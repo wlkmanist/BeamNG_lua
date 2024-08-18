@@ -1,0 +1,97 @@
+{
+  "createDecal": {
+    "cat": "gameplay",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "ui_dynamicDecals.createDecal()",
+    "actionMap": "dynamicDecalsStampUI",
+    "title": "Create decal",
+    "desc": "Create decal"
+  },
+  "scaleDecalX": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "isCentered": true,
+    "actionMap": "dynamicDecalsUI",
+    "onChange": "guihooks.trigger('UINavigation','focus_lr', VALUE)",
+    "title": "ui.inputActions.controllerui.focus_lr.title",
+    "desc": "ui.inputActions.controllerui.focus_lr.description"
+  },
+  "scaleDecalY": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "isCentered": true,
+    "actionMap": "dynamicDecalsUI",
+    "onChange": "guihooks.trigger('UINavigation','focus_ud', VALUE)",
+    "title": "ui.inputActions.controllerui.focus_ud.title",
+    "desc": "ui.inputActions.controllerui.focus_ud.description"
+  },
+  "increaseDecalScaleX": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "actionMap": "dynamicDecalsUI",
+    "onDown": "guihooks.trigger('UINavigation','focus_lr', 1)",
+    "title": "ui.inputActions.controllerui.focus_lr.title",
+    "desc": "ui.inputActions.controllerui.focus_lr.description"
+  },
+  "decreaseDecalScaleX": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "actionMap": "dynamicDecalsUI",
+    "onDown": "guihooks.trigger('UINavigation','focus_lr', -1)",
+    "title": "ui.inputActions.controllerui.focus_lr.title",
+    "desc": "ui.inputActions.controllerui.focus_lr.description"
+  },
+  "increaseDecalScaleY": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "actionMap": "dynamicDecalsUI",
+    "onDown": "guihooks.trigger('UINavigation','focus_ud', 1)",
+    "title": "ui.inputActions.controllerui.focus_ud.title",
+    "desc": "ui.inputActions.controllerui.focus_ud.description"
+  },
+  "decreaseDecalScaleY": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "actionMap": "dynamicDecalsUI",
+    "onDown": "guihooks.trigger('UINavigation','focus_ud', -1)",
+    "title": "ui.inputActions.controllerui.focus_ud.title",
+    "desc": "ui.inputActions.controllerui.focus_ud.description"
+  },
+  "rotateDecalLeft": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "isCentered": true,
+    "actionMap": "dynamicDecalsUI",
+    "onDown": "guihooks.trigger('UINavigation','tab_l', 1)",
+    "title": "ui.inputActions.controllerui.tab_l.title",
+    "desc": "ui.inputActions.controllerui.tab_l.description"
+  },
+  "rotateDecalRight": {
+    "cat": "menu",
+    "order": 1,
+    "ctx": "tlua",
+    "isCentered": true,
+    "actionMap": "dynamicDecalsUI",
+    "onDown": "guihooks.trigger('UINavigation','tab_r', 1)",
+    "title": "ui.inputActions.controllerui.tab_r.title",
+    "desc": "ui.inputActions.controllerui.tab_r.description"
+  },
+  "decalSkewModifier": {
+    "cat": "gameplay",
+    "order": 1,
+    "ctx": "tlua",
+    "isCentered": true,
+    "actionMap": "dynamicDecalsUI",
+    "onChange": "guihooks.trigger('UINavigation','modifier', VALUE)",
+    "title": "ui.inputActions.controllerui.focus_lr.title",
+    "desc": "ui.inputActions.controllerui.focus_lr.description"
+  }
+}
