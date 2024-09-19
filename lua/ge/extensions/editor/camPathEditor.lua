@@ -117,7 +117,7 @@ local function selectPath(path)
 
   if path and path.replay and replayExists(path.replay) and path.replay ~= core_replay.getLoadedFile() then
     core_replay.loadFile(path.replay)
-    if (core_replay.getState() == 'playing') and not core_replay.isPaused() then
+    if (core_replay.getState() == 'playback') and not core_replay.isPaused() then
       core_replay.togglePlay()
     end
   end
@@ -344,9 +344,9 @@ local function playCurrentPath()
 
   core_paths.playPath(M.currentPath, nil)
 
-  if linkReplay[0] and (core_replay.getState() == "playing") then
+  if linkReplay[0] and (core_replay.getState() == "playback") then
     core_replay.seek(M.currentPath.markers[1].time / core_replay.getTotalSeconds())
-    if (core_replay.getState() == 'playing') and core_replay.isPaused() then
+    if (core_replay.getState() == 'playback') and core_replay.isPaused() then
       core_replay.togglePlay()
     end
   end
@@ -476,7 +476,7 @@ end
 
 local function simulatePathCamera(markers, playerPosition, path, focusPos)
   if M.currentPath and path.id == M.currentPath.id then
-    local linkedReplay = linkReplay[0] and (core_replay.getState() == "playing")
+    local linkedReplay = linkReplay[0] and (core_replay.getState() == "playback")
     local firstMarker
     local lastMarker
     if linkedReplay then
@@ -743,7 +743,7 @@ local function addMarker()
   if #M.currentPath.markers > 0 then
     marker.time = M.currentPath.markers[#M.currentPath.markers].time + 2
   end
-  if linkReplay[0] and (core_replay.getState() == "playing") then
+  if linkReplay[0] and (core_replay.getState() == "playback") then
     marker.time = core_replay.getPositionSeconds()
     if #M.currentPath.markers > 0 and marker.time == M.currentPath.markers[#M.currentPath.markers].time then
       M.currentPath.markers[#M.currentPath.markers].cut = true
@@ -1124,7 +1124,7 @@ local function onEditorGui()
       if not linkReplay[0] then h = 2.2 end
       im.BeginChild1("replay", im.ImVec2(0, im.GetFontSize() * h * im.uiscale[0]), im.WindowFlags_ChildWindow)
       linkReplay[0] = M.currentPath.replay == "" or M.currentPath.replay ~= nil and replayExists(M.currentPath.replay)
-      if im.Checkbox("Link path to current replay", linkReplay) then
+      if im.Checkbox("Use with Replay", linkReplay) then
         if linkReplay[0] then
           if core_replay.getLoadedFile() then
             editor.history:commitAction("ChangeReplayField", {path = M.currentPath, oldValue = M.currentPath.replay, newValue = core_replay.getLoadedFile()}, changeReplayFieldActionUndo, changeReplayFieldActionRedo)
@@ -1137,7 +1137,7 @@ local function onEditorGui()
       end
 
       if linkReplay[0] then
-        im.Text("Replay:")
+        im.Text("Replay File:")
         im.SameLine()
 
         if im.BeginCombo("##recordings", core_replay.getLoadedFile()) then
@@ -1156,7 +1156,12 @@ local function onEditorGui()
         im.OpenPopup("Load new replay")
       end
       if im.BeginPopupModal("Load new replay") then
-        im.Text('Do you want to load replay: "' .. replayToBeLoaded .. '"?')
+        local window_width = im.GetWindowWidth()
+        local text = 'Do you want to load replay: \n"' .. replayToBeLoaded .. '"? \nThis will also load the according level and vehicles if necessary.'
+        local text_size = im.CalcTextSize(text)
+        local x_position = (window_width - text_size.x) / 2
+        im.SetCursorPosX(x_position)
+        im.Text(text)
         if im.Button("Yes") then
           editor.history:commitAction("ChangeReplayField", {path = M.currentPath, oldValue = M.currentPath.replay, newValue = replayToBeLoaded}, changeReplayFieldActionUndo, changeReplayFieldActionRedo)
           replayToBeLoaded = nil
@@ -1170,7 +1175,7 @@ local function onEditorGui()
         im.EndPopup()
       end
 
-      if (core_replay.getState() == "playing") then
+      if (core_replay.getState() == "playback") then
         im.tooltip("New Markers will get the time of the current replay. Starting the path also starts the replay.")
         if linkReplay[0] then
           im.Text("Replay Controls")
@@ -1267,7 +1272,7 @@ local function onEditorGui()
       im.PushStyleColor2(im.Col_ButtonActive, im.ImVec4(.8, 0, 0, 0.7))
       if im.Button("Stop",im.ImVec2(avail.x - 2, 0)) then
         core_paths.stopCurrentPath()
-        if (core_replay.getState() == 'playing') and not core_replay.isPaused() then
+        if (core_replay.getState() == 'playback') and not core_replay.isPaused() then
           core_replay.togglePlay()
         end
       end

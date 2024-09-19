@@ -31,7 +31,10 @@ function C:init()
           end
         end
 
-        if modeNum <= 1 then -- passive
+        -- TODO: this may need to be reconsidered
+        -- currently follows at first, then chases
+        -- avoids head collisions if coming from opposing direction
+        if modeNum >= 1 then -- passive
           obj:queueLuaCommand('ai.setMode("follow")')
           obj:queueLuaCommand('ai.driveInLane("on")')
         else -- aggressive
@@ -47,7 +50,8 @@ function C:init()
       self.cooldownTimer = -1
 
       if not self.flags.pursuit then
-        self.veh:modifyRespawnValues(600, 50, -0.6)
+        local dirBias = gameplay_police.getPoliceVars().spawnDirBias
+        self.veh:modifyRespawnValues(1000, 50, dirBias)
         self.flags.pursuit = 1
       end
     end,
@@ -126,7 +130,8 @@ function C:onRefresh()
       -- ignores this if vehicle is at a roadblock
       self:setAction('pursuitStart', {targetId = targetId})
     end
-    self.veh:modifyRespawnValues(750 - self.targetPursuitMode * 150, 50, -0.6)
+    local dirBias = gameplay_police.getPoliceVars().spawnDirBias
+    self.veh:modifyRespawnValues(750 - self.targetPursuitMode * 150, 50, dirBias)
   else
     if self.flags.pursuit then
       self:resetAction()
@@ -182,7 +187,7 @@ function C:onTrafficTick(dt)
     self.cooldownTimer = self.cooldownTimer - dt
   end
 
-  if self.veh.speed >= 6 and next(map.objects[self.veh.id].states) then -- lightbar triggers all traffic lights to change to the red state
+  if self.enableTrafficSignalsChange and self.veh.speed >= 6 and next(map.objects[self.veh.id].states) then -- lightbar triggers all traffic lights to change to the red state
     if map.objects[self.veh.id].states.lightbar then
       self:freezeTrafficSignals(true)
     else

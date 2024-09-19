@@ -7,7 +7,7 @@ local ime = ui_flowgraph_editor
 
 local C = {}
 
-C.name = 'ParkingMarkers'
+C.name = 'Parking Markers'
 C.description = 'Creates Markers for a parking spot.'
 C.category = 'repeat_instant'
 
@@ -64,12 +64,7 @@ function C:init(mgr, ...)
   self.stopTimer = 1
 end
 
-function C:_executionStarted()
-  self.stopTimer = 1
-  self._changed = true
-end
-
-function C:_executionStopped()
+function C:clear()
   self.stopTimer = 1
   self._changed = true
   if not self.triggerName then return end
@@ -94,15 +89,25 @@ function C:_executionStopped()
   table.clear(self.markerObjects)
 end
 
+function C:_executionStarted()
+  self.stopTimer = 1
+  self._changed = true
+end
+
+function C:_executionStopped()
+  self:clear()
+end
+
 function C:onClientEndMission()
-  self:_executionStopped()
+  self:clear()
 end
 
 
 function C:work(args)
   if self.pinIn.clear.value then
-    self:_executionStopped()
+    self:clear()
     for _, p in pairs(self.pinOut) do p.value = nil end
+    return
   end
   if self.pinIn.flow.value then
     self:manageTrigger()

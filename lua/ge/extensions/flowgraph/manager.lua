@@ -1468,7 +1468,7 @@ function C:getCustomNodeTemplates()
   for _, filename in ipairs(FS:findFiles(customNodePath, '*Node.lua', -1, true, false)) do
     local dirname, fn, e = path.split(filename)
     -- TODO: clear up hack with filepaths (issue when loading a FG as a mission)
-    local path = dirname:sub(string.len(customNodePath) + string.find(dirname, customNodePath))
+    local path = dirname:sub(string.len(customNodePath) + string.find(dirname, customNodePath, 1, true))
     local pathArgs = split(path, '/')
     table.insert(pathArgs, 1, "customNodes")
 

@@ -614,7 +614,7 @@ Safe Mode only loads the bare minimum and many apps/features will be missing.
       imgui.Text(
         [[
 
-BeamNG.drive ]] .. beamng_versionb .. [[ World Editor (level editor)
+BeamNG ]] .. beamng_versionb .. [[ World Editor (level editor)
 
 The editor is used to edit and create new content/levels for the game.
         ]])

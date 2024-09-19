@@ -37,7 +37,7 @@ end
 
 local function setFocusPOI(poi)
   if not poi then
-    core_groundMarkers.setFocus(nil)
+    core_groundMarkers.setPath(nil)
     destinationMarker:hide()
   end
   local state = M.state
@@ -119,7 +119,7 @@ local function buildRoadIndicator()
 
     local poiRoadData = state.closestRoad[state.focusExplorationPOI]
     if poiRoadData and poiRoadData.best then
-      core_groundMarkers.setFocus(poiRoadData.best)
+      core_groundMarkers.setPath(poiRoadData.best)
     end
   end
 end
@@ -284,22 +284,12 @@ local function endSubsectionExploration()
   race_marker.onClientEndMission()
   createDestMarker = true
   destinationMarker = nil
-  core_groundMarkers.setFocus(nil)
+  core_groundMarkers.setPath(nil)
   ui_missionInfo.closeDialogue()
-
-  local ExplorationCheckpoints = scenetree.findObject("ExplorationCheckpointsActionMap")
-  if ExplorationCheckpoints then
-    ExplorationCheckpoints:pop()
-  end
 
   local ExplorationMissionUI = scenetree.findObject("ExplorationMissionUIActionMap")
   if ExplorationMissionUI then
     ExplorationMissionUI:pop()
-  end
-
-  local ExplorationGeneral = scenetree.findObject("ExplorationGeneralActionMap")
-  if ExplorationGeneral then
-    ExplorationGeneral:pop()
   end
 end
 
@@ -402,14 +392,6 @@ local function processExploreSubsection(spawningData, transitioningFromScenario)
   inputActionFilter.clear(0)
   inputActionFilter.addAction(0, 'default_blacklist_exploration', true)
 
-  local ExplorationCheckpoints = scenetree.findObject("ExplorationCheckpointsActionMap")
-  if ExplorationCheckpoints then
-    ExplorationCheckpoints:push()
-  end
-  local ExplorationGeneral = scenetree.findObject("ExplorationGeneralActionMap")
-  if ExplorationGeneral then
-    ExplorationGeneral:push()
-  end
   ---------------------------------------------------------------------------------
   local minimap = subsection.minimap
   if minimap then
@@ -669,10 +651,6 @@ local function handleSiteTrigger(vehicleID, subsectionKey, locationKey)
     state.inSideMissionTrigger = true
     openShortLocationInfo(locationKey)
   end
-end
-
-local function openPhotomode()
-  guihooks.trigger('ChangeState', {state = 'photomode'})
 end
 
 local function onBeamNGTrigger(data)
@@ -1166,7 +1144,6 @@ M.onClientEndMission          = onClientEndMission
 M.onCameraToggled             = onCameraToggled
 M.onSaveCampaign              = onSaveCampaign
 M.onResumeCampaign            = onResumeCampaign
-M.openPhotomode               = openPhotomode
 M.refreshLocationMarkers      = refreshLocationMarkers
 M.onUILayoutLoaded            = onUILayoutLoaded
 

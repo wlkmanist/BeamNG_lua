@@ -141,7 +141,8 @@ end
 -- Save the level's scene tree to the specified path.
 local function saveLevelAs(levelPath)
   editor.levelPath = levelPath
-  setMissionFilename(levelPath .. "info.json")
+  local levelName = path.levelFromPath(levelPath)
+  setMissionFilename(path.getPathLevelMain(levelName))
   editor.saveLevel()
 end
 
@@ -165,7 +166,8 @@ local function autoSaveLevel()
   saveLevelAs(path)
   editor.autosavingNow = false
   editor.levelPath = oldLevelPath
-  setMissionFilename(editor.levelPath .. "/info.json")
+  local levelName = path.levelFromPath(editor.levelPath)
+  setMissionFilename(path.getPathLevelMain(levelName))
   counter = counter + 1
   editor.setPreference("files.autoSave.counter", counter)
   editor.dirty = oldDirty

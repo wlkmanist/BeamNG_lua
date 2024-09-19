@@ -3,9 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-}
 local logTag = "editor_dynamicDecals_debugTextures"
 local im = ui_imgui
 
@@ -18,7 +15,8 @@ local textureSet = nil
 local function sectionGui(guiId)
   local maxImageWidgetWidth = editor.getPreference("dynamicDecalsTool.debugTextures.maxImageWidgetWidth")
 
-  if not textureSet then textureSet = api.getTextureSet() end
+  -- if not textureSet then textureSet = api.getTextureSet() end
+  -- print("debug:sectionGui")
   if textureSet then
     if im.CollapsingHeader1("Combined Textures") then
       api.drawTextureSet(textureSet, "Combined Textures", maxImageWidgetWidth)

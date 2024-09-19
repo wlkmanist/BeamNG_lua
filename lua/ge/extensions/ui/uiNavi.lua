@@ -137,7 +137,7 @@ local destinationPos = nil
 -- // in this case we will currently only render the path for the last player.
 -- // in the future we might want to support rendering several paths
 local function route_start (wp, pos)
-  core_groundMarkers.setFocus(wp)
+  core_groundMarkers.setPath(wp)
   destination = wp
   destinationPos = vec3(pos[1], pos[2], pos[3])
 end
@@ -145,7 +145,7 @@ end
 local function route_end ()
   destination = nil
   destinationPos = nil
-  core_groundMarkers.setFocus(nil)
+  core_groundMarkers.setPath(nil)
   guihooks.trigger('RouteUpdate', {})
   guihooks.trigger('RouteEnded')
 end
@@ -160,7 +160,7 @@ local function route_update (oldPos, newPos)
 
   local route = map.getPath(findClosestRoad(newPos), destination)
   if oldPos:distance(newPos) > 0.1 then
-    core_groundMarkers.setFocus(destination)
+    core_groundMarkers.setPath(destination)
     guihooks.trigger('RouteUpdate', route) -- TODO: convert into stream
     if newPos:distance(destinationPos) < 50 then
       guihooks.trigger('RouteReachedDestination')
@@ -221,24 +221,37 @@ end
 local camPos = vec3()
 local camPosPrev = vec3()
 local mapObjects = {}
-local dir
+local mapObjectsTblPool = {}
 local xPlus, yMinus = vec3(1,0,0), vec3(0,-1,0)
 local controlId, cameraHandler
 local mapUpdateUIData = {}
 local function onGuiUpdate(dtReal, dtSim, dtRaw)
   table.clear(mapObjects)
+  local tblPoolIdx = 1
+
   for k, v in pairs(map.getTrackedObjects() or {}) do
     if v.uiState ~= 0 then
-      dir = v.dirVec:normalized()
-      mapObjects[k] = {
-        pos = v.pos:toTable(),
-      --v.vel = v.vel:toTable()
-        rot = math.deg(math.atan2(dir:dot(xPlus), dir:dot(yMinus))),
-      --v.dirVec = v.dirVec:toTable()
-        speed = v.vel:length(),
-        type = 'BeamNGVehicle', -- vehicle
-        state = v.uiState or 1
-      }
+      mapObjectsTblPool[tblPoolIdx] = mapObjectsTblPool[tblPoolIdx] or {pos = {}}
+      local mapObj = mapObjectsTblPool[tblPoolIdx]
+      mapObjects[k] = mapObj
+
+      mapObj.pos[1], mapObj.pos[2], mapObj.pos[3] = v.pos.x, v.pos.y, v.pos.z
+      mapObj.rot = math.deg(math.atan2(v.dirVec:dot(xPlus), v.dirVec:dot(yMinus)))
+      mapObj.speed = v.vel:length()
+      mapObj.type = 'BeamNGVehicle'
+      mapObj.state = v.uiState or 1
+
+      tblPoolIdx = tblPoolIdx + 1
+
+      -- mapObjects[k] = {
+      --   pos = v.pos:toTable(),
+      -- --v.vel = v.vel:toTable()
+      --   rot = math.deg(math.atan2(dir:dot(xPlus), dir:dot(yMinus))),
+      -- --v.dirVec = v.dirVec:toTable()
+      --   speed = v.vel:length(),
+      --   type = 'BeamNGVehicle', -- vehicle
+      --   state = v.uiState or 1
+      -- }
     end
   end
 
@@ -251,21 +264,30 @@ local function onGuiUpdate(dtReal, dtSim, dtRaw)
       local sobj = scenetree[controlId]
 
       local matrix = sobj:getTransform()
-      local forVec = vec3(matrix:getColumn(1))
+      local forVec = matrix:getColumn(1)
       local heading = math.atan2(forVec.x, -forVec.y) * 180 / math.pi
 
       camPos:set(sobj:getPosition())
       local vel = ((camPosPrev or camPos) - camPos) / dtSim
       camPosPrev:set(camPos)
 
-      mapObjects[controlId] = {
-        pos = camPos:toTable(),
-        --vel = vel:toTable(),
-        speed = objSpeed_smooth:get(vel:length()),
-        rot = heading,
-        --dirvec = forVec:toTable(),
-        type = sobj.className
-      }
+      mapObjectsTblPool[tblPoolIdx] = mapObjectsTblPool[tblPoolIdx] or {pos = {}}
+      local mapObj = mapObjectsTblPool[tblPoolIdx]
+      mapObjects[controlId] = mapObj
+
+      mapObj.pos[1], mapObj.pos[2], mapObj.pos[3] = camPos.x, camPos.y, camPos.z
+      mapObj.rot = heading
+      mapObj.speed = objSpeed_smooth:get(vel:length())
+      mapObj.type = sobj.className
+
+      -- mapObjects[controlId] = {
+      --   pos = camPos:toTable(),
+      --   --vel = vel:toTable(),
+      --   speed = objSpeed_smooth:get(vel:length()),
+      --   rot = heading,
+      --   --dirvec = forVec:toTable(),
+      --   type = sobj.className
+      -- }
     end
   end
   -- guard agains sending wrong data in the first frame, when there is no camera - but a vehicle, that is not tracked by the map yet

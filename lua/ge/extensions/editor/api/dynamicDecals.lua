@@ -292,13 +292,12 @@ local function serializeLayer(layer)
     lyr["useLockedSurfaceNormal"] = layer.useLockedSurfaceNormal
     lyr["surfaceNormal"] = layer.surfaceNormal
     -- sdf
-    if layer.sdfThickness then
-      lyr["sdfThickness"] = layer.sdfThickness
-      lyr["sdfSoftness"] = layer.sdfSoftness
-      lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
-      lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
-      lyr["sdfOutlineColor"] = layer.sdfOutlineColor:toTable()
-    end
+    lyr["sdfEnabled"] = layer.sdfEnabled
+    lyr["sdfThickness"] = layer.sdfThickness
+    lyr["sdfSoftness"] = layer.sdfSoftness
+    lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
+    lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
+    lyr["sdfOutlineColor"] = layer.sdfOutlineColor:toTable()
   elseif layer.type == M.layerTypes.fill then
     lyr["name"] = layer.name
     lyr["blendMode"] = layer.blendMode
@@ -374,13 +373,12 @@ local function serializeLayer(layer)
     lyr["zBufferDepth"] = layer.zBufferDepth
     lyr["dataPoints"] = layer.dataPoints
     -- sdf
-    if layer.sdfThickness then
-      lyr["sdfThickness"] = layer.sdfThickness
-      lyr["sdfSoftness"] = layer.sdfSoftness
-      lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
-      lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
-      lyr["sdfOutlineColor"] = layer.sdfOutlineColor:toTable()
-    end
+    lyr["sdfEnabled"] = layer.sdfEnabled
+    lyr["sdfThickness"] = layer.sdfThickness
+    lyr["sdfSoftness"] = layer.sdfSoftness
+    lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
+    lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
+    lyr["sdfOutlineColor"] = layer.sdfOutlineColor:toTable()
   elseif layer.type == M.layerTypes.path then
     lyr["alphaMaskBlendMode"] = layer.alphaMaskBlendMode
     lyr["alphaMaskChannel"] = layer.alphaMaskChannel
@@ -443,13 +441,12 @@ local function serializeLayer(layer)
     lyr["textCharacterPositions"] = layer.textCharacterPositions
     lyr["dataPoints"] = layer.dataPoints
     -- sdf
-    if layer.sdfThickness then
-      lyr["sdfThickness"] = layer.sdfThickness
-      lyr["sdfSoftness"] = layer.sdfSoftness
-      lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
-      lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
-      lyr["sdfOutlineColor"] = layer.sdfOutlineColor:toTable()
-    end
+    lyr["sdfEnabled"] = layer.sdfEnabled
+    lyr["sdfThickness"] = layer.sdfThickness
+    lyr["sdfSoftness"] = layer.sdfSoftness
+    lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
+    lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
+    lyr["sdfOutlineColor"] = layer.sdfOutlineColor:toTable()
   elseif layer.type == M.layerTypes.linkedSet then
     lyr["name"] = layer.name
     lyr["type"] = layer.type
@@ -547,13 +544,16 @@ local function deserializeLayer(layer)
     lyr["useLockedSurfaceNormal"] = layer.useLockedSurfaceNormal or false
     lyr["surfaceNormal"] = layer.surfaceNormal and vec3(layer.decalPos.x, layer.decalPos.y, layer.decalPos.z) or vec3(0, 0, 0)
     -- sdf
-    if layer.sdfThickness then
-      lyr["sdfThickness"] = layer.sdfThickness
-      lyr["sdfSoftness"] = layer.sdfSoftness
-      lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
-      lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
-      lyr["sdfOutlineColor"] = ColorI.fromTable(layer.sdfOutlineColor)
+    if layer.sdfEnabled or (layer.sdfEnabled == nil and layer.sdfThickness) then
+      lyr["sdfEnabled"] = true
+    else
+      lyr["sdfEnabled"] = false
     end
+    lyr["sdfThickness"] = layer.sdfThickness or 0.75
+    lyr["sdfSoftness"] = layer.sdfSoftness or 0.05
+    lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness or 0.4
+    lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness or 0.1
+    lyr["sdfOutlineColor"] = ColorI.fromTable(layer.sdfOutlineColor or {255,0,0,255})
   elseif layer.type == M.layerTypes.fill then
     lyr["name"] = (layer.name or string.format("%s", "Fill Layer"))
     lyr["blendMode"] = layer.blendMode
@@ -629,13 +629,16 @@ local function deserializeLayer(layer)
     lyr["zBufferDepth"] = layer.zBufferDepth or -1.0
     lyr["dataPoints"] = layer.dataPoints
     -- sdf
-    if layer.sdfThickness then
-      lyr["sdfThickness"] = layer.sdfThickness
-      lyr["sdfSoftness"] = layer.sdfSoftness
-      lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
-      lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
-      lyr["sdfOutlineColor"] = ColorI.fromTable(layer.sdfOutlineColor)
+    if layer.sdfEnabled or (layer.sdfEnabled == nil and layer.sdfThickness) then
+      lyr["sdfEnabled"] = true
+    else
+      lyr["sdfEnabled"] = false
     end
+    lyr["sdfThickness"] = layer.sdfThickness or 0.75
+    lyr["sdfSoftness"] = layer.sdfSoftness or 0.05
+    lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness or 0.4
+    lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness or 0.1
+    lyr["sdfOutlineColor"] = ColorI.fromTable(layer.sdfOutlineColor or {255,0,0,255})
   elseif layer.type == M.layerTypes.path then
     lyr["alphaMaskBlendMode"] = layer.alphaMaskBlendMode or 0
     lyr["alphaMaskChannel"] = layer.alphaMaskChannel or 3
@@ -698,13 +701,16 @@ local function deserializeLayer(layer)
     lyr["textCharacterPositions"] = layer.textCharacterPositions
     lyr["dataPoints"] = layer.dataPoints
     -- sdf
-    if layer.sdfThickness then
-      lyr["sdfThickness"] = layer.sdfThickness
-      lyr["sdfSoftness"] = layer.sdfSoftness
-      lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness
-      lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness
-      lyr["sdfOutlineColor"] = ColorI.fromTable(layer.sdfOutlineColor)
+    if layer.sdfEnabled or (layer.sdfEnabled == nil and layer.sdfThickness) then
+      lyr["sdfEnabled"] = true
+    else
+      lyr["sdfEnabled"] = false
     end
+    lyr["sdfThickness"] = layer.sdfThickness or 0.75
+    lyr["sdfSoftness"] = layer.sdfSoftness or 0.05
+    lyr["sdfOutlineThickness"] = layer.sdfOutlineThickness or 0.4
+    lyr["sdfOutlineSoftness"] = layer.sdfOutlineSoftness or 0.1
+    lyr["sdfOutlineColor"] = ColorI.fromTable(layer.sdfOutlineColor or {255,0,0,255})
   elseif layer.type == M.layerTypes.linkedSet then
     lyr["name"] = (layer.name or string.format("%s", "Linked Set Layer"))
     lyr["type"] = layer.type
@@ -946,6 +952,7 @@ M.properties = {
     {id = "wrapColorTextureY", name = "Wrap Color Texture Y", description = "", type = M.types.bool, default = true},
     {id = "useZBufferDepth", name = "Use Z-Buffer Depth", description = "", type = M.types.bool, default = false, widgetType = M.widgetTypes[M.types.bool].Checkbox},
     -- {id = "zBufferDepth", name = "zBufferDepth", description = "", type = M.types.int, default = 0, min = 0, max = 10}, = layer.zBufferDepth
+    {id = "sdfEnabled", name = "SDF Enabled", description = "", type = M.types.bool, default = false},
     {id = "sdfThickness", name = "SDF Thickness", description = "", type = M.types.float, default = 0.75, min = 0, max = 1, widgetType = M.widgetTypes[M.types.float].Slider, format = "%.2f"},
     {id = "sdfSoftness", name = "SDF Softness", description = "", type = M.types.float, default = 0.05, min = 0, max = 1, widgetType = M.widgetTypes[M.types.float].Slider, format = "%.2f"},
     {id = "sdfOutlineThickness", name = "SDF Outline Thickness", description = "", type = M.types.float, default = 0.4, min = 0, max = 1, widgetType = M.widgetTypes[M.types.float].Slider, format = "%.2f"},
@@ -2002,7 +2009,7 @@ M.exportSkin = function(vehicleName, skinName)
       for stage = 0, 3 do
         local value = mat:getField("baseColorMap", stage)
         if value and value ~= "" and value:startswith("@DynamicTexture") then
-          mat:setField("baseColorMap", stage, directory .. skinName .. "_d.color.png")
+          mat:setField("baseColorMap", stage, directory .. skinName .. "_d.data.png")
           mat:setField("diffuseMapUseUV", stage, uvLayer)
         end
         -- value = mat:getField("normalMap", stage)
@@ -2598,6 +2605,14 @@ M.setSdfOutlineColor = function(value_ColorI)
   decalProjection.sdfOutlineColor = value_ColorI
 end
 
+M.getSdfEnabled = function()
+  return decalProjection:getSdfEnabled()
+end
+
+M.setSdfEnabled = function(value_bool)
+  decalProjection:setSdfEnabled(value_bool)
+end
+
 M.getSdfThickness = function()
   return decalProjection.sdfThickness
 end
@@ -2644,6 +2659,10 @@ end
 
 M.setCursorPosition = function(value_Point2F)
   decalProjection.cursorPosition = value_Point2F
+end
+
+M.renderSdfTextureImgui = function(sizeX, sizeY)
+  decalProjection:renderSdfTextureImgui(sizeX, sizeY)
 end
 
 local function moveLayerCursorPos(layer, cursorPosOffset)

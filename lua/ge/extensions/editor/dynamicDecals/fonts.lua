@@ -3,12 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-  "editor_dynamicDecals_helper",
-  "editor_dynamicDecals_browser",
-  "editor_dynamicDecals_notification",
-}
 local logTag = "editor_dynamicDecals_fonts"
 local im = ui_imgui
 
@@ -36,7 +30,8 @@ local fontAtlasDataMap = {}
 
 local fontPreviewWindowName = logTag .. "_fontPreviewWindow"
 
--- sdf debugging
+-- sdf gen
+local generateSdf = false
 local sdfPadding = 8
 local sdfOnedgeValue = 128
 local sdfPixelDistScale = 8.0
@@ -157,7 +152,7 @@ end
 
 local function createFontBitmap(path)
   path = path or fontPath
-  local res = FontRasterizer.createFontBitmap(path, destinationDirectory, glyphPixelHeight, true, sdfPadding, sdfOnedgeValue, sdfPixelDistScale)
+  local res = FontRasterizer.createFontBitmap(path, destinationDirectory, glyphPixelHeight, true, generateSdf, sdfPadding, sdfOnedgeValue, sdfPixelDistScale)
   if res == true then
     table.insert(fontGenNotifications, {msg="Font atlas has been generated in '" .. destinationDirectory .. "'", time = 5})
     updateGeneratedFontAtlases()
@@ -174,6 +169,70 @@ local function fontPreviewWindowGui()
     if im.BeginTabBar("FontPreviewTab") then
       local header = fontAtlasData["header"]
       local glyphs = fontAtlasData["glyphs"]
+
+      if im.BeginTabItem("Info##FontPreviewTab") then
+        if im.BeginTable('FontPreviewTableInfoTable', 2) then
+          im.TableSetupScrollFreeze(0, 1) -- Make top row always visible
+          im.TableSetupColumn("Name")
+          im.TableSetupColumn("Value")
+          im.TableHeadersRow()
+
+          im.TableNextColumn()
+          im.TextUnformatted("Font Name")
+          im.TableNextColumn()
+          im.TextUnformatted(header.font_name)
+
+          im.TableNextColumn()
+          im.TextUnformatted("Version")
+          im.TableNextColumn()
+          im.TextUnformatted(tostring(header.version))
+
+          im.TableNextColumn()
+          im.TextUnformatted("Atlas Dimensions")
+          im.TableNextColumn()
+          im.TextUnformatted(string.format("[%d, %d]", header.atlas_width, header.atlas_height))
+
+          im.TableNextColumn()
+          im.TextUnformatted("Atlas Monospaced Dimensions")
+          im.TableNextColumn()
+          im.TextUnformatted(string.format("[%d, %d]", header.atlas_monospaced_width, header.atlas_monospaced_height))
+
+          im.TableNextColumn()
+          im.TextUnformatted("Glyph Pixel Height")
+          im.TableNextColumn()
+          im.TextUnformatted(string.format("%.1f", header.glyph_pixel_height))
+
+          im.TableNextColumn()
+          im.TextUnformatted("First Character")
+          im.TableNextColumn()
+          im.TextUnformatted(tostring(header.first_char))
+
+          im.TableNextColumn()
+          im.TextUnformatted("Glyph Count")
+          im.TableNextColumn()
+          im.TextUnformatted(tostring(header.glyph_count))
+
+          if header.sdf then
+            im.TableNextColumn()
+            im.TextUnformatted("SDF Padding")
+            im.TableNextColumn()
+            im.TextUnformatted(tostring(header.sdf.padding))
+
+            im.TableNextColumn()
+            im.TextUnformatted("SDF OnEdge Value")
+            im.TableNextColumn()
+            im.TextUnformatted(tostring(header.sdf.onedge_value))
+
+            im.TableNextColumn()
+            im.TextUnformatted("SDF Pixel Dist Scale")
+            im.TableNextColumn()
+            im.TextUnformatted(string.format("%.1f", header.sdf.pixel_dist_scale))
+          end
+
+          im.EndTable()
+        end
+        im.EndTabItem()
+      end
 
       if im.BeginTabItem("Atlas##FontPreviewTab") then
         im.BeginChild1("FontPreviewAtlasChild")

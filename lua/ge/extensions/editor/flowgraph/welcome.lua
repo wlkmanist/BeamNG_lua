@@ -140,7 +140,7 @@ function C:drawRightColumn()
   im.PushTextWrapPos(im.GetCursorPosX() + math.max(minWrap,math.min(im.GetContentRegionAvailWidth(), maxWrap)))
 
   headerText('Disclaimer')
-  im.TextWrapped("Welcome to the Flowgraph Editor! You can use it to create new gameplay for BeamNG.Drive. If you're new, there are examples you can check out below.")
+  im.TextWrapped("Welcome to the Flowgraph Editor! You can use it to create new gameplay for BeamNG. If you're new, there are examples you can check out below.")
   im.Dummy(im.ImVec2(1,1))
   im.TextWrapped("If you are returning, you might notice some changes around here. Most notably, we added a State System, which greatly reduces Flowgraph size and complexity. It also makes it easier to modify existing projects.")
   im.Dummy(im.ImVec2(1,1))

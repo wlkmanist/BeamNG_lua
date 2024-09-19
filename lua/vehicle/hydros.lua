@@ -5,12 +5,13 @@
 local min, max, abs, clockhp = math.min, math.max, math.abs, os.clockhp
 local M = {}
 
-M.enableFFB = true
+M.enableFFB = true -- will skip the actual FFB requests to the connected hardware
+M.enableFFBflood = false -- will skip the timing checks and run at 2KHz no matter what. intended only for debugging and testing purposes, as this will flood the drivers and cripple pretty much all steering wheels
 M.wheelFFBForceCoef = 200 -- regular force coef (at speed)
 M.wheelFFBForceCoefLowSpeed = M.wheelFFBForceCoef -- force coef used at parking speeds
 M.wheelFFBForceCoefCurrent = M.wheelFFBForceCoefLowSpeed -- updated over time depending on speed (start at parking speed) and AI driver
 M.wheelPowerSteeringCoef = 1
-M.wheelFFBForceLimit = 10 -- The FFB steady force limits (in Newton)
+M.wheelFFBForceLimit = 10 -- The FFB steady force limit (in a scale from 0 to M.FFmax)
 local wheelFFBSmoothing, wheelFFBSmoothing2 = 50, 50000
 local wheelFFBSmoothing2automatic = true
 M.GforceCoef = 0
@@ -18,10 +19,10 @@ local GforceVelCoef = 0
 
 M.hydros = {}
 local hydroCount = 0
-M.forceAtWheel = 0
-local prevForceQuantum = 0
-M.forceAtDriver = 0
-M.curForceLimit = 0
+M.forceAtWheelNorm = 0 -- from 0 to 1
+M.forceAtDriverNorm = 0 -- from 0 to 1
+M.curForceLimitNorm = 0 -- from 0 to 1
+M.curForceLimit = 0 -- The FFB realtime force limit (in a scale from 0 to M.FFmax), can be used to progressively return to wheelFFBForceLimit after a reset
 
 local inputFlex = {}
 
@@ -35,19 +36,20 @@ local FFBRest = {}
 local FFBRestCount = 0
 local FFBHydrosExist = false
 local FFBID    = -1 -- >=0 are valid IDs
-local curForceLimitSmoother = newTemporalSmoothingNonLinear(10) -- prevent spikes when resetting vehicle (and ideally also when window focus is lost/gained)
+
+local curForceLimitSmoother = newTemporalSmoothingNonLinear(1000) -- prevent spikes when resetting vehicle (and ideally also when window focus is lost/gained)
 local FFBperiod = 0 -- how small period the steering wheel drivers can cope with, before they crash and burn
 local nextDriverUpdate = 0 -- last time we sent an update to the drivers
-local FFmax = 10
+M.FFmax = 10
 local softlockForceCoef = 1
 local softlockDegrees = 40 -- in these last degrees of steering range, we apply forces to keep the USB steering wheel within the vlua steering lock. e.g. if driving a 360deg Bolide with a 900deg logitech wheel, then from 320 to 360deg (and beyond) the logitech will start pushing back
 local softlockThreshold = nil
 local softlockDamping = 1
-local invFFstep = 65536 / FFmax
 local ffbSpeedFast = 5 / 3.6
 local dtInternal = 1
 local m1, delta1m1, delta1m1m2
 local y1,y2,y2R = 0,0,0
+local overshoot = 0
 local prevdt = 1
 local steeringHydro = nil
 local physicsDt = physicsDt
@@ -103,48 +105,50 @@ end
 
 -- use response correction table to figure out what value to feed the drivers with
 local function getDriverForce(force)
-  local normForce = math.abs(force) / FFmax
+  local normForce = math.abs(force) / M.FFmax
   local prev
   local nxt
   -- find current section (previous and next datapoint) in response curve
-  for i = 1, #responseCurve do
-    nxt = responseCurve[i]
-    if nxt[2] > normForce then break end
-    if nxt[2] == 1 then break end
+  for _, v in ipairs(responseCurve) do
+    local v2 = v[2]
+    nxt = v
+    if v2 > normForce or v2 == 1 then break end
     prev = nxt
   end
   -- map from desired wheel force, to necessary driver force, after taking into account hardware response
   local prev2 = prev and prev[2] or 0
   local normResult = prev[1] + (normForce - prev2) * (nxt[1] - (prev and prev[1] or 0)) / (nxt[2] - prev2)
-  return sign(force) * normResult * FFmax
+  return signApply(force, normResult * M.FFmax)
 end
 
+local ffbDuringPrevFrame = false
 local function FFBcalc(wheelDispl, wheelPos)
-  M.forceAtWheel = M.wheelFFBForceCoefCurrent * vehicleFFBForceCoef * wheelDispl * M.wheelPowerSteeringCoef
+  local result = false
+  local forceAtWheel = M.wheelFFBForceCoefCurrent * vehicleFFBForceCoef * wheelDispl * M.wheelPowerSteeringCoef
 
-  -- TODO: why check for ffb and controller presence (steering wheel hardware) this late, instead of at the beginning of function?
-  -- TODO: or better yet, remove this check, and move FFBcalc() call to inside the hydros calculation in update(dtSim) function?
   if FFBID >= 0 and playerInfo.anyPlayerSeated then
+    result = true
+    if not ffbDuringPrevFrame then
+      FFBsmooth:set(0)
+      curForceLimitSmoother:set(0)
+    end
     -- compute the force that should be output by (and measured at) the steering wheel hardware
 
     -- filter 'huge' spikes from going into the smoother; otherwise, it'll take a while to come back from that far away (in later calls to FFBsmooth:get)
     -- we use a multiplier value of 10; this way the return value of :get() won't be overly smoothed when driving on the limit, i.e. approaching the limit of ffb, i.e. near curForceLimit and towards it
-    -- TODO: instead, maybe we can re-set the smoother when we've gone over the limit and use getUncapped? (just like the fix for lag in skidding sound smoothers)
     -- reminder: FFBsmooth must run at a constant rate, such as 2KHz (replace with a temporal smoother otherwise)
     local limit = 10 * M.curForceLimit
-    M.forceAtWheel = FFBsmooth:getWindow(max(min(M.forceAtWheel, limit), -limit), wheelFFBSmoothing, wheelFFBSmoothing2) - GforceVelCoef * sensors.gx * M.GforceCoef
+    forceAtWheel = FFBsmooth:getWindow(max(min(forceAtWheel, limit), -limit), wheelFFBSmoothing, wheelFFBSmoothing2) - GforceVelCoef * sensors.gx * M.GforceCoef
 
     -- drivers will struggle if sending too many updates per wall clock second, so we throttle them here (according to FFBperiod)
     local now = clockhp() -- important, this must be wall clock time, not sim time (steering wheel drivers don't care about sim time)
-    -- TODO: FFBperiod is literally the avg time it takes for udpates to run when drivers are overloaded, which we assume is close to the max rate the drivers can handle. is that a correct assumption in all cases?
-    -- TODO: also, should we add some wiggle room here? maybe use FFBperiod*1.5 or something like that instead?
     if now > nextDriverUpdate then
 
       -- limit how much torque is output at the wheel (following the binding configuration of curForceLimit)
-      local forceAtWheel = sign(M.forceAtWheel) * min(abs(M.forceAtWheel), M.curForceLimit)
+      forceAtWheel = sign(forceAtWheel) * min(abs(forceAtWheel), M.curForceLimit)
 
       -- figure out the fake number that the drivers want to hear, in order to really output the desired torque at the wheel
-      local newForceAtDriver = responseCorrected and getDriverForce(forceAtWheel) or forceAtWheel
+      local forceAtDriver = responseCorrected and getDriverForce(forceAtWheel) or forceAtWheel
 
       -- progressively apply softlock during the last few degrees of steering lock
       softlockThreshold = softlockThreshold or 0.5*clamp(softlockDegrees / v.data.input.steeringWheelLock, 1e-10, 1)
@@ -153,32 +157,32 @@ local function FFBcalc(wheelDispl, wheelPos)
       if lockForce >= 0 then
         lockForce = lockForce - min(lockForce, square(softlockDamping * max(0, abs(prevWheelPos) - absWheelPos) / physicsDt))
       end
-      lockForce = M.curForceLimit * lockForce
-      --lockForce = lockForce
-      if wheelPos >= 0 then
-        lockForce = max(newForceAtDriver, lockForce)
-      else
-        lockForce = min(newForceAtDriver, -lockForce)
+      local signWheelPos = fsign(wheelPos)
+      lockForce = signWheelPos * max(signWheelPos * forceAtDriver, M.curForceLimit * lockForce)
+
+      forceAtDriver = (1 - softlockForceCoef) * forceAtDriver + softlockForceCoef * lockForce
+      forceAtDriver = sign(forceAtDriver) * min(abs(forceAtDriver), M.curForceLimit)
+      -- send update to driver
+      if M.enableFFB then
+        obj:sendForceFeedback(FFBID, forceAtDriver)
       end
-
-      newForceAtDriver = (1 - softlockForceCoef) * newForceAtDriver + softlockForceCoef * lockForce
-      newForceAtDriver = M.enableFFB and newForceAtDriver or 0
-
-      -- send force only if the driver will see any difference (i.e. skip when still in the same driver ffb quantum step as last time)
-      local newForceQuantum = sign(newForceAtDriver) * math.floor(abs(newForceAtDriver * invFFstep))
-      if newForceQuantum ~= prevForceQuantum then
-        -- send update to driver
-        obj:sendForceFeedback(FFBID, newForceAtDriver)
-        nextDriverUpdate = now + FFBperiod
-
-        -- remember data for future calculations
-        M.forceAtWheel = forceAtWheel
-        prevForceQuantum = newForceQuantum
-        M.forceAtDriver = newForceAtDriver
-      end
+      nextDriverUpdate = now + FFBperiod
+      M.forceAtDriverNorm = forceAtDriver/M.FFmax
+      M.forceAtWheelNorm = forceAtWheel/M.FFmax
     end
   end
+
+  M.curForceLimitNorm = M.curForceLimit/M.FFmax
   prevWheelPos = wheelPos
+  return result
+end
+
+local function debugDraw()
+  local dtReal = obj:getRealdt()
+  if dtReal > 1/10 or dtReal < 0.0001 then -- disable ffb when at less than 10fps, and after pauses. this avoids sudden spikes from accumulated time (e.g. after loading screens, etc)
+    FFBsmooth:set(0)
+    curForceLimitSmoother:set(0)
+  end
 end
 
 local function updateGFX(dt) -- dt in seconds
@@ -235,8 +239,7 @@ local function updateGFX(dt) -- dt in seconds
     local FFBhcount = 0
     local hydroPos = 0
     local simWheelPos = 0
-    for i = 1, #FFBHydros do
-      local h = FFBHydros[i]
+    for i, h in ipairs(FFBHydros) do
       h._inrate, h._outrate = h.inRate * physicsDt, h.outRate * physicsDt
       local hbcid = h.bcid
       if not h.fIsBroken(obj, hbcid) then
@@ -246,7 +249,6 @@ local function updateGFX(dt) -- dt in seconds
       end
     end
 
-    prevForceQuantum = math.huge
     local invDt = 1 / (dt + 1e-30)
     dtInternal = 0
     local y0 = y1
@@ -257,10 +259,12 @@ local function updateGFX(dt) -- dt in seconds
     y2 = electrics.values.steering_input or 0  -- current pos
     y2R = y2
 
-    local predDelta = dt * (y2R - prevy2R) / (prevdt + 1e-10)
+    local predDelta = y2R - prevy2R
     if (hydroPos - y2R) * predDelta >= 0 then
-      y2 = y2R + min(max((y2R - prevy2R) / (prevPredy2 - prevy2R), 0), 1) * predDelta
+      local pred = min(max(predDelta / (prevPredy2 - prevy2R), 0), 1) * predDelta * dt / (prevdt + 1e-10)
+      y2 = y2R + sign(pred) * max(abs(pred) - overshoot, 0)
     end
+    overshoot = 0
 
     local wheelvel = (y2 - prevPredy2) * invDt
     local delta2 = wheelvel
@@ -273,13 +277,15 @@ local function updateGFX(dt) -- dt in seconds
     prevdt = dt
 
     GforceVelCoef = min(1, 1/(abs(wheelvel) + 1))
-    M.curForceLimit = curForceLimitSmoother:getWithRate(M.wheelFFBForceLimit, dt, 1)
+    M.curForceLimit = curForceLimitSmoother:getWithRate(M.wheelFFBForceLimit, obj:getRealdt(), 1) -- use dtReal, since this safety smoother is intended to follow wall time
 
     local speedT = max(electrics.values.airspeed, abs(electrics.values.wheelspeed)) / ffbSpeedFast
     M.wheelFFBForceCoefCurrent = lerp(M.wheelFFBForceCoefLowSpeed, M.wheelFFBForceCoef, clamp(speedT, 0, 1)) -- approach maxForce as we get closer to the fast speed threshold
 
     if ai.isDriving() then
       M.wheelFFBForceCoefCurrent = 0 -- free up the wheel while AI is driving
+      FFBsmooth:set(0)
+      curForceLimitSmoother:set(0)
     end
   end
 
@@ -290,6 +296,7 @@ local function updateGFX(dt) -- dt in seconds
 end
 
 local function update(dtSim)
+  local ffbDuringCurrFrame = false
   -- state: the state of the hydro from -1 to 1
   -- cmd the input value
   -- note: state is scaled to the ratio as the last step
@@ -309,9 +316,7 @@ local function update(dtSim)
       local t = min(1, dtInternal / max(1e-30, lastDt))
       realWheelPos = y1 + dtInternal * (m1 + t*(delta1m1 + (t - 1)*delta1m1m2))
 
-      for i = 1, #FFBHydros do
-        local h = FFBHydros[i]
-
+      for i, h in ipairs(FFBHydros) do
         local hbcid = h.bcid
         if not h.fIsBroken(obj, hbcid) then
           FFBhcount = FFBhcount + 1
@@ -337,7 +342,13 @@ local function update(dtSim)
       end
     end
 
-    FFBcalc((simWheelPos - hydroPos) / max(1, FFBhcount), realWheelPos)
+    local shDif = simWheelPos - hydroPos
+    ffbDuringCurrFrame = FFBcalc(shDif / max(1, FFBhcount), realWheelPos)
+
+    local rsDif = realWheelPos - simWheelPos
+    if (realWheelPos - y2R) * (y2 - realWheelPos) > 0 and rsDif * shDif < 0 then
+      overshoot = overshoot + max(0, abs(rsDif) - abs(shDif))
+    end
   end
 
   for i = 1, hcount do
@@ -352,6 +363,7 @@ local function update(dtSim)
       h.fsetRelDeformedDisplacement(obj, h.bcid, h.state)
     end
   end
+  ffbDuringPrevFrame = ffbDuringCurrFrame
 end
 
 local function getFFBConfig()
@@ -405,25 +417,23 @@ local function onFFBConfigChanged(newFFBConfig)
 
     local ffbConfig = newFFBConfig.steering
 
-    if M.enableFFB then
-      FFBID = ffbConfig.FFBID or -1
-    end
+    FFBID = ffbConfig.FFBID or -1
 
     if FFBID >= 0 then
       if ffbConfig.ff_max_force and ffbConfig.ff_max_force ~= 0 then
-        FFmax = max(0.1, ffbConfig.ff_max_force)
-        M.wheelFFBForceLimit = FFmax
+        M.FFmax = max(0.1, ffbConfig.ff_max_force)
+        M.wheelFFBForceLimit = M.FFmax
         if ffbConfig.ff_res == 0 then
           ffbConfig.ff_res = 65536
           log("D", "", "Steering wheel drivers didn't provide any FFB resolution information. Defaulting to "..dumps(ffbConfig.ff_res).. " steps")
         end
-        invFFstep = ffbConfig.ff_res / FFmax
         local ffbParams = ffbConfig.ffbParams
         if ffbParams then
           local frequency = 0
           if ffbParams.forceCoef ~= nil then M.wheelFFBForceCoef = ffbParams.forceCoef end
+          if ffbParams.torqueDesired and ffbParams.torqueCurrent then M.wheelFFBForceLimit = M.FFmax * clamp(ffbParams.torqueDesired / ffbParams.torqueCurrent, 0.1, 1) end
+          M.torqueCurrent = ffbParams.torqueCurrent or 100
           if ffbParams.softlockForce~= nil then softlockForceCoef = clamp(ffbParams.softlockForce, 0, 1) end
-          M.wheelFFBForceCoefLowSpeed = M.wheelFFBForceCoef
           if ffbParams.lowspeedCoef then M.wheelFFBForceCoefLowSpeed = ffbParams.forceCoef / 10 end
           if ffbParams.smoothing ~= nil then wheelFFBSmoothing = ffbParams.smoothing * 0.7 end
           if ffbParams.gforceCoef ~= nil then M.GforceCoef = ffbParams.gforceCoef  end
@@ -454,7 +464,8 @@ local function onFFBConfigChanged(newFFBConfig)
           if automaticRate then
             -- try to not overload the FFB drivers with too many updates
             -- some steering wheels drivers accept 2KHz updates but will show incorrect behaviour, in those cases the automatic detection (frequency == 0) can be overriden with custom rates (frequency > 0)
-            finalFrequency = clamp(safeFrequency, 30, 500)
+            -- other steering wheels have been reported to accept 2KHz rates nowadays (e.g. in august 2024, logi g29 was said to feel much better at 2KHz by a reddit user, so the drivers appear to have improved since some years ago?), so let's increase the margin of error here
+            finalFrequency = clamp(safeFrequency, 30, 2000)
           else
             finalFrequency = math.max(frequency, 1)
             if finalFrequency > safeFrequency then
@@ -464,7 +475,7 @@ local function onFFBConfigChanged(newFFBConfig)
           end
           FFBSafetyData.safeFrequency = safeFrequency
           FFBSafetyData.finalFrequency = finalFrequency
-          FFBperiod = 1 / math.floor(finalFrequency + 0.5)
+          FFBperiod = M.enableFFBflood and 0 or (1 / math.floor(finalFrequency + 0.5)) -- allow unlimited update in case flood debugging
           local msgDriver   = ""..(math.floor(1/detectedPeriod)).."Hz/"..detectedPeriodMs .."ms detected"
           local msgSafe     = ""..(safeFrequency)               .."Hz safe"
           local msgSelected = ""..(frequency)                   .."Hz selected"
@@ -483,6 +494,7 @@ local function onFFBConfigChanged(newFFBConfig)
       end
     end
   end
+
   FFBSafetyDataNotifyUI()
 end
 
@@ -640,6 +652,7 @@ M.getFFBConfig = getFFBConfig
 M.setFFBConfig = setFFBConfig
 M.sendRPMLeds = sendRPMLeds
 M.destroy = destroy
+M.debugDraw = debugDraw
 M.isPhysicsStepUsed = isPhysicsStepUsed
 M.FFBSafetyDataNotifyUI = FFBSafetyDataNotifyUI
 return M

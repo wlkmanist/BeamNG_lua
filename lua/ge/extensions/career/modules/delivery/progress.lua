@@ -2,17 +2,18 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dPages, dProgress, dParcelMods, dVehOfferManager, dVehicleTasks
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dParcelMods, dVehOfferManager, dVehicleTasks
+local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
   dGeneral = career_modules_delivery_general
   dGenerator = career_modules_delivery_generator
-  dPages = career_modules_delivery_pages
   dProgress = career_modules_delivery_progress
   dParcelMods = career_modules_delivery_parcelMods
   dVehOfferManager = career_modules_delivery_vehicleOfferManager
   dVehicleTasks = career_modules_delivery_vehicleTasks
+  step = util_stepHandler
 end
 
 local progress = {}
@@ -23,89 +24,10 @@ local progressTemplate = {
     parcel = 0,
     vehicle = 0,
     trailer = 0,
-    material = 0,
+    fluid = 0,
+    dryBulk = 0,
   }
 }
-
-local deliverySystemsUnlockInfo = {
-  parcelDelivery = { skill="delivery", moneyMult = function(t) return math.pow(1.2, t-1) end },
-  trailerDelivery = { skill="delivery", name = "Trailer Delivery", requirements = {delivery = 3}, moneyMult = function(t) return math.pow(1.2, t-1) end },
-  vehicleDelivery = { skill="delivery", name = "Car Jockey", requirements = {delivery = 2}, moneyMult = function(t) return math.pow(1.2, t-1) end },
-  --materialsDelivery = { labourerXp = 200, moneyMult = function(t) return math.pow(1.2, t-1) end },
-}
-
-local skillUnlockDescriptions = {
-  delivery = {
-    {
-      unlocks= {
-        {type="unlockCard", heading="Small Packages", description="Deliver small and light-weight packages..", icon="boxPickUp03"}
-      },
-      description = {type="text", heading="Standard Cargo", description="Start with the essentials of delivering standard parcels, focusing on efficiency and reliability."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="Large Packages", description="Deliver larger and heavier packages.", icon="boxPickUp03" },
-        {type="unlockCard", heading="Car Jockey", description="Unlock the Car Jockey skill and try your hand at delivering vehicles for clients.", icon="keys1" }
-      },
-      description = {type="text", heading="Premium Cargo", description="Transporting larger, heavier packages challenges your delivery skills and route optimization for higher rewards and increased demand."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="Small Trailers", description="Deliver small and medium-sized trailers using cars and pickup trucks.", icon="smallTrailer" },
-      },
-      description = {type="text", heading="Trailer Delivery", description="Begin transporting trailers from location A to B, enhancing your delivery capacity and logistical challenges."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="Large Trailers", description="Deliver full-sized transport trailers.", icon="semiTrailer" }
-      },
-      description = {type="text", heading="Heavy-duty Trailers", description="Take on the challenge of delivering large trailers. Hone your skills in truck handling and logistics for major hauls."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="Hazardous Materials", description="Coming Soon!", icon="hazardLights" }
-      },
-      description = {type="text", heading="Fluids Delivery", description="Specialize in transporting fluid materials with tanker trailers, coordinating multiple drop-offs per journey."}
-    },
-  },
-  vehicleDelivery = {
-    {
-      unlocks= {
-        {type="unlockCard", heading="Junkers and beaters", description="Older high-mileage beaters that perform very poorly.", icon="carCrash" }
-      },
-      description = {type="text", heading="Junker Vehicles", description="Deliver low-value vehicles while focusing on careful handling to avoid further depreciation."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="Gently used vehicles", description="Small/Midsize vehicles of reasonable value and in good working condition.", icon="car" }
-      },
-      description = {type="text", heading="Used Vehicles", description="Deliver small and midsized vehicles, emphasizing efficiency and the maintenance of vehicle condition."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="Semi-trucks", description="Larger vehicles and semi-trucks and other commercial vehicles.", icon="deliveryTruck" }
-      },
-      description = {type="text", heading="Large Vehicles", description="Deliver large vehicles and learn to adapt to their unique size and handling requirements."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="Brand new vehicles", description="Factory fresh vehicles in all sizes, complete with that new-car smell.", icon="carCoin" }
-      },
-      description = {type="text", heading="New Vehicles", description="Deliver new vehicles while ensuring they arrive in pristine condition."}
-    },
-    {
-      unlocks= {
-        {type="unlockCard", heading="High-value Vehicles", description="High-priced, high-speed, customized, rare classics, and other top-of-the-line vehicles", icon="turbineL" },
-      },
-      description = {type="text", heading="Exotic Vehicles", description="Deliver top-tier vehicles, requiring exceptional care, discretion, and skill."}
-    },
-  }
-}
-M.getSkillUnlockDescription = function() return skillUnlockDescriptions end
-
-
-M.getModifierRequirements = function() return modifierRequirements end
-
 
 M.setProgress = function(data)
   progress = data or deepcopy(progressTemplate)
@@ -115,145 +37,75 @@ M.getProgress = function()
   return progress
 end
 
-M.unlockTimedDeliveries = function()
-
-end
-
-
-
-M.unlockTimedFragileDeliveries = function()
-
-end
-
-
-
-M.onCargoDelivered = function(cargoItems, sumChange)
-  progress.cargoDeliveredByType.parcel = progress.cargoDeliveredByType.parcel + #cargoItems
+M.onCargoDelivered = function(cargoItems)
 
   local affectedFacilities = {}
 
-  for _, cargo in ipairs(cargoItems) do
+  for _, cargo in ipairs(cargoItems or {}) do
+    if cargo.materialType == nil then
+      progress.cargoDeliveredByType.parcel = progress.cargoDeliveredByType.parcel + 1
+    else
+      local material = dGenerator.getMaterialsTemplatesById(cargo.materialType)
+      progress.cargoDeliveredByType[material.type] = (progress.cargoDeliveredByType[material.type] or 0) + cargo.slots
+    end
+
     local cargoOrigFacility = dGenerator.getFacilityById(cargo.origin.facId)
     cargoOrigFacility.progress.deliveredFromHere.countByType.parcel = cargoOrigFacility.progress.deliveredFromHere.countByType.parcel + 1
     cargoOrigFacility.progress.deliveredFromHere.moneySum = cargoOrigFacility.progress.deliveredFromHere.moneySum + (cargo.rewards.money or 0)
 
-    local cargoDestFacility = dGenerator.getFacilityById(cargo.destination.facId)
+    local cargoDestFacility = dGenerator.getFacilityById(cargo.location.facId)
     cargoDestFacility.progress.deliveredToHere.countByType.parcel = cargoDestFacility.progress.deliveredToHere.countByType.parcel + 1
     cargoDestFacility.progress.deliveredToHere.moneySum = cargoDestFacility.progress.deliveredToHere.moneySum + (cargo.rewards.money or 0)
 
     dParcelMods.trackModifierStats(cargo)
 
     affectedFacilities[cargo.origin.facId] = true
-    affectedFacilities[cargo.destination.facId] = true
+    affectedFacilities[cargo.location.facId] = true
   end
 
   extensions.hook("onDeliveryFacilityProgressStatsChanged", affectedFacilities)
 end
 
 
-M.onVehicleTaskFinished = function(offer)
-  progress.cargoDeliveredByType[offer.data.type] = progress.cargoDeliveredByType[offer.data.type] + 1
-
-  local vehOrigFacility = dGenerator.getFacilityById(offer.origin.facId)
-  vehOrigFacility.progress.deliveredFromHere.countByType[offer.data.type] = vehOrigFacility.progress.deliveredFromHere.countByType[offer.data.type] + 1
-  vehOrigFacility.progress.deliveredFromHere.moneySum = vehOrigFacility.progress.deliveredFromHere.moneySum + (offer.rewards.money or 0)
-
-  local vehDestFacility = dGenerator.getFacilityById(offer.dropOffFacId)
-  vehDestFacility.progress.deliveredToHere.countByType[offer.data.type] = vehDestFacility.progress.deliveredToHere.countByType[offer.data.type] + 1
-  vehDestFacility.progress.deliveredToHere.moneySum = vehDestFacility.progress.deliveredToHere.moneySum + (offer.rewards.money or 0)
-
+M.onVehicleTasksFinished = function(offers)
   local affectedFacilities = {}
-  affectedFacilities[offer.origin.facId] = true
-  affectedFacilities[offer.dropOffFacId] = true
+  for _, o in ipairs(offers or {}) do
+    local offer = o.offer
+    progress.cargoDeliveredByType[offer.data.type] = progress.cargoDeliveredByType[offer.data.type] + 1
+
+    local vehOrigFacility = dGenerator.getFacilityById(offer.origin.facId)
+    vehOrigFacility.progress.deliveredFromHere.countByType[offer.data.type] = vehOrigFacility.progress.deliveredFromHere.countByType[offer.data.type] + 1
+    vehOrigFacility.progress.deliveredFromHere.moneySum = vehOrigFacility.progress.deliveredFromHere.moneySum + (offer.rewards.money or 0)
+
+    local vehDestFacility = dGenerator.getFacilityById(offer.dropOffFacId)
+    vehDestFacility.progress.deliveredToHere.countByType[offer.data.type] = vehDestFacility.progress.deliveredToHere.countByType[offer.data.type] + 1
+    vehDestFacility.progress.deliveredToHere.moneySum = vehDestFacility.progress.deliveredToHere.moneySum + (offer.rewards.money or 0)
+
+    affectedFacilities[offer.origin.facId] = true
+    affectedFacilities[offer.dropOffFacId] = true
+  end
   extensions.hook("onDeliveryFacilityProgressStatsChanged", affectedFacilities)
 end
 
-
-
-local deliverySkills = {delivery = true, vehicleDelivery=true}
 local unlockStatus = nil
 M.aggregateBefore = function()
---[[
-  local facilityStatus = {}
-  for _, fac in ipairs(dGenerator.getFacilities()) do
-    facilityStatus[fac.id] = {
-      visible = M.isFacilityVisible(fac.id),
-      unlocked = M.isFacilityUnlocked(fac.id)
-    }
-  end]]
-
   unlockStatus = {
-    --systemStatus = M.getDeliverySystemsUnlockedSimple(),
-    --parcelModStatus = dParcelMods.getParcelModUnlockStatusSimple(),
-    --vehicleTagsStatus = dVehOfferManager.getVehicleTagUnlockedSimple(),
     skillLevels = {}
   }
-  for skill, _ in pairs(skillUnlockDescriptions) do
+  for skill, _ in pairs(career_branches.getBranches()) do
     unlockStatus.skillLevels[skill] = career_branches.getBranchLevel(skill)
   end
-  --dump(unlockStatus)
-  --dump("delivery skill " .. career_branches.getBranchLevel('delivery'))
 end
 
 M.aggregateAfter = function()
-  -- check facility unlocking status
-  --[[
-  local unlockedFacilitesIds = {}
-  for id, status in pairs(unlockStatus.facilityStatus) do
-    if not status.unlocked and M.isFacilityUnlocked(id) then
-      unlockedFacilitesIds[id] = true
-    end
-  end
-
-  for _, id in ipairs(tableKeysSorted(unlockedFacilitesIds)) do
-    career_modules_logbook.deliveryFacilityUnlocked(id)
-    guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("You can now deliver items from %s!",dGenerator.getFacilityById(id).name), category = "deliveryUnlock"..id, icon = "local_shipping"})
-  end]]
-
   local results = {}
   --[[
-  for sys, unlocked in pairs(M.getDeliverySystemsUnlockedSimple()) do
-    --print(string.format("%s from %s to %s", sys, dumps(unlockStatus.systemStatus[sys]), dumps(unlocked)))
-    if unlocked and not unlockStatus.systemStatus[sys] then
-      table.insert(results, {
-        type = "unlock",
-        heading = "Unlock:",
-        label = string.format("%s now available",sys.name),
-        showSystemPopup = sys,
-      })
-    end
-  end
-  ]]
+  TODO: reimplement
   for skill, _ in pairs(skillUnlockDescriptions) do
     for lvl = unlockStatus.skillLevels[skill], career_branches.getBranchLevel(skill) do
       for _, unlock in ipairs(skillUnlockDescriptions[skill][lvl] or {}) do
         table.insert(results, unlock.unlocks)
       end
-    end
-
-  end
-  --[[
-  --local unlockedMods = {}
-  for mod, unlocked in pairs(dParcelMods.getParcelModUnlockStatusSimple()) do
-    --print(string.format("%s from %s to %s", mod, dumps(unlockStatus.parcelModStatus[mod]), dumps(unlocked)))
-    if unlocked and not unlockStatus.parcelModStatus[mod] then
-      --table.insert(unlockedMods,)
-      table.insert(results, {
-        type = "unlock",
-        heading = "Parcel Modifier unlocked!",
-        label = string.format("%s now available",dParcelMods.getParcelModProgressLabel(mod)),
-      })
-    end
-  end
-
-  for tag, unlocked in pairs(dVehOfferManager.getVehicleTagUnlockedSimple()) do
-    --print(string.format("%s from %s to %s", tag, dumps(unlockStatus.vehicleTagsStatus[tag]), dumps(unlocked)))
-    if unlocked and not unlockStatus.vehicleTagsStatus[tag] then
-      table.insert(results, {
-        type = "unlock",
-        heading = "Vehicle Category Unlocked!",
-        label = string.format("%s now available",dVehOfferManager.getVehicleTagLabelPlural(tag)),
-      })
     end
   end
   ]]
@@ -261,17 +113,19 @@ M.aggregateAfter = function()
   return results
 end
 
-
-
-local unloadedCargoStatus = nil
-M.unloadCargo = function(location)
-  if unloadedCargoStatus ~= nil then log("W","","Already unloading cargo...") end
-  unloadedCargoStatus = {}
-  unloadedCargoStatus.affectedOfferIds = {}
-  unloadedCargoStatus.parcelResults = {}
-  unloadedCargoStatus.vehicleResults = {}
-  unloadedCargoStatus.trailerResults = {}
-  M.aggregateBefore()
+local dropOffDataStatus = nil
+M.requestDropOffData = function(facId, psPath)
+  if dropOffDataStatus ~= nil then log("W","","Already unloading cargo...") end
+  dropOffDataStatus = {}
+  dropOffDataStatus.affectedOfferIds = {}
+  dropOffDataStatus.parcelData = {}
+  dropOffDataStatus.vehicleData = {}
+  dropOffDataStatus.trailerData = {}
+  dropOffDataStatus.playerVehicleData = {}
+  dropOffDataStatus.location = {type="facilityParkingspot", facId=facId, psPath=psPath}
+  local rewardKeys = {}
+  local playerVehiclesById = {}
+  --M.aggregateBefore()
   -- unload cargo
   dGeneral.getNearbyVehicleCargoContainers(function(playerCargoContainers)
     local playerDestinationParkingSpots = {}
@@ -279,129 +133,381 @@ M.unloadCargo = function(location)
     for _, con in ipairs(playerCargoContainers) do
       playerVehIds[con.vehId] = true
       for _, cargo in ipairs(con.rawCargo) do
-        playerDestinationParkingSpots[cargo.destination.psPath] = playerDestinationParkingSpots[cargo.destination.psPath] or {facId = cargo.destination.facId, cargo = {}}
-        table.insert(playerDestinationParkingSpots[cargo.destination.psPath].cargo, cargo)
-      end
-    end
-    if playerDestinationParkingSpots[location.psPath] then
-      -- move all the cargo in the players inventory, whose destination is this parking spot to the parking spot
-      local psLoc = {type = "facilityParkingspot", facId = location.facId, psPath = location.psPath}
-      for _, con in ipairs(playerCargoContainers) do
-        for _, cargo in ipairs(con.rawCargo) do
-          if dParcelManager.sameLocation(cargo.destination, psLoc) then
-            dParcelManager.changeCargoLocation(cargo.id, cargo.destination)
+        local validCargo = false
+        if cargo.destination.type == "facilityParkingspot" then
+          validCargo = dParcelManager.sameLocation(cargo.destination, dropOffDataStatus.location)
+        elseif cargo.destination.type == "multi" then
+          for _, dest in ipairs(cargo.destination.destinations) do
+            validCargo = validCargo or dParcelManager.sameLocation(dest, dropOffDataStatus.location)
           end
         end
-      end
-      unloadedCargoStatus.parcelResults = dParcelManager.checkDeliveredCargo()
 
-      dGeneral.updateContainerWeights(tableKeys(playerVehIds))
-      -- check saving
-      --local ps = database.getParkingSpotByPath(elem.psPath)
-      --local veh = be:getPlayerVehicle(0)
-      --if not ps or not veh then return end
-      --local inside = ps:checkParking(veh)
+        if validCargo then
+          if not playerVehiclesById[con.vehId] then
+            playerVehiclesById[con.vehId] = { containers = {}, niceName = dGeneral.getVehicleName(con.vehId), vehId = con.vehId, containersById = {}}
+          end
+          if not playerVehiclesById[con.vehId].containersById[con.containerId] then
+            playerVehiclesById[con.vehId].containersById[con.containerId] = {
+              vehId = con.vehId,
+              name = con.name,
+              containerId = con.containerId,
+
+              cargo = {},
+
+              totalCargoSlots = con.totalCargoSlots,
+              usedCargoSlots = con.usedCargoSlots,
+              freeCargoSlots = con.freeCargoSlots,
+            }
+          end
+          table.insert(playerVehiclesById[con.vehId].containersById[con.containerId].cargo, cargo)
+        end
+      end
     end
-    unloadedCargoStatus.affectedOfferIds = dVehicleTasks.checkDeliveredCargo()
-    M.unloadCargoComplete()
+
+        -- convert vehicles table to list for UI
+    dropOffDataStatus.playerVehicleData = {}
+    for vehId, vehicleInfo in pairs(playerVehiclesById) do
+      --table.sort(vehicleInfo.containers, function(a,b) return a.name < b.name end)
+      for _, id in ipairs(tableKeysSorted(vehicleInfo.containersById)) do
+        vehicleInfo.containersById[id].cargo = dParcelManager.addParcelRewardsSummary(deepcopy(vehicleInfo.containersById[id].cargo))
+        table.insert(vehicleInfo.containers, vehicleInfo.containersById[id])
+      end
+      vehicleInfo.containersById = nil
+      table.insert(dropOffDataStatus.playerVehicleData, vehicleInfo)
+    end
+    table.sort(dropOffDataStatus.playerVehicleData, function(a,b) return a.vehId < b.vehId end)
+    dropOffDataStatus.rewardKeyIcons = rewardKeys
+    dropOffDataStatus.vehicleData = dVehicleTasks.getVehicleDataWithRewardsSummary()
+    M.openDropOffScreenGatheringComplete()
     -- try to re-open the prompt
   end)
 end
 
-M.addVehicleTasksResult = function(result)
-  unloadedCargoStatus.affectedOfferIds[result.offerId] = nil
-  local resultList = result.type .. "Results"
-  table.insert(unloadedCargoStatus[resultList], result)
-  M.unloadCargoComplete()
+M.unloadMaterialsManualStart = function(cargoId, destination)
+  print("No longer used! unloadMaterialsManualStart")
 end
 
-local function rewardMapToRewardList(rewards)
-  local newRewards = {}
-  local attributes = tableKeys(rewards or {})
-  career_branches.orderAttributeKeysByBranchOrder(attributes)
-
-  for _, key in ipairs(attributes) do
-    local amount = rewards[key]
-    local rewardInfo = {attributeKey = key, rewardAmount = amount}
-
-    if key == "money" or key == "beamXP" then
-      amount = amount - (amount%0.01)
-      rewardInfo.rewardAmount = amount
-    else
-      local value = career_modules_playerAttributes.getAttributeValue(key)
-      local branchData = career_branches.getBranchById(key)
-      local level, curLvlProgress, neededForNext, min, max = career_branches.calcBranchLevelFromValue(value, key)
-      local valueBefore = math.max(0, curLvlProgress - rewardInfo.rewardAmount)
-      rewardInfo.branchInfo = {
-        name = branchData.name,
-        level = {txt='ui.career.lvlLabel', context={lvl=level}},
-        value = curLvlProgress,
-        valueBefore = valueBefore,
-        animValue = valueBefore,
-        min = 0,
-        max = neededForNext
-      }
-    end
-    table.insert(newRewards, rewardInfo)
-  end
-  return newRewards
-end
 
 local showSystemPopup = {}
-M.unloadCargoComplete = function()
+M.openDropOffScreenGatheringComplete = function()
   -- still waiting for vehicles to be finished
-  if next(unloadedCargoStatus.affectedOfferIds) then return end
+  for _, data in pairs(dropOffDataStatus.vehicleData) do
+    if not data.finished then return end
+  end
 
-  unloadedCargoStatus.summary = {
-    rewards = {},
-  }
-  unloadedCargoStatus.sortedResults = {}
-  for _, result in ipairs(unloadedCargoStatus.parcelResults) do
-    table.insert(unloadedCargoStatus.sortedResults, result)
-  end
-  for _, result in ipairs(unloadedCargoStatus.vehicleResults) do
-    table.insert(unloadedCargoStatus.sortedResults, result)
-  end
-  for _, result in ipairs(unloadedCargoStatus.trailerResults) do
-    table.insert(unloadedCargoStatus.sortedResults, result)
-  end
-  unloadedCargoStatus.parcelResults = nil
-  unloadedCargoStatus.vehicleResults = nil
-  unloadedCargoStatus.trailerResults = nil
+    -- patch in xp icons info
+  local branchInfo = {}
 
-  local itemLabels = {}
-  for _, result in ipairs(unloadedCargoStatus.sortedResults) do
-    table.insert(itemLabels, result.label)
-    for key, amount in pairs(result.adjustedRewards) do
-      unloadedCargoStatus.summary.rewards[key] = (unloadedCargoStatus.summary.rewards[key] or 0) + amount
+  -- already calc if we need it
+  local confirmedCargoIds = {}
+  local confirmedOfferIds = {}
+
+  --sort into automatic and non-automatic
+  local automaticDropOffItems = {}
+  local manualDropOffItems = {}
+  for _, vehicleInfo in pairs(dropOffDataStatus.playerVehicleData or {}) do
+    for _, con in pairs(vehicleInfo.containers) do
+      for _, cargo in pairs(con.cargo) do
+        cargo.vehicleName = vehicleInfo.name
+        cargo.containerName = con.name
+        if cargo.automaticDropOff then
+          table.insert(automaticDropOffItems, cargo)
+          for _, id in ipairs(cargo.ids) do
+            table.insert(confirmedCargoIds, {id=id})
+          end
+        else
+          table.insert(manualDropOffItems, cargo)
+        end
+        -- add in rewards keys..?
+        for key, amount in pairs(cargo.adjustedRewards) do
+          branchInfo[key] = true
+        end
+      end
     end
-    result.rewards = rewardMapToRewardList(result.originalRewards)
-    for _, bd in ipairs(result.breakdown) do
-      bd.rewards = rewardMapToRewardList(bd.rewards)
+  end
+
+  for _, vehData in ipairs(dropOffDataStatus.vehicleData or {}) do
+    table.insert(automaticDropOffItems, vehData)
+    table.insert(confirmedOfferIds, vehData.id)
+    for key, amount in pairs(vehData.adjustedRewards) do
+      branchInfo[key] = true
     end
   end
 
-  career_modules_playerAttributes.addAttributes(unloadedCargoStatus.summary.rewards, {tags={"gameplay","delivery","reward"}, label="Reward for delivering: " .. table.concat(itemLabels, ", ")})
-  unloadedCargoStatus.summary.rewards = rewardMapToRewardList(unloadedCargoStatus.summary.rewards)
+  dropOffDataStatus.automaticDropOffItems = automaticDropOffItems
+  dropOffDataStatus.manualDropOffItems = manualDropOffItems
 
-  unloadedCargoStatus.summary.unlocks = M.aggregateAfter()
-  table.clear(showSystemPopup)
-  for _, unlock in ipairs(unloadedCargoStatus.summary.unlocks) do
-    if unlock.showSystemPopup then
-      table.insert(showSystemPopup, unlock.showSystemPopup)
+  -- check how much i can unload for each material
+  local unloadingMaterialInfoByKey = {}
+  local fac = dGenerator.getFacilityById(dropOffDataStatus.location.facId)
+  for _, item in ipairs(manualDropOffItems) do
+    unloadingMaterialInfoByKey[item.materialType] = unloadingMaterialInfoByKey[item.materialType] or {storage = fac.materialStorages[item.materialType], amountToUnload = 0, items = {}}
+    unloadingMaterialInfoByKey[item.materialType].amountToUnload = unloadingMaterialInfoByKey[item.materialType].amountToUnload + item.slots
+    table.insert(unloadingMaterialInfoByKey[item.materialType].items, item)
+  end
+
+
+  dropOffDataStatus.customAmountPerMaterialType = {}
+  for _, materialType in pairs(tableKeysSorted(unloadingMaterialInfoByKey)) do
+    local info = unloadingMaterialInfoByKey[materialType]
+    info.material = dGenerator.getMaterialsTemplatesById(materialType)
+
+    table.insert(dropOffDataStatus.customAmountPerMaterialType, info)
+  end
+
+
+  if next(dropOffDataStatus.customAmountPerMaterialType) then
+
+    for key, _ in pairs(branchInfo) do
+      branchInfo[key] = {
+        icon = career_branches.getBranchIcon(key),
+        order = career_branches.getOrder(key)
+      }
+      if key:endswith("Reputation") then
+        branchInfo[key].order, branchInfo[key].icon = 7000, "peopleOutline" --freeroam_organizations.getOrganizationIdOrderAndIcon()
+      end
     end
+    --dump(dropOffDataStatus)
+    guihooks.trigger("SetDeliveryDropOffCargoSelection", dropOffDataStatus)
+    dropOffDataStatus.branchInfo = branchInfo
+    --dumpz(dropOffDataStatus,2)
+  else
+    local confirmedDropOffs = {
+      confirmedCargoIds = confirmedCargoIds,
+      confirmedOfferIds = confirmedOfferIds,
+    }
+    M.confirmDropOffData(confirmedDropOffs, dropOffDataStatus.location.facId, dropOffDataStatus.location.psPath)
+    return
   end
 
   gameplay_markerInteraction.closeViewDetailPrompt(true)
-  guihooks.trigger("OpenDeliveryEndScreen", unloadedCargoStatus)
   Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Info_Open')
-  career_saveSystem.saveCurrent()
-  dGeneral.checkExitDeliveryMode()
+  gameplay_rawPois.clear()
+  dropOffDataStatus = nil
+end
 
+
+
+
+local confirmedDropOffData = nil
+M.confirmDropOffData = function(confirmedDropOffs, facId, psPath)
+  if confirmedDropOffData ~= nil then log("W","","Already dropoffing cargo...") return end
+  local location = {type="facilityParkingspot", facId=facId, psPath=psPath}
+  confirmedDropOffData = {}
+  confirmedDropOffData.parcelIdElems = confirmedDropOffs.confirmedCargoIds or {}
+  confirmedDropOffData.offerIds = confirmedDropOffs.confirmedOfferIds or {}
+  confirmedDropOffData.cargo = {}
+  --dump(confirmedDropOffs)
+  for _, elem in ipairs(confirmedDropOffData.parcelIdElems) do
+    local cargo = dParcelManager.getCargoById(elem.id)
+    -- check if we need to split materials
+    if elem.amount and elem.amount < cargo.slots then
+      local parts = dGenerator.splitOffPartsFromMaterialCargo(cargo, {elem.amount})
+      -- parts[1] is the remaining cargo
+      cargo = parts[2]
+    end
+    dParcelManager.changeCargoLocation(cargo.id, location)
+
+    if cargo.materialType and not cargo.automaticDropOff then
+      dGenerator.finalizeMaterialDistanceRewards(cargo, location)
+    end
+
+    cargo.originalRewards, cargo.breakdown, cargo.adjustedRewards = dParcelManager.getRewardsWithBreakdown(cargo)
+    table.insert(confirmedDropOffData.cargo, cargo)
+  end
+
+  confirmedDropOffData.offers = dVehicleTasks.finishTasks(confirmedDropOffData.offerIds)
+  confirmedDropOffData.weightUpdateComplete = false
+  dGeneral.requestUpdateContainerWeights()
+  confirmedDropOffData.onComplete = nop
+  dGeneral.updateContainerWeights(function(data)
+    confirmedDropOffData.weightUpdateComplete = true
+    local maxDelay = 0
+    for _, delay in pairs(data) do
+      maxDelay = math.max(delay, maxDelay)
+    end
+    maxDelay = maxDelay
+    if maxDelay >= 1 then
+      confirmedDropOffData.maxDelayForWeightUpdate = maxDelay
+      confirmedDropOffData.onComplete = function()
+        local sequence = {
+          step.makeStepWait(maxDelay+0.5),
+          step.makeStepReturnTrueFunction(function()
+            for vehId, data in pairs(data) do
+              local veh = scenetree.findObjectById(vehId)
+              core_vehicleBridge.executeAction(veh, 'setFreeze', false)
+            end
+          return true
+          end
+          )
+        }
+        step.startStepSequence(sequence, callback)
+      end
+    else
+      confirmedDropOffData.maxDelayForWeightUpdate = 0
+      -- 1s delay, no freeze
+      for vehId, data in pairs(data) do
+        local veh = scenetree.findObjectById(vehId)
+        core_vehicleBridge.executeAction(veh, 'setFreeze', false)
+      end
+    end
+    M.confirmDropOffCheckComplete()
+  end)
+  --M.confirmDropOffCheckComplete()
+end
+
+M.confirmDropOffCheckComplete = function()
+  if not confirmedDropOffData then return end
+
+    -- still waiting for vehicles to be finished
+  for _, data in pairs(confirmedDropOffData.offers) do
+    if not data.finished then return end
+  end
+  if not confirmedDropOffData.weightUpdateComplete then
+    return
+  end
+
+  local rewards = {}
+  local itemNames = {}
+  local branchInfo = {}
+  local rewardParcels = {}
+
+
+
+  -- add rewards for parcels, then for vehicles
+  -- group cargo
+
+   --current location also needs to be the same, but that is guaranteed by the caller of this function
+  local cargoByGroupId = {}
+  for _, c in ipairs(confirmedDropOffData.cargo) do
+    local gId = string.format("%d-%d", c.groupId, c.loadedAtTimeStamp or -1)
+    cargoByGroupId[gId] = cargoByGroupId[gId] or {}
+    -- finalize the fields that require "costly" computation at this point
+    table.insert(cargoByGroupId[gId], c)
+    table.insert(rewards, c.adjustedRewards)
+    c.summaryId = gId
+    table.insert(rewardParcels, c)
+  end
+    -- format each group individually
+  for gId, group in pairs(cargoByGroupId) do
+    table.insert(itemNames, string.format("%dx %s", #group, group[1].name))
+  end
+
+  for _, formattedOffer in ipairs(confirmedDropOffData.offers) do
+    table.insert(itemNames, string.format("%s %s",formattedOffer.offer.name, formattedOffer.offer.vehicle.name))
+    table.insert(rewards, formattedOffer.adjustedRewards)
+  end
+
+
+  -- calculate the simple and detailled breakdowns for UI
+
+
+  local rewardSum = {}
+  for _, reward in ipairs(rewards) do
+    for key, amount in pairs(reward) do
+      rewardSum[key] = (rewardSum[key] or 0) + amount
+      branchInfo[key] = true
+    end
+  end
+  --[[
+  local aggregateChange = {}
+  for key, _ in ipairs(branchInfo) do
+    local branch = career_branches.getBranchById(key)
+    if branch.id == "key" then
+      local level, curLvlProgress, neededForNext, prevThreshold, nextThreshold = career_branches.calcBranchLevelFromValue(career_modules_playerAttributes.getAttributeValue(key), key)
+      aggregateChange[key] = {
+        isBranch = true,
+        valueBefore = career_modules_playerAttributes.getAttributeValue(key),
+        levelInfoBefore = {
+          level = level,
+          curLvlProgress = curLvlProgress,
+          neededForNext = neededForNext,
+          prevThreshold = prevThreshold,
+          nextThreshold = nextThreshold
+        }
+      }
+  end
+  ]]
+  career_modules_playerAttributes.addAttributes(rewardSum,{label=string.format("Rewards for %s", table.concat(itemNames, ", ")), tags={"gameplay"}})
+
+  for key, _ in pairs(branchInfo) do
+
+    if key:endswith("Reputation") then
+      local orgId = key:sub(1, -11)
+      local organization = freeroam_organizations.getOrganization(orgId)
+      branchInfo[key] = {
+        icon = "peopleOutline",
+        order = 7000,
+        animationData = {
+          name = "Reputation: " .. organization.name,
+          max = organization.reputation.nextThreshold,
+          min = organization.reputation.prevThreshold,
+          value = organization.reputation.value
+        },
+        type = "reputation",
+        branchLevels = organization.reputationLevels
+      }
+    else
+      local branch = career_branches.getBranchById(key)
+      branchInfo[key] = {
+        icon = career_branches.getBranchIcon(key),
+        order = career_branches.getOrder(key),
+        animationData = career_modules_branches_landing.getBranchSkillCardData(key),
+        branchLevels = deepcopy(branch.levels),
+        showLevelUpPopup = true,
+        unlockPopupHeader = string.format("%s %s: Level %d", translateLanguage(branch.name, branch.name), branch.isSkill and "Skill" or "Branch", career_branches.getBranchLevel(branch.id) or 0)
+      }
+
+      for i, levelInfo in ipairs(branchInfo[key].branchLevels) do
+        levelInfo.levelLabel = "Level " .. i
+      end
+
+      if branch.isBranch then branchInfo[key].animationData.name = "Branch: " .. translateLanguage(branchInfo[key].animationData.name, branchInfo[key].animationData.name) end
+      if branch.isSkill then branchInfo[key].animationData.name = "Skill: " .. translateLanguage(branchInfo[key].animationData.name, branchInfo[key].animationData.name) end
+    end
+
+    if key == "money" then
+      branchInfo[key].icon = "beamCurrency"
+      branchInfo[key].animationData = {
+        type = "number",
+        name = "Money",
+        value = career_modules_playerAttributes.getAttribute("money").value
+      }
+    end
+
+    if key == "beamXP" then
+      branchInfo[key].icon = "beamXPLo"
+      branchInfo[key].animationData = {
+        type = "number",
+        name = "BeamXP",
+        value = career_modules_playerAttributes.getAttribute("beamXP").value
+      }
+    end
+  end
+  local rewardResult = {
+    rewardParcels = rewardParcels,
+    rewardOffers = confirmedDropOffData.offers,
+    branchInfo = branchInfo,
+    unloadingDelay = confirmedDropOffData.maxDelayForWeightUpdate
+  }
+
+  guihooks.trigger("SetDeliveryDropOffRewardResult", rewardResult)
+
+  Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_02')
+  gameplay_markerInteraction.setForceReevaluateOpenPrompt(true)
   gameplay_rawPois.clear()
 
-  unloadedCargoStatus = nil
+  M.onVehicleTasksFinished(confirmedDropOffData.offers)
+  M.onCargoDelivered(confirmedDropOffData.cargo)
+  confirmedDropOffData.onComplete()
+  dGeneral.checkExitDeliveryMode()
+  confirmedDropOffData = nil
+
+  if career_career.isAutosaveEnabled() then
+    career_saveSystem.saveCurrent()
+  end
 end
+
 
 M.unloadCargoPopupClosed = function()
   Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_02')
@@ -471,68 +577,44 @@ M.getFacilityCountForCargoCount = function(direction)
 end
 
 
-
-
-M.getMoneyMultiplerForSystem = function(system, tier)
-
-return deliverySystemsUnlockInfo[system].moneyMult(tier or career_branches.getBranchLevel(deliverySystemsUnlockInfo[system].skill))
+M.getMoneyMultiplerForSkill = function(skill, tier)
+  tier = tier or career_branches.getBranchLevel(skill)
+  return math.pow(1.2, tier-1)
 end
 
-M.isParcelDeliveryUnlocked    = function() return true end
-M.isTrailerDeliveryUnlocked   = function() return career_branches.getBranchXP("delivery") >= deliverySystemsUnlockInfo.trailerDelivery.requirements.delivery end
-M.isVehicleDeliveryUnlocked   = function() return career_branches.getBranchXP("delivery") >= deliverySystemsUnlockInfo.vehicleDelivery.requirements.delivery end
-M.isMaterialsDeliveryUnlocked = function() return false end
 
-M.getDeliverySystemsUnlockedSimple = function()
-  local unlockInfo = {}
-  for key, info in pairs(deliverySystemsUnlockInfo) do
-    if info.requirements then
-      unlockInfo[key] = career_branches.getBranchLevel("delivery") >= info.requirements.delivery
-    end
+local function onBranchTierReached(skill, tier)
+  if skill == "delivery" and tier > 1 then
+    career_branches.getBranchById("vehicleDelivery").unlocked = true
   end
-  return unlockInfo
 end
 
-local deliverySkillUnlockInfo = {
-  delivery = { name = "Cargo Delivery" },
-  vehicleDelivery = { name = "Car Jockey", requirements = {delivery = 4}},
+local soundObjectIds = {}
+local soundNames = {
+  money = 'event:>UI>Career>Progress_Money',
+  progressBar = 'event:>UI>Career>Progress_XP'
 }
 
-M.getDeliverySystemsUnlocked = function()
-  local unlockInfo = {}
-  local deliverySkill = career_branches.getBranchById("delivery")
-  for key, info in pairs(deliverySkillUnlockInfo) do
-
-    local unlocked = (not info.requirements) or career_branches.getBranchLevel("delivery") >= info.requirements.delivery
-    if unlocked then
-      unlockInfo[key] = {
-        unlocked = true
-      }
-    else
-      local currValue, maxValue = career_branches.getBranchXP("delivery"), deliverySkill.levels[info.requirements.delivery+1].requiredValue
-      unlockInfo[key] = {
-        unlocked = false,
-        header = info.name .. " requires delivery skill level >= " .. info.requirements.delivery,
-        progress = {
-          {type="progressBar",minValue=0,maxValue=maxValue,currValue=currValue, label=string.format("%d / %d Delivery XP", currValue, maxValue),}
-        }
-      }
+local function activateSound(soundLabel, active)
+  soundObjectIds["money"] = soundObjectIds["money"] or Engine.Audio.createSource('AudioGui', soundNames["money"])
+  soundObjectIds["progressBar"] = soundObjectIds["progressBar"] or Engine.Audio.createSource('AudioGui', soundNames["progressBar"])
+  if active then
+    local sound = scenetree.findObjectById(soundObjectIds[soundLabel])
+    if sound then
+      sound:play(-1)
+    end
+  else
+    for label, _ in pairs(soundNames) do
+      local sound = scenetree.findObjectById(soundObjectIds[label])
+      if sound then
+        sound:stop(-1)
+      end
     end
   end
-  return unlockInfo
 end
 
---[[
-local function onGetSkillUnlockInfoForUi(skill, unlocks)
 
-  if skill.id ~= "delivery" then return end
-  for key, info in pairs(deliverySystemsUnlockInfo) do
-    table.insert(unlocks[3], {type="text", label="Vehicle Deliveries" })
-  end
-end
-
-M.onGetSkillUnlockInfoForUi = onGetSkillUnlockInfoForUi
-
-]]
+M.onBranchTierReached = onBranchTierReached
+M.activateSound = activateSound
 
 return M

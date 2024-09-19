@@ -24,6 +24,7 @@ local partDamageData
 local lastDisplayedDamage = 0
 
 local delayedPrecompBeams
+local delayedPrecompTorsionbar
 local initTimer = 0
 
 local collTriState = {}
@@ -345,7 +346,7 @@ local function toggleCouplers(_nodetag, forceLocked, forceWelded, forceAutoCoupl
       disableAutoCoupling()
     else
       local externalIsCouplerAttached = extensions.couplings.isCouplerAttached()
-      if isCouplerAttached() or externalIsCouplerAttached then
+      if (isCouplerAttached() or externalIsCouplerAttached) and not _nodetag then
         detachCouplers()
       else
         activateAutoCoupling(_nodetag)
@@ -515,7 +516,7 @@ local function deflateTire(wheelid)
         obj:deflatePressureGroup(v.data.pressureGroups[wheel.pressureGroup])
         obj:changePressureGroupDrag(v.data.pressureGroups[wheel.pressureGroup], 0)
       elseif brokenBeams == 1 then
-        obj:setGroupPressure(v.data.pressureGroups[wheel.pressureGroup], (0.2 * 6894.757 + 101325))
+        obj:setGroupPressure(v.data.pressureGroups[wheel.pressureGroup], (0.1 * 6894.757 + 101325))
       end
     end
   end
@@ -538,7 +539,8 @@ local function deflateTire(wheelid)
         local frictionCoef = v.data.nodes[nodecid].frictionCoef
         local slidingFrictionCoef = v.data.nodes[nodecid].slidingFrictionCoef
         if frictionCoef then
-          obj:setNodeFrictionSlidingCoefs(nodecid, frictionCoef * 0.5, (slidingFrictionCoef or frictionCoef) * 0.5)
+          local rnd1, rnd2 = math.random(20, 50), math.random(25, 60)
+          obj:setNodeFrictionSlidingCoefs(nodecid, frictionCoef * rnd1 * 0.01, (slidingFrictionCoef or frictionCoef) * rnd2 * 0.01)
         end
       end
 
@@ -736,9 +738,18 @@ local function update(dtSim)
     end
   end
 
+  if delayedPrecompTorsionbar then
+    for _, t in ipairs(delayedPrecompTorsionbar) do
+      local tratio = initTimer / t.precompressionTime
+      finished_precomp = finished_precomp and tratio >= 1
+      obj:setTorsionbarPrecompressionAngle(t.cid, t.precompressionAngle * min(tratio, 1))
+    end
+  end
+
   if finished_precomp then
     M.update = nop
     delayedPrecompBeams = nil
+    delayedPrecompTorsionbar = nil
     updateCorePhysicsStepEnabled()
   end
 end
@@ -1113,9 +1124,6 @@ local function init()
         delayedPrecompBeams = delayedPrecompBeams or {}
         table.insert(delayedPrecompBeams, b)
       end
-      if not tableIsEmpty(delayedPrecompBeams) then
-        M.update = update
-      end
 
       if not b.wheelID then
         local beamNode1Pos = nodes[b.id1].pos
@@ -1136,6 +1144,19 @@ local function init()
         table.insert(partBeams[bpo], b.cid)
       end
     end
+  end
+
+  if v.data.torsionbars then
+    for _, t in pairs(v.data.torsionbars) do
+      if type(t.precompressionTime) == "number" and t.precompressionTime > 0 then
+        delayedPrecompTorsionbar = delayedPrecompTorsionbar or {}
+        table.insert(delayedPrecompTorsionbar, t)
+      end
+    end
+  end
+
+  if (not tableIsEmpty(delayedPrecompBeams)) or (not tableIsEmpty(delayedPrecompTorsionbar)) then
+    M.update = update
   end
 
   for k, v in pairs(invBodyPartBeamCount) do

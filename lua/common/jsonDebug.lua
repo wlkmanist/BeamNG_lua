@@ -42,7 +42,7 @@ local byte, sub, tconcat, tablenew, tableclear = string.byte, string.sub, table.
 local escapes = {[116] = '\t', [110] = '\n', [102] = '\f', [114] = '\r', [98] = '\b', [34] = '"', [92] = '\\', [10] = '\n', [57] = '\t', [48] = '\r'}
 local peekTable, gcrunning = tablenew(256,0), true
 local concatTable
-local s, ctx
+local s, ctx, warnings
 
 local function jsonError(msg, i)
   if gcrunning then collectgarbage("restart") end
@@ -67,7 +67,7 @@ local function jsonWarning(msg, i)
   for w in s:gmatch("([^\n]*)") do
     curlen = curlen + #w
     if curlen >= i then
-      log('W', 'jsonDebug', string.format("%s: %s near line %d, '%s'", ctx, msg, n, w:match'^%s*(.*%S)' or ''))
+      table.insert(warnings, string.format("%s: %s near line %d, '%s'", ctx, msg, n, w:match'^%s*(.*%S)' or ''))
       return
     end
     if w == '' then
@@ -248,7 +248,8 @@ local function readKey(si, c)
 end
 
 local function decode(si, context)
-  if si == nil then return nil end
+  warnings = {}
+  if si == nil then return nil, warnings end
   gcrunning = collectgarbage("isrunning")
   collectgarbage("stop")
   s = si
@@ -273,7 +274,7 @@ local function decode(si, context)
   concatTable = nil
   s = nil
   if gcrunning then collectgarbage("restart") end
-  return result
+  return result, warnings
 end
 
 -- build dispatch table

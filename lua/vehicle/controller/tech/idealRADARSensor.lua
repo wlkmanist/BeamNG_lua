@@ -5,7 +5,7 @@
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 -- Control parameters.
-local maxVehicleRangeSq = 2500.0                                          -- The maximum squared distance from the player vehicle, at which other vehicles can be detected.
+local maxVehicleRangeSq = 22500.0                                          -- The maximum squared distance from the player vehicle, at which other vehicles can be detected.
 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -32,8 +32,9 @@ local lastPos, lastVel = {}, {}                                           -- Tab
 
 local nullReading = {
     vehicleID = 0, width = 0, length = 0,
+    positionB = { x = 0, y = 0, z = 0 },
     distToPlayerVehicleSq = 0, relDistX = 0, relDistY = 0,
-    vel = { x = 0, y = 0, z = 0 }, acc = { x = 0, y = 0, z = 0 },
+    velBB = { x = 0, y = 0, z = 0 }, acc = { x = 0, y = 0, z = 0 },
     relVelX = 0, relVelY = 0, relAccX = 0, relAccY = 0 }
 
 local latestReading = {
@@ -142,9 +143,10 @@ local function update(dtSim)
           vehicles[ctr] = {
             vehicleID = k,
             width = widthB, length = lengthB,
+            positionB = posB,
             distToPlayerVehicleSq = distToPlayerVehicleSq or 0.0,
             relDistX = relDistX, relDistY = relDistY,
-            vel = velB,
+            velBB = velB,
             relVelX = relVelX, relVelY = relVelY,
             acc = accB,
             relAccX = relAccX, relAccY = relAccY }

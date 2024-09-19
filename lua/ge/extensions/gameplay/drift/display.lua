@@ -1,5 +1,7 @@
 local M = {}
 
+M.dependencies = {"gameplay_drift_general"}
+
 local flashTime = 1.5
 local driftContext
 local msgData = {}
@@ -46,13 +48,28 @@ local function onDriftSpinout()
   clearRt()
 end
 
-local function onDonutDriftScore(score)
+local function onDonutDriftScored(score)
   flashMessage(string.format("Donut! + %i points", score))
+end
+
+local function onNearPoleScored(score)
+  flashMessage(string.format("Near pole drift! + %i points", score))
 end
 
 local function onTightDriftScored(score)
   flashMessage(string.format("Drift through! + %i points", score))
 end
+
+local function onHitPoleScored(score)
+  flashMessage(string.format("Pole hit! + %i points", score))
+end
+
+
+local function onNearStuntZoneFirst(stuntZone)
+  local id ="missions.drift.general." .. stuntZone.data.zoneData.type .. "Help"
+  flashMessage(translateLanguage(id, id))
+end
+
 
 local function onUpdate()
   driftContext = gameplay_drift_general.getContext()
@@ -80,8 +97,14 @@ M.onDriftCompletedScored = onDriftCompletedScored
 M.onDriftCompleted = onDriftCompleted
 M.onDriftCrash = onDriftCrash
 M.onDriftSpinout = onDriftSpinout
-M.onDonutDriftScore = onDonutDriftScore
+
+M.onDonutDriftScored = onDonutDriftScored
 M.onTightDriftScored = onTightDriftScored
+M.onHitPoleScored = onHitPoleScored
+M.onNearPoleScored = onNearPoleScored
+
+M.onNearStuntZoneFirst = onNearStuntZoneFirst
+
 M.onDriftCachedScoreReset = onDriftCachedScoreReset
 M.onExtensionUnloaded = onExtensionUnloaded
 return M

@@ -262,13 +262,12 @@ local function updateGFXRecovery(dtSim)
     local nodes = v.data.nodes
     local refPos = vec3(nodes[v.data.refNodes[0].ref].pos)
 
-    local p1 = vec3()
-    local p2 = vec3()
+    local p1, p2, t1, t2, rpos = vec3(), vec3(), vec3(), vec3(), lastRecoveryPoint.pos
     for i=0, tableSizeC(beams) - 1 do
-      p1:set(lastRecoveryPoint.pos)
-      p2:set(lastRecoveryPoint.pos)
-      p1:setAdd(rot * (nodes[beams[i].id1].pos - refPos))
-      p2:setAdd(rot * (nodes[beams[i].id2].pos - refPos))
+      t1:setSub2(nodes[beams[i].id1].pos, refPos)
+      t2:setSub2(nodes[beams[i].id2].pos, refPos)
+      p1:setAdd2(rpos, rot * t1)
+      p2:setAdd2(rpos, rot * t2)
       obj.debugDrawProxy:drawLine(p1, p2, debugColor)
     end
     if not isFreeCamActive then

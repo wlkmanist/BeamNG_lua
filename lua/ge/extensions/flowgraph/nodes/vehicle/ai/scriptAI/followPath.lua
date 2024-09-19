@@ -35,7 +35,6 @@ function C:init()
   self.timeScale = 1.0
 end
 
-
 function C:drawCustomProperties()
   local sclFloat = im.FloatPtr(self.timeScale)
   if im.InputFloat("Timescale",sclFloat,0.05, 1) then
@@ -53,13 +52,26 @@ function C:drawCustomProperties()
     end
     im.EndCombo()
   end
-  if self.veh and im.Button("Reset AI") then
-      self:endAI()
+  if im.Button("Reset AI") then
+    self:endAI()
   end
 end
 
+function C:getVeh()
+  local veh
+  if self.pinIn.vehId.value then
+    veh = be:getObjectByID(self.pinIn.vehId.value)
+  else
+    veh = getPlayerVehicle(0)
+  end
+  return veh
+end
+
 function C:endAI()
-  self.veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
+  local veh = self:getVeh()
+  if veh then
+    veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
+  end
 end
 
 function C:onVehicleSubmitInfo(id, info, nodeID)
@@ -68,22 +80,13 @@ function C:onVehicleSubmitInfo(id, info, nodeID)
   if tonumber(id) ~= self.pinIn.vehId.value then return end
   if info == nil then
     self.complete = true
-    if self.veh then
-      --print("Completed!")
-      self:endAI()
-    end
+    self:endAI()
   end
-
 end
 
-
 function C:_executionStopped()
-
   if self.started and not self.complete then
-    if self.veh then
-      --print("Resetting veh")
-      self:endAI()
-    end
+    self:endAI()
   end
   self.started = false
   self.complete = false
@@ -94,16 +97,12 @@ function C:loadPath()
 end
 
 function C:setupAI()
-
   self:loadPath()
   if not self.path then return end
-  local veh
-  if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-    self.veh = scenetree.findObjectById(self.pinIn.vehId.value)
-  else
-    self.veh = getPlayerVehicle(0)
-  end
-  if not self.veh then return end
+  
+  local veh = self:getVeh()
+  if not veh then return end
+  
   local loopCount = self.pinIn.loopCount.value or 0
   local loopType = self.loopMode
   local path = {}
@@ -111,7 +110,7 @@ function C:setupAI()
     path[i] = {x=p.x, y=p.y, z=p.z, t=p.t / self.timeScale, dir = p.dir or nil, up = p.up or nil}
   end
   --dumpz(path, 3)
-  self.veh:queueLuaCommand('ai.startFollowing(' .. serialize({path=path}) .. ',nil,'..loopCount..',"'..loopType..'")')
+  veh:queueLuaCommand('ai.startFollowing(' .. serialize({path=path}) .. ',nil,'..loopCount..',"'..loopType..'")')
   --dump('ai.startFollowing(' .. serialize(self.path) .. ',)')
 end
 

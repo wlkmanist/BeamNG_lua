@@ -14,6 +14,8 @@ C.category = 'repeat_instant'
 
 C.pinSchema = {}
 
+C.tags = {'imgui'}
+
 function C:work()
   im.End()
 end

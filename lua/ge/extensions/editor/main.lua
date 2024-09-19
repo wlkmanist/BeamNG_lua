@@ -432,6 +432,7 @@ local function setEditorActiveInternal(activate, safeMode)
 
   -- if activate, and not editor inited
   if activate and not M.initialized then
+    editor.levelPath = editor.getLevelPath()
     local state = loadState()
     loadAndInitializeExtensions()
     editor.registerModalWindow("saveDirtyTools", imgui.ImVec2(600, 300), nil, true)
@@ -488,7 +489,6 @@ local function setEditorActiveInternal(activate, safeMode)
     if amap then amap.trapHandledEvents = false end
 
     editor.callShowWindowHookForVisibleWindows()
-    editor.levelPath = editor.getLevelPath()
 
     -- select default edit mode if none set
     if lastEditModeName ~= "" and lastEditModeName ~= nil then
@@ -610,7 +610,7 @@ end
 
 local function onPreWindowClose()
   if editor.dirty or anyToolDirty() and editor.initialized then
-    local result = messageBox("World Editor - Exiting BeamNG.drive", "You have edited this level.\nDo you want to save your changes made to this level ?", 4, 2)
+    local result = messageBox("World Editor - Exiting BeamNG", "You have edited this level.\nDo you want to save your changes made to this level ?", 4, 2)
     if result == 1 then
       editor.saveLevel()
     elseif result == 2 then
@@ -634,10 +634,10 @@ local function onUpdate()
       if doActivate then
         --TODO: we need to get editor UI scale somehow, at this point preferences are not loaded yet
         -- change UI scale to default, so text fits in the loading window
-        imguiUtils.changeUIScale(0.92)
+        imguiUtils.changeUIScale(1)
         local pos = imgui.ImVec2(imgui.GetMainViewport().Pos.x + imgui.GetMainViewport().Size.x / 2, imgui.GetMainViewport().Pos.y + imgui.GetMainViewport().Size.y / 2)
         imgui.SetNextWindowPos(pos, imgui.Cond_Appearing, imgui.ImVec2(0.5, 0.5))
-        imgui.SetNextWindowSize(imgui.ImVec2(300, 55), imgui.Cond_Always)
+        imgui.SetNextWindowSize(imgui.ImVec2(imgui.uiscale[0] * 300, imgui.uiscale[0] * 50), imgui.Cond_Always)
         imgui.Begin("loadingEditorWnd", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoResize + imgui.WindowFlags_NoMove)
         imgui.PushFont3("cairo_semibold_large")
         imgui.Separator()

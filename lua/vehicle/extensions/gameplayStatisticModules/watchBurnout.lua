@@ -26,7 +26,7 @@ local function watchBurnout()
 end
 
 local function onExtensionLoaded()
-  if controller.mainController.typeName ~= "vehicleController" then
+  if controller.mainController.typeName ~= "vehicleController/vehicleController" then
     return false --unload
   end
 

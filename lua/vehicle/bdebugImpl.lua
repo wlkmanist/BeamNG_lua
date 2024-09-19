@@ -42,12 +42,15 @@ local beamTypesColors = {
   [BEAM_BROKEN] = color(255, 0, 0, 255),
 }
 
+local nodeTextMaxDistCap = 15
+
 M.initState = {
   vehicleDebugVisible = false,
   vehicle = {
-    partSelected = 1,
-    parts = {"All"},
-    showOnlySelectedPartMesh = false,
+    partsSelected = {},
+    parts = {},
+    partNameToIdx = {},
+    showOnlySelectedPartsMesh = false,
     nodeTextMode = 1,
     nodeTextModes = {
       {name = "off"},
@@ -61,6 +64,8 @@ M.initState = {
       {name = "relativePositions"},
       {name = "worldPositions"},
     },
+    nodeTextMaxDistCap = nodeTextMaxDistCap,
+    nodeTextMaxDist = nodeTextMaxDistCap,
     nodeTextShowWheels = false,
     nodeVisMode = 1,
     nodeVisModes = {
@@ -157,6 +162,12 @@ M.initState = {
     },
     railsSlideNodesVisWidthScale = 1,
     railsSlideNodesVisAlpha = 1,
+    cogMode = 1,
+    cogModes = {
+      {name = "off"},
+      {name = "on"},
+      {name = "nowheels"}
+    },
     collisionTriangle = false,
     collisionTriangleAlpha = 0.5,
     aeroMode = 1,
@@ -168,12 +179,8 @@ M.initState = {
     },
     aerodynamicsScale = 0.1,
     tireContactPoint = false,
-    cogMode = 1,
-    cogModes = {
-      {name = "off"},
-      {name = "on"},
-      {name = "nowheels"}
-    }
+    steeringGeometry = false,
+    steeringGeometryLineLength = 20,
   }
 }
 
@@ -199,8 +206,30 @@ local requestDrawnBeamsCallbacks
 local viewportSizeX = 0
 local viewportSizeY = 0
 
-local overlapSize = 0.01
-local overlapMap, hashes, jbeamDisplayed, tblPool = {}, {}, {}, {}
+local cellsToCheck = {
+  {0, 0, 0},
+  {0, 0, 1},
+  {0, 0, -1},
+  {0, 1, 0},
+  {0, -1, 0},
+  {1, 0, 0},
+  {-1, 0, 0},
+  {1, 1, 0},
+  {1, -1, 0},
+  {-1, 1, 0},
+  {-1, -1, 0},
+  {0, 1, 1},
+  {0, 1, -1},
+  {0, -1, 1},
+  {0, -1, -1},
+  {1, 0, 1},
+  {1, 0, -1},
+  {-1, 0, 1},
+  {-1, 0, -1}
+}
+local overlapSize = 0.001
+local groupIDCount = 1
+local overlapMap, groupIDToEntries, hashToGroupID, hashes, jbeamDisplayed, tblPool = {}, {}, {}, {}, {}, {}
 local bigOffset = vec3(1e5, 1e5, 1e5)
 
 local tempVec = vec3()
@@ -210,6 +239,21 @@ local function vecRoundNear(v, m)
   v.x = roundNear(v.x, m)
   v.y = roundNear(v.y, m)
   v.z = roundNear(v.z, m)
+end
+
+local function getPosHash(v, offX, offY, offZ)
+  local x, y, z = roundNear(v.x, overlapSize), roundNear(v.y, overlapSize), roundNear(v.z, overlapSize)
+  local hash = bit.bxor(bit.bxor((x + (offX or 0)) * 73856093, (y + (offY or 0)) * 19349663), (z + (offZ or 0)) * 83492791)
+  return not isnaninf(hash) and hash or 0
+end
+
+local function getPartsSelected()
+  local partSelectedIdxs = M.state.vehicle.partsSelected
+  local partsSelected = {}
+  for k,v in ipairs(partSelectedIdxs) do
+    partsSelected[M.state.vehicle.parts[v]] = true
+  end
+  return partsSelected
 end
 
 local function nodeCollision(p)
@@ -294,10 +338,32 @@ local function visualizeTireContactPoint()
   end
 end
 
+local function visualizeSteeringGeometry()
+  if M.state.vehicle.steeringGeometry then
+    if v.data.wheels then
+      local lineLen = M.state.vehicle.steeringGeometryLineLength
+      local vehPos = obj:getPosition()
+      for i = 0, tableSizeC(v.data.wheels) - 1 do
+        local w = v.data.wheels[i]
+        local node1, node2 = w.node1, w.node2
+        if node1 and node2 then
+          local node1Pos, node2Pos = obj:getNodePosition(node1) + vehPos, obj:getNodePosition(node2) + vehPos
+          local midPos = (node1Pos + node2Pos) * 0.5
+          local dir = (node2Pos - node1Pos):normalized()
+
+          -- drawing same line twice with both depth testing enabled and disabled to show where the line intersects with the ground
+          -- TODO: temporary solution to draw from GE Lua side
+          obj:queueGameEngineLua(string.format('debugDrawer:drawLine(%s,%s,ColorF(1,0,0,1),false)', -dir * lineLen * 0.5 + midPos, dir * lineLen * 0.5 + midPos))
+          obj.debugDrawProxy:drawCylinder(-dir * lineLen * 0.5 + midPos, dir * lineLen * 0.5 + midPos, 0.01, color(255, 0, 0, 255))
+        end
+      end
+    end
+  end
+end
+
 local function visualizeCollisionTriangles()
   if M.state.vehicle.collisionTriangle then
-    local partSelectedIdx = M.state.vehicle.partSelected
-    local partSelected = M.state.vehicle.parts[partSelectedIdx]
+    local partsSelected = getPartsSelected()
 
     local alpha = M.state.vehicle.collisionTriangleAlpha * 255
 
@@ -311,7 +377,7 @@ local function visualizeCollisionTriangles()
     for i = 0, trisCount - 1 do
       local tri = v.data.triangles[i]
 
-      if partSelectedIdx == 1 or partSelected == tri.partOrigin then
+      if partsSelected[tri.partOrigin or tri.partName or v.config.mainPartName] then
         local triBroken = obj:isTriangleBroken(i)
 
         local frontCol = normalTriColor
@@ -370,9 +436,14 @@ local function visualizeCOG()
   -- not "off"
   if modeID > 1 then
     local p = obj:calcCenterOfGravity(modeID == 3)
+    local vehPos = obj:getPosition()
+    local initRefNodePos = v.data.nodes[v.data.refNodes[0].ref].pos
+    local rot = quatFromDir(-obj:getDirectionVector(), obj:getDirectionVectorUp())
+    local relCOGPos = rot:inversed() * (p - vehPos) + initRefNodePos
+
     obj.debugDrawProxy:drawAerodynamicsCenterOfPressure(color(0, 0, 0, 0), color(0, 0, 0, 0), color(0, 0, 0, 0), color(0, 0, 0, 0), color(0, 0, 255, 255), 0.1)
     obj.debugDrawProxy:drawSphere(0.1, p, color(255, 0, 0, 255))
-    obj.debugDrawProxy:drawText(p + vec3(0, 0, 0.3), color(255, 0, 0, 255), "COG")
+    obj.debugDrawProxy:drawText(p + vec3(0, 0, 0.3), color(255, 0, 0, 255), string.format("COG (%0.3f, %0.3f, %0.3f)", relCOGPos.x, relCOGPos.y, relCOGPos.z))
 
     if playerInfo.firstPlayerSeated then
       obj.debugDrawProxy:drawText2D(vec3(viewportSizeX - 450 - 40, 100, 0), color(0, 0, 0, 255), "COG distance above ground: " .. string.format("%0.3f m", obj:getDistanceFromTerrainPoint(p)))
@@ -400,27 +471,60 @@ local function visualizeNodesDebugTexts()
   end
 end
 
+local nodePositions = {}
+local nodeDistsFromCam = {}
+local nodeMinDistFromCam = math.huge
+local camPos = vec3()
 local textNodeForceAvg = 1
+local textNodeWeightAvg = 1
 
 -- Uses tempVec
-local function initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
+local function initRenderNodeTexts(partsSelected, showWheels)
   table.clear(hashes)
   table.clear(jbeamDisplayed)
+  table.clear(groupIDToEntries)
+  table.clear(hashToGroupID)
+
+  camPos = obj:getCameraPosition()
+  local vehPos = obj:getPosition()
+
+  groupIDCount = 1
+  nodeMinDistFromCam = math.huge
+
   for i = 0, nodesCount - 1 do
     local node = v.data.nodes[i]
-    if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-      tempVec:set(obj:getNodePositionRelativeXYZ(i))
+    if partsSelected[node.partOrigin or node.partName or v.config.mainPartName] and (showWheels or not node.wheelID) then
+      local pos = obj:getNodePosition(i)
+      tempVec:set(pos)
       tempVec:setAdd(bigOffset)
-      vecRoundNear(tempVec, overlapSize)
-      local posHash = tempVec.x * 1000000 + tempVec.y * 1000 + tempVec.z
-      hashes[i] = not isnaninf(posHash) and posHash or 0
+      local posHash = getPosHash(tempVec)
+      hashes[i] = posHash
       if next(tblPool) == nil then
         table.insert(tblPool, {})
       end
-      if not overlapMap[posHash] then
-        overlapMap[posHash] = table.remove(tblPool)
+      local exists = false
+
+      nodePositions[i] = pos
+      nodePositions[i]:setAdd(vehPos)
+
+      nodeMinDistFromCam = math.min(pos:distance(camPos), nodeMinDistFromCam)
+
+      -- check adjacent cells for entries
+      for k, v in ipairs(cellsToCheck) do
+        local hash = getPosHash(tempVec, v[1] * overlapSize, v[2] * overlapSize, v[3] * overlapSize)
+        if hashToGroupID[hash] then
+          local groupID = hashToGroupID[hash]
+          table.insert(groupIDToEntries[groupID], i)
+          exists = true
+          break
+        end
       end
-      table.insert(overlapMap[posHash], i)
+      if not exists then
+        groupIDCount = groupIDCount + 1
+        hashToGroupID[posHash] = groupIDCount
+        groupIDToEntries[groupIDCount] = table.remove(tblPool)
+        table.insert(groupIDToEntries[groupIDCount], i)
+      end
     end
   end
 end
@@ -429,18 +533,22 @@ local function getNodeText(node, txt)
   return node.name == nil and "[" .. tostring(node.cid) .. "]" .. (txt and ' ' .. txt or '') or tostring(node.name) .. (txt and ' ' .. txt or '')
 end
 
-local function renderNodeText(overlapTbl, i, col, txt)
-  table.clear(overlapTbl)
-  table.insert(tblPool, overlapTbl)
-  overlapMap[hashes[i]] = nil
-  obj.debugDrawProxy:drawNodeText(i, col, txt, nodeDisplayDistance)
+local function renderNodeText(i, col, txt, nodeTextMaxDist, entries)
+  local pos = nodePositions[i]
+  local dist = pos:distance(camPos)
+  local r,g,b,a = colorGetRGBA(col)
+  local distToAlpha = nodeTextMaxDist < nodeTextMaxDistCap and (-1 / nodeTextMaxDist * (dist - nodeMinDistFromCam) + 1) or nodeTextMaxDistCap
+  obj.debugDrawProxy:drawText(pos, color(r,g,b, a * distToAlpha), txt)
+  --obj.debugDrawProxy:drawNodeText(i, col, txt, nodeDisplayDistance)
+  table.clear(entries)
+  table.insert(tblPool, entries)
 end
 
 local function visualizeNodesTexts()
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
+  local partsSelected = getPartsSelected()
 
   local modeID = M.state.vehicle.nodeTextMode
+  local nodeTextMaxDist = M.state.vehicle.nodeTextMaxDist
   local showWheels = M.state.vehicle.nodeTextShowWheels
 
   -- "off"
@@ -449,255 +557,222 @@ local function visualizeNodesTexts()
   -- "names"
   if modeID == 2 then
     local col = color(255, 0, 255, 255)
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            local nodeText = getNodeText(node2, nil)
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, col, text)
-        end
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        local nodeText = getNodeText(node, nil)
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+        jbeamDisplayed[node.cid] = true
       end
+      renderNodeText(displayAtNode, col, text, nodeTextMaxDist, entries)
     end
 
   -- "numbers
   elseif modeID == 3 then
     local col = color(0, 128, 255, 255)
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            local nodeText = tostring(node2.cid)
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, col, text)
-        end
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        local nodeText = tostring(node.cid)
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+        jbeamDisplayed[node.cid] = true
       end
+      renderNodeText(displayAtNode, col, text, nodeTextMaxDist, entries)
     end
 
   -- "names+numbers"
   elseif modeID == 4 then
     local col = color(128, 0, 255, 255)
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            local nodeText = getNodeText(node2, "" .. node2.cid)
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, col, text)
-        end
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        local nodeText = getNodeText(node, "" .. node.cid)
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+        jbeamDisplayed[node.cid] = true
       end
+      renderNodeText(displayAtNode, col, text, nodeTextMaxDist, entries)
     end
 
   -- "weights"
   elseif modeID == 5 then
+    local currNodesCount = 0
     local totalWeight = 0
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      local nodeWeight = obj:getNodeMass(node.cid)
-      totalWeight = totalWeight + nodeWeight
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          local avgWeight = 0
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            local nodeWeight2 = obj:getNodeMass(node2.cid)
-            local nodeText = getNodeText(node2, string.format("%.2fkg", nodeWeight2))
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-            avgWeight = avgWeight + nodeWeight2
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, color(255 - (avgWeight / tblSize * 20), 0, 0, 255), text)
-        end
+    local newTotalWeight = 0
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      local groupAvgWeight = 0
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        local nodeWeight = obj:getNodeMass(node.cid)
+        local nodeText = getNodeText(node, string.format("%.2fkg", nodeWeight))
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+        totalWeight = totalWeight + nodeWeight
+        groupAvgWeight = groupAvgWeight + nodeWeight
+        newTotalWeight = newTotalWeight + nodeWeight
+        jbeamDisplayed[node.cid] = true
+        currNodesCount = currNodesCount + 1
       end
+      renderNodeText(displayAtNode, color(255 * (groupAvgWeight / tblSize / textNodeWeightAvg), 0, 0, 255), text, nodeTextMaxDist, entries)
     end
 
     if playerInfo.firstPlayerSeated then
-      obj.debugDrawProxy:drawText2D(vec3(viewportSizeX - 450 - 40, 60, 0), color(0, 0, 0, 255), "Total weight: " .. string.format("%.2f kg", totalWeight))
+      obj.debugDrawProxy:drawText2D(vec3(viewportSizeX - 450 - 40, 60, 0), color(0, 0, 0, 255), "Weight: " .. string.format("%.2f kg", totalWeight))
     end
+    textNodeWeightAvg = newTotalWeight / (currNodesCount + 1e-30)
 
   -- "materials"
   elseif modeID == 6 then
     -- Averaging colors https://stackoverflow.com/a/29576746
     local materials = particles.getMaterialsParticlesTable()
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          local ar, ag, ab, aa = 0,0,0,0
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            local mat = materials[node2.nodeMaterial]
-            local matname = "unknown"
-            local col = color(255, 0, 0, 255) -- unknown material: red
-            if mat ~= nil then
-              col = color(mat.colorR, mat.colorG, mat.colorB, 255)
-              matname = mat.name
-            end
-            local nodeText = getNodeText(node2, matname)
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-
-            local r,g,b,a = colorGetRGBA(col)
-            ar = ar + r*r
-            ag = ag + g*g
-            ab = ab + b*b
-            aa = aa + a*a
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, color(math.sqrt(ar / tblSize), math.sqrt(ag / tblSize), math.sqrt(ab / tblSize), math.sqrt(aa / tblSize)), text)
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      local ar, ag, ab, aa = 0,0,0,0
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        local mat = materials[node.nodeMaterial]
+        local matname = "unknown"
+        local col = color(255, 0, 0, 255) -- unknown material: red
+        if mat ~= nil then
+          col = color(mat.colorR, mat.colorG, mat.colorB, 255)
+          matname = mat.name
         end
+        local nodeText = getNodeText(node, matname)
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+
+        local r,g,b,a = colorGetRGBA(col)
+        ar = ar + r*r
+        ag = ag + g*g
+        ab = ab + b*b
+        aa = aa + a*a
+        jbeamDisplayed[node.cid] = true
       end
+      renderNodeText(displayAtNode, color(math.sqrt(ar / tblSize), math.sqrt(ag / tblSize), math.sqrt(ab / tblSize), math.sqrt(aa / tblSize)), text, nodeTextMaxDist, entries)
     end
 
   -- "groups"
   elseif modeID == 7 then
     local col = color(255, 128, 0, 255)
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            local txt = nil
-            if type(node2.group) == "table" then
-              txt = '{'
-              local ngSize = tableSize(node2.group)
-              local k = 1
-              for _,v in pairs(node2.group) do
-                txt = txt .. v
-                if k ~= ngSize then
-                  txt = txt .. ', '
-                end
-                k = k + 1
-              end
-              txt = txt .. '}'
-            else
-              txt = '{' .. tostring(node2.group or '') .. '}'
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        local txt = nil
+        if type(node.group) == "table" then
+          txt = '{'
+          local ngSize = tableSize(node.group)
+          local k = 1
+          for _,v in pairs(node.group) do
+            txt = txt .. v
+            if k ~= ngSize then
+              txt = txt .. ', '
             end
-            local nodeText = getNodeText(node2, txt)
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-            jbeamDisplayed[node2.cid] = true
+            k = k + 1
           end
-          renderNodeText(overlapTbl, i, col, text)
+          txt = txt .. '}'
+        else
+          txt = '{' .. tostring(node.group or '') .. '}'
         end
+        local nodeText = getNodeText(node, txt)
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+        jbeamDisplayed[node.cid] = true
       end
+      renderNodeText(displayAtNode, col, text, nodeTextMaxDist, entries)
     end
 
   -- "forces"
   elseif modeID == 8 then
     local newAvg = 0
     local invAvgNodeForce = 1 / (textNodeForceAvg * 10 + 300)
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      local frc = obj:getNodeForceVector(node.cid)
-      local frc_length = frc:length()
-      newAvg = newAvg + frc_length
+    local currNodesCount = 0
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      local ar, ag, ab, aa = 0,0,0,0
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        local frc = obj:getNodeForceVector(node.cid)
+        local frc_length = frc:length()
+        newAvg = newAvg + frc_length
 
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        local ar, ag, ab, aa = 0,0,0,0
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            local frc2 = obj:getNodeForceVector(node2.cid)
-            local frc2_length = frc2:length()
+        local nodeText = getNodeText(node, string.format("%0.1f N", frc_length))
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
 
-            local nodeText = getNodeText(node2, string.format("%0.1f N", frc2_length))
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-
-            local c = min(255, (frc2_length * invAvgNodeForce) * 255)
-            local col = color(c, 0, 0, (c + 100))
-            local r,g,b,a = colorGetRGBA(col)
-            ar = ar + r*r
-            ag = ag + g*g
-            ab = ab + b*b
-            aa = aa + a*a
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, color(math.sqrt(ar / tblSize), math.sqrt(ag / tblSize), math.sqrt(ab / tblSize), math.sqrt(aa / tblSize)), text)
-        end
+        local c = min(255, (frc_length * invAvgNodeForce) * 255)
+        local col = color(c, 0, 0, (c + 100))
+        local r,g,b,a = colorGetRGBA(col)
+        ar = ar + r*r
+        ag = ag + g*g
+        ab = ab + b*b
+        aa = aa + a*a
+        jbeamDisplayed[node.cid] = true
+        currNodesCount = currNodesCount + 1
       end
+      renderNodeText(displayAtNode, color(math.sqrt(ar / tblSize), math.sqrt(ag / tblSize), math.sqrt(ab / tblSize), math.sqrt(aa / tblSize)), text, nodeTextMaxDist, entries)
     end
     obj.debugDrawProxy:drawText2D(vec3(viewportSizeX - 450 - 40, 60, 0), color(0, 0, 0, 255), "Average force: " .. string.format("%0.1f N", textNodeForceAvg))
-    textNodeForceAvg = (newAvg / (nodesCount + 1e-30))
+    textNodeForceAvg = (newAvg / (currNodesCount + 1e-30))
 
   -- "relativePositions"
   elseif modeID == 9 then
     local col = color(0, 255, 0, 255)
     local initRefNodePos = v.data.nodes[v.data.refNodes[0].ref].pos
 
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            tempVec2:set(obj:getNodePositionRelativeXYZ(node2.cid))
-            tempVec2:setAdd(initRefNodePos)
-            local nodeText = getNodeText(node2, string.format("(%0.3f, %0.3f, %0.3f)", tempVec2.x, tempVec2.y, tempVec2.z))
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, col, text)
-        end
+    initRenderNodeTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        tempVec2:set(obj:getNodePositionRelativeXYZ(node.cid))
+        tempVec2:setAdd(initRefNodePos)
+        local nodeText = getNodeText(node, string.format("(%0.3f, %0.3f, %0.3f)", tempVec2.x, tempVec2.y, tempVec2.z))
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+        jbeamDisplayed[node.cid] = true
       end
+      renderNodeText(displayAtNode, col, text, nodeTextMaxDist, entries)
     end
 
   -- "worldPositions"
   elseif modeID == 10 then
     local col = color(0, 255, 192, 255)
-    initRenderNodeTexts(partSelectedIdx, partSelected, showWheels)
+    initRenderNodeTexts(partsSelected, showWheels)
     tempVec:set(obj:getPositionXYZ())
-    for i = 0, nodesCount - 1 do
-      local node = v.data.nodes[i]
-      if (partSelectedIdx == 1 or partSelected == node.partOrigin) and (showWheels or not node.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local node2 = v.data.nodes[overlapTbl[j]]
-            tempVec2:setAdd2(tempVec, obj:getNodePosition(node2.cid))
-            local nodeText = getNodeText(node2, string.format("(%0.3f, %0.3f, %0.3f)", tempVec2.x, tempVec2.y, tempVec2.z))
-            text = j ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
-            jbeamDisplayed[node2.cid] = true
-          end
-          renderNodeText(overlapTbl, i, col, text)
-        end
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local displayAtNode = entries[1]
+      for k, i in ipairs(entries) do
+        local node = v.data.nodes[i]
+        tempVec2:setAdd2(tempVec, obj:getNodePosition(node.cid))
+        local nodeText = getNodeText(node, string.format("(%0.3f, %0.3f, %0.3f)", tempVec2.x, tempVec2.y, tempVec2.z))
+        text = k ~= tblSize and text .. nodeText .. ', ' or text .. nodeText
+        jbeamDisplayed[node.cid] = true
       end
+      renderNodeText(displayAtNode, col, text, nodeTextMaxDist, entries)
     end
   end
 end
@@ -707,8 +782,7 @@ local nodesDrawn
 local function visualizeNodes()
   local dirty = false
 
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
+  local partsSelected = getPartsSelected()
 
   local modeID = M.state.vehicle.nodeVisMode
   local mode = M.state.vehicle.nodeVisModes[modeID]
@@ -741,7 +815,7 @@ local function visualizeNodes()
   if modeID == 2 then
     for i = 0, nodesCount - 1 do
       local node = v.data.nodes[i]
-      if partSelectedIdx == 1 or partSelected == node.partOrigin then
+      if partsSelected[node.partOrigin or node.partName or v.config.mainPartName] then
         local c
         if node.fixed then
           c = color(255, 0, 255, 200 * alpha)
@@ -767,7 +841,7 @@ local function visualizeNodes()
 
     for i = 0, nodesCount - 1 do
       local node = v.data.nodes[i]
-      if partSelectedIdx == 1 or partSelected == node.partOrigin then
+      if partsSelected[node.partOrigin or node.partName or v.config.mainPartName] then
         local c
         if node.fixed then
           c = color(255, 0, 255, 200 * alpha)
@@ -799,7 +873,7 @@ local function visualizeNodes()
   elseif modeID == 4 then
     for i = 0, nodesCount - 1 do
       local node = v.data.nodes[i]
-      if partSelectedIdx == 1 or partSelected == node.partOrigin then
+      if partsSelected[node.partOrigin or node.partName or v.config.mainPartName] then
         local displacementVec = obj:getNodePositionRelative(node.cid)
         displacementVec:setSub(obj:getOriginalNodePositionRelative(node.cid))
         local displacement = displacementVec:length() * 10
@@ -820,7 +894,7 @@ local function visualizeNodes()
     local vecVel = obj:getVelocity()
     for i = 0, nodesCount - 1 do
       local node = v.data.nodes[i]
-      if partSelectedIdx == 1 or partSelected == node.partOrigin then
+      if partsSelected[node.partOrigin or node.partName or v.config.mainPartName] then
         local vel = obj:getNodeVelocityVector(node.cid) - vecVel
         local speed = vel:length()
 
@@ -841,13 +915,14 @@ local function visualizeNodes()
   elseif modeID == 6 then
     local newAvg = 0
     local invAvgNodeForce = 1 / visNodeForceAvg
+    local currNodesCount = 0
 
     for i = 0, nodesCount - 1 do
       local node = v.data.nodes[i]
       local frc = obj:getNodeForceVector(node.cid)
       local frc_length = frc:length()
       newAvg = newAvg + frc_length
-      if partSelectedIdx == 1 or partSelected == node.partOrigin then
+      if partsSelected[node.partOrigin or node.partName or v.config.mainPartName] then
         if frc_length >= rangeMin and frc_length <= rangeMax then
           local c = min(255, (frc_length * invAvgNodeForce) * 255)
           local col = color(c, 0, 0, (c + 100) * alpha)
@@ -856,10 +931,11 @@ local function visualizeNodes()
 
           nodesDrawn[ndi] = node.cid
           ndi = ndi + 1
+          currNodesCount = currNodesCount + 1
         end
       end
     end
-    visNodeForceAvg = (newAvg / (nodesCount + 1e-30)) * 10 + 300
+    visNodeForceAvg = (newAvg / (currNodesCount + 1e-30)) * 10 + 300
 
   -- "density"
   elseif modeID == 7 then
@@ -868,7 +944,7 @@ local function visualizeNodes()
     local colorAir = color(0, 200, 0, 200 * alpha)
     for i = 0, nodesCount - 1 do
       local node = v.data.nodes[i]
-      if partSelectedIdx == 1 or partSelected == node.partOrigin then
+      if partsSelected[node.partOrigin or node.partName or v.config.mainPartName] then
         local inWater = obj:inWater(node.cid)
         if inWater then
           col = colorWater
@@ -923,55 +999,70 @@ local function visualizeNodes()
   return dirty
 end
 
-local nodePositions = {}
+local nodeRelPositions = {}
 local beamPositions = {}
 
-local function initRenderBeamTexts(partSelectedIdx, partSelected, showWheels)
+local function initRenderBeamTexts(partsSelected, showWheels)
   table.clear(hashes)
   table.clear(jbeamDisplayed)
+  table.clear(groupIDToEntries)
+  table.clear(hashToGroupID)
+
+  groupIDCount = 1
 
   local vehPos = obj:getPosition()
 
   for i = 0, nodesCount - 1 do
-    nodePositions[i] = obj:getNodePosition(i)
+    nodeRelPositions[i] = obj:getNodePosition(i)
   end
 
   for i = 0, beamsCount - 1 do
     local beam = v.data.beams[i]
-    if (partSelectedIdx == 1 or partSelected == beam.partOrigin) and (showWheels or not beam.wheelID) then
-      tempVec:setAdd2(nodePositions[beam.id1], nodePositions[beam.id2])
+    if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] and (showWheels or not beam.wheelID) then
+      tempVec:setAdd2(nodeRelPositions[beam.id1], nodeRelPositions[beam.id2])
       tempVec:setScaled(0.5)
       tempVec:setAdd(vehPos)
       if not beamPositions[i] then
         beamPositions[i] = vec3()
       end
       beamPositions[i]:set(tempVec)
-
       tempVec:setAdd(bigOffset)
-      vecRoundNear(tempVec, overlapSize)
-      local posHash = tempVec.x * 1000000 + tempVec.y * 1000 + tempVec.z
-      hashes[i] = not isnaninf(posHash) and posHash or 0
+      local posHash = getPosHash(tempVec)
+      hashes[i] = posHash
       if next(tblPool) == nil then
         table.insert(tblPool, {})
       end
-      if not overlapMap[posHash] then
-        overlapMap[posHash] = table.remove(tblPool)
+
+      local exists = false
+
+      -- check adjacent cells for entries
+      for k, v in ipairs(cellsToCheck) do
+        local hash = getPosHash(tempVec, v[1] * overlapSize, v[2] * overlapSize, v[3] * overlapSize)
+        if hashToGroupID[hash] then
+          local groupID = hashToGroupID[hash]
+          table.insert(groupIDToEntries[groupID], i)
+          exists = true
+          break
+        end
       end
-      table.insert(overlapMap[posHash], i)
+      if not exists then
+        groupIDCount = groupIDCount + 1
+        hashToGroupID[posHash] = groupIDCount
+        groupIDToEntries[groupIDCount] = table.remove(tblPool)
+        table.insert(groupIDToEntries[groupIDCount], i)
+      end
     end
   end
 end
 
-local function renderBeamText(overlapTbl, i, pos, col, txt)
-  table.clear(overlapTbl)
-  table.insert(tblPool, overlapTbl)
-  overlapMap[hashes[i]] = nil
+local function renderBeamText(pos, col, txt, entries)
   obj.debugDrawProxy:drawText(pos, col, txt)
+  table.clear(entries)
+  table.insert(tblPool, entries)
 end
 
 local function visualizeBeamsTexts()
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
+  local partsSelected = getPartsSelected()
 
   local modeID = M.state.vehicle.beamTextMode
   local showWheels = M.state.vehicle.beamTextShowWheels
@@ -982,67 +1073,52 @@ local function visualizeBeamsTexts()
   -- "ids"
   if modeID == 2 then
     local col = jetColor(0)
-    initRenderBeamTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, beamsCount - 1 do
-      local beam = v.data.beams[i]
-      local pos = beamPositions[i]
-      if (partSelectedIdx == 1 or partSelected == beam.partOrigin) and (showWheels or not beam.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local beam2 = v.data.beams[overlapTbl[j]]
-            local beamText = beam2.cid
-            text = j ~= tblSize and text .. beamText .. ', ' or text .. beamText
-            jbeamDisplayed[beam2.cid] = true
-          end
-          renderBeamText(overlapTbl, i, pos, col, text)
-        end
+    initRenderBeamTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local pos = beamPositions[entries[1]]
+      for k, i in ipairs(entries) do
+        local beam = v.data.beams[i]
+        local beamText = beam.cid
+        text = k ~= tblSize and text .. beamText .. ', ' or text .. beamText
+        jbeamDisplayed[beam.cid] = true
       end
+      renderBeamText(pos, col, text, entries)
     end
 
   -- "spawnLength"
   elseif modeID == 3 then
     local col = jetColor(0.1)
-    initRenderBeamTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, beamsCount - 1 do
-      local beam = v.data.beams[i]
-      local pos = beamPositions[i]
-      if (partSelectedIdx == 1 or partSelected == beam.partOrigin) and (showWheels or not beam.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local beam2 = v.data.beams[overlapTbl[j]]
-            local beamText = string.format("%d: %.3f m", beam2.cid, obj:getBeamRestLength(beam2.cid))
-            text = j ~= tblSize and text .. beamText .. ', ' or text .. beamText
-            jbeamDisplayed[beam2.cid] = true
-          end
-          renderBeamText(overlapTbl, i, pos, col, text)
-        end
+    initRenderBeamTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local pos = beamPositions[entries[1]]
+      for k, i in ipairs(entries) do
+        local beam = v.data.beams[i]
+        local beamText = string.format("%d: %.3f m", beam.cid, obj:getBeamRefLength(beam.cid))
+        text = k ~= tblSize and text .. beamText .. ', ' or text .. beamText
+        jbeamDisplayed[beam.cid] = true
       end
+      renderBeamText(pos, col, text, entries)
     end
 
   -- "liveLength"
   elseif modeID == 4 then
     local col = jetColor(0.2)
-    initRenderBeamTexts(partSelectedIdx, partSelected, showWheels)
-    for i = 0, beamsCount - 1 do
-      local beam = v.data.beams[i]
-      local pos = beamPositions[i]
-      if (partSelectedIdx == 1 or partSelected == beam.partOrigin) and (showWheels or not beam.wheelID) then
-        local overlapTbl = overlapMap[hashes[i]]
-        if overlapTbl and not jbeamDisplayed[i] then
-          local tblSize, text = #overlapTbl, ''
-          for j = 1, tblSize do
-            local beam2 = v.data.beams[overlapTbl[j]]
-            local beamText = string.format("%d: %.3f m", beam2.cid, obj:getBeamLength(beam2.cid))
-            text = j ~= tblSize and text .. beamText .. ', ' or text .. beamText
-            jbeamDisplayed[beam2.cid] = true
-          end
-          renderBeamText(overlapTbl, i, pos, col, text)
-        end
+    initRenderBeamTexts(partsSelected, showWheels)
+    for groupID, entries in pairs(groupIDToEntries) do
+      local text = ''
+      local tblSize = #entries
+      local pos = beamPositions[entries[1]]
+      for k, i in ipairs(entries) do
+        local beam = v.data.beams[i]
+        local beamText = string.format("%d: %.3f m", beam.cid, obj:getBeamLength(beam.cid))
+        text = k ~= tblSize and text .. beamText .. ', ' or text .. beamText
+        jbeamDisplayed[beam.cid] = true
       end
+      renderBeamText(pos, col, text, entries)
     end
   end
 end
@@ -1054,8 +1130,7 @@ local beamFreqModeAmp = {}
 local function visualizeBeams()
   local dirty = false
 
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
+  local partsSelected = getPartsSelected()
 
   local modeID = M.state.vehicle.beamVisMode
   local mode = M.state.vehicle.beamVisModes[modeID]
@@ -1094,7 +1169,7 @@ local function visualizeBeams()
   if modeID == 2 then
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         obj.debugDrawProxy:drawBeam3d(beam.cid, beamScale, color(0, 223, 0, 255 * alpha))
 
         beamsDrawn[bdi] = beam.cid
@@ -1106,7 +1181,7 @@ local function visualizeBeams()
   elseif modeID == 3 or modeID == 4 or modeID == 5 then
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         local beamType = beam.beamType or 0
 
         local col = beamTypesColors[beamType]
@@ -1138,7 +1213,7 @@ local function visualizeBeams()
   elseif modeID == 6 then
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         local stress = obj:getBeamStress(beam.cid) * 0.0002
         local a = min(1, abs(stress)) * 255 * alpha
         if a > 5 then
@@ -1163,7 +1238,7 @@ local function visualizeBeams()
 
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         local stress = obj:getBeamStressDamp(beam.cid)
         local absStress = abs(stress)
 
@@ -1209,7 +1284,7 @@ local function visualizeBeams()
 
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         tempVec:setSub2(v.data.nodes[beam.id2].pos, v.data.nodes[beam.id1].pos)
         local originalLength = tempVec:length()
 
@@ -1274,7 +1349,7 @@ local function visualizeBeams()
         deformGroupsTriggerDisplayed[deformGroup] = true
       end
 
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         if not obj:beamIsBroken(beam.cid) then
           local absDeform = abs(deform)
 
@@ -1319,7 +1394,7 @@ local function visualizeBeams()
     local j = 0
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         if beam.breakGroup and beam.breakGroup ~= "" then
           local breakGroups = type(beam.breakGroup) == "table" and beam.breakGroup or {beam.breakGroup}
           for _, g in pairs(breakGroups) do
@@ -1368,7 +1443,7 @@ local function visualizeBeams()
         deformGroupsTriggerDisplayed[deformGroup] = true
       end
 
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         if beam.deformGroup and beam.deformGroup ~= "" then
           local deformGroups = type(beam.deformGroup) == "table" and beam.deformGroup or {beam.deformGroup}
           for _, g in pairs(deformGroups) do
@@ -1405,7 +1480,7 @@ local function visualizeBeams()
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
       if beam.beamType == BEAM_SUPPORT or beam.beamType == BEAM_BOUNDED or beam.beamType == BEAM_HYDRO then
-        if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+        if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
           local currLen = obj:getBeamLength(beam.cid)
           local restLen = obj:getBeamRefLength(beam.cid)
           local restLenHalf = restLen * 0.5
@@ -1427,12 +1502,17 @@ local function visualizeBeams()
       end
     end
 
+    if playerInfo.firstPlayerSeated then
+      obj.debugDrawProxy:drawText2D(vec3(viewportSizeX - 450 - 40, 100, 0), color(255, 0, 0, 255), "Compression")
+      obj.debugDrawProxy:drawText2D(vec3(viewportSizeX - 450 - 40, 120, 0), color(0, 0, 255, 255), "Extension")
+    end
+
   -- frequency
   elseif modeID == 13 then
     local freq, ampMax = mode.sliders[1].val, mode.sliders[2].val
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         local amplitude = obj:getBeamFrequencyAmplitude(i, freq, 10) --obj:detectBeamFrequency(i)
         beamFreqModeAmp[i] = amplitude --0.5 * beam.beamSpring * amplitude^2
       end
@@ -1459,7 +1539,7 @@ local function visualizeBeams()
 
     for i = 0, beamsCount - 1 do
       local beam = v.data.beams[i]
-      if partSelectedIdx == 1 or partSelected == beam.partOrigin then
+      if partsSelected[beam.partOrigin or beam.partName or v.config.mainPartName] then
         local val = tonumber(beam[modeName])
         if val then
           minVal = val ~= -huge and min(val, minVal) or minVal
@@ -1581,8 +1661,7 @@ end
 local function visualizeTorsionBars()
   local dirty = false
 
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
+  local partsSelected = getPartsSelected()
 
   local modeID = M.state.vehicle.torsionBarVisMode
   local mode = M.state.vehicle.torsionBarVisModes[modeID]
@@ -1613,7 +1692,7 @@ local function visualizeTorsionBars()
   if modeID == 2 then
     for i = 0, torsionBarsCount - 1 do
       local torbar = v.data.torsionbars[i]
-      if partSelectedIdx == 1 or partSelected == torbar.partOrigin then
+      if partsSelected[torbar.partOrigin or torbar.partName or v.config.mainPartName] then
         drawTorsionBar(torbar, vehPos, alpha, nodeScale, beamScale)
       end
     end
@@ -1622,7 +1701,7 @@ local function visualizeTorsionBars()
   elseif modeID == 3 or modeID == 4 or modeID == 5 then
     for i = 0, torsionBarsCount - 1 do
       local torbar = v.data.torsionbars[i]
-      if partSelectedIdx == 1 or partSelected == torbar.partOrigin then
+      if partsSelected[torbar.partOrigin or torbar.partName or v.config.mainPartName] then
         local torbarBroken = obj:torsionbarIsBroken(torbar.cid)
         if (modeID == 3 and not torbarBroken) or modeID == 4 or (modeID == 5 and torbarBroken) then
           local startAngle, endAngle = 0, 0
@@ -1649,7 +1728,7 @@ local function visualizeTorsionBars()
 
     for i = 0, torsionBarsCount - 1 do
       local torbar = v.data.torsionbars[i]
-      if partSelectedIdx == 1 or partSelected == torbar.partOrigin then
+      if partsSelected[torbar.partOrigin or torbar.partName or v.config.mainPartName] then
         local id1, id2, id3, id4 = torbar.id1, torbar.id2, torbar.id3, torbar.id4
 
         if id1 and id2 and id3 and id4 then
@@ -1677,7 +1756,7 @@ local function visualizeTorsionBars()
 
     for i = 0, torsionBarsCount - 1 do
       local torbar = v.data.torsionbars[i]
-      if partSelectedIdx == 1 or partSelected == torbar.partOrigin then
+      if partsSelected[torbar.partOrigin or torbar.partName or v.config.mainPartName] then
         local id1, id2, id3, id4 = torbar.id1, torbar.id2, torbar.id3, torbar.id4
 
         if id1 and id2 and id3 and id4 then
@@ -1704,7 +1783,7 @@ local function visualizeTorsionBars()
     local deformRange = rangeMax - rangeMin
     for i = 0, torsionBarsCount - 1 do
       local torbar = v.data.torsionbars[i]
-      if partSelectedIdx == 1 or partSelected == torbar.partOrigin then
+      if partsSelected[torbar.partOrigin or torbar.partName or v.config.mainPartName] then
         local id1, id2, id3, id4 = torbar.id1, torbar.id2, torbar.id3, torbar.id4
         if id1 and id2 and id3 and id4 then
           local deform = obj:getTorsionbarDeformation(i)
@@ -1739,7 +1818,7 @@ local function visualizeTorsionBars()
 
     for i = 0, torsionBarsCount - 1 do
       local torbar = v.data.torsionbars[i]
-      if partSelectedIdx == 1 or partSelected == torbar.partOrigin then
+      if partsSelected[torbar.partOrigin or torbar.partName or v.config.mainPartName] then
         local val = tonumber(torbar[modeName])
 
         if val then
@@ -1889,8 +1968,7 @@ local function getBrokenRailLinks(rail)
 end
 
 local function visualizeRailsSlideNodes()
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
+  local partsSelected = getPartsSelected()
 
   local modeID = M.state.vehicle.railsSlideNodesVisMode
   local mode = M.state.vehicle.railsSlideNodesVisModes[modeID]
@@ -2013,6 +2091,7 @@ local function debugDraw(focusPos)
 
   visualizeWheelThermals()
   visualizeTireContactPoint()
+  visualizeSteeringGeometry()
   visualizeCollisionTriangles()
   visualizeAerodynamics()
   visualizeCOG()
@@ -2114,34 +2193,48 @@ local function setMode(modeVar, modesVar, mode, doSendState)
   end
 end
 
-local function partSelectedChanged()
-  local showOnlySelectedPartMesh = M.state.vehicle.showOnlySelectedPartMesh
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
+local function partsSelectedChanged()
+  if not M.state.vehicle.showOnlySelectedPartsMesh then return end
+  local partsSelected = getPartsSelected()
+  obj:queueGameEngineLua("extensions.core_vehicle_partmgmt.highlightParts(" .. serialize(partsSelected) .. ")")
+end
 
-  if not showOnlySelectedPartMesh then return end
+local function showOnlySelectedPartsMeshChanged()
+  local showOnlySelectedPartsMesh = M.state.vehicle.showOnlySelectedPartsMesh
+  local partsSelected = getPartsSelected()
 
-  if partSelectedIdx == 1 then
+  if not showOnlySelectedPartsMesh then
     -- Selected all parts
     obj:queueGameEngineLua("extensions.core_vehicle_partmgmt.clearVehicleHighlights(); extensions.core_vehicle_partmgmt.showHighlightedParts()")
   else
     -- Selected a specific part
-    obj:queueGameEngineLua("extensions.core_vehicle_partmgmt.highlightParts({['" .. partSelected .. "'] = true})")
+    obj:queueGameEngineLua("extensions.core_vehicle_partmgmt.highlightParts(" .. serialize(partsSelected) .. ")")
   end
 end
 
-local function showOnlySelectedPartMeshChanged()
-  local showOnlySelectedPartMesh = M.state.vehicle.showOnlySelectedPartMesh
-  local partSelectedIdx = M.state.vehicle.partSelected
-  local partSelected = M.state.vehicle.parts[partSelectedIdx]
-
-  if not showOnlySelectedPartMesh or partSelectedIdx == 1 then
-    -- Selected all parts
-    obj:queueGameEngineLua("extensions.core_vehicle_partmgmt.clearVehicleHighlights(); extensions.core_vehicle_partmgmt.showHighlightedParts()")
-  else
-    -- Selected a specific part
-    obj:queueGameEngineLua("extensions.core_vehicle_partmgmt.highlightParts({['" .. partSelected .. "'] = true})")
+local function recievePartsDataFromPartsList(partsDataFromPartList)
+  if not partsDataFromPartList then
+    return
   end
+
+  table.clear(M.state.vehicle.partsSelected)
+  if not partsDataFromPartList.partsHighlighted then
+    for k, part in ipairs(M.initState.vehicle.parts) do
+      table.insert(M.state.vehicle.partsSelected, M.initState.vehicle.partNameToIdx[part])
+    end
+  else
+    for part, highlighted in pairs(partsDataFromPartList.partsHighlighted) do
+      if highlighted then
+        table.insert(M.state.vehicle.partsSelected, M.initState.vehicle.partNameToIdx[part])
+      end
+    end
+  end
+  table.insert(M.state.vehicle.partsSelected, M.initState.vehicle.partNameToIdx[v.config.mainPartName])
+  sendState()
+end
+
+local function syncSelectedPartsWithPartsList()
+  obj:queueGameEngineLua("be:getPlayerVehicle(0):queueLuaCommand('bdebug.recievePartsDataFromPartsList('.. serialize(core_vehicle_partmgmt.getVehPartsData()) .. ')')")
 end
 
 -- Sets the text to display at a node using the node debug text visualization
@@ -2303,15 +2396,36 @@ local function init(savedState, newPartialState)
 
   railsLinksBeams = nil
 
-  if v.data.activeParts then
-    M.initState.vehicle.parts = tableKeysSorted(v.data.activeParts)
-    table.insert(M.initState.vehicle.parts, 1, "All")
-  end
-
   M.state = deepcopy(savedState or M.initState)
   tableMerge(M.state.vehicle, newPartialState.vehicle)
 
-  M.state.vehicle.parts = M.initState.vehicle.parts
+  if v.data.activeParts then
+    local currParts = tableKeysSorted(v.data.activeParts)
+    local tblsEqual = true
+    for k,v in ipairs(currParts) do
+      if M.state.vehicle.parts[k] ~= v then
+        tblsEqual = false
+        break
+      end
+    end
+    M.initState.vehicle.parts = currParts
+    for i=1, #M.initState.vehicle.parts do
+      local part = M.initState.vehicle.parts[i]
+      M.initState.vehicle.partNameToIdx[part] = i
+    end
+    if not tblsEqual then
+      -- Parts changed
+      M.state.vehicle.parts = deepcopy(M.initState.vehicle.parts)
+      table.clear(M.state.vehicle.partsSelected)
+      table.clear(M.state.vehicle.partNameToIdx)
+      for i=1, #M.initState.vehicle.parts do
+        local part = M.initState.vehicle.parts[i]
+        table.insert(M.state.vehicle.partsSelected, i)
+        M.state.vehicle.partNameToIdx[part] = i
+      end
+    end
+    M.initState.vehicle.partsSelected = deepcopy(M.state.vehicle.partsSelected)
+  end
 
   sendState()
 end
@@ -2332,8 +2446,10 @@ M.requestDrawnNodesGE = requestDrawnNodesGE
 M.requestDrawnBeamsGE = requestDrawnBeamsGE
 M.onPlayersChanged = onPlayersChanged
 M.setState = setState
-M.partSelectedChanged = partSelectedChanged
-M.showOnlySelectedPartMeshChanged = showOnlySelectedPartMeshChanged
+M.partsSelectedChanged = partsSelectedChanged
+M.showOnlySelectedPartsMeshChanged = showOnlySelectedPartsMeshChanged
+M.recievePartsDataFromPartsList = recievePartsDataFromPartsList
+M.syncSelectedPartsWithPartsList = syncSelectedPartsWithPartsList
 M.setNodeDebugText = setNodeDebugText
 M.clearNodeDebugText = clearNodeDebugText
 M.clearTypeNodeDebugText = clearTypeNodeDebugText

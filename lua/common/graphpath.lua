@@ -171,13 +171,25 @@ function Graphpath:edge(sp, ep, dist)
   end
 end
 
-function Graphpath:uniEdge(inNode, outNode, dist, drivability, speedLimit, lanes, oneWay, gated)
+function Graphpath:uniEdge(inNode, outNode, dist, drivability, speedLimit, lanes, oneWay, gated, inPos, inRad, outPos, outRad)
   dist = dist or 1
   if self.graph[inNode] == nil then
     self.graph[inNode] = {}
   end
 
-  local data = {len = dist, drivability = drivability, inNode = inNode, speedLimit = speedLimit, lanes = lanes, oneWay = oneWay, gated = gated} -- sp is the inNode of the edge
+  local data = {
+    len = dist,
+    drivability = drivability,
+    inNode = inNode,
+    outNode = outNode,
+    speedLimit = speedLimit,
+    lanes = lanes,
+    oneWay = oneWay,
+    gated = gated,
+    inPos = inPos,
+    inRadius = inRad,
+    outPos = outPos,
+    outRadius = outRad} -- sp is the inNode of the edge
 
   self.graph[inNode][outNode] = data
 
@@ -188,13 +200,25 @@ function Graphpath:uniEdge(inNode, outNode, dist, drivability, speedLimit, lanes
   self.graph[outNode][inNode] = data
 end
 
-function Graphpath:bidiEdge(inNode, outNode, dist, drivability, speedLimit, lanes, oneWay, gated)
+function Graphpath:bidiEdge(inNode, outNode, dist, drivability, speedLimit, lanes, oneWay, gated, inPos, inRad, outPos, outRad)
   dist = dist or 1
   if self.graph[inNode] == nil then
     self.graph[inNode] = {}
   end
 
-  local data = {len = dist, drivability = drivability, inNode = inNode, speedLimit = speedLimit, lanes = lanes, oneWay = oneWay, gated = gated} -- no inNode means edge is bidirectional
+  local data = {
+    len = dist,
+    drivability = drivability,
+    inNode = inNode,
+    outNode = outNode,
+    speedLimit = speedLimit,
+    lanes = lanes,
+    oneWay = oneWay,
+    gated = gated,
+    inPos = inPos,
+    inRadius = inRad,
+    outPos = outPos,
+    outRadius = outRad} -- sp is the inNode of the edge
 
   self.graph[inNode][outNode] = data
 
@@ -203,6 +227,18 @@ function Graphpath:bidiEdge(inNode, outNode, dist, drivability, speedLimit, lane
   end
 
   self.graph[outNode][inNode] = data
+end
+
+function Graphpath:getEdgePositions(n1id, n2id)
+  local edgeData = self.graph[n1id][n2id]
+  return edgeData[n1id == edgeData.inNode and 'inPos' or 'outPos'] or self.positions[n1id],
+         edgeData[n2id == edgeData.inNode and 'inPos' or 'outPos'] or self.positions[n2id]
+end
+
+function Graphpath:getEdgeRadii(n1id, n2id)
+  local edgeData = self.graph[n1id][n2id]
+  return edgeData[n1id == edgeData.inNode and 'inRadius' or 'outRadius'] or self.radius[n1id],
+         edgeData[n2id == edgeData.inNode and 'inRadius' or 'outRadius'] or self.radius[n2id]
 end
 
 function Graphpath:setPointPosition(p, pos)
@@ -396,6 +432,105 @@ function Graphpath:getPath(start, goal, dirMult)
   return invertPath(goal, road)
 end
 
+local function splitID(id, delim)
+  delim = delim or '\0'
+  local i = string.find(id, delim)
+  return string.sub(id, 1, i-1), string.sub(id, i+1, #id)
+end
+
+local function numOfLanesInDirection(lanes, dir)
+  -- lanes: a lane string
+  -- dir: '+' or '-'
+  dir = (not dir or dir == '+') and 43 or dir == '-' and 45
+  local lanesN = 0
+  for i = 1, #lanes, 1 do
+    if lanes:byte(i) == dir then
+      lanesN = lanesN + 1
+    end
+  end
+  return lanesN
+end
+
+function Graphpath:edgeLanesInDirection(fromNode, toNode)
+  if self.graph[fromNode][toNode].inNode == fromNode then
+    return numOfLanesInDirection(self.graph[fromNode][toNode].lanes, '+')
+  else
+    return numOfLanesInDirection(self.graph[fromNode][toNode].lanes, '-')
+  end
+end
+
+function Graphpath:getEdgePath(startEdge, goal, dirMult)
+  local graph = self.graph
+  local bNode, fNode = splitID(startEdge)
+  if not graph[bNode][fNode] or not graph[goal] then return end
+
+  local dirCoeff = {[true] = dirMult or 1, [false] = 1}
+
+  local cost, edge = 0, startEdge
+  local minParent = {[startEdge] = false}
+  local queued = {}
+  local road = {} -- predecessor subgraph
+  local goalEdge
+  local edgeId = {'','\0',''}
+
+  local q = newMinheap()
+  repeat
+    if road[edge] == nil then
+      road[edge] = minParent[edge]
+      bNode, fNode = splitID(edge)
+      if fNode == goal then
+        goalEdge = edge
+        break
+      end
+      edgeId[1] = fNode
+      for child, data in pairs(graph[fNode]) do
+        if child ~= bNode then
+          edgeId[3] = child
+          local childEdge = table.concat(edgeId)
+          if road[childEdge] == nil then -- if the shortest path to child has not already been found
+            local currentChildCost = queued[childEdge] -- lowest value with which child has entered the que
+            local newChildCost = cost + data.len * dirCoeff[self:edgeLanesInDirection(fNode, child) == 0]
+            if not currentChildCost or newChildCost < currentChildCost then
+              q:insert(newChildCost, childEdge)
+              minParent[childEdge] = edge
+              queued[childEdge] = newChildCost
+              dump('push que', childEdge, newChildCost, edge)
+            end
+          end
+        end
+      end
+      edgeId[1] = bNode
+      for child, data in pairs(graph[bNode]) do
+        if child ~= fNode then
+          edgeId[3] = child
+          local childEdge = table.concat(edgeId)
+          if road[childEdge] == nil then -- if the shortest path to child has not already been found
+            local currentChildCost = queued[childEdge] -- lowest value with which child has entered the que
+            local newChildCost = cost + data.len * dirCoeff[self:edgeLanesInDirection(bNode, child) == 0] + 1000
+            if not currentChildCost or newChildCost < currentChildCost then
+              q:insert(newChildCost, childEdge)
+              minParent[childEdge] = edge
+              queued[childEdge] = newChildCost
+              dump('push que', childEdge, newChildCost, edge)
+            end
+          end
+        end
+      end
+    end
+    cost, edge = q:pop()
+    dump('pop que', cost, edge)
+  until not cost
+
+  local edgePath = invertPath(goalEdge, road)
+
+  local path, _ = {}
+  for i = 1, #edgePath do
+    _, path[i] = splitID(edgePath[i])
+  end
+
+  return path, edgePath, road
+end
+
 function Graphpath:getPointNodePath(start, target, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
   -- Shortest path between a point and a node or vice versa.
   -- start/target: either start or target should be a node name, the other a vec3 point
@@ -504,9 +639,9 @@ function Graphpath:getPointNodePath(start, target, cutOffDrivability, dirMult, p
   return path
 end
 
-function Graphpath:getPointToPointPath(startPos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
-  -- startPos: path source position
-  -- startPosLinks: graph nodes closest (by some measure) to startPos to be used as links to it
+function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
+  -- sourcePos: path source position
+  -- startPosLinks: graph nodes closest (by some measure) to sourcePos to be used as links to it
   -- targetPos: target position (vec3)
   -- cutOffDrivability: penalize roads with drivability <= cutOffDrivability
   -- dirMult: penalty to be applied to an edge designated oneWay if it is traversed in opposite direction (should be larger than 1 typically >= 1e3-1e4).
@@ -514,21 +649,20 @@ function Graphpath:getPointToPointPath(startPos, iter, targetPos, cutOffDrivabil
   -- penaltyAboveCutoff: penalty multiplier for roads above the drivability cutoff
   -- penaltyBelowCutoff: penalty multiplier for roads below the drivability cutoff
   -- wZ: number (typically >= 1). When higher than 1 the destination node of optimum path will be biased towards minimizing height difference to targetPos.
-  if startPos == nil or targetPos == nil or startPos == targetPos then return {} end
+  if sourcePos == nil or targetPos == nil or sourcePos == targetPos then return {} end
 
-  local nextNode, nextCost, nextXnorm = iter() -- get the closest neighboor
-  if nextNode == nil then return {} end
+  local sourceNode, sourceCost, sourceXnorm = iter() -- get the closest neighboor to sourcePos
+  if sourceNode == nil then return {} end
 
   local minCost = table.new(0, 32)
-  minCost[nextNode] = nextCost
+  minCost[sourceNode] = sourceCost
   local xnorms = table.new(0, 32)
-  xnorms[nextNode] = nextXnorm
+  xnorms[sourceNode] = sourceXnorm
   local minParent = table.new(0, 32)
-  minParent[nextNode] = false
+  minParent[sourceNode] = false
 
-  local node, cost = nextNode, nextCost
-  nextNode, nextCost, nextXnorm = iter()
-  if nextNode == nil then return {} end
+  local node, cost = sourceNode, sourceCost
+  sourceNode, sourceCost, sourceXnorm = nil, nil, nil
 
   local graph = self.graph
   local positions = self.positions
@@ -542,22 +676,26 @@ function Graphpath:getPointToPointPath(startPos, iter, targetPos, cutOffDrivabil
   local drivCoeff = {[true] = penaltyAboveCutoff, [false] = penaltyBelowCutoff}
 
   local road = table.new(0, 32) -- initialize shortest paths linked list
-  local targetMinCost, targetMinCostLink = math.huge, nil
-  local p1, tmpVec, nodeToTargetVec = vec3(), vec3(), vec3()
+  local targetMinCost = square(square(sourcePos.x-targetPos.x) + square(sourcePos.y-targetPos.y) + square(wZ * (sourcePos.z-targetPos.z))) -- upper bound estimate for the path cost
+  local targetMinCostLink = nil
+  local nodePos, tmpVec, nodeToTargetVec = vec3(), vec3(), vec3()
 
   local tmpNode = table.new(0, 2)
-  local tmpEdge1Data = table.new(0, 3)
-  local tmpEdge2Data = table.new(0, 3)
+  local tmpEdge1Data = table.new(0, 4)
+  local tmpEdge2Data = table.new(0, 4)
 
   local q = newMinheap() -- initialize que
 
-  while cost do
-    if road[node] == nil then
-      road[node] = minParent[node]
+  repeat
+    if road[node] == nil then -- if the shortest path to this node has not already been found
+      road[node] = minParent[node] -- set predessesor of node in shortest path to node
       if node == targetPos then break end
 
-      local graphNode
-      if not graph[node] then
+      local nodeLinks
+      if graph[node] then
+        nodeLinks = graph[node]
+        nodePos:set(positions[node])
+      else
         local n1id, n2id = node[1], node[2]
         local edgeData = graph[n1id][n2id]
         local dist, driv, inNode, oneWay = edgeData.len, edgeData.drivability, edgeData.inNode, edgeData.oneWay
@@ -577,42 +715,43 @@ function Graphpath:getPointToPointPath(startPos, iter, targetPos, cutOffDrivabil
         tmpEdge2Data.oneWay = oneWay
         tmpNode[n2id] = tmpEdge2Data
 
-        graphNode = tmpNode
-        p1:setLerp(positions[n1id], positions[n2id], xnorm)
-      else
-        graphNode = graph[node]
-        p1:set(positions[node])
+        nodeLinks = tmpNode
+        nodePos:setLerp(positions[n1id], positions[n2id], xnorm)
       end
 
-      nodeToTargetVec:setSub2(targetPos, p1)
+      nodeToTargetVec:setSub2(targetPos, nodePos)
+      -- Cost of path if we were to go straight from this node to the target position
       local pathCost = cost + square(square(nodeToTargetVec.x) + square(nodeToTargetVec.y) + square(wZ * nodeToTargetVec.z))
+      -- if pathCost is lower than the current upper bound estimate insert the targetPos in que with this cost
       if pathCost < targetMinCost then
         q:insert(pathCost, targetPos)
-        targetMinCost = pathCost
-        minParent[targetPos] = node
+        targetMinCost = pathCost -- update upper bound estimate
+        minParent[targetPos] = node -- set node as the tentative predessesor of targetPos
         targetMinCostLink = nil
       end
 
       local parent = road[node]
-      for child, edgeData in pairs(graphNode) do
+      for child, edgeData in pairs(nodeLinks) do
         local edgeCost
         if road[child] == nil then -- if the shortest path to child has not already been found
           edgeCost = edgeData.len * dirCoeff[edgeData.oneWay and edgeData.inNode == child] * drivCoeff[edgeData.drivability > cutOffDrivability]
-          local pathCost = cost + edgeCost
-          local childMinCost = minCost[child]
-          if not childMinCost or pathCost < childMinCost then
-            q:insert(pathCost, child)
-            minCost[child] = pathCost
+          local pathToChildCost = cost + edgeCost
+          if pathToChildCost < (minCost[child] or math.huge) then
+            q:insert(pathToChildCost, child)
+            minCost[child] = pathToChildCost
             minParent[child] = node
           end
         end
+
+        -- Update targetMinCost if part of the edge between node and child can be used to reach targetPos.
         if cost < targetMinCost and child ~= parent then
-          tmpVec:setSub2(positions[child], p1) -- edgeVec
-          local xnorm = min(1, max(0, tmpVec:dot(nodeToTargetVec) / (tmpVec:squaredLength() + 1e-30)))
+          tmpVec:setSub2(positions[child], nodePos)
+          local xnorm = tmpVec:dot(nodeToTargetVec) / (tmpVec:squaredLength() + 1e-30)
           if xnorm > 0 and xnorm < 1 then
             tmpVec:setScaled(-xnorm)
-            tmpVec:setAdd(nodeToTargetVec) -- distToEdgeVec
-            pathCost = cost + (edgeCost or edgeData.len * dirCoeff[edgeData.oneWay and edgeData.inNode == child] * drivCoeff[edgeData.drivability > cutOffDrivability]) * xnorm +
+            tmpVec:setAdd(nodeToTargetVec) -- distance vector from targetPos to edge between node and child
+            pathCost = cost +
+                      (edgeCost or edgeData.len * dirCoeff[edgeData.oneWay and edgeData.inNode == child] * drivCoeff[edgeData.drivability > cutOffDrivability]) * xnorm +
                       square(square(tmpVec.x) + square(tmpVec.y) + square(wZ * tmpVec.z))
             if pathCost < targetMinCost then
               q:insert(pathCost, targetPos)
@@ -625,16 +764,20 @@ function Graphpath:getPointToPointPath(startPos, iter, targetPos, cutOffDrivabil
       end
     end
 
-    if (q:peekKey() or math.huge) <= (nextCost or math.huge) then
+    if not sourceNode then
+      sourceNode, sourceCost, sourceXnorm = iter()
+    end
+
+    if (q:peekKey() or math.huge) <= (sourceCost or math.huge) then
       cost, node = q:pop()
     else
-      minCost[nextNode] = nextCost
-      xnorms[nextNode] = nextXnorm
-      minParent[nextNode] = false
-      node, cost = nextNode, nextCost
-      nextNode, nextCost, nextXnorm = iter()
+      minCost[sourceNode] = sourceCost
+      xnorms[sourceNode] = sourceXnorm
+      minParent[sourceNode] = false
+      node, cost = sourceNode, sourceCost
+      sourceNode, sourceCost, sourceXnorm = nil, nil, nil
     end
-  end
+  until not node
 
   local path = {targetMinCostLink} -- last path node has to be added ad hoc
   local e = #path
@@ -644,6 +787,8 @@ function Graphpath:getPointToPointPath(startPos, iter, targetPos, cutOffDrivabil
     path[e] = target
     target = road[target]
   end
+
+  if e == 0 then return {} end -- shortest path does not use the road network
 
   -- add the starNode link to the path if it is not there
   if graph[path[e]] == nil then
@@ -672,16 +817,6 @@ local function numOfLanesFromRadius(rad1, rad2)
   return max(1, math.floor(min(rad1, rad2 or math.huge) * 2 / 3.45 + 0.5))
 end
 
-local function numOfLanesInDirection(lanes)
-  local lanesN = 0
-  for i = 1, #lanes, 1 do
-    if lanes:byte(i) == 43 then -- '+'
-      lanesN = lanesN + 1
-    end
-  end
-  return lanesN
-end
-
 -- return num of total lanes and lanes in the inNode to outNode dir
 function Graphpath:numOfEdgeLanes(inNode, outNode)
   local lanesN, inDirLanesN
@@ -691,7 +826,6 @@ function Graphpath:numOfEdgeLanes(inNode, outNode)
     for i = 1, lanesN, 1 do
       if edge.lanes:byte(i) == 43 then inDirLanesN = inDirLanesN + 1 end
     end
-    --lanesN = lanesN
   else -- make up some lane data in case they don't exist
     if edge.oneWay then
       lanesN = numOfLanesFromRadius(self.radius[inNode], self.radius[outNode])

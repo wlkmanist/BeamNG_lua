@@ -92,20 +92,19 @@ function onGraphicsStep(dtSim)
   electrics.updateGFX(dtSim)
   controller.updateGFX(dtSim)
   electrics.updateGFXSecondStep(dtSim)
-  material.updateGFX()
   extensions.hook("updateGFX", dtSim) -- must be before drivetrain, hydros and after electrics
+  hydros.updateGFX(dtSim) -- must be early for FFB, but after (input, electrics) and before props
   powertrain.updateGFX(dtSim)
   energyStorage.updateGFX(dtSim)
   drivetrain.updateGFX(dtSim)
   beamstate.updateGFX(dtSim) -- must be after drivetrain
   protocols.updateGFX(dtSim)
   sounds.updateGFX(dtSim)
-  hydros.updateGFX(dtSim) -- must be after (input, electrics) and before props
   thrusters.updateGFX() -- should be after extensions.hook
 
   if streams.hasActiveStreams() and obj:getUpdateUIflag() then
     guihooks.updateStreams = true
-    guihooks.frameUpdated()
+    guihooks.sendStreams()
   else
     guihooks.updateStreams = false
   end
@@ -114,7 +113,8 @@ function onGraphicsStep(dtSim)
     damageTracker.updateGFX(dtSim)
   end
 
-  props.update()
+  props.updateGFX() -- must be after hydros
+  material.updateGFX()
   fire.updateGFX(dtSim)
   recovery.updateGFX(dtSim)
   powertrain.updateGFXLastStage(dtSim)
@@ -128,6 +128,7 @@ function onDebugDraw(x, y, z)
   ai.debugDraw(focusPos)
   beamstate.debugDraw(focusPos)
   controller.debugDraw(focusPos)
+  hydros.debugDraw()
   extensions.hook("onDebugDraw", focusPos)
 
   if playerInfo.anyPlayerSeated then

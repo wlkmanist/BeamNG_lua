@@ -3,16 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-  "editor_dynamicDecals_browser",
-  "editor_dynamicDecals_layerTypes_decal",
-  "editor_dynamicDecals_docs",
-  "editor_dynamicDecals_selection",
-  "editor_dynamicDecals_notification",
-  "editor_dynamicDecals_helper",
-  "editor_api_dynamicDecals_textures"
-}
 local logTag = "editor_dynamicDecals_textures"
 local im = ui_imgui
 
@@ -184,7 +174,7 @@ local function drawTextureTiles(textureFilePaths, textureFilter, disableVirtualS
         im.Image(editor.getTempTextureObj(filePath).texId, im.ImVec2(64, 64), im.ImVec2Zero, im.ImVec2One)
         im.EndDragDropSource()
       end
-      im.tooltip(string.format("%s\nLMB to select texture\nCtrl+LMB Add texture to selection\nRMB to open context menu", fileName))
+      im.tooltip(string.format("%s\nDouble-click to set texture as color texture\nLMB to select texture\nCtrl+LMB Add texture to selection\nRMB to open context menu", fileName))
       im.SameLine()
       if im.GetContentRegionAvailWidth() < thumbnailSize then
         im.NewLine()
@@ -282,6 +272,14 @@ local function inspectorGui(inspectorInfo)
       end
       im.NextColumn()
 
+      im.TextUnformatted("SDF compatible")
+      im.NextColumn()
+      im.SetNextItemWidth(im.GetContentRegionAvailWidth())
+      if im.Checkbox("##dynDecalTexturesInspector_isSdfCompatible", editor.getTempBool_BoolBool(bulkChangeTemplate.isSdfCompatible)) then
+        bulkChangeTemplate.isSdfCompatible = editor.getTempBool_BoolBool()
+      end
+      im.NextColumn()
+
       im.TextUnformatted("tags")
       im.NextColumn()
 
@@ -334,10 +332,11 @@ local function inspectorGui(inspectorInfo)
       if im.Button("Apply##dynDecalTexturesInspector_bulkChange") then
         for _, f in ipairs(sel) do
           selectedTexturesSidecarContent[f].type = bulkChangeTemplate.type
+          selectedTexturesSidecarContent[f].isSdfCompatible = bulkChangeTemplate.isSdfCompatible
           selectedTexturesSidecarContent[f].tags = bulkChangeTemplate.tags
           selectedTexturesSidecarContent[f].vehicle = bulkChangeTemplate.vehicle
 
-          textures.updateSidecarFile(selectedTexturesSidecarContent[f].path, selectedTexturesSidecarContent[f])
+          textures.updateSidecarFile(f, selectedTexturesSidecarContent[f])
         end
       end
       im.Separator()
@@ -361,19 +360,6 @@ local function inspectorGui(inspectorInfo)
         im.SetCursorPos(cpos)
         im.NextColumn()
 
-        local dir, filename, ext = path.split(selectedTexturesSidecarContent[file].path)
-        im.TextUnformatted("dir")
-        im.NextColumn()
-        im.TextUnformatted(dir)
-        im.NextColumn()
-        im.NextColumn()
-
-        im.TextUnformatted("filename")
-        im.NextColumn()
-        im.TextUnformatted(filename)
-        im.NextColumn()
-        im.NextColumn()
-
         im.TextUnformatted("texture resolution")
         im.NextColumn()
         im.TextUnformatted(string.format("x: %d y: %d", img.size.x, img.size.y))
@@ -383,8 +369,17 @@ local function inspectorGui(inspectorInfo)
         im.TextUnformatted("type")
         im.NextColumn()
         im.SetNextItemWidth(im.GetContentRegionAvailWidth())
-        if im.Combo2("##dynDecalTexturesInspector_type", editor.getTempInt_NumberNumber(selectedTexturesSidecarContent[file].type), "greyscale\0color\0sdf\0\0") then
+        if im.Combo2("##dynDecalTexturesInspector_type", editor.getTempInt_NumberNumber(selectedTexturesSidecarContent[file].type), "greyscale\0color\0\0") then
           selectedTexturesSidecarContent[file].type = editor.getTempInt_NumberNumber()
+        end
+        im.NextColumn()
+        im.NextColumn()
+
+        im.TextUnformatted("SDF compatible")
+        im.NextColumn()
+        im.SetNextItemWidth(im.GetContentRegionAvailWidth())
+        if im.Checkbox("##dynDecalTexturesInspector_isSdfCompatible", editor.getTempBool_BoolBool(selectedTexturesSidecarContent[file].isSdfCompatible)) then
+          selectedTexturesSidecarContent[file].isSdfCompatible = editor.getTempBool_BoolBool()
         end
         im.NextColumn()
         im.NextColumn()
@@ -441,11 +436,11 @@ local function inspectorGui(inspectorInfo)
         im.Columns(1, "dynDecalTexturesInspectorColumns")
 
         if im.Button("Apply##dynDecalTexturesInspector_" .. file) then
-          textures.updateSidecarFile(selectedTexturesSidecarContent[file].path, selectedTexturesSidecarContent[file])
+          textures.updateSidecarFile(file, selectedTexturesSidecarContent[file])
         end
         im.SameLine()
         if im.Button("Cancel##dynDecalTexturesInspector_" .. file) then
-          selectedTexturesSidecarContent[file] = textures.readSidecarFile(selectedTexturesSidecarContent[file].path)
+          selectedTexturesSidecarContent[file] = textures.readSidecarFile(file)
         end
 
         im.TreePop()

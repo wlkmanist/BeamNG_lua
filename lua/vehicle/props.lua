@@ -9,9 +9,8 @@ local breakGroupMap = {}
 local deformGroupMap = {}
 local min, max = math.min, math.max
 
-local function updateProp(prop)
-  local val = prop.dataValue
-  if val == nil or not prop.pid then return end
+local function updateProp(val, prop)
+  if not prop.pid then return end
   --convert any possible bools to 0/1
   val = type(val) ~= "boolean" and val or (val and 1 or 0)
   local pt = prop.translation
@@ -19,17 +18,17 @@ local function updateProp(prop)
   obj:propUpdate(prop.pid, pt.x, pt.y, pt.z, pr.x, pr.y, pr.z, not prop.hidden, val, min(max(val * prop.multiplier, prop.min), prop.max) + prop.offset)
 end
 
-local function update()
+local function updateGFX()
+  local evals = electrics.values
   for i = 0, propEnd do
     local prop = props[i]
     if not prop.disabled then
-      prop.dataValue = electrics.values[prop.func] or 0
-      updateProp(prop)
+      updateProp(evals[prop.func] or 0, prop)
     end
   end
 end
 
-M.update = nop
+M.updateGFX = nop
 local function reset()
   props = v.data.props
   if not props or props[0] == nil then
@@ -44,14 +43,13 @@ local function reset()
   if propEnd < 0 then
     return
   end
-  M.update = update
+  M.updateGFX = updateGFX
 
   for i = 0, propEnd do
     local prop = props[i]
 
     prop.disabled = false
     prop.hidden = false
-    prop.dataValue = nil
 
     if prop.breakGroup ~= nil then
       local breakGroups = type(prop.breakGroup) == "table" and prop.breakGroup or {prop.breakGroup}
@@ -85,8 +83,7 @@ local function disablePropsInDeformGroup(deformGroup)
       if not prop.disabled then
         prop.disabled = true
         prop.hidden = true
-        prop.dataValue = 0
-        updateProp(prop)
+        updateProp(0, prop)
       end
     end
     deformGroupMap[deformGroup] = nil
@@ -100,8 +97,7 @@ local function hidePropsInBreakGroup(breakGroup)
         -- log('D', "props.hidePropsInBreakGroup", "prop hidden: ".. tostring(breakGroup))
         prop.disabled = true
         prop.hidden = true
-        prop.dataValue = 0
-        updateProp(prop)
+        updateProp(0, prop)
       end
     end
     breakGroupMap[breakGroup] = nil

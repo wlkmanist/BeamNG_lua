@@ -30,7 +30,7 @@ local function createActionTemplate(templateNames, actionWhitelist, actionBlackL
   return template
 end
 
-actionTemplates.vehicleTeleporting = {"dropPlayerAtCamera", "dropPlayerAtCameraNoReset", "recover_vehicle", "recover_vehicle_alt", "recover_to_last_road", "reload_vehicle", "reload_all_vehicles", "loadHome", "saveHome", "reset_all_physics", "goto_checkpoint", "set_checkpoint"} -- no "reset_physics" as this is often used as a normal reset in scenarios
+actionTemplates.vehicleTeleporting = {"dropPlayerAtCamera", "dropPlayerAtCameraNoReset", "recover_vehicle", "recover_vehicle_alt", "recover_to_last_road", "reload_vehicle", "reload_all_vehicles", "loadHome", "saveHome", "reset_all_physics" } -- no "reset_physics" as this is often used as a normal reset in scenarios
 actionTemplates.vehicleMenues = {"vehicle_selector", "parts_selector", "vehicledebugMenu"}
 actionTemplates.physicsControls = {"slower_motion", "faster_motion", "toggle_slow_motion", "nodegrabberAction", "nodegrabberGrab", "nodegrabberRender", "nodegrabberStrength"}
 actionTemplates.aiControls = {"toggleTraffic", "toggleAITraffic"}
@@ -43,7 +43,7 @@ end
 actionTemplates.gameCam = {"camera_1","camera_10","camera_2","camera_3","camera_4","camera_5","camera_6","camera_7","camera_8","camera_9", "center_camera", "look_back", "rotate_camera_down","rotate_camera_horizontal", "rotate_camera_hz_mouse", "rotate_camera_left", "rotate_camera_right", "rotate_camera_up", "rotate_camera_vertical", "rotate_camera_vt_mouse", "switch_camera_next", "switch_camera_prev", "changeCameraSpeed", "movedown", "movefast", "moveup", "rollAbs", "xAxisAbs", "yAxisAbs", "yawAbs", "zAxisAbs", "pitchAbs"}
 actionTemplates.funStuff = {"forceField", "funBoom", "funBreak", "funExtinguish", "funFire", "funHinges", "funTires", "funRandomTire"}
 actionTemplates.walkingMode = {"toggleWalkingMode"}
-actionTemplates.photoMode = {"openPhotomode", "photomode"}
+actionTemplates.photoMode = {"photomode"}
 actionTemplates.trackBuilder = {"toggleTrackBuilder"}
 actionTemplates.bigMap = {"toggleBigMap"}
 actionTemplates.couplers = {"couplersLock", "couplersToggle", "couplersUnlock"}

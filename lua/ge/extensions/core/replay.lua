@@ -8,15 +8,8 @@ local max = math.max
 local M = { state = {} }
 M.state.speed = 1 -- playback speed indicator
 local speeds = {1/1000, 1/500, 1/200, 1/100, 1/50, 1/32, 1/16, 1/8, 1/4, 1/2, 3/4, 1.0, 1.5, 2, 4, 8}
-M.state.jumpOffset = 0 -- how many seconds the replay will jump (when the user stops requesting for more jumps)
-local jumpStart = 0 -- reference point, on top of which we will apply whatever jump length is decided after the timeout
-local jumpTimeout = 0.35 -- time to perform jump after user stopped pressing buttons
 local autoReplayRunning = false
 local autoReplayPath = "replays/autoReplay/"
--- position (in seconds) where the current jump request would land, if it was executed
-local function getJumpPositionSeconds()
-  return max(0, min(M.state.totalSeconds, jumpStart + M.state.jumpOffset))
-end
 
 local function getFileStream()
   if not be then return end
@@ -42,7 +35,7 @@ end
 
 local function stateChanged(loadedFile, positionSeconds, totalSeconds, speed, paused, fpsPlay, fpsRec, statestr, framePositionSeconds)
   if M.state.state ~= statestr then
-    if statestr == 'playing' then -- we are in playback now
+    if statestr == 'playback' then -- we are in playback now
       local o = scenetree.findObject("VehicleCommonActionMap")
       if o then o:setEnabled(false) end
       o = scenetree.findObject("VehicleSpecificActionMap")
@@ -58,9 +51,8 @@ local function stateChanged(loadedFile, positionSeconds, totalSeconds, speed, pa
       if o then o:setEnabled(true) end
     end
   end
-  if statestr == 'playing' and M.state.jumpOffset ~= 0 then positionSeconds = getJumpPositionSeconds() end
   -- speed: we lose some precission on the way to C++ and back, round it a bit
-  M.state = {loadedFile = loadedFile, positionSeconds = positionSeconds, totalSeconds = totalSeconds, speed = round(speed*1000)/1000, paused = paused, fpsPlay = fpsPlay, fpsRec = fpsRec, state = statestr, framePositionSeconds = framePositionSeconds, jumpOffset = M.state.jumpOffset}
+  M.state = {loadedFile = loadedFile, positionSeconds = positionSeconds, totalSeconds = totalSeconds, speed = round(speed*1000)/1000, paused = paused, fpsPlay = fpsPlay, fpsRec = fpsRec, state = statestr, framePositionSeconds = framePositionSeconds}
   guihooks.trigger('replayStateChanged', M.state)
   extensions.hook("onReplayStateChanged", M.state)
 end
@@ -140,7 +132,7 @@ local function pause(v)
   local stream = getFileStream()
   if not stream then return end
 
-  if M.state.state ~= 'playing' then return end
+  if M.state.state ~= 'playback' then return end
   stream:setPaused(v)
 end
 
@@ -157,11 +149,11 @@ local function togglePlay()
   local stream = getFileStream()
   if not stream then return end
 
-  if M.state.state == 'idle' then
+  if M.state.state == 'inactive' then
     stream:setPaused(false)
     local ret = stream:play(M.state.loadedFile)
     if ret ~= 0 then displayMsg("error", "replay.playError", {filename=M.state.loadedFile}) end
-  elseif M.state.state == 'playing' then
+  elseif M.state.state == 'playback' then
     stream:setPaused(not M.state.paused)
   else
     log("E","",'Will not toggle play from state: '..dumps(M.state.state))
@@ -220,7 +212,7 @@ local function toggleRecording(autoplayAfterStopping, isAutoReplay)
       ui_message(isAutoReplay and "stopAutoReplayRecording" or "replay.stopRecording", 5, "replay", "local_movies")
       stream:stop()
     end
-  elseif M.state.state == 'playing' then
+  elseif M.state.state == 'playback' then
     stop()
   else
     if not isAutoReplay and autoReplayRunning then
@@ -249,34 +241,30 @@ local function toggleAutomaticRecording()
   toggleRecording(false, true)
 end
 
-local function seek(time)
+local function seek(percent)
   local stream = getFileStream()
   if not stream then return end
 
-  if M.state.state ~= 'playing' then return end
-  local jumpPosition = max(0, min(1, time))
-  stream:seek(jumpPosition)
+  if M.state.state ~= 'playback' then return end
+  stream:seek(max(0, min(1, percent)))
 end
 
-local now = 0
-local jumpRequestTime = 0
-local function jump(offset)
-  if M.state.state ~= 'playing' then return end
-  jumpRequestTime = now
-  if M.state.jumpOffset == 0 then jumpStart = M.state.positionSeconds end
-  M.state.jumpOffset = M.state.jumpOffset + offset
-  ui_message({txt="replay.jump", context={seconds=M.state.jumpOffset}}, 2, "replay", "local_movies")
+local function jumpFrames(offset)
+  --dump{'jumpFrames', offset}
+  local stream = getFileStream()
+  if not stream then return end
+  stream:setPaused(true)
+  stream:stepFrames(offset)
+  ui_message({txt="replay.jumpFrames", context={frameCount=offset}}, 2, "replay", "local_movies")
 end
 
-local function onUpdate(dtReal, dtSim, dtRaw)
-  now = now + dtRaw
-  if M.state.jumpOffset ~= 0 then
-    local timeSinceJumpRequested = now - jumpRequestTime
-    if timeSinceJumpRequested > jumpTimeout then
-      seek(getJumpPositionSeconds()/M.state.totalSeconds)
-      M.state.jumpOffset = 0
-    end
-  end
+local function jumpTime(timeDiffInSeconds)
+  --dump{'jumpTime', timeDiffInSeconds}
+  local stream = getFileStream()
+  if not stream then return end
+  stream:setPaused(true)
+  stream:stepTime(timeDiffInSeconds)
+  ui_message({txt="replay.jump", context={seconds=timeDiffInSeconds}}, 2, "replay", "local_movies")
 end
 
 local function openReplayFolderInExplorer()
@@ -287,13 +275,24 @@ local function openReplayFolderInExplorer()
 end
 
 local function onClientEndMission(levelPath)
-  if M.state.state == 'playing' and not M.requestedStartLevel then
+  if M.state.state == 'playback' and not M.requestedStartLevel then
     log("I", "", string.format("Stopping replay playback. Reason: level changed from \"%s\" to \"%s\"", getLoadedFile(), levelPath))
     displayMsg("info", "replay.stopPlayback")
     stop()
   end
   M.requestedStartLevel = nil
 end
+
+-- TODO:
+--local function onDrawDebug(lastDebugFocusPos, dtReal, dtSim, dtRaw)
+  -- 1) get the current replay frame (current VehicleState)
+  --    > getCurrentStateReplayNodeCount(vehId)
+  --    > getCurrentStateReplayNodePosition(vehId, x)
+  -- local vdata = extensions.core_vehicle_manager.getVehicleData(vid).vdata
+  -- -> iterate through the nodes and beams and debug draw them
+  -- 2) figure out the bdebug mode? beams? nodes?
+  -- 3) custom draw the things
+--end
 
 local function startLevel(levelPath)
   M.requestedStartLevel = true
@@ -302,7 +301,6 @@ end
 
 -- public interface
 M.onInit = onInit
-M.onUpdate = onUpdate
 M.onClientEndMission = onClientEndMission
 M.startLevel = startLevel
 
@@ -319,7 +317,10 @@ M.loadFile = loadFile
 M.stop = stop
 M.pause = pause
 M.seek = seek -- [0..1] normalized position to seek to
-M.jump = jump -- how many integer steps back/forth to seek ahead/back
+M.jumpTime = jumpTime
+-- M.jump is replaced by M.jumpTime and M.jumpFrames
+M.jump = jumpFrames
+M.jumpFrames = jumpFrames
 M.openReplayFolderInExplorer = openReplayFolderInExplorer
 M.displayMsg = displayMsg
 M.getPositionSeconds = getPositionSeconds
@@ -327,5 +328,6 @@ M.getTotalSeconds = getTotalSeconds
 M.getState = getState
 M.isPaused = isPaused
 M.getLoadedFile = getLoadedFile
+--M.onDrawDebug = onDrawDebug -- TODO
 
 return M

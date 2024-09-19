@@ -142,7 +142,7 @@ local function onEditorGui()
     end
     if tabNo == 2 then
       drawResetButton("gizmos.visualization.visible")
-      local classes = worldEditorCppApi.getObjectClassNames()
+      local classes = worldEditorCppApi.getRenderableObjectClassNames()
       for _, name in ipairs(classes) do
         local visible = im.BoolPtr(editor.getObjectTypeVisible(name))
         if displayType(name) then
@@ -159,7 +159,7 @@ local function onEditorGui()
     end
     if tabNo == 3 then
       drawResetButton("gizmos.visualization.selectable")
-      local classes = worldEditorCppApi.getObjectClassNames()
+      local classes = worldEditorCppApi.getRenderableObjectClassNames()
       for _, name in ipairs(classes) do
         local selectable = im.BoolPtr(editor.getObjectTypeSelectable(name))
         if displayType(name) then
@@ -281,6 +281,7 @@ local renderDebugFlags = {
   FlagsDebugLayerCount = bit.lshift(1,14),
   FlagsDebugNormalsWS = bit.lshift(1,15),
   FlagsDebugEmissive = bit.lshift(1,16),
+  FlagsDebugTriangleSize = bit.lshift(1,17),
 }
 
 local function materialDebugSetter(flag)
@@ -321,6 +322,10 @@ local function onEditorInitialized()
   --editor.registerVisualizationType({type = editor.varTypes.ConVar, name = "$Trigger::renderTriggers", displayName = "Triggers"})
   --editor.registerVisualizationType({type = editor.varTypes.ConVar, name = "$PhysicalZone::renderZones", displayName = "PhysicalZones"})
 
+  editor.registerVisualizationType({type = editor.varTypes.ConVar, name = "$Nav::Editor::renderMesh", displayName = "NavMesh"})
+  editor.registerVisualizationType({type = editor.varTypes.ConVar, name = "$Nav::Editor::renderPortals", displayName = "NavMesh portals"})
+  editor.registerVisualizationType({type = editor.varTypes.ConVar, name = "$Nav::Editor::renderBVTree", displayName = "NavMesh bounding volume (BV) tree"})
+
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "ShadowMapPass.disableShadows", displayName = "Disable Shadows", callback = ShadowMapManager.updateShadowDisable})
 
   editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_LightColorVisualizeVar", displayName = "Advanced Lighting: Light Color Viz",
@@ -350,6 +355,9 @@ local function onEditorInitialized()
     {type = editor.varTypes.Custom, name = "Material_None", displayName = "None",
       setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugNone) end,
       getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugNone end},
+    {type = editor.varTypes.Custom, name = "Material_TriSize", displayName = "Triangle size",
+      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugTriangleSize) end,
+      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugTriangleSize end},
     {type = editor.varTypes.Custom, name = "Material_BaseColor", displayName = "Base Color",
       setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugBaseColor) end,
       getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugBaseColor end},

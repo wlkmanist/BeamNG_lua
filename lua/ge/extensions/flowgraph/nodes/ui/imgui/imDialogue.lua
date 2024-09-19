@@ -15,10 +15,13 @@ C.description = "Opens an imgui window with some text and buttons."
 C.category = 'repeat_instant'
 C.behaviour = { singleActive = true }
 C.todo = "Showing two of these at the same time will break everything."
+
 C.pinSchema = {
   { dir = 'in', type = 'string', name = 'title', description = 'Defines the title of the window.' },
   { dir = 'in', type = 'string', name = 'description', description = 'Defines the description of the window.' },
 }
+
+C.tags = {'imgui'}
 
 function C:init()
   self.options = { "accept", "decline" }

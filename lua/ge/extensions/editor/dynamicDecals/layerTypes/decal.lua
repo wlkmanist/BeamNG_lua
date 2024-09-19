@@ -3,16 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-  "editor_dynamicDecals_brushes",
-  "editor_dynamicDecals_inspector",
-  "editor_dynamicDecals_inspector_utils",
-  "editor_dynamicDecals_helper",
-  "editor_dynamicDecals_docs",
-  "editor_dynamicDecals_widgets",
-  "editor_dynamicDecals_fonts",
-}
 local logTag = "editor_dynamicDecals_layerTypes_decal"
 local im = ui_imgui
 
@@ -22,6 +12,7 @@ local fontCharacterSelectionWindowName = logTag .. "_fontCharacterSelectionWindo
 local tool = nil
 -- reference to the dynamics decal api
 local api = nil
+local texturesApi = nil
 local brushes = nil
 local inspector = nil
 local inspectorUtils = nil
@@ -39,26 +30,25 @@ local lockAlphaMaskOffsetRatio = false
 local mirrorDebugProperty = nil
 local mirrorOffsetProperty = nil
 
-local sdfPropertiesEnabled = false
 local sdfIntroWindowName = "Dynamic Decals - SDF Introduction"
 local sdfModalHasBeenClosed = false
 local highlightSdfProperties = false
-local sdfExplanationText = [[
-Signed Distance Fields (SDF) brings a range of improvements, allowing you to create more complex decals with ease.
+local sdfExplanationTextWidget = function()
+  im.TextUnformatted("Signed Distance Fields (SDF) brings a range of improvements, allowing you to create more complex decals with ease.")
+  im.NewLine()
+  im.TextUnformatted("What are Signed Distance Fields?")
+  im.NewLine()
+  im.TextUnformatted("Signed Distance Fields are mathematical representations used in computer graphics to describe the shape of objects or regions. In the context of decals, SDF allows us to precisely define the boundaries and characteristics of decals.")
+  im.NewLine()
+  im.TextUnformatted("Benefits of SDF for Decals:")
+  im.BulletText("Crisp Outlines: With SDF, you can effortlessly add crisp outlines to your decals.\nThe distance information provided by SDF enables accurate edge detection, ensuring your outlines appear sharp and well-defined.")
+  im.BulletText("Feathered Edges: SDF empowers you to achieve smooth and feathered edges in your decals.\nBy leveraging the distance values, you can create gradual transitions between the decal and the underlying surface, resulting in a more natural and visually appealing appearance.")
+  im.BulletText("Differently Colored Outlines: With SDF, you can easily add outlines of different colors to your decals.")
+  im.BulletText("Efficient Storage: SDF textures can be significantly smaller in size compared to normal textures.\nThe compact representation of shapes in SDF allows for efficient storage and reduced memory usage, enabling you to store a larger variety of decals without sacrificing performance or storage capacity.")
 
-What are Signed Distance Fields?
-Signed Distance Fields are mathematical representations used in computer graphics to describe the shape of objects or regions.
-In the context of decals, SDF allows us to precisely define the boundaries and characteristics of decals.
-
-Benefits of SDF for Decals:
-
-  * Crisp Outlines: With SDF, you can effortlessly add crisp outlines to your decals. The distance information provided by SDF enables accurate edge detection, ensuring your outlines appear sharp and well-defined.
-  * Feathered Edges: SDF empowers you to achieve smooth and feathered edges in your decals. By leveraging the distance values, you can create gradual transitions between the decal and the underlying surface, resulting in a more natural and visually appealing appearance.
-  * Differently Colored Outlines: With SDF, you can easily add outlines of different colors to your decals.
-  * Efficient Storage: SDF textures can be significantly smaller in size compared to normal textures. The compact representation of shapes in SDF allows for efficient storage and reduced memory usage, enabling you to store a larger variety of decals without sacrificing performance or storage capacity.
-
-Experiment with these features by checking out the SDF properties in the 'Decal Properties' section.
-]]
+  im.NewLine()
+  im.TextUnformatted("Experiment with these features by by enaling SDF and checking out the SDF properties in the 'Decal Properties' section.")
+end
 
 local blendModesNamesCharPtr = nil
 local meshesFilter = im.ImGuiTextFilter()
@@ -75,19 +65,20 @@ local function setPropertyInChildrenRec(layer, property, value)
 end
 
 M.isTexturesSdfCompatible = function(texturePath)
-  local _, filename, _ = path.split(api.getDecalTexturePath("color"))
-  if texturePath then filename = texturePath end
-  return string.find(string.lower(filename), "sdf")
+  local file = texturePath or api.getDecalTexturePath("color")
+  local metaData = texturesApi.readSidecarFile(file)
+  if metaData and metaData.isSdfCompatible then
+    return true
+  else
+    return false
+  end
 end
 
 M.checkColorDecalTexturesSdfCompatible = function()
   if M.isTexturesSdfCompatible() then
-    sdfPropertiesEnabled = true
     if (sdfModalHasBeenClosed == false and editor.getPreference("dynamicDecalsTool.decalProperties.doNotShowSdfIntroAgain") == false) then
       M.showSdfIntroWindow()
     end
-  else
-    sdfPropertiesEnabled = false
   end
 end
 
@@ -418,21 +409,11 @@ local function inspectLayerGui(layer, guiId)
   im.NextColumn()
   if im.Checkbox(string.format("##%s_%s_%s", layer.uid, guiId, "useSurfaceNormal"), editor.getTempBool_BoolBool(layer.useSurfaceNormal)) then
     layer.useSurfaceNormal = editor.getTempBool_BoolBool()
-    -- ALERT
+    -- TODO / FIXME
+    -- ALERT WEEE WOOO WEEE WOOO
     -- This is a hack. The decal matrix is not recalculated for this layer as long as it has the 'decalPos' and 'decalNorm' field.
     layer.decalPos = nil
     layer.decalNorm = nil
-    api.setLayer(layer, true)
-  end
-  im.NextColumn()
-
-  im.PushItemWidth(im.GetContentRegionAvailWidth())
-  if editor.uiSliderFloat2(string.format("##%s_%s_%s", layer.uid, guiId, "colorTextureScale"), editor.getTempFloatArray2_TableTable({layer.colorTextureScale.x, layer.colorTextureScale.y}), 0.01, 6.0, nil, nil, editor.getTempBool_BoolBool(false)) then
-    local value = editor.getTempFloatArray2_TableTable()
-    layer.colorTextureScale = Point2F(value[1], value[2])
-  end
-  im.PopItemWidth()
-  if editor.getTempBool_BoolBool() == true then
     api.setLayer(layer, true)
   end
   im.NextColumn()
@@ -547,69 +528,79 @@ local function inspectLayerGui(layer, guiId)
   end
   im.NextColumn()
 
-  if layer.sdfThickness then
-    im.TextUnformatted("SDF thickness")
-    im.NextColumn()
-    im.PushItemWidth(im.GetContentRegionAvailWidth())
-    if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfThickness"), editor.getTempFloat_NumberNumber(layer.sdfThickness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
-      layer.sdfThickness = editor.getTempFloat_NumberNumber()
-    end
-    im.PopItemWidth()
-    if editor.getTempBool_BoolBool() == true then
-      api.setLayer(layer, true)
-    end
-    im.NextColumn()
-
-    im.TextUnformatted("SDF softness")
-    im.NextColumn()
-    im.PushItemWidth(im.GetContentRegionAvailWidth())
-    if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfSoftness"), editor.getTempFloat_NumberNumber(layer.sdfSoftness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
-      layer.sdfSoftness = editor.getTempFloat_NumberNumber()
-    end
-    im.PopItemWidth()
-    if editor.getTempBool_BoolBool() == true then
-      api.setLayer(layer, true)
-    end
-    im.NextColumn()
-
-    im.TextUnformatted("sdf outline color")
-    im.NextColumn()
-    im.PushItemWidth(im.GetContentRegionAvailWidth())
-    local sdfOutlineColorTbl = layer.sdfOutlineColor:toTable()
-    if editor.uiColorEdit4(string.format("##%s_%s_%s", layer.uid, guiId, "sdfOutlineColor"), editor.getTempFloatArray3_TableTable({sdfOutlineColorTbl[1]/255, sdfOutlineColorTbl[2]/255, sdfOutlineColorTbl[3]/255}), nil, editor.getTempBool_BoolBool(false)) then
-      local value = editor.getTempFloatArray3_TableTable()
-      layer.sdfOutlineColor = ColorI(value[1] * 255, value[2] * 255, value[3] * 255, 255)
-    end
-    im.PopItemWidth()
-    if editor.getTempBool_BoolBool() == true then
-      api.setLayer(layer, true)
-    end
-    im.NextColumn()
-
-    im.TextUnformatted("SDF outline thickness")
-    im.NextColumn()
-    im.PushItemWidth(im.GetContentRegionAvailWidth())
-    if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfOutlineThickness"), editor.getTempFloat_NumberNumber(layer.sdfOutlineThickness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
-      layer.sdfOutlineThickness = editor.getTempFloat_NumberNumber()
-    end
-    im.PopItemWidth()
-    if editor.getTempBool_BoolBool() == true then
-      api.setLayer(layer, true)
-    end
-    im.NextColumn()
-
-    im.TextUnformatted("SDF outline softness")
-    im.NextColumn()
-    im.PushItemWidth(im.GetContentRegionAvailWidth())
-    if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfOutlineSoftness"), editor.getTempFloat_NumberNumber(layer.sdfOutlineSoftness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
-      layer.sdfOutlineSoftness = editor.getTempFloat_NumberNumber()
-    end
-    im.PopItemWidth()
-    if editor.getTempBool_BoolBool() == true then
-      api.setLayer(layer, true)
-    end
-    im.NextColumn()
+  -- SDF
+  im.TextUnformatted("SDF enabled")
+  im.NextColumn()
+  if im.Checkbox(string.format("##%s_%s_%s", layer.uid, guiId, "sdfEnabled"), editor.getTempBool_BoolBool(layer.sdfEnabled)) then
+    layer.sdfEnabled = editor.getTempBool_BoolBool()
+    api.setLayer(layer, true)
   end
+  im.NextColumn()
+
+  if layer.sdfEnabled == false then im.BeginDisabled() end
+  im.TextUnformatted("SDF thickness")
+  im.NextColumn()
+  im.PushItemWidth(im.GetContentRegionAvailWidth())
+  if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfThickness"), editor.getTempFloat_NumberNumber(layer.sdfThickness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
+    layer.sdfThickness = editor.getTempFloat_NumberNumber()
+  end
+  im.PopItemWidth()
+  if editor.getTempBool_BoolBool() == true then
+    api.setLayer(layer, true)
+  end
+  im.NextColumn()
+
+  im.TextUnformatted("SDF softness")
+  im.NextColumn()
+  im.PushItemWidth(im.GetContentRegionAvailWidth())
+  if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfSoftness"), editor.getTempFloat_NumberNumber(layer.sdfSoftness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
+    layer.sdfSoftness = editor.getTempFloat_NumberNumber()
+  end
+  im.PopItemWidth()
+  if editor.getTempBool_BoolBool() == true then
+    api.setLayer(layer, true)
+  end
+  im.NextColumn()
+
+  im.TextUnformatted("sdf outline color")
+  im.NextColumn()
+  im.PushItemWidth(im.GetContentRegionAvailWidth())
+  local sdfOutlineColorTbl = layer.sdfOutlineColor:toTable()
+  if editor.uiColorEdit4(string.format("##%s_%s_%s", layer.uid, guiId, "sdfOutlineColor"), editor.getTempFloatArray3_TableTable({sdfOutlineColorTbl[1]/255, sdfOutlineColorTbl[2]/255, sdfOutlineColorTbl[3]/255}), nil, editor.getTempBool_BoolBool(false)) then
+    local value = editor.getTempFloatArray3_TableTable()
+    layer.sdfOutlineColor = ColorI(value[1] * 255, value[2] * 255, value[3] * 255, 255)
+  end
+  im.PopItemWidth()
+  if editor.getTempBool_BoolBool() == true then
+    api.setLayer(layer, true)
+  end
+  im.NextColumn()
+
+  im.TextUnformatted("SDF outline thickness")
+  im.NextColumn()
+  im.PushItemWidth(im.GetContentRegionAvailWidth())
+  if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfOutlineThickness"), editor.getTempFloat_NumberNumber(layer.sdfOutlineThickness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
+    layer.sdfOutlineThickness = editor.getTempFloat_NumberNumber()
+  end
+  im.PopItemWidth()
+  if editor.getTempBool_BoolBool() == true then
+    api.setLayer(layer, true)
+  end
+  im.NextColumn()
+
+  im.TextUnformatted("SDF outline softness")
+  im.NextColumn()
+  im.PushItemWidth(im.GetContentRegionAvailWidth())
+  if editor.uiSliderFloat(string.format("##%s_%s_%s", layer.uid, guiId, "sdfOutlineSoftness"), editor.getTempFloat_NumberNumber(layer.sdfOutlineSoftness), 0.0, 1.0, "%.2f", nil, editor.getTempBool_BoolBool(false)) then
+    layer.sdfOutlineSoftness = editor.getTempFloat_NumberNumber()
+  end
+  im.PopItemWidth()
+  if editor.getTempBool_BoolBool() == true then
+    api.setLayer(layer, true)
+  end
+  im.NextColumn()
+  if layer.sdfEnabled == false then im.EndDisabled() end
+  -- ~SDF
 
   im.TextUnformatted("decal color texture path")
   im.NextColumn()
@@ -713,6 +704,17 @@ local function decalColorSdfPropertiesWidget(guiId)
       M.showSdfIntroWindow()
     end
 
+    if widgets.draw(api.getSdfEnabled(), api.propertiesMap["sdfEnabled"], guiId) then
+      api.setSdfEnabled(api.propertiesMap["sdfEnabled"].value)
+    end
+
+    if api.getSdfEnabled() then
+      if im.TreeNode1(string.format("SDF Texture Preview##DecalColor_%s", guiId)) then
+        api.renderSdfTextureImgui(im.GetContentRegionAvailWidth(), im.GetContentRegionAvailWidth())
+        im.TreePop()
+      end
+    end
+
     if widgets.draw(api.getSdfThickness(), api.propertiesMap["sdfThickness"], guiId) then
       api.setSdfThickness(api.propertiesMap["sdfThickness"].value)
     end
@@ -746,11 +748,11 @@ local function setSdfPropertiesHighlighted()
 end
 
 local function sdfIntroWindow()
-  if editor.beginWindow(sdfIntroWindowName, sdfIntroWindowName) then
+  if editor.beginWindow(sdfIntroWindowName, sdfIntroWindowName, im.WindowFlags_AlwaysAutoResize) then
     im.PushTextWrapPos(800)
     im.TextUnformatted("You've selected a SDF compatible texture.")
     docs.verticalSpacing()
-    im.TextUnformatted(sdfExplanationText)
+    sdfExplanationTextWidget()
     im.PopTextWrapPos()
     if im.Button("Highlight SDF properties") then
       setSdfPropertiesHighlighted()
@@ -1002,26 +1004,24 @@ local function sectionGui(guiId)
     end
     if colorPaletteMapId ~= 0 or api.isDecalGradientColorEnabled() == false then im.EndDisabled() end
 
-    if sdfPropertiesEnabled then
-      if highlightSdfProperties then
-        if highlightSdfProperties.setScroll then
-          im.SetScrollHereY()
-          highlightSdfProperties.setScroll = false
-        end
-        highlightSdfProperties.startCursorPos = im.GetCursorPos()
+    if highlightSdfProperties then
+      if highlightSdfProperties.setScroll then
+        im.SetScrollHereY()
+        highlightSdfProperties.setScroll = false
       end
-      decalColorSdfPropertiesWidget(guiId)
-      if highlightSdfProperties then
-        highlightSdfProperties.endCursorPos = im.GetCursorPos()
+      highlightSdfProperties.startCursorPos = im.GetCursorPos()
+    end
+    decalColorSdfPropertiesWidget(guiId)
+    if highlightSdfProperties then
+      highlightSdfProperties.endCursorPos = im.GetCursorPos()
 
-        local wpos = im.GetWindowPos()
-        local cpos = highlightSdfProperties.startCursorPos
-        local scrollX = im.GetScrollX()
-        local scrollY = im.GetScrollY()
-        local p1 = im.ImVec2(wpos.x + highlightSdfProperties.startCursorPos.x - scrollX, wpos.y + highlightSdfProperties.startCursorPos.y - scrollY)
-        local p2 = im.ImVec2(wpos.x + highlightSdfProperties.endCursorPos.x - scrollX + im.GetContentRegionAvailWidth(), wpos.y + highlightSdfProperties.endCursorPos.y - scrollY)
-        im.ImDrawList_AddRect(im.GetWindowDrawList(), p1, p2, im.GetColorU322(editor.color.beamng.Value), nil, nil, 3)
-      end
+      local wpos = im.GetWindowPos()
+      local cpos = highlightSdfProperties.startCursorPos
+      local scrollX = im.GetScrollX()
+      local scrollY = im.GetScrollY()
+      local p1 = im.ImVec2(wpos.x + highlightSdfProperties.startCursorPos.x - scrollX, wpos.y + highlightSdfProperties.startCursorPos.y - scrollY)
+      local p2 = im.ImVec2(wpos.x + highlightSdfProperties.endCursorPos.x - scrollX + im.GetContentRegionAvailWidth(), wpos.y + highlightSdfProperties.endCursorPos.y - scrollY)
+      im.ImDrawList_AddRect(im.GetWindowDrawList(), p1, p2, im.GetColorU322(editor.color.beamng.Value), nil, nil, 3)
     end
     im.Separator()
 
@@ -1174,7 +1174,7 @@ local function sdfDocumentationGui(docsSection)
   im.PushTextWrapPos(im.GetContentRegionAvailWidth())
   im.TextUnformatted("What is SDF?")
   docs.verticalSpacing()
-  im.TextUnformatted(sdfExplanationText)
+  sdfExplanationTextWidget()
   im.PopTextWrapPos()
 end
 
@@ -1211,6 +1211,7 @@ local tblx = {}
 local function setup(tool_in)
   tool = tool_in
   api = extensions.editor_api_dynamicDecals
+  texturesApi = extensions.editor_api_dynamicDecals_textures
   brushes = extensions.editor_dynamicDecals_brushes
   inspector = extensions.editor_dynamicDecals_inspector
   inspectorUtils = extensions.editor_dynamicDecals_inspector_utils

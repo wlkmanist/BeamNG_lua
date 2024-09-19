@@ -50,6 +50,10 @@ end
 local camPos2d, markerPos2d = vec3(), vec3()
 local tmpVec = vec3()
 local vecZero = vec3(0,0,0)
+local camQuat = quat()
+local camUp = vec3()
+local camToCluster = vec3()
+local camToClusterLeft = vec3()
 
 local bigMapModeColorI = ColorI(255,255,255,255)
 local iconRendererObj
@@ -90,15 +94,14 @@ function C:update(data)
     self.visibleLastFrame = true
     profilerPopEvent("BigMap Marker PreCalculation")
     local resolutionFactor = 800 / freeroam_bigMapMode.getVerticalResolution()
-    local camQuat = core_camera.getQuat()
-    local camUp = camQuat * upVector
-    local camToCluster = self.pos - data.camPos
-    local camToClusterLeft = camUp:cross(camToCluster):normalized()
+    camQuat:set(core_camera.getQuatXYZW())
+    camUp:setRotate(camQuat, upVector)
+    camToCluster:setSub2(self.pos, data.camPos)
+    camToClusterLeft:setCross(camUp, camToCluster)
+    camToClusterLeft:normalize()
     local camToUpperPoint = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * 0.05 * core_camera.getFovRad())):__mul(camToCluster)
 
     local extraHeight = career_modules_linearTutorial and career_modules_linearTutorial.bounceBigmapIcons and bounce((os.clockhp() * 0.9)%1) * 0.05 or 0
-    local iconPos = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * (0.02 + extraHeight) * core_camera.getFovRad())):__mul(camToUpperPoint)
-    local iconPosColumn = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * -0.03 * core_camera.getFovRad())):__mul(camToUpperPoint * 1.1)
     self.selected = self.cluster.containedIdsLookup[freeroam_bigMapMode.selectedPoiId]
     self.hovered = self.cluster.containedIdsLookup[freeroam_bigMapMode.hoveredPoiId]
     self.hoveredListItem = self.cluster.containedIdsLookup[freeroam_bigMapMode.hoveredListItem]
@@ -107,6 +110,7 @@ function C:update(data)
     if self.bigMapIconId then
       local iconInfo = self.iconDataById[self.bigMapIconId]
       if iconInfo then
+        local iconPos = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * (0.02 + extraHeight) * core_camera.getFovRad())):__mul(camToUpperPoint)
         bigMapModeColorI.alpha = bigMapMarkerAlpha *255
         iconInfo.color = bigMapModeColorI
         tmpVec:set(data.camPos)
@@ -123,6 +127,7 @@ function C:update(data)
     if self.bigMapColumnIconId then
       local iconInfo = self.iconDataById[self.bigMapColumnIconId]
       if iconInfo then
+        local iconPosColumn = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * -0.03 * core_camera.getFovRad())):__mul(camToUpperPoint * 1.1)
         tmpVec:set(data.camPos)
         tmpVec:setAdd(iconPosColumn or vecZero)
         iconInfo.worldPosition = tmpVec

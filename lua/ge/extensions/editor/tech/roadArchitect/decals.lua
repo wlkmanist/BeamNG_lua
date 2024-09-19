@@ -5,8 +5,9 @@
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 -- Module constants.
-local latShrinkFac = 0.1                                                                            -- The amount by which to laterally shrink the decal widths, in meters.
-local lonShrinkFac = 0.1                                                                            -- The amount by which to longitudinally shrink the decal widths, in meters.
+local extraGapSpace = 0.45                                                                          -- The gap at the start/end of roads, by which to lay spanning layers short.
+
+local lightTreadMaterial = 'm_tread_marks_clean'                                                    -- The 'light tread/wear' material.
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -14,14 +15,17 @@ local M = {}
 
 
 -- External modules used.
-local profileMgr = require('editor/tech/roadArchitect/profiles')                                    -- Manages the profiles structure/handling profile calculations.
+local util = require('editor/tech/roadArchitect/utilities')                                         -- A utilities module.
 
 -- Private constants.
-local min, max = math.min, math.max
-local raised = vec3(0, 0, 0.5)
+local min, max, sin, cos = math.min, math.max, math.sin, math.cos
+local raised = vec3(0, 0, 4.2)
 
 -- Module state.
-local asphaltDecals = {}
+local asphalts = {}
+local decals = {}
+local templates = {}
+local templateMap = {}
 
 
 -- Compute the road sections from a given road.
@@ -66,323 +70,382 @@ local function computeSectionGeom(road, sStart, sEnd)
     local pL, pR = rD[sStart][1], rD[sEnd][2]
     nodes[i], widths[i] = (pL + pR) * 0.5, pR:distance(pL)                                          -- Use the midpoint for this node.
   end
-  nodes[1] = nodes[1] + (nodes[2] - nodes[1]):normalized() * lonShrinkFac                           -- Apply some longitudinal shrinkage to the start and end nodes.
-  nodes[numDivs] = nodes[numDivs] + (nodes[numDivs - 1] - nodes[numDivs]):normalized() * lonShrinkFac
-  return nodes, widths
-end
-
--- Compute the nodes/widths for the road centerline of a given section of a given road.
-local function computeCenterlineGeom(road, sStart, sEnd)
-  local rData = road.renderData
-  local idx1, idx2 = nil, nil                                                                       -- Get the correct indices for the centerline.
-  if rData[1][-1] then
-    idx1, idx2 = -1, 2
-  elseif rData[1][1] then
-    idx1, idx2 = 1, 1
-  end
-  if not idx1 then
-    return false, nil, nil                                                                          -- If there is no centerline in this section, return false.
-  end
-  local nodes, widths, numDivs = {}, {}, #rData
-  for i = 1, numDivs do
-    nodes[i], widths[i] = rData[i][idx1][idx2], road.centerlineWidth[0]
-  end
-  nodes[1] = nodes[1] + (nodes[2] - nodes[1]):normalized() * lonShrinkFac                           -- Apply some longitudinal shrinkage to the start and end nodes.
-  nodes[numDivs] = nodes[numDivs] + (nodes[numDivs - 1] - nodes[numDivs]):normalized() * lonShrinkFac
-  return true, nodes, widths                                                                        -- The centerline exists in this section, so return true.
-end
-
--- Compute the nodes/widths for the road left edge of a given section of a given road.
-local function computeLeftEdgeGeom(road, sStart, sEnd)
-  local rData = road.renderData
-  local nodes, widths, numDivs = {}, {}, #rData
-  for i = 1, numDivs do
-    local rD = rData[i]
-    local pL, pR = rD[sStart][1], rD[sEnd][2]
-    local v = pR - pL
-    v:normalize()
-    nodes[i], widths[i] = pL + v * road.edgeDecalDist[0], road.edgeDecalWidth[0]
-  end
-  nodes[1] = nodes[1] + (nodes[2] - nodes[1]):normalized() * lonShrinkFac                           -- Apply some longitudinal shrinkage to the start and end nodes.
-  nodes[numDivs] = nodes[numDivs] + (nodes[numDivs - 1] - nodes[numDivs]):normalized() * lonShrinkFac
-  return nodes, widths
-end
-
--- Compute the nodes/widths for the road right edge of a given section of a given road.
-local function computeRightEdgeGeom(road, sStart, sEnd)
-  local rData = road.renderData
-  local nodes, widths, numDivs = {}, {}, #rData
-  for i = 1, numDivs do
-    local rD = rData[i]
-    local pL, pR = rD[sStart][1], rD[sEnd][2]
-    local v = pL - pR
-    v:normalize()
-    nodes[i], widths[i] = pR + v * road.edgeDecalDist[0], road.edgeDecalWidth[0]
-  end
-  nodes[1] = nodes[1] + (nodes[2] - nodes[1]):normalized() * lonShrinkFac                           -- Apply some longitudinal shrinkage to the start and end nodes.
-  nodes[numDivs] = nodes[numDivs] + (nodes[numDivs - 1] - nodes[numDivs]):normalized() * lonShrinkFac
-  return nodes, widths
-end
-
--- Compute the nodes/widths for the road start (junction) line of a given section of a given road.
-local function computeRoadStartGeom(road, sStart, sEnd)
-  local rData = road.renderData
-  local vL = rData[2][sStart][1] - rData[1][sStart][1]
-  vL:normalize()
-  local vR = rData[2][sEnd][2] - rData[1][sEnd][2]
-  vR:normalize()
-  local pL = rData[1][sStart][1] + vL * (lonShrinkFac + road.jctLineOffset[0])
-  local pR = rData[1][sEnd][2] + vR * (lonShrinkFac + road.jctLineOffset[0])
-  local v = pR - pL
-  v:normalize()
-  local nodes = { pL + v * latShrinkFac, pR - v * latShrinkFac }
-  local widths = { road.jctLineWidth[0], road.jctLineWidth[0] }
-  return nodes, widths
-end
-
--- Compute the nodes/widths for the road end (junction) line of a given section of a given road.
-local function computeRoadEndGeom(road, sStart, sEnd)
-  local rData = road.renderData
-  local last = #rData
-  local last2 = last - 1
-  local vL = rData[last2][sStart][1] - rData[last][sStart][1]
-  vL:normalize()
-  local vR = rData[last2][sEnd][2] - rData[last][sEnd][2]
-  vR:normalize()
-  local pL = rData[last][sStart][1] + vL * (lonShrinkFac + road.jctLineOffset[0])
-  local pR = rData[last][sEnd][2] + vR * (lonShrinkFac + road.jctLineOffset[0])
-  local v = pR - pL
-  v:normalize()
-  local nodes = { pL + v * latShrinkFac, pR - v * latShrinkFac }
-  local widths = { road.jctLineWidth[0], road.jctLineWidth[0] }
-  return nodes, widths
-end
-
--- Compute the nodes/widths for the lane marking of a given section and lanes of a given road.
-local function computeLaneMarkingGeom(road, sStart, sEnd, laneA, laneB)
-  local rData = road.renderData
-  local nodes, widths, numDivs = {}, {}, #rData
-  for i = 1, numDivs do
-    nodes[i], widths[i] = rData[i][laneA][2], road.laneMarkingWidth[0]
-  end
-  nodes[1] = nodes[1] + (nodes[2] - nodes[1]):normalized() * lonShrinkFac                           -- Apply some longitudinal shrinkage to the start and end nodes.
-  nodes[numDivs] = nodes[numDivs] + (nodes[numDivs - 1] - nodes[numDivs]):normalized() * lonShrinkFac
   return nodes, widths
 end
 
 -- Creates a decal set for the given road.
 -- [A decal set contains the main road decal, the centerline decal, road edge decals, lane division decals, and start/end junction line decals].
 -- [The user can control the combination of these which will be rendered for the road, using the appropriate Imgui buttons].
-local function createDecal(road, rIdx, numRoads)
+local function createDecal(road, folder)
 
   -- The decal does not exist, so create a new decal per section.
   local name = road.name
-  asphaltDecals[name] = computeSectionsByType(road, 'road_lane')
-  local numSections = #asphaltDecals[name]
+  local renderPrKeyRoad = #road.profile.layers + 3
+  asphalts[name] = computeSectionsByType(road, 'road_lane')
+  local numSections = #asphalts[name]
   for s = 1, numSections do
 
-    -- Create the asphalt road decal for this section.
-    local sStart, sEnd = asphaltDecals[name][s].s, asphaltDecals[name][s].e
-    local renderPrKeyDecal = rIdx * 2 + 12
-    local renderPrKeyRoad = numRoads + rIdx * 2 + 13
-    local section = asphaltDecals[name][s]
-    asphaltDecals[name][s].road = createObject("DecalRoad")
-    local dRoad = asphaltDecals[name][s].road
-    --dRoad:setField("improvedSpline", 0, "true")
-    dRoad:setField("overObjects", 0, "true")
-    dRoad:setField("renderPriority", 0, renderPrKeyRoad)
-    dRoad:setField("oneWay", 0, tostring(section.isOneWay))
-    dRoad:setField("lanesLeft", 0, section.lanesL)
-    dRoad:setField("lanesRight", 0, section.lanesR)
-    dRoad:setField("material", 0, "road_asphalt_2lane")
-    dRoad:setField("drivability", 0, 1.0)
-    dRoad:registerObject("")
-    scenetree.MissionGroup:add(dRoad)
-    local nodes, widths = computeSectionGeom(road, sStart, sEnd)
-    local numNodes, decalId = #nodes, dRoad:getID()
-    if sStart > 0 and sEnd > 0 then
-      for i = 1, numNodes do                                                                        -- For +ve only sections, we need to flip the node order.
-        local idx = numNodes - i + 1
-        editor.addRoadNode(decalId, { pos = nodes[idx] + raised, width = widths[idx] - latShrinkFac, index = i - 1 })
-      end
-    else
-      for i = 1, numNodes do
-        editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = widths[i] - latShrinkFac, index = i - 1 })
-      end
-    end
-
-    -- Create the road centerline decal for this section.
-    -- [This is only required if the road is two-way].
-    if road.isRefLineDecal[0] and not section.isOneWay then
-      local isCLInSection, nodes, widths = computeCenterlineGeom(road, sStart, sEnd)
-      if isCLInSection then                                                                         -- Only create the centerline if it exists in this section.
-        asphaltDecals[name][s].centerLine = createObject("DecalRoad")
-        local cLine = asphaltDecals[name][s].centerLine
-        --cLine:setField("improvedSpline", 0, "true")
-        cLine:setField("overObjects", 0, "true")
-        cLine:setField("renderPriority", 0, renderPrKeyDecal)
-        cLine:setField("material", 0, "m_line_yellow_double")
-        cLine:setField("drivability", 0, -1.0)
-        cLine:registerObject("")
-        scenetree.MissionGroup:add(cLine)
-        local numNodes, decalId = #nodes, cLine:getID()
+    -- Create the navigation graph road, if desired [eg not if road is just an overlay road].
+    if road.isDrivable then                                                                         -- Render standard, drivable road (not an overlay).
+      local sStart, sEnd = asphalts[name][s].s, asphalts[name][s].e
+      local section = asphalts[name][s]
+      asphalts[name][s].road = createObject("DecalRoad")
+      local dRoad = asphalts[name][s].road
+      --dRoad:setField("improvedSpline", 0, "true")
+      dRoad:setField("overObjects", 0, "true")
+      dRoad:setField("textureLength", 0, 36)
+      dRoad:setField("renderPriority", 0, renderPrKeyRoad)
+      dRoad:setField("autoLanes", 0, "false")
+      dRoad:setField("oneWay", 0, tostring(section.isOneWay))
+      dRoad:setField("lanesLeft", 0, section.lanesL)
+      dRoad:setField("lanesRight", 0, section.lanesR)
+      dRoad:setField("drivability", 0, 1.0)
+      dRoad:setField("material", 0, "road_invisible")
+      dRoad:registerObject("")
+      folder:addObject(dRoad)
+      local nodes, sectionWidths = computeSectionGeom(road, sStart, sEnd)
+      local numNodes, decalId = #nodes, dRoad:getID()
+      if sStart > 0 and sEnd > 0 then
+        for i = 1, numNodes do                                                                      -- For +ve only sections, we need to flip the node order.
+          local idx = numNodes - i + 1
+          editor.addRoadNode(decalId, { pos = nodes[idx] + raised, width = sectionWidths[idx], index = i - 1 })
+        end
+      else
         for i = 1, numNodes do
-          editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = widths[i], index = i - 1 })
+          editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = sectionWidths[i], index = i - 1 })
         end
       end
-    end
 
-    -- Create the road edge decals.
-    if road.isEdgeLineDecal[0] then
-      asphaltDecals[name][s].leftEdge = createObject("DecalRoad")
-      local lEdge = asphaltDecals[name][s].leftEdge
-      --lEdge:setField("improvedSpline", 0, "true")
-      lEdge:setField("overObjects", 0, "true")
-      lEdge:setField("renderPriority", 0, renderPrKeyDecal)
-      lEdge:setField("material", 0, "m_line_white")
-      lEdge:setField("drivability", 0, -1.0)
-      lEdge:registerObject("")
-      scenetree.MissionGroup:add(lEdge)
-      local nodes, widths = computeLeftEdgeGeom(road, sStart, sEnd)
-      local numNodes, decalId = #nodes, lEdge:getID()
-      for i = 1, numNodes do
-        editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = widths[i], index = i - 1 })
-      end
+    elseif road.isOverlay then                                                                      -- Render overlay road (not a drivable road).
 
-      asphaltDecals[name][s].rightEdge = createObject("DecalRoad")
-      local rEdge = asphaltDecals[name][s].rightEdge
-      --rEdge:setField("improvedSpline", 0, "true")
-      rEdge:setField("overObjects", 0, "true")
-      rEdge:setField("renderPriority", 0, renderPrKeyDecal)
-      rEdge:setField("material", 0, "m_line_white")
-      rEdge:setField("drivability", 0, -1.0)
-      rEdge:registerObject("")
-      scenetree.MissionGroup:add(rEdge)
-      local nodes, widths = computeRightEdgeGeom(road, sStart, sEnd)
-      local numNodes, decalId = #nodes, rEdge:getID()
-      for i = 1, numNodes do
-        editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = widths[i], index = i - 1 })
-      end
-    end
-
-    -- Create the road start (pedestrian crossing) decal.
-    if road.isStartLineDecal[0] then
-      asphaltDecals[name][s].roadStart = createObject("DecalRoad")
-      local rStart = asphaltDecals[name][s].roadStart
-      --rStart:setField("improvedSpline", 0, "true")
-      rStart:setField("overObjects", 0, "true")
-      rStart:setField("renderPriority", 0, renderPrKeyDecal)
-      rStart:setField("material", 0, "crossing_white")
-      rStart:setField("drivability", 0, -1.0)
-      rStart:registerObject("")
-      scenetree.MissionGroup:add(rStart)
-      local nodes, widths = computeRoadStartGeom(road, sStart, sEnd)
-      local numNodes, decalId = #nodes, rStart:getID()
-      for i = 1, numNodes do
-        editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = widths[i], index = i - 1 })
-      end
-    end
-
-    -- Create the road end (pedestrian crossing) decal.
-    if road.isEndLineDecal[0] then
-      asphaltDecals[name][s].roadEnd = createObject("DecalRoad")
-      local rEnd = asphaltDecals[name][s].roadEnd
-      --rEnd:setField("improvedSpline", 0, "true")
-      rEnd:setField("overObjects", 0, "true")
-      rEnd:setField("renderPriority", 0, renderPrKeyDecal)
-      rEnd:setField("material", 0, "crossing_white")
-      rEnd:setField("drivability", 0, -1.0)
-      rEnd:registerObject("")
-      scenetree.MissionGroup:add(rEnd)
-      local nodes, widths = computeRoadEndGeom(road, sStart, sEnd)
-      local numNodes, decalId = #nodes, rEnd:getID()
-      for i = 1, numNodes do
-        editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = widths[i], index = i - 1 })
-      end
-    end
-
-    -- Create lane markings, for each lane which is on the same side.
-    if road.isLaneDivsDecal[0] then
-      asphaltDecals[name][s].laneMarkings = {}
-      local lCtr = 1
-      for laneB = sStart + 1, sEnd do
-        local laneA = laneB - 1
-        if laneA ~= 0 and laneB ~= 0 then
-          asphaltDecals[name][s].laneMarkings[lCtr] = createObject("DecalRoad")
-          local lMarking = asphaltDecals[name][s].laneMarkings[lCtr]
-          --lMarking:setField("improvedSpline", 0, "true")
-          lMarking:setField("overObjects", 0, "true")
-          lMarking:setField("renderPriority", 0, renderPrKeyDecal)
-          lMarking:setField("material", 0, "m_line_yellow_discontinue")
-          lMarking:setField("drivability", 0, -1.0)
-          lMarking:registerObject("")
-          scenetree.MissionGroup:add(lMarking)
-          local nodes, widths = computeLaneMarkingGeom(road, sStart, sEnd, laneA, laneB)
-          local numNodes, decalId = #nodes, lMarking:getID()
-          for i = 1, numNodes do
-            editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = widths[i], index = i - 1 })
-          end
-          lCtr = lCtr + 1
-        end
+      asphalts[name][s].road = createObject("DecalRoad")
+      local dRoad = asphalts[name][s].road
+      --dRoad:setField("improvedSpline", 0, "true")
+      dRoad:setField("overObjects", 0, "true")
+      dRoad:setField("textureLength", 0, 36)
+      dRoad:setField("renderPriority", 0, renderPrKeyRoad)
+      dRoad:setField("drivability", 0, -1.0)
+      dRoad:setField("material", 0, road.overlayMat or lightTreadMaterial)
+      dRoad:setField('startEndFade', 0, string.format("%f %f", 5.0, 5.0))
+      dRoad:registerObject("")
+      folder:addObject(dRoad)
+      local decalId = dRoad:getID()
+      for i = 1, #road.nodes do
+        editor.addRoadNode(decalId, { pos = road.nodes[i].p + raised, width = road.nodes[i].widths[1][0], index = i - 1 })
       end
     end
   end
 
-end
+  math.randomseed(road.profile.conditionSeed[0])
 
--- Removes a decal set from the scene.
-local function removeDecalFromScene(decal)
-  local numSections = #decal
-  for s = 1, numSections do
-    local d = decal[s]
-    if d.road then
-      d.road:delete()
-    end
-    if d.centerLine then
-      d.centerLine:delete()
-    end
-    if d.leftEdge then
-      d.leftEdge:delete()
-    end
-    if d.rightEdge then
-      d.rightEdge:delete()
-    end
-    if d.roadStart then
-      d.roadStart:delete()
-    end
-    if d.roadEnd then
-      d.roadEnd:delete()
-    end
-    if d.laneMarkings then
-      local numLaneMarkings = #d.laneMarkings
-      for i = 1, numLaneMarkings do
-        d.laneMarkings[i]:delete()
+  -- Create the decals for each layer stored in the profile.
+  local profile = road.profile
+  local layers = profile.layers
+  local rData = road.renderData
+  decals[name] = { layers = {}, templates = {}, instances = {} }
+  local ctrL, ctrD = 1, 1
+  for i = 1, #layers do
+    local layer = layers[i]
+    local layerType = layer.type[0]
+
+    if layerType == 0 then                                                                          -- TYPE: [SPAN LANE].
+
+      decals[name].layers[ctrL] = createObject("DecalRoad")
+      local layerDecal = decals[name].layers[ctrL]
+      ctrL = ctrL + 1
+      --layerDecal:setField("improvedSpline", 0, "true")
+      layerDecal:setField("overObjects", 0, "true")
+      layerDecal:setField("renderPriority", 0, i)
+      layerDecal:setField("textureLength", 0, layer.texLen[0])
+      if layerType ~= 2 then
+        layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
       end
+      layerDecal:setField("material", 0, layer.mat)
+      layerDecal:setField("drivability", 0, -1.0)
+      layerDecal:setField("hidden", 0, "false")
+      layerDecal:registerObject("")
+      folder:addObject(layerDecal)
+      local decalId = layerDecal:getID()
+
+      local laneL, laneR, off = layer.laneMin[0], layer.laneMax[0], layer.off[0]
+      local startDivIdx, endDivIdx = 1, #rData
+      if not layer.isSpanLong[0] then                                                               -- If the user has limited the longitudinal span, only iterate in the chosen interval.
+        startDivIdx = util.computeDivIndicesFromNode(layer.nMin[0], road)
+        endDivIdx = util.computeDivIndicesFromNode(layer.nMax[0], road)
+      end
+      local dNodes, dWidths, latOffs, ctr = {}, {}, {}, 1
+      for j = startDivIdx, endDivIdx do
+        local rDL, rDR = rData[j][laneL], rData[j][laneR]
+        local width = 0.0
+        for k = laneL, laneR do
+          if k ~= 0 then
+            width = width + rData[j][k][9]
+          end
+        end
+        dNodes[ctr] = (rDL[1] + rDR[2]) * 0.5
+        dWidths[ctr] = width
+        latOffs[ctr] = rDL[6] * off
+        ctr = ctr + 1
+      end
+
+      -- If the road is a paint line, then lay it short (except in the case of linkage points).
+      if layer.isPaint[0] then
+        dNodes[1] = dNodes[1] + (dNodes[2] - dNodes[1]):normalized() * extraGapSpace
+        dNodes[#dNodes] = dNodes[#dNodes] + (dNodes[#dNodes - 1] - dNodes[#dNodes]):normalized() * extraGapSpace
+      end
+
+      if layer.isReverse[0] then
+        local ctr = 0
+        for j = #dNodes, 1, -1 do
+          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = dWidths[j], index = ctr })
+          ctr = ctr + 1
+        end
+      else
+        for j = 1, #dNodes do
+          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = dWidths[j], index = j - 1 })
+        end
+      end
+
+    elseif layerType == 1 then                                                                      -- TYPE: [OFFSET FROM LANE].
+
+      decals[name].layers[ctrL] = createObject("DecalRoad")
+      local layerDecal = decals[name].layers[ctrL]
+      ctrL = ctrL + 1
+      --layerDecal:setField("improvedSpline", 0, "true")
+      layerDecal:setField("overObjects", 0, "true")
+      layerDecal:setField("renderPriority", 0, i)
+      layerDecal:setField("textureLength", 0, layer.texLen[0])
+      if layerType ~= 2 then
+        layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
+      end
+      layerDecal:setField("material", 0, layer.mat)
+      layerDecal:setField("drivability", 0, -1.0)
+      layerDecal:setField("hidden", 0, "false")
+      layerDecal:registerObject("")
+      folder:addObject(layerDecal)
+      local decalId = layerDecal:getID()
+
+      local sideIdx = 2
+      if layer.isLeft[0] then
+        sideIdx = 1
+      end
+      local startDivIdx, endDivIdx = 1, #rData
+      if not layer.isSpanLong[0] then                                                               -- If the user has limited the longitudinal span, only iterate in the chosen interval.
+        startDivIdx = util.computeDivIndicesFromNode(layer.nMin[0], road)
+        endDivIdx = util.computeDivIndicesFromNode(layer.nMax[0], road)
+      end
+      local lane, off, fixedWidth = layer.lane[0], layer.off[0], layer.width[0]
+
+      local dNodes, latOffs, ctr = {}, {}, 1
+      for j = startDivIdx, endDivIdx do
+        dNodes[ctr] = rData[j][lane][sideIdx]
+        local rD = rData[j][lane]
+        latOffs[ctr] = rD[6] * off
+        ctr = ctr + 1
+      end
+
+      -- If the road is a paint line, then lay it short (except in the case of linkage points).
+      if layer.isPaint[0] then
+        dNodes[1] = dNodes[1] + (dNodes[2] - dNodes[1]):normalized() * extraGapSpace
+        dNodes[#dNodes] = dNodes[#dNodes] + (dNodes[#dNodes - 1] - dNodes[#dNodes]):normalized() * extraGapSpace
+      end
+
+      if layer.isReverse[0] then
+        local ctr = 0
+        for j = #dNodes, 1, -1 do
+          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = fixedWidth, index = ctr })
+          ctr = ctr + 1
+        end
+      else
+        for j = 1, #dNodes do
+          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = fixedWidth, index = j - 1 })
+        end
+      end
+
+    elseif layerType == 2 then                                                                      -- TYPE: [UNIQUE LATERAL PATCH (NON-DECAL)].
+
+      decals[name].layers[ctrL] = createObject("DecalRoad")
+      local layerDecal = decals[name].layers[ctrL]
+      ctrL = ctrL + 1
+      --layerDecal:setField("improvedSpline", 0, "true")
+      layerDecal:setField("overObjects", 0, "true")
+      layerDecal:setField("renderPriority", 0, i)
+      layerDecal:setField("textureLength", 0, layer.texLen[0])
+      if layerType ~= 2 then
+        layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
+      end
+      layerDecal:setField("material", 0, layer.mat)
+      layerDecal:setField("drivability", 0, -1.0)
+      layerDecal:setField("hidden", 0, "false")
+      layerDecal:registerObject("")
+      folder:addObject(layerDecal)
+      local decalId = layerDecal:getID()
+
+      -- Compute the relevant points, using linear interpolation.
+      local lMin, lMax = layer.laneMin[0], layer.laneMax[0]
+      local qq = layer.off[0]
+      local lengths = util.computeRoadLength(rData)
+      local pEval = qq * lengths[#lengths]                                                          -- The longitudinal evaluation position on the road, in meters.
+      local lower, upper = util.findBounds(pEval, lengths)
+      local q = (pEval - lengths[lower]) / (lengths[upper] - lengths[lower])                        -- The q in [0, 1] between div points (linear interpolation).
+      local pL1 = rData[lower][lMin][1]
+      local pL2 = rData[upper][lMin][1]
+      local pL = pL1 + q * (pL2 - pL1)                                                              -- The evaluation on the left edge.
+      local pR1 = rData[lower][lMax][2]
+      local pR2 = rData[upper][lMax][2]
+      local pR = pR1 + q * (pR2 - pR1)                                                              -- The evaluation on the right edge.
+
+      -- Compute the local tangent at the road centerline, along which to protrude the patch.
+      local cenIdx1, cenIdx2 = 1, 1
+      if rData[1][-1] then
+        cenIdx1, cenIdx2 = -1, 2
+      end
+      local tgt = rData[upper][cenIdx1][cenIdx2] - rData[lower][cenIdx1][cenIdx2]
+      tgt:normalize()
+
+      -- Compute the four quadrilateral vertices of the patch.
+      local tgtVec = tgt * layer.width[0] * 0.5
+      local f1, f2 = pL + tgtVec, pR + tgtVec
+
+      if layer.isPaint[0] then
+        if layer.off[0] > 0.99 then
+          f1 = f1 - tgt * extraGapSpace
+          f2 = f2 - tgt * extraGapSpace
+        elseif layer.off[0] < 0.01 then
+          f1, f2 = pL - tgtVec, pR - tgtVec
+          f1 = f1 + tgt * extraGapSpace
+          f2 = f2 + tgt * extraGapSpace
+        end
+      end
+
+      editor.addRoadNode(decalId, { pos = f1 + raised, width = layer.width[0], index = 0 })
+      editor.addRoadNode(decalId, { pos = f2 + raised, width = layer.width[0], index = 1 })
+
+    elseif layerType == 3 then                                                                      -- TYPE: [UNIQUE DECAL PATCH].
+
+      local lIdx = layer.lane[0]
+      local lengths = util.computeRoadLength(rData)
+      local pEval = layer.off[0] * lengths[#lengths]                                                  -- The longitudinal evaluation position on the road, in meters.
+      local lower, upper = util.findBounds(pEval, lengths)
+      local q = (pEval - lengths[lower]) / (lengths[upper] - lengths[lower])                          -- The q in [0, 1] between div points (linear interpolation).
+      local pL = nil
+      if layer.isLeft[0] then
+        local pL1 = rData[lower][lIdx][1]
+        local pL2 = rData[upper][lIdx][1]
+        pL = pL1 + q * (pL2 - pL1)
+      else
+        local pL1 = rData[lower][lIdx][2]
+        local pL2 = rData[upper][lIdx][2]
+        pL = pL1 + q * (pL2 - pL1)
+      end
+      local n1 = rData[lower][lIdx][5]
+      local n2 = rData[upper][lIdx][5]
+      local nml = n1 + q * (n2 - n1)
+      nml:normalize()
+      local l1 = rData[lower][lIdx][6]
+      local l2 = rData[upper][lIdx][6]
+      local lat = l1 + q * (l2 - l1)
+      lat:normalize()
+      local tgt = nml:cross(lat)
+      local pos = pL + lat * layer.pos[0]
+
+      -- Compute the local frame for this decal patch.
+      if layer.rot[0] == 1 then
+        local x, y, s, c = tgt.x, tgt.y, sin(1.5707963267948966), cos(1.5707963267948966)
+        tgt:set(x * c - y * s, x * s + y * c, 0)
+      elseif layer.rot[0] == 2 then
+        local x, y, s, c = tgt.x, tgt.y, sin(3.141592653589793), cos(3.141592653589793)
+        tgt:set(x * c - y * s, x * s + y * c, 0)
+      elseif layer.rot[0] == 3 then
+        local x, y, s, c = tgt.x, tgt.y, sin(-1.5707963267948966), cos(-1.5707963267948966)
+        tgt:set(x * c - y * s, x * s + y * c, 0)
+      end
+
+      -- Attempt to see if this material already has a template, and use that.  Otherwise, create a new template.
+      local template = nil
+      if templateMap[layer.mat] then
+        template = templates[templateMap[layer.mat]]
+      else
+        local templateIdx = #templates + 1
+        templates[templateIdx] = createObject("DecalData")
+        templates[templateIdx]:setField("renderPriority", 0, i)
+        templates[templateIdx]:setField("textureLength", 0, layer.size[0])
+        templates[templateIdx]:setField("texRows", 0, layer.numRows[0])
+        templates[templateIdx]:setField("texCols", 0, layer.numCols[0])
+        templates[templateIdx]:setField("size", 0, layer.size[0])
+        templates[templateIdx]:setField("material", 0, layer.mat)
+        templates[templateIdx]:registerObject("")
+        templateMap[layer.mat] = templateIdx
+        folder:addObject(templates[templateIdx])
+        template = templates[templateIdx]
+      end
+
+		  decals[name].instances[ctrD] = editor.addDecalInstanceWithTan(pos, nml, tgt, template, layer.size[0], layer.frame[0], 0, 1)
+      ctrD = ctrD + 1
     end
   end
 end
 
 -- Attempts to removes the decal set with the given name, from the scene (if it exists).
 local function tryRemove(name)
-  local decal = asphaltDecals[name]
+  local decal = asphalts[name]
   if decal then
-    removeDecalFromScene(decal)
+    local numDecals = #decal
+    for s = 1, numDecals do
+      local d = decal[s]
+      if d.road then                                                                                -- Main decalRoads.
+        d.road:delete()
+      end
+    end
+    table.clear(decal)
   end
-  asphaltDecals[name] = nil
+
+  local decal = decals[name]
+  if decal then
+    if decal.layers then                                                                            -- Remove all DecalRoad layers.
+      for s = 1, #decal.layers do
+        decal.layers[s]:delete()
+      end
+    end
+    if decal.instances then                                                                         -- Remove all decal instances (must be before template removal).
+      for s = 1, #decal.instances do
+        editor.deleteDecalInstance(decal.instances[s])
+      end
+    end
+    table.clear(decal)
+  end
+end
+
+-- Remove all the templates (all instances should be removed first).
+local function removeTemplates()
+  for i = 1, #templates do
+    if templates[i] then
+      templates[i]:delete()
+    end
+  end
+  table.clear(templates)
+  table.clear(templateMap)
 end
 
 -- Attemps to remove all decal sets from the scene.
 local function tryRemoveAll()
-  for _, decal in pairs(asphaltDecals) do
-    removeDecalFromScene(decal)
+  for k, _ in pairs(asphalts) do
+    tryRemove(k)
   end
-  table.clear(asphaltDecals)
+  table.clear(asphalts)
+  for k, _ in pairs(decals) do
+    tryRemove(k)
+  end
+  table.clear(decals)
+  removeTemplates()
 end
 
 
 -- Public interface.
 M.createDecal =                                           createDecal
+
 M.tryRemove =                                             tryRemove
+M.removeTemplates =                                       removeTemplates
 M.tryRemoveAll =                                          tryRemoveAll
 
 return M

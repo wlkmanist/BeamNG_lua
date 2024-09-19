@@ -7,6 +7,7 @@ local resetFlag = false
 local currDriftCompletedTime = 0
 local currFailPointsCooldown = 0
 local isDrifting
+local isChainingDrifts
 local isCrashing
 local lastFrameIsDrifting
 local currDegAngle
@@ -14,13 +15,14 @@ local lastDriftTimer = 0
 local resetTimer = 0.1
 local currResetTimer = 0
 local score
-
 local driftChainActiveData = nil -- data about a whole chain of drifts
 local driftActiveData = nil -- data about a single drift
+local frontPoint = {} -- arbitrary points placed behind and in front of the car to detect a drift
+local rearPoint = {} -- arbitrary points placed behind and in front of the car to detect a drift
 
 local driftOptions = {
-  minAngle = nil,
-  maxAngle = 140, -- cheap anti cheese
+  minAngle = 5,
+  maxAngle = 165, -- cheap anti cheese
   allowDonut = false,
   allowTightDrifts = true,
   totalDriftAngleModulo = true,
@@ -28,9 +30,9 @@ local driftOptions = {
   raycastDist = 1.8,
   raycastInwardOffset = 0.650,
   wallDetectionLength = 2,
-  driftCompletedTime = 1.5,
+  driftCompletedTime = 1.2,
   failPointsCooldown = 1,
-  minAirSpeed = 4,
+  minAirSpeed = 10,
   maxWasDriftingTime = 4, -- used to detect spinouts
   crashDamageThreshold = 150
 }
@@ -47,7 +49,7 @@ local isInTheAir
 local wallMulti
 local veh
 local vehData
-local currentAngle
+local driftAngleDiff
 local dir = vec3()
 local pos = vec3()
 local hitDist
@@ -65,6 +67,10 @@ local kphAirSpeed
 local up = vec3(0,0,1)
 local vecZero = vec3(0,0,0)
 local tempVec = vec3(0,0,0)
+local avrgRefPointsKphSpeed -- instead of picking the car speed, we use two off-centered ones
+local frontDot -- calculate the front reference point's velocity dot product with vehicle dir
+local centerDot -- calculate the center reference point's velocity dot product with vehicle dir
+local rearDot -- calculate the rear reference point's velocity dot product with vehicle dir
 --------------------------------------------------
 
 local function newDriftActiveData(vehicleData)
@@ -72,9 +78,10 @@ local function newDriftActiveData(vehicleData)
     closestWallDistanceFront = 0,
     closestWallDistanceRear = 0,
     currDegAngle = 0,
-    startOrientation = velDir,
+    direction = nil,
     lastFrameVelDir = vec3(velDir),
     totalDriftAngle = 0,
+    totalDriftTime = 0,
     angleVelocity = 0,
     angles = {},
     speeds = {},
@@ -91,7 +98,10 @@ local function newDriftChainActiveData()
     totalDriftTime = 0,
     rightDrifts = 0,
     leftDrifts = 0,
-    chainedDrifts = 0
+    chainedDrifts = 0,
+    currentCircleDrift = { -- 360 drifts
+      totalAngle = 0
+    }
   }
 end
 
@@ -125,7 +135,7 @@ local function calculateDriftAngle(vehData)
     debugDrawer:drawLine(center, center + dirVec, ColorF(1,0,0,1))
     velocityTip:set(center + vehData.vel:normalized())
     debugDrawer:drawLine(center, velocityTip, ColorF(1,0.3,0,1))
-    debugDrawer:drawTextAdvanced(velocityTip, string.format("%d °", currDegAngle), ColorF(1,1,1,1), true, false, ColorI(0,0,0,255))
+    debugDrawer:drawTextAdvanced(velocityTip, string.format("%d ° (req:%d)", currDegAngle, driftOptions.minAngle), ColorF(1,1,1,1), true, false, ColorI(0,0,0,255))
   end
 end
 
@@ -222,6 +232,16 @@ local function manageDamages(vehData, dtSim) --counts the total damage throughou
   lastFrameDamage = vehData.damage
 end
 
+local totalAngle = 0
+local function detectCircleDrift()
+  if isChainingDrifts then
+    if isDrifting then
+      driftChainActiveData.currentCircleDrift.totalAngle = driftChainActiveData.currentCircleDrift.totalAngle + driftAngleDiff
+    else
+    end
+  end
+end
+
 local minSpeedAllowed = 1.5
 local minAllowedAngle = 110
 local stopSpinoutCheck = false
@@ -238,6 +258,41 @@ local function detectSpinout()
   end
 end
 
+local distFromCenter = 4
+local function updateReferencePoint(point)
+  if gameplay_drift_general.getDebug() then
+    debugDrawer:drawSphere(point.pos + up, 0.2, ColorF(1,0.3,1,0.3))
+  end
+  if point.lastFramePos then
+    point.vel = (point.pos - point.lastFramePos)
+    if gameplay_drift_general.getDebug() then
+      debugDrawer:drawLineInstance(point.pos + up, up + point.pos + point.vel:normalized(), 3, ColorF(1,0.3,0,1))
+    end
+  else
+    point.lastFramePos = vec3()
+  end
+  point.lastFramePos:set(point.pos.x, point.pos.y, point.pos.z)
+end
+
+local function isAngledForDrift()
+  frontPoint.pos = center + dirVec * distFromCenter
+  rearPoint.pos = center - dirVec * distFromCenter
+  updateReferencePoint(frontPoint)
+  updateReferencePoint(rearPoint)
+
+  if frontPoint.vel and vehData then
+    avrgRefPointsKphSpeed = ((frontPoint.vel:length() + rearPoint.vel:length()) / 2) * 520
+    frontDot = frontPoint.vel:dot(dirVec:cross(up))
+    centerDot = velDir:dot(dirVec:cross(up))
+    rearDot = rearPoint.vel:dot(dirVec:cross(up))
+
+    return
+    frontDot < 0 and centerDot > 0 or centerDot < 0 and frontDot > 0
+    or frontDot > 0 and centerDot > 0 and rearDot > 0 or frontDot < 0 and centerDot < 0 and rearDot < 0
+  end
+end
+
+local oldIsDrifting
 local inTheAirTop = vec3(0,0,0)
 local inTheAirBottom = vec3(0,0,0)
 local airOffset = vec3(0,0,0.5)
@@ -248,18 +303,17 @@ local function detectAndGatherDriftInfo(vehicleData, dtSim)
   inTheAirTop:setAdd2(center, airOffset)
 
   velDir:set(push3(vehicleData.vel):normalized())
+
   isInTheAir = throwRaycast(inTheAirTop, inTheAirBottom) > 0.9
+
   isDrifting =
-  not isInTheAir
-  and kphAirSpeed > driftOptions.minAirSpeed
-  and currDegAngle >= driftOptions.minAngle
-  and currDegAngle <= driftOptions.maxAngle
+  isAngledForDrift()
+  and currDegAngle > driftOptions.minAngle and currDegAngle < driftOptions.maxAngle
+  and avrgRefPointsKphSpeed > driftOptions.minAirSpeed
+  and not gameplay_walk.isWalking()
+  and not isInTheAir
   and currFailPointsCooldown <= 0
   and currResetTimer <= 0
-
-  if isDrifting ~= lastFrameIsDrifting then
-    extensions.hook("onDriftStatusChanged", isDrifting)
-  end
 
   if isDrifting then
     if driftChainActiveData == nil then
@@ -271,21 +325,25 @@ local function detectAndGatherDriftInfo(vehicleData, dtSim)
 
       if velDir:dot(vehicleData.dirVec:normalized():cross(up)) < 0 then
         driftChainActiveData.rightDrifts = driftChainActiveData.rightDrifts + 1
+        driftActiveData.direction = "right"
       else
         driftChainActiveData.leftDrifts = driftChainActiveData.leftDrifts + 1
+        driftActiveData.direction = "left"
       end
-
       driftChainActiveData.chainedDrifts = driftChainActiveData.chainedDrifts + 1
       stopSpinoutCheck = false
+
+      extensions.hook("onDriftStatusChanged", true)
     end
 
     currDriftCompletedTime = driftOptions.driftCompletedTime
 
-    currentAngle = math.deg(math.acos(velDir:cosAngle(driftActiveData.lastFrameVelDir))) -- angle in deg
+    driftAngleDiff = math.deg(math.acos(velDir:cosAngle(driftActiveData.lastFrameVelDir))) -- angle in deg
 
-    driftActiveData.angleVelocity = currentAngle / dtSim
-    driftActiveData.totalDriftAngle = driftActiveData.totalDriftAngle + currentAngle
+    driftActiveData.angleVelocity = driftAngleDiff / dtSim
+    driftActiveData.totalDriftAngle = driftActiveData.totalDriftAngle + driftAngleDiff
     driftActiveData.lastFrameVelDir:set(velDir)
+    driftActiveData.totalDriftTime = driftActiveData.totalDriftTime + dtSim
 
     -- total drifting distance
     vec3DistDiff:setSub2(driftActiveData.lastPos, vehicleData.pos)
@@ -303,32 +361,16 @@ local function detectAndGatherDriftInfo(vehicleData, dtSim)
     driftActiveData.avgDriftAngle = sum / #driftActiveData.angles
 
     lastDriftTimer = 0
-  else --if just stopped drifting
-    if driftActiveData then
+  else
+    if driftActiveData then --if just stopped drifting
+      extensions.hook("onDriftStatusChanged", false)
       driftActiveData = nil
     end
 
     lastDriftTimer = lastDriftTimer + dtSim
   end
 
-  if gameplay_drift_general.getDebug() then
-    if im.Begin("Drift debug") then
-      im.Text("Drift context : " .. gameplay_drift_general.getContext())
-      im.Text("Is drifting : " .. ((isDrifting and "Yes") or "No"))
-      im.Text("Is crashing : " .. ((isCrashing and "Yes") or "No"))
-      im.Text("Is in the air : " .. ((isInTheAir and "Yes") or "No"))
-      im.Text(string.format("Air speed : %d kph", kphAirSpeed))
-      im.Text(string.format("Min required angle : %f", driftOptions.minAngle))
-
-      if isDrifting then
-        im.Text(string.format("Angle : %d °", currDegAngle))
-        im.Text(string.format("Total drift distance : %d", driftChainActiveData.totalDriftDistance))
-        im.Text(string.format("Average drift angle : %d", driftActiveData.avgDriftAngle))
-        im.Text(string.format("Wall distance front : %f", driftActiveData.closestWallDistanceFront))
-        im.Text(string.format("Wall distance rear : %f", driftActiveData.closestWallDistanceRear))
-      end
-    end
-  end
+  isChainingDrifts = driftChainActiveData ~= nil
 
   lastFrameIsDrifting = isDrifting
 end
@@ -346,18 +388,34 @@ local function driftCoolDown(dtSim)
   end
 end
 
--- min required drift angle decreases with speed
-local lowSpeedAngle = 40
-local function adaptMinDriftAngleToSpeed()
-  driftOptions.minAngle = 1/(0.0025*(kphAirSpeed+0.8)) + 8.3
-end
-
 -- "near" a wall is speed sensitive
 local function adaptWallDetectionDistToSpeed()
   driftOptions.wallDetectionLength = linearScale(kphAirSpeed, 0, 150, 2, 4)
 end
 
+local function imguiDebug()
+  if gameplay_drift_general.getDebug() then
+    if im.Begin("Drift detection") then
+      im.Text("Is drifting : " .. ((isDrifting and "Yes") or "No"))
+      im.Text("Is crashing : " .. ((isCrashing and "Yes") or "No"))
+      im.Text("Is in the air : " .. ((isInTheAir and "Yes") or "No"))
+      im.Text(string.format("Air speed : %d kph", kphAirSpeed or 0))
+      im.Text(string.format("Min required angle : %0.2f", driftOptions.minAngle or 0))
+      im.Text(string.format("Time to confirmation : %0.2f", currDriftCompletedTime))
+
+      if isDrifting then
+        im.Text(string.format("Angle : %d °", currDegAngle))
+        im.Text(string.format("Total drift distance : %d", driftChainActiveData.totalDriftDistance))
+        im.Text(string.format("Average drift angle : %d", driftActiveData.avgDriftAngle))
+        im.Text(string.format("Wall distance front : %f", driftActiveData.closestWallDistanceFront))
+        im.Text(string.format("Wall distance rear : %f", driftActiveData.closestWallDistanceRear))
+      end
+    end
+  end
+end
+
 local function onUpdate(dtReal, dtSim, dtRaw)
+  imguiDebug()
   if gameplay_drift_general.getContext() == "stopped" or gameplay_drift_general.getFrozen() then return end
 
   score = gameplay_drift_scoring.getScore()
@@ -369,6 +427,9 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   else
     veh = getPlayerVehicle(0)
   end
+
+  isDrifting = false
+
   if not veh then return end
   vehId = veh:getId()
 
@@ -376,19 +437,18 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   if not vehData then return end
   kphAirSpeed = vehData.vel:length() * 3.6
 
-  adaptMinDriftAngleToSpeed()
-  adaptWallDetectionDistToSpeed()
-
   calculateVehCenterAndWheels()
   calculateDriftAngle(vehData)
   manageDamages(vehData, dtSim)
 
-  if not isDrifting and score.cachedScore > 0 then
+  if not isDrifting and (score.cachedScore or 0) > 0 then
     detectSpinout()
   end
   detectAndGatherDriftInfo(vehData, dtSim)
+  detectCircleDrift()
 
   if isDrifting then
+    adaptWallDetectionDistToSpeed()
     calculateDistWall()
 
     driftActiveData.currDegAngle = currDegAngle
@@ -432,16 +492,22 @@ local function getDriftOptions()
   return driftOptions
 end
 
+local function getVehCorners()
+  return {corner_FR, corner_BR, corner_BL, corner_FL}
+end
+
 local function getAirSpeed()
   return kphAirSpeed
 end
 
 local function getVehPos()
-  return vehData.pos
+  if M.doesPlHaveVeh() then
+    return vehData.pos
+  end
 end
 
 local function getAngleDiff()
-  return currentAngle
+  return driftAngleDiff
 end
 
 local function onVehicleSwitched(oldId, newVehId)
@@ -455,6 +521,10 @@ end
 local function onDriftPlVehReset()
   reset()
   currResetTimer = resetTimer
+end
+
+local function doesPlHaveVeh()
+  return vehData ~= nil
 end
 
 M.onUpdate = onUpdate
@@ -471,6 +541,9 @@ M.getDriftOptions = getDriftOptions
 M.getAirSpeed = getAirSpeed
 M.getVehPos = getVehPos
 M.getAngleDiff = getAngleDiff
+M.getVehCorners = getVehCorners
+
+M.doesPlHaveVeh = doesPlHaveVeh
 
 M.setVehId = setVehId
 M.setAllowTightDrift = setAllowTightDrift

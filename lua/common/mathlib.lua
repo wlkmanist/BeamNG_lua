@@ -167,6 +167,14 @@ function LuaVec3:perpendicularN()
   return p
 end
 
+-- inputs should be normalized, output is unormalized
+function LuaVec3:slerp(b, t)
+  local dot = clamp(self:dot(b), -1, 1)
+  if dot > 0.9995 then return self + t*(b-self) end
+  local th = math.acos(dot)
+  return math.sin(th * (1-t)) * self + math.sin(th * t) * b
+end
+
 function LuaVec3:cosAngle(a)
   return max(min(self:dot(a) / (sqrt(self:squaredLength() * a:squaredLength()) + 1e-30), 1), -1)
 end
@@ -598,6 +606,7 @@ function closestLinePoints(l1p1, l1p2, l2p1, l2p2)
   local ru, rv = rx*ux + ry*uy + rz*uz, rx*vx + ry*vy + rz*vz
 
   if D < 1e-20 then
+    -- handles the following cases vv == 0, uu == 0, u // v
     if vv == 0 then
       return -ru / (uu + 1e-30), 0
     else
@@ -1075,6 +1084,7 @@ function round(a)
   return floor(a+.5)
 end
 
+-- to round to Nth decimal use roundNear(x, 1e-N)
 function roundNear(x, m)
   return floor(.5 + x/m)*m
 end
@@ -1227,15 +1237,22 @@ end
 
 --MARK: geom
 
+local function axisCheck(v1, v2, b1e1, b1e2, b2e1, b2e2)
+  tmpv2:setCross(v1, v2) -- axis
+  return abs(tmpv1:dot(tmpv2))-abs(b2e1:dot(tmpv2))-abs(b2e2:dot(tmpv2))<=abs(b1e1:dot(tmpv2))+abs(b1e2:dot(tmpv2))
+end
 function overlapsOBB_OBB(c1, x1, y1, z1, c2, x2, y2, z2)
   tmpv1:setSub2(c1, c2)
-  local d11, d12, d13 = abs(x1:dot(x2)), abs(x1:dot(y2)), abs(x1:dot(z2))
-  local d21, d22, d23 = abs(y1:dot(x2)), abs(y1:dot(y2)), abs(y1:dot(z2))
-  local d31, d32, d33 = abs(z1:dot(x2)), abs(z1:dot(y2)), abs(z1:dot(z2))
-
-  return abs(tmpv1:dot(x1))-d11-d12-d13<=x1:squaredLength() and abs(tmpv1:dot(y1))-d21-d22-d23<=y1:squaredLength()
-     and abs(tmpv1:dot(z1))-d31-d32-d33<=z1:squaredLength() and abs(tmpv1:dot(x2))-d11-d21-d31<=x2:squaredLength()
+  local d11,d12,d13=abs(x1:dot(x2)),abs(x1:dot(y2)),abs(x1:dot(z2))
+  if abs(tmpv1:dot(x1))-d11-d12-d13>x1:squaredLength() then return false end
+  local d21,d22,d23=abs(y1:dot(x2)),abs(y1:dot(y2)),abs(y1:dot(z2))
+  if abs(tmpv1:dot(y1))-d21-d22-d23>y1:squaredLength() then return false end
+  local d31,d32,d33=abs(z1:dot(x2)),abs(z1:dot(y2)),abs(z1:dot(z2))
+  return abs(tmpv1:dot(z1))-d31-d32-d33<=z1:squaredLength() and abs(tmpv1:dot(x2))-d11-d21-d31<=x2:squaredLength()
      and abs(tmpv1:dot(y2))-d12-d22-d32<=y2:squaredLength() and abs(tmpv1:dot(z2))-d13-d23-d33<=z2:squaredLength()
+     and axisCheck(x1,x2,y1,z1,y2,z2) and axisCheck(x1,y2,y1,z1,x2,z2) and axisCheck(x1,z2,y1,z1,x2,y2)
+     and axisCheck(y1,x2,x1,z1,y2,z2) and axisCheck(y1,y2,x1,z1,x2,z2) and axisCheck(y1,z2,x1,z1,x2,y2)
+     and axisCheck(z1,x2,x1,y1,y2,z2) and axisCheck(z1,y2,x1,y1,x2,z2) and axisCheck(z1,z2,x1,y1,x2,y2)
 end
 
 function containsOBB_OBB(c1, x1, y1, z1, c2, x2, y2, z2)

@@ -69,6 +69,10 @@ local function init(jbeamData)
       end
     end
   end
+
+  if eventNodeId then
+    bdebug.setNodeDebugText("Pyrotechnic Charges", eventNodeId, M.name .. ": " .. (eventName or "no event"))
+  end
 end
 
 M.init = init

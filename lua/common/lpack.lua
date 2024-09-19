@@ -38,7 +38,7 @@ end
 local buffer = require('string.buffer')
 
 local tonumber, byte, char, sub = tonumber, string.byte, string.char, string.sub
-local abs, min, tableconcat, tablenew, tableclear = math.abs, math.min, table.concat, table.new, table.clear
+local abs, min, floor, ldexp, tableconcat, tablenew, tableclear = math.abs, math.min, math.floor, math.ldexp, table.concat, table.new, table.clear
 
 local peekEncLua
 local peekEnc
@@ -51,39 +51,33 @@ local bufDec = buffer.new()
 local ludNull = bufTmp:set("\03"):decode()
 local s
 
-local daEnc = {
-  [true] = 1,
-  [false] = 0,
-  number = function(x) return x end
-}
-daEnc['boolean'] = function(x) return daEnc[x] end
+local daType = ffi.typeof("double[?]")
+
+local function unpackDouble(str, i)
+  i = i or 1
+  local b8, b7, b6, b5, b4, b3, b2, b1 = str:byte(i, i+7)
+  local expo = (b1%0x80)*0x10 + floor(b2*0.0625)
+  local mant = b2 % 0x10 + b3 * 3.90625e-3 + b4 * 15.2587890625e-6 + b5 * 59.604644775390625e-9 + b6 * 232.830643653869628906e-12 + b7 * 909.494701772928237915e-15 + b8 * 3.55271367880050092936e-15
+  if mant == 0 and expo == 0 then
+    return b1 < 0x80 and 0 or -0
+  elseif expo == 0x7FF then
+    return mant == 0 and (b1 < 0x80 and 1e333 or -1e333) or 0 * 1e333
+  else
+    local e = ldexp(1 + mant * 0.0625, expo - 0x3FF)
+    return b1 < 0x80 and e or -e
+  end
+end
 
 local function encodeDoubleArray(tbl)
-  local startIdx = tbl[0] == nil and 1 or 0
-  local tsize = #tbl + 1 - startIdx
-  local da = ffi.new('double[?]', tsize)
-  if startIdx == 1 then
-    for i = 1, tsize do
-      local v = tbl[i]
-      da[i - 1] = daEnc[type(v)](v)
-    end
-  else
-    for i = 0, tsize - 1 do
-      local v = tbl[i]
-      da[i] = daEnc[type(v)](v)
-    end
-  end
-
-  return ffi.string(da, 8 * tsize)
+  local tsize = #tbl + 1 - (tbl[0] == nil and 1 or 0)
+  return ffi.string(ffi.new(daType, tsize, tbl), 8 * tsize)
 end
 
 local function decodeDoubleArray(sda, tbl)
-  local sdabytes = #sda
-  local sdasize = sdabytes / 8
-  local da, tbl = ffi.new('double[?]', sdasize), tbl or {}
-  ffi.copy(da, sda, sdabytes)
-  for i = 0, sdasize - 1 do
-    tbl[i+1] = da[i]
+  local tbl, i1 = tbl or {}, 1
+  for i = 1, #sda - 7, 8 do
+    tbl[i1] = unpackDouble(sda, i)
+    i1 = i1 + 1
   end
   return tbl
 end

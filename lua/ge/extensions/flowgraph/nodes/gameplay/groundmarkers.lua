@@ -27,7 +27,7 @@ C.legacyPins = {
     reset = 'clear'
   }
 }
-C.tags = { 'arrow', 'path', 'destination', 'navigation' }
+C.tags = { 'arrow', 'path', 'route', 'destination', 'navigation' }
 C.dependencies = { 'core_groundMarkers' }
 
 function C:init(mgr, ...)
@@ -35,9 +35,6 @@ function C:init(mgr, ...)
   self.data.fadeStart = 100
   self.data.fadeEnd = 150
   --self.data.color = { 0.2, 0.53, 1, 1 }
-end
-
-function C:drawMiddle(builder, style)
 end
 
 function C:work(args)
@@ -55,39 +52,14 @@ function C:work(args)
       else
         target = self.lastTarget
       end
-      core_groundMarkers.setFocus(target, nil, self.data.fadeStart,
-          self.data.fadeEnd, ep, nil, nil, self.pinIn.cutOffDrivability.value,
-          self.pinIn.penaltyAboveCutoff.value, self.pinIn.penaltyBelowCutoff.value)
+      local options = {
+        cutOffDrivability = self.pinIn.cutOffDrivability.value,
+        penaltyAboveCutoff = self.pinIn.penaltyAboveCutoff.value,
+        penaltyBelowCutoff = self.pinIn.penaltyBelowCutoff.value
+      }
+      core_groundMarkers.setPath(target, options)
     end
   end
-end
-
-function C:sameTable(a, b)
-  if type(a) ~= type(b) then
-    return false
-  else
-    if type(a) == 'number' then
-      return math.abs(a - b) < 0.001
-    end
-    if type(a) == 'string' then
-      return a == b
-    end
-    if type(a) == 'table' then
-      if #a ~= #b then
-        return false
-      end
-      local ret = true
-      for i = 1, #a do
-        if not self:sameTable(a[i], b[i]) then
-          return false
-        end
-      end
-      return true
-    end
-    return true
-  end
-
-
 end
 
 function C:_executionStopped()
@@ -95,9 +67,9 @@ function C:_executionStopped()
     core_groundMarkers.resetAll()
   end
 end
+
 function C:_executionStarted()
   self.lastTarget = nil
-
 end
 
 return _flowgraph_createNode(C)

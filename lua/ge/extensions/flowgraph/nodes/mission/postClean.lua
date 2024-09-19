@@ -6,9 +6,9 @@ local im = ui_imgui
 
 local C = {}
 
-C.name = 'Post Clean'
+C.name = 'Mission Post Clean'
 C.color = im.ImVec4(0.13, 0.3, 0.64, 0.75)
-C.description = "Cleans up after a mission"
+C.description = "Cleans up after a mission."
 C.category = 'once_p_duration'
 
 C.pinSchema = {

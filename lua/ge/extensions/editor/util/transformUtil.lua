@@ -220,7 +220,7 @@ function C:shiftUpdate(mouseInfo)
 
     local rot = quatFromDir(fwd, mouseInfo._downNormal):normalized()
     self:set(mouseInfo._downPos,
-        self._temp.moved and rot,
+        self._temp.moved and self.allowRotate and rot,
         self._temp.moved and self.oneDimensionalScale and len or nil)
     return true
   else
@@ -449,13 +449,14 @@ function C:combinedWidget()
     if row ~= prevRow then
       prevRow = row
       --im.NewLine()
-      im.SetCursorPos(im.ImVec2(btnX, math.ceil(prePos.y + buttonHeight * row * scale + spacing * row * scale)))
+      im.SetCursorPosX(btnX)
     end
+    im.SetCursorPosY(math.ceil(prePos.y + buttonHeight * row * scale + spacing * row * scale))
     if editor.uiIconImageButton(editor.icons[btn.icon] or editor.icons.settings, im.ImVec2(buttonHeight, buttonHeight), smallButtonColor) then
       self[btn.fun](self)
       changed = true
     end
-    im.tooltip(btn.tooltip)
+    im.tooltip(btn.label)
     im.SameLine()
     prePos.x = math.max(prePos.x, im.GetCursorPosX())
   end

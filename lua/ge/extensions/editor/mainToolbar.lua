@@ -13,6 +13,7 @@ local editModeToolbarGap = 10
 local gridSnapComboItemCurrent = im.IntPtr(-1)
 local rotateSnapComboItemCurrent = im.IntPtr(-1)
 local scaleSnapComboItemCurrent = im.IntPtr(-1)
+local FadeIconsPtr = im.FloatPtr(0)
 local camSpeedPtr = im.FloatPtr(0)
 local todPtr = im.FloatPtr(0)
 local vehicleActionMaps = {"VehicleCommonActionMap", "VehicleSpecificActionMap"}
@@ -276,17 +277,31 @@ local function axisGizmoButtonsGui()
 end
 
 local function cameraTodSliders()
+  if not editor.disableModifyFadeIconsDistance then
+    FadeIconsPtr[0] = editor.getPreference("gizmos.objectIcons.fadeIconsDistance")
+    if editor.getPreference("gizmos.objectIcons.fadeIconsDistance") ~= FadeIconsPtr[0] then
+      editor.setPreference("gizmos.objectIcons.fadeIconsDistance", FadeIconsPtr[0])
+    end
+  end
+  im.PushItemWidth(80)
+  if editor.uiSliderFloat("Icons Distance", FadeIconsPtr, 100, 500, "%.0f") then
+    editor.setPreference("gizmos.objectIcons.fadeIconsDistance", FadeIconsPtr[0])
+  end
+  im.tooltip("Adjust icons visibility (CTRL + Scroll Wheel)")
+  im.SameLine()
+
   if not editor.keyModifiers.shift then
     camSpeedPtr[0] = core_camera.getSpeed()
     if editor.getPreference("camera.general.freeCameraMoveSpeed") ~= camSpeedPtr[0] then
       editor.setPreference("camera.general.freeCameraMoveSpeed", camSpeedPtr[0])
     end
   end
-  im.PushItemWidth(50)
+  im.PushItemWidth(80)
   if editor.uiSliderFloat("Camera Speed", camSpeedPtr, 2, 100, "%.1f") then
     editor.setCameraSpeed(camSpeedPtr[0])
     editor.setPreference("camera.general.freeCameraMoveSpeed", camSpeedPtr[0])
   end
+  im.tooltip("Adjust camera speed (Shift + Scroll Wheel)")
   im.SameLine()
 
   local tod = core_environment.getTimeOfDay()
@@ -359,7 +374,7 @@ local function onEditorGuiToolBar()
 
       -- assign a default sort order (index of editMode) to the ones that dont have one
       local idx = 1
-      
+
       for _, key in pairs(sortedKeys) do
         if key ~= "objectSelect" and key ~= "createObject" then
           if nil == editor.editModes[key].sortOrder then
@@ -425,8 +440,8 @@ local function onEditorGuiToolBar()
       extensions.hook("onEditorGuiEditModeToolbar")
       im.SameLine()
     end
-    if im.GetContentRegionAvailWidth() > (350 * (1+im.uiscale[0])/2) then
-      im.SetCursorPosX(im.GetCursorPosX() + im.GetContentRegionAvailWidth() - (350 * (1+im.uiscale[0])/2))
+    if im.GetContentRegionAvailWidth() > (550 * (1+im.uiscale[0])/2) then
+      im.SetCursorPosX(im.GetCursorPosX() + im.GetContentRegionAvailWidth() - (550 * (1+im.uiscale[0])/2))
     end
     cameraTodSliders()
   end

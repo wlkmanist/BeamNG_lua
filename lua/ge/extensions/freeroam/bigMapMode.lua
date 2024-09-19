@@ -26,7 +26,8 @@ local shadowDistanceSmoother = newTemporalSmoothing()
 local routeAnimCounter = 1
 local missionRouteAnimCounter
 local poiSelectCallback
-local horizontalOffsetFactor
+local horizontalOffsetFactor = 1
+local verticalOffsetFactor = 1
 
 local shadowDist = 5000
 local verticalResolution = 1080
@@ -72,6 +73,8 @@ local transitionSoundId
 local currentlyVisibleIds = {}
 local missionToOpenOnStart
 
+local cameraAdditionalHeightFactor = 0
+local navigationBoundariesFactor = 1
 
 -- Level properties
 local bigMapTod
@@ -155,10 +158,10 @@ local function createLevelBounds()
   mapBoundsFogPool[2]:setPosRot(edgePoint2.x, edgePoint2.y, edgePoint2.z, rot2.x, rot2.y, rot2.z, rot2.w)
   mapBoundsFogPool[3]:setPosRot(edgePoint3.x, edgePoint3.y, edgePoint3.z, rot3.x, rot3.y, rot3.z, rot3.w)
   mapBoundsFogPool[4]:setPosRot(edgePoint4.x, edgePoint4.y, edgePoint4.z, rot4.x, rot4.y, rot4.z, rot4.w)
-  mapBoundsFogPool[1]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.x/1000 * 3, 1))
-  mapBoundsFogPool[2]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.y/1000 * 3, 1))
-  mapBoundsFogPool[3]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.x/1000 * 3, 1))
-  mapBoundsFogPool[4]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.y/1000 * 3, 1))
+  mapBoundsFogPool[1]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.x/1000 * 6, 1))
+  mapBoundsFogPool[2]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.y/1000 * 6, 1))
+  mapBoundsFogPool[3]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.x/1000 * 6, 1))
+  mapBoundsFogPool[4]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.y/1000 * 6, 1))
 end
 
 local function frameObject(bbox, pitch, yaw, useCamYaw)
@@ -167,8 +170,8 @@ local function frameObject(bbox, pitch, yaw, useCamYaw)
   yaw = yaw or camMode.rotAngle
   local upperEdgePoint = vec3((bbox.maxExtents.x + bbox.minExtents.x) / 2, bbox.maxExtents.y, bbox.maxExtents.z)
   local lowerEdgePoint = vec3((bbox.maxExtents.x + bbox.minExtents.x) / 2, bbox.minExtents.y, bbox.minExtents.z)
-  local lowerCamFovAngle = pitch + camMode.fovMax/2
-  local upperCamFovAngle = pitch - camMode.fovMax/2
+  local lowerCamFovAngle = pitch + (camMode.fovMax - (camMode.fovMax * cameraAdditionalHeightFactor))/2
+  local upperCamFovAngle = pitch - (camMode.fovMax - (camMode.fovMax * cameraAdditionalHeightFactor))/2
   local lowerCamFovDir = quatFromAxisAngle(xVector, (lowerCamFovAngle) / 180 * math.pi):__mul(yVector)
   local upperCamFovDir = quatFromAxisAngle(xVector, (upperCamFovAngle) / 180 * math.pi):__mul(yVector)
   local planeNormal = upperCamFovDir:cross(xVector)
@@ -239,14 +242,18 @@ local function calculateCamPos()
   -- Add a small offset to the camera to make room for the ui sidebar and the topbar
   local camDir = bigMapCamRotation * yVector
   local camLeft = zVector:cross(camDir):normalized()
-  camPos = camPos + camLeft * (camHeightAboveTerrain / 10) * (horizontalOffsetFactor or 1)
-  camPos = camPos + camDir:z0() * camHeightAboveTerrain / 10
+  camPos = camPos + camLeft * (camHeightAboveTerrain / 10) * horizontalOffsetFactor
+  camPos = camPos + camDir:z0() * (camHeightAboveTerrain / 10) * verticalOffsetFactor
 
   shadowDist = camHeightAboveTerrain * 2.5
   bigMapInitialCamPos = camPos
   mapBoundaries = bbox
-  camMode.mapBoundaries = mapBoundaries
-  horizontalOffsetFactor = nil
+
+  local navigationBoundaries = Box3F()
+  navigationBoundaries.minExtents = mapBoundaries.minExtents
+  navigationBoundaries.maxExtents = mapBoundaries.maxExtents
+  navigationBoundaries:scale3F(vec3(navigationBoundariesFactor, navigationBoundariesFactor, 1))
+  camMode.mapBoundaries = navigationBoundaries
 end
 
 local function buildTransitionPath(endMarkerData)
@@ -303,18 +310,6 @@ local function setTime(time)
   end
 end
 
-local function resetForceVisible()
-  -- Set all markers forceVisible to false
-  for i, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
-    if cluster.type == "missionMarker" then
-      cluster.focus = false
-    end
-  end
-
-  M.navigationPoiId = nil
-  M.reachedTargetPos = nil
-end
-
 local function setOnlyIdsVisible(list)
   currentlyVisibleIds = list or {}
   freeroam_bigMapMarkers.setupFilter(currentlyVisibleIds, M.clusterMergeRadius)
@@ -358,15 +353,11 @@ local function setNavFocus(pos)
     pos = nil
   end
   navDestinationForLuaReloads = pos
-  core_groundMarkers.setFocus(pos)
+  core_groundMarkers.setPath(pos)
   resetRoute()
 end
 
-local function reachedTarget()
-  if settings.getValue("showMissionMarkers") or (career_career and career_career.isActive()) then
-    resetForceVisible()
-  end
-  M.reachedTargetPos = core_groundMarkers.endWP[1]
+local function onReachedTargetPos()
   setNavFocus(nil)
 end
 
@@ -599,7 +590,7 @@ local function activateBigMapCallback()
   if not iconRenderer then return end
   iconRenderer:loadIconAtlas("core/art/gui/images/iconAtlas.png", "core/art/gui/images/iconAtlas.json");
   local playerVehicle = getPlayerVehicle(0)
-  iconRenderer:addIcon("playerVehicle", "player", playerVehicle and playerVehicle:getPosition() or vec3(0,0,0))
+  iconRenderer:addIcon("playerVehicle", "player_marker", playerVehicle and playerVehicle:getPosition() or vec3(0,0,0))
   local iconInfo = iconRenderer:getIconByName("playerVehicle")
   iconInfo.color = pureWhite
   iconInfo.customSizeFactor = 0.7
@@ -845,6 +836,30 @@ local function enterBigMap(options)
   if options.missionId then
     missionToOpenOnStart = options.missionId
   end
+  if options.cameraAdditionalHeightFactor then
+    cameraAdditionalHeightFactor = options.cameraAdditionalHeightFactor
+  else
+    cameraAdditionalHeightFactor = 0
+  end
+
+  if options.horizontalOffsetFactor then
+    horizontalOffsetFactor = options.horizontalOffsetFactor
+  else
+    horizontalOffsetFactor = 1
+  end
+
+  if options.verticalOffsetFactor then
+    verticalOffsetFactor = options.verticalOffsetFactor
+  else
+    verticalOffsetFactor = 1
+  end
+
+  if options.navigationBoundariesFactor then
+    navigationBoundariesFactor = options.navigationBoundariesFactor
+  else
+    navigationBoundariesFactor = 1
+  end
+
   enterBigMapActual(options.instant or (render_openxr and render_openxr.isSessionRunning()))
 end
 
@@ -919,9 +934,20 @@ local function toggleBigMap()
     end
   else
     if bigMap then
-      exitBigMap(false, true)
+      if career_career.isActive()
+        and career_modules_delivery_general.isDeliveryModeActive()
+        and career_modules_delivery_cargoScreen.isCargoScreenOpen()
+         then
+        exitBigMap(true, true)
+      else
+        exitBigMap(false, true)
+      end
     else
-      enterBigMap()
+      if career_career.isActive() and career_modules_delivery_general.isDeliveryModeActive() then
+        career_modules_delivery_cargoScreen.enterMyCargo()
+      else
+        enterBigMap()
+      end
     end
   end
 end
@@ -1132,7 +1158,6 @@ end
 
 local function navigateToMission(poiId)
   if career_modules_testDrive and career_modules_testDrive.isActive() then return end
-  resetForceVisible()
 
   for i, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
     local marker = gameplay_playmodeMarkers.getMarkerForCluster(cluster)
@@ -1140,8 +1165,7 @@ local function navigateToMission(poiId)
       cluster.focus = true
       setNavFocus(marker.pos)
       showNavigationMarker = false
-      M.navigationPoiId = poiId
-      extensions.hook("onNavigateToMission", poiIdInCluster)
+      extensions.hook("onNavigateToMission", poiId)
       return marker
     end
   end
@@ -1150,15 +1174,13 @@ local function navigateToMission(poiId)
     if poi.id ==  poiId and poi.markerInfo.bigmapMarker then
       setNavFocus(poi.markerInfo.bigmapMarker.pos)
       showNavigationMarker = false
-      M.navigationPoiId = poiId
-      extensions.hook("onNavigateToMission", poiIdInCluster)
+      extensions.hook("onNavigateToMission", poiId)
       return marker
     end
   end
 
-  extensions.hook("onNavigateToMission",nil)
+  extensions.hook("onNavigateToMission", nil)
   setNavFocus(nil)
-
 end
 
 local function onMenuItemNavigation()
@@ -1385,7 +1407,6 @@ end
 local function onClientEndMission(levelPath)
   clearCylinderCache()
   deselect()
-  resetForceVisible()
   setNavFocus(nil)
 end
 
@@ -1412,12 +1433,17 @@ local function isUIPopupOpen()
   return uiPopupOpen
 end
 
-local function enterBigmapWithCustomPOIs(poiIds, callback, instant, _horizontalOffsetFactor)
-  horizontalOffsetFactor = _horizontalOffsetFactor
+local function enterBigMapWithCustomPOIs(poiIds, callback, options)
   poiSelectCallback = callback
-  enterBigMap({instant = instant})
+  enterBigMap(options)
   setOnlyIdsVisible(poiIds)
 end
+
+-- testing for UI
+local function setBigmapScreenBounds(windowSize, mapSize)
+
+end
+M.setBigmapScreenBounds = setBigmapScreenBounds
 
 -- public interface
 M.enterBigMap = enterBigMap
@@ -1436,13 +1462,11 @@ M.openPopupCallback = openPopupCallback
 M.clusterMergeRadius = 10 -- TODO adjust this merge radius
 M.updateMergeRadius = updateMergeRadius
 M.deselect = deselect
-M.resetForceVisible = resetForceVisible
 M.setNavFocus = setNavFocus
-M.reachedTarget = reachedTarget
 M.getVerticalResolution = getVerticalResolution
 M.poiHovered = poiHovered
 M.isUIPopupOpen = isUIPopupOpen
-M.enterBigmapWithCustomPOIs = enterBigmapWithCustomPOIs
+M.enterBigMapWithCustomPOIs = enterBigMapWithCustomPOIs
 M.resetRoute = resetRoute
 
 M.onClientStartMission    = onClientStartMission
@@ -1457,5 +1481,6 @@ M.onDeserialized = onDeserialized
 M.onMenuItemNavigation = onMenuItemNavigation
 M.onNavgraphReloaded = onNavgraphReloaded
 M.onChangeUiFilter = onChangeUiFilter
+M.onReachedTargetPos = onReachedTargetPos
 
 return M

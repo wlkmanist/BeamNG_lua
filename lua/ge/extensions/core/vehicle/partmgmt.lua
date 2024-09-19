@@ -12,10 +12,24 @@ local vehsPartsData = {}
 
 local attachedCouplers = {}
 
-local function getVehData(vehID)
-  local vehObj = vehID and be:getObjectByID(vehID) or getPlayerVehicle(0)
+-- If inVehID is nil, it uses player vehicle
+local function getVehPartsData(inVehID)
+  local vehObj = inVehID and be:getObjectByID(inVehID) or getPlayerVehicle(0)
+  if not vehObj then return nil end
+  local vehID = vehObj:getID()
+
+  if not vehsPartsData[vehID] then
+    vehsPartsData[vehID] = {vehName = vehObj:getJBeamFilename(), alpha = 1, partsHighlighted = nil}
+  end
+
+  return vehsPartsData[vehID]
+end
+
+-- If inVehID is nil, it uses player vehicle
+local function getVehData(inVehID)
+  local vehObj = inVehID and be:getObjectByID(inVehID) or getPlayerVehicle(0)
   if not vehObj then return end
-  vehID = vehObj:getID()
+  local vehID = vehObj:getID()
 
   local vehData = vehManager.getVehicleData(vehID)
   if not vehData then return end
@@ -539,8 +553,9 @@ local function setPartsMeshesAlpha(vehObj, vdata, partNames, alpha, notSelectedA
 end
 
 -- Sets transparency of highlighted parts
-local function setHighlightedPartsVisiblity(alpha, _vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function setHighlightedPartsVisiblity(alpha, inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   partsData.alpha = alpha
@@ -549,8 +564,9 @@ local function setHighlightedPartsVisiblity(alpha, _vehID)
 end
 
 -- Changes transparency of highlighted parts by delta value
-local function changeHighlightedPartsVisiblity(deltaAlpha, _vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function changeHighlightedPartsVisiblity(deltaAlpha, inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   partsData.alpha = clamp(partsData.alpha + deltaAlpha, 0, 1)
@@ -559,16 +575,18 @@ local function changeHighlightedPartsVisiblity(deltaAlpha, _vehID)
 end
 
 -- Just shows parts highlighted
-local function showHighlightedParts(_vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function showHighlightedParts(inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   setPartsMeshesAlpha(vehObj, vehData.vdata, partsData.partsHighlighted, partsData.alpha)
 end
 
 -- Highlighting refers to clicking on the "eye" icon
-local function highlightParts(parts, _vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function highlightParts(parts, inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   if not partsData.partsHighlighted then
@@ -586,8 +604,9 @@ local function highlightParts(parts, _vehID)
 end
 
 -- selecting refers to hovering over a part in the UI (only temporary)
-local function selectParts(partNamesToHighlight, _vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function selectParts(partNamesToHighlight, inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   setPartsMeshesAlpha(vehObj, vehData.vdata, partNamesToHighlight, partsData.alpha, 0.2)
@@ -616,8 +635,9 @@ end
 -- Merge old part highlights with new vehicle parts
 -- When new part added, its visiblity is set to the parent part visiblity,
 -- as well as its children to prevent weirdness
-local function setNewParts(_vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function setNewParts(inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   local newHighlightedParts = {}
@@ -697,16 +717,18 @@ local function onDeserialized(data)
 end
 
 -- Sets parts highlights to false
-local function clearVehicleHighlights(_vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function clearVehicleHighlights(inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   partsData.partsHighlighted = nil
 end
 
 -- Clears out all highlights data (parts highlighted, mesh transparency, and vehicle)
-local function resetVehicleHighlights(onlyIfVehChanged, _vehID)
-  local vehObj, vehData, vehID, partsData = getVehData(_vehID)
+-- If inVehID is nil, it uses player vehicle
+local function resetVehicleHighlights(onlyIfVehChanged, inVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
   local clear = true
@@ -793,6 +815,7 @@ local function onCouplerDetached(obj1id, obj2id, nodeId, obj2nodeId)
 end
 
 -- public interface
+M.getVehPartsData = getVehPartsData
 M.save = savePartConfigFile
 M.savePartConfigFileStage2 = savePartConfigFileStage2_Format3
 

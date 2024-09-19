@@ -1018,7 +1018,6 @@ local function onClientStartMission(levelPath)
   extensions.hook('onLoadCustomPrefabs', scenario)
 
   changeState('pre-start')
-  setCEFFocus(false) -- focus the game now
 end
 
 local function loadExtentions(scenario)

@@ -72,19 +72,24 @@ local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConf
   --log('D', 'loadVehicle', 'spawn config: ' .. dumps(vehicleConfig))
 
   if loadingProgress then loadingProgress:update(0.2, 'Finding parts...') end
-  local vehicle, unifyJournal, chosenParts, activePartsOrig = jbeamSlotSystem.findParts(ioCtx, vehicleConfig)
+  local vehicle, unifyJournal, unifyJournalC, chosenParts, activePartsOrig = jbeamSlotSystem.findParts(ioCtx, vehicleConfig)
   if not vehicle then return end
 
+  local vars = jbeamVariables.getAllVariables(vehicle, unifyJournal, vehicleConfig)
+
   -- we process all components before processing variables so the variables can use them
-  jbeamSlotSystem.processComponents(vehicle, unifyJournal, vehicleConfig)
+  jbeamVariables.processComponents(vehicle, unifyJournalC, vehicleConfig, vars)
 
   if loadingProgress then loadingProgress:update(0.21, 'Applying variables...') end
-  local allVariables = jbeamVariables.processParts(vehicle, unifyJournal, vehicleConfig)
+  local allVariables = jbeamVariables.processParts(vehicle, unifyJournal, vehicleConfig, vars)
 
   if loadingProgress then loadingProgress:update(0.22, 'Unifying parts...') end
   if not jbeamSlotSystem.unifyPartJournal(ioCtx, unifyJournal) then return end
 
   jbeamVariables.postProcessVariables(vehicle, allVariables)
+
+  -- cleanup everything that should not be send over to the other side that is not serializeable
+  jbeamVariables.componentsCleanup(vehicle)
 
   if debugMgrContext and debugMgrContext.dumpDebug[0] then
     table.insert(debugMgrContext.debugTexts, 'vehicleDebug_preTable.json')
@@ -232,6 +237,11 @@ local function loadBundle(objID, vehicleBundle, loadingProgress)
     jbeamMirrors.process(objID, vehicleObj, vehicleBundle.vdata)
 
     vehicleBundle.config.paints = deserialize(vehicleObj.paints or '{}')
+
+    if vehicleBundle.vdata.animation then
+      vehicleObj:queueLuaCommand('extensions.load("test_animationViz")')
+    end
+
   else
     vehicleBundle.vdata.props = {}
     vehicleBundle.vdata.flexbodies = {}
@@ -243,7 +253,7 @@ local function loadVehicleStage1(objID, vehicleDir, vehicleConfig, debugMgrConte
   profilerPushEvent('loadVehicleStage1')
   local loadingProgress
 
-  if vehicleBundle and debugMgrContext and debugMgrContext.dumpDebug[0] then
+  if debugMgrContext and debugMgrContext.dumpDebug[0] then
     debugMgrContext.debugTexts = {'Creating debug output:'}
   end
 

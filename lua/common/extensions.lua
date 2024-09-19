@@ -185,11 +185,17 @@ local function resolveDependencies()
       end
     end
   end
-
-  table.clear(luaExtensionFuncs)  -- clear the hook function cache
 end
 
 local function unloadInternal(extNames, forceUnloadVirtual)
+  -- nop the function cache so that existing hook iterations do not get invalidated as they are used
+  for fName, fList in pairs(luaExtensionFuncs) do
+    for i, _ in ipairs(fList) do
+      fList[i] = nop
+    end
+  end
+  table.clear(luaExtensionFuncs)  -- clear the hook function cache
+
   if type(extNames) ~= 'table' then
     extNames = {extNames}
   end
@@ -263,7 +269,15 @@ local function unloadInternal(extNames, forceUnloadVirtual)
   end
 end
 
+local function isExtensionLoaded(extName)
+  return extName and _G[extName] ~= nil
+end
+
 local function unload(extName)
+  if not isExtensionLoaded(extName) then
+    return
+  end
+
   if type(extName) == "table" and type(extName.__extensionName__) == "string" then
     extName = extName.__extensionName__
   end
@@ -303,7 +317,6 @@ local function unload(extName)
   end
   -- -------
   -- ------
-
   unloadInternal(extrasToUnloadModuleName)
   resolveDependencies()
 end
@@ -538,6 +551,7 @@ local function loadInternal(manualLoad, ...)
     end
   end
   resolveDependencies()
+  table.clear(luaExtensionFuncs)  -- clear the hook function cache
 end
 
 local function loadExt(...)
@@ -585,6 +599,8 @@ local function loadAtRoot(extPath, rootName)
   end
 
   resolveDependencies()
+  table.clear(luaExtensionFuncs)  -- clear the hook function cache
+
   return extName, m
 end
 
@@ -787,6 +803,7 @@ local function refresh(extName)
   end
   local m = refreshInternal(luaMods[extName], extName, extPath, false)
   resolveDependencies()
+  table.clear(luaExtensionFuncs)  -- clear the hook function cache
   return m
 end
 
@@ -957,6 +974,7 @@ function ExtensionProxy:_updateHooks()
   m.__virtual__ = true
   m.__manuallyLoaded__ = true
   resolveDependencies()
+  table.clear(luaExtensionFuncs)  -- clear the hook function cache
   return m
 end
 
@@ -999,10 +1017,6 @@ M.use = function(key)
 end
 
 -- normal interface
-M.isExtensionLoaded = function(extName)
-  return extName and _G[extName] ~= nil
-end
-
 M.getLoadedExtensionsNames = function(excludeVirtual)
   local loadedNames = {}
   for k, data in pairs(luaMods) do
@@ -1021,6 +1035,7 @@ M.reload = reload
 M.refresh = refresh
 M.unload = unload
 M.unloadExcept = unloadExcept
+M.isExtensionLoaded = isExtensionLoaded
 M.hook = hookFast
 M.hookExcept = hookExcept
 M.hookNotify = hookNotify

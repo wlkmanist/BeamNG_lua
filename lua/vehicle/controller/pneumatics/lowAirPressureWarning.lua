@@ -52,6 +52,7 @@ local function initSounds(jbeamData)
     obj:setVolume(lowAirWarningSoundEvent, lowAirWarningSoundVolume)
   end
   isPlayingLowPressureSound = false
+  bdebug.setNodeDebugText("Misc", warningSoundNode, M.name .. " - Low Air Pressure Warning: " .. (warningSoundEventName or "no event"))
 end
 
 local function init(jbeamData)

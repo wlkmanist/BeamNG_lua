@@ -42,14 +42,21 @@ end
 
 
 -- parses and sanitizes a singular facility entry and adds it to the facilitiesTypeList.
-local function parseFacility(f, type, facilitiesTypeList, levelDir, fileDir, fileName, index)
+local function parseFacility(f, facilityType, facilitiesTypeList, levelDir, fileDir, fileName, index)
   -- sanitize
-  f.id = f.id or (string.format("%s%s-%s-%d",fileDir, fileName, type, index))
-  f.type = type
+  f.id = f.id or (string.format("%s%s-%s-%d",fileDir, fileName, facilityType, index))
+  f.type = facilityType
   f.preview = f.preview or 'defaultFacility.jpg'
   f.preview = fileExistsDefault({fileDir..f.preview, levelDir.. f.preview}, missingPreview)
   f.sitesFile = f.sitesFile or "facilities.sites.json"
-  f.sitesFile = fileExistsDefault({fileDir..f.sitesFile, levelDir.. f.sitesFile}, levelDir.."facilities.sites.json")
+  if type(f.sitesFile) == "table" then
+    for index, file in ipairs(f.sitesFile) do
+      f.sitesFile[index] = fileExistsDefault({fileDir..file, levelDir.. file}, levelDir.."facilities.sites.json")
+    end
+  else
+    f.sitesFile = fileExistsDefault({fileDir..f.sitesFile, levelDir.. f.sitesFile}, levelDir.."facilities.sites.json")
+  end
+
   f.zoneNames = f.zoneNames or {}
   f.parkingSpotNames = f.parkingSpotNames or {}
   table.insert(facilitiesTypeList, f)
@@ -148,18 +155,31 @@ end
 
 local function getParkingSpotsForFacility(facility)
   if not facility.sitesFile then log("E","","Facility has not sites file: " .. dumpsz(facility,1)) return end
-  local sites = gameplay_sites_sitesManager.loadSites(facility.sitesFile)
   local spots = {}
-  if sites then
-    for _, parkingSpotName in ipairs(facility.parkingSpotNames) do
-      local spot = sites.parkingSpots.byName[parkingSpotName]
+
+  local sites = {}
+  if type(facility.sitesFile) == "string" then
+    table.insert(sites, gameplay_sites_sitesManager.loadSites(facility.sitesFile))
+  else
+    for _, sitesFile in ipairs(facility.sitesFile) do
+      table.insert(sites, gameplay_sites_sitesManager.loadSites(sitesFile))
+    end
+  end
+  for _, parkingSpotName in ipairs(facility.parkingSpotNames) do
+    local psFound = false
+    for _, sitesFromFile in ipairs(sites) do
+      local spot = sitesFromFile.parkingSpots.byName[parkingSpotName]
       if spot and not spot.missing then
         table.insert(spots, spot)
-      else
-        log("W","","Missing Spot for facility" .. dumps(facility.id).."?: " .. dumps(parkingSpotName) .. " of " .. dumps(tableKeys(sites.parkingSpots.byName)))
+        psFound = true
+        break
       end
     end
-  else
+    if not psFound then
+      log("W","","Missing Spot for facility" .. dumps(facility.id).."?: " .. dumps(parkingSpotName))
+    end
+  end
+  if tableIsEmpty(sites) then
     log("W","","Could not find sites file for facility: " .. dumps(facility.sitesFile))
   end
   return spots
@@ -170,18 +190,33 @@ end
 -- POI integration
 local function getZonesForFacility(facility)
   if not facility.sitesFile then log("E","","Facility has not sites file: " .. dumpsz(facility,1)) return end
-  local sites = gameplay_sites_sitesManager.loadSites(facility.sitesFile)
   local zones = {}
-  if sites then
-    for _, zoneName in ipairs(facility.zoneNames) do
-      local zone = sites.zones.byName[zoneName]
+
+  local sites = {}
+  if type(facility.sitesFile) == "string" then
+    table.insert(sites, gameplay_sites_sitesManager.loadSites(facility.sitesFile))
+  else
+    for _, sitesFile in ipairs(facility.sitesFile) do
+      table.insert(sites, gameplay_sites_sitesManager.loadSites(sitesFile))
+    end
+  end
+
+  for _, zoneName in ipairs(facility.zoneNames) do
+    local psFound = false
+    for _, sitesFromFile in ipairs(sites) do
+      local zone = sitesFromFile.zones.byName[zoneName]
       if zone and not zone.missing then
         table.insert(zones, zone)
-      else
-        log("W","","Missing Zone for facility" .. dumps(facility.id).."?: " .. dumps(zoneName) .. " of " .. dumps(tableKeys(sites.zones.byName)))
+        psFound = true
+        break
       end
     end
-  else
+    if not psFound then
+      log("W","","Missing Spot for facility" .. dumps(facility.id).."?: " .. dumps(v))
+    end
+  end
+
+  if tableIsEmpty(sites) then
     log("W","","Could not find sites file for facility: " .. dumps(facility.sitesFile))
   end
   return zones
@@ -203,13 +238,12 @@ local function teleportToGarage(garageId, veh, resetVeh)
   local pos, rot = getGaragePosRot({id = garageId}, veh)
   if pos and rot then
     spawn.safeTeleport(veh, pos, rot, nil, nil, nil, true, resetVeh)
-    veh:resetBrokenFlexMesh()
+    core_camera.resetCamera(0)
+    extensions.hook("onTeleportedToGarage", garageId, veh)
     if core_groundMarkers.currentlyHasTarget() then
       freeroam_bigMapMode.setNavFocus(core_groundMarkers.endWP[1])
     end
-    core_camera.resetCamera(0)
   end
-  extensions.hook("onTeleportedToGarage",garageId, veh)
 end
 M.teleportToGarage = teleportToGarage
 
@@ -396,7 +430,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
       end
       -- gasStations are handled in gasStations.lua now
       if elem.type == "dealership" then
-        data.buttonLabel = "Open Dealership"
+        data.buttonLabel = "View Inventory"
         data.buttonFun = function() career_modules_vehicleShopping.openShop(elem.facility.id) end
         data.props = {}
         for _, prop in ipairs(elem.facility.activityAcceptProps or {}) do

@@ -7,11 +7,17 @@ M.type = "auxiliary"
 M.defaultOrder = 80
 
 local abs = math.abs
+local max = math.max
+local clamp = clamp
+
+local defaultTargetLengthCalibrationTime = 1.5 -- seconds
 
 local actuator = nil
 local controlGroups = {}
 local actuationStartDistance = 0
 local actuationEndDistance = 0
+local actuationDelay = 0
+local minValveOpenAmount = 0
 
 local function iterateGroups(groupNameOrNames)
   if type(groupNameOrNames) == "string" then
@@ -32,60 +38,97 @@ local function iterateGroups(groupNameOrNames)
   return pairs(groups)
 end
 
-local function toggleDump(groupNames)
+local function setTemporarilyDisabled(groupNames, disabled)
   for _, group in iterateGroups(groupNames) do
-    group.dumpAir = not group.dumpAir
-    group.maxHeight = false
+    group.temporarilyDisabled = disabled
   end
 end
 
-local function setDump(groupNames, dumpAir)
+local function setAdjustmentRate(groupNames, rate)
   for _, group in iterateGroups(groupNames) do
-    group.dumpAir = dumpAir
-    group.maxHeight = false
+    group.adjustmentRate = clamp(rate, -1, 1)
+    group.commitNewHeight = false
   end
 end
 
-local function toggleMaxHeight(groupNames)
+local function stopAdjusting(groupNames, commitNewHeight)
   for _, group in iterateGroups(groupNames) do
-    group.maxHeight = not group.maxHeight
-    group.reachedMaxHeight = false
-    group.didStartMoving = false
-    group.dumpAir = false
-  end
-end
-
-local function setMaxHeight(groupNames, maxHeight)
-  for _, group in iterateGroups(groupNames) do
-    group.maxHeight = maxHeight
-    group.reachedMaxHeight = false
-    group.didStartMoving = false
-    group.dumpAir = false
+    group.adjustmentRate = 0
+    group.commitNewHeight = commitNewHeight == true
   end
 end
 
 local function setMomentaryIncrease(groupNames, increase)
-  for _, group in iterateGroups(groupNames) do
-    group.momentaryIncrease = increase
-    group.momentaryDecrease = false
+  log("W", "autoLevelSuspension.setMomentaryIncrease", "This function is deprecated. Use setAdjustmentRate with a rate of 1.0 instead.")
+  if increase then
+    setAdjustmentRate(groupNames, 1)
+  else
+    stopAdjusting(groupNames, true)
   end
 end
 
 local function setMomentaryDecrease(groupNames, decrease)
+  log("W", "autoLevelSuspension.setMomentaryDecrease", "This function is deprecated. Use setAdjustmentRate with a rate of -1.0 instead.")
+    if decrease then
+      setAdjustmentRate(groupNames, -1)
+    else
+      stopAdjusting(groupNames, true)
+    end
+end
+
+local function setTargetLength(groupNames, targetLength, immediate)
   for _, group in iterateGroups(groupNames) do
-    group.momentaryDecrease = decrease
-    group.momentaryIncrease = false
+    group.targetLength = targetLength
+
+    if immediate then
+      group.timeOutsideTarget = actuationDelay
+    end
   end
 end
 
---- Returns four values: the target height, the "dump air" flag, and the "max height" flag
-local function getGroupState(groupName)
+local function getTargetLength(groupName)
   local group = controlGroups[groupName]
   if not group then
-    log("E", "autoLevelSuspension.getGroupState", "Suspension control group not found: " .. groupName)
-    return 0, false, false
+    log("E", "autoLevelSuspension.getTargetLength", "Suspension control group not found: " .. groupName)
+    return 0
   end
-  return group.targetLength, group.dumpAir, group.maxHeight
+  return group.targetLength
+end
+
+local function getCurrentLength(groupName)
+  local group = controlGroups[groupName]
+  if not group then
+    log("E", "autoLevelSuspension.getCurrentLength", "Suspension control group not found: " .. groupName)
+    return 0
+  end
+  return group.currentLength
+end
+
+local function getAverageFlowRate(groupName)
+  local group = controlGroups[groupName]
+  if not group then
+    log("E", "autoLevelSuspension.getAverageFlowRate", "Suspension control group not found: " .. groupName)
+    return 0
+  end
+  return actuator.getBeamGroupsAverageFlowRate(group.beamGroups)
+end
+
+local function isMoving(groupName)
+  local group = controlGroups[groupName]
+  if not group then
+    log("E", "autoLevelSuspension.isMoving", "Suspension control group not found: " .. groupName)
+    return false
+  end
+  return abs(actuator.getBeamGroupsAverageFlowRate(group.beamGroups)) > 1e-4
+end
+
+local function isCalibrating(groupName)
+  local group = controlGroups[groupName]
+  if not group then
+    log("E", "autoLevelSuspension.isCalibrating", "Suspension control group not found: " .. groupName)
+    return false
+  end
+  return group.calibratingTime > 0
 end
 
 local function updateFixedStep(dt)
@@ -93,47 +136,71 @@ local function updateFixedStep(dt)
     local controlBeamId = controlGroup.controlBeamId
     local curLength = obj:getBeamLength(controlBeamId)
 
-    if controlGroup.momentaryDecrease or controlGroup.dumpAir then
-      actuator.setBeamGroupsValveState(controlGroup.beamGroups, -1)
-      controlGroup.isAdjusting = controlGroup.momentaryDecrease
-    elseif controlGroup.maxHeight then
-      if controlGroup.reachedMaxHeight then
+    controlGroup.currentLength = curLength
+
+    if controlGroup.debug then
+      streams.drawGraph(controlGroup.name .. "_currentLength", { value = controlGroup.currentLength, unit = "m" })
+      streams.drawGraph(controlGroup.name .. "_targetLength", { value = controlGroup.targetLength, unit = "m" })
+    end
+
+    if controlGroup.calibratingTime > 0 then
+      controlGroup.calibratingTime = controlGroup.calibratingTime - dt
+
+      if controlGroup.calibratingTime <= 0 then
+        controlGroup.targetLength = curLength
+      end
+    elseif controlGroup.adjustmentRate ~= 0 then
+      actuator.setBeamGroupsValveState(controlGroup.beamGroups, controlGroup.adjustmentRate)
+    else
+      if controlGroup.commitNewHeight then
+        controlGroup.targetLength = curLength
+        controlGroup.commitNewHeight = false
+      end
+
+      if controlGroup.temporarilyDisabled then
         actuator.setBeamGroupsValveState(controlGroup.beamGroups, 0)
       else
-        actuator.setBeamGroupsValveState(controlGroup.beamGroups, 1)
-        if abs(actuator.getBeamGroupsAverageFlowRate(controlGroup.beamGroups)) > 1e-4 then
-          controlGroup.didStartMoving = true
-        elseif controlGroup.didStartMoving then
-          controlGroup.reachedMaxHeight = true
+        local targetLength = controlGroup.targetLength
+        local lengthError = targetLength - curLength
+        local actuationCoef = 0
+
+        if abs(lengthError) > actuationStartDistance then
+          actuationCoef = linearScale(abs(lengthError), actuationStartDistance, actuationEndDistance, minValveOpenAmount, 1) * sign(lengthError)
+          controlGroup.timeOutsideTarget = controlGroup.timeOutsideTarget + dt
+        else
+          controlGroup.timeOutsideTarget = 0
+        end
+
+        if controlGroup.timeOutsideTarget >= actuationDelay then
+          actuator.setBeamGroupsValveState(controlGroup.beamGroups, actuationCoef)
+          if controlGroup.debug then
+            streams.drawGraph(controlGroup.name .. "_control", actuationCoef)
+          end
+        else
+          actuator.setBeamGroupsValveState(controlGroup.beamGroups, 0)
+          if controlGroup.debug then
+            streams.drawGraph(controlGroup.name .. "_control", 0)
+          end
         end
       end
-    elseif controlGroup.momentaryIncrease then
-      actuator.setBeamGroupsValveState(controlGroup.beamGroups, 1)
-      controlGroup.isAdjusting = controlGroup.momentaryIncrease
-    else
-      if controlGroup.isAdjusting then
-        controlGroup.targetLength = curLength
-        controlGroup.isAdjusting = false
-      end
-
-      local targetLength = controlGroup.targetLength
-      local lengthError = targetLength - curLength
-      local actuationCoef = linearScale(abs(lengthError), actuationStartDistance, actuationEndDistance, 0, 1) * sign(lengthError)
-
-      actuator.setBeamGroupsValveState(controlGroup.beamGroups, actuationCoef)
     end
   end
 end
 
 local function reset()
   for _, g in pairs(controlGroups) do
-    g.dumpAir = false
-    g.maxHeight = false
-    g.reachedMaxHeight = false
-    g.targetLength = g.defaultTargetLength
-    g.momentaryIncrease = false
-    g.momentaryDecrease = false
-    g.isAdjusting = false
+    g.targetLength = g.defaultTargetLength or 0
+
+    if not g.defaultTargetLength then
+      -- need to automatically determine default target length from initial beam length; give vehicle time to settle
+      g.calibratingTime = defaultTargetLengthCalibrationTime
+    end
+
+    g.currentLength = obj:getBeamLength(g.controlBeamId)
+    g.timeOutsideTarget = 0
+    g.temporarilyDisabled = false
+    g.adjustmentRate = 0
+    g.commitNewHeight = 0
   end
 end
 
@@ -164,23 +231,30 @@ local function init(jbeamData)
       log("W", "autoLevelSuspension.init", "Can't find beam with name: " .. controlBeamName)
     else
       local beamGroupName = groupData.beamGroup
-      local defaultTargetLength = groupData.defaultTargetLength or obj:getBeamRestLength(controlBeamId)
+      local defaultTargetLength = groupData.defaultTargetLength
+      local initialCurrentLength = obj:getBeamLength(controlBeamId)
 
       if not controlGroups[controlGroupName] then
         controlGroups[controlGroupName] = {
           name = controlGroupName,
           controlBeamId = controlBeamId,
           beamGroups = {},
-          dumpAir = false,
-          maxHeight = false,
           didStartMoving = false,
-          reachedMaxHeight = false,
+          calibratingTime = 0,
           defaultTargetLength = defaultTargetLength,
-          targetLength = defaultTargetLength,
-          momentaryIncrease = false,
-          momentaryDecrease = false,
-          isAdjusting = false,
+          targetLength = defaultTargetLength or 0,
+          currentLength = initialCurrentLength,
+          timeOutsideTarget = 0,
+          temporarilyDisabled = false,
+          adjustmentRate = 0,
+          commitNewHeight = false,
+          debug = groupData.debug == true,
         }
+
+        if not defaultTargetLength then
+          -- need to automatically determine default target length from initial beam length; give vehicle time to settle
+          controlGroups[controlGroupName].calibratingTime = defaultTargetLengthCalibrationTime
+        end
       end
 
       table.insert(controlGroups[controlGroupName].beamGroups, beamGroupName)
@@ -189,6 +263,8 @@ local function init(jbeamData)
 
   actuationStartDistance = jbeamData.actuationStartDistance or 0.01 -- 1 cm
   actuationEndDistance = jbeamData.actuationEndDistance or 0.06 -- 6 cm
+  actuationDelay = jbeamData.actuationDelay or 0
+  minValveOpenAmount = jbeamData.minValveOpenAmount or 0.15
 end
 
 local function initSecondStage(jbeamData)
@@ -203,13 +279,17 @@ local function initSecondStage(jbeamData)
   end
 end
 
-M.toggleDump = toggleDump
-M.setDump = setDump
-M.toggleMaxHeight = toggleMaxHeight
-M.setMaxHeight = setMaxHeight
+M.setTemporarilyDisabled = setTemporarilyDisabled
+M.setAdjustmentRate = setAdjustmentRate
+M.stopAdjusting = stopAdjusting
 M.setMomentaryIncrease = setMomentaryIncrease
 M.setMomentaryDecrease = setMomentaryDecrease
-M.getGroupState = getGroupState
+M.setTargetLength = setTargetLength
+M.getTargetLength = getTargetLength
+M.getCurrentLength = getCurrentLength
+M.getAverageFlowRate = getAverageFlowRate
+M.isMoving = isMoving
+M.isCalibrating = isCalibrating
 
 M.init = init
 M.initSecondStage = initSecondStage

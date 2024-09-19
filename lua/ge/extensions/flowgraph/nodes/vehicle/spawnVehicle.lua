@@ -99,41 +99,42 @@ function C:work()
       -- load model and config. maybe read config from file, if it's not the table.
       local model = self.pinIn.model.value
       local config = self.pinIn.config.value
+      local configKey = type(config) == 'string' and config or 'base' -- this is required for function core_vehicles.getConfig
+      if string.find(configKey, '.pc') then
+        configKey = string.match(configKey, '/*([%w_%-]+).pc')
+      end
 
       --various vehicle data
-      local paint, clrIn
-      if self.pinIn.randomColor.value or type(self.pinIn.color.value) == 'string' then
-        local clrs = nil
+      local paint
+      local paintValue = self.pinIn.color.value
+      if self.pinIn.randomColor.value or type(paintValue) == 'string' then
+        local allPaints = nil
         local modelData = core_vehicles.getModel(self.pinIn.model.value)
-        local configData = core_vehicles.getConfig(model, config)
-        if modelData and modelData.model and configData and configData.aggregates then
-          if configData.aggregates["Config Type"] then
-            local cType = configData.aggregates["Config Type"]
-            if cType["Police"] or cType["Service"] then
-              self.mgr:logEvent("Vehicle Spawned ".. dumps(self.pinIn.model.value), "I", "A Vehicle " ..dumps(self.pinIn.model.value) .. " is going to be spawned without a random colour.", {type = "node", node = self})
-            else
-              if type(self.pinIn.color.value) == 'string' then
-                clrIn = modelData.model.paints[self.pinIn.color.value]
-              else
-                clrs = tableKeys(tableValuesAsLookupDict(modelData.model.paints or {}))
+        local configData = core_vehicles.getConfig(model, configKey)
+        if modelData and modelData.model then
+          if type(paintValue) == 'string' then
+            paint = modelData.model.paints[paintValue] -- if paint value is string
+          else
+            allPaints = tableKeys(tableValuesAsLookupDict(modelData.model.paints or {})) -- if random paint is true
+            if configData and configData.aggregates and configData.aggregates["Config Type"] then
+              local cType = configData.aggregates["Config Type"]
+              if cType["Police"] or cType["Service"] then -- random paint disabled
+                allPaints = nil
+                self.mgr:logEvent("Vehicle Spawned ".. dumps(self.pinIn.model.value), "I", "Vehicle " ..dumps(self.pinIn.model.value) .. ": ignoring random color.", {type = "node", node = self})
               end
             end
           end
         end
 
-        if clrs then
-          clrIn = clrs[math.floor(#clrs * math.random())+1]
+        if allPaints then
+          paint = allPaints[math.random(#allPaints)]
         end
-      elseif type(self.pinIn.color.value) == 'table' and (self.pinIn.color.value.baseColor or self.pinIn.color.value[4]) then
-        clrIn = self.pinIn.color.value
+      elseif type(paintValue) == 'table' and (paintValue.baseColor or paintValue[4]) then
+        paint = paintValue
       end
 
-      if clrIn then
-        if not clrIn.baseColor then
-          paint = createVehiclePaint({x=clrIn[1], y=clrIn[2], z=clrIn[3], w=clrIn[4]}, {clrIn[5], clrIn[6], clrIn[7], clrIn[8]})
-        else
-          paint = clrIn
-        end
+      if paint and not paint.baseColor then
+        paint = createVehiclePaint({x=paint[1], y=paint[2], z=paint[3], w=paint[4]}, {paint[5], paint[6], paint[7], paint[8]})
       end
 
       local licenseText = self.pinIn.licenseText.value

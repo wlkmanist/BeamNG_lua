@@ -8,6 +8,7 @@
 local decalRoadMaterial = "road_asphalt_2lane"                                                      -- The material to be used with decal road surfaces.
 local folderName = "Terrain And Road Importer"                                                      -- The name of the folder which will appear in the scene tree, containing the roads.
 local secSize = 1.0                                                                                 -- The longitudinal section size to be used when discretising the decal road spline.
+local edgeSmoothingWidth = 2
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -32,9 +33,88 @@ local toolWinName, toolWinSize = 'terrainAndRoadImporter', im.ImVec2(200, 200)  
 local isToolActive = false
 
 local zMax = im.FloatPtr(400.0)
-local DOI = im.IntPtr(100)
-local margin = im.FloatPtr(4.0)
+local DOI = im.IntPtr(150)
+local margin = im.FloatPtr(7.0)
 
+
+-- Function to calculate the distance between two points.
+local function distance(x1, y1, x2, y2)
+  return math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
+end
+
+-- Function to perform IDW interpolation.
+local function idwInterpolate(grid, peaks, power)
+  local width = #grid[1]
+  local height = #grid
+
+  for y = 1, height do
+      for x = 1, width do
+          local numerator = 0
+          local denominator = 0
+
+          for _, peak in ipairs(peaks) do
+              local px, py, pz = peak.x, peak.y, peak.z
+              local dist = distance(x, y, px, py)
+              if dist == 0 then
+                  -- If the point is exactly at the peak location
+                  numerator = pz
+                  denominator = 1
+                  break
+              end
+              local weight = 1 / (dist ^ power)
+              numerator = numerator + weight * pz
+              denominator = denominator + weight
+          end
+
+          grid[y][x] = numerator / denominator
+      end
+  end
+end
+
+-- Conforms the local terrain to some given peaks
+local function conformTerrainToPeaks(filepath)
+
+  -- If there is no terrain block (eg smallgrid) then leave immediately.
+  local tb = extensions.editor_terrainEditor.getTerrainBlock()
+  local te = extensions.editor_terrainEditor.getTerrainEditor()
+  if not tb or not te then
+    return
+  end
+
+  -- Get the peaks from the .json file.
+  local gW = Point2I(0, 0)
+  local jsonFull = jsonReadFile(filepath)
+  local peaks = {}
+  for i = 1, #jsonFull do
+    te:worldToGridByPoint2I(vec3(jsonFull[i].x, jsonFull[i].y, jsonFull[i].z), gW, tb)
+    peaks[i] = vec3(gW.x, gW.y, jsonFull[i].z)
+  end
+
+  -- Initialise the grid.
+  local xSize, ySize = 2000, 2000
+  local grid = {}
+  for x = 0, xSize do
+    local gridX = {}
+    for y = 0, ySize do
+      gridX[y] = 0.0
+    end
+    grid[x] = gridX
+  end
+
+  local power = 2
+  idwInterpolate(grid, peaks, power)
+
+  -- Terraform the heightmap from the processed mask.
+  for x = 0, xSize do
+    local gridX = grid[x]
+    for y = 0, ySize do
+        tb:setHeight(x, y, max(0, min(250.0, gridX[y])))
+    end
+  end
+
+  -- Update the terrain block.
+  tb:updateGrid(vec3(0, 0), vec3(xSize, ySize))
+end
 
 -- Creates a decal road.
 local function createDecalRoad(nodes, widths, material, folder)
@@ -125,6 +205,28 @@ local function gaussianBlur2D(inputTable, kernel, maskTable)
   end
 
   return result
+end
+
+-- Averages the height with neighbouring points.
+local function averageMask(height, mod, fixedMask, xSize, ySize)
+  local xTop, yTop = xSize - 1, ySize - 1
+  for x = 1, xTop do
+    for y = 1, yTop do
+      if mod[x][y] > 0.5 and fixedMask[x][y] < 0.5 then
+        local sum, count = 0, 0
+        for dx = -edgeSmoothingWidth, edgeSmoothingWidth do
+          for dy = -edgeSmoothingWidth, edgeSmoothingWidth do
+            local nx, ny = x + dx, y + dy
+            if nx >= 0 and nx <= xSize and ny >= 0 and ny <= ySize then
+              sum = sum + height[nx][ny]
+              count = count + 1
+            end
+          end
+        end
+        height[x][y] = sum / count
+      end
+    end
+  end
 end
 
 -- Conforms the local terrain to the road.
@@ -319,10 +421,12 @@ local function conformTerrainToRoad(DOI, tris, trisBloated, box)
   end
 
   -- Perform Gaussian blur on the mask, using the fixed mask.
-  local kernel = gaussianKernel(5, 1)
-  for i = 1, 10 do
-    height = gaussianBlur2D(height, kernel, fixedMask)
+  for _ = 1, 3 do
+    height = gaussianBlur2D(height, gaussianKernel(7, 1.0), fixedMask)
   end
+
+  -- Average the height with neighbouring points.
+  averageMask(height, mod, fixedMask, xSize, ySize)
 
   -- Terraform the heightmap from the processed mask.
   for x = 0, xSize do
@@ -505,9 +609,9 @@ local function importRoads(roadPath, DOI, margin)
     local json = jsonFull[i]
     for j = 1, #json do
       local d = json[j]
-      tmp1:set(d[1], d[2], 0)
-      nodes[j] = vec3(d[1], d[2], core_terrain.getTerrainHeight(tmp1))
-      widths[j] = d[4]
+      tmp1:set(d.x, d.y, 0)
+      nodes[j] = vec3(d.x, d.y, core_terrain.getTerrainHeight(tmp1))
+      widths[j] = d.width
     end
     triangulateAroundCenter(nodes, widths, DOI, margin, tXMin, tXMax, tYMin, tYMax, tris, trisBloated, box)
     n[i], w[i] = nodes, widths
@@ -546,7 +650,7 @@ local function reset()
   te:worldToGridByPoint2I(vec3(floor(tXMin), floor(tYMin)), gMin, tb)
   te:worldToGridByPoint2I(vec3(ceil(tXMax), ceil(tYMax)), gMax, tb)
 
-  -- Apply the bitmap to the heightmap.
+  -- Set the heightmap to zero everywhere.
   local gMinX, gMaxX, gMinY, gMaxY = gMin.x, gMax.x, gMin.y, gMax.y
   for x = gMinX, gMaxX do
     for y = gMinY, gMaxY do
@@ -558,6 +662,9 @@ local function reset()
   tb:updateGrid(vec3(gMin.x, gMin.y), vec3(gMax.x, gMax.y))
 end
 
+-- Opens/closes the world editor.
+local function toggleWorldEditor(isOpen) editor.setEditorActive(isOpen) end
+
 -- World editor main callback for rendering the UI.
 local function onEditorGui()
 
@@ -566,6 +673,19 @@ local function onEditorGui()
   end
 
   if editor.beginWindow(toolWinName, "Terrain And Road Importer###1") then
+
+    -- 'Conform To Peaks' button.
+    if editor.uiIconImageButton(editor.icons.lineToTerrain, im.ImVec2(34, 34), nil, nil, nil, 'conformToPeaksBtn') then
+      extensions.editor_fileDialog.openFile(
+        function(data)
+          conformTerrainToPeaks(data.filepath)
+        end,
+        {{"JSON",".json"}},
+        false,
+        "/")
+    end
+    im.tooltip('Terraforms the terrain to some given peaks (from a .json file).')
+    im.SameLine()
 
     -- 'Import Terrain' button.
     if editor.uiIconImageButton(editor.icons.simobject_terrainblock, im.ImVec2(34, 34), nil, nil, nil, 'importTerrainBtn') then
@@ -658,6 +778,12 @@ end
 
 
 -- Public interface.
+M.conformTerrainToPeaks =                                 conformTerrainToPeaks
+M.importTerrain =                                         importTerrain
+M.importRoads =                                           importRoads
+M.reset =                                                 reset
+M.toggleWorldEditor =                                     toggleWorldEditor
+
 M.onEditorGui =                                           onEditorGui
 M.onEditorInitialized =                                   onEditorInitialized
 

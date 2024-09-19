@@ -30,11 +30,12 @@ local function getRewardIcons(rewards)
   career_branches.orderAttributeKeysByBranchOrder(keys)
   local newRet = {}
   for _, attKey in ipairs(keys) do
-    table.insert(newRet, {attributeKey = attKey, rewardAmount = ret[attKey] })
+    table.insert(newRet, {attributeKey = attKey, rewardAmount = ret[attKey], icon=career_branches.getBranchIcon(attKey) })
   end
   return newRet
 end
 
+local comingSoonCard = {heading="(Not Implemented)", type="unlockCard", icon="roadblockL"}
 local function getSkillsProgressForUi(branchId)
   local ret = {}
   for _, skill in pairs(career_branches.getSortedBranches()) do
@@ -48,6 +49,7 @@ local function getSkillsProgressForUi(branchId)
         description = skill.description,
         level = level,
         levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
+        unlocked = skill.unlocked,
         min = min,
         value = value,
         max = max,
@@ -56,7 +58,9 @@ local function getSkillsProgressForUi(branchId)
         isInDevelopment = skill.isInDevelopment,
       }
 
-      local unlocks = career_modules_delivery_progress.getSkillUnlockDescription()[skill.attributeKey]
+      local unlocks = skill.levels
+
+
       if unlocks then
         local prevTarget = 0
         for i = 1, #unlocks do
@@ -67,14 +71,12 @@ local function getSkillsProgressForUi(branchId)
 
           prevTarget = (curLvlInfo and curLvlInfo.requiredValue or -1)
           skData.unlockInfo[i] = {
-            list = unlocks[i].unlocks or {
-              {label = "Coming Soon!", type = "text"},
-            },
+            list = unlocks[i].unlocks ,
             index = i,
             currentValue = prevLvlInfo and value - prevLvlInfo.requiredValue or -1,
             requiredValue = curLvlInfo and requiredRelative or -1,
-            isInDevelopment = i > 0 and curLvlInfo == nil,
-            isMaxLevel = curLvlInfo == nil,
+            isInDevelopment = unlocks[i].isInDevelopment,
+            isMaxLevel = unlocks[i].isMaxLevel,
             isBase = i == 1,
             unlocked = i >= level,
             description = unlocks[i].description,
@@ -92,6 +94,16 @@ local function getSkillsProgressForUi(branchId)
   end
   return ret
 end
+
+local deliverySystemIcon = {
+  parcelDelivery = "boxPickUp03",
+  trailerDelivery = "smallTrailer",
+  vehicleDelivery = "keys1",
+  smallFluidDelivery = "tankerTrailer",
+  largeFluidDelivery = "tankerTrailer",
+  smallDryBulkDelivery = "terrain",
+  largeDryBulkDelivery = "terrain",
+}
 
 local function getFacilityProgress(fac)
   local ret = {
@@ -118,7 +130,8 @@ local function getFacilityProgress(fac)
     if value then
       table.insert(ret.deliveredFromHere.countByType, {
         attributeKey = key,
-        rewardAmount = fac.progress.deliveredFromHere.countByType[key]
+        rewardAmount = fac.progress.deliveredFromHere.countByType[key],
+        icon = deliverySystemIcon[key]
       })
     end
   end
@@ -127,7 +140,8 @@ local function getFacilityProgress(fac)
     if value then
       table.insert(ret.deliveredToHere.countByType, {
         attributeKey = key,
-        rewardAmount = fac.progress.deliveredToHere.countByType[key]
+        rewardAmount = fac.progress.deliveredToHere.countByType[key],
+        icon = deliverySystemIcon[key]
       })
     end
   end
@@ -139,6 +153,10 @@ local deliverySystemToSkill = {
   vehicleDelivery = "vehicleDelivery",
   parcelDelivery = "delivery",
   trailerDelivery = "delivery",
+  smallDryBulkDelivery = "delivery",
+  largeDryBulkDelivery = "delivery",
+  smallFluidDelivery = "delivery",
+  largeFluidDelivery = "delivery",
 }
 local function getSkillsForFacility(facility)
   local ret = {}
@@ -166,26 +184,85 @@ local function changeDarknesssColor(color, addedValue)
     return color
 end
 
+local function getFacilityAvailableOrders(fac)
+  local ret = {}
+  -- parcels
+  local amounts = {[1]=0, [2]=0, [3]=0, [4]=0, [5]=0, total = 0}
+  for _, item in ipairs(career_modules_delivery_parcelManager.getAllCargoForFacilityUnexpiredUndelivered(fac.id)) do
+    career_modules_delivery_generator.finalizeParcelItemDistanceAndRewards(item)
+    local modifierKeys = {}
+    for _, mod in ipairs(item.modifiers or {}) do
+      modifierKeys[mod.type] = true
+    end
+    local lockedBecauseOfMods, minTier = career_modules_delivery_parcelMods.lockedBecauseOfMods(modifierKeys)
+    amounts[minTier] = amounts[minTier] + 1 
+    amounts.total = amounts.total + 1
+  end
+  
+  table.insert(ret, {
+    icon = "cardboardBox",
+    label = "Available Parcels",
+    amounts = amounts,
+    level = career_branches.getBranchLevel("delivery"),
+  })
+  
+  -- trailers + vehicles
+  for _, t in ipairs({
+    {key="trailer", icon="smallTrailer", label="Available Trailers", skill="delivery"},
+    {key="vehicle", icon="keys1",        label="Available Vehicles", skill="vehicleDelivery"}
+  }) do
+    local amounts = {[1]=0, [2]=0, [3]=0, [4]=0, [5]=0, total = 0}
+    for _, item in ipairs(career_modules_delivery_vehicleOfferManager.getAllOfferAtFacilityUnexpired(fac.id)) do
+      if item.data.type == t.key then
+        local enabled, reason = career_modules_delivery_vehicleOfferManager.isVehicleTagUnlocked(item.vehicle.unlockTag)
+        amounts[reason.level] = amounts[reason.level] + 1 
+        amounts.total = amounts.total + 1
+      end
+    end
+    table.insert(ret, {
+      icon = t.icon,
+      label = t.label,
+      amounts = amounts,
+      level = career_branches.getBranchLevel(t.skill),
+    })
+  end
+
+
+  return ret
+
+end
+
 local function getFacilitiesData(color)
   local ret = {}
   local facilities = career_modules_delivery_generator.getFacilities()
 
   for i, fac in ipairs(facilities) do
-    table.insert(ret, {
+    local data = {
       order = i,
       skill = getSkillsForFacility(fac),
       rewards = getFacilityProgress(fac),
+      availableOrders = getFacilityAvailableOrders(fac),
       id = fac.id,
       icon = "garage01",
       label = fac.name,
       description = fac.description,
+      visible = fac.progress.interacted or fac.alwaysVisible,
       locked = false, --need to know if it's unlocked or not
       startable = true, --need to know if it's startable or not
       thumbnailFile = fac.preview,
       tier = 0, --is there any tier?
       color = color,
       blockedColor = changeDarknesssColor(color, 100)
-    })
+    }
+    data.hasOrders = false
+    for _, orders in ipairs(data.availableOrders) do
+      if orders.amounts.total > 0 then
+        data.hasOrders = true
+      end
+    end
+    if data.hasOrders then
+      table.insert(ret,data)
+    end
   end
   return ret
 end
@@ -213,7 +290,7 @@ local function getBranchPageData(branchId)
     branch.skillInfo = {
       name = branchData.name,
       icon = branchData.icon,
-      glyphIcon = branchData.glyphIcon,
+      glyphIcon = branchData.icon,
       id = attKey,
       levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
       min = min,
@@ -280,9 +357,10 @@ local function getBranchSkillCardData(branchId)
     name = br.name,
     id = br.id,
     levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
+    unlocked = br.unlocked,
     cover = br.progressCover,
     icon = br.icon,
-    glyphIcon = br.glyphIcon,
+    glyphIcon = br.icon,
     color = br.color,
     min = min,
     value = value,
@@ -298,6 +376,7 @@ local function getBranchSkillCardData(branchId)
       local skillInfo = {
         name = skill.name,
         levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
+        unlocked = skill.unlocked,
         min = min,
         value = value,
         max = max,

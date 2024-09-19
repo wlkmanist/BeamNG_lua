@@ -49,7 +49,7 @@ local function onPreRender()
   if not extensions.ui_visibility.getCef() then return end
   if render_openxr and render_openxr.isSessionRunning() then return end
   local maskedBlurFX = scenetree.ScreenBlurFX
-  if maskedBlurFX then
+  if maskedBlurFX and maskedBlurFX.obj then
 
     for _, list in pairs(M.blurRects) do
       for _, data in pairs(list) do

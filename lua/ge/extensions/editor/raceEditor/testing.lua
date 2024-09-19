@@ -39,16 +39,17 @@ end
 
 function C:drawSetup()
   local lapCount = im.IntPtr(self.race.lapCount or 1)
+  im.PushItemWidth(im.GetContentRegionAvailWidth() * 0.5)
   if im.InputInt("Lap Count", lapCount) then
-    self.race.lapCount = math.max(1,lapCount[0])
+    self.race.lapCount = math.max(1, lapCount[0])
   end
-  --if self.path.defaultStartPosition ~= -1 then
-    for i, sp in ipairs(self.path.startPositions.sorted) do
-      if im.SmallButton("Move to " .. sp.name) then
-        sp:moveResetVehicleTo(be:getPlayerVehicleID(0))
-      end
+  im.PopItemWidth()
+
+  for i, sp in ipairs(self.path.startPositions.sorted) do
+    if im.SmallButton("Move to " .. sp.name) then
+      sp:moveResetVehicleTo(be:getPlayerVehicleID(0))
     end
-  --end
+  end
 
   if im.Button("Start") then
     editor.setEditorActive(false)
@@ -65,13 +66,7 @@ function C:drawSetup()
 
   im.Separator()
 
-  if im.Button("AI Drive Test Current Vehicle") then
-    local veh = getPlayerVehicle(0)
-    self.path:getAiPath()
-    veh:queueLuaCommand('ai.driveUsingPath({wpTargetList = ' .. serialize(self.path.aiPath) .. ', wpSpeeds = ' .. serialize({}) .. ', noOfLaps = ' .. self.race.lapCount .. ', aggression = 1})')
-  end
-
-  if im.Button("Place all vehicles in scene onto starting positions") then
+  if im.Button("Move All Vehicles to Starting Positions") then
     local vehs = getObjectsByClass("BeamNGVehicle")
     for i, veh in ipairs(vehs) do
       local sp = self.path.startPositions.sorted[i]
@@ -81,7 +76,13 @@ function C:drawSetup()
     end
   end
 
-  if im.Button("AI Drive all vehicles in scene") then
+  if im.Button("AI Drive Test Current Vehicle") then
+    local veh = getPlayerVehicle(0)
+    self.path:getAiPath()
+    veh:queueLuaCommand('ai.driveUsingPath({wpTargetList = ' .. serialize(self.path.aiPath) .. ', wpSpeeds = ' .. serialize({}) .. ', noOfLaps = ' .. self.race.lapCount .. ', aggression = 1})')
+  end
+
+  if im.Button("AI Drive Test All Vehicles") then
     local veh = getPlayerVehicle(0)
     self.path:getAiPath()
     local vehs = getObjectsByClass("BeamNGVehicle")

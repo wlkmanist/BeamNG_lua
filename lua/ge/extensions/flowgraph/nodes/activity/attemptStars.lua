@@ -7,9 +7,9 @@ local ime = ui_flowgraph_editor
 
 local C = {}
 
-C.name = 'ActivityAttempt Stars'
+C.name = 'Activity Attempt Stars'
 C.color = im.ImVec4(0.03,0.41,0.64,0.75)
-C.description = "Adds fulfilled stars to an attempt. Add mroe pins to add star keys."
+C.description = "Adds fulfilled stars to an attempt. Add more pins to add star keys."
 C.category = 'once_instant'
 
 C.pinSchema = {
@@ -23,7 +23,7 @@ C.allowedManualPinTypes = {
 }
 
 
-C.tags = {'activity'}
+C.tags = {'activity', 'mission'}
 
 function C:init()
   self.savePins = true
@@ -39,6 +39,7 @@ function C:workOnce()
         attempt.unlockedStars[name] = self.pinIn[name].value or false
       end
     end
+
     self.pinOut.attempt.value = attempt
   end
 end

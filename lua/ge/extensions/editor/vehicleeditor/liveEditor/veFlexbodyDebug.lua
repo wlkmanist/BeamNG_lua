@@ -325,13 +325,12 @@ local function verticesLackingNodesModeShowVertexInfoOnHover(flexbody, flexbodyO
 end
 
 local function updateVerticesBBox(vertPos)
-  if vertPos.x < minBounds.x then minBounds.x = vertPos.x end
-  if vertPos.y < minBounds.y then minBounds.y = vertPos.y end
-  if vertPos.z < minBounds.z then minBounds.z = vertPos.z end
-
-  if vertPos.x > maxBounds.x then maxBounds.x = vertPos.x end
-  if vertPos.y > maxBounds.y then maxBounds.y = vertPos.y end
-  if vertPos.z > maxBounds.z then maxBounds.z = vertPos.z end
+  minBounds.x = min(minBounds.x, vertPos.x)
+  minBounds.y = min(minBounds.y, vertPos.y)
+  minBounds.z = min(minBounds.z, vertPos.z)
+  maxBounds.x = max(maxBounds.x, vertPos.x)
+  maxBounds.y = max(maxBounds.y, vertPos.y)
+  maxBounds.z = max(maxBounds.z, vertPos.z)
 end
 
 local nodesUsed = {}
@@ -344,6 +343,7 @@ local localVertPos = vec3()
 local vertPosLocal = vec3()
 local vertPos = vec3()
 local tempVec = vec3()
+local tempVec2 = vec3()
 local nodePos = vec3()
 
 local flexNodePositions = {}
@@ -372,6 +372,7 @@ local function renderPickedFlexbody(flexbody, flexbodyObj)
 
   local rayStartPos = ray.pos
   local rayDir = ray.dir
+  local rayEndPos = rayStartPos + rayDir * 25
 
   local maxDist = maxDistFromCursor[0]
 
@@ -386,23 +387,31 @@ local function renderPickedFlexbody(flexbody, flexbodyObj)
 
     if p then p:add("Render mesh getDebugVertexPos") end
 
-    vertPos:setAdd2(localVertPos, vehPos)
-
-    local dist, _ = intersectsRay_Sphere(rayStartPos, rayDir, vertPos, maxDist * 0.5)
-    if dist > 25 then
-      goto continue
-    end
-
-    --local vertPosLocal = rotInv * localVertPos
-    tempVec:set(push3(rotInv):cross(localVertPos) * 2)
-    vertPosLocal:set(push3(localVertPos) - push3(tempVec) * rotInv.w + push3(rotInv):cross(tempVec))
-
-    if p then p:add("Render mesh init calculations") end
-
     local vertLoc = cacheLocInfo[i]
     local vertLocNodes = vertLoc.nodes
 
-    if p then p:add("Render mesh getVertexLocatorInfo") end
+    for _, nodeID in pairs(vertLocNodes) do
+      if nodeID ~= -1 then
+        nodesUsed[nodeID] = true
+      end
+    end
+
+    vertPos:setAdd2(localVertPos, vehPos)
+
+    local dist = vertPos:squaredDistanceToLineSegment(rayStartPos, rayEndPos)
+    if dist > maxDist * maxDist then
+      goto continue
+    end
+
+    --vertPosLocal:setRotate(rotInv, localVertPos)
+    tempVec:setCross(rotInv, localVertPos)
+    tempVec:setScaled(2)
+    tempVec2:setScaled2(tempVec, -rotInv.w)
+    vertPosLocal:setAdd2(localVertPos, tempVec2)
+    tempVec2:setCross(rotInv, tempVec)
+    vertPosLocal:setAdd(tempVec2)
+
+    if p then p:add("Render mesh init calculations") end
 
     local renderVertex = true
     local renderLines = true
@@ -460,7 +469,6 @@ local function renderPickedFlexbody(flexbody, flexbodyObj)
     -- Go through each vertex's locator nodes to render lines
     for _, nodeID in pairs(vertLocNodes) do
       if nodeID ~= -1 then
-        nodesUsed[nodeID] = true
         if renderVertex and renderLines then
           local renderNode = true
           if state.mode == MODE_PICKED_NODE then

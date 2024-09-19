@@ -9,7 +9,7 @@ local C = {}
 C.name = 'im Number'
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
-C.description = "Displays one of several number inputs."
+C.description = "Displays one of several number inputs in an imgui window."
 C.category = 'repeat_instant'
 
 C.pinSchema = {
@@ -27,6 +27,8 @@ C.pinSchema = {
 
   { dir = 'in', type = 'any', name = 'text', description = 'Name of the Number.' },
 }
+
+C.tags = {'imgui'}
 
 function C:init()
   self.modes = {

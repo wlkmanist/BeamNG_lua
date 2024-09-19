@@ -3,6 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
+M.args = {}
 
 -- Support functions used to manage the directory list
 local function pushFront(list, token, delim)
@@ -26,6 +27,7 @@ end
 
 -- The default global argument parsing
 local function defaultParseArgs()
+  M.args = {}
   local argumentCount = tonumber(getConsoleVariable("$Game::argc"))
   -- log('I','parse','$Game::argv = '..getConsoleVariable("$Game::argv")..'     argumentCount: '..tostring(argumentCount))
   if argumentCount then
@@ -56,6 +58,13 @@ local function defaultParseArgs()
         setFullScreen(true)
       elseif arg == "-windowed" then
         setFullScreen(false)
+      elseif arg == "-vehicleConfig" then
+        if hasNextArg then
+          M.args.vehicleConfig = nextArg
+          i = i + 1
+        else
+          log("E", "", "Error: Missing Command Line argument. Usage: -vehicleConfig \"pickup/myConfig.pc\"")
+        end
       elseif arg == "-vehicle" then
         if hasNextArg then
           setConsoleVariable("$beamngVehicleArgs", nextArg)

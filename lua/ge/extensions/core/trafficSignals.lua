@@ -30,27 +30,6 @@ local debugPos = vec3()
 
 M.debugLevel = 0
 
--- WIP signal actions enumeration (send index num to vLua)
--- 0 = none ('go')
-local signalActions = {
-  alert = 1,
-  stop = 2,
-  briefStop = 3,
-  slow = 4
-}
-
--- mimic colors based on real world, used for debug draws (not for the actual signal objects, which use their own palettes)
-local signalColors = {
-  red = ColorF(1, 0.2, 0, 1),
-  amber = ColorF(1, 0.6, 0, 1),
-  yellow = ColorF(1, 0.8, 0, 1),
-  green = ColorF(0, 1, 0.5, 1),
-  cyan = ColorF(0, 1, 0.9, 1),
-  blue = ColorF(0.3, 0.8, 1, 1),
-  white = ColorF(1, 1, 1, 1),
-  black = ColorF(0, 0, 0, 1)
-}
-
 local _uid = 0
 local function getNextId() -- increments and generates a new id for the next element
   _uid = _uid + 1
@@ -75,6 +54,32 @@ local function setupSignalObjects() -- sets and caches the table of TSStatics th
     end
   end
 end
+
+local function resetControllerDefinitions() -- resets vital controller definitions back to default
+  controllerDefinitions = jsonReadFile('settings/trafficSignals.json')
+  if not controllerDefinitions then
+    controllerDefinitions = {states = {}, types = {}}
+    log('E', logTag, 'Failed to load default signal controller definitions!') -- this should never happen
+  end
+
+  controllerDefinitions.signalActions = { -- signal actions enumeration (send index num to vLua) (incomplete)
+    alert = 1,
+    stop = 2,
+    briefStop = 3,
+    slow = 4
+  }
+  controllerDefinitions.signalColors = { -- mimic colors based on real world, used for debug draws (not actual signal objects, which use their own palettes)
+    red = ColorF(1, 0.2, 0, 1),
+    amber = ColorF(1, 0.6, 0, 1),
+    yellow = ColorF(1, 0.8, 0, 1),
+    green = ColorF(0, 1, 0.5, 1),
+    cyan = ColorF(0, 1, 0.9, 1),
+    blue = ColorF(0.3, 0.8, 1, 1),
+    white = ColorF(1, 1, 1, 1),
+    black = ColorF(0, 0, 0, 1)
+  }
+end
+resetControllerDefinitions()
 
 ---- Traffic signal classes ----
 
@@ -102,13 +107,18 @@ function SignalInstance:new(data)
 
   o.id = data.id or getNextId()
   o.name = data.name or 'signal'
-  o.pos = data.pos or core_camera.getPosition()
+  o.pos = data.pos or vec3()
   o.dir = data.dir or vec3()
   o.radius = data.radius or 8 -- usually unused
+  o.group = data.group -- optional intersection group
   o.controllerId = data.controllerId or 0 -- controller is required
   o.sequenceId = data.sequenceId or 0 -- sequence is optional, usually used for dynamic signals (traffic lights)
   o.useCurrentLane = data.useCurrentLane -- unused at the moment
-  o.startDisabled = data.startDisabled and true or false
+  o.startDisabled = data.startDisabled and true or false -- if disabled, signal will not run when system gets activated
+
+  if o.pos:squaredLength() == 0 and core_camera then -- if pos is (0, 0, 0), try to set it to camera position
+    o.pos = vec3(core_camera.getPosition())
+  end
 
   if o.dir:squaredLength() == 0 then -- if dir is (0, 0, 0), try to automatically calculate it based on the closest road
     o.road = o:getBestRoad()
@@ -140,7 +150,7 @@ function SignalInstance:setLights(lightsTable) -- directly sets the lights of al
   end
 end
 
-function SignalInstance:setStrictState(stateIdx) -- manually sets the signal state from the controller index (overrides auto state)
+function SignalInstance:setStrictState(stateIdx) -- manually sets the signal state from the given controller index (overrides auto state)
   -- recommended to use this after disabling the sequence timer; otherwise, the timer will interfere
   local ctrl = self:getController()
   if ctrl then
@@ -158,19 +168,29 @@ function SignalInstance:getSignalObjects(refresh) -- returns table of objects th
   return signalObjectsDict[self.name] or {}
 end
 
-function SignalInstance:setSignalObjects(idArray) -- sets objects that will be synced to this signal instance
-  for _, id in ipairs(idArray) do
-    if scenetree.findObjectById(id) then
-      scenetree.findObjectById(id):setDynDataFieldbyName('signalInstance', 0, self.name)
+function SignalInstance:clearSignalObjects(alsoDelete) -- unlinks world objects from this signal instance (optionally deletes them)
+  local objData = self:getSignalObjects(true)
+  for _, objId in pairs(objData) do
+    if scenetree.objectExists(objId) then
+      if alsoDelete then
+        scenetree.findObjectById(objId):delete()
+      else
+        scenetree.findObjectById(objId):setDynDataFieldbyName('signalInstance', 0, '')
+      end
     end
   end
 end
 
+function SignalInstance:assignSignalObject(objId) -- links world objects that will be synced to this signal instance
+  if scenetree.objectExists(objId) then
+    scenetree.findObjectById(objId):setDynDataFieldbyName('signalInstance', 0, self.name)
+  end
+end
+
 function SignalInstance:createSignalObject(shapeFile, pos, rot) -- creates and processes a signal object for this signal instance
-  -- we should have a signal head that can be commonly used in any level
-  --shapeFile = shapeFile or ''
+  shapeFile = shapeFile or 'art/shapes/objects/trafficlight_overhead1.dae'
   if not FS:fileExists(shapeFile) then
-    local artDir = path.split(getMissionFilename()) or ''
+    local artDir = path.split(getMissionFilename()) or '' -- first, search the current level assets
     artDir = artDir..'art/shapes/'
     for _, f in ipairs(FS:findFiles(artDir, '*', -1, true, false)) do
       if string.find(f, shapeFile) then
@@ -178,6 +198,17 @@ function SignalInstance:createSignalObject(shapeFile, pos, rot) -- creates and p
         break
       end
     end
+
+    if not FS:fileExists(shapeFile) then
+      artDir = 'art/shapes/' -- if not found, then search the common assets
+      for _, f in ipairs(FS:findFiles(artDir, '*', -1, true, false)) do
+        if string.find(f, shapeFile) then
+          shapeFile = f
+          break
+        end
+      end
+    end
+
     if not FS:fileExists(shapeFile) then
       log('E', logTag, 'Unable to find given shape file!')
       return
@@ -198,7 +229,7 @@ function SignalInstance:createSignalObject(shapeFile, pos, rot) -- creates and p
   local transform = QuatF(rot.x, rot.y, rot.z, rot.w):getMatrix()
   transform:setPosition(pos)
   obj:setTransform(transform)
-  obj:setDynDataFieldbyName('signalInstance', 0, self.name)
+  self:assignSignalObject(obj:getID())
 
   if scenetree.MissionGroup then
     local group = scenetree.AutoTrafficSignals
@@ -211,6 +242,8 @@ function SignalInstance:createSignalObject(shapeFile, pos, rot) -- creates and p
 
     scenetree.AutoTrafficSignals:addObject(obj.obj)
   end
+
+  return obj
 end
 
 function SignalInstance:setup(pos, dir, controllerId, sequenceId) -- alternative way to set up a signal; creates controller and sequence if needed
@@ -307,12 +340,11 @@ function SignalInstance:calcTargetPos() -- calculates the position at the end of
 
   self.targetPos = self.targetPos or (self.pos + self.dir * self.radius)
   local road = self:getBestRoad(self.targetPos)
-  self.road.n3 = road and road.n2
+  self.road.n3 = road and road.n2 -- n3 = the target node at the end point
 end
 
-function SignalInstance:calcIntersectionPos(reset) -- calculates the intersection midpoint for the signal
-  if not reset and self.targetPos then return end
-  -- this only calculates while the signal system is active, so that other signal instances can be queried
+function SignalInstance:calcIntersectionPos() -- calculates the intersection midpoint for the signal
+  -- this only resolves if the signal system is active, so that other signal instances can be queried
   local vectors = {}
   local count = 0
   local refPos = self.pos + self.dir * math.max(3, self.radius)
@@ -341,10 +373,12 @@ function SignalInstance:calcIntersectionPos(reset) -- calculates the intersectio
       if mapNodes[road.n1].pos:squaredDistance(self.targetPos) > mapNodes[road.n2].pos:squaredDistance(self.targetPos) then
         road.n1, road.n2 = road.n2, road.n1
       end
-      self.road.n3 = road.n1
+      if self.road then
+        self.road.n3 = road.n1 -- n3 = the target node at the intersection point
+      end
     end
 
-    for k, _ in pairs(vectors) do
+    for k, _ in pairs(vectors) do -- sets the same intersection data for all matching instances
       instancesByName[k].targetPos = self.targetPos
       instancesByName[k].intersectionId = self.id -- uses the current instance id as the intersection id
       if instancesByName[k].road and self.road and self.road.n3 then
@@ -373,7 +407,7 @@ function SignalInstance:getState() -- returns the state name and the state data 
     if self.priorityStateIndex then -- priority state index overrides sequence
       stateIdx = self.priorityStateIndex
     elseif sequence then -- sequence is optional, otherwise the default state will be used
-      stateIdx = sequence.linkedControllers[controller.name] and sequence.linkedControllers[controller.name].stateIdx
+      stateIdx = sequence.linkedControllers[controller.name] and sequence.linkedControllers[controller.name].stateIdx or 1
     end
     if controller.states[stateIdx] then
       state = controller.states[stateIdx].state
@@ -408,7 +442,7 @@ function SignalInstance:setSequence(id) -- sets the sequence to use, and refresh
   self:refresh()
 end
 
-function SignalInstance:setActive(val) -- (boolean) sets the active state of the signal
+function SignalInstance:setActive(val) -- sets the active state of the signal (boolean)
   self.active = val and true or false
   if self.active then
     if self:getController() then
@@ -432,8 +466,12 @@ function SignalInstance:setActive(val) -- (boolean) sets the active state of the
         self.priorityStateIndex = self:getController().defaultIndex or 1 -- priority state index is permanent, unless a sequence update resolves
       end
 
-      self:calcIntersectionPos()
-      self:calcTargetPos()
+      if not self.intersectionId then
+        self:calcIntersectionPos() -- also tries to calculate target pos
+      end
+      if not self.targetPos then
+        self:calcTargetPos()
+      end
 
       local stateName, stateData = self:getState()
       signalUpdates[self.name] = stateName
@@ -485,7 +523,7 @@ function SignalInstance:include() -- adds the signal instance to the main data
     if self.controller and not controllersByName[self.controller.name] then
       self.controller:include()
     end
-    if self.sequence and not controllersByName[self.sequence.name] then
+    if self.sequence and not sequencesByName[self.sequence.name] then
       self.sequence:include()
     end
   end
@@ -511,6 +549,7 @@ function SignalInstance:onSerialize()
     pos = self.pos:toTable(),
     dir = self.dir:toTable(),
     radius = self.radius,
+    group = self.group,
     controllerId = self.controllerId,
     sequenceId = self.sequenceId,
     useCurrentLane = self.useCurrentLane,
@@ -591,7 +630,7 @@ end
 function SignalController:include() -- adds the signal controller to the main data
   if not controllersByName[self.name] then
     table.insert(controllers, self)
-    instancesByName[self.name] = self
+    controllersByName[self.name] = self
     elementsById[self.id] = self
   end
 end
@@ -800,7 +839,7 @@ end
 
 function SignalSequence:setStrictState(ctrlName, stateIdx) -- manually sets a controller state and updates all related signals (overrides auto state)
   -- for best results, use this after disabling the sequence timer; otherwise, the timer will interfere
-  -- thisSequence:enableTimer(false)
+  -- self:enableTimer(false)
   local lc = self.linkedControllers[ctrlName]
   if lc then
     stateIdx = stateIdx or lc.stateIdx
@@ -1007,8 +1046,8 @@ local function getSequenceByName(name) -- returns the signal sequence via the gi
   return sequencesByName[name]
 end
 
-local function getData() -- returns all data from this module
-  return {
+local function getData(full) -- returns relevant data from this module
+  local data = {
     instances = instances,
     controllers = controllers,
     sequences = sequences,
@@ -1017,6 +1056,14 @@ local function getData() -- returns all data from this module
     timer = timer,
     nextTime = not queue:empty() and queue:peekKey() or 0
   }
+  if full then
+    data.instancesByName = instancesByName
+    data.controllersByName = controllersByName
+    data.sequencesByName = sequencesByName
+    data.elementsById = elementsById
+  end
+
+  return data
 end
 
 local function resetTimer() -- resets the timer & queue, and activates the sequences
@@ -1045,7 +1092,7 @@ local function buildMapNodeSignals() -- creates a reference dict, linking map no
       mapNodeSignals[n1][n2] = mapNodeSignals[n1][n2] or {}
       -- array containing one or more signal data points
       -- just in case two or more signals exist on the same road segment
-      table.insert(mapNodeSignals[n1][n2], {instance = instance.name, pos = instance.pos, target = n3, useLane = instance.useCurrentLane, state = stateName, action = signalActions[stateData.action or 'none'] or 0})
+      table.insert(mapNodeSignals[n1][n2], {instance = instance.name, pos = instance.pos, target = n3, useLane = instance.useCurrentLane, state = stateName, action = controllerDefinitions.signalActions[stateData.action or 'none'] or 0})
       instance._innerIdx = #mapNodeSignals[n1][n2]
     end
   end
@@ -1126,12 +1173,7 @@ local function resetSignals() -- clears signals
 end
 
 local function loadControllerDefinitions(filePath) -- loads default and custom controller definitions
-  controllerDefinitions = jsonReadFile('settings/trafficSignals.json')
-  if not controllerDefinitions then
-    controllerDefinitions = {}
-    log('E', logTag, 'Failed to load default signal controller definitions!')
-    return
-  end
+  resetControllerDefinitions()
 
   if not filePath then
     local levelDir = path.split(getMissionFilename()) or ''
@@ -1250,7 +1292,7 @@ local function onUpdate(dt, dtSim)
           instance:setLights()
         end
         local n1, n2 = instance.road.n1, instance.road.n2
-        local actionNum = signalActions[stateAction] or 0
+        local actionNum = controllerDefinitions.signalActions[stateAction] or 0
 
         mapNodeSignals[n1][n2][instance._innerIdx].state = state -- this might be redundant
         mapNodeSignals[n1][n2][instance._innerIdx].action = actionNum
@@ -1288,7 +1330,7 @@ local function onUpdate(dt, dtSim)
         end
 
         for _, light in ipairs(stateData.lights or {}) do
-          debugDrawer:drawSphere(debugPos, 0.25, signalColors[light] or signalColors.white)
+          debugDrawer:drawSphere(debugPos, 0.25, controllerDefinitions.signalColors[light] or controllerDefinitions.signalColors.white)
           debugPos.z = debugPos.z - 0.5
         end
 
@@ -1384,6 +1426,7 @@ M.setupSignals = setupSignals
 M.resetSignals = resetSignals
 M.loadControllerDefinitions = loadControllerDefinitions
 M.setControllerDefinitions = setControllerDefinitions
+M.resetControllerDefinitions = resetControllerDefinitions
 M.resetTimer = resetTimer
 M.setActive = setActive
 

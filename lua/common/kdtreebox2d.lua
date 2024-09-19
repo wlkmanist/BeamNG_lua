@@ -185,9 +185,9 @@ local function query_it(st)
   if nodeIdx > nonLeafLimIdx then
     local queryXmin, queryYmin, queryXmax, queryYmax = queryArea[1], queryArea[2], queryArea[3], queryArea[4]
     for i = max(tree[nodeIdx+1], st.itmIdx), tree[nodeIdx+3], 5 do
-      if st.items[i-4] <= queryXmax and st.items[i-3] <= queryYmax and st.items[i-2] >= queryXmin and st.items[i-1] >= queryYmin then
+      if items[i-4] <= queryXmax and items[i-3] <= queryYmax and items[i-2] >= queryXmin and items[i-1] >= queryYmin then
         st.itmIdx = i + 5 -- update
-        return st.items[i]
+        return items[i]
       end
     end
     st.itmIdx = -1 -- reset
@@ -213,9 +213,9 @@ local function query_it(st)
       if nodeIdx > nonLeafLimIdx then
         local queryXmin, queryYmin, queryXmax, queryYmax = queryArea[1], queryArea[2], queryArea[3], queryArea[4]
         for i = max(tree[nodeIdx+1], st.itmIdx), tree[nodeIdx+3], 5 do
-          if st.items[i-4] <= queryXmax and st.items[i-3] <= queryYmax and st.items[i-2] >= queryXmin and st.items[i-1] >= queryYmin then
+          if items[i-4] <= queryXmax and items[i-3] <= queryYmax and items[i-2] >= queryXmin and items[i-1] >= queryYmin then
             st.itmIdx = i + 5 -- update
-            return st.items[i]
+            return items[i]
           end
         end
       end

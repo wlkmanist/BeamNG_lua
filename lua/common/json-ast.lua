@@ -291,55 +291,61 @@ local function _parse(ctx)
   end
 end
 
+local function stringifyNode(node)
+  local nodeType = node[1]
+  --dump{i, node}
+  if nodeType == 'object_begin' then
+    return '{'
+  elseif nodeType == 'object_end' then
+    return '}'
+  elseif nodeType == 'list_begin' then
+    return '['
+  elseif nodeType == 'list_end' then
+    return ']'
+  elseif nodeType == 'array_delimiter' then
+    return ','
+  elseif nodeType == 'newline' then
+    return '\n'
+  elseif nodeType == 'newline_windows' then
+    return '\r\n'
+  elseif nodeType == 'bool' then
+    return tostring(node[2])
+  elseif nodeType == 'key_delimiter' then
+    return ':'
+  elseif nodeType == 'comment' then
+    return '//' .. node[2]
+  elseif nodeType == 'comment_multiline' then
+    return '/*' .. node[2] .. '*/'
+  elseif nodeType == 'space' then
+    return string.rep(' ', node[2])
+  elseif nodeType == 'tab' then
+    return string.rep('\t', node[2])
+  elseif nodeType == 'string' then
+    return '"' .. node[2] .. '"'
+  elseif nodeType == 'string_single' then
+    return '"' .. node[2] .. '"'
+  elseif nodeType == 'number' then
+    local res = ''
+    local num = node[2]
+    local precision = node[3]
+    if node.prefixPlus then
+      res = res .. '+'
+    end
+    res = res .. string.format('%' .. precision .. '.' .. precision .. 'f', num)
+    if node.addPostfixDot then
+      res = res .. '.'
+    end
+    return res
+  elseif nodeType == 'literal' then
+    return node[2]
+  end
+  return nil
+end
+
 local function stringifyNodes(nodes)
   local res = ''
-  local nodeType
   for i, node in ipairs(nodes) do
-    nodeType = node[1]
-    --dump{i, node}
-    if nodeType == 'object_begin' then
-      res = res .. '{'
-    elseif nodeType == 'object_end' then
-      res = res .. '}'
-    elseif nodeType == 'list_begin' then
-      res = res .. '['
-    elseif nodeType == 'list_end' then
-      res = res .. ']'
-    elseif nodeType == 'array_delimiter' then
-      res = res .. ','
-    elseif nodeType == 'newline' then
-      res = res .. '\n'
-    elseif nodeType == 'newline_windows' then
-      res = res .. '\r\n'
-    elseif nodeType == 'bool' then
-      res = res .. tostring(node[2])
-    elseif nodeType == 'key_delimiter' then
-      res = res .. ':'
-    elseif nodeType == 'comment' then
-      res = res .. '//' .. node[2]
-    elseif nodeType == 'comment_multiline' then
-      res = res .. '/*' .. node[2] .. '*/'
-    elseif nodeType == 'space' then
-      res = res .. string.rep(' ', node[2])
-    elseif nodeType == 'tab' then
-      res = res .. string.rep('\t', node[2])
-    elseif nodeType == 'string' then
-      res = res .. '"' .. node[2] .. '"'
-    elseif nodeType == 'string_single' then
-      res = res .. '"' .. node[2] .. '"'
-    elseif nodeType == 'number' then
-      local num = node[2]
-      local precision = node[3]
-      if node.prefixPlus then
-        res = res .. '+'
-      end
-      res = res .. string.format('%' .. precision .. '.' .. precision .. 'f', num)
-      if node.addPostfixDot then
-        res = res .. '.'
-      end
-    elseif nodeType == 'literal' then
-      res = res .. node[2]
-    end
+    res = res .. stringifyNode(node)
   end
   return res
 end
@@ -513,6 +519,7 @@ end
 M.testFiles = testFiles
 M.testFile = testFile
 M.stringify = stringify
+M.stringifyNode = stringifyNode
 M.stringifyNodes = stringifyNodes
 M.parse = parse
 

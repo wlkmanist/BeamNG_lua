@@ -8,85 +8,90 @@
 local nodeHeightLimit = 1000.0                                                                      -- The height limit for all road nodes, in metres.
 local nodeRotLimit = 50.0                                                                           -- The lateral rotation limit for all road nodes, in degrees.
 local splitRepelDist = 1.0                                                                          -- The distance by which to repel nodes after a split, in meters.
-local tempRoadName = 'temp'                                                                         -- The name of the temporary road which is used for auditioning profiles.
 local auditionHeight = 1000.0                                                                       -- The height above zero, at which the prefab groups are auditioned, in metres.
-local camRotInc = math.pi / 500                                                                     -- The step size of the angle when rotating the camera around the audition center.
+local camRotInc = 0.0062831853                                                                      -- The step size of the angle when rotating the camera around the audition center.
+local reparameteriseNodeDist = 25                                                                   -- When importing decal roads to road architect, the max dist between nodes for fitting.
+local interDistTol = 3.5                                                                            -- When placing intermediate nodes with mouse, the max dist to centerline.
+
+local tempRoadName = 'temp'                                                                         -- The name of the temporary road which is used for auditioning profiles.
+
+local defaultOverlayMaterial = 'm_tread_marks_clean'                                                -- The default material used for overlays.
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 local M = {}
 
-
 -- External modules used.
+local treeMgr = require('quadtree')                                                                 -- A module for managing a 2D quadtree, used for fast edit visualisation culling.
 local profileMgr = require('editor/tech/roadArchitect/profiles')                                    -- Manages the profiles structure/handles profile calculations.
 local geom = require('editor/tech/roadArchitect/geometry')                                          -- A module for performing geometric calculations.
 local roadMeshMgr = require('editor/tech/roadArchitect/roadMesh')                                   -- A module for managing procedural road meshes.
 local staticMeshMgr = require('editor/tech/roadArchitect/staticMesh')                               -- A module for managing static meshes.
 local decMgr = require('editor/tech/roadArchitect/decals')                                          -- A module for managing road decals.
-local tMesh = require('editor/tech/roadArchitect/tunnelMesh')                                       -- Manages the road tunnel meshes.
+local tMesh = require('editor/tech/roadArchitect/tunnelMesh')                                       -- Manages the auto tunnel meshes.
+local util = require('editor/tech/roadArchitect/utilities')                                         -- A module containing miscellaneous utility functions.
 
 -- Private constants.
 local im = ui_imgui
-local floor, ceil, min, max = math.floor, math.ceil, math.min, math.max
-local abs, sqrt, sin, cos, tan = math.abs, math.sqrt, math.sin, math.cos, math.tan
+local min, max = math.min, math.max
+local abs, sin, cos, tan = math.abs, math.sin, math.cos, math.tan
 local twoPi = math.pi * 2.0
-local downVec, up, tmp0, tmp1 = vec3(0, 0, -1), vec3(0, 0, 1), vec3(0, 0), vec3(0, 0)
+local tmp0, tmp1, tmp2, tmp3 = vec3(0, 0), vec3(0, 0), vec3(0, 0), vec3(0, 0)
 local temp_P1, temp_P2 = vec3(-10, 0, auditionHeight), vec3(10, 0, auditionHeight)
 local gView, auditionVec, auditionCamPos = vec3(0, 0), vec3(0, 0, auditionHeight), vec3(0, 0)
 local camRotAngle = 0.0
-local isPOline = im.BoolPtr(true)                                                                   -- In auditioning, a flag which stores if road outlines are to be visible.
-local isPLane = im.BoolPtr(true)                                                                    -- In auditioning, a flag which stores if lane info is to be visible.
+local interDistTolSq = interDistTol * interDistTol
 
 -- Public module state.
 local roads = {}                                                                                    -- The collection of roads currently present in the scene.
 local roadMap = {}                                                                                  -- A hash table which maps road names to index in the roads array.
+local currentMap = nil                                                                              -- The currently stored map.
 local multi = {}                                                                                    -- A container for storing a multi-selection.
+local tree = nil
 local isAuditionProfileDirty = false                                                                -- A flag indicating if changes have been made to the profile under audition.
+
+
+-- Gets the currently-loaded map.
+local function getCurrentMap() return currentMap end
+
+-- Sets the currently-loaded map.
+local function setCurrentMap(cMap) currentMap = cMap end
 
 -- Creates a new road from a given lateral profile.
 local function createRoadFromProfile(profile)
+  profileMgr.updateLaneFlags(profile)                                                               -- Update the lane type flags (used for displaying static mesh parameters).
   local laneKeys, leftKeys, rightKeys = profileMgr.computeLaneKeys(profile)
   return {
+    displayName = im.ArrayChar(32, 'New Road'),                                                     -- The display name for this road.
 
-    -- Private.
+    isVis = im.BoolPtr(true),                                                                       -- A flag which indicates if road will appear in edit visualisation or not.
     isHidden = false,                                                                               -- A flag which indicates if this road is hidden from the user (eg temp roads).
+    isJctRoad = false,                                                                              -- A flag which indicates if this road appears in a currently-editable junction.
+    treatAsInvisibleInEdit = false,                                                                 -- A flag which indicates if this road should be invisible in edit visualisation.
+
+    aabb = nil,                                                                                     -- The current 2D AABB of the road.
+
     isDirty = true,                                                                                 -- Indicates if a change has been made to this road, requiring updates.
-    isMesh = false,                                                                                 -- Indicates if a procedural mesh will be rendered for this road, on finalise.
+    isDrivable = true,                                                                              -- Indicates if this road should be driveable (wrt the navigation graph).
+    isOverlay = false,                                                                              -- A flag which indicates if this road is an overlay, or not.
+
+    isArc = false,                                                                                  -- Indicates if this road is an arc road (or a spline road).
+    isBridge = false,                                                                               -- A flag which indicates if this is a bridge (rather than a road).
+
+    groupIdx = {},                                                                                  -- A container for the indices of all groups which this road belongs to.
 
     renderData = nil,                                                                               -- A table containing all the world-space positions used for rendering.
     laneKeys = laneKeys, leftKeys = leftKeys, rightKeys = rightKeys,                                -- A table containg all the lane keys associated to this road.
 
-    isArc = false,                                                                                  -- Indicates if this road is an arc road (or a spline road).
-    isLinkRoad = false,                                                                             -- Indicates if this road is a link road (has limited functionality/behaviour).
+    granFactor = im.IntPtr(1),                                                                      -- The granularity factor for this road.
 
-    isDowelS = false, isDowelE = false,                                                             -- Flags which indicate if dowels should be used with the road start/end resp.
-
-    startR = nil, startLie = nil, endR = nil, endLie = nil,                                         -- For link roads, these index the start/end connection road data (and their lie).
-    l1 = {}, l2 = {},                                                                               -- The collection of lanes from each joining road, resp.
-
-    idxL0a_1 = nil, idxL0a_2 = nil, idxL0a_l2 = nil, idxL0a_l = nil,                                -- [i. ontribution masks for each relevant point, for optimisation:]
-    idxL0b_1 = nil, idxL0b_2 = nil, idxL0b_l2 = nil, idxL0b_l = nil,                                -- [1 = first, 2 = second, l2 = second last, l = last].
-    idxR0a_1 = nil, idxR0a_2 = nil, idxR0a_l2 = nil, idxR0a_l = nil,
-    idxR0b_1 = nil, idxR0b_2 = nil, idxR0b_l2 = nil, idxR0b_l = nil,
-
-    idxL1 = nil, idxR1 = nil,                                                                       -- [ii. The renderData lane indices].
-    idxL2 = nil, idxR2 = nil,                                                                       -- [iii. The renderData cross-sectional point indices].
-    w1 = nil, w2 = nil,                                                                             -- [iv. The linked road width data].
-    hL1 = nil, hL2 = nil, hR1 = nil, hR2 = nil,                                                     -- [v. The linked road relative height offset data].
-    rot1 = nil, rot2 = nil,                                                                         -- [vi. The linked road rotational data].
-    isLinkedToS = {}, isLinkedToE = {},                                                             -- The collections of roads to which this road is linked (at start and end).
-
-    tunnels = {},                                                                                   -- The collection of tunnel sections belonging to this road.
-
-    -- Public.
     name = worldEditorCppApi.generateUUID(),                                                        -- The unique id of the road.
 
     nodes = {},                                                                                     -- The collection of reference nodes for this road.
 
     profile = profile,                                                                              -- The lateral road profile associated with this road.
 
-    targetLonRes = im.FloatPtr(5.0),                                                                -- The default target longitudinal resolution for the road.
-    targetArcRes = im.FloatPtr(5.0),                                                                -- The default target circular arc resolution for the road.
+    overlayMat = defaultOverlayMaterial,                                                            -- The overlay material (if this is an overlay rather than a road).
 
     isConformRoadToTerrain = im.BoolPtr(false),                                                     -- Indicates if road should conform to the local terrain (inherit height).
     isDisplayRoadSurface = im.BoolPtr(true),                                                        -- Indicates if the road surface should be visualised (debugDraw)
@@ -95,44 +100,18 @@ local function createRoadFromProfile(profile)
     isDisplayNodeNumbers = im.BoolPtr(false),                                                       -- Indicates if the node number markups should be displayed (debugDraw).
     isDisplayLaneInfo = im.BoolPtr(true),                                                           -- Indicates if the lane markups should be displayed (debugDraw).
     isDisplayRefLine = im.BoolPtr(true),                                                            -- Indicates if the road reference line should be displayed (debugDraw).
-    isRigidTranslation = im.BoolPtr(false),                                                         -- Indicates if fully-rigid translations are used when moving road nodes.
-    isAllowTunnels = im.BoolPtr(false),                                                             -- Indicates if tunnels are allowed on this road (will appear automatically).
 
-    isRefLineDecal = im.BoolPtr(true),                                                              -- Decals: Indicates if the road reference line decal will appear.
-    isEdgeLineDecal = im.BoolPtr(true),                                                             -- Decals: Indicates if the road edge line decals will appear.
-    isLaneDivsDecal = im.BoolPtr(true),                                                             -- Decals: Indicates if the road lane division decals will appear.
-    isStartLineDecal = im.BoolPtr(false),                                                           -- Decals: Indicates if the road start line (at junction) decals will appear.
-    isEndLineDecal = im.BoolPtr(false),                                                             -- Decals: Indicates if the road end line (at junction) decals will appear.
-    edgeDecalDist = im.FloatPtr(0.12),                                                              -- Decals: The distance from the road edge to the edge decals, in meters.
-    edgeDecalWidth = im.FloatPtr(0.15),                                                             -- Decals: The width of the road edge line decals, in meters.
-    centerlineWidth = im.FloatPtr(0.3),                                                             -- Decals: The width of the road centerline decal, in meters.
-    laneMarkingWidth = im.FloatPtr(0.15),                                                           -- Decals: The width of the lane division decals, in meters.
-    jctLineWidth = im.FloatPtr(2.4),                                                                -- Decals: The width of the road start/end line decals, in meters.
-    jctLineOffset = im.FloatPtr(1.5),                                                               -- Decals: The lateral offset of the road start/end line decals, in meters.
+    isRigidTranslation = im.BoolPtr(false),                                                         -- Indicates if fully-rigid translations are used when moving road nodes.
 
     forceField = im.FloatPtr(1.0),                                                                  -- The value of the force field (when using non-rigid translation).
     isCivilEngRoads = im.BoolPtr(false),                                                            -- Indicates if this road is using civil engineering style or spline style.
 
-    lampPostLonSpacing = im.FloatPtr(20.0),                                                         -- Lamp Posts: Longitudinal spacing, in meters.
-    lampJitter = im.FloatPtr(0.0),                                                                  -- Lamp Posts: The amount of random jitter used on lamp posts.
-    lampPostLonOffset = im.FloatPtr(0.0),                                                           -- Lamp Posts: Longitudinal offset of the first lamp post, in meters.
-    lampPostVertOffset = im.FloatPtr(0.5),                                                          -- Lamp Posts: Vertical offset of the lamp posts, in meters.
+    bridgeWidth = im.FloatPtr(5.5),                                                                 -- Bridges: The half-width of the bridge (width of each of the two lanes), in meters.
+    bridgeDepth = im.FloatPtr(4.0),                                                                 -- Bridges: The depth of the bridge, in meters.
+    bridgeArch = im.FloatPtr(-6.0),                                                                 -- Bridges: The amount of arching, in meters.
 
-    crashPostLonOffset = im.FloatPtr(0.0),                                                          -- Crash Barriers: Longitudinal offset of the start of the barriers, in meters.
-    crashVertOffset = im.FloatPtr(0.0),                                                             -- Crash Barriers: Vertical offset of the crash barriers, in meters.
-    useDoublePlate = im.BoolPtr(false),                                                             -- Crash Barriers: Indicates whether to use double plates or single plates.
-
-    barrierLonOffset = im.FloatPtr(0.0),                                                            -- Concrete Barriers: Longitudinal offset of the start of the barriers, in meters.
-    barrierVertOffset = im.FloatPtr(0.0),                                                           -- Concrete Barriers: Vertical offset of the concrete barriers, in meters.
-
-    fenceLonOffset = im.FloatPtr(0.0),                                                              -- Mesh Fences: Longitudinal offset of the start of the fences, in meters.
-    fenceVertOffset = im.FloatPtr(0.1),                                                             -- Mesh Fences: Vertical offset of the mesh fences, in meters.
-
-    bollardLonSpacing = im.FloatPtr(10.0),                                                          -- Bollards: Longitudinal spacing, in meters.
-    bollardJitter = im.FloatPtr(0.0),                                                               -- Bollards: The amount of random jitter used on bollards.
-    bollardLonOffset = im.FloatPtr(0.0),                                                            -- Bollards: Longitudinal offset of the first bollard, in meters.
-    bollardVertOffset = im.FloatPtr(0.0),                                                           -- Bollards: Vertical offset of the bollards, in meters.
-
+    isAllowTunnels = im.BoolPtr(false),                                                             -- Tunnels: Indicates if auto tunnels are allowed on this road.
+    tunnels = {},                                                                                   -- Tunnels: The collection of auto tunnel sections belonging to this road.
     radGran = im.IntPtr(15),                                                                        -- Tunnels: The radial granularity.
     radOffset = im.FloatPtr(0.0),                                                                   -- Tunnels: The radial offset.
     thickness = im.FloatPtr(1.0),                                                                   -- Tunnels: The wall thickness.
@@ -140,7 +119,8 @@ local function createRoadFromProfile(profile)
     protrudeS = im.FloatPtr(0.0),                                                                   -- Tunnels: The amount of protrusion along the tangent, at the start pos.
     protrudeE = im.FloatPtr(0.0),                                                                   -- Tunnels: The amount of protrusion along the tangent, at the end pos.
     extraS = im.IntPtr(2),                                                                          -- Tunnels: The start road position (the div point index).
-    extraE = im.IntPtr(2) }                                                                         -- Tunnels: The end road position (the div point index).
+    extraE = im.IntPtr(2)                                                                           -- Tunnels: The end road position (the div point index).
+  }
 end
 
 -- Creates a new road from a given lateral profile template name.
@@ -150,31 +130,60 @@ local function createRoadFromTemplate(profileTemplateName)
     worldEditorCppApi.generateUUID()))
 end
 
+-- Computes a 2D Axis-Aligned Bounding Box which represents the given road.
+-- [This is used only with the acceleration tree.]
+local function computeRoadAABB_2D(r)
+  local xMin, xMax, yMin, yMax = 1e99, -1e99, 1e99, -1e99
+  local nodes = r.nodes
+  for i = 1, #nodes do
+    local n = nodes[i].p
+    local x, y = n.x, n.y
+    xMin, xMax, yMin, yMax = min(xMin, x), max(xMax, x), min(yMin, y), max(yMax, y)
+  end
+  return xMin, xMax, yMin, yMax
+end
+
 -- Handles the case when a road needs updated.
 local function setDirty(r)
-  r.isDirty = true                                                                                  -- First, set the selected road to dirty.
-  local links = r.isLinkedToS                                                                       -- Check the roads which are linked to the start of this road.
-  local numLinks = #links
-  for i = 1, numLinks do
-    local road = roads[roadMap[links[i]]]
-    if road and road.isLinkRoad then                                                                -- Only link roads need updated - others are considered fixed until moved.
-      road.isDirty = true                                                                           -- Set all the first-links of the selected road to dirty too.
+  if r then
+    r.isDirty = true
+    profileMgr.updateCondition(r)
+
+    local xMin, xMax, yMin, yMax = computeRoadAABB_2D(r)
+
+    if not tree then                                                                                -- If there is no tree yet, build one.
+      tree = treeMgr.newQuadtree()
+      local extents = { x = 5000, y = 5000 }
+      local tb = extensions.editor_terrainEditor.getTerrainBlock()
+      if tb then
+        extents = tb:getObjectBox():getExtents()
+      end
+      tree:preLoad('initial_entry', -extents.x, -extents.y, extents.x, extents.y)                   -- Create the tree with this road.
+      tree:build()
     end
-  end
-  links = r.isLinkedToE                                                                             -- Check the roads which are linked to the end of this road.
-  numLinks = #links
-  for i = 1, numLinks do
-    local road = roads[roadMap[links[i]]]
-    if road and road.isLinkRoad then                                                                -- Only link roads need updated - others are considered fixed until moved.
-      road.isDirty = true                                                                           -- Set all the first-links of the selected road to dirty too.
+    if r.aabb then
+      tree:remove(r.name, r.aabb.x, r.aabb.y)
     end
+    tree:insert(r.name, xMin, yMin, xMax, yMax)                                                     -- Update the tree.
+    r.aabb = vec3((xMin + xMax) * 0.5, (yMin + yMax) * 0.5)                                         -- Set the latest AABB on the road, for later tree-removal usage.
   end
 end
 
--- Sets the flag which indicates if the audition profiles needs updating, to true.
-local function setAuditionProfileDirty()
-  isAuditionProfileDirty = true
+-- Sets all the roads dirty.
+local function setAllDirty()
+  for i = 1, #roads do
+    setDirty(roads[i])
+  end
 end
+
+-- Gets the tree.
+local function getTree() return tree end
+
+-- Removes the tree.
+local function removeTree() tree = nil end
+
+-- Sets the flag which indicates if the audition profiles needs updating, to true.
+local function setAuditionProfileDirty() isAuditionProfileDirty = true end
 
 -- Adds a new node at the end of the road with the given index.
 local function addNodeToRoad(rIdx, pos)
@@ -182,16 +191,92 @@ local function addNodeToRoad(rIdx, pos)
   if r then
     local widths, heightsL, heightsR = profileMgr.getWAndHByKey(r.profile)
     r.nodes[#r.nodes + 1] = {
-      p = pos,                                                                                      -- The node world-space position.
+      p = vec3(pos.x, pos.y, pos.z),                                                                -- The node world-space position.
       isLocked = false,                                                                             -- Indicates if node is locked or unlocked (ie if can be moved by the user).
       rot = im.FloatPtr(0.0),                                                                       -- The lateral rotation angle of the normal at this node (sets road camber).
       widths = widths,                                                                              -- The widths of each lane, by lane key.
       heightsL = heightsL,                                                                          -- The left lane height of each lane, by lane key.
       heightsR = heightsR,                                                                          -- The right lane height of each lane, by lane key.
       incircleRad = im.FloatPtr(1.0),                                                               -- The radius of the incircle, in [0.1, 2] (used for civil eng style roads).
+      isAutoBanked = r.profile.isAutoBanking[0],                                                    -- A flag which indicates if auto-banking is being performed on this node, or not.
       offset = 0.0 }                                                                                -- The lateral lane offset at this node.
     setDirty(r)
   end
+end
+
+-- Adds a new node at the given position, at the given index of the road.
+local function addNodeToRoadAtIdx(rIdx, pos, idx)
+  local r = roads[rIdx]
+  if r then
+    local widths, heightsL, heightsR = profileMgr.getWAndHByKey(r.profile)
+    local newNode =  {
+      p = vec3(pos.x, pos.y, pos.z),                                                                -- The node world-space position.
+      isLocked = false,                                                                             -- Indicates if node is locked or unlocked (ie if can be moved by the user).
+      rot = im.FloatPtr(0.0),                                                                       -- The lateral rotation angle of the normal at this node (sets road camber).
+      widths = widths,                                                                              -- The widths of each lane, by lane key.
+      heightsL = heightsL,                                                                          -- The left lane height of each lane, by lane key.
+      heightsR = heightsR,                                                                          -- The right lane height of each lane, by lane key.
+      incircleRad = im.FloatPtr(1.0),                                                               -- The radius of the incircle, in [0.1, 2] (used for civil eng style roads).
+      isAutoBanked = r.profile.isAutoBanking[0],                                                    -- A flag which indicates if auto-banking is being performed on this node, or not.
+      offset = 0.0 }                                                                                -- The lateral lane offset at this node.
+    table.insert(r.nodes, idx, newNode)
+    setDirty(r)
+  end
+end
+
+-- Determines if the mouse position is at an intermediate position along the road (between nodes).
+local function isMouseAtIntermediatePos(rIdx, mousePos)
+  local isInter, interIdx, q = false, nil, 0.5
+  local r = roads[rIdx]
+  if r then
+    local nodes = r.nodes
+    local dBest = 1e99
+    for i = 2, #nodes do
+      local p1, p2 = nodes[i - 1].p, nodes[i].p
+      tmp1:set(p1.x, p1.y, 0.0)                                                                     -- Project the point to the XY-plane (ie 3D -> 2D).
+      tmp2:set(p2.x, p2.y, 0.0)
+      local dSq = mousePos:squaredDistanceToLineSegment(tmp1, tmp2)
+      if dSq < min(dBest, interDistTolSq) then
+        local proj = util.projectPointToLine(mousePos, tmp1, tmp2)                                  -- Project the mouse position to the line going through the line segment.
+        if proj:squaredDistanceToLineSegment(tmp1, tmp2) < 1e-2 then                                -- Ensure that the projected point is inside the line segment.
+          dBest = dSq
+          interIdx = i
+          q = proj:distance(tmp1) / tmp1:distance(tmp2)
+          isInter = true
+        end
+      end
+    end
+    if isInter then
+      local interPos = nodes[interIdx - 1].p + q * (nodes[interIdx].p - nodes[interIdx - 1].p)
+      return isInter, interPos, interIdx
+    end
+  end
+  return false, nil, nil
+end
+
+-- Sets the width at a given node, by dividing the given width into all the lanes.
+local function setLocalWidth(rIdx, nIdx, offset)
+  local r = roads[rIdx]
+  if r then
+    local n = r.nodes[nIdx]
+    if n then
+      local numLanes = 0
+      local startWidth = nil
+      for k, v in pairs(n.widths) do
+        if r.profile[k].type == 'road_lane' then
+          numLanes = numLanes + 1
+          startWidth = v[0]
+        end
+      end
+      local laneWidth = max(0.5, min(10.0, startWidth + offset))
+      for k, _ in pairs(n.widths) do
+        if r.profile[k].type == 'road_lane' then
+          n.widths[k] = im.FloatPtr(laneWidth)
+        end
+      end
+    end
+  end
+  setDirty(r)
 end
 
 -- Deep copies a node.
@@ -209,6 +294,7 @@ local function copyNode(n)
     rot = im.FloatPtr(n.rot[0]),
     widths = wC, heightsL = hLC, heightsR = hRC,
     incircleRad = im.FloatPtr(n.incircleRad[0]),
+    isAutoBanked = n.isAutoBanked,
     offset = n.offset }
 end
 
@@ -225,31 +311,32 @@ end
 -- [The profile width is also included in the computation, rather than just the nodes themselves].
 local function computeAABB2D(rIdx)
   local road = roads[rIdx]
-  local width = profileMgr.getWidth(road.profile)
-  local nodes, xMin, xMax, yMin, yMax = road.nodes, 1e24, -1e24, 1e24, -1e24
-  local numNodes = #nodes
-  for i = 1, numNodes do
-    local p = nodes[i].p
-    local px, py = p.x, p.y
-    xMin, xMax, yMin, yMax = min(xMin, px), max(xMax, px), min(yMin, py), max(yMax, py)
-  end
-  return { xMin = xMin - width, xMax = xMax + width, yMin = yMin - width, yMax = yMax + width }
-end
-
--- Computes the 2D axis-aligned bounding box of all roads together.
-local function computeAABB2DAllRoads()
-  local xMin, xMax, yMin, yMax = 1e24, -1e24, 1e24, -1e24
-  for _, road in ipairs(roads) do
-    local width = profileMgr.getWidth(road.profile)
-    local nodes = road.nodes
-    local numNodes = #nodes
-    for i = 1, numNodes do
+  local nodes = road.nodes
+  if not road.isBridge and not road.isOverlay then
+    local xMin, xMax, yMin, yMax = 1e24, -1e24, 1e24, -1e24
+    for i = 1, #nodes do
       local p = nodes[i].p
       local px, py = p.x, p.y
-      xMin, xMax, yMin, yMax = min(xMin, px - width), max(xMax, px + width), min(yMin, py - width), max(yMax, py + width)
+      xMin, xMax, yMin, yMax = min(xMin, px), max(xMax, px), min(yMin, py), max(yMax, py)
+    end
+    return { xMin = xMin, xMax = xMax, yMin = yMin, yMax = yMax }
+  end
+end
+
+-- Gets the subset of roads from the given group.
+local function getRoadsFromGroup(group)
+  local rOut, mark, ctr = {}, {}, 1
+  local groupList = group.list
+  for i = 1, #groupList do
+    local gL = groupList[i]
+    local rCandName = gL.r
+    if not mark[rCandName] then
+      rOut[ctr] = roads[roadMap[rCandName]]
+      mark[rCandName] = true
+      ctr = ctr + 1
     end
   end
-  return { xMin = xMin, xMax = xMax, yMin = yMin, yMax = yMax }
+  return rOut
 end
 
 -- Re-computes the map (hash-table) between road names and index in the roads array.
@@ -263,84 +350,28 @@ end
 
 -- Removes the road with the given id from the scene.
 local function removeRoad(roadName)
-
-  -- If this road is joined to any other road, remove the link on the other road.
   local idx = roadMap[roadName]
   local road = roads[idx]
   if road then
-    local rLinksS, rLinksE = road.isLinkedToS, road.isLinkedToE
-    local numLinksS, numLinksE = #rLinksS, #rLinksE
-    for j = 1, numLinksS do                                                                         -- Handle the roads linked to the start of this road.
-      local lRoad = roads[roadMap[rLinksS[j]]]
-      if lRoad and (lRoad.startR == roadName or lRoad.endR == roadName) and lRoad.isLinkRoad then
-        removeRoad(lRoad.name)
-      end
-    end
-    for j = 1, numLinksE do                                                                         -- Handle the roads linked to the end of this road.
-      local lRoad = roads[roadMap[rLinksE[j]]]
-      if lRoad and (lRoad.startR == roadName or lRoad.endR == roadName) and lRoad.isLinkRoad then
-        removeRoad(lRoad.name)
-      end
-    end
-
-    -- Remove the road mesh from the scene, and the roads array entry.
-    roadMeshMgr.tryRemove(roadName)
+    roadMeshMgr.tryRemove(roadName)                                                                 -- Remove the road mesh from the scene, and the roads array entry.
     staticMeshMgr.tryRemove(roadName)                                                               -- If any static mesh was created for this road on finalise, remove them now.
+    if road.aabb and tree then
+      tree:remove(road.name, road.aabb.x, road.aabb.y)                                              -- Remove this road from the tree.
+    end
+    if road.isBridge then                                                                           -- If this is a bridge, remove the folder from the scene tree.
+      roadMeshMgr.tryRemoveBridge(road.name)
+      local folder = scenetree.findObject("Road Architect - Bridge " .. tostring(road.name))
+      if folder then
+        folder:delete()
+      end
+    end
     table.remove(roads, idx)
-
-    -- Remove all links to this road, which may appear in other roads.
-    for _, v in pairs(roads) do
-      road = roads[v]
-      if road then
-        rLinksS, rLinksE = road.isLinkedToS, road.isLinkedToE
-        numLinksS, numLinksE = #rLinksS, #rLinksE
-        for j = numLinksS, 1, -1 do                                                                 -- Handle the roads linked to the start of this road.
-          if rLinksS[j] == roadName then
-            table.remove(rLinksS, j)
-          end
-        end
-        for j = numLinksE, 1, -1 do                                                                 -- Handle the roads linked to the end of this road.
-          if rLinksE[j] == roadName then
-            table.remove(rLinksE, j)
-          end
-        end
-      end
-    end
   end
-
-  -- Search for any link roads which are unconnected at either end, and remove them.
-  for _, v in pairs(roads) do
-    local r = roads[v]
-    if r and r.isLinkRoad then
-      local sR, eR = r.startR, r.endR
-      if not roadMap[sR] or not roadMap[eR] or not roads[roadMap[sR]] or not roads[roadMap[eR]] then
-        removeRoad(r.name)
-      end
-    end
-  end
-
-  -- Re-compute the road map.
   recomputeMap()
 end
 
 -- Removes the node with the given node id, from the road with the given road id.
-local function removeNode(rIdx, nIdx)
-  local road = roads[rIdx]
-  table.remove(road.nodes, nIdx)
-end
-
--- Deep copies a table of nodal width values.
-local function copyWAndH(widths, heightsL, heightsR)
-  local wCopy, hLCopy, hRCopy = {}, {}, {}
-  for i = -20, 20 do
-    local w = widths[i]
-    if w then
-      wCopy[i] = im.FloatPtr(w[0])
-      hLCopy[i], hRCopy[i] = im.FloatPtr(heightsL[i][0]), im.FloatPtr(heightsR[i][0])
-    end
-  end
-  return wCopy, hLCopy, hRCopy
-end
+local function removeNode(rIdx, nIdx) table.remove(roads[rIdx].nodes, nIdx) end
 
 -- Produces a table of average widths, from two width tables.
 local function averageWidths(w1, w2, hL1, hL2, hR1, hR2)
@@ -359,41 +390,60 @@ end
 
 -- Adds a node between the currently-selected node and the next node.
 -- [The added node is computed as the midpoint of the two nodes].
-local function addIntermediateNode(rIdx, nIdx)
-  local nodes = roads[rIdx].nodes
-  local nIdxPlus1 = nIdx + 1
-  local n1, n2 = nodes[nIdx], nodes[nIdxPlus1]
-  local w, hL, hR = averageWidths(n1.widths, n2.widths, n1.heightsL, n2.heightsL, n1.heightsR, n2.heightsR)
-  local newNode = {
-    p = (n1.p + n2.p) * 0.5,                                                                        -- The new point is the midpoint between the selected node and the next node.
-    isLocked = false,                                                                               -- The new node will be unlocked by default.
-    rot = im.FloatPtr((n1.rot[0] + n2.rot[0]) * 0.5),                                               -- The rest of the values are averaged between the selected node and next node.
-    widths = w, heightsL = hL, heightsR = hR,
-    incircleRad = im.FloatPtr((n1.incircleRad[0] + n2.incircleRad[0]) * 0.5),
-    offset = (n1.offset + n2.offset) * 0.5 }
-  table.insert(nodes, nIdxPlus1, newNode)
+local function addIntermediateNode(rIdx, nIdx, lie)
+  local road = roads[rIdx]
+  local nodes = road.nodes
+
+  if lie == 'above' then
+    if nIdx == 1 then                                                                               -- Special case for 'above'.
+      local n1 = nodes[nIdx]
+      local newNode = copyNode(n1)
+      newNode.p = n1.p + (n1.p - nodes[nIdx + 1].p):normalized() * 3
+      table.insert(nodes, nIdx, newNode)
+    else                                                                                            -- General case for 'above'.
+      local nLast = nIdx - 1
+      local n1, n2 = nodes[nIdx], nodes[nLast]
+      local w, hL, hR = averageWidths(n1.widths, n2.widths, n1.heightsL, n2.heightsL, n1.heightsR, n2.heightsR)
+      local newNode = {
+        p = (n1.p + n2.p) * 0.5,                                                                    -- The new point is the midpoint between the selected node and the next node.
+        isLocked = false,                                                                           -- The new node will be unlocked by default.
+        rot = im.FloatPtr((n1.rot[0] + n2.rot[0]) * 0.5),                                           -- The rest of the values are averaged between the selected node and next node.
+        widths = w, heightsL = hL, heightsR = hR,
+        incircleRad = im.FloatPtr((n1.incircleRad[0] + n2.incircleRad[0]) * 0.5),
+        isAutoBanked = n1.isAutoBanked or n2.isAutoBanked,
+        offset = (n1.offset + n2.offset) * 0.5 }
+      table.insert(nodes, nIdx, newNode)
+    end
+  elseif lie == 'below' then
+    if nIdx == #nodes then                                                                          -- Special case for 'below'.
+      local n1 = nodes[nIdx]
+      local newNode = copyNode(n1)
+      newNode.p = n1.p + (n1.p - nodes[nIdx - 1].p):normalized() * 3
+      table.insert(nodes, nIdx + 1, newNode)
+    else                                                                                            -- General case for 'below'.
+      local nNext = nIdx + 1
+      local n1, n2 = nodes[nIdx], nodes[nNext]
+      local w, hL, hR = averageWidths(n1.widths, n2.widths, n1.heightsL, n2.heightsL, n1.heightsR, n2.heightsR)
+      local newNode = {
+        p = (n1.p + n2.p) * 0.5,                                                                    -- The new point is the midpoint between the selected node and the next node.
+        isLocked = false,                                                                           -- The new node will be unlocked by default.
+        rot = im.FloatPtr((n1.rot[0] + n2.rot[0]) * 0.5),                                           -- The rest of the values are averaged between the selected node and next node.
+        widths = w, heightsL = hL, heightsR = hR,
+        incircleRad = im.FloatPtr((n1.incircleRad[0] + n2.incircleRad[0]) * 0.5),
+        isAutoBanked = n1.isAutoBanked or n2.isAutoBanked,
+        offset = (n1.offset + n2.offset) * 0.5 }
+      table.insert(nodes, nNext, newNode)
+    end
+  end
 end
 
 -- Removes all road from the scene.
-local function clearAllRoads(link)
-  while #roads > 0 do
-    removeRoad(roads[1].name, link)
-  end
-end
-
--- Sets all roads in the network to use meshes (instead of only decals).
-local function setAllMesh()
-  local numRoads = #roads
-  for i = 1, numRoads do
-    roads[i].isMesh = true
-  end
-end
-
--- Sets all roads in the network to use only decals (no procedural meshes).
-local function setAllDecals()
-  local numRoads = #roads
-  for i = 1, numRoads do
-    roads[i].isMesh = false
+local function clearAllRoads()
+  for i = #roads, 1, -1 do
+    local r = roads[i]
+    if not r.isJctRoad then
+      removeRoad(r.name)
+    end
   end
 end
 
@@ -437,12 +487,12 @@ local function goToRoad(rIdx)
 
   -- Determine the required distance which the camera should be at.
   local midX, midY = (xMin + xMax) * 0.5, (yMin + yMax) * 0.5                                       -- Midpoint of axis-aligned bounding box.
-  tmp0:set(midX, midY, 0.0)
-  tmp1:set(xMax, yMax, 0.0)
+  local tmp0 = vec3(midX, midY, 0.0)
+  local tmp1 = vec3(xMax, yMax, 0.0)
   local groundDist = tmp0:distance(tmp1)                                                            -- The largest distance from the center of the box to the outside.
   local halfFov = core_camera.getFovRad() * 0.5                                                     -- Half the camera field of view (in radians).
   local height = groundDist / tan(halfFov) + zMax + 5.0                                             -- The height that the camera should be to fit all the trajectory in view.
-  local rot = quatFromDir(downVec)
+  local rot = quatFromDir(vec3(0, 0, -1))
 
   -- Move the camera to the appropriate pose.
   commands.setFreeCamera()
@@ -541,68 +591,61 @@ end
 local function adjustLateralRotation(rotNew, rotOld, nIdx, rIdx)
 
   local road = roads[rIdx]
-  local nodes, dRot = road.nodes, rotNew - rotOld
-  local numNodes = #nodes
+  if not road.profile.isAutoBanking[0] then
+    local nodes, dRot = road.nodes, rotNew - rotOld
+    local numNodes = #nodes
 
-  -- First, rotate the central node to the mouse position.
-  local cNode, fieldInv = nodes[nIdx], 1.0 / max(1e-7, road.forceField[0])                          -- CASE: [Force-Field Translation].
-  cNode.rot = im.FloatPtr(cNode.rot[0] + dRot)
-  cNode.rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, cNode.rot[0])))
+    -- First, rotate the central node to the mouse position.
+    local cNode, fieldInv = nodes[nIdx], 1.0 / max(1e-7, road.forceField[0])                        -- CASE: [Force-Field Translation].
+    cNode.rot = im.FloatPtr(cNode.rot[0] + dRot)
+    cNode.rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, cNode.rot[0])))
 
-  -- Now rotate the rest of the nodes, as appropriate.
-  if nodeRotLimit - abs(cNode.rot[0]) > 1e-3 then                                                   -- If the central node is maxed out, do not move the other nodes.
+    -- Now rotate the rest of the nodes, as appropriate.
+    if nodeRotLimit - abs(cNode.rot[0]) > 1e-3 then                                                 -- If the central node is maxed out, do not move the other nodes.
 
-    if road.isRigidTranslation[0] then
-      for i = 1, numNodes do                                                                        -- CASE: [Rigid Translation].
-        if i ~= nIdx then
-          nodes[i].rot = im.FloatPtr(nodes[i].rot[0] + dRot)
-          nodes[i].rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, nodes[i].rot[0])))
+      if road.isRigidTranslation[0] then
+        for i = 1, numNodes do                                                                      -- CASE: [Rigid Translation].
+          if i ~= nIdx then
+            nodes[i].rot = im.FloatPtr(nodes[i].rot[0] + dRot)
+            nodes[i].rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, nodes[i].rot[0])))
+          end
         end
-      end
-    else
+      else
 
-      -- Iterate from just below the central node, to the start of the polyline.
-      for i = nIdx - 1, 1, -1 do
-        local n = nodes[i]
-        if n.isLocked then                                                                          -- Do not go beyond any locked node in the -ve direction.
-          break
+        -- Iterate from just below the central node, to the start of the polyline.
+        for i = nIdx - 1, 1, -1 do
+          local n = nodes[i]
+          if n.isLocked then                                                                        -- Do not go beyond any locked node in the -ve direction.
+            break
+          end
+          local rat = min(1.0, max(0.0, 1.0 - cNode.p:distance(n.p) * fieldInv))
+          n.rot = im.FloatPtr(n.rot[0] + dRot * rat)                                                -- Move this node by a distance-based ratio (based on the force field).
+          n.rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, n.rot[0])))
         end
-        local rat = min(1.0, max(0.0, 1.0 - cNode.p:distance(n.p) * fieldInv))
-        n.rot = im.FloatPtr(n.rot[0] + dRot * rat)                                                  -- Move this node by a distance-based ratio (based on the force field).
-        n.rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, n.rot[0])))
-      end
 
-      -- Iterate from just above the central node, to the end of the polyline.
-      for i = nIdx + 1, numNodes do
-        local n = nodes[i]
-        if n.isLocked then                                                                          -- Do not go beyond and locked node in the +ve direction.
-          break
+        -- Iterate from just above the central node, to the end of the polyline.
+        for i = nIdx + 1, numNodes do
+          local n = nodes[i]
+          if n.isLocked then                                                                        -- Do not go beyond and locked node in the +ve direction.
+            break
+          end
+          local rat = min(1.0, max(0.0, 1.0 - cNode.p:distance(n.p) * fieldInv))
+          n.rot = im.FloatPtr(n.rot[0] + dRot * rat)                                                -- Move this node by a distance-based ratio (based on the force field).
+          n.rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, n.rot[0])))
         end
-        local rat = min(1.0, max(0.0, 1.0 - cNode.p:distance(n.p) * fieldInv))
-        n.rot = im.FloatPtr(n.rot[0] + dRot * rat)                                                  -- Move this node by a distance-based ratio (based on the force field).
-        n.rot = im.FloatPtr(min(nodeRotLimit, max(-nodeRotLimit, n.rot[0])))
       end
     end
-  end
-  setDirty(road)
-end
-
--- Un-links the start point of the given road, and removes any associated link roads there.
-local function unlinkStart(road)
-  local lS = road.isLinkedToS
-  local numLS = #lS
-  for i = 1, numLS do
-    removeRoad(lS[i])
+    setDirty(road)
   end
 end
 
--- Un-links the end point of the given road, and removes any associated link roads there.
-local function unlinkEnd(road)
-  local lE = road.isLinkedToE
-  local numLE = #lE
-  for i = 1, numLE do
-    removeRoad(lE[i])
+-- Copies the group indices table.
+local function copyGroupIdx(gp)
+  local gOut = {}
+  for i = 1, #gp do
+    gOut[i] = gp[i]
   end
+  return gOut
 end
 
 -- Deep copies a road.
@@ -615,68 +658,54 @@ local function copyRoad(r)
     nodesCopy[i] = copyNode(nodes[i])
   end
 
-  -- Deep copy the connectivity data.
-  local l1, l2, rL1, rL2 = {}, {}, r.l1, r.l2
-  for i = -20, 20 do
-    l1[i], l2[i] = rL1[i], rL2[i]
-  end
-  local linkedS, linkedE, linkedSLen, linkedELen = {}, {}, #r.isLinkedToS, #r.isLinkedToE
-  for i = 1, linkedSLen do
-    linkedS[i] = r.isLinkedToS[i]
-  end
-  for i = 1, linkedELen do
-    linkedE[i] = r.isLinkedToE[i]
+  local aabb = nil
+  if r.aabb then
+    aabb = vec3(r.aabb.x, r.aabb.y)
   end
 
   -- Populate the deep copy.
   local rCopy = {}
   rCopy.name = r.name
+  rCopy.displayName = im.ArrayChar(32, ffi.string(r.displayName))
   rCopy.profile = profileMgr.copyProfile(r.profile)
-  rCopy.tunnels = {}
+
   rCopy.nodes = nodesCopy
+  rCopy.isVis = im.BoolPtr(r.isVis[0])
   rCopy.isHidden = r.isHidden
+  rCopy.isJctRoad = r.isJctRoad
+  rCopy.treatAsInvisibleInEdit = r.treatAsInvisibleInEdit
+  rCopy.aabb = aabb
+  rCopy.isDrivable = r.isDrivable
+  rCopy.isOverlay = r.isOverlay
+  rCopy.groupIdx = copyGroupIdx(r.groupIdx or {})
+  rCopy.granFactor = im.IntPtr(r.granFactor[0])
   rCopy.isDirty = true
-  rCopy.isMesh = r.isMesh
-  rCopy.isDowelS, rCopy.isDowelE = r.isDowelS, r.isDowelE
   rCopy.laneKeys, rCopy.leftKeys, rCopy.rightKeys = profileMgr.computeLaneKeys(r.profile)
   rCopy.renderData = nil
-  rCopy.isLinkRoad = r.isLinkRoad
   rCopy.isArc = r.isArc
-  rCopy.startR, rCopy.startLie, rCopy.endR, rCopy.endLie = r.startR, r.startLie, r.endR, r.endLie
-  rCopy.l1, rCopy.l2 = l1, l2
-  rCopy.isLinkedToS, rCopy.isLinkedToE = linkedS, linkedE
-  rCopy.idxL0a_1, rCopy.idxL0a_2, rCopy.idxL0a_l2, rCopy.idxL0a_l = r.idxL0a_1, r.idxL0a_2, r.idxL0a_l2, r.idxL0a_l
-  rCopy.idxL0b_1, rCopy.idxL0b_2, rCopy.idxL0b_l2, rCopy.idxL0b_l = r.idxL0b_1, r.idxL0b_2, r.idxL0b_l2, r.idxL0b_l
-  rCopy.idxR0a_1, rCopy.idxR0a_2, rCopy.idxR0a_l2, rCopy.idxR0a_l = r.idxR0a_1, r.idxR0a_2, r.idxR0a_l2, r.idxR0a_l
-  rCopy.idxR0b_1, rCopy.idxR0b_2, rCopy.idxR0b_l2, rCopy.idxR0b_l = r.idxR0b_1, r.idxR0b_2, r.idxR0b_l2, r.idxR0b_l
-  rCopy.idxL1, rCopy.idxL2, rCopy.idxR1, rCopy.idxR2 = r.idxL1, r.idxL2, r.idxR1, r.idxR2
-  rCopy.w1, rCopy.w2, rCopy.rot1, rCopy.rot2 = r.w1, r.w2, r.rot1, r.rot2
-  rCopy.hL1, rCopy.hL2, rCopy.hR1, rCopy.hR2 = r.hL1, r.hL2, r.hR1, r.hR2
-  rCopy.targetLonRes = im.FloatPtr(r.targetLonRes[0])
-  rCopy.targetArcRes = im.FloatPtr(r.targetArcRes[0])
+  rCopy.isBridge = r.isBridge
+
+  rCopy.overlayMat = r.overlayMat or defaultOverlayMaterial
+
   rCopy.isConformRoadToTerrain = im.BoolPtr(r.isConformRoadToTerrain[0])
+
   rCopy.isDisplayRoadSurface = im.BoolPtr(r.isDisplayRoadSurface[0])
   rCopy.isDisplayRoadOutline = im.BoolPtr(r.isDisplayRoadOutline[0])
   rCopy.isDisplayNodeSpheres = im.BoolPtr(r.isDisplayNodeSpheres[0])
   rCopy.isDisplayNodeNumbers = im.BoolPtr(r.isDisplayNodeNumbers[0])
   rCopy.isDisplayLaneInfo = im.BoolPtr(r.isDisplayLaneInfo[0])
   rCopy.isDisplayRefLine = im.BoolPtr(r.isDisplayRefLine[0])
-  rCopy.isAllowTunnels = im.BoolPtr(r.isAllowTunnels[0])
-  rCopy.isRefLineDecal = im.BoolPtr(r.isRefLineDecal[0])
-  rCopy.isEdgeLineDecal = im.BoolPtr(r.isEdgeLineDecal[0])
-  rCopy.isLaneDivsDecal = im.BoolPtr(r.isLaneDivsDecal[0])
-  rCopy.isStartLineDecal = im.BoolPtr(r.isStartLineDecal[0])
-  rCopy.isEndLineDecal = im.BoolPtr(r.isEndLineDecal[0])
-  rCopy.edgeDecalDist = im.FloatPtr(r.edgeDecalDist[0])
-  rCopy.edgeDecalWidth = im.FloatPtr(r.edgeDecalWidth[0])
-  rCopy.centerlineWidth = im.FloatPtr(r.centerlineWidth[0])
-  rCopy.laneMarkingWidth = im.FloatPtr(r.laneMarkingWidth[0])
-  rCopy.jctLineWidth = im.FloatPtr(r.jctLineWidth[0])
-  rCopy.jctLineOffset = im.FloatPtr(r.jctLineOffset[0])
+
   rCopy.isRigidTranslation = im.BoolPtr(r.isRigidTranslation[0])
   rCopy.forceField = im.FloatPtr(r.forceField[0])
   rCopy.isCivilEngRoads = im.BoolPtr(r.isCivilEngRoads[0])
 
+  rCopy.bridgeWidth = im.FloatPtr(r.bridgeWidth[0])
+  rCopy.bridgeDepth = im.FloatPtr(r.bridgeDepth[0])
+  rCopy.bridgeArch = im.FloatPtr(r.bridgeArch[0])
+
+  rCopy.isAllowTunnels = im.BoolPtr(r.isAllowTunnels[0])
+  rCopy.tunnels = {}
   rCopy.radGran = im.IntPtr(r.radGran[0])
   rCopy.radOffset = im.FloatPtr(r.radOffset[0])
   rCopy.thickness = im.FloatPtr(r.thickness[0])
@@ -686,51 +715,18 @@ local function copyRoad(r)
   rCopy.extraS = im.IntPtr(r.extraS[0])
   rCopy.extraE = im.IntPtr(r.extraE[0])
 
-  rCopy.lampPostLonSpacing = im.FloatPtr(r.lampPostLonSpacing[0])
-  rCopy.lampJitter = im.FloatPtr(r.lampJitter[0])
-  rCopy.lampPostLonOffset = im.FloatPtr(r.lampPostLonOffset[0])
-  rCopy.lampPostVertOffset = im.FloatPtr(r.lampPostVertOffset[0])
-
-  rCopy.crashPostLonOffset = im.FloatPtr(r.crashPostLonOffset[0])
-  rCopy.crashVertOffset = im.FloatPtr(r.crashVertOffset[0])
-  rCopy.useDoublePlate = im.BoolPtr(r.useDoublePlate[0])
-
-  rCopy.barrierLonOffset = im.FloatPtr(r.barrierLonOffset[0])
-  rCopy.barrierVertOffset = im.FloatPtr(r.barrierVertOffset[0])
-
-  rCopy.fenceLonOffset = im.FloatPtr(r.fenceLonOffset[0])
-  rCopy.fenceVertOffset = im.FloatPtr(r.fenceVertOffset[0])
-
-  rCopy.bollardLonSpacing = im.FloatPtr(r.bollardLonSpacing[0])
-  rCopy.bollardJitter = im.FloatPtr(r.bollardJitter[0])
-  rCopy.bollardLonOffset = im.FloatPtr(r.bollardLonOffset[0])
-  rCopy.bollardVertOffset = im.FloatPtr(r.bollardVertOffset[0])
-
   return rCopy
 end
 
 -- Splits the road with the given index, at the given node position.
 -- [This can be used for creating junctions].
-local function splitRoad(rIdx, nIdx, link)
+local function splitRoad(rIdx, nIdx)
 
   -- Cache the old road data.
   local r = roads[rIdx]
   local oldName, nodes, profile = r.name, r.nodes, r.profile
-  local isArc = r.isArc
-  local targetLonRes, targetArcRes = r.targetLonRes[0], r.targetArcRes[0]
   local isConformRoadToTerrain = r.isConformRoadToTerrain[0]
-  local isDisplayRoadSurface = r.isDisplayRoadSurface[0]
-  local isDisplayRoadOutline = r.isDisplayRoadOutline[0]
-  local isDisplayNodeSpheres = r.isDisplayNodeSpheres[0]
-  local isDisplayNodeNumbers = r.isDisplayNodeNumbers[0]
-  local isDisplayLaneInfo = r.isDisplayLaneInfo[0]
-  local isDisplayRefLine = r.isDisplayRefLine[0]
   local isAllowTunnels = r.isAllowTunnels[0]
-  local isRefLineDecal = r.isRefLineDecal[0]
-  local isEdgeLineDecal = r.isEdgeLineDecal[0]
-  local isLaneDivsDecal = r.isLaneDivsDecal[0]
-  local isStartLineDecal = r.isStartLineDecal[0]
-  local isEndLineDecal = r.isEndLineDecal[0]
   local isRigidTranslation = r.isRigidTranslation[0]
   local forceField = r.forceField[0]
   local isCivilEngRoads = r.isCivilEngRoads[0]
@@ -741,46 +737,38 @@ local function splitRoad(rIdx, nIdx, link)
     copiedNodesA[i] = copyNode(nodes[i])
   end
   local roadA = createRoadFromProfile(profile)
+  roadA.displayName = im.ArrayChar(32, ffi.string(r.displayName) .. ' [A]')
   roadA.nodes = copiedNodesA
-  roadA.tunnels = {}
-  roadA.isLinkRoad, roadA.isArc = false, isArc
-  roadA.isDowelS, roadA.isDowelE = r.isDowelS, false
+  roadA.isDrivable = r.isDrivable
+  roadA.isOverlay = r.isOverlay
+  roadA.groupIdx = {}
+  roadA.isArc = r.isArc
+  roadA.isBridge = r.isBridge
+
+  roadA.granFactor = im.IntPtr(r.granFactor[0])
   roadA.laneKeys, roadA.leftKeys, roadA.rightKeys = profileMgr.computeLaneKeys(r.profile)
-  roadA.startR, roadA.startLie, roadA.endR, roadA.endLie = r.startR, r.startLie, nil, nil
-  roadA.idxL0a_1, roadA.idxL0a_2, roadA.idxL0a_l2, roadA.idxL0a_l = r.idxL0a_1, r.idxL0a_2, r.idxL0a_l2, r.idxL0a_l
-  roadA.idxL0b_1, roadA.idxL0b_2, roadA.idxL0b_l2, roadA.idxL0b_l = r.idxL0b_1, r.idxL0b_2, r.idxL0b_l2, r.idxL0b_l
-  roadA.idxR0a_1, roadA.idxR0a_2, roadA.idxR0a_l2, roadA.idxR0a_l = r.idxR0a_1, r.idxR0a_2, r.idxR0a_l2, r.idxR0a_l
-  roadA.idxR0b_1, roadA.idxR0b_2, roadA.idxR0b_l2, roadA.idxR0b_l = r.idxR0b_1, r.idxR0b_2, r.idxR0b_l2, r.idxR0b_l
-  roadA.idxL1, roadA.idxL2, roadA.idxR1, roadA.idxR2 = r.idxL1, r.idxL2, nil, nil
-  roadA.w1, roadA.w2, roadA.rot1, roadA.rot2 = r.w1, r.w2, r.rot1, r.rot2
-  roadA.hL1, roadA.hL2, roadA.hR1, roadA.hR2 = r.hL1, r.hL2, r.hR1, r.hR2
-  roadA.l1, roadA.l2 = r.l1, {}
-  roadA.isLinkedToS, roadA.isLinkedToE = r.isLinkedToS, {}
-  roadA.targetLonRes = im.FloatPtr(targetLonRes)
-  roadA.targetArcRes = im.FloatPtr(targetArcRes)
+
+  roadA.overlayMat = r.overlayMat or defaultOverlayMaterial
+
   roadA.isConformRoadToTerrain = im.BoolPtr(isConformRoadToTerrain)
-  roadA.isDisplayRoadSurface = im.BoolPtr(isDisplayRoadSurface)
-  roadA.isDisplayRoadOutline = im.BoolPtr(isDisplayRoadOutline)
-  roadA.isDisplayNodeSpheres = im.BoolPtr(isDisplayNodeSpheres)
-  roadA.isDisplayNodeNumbers = im.BoolPtr(isDisplayNodeNumbers)
-  roadA.isDisplayLaneInfo = im.BoolPtr(isDisplayLaneInfo)
-  roadA.isDisplayRefLine = im.BoolPtr(isDisplayRefLine)
-  roadA.isAllowTunnels = im.BoolPtr(isAllowTunnels)
-  roadA.isRefLineDecal = im.BoolPtr(isRefLineDecal)
-  roadA.isEdgeLineDecal = im.BoolPtr(isEdgeLineDecal)
-  roadA.isLaneDivsDecal = im.BoolPtr(isLaneDivsDecal)
-  roadA.isStartLineDecal = im.BoolPtr(isStartLineDecal)
-  roadA.isEndLineDecal = im.BoolPtr(isEndLineDecal)
-  roadA.edgeDecalDist = im.FloatPtr(r.edgeDecalDist[0])
-  roadA.edgeDecalWidth = im.FloatPtr(r.edgeDecalWidth[0])
-  roadA.centerlineWidth = im.FloatPtr(r.centerlineWidth[0])
-  roadA.laneMarkingWidth = im.FloatPtr(r.laneMarkingWidth[0])
-  roadA.jctLineWidth = im.FloatPtr(r.jctLineWidth[0])
-  roadA.jctLineOffset = im.FloatPtr(r.jctLineOffset[0])
+
+  roadA.isDisplayRoadSurface = im.BoolPtr(r.isDisplayRoadSurface[0])
+  roadA.isDisplayRoadOutline = im.BoolPtr(r.isDisplayRoadOutline[0])
+  roadA.isDisplayNodeSpheres = im.BoolPtr(r.isDisplayNodeSpheres[0])
+  roadA.isDisplayNodeNumbers = im.BoolPtr(r.isDisplayNodeNumbers[0])
+  roadA.isDisplayLaneInfo = im.BoolPtr(r.isDisplayLaneInfo[0])
+  roadA.isDisplayRefLine = im.BoolPtr(r.isDisplayRefLine[0])
+
   roadA.isRigidTranslation = im.BoolPtr(isRigidTranslation)
   roadA.forceField = im.FloatPtr(forceField)
   roadA.isCivilEngRoads = im.BoolPtr(isCivilEngRoads)
 
+  roadA.bridgeWidth = im.FloatPtr(r.bridgeWidth[0])
+  roadA.bridgeDepth = im.FloatPtr(r.bridgeDepth[0])
+  roadA.bridgeArch = im.FloatPtr(r.bridgeArch[0])
+
+  roadA.isAllowTunnels = im.BoolPtr(isAllowTunnels)
+  roadA.tunnels = {}
   roadA.radGran = im.IntPtr(r.radGran[0])
   roadA.radOffset = im.FloatPtr(r.radOffset[0])
   roadA.thickness = im.FloatPtr(r.thickness[0])
@@ -790,26 +778,6 @@ local function splitRoad(rIdx, nIdx, link)
   roadA.extraS = im.IntPtr(r.extraS[0])
   roadA.extraE = im.IntPtr(r.extraE[0])
 
-  roadA.lampPostLonSpacing = im.FloatPtr(r.lampPostLonSpacing[0])
-  roadA.lampJitter = im.FloatPtr(r.lampJitter[0])
-  roadA.lampPostLonOffset = im.FloatPtr(r.lampPostLonOffset[0])
-  roadA.lampPostVertOffset = im.FloatPtr(r.lampPostVertOffset[0])
-
-  roadA.crashPostLonOffset = im.FloatPtr(r.crashPostLonOffset[0])
-  roadA.crashVertOffset = im.FloatPtr(r.crashVertOffset[0])
-  roadA.useDoublePlate = im.BoolPtr(r.useDoublePlate[0])
-
-  roadA.barrierLonOffset = im.FloatPtr(r.barrierLonOffset[0])
-  roadA.barrierVertOffset = im.FloatPtr(r.barrierVertOffset[0])
-
-  roadA.fenceLonOffset = im.FloatPtr(r.fenceLonOffset[0])
-  roadA.fenceVertOffset = im.FloatPtr(r.fenceVertOffset[0])
-
-  roadA.bollardLonSpacing = im.FloatPtr(r.bollardLonSpacing[0])
-  roadA.bollardJitter = im.FloatPtr(r.bollardJitter[0])
-  roadA.bollardLonOffset = im.FloatPtr(r.bollardLonOffset[0])
-  roadA.bollardVertOffset = im.FloatPtr(r.bollardVertOffset[0])
-
   -- Create the second new road (road B).
   local copiedNodesB, numNodes, ctr = {}, #nodes, 1
   for i = nIdx, numNodes do
@@ -817,46 +785,38 @@ local function splitRoad(rIdx, nIdx, link)
     ctr = ctr + 1
   end
   local roadB = createRoadFromProfile(profileMgr.copyProfile(profile))
+  roadB.displayName = im.ArrayChar(32, ffi.string(r.displayName) .. ' [B]')
   roadB.nodes = copiedNodesB
-  roadB.tunnels = {}
-  roadB.isLinkRoad, roadB.isArc = false, isArc
-  roadB.isDowelS, roadB.isDowelE = false, r.isDowelE
+  roadB.isDrivable = r.isDrivable
+  roadB.isOverlay = r.isOverlay
+  roadB.groupIdx = {}
+  roadB.isArc = r.isArc
+  roadB.isBridge = r.isBridge
+
+  roadB.granFactor = im.IntPtr(r.granFactor[0])
   roadB.laneKeys, roadB.leftKeys, roadB.rightKeys = profileMgr.computeLaneKeys(r.profile)
-  roadB.startR, roadB.startLie, roadB.endR, roadB.endLie = nil, nil, r.endR, r.endLie
-  roadB.idxL0a_1, roadB.idxL0a_2, roadB.idxL0a_l2, roadB.idxL0a_l = r.idxL0a_1, r.idxL0a_2, r.idxL0a_l2, r.idxL0a_l
-  roadB.idxL0b_1, roadB.idxL0b_2, roadB.idxL0b_l2, roadB.idxL0b_l = r.idxL0b_1, r.idxL0b_2, r.idxL0b_l2, r.idxL0b_l
-  roadB.idxR0a_1, roadB.idxR0a_2, roadB.idxR0a_l2, roadB.idxR0a_l = r.idxR0a_1, r.idxR0a_2, r.idxR0a_l2, r.idxR0a_l
-  roadB.idxR0b_1, roadB.idxR0b_2, roadB.idxR0b_l2, roadB.idxR0b_l = r.idxR0b_1, r.idxR0b_2, r.idxR0b_l2, r.idxR0b_l
-  roadB.idxL1, roadB.idxL2, roadB.idxR1, roadB.idxR2 = nil, nil, r.idxR1, r.idxR2
-  roadB.w1, roadB.w2, roadB.rot1, roadB.rot2 = r.w1, r.w2, r.rot1, r.rot2
-  roadB.hL1, roadB.hL2, roadB.hR1, roadB.hR2 = r.hL1, r.hL2, r.hR1, r.hR2
-  roadB.l1, roadB.l2 = {}, r.l2
-  roadB.isLinkedToS, roadB.isLinkedToE = {}, r.isLinkedToE
-  roadB.targetLonRes = im.FloatPtr(targetLonRes)
-  roadB.targetArcRes = im.FloatPtr(targetArcRes)
+
+  roadB.overlayMat = r.overlayMat or defaultOverlayMaterial
+
   roadB.isConformRoadToTerrain = im.BoolPtr(isConformRoadToTerrain)
-  roadB.isDisplayRoadSurface = im.BoolPtr(isDisplayRoadSurface)
-  roadB.isDisplayRoadOutline = im.BoolPtr(isDisplayRoadOutline)
-  roadB.isDisplayNodeSpheres = im.BoolPtr(isDisplayNodeSpheres)
-  roadB.isDisplayNodeNumbers = im.BoolPtr(isDisplayNodeNumbers)
-  roadB.isDisplayRefLine = im.BoolPtr(isDisplayRefLine)
-  roadB.isAllowTunnels = im.BoolPtr(isAllowTunnels)
-  roadB.isRefLineDecal = im.BoolPtr(isRefLineDecal)
-  roadB.isEdgeLineDecal = im.BoolPtr(isEdgeLineDecal)
-  roadB.isLaneDivsDecal = im.BoolPtr(isLaneDivsDecal)
-  roadB.isStartLineDecal = im.BoolPtr(isStartLineDecal)
-  roadB.isEndLineDecal = im.BoolPtr(isEndLineDecal)
-  roadB.isDisplayLaneInfo = im.BoolPtr(isDisplayLaneInfo)
-  roadB.edgeDecalDist = im.FloatPtr(r.edgeDecalDist[0])
-  roadB.edgeDecalWidth = im.FloatPtr(r.edgeDecalWidth[0])
-  roadB.centerlineWidth = im.FloatPtr(r.centerlineWidth[0])
-  roadB.laneMarkingWidth = im.FloatPtr(r.laneMarkingWidth[0])
-  roadB.jctLineWidth = im.FloatPtr(r.jctLineWidth[0])
-  roadB.jctLineOffset = im.FloatPtr(r.jctLineOffset[0])
+
+  roadB.isDisplayRoadSurface = im.BoolPtr(r.isDisplayRoadSurface[0])
+  roadB.isDisplayRoadOutline = im.BoolPtr(r.isDisplayRoadOutline[0])
+  roadB.isDisplayNodeSpheres = im.BoolPtr(r.isDisplayNodeSpheres[0])
+  roadB.isDisplayNodeNumbers = im.BoolPtr(r.isDisplayNodeNumbers[0])
+  roadB.isDisplayLaneInfo = im.BoolPtr(r.isDisplayLaneInfo[0])
+  roadB.isDisplayRefLine = im.BoolPtr(r.isDisplayRefLine[0])
+
   roadB.isRigidTranslation = im.BoolPtr(isRigidTranslation)
   roadB.forceField = im.FloatPtr(forceField)
   roadB.isCivilEngRoads = im.BoolPtr(isCivilEngRoads)
 
+  roadB.bridgeWidth = im.FloatPtr(r.bridgeWidth[0])
+  roadB.bridgeDepth = im.FloatPtr(r.bridgeDepth[0])
+  roadB.bridgeArch = im.FloatPtr(r.bridgeArch[0])
+
+  roadB.isAllowTunnels = im.BoolPtr(isAllowTunnels)
+  roadB.tunnels = {}
   roadB.radGran = im.IntPtr(r.radGran[0])
   roadB.radOffset = im.FloatPtr(r.radOffset[0])
   roadB.thickness = im.FloatPtr(r.thickness[0])
@@ -865,26 +825,6 @@ local function splitRoad(rIdx, nIdx, link)
   roadB.protrudeE = im.FloatPtr(r.protrudeE[0])
   roadB.extraS = im.IntPtr(r.extraS[0])
   roadB.extraE = im.IntPtr(r.extraE[0])
-
-  roadB.lampPostLonSpacing = im.FloatPtr(r.lampPostLonSpacing[0])
-  roadB.lampJitter = im.FloatPtr(r.lampJitter[0])
-  roadB.lampPostLonOffset = im.FloatPtr(r.lampPostLonOffset[0])
-  roadB.lampPostVertOffset = im.FloatPtr(r.lampPostVertOffset[0])
-
-  roadB.crashPostLonOffset = im.FloatPtr(r.crashPostLonOffset[0])
-  roadB.crashVertOffset = im.FloatPtr(r.crashVertOffset[0])
-  roadB.useDoublePlate = im.BoolPtr(r.useDoublePlate[0])
-
-  roadB.barrierLonOffset = im.FloatPtr(r.barrierLonOffset[0])
-  roadB.barrierVertOffset = im.FloatPtr(r.barrierVertOffset[0])
-
-  roadB.fenceLonOffset = im.FloatPtr(r.fenceLonOffset[0])
-  roadB.fenceVertOffset = im.FloatPtr(r.fenceVertOffset[0])
-
-  roadB.bollardLonSpacing = im.FloatPtr(r.bollardLonSpacing[0])
-  roadB.bollardJitter = im.FloatPtr(r.bollardJitter[0])
-  roadB.bollardLonOffset = im.FloatPtr(r.bollardLonOffset[0])
-  roadB.bollardVertOffset = im.FloatPtr(r.bollardVertOffset[0])
 
   -- Repel the two split endpoints slightly.
   local np = nodes[nIdx].p
@@ -899,58 +839,13 @@ local function splitRoad(rIdx, nIdx, link)
   local rIdxA, rIdxB = numRoads + 1, numRoads + 2
   roads[rIdxA], roads[rIdxB] = roadA, roadB
   roadMap[roadA.name], roadMap[roadB.name] = rIdxA, rIdxB
+  recomputeMap()
+
   roadMeshMgr.tryRemove(oldName)
   staticMeshMgr.tryRemove(oldName)                                                                  -- If any static mesh was created for this road on finalise, remove them now.
-  table.remove(roads, rIdx)
-
-  -- Change the references in any connected link roads, so they become aware of the split.
-  numRoads = #roads
-  for i = 1, numRoads do
-    local r = roads[i]
-    if r.isLinkRoad then
-      if r.startR == oldName then
-        local p0 = r.nodes[1].p
-        if p0:squaredDistance(roadA.nodes[1].p) < p0:squaredDistance(roadB.nodes[#roadB.nodes].p) then
-          r.startR = roadA.name
-        else
-          r.startR = roadB.name
-        end
-      end
-      if r.endR == oldName then
-        local p0 = r.nodes[#r.nodes].p
-        if p0:squaredDistance(roadA.nodes[1].p) < p0:squaredDistance(roadB.nodes[#roadB.nodes].p) then
-          r.endR = roadA.name
-        else
-          r.endR = roadB.name
-        end
-      end
-      local lS, lE = r.isLinkedToS, r.isLinkedToE
-      local numLS, numLE = #lS, #lE
-      for i = 1, numLS do
-        if lS[i] == oldName then
-          local p0 = r.nodes[1].p
-          if p0:squaredDistance(roadA.nodes[1].p) < p0:squaredDistance(roadB.nodes[#roadB.nodes].p) then
-            lS[i] = roadA.name
-          else
-            lS[i] = roadB.name
-          end
-        end
-      end
-      for i = 1, numLE do
-        if lE[i] == oldName then
-          local p0 = r.nodes[#r.nodes].p
-          if p0:squaredDistance(roadA.nodes[1].p) < p0:squaredDistance(roadB.nodes[#roadB.nodes].p) then
-            lE[i] = roadA.name
-          else
-            lE[i] = roadB.name
-          end
-        end
-      end
-    end
-  end
-
-  -- Re-compute the road map.
-  recomputeMap()
+  removeRoad(oldName)
+  setDirty(roadA)
+  setDirty(roadB)
 end
 
 -- Flips the direction of the road with the given index.
@@ -966,81 +861,60 @@ local function flipRoad(rIdx)
     table.clear(r.renderData)
   end
   r.nodes = poly
-  geom.computeRoadRenderData(r, roads, roadMap)
+  geom.computeRoadRenderData(r)
 end
 
 -- Manages the updating of roads.
 -- [Updates the render data for all roads which require it].
-local function updateRoads(isGroupMode)
-  local numRoads = #roads
-  if isGroupMode then
-    for i = 1, numRoads do                                                                          -- CASE A: group-mode
-      local r = roads[i]
-      if r.isDirty and #r.nodes > 1 then                                                            -- If the road has been marked as requiring updating.
-        geom.computeRoadRenderData(r, roads, roadMap)                                               -- Compute the relevant geometric data needed for rendering the road.
-        r.isDirty = false                                                                           -- The road has been updated, so we mark this in the road instance.
-      end
-    end
-  else
-    for i = 1, numRoads do                                                                          -- CASE B: Non-group-mode
-      local r = roads[i]
-      if r.isDirty and #r.nodes > 1 then                                                            -- If the road has been marked as requiring updating.
-        geom.computeRoadRenderData(r, roads, roadMap)                                               -- Compute the relevant geometric data needed for rendering the road.
-        if r.isMesh and not r.isHidden then                                                         -- Update the procedural mesh for this road, if this is switched on.
+local function updateRoads()
+  for i = 1, #roads do
+    local r = roads[i]
+    if r.isDirty and #r.nodes > 1 then                                                              -- If the road has been marked as requiring updating.
+      geom.computeRoadRenderData(r)                                                                 -- Compute the relevant geometric data needed for rendering the road.
+      r.isDirty = false                                                                             -- The road has been updated, so we mark this in the road instance.
+      profileMgr.updateCondition(r)
+      if r.isBridge then
+        local folder = scenetree.findObject("Road Architect - Bridge " .. tostring(r.name))
+        if not folder then
+          folder = createObject("SimGroup")
+          folder:registerObject("Road Architect - Bridge " .. tostring(r.name))
+          scenetree.MissionGroup:addObject(folder)
         end
-        r.isDirty = false                                                                           -- The road has been updated, so we mark this in the road instance.
+        roadMeshMgr.updateBridge(r, folder)                                                         -- If this is a bridge, update the bridge mesh.
       end
     end
   end
 end
 
--- Recover the holemap after the removal of a tunnel.
-local function recoverHolemap(holes)
-  local tb = extensions.editor_terrainEditor.getTerrainBlock()
-  local xMinG, xMaxG, yMinG, yMaxG = 1e99, -1e99, 1e99, -1e99
-  local done = {}
-  if holes then
-    local numHoles = #holes
-    for i = 1, numHoles do
-      local hs = holes[i]
-      local p = hs.p
-      local x, y = p.x, p.y
-      if not done[x] or not done[x][y] then
-        xMinG, xMaxG, yMinG, yMaxG = min(xMinG, x), max(xMaxG, x), min(yMinG, y), max(yMaxG, y)
-        tb:setMaterialIdxWs(p, hs.i)
-        if not done[x] then
-          done[x] = {}
-        end
-        done[x][y] = true
-      end
-    end
-  end
-
-  -- Update the terrain block.
-  local gMin, gMax = Point2I(0, 0), Point2I(0, 0)
-  local te = extensions.editor_terrainEditor.getTerrainEditor()
-  te:worldToGridByPoint2I(vec3(xMinG, yMinG), gMin, tb)
-  te:worldToGridByPoint2I(vec3(xMaxG, yMaxG), gMax, tb)
-  local w2gMin, w2gMax = vec3(gMin.x, gMin.y), vec3(gMax.x, gMax.y)
-  tb:updateGridMaterials(w2gMin, w2gMax)
-  tb:updateGrid(w2gMin, w2gMax)
-end
+-- Clears the bridges structure.
+local function clearBridges() roadMeshMgr.clearBridges() end
 
 -- Removes all road meshes from the scene and clears the roads structure.
 local function removeAll()
   decMgr.tryRemoveAll()                                                                             -- First, remove all decals, if any exist.
-  local numRoads = #roads
-  for i = 1, numRoads do
-    local roadName = roads[i].name
+
+  for i = 1, #roads do
+    local road = roads[i]
+    local roadName = road.name
     roadMeshMgr.tryRemove(roadName)                                                                 -- Remove all meshes, if any exist.
     staticMeshMgr.tryRemove(roadName)                                                               -- If any static mesh was created for this road on finalise, remove them now.
-    local tunnels = roads[i].tunnels
-    for j = 1, #tunnels do
+
+    if road.isBridge then                                                                           -- If this is a bridge, remove the folder from the scene tree.
+      roadMeshMgr.tryRemoveBridge(road.name)
+      local folder = scenetree.findObject("Road Architect - Bridge " .. tostring(road.name))
+      if folder then
+        folder:delete()
+      end
+    end
+
+    local tunnels = road.tunnels
+    for j = 1, #tunnels do                                                                          -- If any tunnel meshes were created for this road on finalise, remove them now.
       local t = tunnels[j]
-      tMesh.tryRemove(t.name)
-      recoverHolemap(t.holes)
+      tMesh.tryRemove(i, t.name)
     end
   end
+  clearBridges()
+
   table.clear(roads)                                                                                -- Clear the roads container.
   recomputeMap()                                                                                    -- Re-compute the roads map.
 end
@@ -1075,64 +949,60 @@ local function manageTempRoadSection(pIdx)
     local n1 = {
       p = temp_P1, isLocked = true, rot = im.FloatPtr(0.0),
       widths = widths, heightsL = heightsL, heightsR = heightsR,
-      incircleRad = im.FloatPtr(1.0), offset = 0.0 }
+      incircleRad = im.FloatPtr(1.0), isAutoBanked = false, offset = 0.0 }
     local n2 = {
       p = temp_P2, isLocked = true, rot = im.FloatPtr(0.0),
       widths = widths, heightsL = heightsL, heightsR = heightsR,
-      incircleRad = im.FloatPtr(1.0), offset = 0.0 }
+      incircleRad = im.FloatPtr(1.0), isAutoBanked = false, offset = 0.0 }
     local laneKeys, leftKeys, rightKeys = profileMgr.computeLaneKeys(profile)
     if not rIdx then
       rIdx = #roads + 1
     end
     roads[rIdx] = {
+      displayName = im.ArrayChar(32, 'temp'),
+      isVis = im.BoolPtr(true),
       isHidden = true,
+      isJctRoad = false,
+      treatAsInvisibleInEdit = false,
+      aabb = vec3((n1.p.x + n2.p.x) * 0.5, (n1.p.y + n2.p.y) * 0.5),
+      isDrivable = false,
+      isOverlay = false,
+      groupIdx = {},
+      granFactor = im.IntPtr(1),
       renderData = nil,
       laneKeys = laneKeys, leftKeys = leftKeys, rightKeys = rightKeys,
       isDirty = true,
-      isMesh = false,
-      isLinkRoad = false,
-      isDowelS = false, isDowelE = false,
+
       isArc = false,
-      startR = nil, startLie = nil, endR = nil, endLie = nil, l1 = {}, l2 = {},
-      idxL0a_1 = nil, idxL0a_2 = nil, idxL0a_l2 = nil, idxL0a_l = nil,
-      idxL0b_1 = nil, idxL0b_2 = nil, idxL0b_l2 = nil, idxL0b_l = nil,
-      idxR0a_1 = nil, idxR0a_2 = nil, idxR0a_l2 = nil, idxR0a_l = nil,
-      idxR0b_1 = nil, idxR0b_2 = nil, idxR0b_l2 = nil, idxR0b_l = nil,
-      idxL1 = nil, idxL2 = nil, idxR1 = nil, idxR2 = nil,
-      w1 = nil, w2 = nil,
-      hL1 = nil, hL2 = nil, hR1 = nil, hR2 = nil,
-      rot1 = nil, rot2 = nil,
-      isLinkedToS = {}, isLinkedToE = {},
+      isBridge = false,
+
       type = nil,
       name = tempRoadName,
       nodes = { n1, n2 },
-      tunnels = {},
+
       profile = profile,
-      targetLonRes = im.FloatPtr(5.0),
-      targetArcRes = im.FloatPtr(5.0),
+
+      overlayMat = defaultOverlayMaterial,
+
       isConformRoadToTerrain = im.BoolPtr(false),
+
       isDisplayRoadSurface = im.BoolPtr(true),
-      isDisplayRoadOutline = im.BoolPtr(isPOline[0]),
+      isDisplayRoadOutline = im.BoolPtr(true),
       isDisplayNodeSpheres = im.BoolPtr(false),
-      isDisplayRefLine = im.BoolPtr(isPOline[0]),
-      isAllowTunnels = im.BoolPtr(false),
-      isDisplayLaneInfo = im.BoolPtr(isPLane),
+      isDisplayRefLine = im.BoolPtr(true),
+      isDisplayLaneInfo = im.BoolPtr(true),
       isDisplayNodeNumbers = im.BoolPtr(false),
-      isRefLineDecal = im.BoolPtr(false),
-      isEdgeLineDecal = im.BoolPtr(false),
-      isLaneDivsDecal = im.BoolPtr(false),
-      isStartLineDecal = im.BoolPtr(false),
-      isEndLineDecal = im.BoolPtr(false),
-      edgeDecalDist = im.FloatPtr(0.12),
-      edgeDecalWidth = im.FloatPtr(0.1),
-      centerlineWidth = im.FloatPtr(0.1),
-      laneMarkingWidth = im.FloatPtr(0.1),
-      jctLineWidth = im.FloatPtr(0.1),
-      jctLineOffset = im.FloatPtr(0.0),
+
       isRigidTranslation = im.BoolPtr(false),
       forceField = im.FloatPtr(1.0),
       isCivilEngRoads = im.BoolPtr(false),
 
+      bridgeWidth = im.FloatPtr(5.0),
+      bridgeDepth = im.FloatPtr(5.0),
+      bridgeArch = im.FloatPtr(1.0),
+
+      isAllowTunnels = im.BoolPtr(false),
+      tunnels = {},
       radGran = im.IntPtr(15),
       radOffset = im.FloatPtr(0.0),
       thickness = im.FloatPtr(1.0),
@@ -1140,33 +1010,13 @@ local function manageTempRoadSection(pIdx)
       protrudeS = im.FloatPtr(0.0),
       protrudeE = im.FloatPtr(0.0),
       extraS = im.IntPtr(2),
-      extraE = im.IntPtr(2),
+      extraE = im.IntPtr(2)
+    }
 
-      lampPostLonSpacing = im.FloatPtr(10.0),
-      lampJitter = im.FloatPtr(0.0),
-      lampPostLonOffset = im.FloatPtr(0.0),
-      lampPostVertOffset = im.FloatPtr(0.0),
-
-      crashPostLonOffset = im.FloatPtr(0.0),
-      crashVertOffset = im.FloatPtr(0.0),
-      useDoublePlate = im.BoolPtr(false),
-
-      barrierLonOffset = im.FloatPtr(0.0),
-      barrierVertOffset = im.FloatPtr(0.0),
-
-      fenceLonOffset = im.FloatPtr(0.0),
-      fenceVertOffset = im.FloatPtr(0.0),
-
-      bollardLonSpacing = im.FloatPtr(10.0),
-      bollardJitter = im.FloatPtr(0.0),
-      bollardLonOffset = im.FloatPtr(0.0),
-      bollardVertOffset = im.FloatPtr(0.0)}
+    setDirty(roads[rIdx])
 
     -- Recompute the road map.
     recomputeMap()
-
-    -- Compute the render data and update the road mesh.
-    geom.computeRoadRenderData(roads[rIdx], roads, roadMap)
 
     updateCameraPose()
   end
@@ -1175,6 +1025,27 @@ local function manageTempRoadSection(pIdx)
   camRotAngle = camRotAngle + camRotInc
   if camRotAngle > twoPi then
     camRotAngle = camRotAngle - twoPi
+  end
+end
+
+-- Update the bridge parameters after a change (width and depth).
+local function updateBridgeParameters(road)
+  local nodes = road.nodes
+  if nodes[1] then
+    nodes[1].widths[-1] = im.FloatPtr(road.bridgeWidth)
+    nodes[1].widths[1] = im.FloatPtr(road.bridgeWidth)
+    nodes[1].heightsL[-1] = im.FloatPtr(road.bridgeDepth)
+    nodes[1].heightsR[-1] = im.FloatPtr(road.bridgeDepth)
+    nodes[1].heightsL[1] = im.FloatPtr(road.bridgeDepth)
+    nodes[1].heightsR[1] = im.FloatPtr(road.bridgeDepth)
+  end
+  if nodes[2] then
+    nodes[2].widths[-1] = im.FloatPtr(road.bridgeWidth)
+    nodes[2].widths[1] = im.FloatPtr(road.bridgeWidth)
+    nodes[2].heightsL[-1] = im.FloatPtr(road.bridgeDepth)
+    nodes[2].heightsR[-1] = im.FloatPtr(road.bridgeDepth)
+    nodes[2].heightsL[1] = im.FloatPtr(road.bridgeDepth)
+    nodes[2].heightsR[1] = im.FloatPtr(road.bridgeDepth)
   end
 end
 
@@ -1203,48 +1074,178 @@ local function createMultiSelect(gPolygon)
   end
 end
 
--- Re-computes the road render data, for all roads, from fresh.
--- [This is used upon loading/de-serialisation, since link roads require renderdata for their attachment roads].
-local function computeAllRoadRenderData()
-  local numRoads = #roads                                                                           -- First compute the render data for non-link roads.
-  for i = 1, numRoads do
-    local r = roads[i]
-    if not r.isLinkRoad and #r.nodes > 1 then
-      geom.computeRoadRenderData(r, roads, roadMap)
+-- Gets the centroid of the multi-selection.
+local function getMultiSelectionCentroid()
+  local xMin, xMax, yMin, yMax, zMin, zMax = 1e99, -1e99, 1e99, -1e99, 1e99, -1e99
+  for i = 1, #multi do
+    local mp = multi[i]
+    local rIdx, nIdx = mp.r, mp.n
+    if roads[rIdx] and roads[rIdx].nodes[nIdx] then
+      local p = roads[rIdx].nodes[nIdx].p
+      local x, y, z = p.x, p.y, p.z
+      xMin, xMax, yMin, yMax, zMin, zMax = min(xMin, x), max(xMax, x), min(yMin, y), max(yMax, y), min(zMin, z), max(zMax, z)
     end
   end
-  for i = 1, numRoads do                                                                            -- Then compute the render data for link roads.
+  return vec3((xMin + xMax) * 0.5, (yMin + yMax) * 0.5, (zMin + zMax) * 0.5)
+end
+
+-- Re-computes the road render data, for all roads, from fresh.
+local function computeAllRoadRenderData()
+  local numRoads = #roads
+  for i = 1, numRoads do
     local r = roads[i]
-    if r.isLinkRoad and #r.nodes > 1 then
-      geom.computeRoadRenderData(r, roads, roadMap)
+    if #r.nodes > 1 then
+      geom.computeRoadRenderData(r)
     end
   end
 end
 
--- Bulldozes (removes) all nodes/roads inside the given polygon.
--- [If only part of a road is inside polygon, road will be split appropriately].
-local function bulldoze(gPolygon)
+-- Computes the road render data for a single road.
+local function computeRoadRenderDataSingle(i) geom.computeRoadRenderData(roads[i]) end
 
-  -- Convert and copy the polygon to 2D.
-  local poly2D = {}
-  for i = 1, #gPolygon do
-    local p = gPolygon[i]
-    poly2D[i] = vec3(p.x, p.y, 0.0)
+-- Removes a group index from the given road.
+local function removeGroupFromRoad(r, groupIdx)
+  local gI = r.groupIdx
+  for i = #gI, 1, -1 do
+    if gI[i] == groupIdx then
+      table.remove(gI, i)
+    end
   end
+end
 
-  for k, v in pairs(roadMap) do
-    local r = roads[v]
-    if r then
-      local nodes = r.nodes
-      local numNodes, nodeCtr = #nodes, 0
+-- Fits nodes/widths (using C-R centripetal) to the given decal road (uses standard C-R).
+local function reparameteriseDecalRoad(nodes, widths)
+  local distSqTol = reparameteriseNodeDist * reparameteriseNodeDist
+  local isError = true
+  local iter = 0
+  local maxIter = 10
+  while isError or iter > maxIter do
+    local nOut, wOut, ctr = { nodes[1] }, { widths[1] }, 2
+    isError = false
+    for i = 2, #nodes do
+      local p1, p2 = nodes[i - 1], nodes[i]
+      local dSq = p1:squaredDistance(p2)
+      if dSq > distSqTol then
+        isError = true
+        local pp1, pp2, pp3, pp4 = nodes[max(1, i - 2)], p1, p2, nodes[min(#nodes, i + 1)]
+        local p = catmullRom(pp1, pp2, pp3, pp4, 0.5)
+        tmp0:set(pp1.x, pp1.y, widths[max(1, i - 2)])
+        tmp1:set(pp1.x, pp1.y, widths[i - 1])
+        tmp2:set(pp1.x, pp1.y, widths[i])
+        tmp3:set(pp1.x, pp1.y, widths[min(#nodes, i + 1)])
+        local w = catmullRom(tmp0, tmp1, tmp2, tmp3, 0.5).z
+        nOut[ctr], wOut[ctr] = p, w
+        ctr = ctr + 1
+      end
+      nOut[ctr], wOut[ctr] = p2, widths[i]
+      ctr = ctr + 1
+    end
+    nodes, widths = nOut, wOut
+    iter = iter + 1
+  end
+  return nodes, widths
+end
+
+-- Set the widths for each lane, at a node.
+local function setWidthsAtNode(hWidth, numLeftLanes, numRightLanes, leftKeys, rightKeys)
+  local leftLaneWidth = hWidth / numLeftLanes
+  local rightLaneWidth = hWidth / numRightLanes
+  local widths = {}
+  for i = 1, #leftKeys do
+    local lIdx = leftKeys[i]
+    widths[lIdx] = im.FloatPtr(leftLaneWidth)
+  end
+  for i = 1, #rightKeys do
+    local lIdx = rightKeys[i]
+    widths[lIdx] = im.FloatPtr(rightLaneWidth)
+  end
+  return widths
+end
+
+-- Decrease the group indices stored in the roads, after the removal of a group.
+local function updateRoadsAfterRemovingGroup(placedGroups)
+  for i = 1, #roads do
+    table.clear(roads[i].groupIdx)
+  end
+  for i = 1, #placedGroups do
+    local gList = placedGroups[i].list
+    for j = 1, #gList do
+      local r = roads[roadMap[gList[j].r]]
+      util.tryAddGroupIdxToRoad(r, i)
+    end
+  end
+end
+
+-- Updates the multi-selection container, after a road/group of roads was removed.
+local function updateMultiAfterRemove()
+  for i = #multi, 1, -1 do
+    local m = multi[i]
+    if not roads[m.r] or not roads[m.r].nodes[m.n] then
+      table.remove(multi, i)
+    end
+  end
+end
+
+-- Converts all decal roads (from scene tree) to Road Architect style roads.
+-- [Note: this removes the original decal roads from the scene tree.]
+local function convertDecalRoads2RoadArchitect()
+  for i = 1, tableSize(editor.selection.object) do                                                  -- Iterate over all the selected objects in the scenetree.
+    local selObj = editor.selection.object[i]
+		local sel = scenetree.findObjectById(selObj)
+		if sel and sel:getClassName() == "DecalRoad" then                                               -- Filter into decal roads only.
+
+      local nodes, widths, ctr = {}, {}, 1                                                          -- Grab all the nodes and widths of this decal road.
+			for _, node in ipairs(editor.getNodes(sel)) do
+        nodes[ctr], widths[ctr] = node.pos, node.width
+        ctr = ctr + 1
+      end
+
+      nodes, widths = reparameteriseDecalRoad(nodes, widths)                                        -- Fit the road architect nodes to the selected decal road.
+
+      local numLeftLanes = sel:getField('lanesLeft', 0) or 1
+      local numRightLanes = sel:getField('lanesRight', 0) or 1
+      local profile = profileMgr.createProfileFromDecalData(numLeftLanes, numRightLanes)            -- Create the road from a profile based on the decal road metadata.
+      local newRoad = createRoadFromProfile(profile)
+
+      local rIdx = #roads + 1                                                                       -- Add the newly-created road to the collections.
+      roads[rIdx] = newRoad
+      roadMap[newRoad.name] = rIdx
+
+      local _, leftKeys, rightKeys = profileMgr.computeLaneKeys(profile)
       for j = 1, #nodes do
-        if nodes[j].p:inPolygon(poly2D) then
-          nodeCtr = nodeCtr + 1
-        end
+        addNodeToRoad(rIdx, nodes[j])
       end
-      if nodeCtr == numNodes then                                                                   -- All nodes of this road are inside the polygon, so remove the road.
-        removeRoad(r.name)
+      for j = 1, #nodes do
+        roads[rIdx].nodes[j].widths = setWidthsAtNode(widths[j] * 0.5, numLeftLanes, numRightLanes, leftKeys, rightKeys)
       end
+      --sel:delete()                                                                                -- Remove the original decal road from the scene tree. THIS HAS BEEN SWITCHED OFF.
+		end
+	end
+end
+
+-- Imports a collection of roads from the L-System.
+local function importRoadsFromLSystem(lRoads)
+  for i = 1, #lRoads do
+    local lRoad = lRoads[i]
+    local nodesIn, roadType = lRoad.nodes, lRoad.road_type                                          -- TODO: road_type is not used currently.
+    local nodes, widths = {}, {}
+    for j = 1, #nodesIn do
+      local n = nodesIn[j]
+      local x, y = n.x, n.y
+      tmp0:set(x, y, 0)
+      nodes[j] = vec3(x, y, core_terrain.getTerrainHeight(tmp0))                                    -- Sample terrain to get the Z-value.
+      widths[j] = n.width
+    end
+    local profile = profileMgr.createProfileFromDecalData(1, 1)                                     -- TODO: Currently assumes two-way, one lane per side.
+    local newRoad = createRoadFromProfile(profile)
+    local rIdx = #roads + 1                                                                         -- Add the newly-created road to the collections.
+      roads[rIdx] = newRoad
+      roadMap[newRoad.name] = rIdx
+
+    for j = 1, #nodes do
+      addNodeToRoad(rIdx, nodes[j])
+      newRoad.nodes[#newRoad.nodes].widths[-1] = im.FloatPtr(widths[j])                             -- TODO: widths are assumed as half widths, roads symmetric around center.
+      newRoad.nodes[#newRoad.nodes].widths[1] = im.FloatPtr(widths[j])
     end
   end
 end
@@ -1269,150 +1270,52 @@ local function offsetByValue(offset)
   end
 end
 
--- Pierces (edits) the holemap with respect to the given tunnel.
--- [Any height plateau inside the tunnel will be converted to a hole].
-local function pierceHolemap(t, rData)
-
-  -- Determine the pipe center and lateral edge indices.
-  local rD1, cIdx1, cIdx2, lIdx, rIdx = rData[1], -1, 3, nil, nil
-  if not rD1[-1] then
-    cIdx1, cIdx2 = 1, 4
-  end
-  for i = -20, 20 do
-    if rD1[i] then
-      lIdx = i
-      break
-    end
-  end
-  for i = 20, -20, -1 do
-    if rD1[i] then
-      rIdx = i
-      break
-    end
-  end
-
-  -- Compute the ring at each longitudinal point in the given section.
-  local iStart, iEnd, radOffset, zOffsetFromRoad = t.s, t.e, t.radOffset, t.zOffsetFromRoad
-  local zVec, roadLen = up * zOffsetFromRoad, #rData
-  local numRings = iEnd - iStart + 1
-  local pipe = {}
-  for i = 1, numRings do
-    local idx = iStart - 1 + i
-    local rD = rData[idx]
-    local rTan = rData[min(roadLen, idx + 1)][cIdx1][cIdx2] - rData[max(1, idx - 1)][cIdx1][cIdx2]
-    rTan:normalize()                                                                                -- The road unit tangent vector.
-    local rDLeft = rD[lIdx]
-    local rLeft, rRight = rDLeft[4], rD[rIdx][3]                                                    -- The left-most and right-most lateral road points.
-    local rCen = (rLeft + rRight) * 0.5                                                             -- The road lateral center.
-    local rWidth = rLeft:distance(rRight)                                                           -- The (lateral) road width at this longitudinal point.
-    pipe[i] = {
-      r = rWidth + radOffset,                                                                       -- The radius of the pipe at this longitudinal point.
-      cen = rCen + zVec,                                                                            -- The pipe center.
-      tan = rTan }                                                                                  -- The pipe unit tangent vector.
-  end
-
-  -- Iterate across each section of the pipe, and determine if the heightmap intersects it.
-  local tb = extensions.editor_terrainEditor.getTerrainBlock()
-  local granFac = 2
-  local holes, hCtr = {}, 1
-  local xMinG, xMaxG, yMinG, yMaxG = 1e99, -1e99, 1e99, -1e99
-  local cenS, cenE, tanS, tanE = pipe[1].cen, pipe[numRings].cen, pipe[1].tan, pipe[numRings].tan
-  for i = 2, numRings do
-    local pipe1, pipe2 = pipe[i - 1], pipe[i]
-    local r1, c1, r2, c2 = pipe1.r, pipe1.cen, pipe2.r, pipe2.cen
-    local xMin, xMax = floor(min(c1.x - r1, c2.x - r2)), ceil(max(c1.x + r1, c2.x + r2))            -- The 2D AABB of this section, with a radial margin included.
-    local yMin, yMax = floor(min(c1.y - r1, c2.y - r2)), ceil(max(c1.y + r1, c2.y + r2))
-    xMinG, xMaxG, yMinG, yMaxG = min(xMinG, xMin), max(xMaxG, xMax), min(yMinG, yMin), max(yMaxG, yMax)
-    local rAvg = (r1 + r2) * 0.5
-    local rAvgSq = rAvg * rAvg
-    local dx, dy = xMax - xMin, yMax - yMin
-    local xGran, yGran = dx * granFac, dy * granFac
-    local xFac, yFac = dx / xGran, dy / yGran
-    for xxx = 0, xGran do                                                                           -- Iterate over the 2D AABB, and find any intersections.
-      local xx = xMin + xxx * xFac
-      local sx1, sx2 = floor(xx), ceil(xx)
-      for yyy = 0, yGran do
-        local yy = yMin + yyy * yFac
-        local sy1, sy2 = floor(yy), ceil(yy)
-        tmp0:set(sx1, sy1, 0)
-        tmp1:set(sx1, sy1, core_terrain.getTerrainHeight(tmp0))
-        local dSq = tmp1:squaredDistanceToLineSegment(c1, c2)
-        if (i < 5 and (tmp1 - cenS):dot(tanS) > 0.0) or (i > numRings - 5 and (tmp1 - cenE):dot(tanE) < 0.0) or (i > 4 and i < numRings - 4) then   -- At ends, use plane clipping.
-          if dSq < rAvgSq then
-            holes[hCtr] = { p = vec3(tmp1.x, tmp1.y, 0), i = tb:getMaterialIdxWs(tmp1) }
-            hCtr = hCtr + 1
-            tb:setMaterialIdxWs(tmp1, 255)
-          end
-        end
-
-        tmp0:set(sx1, sy2, 0)
-        tmp1:set(sx1, sy2, core_terrain.getTerrainHeight(tmp0))
-        local dSq = tmp1:squaredDistanceToLineSegment(c1, c2)
-        if (i < 5 and (tmp1 - cenS):dot(tanS) > 0.0) or (i > numRings - 5 and (tmp1 - cenE):dot(tanE) < 0.0) or (i > 4 and i < numRings - 4) then   -- At ends, use plane clipping.
-          if dSq < rAvgSq then
-            holes[hCtr] = { p = vec3(tmp1.x, tmp1.y, 0), i = tb:getMaterialIdxWs(tmp1) }
-            hCtr = hCtr + 1
-            tb:setMaterialIdxWs(tmp1, 255)
-          end
-        end
-
-        tmp0:set(sx2, sy1, 0)
-        tmp1:set(sx2, sy1, core_terrain.getTerrainHeight(tmp0))
-        local dSq = tmp1:squaredDistanceToLineSegment(c1, c2)
-        if (i < 5 and (tmp1 - cenS):dot(tanS) > 0.0) or (i > numRings - 5 and (tmp1 - cenE):dot(tanE) < 0.0) or (i > 4 and i < numRings - 4) then   -- At ends, use plane clipping.
-          if dSq < rAvgSq then
-            holes[hCtr] = { p = vec3(tmp1.x, tmp1.y, 0), i = tb:getMaterialIdxWs(tmp1) }
-            hCtr = hCtr + 1
-            tb:setMaterialIdxWs(tmp1, 255)
-          end
-        end
-
-        tmp0:set(sx2, sy2, 0)
-        tmp1:set(sx2, sy2, core_terrain.getTerrainHeight(tmp0))
-        local dSq = tmp1:squaredDistanceToLineSegment(c1, c2)
-        if (i < 5 and (tmp1 - cenS):dot(tanS) > 0.0) or (i > numRings - 5 and (tmp1 - cenE):dot(tanE) < 0.0) or (i > 4 and i < numRings - 4) then   -- At ends, use plane clipping.
-          if dSq < rAvgSq then
-            holes[hCtr] = { p = vec3(tmp1.x, tmp1.y, 0), i = tb:getMaterialIdxWs(tmp1) }
-            hCtr = hCtr + 1
-            tb:setMaterialIdxWs(tmp1, 255)
-          end
-        end
-      end
-    end
-  end
-
-  -- Update the terrain block.
-  local gMin, gMax = Point2I(0, 0), Point2I(0, 0)
-  local te = extensions.editor_terrainEditor.getTerrainEditor()
-  te:worldToGridByPoint2I(vec3(xMinG, yMinG), gMin, tb)
-  te:worldToGridByPoint2I(vec3(xMaxG, yMaxG), gMax, tb)
-  local w2gMin, w2gMax = vec3(gMin.x, gMin.y), vec3(gMax.x, gMax.y)
-  tb:updateGridMaterials(w2gMin, w2gMax)
-  tb:updateGrid(w2gMin, w2gMax)
-
-  return holes
-end
-
 -- Switches to the 'finalised' state.
 -- [All requested procedural meshes are created, the collision mesh is re-computed, then all requested decals are laid].
 local function finalise()
 
   computeAllRoadRenderData()
 
-  -- First, create all the requested procedural road and tunnel meshes.
-  local numRoads = #roads
-  for i = 1, numRoads do
+  -- Create a group (folder) in the scenetree to store every asset related to this road.
+  local rGroups = {}
+  for i = 1, #roads do
+    if not roads[i].isBridge then
+      rGroups[i] = createObject("SimGroup")
+      rGroups[i]:registerObject("Road Architect - Road " .. tostring(i))
+      scenetree.MissionGroup:addObject(rGroups[i])
+    end
+  end
+
+  -- Do the bridges first.
+  for i = 1, #roads do
     local r = roads[i]
-    if #r.nodes > 1 then
-      roadMeshMgr.createRoad(r, i)
-      staticMeshMgr.createStaticMeshes(r, i)
-      if #r.tunnels > 0 then
-        for j = 1, #r.tunnels do
-          local t = r.tunnels[j]
-          t.name = worldEditorCppApi.generateUUID()
-          tMesh.createTunnel(t.name, r.renderData, t)                                               -- Create the procedural mesh for this tunnel.
-          t.holes = pierceHolemap(t, r.renderData)                                                  -- Edit the holemap with respect to this tunnel.
+    if r.isBridge then
+      local nodes = r.nodes
+      if #nodes > 1 then
+        roadMeshMgr.createRoad(r, i, rGroups[i])
+      end
+    end
+  end
+
+  -- Now do the roads.
+  for i = 1, #roads do
+    local r = roads[i]
+    if not r.isOverlay and not r.isBridge then
+
+      -- Create any procedural/static meshes.
+      local nodes = r.nodes
+      if #nodes > 1 then
+        roadMeshMgr.createRoad(r, i, rGroups[i])
+        staticMeshMgr.createStaticMeshes(r, i, rGroups[i])
+
+        -- Create the procedural meshes for any auto tunnels.
+        if #r.tunnels > 0 then
+          for j = 1, #r.tunnels do
+            local t = r.tunnels[j]
+            tMesh.createTunnel(i, t.name, r.renderData, t, rGroups[i])
+          end
         end
+
       end
     end
   end
@@ -1421,10 +1324,10 @@ local function finalise()
   be:reloadCollision()
 
   -- Lastly, now that the collision meshes has been updated, lay down all the requested decals.
-  for i = 1, numRoads do
+  for i = 1, #roads do
     local r = roads[i]
-    if #r.nodes > 1 then
-      decMgr.createDecal(r, i, numRoads)
+    if #r.nodes > 1 and not r.isBridge then
+      decMgr.createDecal(r, rGroups[i])
     end
   end
 
@@ -1434,23 +1337,38 @@ end
 
 -- Leaves the 'finalised' state and returns to the 'edit' state.
 local function unfinalise()
-  local numRoads = #roads
-  for i = 1, numRoads do
+  for i = 1, #roads do
     local road = roads[i]
-    local roadName = road.name
-    decMgr.tryRemove(roadName)                                                                      -- If any decal was created for this road on finalise, remove it now.
-    roadMeshMgr.tryRemove(roadName)                                                                 -- If any mesh was created for this road on finalise, remove it now.
-    staticMeshMgr.tryRemove(roadName)                                                               -- If any static mesh was created for this road on finalise, remove them now.
-    local tunnels = road.tunnels
-    local numTunnels = #tunnels
-    for j = 1, numTunnels do                                                                        -- If any tunnel meshes were created, remove them now.
-      local t = tunnels[j]
-      tMesh.tryRemove(t.name)
-      recoverHolemap(t.holes)
-      table.clear(t.holes)
+    if not road.isBridge then
+      local roadName = road.name
+      decMgr.tryRemove(roadName)                                                                    -- If any decal was created for this road on finalise, remove it now.
+
+      roadMeshMgr.tryRemove(roadName)                                                               -- If any mesh was created for this road on finalise, remove it now.
+      staticMeshMgr.tryRemove(roadName)                                                             -- If any static mesh was created for this road on finalise, remove them now.
+
+      -- If any auto tunnel meshes were created, remove them now.
+      local tunnels = road.tunnels
+      for j = 1, #tunnels do
+        local t = tunnels[j]
+        tMesh.tryRemove(i, t.name)
+      end
+
+      setDirty(road)
     end
-    setDirty(road)
   end
+
+  decMgr.removeTemplates()
+
+  -- Remove any folders.
+  for i = 1, #roads do
+    if not roads[i].isBridge then
+      local folder = scenetree.findObject("Road Architect - Road " .. tostring(i))
+      if folder then
+        folder:delete()
+      end
+    end
+  end
+
   be:reloadCollision()                                                                              -- Re-load the collision mesh now that the meshes have been removed.
   map.reset({})                                                                                     -- Clear the navgraph.
 end
@@ -1462,7 +1380,8 @@ local function serialiseNode(n)
   for i = -20, 20 do
     local w = widths[i]
     if w then
-      serWidths[i], serHeightsL[i], serHeightsR[i] = w[0], heightsL[i][0], heightsR[i][0]
+      local iS = tostring(i)
+      serWidths[iS], serHeightsL[iS], serHeightsR[iS] = w[0], heightsL[i][0], heightsR[i][0]
     end
   end
   local p = n.p
@@ -1472,6 +1391,7 @@ local function serialiseNode(n)
     rot = n.rot[0],
     widths = serWidths, heightsL = serHeightsL, heightsR = serHeightsR,
     incircleRad = n.incircleRad[0],
+    isAutoBanked = n.isAutoBanked,
     offset = n.offset }
 end
 
@@ -1480,10 +1400,11 @@ local function deserialiseNode(nSer)
   local serWidths, serHeightsL, serHeightsR = nSer.widths, nSer.heightsL, nSer.heightsR             -- De-serialise the widths/heights structures first.
   local widths, heightsL, heightsR = {}, {}, {}
   for i = -20, 20 do
-    local w = serWidths[i]
+    local iS = tostring(i)
+    local w = serWidths[iS]
     if w then
       widths[i] = im.FloatPtr(w)
-      heightsL[i], heightsR[i] = im.FloatPtr(serHeightsL[i]), im.FloatPtr(serHeightsR[i])
+      heightsL[i], heightsR[i] = im.FloatPtr(serHeightsL[iS]), im.FloatPtr(serHeightsR[iS])
     end
   end
   return {                                                                                          -- Now de-serialise the node container.
@@ -1492,7 +1413,38 @@ local function deserialiseNode(nSer)
     rot = im.FloatPtr(nSer.rot),
     widths = widths, heightsL = heightsL, heightsR = heightsR,
     incircleRad = im.FloatPtr(nSer.incircleRad or 0.0),
+    isAutoBanked = nSer.isAutoBanked or false,
     offset = nSer.offset or 0.0 }
+end
+
+-- Sets the visibility of all roads (master switch).
+local function setRoadsVisibilityMaster(isShow)
+  for i = 1, #roads do
+    local r = roads[i]
+    if not r.isBridge and not r.isOverlay then
+      r.isVis = im.BoolPtr(isShow)
+    end
+  end
+end
+
+-- Sets the visibility of all bridges (master switch).
+local function setBridgesVisibilityMaster(isShow)
+  for i = 1, #roads do
+    local r = roads[i]
+    if r.isBridge then
+      r.isVis = im.BoolPtr(isShow)
+    end
+  end
+end
+
+-- Sets the visibility of all overlays (master switch).
+local function setOverlaysVisibilityMaster(isShow)
+  for i = 1, #roads do
+    local r = roads[i]
+    if r.isOverlay then
+      r.isVis = im.BoolPtr(isShow)
+    end
+  end
 end
 
 -- Serializes a road.
@@ -1502,60 +1454,44 @@ local function serialiseRoad(r)
   for i = 1, numNodes do
     serNodes[i] = serialiseNode(nodes[i])
   end
-  local w1, w2, hL1, hL2, hR1, hR2 = {}, {}, {}, {}, {}, {}
-  for i = -20, 20 do
-    if r.w1 and r.w1[i] then
-      w1[i], hL1[i], hR1[i] = r.w1[i][0], r.hL1[i][0], r.hR1[i][0]
-    end
-    if r.w2 and r.w2[i] then
-      w2[i], hL2[i], hR2[i] = r.w2[i][0], r.hL2[i][0], r.hR2[i][0]
-    end
-  end
   return {
+    displayName = ffi.string(r.displayName),
+    isVis = r.isVis[0],
     isHidden = r.isHidden,
-    isMesh = r.isMesh,
-    isLinkRoad = r.isLinkRoad,
-    isDowelS = r.isDowelS or false, isDowelE = r.isDowelE or false,
-    isArc = r.isArc or false,
-    startR = r.startR, startLie = r.startLie, endR = r.endR, endLie = r.endLie,
-    l1 = r.l1, l2 = r.l2,
-    idxL0a_1 = r.idxL0a_1, idxL0a_2 = r.idxL0a_2, idxL0a_l2 = r.idxL0a_l2, idxL0a_l = r.idxL0a_l,
-    idxL0b_1 = r.idxL0b_1, idxL0b_2 = r.idxL0b_2, idxL0b_l2 = r.idxL0b_l2, idxL0b_l = r.idxL0b_l,
-    idxR0a_1 = r.idxR0a_1, idxR0a_2 = r.idxR0a_2, idxR0a_l2 = r.idxR0a_l2, idxR0a_l = r.idxR0a_l,
-    idxR0b_1 = r.idxR0b_1, idxR0b_2 = r.idxR0b_2, idxR0b_l2 = r.idxR0b_l2, idxR0b_l = r.idxR0b_l,
-    idxL1 = r.idxL1, idxL2 = r.idxL2, idxR1 = r.idxR1, idxR2 = r.idxR2,
-    w1 = w1, w2 = w2,
-    hL1 = hL1, hL2 = hL2, hR1 = hR1, hR2 = hR2,
-    rot1 = r.rot1, rot2 = r.rot2,
-    isLinkedToS = r.isLinkedToS, isLinkedToE = r.isLinkedToE,
+    isJctRoad = r.isJctRoad,
+    treatAsInvisibleInEdit = r.treatAsInvisibleInEdit,
+    groupIdx = copyGroupIdx(r.groupIdx),
+    granFactor = r.granFactor[0],
+
+    isDrivable = r.isDrivable,
+    isOverlay = r.isOverlay,
+    isArc = r.isArc,
+    isBridge = r.isBridge,
+
     name = r.name,
     nodes = serNodes,
     profile = profileMgr.serialiseProfile(r.profile),
-    targetLonRes = r.targetLonRes[0],
-    targetArcRes = r.targetArcRes[0],
-    isConformRoadToTerrain = r.isConformRoadToTerrain[0] or false,
+
+    overlayMat = r.overlayMat,
+
+    isConformRoadToTerrain = r.isConformRoadToTerrain[0],
+
     isDisplayRoadSurface = r.isDisplayRoadSurface[0],
     isDisplayRoadOutline = r.isDisplayRoadOutline[0],
     isDisplayNodeSpheres = r.isDisplayNodeSpheres[0],
     isDisplayNodeNumbers = r.isDisplayNodeNumbers[0],
     isDisplayRefLine = r.isDisplayRefLine[0],
-    isAllowTunnels = r.isAllowTunnels[0],
-    isRefLineDecal = r.isRefLineDecal[0],
-    isEdgeLineDecal = r.isEdgeLineDecal[0],
-    isLaneDivsDecal = r.isLaneDivsDecal[0],
-    isStartLineDecal = r.isStartLineDecal[0],
-    isEndLineDecal = r.isEndLineDecal[0],
-    edgeDecalDist = r.edgeDecalDist[0],
-    edgeDecalWidth = r.edgeDecalWidth[0],
-    centerlineWidth = r.centerlineWidth[0],
-    laneMarkingWidth = r.laneMarkingWidth[0],
-    jctLineWidth = r.jctLineWidth[0],
-    jctLineOffset = r.jctLineOffset[0],
+
     isDisplayLaneInfo = r.isDisplayLaneInfo[0],
     isRigidTranslation = r.isRigidTranslation[0],
     forceField = r.forceField[0],
     isCivilEngRoads = r.isCivilEngRoads[0],
 
+    bridgeWidth = r.bridgeWidth[0],
+    bridgeDepth = r.bridgeDepth[0],
+    bridgeArch = r.bridgeArch[0],
+
+    isAllowTunnels = r.isAllowTunnels[0],
     radGran = r.radGran[0],
     radOffset = r.radOffset[0],
     thickness = r.thickness[0],
@@ -1563,27 +1499,8 @@ local function serialiseRoad(r)
     protrudeS = r.protrudeS[0],
     protrudeE = r.protrudeE[0],
     extraS = r.extraS[0],
-    extraE = r.extraE[0],
-
-    lampPostLonSpacing = r.lampPostLonSpacing[0],
-    lampJitter = r.lampJitter[0],
-    lampPostLonOffset = r.lampPostLonOffset[0],
-    lampPostVertOffset = r.lampPostVertOffset[0],
-
-    crashPostLonOffset = r.crashPostLonOffset[0],
-    crashVertOffset = r.crashVertOffset[0],
-    useDoublePlate = r.useDoublePlate[0],
-
-    barrierLonOffset = r.barrierLonOffset[0],
-    barrierVertOffset = r.barrierVertOffset[0],
-
-    fenceLonOffset = r.fenceLonOffset[0],
-    fenceVertOffset = r.fenceVertOffset[0],
-
-    bollardLonSpacing= r.bollardLonSpacing[0],
-    bollardJitter = r.bollardJitter[0],
-    bollardLonOffset = r.bollardLonOffset[0],
-    bollardVertOffset = r.bollardVertOffset[0] }
+    extraE = r.extraE[0]
+  }
 end
 
 -- Deserializes a road.
@@ -1593,65 +1510,55 @@ local function deserialiseRoad(rSer)
   for i = 1, numNodes do
     nodes[i] = deserialiseNode(serNodes[i])
   end
-  local w1, w2, hL1, hL2, hR1, hR2 = {}, {}, {}, {}, {}, {}
-  for i = -20, 20 do
-    if rSer.w1 and rSer.w1[i] then
-      w1[i], hL1[i], hR1[i] = im.FloatPtr(rSer.w1[i]), im.FloatPtr(rSer.hL1[i]), im.FloatPtr(rSer.hR1[i])
-    end
-    if rSer.w2 and rSer.w2[i] then
-      w2[i], hL2[i], hR2[i] = im.FloatPtr(rSer.w2[i]), im.FloatPtr(rSer.hL2[i]), im.FloatPtr(rSer.hR2[i])
-    end
-  end
   local profile = profileMgr.deserialiseProfile(rSer.profile)
   local laneKeys, leftKeys, rightKeys = profileMgr.computeLaneKeys(profile)
+  if not rSer.isVis then
+    rSer.isVis = true
+  end
   return {
+    displayName = im.ArrayChar(32, rSer.displayName or 'New Road'),
     isDirty = true,
+    isVis = im.BoolPtr(rSer.isVis),
     isHidden = rSer.isHidden,
-    isMesh = rSer.isMesh,
-    isLinkRoad = rSer.isLinkRoad,
-    isDowelS = rSer.isDowelS or false, isDowelE = rSer.isDowelE or false,
+    isJctRoad = rSer.isJctRoad,
+    treatAsInvisibleInEdit = rSer.treatAsInvisibleInEdit,
+    groupIdx = rSer.groupIdx,
+    granFactor = im.IntPtr(rSer.granFactor or 1),
+
+    isDrivable = rSer.isDrivable,
+    isOverlay = rSer.isOverlay,
     isArc = rSer.isArc or false,
+    isBridge = rSer.isBridge or false,
+
     renderData = nil,
     laneKeys = laneKeys, leftKeys = leftKeys, rightKeys = rightKeys,
-    startR = rSer.startR, startLie = rSer.startLie, endR = rSer.endR, endLie = rSer.endLie,
-    l1 = rSer.l1, l2 = rSer.l2,
-    idxL0a_1 = rSer.idxL0a_1, idxL0a_2 = rSer.idxL0a_2, idxL0a_l2 = rSer.idxL0a_l2, idxL0a_l = rSer.idxL0a_l,
-    idxL0b_1 = rSer.idxL0b_1, idxL0b_2 = rSer.idxL0b_2, idxL0b_l2 = rSer.idxL0b_l2, idxL0b_l = rSer.idxL0b_l,
-    idxR0a_1 = rSer.idxR0a_1, idxR0a_2 = rSer.idxR0a_2, idxR0a_l2 = rSer.idxR0a_l2, idxR0a_l = rSer.idxR0a_l,
-    idxR0b_1 = rSer.idxR0b_1, idxR0b_2 = rSer.idxR0b_2, idxR0b_l2 = rSer.idxR0b_l2, idxR0b_l = rSer.idxR0b_l,
-    idxL1 = rSer.idxL1, idxL2 = rSer.idxL2, idxR1 = rSer.idxR1, idxR2 = rSer.idxR2,
-    w1 = w1, w2 = w2,
-    hL1 = hL1, hL2 = hL2, hR1 = hR1, hR2 = hR2,
-    rot1 = rSer.rot1, rot2 = rSer.rot2,
-    isLinkedToS = rSer.isLinkedToS, isLinkedToE = rSer.isLinkedToE,
+
     name = rSer.name,
     nodes = nodes,
-    tunnels = {},
+
     profile = profile,
-    targetLonRes = im.FloatPtr(rSer.targetLonRes or 5),
-    targetArcRes = im.FloatPtr(rSer.targetArcRes or 5),
+
+    overlayMat = rSer.overlayMat or defaultOverlayMaterial,
+
     isConformRoadToTerrain = im.BoolPtr(rSer.isConformRoadToTerrain),
+
     isDisplayRoadSurface = im.BoolPtr(rSer.isDisplayRoadSurface),
     isDisplayRoadOutline = im.BoolPtr(rSer.isDisplayRoadOutline),
     isDisplayNodeSpheres = im.BoolPtr(rSer.isDisplayNodeSpheres),
     isDisplayNodeNumbers = im.BoolPtr(rSer.isDisplayNodeNumbers),
     isDisplayRefLine = im.BoolPtr(rSer.isDisplayRefLine),
-    isAllowTunnels = im.BoolPtr(rSer.isAllowTunnels),
-    isRefLineDecal = im.BoolPtr(rSer.isRefLineDecal),
-    isEdgeLineDecal = im.BoolPtr(rSer.isEdgeLineDecal),
-    isLaneDivsDecal = im.BoolPtr(rSer.isLaneDivsDecal),
-    isStartLineDecal = im.BoolPtr(rSer.isStartLineDecal),
-    isEndLineDecal = im.BoolPtr(rSer.isEndLineDecal),
-    edgeDecalDist = im.FloatPtr(rSer.edgeDecalDist or 0.11),
-    edgeDecalWidth = im.FloatPtr(rSer.edgeDecalWidth or 0.1),
-    centerlineWidth = im.FloatPtr(rSer.centerlineWidth or 0.1),
-    laneMarkingWidth = im.FloatPtr(rSer.laneMarkingWidth or 0.1),
-    jctLineWidth = im.FloatPtr(rSer.jctLineWidth or 0.1),
-    jctLineOffset = im.FloatPtr(rSer.jctLineOffset or 0.0),
-    isDisplayLaneInfo = im.BoolPtr(rSer.isDisplayLaneInfo),
-    isRigidTranslation = im.BoolPtr(rSer.isRigidTranslation),
+
+    isDisplayLaneInfo = im.BoolPtr(rSer.isDisplayLaneInfo or false),
+    isRigidTranslation = im.BoolPtr(rSer.isRigidTranslation or false),
     forceField = im.FloatPtr(rSer.forceField or 0.1),
-    isCivilEngRoads = im.BoolPtr(rSer.isCivilEngRoads),
+    isCivilEngRoads = im.BoolPtr(rSer.isCivilEngRoads or false),
+
+    bridgeWidth = im.FloatPtr(rSer.bridgeWidth or 5.0),
+    bridgeDepth = im.FloatPtr(rSer.bridgeDepth or 0.5),
+    bridgeArch = im.FloatPtr(rSer.bridgeArch or 1.0),
+
+    isAllowTunnels = im.BoolPtr(rSer.isAllowTunnels or false),
+    tunnels = {},
     radGran = im.IntPtr(rSer.radGran or 15),
     radOffset = im.FloatPtr(rSer.radOffset or 0.0),
     thickness = im.FloatPtr(rSer.thickness or 1.0),
@@ -1660,26 +1567,8 @@ local function deserialiseRoad(rSer)
     protrudeE = im.FloatPtr(rSer.protrudeE or 0.0),
     extraS = im.IntPtr(rSer.extraS or 2),
     extraE = im.IntPtr(rSer.extraE or 2),
-
-    lampPostLonSpacing = im.FloatPtr(rSer.lampPostLonSpacing or 10.0),
-    lampJitter = im.FloatPtr(rSer.lampJitter or 0.0),
-    lampPostLonOffset = im.FloatPtr(rSer.lampPostLonOffset or 0.0),
-    lampPostVertOffset = im.FloatPtr(rSer.lampPostVertOffset or 1.0),
-
-    crashPostLonOffset = im.FloatPtr(rSer.crashPostLonOffset or 0.0),
-    crashVertOffset = im.FloatPtr(rSer.crashVertOffset or 0.0),
-    useDoublePlate = im.BoolPtr(rSer.useDoublePlate),
-
-    barrierLonOffset = im.FloatPtr(rSer.barrierLonOffset or 0.0),
-    barrierVertOffset = im.FloatPtr(rSer.barrierVertOffset or 0.0),
-
-    fenceLonOffset = im.FloatPtr(rSer.fenceLonOffset or 0.0),
-    fenceVertOffset = im.FloatPtr(rSer.fenceVertOffset or 0.1),
-
-    bollardLonSpacing = im.FloatPtr(rSer.bollardLonSpacing or 10.0),
-    bollardJitter = im.FloatPtr(rSer.bollardJitter or 0.0),
-    bollardLonOffset = im.FloatPtr(rSer.bollardLonOffset or 0.0),
-    bollardVertOffset = im.FloatPtr(rSer.bollardVertOffset or 0.0) }
+    tOffset = im.FloatPtr(rSer.lampPostVertOffset or 1.0)
+  }
 end
 
 
@@ -1688,18 +1577,30 @@ M.roads =                                                 roads
 M.map =                                                   roadMap
 M.multi =                                                 multi
 
+M.getCurrentMap =                                         getCurrentMap
+M.setCurrentMap =                                         setCurrentMap
+
 M.isAuditionProfileDirty =                                isAuditionProfileDirty
-M.isPOline =                                              isPOline
-M.isPLane =                                               isPLane
+
+M.getTree =                                               getTree
+M.removeTree =                                            removeTree
+
 M.createRoadFromProfile =                                 createRoadFromProfile
 M.createRoadFromTemplate =                                createRoadFromTemplate
 M.setDirty =                                              setDirty
+M.setAllDirty =                                           setAllDirty
 M.setAuditionProfileDirty =                               setAuditionProfileDirty
 M.addNodeToRoad =                                         addNodeToRoad
+M.addNodeToRoadAtIdx =                                    addNodeToRoadAtIdx
+M.isMouseAtIntermediatePos =                              isMouseAtIntermediatePos
+M.setLocalWidth =                                         setLocalWidth
 M.copyNode =                                              copyNode
 M.updateWAndHToNewProfile =                               updateWAndHToNewProfile
+
+M.computeRoadAABB_2D =                                    computeRoadAABB_2D
 M.computeAABB2D =                                         computeAABB2D
-M.computeAABB2DAllRoads =                                 computeAABB2DAllRoads
+M.getRoadsFromGroup =                                     getRoadsFromGroup
+
 M.offsetRoads2Terrain =                                   offsetRoads2Terrain
 M.offsetByValue =                                         offsetByValue
 M.recomputeMap =                                          recomputeMap
@@ -1707,26 +1608,38 @@ M.removeRoad =                                            removeRoad
 M.removeNode =                                            removeNode
 M.addIntermediateNode =                                   addIntermediateNode
 M.clearAllRoads =                                         clearAllRoads
-M.setAllMesh =                                            setAllMesh
-M.setAllDecals =                                          setAllDecals
 M.removeHiddenRoads =                                     removeHiddenRoads
 M.goToRoad =                                              goToRoad
 M.moveRoad =                                              moveRoad
 M.adjustHeight =                                          adjustHeight
 M.adjustLateralRotation =                                 adjustLateralRotation
-M.unlinkStart =                                           unlinkStart
-M.unlinkEnd =                                             unlinkEnd
 M.copyRoad =                                              copyRoad
 M.splitRoad =                                             splitRoad
 M.flipRoad =                                              flipRoad
 M.updateRoads =                                           updateRoads
+M.clearBridges =                                          clearBridges
 M.removeAll =                                             removeAll
 M.manageTempRoadSection =                                 manageTempRoadSection
+M.updateBridgeParameters =                                updateBridgeParameters
 M.createMultiSelect =                                     createMultiSelect
-M.bulldoze =                                              bulldoze
+M.getMultiSelectionCentroid =                             getMultiSelectionCentroid
+M.removeGroupFromRoad =                                   removeGroupFromRoad
+M.updateRoadsAfterRemovingGroup =                         updateRoadsAfterRemovingGroup
+M.updateMultiAfterRemove =                                updateMultiAfterRemove
+
+M.convertDecalRoads2RoadArchitect =                       convertDecalRoads2RoadArchitect
+M.importRoadsFromLSystem =                                importRoadsFromLSystem
+
 M.finalise =                                              finalise
 M.unfinalise =                                            unfinalise
+
 M.computeAllRoadRenderData =                              computeAllRoadRenderData
+M.computeRoadRenderDataSingle =                           computeRoadRenderDataSingle
+
+M.setRoadsVisibilityMaster =                              setRoadsVisibilityMaster
+M.setBridgesVisibilityMaster =                            setBridgesVisibilityMaster
+M.setOverlaysVisibilityMaster =                           setOverlaysVisibilityMaster
+
 M.serialiseRoad =                                         serialiseRoad
 M.deserialiseRoad =                                       deserialiseRoad
 

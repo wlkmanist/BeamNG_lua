@@ -79,6 +79,7 @@ local function getAllVehicles()
 end
 
 function benchPhysics(vehicles, vehicleMin, vehicleMax)
+  setPowerPlanMaxPerformance()
   if BeamEngine == nil then
     log('E', "bananabench", 'error loading libbeamng')
     return
@@ -205,6 +206,8 @@ function benchPhysics(vehicles, vehicleMin, vehicleMax)
   print(" .______,# ")
   print(" \\ -----'/ ")
   print("  `-----' ")
+
+  restorePowerPlan()
   return res
 end
 

@@ -68,6 +68,12 @@ local function getRawPoiListByLevel(levelIdentifier)
     extensions.hook("onGetRawPoiListForLevel",levelIdentifier, elementsUnchecked)
     for _, e in ipairs(elementsUnchecked) do
       -- sanity check
+
+      -- make clustering true by default
+      if e.markerInfo.bigmapMarker and e.markerInfo.bigmapMarker.cluster == nil then
+        e.markerInfo.bigmapMarker.cluster = true
+      end
+
       if (not career_modules_testDrive or not career_modules_testDrive.isActive() or e.data.type == "testDriveEnd") then
         table.insert(elements, e)
       end

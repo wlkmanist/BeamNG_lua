@@ -15,12 +15,10 @@ C.pinSchema = {
   { dir = 'out', type = 'string', name = 'value', description = 'Result string of transformed value.' },
 }
 
-C.tags = {'string'}
+C.tags = {'string', 'tostring'}
 
 function C:work()
   self.pinOut.value.value = tostring(self.pinIn.value.value)
 end
-function C:drawMiddle(builder, style)
-  builder:Middle()
-end
+
 return _flowgraph_createNode(C)

@@ -70,6 +70,7 @@ end
 
 
 function benchPhysics(vehicles, vehicleMin, vehicleMax)
+    setPowerPlanMaxPerformance()
     vehicles = vehicles or {'pickup'}
     vehicleMin = vehicleMin or 1
     vehicleMax = vehicleMax or 12
@@ -200,6 +201,8 @@ function benchPhysics(vehicles, vehicleMin, vehicleMax)
     print(" \\ -----'/ ")
     print("  `-----' ")
     --dump(res)
+
+    restorePowerPlan()
     return res
 end
 

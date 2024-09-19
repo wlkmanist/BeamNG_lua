@@ -14,7 +14,7 @@ local lastHeartbeat = 0
 local pcFileToTest = {}
 local vehicleToTest = nil
 
-local testLevel = "/levels/autotest/main.level.json"
+local testLevel = path.getPathLevelMain("autotest")
 
 local testJob = nil
 local watchdogTimer = nil

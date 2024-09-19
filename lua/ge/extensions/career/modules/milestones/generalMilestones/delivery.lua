@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
-M.dependencies = {"career_modules_milestones_milestones", "career_modules_delivery_progress"}
+M.dependencies = {"career_modules_milestones_milestones", "career_modules_delivery_progress", "career_modules_delivery_parcelMods"}
 
 local deliveryCounterConfigs = {
   {
@@ -29,12 +29,57 @@ local deliveryCounterConfigs = {
     progressLabel = "%d / %d",
     targets = {1,4,9,25,35,50},
   },
+  {
+    progressKey = "fluid",
+    icon = "droplet",
+    label = "Go with the Flow",
+    description = "Deliver %dL of fluids.",
+    progressLabel = "%d / %d",
+    targets = {100,1000,10000,100000}
+  },
+  {
+    progressKey = "dryBulk",
+    icon = "rocks",
+    label = "Gravel Travel",
+    description = "Deliver %dL of dry bulk.",
+    progressLabel = "%d / %d",
+    targets = {100,1000,10000,100000}
+  },
 }
 
-local milestones, dProgress
+local parcelModConfigs = {
+  {
+    modKey = "timed",
+    progressKey = "onTimeDeliveries",
+    icon = "stopwatchSectionSolidStart",
+    label = "Ahead of the Curve",
+    description = "Deliver %d timed parcels on time.",
+    progressLabel = "%d / %d",
+    targets = {1,8,20,50}
+  }, {
+    modKey = "timed",
+    progressKey = "delayedDeliveries",
+    icon = "stopwatchSectionSolidStart",
+    label = "Detour Dilemma",
+    description = "Deliver %d timed parcels delayed.",
+    progressLabel = "%d / %d",
+    targets = {1,8,20,50}
+  }, {
+    modKey = "timed",
+    progressKey = "lateDeliveries",
+    icon = "stopwatchSectionSolidStart",
+    label = "Lost in Transit",
+    description = "Deliver %d timed parcels late.",
+    progressLabel = "%d / %d",
+    targets = {1,8,20,50}
+  }
+}
+
+local milestones, dProgress, dParcelMods
 local milestoneConfigs = {}
 M.onGeneralMilestonesCollect = function(milestonesList)
   dProgress = career_modules_delivery_progress
+  dParcelMods = career_modules_delivery_parcelMods
   milestones = career_modules_milestones_milestones
   for _, config in ipairs(deliveryCounterConfigs) do
     local milestoneConfig = {
@@ -42,8 +87,26 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       filter = {delivery=true, gameplay=true},
       maxStep = #config.targets,
       icon = config.icon,
-      color=milestones.colorGeneralGray,
+      color = milestones.colorGeneralGray,
       getValue = function() return dProgress.getProgress().cargoDeliveredByType[config.progressKey] or 0 end,
+      getLabel = function(step, displayValue, target) return config.label end,
+      getDescription = function(step, displayValue, target) return string.format(config.description, target) end,
+      getProgressLabel = function(step, current, target) return string.format(config.progressLabel, current, target) end,
+      getTarget = function(step) return step == 0 and 0 or config.targets[step] end,
+      getRewards = milestones.minorLinear,
+    }
+    table.insert(milestonesList, milestoneConfig)
+    table.insert(milestoneConfigs, milestoneConfig)
+  end
+
+  for _, config in ipairs(parcelModConfigs) do
+    local milestoneConfig = {
+      id = config.modKey .. "/"..config.progressKey.."-parcelMods",
+      filter = {delivery=true, gameplay=true},
+      maxStep = #config.targets,
+      icon = config.icon,
+      color = milestones.colorGeneralGray,
+      getValue = function() return (dParcelMods.getProgress()[config.modKey] or {})[config.progressKey] or 0 end,
       getLabel = function(step, displayValue, target) return config.label end,
       getDescription = function(step, displayValue, target) return string.format(config.description, target) end,
       getProgressLabel = function(step, current, target) return string.format(config.progressLabel, current, target) end,
@@ -87,6 +150,7 @@ M.onGeneralMilestonesCollect = function(milestonesList)
   }
   table.insert(milestonesList, deliverFromConfig)
   table.insert(milestoneConfigs, deliverFromConfig)
+
 end
 
 

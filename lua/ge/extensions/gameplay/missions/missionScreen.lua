@@ -7,10 +7,10 @@ M.dependencies = {'gameplay_missions_missions', 'gameplay_markerInteraction'}
 local preselectedMissionId = nil
 
 local repairCostMoney = 1000
-local repairCostBonusStar = 1
+local repairCostVoucher = 1
 M.getRepairCostForStartingRepairType = function(type)
   if type == "moneyRepair" then return { money = repairCostMoney} end
-  if type == "bonusStarRepair" then return { bonusStars = repairCostMoney} end
+  if type == "voucherRepair" then return { vouchers = repairCostVoucher} end
 end
 
 -- formats a single mission.
@@ -121,9 +121,9 @@ local function getMissionScreenData()
 
       if career_career.isActive() then
         if career_modules_permissions then
-          local status, message = career_modules_permissions.getStatusForTag("interactMission")
-          if message then
-            ret.startWarning = {label = message, title ="Delivery in progress!" }
+          local reason = career_modules_permissions.getStatusForTag("interactMission")
+          if reason.label then
+            ret.startWarning = {label = reason.label, title ="Delivery in progress!" }
           end
         end
       end
@@ -218,7 +218,7 @@ local function requestStartingOptionsForUserSettings(id, userSettings)
       end
 
       -- build repair options based on player currency.
-      local bonusStarCount = career_modules_playerAttributes.getAttributeValue('bonusStars')
+      local vouchers = career_modules_playerAttributes.getAttributeValue('vouchers')
       local money = career_modules_playerAttributes.getAttributeValue('money')
       local repairOptions = {
         {
@@ -226,10 +226,10 @@ local function requestStartingOptionsForUserSettings(id, userSettings)
           label = "Vehicle needs to be repaired to start",
           optionLabel = "Don't repair",
         }, {
-          enabled = bonusStarCount >= repairCostBonusStar,
-          label = bonusStarCount >= repairCostBonusStar and "Pay Repair and Start" or "Not enough bonus stars for repair",
-          optionsLabel = string.format("Repair for %d bonus star", repairCostBonusStar),
-          type = "bonusStarRepair"
+          enabled = vouchers >= repairCostVoucher,
+          label = vouchers >= repairCostVoucher and "Pay Repair and Start" or "Not enough vouchers for repair",
+          optionsLabel = string.format("Repair for %d vouchers", repairCostVoucher),
+          type = "voucherRepair"
         }, {
           enabled = money >= repairCostMoney,
           label = money >= repairCostMoney and "Pay Repair and Start" or "Not enough money to repair",

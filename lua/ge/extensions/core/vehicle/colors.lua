@@ -50,16 +50,27 @@ local function setVehicleColor(index, colorString, objID)
 end
 
 local function onVehicleSpawned(vehId)
+  -- We set the paint data in vehicleData to the correct thing because otherwise vehicleData will be wrong when loading into the garage
   local vd = extensions.core_vehicle_manager.getVehicleData(vehId)
   vd.config.paints = vd.config.paints or {}
 
-  local colors = {}
-  table.insert(colors, getVehicleColor(vehId))
-  table.insert(colors, getVehicleColorPalette(0, vehId))
-  table.insert(colors, getVehicleColorPalette(1, vehId))
+  local veh = be:getObjectByID(vehId)
+  local metallicPaintData = veh:getMetallicPaintData()
+  vd.config.paints[1] = createVehiclePaint(veh.color, metallicPaintData[1])
+  vd.config.paints[2] = createVehiclePaint(veh.colorPalette0, metallicPaintData[2])
+  vd.config.paints[3] = createVehiclePaint(veh.colorPalette1, metallicPaintData[3])
 
-  for index, colorString in ipairs(colors) do
-    updateVehicleDataPaint(index, colorString, vehId)
+  -- round the values. same as we do in colorTableToRoundedColorString
+  for i, paint in ipairs(vd.config.paints) do
+    for attribute, value in pairs(paint) do
+      if type(value) == "table" then
+        for j, value2 in ipairs(value) do
+          value[j] = round(value2*100)/100
+        end
+      else
+        paint[attribute] = round(value*100)/100
+      end
+    end
   end
 end
 

@@ -458,8 +458,10 @@ local function reset()
   M.values.boost = 0
   M.values.boostMax = 0
 
-  lightbarState = 0
+  --lightbarState = 0
   lightsSavedState = 0
+
+  toggleSound(lightbarState == 2, sirenSound)
 
   local allowedIgnitionLevels = (v.data.electrics and v.data.electrics.allowedIgnitionLevels) or {0, 1, 2, 3} --read allowed ingition levels from jbeam or use all of them by default
   setAllowedIgnitionLevels(allowedIgnitionLevels)
@@ -563,14 +565,18 @@ local function horn(state)
   hornState = state
   if hornState then
     hornSound1 = hornSound1 or sounds.createSoundscapeSound("horn")
-    if not hornSound1 then return end
+    if not hornSound1 then
+      return
+    end
     if hornSound2 then
       obj:setVolume(hornSound2, 0)
     end
     obj:setVolume(hornSound1, 1)
     obj:playSFX(hornSound1)
   else
-    if hornSound1 then obj:stopSFX(hornSound1) end
+    if hornSound1 then
+      obj:stopSFX(hornSound1)
+    end
     hornSound1, hornSound2 = hornSound2, hornSound1
   end
 end

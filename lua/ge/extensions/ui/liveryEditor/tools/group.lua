@@ -17,27 +17,53 @@ M.moveOrderDown = function()
   end)
 end
 
+M.changeOrderToTop = function()
+  dump("changeOrderToTop")
+  uiTools.doOperation(function(layer)
+    local uiLayer = uiLayersApi.getLayerByUid(layer.uid)
+    dump("changeOrderToTop", uiLayer)
+    api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.siblingCount, uiLayer.parentUid)
+  end)
+end
+
+M.changeOrderToBottom = function()
+  dump("changeOrderToBottom")
+  uiTools.doOperation(function(layer)
+    local uiLayer = uiLayersApi.getLayerByUid(layer.uid)
+    dump("changeOrderToBottom", uiLayer)
+    api.moveLayer(uiLayer.order, uiLayer.parentUid, 2, uiLayer.parentUid)
+  end)
+end
+
+M.setOrder = function(order)
+  uiTools.doOperation(function(layer, order)
+    local uiLayer = uiLayersApi.getLayerByUid(layer.uid)
+    api.moveLayer(uiLayer.order, uiLayer.parentUid, order, uiLayer.parentUid)
+  end, order)
+end
+
 M.moveOrderUpById = function(layerUid)
   local uiLayer = uiLayersApi.getLayerByUid(layerUid)
+  -- local siblingsCount = uiLayersApi.getChildrenCount(uiLayer.parentUid)
 
-  if uiLayer.order <= 1 then
+  if uiLayer.order == uiLayer.siblingCount then
     log("W", "", "Unable to move layer " .. uiLayer.uid .. " up with order " .. uiLayer.order)
     return
   end
 
-  api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.order - 1, uiLayer.parentUid)
+  api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.order + 1, uiLayer.parentUid)
 end
 
 M.moveOrderDownById = function(layerUid)
   local uiLayer = uiLayersApi.getLayerByUid(layerUid)
-  local siblingsCount = uiLayersApi.getChildrenCount(uiLayer.parentUid)
+  -- local siblingsCount = uiLayersApi.getChildrenCount(uiLayer.parentUid)
 
-  if uiLayer.order >= siblingsCount then
+  if uiLayer.order == 2 then
     log("W", "", "Unable to move layer " .. uiLayer.uid .. " down with order " .. uiLayer.order)
     return
   end
 
-  api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.order + 1, uiLayer.parentUid)
+  api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.order - 1, uiLayer.parentUid)
 end
 
 M.changeOrder = function(oldOrder, oldParentUid, newOrder, newParentUid)
@@ -78,7 +104,7 @@ M.groupLayers = function()
   end
 
   -- select new group
-  uiSelectionApi.setSelected(newGroup.uid)
+  uiSelectionApi.select(newGroup.uid)
 end
 
 M.ungroupLayer = function()

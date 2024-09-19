@@ -351,7 +351,7 @@ local function unpack_double(c)
   elseif expo == 0x7FF then
     return mant == 0 and sign * huge or 0/0
   else
-    return sign * ldexp(1 + mant / 4503599627370496.0, expo - 0x3FF)
+    return sign * ldexp(1 + mant / 4503599627370496, expo - 0x3FF)
   end
 end
 

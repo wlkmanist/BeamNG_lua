@@ -24,6 +24,15 @@ local upVec = vec3(0,0,1)
 
 local arrowScale = 3
 
+-- global functions for backwards compatibility
+local deprecationWarningDone = {}
+local function deprecationWarning(oldFunction, newFunction)
+  if not deprecationWarningDone[oldFunction] then
+    log('W', logTag, string.format('function "%s" is deprecated. Please use function "%s" instead', oldFunction, newFunction))
+    deprecationWarningDone[oldFunction] = true
+  end
+end
+
 local function getPathLength()
   if M.routePlanner.path and M.routePlanner.path[1] then
     return M.routePlanner.path[1].distToTarget
@@ -63,8 +72,8 @@ local function getNewData()
     forwardVec = vec3(0, 0, 0),
     color = ColorF(M.color[1], M.color[2], M.color[3], 0 ),
     scale = vec3(1*decalScale, 1*decalScale, 1*decalScale),
-    fadeStart = M.fadeStart,
-    fadeEnd = M.fadeEnd
+    fadeStart = 150,
+    fadeEnd = 200
   }
   return data
 end
@@ -231,7 +240,7 @@ local function generateRouteDecals(startPos)
       prevPointId = M.routePlanner.path[i+1].wp
     end
 
-    if path[i+1] and (not path[i-1] or (path[i+1].pos ~= path[i-1].pos)) then
+    if path[i+1] then
       nextIdx, cont, first = generateDecalsForSegment(path[i], path[i+1], nextIdx, first)
       i = i+1
       cont = cont and path[i+1]
@@ -321,8 +330,9 @@ local function sendToApp()
   guihooks.trigger("NavigationGroundMarkersUpdate", data)
 end
 
-local function setFocus(wp, step, _fadeStart, _fadeEnd, _endPos, _disableVeh, _color, _cutOffDrivability, _penaltyAboveCutoff, _penaltyBelowCutoff, _renderDecals)
+local function setPath(wp, options)
   profilerPushEvent("Groundmarkers setFocus")
+  options = options or {}
   M.endWP = nil
   -- clear pool
   M.decalPoolCount = 0
@@ -330,19 +340,16 @@ local function setFocus(wp, step, _fadeStart, _fadeEnd, _endPos, _disableVeh, _c
   M.activeDecalCount = 0
   lastGenerationPos = nil
 
-  M.stepDistance = step or 4
-  M.fadeStart =  150
-  M.fadeEnd = 200
-  M.endPos = _endPos
-  M.disableVeh = _disableVeh
-  --{ 0.2, 0.53, 1, 1 } --  from fg node
-  M.color = _color or {0, 0.4, 1}
+  M.stepDistance = options.step or 4
+  M.color = options.color or {0, 0.4, 1}
   M.floatingArrowColor = M.color
 
-  M.cutOffDrivability = _cutOffDrivability
-  M.penaltyAboveCutoff = _penaltyAboveCutoff
-  M.penaltyBelowCutoff = _penaltyBelowCutoff
-  M.renderDecals = _renderDecals ~= false
+  M.clearPathOnReachingTarget = options.clearPathOnReachingTarget ~= false
+
+  M.cutOffDrivability = options.cutOffDrivability
+  M.penaltyAboveCutoff = options.penaltyAboveCutoff
+  M.penaltyBelowCutoff = options.penaltyBelowCutoff
+  M.renderDecals = options.renderDecals ~= false
   M.endWP = (type(wp) == 'table' and wp) or {wp}
   if not wp or tableIsEmpty(M.endWP) then
     M.routePlanner:clear()
@@ -418,6 +425,19 @@ local function setFocus(wp, step, _fadeStart, _fadeEnd, _endPos, _disableVeh, _c
   profilerPopEvent()
 end
 
+local function setFocus(wp, step, _fadeStart, _fadeEnd, _endPos, _disableVeh, _color, _cutOffDrivability, _penaltyAboveCutoff, _penaltyBelowCutoff, _renderDecals)
+  deprecationWarning("core_groundmarkers.setFocus", "core_groundmarkers.setPath")
+  local options = {
+    step = step,
+    color = _color,
+    cutOffDrivability = _cutOffDrivability,
+    penaltyAboveCutoff = _penaltyAboveCutoff,
+    penaltyBelowCutoff = _penaltyBelowCutoff,
+    renderDecals = _renderDecals,
+  }
+  setPath(wp, options)
+end
+
 local function clearArrows()
   local arrowPool = scenetree.findObject("arrowPool")
   if arrowPool then
@@ -434,7 +454,7 @@ end
 
 local function resetAll()
   --cleanup on level exit
-  setFocus(nil)
+  setPath(nil)
 
   decals = {}
 
@@ -469,7 +489,7 @@ M.onAnyMissionChanged = function(state) if state == "started" or state == "stopp
 
 -- public interface
 M.onPreRender = onPreRender
-M.setFocus = setFocus
+M.setPath = setPath
 M.getPathLength = getPathLength
 M.onClientEndMission = onClientEndMission
 M.onExtensionUnloaded = onExtensionUnloaded
@@ -479,4 +499,8 @@ M.generateRouteDecals = generateRouteDecals
 M.sendToApp = sendToApp
 M.currentlyHasTarget = currentlyHasTarget
 M.getTargetPos = getTargetPos
+
+-- deprecated
+M.setFocus = setFocus
+
 return M

@@ -7,15 +7,15 @@ local C = {}
 local route
 C.name = 'Navgraph Distance'
 
-C.description = [[Finds the aproximate length between positions along the navgraph.]]
+C.description = 'Finds the approximate length between positions along the navgraph.'
 C.category = 'repeat_instant'
 
 C.pinSchema = {
-  { dir = 'in', type = 'flow', impulse = true, name = 'setRoute', description = "Sets the route" },
-  { dir = 'in', type = 'vec3', name = 'trackedPos', description = "The tracked pos" },
-  { dir = 'in', type = 'vec3', name = 'posA', description = "The Position that should be checked." },
-  { dir = 'in', type = 'vec3', name = 'posB', description = "The Position that should be checked." },
-  { dir = 'out', type = 'number', name = 'dist', description = "Distance to the road." },
+  { dir = 'in', type = 'flow', impulse = true, name = 'setRoute', description = "Sets the route." },
+  { dir = 'in', type = 'vec3', name = 'trackedPos', description = "The tracked position." },
+  { dir = 'in', type = 'vec3', name = 'posA', description = "The first endpoint position." },
+  { dir = 'in', type = 'vec3', name = 'posB', description = "The second endpoint position." },
+  { dir = 'out', type = 'number', name = 'dist', description = "Distance to the end of the route." },
 }
 
 C.color = ui_flowgraph_editor.nodeColors.default
@@ -47,11 +47,11 @@ function C:updatePins()
   if self.waypoint[0] then
     self:removePin(self.pinInLocal["posA"])
     self:removePin(self.pinInLocal["posB"])
-    self:createPin('in', 'table', "waypoints", nil, 'The route')
+    self:createPin('in', 'table', "waypoints", nil, 'The route.')
   else
     self:removePin(self.pinInLocal["waypoints"])
-    self:createPin('in', 'vec3', "posA", nil, 'The Position that should be checked.')
-    self:createPin('in', 'vec3', "posB", nil, 'The Position that should be checked.')
+    self:createPin('in', 'vec3', "posA", nil, 'The first endpoint position.')
+    self:createPin('in', 'vec3', "posB", nil, 'The second endpoint position.')
   end
 end
 

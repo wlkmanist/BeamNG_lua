@@ -1006,7 +1006,7 @@ local function createPrefabFromObjectSelection(newPrefabFilename, objName, loadm
 
   for i = 1, #cleanup do
     if cleanup[i] ~= nil then
-      editor.onRemoveObjectFromSet(cleanup[i], cleanup[i]:getGroup())
+      editor.removeObjectFromSet(cleanup[i], cleanup[i]:getGroup())
       cleanup[i]:deleteObject()
     end
   end
@@ -1068,9 +1068,6 @@ local function explodeSelectedPrefab()
       newGroup:setName(name)
       prefab:deleteObject()
       table.insert(groups, newGroup)
-      if editor_sceneTree then
-        editor_sceneTree.recacheAllNodes(nil, true)
-      end
       editor.selectObjectById(newGroup:getId())
     end
   end

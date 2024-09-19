@@ -32,7 +32,7 @@ C.legacyPins = {
   }
 }
 
-local markerTypes = {'overhead', 'ringMarker', 'sideColumnMarker', 'sideMarker', 'cylinderMarker'}
+local markerTypes = {'overhead', 'ringMarker', 'sideColumnMarker', 'sideMarker', 'cylinderMarker', 'attention'}
 
 function C:init(mgr, ...)
   self.position = {}

@@ -11,6 +11,7 @@ local CEF_UI_maxSizeHeight = "1080"
 
 local GraphicsQualityGroup  = require('core/settings/graphicsQualityGroup')
 local lightingQualityGroup  = GraphicsQualityGroup('core/settings/lightingQuality', 'Lighting Quality')
+local shadowsQualityGroup   = GraphicsQualityGroup('core/settings/shadowsQuality', 'Shadows Quality')
 local shaderQualityGroup    = GraphicsQualityGroup('core/settings/shaderQuality', 'Shader Quality')
 local textureQualityGroup   = GraphicsQualityGroup('core/settings/textureQuality', 'Texture Quality')
 local meshQualityGroup      = GraphicsQualityGroup('core/settings/meshQuality', 'Mesh Quality')
@@ -585,7 +586,7 @@ local function buildOptionHelpers()
       end
     end,
     getModes = function()
-      return {keys={'Custom', 'Lowest', 'Low', 'Normal', 'High', 'Ultra'}, values={'ui.options.graphics.Custom', 'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.Normal', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}}
+      return {keys={'Custom', 'Lowest', 'Low', 'SteamDeck', 'Normal', 'High', 'Ultra'}, values={'ui.options.graphics.Custom', 'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.SteamDeck', 'ui.options.graphics.Normal', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}}
     end,
     init = function ()
       local temp = {}
@@ -642,7 +643,7 @@ local function buildOptionHelpers()
         value = tonumber(value)
       end
       if type(value) == 'number' then
-        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High'}
+        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High', 'Ultra'}
         value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
       end
 
@@ -651,7 +652,7 @@ local function buildOptionHelpers()
     end,
 
     getModes = function()
-      return {keys={'High', 'Normal', 'Low', 'Lowest'}, values={'ui.options.graphics.High', 'ui.options.graphics.Normal', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
+      return {keys={'Ultra', 'High', 'Normal', 'Low', 'Lowest'}, values={'ui.options.graphics.Ultra', 'ui.options.graphics.High', 'ui.options.graphics.Normal', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
     end
   }
 
@@ -683,7 +684,7 @@ local function buildOptionHelpers()
 
   -- SettingsGraphicLightingQuality
   o.GraphicLightingQuality = {
-    qualityLevel = "Normal",
+    qualityLevel = "High",
 
     get = function ()
       return o.GraphicLightingQuality.qualityLevel
@@ -694,7 +695,7 @@ local function buildOptionHelpers()
         value = tonumber(value)
       end
       if type(value) == 'number' then
-        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High', 'Ultra'}
+        local upgrade_old_id_to_name = {'Lowest', 'Low', 'High', 'Ultra'}
         value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
       end
 
@@ -703,16 +704,16 @@ local function buildOptionHelpers()
     end,
 
     getModes = function()
-      return {keys={'Ultra', 'High', 'Normal', 'Low', 'Lowest'}, values={'ui.options.graphics.Ultra', 'ui.options.graphics.High', 'ui.options.graphics.Normal', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
+      return {keys={'Ultra', 'High', 'Low', 'Lowest'}, values={'ui.options.graphics.Ultra', 'ui.options.graphics.High', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
     end
   }
 
-  -- SettingsGraphicShaderQuality
-  o.GraphicShaderQuality = {
+  -- SettingsGraphicShadowQuality
+  o.GraphicShadowsQuality = {
     qualityLevel = "Normal",
 
     get = function ()
-      return o.GraphicShaderQuality.qualityLevel
+      return o.GraphicShadowsQuality.qualityLevel
     end,
 
     set = function ( value )
@@ -723,8 +724,9 @@ local function buildOptionHelpers()
         local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High'}
         value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
       end
-      shaderQualityGroup:applyLevel(value)
-      o.GraphicShaderQuality.qualityLevel = value
+
+      shadowsQualityGroup:applyLevel(value)
+      o.GraphicShadowsQuality.qualityLevel = value
     end,
 
     getModes = function()
@@ -732,47 +734,28 @@ local function buildOptionHelpers()
     end
   }
 
-  -- SettingsGraphicPostfxQuality
-  o.GraphicPostfxQuality = {
-    qualityLevel = "2",
-    get = function ()
-      return o.GraphicPostfxQuality.qualityLevel
-    end,
-    set = function ( value )
-      -- log('I','graphic','GraphicPostfxQuality = '..tostring(value))
-      value = tostring(value)
+  -- SettingsGraphicShaderQuality
+  o.GraphicShaderQuality = {
+    qualityLevel = "High",
 
+    get = function ()
+      return o.GraphicShaderQuality.qualityLevel
+    end,
+
+    set = function ( value )
       if type(value) == 'string' and tonumber(value) then
         value = tonumber(value)
       end
       if type(value) == 'number' then
-        if value == -1 then value = 'Custom' end
-        if value == 0  then value = 'Lowest' end
-        if value == 1  then value = 'Low' end
-        if value == 2  then value = 'Normal' end
-        if value == 3  then value = 'High' end
+        local upgrade_old_id_to_name = {'Low', 'High'}
+        value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
       end
-
-      o.GraphicPostfxQuality.qualityLevel = value
-      local preset = '$PostFXManager::normalPreset'
-      if value == '3' then
-        preset = '$PostFXManager::highPreset'
-      elseif value == '2' then
-        preset = '$PostFXManager::normalPreset'
-      elseif value == '1' then
-        preset = '$PostFXManager::lowPreset'
-      elseif value == '0' then
-        preset = '$PostFXManager::lowestPreset'
-      else
-        return
-      end
-
-      local presetFilename = TorqueScriptLua.getVar(preset)
-      postFxModule.loadPresetFile(presetFilename)
-      postFxModule.settingsApplyFromPreset()
+      shaderQualityGroup:applyLevel(value)
+      o.GraphicShaderQuality.qualityLevel = value
     end,
+
     getModes = function()
-      return {keys={'High', 'Normal', 'Low', 'Lowest', 'Custom'}, values={'ui.options.graphics.High', 'ui.options.graphics.Normal', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest', 'ui.options.graphics.Custom'}}
+      return {keys={'High', 'Low'}, values={'ui.options.graphics.High', 'ui.options.graphics.Low'}}
     end
   }
 
@@ -984,6 +967,30 @@ local function buildOptionHelpers()
       else
         SSAOPostFx:disable()
       end
+    end
+  }
+
+  -- SettingsPostFXSSAOGeneralQuality
+  o.PostFXSSAOGeneralQuality = {
+    get = function ()
+      local value = settings.getValue('PostFXSSAOGeneralQuality')
+      -- log('I','','get PostFXSSAOGeneralQuality = '..tostring(value))
+      return value
+    end,
+    set = function ( value )
+      local enabled = o.PostFXSSAOGeneralEnabled.get();
+      if enabled == 0 then return end
+      local ssao = scenetree.findObject("SSAOPostFx")
+      if not ssao then return end
+      if value == "High" then
+        scenetree.SSAOPostFx:setSamples(64)
+      elseif value == "Normal" then
+        scenetree.SSAOPostFx:setSamples(16)
+      end
+      settings.setValue('PostFXSSAOGeneralQuality', value)
+    end,
+    getModes = function ()
+      return {keys={'High', 'Normal'}, values={'ui.options.graphics.High', 'ui.options.graphics.Normal'}}
     end
   }
 
@@ -1240,7 +1247,6 @@ local function autoDetectApplyGraphicsQuality()
   --
 
   -- TorqueScriptLua.setVar('$pref::Video::autoDetect', false)
-  -- local shaderVer = getPixelShaderVersion()
   -- local intel = string.find(string.upper(getDisplayDeviceInformation()), "INTEL") ~= nil
   -- local videoMem = GFXDevice.getVideoMemoryMB()
 

@@ -2,32 +2,43 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dPages, dProgress, dParcelMods
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dParcelMods
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
   dGeneral = career_modules_delivery_general
   dGenerator = career_modules_delivery_generator
-  dPages = career_modules_delivery_pages
   dProgress = career_modules_delivery_progress
 end
 
 local modifiers = {
   timed = {
+     requirements = {
+      delivery = 1
+    },
     makeTemplate = function(g,p,distance)
       local time = (distance / 13) + 30 * math.random() + 30
       return {
         type = "timed",
-        deliveryTime = time,
-        paddingTime = time * 0.2 + 10,
-        timeMessageFlag = false,
-        paddingTimeMessageFlag = false,
+        timeUntilDelayed = time,
+        timeUntilLate = time * 1.25 + 15,
+        --paddingTime = time * 0.2 + 10,
+        --timeMessageFlag = false,
+        --paddingTimeMessageFlag = false,
         moneyMultipler = 1.5,
       }
     end,
     unlockLabel = "Time Sensitive Deliveries",
+    priority = 1,
+    icon = "stopwatchSectionSolidEnd",
+    label = "Time Sensitive",
+    shortDescription = "Increased rewards when on time, penalty if late.",
+    important = true,
   },
   post = {
+    requirements = {
+      delivery = 1
+    },
     makeTemplate = function(g,p,distance)
       return {
         type = "post",
@@ -35,6 +46,11 @@ local modifiers = {
       }
     end,
     unlockLabel = "General Post Parcels",
+    priority = 2,
+    icon = "envelope",
+    label = "Postage Parcel",
+    shortDescription = "",
+    hidden=true,
   },
   precious = {
     requirements = {
@@ -45,9 +61,16 @@ local modifiers = {
       return {
         type = "precious",
         moneyMultipler = 2.5,
+        abandonMultiplier = 1.0,
       }
     end,
     unlockLabel = "Precious Cargo",
+    priority = 3,
+    icon = "fragile",
+    label = "Precious",
+    shortDescription = "Increased rewards, high penalty if lost or abandoned.",
+    important = true,
+
   },
   supplies = {
     requirements = {
@@ -60,6 +83,11 @@ local modifiers = {
       }
     end,
     unlockLabel = "Supply & Logistics Cargo",
+    priority = 4,
+    icon = "cardboardBox",
+    label = "Supply & Logistics",
+    shortDescription = "",
+    hidden=true,
   },
   large = {
     requirements = {
@@ -72,6 +100,72 @@ local modifiers = {
       }
     end,
     unlockLabel = "Large & Heavy Cargo",
+    priority = 5,
+    icon = "group",
+    label = "Large & Heavy",
+    shortDescription = "Drive carefully and beware of momentum!"
+  },
+  fluid = {
+    requirements = {
+      delivery = 5
+    },
+    makeTemplate = function(g,p,distance)
+      return {
+        type = "fluid",
+      }
+    end,
+    unlockLabel = "Fluids",
+    priority = 6,
+    icon = "droplet",
+    label = "Fluid",
+    shortDescription = "Requires a fluid-capable container or tank to transport."
+  },
+  dryBulk = {
+    requirements = {
+      delivery = 5
+    },
+    makeTemplate = function(g,p,distance)
+      return {
+        type = "dryBulk",
+      }
+    end,
+    unlockLabel = "Dry Bulk",
+    priority = 6,
+    icon = "rocks",
+    label = "Dry Bulk",
+    shortDescription = "Requires a drybulk-capable container to transport."
+  },
+  parcel = {
+    requirements = {
+      delivery = 1
+    },
+    makeTemplate = function(g,p,distance)
+      return {
+        type = "parcel",
+      }
+    end,
+    unlockLabel = "Parcel",
+    priority = 6,
+    icon = "cardboardBox",
+    label = "Parcel",
+    shortDescription = "Requires a parcel-capable container transport.",
+    hidden=true,
+  },
+  hazardous = {
+    requirements = {
+      delivery = 5
+    },
+    makeTemplate = function(g,p,distance)
+      return {
+        type = "hazardous",
+      }
+    end,
+    unlockLabel = "Hazardous",
+    priority = 6,
+    icon = "roadblockL",
+    label = "Hazardous",
+    shortDescription = "Large penalty if lost or abandoned. Requires special license to handle.",
+
   },
 }
 
@@ -108,11 +202,18 @@ M.getProgress = function()
   return progress
 end
 
+M.getModData = function(key) return modifiers[key] end
+M.getModifierIcon = function(key) return modifiers[key].icon end
+M.getLabelAndShortDescription = function(key) return modifiers[key].label, modifiers[key].shortDescription end
+M.isImportant = function(key) return modifiers[key].important or false end
+
 local function calculateTimedModifierTime(distance)
   local r = math.random()+1
   return (distance / 13) + (30 * r)
 end
 M.calculateTimedModifierTime = calculateTimedModifierTime
+
+local sortByPrio = function(a,b) return modifiers[a.type].priority < modifiers[b.type].priority end
 
 local modifierProbability = 1
 local largeSlotThreshold = 65
@@ -122,6 +223,7 @@ local function generateModifiers(item, parcelTemplate, distance)
   math.randomseed(item.groupSeed)
 
   local r = math.random()
+  --for _, modKey in ipairs(tableKeysSorted(modifiers)) do
   for _, modKey in ipairs(tableKeysSorted(parcelTemplate.modChance)) do
     if r <= parcelTemplate.modChance[modKey] then
       local modTemplate = modifiers[modKey].makeTemplate(item.groupSeed, parcelTemplate, distance)
@@ -134,6 +236,7 @@ local function generateModifiers(item, parcelTemplate, distance)
     table.insert(mods, modifiers.large.makeTemplate())
   end
 
+  table.sort(mods, sortByPrio)
   return mods
 end
 M.generateModifiers = generateModifiers
@@ -151,11 +254,11 @@ end
 M.isParcelModUnlocked = isParcelModUnlocked
 
 local function lockedBecauseOfMods(modKeys)
-  local minTier = math.huge
+  local minTier = 1
   local locked = false
   for key, _ in pairs(modKeys) do
+    minTier = math.max(minTier, modifiers[key].requirements.delivery)
     if not isParcelModUnlocked(key) then
-      minTier = math.min(minTier, modifiers[key].requirements.delivery)
       locked = true
     end
   end
@@ -176,16 +279,18 @@ M.getParcelModProgressLabel = function(key) return modifiers[key].unlockLabel en
 
 
 local function trackModifierStats(cargo)
-  for _, m in ipairs(cargo.modifiers or {}) do
-    progress[m.type] = progress[m.type] or {}
-    progress[m.type].delivered = (progress[m.type].delivered or 0) + 1
-    if m.type == "timed" then
+  for _, mod in ipairs(cargo.modifiers or {}) do
+    progress[mod.type] = progress[mod.type] or {}
+    progress[mod.type].delivered = (progress[mod.type].delivered or 0) + 1
+    if mod.type == "timed" then
       local prog = progress.timed
-      if m.expirationTimeStamp and dGeneral.time() < m.expirationTimeStamp then
+      local expiredTime = dGeneral.time() - cargo.loadedAtTimeStamp
+
+      if expiredTime <= mod.timeUntilDelayed then
         prog.onTimeDeliveries = (prog.onTimeDeliveries or 0) + 1
-      elseif m.expirationTimeStamp and m.definitiveExpirationTimeStamp and dGeneral.time() > m.expirationTimeStamp and dGeneral.time() < m.definitiveExpirationTimeStamp then
+      elseif expiredTime <= mod.timeUntilLate then
         prog.delayedDeliveries = (prog.delayedDeliveries or 0) + 1
-      elseif m.definitiveExpirationTimeStamp and dGeneral.time() > m.definitiveExpirationTimeStamp then
+      else
         prog.lateDeliveries = (prog.lateDeliveries or 0) + 1
       end
     end

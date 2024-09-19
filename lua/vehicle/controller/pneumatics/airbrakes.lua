@@ -321,14 +321,6 @@ local function init(jbeamData)
     airTank = {isDummy = true, currentPressure = 0, supplyPressure = 0, remainingMass = 0, invCapacity = 0}
   end
 
-  if jbeamData.soundNode_nodes and type(jbeamData.soundNode_nodes) == "table" and type(jbeamData.soundNode_nodes[1]) == "number" then
-    soundNode = jbeamData.soundNode_nodes[1]
-  else
-    soundNode = 0
-  end
-
-  soundEvent = jbeamData.soundEvent or "event:>Vehicle>Pneumatics>Air_Brakes"
-
   if not jbeamData.brakeTorque then
     log("E", "airbrakes.init", "Can't find brake torque table! Air brakes will not function.")
   end
@@ -412,6 +404,8 @@ local function init(jbeamData)
   soundCoolDown = jbeamData.soundCoolDown or 0.75
   serviceSoundCoolDown = soundCoolDown
   parkingSoundCoolDown = soundCoolDown
+
+  bdebug.setNodeDebugText("Airbrakes", soundNode, M.name .. ": " .. (soundEvent or "no event"))
 
   didAutoApplyParkingBrake = false
 

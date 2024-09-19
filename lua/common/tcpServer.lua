@@ -97,7 +97,7 @@ function TCPServer:new(listenHost, port)
   self.__index = self
 
   self.headerBuffer = ffi.new("message_header_t")
-  ffi.copy(self.headerBuffer.identifier, messageJsonHeader)
+  ffi.copy(self.headerBuffer.identifier, messageJsonHeader, 4)
 
   -- availability of createNetworkServer means ASIO is available
   if not createNetworkServer then
@@ -131,7 +131,7 @@ function TCPServer:send(connection, sendData, recData)
   self.headerBuffer.length = ffi.new("uint32_t", messageLength) -- little-endian format
 
   -- Send the header
-  connection:send(ffi.string(self.headerBuffer, headerSize))
+  connection:send(ffi.string(self.headerBuffer.identifier, headerSize))
 
   -- Send the JSON data and the null character
   connection:send(jsonData .. '\0')
@@ -152,7 +152,8 @@ function TCPServer:_onDataRaw(connection, dataRaw, res)
 
     -- Use the FFI to directly access the buffer's memory for header inspection
     local headerPtr = buffer:ref()
-    local header = ffi.cast("message_header_t *", headerPtr)
+    local header = ffi.new("message_header_t")
+    ffi.copy(header, headerPtr, ffi.sizeof("message_header_t"))
 
     local identifierStr = ffi.string(header.identifier, 4)
     if header.identifier[0] ~= 66 or -- 66 = B
@@ -172,8 +173,9 @@ function TCPServer:_onDataRaw(connection, dataRaw, res)
       return
     end
 
-    local message = ffi.string(headerPtr + headerSize, header.length - 1) -- Extract the message
-    buffer:skip(headerSize + header.length) -- Skip the processed part, consumes the data
+    buffer:skip(headerSize)
+    local message = ffi.string(buffer:ref(), header.length - 1) -- Extract the message
+    buffer:skip(header.length)
 
     local data = jsonDecode(message, 'tcpConnection')
     if not data then

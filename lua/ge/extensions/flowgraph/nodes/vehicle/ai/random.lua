@@ -9,24 +9,25 @@ local C = {}
 C.name = 'AI Random'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
-C.description = 'Causes the AI to take random paths.'
+C.description = 'Sets a vehicle to drive along random roads.'
 C.category = 'once_p_duration'
 
 C.pinSchema = {
-    { dir = 'in', type = 'number', name = 'aiVehId', description = 'Defines the id of the vehicle to activate the AI on.' },
+  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Vehicle id to apply AI mode: Random.' }
 }
 
 C.tags = {}
 
 function C:workOnce()
-    local source
-    if self.pinIn.aiVehId.value and self.pinIn.aiVehId.value ~= 0 then
-        source = scenetree.findObjectById(self.pinIn.aiVehId.value)
-    else
-        source = getPlayerVehicle(0)
-    end
-
-    source:queueLuaCommand('ai.setState({mode = "random"})')
+  local veh
+  if self.pinIn.aiVehId.value then
+    veh = be:getObjectByID(self.pinIn.aiVehId.value)
+  else
+    veh = getPlayerVehicle(0)
+  end
+  if not veh then return end
+  
+  veh:queueLuaCommand('ai.setState({mode = "random"})')
 end
 
 return _flowgraph_createNode(C)

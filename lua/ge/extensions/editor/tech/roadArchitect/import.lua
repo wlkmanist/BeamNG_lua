@@ -27,18 +27,11 @@ local clothoid = require('editor/tech/roadArchitect/clothoid')                  
 -- Module constants.
 local im = ui_imgui
 local min, max, floor, ceil = math.min, math.max, math.floor, math.ceil
-local abs, sqrt = math.abs, math.sqrt
-local sin, cos, acos, pi = math.sin, math.cos, math.acos, math.pi
+local abs = math.abs
+local sin, cos = math.sin, math.cos
 local targetLonResInv, targetArcResInv = 1.0 / targetLonRes, 1.0 / targetArcRes
 local tmp0, tmp1 = vec3(0, 0), vec3(0, 0)
 
-
--- Rotates vector v around unit axis k, by angle theta (in radians).
--- [This function uses the standard Rodrigues formula].
-local function rotateVecAroundAxis(v, k, theta)
-  local c = cos(theta)
-  return v * c + k:cross(v) * sin(theta) + k * k:dot(v) * (1.0 - c)
-end
 
 -- Evaluates an explicit cubic polynomial at the given p in [0, segment length].
 local function evalExpCubic(a, b, c, d, s)
@@ -259,6 +252,7 @@ local function format3DPoly(raw)
       height = im.FloatPtr(p.z),
       widths = {}, heightsL = {}, heightsR = {},
       incircleRad = im.FloatPtr(1.0),
+      isAutoBanked = false,
       offset = 0.0 }
   end
   return poly
@@ -289,18 +283,6 @@ local function getRelevantCubic(sNode, sections)
 
   -- There is no section s-value which is above the given node s-value, so use the last available section.
   return numSections, sNode - sections[numSections].s
-end
-
--- Fetches the unit lateral vector for the given node, using the previously-computed render data.
-local function getLatFromDiscPts(p, rData, lIdx1, lIdx2)
-  local numDivs, dBest, bestIdx = #rData, 1e99, nil
-  for i = 1, numDivs do                                                                             -- Find the closest disc. point to the given node.
-    local d = p:squaredDistance(rData[i][lIdx1][lIdx2])
-    if d < dBest then
-      dBest, bestIdx = d, i
-    end
-  end
-  return rData[bestIdx][lIdx1][6]
 end
 
 -- Applies the lane offset sections to the 3D reference polyline.
@@ -551,7 +533,6 @@ local function convertRoad(data)
 
       local road = roadMgr.createRoadFromProfile(newProfile)
       road.nodes = rEPoly
-      road.isDowelS, road.isDowelE = true, true
 
       geom.computeRoadRenderData(road, roadMgr.roads, roadMgr.map)
 
@@ -564,7 +545,7 @@ local function convertRoad(data)
 end
 
 -- Imports an .xodr file from disk, and creates a Road Architect network from the data.
-local function import(importO2T, importCO, importTT2I, importCustomOffset, domainOfInfluence)
+local function import(importO2T, importCO, importTT2I, importCustomOffset, domainOfInfluence, margin)
 
   extensions.editor_fileDialog.openFile(
     function(data)
@@ -729,7 +710,7 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
       end
       if importTT2I then
         roadMgr.computeAllRoadRenderData()
-        terra.terraformTB2Roads(domainOfInfluence)
+        terra.terraformMultiRoads(domainOfInfluence, margin, nil)
       end
 
     end,

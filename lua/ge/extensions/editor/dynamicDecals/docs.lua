@@ -3,9 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_dynamicDecals_helper",
-}
 local logTag = "editor_dynamicDecals_docs"
 local im = ui_imgui
 
@@ -199,7 +196,7 @@ end
 
 M.introductionGui = function(docsSection)
   im.PushTextWrapPos(im.GetContentRegionAvailWidth())
-  helper.textUnformattedCentered("Welcome to the world of skin customization in BeamNG.drive!")
+  helper.textUnformattedCentered("Welcome to the world of skin customization in BeamNG!")
   helper.textUnformattedCentered(string.format("v %d.%d.%d", tool.version[1], tool.version[2], tool.version[2]))
 
   im.TextUnformatted([[
@@ -212,7 +209,7 @@ Our tool offers an array of features, let's dive into what you can expect:
 * Layer System: Get ready to explore endless possibilities with our versatile layer system. Create decal layers, path layers (ideal for text or intricate designs following curves), fill layers, texture fill layers (to fill shapes with captivating patterns), brush stroke layers, and group layers.
   * Layer Masks: Enhance your designs with layer masks. These masks provide you with greater control and flexibility in shaping your decals and compositions.
 * SDF support: The tool supports SDF (Signed Distance Field) technology, ensuring your decals and text appear crisp and sharp. Add colored outlines, edge feathering, and other fine details to take your designs to the next level.
-* Save, Share, and Export: Once you've crafted your perfect skin, save it for future use or share it with fellow enthusiasts. You can export your designs as skin to seamlessly incorporate them into BeamNG.drive. Alternatively, you can export the raw textures, allowing you to make fine adjustments and further refine your designs using third-party raster image editing tools.
+* Save, Share, and Export: Once you've crafted your perfect skin, save it for future use or share it with fellow enthusiasts. You can export your designs as skin to seamlessly incorporate them into BeamNG. Alternatively, you can export the raw textures, allowing you to make fine adjustments and further refine your designs using third-party raster image editing tools.
 ]])
 
   im.TextColored(editor.color.beamng.Value, "Please keep in mind that this tool is work-in-progress. We're actively working to enhance and refine the experience based on your feedback.")
@@ -264,7 +261,7 @@ local function lateSetup()
   sortSectionChildren(docsSections)
   docsSectionsBase = deepcopy(docsSections)
   -- select the very first section of the docs by default
-  M.selectSection(docsSections.children[1].name)
+  M.selectSection(docsSections.children[1].name, true)
   -- dump(docsSections)
 end
 
@@ -304,6 +301,7 @@ local function setup(tool_in)
       end
     end
   end
+  table.sort(inputActionInfo, function(a,b) return string.lower(a.control) < string.lower(b.control) end)
 end
 
 local function registerEditorPreferences(prefsRegistry)
@@ -364,7 +362,6 @@ local function selectSectionInChildren(section, name)
   for _, child in ipairs(section.children) do
     if child.name == name then
       setScroll = true
-      if not M.isWindowVisible() then M.showWindow() end
       currentSection = child
       return
     end
@@ -386,8 +383,10 @@ local function searchSectionInChildren(curSection, sections, index)
   end
 end
 
-M.selectSection = function(section)
-  M.showWindow()
+M.selectSection = function(section, doNotOpenWindow)
+  if not doNotOpenWindow then
+    M.showWindow()
+  end
 
   if type(section) == "string" then
     im.ImGuiTextFilter_Clear(filter)

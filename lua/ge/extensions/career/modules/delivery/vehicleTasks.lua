@@ -1,13 +1,12 @@
 local M = {}
 M.dependencies = {"util_stepHandler"}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dPages, dProgress, dTasklist
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dTasklist
 local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
   dGeneral = career_modules_delivery_general
   dGenerator = career_modules_delivery_generator
-  dPages = career_modules_delivery_pages
   dProgress = career_modules_delivery_progress
   dTasklist = career_modules_delivery_tasklist
   step = util_stepHandler
@@ -57,11 +56,11 @@ local function navigateToTask(task)
   local activeTaskStep = task.tasks[task.activeTaskIndex]
   if activeTaskStep.destination then
     local destinationPos = dGenerator.getParkingSpotByPath(activeTaskStep.destination.psPath).pos
-    core_groundMarkers.setFocus(destinationPos)
+    core_groundMarkers.setPath(destinationPos, {clearPathOnReachingTarget = false})
   elseif activeTaskStep.type == "enterVehicle" or activeTaskStep.type == "coupleTrailer" then
     local veh = be:getObjectByID(task.vehId)
     if veh then
-      core_groundMarkers.setFocus(veh:getPosition())
+      core_groundMarkers.setPath(veh:getPosition(), {clearPathOnReachingTarget = false})
     end
   end
 end
@@ -194,11 +193,111 @@ local function processActiveTask(taskData)
   end
 end
 
-local function checkDeliveredCargo()
-  local affectedOfferIds = {}
+local function onTrailerAttached(objId1, objId2)
   for _, taskData in ipairs(vehicleTasks) do
+    if taskData.vehId then
+      taskData.loanerOrganisations = taskData.loanerOrganisations or {}
+      tableMerge(taskData.loanerOrganisations, career_modules_loanerVehicles.getLoaningOrgsOfVehicle(taskData.vehId))
+    end
+  end
+end
+
+local function getRewardsWithBreakdown(taskData)
+  local originalRewards = deepcopy(taskData.offer.rewards)
+  local breakdown = {}
+
+  log("I","","Finished Vehicle: " .. taskData.vehId)
+  local brokenPartsRelative = taskData.brokenPartsNumber / taskData.partsNumber
+  log("I","",string.format("Broken Parts: %0.1f%% (%d / %d)", brokenPartsRelative*100, taskData.brokenPartsNumber, taskData.partsNumber))
+  local distanceDriven = (taskData.offer.endingOdometer - taskData.offer.startingOdometer)
+  log("I","",string.format("Driven Distance: %0.3fkm (%0.1f%% of allowed %0.3fkm)", distanceDriven/1000, 100*distanceDriven/taskData.offer.data.originalDistance, 1.2*taskData.offer.data.originalDistance/1000))
+  local timeTaken = dGeneral.time() - taskData.startedTimestamp
+  local expectedTime = (taskData.offer.data.originalDistance/12 + 30 )
+  log("I","",string.format("Time Taken: %0.1f seconds (expected: %0.1fs)", timeTaken, expectedTime))
+
+
+  local brokenPartsThreshold = career_modules_insurance.getBrokenPartsThreshold()
+
+  local origMoney = originalRewards.money
+  local reputationRewards = {}
+  for rewardKey, rewardValue in pairs(originalRewards) do
+    if rewardKey:endswith("Reputation") then
+      reputationRewards[rewardKey] = rewardValue
+    end
+  end
+
+  local partsBreakdown = {simpleBreakdownType="bonus"}
+  local brokenPartsMultipler = 1
+  if brokenPartsRelative >= 0.25 then
+    brokenPartsMultipler = 0
+    partsBreakdown.label = "Excessive Damage"
+    partsBreakdown.rewards = {money = -origMoney}
+    for rewardKey, rewardValue in pairs(reputationRewards) do
+      partsBreakdown.rewards[rewardKey] = -2 * rewardValue
+    end
+  elseif taskData.brokenPartsNumber >= brokenPartsThreshold then
+    brokenPartsMultipler = 0.8 - 0.6*(brokenPartsRelative*4)
+    partsBreakdown.label = "Slight Damage"
+    partsBreakdown.rewards = {money = -(1-brokenPartsMultipler)*origMoney}
+    for rewardKey, rewardValue in pairs(reputationRewards) do
+      partsBreakdown.rewards[rewardKey] = -(1-brokenPartsMultipler) * rewardValue
+    end
+  else
+    partsBreakdown.label = "No Damage"
+    partsBreakdown.rewards = {money = math.ceil(origMoney*0.05)}
+  end
+
+  table.insert(breakdown, partsBreakdown)
+
+  if brokenPartsMultipler == 1 then
+    if distanceDriven/taskData.offer.data.originalDistance < 1.2 then
+      local rewards = {money=origMoney*0.15+10}
+      for rewardKey, rewardValue in pairs(reputationRewards) do
+        rewards[rewardKey] = math.ceil(rewardValue*0.125)
+      end
+      table.insert(breakdown, {label = "No Detours", rewards = rewards, simpleBreakdownType="bonus", })
+    end
+    if timeTaken < expectedTime then
+      local rewards = {money=origMoney*0.15+10}
+      for rewardKey, rewardValue in pairs(reputationRewards) do
+        rewards[rewardKey] = math.ceil(rewardValue*0.125)
+      end
+      table.insert(breakdown, {label = "No Delays", rewards = rewards, simpleBreakdownType="bonus",})
+    end
+  end
+
+  for organizationId, _ in pairs(taskData.loanerOrganisations or {}) do
+    local organization = freeroam_organizations.getOrganization(organizationId)
+    local level = organization.reputation.level
+    local organizationCut = (organization.reputationLevels[level+2].loanerCut and organization.reputationLevels[level+2].loanerCut.value or 0.5)
+
+    local organizationElement = {
+      label = string.format("Loaner Organization (%d%% cut)", round(organizationCut * 100)),
+      rewards = {money = -organizationCut * originalRewards.money},
+      simpleBreakdownType = "loaner",
+    }
+    organizationElement.rewards[organizationId.."Reputation"] = 5 + round(taskData.offer.data.originalDistance/1000)
+
+    table.insert(breakdown, organizationElement)
+  end
+
+  local adjustedRewards = deepcopy(originalRewards)
+  for _, bd in ipairs(breakdown) do
+    for key, amount in pairs(bd.rewards) do
+      adjustedRewards[key] = (adjustedRewards[key] or 0) + amount
+    end
+  end
+  return originalRewards, breakdown, adjustedRewards
+end
+
+local function getVehicleDataWithRewardsSummary()
+  local vehicleRewardData = {}
+  for _, taskData in ipairs(vehicleTasks) do
+    local formatted = dCargoScreen.formatAcceptedOfferForUI(taskData.offer)
+    formatted.finished = false
     local activeTask = taskData.tasks[taskData.activeTaskIndex]
     if activeTask.type == "confirmDropOff" then
+      table.insert(vehicleRewardData, formatted)
       local veh = be:getObjectByID(taskData.vehId)
       if veh then
         local sequence = {
@@ -228,20 +327,21 @@ local function checkDeliveredCargo()
             end
             return step.odometerComplete or false
           end),
-          step.makeStepReturnTrueFunction(function() taskData.finished = true return true end)
+          step.makeStepReturnTrueFunction(function()
+            formatted.originalRewards, formatted.breakdown, formatted.adjustedRewards = getRewardsWithBreakdown(taskData)
+            formatted.finished = true
+            dProgress.openDropOffScreenGatheringComplete()
+            return true
+         end)
         }
         step.startStepSequence(sequence, callback)
-
-      else
-        taskData.finished = true
       end
-      taskData.dropOffPsPath = activeTask.destination.psPath
-      affectedOfferIds[taskData.offer.id] = true
+      --taskData.dropOffPsPath = activeTask.destination.psPath
     end
   end
-  return affectedOfferIds
+  return vehicleRewardData
 end
-M.checkDeliveredCargo = checkDeliveredCargo
+M.getVehicleDataWithRewardsSummary = getVehicleDataWithRewardsSummary
 
 local function canDropOffCargoAtPsPath(psPath)
   local vehsClose, trailersClose = 0,0
@@ -255,6 +355,61 @@ local function canDropOffCargoAtPsPath(psPath)
   return vehsClose, trailersClose
 end
 M.canDropOffCargoAtPsPath = canDropOffCargoAtPsPath
+
+
+M.finishTasks = function(offerIds)
+  local affectedOffers = {}
+  local offersById = tableValuesAsLookupDict(offerIds)
+  for _, taskData in ipairs(vehicleTasks) do
+    if offersById[taskData.offer.id] then
+      table.insert(affectedOffers, taskData)
+      taskData.finished = false
+      local activeTask = taskData.tasks[taskData.activeTaskIndex]
+      if activeTask.type == "confirmDropOff" then
+        local veh = be:getObjectByID(taskData.vehId)
+        if veh then
+          local sequence = {
+            step.makeStepReturnTrueFunction(function(step)
+              if not step.sentCommand then
+                step.sentCommand = true
+                core_vehicleBridge.requestValue(veh, function(res)
+                  local partConditions = res.result
+                  if tableSize(partConditions) > 0 then
+                    taskData.brokenPartsNumber = career_modules_insurance.getNumberOfBrokenParts(partConditions)
+                    taskData.partsNumber = tableSize(partConditions)
+                  end
+                  step.brokenPartsRequested = true
+                end, 'getPartConditions')
+              end
+              return step.brokenPartsRequested or false
+            end),
+            step.makeStepReturnTrueFunction(function(step)
+              if not step.sentCommand then
+                step.sentCommand = true
+                local vehData = core_vehicle_manager.getVehicleData(taskData.vehId)
+                core_vehicleBridge.requestValue(veh, function(res)
+                  step.odometerComplete = true
+                  local part = res.result[vehData.config.mainPartName]
+                  taskData.offer.endingOdometer = part.odometer
+                end, 'getPartConditions')
+              end
+              return step.odometerComplete or false
+            end),
+            step.makeStepReturnTrueFunction(function()
+              taskData.originalRewards, taskData.breakdown, taskData.adjustedRewards = getRewardsWithBreakdown(taskData)
+              taskData.finished = true
+
+              return true
+           end)
+          }
+          step.startStepSequence(sequence, callback)
+        end
+        taskData.dropOffPsPath = activeTask.destination.psPath
+      end
+    end
+  end
+  return affectedOffers
+end
 
 local taskDataRemoveThisFrame = false
 local function processFinished(taskData)
@@ -274,79 +429,30 @@ local function processFinished(taskData)
       spawn.safeTeleport(unicycle, psPos)
     end
 
+    dTasklist.clearTasklistForOfferId(taskData.offer.id)
 
     taskData.remove = true
-
-
-    local resultElement = {
-      type = taskData.offer.data.type,
-      offerId = taskData.offer.id,
-      label = taskData.offer.name,
-      originalRewards = deepcopy(taskData.offer.rewards),
-      breakdown = {},
-      adjustedRewards = {},
-    }
-
-    log("I","","Finished Vehicle: " .. taskData.vehId)
-    local brokenPartsRelative = taskData.brokenPartsNumber / taskData.partsNumber
-    log("I","",string.format("Broken Parts: %0.1f%% (%d / %d)", brokenPartsRelative*100, taskData.brokenPartsNumber, taskData.partsNumber))
-    local distanceDriven = (taskData.offer.endingOdometer - taskData.offer.startingOdometer)
-    log("I","",string.format("Driven Distance: %0.3fkm (%0.1f%% of allowed %0.3fkm)", distanceDriven/1000, 100*distanceDriven/taskData.offer.data.originalDistance, 1.2*taskData.offer.data.originalDistance/1000))
-    local timeTaken = dGeneral.time() - taskData.startedTimestamp
-    local expectedTime = (taskData.offer.data.originalDistance/12 + 30 )
-    log("I","",string.format("Time Taken: %0.1f seconds (expected: %0.1fs)", timeTaken, expectedTime))
-
-
-    local brokenPartsThreshold = career_modules_insurance.getBrokenPartsThreshold()
-
-    local rewards = deepcopy(taskData.offer.rewards)
-    local origMoney = rewards.money
-
-
-
-    local partsBreakdown = {}
-    local brokenPartsMultipler = 1
-    if brokenPartsRelative >= 0.25 then
-      brokenPartsMultipler = 0
-      partsBreakdown.label = "Excessive Damage"
-      partsBreakdown.rewards = {money = -origMoney}
-    elseif taskData.brokenPartsNumber >= brokenPartsThreshold then
-      brokenPartsMultipler = 0.8 - 0.6*(brokenPartsRelative*4)
-      partsBreakdown.label = "Slight Damage"
-      partsBreakdown.rewards = {money = -(1-brokenPartsMultipler)*origMoney}
-    else
-      partsBreakdown.label = "No Damage"
-      partsBreakdown.rewards = {money = 0}
-    end
-
-    table.insert(resultElement.breakdown, partsBreakdown)
-
-    if brokenPartsMultipler == 1 then
-      if distanceDriven/taskData.offer.data.originalDistance < 1.2 then
-        table.insert(resultElement.breakdown, {label = "No Detours", rewards = {money=origMoney*0.15+10}})
-      end
-      if timeTaken < expectedTime then
-        table.insert(resultElement.breakdown, {label = "No Delays", rewards = {money=origMoney*0.15+10}})
-      end
-    end
-
-    resultElement.adjustedRewards = deepcopy(resultElement.originalRewards)
-    for _, bd in ipairs(resultElement.breakdown) do
-      for key, amount in pairs(bd.rewards) do
-        resultElement.adjustedRewards[key] = resultElement.adjustedRewards[key] + amount
-      end
-    end
-
-    dTasklist.clearTasklistForOfferId(taskData.offer.id)
-    taskData.offer.rewards = resultElement.adjustedRewards
-
-    dProgress.onVehicleTaskFinished(taskData.offer)
-    dProgress.addVehicleTasksResult(resultElement)
-
-
-
+    taskData.processFinishedComplete = true
+    dProgress.confirmDropOffCheckComplete()
   end
 end
+
+local function showMessageJob(job)
+  local message = job.args[1]
+  local category = job.args[2]
+  local icon = job.args[3]
+  job.sleep(1)
+  guihooks.trigger('Message', {clear = nil, ttl = 10, msg = message, category = category, icon = icon})
+end
+
+local function getFineForAbandon(taskData)
+  local fine = {money=-(taskData.offer.rewards.money or 0) * dGeneral.getDeliveryAbandonPenaltyFactor()}
+  if taskData.offer.organization then
+    fine[taskData.offer.organization .. "Reputation"] = career_modules_reputation.getValueForEvent("discardDeliveryVehicle")
+  end
+  return fine
+end
+M.getFineForAbandon = getFineForAbandon
 
 local function processGiveBack(taskData)
   if taskData.giveBack then
@@ -357,26 +463,40 @@ local function processGiveBack(taskData)
     local veh = scenetree.findObjectById(taskData.vehId)
     if veh then veh:delete() end
     dTasklist.clearTasklistForOfferId(taskData.offer.id)
-    guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("Delivery %s abandoned. %0.2f$ penalty",taskData.offer.name, (taskData.offer.rewards.money or 0) * dGeneral.getDeliveryAbandonPenaltyFactor()), category = "delivery", icon = "local_shipping"})
 
-    career_modules_playerAttributes.addAttributes({money=-(taskData.offer.rewards.money or 0) * dGeneral.getDeliveryAbandonPenaltyFactor()}, {tags={"gameplay", "delivery","fine"}, label="Abandoned Delivery Penalty for " .. taskData.offer.name})
+    local fine = M.getFineForAbandon(taskData)
+
+    career_modules_playerAttributes.addAttributes(fine, {tags={"gameplay", "delivery","fine"}, label="Abandoned Delivery Penalty for " .. taskData.offer.name})
     taskData.remove = true
+
+    local message = string.format("Delivery %s abandoned. \n %0.2f$ penalty. " .. (taskData.offer.organization and "\n%d reputation lost." or ""), taskData.offer.name, -fine.money, taskData.offer.organization and -fine[taskData.offer.organization .. "Reputation"] or 0)
+    core_jobsystem.create(showMessageJob, nil, message, "delivery", "local_shipping")
   end
 end
 
-
+local function navigateToNextTask()
+  if vehicleTasks[#vehicleTasks] then
+    navigateToTask(vehicleTasks[#vehicleTasks])
+  end
+end
 
 local toDeleteActiveTrailerIndexes = {}
 local function onUpdate(dtReal, dtSim, dtRaw)
   taskThatChangedThisFrame = nil
   for _, taskData in ipairs(vehicleTasks) do
-    processActiveTask(taskData)
+    if not taskData.remove then
+      processActiveTask(taskData)
+    end
   end
   for _, taskData in ipairs(vehicleTasks) do
-    processFinished(taskData)
+    if not taskData.remove then
+      processFinished(taskData)
+    end
   end
   for _, taskData in ipairs(vehicleTasks) do
-    processGiveBack(taskData)
+    if not taskData.remove then
+      processGiveBack(taskData)
+    end
   end
 
   local idsToRemove = {}
@@ -435,6 +555,7 @@ local function giveBackDeliveryVehicle(vehId)
   for _, taskData in ipairs(vehicleTasks) do
     if taskData.vehId == vehId then
       taskData.giveBack = true
+      return
     end
   end
 end
@@ -444,6 +565,39 @@ local function getVehicleTasks()
   return vehicleTasks
 end
 M.getVehicleTasks = getVehicleTasks
+
+local function getFineForAbandonAllVehicleTasks()
+  local fine = {}
+  for _, taskData in ipairs(vehicleTasks) do
+    for attKey, amount in pairs(M.getFineForAbandon(taskData)) do
+      fine[attKey] = (fine[attKey] or 0) + amount
+    end
+  end
+  return fine
+end
+M.getFineForAbandonAllVehicleTasks = getFineForAbandonAllVehicleTasks
+
+local function abandonAllVehicleTasks()
+  for _, taskData in ipairs(vehicleTasks) do
+    if be:getPlayerVehicleID(0) == taskData.vehId then
+      gameplay_walk.setWalkingMode(true)
+    end
+    local veh = scenetree.findObjectById(taskData.vehId)
+    if veh then veh:delete() end
+  end
+  vehicleTasks = {}
+end
+M.abandonAllVehicleTasks = abandonAllVehicleTasks
+
+local function getVehicleTaskForOffer(offer)
+  for _, task in ipairs(vehicleTasks) do
+    if task.offer.id == offer.id then
+      return task
+    end
+  end
+  return nil
+end
+M.getVehicleTaskForOffer = getVehicleTaskForOffer
 
 -- DEBUG part
 local im = ui_imgui
@@ -458,5 +612,7 @@ local function drawDebugMenu()
 end
 
 M.drawDebugMenu = drawDebugMenu
+M.onTrailerAttached = onTrailerAttached
+M.navigateToNextTask = navigateToNextTask
 
 return M

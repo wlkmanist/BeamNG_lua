@@ -59,6 +59,12 @@ local function process(vehicleObj, vehicle)
   if vehicle.glowMap ~= nil then
     for orgMat, gm in sortedPairs(vehicle.glowMap) do --order not guaranted when reloading GE
       --log('D', "material.init", "getSwitchableMaterial("..orgMat..")")
+      if not scenetree.findObject(orgMat) then
+        local mat = createObject("Material")
+        mat.mapTo = orgMat
+        mat.canSave = false
+        mat:registerObject(orgMat)
+      end
       local meshStr = vehicleObj:getMeshesContainingMaterial(orgMat)
       --log('D', "material.init", "[glowmap] meshes containing material " .. orgMat .. ": " .. tostring(meshStr))
       local meshes = split(trim(meshStr), " ")

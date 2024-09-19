@@ -3,15 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-  "editor_dynamicDecals_textures",
-  "editor_dynamicDecals_gizmo",
-  "editor_dynamicDecals_notification",
-  "editor_dynamicDecals_docs",
-  "editor_dynamicDecals_widgets",
-  "editor_dynamicDecals_settings",
-}
 local logTag = "editor_dynamicDecals_debugSection"
 local im = ui_imgui
 
@@ -99,10 +90,6 @@ local function sectionGui(guiId)
 
   if im.Button(string.format("%s##%s", "notification.add", guiId)) then
     notification.add("Debug", "test", "this is a test")
-  end
-
-  if im.Button(string.format("%s##%s", "SDF Gen", guiId)) then
-    FontRasterizer.generateSdfTexture("/art/dynamicDecals/textures/shape_star_5sides.png")
   end
 
   if im.Button(string.format("%s##%s", "Open 'Load/Save' section", guiId)) then

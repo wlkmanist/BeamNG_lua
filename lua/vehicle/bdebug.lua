@@ -43,6 +43,18 @@ end
 
 -- Following interfaces will initalize bdebugImpl
 
+M.initState = {}
+setmetatable(M.initState, {
+  __index = function(_, key)
+    initBDebugImpl()
+    return bdebugImpl.initState[key]  -- Redirect read access to the current bdebugImpl.initState
+  end,
+  __newindex = function(_, key, value)
+    initBDebugImpl()
+    bdebugImpl.initState[key] = value  -- Redirect write access to the current bdebugImpl.initState
+  end
+})
+
 M.state = {}
 setmetatable(M.state, {
   __index = function(_, key)
@@ -77,14 +89,24 @@ local function requestDrawnBeamsGE(geFuncName)
   bdebugImpl.requestDrawnBeamsGE(geFuncName)
 end
 
-local function partSelectedChanged()
+local function partsSelectedChanged()
   initBDebugImpl()
-  bdebugImpl.partSelectedChanged()
+  bdebugImpl.partsSelectedChanged()
 end
 
-local function showOnlySelectedPartMeshChanged()
+local function showOnlySelectedPartsMeshChanged()
   initBDebugImpl()
-  bdebugImpl.showOnlySelectedPartMeshChanged()
+  bdebugImpl.showOnlySelectedPartsMeshChanged()
+end
+
+local function recievePartsDataFromPartsList(parts)
+  initBDebugImpl()
+  bdebugImpl.recievePartsDataFromPartsList(parts)
+end
+
+local function syncSelectedPartsWithPartsList()
+  initBDebugImpl()
+  bdebugImpl.syncSelectedPartsWithPartsList()
 end
 
 local function isEnabled()
@@ -241,8 +263,10 @@ M.setState = setState
 M.requestState = sendState
 M.requestDrawnNodesGE = requestDrawnNodesGE
 M.requestDrawnBeamsGE = requestDrawnBeamsGE
-M.partSelectedChanged = partSelectedChanged
-M.showOnlySelectedPartMeshChanged = showOnlySelectedPartMeshChanged
+M.partsSelectedChanged = partsSelectedChanged
+M.showOnlySelectedPartsMeshChanged = showOnlySelectedPartsMeshChanged
+M.recievePartsDataFromPartsList = recievePartsDataFromPartsList
+M.syncSelectedPartsWithPartsList = syncSelectedPartsWithPartsList
 M.isEnabled = isEnabled
 M.setEnabled = setEnabled
 M.toggleEnabled = toggleEnabled

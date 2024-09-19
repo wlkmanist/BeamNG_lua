@@ -34,7 +34,7 @@ local function updateGFX(dt)
 end
 
 local function init()
-  M.ffiSensors = ffi.cast("struct{float sensorX; float sensorY; float sensorZ; float sensorZnonInertial; float yawAngVel;}*", obj:getSensorsFFI())
+  M.ffiSensors = obj:getSensorsFFI()
 
   if not v.data.refNodes then
     return

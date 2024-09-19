@@ -1,5 +1,5 @@
 {
-//"toggleMenues"            :{"cat":"menu",          "order":  1, "ctx": "tlua", "onDown"  :"guihooks.trigger('MenuItemNavigation','toggleMenues')", "actionMap": "Global", "title": "ui.inputActions.menu.toggleMenues.title", "desc": "ui.inputActions.menu.toggleMenues.description" },
+//"toggleMenues"            :{"cat":"menu",          "order":  1, "ctx": "tlua", "onDown"  :"guihooks.trigger('MenuItemNavigation','toggleMenues')", "title": "ui.inputActions.menu.toggleMenues.title", "desc": "ui.inputActions.menu.toggleMenues.description" },
 
 "toggle_help"             :{"cat":"menu",          "order":  2, "ctx": "tlua", "onDown"  :"guihooks.trigger('MenuOpenModule','help')", "actionMap": "Normal", "title": "ui.inputActions.menu.toggle_help.title", "desc": "ui.inputActions.menu.toggle_help.description" },
 "options"                 :{"cat":"menu",          "order":  3, "ctx": "tlua", "onDown"  :"guihooks.trigger('MenuOpenModule','options')", "actionMap": "Normal", "title": "ui.inputActions.menu.options.title", "desc": "ui.inputActions.menu.options.description" },

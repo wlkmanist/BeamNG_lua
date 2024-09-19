@@ -182,7 +182,7 @@ local function actionToCommands(action)
   end
 
   if actsOnUp and not actsOnDown then
-    log("W", "", "Action "..dumps(action).." uses 'onUp' instead of 'onDown'. This means extra input lag. Are you sure you have a legit reason to define the action like that?")
+    log("W", "", "Action "..dumps(action).." uses 'onUp' instead of 'onDown', which adds input lag. If you're the author of this action, please double check and see if you can switch to 'onDown' instead.")
   end
 
   return true, actionMap, actsOnChange, onChange, actsOnDown, onDown, actsOnUp, onUp, isRelative, ctx, isCentered

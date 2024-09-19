@@ -1085,7 +1085,7 @@ local function unpackMod(modname)
     Engine.Platform.taskbarSetProgressState(4)
     guihooks.trigger('modmanagerError', 'Error : could not safe delete: ' .. dumps(filename))
     log('E', 'unpackMod', 'Error : could not safe delete: ' .. dumps(filename))
-    messageBox("BeamNG.drive - Modmager",
+    messageBox("BeamNG - Modmager",
     "The zip file could not be deleted properlly.\nThis happens when it's open by another software.\nYou need to close that software and manually delete the file bellow :\n"..dumps(filename), 0, 0)
   end
   Engine.Platform.taskbarSetProgressState(0)

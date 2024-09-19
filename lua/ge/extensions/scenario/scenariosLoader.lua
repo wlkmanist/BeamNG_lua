@@ -43,9 +43,9 @@ local function processScenarioData(scenarioKey, scenarioData, scenarioFilename)
       scenarioData.official = isOfficialContentVPath(string.sub(scenarioFilename, 0))
       scenarioData.levelName = string.gsub(scenarioFilename, "(.*/)(.*)/scenarios/(.*)%.json", "%2")
       scenarioData.map = "ui.common.unknown"
-      if scenarioFilename ~= 'flowgraphEditor' then
+      if scenarioFilename ~= 'flowgraphEditor' and scenarioData.levelName ~= 'flowgraphEditor' then
         -- improve the data a little bit
-        scenarioData.mission = '/levels/'..scenarioData.levelName..'/main.level.json'
+        scenarioData.mission = path.getPathLevelMain(scenarioData.levelName)
 
         if not FS:fileExists(scenarioData.mission) then
           -- Fallback to old MIS file

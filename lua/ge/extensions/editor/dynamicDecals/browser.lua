@@ -3,11 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-  "editor_dynamicDecals_textures",
-  "editor_dynamicDecals_docs",
-}
 local logTag = "editor_dynamicDecals_browser"
 local im = ui_imgui
 

@@ -119,6 +119,8 @@ local function initSounds(cylinder, cylinderData)
     obj:playSFX(cylinder.movementSound)
   end
 
+  bdebug.setNodeDebugText("Hydraulics", movementLoopNodeId, cylinder.name .. " - Cylinder Movement Loop: " .. (cylinderMovementEvent or "no event"))
+
   local velocitySmoothingInRate = cylinderData.movementLoopVelocitySmoothingInRate or 5
   local velocitySmoothingStartAccel = cylinderData.movementLoopVelocitySmoothingStartAccel or 2
   local velocitySmoothingStopAccel = cylinderData.movementLoopVelocitySmoothingStopAccel or 2

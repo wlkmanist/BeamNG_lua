@@ -441,6 +441,7 @@ local function init(jbeamData, sharedFunctionTable)
 
   motors = {}
   local motorNames = jbeamData.motorNames or {"mainMotor"}
+  motorNames = type(motorNames) ~= "table" and {motorNames} or motorNames
   for _, v in ipairs(motorNames) do
     local motor = powertrain.getDevice(v)
     if motor then

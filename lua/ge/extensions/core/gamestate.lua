@@ -92,8 +92,11 @@ local function requestEnterLoadingScreen(tagName, func)
   if first and not loadingActive then
     log('D', logTag, 'sending show loading screen')
     guihooks.trigger('ChangeState', 'loading')
-    waitingForUIChangeToLoading = true
-
+    
+	if GFXDevice.devicePresent() then
+	   waitingForUIChangeToLoading = true
+	end
+	
     SFXSystem.setGlobalParameter("g_GameLoading", 1)
     SFXSystem.setGlobalParameter("g_FadeTimeMS", 1000) -- fade time in milliseconds
   end

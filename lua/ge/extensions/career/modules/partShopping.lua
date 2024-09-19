@@ -22,8 +22,9 @@ local partsToAdd = {}
 local slotToPartIdMap
 local slotsNiceName = {}
 local partsNiceName = {}
+local engineRunning
 
-local tutorialPartNames = {bx_cargo_load_box_m_seat_R = true, covet_cargo_load_box_M_seat_R = true, etki_cargo_load_box_M_seat_R = true}
+local tutorialPartNames = {cargo_load_box_M_seat_load_R = true}
 
 local tether -- tether object for aborting shopping when walking too far away
 
@@ -55,7 +56,8 @@ local function generatePart(partName, currentVehicleData, availableParts, slot, 
   part.partCondition = {integrityValue = 1, odometer = 0, visualValue = 1}
   part.description = availableParts[partName] or "no description found"
   part.tags = {}
-  part.slot = slot
+  part.containingSlot = slot
+  part.slot = jbeamData.slotType
   part.vehicleModel = vehicleObj:getJBeamFilename()
   part.year = 2023
   part.partShopId = partShopId
@@ -72,13 +74,16 @@ local function buildPartTree(slotName, availableParts, chosenParts, slotMap)
   partsNiceName[part.name] = part.niceName
 
   for slotName, slotInfo in pairs(partInfo.slotInfoUi) do
-    if slotMap[slotName] and not tableIsEmpty(slotMap[slotName]) then -- Filter out slots with no possible parts
-      local slotInfo = {slotName = slotName, slotNiceName = slotsNiceName[slotName]}
-      table.insert(part.slots, slotInfo)
+    for _, allowType in ipairs(slotInfo.allowTypes) do
+      if slotMap[allowType] and not tableIsEmpty(slotMap[allowType]) then -- Filter out slots with no possible parts
+        local slotInfo = {slotName = slotName, slotNiceName = slotsNiceName[slotName]}
+        table.insert(part.slots, slotInfo)
 
-      local partInSlotName = chosenParts[slotInfo.slotName]
-      if partInSlotName and partInSlotName ~= "" then
-        slotInfo.part = buildPartTree(slotInfo.slotName, availableParts, chosenParts, slotMap)
+        local partInSlotName = chosenParts[slotInfo.slotName]
+        if partInSlotName and partInSlotName ~= "" then
+          slotInfo.part = buildPartTree(slotInfo.slotName, availableParts, chosenParts, slotMap)
+          break
+        end
       end
     end
   end
@@ -93,7 +98,6 @@ local function generatePartShop()
   local slotMap = jbeamIO.getAvailableSlotMap(currentVehicleData.ioCtx)
   local vehicleObj = getCurrentVehicleObj()
 
-  -- for now: loop through the available slots for each part and create one part in the shop per slot (for parts that can fit into multiple slots)
   partsInShop = {}
   for _, partName in pairs(currentVehicleData.chosenParts) do
     if partName ~= "" then
@@ -105,10 +109,12 @@ local function generatePartShop()
       end
 
       for mainSlotName, chosenPartSlotInfo in pairs(partInfo.slotInfoUi) do
-        for _, allowedSlotPartName in ipairs(slotMap[mainSlotName] or {}) do
-          local part = generatePart(allowedSlotPartName, currentVehicleData, availableParts, mainSlotName, vehicleObj)
-          if part.slot ~= "main" and not part.description.isAuxiliary then
-            partsInShop[allowedSlotPartName] = part
+        for _, allowType in ipairs(chosenPartSlotInfo.allowTypes) do
+          for _, allowedSlotPartName in ipairs(slotMap[allowType] or {}) do
+            local part = generatePart(allowedSlotPartName, currentVehicleData, availableParts, mainSlotName, vehicleObj)
+            if part.containingSlot ~= "main" and not part.description.isAuxiliary then
+              partsInShop[allowedSlotPartName] = part
+            end
           end
         end
       end
@@ -131,8 +137,8 @@ local function buildSearchSlotList()
 
   -- Add the nice part name from the part that is in the vehicle
   for partName, part in pairs(partsInShop) do
-    if not searchSlotDict[part.slot].partNiceName then
-      searchSlotDict[part.slot].partNiceName = previewVehicle.config.parts[part.slot] and partsNiceName[previewVehicle.config.parts[part.slot]]
+    if not searchSlotDict[part.containingSlot].partNiceName then
+      searchSlotDict[part.containingSlot].partNiceName = previewVehicle.config.parts[part.containingSlot] and partsNiceName[previewVehicle.config.parts[part.containingSlot]]
     end
   end
 
@@ -167,16 +173,16 @@ local function updateShoppingCart()
   for slot, part in pairs(shoppingCart.partsIn) do
     shoppingCart.slotList[counter] = slot
     shoppingCart.partsInList[counter] = part
-    shoppingCart.partsOutList[counter] = shoppingCart.partsOut[part.slot]
-    slotsAdded[part.slot] = true
+    shoppingCart.partsOutList[counter] = shoppingCart.partsOut[part.containingSlot]
+    slotsAdded[part.containingSlot] = true
     counter = counter + 1
   end
 
   for slot, part in pairs(shoppingCart.partsOut) do
-    if not slotsAdded[part.slot] then
+    if not slotsAdded[part.containingSlot] then
       shoppingCart.slotList[counter] = slot
       shoppingCart.partsOutList[counter] = part
-      slotsAdded[part.slot] = true
+      slotsAdded[part.containingSlot] = true
       counter = counter + 1
     end
   end
@@ -204,7 +210,7 @@ local function sendShoppingDataToUI()
   shoppingData.vehicleSlotToPartMap = {}
   for partId, part in pairs(career_modules_partInventory.getInventory()) do
     if part.location == currentVehicle then
-      shoppingData.vehicleSlotToPartMap[part.slot] = part
+      shoppingData.vehicleSlotToPartMap[part.containingSlot] = part
     end
   end
   if not career_modules_linearTutorial.getTutorialFlag("partShoppingComplete") then
@@ -253,12 +259,13 @@ local function startShoppingActual(_originComputerId)
 
   M.setupTether()
 
-
   openUIState()
 
   if gameplay_walk.isWalking() then
     gameplay_walk.setRot(getCurrentVehicleObj():getPosition() - getPlayerVehicle(0):getPosition())
   end
+
+  core_vehicleBridge.requestValue(getCurrentVehicleObj(), function(data) engineRunning = data.result > 1 end, 'electricsValue', 'ignitionLevel')
 
   core_vehicleBridge.executeAction(be:getObjectByID(career_modules_inventory.getVehicleIdFromInventoryId(previewVehicle.id)),'setFreeze', true)
   extensions.hook("onPartShoppingStarted")
@@ -266,13 +273,9 @@ end
 
 local function setupTether()
     -- calculate the size of the vehicle to use for tethering
-  local vehCenter, vehRadius = vec3(), vec3()
   local oobb = getCurrentVehicleObj():getSpawnWorldOOBB()
-  for i = 0, 7 do
-    vehCenter = vehCenter + oobb:getPoint(i)
-  end
-  vehCenter = vehCenter / 8
-  vehRadius = (oobb:getPoint(0) - oobb:getPoint(6)):length()
+  local vehCenter = oobb:getCenter()
+  local vehRadius = (oobb:getPoint(0) - oobb:getPoint(6)):length()
   -- calculate computer position
   local computerPos = freeroam_facilities.getAverageDoorPositionForFacility(freeroam_facilities.getFacility("computer",originComputerId))
 
@@ -280,7 +283,7 @@ local function setupTether()
   -- this smoothly scales the radius from 100% for 4m or less distance to 150% for 12m or more radius
   local radiusMultipler = ((clamp(distBetweenVehicleAndComputer,4,12)-4)/16 + 1)
   -- these radii are tuned for the wcusa garage!
-  tether = career_modules_tether.startCapsuleTetherBetweenStatics(computerPos, 6*radiusMultipler, vehCenter, vehRadius + (5*radiusMultipler), M.cancelShopping)
+  tether = career_modules_tether.startCapsuleTetherBetweenStatics(computerPos, 10*radiusMultipler, vehCenter, vehRadius + (9*radiusMultipler), M.cancelShopping)
 end
 
 local function startShopping(inventoryId, _originComputerId)
@@ -318,8 +321,9 @@ M.focusSlot = focusSlot
 
 local function getDefaultPartName(jbeamData, slotName)
   for _, slot in ipairs(jbeamData.slots2) do
-    -- TODO this should probably check if "slotName" is any of the allowTypes, not just the first
-    if slot.allowTypes[1] == slotName and slot.default and slot.default ~= "" then return slot.default end
+    for _, allowType in ipairs(slot.allowTypes) do
+      if allowType == slotName and slot.default and slot.default ~= "" then return slot.default end
+    end
   end
 end
 
@@ -344,7 +348,7 @@ local function getNeededAdditionalParts(parts, inventoryId)
   local combinedSlotToPartMap = deepcopy(slotToPartIdMap[inventoryId])
   for _, part in pairs(parts) do
     if part then
-      combinedSlotToPartMap[part.slot] = true
+      combinedSlotToPartMap[part.containingSlot] = true
     end
   end
 
@@ -363,7 +367,7 @@ local function getNeededAdditionalParts(parts, inventoryId)
             local newGeneratedPart = generatePart(partNameToGenerate, currentVehicleData, availableParts, slotName, vehicleObj)
 
             if newGeneratedPart then -- the default part exists in the jbeam
-              resultParts[newGeneratedPart.slot] = newGeneratedPart
+              resultParts[newGeneratedPart.containingSlot] = newGeneratedPart
               addedParts = true
             end
           end
@@ -415,7 +419,7 @@ local function updateInstalledParts()
 
   -- Add new parts to preview vehicle data
   for _, part in pairs(shoppingCart.partsIn) do
-    spawnOptions.config.parts[part.slot] = part.name
+    spawnOptions.config.parts[part.containingSlot] = part.name
   end
 
   -- Find and remove parts from the shopping cart that are not compatible anymore after the installed parts have changed
@@ -431,6 +435,11 @@ local function updateInstalledParts()
     previewVehicle.partConditions[part.name] = part.partCondition
   end
 
+  if not engineRunning then
+    local additionalVehicleData = {spawnWithEngineRunning = false}
+    core_vehicle_manager.queueAdditionalVehicleData(additionalVehicleData, getCurrentVehicleObj():getID())
+  end
+
   core_vehicles.replaceVehicle(previewVehicle.model, spawnOptions, getCurrentVehicleObj())
   getCurrentVehicleObj():queueLuaCommand(string.format("partCondition.initConditions(%s, nil, nil, nil, {%s})", serialize(previewVehicle.partConditions), serialize(career_modules_painting.getPrimerColor())))
   -- Doing the callback immediately will result in wrong values for some parts, so we do it one frame later
@@ -443,14 +452,14 @@ end
 
 local function removePart(part)
   if not shoppingSessionActive then return end
-  partsToAdd[part.slot] = nil
+  partsToAdd[part.containingSlot] = nil
   updateInstalledParts()
 end
 
 local function installPart(part)
   if not shoppingSessionActive then return end
   part.sourcePart = true
-  partsToAdd[part.slot] = part
+  partsToAdd[part.containingSlot] = part
   updateInstalledParts()
 
   extensions.hook("onPartShoppingPartInstalled",{part = part})
@@ -467,13 +476,14 @@ end
 
 local function removePartBySlot(slot)
   for partName, part in pairs(partsInShop) do
-    if part.slot == slot then
+    if part.containingSlot == slot then
       removePart(part)
       return
     end
   end
 end
 
+local closeMenuAfterSaving
 local function closeMenu()
   if originComputerId then
     local computer = freeroam_facilities.getFacility("computer", originComputerId)
@@ -487,16 +497,26 @@ local function closeMenu()
   end
 end
 
-local function endShopping()
+local function endShopping(_closeMenuAfterSaving)
+  closeMenuAfterSaving = career_career.isAutosaveEnabled() and _closeMenuAfterSaving
   shoppingSessionActive = false
   initialVehicleParts = nil
-  closeMenu()
+  if not closeMenuAfterSaving then
+    closeMenu()
+  end
 end
 
 local function cancelShopping()
   if shoppingSessionActive then
     career_modules_inventory.spawnVehicle(currentVehicle, 2)
     endShopping()
+  end
+end
+
+local function onVehicleSaveFinished()
+  if closeMenuAfterSaving then
+    closeMenu()
+    closeMenuAfterSaving = nil
   end
 end
 
@@ -534,11 +554,11 @@ local function applyShopping()
   local vehicles = career_modules_inventory.getVehicles()
   vehicles[currentVehicle] = previewVehicle
   updateInventory()
-  endShopping()
+  endShopping(true)
   local buyingLabel = getBuyingLabel()
   career_modules_playerAttributes.addAttributes({money=-shoppingCart.total}, {tags={"partsBought", "buying"},label=buyingLabel})
   if career_career.isAutosaveEnabled() then
-    career_saveSystem.saveCurrent()
+    career_saveSystem.saveCurrent({currentVehicle})
   else
     career_modules_inventory.updatePartConditions(nil, currentVehicle)
   end
@@ -571,23 +591,30 @@ local function onComputerAddFunctions(menuData, computerFunctions)
 
   for _, vehicleData in ipairs(menuData.vehiclesInGarage) do
     local inventoryId = vehicleData.inventoryId
-    local permissionStatus, permissionLabel = career_modules_permissions.getStatusForTag("vehicleModification")
-
-    local buttonDisabled =
-      vehicleData.needsRepair or
-      menuData.tutorialTuningActive or
-      permissionStatus == "forbidden"
-
-    local label = "Purchase Parts" ..(permissionLabel and ("\n"..permissionLabel) or "")
-
     local computerFunctionData = {
       id = "partShop",
-      label = label,
+      label = "Purchase Parts",
       callback = function() startShopping(inventoryId, menuData.computerFacility.id) end,
-      disabled = buttonDisabled
+      order = 1
     }
+    -- vehicle broken
     if vehicleData.needsRepair then
-      computerFunctionData.disableReason = "fix vehicle body first"
+      computerFunctionData.disabled = true
+      computerFunctionData.reason = career_modules_computer.reasons.needsRepair
+    end
+    -- tutorial active
+    if menuData.tutorialTuningActive then
+      computerFunctionData.disabled = true
+      computerFunctionData.reason = career_modules_computer.reasons.tutorialActive
+    end
+
+    -- generic gameplay reason
+    local reason = career_modules_permissions.getStatusForTag({"partBuying", "vehicleModification"}, {inventoryId = inventoryId})
+    if not reason.allow then
+      computerFunctionData.disabled = true
+    end
+    if reason.permission ~= "allowed" then
+      computerFunctionData.reason = reason
     end
 
     computerFunctions.vehicleSpecific[inventoryId][computerFunctionData.id] = computerFunctionData
@@ -609,5 +636,6 @@ M.isShoppingSessionActive = isShoppingSessionActive
 
 M.setupTether = setupTether
 M.onComputerAddFunctions = onComputerAddFunctions
+M.onVehicleSaveFinished = onVehicleSaveFinished
 
 return M

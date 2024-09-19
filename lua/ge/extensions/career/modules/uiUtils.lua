@@ -11,7 +11,7 @@ local function getCareerStatusData()
   local data = {}
   data.money = career_modules_playerAttributes.getAttributeValue("money")
   data.beamXP = career_modules_playerAttributes.getAttributeValue("beamXP")
-  data.bonusStars = career_modules_playerAttributes.getAttributeValue("bonusStars")
+  data.vouchers = career_modules_playerAttributes.getAttributeValue("vouchers")
   return data
 end
 M.getCareerStatusData = getCareerStatusData

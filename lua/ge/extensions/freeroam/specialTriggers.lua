@@ -311,13 +311,34 @@ local function useTrigger(data) -- called whenever a trigger or zone detects an 
   end
 end
 
+local function setTriggerActive(tName, active, instant) -- manually sets a trigger active state
+  -- the instant bool forces the timer to be ignored
+  if not tName or not triggers[tName] then return end
+
+  local data = triggers[tName]
+  if active == nil then active = not data.active print(tostring(active)) end
+  data.triggerName = tName
+  data.event = active and 'enter' or 'exit'
+  data.vehId = 0 -- untested, but this forces the trigger to stay active
+  data.valid = true
+
+  useTrigger(data)
+  if instant then
+    setTriggerObjects(tName, active) -- instant activation
+    data.timer = -1
+    data.stepTimer = -1
+    data.stack = 0
+  end
+end
+
 local function onTick() -- tick to check for zones, if applicable
-  if not gameplay_city then return end
+  if not M.active or not gameplay_city then return end
+
   local zones = gameplay_city.getSites() and gameplay_city.getSites().zones
   if not zones or not zones.sorted[1] then return end
 
   for k, v in pairs(triggers) do
-    if v.type == 'zone' and zones.byName[k] then
+    if v.type == 'zone' and zones.byName[k] and not v.vehIds[0] then -- veh id of 0 blocks detection
       local valid = false
       local data = {}
       for _, veh in ipairs(getAllVehiclesByType()) do
@@ -339,6 +360,8 @@ local function onTick() -- tick to check for zones, if applicable
 end
 
 local function onVehicleSwitched(oldId, newId) -- temporarily sets the state to false if the new vehicle meets the requirements
+  if not M.active then return end
+
   for k, v in pairs(triggers) do
     if v.vehIds and isVehicleValid(k, newId) then
       local data = {}
@@ -352,6 +375,8 @@ local function onVehicleSwitched(oldId, newId) -- temporarily sets the state to 
 end
 
 local function onVehicleDestroyed(vehId) -- clears vehicle id from tables
+  if not M.active then return end
+
   for k, v in pairs(triggers) do
     if v.vehIds then
       v.vehIds[vehId] = nil
@@ -360,6 +385,8 @@ local function onVehicleDestroyed(vehId) -- clears vehicle id from tables
 end
 
 local function onVehicleActiveChanged(vehId, active)
+  if not M.active then return end
+
   if not active then
     onVehicleDestroyed(vehId)
   end
@@ -384,8 +411,9 @@ local function onUpdate(dt, dtSim)
 
     if v.objects then
       for name, data in pairs(v.objects) do
-        local obj = scenetree.findObject(name)
+        local obj = scenetree.objectExists(name)
         if obj and v.stack > 0 then
+          obj = scenetree.findObject(name)
           local delay = v.active and data.enterDelay or data.exitDelay
           local delayRandomMin = v.active and data.enterRandomMin or data.exitRandomMin
           local delayRandomMax = v.active and data.enterRandomMax or data.exitRandomMax
@@ -482,7 +510,7 @@ local function onUpdate(dt, dtSim)
 end
 
 local function onBeamNGTrigger(data)
-  if not data.triggerName then return end
+  if not M.active or not data.triggerName then return end
 
   useTrigger(data)
 end
@@ -504,6 +532,7 @@ M.setupTriggers = setupTriggers
 M.addTrigger = addTrigger
 M.removeTrigger = removeTrigger
 M.getTriggers = getTriggers
+M.setTriggerActive = setTriggerActive
 
 M.onVehicleSwitched = onVehicleSwitched
 M.onVehicleDestroyed = onVehicleDestroyed

@@ -35,7 +35,6 @@ local invWheelCount = 0
 local speedoWheelCount = 0
 local initialSpeedoWheelCount = 0
 local invSpeedoWheelCount = 0
-local ffiWheelCoreData
 
 local minBrakeMass = 1
 local brakeSmokeEfficiencyThreshold = 0.75
@@ -338,6 +337,10 @@ local function updateWheelsGFX(dt)
     end
 
     wd.dynamicRadius = wd.dynamicRadiusSmoother:get(wd.lastTreadContactNode and obj:nodeLineSectionDistance(wd.lastTreadContactNode, wd.node1, wd.node2) or wd.radius, dt)
+
+    if wd.contactMaterialID1 == 32 or wd.contactMaterialID2 == 32 then
+      beamstate.deflateTire(wd.cid)
+    end
   end
 
   warningLightsTimer = warningLightsTimer + dt
@@ -885,10 +888,6 @@ local function initThermals()
   end
 end
 
-ffi.cdef [[
-  void bng_applyTorqueAxisCouple(void *obj, float torque, int axisn1, int axisn2, int node);
-]]
-
 local function initWheels()
   -- startPosition = nil
   -- state = "idle"
@@ -908,7 +907,6 @@ local function initWheels()
   M.treadNodeLookup = {}
 
   local maxWheelCid = 0
-  ffiWheelCoreData = ffi.cast("struct{float propulsionTorque; float brakingTorque; float engineReactionTorque; float angularVelocity; float angularVelocityBrakeCouple; float totalTorqueApplied; float brakeTorqueApplied;}*", obj:getWheelsFFI())
 
   local count = tableSizeC(v.data.wheels or {})
   for i = 0, count - 1, 1 do
@@ -990,7 +988,7 @@ local function initWheels()
         angularVelocityBrakeCouple = 0,
         lastAngularVelocity = 0,
         lastAngularVelocityBrakeCouple = 0,
-        coreData = ffiWheelCoreData[wd.cid],
+        coreData = obj:getWheelFFI(wd.cid),
         brakeInputSplit = clamp(wd.brakeInputSplit or 1, 0, 1),
         brakeSplitCoef = clamp(wd.brakeSplitCoef or 1, 0, 1),
         brakePressureDelay = newLinearSmoothing(physicsDt, (wd.brakeTorque or 0) / ((wd.brakePressureInDelay or 0.05) + 1e-30), (wd.brakeTorque or 0) / ((wd.brakePressureOutDelay or 0.1) + 1e-30)),

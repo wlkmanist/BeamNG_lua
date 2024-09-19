@@ -57,8 +57,8 @@ local function getQuickraceList()
  --dump(files)
   for _, levelName in ipairs(files) do
     --print(levelName)
-    local path = '/levels/' .. levelName .. '/quickrace/'
-    local quickraceFiles =  FS:findFiles(path, '*.json', -1, true, false)
+    local levelPath = '/levels/' .. levelName .. '/quickrace/'
+    local quickraceFiles =  FS:findFiles(levelPath, '*.json', -1, true, false)
       local newLevel = {}
     if #quickraceFiles > 0 or trackBuilderTracks[levelName] ~= nil  then -- only add the level if it has quickraces inside!
 
@@ -98,7 +98,7 @@ local function getQuickraceList()
       if levelName == "smallgrid" then
         newLevel.previews = {"/ui/images/trackEdit.png"}
       end
-      newLevel.mission = 'levels/'..levelName..'/main.level.json'
+      newLevel.mission = path.getPathLevelMain(levelName)
 
       --if newLevel.levelName == "smallgrid" then
       --  newLevel.tracks = M.getTrackEditorTracks(quickraceFiles, levelName)
@@ -156,9 +156,6 @@ local function getQuickraceList()
     --  end
      end
     end
-
-
-
   return levels
 end
 
@@ -326,13 +323,13 @@ local function loadTrackBuilderJSON(originalFilename)
   if FS:fileExists(filename) then
     local read = jsonReadFile(filename)
     if not read then
-        log('I',logTag,'No track found in file Documents/BeamNG.drive/'..filename)
+        log('I',logTag,'No track found in file Documents/BeamNG/'..filename)
         return nil
     end
     return read
 
   else
-      log('I',logTag,'Could not find file Documents/BeamNG.drive/'..filename)
+      log('I',logTag,'Could not find file Documents/BeamNG/'..filename)
       return nil
   end
 end

@@ -1097,11 +1097,6 @@ M.handleOpenCamera = function(request)
     return false
   end
 
-  if hostOS == 'linux' then
-    reportMissingLinuxFeature(request)
-    return false
-  end
-
   local args = {}
   args.requestedUpdateTime = request['updateTime']
   args.updatePriority = request['priority']
@@ -1300,11 +1295,6 @@ end
 M.handleOpenLidar = function(request)
   if not ResearchVerifier.isTechLicenseVerified() then
     reportMissingLicenseFeature(request)
-    return false
-  end
-
-  if hostOS == 'linux' then
-    reportMissingLinuxFeature(request)
     return false
   end
 
@@ -1509,11 +1499,6 @@ M.handleOpenUltrasonic = function(request)
     return false
   end
 
-  if hostOS == 'linux' then
-    reportMissingLinuxFeature(request)
-    return false
-  end
-
   local args = {}
   args.shmemName = request['shmemHandle']
   args.shmemSize = request['shmemSize']
@@ -1654,11 +1639,6 @@ end
 M.handleOpenRadar = function(request)
   if not ResearchVerifier.isTechLicenseVerified() then
     reportMissingLicenseFeature(request)
-    return false
-  end
-
-  if hostOS == 'linux' then
-    reportMissingLinuxFeature(request)
     return false
   end
 
@@ -3365,8 +3345,10 @@ M.handleSetLicensePlate = function(request)
 end
 
 M.handleGetSystemInfo = function(request)
-  local response = {}
-  response['tech'] = ResearchVerifier.isTechLicenseVerified()
+  local response = {
+    type = 'GetSystemInfo',
+    tech = ResearchVerifier.isTechLicenseVerified()
+  }
   if request['os'] then
     response['os'] = Engine.Platform.getOSInfo()
   end
@@ -3383,13 +3365,45 @@ M.handleGetSystemInfo = function(request)
   request:sendResponse(response)
 end
 
+-- Imports a heightmap from beamngpy (the old way).  THIS IS DEPRECATED AS OF 08/08/2024.
 M.handleImportHeightmap = function(request)
   extensions.tech_terrainImporter.importHeightmap(request.data, request.w, request.h, request.scale, request.zMin, request.zMax, request.isYFlipped)
-  log('I', logTag, 'Heightmap imported')
+  log('I', logTag, 'Heightmap imported.')
   request:sendACK('CompletedImportHeightmap')
 end
 
+-- Imports a terrain and lays a collection of roads on it along with some terraforming.
+-- The path of the terrain .png is provided. Roads are provided as a table/dictionary.
+M.handleTerrainAndRoadImport = function(request)
+  extensions.tech_terrainImporter.terrainAndRoadImport(request.pngPath, request.roads, request.DOI, request.margin, request.zMax)
+  log('I', logTag, 'Terrain and roads - imported.')
+  request:sendACK('CompletedTerrainAndRoadImport')
+end
+
+-- Creates a a terrain from a collection of peaks and troughs on a grid, and lays a collection of roads on them, along with some terraforming.
+-- The peaks and roads are provided as table/dictionaries.
+M.handlePeaksAndRoadImport = function(request)
+  extensions.tech_terrainImporter.peaksAndRoadImport(request.peaks, request.roads, request.DOI, request.margin)
+  log('I', logTag, 'Peaks and roads - imported.')
+  request:sendACK('CompletedPeaksAndRoadImport')
+end
+
+-- Resets the terrain and roads created by a call to the terrain+roads or peaks+roads importer functions (see above).
+M.handleResetTerrain = function(request)
+  extensions.tech_terrainImporter.reset()
+  log('I', logTag, 'Terrain and roads - reset.')
+  request:sendACK('CompletedResetTerrain')
+end
+
+-- Opens/closes the world editor, by call.
+M.handleOpenCloseWorldEditor = function(request)
+  extensions.tech_terrainImporter.toggleWorldEditor(request.isOpen)
+  log('I', logTag, 'Terrain and roads - toggle world editor open/close.')
+  request:sendACK('CompletedOpenCloseWorldEditor')
+end
+
 -- Compute the vehicle space position of a sensor, given the local reference frame coefficients.
+-- [This is used with the ADAS Sensor Configuration tool].
 local function coeffs2PosVS(c, veh)
   local fwd, up = veh:getDirectionVector(), veh:getDirectionVectorUp()
   fwd:normalize()
@@ -3399,6 +3413,7 @@ local function coeffs2PosVS(c, veh)
 end
 
 -- Compute the vehicle space/world space frame of a sensor, given the local reference frame.
+-- [This is used with the ADAS Sensor Configuration tool].
 local function sensor2VS(dirLoc, upLoc, veh)
   local fwd, up = veh:getDirectionVector(), veh:getDirectionVectorUp()
   fwd:normalize()

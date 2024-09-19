@@ -144,6 +144,8 @@ end
 
 local function cycleTimeOfDay(controlLights)
   local v = getTimeOfDay()
+  if not v then return end
+
   local t = v.time
   local lights = 2
   if t < 0.2 then
@@ -619,12 +621,12 @@ local function submitGroundModel(k, v)
   gm.strength = v.strength or 1
   gm.collisiontype = 0
   if type(v.collisiontype) == 'string' then
-    gm.collisiontype = particles.getMaterialIDByName(materials, v.collisiontype)
+    gm.collisiontype = particles.getOrAddMaterialIDByName(materials, v.collisiontype)
     --print(v.collisiontype .. ' -> ' .. tostring(gm.collisiontype))
   end
   gm.fluidDensity = v.fluidDensity or 200
   gm.flowConsistencyIndex = v.flowConsistencyIndex or 10000
-  gm.flowBehaviorIndex = v.flowBehaviorIndex or v.flowBehaviourIndex or 0.5 -- omg ...
+  gm.flowBehaviorIndex = v.flowBehaviorIndex or 0.5
   gm.dragAnisotropy = v.dragAnisotropy or 0
   gm.skidMarks = v.skidMarks or false
   gm.shearStrength = v.shearStrength or 0

@@ -3,10 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-  "editor_dynamicDecals_docs",
-}
 local logTag = "editor_dynamicDecals_vehicleColorPalette"
 local im = ui_imgui
 local docs = nil
@@ -435,7 +431,7 @@ local function setup(tool_in)
   tool.registerSection("Vehicle Color Palette", onGui, 120, false, {}, {
     {icon = editor.icons.help_outline, tooltip = "Docs", fn = function() docs.selectSection({"Vehicle Color Palette"}) end},
   })
-  tool.registerEditorOnUpdateFn("docs", editModeUpdate)
+  tool.registerEditorOnUpdateFn("vehicleColorPalette", editModeUpdate)
   docs.register({section = {"Vehicle Color Palette"}, guiFn = documentationGui})
 end
 

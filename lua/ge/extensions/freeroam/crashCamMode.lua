@@ -514,7 +514,7 @@ local function onUpdate(dtReal, dtSim)
   if not crashCamActive then
     -- crash cam is not active
     if timeSinceLastCrashCam > crashCamCooldown
-      and core_replay.getState() ~= "playing"
+      and core_replay.getState() ~= "playback"
       and not commands.isFreeCamera()
       and simTimeAuthority.get() == 1
       and not hasTeleported

@@ -90,6 +90,7 @@ local function sendInitialDataToUI()
   local uiUpdateData = {}
   uiUpdateData.energyTypesToLocalUnits = localUnits
   uiUpdateData.energyTypes = energyTypes
+  uiUpdateData.gasStationName = gasStation.facility.name
   uiUpdateData.fuelData = {}
   for i, tank in ipairs(fuelData) do
     local tankData = {}
@@ -159,7 +160,7 @@ local function startTransaction(_gasStation)
   if not career_modules_inventory.getCurrentVehicle() then return end
   gasStation = _gasStation
   pushActionMap("Refueling")
-  core_vehicleBridge.executeAction(getPlayerVehicle(0),'setIgnitionLevel', 0)
+  core_vehicleBridge.executeAction(getPlayerVehicle(0), 'setIgnitionLevel', 0)
   startAngularUI()
   extensions.hook("onRefuelingStartTransaction")
 end
@@ -283,7 +284,8 @@ local function stopFuelingType(energyType)
   applyFuelData()
 end
 
-local function changeFlowRate(factor)
+local function onChangeFlowRate(factor)
+  if not gasStation then return end
   if not defaultEnergyType then
     initializeDefaultEnergyType()
     if not defaultEnergyType then
@@ -337,10 +339,16 @@ local function payPrice()
     Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
   end
   stopFuelingType()
-  career_modules_playerAttributes.addAttributes({money=-overallPrice}, {tags={"fuel","buying"},label = "Refuelled at "..(translateLanguage(gasStation.facility.name, gasStation.facility.name, true))})
+
+  if career_modules_inventory.getVehicles()[career_modules_inventory.getCurrentVehicle()].loanType == "work" then
+    ui_message(string.format("Fuel paid for by the company"), 6, "refueling")
+  else
+    career_modules_playerAttributes.addAttributes({money=-overallPrice}, {tags={"fuel","buying"},label = "Refuelled at "..(translateLanguage(gasStation.facility.name, gasStation.facility.name, true))})
+    gameplay_statistic.metricAdd("career/fuel/paidPrice.money", overallPrice)
+  end
+
   endTransaction()
   extensions.hook("onPaidRefuelling", overallPrice)
-  gameplay_statistic.metricAdd("career/fuel/paidPrice.money", overallPrice)
 end
 
 local function uiButtonStartFueling(energyType)
@@ -509,7 +517,7 @@ M.getFuelData = getFuelData
 M.isCurrentlyFueling = isCurrentlyFueling
 M.getFuelingData = getFuelingData
 M.payPrice = payPrice
-M.changeFlowRate = changeFlowRate
+M.onChangeFlowRate = onChangeFlowRate
 
 -- Called by UI
 M.uiButtonStartFueling = uiButtonStartFueling

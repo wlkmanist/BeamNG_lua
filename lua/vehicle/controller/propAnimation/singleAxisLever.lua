@@ -65,7 +65,7 @@ local function init(jbeamData)
   if type(jbeamData.shiftSoundNode_nodes) == "table" and jbeamData.shiftSoundNode_nodes[1] and type(jbeamData.shiftSoundNode_nodes[1]) == "number" then
     shiftSoundNodeId = jbeamData.shiftSoundNode_nodes[1]
   else
-    log("W", "shifterAnimation/singleAxisLever.init", "Can't find node id for sound location. Specified data: " .. dumps(jbeamData.shiftSoundNode_nodes))
+    log("W", "propAnimation/singleAxisLever.init", "Can't find node id for sound location. Specified data: " .. dumps(jbeamData.shiftSoundNode_nodes))
     shiftSoundNodeId = 0
   end
 

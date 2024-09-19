@@ -147,7 +147,7 @@ local function tabRoute() -- debug navgraph route with a start position, finish 
     for i, marker in ipairs(routeMarkers) do
       table.insert(path, marker.pos)
     end
-    core_groundMarkers.setFocus(path)
+    core_groundMarkers.setPath(path)
   end
   im.tooltip("Sends route data to the ground markers system.")
   im.SameLine()

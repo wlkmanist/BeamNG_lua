@@ -91,6 +91,27 @@ local pickedBeams = {}
 M.nodeDataFromVELua = {}
 M.beamDataFromVELua = {}
 
+local function getNodeDisplayText(node)
+  local dispText = node.name or tostring(node.cid)
+  if node.tag then
+    dispText = dispText .. ' / ' .. tostring(node.tag)
+  end
+  return dispText
+end
+
+local function getBeamDisplayText(beam)
+  local node1 = vEditor.vdata.nodes[beam.id1]
+  local node2 = vEditor.vdata.nodes[beam.id2]
+  local node1Name = node1.name or tostring(node1.cid)
+  local node2Name = node2.name or tostring(node2.cid)
+
+  local dispText = node1Name .. " - " .. node2Name .. ' (' .. (beam.name and (beam.name..' '..tostring(beam.cid)) or tostring(beam.cid)) .. ')'
+  if beam.tag then
+    dispText = dispText .. ' / ' .. tostring(beam.tag)
+  end
+  return dispText
+end
+
 local function setLinePointFromXnorm(outVec, p0, p1, xnorm)
   outVec:set(p0.x + (p1.x-p0.x) * xnorm, p0.y + (p1.y-p0.y) * xnorm, p0.z + (p1.z-p0.z) * xnorm)
 end
@@ -128,18 +149,18 @@ local function getVELuaBeamData(id, varName, luaFunction)
 end
 
 local nodeDataRendering = {
-  {name = "Displacement",     enabled = im.BoolPtr(false),    units = "m",      digitsBeforeDP = 0,   color = rainbowColor(8, 0, 1),   data = function(id) return vEditor.vehicle:getNodePosition(id):length() end, plotData = {}},
-  {name = "Speed",            enabled = im.BoolPtr(true),     units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 1, 1),   data = function(id) return vEditor.vehicle:getNodeVelocity(id):length() end, plotData = {}},
-  {name = "Relative Speed",   enabled = im.BoolPtr(false),    units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 2, 1),   data = function(id) return (vEditor.vehicle:getVelocity() - vEditor.vehicle:getNodeVelocity(id)):length() end, plotData = {}},
-  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 3, 1),   data = function(id) getVELuaNodeData(id, "force", "obj:getNodeForceVector(" .. id .. "):length()") return M.nodeDataFromVELua[id].force end, plotData = {}}
+  {name = "Displacement",     enabled = im.BoolPtr(false),    units = "m",      digitsBeforeDP = 0,   color = rainbowColor(8, 2, 1),   data = function(id) return vEditor.vehicle:getNodePosition(id):length() end, plotData = {}},
+  {name = "Speed",            enabled = im.BoolPtr(true),     units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 3, 1),   data = function(id) return vEditor.vehicle:getNodeVelocity(id):length() end, plotData = {}},
+  {name = "Relative Speed",   enabled = im.BoolPtr(false),    units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 4, 1),   data = function(id) return (vEditor.vehicle:getVelocity() - vEditor.vehicle:getNodeVelocity(id)):length() end, plotData = {}},
+  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 5, 1),   data = function(id) getVELuaNodeData(id, "force", "obj:getNodeForceVector(" .. id .. "):length()") return M.nodeDataFromVELua[id].force end, plotData = {}}
 }
 
 local beamDataRendering = {
-  {name = "Length",           enabled = im.BoolPtr(true),     units = "m",      digitsBeforeDP = 0,   color = rainbowColor(8, 0, 1),   data = function(id) return getBeamLength(id) end, plotData = {}},
-  {name = "Speed",            enabled = im.BoolPtr(false),    units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 1, 1),   data = function(id) getVELuaBeamData(id, "speed", "obj:getBeamVelocity(" .. id .. ")") return M.beamDataFromVELua[id].speed end, plotData = {}},
-  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 2, 1),   data = function(id) getVELuaBeamData(id, "force", "obj:getBeamForce(" .. id .. ")") return M.beamDataFromVELua[id].force end, plotData = {}},
-  {name = "Stress",           enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 3, 1),   data = function(id) getVELuaBeamData(id, "stress", "(select(1,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].stress end, plotData = {}},
-  {name = "Damping",          enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 4, 1),   data = function(id) getVELuaBeamData(id, "damping", "(select(2,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].damping end, plotData = {}},
+  {name = "Length",           enabled = im.BoolPtr(true),     units = "m",      digitsBeforeDP = 0,   color = rainbowColor(8, 2, 1),   data = function(id) return getBeamLength(id) end, plotData = {}},
+  {name = "Speed",            enabled = im.BoolPtr(false),    units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 3, 1),   data = function(id) getVELuaBeamData(id, "speed", "obj:getBeamVelocity(" .. id .. ")") return M.beamDataFromVELua[id].speed end, plotData = {}},
+  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 4, 1),   data = function(id) getVELuaBeamData(id, "force", "obj:getBeamForce(" .. id .. ")") return M.beamDataFromVELua[id].force end, plotData = {}},
+  {name = "Stress",           enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 5, 1),   data = function(id) getVELuaBeamData(id, "stress", "(select(1,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].stress end, plotData = {}},
+  {name = "Damping",          enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 6, 1),   data = function(id) getVELuaBeamData(id, "damping", "(select(2,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].damping end, plotData = {}},
 }
 
 local beamTypesRendering = {}
@@ -229,8 +250,7 @@ local function pickNode()
   if not chosenNodeData then return end
 
   -- After choosing closest node, if user left clicked then pick it, otherwise highlight it
-  local chosenNodeID = chosenNodeData.node.cid
-  local chosenNodeName = chosenNodeData.node.name
+  local dispText = getNodeDisplayText(chosenNodeData.node)
   local chosenNodeKeyInPickedNodes = chosenNodeData.keyInPickedNodes
 
   local chosenNodePos = chosenNodeData.pos
@@ -247,7 +267,7 @@ local function pickNode()
   else -- on hover
     -- Highlight node
     debugDrawer:drawSphere(chosenNodePos, nodeSelectedRadius, hoveredColor)
-    debugDrawer:drawTextAdvanced(chosenNodePos, chosenNodeName or chosenNodeID, textColor, true, false, textBackgroundColor)
+    debugDrawer:drawTextAdvanced(chosenNodePos, dispText, textColor, true, false, textBackgroundColor)
   end
 end
 
@@ -324,14 +344,11 @@ local function pickBeam()
   if not chosenBeamData then return end
 
   -- After choosing closest beam, if user left clicked then pick it, otherwise highlight it
-  local chosenBeamID = chosenBeamData.beam.cid
   local chosenBeamKeyInPickedBeams = chosenBeamData.keyInPickedBeams
 
   local chosenBeamPos1 = chosenBeamData.pos1
   local chosenBeamPos2 = chosenBeamData.pos2
   local chosenBeamCenterPos = chosenBeamData.pos
-  local chosenBeamNode1 = vEditor.vdata.nodes[chosenBeamData.beam.id1]
-  local chosenBeamNode2 = vEditor.vdata.nodes[chosenBeamData.beam.id2]
 
   if leftClicked then -- on left click
     -- Picked beam!
@@ -347,11 +364,11 @@ local function pickBeam()
     --local beamColor = beamColors[chosenBeamData.beam.beamType or 0]
     --local newBeamColor = ColorF(1 - beamColor.r, 1 - beamColor.g, 1 - beamColor.b, beamColor.a)
 
-    local text = string.format("%s - %s (%s)", chosenBeamNode1.name or chosenBeamNode1.cid, chosenBeamNode2.name or chosenBeamNode2.cid, chosenBeamID)
+    local dispText = getBeamDisplayText(chosenBeamData.beam)
 
     debugDrawer:drawCylinder(chosenBeamPos1, chosenBeamPos2, beamSelectedRadius, beamHoveredColor)
     --debugDrawer:drawLineInstance(chosenBeamPos1, chosenBeamPos2, beamHoveredRenderSize, beamHoveredColor)
-    debugDrawer:drawTextAdvanced(chosenBeamCenterPos, text, textColor, true, false, textBackgroundColor, false, false)
+    debugDrawer:drawTextAdvanced(chosenBeamCenterPos, dispText, textColor, true, false, textBackgroundColor, false, false)
   end
 end
 
@@ -360,20 +377,15 @@ local tempBeamCenterPos = vec3()
 local function renderPickedJBeamObjs()
   for k, node in pairs(pickedNodes) do
     local nodeID = node.cid
-    local nodeName = node.name
+    local dispText = getNodeDisplayText(node)
     local nodePos = vEditor.vehicle:getNodeAbsPosition(nodeID)
 
     debugDrawer:drawSphere(nodePos, nodeSelectedRadius, pickedColor, false)
-    debugDrawer:drawTextAdvanced(nodePos, "#" .. k .. ": " .. (nodeName or nodeID), textColor, true, false, textBackgroundColor)
+    debugDrawer:drawTextAdvanced(nodePos, "#" .. k .. ": " .. dispText, textColor, true, false, textBackgroundColor)
   end
 
   for k, beam in pairs(pickedBeams) do
-    local beamID = beam.cid
-
-    local beamNode1 = vEditor.vdata.nodes[beam.id1]
-    local beamNode2 = vEditor.vdata.nodes[beam.id2]
-
-    local text = string.format("%s - %s (%s)", beamNode1.name or beamNode1.cid, beamNode2.name or beamNode2.cid, beamID)
+    local dispText = getBeamDisplayText(beam)
 
     local beam1Pos = vEditor.vehicle:getNodeAbsPosition(beam.id1)
     local beam2Pos = vEditor.vehicle:getNodeAbsPosition(beam.id2)
@@ -384,8 +396,7 @@ local function renderPickedJBeamObjs()
 
     debugDrawer:drawCylinder(beam1Pos, beam2Pos, beamSelectedRadius, pickedColor, false)
     --debugDrawer:drawLineInstance(tempBeamPos1, tempBeamPos2, beamHoveredRenderSize, pickedColor)
-
-    debugDrawer:drawTextAdvanced(tempBeamCenterPos, "#" .. k .. ": " .. text, textColor, true, false, textBackgroundColor)
+    debugDrawer:drawTextAdvanced(tempBeamCenterPos, "#" .. k .. ": " .. dispText, textColor, true, false, textBackgroundColor)
   end
 end
 
@@ -435,7 +446,6 @@ local function renderMenuBar()
   end
 end
 
-local nodeIDToNameList = {}
 local pickedNodesCIDs = {}
 local pickedBeamsCIDs = {}
 
@@ -484,11 +494,11 @@ local function renderNodeSelectionUI()
     if im.Begin(inputSuggestWndName, nil, inputSuggestWndFlags) then
       for i = 0, tableSizeC(vEditor.vdata.nodes) - 1 do
         local node = vEditor.vdata.nodes[i]
-        local nodeName = tostring(node.name or node.cid)
+        local dispText = getNodeDisplayText(node)
 
-        if string.find(nodeName, input, 1, true) then
+        if string.find(dispText, input, 1, true) then
           -- on clicking suggestion, add to list!
-          if im.Selectable1(nodeName) then
+          if im.Selectable1(dispText) then
             ffi.copy(nodeInputTextInput, "")
 
             local keyInPickedNodes = pickedNodesCIDs[node.cid] or -1
@@ -538,12 +548,6 @@ local function renderBeamSelectionUI()
     beamInputTextPopupPos = im.GetItemRectMin()
     beamInputTextPopupPos.y = beamInputTextPopupPos.y + inputSize.y
 
-    -- Generate lookup table for node ID to node name
-    for i = 0, tableSizeC(vEditor.vdata.nodes) - 1 do
-      local node = vEditor.vdata.nodes[i]
-      nodeIDToNameList[node.cid] = node.name
-    end
-
     -- Generate lookup table for pickedbeams index based on beam ID
     table.clear(pickedBeamsCIDs)
     for k,v in ipairs(pickedBeams) do
@@ -556,16 +560,11 @@ local function renderBeamSelectionUI()
     if im.Begin(inputSuggestWndName, nil, inputSuggestWndFlags) then
       for i = 0, tableSizeC(vEditor.vdata.beams) - 1 do
         local beam = vEditor.vdata.beams[i]
-        local node1ID = beam.id1
-        local node2ID = beam.id2
+        local dispText = getBeamDisplayText(beam)
 
-        local node1Name = nodeIDToNameList[node1ID] or node1ID
-        local node2Name = nodeIDToNameList[node2ID] or node2ID
-        local beamName = node1Name .. " - " .. node2Name .. " (" .. (beam.name or beam.cid) .. ")"
-
-        if string.find(beamName, input, 1, true) then
+        if string.find(dispText, input, 1, true) then
           -- on clicking suggestion, add to list!
-          if im.Selectable1(beamName) then
+          if im.Selectable1(dispText) then
             ffi.copy(beamInputTextInput, "")
 
             local keyInPickedbeams = pickedBeamsCIDs[beam.cid] or -1
@@ -587,7 +586,7 @@ local function renderPickedNodesTree()
 
   for pickedNodesKey, node in ipairs(pickedNodes) do
     local nodeID = node.cid
-    local nodeName = node.name
+    local dispText = getNodeDisplayText(node)
 
     if im.Button("X##" .. nodeID .. "_nodeDeleteButton") then -- Remove item
       table.remove(pickedNodes, pickedNodesKey)
@@ -595,7 +594,7 @@ local function renderPickedNodesTree()
 
     im.SameLine()
 
-    if im.TreeNodeEx1("#" .. pickedNodesKey .. ": " .. (nodeName or nodeID) .. "##" .. nodeID .. "_pickedNodesData") then
+    if im.TreeNodeEx1("#" .. pickedNodesKey .. ": " .. dispText .. "##" .. nodeID .. "_pickedNodesData") then
       if im.TreeNodeEx1("Static Data##" .. nodeID .. "_pickedNodesData") then
         imguiUtils.addRecursiveTreeTable(node, '')
         im.TreePop()
@@ -655,11 +654,7 @@ end
 local function renderPickedBeamsTree()
   for pickedBeamsKey, beam in ipairs(pickedBeams) do
     local beamID = beam.cid
-
-    local beamNode1 = vEditor.vdata.nodes[beam.id1]
-    local beamNode2 = vEditor.vdata.nodes[beam.id2]
-
-    local beamLabel = string.format("%s - %s (%s)", beamNode1.name or beamNode1.cid, beamNode2.name or beamNode2.cid, beamID)
+    local dispText = getBeamDisplayText(beam)
 
     if im.Button("X##" .. beamID .. "_beamDeleteButton") then -- Remove item
       table.remove(pickedBeams, pickedBeamsKey)
@@ -667,7 +662,7 @@ local function renderPickedBeamsTree()
 
     im.SameLine()
 
-    if im.TreeNodeEx1("#" .. pickedBeamsKey .. ": " .. beamLabel .. "##_pickedBeamsData") then
+    if im.TreeNodeEx1("#" .. pickedBeamsKey .. ": " .. dispText .. "##_pickedBeamsData") then
       if im.TreeNodeEx1("Static Data##" .. beamID .. "_pickedBeamsData") then
         imguiUtils.addRecursiveTreeTable(beam, '')
         im.TreePop()

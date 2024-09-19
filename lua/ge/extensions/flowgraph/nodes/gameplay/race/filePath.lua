@@ -18,11 +18,11 @@ C.pinSchema = {
   {dir = 'out', type = 'table', name = 'pathData', tableType = 'pathData', description = 'Data from the path for other nodes to process.'},
   {dir = 'out', type = 'string', name = 'name', description = 'Name of the Race'},
   {dir = 'out', type = 'string', name = 'desc', description = 'Description of the Race'},
-  {dir = 'out', type = 'bool', name = 'branching', hidden= true, description = 'If the path is branching.'},
-  {dir = 'out', type = 'bool', name = 'closed', hidden= true, description = 'If the path is closed.'},
-  {dir = 'out', type = 'number', name = 'laps', hidden= true,  description = 'Default number of laps.'},
-  {dir = 'out', type = 'number', name = 'checkpointCount', hidden= true,  description = 'Number of checkpoints in total (does nto work for branching)'},
-  {dir = 'out', type = 'number', name = 'recoveryCount', hidden= true,  description = 'Number of checkpoints that have a recovery point set up'}
+  {dir = 'out', type = 'bool', name = 'branching', hidden = true, description = 'If the path is branching.'},
+  {dir = 'out', type = 'bool', name = 'closed', hidden = true, description = 'If the path is closed.'},
+  {dir = 'out', type = 'number', name = 'laps', hidden = true,  description = 'Default number of laps.'},
+  {dir = 'out', type = 'number', name = 'checkpointCount', hidden = true,  description = 'Number of checkpoints in total (does nto work for branching)'},
+  {dir = 'out', type = 'number', name = 'recoveryCount', hidden = true,  description = 'Number of checkpoints that have a recovery point set up'}
 }
 
 C.tags = {'scenario'}
@@ -66,7 +66,7 @@ function C:_executionStopped()
 end
 
 function C:work(args)
-  if self.path == nil then
+  if self.path == nil and self.pinIn.file.value then
     local file, valid = self.mgr:getRelativeAbsolutePath({self.pinIn.file.value, self.pinIn.file.value..'.race.json'})
     if not valid then
       self:__setNodeError('file', 'unable to find race file: '..file)
@@ -88,6 +88,7 @@ function C:work(args)
     self.pinOut.closed.value = path.config.closed
     self.pinOut.laps.value = path.defaultLaps
     self.pinOut.checkpointCount.value = #(path.pathnodes.sorted)
+
     local rCount = 0
     for _, pn in ipairs(path.pathnodes.sorted) do
       if self.pinIn.reverse.value then

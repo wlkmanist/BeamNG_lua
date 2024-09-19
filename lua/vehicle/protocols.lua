@@ -33,10 +33,10 @@ end
 local function updateSmoothers(dtSim)
   M.posX, M.posY, M.posZ = obj:getPositionXYZ()
 
-  local vel = obj:getVelocity()
-  M.velXSmoothed = velXSmoother:get(vel.x, dtSim)
-  M.velYSmoothed = velYSmoother:get(vel.y, dtSim)
-  M.velZSmoothed = velZSmoother:get(vel.z, dtSim)
+  local velX, velY, velZ = obj:getVelocityXYZ()
+  M.velXSmoothed = velXSmoother:get(velX, dtSim)
+  M.velYSmoothed = velYSmoother:get(velY, dtSim)
+  M.velZSmoothed = velZSmoother:get(velZ, dtSim)
 
   local ffisensors = sensors.ffiSensors
   M.accXSmoothed = accXSmoother:get(-ffisensors.sensorX, dtSim)

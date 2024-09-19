@@ -1305,6 +1305,15 @@ end
 --if not then use the defaultVehicleModel
 local function loadDefaultVehicle()
   log('D', 'main', 'Loading default vehicle')
+  local arg = parseArgs.args.vehicleConfig
+  if arg then
+    local pathConfig = "vehicles/"..arg
+    local modelRegexPC  = "^([%w|_|%-|%s]+)/(.*)%.pc"
+    local model, config = string.match(arg, modelRegexPC)
+    TorqueScriptLua.setVar('$beamngVehicle', model)
+    TorqueScriptLua.setVar('$beamngVehicleConfig', pathConfig)
+    return
+  end
   local myveh = TorqueScriptLua.getVar('$beamngVehicleArgs')
   if myveh ~= ""  then
     TorqueScriptLua.setVar( '$beamngVehicle', myveh )

@@ -224,7 +224,7 @@ local function updateTorqueWithoutClutch(device, dt)
   local friction = device.friction
   local dynamicFriction = device.dynamicFriction
   local rpm = engineAV * avToRPM * motorDirection
-  local torqueRPM = floor(rpm)
+  local torqueRPM = abs(floor(rpm))
 
   local torqueCoef = clamp(device.torqueCoef, 0, 1) --can be used to externally reduce the available torque, for example to limit output power
   local torque = (torqueCurve[torqueRPM] or (torqueRPM < 0 and torqueCurve[0] or 0)) * device.outputTorqueState * torqueCoef
@@ -233,7 +233,7 @@ local function updateTorqueWithoutClutch(device, dt)
 
   local regenThrottle = electrics.values[device.electricsRegenThrottleName] or 0
   local rawRegenTorque = (device.regenCurve[torqueRPM] or 0)
-  local regenTorque = -(min(max(rawRegenTorque * regenThrottle, min(rawRegenTorque, device.minWantedRegenTorque)), device.maxWantedRegenTorque) * sign(regenThrottle) * throttleFactor * motorDirection)
+  local regenTorque = -(min(max(rawRegenTorque * regenThrottle, min(rawRegenTorque, device.minWantedRegenTorque)), device.maxWantedRegenTorque) * sign(regenThrottle) * throttleFactor * sign(engineAV))
   device.regenThrottle = regenThrottle
   device.instantMaxRegenTorque = rawRegenTorque
 
@@ -243,6 +243,9 @@ local function updateTorqueWithoutClutch(device, dt)
   local instantEngineLoad = clamp(actualTorque / (maxCurrentTorque + 1e-30), -1, 1)
   device.instantEngineLoad = instantEngineLoad
   device.engineLoad = device.loadSmoother:getCapped(instantEngineLoad, dt)
+
+  local inertialTorque = (device.outputAV1 - device.lastOutputAV1) * device.inertia / dt
+  obj:applyTorqueAxisCouple(inertialTorque, device.torqueReactionNodes[1], device.torqueReactionNodes[2], device.torqueReactionNodes[3])
 
   local dtT = dt * actualTorque
 
@@ -259,6 +262,7 @@ local function updateTorqueWithoutClutch(device, dt)
   frictionTorque = min(frictionTorque, abs(engineAV) * device.inertia * 2000) * avSign
 
   device.outputTorque1 = actualTorque - frictionTorque
+  device.lastOutputAV1 = device.outputAV1
 end
 
 local function selectUpdates(device)
@@ -338,6 +342,7 @@ local function reset(device, jbeamData)
   device.friction = jbeamData.friction or 0
 
   device.outputAV1 = 0
+  device.lastOutputAV1 = 0
   device.inputAV = 0
   device.outputTorque1 = 0
   device.virtualMassAV = 0
@@ -374,6 +379,7 @@ local function reset(device, jbeamData)
   device.frictionLossPerUpdate = 0
   device.spentEnergy = 0
   device.storageWithEnergyCounter = 0
+  device.storageCounter = 0
   device.registeredEnergyStorages = {}
   device.previousEnergyLevels = {}
   device.energyStorageRatios = {}
@@ -511,6 +517,7 @@ local function new(jbeamData)
     isPhysicallyDisconnected = true,
     isPropulsed = true,
     outputAV1 = 0,
+    lastOutputAV1 = 0,
     inputAV = 0,
     outputTorque1 = 0,
     virtualMassAV = 0,
@@ -577,7 +584,21 @@ local function new(jbeamData)
 
   device.motorDirection = jbeamData.defaultMotorDirection or 1
 
-  device.torqueReactionNodes = jbeamData["torqueReactionNodes_nodes"]
+  local torqueReactionNodes_nodes = jbeamData.torqueReactionNodes_nodes
+  if torqueReactionNodes_nodes and type(torqueReactionNodes_nodes) == "table" then
+    local hasValidReactioNodes = true
+    for _, v in pairs(torqueReactionNodes_nodes) do
+      if type(v) ~= "number" then
+        hasValidReactioNodes = false
+      end
+    end
+    if hasValidReactioNodes then
+      device.torqueReactionNodes = torqueReactionNodes_nodes
+    end
+  end
+  if not device.torqueReactionNodes then
+    device.torqueReactionNodes = {-1, -1, -1}
+  end
 
   device.maxRPM = 0
 
@@ -668,7 +689,7 @@ local function new(jbeamData)
   device.requiredEnergyType = "electricEnergy"
   device.energyStorage = jbeamData.energyStorage
 
-  if device.torqueReactionNodes and #device.torqueReactionNodes == 3 then
+  if device.torqueReactionNodes and #device.torqueReactionNodes == 3 and device.torqueReactionNodes[1] >= 0 then
     local pos1 = vec3(v.data.nodes[device.torqueReactionNodes[1]].pos)
     local pos2 = vec3(v.data.nodes[device.torqueReactionNodes[2]].pos)
     local pos3 = vec3(v.data.nodes[device.torqueReactionNodes[3]].pos)

@@ -7,6 +7,8 @@ local im = extensions.ui_imgui
 local jbeamIO = require('jbeam/io')
 local jsonAST = require('json-ast')
 
+local tableInsert, tableClear = table.insert, table.clear
+
 local wndName = "JBeam Modifier Leaking Visualizer"
 M.menuEntry = "JBeam Modifier Leaking Visualizer"
 
@@ -405,7 +407,7 @@ end
 
 -- Get all parts as a list and store output in 'parts' var
 local function getPartsRec(ioCtx, part, jbeamFilename, parts)
-  table.insert(parts, {part = part, jbeamFilename = jbeamFilename})
+  tableInsert(parts, {part = part, jbeamFilename = jbeamFilename})
   local slots = part.slots2 or part.slots
   if slots ~= nil then
     for _, slot in ipairs(slots) do
@@ -446,7 +448,7 @@ local function getPartsWithASTData(parts)
       end
     end
     if jbeamCache[jbeamFilename] then
-      table.insert(output,
+      tableInsert(output,
         {
           name = partName,
           jbeamFilename = jbeamFilename,
@@ -463,20 +465,174 @@ local function getPartsWithASTData(parts)
 end
 
 local function getLineASTNodes(astHierarchy, nodeIdx, outputNodeIdxs)
-  table.insert(outputNodeIdxs, nodeIdx)
+  tableInsert(outputNodeIdxs, nodeIdx)
   for _, ni in ipairs(astHierarchy[nodeIdx] or {}) do
     getLineASTNodes(astHierarchy, ni, outputNodeIdxs)
   end
 end
 
+local function initAnalyzeModifiersLeaking(partsWithASTData, outSectionsAllModNames, sectionsMods, outMods, outSectionsPartNames, outSectionsPartNameToIdx, modsScalers, partsModsScalers, testSectionsCounter, testSectionsWrongCounter)
+  -- First initialize by getting all modifiers per section
+  -- and only save sections that have row modifiers defined
+  for k, partData in ipairs(partsWithASTData) do
+    local part = partData.data
+    local partName = partData.name
+
+    for sectionName, section in pairs(part) do
+      if type(section) == "table" and #section > 1 then
+        -- Go through each line in part's current section
+        for lineNum, lineData in ipairs(section) do
+          if lineNum > 1 and tableIsDict(lineData) then
+            -- Line is dictionary, so it declares modifier(s)
+            for mod, modVal in pairs(lineData) do
+              if mod ~= "__astNodeIdx" then
+                if not outSectionsAllModNames[sectionName] then
+                  outSectionsAllModNames[sectionName] = {}
+                  sectionsMods[sectionName] = sectionsMods[sectionName] or {}
+                  outMods[sectionName] = outMods[sectionName] or {}
+
+                  if runTest and vEditor.vdata[sectionName] and #vEditor.vdata[sectionName] > 0
+                  and sectionName ~= "nodes" and sectionName ~= "beams" and sectionName ~= "triangles" then
+                    testSectionsCounter[sectionName] = 0
+                    testSectionsWrongCounter[sectionName] = 0
+                  end
+                end
+                outSectionsAllModNames[sectionName][mod] = true
+              end
+            end
+          end
+        end
+      elseif sectionName:match('^scale') and type(section) == "number" then
+        modsScalers[sectionName:sub(6, #sectionName)] = {modVal = section, partOrigin = partName}
+      end
+    end
+  end
+  for mod, modData in pairs(modsScalers) do
+    partsModsScalers[modData.partOrigin] = partsModsScalers[modData.partOrigin] or {}
+    partsModsScalers[modData.partOrigin][mod] = modData.modVal
+  end
+end
+
+-- Check if current modifiers match vehicle data section item
+local function testModifiers(sectionName, lineData, testSectionsCounter, testNodeNameToCID, newSectionModifiers, testSectionsWrongCounter)
+  local valid = true
+
+  local currCount = testSectionsCounter[sectionName]
+  local item = nil
+
+  if currCount then
+    item = vEditor.vdata[sectionName][currCount]
+
+    if sectionName == "nodes" then
+      item = vEditor.vdata[sectionName][testNodeNameToCID[lineData[1]]]
+
+      --local cid =
+      --[[
+      if not (vEditor.vdata.nodes[cid] == currCount) then
+        log('E', '', "node ids mismatch: expected: " .. dumps(lineData[1]) .. " got: " .. dumps(cid))
+        valid = false
+        goto continue
+      end
+      ]]--
+
+    elseif sectionName == "beams" then
+      local n1 = vEditor.vdata.nodes[item.id1]
+      local n2 = vEditor.vdata.nodes[item.id2]
+
+      local id1 = tostring(n1.name or n1.cid)
+      local id2 = tostring(n2.name or n2.cid)
+
+      if not (id1 == lineData[1] or id1 == lineData[2] and id2 == lineData[1] or id2 == lineData[2]) then
+        log('E', '', "beam ids mismatch: expected: " .. dumps(lineData[1]) .. "," .. dumps(lineData[2]) .. " got: " .. dumps(id1) .. "," .. dumps(id2))
+        valid = false
+        goto continue
+      end
+    end
+
+    if sectionName == "nodes" then
+      newSectionModifiers.group = nil
+      newSectionModifiers.engineGroup = nil
+      if newSectionModifiers.collision and newSectionModifiers.collision.modVal == true then newSectionModifiers.collision.modVal = nil end -- the default
+      if newSectionModifiers.chemEnergy and (type(newSectionModifiers.chemEnergy.modVal) ~= 'number' or newSectionModifiers.chemEnergy.modVal == 0) then newSectionModifiers.chemEnergy.modVal = nil end
+      if newSectionModifiers.flashPoint and not newSectionModifiers.flashPoint.modVal then
+        -- if not in fire system, clean out the data
+        newSectionModifiers.flashPoint = nil
+        newSectionModifiers.smokePoint = nil
+        newSectionModifiers.specHeat = nil
+        newSectionModifiers.vaporPoint = nil
+        newSectionModifiers.selfIgnitionCoef = nil
+        newSectionModifiers.burnRate = nil
+        newSectionModifiers.baseTemp = nil
+        newSectionModifiers.conductionRadius = nil
+        newSectionModifiers.containerBeam = nil
+        newSectionModifiers.selfIgnition = nil
+      end
+      if newSectionModifiers.selfCollision and not newSectionModifiers.selfCollision.modVal then newSectionModifiers.selfCollision.modVal = nil end -- the default
+    elseif sectionName == "beams" then
+      --if newSectionModifiers.beamType.modVal == 0 then newSectionModifiers.beamType.modVal = nil end -- the default
+      --if newSectionModifiers.beamPrecompression.modVal == 1 then newSectionModifiers.beamPrecompression.modVal = nil end
+      --if newSectionModifiers.breakGroupType.modVal == 0 then newSectionModifiers.breakGroupType.modVal = nil end
+      --if newSectionModifiers.disableTriangleBreaking.modVal == false then newSectionModifiers.disableTriangleBreaking.modVal = nil end
+      --if newSectionModifiers.disableMeshBreaking.modVal == false then newSectionModifiers.disableMeshBreaking.modVal = nil end
+    elseif sectionName == "hydros" then
+      newSectionModifiers.beamType.modVal = BEAM_HYDRO
+    end
+
+    for mod, modData in pairs(newSectionModifiers) do
+      --local vehDataModVal = item[mod]
+      local modVal = replaceSpecialValues(modData.modVal)
+      if modVal == "" then
+        modVal = nil
+      end
+      newSectionModifiers[mod].modVal = modVal
+    end
+
+    for mod, modData in pairs(newSectionModifiers) do
+      local vehDataModVal = item[mod]
+      --[[
+      local modVal = replaceSpecialValues(modData.modVal)
+      if modVal == "" then
+        modVal = nil
+      end
+      ]]--
+      local modVal = modData.modVal
+      local vehDataModValType = type(vehDataModVal)
+      local modValType = type(modVal)
+
+      if --vehDataModValType == "number" and modValType == "number" and not (vehDataModVal - 0.001 < modVal and vehDataModVal + 0.001 > modVal)
+        dumps(vehDataModVal) ~= dumps(modVal) then
+        log('E', '', sectionName .. "." .. mod .. ": expected: " .. dumps(vehDataModVal) .. " " .. vehDataModValType .. " got: " .. dumps(modVal) .. " " .. modValType)
+        valid = false
+        break
+      end
+    end
+  end
+  ::continue::
+
+  if not valid then
+    --log('E', '', sectionName .. "[" .. currCount .. "]." .. mod .. " ~= " .. tostring(vehDataModVal))
+    log('E', '', sectionName .. "[" .. currCount .. "] wrong")
+    print("Full JBeam Item Data:")
+    print(dumps(item))
+    print("Algorithm's Current Modifiers:")
+    print(dumps(newSectionModifiers))
+    testSectionsWrongCounter[sectionName] = testSectionsWrongCounter[sectionName] + 1
+  end
+
+  if currCount then
+    testSectionsCounter[sectionName] = currCount + 1
+  end
+end
+
 local function analyzeModifiersLeaking(partsWithASTData)
-  local outModifiers = {}
+  local outMods = {}
   local outSectionsWithLeakingMods = {}
   local outSectionsPartNames = {}
   local outSectionsPartNameToIdx = {}
   local outSectionsAllModNames = {}
+  local outPartModifiersScalers = {}
 
-  local sectionsModifiers = {}
+  local sectionsMods = {}
 
   local testSectionsCounter = nil
   local testSectionsWrongCounter = nil
@@ -491,43 +647,12 @@ local function analyzeModifiersLeaking(partsWithASTData)
     end
   end
 
+  local modsScalers = {}
+  local partsModsScalers = {}
+
   -- First initialize by getting all modifiers per section
   -- and only save sections that have row modifiers defined
-  for k, partData in ipairs(partsWithASTData) do
-    local part = partData.data
-
-    for sectionName, section in pairs(part) do
-      if type(section) == "table" and #section > 1 then
-        -- Go through each line in part's current section
-        for lineNum, lineData in ipairs(section) do
-          if lineNum > 1 and tableIsDict(lineData) then
-            -- Line is dictionary, so it declares modifier(s)
-            for mod, modVal in pairs(lineData) do
-              if mod ~= "__astNodeIdx" then
-                if not outSectionsAllModNames[sectionName] then
-                  outSectionsAllModNames[sectionName] = {}
-
-                  if not sectionsModifiers[sectionName] then
-                    sectionsModifiers[sectionName] = {}
-                  end
-                  if not outModifiers[sectionName] then
-                    outModifiers[sectionName] = {}
-                  end
-
-                  if runTest and vEditor.vdata[sectionName] and #vEditor.vdata[sectionName] > 0
-                  and sectionName ~= "nodes" and sectionName ~= "beams" and sectionName ~= "triangles" then
-                    testSectionsCounter[sectionName] = 0
-                    testSectionsWrongCounter[sectionName] = 0
-                  end
-                end
-                outSectionsAllModNames[sectionName][mod] = true
-              end
-            end
-          end
-        end
-      end
-    end
-  end
+  initAnalyzeModifiersLeaking(partsWithASTData, outSectionsAllModNames, sectionsMods, outMods, outSectionsPartNames, outSectionsPartNameToIdx, modsScalers, partsModsScalers, testSectionsCounter, testSectionsWrongCounter)
 
   -- For each part go through each section, and for each section go through each row
   -- to get the leaking modifiers
@@ -538,15 +663,14 @@ local function analyzeModifiersLeaking(partsWithASTData)
     local astHierarchy = partData.astHierarchy
 
     for sectionName, section in pairs(part) do
-      if outModifiers[sectionName] then
-        if not outSectionsPartNames[sectionName] then
-          outSectionsPartNames[sectionName] = {}
-        end
-        if not outSectionsPartNameToIdx[sectionName] then
-          outSectionsPartNameToIdx[sectionName] = {}
-        end
+      local outModsSection = outMods[sectionName]
+      if outModsSection then
+        local sectionMods = sectionsMods[sectionName]
 
-        table.insert(outSectionsPartNames[sectionName], partName)
+        outSectionsPartNames[sectionName] = outSectionsPartNames[sectionName] or {}
+        outSectionsPartNameToIdx[sectionName] = outSectionsPartNameToIdx[sectionName] or {}
+
+        tableInsert(outSectionsPartNames[sectionName], partName)
         outSectionsPartNameToIdx[sectionName][partName] = #outSectionsPartNames[sectionName]
 
         local leakingToPartsEntries = {}
@@ -568,28 +692,29 @@ local function analyzeModifiersLeaking(partsWithASTData)
                   if type(newModVal) == "table" then
                     newModVal["__astNodeIdx"] = nil
                   end
+                  -- Apply scalers
+                  local isScaled = false
+                  if modsScalers[mod] and type(newModVal) == "number" and type(modsScalers[mod].modVal) == "number" then
+                    newModVal = newModVal * modsScalers[mod].modVal
+                    isScaled = true
+                  end
+                  sectionMods[mod] = sectionMods[mod] or {modVal = nil, isScaled = false, partOrigin = nil}
+                  sectionMods[mod].modVal = newModVal
+                  sectionMods[mod].isScaled = isScaled
+                  sectionMods[mod].partOrigin = partName
 
-                  if not sectionsModifiers[sectionName][mod] then
-                    sectionsModifiers[sectionName][mod] = {modVal = nil, partOrigin = nil}
-                  end
-                  sectionsModifiers[sectionName][mod].modVal = newModVal
-                  sectionsModifiers[sectionName][mod].partOrigin = partName
-
-                  if not outModifiers[sectionName][partName] then
-                    outModifiers[sectionName][partName] = {}
-                  end
-                  if not outModifiers[sectionName][partName][mod] then
-                    outModifiers[sectionName][partName][mod] = {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
-                  end
-                  outModifiers[sectionName][partName][mod].modVal = newModVal
-                  outModifiers[sectionName][partName][mod].astNodeData.leakSourceASTNodeIdxs = astNodeIdxs
+                  outModsSection[partName] = outModsSection[partName] or {}
+                  outModsSection[partName][mod] = outModsSection[partName][mod] or {modVal = nil, isScaled = false, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+                  outModsSection[partName][mod].modVal = newModVal
+                  outModsSection[partName][mod].isScaled = isScaled
+                  outModsSection[partName][mod].astNodeData.leakSourceASTNodeIdxs = astNodeIdxs
                 end
               end
 
             else
               -- Line is not dictionary, so it declares a JBeam item
 
-              local newSectionModifiers = deepcopy(sectionsModifiers[sectionName])
+              local sectionModsCopy = deepcopy(sectionMods)
 
               for lineCol = headerSize1, #lineData do
                 local colData = lineData[lineCol]
@@ -600,18 +725,39 @@ local function analyzeModifiersLeaking(partsWithASTData)
                       if type(newModVal) == "table" then
                         newModVal["__astNodeIdx"] = nil
                       end
-                      if not newSectionModifiers[mod] then
-                        newSectionModifiers[mod] = {modVal = nil, partOrigin = nil}
+                      -- Apply scalers
+                      local isScaled = false
+                      if modsScalers[mod] and type(newModVal) == "number" and type(modsScalers[mod].modVal) == "number" then
+                        newModVal = newModVal * modsScalers[mod].modVal
+                        isScaled = true
                       end
-                      newSectionModifiers[mod].modVal = newModVal
-                      newSectionModifiers[mod].partOrigin = partName
+                      sectionModsCopy[mod] = sectionModsCopy[mod] or {modVal = nil, partOrigin = nil}
+                      sectionModsCopy[mod].modVal = newModVal
+                      sectionModsCopy[mod].isScaled = isScaled
+                      sectionModsCopy[mod].partOrigin = partName
                     end
                   end
                 end
               end
 
               -- If current modifiers part origin is not equal to current part and the modifier is not a default value, modifiers are considered leaking
-              for mod, modData in pairs(newSectionModifiers) do
+              for mod, modData in pairs(sectionModsCopy) do
+                if modsScalers[mod] then
+                  local scaleMod = 'scale'..mod
+                  local outModsSectionPart = outModsSection[partName]
+                  local partOrigin = modsScalers[mod].partOrigin
+
+                  outModsSectionPart[scaleMod] = outModsSectionPart[scaleMod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+                  outModsSectionPart[scaleMod].leakedFromPart = partOrigin
+
+                  if not leakingToPartsEntries[scaleMod] then
+                    outModsSection[partOrigin] = outModsSection[partOrigin] or {}
+                    outModsSection[partOrigin][scaleMod] = outModsSection[partOrigin][scaleMod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+                    tableInsert(outModsSection[partOrigin][scaleMod].leakingToParts, partName)
+                    leakingToPartsEntries[scaleMod] = true
+                  end
+                end
+
                 if modData.partOrigin ~= partName and
                 (
                   not useDefaultValuesForLeaking[0] or
@@ -623,142 +769,53 @@ local function analyzeModifiersLeaking(partsWithASTData)
                     )
                   )
                 ) then
+                  outModsSection[partName] = outModsSection[partName] or {}
+                  local outModsSectionPart = outModsSection[partName]
+
                   if not leakingToPartsEntries[mod] then
-                    table.insert(outModifiers[sectionName][modData.partOrigin][mod].leakingToParts, partName)
+                    outModsSection[modData.partOrigin] = outModsSection[modData.partOrigin] or {}
+                    outModsSection[modData.partOrigin][mod] = outModsSection[modData.partOrigin][mod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+                    tableInsert(outModsSection[modData.partOrigin][mod].leakingToParts, partName)
                     leakingToPartsEntries[mod] = true
                   end
 
-                  if not outModifiers[sectionName][partName] then
-                    outModifiers[sectionName][partName] = {}
-                  end
-                  if not outModifiers[sectionName][partName][mod] then
-                    outModifiers[sectionName][partName][mod] = {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
-                  end
-                  outModifiers[sectionName][partName][mod].leakedFromPart = modData.partOrigin
+                  outModsSectionPart[mod] = outModsSectionPart[mod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+                  outModsSectionPart[mod].leakedFromPart = modData.partOrigin
 
-                  if not outModifiers[sectionName][partName][mod].astNodeData.affectedRowsASTNodeIdxs then
-                    outModifiers[sectionName][partName][mod].astNodeData.affectedRowsASTNodeIdxs = {}
-                  end
-                  table.insert(outModifiers[sectionName][partName][mod].astNodeData.affectedRowsASTNodeIdxs, astNodeIdxs)
+                  outModsSectionPart[mod].astNodeData.affectedRowsASTNodeIdxs = outModsSectionPart[mod].astNodeData.affectedRowsASTNodeIdxs or {}
+                  tableInsert(outModsSectionPart[mod].astNodeData.affectedRowsASTNodeIdxs, astNodeIdxs)
                   outSectionsWithLeakingMods[sectionName] = true
                 end
               end
 
-              -- If runTest true, check if current modifiers match vehicle data section item
               if runTest then
-                local valid = true
-
-                local currCount = testSectionsCounter[sectionName]
-                local item = nil
-
-                if currCount then
-                  item = vEditor.vdata[sectionName][currCount]
-
-                  if sectionName == "nodes" then
-                    item = vEditor.vdata[sectionName][testNodeNameToCID[lineData[1]]]
-
-                    --local cid =
-                    --[[
-                    if not (vEditor.vdata.nodes[cid] == currCount) then
-                      log('E', '', "node ids mismatch: expected: " .. dumps(lineData[1]) .. " got: " .. dumps(cid))
-                      valid = false
-                      goto continue
-                    end
-                    ]]--
-
-                  elseif sectionName == "beams" then
-                    local n1 = vEditor.vdata.nodes[item.id1]
-                    local n2 = vEditor.vdata.nodes[item.id2]
-
-                    local id1 = tostring(n1.name or n1.cid)
-                    local id2 = tostring(n2.name or n2.cid)
-
-                    if not (id1 == lineData[1] or id1 == lineData[2] and id2 == lineData[1] or id2 == lineData[2]) then
-                      log('E', '', "beam ids mismatch: expected: " .. dumps(lineData[1]) .. "," .. dumps(lineData[2]) .. " got: " .. dumps(id1) .. "," .. dumps(id2))
-                      valid = false
-                      goto continue
-                    end
-                  end
-
-                  if sectionName == "nodes" then
-                    newSectionModifiers.group = nil
-                    newSectionModifiers.engineGroup = nil
-                    if newSectionModifiers.collision and newSectionModifiers.collision.modVal == true then newSectionModifiers.collision.modVal = nil end -- the default
-                    if newSectionModifiers.chemEnergy and (type(newSectionModifiers.chemEnergy.modVal) ~= 'number' or newSectionModifiers.chemEnergy.modVal == 0) then newSectionModifiers.chemEnergy.modVal = nil end
-                    if newSectionModifiers.flashPoint and not newSectionModifiers.flashPoint.modVal then
-                      -- if not in fire system, clean out the data
-                      newSectionModifiers.flashPoint = nil
-                      newSectionModifiers.smokePoint = nil
-                      newSectionModifiers.specHeat = nil
-                      newSectionModifiers.vaporPoint = nil
-                      newSectionModifiers.selfIgnitionCoef = nil
-                      newSectionModifiers.burnRate = nil
-                      newSectionModifiers.baseTemp = nil
-                      newSectionModifiers.conductionRadius = nil
-                      newSectionModifiers.containerBeam = nil
-                      newSectionModifiers.selfIgnition = nil
-                    end
-                    if newSectionModifiers.selfCollision and not newSectionModifiers.selfCollision.modVal then newSectionModifiers.selfCollision.modVal = nil end -- the default
-                  elseif sectionName == "beams" then
-                    --if newSectionModifiers.beamType.modVal == 0 then newSectionModifiers.beamType.modVal = nil end -- the default
-                    --if newSectionModifiers.beamPrecompression.modVal == 1 then newSectionModifiers.beamPrecompression.modVal = nil end
-                    --if newSectionModifiers.breakGroupType.modVal == 0 then newSectionModifiers.breakGroupType.modVal = nil end
-                    --if newSectionModifiers.disableTriangleBreaking.modVal == false then newSectionModifiers.disableTriangleBreaking.modVal = nil end
-                    --if newSectionModifiers.disableMeshBreaking.modVal == false then newSectionModifiers.disableMeshBreaking.modVal = nil end
-                  elseif sectionName == "hydros" then
-                    newSectionModifiers.beamType.modVal = BEAM_HYDRO
-                  end
-
-                  for mod, modData in pairs(newSectionModifiers) do
-                    --local vehDataModVal = item[mod]
-                    local modVal = replaceSpecialValues(modData.modVal)
-                    if modVal == "" then
-                      modVal = nil
-                    end
-                    newSectionModifiers[mod].modVal = modVal
-                  end
-
-                  for mod, modData in pairs(newSectionModifiers) do
-                    local vehDataModVal = item[mod]
-                    --[[
-                    local modVal = replaceSpecialValues(modData.modVal)
-                    if modVal == "" then
-                      modVal = nil
-                    end
-                    ]]--
-                    local modVal = modData.modVal
-                    local vehDataModValType = type(vehDataModVal)
-                    local modValType = type(modVal)
-
-                    if --vehDataModValType == "number" and modValType == "number" and not (vehDataModVal - 0.001 < modVal and vehDataModVal + 0.001 > modVal)
-                      dumps(vehDataModVal) ~= dumps(modVal) then
-                      log('E', '', sectionName .. "." .. mod .. ": expected: " .. dumps(vehDataModVal) .. " " .. vehDataModValType .. " got: " .. dumps(modVal) .. " " .. modValType)
-                      valid = false
-                      break
-                    end
-                  end
-                end
-                ::continue::
-
-                if not valid then
-                  --log('E', '', sectionName .. "[" .. currCount .. "]." .. mod .. " ~= " .. tostring(vehDataModVal))
-                  log('E', '', sectionName .. "[" .. currCount .. "] wrong")
-                  print("Full JBeam Item Data:")
-                  print(dumps(item))
-                  print("Algorithm's Current Modifiers:")
-                  print(dumps(newSectionModifiers))
-                  testSectionsWrongCounter[sectionName] = testSectionsWrongCounter[sectionName] + 1
-                end
-
-                if currCount then
-                  testSectionsCounter[sectionName] = currCount + 1
-                end
+                testModifiers(sectionName, lineData, testSectionsCounter, testNodeNameToCID, sectionModsCopy, testSectionsWrongCounter)
               end
             end
           else
             header = lineData
             headerSize = #header
             headerSize1 = headerSize + 1
+          end
+        end
+      end
+    end
+
+    if partsModsScalers[partName] then
+      local mods = partsModsScalers[partName]
+      for mod, modVal in pairs(mods) do
+        for sectionName, outModsSection in pairs(outMods) do
+          outModsSection[partName] = outModsSection[partName] or {}
+          outModsSection[partName]['scale'..mod] = outModsSection[partName]['scale'..mod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+          outModsSection[partName]['scale'..mod].modVal = modsScalers[mod].modVal
+          outSectionsAllModNames[sectionName]['scale'..mod] = true
+
+          outSectionsPartNames[sectionName] = outSectionsPartNames[sectionName] or {}
+          outSectionsPartNameToIdx[sectionName] = outSectionsPartNameToIdx[sectionName] or {}
+
+          if outSectionsPartNames[sectionName][#outSectionsPartNames[sectionName]] ~= partName then
+            tableInsert(outSectionsPartNames[sectionName], partName)
+            outSectionsPartNameToIdx[sectionName][partName] = #outSectionsPartNames[sectionName]
           end
         end
       end
@@ -772,7 +829,7 @@ local function analyzeModifiersLeaking(partsWithASTData)
     --testSectionsWrongCounter[sectionName] = testSectionsWrongCounter[sectionName] + 1
   end
 
-  return outModifiers, outSectionsWithLeakingMods, outSectionsPartNames, outSectionsPartNameToIdx, outSectionsAllModNames
+  return outMods, outSectionsWithLeakingMods, outSectionsPartNames, outSectionsPartNameToIdx, outSectionsAllModNames
 end
 
 local function analyze()
@@ -960,9 +1017,11 @@ local function onEditorGui()
 
                 if im.Selectable1(modValStr .. "##" .. partIdx .. "," .. sectionModIdx) then
                   vEditor.selectedPart = partName
-                  table.clear(vEditor.selectedASTNodeMap)
-                  for k,v in ipairs(modifier.astNodeData.leakSourceASTNodeIdxs) do
-                    vEditor.selectedASTNodeMap[v] = true
+                  tableClear(vEditor.selectedASTNodeMap)
+                  if modifier.astNodeData.leakSourceASTNodeIdxs then
+                    for k,v in ipairs(modifier.astNodeData.leakSourceASTNodeIdxs) do
+                      vEditor.selectedASTNodeMap[v] = true
+                    end
                   end
                   vEditor.scrollToNode = true
                 end
@@ -993,16 +1052,16 @@ local function onEditorGui()
                 end
               end
               if im.IsItemClicked(1) then
+                vEditor.selectedPart = partName
+                tableClear(vEditor.selectedASTNodeMap)
                 if modifier.astNodeData.affectedRowsASTNodeIdxs then
-                  vEditor.selectedPart = partName
-                  table.clear(vEditor.selectedASTNodeMap)
                   for k,v in ipairs(modifier.astNodeData.affectedRowsASTNodeIdxs) do
                     for k2,v2 in ipairs(v) do
                       vEditor.selectedASTNodeMap[v2] = true
                     end
                   end
-                  vEditor.scrollToNode = true
                 end
+                vEditor.scrollToNode = true
               end
             end
           end

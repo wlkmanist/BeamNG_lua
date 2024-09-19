@@ -47,34 +47,7 @@ local function printStats()
   end
 end
 
--- incomplete list of vendor names to complete the data resaved
-local vendorNames = {
-  ["bngremotectrlv1"] = "Phone App by BeamNG GmbH.",
-  ["0000"] = "Hitec",
-  ["0079"] = "CSL",
-  ["044d"] = "Thrustmaster", -- an old vendor ID?
-  ["044f"] = "Thrustmaster",
-  ["24c6"] = "Thrustmaster",
-  ["045e"] = "Microsoft",
-  ["046d"] = "Logitech",
-  ["054c"] = "Sony",
-  ["0583"] = "Genius",
-  ["0738"] = "Saitek",
-  ["0810"] = "Personal Communication Systems",
-  ["0e8f"] = "Hama",
-  ["0eb7"] = "Fanatec",
-  ["1dd2"] = "Leo Bodnar",
-  ["11ff"] = "PXN", -- this USB Vendor ID was used by SpeedLink in the past
-  ["1038"] = "SimRaceWay",
-  ["1209"] = "OpenFFBoard",
-  ["16c0"] = "SHH",
-  ["16d0"] = "Simucube",
-  ["1cbe"] = "Sim-Plicity",
-  ["1fc9"] = "SimXperience",
-  ["30b7"] = "Heusinkveld",
-  ["a020"] = "Heusinkveld", -- weird... a second VID for a heusinkveld.
-  ["346e"] = "Moza",
-}
+local vendorNames = jsonReadFile("lua/ge/extensions/util/vendorNames.json")
 
 -- helper for natural sorting, enables sorting 1, 11, 2 to 1, 2, 11 by fake-padding the number before comparing it
 local function padnum(d) return ("%012d"):format(d) end

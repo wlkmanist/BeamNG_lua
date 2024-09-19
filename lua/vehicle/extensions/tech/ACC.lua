@@ -97,7 +97,7 @@ local function createCSV()
 end
 
 local function saveCSV()
-  -- save in AppData/Local/BeamNG.drive/<current Version>
+  -- save in AppData/Local/BeamNG/<current Version>
   csvData:write('testLog')
 end
 
@@ -402,8 +402,8 @@ local function detectSpeedTrend(currentSpeed, targetSpeedIn) --function for calc
   local averageSpeed = calcAvgSpeed(leaderSpeedBuffer)
   local threshold = 0.1 --threshold for detecting the acceleration of decelration
 
-  
-  if targetSpeedIn == 0 then 
+
+  if targetSpeedIn == 0 then
     return "Car Stopped"
   elseif currentSpeed > averageSpeed + threshold then
     return "Accelerating"
@@ -427,7 +427,7 @@ local function adjustThrottle(velocityDifference)
   return throttlePower
 end
 
-local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID, dtSim, debug) 
+local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID, dtSim, debug)
   local currentTime = os.clock()
 
   -- Calculate the time elapsed since the last update
@@ -444,9 +444,9 @@ local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID,
 
   local currentSpeed = electrics.values.wheelspeed    --speed of the vehicle with the acc
   local speedDifference = math.sqrt((velocityy-targetSpeedIn)^2)
-  local distanceToCars = encodedDistances  
+  local distanceToCars = encodedDistances
   local targetDistance = standStillDistance + deltaTime * currentSpeed --for testing
-  
+
 
   if mode=="acc" then
     local targetDistance = standStillDistance + deltaTime * currentSpeed
@@ -454,14 +454,14 @@ local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID,
 
   if vehiclesOldData[vehicleID] then
     local observedSpeed = (distanceToCars - vehiclesOldData[vehicleID]) / dtSim + prevSpeed --changed to variable the form the function call instead of from the for loop on the table
-    distanceToLeadCar = distanceToCars 
+    distanceToLeadCar = distanceToCars
     leadingSpeed = observedSpeed
   end
 
   local speed2 = leadingSpeed + (distanceToLeadCar - targetDistance) / dtSim --is negative, maintain same speed, add it with the conditions for acc and dec
 
   local speed2 = velocityy + (distanceToLeadCar - targetDistance) / dtSim
-  
+
   targetSpeed = math.min(math.max(speed2, velocityy), targetSpeedIn) --add .max for -ve speed and the velocity is fot the leading vehicle's speed --brakes because of zero
   local distanceError = distanceToLeadCar - targetDistance
   local Kp = 0.1
@@ -477,8 +477,8 @@ local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID,
     targetSpeed = targetSpeedIn
   end
 
-  local Kmpc = computeKmpc() 
-  local deltaU = Kmpc[1]*velocityy + Kmpc[2]*pastU + Kmpc[3]*targetSpeed + Kmpc[4]*targetSpeed + Kmpc[5]*targetSpeed + Kmpc[6]*targetSpeed + Kmpc[7]*targetSpeed 
+  local Kmpc = computeKmpc()
+  local deltaU = Kmpc[1]*velocityy + Kmpc[2]*pastU + Kmpc[3]*targetSpeed + Kmpc[4]*targetSpeed + Kmpc[5]*targetSpeed + Kmpc[6]*targetSpeed + Kmpc[7]*targetSpeed
   local u = pastU + deltaU
 
   if math.floor(distanceToLeadCar) > math.floor(targetDistance) and targetSpeedIn > 0 then
@@ -487,11 +487,11 @@ local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID,
   elseif math.floor(distanceToLeadCar) > math.floor(targetDistance) and targetSpeedIn == 0 then --brakes on and off issue still on
     targetSpeed = inputSpeed
     u = 1
- 
+
   end
   local velDiff = velocityy - targetSpeedIn
 
-  if targetSpeedIn == 0 then 
+  if targetSpeedIn == 0 then
     targetDistance = standStillDistance
   end
 
@@ -502,37 +502,37 @@ local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID,
 
 
 
-  local leaderSpeedingState = detectSpeedTrend(targetSpeed, targetSpeedIn) --using the leading speed value in this function 
+  local leaderSpeedingState = detectSpeedTrend(targetSpeed, targetSpeedIn) --using the leading speed value in this function
 
 
-  if u >= 1  then 
-    u = 1 
-  elseif u <= -0.5 then 
-    u = -0.5 
-  elseif electrics.values.isShifting and velDiff < 0 and distanceToLeadCar-targetDistance > 0 then 
+  if u >= 1  then
+    u = 1
+  elseif u <= -0.5 then
+    u = -0.5
+  elseif electrics.values.isShifting and velDiff < 0 and distanceToLeadCar-targetDistance > 0 then
     u = adjustThrottle(targetSpeed)
-    
+
   end
-  
-  
-  if maintainSpeedFlag == true then 
+
+
+  if maintainSpeedFlag == true then
     u =pastU
   end
 
-  if u > 0  then 
-    electrics.values.throttleOverride = u electrics.values.brakeOverride = nil 
+  if u > 0  then
+    electrics.values.throttleOverride = u electrics.values.brakeOverride = nil
   elseif (u == 0 and targetSpeed > 0)  then --added for ego vehicle to move once leader vehicle moves
-    electrics.values.throttleOverride = u electrics.values.brakeOverride = nil 
+    electrics.values.throttleOverride = u electrics.values.brakeOverride = nil
   else -- added the if and then parts
     electrics.values.throttleOverride = nil electrics.values.brakeOverride = -u --stopping and pressing breaks
-  end 
-  if debug then 
-    local time = math.floor(timer * 1000) / 1000 -- Make sure time doesn't have dozen of digits 
-    csvData:add(time, velocityy, targetSpeed, u) timer = timer + dtSim 
-  end 
-  
+  end
+  if debug then
+    local time = math.floor(timer * 1000) / 1000 -- Make sure time doesn't have dozen of digits
+    csvData:add(time, velocityy, targetSpeed, u) timer = timer + dtSim
+  end
+
   pastU = u
- 
+
   prevSpeed = velocityy
 
   vehiclesOldData[vehicleID] = distanceToCars
@@ -637,7 +637,7 @@ local function updateGFX(dtSim)
   lastDt = dtSim
 
   local distance
-  
+
   if next(simData) ~= nil then
     for k, v in pairs(simData) do
       if type(v) == "table" then
@@ -651,24 +651,24 @@ local function updateGFX(dtSim)
             if k2 == "vehicleID" then
               vehicleID = v2
             end
-            
+
             if k2 == "velBB" then
               if type(v2) == "cdata" then
                 local x = tonumber(v2.x)
                 local y = tonumber(v2.y)
                 local z = tonumber(v2.z)
                 local sq2 = math.sqrt( x^2 + y^2)
-                
 
-                if sq2 <= 0.01 then 
+
+                if sq2 <= 0.01 then
                   sq2 = 0
                 end
 
                 targetSpeed = sq2
               end
             end
-              
-            
+
+
           end
         end
       end
@@ -703,15 +703,10 @@ end
 
 
 
-local function loadAccWithID(vid, speed, debugFlag)
+local function loadACC(speed, debugFlag)
   loaded = true
   mode = "acc"
 
-
-  if not vid or vid == -1 then
-    return
-  end
-  assert(vid >= 0, "adaptiveCruiseControlWithRadar.lua - Failed to get a valid vehicle ID")
   local radarArgs = {}
   targetSpeed = speed
   getMass()
@@ -739,6 +734,6 @@ M.updateGFX = updateGFX
 M.unloadACC           = unloadACC
 M.loadWithIDPlatoon   = loadWithIDPlatoon
 M.changeSpeed         = changeSpeed
-M.loadAccWithID       = loadAccWithID
+M.loadACC             = loadACC
 
 return M

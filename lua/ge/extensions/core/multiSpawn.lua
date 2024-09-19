@@ -78,42 +78,36 @@ local function getIndexRandomPop(data) -- returns the index by using a random po
   return 1 -- random index failed, just return 1
 end
 
-local function getPopulationFactor(modelData, configData, params) -- returns the weighted factor from the given filters
+local function getPopulationFactor(config, params) -- returns the weighted factor from the given filters
   params = params or {}
   params.filters = params.filters or {}
   local factor = 1
 
   if params.maxYear then
-    local vehYear
-    local maxYear = params.maxYear
-    local validYear = true
-
-    configData.Years = configData.Years or modelData.Years
-    if type(configData.Years) == 'table' and type(configData.Years.max) == 'number' then
-      vehYear = configData.Years.max
+    if type(config.Years) == 'table' then
+      config.yearMax = config.Years.max
+    end
+    if params.maxYear <= 0 then -- this auto sets year
+      params.maxYear = os.date('*t').year -- current year (unsure about if this should be used)
     end
 
-    if vehYear then
-      if maxYear > 0 then
-        validYear = vehYear <= maxYear
+    if config.yearMax then
+      if config.yearMax > params.maxYear then
+        return 0
       else
-        maxYear = 2000 -- arbitrary year...
+        factor = min(1, square((100 - max(0, params.maxYear - config.yearMax)) / 100))
       end
-
-      factor = validYear and factor * min(1, square((100 - max(0, maxYear - vehYear)) / 100)) or 0
     end
   end
 
   for k, v in pairs(params.filters) do -- each inner table pair should have a coefficient: {Type = {car = 1, truck = 0.4}}
-    if configData[k] then
-      local configKey = configData[k]
-      if type(configKey) == 'string' then configKey = string.lower(configKey) end
+    local configKey = config[k] or 'default' -- unsure about this actually
+    if type(configKey) == 'string' then configKey = string.lower(configKey) end
 
-      if type(v[configKey]) == 'number' then -- filter value
-        factor = factor * v[configKey]
-      else
-        factor = type(v.other) == 'number' and factor * v.other or 0 -- if 'other' exists, use it
-      end
+    if type(v[configKey]) == 'number' then -- filter value
+      factor = factor * v[configKey]
+    else
+      factor = type(v.other) == 'number' and factor * v.other or 0 -- if 'other' exists, use it; otherwise, factor becomes 0
     end
 
     if factor <= 0 then return 0 end
@@ -130,17 +124,17 @@ local function getInstalledVehicleData(params) -- gets all vehicles and creates 
   params.filters = params.filters or deepcopy(defaultFilters)
   local minPop = params.minPop or 0
   local data = {countryRatios = {}}
+  local configData = {}
   local countryEntries = 0
 
   for _, model in pairs(core_vehicles.getModelList().models) do
     local officialModel = isOfficialSource(model)
     if params.allMods or officialModel then
-      local configData = {}
-      local vehType = model.Type and string.lower(model.Type)
-      local country = model.Country and string.lower(model.Country) or 'default'
+      table.clear(configData)
       local defaultConfig = model.default_pc
       local defaultPop, defaultPopFactor = 0, 1
 
+      local country = model.Country and string.lower(model.Country) or 'default'
       if country ~= 'default' then
         countryEntries = countryEntries + 1
         data.countryRatios[country] = (data.countryRatios[country] or 0) + 1 -- counts up country of origin entries
@@ -149,22 +143,25 @@ local function getInstalledVehicleData(params) -- gets all vehicles and creates 
       for _, config in pairs(core_vehicles.getModel(model.key).configs) do
         local officialConfig = isOfficialSource(config)
         if params.allMods or officialConfig then
-          local popValue = config.Population
-          if type(popValue) ~= 'number' then
+          local configCopy = deepcopy(config)
+
+          if type(configCopy.Population) ~= 'number' then
             if not officialModel or not officialConfig then
-              popValue = 5000 -- improves chance of selecting mod configs, if applicable
+              configCopy.Population = 10000 -- improves chance of selecting mod configs, if applicable (old: 5000)
             else
-              popValue = 0
+              configCopy.Population = 0
             end
           end
+          local popValue = configCopy.Population
 
           if popValue >= minPop then
-            config.Country = country
-            config.Type = config.Type and string.lower(config.Type) or vehType
-            config['Derby Class'] = model['Derby Class']
-            local popFactor = getPopulationFactor(model, config, params)
+            configCopy.Name = model.Name -- enables filtering by name
+            configCopy.Type = config.Type or model.Type -- this way is not good, "Type" should only be a model property
+            configCopy.Country = model.Country -- improves selection of domestic models
+            configCopy['Derby Class'] = model['Derby Class'] -- enables filtering by class
 
-            if popFactor > 0 then
+            local popFactor = getPopulationFactor(configCopy, params)
+            if popFactor > 0 then -- population value must be greater than zero to enable entry into table
               if popValue > defaultPop then -- searches for the maximum population value to apply to model data
                 defaultPop = popValue
                 defaultPopFactor = popFactor
@@ -188,7 +185,7 @@ local function getInstalledVehicleData(params) -- gets all vehicles and creates 
           country = country,
           popBase = defaultPop,
           popFactor = defaultPopFactor,
-          configData = configData
+          configData = deepcopy(configData)
         })
       end
     end

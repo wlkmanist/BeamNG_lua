@@ -90,7 +90,7 @@ end
 -- in ge this should be onPreRender
 -- in vehicle this should be updateGFX
 -- WARNING: this can currently only be called from vehicle lua side. from ge this will break
-local function frameUpdated()
+local function sendStreams()
   vehicleLuaSpecific()
   for streamName, data in pairs(cache) do
     queueStreamDataJS(streamName, jsonEncodeWorkBuffer(data))
@@ -179,7 +179,7 @@ end
 
 -- public interface
 M.reset = reset
-M.frameUpdated = frameUpdated
+M.sendStreams = sendStreams
 -- WARNING: this can currently only be called from vehicle lua side. from ge this will break
 
 M.trigger = trigger

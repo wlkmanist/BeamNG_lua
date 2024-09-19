@@ -185,7 +185,7 @@ local function setState(newState, ignoreCache)
   local isChanged = false
 
   -- Graphics quality groups that have preset values for groups of graphic settings
-  local graphicQualityGroups = {'GraphicOverallQuality', 'GraphicMeshQuality', 'GraphicTextureQuality', 'GraphicLightingQuality', 'GraphicShaderQuality','GraphicPostfxQuality'}
+  local graphicQualityGroups = {'GraphicOverallQuality', 'GraphicMeshQuality', 'GraphicTextureQuality', 'GraphicLightingQuality', 'GraphicShadowsQuality', 'GraphicShaderQuality'}
 
   local sortedKeys = {}
   for k,_ in pairs(newState) do
@@ -391,7 +391,8 @@ local function finalizeInit()
   core_settings_graphic.onFirstUpdateSettings()
   core_settings_audio.onFirstUpdateSettings()
 
-  local techLicense = ResearchVerifier.isTechLicenseVerified()
+  local techLicense = false
+  if ResearchVerifier ~= nil then techLicense = ResearchVerifier.isTechLicenseVerified() end
 
   if not techLicense and values.onlineFeatures == 'enable' and values.telemetry == 'enable' then
     extensions.load('telemetry/gameTelemetry')

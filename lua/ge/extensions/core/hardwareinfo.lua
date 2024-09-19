@@ -268,7 +268,7 @@ local function getInfo()
       table.insert(res.disk.warnings, {type = 'warn', msg = 'rootmodified'})
     end
   end
-  if string.find( getUserPath(), ".:\\Users\\.-\\OneDrive") then
+  if string.find( FS:getUserPath(), ".:\\Users\\.-\\OneDrive") then
     table.insert(res.disk.warnings, {type = 'warn', msg = 'onedrive'})
   end
 

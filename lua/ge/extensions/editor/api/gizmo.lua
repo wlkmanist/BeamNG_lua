@@ -490,10 +490,15 @@ end
 
 --- Modify the distance of the object icons fading by a delta value
 local function modifyFadeIconsDistance(deltaValue)
-  if 0 ~= deltaValue then
+  if 0 ~= deltaValue and not editor.disableModifyFadeIconsDistance then
     local val = editor.getPreference("gizmos.objectIcons.fadeIconsDistance") + deltaValue * editor.getPreference("gizmos.objectIcons.fadeIconsDistanceModifySpeed")
     val = clamp(val, 1, 50000)
     editor.setPreference("gizmos.objectIcons.fadeIconsDistance", val)
+
+    if editor and editor.active and editor.showNotification then
+      editor.showNotification(string.format("Icons Distance: %.0f", val), nil, "IconDistance", nil, false)
+    end
+
   end
 end
 

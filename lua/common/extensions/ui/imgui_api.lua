@@ -15,7 +15,7 @@ ffi.cdef([[
 typedef struct ImVector {
   int Size;
   int Capacity;
-  void* Data;
+  const void* Data;
 } ImVector;
 
 typedef struct ImVec2 {

@@ -4,7 +4,7 @@
 
 local M = {}
 
-local advancedCsvReader
+local csvlib
 
 --function used as a case selector, input can be both int and bool as the first argument, any number of arguments after that
 --in case it's a bool, it works like a ternary if, returning the second param if true, the third if false
@@ -27,17 +27,11 @@ end
 
 local function includeExternalResource(resourceURI)
   if type(resourceURI) ~= 'string' then return end
-
   -- TODO: URL, URI, etc
-
   local _, _, ext = path.split(resourceURI:lower(), true)
   if ext == '.csv' then
-    if not advancedCsvReader then advancedCsvReader = require('advancedCsvReader') end
-    if not advancedCsvReader then
-      log('E', '', 'CSV parser not available')
-      return nil, 'CSV parser not available'
-    end
-    return advancedCsvReader.parseCSVFile()
+    csvlib = csvlib or require('csvlib')
+    return csvlib.readFileCSV(resourceURI)
   end
   log('E', '', 'Unsupported file format: ' .. tostring(filename))
   return nil, 'Unsupported file format: ' .. tostring(filename)

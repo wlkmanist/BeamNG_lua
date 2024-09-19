@@ -130,25 +130,25 @@ end
 
 local function dumpsDeviceData(device)
   if device then
-    local data = deepcopy(device)
-    if data.children then
-      data.children = {}
+    local deviceData = deepcopy(device)
+    if deviceData.children then
+      deviceData.children = {}
       for _, v in pairs(device.children) do
-        table.insert(data.children, v.name or "unknown")
+        table.insert(deviceData.children, v.name or "unknown")
       end
     end
-    if data.clutchChildren then
-      for k, child in ipairs(data.clutchChildren) do
-        data.clutchChildren[k] = child.name
+    if deviceData.clutchChildren then
+      for k, child in ipairs(deviceData.clutchChildren) do
+        deviceData.clutchChildren[k] = child.name
       end
     end
-    if data.clutchChild then
-      data.clutchChild = data.clutchChild.name
+    if deviceData.clutchChild then
+      deviceData.clutchChild = deviceData.clutchChild.name
     end
-    if data.parent then
-      data.parent = data.parent.name or "unknown"
+    if deviceData.parent then
+      deviceData.parent = deviceData.parent.name or "unknown"
     end
-    return dumps(data)
+    return dumps(deviceData)
   else
     return "nil"
   end
@@ -198,8 +198,6 @@ local function updateGFX(dt)
         --print(string.format("Damage detected: %s:%s -> %.4f (%.4f)", device.name, deformGroupData.groupType, currentDamage - lastDamage, currentDamage))
         if device.applyDeformGroupDamage then
           device:applyDeformGroupDamage(currentDamage - lastDamage, deformGroupData.groupType)
-        else
-          --print("Can't apply damage, no API found")
         end
         device.deformGroupLastDamages[deformGroupData.groupType] = currentDamage
       end

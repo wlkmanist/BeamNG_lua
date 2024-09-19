@@ -291,7 +291,10 @@ local function onRaceStart()
     end
   end
   table.insert(wps, vec3(task[3][1], task[3][2], core_terrain.getTerrainHeight(vec3(task[3]))))
-  core_groundMarkers.setFocus(wps, nil, nil, nil, nil, nil, {hex2rgb(currentLine.routeColor)})
+  local options = {
+    color = {hex2rgb(currentLine.routeColor)}
+  }
+  core_groundMarkers.setPath(wps, options)
   running = true
 end
 
@@ -491,13 +494,17 @@ local function renderDebugLine()
     table.insert(wps, firstDest)
     table.insert(wps, secondDest)
   end
-  core_groundMarkers.setFocus(wps, 10, 150 * 1000, 200 * 1000, vec3Destination, true, {hex2rgb(currentLine.routeColor)})
+  local options = {
+    step = 10,
+    color = {hex2rgb(currentLine.routeColor)}
+  }
+  core_groundMarkers.setPath(wps, options)
 end
 
 local function onPreRender(dt, dtSim)
   --local debugPath = true
 
-  --core_groundMarkers.setFocus(nil)
+  --core_groundMarkers.setPath(nil)
   if (not nextStop) or nextStop == "nil" then return end
   if nextStop == nil then return end
 
@@ -629,7 +636,7 @@ local function onPreRender(dt, dtSim)
   table.insert(wps, firstDest)
   table.insert(wps, secondDest)
 
-  core_groundMarkers.setFocus(wps, 10, 150, 200, vec3Destination, nil, {hex2rgb(currentLine.routeColor)})
+  core_groundMarkers.setPath(wps, 10, 150, 200, vec3Destination, nil, {hex2rgb(currentLine.routeColor)})
   --]]
   if M.enabledLineDebug then
     renderDebugLine()
@@ -751,7 +758,10 @@ local function onBusUpdate(state)
             end
           end
           table.insert(wps, vec3(task[3][1], task[3][2], core_terrain.getTerrainHeight(vec3(task[3]))))
-          core_groundMarkers.setFocus(wps, nil, nil, nil, nil, nil, {hex2rgb(currentLine.routeColor)})
+          local options = {
+            color = {hex2rgb(currentLine.routeColor)}
+          }
+          core_groundMarkers.setPath(wps, options)
         else
           nextStop = nil
         end
@@ -795,7 +805,7 @@ end
 
 local function onExtensionUnloaded()
   markers = {}
-  core_groundMarkers.setFocus(nil)
+  core_groundMarkers.setPath(nil)
 
   --we freeze in the reset(), we need to unfreeze manually
   local playerVehicle = getPlayerVehicle(0)

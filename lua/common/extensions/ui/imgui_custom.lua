@@ -96,7 +96,7 @@ return function(M)
     return res
   end
 
-  function M.ImVec4ToFloatPtr(imVec4) return ffi.cast("float*", imVec4) end
+  function M.ImVec4ToFloatPtr(imVec4) return imVec4 end
 
   function M.ArrayBoolByTbl(tbl)
     local arr = ffi.new("bool[" .. #tbl .. "]")
@@ -216,6 +216,12 @@ return function(M)
     return C.imgui_InputTextMultiline(label, buf, buf_size, size, flags, callback, user_data)
   end
 
+  function M.InputTextConsole(label, buf, buf_size, flags)
+    if not buf_size then buf_size = ffi.sizeof(buf) end
+    if not flags then flags = 0 end
+
+    return C.imgui_InputTextConsole(label, buf, buf_size, flags)
+  end
   function M.Combo1(label, current_item, items, items_count, popup_max_height_in_items)
     if popup_max_height_in_items == nil then popup_max_height_in_items = -1 end
     if items_count == nil then items_count = M.GetLengthArrayCharPtr(items) end
@@ -331,7 +337,7 @@ return function(M)
       table.insert(FFiDataConv, ffi.new('float['..tostring(#datas[i])..']', datas[i]))
       options.values_count = #datas[i]
     end
-    options.datas = ffi.new('float*['..tostring(options.num_datas)..']', FFiDataConv)
+    options.datas = ffi.new('const float&['..tostring(options.num_datas)..']', FFiDataConv)
     C.imgui_PlotMulti2Lines(options.c)
   end
   M.PlotMulti2NumberFormat = {USE_FIRST_Y_AXIS = 0,
@@ -346,7 +352,7 @@ return function(M)
   function M.GetLengthArrayBool(array) return ffi.sizeof(array) / ffi.sizeof("bool") end
   function M.GetLengthArrayFloat(array) return ffi.sizeof(array) / ffi.sizeof("float") end
   function M.GetLengthArrayInt(array) return ffi.sizeof(array) / ffi.sizeof("int") end
-  function M.GetLengthArrayCharPtr(array) return (ffi.sizeof(array) / ffi.sizeof("char*")) - 1 end
+  function M.GetLengthArrayCharPtr(array) return (ffi.sizeof(array) / ffi.sizeof("const char*")) - 1 end
   function M.GetLengthArrayImVec4(array) return ffi.sizeof(array) / ffi.sizeof("ImVec4") end
   function M.ArrayCharPtrByTbl(tbl) return ffi.new("const char*[".. #tbl + 1 .."]", tbl) end
 
@@ -467,7 +473,7 @@ return function(M)
   end
 
   function M.loadIniSettingsFromDisk(filename)
-    C.imgui_LoadIniSettingsFromDisk(FS:getFileRealPath(filename))
+    C.imgui_LoadIniSettingsFromDisk(filename)
   end
 
   function M.ClearActiveID()
@@ -475,8 +481,7 @@ return function(M)
   end
 
   function M.saveIniSettingsToDisk(filename)
-    local filepath = getUserPath() .. filename
-    C.imgui_SaveIniSettingsToDisk(filepath)
+    C.imgui_SaveIniSettingsToDisk(filename)
   end
 
   -- Wrapper function, this was removed in the latest imgui version
@@ -551,7 +556,6 @@ return function(M)
     M.PopFont()
   end
 
-
   -- Knobs
   function M.Knob(string_label, floatPtr_value, float_v_min, float_v_max, float_speed, string_format, ImGuiKnobVariant_variant, float_size, ImGuiKnobFlags_flags, int_steps)
     if float_v_min == nil then float_v_min = 0 end
@@ -576,6 +580,7 @@ return function(M)
     if int_steps == nil then int_steps = 10 end
     return C.imgui_KnobInt(string_label, floatPtr_value, float_v_min, float_v_max, float_speed, string_format, ImGuiKnobVariant_variant, float_size, ImGuiKnobFlags_flags, int_steps)
   end
+
   M.KnobFlags_NoTitle = C.ImGuiKnobFlags_NoTitle
   M.KnobFlags_NoInput = C.ImGuiKnobFlags_NoInput
   M.KnobFlags_ValueTooltip = C.ImGuiKnobFlags_ValueTooltip
@@ -588,6 +593,103 @@ return function(M)
   M.KnobVariant_WiperDot = C.ImGuiKnobVariant_WiperDot
   M.KnobVariant_Stepped = C.ImGuiKnobVariant_Stepped
   M.KnobVariant_Space = C.ImGuiKnobVariant_Space
-  
+
+
+  -- ##### ##### #####
+  -- ##### ##### #####
+  -- ##### ##### #####
+  local FFIType_mt = {
+    __index = function(self, key)
+      if key == 0 then
+        return self.value
+      else
+        return nil
+      end
+    end,
+    __newindex = function(self, key, value)
+      if key == 0 then
+        self.value = value
+      else
+        -- rawset(self, key, value)
+      end
+    end,
+    __tostring = function(self)
+      return tostring(self.value)
+    end,
+  }
+  M.ffiBool = ffi.metatype("FFIBool", FFIType_mt)
+  M.ffiFloat = ffi.metatype("FFIFloat", FFIType_mt)
+
+  local FFIType2_mt = {
+    __index = function(self, key)
+      if key == 0 then
+        return self.x
+      elseif key == 1 then
+        return self.y
+      else
+        return nil
+      end
+    end,
+    __newindex = function(self, key, value)
+      if key == 0 then
+        self.x = value
+      elseif key == 1 then
+        self.y = value
+      else
+        -- rawset(self, key, value)
+      end
+    end,
+    __tostring = function(self)
+      return "x: " .. tostring(self.x) .. "y: " .. tostring(self.y)
+    end,
+  }
+  M.ffiFloat2 = ffi.metatype("FFIFloat2", FFIType2_mt)
+
+  local string_mt = {
+    __gc = function(self) print("GC") C.imgui_FreeString(self) end,
+    __new = function(ct, size, str)
+      local outStr = ffi.new(ct)
+      C.imgui_AllocString(outStr, size, str or "")
+      return outStr
+    end,
+    __tostring = function(str) return ffi.string(str.value) end,
+  }
+  string_mt.__index = string_mt
+  ffi.metatype("struct FFIString", string_mt)
+  M.str = ffi.typeof("struct FFIString")
+
+  function M.ShowDemoWindowTest(bool_p_open)
+    -- bool_p_open is optional and can be nil
+    C.imgui_ShowDemoWindow_Test(bool_p_open)
+  end
+
+  function M.CheckboxTest(string_label, bool_v)
+    if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Checkbox' cannot be nil, as the c type is 'const char *'") ; return end
+    if bool_v == nil then log("E", "", "Parameter 'bool_v' of function 'Checkbox' cannot be nil, as the c type is 'bool *'") ; return end
+    return C.imgui_CheckboxTest(string_label, bool_v)
+  end
+
+  function M.SliderFloatTest(string_label, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
+    if string_format == nil then string_format = "%.3f" end
+    if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
+    if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderFloat' cannot be nil, as the c type is 'const char *'") ; return end
+    if float_v == nil then log("E", "", "Parameter 'float_v' of function 'SliderFloat' cannot be nil, as the c type is 'float *'") ; return end
+    return C.imgui_SliderFloatTest(string_label, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
+  end
+
+  function M.SliderFloat2Test(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
+    if string_format == nil then string_format = "%.3f" end
+    if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
+    if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderFloat2' cannot be nil, as the c type is 'const char *'") ; return end
+    return C.imgui_SliderFloat2Test(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
+  end
+
+  function M.InputTextTest(label, buf, buf_size, flags, callback, user_data, editEnded)
+    if not buf_size then buf_size = buf.size end
+    if not flags then flags = 0 end
+
+    return C.imgui_InputTextTest(label, buf, buf_size, flags, callback, user_data)
+  end
+
 end -- return end add things above, not below
 

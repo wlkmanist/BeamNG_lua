@@ -11,11 +11,13 @@ local tether
 
 local computerFunctions
 local computerId
+local computerFacilityName
 local menuData = {}
 
 local function openMenu(computerFacility)
   computerFunctions = {general = {}, vehicleSpecific = {}}
   computerId = computerFacility.id
+  computerFacilityName = computerFacility.name
 
   menuData = {vehiclesInGarage = {}}
   local inventoryIds = career_modules_inventory.getInventoryIdsInClosestGarage()
@@ -26,6 +28,7 @@ local function openMenu(computerFacility)
     vehicleData.needsRepair = career_modules_insurance.inventoryVehNeedsRepair(inventoryId) or nil
     local vehicleInfo = career_modules_inventory.getVehicles()[inventoryId]
     vehicleData.vehicleName = vehicleInfo and vehicleInfo.niceName
+    vehicleData.dirtyDate = vehicleInfo and vehicleInfo.dirtyDate
     table.insert(menuData.vehiclesInGarage, vehicleData)
 
     computerFunctions.vehicleSpecific[inventoryId] = {}
@@ -69,12 +72,14 @@ local function getComputerUIData()
   end
 
   local vehiclesForUI = deepcopy(menuData.vehiclesInGarage)
-  for i, vehicleData in ipairs(menuData.vehiclesInGarage) do
-    vehiclesForUI[i].inventoryId = tostring(vehicleData.inventoryId)
+  for i, vehicleData in ipairs(vehiclesForUI) do
+    vehicleData.thumbnail = career_modules_inventory.getVehicleThumbnail(vehicleData.inventoryId) .. "?" .. (vehicleData.dirtyDate or "")
+    vehicleData.inventoryId = tostring(vehicleData.inventoryId)
   end
 
   data.computerFunctions = computerFunctionsForUI
   data.vehicles = vehiclesForUI
+  data.facilityName = computerFacilityName
   return data
 end
 
@@ -92,5 +97,16 @@ M.closeMenu = closeMenu
 
 M.getComputerUIData = getComputerUIData
 M.computerButtonCallback = computerButtonCallback
+
+M.reasons = {
+  tutorialActive = {
+    type = "text",
+    label = "Disabled during tutorial."
+  },
+  needsRepair = {
+    type = "needsRepair",
+    label = "The vehicle needs to be repaired first."
+  }
+}
 
 return M

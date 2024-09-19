@@ -27,7 +27,7 @@ local debugSendTimer = 0
 local debugReceiveTimer = 0
 local debugHeartbeatTimer = 0
 local debugPackets = {}
-local udpSocket = socket.udp()
+local udpSocket
 
 local controlParameters
 local initialControlParameters
@@ -261,12 +261,17 @@ local function init(jbeamData)
   isUDPConnected = false
   local debugSettings = jbeamData.debugSettings or {}
   table.clear(debugPackets)
-  udpSocket:settimeout(0.00)
   local peerIP = debugSettings.peerIP or "127.0.0.1"
   local peerPort = debugSettings.peerPort or 54812
-  local result, error = udpSocket:setpeername(peerIP, peerPort)
-  if result and not error then
-    isUDPConnected = true
+
+  --socket is not always available
+  if socket then
+    udpSocket = socket.udp()
+    udpSocket:settimeout(0.00)
+    local result, error = udpSocket:setpeername(peerIP, peerPort)
+    if result and not error then
+      isUDPConnected = true
+    end
   end
 
   local indicateUI = jbeamData.indicateUI == nil and true or false

@@ -133,7 +133,7 @@ end
 
 -- pos and rot are optional
 local function setWalkingMode(enabled, pos, rot)
-  if (enabled == active) or not atParkingSpeed or not togglingEnabled or (core_replay.getState() == 'playing') then
+  if (enabled == active) or not atParkingSpeed or not togglingEnabled or (core_replay.getState() == 'playback') then
     return false, getPlayerUnicycle() and getPlayerUnicycle():getId()
   end
   if enabled then

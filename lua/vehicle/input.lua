@@ -201,8 +201,14 @@ local function initSecondStage()
           end
         end
       end
+      if foundSteeringHydro and not next(rearWheels) then
+        log("W", "", "Unable to identify any rear wheels for front wheel: "..dumps(wd1.name))
+      end
       table.insert(frontWheels, {wi1, wd1, rearWheels, #rearWheels})
     end
+  end
+  if foundSteeringHydro and not next(frontWheels) then
+    log("W", "", "Unable to identify any front wheels: driving assistants may not work")
   end
   if debug then
     for k, v in ipairs(frontWheels) do

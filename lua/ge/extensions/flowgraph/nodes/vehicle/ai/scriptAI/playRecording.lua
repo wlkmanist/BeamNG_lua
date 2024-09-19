@@ -41,15 +41,23 @@ function C:postInit()
   }
 end
 
-function C:play()
-  self:loadRecording()
-  if not self.recording then return end
+function C:getVeh()
   local veh
-  if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-    veh = scenetree.findObjectById(self.pinIn.vehId.value)
+  if self.pinIn.vehId.value then
+    veh = be:getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end
+  return veh
+end
+
+function C:play()
+  self:loadRecording()
+  if not self.recording then return end
+  
+  local veh = self:getVeh()
+  if not veh then return end
+
   self.recording.recording.loopCount = self.pinIn.loopCount.value or -1
   self.recording.recording.loopType = "firstOnlyTeleport"
   veh:queueLuaCommand('ai.startFollowing(' .. serialize(self.recording.recording) .. ')')
@@ -57,16 +65,13 @@ function C:play()
 end
 
 function C:stop()
-  local veh
-  if self.pinIn.vehId.value then
-    veh = scenetree.findObjectById(self.pinIn.vehId.value)
-  else
-    veh = getPlayerVehicle(0)
-  end
-  veh:queueLuaCommand('ai.stopFollowing()')
   self.running = false
+  
+  local veh = self:getVeh()
+  if veh then
+    veh:queueLuaCommand('ai.stopFollowing()')
+  end
 end
-
 
 function C:loadRecording()
   if not self.pinIn.fileName.value then return end

@@ -19,7 +19,7 @@ C.allowedManualPinTypes = {
 }
 
 
-C.tags = {'activity'}
+C.tags = {'activity', 'mission'}
 
 function C:init()
   self.savePins = true

@@ -5,6 +5,7 @@
 local graphpath = require('graphpath')
 local quadtree = require('quadtree')
 local kdTreeBox2D = require('kdtreebox2d')
+local buffer = require("string.buffer")
 
 -- cache frequently used functions from other modules in upvalues
 local min, max, abs, sqrt, huge = math.min, math.max, math.abs, math.sqrt, math.huge
@@ -35,6 +36,63 @@ local emptyTable = setmetatable({}, {__newindex = function(t, key, val) log('E',
 local vecX = vec3(1,0,0)
 local vecY = vec3(0,1,0)
 local vecUp = vec3(0,0,1)
+local tmpBuf = buffer.new()
+local function highToLow(a, b) return a < b end
+local function lowToHigh(a, b) return a > b end
+local function randomOrder(a, b) return math.random() > math.random() end
+
+local _pairs = pairs
+-- for debugging issues in the deterministic build of the navgraph
+local function toggleShuffledPairs(mode)
+  if mode then
+    if mode == 'shuffledPairs' then
+      _pairs = shuffledPairs
+    elseif mode == 'pairs' then
+      _pairs = pairs
+    end
+  else
+    _pairs = _pairs == pairs and shuffledPairs or pairs
+  end
+  if _pairs == pairs then
+    log('W', 'map.lua', 'Using pairs')
+  elseif _pairs == shuffledPairs then
+    log('W', 'map.lua', 'Using shuffledPairs')
+  end
+end
+
+local function safeVecSum(l)
+  local len = #l
+  local tmp = table.new(len, 0)
+
+  for i = 1, len do tmp[i] = l[i].x end
+  table.sort(tmp)
+  local sumX = 0
+  for i = 1, len do sumX = sumX + tmp[i] end
+
+  for i = 1, len do tmp[i] = l[i].y end
+  table.sort(tmp)
+  local sumY = 0
+  for i = 1, len do sumY = sumY + tmp[i] end
+
+  for i = 1, len do tmp[i] = l[i].z end
+  table.sort(tmp)
+  local sumZ = 0
+  for i = 1, len do sumZ = sumZ + tmp[i] end
+
+  return vec3(sumX, sumY, sumZ)
+end
+
+local function safeNumberSum(l)
+  local len = #l
+  local _l = table.new(len, 0)
+
+  for i = 1, len do _l[i] = l[i] end -- copy to preserve order of input list
+  table.sort(_l)
+  local sum = 0
+  for i = 1, len do sum = sum + _l[i] end
+
+  return sum
+end
 
 -- enforces rerendering the loading screen if required
 local function _updateProgress()
@@ -87,11 +145,7 @@ end
 
 local function setRoadRules()
   rules = {rightHandDrive = false, turnOnRed = false} -- default road rules
-  local fileName = getMissionFilename()
-  if not fileName or fileName == '' then return end
-  local _, _, ext = path.split(fileName)
-  if ext == 'mis' then return end
-
+  local fileName = path.getPathLevelInfo(getCurrentLevelIdentifier() or '')
   local info = jsonReadFile(fileName)
   if info and info.roadRules then
     rules = tableMerge(rules, info.roadRules)
@@ -106,14 +160,43 @@ local function isOneWay(lanes)
   return not lanes:find('-') or not lanes:find('+')
 end
 
+local laneStringBuffer = buffer.new()
 local function flipLanes(lanes)
   -- ex. '--+++' becomes '---++'
-  local res = ''
   for i = #lanes, 1, -1 do
-    local char = lanes:byte(i) == 43 and '-' or lanes:byte(i) == 45 and '+' or '0'
-    res = res..char
+    laneStringBuffer:put(lanes:byte(i) == 43 and '-' or lanes:byte(i) == 45 and '+' or '0')
   end
-  return res
+  return laneStringBuffer:get()
+end
+
+-- returns the edge node positions of edge n1-n2 in the given order
+local function getEdgeNodePositions(n1id, n2id)
+  if not (map.nodes[n1id] and map.nodes[n2id] and (map.nodes[n1id].links[n2id] or map.nodes[n2id].links[n1id])) then return end
+  local edgeData = map.nodes[n1id].links[n2id] or map.nodes[n2id].links[n1id]
+  return edgeData[edgeData.inNode == n1id and 'inPos' or 'outPos'] or map.nodes[n1id].pos,
+         edgeData[edgeData.inNode == n2id and 'inPos' or 'outPos'] or map.nodes[n2id].pos
+end
+
+-- returns the node position of node n1 of edge
+local function getEdgeNodePosition(nid, edge)
+  -- nid: a node id (string)
+  -- edge: an edge data table.(ex. given node n1id and n2id the edge data table is map.nodes[n1id].links[n2id])
+  return edge[edge.inNode == nid and 'inPos' or 'outPos'] or map.nodes[nid].pos
+end
+
+-- returns the edge node positions of edge n1-n2 in the given order
+local function getEdgeNodeRadii(n1id, n2id)
+  if not (map.nodes[n1id] and map.nodes[n2id] and (map.nodes[n1id].links[n2id] or map.nodes[n2id].links[n1id])) then return end
+  local edgeData = map.nodes[n1id].links[n2id] or map.nodes[n2id].links[n1id]
+  return edgeData[edgeData.inNode == n1id and 'inRadius' or 'outRadius'] or map.nodes[n1id].radius,
+         edgeData[edgeData.inNode == n2id and 'inRadius' or 'outRadius'] or map.nodes[n2id].radius
+end
+
+-- returns the node position of node n1 of edge
+local function getEdgeNodeRadius(nid, edge)
+  -- nid: a node id (string)
+  -- edge: an edge data table.(ex. given node nid and n2id the edge data table is map.nodes[nid].links[n2id])
+  return edge[edge.inNode == nid and 'inRadius' or 'outRadius'] or map.nodes[nid].radius
 end
 
 local function createSpeedLimits(metric)
@@ -122,12 +205,13 @@ local function createSpeedLimits(metric)
   local baseValue = 19.444 -- 70 km/h
 
   for nid, n in pairs(map.nodes) do
-    for lid, d in pairs(n.links) do
-      if not d.speedLimit then
+    for lid, edge in pairs(n.links) do
+      if not edge.speedLimit then
         local speedLimit = huge
-        local radius = (n.radius + map.nodes[lid].radius) * 0.5
-        local highway = d.oneWay and 2 or 1
-        local autoSpeed = baseValue * clamp(((radius * highway + 5) / 8) * d.drivability, 0.4, 2)
+        local nidRad, lidRad = getEdgeNodeRadii(nid, lid)
+        local radius = (nidRad + lidRad) * 0.5
+        local highway = edge.oneWay and 2 or 1
+        local autoSpeed = baseValue * clamp(((radius * highway + 5) / 8) * edge.drivability, 0.4, 2)
 
         for i, speed in ipairs(list) do
           speed = speed / unit
@@ -138,10 +222,283 @@ local function createSpeedLimits(metric)
           end
         end
 
-        d.speedLimit = speedLimit
+        edge.speedLimit = speedLimit
       end
     end
   end
+end
+
+-- returns minimum point in x, y, z order comparison or nil if coordinates are equal
+local function min3D(a, b)
+  -- TODO: returns nil if all equal
+  if a.x ~= b.x then
+    if a.x < b.x then
+      return a
+    else
+      return b
+    end
+  elseif a.y ~= b.y then
+    if a.y < b.y then
+      return a
+    else
+      return b
+    end
+  elseif a.z ~= b.z then
+    if a.z < b.z then
+      return a
+    else
+      return b
+    end
+  else
+    return a
+  end
+end
+
+-- less than function for nodes
+-- returns true if n1 < n2
+local function nodeCompare(n1, n2)
+  if n1.pos.x ~= n2.pos.x then
+    return n1.pos.x < n2.pos.x
+  elseif n1.pos.y ~= n2.pos.y then
+    return n1.pos.y < n2.pos.y
+  elseif n1.pos.z ~= n2.pos.z then
+    return n1.pos.z < n2.pos.z
+  elseif n1.radius ~= n2.radius then
+    return n1.radius < n2.radius
+  elseif n1.manual ~= n2.manual then
+    return (n1.manual or 0) < (n2.manual or 0)
+  elseif n1.noMerge ~= n2.noMerge then
+    return (n1.noMerge and 1 or 0) < (n2.noMerge and 1 or 0)
+  elseif n1.endNode ~= n2.endNode then
+    return (n1.endNode and 1 or 0) < (n2.endNode and 1 or 0)
+  elseif tableSize(n1.links) ~= tableSize(n2.links) then
+    return tableSize(n1.links) < tableSize(n2.links)
+  else
+    return false
+  end
+end
+
+local function hashNodeData()
+  local nodeList = {}
+  for _, node in _pairs(map.nodes) do
+    table.insert(nodeList, node)
+  end
+  table.sort(nodeList, nodeCompare)
+  for i = 1, #nodeList do
+    local node = nodeList[i]
+    tmpBuf:put(node.pos.x, node.pos.y, node.pos.z, node.radius, node.manual or 0, node.noMerge and 1 or 0, node.endNode and 1 or 0, tableSize(node.links))
+  end
+  return hashStringSHA256(tmpBuf:get())
+end
+
+-- local function sortEdgeNodes(edge)
+--   local n1id, n1Pos = next(edge.pos)
+--   local n2id, n2Pos = next(edge.pos, n1id)
+--   if n1Pos.x ~= n2Pos.x then
+--     if n1Pos.x < n2Pos.x then
+--       return n1id, n2id
+--     else
+--       return n2id, n1id
+--     end
+--   elseif n1Pos.y ~= n2Pos.y then
+--     if n1Pos.y < n2Pos.y then
+--       return n1id, n2id
+--     else
+--       return n2id, n1id
+--     end
+--   elseif n1Pos.z ~= n2Pos.z then
+--     if n1Pos.z < n2Pos.z then
+--       return n1id, n2id
+--     else
+--       return n2id, n1id
+--     end
+--   elseif edge.radius[n1id] ~= edge.radius[n2id] then
+--     if edge.radius[n1id] < edge.radius[n2id] then
+--       return n1id, n2id
+--     else
+--       return n2id, n1id
+--     end
+--   else
+--     return n1id, n2id
+--   end
+-- end
+
+local function sortEdgeNodes(edge)
+  local inPos, inRadius = edge.inPos, edge.inRadius
+  local outPos, outRadius = edge.outPos, edge.outRadius
+  if inPos.x ~= outPos.x then
+    if inPos.x < outPos.x then
+      return inPos, inRadius, outPos, outRadius
+    else
+      return outPos, outRadius, inPos, inRadius
+    end
+  elseif inPos.y ~= outPos.y then
+    if inPos.y < outPos.y then
+      return inPos, inRadius, outPos, outRadius
+    else
+      return outPos, outRadius, inPos, inRadius
+    end
+  elseif inPos.z ~= outPos.z then
+    if inPos.z < outPos.z then
+      return inPos, inRadius, outPos, outRadius
+    else
+      return outPos, outRadius, inPos, inRadius
+    end
+  elseif inRadius ~= outRadius then
+    if inRadius < outRadius then
+      return inPos, inRadius, outPos, outRadius
+    else
+      return outPos, outRadius, inPos, inRadius
+    end
+  else
+    return inPos, inRadius, outPos, outRadius
+  end
+end
+
+-- -- returns the node id of the minimum of the two nodes of edge
+-- -- There is an expectation here that the two nodes will not be equal
+-- local function minEdgeNode(edge)
+--   local inPos, inRadius = edge.inPos, edge.inRadius
+--   local outPos, outRadius = edge.outPos, edge.outRadius
+--   if inPos.x ~= outPos.x then
+--     if inPos.x < outPos.x then
+--       return edge.inNode
+--     else
+--       return edge.outNode
+--     end
+--   elseif inPos.y ~= outPos.y then
+--     if inPos.y < outPos.y then
+--       return edge.inNode
+--     else
+--       return edge.outNode
+--     end
+--   elseif inPos.z ~= outPos.z then
+--     if inPos.z < outPos.z then
+--       return edge.inNode
+--     else
+--       return edge.outNode
+--     end
+--   elseif inRadius ~= outRadius then
+--     if inRadius < outRadius then
+--       return edge.inNode
+--     else
+--       return edge.outNode
+--     end
+--   else
+--     return edge.inNode
+--   end
+-- end
+
+-- -- ordering function for edges
+-- local function edgeCompare(a, b)
+--   local aMin, aMax = sortEdgeNodes(a)
+--   local bMin, bMax = sortEdgeNodes(b)
+
+--   if a.pos[aMin].x ~= b.pos[bMin].x then
+--     return a.pos[aMin].x < b.pos[bMin].x
+--   elseif a.pos[aMin].y ~= b.pos[bMin].y then
+--     return a.pos[aMin].y < b.pos[bMin].y
+--   elseif a.pos[aMin].z ~= b.pos[bMin].z then
+--     return a.pos[aMin].z < b.pos[bMin].z
+--   elseif a.radius[aMin] ~= b.radius[bMin] then
+--     return a.radius[aMin] < b.radius[bMin]
+--   elseif a.pos[aMax].x ~= b.pos[bMax].x then
+--     return a.pos[aMax].x < b.pos[bMax].x
+--   elseif a.pos[aMax].y ~= b.pos[bMax].y then
+--     return a.pos[aMax].y < b.pos[bMax].y
+--   elseif a.pos[aMax].z ~= b.pos[bMax].z then
+--     return a.pos[aMax].z < b.pos[bMax].z
+--   elseif a.radius[aMax] ~= b.radius[bMax] then
+--     return a.radius[aMax] < b.radius[bMax]
+--   elseif a.drivability ~= b.drivability then
+--     return a.drivability < b.drivability
+--   elseif a.oneWay ~= b.oneWay then
+--     return (a.oneWay and 1 or 0) < (b.oneWay and 1 or 0)
+--   elseif a.speedLimit ~= b.speedLimit then
+--     return (a.speedLimit or 0) < (b.speedLimit or 0)
+--   elseif a.type ~= b.type then
+--     return (a.type or '') < (b.type or '')
+--   elseif a.noMerge ~= b.noMerge then
+--     return (a.noMerge and 1 or 0) < (b.noMerge and 1 or 0)
+--   else -- inNode?
+--     return false
+--   end
+-- end
+
+-- less than function for edges
+-- returns true if a < b
+local function edgeCompare(a, b)
+  local aPosMin, aRadMin, aPosMax, aRadMax = sortEdgeNodes(a) -- do i need to sort, why not just always compare in a vs in b and out a vs out b?
+  local bPosMin, bRadMin, bPosMax, bRadMax = sortEdgeNodes(b)
+
+  if aPosMin.x ~= bPosMin.x then
+    return aPosMin.x < bPosMin.x
+  elseif aPosMin.y ~= bPosMin.y then
+    return aPosMin.y < bPosMin.y
+  elseif aPosMin.z ~= bPosMin.z then
+    return aPosMin.z < bPosMin.z
+  elseif aRadMin ~= bRadMin then
+    return aRadMin < bRadMin
+  elseif aPosMax.x ~= bPosMax.x then
+    return aPosMax.x < bPosMax.x
+  elseif aPosMax.y ~= bPosMax.y then
+    return aPosMax.y < bPosMax.y
+  elseif aPosMax.z ~= bPosMax.z then
+    return aPosMax.z < bPosMax.z
+  elseif aRadMax ~= bRadMax then
+    return aRadMax < bRadMax
+  elseif a.drivability ~= b.drivability then
+    return a.drivability < b.drivability
+  elseif a.oneWay ~= b.oneWay then
+    return (a.oneWay and 1 or 0) < (b.oneWay and 1 or 0)
+  elseif a.speedLimit ~= b.speedLimit then
+    return (a.speedLimit or 0) < (b.speedLimit or 0)
+  elseif a.lanes ~= b.lanes then
+    return a.lanes < b.lanes
+  elseif a.type ~= b.type then
+    return (a.type or '') < (b.type or '')
+  elseif a.noMerge ~= b.noMerge then
+    return (a.noMerge and 1 or 0) < (b.noMerge and 1 or 0)
+  else -- inNode?
+    return false
+  end
+end
+
+local function hashEdgeData()
+  local edgeList = {}
+  for n1id, node1 in _pairs(map.nodes) do
+    for n2id, edge in _pairs(node1.links) do
+      if n1id < n2id or not map.nodes[n2id].links[n1id] then -- second condition checks if edge is single sided
+        table.insert(edgeList, edge)
+      end
+    end
+  end
+  table.sort(edgeList, edgeCompare)
+  for i = 1, #edgeList do
+    local edge = edgeList[i]
+    local nodeMinPos, nodeMinRad, nodeMaxPos, nodeMaxRad = sortEdgeNodes(edge)
+    local inPos, outPos = getEdgeNodePositions(edge.inNode, edge.outNode)
+    local inRadius, outRadius = getEdgeNodeRadii(edge.inNode, edge.outNode)
+    tmpBuf:put(
+      nodeMinPos.x, nodeMinPos.y, nodeMinPos.z, nodeMinRad,
+      nodeMaxPos.x, nodeMaxPos.y, nodeMaxPos.z, nodeMaxRad,
+      inPos.x, inPos.y, inPos.z,
+      outPos.x, outPos.y, outPos.z,
+      inRadius, outRadius,
+      edge.drivability,
+      edge.oneWay and 1 or 0,
+      edge.speedLimit or 0,
+      edge.lanes,
+      edge.type or 0,
+      edge.noMerge and 1 or 0
+    )
+  end
+  return hashStringSHA256(tmpBuf:get())
+end
+
+local function logGraphHashes()
+  log('I', 'node hash', hashNodeData())
+  log('I', 'edge hash', hashEdgeData())
 end
 
 local function surfaceNormal(p, r)
@@ -185,6 +542,31 @@ local function surfaceNormal(p, r)
   return p3
 end
 
+local function numOfLanesFromRadius(rad1, rad2)
+  return max(1, math.floor(min(rad1, rad2 or math.huge) * 2 / 3.61 + 0.5)) -- math.floor(min(rad1, rad2) / 2.7) + 1
+end
+
+-- Returns the lane configuration of an edge as traversed in the inNode -> outNode direction (predessesor and succesor if along a path)
+-- if an edge does not have lane data they are deduced from the node radii
+local function getEdgeLaneConfig(node1, node2)
+  local lanes
+  local edge = map.nodes[node1].links[node2]
+  local rad1, rad2 = getEdgeNodeRadii(edge.inNode, edge.outNode)
+  if edge.oneWay then
+    local numOfLanes = numOfLanesFromRadius(rad1, rad2)
+    lanes = string.rep("+", numOfLanes)
+  else
+    local numOfLanes = max(1, math.floor(numOfLanesFromRadius(rad1, rad2) * 0.5))
+    if rules.rightHandDrive then
+      lanes = string.rep("+", numOfLanes)..string.rep("-", numOfLanes)
+    else
+      lanes = string.rep("-", numOfLanes)..string.rep("+", numOfLanes)
+    end
+  end
+
+  return lanes
+end
+
 local function loadJsonDecalMap()
   local mapNodes = map.nodes
 
@@ -210,7 +592,7 @@ local function loadJsonDecalMap()
         local edgeCount = road:getEdgeCount()
         local nodeCount = road:getNodeCount()
         if max(edgeCount, nodeCount) > 1 then
-          local prefix = (tonumber(decalRoadName) and 'DecalRoad'..decalRoadName..'_') or decalRoadName
+          local prefix = (tonumber(decalRoadName) and 'DR'..decalRoadName..'_') or decalRoadName
           local drivability = road.drivability
           local hiddenInNavi = road.hiddenInNavi
           local roadType = road.gatedRoad and 'private' or road.type -- TODO: deprecate gatedRoad if we get more road types?
@@ -230,108 +612,161 @@ local function loadJsonDecalMap()
           end
 
           local lanes -- string encoding for lanes (currently: dir)
-          if road.processLanes then
-            if oneWay then
-              lanes = ('+'):rep(max(1, road.lanesRight))
+          -- if not road.autoLanes then
+          --   if oneWay then
+          --     lanes = ('+'):rep(max(1, road.lanesRight))
+          --   else
+          --     lanes = ('-'):rep(road.lanesLeft or 0)..('+'):rep(road.lanesRight or 0) -- max(1, road.lanesLeft), max(1, road.lanesRight)
+          --   end
+          -- end
+
+          if not road.autoLanes then
+            local lanesLeft = max(0, road.lanesLeft or 0)
+            local lanesRight = max(0, road.lanesRight or 0)
+            if rules.rightHandDrive then
+              lanes = ('+'):rep(lanesLeft)..('-'):rep(lanesRight)
             else
-              lanes = ('-'):rep(road.lanesLeft or 0)..('+'):rep(road.lanesRight or 0) -- max(1, road.lanesLeft), max(1, road.lanesRight)
+              lanes = ('-'):rep(lanesLeft)..('+'):rep(lanesRight)
             end
+            oneWay = isOneWay(lanes)
           end
 
-          if edgeCount > nodeCount and road.useSubdivisions then -- use decalRoad edge (subdivision) data to generate AI path
-            local segCount = edgeCount - 1
-
-            -- Polyline simplification: radial distance
-            local count = 1
-            nodePos[1] = road:getMiddleEdgePosition(0)
-            nodeSqRad[1] = nodePos[1]:squaredDistance(road:getLeftEdgePosition(0))
-            local warningCount = 0
-            if nodeSqRad[1] > 900 then warningCount = warningCount + 1 end
-            for i = 1, segCount-1 do
+          if edgeCount > 2 and edgeCount >= nodeCount and road.useSubdivisions then -- use decalRoad edge (subdivision) data to generate AI path
+            -- Polyline simplification: Radial distance
+            local count, segCount, warningCount = 0, edgeCount - 1, 0
+            for i = 0, segCount do
               local pos = road:getMiddleEdgePosition(i)
-              local radius = pos:squaredDistance(road:getLeftEdgePosition(i))
-              if pos:squaredDistance(nodePos[count]) >= 4 * min(nodeSqRad[count], radius) then
+              local radius = min(pos:squaredDistance(road:getLeftEdgePosition(i)), pos:squaredDistance(road:getRightEdgePosition(i)))
+              if i == 0 or i == segCount or pos:squaredDistance(nodePos[count]) >= 4 * min(nodeSqRad[count], radius) then
                 count = count + 1
                 nodePos[count] = pos
                 nodeSqRad[count] = radius
               end
-              if radius > 900 then warningCount = warningCount + 1 end
+              if radius > 400 then warningCount = warningCount + 1 end
             end
-            count = count + 1
-            nodePos[count] = road:getMiddleEdgePosition(segCount)
-            nodeSqRad[count] = nodePos[count]:squaredDistance(road:getLeftEdgePosition(segCount))
-            if nodeSqRad[count] > 900 then warningCount = warningCount + 1 end
-            if warningCount > 0 then log('W', "map", "Road "..prefix.." centerline to edge distance exceeding 30m on "..warningCount.." counts.") end
+
+            if warningCount > 0 then
+              log('W', "map", "Road "..prefix.." centerline to edge distance exceeding 20m on "..warningCount.." counts.")
+            end
 
             -- Polyline simplification: Ramer-Douglas-Peucker algorithm
             local i, k = 1, count
             count = 1
-            local nid = nameNode(prefix, count)
-            mapNodes[nid] = {pos = nodePos[1], radius = sqrt(nodeSqRad[1]), links = {}, noMerge = noMerge, endNode = true}
+            local nodeName = nameNode(prefix, count)
+            mapNodes[nodeName] = {pos = nodePos[1], radius = sqrt(nodeSqRad[1]), links = {}, noMerge = noMerge, endNode = true}
+            local prevName = nodeName
 
             repeat
-              local dMax, idxMax = 0, nil
+              local d2max, jmax = 0, nil
               local pi, pk = nodePos[i], nodePos[k]
               for j = i+1, k-1 do
                 local sqDist = nodePos[j]:squaredDistanceToLineSegment(pi, pk)
-                if sqDist > dMax then
-                  dMax = sqDist
-                  idxMax = j
+                if sqDist > d2max then
+                  d2max = sqDist
+                  jmax = j
                 end
               end
 
-              if idxMax and dMax > max(0.0065 * nodeSqRad[idxMax], 0.04) then
+              if jmax and d2max > max(0.005 * nodeSqRad[jmax], 0.04) then
                 stackIdx = stackIdx + 1
                 stack[stackIdx] = k
-                k = idxMax
+                k = jmax
               else
                 count = count + 1
-                local nextNid = nameNode(prefix, count)
-                local edgeData = {
+                nodeName = nameNode(prefix, count)
+                local inNode = flipDirection and nodeName or prevName
+                local outNode = inNode == nodeName and prevName or nodeName
+                mapNodes[nodeName] = {pos = pk, radius = sqrt(nodeSqRad[k]), links = {}, noMerge = noMerge}
+                local data = {
                   drivability = drivability,
                   hiddenInNavi = hiddenInNavi,
                   oneWay = oneWay,
                   lanes = lanes,
                   speedLimit = speedLimit,
-                  inNode = flipDirection and nextNid or nid,
+                  inNode = inNode,
+                  outNode = outNode,
                   type = roadType,
+                  inPos = mapNodes[inNode].pos,
+                  outPos = mapNodes[outNode].pos,
+                  inRadius = mapNodes[inNode].radius,
+                  outRadius = mapNodes[outNode].radius,
                   noMerge = noMerge
                 }
-                mapNodes[nextNid] = {pos = pk, radius = sqrt(nodeSqRad[k]), links = {[nid] = edgeData}, noMerge = noMerge}
-                mapNodes[nid].links[nextNid] = edgeData
-                nid = nextNid
+                mapNodes[nodeName].links[prevName] = data
+                mapNodes[prevName].links[nodeName] = data
+                if not data.lanes then
+                  data.lanes = getEdgeLaneConfig(prevName, nodeName)
+                end
+                prevName = nodeName
 
                 i = k
                 k = stack[stackIdx]
                 stackIdx = stackIdx - 1
               end
             until not k
-            mapNodes[nid].endNode = true -- set the last node of this road as an end node
+            mapNodes[nodeName].endNode = true -- set the last node of this road as an end node
 
             tableClear(nodePos)
             tableClear(nodeSqRad)
             tableClear(stack)
             stackIdx = 0
-          else -- use decalRoad node data to generate AI path
-            local nid = nameNode(prefix, 1)
-            mapNodes[nid] = {pos = road:getNodePosition(0), radius = road:getNodeWidth(0) * 0.5, links = {}, noMerge = noMerge, endNode = true}
+          else -- use decalRoad control point data to generate AI path
+            local prevName = nameNode(prefix, 1)
+            local lNode
+            if road.looped and nodeCount > 2 then
+              lNode = prevName
+            end
+            mapNodes[prevName] = {pos = road:getNodePosition(0), radius = road:getNodeWidth(0) * 0.5, links = {}, noMerge = noMerge, endNode = true}
             for i = 1, nodeCount - 1 do
-              local nextNid = nameNode(prefix, i+1)
-              local edgeData = {
+              local nodeName = nameNode(prefix, i+1)
+              local pos = road:getNodePosition(i)
+              local radius = road:getNodeWidth(i) * 0.5
+              local inNode = flipDirection and nodeName or prevName
+              local outNode = inNode == nodeName and prevName or nodeName
+              mapNodes[nodeName] = {pos = pos, radius = radius, links = {}, noMerge = noMerge}
+              local data = {
                 drivability = drivability,
                 hiddenInNavi = hiddenInNavi,
                 oneWay = oneWay,
                 lanes = lanes,
                 speedLimit = speedLimit,
-                inNode = flipDirection and nextNid or nid,
+                inNode = inNode,
+                outNode = outNode,
+                inPos = mapNodes[inNode].pos,
+                outPos = mapNodes[outNode].pos,
+                inRadius = mapNodes[inNode].radius,
+                outRadius = mapNodes[outNode].radius,
                 type = roadType,
                 noMerge = noMerge
               }
-              mapNodes[nextNid] = {pos = road:getNodePosition(i), radius = road:getNodeWidth(i) * 0.5, links = {[nid] = edgeData}, noMerge = noMerge}
-              mapNodes[nid].links[nextNid] = edgeData
-              nid = nextNid
+              mapNodes[nodeName].links[prevName] = data
+              mapNodes[prevName].links[nodeName] = data
+              if not data.lanes then
+                data.lanes = getEdgeLaneConfig(prevName, nodeName)
+              end
+              prevName = nodeName
             end
-            mapNodes[nid].endNode = true
+            mapNodes[prevName].endNode = true
+            -- road is looped: add edge between first and last nodes
+            if lNode then
+              local inNode = flipDirection and lNode or prevName
+              local data = {
+                drivability = drivability,
+                hiddenInNavi = hiddenInNavi,
+                oneWay = oneWay,
+                lanes = lanes,
+                speedLimit = speedLimit,
+                inNode = inNode,
+                type = roadType,
+                inPos = mapNodes[inNode].pos,
+                outPos = mapNodes[inNode == lNode and prevName or lNode].pos,
+                inRadius = mapNodes[inNode].radius,
+                outRadius = mapNodes[inNode == lNode and prevName or lNode].radius,
+                noMerge = noMerge
+              }
+              mapNodes[lNode].links[prevName] = data
+              mapNodes[prevName].links[lNode] = data
+            end
           end
         end
       end
@@ -396,14 +831,25 @@ local function loadJsonDecalMap()
     local oneWay = v.oneWay or false
 
     local lanes
-    if v.processLanes then
-      local lanesLeft = v.lanesLeft or 0
-      local lanesRight = v.lanesRight or 0
-      if oneWay then
-        lanes = ('+'):rep(max(1, lanesRight))
+    -- if v.autoLanes == false then
+    --   local lanesLeft = v.lanesLeft or 0
+    --   local lanesRight = v.lanesRight or 0
+    --   if oneWay then
+    --     lanes = ('+'):rep(max(1, lanesRight))
+    --   else
+    --     lanes = ('-'):rep(max(1, lanesLeft))..('+'):rep(max(1, lanesRight))
+    --   end
+    -- end
+
+    if v.autoLanes == false then
+      local lanesLeft = max(0, v.lanesLeft or 0)
+      local lanesRight = max(0, v.lanesRight or 0)
+      if rules.rightHandDrive then
+        lanes = ('+'):rep(lanesLeft)..('-'):rep(lanesRight)
       else
-        lanes = ('-'):rep(max(1, lanesLeft))..('+'):rep(max(1, lanesRight))
+        lanes = ('-'):rep(lanesLeft)..('+'):rep(lanesRight)
       end
+      oneWay = isOneWay(lanes)
     end
 
     local noMerge
@@ -417,22 +863,34 @@ local function loadJsonDecalMap()
       local nodeCount = #v.nodes
       for i = 2, nodeCount do
         local wp2 = v.nodes[i]
-        if mapNodes[wp2] == nil then log('E', 'map', "manual waypoint not found: "..tostring(wp2)); break; end
-        mapNodes[wp2].noMerge = noMerge
-        local data = {
-          drivability = drivability,
-          hiddenInNavi = hiddenInNavi,
-          oneWay = oneWay,
-          lanes = lanes,
-          speedLimit = speedLimit,
-          inNode = flipDirection and wp2 or wp1,
-          type = roadType,
-          noMerge = noMerge
-        }
-        mapNodes[wp1].links[wp2] = data
-        mapNodes[wp2].links[wp1] = data
-        if i == nodeCount then mapNodes[wp2].endNode = true end
-        wp1 = wp2
+        if wp2 ~= wp1 then -- guards against a node name appearing consequtively in the nodelist.
+          if mapNodes[wp2] == nil then log('E', 'map', "manual waypoint not found: "..tostring(wp2)); break; end
+          mapNodes[wp2].noMerge = noMerge
+          local inNode = flipDirection and wp2 or wp1
+          local outNode = inNode == wp2 and wp1 or wp2
+          local data = {
+            drivability = drivability,
+            hiddenInNavi = hiddenInNavi,
+            oneWay = oneWay,
+            lanes = lanes,
+            speedLimit = speedLimit,
+            inNode = inNode,
+            outNode = outNode,
+            type = roadType,
+            inPos = mapNodes[inNode].pos,
+            outPos = mapNodes[outNode].pos,
+            inRadius = mapNodes[inNode].radius,
+            outRadius = mapNodes[outNode].radius,
+            noMerge = noMerge
+          }
+          mapNodes[wp1].links[wp2] = data
+          mapNodes[wp2].links[wp1] = data
+          if not data.lanes then
+            data.lanes = getEdgeLaneConfig(wp1, wp2)
+          end
+          if i == nodeCount then mapNodes[wp2].endNode = true end
+          wp1 = wp2
+        end
       end
     else
       log('E', 'map', "manual waypoint not found: "..tostring(wp1));
@@ -440,6 +898,163 @@ local function loadJsonDecalMap()
   end
 
   _updateProgress()
+end
+
+local function checkNodeMatches(nodeList1, nodeList2) -- TODO: add node attributes to match checks
+  local list1Count, list2Count = #nodeList1, #nodeList2
+  if list1Count ~= list2Count then
+    print('!!!!!!!!!!!!!!!! Node List Sizes Do Not Match ('..list1Count..' - '..list2Count..') !!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    return
+  end
+
+  local nodeTree = kdTreeBox2D.new(list2Count)
+  for i = 1, list2Count do
+    nodeTree:preLoad(i, quadtree.pointBBox(nodeList2[i].pos.x, nodeList2[i].pos.y, nodeList2[i].radius))
+  end
+  nodeTree:build()
+
+  local matchedL2 = {}
+  for i = 1, list1Count do
+    for j in nodeTree:queryNotNested(quadtree.pointBBox(nodeList1[i].pos.x, nodeList1[i].pos.y, nodeList1[i].radius)) do
+      if not matchedL2[j] then
+        if nodeList1[i].degree == nodeList2[j].degree
+        and nodeList1[i].radius == nodeList2[j].radius
+        and nodeList1[i].pos == nodeList2[j].pos
+        and nodeList1[i].noMerge == nodeList2[j].noMerge
+        and nodeList1[i].endNode == nodeList2[j].endNode
+        and nodeList1[i].manual == nodeList2[j].manual
+        then
+          matchedL2[j] = i
+          break
+        end
+      end
+    end
+  end
+
+  local nodesNotMatchedCount = list2Count - tableSize(matchedL2)
+  if nodesNotMatchedCount > 0 then
+    print('!!!!!!!!!!!!!!!!! Did not find match for '..nodesNotMatchedCount..' nodes !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    local matchedL1 = {}
+    for i = 1, nodeList2 do
+      if not matchedL2[i] then
+        dump(nodeList2[i])
+      else
+        matchedL1[matchedL2[i]] = i
+      end
+    end
+    print('-------------')
+    for i = 1, nodeList1 do
+      if not matchedL1[i] then
+        dump(nodeList1[i])
+      end
+    end
+  else
+    print('Matches found for all ('..list1Count..') nodes.')
+  end
+end
+
+local function checkEdgeMatches(edgeList1, edgeList2)
+  local edgeList1Count, edgeList2Count = #edgeList1, #edgeList2
+  if edgeList1Count ~= edgeList2Count then
+    print('!!!!!!!!!!!!!!!! Edge List Sizes Do Not Match ('..edgeList1..' - '..edgeList2..') !!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    return
+  end
+
+  local edgeTree = kdTreeBox2D.new(edgeList2Count)
+  for i = 1, edgeList2Count do
+    local n1id, n1Pos = next(edgeList2[i].pos)
+    local n2id, n2Pos = next(edgeList2[i].pos, n1id)
+    local n1Rad = edgeList2[i].radius[n1id]
+    local n2Rad = edgeList2[i].radius[n2id]
+    edgeTree:preLoad(i, quadtree.lineBBox(n1Pos.x, n1Pos.y, n2Pos.x, n2Pos.y, max(n1Rad, n2Rad)))
+  end
+  edgeTree:build()
+
+  local matchedL2 = {}
+  for i = 1, edgeList1Count do
+    local e1 = edgeList1[i]
+    local e1n1Id, e1n1Pos = next(edgeList1[i].pos)
+    local e1n2Id, e1n2Pos = next(edgeList1[i].pos, e1n1Id)
+    local e1n1Rad = e1.radius[e1n1Id]
+    local e1n2Rad = e1.radius[e1n2Id]
+    local e1NodeMin = min3D(e1n1Pos, e1n2Pos) == e1n1Pos and e1n1Id or e1n2Id
+    local e1NodeMax = e1NodeMin == e1n1Id and e1n2Id or e1n1Id
+    local e1InNodePos = e1.pos[e1.inNode]
+    for j in edgeTree:queryNotNested(quadtree.lineBBox(e1n1Pos.x, e1n1Pos.y, e1n2Pos.x, e1n2Pos.y, max(e1n1Rad, e1n2Rad))) do
+      if not matchedL2[j] then
+        local e2 = edgeList2[j]
+        local e2n1Id, e2n1Pos = next(edgeList2[j].pos)
+        local e2n2Id, e2n2Pos = next(edgeList2[j].pos, e2n1Id)
+        local e2NodeMin = min3D(e2n1Pos, e2n2Pos) == e2n1Pos and e2n1Id or e2n2Id
+        local e2NodeMax = e2NodeMin == e2n1Id and e2n2Id or e2n1Id
+        local inNodesMatch = (not e2.oneWay and not e2.oneWay) or (e2.oneWay and e1.oneWay and e2.pos[e2.inNode] == e1InNodePos)
+        if e1.pos[e1NodeMin] == e2.pos[e2NodeMin] and e1.pos[e1NodeMax] == e2.pos[e2NodeMax] -- positions
+        and e1.radius[e1NodeMin] == e2.radius[e2NodeMin] and e1.radius[e1NodeMax] == e2.radius[e2NodeMax] -- radii
+        and e2.drivability == e1.drivability
+        and e2.oneWay == e1.oneWay
+        and inNodesMatch
+        and e2.speedLimit == e1.speedLimit
+        and e2.type == e1.type
+        and e2.noMerge == e1.noMerge
+        then
+          matchedL2[j] = i
+          break
+        end
+      end
+    end
+  end
+
+  local edgesNotMatchedCount = edgeList2Count - tableSize(matchedL2)
+  if edgesNotMatchedCount > 0 then
+    print('!!!!!!!!!!!!!!!!!!!!!!!!!!! DID NOT FIND MATCH FOR '..edgesNotMatchedCount..' edges !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    local matchedL1 = {}
+    for i = 1, edgeList2Count do
+      if not matchedL2[i] then
+        dump(edgeList2[i])
+      else
+        matchedL1[edgeList2[i]] = i
+      end
+    end
+    print('--------------------')
+    for i = 1, edgeList1Count do
+      if not matchedL1[i] then
+        dump(edgeList1[i])
+      end
+    end
+  else
+    print('Matches found for all ('..edgeList1Count..') edges.')
+  end
+end
+
+local function checkLinks()
+  local linksOk = true
+  local numOfLinks = 0
+  local numOfNodes = 0
+  for n1id, node in _pairs(map.nodes) do
+    numOfNodes = numOfNodes + 1
+    for n2id, edgeData in _pairs(node.links) do
+      if not map.nodes[n2id] then
+        print('!!!! Link is not a map node !!!!!')
+        linksOk = false
+      end
+      if n1id == n2id then
+        print('!!!! Link is connected to itself !!!!')
+        linksOk = false
+      end
+      -- if not edgeData.pos[n1id] or not edgeData.pos[n2id] or not edgeData.radius[n1id] or not edgeData.radius[n2id] then
+      --   print('!!!! edge Node ids do not match graph ids !!!!')
+      --   linksOk = false
+      -- end
+      if linksOk then numOfLinks = numOfLinks + 1 end
+    end
+  end
+
+  if linksOk and (numOfLinks % 2 == 0) then
+    dump('---> Links Are Ok. -> ', numOfLinks * 0.5, numOfNodes)
+  else
+    print('!!!!!! Links Not Ok !!!!!!!')
+  end
+  return linksOk
 end
 
 local function is2SegMergeValid(middleNode, d1, d2)
@@ -451,7 +1066,7 @@ local function is2SegMergeValid(middleNode, d1, d2)
     end
   elseif not d1.lanes and not d2.lanes then
     if d1.oneWay == d2.oneWay then
-      return (d1.oneWay == false) or (not (d1.inNode == d2.inNode or (d1.inNode ~= middleNode and d2.inNode ~= middleNode)))
+      return d1.oneWay == false or not (d1.inNode == d2.inNode or (d1.inNode ~= middleNode and d2.inNode ~= middleNode))
     else
       return false
     end
@@ -484,7 +1099,42 @@ local function is3SegMergeValid(middleNode, d1, d2, dchord)
   end
 end
 
-local function mergeNodes(n1id, n2id)
+local function mergeEdgeData(e1, e2)
+  local drivability = max(e1.drivability, e2.drivability)
+  local type = e1.type or e2.type -- TODO: This will be a problem when/if we have more than two types
+  local speedLimit = max(e1.speedLimit, e2.speedLimit)
+  local noMerge = e1.noMerge or e2.noMerge
+  local e1n1Id = next(e1.pos)
+  local e1n2Id = next(e1.pos, e1n1Id)
+  local e2n1Id = next(e2.pos)
+  local e2n2Id = next(e2.pos, e2n1Id)
+  local commonNodeId = (e1n1Id == e2n1Id or e1n1Id == e2n2Id) and e1n1Id or e1n2Id
+  local oneWay = e1.oneWay or e2.oneWay
+  local inNode
+  if e1.oneWay == e2.oneWay then
+    if e1.oneWay then
+      if e1.inNode == e2.inNode then
+        inNode = e1.inNode
+      elseif e1.inNode ~= commonNodeId and e2.inNode ~= commonNodeId then
+        inNode = commonNodeId == e1n1Id and e1n2Id or e1n1Id
+      else -- TODO: both segments are oneWay but in opposite directions. Use compare edges to decide which to keep?
+        inNode = commonNodeId == e1n1Id and e1n2Id or e1n1Id
+      end
+    else -- if both edges are two way inNode selection is immaterial.
+      inNode = e1.inNode
+    end
+  else
+    if e1.oneWay then
+      inNode = e1.inNode
+    else
+      inNode = (e2.inNode == commonNodeId and commonNodeId) or (commonNodeId == e1n1Id and e1n2Id or e1n1Id)
+    end
+  end
+
+  return drivability, oneWay, inNode, speedLimit, type, noMerge
+end
+
+local function mergeLinks(n1id, n2id)
   local mapNodes = map.nodes
   if mapNodes[n2id].manual then --> TODO: what if both are manual?
     n1id, n2id = n2id, n1id
@@ -492,21 +1142,25 @@ local function mergeNodes(n1id, n2id)
 
   local n1 = mapNodes[n1id]
   local n2 = mapNodes[n2id]
-  n1.pos = (n1.pos + n2.pos) * 0.5
-  n1.radius = (n1.radius + n2.radius) * 0.5
 
+  -- if n1 is already linked with n2
   n1.links[n2id] = nil
   n2.links[n1id] = nil
 
-  -- remap neighbors
-  for lnid, edgeData in pairs(n2.links) do
-    -- what if lnid is already linked with n1id
+  -- remap neighbors of n2 to n1
+  for lnid, edgeData in _pairs(n2.links) do
     local ln = mapNodes[lnid]
     if ln then
-      edgeData.inNode = (edgeData.inNode == n2id and n1id) or lnid
-      ln.links[n2id] = nil
-      ln.links[n1id] = edgeData
-      n1.links[lnid] = edgeData
+      if n1.links[lnid] and edgeCompare(n1.links[lnid], edgeData) then
+        ln.links[n2id] = nil -- delete link to n2id (n2id will cease to exist after the merge)
+        n2.links[lnid] = nil
+      else
+        edgeData.inNode = edgeData.inNode == n2id and n1id or lnid
+        edgeData.outNode = edgeData.inNode == n1id and lnid or n1id
+        ln.links[n2id] = nil -- delete link to n2id (n2id will cease to exist after the merge)
+        ln.links[n1id] = edgeData -- reference the edge data to the other side of the edge
+        n1.links[lnid] = edgeData
+      end
     end
   end
 
@@ -515,354 +1169,565 @@ local function mergeNodes(n1id, n2id)
   return n1id
 end
 
--- merge closeby nodes together
-local function dedupNodes(nodes)
+-- merge groups of overlapping nodes
+local function mergeOverlappingNodes(endNodesOnly)
   local mapNodes = map.nodes
 
-  local nodeCount = #nodes
-  table.sort(nodes)
-
-  local q = quadtree.newQuadtree(nodeCount)
-  for i = 1, nodeCount do
-    local k = nodes[i]
-    local v = mapNodes[k]
-    q:preLoad(k, pointBBox(v.pos.x, v.pos.y, v.radius))
+  local nodeCount = 0
+  local q = kdTreeBox2D.new()
+  for k, v in _pairs(mapNodes) do
+    if not (v.noMerge or endNodesOnly) or v.endNode then
+      q:preLoad(k, pointBBox(v.pos.x, v.pos.y, v.radius))
+      nodeCount = nodeCount + 1
+    end
   end
   q:build()
 
-  _updateProgress()
-
-  for i = 1, nodeCount do
-    local n1id = nodes[i]
-    local n1 = mapNodes[n1id]
-    if n1 then
-      if next(n1.links) or n1.manual then
-        for n2id in q:queryNotNested(pointBBox(n1.pos.x, n1.pos.y, n1.radius)) do -- give me the id of every node that overlaps this bounding box
-          -- should we merge nodes if they are both manual?
-          if n2id ~= n1id then
-            local n2 = mapNodes[n2id]
-            if n2 and n1.pos:squaredDistance(n2.pos) < square(min(n1.radius, n2.radius)) then -- center of the larger is within the radius of the smaller
-              q:remove(n1id, n1.pos.x, n1.pos.y)
-              q:remove(n2id, n2.pos.x, n2.pos.y)
-              local nid = mergeNodes(n1id, n2id) -- create a new node (in place of the two being merged) and give me its name
-              local n = mapNodes[nid]
-              q:insert(nid, pointBBox(n.pos.x, n.pos.y, n.radius))
-
-              if nid ~= n1id then break end
+  -- create node overlap graph
+  -- i.e. a graph whereby an edge is added between any two nodes that satisfy the overlap condition
+  local nodeOverlapGraph = table.new(0, nodeCount)
+  local groupIds = table.new(0, nodeCount)
+  for n1id, n1 in _pairs(mapNodes) do
+    if not (n1.noMerge or endNodesOnly) or n1.endNode then
+      for n2id in q:queryNotNested(pointBBox(n1.pos.x, n1.pos.y, n1.radius)) do
+        if n1id < n2id then
+          local nodeDist = n1.pos:squaredDistance(mapNodes[n2id].pos)
+          if (endNodesOnly and nodeDist < 0.01 and abs(n1.radius - mapNodes[n2id].radius) < 0.1)
+            or (not endNodesOnly and nodeDist < square(max(n1.radius, mapNodes[n2id].radius))) then
+            -- create edge between overlapping nodes (graph is one sided)
+            if not nodeOverlapGraph[n1id] then
+              nodeOverlapGraph[n1id] = {}
+              groupIds[n1id] = n1id
             end
+            nodeOverlapGraph[n1id][n2id] = true
+            groupIds[n2id] = groupIds[n1id]
           end
         end
-      else
-        visLog("error", n1.pos, "isolated node: "..tostring(n1id))
-        q:remove(n1id, n1.pos.x, n1.pos.y)
-        mapNodes[n1id] = nil
       end
     end
   end
 
-  _updateProgress()
-end
-
-local function edgeList()
-  -- Creates a list of all the edges in the graph -> {node1, node2, edgeData (by reference)}
-  local edges = {}
-  local noOfEdges = 0
-  local nodeDegree = {} -- number of edges incident on each node
-  for n1id, node in pairs(map.nodes) do
-    local degree = 0
-    for n2id, edgeData in pairs(node.links) do
-      if n1id ~= n2id and map.nodes[n2id] then -- why is this check needed?
-        degree = degree + 1
-        if n2id > n1id then -- every edge gets in the array once
-          tableInsert(edges, {n1id, n2id, edgeData})
-          noOfEdges = noOfEdges + 1
+  -- calculate node overlap graph connected components
+  repeat
+    local change = false
+    for n1id, n1Links in _pairs(nodeOverlapGraph) do
+      for n2id in _pairs(n1Links) do
+        if groupIds[n1id] < groupIds[n2id] then
+          groupIds[n2id] = groupIds[n1id]
+          change = true
+        elseif groupIds[n1id] > groupIds[n2id] then
+          groupIds[n1id] = groupIds[n2id]
+          change = true
         end
       end
     end
-    nodeDegree[n1id] = degree
-  end
-  edges.count = noOfEdges
+  until not change
 
-  _updateProgress()
-
-  return edges, nodeDegree
-end
-
-local function resetLinksFromEdges(edges)
-  local mapNodes = map.nodes
-  for _, n in pairs(mapNodes) do
-    tableClear(n.links)
-  end
-
-  _updateProgress()
-
-  for _, edge in ipairs(edges) do
-    mapNodes[edge[1]].links[edge[2]] = edge[3]
-    mapNodes[edge[2]].links[edge[1]] = edge[3]
-  end
-
-  _updateProgress()
-
-  for nid, n in pairs(mapNodes) do
-    if n.manual == nil and next(n.links) == nil then
-      mapNodes[nid] = nil
+  -- arrange nodes by the overlap group they belong to
+  local nodeOverlapGroups = {} -- keys are group ids and values are tables containing all the nodes belonging to the group
+  for nodeId, groupId in _pairs(groupIds) do
+    if nodeOverlapGroups[groupId] then
+      table.insert(nodeOverlapGroups[groupId], nodeId)
+    else
+      nodeOverlapGroups[groupId] = {nodeId}
     end
   end
 
+  -- merge nodes that belong to the same overlap group
+  local nodePosTab, nodeRadiusTab = {}, {}
+  for groupId, nodeGroup in _pairs(nodeOverlapGroups) do
+    local nid = nodeGroup[1]
+
+    nodePosTab[1] = mapNodes[nid].pos
+    nodeRadiusTab[1] = mapNodes[nid].radius
+
+    local count = #nodeGroup
+    for i = 2, count do
+      nodePosTab[i] = mapNodes[nodeGroup[i]].pos
+      nodeRadiusTab[i] = mapNodes[nodeGroup[i]].radius
+      nid = mergeLinks(nid, nodeGroup[i])
+    end
+
+    mapNodes[nid].pos = safeVecSum(nodePosTab) / count
+    mapNodes[nid].radius = safeNumberSum(nodeRadiusTab) / count
+    mapNodes[nid].noMerge = nil
+    mapNodes[nid].endNode = nil -- TODO: does it make sense to retain the endNode attribute if true for any of the merged nodes?
+    mapNodes[nid].junction = true
+
+    table.clear(nodePosTab)
+    table.clear(nodeRadiusTab)
+  end
+
   _updateProgress()
 end
 
-local function resolveTJunction(edges, q_edges, nodeDegree, i, l1n1id, l1n2id)
-  local mapNodes = map.nodes
-
-  local n1 = mapNodes[l1n1id]
-  local l1n1pos, l1n1rad = n1.pos, n1.radius
-  local l1n2pos = mapNodes[l1n2id].pos
-
-  local minXnorm = -huge
-  local edge, l2Xnorm
-  for l_id in q_edges:queryNotNested(pointBBox(l1n1pos.x, l1n1pos.y, l1n1rad)) do
-    local l2n1id, l2n2id = edges[l_id][1], edges[l_id][2]
-    if l1n1id ~= l2n1id and l1n1id ~= l2n2id and l1n2id ~= l2n1id and l1n2id ~= l2n2id then -- given we know that the degree of l1n1 == 1 and than it is connected to l1n2 do we need the first two checks?
-      local pos1 = l1n1pos + (l1n2pos - l1n1pos):normalized() * n1.radius -- why do this?
-      local l1xn, l2xn = closestLinePoints(pos1, l1n2pos, mapNodes[l2n1id].pos, mapNodes[l2n2id].pos)
-      if l2xn >= 0 and l2xn <= 1 and l1xn <= 0 and l1xn > minXnorm then -- find largest negative xnorm
-        edge, minXnorm, l2Xnorm = l_id, l1xn, l2xn -- edge here is the horizontal part of the T junction
+-- Creates a list of all the edges in the graph -> {node1, node2, edgeData}
+local function getEdgeList()
+  local edges = {}
+  for n1id, node in _pairs(map.nodes) do
+    for n2id, edgeData in _pairs(node.links) do
+      if n1id ~= n2id and map.nodes[n2id] then -- TODO: why is this check needed? (first check is needed because of possible errors in manual edges map.json)
+        if n1id < n2id then -- every edge gets in the array once
+          -- local a, b
+          -- -- TODO: depends on edge end poins not being identical, a fair assumption for an edge, although theoretically not guaranteed
+          -- if min3D(edgeData.pos[n1id], edgeData.pos[n2id]) == edgeData.pos[n1id] then
+          --   a, b = n1id, n2id
+          -- else
+          --   a, b = n2id, n1id
+          -- end
+          -- tableInsert(edges, {a, b, edgeData}) -- TODO: I don't need to save edge node names anymore. i can access them from either the pos or radius tables in edgeData
+          tableInsert(edges, {edgeData.inNode, edgeData.outNode, edgeData}) -- TODO: I don't need to save edge node names anymore. i can access them from either the pos or radius tables in edgeData
+        end
       end
     end
   end
 
-  if edge then
-    local l2n1id = edges[edge][1]
-    local l2n2id = edges[edge][2]
-    local l2n1pos = mapNodes[l2n1id].pos
-    local l2n2pos = mapNodes[l2n2id].pos
-    local l2n1rad = mapNodes[l2n1id].radius
-    local l2n2rad = mapNodes[l2n2id].radius
+  _updateProgress()
+
+  return edges
+end
+
+local function resolveTJunction(edges, q_edges, i, l1n1id) -- could use 'inPos' and 'outPos' instead of node id (l1n1id)?
+  local l1Data = edges[i][3]
+  local l1n1pos, l1n1rad = l1Data[l1Data.inNode == l1n1id and 'inPos' or 'outPos'], l1Data[l1Data.inNode == l1n1id and 'inRadius' or 'outRadius']
+
+  local l1n2id = l1n1id == l1Data.inNode and l1Data.outNode or l1Data.inNode
+  local l1n2pos = l1Data[l1Data.inNode == l1n2id and 'inPos' or 'outPos']
+
+  local minXnorm = -huge
+  local edgeId, l2Xnorm
+  for l_id in q_edges:queryNotNested(pointBBox(l1n1pos.x, l1n1pos.y, l1n1rad)) do
+    local l2n1id, l2n2id = edges[l_id][1], edges[l_id][2]
+    if l1n1id ~= l2n1id and l1n1id ~= l2n2id and l1n2id ~= l2n1id and l1n2id ~= l2n2id then
+      --local pos1 = l1n1pos + (l1n2pos - l1n1pos):normalized() * l1n1rad -- why do this?
+      local l1xn, l2xn = closestLinePoints(l1n1pos, l1n2pos, edges[l_id][3].inPos, edges[l_id][3].outPos)
+      if l2xn >= 0 and l2xn <= 1 and l1xn <= 0 and l1xn > minXnorm then -- find largest negative xnorm
+        edgeId, minXnorm, l2Xnorm = l_id, l1xn, l2xn -- edge here is the horizontal part of the T junction
+      end
+    end
+  end
+
+  if edgeId then
+    local l2n1pos = edges[edgeId][3].inPos
+    local l2n2pos = edges[edgeId][3].outPos
+    local l2n1rad = edges[edgeId][3].inRadius
+    local l2n2rad = edges[edgeId][3].outRadius
     local l2Prad = lerp(l2n1rad, l2n2rad, l2Xnorm)
     local tempVec = (linePointFromXnorm(l2n1pos, l2n2pos, l1n1pos:xnormOnLine(l2n1pos, l2n2pos)) - l1n1pos):normalized() * (l2Prad + l1n1rad)
     if l1n1pos:squaredDistanceToLine(l2n1pos, l2n2pos) < tempVec:z0():squaredLength() then -- square(l2Prad + l1n1rad) -- Why z0?
-      q_edges:remove(edge, (l2n1pos.x + l2n2pos.x) * 0.5, (l2n1pos.y + l2n2pos.y) * 0.5)
-      q_edges:remove(i, (l1n1pos.x + l1n2pos.x) * 0.5, (l1n1pos.y + l1n2pos.y) * 0.5)
-
-      local l2Data = edges[edge][3]
-      local l2inNode = l2Data.inNode
-
-      -- change the already existing edge (l2) in the edge list to update the new "end node"
-      edges[edge][2] = l1n1id
-      l2Data.inNode = l2inNode == l2n1id and l2n1id or l1n1id
-
-      -- add the other half of the split l2 edge in the edge list also preserving the l2 edge data
-      tableInsert(edges, {l1n1id, l2n2id, {drivability = l2Data.drivability, hiddenInNavi = l2Data.hiddenInNavi, speedLimit = l2Data.speedLimit, oneWay = l2Data.oneWay, lanes = l2Data.lanes, inNode = l2inNode == l2n2id and l2n2id or l1n1id, type = l2Data.type}})
-      edges.count = edges.count + 1
-
-      -- consider creating a new edge rather than extending the already existing one, it might distort road widths.
-      local t = linePointFromXnorm(l2n1pos, l2n2pos, l2Xnorm)
-      mapNodes[l1n1id].pos = t
-      local avgrad = l2Prad -- + l1n1rad) * 0.5
-      mapNodes[l1n1id].radius = avgrad
-
-      local t_x, t_y = t.x, t.y
-      q_edges:insert(edge, quadtree.lineBBox(l2n1pos.x, l2n1pos.y, t_x, t_y, max(l2n1rad, avgrad)))
-      q_edges:insert(edges.count, quadtree.lineBBox(l2n2pos.x, l2n2pos.y, t_x, t_y, max(l2n2rad, avgrad)))
-      q_edges:insert(i, quadtree.lineBBox(l1n2pos.x, l1n2pos.y, t_x, t_y, max(mapNodes[l1n2id].radius, avgrad)))
-
-      nodeDegree[l1n1id] = nodeDegree[l1n1id] + 2
+      return edgeId, l2Xnorm
     end
   end
 end
 
-local function resolveTJunctions(edges, nodeDegree, q_edges)
-  local mapNodes = map.nodes
-  local i = 1
-  while i <= edges.count do -- the vertical edge in the T junction
-    local l1n1id = edges[i][1]
+local function resolveTJunctions()
+  local edges = getEdgeList()
+  local edgeCount = #edges
+
+  -- Create a kd-tree with map edges
+  local q_edges = kdTreeBox2D.new(edgeCount)
+  for i = 1, edgeCount do
+    if not edges[i][3].noMerge then
+      local inPos = edges[i][3].inPos
+      local outPos = edges[i][3].outPos
+      q_edges:preLoad(i, quadtree.lineBBox(inPos.x, inPos.y, outPos.x, outPos.y, max(edges[i][3].inRadius, edges[i][3].outRadius)))
+    end
+  end
+  q_edges:build()
+
+  local edgeSplits = {}
+  for i = 1, edgeCount do
+    local l1n1id = edges[i][1] -- the vertical edge in the T junction
+    if tableSize(map.nodes[l1n1id].links) == 1 then
+      local edgeId, xnorm = resolveTJunction(edges, q_edges, i, l1n1id)
+      if edgeId then
+        if edgeSplits[edgeId] then
+          table.insert(edgeSplits[edgeId], {xnorm, l1n1id})
+        else
+          edgeSplits[edgeId] = {{xnorm, l1n1id}}
+        end
+      end
+    end
+
     local l1n2id = edges[i][2]
-    if nodeDegree[l1n1id] == 1 then
-      resolveTJunction(edges, q_edges, nodeDegree, i, l1n1id, l1n2id)
+    if tableSize(map.nodes[l1n2id].links) == 1 then
+      local edgeId, xnorm = resolveTJunction(edges, q_edges, i, l1n2id)
+      if edgeId then
+        if edgeSplits[edgeId] then
+          table.insert(edgeSplits[edgeId], {xnorm, l1n2id})
+        else
+          edgeSplits[edgeId] = {{xnorm, l1n2id}}
+        end
+      end
     end
-    if nodeDegree[l1n2id] == 1 then
-      resolveTJunction(edges, q_edges, nodeDegree, i, l1n2id, l1n1id)
+  end
+
+  local positions = {}
+  local radii = {}
+  for edgeId, splitData in _pairs(edgeSplits) do
+    local n1 = edges[edgeId][1] -- edge inNode
+    local n2 = edges[edgeId][2] -- edge outNode
+    table.sort(splitData, function(a, b) return a[1] < b[1] end) -- TODO: what happens if equal?
+
+    for i = 1, #splitData do
+      positions[i] = linePointFromXnorm(map.nodes[n1].links[n2].inPos, map.nodes[n1].links[n2].outPos, splitData[i][1])
+      radii[i] = lerp(map.nodes[n1].links[n2].inRadius, map.nodes[n1].links[n2].outRadius, splitData[i][1])
     end
-    i = i + 1
+
+    for i = 1, #splitData do
+      local nodeName = splitData[i][2] -- node id of T-junction vertical edge
+
+      map.nodes[nodeName].pos = positions[i]
+      map.nodes[nodeName].radius = radii[i]
+      map.nodes[nodeName].junction = true
+
+      -- clear link between n1 and n2
+      local data = map.nodes[n1].links[n2]
+      map.nodes[n1].links[n2] = nil
+      map.nodes[n2].links[n1] = nil
+
+      -- connect n1 to nodeName
+      --if map.nodes[n1].links[nodeName] then dump('1 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!', n1, nodeName, n2) end -- TODO: remove debug
+      map.nodes[n1].links[nodeName] = {
+        drivability = data.drivability,
+        hiddenInNavi = data.hiddenInNavi,
+        oneWay = data.oneWay,
+        lanes = data.lanes,
+        speedLimit = data.speedLimit,
+        type = data.type,
+        inNode = n1,
+        outNode = nodeName,
+        inPos = data.inPos,
+        outPos = positions[i],
+        inRadius = data.inRadius,
+        outRadius = radii[i],
+        noMerge = data.noMerge
+      }
+
+      -- connect nodeName to n1
+      map.nodes[nodeName].links[n1] = map.nodes[n1].links[nodeName]
+
+      -- connect n2 to nodeName
+      map.nodes[n2].links[nodeName] = {
+        drivability = data.drivability,
+        hiddenInNavi = data.hiddenInNavi,
+        oneWay = data.oneWay,
+        lanes = data.lanes,
+        speedLimit = data.speedLimit,
+        type = data.type,
+        inNode = nodeName,
+        outNode = n2,
+        inPos = positions[i],
+        outPos = data.outPos,
+        inRadius = radii[i],
+        outRadius = data.outRadius,
+        noMerge = data.noMerge
+      }
+
+      -- connect nodeName to n2
+      map.nodes[nodeName].links[n2] = map.nodes[n2].links[nodeName]
+
+      n1 = nodeName
+    end
+    table.clear(positions)
+    table.clear(radii)
   end
 
   _updateProgress()
 end
 
-local function resolveXJunctions(edges, nodeDegree, q_edges)
-  -- Resolve X junctions
-  local mapNodes = map.nodes
-  local junctionid = 1
-  local i = 1
-  while i <= edges.count do
-    local l1n1id = edges[i][1]
-    local l1n2id = edges[i][2]
+-- Resolve X junctions
+local function resolveXJunctions()
+  local edges = getEdgeList()
+  local edgeCount = #edges
+
+  -- Create a kd-tree with map edges
+  local q_edges = kdTreeBox2D.new(edgeCount)
+  for i = 1, edgeCount do
     if not edges[i][3].noMerge then
-      local l1n1pos = mapNodes[l1n1id].pos
-      local l1n2pos = mapNodes[l1n2id].pos
-      local l1n1rad = mapNodes[l1n1id].radius
-      local l1n2rad = mapNodes[l1n2id].radius
-      for l_id in q_edges:queryNotNested(quadtree.lineBBox(l1n1pos.x, l1n1pos.y, l1n2pos.x, l1n2pos.y)) do
-        local l2n1id = edges[l_id][1]
-        local l2n2id = edges[l_id][2]
-        if l1n1id ~= l2n1id and l1n1id ~= l2n2id and l1n2id ~= l2n1id and l1n2id ~= l2n2id then
-          local l2n1pos = mapNodes[l2n1id].pos
-          local l2n2pos = mapNodes[l2n2id].pos
-          local l2n1rad = mapNodes[l2n1id].radius
-          local l2n2rad = mapNodes[l2n2id].radius
-          local l1xn, l2xn = closestLinePoints(l1n1pos, l1n2pos, l2n1pos, l2n2pos)
-          if l1xn > 0 and l1xn < 1 and l2xn > 0 and l2xn < 1 then
-            local t1 = linePointFromXnorm(l1n1pos, l1n2pos, l1xn)
-            local t2 = linePointFromXnorm(l2n1pos, l2n2pos, l2xn)
-            local l1Prad = lerp(l1n1rad, l1n2rad, l1xn)
-            local l2Prad = lerp(l2n1rad, l2n2rad, l2xn)
-            if t1:squaredDistance(t2) < square(min(l1Prad, l2Prad) * 0.5) then
-              local xid = 'autojunction_'..junctionid
-              junctionid = junctionid + 1
-              local xid_pos = (t1 + t2) * 0.5
-              mapNodes[xid] = {pos = xid_pos, radius = (l1Prad + l2Prad) * 0.5, links = {}}
-              nodeDegree[xid] = 4
+      local inPos = edges[i][3].inPos
+      local outPos = edges[i][3].outPos
+      q_edges:preLoad(i, quadtree.lineBBox(inPos.x, inPos.y, outPos.x, outPos.y, max(edges[i][3].inRadius, edges[i][3].outRadius)))
+    end
+  end
+  q_edges:build()
 
-              q_edges:remove(i, (l1n1pos.x + l1n2pos.x) * 0.5, (l1n1pos.y + l1n2pos.y) * 0.5)
-              q_edges:remove(l_id, (l2n1pos.x + l2n2pos.x) * 0.5, (l2n1pos.y + l2n2pos.y) * 0.5)
+  local edgeSplits = {}
+  local junctionid = 0
+  for i = 1, edgeCount do
+    local l1n1id = edges[i][1] -- edge inNode id
+    local l1n2id = edges[i][2] -- edge outNode id
+    if not edges[i][3].noMerge then
+      local l1n1pos = edges[i][3].inPos
+      local l1n2pos = edges[i][3].outPos
+      local l1n1rad = edges[i][3].inRadius
+      local l1n2rad = edges[i][3].outRadius
+      for j in q_edges:queryNotNested(quadtree.lineBBox(l1n1pos.x, l1n1pos.y, l1n2pos.x, l1n2pos.y)) do
+        if j > i then
+          local l2n1id = edges[j][1] -- edge inNode id
+          local l2n2id = edges[j][2] -- edge outNode id
+          if l1n1id ~= l2n1id and l1n1id ~= l2n2id and l1n2id ~= l2n1id and l1n2id ~= l2n2id then
+            local l2n1pos = edges[j][3].inPos
+            local l2n2pos = edges[j][3].outPos
+            local l2n1rad = edges[j][3].inRadius
+            local l2n2rad = edges[j][3].outRadius
+            local l1xn, l2xn = closestLinePoints(l1n1pos, l1n2pos, l2n1pos, l2n2pos)
+            if l1xn > 0 and l1xn < 1 and l2xn > 0 and l2xn < 1 then
+              local t1 = linePointFromXnorm(l1n1pos, l1n2pos, l1xn)
+              local t2 = linePointFromXnorm(l2n1pos, l2n2pos, l2xn)
+              local l1Prad = lerp(l1n1rad, l1n2rad, l1xn)
+              local l2Prad = lerp(l2n1rad, l2n2rad, l2xn)
+              if t1:squaredDistance(t2) < square(min(l1Prad, l2Prad) * 0.5) then
+                junctionid = junctionid + 1
+                local nodeName = 'autojunction_'..junctionid
 
-              local l1Data = edges[i][3]
-              local l1inNode = l1Data.inNode
+                if edgeSplits[i] then
+                  table.insert(edgeSplits[i], {l1xn, nodeName})
+                else
+                  edgeSplits[i] = {{l1xn, nodeName}}
+                end
 
-              edges[i][2] = xid
-              l1Data.inNode = l1inNode == l1n1id and l1n1id or xid
-
-              tableInsert(edges, {xid, l1n2id, {drivability = l1Data.drivability, hiddenInNavi = l1Data.hiddenInNavi, speedLimit = l1Data.speedLimit, oneWay = l1Data.oneWay, lanes = l1Data.lanes, inNode = l1inNode == l1n2id and l1n2id or xid, type = l1Data.type}})
-              edges.count = edges.count + 1
-              q_edges:insert(edges.count, quadtree.lineBBox(xid_pos.x, xid_pos.y, l1n2pos.x, l1n2pos.y))
-              q_edges:insert(i, quadtree.lineBBox(xid_pos.x, xid_pos.y, l1n1pos.x, l1n1pos.y))
-
-              local l2Data = edges[l_id][3]
-              local l2inNode = l2Data.inNode
-
-              edges[l_id][2] = xid
-              l2Data.inNode = l2inNode == l2n1id and l2n1id or xid
-
-              tableInsert(edges, {xid, l2n2id, {drivability = l2Data.drivability, hiddenInNavi = l2Data.hiddenInNavi, speedLimit = l2Data.speedLimit, oneWay = l2Data.oneWay, lanes = l2Data.lanes, inNode = l2inNode == l2n2id and l2n2id or xid, type = l2Data.type}})
-              edges.count = edges.count + 1
-              q_edges:insert(l_id, quadtree.lineBBox(xid_pos.x, xid_pos.y, l2n1pos.x, l2n1pos.y))
-              q_edges:insert(edges.count, quadtree.lineBBox(xid_pos.x, xid_pos.y, l2n2pos.x, l2n2pos.y))
-              -- TODO: shouldn't we have a i = i - 1 as in resolve T junctions
-              break
+                if edgeSplits[j] then
+                  table.insert(edgeSplits[j], {l2xn, nodeName})
+                else
+                  edgeSplits[j] = {{l2xn, nodeName}}
+                end
+              end
             end
           end
         end
       end
     end
-    i = i + 1
+  end
+
+  local positions, radii = {}, {}
+  for edgeId, splitData in _pairs(edgeSplits) do
+    local n1 = edges[edgeId][1]
+    local n2 = edges[edgeId][2]
+    table.sort(splitData, function(a, b) return a[1] < b[1] end)
+
+    for j = 1, #splitData do
+      positions[j] = linePointFromXnorm(map.nodes[n1].links[n2].inPos, map.nodes[n1].links[n2].outPos, splitData[j][1])
+      radii[j] = lerp(map.nodes[n1].links[n2].inRadius, map.nodes[n1].links[n2].outRadius, splitData[j][1])
+    end
+
+    for j = 1, #splitData do
+      local nodeName = splitData[j][2]
+      local pos = positions[j]
+      local radius = radii[j]
+
+      if not map.nodes[nodeName] then
+        map.nodes[nodeName] = {pos = pos, radius = radius, links = {}}
+        map.nodes[nodeName].junction = true
+      else
+        map.nodes[nodeName].pos = (map.nodes[nodeName].pos + pos) * 0.5
+        map.nodes[nodeName].radius = (map.nodes[nodeName].radius + radius) * 0.5
+      end
+
+      -- clear link between n1 and n2
+      local data = map.nodes[n1].links[n2]
+      map.nodes[n1].links[n2] = nil
+      map.nodes[n2].links[n1] = nil
+
+      -- connect n1 to nodeName
+      map.nodes[n1].links[nodeName] = {
+        drivability = data.drivability,
+        hiddenInNavi = data.hiddenInNavi,
+        oneWay = data.oneWay,
+        lanes = data.lanes,
+        speedLimit = data.speedLimit,
+        type = data.type,
+        inNode = n1,
+        outNode = nodeName,
+        inPos = data.inPos,
+        outPos = positions[j],
+        inRadius = data.inRadius,
+        outRadius = radii[j],
+        noMerge = data.noMerge
+      }
+
+      -- connect nodeName to n1
+      map.nodes[nodeName].links[n1] = map.nodes[n1].links[nodeName]
+
+      -- connect n2 to nodeName
+      map.nodes[n2].links[nodeName] = {
+        drivability = data.drivability,
+        hiddenInNavi = data.hiddenInNavi,
+        oneWay = data.oneWay,
+        lanes = data.lanes,
+        speedLimit = data.speedLimit,
+        type = data.type,
+        inNode = nodeName,
+        outNode = n2,
+        inPos = positions[j],
+        outPos = data.outPos,
+        inRadius = radii[j],
+        outRadius = data.outRadius,
+        noMerge = data.noMerge
+      }
+
+      -- connect nodeName to n2
+      map.nodes[nodeName].links[n2] = map.nodes[n2].links[nodeName]
+
+      n1 = nodeName
+    end
+    table.clear(positions)
+    table.clear(radii)
   end
 
   _updateProgress()
 end
 
-local function mergeNodesToLines(edges, nodeDegree)
-  -- Merge nodes to lines if they are closeby
-  local mapNodes = map.nodes
-  local q = quadtree.newQuadtree()
-  for k, v in pairs(mapNodes) do
-    if not v.noMerge or v.endNode then
-      q:preLoad(k, pointBBox(v.pos.x, v.pos.y, v.radius))
+-- Merge nodes to lines if they are closeby
+local function mergeNodesToLines()
+  local edges = getEdgeList()
+  local edgeCount = #edges
+
+  -- Create a quadtree with map edges
+  local q_edges = kdTreeBox2D.new(edgeCount)
+  for i = 1, edgeCount do
+    if not edges[i][3].noMerge then
+      local inPos = edges[i][3].inPos
+      local outPos = edges[i][3].outPos
+      q_edges:preLoad(i, quadtree.lineBBox(inPos.x, inPos.y, outPos.x, outPos.y, max(edges[i][3].inRadius, edges[i][3].outRadius)))
     end
   end
-  q:build()
+  q_edges:build()
 
   _updateProgress()
 
-  local i = 1
-  while i <= edges.count do
-    local l1n1id = edges[i][1]
-    local l1n2id = edges[i][2]
-    if not edges[i][3].noMerge then
-      local l1n1pos = mapNodes[l1n1id].pos
-      local l1n2pos = mapNodes[l1n2id].pos
-      local l1n1rad = mapNodes[l1n1id].radius
-      local l1n2rad = mapNodes[l1n2id].radius
-      for nid in q:queryNotNested(quadtree.lineBBox(l1n1pos.x, l1n1pos.y, l1n2pos.x, l1n2pos.y)) do
-        if nid ~= l1n1id and nid ~= l1n2id then -- and not mapNodes[nid].links[l1n1id] and not mapNodes[nid].links[l1n2id]
-          local n = mapNodes[nid]
+  local mapNodes = map.nodes
+
+  local nodesToMerge = {}
+  -- for every node find the edge that is closest and close enough to it. Each node can only merge with one edge.
+  for nid, n in _pairs(mapNodes) do
+    if not n.noMerge or n.endNode then
+      local d2Min = math.huge
+      local nodeMin, eIdMin, xMin
+      for edgeId in q_edges:queryNotNested(quadtree.pointBBox(n.pos.x, n.pos.y, n.radius)) do
+        local l1n1id = edges[edgeId][1] -- edge inNode id
+        local l1n2id = edges[edgeId][2] -- edge outNode id
+        if nid ~= l1n1id and nid ~= l1n2id then -- TODO: consider adding the following condition: and not (mapNodes[nid].links[l1n1id] or mapNodes[nid].links[l1n2id])
+          local l1n1pos = edges[edgeId][3].inPos
+          local l1n2pos = edges[edgeId][3].outPos
           local xnorm = n.pos:xnormOnLine(l1n1pos, l1n2pos)
           if xnorm > 0 and xnorm < 1 then
-            local lp = linePointFromXnorm(l1n1pos, l1n2pos, xnorm)
+            local linePoint = linePointFromXnorm(l1n1pos, l1n2pos, xnorm)
+            local l1n1rad = edges[edgeId][3].inRadius
+            local l1n2rad = edges[edgeId][3].outRadius
             local linePrad = lerp(l1n1rad, l1n2rad, xnorm)
-            if n.pos:squaredDistance(lp) < square(min(linePrad, n.radius)) then
-
-              if n.manual ~= 1 or nodeDegree[nid] > 0 then
-                q:remove(nid, n.pos.x, n.pos.y)
-                if nodeDegree[nid] == 1 then
-                  n.pos = lp
-                  n.radius = linePrad
-                else
-                  n.pos = (n.pos + lp) * 0.5 -- here i might be introducing an angle in straight lines
-                  n.radius = (linePrad + n.radius) * 0.5
-                end
-                q:insert(nid, pointBBox(n.pos.x, n.pos.y, n.radius))
-              end
-
-              local l1Data = edges[i][3]
-              local l1inNode = l1Data.inNode
-
-              edges[i][2] = nid
-              l1Data.inNode = (l1inNode == l1n1id) and l1n1id or nid
-
-              tableInsert(edges, {nid, l1n2id, {drivability = l1Data.drivability, hiddenInNavi = l1Data.hiddenInNavi, speedLimit = l1Data.speedLimit, oneWay = l1Data.oneWay, lanes = l1Data.lanes, inNode = (l1inNode == l1n2id and l1n2id) or nid, type = l1Data.type}})
-              edges.count = edges.count + 1
-              nodeDegree[nid] = nodeDegree[nid] + 2
-              i = i - 1 -- this is needed given we want to recheck edges[i]
-              break
+            local d2 = n.pos:squaredDistance(linePoint)
+            if d2 < min(square(min(linePrad, n.radius)), d2Min) then -- TODO: do i need to keep the minimum? Why not keep all that safisfy the radius condition?
+              d2Min, nodeMin, eIdMin, xMin = d2, nid, edgeId, xnorm
             end
           end
         end
       end
-    end
-    i = i + 1
-  end
-
-  _updateProgress()
-end
-
-local function optimizeEdges()
-  -- triangle n1id, nid, n2id: deletes n1id, n2id segment
-  for nid, n in pairs(map.nodes) do
-    if n.manual == nil then -- why is this check needed? We are not removing any nodes here, only edges.
-      local numLinks = tableSize(n.links)
-      if numLinks == 2 then
-        local n1id = next(n.links)
-        local n2id = next(n.links, n1id)
-        local n1 = map.nodes[n1id]
-        local n2 = map.nodes[n2id]
-        local dchord = n1.links[n2id]
-        local d1 = n.links[n1id]
-        local d2 = n.links[n2id]
-        if (n1.links[n2id] ~= nil or n2.links[n1id] ~= nil) and is3SegMergeValid(nid, d1, d2, dchord) and (d1.type == d2.type and d2.type == dchord.type) then
-          local xnorm, dist = n.pos:xnormSquaredDistanceToLineSegment(n1.pos, n2.pos)
-          if xnorm >= 0 and xnorm <= 1 and dist <= square(n.radius + lerp(n1.radius, n2.radius, xnorm)) then -- we should maybe add something compairing dist to dchord length
-            dist = sqrt(dist)
-            local lnPoint = linePointFromXnorm(n1.pos, n2.pos, xnorm)
-            local lnPointRadius = lerp(n1.radius, n2.radius, xnorm)
-            local newRadius = max(n.radius, lnPointRadius, (dist + n.radius + lnPointRadius) * 0.5)
-            n.pos = n.pos + (lnPoint - n.pos):normalized() * max(0, newRadius - n.radius) -- (dist - n.radius + max(n1.radius, n2.radius)) * 0.5
-            n.radius = newRadius
-            n.links[n1id].drivability = min(n.links[n1id].drivability, n1.links[n2id].drivability)
-            n.links[n2id].drivability = min(n.links[n2id].drivability, n1.links[n2id].drivability)
-            n.links[n1id].speedLimit = min(n.links[n1id].speedLimit, n1.links[n2id].speedLimit)
-            n.links[n2id].speedLimit = min(n.links[n2id].speedLimit, n1.links[n2id].speedLimit)
-            if not n1.links[n2id].hiddenInNavi then
-              n.links[n1id].hiddenInNavi = nil
-              n.links[n2id].hiddenInNavi = nil
-            end
-            n1.links[n2id] = nil
-            n2.links[n1id] = nil
-          end
-        end
+      if nodeMin then
+        nodesToMerge[nodeMin] = {eIdMin, xMin}
       end
     end
   end
+
+  local splits = {}
+  for nid, data in pairs(nodesToMerge) do
+    local edgeId = data[1]
+    if splits[edgeId] then
+      table.insert(splits[edgeId], {data[2], nid}) -- TODO: i'm only keeping nid here for debugging
+    else
+      splits[edgeId] = {{data[2], nid}}
+    end
+  end
+
+  local positions, radii = {}, {} -- TODO: I don't need two tables here
+  --local newNodesCreated = {} -- TODO: remove debug
+  --local numOfNewNodesCreated = 0 -- TODO: remove debug
+  for edgeId, splitData in _pairs(splits) do
+    local n1 = edges[edgeId][1] -- inNode
+    local n2 = edges[edgeId][2] -- outNode
+    table.sort(splitData, function(a, b) return a[1] < b[1] end)
+
+    for j = 1, #splitData do
+      positions[j] = linePointFromXnorm(map.nodes[n1].links[n2].inPos, map.nodes[n1].links[n2].outPos, splitData[j][1])
+      radii[j] = lerp(map.nodes[n1].links[n2].inRadius, map.nodes[n1].links[n2].outRadius, splitData[j][1])
+    end
+
+    -- This loop splits the n1-n2 edge at the disignated xnorms it does nothing else, i.e. it does not process nid at all.
+    -- The merging of nid with the newly produced node along n1-n2 is done by the following mergeOverlappingNodes.
+    -- This creates a dependence of mergeNodesToLines with mergeOverlappingNodes. Not Good!!
+    for j = 1, #splitData do
+      local nodeName = nameNode(n1, j)
+      --newNodesCreated[nodeName] = splitData[j][2] -- TODO: remove debug
+      --numOfNewNodesCreated = numOfNewNodesCreated + 1 -- TODO: remove debug
+      local pos = positions[j]
+      local radius = radii[j]
+
+      map.nodes[nodeName] = {pos = pos, radius = radius, links = {}}
+      map.nodes[nodeName].junction = true
+
+      -- clear link between n1 and n2
+      local data = map.nodes[n1].links[n2]
+      map.nodes[n1].links[n2] = nil
+      map.nodes[n2].links[n1] = nil
+
+      -- connect n1 to nodeName
+      map.nodes[n1].links[nodeName] = {
+        drivability = data.drivability,
+        hiddenInNavi = data.hiddenInNavi,
+        oneWay = data.oneWay,
+        lanes = data.lanes,
+        speedLimit = data.speedLimit,
+        type = data.type,
+        inNode = n1,
+        outNode = nodeName,
+        inPos = data.inPos,
+        outPos = positions[j],
+        inRadius = data.inRadius,
+        outRadius = radii[j],
+        noMerge = data.noMerge
+      }
+
+      -- connect nodeName to n1
+      map.nodes[nodeName].links[n1] = map.nodes[n1].links[nodeName]
+
+      -- connect n2 to nodeName
+      map.nodes[n2].links[nodeName] = {
+        drivability = data.drivability,
+        hiddenInNavi = data.hiddenInNavi,
+        oneWay = data.oneWay,
+        lanes = data.lanes,
+        speedLimit = data.speedLimit,
+        type = data.type,
+        inNode = nodeName,
+        outNode = n2,
+        inPos = positions[j],
+        outPos = data.outPos,
+        inRadius = radii[j],
+        outRadius = data.outRadius,
+        noMerge = data.noMerge
+      }
+
+      -- connect nodeName to n2
+      map.nodes[nodeName].links[n2] = map.nodes[n2].links[nodeName]
+
+      n1 = nodeName
+    end
+
+    table.clear(positions)
+    table.clear(radii)
+  end
+
+  -- for n1id, n2id in pairs(newNodesCreated) do -- TODO: remove debug
+  --   local n1 = map.nodes[n1id]
+  --   local n2 = map.nodes[n2id]
+  --   if not (n1.pos:squaredDistance(n2.pos) < square(min(n1.radius, n2.radius))) then
+  --     print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! mergeNodesToLines Error 1 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+  --   end
+  -- end
+
+  -- if tableSize(newNodesCreated) ~= numOfNewNodesCreated then -- TODO: remove debug
+  --   print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! mergeNodesToLines Error 2 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+  -- end
 
   _updateProgress()
 end
@@ -906,53 +1771,244 @@ local function processPrivateRoads()
   _updateProgress()
 end
 
--- optimize paths and throw away nodes that are below a certain displacement
+local function isJunction(nId)
+  local nodeDegree = tableSize(map.nodes[nId].links)
+  if nodeDegree ~= 2 then
+    return true
+  else
+    local n1Id, d1 = next(map.nodes[nId].links)
+    local _, d2 = next(map.nodes[nId].links, n1Id)
+    return not (is2SegMergeValid(nId, d1, d2) and (d1.type == d2.type) and d1.drivability == d2.drivability and d1.speedLimit == d2.speedLimit)
+  end
+end
+
 local function optimizeNodes()
-  -- n1id <-> nid (to delete) <-> n2id
-  local optimizedNodes = 0
-  local nodesToDelete = {}
-  for nid, n in pairs(map.nodes) do
-    if n.manual == nil and tableSize(n.links) == 2 then
-      local n1id = next(n.links)
-      local n2id = next(n.links, n1id)
-      local n1 = map.nodes[n1id]
-      local n2 = map.nodes[n2id]
+  local isJunctionNode = {}
+  -- identify junction nodes
+  for nid in _pairs(map.nodes) do
+    isJunctionNode[nid] = isJunction(nid)
+  end
 
-      local d1 = n1.links[nid]
-      local d2 = n2.links[nid]
+  local visited = {}
+  local path, nodesToKeep, stack, pathLen = {}, {}, {}, {}
+  for nid in _pairs(map.nodes) do
+    if not (visited[nid] or isJunctionNode[nid]) then -- isJunction(nid)
 
-      if is2SegMergeValid(nid, d1, d2) and (d1.type == d2.type) then
-        local xnorm = n.pos:xnormOnLine(n1.pos, n2.pos)
-        if xnorm > 0 and xnorm < 1 and n.pos:squaredDistance(linePointFromXnorm(n1.pos, n2.pos, xnorm)) < square(n.radius*0.05) and
-        abs(n.radius - lerp(n1.radius, n2.radius, xnorm)) < (0.1 * n.radius) then
-          d1.drivability = min(d1.drivability, d2.drivability)
-          d1.speedLimit = min(d1.speedLimit, d2.speedLimit)
-          d1.inNode = d1.inNode == nid and n2id or n1id
-          if not (d1.hiddenInNavi and d2.hiddenInNavi) then
-            d1.hiddenInNavi = nil
+      ------------------------------------------------------------------------------
+      -- Unfold the path (set of nodes between two "junction" nodes) containing nid
+      ------------------------------------------------------------------------------
+
+      path[1] = nid
+      local pathCount = 1
+      visited[nid] = true
+      while true do -- explore the path nid belongs to
+        local nextNid = next(map.nodes[path[pathCount]].links)
+        nextNid = nextNid ~= path[pathCount-1] and nextNid or next(map.nodes[path[pathCount]].links, nextNid)
+
+        if nextNid == nid then -- search has come full circle without encountering a junction node. Path is an isolated loop.
+          local iMin = 1
+          for i = 2, pathCount do -- deterministically decide which node will be considered the first/last node of the path
+            iMin = min3D(map.nodes[path[iMin]].pos, map.nodes[path[i]].pos) == map.nodes[path[iMin]].pos and iMin or i
           end
-          n1.links[nid] = nil
-          n1.links[n2id] = d1
-          n2.links[nid] = nil
-          n2.links[n1id] = d1
-          optimizedNodes = optimizedNodes + 1
-          nodesToDelete[optimizedNodes] = nid
+
+          local n = iMin
+          for i = 1, n * 0.5 do -- reverse array from 1 to iMin. this will make iMin the first node in the path
+            path[i], path[n] = path[n], path[i]
+            n = n - 1
+          end
+
+          n = pathCount
+          for i = iMin + 1, (n + iMin) * 0.5 do -- reverse array from iMin+1 to n
+            path[i], path[n] = path[n], path[i]
+            n = n - 1
+          end
+
+          pathCount = pathCount + 1
+          path[pathCount] = path[1] -- make first node in the path also the last node in the path (a path has to have two end nodes)
+
+          break
+        end
+
+        pathCount = pathCount + 1
+        path[pathCount] = nextNid
+        visited[nextNid] = true
+
+        if isJunctionNode[nextNid] then -- isJunction(nextNid)
+          if path[1] == nid then -- first junction node reached
+            local n = pathCount
+            for i = 1, n * 0.5 do -- reverse path up to this point to place junction node at the path start
+              path[i], path[n] = path[n], path[i]
+              n = n - 1
+            end
+          else
+            break
+          end
         end
       end
+
+      -- order path deterministically
+      local first, last
+      if path[1] ~= path[pathCount] then -- path is not a loop
+        first = path[1]
+        last = path[pathCount]
+      else -- path is a loop
+        first = path[2]
+        last = path[pathCount-1]
+      end
+      if min3D(map.nodes[last].pos, map.nodes[first].pos) == map.nodes[last].pos then
+        local n = pathCount
+        for i = 1, n * 0.5 do
+          path[i], path[n] = path[n], path[i]
+          n = n - 1
+        end
+      end
+
+      -------------------------
+      -- Simplify path polyline
+      -------------------------
+
+      -- Consider positions
+      local i, k = 1, pathCount
+      local pi = map.nodes[path[i]].pos
+      repeat
+        local maxd2, maxj = 0, nil
+        local pk = map.nodes[path[k]].pos
+        for j = i+1, k-1 do
+          local d2 = map.nodes[path[j]].pos:squaredDistanceToLineSegment(pi, pk)
+          if d2 > maxd2 then -- TODO: does the overall result change if i have two nodes at the same distance?
+            maxd2 = d2
+            maxj = j
+          end
+        end
+
+        if maxj and maxd2 > square(map.nodes[path[maxj]].radius * 0.05) then
+          nodesToKeep[maxj] = true
+          table.insert(stack, k)
+          k = maxj
+        else
+          i = k
+          pi = pk
+          k = table.remove(stack)
+        end
+      until not k
+
+      -- Consider radii
+      pathLen[1] = 0
+      for i = 2, pathCount do
+        pathLen[i] = pathLen[i-1] + map.nodes[path[i]].pos:distance(map.nodes[path[i-1]].pos)
+      end
+
+      local i, k = 1, pathCount
+      repeat
+        local maxDiff, maxj = 0, nil
+        for j = i+1, k-1 do
+          local xnorm = (pathLen[j] - pathLen[i]) / (pathLen[k] - pathLen[i])
+          local rDiff = abs(map.nodes[path[j]].radius - lerp(map.nodes[path[i]].radius, map.nodes[path[k]].radius, xnorm))
+          if rDiff > maxDiff then
+            maxDiff = rDiff
+            maxj = j
+          end
+        end
+
+        if maxj and maxDiff > 0.1 * map.nodes[path[maxj]].radius then
+          nodesToKeep[maxj] = true
+          table.insert(stack, k)
+          k = maxj
+        else
+          i = k
+          k = table.remove(stack)
+        end
+      until not k
+
+      -- Remove nodes
+      local prevNode
+      for i = 2, pathCount-1 do
+        if not nodesToKeep[i] then
+          local n1id = prevNode or path[i-1]
+          local nid = path[i]
+          local n2id = path[i+1]
+          local n1 = map.nodes[n1id]
+          local n2 = map.nodes[n2id]
+          local d1 = n1.links[nid]
+          local d2 = n2.links[nid]
+
+          -- n1.links[n1id] = nil -- TODO: this makes no sense
+          -- n2.links[n2id] = nil
+
+          n1.links[nid] = nil
+          n2.links[nid] = nil
+          map.nodes[nid] = nil
+
+          if n1.links[n2id] then
+            -- local dchord = n1.links[n2id]
+            -- if is3SegMergeValid(nid, d1, d2, dchord) and (d1.type == d2.type and d2.type == dchord.type) then
+            --   n1.links[nid] = nil
+            --   n2.links[nid] = nil
+            --   map.nodes[nid] = nil
+            --   prevNode = n1id
+            -- else
+            --   prevNode = nil
+            -- end
+
+            local e1 = n1.links[n2id]
+            local inNode = d1.inNode == nid and n2id or n1id
+            local outNode = d1.outNode == nid and n2id or n1id
+            local e2 = {
+              drivability = min(d1.drivability, d2.drivability),
+              speedLimit = min(d1.speedLimit, d2.speedLimit),
+              oneWay = d1.oneWay,
+              inNode = inNode,
+              outNode = outNode,
+              inPos = inNode == n1id and d1[d1.inNode == n1id and 'inPos' or 'outPos'] or d2[d2.inNode == n2id and 'inPos' or 'outPos'],
+              outPos = outNode == n1id and d1[d1.outNode == n1id and 'outPos' or 'inPos'] or d2[d2.outNode == n2id and 'outPos' or 'inPos'],
+              inRadius = inNode == n1id and d1[d1.inNode == n1id and 'inRadius' or 'outRadius'] or d2[d2.outNode == n2id and 'inRadius' or 'outRadius'],
+              outRadius = outNode == n1id and d1[d1.outNode == n1id and 'outRadius' or 'inRadius'] or d2[d2.outNode == n2id and 'outRadius' or 'inRadius'],
+              type = d1.type,
+            }
+
+            prevNode = n1id
+
+            if edgeCompare(e2, e1) then
+              n1.links[n2id] = e2
+              n2.links[n1id] = e2
+            end
+          else
+            d1.drivability = min(d1.drivability, d2.drivability)
+            d1.speedLimit = min(d1.speedLimit, d2.speedLimit)
+            d1.inNode = d1.inNode == nid and n2id or n1id
+            d1.outNode = d1.outNode == nid and n2id or n1id
+
+            if not (d1.hiddenInNavi and d2.hiddenInNavi) then
+              d1.hiddenInNavi = nil
+            end
+
+            -- n1.links[nid] = nil
+            -- n2.links[nid] = nil
+            -- n1.links[n1id] = nil -- i possibly ment map.nodes[nid].links[n1id]
+            -- n2.links[n2id] = nil
+            -- map.nodes[nid] = nil
+
+            d1.inPos = d1.inNode == n1id and d1[d1.inNode == n1id and 'inPos' or 'outPos'] or d2[d2.inNode == n2id and 'inPos' or 'outPos']
+            d1.outPos = d1.outNode == n1id and d1[d1.outNode == n1id and 'outPos' or 'inPos'] or d2[d2.outNode == n2id and 'outPos' or 'inPos']
+            d1.inRadius = d1.inNode == n1id and d1[d1.inNode == n1id and 'inRadius' or 'outRadius'] or d2[d2.inNode == n2id and 'inRadius' or 'outRadius']
+            d1.outRadius = d1.outNode == n1id and d1[d1.outNode == n1id and 'outRadius' or 'inRadius'] or d2[d2.outNode == n2id and 'outRadius' or 'inRadius']
+            d1.noMerge = nil
+            n1.links[n2id] = d1
+            n2.links[n1id] = d1
+
+            prevNode = n1id
+          end
+        else
+          prevNode = nil
+        end
+      end
+
+      tableClear(path)
+      tableClear(pathLen)
+      tableClear(nodesToKeep)
+      tableClear(stack)
     end
   end
-
-  _updateProgress()
-
-  for i = 1, optimizedNodes do
-    map.nodes[nodesToDelete[i]] = nil
-  end
-
-  --if optimizedNodes > 0 then
-  --  log('D', 'map', "optimized nodes: " .. optimizedNodes .. " of " .. tableSize(map.nodes) .. " total nodes")
-  --end
-
-  _updateProgress()
 end
 
 local function validateMapData(singleSided)
@@ -1030,11 +2086,11 @@ end
 
 local function convertToSingleSided()
   local edgeCount, nodeCount = 0, 0
-  for nid, n in pairs(map.nodes) do
+  for nid, n in _pairs(map.nodes) do
     nodeCount = nodeCount + 1
     local newLinks = {}
-    for lid, data in pairs(n.links) do
-      if data.inNode == lid and map.nodes[lid] then -- lid > nid
+    for lid, data in _pairs(n.links) do
+      if data.inNode == lid then -- lid > nid
         edgeCount = edgeCount + 1
         newLinks[lid] = data
       end
@@ -1053,6 +2109,204 @@ local function getNodeLinkCount(nId)
   return tableSize(gp.graph[nId])
 end
 
+local function linkMap()
+  local graphDataHistory = {}
+
+  loadJsonDecalMap()
+  --[[ Load Map Data Hashes
+  print('--------------- Load ---------------')
+  checkLinks()
+  graphDataHistory['load'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['load'][1])
+  dump(graphDataHistory['load'][2])
+  print('')
+  --]]
+  createSpeedLimits(true)
+
+  mergeOverlappingNodes(true)
+  --[[ Merge Overlapping Nodes 0 Hashes
+  print('--------------- Merge Overlapping Nodes 0 ---------------')
+  checkLinks()
+  graphDataHistory['Merge_Nodes_0'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['Merge_Nodes_0'][1])
+  dump(graphDataHistory['Merge_Nodes_0'][2])
+  print('')
+  --]]
+
+  optimizeNodes()
+  --[[ optimizeNodes_0
+  print('--------------- Optimize Nodes 0 ---------------')
+  checkLinks()
+  graphDataHistory['optimizeNodes_0'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['optimizeNodes_0'][1])
+  dump(graphDataHistory['optimizeNodes_0'][2])
+  print('')
+  --]]
+
+  mergeOverlappingNodes() -- this opperation could delete edges (if there is an edge between two nodes in the same overlap group or two nodes in the same group link to a third node in another group)
+  --[[ Merge Overlapping Nodes 1 Hashes
+  print('--------------- Merge Overlapping Nodes 1 ---------------')
+  checkLinks()
+  graphDataHistory['Merge_Nodes_1'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['Merge_Nodes_1'][1])
+  dump(graphDataHistory['Merge_Nodes_1'][2])
+  print('')
+  --]]
+
+
+  resolveTJunctions()
+  --[[ T - Junctions Hashes
+  print('--------------- Resolve T Junctions ---------------')
+  checkLinks()
+  graphDataHistory['T_Junctions'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['T_Junctions'][1])
+  dump(graphDataHistory['T_Junctions'][2])
+  print('')
+  --]]
+
+
+  resolveXJunctions()
+  --[[ X - Junctions Hashes
+  print('--------------- Resolve X Junctions ---------------')
+  checkLinks()
+  graphDataHistory['X_Junctions'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['X_Junctions'][1])
+  dump(graphDataHistory['X_Junctions'][2])
+  print('')
+  --]]
+
+
+  mergeNodesToLines()
+  --[[ Merge Nodes to Lines Hashes
+  print('--------------- After merge nodes to lines ---------------')
+  checkLinks()
+  graphDataHistory['mergeNodesToLines'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['mergeNodesToLines'][1])
+  dump(graphDataHistory['mergeNodesToLines'][2])
+  print('')
+  --]]
+
+
+  mergeOverlappingNodes() -- this opperation could delete edges (if there is an edge between two nodes in the same overlap group or two nodes in the same group link to a third node in another group)
+  --[[ Merge Overlapping Nodes 2 Hashes
+  print('--------------- Merge Overlapping Nodes 2 ---------------')
+  checkLinks()
+  graphDataHistory['Merge_Nodes_2'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['Merge_Nodes_2'][1])
+  dump(graphDataHistory['Merge_Nodes_2'][2])
+  print('')
+  --]]
+
+  processPrivateRoads()
+
+  optimizeNodes() -- optimize nodes does not preserve the noMerge property of edges
+  --[[ Optimize Nodes Hashes
+  print('------------------ Optimize Nodes ----------------------')
+  checkLinks()
+  graphDataHistory['optimizeNodes'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['optimizeNodes'][1])
+  dump(graphDataHistory['optimizeNodes'][2])
+  print('')
+  --]]
+
+  convertToSingleSided()
+  --[[ Convert to single sided Hashes
+  print('------------------ Convert To Single Sided ----------------------')
+  -- checkLinks() -- this does not work for single sided links
+  graphDataHistory['convertToSingleSided'] = {hashNodeData(), hashEdgeData()}
+  dump(graphDataHistory['convertToSingleSided'][1])
+  dump(graphDataHistory['convertToSingleSided'][2])
+  print('')
+  --]]
+
+  return graphDataHistory
+end
+
+-- local function colorNodes(mapNodes)
+--   local maxColorCode = 0
+--   for nodeId, node in pairs(mapNodes) do
+--     if node.junction then
+--       local colorCode = -1
+--       repeat
+--         colorCode = colorCode + 1
+--         local validColorFound = true
+--         for k in nodeKdTree:queryNotNested(pointBBox(node.pos.x, node.pos.y, node.radius * 4)) do -- check all nodes with this colorCode
+--           if mapNodes[k].debugColorCode == colorCode then -- check distance between nodes with the same colorCode -- and nodes[k].pos:squaredDistance(nodes[nodeId].pos) < 400
+--             validColorFound = false
+--             break
+--           end
+--         end
+--       until validColorFound
+--       node.debugColorCode = colorCode
+--       maxColorCode = max(maxColorCode, colorCode)
+--     end
+--   end
+
+--   --[[ Debug color distribution: number of times each color is used
+--   local dist = {}
+--   for k, v in pairs(mapNodes) do
+--     if v.debugColorCode then
+--       dist[v.debugColorCode+1] = (dist[v.debugColorCode+1] or 0) + 1
+--     end
+--   end
+--   dump(dist)
+--   --]]
+
+--   for nodeId, node in pairs(mapNodes) do
+--     if node.debugColorCode then node.debugColorCode = node.debugColorCode / maxColorCode end
+--   end
+--   -- dump('nodeColors', nodeColors)
+--   -- dump('colorCodes', colorCodes)
+--   dump('maxColorCode', maxColorCode)
+-- end
+
+-- colors junction nodes so that nodes that are close by get different colors: for visual debugging
+local function colorNodes(mapNodes)
+  local numOfColorCodes = 8 -- number of colors to be used. Tentative, will grow as needed at the expense of skewing the color distribution.
+  local colorCode = -1 -- initialize color code (-- TODO: can we get something from random initialization?)
+  for nodeId, node in pairs(mapNodes) do
+    if node.junction then
+      local numOfColorsRejected = 0
+      repeat
+        if numOfColorsRejected == numOfColorCodes then -- all available colors have been rejected
+          colorCode = numOfColorCodes -- set color code to the newly available color code
+          numOfColorCodes = numOfColorCodes + 1
+          break -- we can be sure this color is unused, so break from the loop
+        else
+          colorCode = (colorCode+1) % numOfColorCodes -- colorCodes will run from 0 to numOfColorCodes-1
+        end
+        local validColorFound = true
+        for k in nodeKdTree:queryNotNested(pointBBox(node.pos.x, node.pos.y, node.radius * 4)) do -- check nodes around nodeId
+          if mapNodes[k].debugColorCode == colorCode then
+            -- TODO when i reject a color code i should try to get a color that is not adjacent to the one rejected
+            -- it might be possible to do this with an integer variant of getBlueNoise1d
+            numOfColorsRejected = numOfColorsRejected + 1
+            validColorFound = false
+            break
+          end
+        end
+      until validColorFound
+      node.debugColorCode = colorCode
+    end
+  end
+
+  --[[ Debug color distribution: number of times each color is used (a uniform distribution is desirable)
+  local dist = {}
+  for k, v in pairs(mapNodes) do
+    if v.debugColorCode then
+      dist[v.debugColorCode+1] = (dist[v.debugColorCode+1] or 0) + 1
+    end
+  end
+  dump(dist)
+  --]]
+  -- dump('numOfColorCodes', numOfColorCodes)
+
+  numOfColorCodes = 1 / (numOfColorCodes-1)
+  for nodeId, node in pairs(mapNodes) do
+    if node.debugColorCode then node.debugColorCode = node.debugColorCode * numOfColorCodes end
+  end
+end
+
 local function loadMap(customMapNodes)
   if not be then return end
   --log('A', "map.loadMap-calledby", debug.traceback())
@@ -1069,70 +2323,57 @@ local function loadMap(customMapNodes)
 
   setRoadRules()
 
+  local edgeCount, nodeCount
   if customMapNodes then
     map.nodes = customMapNodes
+    edgeCount, nodeCount = convertToSingleSided()
   else
-    loadJsonDecalMap()
+    linkMap()
 
-    createSpeedLimits(true)
+    --[[ For debugging: comment out linkMap() call above.
+    print('============== Load Map ===============')
+    toggleShuffledPairs('shuffledPairs')
 
-    local nodesToMerge, idx = {}, 0
-    for k, v in pairs(map.nodes) do
-      if not v.noMerge or v.endNode then
-        idx = idx + 1
-        nodesToMerge[idx] = k
+    local graphHistory = {}
+
+    graphHistory[1] = linkMap()
+
+    print('')
+    print('=========================================================================')
+    print('')
+
+    local nodes = map.nodes
+    tableClear(nodes)
+    tableClear(map)
+    map.nodes = nodes
+
+    graphHistory[2] = linkMap()
+    print('')
+
+    local checkTabNames = {'load', 'Merge_Nodes_1', 'T_Junctions', 'X_Junctions', 'mergeNodesToLines', 'Merge_Nodes_2', 'optimizeNodes', 'convertToSingleSided'}
+    for i, v in ipairs(checkTabNames) do
+      if graphHistory[1][v] and graphHistory[2][v] then
+        print('========='.. ' '..v..' '..'=========')
+
+        if graphHistory[1][v][1] == graphHistory[2][v][1] then
+          print('Node Check PASSED')
+        else
+          print('Node check FAILED !!!!!!!!!!!!!!!!!!!!!!!')
+        end
+
+        if graphHistory[1][v][2] == graphHistory[2][v][2] then
+          print('Edge Check PASSED')
+        else
+          print('Edge check FAILED !!!!!!!!!!!!!!!!!!!!!!!')
+        end
+
+        print('')
       end
     end
-
-    dedupNodes(nodesToMerge)
-
-    local edges, nodeDegree = edgeList()
-
-    -- Create a quadtree with map edges
-    local q_edges = quadtree.newQuadtree(edges.count)
-    for i = 1, edges.count do
-      local n1 = map.nodes[edges[i][1]]
-      local n2 = map.nodes[edges[i][2]]
-      if not edges[i][3].noMerge then
-        q_edges:preLoad(i, quadtree.lineBBox(n1.pos.x, n1.pos.y, n2.pos.x, n2.pos.y, max(n1.radius, n2.radius)))
-      end
-    end
-    q_edges:build()
-
-    _updateProgress()
-
-    resolveTJunctions(edges, nodeDegree, q_edges)
-
-    resolveXJunctions(edges, nodeDegree, q_edges)
-
-    q_edges = nil
-
-    -- resetLinksFromEdges(edges) possibly needed here
-
-    mergeNodesToLines(edges, nodeDegree)
-
-    resetLinksFromEdges(edges)
-
-    table.clear(nodesToMerge)
-    idx = 0
-    for k, v in pairs(map.nodes) do
-      if not v.noMerge or v.endNode then
-        idx = idx + 1
-        nodesToMerge[idx] = k
-      end
-    end
-
-    dedupNodes(nodesToMerge)
-
-    optimizeEdges()
-    processPrivateRoads()
-    optimizeNodes()
+    --]]
   end
 
-  --validateMapData(false) --> map data sanity check
   --generateVisLog()
-  local edgeCount, nodeCount = convertToSingleSided()
-  --validateMapData(true) --> single sided map data sanity check
 
   local mapNodes = map.nodes
 
@@ -1156,19 +2397,28 @@ local function loadMap(customMapNodes)
     nodeKdTree:preLoad(nid, pointBBox(nPos.x, nPos.y, radius))
     maxRadius = max(maxRadius, radius)
     local nidDrivability = nodeDrivabilities[nid]
+    edgeTab[1] = nid
     for lid, data in pairs(n.links) do
-      local lPos = mapNodes[lid].pos
       local edgeDrivability = min(1, max(1e-30, (nodeDrivabilities[lid] + nidDrivability) * 0.5 * data.drivability))
       local distanceConst = data.gatedRoad and 10000 or 0
-      local inNode = data.inNode
-      local outNode = inNode == nid and lid or nid
-      if data.oneWay then
-        gp:uniEdge(inNode, outNode, nPos:distance(lPos) / edgeDrivability + distanceConst, data.drivability, data.speedLimit, data.lanes, data.oneWay, distanceConst)
-      else
-        gp:bidiEdge(inNode, outNode, nPos:distance(lPos) / edgeDrivability + distanceConst, data.drivability, data.speedLimit, data.lanes, data.oneWay, distanceConst)
-      end
-      edgeTab[1], edgeTab[3] = nid, lid
-      edgeKdTree:preLoad(table.concat(edgeTab), quadtree.lineBBox(nPos.x, nPos.y, lPos.x, lPos.y, radius))
+      local inNodeId = data.inNode
+      local outNodeId = data.outNode
+      gp:bidiEdge(
+        inNodeId,
+        outNodeId,
+        nPos:distance(mapNodes[lid].pos) / edgeDrivability + distanceConst,
+        data.drivability,
+        data.speedLimit,
+        data.lanes,
+        data.oneWay,
+        distanceConst,
+        mapNodes[inNodeId].pos ~= data.inPos and data.inPos or nil,
+        mapNodes[inNodeId].radius ~= data.inRadius and data.inRadius or nil,
+        mapNodes[outNodeId].pos ~= data.outPos and data.outPos or nil,
+        mapNodes[outNodeId].radius ~= data.ouRadius and data.outRadius or nil
+      )
+      edgeTab[3] = lid
+      edgeKdTree:preLoad(table.concat(edgeTab), quadtree.lineBBox(data.inPos.x, data.inPos.y, data.outPos.x, data.outPos.y, min(data.inRadius, data.outRadius)))
     end
 
     n.normal = surfaceNormal(nPos, radius * 0.5)
@@ -1362,6 +2612,21 @@ local function getPathLen(path)
   return pathLen
 end
 
+local function getPathPositions(path)
+  local pathCount = #path
+  local tab = table.new(pathCount, 0)
+  tab[1] = gp:getEdgePositions(path[1], path[2])
+  tab[1] = tab[1]:copy()
+  for i = 2, pathCount-1 do
+    local _, wp2Pos = gp:getEdgePositions(path[i-1], path[i])
+    local wp3Pos, _ = gp:getEdgePositions(path[i], path[i+1])
+    tab[i] = (wp2Pos + wp3Pos) * 0.5
+  end
+  tab[pathCount] = gp:getEdgePositions(path[pathCount], path[pathCount-1])
+  tab[pathCount] = tab[pathCount]:copy()
+  return tab
+end
+
 local function startPosLinks(position, wZ)
   --log('A','map', 'findClosestRoad called with '..position.x..','..position.y..','..position.z)
   wZ = wZ or 1 -- zbias
@@ -1490,12 +2755,221 @@ local function saveSVG(filename)
   svgDoc:writeTo(filename or 'map.svg')
 end
 
+-- returns the displacement value of the lane (negative = left, positive = right)
+local function getLaneOffset(nid1, nid2, width, lane, laneCount)
+  local link = map.nodes[nid1].links[nid2] or map.nodes[nid2].links[nid1]
+  if link.inNode == nid2 then
+    nid1, nid2 = nid2, nid1
+  end
+
+  return (lane - laneCount / 2 - 0.5) * (width / laneCount)
+end
+
+local function stringToNumber(str)
+  str = hashStringSHA256(str)
+  local res = 0
+  for i = 1, #str do
+    res = res + str:byte(i)
+  end
+  return res % 13
+end
+
+local function jetColorF(x, a)
+  return ColorF(min(1, max(0, 4 * x - 2)), min(1, max(0, 2 - abs(4 * x - 2))), min(1, max(0, 2 - 4 * x)), a)
+end
+
+local function debugDraw1()
+  if gp then
+    local camPos = core_camera.getPosition()
+    local black = ColorF(0, 0, 0, 1)
+    local gatedRoadColor = ColorF(1, 0.5, 0.5, 0.5)
+    local arrowSize1 = Point2F(1, 1)
+    local arrowSize2 = Point2F(1, 0)
+    local laneColor1 = ColorF(1, 0.2, 0.2, 1)
+    local laneColor2 = ColorF(0.2, 0.4, 1, 1)
+    local drawDist = 100
+
+    for node1id in nodeKdTree:queryNotNested(quadtree.pointBBox(camPos.x, camPos.y, drawDist)) do
+      local node = map.nodes[node1id]
+      if node.junction then
+        debugDrawer:drawText(map.nodes[node1id].pos + vec3(0, 0, 2), node1id, black)
+      end
+      for node2id, edgeData in pairs(node.links) do
+        if node.junction then
+          local n1Pos = getEdgeNodePosition(node1id, edgeData)
+          local n1Rad = getEdgeNodeRadius(node1id, edgeData)
+          debugDrawer:drawSphere(n1Pos, n1Rad, jetColorF(stringToNumber(node1id) / 12, 0.3))
+        end
+
+        if map.nodes[node2id].junction then
+          local n2Pos = getEdgeNodePosition(node2id, edgeData)
+          local n2Rad = getEdgeNodeRadius(node2id, edgeData)
+          debugDrawer:drawSphere(n2Pos, n2Rad, jetColorF(stringToNumber(node2id) / 12, 0.3))
+        end
+
+        local edgeColor
+        if edgeData.gatedRoad then
+          edgeColor = gatedRoadColor
+        else
+          local rainbow = rainbowColor(50, clamp(edgeData.drivability, 0, 1) * 15, 1)
+          edgeColor = ColorF(rainbow[1], rainbow[2], rainbow[3], 0.5)
+        end
+        debugDrawer:drawSquarePrism(edgeData.inPos, edgeData.outPos, Point2F(0.6, edgeData.inRadius * 2), Point2F(0.6, edgeData.outRadius * 2), edgeColor)
+
+        if edgeData.lanes then
+          local strLen = 1 -- number of characters representing a single lane in the lane string
+          local laneCount = #edgeData.lanes / strLen
+
+          local edgeDirVec = edgeData.outPos - edgeData.inPos
+          local edgeLength = edgeDirVec:length()
+          edgeDirVec:setScaled(1 / (edgeLength + 1e-30))
+          local right1 = edgeDirVec:cross(map.nodes[edgeData.inNode].normal)
+
+          -- calculate arrow spacing to draw lane direction indicator arrows
+          local arrowLength = 2
+          local usableEdgeLength = edgeLength - arrowLength
+          local k = max(1, math.floor(usableEdgeLength / 30) - 1) -- number of arrows per lane (30m between arrows). skip first and last.
+          local dispVec = (usableEdgeLength / (k + 1)) * edgeDirVec
+          local arrowLengthVec = arrowLength * edgeDirVec
+
+          for i = 1, laneCount do -- draw lanes
+            -- Draw arrows indicating lane direction
+            local offset1 = getLaneOffset(edgeData.inNode, edgeData.outNode, min(edgeData.inRadius, edgeData.outRadius) * 2, i, laneCount)
+            local laneDir = edgeData.lanes:byte(i) == 43 --> ascii code for '+'
+            local color = laneDir and laneColor2 or laneColor1
+            local tailPos = edgeData.inPos + right1 * offset1
+            local tipPos  = vec3()
+            for j = 1, k do
+              tailPos:setAdd(dispVec)
+              tipPos:setAdd2(tailPos, arrowLengthVec)
+              debugDrawer:drawSquarePrism(tailPos, tipPos, laneDir and arrowSize1 or arrowSize2, laneDir and arrowSize2 or arrowSize1, color)
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+local nodeIdsDrawn
+local function edgeDebugDraw()
+  if gp then
+    local camPos = core_camera.getPosition()
+    local black = ColorF(0, 0, 0, 1)
+    local gatedRoadColor = ColorF(1, 0.5, 0.5, 0.5)
+    local arrowSize1 = Point2F(1, 1)
+    local arrowSize2 = Point2F(1, 0)
+    local laneColor1 = ColorF(1, 0.2, 0.2, 1)
+    local laneColor2 = ColorF(0.2, 0.4, 1, 1)
+    local drawDist = clamp(camPos.z - be:getSurfaceHeightBelow(camPos), 20, 300)
+
+    local tmpPos, edgeDirVec, right1 = vec3(), vec3(), vec3()
+    for edgeID in edgeKdTree:queryNotNested(quadtree.pointBBox(camPos.x, camPos.y, drawDist)) do
+      local i = stringFind(edgeID, '\0')
+      local node1id = stringSub(edgeID, 1, i-1)
+      local node2id = stringSub(edgeID, i+1, #edgeID)
+
+      local n1Pos, n2Pos = gp:getEdgePositions(node1id, node2id)
+      local n1Rad, n2Rad = gp:getEdgeRadii(node1id, node2id)
+
+      -- Draw node 1 sphere if node is a junction
+      if map.nodes[node1id].junction then
+        debugDrawer:drawSphere(n1Pos, n1Rad, jetColorF(stringToNumber(node1id) / 12, 0.3))
+        --debugDrawer:drawSphere(n1Pos, n1Rad, jetColorF(map.nodes[node1id].debugColorCode, 0.3))
+        if not nodeIdsDrawn[node1id] then
+          nodeIdsDrawn[node1id] = true
+          tmpPos:set(0, 0, 2)
+          tmpPos:setAdd(map.nodes[node1id].pos)
+          debugDrawer:drawText(tmpPos, node1id, black)
+        end
+      end
+
+      -- Draw node 2 sphere if node is a junction
+      if map.nodes[node2id].junction then
+        debugDrawer:drawSphere(n2Pos, n2Rad, jetColorF(stringToNumber(node2id) / 12, 0.3))
+        --debugDrawer:drawSphere(n2Pos, n2Rad, jetColorF(map.nodes[node2id].debugColorCode, 0.3))
+        if not nodeIdsDrawn[node2id] then
+          nodeIdsDrawn[node2id] = true
+          tmpPos:set(0, 0, 2)
+          tmpPos:setAdd(map.nodes[node2id].pos)
+          debugDrawer:drawText(tmpPos, node2id, black)
+        end
+      end
+
+      local edgeData = gp.graph[node1id][node2id]
+
+      -- Draw Edge
+      local edgeColor
+      if edgeData.gatedRoad then
+        edgeColor = gatedRoadColor
+      else
+        local rainbow = rainbowColor(50, clamp(edgeData.drivability, 0, 1) * 15, 1)
+        edgeColor = ColorF(rainbow[1], rainbow[2], rainbow[3], 0.5)
+      end
+      debugDrawer:drawSquarePrism(n1Pos, n2Pos, Point2F(0.6, n1Rad * 2), Point2F(0.6, n2Rad * 2), edgeColor)
+
+      if edgeData.lanes then
+        local strLen = 1 -- number of characters representing a single lane in the lane string
+        local laneCount = #edgeData.lanes / strLen
+
+        local inPos = edgeData.inPos or gp.positions[edgeData.inNode]
+        local outPos = edgeData.outPos or gp.positions[edgeData.outNode]
+
+        edgeDirVec:setSub2(outPos, inPos)
+        local edgeLength = edgeDirVec:length()
+        edgeDirVec:setScaled(1 / (edgeLength + 1e-30))
+        right1:setCross(edgeDirVec, map.nodes[edgeData.inNode].normal)
+
+        -- calculate arrow spacing to draw lane direction indicator arrows
+        local arrowLength = 2
+        local usableEdgeLength = edgeLength - arrowLength
+        local k = max(1, math.floor(usableEdgeLength / 30) - 1) -- number of arrows per lane (30m between arrows). skip first and last.
+        local dispVec = (usableEdgeLength / (k + 1)) * edgeDirVec
+        local arrowLengthVec = arrowLength * edgeDirVec
+        local minRadius = min(n1Rad, n2Rad)
+
+        local tailPos, tipPos = vec3(), vec3()
+        for i = 1, laneCount do -- draw lanes
+          -- Draw arrows indicating lane direction
+          local offset1 = getLaneOffset(edgeData.inNode, edgeData.outNode, minRadius * 2, i, laneCount)
+          local laneDir = edgeData.lanes:byte(i) == 43 --> ascii code for '+'
+          local color = laneDir and laneColor2 or laneColor1
+          tailPos:setAdd2(inPos, right1 * offset1)
+          for j = 1, k do
+            tailPos:setAdd(dispVec)
+            tipPos:setAdd2(tailPos, arrowLengthVec)
+            debugDrawer:drawSquarePrism(tailPos, tipPos, laneDir and arrowSize1 or arrowSize2, laneDir and arrowSize2 or arrowSize1, color)
+          end
+        end
+      end
+    end
+    table.clear(nodeIdsDrawn)
+  end
+end
+
+M.drawNavGraphState = 'off'
+local drawNavGraph = nop
+local function toggleDrawNavGraph()
+  if drawNavGraph == nop then
+    --colorNodes(map.nodes)
+    drawNavGraph = edgeDebugDraw
+    M.drawNavGraphState = 'on'
+    nodeIdsDrawn = table.new(0, 50)
+  else
+    drawNavGraph = nop
+    M.drawNavGraphState = 'off'
+    nodeIdsDrawn = nil
+  end
+end
+
 local function updateGFX(dtReal)
   be:sendToMailbox("objUpdate", lpack.encodeBinWorkBuffer(M.objects))
 
   objectsReset = true
 
   delayedLoad:update(dtReal)
+
+  drawNavGraph()
 end
 
 local function Mload()
@@ -1682,10 +3156,10 @@ local function objectData(objId, isactive, damage, states, objectCollisions)
     obj.states = states or emptyTable
     obj.uiState = object.uiState and tonumber(object.uiState)
     obj.objectCollisions = objectCollisions or emptyTable
-    obj.pos:set(object:getPosition())
-    obj.vel:set(object:getVelocity())
-    obj.dirVec:set(object:getDirectionVector())
-    obj.dirVecUp:set(object:getDirectionVectorUp())
+    obj.pos:set(object:getPositionXYZ())
+    obj.vel:set(object:getVelocityXYZ())
+    obj.dirVec:set(object:getDirectionVectorXYZ())
+    obj.dirVecUp:set(object:getDirectionVectorUpXYZ())
     obj.isParked = object.isParked and true
 
     objectsCache[objId] = obj
@@ -1804,6 +3278,9 @@ M.nameNode = nameNode
 M.getNodeLinkCount = getNodeLinkCount
 M.updateDrivabilities = updateDrivabilities
 M.safeTeleport = safeTeleport
+M.toggleDrawNavGraph = toggleDrawNavGraph
+M.logGraphHashes = logGraphHashes
+M.toggleShuffledPairs = toggleShuffledPairs
 
 -- backward compatibility fixes below
 setmetatable(M, {

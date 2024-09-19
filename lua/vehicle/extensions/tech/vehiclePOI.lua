@@ -23,10 +23,10 @@ local function collectVehiclePOIData()
 
   -- Compute the front and rear axle midpoints [assumes symmetric wheel layout].
   -- [Note: these are in world-space].
-  local wp, ctr = {}, 1
+  local wp, ctr = {}, 0
   for _, wheel in pairs(wheels.wheels) do
-    wp[ctr] = obj:getNodePosition(wheel.node1)
     ctr = ctr + 1
+    wp[ctr] = obj:getNodePosition(wheel.node1)
   end
   local frontAxleMidpoint, rearAxleMidpoint = pos + (wp[min(ctr, 3)] + wp[min(ctr, 4)]) * 0.5, pos + (wp[min(ctr, 1)] + wp[min(ctr, 2)]) * 0.5
 

@@ -137,7 +137,7 @@ local function setTestDriveInfo(_testDriveInfo)
     for i, pn in ipairs(path.config.linearSegments) do
       table.insert(routeNodes, path.pathnodes.objects[pn].pos)
     end
-    core_groundMarkers.setFocus(routeNodes)
+    core_groundMarkers.setPath(routeNodes)
   end
 end
 

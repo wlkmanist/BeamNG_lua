@@ -962,7 +962,7 @@ local function terrainPainterMaterialWindow()
         end
 
         im.PushTextWrapPos(im.GetContentRegionAvailWidth())
-        im.TextColored(editor.color.warning.Value, "Warning: This action may take a while. BeamNG.drive will not be responsive during this time.")
+        im.TextColored(editor.color.warning.Value, "Warning: This action may take a while. BeamNG will not be responsive during this time.")
         im.PopTextWrapPos()
         im.Dummy(im.ImVec2(0, 10))
 

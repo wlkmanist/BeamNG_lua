@@ -9,11 +9,12 @@ local C = {}
 C.name = 'im Separator'
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
-C.description = "Makes a Separator in Imgui."
+C.description = "Makes a separator in an imgui window."
 C.category = 'repeat_instant'
 
 C.pinSchema = {}
 
+C.tags = {'imgui'}
 
 function C:init()
   self.data.aboveSpacing = 5

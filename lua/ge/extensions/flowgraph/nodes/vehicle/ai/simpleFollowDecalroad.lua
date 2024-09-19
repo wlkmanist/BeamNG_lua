@@ -7,7 +7,7 @@ local im  = ui_imgui
 local C = {}
 
 C.name = 'Follow Decalroad'
-C.description = 'Lets a Vehicle follow a Decalroad very simply.'
+C.description = 'Lets a vehicle follow a Decalroad very simply.'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
 C.behaviour = { duration = true }
@@ -15,13 +15,13 @@ C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
   { dir = 'in', type = 'flow', name = 'start', description = 'When receiving flow, starts the AI.' },
   { dir = 'in', type = 'flow', name = 'stop', description = 'When receiving flow, stops the AI.' },
-  { dir = 'in', type = 'string', name = 'roadName', description = 'Defines the name of the road to follow.' },
-  { dir = 'in', type = 'number', name = 'vehId', description = 'Defines the id of the vehicle to activate AI on.' },
-  { dir = 'in', type = 'number', name = 'loopCount', hidden = true, description = 'Defines the amount of loops for the AI to drive.' },
+  { dir = 'in', type = 'string', name = 'roadName', description = 'Name of the road to follow.' },
+  { dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle id to set AI mode for.' },
+  { dir = 'in', type = 'number', name = 'loopCount', hidden = true, description = 'Number of loops for the AI to drive.' },
   { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' },
   { dir = 'out', type = 'flow', name = 'active', description = 'Puts out flow, while the AI is active.' },
   { dir = 'out', type = 'flow', name = 'finished', description = 'Puts out flow, when the AI is finished.' },
-  { dir = 'out', type = 'number', name = 'progress', description = 'Puts out the relative progress from 0 to 1.' },
+  { dir = 'out', type = 'number', name = 'progress', description = 'Puts out the relative progress from 0 to 1.' }
 }
 C.legacyPins = {
   _in = {
@@ -45,9 +45,9 @@ function C:init()
 end
 
 function C:onVehicleSubmitInfo(id, info)
-
   if not self.running then return end
   if tonumber(id) ~= self.pinIn.vehId.value then return end
+
   if info == nil then
     self.pinOut.active = false
     self.pinOut.finished = true
@@ -58,16 +58,22 @@ function C:onVehicleSubmitInfo(id, info)
   self.receivedInfo = true
 end
 
+function C:getVeh()
+  local veh
+  if self.pinIn.vehId.value then
+    veh = be:getObjectByID(self.pinIn.vehId.value)
+  else
+    veh = getPlayerVehicle(0)
+  end
+  return veh
+end
 
 function C:play()
   self:loadRecording()
   if not self.path then return end
-  local veh
-  if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-    veh = scenetree.findObjectById(self.pinIn.vehId.value)
-  else
-    veh = getPlayerVehicle(0)
-  end
+  
+  local veh = self:getVeh()
+  if not veh then return end
 
   veh:queueLuaCommand('ai.startFollowing(' .. serialize(self.path) .. ',nil,'..(self.pinIn.loopCount.value or -1)..',"'..self.data.loopMode..'")')
   --dump('ai.startFollowing(' .. serialize(self.path) .. ',)')
@@ -79,12 +85,9 @@ function C:play()
 end
 
 function C:stop()
-  local veh
-  if self.pinIn.vehId.value then
-    veh = scenetree.findObjectById(self.pinIn.vehId.value)
-  else
-    veh = getPlayerVehicle(0)
-  end
+  local veh = self:getVeh()
+  if not veh then return end
+
   veh:queueLuaCommand('ai.stopFollowing()')
   self.running = false
   self.pinOut.finished.value = false
@@ -121,9 +124,7 @@ function C:work()
   elseif self.pinIn.stop.value then
     self:stop()
   end
-
 end
-
 
 function C:drawMiddle(builder, style)
   builder:Middle()

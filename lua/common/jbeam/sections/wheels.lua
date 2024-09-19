@@ -1695,6 +1695,7 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   local hubSide1TriangleCollision = wheel.hubSide1TriangleCollision == true and true or false
   local hubSide2TriangleCollision = wheel.hubSide2TriangleCollision == true and true or false
 
+  local rimBeams = {}
   local sideBeams = {}
   local peripheryBeams = {}
   local treadBeams = {}
@@ -1766,10 +1767,10 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
     jbeamUtils.addBeamWithOptions(vehicle, inhubnode,  nextinhubnode,  NORMALTYPE, hubPeripheryOptions)
 
     --hub axis beams
-    jbeamUtils.addBeamWithOptions(vehicle, outhubnode, inaxisnode, NORMALTYPE, hubReinfOptions)
-    jbeamUtils.addBeamWithOptions(vehicle, outhubnode, outaxisnode, NORMALTYPE, hubSideOptions)
-    jbeamUtils.addBeamWithOptions(vehicle, inhubnode,  inaxisnode, NORMALTYPE, hubSideOptions)
-    jbeamUtils.addBeamWithOptions(vehicle, inhubnode,  outaxisnode, NORMALTYPE, hubReinfOptions)
+    table.insert(rimBeams, jbeamUtils.addBeamWithOptions(vehicle, outhubnode, inaxisnode, NORMALTYPE, hubReinfOptions))
+    table.insert(rimBeams, jbeamUtils.addBeamWithOptions(vehicle, outhubnode, outaxisnode, NORMALTYPE, hubSideOptions))
+    table.insert(rimBeams, jbeamUtils.addBeamWithOptions(vehicle, inhubnode,  inaxisnode, NORMALTYPE, hubSideOptions))
+    table.insert(rimBeams, jbeamUtils.addBeamWithOptions(vehicle, inhubnode,  outaxisnode, NORMALTYPE, hubReinfOptions))
 
     --Beams to stability node
     if nodeStabilizerExists then
@@ -1877,9 +1878,10 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
 
   wheel.nodes = hubNodes
   wheel.treadNodes = treadNodes
+  wheel.rimBeams = rimBeams
   wheel.sideBeams = sideBeams
   wheel.peripheryBeams = peripheryBeams
-  --wheel.reinfBeams = reinfBeams
+  wheel.reinfBeams = reinfBeams
   wheel.treadBeams = treadBeams
   wheel.pressureGroup = pressureGroupName
 end

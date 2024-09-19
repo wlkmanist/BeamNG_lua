@@ -4,9 +4,8 @@
 
 local M = {}
 
-local currentForegroundActivity = nil
 -- Tags:
-local tags = {
+local permissionTags = {
   vehicleModification = "allowed",-- Slow and Fast Repairing, Changing and buying parts, tuning, painting
   vehicleSelling = "allowed", --selling a vehicle
   vehicleStorage = "allowed", --put vehicles into storage
@@ -20,8 +19,9 @@ local tags = {
 
   recoveryFlipUpright = "allowed", --flip upright
   recoveryTowToRoad = "allowed", --tow to road
-  recoveryTorToGarage = "allowed", --tow to garage
+  recoveryTowToGarage = "allowed", --tow to garage
 }
+
 -- permission can be:
 -- "allowed" - normal behaviour, no restriction
 -- "warning" - action can be done, but a warning is displayed. will probably have some effect on the current activity (ie ending it, penalty, etc)
@@ -31,24 +31,39 @@ local tags = {
 -- it is assumed that during an activity, the permissions don't change.
 -- if permission do change, you can split it into two activites
 
+local permissionPriorities = {
+  allowed = 0,
+  warning = 1,
+  forbidden = 2,
+  hidden = 3
+}
 
-local function setForegroundActivity(activity)
-  currentForegroundActivity = activity
-end
-M.setForegroundActivity = setForegroundActivity
-
-local function clearForegroundActivityIfIdIs(id)
-  if currentForegroundActivity and currentForegroundActivity.id == id then
-    M.setForegroundActivity(nil)
+local function getStatusForTag(tags, additionalData)
+  local permissions = {}
+  if type(tags) ~= "table" then
+    tags = {tags}
   end
-end
-M.clearForegroundActivityIfIdIs = clearForegroundActivityIfIdIs
+  extensions.hook("onCheckPermission", tags, permissions, additionalData)
 
-local function getStatusForTag(tag)
-  local permission = (currentForegroundActivity or tags)[tag] or "allowed"
-  local label = currentForegroundActivity and currentForegroundActivity.getLabel(tag, permission)
-  return permission, label
+  local result
+  for _, permissionData in ipairs(permissions) do
+    if not result or permissionPriorities[permissionData.permission] > permissionPriorities[result.permission] then
+      result = permissionData
+    end
+  end
+  if not result then
+    return {permission = "allowed", allow = true}
+  end
+  local ret = {
+    allow = result.permission == "warning",
+    permission = result.permission,
+    label = result.label,
+    type = "text",
+    penalty = result.penalty 
+  }
+  return ret
 end
+
 M.getStatusForTag = getStatusForTag
 
 return M

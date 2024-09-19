@@ -7,15 +7,16 @@ local im  = ui_imgui
 local C = {}
 
 C.name = 'Race End Transform'
-C.description = 'Gives the End Positions Transform of a Path. Useful for creating custom triggers..'
+C.description = 'Gives the End Pathnode Transform of a Path. Useful for creating custom triggers.'
 C.category = 'repeat_instant'
 
 C.color = im.ImVec4(1, 1, 0, 0.75)
 C.pinSchema = {
   {dir = 'in', type = 'table', name = 'pathData', tableType = 'pathData', description = 'Data from the path for other nodes to process.'},
   {dir = 'out', type = 'bool', name = 'existing', description = 'True if the transform was found'},
-  {dir = 'out', type = 'vec3', name = 'pos', description= 'The position of this transform.'},
-  {dir = 'out', type = 'number', name = 'radius', description= 'The radius of this transform.'},
+  {dir = 'out', type = 'vec3', name = 'pos', description = 'The position of this transform.'},
+  {dir = 'out', type = 'vec3', name = 'dirVec', description = 'The direction vector of this transform.'},
+  {dir = 'out', type = 'number', name = 'radius', description = 'The radius of this transform.'},
 }
 
 C.tags = {'scenario'}
@@ -26,7 +27,6 @@ function C:init(mgr, ...)
   self.clearOutPinsOnStart = false
 end
 
-
 function C:_executionStopped()
   self.path = nil
 end
@@ -35,20 +35,21 @@ function C:work(args)
   if self.path == nil and self.pinIn.pathData.value then
     self.path = self.pinIn.pathData.value
 
-    local endNode = nil
-    for _, sortedNode in pairs(self.path.pathnodes.sorted) do
-      if sortedNode.id == self.path.endNode then
-        endNode = sortedNode
-      end
+    local endNode
+    if self.path.endNode and self.path.endNode ~= -1 and self.path.pathnodes.objects[self.path.endNode] then
+      endNode = self.path.pathnodes.objects[self.path.endNode]
+    elseif self.path.config.closed and self.path.startNode and self.path.startNode ~= -1 and self.path.pathnodes.objects[self.path.startNode] then
+      endNode = self.path.pathnodes.objects[self.path.startNode]
     end
 
     self.pinOut.existing.value = false
 
-    if endNode == nil then return end
+    if not endNode or endNode.missing then return end
 
     self.pinOut.existing.value = true
 
     self.pinOut.pos.value = endNode.pos:toTable()
+    self.pinOut.dirVec.value = endNode.hasNormal and endNode.normal:toTable() or {0, 0, 1}
     self.pinOut.radius.value = endNode.radius
   end
 end

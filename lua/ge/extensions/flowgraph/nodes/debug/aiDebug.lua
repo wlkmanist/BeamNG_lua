@@ -16,14 +16,10 @@ C.category = 'dynamic_p_duration'
 
 C.pinSchema = {
   { dir = 'in', type = 'number', name = 'vehId', default = 0, description = "ID of the AI vehicle. no input will use the player vehicle." },
-  { dir = 'in', type = 'string', name = 'mode', default = "off", hidden = true, hardcoded = true, description = "Mode can be off, target, trajectory, speeds or route." },
+  { dir = 'in', type = 'string', name = 'mode', default = "off", hardcoded = true, description = "Mode can be off, target, trajectory, speeds, or route." },
 }
 
 C.tags = { 'target', 'trajectory', 'route', 'debug' }
-
-function C:init()
-
-end
 
 function C:postInit()
   local modeTypes = {}
@@ -60,6 +56,5 @@ function C:SetAIDebugMode()
     veh:queueLuaCommand('ai.setVehicleDebugMode({debugMode = "' .. mode .. '"})')
   end
 end
-
 
 return _flowgraph_createNode(C)

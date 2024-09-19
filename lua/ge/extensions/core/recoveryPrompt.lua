@@ -34,11 +34,21 @@ local conditions = {
     end
     return true
   end,
-  vehicleOwned = function(type, vehId)
+  vehicleInInventory = function(type, vehId)
     if not (career_modules_inventory and career_modules_inventory.getInventoryIdFromVehicleId(vehId)) then
-      return false, "You do not own this vehicle."
+      return false, "This vehicle is not in your inventory."
     end
     return true
+  end,
+  vehicleOwned = function(type, vehId)
+    if career_modules_inventory then
+      local inventoryId = career_modules_inventory.getInventoryIdFromVehicleId(vehId)
+      if inventoryId then
+        local vehInfo = career_modules_inventory.getVehicles()[inventoryId]
+        if vehInfo and vehInfo.owned then return true end
+      end
+    end
+    return false, "You do not own this vehicle."
   end,
   favouriteSet = function(type, vehId)
     local favoriteVehicleId = career_modules_inventory.getFavoriteVehicle()
@@ -66,8 +76,9 @@ local conditions = {
   end,
   towToRoadAllowedByPermission = function(type, vehId)
     if not career_modules_permissions then return true end
-    local status, warning = career_modules_permissions.getStatusForTag("recoveryTowToGarage")
-    return status == "allowed" or status == "warning", warning
+    local inventoryId = career_modules_inventory.getInventoryIdFromVehicleId(vehId)
+    local reason = career_modules_permissions.getStatusForTag("recoveryTowToGarage", {inventoryId = inventoryId})
+    return reason.allow, reason.label
   end,
   vehicleIsDeliveryVehicle = function(type, vehId)
     if not career_modules_delivery_vehicleTasks then return false end
@@ -100,11 +111,11 @@ local buttonOptions = {
     label = "ui.career.towToRoad",
     type = "vehicle",
     includeConditions = {},
-    enableConditions = {conditions.outOfPursuit, conditions.vehicleSlow, conditions.notTestdriving, conditions.vehicleOwned},
+    enableConditions = {conditions.outOfPursuit, conditions.vehicleSlow, conditions.notTestdriving, conditions.vehicleInInventory},
     atFadeFunction = function(target)
       local veh = scenetree.findObjectById(target.vehId)
       if veh then
-        spawn.teleportToLastRoad(veh, false)
+        spawn.teleportToLastRoad(veh, {resetVehicle = false})
         if not career_modules_insurance.isRoadSideAssistanceFree(career_modules_inventory.getInventoryIdFromVehicleId(target.vehId)) then
           career_modules_payment.pay({money = {amount = towToRoadCost, canBeNegative = true}}, {label = string.format("Towed your vehicle to the road")})
         end
@@ -123,7 +134,7 @@ local buttonOptions = {
     label = "Flip Upright",
     type = "vehicle",
     includeConditions = {},
-    enableConditions = {conditions.outOfPursuit, conditions.vehicleStopped, conditions.vehicleOwned, conditions.notTestdriving},
+    enableConditions = {conditions.outOfPursuit, conditions.vehicleStopped, conditions.vehicleInInventory, conditions.notTestdriving},
     atFadeFunction = function(target)
       local veh = scenetree.findObjectById(target.vehId)
       if veh then
@@ -148,7 +159,7 @@ local buttonOptions = {
       return "Tow to garage"
     end,
     includeConditions = {},
-    enableConditions = {conditions.outOfPursuit, conditions.vehicleSlow, conditions.vehicleOwned, conditions.notTestdriving, conditions.towToRoadAllowedByPermission},
+    enableConditions = {conditions.outOfPursuit, conditions.vehicleSlow, conditions.vehicleInInventory, conditions.notTestdriving, conditions.towToRoadAllowedByPermission},
     atFadeFunction = function(target)
       currentMenuTag = "towing"
       openRecoveryPrompt("Select location", true)
@@ -176,7 +187,7 @@ local buttonOptions = {
     enabled = true,
     fadeActive = false,
     keepMenuOpen = true,
-    icon = "car"
+    icon = "taxiCar3"
   },
   getFavoriteVehicle = {
     type = "walk",
@@ -313,6 +324,27 @@ local buttonOptions = {
     fadeActive = true,
     icon = "restart"
   },
+  returnLoanedVehicle = {
+    label = "Return loaned vehicle",
+    type = "vehicle",
+    includeConditions = {function(_, vehId) return conditions.vehicleInInventory(_, vehId) and not conditions.vehicleOwned(_, vehId) end},
+    enableConditions = {conditions.outOfPursuit, conditions.vehicleStopped, conditions.notTestdriving},
+    atFadeFunction = function(target)
+      if career_modules_inventory then
+        local inventoryId = career_modules_inventory.getInventoryIdFromVehicleId(target.vehId)
+        if inventoryId then
+          career_modules_loanerVehicles.returnVehicle(inventoryId)
+        end
+      end
+    end,
+    order = 5,
+    active = true,
+    enabled = true,
+    fadeActive = true,
+    fadeStartSound = "event:>UI>Missions>Vehicle_Recover",
+    icon = "car",
+    confirmationText = "Do you want to return this loaned vehicle?"
+  },
 }
 
 local function addTowingButtons()
@@ -338,7 +370,7 @@ local function addTowingButtons()
       end,
       includeConditions = {},
       menuTag = "towing",
-      enableConditions = {conditions.outOfPursuit, conditions.vehicleSlow, conditions.vehicleOwned, conditions.notTestdriving, conditions.towToRoadAllowedByPermission},
+      enableConditions = {conditions.outOfPursuit, conditions.vehicleSlow, conditions.vehicleInInventory, conditions.notTestdriving, conditions.towToRoadAllowedByPermission},
       atFadeFunction = function(target)
         career_modules_playerDriving.teleportToGarage(garage.id, scenetree.findObjectById(target.vehId), false)
         local price = getPrice(target)
@@ -440,6 +472,7 @@ end
 
 local function onClientStartMission(levelPath)
   if career_career.isActive() then
+    M.setDefaultsForCareer()
     addTowingButtons()
     addTaxiButtons()
   end
@@ -462,6 +495,7 @@ local function setDefaultsForCareer()
   buttonOptions.getFavoriteVehicle.active = true
   buttonOptions.stopTestdrive.active = true
   buttonOptions.giveBackDeliveryVehicle.active = true
+  buttonOptions.returnLoanedVehicle.active = true
   addTowingButtons()
   addTaxiButtons()
 end
@@ -779,9 +813,9 @@ local function getUIData()
   if not popupData then return {} end
   popupData.warningMessage = nil
   if career_career.isActive() then
-    local status, warning = career_modules_permissions and career_modules_permissions.getStatusForTag("recoveryTowToGarage")
-    if warning then
-      popupData.warningMessage = warning
+    local reason = career_modules_permissions and career_modules_permissions.getStatusForTag("recoveryTowToGarage")
+    if reason.label then
+      popupData.warningMessage = reason.label
     end
   end
   return popupData

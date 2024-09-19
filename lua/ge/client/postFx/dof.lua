@@ -422,7 +422,7 @@ end
 
 dOFPostEffectCallbacks.setShaderConsts = function()
   local dofPostEffect = scenetree.findObject("DOFPostEffect")
-  if not dofPostEffect then
+  if not dofPostEffect or not dofPostEffect.focalDist then
     return
   end
 

@@ -55,7 +55,7 @@ local function init(_bindhost, _bindport, _callback)
     callback = _callback
 
     tcp_socket = socket.tcp()
-    res, err = tcp_socket:bind(bindhost, bindport)
+    local res, err = tcp_socket:bind(bindhost, bindport)
     if res == nil then
         log('E', 'httpJsonServer', "unable to create webserver: " .. err)
     end

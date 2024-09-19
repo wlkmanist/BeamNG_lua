@@ -146,6 +146,12 @@ local isFrozen = false
 
 local controlLogicModule = nil
 
+local drivingStrategies = {
+  availableStrategies = {},
+  currentWeights = {},
+  currentStrategyIndex = {}
+}
+
 local function setAggressionOverride(aggression)
   aggressionOverride = aggression
 end
@@ -926,8 +932,14 @@ local function init(jbeamData)
   timerConstants.aggressionHoldOffThrottleDelay = jbeamData.aggressionHoldOffThrottleDelay or 2.25
   timerConstants.revMatchExpired = jbeamData.revMatchExpired or 1
 
-  local controlLogicModuleName = "controller/shiftLogic-" .. controlLogicName
-  controlLogicModule = require(controlLogicModuleName)
+  local controlLogicModuleDirectory = "controller/vehicleController/shiftLogic/"
+  local controlLogicModulePath = controlLogicModuleDirectory .. controlLogicName
+  if not FS:fileExists("lua/vehicle/" .. controlLogicModulePath .. ".lua") then
+    local controlLogicModuleDirectoryLegacy = "controller/shiftLogic-"
+    log("D", "vehicleController.init", string.format("Using legacy shift logic '%s' at '/%s.lua', expected file path: '/%s.lua'", controlLogicName, controlLogicModuleDirectoryLegacy .. controlLogicName, controlLogicModulePath))
+    controlLogicModulePath = controlLogicModuleDirectoryLegacy .. controlLogicName
+  end
+  controlLogicModule = require(controlLogicModulePath)
 
   controlLogicModule.init(jbeamData, sharedFunctions)
   controlLogicModule.gearboxHandling = gearboxHandling

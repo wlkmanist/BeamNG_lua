@@ -186,7 +186,7 @@ local function pasteObjects(objectMementos, objectIDs, parentIds)
       end
       if obj then
         local newGroup = nil
-        if parentIds and parentIds[i] then newGroup = scenetree.findObjectById(parentIds[i]) end
+        if parentIds and parentIds[i] then newGroup = scenetree.findObjectById(tonumber(parentIds[i])) end
         local grp = newGroup or missionGroup
         grp:addObject(obj)
         table.insert(newObjectIDs, obj:getId())
@@ -564,6 +564,7 @@ local function objectSelectUpdate()
           currentObjectToAlign:disableCollision()
           alignToSurfaceInitialTransform = obj:getTransform()
         end
+
         local scl = obj:getScale()
         local rot = quatFromDir(rayCastInfo.normal)
         local mtx = MatrixF(0)

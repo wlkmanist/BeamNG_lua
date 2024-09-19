@@ -619,6 +619,7 @@ function C:drawCustomFields(fields)
     im.SameLine()
     if im.SmallButton("X##"..i) then
       remove = name
+      self.fields[name] = nil
     end
   end
   if remove then

@@ -31,6 +31,27 @@ local function getSimObjects(fileName)
   --log('E', '', '# objects left: ' .. tostring(#scenetree.getAllObjects()))
 end
 
+local function resaveMaterial(file)
+  if file and FS:fileExists(file) then
+    local persistenceMgr = PersistenceManager()
+    persistenceMgr:registerObject('matFixOrder_PersistMan')
+    loadJsonMaterialsFile(file)
+    local objects = getSimObjects(file)
+    if not tableIsEmpty(objects) then
+      for _, obj in ipairs(objects) do
+        if obj.___type == "class<Material>" then
+          persistenceMgr:setDirty(obj, '')
+        end
+      end
+      persistenceMgr:saveDirty()
+      --for _, obj in ipairs(objects) do
+        --obj:delete()
+      --end
+    end
+    persistenceMgr:delete()
+  end
+end
+
 --check of pow2
 local function powerOfTwo(x)
   return((math.log(x)/math.log(2)) % 1 == 0)
@@ -84,10 +105,7 @@ local function getMaterialTexFields(mat)
   end
 end
 
-local countduplicate = 0
 local duplicatedM = {}
-local duplicatedN = {}
-local duplicatedPID = {}
 
 --look for duplicates
 local function findDuplicates(duplicatelist)
@@ -95,32 +113,19 @@ local function findDuplicates(duplicatelist)
   local seen1file = {}
   local seen2 = {}
   local seen2file = {}
-  local seen3 = {}
-  local seen3file = {}
   for k,v in pairs(duplicatelist) do
     if seen1[v[1]] then
-      countduplicate = countduplicate +1
-      duplicatedN[k] = {v[1], v[2], v[3], seen1file[v[1]]}
+      duplicatedM[v[1]] = true
     else
       seen1[v[1]] = true
       seen1file[v[1]] = v[3]
     end
     if v[2] and v[2] ~= "unmapped_mat" then
       if seen2[v[2]] then
-        countduplicate = countduplicate +1
-        duplicatedM[k] = {v[1], v[2], v[3], seen2file[v[2]]}
+        duplicatedM[v[1]] = true
       else
         seen2[v[2]] = true
         seen2file[v[2]] = v[3]
-      end
-    end
-    if v[4] then
-      if seen3[v[4]] then
-        countduplicate = countduplicate +1
-        duplicatedPID[k] = {v[1], v[2], v[3], seen3file[v[4]]}
-      else
-        seen3[v[4]] = true
-        seen3file[v[4]] = v[1]
       end
     end
   end
@@ -223,16 +228,14 @@ end
 
 local verifyDuplicateworkJob
 
-local function verifyDuplicatework(job, convertdata)
+local function verifyDuplicatework(job, convertdata, skipCommon)
   local isDone
   local verifydata = convertdata
-  countduplicate = 0
+  local countduplicate = 0
   local duplicated = {}
   local type = 3
   local matTable = {}
   duplicatedM = {}
-  duplicatedN = {}
-  duplicatedPID = {}
   job.progress = 0
   job.stop = nil
 
@@ -249,15 +252,20 @@ local function verifyDuplicatework(job, convertdata)
 
     --V2, shortcode much more efficient, checks all types of files at once
     --we have to check for common art too...
-    local commonArt
-    if string.match(convertdata, "/vehicles/") then
-      commonArt = FS:findFiles("/vehicles/common", "*.cs\t*materials.json", -1, true, false)
-    else
-      commonArt = FS:findFiles("/art", "*.cs\t*materials.json", -1, true, false)
-    end
     local materialFiles = FS:findFiles(verifydata, "*.cs\t*materials.json", -1, true, false)
-    for k,v in pairs(commonArt) do
-      table.insert(materialFiles, v)
+    if skipCommon == false then
+      local commonVeh = FS:findFiles("/vehicles/common", "*.cs\t*materials.json", -1, true, false)
+      local commonArt = FS:findFiles("/art", "*.cs\t*materials.json", -1, true, false)
+      local commonCore = FS:findFiles("/core", "*.cs\t*materials.json", -1, true, false)
+      for k,v in pairs(commonVeh) do
+        table.insert(materialFiles, v)
+      end
+      for k,v in pairs(commonArt) do
+        table.insert(materialFiles, v)
+      end
+      for k,v in pairs(commonCore) do
+        table.insert(materialFiles, v)
+      end
     end
     job.sleep(0.001)
     job.progress = 10
@@ -315,10 +323,10 @@ local function verifyDuplicatework(job, convertdata)
           local mat = v
           if mat and mat.name then
             local matname = mat.name
-            log('I', '', ' * ' .. tostring(mat.persistentId) .. ' - ' .. tostring(matname) .. ' - mapTo: ' .. tostring(mat.mapTo) )
+            log('I', '', ' * ' .. tostring(matname) .. ' - mapTo: ' .. tostring(mat.mapTo) )
             local matID = math.random(0, 100000000)
             if duplicatelist[matID] then matID = math.random(0, 100000000) end
-            duplicatelist[matID] = {matname, mat.mapTo, path, mat.persistentId}
+            duplicatelist[matID] = {matname, mat.mapTo, path}
             if job.progress < 50 then
               job.progress = job.progress + 0.01
             end
@@ -337,34 +345,15 @@ local function verifyDuplicatework(job, convertdata)
       do return end
     end
 
-    log('I', '', 'Found ' ..tostring(countduplicate).. ' duplicates' )
-    if countduplicate < 100 then
-      if not tableIsEmpty(duplicatedM) then
-        for k,v in pairs(duplicatedM) do log('W', '', v[1].." in "..v[3].." has duplicated mapping with "..v[4].." !") end
-      end
-      if not tableIsEmpty(duplicatedN) then
-        for k,v in pairs(duplicatedN) do log('W', '', v[1].." in "..v[3].." has duplicated name with "..v[4].." !") end
-      end
-      if not tableIsEmpty(duplicatedPID) then
-        for k,v in pairs(duplicatedPID) do log('W', '', v[1].." in "..v[3].." has duplicated persistentId with "..v[4].." !") end
-      end
-    else
-      log('W', '', 'Found more than 100 duplicates, skipping...' )
-    end
     job.progress = 90
     job.sleep(0.001)
-    duplicated["Duplicated Name"] = {}
-    duplicated["Duplicated Mapping"] = {}
-    duplicated["Duplicated persistentId"] = {}
-    for k,v in pairs(duplicatedN) do
-      duplicated["Duplicated Name"][k] = v
-    end
     for k,v in pairs(duplicatedM) do
-      duplicated["Duplicated Mapping"][k] = v
+      countduplicate = countduplicate + 1
+      table.insert(duplicated, k)
+      --duplicated["Duplicated Mapping"][k] = v
     end
-    for k,v in pairs(duplicatedPID) do
-      duplicated["Duplicated persistentId"][k] = v
-    end
+
+    log('I', '', 'Found ' ..tostring(countduplicate).. ' duplicates' )
     job.sleep(0.001)
     isDone = 1
     job.progress = 100
@@ -373,19 +362,19 @@ local function verifyDuplicatework(job, convertdata)
   extensions.editor_resourceChecker.jobData(2, data)
 end
 
-local function verifyDuplicate(convertdata)
-  verifyDuplicateworkJob = extensions.core_jobsystem.create(verifyDuplicatework, 1, convertdata)
+local function verifyDuplicate(convertdata, skipCommon)
+  verifyDuplicateworkJob = extensions.core_jobsystem.create(verifyDuplicatework, 1, convertdata, skipCommon)
 end
 
 local fixPIDworkJob
 
-local function fixPIDwork(job, convertdata)
+local function fixPIDwork(job, convertdata, skipCommon)
   local isDone
   local verifydata = convertdata
   local type = 5
   local matTable = {}
-  local duplicatedPIDs = {}
-  local changedFiles = {}
+  local editedFiles = {}
+  local outdatedFiles = {}
   local count = 0
   job.stop = nil
   job.progress = 0
@@ -398,21 +387,24 @@ local function fixPIDwork(job, convertdata)
     log('E', '', 'Incorrect path' )
     isDone = 2
   else
-    log('I', '', 'Fixing PID' )
-
-    local duplicatelist = {}
+    log('I', '', 'Removing PID' )
 
     --V2, shortcode much more efficient, checks all types of files at once
     --we have to check for common art too...
-    local commonArt
-    if string.match(convertdata, "/vehicles/") then
-      commonArt = FS:findFiles("/vehicles/common", "*.cs\t*materials.json", -1, true, false)
-    else
-      commonArt = FS:findFiles("/art", "*.cs\t*materials.json", -1, true, false)
-    end
-    local materialFiles = FS:findFiles(verifydata, "*.cs\t*materials.json", -1, true, false)
-    for k,v in pairs(commonArt) do
-      table.insert(materialFiles, v)
+    local materialFiles = FS:findFiles(verifydata, "*materials.json", -1, true, false)
+    if skipCommon == false then
+      local commonVeh = FS:findFiles("/vehicles/common", "*materials.json", -1, true, false)
+      local commonArt = FS:findFiles("/art", "*materials.json", -1, true, false)
+      local commonCore = FS:findFiles("/core", "*materials.json", -1, true, false)
+      for k,v in pairs(commonVeh) do
+        table.insert(materialFiles, v)
+      end
+      for k,v in pairs(commonArt) do
+        table.insert(materialFiles, v)
+      end
+      for k,v in pairs(commonCore) do
+        table.insert(materialFiles, v)
+      end
     end
 
     job.progress = 10
@@ -444,89 +436,39 @@ local function fixPIDwork(job, convertdata)
             do return end
           end
           local mat = v
-          if mat and mat.name and mat.mapTo then
-            local matname = mat.name
-            log('I', '', ' * ' .. tostring(mat.persistentId) .. ' - ' .. tostring(matname) .. ' - mapTo: ' .. tostring(mat.mapTo) )
-            local matID = math.random(0, 100000000)
-            if duplicatedPIDs[matID] then matID = math.random(0, 100000000) end
-            duplicatedPIDs[matID] = {matname, mat.mapTo, path, mat.persistentId}
-            if job.progress < 50 then
-              job.progress = job.progress + 0.01
-            end
+          if mat and mat.persistentId then
+            mat.persistentId = nil
             job.yield()
-          elseif mat and not mat.name or not mat.mapTo then
+            outdatedFiles[path] = true
+            count = count + 1
+          elseif mat and not mat.persistentId then
             log('W', '', 'Corrupted or incompatible material found '..k)
           end
         end
-      end
-    end
-
-    job.progress = 50
-    job.sleep(0.001)
-
-    local inList = {}
-    local matLocation = {}
-    local foundIssues = {}
-    for k,v in pairs(duplicatedPIDs) do
-      if job.stop == true then
-        do return end
-      end
-      job.yield()
-      if inList[v[4]] or not v[4] or v[4] == "" then
-        foundIssues[k] = {v[1], v[2], v[3]}
-        matLocation[v[3]] = true
-        count = count + 1
-      else
-        inList[v[4]] = true
-      end
-    end
-
-    job.progress = 70
-    job.sleep(0.001)
-    local persistenceMgr = PersistenceManager()
-    persistenceMgr:registerObject('matResave_FixPID')
-    log('I', '', 'Generating new PID' )
-    for k, v in pairs(matLocation) do
-      job.yield()
-      loadJsonMaterialsFile(k)
-      objects = extensions.editor_resourceChecker_resourceUtil.getSimObjects(k)
-      if not tableIsEmpty(objects) then
-        log('I', '', 'parsing all materials file: ' .. tostring(k))
-        for _, obj in ipairs(objects) do
-          if job.stop == true then
-            do return end
-          end
-          if obj.___type == "class<Material>" then
-            log('I', '', ' * ' .. tostring(obj:getOrCreatePersistentID()) .. ' - ' .. tostring(obj:getName()) .. ' - Generated PID')
-            persistenceMgr:setDirty(obj, '')
-          end
+        if outdatedFiles[path] == true then
+          jsonWriteFile(path, v, true)
         end
-        persistenceMgr:saveDirty()
       end
     end
-    job.progress = 90
+
+    job.progress = 65
     job.sleep(0.001)
-    persistenceMgr:delete()
-    FS:triggerFilesChanged(materialFiles)
-    for k,v in pairs(matLocation) do
-      if job.stop == true then
-        do return end
-      end
-      job.yield()
-      table.insert(changedFiles, k)
+    for k,v in pairs(outdatedFiles) do
+      log('I', '', 'Saved materials to '..k )
+      resaveMaterial(k)
+      table.insert(editedFiles, k)
     end
-    log('I', '', 'Fixed all materials' )
-    log('I', '', 'Fixed '..count..' materials' )
+    log('I', '', 'Removed '..count..' persistendIds' )
     job.progress = 100
     job.sleep(0.001)
     isDone = 1
   end
-  local data = {type, count, "", changedFiles, isDone}
+  local data = {type, count, "", editedFiles, isDone}
   extensions.editor_resourceChecker.jobData(2, data)
 end
 
-local function fixPID(convertdata)
-  fixPIDworkJob = extensions.core_jobsystem.create(fixPIDwork, 1, convertdata)
+local function fixPID(convertdata, skipCommon)
+  fixPIDworkJob = extensions.core_jobsystem.create(fixPIDwork, 1, convertdata, skipCommon)
 end
 
 local checkMatTexworkJob
@@ -759,7 +701,6 @@ local function checkMatTexwork(job, convertdata)
     end
     job.progress = 100
     job.sleep(0.001)
-    jsonWriteFile("/temp/resourceChecker.json", issuesTab, true)
     log('I', '', 'Checked all materials textures mapping' )
     isDone = 1
   end
@@ -985,12 +926,11 @@ local function checkTexwork(job, convertdata)
     end
     job.progress = 100
     job.sleep(0.001)
-    jsonWriteFile("/temp/resourceChecker.json", issuesTab, true)
     log('I', '', 'Checked all texture files' )
     isDone = 1
   end
 
-  local data = {type, countext, countp2, "", isDone, countcooker}
+  local data = {type, countext, countp2, issuesTab, isDone, countcooker}
   extensions.editor_resourceChecker.jobData(2, data)
 end
 
@@ -1006,7 +946,6 @@ local function checkmissingMatswork(job, convertdata)
   local verifydata = convertdata
   local type = 8
   local objmatTable = {}
-  local mats = {}
   local mapping = {}
   local missingMat = {}
   local count = 0
@@ -1026,14 +965,17 @@ local function checkmissingMatswork(job, convertdata)
     log('I', '', 'Checking material files' )
     --V2, shortcode much more efficient, checks all types of files at once
     --we have to check for common art too...
-    local commonArt
-    if string.match(convertdata, "/vehicles/") then
-      commonArt = FS:findFiles("/vehicles/common", "*.cs\t*materials.json", -1, true, false)
-    else
-      commonArt = FS:findFiles("/art", "*.cs\t*materials.json", -1, true, false)
-    end
+    local commonVeh = FS:findFiles("/vehicles/common", "*.cs\t*materials.json", -1, true, false)
+    local commonArt = FS:findFiles("/art", "*.cs\t*materials.json", -1, true, false)
+    local commonCore = FS:findFiles("/core", "*.cs\t*materials.json", -1, true, false)
     local materialFiles = FS:findFiles(verifydata, "*.cs\t*materials.json", -1, true, false)
+    for k,v in pairs(commonVeh) do
+      table.insert(materialFiles, v)
+    end
     for k,v in pairs(commonArt) do
+      table.insert(materialFiles, v)
+    end
+    for k,v in pairs(commonCore) do
       table.insert(materialFiles, v)
     end
     job.progress = 20
@@ -1089,7 +1031,7 @@ local function checkmissingMatswork(job, convertdata)
       end
       shapeLoader:setObjectModel(v)
       log('I', '', 'Checking mesh '.. v)
-      table.insert(objmatTable, {shapeLoader:getMaterialNames(), dir})
+      table.insert(objmatTable, {shapeLoader:getMaterialNames(), v})
       shapeLoader:clearShape()
     end
     job.progress = 75
@@ -1101,7 +1043,11 @@ local function checkmissingMatswork(job, convertdata)
       job.yield()
       if (luaType(v[1]) == "table") then
         for g,j in pairs(v[1]) do
-          mats[j] = v[2]
+          if not mapping[j] then
+            log('I', '', 'Found missing mat '..j.. ' in: '..v[2] )
+            table.insert(missingMat, j.."   Mesh: "..v[2])
+            count = count + 1
+          end
         end
       else
         log("E","", "Is not a table???")
@@ -1109,16 +1055,6 @@ local function checkmissingMatswork(job, convertdata)
     end
     if job.stop == true then
       do return end
-    end
-    job.progress = 90
-    job.sleep(0.001)
-    for k,v in pairs(mats) do
-      job.yield()
-      if not mapping[k] then
-        log('I', '', 'Found missing mat '..k )
-        table.insert(missingMat, k.."   Dir: "..v)
-        count = count + 1
-      end
     end
     job.progress = 100
     job.sleep(0.001)
@@ -1176,6 +1112,7 @@ local function checkStaticwork(job)
     end
     job.yield()
     table.insert(shapes, k)
+    log('I', '', 'Found shape '..k )
     local fsize = getFileSize(k)
     if fsize > 0 and fsize > -1 then
       size = size + fsize
@@ -1237,6 +1174,7 @@ local function checkForestwork(job)
     end
     job.yield()
     table.insert(shapes, k)
+    log('I', '', 'Found ForestItem '..k )
     local fsize = getFileSize(k)
     if fsize > 0 and fsize > -1 then
       size = size + fsize
@@ -1292,6 +1230,7 @@ local function checkTerrainswork(job)
     end
     job.yield()
     table.insert(shapes, k)
+    log('I', '', 'Found terrain '..k )
     local fsize = getFileSize(k)
     if fsize > 0 and fsize > -1 then
       size = size + fsize
@@ -1629,7 +1568,7 @@ local function checkUnusedMatswork(job, levelname, removal)
     for k,v in pairs(unused) do
       job.yield()
       local m = scenetree.findObject(k)
-      if m ~= nil then
+      if m and m:getFileName() then
         table.insert(shapes, k.."  in: "..m:getFileName())
         countduplicate = countduplicate + 1
       end
@@ -1644,7 +1583,7 @@ local function checkUnusedMatswork(job, levelname, removal)
     for k,v in pairs(unused) do
       job.yield()
       local m = scenetree.findObject(k)
-      if m ~= nil then
+      if m and m:getFileName() then
         toRemove[k] = m:getFileName()
       end
     end
@@ -1772,6 +1711,22 @@ local function checkUnusedModelswork(job, levelname, removal)
     end
     job.progress = 50
     job.sleep(0.001)
+    log('I', '', 'Checking GroundCovers' )
+    local meshNames = scenetree.findClassObjects('GroundCover')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "GroundCover object broken "..dumps(v))
+      else
+        local type = 0
+        for i=1, 8 do
+          if m:getField("shapeFilename",type) then models[m:getField("shapeFilename",type)] = true end
+          type = type + 1
+        end
+      end
+    end
+    job.progress = 55
+    job.sleep(0.001)
     for k,v in pairs(forestModels) do
       job.yield()
       if forestInternals[k] then
@@ -1779,7 +1734,7 @@ local function checkUnusedModelswork(job, levelname, removal)
       end
     end
     local modelsNoExt = {}
-    job.progress = 55
+    job.progress = 60
     job.sleep(0.001)
     for k,v in pairs(models) do
       job.yield()
@@ -1794,7 +1749,7 @@ local function checkUnusedModelswork(job, levelname, removal)
       tempMdl[k] = true
     end
     models = tempMdl
-    job.progress = 60
+    job.progress = 65
     local meshFiles = FS:findFiles("/levels/"..levelname.."/", "*.dae\t*.dts\t*.cdae", -1, true, false)
     for k,v in pairs(meshFiles) do
       job.yield()
@@ -2271,6 +2226,230 @@ local function removeUnused(levelname, item, selected)
   removeUnusedworkJob = extensions.core_jobsystem.create(removeUnusedwork, 1, levelname, item, selected)
 end
 
+local duplicateDataworkJob
+
+local function duplicateDatawork(job, material)
+  local verifydata = material
+  local duplicatelist = {}
+
+  if not verifydata then
+    log('E', '', 'There is no material' )
+  else
+    log('I', '', 'Searching materials' )
+    local matTable = {}
+    local maplist = {}
+    --V2, shortcode much more efficient, checks all types of files at once
+    --we have to check for common art too...
+    local materialFiles = {}
+    local commonLevels = FS:findFiles("/levels", "*.cs\t*materials.json", -1, true, false)
+    local commonVeh = FS:findFiles("/vehicles", "*.cs\t*materials.json", -1, true, false)
+    local commonArt = FS:findFiles("/art", "*.cs\t*materials.json", -1, true, false)
+    local commonCore = FS:findFiles("/core", "*.cs\t*materials.json", -1, true, false)
+    for k,v in pairs(commonLevels) do
+      table.insert(materialFiles, v)
+    end
+    for k,v in pairs(commonVeh) do
+      table.insert(materialFiles, v)
+    end
+    for k,v in pairs(commonArt) do
+      table.insert(materialFiles, v)
+    end
+    for k,v in pairs(commonCore) do
+      table.insert(materialFiles, v)
+    end
+    for _, fn in ipairs(materialFiles) do
+      local dir, basefilename, ext = path.splitWithoutExt(fn)
+      if getFileSize(fn) > 0 then
+        if string.find(fn, 'materials.cs$') then
+          log('I', '', 'Loading cs material file '..fn )
+          local f = io.open(fn, "r")
+          if f then
+            matTable[fn] = {}
+            local titleS = nil
+            for line in f:lines() do
+              local title = line:match('%b()')
+              local key = line:match("(.+)=(.+)")
+              local value = line:match('%b""')
+              if title then
+                title = title:gsub('%(', '')
+                title = title:gsub('%)', '')
+                --print("title "..title)
+                matTable[fn][title] = {}
+                matTable[fn][title].name = title
+                titleS = title
+              end
+              if key then
+                key = key:gsub(' ', "")
+                if value then
+                  value = value:gsub('"', "")
+                  --print("val  "..value)
+                  matTable[fn][titleS][key] = value
+                end
+              end
+            end
+            f:close()
+          end
+        elseif string.find(fn, 'materials.json$') then
+          --log('I', '', 'Loading json material file '..fn )
+          matTable[fn] = jsonReadFile(fn) or {}
+        end
+        job.yield()
+      end
+    end
+    --dump(matTable)
+    if not tableIsEmpty(matTable) then
+      log('I', '', 'parsing all materials')
+      for k,v in pairs(matTable) do
+        for l,b in pairs(v) do
+          local mat = b
+          if mat and mat.name then
+            if mat.name == verifydata or mat.mapTo == verifydata or l == verifydata then
+              if mat.mapTo and mat.mapTo ~= "" and mat.mapTo ~= "unmapped_mat" then maplist[mat.mapTo] = true end
+              if not duplicatelist[k] then duplicatelist[k] = {} end
+              if duplicatelist[k] then
+                if not duplicatelist[k][l] then duplicatelist[k][l] = {} end
+                if duplicatelist[k][l] then duplicatelist[k][l] = b end
+              end
+            end
+          elseif mat and not mat.name then
+            log('W', '', 'Corrupted or incompatible material found '..k)
+          end
+          job.yield()
+        end
+      end
+      for k,v in pairs(matTable) do
+        for l,b in pairs(v) do
+          local mat = b
+          if mat and mat.name then
+            if mat.mapTo and mat.mapTo ~= "" and mat.mapTo ~= "unmapped_mat" then
+              if maplist[mat.mapTo] then
+                if not duplicatelist[k] then duplicatelist[k] = {} end
+                if duplicatelist[k] then
+                  if not duplicatelist[k][l] then duplicatelist[k][l] = {} end
+                  if duplicatelist[k][l] then duplicatelist[k][l] = b end
+                end
+              end
+            end
+          elseif mat and not mat.name then
+            log('W', '', 'Corrupted or incompatible material found '..k)
+          end
+          job.yield()
+        end
+      end
+      --dumpz(duplicatelist)
+    end
+    extensions.editor_resourceChecker.updateDuplicateTable(duplicatelist)
+  end
+end
+
+local function duplicateData(material)
+  duplicateDataworkJob = extensions.core_jobsystem.create(duplicateDatawork, 1, material)
+end
+
+
+local removeDummyworkJob
+
+local function removeDummywork(job, convertdata, skipCommon)
+  local luaType = type
+  local isDone
+  local verifydata = convertdata
+  local type = 9
+  local matTable = {}
+  local resultTable = {}
+  local count = 0
+
+  job.progress = 0
+  job.sleep(0.001)
+  job.stop = nil
+
+  if not verifydata then
+    log('E', '', 'There is no material path' )
+    isDone = 2
+  elseif not string.match(verifydata, "/") then
+    log('E', '', 'Incorrect path' )
+    isDone = 2
+  else
+    log('I', '', 'Checking material files' )
+    --V2, shortcode much more efficient, checks all types of files at once
+    --we have to check for common art too...
+    local materialFiles = FS:findFiles(verifydata, "*materials.json", -1, true, false)
+    if skipCommon == false then
+      local commonVeh = FS:findFiles("/vehicles/common", "*materials.json", -1, true, false)
+      for k,v in pairs(commonVeh) do
+        table.insert(materialFiles, v)
+      end
+    end
+    job.progress = 20
+    job.sleep(0.001)
+    local dummyMat = {}
+    for _, fn in ipairs(materialFiles) do
+      if getFileSize(fn) > 0 then
+        if string.find(fn, 'materials.json$') then
+          matTable[fn] = jsonReadFile(fn) or {}
+        end
+        job.yield()
+      end
+    end
+    job.progress = 50
+    job.sleep(0.001)
+    --dump(matTable)
+    if not tableIsEmpty(matTable) then
+      log('I', '', 'parsing all materials')
+      for k,v in pairs(matTable) do
+        for l,b in pairs(v) do
+          local mat = b
+          if mat and mat.name then
+            if not mat.Stages or tableIsEmpty(mat.Stages) or tableIsEmpty(mat.Stages[1]) then
+              count = count + 1
+              log('I', '', 'Found dummy material: '..mat.name.. ' in: '..k)
+              if not dummyMat[k] then dummyMat[k] = {} end
+              if dummyMat[k] then
+                dummyMat[k][l] = true
+              end
+            end
+          elseif mat and not mat.name then
+            log('W', '', 'Corrupted or incompatible material found '..k)
+          end
+          job.yield()
+          if job.stop == true then
+            do return end
+          end
+        end
+      end
+      log('I', '', 'Found: '.. count ..' dummy materials')
+    end
+    job.progress = 85
+    job.sleep(0.001)
+    for k,v in pairs(dummyMat) do
+      if FS:fileExists(k) then
+        local materialFile = jsonReadFile(k) or {}
+        for l,b in pairs(v) do
+          if materialFile[l] then materialFile[l] = nil end
+          table.insert(resultTable, l.. ' in: '..k)
+        end
+        log('I', '', 'Saved materials to '..k )
+        jsonWriteFile(k, materialFile, true)
+        job.yield()
+        if job.stop == true then
+          do return end
+        end
+      end
+    end
+    if job.stop == true then
+      do return end
+    end
+    job.progress = 100
+    job.sleep(0.001)
+    isDone = 1
+  end
+  local data = {type, count, "dummy", resultTable, isDone}
+  extensions.editor_resourceChecker.jobData(2, data)
+end
+
+local function removeDummy(convertdata, skipCommon)
+  removeDummyworkJob = extensions.core_jobsystem.create(removeDummywork, 1, convertdata, skipCommon)
+end
+
 --interface
 local function getProgress()
   if verifyVersionworkJob and verifyVersionworkJob.running then
@@ -2311,6 +2490,9 @@ local function getProgress()
   end
   if removeUnusedworkJob and removeUnusedworkJob.running then
     return removeUnusedworkJob.progress
+  end
+  if removeDummyworkJob and removeDummyworkJob.running then
+    return removeDummyworkJob.progress
   end
 end
 
@@ -2354,6 +2536,9 @@ local function stopProgress()
   if removeUnusedworkJob and removeUnusedworkJob.running then
     removeUnusedworkJob.stop = true
   end
+  if removeDummyworkJob and removeDummyworkJob.running then
+    removeDummyworkJob.stop = true
+  end
 end
 
 local function onExtensionLoaded()
@@ -2363,6 +2548,7 @@ end
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.getSimObjects = getSimObjects
+M.resaveMaterial = resaveMaterial
 M.powerOfTwo = powerOfTwo
 M.removeFromForestJson = removeFromForestJson
 M.findDuplicates = findDuplicates
@@ -2386,6 +2572,9 @@ M.textoRemove = textoRemove
 M.unusedTexturesworkJob = unusedTexturesworkJob
 M.unusedTextures = unusedTextures
 M.removeUnused = removeUnused
+M.duplicateData = duplicateData
+M.duplicateDataworkJob = duplicateDataworkJob
+M.removeDummy = removeDummy
 M.getProgress = getProgress
 M.stopProgress = stopProgress
 

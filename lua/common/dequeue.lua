@@ -94,6 +94,11 @@ local remove_left = function(self, x)
   return false
 end
 
+local reset = function(self)
+  self.head = 0
+  self.tail = 0
+end
+
 local length = function(self)
   return self.tail - self.head
 end
@@ -146,6 +151,7 @@ local methods = {
   length = length,
   is_empty = is_empty,
   contents = contents,
+  reset = reset,
 }
 
 local new = function(data)

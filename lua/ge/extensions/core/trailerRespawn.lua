@@ -59,6 +59,31 @@ local function getPreviousAttachedVehicleId(vehId)
   end
 end
 
+-- returns all vehicles connected to a given vehicle
+local function getVehicleTrain(vehId, res, forward)
+  if not res then
+    res = {}
+    res[vehId] = true
+  end
+
+  if forward == false then
+    if trailerReg[vehId] then
+      res[trailerReg[vehId].trailerId] = true
+      getVehicleTrain(trailerReg[vehId].trailerId, res, false)
+    end
+  elseif forward == true then
+    local prevVehId = getPreviousAttachedVehicleId(vehId)
+    if prevVehId then
+      res[prevVehId] = true
+      getVehicleTrain(prevVehId, res, true)
+    end
+  else
+    getVehicleTrain(vehId, res, true)
+    getVehicleTrain(vehId, res, false)
+  end
+  return res
+end
+
 local function getAttachedNonTrailer(vehId)
   local veh = be:getObjectByID(vehId)
   local vehModel = core_vehicles.getModel(veh:getField('JBeam','0')).model
@@ -101,6 +126,7 @@ local function onCouplerAttached(objId1, objId2, nodeId, obj2nodeId)
     end
     trailerReg[objId2] = {trailerId=objId1, trailerNode=nodeId, node=obj2nodeId}
   end
+  extensions.hook("onTrailerAttached", objId1, objId2)
 end
 
 local function onCouplerDetach(objId1, nodeId)
@@ -212,6 +238,7 @@ M.addCouplerOffset = addCouplerOffset
 M.getCouplerTagsOptions = getCouplerTagsOptions
 M.getAttachedNonTrailer = getAttachedNonTrailer
 M.isVehicleCoupledToTrailer = isVehicleCoupledToTrailer
+M.getVehicleTrain = getVehicleTrain
 
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized

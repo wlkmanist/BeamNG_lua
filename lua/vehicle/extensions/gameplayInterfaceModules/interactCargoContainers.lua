@@ -44,7 +44,18 @@ local function buildContainerCache()
     }
     table.insert(cargoContainerCache, entry)
 
-    cargoContainerById[container.cid] = {nodes = {}, beams = {}}
+    cargoContainerById[container.cid] = {
+      nodes = {}, beams = {},
+      smoothers = {
+        volume = newTemporalSmoothing(container.maxVolumeRate or 1000, container.maxVolumeRate or 1000),
+        density = newTemporalSmoothing(2,2, nil, 1), -- need to smooth density? probably...
+      },
+      target = {
+        volume = 0,
+        density = 1
+      },
+      reachedTarget = true
+    }
     cargoContainerGroupIdToCacheIndex[container.groupId..container.partOrigin] = idx
     cargoContainerGroupIdToCid[container.groupId..container.partOrigin] = container.cid
     idx = idx + 1
@@ -95,30 +106,39 @@ local function clearFunctionResults()
   end
 end
 
-local function getFunctionResult(expr, load)
+local function getFunctionResult(expr, container)
   if not functionCache[expr] then
     expressionParser = expressionParser or require("jbeam/expressionParser")
     local fun, vars = expressionParser.compileSafe("$"..expr)
     functionCache[expr] = {fun = fun, vars = vars, result = nil}
   end
   if not functionCache[expr].result then
-    functionCache[expr].vars["$load"] = load
+    functionCache[expr].vars["$volume"] = container.smoothers.volume.state
+    functionCache[expr].vars["$density"] = container.smoothers.density.state
     functionCache[expr].result = functionCache[expr].fun()
     --dump(expr, functionCache[expr].result)
   end
   return functionCache[expr].result
 end
 
-
-local function applyNodeAndBeamValues(container, load)
+local abs = math.abs
+local function applyNodeAndBeamValues(container, dtSim)
   clearFunctionResults()
+
+  --update smoothers
+  container.reachedTarget = false
+  container.smoothers.volume:get(container.target.volume, dtSim)
+  container.smoothers.density:get(container.target.density, dtSim)
+
+  container.reachedTarget =     abs(container.smoothers.volume.state  - container.target.volume)  < 1e-30
+                            and abs(container.smoothers.density.state - container.target.density) < 1e-30
 
   for _, nodeId in ipairs(container.nodes) do
     local node = v.data.nodes[nodeId]
     if node.nodeWeightFunction then
       local nodeWeight = node.nodeWeight
       --dump("setNodeMass From", node.cid, nodeWeight)
-      nodeWeight = getFunctionResult(node.nodeWeightFunction, load)
+      nodeWeight = getFunctionResult(node.nodeWeightFunction, container)
       obj:setNodeMass(node.cid, nodeWeight)
       --dump("setNodeMass To  ", node.cid, nodeWeight)
     end
@@ -133,10 +153,10 @@ local function applyNodeAndBeamValues(container, load)
       --dump("setBeamSpringDamp From", beam.cid, beamSpring, beamDamp)
 
       if beam.beamSpringFunction then
-        beamSpring      = getFunctionResult(beam.beamSpringFunction, load)
+        beamSpring      = getFunctionResult(beam.beamSpringFunction, container)
       end
       if beam.beamDampFunction then
-        beamDamp        = getFunctionResult(beam.beamDampFunction, load)
+        beamDamp        = getFunctionResult(beam.beamDampFunction, container)
       end
       obj:setBeamSpringDamp(beam.cid, beamSpring, beamDamp, -1, -1)
       --dump("setBeamSpringDamp To  ", beam.cid, beamSpring, beamDamp)
@@ -147,10 +167,10 @@ local function applyNodeAndBeamValues(container, load)
       local beamLimitDamp   = -1
       --dump("setBeamSpringDamp From", beam.cid, beamSpring, beamDamp)
       if beam.beamLimitSpringFunction then
-        beamLimitSpring = getFunctionResult(beam.beamLimitSpringFunction, load)
+        beamLimitSpring = getFunctionResult(beam.beamLimitSpringFunction, container)
       end
       if beam.beamLimitDampFunction then
-        beamLimitDamp   = getFunctionResult(beam.beamLimitDampFunction, load)
+        beamLimitDamp   = getFunctionResult(beam.beamLimitDampFunction, container)
       end
       obj:setBoundedBeamSpringDampLimits(beamId, beamLimitSpring, beamLimitDamp, -1)
       --dump("setBeamSpringDamp To  ", beam.cid, beamSpring, beamDamp)
@@ -159,14 +179,14 @@ local function applyNodeAndBeamValues(container, load)
     if beam.beamStrengthFunction then
       local beamStrength = beam.beamStrength
       --dump("setBeamStrength From", beam.cid, beamStrength)
-      beamStrength = getFunctionResult(beam.beamStrengthFunction, load)
+      beamStrength = getFunctionResult(beam.beamStrengthFunction, container)
       obj:setBeamStrength(beam.cid, beamStrength)
       --dump("setBeamStrength To  ", beam.cid, beamStrength)
     end
     if beam.beamDeformFunction then
       local beamDeform = beam.beamDeform
       --dump("beamDeform From", beam.cid, beamDeform)
-      beamDeform = getFunctionResult(beam.beamDeformFunction, load)
+      beamDeform = getFunctionResult(beam.beamDeformFunction, container)
       obj:setBeamDeform(beam.cid, beamDeform)
       --dump("beamDeform To  ", beam.cid, beamDeform)
     end
@@ -174,7 +194,7 @@ local function applyNodeAndBeamValues(container, load)
     if beam.beamShortBoundFunction then
       local beamShortBound = beam.beamShortBound
       --dump("setBoundedBeamShortBound From", beam.cid, beamShortBound)
-      beamShortBound = getFunctionResult(beam.beamShortBoundFunction, load)
+      beamShortBound = getFunctionResult(beam.beamShortBoundFunction, container)
       obj:setBoundedBeamShortBound(beam.cid, beamShortBound)
       --dump("setBoundedBeamShortBound To  ", beam.cid, beamShortBound)
     end
@@ -182,18 +202,47 @@ local function applyNodeAndBeamValues(container, load)
     if beam.beamLongBoundFunction then
       local beamLongBound = beam.beamLongBound
       --dump("setBoundedBeamLongBound From", beam.cid, beamLongBound)
-      beamLongBound = getFunctionResult(beam.beamLongBoundFunction, load)
+      beamLongBound = getFunctionResult(beam.beamLongBoundFunction, container)
       obj:setBoundedBeamLongBound(beam.cid, beamLongBound)
       --dump("setBoundedBeamLongBound To  ", beam.cid, beamLongBound)
     end
-
   end
 
+  return container.reachedTarget
 end
 
 
+local anyContainerNeedsUpdate = false
+local function updateGFX(dtSim)
+  anyContainerNeedsUpdate = false
+  for id, container in pairs(cargoContainerById) do
+    if not container.reachedTarget then
+      applyNodeAndBeamValues(container, dtSim)
+      anyContainerNeedsUpdate = anyContainerNeedsUpdate or not container.reachedTarget
+    end
+  end
+  if not anyContainerNeedsUpdate then
+    M.setUpdateEnabled(false)
+  end
+end
+
+local isUpdating = false
+local function setUpdateEnabled(enabled)
+  if enabled and not isUpdating then
+    isUpdating = true
+    M.updateGFX = updateGFX
+    extensions.hookUpdate("updateGFX")
+    --log("I","","Start updating cargo containers...")
+  elseif not enabled and isUpdating then
+    isUpdating = false
+    M.updateGFX = nil
+    extensions.hookUpdate("updateGFX")
+    --log("I","","Cargo containers updated.")
+  end
+end
+
 local function setCargoContainers(params)
-  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, {"table"})
+  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, {"table", "string"})
   if not dataTypeCheck then
     return {failReason = dataTypeError}
   end
@@ -202,18 +251,43 @@ local function setCargoContainers(params)
     buildContainerCache()
   end
 
-
+  local mode = params[2] or "updateExplicit"
 
   -- set all container weights according to the params data.
-  for _, setContainerData in pairs(params[1] or {}) do
-    if not setContainerData.containerId or not setContainerData.load then
-      return {failReason = "Container Data missing either containerId or load values."}
+  for id, setContainerData in pairs(params[1] or {}) do
+    -- first check if all containers have proper data
+    if not setContainerData.containerId or not setContainerData.volume then
+      return {failReason = "Container Data missing either containerId or volume values."}
+    end
+  end
+  -- only then actually update
+  anyContainerNeedsUpdate = false
+  for id, _ in pairs(cargoContainerById) do
+    local setContainerData = (params[1] or {})[id]
+    local target = cargoContainerById[id].target
+    local container = cargoContainerById[id]
+    -- default non-set containers to 0 weight by default
+    target.volume  = (setContainerData and setContainerData.volume)  or (mode == "updateExplicit" and target.volume or 0) or 0
+    target.density = (setContainerData and setContainerData.density) or (mode == "updateExplicit" and target.density or 1) or 1
+
+    container.reachedTarget =   abs(container.smoothers.volume.state - container.target.volume) < 1e-30
+                            and abs(container.smoothers.density.state - container.target.density) < 1e-30
+
+    if not container.reachedTarget then
+      container.reachTargetDuration = math.max(
+        math.abs(container.smoothers.volume.state  - container.target.volume)  / container.smoothers.volume[false],
+        math.abs(container.smoothers.density.state - container.target.density) / container.smoothers.density[false]
+        )
     end
 
-    local load = setContainerData.load
-    applyNodeAndBeamValues(cargoContainerById[setContainerData.containerId], load)
+    anyContainerNeedsUpdate = anyContainerNeedsUpdate or not container.reachedTarget
 
   end
+  if anyContainerNeedsUpdate then
+    M.setUpdateEnabled(true)
+  end
+
+  --dump(cargoContainerById)
 
 end
 
@@ -226,6 +300,25 @@ local function getCargoContainers(params)
   if not cargoContainerCache then
     buildContainerCache()
   end
+
+  for _, entry in ipairs(cargoContainerCache[1]) do
+    local container = cargoContainerById[entry.id]
+    entry.reachTargetDuration = container.reachTargetDuration
+    if container.reachedTarget then
+      entry.reachTargetTimeRemaining = 0
+    else
+      entry.reachTargetTimeRemaining = math.max(
+        math.abs(container.smoothers.volume.state  - container.target.volume)  / container.smoothers.volume[false],
+        math.abs(container.smoothers.density.state - container.target.density) / container.smoothers.density[false]
+        )
+    end
+    entry.targetVolume   = container.target.volume
+    entry.currentVolume  = container.smoothers.volume.state
+    entry.rateVolume = container.smoothers.volume[false]
+    entry.targetDensity  = container.target.density
+    entry.currentDensity = container.smoothers.density.state
+  end
+
   return cargoContainerCache
 end
 
@@ -236,9 +329,18 @@ end
 local function onExtensionLoaded()
   M.moduleActions.setCargoContainers = setCargoContainers
   M.moduleLookups.getCargoContainers = getCargoContainers
+  cargoContainerCache = nil
+  cargoContainerById = nil
+end
+
+local function onReset()
+  cargoContainerCache = nil
+  cargoContainerById = nil
 end
 
 M.onExtensionLoaded = onExtensionLoaded
 M.requestRegistration = requestRegistration
-
+M.setUpdateEnabled = setUpdateEnabled
+M.updateGFX = nop
+M.onReset = onReset
 return M

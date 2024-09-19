@@ -283,10 +283,22 @@ function C:doSuspend(sus)
   end
 end
 
+function C:skipLap(id, keepLapProgress)
+  local state = self.states[id]
+  if state.complete or not state.active or not self.path.config.closed then return end
+
+  if not state.invalidLap then
+    state.invalidLap = true
+    if not keepLapProgress then -- also skips the lap progress and resets the next segment
+      state.skippedLap = true
+    end
+  end
+end
+
 function C:changeRaceVehicle(lastId, newId)
   for k, id in ipairs(self.vehIds) do
-    if id == lastId then 
-      self.vehIds[k] = newId 
+    if id == lastId then
+      self.vehIds[k] = newId
     end
   end
 
@@ -612,7 +624,6 @@ function C:detectRollingStart(id, dt)
   end
   state.startTime = self.time
   if #state.currentSegments > 0 then
-    print("Rolling Started!")
     state.startTime = self.time + dt * t
     state.waitingForRollingStart = false
     state.events.rollingStarted = true
@@ -648,6 +659,21 @@ function C:updateVehicle(id, dt)
   local finishedSegmentT = 1
   -- if we have lapped in reaching a pathnode.
   local lapped = false
+
+  -- if lap was skipped, cancel the timer and set the lap point as the next pathnode
+  if state.invalidLap then
+    state.invalidLap = nil
+    state.events.lapSkipped = true
+    if state.skippedLap then -- sets the segment to the final one
+      for segId, currentSegment in pairs(self.path.config.graph) do
+        if currentSegment.lastInLap then
+          state.currentSegments = {segId}
+          self:findNextPathnodes(id)
+          break
+        end
+      end
+    end
+  end
 
   -- go through all current segments. check if the segment is finished (reaching its end)
   for _,currentId in ipairs(state.currentSegments) do
@@ -719,7 +745,6 @@ function C:updateVehicle(id, dt)
   -- check if we have reached a recovery point
   local rec = self.path.isReversed and self.path.pathnodes.objects[graphElem.targetNode]:getReverseRecovery() or self.path.pathnodes.objects[graphElem.targetNode]:getRecovery()
   if not rec.missing then
-    print("Reached Recovery")
     state.events.recoveryReached = rec
   end
 end
@@ -762,11 +787,13 @@ function C:digestEvents(id)
     elseif events.rollingStarted then
       core_hotlapping.newRaceStart(self)
     elseif events.lapComplete then
-      core_hotlapping.newRacePathnodeReached(state,{lapped = true})
+      core_hotlapping.newRacePathnodeReached(state, {lapped = true})
+    elseif events.lapSkipped then
+      core_hotlapping.newRaceLapSkipped(state, {lapped = false})
     elseif events.pathnodeReached then
-      core_hotlapping.newRacePathnodeReached(state,{lapped = false})
+      core_hotlapping.newRacePathnodeReached(state, {lapped = false})
     elseif events.raceComplete then
-      core_hotlapping.newRacePathnodeReached(state,nil)
+      core_hotlapping.newRacePathnodeReached(state, nil)
       core_hotlapping.newRaceStop()
     end
   end
@@ -779,6 +806,11 @@ function C:digestEvents(id)
   end
   if events.lapComplete then
     table.insert(state.eventLog, {name = "Lap " .. state.currentLap.." Complete.", time = self.time})
+    state.invalidLap = nil
+    state.skippedLap = nil
+  end
+  if events.lapSkipped then
+    table.insert(state.eventLog, {name = "Lap " .. state.currentLap.." Skipped.", time = self.time})
   end
   if events.raceComplete then
     table.insert(state.eventLog, {name = "Race Complete!", time = self.time})
@@ -799,7 +831,7 @@ function C:digestEvents(id)
     self:createRecoveryPoint(id, events.recoveryReached)
   end
 
-  if self.useWaypointAudio and (events.rollingStarted or events.pathnodeReached or events.lapComplete or events.raceComplete) then
+  if not events.recovered and self.useWaypointAudio and (events.rollingStarted or events.pathnodeReached or events.lapComplete or events.raceComplete) then
     Engine.Audio.playOnce('AudioGui', "event:UI_Checkpoint")
   end
 

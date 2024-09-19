@@ -141,7 +141,7 @@ local function onEditorGui()
                 partsViewCount = partsViewCount + 1
               end
             end
-            specs.SpecsDirty = false
+            im.TableSetSortSpecsDirty(false)
             partsSortingDirty = false
           end
           local partName
@@ -197,7 +197,7 @@ local function onEditorGui()
           end
         im.EndTable()
         end
-        
+
       end
       im.EndChild()
 

@@ -7,41 +7,52 @@ local M = {}
 local logTag = 'server.lua'
 local loadingProgress, timer2, levelPath
 
-local function endMission()
+local function endMission(p)
   if scenetree.MissionGroup then
     local missionFilename = getMissionFilename()
     log('I', logTag,"*** Level ended: "..missionFilename)
 
     TorqueScriptLua.setVar("$instantGroup", 0)
+    if p then p:add("endMission.vars") end
     clientEndMission(missionFilename)
+    if p then p:add("endMission.clientEndMission") end
 
     if scenetree.EditorGui then
       TorqueScript.eval("EditorGui.onClientEndMission();")
     end
+    if p then p:add("endMission.editorGui") end
 
     if scenetree.AudioChannelEffects then
       scenetree.AudioChannelEffects:stop(-1.0, -1.0)
     end
+    if p then p:add("endMission.audio") end
 
     decalManagerClear()
+    if p then p:add("endMission.decals") end
 
     scenetree.MissionGroup:deleteAllObjects()
+    if p then p:add("endMission.deleteObjects") end
     scenetree.MissionGroup:delete()
+    if p then p:add("endMission.delete") end
   end
 
   if scenetree.MissionCleanup then
     scenetree.MissionCleanup:delete()
+    if p then p:add("endMission.cleanup") end
   end
 
   if scenetree.LevelLoadingGroup then
     scenetree.LevelLoadingGroup:delete()
+    if p then p:add("endMission.levelLoading") end
   end
 
   if clearLevelLogs then
     clearLevelLogs()
+    if p then p:add("endMission.clearLogs") end
   end
 
   setMissionPath("")
+    if p then p:add("endMission.finalSet") end
 end
 
 --seems to work for freeroam
@@ -66,17 +77,16 @@ local function createGameActual(lvlPath, customLoadingFunction)
   timer2 = hptimer()
 
   TorqueScriptLua.setVar("$loadingLevel", true)  -- DO NOT REMOVE, this is used on the c++ side
+  levelPath = levelPath:lower()
+  if not levelPath:find(".json") and not levelPath:find(".mis") then
+    local levelName = path.levelFromPath(levelPath)
+    levelPath = path.getPathLevelMain(levelName)
+  end
 
   profilerPushEvent('clientPreStartMission')
 
   clientPreStartMission(levelPath)
   profilerPopEvent() -- clientPreStartMission
-
-  levelPath = levelPath:lower()
-  if not levelPath:find(".json") and not levelPath:find(".mis") then
-    levelPath = levelPath .. 'info.json'
-  end
-
 
   TorqueScriptLua.setVar("$Physics::isSinglePlayer", "true")
 
@@ -165,7 +175,7 @@ local function createGameActual(lvlPath, customLoadingFunction)
     elseif string.find(filename, 'materials.json') then
       loadingProgress:update(-1, '')
       loadJsonMaterialsFile(filename)
-    elseif string.find(filename, 'Data.json') then
+    elseif string.match(filename, "/%a+Data%.json$") then
       table.insert(jsonFilesToLoad, filename)
     elseif string.find(filename, '.cs') then
       table.insert(tsFilesToExecute, filename)
@@ -193,7 +203,8 @@ local function createGameActual(lvlPath, customLoadingFunction)
     LoadingManager:loadLevelJsonObjects(levelDir .. 'main/', '*.level.json') -- new level loading handler
   else
     -- backward compatibility: single file mode
-    local json_main = levelDir .. 'main.level.json'
+    local levelName = path.levelFromPath(levelPath)
+    local json_main = path.getPathLevelMain(levelName)
     if FS:fileExists(json_main) then
       Sim.deserializeObjectsFromFile(json_main, true)
     else
@@ -323,26 +334,33 @@ local function fadeoutLoadingScreen(skipStart)
   levelPath, timer2, loadingProgress = nil, nil, nil
 end
 
-local function destroy()
+local function destroy(p)
   TorqueScriptLua.setVar("$missionRunning", "false")
+  if p then p:add("server.destroy.setvar") end
 
   --End any running levels
-  endMission()
+  endMission(p)
+  if p then p:add("server.destroy.endMission") end
 
   be:physicsDestroyWorld()
+  if p then p:add("server.destroy.physics") end
 
   TorqueScriptLua.setVar("$Server::GuidList", "")
+  if p then p:add("server.destroy.setvar") end
 
   -- Delete all the data blocks...
   be:deleteDataBlocks()
+  if p then p:add("server.destroy.datablocks") end
 
   -- Increase the server session number.  This is used to make sure we're
   -- working with the server session we think we are.
   local sessionCnt = (tonumber(TorqueScriptLua.getVar("$Server::Session")) or 0) +1
   TorqueScriptLua.setVar("$Server::Session", sessionCnt)
+  if p then p:add("server.destroy.sessioncount") end
 
   rawset(_G, 'levelLoaded', nil)
   rawset(_G, 'gameConnection', nil) -- backward compatibility
+  if p then p:add("server.destroy.rawsets") end
 end
 
 local function createGameWrapper(levelPath, customLoadingFunction)

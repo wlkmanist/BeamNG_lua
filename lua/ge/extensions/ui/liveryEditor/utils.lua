@@ -5,13 +5,25 @@ local M = {}
 
 local convertRadiansToDegrees = function(radians)
   local value = radians * (180 / math.pi)
-  return math.floor(value + 0.5)
+  -- return math.floor(value + 0.5)
+  -- local truncated = string.format("%.1f", value)
+  -- return tonumber(truncated)
+  return value
 end
 
 local convertDegreesToRadians = function(degrees)
   local radians = degrees * (math.pi / 180)
   local truncated = string.format("%.14f", radians)
-  return tonumber(radians)
+  return tonumber(truncated)
+  -- return radians
+end
+
+local getBaseDegreesValue = function(value)
+  value = value % 361
+  if value < 0 then
+    value = value + 361
+  end
+  return value
 end
 
 local roundAndTruncateDecimal = function(number, decimals)
@@ -35,6 +47,14 @@ local getXYCoordinates = function(decalPos, coordinates)
   }
 end
 
+local cycleRange = function(value, min, max)
+  value = value % max
+  if value < min then
+    value = value + max
+  end
+  return value
+end
+
 local getActionMapNameByTool = function(tool)
   log("D", "", "getActionMapNameByTool" .. tool)
   local tools = extensions.ui_liveryEditor_tools.TOOLS
@@ -53,5 +73,7 @@ M.getXYCoordinates = getXYCoordinates
 M.getActionMapNameByTool = getActionMapNameByTool
 M.convertDegreesToRadians = convertDegreesToRadians
 M.convertRadiansToDegrees = convertRadiansToDegrees
+M.getBaseDegreesValue = getBaseDegreesValue
+M.cycleRange = cycleRange
 
 return M

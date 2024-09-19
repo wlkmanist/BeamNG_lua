@@ -16,7 +16,9 @@ C.pinSchema = {
     { dir = 'in', type = 'color', name = 'colorIn', hidden = true, description = 'Initial color value.' },
     { dir = 'in', type = 'any', name = 'text', description = 'Text to display.' },
     { dir = 'out', type = 'color', name = 'colorOut', description = 'The color value.' },
-  }
+}
+
+C.tags = {'imgui'}
 
 function C:_executionStarted()
   for _, p in pairs(self.pinOut) do

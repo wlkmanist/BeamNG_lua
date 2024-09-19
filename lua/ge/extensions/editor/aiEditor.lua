@@ -18,8 +18,8 @@ local colLightGrey = ColorF(0.9, 0.9, 0.9, 0.3)
 local linkBaseColor = ColorF(0, 0, 0, 0.7)
 local arrowBaseColor = ColorF(0, 0, 0, 1)
 local arrowAltColor = ColorF(0.5, 0, 0, 1)
-local arrowSize1 = Point2F(0.7, 1)
-local arrowSize2 = Point2F(0.7, 0)
+local arrowSize1 = Point2F(1, 1)
+local arrowSize2 = Point2F(1, 0)
 
 local laneColor1 = ColorF(1, 0.2, 0.2, 1)
 local laneColor2 = ColorF(0.2, 0.4, 1, 1)
@@ -519,8 +519,9 @@ local function drawNode(nid, n)
   end
 
   -- draw edges
+  -- map.nodes is single sided i.e. edge between nodes a, b is either in map.nodes[a].links[b] or map.nodes[b].links[a] but not both
   for lid, data in pairs(n.links) do
-    if mapNodes[lid] and data.inNode == nid then
+    if mapNodes[lid] then
       local lidPos = mapNodes[lid].pos
 
       local linkColor = getLinkColor(data)
@@ -535,17 +536,27 @@ local function drawNode(nid, n)
         debugDrawer:drawCylinder(n.pos + linkLineOffset, lidPos + linkLineOffset, 0.3, linkLineColor)
       end
       local inNodePos = mapNodes[data.inNode].pos
-      local edgeDirVec = mapNodes[data.inNode ~= lid and lid or nid].pos - inNodePos
+      local outNodePos = mapNodes[data.outNode].pos
+      local edgeDirVec = outNodePos - inNodePos
       local edgeLength = edgeDirVec:length()
-      edgeDirVec:normalize()
+      edgeDirVec:setScaled(1 / (edgeLength + 1e-30))
 
-      if data.lanes then
+      if data.lanes then -- if lane data is available
         local strLen = 1 -- number of characters representing a single lane in the lane string
-        local laneCount = string.len(data.lanes) / strLen
-        local right1 = edgeDirVec:cross(n.normal)
-        local right2 = edgeDirVec:cross(mapNodes[lid].normal)
+        local laneCount = #data.lanes / strLen
+        local inNodeRad, outNodeRad = mapNodes[data.inNode].radius, mapNodes[data.outNode].radius
+
+        -- calculate arrow spacing to draw lane direction indicator arrows
+        local arrowLength = 2
+        local usableEdgeLength = edgeLength - arrowLength
+        local k = math.max(1, math.floor(usableEdgeLength / 30) - 1) -- number of arrows per lane (30m between arrows). skip first and last.
+        local dispVec = (usableEdgeLength / (k + 1)) * edgeDirVec
+        local arrowLengthVec = arrowLength * edgeDirVec
+
+        local right1 = edgeDirVec:cross(mapNodes[data.inNode].normal)
 
         for i = 1, laneCount do -- draw lanes
+          --[[
           local pos1, pos2 = n.pos, lidPos
           local rad1, rad2 = n.radius, mapNodes[lid].radius
           if false and mapNodes[nid].isJunction then -- project lanes from previous link towards intersection
@@ -565,20 +576,28 @@ local function drawNode(nid, n)
               rad1 = rad2
             end
           end
+          --]]
 
-          local offset1 = getLaneOffset(nid, lid, rad1 * 2, i, laneCount)
-          local offset2 = getLaneOffset(nid, lid, rad2 * 2, i, laneCount)
-          color = string.sub(data.lanes, i * strLen - (strLen - 1), i * strLen - (strLen - 1)) == "-" and laneColor1 or laneColor2
-          debugDrawer:drawSquarePrism(pos1 + right1 * offset1, pos2 + right2 * offset2, laneSize, laneSize, color)
+          -- Draw arrows indicating lane direction
+          local offset1 = getLaneOffset(data.inNode, data.outNode, math.min(inNodeRad, outNodeRad) * 2, i, laneCount)
+          local laneDir = data.lanes:byte(i) == 43 --> ascii code for '+'
+          color = laneDir and laneColor2 or laneColor1
+          local tailPos = inNodePos + right1 * offset1
+          local tipPos  = vec3()
+          for j = 1, k do
+            tailPos:setAdd(dispVec)
+            tipPos:setAdd2(tailPos, arrowLengthVec)
+            debugDrawer:drawSquarePrism(tailPos, tipPos, laneDir and arrowSize1 or arrowSize2, laneDir and arrowSize2 or arrowSize1, color)
+          end
         end
-      end
-
-      if data.oneWay then
-        local edgeProgress = 0.5
-        while edgeProgress <= edgeLength do
-          color = core_camera.getForward():dot(edgeDirVec) >= 0 and arrowBaseColor or arrowAltColor
-          debugDrawer:drawSquarePrism((inNodePos + edgeProgress * edgeDirVec), (inNodePos + (edgeProgress + 2) * edgeDirVec), arrowSize1, arrowSize2, color)
-          edgeProgress = edgeProgress + 15
+      else
+        if data.oneWay then
+          local edgeProgress = 0.5
+          while edgeProgress <= edgeLength do
+            color = core_camera.getForward():dot(edgeDirVec) >= 0 and arrowBaseColor or arrowAltColor
+            debugDrawer:drawSquarePrism((inNodePos + edgeProgress * edgeDirVec), (inNodePos + (edgeProgress + 2) * edgeDirVec), arrowSize1, arrowSize2, color)
+            edgeProgress = edgeProgress + 15
+          end
         end
       end
     end

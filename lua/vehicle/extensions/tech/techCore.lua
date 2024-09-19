@@ -264,11 +264,7 @@ M.handleSetAiLine = function(request)
       z = n['pos'][3]
     end
     pos.z = z
-    local fauxNode = {
-      pos = pos,
-      radius = 0,
-      radiusOrig = 0,
-    }
+    local fauxNode = {x=pos.x, y=pos.y, z=pos.z, v=n['speed'], radius=0, radiusOrig=0}
     table.insert(speedList, n['speed'])
     table.insert(fauxPath, fauxNode)
   end
@@ -639,6 +635,36 @@ end
 M.handleDeflateTire = function(request)
   beamstate.deflateTires(request['wheelId'])
   request:sendACK('CompletedDeflateTire')
+end
+
+--- ACC handler
+M.handleLoadACC = function(request)
+  extensions.tech_ACC.loadACC()
+  request:sendACK('ACCloaded')
+end
+
+M.handleUnloadACC = function(request)
+  extensions.tech_ACC.unloadACC()
+  request:sendACK('ACCunloaded')
+end
+
+M.handleStartCosimulation = function(request)
+  local cData = {{
+    signalsTo = request.signalsTo, signalsFrom = request.signalsFrom,
+    sensorMap = request.sensorMap,
+    time3rdParty = request.time3rdParty, pingTime = request.pingTime,
+    udpSendPort = request.udpSendPort, udpReceivePort = request.udpReceivePort,
+    udpSendIP = request.udpSendIP, udpReceiveIP = request.udpReceiveIP
+  }}
+  controller.loadControllerExternal('tech/cosimulationCoupling', 'cosimulationCoupling', lpack.encode(cData))
+
+  request:sendACK('CosimulationStarted')
+end
+
+M.handleStopCosimulation = function(request)
+  controller.getController('cosimulationCoupling').stop()
+  controller.unloadControllerExternal('cosimulationCoupling')
+  request:sendACK('CosimulationStopped')
 end
 
 return M

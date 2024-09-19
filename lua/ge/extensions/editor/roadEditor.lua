@@ -1059,12 +1059,11 @@ local function onUpdate()
         local aiRoadsSelectable = editor.getPreference("roadEditor.general.aiRoadsSelectable")
         local nonAiRoadsSelectable = editor.getPreference("roadEditor.general.nonAiRoadsSelectable")
         for roadID, _ in pairs(editor.getAllRoads()) do
-          local road = scenetree.findObjectById(roadID)
-          if road and not road:isHidden() then
-            if (road.drivability > 0 and aiRoadsSelectable) or (road.drivability <= 0 and nonAiRoadsSelectable) then
-              if road:containsPoint(focusPointP3F) ~= -1 then
-                table.insert(hoveredRoadsIDs, roadID)
-              end
+          if scenetree.decalRoadContainsPoint(roadID, focusPointP3F) then
+            local road = scenetree.findObjectById(roadID)
+            local drivability = road.drivability
+            if ((drivability > 0 and aiRoadsSelectable) or (drivability <= 0 and nonAiRoadsSelectable)) and not road:isHidden() then
+              table.insert(hoveredRoadsIDs, roadID)
             end
           end
         end

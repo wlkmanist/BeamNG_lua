@@ -7,9 +7,10 @@ local M = {}
 M.dependencies = {'career_career'}
 
 local playerData = {trafficActive = 0} -- traffic data, parking data, etc.
-local _devTraffic = {traffic = 1, police = 0, parkedCars = 1, active = 1} -- amounts to use while not in shipping mode
+local testTrafficAmounts = {traffic = 1, police = 0, parkedCars = 1, active = 1} -- amounts to use if restrict mode is true
 
 M.ensureTraffic = false
+M.preStart = true
 M.debugMode = not shipping_build
 
 local function getPlayerData()
@@ -41,20 +42,40 @@ end
 local function setupTraffic(forceSetup)
   if forceSetup or (gameplay_traffic.getState() == "off" and not gameplay_traffic.getTrafficList(true)[1] and playerData.trafficActive == 0) then
     log("I", "career", "Now spawning traffic for career mode")
-    -- TODO: revise this
-    local amount = clamp(gameplay_traffic.getIdealSpawnAmount(), 3, 7) -- returns amount from user settings; at least 3 vehicles should get spawned
+    local restrict = settings.getValue('trafficRestrictForCareer')
+
+    -- traffic amount
+    local amount = settings.getValue('trafficAmount')
+    if amount == 0 then -- auto amount
+      amount = gameplay_traffic.getIdealSpawnAmount()
+    end
     if not getAllVehiclesByType()[1] then -- if player vehicle does not exist yet
       amount = amount - 1
     end
-    local policeAmount = M.debugMode and _devTraffic.police or 0 -- temporarily disabled by default
+    if not M.debugMode then
+      amount = clamp(amount, 2, 50) -- at least 2 vehicles should get spawned
+    end
+
+    -- parked cars amount
+    local parkedAmount = settings.getValue('trafficParkedAmount')
+    if parkedAmount == 0 then -- auto amount
+      parkedAmount = clamp(gameplay_traffic.getIdealSpawnAmount(nil, true), 4, 20)
+    end
+    if not M.debugMode then
+      parkedAmount = clamp(parkedAmount, 2, 50) -- at least 2 vehicles should get spawned
+    end
+
+    -- police amount and vehicle pooling
+    local policeAmount = M.debugMode and testTrafficAmounts.police or 0 -- temporarily disabled by default
     local extraAmount = policeAmount -- enables traffic pooling
-    playerData.trafficActive = M.debugMode and _devTraffic.active or amount -- store the amount here for future usage
+    playerData.trafficActive = restrict and testTrafficAmounts.active or amount -- store the amount here for future usage
     if playerData.trafficActive == 0 then playerData.trafficActive = math.huge end
 
     --gameplay_traffic.queueTeleport = true -- forces traffic vehicles to teleport away
 
     -- TEMP: this is a temporary measure; it spawns vehicles far away, but skips the step of force teleporting them
     -- hopefully, this cures the vehicle instability issue
+    -- we need to rework the initial loading logic so that the player / camera is already ready, then this hack won't be needed
     local trafficPos, trafficRot, parkingPos
     local trafficSpawnPoint = scenetree.findObject("spawns_refinery")
     local parkingSpawnPoint = scenetree.findObject("spawns_servicestation") -- TODO: replace this with the intended player position (player veh not ready yet)
@@ -65,8 +86,8 @@ local function setupTraffic(forceSetup)
       parkingPos = parkingSpawnPoint:getPosition()
     end
 
-    gameplay_parking.setupVehicles(M.debugMode and _devTraffic.parkedCars, {pos = parkingPos})
-    gameplay_traffic.setupTraffic(M.debugMode and _devTraffic.traffic + extraAmount or amount + extraAmount, 0, {policeAmount = policeAmount, simpleVehs = true, autoLoadFromFile = true, pos = trafficPos, rot = trafficRot})
+    gameplay_parking.setupVehicles(restrict and testTrafficAmounts.parkedCars or parkedAmount, {pos = parkingPos})
+    gameplay_traffic.setupTraffic(restrict and testTrafficAmounts.traffic + extraAmount or amount + extraAmount, 0, {policeAmount = policeAmount, simpleVehs = true, autoLoadFromFile = true, pos = trafficPos, rot = trafficRot})
     setTrafficVars()
 
     M.ensureTraffic = false
@@ -102,6 +123,7 @@ local function retrieveFavoriteVehicle()
   if vehId then
     local playerVehObj = getPlayerVehicle(0)
     spawn.safeTeleport(be:getObjectByID(vehId), playerVehObj:getPosition(), quatFromDir(playerVehObj:getDirectionVector()), nil, nil, nil, nil, false)
+    core_vehicleBridge.executeAction(be:getObjectByID(vehId),'setIgnitionLevel', 0)
   elseif not vehInfo.timeToAccess and not career_modules_insurance.inventoryVehNeedsRepair(favoriteVehicleInventoryId) then
     inventory.spawnVehicle(favoriteVehicleInventoryId, nil,
     function()
@@ -139,8 +161,9 @@ local teleportTrailerJob = function(job)
 end
 
 local function teleportToGarage(garageId, veh, resetVeh)
-  freeroam_bigMapMode.navigateToMission(nil)
   freeroam_facilities.teleportToGarage(garageId, veh, resetVeh)
+  freeroam_bigMapMode.navigateToMission(nil)
+  core_vehicleBridge.executeAction(veh,'setIgnitionLevel', 0)
 
   local trailerData = core_trailerRespawn.getTrailerData()
   local primaryTrailerData = trailerData[veh:getId()]
@@ -157,12 +180,12 @@ local function teleportToGarage(garageId, veh, resetVeh)
       function()
         local trailer = be:getObjectByID(primaryTrailerData.trailerId)
         deleteTrailers(trailer)
+        career_modules_fuel.minimumRefuelingCheck(veh:getId())
       end
     )
+  else
+    career_modules_fuel.minimumRefuelingCheck(veh:getId())
   end
-end
-
-local function onSaveCurrentSaveSlot(currentSavePath)
 end
 
 local function onVehicleParkingStatus(vehId, data)
@@ -231,6 +254,22 @@ local function onVehicleSwitched(oldId, newId)
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
+  if M.preStart and freeroam_specialTriggers and playerData.traffic then -- this cycles all lights triggers, to eliminate lag spikes (move this code later)
+    if not playerData.preStartTicks then playerData.preStartTicks = 6 end
+    playerData.preStartTicks = playerData.preStartTicks - 1
+    for k, v in pairs(freeroam_specialTriggers.getTriggers()) do
+      if not v.vehIds[be:getPlayerVehicleID(0)] then
+        if playerData.preStartTicks == 3 then
+          freeroam_specialTriggers.setTriggerActive(k, true, true)
+        elseif playerData.preStartTicks == 0 then
+          freeroam_specialTriggers.setTriggerActive(k, false, true)
+          M.preStart = false
+        end
+      end
+    end
+    if playerData.preStartTicks == 0 then playerData.preStartTicks = nil end
+  end
+
   if not playerPursuitActive() then return end
 
   -- for now, prevent pursuit softlock by making the police give up
@@ -254,11 +293,42 @@ local function onCareerModulesActivated(alreadyInLevel)
   end
 end
 
-local function onExtensionLoaded()
-end
-
 local function onClientStartMission()
   setupTraffic()
+end
+
+local function buildCamPath(targetPos, endDir)
+  local camMode = core_camera.getGlobalCameras().bigMap
+
+  local path = { looped = false, manualFov = false}
+  local startPos = core_camera.getPosition() + vec3(0,0,30)
+
+  local m1 = { fov = 30, movingEnd = false, movingStart = false, positionSmooth = 0.5, pos = startPos, rot = quatFromDir(targetPos - startPos), time = 0, trackPosition = false  }
+  local m2 = { fov = 30, movingEnd = false, movingStart = false, positionSmooth = 0.5, pos = startPos, rot = quatFromDir(targetPos - startPos), time = 0.5, trackPosition = false  }
+  local m3 = { fov = core_camera.getFovDeg(), movingEnd = false, movingStart = false, positionSmooth = 0.5, pos = core_camera.getPosition(), rot = endDir and quatFromDir(endDir) or core_camera.getQuat(), time = 5.5, trackPosition = false }
+  path.markers = {m1, m2, m3}
+
+  return path
+end
+
+local function showPosition(pos)
+  local camDir = pos - getPlayerVehicle(0):getPosition()
+  if gameplay_walk.isWalking() then
+    gameplay_walk.setRot(camDir)
+  end
+
+  local camDirLength = camDir:length()
+  local rayDist = castRayStatic(getPlayerVehicle(0):getPosition(), camDir, camDirLength)
+
+  if rayDist < camDirLength then
+    -- Play cam path to show where the position is
+    local camPath = buildCamPath(pos, camDir)
+    local initData = {}
+    initData.finishedPath = function(this)
+      core_camera.setVehicleCameraByIndexOffset(0, 1)
+    end
+    core_paths.playPath(camPath, 0, initData)
+  end
 end
 
 M.getPlayerData = getPlayerData
@@ -266,8 +336,8 @@ M.retrieveFavoriteVehicle = retrieveFavoriteVehicle
 M.playerPursuitActive = playerPursuitActive
 M.resetPlayerState = resetPlayerState
 M.teleportToGarage = teleportToGarage
+M.showPosition = showPosition
 
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
 M.onPlayerCameraReady = onPlayerCameraReady
 M.onTrafficStarted = onTrafficStarted
 M.onTrafficStopped = onTrafficStopped
@@ -276,7 +346,6 @@ M.onVehicleParkingStatus = onVehicleParkingStatus
 M.onVehicleSwitched = onVehicleSwitched
 M.onCareerModulesActivated = onCareerModulesActivated
 M.onClientStartMission = onClientStartMission
-M.onExtensionLoaded = onExtensionLoaded
 M.onUpdate = onUpdate
 
 return M

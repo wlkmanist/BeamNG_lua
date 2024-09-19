@@ -22,6 +22,7 @@ C.pinSchema = {
     { dir = 'in', type = 'string', name = 'anchor', hidden = true, default = "TL", hardcoded = true, description = 'Defines the anchor for the window. Can be TL (Top-Left), TR (Top-Right), BL (Bottom-Left) or BR (Bottom-Right).' },
 }
 
+C.tags = {'imgui'}
 
 function C:init()
   self.done = false

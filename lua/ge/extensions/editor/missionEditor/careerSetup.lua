@@ -30,7 +30,7 @@ function C:init(missionEditor)
 
 
   self.copiedStars = {}
-  self.attributeOptions = {'money','beamXP','bonusStars'}
+  self.attributeOptions = {'money','beamXP','vouchers'}
   self.branchOptions = {"(none)"}
   self.skillOptions = {"(none)"}
   extensions.load('career_branches')

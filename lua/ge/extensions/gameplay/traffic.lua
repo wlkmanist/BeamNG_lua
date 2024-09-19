@@ -449,6 +449,7 @@ local function respawnVehicle(id, pos, rot, strict) -- moves the vehicle to a ne
   if not strict then
     spawn.safeTeleport(obj, pos, rot, true, nil, false) -- this is slower, but prevents vehicles from spawning inside static geometry
   else
+    rot = rot * quat(0, 0, 1, 0)
     obj:setPositionRotation(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
     obj:autoplace(false)
     obj:resetBrokenFlexMesh()
@@ -482,7 +483,7 @@ local function forceTeleport(id, pos, dir, minDist, maxDist) -- force teleports 
       newPos, newRot = getNextSpawnPoint(id, spawnData)
     else
       local outerPos, outerDir = vec3(), vec3()
-      local radius = 200
+      local radius = 400
 
       repeat -- repeats random radial search
         local angleRad = math.rad(math.random() * 360)
@@ -596,7 +597,7 @@ local function resetTrafficVars() -- resets traffic variables to default
   vars = {
     spawnValue = 1, -- as the default value, globalSpawnDist will dynamically adjust the random respawn distance from player
     spawnDirBias = 0, -- as the default value, globalSpawnDir will dynamically adjust the random respawn direction
-    baseAggression = 0.3,
+    baseAggression = 0.36, -- old default: 0.3
     minRoadDrivability = 0.25,
     minRoadRadius = 1.2,
     activeAmount = math.huge,
@@ -684,12 +685,12 @@ local function insertTraffic(id, ignoreAi) -- inserts new vehicles into the traf
       return
     end
 
-    obj:setDynDataFieldbyName('isTraffic', 0, not ignoreAi and 'true' or 'false')
     if not ignoreAi then
       table.insert(trafficAiVehsList, id)
       traffic[id]:setAiMode(vars.aiMode)
       gameplay_walk.addVehicleToBlacklist(id)
 
+      obj:setDynDataFieldbyName('isTraffic', 0, 'true')
       obj.playerUsable = settings.getValue('trafficEnableSwitching') and true or false
 
       if not vehPool then

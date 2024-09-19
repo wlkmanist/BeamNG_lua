@@ -22,7 +22,7 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       getLabel = function(step, current, target) return "Long Distance Driver" end,
       getDescription = function(step, current, target) return string.format("Drive a total distance of %0.1fkm.", target/1000) end,
       getProgressLabel = function(step, current, target) return string.format("%0.1fkm / %0.1fkm", current/1000, target/1000) end,
-      getTarget = function(step) return step == 0 and 0 or ({5,12.5,25,50,90,145,215,300})[step]*1000 end,
+      getTarget = function(step) return step == 0 and 0 or ({10,20,35,60,90,145,215,300})[step]*1000 end,
       getRewards = milestones.majorLinear,
     },
     {

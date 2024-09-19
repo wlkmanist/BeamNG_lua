@@ -51,10 +51,14 @@ local function getMilestones(filter)
   --table.sort(list, sortByTimeAndId)
   storeClaimFunctions(list)
   local filters = {}
+  M.saveData.unclaimedMilestonesCount = 0
   for _, milestone in ipairs(list) do
     milestone.filter = milestone.filter or {missingFilter=true}
     for key, _ in pairs(milestone.filter) do
       filters[key] = true
+    end
+    if milestone.claimable then
+      M.saveData.unclaimedMilestonesCount = M.saveData.unclaimedMilestonesCount + 1
     end
   end
   return {
@@ -70,20 +74,6 @@ end
 M.getMilestones = getMilestones
 M.onGetMilestones = onGetMilestones
 
-local function doStuff()
-  local playerVeh = getPlayerVehicle(0)
-  if not playerVeh then return end
-  for i=0, be:getObjectCount()-1 do
-    local otherVeh = be:getObject(i)
-    if otherVeh and (otherVeh:getID() ~= playerVeh:getID()) then
-      local bb1 = playerVeh:getSpawnWorldOOBB()
-      local bb2 = otherVeh:getSpawnWorldOOBB()
-      local dir = (bb2:getCenter() - bb1:getCenter()):normalized() * 15
-      otherVeh:applyClusterVelocityScaleAdd(otherVeh:getRefNodeId(), 0, dir.x, dir.y, dir.z)
-    end
-  end
-end
-
 -- put here so it can eventually be delayed if in a mission, grouped up if multiple...
 local function milestoneReached(label)
   if type(label) == "string" then
@@ -91,6 +81,7 @@ local function milestoneReached(label)
   elseif type(label) == "table" then
     guihooks.trigger("toastrMsg", {type="success", title="Milestone Reached!", msg=label.txt, context=label.context})
   end
+  M.saveData.unclaimedMilestonesCount = M.saveData.unclaimedMilestonesCount + 1
 end
 M.milestoneReached = milestoneReached
 
@@ -101,8 +92,10 @@ M.saveData = {}
 local function loadSaveData()
   local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
   if not saveSlot then return end
+
   local data = (savePath and jsonReadFile(savePath .. "/career/"..saveFile)) or {}
   M.saveData = data
+  M.saveData.unclaimedMilestonesCount = M.saveData.unclaimedMilestonesCount or 0
 end
 
 local function onExtensionLoaded()
@@ -115,10 +108,33 @@ local function onSaveCurrentSaveSlot(currentSavePath)
   career_saveSystem.jsonWriteFileSafe(filePath, M.saveData, true)
 end
 
+local function unclaimedMilestonesCount()
+  return M.saveData.unclaimedMilestonesCount
+end
+
+local function notifyUnclaimedMilestonesCount()
+  if M.saveData.unclaimedMilestonesCount > 0 then
+    guihooks.trigger("toastrMsg", {type="success", title="Unclaimed Milestones: " .. M.saveData.unclaimedMilestonesCount, msg="Check out Milestones in Pause>Progress>Milestones"})
+  end
+end
+
+local function onCareerModulesActivated(alreadyInLevel)
+  if alreadyInLevel then
+    notifyUnclaimedMilestonesCount()
+  end
+end
+local function onClientStartMission()
+  notifyUnclaimedMilestonesCount()
+end
+
 M.loadSaveData = loadSaveData
 M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
 M.onExtensionLoaded = onExtensionLoaded
 
+
+M.unclaimedMilestonesCount = unclaimedMilestonesCount
+M.onCareerModulesActivated = onCareerModulesActivated
+M.onClientStartMission = onClientStartMission
 
 -- common reward functions
 M.minorLinear = function(step) return {{attributeKey="money",rewardAmount=100*(step+1)}, {attributeKey="beamXP",rewardAmount=5*(step+1)}} end

@@ -24,10 +24,9 @@ C.pinSchema = {
   { dir = 'in', type = 'number', name = 'checkVelocity', hidden = true, default = 0.1, hardcoded = true, description = 'If given, vehicle has to be slower than this to be considered arrived.' },
 }
 
-C.tags = {'manual','driveTo'}
+C.tags = {'manual', 'driveTo'}
 
 function C:init()
-  self.previousVehicle = nil
   self.data.autoDisableOnArrive = true
   self:onNodeReset()
 end
@@ -41,16 +40,14 @@ function C:_executionStopped()
   self:onNodeReset()
 end
 
-function C:findVehicle()
-  local source
-  if self.pinIn.aiVehId.value and self.pinIn.aiVehId.value ~= 0 then
-    source = scenetree.findObjectById(self.pinIn.aiVehId.value)
-    self.previousVehicle = self.pinIn.aiVehId.value
+function C:getVeh()
+  local veh
+  if self.pinIn.aiVehId.value then
+    veh = be:getObjectByID(self.pinIn.aiVehId.value)
   else
-    source = getPlayerVehicle(0)
-    self.previousVehicle = -1
+    veh = getPlayerVehicle(0)
   end
-  return source
+  return veh
 end
 
 function C:work()
@@ -66,31 +63,33 @@ function C:work()
     end
 
     if self.pinIn.endLinePosition.value then
-      local source = self:findVehicle()
-      if source then
-        local vData = map.objects[source:getID()]
+      local veh = self:getVeh()
+      if not veh then return end
 
-        local rad = self.pinIn.checkDistance.value
-        if not rad or rad == 0 then
-          rad = 1
+      local rad = self.pinIn.checkDistance.value
+      if not rad or rad == 0 then
+        rad = 1
+      end
+      local frontPos = linePointFromXnorm(vec3(veh:getCornerPosition(0)), vec3(veh:getCornerPosition(1)), 0.5)
+      local endLinePosition = self.pinIn.endLinePosition.value
+      if type(endLinePosition) == "table" then
+        endLinePosition = vec3(endLinePosition)
+      end
+      local dist = (frontPos - endLinePosition):length()
+      self.pinOut.distance.value = dist
+      if dist < rad then
+        self.pinOut.inRadius.value = true
+        self.complete = map.objects[veh:getID()].vel:length() < (self.pinIn.checkVelocity.value or 10000)
+      end
+      if self.complete then
+        if self.data.autoDisableOnArrive then
+          veh:queueLuaCommand('ai.setState({mode = "disabled"})')
         end
-        local frontPos = linePointFromXnorm(vec3(source:getCornerPosition(0)), vec3(source:getCornerPosition(1)), 0.5)
-        local dist = (frontPos - self.pinIn.endLinePosition.value):length()
-        self.pinOut.distance.value = dist
-        if dist < rad then
-          self.pinOut.inRadius.value = true
-          self.complete = vData.vel:length() < (self.pinIn.checkVelocity.value or 10000)
-        end
-        if self.complete then
-          if self.data.autoDisableOnArrive then
-            source:queueLuaCommand('ai.setState({mode = "disabled"})')
-          end
-          return
-        end
-        if not self.sentCommand then
-          source:queueLuaCommand('ai.setState({mode = "manual"})')
-          self.sentCommand = true
-        end
+        return
+      end
+      if not self.sentCommand then
+        veh:queueLuaCommand('ai.setState({mode = "manual"})')
+        self.sentCommand = true
       end
     else
       self:__setNodeError("work","No target name or position given!")

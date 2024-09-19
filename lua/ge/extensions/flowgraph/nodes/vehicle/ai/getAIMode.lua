@@ -12,7 +12,7 @@ C.icon = ui_flowgraph_editor.nodeIcons.ai
 C.description = 'Get AI mode of a vehicle.'
 C.category = 'repeat_p_duration'
 C.pinSchema = {
-  { dir = 'in', type = 'number', name = 'VehId', description = 'ID of the vehicle. If empty, the Player vehicle will be used' },
+  { dir = 'in', type = 'number', name = 'vehId', description = 'ID of the vehicle. If empty, the Player vehicle will be used' },
   { dir = 'out', type = 'string', name = 'aiMode', description = 'Returns the current AI mode on the vehicle' },
 }
 
@@ -25,13 +25,12 @@ end
 function C:work()
   local veh
   if self.pinIn.vehId.value then
-    veh = scenetree.findObjectById(self.pinIn.vehId.value)
+    veh = be:getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end
-  if not veh then
-    return
-  end
+  if not veh then return end
+  
   veh:queueLuaCommand(self:getCmd())
   if self.returnedMode ~= nil then
     self.pinOut.aiMode.value = self.returnedMode

@@ -60,7 +60,7 @@ end
 
 function C:sendMenus()
   -- add menus?
-  core_quickAccess.addEntry({ level = '/', uniqueID = 'relativeCameraMenu', generator = function(entries)
+  extensions.core_quickAccess.addEntry({ level = '/', uniqueID = 'relativeCameraMenu', generator = function(entries)
     if not self.focused then return {} end
     table.insert(entries, { title = 'RelCam', icon = 'radial_relative_camera', priority = 10, ["goto"] = '/camera_relative_mode/'})
   end})

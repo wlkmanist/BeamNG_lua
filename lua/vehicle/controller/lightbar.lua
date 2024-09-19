@@ -143,5 +143,6 @@ end
 M.init = init
 M.updateGFX = updateGFX
 M.toggleMode = toggleMode
+M.setModeIndex = setModeIndex
 
 return M

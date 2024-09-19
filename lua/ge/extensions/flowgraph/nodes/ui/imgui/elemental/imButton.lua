@@ -9,7 +9,7 @@ local C = {}
 C.name = 'im Button'
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
-C.description = "Displays a Button in an imgui window."
+C.description = "Displays a button in an imgui window."
 C.category = 'repeat_instant'
 
 C.pinSchema = {
@@ -18,6 +18,8 @@ C.pinSchema = {
     { dir = 'out', type = 'flow', name = 'up', hidden = true, description = 'When button is released.' },
     { dir = 'in', type = 'any', name = 'text', description = 'Defines the text displayed on the button.' },
 }
+
+C.tags = {'imgui'}
 
 function C:_executionStarted()
   for _, p in pairs(self.pinOut) do

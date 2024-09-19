@@ -18,7 +18,7 @@ M.onGeneralMilestonesCollect = function(milestonesList)
 
   for i, branchInfo in ipairs(career_branches.getSortedBranches()) do
     if not branchInfo.isInDevelopment then
-      local levelCount = #branchInfo.levels -1 -- account for entry 0
+      local levelCount = branchInfo.maxReachableLevel -1 -- account for entry 0
       local attKey = branchInfo.attributeKey
       local isBranch = not branchInfo.isSkill
       local color = branchInfo.color

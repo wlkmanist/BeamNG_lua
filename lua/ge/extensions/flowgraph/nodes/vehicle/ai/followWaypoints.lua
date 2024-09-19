@@ -44,21 +44,25 @@ function C:onNodeReset()
   self:setDurationState('inactive')
 end
 
+function C:getVeh()
+  local veh
+  if self.pinIn.vehId.value then
+    veh = be:getObjectByID(self.pinIn.vehId.value)
+  else
+    veh = getPlayerVehicle(0)
+  end
+  return veh
+end
+
 function C:workOnce()
   if self.pinIn.navgraphPath.value then
     self.aiPath = self.pinIn.navgraphPath.value.aiPath or self.pinIn.navgraphPath.value -- backwards compatibility
   end
 
-  if not self.aiPath[1] then
-    return
-  end
+  if not self.aiPath[1] then return end
 
-  local veh
-  if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-    veh = scenetree.findObjectById(self.pinIn.vehId.value)
-  else
-    veh = getPlayerVehicle(0)
-  end
+  local veh = self:getVeh()
+  if not veh then return end
 
   self.lapCount = math.max(1, self.pinIn.lapCount.value or 1)
   self.pinOut.finalWp.value = self.aiPath[#self.aiPath]
@@ -80,15 +84,10 @@ end
 
 function C:work()
   if self.durationState == 'started' then
-    local veh
+    local veh = self:getVeh()
+    if not veh then return end
+  
     local mapNodes = map.getMap().nodes
-
-    if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-      veh = scenetree.findObjectById(self.pinIn.vehId.value)
-    else
-      veh = getPlayerVehicle(0)
-    end
-
     local vehPos = veh:getPosition()
     if not self.lapFlag and vehPos:squaredDistance(mapNodes[self.pinOut.finalWp.value].pos) < square(mapNodes[self.pinOut.finalWp.value].radius) then
       -- vehicle is within radius of final waypoint

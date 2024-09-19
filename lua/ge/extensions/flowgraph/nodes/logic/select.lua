@@ -101,13 +101,16 @@ function C:work()
   local var = {value = nil}
   fg_utils.mergeFuns.any[self.mode].init(var)
   local selecting = false
-  for i = 1, self.count do
-    if self.pinIn['select_'..i].value then
-      fg_utils.mergeFuns.any[self.mode].merge(var, self.pinIn['value_'..i].value)
-      selecting = true
+  if self.pinIn.flow.value then
+    for i = 1, self.count do
+      if self.pinIn['select_'..i].value then
+        fg_utils.mergeFuns.any[self.mode].merge(var, self.pinIn['value_'..i].value)
+        selecting = true
+      end
     end
   end
   fg_utils.mergeFuns.any[self.mode].finalize(var)
+
   if selecting then
     self.pinOut.flow.value = true
     self.pinOut.value.value = var.value

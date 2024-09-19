@@ -6,6 +6,8 @@ local M = {}
 
 M.dependencies = {'career_career'}
 
+local moduleVersion = 42
+
 local imgui = ui_imgui
 local jbeamIO = require('jbeam/io')
 
@@ -15,8 +17,12 @@ local coreSlots = {}
 local partsBefore = {}
 local slotToPartIdMap = {}
 local partInventoryOpen = false
+local closeMenuAfterSaving
 
 local currentVehicleInventoryId
+
+-- TODO need to find a solution for when there will be multiple of the same part in one vehicle
+-- one solution would be to save {slot = partId} instead of {slot = partName}
 
 local function getPartsThatMoved(partsBefore, partsAfter)
   -- Compare old parts with new parts to see what has changed
@@ -77,7 +83,7 @@ local function removePartRec(partId, config, removedParts)
   end
   removedParts[partId] = true
   if config then
-    config[part.slot] = ""
+    config[part.containingSlot] = ""
   end
 end
 
@@ -106,6 +112,7 @@ local function removePart(partId, inventoryId)
   local vehObjId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
   if vehObjId then
     local vehicleObj = be:getObjectByID(vehObjId)
+    core_vehicle_manager.queueAdditionalVehicleData({spawnWithEngineRunning = false}, vehObjId)
     core_vehicles.replaceVehicle(carModelToLoad, vehicleData, vehicleObj)
     queueCallbackInVehicle(vehicleObj, "career_modules_partInventory.initConditionsCallback", "partCondition.initConditions(" .. serialize(partConditions) .. ")", inventoryId)
   else
@@ -113,7 +120,7 @@ local function removePart(partId, inventoryId)
     for partId, _ in pairs(removedParts) do
       local part = partInventory[partId]
       partConditions[part.name] = nil
-      career_modules_inventory.getVehicles()[inventoryId].config.parts[part.slot] = ""
+      career_modules_inventory.getVehicles()[inventoryId].config.parts[part.containingSlot] = ""
     end
     M.changedPartsCallback(partConditions, inventoryId)
   end
@@ -122,10 +129,12 @@ end
 
 -- TODO with this method we might not find a working config, because this just returns a random fitting part, which may have empty core slots
 -- TODO one solution would be to allow for empty core slots, but mark them and tell the user that they cant spawn this or use this vehicle until the core slots are filled
-local function findFittingPart(slot, vehicleModel)
+local function findFittingPart(slotInfo, vehicleModel)
   for partId, part in pairs(partInventory) do
-    if part.location == 0 and part.slot == slot and part.vehicleModel == vehicleModel then
-      return partId
+    for _, allowType in ipairs(slotInfo.allowTypes) do
+      if part.location == 0 and part.slot == allowType and part.vehicleModel == vehicleModel then
+        return partId, allowType
+      end
     end
   end
 end
@@ -133,19 +142,10 @@ end
 local newParts
 
 -- Checks which parts need to be added in addition to "partIds" and returns all parts that need to be added
-local function fillCoreSlots(partIds, inventoryId)
+local function fillCoreSlots(partIds, inventoryId, combinedSlotToPartMap)
   local vehObjId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
   local vehicleObj = be:getObjectByID(vehObjId)
   local jbeamFileName = vehicleObj:getJBeamFilename()
-
-  -- Make a map from slot to its part for the parts which were already in the vehicle and the parts which we want to add
-  local combinedSlotToPartMap = deepcopy(slotToPartIdMap[inventoryId])
-  for _, partId in ipairs(partIds) do
-    local part = partInventory[partId]
-    if part then
-      combinedSlotToPartMap[part.slot] = true
-    end
-  end
 
   local addedParts = false
   local resultParts = deepcopy(partIds)
@@ -155,10 +155,11 @@ local function fillCoreSlots(partIds, inventoryId)
       for slotName, slotInfo in pairs(part.description.slotInfoUi) do
         if slotInfo.coreSlot and not combinedSlotToPartMap[slotName] then
           -- search in the inventory for a fitting part
-          local newPartId = findFittingPart(slotName, jbeamFileName)
+          local newPartId, newPartSlot = findFittingPart(slotInfo, jbeamFileName)
           if not newPartId then
-            return false
+            return false, slotInfo
           end
+          combinedSlotToPartMap[newPartSlot] = newPartId
           table.insert(resultParts, newPartId)
           table.insert(newParts, newPartId)
           addedParts = true
@@ -170,12 +171,13 @@ local function fillCoreSlots(partIds, inventoryId)
   return resultParts, addedParts
 end
 
-local function getDisconnectedPartsRec(part, disconnectedParts, parts)
-  disconnectedParts[part.slot] = nil
+local function getDisconnectedPartsRec(slot, disconnectedParts, parts)
+  disconnectedParts[slot] = nil
+  local part = parts[slot]
   if part and part.description.slotInfoUi then
     for slotName, slotInfo in pairs(part.description.slotInfoUi) do
       if parts[slotName] then
-        getDisconnectedPartsRec(parts[slotName], disconnectedParts, parts)
+        getDisconnectedPartsRec(slotName, disconnectedParts, parts)
       end
     end
   end
@@ -183,54 +185,75 @@ end
 
 local function getDisconnectedParts(partIds)
   local parts = {}
-  for partId, _ in pairs(partIds) do
+  for partId, slot in pairs(partIds) do
     local part = deepcopy(partInventory[partId])
     part.id = partId
-    parts[part.slot] = part
+    parts[slot] = part
   end
 
-  local mainPart = parts["main"]
   local disconnectedParts = deepcopy(parts)
-  getDisconnectedPartsRec(mainPart, disconnectedParts, parts)
+  getDisconnectedPartsRec("main", disconnectedParts, parts)
   return disconnectedParts
+end
+
+local function switchKeysAndValues(inputTable)
+  local switchedTable = {}
+  for key, value in pairs(inputTable) do
+    switchedTable[value] = key
+  end
+  return switchedTable
 end
 
 local function installParts(partIds, inventoryId)
   local vehicle = career_modules_inventory.getVehicles()[inventoryId]
   local carModelToLoad = vehicle.model
-  local vehicleData = {}
-  vehicleData.config = vehicle.config
-  vehicleData.keepOtherVehRotation = true
 
   local addedParts
   newParts = {}
-  repeat
-    partIds, addedParts = fillCoreSlots(partIds, inventoryId)
-    if not partIds then return false end
-  until not addedParts
 
-  if tableSize(newParts) > 0 then
-    guihooks.trigger('openNewPartsPopup', newParts)
+  -- Make a map from slot to its part for the parts which were already in the vehicle and the parts which we want to add
+  local combinedSlotToPartMap = deepcopy(slotToPartIdMap[inventoryId])
+  for _, partId in ipairs(partIds) do
+    local partFits, slot = M.doesPartFitVehicle(inventoryId, partInventory[partId])
+    if partFits then
+      combinedSlotToPartMap[slot] = partId
+    end
   end
+
+  repeat
+    partIds, addedParts = fillCoreSlots(partIds, inventoryId, combinedSlotToPartMap)
+    if not partIds then return false, addedParts end
+  until not addedParts
 
   partsAfter = getPartIdsFromVehicle(inventoryId)
 
+  -- Add the slot which contains the part
+  for oldPartId, _ in pairs(partsAfter) do
+    local oldPart = partInventory[oldPartId]
+    for slotName, partName in pairs(vehicle.config.parts) do
+      if partName == oldPart.name then
+        partsAfter[oldPartId] = slotName
+        break
+      end
+    end
+  end
+
+  local combinedPartIdToSlotMap = switchKeysAndValues(combinedSlotToPartMap)
+
   -- Check which parts need to be removed from partIds because they have been replaced by other parts
   for _, newPartId in ipairs(partIds) do
-    local newPart = partInventory[newPartId]
-
     -- remove parts in partsAfter that have the same slot as one of the newly added parts in partsId
-    for oldPartId, _ in pairs(partsAfter) do
+    for oldPartId, oldSlot in pairs(partsAfter) do
       local oldPart = partInventory[oldPartId]
-      if oldPart.slot == newPart.slot then
+      if oldSlot == combinedPartIdToSlotMap[newPartId] then
         -- remove the part
         vehicle.partConditions[oldPart.name] = nil
-        vehicleData.config.parts[oldPart.slot] = ""
+        vehicle.config.parts[oldSlot] = ""
         partsAfter[oldPartId] = nil
       end
     end
 
-    partsAfter[newPartId] = true
+    partsAfter[newPartId] = combinedPartIdToSlotMap[newPartId]
   end
 
   -- Get parts that have now been disconnected from the rest because they are child parts from removed parts
@@ -238,7 +261,7 @@ local function installParts(partIds, inventoryId)
   for slot, part in pairs(disconnectedParts) do
     -- remove the part
     vehicle.partConditions[part.name] = nil
-    vehicleData.config.parts[part.slot] = ""
+    vehicle.config.parts[slot] = ""
     partsAfter[part.id] = nil
   end
 
@@ -246,16 +269,7 @@ local function installParts(partIds, inventoryId)
   for _, partId in ipairs(partIds) do
     local part = partInventory[partId]
     if part then
-      vehicleData.config.parts[part.slot] = part.name
-    end
-  end
-
-  -- Make a map from slot to its part
-  local combinedSlotToPartMap = deepcopy(slotToPartIdMap[inventoryId])
-  for _, partId in ipairs(partIds) do
-    local part = partInventory[partId]
-    if part then
-      combinedSlotToPartMap[part.slot] = true
+      vehicle.config.parts[combinedPartIdToSlotMap[partId]] = part.name
     end
   end
 
@@ -264,7 +278,7 @@ local function installParts(partIds, inventoryId)
     if part and part.description.slotInfoUi then
       for slotName, slotInfo in pairs(part.description.slotInfoUi) do
         if not slotInfo.coreSlot and not combinedSlotToPartMap[slotName] then
-          vehicleData.config.parts[slotName] = ""
+          vehicle.config.parts[slotName] = ""
         end
       end
     end
@@ -280,6 +294,11 @@ local function installParts(partIds, inventoryId)
 
   local vehObjId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
   local vehicleObj = be:getObjectByID(vehObjId)
+  core_vehicle_manager.queueAdditionalVehicleData({spawnWithEngineRunning = false}, vehObjId)
+
+  local vehicleData = {}
+  vehicleData.config = vehicle.config
+  vehicleData.keepOtherVehRotation = true
   core_vehicles.replaceVehicle(carModelToLoad, vehicleData, vehicleObj)
 
   -- repair the car if the damage is below the threshold
@@ -290,6 +309,15 @@ local function installParts(partIds, inventoryId)
 
   queueCallbackInVehicle(vehicleObj, "career_modules_partInventory.initConditionsCallback", "partCondition.initConditions(" .. serialize(vehicle.partConditions) .. ")", inventoryId)
   career_modules_inventory.setVehicleDirty(inventoryId)
+
+  for partId, slot in pairs(partsAfter) do
+    local part = partInventory[partId]
+    part.containingSlot = slot
+  end
+
+  if tableSize(newParts) > 0 then
+    return true, newParts
+  end
   return true
 end
 
@@ -310,8 +338,10 @@ local function doesPartFitVehicle(inventoryId, part)
   local vehicleParts = getPartsOfVehicle(inventoryId)
   for _, partInVehicle in ipairs(vehicleParts) do
     if partInVehicle.description and partInVehicle.description.slotInfoUi then
-      for slotName, _ in pairs(partInVehicle.description.slotInfoUi) do
-        if part.slot == slotName then return true end
+      for slotName, slotInfo in pairs(partInVehicle.description.slotInfoUi) do
+        for _, allowType in ipairs(slotInfo.allowTypes) do
+          if part.slot == allowType then return true, allowType end
+        end
       end
     end
   end
@@ -355,8 +385,8 @@ local function generateAndGetPartsFromVehicle(inventoryId, allAvailableParts)
     part.description = availableParts[partName] or "no description found"
     part.tags = {}
 
-    -- TODO in the future we can use part.slotType here
-    part.slot = partToSlotMap[partName]
+    part.containingSlot = partToSlotMap[partName]
+    part.slot = jbeamData.slotType
     part.vehicleModel = vehObj:getJBeamFilename()
     part.location = inventoryId
 
@@ -381,7 +411,7 @@ local function movePart(to, partId)
   if vehicles[to] and vehicles[to].timeToAccess then return end
 
   if from >= 1 then
-    if coreSlots[from][part.slot] then return end
+    if coreSlots[from][part.containingSlot] then return end
   end
 
   if to >= 1 then
@@ -397,7 +427,20 @@ local function movePart(to, partId)
   -- TODO havent looked much further into if it is possible without spawning
   if to >= 1 then
     partsBefore = getPartIdsFromVehicle(to)
-    installParts({partId}, to)
+    local installSuccessful, extraData = installParts({partId}, to)
+
+    if not installSuccessful then
+      return {
+        success = false,
+        title = "Install failed!",
+        message = string.format('Couldnt install the parts, because there was no fitting part found in your inventory for the core slot: "%s"', extraData.description)
+      }
+    end
+
+    if extraData then
+      career_modules_log.addLog(string.format("Moved part %d from %d to %d", partId, from, to), "partInventory")
+      return {success = true, newPartIds = extraData}
+    end
   end
   career_modules_log.addLog(string.format("Moved part %d from %d to %d", partId, from, to), "partInventory")
 end
@@ -421,7 +464,7 @@ local function updateVehicleMaps()
   table.clear(slotToPartIdMap)
   for partId, part in pairs(partInventory) do
     slotToPartIdMap[part.location] = slotToPartIdMap[part.location] or {}
-    slotToPartIdMap[part.location][part.slot] = partId
+    slotToPartIdMap[part.location][part.containingSlot] = partId
   end
 end
 
@@ -442,6 +485,7 @@ local function addPartToInventory(part)
   partInventory[idCounter] = part
 end
 
+
 local function changedPartsCallback(partConditions, inventoryId)
   career_modules_inventory.getPartConditionsCallback(partConditions, inventoryId)
   local partsThatMoved = getPartsThatMoved(partsBefore, partsAfter)
@@ -450,17 +494,14 @@ local function changedPartsCallback(partConditions, inventoryId)
   for partId, _ in pairs(partsThatMoved.movedOut) do
     local part = partInventory[partId]
     part.location = 0
-    vehicle.changedSlots[part.slot] = true
+    vehicle.changedSlots[part.containingSlot] = true
   end
   for partId, _ in pairs(partsThatMoved.movedIn) do
     local part = partInventory[partId]
     part.location = inventoryId
-    vehicle.changedSlots[part.slot] = true
+    vehicle.changedSlots[part.containingSlot] = true
   end
   updateVehicleMaps()
-  if career_career.isAutosaveEnabled() then
-    career_saveSystem.saveCurrent()
-  end
   if partInventoryOpen then
     M.sendUIData()
   end
@@ -588,27 +629,38 @@ local function sendUIData()
   local data = {}
   local partList = {}
   local vehicles = career_modules_inventory.getVehicles()
+  local vehiclesUiData = {}
 
   data.brokenVehicleInventoryIds = {}
-  for inventoryId, _ in pairs(career_modules_inventory.getVehicles()) do
+  for inventoryId, vehicle in pairs(vehicles) do
     data.brokenVehicleInventoryIds[tostring(inventoryId)] = career_modules_insurance.inventoryVehNeedsRepair(inventoryId)
+
+    local vehicleUiData = deepcopy(vehicle)
+    vehicleUiData.thumbnail = career_modules_inventory.getVehicleThumbnail(inventoryId) .. "?" .. (vehicleUiData.dirtyDate or "")
+    vehiclesUiData[tostring(inventoryId)] = vehicleUiData
   end
 
   for partId, part in pairs(partInventory) do
     if part.slot ~= "main" then
       local newPart = deepcopy(part)
-      if newPart.location ~= 0 and coreSlots[newPart.location][newPart.slot] then
+      if newPart.location ~= 0 and coreSlots[newPart.location][newPart.containingSlot] then
         newPart.isInCoreSlot = true
       end
       newPart.id = partId
       newPart.fitsCurrentVehicle = doesPartFitVehicle(currentVehicleInventoryId, part) and true or false
       newPart.finalValue = career_modules_valueCalculator.getPartValue(newPart)
-      newPart.accessible = not (vehicles[newPart.location] and (vehicles[newPart.location].timeToAccess or data.brokenVehicleInventoryIds[newPart.location]))
+      newPart.accessible = not (vehicles[newPart.location] and
+          (vehicles[newPart.location].timeToAccess or
+          data.brokenVehicleInventoryIds[newPart.location] or
+          not career_modules_permissions.getStatusForTag("partSwapping", {inventoryId = newPart.location}).allow)
+        )
       table.insert(partList, newPart)
     end
   end
   data.partList = partList
   data.currentVehicle = currentVehicleInventoryId
+  data.vehicles = vehiclesUiData
+
   guihooks.trigger('partInventoryData', data)
 end
 
@@ -622,7 +674,7 @@ local function onVehicleSaveFinished(currentSavePath, oldSaveDate)
   for partId, part in pairs(partInventoryCopy) do
     part.description = nil
   end
-  jsonWriteFile(currentSavePath .. "/career/partInventory.json", {lpack.encode(partInventoryCopy)}, true)
+  jsonWriteFile(currentSavePath .. "/career/partInventory.json", {serialize(partInventoryCopy)}, true)
 end
 
 local function updatePartDescriptionsWithJBeamInfo()
@@ -661,9 +713,13 @@ local function onExtensionLoaded()
   if not career_career.isActive() then return false end
   local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
   if not saveSlot then return end
+
+  local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
+  local outdated = not saveInfo or saveInfo.version < moduleVersion
+
   local jsonData = savePath and jsonReadFile(savePath .. "/career/partInventory.json")
-  if jsonData then
-    partInventory = (lpack.decode(jsonData[1]))
+  if jsonData and not outdated then
+    partInventory = deserialize(jsonData[1])
   else
     partInventory = {}
   end
@@ -701,7 +757,7 @@ end
 
 local function getPart(inventoryId, slot)
   for partId, part in pairs(partInventory) do
-    if part.location == inventoryId and part.slot == slot then
+    if part.location == inventoryId and part.containingSlot == slot then
       return part
     end
   end
@@ -724,12 +780,34 @@ local function openMenu(_originComputerId)
   end
 end
 
-local function closeMenu()
+local function closeMenuActual()
   if originComputerId then
     local computer = freeroam_facilities.getFacility("computer", originComputerId)
     career_modules_computer.openMenu(computer)
   else
     career_career.closeAllMenus()
+  end
+end
+
+local function closeMenu()
+  local dirtyVehicles = career_modules_inventory.getDirtiedVehicles()
+  if career_career.isAutosaveEnabled() and dirtyVehicles and next(dirtyVehicles) then
+    local dirtyVehiclesList = {}
+    for invId, _ in pairs(dirtyVehicles) do
+      table.insert(dirtyVehiclesList, invId)
+    end
+    closeMenuAfterSaving = true
+    career_saveSystem.saveCurrent(dirtyVehiclesList)
+    return
+  end
+
+  closeMenuActual()
+end
+
+local function onSaveFinished()
+  if closeMenuAfterSaving then
+    closeMenuActual()
+    closeMenuAfterSaving = nil
   end
 end
 
@@ -750,10 +828,14 @@ local function onComputerAddFunctions(menuData, computerFunctions)
 
   local computerFunctionData = {
     id = "partInventory",
-    label = "Parts Inventory",
+    label = "My Parts",
     callback = function() openMenu(menuData.computerFacility.id) end,
-    disabled = menuData.tutorialPartShoppingActive or menuData.tutorialTuningActive
+    order = 5
   }
+  if menuData.tutorialPartShoppingActive or menuData.tutorialTuningActive then
+    computerFunctionData.disabled = true
+    computerFunctionData.reason = career_modules_computer.reasons.tutorialActive
+  end
   computerFunctions.general[computerFunctionData.id] = computerFunctionData
 end
 
@@ -776,6 +858,7 @@ M.sellPart = sellPart
 M.onExtensionLoaded = onExtensionLoaded
 M.onUpdate = onUpdate
 M.onVehicleSaveFinished = onVehicleSaveFinished
+M.onSaveFinished = onSaveFinished
 M.onEnterVehicleFinished = onEnterVehicleFinished
 M.onVehicleAdded = onVehicleAdded
 M.onVehicleRemoved = onVehicleRemoved

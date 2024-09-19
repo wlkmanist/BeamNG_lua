@@ -714,9 +714,7 @@ local function notifyGE(reason)
     imgui.readGlobalActions()
   end
 end
-
-local function getFFBConfig(veh)
-  local action = "steering"
+local function getFFBConfigForAction(veh, action)
   local FFBID = veh:getFFBID(action) -- will automatically return -1 if no player is seated there with an ffb input controller
   if FFBID < 0 then
     return nil
@@ -737,9 +735,34 @@ local function getFFBConfig(veh)
     return nil
   end
   ffbConfig.ffbParams = ffbParams
+  return ffbConfig, FFBID
+end
+
+local function getFFBConfig(veh)
+  local ffbConfig, FFBID
   local result = {}
-  result[action] = ffbConfig
-  result[action]["FFBID"] = FFBID
+  local action = "steering"
+
+  ffbConfig, FFBID = getFFBConfigForAction(veh, action)
+  if ffbConfig then
+    result[action] = ffbConfig
+    result[action]["FFBID"] = FFBID
+  end
+--trigger ffb start
+  action = "accelerate"
+  ffbConfig, FFBID = getFFBConfigForAction(veh, "accelerate")
+  if ffbConfig then
+    result[action] = ffbConfig
+    result[action]["FFBID"] = FFBID
+  end
+
+  action = "brake"
+  ffbConfig, FFBID = getFFBConfigForAction(veh, action)
+  if ffbConfig then
+    result[action] = ffbConfig
+    result[action]["FFBID"] = FFBID
+  end
+--trigger ffb end
   return result
 end
 

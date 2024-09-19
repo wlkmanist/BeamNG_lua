@@ -265,6 +265,7 @@ local function setGlobalCameraByName(name, withTransition, customData)
   local c = getGlobalCameras()[activeGlobalCameraName]
   if c and c.setCustomData then c:setCustomData(customData or {}) end
   if c and type(c.onCameraChanged) == 'function' then c:onCameraChanged(true) end
+  extensions.hook("onGlobalCameraSet", name)
 end
 
 local function getConfigByName(camName)

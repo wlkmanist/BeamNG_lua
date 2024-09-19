@@ -1407,12 +1407,21 @@ local function materialInfo()
     im.NextColumn()
 
     -- Version
+    local version = tonumber(currentMaterial:getField('version', 0))
     im.TextUnformatted("Version")
+    if version > 1 then
+      im.ShowHelpMarker("Choose if to use the old material system, or the newer one based on Physically Based Rendering.\n" ..
+      "In v1.5, BaseColor must be in sRGB colorspace, while other textures must be in linear colorspace.\n" ..
+      "We recommend to use v1.5 along with the Texture Cooker feature.\nMore info in the Official Documentation (F1)", true)
+    elseif version < 1.5 then
+      im.ShowHelpMarker("Choose if to use the old material system, or the newer one based on Physically Based Rendering.\n" ..
+      "In v1 all textures are expected to be in sRGB colorspace", true)
+    end
+
     im.NextColumn()
     im.TextUnformatted(currentMaterial:getField('version', 0))
     im.SameLine()
 
-    local version = tonumber(currentMaterial:getField('version', 0))
     if version and version < 1.5 then
       im.PushStyleColor2(im.Col_Button, im.ImVec4(0, .5, 0, 0.5))
       im.PushStyleColor2(im.Col_ButtonHovered, im.ImVec4(0, .7, 0, 0.6))
@@ -1421,6 +1430,7 @@ local function materialInfo()
         -- Disabled deprecated 'glow' feature when switching to new materials
         setProperty(nil, 'glow', 0, '0')
         currentMaterial:setField('version', 0, '1.5')
+
       end
       im.PopStyleColor(3)
     end
@@ -1436,14 +1446,14 @@ local function materialInfo()
 
     -- Active Layers
     if version and version > 1 then
-      im.TextUnformatted("active layers")
+      im.TextUnformatted("Active Layers")
       im.NextColumn()
       im.TextUnformatted(tostring(currentMaterial.activeLayers) .. ' of ' .. tostring(maxLayers))
       im.SameLine()
 
       local disabled = currentMaterial.activeLayers >= maxLayers
       if disabled then im.BeginDisabled() end
-      if editor.uiIconImageButton(editor.icons.add, im.ImVec2(v.inputWidgetHeight, v.inputWidgetHeight)) then
+      if im.Button("+") then
         if currentMaterial.activeLayers < maxLayers then
           setPropertyWithUndo('activeLayers', 0, currentMaterial.activeLayers + 1)
         end
@@ -1453,7 +1463,7 @@ local function materialInfo()
       im.SameLine()
       disabled = currentMaterial.activeLayers <= 1
       if disabled then im.BeginDisabled() end
-      if editor.uiIconImageButton(editor.icons.remove, im.ImVec2(v.inputWidgetHeight, v.inputWidgetHeight)) then
+      if im.Button("-") then
         if currentMaterial.activeLayers > 1 then
           setPropertyWithUndo('activeLayers', 0, currentMaterial.activeLayers - 1)
         end
@@ -2038,7 +2048,7 @@ local function menu()
   im.tooltip("Reload textures of current material")
 
   if currentMaterial and currentMaterial:getFilename() then
-    im.SameLine(nil, 3 * v.style.ItemSpacing.x)
+    im.SameLine(nil, v.style.ItemSpacing.x)
     local _,_,extension = path.split(currentMaterial:getFilename())
     local residesInJson = (extension == "json")
     if not residesInJson then im.BeginDisabled() end
@@ -2265,7 +2275,7 @@ local function onEditorGui()
 
   if editor.beginWindow(toolWindowName, "Material Editor") then
     v.style = im.GetStyle()
-    v.inputWidgetHeight = 20 + v.style.FramePadding.y
+    v.inputWidgetHeight = 16 + v.style.FramePadding.y
     menu()
 
     if openPickMapToFromObjectPopup == true then

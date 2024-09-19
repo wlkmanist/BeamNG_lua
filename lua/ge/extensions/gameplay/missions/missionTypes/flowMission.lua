@@ -170,6 +170,7 @@ function C:setBackwardsCompatibility(keyAliases)
     self.setupModules.vehicles.prioritizePlayerVehicle = prioritizePlayerVehicle
     self.setupModules.vehicles.vehicles = {}
     self.setupModules.vehicles._compatibility = true
+    self.additionalAttributes.vehicle = nil
 
     if playerModel then
       table.insert(self.setupModules.vehicles.vehicles, {
@@ -179,6 +180,19 @@ function C:setBackwardsCompatibility(keyAliases)
         paintName = paintName,
         useCustomConfig = useCustomConfig
       })
+    end
+  end
+
+  if not self.additionalAttributes.vehicle then -- auto generates this attribute
+    if not self.setupModules.vehicles.enabled then -- this assumes that the mission type will use the player vehicle
+      self.additionalAttributes.vehicle = "own"
+    else
+      local vehicleExists = self.setupModules.vehicles.vehicles[1]
+      if self.setupModules.vehicles.includePlayerVehicle then
+        self.additionalAttributes.vehicle = vehicleExists and "choice" or "own"
+      else
+        self.additionalAttributes.vehicle = vehicleExists and "provided" or "own"
+      end
     end
   end
 end

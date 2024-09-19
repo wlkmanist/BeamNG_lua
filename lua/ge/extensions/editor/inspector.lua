@@ -25,7 +25,7 @@ local headerMenus = {
     pos = nil
   }
 }
-local groundCoverUVWindowName = "inspectorGroundCoverUVEditor"
+local groundCoverUVWindowName = "Ground Cover UV Editor"
 local groundCoverUVTypeIndex = nil
 local groundCoverUVInitialValue = ""
 local groundCoverUVHandleColorIndex = 1
@@ -641,15 +641,12 @@ local function objectInspectorGui(inspectorInfo)
           imgui.Text("    ")
           imgui.SameLine()
           imgui.TextUnformatted("ID:") imgui.SameLine() imgui.TextColored(textColor, tostring(obj:getId()))
-          imgui.tooltip("PID: " .. tostring(obj:getOrCreatePersistentID()))
           imgui.SameLine()
           if imgui.Button("Copy ID") then
             setClipboard(tostring(obj:getId()))
           end
           imgui.SameLine()
-          if imgui.Button("Copy PID") then
-            setClipboard(tostring(obj:getOrCreatePersistentID()))
-          end
+
           local grp = obj:getGroup()
           if grp then
             imgui.TextUnformatted("Parent:") imgui.SameLine() imgui.TextColored(textColor, tostring(grp:getName()))
@@ -1049,7 +1046,7 @@ end
 local function groundCoverUVWindow(customData, retTbl)
   local typeIndex = customData.arrayIndex
   if typeIndex ~= groundCoverUVTypeIndex then return end
-  if editor.beginWindow(groundCoverUVWindowName, "GroundCover UV Editor") then
+  if imgui.BeginPopupModal(groundCoverUVWindowName, nil) then
     local availableSize = imgui.GetContentRegionAvail()
     if typeIndex == groundCoverUVTypeIndex then
       local fontSize = math.ceil(imgui.GetFontSize())
@@ -1258,16 +1255,16 @@ local function groundCoverUVWindow(customData, retTbl)
           retTbl.valueChanged = true
           retTbl.fieldVal = fieldVal
         end
-        editor.hideWindow(groundCoverUVWindowName)
+        imgui.CloseCurrentPopup()
       end
 
       imgui.SameLine()
       if imgui.Button("Cancel") then
-        editor.hideWindow(groundCoverUVWindowName)
+        imgui.CloseCurrentPopup()
       end
     end
+    imgui.EndPopup()
   end
-  editor.endWindow()
 end
 
 local function onEditorGui()
@@ -1518,7 +1515,8 @@ local function customGroundCoverBillBoardUVsFieldEditor(objectIds, fieldValue, f
       groundCoverVVal[0] = tonumber(vec[2])
       groundCoverWVal[0] = tonumber(vec[3])
       groundCoverHVal[0] = tonumber(vec[4])
-      editor.showWindow(groundCoverUVWindowName)
+      imgui.SetWindowSize2(groundCoverUVWindowName, imgui.ImVec2(800, 600))
+      imgui.OpenPopup(groundCoverUVWindowName)
     else
       uvButtonBGColor = imgui.GetStyleColorVec4(imgui.Col_ButtonHovered)
     end
@@ -1562,14 +1560,12 @@ local function onEditorInitialized()
   editor.registerCustomFieldInspectorEditor("BeamNGVehicle", "metallicPaintData", customVehicleMetallicFieldEditor, true)
   editor.registerCustomFieldInspectorEditor("GroundCover", "billboardUVs", customGroundCoverBillBoardUVsFieldEditor, true)
 
-  editor.registerWindow(groundCoverUVWindowName, imgui.ImVec2(800, 600))
-  editor.hideWindow(groundCoverUVWindowName)
 end
 
 local function onEditorObjectSelectionChanged()
   if editor.pickingLinkTo and #editor.selection.object then
-    local pid = Sim.findObjectById(editor.selection.object[1]):getOrCreatePersistentID()
-    editor.pickingLinkTo.child:setField("linkToParent", 0, pid)
+    -- local pid = Sim.findObjectById(editor.selection.object[1]):getOrCreatePersistentID() -- Note: 11/06/2024 - Only TerrainMaterial and DecalRoad still have persistent id. Persistent Id will soon be no more.
+    -- editor.pickingLinkTo.child:setField("linkToParent", 0, pid)
     editor.selection.object = deepcopy(editor.pickingLinkTo.selectionObjectIds)
     editor.pickingLinkTo = nil
     return

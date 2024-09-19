@@ -7,7 +7,7 @@ local ime = ui_flowgraph_editor
 
 local C = {}
 
-C.name = 'RacelineParking'
+C.name = 'Raceline Parking'
 C.description = 'Manages raceline parking.'
 C.category = 'repeat_instant'
 

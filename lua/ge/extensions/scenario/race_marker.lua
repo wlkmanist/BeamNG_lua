@@ -10,9 +10,16 @@ local createMarker = require("scenario/raceMarkers/sideColumnMarker")
 local markers_index = 0
 local function getNewMarkerId() markers_index = markers_index+1 return markers_index end
 local markerListName = 'markers'
-local function hide(b)
+
+local function hide()
   for _, m in pairs(idToMarker) do
     m:hide()
+  end
+end
+
+local function show()
+  for _, m in pairs(idToMarker) do
+    m:show()
   end
 end
 
@@ -92,13 +99,11 @@ M.onClientEndMission = onClientEndMission
 M.init = init
 M.render = render
 M.hide = hide
-M.setPosition = setPosition
-M.setNextPosition = setNextPosition
-M.setFinalMarkerPosition = setFinalMarkerPosition
+M.show = show
 M.setToCheckpoints = setToCheckpoints
-M.removeFinalMarker = removeFinalMarker
 M.createRaceMarker = createRaceMarker
 M.setupMarkers = setupMarkers
 M.setModes = setModes
 M.idToMarker = idToMarker
+
 return M

@@ -40,7 +40,8 @@ local string_sub = string.sub
 local table_concat = table.concat
 
 local _M = {
-  max_tb_output_len = 70    -- controls the maximum length of the 'stringified' table before cutting with ' (more...)'
+  max_tb_output_len = 70,    -- controls the maximum length of the 'stringified' table before cutting with ' (more...)'
+  max_string_output_len = 700, -- controls how long the strings can be. -1 to deactivate
 }
 
 -- this tables should be weak so the elements in them won't become uncollectable
@@ -261,15 +262,21 @@ function Dumper:DumpLocals (level)
   if not name then
     return
   end
-  self:add("  Local variables:\n")
   while name do
     if type(value) == "number" then
       self:add_f("%s%s = number: %g\n", prefix, name, value)
     elseif type(value) == "boolean" then
       self:add_f("%s%s = boolean: %s\n", prefix, name, tostring(value))
     elseif type(value) == "string" then
-      self:add_f("%s%s = string: %q\n", prefix, name, value)
+      local stringlen = #value
+      if _M.max_string_output_len > 0 and stringlen > _M.max_string_output_len then
+        self:add_f("%s%s = string[%d/%d]: %q (more...)\n", prefix, name, _M.max_string_output_len, stringlen, string.sub(tostring(value), 1, _M.max_string_output_len))
+      else
+        self:add_f("%s%s = string[%d]: %q\n", prefix, name, stringlen, value)
+      end
     elseif type(value) == "userdata" then
+      self:add_f("%s%s = %s\n", prefix, name, safe_tostring(value))
+    elseif type(value) == "cdata" then
       self:add_f("%s%s = %s\n", prefix, name, safe_tostring(value))
     elseif type(value) == "nil" then
       self:add_f("%s%s = nil\n", prefix, name)
@@ -306,6 +313,8 @@ function Dumper:DumpLocals (level)
       end
     elseif type(value) == "thread" then
       self:add_f("%sthread %q = %s\n", prefix, name, tostring(value))
+    else
+      self:add_f("%s%s = %s: (unrecognized type)\n", prefix, name, type(value))
     end
     i = i + 1
     name, value = self.getlocal(level, i)

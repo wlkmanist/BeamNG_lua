@@ -223,14 +223,14 @@ function C:drawGeneralInfo()
 
   im.Separator()
   im.Text("Pathnode Tools")
-  if im.Button("Drop all pathnodes to terrain height") then
+  if im.Button("Drop All Pathnodes to Terrain Height") then
     local newDataMap = {}
     for _, node in pairs(self.path.pathnodes.objects) do
       newDataMap[node.id] = core_terrain.getTerrainHeight(node.pos)
     end
     self:changeFieldMulti('pos', newDataMap)
   end
-  if im.Button("Align all pathnode normals to terrain height") then
+  if im.Button("Align All Pathnode Normals to Terrain Height") then
     local newDataMap = {}
     for _, node in pairs(self.path.pathnodes.objects) do
       if node.hasNormal then
@@ -246,28 +246,30 @@ function C:drawGeneralInfo()
     if nodeSize[0] < 0.1 then nodeSize[0] = 0.1 end
   end
   im.SameLine()
-  if im.Button("Set all pathnode sizes") then
+  if im.Button("Set All Pathnode Sizes") then
     local newDataMap = {}
     for _, node in pairs(self.path.pathnodes.objects) do
       newDataMap[node.id] = nodeSize[0]
     end
     self:changeFieldMulti('radius', newDataMap)
   end
-  if im.Button("Remove all BeamNGWaypoints with same name as Pathnodes") then
+  im.Dummy(im.ImVec2(0, 5))
+
+  if im.Button("Remove Redundant BeamNGWaypoints") then
     for _, node in pairs(self.path.pathnodes.objects) do
       if scenetree.findObject(node.name) then
         scenetree.findObject(node.name):delete()
       end
     end
   end
-  if im.Button("Align All pathnodes to grid") then
+  if im.Button("Align All Pathnodes to Grid") then
     for _, node in pairs(self.path.pathnodes.objects) do
       node.pos.x = round(node.pos.x)
       node.pos.y = round(node.pos.y)
       node.pos.z = round(node.pos.z)
     end
   end
-  if im.Button("Remove all Segments") then
+  if im.Button("Remove All Segments") then
     self.path.segments:clear()
   end
 
@@ -275,7 +277,9 @@ function C:drawGeneralInfo()
   im.Text("Debug Tools")
   if im.Button("Open Test Race Window") then
     self.raceEditor.setupRace()
-  end im.SameLine() im.tooltip("Opens as separate windows to test the current track.\nThe test track will only have debug visualizations.\nYou can return to this editor by closing the test window.")
+  end
+  im.tooltip("Opens as separate windows to test the current track.\nThe test track will only have debug visualizations.\nYou can return to this editor by closing the test window.")
+  im.SameLine()
   if im.Button("Dump Path [Debug]") then
     dumpz(self.path,2)
   end

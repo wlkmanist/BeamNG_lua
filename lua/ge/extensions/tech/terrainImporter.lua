@@ -67,8 +67,35 @@ local function importHeightmap(data, w, h, scale, zMin, zMax, isYFlipped)
   tg:createTerrain()
 end
 
+-- Imports a terrain and lays a collection of roads on it along with some terraforming.
+-- The path of the terrain .png is provided. Roads are provided as a table/dictionary.
+local function terrainAndRoadImport(pngPath, roads, DOI, margin, zMax)
+  extensions.editor_terrainAndRoadImporter.importTerrain(pngPath, zMax)
+  jsonWriteFile('temp/terrainRoadImport.json', roads, true)
+  extensions.editor_terrainAndRoadImporter.importRoads('temp/terrainRoadImport.json', DOI, margin)
+end
+
+-- Creates a a terrain from a collection of peaks and troughs on a grid, and lays a collection of roads on them, along with some terraforming.
+-- The peaks and roads are provided as table/dictionaries.
+local function peaksAndRoadImport(peaks, roads, DOI, margin)
+  jsonWriteFile('temp/terrainRoadImportPeaks.json', peaks, true)
+  extensions.editor_terrainAndRoadImporter.conformTerrainToPeaks('temp/terrainRoadImportPeaks.json')
+  jsonWriteFile('temp/terrainRoadImport.json', roads, true)
+  extensions.editor_terrainAndRoadImporter.importRoads('temp/terrainRoadImport.json', DOI, margin)
+end
+
+-- Resets the terrain and roads created by a call to the terrain+roads or peaks+roads importer functions (see above).
+local function reset() extensions.editor_terrainAndRoadImporter.reset() end
+
+-- Opens/closes the world editor.
+local function toggleWorldEditor(isOpen) editor.setEditorActive(isOpen) end
+
 
 -- Public interface.
 M.importHeightmap =                                         importHeightmap
+M.terrainAndRoadImport =                                    terrainAndRoadImport
+M.peaksAndRoadImport =                                      peaksAndRoadImport
+M.reset =                                                   reset
+M.toggleWorldEditor =                                       toggleWorldEditor
 
 return M

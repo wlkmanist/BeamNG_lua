@@ -259,7 +259,7 @@ local function getRandomParkingSpots(originPos, minDist, maxDist, minCount, filt
   maxDist = maxDist or 10000
   local radius = max(minDist, 100)
   local psList, psCount
-  if not minCount then
+  if not minCount or minCount <= 0 then
     minCount = math.huge
     radius = maxDist
   end
@@ -507,10 +507,6 @@ local function processVehicles(vehIds, ignoreScatter) -- activates a group of ve
         vehPool.name = "parkedCars"
       end
 
-      parkedVehData[id] = {
-        radiusCoef = 1 -- coefficient for keeping the vehicle at its current spot
-      }
-
       obj.uiState = 0
       obj.playerUsable = false
       obj:setDynDataFieldbyName("ignoreTraffic", 0, "true")
@@ -519,6 +515,16 @@ local function processVehicles(vehIds, ignoreScatter) -- activates a group of ve
 
       table.insert(parkedVehIds, id)
       vehPool:insertVeh(id)
+
+      local psId = getCurrentParkingSpot(id)
+      if psId then
+        sites.parkingSpots.objects[psId].vehicle = id -- saves the vehicle id to this spot
+      end
+
+      parkedVehData[id] = {
+        radiusCoef = 1, -- coefficient for keeping the vehicle at its current spot
+        parkingSpotId = psId -- current parking spot id
+      }
     end
   end
 
@@ -675,12 +681,11 @@ local function onVehicleActiveChanged(vehId, active)
   end
 end
 
+local camPos, vehPos = vec3(), vec3()
 local function onUpdate(dt, dtSim)
   if not active or not sites or not be:getEnabled() or freeroam_bigMapMode.bigMapActive() then return end
 
-  local camPos = core_camera.getPosition()
-  local camDirVec = core_camera.getForward()
-  local playerPos = map.objects[be:getPlayerVehicleID(0)] and map.objects[be:getPlayerVehicleID(0)].pos or camPos
+  camPos:set(core_camera.getPositionXYZ())
 
   if not worldLoaded and parkedVehIds[1] and camPos.z ~= 0 then
     --scatterParkedCars()
@@ -744,6 +749,8 @@ local function onUpdate(dt, dtSim)
   -- only search for parking spots whenever needed
   if vars.baseProbability > 0 and focusPos:squaredDistance(camPos) >= square(stepDist) then
     -- consider using a smoother for the look direction, similar to the traffic system
+    local camDirVec = core_camera.getForward()
+    local playerPos = map.objects[be:getPlayerVehicleID(0)] and map.objects[be:getPlayerVehicleID(0)].pos or camPos
     local aheadPos = camPos + camDirVec:z0():normalized() * (lookDist + stepDist) + camDirVec:cross(vec3(0, 0, 1)):z0():normalized() * random(-50, 50)
     currParkingSpots = findParkingSpots(aheadPos, 0, areaRadius)
     currParkingSpots = filterParkingSpots(currParkingSpots)
@@ -756,19 +763,20 @@ local function onUpdate(dt, dtSim)
   end
 
   -- cycle through array of parked vehicles one at a time, to save on performance
-  local currId = parkedVehIds[queuedIndex]
+  local currId = parkedVehIds[queuedIndex] or 0
   local currVeh = parkedVehData[currId]
-  local obj = be:getObjectByID(currId or 0)
-  if obj and obj:getActive() then
-    local pos = obj:getPosition()
+  if be:getObjectActive(currId) then
+    vehPos:set(be:getObjectPositionXYZ(currId))
     local dtCoef = max(0.4, parkedVehCount * 0.1)
-    currVeh.radiusCoef = lerp(currVeh.radiusCoef, clamp(80 / pos:distance(camPos + camDirVec * 15), 1, 6), dtSim * dtCoef) -- stronger value while player or camera is near target
+    currVeh.radiusCoef = lerp(currVeh.radiusCoef, clamp(80 / vehPos:distance(camPos), 1, 6), dtSim * dtCoef) -- stronger value while player or camera is near target
 
     if not currVeh.searchFlag and currParkingSpots[1] then
       if vars.baseProbability == 1 or vars.baseProbability >= random() then
-        local dirValue = max(0, camDirVec:dot((pos - camPos):normalized()) * areaRadius) -- higher value while looking at target vehicle
-        if pos:squaredDistance(camPos) > square(areaRadius * currVeh.radiusCoef * 0.5 + dirValue) and pos:squaredDistance(playerPos) > square(areaRadius * 0.5) then
-          processNextSpawn(currId) -- respawn the next available vehicle
+        local dirValue = max(0, core_camera.getForward():dot((vehPos - camPos):normalized()) * areaRadius) -- higher value while looking at target vehicle
+        if vehPos:squaredDistance(camPos) > square(areaRadius * currVeh.radiusCoef * 0.5 + dirValue) then
+          if map.objects[be:getPlayerVehicleID(0)] and vehPos:squaredDistance(map.objects[be:getPlayerVehicleID(0)].pos) > square(areaRadius * 0.5) then
+            processNextSpawn(currId) -- respawn the next available vehicle
+          end
         end
       end
 

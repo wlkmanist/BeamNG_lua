@@ -585,6 +585,7 @@ local function setVehicleObject(veh, options)
   setSafePosition(veh, nil, nil, nil, true)
 end
 
+-- TODO this breaks if you teleport multiple vehicles on the same spot on the same frame without resetting, because the OOBB is not up to date
 local function safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, removeTraffic_, centeredPosition, resetVehicle)
   --candidates = {}
   --TODO Make a simplified version for traffic
@@ -605,7 +606,7 @@ local function safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, 
   setSafePosition(veh, pos, rot, centeredPosition, resetVehicle)
 end
 
-local function teleportToLastRoadCallback(data, resetVeh)
+local function teleportToLastRoadCallback(data, options)
   local mapData = map.getMap()
   local legalSide = map.getRoadRules().rightHandDrive and -1 or 1
   local veh = getPlayerVehicle(0)
@@ -625,11 +626,26 @@ local function teleportToLastRoadCallback(data, resetVeh)
         local n1 = mapData.nodes[n1Id]
         local n2 = mapData.nodes[n2Id]
         if dist <= (n1.radius+n2.radius)/2 then
+          -- Found a recovery point on a road
+
           local oneWay = mapData.nodes[n1Id].links[n2Id].oneWay
           local roadDir = (n2.pos - n1.pos)
 
+          if options.destinationPos then
+            -- if there is a destinationPos then always put the vehicle in that direction irregardless of other rules
+
+            local routePlanner = require('gameplay/route/route')()
+            routePlanner:setupPath(n1.pos, options.destinationPos)
+
+            if routePlanner.path and routePlanner.path[2] then
+              if roadDir:dot(routePlanner.path[2].pos - n1.pos) < 0 then
+                roadDir = -roadDir
+              end
+            end
+            oneWay = true
+
           -- if the road is oneWay, flip the roadDir if it is incorrect
-          if oneWay and (mapData.nodes[n1Id].links[n2Id].inNode ~= n1Id) then
+          elseif oneWay and (mapData.nodes[n1Id].links[n2Id].inNode ~= n1Id) then
             roadDir = -roadDir
           end
 
@@ -685,13 +701,14 @@ local function teleportToLastRoadCallback(data, resetVeh)
     rot = quatFromDir(veh:getDirectionVector(), veh:getDirectionVectorUp())
   end
 
-  safeTeleport(veh, pos, rot, nil, nil, nil, nil, resetVeh)
+  safeTeleport(veh, pos, rot, nil, nil, nil, nil, options.resetVehicle)
 end
 
-local function teleportToLastRoad(veh, resetVeh)
+local function teleportToLastRoad(veh, options)
   veh = veh or getPlayerVehicle(0)
   if not veh then return end
-  queueCallbackInVehicle(veh, "spawn.teleportToLastRoadCallback", "recovery.recoveryPoints", resetVeh)
+  if not options then options = {} end
+  queueCallbackInVehicle(veh, "spawn.teleportToLastRoadCallback", "recovery.recoveryPoints", options)
 end
 
 local function spawnVehicle(model, partConfig, pos, rot, options)

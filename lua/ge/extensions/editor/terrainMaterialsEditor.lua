@@ -591,6 +591,9 @@ end
 
 local function materialPropertiesGuiBase()
   im.TextUnformatted("Material Properties")
+    im.ShowHelpMarker("When using the Upgraded Material System, all textures must be of the same size specified in the TextureSet properties. \n" ..
+    "Base Texture must be in sRGB colorspace. Other textures must be in linear colorspace.\n" ..
+    "We recommend using this along with the Texture Cooker feature\nMore info in the Official Documentation (F1)", true)
   im.Separator()
 end
 
@@ -942,7 +945,7 @@ local function onEditorGui()
           end
         im.EndTable()
         end
-        
+
         im.Dummy(im.ImVec2(0, 10))
       end
 

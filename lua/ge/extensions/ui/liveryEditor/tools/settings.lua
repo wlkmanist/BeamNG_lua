@@ -3,6 +3,8 @@ local M = {}
 local api = extensions.editor_api_dynamicDecals
 local uiTools = extensions.ui_liveryEditor_tools
 local uiLayers = extensions.ui_liveryEditor_layers
+local uiCursorApi = extensions.ui_liveryEditor_layers_cursor
+local uiDecals = extensions.ui_liveryEditor_layers_decals
 
 M.setVisibility = function(show)
   uiTools.doOperation(function(layer, show)
@@ -13,8 +15,15 @@ end
 
 M.toggleVisibility = function()
   uiTools.doOperation(function(layer)
+    local apiEnabled = api.getEnabled()
+    if not apiEnabled then
+      api.setEnabled(true)
+    end
     layer.enabled = not layer.enabled
     api.setLayer(layer, true)
+    if apiEnabled ~= api.getEnabled() then
+      api.setEnabled(apiEnabled)
+    end
   end)
 end
 
@@ -47,16 +56,41 @@ end
 M.deleteLayer = function()
   uiTools.doOperation(function(layer)
     local uiLayer = uiLayers.getLayerByUid(layer.uid)
-    dump("deleteLayer", uiLayer)
     api.removeLayer(uiLayer.order, uiLayer.parentUid)
   end)
 end
 
 M.setMirrored = function(mirror, flip)
   uiTools.doOperation(function(layer)
-    layer.mirrored = mirror
-    layer.flipMirroredDecal = flip or false
-    api.setLayer(layer, true)
+    if not layer then
+      uiCursorApi.setMirrored(mirror, flip)
+    elseif layer.type == api.layerTypes.decal then
+      uiDecals.setMirrored(layer, mirror, flip)
+    end
+  end)
+end
+
+M.setMirrorOffset = function(offset)
+  uiTools.doOperation(function(layer)
+    if not layer then
+      uiCursorApi.setMirrorOffset(offset)
+    end
+  end)
+end
+
+M.setUseMousePos = function(value)
+  if api.isUseMousePos() ~= value then
+    api.toggleSetting(api.settingsFlags.UseMousePos.value)
+    guihooks.trigger("liveryEditor_OnSettingsChanged_UseMousePos", value)
+    extensions.hook("liveryEditor_OnUseMousePosChanged", value)
+  end
+end
+
+M.setProjectSurfaceNormal = function(value)
+  uiTools.doOperation(function(layer)
+    if not layer then
+      uiCursorApi.setProjectSurfaceNormal(value)
+    end
   end)
 end
 

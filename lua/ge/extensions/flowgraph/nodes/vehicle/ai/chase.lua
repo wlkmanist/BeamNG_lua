@@ -9,30 +9,28 @@ local C = {}
 C.name = 'AI Chase'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
-C.description = 'Chases another vehicle or object until another command is given.'
+C.description = 'Sets a vehicle to chase another vehicle, with intentional contact enabled.'
 C.category = 'once_p_duration'
 
 C.pinSchema = {
-  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Defines the id of the vehicle to activate chase AI on.' },
-  { dir = 'in', type = 'number', name = 'targetId', description = 'Defines the id of the vehicle to be chased.' },
+  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Vehicle id to apply AI mode: Chase.' },
+  { dir = 'in', type = 'number', name = 'targetId', description = 'Vehicle id of the target vehicle that will be chased.' }
 }
 
 C.tags = {}
 
 function C:workOnce()
-  if self.pinIn.targetId.value and self.pinIn.targetId.value ~= 0 then
-    self:__setNodeError("work",nil)
-    local source
-    if self.pinIn.aiVehId.value and self.pinIn.aiVehId.value ~= 0 then
-      source = scenetree.findObjectById(self.pinIn.aiVehId.value)
-    else
-      source = getPlayerVehicle(0)
-    end
-    source:queueLuaCommand('ai.setMode("chase")')
-    source:queueLuaCommand('ai.setTargetObjectID('..self.pinIn.targetId.value..')')
+  local veh
+  if self.pinIn.aiVehId.value then
+    veh = be:getObjectByID(self.pinIn.aiVehId.value)
   else
-    self:__setNodeError("work","No target id given!")
+    veh = getPlayerVehicle(0)
   end
+  if not veh then return end
+  
+  local targetId = self.pinIn.targetId.value or be:getPlayerVehicleID(0)
+  veh:queueLuaCommand('ai.setMode("chase")')
+  veh:queueLuaCommand('ai.setTargetObjectID('..targetId..')')
 end
 
 return _flowgraph_createNode(C)

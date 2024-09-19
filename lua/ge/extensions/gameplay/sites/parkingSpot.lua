@@ -377,7 +377,7 @@ function C:hasAnyVehicles(playerId)
 end
 
 local backwardsQuat = quat(0, 0, 1, 0)
-function C:moveResetVehicleTo(vehId, lowPrecision, backwards, addedOffsetPos, addedOffsetRot, useSafeTeleport, removeTraffic)
+function C:moveResetVehicleTo(vehId, lowPrecision, backwards, addedOffsetPos, addedOffsetRot, useSafeTeleport, removeTraffic, resetVehicleInSafeTeleport)
   local veh = be:getObjectByID(vehId)
   if not veh then return end
 
@@ -389,36 +389,38 @@ function C:moveResetVehicleTo(vehId, lowPrecision, backwards, addedOffsetPos, ad
     selfRot = selfRot * backwardsQuat
   end
 
-  local vehRot = quatFromEuler(0, 0, math.pi) * addedOffsetRot * selfRot
+  -- the following code applies a positional and rotational offset to the spawn transform, and ensures that the vehicle corners are still contained in the spot
+  local vehRot = addedOffsetRot * selfRot
+
+  local oobb = veh:getSpawnWorldOOBB()
+  local fl  = oobb:getPoint(0)
+  local fr  = oobb:getPoint(3)
+  local bl  = oobb:getPoint(4)
+  local flU = oobb:getPoint(1)
+
+  local xVeh = (fr -fl) xVeh:normalize()
+  local yVeh = (fl -bl) yVeh:normalize()
+  local zVeh = (flU-fl) zVeh:normalize()
+
+  local pos = veh:getPosition()
+  local posOffset = (pos - fl)
+  local localOffset = vec3(xVeh:dot(posOffset), yVeh:dot(posOffset), zVeh:dot(posOffset))
+
+  local xLine, yLine, zLine = selfRot * xVector, selfRot * yVector, selfRot * zVector
+  local newFLPos = self.pos - xLine * fl:distance(fr) * 0.5 + yLine * fl:distance(bl) * 0.5
+  local newAddedOffset = xLine * addedOffsetPos.x + yLine * addedOffsetPos.y
+
+  local newOffset = xLine * localOffset.x + yLine * localOffset.y + zLine * localOffset.z
+  local newPos = newFLPos + newOffset + newAddedOffset
+
+  if lowPrecision then -- this must be used if the vehicle is loaded in the first frame, because the OOBB does not work correctly then
+    newPos = self.pos + yLine * 2 + zLine * 0.5 -- spawn the vehicle 2m behind and 0.5m above self
+  end
 
   if useSafeTeleport then
-    spawn.safeTeleport(veh, self.pos, vehRot, nil, nil, removeTraffic, true)
+    spawn.safeTeleport(veh, self.pos, vehRot, nil, nil, removeTraffic, true, resetVehicleInSafeTeleport)
   else
-    local oobb = veh:getSpawnWorldOOBB()
-    local fl  = oobb:getPoint(0)
-    local fr  = oobb:getPoint(3)
-    local bl  = oobb:getPoint(4)
-    local flU = oobb:getPoint(1)
-
-    local xVeh = (fr -fl) xVeh:normalize()
-    local yVeh = (fl -bl) yVeh:normalize()
-    local zVeh = (flU-fl) zVeh:normalize()
-
-    local pos = veh:getPosition()
-    local posOffset = (pos - fl)
-    local localOffset = vec3(xVeh:dot(posOffset), yVeh:dot(posOffset), zVeh:dot(posOffset))
-
-    local xLine, yLine, zLine = selfRot * xVector, selfRot * yVector, selfRot * zVector
-    local newFLPos = self.pos - xLine * fl:distance(fr) * 0.5 + yLine * fl:distance(bl) * 0.5
-    local newAddedOffset = xLine * addedOffsetPos.x + yLine * addedOffsetPos.y
-
-    local newOffset = xLine * localOffset.x + yLine * localOffset.y + zLine * localOffset.z
-    local newPos = newFLPos + newOffset + newAddedOffset
-
-    if lowPrecision then -- this must be used if the vehicle is loaded in the first frame, because the OOBB does not work correctly then.
-      newPos = self.pos + yLine * 2 + zLine * 0.5 -- spawn the vehicle 2m behin and 0.5m above self.
-    end
-
+    vehRot = vehRot * backwardsQuat
     veh:setPositionRotation(newPos.x, newPos.y, newPos.z, vehRot.x, vehRot.y, vehRot.z, vehRot.w)
     veh:autoplace(false)
   end

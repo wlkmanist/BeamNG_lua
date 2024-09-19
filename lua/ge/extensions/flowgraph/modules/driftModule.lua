@@ -4,7 +4,7 @@
 
 local C = {}
 C.moduleOrder = 0 -- low first, high later
-C.hooks = {'onDriftSpinout', 'onDriftCrash', 'onDonutDriftScore', 'onTightDriftScored', 'onDriftCompletedScored'}
+C.hooks = {'onDriftSpinout', 'onDriftCrash', 'onDonutDriftScored', 'onTightDriftScored', 'onDriftCompletedScored'}
 C.dependencies = {'gameplay_drift_general'}
 
 function C:resetModule()
@@ -59,7 +59,7 @@ function C:onTightDriftScored(score)
   self:addCallback("tight", {score = score})
 end
 
-function C:onDonutDriftScore(score)
+function C:onDonutDriftScored(score)
   self:addCallback("donut", {score = score})
 end
 

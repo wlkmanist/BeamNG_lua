@@ -83,7 +83,6 @@ function C:closeDialogue()
   --core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
   --guihooks.trigger('MenuHide')
   --guihooks.trigger('ChangeState', 'play')
-  setCEFFocus(false) -- focus the game now
   self.open = false
   self._active = false
 end

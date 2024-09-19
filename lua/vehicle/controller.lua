@@ -57,6 +57,12 @@ local controllerNameLookup = {
   debugDraw = {}
 }
 
+local relocatedControllers = {}
+
+local function registerRelocatedController(originalPath, newPath)
+  relocatedControllers[originalPath] = newPath
+end
+
 --These debug methods are here to be used in conjunction with controller.printDebugMethodCalls() to generate a hardcoded list of controller updates.
 --Check the comments in updateFunctionCounts() for more info
 
@@ -270,6 +276,11 @@ local function loadControllerExternal(fileName, controllerName, controllerData)
   local directory = "controller/"
 
   local filePath = directory .. fileName
+  --adjust for relocated controllers by using the new path if one exists
+  if relocatedControllers[filePath] then
+    log("D", "controller.loadControllerExternal", string.format("Using relocated controller controller '%s' at '/%s.lua', original file path: '/%s.lua'", fileName, relocatedControllers[filePath], filePath))
+    filePath = relocatedControllers[filePath]
+  end
   controllerName = controllerName or fileName
   local c
   local loadFunc = function()
@@ -382,6 +393,10 @@ local function adjustControllersPreInit(controllers)
   return controllers
 end
 
+local function registerRelocatedControllers()
+  registerRelocatedController("vehicleController", "vehicleController/vehicleController")
+end
+
 local function init()
   loadedControllers = {}
   sortedControllers = {}
@@ -408,6 +423,8 @@ local function init()
   }
   setmetatable(M.nilController, mt)
 
+  registerRelocatedControllers()
+
   local jbeamControllers = v.data.controller
   if not jbeamControllers then
     jbeamControllers = {{fileName = "dummy"}}
@@ -426,6 +443,10 @@ local function init()
       if controllers[name] then
         log("E", "controller.init", string.format("Found duplicate controller of name %q, please make sure there are no name overlaps.", name))
         log("E", "controller.init", "By default controller names are the type, specify unique names if you use multiple controllers of the same type.")
+      end
+      if relocatedControllers[v.fileName] then
+        log("D", "controller.init", string.format("Using relocated controller controller '%s' at '/%s.lua', original file path: '/%s.lua'", name, relocatedControllers[v.fileName], v.fileName))
+        v.fileName = relocatedControllers[v.fileName]
       end
       controllers[name] = v
     end
@@ -958,6 +979,7 @@ M.initLastStage = initLastStage
 M.initSounds = initSounds
 M.resetSounds = resetSounds
 
+M.registerRelocatedController = registerRelocatedController
 M.cacheAllControllerFunctions = cacheAllControllerFunctions
 M.loadControllerExternal = loadControllerExternal
 M.unloadControllerExternal = unloadControllerExternal

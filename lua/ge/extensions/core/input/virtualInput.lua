@@ -48,7 +48,7 @@ end
 local function emit(deviceInstance, objType, objectInstance, action, val)
   local mgr = getVirtualInputManager()
   if not mgr then return end
-  mgr:emitEvent('vinput', deviceInstance, objType, objectInstance, action, val)
+  mgr:emitEvent('vinput', deviceInstance, objType, objectInstance, action, val, os.clockhp())
 end
 
 M.createDevice = createDevice

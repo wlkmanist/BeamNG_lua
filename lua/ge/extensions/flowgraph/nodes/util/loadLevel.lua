@@ -62,7 +62,7 @@ function C:work()
     local dirM  = path.split(loadedMissionFile)
     --log('I', logTag, "missionDir: "..tostring(dirM))
 
-    -- scenarioData.mission = 'levels/'..scenarioData.levelName..'/main.level.json'
+    -- scenarioData.mission = path.getPathLevelMain(scenarioData.levelName)
     if self.state == 1 then
       if (dirM == levelPath) and
               (not self.data.forceLevelLoad or (editor and editor.active and self.data.noLoadInEdit)) then

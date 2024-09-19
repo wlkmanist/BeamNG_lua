@@ -1,9 +1,9 @@
-M = {}
+local M = {}
 
 local api = extensions.editor_api_dynamicDecals
 
-local ACTIONS = {"material", "order", "rename", "visibility", "lock", "delete"}
-local PRESET_ACTIONS = {"order", "rename", "visibility", "delete"}
+local ACTIONS = {"material", "rename", "visibility"}
+local PRESET_ACTIONS = {"rename", "visibility"}
 
 local getLayerActions = function(layer)
   if not layer and layer.colorPaletteMapId == 0 then
@@ -50,7 +50,7 @@ M.getColorPalettes = function()
     local rgba255Color = {color[1] * 255, color[2] * 255, color[3] * 255, color[4]}
 
     table.insert(colorPalettes, {
-      label = label or "Paint "..tostring(i + 1),
+      label = label or "Paint " .. tostring(i + 1),
       color = color,
       color255 = rgba255Color,
       value = i

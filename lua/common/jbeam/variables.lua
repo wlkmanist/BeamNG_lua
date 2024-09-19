@@ -251,16 +251,18 @@ local function varMerge(dict, dest, src)
   end
 end
 
-local function processParts(rootPart, unifyJournal, vehicleConfig)
+local function getAllVariables(rootPart, unifyJournal, vehicleConfig)
   -- collect all the known variables across all parts
   local varDict = {}
   local allVariables = _getPartVariables_ParsingVariablesSectionDestructive(rootPart)  -- the root part is missing from the journal, so lets process it explicitly
   for i = #unifyJournal, 1, -1 do
     varMerge(varDict, allVariables, _getPartVariables_ParsingVariablesSectionDestructive(unifyJournal[i][2]))
   end
-  -- dumpz({'allVariables = ', allVariables}, 3)
+  --dumpz({'allVariables = ', allVariables}, 3)
+  return _sanitizeVars(allVariables, vehicleConfig.vars or {})
+end
 
-  local vars = _sanitizeVars(allVariables, vehicleConfig.vars or {})
+local function processParts(rootPart, unifyJournal, vehicleConfig, vars)
   vars['$components'] = {val = rootPart.components} -- with this you can use '$components.' in your expressions
   -- dumpz({'vars = ', vars}, 2)
 
@@ -271,7 +273,11 @@ local function processParts(rootPart, unifyJournal, vehicleConfig)
   if rootPart.components then
     apply(rootPart.components, vars)
   end
-  apply(rootPart, vars) -- root part
+  local c = rootPart.components
+  rootPart.components = nil
+  -- process root part without components
+  apply(rootPart, vars)
+  rootPart.components = c
   for i = #unifyJournal, 1, -1 do
     local parentPart, part, level, slotOptions, path, slot = unpack(unifyJournal[i])
     local slotVars = slot.variables
@@ -313,6 +319,107 @@ local function postProcessVariables(vehicle, allVariables)
   vehicle.variables = newVars
 end
 
+
+local function replaceTableKeysRecursive(tbl_readonly_src, svars)
+  local res = {}
+  for k, v in pairs(tbl_readonly_src) do
+    -- replace key
+    if type(k) == "string" and str_byte(k, 1) == 36 then -- $
+      local secondChar = str_byte(k, 2)
+      if secondChar == 61 then -- =
+        -- eval replacement
+        k = expressionParser.parseSafe(k, svars)
+      elseif secondChar ~= 43 and secondChar ~= 60 and secondChar ~= 62 then -- + < > we need to exlcude these because they are used as custom merging strategy indicators
+        if svars[k] == nil then
+          log('E', "jbeam.applyVariables", "missing variable "..tostring(v))
+        else
+          -- direct replacement
+          local varVal = svars[k]
+          if type(varVal) == "table" then
+            k = varVal.val
+          else
+            k = varVal
+          end
+        end
+        --log('I', "jbeam.applyVariables", "set variable "..tostring(key).." to ".. tostring(data[key]))
+      end
+    end
+
+    if type(v) == "table" then
+      v = replaceTableKeysRecursive(v, svars)
+    end
+
+    res[k] = v
+  end
+  return res
+end
+
+
+local function unifyComponents(vehicle, svars, target, source_raw, level, slotOptions, partPath, slot)
+  --dump(slot.variables or {})
+  for sectionKey, section in pairs(source_raw) do
+    if sectionKey == 'components' then
+      for k3, v3 in pairs(section) do
+        if type(v3) == 'table' then
+          vehicle.components[k3] = vehicle.components[k3] or {}
+          tableMergeRecursive( vehicle.components[k3], replaceTableKeysRecursive(v3, svars) )
+        else
+          vehicle.components[k3] = v3
+        end
+      end
+      source_raw.components = nil
+    end
+  end
+end
+
+local function processComponents(rootPart, unifyJournal, vehicleConfig, vars)
+  profilerPushEvent('jbeam/variables.processComponents')
+
+  rootPart.components = rootPart.components or {}
+  local varStack = {}
+  varStack[tostring(rootPart)] = deepcopy(vars)
+
+  for i = 1, #unifyJournal do
+    local parentPart, part, level, slotOptions, path, slot = unpack(unifyJournal[i])
+
+    -- get the slot variables into the proper stack
+    local slotVarCopy = deepcopy(slot.variables or {})
+    local svars = applySlotVars(slotVarCopy, varStack[tostring(parentPart)] or {})
+    svars = tableMerge(deepcopy(varStack[tostring(parentPart)]), svars)
+    varStack[tostring(part)] = svars
+    --dump(varStack)
+
+    unifyComponents(rootPart, svars, unpack(unifyJournal[i]))
+  end
+
+  --log('I', "jbeam.processComponents", "Final components: " .. dumps(rootPart.components))
+
+  profilerPopEvent() -- jbeam/variables.processComponents
+  return true
+end
+
+local function setFunctionsToNil(t)
+  for k, v in pairs(t) do
+    if type(v) == "function" then
+      t[k] = nil
+    elseif type(v) == "table" then
+      setFunctionsToNil(v)
+    end
+  end
+end
+
+local function componentsCleanup(vehicle)
+  profilerPushEvent('jbeam/variables.componentsCleanup')
+
+  setFunctionsToNil(vehicle.components or {})
+
+  profilerPopEvent() -- jbeam/variables.processCompcomponentsCleanuponents
+  return true
+end
+
+M.processComponents = processComponents
+M.componentsCleanup = componentsCleanup
+M.getAllVariables = getAllVariables
 M.postProcessVariables = postProcessVariables
 M.processParts = processParts
 

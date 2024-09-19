@@ -261,12 +261,13 @@ local function populateBankTables()
 
   local asset_directory
   local meta_directory
+  local platformDir = 'desktop'
 
-  asset_directory = '/art/sound/fmod/desktop'
+  asset_directory = '/art/sound/fmod/'..platformDir
+  meta_directory = asset_directory
+
   if useHeadphones then
-    meta_directory = '/art/sound/fmod/desktop_headphones'
-  else
-    meta_directory = '/art/sound/fmod/desktop'
+    meta_directory = meta_directory..'_headphones'
   end
 
   asset_banks = populateAssetBanks(asset_directory)
@@ -410,6 +411,22 @@ end
 
 local function onPhysicsUnpaused()
   SFXSystem.setGlobalParameter("g_GamePause", 0)
+end
+
+M.onReplayStateChanged = function(newState)
+  if M.prevReplayState == newState.state and M.prevReplayPaused == newState.paused then
+    return
+  end
+
+  local paused = simTimeAuthority.getPause()
+  if paused then
+    SFXSystem.setGlobalParameter("g_GamePause", 1)
+  else
+    SFXSystem.setGlobalParameter("g_GamePause", 0)
+  end
+
+  M.prevReplayState = newState.state
+  M.prevReplayPaused = newState.paused
 end
 
 M.onFirstUpdate = onFirstUpdate

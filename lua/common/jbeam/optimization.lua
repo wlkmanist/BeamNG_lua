@@ -176,6 +176,11 @@ local function dereference(vehicle)
           wheel.sideBeams[k] = b.cid
         end
       end
+      if wheel.rimBeams then
+        for k, b in pairs(wheel.rimBeams) do
+          wheel.rimBeams[k] = b.cid
+        end
+      end
       if wheel.peripheryBeams then
         for k, b in pairs(wheel.peripheryBeams) do
           wheel.peripheryBeams[k] = b.cid

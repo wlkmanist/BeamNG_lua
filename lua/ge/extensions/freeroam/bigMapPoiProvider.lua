@@ -49,7 +49,8 @@ M.clearMissionsFromMinimap = function()
 end
 
 M.formatPoiForBigmap = function(poi)
-local bmi = poi.markerInfo.bigmapMarker
+  local bmi = poi.markerInfo.bigmapMarker
+  local qtEnabled = (not career_career.isActive()) or (career_modules_linearTutorial.getTutorialFlag('quickTravelEnabled'))
   return {
     id = poi.id,
     --idInCluster = poi.idInCluster,
@@ -59,8 +60,8 @@ local bmi = poi.markerInfo.bigmapMarker
     previewFiles = bmi.previews,
     type = poi.data.type,
     label = '',
-    quickTravelAvailable = bmi.quickTravelPosRotFunction and true or false,
-    quickTravelUnlocked = bmi.quickTravelPosRotFunction and true or false,
+    quickTravelAvailable = bmi.quickTravelPosRotFunction and qtEnabled or false,
+    quickTravelUnlocked = bmi.quickTravelPosRotFunction and qtEnabled or false,
   }
 end
 
@@ -167,6 +168,7 @@ M.sendCurrentLevelMissionsToBigmap = function()
   end
 
 
+  gameplay_rawPois.clear()
   for _, poi in ipairs(gameplay_rawPois.getRawPoiListByLevel(level)) do
     if poi.markerInfo.bigmapMarker then
       local filterData = {

@@ -7,43 +7,33 @@
 -- Module constants.
 local intersectionTol = 1e-3                                                                        -- A tolerance used when determining if line segments intersect circles.
 local splineSmoothingVal = 0.5                                                                      -- The smoothing value used when fitting splines to polylines, in [0, 1].
-local duplicateNodeTol = 1e-4                                                                       -- A tolerance used when checking if two nodes are sufficiently distant.
-local tolUG = 1.0                                                                                   -- The tolerance used for determining if a road is underground, or not.
-local minTunnelLen = 5                                                                              -- The minimum number of div points which can comprise a tunnel length.
+
+local extraHairpinWidth = 3.0                                                                       -- The extra width added to hairpin corners.
+local lonDistMin, lonDistMax = 1, 20
+
+local tolUG, tolOG = 1.0, 0.5                                                                       -- The tolerances used for determining if a road is underground or overground.
+local minTunnelLen = 3                                                                              -- The minimum number of div points which can comprise a tunnel length.
+local minBridgeLen = 3                                                                              -- The minimum number of div points which can comprise a bridge.
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 local M = {}
 
-
 -- External modules used.
-local profileMgr = require('editor/tech/roadArchitect/profiles')                                    -- Manages the profiles structure.
-local tMesh = require('editor/tech/roadArchitect/tunnelMesh')                                       -- Manages the road tunnel meshes.
-local util = require('editor/tech/roadArchitect/utilities')                                         -- The Road Architect utilities module.
+local util = require('editor/tech/roadArchitect/utilities')                                         -- A module containing miscellaneous utility functions.
 
 -- Private constants.
 local im = ui_imgui
 local min, max, abs, floor, ceil = math.min, math.max, math.abs, math.floor, math.ceil
-local sin, cos, acos, atan2, pi, sqrt, rad = math.sin, math.cos, math.acos, math.atan2, math.pi, math.sqrt, math.rad
-local twoPi, deg2Rad, rad2Deg = pi * 2.0, pi / 180.0, 180.0 / pi
-local tmp1, tmp2, tmp3= vec3(0, 0), vec3(0, 0), vec3(0, 0)
-local tgt_2D, pLast, tmpLat = vec3(0, 0), vec3(0, 0), vec3(0, 0)
+local atan2, pi, sqrt, rad = math.atan2, math.pi, math.sqrt, math.rad
+local twoPi, halfPi, deg2Rad = pi * 2.0, pi * 0.5, pi / 180.0
+local tmp1, tmp2, tmp3 = vec3(0, 0), vec3(0, 0), vec3(0, 0)
+local tgt_2D, tmpLat = vec3(0, 0), vec3(0, 0)
 local pStart_2D, pMid_2D, pEnd_2D = vec3(0, 0), vec3(0, 0), vec3(0, 0)
 local vertical = vec3(0, 0, 1)
 local oneThird, twoThirds = 0.3333333333333333333333333333, 0.666666666666666666666666666667
-local qVals = { 0.0, 0.00390625, 0.03125, 0.125, 0.25, 0.5, 0.75, 0.875, 0.9375, 0.96875, 0.984375, 1.0 }
-local numQVals = #qVals
 local splSm = splineSmoothingVal * 2
 
-
--- Computes the (small) angle between two unit vectors, in radians.
-local function angleBetweenVecsNorm(a, b) return acos(a:dot(b)) end
-
--- Computes the (small) angle between two vectors of arbitrary length, in radians.
-local function angleBetweenVecs(a, b) return angleBetweenVecsNorm(a:normalized(), b:normalized()) end
-
--- Find the interpolation parameter in [0, 1] at which p lies on line segment a->b.
-local function getInterpP(p, a, b) return p:distance(a) / b:distance(a) end
 
 -- Linearly interpolates between two sets of lane width values and (left and right) relative height offset values.
 local function lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
@@ -53,22 +43,6 @@ local function lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
     w_q[k], hL_q[k], hR_q[k] = im.FloatPtr(w1Key + q * (w2[k][0] - w1Key)), im.FloatPtr(hL1Key + q * (hL2[k][0] - hL1Key)), im.FloatPtr(hR1Key + q * (hR2[k][0] - hR1Key))
   end
   return w_q, hL_q, hR_q
-end
-
--- Attemps to fit a circle (2D) to three given points.
-local function circle2DFrom3Points(p1, p2, p3)
-  local p1x, p1y, p2x, p2y, p3x, p3y = p1.x, p1.y, p2.x, p2.y, p3.x, p3.y
-  local dot22 = p2x * p2x + p2y * p2y
-  local bc = (p1x * p1x + p1y * p1y - dot22) * 0.5
-  local cd = (dot22 - p3x * p3x - p3y * p3y) * 0.5
-  local det = (p1x - p2x) * (p2y - p3y) - (p2x - p3x) * (p1y - p2y)
-  if abs(det) < 1e-12 then
-    return nil, nil
-  end
-  local detInv = 1.0 / det
-  local cx = (bc * (p2y - p3y) - cd * (p1y - p2y)) * detInv
-  local cy = ((p1x - p2x) * cd - (p2x - p3x) * bc) * detInv
-  return vec3(cx, cy)
 end
 
 -- Computes the 2D incircle of a triangle (from the three given triangle vertices v0-v1-v2).
@@ -94,41 +68,6 @@ local function intLineSegAndCircle(a, b, c, r)
   return nil
 end
 
--- Rotates vector v around unit axis k, by angle theta (in radians).
--- [This function uses the standard Rodrigues formula].
-local function rotateVecAroundAxis(v, k, theta)
-  local c = cos(theta)
-  return v * c + k:cross(v) * sin(theta) + k * k:dot(v) * (1.0 - c)
-end
-
--- Removes all adjacent duplicates (repeated points) from a given polyline.
--- [Also removes duplicates in the corresponding normals, rots, widths and heights from the given collections].
-local function removeDuplicates(poly, normals, rots, offs, widths, heightsL, heightsR)
-  local numDiscPoints, ctr = #poly, 2
-  local pDiscPost, nDiscPost, rDiscPost, oDiscPost, wDiscPost = { poly[1] }, { normals[1] }, { rots[1] }, { offs[1]}, { widths[1] }
-  local hLDiscPost, hRDiscPost = { heightsL[1] }, { heightsR[1] }
-  for i = 2, numDiscPoints do
-    if poly[i]:squaredDistance(poly[i - 1]) > duplicateNodeTol then
-      pDiscPost[ctr], nDiscPost[ctr], rDiscPost[ctr], oDiscPost[ctr] = poly[i], normals[i], rots[i], offs[i]
-      wDiscPost[ctr], hLDiscPost[ctr], hRDiscPost[ctr] = widths[i], heightsL[i], heightsR[i]
-      ctr = ctr + 1
-    end
-  end
-  return pDiscPost, nDiscPost, rDiscPost, oDiscPost, wDiscPost, hLDiscPost, hRDiscPost
-end
-
--- Computes unit normal vectors for each point in a given polyline, based on the selected lateral angle at each node.
-local function getUnitNormals(road)
-  local poly = road.nodes
-  local normals, numNodes = {}, #poly
-  for i = 1, numNodes do
-    local tgt = poly[min(numNodes, i + 1)].p - poly[max(1, i - 1)].p                                -- Compute the sparse tangent vector (the axis of rotation for this node).
-    tgt:normalize()
-    normals[i] = rotateVecAroundAxis(vertical, tgt, poly[i].rot[0] * deg2Rad)                       -- Rotate the vertical around the axis of rotation by the selected angle.
-  end
-  return normals
-end
-
 -- Identifies all the tunnel sections within the given road.
 local function identifyTunnelSections(rData, extraS, extraE)
 
@@ -148,257 +87,150 @@ local function identifyTunnelSections(rData, extraS, extraE)
   end
 
   -- Iterate over the road longitudinally, and identify all the individual tunnelled sections.
-  local sections, sCtr, rDataSize, isInside, sS = {}, 1, #rData, false, nil
+  local tSections, sCtr, rDataSize, isInside, sTun = {}, 1, #rData, false, nil
   for i = 1, rDataSize do
     local rD = rData[i]
     local rDLeft = rD[lIdx]
     local rLeft, rRight = rDLeft[4], rD[rIdx][3]                                                    -- Test both the left-most and right-most lateral road points.
     local zLeft = core_terrain.getTerrainHeight(rLeft)
     local zRight = core_terrain.getTerrainHeight(rRight)
+
     if zLeft > rLeft.z + tolUG and zRight > rRight.z + tolUG then
       if not isInside then
-        sS, isInside = i, true
+        sTun, isInside = i, true
       end
     else
       if isInside then
-        if i - 1 > sS + minTunnelLen then                                                           -- Only include sections which span a sufficient number of div points.
-          sections[sCtr] = { s = max(1, sS - extraS), e = min(rDataSize, i + extraE) }
+        if i - 1 > sTun + minTunnelLen then                                                         -- Only include sections which span a sufficient number of div points.
+          tSections[sCtr] = { s = max(1, sTun - extraS), e = min(rDataSize, i + extraE) }
           sCtr = sCtr + 1
         end
       end
       isInside = false
     end
   end
+
   if isInside then
-    if rDataSize > sS + minTunnelLen then                                                           -- Only include sections which span a sufficient number of div points.
-      sections[sCtr] = { s = max(1, sS - extraS), e = rDataSize }
+    if rDataSize > sTun + minTunnelLen then                                                         -- Only include sections which span a sufficient number of div points.
+      tSections[sCtr] = { s = max(1, sTun - extraS), e = rDataSize }
       sCtr = sCtr + 1
     end
   end
-  return sections
+
+  return tSections
 end
 
--- Fits a spline using the given four points to define the start/end tangents.
--- [Catmull-Rom is fitted through X and Y, monotonic Steffen preconditioning is applied for Z].
--- [The splines return an array in the 'node' format, with metadata included].
-local function fitSpline(p1, p2, p3, p4, w1, w2, hL1, hL2, hR1, hR2, rot1, rot2, off1, off2)
-  local nodes = {}
-  local p1z, p2z, p3z, p4z, p2p3 = p1.z, p2.z, p3.z, p4.z, p3 - p2
-  local d1, d2, d3 = max(1e-30, p1:distance(p2)), p2:distance(p3), max(1e-30, p3:distance(p4))
-  local m1, m2, sd2 = (p2 - p1) / d1 + (p1 - p3) / (d1 + d2), (p2 - p4) / (d2 + d3) + (p4 - p3) / d3, splSm * d2
-  local delta0, delta1, delta2 = p2z - p1z, p3z - p2z, p4z - p3z
-  local signDelta1, absDelta1 = sign2(delta1), abs(delta1)
-  local n1 = (sign2(delta0) + signDelta1) * min(abs(delta0), absDelta1, 0.5 * abs((delta0 + delta1) * 0.5))
-  local n2 = (signDelta1 + sign2(delta2)) * min(absDelta1, abs(delta2), 0.5 * abs((delta1 + delta2) * 0.5))
-  local n1PlusN2 = n1 + n2
-  for j = 1, numQVals do
-    local q = qVals[j]
-    local tt, t_1 = q * q, q - 1
-    local t_1sq = t_1 * t_1
-    local pos = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * p2 - tt * (2.0 * q - 3.0) * p3 + splSm * t_1 * (q * t_1 + tt) * p2p3
-    pos.z = p2z + q * (n1 + q * (delta1 - n1 + (q - 1.0) * (n1PlusN2 - 2.0 * delta1)))
-    local wd, hL, hR = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
-    nodes[j] = {
-      p = pos,
-      isLocked = false,
-      rot = im.FloatPtr(lerp(rot1, rot2, q)),
-      height = im.FloatPtr(pos.z),
-      widths = wd, heightsL = hL, heightsR = hR,
-      incircleRad = im.FloatPtr(1.0),
-      offset = lerp(off1, off2, q) }
+-- Computes the normal vectors from the discretised points and rotation angles.
+local function normalsFromPAndRot(pDisc, rDisc)
+  local nDisc = {}
+  for i = 1, #pDisc do
+    local tgt = pDisc[min(#pDisc, i + 1)] - pDisc[max(1, i - 1)]                                    -- Compute the sparse tangent vector (the axis of rotation for this node).
+    tgt:normalize()
+    nDisc[i] = util.rotateVecAroundAxis(vertical, tgt, rDisc[i] * deg2Rad)                          -- Rotate the vertical around the axis of rotation by the selected angle.
   end
-  return nodes
+  return nDisc
+end
+
+-- Adaptively computes the best granularity for the given spline section, using curvature and length.
+local function computeAdaptiveGran(road, i1, i2, i3, i4, numNodes, length, isFirstEval)
+  local radius, cen = 1e5, nil
+  if numNodes > 2 then
+    if isFirstEval then
+      tmp1:set(i2.x, i2.y, 0)
+      tmp2:set(i3.x, i3.y, 0)
+      tmp3:set(i4.x, i4.y, 0)
+      cen = util.circle2DFrom3Points(tmp1, tmp2, tmp3)
+    else
+      local radius1, radius2 = nil, nil
+      tmp1:set(i1.x, i1.y, 0)
+      tmp2:set(i2.x, i2.y, 0)
+      tmp3:set(i3.x, i3.y, 0)
+      local cen1 = util.circle2DFrom3Points(tmp1, tmp2, tmp3)
+      if cen1 then radius1 = cen1:distance(tmp1) end
+      tmp1:set(i2.x, i2.y, 0)
+      tmp2:set(i3.x, i3.y, 0)
+      tmp3:set(i4.x, i4.y, 0)
+      local cen2 = util.circle2DFrom3Points(tmp1, tmp2, tmp3)
+      if cen2 then radius2 = cen2:distance(tmp1) end
+      radius = min(radius1 or 1e5, radius2 or 1e5)
+    end
+  end
+  if cen then radius = cen:distance(tmp1) end
+  local lonDistMin, lonDistMax = 1, 10
+  local dx = min(lonDistMax, max(lonDistMin, radius * (lonDistMax - lonDistMin) / 190.0 + (20.0 * lonDistMin - lonDistMax) / 19.0))
+  return ceil(length / dx) * road.granFactor[0]
+end
+
+-- Deep copies a node.
+local function copyNode(n)
+  local wC, hLC, hRC, w, hL, hR = {}, {}, {}, n.widths, n.heightsL, n.heightsR
+  for i = -20, 20 do
+    if w[i] then
+      wC[i], hLC[i], hRC[i] = im.FloatPtr(w[i][0]), im.FloatPtr(hL[i][0]), im.FloatPtr(hR[i][0])
+    end
+  end
+  local pos = n.p
+  return {
+    p = vec3(pos.x, pos.y, pos.z),
+    isLocked = n.isLocked,
+    rot = im.FloatPtr(n.rot[0]),
+    widths = wC, heightsL = hLC, heightsR = hRC,
+    incircleRad = im.FloatPtr(n.incircleRad[0]),
+    isAutoBanked = n.isAutoBanked,
+    offset = n.offset }
 end
 
 -- Fits a spline through a standard (user) road.
 -- [Catmull-Rom is fitted through X and Y, monotonic Steffen preconditioning is applied for Z].
 local function fitSplineStandardRoad(road)
 
-  -- Compute the normals from the given polyline (the reference nodes).
+  local pDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc, ctr = {}, {}, {}, {}, {}, {}, 1
   local poly = road.nodes
-  local normals = getUnitNormals(road)
-
-  -- Starting line segment [evaluated across [0, 1], inclusive].
-  local pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc, ctr = {}, {}, {}, {}, {}, {}, {}, 1
-  pLast:set(1e99, 1e99, 1e99)
-  local targetLonResInv, polyLen = 1.0 / road.targetLonRes[0], #poly
-  local pL, pR, norm1, norm2 = poly[1], poly[2], normals[1], normals[2]
-  local rot1, rot2, off1, off2 = pL.rot[0], pR.rot[0], pL.offset, pR.offset
-  local w1, w2, hL1, hL2, hR1, hR2 = pL.widths, pR.widths, pL.heightsL, pR.heightsL, pL.heightsR, pR.heightsR
-  local i1, i2, i3, i4 = poly[1].p, pL.p, pR.p, poly[min(polyLen, 3)].p
-  local i1z, i2z, i3z, i4z, i2i3 = i1.z, i2.z, i3.z, i4.z, i3 - i2
-  local delta0, delta1, delta2 = i2z - i1z, i3z - i2z, i4z - i3z
-  local signDelta1, absDelta1 = sign2(delta1), abs(delta1)
-  local n1 = (sign2(delta0) + signDelta1) * min(abs(delta0), absDelta1, 0.5 * abs((delta0 + delta1) * 0.5))
-  local n2 = (signDelta1 + sign2(delta2)) * min(absDelta1, abs(delta2), 0.5 * abs((delta1 + delta2) * 0.5))
-  local n1PlusN2 = n1 + n2
-  local dd23 = i2:distance(i3)
-  local d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(dd23), max(1e-30, sqrt(i3:distance(i4)))
-  local m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-  local splineGran = ceil(dd23 * targetLonResInv)
-  local splineGranInv = 1.0 / splineGran
-  for j = 0, splineGran do                                                                          -- Include start point, since it is the first line segment.
-    local q = j * splineGranInv
-    local tt, t_1 = q * q, q - 1
-    local t_1sq = t_1 * t_1
-    local p = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-    p.z = i2z + q * (n1 + q * (delta1 - n1 + (q - 1.0) * (n1PlusN2 - 2.0 * delta1)))
-    pDisc[ctr] = p
-    nDisc[ctr], rDisc[ctr], oDisc[ctr] = lerp(norm1, norm2, q), lerp(rot1, rot2, q), lerp(off1, off2, q)
-    wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
-    ctr, pLast = ctr + 1, p
-  end
-
-  -- All the remaining line segments [evaluated across (0, 1], limited].
-  for i = 3, polyLen do
+  local numNodes = #poly
+  for i = 2, numNodes do
     local iMinus1 = i - 1
-    pL, pR, norm1, norm2 = poly[iMinus1], poly[i], normals[iMinus1], normals[i]
-    local rot1, rot2, off1, off2 = pL.rot[0], pR.rot[0], pL.offset, pR.offset
-    w1, w2, hL1, hL2, hR1, hR2 = pL.widths, pR.widths, pL.heightsL, pR.heightsL, pL.heightsR, pR.heightsR
-    i1, i2, i3, i4 = poly[i - 2].p, pL.p, pR.p, poly[min(polyLen, i + 1)].p
-    i1z, i2z, i3z, i4z, i2i3 = i1.z, i2.z, i3.z, i4.z, i3 - i2
-    delta0, delta1, delta2 = i2z - i1z, i3z - i2z, i4z - i3z
-    signDelta1, absDelta1 = sign2(delta1), abs(delta1)
-    n1 = (sign2(delta0) + signDelta1) * min(abs(delta0), absDelta1, 0.5 * abs((delta0 + delta1) * 0.5))
-    n2 = (signDelta1 + sign2(delta2)) * min(absDelta1, abs(delta2), 0.5 * abs((delta1 + delta2) * 0.5))
-    n1PlusN2 = n1 + n2
-    dd23 = i2:distance(i3)
-    d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(dd23), max(1e-30, sqrt(i3:distance(i4)))
-    m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-    splineGran = ceil(dd23 * targetLonResInv)
-    splineGranInv = 1.0 / splineGran
-    for j = 1, splineGran do                                                                      -- Do not include start point here (to avoid duplicate disc. points).
+    local p1, p2, p3, p4 = poly[max(1, i - 2)], poly[iMinus1], poly[i], poly[min(numNodes, i + 1)]
+    local i1, i2, i3, i4 = p1.p, p2.p, p3.p, p4.p
+
+    local i1z, i2z, i3z, i4z, i2i3 = i1.z, i2.z, i3.z, i4.z, i3 - i2
+    local delta0, delta1, delta2 = i2z - i1z, i3z - i2z, i4z - i3z
+    local signDelta1, absDelta1 = sign2(delta1), abs(delta1)
+    local n1 = (sign2(delta0) + signDelta1) * min(abs(delta0), absDelta1, 0.5 * abs((delta0 + delta1) * 0.5))
+    local n2 = (signDelta1 + sign2(delta2)) * min(absDelta1, abs(delta2), 0.5 * abs((delta1 + delta2) * 0.5))
+    local n1PlusN2 = n1 + n2
+    local length = i2:distance(i3)
+    local d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(length), max(1e-30, sqrt(i3:distance(i4)))
+    local m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
+
+    -- Compute the granularity to be used with this spline section.
+    local splineGran = computeAdaptiveGran(road, i1, i2, i3, i4, numNodes, length, i == 2)
+    local splineGranInv = 1.0 / splineGran
+
+    -- Fit the spline.
+    local startIdx = 1
+    if i == 2 then startIdx = 0 end
+    for j = startIdx, splineGran do
       local q = j * splineGranInv
       local tt, t_1 = q * q, q - 1
       local t_1sq= t_1 * t_1
       local p = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
       p.z = i2z + q * (n1 + q * (delta1 - n1 + (q - 1.0) * (n1PlusN2 - 2.0 * delta1)))
       pDisc[ctr] = p
-      nDisc[ctr], rDisc[ctr], oDisc[ctr] = lerp(norm1, norm2, q), lerp(rot1, rot2, q), lerp(off1, off2, q)
-      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
-      ctr, pLast = ctr + 1, p
+      local qPlus1 = q + 1
+      rDisc[ctr] = monotonicSteffen(p1.rot[0], p2.rot[0], p3.rot[0], p4.rot[0], 0, 1, 2, 3, qPlus1)
+      oDisc[ctr] = monotonicSteffen(p1.offset, p2.offset, p3.offset, p4.offset, 0, 1, 2, 3, qPlus1)
+      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = {}, {}, {}
+      for k, _ in pairs(p1.widths) do
+        wDisc[ctr][k] = im.FloatPtr(monotonicSteffen(p1.widths[k][0], p2.widths[k][0], p3.widths[k][0], p4.widths[k][0], 0, 1, 2, 3, qPlus1))
+        hLDisc[ctr][k] = im.FloatPtr(monotonicSteffen(p1.heightsL[k][0], p2.heightsL[k][0], p3.heightsL[k][0], p4.heightsL[k][0], 0, 1, 2, 3, qPlus1))
+        hRDisc[ctr][k] = im.FloatPtr(monotonicSteffen(p1.heightsR[k][0], p2.heightsR[k][0], p3.heightsR[k][0], p4.heightsR[k][0], 0, 1, 2, 3, qPlus1))
+      end
+      ctr = ctr + 1
     end
   end
 
-  return pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc
-end
-
--- Fits a spline through a link road.
--- [Catmull-Rom is fitted through X and Y, monotonic Steffen preconditioning is applied for Z].
-local function fitSplineLinkRoad(r, roads, map)
-
-  -- First, fit a Chordal CR spline between the two tributory roads, to get appropriate reference nodes.
-  local r1, r2 = roads[map[r.startR]], roads[map[r.endR]]
-  local r1I1, r1I2, r2I1, r2I2 = r.idxL1, r.idxL2, r.idxR1, r.idxR2
-  local rData1, rData2 = r1.renderData, r2.renderData
-  local rData1Len, rData2Len = #rData1, #rData2
-  local secondLast1, secondLast2 = rData1Len - 1, rData2Len - 1
-  local i1 = r.idxL0a_1 + r.idxL0a_2 * 2 + r.idxL0a_l * rData1Len + r.idxL0a_l2 * secondLast1       -- Compute the appropriate indices from the stored contributions.
-  local i2 = r.idxL0b_1 + r.idxL0b_2 * 2 + r.idxL0b_l * rData1Len + r.idxL0b_l2 * secondLast1       -- [The masking here avoids branching].
-  local i3 = r.idxR0a_1 + r.idxR0a_2 * 2 + r.idxR0a_l * rData2Len + r.idxR0a_l2 * secondLast2
-  local i4 = r.idxR0b_1 + r.idxR0b_2 * 2 + r.idxR0b_l * rData2Len + r.idxR0b_l2 * secondLast2
-  local f2, f3 = rData1[i2][r1I1], rData2[i3][r2I1]
-  local t1, t2, t3, t4 = rData1[i1][r1I1][r1I2], f2[r1I2], f3[r2I2], rData2[i4][r2I1][r2I2]
-  local poly = fitSpline(
-    t1, t2, t3, t4,
-    r.w1, r.w2, r.hL1, r.hL2, r.hR1, r.hR2,
-    f2[12] * rad2Deg * r.rot1, f3[12] * rad2Deg * r.rot2,
-    f2[13] * r.rot1, f3[13] * r.rot2)
-  r.nodes = poly
-
-  -- Compute the corresponding normals for each node in the reference polyline.
-  local normals = getUnitNormals(r)
-
-  -- Fit through the first line segment of the reference polyline.
-  local pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc, ctr = {}, {}, {}, {}, {}, {}, {}, 1
-  pLast:set(1e99, 1e99, 1e99)
-  local targetLonResInv, polyLen = 1.0 / r.targetLonRes[0], #poly
-  local pL, pR, norm1, norm2 = poly[1], poly[2], normals[1], normals[2]
-  local rot1, rot2, off1, off2 = pL.rot[0], pR.rot[0], pL.offset, pR.offset
-  local w1, w2, hL1, hL2, hR1, hR2 = pL.widths, pR.widths, pL.heightsL, pR.heightsL, pL.heightsR, pR.heightsR
-  local i1, i2, i3, i4 = t1, t2, pR.p, poly[min(polyLen, 3)].p
-  local i1z, i2z, i3z, i4z, i2i3 = i1.z, i2.z, i3.z, i4.z, i3 - i2
-  local delta0, delta1, delta2 = i2z - i1z, i3z - i2z, i4z - i3z
-  local signDelta1, absDelta1 = sign2(delta1), abs(delta1)
-  local n1 = (sign2(delta0) + signDelta1) * min(abs(delta0), absDelta1, 0.5 * abs((delta0 + delta1) * 0.5))
-  local n2 = (signDelta1 + sign2(delta2)) * min(absDelta1, abs(delta2), 0.5 * abs((delta1 + delta2) * 0.5))
-  local n1PlusN2 = n1 + n2
-  local d23 = i2:distance(i3)
-  local d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23), max(1e-30, sqrt(i3:distance(i4)))
-  local m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-  r.nodes[1].p = i2
-  local splineGran = ceil(d23 * targetLonResInv)
-  local splineGranInv = 1.0 / splineGran
-  for j = 0, splineGran do
-    local q = j * splineGranInv
-    local tt, t_1 = q * q, q - 1
-    local t_1sq = t_1 * t_1
-    local p = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-    p.z = i2z + q * (n1 + q * (delta1 - n1 + (q - 1.0) * (n1PlusN2 - 2.0 * delta1)))
-    pDisc[ctr], nDisc[ctr], rDisc[ctr], oDisc[ctr] = p, lerp(norm1, norm2, q), lerp(rot1, rot2, q), lerp(off1, off2, q)
-    wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
-    ctr, pLast = ctr + 1, p
-  end
-
-  -- Fit through the intermediate line segments of the reference polyline.
-  local lastIdx = polyLen - 1
-  for i = 3, lastIdx do
-    local iMinus1 = i - 1
-    pL, pR, norm1, norm2 = poly[iMinus1], poly[i], normals[iMinus1], normals[i]
-    rot1, rot2, off1, off2 = pL.rot[0], pR.rot[0], pL.offset, pR.offset
-    w1, w2, hL1, hL2, hR1, hR2 = pL.widths, pR.widths, pL.heightsL, pR.heightsL, pL.heightsR, pR.heightsR
-    i1, i2, i3, i4 = poly[i - 2].p, pL.p, pR.p, poly[i + 1].p
-    i1z, i2z, i3z, i4z, i2i3 = i1.z, i2.z, i3.z, i4.z, i3 - i2
-    delta0, delta1, delta2 = i2z - i1z, i3z - i2z, i4z - i3z
-    signDelta1, absDelta1 = sign2(delta1), abs(delta1)
-    n1 = (sign2(delta0) + signDelta1) * min(abs(delta0), absDelta1, 0.5 * abs((delta0 + delta1) * 0.5))
-    n2 = (signDelta1 + sign2(delta2)) * min(absDelta1, abs(delta2), 0.5 * abs((delta1 + delta2) * 0.5))
-    n1PlusN2 = n1 + n2
-    d23 = i2:distance(i3)
-    d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23), max(1e-30, sqrt(i3:distance(i4)))
-    m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-    splineGran = ceil(d23 * targetLonResInv)
-    splineGranInv = 1.0 / splineGran
-    for j = 1, splineGran do                                                                        -- Do not include start point here (to avoid duplicate disc. points).
-      local q = j * splineGranInv
-      local tt, t_1 = q * q, q - 1
-      local t_1sq = t_1 * t_1
-      local p = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-      p.z = i2z + q * (n1 + q * (delta1 - n1 + (q - 1.0) * (n1PlusN2 - 2.0 * delta1)))
-      pDisc[ctr], nDisc[ctr], rDisc[ctr], oDisc[ctr] = p, lerp(norm1, norm2, q), lerp(rot1, rot2, q), lerp(off1, off2, q)
-      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
-      ctr, pLast = ctr + 1, p
-    end
-  end
-
-  -- Fit through the last line segment of the reference polyline.
-  local secondLast = polyLen - 1
-  pL, pR, norm1, norm2 = poly[secondLast], poly[polyLen], normals[secondLast], normals[polyLen]
-  rot1, rot2, off1, off2 = pL.rot[0], pR.rot[0], pL.offset, pR.offset
-  w1, w2, hL1, hL2, hR1, hR2 = pL.widths, pR.widths, pL.heightsL, pR.heightsL, pL.heightsR, pR.heightsR
-  i1, i2, i3, i4 = poly[max(1, polyLen - 2)].p, pL.p, t3, t4
-  i1z, i2z, i3z, i4z, i2i3 = i1.z, i2.z, i3.z, i4.z, i3 - i2
-  delta0, delta1, delta2 = i2z - i1z, i3z - i2z, i4z - i3z
-  signDelta1, absDelta1 = sign2(delta1), abs(delta1)
-  n1 = (sign2(delta0) + signDelta1) * min(abs(delta0), absDelta1, 0.5 * abs((delta0 + delta1) * 0.5))
-  n2 = (signDelta1 + sign2(delta2)) * min(absDelta1, abs(delta2), 0.5 * abs((delta1 + delta2) * 0.5))
-  n1PlusN2 = n1 + n2
-  d23 = i2:distance(i3)
-  d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23), max(1e-30, sqrt(i3:distance(i4)))
-  m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-  splineGran = ceil(d23 * targetLonResInv)
-  splineGranInv = 1.0 / splineGran
-  r.nodes[#r.nodes].p = i3
-  for j = 1, splineGran do                                                                          -- Do not include start point here (to avoid duplicate disc. points).
-    local q = j * splineGranInv
-    local tt, t_1 = q * q, q - 1
-    local t_1sq = t_1 * t_1
-    local p = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-    p.z = i2z + q * (n1 + q * (delta1 - n1 + (q - 1.0) * (n1PlusN2 - 2.0 * delta1)))
-    pDisc[ctr], nDisc[ctr], rDisc[ctr], oDisc[ctr] = p, lerp(norm1, norm2, q), lerp(rot1, rot2, q), lerp(off1, off2, q)
-    wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
-    ctr, pLast = ctr + 1, p
-  end
+  -- Compute the normal vectors.
+  local nDisc = normalsFromPAndRot(pDisc, rDisc)
 
   return pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc
 end
@@ -417,39 +249,44 @@ local function fitArc(road)
   local numNodes, cen, p1, p2, p3 = #nodes, nil, nil, nil, nil
   if numNodes > 2 then
     p1, p2, p3 = nodes[1].p, nodes[2].p, nodes[3].p
-    cen = circle2DFrom3Points(p1, p2, p3)                                                        -- Find the (2D) circle which fits through the (three) road nodes.
+    cen = util.circle2DFrom3Points(p1, p2, p3)                                                      -- Find the (2D) circle which fits through the (three) road nodes.
   end
   if not cen then
     return fitSplineStandardRoad(road)                                                              -- If an arc cannot be fitted through the given nodes, fit a spline instead.
   end
 
-  -- Compute the sparse normals of the given polyline.
-  local normals = getUnitNormals(road)
-
   -- Discretise the arc to produce a fitted polyline.
-  local pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = {}, {}, {}, {}, {}, {}, {}
+  local pDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = {}, {}, {}, {}, {}, {}
   pStart_2D:set(p1.x, p1.y, 0.0)
   pMid_2D:set(p2.x, p2.y, 0.0)
   pEnd_2D:set(p3.x, p3.y, 0.0)
   local v1 = pStart_2D - cen
-  local theta, signFac = 0.0, -sign2((p2 - p1):cross(vertical):dot(p3-p1))
+  local theta, signFac = 0.0, -sign2((p2 - p1):cross(vertical):dot(p3 - p1))
   local rotDir = (pStart_2D - pEnd_2D):cross(pMid_2D - pEnd_2D):normalized()
   theta = signFac * calcSpanAngle(cen, rotDir, pStart_2D, pEnd_2D)
-  local z1, z2, norm1, norm2 = p1.z, p3.z, normals[1], normals[3]
+  local z1, z2 = p1.z, p3.z
   local nd1, nd3 = nodes[1], nodes[3]
   local rot1, rot2, off1, off2 = nd1.rot[0], nd3.rot[0], nd1.offset, nd3.offset
   local w1, w2 = nd1.widths, nd3.widths
   local hL1, hL2, hR1, hR2 = nd1.heightsL, nd3.heightsL, nd1.heightsR, nd3.heightsR
-  local arcGran = ceil((p1:distance(p2) + p2:distance(p3)) / max(1, road.targetArcRes[0]))
-  local arcGranInv = 1.0 / arcGran
-  for i = 0, arcGran do
-    local q, idx = i * arcGranInv, i + 1
-    local p = cen + rotateVecAroundAxis(v1, vertical, q * theta)
+
+  local radius = cen:distance(pStart_2D)
+  local dx = min(lonDistMax, max(lonDistMin, radius * (lonDistMax - lonDistMin) / 190.0 + (20.0 * lonDistMin - lonDistMax) / 19.0))
+  local length = pStart_2D:distance(pMid_2D) + pMid_2D:distance(pEnd_2D)
+  local splineGran = (ceil(length / dx) + 1) * road.granFactor[0]
+  local splineGranInv = 1.0 / splineGran
+
+  for i = 0, splineGran do
+    local q, idx = i * splineGranInv, i + 1
+    local p = cen + util.rotateVecAroundAxis(v1, vertical, q * theta)
     p.z = lerp(z1, z2, q)
     pDisc[idx] = p
-    nDisc[idx], rDisc[idx], oDisc[idx] = lerp(norm1, norm2, q), lerp(rot1, rot2, q), lerp(off1, off2, q)
+    rDisc[idx], oDisc[idx] = lerp(rot1, rot2, q), lerp(off1, off2, q)
     wDisc[idx], hLDisc[idx], hRDisc[idx] = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
   end
+
+  -- Compute the normal vectors.
+  local nDisc = normalsFromPAndRot(pDisc, rDisc)
 
   return pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc
 end
@@ -458,22 +295,20 @@ end
 -- and interpolates a local orthonormal frame across this discretisation.
 local function fitCivEngAndFrame(road)
 
-  -- Compute the sparse normals of the given polyline.
+  -- Compute linking points and tangents, if applicable.
   local poly = road.nodes
-  local normals = getUnitNormals(road)
 
   -- If there are only two nodes, fit a spline instead.
-  local polyLen = #poly
-  if polyLen < 3 then
+  if #poly < 3 then
     return fitSplineStandardRoad(road)
   end
 
   -- Attempt to fit civil-engineering style splines at each corner.
+  local map = { 1 }
   local poly1 = poly[1]
-  local pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = { poly1.p }, { normals[1] }, { poly1.rot[0] }, { poly1.offset }, { poly1.widths }, { poly1.heightsL }, { poly1.heightsR }
-  local ctr, polyLenMinus1 = 2, polyLen - 1
-  local targetLonResInv, targetArcResInv = 1.0 / road.targetLonRes[0], 1.0 / road.targetArcRes[0]
-  for i = 2, polyLenMinus1 do
+  local pDisc = { vec3(poly1.p.x, poly1.p.y, 0) }
+  local ctr = 2
+  for i = 2, #poly - 1 do
 
     -- Compute the three triangle points which will define the circular arc.
     -- [This is the node position and a point on each connecting line segment, which depend on the selected incircle radius].
@@ -494,160 +329,195 @@ local function fitCivEngAndFrame(road)
     -- [At these intersections, the linear segment tangents match the arc tangent, so continuity exists].
     local p1_2D, p3_2D = intLineSegAndCircle(tmp1, tmp2, iCen_2D, iRad), intLineSegAndCircle(tmp1, tmp3, iCen_2D, iRad)
 
-    -- Interpolate to get the bounding values at each joining point on the line-spline-arc-spline-line section.
-    local qA, qB = getInterpP(p1_2D, pIm, pI), getInterpP(p3_2D, pI, pIp)                                                     -- Interpolation parameters.
-    local un1, un2, un3 = normals[iMinus1], normals[i], normals[iPlus1]                                                       -- Normals.
-    local nU1, nU4 = lerp(un1, un2, qA), lerp(un2, un3, qB)
-    local nU2, nU3 = lerp(nU1, nU4, oneThird), lerp(nU1, nU4, twoThirds)
-    local ro1, ro2, ro3 = poly[iMinus1].rot[0], poly[i].rot[0], poly[iPlus1].rot[0]
-    local rU1, rU4 = lerp(ro1, ro2, qA), lerp(ro2, ro3, qB)                                                                   -- Rotation.
-    local rU2, rU3 = lerp(rU1, rU4, oneThird), lerp(rU1, rU4, twoThirds)
-    local oo1, oo2, oo3 = poly[iMinus1].offset, poly[i].offset, poly[iPlus1].offset                                           -- Lateral offset.
-    local oU1, oU4 = lerp(oo1, oo2, qA), lerp(oo2, oo3, qB)
-    local oU2, oU3 = lerp(oU1, oU4, oneThird), lerp(oU1, oU4, twoThirds)
-    local zp1, zp2, zp3 = pLast.z, pI.z, pNext.z                                                                              -- Elevation.
-    local zU1, zU4 = lerp(zp1, zp2, qA), lerp(zp2, zp3, qB)
-    local zU2, zU3 = lerp(zU1, zU4, oneThird), lerp(zU1, zU4, twoThirds)
-    local wU1, hLU1, hRU1 = lerpWAndH(nM.widths, node.widths, nM.heightsL, node.heightsL, nM.heightsR, node.heightsR, qA)     -- Lane widths and left/right relative height offsets.
-    local wU4, hLU4, hRU4 = lerpWAndH(node.widths, nP.widths, node.heightsL, nP.heightsL, node.heightsR, nP.heightsR, qB)
-    local wU2, hLU2, hRU2 = lerpWAndH(wU1, wU4, hLU1, hLU4, hRU1, hRU4, oneThird)
-    local wU3, hLU3, hRU3 = lerpWAndH(wU1, wU4, hLU1, hLU4, hRU1, hRU4, twoThirds)
-
     -- Determine the angular domain for the arc.
     -- [The sign of theta depends on the sign of the distance to the lateral plane of the current point.]
     local v1_2D = p1_2D - iCen_2D
     local tgt_3D = pIp - pIm
     tgt_2D:set(tgt_3D.x, tgt_3D.y, 0.0)
     tgt_2D:normalize()
-    local signFac = -sign2(tgt_2D:cross(un2):dot(pIp - pI))
-    local theta = angleBetweenVecs(v1_2D, p3_2D - iCen_2D) * signFac
-    local vStart_2D, vEnd_2D = rotateVecAroundAxis(v1_2D, vertical, oneThird * theta), rotateVecAroundAxis(v1_2D, vertical, twoThirds * theta)
+    local signFac = -sign2(tgt_2D:cross(vertical):dot(pIp - pI))
+    local theta = util.angleBetweenVecs(v1_2D, p3_2D - iCen_2D) * signFac
+    local vStart_2D, vEnd_2D = util.rotateVecAroundAxis(v1_2D, vertical, oneThird * theta), util.rotateVecAroundAxis(v1_2D, vertical, twoThirds * theta)
     local u1_2D, u2_2D, u3_2D = p1_2D, iCen_2D + vStart_2D, iCen_2D + vEnd_2D
-    local arcAngle = angleBetweenVecs(u2_2D - iCen_2D, u3_2D - iCen_2D) * signFac
+    local arcAngle = util.angleBetweenVecs(u2_2D - iCen_2D, u3_2D - iCen_2D) * signFac
 
     -- Fit a discretised line.
     -- [The points and width values are linearly-interpolated, and the normals are spherically-interpolated].
     local lastIdx = ctr - 1
-    local nn1, rr1, ww1, hhL1, hhR1 = nDisc[lastIdx], rDisc[lastIdx], wDisc[lastIdx], hLDisc[lastIdx], hRDisc[lastIdx]
-    local pStart_3D = pDisc[lastIdx]
+    local pLastIdx = max(1, lastIdx - 1)
+    local pPrev = vec3(pDisc[pLastIdx].x, pDisc[pLastIdx].y, 0)
+    local pStart_3D = vec3(pDisc[lastIdx].x, pDisc[lastIdx].y, 0)
     pStart_2D:set(pStart_3D.x, pStart_3D.y, 0.0)
-    local i1, i2, i3, i4 = pDisc[max(1, lastIdx - 1)], pStart_3D, u1_2D, u2_2D
-    i3.z, i4.z = zU1, zU2
+    local i1, i2, i3, i4 = pPrev, pStart_2D, vec3(u1_2D.x, u1_2D.y, 0), vec3(u2_2D.x, u2_2D.y, 0)
+
     local i2i3 = i3 - i2
     local d23 = i2:distance(i3)
     local d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23), max(1e-30, sqrt(i3:distance(i4)))
     local m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-    local splineGran = min(10, ceil(d23 * targetLonResInv))
+    local splineGran = computeAdaptiveGran(road, i1, i2, i3, i4, #poly, d23, i == 2)
     local splineGranInv = 1.0 / splineGran
-    for j = 0, splineGran do
+    local startIdx = 1
+    if i == 2 then
+      startIdx = 0
+    end
+    for j = startIdx, splineGran do
       local q = j * splineGranInv
       local tt, t_1 = q * q, q - 1
       local t_1sq = t_1 * t_1
       pDisc[ctr] = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-      nDisc[ctr], rDisc[ctr], oDisc[ctr] = lerp(nn1, nU1, q), lerp(rr1, rU1, q), lerp(oo1, oU1, q)
-      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = lerpWAndH(ww1, wU1, hhL1, hLU1, hhR1, hRU1, q)
+      pDisc[ctr].z = 0.0
       ctr = ctr + 1
     end
 
     -- Compute the arc section.
     -- [This is done before computing the Clothoid sections].
-    local arcGran = min(6, ceil(u3_2D:distance(u2_2D) * targetArcResInv) + 1)
-    local arcGranInv = 1.0 / arcGran
-    local pArc, nArc, rArc, oArc, wArc, hLArc, hRArc = {}, {}, {}, {}, {}, {}, {}
-    for j = 0, arcGran do
-      local idx, q = j + 1, j * arcGranInv
-      pArc[idx] = iCen_2D + rotateVecAroundAxis(vStart_2D, vertical, q * arcAngle)
-      pArc[idx].z = lerp(zU2, zU3, q)
-      nArc[idx], rArc[idx], oArc[idx] = lerp(nU2, nU3, q), lerp(rU2, rU3, q), lerp(oU2, oU3, q)
-      wArc[idx], hLArc[idx], hRArc[idx] = lerpWAndH(wU2, wU3, hLU2, hLU3, hRU2, hRU3, q)
+    local dx = 5.0--min(lonDistMax, max(lonDistMin, iRad * (lonDistMax - lonDistMin) / 190.0 + (20.0 * lonDistMin - lonDistMax) / 19.0))
+    local length = 10--u1_2D:distance(u2_2D) + u2_2D:distance(u3_2D)
+    local splineGran = ceil(length / dx) * road.granFactor[0]
+    local splineGranInv = 1.0 / splineGran
+    local pArc = {}
+    for j = 0, splineGran do
+      pArc[j + 1] = iCen_2D + util.rotateVecAroundAxis(vStart_2D, vertical, j * splineGranInv * arcAngle)
+      pArc[j + 1].z = 0.0
     end
 
     -- Fit a spline between the first line and the arc.
-    local pClo1, nClo1, rClo1, oClo1, wClo1, hLClo1, hRClo1 = {}, {}, {}, {}, {}, {}, {}
-    i1, i2, i3, i4 = pIm, pDisc[ctr - 1], pArc[1], pArc[2]
+    local pClo1 = {}
+    i1 = vec3(pIm.x, pIm.y, 0)
+    i2 = vec3(pDisc[ctr - 1].x, pDisc[ctr - 1].y, 0)
+    i3 = vec3(pArc[1].x, pArc[1].y, 0)
+    i4 = vec3(pArc[2].x, pArc[2].y, 0)
     i2i3 = i3 - i2
     d23 = i2:distance(i3)
     d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23), max(1e-30, sqrt(i3:distance(i4)))
     m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-    splineGran = min(7, ceil(d23 * targetLonResInv) + 1)
-    splineGranInv = 1.0 / splineGran
-    for j = 0, splineGran do
-      local idx, q = j + 1, j * splineGranInv
+    for j = 1, splineGran - 1 do
+      local q = j * splineGranInv
       local tt, t_1 = q * q, q - 1
       local t_1sq = t_1 * t_1
-      pClo1[idx] = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-      nClo1[idx], rClo1[idx], oClo1[idx] = lerp(nU1, nU2, q), lerp(rU1, rU2, q), lerp(oU1, oU2, q)
-      wClo1[idx], hLClo1[idx], hRClo1[idx] = lerpWAndH(wU1, wU2, hLU1, hLU2, hRU1, hRU2, q)
+      pClo1[j] = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
+      pClo1[j].z = 0.0
     end
 
     -- Fit a spline between the arc and the second line.
-    local pClo2, nClo2, rClo2, oClo2, wClo2, hLClo2, hRClo2 = {}, {}, {}, {}, {}, {}, {}
+    local pClo2 = {}
     local pArcLen = #pArc
-    i1, i2, i3, i4 = pArc[pArcLen - 1], pArc[pArcLen], p3_2D, pIp
-    i3.z = zU4
+    i1 = vec3(pArc[pArcLen - 1].x, pArc[pArcLen - 1].y, 0)
+    i2 = vec3(pArc[pArcLen].x, pArc[pArcLen].y, 0)
+    i3 = vec3(p3_2D.x, p3_2D.y, 0)
+    i4 = vec3(pIp.x, pIp.y, 0)
     i2i3 = i3 - i2
     d23 = i2:distance(i3)
     d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23), max(1e-30, sqrt(i3:distance(i4)))
     m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
-    splineGran = min(7, ceil(d23 * targetLonResInv) + 1)
-    splineGranInv = 1.0 / splineGran
-    for j = 0, splineGran do
-      local idx, q = j + 1, j * splineGranInv
+    for j = 1, splineGran - 1 do
+      local q = j * splineGranInv
       local tt, t_1 = q * q, q - 1
       local t_1sq = t_1 * t_1
-      pClo2[idx] = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-      nClo2[idx], rClo2[idx], oClo2[idx] = lerp(nU3, nU4, q), lerp(rU3, rU4, q), lerp(oU3, oU4, q)
-      wClo2[idx], hLClo2[idx], hRClo2[idx] = lerpWAndH(wU3, wU4, hLU3, hLU4, hRU3, hRU4, q)
+      pClo2[j] = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
+      pClo2[j].z = 0.0
     end
 
     -- Append [Clothoid 1 - Arc - Clothoid 2] multi-section to the discretised points array.
-    local numClo1 = #pClo1
-    for j = 1, numClo1 do
-      pDisc[ctr], nDisc[ctr], rDisc[ctr], oDisc[ctr] = pClo1[j], nClo1[j], rClo1[j], oClo1[j]
-      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = wClo1[j], hLClo1[j], hRClo1[j]
+    if abs(iRad) > 1.7 then
+      for j = 1, #pClo1 do
+        pDisc[ctr] = pClo1[j]
+        ctr = ctr + 1
+      end
+      map[#map + 1] = ctr + floor(#pArc * 0.5)                                                      -- For the general case, add the arc midpoint to the map.
+      for j = 1, #pArc do
+        pDisc[ctr] = pArc[j]
+        ctr = ctr + 1
+      end
+      for j = 1, #pClo2 do
+        pDisc[ctr] = pClo2[j]
+        ctr = ctr + 1
+      end
+    else
+      map[#map + 1] = ctr + 1                                                                       -- Use only a single point in the near-linear case (avoids rendering issues/folding).
+      pDisc[ctr] = pArc[floor(#pArc * 0.5)]
       ctr = ctr + 1
     end
-    for j = 1, pArcLen do
-      pDisc[ctr], nDisc[ctr], rDisc[ctr], oDisc[ctr] = pArc[j], nArc[j], rArc[j], oArc[j]
-      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = wArc[j], hLArc[j], hRArc[j]
-      ctr = ctr + 1
-    end
-    local numClo2 = #pClo2
-    for j = 1, numClo2 do
-      pDisc[ctr], nDisc[ctr], rDisc[ctr], oDisc[ctr] = pClo2[j], nClo2[j], rClo2[j], oClo2[j]
-      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = wClo2[j], hLClo2[j], hRClo2[j]
-      ctr = ctr + 1
-    end
+
   end
 
   -- Fit a final discretised line between the last multi-section and the very last point.
   -- [The points and lane widths are linearly-interpolated, and the normals are spherically-interpolated].
   local ctrLast = ctr - 1
-  local nLast = poly[polyLen]
-  local i1, i2, i3 = pDisc[ctr - 2], pDisc[ctrLast], nLast.p
+  local nLast = poly[#poly]
+  local i1 = vec3(pDisc[ctr - 2].x, pDisc[ctr - 2].y, 0)
+  local i2 = vec3(pDisc[ctrLast].x, pDisc[ctrLast].y, 0)
+  local i3 = vec3(nLast.p.x, nLast.p.y, 0)
+  local i4 = i3
   local i2i3 = i3 - i2
-  local norm1, norm2 = nDisc[ctrLast], normals[polyLen]
-  local w1, w2, rot1, rot2, off1, off2 = wDisc[ctrLast], nLast.widths, rDisc[ctrLast], nLast.rot[0], oDisc[ctrLast], nLast.offset
-  local hL1, hL2, hR1, hR2 = hLDisc[ctrLast], nLast.heightsL, hRDisc[ctrLast], nLast.heightsR
   local d23 = i2:distance(i3)
-  local d1, d2 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23)
-  local m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i3) / d2, splSm * d2
-  local splineGran = ceil(d23 * targetLonResInv)
+  local d1, d2, d3 = max(1e-30, sqrt(i1:distance(i2))), sqrt(d23), max(1e-30, sqrt(i3:distance(i4)))
+  local m1, m2, sd2 = (i2 - i1) / d1 + (i1 - i3) / (d1 + d2), (i2 - i4) / (d2 + d3) + (i4 - i3) / d3, splSm * d2
+  local splineGran = computeAdaptiveGran(road, i1, i2, i3, i3, #poly, d23, false)
   local splineGranInv = 1.0 / splineGran
-  for j = 0, splineGran do
+  for j = 1, splineGran do
     local q = j * splineGranInv
     local tt, t_1 = q * q, q - 1
     local t_1sq = t_1 * t_1
     pDisc[ctr] = q * t_1sq * sd2 * m1 + tt * t_1 * sd2 * m2 + t_1sq * (2.0 * q + 1) * i2 - tt * (2.0 * q - 3.0) * i3 + splSm * t_1 * (q * t_1 + tt) * i2i3
-    nDisc[ctr], rDisc[ctr], oDisc[ctr] = lerp(norm1, norm2, q), lerp(rot1, rot2, q), lerp(off1, off2, q)
-    wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = lerpWAndH(w1, w2, hL1, hL2, hR1, hR2, q)
+    pDisc[ctr].z = 0.0
     ctr = ctr + 1
   end
 
-  -- Remove any duplicate adjacents (nodes, normals and lane widths).
-  pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = removeDuplicates(pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc)
+  map[#map + 1] = #pDisc
 
-  return pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc
+  -- Interpolate the other quantities using Steffen.
+  local rDisc, oDisc, wDisc, hLDisc, hRDisc = { poly[1].rot[0] }, { poly[1].offset }, { poly[1].widths }, { poly[1].heightsL }, { poly[1].heightsR }
+  local ctr = 2
+  for i = 2, #poly do
+    local i1, i2, i3, i4 = max(1, i - 2), i - 1, i, min(#poly, i + 1)
+    local p1, p2, p3, p4 = poly[i1], poly[i2], poly[i3], poly[i4]
+    local div1, div2 = map[i2], map[i3]
+    tmp1:set(pDisc[div1].x, pDisc[div1].y, 0)
+    tmp2:set(pDisc[div2].x, pDisc[div2].y, 0)
+    local dAll = tmp1:distance(tmp2)
+    local size = map[i3] - map[i2]
+    for _ = 1, size do
+      tmp3:set(pDisc[ctr].x, pDisc[ctr].y, 0)
+      local d1 = tmp3:distance(tmp1)
+      local q = d1 / dAll
+      local qPlus1 = q + 1
+      pDisc[ctr].z = monotonicSteffen(p1.p.z, p2.p.z, p3.p.z, p4.p.z, 0, 1, 2, 3, qPlus1)
+      rDisc[ctr] = monotonicSteffen(p1.rot[0], p2.rot[0], p3.rot[0], p4.rot[0], 0, 1, 2, 3, qPlus1)
+      oDisc[ctr] = monotonicSteffen(p1.offset, p2.offset, p3.offset, p4.offset, 0, 1, 2, 3, qPlus1)
+      wDisc[ctr], hLDisc[ctr], hRDisc[ctr] = {}, {}, {}
+      for k, _ in pairs(p1.widths) do
+        wDisc[ctr][k] = im.FloatPtr(monotonicSteffen(p1.widths[k][0], p2.widths[k][0], p3.widths[k][0], p4.widths[k][0], 0, 1, 2, 3, qPlus1))
+        hLDisc[ctr][k] = im.FloatPtr(monotonicSteffen(p1.heightsL[k][0], p2.heightsL[k][0], p3.heightsL[k][0], p4.heightsL[k][0], 0, 1, 2, 3, qPlus1))
+        hRDisc[ctr][k] = im.FloatPtr(monotonicSteffen(p1.heightsR[k][0], p2.heightsR[k][0], p3.heightsR[k][0], p4.heightsR[k][0], 0, 1, 2, 3, qPlus1))
+      end
+      ctr = ctr + 1
+    end
+  end
+  pDisc[1].z = poly[1].p.z
+  table.remove(pDisc, 1)
+  table.remove(rDisc, 1)
+  table.remove(oDisc, 1)
+  table.remove(wDisc, 1)
+  table.remove(hLDisc, 1)
+  table.remove(hRDisc, 1)
+
+  -- Remove any duplicates.
+  local pDiscA, rDiscA, oDiscA, wDiscA, hLDiscA, hRDiscA = { pDisc[1] }, { rDisc[1] }, { oDisc[1] }, { wDisc[1] }, { hLDisc[1] }, { hRDisc[1] }
+  local ctr = 2
+  for i = 2, #pDisc do
+    local p1, p2 = pDisc[i - 1], pDisc[i]
+    local dSq = p1:squaredDistance(p2)
+    if dSq > 0.01 then
+      pDiscA[ctr], rDiscA[ctr], oDiscA[ctr], wDiscA[ctr], hLDiscA[ctr], hRDiscA[ctr] = pDisc[i], rDisc[i], oDisc[i], wDisc[i], hLDisc[i], hRDisc[i]
+      ctr = ctr + 1
+    end
+  end
+
+  -- Compute the normal vectors.
+  local nDiscA = normalsFromPAndRot(pDiscA, rDiscA)
+
+  return pDiscA, nDiscA, rDiscA, oDiscA, wDiscA, hLDiscA, hRDiscA
 end
 
 -- Computes the geometric data for the given road, ready for rendering.
@@ -660,28 +530,95 @@ end
 --  [9:11] is the lane width and left/right relative heights.
 --  [12] is the signed lateral rotation angle (super-elevation), same for all lanes.
 --  [13] The lateral lane offset value (same for every lane, at this disc. pt).
-local function computeRoadRenderData(road, roads, map)
+local function computeRoadRenderData(road)
+
+  -- If the road is being conformed to the terrain, project the nodes to the terrain.
+  local isConformToTerrain = road.isConformRoadToTerrain[0]
+  if isConformToTerrain then
+    for i = 1, #road.nodes do
+      local p = road.nodes[i].p
+      tmp1:set(p.x, p.y, 0)
+      p.z = core_terrain.getTerrainHeight(tmp1)
+    end
+  end
+
+  -- Apply auto banking, if selected.
+  local profile = road.profile
+  if profile.isAutoBanking[0] then
+    local autoBankingFactor = profile.autoBankingFactor[0]
+    local nodes = road.nodes
+    nodes[1].rot = im.FloatPtr(0.0)
+    nodes[#nodes].rot = im.FloatPtr(0.0)
+    for i = 2, #nodes - 1 do
+      if nodes[i].isAutoBanked then
+        local p1, p2, p3 = nodes[i - 1].p, nodes[i].p, nodes[i + 1].p
+        tmp1:set(p1.x, p1.y, 0)
+        tmp2:set(p2.x, p2.y, 0)
+        tmp3:set(p3.x, p3.y, 0)
+        local cen = util.circle2DFrom3Points(tmp1, tmp2, tmp3)
+        if cen then
+          local radius = cen:distance(tmp1)
+          local angDeg = max(0.0, min(8.0, -0.015 * radius + 8.5))
+          local bankingSign = sign2((p2 - p1):cross(vertical):dot(p3 - p1))
+          nodes[i].rot = im.FloatPtr(bankingSign * autoBankingFactor * angDeg)
+        end
+      end
+    end
+  end
+
+  -- Apply extra width at hairpins, if required.
+  local nodes = road.nodes
+  local origWidths = {}
+  if profile.isExtraWidth[0] then
+    for i = 2, #nodes - 1 do
+      origWidths[i] = {}
+      local v1, v2 = nodes[i].p - nodes[i - 1].p, nodes[i + 1].p - nodes[i].p
+      if abs(util.angleBetweenVecs(v1, v2)) > halfPi then
+        local numLanes = 0
+        for k, _ in pairs(nodes[i].widths) do
+          if nodes[i].widths[k][0] > 2.0 then
+            numLanes = numLanes + 1
+          end
+        end
+        local extraHairpinLaneWidth = extraHairpinWidth / numLanes
+        for k, _ in pairs(nodes[i].widths) do
+          if nodes[i].widths[k][0] > 2.0 then
+            origWidths[i][k] = nodes[i].widths[k][0]
+            nodes[i].widths[k] = im.FloatPtr(nodes[i].widths[k][0] + extraHairpinLaneWidth)
+          end
+        end
+      end
+    end
+  end
 
   -- Filter by case:
   -- i) Standard roads: if the user has requested a civil engineering style spline, this is handled separately.
-  -- ii) Link roads: a fresh CR-Chordal spline is fitted through the reference nodes, then centripetal CR spline fitting is applied.
-  -- iii) Arc roads: circular-arc fitted splines comprising of exactly three nodes.
-  -- iv) Standard roads: the default is to use centripetal CR spline fitting through the nodes.
+  -- ii) Arc roads: circular-arc fitted splines comprising of exactly three nodes.
+  -- iii) Standard roads: the default is to use centripetal CR spline fitting through the nodes.
   local pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = nil, nil, nil, nil, nil, nil, nil
   if road.isCivilEngRoads[0] then
     pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = fitCivEngAndFrame(road)
-  elseif road.isLinkRoad then
-    pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = fitSplineLinkRoad(road, roads, map)
   elseif road.isArc then
     pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = fitArc(road)
   else
     pDisc, nDisc, rDisc, oDisc, wDisc, hLDisc, hRDisc = fitSplineStandardRoad(road)
   end
 
+  -- Recover the old widths (after hairpin computations above).
+  if profile.isExtraWidth[0] then
+    for i = 1, #origWidths do
+      if origWidths[i] then
+        for k, _ in pairs(origWidths[i]) do
+          nodes[i].widths[k] = im.FloatPtr(origWidths[i][k])
+        end
+      end
+    end
+  end
+
   -- Compute the render data for this road (sub node data at each discretisation point on the fitted polyline).
-  local profile, laneKeys, leftKeys, rightKeys = road.profile, road.laneKeys, road.leftKeys, road.rightKeys
+  local laneKeys, leftKeys, rightKeys = road.laneKeys, road.leftKeys, road.rightKeys
   local numLaneKeys, numLeftKeys, numRightKeys = #laneKeys, #leftKeys, #rightKeys
-  local isConformToTerrain, numDiscPoints = road.isConformRoadToTerrain[0], #pDisc
+  local numDiscPoints = #pDisc
 
   -- Fetch the existing render data table, if it exists, or allocate a new table (new roads will require this).
   local renderData = road.renderData or {}
@@ -695,7 +632,10 @@ local function computeRoadRenderData(road, roads, map)
     local tgt = pDisc[min(numDiscPoints, i + 1)] - pDisc[max(1, i - 1)]
     tgt:normalize()
     local nml = nDisc[i]
+    nml:normalize()
     tmpLat:set(nml.y * tgt.z - nml.z * tgt.y, nml.z * tgt.x - nml.x * tgt.z, nml.x * tgt.y - nml.y * tgt.x)
+    tmpLat:normalize()
+    nml = tgt:cross(tmpLat)
 
     -- Fetch the render data for this discretisation point, if it exists, or allocate a new table (new roads will require this).
     local rData = renderData[i] or {}
@@ -705,13 +645,13 @@ local function computeRoadRenderData(road, roads, map)
 
     -- First, do the left lanes first, from inner to outer.
     -- [Splitting road into two sides ensures the reference line is rendered at the center, without needing an offset].
-    local p, n, w, hL, hR = pDisc[i], nDisc[i], wDisc[i], hLDisc[i], hRDisc[i]
+    local p, w, hL, hR = pDisc[i], wDisc[i], hLDisc[i], hRDisc[i]
     local rotRad, off, pWork = rad(rDisc[i]), oDisc[i], p
     for j = numLeftKeys, 1, -1 do
       local k = leftKeys[j]
       local laneWidth, heightL, heightR = w[k][0], hL[k][0], hR[k][0]
       local laneWidthVec = laneWidth * tmpLat
-      local nHL, nHR = n * heightL, n * heightR
+      local nHL, nHR = nml * heightL, nml * heightR
       local lu, ru = pWork + nHL, pWork - laneWidthVec + nHR                                        -- The lane inner-most/outer-most points.
       pWork = pWork - laneWidthVec
       local rdk = rData[k]
@@ -722,7 +662,7 @@ local function computeRoadRenderData(road, roads, map)
       local oVec = tmpLat * off                                                                     -- The lateral offset vector.
       local p1, p2, p3, p4 = ru + oVec, lu + oVec, lu - nHL + oVec, ru - nHR + oVec                 -- The four cross-sectional points from top-left, clockwise, to bottom-right.
       rdk[1], rdk[2], rdk[3], rdk[4] = p1, p2, p3, p4                                               -- [1:4] The four cross-sectional points, clockwise from top left.
-      rdk[5] = n                                                                                    -- [5] The road section unit normal vector (not quad local).
+      rdk[5] = nml                                                                                  -- [5] The road section unit normal vector (not quad local).
       rdk[6]:set(tmpLat.x, tmpLat.y, tmpLat.z)                                                      -- [6] The road section unit lateral vectors (not quad local).
       rdk[7] = (p1 + p2) * 0.5                                                                      -- [7] The lane midpoint (on top face).
       rdk[8] = profile[k].type                                                                      -- [8] The lane type ('road_lane', 'sidewalk', 'island', etc).
@@ -739,7 +679,7 @@ local function computeRoadRenderData(road, roads, map)
       local k = rightKeys[j]
       local laneWidth, heightL, heightR = w[k][0], hL[k][0], hR[k][0]
       local laneWidthVec = laneWidth * tmpLat
-      local nHL, nHR = n * heightL, n * heightR
+      local nHL, nHR = nml * heightL, nml * heightR
       local lu, ru = pWork + nHL, pWork + laneWidthVec + nHR                                        -- The lane inner-most/outer-most points.
       pWork = pWork + laneWidthVec
       local rdk = rData[k]
@@ -750,7 +690,7 @@ local function computeRoadRenderData(road, roads, map)
       local oVec = tmpLat * off                                                                     -- The lateral offset vector.
       local p1, p2, p3, p4 = lu + oVec, ru + oVec, ru - nHR + oVec, lu - nHL + oVec                 -- The four cross-sectional points from top-left, clockwise, to bottom-right.
       rdk[1], rdk[2], rdk[3], rdk[4] = p1, p2, p3, p4                                               -- [1:4] The four cross-sectional points, clockwise from top left.
-      rdk[5] = n                                                                                    -- [5] The road section unit normal vector (not quad local).
+      rdk[5] = nml                                                                                  -- [5] The road section unit normal vector (not quad local).
       rdk[6]:set(tmpLat.x, tmpLat.y, tmpLat.z)                                                      -- [6] The road section unit lateral vectors (not quad local).
       rdk[7] = (p1 + p2) * 0.5                                                                      -- [7] The lane midpoint (on top face).
       rdk[8] = profile[k].type                                                                      -- [8] The lane type ('road_lane', 'sidewalk', 'island', etc).
@@ -785,25 +725,26 @@ local function computeRoadRenderData(road, roads, map)
   -- Set the road render data on the road.
   road.renderData = renderData
 
-  -- Handle any tunneled sections for this road.
-  if road.isAllowTunnels[0] and extensions.editor_terrainEditor.getTerrainBlock() then
-    table.clear(road.tunnels)
-    local tSections = identifyTunnelSections(renderData, road.extraS[0], road.extraE[0])
-    local numTSections = #tSections
-    for i = 1, numTSections do
-      local sec = tSections[i]
-      road.tunnels[i] = {
-        s = sec.s, e = sec.e,
-        radGran = road.radGran[0], radOffset = road.radOffset[0],
-        thickness = road.thickness[0], zOffsetFromRoad = road.zOffsetFromRoad[0],
-        protrudeS = road.protrudeS[0], protrudeE = road.protrudeE[0] }
+  -- Handle any tunneled/bridged sections for this road.
+  if extensions.editor_terrainEditor.getTerrainBlock() then
+    if road.isAllowTunnels[0] then
+      local tSections = identifyTunnelSections(renderData, road.extraS[0], road.extraE[0])
+      table.clear(road.tunnels)
+      for i = 1, #tSections do
+        local sec = tSections[i]
+        road.tunnels[i] = {
+          name = 'tunnel_' .. tostring(i),
+          s = sec.s, e = sec.e,
+          radGran = road.radGran[0], radOffset = road.radOffset[0],
+          thickness = road.thickness[0], zOffsetFromRoad = road.zOffsetFromRoad[0],
+          protrudeS = road.protrudeS[0], protrudeE = road.protrudeE[0] }
+      end
     end
   end
 end
 
 
 -- Public interface.
-M.fitSpline =                                             fitSpline
 M.computeRoadRenderData =                                 computeRoadRenderData
 
 return M

@@ -8,6 +8,8 @@ M.dependencies = {"career_career"}
 
 local blockedInputActions = core_input_actionFilter.createActionTemplate({"walkingMode", "bigMap"})
 
+local paintingActive
+
 local inventoryId
 
 local originComputerId
@@ -29,6 +31,15 @@ local prices = {
   },
   clearcoatBase = {money = {amount = 500, canBeNegative = false}},
   clearcoatPolishFactor = {money = {amount = 1000, canBeNegative = false}},
+}
+
+local colorClassData = {
+  semiGloss = {metallic = 0, roughness = 0.13},
+  gloss = {metallic = 0, roughness = 0},
+  semiMetallic = {metallic = 0.5, roughness = 0.5},
+  metallic = {metallic = 1, roughness = 0.5},
+  matte = {metallic = 0, roughness = 0.7},
+  chrome = {metallic = 1, roughness = 0}
 }
 
 local function getPrimerColor()
@@ -68,10 +79,12 @@ local function getPaintData()
   local colors = findBaseColors(partConditions)
   data.colors = colors
   data.prices = prices
+  data.colorClassData = colorClassData
   return data
 end
 
 local function startActual(_originComputerId)
+  paintingActive = true
   chosenPaints = nil
   chosenPackage = nil
   originComputerId = _originComputerId
@@ -101,12 +114,22 @@ local function start(_inventoryId, _originComputerId)
   end
 end
 
-local function close()
+local function closeMenu()
   if originComputerId then
     local computer = freeroam_facilities.getFacility("computer", originComputerId)
     career_modules_computer.openMenu(computer)
   else
     career_career.closeAllMenus()
+  end
+end
+
+local closeMenuAfterSaving
+local function close(_closeMenuAfterSaving)
+  if not paintingActive then return end
+
+  closeMenuAfterSaving = career_career.isAutosaveEnabled() and _closeMenuAfterSaving
+  if not closeMenuAfterSaving then
+    closeMenu()
   end
   career_modules_inventory.spawnVehicle(inventoryId, 2)
 
@@ -125,6 +148,15 @@ local function close()
 
   core_input_actionFilter.setGroup('paintingBlockedActions', blockedInputActions)
   core_input_actionFilter.addAction(0, 'paintingBlockedActions', false)
+  scenetree.OnlyGui:setFrustumCameraCenterOffset(Point2F(0, 0))
+  paintingActive = nil
+end
+
+local function onVehicleSaveFinished()
+  if closeMenuAfterSaving then
+    closeMenu()
+    closeMenuAfterSaving = nil
+  end
 end
 
 local function getTotalPrice(package)
@@ -158,33 +190,40 @@ local function apply()
     end
   end
 
-  close()
+  close(true)
   career_modules_inventory.setVehicleDirty(inventoryId)
+  career_saveSystem.saveCurrent({inventoryId})
 end
 
 local function onComputerAddFunctions(menuData, computerFunctions)
   if not menuData.computerFacility.functions["painting"] then return end
 
   for _, vehicleData in ipairs(menuData.vehiclesInGarage) do
-    local inventoryId = vehicleData.inventoryId
-    local permissionStatus, permissionLabel = career_modules_permissions.getStatusForTag("vehicleModification")
-
-    local buttonDisabled =
-      vehicleData.needsRepair or
-      menuData.tutorialTuningActive or
-      menuData.tutorialPartShoppingActive or
-      permissionStatus == "forbidden"
-
-    local label = "Painting" ..(permissionLabel and ("\n"..permissionLabel) or "")
-
     local computerFunctionData = {
       id = "painting",
-      label = label,
-      callback = function() start(inventoryId, menuData.computerFacility.id) end,
-      disabled = buttonDisabled
+      label = "Painting",
+      callback = function() start(vehicleData.inventoryId, menuData.computerFacility.id) end,
+      order = 15
     }
+    -- vehicle broken
     if vehicleData.needsRepair then
-      computerFunctionData.disableReason = "fix vehicle body first"
+      computerFunctionData.disabled = true
+      computerFunctionData.reason = career_modules_computer.reasons.needsRepair
+    end
+    -- tutorial active
+    if menuData.tutorialPartShoppingActive or menuData.tutorialTuningActive then
+      computerFunctionData.disabled = true
+      computerFunctionData.reason = career_modules_computer.reasons.tutorialActive
+    end
+
+    -- generic gameplay reason
+    local inventoryId = vehicleData.inventoryId
+    local reason =  career_modules_permissions.getStatusForTag({"painting", "vehicleModification"}, {inventoryId = inventoryId})
+    if not reason.allow then
+      computerFunctionData.disabled = true
+    end
+    if reason.permission ~= "allowed" then
+      computerFunctionData.reason = reason
     end
 
     computerFunctions.vehicleSpecific[inventoryId][computerFunctionData.id] = computerFunctionData
@@ -198,7 +237,7 @@ local function sendShoppingCartData(package)
   guihooks.trigger("sendPaintingShoppingCartData", data)
 end
 
-local function setPaints(paints, paintOptions)
+local function setPaints(paints, paintOptions, partName)
   chosenPaints = paints
   chosenPackage = paintOptions
 
@@ -211,7 +250,11 @@ local function setPaints(paints, paintOptions)
   end
 
   local vehicleObject = be:getObjectByID(career_modules_inventory.getMapInventoryIdToVehId()[inventoryId])
-  vehicleObject:queueLuaCommand(string.format("partCondition.setAllPartPaints(%s, 0)", serialize(chosenPaints)))
+  if partName then
+    vehicleObject:queueLuaCommand(string.format("partCondition.setPartPaints(%s, %s, 0)", partName, serialize(chosenPaints)))
+  else
+    vehicleObject:queueLuaCommand(string.format("partCondition.setAllPartPaints(%s, 0)", serialize(chosenPaints)))
+  end
 end
 
 local function getFactoryPaint()
@@ -236,6 +279,7 @@ local function onUIOpened()
     core_camera.setByName(0, "orbit", true)
     core_camera.setDefaultRotation(vehId, vec3(145, -15, 0))
     core_camera.resetCamera(0)
+    scenetree.OnlyGui:setFrustumCameraCenterOffset(Point2F(-0.3125, 0))
     extensions.hook("onVehiclePaintingUiOpened")
   end, 'ping')
 end
@@ -251,5 +295,6 @@ M.getPrimerColor = getPrimerColor
 
 M.onComputerAddFunctions = onComputerAddFunctions
 M.onUIOpened = onUIOpened
+M.onVehicleSaveFinished = onVehicleSaveFinished
 
 return M

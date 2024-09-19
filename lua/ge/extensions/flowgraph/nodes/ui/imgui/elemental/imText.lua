@@ -16,6 +16,8 @@ C.pinSchema = {
   { dir = 'in', type = 'any', name = 'text', description = 'Text to display.' },
 }
 
+C.tags = {'imgui'}
+
 function C:_executionStarted()
   for _, p in pairs(self.pinOut) do
     p.value = false

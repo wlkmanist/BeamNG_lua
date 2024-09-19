@@ -8,6 +8,9 @@ local stateCache = nil
 
 local function isValid()
   if stateCache == nil then
+    if ResearchVerifier == nil then
+      return false
+    end
     stateCache = ResearchVerifier.isTechLicenseVerified() or false
   end
   return stateCache

@@ -67,7 +67,7 @@ local function init(jbeamData)
   if type(jbeamData.shiftSoundNode_nodes) == "table" and jbeamData.shiftSoundNode_nodes[1] and type(jbeamData.shiftSoundNode_nodes[1]) == "number" then
     shiftSoundNodeId = jbeamData.shiftSoundNode_nodes[1]
   else
-    log("W", "shifterAnimation/sequentialLever.init", "Can't find node id for sound location. Specified data: " .. dumps(jbeamData.shiftSoundNode_nodes))
+    log("W", "propAnimation/sequentialLever.init", "Can't find node id for sound location. Specified data: " .. dumps(jbeamData.shiftSoundNode_nodes))
     shiftSoundNodeId = 0
   end
 
@@ -81,13 +81,13 @@ local function init(jbeamData)
 
   if not relevantGearbox then
     --no gearbox device
-    log("E", "shifterAnimation/sequentialLever.init", "Can't find relevant gearbox device with name: " .. gearboxName)
+    log("E", "propAnimation/sequentialLever.init", "Can't find relevant gearbox device with name: " .. gearboxName)
     M.updateGFX = nop
   end
 
   if relevantGearbox and not supportedGearboxLookup[relevantGearbox.type] then
     --gearbox device is the wrong type
-    log("E", "shifterAnimation/sequentialLever.init", "Relevant gearbox device is the wrong type. Expected: " .. dumps(supportedGearboxTypes) .. ", actual: " .. relevantGearbox.type)
+    log("E", "propAnimation/sequentialLever.init", "Relevant gearbox device is the wrong type. Expected: " .. dumps(supportedGearboxTypes) .. ", actual: " .. relevantGearbox.type)
     M.updateGFX = nop
   end
 

@@ -146,7 +146,7 @@ function C:drawIssuesWindow()
         if im.TableGetSortSpecs().Specs.SortDirection == 1 then
           arrayReverse(self.issues.list)
         end
-        im.TableGetSortSpecs().SpecsDirty = false
+        im.TableSetSortSpecsDirty(false)
       end
 
       for _, issue in ipairs(self.issues.list or {}) do

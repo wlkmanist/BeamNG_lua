@@ -343,6 +343,33 @@ local function registerDefaultMenus()
       end
     end
   end})
+
+  addEntry({ level = '/', generator = function(entries)
+    if getPlayerVehicle(0) and not core_input_actionFilter.isActionBlocked("reload_vehicle") then
+      table.insert(entries, {
+        level = "/",
+        title = "ui.radialmenu2.Save",
+        icon = "radial_save",
+        priority = 90,
+        onSelect = function()
+          getPlayerVehicle(0):queueLuaCommand("beamstate.save()")
+          return {"hide"}
+        end
+      })
+
+      table.insert(entries, {
+        level = "/",
+        title = "ui.radialmenu2.Load",
+        icon = "radial_load",
+        priority = 91,
+        onSelect = function()
+          getPlayerVehicle(0):queueLuaCommand("beamstate.load()")
+          extensions.hook('trackVehReset')
+          return {"hide"}
+        end
+      })
+    end
+  end})
   --dump(menuTree)
 end
 

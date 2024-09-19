@@ -210,6 +210,8 @@ local function initSounds(device, jbeamData)
       consumer:initSounds(device.consumerJbeamData[consumer.name])
     end
   end
+
+  bdebug.setNodeDebugText("Hydraulics", pumpLoopNodeId, device.name .. " - Pump Loop: " .. (pumpLoopEvent or "no event"))
 end
 
 local function resetSounds(device, jbeamData)

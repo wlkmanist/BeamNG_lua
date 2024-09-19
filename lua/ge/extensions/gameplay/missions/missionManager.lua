@@ -8,6 +8,9 @@ local missions = {}
 
 local logTag = "missionManager"
 
+-- CANbus is one-vehicle exclusive, so all vehicles need to be removed before...
+local removeAllVehiclesBeforeMission = false
+
 ------------- helpers ----------------
 local foregroundMissionId -- holds the one non-background-mission that is allowed to run at the same time
 local delayedStartFromWithinMission
@@ -75,6 +78,20 @@ local function taskStartFadeStep(step)
     step.complete = true
     ui_fadeScreen.delayFrames = 1
   end
+end
+
+local function taskStartRemoveVehicles(step)
+  if not removeAllVehiclesBeforeMission then step.complete = true return end
+  for _, name in ipairs(scenetree.findClassObjects("BeamNGVehicle")) do
+    local obj = scenetree.findObject(name)
+    if obj then
+      log("I","","Deleting " .. obj:getId())
+      obj:delete()
+    end
+  end
+  gameplay_traffic.deleteVehicles()
+  step.complete = true
+  return
 end
 
 local function taskStartPreMissionHandling(step)
@@ -153,8 +170,15 @@ local function taskStartPreMissionHandling(step)
   -- custom mission script
   local scriptPath = mission.missionFolder.."/script"
   if FS:fileExists(scriptPath..".lua") then
-    mission.script = require(scriptPath)({mission = mission})
-    log("I", logTag, "Initializing custom mission script")
+    local script
+    local result = xpcall(function()
+      script = require(scriptPath)
+    end
+    , debug.traceback)
+    if result then
+      mission.script = script({mission = mission}) -- actual init of the script
+      log("I", logTag, "Initializing custom mission script")
+    end
   end
 end
 
@@ -303,6 +327,7 @@ local function taskStartTrafficStep(step)
 
       step.validParking = gameplay_parking.setupVehicles(trafficSetup.parkedAmount)
       step.validTraffic = gameplay_traffic.setupTraffic(trafficSetup.amount, 0, options)
+      trafficSetup._hasSpawnedTraffic = true
       if not step.validParking and not step.validTraffic then -- no vehicles to spawn, just continue
         step.complete = true
       end
@@ -437,9 +462,10 @@ local function taskStopMissionStep(step)
   end
   mission.setupModules.vehicles._processed = nil
 
-  if mission.setupModules.traffic._processed and not mission.setupModules.traffic.usePrevTraffic then
+  if mission.setupModules.traffic._processed and mission.setupModules.traffic._hasSpawnedTraffic then
     gameplay_traffic.deleteVehicles()
     gameplay_parking.deleteVehicles()
+    log("I", logTag, "Deleting traffic spawned by mission.")
   end
   unstashVehicles()
 
@@ -485,6 +511,42 @@ local function taskStopMissionStep(step)
   mission.script = nil
 end
 
+local function taskStopRespawnVehicleStep(step)
+  if not removeAllVehiclesBeforeMission then step.complete = true return end
+
+  if not step.veh then
+    local pos = core_camera.getPosition()
+    pos.z = core_terrain.getTerrainHeight(pos)+0.5
+    local options = {config = "kc6x_360_A", pos = pos}
+    local spawningOptions = sanitizeVehicleSpawnOptions("etkc", options)
+    spawningOptions.autoEnterVehicle = true
+    step.veh = core_vehicles.spawnNewVehicle("etkc", spawningOptions)
+  end
+  if step.veh:isReady() then
+    spawn.teleportToLastRoad()
+    gameplay_walk.getInVehicle(step.veh)
+    commands.setGameCamera()
+    step.complete = true
+    return
+  end
+end
+
+local function taskStopRespawnTrafficStep(step)
+  if not removeAllVehiclesBeforeMission then step.complete = true return end
+
+  if not step.started then
+    gameplay_traffic.setupTraffic()
+    step.started = true
+  end
+  if gameplay_traffic.getState() == 'on' then
+    gameplay_traffic.scatterTraffic()
+    gameplay_traffic.scatterTraffic()
+    step.complete = true
+  end
+
+  step.complete = true
+end
+
 local function taskStopFadeStep(step)
   if not step.waitForFade then
     ui_fadeScreen.stop(M.fadeDuration)
@@ -521,6 +583,7 @@ M.onScreenFadeState = function(state)
   taskData.steps[taskData.currentStep]["fadeState"..state] = true
 end
 
+
 local function startWithFade(mission, userSettings, startingOptions)
   if not mission then
     log("E", logTag, "Couldn't start mission, mission id not found. " .. dumpsz(mission, 2))
@@ -542,6 +605,9 @@ local function startWithFade(mission, userSettings, startingOptions)
       name = "taskStartFadeStep",
       processTask = taskStartFadeStep,
       timeout = 10
+    }, {
+      name = "taskStartRemoveVehicles",
+      processTask = taskStartRemoveVehicles
     }, {
       name = "taskStartPreMissionHandling",
       processTask = taskStartPreMissionHandling
@@ -651,6 +717,15 @@ local function attemptAbandonMissionWithFade(mission)
       name = "taskStopMissionStep",
       processTask = taskStopMissionStep,
     }, {
+      name = "taskStartRemoveVehicles",
+      processTask = taskStartRemoveVehicles,
+    }, {
+      name = "taskStopRespawnVehicleStep",
+      processTask = taskStopRespawnVehicleStep,
+    }, {
+      name = "taskStopRespawnTrafficStep",
+      processTask = taskStopRespawnTrafficStep,
+    }, {
       name = "taskStopFadeStep",
       processTask = taskStopFadeStep,
       timeout = 5
@@ -684,6 +759,15 @@ local function stop(mission, data)
     {
       name = "taskStopMissionStep",
       processTask = taskStopMissionStep,
+    }, {
+      name = "taskStartRemoveVehicles",
+      processTask = taskStartRemoveVehicles,
+    }, {
+      name = "taskStopRespawnVehicleStep",
+      processTask = taskStopRespawnVehicleStep,
+    }, {
+      name = "taskStopRespawnTrafficStep",
+      processTask = taskStopRespawnTrafficStep,
     }
   }
   taskData.currentStep = 1

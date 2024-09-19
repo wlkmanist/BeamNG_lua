@@ -4,21 +4,24 @@
 
 local M = {}
 M.dependencies = {"core_vehicleBridge"}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dPages, dProgress, dVehicleTasks, dTasklist, dParcelMods, dVehOfferManager
+local moduleVersion = 42
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehicleTasks, dTasklist, dParcelMods, dVehOfferManager
+local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
   dGeneral = career_modules_delivery_general
   dGenerator = career_modules_delivery_generator
-  dPages = career_modules_delivery_pages
   dProgress = career_modules_delivery_progress
   dVehicleTasks = career_modules_delivery_vehicleTasks
   dTasklist = career_modules_delivery_tasklist
   dParcelMods = career_modules_delivery_parcelMods
   dVehOfferManager = career_modules_delivery_vehicleOfferManager
+  step = util_stepHandler
 end
 
 local deliveryGameTime = 0
+local deliveryGameTimePaused = false
 
 local deliveryModeActive = false
 local deliveryAbandonPenaltyFactor = 0.1
@@ -31,12 +34,21 @@ local loadData = {}
 local function loadSaveData()
   local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
   if not saveSlot then return end
-  local data = (savePath and jsonReadFile(savePath .. "/career/"..saveFile)) or {}
 
-  loadData = data or {}
+  local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
+  local outdated = not saveInfo or saveInfo.version < moduleVersion
+
+  local data = (not outdated and savePath and jsonReadFile(savePath .. "/career/"..saveFile)) or {}
+
+  loadData = data
   dProgress.setProgress(loadData.progress)
   dParcelMods.setProgress(loadData.parcelModProgress)
   loadData.facilities = loadData.facilities or {}
+  loadData.settings = data.settings or {}
+
+  if loadData.settings.automaticRoute == nil then
+    loadData.settings.automaticRoute = true
+  end
 
   deliveryGameTime = loadData.general and loadData.general.gameTime or deliveryGameTime
   if loadData.general and loadData.general.osTime then
@@ -65,6 +77,7 @@ local function onSaveCurrentSaveSlot(currentSavePath)
     parcels = {},
     vehicleOffers = {},
     facilities = {},
+    settings = loadData.settings or {}
   }
 
   -- general data
@@ -95,7 +108,10 @@ local function onSaveCurrentSaveSlot(currentSavePath)
       modifiers = cargo.modifiers,
       generatedAtTimestamp = cargo.generatedAtTimestamp,
       weight = cargo.weight,
+      density = cargo.density,
       groupSeed = cargo.groupSeed,
+      automaticDropOff = cargo.automaticDropOff,
+      organization = cargo.organization,
     }
     if not groupMap[cargo.groupId] then
       maxGroupId = maxGroupId + 1
@@ -117,6 +133,7 @@ local function onSaveCurrentSaveSlot(currentSavePath)
     local elem = {
       logisticGenerators = {},
       progress = facility.progress,
+      materialStorages = facility.materialStorages,
     }
     for i, generator in ipairs(facility.logisticGenerators or {}) do
       elem.logisticGenerators[i] = {
@@ -186,17 +203,19 @@ local function getNearbyVehicleCargoContainers(callback)
       vehCargoData[vehId] = {}
 
       for _, container in ipairs(vehCargoContainerData[1]) do
-
+        local vehName = getVehicleName(vehId)
         local elem = {
           vehId = vehId,
           containerId = container.id,
           location = {type = "vehicle", vehId = veh:getID(), containerId = container.id},
+          vehName = vehName,
           name = container.name,
-          moveToLabel = getVehicleName(vehId) .. " " .. container.name,
+          moveToLabel = vehName .. " " .. container.name,
           cargoTypesLookup = tableValuesAsLookupDict(container.cargoTypes),
           cargoTypesString = table.concat(container.cargoTypes,", "),
           totalCargoSlots = container.capacity,
           usedCargoSlots = 0,
+          transientCargoSlots = 0,
           freeCargoSlots = container.capacity,
           refNodeClusterId = refNodeClusterIdByVehId[vehId],
           clusterId = container.nodeId and veh:getNodeClusterId(container.nodeId),
@@ -215,11 +234,21 @@ local function getNearbyVehicleCargoContainers(callback)
           end
         end
         elem.rawCargo = dParcelManager.getAllCargoForLocation(elem.location)
+
+        elem.transientCargo = dParcelManager.getTransientMovesForTargetLocationWithCargo(elem.location)
+
+
         --for key, amount in pairs(elem.totalCargoSlots) do
         --  elem.usedCargoSlots[key] = 0
         --end
         for _, cargo in ipairs(elem.rawCargo) do
           elem.usedCargoSlots = elem.usedCargoSlots + cargo.slots
+          elem.freeCargoSlots = elem.freeCargoSlots - cargo.slots
+        end
+
+        for _, cargo in ipairs(elem.transientCargo) do
+          elem.usedCargoSlots = elem.usedCargoSlots + cargo.slots
+          elem.transientCargoSlots = elem.transientCargoSlots + cargo.slots
           elem.freeCargoSlots = elem.freeCargoSlots - cargo.slots
         end
 
@@ -252,9 +281,49 @@ end
 M.getNearbyVehicleCargoContainers = getNearbyVehicleCargoContainers
 
 
+local function defaultDelayCallback(data)
+  local maxDelay = 0
+  for _, delay in pairs(data) do
+    maxDelay = math.max(delay, maxDelay)
+  end
+  if maxDelay > 0 then
+    maxDelay = math.max(maxDelay, 1)
+    -- make
+    local sequence = {
+      step.makeStepWait(maxDelay+0.5),
+      step.makeStepReturnTrueFunction(function()
+        for vehId, data in pairs(data) do
+          local veh = scenetree.findObjectById(vehId)
+          core_vehicleBridge.executeAction(veh, 'setFreeze', false)
+        end
+        gameplay_markerInteraction.setForceReevaluateOpenPrompt()
+      return true
+      end
+      )
+    }
+    step.startStepSequence(sequence, callback)
+    -- add loading progress bar
+    guihooks.trigger("OpenSimpleDelayPopup",{timer=maxDelay, heading="Loading Cargo..."})
+  else
+    -- 1s delay, no freeze
+    for vehId, data in pairs(data) do
+      local veh = scenetree.findObjectById(vehId)
+      core_vehicleBridge.executeAction(veh, 'setFreeze', false)
+    end
+    gameplay_markerInteraction.setForceReevaluateOpenPrompt()
+  end
+  log("I","",string.format("%0.2fs delay after adjusting weights for cargo.", maxDelay))
+end
 
-local function updateContainerWeights(includeVehIds)
-  log("I","","updateContainerWeights")
+local updateWeightsScheduled = false
+M.requestUpdateContainerWeights = function() updateWeightsScheduled = true end
+local function updateContainerWeights(delayCallback)
+  if not updateWeightsScheduled then
+    return
+  end
+  delayCallback = delayCallback or defaultDelayCallback
+  updateWeightsScheduled = false
+  log("I","","updateContainerWeights...")
   local updatePerVehicle = {}
   for vehId, veh in activeVehiclesIterator() do
     if veh:getJBeamFilename() ~= "unicycle" and veh.playerUsable ~= false then
@@ -263,21 +332,63 @@ local function updateContainerWeights(includeVehIds)
   end
   for _, cargo in ipairs(dParcelManager.getAllCargoInVehicles()) do
     updatePerVehicle[cargo.location.vehId][cargo.location.containerId] = updatePerVehicle[cargo.location.vehId][cargo.location.containerId] or {
-      load = 0,
+      volume = 0,
+      density = 1,
       containerId = cargo.location.containerId
     }
-    if not cargo.weight then dump("No weight", cargo) end
-    updatePerVehicle[cargo.location.vehId][cargo.location.containerId].load = updatePerVehicle[cargo.location.vehId][cargo.location.containerId].load + (cargo.weight or 0)
+    if not cargo.weight then log("W","","No weight on cargo? " .. dumps(cargo.name)) dump(cargo) end
+
+    if cargo.type == "parcel" then
+      -- add up load/weight
+      updatePerVehicle[cargo.location.vehId][cargo.location.containerId].volume = updatePerVehicle[cargo.location.vehId][cargo.location.containerId].volume + (cargo.weight or 0)
+    end
+
+    if cargo.type == "fluid" or cargo.type == "dryBulk" then
+      -- add up volume
+      updatePerVehicle[cargo.location.vehId][cargo.location.containerId].volume = updatePerVehicle[cargo.location.vehId][cargo.location.containerId].volume + (cargo.slots or 0)
+      -- only keep one density, since all cargo in one container have the same density
+      updatePerVehicle[cargo.location.vehId][cargo.location.containerId].density = (cargo.density or 1)
+    end
+
+  end
+  --if next(updatePerVehicle) then
+  for vehId, data in pairs(updatePerVehicle) do
+    local veh = scenetree.findObjectById(vehId)
+
+    core_vehicleBridge.executeAction(veh, "setCargoContainers", updatePerVehicle[vehId] or {}, "updateAll")
+    core_vehicleBridge.executeAction(veh, 'setFreeze', true)
+
+    for _, con in pairs(updatePerVehicle[vehId]) do
+      log("I","",string.format("Container %d => volume %0.1f | density: %0.1f",con.containerId, con.volume or 0, con.density or 1))
+    end
+  end
+
+  -- check loading delay
+  local delayData = {}
+  for vehId, data in pairs(updatePerVehicle) do
+    delayData[vehId] = -1
   end
 
   for vehId, data in pairs(updatePerVehicle) do
     local veh = scenetree.findObjectById(vehId)
-    core_vehicleBridge.executeAction(veh, "setCargoContainers", updatePerVehicle[vehId])
-    for _, con in pairs(updatePerVehicle[vehId]) do
-      log("Container " .. con.containerId .. " => " .. con.load)
-    end
+    core_vehicleBridge.requestValue(veh, function(vehCargoContainerData)
+      local maxForContainer = 0
+      for _, container in ipairs(vehCargoContainerData[1]) do
+        maxForContainer = math.max(maxForContainer, container.reachTargetTimeRemaining)
+      end
+      delayData[vehId] = maxForContainer
+
+
+      for key, val in pairs(delayData) do
+        if val == -1 then return end
+      end
+      delayCallback(delayData)
+
+    end, "getCargoContainers")
   end
-  log("I","","Cargo container weights updated.")
+  if not next(updatePerVehicle) then
+    delayCallback(delayData)
+  end
 
 end
 M.updateContainerWeights = updateContainerWeights
@@ -289,21 +400,30 @@ local colorForAttachmentDebug = {
   lost = ColorF(1,0.2,0.2, 0.75),
 }
 local tickTimer = 0
+M.setDeliveryTimePaused = function(paused) deliveryGameTimePaused = paused end
 M.onUpdate = function(dtReal, dtSim, dtRaw)
   profilerPushEvent("Delivery DeliveryManager")
   -- update game time
-  if freeroam_bigMapMode.bigMapActive() and not freeroam_bigMapMode.isTransitionActive() then
-    deliveryGameTime = deliveryGameTime + dtReal * fast
-  else
+  --if freeroam_bigMapMode.bigMapActive() and not freeroam_bigMapMode.isTransitionActive() and not deliveryGameTimePaused then
+    --deliveryGameTime = deliveryGameTime + dtReal * fast
+  --else
+  --end
+  if not deliveryGameTimePaused then
     deliveryGameTime = deliveryGameTime + dtSim * fast
   end
 
   -- handle penalty from previous save
-  if loadData.penalty and loadData.penalty > 0 then
-    --ui_message(string.format("Penalty for abandoning cargo: %0.2f$", loadData.penalty),10, "exitDeliveryMode", "warning")
-    guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo from last save was abandoned. Penalty: %0.2f$", loadData.penalty)})
-    log("I","",string.format("Penalty for abandoning cargo: %0.2f$", loadData.penalty))
-    career_modules_playerAttributes.addAttributes({money=-loadData.penalty}, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
+  if loadData.penalty and next(loadData.penalty) then
+    local anyValue = false
+    for key, value in pairs(loadData.penalty) do
+      if value ~= 0 then
+        anyValue = true
+      end
+    end
+    if anyValue then
+      guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo from last save was abandoned. Penalty: %0.2f$", -loadData.penalty.money or 0)})
+      career_modules_playerAttributes.addAttributes(loadData.penalty, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
+    end
     loadData.penalty = nil
   end
 
@@ -311,6 +431,11 @@ M.onUpdate = function(dtReal, dtSim, dtRaw)
   if tickTimer > 1 then
     M.getNearbyVehicleCargoContainers(nop)
     tickTimer = tickTimer - 1
+  end
+
+  -- check if container weights need to be updated, only if unpauses
+  if dtSim > 10e-10 then
+    M.updateContainerWeights()
   end
 
   -- debug display for cargo boxes
@@ -326,14 +451,26 @@ M.onUpdate = function(dtReal, dtSim, dtRaw)
 end
 
 
--- poi list stuff
-local function onGetRawPoiListForLevel(levelIdentifier, elements)
-
-  --local nearbyVehicles = M.getNearbyVehicleCargoContainers()
-  local playerDestinationParkingSpots = {}
+local function addInteractivePoi(list, id, field, elem)
+  if not list[id] then list[id] = {dropOffs = {}, pickUps = {}, vehicles = {}} end
+  table.insert(list[id][field], elem)
+end
+local function getInteractivePois()
+  local interactiveParkingSpots = {}
   for _, cargo in ipairs(dParcelManager.getAllCargoInVehicles()) do
-    playerDestinationParkingSpots[cargo.destination.psPath] = playerDestinationParkingSpots[cargo.destination.psPath] or {facId = cargo.destination.facId, cargo = {}}
-    table.insert(playerDestinationParkingSpots[cargo.destination.psPath].cargo, cargo)
+    if cargo.destination.type == "facilityParkingspot" then
+      addInteractivePoi(interactiveParkingSpots, cargo.destination.psPath, "dropOffs", cargo)
+
+    elseif cargo.destination.type == "multi" then
+      for _, dest in ipairs(cargo.destination.destinations) do
+        addInteractivePoi(interactiveParkingSpots, dest.psPath, "dropOffs", cargo)
+      end
+    end
+  end
+
+  for _, cargo in ipairs(dParcelManager.getTransientMoveCargo()) do
+    local locPsPath = cargo.location.psPath
+    addInteractivePoi(interactiveParkingSpots, locPsPath, "pickUps", cargo)
   end
 
   -- figure out which facilities need to be active in order to drop of vehicles.
@@ -341,9 +478,15 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
   local targetFacilityIds = {}
   for _, destination in ipairs(trailerTargetDestinations) do
     targetFacilityIds[destination.facId] = true
-    playerDestinationParkingSpots[destination.psPath] = playerDestinationParkingSpots[destination.psPath] or {facId = destination.facId, cargo = {}}
-    table.insert(playerDestinationParkingSpots[destination.psPath].cargo, "trailer")
+    addInteractivePoi(interactiveParkingSpots, destination.psPath, "vehicles", "vehicle")
   end
+  return interactiveParkingSpots, targetFacilityIds
+end
+-- poi list stuff
+local function onGetRawPoiListForLevel(levelIdentifier, elements)
+
+  --local nearbyVehicles = M.getNearbyVehicleCargoContainers()
+  local interactiveParkingSpots, targetFacilityIds = getInteractivePois()
 
   for _, fac in ipairs(freeroam_facilities.getFacilitiesByType("deliveryProvider")) do
     -- only process facilities if the facility is visible
@@ -352,35 +495,26 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
     if includeFac then
       local totalCargoCount = 0
       local lastPsPos = nil
-      local allSpotsLookup = {}
 
-      if next(fac.logisticTypesProvided) then
-        for _, ps in ipairs(fac.pickUpSpots or {}) do
-          allSpotsLookup[ps:getPath()] = ps
-        end
-      end
+      -- look up all relevant parking spots for this facility
+      local spotsForThisFacLookup = {}
 
-      for _, ps in ipairs(fac.dropOffSpots or {}) do
-        if playerDestinationParkingSpots[ps:getPath()] or dCargoScreen.isCargoScreenOpen() then
-          allSpotsLookup[ps:getPath()] = ps
-        end
-      end
-
-      for _, ps in pairs(allSpotsLookup) do
+      for name, ap in pairs(fac.accessPointsByName) do
+        local ps = ap.ps
         local id = string.format("delivery-parking-%s-%s", fac.id, ps:getPath())
         local loc = {type = "facilityParkingspot", facId = fac.id, psPath = ps:getPath()}
         local cargoCount = #dParcelManager.getAllCargoForLocationUnexpiredUndelivered(loc)
         totalCargoCount = totalCargoCount + cargoCount
         lastPsPos = ps.pos
         local icon = "poi_pickup_round"
-        if playerDestinationParkingSpots[ps:getPath()] then
+        if interactiveParkingSpots[ps:getPath()] then
           icon = "poi_dropoff_round"
         end
 
-        local focus = playerDestinationParkingSpots[ps:getPath()] ~= nil
+        local focus = interactiveParkingSpots[ps:getPath()] ~= nil
         local elem = {
           id = id,
-          data = {type = "logisticsParking", facId = fac.id, psPath = ps:getPath(), hasPlayerCargo = playerDestinationParkingSpots[ps:getPath()] and true or false },
+          data = {type = "logisticsParking", facId = fac.id, psPath = ps:getPath(), canInspectCargo = ap.isInspectSpot, hasPlayerCargo = interactiveParkingSpots[ps:getPath()] and true or false },
           markerInfo = {
             -- only include parking marker if there is an action
             parkingMarker = cargoCount and {path = ps:getPath(), pos = ps.pos, rot = ps.rot, scl = ps.scl, icon = icon, focus = focus} or nil,
@@ -395,8 +529,20 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
         if dCargoScreen.isCargoScreenOpen() then
           elem.markerInfo.bigmapMarker = {pos = ps.pos, name = "Pickup "..fac.name, icon = icon}
         else
-          if playerDestinationParkingSpots[ps:getPath()] then
-            local desc = string.format("Deliver %d cargo items to this location.", #playerDestinationParkingSpots[ps:getPath()].cargo)
+          if interactiveParkingSpots[ps:getPath()] then
+
+            local tasks = {}
+            if next(interactiveParkingSpots[ps:getPath()].dropOffs) then
+              table.insert(tasks, string.format("Deliver %d cargo items here.", #interactiveParkingSpots[ps:getPath()].dropOffs))
+            end
+            if next(interactiveParkingSpots[ps:getPath()].pickUps) then
+              table.insert(tasks, string.format("Pick up %d cargo items here.", #interactiveParkingSpots[ps:getPath()].pickUps))
+            end
+            if next(interactiveParkingSpots[ps:getPath()].vehicles) then
+              table.insert(tasks, string.format("Deliver %d vehicles here.", #interactiveParkingSpots[ps:getPath()].vehicles))
+            end
+
+            local desc = table.concat(tasks, '<br/>')
             elem.markerInfo.bigmapMarker = {
               pos = ps.pos,
               name = dParcelManager.getLocationLabelShort(loc),
@@ -407,9 +553,13 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
             }
           end
         end
-        table.insert(elements, elem)
+        if interactiveParkingSpots[ps:getPath()] or ap.isInspectSpot or dCargoScreen.isCargoScreenOpen() then
+          --dump(string.format("%s -> %s", fac.name, name))
+          --dumpz(ap, 1)
+          table.insert(elements, elem)
+        end
       end
-
+      --[[
       -- add trailer spots in a separate entry.
       if dCargoScreen.isCargoScreenOpen() then
         for _, ps in ipairs(fac.trailerSpots) do
@@ -418,13 +568,13 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
           local loc = {type = "facilityParkingspot", facId = fac.id, psPath = ps:getPath()}
 
           local icon = "poi_pickup_round"
-          if playerDestinationParkingSpots[ps:getPath()] then
+          if interactiveParkingSpots[ps:getPath()] then
             icon = "poi_dropoff_round"
           end
 
           local elem = {
             id = id,
-            data = {type = "logisticsParking", facId = fac.id, psPath = ps:getPath(), hasPlayerCargo = playerDestinationParkingSpots[ps:getPath()] and true or false },
+            data = {type = "logisticsParking", facId = fac.id, psPath = ps:getPath(), hasPlayerCargo = interactiveParkingSpots[ps:getPath()] and true or false },
             markerInfo = {
               bigmapMarker = {pos = ps.pos, name = "Pickup "..fac.name, icon = icon}
             }
@@ -434,7 +584,7 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
         end
 
      end
-
+]]
       -- one POI for the whole facility to display on bigmap under labourer branch.
       if not dCargoScreen.isCargoScreenOpen() then
         if dProgress.isFacilityUnlocked(fac.id) and next(fac.logisticTypesProvided) then
@@ -443,12 +593,20 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
           if fac.doors and next(fac.doors) then
             freeroam_facilities.walkingMarkerFormatFacility(fac, elems)
           end
+
+          local pos = lastPsPos
+          for name, ap in pairs(fac.accessPointsByName) do
+            if ap.isInspectSpot then
+              pos = ap.ps.pos
+            end
+          end
+
           local elem = {
             id = id,
             data = {type = "logisticsOffice", facId = fac.id},
             markerInfo = {
               walkingMarker = next(elems) and elems[1].markerInfo.walkingMarker or nil,
-              bigmapMarker = {pos = lastPsPos, name = fac.name, description = string.format("%s\n\n%d Item%s available here.",fac.description, totalCargoCount, totalCargoCount ~= 1 and "s" or ""), icon="poi_delivery_round", previews = {fac.preview}, thumbnail = fac.preview,} or nil
+              bigmapMarker = {pos = pos, name = fac.name, description = string.format("%s\n\n%d Item%s available here.",fac.description, totalCargoCount, totalCargoCount ~= 1 and "s" or ""), icon="poi_delivery_round", previews = {fac.preview}, thumbnail = fac.preview,} or nil
             }
           }
           table.insert(elements, elem)
@@ -484,108 +642,228 @@ local function onActivityAcceptGatherData(elemData, activityData)
       }
       table.insert(activityData, data)
     elseif elem.type == "logisticsParking" then
-      -- figure out how much/which cargo can be dropped of here
-      local psPos = dGenerator.getParkingSpotByPath(elem.psPath).pos
-      local parcelsClose = 0
-      for _, container in ipairs(mostRecentCargoContainerData) do
-        for _, cargo in ipairs(container.rawCargo) do
-          parcelsClose  = parcelsClose + ((cargo.destination.psPath == elem.psPath and (container.position - psPos):squaredLength() < 25*25) and 1 or 0)
-        end
-      end
 
-      local vehsClose, trailersClose = dVehicleTasks.canDropOffCargoAtPsPath(elem.psPath)
-
-      local anyCargoClose = parcelsClose > 0 or vehsClose > 0 or trailersClose > 0
       -- cargo menu button
-      local props = {}
-      local data = {
+      local loc = {type = "facilityParkingspot", facId = elem.facId, psPath = elem.psPath}
+      local poiTemplate = {
         icon = "poi_pickup_round",
-        heading = dParcelManager.getLocationLabelShort({type = "facilityParkingspot", facId = elem.facId, psPath = elem.psPath}),
-        preheadings = {},
+        preheadings =  {dParcelManager.getLocationLabelShort({type = "facilityParkingspot", facId = elem.facId, psPath = elem.psPath})},
+        props = {},
         sorting = {
           type = elem.type,
           id = elem.id
         },
-        props = {},
-        buttonLabel = anyCargoClose and "Drop Off" or "Inspect",
-        buttonFun = function()
-
-          if not anyCargoClose then
-            dCargoScreen.enterCargoOverviewScreen(elem.facId, elem.psPath)
-          else
-            dProgress.unloadCargo(elem)
-          end
-        end
       }
 
-      -- additional props and headings
-
-      -- parcel props
-      local loc = {type = "facilityParkingspot", facId = elem.facId, psPath = elem.psPath}
-      local cargoCount = #dParcelManager.getAllCargoForLocationUnexpiredUndelivered(loc)
-      if cargoCount > 0 then
-        table.insert(data.props, {
-          icon = "checkmark",
-          keyLabel = string.format("%d parcel%s available", cargoCount, cargoCount ~= 1 and "s" or "")
-        })
-      end
-
-      -- veh and trailer props
-      local vehOffers, trailerOffers = {}, {}
-      for _, offer in ipairs(dVehOfferManager.getAllOfferAtFacilityUnexpired(elem.facId)) do
-        if offer.data.type == "vehicle" then
-          table.insert(vehOffers, offer)
+      -- dropoff data and props
+      local psPos = dGenerator.getParkingSpotByPath(elem.psPath).pos
+      local dropOffableCargoByCargoType = {
+        parcel = 0,
+        fluid = 0,
+        dryBulk = 0
+      }
+      for _, container in ipairs(mostRecentCargoContainerData) do
+        for _, cargo in ipairs(container.rawCargo) do
+          local add = 1
+          local type = cargo.type
+          if cargo.type == "fluid" then
+            type = "fluid"
+            add = cargo.slots
+          end
+          if cargo.type == "dryBulk" then
+            add = cargo.slots
+          end
+          if cargo.destination.type == "facilityParkingspot" then
+            dropOffableCargoByCargoType[cargo.type]  = dropOffableCargoByCargoType[type] + ((cargo.destination.psPath == elem.psPath and (container.position - psPos):squaredLength() < 25*25) and add or 0)
+          elseif cargo.destination.type == "multi" then
+            for _, dest in ipairs(cargo.destination.destinations) do
+              dropOffableCargoByCargoType[type]  = dropOffableCargoByCargoType[type] + ((dest.psPath == elem.psPath and (container.position - psPos):squaredLength() < 25*25) and add or 0)
+            end
+          end
         end
-        if offer.data.type == "trailer" then
-          table.insert(trailerOffers, offer)
-        end
       end
-      if #vehOffers > 0 then
-        table.insert(data.props, {
-          icon = "checkmark",
-          keyLabel = string.format("%d vehicle transport%s available", #vehOffers, #vehOffers ~= 1 and "s" or "")
-        })
-      end
-      if #trailerOffers > 0 then
-        table.insert(data.props, {
-          icon = "checkmark",
-          keyLabel = string.format("%d trailer transport%s available", #trailerOffers, #trailerOffers ~= 1 and "s" or "")
-        })
-      end
-
-      -- headings
-      if next(trailerOffers) or next(vehOffers) or cargoCount > 0 then
-        table.insert(data.preheadings, "Delivery Facility")
-      end
-      if anyCargoClose then
-        table.insert(data.preheadings, "Delivery Dropoff")
-      end
-
-      if not next(data.preheadings) then
-        data.preheadings = {"Delivery Location"}
-      end
-
+      local vehsClose, trailersClose = dVehicleTasks.canDropOffCargoAtPsPath(elem.psPath)
+      local anyCargoDropOffable = (dropOffableCargoByCargoType.parcel > 0 or dropOffableCargoByCargoType.fluid > 0 or dropOffableCargoByCargoType.dryBulk > 0) or vehsClose > 0 or trailersClose > 0
       -- dropoff props
-      if parcelsClose > 0 then
-        table.insert(data.props, {
+      if dropOffableCargoByCargoType.parcel > 0 then
+        table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = string.format("%sParcel%s dropoff", parcelsClose > 1 and ((parcelsClose).." ") or "", parcelsClose > 1 and "s" or "")
+          keyLabel = string.format("%sParcel%s dropoff", dropOffableCargoByCargoType.parcel > 1 and ((dropOffableCargoByCargoType.parcel).." ") or "", dropOffableCargoByCargoType.parcel > 1 and "s" or "")
+        })
+      end
+      if dropOffableCargoByCargoType.fluid > 0 then
+        table.insert(poiTemplate.props, {
+          icon = "checkmark",
+          keyLabel = string.format("%dL fluid dropoff", dropOffableCargoByCargoType.fluid)
+        })
+      end
+      if dropOffableCargoByCargoType.dryBulk > 0 then
+        table.insert(poiTemplate.props, {
+          icon = "checkmark",
+          keyLabel = string.format("%dL dry bulk dropoff", dropOffableCargoByCargoType.dryBulk)
         })
       end
       if vehsClose > 0 then
-        table.insert(data.props, {
+        table.insert(poiTemplate.props, {
           icon = "checkmark",
           keyLabel = "Vehicle dropoff"
         })
       end
       if trailersClose > 0 then
-        table.insert(data.props, {
+        table.insert(poiTemplate.props, {
           icon = "checkmark",
           keyLabel = "Trailer dropoff"
         })
       end
 
-      table.insert(activityData, data)
+
+      -- pickup data and props
+      local pickUpAbleCargoByCargoType = {
+        parcel = 0,
+        fluid = 0,
+        dryBulk = 0
+      }
+      for _, container in ipairs(mostRecentCargoContainerData) do
+        for _, cargo in ipairs(container.transientCargo) do
+          local add = 1
+          local type = cargo.type
+          if cargo.type == "fluid" then
+            type = "fluid"
+            add = cargo.slots
+          end
+          if cargo.type == "dryBulk" then
+            add = cargo.slots
+          end
+          if cargo.location.type == "facilityParkingspot" then
+            pickUpAbleCargoByCargoType[cargo.type]  = pickUpAbleCargoByCargoType[type] + ((cargo.location.psPath == elem.psPath and (container.position - psPos):squaredLength() < 25*25) and add or 0)
+          end
+        end
+      end
+      local anyCargoPickUpAble = (pickUpAbleCargoByCargoType.parcel > 0 or pickUpAbleCargoByCargoType.fluid > 0 or pickUpAbleCargoByCargoType.dryBulk > 0)
+      if pickUpAbleCargoByCargoType.parcel > 0 then
+        table.insert(poiTemplate.props, {
+          icon = "checkmark",
+          keyLabel = string.format("%sParcel%s pickup", pickUpAbleCargoByCargoType.parcel > 1 and ((pickUpAbleCargoByCargoType.parcel).." ") or "", pickUpAbleCargoByCargoType.parcel > 1 and "s" or "")
+        })
+      end
+      if pickUpAbleCargoByCargoType.fluid > 0 then
+        table.insert(poiTemplate.props, {
+          icon = "checkmark",
+          keyLabel = string.format("%dL fluid pickup", pickUpAbleCargoByCargoType.fluid)
+        })
+      end
+      if pickUpAbleCargoByCargoType.dryBulk > 0 then
+        table.insert(poiTemplate.props, {
+          icon = "checkmark",
+          keyLabel = string.format("%dL dry bulk pickup", pickUpAbleCargoByCargoType.dryBulk)
+        })
+      end
+
+
+      if elem.canInspectCargo then
+        -- available cargo data and props
+        local availableCargoCountByCargoType = {
+          parcel = 0,
+          fluid = 0,
+          dryBulk = 0,
+        }
+        for _, cargo in ipairs(dParcelManager.getAllCargoForFacilityUnexpiredUndelivered(elem.facId)) do
+          local add = 1
+          local type = cargo.type
+          if cargo.type == "fluid" then
+            type = "fluid"
+            add = cargo.slots
+          end
+          if cargo.type == "dryBulk" then
+            add = cargo.slots
+          end
+          availableCargoCountByCargoType[type] = availableCargoCountByCargoType[type] + add
+        end
+        -- add storages
+        local fac = dGenerator.getFacilityById(elem.facId)
+        for materialType, storage in pairs(fac.materialStorages) do
+          if storage.isProvider then
+            local type = dGenerator.getMaterialsTemplatesById(materialType).type
+            availableCargoCountByCargoType[type] = availableCargoCountByCargoType[type] + storage.storedVolume
+          end
+        end
+
+        if availableCargoCountByCargoType.parcel > 0 then
+          table.insert(poiTemplate.props, {
+            icon = "checkmark",
+            keyLabel = string.format("%d parcel%s available", availableCargoCountByCargoType.parcel, availableCargoCountByCargoType.parcel ~= 1 and "s" or "")
+          })
+        end
+        if availableCargoCountByCargoType.fluid > 0 then
+          table.insert(poiTemplate.props, {
+            icon = "checkmark",
+            keyLabel = string.format("%dL of fluid available", availableCargoCountByCargoType.fluid)
+          })
+        end
+        if availableCargoCountByCargoType.dryBulk > 0 then
+          table.insert(poiTemplate.props, {
+            icon = "checkmark",
+            keyLabel = string.format("%dL of dry bulk available", availableCargoCountByCargoType.dryBulk)
+          })
+        end
+        -- veh and trailer props
+        local vehOffers, trailerOffers = {}, {}
+        for _, offer in ipairs(dVehOfferManager.getAllOfferAtFacilityUnexpired(elem.facId)) do
+          if offer.data.type == "vehicle" then
+            table.insert(vehOffers, offer)
+          end
+          if offer.data.type == "trailer" then
+            table.insert(trailerOffers, offer)
+          end
+        end
+        if #vehOffers > 0 then
+          table.insert(poiTemplate.props, {
+            icon = "checkmark",
+            keyLabel = string.format("%d vehicle transport%s available", #vehOffers, #vehOffers ~= 1 and "s" or "")
+          })
+        end
+        if #trailerOffers > 0 then
+          table.insert(poiTemplate.props, {
+            icon = "checkmark",
+            keyLabel = string.format("%d trailer transport%s available", #trailerOffers, #trailerOffers ~= 1 and "s" or "")
+          })
+        end
+      end
+
+      -- make actual poi elemens
+
+      if anyCargoDropOffable then
+        local dropOffPoi = deepcopy(poiTemplate)
+        dropOffPoi.heading = "Delivery Drop Off"
+        dropOffPoi.buttonLabel = "Drop Off"
+        dropOffPoi.buttonFun = function() guihooks.trigger('ChangeState', {state = 'cargoDropOff', params = {facilityId = elem.facId, parkingSpotPath = elem.psPath}}) end
+        dropOffPoi.icon = "poi_dropoff_round"
+        table.insert(activityData, dropOffPoi)
+      end
+
+      if anyCargoPickUpAble then
+        local pickUpPoi = deepcopy(poiTemplate)
+        pickUpPoi.heading = "Delivery Pick Up"
+        pickUpPoi.buttonLabel = "Pick Up"
+        pickUpPoi.buttonFun = function()
+          dParcelManager.applyTransientMoves({type="facilityParkingspot", facId = elem.facId, psPath = elem.psPath})
+          M.requestUpdateContainerWeights()
+          gameplay_markerInteraction.closeViewDetailPrompt(true)
+          Engine.Audio.playOnce('AudioGui', 'event:>UI>Missions>Info_Open')
+          gameplay_rawPois.clear()
+          dCargoScreen.onCargoPickedUp()
+        end
+        pickUpPoi.icon = "poi_dropoff_round"
+        table.insert(activityData, pickUpPoi)
+      end
+      if elem.canInspectCargo then
+        local inspectPoi = poiTemplate
+        inspectPoi.heading = "Inspect Cargo"
+        inspectPoi.buttonLabel = "Inspect"
+        inspectPoi.buttonFun = function() dCargoScreen.enterCargoOverviewScreen(elem.facId, elem.psPath) end
+        table.insert(activityData, inspectPoi)
+      end
+
 
     end
   end
@@ -600,6 +878,7 @@ local deliveryActivity = {
   vehicleModification = "warning",-- Slow and Fast Repairing, Changing and buying parts, tuning, painting
   vehicleSelling = "warning", --selling a vehicle
   vehicleStorage = "warning", --put vehicles into storage
+  vehicleRepair = "warning",
   vehicleRetrieval = "allowed", --retrieve vehicles from storage
 
   vehicleShopping = "forbidden",
@@ -612,14 +891,16 @@ local deliveryActivity = {
   recoveryTowToRoad = "allowed", --tow to road
   recoveryTowToGarage = "warning", --tow to garage
 
-  getLabel = function(tag, permission)
-    local penalty = M.getDeliveryModePenalty()
+  getLabel = function(tag)
+    local penalty = -M.getDeliveryModePenalty().money
     if     tag == "vehicleModification" then
       return string.format("Modifying a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
     elseif tag == "vehicleSelling" then
       return string.format("Selling a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
     elseif tag == "vehicleStorage" then
       return string.format("Storing a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
+    elseif tag == "vehicleRepair" then
+      return string.format("Repairing a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
     elseif tag == "interactMission" then
       return string.format("Starting a Mission will end Delivery Mode (Penalty: %0.2f$)", penalty)
     elseif tag == "recoveryTowToGarage" then
@@ -630,11 +911,20 @@ local deliveryActivity = {
   end
 }
 
+local function onCheckPermission(tags, permissions)
+  if not deliveryModeActive then return end
+  for _, tag in ipairs(tags) do
+    if deliveryActivity[tag] then
+      table.insert(permissions, {permission = deliveryActivity[tag], label = deliveryActivity.getLabel(tag)})
+      return
+    end
+  end
+end
+
 local function startDeliveryMode()
   if deliveryModeActive then return end
   log("I","","Delivery Mode Started.")
   deliveryModeActive = true
-  career_modules_permissions.setForegroundActivity(deliveryActivity)
   gameplay_rawPois.clear()
   extensions.hook("onDeliveryModeStarted")
 end
@@ -644,56 +934,123 @@ local function exitDeliveryMode()
   log("I","","Delivery Mode Exited.")
   dParcelManager.clearTransientFlags()
   -- get all cargo currently in vehicles.
-  local cargoInVehicles = dParcelManager.getAllCargoInVehicles()
-  --dump(cargoInVehicles)
+  local penalty = M.getDeliveryModePenalty()
+  local cargoInVehicles = dParcelManager.getAllCargoInVehicles(true)
   if next(cargoInVehicles) then
-    local totalMoneyRewards = 0
     for _, cargo in ipairs(cargoInVehicles) do
-      totalMoneyRewards = totalMoneyRewards + cargo.rewards.money
       dParcelManager.changeCargoLocation(cargo.id, {type="deleted"})
     end
-    if totalMoneyRewards > 0 then
-      guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo was thrown away because delivery mode ended. Penalty: %0.2f$", totalMoneyRewards * M.getDeliveryAbandonPenaltyFactor())})
-      log("I","",string.format("Penalty for abandoning cargo: %0.2f$", totalMoneyRewards * M.getDeliveryAbandonPenaltyFactor()))
-      career_modules_playerAttributes.addAttributes({money=-totalMoneyRewards  * M.getDeliveryAbandonPenaltyFactor()}, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
-      Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
-    end
   end
-  deliveryModeActive = false
-  career_modules_permissions.clearForegroundActivityIfIdIs('deliveryMode')
-  gameplay_rawPois.clear()
-  core_groundMarkers.setFocus(nil)
+  if penalty.money < 0 then
+    guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo was thrown away because delivery mode ended. Penalty: %0.2f$", -penalty.money)})
+    log("I","",string.format("Penalty for abandoning cargo: %0.2f$", -penalty.money))
+    career_modules_playerAttributes.addAttributes(penalty, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
+    Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
+  end
 
-  M.updateContainerWeights()
+  dVehicleTasks.abandonAllVehicleTasks()
+
+  dParcelManager.clearAllTransientMoves()
+
+  deliveryModeActive = false
+  gameplay_rawPois.clear()
+  freeroam_bigMapMode.setNavFocus(nil)
+
+  M.requestUpdateContainerWeights()
   dTasklist.clearAll()
   --core_gamestate.setGameState("career", "career")
   extensions.hook("onDeliveryModeStopped")
 end
 
 local function checkExitDeliveryMode()
-  local cargoInVehicles = dParcelManager.getAllCargoInVehicles()
+  local cargoInVehicles = dParcelManager.getAllCargoInVehicles(true)
   local vehicleTasks = dVehicleTasks.getVehicleTasks()
   if not next(cargoInVehicles) and not next(vehicleTasks) then
     M.exitDeliveryMode()
   end
 end
 
+local function isAutomaticRouteEnabled()
+  return loadData.settings.automaticRoute
+end
+M.isAutomaticRouteEnabled = isAutomaticRouteEnabled
+
+local function setAutomaticRoute(enabled)
+  loadData.settings.automaticRoute = enabled
+  if enabled then
+    career_modules_delivery_cargoScreen.setBestRoute()
+  else
+    core_groundMarkers.setPath(nil)
+    freeroam_bigMapMode.resetRoute()
+  end
+  guihooks.trigger("automaticRouteSet", enabled)
+end
+
+local function setDetailedDropOff(enabled)
+  loadData.settings.detailedDropOff = enabled
+  guihooks.trigger("detailedDropOffSet", enabled)
+end
+
+-- Deactivate automatic route when setting a manual waypoint
+local function onSetBigmapNavFocus()
+  if M.isDeliveryModeActive() then
+    setAutomaticRoute(false)
+  end
+end
+
+local function setSetting(key, value)
+  loadData.settings[key] = value
+end
+
+local function getSettings()
+  return loadData.settings
+end
+
+M.setAutomaticRoute = setAutomaticRoute
+M.setDetailedDropOff = setDetailedDropOff
+M.onSetBigmapNavFocus = onSetBigmapNavFocus
+
+M.setSetting = setSetting
+M.getSettings = getSettings
+
 M.startDeliveryMode = startDeliveryMode
 M.exitDeliveryMode = exitDeliveryMode
 M.checkExitDeliveryMode = checkExitDeliveryMode
 M.isDeliveryModeActive = function() return deliveryModeActive end
-M.getDeliveryModePenalty = function()
-  local cargoInVehicles = dParcelManager.getAllCargoInVehicles()
-  --dump(cargoInVehicles)
-  if next(cargoInVehicles) then
-    local totalMoneyRewards = 0
-    for _, cargo in ipairs(cargoInVehicles) do
-      totalMoneyRewards = totalMoneyRewards + cargo.rewards.money
+M.getDeliveryModePenalty = function(onlyVehIdsAsKeys)
+  local cargoInVehicles = dParcelManager.getAllCargoInVehicles(true)
+  local penalty = {money = 0}
+  if not onlyVehIdsAsKeys then
+    local fine = dVehicleTasks.getFineForAbandonAllVehicleTasks()
+    for attKey, amount in pairs(fine) do
+      penalty[attKey] = (penalty[attKey] or 0) + amount
     end
-    return totalMoneyRewards * M.getDeliveryAbandonPenaltyFactor()
   end
-  return 0
+
+  if next(cargoInVehicles) then
+    for _, cargo in ipairs(cargoInVehicles) do
+      if (not onlyVehIdsAsKeys) or (cargo.location.vehId and onlyVehIdsAsKeys[cargo.location.vehId]) then
+        local abandonFac = M.getDeliveryAbandonPenaltyFactor()
+        local modFac = 0
+        if cargo.modifiers then
+          for _, mod in ipairs(cargo.modifiers) do
+            modFac = modFac + (mod.abandonMultiplier or 0)
+          end
+        end
+        if not cargo._transientMove then
+          penalty.money = penalty.money - cargo.rewards.money * (abandonFac + modFac)
+        end
+        if cargo.organization then
+          penalty[cargo.organization.."Reputation"] = penalty[cargo.organization.."Reputation"] or 0
+          penalty[cargo.organization.."Reputation"] = penalty[cargo.organization.."Reputation"] - math.ceil(cargo.rewards[cargo.organization.."Reputation"])
+        end
+      end
+    end
+  end
+  return penalty
 end
+
+M.onCheckPermission = onCheckPermission
 
 -- actions that stop delivery mode
 
@@ -734,25 +1091,40 @@ M.onAnyMissionChanged = function(change)
   end
 end
 
-M.onInventoryPreRemoveVehicleObject = function(inventoryId, vehId)
+local function checkEndDeliveryModeForVehicle(vehId)
   if deliveryModeActive then
     -- TODO: this needs to check for cargo in vehicle containers, not just vehicle
-    local cargoInVehicle = dParcelManager.getAllCargoForLocation({type = "vehicle", vehId = vehId})
+    local penalty = M.getDeliveryModePenalty({[vehId] = true})
+    local cargoInVehicle = dParcelManager.getAllCargoCustomFilter(function(cargo)
+      if cargo.location.type == "vehicle" and cargo.location.vehId == vehId then
+        return true
+      end
+      if cargo._transientMove and cargo.transientMove.targetLocation.vehId == vehId then
+        return true
+      end
+    end)
     if next(cargoInVehicle) then
-      local totalMoneyRewards = 0
       for _, cargo in ipairs(cargoInVehicle) do
-        totalMoneyRewards = totalMoneyRewards + cargo.rewards.money
         dParcelManager.changeCargoLocation(cargo.id, {type="deleted"})
       end
-      if totalMoneyRewards > 0 then
-        guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo was thrown away because vehicle was put into storage. Penalty: %0.2f$", totalMoneyRewards * M.getDeliveryAbandonPenaltyFactor())})
-        log("I","",string.format("Penalty for abandoning cargo: %0.2f$", totalMoneyRewards * M.getDeliveryAbandonPenaltyFactor()))
-        career_modules_playerAttributes.addAttributes({money=-totalMoneyRewards  * M.getDeliveryAbandonPenaltyFactor()}, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
+      if penalty.money < 0 then
+        guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo was thrown away because vehicle was put into storage. Penalty: %0.2f$", -penalty.money)})
+        log("I","",string.format("Penalty for abandoning cargo: %0.2f$", -penalty.money))
+        career_modules_playerAttributes.addAttributes(penalty, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
       end
     end
     checkExitDeliveryMode()
   end
+end
+
+M.onRepairInGarage = function(vehInfo, repairOption)
+  local vehId = career_modules_inventory.getVehicleIdFromInventoryId(vehInfo.id)
+  checkEndDeliveryModeForVehicle(vehId)
+end
+
+M.onInventoryPreRemoveVehicleObject = function(inventoryId, vehId)
+  checkEndDeliveryModeForVehicle(vehId)
 end
 
 return M

@@ -59,7 +59,7 @@ local function pageListGui(items)
           windowPos.x + cPos.x - style.ItemSpacing.x/2 + 5,
           windowPos.y + cPos.y + math.ceil(imgui.GetFontSize() + style.ItemSpacing.y/2) - scrollY
         ),
-        imgui.GetColorU321(imgui.Col_HeaderActive)
+        imgui.GetColorU321(imgui.Col_TitleBgActive)
       )
     end
   end
@@ -310,6 +310,7 @@ end
 
 local function onEditorPreferenceValueChanged(path, value)
   if path == "ui.general.scale" then imguiUtils.changeUIScale(value) end
+  if path == "ui.general.dpiAware" then imguiUtils.changeUIScale(editor.getPreference("ui.general.scale")) end
   if path == "ui.general.iconButtonSize" then editor.setDefaultIconButtonSize(value) end
   if path == "ui.general.showCompleteSceneTree" then editor.refreshSceneTreeWindow() end
   if path == "camera.general.smoothCameraMove" then editor.setSmoothCameraMove(value) end
@@ -345,6 +346,7 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {floatDigitCount = {"int", 3, "The float numbers decimal precision"}},
     {hexColorInput = {"bool", true, "Use hex format for color input in field/value inspector"}},
     {scale = {"float", defaultUiScale, "The global UI scale for editor widgets", nil, 0.4, 3}},
+    {dpiAware = {"bool", false, "If this is true, it will multiply the UI scale with system's DPI scale"}},
     {iconButtonSize = {"float", 28, "The size of the icon buttons found in the toolbars"}},
     {singleLineToolbar = {"bool", false, "Arrange toolbar buttons on a single row, otherwise use another row for the current edit mode buttons"}},
     {enableVehicleControls = {"bool", true, "Enable driving the vehicle while editor is active"}},

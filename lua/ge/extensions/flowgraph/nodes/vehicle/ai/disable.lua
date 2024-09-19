@@ -9,10 +9,10 @@ local C = {}
 C.name = 'AI Disable'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
-C.description = 'Disables AI behaviour for this vehicle.'
+C.description = 'Disables AI mode for a vehicle.'
 C.category = 'repeat_p_duration'
 C.pinSchema = {
-  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Defines the id of the vehicle to disable AI on.' },
+  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Vehicle id to disable AI mode for.' }
 }
 
 C.tags = {}
@@ -23,18 +23,19 @@ function C:init()
   self.data.straightenWheelsWhenFinished = false
 end
 
-
 function C:work()
-  local source
-  if self.pinIn.aiVehId.value and self.pinIn.aiVehId.value ~= 0 then
-    source = scenetree.findObjectById(self.pinIn.aiVehId.value)
+  local veh
+  if self.pinIn.aiVehId.value then
+    veh = be:getObjectByID(self.pinIn.aiVehId.value)
   else
-    source = getPlayerVehicle(0)
+    veh = getPlayerVehicle(0)
   end
+  if not veh then return end
+  
   if self.data.useScriptStop then
-    source:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
+    veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
   else
-    source:queueLuaCommand('ai.setState({mode = "disabled"})')
+    veh:queueLuaCommand('ai.setState({mode = "disabled"})')
   end
 end
 

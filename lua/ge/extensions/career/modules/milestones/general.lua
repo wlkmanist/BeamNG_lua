@@ -127,7 +127,7 @@ local function getMilestone(id)
       step = step-1,
       icon = milestoneConfig.icon or "star",
       color = milestoneConfig.color or "orange",
-      rewards = milestoneConfig.getRewards(step),
+      rewards = milestoneConfig.getRewards(step-1),
       claimable = displayValue >= target,
       claimFunction = function() M.claim(id) end,
       claimRefreshFunction = function() if not milestoneConfig.maxStep or milestoneConfig.maxStep >= step then return M.getMilestone(id) end end

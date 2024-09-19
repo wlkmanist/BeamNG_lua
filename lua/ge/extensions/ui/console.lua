@@ -16,7 +16,7 @@ local colors = {D = im.ImVec4(0.12,0.75,1,1), I = im.ImVec4(0.3,1,0.3,1), W = im
 local iconColors = {D = im.ImColorByRGB(32,196,255,255), I = im.ImColorByRGB(96,255,96,255), W = im.ImColorByRGB(255,255,0,255), E = im.ImColorByRGB(255,64,64,255)}
 local iconButtonBgColor = im.ImColorByRGB(0, 0, 0, 0)
 local iconButtonFgColor = im.ImColorByRGB(255, 255, 255, 255)
-local iconButtonNoColor = im.ImColorByRGB(8, 8, 8, 255)
+local iconButtonNoColor = im.ImColorByRGB(255, 255, 255, 128)
 
 local rollAvgUpdate = {}
 local rollAvgAdd = {}
@@ -36,7 +36,7 @@ local invalidOriginFilter = false
 local paused = false
 local winTitle = beamng_appname..".consoleNG - "..beamng_versiond .." - ".. beamng_buildtype .." - ".. beamng_arch .."##consoleNG"
 local consoleInputField = ffi.new("char[4096]", "")
-local inputCallbackC = nil
+--local inputCallbackC = nil
 local comboCurrentItem = im.IntPtr(0)
 local fontConsoleFact = im.FloatPtr(0.95)
 local fullscreen = true
@@ -83,8 +83,9 @@ Pattern Item:
 ]]
 local filterErr =""
 local vehicleActionMaps = {"VehicleCommonActionMap", "VehicleSpecificActionMap"}
+local interestingLines = {}
 
-ffi.cdef("int ImGuiInputTextCallbackLua(ImGuiInputTextCallbackData* data);")
+ffi.cdef("int ImGuiInputTextCallbackLua(const ImGuiInputTextCallbackData* data);")
 
 local function settingsSave()
  local s = {
@@ -187,12 +188,80 @@ local function clearConsole()
   logFiltered = {}
   logsHead = 1
   logsTail = 1
+  interestingLines={}
 end
 
 local function checkPattern(pat)
   local status,err = pcall(function() string.match("", pat) end )
   if not status then filterErr = string.match(tostring(err), "%[.*%]:%d*: ?(.*)") end
   return status
+end
+
+local function getInterestingLines()
+  if not interestingLines.currentDisplayLines then return end
+
+  interestingLines.currentDisplayWarn = {}
+  interestingLines.currentDisplayError = {}
+  interestingLines.allFilteredWarn = {}
+  interestingLines.allFilteredError = {}
+
+  -- for i = interestingLines.currentDisplayLines[1], interestingLines.currentDisplayLines[2], 1 do
+  --   local l = logs[logFiltered[i+1]]
+  --   if not l then goto skipinterline end
+  --   if l[2] == "W" then
+  --     table.insert(interestingLines.currentDisplayWarn,i)
+  --     table.insert(interestingLines.currentDisplayError,i)
+  --   end
+  --   if l[2] == "E" then
+  --     table.insert(interestingLines.currentDisplayError,i)
+  --   end
+  --   ::skipinterline::
+  -- end
+
+  for _,i in ipairs(logFiltered) do
+    local l = logs[i]
+    if not l then goto skipinterline end
+    if l[2] == "W" then
+      table.insert(interestingLines.allFilteredWarn,i)
+      table.insert(interestingLines.allFilteredError,i)
+      if i >= interestingLines.currentDisplayLines[1] and i<= interestingLines.currentDisplayLines[2] then
+        table.insert(interestingLines.currentDisplayWarn,i)
+        table.insert(interestingLines.currentDisplayError,i)
+      end
+    end
+    if l[2] == "E" then
+      table.insert(interestingLines.allFilteredError,i)
+      if i >= interestingLines.currentDisplayLines[1] and i<= interestingLines.currentDisplayLines[2] then
+        table.insert(interestingLines.currentDisplayError,i)
+      end
+
+    end
+    ::skipinterline::
+  end
+
+  -- logs[logFiltered[i+1]]
+end
+
+local function putLogLinesInClipboard(rangeOrList, isRange)
+  local txt = ""
+
+  if isRange then
+    for i = rangeOrList[1], rangeOrList[2], 1 do
+      local l = logs[i+1]
+      if l then
+        txt = txt..string.format("%s|%s|%s|%s\n",l[1],l[2],l[3],l[4])
+      end
+    end
+  else
+    for _,i in ipairs(rangeOrList) do
+      local l = logs[i]
+      if l then
+        txt = txt..string.format("%s|%s|%s|%s\n",l[1],l[2],l[3],l[4])
+      end
+    end
+  end
+
+  setClipboard(txt)
 end
 
 local function menuToolbar(uiScale)
@@ -220,6 +289,36 @@ local function menuToolbar(uiScale)
       end
       if im.SliderFloat("Background Alpha fullscreen", winBgAlpha[2], 0.0, 1.0) then
         settingsSave()
+      end
+
+      im.EndMenu()
+    end
+
+    if im.BeginMenu("Copy Lines") then
+      if #interestingLines <=1 then getInterestingLines() end
+
+      if interestingLines.currentDisplayLines and im.MenuItem1("Copy displayed lines") then
+        putLogLinesInClipboard(interestingLines.currentDisplayLines, true)
+      end
+
+      if interestingLines.currentDisplayWarn and #interestingLines.currentDisplayWarn>0 and im.MenuItem1("Copy displayed Warnings only") then
+        putLogLinesInClipboard(interestingLines.currentDisplayWarn)
+      end
+
+      if interestingLines.currentDisplayError and #interestingLines.currentDisplayError>0 and im.MenuItem1("Copy displayed Errors and Warnings") then
+        putLogLinesInClipboard(interestingLines.currentDisplayError)
+      end
+
+      if interestingLines.currentDisplayLines and im.MenuItem1("Copy all filtered lines") then
+        putLogLinesInClipboard(logFiltered)
+      end
+
+      if interestingLines.allFilteredWarn and #interestingLines.allFilteredWarn>0 and im.MenuItem1("Copy all filtered Warnings only") then
+        putLogLinesInClipboard(interestingLines.allFilteredWarn)
+      end
+
+      if interestingLines.allFilteredError and #interestingLines.allFilteredError>0 and im.MenuItem1("Copy all filtered Errors and Warnings") then
+        putLogLinesInClipboard(interestingLines.allFilteredError)
       end
 
       im.EndMenu()
@@ -330,7 +429,6 @@ local function runFilter(newEntry)
 end
 
 function ConsoleInputCallback(data)
-  data = ffi.cast("ImGuiInputTextCallbackData*", data);
   --log('D', 'console', '>>> inputCallback 1 - ' .. dumps(data) .. ' / ' .. tostring(#history))
   if data.EventFlag == im.InputTextFlags_CallbackHistory then
     local prevHistoryPos = historyPos
@@ -366,14 +464,13 @@ function ConsoleInputCallback(data)
         return 0 -- im.Int(0)
       end
       local inplen = string.len(t)
-      local inplenInt = im.Int(inplen)
-      ffi.copy(data.Buf, t, math.min(data.BufSize-1, inplen+1))
-      --data.Buf = ffi.string(t, math.min(data.BufSize-1, inplen+1))
+      local inplenInt = inplen
+      data.Buf = ffi.string(t, math.min(data.BufSize-1, inplen+1))
       data.CursorPos = inplenInt
       data.SelectionStart = inplenInt
       data.SelectionEnd = inplenInt
       data.BufTextLen = inplenInt
-      data.BufDirty = im.Bool(true);
+      data.BufDirty = true
     end
   -- elseif data.EventFlag == im.InputTextFlags_CallbackCharFilter then
   --   print(data.EventChar)
@@ -454,6 +551,7 @@ local function onConsoleLog(timer, lvl, origin, line)
   -- end
   runFilter(math.max(logsTail-(#slashed), logsHead))
   -- rollAvgAppend(rollAvgAdd, tim:stopAndReset())
+  interestingLines = {}
 end
 
 local previouslyShown
@@ -586,6 +684,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
     local numColm = 4
     im.PushStyleVar2(im.StyleVar_FramePadding,im.ImVec2(0,0))
+    im.PushStyleColor2(im.Col_ChildBg, im.ImColorByRGB(0,0,0,0).Value)
     if im.BeginTable("LogsChild", numColm, im.TableFlags_Resizable+im.TableFlags_ContextMenuInBody+im.TableFlags_ScrollY+im.TableFlags_NoPadInnerX+im.TableFlags_BordersOuter+(tableBgLines[0] and im.TableFlags_RowBg or 0 )+im.TableFlags_Hideable, im.ImVec2(0, -30 * uiScale)) and numColm>0 then
       im.SetWindowFontScale(fontConsoleFact[0])
       im.TableSetupColumn("time", im.TableColumnFlags_NoSort + im.TableColumnFlags_WidthStretch,10)
@@ -600,6 +699,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       if filterCur ~= filterOld then
         filterOld = filterCur
         runFilter()
+        interestingLines = {}
       end
 
       local fontPushed = im.PushFont3("robotomono_regular")
@@ -740,7 +840,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
       while(im.ImGuiListClipper_Step(listClip)) do
         for i = listClip.DisplayStart,listClip.DisplayEnd,1 do
-
+          interestingLines["currentDisplayLines"] = {listClip.DisplayStart,listClip.DisplayEnd}
           -- im.TextUnformatted(tostring(i))
           -- ::looklineagain::
           -- if not logFiltered[i+logsHead+offset] then
@@ -854,6 +954,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     end
 
     im.PopStyleVar()
+    im.PopStyleColor()
 
     if true then
       local flags = 0
@@ -1159,6 +1260,7 @@ M.show = show
 M.hide = hide
 M.toggle = toggle
 
+M.inputCallback = inputCallback
 --M.onConsoleLog = onConsoleLog --hook removed
 
 M.onVehicleDestroyed = refreshCombo

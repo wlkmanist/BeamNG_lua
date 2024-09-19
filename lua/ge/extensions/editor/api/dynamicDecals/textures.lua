@@ -3,13 +3,9 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {
-  "editor_api_dynamicDecals",
-  "editor_dynamicDecals_browser",
-  "editor_dynamicDecals_layerTypes_decal",
-  "editor_dynamicDecals_docs",
-}
 local logTag = "editor_api_dynamicDecals_textures"
+
+local sidecarFileMigration = nil
 
 local texturesDirectoryPath = "/art/dynamicDecals/textures"
 local textureFiles = nil
@@ -19,11 +15,19 @@ local missingSidecarFiles = nil
 
 local contextMenuTexturePath = ""
 
+local sidecarFileVersion = 2
 local sidecarExtension = ".dynDecalTexture.json"
+M.textureType = {
+  greyscale = 0,
+  color = 1,
+  sdf = 2,        -- obsolete
+  fillTexture = 3
+}
+
 local sidecarTemplate = {
-  version = 1,
-  path = "",
-  type = 0, -- 0: greyscale; 1: color; 2: sdf; 3: fillTexture
+  version = 2,
+  type = M.textureType.color, -- 0: greyscale; 1: color; 2: sdf; 3: fillTexture
+  isSdfCompatible = false,
   tags = {},
   vehicle = ""
 }
@@ -115,6 +119,13 @@ local function reloadTextureFiles()
     local textureFilePath = dirName .. fileName
     if sidecarFileExists(textureFilePath) then
       local data = readSidecarFile(textureFilePath)
+
+      -- do sidecar file version migration here
+      if data.version < sidecarFileVersion then
+        sidecarFileMigration.migrate(data)
+        updateSidecarFile(textureFilePath, data)
+      end
+
       if data.tags then
         for _, tag in ipairs(data.tags) do
           if not tagsWithRefs[tag] then
@@ -127,10 +138,11 @@ local function reloadTextureFiles()
     else
       table.insert(missingSidecarFiles, filepath)
       local data = shallowcopy(sidecarTemplate)
-      data.path = dirName .. fileName
       updateSidecarFile(textureFilePath, data)
     end
   end
+
+  if true then return end
 
   table.sort(textureFiles, textureFilesSortFn)
 
@@ -154,14 +166,12 @@ end
 local function addTexture(filepath)
   table.insert(textureFiles, filepath)
   table.sort(textureFiles, textureFilesSortFn)
-
   local dirName, fileName, extension = path.split(filepath)
   local sidecarFilePath = dirName .. fileName .. sidecarExtension
   missingSidecarFiles = {}
   if not FS:fileExists(sidecarFilePath) then
     table.insert(missingSidecarFiles, filepath)
     local data = shallowcopy(sidecarTemplate)
-    data.path = dirName .. fileName
     jsonWriteFile(sidecarFilePath, data)
   end
 
@@ -169,13 +179,15 @@ local function addTexture(filepath)
 end
 
 local function setup()
+  sidecarFileMigration = extensions.editor_api_dynamicDecals_sidecarFileMigration
+
   reloadTextureFiles()
   FS:directoryCreate(texturesDirectoryPath)
 end
 
 local function onFileChanged(filepath, type)
   local dir, filename, ext = path.split(filepath)
-  if dir == (texturesDirectoryPath .. "/") and ext ~= "json" then
+  if string.startswith(dir, texturesDirectoryPath) and (ext == "png" or ext == "jpg") then
     if type == 'added' or type == 'modified' then
       if not textureExists(filepath) then
         addTexture(filepath)

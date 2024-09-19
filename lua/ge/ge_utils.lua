@@ -25,6 +25,10 @@ scenetree.objectExistsById = function(objectId)
   return Sim.objectExistsById(objectId)
 end
 
+scenetree.decalRoadContainsPoint = function(objectId, point)
+  return Sim.decalRoadContainsPoint(objectId, point)
+end
+
 -- allows users to find Objects via classname: scenetree.findClassObjects('BeamNGTrigger')
 scenetree.findClassObjects = function(className)
   local res_table = {}
@@ -1552,7 +1556,7 @@ end
 
 function the_high_sea_crap_detector()
   -- this function only shows a message to entice people to get the game.
-  -- please support development of BeamNG.drive and leave this in here :)
+  -- please support development of BeamNG and leave this in here :)
   local files = FS:findFiles('/', '*.url', 0, false, false)
   local knownHashes = {
     ['24cc61dd875c262b4bbdd0d07e448015ae47b678'] = 1,
@@ -1674,4 +1678,13 @@ if vmType == 'game' then
 end
 
 -- backward compatibility below
+
 string.c_str = function(self) return self end
+
+local setCEFFocusWarned = 5
+function setCEFFocus()
+  if setCEFFocusWarned == 0 then return end
+  setCEFFocusWarned = setCEFFocusWarned - 1
+  log("E", "", "The 'setCEFFocus()' function is deprecated and doesn't need to be called by the following code:")
+  print(debug.tracesimple())
+end

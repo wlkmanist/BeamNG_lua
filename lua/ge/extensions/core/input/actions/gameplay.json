@@ -37,6 +37,8 @@
 "funExtinguish"           :{"cat":"gameplay", "order": 44, "ctx": "vlua", "onDown":"fire.extinguishVehicle()",        "title": "ui.inputActions.gameplay.funExtinguish.title",   "desc": "ui.inputActions.gameplay.funExtinguish.description" },
 "funBoom"                 :{"cat":"gameplay", "order": 45, "ctx": "vlua", "onDown":"fire.explodeVehicle()",           "title": "ui.inputActions.gameplay.funBoom.title",           "desc": "ui.inputActions.gameplay.funBoom.description"                 },
 "forceField"              :{"cat":"gameplay", "order": 46, "ctx": "tlua", "onDown":"extensions.gameplay_forceField.toggleActive()", "title": "ui.inputActions.gameplay.forceField.title",  "desc": "ui.radialmenu2.funstuff.ForceField.desc"                 },
+"latchesOpen"             :{"cat":"gameplay", "order": 47, "ctx": "vlua", "onDown":"for k, v in pairs(controller.getControllersByType('advancedCouplerControl')) do v.detachGroup() end", "title": "ui.radialmenu2.funstuff.LatchesOpen","desc": "ui.radialmenu2.funstuff.LatchesOpen.desc" },
+"latchesClose"             :{"cat":"gameplay", "order": 48, "ctx": "vlua", "onDown":"for k, v in pairs(controller.getControllersByType('advancedCouplerControl')) do v.tryAttachGroupImpulse() end", "title": "ui.radialmenu2.funstuff.LatchesClose","desc": "ui.radialmenu2.funstuff.LatchesClose.desc" },
 
 // other functions
 "saveHome"                :{"cat":"gameplay", "order": 90, "ctx": "vlua", "onDown"  :"recovery.saveHome()", "title": "ui.inputActions.gameplay.saveHome.title", "desc": "ui.inputActions.gameplay.saveHome.description" },
@@ -57,7 +59,7 @@
 "bigMapPreviousFilter"  :{"cat":"gameplay",  "order": 100, "ctx": "tlua", "onChange":"if freeroam_bigMapMode then freeroam_bigMapMode.onChangeUiFilter(VALUE, -1) end", "actionMap": "BigMap", "title": "bigMap.action.previousFilter.title",  "desc": "bigMap.action.previousFilter.description" },
 
 // fueling
-"fuelVehicle"  :{"cat":"gameplay",  "order": 101, "ctx": "tlua", "onChange":"if career_modules_fuel then career_modules_fuel.changeFlowRate(VALUE) end", "actionMap": "Refueling", "title": "ui.career.refueling.action.title",  "desc": "ui.career.refueling.action.description" },
+"fuelVehicle"  :{"cat":"gameplay",  "order": 101, "ctx": "tlua", "onChange":"extensions.hook('onChangeFlowRate', VALUE) ", "actionMap": "Refueling", "title": "ui.career.refueling.action.title",  "desc": "ui.career.refueling.action.description" },
 }
 
 

@@ -287,7 +287,7 @@ local function applyDeformGroupDamageOilRadiator(damageAmount)
 end
 
 local function headGasketBlown()
-  damageTracker.setDamage("engine", "headGasketDamaged", true)
+  damageTracker.setDamage("engine", "headGasketDamaged", true, true)
   M.headGasketBlown = true
   --without a working headgasket we don't have full compression anymore -> less torque
   parentEngine:scaleOutputTorque(0.8)
@@ -310,7 +310,7 @@ end
 local function engineBlockMelted()
   parentEngine:scaleFriction(10000) --essentially kill the engine
   M.engineBlockMelted = true
-  damageTracker.setDamage("engine", "blockMelted", true)
+  damageTracker.setDamage("engine", "blockMelted", true, true)
 end
 
 local function cylinderWallsMelted()
@@ -705,7 +705,7 @@ local function updateWaterCoolingGFX(dt)
     updateCoolantRadiatorDamage()
 
     if adjustedRadiatorDamage > 0 and not damageTracker.getDamage("engine", "radiatorLeak") then
-      damageTracker.setDamage("engine", "radiatorLeak", true)
+      damageTracker.setDamage("engine", "radiatorLeak", true, true)
     end
     fluidLeakRates.coolant.radiator = adjustedRadiatorDamage * 10
   end

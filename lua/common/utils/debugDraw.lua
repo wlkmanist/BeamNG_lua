@@ -25,10 +25,10 @@ else
     void BNG_DBG_DRAW_SquarePrism(float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float x4, float y4, unsigned int packedCol, bool useZ);
     void BNG_DBG_DRAW_TextAdvanced(float x1, float y1, float z1, const char* text, unsigned int packedCol, bool useAdvancedText, bool twod, unsigned int bgColorPacked, bool shadow, bool useZ);
     void BNG_DBG_DRAW_TriSolid(float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3, unsigned int packedCol, bool useZ);
-    void BNG_DBG_DRAW_LineInstance_MinArgBatch(float *data, unsigned int lineCount, float w1, unsigned int packedCol);
-    void BNG_DBG_DRAW_TriSolidBatch(float *data, unsigned int triCount, unsigned int packedCol, bool useZ);
+    void BNG_DBG_DRAW_LineInstance_MinArgBatch(const float &data, unsigned int lineCount, float w1, unsigned int packedCol);
+    void BNG_DBG_DRAW_TriSolidBatch(const float &data, unsigned int triCount, unsigned int packedCol, bool useZ);
 
-    void copy_vehicle_nodes(int vehID, Vector3* nodes, int nodeCount);
+    void copy_vehicle_nodes(int vehID, const Vector3& nodes, int nodeCount);
     ]]
 end
 

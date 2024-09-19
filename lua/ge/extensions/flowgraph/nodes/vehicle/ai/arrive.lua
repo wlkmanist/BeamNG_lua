@@ -9,13 +9,13 @@ local C = {}
 C.name = 'AI Arrive'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
-C.description = 'Drives toward a target waypoint.'
+C.description = 'Sets a vehicle to drive towards a target waypoint.'
 C.category = 'once_f_duration'
 C.behaviour = { duration = true }
 
 
 C.pinSchema = {
-  { dir = 'in', type = 'number', name = 'aiVehId', description = 'The AI vehicle. Uses player vehicle if no value given.' },
+  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Vehicle id to set AI mode for.' },
   { dir = 'in', type = 'string', name = 'waypointName', description = 'Name of waypoint to be driven to.' },
   { dir = 'in', type = 'number', name = 'checkDistance', hidden = true, default = 1, description = 'If the vehicle is closer than this distance, it is considered arrived. Keep empty for default waypoint width.'
   },
@@ -53,19 +53,18 @@ function C:drawMiddle(builder, style)
   im.Text("Command sent: "..(self.sentCommand and 'yes' or 'no'))
 end
 
-function C:findVehicle()
-  local source
-  if self.pinIn.aiVehId.value and self.pinIn.aiVehId.value ~= 0 then
-    source = scenetree.findObjectById(self.pinIn.aiVehId.value)
+function C:getVeh()
+  local veh
+  if self.pinIn.aiVehId.value then
+    veh = be:getObjectByID(self.pinIn.aiVehId.value)
   else
-    source = getPlayerVehicle(0)
+    veh = getPlayerVehicle(0)
   end
-  return source
+  return veh
 end
 
 function C:work()
-
-  if self.pinIn.flow.value == true then
+  if self.pinIn.flow.value then
     if self.durationState == 'finished' then return end
 
     if self.pinIn.waypointName.value then
@@ -75,29 +74,31 @@ function C:work()
         return
       end
 
-      local source = self:findVehicle()
-      if source then
-        local radius = self.pinIn.checkDistance.value
-        if not radius or radius == 0 then
-          radius = node.radius
-        end
-        local frontPos = linePointFromXnorm(vec3(source:getCornerPosition(0)), vec3(source:getCornerPosition(1)), 0.5)
-        local dist = (frontPos - node.pos):length()
-        self.pinOut.distance.value = dist
+      local veh = self:getVeh()
+      if not veh then 
+        self:__setNodeError("work", "No vehicle found!")
+        return
+      end
+      
+      local radius = self.pinIn.checkDistance.value
+      if not radius or radius == 0 then
+        radius = node.radius
+      end
+      local frontPos = linePointFromXnorm(vec3(veh:getCornerPosition(0)), vec3(veh:getCornerPosition(1)), 0.5)
+      local dist = (frontPos - node.pos):length()
+      self.pinOut.distance.value = dist
 
-        if dist < radius and map.objects[source:getID()].vel:length() < (self.pinIn.checkVelocity.value or 10000) then
-          self:setDurationState('finished')
-          if self.data.autoDisableOnArrive then
-            source:queueLuaCommand('ai.setState({mode = "disabled"})')
-          end
+      if dist < radius and map.objects[veh:getID()].vel:length() < (self.pinIn.checkVelocity.value or 10000) then
+        self:setDurationState('finished')
+        if self.data.autoDisableOnArrive then
+          veh:queueLuaCommand('ai.setState({mode = "disabled"})')
         end
-        if not self.sentCommand then
-          print("Command sent to arrive to: " .. self.pinIn.waypointName.value)
-          source:queueLuaCommand('ai.setState({mode = "manual"})')
-          source:queueLuaCommand('ai.setTarget("'..self.pinIn.waypointName.value..'")')
-          self.sentCommand = true
-          self:setDurationState('started')
-        end
+      end
+      if not self.sentCommand then
+        veh:queueLuaCommand('ai.setState({mode = "manual"})')
+        veh:queueLuaCommand('ai.setTarget("'..self.pinIn.waypointName.value..'")')
+        self.sentCommand = true
+        self:setDurationState('started')
       end
     else
       self:__setNodeError("work", "No target waypoint name given!")

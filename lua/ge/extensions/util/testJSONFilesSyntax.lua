@@ -7,11 +7,14 @@ local M = {}
 local jsonDebug = require('jsonDebug')
 
 local function jsonDebugDecode(content, context)
-  local state, data = xpcall(function() return jsonDebug.decode(content, context) end, debug.traceback)
+  local state, data, warnings = xpcall(function() return jsonDebug.decode(content, context) end, debug.traceback)
   if state == false then
     log('E', "jsonDecode", "unable to decode JSON: "..tostring(context))
     log('E', "jsonDecode", "JSON decoding error: "..tostring(data))
     return nil
+  end
+  for _, warning in ipairs(warnings) do
+    log('W', 'jsonDecode', warning)
   end
   return data
 end

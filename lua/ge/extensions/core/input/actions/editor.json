@@ -6,8 +6,8 @@
 "editorOpenLevel": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor.doOpenLevel()", "actionMap": "Editor", "title": "Open Level", "desc": "Open a level" },
 "editorSaveLevel": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor.doSaveLevel()", "actionMap": "Editor", "title": "Save Level", "desc": "Save the level" },
 "editorSaveLevelAs": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor.doSaveLevelAs()", "actionMap": "Editor", "title": "Save Level As", "desc": "Save level as new level name" },
-"editorToggle": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor.toggleActive()", "actionMap": "Global", "title": "Toggle World Editor", "desc": "Toggle the world editor" },
-"editorSafeModeToggle": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor.toggleActive(true)", "actionMap": "Global", "title": "Toggle World Editor (Safe Mode)", "desc": "Toggle the world editor in Safe Mode, only vital/core editor extensions are loaded" },
+"editorToggle": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor.toggleActive()", "actionMap": "First", "title": "Toggle World Editor", "desc": "Toggle the world editor" },
+"editorSafeModeToggle": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor.toggleActive(true)", "actionMap": "First", "title": "Toggle World Editor (Safe Mode)", "desc": "Toggle the world editor in Safe Mode, only vital/core editor extensions are loaded" },
 
 //----------------------------------------------------
 // Edit Menu
@@ -167,7 +167,7 @@
 //----------------------------------------------------
 // Vehicle Editor
 //----------------------------------------------------
-"vehicleEditorToggle": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor_veMain.toggleActive()", "actionMap": "Global", "title": "Toggle Vehicle Editor", "desc": "Toggle the vehicle editor" },
+"vehicleEditorToggle": {"cat":"editor", "order": 1, "ctx": "tlua", "onDown" :"editor_veMain.toggleActive()", "title": "Toggle Vehicle Editor", "desc": "Toggle the vehicle editor" },
 "renderViewMoveForward": {"cat":"editor", "order": 1, "ctx": "tlua",   "onChange" :"editor_vehicleEditor_staticEditor_veStaticRenderView.moveForward(VALUE)", "actionMap": "VehicleEditor", "title": "Render View Move Forward", "desc": "Move Forward in Render View" },
 "renderViewMoveBackward": {"cat":"editor", "order": 1, "ctx": "tlua",   "onChange" :"editor_vehicleEditor_staticEditor_veStaticRenderView.moveBackward(VALUE)", "actionMap": "VehicleEditor", "title": "Render View Move Backward", "desc": "Move Backward in Render View" },
 "renderViewMoveLeft": {"cat":"editor", "order": 1, "ctx": "tlua",   "onChange" :"editor_vehicleEditor_staticEditor_veStaticRenderView.moveLeft(VALUE)", "actionMap": "VehicleEditor", "title": "Render View Move Left", "desc": "Move Left in Render View" },

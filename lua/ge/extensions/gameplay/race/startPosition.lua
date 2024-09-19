@@ -109,8 +109,8 @@ function C:drawDebug(drawMode, clr)
 
   if drawMode == 'highlight' then
     debugDrawer:drawSquarePrism(
-      vec3(self.pos -y*0.1 + z*0.91),
-      vec3(self.pos -y*4.6 + z*0.91),
+      vec3(self.pos - y * 0.1 + z * 0.9),
+      vec3(self.pos - y * 4.8 + z * 0.9),
       Point2F(1.5,1.8),
       Point2F(1.5,1.8),
       ColorF(0.9,0.0,0.3,0.5))

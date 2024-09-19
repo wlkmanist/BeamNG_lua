@@ -84,7 +84,6 @@ function C:getCmd(action)
 end
 
 function C:closeDialogue()
-  setCEFFocus(false) -- focus the game now
   self.open = false
   self._active = false
 end

@@ -4,37 +4,41 @@
 
 local im  = ui_imgui
 
-
 local C = {}
 
 C.name = 'im Vehicle Selector'
-C.description = 'Vehicle selector ui made in imgui'
+C.description = 'Vehicle selector ui made in imgui.'
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
 C.category = 'once_instant'
 
 C.pinSchema = {
+  { dir = 'out', type = 'flow', name = 'selected', description = 'Flows after the Select button was pressed.' },
   { dir = 'out', type = 'string', name = 'model', description = 'The model of the selected vehicle.' },
   { dir = 'out', type = 'string', name = 'config', description = 'The config of the selected vehicle.' },
+  { dir = 'out', type = 'string', name = 'configPath', description = 'The full config path of the selected vehicle.' },
+  { dir = 'out', type = 'string', name = 'paintName1', hidden = true, description = 'The first paint layer of the selected vehicle.' },
+  { dir = 'out', type = 'string', name = 'paintName2', hidden = true, description = 'The second paint layer of the selected vehicle.' },
+  { dir = 'out', type = 'string', name = 'paintName3', hidden = true, description = 'The third paint layer of the selected vehicle.' }
 }
 
-C.tags = {}
+C.tags = {'imgui', 'vehicle', 'config'}
 
 function C:init()
+  self.data.enableConfigs = true
+  self.data.enablePaints = false
+  self.data.enableCustomConfig = false
 end
 
-
 function C:_executionStarted()
-  self.models =  core_vehicles.getModelList(true).models
-  self.configs = {}
-  self.model = ""
-  self.config = ""
-  self.vehType = 'Car'
-  self.modelName = ""
-  self.configName = ""
+  self.util = require("/lua/ge/extensions/editor/util/vehicleSelectUtil")("FG Vehicle Selector##"..self.id)
+  self.util.enableConfigs = self.data.enableConfigs
+  self.util.enablePaints = self.data.enablePaints
+  self.util.enableCustomConfig = self.data.enableCustomConfig
+
   self.open = false
   self.done = false
-  self.pinOut.flow.value = false
+  self.refresh = false
 end
 
 function C:drawMiddle(builder, style)
@@ -42,79 +46,31 @@ function C:drawMiddle(builder, style)
 end
 
 function C:displayWindow()
+  im.SetNextWindowSize(im.ImVec2(480, 300))
   im.Begin("Vehicle Select##"..self.id, im.BoolPtr(true))
-  im.Columns(2)
-  if self.models == nil or next(self.models) == nil then
-    im.Text("Model")
-    im.NextColumn()
-    im.Text(tostring(self.modelName))
-    im.NextColumn()
-    im.Text("Config")
-    im.NextColumn()
-    im.Text(tostring(self.configName))
-    im.Columns(1)
-    return
+
+  if self.util:widget() then
+    self.refresh = true
   end
-  im.Text("Type")
-  im.NextColumn()
-  if im.BeginCombo("##vehType" .. self.id, self.vehType) then
-    for _, t in ipairs({'Car','Truck','Prop','Trailer','Utility', 'Traffic'}) do
-      if im.Selectable1(t, t == self.vehType) then
-        if t ~= self.vehType then
-          self.vehType = t
-          self.model = ""
-          self.modelName = ""
-          self.config = ""
-          self.configName = ""
-        end
-      end
-    end
-    im.EndCombo()
+  if self.refresh then
+    self.pinOut.model.value = self.util.model
+    self.pinOut.config.value = self.util.config
+    self.pinOut.configPath.value = self.util.configPath
+    self.pinOut.paintName1.value = self.util.paintName
+    self.pinOut.paintName2.value = self.util.paintName2
+    self.pinOut.paintName3.value = self.util.paintName3
+
+    self.refresh = false
   end
 
-  im.NextColumn()
-  im.Text("Model")
-  im.NextColumn()
-  if im.BeginCombo("##models" .. self.id, self.model) then
-    for _, m in ipairs(self.models) do
-      if m.Type == self.vehType then
-        if im.Selectable1(m.Name and (m.Name .. " ["..m.key.."]") or m.key, m.key == self.model) then
-          if self.model ~= m.key then
-            self.model = m.key
-            self.modelName = m.Name
-            self.configs = core_vehicles.getModel(m.key).configs
-            self.config = ""
-            self.configName = ""
-          end
-        end
-      end
-    end
-    im.EndCombo()
-  end
-  im.Text(tostring(self.modelName))
-  im.NextColumn()
-  im.Text("Config")
-  im.NextColumn()
-  if self.configs and self.configs ~= {} then
-    if im.BeginCombo("##configs" .. self.id, self.config) then
-      for c, m in pairs(self.configs) do
-        if im.Selectable1((m.Name .. " ["..c.."]"), c == self.config) then
-          self.config = c
-          self.configName = m.Name
-          self.configPath = "vehicles/"..self.model.."/"..c..".pc"
-        end
-      end
-      im.EndCombo()
-    end
-  end
-  im.Text(tostring(self.configName))
-  im.Columns(1)
   if im.Button("Select") then
     self.done = true
     self.open = false
-    self.pinOut.config.value = self.configPath
-    self.pinOut.model.value = self.model
-    self.pinOut.flow.value = true
+    self.pinOut.selected.value = true
+  end
+  if im.Button("Reset") then
+    self.util:resetSelections()
+    self.refresh = true
   end
 
   im.End()
@@ -122,10 +78,13 @@ end
 
 function C:onNodeReset()
   self.open = false
+  self.done = false
+  self.pinOut.selected.value = false
 end
 
 function C:workOnce()
   self.open = true
+  self.refresh = true
 end
 
 function C:work()
@@ -133,6 +92,5 @@ function C:work()
     self:displayWindow()
   end
 end
-
 
 return _flowgraph_createNode(C)

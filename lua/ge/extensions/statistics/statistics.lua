@@ -727,6 +727,8 @@ local function onScenarioChange(scenario)
   end
 end
 
+local tempPos = vec3()
+
 local function onUpdate()
   local scenario = scenario_scenarios and scenario_scenarios.getScenario()
   if not scenario or not scenario.raceState or scenario.raceState ~= 'racing' or scenario.state == 'post' then
@@ -744,9 +746,9 @@ local function onUpdate()
           vehicle = be:getObjectByID(vehicleID)
         end
         if vehicle then
-          local pos = vehicle:getPosition()
-          local delta = pos - instance.initialPos
-          instance.value = delta:length()
+          tempPos:set(vehicle:getPositionXYZ())
+          tempPos:setSub(instance.initialPos)
+          instance.value = tempPos:length()
         end
       end
     end
@@ -762,8 +764,8 @@ local function onUpdate()
         end
 
         if vehicle then
-          local pos = vehicle:getPosition()
-          instance.value = math.abs(pos.z - instance.initialZPos)
+          tempPos:set(vehicle:getPositionXYZ())
+          instance.value = math.abs(tempPos.z - instance.initialZPos)
         end
       end
     end

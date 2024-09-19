@@ -354,10 +354,6 @@ guiSliderBoxProfile.bitmap = "./images/slider-w-box"
 guiSliderBoxProfile.category = "Core"
 guiSliderBoxProfile:registerObject("GuiSliderBoxProfile")
 
--- // ----------------------------------------------------------------------------
--- // TODO: Revisit Popupmenu
--- // ----------------------------------------------------------------------------
-
 -- GuiPopupMenuItemBorder
 local guiPopupMenuItemBorder = createObject("GuiControlProfile")
 guiPopupMenuItemBorder:inheritParentFields(guiButtonProfile)

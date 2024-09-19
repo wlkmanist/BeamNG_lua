@@ -10,9 +10,11 @@ local M = {}
 local api = extensions.editor_api_dynamicDecals
 
 local ACTION_MAPS = {
+  rotate = "LiveryEditorRotate",
+  scale = "LiveryEditorScale",
+  skew = "LiveryEditorSkew",
   transform = "LiveryEditorTransform",
   transformStamp = "LiveryEditorTransformStamp",
-  deform = "LiveryEditorDeform",
   material = "LiveryEditorMaterial"
 }
 
@@ -23,52 +25,57 @@ local disableAllActionMaps = function()
 end
 
 local toggleActionMap = function(actionMap, enable)
-  local o = scenetree.findObject(actionMap.."ActionMap")
+  local o = scenetree.findObject(actionMap .. "ActionMap")
   if o then
     o:setEnabled(enable)
   end
 end
 
 M.useMouseProjection = function()
-  local isUseMousePos = api.isUseMousePos()
+  dump("useMouseProjection")
+  -- local isUseMousePos = api.isUseMousePos()
 
-  if isUseMousePos then
-    return
-  end
+  -- if isUseMousePos then
+  -- return
+  -- end
 
   -- disable unapplicable action maps
-  -- M.useActionMap(ACTION_MAPS.transformStamp)
-  pushActionMap(ACTION_MAPS.transformStamp)
-  toggleActionMap(ACTION_MAPS.transform, false)
+  M.useActionMap("transformStamp")
+  -- pushActionMap(ACTION_MAPS.transformStamp)
+  -- toggleActionMap(ACTION_MAPS.transform, false)
+  -- disableAllActionMaps()
 
-  api.toggleSetting(api.settingsFlags.UseMousePos.value)
+  -- api.toggleSetting(api.settingsFlags.UseMousePos.value)
 end
 
 M.useCursorProjection = function()
-  local isUseMousePos = api.isUseMousePos()
+  dump("useCursorProjection")
+  -- local isUseMousePos = api.isUseMousePos()
 
-  if not isUseMousePos then
-    return
-  end
+  -- if not isUseMousePos then
+  -- return
+  -- end
 
-  popActionMap(ACTION_MAPS.transformStamp)
-  toggleActionMap(ACTION_MAPS.transform, true)
-  api.toggleSetting(api.settingsFlags.UseMousePos.value)
+  -- popActionMap(ACTION_MAPS.transformStamp)
+  -- toggleActionMap(ACTION_MAPS.transform, true)
+  -- api.toggleSetting(api.settingsFlags.UseMousePos.value)
+  -- reset cursor position
+  -- api.setCursorPosition(Point2F(0.5, 0.5))
+  M.useActionMap("transform")
 end
 
 M.useActionMap = function(actionMapKey)
-  log("D", "", "useActionMap " .. actionMapKey)
+  -- dump("useActionMap", actionMapKey)
   disableAllActionMaps()
+  actionMapKey = actionMapKey == "transform" and api.isUseMousePos() and "transformStamp" or actionMapKey
   local actionMap = ACTION_MAPS[actionMapKey]
   if actionMap then
-    log("D", "", "pushing actionMap " .. actionMap)
+    -- dump("useActionMap", actionMap)
     pushActionMap(actionMap)
   end
 end
 
-M.disableActionMap = function(actionMap)
-  popActionMap(actionMap)
-end
+M.disableAllActionMaps = disableAllActionMaps
 
 -- M.editAsController = function()
 --   api.toggleSetting(api.settingsFlags.UseMousePos.value)
@@ -80,7 +87,6 @@ end
 --   dump("toggleUseMousePos", api.settingsFlags.UseMousePos)
 --   dump("settings", api.isUseMousePos())
 -- end
-
 
 -- TODO: Refactor this to toggle action map based on mode (normal/edit) and selected decal(should probably be called from selected lua module)
 M.toggleEditActionMaps = function(enable)
@@ -105,5 +111,14 @@ end
 
 M.disableAllActionMaps = disableAllActionMaps
 M.ACTION_MAPS = ACTION_MAPS
+
+M.liveryEditor_OnUseMousePosChanged = function(value)
+  dump("liveryEditor_OnUseMousePosChanged", value)
+  if value then
+    M.useMouseProjection()
+  else
+    M.useCursorProjection()
+  end
+end
 
 return M

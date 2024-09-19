@@ -328,7 +328,7 @@ function C:draw()
         popStyle()
       end
       if self._editing then
-        im.InputTextMultiline("##facEditor", self._text[1], im.GetLengthArrayCharPtr(self._text[1]), im.ImVec2(-1,-1))
+        im.InputTextMultiline("##facEditor", self._text[1], im.GetLengthArrayCharPtr(self._text[1]), im.ImVec2(-1,math.max(im.GetContentRegionAvail().y, 500)))
         -- display char limit
         im.Text("(char limit: "..dumps(self._text[2]/8-2)..")")
       end

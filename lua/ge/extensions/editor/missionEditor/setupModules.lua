@@ -10,7 +10,8 @@ function C:init(missionEditor)
   self.name = "SetupModules"
 end
 
-local paintNameKeys = {"paintName", "paintName2", "paintName3"}
+local imDummy = im.ImVec2(0, 5)
+local defaultVehicle = {model = "etkc"}
 
 function C:setMission(mission)
   self.mission = mission
@@ -73,7 +74,7 @@ end
 function C:draw()
   im.PushID1(self.name)
   im.Columns(2)
-  im.SetColumnWidth(0,150)
+  im.SetColumnWidth(0, 150)
 
   im.Text("Vehicles")
   im.NextColumn()
@@ -107,25 +108,34 @@ function C:draw()
     end
     im.Text("Number of vehicles selectable for this mission: "..count)
     if im.Button("Add New Provided Vehicle") then
-      table.insert(setupModule.vehicles, {model = "pickup"})
+      table.insert(setupModule.vehicles, defaultVehicle)
+      self.mission._dirty = true
     end
     im.tooltip("Adds a vehicle that the user can choose to use for this mission.")
 
-    im.Dummy(im.ImVec2(0, 5))
+    im.Dummy(imDummy)
 
     if not self.vehicleSelectors[baseCount] then
       for i = #self.vehicleSelectors + 1, baseCount do
         local currVeh = setupModule.vehicles[i] or {}
+
         local data = {
-          model = currVeh.model or "pickup",
-          config = currVeh.config or "",
-          configPath = currVeh.configPath or "",
-          paintName = currVeh.paintName or "",
-          paintName2 = currVeh.paintName2 or "",
-          paintName3 = currVeh.paintName3 or "",
-          useCustomConfig = im.BoolPtr(currVeh.useCustomConfig and true or false)
+          model = currVeh.model or defaultVehicle.model,
+          config = currVeh.config,
+          customConfigPath = currVeh.customConfigPath,
+          paintName = currVeh.paintName,
+          paintName2 = currVeh.paintName2,
+          paintName3 = currVeh.paintName3
         }
-        table.insert(self.vehicleSelectors, data)
+
+        if currVeh.useCustomConfig and not currVeh.customConfigPath then
+          currVeh.customConfigPath = currVeh.configPath
+        end
+
+        local vehSelectUtil = require("/lua/ge/extensions/editor/util/vehicleSelectUtil")("Provided Vehicle #"..i, data)
+        vehSelectUtil.enablePaints = true
+        vehSelectUtil.enableCustomConfig = true
+        table.insert(self.vehicleSelectors, vehSelectUtil)
       end
     end
 
@@ -136,80 +146,30 @@ function C:draw()
       if im.Button("Delete##vehicleSelector"..i) then
         delIdx = i
       end
-      local currSelection = self.vehicleSelectors[i]
-      if ui_flowgraph_editor.vehicleSelector(currSelection) then -- model, config, configPath
-        setupModule.vehicles[i].model = currSelection.model
-        setupModule.vehicles[i].config = currSelection.config
-        setupModule.vehicles[i].configPath = currSelection.configPath
-        currSelection.paints = nil
-        --im.PushItemWidth(im.GetContentRegionAvailWidth())
-        im.Columns(1)
-        currSelection._updated = true
+
+      local util = self.vehicleSelectors[i]
+      local veh = setupModule.vehicles[i]
+      if util:widget() then -- returns true whenever updated
+        veh.model = util.model
+        veh.config = util.config
+        veh.configPath = util.configPath
+        veh.paintName = util.paintName
+        veh.paintName2 = util.paintName2
+        veh.paintName3 = util.paintName3
+
+        veh.customConfigPath = util.customConfigPath
+        veh.useCustomConfig = util.customConfigPath and true or false
+
         self.mission._dirty = true
       end
 
-      if not currSelection.paints then -- load available model paints
-        local model = core_vehicles.getModel(currSelection.model)
-        if model and model.model then
-          currSelection.paints = model.model.paints
-          currSelection.paintKeys = currSelection.paints and tableKeysSorted(currSelection.paints) or {}
-        end
-      else
-        for j, key in ipairs(paintNameKeys) do
-          im.PushItemWidth(200)
-          local label = currSelection.paints[currSelection[key]] and currSelection[key] or "(Default)"
-          if im.BeginCombo("Paint "..j.."##vehicleSelector"..i, label) then
-            if im.Selectable1("(Default)", currSelection[key] == nil) then
-              currSelection[key] = nil
-              currSelection._updatedPaint = true
-              self.mission._dirty = true
-            end
-            for _, paint in ipairs(currSelection.paintKeys) do
-              if im.Selectable1(paint, currSelection[key] == paint) then
-                currSelection[key] = paint
-                currSelection._updatedPaint = true
-                self.mission._dirty = true
-              end
-            end
-            im.EndCombo()
-          end
-          im.PopItemWidth()
-
-          if currSelection._updatedPaint then
-            setupModule.vehicles[i][key] = currSelection[key]
-            currSelection._updatedPaint = nil
-          end
-        end
-
-        if im.Checkbox("Use Custom Part Configuration##vehicleSelector"..i, currSelection.useCustomConfig) then
-          setupModule.vehicles[i].useCustomConfig = currSelection.useCustomConfig[0]
-          self.mission._dirty = true
-        end
-        im.tooltip("If true, enables a custom part configuration (.pc) file for this model.")
-        if setupModule.vehicles[i].useCustomConfig then -- enable selection of custom file (or custom.pc by default)
-          if not setupModule.vehicles[i].customConfigPath then
-            setupModule.vehicles[i].customConfigPath = self.mission.missionFolder.."/custom.pc"
-            self.mission._dirty = true
-          end
-          if not currSelection.customConfigPath then
-            currSelection.customConfigPath = im.ArrayChar(1024, setupModule.vehicles[i].customConfigPath)
-          end
-          if editor.uiInputFile("Custom Config##vehicleSelector"..i, currSelection.customConfigPath, nil, nil, {{"Part config files", ".pc"}}, im.InputTextFlags_EnterReturnsTrue) then
-            setupModule.vehicles[i].customConfigPath = ffi.string(currSelection.customConfigPath)
-            self.mission._dirty = true
-          end
-        else
-          setupModule.vehicles[i].customConfigPath = nil
-          currSelection.customConfigPath = nil
-        end
-      end
-
-      im.Dummy(im.ImVec2(0, 5))
+      im.Dummy(imDummy)
     end
 
     if delIdx and setupModule.vehicles[delIdx] then
       table.remove(setupModule.vehicles, delIdx)
       table.remove(self.vehicleSelectors, delIdx)
+      self.mission._dirty = true
     end
 
     if im.Checkbox("Add Player Vehicle to Selections##vehicle", self.vehicleIncludePlayer) then

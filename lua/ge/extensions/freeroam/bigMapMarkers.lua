@@ -162,15 +162,21 @@ local function clusterBySettings(elements, settingsId)
   -- filter all pois that have a bigmapMarker representation and are in validIds
   local filteredPois = {}
   --dump(settings.validIdsLookup)
+  --local validCopy = deepcopy(settings.validIdsLookup)
   for _, poi in ipairs(elements) do
     if settings.validIdsLookup[poi.id] and poi.markerInfo.bigmapMarker then
-      --print("ok " .. poi.id)
+      --validCopy[poi.id] = "INCLUDED"
       table.insert(filteredPois, poi)
+      --print("ok " .. poi.id)
     else
      --print("No ok " .. poi.id)
     end
+    --if settings.validIdsLookup[poi.id] and not poi.markerInfo.bigmapMarker then
+    --  validCopy[poi.id] = "Missing bigmapMarker"
+    --end
 
   end
+  --dump(validCopy)
   table.sort(filteredPois, idSort)
 
   -- preload all elements into a qt for quick clustering
@@ -188,13 +194,19 @@ local function clusterBySettings(elements, settingsId)
     if cur then
       local cluster = {}
       local bmi = cur.markerInfo.bigmapMarker
+
       -- find all the list that potentially overlap with cur, and get all the ones that actually overlap into cluster list
       for id in qt:query(quadtree.pointBBox(bmi.pos.x, bmi.pos.y, settings.radius)) do
         local candidate = filteredPois[id]
 
         candidate._qtId = id
-        if bmi.pos:squaredDistance(candidate.markerInfo.bigmapMarker.pos) < square(settings.radius) then
+
+        if not bmi.cluster and cur == candidate then
           table.insert(cluster, candidate)
+        elseif bmi.cluster and candidate.markerInfo.bigmapMarker.cluster then
+          if bmi.pos:squaredDistance(candidate.markerInfo.bigmapMarker.pos) < square(settings.radius) then
+            table.insert(cluster, candidate)
+          end
         end
       end
 

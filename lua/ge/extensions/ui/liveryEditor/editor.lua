@@ -1,160 +1,168 @@
--- -- Core file and Api interface to the UI
--- local M = {}
+-- Core file and Api interface to the UI
+local M = {}
 
--- M.dependencies = { "editor_api_dynamicDecals", "ui_liveryEditor_layers", "ui_liveryEditor_layers_decals",
---   "ui_liveryEditor_camera", "ui_liveryEditor_controls", "ui_liveryEditor_resources", "ui_liveryEditor_selection",
---   "ui_liveryEditor_tools", "ui_liveryEditor_tools_transform" }
+M.dependencies = {"editor_api_dynamicDecals", "ui_liveryEditor_layers", "ui_liveryEditor_layers_decals",
+                  "ui_liveryEditor_layers_cursor", "ui_liveryEditor_camera", "ui_liveryEditor_controls",
+                  "ui_liveryEditor_resources", "ui_liveryEditor_selection", "ui_liveryEditor_tools",
+                  "ui_liveryEditor_tools_transform", "ui_liveryEditor_editMode"}
 
--- local api = extensions.editor_api_dynamicDecals
--- local texturesApi = extensions.editor_api_dynamicDecals_textures
--- local uiControlsApi = extensions.ui_liveryEditor_controls
--- local uiLayersApi = extensions.ui_liveryEditor_layers
--- local uiDecalApi = extensions.ui_liveryEditor_layers_decals
--- local uiResourcesApi = extensions.ui_liveryEditor_resources
--- local uiSelectionApi = extensions.ui_liveryEditor_selection
--- local uiToolsApi = extensions.ui_liveryEditor_tools
--- local uiUtilsApi = extensions.ui_liveryEditor_utils
--- local uiUserDataApi = extensions.ui_liveryEditor_userData
+local api = extensions.editor_api_dynamicDecals
+local texturesApi = extensions.editor_api_dynamicDecals_textures
+local uiControlsApi = extensions.ui_liveryEditor_controls
+local uiLayersApi = extensions.ui_liveryEditor_layers
+local uiDecalApi = extensions.ui_liveryEditor_layers_decals
+local uiResourcesApi = extensions.ui_liveryEditor_resources
+local uiSelectionApi = extensions.ui_liveryEditor_selection
+local uiToolsApi = extensions.ui_liveryEditor_tools
+local uiUtilsApi = extensions.ui_liveryEditor_utils
+local uiUserDataApi = extensions.ui_liveryEditor_userData
+local uiEditMode = extensions.ui_liveryEditor_editMode
 
--- local SAVE_FILENAME_PATTERN = "^[a-zA-Z0-9_-]+$"
+local SAVE_FILENAME_PATTERN = "^[a-zA-Z0-9_-]+$"
 
--- local setupComplete = false
--- local isRunning = false
--- local currentFile = nil
--- local hasLoadedFile = false
+local setupComplete = false
+local isRunning = false
+local currentFile = nil
+local hasLoadedFile = false
+local applyOnExit = false
 
--- local loadFile = function()
---   api.loadLayerStackFromFile(currentFile)
---   api.onUpdate_()
--- end
+local function toggleVehicleControls(enable)
+  local commonActionMap = scenetree.findObject("VehicleCommonActionMap")
+  if commonActionMap then
+    commonActionMap:setEnabled(enable)
+  end
 
--- local createNew = function()
---   local vehicleObj = getPlayerVehicle(0)
+  local specificActionMap = scenetree.findObject("VehicleSpecificActionMap")
+  if specificActionMap then
+    specificActionMap:setEnabled(enable)
+  end
+end
 
---   api.clearLayerStack()
---   api.setFillLayerColorPaletteMapId(1)
---   api.setFillLayerColor(vehicleObj.color)
---   api.addFillLayer()
+local loadFile = function()
+  api.loadLayerStackFromFile(currentFile)
+  api.onUpdate_()
+end
 
---   local history = api.getHistory()
---   history:clear()
+local createNew = function()
+  local vehicleObj = getPlayerVehicle(0)
 
---   api.onUpdate_()
--- end
+  api.clearLayerStack()
+  api.setFillLayerColorPaletteMapId(1)
+  api.setFillLayerColor(vehicleObj.color)
+  api.addFillLayer()
 
--- M.startEditor = function()
---   if not setupComplete then
---     log("I", "", "Starting initial setup. Skipping...")
---     api.setLayerNameBuildString("@type { - @colormap}")
---     api.setup()
---     uiResourcesApi.setup()
+  local history = api.getHistory()
+  history:clear()
 
---     core_vehicle_partmgmt.setSkin("dynamicTextures")
---     extensions.editor_dynamicDecalsTool.doApiUpdate = false
---     setupComplete = true
---   end
+  api.onUpdate_()
+end
 
---   uiControlsApi.useCursorProjection()
+M.startEditor = function()
+  -- if not setupComplete then
+  log("I", "", "Starting initial setup. Skipping...")
+  api.setLayerNameBuildString("@type { - @colormap}")
+  api.setup()
 
---   -- hide decal cursor
---   uiDecalApi.showCursor(false)
+  core_vehicle_partmgmt.setSkin("dynamicTextures")
+  extensions.editor_dynamicDecalsTool.doApiUpdate = false
+  uiResourcesApi.setup()
+  uiEditMode.setup()
+  setupComplete = true
 
---   isRunning = true
--- end
+  -- disable vehicle controls
+  toggleVehicleControls(false)
 
--- M.startSession = function()
---   if not setupComplete then
---     log("W", "Editor has not been setup")
---     return
---   end
+  isRunning = true
 
---   if hasLoadedFile and currentFile then
---     loadFile()
---     local filename = uiUserDataApi.getFilename(currentFile)
---     guihooks.trigger("LiveryEditorLoadedFile", { name = filename, location = currentFile })
---   else
---     createNew()
---   end
--- end
+  uiControlsApi.disableAllActionMaps()
+  api.setEnabled(false)
+end
 
--- M.createNew = function()
---   currentFile = nil
---   hasLoadedFile = false
--- end
+M.startSession = function()
+  if not setupComplete then
+    log("W", "Editor has not been setup")
+    return
+  end
 
--- M.loadFile = function(file)
---   if not FS:fileExists(file) then
---     log("W", "", "File " .. file .. " not found")
---     return false
---   end
+  if hasLoadedFile and currentFile then
+    loadFile()
+    local filename = uiUserDataApi.getFilename(currentFile)
+    guihooks.trigger("LiveryEditor_onSaveFileLoaded", {
+      name = filename,
+      location = currentFile
+    })
+    uiLayersApi.requestInitialData()
+  else
+    guihooks.trigger("LiveryEditor_onSaveFileLoaded", nil)
+    createNew()
+  end
 
---   currentFile = file
---   hasLoadedFile = true
+  uiSelectionApi.setup()
+end
 
---   return true
--- end
+M.createNew = function()
+  currentFile = nil
+  hasLoadedFile = false
+end
 
--- M.save = function(filename)
---   if not hasLoadedFile and not filename then
---     log("W", "", "No loaded file saved or specified filename. Cannot save")
---     return
---   end
+M.loadFile = function(file)
+  if not FS:fileExists(file) then
+    log("W", "", "File " .. file .. " not found")
+    return false
+  end
 
---   local playerVehicle = extensions.core_vehicles.getCurrentVehicleDetails()
---   api.exportSkin(playerVehicle.current.key, filename)
+  currentFile = file
+  hasLoadedFile = true
 
---   -- if not uiUserDataApi.saveFileExists(filename) then
---   local path = uiUserDataApi.createSaveFile(filename)
---   currentFile = path
---   hasLoadedFile = true
---   guihooks.trigger("LiveryEditorLoadedFile", { name = filename, location = path })
---   -- end
--- end
+  return true
+end
 
--- M.exitEditor = function()
---   core_vehicle_partmgmt.setSkin(nil)
---   uiControlsApi.disableAllActionMaps()
---   currentFile = nil
---   hasLoadedFile = false
---   isRunning = false
---   setupComplete = false
--- end
+M.save = function(filename)
+  if not hasLoadedFile and not filename then
+    log("W", "", "No loaded file saved or specified filename. Cannot save")
+    return
+  end
 
--- M.applyDecal = function()
---   uiDecalApi.showCursor(true)
---   uiDecalApi.createDecal()
---   uiDecalApi.showCursor(false)
--- end
+  local playerVehicle = extensions.core_vehicles.getCurrentVehicleDetails()
+  api.exportSkin(playerVehicle.current.key, filename)
 
--- M.onUpdate = function()
---   if isRunning then
---     api.onUpdate_()
---   end
--- end
+  local path = uiUserDataApi.createSaveFile(filename)
+  currentFile = path
+  hasLoadedFile = true
+  guihooks.trigger("LiveryEditor_onSaveFileLoaded", {
+    name = filename,
+    location = path
+  })
+end
 
--- -- External hooks. Do not call!
--- M.dynamicDecals_onLayerAdded = function(layerUid)
---   local layer = api.getLayerByUid(layerUid)
+M.applySkin = function()
+  if hasLoadedFile and currentFile then
+    core_vehicle_partmgmt.setSkin(currentFile)
+    applyOnExit = true
+  else
+    log("W", "", "No loaded file saved or specified filename. Cannot apply skin")
+  end
+end
 
---   if #uiLayersApi.getLayers() <= 1 then
---     return
---   end
+M.exitEditor = function()
+  if not applyOnExit then
+    core_vehicle_partmgmt.setSkin(nil)
+  end
 
---   -- Ignore if a tool is in used because it will be an update to a selected layer that requires recreation of the layer
---   if layer.type == api.layerTypes.decal and not uiToolsApi.getCurrentTool() then
---     uiSelectionApi.setSelected(layerUid)
---     uiToolsApi.useTool(uiToolsApi.TOOLS.transform)
---   elseif layer.type == api.layerTypes.fill and layer.colorPaletteMapId == 0 then
---     uiSelectionApi.setSelected(layerUid)
---     uiToolsApi.useTool(uiToolsApi.TOOLS.material)
---   end
--- end
+  uiControlsApi.disableAllActionMaps()
+  currentFile = nil
+  hasLoadedFile = false
+  applyOnExit = false
+  isRunning = false
+  setupComplete = false
 
--- M.dynamicDecals_onLayerDeleted = function(layerUid)
---   local selectedLayers = uiSelectionApi.getSelectedLayers()
---   if #selectedLayers == 0 then
---     uiToolsApi.closeCurrentTool()
---   end
--- end
+  toggleVehicleControls(true)
+end
 
--- return M
+M.onUpdate = function()
+  if isRunning then
+    api.onUpdate_()
+  end
+end
+
+return M

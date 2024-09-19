@@ -9,32 +9,27 @@ local C = {}
 C.name = 'AI Flee'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
-C.description = 'Flees from another vehicle or object until another command is given.'
+C.description = 'Sets a vehicle to flee from another vehicle.'
 C.category = 'once_p_duration'
 C.pinSchema = {
-  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Defines the id of the vehicle to activate the AI on.' },
-  { dir = 'in', type = 'number', name = 'targetId', description = 'Defines the id of the vehicle to flee from.' },
+  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Vehicle id to apply AI mode: Flee.' },
+  { dir = 'in', type = 'number', name = 'targetId', description = 'Vehicle id of the target vehicle that will be escaped from.' }
 }
 
 C.tags = {}
 
 function C:workOnce()
-  if self.pinIn.targetId.value and self.pinIn.targetId.value ~= 0 then
-    self:__setNodeError("work",nil)
-    if self.pinIn.flow.value == true  then
-      local source
-      if self.pinIn.aiVehId.value and self.pinIn.aiVehId.value ~= 0 then
-        source = scenetree.findObjectById(self.pinIn.aiVehId.value)
-      else
-        source = getPlayerVehicle(0)
-      end
-
-      source:queueLuaCommand('ai.setMode("flee")')
-      source:queueLuaCommand('ai.setTargetObjectID('..self.pinIn.targetId.value..')')
-    end
+  local veh
+  if self.pinIn.aiVehId.value then
+    veh = be:getObjectByID(self.pinIn.aiVehId.value)
   else
-    self:__setNodeError("work","No target id given!")
+    veh = getPlayerVehicle(0)
   end
+  if not veh then return end
+  
+  local targetId = self.pinIn.targetId.value or be:getPlayerVehicleID(0)
+  veh:queueLuaCommand('ai.setMode("flee")')
+  veh:queueLuaCommand('ai.setTargetObjectID('..targetId..')')
 end
 
 return _flowgraph_createNode(C)

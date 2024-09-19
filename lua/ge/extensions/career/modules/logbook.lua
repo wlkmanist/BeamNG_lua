@@ -239,7 +239,6 @@ local function onUpdate()
   playedLogbookSoundThisFrame = false
 end
 
-M.onExtensionLoaded = onExtensionLoaded
 M.onCareerActive = onCareerActive
 M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
 

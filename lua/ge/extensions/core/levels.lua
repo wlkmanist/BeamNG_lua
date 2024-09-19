@@ -34,7 +34,7 @@ local function _findAvailableLevels()
 
     -- figure out entry points (in order of priority)
     local newSceneTreeEntry = d .. '/main/'
-    local oldMainFile = d .. '/main.level.json'
+    local oldMainFile = path.getPathLevelMain(l.levelName)
     if FS:directoryExists(newSceneTreeEntry) then
       l.fullfilename = newSceneTreeEntry
     elseif FS:fileExists(oldMainFile) then

@@ -88,7 +88,7 @@ local function spawnCCallback(objID, vehicleDir, configDataIn)
 
   extensions.hook("onSpawnCCallback", objID)
 
-  if additionalVehicleData and additionalDataId == objID then
+  if additionalVehicleData and not additionalDataId or additionalDataId == objID then
     vehicleConfig.additionalVehicleData = additionalVehicleData
     additionalVehicleData = nil
   end

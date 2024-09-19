@@ -1,20 +1,21 @@
 local M = {}
 
 local api = extensions.editor_api_dynamicDecals
-local garageMode = extensions.gameplay_garageMode
 
-local CAMERA_VIEWS = {
-  FRONT = 1,
-  LEFT = 2,
-  TOP = 3,
-  RIGHT = 4,
-  BACK = 5,
-  FREEROAM = 6
+local ORTHOGRAPHIC_VIEWS = {
+  front = vec3(180, 0, 0),
+  back = vec3(0, 0, 0),
+  left = vec3(-90, 0, 0),
+  right = vec3(90, 0, 0),
+  topfront = vec3(180, -90, 0),
+  topleft = vec3(-90, -90, 0),
+  topright = vec3(90, -90, 0),
+  topback = vec3(0, -90, 0)
 }
 
 local orientationCoordinates = {
   -- z inverted, y
-  [CAMERA_VIEWS.LEFT] = {
+  left = {
     x = {
       index = 2,
       inverted = false
@@ -25,7 +26,7 @@ local orientationCoordinates = {
     }
   },
   -- z, y face
-  [CAMERA_VIEWS.RIGHT] = {
+  right = {
     x = {
       index = 2,
       inverted = true
@@ -36,7 +37,7 @@ local orientationCoordinates = {
     }
   },
   -- x inverted, y face
-  [CAMERA_VIEWS.FRONT] = {
+  front = {
     x = {
       index = 1,
       inverted = false
@@ -47,7 +48,7 @@ local orientationCoordinates = {
     }
   },
   -- x, y face
-  [CAMERA_VIEWS.BACK] = {
+  back = {
     x = {
       index = 1,
       inverted = true
@@ -58,7 +59,7 @@ local orientationCoordinates = {
     }
   },
   -- x, z face
-  [CAMERA_VIEWS.TOP] = {
+  topright = {
     x = {
       index = 2,
       inverted = true
@@ -67,10 +68,43 @@ local orientationCoordinates = {
       index = 1,
       inverted = false
     }
+  },
+  -- x, z face
+  topleft = {
+    x = {
+      index = 2,
+      inverted = false
+    },
+    y = {
+      index = 1,
+      inverted = true
+    }
+  },
+  -- x, z face
+  topfront = {
+    x = {
+      index = 1,
+      inverted = false
+    },
+    y = {
+      index = 2,
+      inverted = false
+    }
+  },
+  -- x, z face
+  topback = {
+    x = {
+      index = 1,
+      inverted = true
+    },
+    y = {
+      index = 2,
+      inverted = true
+    }
   }
 }
 
-local currentCameraView = CAMERA_VIEWS.FREEROAM
+local orthographicView = nil
 
 local resetCursorPosition = function()
   local cursorPosition = api.getCursorPosition()
@@ -79,66 +113,119 @@ local resetCursorPosition = function()
   api.setCursorPosition(cursorPosition)
 end
 
-local setCameraPresetByView = function(view)
-  local camPreset
-  if view == CAMERA_VIEWS.RIGHT then
-    -- camPreset = garageMode.camPresets.right
-    camPreset = "right"
-  elseif view == CAMERA_VIEWS.LEFT then
-    -- camPreset = garageMode.camPresets.left
-    camPreset = "left"
-  elseif view == CAMERA_VIEWS.FRONT then
-    -- camPreset = garageMode.camPresets.front
-    camPreset = "front"
-  elseif view == CAMERA_VIEWS.BACK then
-    -- camPreset = garageMode.camPresets.back
-    camPreset = "back"
-  elseif view == CAMERA_VIEWS.TOP then
-    -- camPreset = garageMode.camPresets.top
-    camPreset = "top"
-  end
-
-  if camPreset then
-    garageMode.setCamera(camPreset)
-  end
+local function setCameraRotationInJob(job)
+  commands.setGameCamera()
+  core_camera.setByName(0, "orbit", false)
+  job.sleep(0.00001) -- sleep for one frame so the orbit cam can update correctly
+  core_camera.setDefaultRotation(be:getPlayerVehicleID(0), job.args[1])
+  core_camera.resetCamera(0)
 end
 
-local setCameraView = function(cameraView)
-  log("D", "", "set camera view")
-  dump(cameraView)
-  currentCameraView = cameraView
-  setCameraPresetByView(currentCameraView)
+local function setCameraPosRotInJob(job)
+  local layer = job.args[1]
+  local pos = layer.camPosition
+  local camDir = layer.camDirection
+
+  local vehId = be:getPlayerVehicleID(0)
+  local veh = be:getPlayerVehicle(0)
+
+  core_camera.setByName(0, 'free')
+  local idealDistance = veh:getViewportFillingCameraDistance() * 1.05
+  core_camera.setDistance(0, idealDistance)
+  core_camera.setFOV(0, 45)
+  core_camera.setOffset(0, vec3(0, 0, 2 / idealDistance))
+
+  core_camera.setPosition(0, layer.camPosition + veh:getPosition())
+  core_camera.setRotation(0, quatFromDir(layer.camDirection))
+end
+
+local notifyUiListeners = function(data)
+  guihooks.trigger("LiveryEditor_OnCameraChanged", data)
+end
+
+M.setOrthographicView = function(view)
+  orthographicView = view
+  core_jobsystem.create(setCameraRotationInJob, nil, ORTHOGRAPHIC_VIEWS[orthographicView])
   resetCursorPosition()
+  notifyUiListeners(view)
 end
 
-M.setCameraViewByPosition = function(pos)
-  local cameraView
+M.setOrthographicViewByPosition = function(pos)
+  local view = M.getOrthographicViewByPosition(pos)
+  M.setOrthographicView(view)
+end
+
+M.setOrthographicViewLayer = function(layer)
+  local view = M.getOrthographicViewByPosition(layer.camPosition)
+  M.setOrthographicView(view)
+end
+
+M.getViewPointByLayer = function(layer)
+  return M.getOrthographicViewByPosition(layer.camPosition)
+end
+
+M.switchOrthographicViewByDirection = function(x, y)
+  if not orthographicView then
+    M.setOrthographicView("right")
+  else
+    local switchOrder = {"right", "front", "left", "back"}
+    local startsWithTop = string.sub(orthographicView, 1, 3) == "top"
+
+    if x and (x == 1 or x == -1) and not startsWithTop then
+      local index
+
+      for k, v in ipairs(switchOrder) do
+        if v == orthographicView then
+          index = k
+        end
+      end
+
+      if index == 1 and x == -1 then
+        M.setOrthographicView(switchOrder[#switchOrder])
+      else
+        if index == #switchOrder and x == 1 then
+          M.setOrthographicView(switchOrder[1])
+        else
+          M.setOrthographicView(switchOrder[index + x])
+        end
+      end
+    end
+
+    if y and (y == 1 or y == -1) then
+      if startsWithTop and y == -1 then
+        local view = string.sub(orthographicView, 4)
+        M.setOrthographicView(view)
+      elseif not startsWithTop and y == 1 then
+        M.setOrthographicView("top" .. orthographicView)
+      end
+    end
+  end
+end
+
+M.getOrthographicViewByPosition = function(pos)
+  local view = pos.z > 1 and "top" or ""
 
   if pos.x < 0 then
-    cameraView = CAMERA_VIEWS.RIGHT
+    return view .. "right"
   elseif pos.y < 0 then
-    cameraView = CAMERA_VIEWS.FRONT
+    return view .. "front"
   elseif pos.x > 1 then
-    cameraView = CAMERA_VIEWS.LEFT
+    return view .. "left"
   elseif pos.y > 1 then
-    cameraView = CAMERA_VIEWS.BACK
-  elseif pos.z > 1 then
-    cameraView = CAMERA_VIEWS.TOP
+    return view .. "back"
   end
-
-  setCameraView(cameraView)
 end
 
-M.getCameraView = function()
-  return currentCameraView
+M.getCoordinatesByView = function(view)
+  return orientationCoordinates[view]
 end
 
-M.getOrientationCoordinates = function()
-  return orientationCoordinates[currentCameraView]
+M.getOrthographicView = function()
+  return orthographicView
 end
 
-M.setCameraView = setCameraView
-M.CAMERA_VIEWS = CAMERA_VIEWS
-M.orientationCoordinates = orientationCoordinates
+M.getCoordinates = function()
+  return orientationCoordinates[orthographicView]
+end
 
 return M

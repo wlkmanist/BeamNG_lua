@@ -101,33 +101,7 @@ local function exportDataLangSpecific(job, lang)
 end
 
 local function getTestedControllers()
-  local vendorNames = {
-    ["bngremotectrlv1"] = "Phone App by BeamNG GmbH.",
-    ["0000"] = "Hitec",
-    ["0079"] = "CSL",
-    ["044d"] = "Thrustmaster", -- an old vendor ID?
-    ["044f"] = "Thrustmaster",
-    ["24c6"] = "Thrustmaster",
-    ["045e"] = "Microsoft",
-    ["046d"] = "Logitech",
-    ["054c"] = "Sony",
-    ["0583"] = "Genius",
-    ["0738"] = "Saitek",
-    ["0810"] = "Personal Communication Systems",
-    ["0e8f"] = "Hama",
-    ["0eb7"] = "Fanatec",
-    ["1dd2"] = "Leo Bodnar",
-    ["11ff"] = "PXN", -- this USB Vendor ID was used by SpeedLink in the past
-    ["1038"] = "SimRaceWay",
-    ["1209"] = "OpenFFBoard",
-    ["16c0"] = "SHH",
-    ["16d0"] = "Simucube",
-    ["1cbe"] = "Sim-Plicity",
-    ["1fc9"] = "SimXperience",
-    ["30b7"] = "Heusinkveld",
-    ["a020"] = "Heusinkveld", -- weird... a second VID for a heusinkveld.
-    ["346e"] = "Moza",
-  }
+  local vendorNames = jsonReadFile("lua/ge/extensions/util/vendorNames.json")
   local mergedInfo = {} -- use a map to merge information that is spread across multiple json files
 
   -- gather data from each known inputmap file (json files only, which correspond to the default configs shipped with the game)
@@ -176,9 +150,9 @@ local function getTestedControllers()
 
     -- detect if ffb is supported on this device
     local x = {}
-    table.insert(x, out.ffbEnabled           and "<font color='green'>&#9745; FFB</font>")
-    table.insert(x, out.ffbSupported == true and "<font color='green'>&#9745; FFB</font>" or out.ffbSupported)
-    table.insert(x, out.trueforceSupported   and "<font color='green'>&#9745; Trueforce</font>")
+    table.insert(x, out.ffbEnabled           and "<div class='bng-hw ffb'></div>")
+    table.insert(x, out.ffbSupported == true and "<div class='bng-hw ffb'></div>" or out.ffbSupported)
+    table.insert(x, out.trueforceSupported   and "<div class='bng-hw trueforce'></div>")
     out.ffb = table.concat(x, " ")
 
     -- write all the information into an intermediate temporary table
@@ -205,7 +179,7 @@ local function getTestedControllers()
     if info.assigned ~= nil then
       assigned = info.assigned
     end
-    table.insert(entry, assigned and "<font color='green'>&#9745; Already assigned</font>" or "<font color='grey'>&#9744; Not assigned</font>") -- TODO also grab info from other stuff, see current docs to see what's missing
+    table.insert(entry, assigned and "<div class='bng-hw assigned'></div>" or "<div class='bng-hw not-assigned'></div>") -- TODO also grab info from other stuff, see current docs to see what's missing
 
     -- force feedback
     local ffb = info.ffb or "" -- TODO also grab info from other stuff, see current docs to see what's missing
@@ -239,15 +213,15 @@ local function getTestedControllers()
       local controller = {}
       local vendor = info.vendorName or ""
       table.insert(controller, vendor)
-      table.insert(controller, "<strong>"..name.."</strong>")
+      table.insert(controller, "<b>"..name.."</b>")
       if info.vid or info.pid then
         local x = {}
         table.insert(x, info.vid and ("0x"..info.vid..""))
         table.insert(x, info.pid and ("0x"..info.pid..""))
-        table.insert(controller, "<span style='color:grey; font-family:monospace; font-size:0.7em'>("..table.concat(x, ", ")..")</span>")
+        table.insert(controller, "<span class='bng-hw vendor'>("..table.concat(x, ", ")..")</span>")
       end
       local content = table.concat(controller, " ")
-      content = content .. (info.notes and ("<div style='padding-left: 32px'>Note: "..info.notes.."</div>") or "")
+      content = content .. (info.notes and ("<div class='bng-hw hw-note'>Note: "..info.notes.."</div>") or "")
       table.insert(e, content)
 
       table.insert(entries, e)

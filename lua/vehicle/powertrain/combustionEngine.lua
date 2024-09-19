@@ -560,7 +560,11 @@ local function updateGFX(device, dt)
   local idleThrottleMap = min(max(idleThrottle + idleThrottle * device.maxPowerThrottleMap / (idleTorque * device.forcedInductionCoef * abs(device.outputAV1) + 1e-30) * (1 - idleThrottle), 0), 1)
   idleTorque = ((idleTorque * device.forcedInductionCoef * idleThrottleMap) + device.nitrousOxideTorque)
 
-  if device.frictionTorque > device.maxTorque or (device.outputAV1 < device.idleAV * 0.5 and device.frictionTorque > idleTorque * 0.95) then
+  local finalFriction = device.friction * device.wearFrictionCoef * device.damageFrictionCoef
+  local finalDynamicFriction = device.dynamicFriction * device.wearDynamicFrictionCoef * device.damageDynamicFrictionCoef
+  local frictionTorque = finalFriction - (finalDynamicFriction * device.idleAV)
+
+  if not device.isDisabled and (frictionTorque > device.maxTorque or (device.outputAV1 < device.idleAV * 0.5 and frictionTorque > idleTorque * 0.95)) then
     --if our friction is higher than the biggest torque we can output, the engine WILL lock up automatically
     --however, we need to communicate that with other subsystems to prevent issues, so in this case we ADDITIONALLY lock it up manually
     device:lockUp()
@@ -752,7 +756,7 @@ local function updateTorque(device, dt)
   --friction torque is limited for stability
   frictionTorque = min(frictionTorque, absEngineAV * device.inertia * 2000) * sign(engineAV)
 
-  local starterTorque = device.starterEngagedCoef * device.starterTorque * min(max(1 - engineAV / device.starterMaxAV, -0.5), 1)
+  local starterTorque = device.starterEngagedCoef * device.starterTorque * min(max(1 - engineAV * device.invStarterMaxAV, -0.5), 1)
 
   --iterate over all connected clutches and sum their torqueDiff to know the final torque load on the engine
   local torqueDiffSum = 0
@@ -773,7 +777,7 @@ local function updateTorque(device, dt)
   device.frictionTorque = frictionTorque
 
   local inertialTorque = (device.outputAV1 - device.lastOutputAV1) * device.inertia / dt
-  ffi.C.bng_applyTorqueAxisCouple(ffiObjPtr, inertialTorque, device.torqueReactionNodes[1], device.torqueReactionNodes[2], device.torqueReactionNodes[3])
+  obj:applyTorqueAxisCouple(inertialTorque, device.torqueReactionNodes[1], device.torqueReactionNodes[2], device.torqueReactionNodes[3])
   device.lastOutputAV1 = device.outputAV1
 
   local dLoad = min((device.instantEngineLoad - lastInstantEngineLoad) / dt, 0)
@@ -1797,6 +1801,7 @@ local function new(jbeamData)
   end
 
   device.ignitionCoef = spawnWithIgnitionOn and 1 or 0
+  device.invStarterMaxAV = 1 / device.starterMaxAV
 
   device.initialFriction = device.friction
   device.engineBrakeTorque = jbeamData.engineBrakeTorque or device.friction * 2

@@ -14,11 +14,24 @@ C.pinSchema = {
   { dir = 'in', type = 'number', name = 'x', description = 'The x value.' },
   { dir = 'in', type = 'number', name = 'y', description = 'The y value.' },
   { dir = 'in', type = 'number', name = 'z', description = 'The z value.' },
-  { dir = 'out', type = 'vec3', name = 'value', description = 'The vector3 value.' },
+  { dir = 'in', type = 'quat', name = 'rot', hidden = true, description = '(Optional) Converts from a quaternion instead.' },
+  { dir = 'out', type = 'vec3', name = 'value', description = 'The vector3 value.' }
 }
 
+C.tags = {'vec3', 'vector', 'direction'}
+
+local tempQuat = quat()
+local vecOut = vec3()
+local vecY = vec3(0, 1, 0)
 function C:work()
-  self.pinOut.value.value = {self.pinIn.x.value or 0, self.pinIn.y.value or 0, self.pinIn.z.value or 0}
+  if self.pinIn.rot.value then
+    local rot = self.pinIn.rot.value
+    tempQuat:set(rot[1], rot[2], rot[3], rot[4])
+    vecOut:set(vecY:rotated(tempQuat))
+    self.pinOut.value.value = {vecOut.x, vecOut.y, vecOut.z}
+  else
+    self.pinOut.value.value = {self.pinIn.x.value or 0, self.pinIn.y.value or 0, self.pinIn.z.value or 0}
+  end
 end
 
 function C:drawMiddle(builder, style)

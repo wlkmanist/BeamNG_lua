@@ -310,7 +310,7 @@ function C:displayMaterialPopupList(objectSet, fieldName, fieldNameId, fieldValu
 
   -- This emulates a popup window because BeginPopup doesnt work correctly with the "hovered" state of imgui windows
   local windowOpenPtr = imgui.BoolPtr(true)
-  if imgui.Begin(fieldNameId .. "MaterialSetPopup", windowOpenPtr, imgui.WindowFlags_NoCollapse + imgui.WindowFlags_NoDocking + imgui.WindowFlags_NoTitleBar) then
+  if imgui.Begin(fieldNameId .. "MaterialSetPopup", windowOpenPtr, imgui.flags(imgui.WindowFlags_NoCollapse, imgui.WindowFlags_NoDocking, imgui.WindowFlags_NoTitleBar)) then
     loadedTextures = 0
     imgui.PushID1(fieldNameId .. "SimSetNameFilter")
     imgui.ImGuiTextFilter_Draw(simSetNameFilter, "", 200)

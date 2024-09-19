@@ -13,7 +13,7 @@ C.category = 'repeat_instant'
 
 
 function C:work()
-  if core_replay.state.state == "playing" then
+  if core_replay.state.state == "playback" then
     core_replay.stop()
   end
 end

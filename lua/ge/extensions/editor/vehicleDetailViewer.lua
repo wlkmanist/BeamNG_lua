@@ -16,15 +16,14 @@ local sizeX = 512 * 16/10
 local sizeY = 512
 
 local views
+local viewTemplates
 
 local dragView = nil
 
 local timer = 0
+local farClip = 10 -- 10 meters hardcoded
 
 local meterToPixelScale = 200
-
-
-local statusMessage
 
 local resolutionMultiplier = im.IntPtr(3)
 
@@ -35,6 +34,14 @@ local availableLayoutFiles = {}
 local loadedLayoutBaseFilename = 'default'
 
 local toolWindowName = 'Vehicle Detail Viewer'
+local spawnNewView = false
+local detailViewerActive
+
+local function customRound(num, numDecimalPlaces)
+  local mult = 10^(numDecimalPlaces or 0)
+  return math.floor(num * mult + 0.5) / mult
+end
+
 
 local function drawBoundinBox(veh)
   local bb = veh:getSpawnWorldOOBB()
@@ -87,6 +94,8 @@ local function sign3(number)
 end
 
 local function renderOrthoView(veh, view)
+  --dump{'renderOrthoView', view}
+
   local axisIdx = math.abs(view.axis)
   local axisSign = sign3(view.axis)
 
@@ -149,7 +158,7 @@ local function renderOrthoView(veh, view)
   -- Increase the camera distance if the vehicle is large
   local cameraMatrix = MatrixF()
 
-  cameraMatrix:createOrientFromDirUp(config.camDir, view.fixAxis and config.camUpAxis or config.camUp)
+  cameraMatrix:createOrientFromDirUp(config.camDir, view.fixUpAxis and config.camUpAxis or config.camUp)
   cameraMatrix:setPosition(config.camPos)
 
   -- Set up the RenderView
@@ -171,7 +180,6 @@ local function renderOrthoView(veh, view)
   local renderOrthogonal = true
   local aspectRatio = 2.3
   --local nearClip = 0.1 -- math.sin(timer) + 2.6
-  local farClip = 10
 
   rv.resolution = Point2I(view.size.x * resolutionMultiplier[0], view.size.y * resolutionMultiplier[0])
   rv.viewPort = RectI(0, 0, view.size.x * resolutionMultiplier[0], view.size.y * resolutionMultiplier[0])
@@ -179,13 +187,13 @@ local function renderOrthoView(veh, view)
 
   rv.cameraMatrix = cameraMatrix
 
-  if view.debug then
+  if view.debug == true then
     debugDrawer:drawFrustum(cameraMatrix, rv.frustum, colMagenta)
   end
 end
 
-local function createViewsForVehicle(veh)
-  views = {}
+local function createViewTemplatesForVehicle(veh)
+  viewTemplates = {}
   -- Get the bounding box details
   local bb = veh:getSpawnWorldOOBB()
   local c = bb:getCenter()
@@ -198,24 +206,26 @@ local function createViewsForVehicle(veh)
 
   local sizeIso = math.max(e.x, e.y, e.z) * 2 * meterToPixelScale
 
-  table.insert(views, {name = 'Left',   size = {x = bbHeight, y = bbDepth},  axis = -1})
-  table.insert(views, {name = 'Right',  size = {x = bbHeight, y = bbDepth},  axis =  1})
-  table.insert(views, {name = 'Front',  size = {x = bbWidth,  y = bbDepth},  axis =  2})
-  table.insert(views, {name = 'Back',   size = {x = bbWidth,  y = bbDepth},  axis = -2})
-  table.insert(views, {name = 'Top',    size = {x = bbHeight,  y = bbWidth}, axis = -3})
-  table.insert(views, {name = 'Bottom', size = {x = bbHeight,  y = bbWidth}, axis =  3})
+  -- bbX, bbY are for the bounding box debug display
+  viewTemplates.left   = {typeName = 'Left',   size = {x = bbHeight, y = bbDepth},  axis = -1, bbX = bbHeight, bbY = bbWidth, bbLabel = 'Top'}
+  viewTemplates.right  = {typeName = 'Right',  size = {x = bbHeight, y = bbDepth},  axis =  1, bbX = bbHeight, bbY = bbWidth, bbLabel = 'Top'}
+  viewTemplates.front  = {typeName = 'Front',  size = {x = bbWidth,  y = bbDepth},  axis =  2, bbX = bbHeight, bbY = bbWidth, bbWidth = 'Top'}
+  viewTemplates.back   = {typeName = 'Back',   size = {x = bbWidth,  y = bbDepth},  axis = -2, bbX = bbHeight, bbY = bbWidth, bbWidth = 'Top'}
+  viewTemplates.top    = {typeName = 'Top',    size = {x = bbHeight,  y = bbWidth}, axis = -3, bbX = bbHeight, bbY = bbDepth, bbLabel = 'Left'}
+  viewTemplates.bottom = {typeName = 'Bottom', size = {x = bbHeight,  y = bbWidth}, axis =  3, bbX = bbHeight, bbY = bbDepth, bbLabel = 'Left'}
 
   -- set some defaults
-  for i, view in pairs(views) do
-    view.zoom = 1
-    view.nearClip = 0.1
-    view.dragOffset = {x = 0, y = 0}
-    view.windowOpen = im.BoolPtr(false)
+  for i, vt in pairs(viewTemplates) do
+    vt.zoom = 1
+    vt.nearClip = 0.1
+    vt.dragOffset = {x = 0, y = 0}
   end
+
+  --dump{'createViewTemplatesForVehicle', viewTemplates}
 end
 
 local function handleImageInput(view)
-  if view.freeze then return end
+  if view.freeze == true then return end
   -- Handle mouse dragging
   if im.IsItemHovered() then
     local wheel = im.GetIO().MouseWheel
@@ -224,7 +234,7 @@ local function handleImageInput(view)
 
     if wheel ~= 0 then
       if isShiftHeld then
-        view.nearClip = math.max(-20, math.min(20, view.nearClip + wheel * 0.1))
+        view.nearClip = math.max(-20, math.min(20, view.nearClip + wheel * 0.01))
         --dump{'near: ', view.nearClip}
       else
         view.zoom = math.max(0.01, math.min(3, view.zoom - wheel * (0.1 * math.min(1, view.zoom))))
@@ -275,9 +285,13 @@ local function onSerialize()
     if view.windowSize then
       view.windowSize = {x = view.windowSize.x, y = view.windowSize.y}
     end
-    --view.windowViewport
+    -- cleanup things we do not want to serializes
+    view.windowViewport = nil
+    view.debugBoolPtr = nil
+    view.fixUpAxisBoolPtr = nil
+    view.freezeBoolPtr = nil
   end
-  return { views = views}
+  return { views = views }
 end
 
 local function onDeserialized(data)
@@ -289,8 +303,183 @@ local function onDeserialized(data)
   end
 end
 
+local function renderPopup(view)
+  if im.BeginMenu('View##VDV_'..tostring(view.name)) then
+    if im.RadioButton1('Left##VDV_'..tostring(view.name), view.typeName == 'Left') then
+      tableMerge(view, viewTemplates.left)
+    end
+    if im.RadioButton1('Right##VDV_'..tostring(view.name), view.typeName == 'Right') then
+      tableMerge(view, viewTemplates.right)
+    end
+    if im.RadioButton1('Top##VDV_'..tostring(view.name), view.typeName == 'Top') then
+      tableMerge(view, viewTemplates.top)
+    end
+    if im.RadioButton1('Bottom##VDV_'..tostring(view.name), view.typeName == 'Bottom') then
+      tableMerge(view, viewTemplates.bottom)
+    end
+    if im.RadioButton1('Front##VDV_'..tostring(view.name), view.typeName == 'Front') then
+      tableMerge(view, viewTemplates.front)
+    end
+    if im.RadioButton1('Back##VDV_'..tostring(view.name), view.typeName == 'Back') then
+      tableMerge(view, viewTemplates.back)
+    end
+    im.Separator()
+    if im.Selectable1('New##VDV_'..tostring(view.name)) then
+      spawnNewView = true
+    end
+    if im.Selectable1('Close##VDV_'..tostring(view.name)) then
+      view.windowOpen[0] = false
+    end
+    im.EndMenu()
+  end
+
+  if im.Selectable1('save as PNG##save'..tostring(view.name)) then
+    local filename = view.name .. '-' .. tostring(loadedLayoutBaseFilename) .. '.png'
+    view.runtime.rv:saveToDisk(filename)
+    log('I', 'thumbnail', 'saved to disk: ' .. tostring(filename))
+    view.statusMessage = 'image saved: ' .. tostring(filename)
+  end
+
+  if not view.debugBoolPtr then view.debugBoolPtr = im.BoolPtr(view.debug or false) end
+  if im.Checkbox('Debug##VDV_'..tostring(view.name), view.debugBoolPtr) then
+    view.debug = view.debugBoolPtr[0]
+  end
+
+  if not view.fixUpAxisBoolPtr then view.fixUpAxisBoolPtr = im.BoolPtr(view.fixUpAxis or false) end
+  if im.Checkbox('World Up Axis##VDV_'..tostring(view.name), view.fixUpAxisBoolPtr) then
+    view.fixUpAxis = view.fixUpAxisBoolPtr[0]
+  end
+
+  if not view.freezeBoolPtr then view.freezeBoolPtr = im.BoolPtr(view.freeze or false) end
+  if im.Checkbox('Freeze Camera##VDV_'..tostring(view.name), view.freezeBoolPtr) then
+    view.freeze = view.freezeBoolPtr[0]
+  end
+
+  im.Separator()
+  if im.BeginMenu('View details##VDV_'..tostring(view.name)) then -- there is only one at any point in time
+    im.TextUnformatted('Name: ' .. tostring(view.name))
+    im.TextUnformatted('Zoom: ' .. tostring(customRound(view.zoom, 4)))
+    im.TextUnformatted('Offset: ' ..tostring(customRound(view.dragOffset.x, 4)) .. ', ' .. tostring(customRound(view.dragOffset.y, 4)))
+    im.TextUnformatted('Nearclip: ' .. tostring(customRound(view.nearClip, 4)))
+    im.TextUnformatted('Resolution: ' .. tostring(math.floor(view.size.x)) .. 'x' .. tostring(math.floor(view.size.y)))
+    im.EndMenu()
+  end
+
+  if im.BeginMenu('View Controls##VDV_'..tostring(view.name)) then
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 1, 1, 0.8))
+    im.TextUnformatted('click+drag = move')
+    im.TextUnformatted('mousewheel = zoom')
+    im.TextUnformatted('shift + mousewheel = nearclip')
+    im.TextUnformatted('doubleclick = reset')
+    im.PopStyleColor()
+    im.EndMenu()
+  end
+
+  if im.BeginMenu('Layouts##VDV_'..tostring(view.name)) then
+    if im.SmallButton('reset current##resetLayouy') then
+      createViewsForVehicle(veh)
+      views = nil
+    end
+    im.Separator()
+
+    im.TextUnformatted("Save Layout")
+    im.SameLine()
+    im.SetCursorPosX(200)
+    im.SetNextItemWidth(200)
+    im.InputText("##saveLayoutfilename", saveFilenameFFI)
+    im.SameLine()
+
+    if im.SmallButton('save##saveLayouy') then
+      local baseFilename = ffi.string(saveFilenameFFI)
+      local layoutFilename = saveFolder .. baseFilename  .. '.vehicleDetailSetting.json'
+      jsonWriteFile(layoutFilename, onSerialize())
+      onDeserialized(jsonReadFile(layoutFilename))
+      loadedLayoutBaseFilename = baseFilename
+      view.statusMessage = 'Layout saved: ' .. layoutFilename
+      refreshLayoutFiles()
+    end
+    im.Separator()
+    if #availableLayoutFiles > 0 then
+      im.TextUnformatted("Available Layouts:")
+      for lidx, layoutFilename in ipairs(availableLayoutFiles) do
+        local _, baseFilename = path.splitWithoutExt(layoutFilename, '.vehicleDetailSetting.json')
+        if loadedLayoutBaseFilename == baseFilename then
+          im.PushStyleColor2(im.Col_Text, im.ImVec4(0, 1, 0, 1))
+          im.TextUnformatted(baseFilename)
+          im.PopStyleColor()
+        else
+          im.TextUnformatted(baseFilename)
+        end
+        im.SameLine()
+        im.SetCursorPosX(200)
+        if im.SmallButton('load##loadLayouy_'..tostring(lidx)) then
+          loadedLayoutBaseFilename = baseFilename
+          onDeserialized(jsonReadFile(layoutFilename))
+          view.statusMessage = 'Layout loaded: ' .. layoutFilename
+        end
+        im.SameLine()
+        if im.SmallButton('overwrite##overwriteLayouy_'..tostring(lidx)) then
+          jsonWriteFile(layoutFilename, onSerialize())
+          onDeserialized(jsonReadFile(layoutFilename))
+          view.statusMessage = 'Layout saved: ' .. layoutFilename
+          refreshLayoutFiles()
+        end
+        im.SameLine()
+        if im.SmallButton('delete##deleteLayouy_'..tostring(lidx)) then
+          FS:removeFile(layoutFilename)
+          view.statusMessage = 'Layout deleted: ' .. layoutFilename
+          refreshLayoutFiles()
+        end
+      end
+    end
+    im.EndMenu()
+  end
+
+
+  --  float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags
+  if im.BeginMenu('Options##VDV_'..tostring(view.name)) then
+    im.TextUnformatted('Image resolution multiplier: ')
+    im.SameLine()
+    im.SetNextItemWidth(100)
+    if im.InputInt("##ResolutionMultiplier", resolutionMultiplier, 1) then
+      if resolutionMultiplier[0] < 1 then
+        resolutionMultiplier[0] = 1
+      elseif resolutionMultiplier[0] > 3 then
+        resolutionMultiplier[0] = 3
+      end
+    end
+    im.EndMenu()
+  end
+  if settings.getValue("vsync") then
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 0, 0, 1))
+    im.TextUnformatted('>> DISABLE VSYNC: there will be render problems')
+    im.PopStyleColor()
+  end
+end
+
+local function renderOverlay(view)
+  local bottomY = im.GetCursorPosY()
+  im.SetCursorPosX(5)
+  im.SetCursorPosY(bottomY - 40)
+  im.TextUnformatted(view.typeName)
+  im.SetCursorPosX(5)
+  im.TextUnformatted('Nearclip: ' .. tostring(customRound(view.nearClip, 6)))
+
+
+  if view.statusMessage then
+    im.SetCursorPosX(5)
+    im.SetCursorPosY(bottomY - 60)
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(0, 1, 0, 1))
+    im.TextUnformatted(view.statusMessage)
+    if im.IsItemClicked(0) then
+      view.statusMessage = nil
+    end
+    im.PopStyleColor()
+  end
+end
+
 local function onPreRender(dtReal, dtSim, dtRaw)
-  if not editor.beginWindow then return end -- for some frames, the editor is not ready yet
+  if not editor.beginWindow or not detailViewerActive then return end -- for some frames, the editor is not ready yet
 
   local vehId = be:getPlayerVehicleID(0)
   local veh = be:getObjectByID(vehId)
@@ -304,235 +493,57 @@ local function onPreRender(dtReal, dtSim, dtRaw)
 
   --drawBoundinBox(veh)
 
+  if not viewTemplates then
+    createViewTemplatesForVehicle(veh)
+  end
+
   if not views then
+    views = {}
     onDeserialized(jsonReadFile(layoutFilenameDefault))
-    if not views then
-      createViewsForVehicle(veh)
+    if #views == 0 then
+      spawnNewView = true
     end
   end
 
-  --im.SetNextWindowSize(im.ImVec2(600,450), im.Cond_Appearing)
-  if editor.beginWindow(toolWindowName, "Vehicle Detail Viewer##vehDetView") then
-    local tableFlags = bit.bor(im.TableFlags_Resizable,im.TableFlags_RowBg,im.TableFlags_Borders)
-    if im.BeginTable('##views', 6, tableFlags) then
-      im.TableSetupScrollFreeze(0, 1) -- Make top row always visible
-      im.TableSetupColumn("Name", nil, 5)
-      im.TableSetupColumn("Zoom", nil, 5)
-      im.TableSetupColumn("Offset", nil, 10)
-      im.TableSetupColumn("nearClip", nil, 5)
-      im.TableSetupColumn("resolution", nil, 5)
-      im.TableSetupColumn("Controls", nil, 30)
-      im.TableHeadersRow()
-
-      for i, view in pairs(views) do
-        im.TableNextColumn()
-        im.TextUnformatted(tostring(view.name))
-        im.TableNextColumn()
-        im.TextUnformatted(tostring(roundNear(view.zoom, 100)))
-        im.TableNextColumn()
-        im.TextUnformatted(tostring(roundNear(view.dragOffset.x, 100)) .. ', ' .. tostring(roundNear(view.dragOffset.y, 100)))
-        im.TableNextColumn()
-        im.TextUnformatted(tostring(roundNear(view.nearClip, 100)))
-        im.TableNextColumn()
-        im.TextUnformatted(tostring(math.floor(view.size.x)) .. 'x' .. tostring(math.floor(view.size.y)))
-        im.TableNextColumn()
-
-        if not view.windowOpen[0] then
-          if im.SmallButton('open##'..tostring(view.name)) then
-            view.windowOpen[0] = true
-          end
-        else
-          if im.SmallButton('close##'..tostring(view.name)) then
-            view.windowOpen[0] = false
-          end
-        end
-        if i > 6 then
-          im.SameLine()
-          if im.SmallButton('delete##'..tostring(view.name)) then
-            views[i] = nil
-          end
-        end
-        im.SameLine()
-        if im.SmallButton('clone##'..tostring(view.name)) then
-          table.insert(views, {
-            name = view.name .. ' ' .. tostring(#views),
-            size = {x = view.size.x, y = view.size.y},
-            axis = view.axis,
-            zoom = view.zoom,
-            nearClip = view.nearClip,
-            dragOffset = {x = view.dragOffset.x, y = view.dragOffset.y},
-            windowOpen = im.BoolPtr(view.windowOpen[0])
-          })
-        end
-        if view.runtime and view.runtime.rv then
-          im.SameLine()
-          if im.SmallButton('PNG##save'..tostring(view.name)) then
-            local filename = view.name .. '-' .. tostring(loadedLayoutBaseFilename) .. '.png'
-            view.runtime.rv:saveToDisk(filename)
-            log('I', 'thumbnail', 'saved to disk: ' .. tostring(filename))
-            statusMessage = 'image saved: ' .. tostring(filename)
-          end
-        end
-        if view.windowOpen[0] then
-          im.SameLine()
-          if view.debug == true then
-            if im.SmallButton('no debug##nodebug'..tostring(view.name)) then
-              view.debug = nil
-            end
-          else
-            if im.SmallButton('debug##debug'..tostring(view.name)) then
-              view.debug = true
-            end
-          end
-          im.SameLine()
-          if view.fixAxis == nil then
-            if im.SmallButton('fix Axis##fixAxis'..tostring(view.name)) then
-              view.fixAxis = true
-            end
-          else
-            if im.SmallButton('unfix Axis##unfixAxis'..tostring(view.name)) then
-              view.fixAxis = nil
-            end
-          end
-          im.SameLine()
-          if view.freeze == nil then
-            if im.SmallButton('freeze##freeze'..tostring(view.name)) then
-              view.freeze = true
-            end
-          else
-            if im.SmallButton('unfreeze##unfreeze'..tostring(view.name)) then
-              view.freeze = nil
-            end
-          end
-        end
-
-        im.TableNextRow()
-      end
-      im.EndTable()
-
-      if statusMessage then
-        im.PushStyleColor2(im.Col_Text, im.ImVec4(0, 1, 0, 1))
-        im.TextUnformatted(statusMessage)
-        if im.IsItemClicked(0) then
-          statusMessage = nil
-        end
-        im.PopStyleColor()
-      end
-
-      if im.CollapsingHeader1("Layouts###Layouts") then
-        if im.SmallButton('reset current##resetLayouy') then
-          createViewsForVehicle(veh)
-        end
-        im.Separator()
-
-        im.TextUnformatted("Save Layout")
-        im.SameLine()
-        im.SetCursorPosX(200)
-        im.SetNextItemWidth(200)
-        im.InputText("##saveLayoutfilename", saveFilenameFFI)
-        im.SameLine()
-
-        if im.SmallButton('save##saveLayouy') then
-          local baseFilename = ffi.string(saveFilenameFFI)
-          local layoutFilename = saveFolder .. baseFilename  .. '.vehicleDetailSetting.json'
-          jsonWriteFile(layoutFilename, onSerialize())
-          onDeserialized(jsonReadFile(layoutFilename))
-          loadedLayoutBaseFilename = baseFilename
-          statusMessage = 'Layout saved: ' .. layoutFilename
-          refreshLayoutFiles()
-        end
-        im.Separator()
-        if #availableLayoutFiles > 0 then
-          im.TextUnformatted("Available Layouts:")
-          for lidx, layoutFilename in ipairs(availableLayoutFiles) do
-            local _, baseFilename = path.splitWithoutExt(layoutFilename, '.vehicleDetailSetting.json')
-            if loadedLayoutBaseFilename == baseFilename then
-              im.PushStyleColor2(im.Col_Text, im.ImVec4(0, 1, 0, 1))
-              im.TextUnformatted(baseFilename)
-              im.PopStyleColor()
-            else
-              im.TextUnformatted(baseFilename)
-            end
-            im.SameLine()
-            im.SetCursorPosX(200)
-            if im.SmallButton('load##loadLayouy_'..tostring(lidx)) then
-              loadedLayoutBaseFilename = baseFilename
-              onDeserialized(jsonReadFile(layoutFilename))
-              statusMessage = 'Layout loaded: ' .. layoutFilename
-            end
-            im.SameLine()
-            if im.SmallButton('overwrite##overwriteLayouy_'..tostring(lidx)) then
-              jsonWriteFile(layoutFilename, onSerialize())
-              onDeserialized(jsonReadFile(layoutFilename))
-              statusMessage = 'Layout saved: ' .. layoutFilename
-              refreshLayoutFiles()
-            end
-            im.SameLine()
-            if im.SmallButton('delete##deleteLayouy_'..tostring(lidx)) then
-              FS:removeFile(layoutFilename)
-              statusMessage = 'Layout deleted: ' .. layoutFilename
-              refreshLayoutFiles()
-            end
-          end
-        end
-      end
-
-      --  float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags
-      if im.CollapsingHeader1("Options##Options") then
-        im.TextUnformatted('Image saving resolution multiplier: ')
-        im.SameLine()
-        im.SetNextItemWidth(100)
-        if im.InputInt("##ResolutionMultiplier", resolutionMultiplier, 1) then
-          if resolutionMultiplier[0] < 1 then
-            resolutionMultiplier[0] = 1
-          elseif resolutionMultiplier[0] > 3 then
-            resolutionMultiplier[0] = 3
-          end
-        end
-      end
-
-      if im.CollapsingHeader1("Controls###Controls") then
-        im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 1, 1, 0.8))
-        im.TextUnformatted('click+drag = move')
-        im.TextUnformatted('mousewheel = zoom')
-        im.TextUnformatted('shift + mousewheel = nearclip')
-        im.TextUnformatted('doubleclick = reset')
-        im.PopStyleColor()
-        im.EndChild()
-      end
-
-      if settings.getValue("vsync") then
-        im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 0, 0, 1))
-        im.TextUnformatted('!!! DISABLE VSYNC !!')
-        im.PopStyleColor()
-      end
-
-    end
-    editor.endWindow()
+  if spawnNewView then
+    local newView = deepcopy(viewTemplates.left)
+    newView.name = 'View ' .. tostring(#views + 1)
+    newView.windowOpen = im.BoolPtr(true)
+    table.insert(views, newView)
+    spawnNewView = false
   end
-
-  im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0, 0))
 
   for i, view in pairs(views or {}) do
     if view.windowOpen[0] then
-      local txt = ''
-      if view.freeze then
-        txt = txt .. ' [FROZEN]'
-      end
+      local windowId = 'CDV_' .. loadedLayoutBaseFilename .. '_' .. view.name
+
       -- GetWindowDockID
       --im.SetNextWindowDockID(self.fgEditor.dockspaces["NE_Main_Dockspace"])
       im.SetNextWindowSize(im.ImVec2(view.size.x, view.size.y), im.Cond_Appearing)
-      im.PushID1('CDV_' .. loadedLayoutBaseFilename .. '_' .. view.name)
-      if im.Begin('Vehicle Detail View - ' .. view.name .. ' - ' .. loadedLayoutBaseFilename .. txt, view.windowOpen) then
-        if not view.freeze then
-          view.size.x = im.GetContentRegionAvail().x
-          view.size.y = im.GetContentRegionAvail().y
+      im.PushID1(windowId)
+      im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0, 0))
+      local windowOpen = im.Begin('Vehicle Detail View - ' .. view.name .. ' - ' .. loadedLayoutBaseFilename, view.windowOpen)
+      im.PopStyleVar()
+
+      if windowOpen then
+        if view.freeze ~= true then
+          view.size.x = math.max(1, im.GetContentRegionAvail().x)
+          view.size.y = math.max(1, im.GetContentRegionAvail().y)
           renderOrthoView(veh, view)
         end
         local texObj = imUtils.texObj('#' .. view.name)
         im.Image(texObj.texId, im.ImVec2(view.size.x, view.size.y))
-        handleImageInput(view)
-        im.End()
+        handleImageInput(view) -- must come directly after the image
+        if im.IsItemClicked(1) then
+          im.OpenPopup('VDV_VIEW_POPUP')
+        end
+        if im.BeginPopup('VDV_VIEW_POPUP') then
+          renderPopup(view)
+          im.EndPopup()
+        end
+        renderOverlay(view) -- must come after input
+
+        im.End() -- window end
         view.dockID = im.GetWindowDockID()
         view.docked = im.IsWindowDocked()
         view.windowPos = im.GetWindowPos()
@@ -548,11 +559,19 @@ local function onPreRender(dtReal, dtSim, dtRaw)
     end
   end
 
-  im.PopStyleVar()
+  local numberOfOpenWindows = 0
+  for i, view in pairs(views) do
+    if view.windowOpen[0] then
+      numberOfOpenWindows = numberOfOpenWindows + 1
+    end
+  end
+  if numberOfOpenWindows == 0 then
+    detailViewerActive = nil
+  end
 
   debugDrawer.currentRenderViewMask = 0
 
-  if not editor.isWindowVisible(toolWindowName) then
+  if not detailViewerActive then
     -- do not render anything
     for _, view in pairs(views or {}) do
       if view and view.runtime and view.runtime.rv then
@@ -561,6 +580,7 @@ local function onPreRender(dtReal, dtSim, dtRaw)
       end
       view.runtime = nil
     end
+    views = nil
   end
 end
 
@@ -584,8 +604,7 @@ local function onExtensionUnloaded()
 end
 
 local function onEditorInitialized()
-  editor.registerWindow(toolWindowName, im.ImVec2(600,550))
-  editor.addWindowMenuItem(toolWindowName, function() editor.showWindow(toolWindowName) end, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem(toolWindowName, function() detailViewerActive = true end, {groupMenuName = 'Experimental'})
 end
 
 M.onEditorInitialized = onEditorInitialized

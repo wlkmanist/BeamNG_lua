@@ -1,13 +1,12 @@
 local M = {}
 
 M.dependencies = {"core_vehicleBridge"}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dPages, dProgress, dVehicleTasks
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehicleTasks
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
   dGeneral = career_modules_delivery_general
   dGenerator = career_modules_delivery_generator
-  dPages = career_modules_delivery_pages
   dProgress = career_modules_delivery_progress
   dVehicleTasks = career_modules_delivery_vehicleTasks
 end
@@ -25,14 +24,14 @@ local function sendCargoToTasklist()
       elem.clear = true
     end
 
-    -- cargo
+    -- cargo already loaded
     local cargoCount = 0
     local cargoGrouped = {}
     for _, con in ipairs(containers) do
       for _, cargo in ipairs(con.rawCargo) do
         local gId = string.format("%s-%s", dParcelManager.getLocationLabelShort(cargo.destination),
           #cargo.modifiers == 0 and "noMods"
-          or string.format("%s-%s-%0.2f", cargo.groupId, cargo.transient or false, cargo.loadedAtTimeStamp or -1)
+          or string.format("%s-%0.2f", cargo.groupId, cargo.loadedAtTimeStamp or -1)
           )
         cargoCount = cargoCount +1
         cargoGrouped[gId] = (cargoGrouped[gId] or {})
@@ -49,6 +48,30 @@ local function sendCargoToTasklist()
       tasklistElements[gId] = tasklistElement
       for _, cId in ipairs(cargoGrouped[gId]) do
         cargoIdToTasklistElementId[cId] = gId
+      end
+    end
+
+    -- cargo to be loaded
+    local transientCount = 0
+    local transientPickupLocationGrouped = {}
+    for _, con in ipairs(containers) do
+      for _, cargo in ipairs(con.transientCargo) do
+        local dId = string.format("%s", dParcelManager.getLocationLabelLong(cargo.location))
+        transientCount = transientCount +1
+        transientPickupLocationGrouped[dId] = (transientPickupLocationGrouped[dId] or {})
+        table.insert(transientPickupLocationGrouped[dId], cargo.id)
+      end
+    end
+    for _, dId in ipairs(tableKeysSorted(transientPickupLocationGrouped)) do
+      local tasklistElement = {
+        type = "pickup",
+        cargoIds = transientPickupLocationGrouped[dId],
+        id = dId,
+        update = true,
+      }
+      tasklistElements[dId] = tasklistElement
+      for _, cId in ipairs(transientPickupLocationGrouped[dId]) do
+        cargoIdToTasklistElementId[cId] = dId
       end
     end
 
@@ -77,7 +100,7 @@ local function sendCargoToTasklist()
       if cargoCount > 0 and vehicleTaskCount == 0 then
         subtext = string.format("%d item%s loaded.", cargoCount, cargoCount > 1 and "s" or "")
       else
-        subtext = string.format("%d ongoing task%s.", cargoCount + vehicleTaskCount, (cargoCount + vehicleTaskCount) > 1 and "s" or "")
+        subtext = string.format("%d ongoing task%s.", cargoCount + vehicleTaskCount + transientCount, (cargoCount + vehicleTaskCount + transientCount) > 1 and "s" or "")
       end
       tasklistElements.header = {
         id = "header",
@@ -133,6 +156,9 @@ local function updateCargoTasklistElements()
       if elem.type == "parcels" then
         guihooks.trigger("DiscardTasklistItem", elem.id)
       end
+      if elem.type == "pickup" then
+        guihooks.trigger("DiscardTasklistItem", elem.id)
+      end
       if elem.type == "header" then
         guihooks.trigger("SetTasklistHeader",nil)
       end
@@ -154,24 +180,33 @@ local function updateCargoTasklistElements()
 
         for _, mod in ipairs(first.modifiers) do
           if mod.type == "timed" then
-            local tasklistTime = mod.expirationTimeStamp and (mod.expirationTimeStamp - dGeneral.time() > 0 and mod.expirationTimeStamp - dGeneral.time()
-                  or mod.definitiveExpirationTimeStamp - dGeneral.time() > 0 and mod.definitiveExpirationTimeStamp - dGeneral.time()
-                  or 0) or mod.deliveryTime
-            local tasklistLabel = mod.expirationTimeStamp and (mod.expirationTimeStamp - dGeneral.time() > 0 and "Time"
-                  or mod.definitiveExpirationTimeStamp - dGeneral.time() > 0 and "Delayed"
-                  or "Late") or "Time"
-            table.insert(modifierStrings, string.format("%s: %ds", tasklistLabel, tasklistTime))
-          elseif mod.type == "fragile" then
-            local desc = "Intact"
-            if mod.currentHealth < 90 then desc = "Damaged" end
-            if mod.currentHealth <= 0 then desc = "Destroyed" end
-            table.insert(modifierStrings, string.format("Fragile: %d (%s)", mod.currentHealth, desc))
+            local expiredTime = dGeneral.time() - first.loadedAtTimeStamp
+            if expiredTime <= mod.timeUntilDelayed then
+              table.insert(modifierStrings, string.format("Time: %ds", mod.timeUntilDelayed - expiredTime))
+            elseif expiredTime <= mod.timeUntilLate then
+              table.insert(modifierStrings, string.format("Delayed: %ds", mod.timeUntilLate - expiredTime))
+            else
+              table.insert(modifierStrings, "Late")
+            end
+
           end
         end
         guihooks.trigger("SetTasklistTask", {
             id = tasklistId,
             label = string.format("Deliver to %s",  dParcelManager.getLocationLabelShort(first.destination)),
             subtext = table.concat(modifierStrings, ", "),
+            active = true,
+            type = "message"
+          }
+        )
+      end
+
+      -- pickup
+      if elem.type == "pickup" then
+        local first = dParcelManager.getCargoById(elem.cargoIds[1])
+        guihooks.trigger("SetTasklistTask", {
+            id = tasklistId,
+            label = string.format("Pick up %d items from %s", #elem.cargoIds, dParcelManager.getLocationLabelLong(first.location)),
             active = true,
             type = "message"
           }

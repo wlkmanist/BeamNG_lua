@@ -462,7 +462,6 @@ local function getDependencyFile(str)
 end
 
 local function layerTypesDocumentationGui(docsSection)
-
   im.PushTextWrapPos(im.GetContentRegionAvailWidth())
   im.TextUnformatted([[
 Layer types are distinct categories that define the nature and purpose of individual layers.
@@ -635,7 +634,10 @@ local function onEditorToolWindowShow(windowName)
     end
     -- Open layers window by default
     editor.showWindow("Decal Stack / Layers##window")
-    deps.browser.showWindow()
+
+    if editor.getPreference("dynamicDecalsTool.general.openBrowserWindowOnStartup") then
+      deps.browser.showWindow()
+    end
 
     local playerVehicle = getPlayerVehicle(0)
     if not playerVehicle then
@@ -689,6 +691,7 @@ local function onEditorRegisterPreferences(prefsRegistry)
   prefsRegistry:registerCategory("dynamicDecalsTool")
   prefsRegistry:registerSubCategory("dynamicDecalsTool", "general", nil, {
     {debug = {"bool", false, "debug"}},
+    {openBrowserWindowOnStartup = {"bool", true, "Automaticaly open the browser window when opening the tool"}},
     {version = {"table", {0,0,1}, "version", nil, nil, nil, true}},
     {layerNameBuildString = {"string", "@type{ - @colormap}", [[
 Defines how the layer name is build when adding new layers.

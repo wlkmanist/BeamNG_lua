@@ -12,7 +12,7 @@ local str_byte, str_sub, str_len, str_find = string.byte, string.sub, string.len
 
 local jbeamUtils = require("jbeam/utils")
 local particles = require("particles")
-local advancedCsvReader = require_optional('advancedCsvReader')
+local csvlib = require('csvlib')
 
 
 local materials, materialsMap = particles.getMaterialsParticlesTable()
@@ -65,7 +65,7 @@ local function replaceSpecialValues(val)
 
   if specialVals[val] then return specialVals[val] end
 
-  if str_find(val, '|', 1, true) then
+  if string.byte(val, 1) == 124 then -- |
     local parts = split(val, "|", 999)
     local ival = 0
     for i = 2, #parts do
@@ -89,25 +89,26 @@ local function processJbeamTableRow(ctx, rowValue)
     return -1
   end
   if tableIsDict(rowValue) then
-    if rowValue.include and advancedCsvReader then
-      local data, err, headerCsv = advancedCsvReader.parseCSVFile(rowValue.include, false, rowValue.delimiter)
-      if err then
+    if rowValue.include and csvlib then
+      local data = csvlib.readFileCSV(rowValue.include, rowValue.delimiter)
+      if not data then
         log('E', '', 'unable to read CSV file: ' .. tostring(rowValue.include))
         return
       end
-      if #headerCsv ~= ctx.headerSize then
+      if #data[1] ~= ctx.headerSize then
         log('E', '', 'CSV file has mismatching header. Required: ' .. dumps(ctx.header) .. ' - present in file: ' .. dumps(headerCsv))
         return
       end
       for i, _ in ipairs(ctx.header) do
-        if ctx.header[i] ~= headerCsv[i] then
-          log('E', '', 'CSV file has mismatching header column ' .. tostring(i) .. '. Required: ' .. dumps(ctx.header) .. ' - present in file: ' .. dumps(headerCsv))
+        if ctx.header[i] ~= data[1][i] then
+          log('E', '', 'CSV file has mismatching header column ' .. tostring(i) .. '. Required: ' .. dumps(ctx.header) .. ' - present in file: ' .. dumps(data[1]))
           return
         end
       end
 
       local startRowCounter = ctx.rowCounter
-      for _, rowValueCsv in ipairs(data) do
+      for i = 2, #data do
+        local rowValueCsv = data[i]
         processJbeamTableRow(ctx, rowValueCsv, ctx.newList, ctx.omitWarnings)
         ctx.rowCounter = ctx.rowCounter + 1
       end

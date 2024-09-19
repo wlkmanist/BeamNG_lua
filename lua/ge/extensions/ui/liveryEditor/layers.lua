@@ -1,171 +1,195 @@
--- local M = {}
+local M = {}
 
--- local api = extensions.editor_api_dynamicDecals
--- local utils = extensions.ui_liveryEditor_utils
--- local uiCameraApi = extensions.ui_liveryEditor_camera
--- local uiFillApi = extensions.ui_liveryEditor_layers_fill
+local api = extensions.editor_api_dynamicDecals
+local utils = extensions.ui_liveryEditor_utils
+local uiCameraApi = extensions.ui_liveryEditor_camera
+local uiFillApi = extensions.ui_liveryEditor_layers_fill
 
--- -- Layer Cached Data
--- -- Id
--- -- Path - path from root
--- local layerMap = {}
--- local layers = {}
+-- Layer Cached Data
+-- Id
+-- Path - path from root
+local layerMap = {}
+local layers = {}
 
--- local transformLayerUiFormat = function(layer, coordinates)
---   local formattedLayer = {
---     uid = layer.uid,
---     id = layer.uid,
---     name = layer.name,
---     type = layer.type,
---     enabled = layer.enabled,
---     locked = layer.locked
---   }
+local transformLayerUiFormat = function(layer, coordinates)
+  local formattedLayer = {
+    uid = layer.uid,
+    id = layer.uid,
+    name = layer.name,
+    type = layer.type,
+    enabled = layer.enabled,
+    locked = layer.locked
+  }
 
---   if layer.type == api.layerTypes.decal then
---     formattedLayer.preview = layer.decalColorTexturePath
---     formattedLayer.rotation = utils.convertRadiansToDegrees(layer.decalRotation)
---     formattedLayer.mirrored = layer.mirrored
---     formattedLayer.mirrorFlipped = layer.flipMirroredDecal
---     formattedLayer.scale = {
---       x = layer.decalScale.x,
---       y = layer.decalScale.z
---     }
---     formattedLayer.skew = {
---       x = utils.roundAndTruncateDecimal(layer.decalSkew.x),
---       y = utils.roundAndTruncateDecimal(layer.decalSkew.y)
---     }
---     formattedLayer.position = utils.getXYCoordinates(layer.decalPos, uiCameraApi.getOrientationCoordinates())
---     formattedLayer.color = layer.color:toTable()
---     formattedLayer.metallicIntensity = layer.metallicIntensity
---     formattedLayer.normalIntensity = layer.normalIntensity
---     formattedLayer.roughnessIntensity = layer.roughnessIntensity
---   elseif layer.type == api.layerTypes.fill then
---     formattedLayer.colorPaletteMapId = layer.colorPaletteMapId
+  if layer.type == api.layerTypes.decal then
+    formattedLayer.preview = layer.decalColorTexturePath
+    formattedLayer.rotation = utils.convertRadiansToDegrees(layer.decalRotation)
+    formattedLayer.mirrored = layer.mirrored
+    formattedLayer.mirrorFlipped = layer.flipMirroredDecal
+    formattedLayer.scale = {
+      x = layer.decalScale.x,
+      y = layer.decalScale.z
+    }
+    formattedLayer.skew = {
+      x = utils.roundAndTruncateDecimal(layer.decalSkew.x),
+      y = utils.roundAndTruncateDecimal(layer.decalSkew.y)
+    }
+    formattedLayer.position = utils.getXYCoordinates(layer.decalPos, uiCameraApi.getCoordinates())
+    formattedLayer.color = layer.color:toTable()
+    formattedLayer.metallicIntensity = layer.metallicIntensity
+    formattedLayer.normalIntensity = layer.normalIntensity
+    formattedLayer.roughnessIntensity = layer.roughnessIntensity
+  elseif layer.type == api.layerTypes.fill then
+    formattedLayer.colorPaletteMapId = layer.colorPaletteMapId
 
---     if layer.colorPaletteMapId == 0 then
---       formattedLayer.color = layer.color:toTable()
---     else
---       local colorPaletteData = uiFillApi.getColorPaletteDataById(layer.colorPaletteMapId)
---       formattedLayer.color = colorPaletteData.color
---     end
---   elseif layer.type == api.layerTypes.linkedSet then
---     dump("transformLayerUiFormat", layer)
---     for k, property in ipairs(layer.properties) do
---       dump("property key", k)
---       dump("property value", property)
---       if property.id == "color" then
---         formattedLayer.color = property.value:toTable()
---       end
---     end
---   end
+    if layer.colorPaletteMapId == 0 then
+      formattedLayer.color = layer.color:toTable()
+    else
+      local colorPaletteData = uiFillApi.getColorPaletteDataById(layer.colorPaletteMapId)
+      formattedLayer.color = colorPaletteData.color
+    end
+  elseif layer.type == api.layerTypes.linkedSet then
+    for k, property in ipairs(layer.properties) do
+      if property.id == "color" then
+        formattedLayer.color = property.value:toTable()
+      end
+    end
+  end
 
---   return formattedLayer
--- end
+  return formattedLayer
+end
 
--- local function parseLayersData(layersData, parentUid, parentPath, parentPathIndices)
---   local uiLayers = {}
+M.parseLayersData = function(layersData, parentLayer)
+  dump("parseLayerData", parentLayer)
+  local uiLayers = {}
 
---   for key in ipairs(layersData) do
---     local layer = layersData[key]
---     local uiLayer = transformLayerUiFormat(layer, uiCameraApi.getOrientationCoordinates())
+  for key in ipairs(layersData) do
+    local layer = layersData[key]
+    local uiLayer = transformLayerUiFormat(layer, uiCameraApi.getCoordinates())
 
---     uiLayer.order = key
---     uiLayer.parentUid = parentUid
---     uiLayer.path = parentPath
---     uiLayer.pathIndices = parentPathIndices
---     uiLayer.childrenCount = layer.children and #layer.children or 0
+    uiLayer.order = key
+    uiLayer.parentUid = parentLayer and parentLayer.uid
+    uiLayer.childrenCount = layer.children and #layer.children or 0
 
---     if layer.children and #layer.children > 0 then
---       local layerPath = parentPath and shallowcopy(parentPath) or {}
---       table.insert(layerPath, layer.uid)
+    -- set layer hidden for now if type is not decal or group
+    local hidden = layer.type ~= api.layerTypes.decal and layer.type ~= api.layerTypes.linkedSet
+    uiLayer.hidden = hidden
 
---       local layerPathIndices = parentPathIndices and shallowcopy(parentPathIndices) or {}
---       table.insert(layerPathIndices, key)
+    if parentLayer then
+      uiLayer.path = shallowcopy(parentLayer.path)
+      table.insert(uiLayer.path, layer.uid)
 
---       uiLayer.children = parseLayersData(layer.children, layer.uid, layerPath, layerPathIndices)
---     end
+      uiLayer.pathIndices = shallowcopy(parentLayer.pathIndices)
+      table.insert(uiLayer.pathIndices, key)
+    else
+      uiLayer.path = {layer.uid}
+      uiLayer.pathIndices = {key}
+    end
 
---     table.insert(uiLayers, uiLayer)
+    uiLayer.siblingCount = #layersData
 
---     layerMap[uiLayer.uid] = {
---       order = key,
---       parentUid = parentUid,
---       layer = shallowcopy(uiLayer)
---     }
---   end
+    if layer.children and #layer.children > 0 then
+      uiLayer.children = M.parseLayersData(layer.children, uiLayer)
+    end
 
---   return uiLayers
--- end
+    table.insert(uiLayers, 1, uiLayer)
 
--- local function notifyUIListeners()
---   guihooks.trigger("LiveryEditorLayersUpdate", layers)
--- end
+    M.layerMap[uiLayer.uid] = {
+      order = key,
+      parentUid = parentLayer and parentLayer.uid,
+      layer = shallowcopy(uiLayer),
+      hidden = hidden
+    }
+  end
 
--- local function rebuildLayerData()
---   layerMap = {}
---   layers = parseLayersData(api.getLayerStack())
---   notifyUIListeners()
--- end
+  return uiLayers
+end
 
--- M.getLayers = function()
---   return layers
--- end
+M.getVisibleLayersCount = function()
+  local count = 0
+  if M.layerMap then
+    for k, layer in pairs(M.layerMap) do
+      if not layer.hidden then
+        count = count + 1
+      end
+    end
+  end
 
--- M.getLayerByUid = function(layerUid)
---   return layerMap[layerUid].layer
--- end
+  return count
+end
 
--- M.getLayerByOrder = function(order, parentUid)
---   dump("getLayerByUid", order .. " " .. (parentUid or "nil"))
---   for k, layer in ipairs(layerMap) do
---     if parentUid == layer.parentUid and layer.order == order then
---       return layer
---     end
---   end
--- end
+M.rebuildLayerData = function()
+  M.layerMap = {}
+  M.layers = M.parseLayersData(api.getLayerStack())
+  guihooks.trigger("liveryEditor_OnLayersUpdated", M.layers)
+  guihooks.trigger("liveryEditor_Layers_OnVisibleCountChanged", M.getVisibleLayersCount())
+end
 
--- M.getChildrenCount = function(layerUid)
---   if not layerUid then
---     return #layers
---   end
+M.getLayers = function()
+  return layers
+end
 
---   local count = 0
---   for k, layer in ipairs(layerMap) do
---     if layer.parentUid == layerUid then
---       count = count + 1
---     end
---   end
+M.getLayerByUid = function(layerUid)
+  return M.layerMap[layerUid].layer
+end
 
---   return count
--- end
+M.getLayerByOrder = function(order, parentUid)
+  for k, layerMapItem in pairs(M.layerMap) do
+    if (not parentUid or parentUid == layerMapItem.parentUid) and layerMapItem.order == order then
+      return layerMapItem.layer
+    end
+  end
+end
 
--- -- External hooks. Do not call!
--- M.dynamicDecals_onLayerAdded = function(layerUid)
---   dump("dynamicDecals_onLayerAdded", layerUid)
---   rebuildLayerData()
--- end
+M.getChildrenCount = function(layerUid)
+  if not layerUid then
+    return #M.layers
+  end
 
--- M.dynamicDecals_onLayerDeleted = function(layerUid)
---   dump("dynamicDecals_onLayerDeleted", layerUid)
---   rebuildLayerData()
--- end
+  local count = 0
+  for k, layer in ipairs(M.layerMap) do
+    if layer.parentUid == layerUid then
+      count = count + 1
+    end
+  end
 
--- M.dynamicDecals_onLayerUpdated = function(layerUid)
---   dump("dynamicDecals_onLayerUpdated", layerUid)
---   rebuildLayerData()
---   extensions.hook("liveryEditor_onLayersUpdated", layerUid)
--- end
+  return count
+end
 
--- M.dynamicDecals_moveLayer = function(from, fromParentUid, to, toParentUid)
---   dump("dynamicDecals_moveLayer",
---     "from: " ..
---     from .. ", fromParent: " .. (fromParentUid or "nil") .. ", to: " .. to .. ", toParent: " .. (toParentUid or "nil"))
---   local movedLayer = M.getLayerByOrder(from, fromParentUid)
---   rebuildLayerData()
+M.requestInitialData = function()
+  M.rebuildLayerData()
+end
 
---   if movedLayer then
---     extensions.hook("liveryEditor_onLayersUpdated", movedLayer.uid)
---   end
--- end
+M.layers = layers
+M.layerMap = layerMap
+-- M.notifyUiListeners
 
--- return M
+-- External hooks. Do not call!
+M.dynamicDecals_onLayerAdded = function(layerUid)
+  dump("dynamicDecals_onLayerAdded", layerUid)
+  M.rebuildLayerData()
+  extensions.hook("liveryEditor_OnLayerAdded", M.getLayerByUid(layerUid))
+end
+
+M.dynamicDecals_onLayerDeleted = function(layerUid)
+  dump("dynamicDecals_onLayerDeleted", layerUid)
+  M.rebuildLayerData()
+  extensions.hook("liveryEditor_OnLayerDeleted", layerUid)
+end
+
+M.dynamicDecals_onLayerUpdated = function(layerUid)
+  dump("dynamicDecals_onLayerUpdated", layerUid)
+  M.rebuildLayerData()
+  extensions.hook("liveryEditor_onLayersUpdated", layerUid)
+end
+
+M.dynamicDecals_moveLayer = function(from, fromParentUid, to, toParentUid)
+  dump("dynamicDecals_moveLayer",
+      "from: " .. from .. ", fromParent: " .. (fromParentUid or "nil") .. ", to: " .. to .. ", toParent: " ..
+          (toParentUid or "nil"))
+  M.rebuildLayerData()
+  local layer = M.getLayerByOrder(to, toParentUid)
+  extensions.hook("liveryEditor_onLayersUpdated", layer.uid)
+end
+
+return M

@@ -442,26 +442,6 @@ local function onExtensionLoaded()
       end}
   )
 
-  addEntry(
-    {level = "/", title = "ui.radialmenu2.Save", icon = "radial_save", priority = 90, onSelect = function()
-        beamstate.save()
-        return {"hide"}
-      end}
-  )
-  addEntry(
-    {
-      level = "/",
-      title = "ui.radialmenu2.Load",
-      icon = "radial_load",
-      priority = 91,
-      onSelect = function()
-        beamstate.load()
-        obj:queueGameEngineLua("extensions.hook('trackVehReset')")
-        return {"hide"}
-      end
-    }
-  )
-
   --[[
   addEntry({ level = '/', title = 'entry by vehicle ' .. tostring(obj:getId()), onSelect = function() ui_message('Hello world from obj ' .. tostring(obj:getId())) end } )
   addEntry({ level = '/test/', title = 'do things for ' .. tostring(obj:getId())} )

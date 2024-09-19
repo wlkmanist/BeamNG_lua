@@ -10,9 +10,19 @@ local imgui = ui_imgui
 local style = ffi.new('ImGuiStyle[1]')
 
 function M.changeUIScale(uiscale)
-  imgui.uiscale[0] = uiscale
+  local finalScale = uiscale
+
+  if editor and editor.getPreference then
+    if editor.getPreference("ui.general.dpiAware") then
+      finalScale = finalScale * imgui.GetWindowDpiScale()
+    end
+  else
+    finalScale = finalScale * imgui.GetWindowDpiScale()
+  end
+
+  imgui.uiscale[0] = finalScale
   local io = imgui.GetIO(io)
-  io.FontGlobalScale = imgui.uiscale[0]
+  imgui.ImGuiIO_FontGlobalScale(io, imgui.uiscale[0]);
 end
 
 function M.drawCursorPos(posX, posY)

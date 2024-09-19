@@ -9,14 +9,14 @@ local C = {}
 
 C.name = 'Edge Detector'
 C.icon = ui_flowgraph_editor.nodeIcons.logic
-C.description = "Lets the flow through once when input value changes"
+C.description = "Lets the flow through once when input value changes."
 C.category = 'logic'
 
 C.pinSchema = {
-    { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
-    { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' },
-    { dir = 'in', type = 'any', name = 'signal', description = 'Input signal to detect change in.' },
-    { dir = 'in', type = 'number', name = 'threshold', default = 0, description = "Allows to specify a threshold value when input signal is numeric" }
+  { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
+  { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' },
+  { dir = 'in', type = 'any', name = 'signal', description = 'Input signal to detect change in.' },
+  { dir = 'in', type = 'number', name = 'threshold', default = 0, description = "Allows to specify a threshold value when input signal is numeric" }
 }
 
 C.legacyPins = {
@@ -28,7 +28,7 @@ C.legacyPins = {
   }
 }
 
-C.tags = { 'util' }
+C.tags = { 'util', 'change', 'difference', 'threshold' }
 
 function C:work()
   if type(self.pinIn.signal.value) == "number" and type(self.lastSignal) == "number" and type(self.pinIn.threshold.value) == "number" then

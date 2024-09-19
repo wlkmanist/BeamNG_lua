@@ -64,6 +64,7 @@ function C:init(veh, name, data)
       if self.veh.isAi then
         self.veh:setAiMode('stop')
         be:getObjectByID(self.veh.id):queueLuaCommand('electrics.set_warn_signal(1)')
+        be:getObjectByID(self.veh.id):queueLuaCommand('electrics.set_lightbar_signal(0)')
       end
       self.state = 'disabled'
     end
@@ -178,17 +179,20 @@ function C:applyPersonality(data) -- sends parameters to ai.lua
   local obj = be:getObjectByID(self.veh.id)
 
   self.driver.personality = tableMerge(self.driver.personality, data)
-  self.driver.aggression = clamp(self.veh.vars.baseAggression + (self.driver.personality.aggression - 0.5) * 0.25, 0.1, 1)
-  obj:queueLuaCommand('ai.setAggression('..self.driver.aggression..')')
+  self.driver.aggression = clamp(self.veh.vars.baseAggression + (self.driver.personality.aggression - 0.5) * 0.25, 0.2, 1)
+  --obj:queueLuaCommand('ai.setAggression('..self.driver.aggression..')') -- slightly randomized aggression (mean 0.3)
+  obj:queueLuaCommand('ai.setAggression('..self.veh.vars.baseAggression..')') -- TEMP: removed randomness, for now
 
   -- TODO: create more params
+  -- these specific ai parameters may need to be reconsidered
   local params = {
-    trafficWaitTime = data.patience * 4 -- intersection max wait time
+    trafficWaitTime = data.patience * 6 -- intersection max wait time
   }
+  -- trafficWaitTime may need to be reconsidered, it may be causing conflicts in intersections
   obj:queueLuaCommand('ai.setParameters('..serialize(params)..')')
 end
 
-function C:checkTargetVisible(id)
+function C:checkTargetVisible(id) -- checks if the other vehicle is visible (static raycast)
   local visible = false
   local targetId = id or self.targetId
   local targetVeh = targetId and gameplay_traffic.getTrafficData()[targetId]

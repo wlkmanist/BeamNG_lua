@@ -217,7 +217,7 @@ local function partFitsSlot(part, slot)
   return false
 end
 
-local function fillSlots_rec(ioCtx, userPartConfig, currentPart, level, _slotOptions, chosenParts, activePartsOrig, path, unifyJournal)
+local function fillSlots_rec(ioCtx, userPartConfig, currentPart, level, _slotOptions, chosenParts, activePartsOrig, path, unifyJournal, unifyJournalC)
   if level > 50 then
     log('E', "jbeam.fillSlots", "* ERROR: over 50 levels of parts, check if parts are self referential")
     return
@@ -312,9 +312,13 @@ local function fillSlots_rec(ioCtx, userPartConfig, currentPart, level, _slotOpt
 
         chosenPart = deepcopy(chosenPart) -- make it unique
 
-        fillSlots_rec(ioCtx, userPartConfig, chosenPart, level + 1, slotOptions, chosenParts, activePartsOrig, newPath, unifyJournal)
+        local uj = {currentPart, chosenPart, level, slotOptions, newPath, slot}
 
-        table.insert(unifyJournal, {currentPart, chosenPart, level, slotOptions, newPath, slot})
+        table.insert(unifyJournalC, uj)
+
+        fillSlots_rec(ioCtx, userPartConfig, chosenPart, level + 1, slotOptions, chosenParts, activePartsOrig, newPath, unifyJournal, unifyJournalC)
+
+        table.insert(unifyJournal, uj)
 
       else
         if selectedPartName and selectedPartName ~= '' then
@@ -349,10 +353,11 @@ local function findParts(ioCtx, vehicleConfig)
   activePartsOrig[vehicleConfig.mainPartName] = deepcopy(rootPart)  -- make a copy of the original part
 
   local unifyJournal = {}
-  fillSlots_rec(ioCtx, vehicleConfig.parts or {}, rootPart, 1, nil, chosenParts, activePartsOrig, '/', unifyJournal)
+  local unifyJournalC = {}
+  fillSlots_rec(ioCtx, vehicleConfig.parts or {}, rootPart, 1, nil, chosenParts, activePartsOrig, '/', unifyJournal, unifyJournalC)
 
   profilerPopEvent() -- jbeam/slotsystem.process
-  return rootPart, unifyJournal, chosenParts, activePartsOrig
+  return rootPart, unifyJournal, unifyJournalC, chosenParts, activePartsOrig
 end
 
 local function unifyPartJournal(ioCtx, unifyJournal)
@@ -364,38 +369,8 @@ local function unifyPartJournal(ioCtx, unifyJournal)
   return true
 end
 
-local function unifyComponents(vehicle, target, source_raw, level, slotOptions, partPath)
-  for sectionKey, section in pairs(source_raw) do
-    if sectionKey == 'components' then
-      for k3, v3 in pairs(section) do
-        if type(v3) == 'table' then
-          vehicle.components[k3] = vehicle.components[k3] or {}
-          tableMergeRecursive(vehicle.components[k3], v3)
-        else
-          vehicle.components[k3] = v3
-        end
-      end
-      section.components = nil
-    end
-  end
-end
-
-local function processComponents(vehicle, unifyJournal, vehicleConfig)
-  profilerPushEvent('jbeam/slotsystem.processComponents')
-
-  vehicle.components = vehicle.components or {}
-  for i, j in ipairs(unifyJournal) do
-    unifyComponents(vehicle, unpack(j))
-  end
-
-  --log('I', "jbeam.processComponents", "Final components: " .. dumps(vehicle.components))
-
-  profilerPopEvent() -- jbeam/slotsystem.processComponents
-  return true
-end
 
 M.findParts = findParts
 M.unifyPartJournal = unifyPartJournal
-M.processComponents = processComponents
 
 return M

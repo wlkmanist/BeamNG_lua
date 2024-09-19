@@ -83,7 +83,7 @@ local function assetNamesTable()
       if im.TableGetSortSpecs().Specs.SortDirection == 1 then
         arrayReverse(assetNamingEntries)
       end
-      im.TableGetSortSpecs().SpecsDirty = false
+      im.TableSetSortSpecsDirty(false)
     end
     im.TableNextRow()
     for index, entry in ipairs(assetNamingEntries) do

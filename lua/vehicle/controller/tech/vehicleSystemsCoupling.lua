@@ -75,7 +75,7 @@ local function createCSV(sendKeys, receiveKeys)
 end
 
 local function saveCSV()
-  -- save in AppData/Local/BeamNG.drive/<current Version>
+  -- save in AppData/Local/BeamNG/<current Version>
   csvSendData:write('simulinkSendLog.csv')
   csvReceiveData:write('simulinkReceiveLog.csv')
   csvPhysicsSteps:write('simulinkPhysicsStepsLog.csv')

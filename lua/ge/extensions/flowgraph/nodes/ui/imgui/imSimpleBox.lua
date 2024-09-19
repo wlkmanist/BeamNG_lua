@@ -18,7 +18,7 @@ C.pinSchema = {
   { dir = 'in', type = 'string', name = 'text', default = 'Some Text', description = 'Displayed text.' },
 }
 
-C.tags = {}
+C.tags = {'imgui'}
 
 function C:drawMiddle(builder, style)
   builder:Middle()

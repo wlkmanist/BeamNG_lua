@@ -103,7 +103,7 @@ end
 
 local function executeLink(vdata, lnk, actionValue, vehicleId)
   if lnk.version and lnk.version == 2 then
-    dump({'>>>>> executeLink', lnk.inputAction, actionValue, vehicleId})
+    --dump({'>>>>> executeLink', lnk.inputAction, actionValue, vehicleId})
 
     if lnk.namespace == 'vehicle' then
       if not vdata.inputActions[lnk.inputAction] then

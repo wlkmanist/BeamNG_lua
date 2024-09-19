@@ -8,6 +8,11 @@ local sidesPrefix = "cylinder_marker_"
 local distantPrefix = "distant_marker_"
 local sideShape =  "art/shapes/arrows/s_arrow_floating.dae"
 
+-- used to offset the height of the marker's position when the player, in walking mode, gets close to the marker
+local markerPosHeightOffset = 0
+local markerMaxPosHeightOffset = 1
+local plDistToMarkerOffset = 4
+local tmpVec = vec3()
 
 local function inverseLerp(min, max, value)
  if math.abs(max - min) < 1e-30 then return min end
@@ -36,7 +41,11 @@ function C:init(id)
 
   self.mode = 'hidden'
   self.oldMode = 'hidden'
+
+  self.iconPositionSmoother = newTemporalSmoothingNonLinear(10,10)
+  self.iconPositionSmoother:set(5)
 end
+
 
 -- called every frame to update the visuals.
 function C:update(dt, dtSim)
@@ -56,6 +65,15 @@ function C:update(dt, dtSim)
 
   local distanceFromMarker = self.pos:distance(playerPosition)
 
+  if gameplay_walk.isWalking() then
+    if distanceFromMarker > plDistToMarkerOffset then
+      markerPosHeightOffset = self.iconPositionSmoother:get(0, dt)
+    else
+      markerPosHeightOffset = self.iconPositionSmoother:get(markerMaxPosHeightOffset, dt)
+    end
+    tmpVec:set(0, 0, markerPosHeightOffset)
+  end
+
   local t = clamp(self.colorTimer / self.colorLerpDuration,0,1)
   local color =  {0, 0.4, 1}
   self.currentColor = ColorF(color[1],color[2],color[3],color[4] or 1)
@@ -67,7 +85,7 @@ function C:update(dt, dtSim)
     self.left:setField('rotation', 0, rot.x .. ' ' .. rot.y .. ' ' .. rot.z .. ' ' .. rot.w)
     self.left.instanceColor = self.currentColor:asLinear4F()
     self.left.instanceColor1 = ColorF(0,0,0,self.currentColor.a):asLinear4F()
-    self.left:setPosition( vec3(0,0,self.scale.x/1.5 + math.sin(os.clock()*4)*(0.2*self.scale.x/1.5))+self.pos)
+    self.left:setPosition( vec3(0,0,self.scale.x/1.5 + math.sin(os.clock()*4)*(0.2*self.scale.x/1.5))+self.pos+tmpVec)
 --      self.left:setField('instanceColor', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
 --    self.left:setField('instanceColor1', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
     self.left:updateInstanceRenderData()
@@ -112,14 +130,9 @@ function C:setVisibility(v)
   if self.left then
     self.left.hidden = not v
   end
-
 end
 
-function C:hide()
-  self.newColor = {0, 0, 0}
-  self.oldColor = {0, 0, 0}
-  self:setVisibility(false)
-end
+function C:hide() self:setVisibility(false) end
 function C:show() self:setVisibility(true)  end
 
 -- marker management
@@ -131,6 +144,7 @@ function C:createObject(shapeName, objectName)
   marker:setField('rotation', 0, '1 0 0 0')
   marker.useInstanceRenderData = true
   marker:setField('instanceColor', 0, '1 1 1 1')
+  marker:setInternalName('marker')
   marker.canSave = false
   marker.hidden = true
   marker:registerObject(objectName)

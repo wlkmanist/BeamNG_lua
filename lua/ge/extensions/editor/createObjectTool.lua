@@ -23,6 +23,11 @@ local activeWhileHoldingCtrl
 local lastInstance
 local objectIdToSelect
 local placeAtCameraPos = false
+local newStaticMesh
+local lastUsedStaticMeshFolder = ""
+local lastUsedShapeName = "/core/art/shapes/no_mesh.dae"
+local staticMeshPickFilenameShown = false
+local angleAroundUpValue = 0
 local fieldsSetOnBuildFunc = {}
 local offsetFromSurface = {
   PointLight = 0.2,
@@ -174,6 +179,7 @@ local function createObjectModeUpdate()
       and editor.isViewportHovered()
       and currentCreateObjectItem then
     lastInstance = currentClassInstance
+
     -- Add the last object to the scenetree and create a new object to be placed
     if currentParent then
       currentParent:addObject(lastInstance)
@@ -182,6 +188,7 @@ local function createObjectModeUpdate()
 
     -- create the object and set some default fields (especially for player/observer spawn points)
     currentClassInstance = createObjectInstance(currentCreateObjectItem.classname, currentCreateObjectItem)
+
     if currentClassInstance then
       editor.selectObjectById(currentClassInstance:getID())
       currentClassInstance:disableCollision()
@@ -226,6 +233,28 @@ local function createObjectModeUpdate()
         finalPos = worldEditorCppApi.snapPositionToGrid(finalPos)
         obj:setPosition(finalPos)
     end
+
+    local scl = obj:getScale()
+    local pos = obj:getPosition()
+    local rot = quatFromDir(rayCastInfo.normal)
+    local mtx = MatrixF(0)
+    local mtxCorrection = MatrixF(0)
+    local mtxAngleAroundUp = MatrixF(0)
+    -- I need to add this 90deg x axis correction, dont know why quatFromDir doesnt properly create the rotation at default up (0,0,1)
+    mtxCorrection:setFromEuler(vec3((90 * math.pi) / 180.0, 0, 0))
+    editor.disableModifyFadeIconsDistance = false
+
+    if editor.keyModifiers.ctrl then
+      editor.disableModifyFadeIconsDistance = true
+      angleAroundUpValue = angleAroundUpValue + imgui.GetIO().MouseWheel * 5 -- TODO: add this to prefs
+    end
+
+    mtxAngleAroundUp:setFromEuler(vec3(0, 0, (angleAroundUpValue * math.pi) / 180.0))
+    mtx:setFromQuatF(QuatF(rot.x, rot.y, rot.z, rot.w))
+    mtx = mtx:mul(mtxCorrection)
+    mtx = mtx:mul(mtxAngleAroundUp)
+    obj:setTransform(mtx)
+    obj:setPosition(pos)
   end
 
   if rayCastInfo then
@@ -433,15 +462,19 @@ local function createObjectToolbar()
       imgui.SetTooltip("Create the class instance in the currently selected folder or object's parent folder")
     end
   else
-    -- else we show a button for each class instance we can create
+    -- else we show a button for each class type we can create
     for i, item in ipairs(createGroups[createObjectGroupIndex].objectClasses) do
       local bgColor = nil
 
       if item == currentCreateObjectItem then bgColor = imgui.GetStyleColorVec4(imgui.Col_ButtonActive) end
       if editor.uiIconImageButton(item.icon or editor.icons.stop, nil, nil, nil, bgColor) then
-        --Set edit mode to 'createObject', CreateObjectTool can also be open in objectSelect mode.
+        -- set edit mode to 'createObject', CreateObjectTool can also be open in objectSelect mode.
         currentParent = getCurrentSelectedParent()
         editor.selectEditMode(editor.editModes.createObject)
+
+        -- reset static mesh shape picker dialog and mouse wheel rotation angle
+        staticMeshPickFilenameShown = false
+        angleAroundUpValue = 0
 
         -- delete the old instance if any, if we were hovering it in the viewport
         if currentClassInstance then
@@ -852,6 +885,27 @@ local function buildCamera(obj)
   return true
 end
 
+local function buildStaticMesh(obj)
+  obj:setField("shapeName", 0, lastUsedShapeName)
+  newStaticMesh = obj
+
+  local callback = function(data)
+    local filepath = data.filepath
+    if filepath == nil or filepath == "" or not newStaticMesh then return end
+    lastUsedStaticMeshFolder = data.path
+    lastUsedShapeName = filepath
+    newStaticMesh:setField("shapeName", 0, filepath)
+    newStaticMesh:postApply()
+  end
+
+  if not staticMeshPickFilenameShown then
+    editor_fileDialog.openFile(callback, {{"DAE Mesh", ".dae"}}, false, lastUsedStaticMeshFolder)
+    staticMeshPickFilenameShown = true
+  end
+
+  return true
+end
+
 local function makeCreateObjectGroupItem(name, icon)
   return {
     name = name,
@@ -942,7 +996,8 @@ local function initGroups()
     makeCreateObjectItem(editor.icons.simobject_portal, "Portal", "Zone Portal"),
     makeCreateObjectItem(editor.icons.simobject_player_spawn_sphere, "SpawnSphere", "Player Spawn Sphere", buildPlayerDropPoint),
     makeCreateObjectItem(editor.icons.simobject_observer_spawn_sphere, "SpawnSphere", "Observer Spawn Sphere", buildObserverDropPoint),
-    makeCreateObjectItem(editor.icons.simobject_occlusion_volume, "OcclusionVolume", "Occlusion Volume")
+    makeCreateObjectItem(editor.icons.simobject_occlusion_volume, "OcclusionVolume", "Occlusion Volume"),
+    makeCreateObjectItem(editor.icons.ab_asset_mesh, "TSStatic", "Static Mesh", buildStaticMesh)
   }
 
   -- BeamNG classes
@@ -982,8 +1037,12 @@ local function onEditorInitialized()
     actionMap = "CreatingObjects",
     icon = editor.icons.add_circle,
     iconTooltip = "Create Object",
-    toolbarAlwaysVisible = false
+    toolbarAlwaysVisible = false,
+    auxShortcuts = {}
   }
+
+  editor.editModes.createObject.auxShortcuts[bit.bor(editor.AuxControl_Ctrl, editor.AuxControl_MWheel)] = "Rotates around up axis"
+  editor.editModes.createObject.auxShortcuts[bit.bor(editor.AuxControl_Alt)] = "Snap to grid"
 
   editor.stopCreatingObjects = function()
     editor.clearObjectSelection()

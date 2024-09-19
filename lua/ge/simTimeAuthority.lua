@@ -32,7 +32,7 @@ for currSlot,currTimescale in ipairs(bulletTimeSlots) do
 end
 
 local function getPause()
-  if core_replay.state.state == "playing" then
+  if core_replay.state.state == "playback" then
     return core_replay.isPaused()
   else
     return not be:getEnabled()
@@ -96,7 +96,7 @@ local function setTargetSpeed(val)
 end
 
 local function selectPreset(val)
-  if core_replay.state.state == "playing" then
+  if core_replay.state.state == "playback" then
     if     val == "^" then core_replay.toggleSpeed("realtime")
     elseif val == "v" then core_replay.toggleSpeed("slowmotion")
     elseif val == "<" then core_replay.toggleSpeed( -1)
@@ -146,7 +146,7 @@ end
 local function pause(paused, playPauseSound)
   if playPauseSound == nil then playPauseSound = true end
   extensions.hook("onSimTimePauseCalled", paused)
-  if core_replay.state.state == "playing" then
+  if core_replay.state.state == "playback" then
     core_replay.pause(paused)
   else
     if paused == getPause() then return end
@@ -173,7 +173,7 @@ end
 local function pauseSmooth(paused, rateLimit, startAccel, stopAccel, playPauseSound)
   if playPauseSound == nil then playPauseSound = true end
   extensions.hook("simTimePauseCalled", paused)
-  if core_replay.state.state == "playing" then
+  if core_replay.state.state == "playback" then
     core_replay.pause(paused)
   else
     if paused == getPause() and not pauseTransition then return end
@@ -202,7 +202,7 @@ end
 
 local function togglePause()
   extensions.hook("onTogglePause")
-  if core_replay.state.state == "playing" then
+  if core_replay.state.state == "playback" then
     core_replay.togglePlay()
   else
     pause(not getPause())

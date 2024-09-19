@@ -13,11 +13,11 @@ C.description = 'Lets the AI stop the vehicle.'
 C.category = 'once_p_duration'
 C.pinSchema = {
   { dir = 'out', type = 'flow', name = 'stopped', description = 'Outflow when the vehicle is stopped.' },
-  { dir = 'in', type = 'number', name = 'aiVehId', description = 'ID of the target vehicle.' },
-  { dir = 'in', type = 'number', name = 'checkVelocity', hidden = true, default = 0.01, hardcoded = true, description = 'If given, vehicle has to be slower than this to be considered arrived. Defaults to 0.01' },
+  { dir = 'in', type = 'number', name = 'aiVehId', description = 'Vehicle id to stop.' },
+  { dir = 'in', type = 'number', name = 'checkVelocity', hidden = true, default = 0.01, hardcoded = true, description = 'If given, vehicle has to be slower than this to be considered stopped.' }
 }
 
-C.tags = {'halt'}
+C.tags = {'halt', 'disable'}
 
 function C:init()
   self.complete = false
@@ -31,16 +31,21 @@ function C:_executionStarted()
   self:onNodeReset()
 end
 
-function C:workOnce()
-  local source
-  if self.pinIn.aiVehId.value and self.pinIn.aiVehId.value ~= 0 then
-    source = scenetree.findObjectById(self.pinIn.aiVehId.value)
+function C:getVeh()
+  local veh
+  if self.pinIn.aiVehId.value then
+    veh = be:getObjectByID(self.pinIn.aiVehId.value)
   else
-    source = getPlayerVehicle(0)
+    veh = getPlayerVehicle(0)
   end
-  if source then
-    source:queueLuaCommand('ai.setState({mode = "stop"})')
-  end
+  return veh
+end
+
+function C:workOnce()
+  local veh = self:getVeh()
+  if not veh then return end
+
+  veh:queueLuaCommand('ai.setState({mode = "stop"})')
 end
 
 function C:work()
@@ -49,7 +54,8 @@ function C:work()
     return
   end
 
-  local vData = map.objects[self.pinIn.aiVehId.value]
+  local vehId = self.pinIn.aiVehId.value or be:getPlayerVehicleID(0)
+  local vData = map.objects[vehId]
   if vData then
     self.complete = vData.vel:length() < (self.pinIn.checkVelocity.value or 0.01)
   end

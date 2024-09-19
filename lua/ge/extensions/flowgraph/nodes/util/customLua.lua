@@ -196,6 +196,7 @@ function C:buildBaseEnv()
     env.String = String
     env.ColorF = ColorF
     env.ColorI = ColorI
+    env.QuatF = QuatF
     env.Point3F = vec3
     env.vec3 = vec3
     env.createObject = createObject
@@ -203,6 +204,9 @@ function C:buildBaseEnv()
     env.rainbowColor = rainbowColor
     env.readJsonFile = jsonReadFile
     env.getPlayerVehicle = getPlayerVehicle
+    env.RenderViewManagerInstance = RenderViewManagerInstance
+    env.Frustum = Frustum
+    env.newTemporalSmoothingNonLinear = newTemporalSmoothingNonLinear
 
     -- env.extension = extensions
     -- add all non-virtual extensions from the global table to the env
@@ -275,6 +279,9 @@ function C:buildBaseEnv()
     env.quat = quat
     env.euler = quatFromEuler
     env.quatFromEuler = quatFromEuler
+
+    env.RectI = RectI
+    env.Point2I = Point2I
 
     env.im = ui_imgui
     env.square = square

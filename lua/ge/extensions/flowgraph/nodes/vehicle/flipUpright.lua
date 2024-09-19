@@ -7,11 +7,11 @@ local im  = ui_imgui
 
 local C = {}
 
-C.name = 'Flip upright'
+C.name = 'Flip Upright'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 
-C.description = [[Flips the vehicle upright without repairing it.]]
+C.description = "Flips the vehicle upright without repairing it."
 C.category = 'repeat_instant'
 
 C.pinSchema = {
@@ -19,7 +19,7 @@ C.pinSchema = {
 }
 C.legacyPins = {
 }
-C.tags = {'rotation', 'position', 'move'}
+C.tags = {'rotation', 'position', 'recover', 'move'}
 
 function C:init()
   --self.data.useWheelCenter = false

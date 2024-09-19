@@ -23,8 +23,9 @@ C.pinSchema = {
   { dir = 'out', type = 'bool', name = "newBestType", description = "if a new best type was achieved", fixed=true, hidden=true },
 }
 
-C.tags = {'activity'}
+C.tags = {'activity', 'mission'}
 C.allowCustomOutPins = true
+
 function C:init()
 
 end

@@ -13,8 +13,8 @@ local function getMaterialByID(mats, i)
     return mats[i]
 end
 
-local function getMaterialIDByName(mats, s)
-    for k,v in pairs(mats) do
+local function getOrAddMaterialIDByName(mats, s)
+    for k, v in pairs(mats) do
         --print(" "..s.." == "..v.name)
         if s == v.name then
             return k
@@ -23,15 +23,19 @@ local function getMaterialIDByName(mats, s)
 
     --log('W', "particles.getMaterialIDByName", "unknown material: " .. tostring(s))
     -- creating temp definition
-    local m = {
-        colorB = 255,
-        colorG = 255,
-        colorR = 255,
-        dynamic = true,
-        name = s
-    }
-    table.insert(mats, m)
-    return #mats - 1
+    table.insert(mats, { colorB = 255, colorG = 255, colorR = 255, dynamic = true, name = s })
+    return #mats
+end
+
+local function getMaterialIDByName(mats, s)
+    for k,v in pairs(mats) do
+        --print(" "..s.." == "..v.name)
+        if s == v.name then
+            return k
+        end
+    end
+
+    return math.min(3, #mats)
 end
 
 local function particleLoadStr(str, name)
@@ -54,8 +58,8 @@ local function preloadParticlesTable()
 
     -- fix the constants
     for k,v in pairs(particles) do
-        v.materialID1 = getMaterialIDByName(materials, v.materialID1)
-        v.materialID2 = getMaterialIDByName(materials, v.materialID2)
+        v.materialID1 = getOrAddMaterialIDByName(materials, v.materialID1)
+        v.materialID2 = getOrAddMaterialIDByName(materials, v.materialID2)
 
         -- exchange in a clever way
         if v.materialID2 > v.materialID1 then
@@ -122,6 +126,7 @@ preloadParticlesTable()
 -- public interface
 M.getMaterialByID            = getMaterialByID
 M.getMaterialIDByName        = getMaterialIDByName
+M.getOrAddMaterialIDByName   = getOrAddMaterialIDByName
 M.getMaterialsParticlesTable = getMaterialsParticlesTable
 
 return M

@@ -61,9 +61,6 @@ local function spawnVehicle(shopId)
   core_vehicleBridge.executeAction(newVeh,'setIgnitionLevel', 0)
   core_vehicleBridge.executeAction(newVeh, 'setFreeze', true)
   newVeh:queueLuaCommand(string.format("partCondition.initConditions(nil, %d, nil, %f)", vehicleInfo.Mileage, career_modules_vehicleShopping.getVisualValueFromMileage(vehicleInfo.Mileage)))
-  if vehicleInfo.aggregates.Type.Trailer then
-    gameplay_walk.addVehicleToBlacklist(newVeh:getId())
-  end
   return newVeh
 end
 
@@ -212,7 +209,7 @@ local function startInspection(vehicleInfo, teleportToVehicle)
       career_modules_quickTravel.quickTravelToPos(parkingSpot.pos, true)
     else
       if spawnPointElsewhere then
-        core_groundMarkers.setFocus(parkingSpot.pos)
+        core_groundMarkers.setPath(parkingSpot.pos)
       end
     end
 
@@ -221,10 +218,10 @@ local function startInspection(vehicleInfo, teleportToVehicle)
   end,1)
 end
 
-local function buySpawnedVehicle()
+local function buySpawnedVehicle(buyVehicleOptions)
   local vehObj = be:getObjectByID(testDriveVehInfo.vehId)
   core_vehicleBridge.executeAction(vehObj, 'setFreeze', false)
-  career_modules_vehicleShopping.buySpawnedVehicle(testDriveVehInfo)
+  career_modules_vehicleShopping.buySpawnedVehicle(buyVehicleOptions)
   career_modules_tether.removeTether(leaveSaleTether)
   leaveSaleTether = nil
   resetSomeData()
@@ -257,7 +254,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
   local playerVehObj = getPlayerVehicle(0)
   local distanceToVeh = vehObj:getPosition():distance(playerVehObj:getPosition())
-  isCloseToSpawnedVehicle = distanceToVeh < inspectScreenDist
+  isCloseToSpawnedVehicle = (gameplay_walk.isWalking() or playerVehObj:getID() == vehObj:getID()) and distanceToVeh < inspectScreenDist
 
   if not leaveSaleTether and distanceToVeh < activateTetherDist then
     leaveSaleTether = career_modules_tether.startVehicleTether(testDriveVehInfo.vehId, leaveSaleDist, false, leaveSaleCallback)

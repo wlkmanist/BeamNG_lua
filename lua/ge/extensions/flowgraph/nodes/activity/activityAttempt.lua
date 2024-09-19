@@ -21,7 +21,7 @@ C.pinSchema = {
 
 }
 
-C.tags = {'activity'}
+C.tags = {'activity', 'mission'}
 C.allowedManualPinTypes = {
   flow = false,
   string = true,

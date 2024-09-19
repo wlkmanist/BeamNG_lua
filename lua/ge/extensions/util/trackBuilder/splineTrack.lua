@@ -1992,7 +1992,7 @@ local function load(originalFilename, instantHighQuality, increasePointMult, cle
     if FS:fileExists(filename) then
       read = jsonReadFile(filename)
       if not read then
-        log('I', logTag, 'No track found in file Documents/BeamNG.drive/'..filename)
+        log('I', logTag, 'No track found in file Documents/BeamNG/'..filename)
         return
       end
     end
@@ -2031,7 +2031,7 @@ local function load(originalFilename, instantHighQuality, increasePointMult, cle
       mesher.clearShapes()
     end
   else
-    log('I', logTag, 'Could not find file Documents/BeamNG.drive/'..filename)
+    log('I', logTag, 'Could not find file Documents/BeamNG/'..filename)
   end
   if not silent then
     if type(originalFilename) == "table" then
@@ -2049,12 +2049,12 @@ local function loadJSON(originalFilename)
   if FS:fileExists(filename) then
     local read = jsonReadFile(filename)
     if not read then
-      log('I', logTag, 'No track found in file Documents/BeamNG.drive/'..filename)
+      log('I', logTag, 'No track found in file Documents/BeamNG/'..filename)
       return nil
     end
     return read
   else
-    log('I', logTag, 'Could not find file Documents/BeamNG.drive/'..filename)
+    log('I', logTag, 'Could not find file Documents/BeamNG/'..filename)
     return nil
   end
 end
@@ -2112,8 +2112,8 @@ local function save(filename, saveOptions)
     end
     filename = 'trackEditor/'..name..'.json';
     jsonWriteFile(filename, exported, true)
-    log('I', logTag, 'Serialized track to file Documents/BeamNG.drive/'..filename)
-    guihooks.trigger('Message', {ttl = 10, msg = 'Serialized track to file Documents/BeamNG.drive/'..filename, category = "fill", icon = "save"})
+    log('I', logTag, 'Serialized track to file Documents/BeamNG/'..filename)
+    guihooks.trigger('Message', {ttl = 10, msg = 'Serialized track to file Documents/BeamNG/'..filename, category = "fill", icon = "save"})
     return exported, name
   else
     guihooks.trigger('Message', {ttl = 10, msg = 'Saved track without serializing it', category = "fill", icon = "save"})

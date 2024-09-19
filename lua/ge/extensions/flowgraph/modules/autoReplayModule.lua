@@ -77,7 +77,7 @@ end
 function C:startNewRec() 
   self:stopIfRec()
   self:deleteOlderReplays()
-  if core_replay.getState() == "idle" and settings.getValue('enableMissionReplay') then
+  if core_replay.getState() == "inactive" and settings.getValue('enableMissionReplay') then
     core_replay.toggleAutomaticRecording()  
   end
 end

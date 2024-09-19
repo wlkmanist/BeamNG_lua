@@ -16,7 +16,7 @@ local imVec4Red = im.ImVec4(1,0.3,0.3,0.7)
 local imVec4Green = im.ImVec4(0.3,1,0.3,0.7)
 
 local localColor = im.ImVec4(1,0.8,0.6,0.75)
-local globalColor = im.ImVec4(1,0.6,0,8,0.75)
+local globalColor = im.ImVec4(1,0.6,0.8,0.75)
 local scale = 1
 function C:init()
   self.target = nil

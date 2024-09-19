@@ -13,7 +13,7 @@ local fines = {
 }
 local maxFine = {money = {amount = 100, canBeNegative = true}}
 
-local function getFine(overSpeed)
+local function getFineFromSpeed(overSpeed)
   for _, fineInfo in ipairs(fines) do
     if overSpeed <= fineInfo.overSpeed then
       return fineInfo.fine
@@ -45,15 +45,40 @@ local function onSpeedTrapTriggered(speedTrapData, playerSpeed, overSpeed)
   local inventoryId = career_modules_inventory.getInventoryIdFromVehicleId(vehId)
 
   local veh = getPlayerVehicle(0)
-  local highscore, leaderboard = gameplay_speedTrapLeaderboards.addRecord(speedTrapData, playerSpeed, overSpeed, veh)
-  if not inventoryId or hasLicensePlate(inventoryId) then
-    local fine = getFine(overSpeed)
-    career_modules_payment.pay(fine, {label="Fine for speeding", tags={"fine"}})
-    Engine.Audio.playOnce('AudioGui','event:>UI>Career>Speedcam_Snapshot')
-    ui_message(string.format("Traffic Violation: \n - %q | Fine %d$\n - {{%f | unit: \"speed\":0}} | ({{%f | unit: \"speed\":0}})", core_vehicles.getVehicleLicenseText(veh), fine.money.amount, playerSpeed, speedTrapData.speedLimit), 10, "speedTrap")
+  local vehInfo = career_modules_inventory.getVehicles()[inventoryId]
+
+  local penaltyType
+  if not inventoryId then
+    penaltyType = "default"
+  elseif hasLicensePlate(inventoryId) then
+    if vehInfo.owned then
+      penaltyType = "default"
+    elseif vehInfo.loanType == "work" then
+      penaltyType = "workVehicle"
+    end
   else
-    ui_message(string.format("Traffic Violation: \n - No license plate detected | Fine could not be issued\n - {{%f | unit: \"speed\":0}} | ({{%f | unit: \"speed\":0}})", playerSpeed, speedTrapData.speedLimit), 10, "speedTrap")
+    penaltyType = "noLicensePlate"
   end
+
+  if penaltyType == "default" then
+    local fine = getFineFromSpeed(overSpeed)
+    career_modules_payment.pay(fine, {label="Fine for speeding", tags={"fine"}})
+    ui_message(string.format("Traffic Violation: \n - %q | Fine %d$\n - {{%f | unit: \"speed\":0}} | ({{%f | unit: \"speed\":0}})", core_vehicles.getVehicleLicenseText(veh), fine.money.amount, playerSpeed, speedTrapData.speedLimit), 10, "speedTrap")
+    Engine.Audio.playOnce('AudioGui','event:>UI>Career>Speedcam_Snapshot')
+
+  elseif penaltyType == "noLicensePlate" then
+    ui_message(string.format("Traffic Violation: \n - No license plate detected | Fine could not be issued\n - {{%f | unit: \"speed\":0}} | ({{%f | unit: \"speed\":0}})", playerSpeed, speedTrapData.speedLimit), 10, "speedTrap")
+    Engine.Audio.playOnce('AudioGui','event:>UI>Career>Speedcam_Snapshot')
+
+  elseif penaltyType == "workVehicle" then
+    if vehInfo.owningOrganization then
+      local fine = {}
+      fine[vehInfo.owningOrganization .. "Reputation"] = {amount = 10, canBeNegative = true}
+      career_modules_payment.pay(fine, {label="Reputation cost for speeding", tags={"fine"}})
+    end
+  end
+
+  local highscore, leaderboard = gameplay_speedTrapLeaderboards.addRecord(speedTrapData, playerSpeed, overSpeed, veh)
 
   local message
   if highscore then
@@ -94,10 +119,11 @@ end
 local function onExtensionLoaded()
   if not career_career.isActive() then return false end
   local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+
   gameplay_speedTrapLeaderboards.loadLeaderboards(savePath .. leaderboardFolder)
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath, oldSaveDate, forceSyncSave)
+local function onSaveCurrentSaveSlot(currentSavePath)
   -- TODO maybe add option to only save file for current level
   gameplay_speedTrapLeaderboards.saveLeaderboards(currentSavePath .. leaderboardFolder, true)
 end

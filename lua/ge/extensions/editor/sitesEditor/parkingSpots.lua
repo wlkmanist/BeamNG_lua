@@ -104,7 +104,7 @@ local function createRedo(data)
   local ps = data.list:create()
 
   if lastName then
-    ps.name = lastName
+    --ps.name = lastName
   end
   ps:set(data.pos, nil, psVehScales["Car"])
   transformUtil:enableEditing(0)

@@ -4,7 +4,6 @@
 
 local im  = ui_imgui
 
-
 local C = {}
 
 C.name = 'Set Object Field'
@@ -23,7 +22,7 @@ C.icon = ui_flowgraph_editor.nodeIcons.scene
 C.tags = {}
 
 function C:work()
-  if not self.pinIn.objectId.value or not self.pinIn.fieldName.value or not self.pinIn.value then return end
+  if not self.pinIn.objectId.value or not self.pinIn.fieldName.value or not self.pinIn.value.value then return end
   local obj = scenetree.findObjectById(self.pinIn.objectId.value)
   self.pinOut.objectFound.value = (obj ~= nil)
   if not obj then return end
@@ -32,7 +31,11 @@ function C:work()
   if type(val) =='table' then
     val = table.concat(val,' ')
   end
-  obj:setField(self.pinIn.fieldName.value, self.pinIn.fieldArrayNum.value or 0, val)
+  if obj:getFields()[self.pinIn.fieldName.value] then
+    obj:setField(self.pinIn.fieldName.value, self.pinIn.fieldArrayNum.value or 0, val)
+  else
+    obj:setDynDataFieldbyName(self.pinIn.fieldName.value, self.pinIn.fieldArrayNum.value or 0, val)
+  end
   if obj.updateInstanceRenderData then obj:updateInstanceRenderData() end
 end
 

@@ -16,6 +16,7 @@ C.category = 'simple'
 C.pinSchema = {
   { dir = 'in', type = 'string', name = 'name', description = 'The name of the Object.', hidden = true },
   { dir = 'out', type = 'number', name = 'objID', description = 'The id of the first object with the given name.' },
+  { dir = 'out', type = 'bool', name = 'exist', description = 'If the object exists.', hidden=true, },
 }
 
 C.tags = {'scene'}
@@ -36,10 +37,12 @@ function C:work()
     self.objID = ob:getID()
   end
   --end
-
+  self.pinOut.exist.value = false
   if self.objID ~= nil then
     self.pinOut.objID.value = self.objID
+    self.pinOut.exist.value = true
   end
+
 end
 
 function C:onClientEndMission()

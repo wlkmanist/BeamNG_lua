@@ -60,15 +60,6 @@ local function _save()
   --log("E","_save","!!!!!!!!!!!!!!!!!!!!")
   M.forceTimerUpdate()
   _saveData()
-  if fileDataCareer then
-    local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
-    if saveSlot then
-      M.onSaveCurrentSaveSlot(savePath)
-    else
-      log("E","_save","could not save career")
-      dump(saveSlot,savePathsavePath)
-    end
-  end
 end
 
 local function onExit()
@@ -163,9 +154,11 @@ local function _runCallback(name, oldentry, newentry, career)
   nval.career = career
 
   for cbindex in pairs(cbs) do
-    if newentry.value >= cbs[cbindex].trigger then
+    if not cbs[cbindex].trigger or newentry.value >= cbs[cbindex].trigger then
       cbs[cbindex].func(name, oldentry, nval)
-      cbs[cbindex] = nil
+      if cbs[cbindex].trigger then
+        cbs[cbindex] = nil
+      end
     end
   end
 end

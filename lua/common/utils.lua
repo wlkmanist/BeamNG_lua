@@ -136,6 +136,12 @@ function dumpz(o, depth)
   log('A', "lua.utils", dumpsz(o, depth))
 end
 
+function dumpNotNil(x)
+  if x ~= nil then
+    Lua:log('A', '', dumps(x))
+  end
+end
+
 function addLevelLog(object, logLevel, origin, uniqueErrorCode, message)
   local debugInfo = debug.getinfo(2)
   if not object then
@@ -205,8 +211,7 @@ function string.stripchars(String, chrs)
 end
 
 function string.stripcharsFrontBack(str, chrs)
-  str = str:match( "^["..chrs.."]*(.+)" )
-  str = str:match( "(.-)["..chrs.."]*$" )
+  str = str:match( "^["..chrs.."]*(.-)["..chrs.."]*$" )
   return str
 end
 
@@ -1127,6 +1132,10 @@ function _kv(kv)
 end
 
 function deserialize(s)
+
+  -- if you crash here with "attempt to call a nil value" or alike, the chances are
+  -- that your serialize function emits invalid lua. I.e.: ["windowViewport"]=cdata<struct ImGuiViewport *>: 0x0257e75a5580
+
   if s == nil then return nil end
   return loadstring("return " .. s)()
 end
@@ -1267,32 +1276,53 @@ function unflattenTable(tbl)
   return tbl
 end
 
-local function sortedPairs_it(ctx)
-  local k, v
-  repeat
-    k = ctx[ctx.i]
-    if k == nil then return end
+-- keep original function as a backup and use the backup inside sortedPairs. this allows to execute 'pairs = sortedPairs' to make that kind of loops deterministic
+local unsortedPairs = pairs
+
+local function pairs_it(ctx)
+  local k = ctx[ctx.i]
+  while k ~= nil do
     ctx.i = ctx.i + 1
-    v = ctx.t[k]
-  until v ~= nil
-  return k, v
+    local v = ctx.t[k]
+    if v ~= nil then return k, v end
+    k = ctx[ctx.i]
+  end
 end
 
 function sortedPairs(t, ctx, f)
   if ctx then
     table.clear(ctx)
   else
-    ctx = table.new(#t, 10)
+    ctx = table.new(#t, 2)
+  end
+  local i = 0
+  for k in unsortedPairs(t) do
+    i = i + 1
+    ctx[i] = k
+  end
+  table.sort(ctx, f or tableSortCompareMultiType)
+  ctx.i, ctx.t = 1, t
+  return pairs_it, ctx
+end
+
+-- like pairs but in guaranteed random order
+function shuffledPairs(t, ctx)
+  if ctx then
+    table.clear(ctx)
+  else
+    ctx = table.new(#t, 2)
   end
   local i = 0
   for k in pairs(t) do
     i = i + 1
     ctx[i] = k
   end
-  table.sort(ctx, f or tableSortCompareMultiType)
+  arrayShuffle(ctx)
   ctx.i, ctx.t = 1, t
-  return sortedPairs_it, ctx
+  return pairs_it, ctx
 end
+
+--pairs = sortedPairs -- uncomment this line to make 'pairs' deterministic (see also: unsortedPairs)
 
 function hex_dump(str)
   local len, hex, asc = string.len(str), '', ''
@@ -1309,9 +1339,17 @@ function hex_dump(str)
   print(hex .. string.rep("   ", 8 - len % 8 ) .. asc)
 end
 
-function simpleDebugText3d(text, pos, radius, sphereColor)
-  debugDrawer:drawTextAdvanced(pos, String(tostring(text or "")), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
+function simpleDebugText3d(text, pos, radius, sphereColor, dir)
+  if text then
+    debugDrawer:drawTextAdvanced(pos, String(tostring(text or "")), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
+  end
   if radius and radius > 0 then
     debugDrawer:drawSphere(pos, radius, sphereColor or ColorF(1,1,1,0.25))
+  end
+  if dir then
+    local x,y,z = vec3(radius,0,0)*dir,vec3(0,radius,0)*dir,vec3(0,0,radius)*dir
+    simpleDebugText3d(nil, pos + x, 0.1, ColorF(1,0,0,0.25))
+    simpleDebugText3d(nil, pos + y, 0.1, ColorF(0,1,0,0.25))
+    simpleDebugText3d(nil, pos + z, 0.1, ColorF(0,0,1,0.25))
   end
 end

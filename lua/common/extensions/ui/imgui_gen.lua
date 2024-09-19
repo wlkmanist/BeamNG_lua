@@ -16,67 +16,67 @@ function M.NewFrame() C.imgui_NewFrame() end
 function M.EndFrame() C.imgui_EndFrame() end
 function M.Render() C.imgui_Render() end
 function M.GetDrawData() return C.imgui_GetDrawData() end
-function M.ShowDemoWindow(bool_p_open) 
+function M.ShowDemoWindow(bool_p_open)
   -- bool_p_open is optional and can be nil
   C.imgui_ShowDemoWindow(bool_p_open)
 end
-function M.ShowMetricsWindow(bool_p_open) 
+function M.ShowMetricsWindow(bool_p_open)
   -- bool_p_open is optional and can be nil
   C.imgui_ShowMetricsWindow(bool_p_open)
 end
-function M.ShowDebugLogWindow(bool_p_open) 
+function M.ShowDebugLogWindow(bool_p_open)
   -- bool_p_open is optional and can be nil
   C.imgui_ShowDebugLogWindow(bool_p_open)
 end
-function M.ShowStackToolWindow(bool_p_open) 
+function M.ShowStackToolWindow(bool_p_open)
   -- bool_p_open is optional and can be nil
   C.imgui_ShowStackToolWindow(bool_p_open)
 end
-function M.ShowAboutWindow(bool_p_open) 
+function M.ShowAboutWindow(bool_p_open)
   -- bool_p_open is optional and can be nil
   C.imgui_ShowAboutWindow(bool_p_open)
 end
-function M.ShowStyleEditor(ImGuiStyle_ref) 
+function M.ShowStyleEditor(ImGuiStyle_ref)
   -- ImGuiStyle_ref is optional and can be nil
   C.imgui_ShowStyleEditor(ImGuiStyle_ref)
 end
-function M.ShowStyleSelector(string_label) 
+function M.ShowStyleSelector(string_label)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ShowStyleSelector' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ShowStyleSelector(string_label)
 end
-function M.ShowFontSelector(string_label) 
+function M.ShowFontSelector(string_label)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ShowFontSelector' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ShowFontSelector(string_label)
 end
 function M.ShowUserGuide() C.imgui_ShowUserGuide() end
 function M.GetVersion() return C.imgui_GetVersion() end
-function M.StyleColorsDark(ImGuiStyle_dst) 
+function M.StyleColorsDark(ImGuiStyle_dst)
   -- ImGuiStyle_dst is optional and can be nil
   C.imgui_StyleColorsDark(ImGuiStyle_dst)
 end
-function M.StyleColorsLight(ImGuiStyle_dst) 
+function M.StyleColorsLight(ImGuiStyle_dst)
   -- ImGuiStyle_dst is optional and can be nil
   C.imgui_StyleColorsLight(ImGuiStyle_dst)
 end
-function M.StyleColorsClassic(ImGuiStyle_dst) 
+function M.StyleColorsClassic(ImGuiStyle_dst)
   -- ImGuiStyle_dst is optional and can be nil
   C.imgui_StyleColorsClassic(ImGuiStyle_dst)
 end
-function M.Begin(string_name, bool_p_open, ImGuiWindowFlags_flags) 
+function M.Begin(string_name, bool_p_open, ImGuiWindowFlags_flags)
   -- bool_p_open is optional and can be nil
   if ImGuiWindowFlags_flags == nil then ImGuiWindowFlags_flags = 0 end
   if string_name == nil then log("E", "", "Parameter 'string_name' of function 'Begin' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_Begin(string_name, bool_p_open, ImGuiWindowFlags_flags)
 end
 function M.End() C.imgui_End() end
-function M.BeginChild1(string_str_id, ImVec2_size, bool_border, ImGuiWindowFlags_flags) 
+function M.BeginChild1(string_str_id, ImVec2_size, bool_border, ImGuiWindowFlags_flags)
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if bool_border == nil then bool_border = false end
   if ImGuiWindowFlags_flags == nil then ImGuiWindowFlags_flags = 0 end
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'BeginChild1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginChild1(string_str_id, ImVec2_size, bool_border, ImGuiWindowFlags_flags)
 end
-function M.BeginChild2(ImGuiID_id, ImVec2_size, bool_border, ImGuiWindowFlags_flags) 
+function M.BeginChild2(ImGuiID_id, ImVec2_size, bool_border, ImGuiWindowFlags_flags)
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if bool_border == nil then bool_border = false end
   if ImGuiWindowFlags_flags == nil then ImGuiWindowFlags_flags = 0 end
@@ -85,11 +85,11 @@ end
 function M.EndChild() C.imgui_EndChild() end
 function M.IsWindowAppearing() return C.imgui_IsWindowAppearing() end
 function M.IsWindowCollapsed() return C.imgui_IsWindowCollapsed() end
-function M.IsWindowFocused(ImGuiFocusedFlags_flags) 
+function M.IsWindowFocused(ImGuiFocusedFlags_flags)
   if ImGuiFocusedFlags_flags == nil then ImGuiFocusedFlags_flags = 0 end
   return C.imgui_IsWindowFocused(ImGuiFocusedFlags_flags)
 end
-function M.IsWindowHovered(ImGuiHoveredFlags_flags) 
+function M.IsWindowHovered(ImGuiHoveredFlags_flags)
   if ImGuiHoveredFlags_flags == nil then ImGuiHoveredFlags_flags = 0 end
   return C.imgui_IsWindowHovered(ImGuiHoveredFlags_flags)
 end
@@ -100,22 +100,22 @@ function M.GetWindowSize() return C.imgui_GetWindowSize() end
 function M.GetWindowWidth() return C.imgui_GetWindowWidth() end
 function M.GetWindowHeight() return C.imgui_GetWindowHeight() end
 function M.GetWindowViewport() return C.imgui_GetWindowViewport() end
-function M.SetNextWindowPos(ImVec2_pos, ImGuiCond_cond, ImVec2_pivot) 
+function M.SetNextWindowPos(ImVec2_pos, ImGuiCond_cond, ImVec2_pivot)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   if ImVec2_pivot == nil then ImVec2_pivot = M.ImVec2(0,0) end
   C.imgui_SetNextWindowPos(ImVec2_pos, ImGuiCond_cond, ImVec2_pivot)
 end
-function M.SetNextWindowSize(ImVec2_size, ImGuiCond_cond) 
+function M.SetNextWindowSize(ImVec2_size, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   C.imgui_SetNextWindowSize(ImVec2_size, ImGuiCond_cond)
 end
-function M.SetNextWindowSizeConstraints(ImVec2_size_min, ImVec2_size_max, ImGuiSizeCallback_custom_callback, void_custom_callback_data) 
+function M.SetNextWindowSizeConstraints(ImVec2_size_min, ImVec2_size_max, ImGuiSizeCallback_custom_callback, void_custom_callback_data)
   -- ImGuiSizeCallback_custom_callback is optional and can be nil
   -- void_custom_callback_data is optional and can be nil
   C.imgui_SetNextWindowSizeConstraints(ImVec2_size_min, ImVec2_size_max, ImGuiSizeCallback_custom_callback, void_custom_callback_data)
 end
 function M.SetNextWindowContentSize(ImVec2_size) C.imgui_SetNextWindowContentSize(ImVec2_size) end
-function M.SetNextWindowCollapsed(bool_collapsed, ImGuiCond_cond) 
+function M.SetNextWindowCollapsed(bool_collapsed, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   C.imgui_SetNextWindowCollapsed(bool_collapsed, ImGuiCond_cond)
 end
@@ -123,36 +123,36 @@ function M.SetNextWindowFocus() C.imgui_SetNextWindowFocus() end
 function M.SetNextWindowScroll(ImVec2_scroll) C.imgui_SetNextWindowScroll(ImVec2_scroll) end
 function M.SetNextWindowBgAlpha(float_alpha) C.imgui_SetNextWindowBgAlpha(float_alpha) end
 function M.SetNextWindowViewport(ImGuiID_viewport_id) C.imgui_SetNextWindowViewport(ImGuiID_viewport_id) end
-function M.SetWindowPos1(ImVec2_pos, ImGuiCond_cond) 
+function M.SetWindowPos1(ImVec2_pos, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   C.imgui_SetWindowPos1(ImVec2_pos, ImGuiCond_cond)
 end
-function M.SetWindowSize1(ImVec2_size, ImGuiCond_cond) 
+function M.SetWindowSize1(ImVec2_size, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   C.imgui_SetWindowSize1(ImVec2_size, ImGuiCond_cond)
 end
-function M.SetWindowCollapsed1(bool_collapsed, ImGuiCond_cond) 
+function M.SetWindowCollapsed1(bool_collapsed, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   C.imgui_SetWindowCollapsed1(bool_collapsed, ImGuiCond_cond)
 end
 function M.SetWindowFocus1() C.imgui_SetWindowFocus1() end
 function M.SetWindowFontScale(float_scale) C.imgui_SetWindowFontScale(float_scale) end
-function M.SetWindowPos2(string_name, ImVec2_pos, ImGuiCond_cond) 
+function M.SetWindowPos2(string_name, ImVec2_pos, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   if string_name == nil then log("E", "", "Parameter 'string_name' of function 'SetWindowPos2' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetWindowPos2(string_name, ImVec2_pos, ImGuiCond_cond)
 end
-function M.SetWindowSize2(string_name, ImVec2_size, ImGuiCond_cond) 
+function M.SetWindowSize2(string_name, ImVec2_size, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   if string_name == nil then log("E", "", "Parameter 'string_name' of function 'SetWindowSize2' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetWindowSize2(string_name, ImVec2_size, ImGuiCond_cond)
 end
-function M.SetWindowCollapsed2(string_name, bool_collapsed, ImGuiCond_cond) 
+function M.SetWindowCollapsed2(string_name, bool_collapsed, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   if string_name == nil then log("E", "", "Parameter 'string_name' of function 'SetWindowCollapsed2' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetWindowCollapsed2(string_name, bool_collapsed, ImGuiCond_cond)
 end
-function M.SetWindowFocus2(string_name) 
+function M.SetWindowFocus2(string_name)
   if string_name == nil then log("E", "", "Parameter 'string_name' of function 'SetWindowFocus2' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetWindowFocus2(string_name)
 end
@@ -168,36 +168,36 @@ function M.SetScrollX(float_scroll_x) C.imgui_SetScrollX(float_scroll_x) end
 function M.SetScrollY(float_scroll_y) C.imgui_SetScrollY(float_scroll_y) end
 function M.GetScrollMaxX() return C.imgui_GetScrollMaxX() end
 function M.GetScrollMaxY() return C.imgui_GetScrollMaxY() end
-function M.SetScrollHereX(float_center_x_ratio) 
+function M.SetScrollHereX(float_center_x_ratio)
   if float_center_x_ratio == nil then float_center_x_ratio = 0.5 end
   C.imgui_SetScrollHereX(float_center_x_ratio)
 end
-function M.SetScrollHereY(float_center_y_ratio) 
+function M.SetScrollHereY(float_center_y_ratio)
   if float_center_y_ratio == nil then float_center_y_ratio = 0.5 end
   C.imgui_SetScrollHereY(float_center_y_ratio)
 end
-function M.SetScrollFromPosX(float_local_x, float_center_x_ratio) 
+function M.SetScrollFromPosX(float_local_x, float_center_x_ratio)
   if float_center_x_ratio == nil then float_center_x_ratio = 0.5 end
   C.imgui_SetScrollFromPosX(float_local_x, float_center_x_ratio)
 end
-function M.SetScrollFromPosY(float_local_y, float_center_y_ratio) 
+function M.SetScrollFromPosY(float_local_y, float_center_y_ratio)
   if float_center_y_ratio == nil then float_center_y_ratio = 0.5 end
   C.imgui_SetScrollFromPosY(float_local_y, float_center_y_ratio)
 end
-function M.PushFont(ImFont_font) 
+function M.PushFont(ImFont_font)
   if ImFont_font == nil then log("E", "", "Parameter 'ImFont_font' of function 'PushFont' cannot be nil, as the c type is 'ImFont *'") ; return end
   C.imgui_PushFont(ImFont_font)
 end
 function M.PopFont() C.imgui_PopFont() end
 function M.PushStyleColor1(ImGuiCol_idx, ImU32_col) C.imgui_PushStyleColor1(ImGuiCol_idx, ImU32_col) end
 function M.PushStyleColor2(ImGuiCol_idx, ImVec4_col) C.imgui_PushStyleColor2(ImGuiCol_idx, ImVec4_col) end
-function M.PopStyleColor(int_count) 
+function M.PopStyleColor(int_count)
   if int_count == nil then int_count = 1 end
   C.imgui_PopStyleColor(int_count)
 end
 function M.PushStyleVar1(ImGuiStyleVar_idx, float_val) C.imgui_PushStyleVar1(ImGuiStyleVar_idx, float_val) end
 function M.PushStyleVar2(ImGuiStyleVar_idx, ImVec2_val) C.imgui_PushStyleVar2(ImGuiStyleVar_idx, ImVec2_val) end
-function M.PopStyleVar(int_count) 
+function M.PopStyleVar(int_count)
   if int_count == nil then int_count = 1 end
   C.imgui_PopStyleVar(int_count)
 end
@@ -211,7 +211,7 @@ function M.PushItemWidth(float_item_width) C.imgui_PushItemWidth(float_item_widt
 function M.PopItemWidth() C.imgui_PopItemWidth() end
 function M.SetNextItemWidth(float_item_width) C.imgui_SetNextItemWidth(float_item_width) end
 function M.CalcItemWidth() return C.imgui_CalcItemWidth() end
-function M.PushTextWrapPos(float_wrap_local_pos_x) 
+function M.PushTextWrapPos(float_wrap_local_pos_x)
   if float_wrap_local_pos_x == nil then float_wrap_local_pos_x = 0 end
   C.imgui_PushTextWrapPos(float_wrap_local_pos_x)
 end
@@ -219,7 +219,7 @@ function M.PopTextWrapPos() C.imgui_PopTextWrapPos() end
 function M.GetFont() return C.imgui_GetFont() end
 function M.GetFontSize() return C.imgui_GetFontSize() end
 function M.GetFontTexUvWhitePixel() return C.imgui_GetFontTexUvWhitePixel() end
-function M.GetColorU321(ImGuiCol_idx, float_alpha_mul) 
+function M.GetColorU321(ImGuiCol_idx, float_alpha_mul)
   if float_alpha_mul == nil then float_alpha_mul = 1 end
   return C.imgui_GetColorU321(ImGuiCol_idx, float_alpha_mul)
 end
@@ -227,7 +227,7 @@ function M.GetColorU322(ImVec4_col) return C.imgui_GetColorU322(ImVec4_col) end
 function M.GetColorU323(ImU32_col) return C.imgui_GetColorU323(ImU32_col) end
 function M.GetStyleColorVec4(ImGuiCol_idx) return C.imgui_GetStyleColorVec4(ImGuiCol_idx) end
 function M.Separator() C.imgui_Separator() end
-function M.SameLine(float_offset_from_start_x, float_spacing) 
+function M.SameLine(float_offset_from_start_x, float_spacing)
   if float_offset_from_start_x == nil then float_offset_from_start_x = 0 end
   if float_spacing == nil then float_spacing = -1 end
   C.imgui_SameLine(float_offset_from_start_x, float_spacing)
@@ -235,11 +235,11 @@ end
 function M.NewLine() C.imgui_NewLine() end
 function M.Spacing() C.imgui_Spacing() end
 function M.Dummy(ImVec2_size) C.imgui_Dummy(ImVec2_size) end
-function M.Indent(float_indent_w) 
+function M.Indent(float_indent_w)
   if float_indent_w == nil then float_indent_w = 0 end
   C.imgui_Indent(float_indent_w)
 end
-function M.Unindent(float_indent_w) 
+function M.Unindent(float_indent_w)
   if float_indent_w == nil then float_indent_w = 0 end
   C.imgui_Unindent(float_indent_w)
 end
@@ -259,94 +259,94 @@ function M.GetTextLineHeight() return C.imgui_GetTextLineHeight() end
 function M.GetTextLineHeightWithSpacing() return C.imgui_GetTextLineHeightWithSpacing() end
 function M.GetFrameHeight() return C.imgui_GetFrameHeight() end
 function M.GetFrameHeightWithSpacing() return C.imgui_GetFrameHeightWithSpacing() end
-function M.PushID1(string_str_id) 
+function M.PushID1(string_str_id)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'PushID1' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_PushID1(string_str_id)
 end
-function M.PushID2(string_str_id_begin, string_str_id_end) 
+function M.PushID2(string_str_id_begin, string_str_id_end)
   if string_str_id_begin == nil then log("E", "", "Parameter 'string_str_id_begin' of function 'PushID2' cannot be nil, as the c type is 'const char *'") ; return end
   if string_str_id_end == nil then log("E", "", "Parameter 'string_str_id_end' of function 'PushID2' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_PushID2(string_str_id_begin, string_str_id_end)
 end
-function M.PushID3(void_ptr_id) 
+function M.PushID3(void_ptr_id)
   if void_ptr_id == nil then log("E", "", "Parameter 'void_ptr_id' of function 'PushID3' cannot be nil, as the c type is 'const void *'") ; return end
   C.imgui_PushID3(void_ptr_id)
 end
 function M.PushID4(int_int_id) C.imgui_PushID4(int_int_id) end
 function M.PopID() C.imgui_PopID() end
-function M.GetID1(string_str_id) 
+function M.GetID1(string_str_id)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'GetID1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_GetID1(string_str_id)
 end
-function M.GetID2(string_str_id_begin, string_str_id_end) 
+function M.GetID2(string_str_id_begin, string_str_id_end)
   if string_str_id_begin == nil then log("E", "", "Parameter 'string_str_id_begin' of function 'GetID2' cannot be nil, as the c type is 'const char *'") ; return end
   if string_str_id_end == nil then log("E", "", "Parameter 'string_str_id_end' of function 'GetID2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_GetID2(string_str_id_begin, string_str_id_end)
 end
-function M.GetID3(void_ptr_id) 
+function M.GetID3(void_ptr_id)
   if void_ptr_id == nil then log("E", "", "Parameter 'void_ptr_id' of function 'GetID3' cannot be nil, as the c type is 'const void *'") ; return end
   return C.imgui_GetID3(void_ptr_id)
 end
-function M.TextUnformatted(string_text, string_text_end) 
+function M.TextUnformatted(string_text, string_text_end)
   -- string_text_end is optional and can be nil
   if string_text == nil then log("E", "", "Parameter 'string_text' of function 'TextUnformatted' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextUnformatted(string_text, string_text_end)
 end
-function M.Text(string_fmt, ...) 
+function M.Text(string_fmt, ...)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'Text' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_Text(string_fmt, ...)
 end
-function M.TextV(string_fmt, va_list_args) 
+function M.TextV(string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TextV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextV(string_fmt, va_list_args)
 end
-function M.TextColored(ImVec4_col, string_fmt, ...) 
+function M.TextColored(ImVec4_col, string_fmt, ...)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TextColored' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextColored(ImVec4_col, string_fmt, ...)
 end
-function M.TextColoredV(ImVec4_col, string_fmt, va_list_args) 
+function M.TextColoredV(ImVec4_col, string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TextColoredV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextColoredV(ImVec4_col, string_fmt, va_list_args)
 end
-function M.TextDisabled(string_fmt, ...) 
+function M.TextDisabled(string_fmt, ...)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TextDisabled' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextDisabled(string_fmt, ...)
 end
-function M.TextDisabledV(string_fmt, va_list_args) 
+function M.TextDisabledV(string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TextDisabledV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextDisabledV(string_fmt, va_list_args)
 end
-function M.TextWrapped(string_fmt, ...) 
+function M.TextWrapped(string_fmt, ...)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TextWrapped' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextWrapped(string_fmt, ...)
 end
-function M.TextWrappedV(string_fmt, va_list_args) 
+function M.TextWrappedV(string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TextWrappedV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TextWrappedV(string_fmt, va_list_args)
 end
-function M.LabelText(string_label, string_fmt, ...) 
+function M.LabelText(string_label, string_fmt, ...)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'LabelText' cannot be nil, as the c type is 'const char *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'LabelText' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_LabelText(string_label, string_fmt, ...)
 end
-function M.LabelTextV(string_label, string_fmt, va_list_args) 
+function M.LabelTextV(string_label, string_fmt, va_list_args)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'LabelTextV' cannot be nil, as the c type is 'const char *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'LabelTextV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_LabelTextV(string_label, string_fmt, va_list_args)
 end
-function M.BulletText(string_fmt, ...) 
+function M.BulletText(string_fmt, ...)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'BulletText' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_BulletText(string_fmt, ...)
 end
-function M.BulletTextV(string_fmt, va_list_args) 
+function M.BulletTextV(string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'BulletTextV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_BulletTextV(string_fmt, va_list_args)
 end
-function M.SeparatorText(string_label) 
+function M.SeparatorText(string_label)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SeparatorText' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SeparatorText(string_label)
 end
-function M.Button(string_label, ImVec2_size) 
+function M.Button(string_label, ImVec2_size)
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Button' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_PushStyleVar2(M.StyleVar_FramePadding, M.ImVec2(6,2))
@@ -354,16 +354,16 @@ function M.Button(string_label, ImVec2_size)
   C.imgui_PopStyleVar(1)
   return retVal
 end
-function M.SmallButton(string_label) 
+function M.SmallButton(string_label)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SmallButton' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_SmallButton(string_label)
 end
-function M.InvisibleButton(string_str_id, ImVec2_size, ImGuiButtonFlags_flags) 
+function M.InvisibleButton(string_str_id, ImVec2_size, ImGuiButtonFlags_flags)
   if ImGuiButtonFlags_flags == nil then ImGuiButtonFlags_flags = 0 end
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'InvisibleButton' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_InvisibleButton(string_str_id, ImVec2_size, ImGuiButtonFlags_flags)
 end
-function M.ArrowButton(string_str_id, ImGuiDir_dir) 
+function M.ArrowButton(string_str_id, ImGuiDir_dir)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'ArrowButton' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ArrowButton(string_str_id, ImGuiDir_dir)
 end
@@ -374,7 +374,7 @@ function M.Image(ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv
   if ImVec4_border_col == nil then ImVec4_border_col = M.ImVec4(0,0,0,0) end
   C.imgui_Image(ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv1, ImVec4_tint_col, ImVec4_border_col)
 end
-function M.ImageButton(string_str_id, ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv1, ImVec4_bg_col, ImVec4_tint_col) 
+function M.ImageButton(string_str_id, ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv1, ImVec4_bg_col, ImVec4_tint_col)
   if ImVec2_uv0 == nil then ImVec2_uv0 = M.ImVec2(0,0) end
   if ImVec2_uv1 == nil then ImVec2_uv1 = M.ImVec2(1,1) end
   if ImVec4_bg_col == nil then ImVec4_bg_col = M.ImVec4(0,0,0,0) end
@@ -382,58 +382,58 @@ function M.ImageButton(string_str_id, ImTextureID_user_texture_id, ImVec2_size, 
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'ImageButton' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ImageButton1(string_str_id, ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv1, ImVec4_bg_col, ImVec4_tint_col)
 end
-function M.Checkbox(string_label, bool_v) 
+function M.Checkbox(string_label, bool_v)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Checkbox' cannot be nil, as the c type is 'const char *'") ; return end
   if bool_v == nil then log("E", "", "Parameter 'bool_v' of function 'Checkbox' cannot be nil, as the c type is 'bool *'") ; return end
   return C.imgui_Checkbox(string_label, bool_v)
 end
-function M.CheckboxFlags1(string_label, int_flags, int_flags_value) 
+function M.CheckboxFlags1(string_label, int_flags, int_flags_value)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'CheckboxFlags1' cannot be nil, as the c type is 'const char *'") ; return end
   if int_flags == nil then log("E", "", "Parameter 'int_flags' of function 'CheckboxFlags1' cannot be nil, as the c type is 'int *'") ; return end
   return C.imgui_CheckboxFlags1(string_label, int_flags, int_flags_value)
 end
-function M.CheckboxFlags2(string_label, int_flags, int_flags_value) 
+function M.CheckboxFlags2(string_label, int_flags, int_flags_value)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'CheckboxFlags2' cannot be nil, as the c type is 'const char *'") ; return end
   if int_flags == nil then log("E", "", "Parameter 'int_flags' of function 'CheckboxFlags2' cannot be nil, as the c type is 'unsigned int *'") ; return end
   return C.imgui_CheckboxFlags2(string_label, int_flags, int_flags_value)
 end
-function M.RadioButton1(string_label, bool_active) 
+function M.RadioButton1(string_label, bool_active)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'RadioButton1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_RadioButton1(string_label, bool_active)
 end
-function M.RadioButton2(string_label, int_v, int_v_button) 
+function M.RadioButton2(string_label, int_v, int_v_button)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'RadioButton2' cannot be nil, as the c type is 'const char *'") ; return end
   if int_v == nil then log("E", "", "Parameter 'int_v' of function 'RadioButton2' cannot be nil, as the c type is 'int *'") ; return end
   return C.imgui_RadioButton2(string_label, int_v, int_v_button)
 end
-function M.ProgressBar(float_fraction, ImVec2_size_arg, string_overlay) 
+function M.ProgressBar(float_fraction, ImVec2_size_arg, string_overlay)
   if ImVec2_size_arg == nil then ImVec2_size_arg = M.ImVec2(-FLT_MIN,0) end
   -- string_overlay is optional and can be nil
   C.imgui_ProgressBar(float_fraction, ImVec2_size_arg, string_overlay)
 end
 function M.Bullet() C.imgui_Bullet() end
-function M.BeginCombo(string_label, string_preview_value, ImGuiComboFlags_flags) 
+function M.BeginCombo(string_label, string_preview_value, ImGuiComboFlags_flags)
   if ImGuiComboFlags_flags == nil then ImGuiComboFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'BeginCombo' cannot be nil, as the c type is 'const char *'") ; return end
   if string_preview_value == nil then log("E", "", "Parameter 'string_preview_value' of function 'BeginCombo' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginCombo(string_label, string_preview_value, ImGuiComboFlags_flags)
 end
 function M.EndCombo() C.imgui_EndCombo() end
-function M.Combo1(string_label, int_current_item, charconstPtr_items, int_items_count, int_popup_max_height_in_items) 
+function M.Combo1(string_label, int_current_item, charconstPtr_items, int_items_count, int_popup_max_height_in_items)
   if int_popup_max_height_in_items == nil then int_popup_max_height_in_items = -1 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Combo1' cannot be nil, as the c type is 'const char *'") ; return end
   if int_current_item == nil then log("E", "", "Parameter 'int_current_item' of function 'Combo1' cannot be nil, as the c type is 'int *'") ; return end
   if charconstPtr_items == nil then log("E", "", "Parameter 'charconstPtr_items' of function 'Combo1' cannot be nil, as the c type is 'const char *const[]'") ; return end
   return C.imgui_Combo1(string_label, int_current_item, charconstPtr_items, int_items_count, int_popup_max_height_in_items)
 end
-function M.Combo2(string_label, int_current_item, string_items_separated_by_zeros, int_popup_max_height_in_items) 
+function M.Combo2(string_label, int_current_item, string_items_separated_by_zeros, int_popup_max_height_in_items)
   if int_popup_max_height_in_items == nil then int_popup_max_height_in_items = -1 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Combo2' cannot be nil, as the c type is 'const char *'") ; return end
   if int_current_item == nil then log("E", "", "Parameter 'int_current_item' of function 'Combo2' cannot be nil, as the c type is 'int *'") ; return end
   if string_items_separated_by_zeros == nil then log("E", "", "Parameter 'string_items_separated_by_zeros' of function 'Combo2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_Combo2(string_label, int_current_item, string_items_separated_by_zeros, int_popup_max_height_in_items)
 end
-function M.Combo3(string_label, int_current_item, functionPtr_items_getter, void_data, int_items_count, int_popup_max_height_in_items) 
+function M.Combo3(string_label, int_current_item, functionPtr_items_getter, void_data, int_items_count, int_popup_max_height_in_items)
   if int_popup_max_height_in_items == nil then int_popup_max_height_in_items = -1 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Combo3' cannot be nil, as the c type is 'const char *'") ; return end
   if int_current_item == nil then log("E", "", "Parameter 'int_current_item' of function 'Combo3' cannot be nil, as the c type is 'int *'") ; return end
@@ -441,7 +441,7 @@ function M.Combo3(string_label, int_current_item, functionPtr_items_getter, void
   if void_data == nil then log("E", "", "Parameter 'void_data' of function 'Combo3' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_Combo3(string_label, int_current_item, functionPtr_items_getter, void_data, int_items_count, int_popup_max_height_in_items)
 end
-function M.DragFloat(string_label, float_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragFloat(string_label, float_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if float_v_min == nil then float_v_min = 0 end
   if float_v_max == nil then float_v_max = 0 end
@@ -451,7 +451,7 @@ function M.DragFloat(string_label, float_v, float_v_speed, float_v_min, float_v_
   if float_v == nil then log("E", "", "Parameter 'float_v' of function 'DragFloat' cannot be nil, as the c type is 'float *'") ; return end
   return C.imgui_DragFloat(string_label, float_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragFloat2(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragFloat2(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if float_v_min == nil then float_v_min = 0 end
   if float_v_max == nil then float_v_max = 0 end
@@ -460,7 +460,7 @@ function M.DragFloat2(string_label, floatPtr_v, float_v_speed, float_v_min, floa
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'DragFloat2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_DragFloat2(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragFloat3(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragFloat3(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if float_v_min == nil then float_v_min = 0 end
   if float_v_max == nil then float_v_max = 0 end
@@ -469,7 +469,7 @@ function M.DragFloat3(string_label, floatPtr_v, float_v_speed, float_v_min, floa
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'DragFloat3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_DragFloat3(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragFloat4(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragFloat4(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if float_v_min == nil then float_v_min = 0 end
   if float_v_max == nil then float_v_max = 0 end
@@ -478,7 +478,7 @@ function M.DragFloat4(string_label, floatPtr_v, float_v_speed, float_v_min, floa
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'DragFloat4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_DragFloat4(string_label, floatPtr_v, float_v_speed, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragFloatRange2(string_label, float_v_current_min, float_v_current_max, float_v_speed, float_v_min, float_v_max, string_format, string_format_max, ImGuiSliderFlags_flags) 
+function M.DragFloatRange2(string_label, float_v_current_min, float_v_current_max, float_v_speed, float_v_min, float_v_max, string_format, string_format_max, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if float_v_min == nil then float_v_min = 0 end
   if float_v_max == nil then float_v_max = 0 end
@@ -490,7 +490,7 @@ function M.DragFloatRange2(string_label, float_v_current_min, float_v_current_ma
   if float_v_current_max == nil then log("E", "", "Parameter 'float_v_current_max' of function 'DragFloatRange2' cannot be nil, as the c type is 'float *'") ; return end
   return C.imgui_DragFloatRange2(string_label, float_v_current_min, float_v_current_max, float_v_speed, float_v_min, float_v_max, string_format, string_format_max, ImGuiSliderFlags_flags)
 end
-function M.DragInt(string_label, int_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragInt(string_label, int_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if int_v_min == nil then int_v_min = 0 end
   if int_v_max == nil then int_v_max = 0 end
@@ -500,7 +500,7 @@ function M.DragInt(string_label, int_v, float_v_speed, int_v_min, int_v_max, str
   if int_v == nil then log("E", "", "Parameter 'int_v' of function 'DragInt' cannot be nil, as the c type is 'int *'") ; return end
   return C.imgui_DragInt(string_label, int_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragInt2(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragInt2(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if int_v_min == nil then int_v_min = 0 end
   if int_v_max == nil then int_v_max = 0 end
@@ -509,7 +509,7 @@ function M.DragInt2(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max,
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'DragInt2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_DragInt2(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragInt3(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragInt3(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if int_v_min == nil then int_v_min = 0 end
   if int_v_max == nil then int_v_max = 0 end
@@ -518,7 +518,7 @@ function M.DragInt3(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max,
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'DragInt3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_DragInt3(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragInt4(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragInt4(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if int_v_min == nil then int_v_min = 0 end
   if int_v_max == nil then int_v_max = 0 end
@@ -527,7 +527,7 @@ function M.DragInt4(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max,
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'DragInt4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_DragInt4(string_label, intPtr_v, float_v_speed, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragIntRange2(string_label, int_v_current_min, int_v_current_max, float_v_speed, int_v_min, int_v_max, string_format, string_format_max, ImGuiSliderFlags_flags) 
+function M.DragIntRange2(string_label, int_v_current_min, int_v_current_max, float_v_speed, int_v_min, int_v_max, string_format, string_format_max, ImGuiSliderFlags_flags)
   if float_v_speed == nil then float_v_speed = 1 end
   if int_v_min == nil then int_v_min = 0 end
   if int_v_max == nil then int_v_max = 0 end
@@ -539,7 +539,7 @@ function M.DragIntRange2(string_label, int_v_current_min, int_v_current_max, flo
   if int_v_current_max == nil then log("E", "", "Parameter 'int_v_current_max' of function 'DragIntRange2' cannot be nil, as the c type is 'int *'") ; return end
   return C.imgui_DragIntRange2(string_label, int_v_current_min, int_v_current_max, float_v_speed, int_v_min, int_v_max, string_format, string_format_max, ImGuiSliderFlags_flags)
 end
-function M.DragScalar(string_label, ImGuiDataType_data_type, void_p_data, float_v_speed, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragScalar(string_label, ImGuiDataType_data_type, void_p_data, float_v_speed, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
   -- void_p_min is optional and can be nil
   -- void_p_max is optional and can be nil
   -- string_format is optional and can be nil
@@ -548,7 +548,7 @@ function M.DragScalar(string_label, ImGuiDataType_data_type, void_p_data, float_
   if void_p_data == nil then log("E", "", "Parameter 'void_p_data' of function 'DragScalar' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_DragScalar(string_label, ImGuiDataType_data_type, void_p_data, float_v_speed, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.DragScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, float_v_speed, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags) 
+function M.DragScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, float_v_speed, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
   -- void_p_min is optional and can be nil
   -- void_p_max is optional and can be nil
   -- string_format is optional and can be nil
@@ -557,32 +557,32 @@ function M.DragScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_c
   if void_p_data == nil then log("E", "", "Parameter 'void_p_data' of function 'DragScalarN' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_DragScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, float_v_speed, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderFloat(string_label, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderFloat(string_label, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderFloat' cannot be nil, as the c type is 'const char *'") ; return end
   if float_v == nil then log("E", "", "Parameter 'float_v' of function 'SliderFloat' cannot be nil, as the c type is 'float *'") ; return end
   return C.imgui_SliderFloat(string_label, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderFloat2(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderFloat2(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderFloat2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_SliderFloat2(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderFloat3(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderFloat3(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderFloat3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_SliderFloat3(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderFloat4(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderFloat4(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderFloat4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_SliderFloat4(string_label, floatPtr_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderAngle(string_label, float_v_rad, float_v_degrees_min, float_v_degrees_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderAngle(string_label, float_v_rad, float_v_degrees_min, float_v_degrees_max, string_format, ImGuiSliderFlags_flags)
   if float_v_degrees_min == nil then float_v_degrees_min = -360 end
   if float_v_degrees_max == nil then float_v_degrees_max = 360 end
   if string_format == nil then string_format = "%.0f deg" end
@@ -591,32 +591,32 @@ function M.SliderAngle(string_label, float_v_rad, float_v_degrees_min, float_v_d
   if float_v_rad == nil then log("E", "", "Parameter 'float_v_rad' of function 'SliderAngle' cannot be nil, as the c type is 'float *'") ; return end
   return C.imgui_SliderAngle(string_label, float_v_rad, float_v_degrees_min, float_v_degrees_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderInt(string_label, int_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderInt(string_label, int_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%d" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderInt' cannot be nil, as the c type is 'const char *'") ; return end
   if int_v == nil then log("E", "", "Parameter 'int_v' of function 'SliderInt' cannot be nil, as the c type is 'int *'") ; return end
   return C.imgui_SliderInt(string_label, int_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderInt2(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderInt2(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%d" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderInt2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_SliderInt2(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderInt3(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderInt3(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%d" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderInt3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_SliderInt3(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderInt4(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderInt4(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%d" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderInt4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_SliderInt4(string_label, intPtr_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderScalar(string_label, ImGuiDataType_data_type, void_p_data, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderScalar(string_label, ImGuiDataType_data_type, void_p_data, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
   -- string_format is optional and can be nil
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderScalar' cannot be nil, as the c type is 'const char *'") ; return end
@@ -625,7 +625,7 @@ function M.SliderScalar(string_label, ImGuiDataType_data_type, void_p_data, void
   if void_p_max == nil then log("E", "", "Parameter 'void_p_max' of function 'SliderScalar' cannot be nil, as the c type is 'const void *'") ; return end
   return C.imgui_SliderScalar(string_label, ImGuiDataType_data_type, void_p_data, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.SliderScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags) 
+function M.SliderScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
   -- string_format is optional and can be nil
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'SliderScalarN' cannot be nil, as the c type is 'const char *'") ; return end
@@ -634,21 +634,21 @@ function M.SliderScalarN(string_label, ImGuiDataType_data_type, void_p_data, int
   if void_p_max == nil then log("E", "", "Parameter 'void_p_max' of function 'SliderScalarN' cannot be nil, as the c type is 'const void *'") ; return end
   return C.imgui_SliderScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.VSliderFloat(string_label, ImVec2_size, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.VSliderFloat(string_label, ImVec2_size, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'VSliderFloat' cannot be nil, as the c type is 'const char *'") ; return end
   if float_v == nil then log("E", "", "Parameter 'float_v' of function 'VSliderFloat' cannot be nil, as the c type is 'float *'") ; return end
   return C.imgui_VSliderFloat(string_label, ImVec2_size, float_v, float_v_min, float_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.VSliderInt(string_label, ImVec2_size, int_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags) 
+function M.VSliderInt(string_label, ImVec2_size, int_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
   if string_format == nil then string_format = "%d" end
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'VSliderInt' cannot be nil, as the c type is 'const char *'") ; return end
   if int_v == nil then log("E", "", "Parameter 'int_v' of function 'VSliderInt' cannot be nil, as the c type is 'int *'") ; return end
   return C.imgui_VSliderInt(string_label, ImVec2_size, int_v, int_v_min, int_v_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.VSliderScalar(string_label, ImVec2_size, ImGuiDataType_data_type, void_p_data, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags) 
+function M.VSliderScalar(string_label, ImVec2_size, ImGuiDataType_data_type, void_p_data, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
   -- string_format is optional and can be nil
   if ImGuiSliderFlags_flags == nil then ImGuiSliderFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'VSliderScalar' cannot be nil, as the c type is 'const char *'") ; return end
@@ -657,7 +657,7 @@ function M.VSliderScalar(string_label, ImVec2_size, ImGuiDataType_data_type, voi
   if void_p_max == nil then log("E", "", "Parameter 'void_p_max' of function 'VSliderScalar' cannot be nil, as the c type is 'const void *'") ; return end
   return C.imgui_VSliderScalar(string_label, ImVec2_size, ImGuiDataType_data_type, void_p_data, void_p_min, void_p_max, string_format, ImGuiSliderFlags_flags)
 end
-function M.InputText(string_label, string_buf, size_t_buf_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data) 
+function M.InputText(string_label, string_buf, size_t_buf_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data)
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   -- ImGuiInputTextCallback_callback is optional and can be nil
   -- void_user_data is optional and can be nil
@@ -665,7 +665,7 @@ function M.InputText(string_label, string_buf, size_t_buf_size, ImGuiInputTextFl
   if string_buf == nil then log("E", "", "Parameter 'string_buf' of function 'InputText' cannot be nil, as the c type is 'char *'") ; return end
   return C.imgui_InputText(string_label, string_buf, size_t_buf_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data)
 end
-function M.InputTextMultiline(string_label, string_buf, size_t_buf_size, ImVec2_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data) 
+function M.InputTextMultiline(string_label, string_buf, size_t_buf_size, ImVec2_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data)
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   -- ImGuiInputTextCallback_callback is optional and can be nil
@@ -674,7 +674,7 @@ function M.InputTextMultiline(string_label, string_buf, size_t_buf_size, ImVec2_
   if string_buf == nil then log("E", "", "Parameter 'string_buf' of function 'InputTextMultiline' cannot be nil, as the c type is 'char *'") ; return end
   return C.imgui_InputTextMultiline(string_label, string_buf, size_t_buf_size, ImVec2_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data)
 end
-function M.InputTextWithHint(string_label, string_hint, string_buf, size_t_buf_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data) 
+function M.InputTextWithHint(string_label, string_hint, string_buf, size_t_buf_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data)
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   -- ImGuiInputTextCallback_callback is optional and can be nil
   -- void_user_data is optional and can be nil
@@ -683,7 +683,7 @@ function M.InputTextWithHint(string_label, string_hint, string_buf, size_t_buf_s
   if string_buf == nil then log("E", "", "Parameter 'string_buf' of function 'InputTextWithHint' cannot be nil, as the c type is 'char *'") ; return end
   return C.imgui_InputTextWithHint(string_label, string_hint, string_buf, size_t_buf_size, ImGuiInputTextFlags_flags, ImGuiInputTextCallback_callback, void_user_data)
 end
-function M.InputFloat(string_label, float_v, float_step, float_step_fast, string_format, ImGuiInputTextFlags_flags) 
+function M.InputFloat(string_label, float_v, float_step, float_step_fast, string_format, ImGuiInputTextFlags_flags)
   if float_step == nil then float_step = 0 end
   if float_step_fast == nil then float_step_fast = 0 end
   if string_format == nil then string_format = "%.3f" end
@@ -692,25 +692,25 @@ function M.InputFloat(string_label, float_v, float_step, float_step_fast, string
   if float_v == nil then log("E", "", "Parameter 'float_v' of function 'InputFloat' cannot be nil, as the c type is 'float *'") ; return end
   return C.imgui_InputFloat(string_label, float_v, float_step, float_step_fast, string_format, ImGuiInputTextFlags_flags)
 end
-function M.InputFloat2(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags) 
+function M.InputFloat2(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'InputFloat2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_InputFloat2(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags)
 end
-function M.InputFloat3(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags) 
+function M.InputFloat3(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'InputFloat3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_InputFloat3(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags)
 end
-function M.InputFloat4(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags) 
+function M.InputFloat4(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags)
   if string_format == nil then string_format = "%.3f" end
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'InputFloat4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_InputFloat4(string_label, floatPtr_v, string_format, ImGuiInputTextFlags_flags)
 end
-function M.InputInt(string_label, int_v, int_step, int_step_fast, ImGuiInputTextFlags_flags) 
+function M.InputInt(string_label, int_v, int_step, int_step_fast, ImGuiInputTextFlags_flags)
   if int_step == nil then int_step = 1 end
   if int_step_fast == nil then int_step_fast = 100 end
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
@@ -718,22 +718,22 @@ function M.InputInt(string_label, int_v, int_step, int_step_fast, ImGuiInputText
   if int_v == nil then log("E", "", "Parameter 'int_v' of function 'InputInt' cannot be nil, as the c type is 'int *'") ; return end
   return C.imgui_InputInt(string_label, int_v, int_step, int_step_fast, ImGuiInputTextFlags_flags)
 end
-function M.InputInt2(string_label, intPtr_v, ImGuiInputTextFlags_flags) 
+function M.InputInt2(string_label, intPtr_v, ImGuiInputTextFlags_flags)
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'InputInt2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_InputInt2(string_label, intPtr_v, ImGuiInputTextFlags_flags)
 end
-function M.InputInt3(string_label, intPtr_v, ImGuiInputTextFlags_flags) 
+function M.InputInt3(string_label, intPtr_v, ImGuiInputTextFlags_flags)
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'InputInt3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_InputInt3(string_label, intPtr_v, ImGuiInputTextFlags_flags)
 end
-function M.InputInt4(string_label, intPtr_v, ImGuiInputTextFlags_flags) 
+function M.InputInt4(string_label, intPtr_v, ImGuiInputTextFlags_flags)
   if ImGuiInputTextFlags_flags == nil then ImGuiInputTextFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'InputInt4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_InputInt4(string_label, intPtr_v, ImGuiInputTextFlags_flags)
 end
-function M.InputDouble(string_label, double_v, double_step, double_step_fast, string_format, ImGuiInputTextFlags_flags) 
+function M.InputDouble(string_label, double_v, double_step, double_step_fast, string_format, ImGuiInputTextFlags_flags)
   if double_step == nil then double_step = 0 end
   if double_step_fast == nil then double_step_fast = 0 end
   if string_format == nil then string_format = "%.6f" end
@@ -742,7 +742,7 @@ function M.InputDouble(string_label, double_v, double_step, double_step_fast, st
   if double_v == nil then log("E", "", "Parameter 'double_v' of function 'InputDouble' cannot be nil, as the c type is 'double *'") ; return end
   return C.imgui_InputDouble(string_label, double_v, double_step, double_step_fast, string_format, ImGuiInputTextFlags_flags)
 end
-function M.InputScalar(string_label, ImGuiDataType_data_type, void_p_data, void_p_step, void_p_step_fast, string_format, ImGuiInputTextFlags_flags) 
+function M.InputScalar(string_label, ImGuiDataType_data_type, void_p_data, void_p_step, void_p_step_fast, string_format, ImGuiInputTextFlags_flags)
   -- void_p_step is optional and can be nil
   -- void_p_step_fast is optional and can be nil
   -- string_format is optional and can be nil
@@ -751,7 +751,7 @@ function M.InputScalar(string_label, ImGuiDataType_data_type, void_p_data, void_
   if void_p_data == nil then log("E", "", "Parameter 'void_p_data' of function 'InputScalar' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_InputScalar(string_label, ImGuiDataType_data_type, void_p_data, void_p_step, void_p_step_fast, string_format, ImGuiInputTextFlags_flags)
 end
-function M.InputScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, void_p_step, void_p_step_fast, string_format, ImGuiInputTextFlags_flags) 
+function M.InputScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, void_p_step, void_p_step_fast, string_format, ImGuiInputTextFlags_flags)
   -- void_p_step is optional and can be nil
   -- void_p_step_fast is optional and can be nil
   -- string_format is optional and can be nil
@@ -760,136 +760,136 @@ function M.InputScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_
   if void_p_data == nil then log("E", "", "Parameter 'void_p_data' of function 'InputScalarN' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_InputScalarN(string_label, ImGuiDataType_data_type, void_p_data, int_components, void_p_step, void_p_step_fast, string_format, ImGuiInputTextFlags_flags)
 end
-function M.ColorEdit3(string_label, floatPtr_col, ImGuiColorEditFlags_flags) 
+function M.ColorEdit3(string_label, floatPtr_col, ImGuiColorEditFlags_flags)
   if ImGuiColorEditFlags_flags == nil then ImGuiColorEditFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ColorEdit3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ColorEdit3(string_label, floatPtr_col, ImGuiColorEditFlags_flags)
 end
-function M.ColorEdit4(string_label, floatPtr_col, ImGuiColorEditFlags_flags) 
+function M.ColorEdit4(string_label, floatPtr_col, ImGuiColorEditFlags_flags)
   if ImGuiColorEditFlags_flags == nil then ImGuiColorEditFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ColorEdit4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ColorEdit4(string_label, floatPtr_col, ImGuiColorEditFlags_flags)
 end
-function M.ColorPicker3(string_label, floatPtr_col, ImGuiColorEditFlags_flags) 
+function M.ColorPicker3(string_label, floatPtr_col, ImGuiColorEditFlags_flags)
   if ImGuiColorEditFlags_flags == nil then ImGuiColorEditFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ColorPicker3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ColorPicker3(string_label, floatPtr_col, ImGuiColorEditFlags_flags)
 end
-function M.ColorPicker4(string_label, floatPtr_col, ImGuiColorEditFlags_flags, float_ref_col) 
+function M.ColorPicker4(string_label, floatPtr_col, ImGuiColorEditFlags_flags, float_ref_col)
   if ImGuiColorEditFlags_flags == nil then ImGuiColorEditFlags_flags = 0 end
   -- float_ref_col is optional and can be nil
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ColorPicker4' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ColorPicker4(string_label, floatPtr_col, ImGuiColorEditFlags_flags, float_ref_col)
 end
-function M.ColorButton(string_desc_id, ImVec4_col, ImGuiColorEditFlags_flags, ImVec2_size) 
+function M.ColorButton(string_desc_id, ImVec4_col, ImGuiColorEditFlags_flags, ImVec2_size)
   if ImGuiColorEditFlags_flags == nil then ImGuiColorEditFlags_flags = 0 end
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if string_desc_id == nil then log("E", "", "Parameter 'string_desc_id' of function 'ColorButton' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ColorButton(string_desc_id, ImVec4_col, ImGuiColorEditFlags_flags, ImVec2_size)
 end
 function M.SetColorEditOptions(ImGuiColorEditFlags_flags) C.imgui_SetColorEditOptions(ImGuiColorEditFlags_flags) end
-function M.TreeNode1(string_label) 
+function M.TreeNode1(string_label)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'TreeNode1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNode1(string_label)
 end
-function M.TreeNode2(string_str_id, string_fmt, ...) 
+function M.TreeNode2(string_str_id, string_fmt, ...)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'TreeNode2' cannot be nil, as the c type is 'const char *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNode2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNode2(string_str_id, string_fmt, ...)
 end
-function M.TreeNode3(void_ptr_id, string_fmt, ...) 
+function M.TreeNode3(void_ptr_id, string_fmt, ...)
   if void_ptr_id == nil then log("E", "", "Parameter 'void_ptr_id' of function 'TreeNode3' cannot be nil, as the c type is 'const void *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNode3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNode3(void_ptr_id, string_fmt, ...)
 end
-function M.TreeNodeV1(string_str_id, string_fmt, va_list_args) 
+function M.TreeNodeV1(string_str_id, string_fmt, va_list_args)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'TreeNodeV1' cannot be nil, as the c type is 'const char *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNodeV1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNodeV1(string_str_id, string_fmt, va_list_args)
 end
-function M.TreeNodeV2(void_ptr_id, string_fmt, va_list_args) 
+function M.TreeNodeV2(void_ptr_id, string_fmt, va_list_args)
   if void_ptr_id == nil then log("E", "", "Parameter 'void_ptr_id' of function 'TreeNodeV2' cannot be nil, as the c type is 'const void *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNodeV2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNodeV2(void_ptr_id, string_fmt, va_list_args)
 end
-function M.TreeNodeEx1(string_label, ImGuiTreeNodeFlags_flags) 
+function M.TreeNodeEx1(string_label, ImGuiTreeNodeFlags_flags)
   if ImGuiTreeNodeFlags_flags == nil then ImGuiTreeNodeFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'TreeNodeEx1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNodeEx1(string_label, ImGuiTreeNodeFlags_flags)
 end
-function M.TreeNodeEx2(string_str_id, ImGuiTreeNodeFlags_flags, string_fmt, ...) 
+function M.TreeNodeEx2(string_str_id, ImGuiTreeNodeFlags_flags, string_fmt, ...)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'TreeNodeEx2' cannot be nil, as the c type is 'const char *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNodeEx2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNodeEx2(string_str_id, ImGuiTreeNodeFlags_flags, string_fmt, ...)
 end
-function M.TreeNodeEx3(void_ptr_id, ImGuiTreeNodeFlags_flags, string_fmt, ...) 
+function M.TreeNodeEx3(void_ptr_id, ImGuiTreeNodeFlags_flags, string_fmt, ...)
   if void_ptr_id == nil then log("E", "", "Parameter 'void_ptr_id' of function 'TreeNodeEx3' cannot be nil, as the c type is 'const void *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNodeEx3' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNodeEx3(void_ptr_id, ImGuiTreeNodeFlags_flags, string_fmt, ...)
 end
-function M.TreeNodeExV1(string_str_id, ImGuiTreeNodeFlags_flags, string_fmt, va_list_args) 
+function M.TreeNodeExV1(string_str_id, ImGuiTreeNodeFlags_flags, string_fmt, va_list_args)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'TreeNodeExV1' cannot be nil, as the c type is 'const char *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNodeExV1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNodeExV1(string_str_id, ImGuiTreeNodeFlags_flags, string_fmt, va_list_args)
 end
-function M.TreeNodeExV2(void_ptr_id, ImGuiTreeNodeFlags_flags, string_fmt, va_list_args) 
+function M.TreeNodeExV2(void_ptr_id, ImGuiTreeNodeFlags_flags, string_fmt, va_list_args)
   if void_ptr_id == nil then log("E", "", "Parameter 'void_ptr_id' of function 'TreeNodeExV2' cannot be nil, as the c type is 'const void *'") ; return end
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'TreeNodeExV2' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TreeNodeExV2(void_ptr_id, ImGuiTreeNodeFlags_flags, string_fmt, va_list_args)
 end
-function M.TreePush1(string_str_id) 
+function M.TreePush1(string_str_id)
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'TreePush1' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TreePush1(string_str_id)
 end
-function M.TreePush2(void_ptr_id) 
+function M.TreePush2(void_ptr_id)
   -- void_ptr_id is optional and can be nil
   C.imgui_TreePush2(void_ptr_id)
 end
 function M.TreePop() C.imgui_TreePop() end
 function M.GetTreeNodeToLabelSpacing() return C.imgui_GetTreeNodeToLabelSpacing() end
-function M.CollapsingHeader1(string_label, ImGuiTreeNodeFlags_flags) 
+function M.CollapsingHeader1(string_label, ImGuiTreeNodeFlags_flags)
   if ImGuiTreeNodeFlags_flags == nil then ImGuiTreeNodeFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'CollapsingHeader1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_CollapsingHeader1(string_label, ImGuiTreeNodeFlags_flags)
 end
-function M.CollapsingHeader2(string_label, bool_p_visible, ImGuiTreeNodeFlags_flags) 
+function M.CollapsingHeader2(string_label, bool_p_visible, ImGuiTreeNodeFlags_flags)
   if ImGuiTreeNodeFlags_flags == nil then ImGuiTreeNodeFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'CollapsingHeader2' cannot be nil, as the c type is 'const char *'") ; return end
   if bool_p_visible == nil then log("E", "", "Parameter 'bool_p_visible' of function 'CollapsingHeader2' cannot be nil, as the c type is 'bool *'") ; return end
   return C.imgui_CollapsingHeader2(string_label, bool_p_visible, ImGuiTreeNodeFlags_flags)
 end
-function M.SetNextItemOpen(bool_is_open, ImGuiCond_cond) 
+function M.SetNextItemOpen(bool_is_open, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   C.imgui_SetNextItemOpen(bool_is_open, ImGuiCond_cond)
 end
-function M.Selectable1(string_label, bool_selected, ImGuiSelectableFlags_flags, ImVec2_size) 
+function M.Selectable1(string_label, bool_selected, ImGuiSelectableFlags_flags, ImVec2_size)
   if bool_selected == nil then bool_selected = false end
   if ImGuiSelectableFlags_flags == nil then ImGuiSelectableFlags_flags = 0 end
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Selectable1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_Selectable1(string_label, bool_selected, ImGuiSelectableFlags_flags, ImVec2_size)
 end
-function M.Selectable2(string_label, bool_p_selected, ImGuiSelectableFlags_flags, ImVec2_size) 
+function M.Selectable2(string_label, bool_p_selected, ImGuiSelectableFlags_flags, ImVec2_size)
   if ImGuiSelectableFlags_flags == nil then ImGuiSelectableFlags_flags = 0 end
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'Selectable2' cannot be nil, as the c type is 'const char *'") ; return end
   if bool_p_selected == nil then log("E", "", "Parameter 'bool_p_selected' of function 'Selectable2' cannot be nil, as the c type is 'bool *'") ; return end
   return C.imgui_Selectable2(string_label, bool_p_selected, ImGuiSelectableFlags_flags, ImVec2_size)
 end
-function M.BeginListBox(string_label, ImVec2_size) 
+function M.BeginListBox(string_label, ImVec2_size)
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'BeginListBox' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginListBox(string_label, ImVec2_size)
 end
 function M.EndListBox() C.imgui_EndListBox() end
-function M.ListBox1(string_label, int_current_item, charconstPtr_items, int_items_count, int_height_in_items) 
+function M.ListBox1(string_label, int_current_item, charconstPtr_items, int_items_count, int_height_in_items)
   if int_height_in_items == nil then int_height_in_items = -1 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ListBox1' cannot be nil, as the c type is 'const char *'") ; return end
   if int_current_item == nil then log("E", "", "Parameter 'int_current_item' of function 'ListBox1' cannot be nil, as the c type is 'int *'") ; return end
   if charconstPtr_items == nil then log("E", "", "Parameter 'charconstPtr_items' of function 'ListBox1' cannot be nil, as the c type is 'const char *const[]'") ; return end
   return C.imgui_ListBox1(string_label, int_current_item, charconstPtr_items, int_items_count, int_height_in_items)
 end
-function M.ListBox2(string_label, int_current_item, functionPtr_items_getter, void_data, int_items_count, int_height_in_items) 
+function M.ListBox2(string_label, int_current_item, functionPtr_items_getter, void_data, int_items_count, int_height_in_items)
   if int_height_in_items == nil then int_height_in_items = -1 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'ListBox2' cannot be nil, as the c type is 'const char *'") ; return end
   if int_current_item == nil then log("E", "", "Parameter 'int_current_item' of function 'ListBox2' cannot be nil, as the c type is 'int *'") ; return end
@@ -897,7 +897,7 @@ function M.ListBox2(string_label, int_current_item, functionPtr_items_getter, vo
   if void_data == nil then log("E", "", "Parameter 'void_data' of function 'ListBox2' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_ListBox2(string_label, int_current_item, functionPtr_items_getter, void_data, int_items_count, int_height_in_items)
 end
-function M.PlotLines1(string_label, float_values, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size, int_stride) 
+function M.PlotLines1(string_label, float_values, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size, int_stride)
   if int_values_offset == nil then int_values_offset = 0 end
   -- string_overlay_text is optional and can be nil
   if float_scale_min == nil then float_scale_min = FLT_MAX end
@@ -908,7 +908,7 @@ function M.PlotLines1(string_label, float_values, int_values_count, int_values_o
   if float_values == nil then log("E", "", "Parameter 'float_values' of function 'PlotLines1' cannot be nil, as the c type is 'const float *'") ; return end
   C.imgui_PlotLines1(string_label, float_values, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size, int_stride)
 end
-function M.PlotLines2(string_label, functionPtr_values_getter, void_data, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size) 
+function M.PlotLines2(string_label, functionPtr_values_getter, void_data, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size)
   if int_values_offset == nil then int_values_offset = 0 end
   -- string_overlay_text is optional and can be nil
   if float_scale_min == nil then float_scale_min = FLT_MAX end
@@ -919,7 +919,7 @@ function M.PlotLines2(string_label, functionPtr_values_getter, void_data, int_va
   if void_data == nil then log("E", "", "Parameter 'void_data' of function 'PlotLines2' cannot be nil, as the c type is 'void *'") ; return end
   C.imgui_PlotLines2(string_label, functionPtr_values_getter, void_data, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size)
 end
-function M.PlotHistogram1(string_label, float_values, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size, int_stride) 
+function M.PlotHistogram1(string_label, float_values, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size, int_stride)
   if int_values_offset == nil then int_values_offset = 0 end
   -- string_overlay_text is optional and can be nil
   if float_scale_min == nil then float_scale_min = FLT_MAX end
@@ -930,7 +930,7 @@ function M.PlotHistogram1(string_label, float_values, int_values_count, int_valu
   if float_values == nil then log("E", "", "Parameter 'float_values' of function 'PlotHistogram1' cannot be nil, as the c type is 'const float *'") ; return end
   C.imgui_PlotHistogram1(string_label, float_values, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size, int_stride)
 end
-function M.PlotHistogram2(string_label, functionPtr_values_getter, void_data, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size) 
+function M.PlotHistogram2(string_label, functionPtr_values_getter, void_data, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size)
   if int_values_offset == nil then int_values_offset = 0 end
   -- string_overlay_text is optional and can be nil
   if float_scale_min == nil then float_scale_min = FLT_MAX end
@@ -941,19 +941,19 @@ function M.PlotHistogram2(string_label, functionPtr_values_getter, void_data, in
   if void_data == nil then log("E", "", "Parameter 'void_data' of function 'PlotHistogram2' cannot be nil, as the c type is 'void *'") ; return end
   C.imgui_PlotHistogram2(string_label, functionPtr_values_getter, void_data, int_values_count, int_values_offset, string_overlay_text, float_scale_min, float_scale_max, ImVec2_graph_size)
 end
-function M.Value1(string_prefix, bool_b) 
+function M.Value1(string_prefix, bool_b)
   if string_prefix == nil then log("E", "", "Parameter 'string_prefix' of function 'Value1' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_Value1(string_prefix, bool_b)
 end
-function M.Value2(string_prefix, int_v) 
+function M.Value2(string_prefix, int_v)
   if string_prefix == nil then log("E", "", "Parameter 'string_prefix' of function 'Value2' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_Value2(string_prefix, int_v)
 end
-function M.Value3(string_prefix, int_v) 
+function M.Value3(string_prefix, int_v)
   if string_prefix == nil then log("E", "", "Parameter 'string_prefix' of function 'Value3' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_Value3(string_prefix, int_v)
 end
-function M.Value4(string_prefix, float_v, string_float_format) 
+function M.Value4(string_prefix, float_v, string_float_format)
   -- string_float_format is optional and can be nil
   if string_prefix == nil then log("E", "", "Parameter 'string_prefix' of function 'Value4' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_Value4(string_prefix, float_v, string_float_format)
@@ -962,20 +962,20 @@ function M.BeginMenuBar() return C.imgui_BeginMenuBar() end
 function M.EndMenuBar() C.imgui_EndMenuBar() end
 function M.BeginMainMenuBar() return C.imgui_BeginMainMenuBar() end
 function M.EndMainMenuBar() C.imgui_EndMainMenuBar() end
-function M.BeginMenu(string_label, bool_enabled) 
+function M.BeginMenu(string_label, bool_enabled)
   if bool_enabled == nil then bool_enabled = true end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'BeginMenu' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginMenu(string_label, bool_enabled)
 end
 function M.EndMenu() C.imgui_EndMenu() end
-function M.MenuItem1(string_label, string_shortcut, bool_selected, bool_enabled) 
+function M.MenuItem1(string_label, string_shortcut, bool_selected, bool_enabled)
   -- string_shortcut is optional and can be nil
   if bool_selected == nil then bool_selected = false end
   if bool_enabled == nil then bool_enabled = true end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'MenuItem1' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_MenuItem1(string_label, string_shortcut, bool_selected, bool_enabled)
 end
-function M.MenuItem2(string_label, string_shortcut, bool_p_selected, bool_enabled) 
+function M.MenuItem2(string_label, string_shortcut, bool_p_selected, bool_enabled)
   if bool_enabled == nil then bool_enabled = true end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'MenuItem2' cannot be nil, as the c type is 'const char *'") ; return end
   if string_shortcut == nil then log("E", "", "Parameter 'string_shortcut' of function 'MenuItem2' cannot be nil, as the c type is 'const char *'") ; return end
@@ -984,76 +984,76 @@ function M.MenuItem2(string_label, string_shortcut, bool_p_selected, bool_enable
 end
 function M.BeginTooltip() return C.imgui_BeginTooltip() end
 function M.EndTooltip() C.imgui_EndTooltip() end
-function M.SetTooltip(string_fmt, ...) 
+function M.SetTooltip(string_fmt, ...)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'SetTooltip' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetTooltip(string_fmt, ...)
 end
-function M.SetTooltipV(string_fmt, va_list_args) 
+function M.SetTooltipV(string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'SetTooltipV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetTooltipV(string_fmt, va_list_args)
 end
 function M.BeginItemTooltip() return C.imgui_BeginItemTooltip() end
-function M.SetItemTooltip(string_fmt, ...) 
+function M.SetItemTooltip(string_fmt, ...)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'SetItemTooltip' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetItemTooltip(string_fmt, ...)
 end
-function M.SetItemTooltipV(string_fmt, va_list_args) 
+function M.SetItemTooltipV(string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'SetItemTooltipV' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetItemTooltipV(string_fmt, va_list_args)
 end
-function M.BeginPopup(string_str_id, ImGuiWindowFlags_flags) 
+function M.BeginPopup(string_str_id, ImGuiWindowFlags_flags)
   if ImGuiWindowFlags_flags == nil then ImGuiWindowFlags_flags = 0 end
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'BeginPopup' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginPopup(string_str_id, ImGuiWindowFlags_flags)
 end
-function M.BeginPopupModal(string_name, bool_p_open, ImGuiWindowFlags_flags) 
+function M.BeginPopupModal(string_name, bool_p_open, ImGuiWindowFlags_flags)
   -- bool_p_open is optional and can be nil
   if ImGuiWindowFlags_flags == nil then ImGuiWindowFlags_flags = 0 end
   if string_name == nil then log("E", "", "Parameter 'string_name' of function 'BeginPopupModal' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginPopupModal(string_name, bool_p_open, ImGuiWindowFlags_flags)
 end
 function M.EndPopup() C.imgui_EndPopup() end
-function M.OpenPopup1(string_str_id, ImGuiPopupFlags_popup_flags) 
+function M.OpenPopup1(string_str_id, ImGuiPopupFlags_popup_flags)
   if ImGuiPopupFlags_popup_flags == nil then ImGuiPopupFlags_popup_flags = 0 end
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'OpenPopup1' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_OpenPopup1(string_str_id, ImGuiPopupFlags_popup_flags)
 end
-function M.OpenPopup2(ImGuiID_id, ImGuiPopupFlags_popup_flags) 
+function M.OpenPopup2(ImGuiID_id, ImGuiPopupFlags_popup_flags)
   if ImGuiPopupFlags_popup_flags == nil then ImGuiPopupFlags_popup_flags = 0 end
   C.imgui_OpenPopup2(ImGuiID_id, ImGuiPopupFlags_popup_flags)
 end
-function M.OpenPopup(string_str_id, ImGuiPopupFlags_popup_flags) 
+function M.OpenPopup(string_str_id, ImGuiPopupFlags_popup_flags)
   if ImGuiPopupFlags_popup_flags == nil then ImGuiPopupFlags_popup_flags = 0 end
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'OpenPopup' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_OpenPopup1(string_str_id, ImGuiPopupFlags_popup_flags)
 end
-function M.OpenPopupOnItemClick(string_str_id, ImGuiPopupFlags_popup_flags) 
+function M.OpenPopupOnItemClick(string_str_id, ImGuiPopupFlags_popup_flags)
   -- string_str_id is optional and can be nil
   if ImGuiPopupFlags_popup_flags == nil then ImGuiPopupFlags_popup_flags = 1 end
   C.imgui_OpenPopupOnItemClick(string_str_id, ImGuiPopupFlags_popup_flags)
 end
 function M.CloseCurrentPopup() C.imgui_CloseCurrentPopup() end
-function M.BeginPopupContextItem(string_str_id, ImGuiPopupFlags_popup_flags) 
+function M.BeginPopupContextItem(string_str_id, ImGuiPopupFlags_popup_flags)
   -- string_str_id is optional and can be nil
   if ImGuiPopupFlags_popup_flags == nil then ImGuiPopupFlags_popup_flags = 1 end
   return C.imgui_BeginPopupContextItem(string_str_id, ImGuiPopupFlags_popup_flags)
 end
-function M.BeginPopupContextWindow(string_str_id, ImGuiPopupFlags_popup_flags) 
+function M.BeginPopupContextWindow(string_str_id, ImGuiPopupFlags_popup_flags)
   -- string_str_id is optional and can be nil
   if ImGuiPopupFlags_popup_flags == nil then ImGuiPopupFlags_popup_flags = 1 end
   return C.imgui_BeginPopupContextWindow(string_str_id, ImGuiPopupFlags_popup_flags)
 end
-function M.BeginPopupContextVoid(string_str_id, ImGuiPopupFlags_popup_flags) 
+function M.BeginPopupContextVoid(string_str_id, ImGuiPopupFlags_popup_flags)
   -- string_str_id is optional and can be nil
   if ImGuiPopupFlags_popup_flags == nil then ImGuiPopupFlags_popup_flags = 1 end
   return C.imgui_BeginPopupContextVoid(string_str_id, ImGuiPopupFlags_popup_flags)
 end
-function M.IsPopupOpen(string_str_id, ImGuiPopupFlags_flags) 
+function M.IsPopupOpen(string_str_id, ImGuiPopupFlags_flags)
   if ImGuiPopupFlags_flags == nil then ImGuiPopupFlags_flags = 0 end
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'IsPopupOpen' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_IsPopupOpen(string_str_id, ImGuiPopupFlags_flags)
 end
-function M.BeginTable(string_str_id, int_column, ImGuiTableFlags_flags, ImVec2_outer_size, float_inner_width) 
+function M.BeginTable(string_str_id, int_column, ImGuiTableFlags_flags, ImVec2_outer_size, float_inner_width)
   if ImGuiTableFlags_flags == nil then ImGuiTableFlags_flags = 0 end
   if ImVec2_outer_size == nil then ImVec2_outer_size = M.ImVec2(0.0,0.0) end
   if float_inner_width == nil then float_inner_width = 0 end
@@ -1061,7 +1061,7 @@ function M.BeginTable(string_str_id, int_column, ImGuiTableFlags_flags, ImVec2_o
   return C.imgui_BeginTable(string_str_id, int_column, ImGuiTableFlags_flags, ImVec2_outer_size, float_inner_width)
 end
 function M.EndTable() C.imgui_EndTable() end
-function M.TableNextRow(ImGuiTableRowFlags_row_flags, float_min_row_height) 
+function M.TableNextRow(ImGuiTableRowFlags_row_flags, float_min_row_height)
   if ImGuiTableRowFlags_row_flags == nil then ImGuiTableRowFlags_row_flags = 0 end
   if float_min_row_height == nil then float_min_row_height = 0 end
   C.imgui_TableNextRow(ImGuiTableRowFlags_row_flags, float_min_row_height)
@@ -1077,28 +1077,29 @@ function M.TableSetupColumn(string_label, ImGuiTableColumnFlags_flags, float_ini
 end
 function M.TableSetupScrollFreeze(int_cols, int_rows) C.imgui_TableSetupScrollFreeze(int_cols, int_rows) end
 function M.TableHeadersRow() C.imgui_TableHeadersRow() end
-function M.TableHeader(string_label) 
+function M.TableHeader(string_label)
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'TableHeader' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_TableHeader(string_label)
 end
 function M.TableGetSortSpecs() return C.imgui_TableGetSortSpecs() end
+function M.TableSetSortSpecsDirty(dirty) return C.imgui_TableSetSortSpecsDirty(dirty) end
 function M.TableGetColumnCount() return C.imgui_TableGetColumnCount() end
 function M.TableGetColumnIndex() return C.imgui_TableGetColumnIndex() end
 function M.TableGetRowIndex() return C.imgui_TableGetRowIndex() end
-function M.TableGetColumnName(int_column_n) 
+function M.TableGetColumnName(int_column_n)
   if int_column_n == nil then int_column_n = -1 end
   return C.imgui_TableGetColumnName(int_column_n)
 end
-function M.TableGetColumnFlags(int_column_n) 
+function M.TableGetColumnFlags(int_column_n)
   if int_column_n == nil then int_column_n = -1 end
   return C.imgui_TableGetColumnFlags(int_column_n)
 end
 function M.TableSetColumnEnabled(int_column_n, bool_v) C.imgui_TableSetColumnEnabled(int_column_n, bool_v) end
-function M.TableSetBgColor(ImGuiTableBgTarget_target, ImU32_color, int_column_n) 
+function M.TableSetBgColor(ImGuiTableBgTarget_target, ImU32_color, int_column_n)
   if int_column_n == nil then int_column_n = -1 end
   C.imgui_TableSetBgColor(ImGuiTableBgTarget_target, ImU32_color, int_column_n)
 end
-function M.Columns(int_count, string_id, bool_border) 
+function M.Columns(int_count, string_id, bool_border)
   if int_count == nil then int_count = 1 end
   -- string_id is optional and can be nil
   if bool_border == nil then bool_border = true end
@@ -1106,89 +1107,76 @@ function M.Columns(int_count, string_id, bool_border)
 end
 function M.NextColumn() C.imgui_NextColumn() end
 function M.GetColumnIndex() return C.imgui_GetColumnIndex() end
-function M.GetColumnWidth(int_column_index) 
+function M.GetColumnWidth(int_column_index)
   if int_column_index == nil then int_column_index = -1 end
   return C.imgui_GetColumnWidth(int_column_index)
 end
 function M.SetColumnWidth(int_column_index, float_width) C.imgui_SetColumnWidth(int_column_index, float_width) end
-function M.GetColumnOffset(int_column_index) 
+function M.GetColumnOffset(int_column_index)
   if int_column_index == nil then int_column_index = -1 end
   return C.imgui_GetColumnOffset(int_column_index)
 end
 function M.SetColumnOffset(int_column_index, float_offset_x) C.imgui_SetColumnOffset(int_column_index, float_offset_x) end
 function M.GetColumnsCount() return C.imgui_GetColumnsCount() end
-function M.BeginTabBar(string_str_id, ImGuiTabBarFlags_flags) 
+function M.BeginTabBar(string_str_id, ImGuiTabBarFlags_flags)
   if ImGuiTabBarFlags_flags == nil then ImGuiTabBarFlags_flags = 0 end
   if string_str_id == nil then log("E", "", "Parameter 'string_str_id' of function 'BeginTabBar' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginTabBar(string_str_id, ImGuiTabBarFlags_flags)
 end
 function M.EndTabBar() C.imgui_EndTabBar() end
-function M.BeginTabItem(string_label, bool_p_open, ImGuiTabItemFlags_flags) 
+function M.BeginTabItem(string_label, bool_p_open, ImGuiTabItemFlags_flags)
   -- bool_p_open is optional and can be nil
   if ImGuiTabItemFlags_flags == nil then ImGuiTabItemFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'BeginTabItem' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_BeginTabItem(string_label, bool_p_open, ImGuiTabItemFlags_flags)
 end
 function M.EndTabItem() C.imgui_EndTabItem() end
-function M.TabItemButton(string_label, ImGuiTabItemFlags_flags) 
+function M.TabItemButton(string_label, ImGuiTabItemFlags_flags)
   if ImGuiTabItemFlags_flags == nil then ImGuiTabItemFlags_flags = 0 end
   if string_label == nil then log("E", "", "Parameter 'string_label' of function 'TabItemButton' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_TabItemButton(string_label, ImGuiTabItemFlags_flags)
 end
-function M.SetTabItemClosed(string_tab_or_docked_window_label) 
+function M.SetTabItemClosed(string_tab_or_docked_window_label)
   if string_tab_or_docked_window_label == nil then log("E", "", "Parameter 'string_tab_or_docked_window_label' of function 'SetTabItemClosed' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetTabItemClosed(string_tab_or_docked_window_label)
 end
-function M.DockSpace(ImGuiID_id, ImVec2_size, ImGuiDockNodeFlags_flags, ImGuiWindowClass_window_class) 
+function M.DockSpace(ImGuiID_id, ImVec2_size, ImGuiDockNodeFlags_flags, ImGuiWindowClass_window_class)
   if ImVec2_size == nil then ImVec2_size = M.ImVec2(0,0) end
   if ImGuiDockNodeFlags_flags == nil then ImGuiDockNodeFlags_flags = 0 end
   -- ImGuiWindowClass_window_class is optional and can be nil
   return C.imgui_DockSpace(ImGuiID_id, ImVec2_size, ImGuiDockNodeFlags_flags, ImGuiWindowClass_window_class)
 end
-function M.DockSpaceOverViewport(ImGuiViewport_viewport, ImGuiDockNodeFlags_flags, ImGuiWindowClass_window_class) 
+function M.DockSpaceOverViewport(ImGuiViewport_viewport, ImGuiDockNodeFlags_flags, ImGuiWindowClass_window_class)
   -- ImGuiViewport_viewport is optional and can be nil
   if ImGuiDockNodeFlags_flags == nil then ImGuiDockNodeFlags_flags = 0 end
   -- ImGuiWindowClass_window_class is optional and can be nil
   return C.imgui_DockSpaceOverViewport(ImGuiViewport_viewport, ImGuiDockNodeFlags_flags, ImGuiWindowClass_window_class)
 end
-function M.SetNextWindowDockID(ImGuiID_dock_id, ImGuiCond_cond) 
+function M.SetNextWindowDockID(ImGuiID_dock_id, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   C.imgui_SetNextWindowDockID(ImGuiID_dock_id, ImGuiCond_cond)
 end
-function M.SetNextWindowClass(ImGuiWindowClass_window_class) 
+function M.SetNextWindowClass(ImGuiWindowClass_window_class)
   if ImGuiWindowClass_window_class == nil then log("E", "", "Parameter 'ImGuiWindowClass_window_class' of function 'SetNextWindowClass' cannot be nil, as the c type is 'const ImGuiWindowClass *'") ; return end
   C.imgui_SetNextWindowClass(ImGuiWindowClass_window_class)
 end
 function M.GetWindowDockID() return C.imgui_GetWindowDockID() end
 function M.IsWindowDocked() return C.imgui_IsWindowDocked() end
-function M.LogToTTY(int_auto_open_depth) 
+function M.LogToTTY(int_auto_open_depth)
   if int_auto_open_depth == nil then int_auto_open_depth = -1 end
   C.imgui_LogToTTY(int_auto_open_depth)
 end
-function M.LogToFile(int_auto_open_depth, string_filename) 
-  if int_auto_open_depth == nil then int_auto_open_depth = -1 end
-  -- string_filename is optional and can be nil
-  C.imgui_LogToFile(int_auto_open_depth, string_filename)
-end
-function M.LogToClipboard(int_auto_open_depth) 
+function M.LogToClipboard(int_auto_open_depth)
   if int_auto_open_depth == nil then int_auto_open_depth = -1 end
   C.imgui_LogToClipboard(int_auto_open_depth)
 end
 function M.LogFinish() C.imgui_LogFinish() end
 function M.LogButtons() C.imgui_LogButtons() end
-function M.LogText(string_fmt, ...) 
-  if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'LogText' cannot be nil, as the c type is 'const char *'") ; return end
-  C.imgui_LogText(string_fmt, ...)
-end
-function M.LogTextV(string_fmt, va_list_args) 
-  if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'LogTextV' cannot be nil, as the c type is 'const char *'") ; return end
-  C.imgui_LogTextV(string_fmt, va_list_args)
-end
-function M.BeginDragDropSource(ImGuiDragDropFlags_flags) 
+function M.BeginDragDropSource(ImGuiDragDropFlags_flags)
   if ImGuiDragDropFlags_flags == nil then ImGuiDragDropFlags_flags = 0 end
   return C.imgui_BeginDragDropSource(ImGuiDragDropFlags_flags)
 end
-function M.SetDragDropPayload(string_type, void_data, size_t_sz, ImGuiCond_cond) 
+function M.SetDragDropPayload(string_type, void_data, size_t_sz, ImGuiCond_cond)
   if ImGuiCond_cond == nil then ImGuiCond_cond = 0 end
   if string_type == nil then log("E", "", "Parameter 'string_type' of function 'SetDragDropPayload' cannot be nil, as the c type is 'const char *'") ; return end
   if void_data == nil then log("E", "", "Parameter 'void_data' of function 'SetDragDropPayload' cannot be nil, as the c type is 'const void *'") ; return end
@@ -1196,14 +1184,14 @@ function M.SetDragDropPayload(string_type, void_data, size_t_sz, ImGuiCond_cond)
 end
 function M.EndDragDropSource() C.imgui_EndDragDropSource() end
 function M.BeginDragDropTarget() return C.imgui_BeginDragDropTarget() end
-function M.AcceptDragDropPayload(string_type, ImGuiDragDropFlags_flags) 
+function M.AcceptDragDropPayload(string_type, ImGuiDragDropFlags_flags)
   if ImGuiDragDropFlags_flags == nil then ImGuiDragDropFlags_flags = 0 end
   if string_type == nil then log("E", "", "Parameter 'string_type' of function 'AcceptDragDropPayload' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_AcceptDragDropPayload(string_type, ImGuiDragDropFlags_flags)
 end
 function M.EndDragDropTarget() C.imgui_EndDragDropTarget() end
 function M.GetDragDropPayload() return C.imgui_GetDragDropPayload() end
-function M.BeginDisabled(bool_disabled) 
+function M.BeginDisabled(bool_disabled)
   if bool_disabled == nil then bool_disabled = true end
   C.imgui_BeginDisabled(bool_disabled)
 end
@@ -1211,17 +1199,17 @@ function M.EndDisabled() C.imgui_EndDisabled() end
 function M.PushClipRect(ImVec2_clip_rect_min, ImVec2_clip_rect_max, bool_intersect_with_current_clip_rect) C.imgui_PushClipRect(ImVec2_clip_rect_min, ImVec2_clip_rect_max, bool_intersect_with_current_clip_rect) end
 function M.PopClipRect() C.imgui_PopClipRect() end
 function M.SetItemDefaultFocus() C.imgui_SetItemDefaultFocus() end
-function M.SetKeyboardFocusHere(int_offset) 
+function M.SetKeyboardFocusHere(int_offset)
   if int_offset == nil then int_offset = 0 end
   C.imgui_SetKeyboardFocusHere(int_offset)
 end
-function M.IsItemHovered(ImGuiHoveredFlags_flags) 
+function M.IsItemHovered(ImGuiHoveredFlags_flags)
   if ImGuiHoveredFlags_flags == nil then ImGuiHoveredFlags_flags = 0 end
   return C.imgui_IsItemHovered(ImGuiHoveredFlags_flags)
 end
 function M.IsItemActive() return C.imgui_IsItemActive() end
 function M.IsItemFocused() return C.imgui_IsItemFocused() end
-function M.IsItemClicked(ImGuiMouseButton_mouse_button) 
+function M.IsItemClicked(ImGuiMouseButton_mouse_button)
   if ImGuiMouseButton_mouse_button == nil then ImGuiMouseButton_mouse_button = 0 end
   return C.imgui_IsItemClicked(ImGuiMouseButton_mouse_button)
 end
@@ -1246,11 +1234,11 @@ function M.GetFrameCount() return C.imgui_GetFrameCount() end
 function M.GetMainViewport() return C.imgui_GetMainViewport() end
 function M.GetBackgroundDrawList1() return C.imgui_GetBackgroundDrawList1() end
 function M.GetForegroundDrawList1() return C.imgui_GetForegroundDrawList1() end
-function M.GetBackgroundDrawList2(ImGuiViewport_viewport) 
+function M.GetBackgroundDrawList2(ImGuiViewport_viewport)
   if ImGuiViewport_viewport == nil then log("E", "", "Parameter 'ImGuiViewport_viewport' of function 'GetBackgroundDrawList2' cannot be nil, as the c type is 'ImGuiViewport *'") ; return end
   return C.imgui_GetBackgroundDrawList2(ImGuiViewport_viewport)
 end
-function M.GetForegroundDrawList2(ImGuiViewport_viewport) 
+function M.GetForegroundDrawList2(ImGuiViewport_viewport)
   if ImGuiViewport_viewport == nil then log("E", "", "Parameter 'ImGuiViewport_viewport' of function 'GetForegroundDrawList2' cannot be nil, as the c type is 'ImGuiViewport *'") ; return end
   return C.imgui_GetForegroundDrawList2(ImGuiViewport_viewport)
 end
@@ -1260,7 +1248,7 @@ function M.GetTime() return C.imgui_GetTime() end
 function M.GetFrameCount() return C.imgui_GetFrameCount() end
 function M.GetDrawListSharedData() return C.imgui_GetDrawListSharedData() end
 function M.GetStyleColorName(ImGuiCol_idx) return C.imgui_GetStyleColorName(ImGuiCol_idx) end
-function M.SetStateStorage(ImGuiStorage_storage) 
+function M.SetStateStorage(ImGuiStorage_storage)
   if ImGuiStorage_storage == nil then log("E", "", "Parameter 'ImGuiStorage_storage' of function 'SetStateStorage' cannot be nil, as the c type is 'ImGuiStorage *'") ; return end
   C.imgui_SetStateStorage(ImGuiStorage_storage)
 end
@@ -1270,12 +1258,12 @@ function M.CalcListClipping(int_items_count, float_items_height, int_out_items_d
   if int_out_items_display_end == nil then log("E", "", "Parameter 'int_out_items_display_end' of function 'CalcListClipping' cannot be nil, as the c type is 'int *'") ; return end
   C.imgui_CalcListClipping(int_items_count, float_items_height, int_out_items_display_start, int_out_items_display_end)
 end
-function M.BeginChildFrame(ImGuiID_id, ImVec2_size, ImGuiWindowFlags_flags) 
+function M.BeginChildFrame(ImGuiID_id, ImVec2_size, ImGuiWindowFlags_flags)
   if ImGuiWindowFlags_flags == nil then ImGuiWindowFlags_flags = 0 end
   return C.imgui_BeginChildFrame(ImGuiID_id, ImVec2_size, ImGuiWindowFlags_flags)
 end
 function M.EndChildFrame() C.imgui_EndChildFrame() end
-function M.CalcTextSize(string_text, string_text_end, bool_hide_text_after_double_hash, float_wrap_width) 
+function M.CalcTextSize(string_text, string_text_end, bool_hide_text_after_double_hash, float_wrap_width)
   -- string_text_end is optional and can be nil
   if bool_hide_text_after_double_hash == nil then bool_hide_text_after_double_hash = false end
   if float_wrap_width == nil then float_wrap_width = -1 end
@@ -1288,7 +1276,7 @@ function M.ColorConvertRGBtoHSV(float_r, float_g, float_b, float_out_h, float_ou
 function M.ColorConvertHSVtoRGB(float_h, float_s, float_v, float_out_r, float_out_g, float_out_b) C.imgui_ColorConvertHSVtoRGB(float_h, float_s, float_v, float_out_r, float_out_g, float_out_b) end
 function M.GetKeyIndex(ImGuiKey_imgui_key) return C.imgui_GetKeyIndex(ImGuiKey_imgui_key) end
 function M.IsKeyDown(ImGuiKey_key) return C.imgui_IsKeyDown(ImGuiKey_key) end
-function M.IsKeyPressed(ImGuiKey_key, _repeat) 
+function M.IsKeyPressed(ImGuiKey_key, _repeat)
   if _repeat == nil then _repeat = true end
   return C.imgui_IsKeyPressed(ImGuiKey_key, _repeat)
 end
@@ -1297,34 +1285,34 @@ function M.GetKeyPressedAmount(ImGuiKey_key, float_repeat_delay, float_rate) ret
 function M.GetKeyName(ImGuiKey_key) return C.imgui_GetKeyName(ImGuiKey_key) end
 function M.SetNextFrameWantCaptureKeyboard(bool_want_capture_keyboard) C.imgui_SetNextFrameWantCaptureKeyboard(bool_want_capture_keyboard) end
 function M.IsMouseDown(ImGuiMouseButton_button) return C.imgui_IsMouseDown(ImGuiMouseButton_button) end
-function M.IsMouseClicked(ImGuiMouseButton_button, _repeat) 
+function M.IsMouseClicked(ImGuiMouseButton_button, _repeat)
   if _repeat == nil then _repeat = false end
   return C.imgui_IsMouseClicked(ImGuiMouseButton_button, _repeat)
 end
 function M.IsMouseReleased(ImGuiMouseButton_button) return C.imgui_IsMouseReleased(ImGuiMouseButton_button) end
 function M.IsMouseDoubleClicked(ImGuiMouseButton_button) return C.imgui_IsMouseDoubleClicked(ImGuiMouseButton_button) end
 function M.GetMouseClickedCount(ImGuiMouseButton_button) return C.imgui_GetMouseClickedCount(ImGuiMouseButton_button) end
-function M.IsMouseHoveringRect(ImVec2_r_min, ImVec2_r_max, bool_clip) 
+function M.IsMouseHoveringRect(ImVec2_r_min, ImVec2_r_max, bool_clip)
   if bool_clip == nil then bool_clip = true end
   return C.imgui_IsMouseHoveringRect(ImVec2_r_min, ImVec2_r_max, bool_clip)
 end
-function M.IsMousePosValid(ImVec2_mouse_pos) 
+function M.IsMousePosValid(ImVec2_mouse_pos)
   -- ImVec2_mouse_pos is optional and can be nil
   return C.imgui_IsMousePosValid(ImVec2_mouse_pos)
 end
 function M.IsAnyMouseDown() return C.imgui_IsAnyMouseDown() end
 function M.GetMousePos() return C.imgui_GetMousePos() end
 function M.GetMousePosOnOpeningCurrentPopup() return C.imgui_GetMousePosOnOpeningCurrentPopup() end
-function M.IsMouseDragging(ImGuiMouseButton_button, float_lock_threshold) 
+function M.IsMouseDragging(ImGuiMouseButton_button, float_lock_threshold)
   if float_lock_threshold == nil then float_lock_threshold = -1 end
   return C.imgui_IsMouseDragging(ImGuiMouseButton_button, float_lock_threshold)
 end
-function M.GetMouseDragDelta(ImGuiMouseButton_button, float_lock_threshold) 
+function M.GetMouseDragDelta(ImGuiMouseButton_button, float_lock_threshold)
   if ImGuiMouseButton_button == nil then ImGuiMouseButton_button = 0 end
   if float_lock_threshold == nil then float_lock_threshold = -1 end
   return C.imgui_GetMouseDragDelta(ImGuiMouseButton_button, float_lock_threshold)
 end
-function M.ResetMouseDragDelta(ImGuiMouseButton_button) 
+function M.ResetMouseDragDelta(ImGuiMouseButton_button)
   if ImGuiMouseButton_button == nil then ImGuiMouseButton_button = 0 end
   C.imgui_ResetMouseDragDelta(ImGuiMouseButton_button)
 end
@@ -1332,19 +1320,19 @@ function M.GetMouseCursor() return C.imgui_GetMouseCursor() end
 function M.SetMouseCursor(ImGuiMouseCursor_cursor_type) C.imgui_SetMouseCursor(ImGuiMouseCursor_cursor_type) end
 function M.SetNextFrameWantCaptureMouse(bool_want_capture_mouse) C.imgui_SetNextFrameWantCaptureMouse(bool_want_capture_mouse) end
 function M.GetClipboardText() return C.imgui_GetClipboardText() end
-function M.SetClipboardText(string_text) 
+function M.SetClipboardText(string_text)
   if string_text == nil then log("E", "", "Parameter 'string_text' of function 'SetClipboardText' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_SetClipboardText(string_text)
 end
-function M.DebugTextEncoding(string_text) 
+function M.DebugTextEncoding(string_text)
   if string_text == nil then log("E", "", "Parameter 'string_text' of function 'DebugTextEncoding' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_DebugTextEncoding(string_text)
 end
-function M.DebugCheckVersionAndDataLayout(string_version_str, size_t_sz_io, size_t_sz_style, size_t_sz_vec2, size_t_sz_vec4, size_t_sz_drawvert, size_t_sz_drawidx) 
+function M.DebugCheckVersionAndDataLayout(string_version_str, size_t_sz_io, size_t_sz_style, size_t_sz_vec2, size_t_sz_vec4, size_t_sz_drawvert, size_t_sz_drawidx)
   if string_version_str == nil then log("E", "", "Parameter 'string_version_str' of function 'DebugCheckVersionAndDataLayout' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_DebugCheckVersionAndDataLayout(string_version_str, size_t_sz_io, size_t_sz_style, size_t_sz_vec2, size_t_sz_vec4, size_t_sz_drawvert, size_t_sz_drawidx)
 end
-function M.GetAllocatorFunctions(ImGuiMemAllocFunc_p_alloc_func, ImGuiMemFreeFunc_p_free_func, void_p_user_data) 
+function M.GetAllocatorFunctions(ImGuiMemAllocFunc_p_alloc_func, ImGuiMemFreeFunc_p_free_func, void_p_user_data)
   if ImGuiMemAllocFunc_p_alloc_func == nil then log("E", "", "Parameter 'ImGuiMemAllocFunc_p_alloc_func' of function 'GetAllocatorFunctions' cannot be nil, as the c type is 'ImGuiMemAllocFunc *'") ; return end
   if ImGuiMemFreeFunc_p_free_func == nil then log("E", "", "Parameter 'ImGuiMemFreeFunc_p_free_func' of function 'GetAllocatorFunctions' cannot be nil, as the c type is 'ImGuiMemFreeFunc *'") ; return end
   if void_p_user_data == nil then log("E", "", "Parameter 'void_p_user_data' of function 'GetAllocatorFunctions' cannot be nil, as the c type is 'void **'") ; return end
@@ -1352,14 +1340,14 @@ function M.GetAllocatorFunctions(ImGuiMemAllocFunc_p_alloc_func, ImGuiMemFreeFun
 end
 function M.GetPlatformIO() return C.imgui_GetPlatformIO() end
 function M.UpdatePlatformWindows() C.imgui_UpdatePlatformWindows() end
-function M.RenderPlatformWindowsDefault(void_platform_render_arg, void_renderer_render_arg) 
+function M.RenderPlatformWindowsDefault(void_platform_render_arg, void_renderer_render_arg)
   -- void_platform_render_arg is optional and can be nil
   -- void_renderer_render_arg is optional and can be nil
   C.imgui_RenderPlatformWindowsDefault(void_platform_render_arg, void_renderer_render_arg)
 end
 function M.DestroyPlatformWindows() C.imgui_DestroyPlatformWindows() end
 function M.FindViewportByID(ImGuiID_id) return C.imgui_FindViewportByID(ImGuiID_id) end
-function M.FindViewportByPlatformHandle(void_platform_handle) 
+function M.FindViewportByPlatformHandle(void_platform_handle)
   if void_platform_handle == nil then log("E", "", "Parameter 'void_platform_handle' of function 'FindViewportByPlatformHandle' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_FindViewportByPlatformHandle(void_platform_handle)
 end
@@ -2048,11 +2036,11 @@ function M.ImGuiIO_AddMouseViewportEvent(ImGuiIO_ctx, ImGuiID_id) C.imgui_ImGuiI
 function M.ImGuiIO_AddFocusEvent(ImGuiIO_ctx, bool_focused) C.imgui_ImGuiIO_AddFocusEvent(ImGuiIO_ctx, bool_focused) end
 function M.ImGuiIO_AddInputCharacter(ImGuiIO_ctx, int_c) C.imgui_ImGuiIO_AddInputCharacter(ImGuiIO_ctx, int_c) end
 function M.ImGuiIO_AddInputCharacterUTF16(ImGuiIO_ctx, ImWchar16_c) C.imgui_ImGuiIO_AddInputCharacterUTF16(ImGuiIO_ctx, ImWchar16_c) end
-function M.ImGuiIO_AddInputCharactersUTF8(ImGuiIO_ctx, string_str) 
+function M.ImGuiIO_AddInputCharactersUTF8(ImGuiIO_ctx, string_str)
   if string_str == nil then log("E", "", "Parameter 'string_str' of function 'AddInputCharactersUTF8' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ImGuiIO_AddInputCharactersUTF8(ImGuiIO_ctx, string_str)
 end
-function M.ImGuiIO_SetKeyEventNativeData(ImGuiIO_ctx, ImGuiKey_key, int_native_keycode, int_native_scancode, int_native_legacy_index) 
+function M.ImGuiIO_SetKeyEventNativeData(ImGuiIO_ctx, ImGuiKey_key, int_native_keycode, int_native_scancode, int_native_legacy_index)
   if int_native_legacy_index == nil then int_native_legacy_index = -1 end
   C.imgui_ImGuiIO_SetKeyEventNativeData(ImGuiIO_ctx, ImGuiKey_key, int_native_keycode, int_native_scancode, int_native_legacy_index)
 end
@@ -2060,6 +2048,7 @@ function M.ImGuiIO_SetAppAcceptingEvents(ImGuiIO_ctx, bool_accepting_events) C.i
 function M.ImGuiIO_ClearEventsQueue(ImGuiIO_ctx) C.imgui_ImGuiIO_ClearEventsQueue(ImGuiIO_ctx) end
 function M.ImGuiIO_ClearInputKeys(ImGuiIO_ctx) C.imgui_ImGuiIO_ClearInputKeys(ImGuiIO_ctx) end
 function M.ImGuiIO_ClearInputCharacters(ImGuiIO_ctx) C.imgui_ImGuiIO_ClearInputCharacters(ImGuiIO_ctx) end
+function M.ImGuiIO_FontGlobalScale(ImGuiIO_ctx, value) C.imgui_ImGuiIO_FontGlobalScale(ImGuiIO_ctx, value) end
 function M.ImGuiIO() return ffi.new("ImGuiIO") end
 function M.ImGuiIOPtr() return ffi.new("ImGuiIO[1]") end
 --===
@@ -2067,7 +2056,7 @@ function M.ImGuiIOPtr() return ffi.new("ImGuiIO[1]") end
 function M.ImGuiInputTextCallbackData() return ffi.new("ImGuiInputTextCallbackData") end
 function M.ImGuiInputTextCallbackDataPtr() return ffi.new("ImGuiInputTextCallbackData[1]") end
 function M.ImGuiInputTextCallbackData_DeleteChars(ImGuiInputTextCallbackData_ctx, int_pos, int_bytes_count) C.imgui_ImGuiInputTextCallbackData_DeleteChars(ImGuiInputTextCallbackData_ctx, int_pos, int_bytes_count) end
-function M.ImGuiInputTextCallbackData_InsertChars(ImGuiInputTextCallbackData_ctx, int_pos, string_text, string_text_end) 
+function M.ImGuiInputTextCallbackData_InsertChars(ImGuiInputTextCallbackData_ctx, int_pos, string_text, string_text_end)
   -- string_text_end is optional and can be nil
   if string_text == nil then log("E", "", "Parameter 'string_text' of function 'InsertChars' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ImGuiInputTextCallbackData_InsertChars(ImGuiInputTextCallbackData_ctx, int_pos, string_text, string_text_end)
@@ -2086,7 +2075,7 @@ function M.ImGuiWindowClassPtr() return ffi.new("ImGuiWindowClass[1]") end
 function M.ImGuiPayload() return ffi.new("ImGuiPayload") end
 function M.ImGuiPayloadPtr() return ffi.new("ImGuiPayload[1]") end
 function M.ImGuiPayload_Clear(ImGuiPayload_ctx) C.imgui_ImGuiPayload_Clear(ImGuiPayload_ctx) end
-function M.ImGuiPayload_IsDataType(ImGuiPayload_ctx, string_type) 
+function M.ImGuiPayload_IsDataType(ImGuiPayload_ctx, string_type)
   if string_type == nil then log("E", "", "Parameter 'string_type' of function 'IsDataType' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ImGuiPayload_IsDataType(ImGuiPayload_ctx, string_type)
 end
@@ -2102,12 +2091,12 @@ function M.ImGuiTableSortSpecs() return ffi.new("ImGuiTableSortSpecs") end
 function M.ImGuiTableSortSpecsPtr() return ffi.new("ImGuiTableSortSpecs[1]") end
 --===
 --=== struct ImGuiTextFilter ===
-function M.ImGuiTextFilter_Draw(ImGuiTextFilter_ctx, string_label, float_width) 
+function M.ImGuiTextFilter_Draw(ImGuiTextFilter_ctx, string_label, float_width)
   if string_label == nil then string_label = "Filter (inc,-exc)" end
   if float_width == nil then float_width = 0 end
   return C.imgui_ImGuiTextFilter_Draw(ImGuiTextFilter_ctx, string_label, float_width)
 end
-function M.ImGuiTextFilter_PassFilter(ImGuiTextFilter_ctx, string_text, string_text_end) 
+function M.ImGuiTextFilter_PassFilter(ImGuiTextFilter_ctx, string_text, string_text_end)
   -- string_text_end is optional and can be nil
   if string_text == nil then log("E", "", "Parameter 'string_text' of function 'PassFilter' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ImGuiTextFilter_PassFilter(ImGuiTextFilter_ctx, string_text, string_text_end)
@@ -2126,51 +2115,51 @@ function M.ImGuiTextBuffer_empty(ImGuiTextBuffer_ctx) return C.imgui_ImGuiTextBu
 function M.ImGuiTextBuffer_clear(ImGuiTextBuffer_ctx) C.imgui_ImGuiTextBuffer_clear(ImGuiTextBuffer_ctx) end
 function M.ImGuiTextBuffer_reserve(ImGuiTextBuffer_ctx, int_capacity) C.imgui_ImGuiTextBuffer_reserve(ImGuiTextBuffer_ctx, int_capacity) end
 function M.ImGuiTextBuffer_c_str(ImGuiTextBuffer_ctx) return C.imgui_ImGuiTextBuffer_c_str(ImGuiTextBuffer_ctx) end
-function M.ImGuiTextBuffer_append(ImGuiTextBuffer_ctx, string_str, string_str_end) 
+function M.ImGuiTextBuffer_append(ImGuiTextBuffer_ctx, string_str, string_str_end)
   -- string_str_end is optional and can be nil
   if string_str == nil then log("E", "", "Parameter 'string_str' of function 'append' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ImGuiTextBuffer_append(ImGuiTextBuffer_ctx, string_str, string_str_end)
 end
-function M.ImGuiTextBuffer_appendfv(ImGuiTextBuffer_ctx, string_fmt, va_list_args) 
+function M.ImGuiTextBuffer_appendfv(ImGuiTextBuffer_ctx, string_fmt, va_list_args)
   if string_fmt == nil then log("E", "", "Parameter 'string_fmt' of function 'appendfv' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ImGuiTextBuffer_appendfv(ImGuiTextBuffer_ctx, string_fmt, va_list_args)
 end
 --===
 --=== struct ImGuiStorage ===
 function M.ImGuiStorage_Clear(ImGuiStorage_ctx) C.imgui_ImGuiStorage_Clear(ImGuiStorage_ctx) end
-function M.ImGuiStorage_GetInt(ImGuiStorage_ctx, ImGuiID_key, int_default_val) 
+function M.ImGuiStorage_GetInt(ImGuiStorage_ctx, ImGuiID_key, int_default_val)
   if int_default_val == nil then int_default_val = 0 end
   return C.imgui_ImGuiStorage_GetInt(ImGuiStorage_ctx, ImGuiID_key, int_default_val)
 end
 function M.ImGuiStorage_SetInt(ImGuiStorage_ctx, ImGuiID_key, int_val) C.imgui_ImGuiStorage_SetInt(ImGuiStorage_ctx, ImGuiID_key, int_val) end
-function M.ImGuiStorage_GetBool(ImGuiStorage_ctx, ImGuiID_key, bool_default_val) 
+function M.ImGuiStorage_GetBool(ImGuiStorage_ctx, ImGuiID_key, bool_default_val)
   if bool_default_val == nil then bool_default_val = false end
   return C.imgui_ImGuiStorage_GetBool(ImGuiStorage_ctx, ImGuiID_key, bool_default_val)
 end
 function M.ImGuiStorage_SetBool(ImGuiStorage_ctx, ImGuiID_key, bool_val) C.imgui_ImGuiStorage_SetBool(ImGuiStorage_ctx, ImGuiID_key, bool_val) end
-function M.ImGuiStorage_GetFloat(ImGuiStorage_ctx, ImGuiID_key, float_default_val) 
+function M.ImGuiStorage_GetFloat(ImGuiStorage_ctx, ImGuiID_key, float_default_val)
   if float_default_val == nil then float_default_val = 0 end
   return C.imgui_ImGuiStorage_GetFloat(ImGuiStorage_ctx, ImGuiID_key, float_default_val)
 end
 function M.ImGuiStorage_SetFloat(ImGuiStorage_ctx, ImGuiID_key, float_val) C.imgui_ImGuiStorage_SetFloat(ImGuiStorage_ctx, ImGuiID_key, float_val) end
 function M.ImGuiStorage_GetVoidPtr(ImGuiStorage_ctx, ImGuiID_key) return C.imgui_ImGuiStorage_GetVoidPtr(ImGuiStorage_ctx, ImGuiID_key) end
-function M.ImGuiStorage_SetVoidPtr(ImGuiStorage_ctx, ImGuiID_key, void_val) 
+function M.ImGuiStorage_SetVoidPtr(ImGuiStorage_ctx, ImGuiID_key, void_val)
   if void_val == nil then log("E", "", "Parameter 'void_val' of function 'SetVoidPtr' cannot be nil, as the c type is 'void *'") ; return end
   C.imgui_ImGuiStorage_SetVoidPtr(ImGuiStorage_ctx, ImGuiID_key, void_val)
 end
-function M.ImGuiStorage_GetIntRef(ImGuiStorage_ctx, ImGuiID_key, int_default_val) 
+function M.ImGuiStorage_GetIntRef(ImGuiStorage_ctx, ImGuiID_key, int_default_val)
   if int_default_val == nil then int_default_val = 0 end
   return C.imgui_ImGuiStorage_GetIntRef(ImGuiStorage_ctx, ImGuiID_key, int_default_val)
 end
-function M.ImGuiStorage_GetBoolRef(ImGuiStorage_ctx, ImGuiID_key, bool_default_val) 
+function M.ImGuiStorage_GetBoolRef(ImGuiStorage_ctx, ImGuiID_key, bool_default_val)
   if bool_default_val == nil then bool_default_val = false end
   return C.imgui_ImGuiStorage_GetBoolRef(ImGuiStorage_ctx, ImGuiID_key, bool_default_val)
 end
-function M.ImGuiStorage_GetFloatRef(ImGuiStorage_ctx, ImGuiID_key, float_default_val) 
+function M.ImGuiStorage_GetFloatRef(ImGuiStorage_ctx, ImGuiID_key, float_default_val)
   if float_default_val == nil then float_default_val = 0 end
   return C.imgui_ImGuiStorage_GetFloatRef(ImGuiStorage_ctx, ImGuiID_key, float_default_val)
 end
-function M.ImGuiStorage_GetVoidPtrRef(ImGuiStorage_ctx, ImGuiID_key, void_default_val) 
+function M.ImGuiStorage_GetVoidPtrRef(ImGuiStorage_ctx, ImGuiID_key, void_default_val)
   -- void_default_val is optional and can be nil
   return C.imgui_ImGuiStorage_GetVoidPtrRef(ImGuiStorage_ctx, ImGuiID_key, void_default_val)
 end
@@ -2180,7 +2169,7 @@ function M.ImGuiStorage_BuildSortByKey(ImGuiStorage_ctx) C.imgui_ImGuiStorage_Bu
 --=== struct ImGuiListClipper ===
 function M.ImGuiListClipper() return ffi.new("ImGuiListClipper") end
 function M.ImGuiListClipperPtr() return ffi.new("ImGuiListClipper[1]") end
-function M.ImGuiListClipper_Begin(ImGuiListClipper_ctx, int_items_count, float_items_height) 
+function M.ImGuiListClipper_Begin(ImGuiListClipper_ctx, int_items_count, float_items_height)
   if float_items_height == nil then float_items_height = -1 end
   C.imgui_ImGuiListClipper_Begin(ImGuiListClipper_ctx, int_items_count, float_items_height)
 end
@@ -2192,11 +2181,11 @@ function M.ImGuiListClipper_ForceDisplayRangeByIndices(ImGuiListClipper_ctx, int
 --=== struct ImColor ===
 function M.ImColor() return ffi.new("ImColor") end
 function M.ImColorPtr() return ffi.new("ImColor[1]") end
-function M.ImColor_SetHSV(ImColor_ctx, float_h, float_s, float_v, float_a) 
+function M.ImColor_SetHSV(ImColor_ctx, float_h, float_s, float_v, float_a)
   if float_a == nil then float_a = 1 end
   C.imgui_ImColor_SetHSV(ImColor_ctx, float_h, float_s, float_v, float_a)
 end
-function M.ImColor_HSV(ImColor_ctx, float_h, float_s, float_v, float_a) 
+function M.ImColor_HSV(ImColor_ctx, float_h, float_s, float_v, float_a)
   if float_a == nil then float_a = 1 end
   return C.imgui_ImColor_HSV(ImColor_ctx, float_h, float_s, float_v, float_a)
 end
@@ -2215,15 +2204,15 @@ function M.ImDrawListSplitter() return ffi.new("ImDrawListSplitter") end
 function M.ImDrawListSplitterPtr() return ffi.new("ImDrawListSplitter[1]") end
 function M.ImDrawListSplitter_Clear(ImDrawListSplitter_ctx) C.imgui_ImDrawListSplitter_Clear(ImDrawListSplitter_ctx) end
 function M.ImDrawListSplitter_ClearFreeMemory(ImDrawListSplitter_ctx) C.imgui_ImDrawListSplitter_ClearFreeMemory(ImDrawListSplitter_ctx) end
-function M.ImDrawListSplitter_Split(ImDrawListSplitter_ctx, ImDrawList_draw_list, int_count) 
+function M.ImDrawListSplitter_Split(ImDrawListSplitter_ctx, ImDrawList_draw_list, int_count)
   if ImDrawList_draw_list == nil then log("E", "", "Parameter 'ImDrawList_draw_list' of function 'Split' cannot be nil, as the c type is 'ImDrawList *'") ; return end
   C.imgui_ImDrawListSplitter_Split(ImDrawListSplitter_ctx, ImDrawList_draw_list, int_count)
 end
-function M.ImDrawListSplitter_Merge(ImDrawListSplitter_ctx, ImDrawList_draw_list) 
+function M.ImDrawListSplitter_Merge(ImDrawListSplitter_ctx, ImDrawList_draw_list)
   if ImDrawList_draw_list == nil then log("E", "", "Parameter 'ImDrawList_draw_list' of function 'Merge' cannot be nil, as the c type is 'ImDrawList *'") ; return end
   C.imgui_ImDrawListSplitter_Merge(ImDrawListSplitter_ctx, ImDrawList_draw_list)
 end
-function M.ImDrawListSplitter_SetCurrentChannel(ImDrawListSplitter_ctx, ImDrawList_draw_list, int_channel_idx) 
+function M.ImDrawListSplitter_SetCurrentChannel(ImDrawListSplitter_ctx, ImDrawList_draw_list, int_channel_idx)
   if ImDrawList_draw_list == nil then log("E", "", "Parameter 'ImDrawList_draw_list' of function 'SetCurrentChannel' cannot be nil, as the c type is 'ImDrawList *'") ; return end
   C.imgui_ImDrawListSplitter_SetCurrentChannel(ImDrawListSplitter_ctx, ImDrawList_draw_list, int_channel_idx)
 end
@@ -2252,7 +2241,7 @@ M.ImDrawListFlags_AntiAliasedFill = C.ImDrawListFlags_AntiAliasedFill
 M.ImDrawListFlags_AllowVtxOffset = C.ImDrawListFlags_AllowVtxOffset
 --===
 --=== struct ImDrawList ===
-function M.ImDrawList_PushClipRect(ImDrawList_ctx, ImVec2_clip_rect_min, ImVec2_clip_rect_max, bool_intersect_with_current_clip_rect) 
+function M.ImDrawList_PushClipRect(ImDrawList_ctx, ImVec2_clip_rect_min, ImVec2_clip_rect_max, bool_intersect_with_current_clip_rect)
   if bool_intersect_with_current_clip_rect == nil then bool_intersect_with_current_clip_rect = false end
   C.imgui_ImDrawList_PushClipRect(ImDrawList_ctx, ImVec2_clip_rect_min, ImVec2_clip_rect_max, bool_intersect_with_current_clip_rect)
 end
@@ -2262,52 +2251,52 @@ function M.ImDrawList_PushTextureID(ImDrawList_ctx, ImTextureID_texture_id) C.im
 function M.ImDrawList_PopTextureID(ImDrawList_ctx) C.imgui_ImDrawList_PopTextureID(ImDrawList_ctx) end
 function M.ImDrawList_GetClipRectMin(ImDrawList_ctx) return C.imgui_ImDrawList_GetClipRectMin(ImDrawList_ctx) end
 function M.ImDrawList_GetClipRectMax(ImDrawList_ctx) return C.imgui_ImDrawList_GetClipRectMax(ImDrawList_ctx) end
-function M.ImDrawList_AddLine(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImU32_col, float_thickness) 
+function M.ImDrawList_AddLine(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImU32_col, float_thickness)
   if float_thickness == nil then float_thickness = 1 end
   C.imgui_ImDrawList_AddLine(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImU32_col, float_thickness)
 end
-function M.ImDrawList_AddRect(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col, float_rounding, ImDrawFlags_flags, float_thickness) 
+function M.ImDrawList_AddRect(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col, float_rounding, ImDrawFlags_flags, float_thickness)
   if float_rounding == nil then float_rounding = 0 end
   if ImDrawFlags_flags == nil then ImDrawFlags_flags = 0 end
   if float_thickness == nil then float_thickness = 1 end
   C.imgui_ImDrawList_AddRect(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col, float_rounding, ImDrawFlags_flags, float_thickness)
 end
-function M.ImDrawList_AddRectFilled(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col, float_rounding, ImDrawFlags_flags) 
+function M.ImDrawList_AddRectFilled(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col, float_rounding, ImDrawFlags_flags)
   if float_rounding == nil then float_rounding = 0 end
   if ImDrawFlags_flags == nil then ImDrawFlags_flags = 0 end
   C.imgui_ImDrawList_AddRectFilled(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col, float_rounding, ImDrawFlags_flags)
 end
 function M.ImDrawList_AddRectFilledMultiColor(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col_upr_left, ImU32_col_upr_right, ImU32_col_bot_right, ImU32_col_bot_left) C.imgui_ImDrawList_AddRectFilledMultiColor(ImDrawList_ctx, ImVec2_p_min, ImVec2_p_max, ImU32_col_upr_left, ImU32_col_upr_right, ImU32_col_bot_right, ImU32_col_bot_left) end
-function M.ImDrawList_AddQuad(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col, float_thickness) 
+function M.ImDrawList_AddQuad(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col, float_thickness)
   if float_thickness == nil then float_thickness = 1 end
   C.imgui_ImDrawList_AddQuad(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col, float_thickness)
 end
 function M.ImDrawList_AddQuadFilled(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col) C.imgui_ImDrawList_AddQuadFilled(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col) end
-function M.ImDrawList_AddTriangle(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col, float_thickness) 
+function M.ImDrawList_AddTriangle(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col, float_thickness)
   if float_thickness == nil then float_thickness = 1 end
   C.imgui_ImDrawList_AddTriangle(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col, float_thickness)
 end
 function M.ImDrawList_AddTriangleFilled(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col) C.imgui_ImDrawList_AddTriangleFilled(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col) end
-function M.ImDrawList_AddCircle(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments, float_thickness) 
+function M.ImDrawList_AddCircle(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments, float_thickness)
   if int_num_segments == nil then int_num_segments = 0 end
   if float_thickness == nil then float_thickness = 1 end
   C.imgui_ImDrawList_AddCircle(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments, float_thickness)
 end
-function M.ImDrawList_AddCircleFilled(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments) 
+function M.ImDrawList_AddCircleFilled(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments)
   if int_num_segments == nil then int_num_segments = 0 end
   C.imgui_ImDrawList_AddCircleFilled(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments)
 end
-function M.ImDrawList_AddNgon(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments, float_thickness) 
+function M.ImDrawList_AddNgon(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments, float_thickness)
   if float_thickness == nil then float_thickness = 1 end
   C.imgui_ImDrawList_AddNgon(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments, float_thickness)
 end
 function M.ImDrawList_AddNgonFilled(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments) C.imgui_ImDrawList_AddNgonFilled(ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments) end
-function M.ImDrawList_AddText1(ImDrawList_ctx, ImVec2_pos, ImU32_col, string_text_begin, string_text_end) 
+function M.ImDrawList_AddText1(ImDrawList_ctx, ImVec2_pos, ImU32_col, string_text_begin, string_text_end)
   -- string_text_end is optional and can be nil
   if string_text_begin == nil then log("E", "", "Parameter 'string_text_begin' of function 'AddText1' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ImDrawList_AddText1(ImDrawList_ctx, ImVec2_pos, ImU32_col, string_text_begin, string_text_end)
 end
-function M.ImDrawList_AddText2(ImDrawList_ctx, ImFont_font, float_font_size, ImVec2_pos, ImU32_col, string_text_begin, string_text_end, float_wrap_width, ImVec4_cpu_fine_clip_rect) 
+function M.ImDrawList_AddText2(ImDrawList_ctx, ImFont_font, float_font_size, ImVec2_pos, ImU32_col, string_text_begin, string_text_end, float_wrap_width, ImVec4_cpu_fine_clip_rect)
   -- string_text_end is optional and can be nil
   if float_wrap_width == nil then float_wrap_width = 0 end
   -- ImVec4_cpu_fine_clip_rect is optional and can be nil
@@ -2315,29 +2304,29 @@ function M.ImDrawList_AddText2(ImDrawList_ctx, ImFont_font, float_font_size, ImV
   if string_text_begin == nil then log("E", "", "Parameter 'string_text_begin' of function 'AddText2' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ImDrawList_AddText2(ImDrawList_ctx, ImFont_font, float_font_size, ImVec2_pos, ImU32_col, string_text_begin, string_text_end, float_wrap_width, ImVec4_cpu_fine_clip_rect)
 end
-function M.ImDrawList_AddPolyline(ImDrawList_ctx, ImVec2_points, int_num_points, ImU32_col, ImDrawFlags_flags, float_thickness) 
+function M.ImDrawList_AddPolyline(ImDrawList_ctx, ImVec2_points, int_num_points, ImU32_col, ImDrawFlags_flags, float_thickness)
   if ImVec2_points == nil then log("E", "", "Parameter 'ImVec2_points' of function 'AddPolyline' cannot be nil, as the c type is 'const ImVec2 *'") ; return end
   C.imgui_ImDrawList_AddPolyline(ImDrawList_ctx, ImVec2_points, int_num_points, ImU32_col, ImDrawFlags_flags, float_thickness)
 end
-function M.ImDrawList_AddConvexPolyFilled(ImDrawList_ctx, ImVec2_points, int_num_points, ImU32_col) 
+function M.ImDrawList_AddConvexPolyFilled(ImDrawList_ctx, ImVec2_points, int_num_points, ImU32_col)
   if ImVec2_points == nil then log("E", "", "Parameter 'ImVec2_points' of function 'AddConvexPolyFilled' cannot be nil, as the c type is 'const ImVec2 *'") ; return end
   C.imgui_ImDrawList_AddConvexPolyFilled(ImDrawList_ctx, ImVec2_points, int_num_points, ImU32_col)
 end
-function M.ImDrawList_AddBezierCubic(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col, float_thickness, int_num_segments) 
+function M.ImDrawList_AddBezierCubic(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col, float_thickness, int_num_segments)
   if int_num_segments == nil then int_num_segments = 0 end
   C.imgui_ImDrawList_AddBezierCubic(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImU32_col, float_thickness, int_num_segments)
 end
-function M.ImDrawList_AddBezierQuadratic(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col, float_thickness, int_num_segments) 
+function M.ImDrawList_AddBezierQuadratic(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col, float_thickness, int_num_segments)
   if int_num_segments == nil then int_num_segments = 0 end
   C.imgui_ImDrawList_AddBezierQuadratic(ImDrawList_ctx, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImU32_col, float_thickness, int_num_segments)
 end
-function M.ImDrawList_AddImage(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p_min, ImVec2_p_max, ImVec2_uv_min, ImVec2_uv_max, ImU32_col) 
+function M.ImDrawList_AddImage(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p_min, ImVec2_p_max, ImVec2_uv_min, ImVec2_uv_max, ImU32_col)
   if ImVec2_uv_min == nil then ImVec2_uv_min = M.ImVec2(0,0) end
   if ImVec2_uv_max == nil then ImVec2_uv_max = M.ImVec2(1,1) end
   if ImU32_col == nil then ImU32_col = IM_COL32_WHITE end
   C.imgui_ImDrawList_AddImage(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p_min, ImVec2_p_max, ImVec2_uv_min, ImVec2_uv_max, ImU32_col)
 end
-function M.ImDrawList_AddImageQuad(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImVec2_uv1, ImVec2_uv2, ImVec2_uv3, ImVec2_uv4, ImU32_col) 
+function M.ImDrawList_AddImageQuad(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImVec2_uv1, ImVec2_uv2, ImVec2_uv3, ImVec2_uv4, ImU32_col)
   if ImVec2_uv1 == nil then ImVec2_uv1 = M.ImVec2(0,0) end
   if ImVec2_uv2 == nil then ImVec2_uv2 = M.ImVec2(1,0) end
   if ImVec2_uv3 == nil then ImVec2_uv3 = M.ImVec2(1,1) end
@@ -2345,7 +2334,7 @@ function M.ImDrawList_AddImageQuad(ImDrawList_ctx, ImTextureID_user_texture_id, 
   if ImU32_col == nil then ImU32_col = IM_COL32_WHITE end
   C.imgui_ImDrawList_AddImageQuad(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p1, ImVec2_p2, ImVec2_p3, ImVec2_p4, ImVec2_uv1, ImVec2_uv2, ImVec2_uv3, ImVec2_uv4, ImU32_col)
 end
-function M.ImDrawList_AddImageRounded(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p_min, ImVec2_p_max, ImVec2_uv_min, ImVec2_uv_max, ImU32_col, float_rounding, ImDrawFlags_flags) 
+function M.ImDrawList_AddImageRounded(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p_min, ImVec2_p_max, ImVec2_uv_min, ImVec2_uv_max, ImU32_col, float_rounding, ImDrawFlags_flags)
   if ImDrawFlags_flags == nil then ImDrawFlags_flags = 0 end
   C.imgui_ImDrawList_AddImageRounded(ImDrawList_ctx, ImTextureID_user_texture_id, ImVec2_p_min, ImVec2_p_max, ImVec2_uv_min, ImVec2_uv_max, ImU32_col, float_rounding, ImDrawFlags_flags)
 end
@@ -2353,30 +2342,30 @@ function M.ImDrawList_PathClear(ImDrawList_ctx) C.imgui_ImDrawList_PathClear(ImD
 function M.ImDrawList_PathLineTo(ImDrawList_ctx, ImVec2_pos) C.imgui_ImDrawList_PathLineTo(ImDrawList_ctx, ImVec2_pos) end
 function M.ImDrawList_PathLineToMergeDuplicate(ImDrawList_ctx, ImVec2_pos) C.imgui_ImDrawList_PathLineToMergeDuplicate(ImDrawList_ctx, ImVec2_pos) end
 function M.ImDrawList_PathFillConvex(ImDrawList_ctx, ImU32_col) C.imgui_ImDrawList_PathFillConvex(ImDrawList_ctx, ImU32_col) end
-function M.ImDrawList_PathStroke(ImDrawList_ctx, ImU32_col, ImDrawFlags_flags, float_thickness) 
+function M.ImDrawList_PathStroke(ImDrawList_ctx, ImU32_col, ImDrawFlags_flags, float_thickness)
   if ImDrawFlags_flags == nil then ImDrawFlags_flags = 0 end
   if float_thickness == nil then float_thickness = 1 end
   C.imgui_ImDrawList_PathStroke(ImDrawList_ctx, ImU32_col, ImDrawFlags_flags, float_thickness)
 end
-function M.ImDrawList_PathArcTo(ImDrawList_ctx, ImVec2_center, float_radius, float_a_min, float_a_max, int_num_segments) 
+function M.ImDrawList_PathArcTo(ImDrawList_ctx, ImVec2_center, float_radius, float_a_min, float_a_max, int_num_segments)
   if int_num_segments == nil then int_num_segments = 0 end
   C.imgui_ImDrawList_PathArcTo(ImDrawList_ctx, ImVec2_center, float_radius, float_a_min, float_a_max, int_num_segments)
 end
 function M.ImDrawList_PathArcToFast(ImDrawList_ctx, ImVec2_center, float_radius, int_a_min_of_12, int_a_max_of_12) C.imgui_ImDrawList_PathArcToFast(ImDrawList_ctx, ImVec2_center, float_radius, int_a_min_of_12, int_a_max_of_12) end
-function M.ImDrawList_PathBezierCubicCurveTo(ImDrawList_ctx, ImVec2_p2, ImVec2_p3, ImVec2_p4, int_num_segments) 
+function M.ImDrawList_PathBezierCubicCurveTo(ImDrawList_ctx, ImVec2_p2, ImVec2_p3, ImVec2_p4, int_num_segments)
   if int_num_segments == nil then int_num_segments = 0 end
   C.imgui_ImDrawList_PathBezierCubicCurveTo(ImDrawList_ctx, ImVec2_p2, ImVec2_p3, ImVec2_p4, int_num_segments)
 end
-function M.ImDrawList_PathBezierQuadraticCurveTo(ImDrawList_ctx, ImVec2_p2, ImVec2_p3, int_num_segments) 
+function M.ImDrawList_PathBezierQuadraticCurveTo(ImDrawList_ctx, ImVec2_p2, ImVec2_p3, int_num_segments)
   if int_num_segments == nil then int_num_segments = 0 end
   C.imgui_ImDrawList_PathBezierQuadraticCurveTo(ImDrawList_ctx, ImVec2_p2, ImVec2_p3, int_num_segments)
 end
-function M.ImDrawList_PathRect(ImDrawList_ctx, ImVec2_rect_min, ImVec2_rect_max, float_rounding, ImDrawFlags_flags) 
+function M.ImDrawList_PathRect(ImDrawList_ctx, ImVec2_rect_min, ImVec2_rect_max, float_rounding, ImDrawFlags_flags)
   if float_rounding == nil then float_rounding = 0 end
   if ImDrawFlags_flags == nil then ImDrawFlags_flags = 0 end
   C.imgui_ImDrawList_PathRect(ImDrawList_ctx, ImVec2_rect_min, ImVec2_rect_max, float_rounding, ImDrawFlags_flags)
 end
-function M.ImDrawList_AddCallback(ImDrawList_ctx, ImDrawCallback_callback, void_callback_data) 
+function M.ImDrawList_AddCallback(ImDrawList_ctx, ImDrawCallback_callback, void_callback_data)
   if void_callback_data == nil then log("E", "", "Parameter 'void_callback_data' of function 'AddCallback' cannot be nil, as the c type is 'void *'") ; return end
   C.imgui_ImDrawList_AddCallback(ImDrawList_ctx, ImDrawCallback_callback, void_callback_data)
 end
@@ -2424,12 +2413,12 @@ function M.ImFontGlyphRangesBuilder_Clear(ImFontGlyphRangesBuilder_ctx) C.imgui_
 function M.ImFontGlyphRangesBuilder_GetBit(ImFontGlyphRangesBuilder_ctx, size_t_n) return C.imgui_ImFontGlyphRangesBuilder_GetBit(ImFontGlyphRangesBuilder_ctx, size_t_n) end
 function M.ImFontGlyphRangesBuilder_SetBit(ImFontGlyphRangesBuilder_ctx, size_t_n) C.imgui_ImFontGlyphRangesBuilder_SetBit(ImFontGlyphRangesBuilder_ctx, size_t_n) end
 function M.ImFontGlyphRangesBuilder_AddChar(ImFontGlyphRangesBuilder_ctx, ImWchar_c) C.imgui_ImFontGlyphRangesBuilder_AddChar(ImFontGlyphRangesBuilder_ctx, ImWchar_c) end
-function M.ImFontGlyphRangesBuilder_AddText(ImFontGlyphRangesBuilder_ctx, string_text, string_text_end) 
+function M.ImFontGlyphRangesBuilder_AddText(ImFontGlyphRangesBuilder_ctx, string_text, string_text_end)
   -- string_text_end is optional and can be nil
   if string_text == nil then log("E", "", "Parameter 'string_text' of function 'AddText' cannot be nil, as the c type is 'const char *'") ; return end
   C.imgui_ImFontGlyphRangesBuilder_AddText(ImFontGlyphRangesBuilder_ctx, string_text, string_text_end)
 end
-function M.ImFontGlyphRangesBuilder_AddRanges(ImFontGlyphRangesBuilder_ctx, ImWchar_ranges) 
+function M.ImFontGlyphRangesBuilder_AddRanges(ImFontGlyphRangesBuilder_ctx, ImWchar_ranges)
   if ImWchar_ranges == nil then log("E", "", "Parameter 'ImWchar_ranges' of function 'AddRanges' cannot be nil, as the c type is 'const ImWchar *'") ; return end
   C.imgui_ImFontGlyphRangesBuilder_AddRanges(ImFontGlyphRangesBuilder_ctx, ImWchar_ranges)
 end
@@ -2448,33 +2437,33 @@ M.ImFontAtlasFlags_NoBakedLines = C.ImFontAtlasFlags_NoBakedLines
 --=== struct ImFontAtlas ===
 function M.ImFontAtlas() return ffi.new("ImFontAtlas") end
 function M.ImFontAtlasPtr() return ffi.new("ImFontAtlas[1]") end
-function M.ImFontAtlas_AddFont(ImFontAtlas_ctx, ImFontConfig_font_cfg) 
+function M.ImFontAtlas_AddFont(ImFontAtlas_ctx, ImFontConfig_font_cfg)
   if ImFontConfig_font_cfg == nil then log("E", "", "Parameter 'ImFontConfig_font_cfg' of function 'AddFont' cannot be nil, as the c type is 'const ImFontConfig *'") ; return end
   return C.imgui_ImFontAtlas_AddFont(ImFontAtlas_ctx, ImFontConfig_font_cfg)
 end
-function M.ImFontAtlas_AddFontDefault(ImFontAtlas_ctx, ImFontConfig_font_cfg) 
+function M.ImFontAtlas_AddFontDefault(ImFontAtlas_ctx, ImFontConfig_font_cfg)
   -- ImFontConfig_font_cfg is optional and can be nil
   return C.imgui_ImFontAtlas_AddFontDefault(ImFontAtlas_ctx, ImFontConfig_font_cfg)
 end
-function M.ImFontAtlas_AddFontFromFileTTF(ImFontAtlas_ctx, string_filename, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges) 
+function M.ImFontAtlas_AddFontFromFileTTF(ImFontAtlas_ctx, string_filename, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges)
   -- ImFontConfig_font_cfg is optional and can be nil
   -- ImWchar_glyph_ranges is optional and can be nil
   if string_filename == nil then log("E", "", "Parameter 'string_filename' of function 'AddFontFromFileTTF' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ImFontAtlas_AddFontFromFileTTF(ImFontAtlas_ctx, string_filename, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges)
 end
-function M.ImFontAtlas_AddFontFromMemoryTTF(ImFontAtlas_ctx, void_font_data, int_font_size, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges) 
+function M.ImFontAtlas_AddFontFromMemoryTTF(ImFontAtlas_ctx, void_font_data, int_font_size, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges)
   -- ImFontConfig_font_cfg is optional and can be nil
   -- ImWchar_glyph_ranges is optional and can be nil
   if void_font_data == nil then log("E", "", "Parameter 'void_font_data' of function 'AddFontFromMemoryTTF' cannot be nil, as the c type is 'void *'") ; return end
   return C.imgui_ImFontAtlas_AddFontFromMemoryTTF(ImFontAtlas_ctx, void_font_data, int_font_size, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges)
 end
-function M.ImFontAtlas_AddFontFromMemoryCompressedTTF(ImFontAtlas_ctx, void_compressed_font_data, int_compressed_font_size, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges) 
+function M.ImFontAtlas_AddFontFromMemoryCompressedTTF(ImFontAtlas_ctx, void_compressed_font_data, int_compressed_font_size, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges)
   -- ImFontConfig_font_cfg is optional and can be nil
   -- ImWchar_glyph_ranges is optional and can be nil
   if void_compressed_font_data == nil then log("E", "", "Parameter 'void_compressed_font_data' of function 'AddFontFromMemoryCompressedTTF' cannot be nil, as the c type is 'const void *'") ; return end
   return C.imgui_ImFontAtlas_AddFontFromMemoryCompressedTTF(ImFontAtlas_ctx, void_compressed_font_data, int_compressed_font_size, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges)
 end
-function M.ImFontAtlas_AddFontFromMemoryCompressedBase85TTF(ImFontAtlas_ctx, string_compressed_font_data_base85, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges) 
+function M.ImFontAtlas_AddFontFromMemoryCompressedBase85TTF(ImFontAtlas_ctx, string_compressed_font_data_base85, float_size_pixels, ImFontConfig_font_cfg, ImWchar_glyph_ranges)
   -- ImFontConfig_font_cfg is optional and can be nil
   -- ImWchar_glyph_ranges is optional and can be nil
   if string_compressed_font_data_base85 == nil then log("E", "", "Parameter 'string_compressed_font_data_base85' of function 'AddFontFromMemoryCompressedBase85TTF' cannot be nil, as the c type is 'const char *'") ; return end
@@ -2485,14 +2474,14 @@ function M.ImFontAtlas_ClearTexData(ImFontAtlas_ctx) C.imgui_ImFontAtlas_ClearTe
 function M.ImFontAtlas_ClearFonts(ImFontAtlas_ctx) C.imgui_ImFontAtlas_ClearFonts(ImFontAtlas_ctx) end
 function M.ImFontAtlas_Clear(ImFontAtlas_ctx) C.imgui_ImFontAtlas_Clear(ImFontAtlas_ctx) end
 function M.ImFontAtlas_Build(ImFontAtlas_ctx) return C.imgui_ImFontAtlas_Build(ImFontAtlas_ctx) end
-function M.ImFontAtlas_GetTexDataAsAlpha8(ImFontAtlas_ctx, string_out_pixels, int_out_width, int_out_height, int_out_bytes_per_pixel) 
+function M.ImFontAtlas_GetTexDataAsAlpha8(ImFontAtlas_ctx, string_out_pixels, int_out_width, int_out_height, int_out_bytes_per_pixel)
   -- int_out_bytes_per_pixel is optional and can be nil
   if string_out_pixels == nil then log("E", "", "Parameter 'string_out_pixels' of function 'GetTexDataAsAlpha8' cannot be nil, as the c type is 'unsigned char **'") ; return end
   if int_out_width == nil then log("E", "", "Parameter 'int_out_width' of function 'GetTexDataAsAlpha8' cannot be nil, as the c type is 'int *'") ; return end
   if int_out_height == nil then log("E", "", "Parameter 'int_out_height' of function 'GetTexDataAsAlpha8' cannot be nil, as the c type is 'int *'") ; return end
   C.imgui_ImFontAtlas_GetTexDataAsAlpha8(ImFontAtlas_ctx, string_out_pixels, int_out_width, int_out_height, int_out_bytes_per_pixel)
 end
-function M.ImFontAtlas_GetTexDataAsRGBA32(ImFontAtlas_ctx, string_out_pixels, int_out_width, int_out_height, int_out_bytes_per_pixel) 
+function M.ImFontAtlas_GetTexDataAsRGBA32(ImFontAtlas_ctx, string_out_pixels, int_out_width, int_out_height, int_out_bytes_per_pixel)
   -- int_out_bytes_per_pixel is optional and can be nil
   if string_out_pixels == nil then log("E", "", "Parameter 'string_out_pixels' of function 'GetTexDataAsRGBA32' cannot be nil, as the c type is 'unsigned char **'") ; return end
   if int_out_width == nil then log("E", "", "Parameter 'int_out_width' of function 'GetTexDataAsRGBA32' cannot be nil, as the c type is 'int *'") ; return end
@@ -2511,19 +2500,19 @@ function M.ImFontAtlas_GetGlyphRangesCyrillic(ImFontAtlas_ctx) return C.imgui_Im
 function M.ImFontAtlas_GetGlyphRangesThai(ImFontAtlas_ctx) return C.imgui_ImFontAtlas_GetGlyphRangesThai(ImFontAtlas_ctx) end
 function M.ImFontAtlas_GetGlyphRangesVietnamese(ImFontAtlas_ctx) return C.imgui_ImFontAtlas_GetGlyphRangesVietnamese(ImFontAtlas_ctx) end
 function M.ImFontAtlas_AddCustomRectRegular(ImFontAtlas_ctx, int_width, int_height) return C.imgui_ImFontAtlas_AddCustomRectRegular(ImFontAtlas_ctx, int_width, int_height) end
-function M.ImFontAtlas_AddCustomRectFontGlyph(ImFontAtlas_ctx, ImFont_font, ImWchar_id, int_width, int_height, float_advance_x, ImVec2_offset) 
+function M.ImFontAtlas_AddCustomRectFontGlyph(ImFontAtlas_ctx, ImFont_font, ImWchar_id, int_width, int_height, float_advance_x, ImVec2_offset)
   if ImVec2_offset == nil then ImVec2_offset = M.ImVec2(0,0) end
   if ImFont_font == nil then log("E", "", "Parameter 'ImFont_font' of function 'AddCustomRectFontGlyph' cannot be nil, as the c type is 'ImFont *'") ; return end
   return C.imgui_ImFontAtlas_AddCustomRectFontGlyph(ImFontAtlas_ctx, ImFont_font, ImWchar_id, int_width, int_height, float_advance_x, ImVec2_offset)
 end
 function M.ImFontAtlas_GetCustomRectByIndex(ImFontAtlas_ctx, int_index) return C.imgui_ImFontAtlas_GetCustomRectByIndex(ImFontAtlas_ctx, int_index) end
-function M.ImFontAtlas_CalcCustomRectUV(ImFontAtlas_ctx, ImFontAtlasCustomRect_rect, ImVec2_out_uv_min, ImVec2_out_uv_max) 
+function M.ImFontAtlas_CalcCustomRectUV(ImFontAtlas_ctx, ImFontAtlasCustomRect_rect, ImVec2_out_uv_min, ImVec2_out_uv_max)
   if ImFontAtlasCustomRect_rect == nil then log("E", "", "Parameter 'ImFontAtlasCustomRect_rect' of function 'CalcCustomRectUV' cannot be nil, as the c type is 'const ImFontAtlasCustomRect *'") ; return end
   if ImVec2_out_uv_min == nil then log("E", "", "Parameter 'ImVec2_out_uv_min' of function 'CalcCustomRectUV' cannot be nil, as the c type is 'ImVec2 *'") ; return end
   if ImVec2_out_uv_max == nil then log("E", "", "Parameter 'ImVec2_out_uv_max' of function 'CalcCustomRectUV' cannot be nil, as the c type is 'ImVec2 *'") ; return end
   C.imgui_ImFontAtlas_CalcCustomRectUV(ImFontAtlas_ctx, ImFontAtlasCustomRect_rect, ImVec2_out_uv_min, ImVec2_out_uv_max)
 end
-function M.ImFontAtlas_GetMouseCursorTexData(ImFontAtlas_ctx, ImGuiMouseCursor_cursor, ImVec2_out_offset, ImVec2_out_size, ImVec2Ptr_out_uv_border, ImVec2Ptr_out_uv_fill) 
+function M.ImFontAtlas_GetMouseCursorTexData(ImFontAtlas_ctx, ImGuiMouseCursor_cursor, ImVec2_out_offset, ImVec2_out_size, ImVec2Ptr_out_uv_border, ImVec2Ptr_out_uv_fill)
   if ImVec2_out_offset == nil then log("E", "", "Parameter 'ImVec2_out_offset' of function 'GetMouseCursorTexData' cannot be nil, as the c type is 'ImVec2 *'") ; return end
   if ImVec2_out_size == nil then log("E", "", "Parameter 'ImVec2_out_size' of function 'GetMouseCursorTexData' cannot be nil, as the c type is 'ImVec2 *'") ; return end
   return C.imgui_ImFontAtlas_GetMouseCursorTexData(ImFontAtlas_ctx, ImGuiMouseCursor_cursor, ImVec2_out_offset, ImVec2_out_size, ImVec2Ptr_out_uv_border, ImVec2Ptr_out_uv_fill)
@@ -2537,22 +2526,22 @@ function M.ImFont_FindGlyphNoFallback(ImFont_ctx, ImWchar_c) return C.imgui_ImFo
 function M.ImFont_GetCharAdvance(ImFont_ctx, ImWchar_c) return C.imgui_ImFont_GetCharAdvance(ImFont_ctx, ImWchar_c) end
 function M.ImFont_IsLoaded(ImFont_ctx) return C.imgui_ImFont_IsLoaded(ImFont_ctx) end
 function M.ImFont_GetDebugName(ImFont_ctx) return C.imgui_ImFont_GetDebugName(ImFont_ctx) end
-function M.ImFont_CalcTextSizeA(ImFont_ctx, float_size, float_max_width, float_wrap_width, string_text_begin, string_text_end, string_remaining) 
+function M.ImFont_CalcTextSizeA(ImFont_ctx, float_size, float_max_width, float_wrap_width, string_text_begin, string_text_end, string_remaining)
   -- string_text_end is optional and can be nil
   -- string_remaining is optional and can be nil
   if string_text_begin == nil then log("E", "", "Parameter 'string_text_begin' of function 'CalcTextSizeA' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ImFont_CalcTextSizeA(ImFont_ctx, float_size, float_max_width, float_wrap_width, string_text_begin, string_text_end, string_remaining)
 end
-function M.ImFont_CalcWordWrapPositionA(ImFont_ctx, float_scale, string_text, string_text_end, float_wrap_width) 
+function M.ImFont_CalcWordWrapPositionA(ImFont_ctx, float_scale, string_text, string_text_end, float_wrap_width)
   if string_text == nil then log("E", "", "Parameter 'string_text' of function 'CalcWordWrapPositionA' cannot be nil, as the c type is 'const char *'") ; return end
   if string_text_end == nil then log("E", "", "Parameter 'string_text_end' of function 'CalcWordWrapPositionA' cannot be nil, as the c type is 'const char *'") ; return end
   return C.imgui_ImFont_CalcWordWrapPositionA(ImFont_ctx, float_scale, string_text, string_text_end, float_wrap_width)
 end
-function M.ImFont_RenderChar(ImFont_ctx, ImDrawList_draw_list, float_size, ImVec2_pos, ImU32_col, ImWchar_c) 
+function M.ImFont_RenderChar(ImFont_ctx, ImDrawList_draw_list, float_size, ImVec2_pos, ImU32_col, ImWchar_c)
   if ImDrawList_draw_list == nil then log("E", "", "Parameter 'ImDrawList_draw_list' of function 'RenderChar' cannot be nil, as the c type is 'ImDrawList *'") ; return end
   C.imgui_ImFont_RenderChar(ImFont_ctx, ImDrawList_draw_list, float_size, ImVec2_pos, ImU32_col, ImWchar_c)
 end
-function M.ImFont_RenderText(ImFont_ctx, ImDrawList_draw_list, float_size, ImVec2_pos, ImU32_col, ImVec4_clip_rect, string_text_begin, string_text_end, float_wrap_width, bool_cpu_fine_clip) 
+function M.ImFont_RenderText(ImFont_ctx, ImDrawList_draw_list, float_size, ImVec2_pos, ImU32_col, ImVec4_clip_rect, string_text_begin, string_text_end, float_wrap_width, bool_cpu_fine_clip)
   if float_wrap_width == nil then float_wrap_width = 0 end
   if bool_cpu_fine_clip == nil then bool_cpu_fine_clip = false end
   if ImDrawList_draw_list == nil then log("E", "", "Parameter 'ImDrawList_draw_list' of function 'RenderText' cannot be nil, as the c type is 'ImDrawList *'") ; return end
@@ -2563,11 +2552,11 @@ end
 function M.ImFont_BuildLookupTable(ImFont_ctx) C.imgui_ImFont_BuildLookupTable(ImFont_ctx) end
 function M.ImFont_ClearOutputData(ImFont_ctx) C.imgui_ImFont_ClearOutputData(ImFont_ctx) end
 function M.ImFont_GrowIndex(ImFont_ctx, int_new_size) C.imgui_ImFont_GrowIndex(ImFont_ctx, int_new_size) end
-function M.ImFont_AddGlyph(ImFont_ctx, ImFontConfig_src_cfg, ImWchar_c, float_x0, float_y0, float_x1, float_y1, float_u0, float_v0, float_u1, float_v1, float_advance_x) 
+function M.ImFont_AddGlyph(ImFont_ctx, ImFontConfig_src_cfg, ImWchar_c, float_x0, float_y0, float_x1, float_y1, float_u0, float_v0, float_u1, float_v1, float_advance_x)
   if ImFontConfig_src_cfg == nil then log("E", "", "Parameter 'ImFontConfig_src_cfg' of function 'AddGlyph' cannot be nil, as the c type is 'const ImFontConfig *'") ; return end
   C.imgui_ImFont_AddGlyph(ImFont_ctx, ImFontConfig_src_cfg, ImWchar_c, float_x0, float_y0, float_x1, float_y1, float_u0, float_v0, float_u1, float_v1, float_advance_x)
 end
-function M.ImFont_AddRemapChar(ImFont_ctx, ImWchar_dst, ImWchar_src, bool_overwrite_dst) 
+function M.ImFont_AddRemapChar(ImFont_ctx, ImWchar_dst, ImWchar_src, bool_overwrite_dst)
   if bool_overwrite_dst == nil then bool_overwrite_dst = true end
   C.imgui_ImFont_AddRemapChar(ImFont_ctx, ImWchar_dst, ImWchar_src, bool_overwrite_dst)
 end
@@ -2613,7 +2602,7 @@ function M.GetKeyIndex(ImGuiKey_key) return C.imgui_GetKeyIndex(ImGuiKey_key) en
 function M.SetItemAllowOverlap() C.imgui_SetItemAllowOverlap() end
 function M.PushAllowKeyboardFocus(bool_tab_stop) C.imgui_PushAllowKeyboardFocus(bool_tab_stop) end
 function M.PopAllowKeyboardFocus() C.imgui_PopAllowKeyboardFocus() end
-function M.ImageButton2(ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv1, int_frame_padding, ImVec4_bg_col, ImVec4_tint_col) 
+function M.ImageButton2(ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv1, int_frame_padding, ImVec4_bg_col, ImVec4_tint_col)
   if ImVec2_uv0 == nil then ImVec2_uv0 = M.ImVec2(0,0) end
   if ImVec2_uv1 == nil then ImVec2_uv1 = M.ImVec2(1,1) end
   if int_frame_padding == nil then int_frame_padding = -1 end
@@ -2621,15 +2610,15 @@ function M.ImageButton2(ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, Im
   if ImVec4_tint_col == nil then ImVec4_tint_col = M.ImVec4(1,1,1,1) end
   return C.imgui_ImageButton2(ImTextureID_user_texture_id, ImVec2_size, ImVec2_uv0, ImVec2_uv1, int_frame_padding, ImVec4_bg_col, ImVec4_tint_col)
 end
-function M.CaptureKeyboardFromApp(bool_want_capture_keyboard) 
+function M.CaptureKeyboardFromApp(bool_want_capture_keyboard)
   if bool_want_capture_keyboard == nil then bool_want_capture_keyboard = true end
   C.imgui_CaptureKeyboardFromApp(bool_want_capture_keyboard)
 end
-function M.CaptureMouseFromApp(bool_want_capture_mouse) 
+function M.CaptureMouseFromApp(bool_want_capture_mouse)
   if bool_want_capture_mouse == nil then bool_want_capture_mouse = true end
   C.imgui_CaptureMouseFromApp(bool_want_capture_mouse)
 end
-function M.CalcListClipping(int_items_count, float_items_height, int_out_items_display_start, int_out_items_display_end) 
+function M.CalcListClipping(int_items_count, float_items_height, int_out_items_display_start, int_out_items_display_end)
   if int_out_items_display_start == nil then log("E", "", "Parameter 'int_out_items_display_start' of function 'CalcListClipping' cannot be nil, as the c type is 'int *'") ; return end
   if int_out_items_display_end == nil then log("E", "", "Parameter 'int_out_items_display_end' of function 'CalcListClipping' cannot be nil, as the c type is 'int *'") ; return end
   C.imgui_CalcListClipping(int_items_count, float_items_height, int_out_items_display_start, int_out_items_display_end)

@@ -5,7 +5,8 @@
 local M = {}
 local saveRoot = 'settings/cloud/saves/'
 local infoFile = 'info.json'
-local saveSystemVersion = 36
+local saveSystemVersion = 42
+local backwardsCompVersion = 36
 local numberOfAutosaves = 3
 local creationDateOfCurrentSaveSlot
 
@@ -35,8 +36,15 @@ local function getAutosave(path, oldest)
   local folders = FS:directoryList(path, false, true)
   -- TODO use getAllAutosaves to get the newest or oldest save
   if (tableSize(folders) < numberOfAutosaves) and oldest then
-    resultSave = path .. "/autosave" .. (tableSize(folders) + 1)
-    resultDate = "0"
+    -- Check the autosave folders that are already there to find a name that isnt used yet
+    for i = 1, numberOfAutosaves do
+      local possiblePath = "/" .. path .. "/autosave" .. i
+      if not tableContains(folders, possiblePath) then
+        resultSave = possiblePath
+        resultDate = "0"
+        break
+      end
+    end
   else
     for i = 1, tableSize(folders) do
       local data = jsonReadFile(folders[i] .. "/info.json")
@@ -76,7 +84,7 @@ local function setSaveSlot(slotName, specificAutosave)
 
   local data = jsonReadFile(savePath .. "/info.json")
   if data then
-    if not data.version or M.getSaveSystemVersion() > data.version then
+    if not data.version or M.getBackwardsCompVersion() > data.version then
       return false
     end
     creationDateOfCurrentSaveSlot = data.creationDate
@@ -180,10 +188,10 @@ local function saveCompleted()
     infoData.corrupted = nil
     infoData.date = saveDate
     if jsonWriteFileSafe(oldestSave .. "/info.json", infoData, true) then
-      local legalParking = career_modules_playerDriving and career_modules_playerDriving.getPlayerData() and career_modules_playerDriving.getPlayerData().isParked
-      guihooks.trigger("toastrMsg", {type="success", title="Game Saved", msg=legalParking and "Vehicle parked legally." or ""})
+      guihooks.trigger("toastrMsg", {type="success", title="Game Saved", msg=""})
       log("I", "Saved to " .. oldestSave)
       currentSavePath = oldestSave -- update the currentSavePath
+      extensions.hook("onSaveFinished")
       return
     end
   end
@@ -203,7 +211,7 @@ local function asyncSaveExtensionFinished(extName)
   end
 end
 
-local function saveCurrent(forceSyncSave)
+local function saveCurrent(vehiclesThumbnailUpdate)
   if not currentSaveSlot or career_modules_linearTutorial.isLinearTutorialActive() then return end
   oldestSave, oldSaveDate = getAutosave(saveRoot .. currentSaveSlot, true) -- get oldest autosave to overwrite
   saveDate = os.date("!%Y-%m-%dT%XZ") -- UTC time
@@ -223,7 +231,7 @@ local function saveCurrent(forceSyncSave)
 
   syncSaveExtensionsDone = false
   extensions.hook("onSaveCurrentSaveSlotAsyncStart")
-  extensions.hook("onSaveCurrentSaveSlot", oldestSave, oldSaveDate, forceSyncSave)
+  extensions.hook("onSaveCurrentSaveSlot", oldestSave, oldSaveDate, vehiclesThumbnailUpdate)
   syncSaveExtensionsDone = true
   if tableIsEmpty(asyncSaveExtensions) then
     saveCompleted()
@@ -265,6 +273,10 @@ local function getSaveSystemVersion()
   return saveSystemVersion
 end
 
+local function getBackwardsCompVersion()
+  return backwardsCompVersion
+end
+
 M.setSaveSlot = setSaveSlot
 M.removeSaveSlot = removeSaveSlot
 M.renameSaveSlot = renameSaveSlot
@@ -275,6 +287,7 @@ M.getSaveRootDirectory = getSaveRootDirectory
 M.getAutosave = getAutosave
 M.getAllAutosaves = getAllAutosaves
 M.getSaveSystemVersion = getSaveSystemVersion
+M.getBackwardsCompVersion = getBackwardsCompVersion
 M.saveFailed = saveFailed
 M.registerAsyncSaveExtension = registerAsyncSaveExtension
 M.asyncSaveExtensionFinished = asyncSaveExtensionFinished

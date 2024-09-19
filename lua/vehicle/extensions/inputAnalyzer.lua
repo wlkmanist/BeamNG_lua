@@ -77,6 +77,7 @@ local function checkInput(dt)
       inputString = inputString:sub(2)
     end
   end
+  --print(inputString)
 end
 
 local function updateGFX(dt)

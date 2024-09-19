@@ -9,22 +9,26 @@ M.dependencies = {'career_career'}
 M.tutorialEnabled = -1
 M.bounceBigmapIcons = false
 
-local debug_ignoreGlobalSaveData = false
+local moduleVersion = 42
+
 local debug_alwaysShowAllPopups = false
 
 local tutorialsFolder ='/gameplay/tutorials/'
 local saveFile = "/career/tutorialData.json"
 local saveData
-local globalSaveFile = "/settings/careerIntroPopups.json"
-local globalSaveData
 
-M.clearGlobalSaveData = function() globalSaveData = {} jsonWriteFile(globalSaveFile, globalSaveData, false) end
+
+
 
 local function onExtensionLoaded()
   if not career_career.isActive() then return false end
   -- load from saveslot
   local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
-  saveData = (savePath and jsonReadFile(savePath .. saveFile)) or {}
+
+  local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
+  local outdated = not saveInfo or saveInfo.version < moduleVersion
+
+  saveData = (not outdated and savePath and jsonReadFile(savePath .. saveFile)) or {}
 
   if debug_alwaysShowAllPopups then saveData = {} end
 
@@ -47,8 +51,11 @@ local function onExtensionLoaded()
         earnedFirstStar = false,
       }
     }
-    if career_career.vehSelectEnabled then
-
+    if not career_career.tutorialEnabled then
+      local tutorialPopups = {"welcome", "driving", "crashRecover", "bigmap", "refueling", "missions", "postMission", "dealership", "computer", "partShopping", "finishing", "logbook", "milestones", "progress"}
+      for _, key in ipairs(tutorialPopups) do
+        saveData.flags[key] = true
+      end
     end
   end
   if saveData.linearStep == -1 then
@@ -56,9 +63,6 @@ local function onExtensionLoaded()
       saveData.flags[key] = true
     end
   end
-  globalSaveData = jsonReadFile(globalSaveFile) or {}
-
-  if debug_ignoreGlobalSaveData or debug_alwaysShowAllPopups then globalSaveData = {} end
 
 end
 
@@ -183,35 +187,31 @@ M.setTrafficAfterTutorial = function()
   end
 end
 
-
+M.wasIntroPopupsSeen = function(pages)
+  for _, page in ipairs(pages or {}) do
+    if not getTutorialFlag(page) then
+      return false
+    end
+  end
+  return true
+end
 
 -- creates a new intro popup from the content of the folder in ui/modules/introPopup/tutorial/ID/content.html
 M.introPopup = function(id, force)
-  if not force then
-    if M.isLinearTutorialActive() then
-      if M.getTutorialFlag(id) then return end
-    else
-      if globalSaveData[id] then return end
-    end
-  end
+  if not force and M.getTutorialFlag(id) then return end
 
   M.setTutorialFlag(id, true)
 
-  if not globalSaveData[id] then
-    -- save global data manually
-    globalSaveData[id] = true
-    jsonWriteFile(globalSaveFile, globalSaveData, false)
-  end
+  if not FS:fileExists("/gameplay/tutorials/pages/"..id.."/content.html") then return end
 
-  if not FS:fileExists("ui/modules/introPopup/tutorial/"..id.."/content.html") then return end
-
-  local content = readFile("ui/modules/introPopup/tutorial/"..id.."/content.html"):gsub("\r\n","")
+  local content = readFile("/gameplay/tutorials/pages/"..id.."/content.html"):gsub("\r\n","")
   local entry = {
     type = "info",
     content = content,
     flavour = "onlyOk",
     isPopup = true,
   }
+  log("I","","Intro Popup: " .. id)
   guihooks.trigger("introPopupTutorial", {entry})
 
 end
@@ -266,10 +266,10 @@ local introPopupTable = {
 
   -- shown at the end of the tutorial
   showLogbookSplash = {"logbook"},
-  showTutorialOverSplash = {"finishing", "logbook","milestones","progress"},
+  showTutorialOverSplash = {"finishing", "logbook", "delivey/intro"},
 
   -- shown when opening the cargo screen for the first time
-  onEnterCargoOverviewScreen = {"cargoScreen"},
+  onEnterCargoOverviewScreen = {"delivery/cargoScreen"},
 
   onComputerInsurance = {"insurance"},
 
@@ -280,9 +280,10 @@ local introPopupTable = {
 -- this function is custom, because it needs to clear flags to make sure it always shows
 M.showNonTutorialWelcomeSplashscreen = function()
   M.introPopup("welcomeNoTutorial", true)
-  M.introPopup("logbookNoTutorial", true)
-  M.introPopup("milestones", true)
-  M.introPopup("progress", true)
+  M.introPopup("delivery/intro", true)
+  M.introPopup("logbook", true)
+  --M.introPopup("milestones", true)
+  --M.introPopup("progress", true)
 end
 
 for key, values in pairs(introPopupTable) do
@@ -295,7 +296,6 @@ end
 
 M.showAllSplashscreensAndLogbookEntries = function()
   for _, key in ipairs(M.allTutorialFlags) do saveData.flags[key] = false end
-  globalSaveData = {}
 
   M.showNonTutorialWelcomeSplashscreen()
   for key, values in pairs(introPopupTable) do
@@ -305,33 +305,37 @@ end
 
 
 local introPopupFiles = {
- {"/ui/modules/introPopup/tutorial/welcome/content.html"                 ,"Tutorial Start"},
- {"/ui/modules/introPopup/tutorial/driving/content.html"                 ,"Tutorial Driving"},
- {"/ui/modules/introPopup/tutorial/crashRecover/content.html"            ,"Tutorial Crashing"},
- {"/ui/modules/introPopup/tutorial/bigmap/content.html"                  ,"Tutorial Bigmap, Or when opening Bigmap"},
- {"/ui/modules/introPopup/tutorial/refueling/content.html"               ,"Tutorial Refuel, Or when opening Refueling screen"},
- {"/ui/modules/introPopup/tutorial/missions/content.html"                ,"Tutorial Missions, Or when opening Mission screen"},
- {"/ui/modules/introPopup/tutorial/postMission/content.html"             ,"Tutorial after Mission"},
- {"/ui/modules/introPopup/tutorial/dealership/content.html"              ,"Tutorial Dealership, or when opening Dealership Screen"},
- {"/ui/modules/introPopup/tutorial/computer/content.html"                ,"Tutorial Computer, or when opening Computer"},
- {"/ui/modules/introPopup/tutorial/partShopping/content.html"            ,"Tutorial Shopping, or when opening Shopping"},
- {"/ui/modules/introPopup/tutorial/finishing/content.html"               ,"Tutorial End 1"},
- {"/ui/modules/introPopup/tutorial/logbook/content.html"                 ,"Tutorial End 2"},
- {"/ui/modules/introPopup/tutorial/milestones/content.html"              ,"Tutorial End 3, Non-tutorial Start 3"},
- {"/ui/modules/introPopup/tutorial/progress/content.html"                ,"Tutorial End 4, Non-tutorial Start 4"},
+ {"welcome"                 ,"Tutorial Start"},
+ {"driving"                 ,"Tutorial Driving"},
+ {"crashRecover"            ,"Tutorial Crashing"},
+ {"bigmap"                  ,"Tutorial Bigmap, Or when opening Bigmap"},
+ {"refueling"               ,"Tutorial Refuel, Or when opening Refueling screen"},
+ {"missions"                ,"Tutorial Missions, Or when opening Mission screen"},
+ {"postMission"             ,"Tutorial after Mission"},
+ {"dealership"              ,"Tutorial Dealership, or when opening Dealership Screen"},
+ {"computer"                ,"Tutorial Computer, or when opening Computer"},
+ {"partShopping"            ,"Tutorial Shopping, or when opening Shopping"},
+ {"finishing"               ,"Tutorial End 1"},
+ {"delivery/intro"          ,"Tutorial End 2, No-Tutorial Start 2"},
+ {"logbook"                 ,"Tutorial End 3, No-Tutorial Start 3"},
   {},
- {"/ui/modules/introPopup/tutorial/welcomeNoTutorial/content.html"       ,"No-Tutorial Start 1"},
- {"/ui/modules/introPopup/tutorial/logbooknoTutorial/content.html"       ,"No-Tutorial Start 2"},
+ {"welcomeNoTutorial"       ,"No-Tutorial Start 1"},
+
   {},
- {"/ui/modules/introPopup/tutorial/cargoScreen/content.html"             ,"Opening Cargo Screen for the first time"},
- {"/ui/modules/introPopup/tutorial/cargoDelivered/content.html"          ,"Delivered cargo for the first time"},
- {"/ui/modules/introPopup/tutorial/vehicleDeliveryUnlocked/content.html" ,"Vehicle Delivery System unlocked"},
- {"/ui/modules/introPopup/tutorial/trailerDeliveryUnlocked/content.html" ,"Trailer Delivery System unlocked"},
- {"/ui/modules/introPopup/tutorial/cargoContainerHowTo/content.html"     ,"How-To button on cargo screen"},
+
+ {"delivery/cargoScreen"           ,"Opening Cargo Screen for the first time"},
+ {"delivery/parcelDeliveryHelp"    ,"Parcel delivery help"},
+ {"delivery/vehicleDeliveryHelp"   ,"Vehicle delivery help"},
+ {"delivery/trailerDeliveryHelp"   ,"trailer delivery help"},
+ {"delivery/materialsDeliveryHelp" ,"materials delivery help"},
+ {"delivery/loanerHelp"            ,"loaner help"},
   {},
- {"/ui/modules/introPopup/tutorial/vehiclePainting/content.html"         ,"Opening Painting for the first time"},
- {"/ui/modules/introPopup/tutorial/tuning/content.html"                  ,"Opening Tuning menu for the first time"},
- {"/ui/modules/introPopup/tutorial/insurance/content.html"               ,"Opening Insurance Menu for the first time"},
+ {"vehiclePainting"         ,"Opening Painting for the first time"},
+ {"tuning"                  ,"Opening Tuning menu for the first time"},
+ {"insurance"               ,"Opening Insurance Menu for the first time"},
+ {},
+ {"milestones"              ,"(NO LONGER USED)"},
+ {"progress"                ,"(NO LONGER USED)"},
 }
 
 M.drawDebugFunctions = function()
@@ -339,11 +343,20 @@ M.drawDebugFunctions = function()
     if im.Selectable1("View All In Order") then
       for _,  file in ipairs(introPopupFiles) do
         if next(file) then
-          local folder = file[1]:match(".-([^/]+)/[^/]+$")
+          local folder = file[1]
           M.introPopup(folder, true)
         end
       end
     end
+    if im.Selectable1("Un-view all") then
+      for _,  file in ipairs(introPopupFiles) do
+        if next(file) then
+          local folder = file[1]
+          M.setTutorialFlag(folder, false)
+        end
+      end
+    end
+
     im.Dummy(im.ImVec2(1,3))
     im.Separator()
     im.Dummy(im.ImVec2(1,3))
@@ -353,9 +366,13 @@ M.drawDebugFunctions = function()
         im.Separator()
         im.Dummy(im.ImVec2(1,3))
       else
-        local folder = file[1]:match(".-([^/]+)/[^/]+$")
+        local folder = file[1]
+        if im.Checkbox("##Seen " .. folder, im.BoolPtr(M.getTutorialFlag(folder) or false)) then
+          M.setTutorialFlag(folder, not M.getTutorialFlag(folder))
+        end
+        im.SameLine()
         if im.Button("Edit##"..folder) then
-          Engine.Platform.exploreFolder(file[1])
+          Engine.Platform.exploreFolder("/gameplay/tutorials/pages/"..file[1].."/content.html")
         end
         im.SameLine()
         if im.Selectable1("View " .. folder) then

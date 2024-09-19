@@ -227,14 +227,19 @@ local function init(jbeamData)
 end
 
 local function initSounds(jbeamData)
-  pumpSoundLoop = obj:createSFXSource2(jbeamData.pumpSample or "event:>Vehicle>Hydraulics>Pump_01", "AudioDefaultLoop3D", "", jbeamData.pumpNode, 0)
+  local pumpSoundEvent = jbeamData.pumpSample or "event:>Vehicle>Hydraulics>Pump_01"
+  pumpSoundLoop = obj:createSFXSource2(pumpSoundEvent, "AudioDefaultLoop3D", "", jbeamData.pumpNode, 0)
   isPumpSoundPlaying = false
   maxPumpFlow = maxPumpSpeed * #beams
   lastPumpFlow = 0
   currentPumpFlow = 0
 
-  releaseSoundLoop = obj:createSFXSource(jbeamData.releaseSample or "event:>Vehicle>Hydraulics>Release_01", "AudioDefaultLoop3D", "", jbeamData.pumpNode)
+  local releaseSoundEvent = jbeamData.releaseSample or "event:>Vehicle>Hydraulics>Release_01"
+  releaseSoundLoop = obj:createSFXSource(releaseSoundEvent, "AudioDefaultLoop3D", "", jbeamData.pumpNode)
   obj:setVolumePitch(releaseSoundLoop, 0, 0)
+
+  bdebug.setNodeDebugText("Hydraulics", jbeamData.pumpNode, M.name .. " - Pump: " .. (pumpSoundEvent or "no event"))
+  bdebug.setNodeDebugText("Hydraulics", jbeamData.pumpNode, M.name .. " - Release: " .. (releaseSoundEvent or "no event"))
 end
 
 local function resetSounds()

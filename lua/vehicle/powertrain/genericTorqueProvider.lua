@@ -53,18 +53,18 @@ end
 --velocity update is always nopped for engines
 
 local function updateTorque(device, dt)
-  local engineAV = device.outputAV1
+  local outputAV = device.outputAV1
 
   local friction = device.friction
   local dynamicFriction = device.dynamicFriction
 
-  local actualTorque = device.desiredOutputTorque or 0
+  local actualTorque = device.desiredOutputTorque
   actualTorque = actualTorque * device.outputTorqueState
-  local avSign = sign(engineAV)
+  local avSign = sign(outputAV)
 
-  local frictionTorque = abs(friction * avSign + dynamicFriction * engineAV)
+  local frictionTorque = abs(friction * avSign + dynamicFriction * outputAV)
   --friction torque is limited for stability
-  frictionTorque = min(frictionTorque, abs(engineAV) * device.inertia * 2000) * avSign
+  frictionTorque = min(frictionTorque, abs(outputAV) * device.inertia * 2000) * avSign
 
   device.outputTorque1 = actualTorque - frictionTorque
 end
@@ -143,6 +143,7 @@ local function new(jbeamData)
     dynamicFriction = jbeamData.dynamicFriction or 0,
     inertia = jbeamData.inertia or 0.1,
     outputTorqueState = 1,
+    desiredOutputTorque = 0,
     isDisabled = false,
     reset = reset,
     initSounds = nop,

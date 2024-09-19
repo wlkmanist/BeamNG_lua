@@ -82,8 +82,6 @@ local missionSearchTxt = im.ArrayChar(256, "")
 local missionSearchDisplayResult = false
 local missionSearchResults = {}
 
-
-
 local lastShownMission = nil -- always force an update on first call
 local function displayHeader(clickedMission, hoveredMission, shownMission)
   if shownMission then
@@ -1545,4 +1543,5 @@ end
 M.onConsoleLog = function(timer, lvl, origin, line)
   print(timer)
 end
+
 return M

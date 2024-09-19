@@ -47,11 +47,12 @@ end
 
 function C:work()
   local veh
-  if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
+  if self.pinIn.vehId.value then
     veh = be:getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end
+  if not veh then return end
 
   if self.pinIn.risk.value ~= nil then
     veh:queueLuaCommand('ai.setAggression('..clamp(self.pinIn.risk.value,0.1,2.0)..')')

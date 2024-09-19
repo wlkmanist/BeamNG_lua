@@ -15,6 +15,7 @@ C.category = 'provider'
 
 C.pinSchema = {
   { dir = 'out', type = 'number', name = 'vehId', description = 'Id of the vehicle that the player currently controls.' },
+  { dir = 'out', type = 'bool', name = 'exist', description = 'If the object exists.', hidden=true, },
 }
 C.legacyPins = {
   out = {
@@ -29,6 +30,7 @@ end
 
 function C:work()
   self.pinOut.vehId.value = be:getPlayerVehicleID(0) or -1
+  self.pinOut.exist.value = self.pinOut.vehId.value ~= -1
 end
 
 

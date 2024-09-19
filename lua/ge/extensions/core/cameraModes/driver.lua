@@ -173,7 +173,7 @@ function C:update(data)
   self.camRot.x = sideInput * maxAngle
   if data.lookBack then self.camRot.x = rightHandDrive and -maxAngle or maxAngle end
   self.camRot.y = vertInput * 20
-  if vertInput > 0 then self.camRot.y = self.camRot.y * 2 end
+  if vertInput > 0 then self.camRot.y = self.camRot.y * 3 end
 
   -- orientation
   rot:set(math.rad(self.camRot.x), math.rad(self.camRot.y), math.rad(self.camRot.z))
@@ -225,15 +225,16 @@ function C:update(data)
   self.fwdSpeed = lerp(self.fwdSpeed, -data.vel:length() * push3(data.vel):normalized():dot(carFwd), data.dt * ( 1.5 - self.lookAheadSmoothness))
   nRockPos:set(push3(carFwd) * (1 - self.rockPos:length() / self.lookAheadSmoothness) + self.rockPos)
   nRockPos:normalize()
-  local lookAheadAngle = math.atan2(nRockPos.x * carFwd.y - nRockPos.y * carFwd.x, nRockPos.x * carFwd.x + nRockPos.y * carFwd.y)
+  local lookAheadAngle = data.openxrSessionRunning and 0 or self.lookAheadAngle -- disable LookAhead while in VR
+  local lookAheadAngleOffset = math.atan2(nRockPos.x * carFwd.y - nRockPos.y * carFwd.x, nRockPos.x * carFwd.x + nRockPos.y * carFwd.y)
   self.rockPos:setScaled((1 - data.dt * 0.1) * clamp(self.fwdSpeed / 20, 0, 1))
-  lookAheadAngle = clamp(lookAheadAngle, -1.1, 1.1) * self.lookAheadAngle * clamp(self.fwdSpeed / 15, 0, 1)
+  lookAheadAngleOffset = clamp(lookAheadAngleOffset, -1.1, 1.1) * lookAheadAngle * clamp(self.fwdSpeed / 15, 0, 1)
 
   -- Pitch smoothing
 
   --local roll, pitch, yaw = data.veh:getRollPitchYawAngularVelocity()
   local pitch = 0
-  camRot = rotateEuler(math.rad(self.camRot.x) + lookAheadAngle, math.rad(self.camRot.y) - pitch, camRoll, camRot) -- stable hood line
+  camRot = rotateEuler(math.rad(self.camRot.x) + lookAheadAngleOffset, math.rad(self.camRot.y) - pitch, camRoll, camRot) -- stable hood line
 
   local notifiedFov = self.manualzoom:update(data)
   if notifiedFov then

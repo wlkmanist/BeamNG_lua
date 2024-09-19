@@ -3,30 +3,52 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {"ui_imgui"}
+local im = ui_imgui
+local imguiUtils = require('ui/imguiUtils')
+local vehicleActionMaps = {"VehicleCommonActionMap", "VehicleSpecificActionMap"}
+
+M.dependencies = {"ui_imgui", "render_renderViews"}
 M.state = {show= false}
+
+local cameraConfigFile
+
+-- Of the currently spawned vehicle
+local currConfigName
+local currModelName
+
+-- helper variables
+local columnFlags = bit.bor(im.TableColumnFlags_NoResize, im.TableColumnFlags_WidthStretch)
+local tableFlags = bit.bor(im.TableFlags_NoBordersInBody)
+local imVec24x24 = im.ImVec2(24,24)
+local imVec32x32 = im.ImVec2(32, 32)
+local imVec4Grey = im.ImVec4(0.65,0.65,0.65,1)
+local imVec4Yellow = im.ImVec4(1,1,0,1)
+local imVec4Red = im.ImVec4(1,0,0,1)
+local imVec4Green = im.ImVec4(0,1,0,1)
 
 local workerCoroutine = nil
 local forceQuit = false
 
-local workConfig = {}
-local ctrls = {} -- imgui controls
-local config = jsonReadFile('settings/createThumbnails_config.json')
-local options
-local views
-local redoPass = false
-
-local transparentMats = {}
-
-local im = ui_imgui
-local guiModule = require("ge/extensions/editor/api/gui")
-local gui = {setupEditorGuiTheme = nop}
-
 local windowOpen = im.BoolPtr(false)
 local initialWindowSize = im.ImVec2(300, 500)
+local runDone = false
+local currentlyPreviewingCamera = false
+local plRes
 
 local vehList -- table array  {vehFolder, boolptr, nameStr, config number?}
-local viewsList = {default = im.BoolPtr(true), sideGarage = im.BoolPtr(false), frontGarage = im.BoolPtr(false)}
+
+local userDefinedDynamicReflections -- used to revert "GraphicDynReflectionEnabled" back to what the user had
+
+local thumbnailConfig = {
+  fileEnding = ".jpg",
+  fov = 20,
+  nearPlane = 0.1,
+}
+
+local presetOutputDestinations = {
+  "Vehicle thumbnails",
+  "Screenshot/showroom folder"
+}
 
 local presetResolutions = { -- name, width, height
   {'thumbnail', 500, 281},
@@ -39,30 +61,59 @@ local presetResolutions = { -- name, width, height
   {'8k'     , 8192, 4320},
 }
 
-local outputFormats = {'jpg', 'png'}
-local updateControls
+local thumbnailDefaultValues = { -- default values for imgui controls
+  ouputDestination = 1, -- "Vehicle thumbnails"
+  resolution = 2 -- "500 * 281"
+}
 
-local function reloadConfig()
-  config = jsonReadFile('settings/createThumbnails_config.json')
-  options = config.options
-  views = config.views
+local reviewData
+
+local ctrls = { -- imgui controls
+  generateMissingThumbnailsOnly = im.BoolPtr(false),
+  reloadUIOnJobFinished = im.BoolPtr(true),
+  camSpeedPtr = im.FloatPtr(core_camera.getSpeed()),
+  drivingEnabled = true,
+  uiToggled = true,
+  resolutionToggled = false,
+}
+
+local workConfig = {} -- current screenshot config
+
+-- check if current settings are the same as the defaults ones
+local function isDefaultConfig()
+  return ctrls.currOuputDestinationPtr[0] == thumbnailDefaultValues.ouputDestination -1 and ctrls.currResolutionsPtr[0] == thumbnailDefaultValues.resolution - 1
 end
 
-local function overwriteOptionGui()
-  options.views = {}
-  for k, v in pairs(viewsList) do
-    if v[0] then table.insert( options.views, k ) end
+-- check if the user wants to update the vehicles thumbnails, if the current settings match the default thumbnail settings
+local function isThumbnailConfigGood()
+  return not(presetOutputDestinations[ctrls.currOuputDestinationPtr[0]+1] == "Vehicle thumbnails"
+  and ctrls.currResolutionsPtr[0] + 1 ~= thumbnailDefaultValues.resolution)
+end
+
+local function isInShowroom()
+  return getCurrentLevelIdentifier() == "showroom_v2"
+end
+
+local function sanitizeVehConfigName(dirtyName)
+  return string.match(dirtyName, ".*/(.-)%.pc$")
+end
+
+local function trySetDynamicReflections(value)
+  if isInShowroom() then
+    settings.setValue('GraphicDynReflectionEnabled', value)
   end
-  options.models = {}
+end
+
+local function getSelectedVehCount()
+  local count = 0
   for k, v in pairs(vehList) do
     if v[2][0] then
-      table.insert(options.models, v[1])
+      count = count + 1
     end
   end
-  if not options.models[1] then
-    options.models = {getPlayerVehicle(0).JBeam}
-  end
+  return count
 end
+
 
 local function populateVehGui()
   vehList = {}
@@ -74,6 +125,7 @@ local function populateVehGui()
     local v = models[k]
     vehList[_] = {k,im.BoolPtr(false), (v.Brand and (v.Brand.." ") or "") ..v.Name }
   end
+  table.sort(vehList, function(a,b) return a[3]<b[3] end )
 end
 
 local function isBatch()
@@ -105,11 +157,6 @@ local function onPreRender(dt)
     end
     if coroutine.status(workerCoroutine) == "dead" then
       workerCoroutine = nil
-      settings.setValue('GraphicBorderless', false)
-      core_settings_graphic.applyGraphicsState()
-      extensions.ui_visibility.set(true)
-      settings.setValue('cameraOrbitSmoothing', true)
-      simTimeAuthority.pause(false)
       if isBatch() then
         log('E', '', 'coroutine BROKE')
         shutdown(0)
@@ -118,523 +165,518 @@ local function onPreRender(dt)
   end
 end
 
-local function findVal (model, config)
-  return function (view)
-    return function (val)
-      if view.models ~= nil and view.models[model] ~= nil then
-        local temp = view.models[model]
 
-        if temp.configs ~= nil and temp.configs[config] ~= nil and temp.configs[config][val] ~= nil then
-          return temp.configs[config][val]
-        end
+local function frameVehicle(veh, fov, nearPlane, aspectRatio)
+  nearPlane = nearPlane or 0.1
 
-        if temp[val] ~= nil then
-          return temp[val]
-        end
-      end
-      return view[val]
-    end
-  end
-end
+  local bb = veh:getSpawnWorldOOBB()
+  local bbCenter = bb:getCenter()
+  local axis0, axis1, axis2 = bb:getAxis(0), bb:getAxis(1), bb:getAxis(2)
+  local halfExtentsX, halfExtentsY, halfExtentsZ = bb:getHalfExtents().x, bb:getHalfExtents().y, bb:getHalfExtents().z
 
--- called when the module is loaded. Note: not all system may be up and running at this point
-local function onInit()
-  log('I', '', "initialized")
-end
+  local camOffsetAxisLocal = vec3(-0.75, -0.66, 0.1):normalized()
+  local camLeftLocal = camOffsetAxisLocal:cross(vec3(0,0,1))
+  local camUpLocal = camOffsetAxisLocal:cross(vec3(1,0,0))
 
-local function setDimHelper(useView)
-  local canvas = scenetree.findObject("Canvas")
-  if not canvas then
-    return
-  end
+  local camOffsetAxis = axis0 * (camOffsetAxisLocal.x) + axis1 * (camOffsetAxisLocal.y) + axis2 * (camOffsetAxisLocal.z)
+  local camLeft = (axis0 * (camLeftLocal.x) + axis1 * (camLeftLocal.y) + axis2 * (camLeftLocal.z)):normalized()
+  local camUp = (axis0 * (camUpLocal.x) + axis1 * (camUpLocal.y) + axis2 * (camUpLocal.z)):normalized()
 
-  local vm = GFXDevice.getVideoMode()
-  if vm.width == useView.width and vm.height == useView.height and vm.displayMode == "Borderless" then
-    -- nothing to change
-    return
-  end
-  log('I', '', "requesting new video mode")
-  vm.width = useView.width
-  vm.height = useView.height
-  vm.displayMode = "Borderless"
-  -- canvas:setMinExtent(vm.width, vm.height)
-  GFXDevice.setVideoMode(vm)
-end
+  local bbUpperPoint = bbCenter - axis0 * 0 - axis1 * 0 + axis2 * (halfExtentsZ + 0.35)
+  local bbForwardPoint = bbCenter - axis0 * 0 - axis1 * (halfExtentsY + 0.35) + axis2 * 0
 
-local function fVal2Bool(v,default)
-  if v then
-    if v == "false" or v == "0" then
-      return false
-    else
-      return true
-    end
+  -- Calculate cam pos based on vertical fov
+  local upperCamFovAngle = fov/2
+  local upperCamFovDir = quatFromAxisAngle(camLeft, (upperCamFovAngle) / 180 * math.pi):__mul(-camOffsetAxis)
+
+  local camPosBasedOnVertical = bbUpperPoint - upperCamFovDir * intersectsRay_Plane(bbUpperPoint, -upperCamFovDir, bbCenter + camOffsetAxis, camUp)
+
+  -- Calculate cam pos based on horizontal fov
+  local viewportHeight = nearPlane * math.tan((fov / 180 * math.pi) / 2)
+  local viewportWidth = aspectRatio * viewportHeight
+  local horizontalFOV = math.atan(viewportWidth / nearPlane) * 2
+  horizontalFOV = horizontalFOV * 180 / math.pi
+
+  local rightCamFovAngle = horizontalFOV/2
+  local rightCamFovDir = quatFromAxisAngle(camUp, (rightCamFovAngle) / 180 * math.pi):__mul(-camOffsetAxis)
+
+  local camPosBasedOnHorizontal = bbForwardPoint - rightCamFovDir * intersectsRay_Plane(bbForwardPoint, -rightCamFovDir, bbCenter + camOffsetAxis, camLeft)
+
+  local finalCamPos
+  -- Check which cam pos is further away and choose that one
+  if camPosBasedOnVertical:distance(bbCenter) > camPosBasedOnHorizontal:distance(bbCenter) then
+    finalCamPos = camPosBasedOnVertical
   else
-    return default
+    finalCamPos = camPosBasedOnHorizontal
   end
+
+  local camRot = quatFromDir(bbCenter - (axis1 * halfExtentsY / 8) - finalCamPos)
+
+  return finalCamPos, camRot
 end
 
-local function setBackground(namebackground, bgs)
-  for i,v in ipairs(bgs) do
-    local obj = scenetree.findObject(v)
-    if obj then
-      obj:setHidden(true)
-    else
-      log("E", "setBackground", "Background mesh not found '"..tostring(v).."'")
+local function getListOfSelectedModels()
+  local models = {}
+  -- Add the selection
+  for k, v in pairs(vehList) do
+    if v[2][0] then
+      table.insert(models, v[1])
     end
   end
 
-  -- print("bgs = "..dumps(bgs))
-  -- print("getcfg".. dumps(namebackground))
-  local ubg = namebackground or bgs[1]
-  -- print("using "..dumps(ubg) )
-  local obj = scenetree.findObject(ubg)
-  if obj then
-    obj:setHidden(false)
-  else
-    log("E", "setBackground", "Background mesh not found '"..tostring(ubg).."'")
+  -- If no selection, then add the player's model by default
+  if not models[1] then
+    models = {getPlayerVehicle(0).JBeam}
+  end
+
+  return models
+end
+
+local function loadCameraConfig()
+  cameraConfigFile = jsonReadFile("/settings/thumbnailCameraConfig.json")
+  if not cameraConfigFile or not next(cameraConfigFile) then
+    cameraConfigFile = {
+      vehModels = {},
+      vehConfigs = {}
+    }
   end
 end
 
-local function startWork()
-  log('I', '', "module loaded")
+local function saveCameraConfig()
+  jsonWriteFile("/settings/thumbnailCameraConfig.json", cameraConfigFile, true)
+end
+
+local function getThumbnailResolution()
+  local thumbnailPreset = presetResolutions[thumbnailDefaultValues.resolution - 1]
+  return {thumbnailPreset[2], thumbnailPreset[3]}
+end
+
+local function getCurrentResolution()
+  if not windowOpen[0] then
+    return getThumbnailResolution()
+  else
+    local presetRes = presetResolutions[ctrls.currResolutionsPtr[0]]
+    if not presetRes then -- if we are not using a preset, ie, if we are a custom res
+      return {ctrls.imageResolution[0], ctrls.imageResolution[1]}
+    else
+      return {presetRes[2], presetRes[3]}
+    end
+  end
+end
+
+local function getCameraConfig(modelName, configName)
+  if not cameraConfigFile then loadCameraConfig() end
+
+  local cameraConfigs = {}
+  if not cameraConfigFile.vehConfigs[modelName.."/"..configName] then
+    cameraConfigFile.vehConfigs[modelName.."/"..configName] = {
+      configCamEnabled = false,
+      modelCamEnabled = false
+    }
+  end
+  cameraConfigs.vehCamConfig = cameraConfigFile.vehConfigs[modelName.."/"..configName]
+
+  if cameraConfigFile.vehModels[modelName] then
+    cameraConfigs.modelCamConfig = cameraConfigFile.vehModels[modelName]
+  end
+  return cameraConfigs
+end
+
+local function getCameraOffsets()
+  -- get the unit vectors for vehicle coordinate system
+  local veh = getPlayerVehicle(0)
+  local bb = veh:getSpawnWorldOOBB()
+  local bbCenter = bb:getCenter()
+  local x, y, z  = bb:getAxis(0), bb:getAxis(1), bb:getAxis(2)
+
+  -- get vector from vehicle to camera
+  local vehToCam = core_camera.getPosition() - veh:getPosition()
+
+  -- un-rotate the camera rotation (remove vehicle rotation)
+  local vehicleRotation = quatFromDir(bb:getAxis(1),  bb:getAxis(2))
+  local vehicleRotationInverse = vehicleRotation:inversed()
+
+  local unRotatedCamRotation = core_camera.getQuat() * vehicleRotationInverse
+
+  -- split that offset into components using the vehicle unit vectors
+  local xOff = x:dot(vehToCam)
+  local yOff = y:dot(vehToCam)
+  local zOff = z:dot(vehToCam)
+  local offset = vec3(xOff, yOff, zOff)
+
+  return offset, unRotatedCamRotation
+end
+
+local function rewindCameraOffsets(posOffset, rotOffset)
+  local veh = getPlayerVehicle(0)
+  local bb = veh:getSpawnWorldOOBB()
+  local bbCenter = bb:getCenter()
+  local x, y, z  = bb:getAxis(0), bb:getAxis(1), bb:getAxis(2)
+
+  local offset = x * posOffset.x + y*posOffset.y + z*posOffset.z
+  local finalPos = offset+veh:getPosition()
+
+  -- rotate the camera rotation by the car rotation
+  local vehicleRotation = quatFromDir(bb:getAxis(1),  bb:getAxis(2))
+  local finalRot = rotOffset * vehicleRotation
+
+  return finalPos, finalRot
+end
+
+
+local function getFinalCameraPosAndRotForVehicle(vehicle, configName)
+  local cameraConfigs = getCameraConfig(vehicle.jbeam, configName)
+  local p, r
+
+  if cameraConfigs.vehCamConfig then
+    if cameraConfigs.vehCamConfig.configCamEnabled then
+      p, r = rewindCameraOffsets(cameraConfigs.vehCamConfig.cameraConfig.posOffset, cameraConfigs.vehCamConfig.cameraConfig.rotOffset)
+      return p, r, "config camera"
+    elseif cameraConfigs.vehCamConfig.modelCamEnabled then
+      p, r = rewindCameraOffsets(cameraConfigs.modelCamConfig.cameraConfig.posOffset, cameraConfigs.modelCamConfig.cameraConfig.rotOffset)
+      return p, r, "model camera"
+    end
+  end
+
+  local currRes = getCurrentResolution()
+  p, r = frameVehicle(vehicle, thumbnailConfig.fov, thumbnailConfig.nearPlane, currRes[1] / currRes[2])
+  return p, r, "procedural camera"
+end
+
+local function takeThumbnail(options)
+  local currRes = getCurrentResolution()
+  local camPos, camRot, camName = getFinalCameraPosAndRotForVehicle(options.vehicle, options.configName)
+
+  local renderViewOptions = {
+    renderViewName = "thumbnail",
+    screenshotDelay = 0,
+    resolution = vec3(currRes[1], currRes[2], 0),
+    rot = camRot,
+    pos = camPos + vec3(0,0,-0.2),
+    fov = thumbnailConfig.fov,
+    nearPlane = thumbnailConfig.nearPlane,
+    filename = options.filepath
+  }
+
+  -- Take screenshot
+  log('I', '', "Saved screenshot:" .. renderViewOptions.filename)
+
+  render_renderViews.takeScreenshot(renderViewOptions)
+  yieldSec(coroutine.yield, 0.75)
+
+
+  if options.isDefaultConfig then
+    FS:copyFile(options.filepath .. thumbnailConfig.fileEnding, 'vehicles/' .. options.modelKey .. '/default' .. thumbnailConfig.fileEnding)
+    log('I', logTag, "saved default:" .. options.modelKey .. thumbnailConfig.fileEnding)
+  end
+  return camName
+end
+
+local function startWork(workOptions)
+  -- Sanitizing workOptions
+  if not workOptions or type(workOptions) ~= 'table' then
+    workOptions = {
+      selection = "selectedModels", -- "selectedModels" or currConfigName
+      onlyMissingThumbnails = false,
+    }
+  end
+  if not workOptions.selection then workOptions.selection = "selectedModels" end
+
+  -- reset reviewData for each run
+  reviewData = {
+    onlyMissingThumbnails = workOptions.onlyMissingThumbnails,
+    selection = workOptions.selection,
+    configs = {}
+  }
 
   if workerCoroutine then
     log('E', "startWork", "coroutine already exist")
     return
   end
 
-  -- set GraphicBorderless to true, to make sure the view dimensions actually are the ones the picture is taken in
-  settings.setValue('GraphicBorderless', true)
-  settings.setValue('cameraOrbitSmoothing', false)
-  settings.setValue('GraphicDynReflectionEnabled', false)
-  core_settings_graphic.applyGraphicsState()
-
-  -- set correct level
-  --core_levels.startLevel(levelFullPath)
-
 
   -- main thing
-
-  -- todo: since we need to load the whole vehicle for each config anyway we should cycle each view for each vehicle so that we don't need to set the window dimensions that often
-
   workerCoroutine = coroutine.create(function()
+    log('I', '', "Starting thumbnail work coroutine")
+    trySetDynamicReflections(false)
+
+    local listOfSelectedModels = getListOfSelectedModels()
 
     forceQuit = false
 
-    if core_camera == nil then
-      unloadAutoExtensions()
-      loadPresetExtensions()
-    end
-
-    core_camera.setByName(0, "orbit")
-    editor.setEditorActive(false)
     be:setPhysicsSpeedFactor(2)
-    core_camera.speedFactor = 10000
 
+    if workOptions.selection == "selectedModels" then -- take thumbnails of the selected models
+      for _, modelName in pairs(listOfSelectedModels) do
+        for _, configData in pairs(core_vehicles.getModel(modelName).configs) do
+          if forceQuit then
+            be:setPhysicsSpeedFactor(0)
+            return
+          end
 
-    local lights = {"light4garagepass"}
-    local lightsobj = {}
-    for _,v in ipairs(lights) do
-      table.insert( lightsobj, scenetree.findObject(v) )
-    end
+          -- generate the thumbnail filename
+          local folder = "vehicles/"
+          local vehName = configData.model_key .. "/" .. configData.key
 
-    yieldSec(coroutine.yield, 0.1)
+          if windowOpen[0] and ctrls.currOuputDestinationPtr[0] == 1 then
+            folder = "screenshots/showroom/"
+          end
+          local filepath = folder .. vehName ..thumbnailConfig.fileEnding
 
-    log('I', '', 'Getting config list')
-    local configs = core_vehicles.getConfigList(true).configs
-    local models = core_vehicles.getModelList().models --because
+          local skip = workOptions.onlyMissingThumbnails and windowOpen[0] and ctrls.currOuputDestinationPtr[0] == 0 and FS:fileExists(filepath)
 
-    local configCount = tableSize(configs)
-    log('I', '', table.maxn(configs).." configs")
-    local modelInfo = nil
-    local fovModifier = settings.getValue('cameraOrbitFovModifier') * -1 --only apply in orbit camera !!!!!
+          local camName
+          local status
+          if not skip then -- replace vehicle
+            core_vehicles.replaceVehicle(configData.model_key, { config = configData.key, licenseText = "BeamNG"})
+            yieldSec(coroutine.yield, 0.7)
 
-    yieldSec(coroutine.yield, 0.1)
+            local newVehicle = getPlayerVehicle(0)
 
-    local counter = 0
-    for _, v in pairs(configs) do
-      counter = counter + 1
-      local findValConf = findVal(v.model_key, v.key)
-      -- if v.model_key == 'bigramp' or v.model_key == 'ramptest' or v.model_key == 'roadsigns' then goto continue end
+            newVehicle:queueLuaCommand("input.event('parkingbrake', 1, 1)")
+            newVehicle:queueLuaCommand("input.event('throttle', 0, 2)")
+            newVehicle:queueLuaCommand("controller.mainController.setEngineIgnition(false)")
 
-      -- skip props
-      -- if v.aggregates.Type.Prop then goto skipConfig end
-      if options.models ~= nil and not tableContains(options.models, v.model_key) then goto skipConfig end
-
-      -- local pcstat = FS:stat("vehicles/"..v.model_key.."/"..v.key..".pc")
-      -- local pcdate = 0
-      -- if pcstat then
-      --     pcdate = pcstat.modtime or 0
-      --     log("D", '', "vehicles/"..v.model_key.."/"..v.key..".pc : ctime="..dumps(pcstat.createtime).." mtime="..dumps(pcstat.modtime))
-      -- else
-      --     log("E", '', "pc FS:stat invalid")
-      -- end
-      -- local thumbdata = 1e30
-      -- for viewName, useView in pairs(views) do
-      --     if useView.allow and tableContains(useView.allow, "onlyDefault") then goto nextviewschk end
-      --     local tbname = "/vehicles/"..v.model_key.."/"..v.key..(useView.suffix or "")..".png"
-      --     local tbstat = FS:stat(tbname)
-      --     if tbstat and tbstat.modtime then
-      --         log("D", '', tbname.." : ctime="..dumps(tbstat.createtime).." mtime="..dumps(tbstat.modtime))
-      --         thumbdata = math.min(thumbdata, tbstat.modtime or 0)
-      --     else
-      --         log("E", '', "tb FS:stat invalid. fileexist "..dumps(tbname).."="..dumps(FS:fileExists(tbname) ))
-      --         if not FS:fileExists(tbname) then pcdate = 1e60 end --missing thumb, force regen
-      --     end
-      --     ::nextviewschk::
-      -- end
-      -- log("I", '', "thumbdata = "..dumps(thumbdata))
-      -- log("I", '', "pcdate = "..dumps(pcdate))
-      -- log("I", '', "isoutdated = "..dumps(pcdate>thumbdata))
-
-      if redoPass then
-        local redoing = false
-        for _,vname in pairs(config.options.views) do
-          local useView = views[vname]
-          if useView.allow and tableContains(useView.allow, "onlyDefault") then goto nextviewschk end
-          local tbname = "/vehicles/"..v.model_key.."/"..v.key..(useView.suffix or "")..".png"
-          local realname = FS:getFileRealPath(tbname)
-          if not realname:find(getUserPath()) then
-            log("D","redo", dumps(realname))
-            redoing = true
-            break --need to do
+            camName = takeThumbnail(
+              {
+                vehicle = newVehicle,
+                configName = currConfigName,
+                filepath = filepath,
+                modelKey = configData.model_key,
+                isDefaultConfig = configData.is_default_config
+              }
+            )
+            status = "done"
           else
-            log("D","redo", "existing")
+            status = "skipped"
           end
-          ::nextviewschk::
-        end
-        if not redoing then
-          log("W", "redoPass" , "skipConfig "..dumps(v.model_key.."/"..v.key))
-          goto skipConfig
+          table.insert(reviewData.configs, {vehName = vehName, camName = camName, status = status, thumbnailPath = filepath})
         end
       end
-
-      -- if( pcdate< thumbdata) then
-      --     log("E", '' , "skipConfig "..dumps(v.model_key.."/"..v.key))
-      --     goto skipConfig
-      -- end
-
-      if models == nil or models[v.model_key] == nil then
-        log("E", '', "Model Info  not found for model ='"..v.model_key .."'")
-        break
-      end
-      modelInfo = models[v.model_key]
-
-      -- Replace the vehicle
-      log('I', '', string.format("Spawning vehicle %05d / %05d", counter, configCount) .. ' : ' .. ' name: ' .. tostring(v.model_key) .. ', config: ' .. tostring(v.key))
-      yieldSec(coroutine.yield, 0.1)
+    else -- take thumbnail of the current vehicle only
       local playerVehicle = getPlayerVehicle(0)
-      local oldVehicle = playerVehicle
+      local vehManager = extensions.core_vehicle_manager
+      local playerVehicleData = vehManager.getPlayerVehicleData()
+      local filepath = playerVehicleData.vehicleDirectory .. workOptions.selection..thumbnailConfig.fileEnding
 
-      oldVehicle:setDynDataFieldbyName("licenseText", 0, "BeamNG")
+      local camName = takeThumbnail({vehicle = playerVehicle, filepath = filepath, configName = workOptions.selection})
 
-      core_vehicles.replaceVehicle(v.model_key, { config = v.key, licenseText = options.plate or ' '})
-      yieldSec(coroutine.yield, 0.2)
-
-      local newVehicle = oldVehicle
-      while newVehicle == oldVehicle do
-        yieldSec(coroutine.yield, 0.1)
-        newVehicle = getPlayerVehicle(0)
-      end
-
-      newVehicle:queueLuaCommand("input.event('parkingbrake', 1, 1)")
-      newVehicle:queueLuaCommand("input.event('throttle', 0, 2)")
-      newVehicle:queueLuaCommand("controller.mainController.setEngineIgnition(false)")
-
-      if tableContains(options.oldveh, newVehicle:getJBeamFilename()) then
-        yieldSec(coroutine.yield, 0.5)
-      end
-      yieldSec(coroutine.yield, 0.1)
-      extensions.ui_visibility.set(false)
-      simTimeAuthority.pause(true)
-
-      for viewName, useView in pairs(views) do
-        if forceQuit then
-          be:setPhysicsSpeedFactor(1)
-          core_camera.speedFactor = 1
-          return
-        end
-
-        if useView.allow == nil then
-          useView.allow = {}
-        end
-        -- dump(v.key)
-        -- dump(v.aggregates)
-        -- print("TYPE ======"..tostring(modelInfo.Type))
-        --if modelInfo.Type == "Prop" and not tableContains(useView.allow, "Prop") then goto skipView end
-        --if modelInfo.Type == "Trailer" and not tableContains(useView.allow, "Trailer") then goto skipView end
-        if not v.is_default_config and tableContains(useView.allow, "onlyDefault") then goto skipView end
-        if options.views ~= nil and not tableContains(options.views, viewName) then goto skipView end
-        local findValView = findValConf(useView)
-
-        yieldSec(coroutine.yield, 0.1)
-        setDimHelper(useView)
-        yieldSec(coroutine.yield, 0.1)
-
-
-
-        -- scenetree.hemisphere:setPosition(vec3(pos.x, pos.y, 0))
-        -- scenetree.light:setPosition(vec3(pos.x, pos.y, 15))
-
-        local vehicleId = newVehicle:getID()
-
-        core_camera.resetCameraByID(vehicleId)
-        core_camera.setFOV(vehicleId, 20 + fovModifier)
-
-        yieldSec(coroutine.yield, 0.1)
-
-        core_camera.resetCameraByID(vehicleId)
-        core_camera.setFOV(vehicleId, 20 + fovModifier)
-
-
-
-        -- newVehicle:setCamModeByType("orbit")
-        --newVehicle:setCamRotation(vec3(-135, 1.3, 0))
-        --newVehicle:setCamFOV(20 + fovModifier)
-        -- newVehicle:setCamModeByType("onboard.driver")
-
-        core_camera.setRotation(vehicleId, vec3(findValView('rotation'), 0, 0))
-        yieldSec(coroutine.yield, 0.1)
-
-        core_camera.setRotation(vehicleId, vec3(findValView('rotation'), 0, 0))
-        yieldSec(coroutine.yield, 0.1)
-
-        if findValView('dist') == nil then
-          useView.dist = 1
-        end
-
-        local idealDistance = newVehicle:getViewportFillingCameraDistance() * findValView('dist')
-        core_camera.setDistance(vehicleId, idealDistance)
-        if findValView('fov') then
-          core_camera.setFOV(vehicleId, findValView('fov') + fovModifier)
-        end
-        if findValView('offset') then
-          core_camera.setOffset(vehicleId, vec3(findValView('offset')[1] / idealDistance, findValView('offset')[2] / idealDistance, findValView('offset')[3] / idealDistance))
-        end
-        --MoveManager.zoomInSpeed = idealDistance
-        --print("* new distance: " .. tostring(idealDistance))
-        setBackground(findValView("background"), options.backgrounds)
-        yieldSec(coroutine.yield, 0.1)
-
-        if findValView('freeOffset') then
-          commands.setFreeCamera()
-          local pos = core_camera.getPosition()
-          pos.x = pos.x + findValView('freeOffset')[1] / idealDistance
-          pos.y = pos.y + findValView('freeOffset')[2] / idealDistance
-          pos.z = pos.z + findValView('freeOffset')[3] / idealDistance
-          core_camera.setPosition(0, pos)
-          core_camera.setFOV(0, findValView('fov'))
-          yieldSec(coroutine.yield, 0.1)
-        end
-
-
-        --newVehicle:queueLuaCommand("input.event('steering', 0.0, 1); input.event('parkingbrake', 1, 1); electrics.toggle_lights() ; electrics.toggle_lightbar_signal() ; electrics.toggle_fog_lights()")
-        newVehicle:queueLuaCommand("input.event('parkingbrake', 1, 1)")
-
-        local screenShotName = ""
-
-        -- Take screenshot
-        if findValView("diffuse") == "true" or findValView("diffuse") == nil then
-          Engine.imgui.setEnabled(false)
-          screenShotName = "vehicles/" .. v.model_key .. "/" .. (findValView('prefix') or '') .. v.key .. (findValView('suffix') or '')
-          log('I', '', "saved screenshot:" .. screenShotName  ..'.'..workConfig.outputFormat)
-          createScreenshot(screenShotName, workConfig.outputFormat, workConfig.superSampling)
-          if viewName == "default" and v.is_default_config then
-            -- t3d apparently does not like to take two pictures in one frame...
-            yieldSec(coroutine.yield, 0.01)
-            log('I', '', "saved default:" .. v.model_key  ..'.'..workConfig.outputFormat)
-            createScreenshot('vehicles/' .. v.model_key .. '/default', workConfig.outputFormat, workConfig.superSampling)
-          end
-          yieldSec(coroutine.yield, 0.01)
-          Engine.imgui.setEnabled(true)
-        end
-
-        if findValView("annotation") == "true" then
-          yieldSec(coroutine.yield, 0.2)
-          TorqueScript.eval('toggleAnnotationVisualize(true);')
-          Engine.imgui.setEnabled(false)
-          screenShotName = "vehicles/" .. v.model_key .. "/" .. (findValView('prefix') or '') .. v.key .. (findValView('suffix') or '')
-          yieldSec(coroutine.yield, 0.1)
-          log('I', '', "saved screenshot:" .. screenShotName  ..'_ann.'..workConfig.outputFormat)
-          createScreenshot(screenShotName ..'_ann', workConfig.outputFormat, workConfig.superSampling)
-          yieldSec(coroutine.yield, 0.1)
-          TorqueScript.eval('toggleAnnotationVisualize(false);')
-          Engine.imgui.setEnabled(true)
-        end
-
-        if findValView("light") == "true" then
-          yieldSec(coroutine.yield, 0.2)
-          -- setBackground("light_bg", options.backgrounds)
-          for _,o in ipairs(lightsobj) do
-            if o then o.isEnabled = true end
-          end
-          Engine.imgui.setEnabled(false)
-          TorqueScript.eval('toggleLightColorViz(true);')
-          screenShotName = "vehicles/" .. v.model_key .. "/" .. (findValView('prefix') or '') .. v.key .. (findValView('suffix') or '')
-          yieldSec(coroutine.yield, 0.1)
-          log('I', '', "saved screenshot:" .. screenShotName  ..'_li.'..workConfig.outputFormat)
-          createScreenshot(screenShotName ..'_li', workConfig.outputFormat, workConfig.superSampling)
-          yieldSec(coroutine.yield, 0.1)
-          for _,o in ipairs(lightsobj) do
-            if o then o.isEnabled = false end
-          end
-          setBackground(findValView("background"), options.backgrounds)
-          TorqueScript.eval('toggleLightColorViz(false);')
-          Engine.imgui.setEnabled(true)
-        end
-
-        setBackground(nil, options.backgrounds)
-
-        if findValView('freeOffset') then
-          commands.setGameCamera()
-        end
-        ::skipView::
-      end
-
-      simTimeAuthority.pause(false)
-
-      ::skipConfig::
+      table.insert(reviewData.configs, {camName = camName, vehName = playerVehicleData.vehicleDirectory, status = "done", thumbnailPath = filepath})
     end
 
-    be:setPhysicsSpeedFactor(1)
-    core_camera.speedFactor = 1
+    be:setPhysicsSpeedFactor(0)
 
+    -- when the job is finished
+    runDone = true
+    if windowOpen[0] and ctrls.reloadUIOnJobFinished[0] then
+      reloadUI()
+    end
   end)
 end
 
--- executed when a level was loaded
-local function onClientStartMission(levelPath)
-  --log('I', '', "onClientStartMission")
-  --setDimHelper({width = 1600, height = 900})
-  --startWork()
+local function selectPlayerVehicle()
+  local playerVehicle = getPlayerVehicle(0)
+  if playerVehicle then
+    for _,v in ipairs(vehList) do
+      v[2][0] = v[1] == playerVehicle.JBeam
+    end
+  else
+    log("E", "selectCurVeh", "Failed to get current vehicle")
+  end
+end
+
+local function resetToDefaultValues()
+  ctrls.currOuputDestinationPtr = im.IntPtr(thumbnailDefaultValues.ouputDestination - 1)
+  ctrls.currResolutionsPtr = im.IntPtr(thumbnailDefaultValues.resolution - 1)
+  local currRes = getCurrentResolution()
+  ctrls.imageResolution = ffi.new("int[3]", { currRes[1], currRes[2], 0 })
+end
+
+local previousFov
+local isCameraSet = true
+local function setCamera(p, r)
+  previousFov = core_camera.getFovDeg()
+  core_camera.setByName(0, "free")
+  core_camera.setPosRot(0, p.x, p.y, p.z, r.x, r.y, r.z, r.w)
+  core_camera.setFOV(0, thumbnailConfig.fov)
+  isCameraSet = true
+end
+
+local function previewCamera(p, r)
+  if currentlyPreviewingCamera then return end
+  setCamera(p, r)
+
+  currentlyPreviewingCamera = true
+end
+
+local function resetCamera()
+  core_camera.setByName(0, "orbit")
+  core_camera.setFOV(0, previousFov or 60)
+  isCameraSet = false
+end
+
+local function stopPreviewCamera()
+  if not currentlyPreviewingCamera then return end
+  resetCamera()
+  currentlyPreviewingCamera = false
+end
+
+local function setDimHelper(w, h)
+  local vm = GFXDevice.getVideoMode()
+  if not plRes then
+    plRes = {vm.width, vm.height}
+  end
+  if vm.width == w and vm.height == h and vm.displayMode == "Borderless" then
+    -- nothing to change
+    return
+  end
+  log('I', '', "requesting new video mode")
+  vm.width = w
+  vm.height = h
+  vm.displayMode = "Borderless"
+  GFXDevice.setVideoMode(vm)
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
   if windowOpen[0] ~= true then return end
 
+  currConfigName = sanitizeVehConfigName(getPlayerVehicle(0).partConfig)
+  currModelName = getPlayerVehicle(0).jbeam
+
   local isRunning = workerCoroutine ~= nil
 
   im.SetNextWindowSize(initialWindowSize, im.Cond_FirstUseEver)
 
-  if im.Begin("Vehicle Screenshot Creator", windowOpen) then
+  if im.Begin("Vehicle Screenshot Creator (WIP)", windowOpen) then
 
-    if isRunning then im.BeginDisabled() end
-    im.PushStyleColor2(im.Col_Button, im.ImVec4(0,0,0,0))
-    if editor.uiIconImageButton(editor.icons.insert_drive_file, nil, nil, nil, nil) then
-      workConfig = {}
+    -- we set the default values
+    if not ctrls.currOuputDestinationPtr then
+      resetToDefaultValues()
     end
-    if im.IsItemHovered() then im.BeginTooltip() im.Text("New Config") im.EndTooltip() end
-    im.SameLine()
-    ----
-    if editor.uiIconImageButton(editor.icons.folder, nil, nil, nil, nil) then
-    end
-    if im.IsItemHovered() then im.BeginTooltip() im.Text("Open Config") im.EndTooltip() end
-    im.SameLine()
-    ----
-    if editor.uiIconImageButton(editor.icons.save, nil, nil, nil, nil) then
-    end
-    if im.IsItemHovered() then im.BeginTooltip() im.Text("Save Config") im.EndTooltip() end
-    im.SameLine()
 
-    if isRunning then im.EndDisabled() end
 
-    ----
     if isRunning then
-      if editor.uiIconImageButton(editor.icons.stop, nil, im.ImColorByRGB(0,255,0,255).Value, nil, nil) then
+      if editor.uiIconImageButton(editor.icons.stop, imVec32x32, im.ImColorByRGB(0,255,0,255).Value, nil, nil) then
         forceQuit = true
       end
       if im.IsItemHovered() then im.BeginTooltip() im.Text("Stop") im.EndTooltip() end
     else
-      if editor.uiIconImageButton(editor.icons.play_arrow, nil, im.ImColorByRGB(0,255,0,127).Value, nil, nil) then
-        reloadConfig()
-        overwriteOptionGui()
-        startWork()
+      if editor.uiIconImageButton(editor.icons.play_arrow, imVec32x32, im.ImColorByRGB(0,255,0,127).Value, nil, nil) then
+        startWork({selection = "selectedModels", onlyMissingThumbnails = ctrls.generateMissingThumbnailsOnly[0]})
       end
-      if im.IsItemHovered() then im.BeginTooltip() im.Text("Run") im.EndTooltip() end
+      if im.IsItemHovered() then im.BeginTooltip() im.Text("Run (".. getSelectedVehCount() .. ") selected models (See 'Selection'tab). If none are selected, player's vehicle model will run by default") im.EndTooltip() end
+
+      im.SameLine()
+
+      if editor.uiIconImageButton(editor.icons.play_arrow, imVec32x32, imVec4Yellow, nil, nil) then
+        startWork({selection = currConfigName})
+      end
+      if im.IsItemHovered() then im.BeginTooltip() im.Text("Only update thumbnail of current config : '"..currConfigName .."' (Will not update the config itself!)") im.EndTooltip() end
+
+      im.Checkbox("Generate missing thumbnails only", ctrls.generateMissingThumbnailsOnly)
+      im.SameLine()
+      im.Checkbox("Reload UI when run is finished", ctrls.reloadUIOnJobFinished)
+      if im.IsItemHovered() then im.BeginTooltip() im.Text("If not, opening the vehicle menu after updating the thumbnails, won't show the new thumbnails") im.EndTooltip() end
+
+      im.Dummy(im.ImVec2(1, 5))
     end
-    ----
 
     im.PopStyleColor()
 
-    -- menu end
-    -- tabs start
 
     if isRunning then im.BeginDisabled() end
     if im.BeginTabBar("main Menu##") then
       if im.BeginTabItem('Output') then
-        if not ctrls.imageResolution then ctrls.imageResolution = ffi.new("int[3]", { 1920, 1080, 0 }) end
-        if im.InputInt2("Image resolution", ctrls.imageResolution) then
+        if isDefaultConfig() then
+          im.BeginDisabled()
+        end
+        if editor.uiIconImageButton(editor.icons.undo, imVec32x32, nil, nil, nil) then
+          resetToDefaultValues()
+        end
+        im.tooltip("Restore settings to thumbnail's")
+        if isDefaultConfig() then
+          im.EndDisabled()
+        end
+
+        -- this build the string from the presets to feed the Combo2
+        local s = ""
+        for _, r in ipairs(presetOutputDestinations) do
+          s = s .. r .. '\0'
+        end
+        ctrls.outputDestinationsStr = s
+        im.Combo2("Output destination", ctrls.currOuputDestinationPtr, ctrls.outputDestinationsStr)
+
+        im.Dummy(im.ImVec2(1, 20))
+
+        -- this build the string from the presets to feed the Combo2
+        local s = 'custom\0'
+        for _, r in ipairs(presetResolutions) do
+          s = s .. r[1] .. ' - ' .. r[2] .. ' x ' .. r[3] .. '\0'
+        end
+        ctrls.presetResolutionsComboStr = s .. '\0'
+        im.Combo2("Common Resolutions", ctrls.currResolutionsPtr, ctrls.presetResolutionsComboStr)
+
+        -- make sure the final image resolution is updated
+        if ctrls.currResolutionsPtr[0] > 0 then
+          local preset = presetResolutions[ctrls.currResolutionsPtr[0]]
+          ctrls.imageResolution[0] = preset[2]
+          ctrls.imageResolution[1] = preset[3]
+        end
+
+        if im.InputInt2("Final image resolution", ctrls.imageResolution) then
           local found = false
+          -- check if custom resolution matches one of the presets, otherwise use custom
           for i, r in ipairs(presetResolutions) do
-            if ctrls.commonResolutionsPtr and ctrls.imageResolution[0] == r[2] and ctrls.imageResolution[1] == r[3] then
-              ctrls.commonResolutionsPtr[0] = i
+            if ctrls.currResolutionsPtr and ctrls.imageResolution[0] == r[2] and ctrls.imageResolution[1] == r[3] then
+              ctrls.currResolutionsPtr[0] = i
               found = true
               break
             end
           end
           if not found then
-            ctrls.commonResolutionsPtr[0] = 0 -- custom
+            ctrls.currResolutionsPtr[0] = 0 -- custom
           end
         end
 
-        if not ctrls.commonResolutionsPtr then
-          ctrls.commonResolutionsPtr = im.IntPtr(3)
-          local s = 'custom\0'
-          for _, r in ipairs(presetResolutions) do
-            s = s .. r[1] .. ' - ' .. r[2] .. ' x ' .. r[3] .. '\0'
-          end
-          ctrls.presetResolutionsComboStr = s .. '\0'
-
-        end
-        if im.Combo2("Common Resolutions", ctrls.commonResolutionsPtr, ctrls.presetResolutionsComboStr) then
-          if ctrls.commonResolutionsPtr[0] > 0 then
-            -- ignore custom
-            local preset = presetResolutions[ctrls.commonResolutionsPtr[0]]
-            ctrls.imageResolution[0] = preset[2]
-            ctrls.imageResolution[1] = preset[3]
+        if im.Button(ctrls.resolutionToggled and "Reset resolution" or "Preview resolution") then
+          ctrls.resolutionToggled = not ctrls.resolutionToggled
+          if ctrls.resolutionToggled then
+            setDimHelper(ctrls.imageResolution[0], ctrls.imageResolution[1])
+          else
+            setDimHelper(plRes[1], plRes[2])
           end
         end
-
-        if not ctrls.outputFormatPtr then
-          ctrls.outputFormatPtr = im.IntPtr(1)
-          workConfig.outputFormat = 'png'
-          local s = ''
-          for _, n in ipairs(outputFormats) do
-            s = s .. n .. '\0'
+        im.SameLine()
+        if im.Button("Toggle UI apps") then
+          ctrls.uiToggled = not ctrls.uiToggled
+          if ctrls.uiToggled then
+            core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
+          else
+            core_gamestate.setGameState('freeroam', {}, 'freeroam')
           end
-          ctrls.outputFormatsStr = s .. '\0'
         end
-        if im.Combo2("File format", ctrls.outputFormatPtr, ctrls.outputFormatsStr) then
-          workConfig.outputFormat = outputFormats[ctrls.outputFormatPtr[0] + 1]
+        if not isThumbnailConfigGood() then
+          editor.uiIconImage(editor.icons.warning, imVec24x24, imVec4Yellow)
+          im.SameLine()
+          im.PushStyleColor2(im.Col_Text, imVec4Yellow)
+          im.TextWrapped(string.format("Correct size for vehicles thumbnails are 500 * 281 and you have chosen %i * %i", getCurrentResolution()[1], getCurrentResolution()[2]))
+          im.PopStyleColor()
+        else
+          im.Dummy(im.ImVec2(1, 20))
         end
-
 
         if not ctrls.superSamplingPtr then
           ctrls.superSamplingPtr = im.IntPtr(1)
           workConfig.superSampling = 0
         end
-        if im.SliderInt("Supersampling", ctrls.superSamplingPtr, 0, 64) then
-          workConfig.superSampling = ctrls.superSamplingPtr[0]
-        end
+        -- if im.SliderInt("Supersampling", ctrls.superSamplingPtr, 0, 64) then
+        --   workConfig.superSampling = ctrls.superSamplingPtr[0]
+        -- end
 
         ----------------------------------------------------------------------------
         local s = math.sqrt(ctrls.superSamplingPtr[0])
         local x = ctrls.imageResolution[0]
         local y = ctrls.imageResolution[1]
-
-        --[[
-        local screenSize = im.getCurrentMonitorSize()
-        if screenSize.x > 0 and screenSize.y > 0 then
-          if x > screenSize.x then
-            im.TextColored(im.ImVec4(1.0, 0.0, 0.0, 1.0), 'ERROR: Screenshot wider than your screen, will be capped')
-            x = screenSize.x
-          end
-          if y > screenSize.y then
-            im.TextColored(im.ImVec4(1.0, 0.0, 0.0, 1.0), 'ERROR: Screenshot higher than your screen, will be capped')
-            y = screenSize.y
-          end
-        end
-        --]]
 
         -- this is the same math as in the c++ side
         local maxSize = math.max(x, y) * math.sqrt(s)
@@ -652,24 +694,13 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         im.TextUnformatted('Megapixel = ' .. string.format('%0.2f', x * y / 1000000))
         local rawSize = x * y * 3 -- RGB = 3 byte
         im.TextUnformatted('Raw image size = ' .. (bytes_to_string(rawSize)))
-        if workConfig.outputFormat == 'png' then
-          im.TextUnformatted('estimated png file size = ' .. (bytes_to_string(rawSize * 0.5)))
-        elseif workConfig.outputFormat == 'jpg' then
-          im.TextUnformatted('estimated jpg file size = ' .. (bytes_to_string(rawSize * 0.14)))
-        end
+        im.TextUnformatted('Estimated JPG file size = ' .. (bytes_to_string(rawSize * 0.14)))
 
         im.EndTabItem()
       end
-      if im.BeginTabItem('Vehicle') then
-        if im.SmallButton("Player Vehicle") then
-          local playerVehicle = getPlayerVehicle(0)
-          if playerVehicle then
-            for _,v in ipairs(vehList) do
-              v[2][0] = v[1] == playerVehicle.JBeam
-            end
-          else
-            log("E", "selectCurVeh", "Failed to get current vehicle")
-          end
+      if im.BeginTabItem("Models selection") then
+        if im.SmallButton("Player Vehicle Model") then
+          selectPlayerVehicle()
         end
         im.SameLine()
         if im.SmallButton("Select All") then
@@ -690,34 +721,349 @@ local function onUpdate(dtReal, dtSim, dtRaw)
           end
         end
 
-        if im.BeginChild1("modelsChild", im.ImVec2(0, 0), true) then
-          if vehList then
-            for _,v in ipairs(vehList) do
-              im.Selectable2(v[1],v[2])
-              im.SameLine(200)
-              im.TextUnformatted(v[3])
+        local halfWidth = im.GetContentRegionAvailWidth() / 2
+        if im.BeginChild1("unselectedSection", im.ImVec2(halfWidth, 0), true) then
+          im.Text("Unselected Vehicles")
+          if im.BeginChild1("unselectedVehs", im.ImVec2(0,0), true) then
+            if vehList then
+              for _,v in ipairs(vehList) do
+                if not v[2][0] then
+                  im.Selectable2(v[3] .. " (" ..v[1] .. ")",v[2])
+                end
+              end
             end
           end
         end
         im.EndChild()
-        im.EndTabItem()
-      end
-      --if im.BeginTabItem('Level') then
-        --im.EndTabItem()
-      --end
-      if im.BeginTabItem('Review/Run') then
-        if not isRunning then
-          im.TextUnformatted("Ready")
-        else --running
-          if forceQuit then
-            im.TextUnformatted("Will stop")
-          else
-            im.TextUnformatted("Running")
+        im.EndChild()
+
+        im.SameLine()
+        if im.BeginChild1("selected", im.ImVec2(halfWidth, 0), true) then
+          im.Text("Selected Vehicles")
+          if im.BeginChild1("selectedVehs", im.ImVec2(0,0), true) then
+            if vehList then
+              for _,v in ipairs(vehList) do
+                if v[2][0] then
+                  im.Selectable2(v[3] .. " (" ..v[1] .. ")",v[2])
+                end
+              end
+            end
           end
         end
 
+        im.EndChild()
+        im.EndChild()
+
         im.EndTabItem()
       end
+      if im.BeginTabItem("Manual controls") then
+
+        im.TextWrapped("This tab is used to override the procedural camera placement per model and/or config, during the generation of thumbnails")
+        im.TextWrapped("A vehicle config's camera will override its model camera")
+
+        im.Dummy(im.ImVec2(1, 10))
+
+        im.TextWrapped("The ")
+        local _, _, camName = getFinalCameraPosAndRotForVehicle(getPlayerVehicle(0), currConfigName)
+
+        im.PushStyleColor2(im.Col_Text, imVec4Green)
+        im.SameLine()
+        im.TextWrapped(camName)
+        im.PopStyleColor()
+        im.tooltip("To disable procedural camera placement during thumbnail generation, enable either one of the manual camera placement below")
+        im.SameLine()
+        im.TextWrapped(" will be used for the spawned config.")
+        im.Dummy(im.ImVec2(1, 10))
+
+
+        if currConfigName == "default" then
+          im.PushStyleColor2(im.Col_Text, imVec4Red)
+          editor.uiIconImage(editor.icons.error, imVec24x24, imVec4Red)
+          im.SameLine()
+          im.TextWrapped("Current vehicle is your own 'default' vehicle. Spawn a vehicle from the vehicle selector (Will be fixed)")
+          im.PopStyleColor()
+        else
+          if im.Button("Preview final thumbnail") then end
+          if im.IsItemHovered() then
+            local p, r = getFinalCameraPosAndRotForVehicle(getPlayerVehicle(0), currConfigName)
+            previewCamera(p, r)
+          else
+            stopPreviewCamera()
+          end
+          im.Dummy(im.ImVec2(1, 10))
+
+          local imguiHeight = 230
+          if im.BeginChild1("Parent parent", im.ImVec2(0, imguiHeight), true) then
+            if im.BeginChild1("Config list", im.ImVec2(im.GetContentRegionAvailWidth() / 2, 0), nil) then
+              if im.BeginTable('Model configs', 4, nil) then
+                im.TableSetupColumn("Config name",nil, 16)
+                im.TableSetupColumn("Config cam",nil, 7)
+                im.TableSetupColumn("Model cam",nil, 7)
+                im.TableSetupColumn("Spawn",nil, 7)
+                im.TableNextColumn()
+                im.Text("Config name")
+                im.TableNextColumn()
+                im.Text("Config cam")
+                im.TableNextColumn()
+                im.Text("Model cam")
+                im.TableNextColumn()
+                im.TableNextColumn()
+
+                local isCurrent
+                for _, configData in pairs(core_vehicles.getModel(currModelName).configs) do
+                  isCurrent = configData.key == currConfigName
+                  local cameraConfigs = getCameraConfig(configData.model_key, configData.key)
+                  im.Text(configData.key)
+                  if isCurrent then
+                    im.SameLine()
+                    im.Text("(Current)")
+                  end
+                  im.TableNextColumn()
+                  if cameraConfigs.vehCamConfig.cameraConfig then
+                    local enabledPtr = im.BoolPtr(cameraConfigs.vehCamConfig.configCamEnabled)
+                    if im.Checkbox("##"..configData.key, enabledPtr) then
+                      cameraConfigs.vehCamConfig.configCamEnabled = enabledPtr[0]
+                      saveCameraConfig()
+                    end
+                    im.SameLine(42)
+                    if editor.uiIconImageButton(editor.icons.switch_camera, imVec24x24, im.ImColorByRGB(0,255,0,127).Value, nil, nil) then
+                      local p,r = rewindCameraOffsets(cameraConfigs.vehCamConfig.cameraConfig.posOffset, cameraConfigs.vehCamConfig.cameraConfig.rotOffset)
+                      setCamera(p, r)
+                    end
+                    im.tooltip(string.format("Click to set camera to '%s' config's camera", configData.key))
+                  else
+                    im.Text("None")
+                  end
+                  im.TableNextColumn()
+                  if cameraConfigs.modelCamConfig then
+                    local enabledPtr = im.BoolPtr(cameraConfigs.vehCamConfig.modelCamEnabled)
+                    if im.Checkbox("##"..configData.key..".", enabledPtr) then
+                      cameraConfigs.vehCamConfig.modelCamEnabled = enabledPtr[0]
+                      saveCameraConfig()
+                    end
+                  else
+                    im.Text("None")
+                  end
+                  im.TableNextColumn()
+                  if not isCurrent then
+                    if im.Button("Spawn##"..configData.key) then
+                      core_vehicles.replaceVehicle(configData.model_key, { config = configData.key, licenseText = "BeamNG"})
+                    end
+                  end
+                  im.TableNextColumn()
+                end
+                im.EndTable()
+              end
+            end
+            im.EndChild()
+            im.SameLine()
+
+            local cameraConfigs = getCameraConfig(currModelName, currConfigName)
+            if im.BeginChild1("Config custom camera", im.ImVec2(im.GetContentRegionAvailWidth() / 2, 0), true) then
+              if cameraConfigs.vehCamConfig and cameraConfigs.vehCamConfig.cameraConfig then
+                editor.uiIconImage(editor.icons.check, imVec24x24, imVec4Green)
+                im.SameLine()
+                im.TextWrapped("Current vehicle config has a custom camera")
+                if im.Button("Set camera to config camera") then
+                  local p,r = rewindCameraOffsets(cameraConfigs.vehCamConfig.cameraConfig.posOffset, cameraConfigs.vehCamConfig.cameraConfig.rotOffset)
+                  setCamera(p, r)
+                end
+
+                local enabledPtr = im.BoolPtr(cameraConfigs.vehCamConfig.configCamEnabled)
+                if im.Checkbox("Enabled", enabledPtr) then
+                  cameraConfigs.vehCamConfig.configCamEnabled = enabledPtr[0]
+                  saveCameraConfig()
+                end
+                im.tooltip("If enabled, will use the current vehicle config's custom camera during thumbnail generation.")
+              else
+                editor.uiIconImage(editor.icons.error, imVec24x24, imVec4Red)
+                im.SameLine()
+                im.TextWrapped("Current vehicle config doesn't have a custom camera")
+              end
+              if im.Button("Overwrite config camera") then
+                local s = currModelName.."/"..currConfigName
+                local posOffset, rotOffset = getCameraOffsets()
+                cameraConfigFile.vehConfigs[s] = {
+                  cameraConfig = {posOffset=posOffset, rotOffset=rotOffset}
+                }
+                if not cameraConfigFile.vehConfigs[s] then
+                  cameraConfigFile.vehConfigs[s] = {}
+                end
+                cameraConfigFile.vehConfigs[s].modelCamEnabled = false
+                cameraConfigFile.vehConfigs[s].configCamEnabled = true
+                saveCameraConfig()
+              end
+              im.tooltip("Will save the current camera's position and rotation for current vehicle config only")
+            end
+            im.EndChild()
+            im.SameLine()
+            if im.BeginChild1("Model custom camera", nil, true) then
+              if cameraConfigs.vehCamConfig and cameraConfigs.vehCamConfig.configCamEnabled then
+                im.TextWrapped("Vehicle config's manual camera overrides the vehicle model camera. Since the current vehicle config camera is enabled, this window is deactivated")
+              else
+                if cameraConfigs.modelCamConfig then
+                  editor.uiIconImage(editor.icons.check, imVec24x24, imVec4Green)
+                  im.SameLine()
+                  im.TextWrapped("Current model has a custom camera")
+                  if im.Button("Set camera to model camera") then
+                    local p,r = rewindCameraOffsets(cameraConfigs.modelCamConfig.cameraConfig.posOffset, cameraConfigs.modelCamConfig.cameraConfig.rotOffset)
+                    setCamera(p, r)
+                  end
+
+                  local enabledPtr = im.BoolPtr(cameraConfigs.vehCamConfig.modelCamEnabled)
+                  if im.Checkbox("Enabled", enabledPtr) then
+                    cameraConfigs.vehCamConfig.modelCamEnabled = enabledPtr[0]
+                    saveCameraConfig()
+                  end
+                  im.tooltip("If enabled, will use the current vehicle model's custom camera during thumbnail generation.")
+
+                else
+                  editor.uiIconImage(editor.icons.error, imVec24x24, imVec4Red)
+                  im.SameLine()
+                  im.TextWrapped("Current model doesn't have a custom camera")
+                end
+                if im.Button("Overwrite model camera") then
+                  local s = currModelName.."/"..currConfigName
+                  local posOffset, rotOffset = getCameraOffsets()
+                  cameraConfigFile.vehModels[currModelName] = {
+                    cameraConfig = {posOffset=posOffset, rotOffset=rotOffset}
+                  }
+                  if not cameraConfigFile.vehConfigs[s] then
+                    cameraConfigFile.vehConfigs[s] = {}
+                  end
+                  cameraConfigFile.vehConfigs[s].modelCamEnabled = true
+                  cameraConfigFile.vehConfigs[s].configCamEnabled = false
+                  saveCameraConfig()
+                end
+                im.tooltip("Will save the current camera's position and rotation for current model")
+              end
+            end
+            im.EndChild()
+          end
+          im.EndChild()
+
+            im.Text("Manual controls")
+            if im.Button(ctrls.drivingEnabled and "Disable driving" or "Enable driving") then
+              ctrls.drivingEnabled = not ctrls.drivingEnabled
+
+              for _, mapName in ipairs(vehicleActionMaps) do
+                local map = scenetree.findObject(mapName)
+                if map then
+                  map:setEnabled(ctrls.drivingEnabled)
+                end
+              end
+
+            end
+            if im.IsItemHovered() then im.BeginTooltip() im.Text("Enable or disable vehicle's controls") im.EndTooltip() end
+            if im.Button("Set camera to procedural") then
+              local currRes = getCurrentResolution()
+              local p, r = frameVehicle(getPlayerVehicle(0), thumbnailConfig.fov, thumbnailConfig.nearPlane, currRes[1] / currRes[2])
+              setCamera(p, r)
+            end
+            if isCameraSet then
+              if im.Button("Revert camera") then
+                resetCamera()
+              end
+              if editor.uiSliderFloat("Camera Speed", ctrls.camSpeedPtr, 2, 100, "%.1f") then
+                core_camera.setSpeed(ctrls.camSpeedPtr[0])
+              end
+            end
+        end
+        im.EndTabItem()
+      end
+
+      if runDone then im.PushStyleColor2(im.Col_Text, imVec4Red) end
+      if im.BeginTabItem("Last run review") then
+        if im.Button("Open user's vehicle folder") then
+          if not fileExistsOrNil('/vehicles/') then  -- create dir if it doesnt exist
+            FS:directoryCreate('/vehicles/', true)
+          end
+          Engine.Platform.exploreFolder('/vehicles/')
+        end
+        im.SameLine()
+        if im.Button("Open user's screenshot/showroom folder") then
+          if not fileExistsOrNil('/screenshots/showroom/') then  -- create dir if it doesnt exist
+            FS:directoryCreate('/screenshots/showroom/', true)
+          end
+          Engine.Platform.exploreFolder('/screenshots/showroom/')
+        end
+
+        if reviewData and next(reviewData) then
+          local totalSkipped = 0
+          local totalDone = 0
+
+          local halfWidth = im.GetContentRegionAvailWidth() / 2
+          if im.BeginChild1("Vehicle list info", im.ImVec2(halfWidth, 0), true) then
+            im.Text("Thumbnail status list : ")
+            im.Dummy(im.ImVec2(1, 10))
+
+            if im.BeginTable('Status list', 4, nil) then
+              im.TableSetupColumn("Veh name",nil, 11)
+              im.TableSetupColumn("Status",nil, 6)
+              im.TableSetupColumn("Camera",nil, 12)
+              im.TableSetupColumn("Preview",nil, 7)
+              im.TableNextColumn()
+              im.Text("Veh name")
+              im.TableNextColumn()
+              im.Text("Status")
+              im.TableNextColumn()
+              im.Text("Camera")
+              im.TableNextColumn()
+              im.TableNextColumn()
+              for _, data in ipairs(reviewData.configs) do
+                im.Text(data.vehName)
+                im.TableNextColumn()
+
+                im.Text(data.status)
+                im.TableNextColumn()
+
+                im.Text(data.camName or "")
+                im.TableNextColumn()
+
+                if data.status == "skipped" then
+                  totalSkipped = totalSkipped + 1
+                elseif data.status == "done" then
+                  totalDone = totalDone + 1
+                end
+
+                im.BeginDisabled()
+                if im.Button("Preview") then
+                end
+                if im.IsItemHovered() then
+                  local thumb = imguiUtils.texObj(data.thumbnailPath)
+                  im.BeginTooltip()
+                  im.Image(thumb.texId, thumb.size, im.ImVec2(0, 0), im.ImVec2(1, 1))
+                  im.EndTooltip()
+                end
+                im.TableNextColumn()
+                im.EndDisabled()
+
+              end
+              im.EndTable()
+            end
+          end
+          im.EndChild()
+
+          im.SameLine()
+
+          if im.BeginChild1("Run info", im.ImVec2(halfWidth, 0), true) then
+
+            im.Text("General info : ")
+            im.Dummy(im.ImVec2(1, 10))
+            im.Text("Generate missing thumbnails only : " .. (reviewData.onlyMissingThumbnails and "Yes" or "No"))
+            im.Text("Total done : " .. totalDone)
+            im.Text("Total skipped : " .. totalSkipped)
+          end
+          im.EndChild()
+        else
+          im.Text("There is no last run to review")
+        end
+
+        im.EndTabItem()
+
+        runDone = false
+      end
+      if runDone then im.PopStyleColor() end
     end
     im.EndTabBar()
 
@@ -728,24 +1074,19 @@ end
 
 local function onExtensionLoaded()
   extensions.editor_main.initializeModules()
-  guiModule.initialize(gui)
   populateVehGui()
-  settings.setValue('GraphicDynReflectionEnabled', false)
+
+  -- save the user setting to revert it back when leaving the showroom
+  if isInShowroom() then
+    userDefinedDynamicReflections = settings.getValue("GraphicDynReflectionEnabled")
+  end
+  trySetDynamicReflections(false)
 end
 
 local function onExtensionUnloaded()
-  log('I', '', "module unloaded")
-  settings.setValue('GraphicBorderless', false)
-  settings.setValue('GraphicDynReflectionEnabled', true)
-end
+  trySetDynamicReflections(userDefinedDynamicReflections)
 
-local function stop()
-  forceQuit = true
-end
-
-local function redo()
-  redoPass = true
-  onClientStartMission()
+  log('I', '', "Module unloaded")
 end
 
 local function openWindow()
@@ -753,27 +1094,47 @@ local function openWindow()
 end
 
 local function onSerialize()
-  return {windowOpen = windowOpen[0]}
+  return {
+    windowOpen = windowOpen[0],
+    userDefinedDynamicReflections = userDefinedDynamicReflections,
+    generateMissingThumbnailsOnly = ctrls.generateMissingThumbnailsOnly[0],
+    reloadUIOnJobFinished = ctrls.reloadUIOnJobFinished[0],
+    resolutionPtr = (ctrls.currResolutionsPtr and ctrls.currResolutionsPtr[0]) or thumbnailDefaultValues.resolution,
+    reviewData = reviewData,
+    runDone = runDone,
+    currentlyPreviewingCamera = currentlyPreviewingCamera,
+    previousFov = previousFov,
+    isCameraSet = isCameraSet,
+    plRes = plRes
+  }
 end
 
 local function onDeserialized(data)
   if data.windowOpen ~= nil then
+    resetToDefaultValues()
+
     windowOpen[0] = data.windowOpen
+    userDefinedDynamicReflections = data.userDefinedDynamicReflections
+    reviewData = data.reviewData or {}
+    ctrls.generateMissingThumbnailsOnly[0] = data.generateMissingThumbnailsOnly
+    ctrls.currResolutionsPtr[0] = data.resolutionPtr
+    ctrls.reloadUIOnJobFinished[0] = data.reloadUIOnJobFinished
+    runDone = data.runDone
+    currentlyPreviewingCamera = data.currentlyPreviewingCamera
+    previousFov = data.previousFov
+    isCameraSet = data.isCameraSet
+    plRes = data.plRes
   end
 end
 
 M.onPreRender = onPreRender
-M.onInit = onInit
 M.onUpdate = onUpdate
-M.onClientStartMission = onClientStartMission
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.openWindow = openWindow
-
+M.startWork = startWork
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
 
-M.stop = stop
-M.redo = redo
-
+M.frameVehicle = frameVehicle
 return M

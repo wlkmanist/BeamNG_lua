@@ -120,13 +120,14 @@ end
 local function resetPursuitVars() -- resets pursuit variables to default
   vars = {
     scoreLevels = deepcopy(defaultScoreLevels),
+    spawnDirBias = -0.6, -- respawn direction randomization (police vehicles only)
     strictness = 0.5, -- strength of detecting driver infractions
     arrestLimit = 5,
     arrestRadius = 20,
     evadeLimit = 45,
     evadeRadius = 80,
     suspectFrequency = 0.5, -- this is disabled if traffic random events are disabled
-    roadblockFrequency = 0.5,
+    roadblockFrequency = 0.5, -- roadblock frequency modifier (set to 0 to disable)
     autoRelease = true -- set to true to automatically unfreeze the vehicle after an arrest
   }
 end
@@ -167,7 +168,8 @@ local function getNearestPoliceVehicle(targetId, isVisible, isUsable) -- returns
 end
 
 local function setPursuitMode(mode, targetId, policeId) -- sets pursuit mode; -1 = busted, 0 = off, 1 and higher = pursuit level
-  targetId = targetId or be:getPlayerVehicleID(0) -- target is player vehicle by default
+  --print(tostring(mode)..", "..tostring(targetId)..", "..tostring(policeId))
+  targetId = targetId or be:getPlayerVehicleID(0) -- if targetId is not provided, uses player vehicle (intended as a backwards compatibility measure)
   if not targetId then return end
 
   local traffic = gameplay_traffic.getTrafficData()
@@ -186,8 +188,8 @@ local function setPursuitMode(mode, targetId, policeId) -- sets pursuit mode; -1
     pursuit.timers.arrest = 0
 
     for id, veh in pairs(traffic) do
-      if id ~= targetId and veh.pursuit.mode == 1 then -- temporarily forgive other vehicles with low pursuit mode
-        setPursuitMode(0, id)
+      if id ~= targetId and veh.pursuit.mode >= 1 then -- during active arrest, reduce pursuit level of other suspects
+        setPursuitMode(veh.pursuit.mode - 1, id)
       end
     end
   elseif mode == 0 then -- reset pursuit data
@@ -571,9 +573,11 @@ local function onUpdate(dt, dtSim)
               local spawnData
 
               if not pursuit.roadblockPos or (pursuit.roadblockPos and veh.pos:squaredDistance(pursuit.roadblockPos) > 400) then
+                local minDist = 40 + 60 / max(0.001, gameplay_traffic.getTrafficVars().spawnValue)
+
                 for otherId, otherVeh in pairs(policeVehs) do -- first, check for police vehicles that are out of sight
                   if be:getObjectByID(otherId):getActive() and otherVeh.role.validTargets[id] and otherVeh.role.validTargets[id].dist > 10000
-                  and otherVeh.pos:squaredDistance(core_camera.getPosition()) > 10000 and otherVeh.respawn.sightDirValue < 100 then
+                  and otherVeh.distCam > minDist and otherVeh.respawn.sightDirValue < 100 then
                     table.insert(vehIds, otherId)
                   end
                   count = count + 1

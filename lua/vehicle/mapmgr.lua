@@ -16,7 +16,7 @@ local M = {}
 M.objects = {}
 M.objectCollisionIds = {}
 
-local mapData, mapBuildSerial, edgeKdTree, maxRadius
+local mapData, mapBuildSerial, edgeKdTree, maxRadius, customMap
 local lastSimTime = -1
 
 local function updateDrivabilities()
@@ -71,8 +71,18 @@ local function requestMap()
 end
 
 local function setCustomMap(map)
-  M.mapData = map
+  mapData = map
+  M.mapData = mapData
+  customMap = true
   mapBuildSerial = nil
+end
+
+local function clearCustomMap()
+  if customMap then
+    mapData = nil
+    M.mapData = nil
+    customMap = nil
+  end
 end
 
 local function setSignals(data)
@@ -224,7 +234,6 @@ local function findClosestRoad(pos, wZ)
   --log('A','mapmgr', 'findClosestRoad called with '..pos.x..','..pos.y..','..pos.z)
   pos = pos or obj:getPosition()
 
-  local nodePositions = mapData.positions
   local bestRoad1, bestRoad2, bestDist
   local searchRadius = maxRadius
   repeat
@@ -235,7 +244,8 @@ local function findClosestRoad(pos, wZ)
       local i = stringFind(item_id, '\0')
       local n1id = stringSub(item_id, 1, i-1)
       local n2id = stringSub(item_id, i+1, #item_id)
-      local curDist = sqDistToLineSegmentZBias(pos, nodePositions[n1id], nodePositions[n2id], wZ)
+      local n1Pos, n2Pos = mapData:getEdgePositions(n1id, n2id)
+      local curDist = sqDistToLineSegmentZBias(pos, n1Pos, n2Pos, wZ)
 
       if curDist <= bestDist then
         bestDist = curDist
@@ -390,5 +400,6 @@ M.findClosestRoad = findClosestRoad
 M.findBestRoad = findBestRoad
 M.getPointToPointPath = getPointToPointPath
 M.setCustomMap = setCustomMap
+M.clearCustomMap = clearCustomMap
 
 return M

@@ -7,24 +7,24 @@ local C = {}
 
 C.name = 'Closest Road'
 
-C.description = [[Finds closest road of the NavGraph for a position.]]
+C.description = 'Finds closest road of the navgraph for a position.'
 C.category = 'repeat_instant'
 
 C.pinSchema = {
-  { dir = 'in', type = 'vec3', name = 'pos', description = "The Position that should be checked." },
+  { dir = 'in', type = 'vec3', name = 'pos', description = "The position that should be checked." },
   { dir = 'out', type = 'string', name = 'name_a', description = "Name of the first node." },
   { dir = 'out', type = 'vec3', name = 'pos_a', description = "Position of the first node." },
-  { dir = 'out', type = 'number', name = 'roadId_a', hidden = true, description = "Name of the first nodes road (if existing)." },
-  { dir = 'out', type = 'number', name = 'roadIdx_a', hidden = true, description = "Index of the first nodes node on the road (if existing)." },
+  { dir = 'out', type = 'number', name = 'roadId_a', hidden = true, description = "Name of the first node of the road (if existing)." },
+  { dir = 'out', type = 'number', name = 'roadIdx_a', hidden = true, description = "Index of the first node of the road (if existing)." },
   { dir = 'out', type = 'string', name = 'name_b', description = "Name of the second node." },
-  { dir = 'out', type = 'vec3', name = 'pos_b', description = "Position of the second node."},
-  { dir = 'out', type = 'number', name = 'roadId_b',hidden=true,  description = "Name of the second nodes road (if existing)."},
-  { dir = 'out', type = 'number', name = 'roadIdx_b',hidden=true,  description = "Index of the second nodes node on the road (if existing)."},
-  { dir = 'out', type = 'number', name = 'dist', description = "Distance to the road."},
-  { dir = 'out', type = 'number', name = 'width', description = "Width of the road at the closest intersection.", hidden=true},
-  { dir = 'out', type = 'number', name = 'speedLimit', description = "speed limit of the road you're on in m/s", hidden=true},
-  { dir = 'out', type = 'vec3', name = 'projectedPoint', description = "The position projected onto the road segment", hidden=true},
-
+  { dir = 'out', type = 'vec3', name = 'pos_b', description = "Position of the second node." },
+  { dir = 'out', type = 'number', name = 'roadId_b', hidden = true,  description = "Name of the second node of the road (if existing)." },
+  { dir = 'out', type = 'number', name = 'roadIdx_b', hidden = true,  description = "Index of the second node of the road (if existing)." },
+  { dir = 'out', type = 'number', name = 'dist', description = "Distance to the road." },
+  { dir = 'out', type = 'bool', name = 'exists', hidden = true, description = "True if a road was found." },
+  { dir = 'out', type = 'number', name = 'width', hidden = true, description = "Width of the road at the closest point." },
+  { dir = 'out', type = 'number', name = 'speedLimit', hidden = true, description = "Speed limit of the road, in m/s ." },
+  { dir = 'out', type = 'vec3', name = 'projectedPoint', hidden = true, description = "The position projected onto the road segment." }
 }
 
 C.color = ui_flowgraph_editor.nodeColors.default
@@ -32,30 +32,28 @@ C.color = ui_flowgraph_editor.nodeColors.default
 function C:init(mgr)
 end
 
-
 function C:_executionStarted()
   self.oldPos = nil
-  --map.load()
 end
 
 function C:findDecalroad(name)
   if not scenetree[name] then
-      -- this assumes that decalroads do not end with a number...
-      local index, length = string.find(name, "DecalRoad")
-      if index == 1 then
-        local short = string.sub(name,length+1,string.len(name))
-        local underscoreIndex = string.find(short,"_")
-        if underscoreIndex and underscoreIndex >= 0 then
-          local rdId = tonumber(string.sub(short,1,underscoreIndex-1))
-          if not idId then
-            local obj = scenetree.findObject(string.sub(short,1,underscoreIndex-1))
-            if obj then
-              rdId = obj:getId()
-            end
+    -- this assumes that decalroads do not end with a number...
+    local index, length = string.find(name, "DecalRoad")
+    if index == 1 then
+      local short = string.sub(name,length+1,string.len(name))
+      local underscoreIndex = string.find(short,"_")
+      if underscoreIndex and underscoreIndex >= 0 then
+        local rdId = tonumber(string.sub(short,1,underscoreIndex-1))
+        if not idId then
+          local obj = scenetree.findObject(string.sub(short,1,underscoreIndex-1))
+          if obj then
+            rdId = obj:getId()
           end
-          local rdIdx = tonumber(string.sub(short,underscoreIndex+1,string.len(short)))
-          return rdId, rdIdx
         end
+        local rdIdx = tonumber(string.sub(short,underscoreIndex+1,string.len(short)))
+        return rdId, rdIdx
+      end
     end
   else
     return -1, -1
@@ -68,9 +66,13 @@ function C:work()
 
   if not self.oldPos or self.oldPos ~= self.pinIn.pos.value then
     self.oldPos = self.pinIn.pos.value
-    local name_a,name_b,distance = map.findClosestRoad(vec3(self.oldPos))
+    local name_a, name_b, distance = map.findClosestRoad(vec3(self.oldPos))
 
-    if not name_a or not name_b or not distance then return end
+    if not name_a or not name_b or not distance then
+      self.pinOut.exists.value = false
+      return
+    end
+    self.pinOut.exists.value = true
 
     local a = map.getMap().nodes[name_a]
     local b = map.getMap().nodes[name_b]
@@ -105,7 +107,7 @@ function C:work()
     self.pinOut.speedLimit.value = link.speedLimit or 0
 
     self.pinOut.projectedPoint.value = lerp(a.pos,b.pos, xnorm):toTable()
-    self.pinOut.width.value = lerp(a.radius,b.radius,xnorm)
+    self.pinOut.width.value = lerp(a.radius,b.radius,xnorm) * 2
   end
 end
 

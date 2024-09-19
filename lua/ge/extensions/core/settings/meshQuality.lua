@@ -16,6 +16,9 @@ M.qualityLevels = {
   High = {
     caseSensitive = 1,
   },
+  Ultra = {
+    caseSensitive = 1,
+  },
 }
 
 M.qualityLevels.Lowest["$pref::TS::maxDecalCount"] = 2000
@@ -41,5 +44,11 @@ M.qualityLevels.High["$pref::TS::detailAdjust"] = 1.5
 M.qualityLevels.High["$pref::TS::skipRenderDLs"] = 0
 M.qualityLevels.High["$pref::Terrain::lodScale"] = 0.75
 M.qualityLevels.High["$pref::GroundCover::densityScale"] = 1.0
+
+M.qualityLevels.Ultra["$pref::TS::maxDecalCount"] = 8000
+M.qualityLevels.Ultra["$pref::TS::detailAdjust"] = 2.0
+M.qualityLevels.Ultra["$pref::TS::skipRenderDLs"] = 0
+M.qualityLevels.Ultra["$pref::Terrain::lodScale"] = 0.5
+M.qualityLevels.Ultra["$pref::GroundCover::densityScale"] = 1.0
 
 return M

@@ -9,15 +9,15 @@ local C = {}
 C.name = 'AI Directly To'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
-C.description = 'Drives directly towards a target position.'
+C.description = 'Sets a vehicle to drive towards a target position.'
 C.behaviour = { duration = true, once = true }
 C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
   { dir = 'in', type = 'flow', name = 'reset', description = 'Resets this node.', impulse = true },
-  { dir = 'in', type = 'number', name = 'vehId', description = 'Id of vehicle to direct.' },
+  { dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle id to set AI mode for.' },
   { dir = 'in', type = 'vec3', name = 'target', description = 'Position to direct vehicle to.' },
   { dir = 'in', type = 'number', name = 'targetVelocity', description = 'Target velocity while driving to target position.' },
-  { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' },
+  { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' }
 }
 C.legacyPins = {
   _in = {
@@ -45,24 +45,26 @@ function C:reset()
   self:endAI()
 end
 
+function C:getVeh()
+  local veh
+  if self.pinIn.vehId.value then
+    veh = be:getObjectByID(self.pinIn.vehId.value)
+  else
+    veh = getPlayerVehicle(0)
+  end
+  return veh
+end
+
 function C:endAI()
-  if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-    local veh = scenetree.findObjectById(self.pinIn.vehId.value)
-    if veh then
-      veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
-    end
+  local veh = self:getVeh()
+  if veh then
+    veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
   end
 end
 
 function C:setupAI()
-  local veh
-  if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-    veh = scenetree.findObjectById(self.pinIn.vehId.value)
-  end
-  if not veh then
-    log("E","directlyTo","No Vehicle found!")
-    return
-  end
+  local veh = self:getVeh()
+  if not veh then return end
 
   local origin = vec3(veh:getPosition())
   local target = vec3(self.pinIn.target.value)
@@ -70,7 +72,7 @@ function C:setupAI()
   local speed = self.pinIn.targetVelocity.value
   target = target - origin
   local steps = math.ceil(distance / self.data.maxStepDistance)
-  local path = {} 
+  local path = {}
   for i = 1, steps+3 do
     local vec = origin + (i/steps) * target
     local dst = (origin - vec):length()
@@ -100,10 +102,7 @@ function C:work()
         self:setupAI()
         self.started = true
       else
-        local veh
-        if self.pinIn.vehId.value and self.pinIn.vehId.value ~= 0 then
-          veh = scenetree.findObjectById(self.pinIn.vehId.value)
-        end
+        local veh = self:getVeh()
         if not veh then return end
 
         local origin = veh:getPosition()

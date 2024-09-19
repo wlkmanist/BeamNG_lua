@@ -1047,7 +1047,9 @@ local function formatStars(mission)
 
   local unlockedStarsFormatted = {stars = {}, totalStars = #starKeys}
 
-  local totalUnlockedStarCount, defaultUnlockedStarCount, totalDefaultStarCount = 0,0, 0
+  local totalUnlockedStarCount = 0
+  local defaultUnlockedStarCount, totalDefaultStarCount = 0,0
+  local bonusUnlockedStarCount, totalBonusStarCount = 0,0
 
   for i, key in ipairs(starKeys) do
     local count = mission.saveData.unlockedStars[key]
@@ -1069,12 +1071,18 @@ local function formatStars(mission)
     totalUnlockedStarCount = totalUnlockedStarCount + (elem.unlocked and 1 or 0)
     totalDefaultStarCount = totalDefaultStarCount + (elem.isDefaultStar and 1 or 0)
     defaultUnlockedStarCount = defaultUnlockedStarCount + (elem.unlocked and elem.isDefaultStar and 1 or 0)
+    totalBonusStarCount = totalBonusStarCount + ((not elem.isDefaultStar) and 1 or 0)
+    bonusUnlockedStarCount = bonusUnlockedStarCount + (elem.unlocked and (not elem.isDefaultStar) and 1 or 0)
     table.insert(unlockedStarsFormatted.stars, elem)
   end
 
   unlockedStarsFormatted.totalUnlockedStarCount = totalUnlockedStarCount
-  unlockedStarsFormatted.totalDefaultStarCount = totalDefaultStarCount
+
   unlockedStarsFormatted.defaultUnlockedStarCount = defaultUnlockedStarCount
+  unlockedStarsFormatted.totalDefaultStarCount = totalDefaultStarCount
+
+  unlockedStarsFormatted.bonusUnlockedStarCount = bonusUnlockedStarCount
+  unlockedStarsFormatted.totalBonusStarCount = totalBonusStarCount
 
   return unlockedStarsFormatted
 end

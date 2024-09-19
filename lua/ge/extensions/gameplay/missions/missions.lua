@@ -615,8 +615,26 @@ local function get()
       end
       if type(mission) == 'string' then
         log("E", "", "Unable to construct mission "..dumps(missionData.id).." of type "..dumps(missionData.missionType)..", something went wrong:")
-        dump(mission)
+        print(mission)
         goto continue
+      end
+
+      local customPath = mission.missionFolder.."/constructor" -- constructor specific to this mission
+      if FS:fileExists(customPath..".lua") then
+        local result, err = xpcall(function()
+          local missionConstructor = require(customPath)() -- gets it as if it was a module, then merges all non-init pairs
+          for k, v in pairs(missionConstructor) do
+            if k ~= "init" then
+              mission[k] = v
+            end
+          end
+        end
+        , debug.traceback)
+
+        if err then
+          log("E", "", "Mission specific constructor of mission "..dumps(missionData.id).." failed to resolve, something went wrong:")
+          print(err)
+        end
       end
 
       -- sanitize after creation
@@ -865,7 +883,7 @@ end
 
 M.clearCache = function() filesData = nil locationsCache = {} missions = nil end
 M.onModManagerReady = M.clearCache
-M.baseMission = function(C, ...) return require('/lua/ge/extensions/gameplay/missions/missionTypes/baseMission')(C, ...) end
-M.flowMission = function(C, ...) return require('/lua/ge/extensions/gameplay/missions/missionTypes/flowMission')(C, ...) end
-M.editorHelper = function(C, ...) return require('/lua/ge/extensions/editor/newEditorHelper')(C, 'mission', ...) end
+M.baseMission  = function(C, ...) return require('/lua/ge/extensions/gameplay/missions/missionTypes/baseMission')(C, ...) end
+M.flowMission  = function(C, ...) return require('/lua/ge/extensions/gameplay/missions/missionTypes/flowMission')(C, ...) end
+M.editorHelper = function(C, ...) return require('/lua/ge/extensions/editor/util/editorElementHelper')(C, 'mission', ...) end
 return M

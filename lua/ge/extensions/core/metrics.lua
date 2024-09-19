@@ -8,7 +8,7 @@ M.currentMode = 0 -- 0 disabled, 1 small, 2 full
 
 local im = ui_imgui
 local pos = im.ImVec2(0, 0)
-local padding = im.ImVec2(0, 0)
+local padding = im.ImVec2(10, 0)
 local sizeMin = im.ImVec2(0, 0)
 local sizeMax = im.ImVec2(-1, -1)
 
@@ -46,7 +46,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
   -- reduce padding and set bg
   im.PushStyleVar2(im.StyleVar_WindowPadding, padding)
-  im.SetNextWindowBgAlpha(0.9)
+  im.SetNextWindowBgAlpha(0.85)
 
   -- draw panel window
   if im.Begin("##metricsWindow", nil, im.WindowFlags_AlwaysAutoResize+im.WindowFlags_NoResize+im.WindowFlags_NoMove+im.WindowFlags_NoCollapse+im.WindowFlags_NoDocking+im.WindowFlags_NoTitleBar) then
@@ -56,7 +56,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     im.SetCursorPosY(-4)
     -- minimum stats
     if M.currentMode == 1 then
-      lineText = string.format("%5.1f fps (avg %5.1f, min %5.1f, max %5.1f%s)", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::avg"), getConsoleNumber("fps::min"), getConsoleNumber("fps::max"), rnd == 0 and "" or ", randomness "..rnd.."%")
+      lineText = string.format("FPS: %5.1f [Avg %5.1f | Min %5.1f | Max %5.1f%s]", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::avg"), getConsoleNumber("fps::min"), getConsoleNumber("fps::max"), rnd == 0 and "" or ", randomness "..rnd.."%")
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
     end
@@ -70,11 +70,11 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("%5.1f fps (unmanaged: %5.1f fps)", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::instantaneousUncap"))
+        columnText = string.format("%5.1f fps [UM: %5.1f fps]", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::instantaneousUncap"))
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("average")
+        columnText = string.format("Avg")
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -82,7 +82,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("10%% below")
+        columnText = string.format("10%% Below")
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -90,7 +90,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("5%% below")
+        columnText = string.format("5%% Below")
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -98,7 +98,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("1%% below")
+        columnText = string.format("1%% Below")
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -106,7 +106,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("min")
+        columnText = string.format("Min")
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -114,7 +114,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("max")
+        columnText = string.format("Max")
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -129,7 +129,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("%5.2f ms (unmanaged: %5.1f ms)", 1000 / getConsoleNumber("fps::instantaneous"), 1000 / getConsoleNumber("fps::instantaneousUncap"))
+        columnText = string.format("%5.2f ms [UM: %5.1f ms]", 1000 / getConsoleNumber("fps::instantaneous"), 1000 / getConsoleNumber("fps::instantaneousUncap"))
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -164,13 +164,9 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         im.TextUnformatted(columnText)
         if not imguiVisible then table.insert(lines, table.concat(lineTexts, "  ")) end
         lineTexts = imguiVisible or {}
-		im.EndTable()
+		  im.EndTable()
       end
 
-      if im.SmallButton("Performance Graph (ctrl+shift+f)") then
-        togglePerformanceGraph()
-      end
-      im.SameLine()
       lineText = string.format("WaitforGPU: %4.2f ms%s", getConsoleNumber("fps::waitForGPU"), rnd == 0 and "" or ", WARNING: RANDOMNESS="..rnd.."%")
       local managers = {}
       if render_openxr and render_openxr.isSessionRunning() then
@@ -184,48 +180,63 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       if not next(managers) then
         table.insert(managers, "<none>")
       end
-      lineText = lineText.." | Framerate managed by: "..table.concat(managers, ", ")
+      lineText = lineText.."  Framerate Managed: "..table.concat(managers, ", ")
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
+
+      im.SameLine()
+      im.PushStyleColor2(im.Col_Button, im.GetStyleColorVec4(im.Col_ButtonHovered))
+      if im.Button("Open Performance Graph ") then
+        togglePerformanceGraph()
+      end
+      if im.IsItemHovered() then
+        im.BeginTooltip()
+        im.TextUnformatted("Also open with CTRL+SHIFT+F")
+        im.EndTooltip()
+      end
+      im.PopStyleColor(3)
+
     end
 
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 1, 1, 0.5))
     -- full stats
     if M.currentMode > 2 then
-      lineText = string.format(" GFX:  PolyCount: %d DrawCalls: %d  StateChanges: %d  RTChanges: %d",
+      lineText = string.format("GFX:  PolyCount: %d DrawCalls: %d  StateChanges: %d  RTChanges: %d",
         getConsoleNumber("$GFXDeviceStatistics::polyCount"), getConsoleNumber("$GFXDeviceStatistics::drawCalls"), getConsoleNumber("$GFXDeviceStatistics::drawStateChanges"), getConsoleNumber("$GFXDeviceStatistics::renderTargetChanges"))
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
 
-      lineText = string.format(" Terrain:  Cells: %d  Override Cells: %d  DrawCalls: %d",
+      lineText = string.format("Terrain:  Cells: %d  Override Cells: %d  DrawCalls: %d",
       getConsoleNumber("$TerrainBlock::cellsRendered"), getConsoleNumber("$TerrainBlock::overrideCells"), getConsoleNumber("$TerrainBlock::drawCalls"))
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
 
-      lineText = string.format(" GroundCover:  Cells: %d  Billboards: %d  Batches: %d  Shapes: %d",
+      lineText = string.format("GroundCover:  Cells: %d  Billboards: %d  Batches: %d  Shapes: %d",
       getConsoleNumber("$GroundCover::renderedCells"), getConsoleNumber("$GroundCover::renderedBillboards"), getConsoleNumber("$GroundCover::renderedBatches"), getConsoleNumber("GroundCover::renderedShapes"))
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
 
-      lineText = string.format(" Forest:  Cells: %d  Cells Meshed: %d  Cells Billboarded: %d  Meshes: %d  Billboards: %d",
+      lineText = string.format("Forest:  Cells: %d  Cells Meshed: %d  Cells Billboarded: %d  Meshes: %d  Billboards: %d",
       getConsoleNumber("$Forest::totalCells"), getConsoleNumber("$Forest::cellsRendered"), getConsoleNumber("$Forest::cellsBatched"), getConsoleNumber("$Forest::cellItemsRendered"), getConsoleNumber("$Forest::cellItemsBatched"))
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
 
-      lineText = string.format(" Shadow:  Active: %d  Updated: %d  PolyCount: %d  DrawCalls: %d  StateChanges: %d  RTChanges: %d",
+      lineText = string.format("Shadow:  Active: %d  Updated: %d  PolyCount: %d  DrawCalls: %d  StateChanges: %d  RTChanges: %d",
       getConsoleNumber("$ShadowStats::activeMaps"), getConsoleNumber("$ShadowStats::updatedMaps"), getConsoleNumber("$ShadowStats::polyCount"), getConsoleNumber("$ShadowStats::drawCalls"), getConsoleNumber("$ShadowStats::drawStateChanges"), getConsoleNumber("$ShadowStats::rtChanges"))
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
 
-      lineText = string.format(" LightManager:  Active: %d  Updated: %d  Elapsed Ms: %5.2f",
+      lineText = string.format("LightManager:  Active: %d  Updated: %d  Elapsed Ms: %5.2f",
       getConsoleNumber("$BasicLightManagerStats::activePlugins"), getConsoleNumber("$BasicLightManagerStats::shadowsUpdated"), getConsoleNumber("$BasicLightManagerStats::elapsedUpdateTime") * 1000)
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
 
-      lineText = string.format(" Deferred Lights:  Active: %d  Culled: %d",
+      lineText = string.format("Deferred Lights:  Active: %d  Culled: %d",
       getConsoleNumber("$lightMetrics::activeLights"), getConsoleNumber("$lightMetrics::culledLights"))
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
     end
+    im.PopStyleColor()
   end
   im.End() --Begin
   im.PopStyleVar()

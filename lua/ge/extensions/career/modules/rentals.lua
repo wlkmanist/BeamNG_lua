@@ -88,7 +88,7 @@ local function onExtensionLoaded()
   loadData()
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath, oldSaveDate, forceSyncSave)
+local function onSaveCurrentSaveSlot()
   saveData(saveData)
 end
 

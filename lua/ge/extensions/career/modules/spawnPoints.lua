@@ -5,6 +5,8 @@
 local M = {}
 M.dependencies = {'career_career'}
 
+local moduleVersion = 42
+
 local unlockedSpawnpoints = {}
 local fileName = "spawnPoints.json"
 local levelInfo = nil
@@ -78,7 +80,11 @@ end
 local function loadDataFromFile()
   local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
   if not saveSlot then return end
-  unlockedSpawnpoints = (savePath and jsonReadFile(savePath .. "/career/"..fileName)) or {}
+
+  local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
+  local outdated = not saveInfo or saveInfo.version < moduleVersion
+
+  unlockedSpawnpoints = (not outdated and savePath and jsonReadFile(savePath .. "/career/"..fileName)) or {}
 end
 
 local function isSpawnPointDiscovered(level, spawnPointName)

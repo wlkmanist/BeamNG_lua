@@ -20,7 +20,7 @@ C.pinSchema = {
   { dir = 'in', type = 'string', name = 'logType', default = 'I', hardcoded = true, description = 'Can be I(Info), D(Debug), W(Warning) or E(Error)' },
 }
 
-C.tags = { 'util' }
+C.tags = { 'util', 'print' }
 
 function C:postInit()
   local type = {}
@@ -51,13 +51,13 @@ function C:createLogEntry()
   if type(self.pinIn.value.value) == 'table' then
     msg = dumps(self.pinIn.value.value)
   end
-  log(self.pinInLocal.logType.value, self.pinInLocal.logTag.value, msg)
+  log(self.pinIn.logType.value or 'I', self.pinIn.logTag.value or 'node', msg)
   self.mgr:logEvent(msg, self.pinIn.logType.value, nil, { type = "node", node = self })
 end
 
 function C:drawMiddle(builder, style)
   builder:Middle()
-  im.Text("('" .. self.pinInLocal.logType.value .. "','" .. self.pinInLocal.logTag.value .. "',...)")
+  im.Text("('" .. tostring(self.pinIn.logType.value) .. "','" .. tostring(self.pinIn.logTag.value) .. "',...)")
 end
 
 return _flowgraph_createNode(C)

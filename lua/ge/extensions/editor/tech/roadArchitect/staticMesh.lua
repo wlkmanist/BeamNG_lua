@@ -2,555 +2,240 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
--- Module constants.
-local crashBarrierPostSpacing = 2.0                                                                         -- The (fixed) spacing between the crash barrier posts.
-local fenceSpacing = 2.0                                                                                    -- The (fixed) spacing between the starts of adjacent fence sections.
-local barrierSpacing = 3.0                                                                                  -- The (fixed) spacing between the starts of adjacent concrete barriers.
-local latPlateOffset = 0.1                                                                                  -- The (fixed) lateral offset between plate and posts.
-local tgtPlateOffset = 1.0                                                                                  -- The (fixed) tangential offset between plate and posts.
-local tgtBarrierOffset = 1.5                                                                                -- The (fixed) tangential offset for concrete barriers.
-local plateVOffsetUpper = 0.95                                                                              -- The (fixed) vertical offset of the upper crash barrier plates.
-local plateVOffsetLower = 0.60                                                                              -- The (fixed) vertical offset of the lower crash barrier plates.
-
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
 local M = {}
 
-
 -- External modules used.
-local profileMgr = require('editor/tech/roadArchitect/profiles')                                            -- Manages the profiles structure/handles profile calculations.
+local util = require('editor/tech/roadArchitect/utilities')                                                 -- The Road Architect utilities module.
 
 -- Private constants.
-local floor, ceil, min, max = math.floor, math.ceil, math.min, math.max
+local ceil, min, max, abs, sqrt = math.ceil, math.min, math.max, math.abs, math.sqrt
 local random, randomseed = math.random, math.randomseed
 
 -- Module state.
-local lampPosts = {}                                                                                        -- The collection of lamp post (static) meshes.
-local poleBollards = {}                                                                                     -- The collection of bollard (static) meshes.
-local crashPosts = {}                                                                                       -- The collection of crash barrier post (static) meshes.
-local crashPlates = {}                                                                                      -- The collection of crash barrier plate sections (static) meshes.
-local fences = {}                                                                                           -- The collection mesh fence (static) meshes.
-local barriers = {}                                                                                         -- The collection of concrete barrier (static) meshes.
+local spanMeshes = {}                                                                                       -- The collection of lane-spanning meshes.
+local singleMeshes = {}                                                                                     -- The collection of single unit (patch) meshes.
 
 -- Module constants.
 local scaleVec = vec3(1, 1, 1)                                                                              -- A vec3 used for representing uniform scale.
-local orig = vec3(0, 1, 0)                                                                                  -- The rotation origin vector (vehicle forward in world space).
-local origLat1, origLat2 = vec3(1, 0, 0), vec3(-1, 0, 0)                                                    -- The world space lateral vectors.
-local tmp1 = vec3(0, 0)                                                                                     -- A temporary vector.
-local lampPostPath = 'art/shapes/objects/pole_light_single.dae'                                             -- The (single) lamp post static mesh location.
-local lampPostDoublePath = 'art/shapes/objects/pole_light_double.dae'                                       -- The (double) lamp post static mesh location.
-local bollardPath = 'art/shapes/objects/bollard_yellow.dae'                                                 -- The bollard static mesh location.
-local crashPostPath = 'art/shapes/objects/guardrailpost.dae'                                                -- The crash barrier post mesh location.
-local crashPlatePath = 'art/shapes/objects/guardrail1.dae'                                                  -- The crash barrier section mesh location.
-local fencePath = 'art/shapes/objects/s_chainlink_old.dae'                                                  -- The mesh fence section mesh location.
-local barrierPath = 'art/shapes/objects/jerseybarrier_3m.dae'                                               -- The barrier section mesh location.
+local vertical = vec3(0, 0, 1)                                                                              -- A vec3 used to represent the global world space 'up' axis.
+local downVec = -vertical
+local raised = vertical * 4.5
+
+local root2Over2 = sqrt(2) * 0.5
+local rot_q0 = quat(0, 0, 0, 1)                                                                             -- Some common rotations (as quaternions).
+local rot_q90 = quat(0, 0, root2Over2, root2Over2)
+local rot_q180 = quat(0, 0, 1, 0)
+local rot_q270 = quat(0, 0, -root2Over2, root2Over2)
 
 
 -- Computes the length of the given polyline.
-local function computePolylineLengths(poly)
+local function computePolylineLengths(posns)
   local lens = { 0.0 }
-  for i = 2, #poly do
+  for i = 2, #posns do
     local iMinus1 = i - 1
-    lens[i] = lens[iMinus1] + poly[iMinus1]:distance(poly[i])
+    lens[i] = lens[iMinus1] + posns[iMinus1]:distance(posns[i])
   end
   return lens
 end
 
--- Linearly interpolates into a given polyline.
-local function polyLerp(pos, rot, lens, q)
-  local l, u = 1, #pos
-  for i = 2, #lens do
-    if lens[i - 1] <= q and lens[i] >= q then
-      l, u = i - 1, i
-      break
-    end
-  end
-  if q < lens[1] then
-    return nil, nil
-  end
-  if q > lens[#lens] then
-    return nil, nil
-  end
-  local rat = (q - lens[l]) / (lens[u] - lens[l])
-  local p = pos[l] + rat * (pos[u] - pos[l])
-  local r = rot[l]:nlerp(rot[u], rat)
-  return p, r
-end
+-- Populates a road with instances of a static mesh along its length.
+local function createSelectedMesh(r, roadIdx, layer, folder)
+  randomseed(41225)
 
--- Linearly interpolates into a given polyline, including the lateral vector.
-local function polyLerpWithLat(pos, rot, lat, lens, q)
-  local l, u = 1, #pos
-  for i = 2, #lens do
-    if lens[i - 1] <= q and lens[i] >= q then
-      l, u = i - 1, i
-      break
-    end
+  local displayName = layer.matDisplay
+  local meshPath, length = layer.mat, layer.extentsL
+  local vertOffset = layer.vertOffset[0]
+  local latOffset = layer.latOffset[0]
+  local lIdx = layer.lane[0]
+  local pIdx = 2
+  if layer.isLeft[0] then
+    pIdx = 1
   end
-  if q < lens[1] then
-    return nil, nil
+  local preRot = rot_q0
+  local isCentered = abs(layer.boxXLeft - layer.boxXRight) < 0.1 and max(layer.boxXLeft, layer.boxXRight) > 1.0
+  if layer.rot[0] == 1 then
+    preRot = rot_q90
+    length = layer.extentsW
+    isCentered = abs(layer.boxYLeft - layer.boxYRight) < 0.1 and max(layer.boxYLeft, layer.boxYRight) > 1.0
+  elseif layer.rot[0] == 2 then
+    preRot = rot_q180
+  elseif layer.rot[0] == 3 then
+    preRot = rot_q270
+    length = layer.extentsW
+    isCentered = abs(layer.boxYLeft - layer.boxYRight) < 0.1 and max(layer.boxYLeft, layer.boxYRight) > 1.0
   end
-  if q > lens[#lens] then
-    return nil, nil
-  end
-  local rat = (q - lens[l]) / (lens[u] - lens[l])
-  local p = pos[l] + rat * (pos[u] - pos[l])
-  local r = rot[l]:nlerp(rot[u], rat)
-  local latOut = vec3(0, 0)
-  latOut:setLerp(lat[l], lat[u], rat)
-  return p, r, latOut
-end
+  local extraSpacing = layer.spacing[0]
+  local jitter = layer.jitter[0]
+  local isGlobalZ = layer.useWorldZ[0]
 
--- Creates a row of left-facing lamp posts.
-local function createLampPostsL(r, roadIdx, lIdx)
+  if not length then
+    return
+  end
+
   local rData = r.renderData
-  local numDivs = #rData
-  randomseed(30000)
-  local jitter = r.lampJitter[0]
-  local posns, rots = {}, {}
-  tmp1:set(0, 0, r.lampPostVertOffset[0])
-  for j = 1, numDivs do
+  local startDivIdx, endDivIdx = 1, #rData
+  if not layer.isSpanLong[0] then
+    startDivIdx = util.computeDivIndicesFromNode(layer.nMin[0], r)
+    endDivIdx = util.computeDivIndicesFromNode(layer.nMax[0], r)
+  end
+
+  local posns, nmls, ctr = {}, {}, 1
+  for j = startDivIdx, endDivIdx do
     local lData = rData[j][lIdx]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(-lData[6]:cross(lData[5]))
-    rots[j].x = rots[j].x + (random() * 2 - 1) * jitter                                             -- Apply any random jittering, if requested.
-    rots[j].y = rots[j].y + (random() * 2 - 1) * jitter
-    rots[j].z = rots[j].z + (random() * 2 - 1) * jitter
-  end
-
-  -- Create the static meshes for the lamp posts.
-  local lens = computePolylineLengths(posns)
-  local numLamps = ceil(lens[#lens] / r.lampPostLonSpacing[0])
-  lampPosts[r.name] = lampPosts[r.name] or {}
-  local q = r.lampPostLonOffset[0] + 1.0
-  for j = 1, numLamps do
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, lampPostPath)
-    static:setField('decalType', 0, 'None')
-    local lampId = 'Lamp post ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(lampId)
-    local pos, rot = polyLerp(posns, rots, lens, q)
-    if pos then
-      static:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
-      static.scale = scaleVec
-      static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      lampPosts[r.name][lampId] = static
-      q = q + r.lampPostLonSpacing[0]
-    end
-  end
-end
-
--- Creates a row of right-facing lamp posts.
-local function createLampPostsR(r, roadIdx, lIdx)
-  local rData = r.renderData
-  local numDivs = #rData
-  randomseed(30000)
-  local jitter = r.lampJitter[0]
-  local posns, rots = {}, {}
-  tmp1:set(0, 0, r.lampPostVertOffset[0])
-  for j = 1, numDivs do
-    local lData = rData[j][lIdx]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(lData[6]:cross(lData[5]))
-    rots[j].x = rots[j].x + (random() * 2 - 1) * jitter                                             -- Apply any random jittering, if requested.
-    rots[j].y = rots[j].y + (random() * 2 - 1) * jitter
-    rots[j].z = rots[j].z + (random() * 2 - 1) * jitter
-  end
-
-  -- Create the static meshes for the lamp posts.
-  local lens = computePolylineLengths(posns)
-  local numLamps = ceil(lens[#lens] / r.lampPostLonSpacing[0])
-  lampPosts[r.name] = lampPosts[r.name] or {}
-  local q = r.lampPostLonOffset[0] + 1.0
-  for j = 1, numLamps do
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, lampPostPath)
-    static:setField('decalType', 0, 'None')
-    local lampId = 'Lamp post ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(lampId)
-    local pos, rot = polyLerp(posns, rots, lens, q)
-    if pos then
-      static:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
-      static.scale = scaleVec
-      static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      lampPosts[r.name][lampId] = static
-      q = q + r.lampPostLonSpacing[0]
-    end
-  end
-end
-
--- Creates a row of double lamp posts.
-local function createLampPostsD(r, roadIdx, lIdx)
-  local rData = r.renderData
-  local numDivs = #rData
-  randomseed(30000)
-  local jitter = r.lampJitter[0]
-  local posns, rots = {}, {}
-  tmp1:set(0, 0, r.lampPostVertOffset[0])
-  for j = 1, numDivs do
-    local lData = rData[j][lIdx]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(lData[6]:cross(lData[5]))
-    rots[j].x = rots[j].x + (random() * 2 - 1) * jitter                                             -- Apply any random jittering, if requested.
-    rots[j].y = rots[j].y + (random() * 2 - 1) * jitter
-    rots[j].z = rots[j].z + (random() * 2 - 1) * jitter
-  end
-
-  -- Create the static meshes for the lamp posts.
-  local lens = computePolylineLengths(posns)
-  local numLamps = ceil(lens[#lens] / r.lampPostLonSpacing[0])
-  lampPosts[r.name] = lampPosts[r.name] or {}
-  local q = r.lampPostLonOffset[0] + 1.0
-  for j = 1, numLamps do
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, lampPostDoublePath)
-    static:setField('decalType', 0, 'None')
-    local lampId = 'Lamp post ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(lampId)
-    local pos, rot = polyLerp(posns, rots, lens, q)
-    if pos then
-      static:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
-      static.scale = scaleVec
-      static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      lampPosts[r.name][lampId] = static
-      q = q + r.lampPostLonSpacing[0]
-    end
-  end
-end
-
--- Creates a left-side crash barrier.
-local function createCrashBarrierL(r, roadIdx, lIdx)
-  local rData = r.renderData
-  local posns, rots, lats = {}, {}, {}
-  tmp1:set(0, 0, r.crashVertOffset[0])
-  for j = 1, #rData do
-    local lData = rData[j][lIdx]
+    local tgt = rData[min(#rData, j + 1)][lIdx][1] - rData[max(1, j - 1)][lIdx][1]
+    tgt:normalize()
     local lat = lData[6]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(-lat)
-    lats[j] = lat
+    local nml = tgt:cross(lat)
+    local orig = lData[pIdx] + raised
+    orig.z = orig.z - castRayStatic(orig, downVec, 1000) + 0.02
+    posns[ctr] = orig + (vertOffset * nml) + (latOffset * lat)
+    nmls[ctr] = nml
+    ctr = ctr + 1
   end
 
-  -- Create the static meshes for the crash barrier posts.
+  -- Compute the positions and normal vectors for each mesh unit on the lane.
   local lens = computePolylineLengths(posns)
-  local numPosts = ceil(lens[#lens] / crashBarrierPostSpacing)
-  crashPosts[r.name] = crashPosts[r.name] or {}
-  local posts = crashPosts[r.name]
-  local fPos, fLat, fCtr = {}, {}, 1
-  local q = r.crashPostLonOffset[0]
-  for j = 1, numPosts do
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, crashPostPath)
-    static:setField('decalType', 0, 'None')
-    local postId = 'Crash Post ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(postId)
-    local pos, rot, lat = polyLerpWithLat(posns, rots, lats, lens, q)
+  local numMeshes = ceil(lens[#lens] / (length + extraSpacing))
+  local q = 0.0
+  local fPosns, fNmls = {}, {}
+  local ctr = 1
+  for _ = 1, numMeshes do
+    local pos, nml = util.polyLerp(posns, nmls, lens, q)
     if pos then
-      static:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
-      static.scale = scaleVec
-      static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      posts[postId] = static
-      q = q + crashBarrierPostSpacing
-      fPos[fCtr] = pos
-      fLat[fCtr] = lat
-      fCtr = fCtr + 1
+      fPosns[ctr], fNmls[ctr] = pos, nml
+      ctr = ctr + 1
     end
+    q = q + length + extraSpacing
   end
 
-  -- Create the crash barrier plate sections.
-  crashPlates[r.name] = crashPlates[r.name] or {}
-  local plates = crashPlates[r.name]
-  local fNumPosts = #fPos
-  for j = 1, fNumPosts - 1 do
-    local p1, p2 = fPos[j], fPos[j + 1]
-    local v = p2 - p1
-    v:normalize()
-    local rot = origLat2:getRotationTo(v)
-    local latOffset = fLat[j] * latPlateOffset
-    local tgtOffset = v * tgtPlateOffset
-    p1 = p1 + latOffset + tgtOffset
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, crashPlatePath)
-    static:setField('decalType', 0, 'None')
-    local plateId = 'Crash Plate A ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(plateId)
-    static:setPosRot(p1.x, p1.y, p1.z + plateVOffsetUpper, rot.x, rot.y, rot.z, rot.w)
-    static.scale = scaleVec
-    static.canSave = true
-    scenetree.MissionGroup:addObject(static.obj)
-    plates[plateId] = static
-  end
-  if r.useDoublePlate[0] then
-    for j = 1, fNumPosts - 1 do
-      local p1, p2 = fPos[j], fPos[j + 1]
+  -- Create the static meshes for each mesh unit on the lane.
+  spanMeshes[r.name] = spanMeshes[r.name] or {}
+  local thisMesh = spanMeshes[r.name]
+  local q = 0.0
+  numMeshes = #fPosns
+  for j = 1, numMeshes do
+    local p1, p2 = fPosns[j], fPosns[j + 1]
+    local posOrig = p1
+    if j == numMeshes then
+      p1, p2 = fPosns[j - 1], fPosns[j]
+      posOrig = p2
+    end
+    if p1 and p2 then
       local v = p2 - p1
-      v:normalize()
-      local rot = origLat2:getRotationTo(v)
-      local latOffset = fLat[j] * latPlateOffset
-      local tgtOffset = v * tgtPlateOffset
-      p1 = p1 + latOffset + tgtOffset
+      local pos = nil
+      if isCentered then                                                                            -- If the static mesh has its origin at the center of mesh.
+        pos = posOrig + v * 0.5
+      else
+        pos = posOrig
+      end
+      local tgt = v:normalized()
+
+      local rot = quat()
+      if isGlobalZ then
+        tgt.z = 0.0
+        rot:setFromDir(tgt, vertical)
+      else
+        rot:setFromDir(tgt, fNmls[j])
+      end
+      rot = preRot * rot_q90 * rot
+
+      rot.x = rot.x + (random() * 2 - 1) * jitter                                                   -- Apply any random jittering, if requested.
+      rot.y = rot.y + (random() * 2 - 1) * jitter
+      rot.z = rot.z + (random() * 2 - 1) * jitter
+
       local static = createObject('TSStatic')
-      static:setField('shapeName', 0, crashPlatePath)
+      static:setField('shapeName', 0, meshPath)
       static:setField('decalType', 0, 'None')
-      local plateId = 'Crash Plate B ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-      static:registerObject(plateId)
-      static:setPosRot(p1.x, p1.y, p1.z + plateVOffsetLower, rot.x, rot.y, rot.z, rot.w)
-      static.scale = scaleVec
-      static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      plates[plateId] = static
-    end
-  end
-end
-
--- Creates a right-side crash barrier.
-local function createCrashBarrierR(r, roadIdx, lIdx)
-  local rData = r.renderData
-  local posns, rots, lats = {}, {}, {}
-  tmp1:set(0, 0, r.crashVertOffset[0])
-  for j = 1, #rData do
-    local lData = rData[j][lIdx]
-    local lat = lData[6]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(lat)
-    lats[j] = lat
-  end
-
-  -- Create the static meshes for the crash barrier posts.
-  local lens = computePolylineLengths(posns)
-  local numPosts = ceil(lens[#lens] / crashBarrierPostSpacing)
-  crashPosts[r.name] = crashPosts[r.name] or {}
-  local posts = crashPosts[r.name]
-  local fPos, fLat, fCtr = {}, {}, 1
-  local q = r.crashPostLonOffset[0]
-  for j = 1, numPosts do
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, crashPostPath)
-    static:setField('decalType', 0, 'None')
-    local postId = 'Crash Post ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(postId)
-    local pos, rot, lat = polyLerpWithLat(posns, rots, lats, lens, q)
-    if pos then
+      local meshId = displayName .. ' ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
+      static:registerObject(meshId)
       static:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
       static.scale = scaleVec
       static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      posts[postId] = static
-      q = q + crashBarrierPostSpacing
-      fPos[fCtr] = pos
-      fLat[fCtr] = lat
-      fCtr = fCtr + 1
+      folder:addObject(static.obj)
+      thisMesh[meshId] = static
     end
-  end
-
-  -- Creates the crash barrier plate sections.
-  crashPlates[r.name] = crashPlates[r.name] or {}
-  local plates = crashPlates[r.name]
-  local fNumPosts = #fPos
-  for j = 1, fNumPosts - 1 do
-    local p1, p2 = fPos[j], fPos[j + 1]
-    local v = p2 - p1
-    v:normalize()
-    local rot = origLat1:getRotationTo(v)
-    local latOffset = -fLat[j] * latPlateOffset
-    local tgtOffset = v * tgtPlateOffset
-    p1 = p1 + latOffset + tgtOffset
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, crashPlatePath)
-    static:setField('decalType', 0, 'None')
-    local plateId = 'Crash Plate A ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(plateId)
-    static:setPosRot(p1.x, p1.y, p1.z + plateVOffsetUpper, rot.x, rot.y, rot.z, rot.w)
-    static.scale = scaleVec
-    static.canSave = true
-    scenetree.MissionGroup:addObject(static.obj)
-    plates[plateId] = static
-  end
-  if r.useDoublePlate[0] then
-    for j = 1, fNumPosts - 1 do
-      local p1, p2 = fPos[j], fPos[j + 1]
-      local v = p2 - p1
-      v:normalize()
-      local rot = origLat1:getRotationTo(v)
-      local latOffset = -fLat[j] * latPlateOffset
-      local tgtOffset = v * tgtPlateOffset
-      p1 = p1 + latOffset + tgtOffset
-      local static = createObject('TSStatic')
-      static:setField('shapeName', 0, crashPlatePath)
-      static:setField('decalType', 0, 'None')
-      local plateId = 'Crash Plate B ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-      static:registerObject(plateId)
-      static:setPosRot(p1.x, p1.y, p1.z + plateVOffsetLower, rot.x, rot.y, rot.z, rot.w)
-      static.scale = scaleVec
-      static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      plates[plateId] = static
-    end
+    q = q + length + extraSpacing
   end
 end
 
--- Creates a concrete barrier.
-local function createConcreteBarrier(r, roadIdx, lIdx)
+-- Create a single mesh unit on this road, using the given layer parameters.
+local function createSingleMeshUnit(r, roadIdx, layer, folder, sIdx)
+
+  -- If no material has been selected for this single mesh unit, leave immediately.
+  if not layer.mat or layer.mat == '' then
+    return
+  end
+
+  -- Compute the position on the road.
   local rData = r.renderData
-  local posns, rots, lats = {}, {}, {}
-  tmp1:set(0, 0, r.barrierVertOffset[0])
-  for j = 1, #rData do
-    local lData = rData[j][lIdx]
-    local lat = lData[6]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(-lat)
-    lats[j] = lat
+  local lIdx = layer.lane[0]
+  local lengths = util.computeRoadLength(rData)
+  local pEval = layer.pos[0] * lengths[#lengths]                                                    -- The longitudinal evaluation position on the road, in meters.
+  local lower, upper = util.findBounds(pEval, lengths)
+  local q = (pEval - lengths[lower]) / (lengths[upper] - lengths[lower])                            -- The q in [0, 1] between div points (linear interpolation).
+  local pL = nil
+  if layer.isLeft[0] then
+    local pL1 = rData[lower][lIdx][1]
+    local pL2 = rData[upper][lIdx][1]
+    pL = pL1 + q * (pL2 - pL1)
+  else
+    local pL1 = rData[lower][lIdx][2]
+    local pL2 = rData[upper][lIdx][2]
+    pL = pL1 + q * (pL2 - pL1)
   end
+  if abs(layer.vertOffset[0]) < 0.001 then
+    pL = pL + raised
+    pL.z = pL.z - castRayStatic(pL, downVec, 1000) + 0.02
+  end
+  local n1 = rData[lower][lIdx][5]
+  local n2 = rData[upper][lIdx][5]
+  local nml = n1 + q * (n2 - n1)
+  local l1 = rData[lower][lIdx][6]
+  local l2 = rData[upper][lIdx][6]
+  local lat = l1 + q * (l2 - l1)
+  local pos = pL + nml * (layer.vertOffset[0] + 0.001) + lat * layer.latOffset[0]
 
-  local lens = computePolylineLengths(posns)
-  local numPosts = ceil(lens[#lens] / barrierSpacing)
-  local fPos, fLat, fCtr = {}, {}, 1
-  local q = r.barrierLonOffset[0]
-  for j = 1, numPosts do
-    local pos, _, lat = polyLerpWithLat(posns, rots, lats, lens, q)
-    q = q + barrierSpacing
-    fPos[fCtr] = pos
-    fLat[fCtr] = lat
-    fCtr = fCtr + 1
+  -- Compute the rotation.
+  local preRot = rot_q0
+  local lRot = layer.rot[0]
+  if lRot == 1 then
+    preRot = rot_q90
+  elseif lRot == 2 then
+    preRot = rot_q180
+  elseif lRot == 3 then
+    preRot = rot_q270
   end
+  local rot = quat()
+  local tgt = lat:cross(nml)
+  rot:setFromDir(tgt, nml)
+  rot = preRot * rot_q90 * rot
 
-  barriers[r.name] = barriers[r.name] or {}
-  local barrier = barriers[r.name]
-  local fNumPosts = #fPos
-  for j = 1, fNumPosts - 1 do
-    local p1, p2 = fPos[j], fPos[j + 1]
-    local v = p2 - p1
-    v:normalize()
-    local rot = orig:getRotationTo(v)
-    local tgtOffset = v * tgtBarrierOffset
-    p1 = p1 + tgtOffset
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, barrierPath)
-    static:setField('decalType', 0, 'None')
-    local plateId = 'Concrete Barrier ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(plateId)
-    static:setPosRot(p1.x, p1.y, p1.z, rot.x, rot.y, rot.z, rot.w)
-    static.scale = scaleVec
-    static.canSave = true
-    scenetree.MissionGroup:addObject(static.obj)
-    barrier[plateId] = static
-  end
+  singleMeshes[r.name] = singleMeshes[r.name] or {}
+  local thisMesh = singleMeshes[r.name]
+  local static = createObject('TSStatic')
+  static:setField('shapeName', 0, layer.mat)
+  static:setField('decalType', 0, 'None')
+  local meshId = layer.matDisplay .. ' ' .. tostring(roadIdx) .. '- single -' .. tostring(sIdx)
+  static:registerObject(meshId)
+  static:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
+  static.scale = scaleVec
+  static.canSave = true
+  folder:addObject(static.obj)
+  thisMesh[meshId] = static
 end
 
--- Creates a row of bollards.
-local function createBollards(r, roadIdx, lIdx)
-  local rData = r.renderData
-  local numDivs = #rData
-  randomseed(30000)
-  local jitter = r.bollardJitter[0]
-  local posns, rots = {}, {}
-  tmp1:set(0, 0, r.bollardVertOffset[0])
-  for j = 1, numDivs do
-    local lData = rData[j][lIdx]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(lData[6]:cross(lData[5]))
-    rots[j].x = rots[j].x + (random() * 2 - 1) * jitter                                             -- Apply any random jittering, if requested.
-    rots[j].y = rots[j].y + (random() * 2 - 1) * jitter
-    rots[j].z = rots[j].z + (random() * 2 - 1) * jitter
-  end
-
-  -- Create the static meshes for the lamp posts.
-  local lens = computePolylineLengths(posns)
-  local numBollards = ceil(lens[#lens] / r.bollardLonSpacing[0])
-  poleBollards[r.name] = poleBollards[r.name] or {}
-  local q = r.bollardLonSpacing[0]
-  for j = 1, numBollards do
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, bollardPath)
-    static:setField('decalType', 0, 'None')
-    local bollardId = 'Bollard ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(bollardId)
-    local pos, rot = polyLerp(posns, rots, lens, q)
-    if pos then
-      static:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
-      static.scale = scaleVec
-      static.canSave = true
-      scenetree.MissionGroup:addObject(static.obj)
-      poleBollards[r.name][bollardId] = static
-      q = q + r.bollardLonSpacing[0]
-    end
-  end
-end
-
--- Creates a mesh fence.
-local function createFence(r, roadIdx, lIdx)
-  local rData = r.renderData
-  local posns, rots, lats = {}, {}, {}
-  tmp1:set(0, 0, r.fenceVertOffset[0])
-  for j = 1, #rData do
-    local lData = rData[j][lIdx]
-    local lat = lData[6]
-    posns[j] = lData[7] + tmp1
-    rots[j] = orig:getRotationTo(-lat)
-    lats[j] = lat
-  end
-
-  local lens = computePolylineLengths(posns)
-  local numPosts = ceil(lens[#lens] / fenceSpacing)
-  local fPos, fLat, fCtr = {}, {}, 1
-  local q = r.fenceLonOffset[0]
-  for j = 1, numPosts do
-    local pos, _, lat = polyLerpWithLat(posns, rots, lats, lens, q)
-    q = q + fenceSpacing
-    fPos[fCtr] = pos
-    fLat[fCtr] = lat
-    fCtr = fCtr + 1
-  end
-
-  fences[r.name] = fences[r.name] or {}
-  local fence = fences[r.name]
-  local fNumPosts = #fPos
-  for j = 1, fNumPosts - 1 do
-    local p1, p2 = fPos[j], fPos[j + 1]
-    local v = p2 - p1
-    v:normalize()
-    local rot = origLat2:getRotationTo(v)
-    local static = createObject('TSStatic')
-    static:setField('shapeName', 0, fencePath)
-    static:setField('decalType', 0, 'None')
-    local plateId = 'Mesh Fence ' .. tostring(roadIdx) .. '-' .. tostring(lIdx) .. '-' .. tostring(j)
-    static:registerObject(plateId)
-    static:setPosRot(p1.x, p1.y, p1.z, rot.x, rot.y, rot.z, rot.w)
-    static.scale = scaleVec
-    static.canSave = true
-    scenetree.MissionGroup:addObject(static.obj)
-    fence[plateId] = static
-  end
-end
-
--- Creates all the appropriate static meshes for the given road.
-local function createStaticMeshes(r, roadIdx)
-  local rData = r.renderData
-  for i = -20, 20 do
-    local lane = rData[1][i]
-    if lane then
-      local type = lane[8]
-      if type == 'lamp_post_L' then
-        createLampPostsL(r, roadIdx, i)
-      elseif type == 'lamp_post_R' then
-        createLampPostsR(r, roadIdx, i)
-      elseif type == 'lamp_post_D' then
-        createLampPostsD(r, roadIdx, i)
-      elseif type == 'crash_L' then
-        createCrashBarrierL(r, roadIdx, i)
-      elseif type == 'crash_R' then
-        createCrashBarrierR(r, roadIdx, i)
-      elseif type == 'concrete' then
-        createConcreteBarrier(r, roadIdx, i)
-      elseif type == 'bollards' then
-        createBollards(r, roadIdx, i)
-      elseif type == 'fence' then
-        createFence(r, roadIdx, i)
+-- Creates all the appropriate static meshes for a given road.
+local function createStaticMeshes(r, roadIdx, folder)
+  local profile = r.profile
+  local layers = profile.layers
+  if layers then
+    for i = 1, #layers do
+      local layer = layers[i]
+      local layerType = layer.type[0]
+      if layerType == 4 then
+        createSelectedMesh(r, roadIdx, layer, folder)
+      elseif layerType == 5 then
+        createSingleMeshUnit(r, roadIdx, layer, folder, i)
       end
     end
   end
@@ -559,57 +244,25 @@ end
 -- Attempts to removes the meshes of the road with the given name, from the scene (if it exists).
 -- [This is done through road indices; the actual handling of the meshes structure should be private to this module].
 local function tryRemove(roadName)
+  if spanMeshes[roadName] then
+    for _, v in pairs(spanMeshes[roadName]) do
+      v:delete()
+    end
+  end
+  spanMeshes[roadName] = nil
 
-  -- Remove any lamp posts (static meshes), if they exist.
-  if lampPosts[roadName] then
-    for k, v in pairs(lampPosts[roadName]) do
+  if singleMeshes[roadName] then
+    for _, v in pairs(singleMeshes[roadName]) do
       v:delete()
     end
   end
-  lampPosts[roadName] = nil
-
-  -- Remove any crash barriers (static meshes), if they exist.
-  if crashPosts[roadName] then
-    for k, v in pairs(crashPosts[roadName]) do
-      v:delete()
-    end
-  end
-  if crashPlates[roadName] then
-    for k, v in pairs(crashPlates[roadName]) do
-      v:delete()
-    end
-  end
-  crashPosts[roadName] = nil
-  crashPlates[roadName] = nil
-
-  -- Remove any concrete barriers (static meshes), if they exist.
-  if barriers[roadName] then
-    for k, v in pairs(barriers[roadName]) do
-      v:delete()
-    end
-  end
-  barriers[roadName] = nil
-
-  -- Remove any bollards (static meshes), if they exist.
-  if poleBollards[roadName] then
-    for k, v in pairs(poleBollards[roadName]) do
-      v:delete()
-    end
-  end
-  poleBollards[roadName] = nil
-
-  -- Remove any mesh fences (static meshes), if they exist.
-  if fences[roadName] then
-    for k, v in pairs(fences[roadName]) do
-      v:delete()
-    end
-  end
-  fences[roadName] = nil
+  singleMeshes[roadName] = nil
 end
 
 
 -- Public interface.
 M.createStaticMeshes =                                    createStaticMeshes
+
 M.tryRemove =                                             tryRemove
 
 return M

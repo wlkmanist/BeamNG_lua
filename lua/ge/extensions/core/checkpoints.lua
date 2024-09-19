@@ -106,29 +106,6 @@ local function initialiseCheckpointData(vehicleId)
   end
 end
 
-local function setCheckpoint(playerId)
-  -- log('I', logTag, 'setCheckpoint called...'..tostring(playerId))
-  local vehicle = getPlayerVehicle(playerId)
-  if vehicle then
-    saveCheckpoint(vehicle:getId(), vehicle:getField('name', ''))
-    -- dump(M.state)
-  end
-end
-
-
-local function teleportToCheckpoint(vehicleId)
-  local vehicle = be:getObjectByID(vehicleId)
-  if vehicle then
-    ResetToSavedCheckpoint(vehicle, vehicle:getField('name', ''))
-  end
-end
-
-local function gotoCheckpoint(playerId)
-  -- log('I', logTag, 'teleportToCheckpoint called...'..tostring(playerId))
-  local vehicleId = be:getPlayerVehicleID(playerId)
-  teleportToCheckpoint(vehicleId)
-end
-
 local function onRaceWaypointReached(data)
   local scenario = scenario_scenarios.getScenario()
   if not scenario then
@@ -327,9 +304,6 @@ M.onPreRender             = onPreRender
 M.onSaveCampaign          = onSaveCampaign
 M.onResumeCampaign        = onResumeCampaign
 
-M.teleportToCheckpoint    = teleportToCheckpoint
-M.setCheckpoint           = setCheckpoint
-M.gotoCheckpoint          = gotoCheckpoint
 M.saveCheckpoint          = saveCheckpoint
 M.saveAIPath              = saveAIPath
 return M

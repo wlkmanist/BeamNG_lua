@@ -218,11 +218,7 @@ function C:setVisibility(v)
   end
 end
 
-function C:hide()
-  self.newColor = modeInfos['hidden'].color
-  self.oldColor = modeInfos['hidden'].color
-  self:setVisibility(false)
-end
+function C:hide() self:setVisibility(false) end
 function C:show() self:setVisibility(true)  end
 
 -- marker management
@@ -234,6 +230,7 @@ function C:createObject(shapeName, objectName)
   marker:setField('rotation', 0, '1 0 0 0')
   marker.useInstanceRenderData = true
   marker:setField('instanceColor', 0, '1 1 1 1')
+  marker:setInternalName('marker')
   marker.canSave = false
   marker.hidden = true
   marker:registerObject(objectName)

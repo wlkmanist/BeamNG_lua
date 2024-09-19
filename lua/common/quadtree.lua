@@ -208,7 +208,7 @@ function quadTree:remove(itm_id, itm_x, itm_y)
     -- look for the item in the current node
     for j = 1, (tree[node_i] or emptyNode).itemCount, 5 do
       local node = tree[node_i]
-      if node[j] == itm_id and square((node[j+1] + node[j+2]) * 0.5 - itm_x) + square((node[j+3] + node[j+4]) * 0.5 - itm_y) < 1e-8 then
+      if node[j] == itm_id then
         local itemCount = node.itemCount
         local tmp_items = table.new(itemCount-5, 1) -- allows us to remove items while a in an active query
         for i = 1, j-1 do tmp_items[i] = node[i] end

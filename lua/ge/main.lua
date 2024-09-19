@@ -4,7 +4,7 @@
 
 --- you can use this to turn of Just In Time compilation for debugging purposes:
 --jit.off()
-jit.opt.start('minstitch=10000000')
+if jit then	jit.opt.start('minstitch=10000000') end
 
 vmType = 'game'
 
@@ -66,7 +66,9 @@ serverConnection = require("serverConnection")
 server = require("server/server")
 commands = require("server/commands")
 editor = {}
+
 worldReadyState = -1 -- tracks if the level loading is done yet: 0 = no, 1 = yes, load play ui, 2 = all done
+parseArgs = require("client/parseArgs")
 
 sailingTheHighSeas = the_high_sea_crap_detector()
 photoModeOpen = false
@@ -217,11 +219,23 @@ end
 local function handleCommandLineFirstFrame()
   if tableFindKey(cmdArgs, '-flowgraph') then
     if getMissionFilename() == "" then
-      freeroam_freeroam.startFreeroam("levels/smallgrid/main.level.json")
+      freeroam_freeroam.startFreeroam(path.getPathLevelMain("smallgrid"))
       extensions.load('editor_flowgraphEditor')
       editor_flowgraphEditor.requestedEditor = true
-      --core_levels.startLevel("levels/smallgrid/main.level.json")
+      --core_levels.startLevel(path.getPathLevelMain("smallgrid"))
     end
+  end
+
+  if tableFindKey(cmdArgs, '-compilemeshes') then
+    extensions.load('util_compileMeshes')
+  end
+
+  if tableFindKey(cmdArgs, '-LoadSingleLevelForTextureCache') then
+    --Using existing extension to run level for 600 frames. Use with param: -testlevel [level name]
+    extensions.load('test_singleLevel')
+  end
+  if tableFindKey(cmdArgs, '-LoadSingleLevelForShaderCache') then
+    extensions.load('test_singleLevelLong')
   end
 
   if tableFindKey(cmdArgs, '-convertCSMaterials') then
@@ -305,7 +319,7 @@ local startupExtensions = {
   'ui_apps', 'ui_audio', 'ui_flowgraph_editor', 'ui_visibility', 'campaign_campaignsLoader', 'career_branches',
   'career_career', 'career_saveSystem', 'editor_main', 'editor_veMain', 'freeroam_freeroam', 'gameplay_garageMode',
   'gameplay_missions_missions', 'gameplay_missions_progress', 'gameplay_missions_unlocks', 'gameplay_missions_missionScreen',
-  'gameplay_statistic', 'render_hdr', 'scenario_quickRaceLoader', 'scenario_scenariosLoader'
+  'gameplay_statistic', 'render_hdr', 'scenario_quickRaceLoader', 'scenario_scenariosLoader', 'core_windowsConsole'
   -- DO NOT ADD MORE EXTENSIONS TO THIS LIST unless it's required by game startup procedure. Instead, try the following:
   --   To load an extension on demand:               extensions.load("my_extension")
   --   To keep an extension loaded across levels:    M.onInit = function() setExtensionUnloadMode(M, "manual") end
@@ -319,10 +333,10 @@ local presetExtensions = {
   'core_groundMarkers', 'core_multiSpawn', 'core_quickAccess', 'core_recoveryPrompt', 'core_terrain',
   'core_trafficSignals', 'core_trailerRespawn', 'core_vehicleBridge', 'core_vehiclePoolingManager', 'core_vehicle_mirror', 'core_weather',
   'freeroam_bigMapMode', 'freeroam_bigMapPoiProvider', 'freeroam_facilities', 'freeroam_facilities_fuelPrice',
-  'freeroam_gasStations', 'freeroam_specialTriggers', 'gameplay_city', 'gameplay_markerInteraction',
+  'freeroam_gasStations', 'freeroam_specialTriggers', 'freeroam_organizations', 'gameplay_city', 'gameplay_markerInteraction',
   'gameplay_missions_missionManager', 'gameplay_missions_startTrigger', 'gameplay_parking', 'gameplay_rawPois',
   'gameplay_traffic', 'gameplay_walk', 'trackbuilder_trackBuilder', 'ui_fadeScreen', 'ui_missionInfo', 'util_richPresence',
-  'freeroam_crashCamModeLoader', 'gameplay_speedTraps', 'gameplay_speedTrapLeaderboards', 'gameplay_drift_general'
+  'freeroam_crashCamModeLoader', 'gameplay_speedTraps', 'gameplay_speedTrapLeaderboards', 'gameplay_drift_general', 'gameplay_drag_general'
 }
 
 local cmdlineLevelLoadExtensions = {} -- extensions indicated from command line arguments
@@ -460,7 +474,7 @@ function luaPreRender(dtReal, dtSim, dtRaw)
   if geluaProfiler then geluaProfiler:add("luaPreRender drawdebug") end
 
   -- will be used for ge streams later
-  -- guihooks.frameUpdated(dtReal)
+  -- guihooks.sendStreams(dtReal)
 
   -- detect if we need to switch the UI around
   if worldReadyState == 1 then
@@ -573,7 +587,7 @@ function init(reason)
   -- put the mods folder in clear view, so users don't put stuff in the wrong place
   if not FS:directoryExists("mods") then FS:directoryCreate("mods") end
 
-  if not FS:directoryExists("trackEditor") or not string.startswith(FS:getFileRealPath("trackEditor"), getUserPath())  then FS:directoryCreate("trackEditor") end
+  if not FS:directoryExists("trackEditor") or not string.startswith(FS:getFileRealPath("trackEditor"), FS:getUserPath())  then FS:directoryCreate("trackEditor") end
 end
 
 function onBeamNGWaypoint(args)
@@ -649,6 +663,10 @@ function vehicleDestroyed(vid)
   extensions.hook('onVehicleDestroyed', vid)
 end
 
+function onClusterTeleportNoReset(vehicle, nodeId, px, py, pz, rdx, rdy, rdz, rdw)
+  extensions.hook('onClusterTeleportNoReset', vehicle:getId(), nodeId, px, py, pz, rdx, rdy, rdz, rdw)
+end
+
 function onCouplerAttached(objId1, objId2, nodeId, obj2nodeId)
   if objId1 ~= objId2 and settings.getValue("couplerCameraModifier", false) then
     local isEnabled = core_couplerCameraModifier ~= nil
@@ -714,7 +732,7 @@ end
 function importPersistentData()
   if not be then return end
   local s = be.persistenceLuaData
-  -- log('D', 'main', 'persistent data imported: ' .. tostring(s))
+  -- log('E', 'main', '>>>> persistent data imported: ' .. tostring(s))
   -- deserialize extensions first, so the extensions are loaded before they are trying to get deserialized
   local data = deserialize(s)
   -- TODO(AK): Remove this stuff post completing serialization work
@@ -840,34 +858,50 @@ function onPreWindowClose()
 end
 
 function onPreExit()
+  local p = LuaProfiler("onPreExit()")
+  p:start()
   extensions.hook('onPreExit')
+  p:add("extensions.onPreExit")
+  p:finish(true)
 end
 
 function onExit()
+  local p = LuaProfiler("onExit()")
+  p:start()
   -- onExit is called directly from C++ code
     extensions.hook('onExit')
+  p:add("extensions.onExit")
 
     -- scripts_main.onExit()
     -- Ensure that we are disconnected and/or the server is destroyed.
     -- This prevents crashes due to the SceneGraph being deleted before
     -- the objects it contains.
-    serverConnection.noLoadingScreenDisconnect()
+  serverConnection.noLoadingScreenDisconnect(p)
+  p:add("noLoadingScreenDisconnect")
 
     -- Destroy the physics plugin.
     PhysicsPlugin.destroy()
+  p:add("PhysicsPlugin")
 
     -- TODO(AK) 18/08/2021: check which calls to replace this Parent::onExit with.
     -- Parent::onExit();
+  p:add("ParentOnExit")
 
     local mainEventManager = scenetree.findObject("MainEventManager")
+  p:add("MainEventManager.find")
     if mainEventManager then
       mainEventManager:postEvent("onExit", 0)
+    p:add("MainEventManager.onExit")
     else
       log("E","", "Couldn't find event manager 'MainEventManager'")
+    p:add("MainEventManager.onError")
     end
 
     postFxModule.savePresetFile('settings/postfxSettings.postfx')
+  p:add("savePostFx")
     settings.exit()
+  p:add("settings")
+  p:finish(true)
 end
 
 function onGameEngineStartup()
@@ -892,7 +926,6 @@ function onGameEngineStartup()
     log("E","", "Couldn't create event manager 'MainEventManager'")
   end
 
-  local parseArgs = require("client/parseArgs")
   parseArgs.defaultParseArgs()
 
   onPreStartCallback()

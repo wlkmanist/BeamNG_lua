@@ -23,6 +23,8 @@ C.pinSchema = {
   { dir = 'in', type = 'any', name = 'text', description = 'Name of the box.' },
 }
 
+C.tags = {'imgui'}
+
 function C:init()
   self.data.startState = false
 end

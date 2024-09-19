@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Distance from ground'
+C.name = 'Distance From Ground'
 
-C.description = [[Reports the distance of the lowest vehicle's bounding box point from the terrain below.]]
+C.description = "Reports the distance of the lowest vehicle's bounding box point from the terrain below."
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

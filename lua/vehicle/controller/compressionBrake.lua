@@ -54,7 +54,7 @@ local function updateGFX(dt)
     controller.mainController.setAggressionOverride(1)
     didSetDrivingAggressionOverride = true
   elseif didSetDrivingAggressionOverride then --but only unset the override once IF we did set it before to at least give other systems a chance of using it as well
-    controller.mainController.setAggressionOverride(0)
+    controller.mainController.setAggressionOverride(nil)
     didSetDrivingAggressionOverride = false
   end
   electrics.values[electricsNameSetting] = compressionBrakeCoef
