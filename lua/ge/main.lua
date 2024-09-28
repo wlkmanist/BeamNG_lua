@@ -336,7 +336,7 @@ local presetExtensions = {
   'freeroam_gasStations', 'freeroam_specialTriggers', 'freeroam_organizations', 'gameplay_city', 'gameplay_markerInteraction',
   'gameplay_missions_missionManager', 'gameplay_missions_startTrigger', 'gameplay_parking', 'gameplay_rawPois',
   'gameplay_traffic', 'gameplay_walk', 'trackbuilder_trackBuilder', 'ui_fadeScreen', 'ui_missionInfo', 'util_richPresence',
-  'freeroam_crashCamModeLoader', 'gameplay_speedTraps', 'gameplay_speedTrapLeaderboards', 'gameplay_drift_general', 'gameplay_drag_general'
+  'freeroam_crashCamModeLoader', 'gameplay_speedTraps', 'gameplay_speedTrapLeaderboards', 'gameplay_drift_general', 'gameplay_drag_general', 'gameplay_achievement'
 }
 
 local cmdlineLevelLoadExtensions = {} -- extensions indicated from command line arguments

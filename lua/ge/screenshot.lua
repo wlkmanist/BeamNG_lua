@@ -22,8 +22,8 @@ local function getMetadataJson()
     res.gameState = extensions.core_gamestate.state.state
   end
 
-  if Steam and Steam.isWorking and Steam.accountID ~= 0 then
-    res.steamIDHash = tostring(hashStringSHA1(Steam.getAccountIDStr()))
+  if Steam and Steam.isWorking and Steam.accountID ~= "" then
+    res.steamIDHash = tostring(hashStringSHA1(Steam.accountID))
     res.steamPlayerName = Steam.playerName
   end
 

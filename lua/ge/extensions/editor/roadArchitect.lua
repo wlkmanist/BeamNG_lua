@@ -52,6 +52,7 @@ local isRoadArchitectActive = false                                             
 
 local hasBeenSaved = false                                                                          -- A flag which indicates if the current session has been saved previously.
 local savePath = nil                                                                                -- The path of the previously saved session file.
+local isLoadTerrain = im.BoolPtr(true)                                                              -- A flag which indicates the terrains should be loaded when loading sessions.
 
 local isGroupPlaceMode = false                                                                      -- A flag which indicates if the editor is in 'group placement' mode, or not.
 local isCreateGroup = false                                                                         -- A flag which indicates if the editor is in 'create group' mode, or not.
@@ -1016,11 +1017,13 @@ local function loadSession()
       -- Remove all meshes and decals from scene.
       roadMgr.removeAll()
 
-      -- Read the .png file containing the heightmap data, and set the terrain.
-      local pathOnly = util.removeFileNameFromPath(data.filepath)
-      local filenameAndExt = util.getFilenameFromPath(data.filepath)
-      local filenameWithoutExt = util.removeExtension(filenameAndExt)
-      terra.setHeightmapFromPng(pathOnly .. filenameWithoutExt .. '.png')
+      -- Load the terrain file, if requested, and set the terrain.
+      if isLoadTerrain[0] then
+        local pathOnly = util.removeFileNameFromPath(data.filepath)
+        local filenameAndExt = util.getFilenameFromPath(data.filepath)
+        local filenameWithoutExt = util.removeExtension(filenameAndExt)
+        terra.setHeightmapFromPng(pathOnly .. filenameWithoutExt .. '.png')
+      end
 
       -- De-serialise all the stored profiles, into the profiles container.
       table.clear(profileMgr.profiles)
@@ -1093,7 +1096,7 @@ local function handleMainToolWindow(roads)
     -- 'Is Finalise' button.
     if not isCreateGroup and not isGroupPlaceMode then
       local finIcon = editor.icons.roadEditOutline
-      if isFinalise then btnCol, finIcon = cols.darkLockCol, editor.icons.roadEditSolid end
+      if isFinalise then finIcon = editor.icons.roadEditSolid end
       if editor.uiIconImageButton(finIcon, vec40, cols.fullWhite, nil, nil, 'LayDecalsButton') then
         if #roadMgr.roads > 0 then
           isFinalise = not isFinalise
@@ -1208,6 +1211,10 @@ local function handleMainToolWindow(roads)
       end
       if im.BeginTabItem("Groups") then
         selectedTab = 3
+        im.EndTabItem()
+      end
+      if im.BeginTabItem("Options") then
+        selectedTab = 4
         im.EndTabItem()
       end
       im.EndTabBar()
@@ -2962,6 +2969,15 @@ local function handleMainToolWindow(roads)
 
           im.Columns(1)
           im.TreePop()
+        end
+      end
+
+      -- Rendering options for this road.
+      if #roads > 0 and road and mfe.selectedRoadIdx and roads[mfe.selectedRoadIdx] then
+        im.Separator()
+        if im.TreeNode1("Render Options") then
+          im.Checkbox('isOverObject Flag', road.isOverObject)
+          im.tooltip("All decals created by this road will have the 'isOverObjects' flag set true (checked), or set false (unchecked).")
         end
       end
 
@@ -6495,6 +6511,14 @@ local function handleMainToolWindow(roads)
 
       im.EndTabItem()
     end
+
+    if selectedTab == 4 then
+      im.TextColored(cols.greenB, 'Disk Options:')
+      im.Checkbox('Load Terrains With Sessions', isLoadTerrain)
+      im.tooltip('On loading a session, the saved terrain (.png) file will also be loaded to the map (checked), otherwise only the road network data will be loaded (unchecked).')
+      im.EndTabItem()
+    end
+
     im.EndChild()
     im.Separator()
   end

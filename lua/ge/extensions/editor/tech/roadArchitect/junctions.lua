@@ -8720,7 +8720,7 @@ local function addRoundaboutJunction(isNew)
       sidewalkWidth = im.FloatPtr(2.0),
       sidewalkHeight = im.FloatPtr(0.12),
       isLowerSWAtPedX = im.BoolPtr(true),
-      isTLights = im.BoolPtr(true),
+      isTLights = im.BoolPtr(false),
       trafficLatOff = im.FloatPtr(-2.6),
       isCrossings = im.BoolPtr(true),
       displayCrossings = im.BoolPtr(false),

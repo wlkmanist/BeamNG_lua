@@ -91,8 +91,10 @@ local function createDecal(road, folder)
       local section = asphalts[name][s]
       asphalts[name][s].road = createObject("DecalRoad")
       local dRoad = asphalts[name][s].road
-      --dRoad:setField("improvedSpline", 0, "true")
-      dRoad:setField("overObjects", 0, "true")
+      dRoad:setField("improvedSpline", 0, "true")
+      if road.isOverObject[0] then
+        dRoad:setField("overObjects", 0, "true")
+      end
       dRoad:setField("textureLength", 0, 36)
       dRoad:setField("renderPriority", 0, renderPrKeyRoad)
       dRoad:setField("autoLanes", 0, "false")
@@ -120,8 +122,10 @@ local function createDecal(road, folder)
 
       asphalts[name][s].road = createObject("DecalRoad")
       local dRoad = asphalts[name][s].road
-      --dRoad:setField("improvedSpline", 0, "true")
-      dRoad:setField("overObjects", 0, "true")
+      dRoad:setField("improvedSpline", 0, "true")
+      if road.isOverObject[0] then
+        dRoad:setField("overObjects", 0, "true")
+      end
       dRoad:setField("textureLength", 0, 36)
       dRoad:setField("renderPriority", 0, renderPrKeyRoad)
       dRoad:setField("drivability", 0, -1.0)
@@ -153,8 +157,10 @@ local function createDecal(road, folder)
       decals[name].layers[ctrL] = createObject("DecalRoad")
       local layerDecal = decals[name].layers[ctrL]
       ctrL = ctrL + 1
-      --layerDecal:setField("improvedSpline", 0, "true")
-      layerDecal:setField("overObjects", 0, "true")
+      layerDecal:setField("improvedSpline", 0, "true")
+      if road.isOverObject[0] then
+        layerDecal:setField("overObjects", 0, "true")
+      end
       layerDecal:setField("renderPriority", 0, i)
       layerDecal:setField("textureLength", 0, layer.texLen[0])
       if layerType ~= 2 then
@@ -211,8 +217,10 @@ local function createDecal(road, folder)
       decals[name].layers[ctrL] = createObject("DecalRoad")
       local layerDecal = decals[name].layers[ctrL]
       ctrL = ctrL + 1
-      --layerDecal:setField("improvedSpline", 0, "true")
-      layerDecal:setField("overObjects", 0, "true")
+      layerDecal:setField("improvedSpline", 0, "true")
+      if road.isOverObject[0] then
+        layerDecal:setField("overObjects", 0, "true")
+      end
       layerDecal:setField("renderPriority", 0, i)
       layerDecal:setField("textureLength", 0, layer.texLen[0])
       if layerType ~= 2 then
@@ -267,8 +275,10 @@ local function createDecal(road, folder)
       decals[name].layers[ctrL] = createObject("DecalRoad")
       local layerDecal = decals[name].layers[ctrL]
       ctrL = ctrL + 1
-      --layerDecal:setField("improvedSpline", 0, "true")
-      layerDecal:setField("overObjects", 0, "true")
+      layerDecal:setField("improvedSpline", 0, "true")
+      if road.isOverObject[0] then
+        layerDecal:setField("overObjects", 0, "true")
+      end
       layerDecal:setField("renderPriority", 0, i)
       layerDecal:setField("textureLength", 0, layer.texLen[0])
       if layerType ~= 2 then

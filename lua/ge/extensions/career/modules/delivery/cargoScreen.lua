@@ -400,7 +400,7 @@ end
 -- gets the thumbnail for a vehicle
 local function getVehicleThumb(vehicle)
   local model = core_vehicles.getModel(vehicle.model)
-  if not model then return nil end
+  if not model or not model.configs or not vehicle.config then return nil end
   local config = model.configs[vehicle.config]
   if not config then return nil end
   return config.preview

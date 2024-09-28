@@ -69,6 +69,8 @@ local function createRoadFromProfile(profile)
     isJctRoad = false,                                                                              -- A flag which indicates if this road appears in a currently-editable junction.
     treatAsInvisibleInEdit = false,                                                                 -- A flag which indicates if this road should be invisible in edit visualisation.
 
+    isOverObject = im.BoolPtr(true),                                                                -- A flag which indicates if the overObjects flag will be set for this road's decals.
+
     aabb = nil,                                                                                     -- The current 2D AABB of the road.
 
     isDirty = true,                                                                                 -- Indicates if a change has been made to this road, requiring updates.
@@ -687,6 +689,8 @@ local function copyRoad(r)
 
   rCopy.overlayMat = r.overlayMat or defaultOverlayMaterial
 
+  rCopy.isOverObject = im.BoolPtr(r.isOverObject[0])
+
   rCopy.isConformRoadToTerrain = im.BoolPtr(r.isConformRoadToTerrain[0])
 
   rCopy.isDisplayRoadSurface = im.BoolPtr(r.isDisplayRoadSurface[0])
@@ -750,6 +754,8 @@ local function splitRoad(rIdx, nIdx)
 
   roadA.overlayMat = r.overlayMat or defaultOverlayMaterial
 
+  roadA.isOverObject = im.BoolPtr(r.isOverObject[0])
+
   roadA.isConformRoadToTerrain = im.BoolPtr(isConformRoadToTerrain)
 
   roadA.isDisplayRoadSurface = im.BoolPtr(r.isDisplayRoadSurface[0])
@@ -797,6 +803,8 @@ local function splitRoad(rIdx, nIdx)
   roadB.laneKeys, roadB.leftKeys, roadB.rightKeys = profileMgr.computeLaneKeys(r.profile)
 
   roadB.overlayMat = r.overlayMat or defaultOverlayMaterial
+
+  roadB.isOverObject = im.BoolPtr(r.isOverObject[0])
 
   roadB.isConformRoadToTerrain = im.BoolPtr(isConformRoadToTerrain)
 
@@ -983,6 +991,8 @@ local function manageTempRoadSection(pIdx)
       profile = profile,
 
       overlayMat = defaultOverlayMaterial,
+
+      isOverObject = im.BoolPtr(true),
 
       isConformRoadToTerrain = im.BoolPtr(false),
 
@@ -1474,6 +1484,8 @@ local function serialiseRoad(r)
 
     overlayMat = r.overlayMat,
 
+    isOverObject = r.isOverObject[0],
+
     isConformRoadToTerrain = r.isConformRoadToTerrain[0],
 
     isDisplayRoadSurface = r.isDisplayRoadSurface[0],
@@ -1539,6 +1551,8 @@ local function deserialiseRoad(rSer)
     profile = profile,
 
     overlayMat = rSer.overlayMat or defaultOverlayMaterial,
+
+    isOverObject = im.BoolPtr(rSer.isOverObject or false),
 
     isConformRoadToTerrain = im.BoolPtr(rSer.isConformRoadToTerrain),
 

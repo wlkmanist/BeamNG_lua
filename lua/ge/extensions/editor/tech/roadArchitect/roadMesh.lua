@@ -74,10 +74,10 @@ local function createLeftSidewalkKerb(r, sec, roadMeshIdx, s, folder)
     local p2 = vec3(rD[2].x, rD[2].y, rD[2].z) + raised
     local p3 = vec3(rD[3].x, rD[3].y, rD[3].z) + raised
     local p4 = vec3(rD[4].x, rD[4].y, rD[4].z) + raised
-    p1.z = p1.z - castRayStatic(p1, downVec, 1000) + 0.02 + rD[1].z - rD[4].z
-    p2.z = p2.z - castRayStatic(p2, downVec, 1000) + 0.02 + rD[2].z - rD[3].z
-    p3.z = p3.z - castRayStatic(p3, downVec, 1000) + 0.02
-    p4.z = p4.z - castRayStatic(p4, downVec, 1000) + 0.02
+    p1.z = p1.z - castRayStatic(p1, downVec, 1000) + rD[1].z - rD[4].z
+    p2.z = p2.z - castRayStatic(p2, downVec, 1000) + rD[2].z - rD[3].z
+    p3.z = p3.z - castRayStatic(p3, downVec, 1000)
+    p4.z = p4.z - castRayStatic(p4, downVec, 1000)
 
     local sTop = p2 - (p2 - p1):normalized() * r.profile[lIdx].kerbWidth[0]
     local sBot = p3 - (p3 - p4):normalized() * r.profile[lIdx].kerbWidth[0]
@@ -373,10 +373,10 @@ local function createRightSidewalkKerb(r, sec, roadMeshIdx, s, folder)
     local p1 = vec3(rD[2].x, rD[2].y, rD[2].z) + raised
     local p4 = vec3(rD[3].x, rD[3].y, rD[3].z) + raised
     local p3 = vec3(rD[4].x, rD[4].y, rD[4].z) + raised
-    p1.z = p1.z - castRayStatic(p1, downVec, 1000) + 0.02 + rD[2].z - rD[3].z
-    p2.z = p2.z - castRayStatic(p2, downVec, 1000) + 0.02 + rD[1].z - rD[4].z
-    p3.z = p3.z - castRayStatic(p3, downVec, 1000) + 0.02
-    p4.z = p4.z - castRayStatic(p4, downVec, 1000) + 0.02
+    p1.z = p1.z - castRayStatic(p1, downVec, 1000) + rD[2].z - rD[3].z
+    p2.z = p2.z - castRayStatic(p2, downVec, 1000) + rD[1].z - rD[4].z
+    p3.z = p3.z - castRayStatic(p3, downVec, 1000)
+    p4.z = p4.z - castRayStatic(p4, downVec, 1000)
     local sTop = p2 - (p2 - p1):normalized() * r.profile[lIdx].kerbWidth[0]
     local sBot = p3 - (p3 - p4):normalized() * r.profile[lIdx].kerbWidth[0]
     p2 = p2 - (p3 - p2):normalized() * r.profile[lIdx].cornerDrop[0] - rD[6] * r.profile[lIdx].cornerLatOff[0]    -- Move the curb corner as requested.

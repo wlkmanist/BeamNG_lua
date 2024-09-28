@@ -84,7 +84,7 @@ local function onSaveCurrentSaveSlot(currentSavePath)
   saveData.general.gameTime = M.time()
   saveData.general.osTime = os.time()
   saveData.progress = dProgress.getProgress()
-  saveData.parcelModProgress = dProgress.getProgress()
+  saveData.parcelModProgress = dParcelMods.getProgress()
 
   -- facility data
 

@@ -135,6 +135,36 @@ local function averageMask(height, mod, fixedMask, xSize, ySize)
   end
 end
 
+-- Refines the given collection of triangles by splitting them into four.
+local function refineTriangles(tris)
+  local trisOut, ctr = {}, 1
+  for i = 1, #tris, 3 do
+    local a, b, c = tris[i], tris[i + 1], tris[i + 2]
+    local mAB = vec3((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, (a.z + b.z) * 0.5)
+    local mAC = vec3((a.x + c.x) * 0.5, (a.y + c.y) * 0.5, (a.z + c.z) * 0.5)
+    local mBC = vec3((c.x + b.x) * 0.5, (c.y + b.y) * 0.5, (c.z + b.z) * 0.5)
+
+    trisOut[ctr] = a
+    trisOut[ctr + 1] = mAB
+    trisOut[ctr + 2] = mAC
+
+    trisOut[ctr + 3] = b
+    trisOut[ctr + 4] = mAB
+    trisOut[ctr + 5] = mBC
+
+    trisOut[ctr + 6] = c
+    trisOut[ctr + 7] = mBC
+    trisOut[ctr + 8] = mAC
+
+    trisOut[ctr + 9] = mBC
+    trisOut[ctr + 10] = mAB
+    trisOut[ctr + 11] = mAC
+
+    ctr = ctr + 12
+  end
+  return trisOut
+end
+
 -- Bloats the given renderdata by the given amount [top surface only].
 local function getTriangles(road, excess)
   local rData = road.renderData
@@ -174,6 +204,11 @@ local function getTriangles(road, excess)
       tris[ctr + 5] = right[i]
       ctr = ctr + 6
     end
+  end
+
+  -- Refine the triangles for smoother terraforming results.
+  for i = 1, 5 do
+    refineTriangles(tris)
   end
 
   return tris
@@ -220,6 +255,12 @@ local function getTrianglesMulti(roads, box, excess)
       end
     end
   end
+
+  -- Refine the triangles for smoother terraforming results.
+  for i = 1, 5 do
+    refineTriangles(tris)
+  end
+  
   return tris
 end
 
