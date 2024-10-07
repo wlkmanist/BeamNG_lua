@@ -156,7 +156,7 @@ local function _runCallback(name, oldentry, newentry, career)
   for cbindex in pairs(cbs) do
     if not cbs[cbindex].trigger or newentry.value >= cbs[cbindex].trigger then
       cbs[cbindex].func(name, oldentry, nval)
-      if cbs[cbindex].trigger then
+      if cbs[cbindex] and cbs[cbindex].trigger then --recheck because can call remove
         cbs[cbindex] = nil
       end
     end

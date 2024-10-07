@@ -70,7 +70,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("%5.1f fps [UM: %5.1f fps]", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::instantaneousUncap"))
+        columnText = string.format("%5.1f fps [Unmanaged: %5.1f fps]", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::instantaneousUncap"))
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -129,7 +129,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("%5.2f ms [UM: %5.1f ms]", 1000 / getConsoleNumber("fps::instantaneous"), 1000 / getConsoleNumber("fps::instantaneousUncap"))
+        columnText = string.format("%5.2f ms [Unmanaged: %5.1f ms]", 1000 / getConsoleNumber("fps::instantaneous"), 1000 / getConsoleNumber("fps::instantaneousUncap"))
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -164,7 +164,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         im.TextUnformatted(columnText)
         if not imguiVisible then table.insert(lines, table.concat(lineTexts, "  ")) end
         lineTexts = imguiVisible or {}
-		  im.EndTable()
+      im.EndTable()
       end
 
       lineText = string.format("WaitforGPU: %4.2f ms%s", getConsoleNumber("fps::waitForGPU"), rnd == 0 and "" or ", WARNING: RANDOMNESS="..rnd.."%")

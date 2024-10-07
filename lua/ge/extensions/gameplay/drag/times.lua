@@ -49,14 +49,6 @@ end
 M.reset = reset
 
 
-local tmp = vec3()
-local function calculateDistanceFromStagePos(racer)
-  tmp:set(dragData.strip.lanes[racer.lane].stage.transform.pos)
-  tmp:setSub(racer.frontWheelCenter)
-  return tmp:dot(dragData.strip.lanes[racer.lane].stage.toEndNormalized)
-end
-
-
 local function velocityInAllUnits(speed)
   return string.format("%0.2fmph | %0.2fkm/h", speed * 2.23694, speed * 3.6)
 end
@@ -72,7 +64,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       racer.timers.timer.value = auxTimer
 
       -- get current distance
-      local distanceFromOrigin = -calculateDistanceFromStagePos(racer)
+      local distanceFromOrigin = gameplay_drag_utils.calculateDistanceFromStagePos(racer)
       racer.previousDistanceFromOrigin = racer.previousDistanceFromOrigin or distanceFromOrigin
 
       -- reaction time
@@ -116,7 +108,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       end
 
       -- store the current distance for next frame
-      racer.previousDistanceFromOrigin = currentDistanceFromOrigin
+      racer.previousDistanceFromOrigin = distanceFromOrigin
     end
   end
 end

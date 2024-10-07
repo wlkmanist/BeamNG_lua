@@ -133,7 +133,7 @@ local function findFittingPart(slotInfo, vehicleModel)
   for partId, part in pairs(partInventory) do
     for _, allowType in ipairs(slotInfo.allowTypes) do
       if part.location == 0 and part.slot == allowType and part.vehicleModel == vehicleModel then
-        return partId, allowType
+        return partId, slotInfo.name
       end
     end
   end
@@ -340,7 +340,7 @@ local function doesPartFitVehicle(inventoryId, part)
     if partInVehicle.description and partInVehicle.description.slotInfoUi then
       for slotName, slotInfo in pairs(partInVehicle.description.slotInfoUi) do
         for _, allowType in ipairs(slotInfo.allowTypes) do
-          if part.slot == allowType then return true, allowType end
+          if part.slot == allowType then return true, slotName end
         end
       end
     end

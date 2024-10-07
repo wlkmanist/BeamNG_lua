@@ -12,6 +12,8 @@ local BUF_SIZE = 131072
 local HEADER_SIZE = 4
 
 local tcomDebug = not shipping_build -- when true, errors in BeamNGpy protocol crash the communication and full stacktrace is shown
+local isRecording = nil
+local recorder = nil
 
 M.protocolVersion = 'v1.22'
 
@@ -25,7 +27,7 @@ local function unpackUnsignedInt32Network(c)
 end
 
 -- Simple set implementation from the LuaSocket samples
-M.newSet = function()
+local function newSet()
   local reverse = {}
   local set = {}
   return setmetatable(set, {
@@ -51,7 +53,7 @@ M.newSet = function()
   })
 end
 
-M.checkForClients = function(servers)
+local function checkForClients(servers)
   local ret = {}
   local readable, _, err = socket.select(servers, nil, 0)
   for _, input in ipairs(readable) do
@@ -61,7 +63,7 @@ M.checkForClients = function(servers)
   return ret
 end
 
-M.receive = function(skt)
+local function receive(skt)
   local lengthPacked, err = skt:receive(4)
 
   if err then
@@ -113,6 +115,22 @@ end
 
 local Request = {}
 
+local function checkIfRecording()
+  recorder = extensions['tech_techCapture']
+  if recorder == nil then
+    isRecording = false
+    return
+  end
+
+  if not recorder.isRecordingRequests() then
+    recorder = nil
+    isRecording = false
+    return
+  end
+
+  isRecording = true
+end
+
 local function handleRequest(handler, request)
   if not tcomDebug then
     local status, result = pcall(handler, request)
@@ -124,6 +142,13 @@ local function handleRequest(handler, request)
     log('E', logTag, 'A fatal error encountered during handling the command: ' .. result)
     request:sendBNGError(result)
     return false
+  else
+    if isRecording == nil then
+      checkIfRecording()
+    end
+    if isRecording then
+      isRecording = recorder.recordRequest(request)
+    end
   end
 
   local result = handler(request)
@@ -132,7 +157,31 @@ local function handleRequest(handler, request)
   return result
 end
 
-M.checkMessages = function(E, clients)
+local function callRequestHandler(E, request)
+  local msgType = request['type']
+  if msgType ~= nil then
+    local handler
+    if E.handlers then
+      handler = E.handlers[msgType]
+    end
+    if handler == nil then
+      msgType = 'handle' .. msgType
+      handler = E[msgType]
+    end
+    if handler ~= nil then
+      if handleRequest(handler, request) == false then
+        return false
+      end
+    else
+      extensions.hook('onSocketMessage', request)
+    end
+  else
+    log('E', logTag, 'Got message without message type: ' .. tostring(message))
+    request:sendBNGError('Got message without message type.')
+  end
+end
+
+local function checkMessages(E, clients)
   local message
   local readable, writable, err = socket.select(clients, clients, 0)
   local ret = true
@@ -154,20 +203,8 @@ M.checkMessages = function(E, clients)
 
     if message ~= nil then
       local request = Request:new(mp.unpack(message), skt)
-      local msgType = request['type']
-      if msgType ~= nil then
-        msgType = 'handle' .. msgType
-        local handler = E[msgType]
-        if handler ~= nil then
-          if handleRequest(handler, request) == false then
-            ret = false
-          end
-        else
-          extensions.hook('onSocketMessage', request)
-        end
-      else
-        log('E', logTag, 'Got message without message type: ' .. tostring(message))
-        request:sendBNGError('Got message without message type.')
+      if callRequestHandler(E, request) == false then
+        ret = false
       end
 
       if not request.handled then
@@ -187,7 +224,7 @@ M.checkMessages = function(E, clients)
   end
 end
 
-M.sanitizeTable = function(tab)
+local function sanitizeTable(tab)
   local ret = {}
 
   for k, v in pairs(tab) do
@@ -228,7 +265,7 @@ local function sendAll(skt, data, length)
   return nil
 end
 
-M.sendLegacyError = function(skt, error) -- send an error to a legacy BeamNGpy client so the client can parse it
+local function sendLegacyError(skt, error) -- send an error to a legacy BeamNGpy client so the client can parse it
   local message = mp.pack({bngError = error})
 
   local length = #message
@@ -241,33 +278,44 @@ M.sendLegacyError = function(skt, error) -- send an error to a legacy BeamNGpy c
   end
 end
 
-M.sendMessage = function(skt, message)
+local function sendMessage(skt, message)
   if skt == nil then
     return
   end
 
-  message = mp.packWorkBuffer(message)
-
-  --message = mp.pack(message)
-  local length = #message
+  message = mp.packPrefixWorkBuffer('\0\0\0\0', message)
+  local length = #message - HEADER_SIZE
   local lenPrefix = packUnsignedInt32Network(length)
   if length < 9000 then -- 6 * MTU
-    message = lenPrefix .. message
-    length = length + HEADER_SIZE
+    ffi.copy(message, lenPrefix, HEADER_SIZE)
+    length = #message
   else
     local err = sendAll(skt, lenPrefix, HEADER_SIZE)
+    message:get(HEADER_SIZE) -- consume the header part as it was already sent
     if err then
       log('E', logTag, 'Error writing to socket: ' .. tostring(err))
       return
     end
   end
-
   local err = sendAll(skt, message, length)
 
   if err then
     log('E', logTag, 'Error writing to socket: ' .. tostring(err))
     return
   end
+end
+
+
+local function openServer(port, ip)
+  ip = ip or '*'
+  local server, error = socket.bind(ip, port)
+  if server == nil then
+    log('E', logTag, error)
+    return nil
+  end
+  ip, port = server:getsockname()
+  log('I', logTag, 'Started listening on ' .. ip .. '/' .. tostring(port) .. '.')
+  return server
 end
 
 function Request:new(o, skt)
@@ -305,26 +353,27 @@ function Request:sendBNGValueError(message)
   self:sendResponse(message)
 end
 
-M.openServer = function(port, ip)
-  ip = ip or '*'
-  local server, error = socket.bind(ip, port)
-  if server == nil then
-    log('E', logTag, error)
-    return nil
-  end
-  ip, port = server:getsockname()
-  log('I', logTag, 'Started listening on ' .. ip .. '/' .. tostring(port) .. '.')
-  return server
-end
-
-M.enableDebug = function()
+local function enableDebug()
   log('I', logTag, 'Enabled tech communication debug mode.')
   tcomDebug = true
 end
 
-M.disableDebug = function()
+local function disableDebug()
   log('I', logTag, 'Disabled tech communication debug mode.')
   tcomDebug = false
 end
+
+M.newSet = newSet
+M.checkForClients = checkForClients
+M.receive = receive
+M.checkMessages = checkMessages
+M.sanitizeTable = sanitizeTable
+M.sendLegacyError = sendLegacyError
+M.sendMessage = sendMessage
+M.openServer = openServer
+M.enableDebug = enableDebug
+M.disableDebug = disableDebug
+
+M.callRequestHandler = callRequestHandler
 
 return M

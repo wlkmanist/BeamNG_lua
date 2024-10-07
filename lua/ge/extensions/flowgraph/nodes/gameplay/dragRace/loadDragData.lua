@@ -23,7 +23,7 @@ function C:work()
   if not self.pinIn.filepath.value then return end
 
   if not self.pinOut.flow.value then
-    gameplay_drag_general.setFilepath(self.pinIn.filepath.value)
+    gameplay_drag_general.loadDragDataForMission(self.pinIn.filepath.value)
     self.pinOut.flow.value = true
   else
     self.pinOut.flow.value = false

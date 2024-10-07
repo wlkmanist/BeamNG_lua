@@ -153,8 +153,10 @@ M.requestVehicleInfo = function()
   obj:queueGameEngineLua(cmd)
 end
 
-M.startConnection = function(ip)
-  if server == nil then
+M.startConnection = function(ip, skipServer)
+  if skipServer then
+    port = -1
+  elseif server == nil then
     server = tcom.openServer(0, ip)
     local _
     _, port = server:getsockname()
@@ -665,6 +667,18 @@ M.handleStopCosimulation = function(request)
   controller.getController('cosimulationCoupling').stop()
   controller.unloadControllerExternal('cosimulationCoupling')
   request:sendACK('CosimulationStopped')
+end
+
+M.handleAttachCouplers = function(request)
+  beamstate.attachCouplers(request.tag)
+end
+
+M.handleDetachCouplers = function(request)
+  beamstate.detachCouplers(request.tag, request.forceLocked, request.forceWelded)
+end
+
+M.handleToggleCouplers = function(request)
+  beamstate.toggleCouplers(request.tag, request.forceLocked, request.forceWelded, request.forceAutoCoupling)
 end
 
 return M

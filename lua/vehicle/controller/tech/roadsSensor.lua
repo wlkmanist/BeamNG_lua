@@ -32,6 +32,7 @@ local physicsUpdateTime = nil                                           -- How o
 local readings, readingIndex = {}, 1                                    -- Container and counter for the sensor readings.
 local isMapDataCached = false                                           -- A flag which indicates if the navigraph map data has been cached, and is ready to access here in vlua.
 local initTimer = 0                                                     -- A counter used to wait for the navgraph data to become available in vlua.
+local isVisualised = false                                              -- A flag which indicates whether the sensor will draw debug data or not.
 
 -- Navgraph state.
 local graph, coords, widths, normals = {}, {}, {}, {}                   -- Initialise a table to store the navigraph map, nodes, widths and normals.
@@ -63,9 +64,6 @@ local latestReading = {
   xStartL = 0.0, yStartL = 0.0, zStartL = 0.0,
   xStartR = 0.0, yStartR = 0.0, zStartR = 0.0,
   drivability = 0.0, speedLimit = 0.0, flag1way = 0.0 }
-
--- Projects a vector onto another vector.
-local function project(a, b) return (a:dot(b) / b:dot(b)) * b end
 
 -- Computes the closest point on the given line segment (a, b) to the given point p, in 2D.
 local function closestPointBetween2D(p, a, b)
@@ -203,6 +201,7 @@ local function init(data)
   readingIndex = 1
   physicsTimer = 0.0
   physicsUpdateTime = data.physicsUpdateTime
+  isVisualised = data.isVisualised
 end
 
 local function reset()
@@ -318,17 +317,19 @@ local function update(dtSim)
       -- Set the distances from the vehicle front axle midpoint to each estimated point.
       distToCenterline, distToLeft, distToRight = dSqBest, (pLeft - frontAxleMidpointProjGround):length(), (pRight - frontAxleMidpointProjGround):length()
 
-      -- For debugging.
-      --
-      obj.debugDrawProxy:drawSphere(0.1, pLeft + vec3(0, 0, 0.25), color(255, 0, 0, 255))
-      obj.debugDrawProxy:drawSphere(0.1, pInt + vec3(0, 0, 0.25), color(0, 255, 0, 255))
-      obj.debugDrawProxy:drawSphere(0.1, pRight + vec3(0, 0, 0.25), color(0, 0, 255, 255))
+      if isVisualised then
+        -- For debugging.
+        --
+        obj.debugDrawProxy:drawSphere(0.1, pLeft + vec3(0, 0, 0.25), color(255, 0, 0, 255))
+        obj.debugDrawProxy:drawSphere(0.1, pInt + vec3(0, 0, 0.25), color(0, 255, 0, 255))
+        obj.debugDrawProxy:drawSphere(0.1, pRight + vec3(0, 0, 0.25), color(0, 0, 255, 255))
 
-      obj.debugDrawProxy:drawSphere(0.2, p0 + vec3(0, 0, 0.25), color(255, 255, 255,255))
-      obj.debugDrawProxy:drawSphere(0.2, p1 + vec3(0, 0, 0.25), color(255, 155, 155,255))
-      obj.debugDrawProxy:drawSphere(0.2, p2 + vec3(0, 0, 0.25), color(155, 155, 255,255))
-      obj.debugDrawProxy:drawSphere(0.2, p3 + vec3(0, 0, 0.25), color(255, 255, 255,255))
-      --
+        obj.debugDrawProxy:drawSphere(0.2, p0 + vec3(0, 0, 0.25), color(255, 255, 255,255))
+        obj.debugDrawProxy:drawSphere(0.2, p1 + vec3(0, 0, 0.25), color(255, 155, 155,255))
+        obj.debugDrawProxy:drawSphere(0.2, p2 + vec3(0, 0, 0.25), color(155, 155, 255,255))
+        obj.debugDrawProxy:drawSphere(0.2, p3 + vec3(0, 0, 0.25), color(255, 255, 255,255))
+        --
+      end
     end
   end
 

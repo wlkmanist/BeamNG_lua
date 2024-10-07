@@ -94,10 +94,6 @@ if not _G['__gpuFlexMesh_t_cdef'] then
 
   const gpuMesh_t* bng_getGPUMesh(int id);
   void bng_freeGPUMesh(int id, const gpuMesh_t* meshInfo);
-
-  const unsigned char* bng_base64_encode(const unsigned char* src, size_t len, const size_t* out_len);
-  const unsigned char* bng_base64_decode(const unsigned char* src, size_t len, const size_t* out_len);
-  void bng_base64_free(const unsigned char* buffer);
   ]]
 
   rawset(_G, '__gpuFlexMesh_t_cdef', true)
@@ -168,23 +164,23 @@ local function _addBuffer(gltfRoot, data, dataSize, name)
     bufferID = #binaryBuffers - 1
     --log('D', 'Buffers binary'..dumps(bufferID))
   else
+    local dataString = ffi.string(data, dataSize)
+
     -- then we encode or write the data out
     if M.embedBuffers then
       -- log('D', 'Buffers are to be embedded.')
       -- write index buffer in base64 encoding
-      local out_len = ffi.new('size_t[1]', 0)
-      local res = ffi.C.bng_base64_encode(ffi.cast('unsigned char*', data), dataSize, out_len)
+      local res = mime.b64(dataString)
       if not res then
         log('E', 'Unable to base64 encode buffer.')
         return
       end
       -- writeFile("test.b64", ffi.string(res))
-      buffer.uri = base64Prefix .. ffi.string(res, out_len[0])
+      buffer.uri = base64Prefix .. res
       -- log('D', 'Embedded base64-encoded buffer of length: ' .. tostring(out_len[0]))
     else
       log('D', 'Buffers are to be stored externally.')
       local binaryFilename = string.format(bufferPathPattern, bufferID, name)
-      local dataString = ffi.string(data, dataSize)
       writeFile(binaryFilename, dataString)
       local p, filename, ext
       p, filename, ext = path.split(binaryFilename)

@@ -224,9 +224,11 @@ local function setPursuitMode(mode, targetId, policeId) -- sets pursuit mode; -1
       if targetVeh.role.state == 'wanted' then -- "wanted" vehicles will always try to flee
         local policePlayer = be:getPlayerVehicleID(0) == policeId and policeVehs[policeId]
         if gameplay_traffic.showMessages and policePlayer and not policePlayer.role.flags.busy then
-          local str = translateLanguage('ui.traffic.suspectFlee', 'A suspect is fleeing from you! Vehicle:')
-          str = str..' '..targetVeh.model.name
-          ui_message(str, 5, 'traffic', 'traffic')
+          if targetVeh.model.name ~= 'Simplified Traffic Vehicles' then -- TEMP: we need to fix this so that simplified traffic vehicles give a model name
+            local str = translateLanguage('ui.traffic.suspectFlee', 'A suspect is fleeing from you! Vehicle:')
+            str = str..' '..targetVeh.model.name
+            ui_message(str, 5, 'traffic', 'traffic')
+          end
         end
 
         targetVeh.role.keepActionOnRefresh = false

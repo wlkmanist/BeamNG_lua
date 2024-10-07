@@ -12,6 +12,7 @@ local treeTimer = 0
 local treeFinished = false
 local dragData
 
+--TODO: if there is a prefab in the scene, just look at it and use its lights and display.
 local function initTree()
   local treeLights = {
     {
@@ -188,7 +189,7 @@ local timerFlag = false
 local function onUpdate(dtReal, dtSim, dtRaw)
   if startTree then
     treeTimer = treeTimer + dtSim
-    if dragData.strip.prefabs.christmasTree.treeType == ".400" then
+    if dragData.prefabs.christmasTree.treeType == ".400" then
       if treeTimer > rand and not timerFlag then
         treeTimer = 0
         timerFlag = true

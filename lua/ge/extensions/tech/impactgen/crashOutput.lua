@@ -157,11 +157,6 @@ local function requestMesh(veh)
 end
 
 local function renderPerspective(request, origin, angle, idx)
-  if cameraRequestWaitFrames > 20 then
-    log('E', 'crashOutput', 'Camera request time out, sending a new request.')
-    cameraRequest = nil
-  end
-
   if not cameraRequest then
     log('I', 'crashOutput', 'Rendering perspective ' .. idx .. '...')
     cameraRequestWaitFrames = 0
@@ -217,7 +212,6 @@ M.onInit = function()
   end
 
   setExtensionUnloadMode(M, 'manual')
-  Engine.Annotation.enable(true)
   extensions.load('tech/partAnnotations')
   extensions.load('util/export')
 end
@@ -298,6 +292,7 @@ end
 M.handleImpactGenGenerateOutput = function(request)
   request:markHandled() -- we return responses later than this frame
 
+  Engine.Annotation.enable(true)
   camera = sensors.createCamera(0, cameraArgs)
   local veh = getPlayerVehicle(0)
 

@@ -977,14 +977,13 @@ end
 
 local function abortUpcommingLaneChange()
   if not currentRoute then return end
-  local plan = currentRoute.plan
-  local lastPlanPidx = plan[plan.planCount].pathidx
   if currentRoute.laneChanges[1] then
-    currentRoute.laneChanges[1][2] = 0
+    currentRoute.laneChanges[1].side = 0
   end
+  local lastPlanPidx = currentRoute.plan[currentRoute.plan.planCount].pathidx
   for _, lc in ipairs(currentRoute.laneChanges) do
-    if lc[1] <= lastPlanPidx then
-      lc[2] = 0
+    if lc.pathIdx <= lastPlanPidx then
+      lc.side = 0
     end
   end
 end
@@ -1747,9 +1746,9 @@ local function createNewRoute(path)
   return {
     path = path,
     plan = table.new(15, 10),
-    laneChanges = {}, -- 1: path index at which a lane change is needed, 2: side
+    laneChanges = {}, -- array: in the array each lane change is a dict with an idx key (path index at which lane change occurs) and a side key (direction of lane change)
     lastLaneChangeIdx = 2, -- path node up to which we have checked for a posible lane change
-    pathDists = {0} -- distance from beggining of path to node at index i
+    pathLength = {0} -- distance from beggining of path to node at index i
   }
 end
 
@@ -1781,7 +1780,7 @@ local function planAhead(route, baseRoute)
       route.path, commonPathEnd = mergePathPrefix(baseRoute.path, route.path, bsrPlan[2].pathidx)
       route.lastLaneChangeIdx = 2
       table.clear(route.laneChanges)
-      route.pathDists = {0}
+      route.pathLength = {0}
       if commonPathEnd >= 1 then
         local refpathidx = bsrPlan[2].pathidx - 1
         local planLen, planCount = 0, 0
@@ -1942,22 +1941,25 @@ local function planAhead(route, baseRoute)
     plan[1].roadSpeedLimit = plan[2].roadSpeedLimit
   end
 
-  local lastPathDistsIdx = #route.pathDists
-  if lastPathDistsIdx < #route.path then
-    table.insert(route.pathDists,
-      mapData.positions[route.path[lastPathDistsIdx + 1]]:distance(mapData.positions[route.path[max(1, lastPathDistsIdx)]])
-      + route.pathDists[lastPathDistsIdx])
+  -- Calculate the length of the path at each path node one segment per call of planAhead
+  if not route.pathLength[#route.path] then
+    local n = #route.pathLength
+    table.insert(
+      route.pathLength,
+      mapData.positions[route.path[n+1]]:distance(mapData.positions[route.path[max(1, n)]]) + route.pathLength[n]
+    )
   end
 
+  -- check path node at lastLaneChangeIdx for a possible lane change
   if route.lastLaneChangeIdx < #route.path then
-    local wp1, wp2, wp3 = route.path[route.lastLaneChangeIdx-1], route.path[route.lastLaneChangeIdx], route.path[route.lastLaneChangeIdx+1]
+    local wp1, wp2 = route.path[route.lastLaneChangeIdx-1], route.path[route.lastLaneChangeIdx]
     if numOfLanesInDirection(getEdgeLaneConfig(wp1, wp2), '+') > 1 then
       local minNode = roadNaturalContinuation(wp1, wp2)
+      local wp3 = route.path[route.lastLaneChangeIdx+1]
       if minNode and minNode ~= wp3 then -- road natural continuation at wp2 is not in our path
-        local wp2Pos = mapData.positions[wp2]
-        local edgeNormal = gravityDir:cross(mapData.positions[minNode] - wp2Pos):normalized()
+        local edgeNormal = gravityDir:cross(mapData.positions[minNode] - mapData.positions[wp2]):normalized()
         local side = sign2(edgeNormal:dot(mapData.positions[wp3]) - edgeNormal:dot(mapData.positions[minNode]))
-        table.insert(route.laneChanges, {route.lastLaneChangeIdx, side})
+        table.insert(route.laneChanges, {pathIdx = route.lastLaneChangeIdx, side = side, alternate = wp3})
       end
     end
     route.lastLaneChangeIdx = route.lastLaneChangeIdx + 1
@@ -2362,23 +2364,25 @@ local function planAhead(route, baseRoute)
   --end
   local aiWidthMargin = ai.width * 0.5 -- TODO
 
-  while route.laneChanges[1] and plan[2].pathidx > route.laneChanges[1][1] do -- remove this lane change if we have gone past it
+  -- remove lane change if vehicle has gone past it
+  while route.laneChanges[1] and plan[2].pathidx > route.laneChanges[1].pathIdx do
     electrics.stop_turn_signal()
     table.remove(route.laneChanges, 1)
   end
 
   local skipLast = 1
   local lastNodeLatXnorm, lastNodeLimLeft, lastNodeLimRight
-  if route.laneChanges[1] and math.floor(plan[2].rangeLaneCount + 0.5) > 1 and route.laneChanges[1][2] ~= 0 then
-    local exitNodeIdx = route.laneChanges[1][1]
+  if route.laneChanges[1] and math.floor(plan[2].rangeLaneCount + 0.5) > 1 and route.laneChanges[1].side ~= 0 then
+    local exitNodeIdx = route.laneChanges[1].pathIdx
     local distToExit
     if plan[plan.planCount].pathidx > exitNodeIdx then
       distToExit = aiPos:distance(mapData.positions[route.path[exitNodeIdx]])
     else
-      distToExit = plan.planLen + max(0, route.pathDists[route.laneChanges[1][1]] - route.pathDists[plan[plan.planCount].pathidx])
+      distToExit = plan.planLen + max(0, route.pathLength[route.laneChanges[1].pathIdx] - route.pathLength[plan[plan.planCount].pathidx])
     end
-    if distToExit < min(600, max(15, aiSpeed * aiSpeed * 0.7)) then
-      local side = route.laneChanges[1][2]
+    if distToExit < min(600, max(15, aiSpeed * aiSpeed * 0.7)) or route.laneChanges[1].commit then
+      route.laneChanges[1].commit = true
+      local side = route.laneChanges[1].side
       if side < 0 then
         if (electrics.values.turnsignal or -1) >= 0 then electrics.toggle_left_signal() end
       else
@@ -2693,7 +2697,7 @@ local function newManualPath()
         plan = currentRoute.plan,
         laneChanges = currentRoute.laneChanges,
         lastLaneChangeIdx = currentRoute.lastLaneChangeIdx,
-        pathDists = currentRoute.pathDists
+        pathLength = currentRoute.pathLength
       }
     else
       n1, n2, dist = mapmgr.findClosestRoad(aiPos)
@@ -3870,11 +3874,11 @@ local function updateGFX(dtGFX)
       end
       currentRoute.lastLaneChangeIdx = currentRoute.lastLaneChangeIdx - k
       for _, v in ipairs(currentRoute.laneChanges) do
-        v[1] = v[1] - k
+        v.pathIdx = v.pathIdx - k
       end
-      local pathDistK = currentRoute.pathDists[k + 1]
-      for i = 1, #currentRoute.pathDists do
-        currentRoute.pathDists[i] = currentRoute.pathDists[k+i] and currentRoute.pathDists[k+i] - pathDistK or nil
+      local pathDistK = currentRoute.pathLength[k+1]
+      for i = 1, #currentRoute.pathLength do
+        currentRoute.pathLength[i] = currentRoute.pathLength[k+i] and currentRoute.pathLength[k+i] - pathDistK or nil
       end
     end
 

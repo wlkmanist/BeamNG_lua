@@ -18,13 +18,15 @@ local rollVelSmoother, pitchVelSmoother, yawVelSmoother
 local rollAccSmoother, pitchAccSmoother, yawAccSmoother
 
 local function updateProtocol(protocol, dtSim)
+  protocol.dtSim = protocol.dtSim + dtSim
   local now = protocol.updateTimer:stop() * 0.001 -- this has to be wall clock time (not sim time), the user wants certain Hz of update rate, regardless of slowmotion mode, etc
   local elapsed = now - protocol.nextUpdate
   local pendingUpdates = math.ceil(elapsed / protocol.updatePeriod)
   protocol.nextUpdate = protocol.nextUpdate + protocol.updatePeriod * pendingUpdates
   if pendingUpdates > 0 then
     ffi.fill(protocol.packet, protocol.packetSize) -- memset to zero
-    protocol.module.fillStruct(protocol.packet, dtSim)
+    protocol.module.fillStruct(protocol.packet, protocol.dtSim)
+    protocol.dtSim = 0
     local data = ffi.string(protocol.packet, protocol.packetSize)
     protocol.udpSocket:sendto(data, protocol.ip, protocol.port)
   end
@@ -129,19 +131,6 @@ local function reset()
   end
 end
 
-local function destroyProtocol(protocol)
-  if protocol.udpSocket then
-    protocol.udpSocket:close()
-    protocol.udpSocket = nil
-  end
-  local idx = tableFindKey(protocols, protocol)
-  if not idx then
-    log("E", "", "Unable to destroy protocol '"..dumps(protocol.moduleName).."', not found in protocols table")
-    return
-  end
-  table.remove(protocols, idx)
-end
-
 -- the config looks similar to: { enabled=true, name="motionSim", ...}
 local function initProtocolFromConfig(name)
   local protocol = {}
@@ -161,6 +150,7 @@ local function initProtocolFromConfig(name)
   protocol.physicsStepUsed = protocol.module.isPhysicsStepUsed()
   protocol.updateRate = protocol.module.getMaxUpdateRate()
   protocol.updatePeriod = 1 / protocol.updateRate
+  protocol.dtSim = 0
   protocol.updateTimer = HighPerfTimer()
   protocol.updateTimer:reset()
   protocol.nextUpdate = protocol.updateTimer:stop()
@@ -203,8 +193,12 @@ end
 local function destroy()
   for _,protocol in ipairs(protocols) do
     log("D", "", string.format("Shutdown of protocol %q for vehicle "..objectId.." ("..vehiclePath..") at %s:%d with an update rate of %d Hz (%s)", protocol.name, protocol.ip, protocol.port, protocol.updateRate, tostring(protocol)))
-    destroyProtocol(protocol)
+    if protocol.udpSocket then
+      protocol.udpSocket:close()
+      protocol.udpSocket = nil
+    end
   end
+  table.clear(protocols)
 end
 
 local protocolsDir = "/lua/vehicle/protocols/"

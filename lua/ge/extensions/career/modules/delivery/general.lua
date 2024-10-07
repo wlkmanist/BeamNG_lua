@@ -1040,7 +1040,7 @@ M.getDeliveryModePenalty = function(onlyVehIdsAsKeys)
         if not cargo._transientMove then
           penalty.money = penalty.money - cargo.rewards.money * (abandonFac + modFac)
         end
-        if cargo.organization then
+        if cargo.organization and penalty[cargo.organization.."Reputation"] then
           penalty[cargo.organization.."Reputation"] = penalty[cargo.organization.."Reputation"] or 0
           penalty[cargo.organization.."Reputation"] = penalty[cargo.organization.."Reputation"] - math.ceil(cargo.rewards[cargo.organization.."Reputation"])
         end

@@ -44,7 +44,8 @@ local function create(data)
     sensorId = decodedData.sensorId,
     GFXUpdateTime = decodedData.GFXUpdateTime,
     physicsUpdateTime = decodedData.physicsUpdateTime,
-    isSendImmediately = decodedData.isSendImmediately }
+    isSendImmediately = decodedData.isSendImmediately,
+    isVisualised = decodedData.isVisualised }
 
   roadsSensors[decodedData.sensorId] = {
     data = controllerData,

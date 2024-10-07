@@ -370,6 +370,21 @@ local function registerDefaultMenus()
       })
     end
   end})
+
+  addEntry({ level = '/', generator = function(entries)
+    if getPlayerVehicle(0) and settings.getValue('GraphicDynMirrorsEnabled') and not core_input_actionFilter.isActionBlocked("switch_camera_next") then
+      table.insert(entries, {
+        level = "/",
+        title = "ui.radialmenu2.Mirrors",
+        icon = "mirrorInteriorMiddle",
+        priority = 95,
+        onSelect = function()
+          guihooks.trigger('ChangeState', {state = 'menu.vehicleconfig.vue.tuning.mirrors', params = {exitRoute = "play"}})
+          return {'hideMeOnly'}
+        end
+      })
+    end
+  end})
   --dump(menuTree)
 end
 

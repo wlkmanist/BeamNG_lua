@@ -26,6 +26,7 @@ local conSleep = 1
 local stepsLeft = 0
 
 local blocking = nil
+local blockingData = nil
 local waiting = nil
 local responsePending = nil
 
@@ -94,19 +95,21 @@ local function addFrameDelayFunc(func, delay)
   table.insert(frameDelayFuncQueue, {callback=func, frameCountDown=delay})
 end
 
-local function block(reason, request)
+local function block(reason, request, data)
   if blocking ~= nil then
     request:sendBNGError('Cannot fullfill this request. It needs blocking, but BeamNG.tech is already blocked (\'' .. reason .. '\').')
     return false
   end
   blocking = reason
   waiting = request
+  blockingData = data
 
   return true
 end
 
 local function stopBlocking()
   blocking = nil
+  blockingData = nil
   waiting = nil
 end
 
@@ -382,6 +385,8 @@ M.openServer = function(port)
 
   if debug == true then
     tcom.enableDebug()
+    extensions.load('tech/techCapture')
+    tech_techCapture.enableRequestCapture()
   elseif debug == false then
     tcom.disableDebug()
   end
@@ -577,6 +582,13 @@ M.onScenarioRestarted = function(scenario)
     scenario.countDownTime = 0
 
     guihooks.trigger('ScenarioPlay')
+
+    local restrictActions = blockingData
+    if not restrictActions then -- allow freeroam-like controls of the scenario
+      core_input_actionFilter.clear(0)
+      core_gamestate.setGameState('exploration', nil, 'freeroam', 'freeroam')
+    end
+
     waiting:sendACK('ScenarioRestarted')
     stopBlocking()
   end
@@ -717,7 +729,7 @@ M.handleRestartScenario = function(request)
   local scenario = scenario_scenarios and scenario_scenarios.getScenario()
 
   if scenario then
-    if not block('restartScenario', request) then return false end
+    if not block('restartScenario', request, request['restrict_actions']) then return false end
     scenario_scenarios.restartScenario()
   else
     local fgMgr = getRunningFlowgraphManager()
@@ -854,9 +866,18 @@ M.handleStartVehicleConnection = function(request)
     end
   end
 
+  if tech_techCapture then
+    command = [[
+      extensions.load("tech/techCapture")
+      tech_techCapture.import(lpack.decode(%q))
+    ]]
+    veh:queueLuaCommand(string.format(command, lpack.encode(tech_techCapture.export())))
+  end
+
   if not block('vehicleConnection', request) then return false end
 
-  command = 'tech_techCore.startConnection(\'' .. tcomParams.ip .. '\')'
+  local skipServer = server == nil
+  command = string.format('tech_techCore.startConnection(\'%s\', %s)', tcomParams.ip, tostring(skipServer))
   veh:queueLuaCommand(command)
   return true
 end

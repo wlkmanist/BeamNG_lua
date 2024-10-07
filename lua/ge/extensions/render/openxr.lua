@@ -17,6 +17,8 @@ local buttonOkLua     = "extensions.render_openxr.closeWelcome(true)"
 local buttonNoVulkanLua="extensions.render_openxr.closeWelcome(false)"
 local buttonCancelLua = "extensions.render_openxr.closeWelcome(false)"
 
+local framesUntilCenter = nil
+
 local M = {}
 M.stateString = "disabled" -- can also be "enabled" and "welcome"
 M.cefDialogOpen = nil
@@ -25,6 +27,13 @@ M.state.systemName = unknownSystemName
 
 local variableOnUpdate = nop
 local function constOnUpdate(...)
+  if framesUntilCenter then
+    framesUntilCenter = framesUntilCenter - 1
+    if framesUntilCenter < 0 then
+      framesUntilCenter = nil
+      M.center(0) -- end centering
+    end
+  end
   variableOnUpdate(...)
 end
 
@@ -242,8 +251,9 @@ end
 local lastCenterRequest = false
 local function center(value)
   if not value then
-    center(1)
-    center(0)
+    -- this is a one-time center request (rather than a long continuous hold-and-release center request)
+    center(1) -- begin centering
+    framesUntilCenter = 1 -- stop centering after one frame (otherwise C++ simply cancels the centering request)
     return
   end
   local request = value > 0.2 and true or false

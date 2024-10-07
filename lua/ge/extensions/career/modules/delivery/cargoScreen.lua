@@ -764,7 +764,7 @@ local function moveMaterialFromUi(materialType, cargoType, amount, targetLocatio
       arrayConcat(allValidStorages, emptyPartialStorages)
     elseif targetLocation.type == "vehicle" then
       for _, con in ipairs(playerCargoContainers) do
-        if con.containerId == targetLocation.containerId then
+        if con.containerId == targetLocation.containerId and con.vehId == targetLocation.vehId then
           table.insert(allValidStorages, con)
         end
       end
@@ -785,6 +785,8 @@ local function moveMaterialFromUi(materialType, cargoType, amount, targetLocatio
     if remainingVolume > 0 then
       log("W","",string.format("Tried loading %0.1fL %s from %s, but %0.1fL remained unloaded!",amount, materialType, fac.id, remainingVolume))
     end
+    -- finally notify the UI that this action is done
+    guihooks.trigger("requestCargoDataSimple")
   end)
 end
 M.moveMaterialFromUi = moveMaterialFromUi

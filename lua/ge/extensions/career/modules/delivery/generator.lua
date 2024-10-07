@@ -785,6 +785,7 @@ local function addMaterialAsParcelToContainer(con, storage, amount, sourceFacId,
     automaticDropOff = false,
     hiddenInFacility = true,
     sourceStorage = storage.id,
+    organization = fac.associatedOrganization,
   }
 
   local label, desc = dParcelMods.getLabelAndShortDescription(materialData.type)
@@ -891,7 +892,6 @@ M.finalizeMaterialDistances = finalizeMaterialDistances
 local function finalizeMaterialDistanceRewards(item, destination)
   --(3+(max(0,($D24/2000)-1))) * (E$23/400)
   local distance = getDistanceBetweenFacilities(item.origin, destination)
-  dump(distance, item.slots)
   local xpAmount = round((3+math.max(0,(distance/2000)-1)) * (item.slots / 400))
   item.rewards.beamXP = xpAmount
   item.rewards.labourer = xpAmount
