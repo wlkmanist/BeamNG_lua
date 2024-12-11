@@ -18,7 +18,9 @@ C.pinSchema = {
   { dir = 'out', type = 'number', name = 'lane', description = ""},
   { dir = 'out', type = 'bool', name = 'isDesqualified', description = ""},
   { dir = 'out', type = 'string', name = 'desqualifiedReason', description = ""},
-  { dir = 'out', type = 'bool', name = 'isFinished', description = ""}
+  { dir = 'out', type = 'bool', name = 'isFinished', description = ""},
+  { dir = 'out', type = 'vec3', name = 'spawnPos', description = ""},
+  { dir = 'out', type = 'quat', name = 'spawnRot', description = ""},
 }
 
 C.tags = {'gameplay', 'utils'}
@@ -26,10 +28,12 @@ C.tags = {'gameplay', 'utils'}
 
 function C:_executionStarted()
   self.data = {}
+  self.dragData = {}
 end
 
 function C:work()
   self.data = gameplay_drag_general.getRacerData(self.pinIn.vehId.value)
+  self.dragData = gameplay_drag_general.getData()
 
   if self.pinOut.isPlayable:isUsed() then
     self.pinOut.isPlayable.value = self.data.isPlayable
@@ -45,6 +49,14 @@ function C:work()
   end
   if self.pinOut.isFinished:isUsed() then
     self.pinOut.isFinished.value = self.data.isFinished
+  end
+
+  if self.pinOut.spawnPos:isUsed() then
+    self.pinOut.spawnPos.value = self.dragData.strip.lanes[self.data.lane].waypoints.spawn.transform.pos:toTable()
+  end
+
+  if self.pinOut.spawnRot:isUsed() then
+    self.pinOut.spawnRot.value = self.dragData.strip.lanes[self.data.lane].waypoints.spawn.transform.rot:toTable()
   end
 
 end

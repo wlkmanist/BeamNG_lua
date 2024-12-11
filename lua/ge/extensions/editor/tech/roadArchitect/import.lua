@@ -366,7 +366,7 @@ local function addLaneWAndH(poly, sec, laneKeys, lengths)
 
         -- Add the lane height offsets, if they are provided.
         local lHeight = getApprCubic(lane.heights, sNode, sLaneSec)
-        if lHeight then
+        if lHeight and lHeight.inner and lHeight.outer then
           if j < 0 then
             poly[i].heightsL[j] = im.FloatPtr(lHeight.inner)
             poly[i].heightsR[j] = im.FloatPtr(lHeight.outer)
@@ -710,7 +710,7 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
       end
       if importTT2I then
         roadMgr.computeAllRoadRenderData()
-        terra.terraformMultiRoads(domainOfInfluence, margin, nil)
+        terra.terraformMultiRoads(domainOfInfluence, margin, nil, true)
       end
 
     end,

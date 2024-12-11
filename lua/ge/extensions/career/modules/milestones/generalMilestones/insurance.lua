@@ -2,7 +2,6 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
-M.dependencies = {"career_modules_milestones_milestones", "career_modules_insurance"}
 local id = "insurance_repair_claims"
 local stepsInfo = {1,5,10,20,50}
 local milestones

@@ -14,6 +14,11 @@ local gameplayContext = "freeroam"
 local ext
 
 local levelDir = ""
+local defaultSaveSlot = 'default'
+local currentSaveSlotName = defaultSaveSlot
+local saveRoot = 'settings/cloud/'
+local currentSavePath = saveRoot .. defaultSaveSlot .. "/"
+local allDragTimesData
 
 local selectedVehicle = -1
 local search = require('/lua/ge/extensions/editor/util/searchUtil')()
@@ -24,11 +29,14 @@ local needsCollisionRebuild = false
 local currentLevel = ""
 local initFlagCounter = 0
 
+local careerRewards = 5 --beamXP
+
 ----------------------------
 -- Clearing and unloading --
 ----------------------------
 
 local function unloadAllExtensions()
+  extensions.hook("onBeforeDragUnloadAllExtensions")
   extensions.unload('gameplay_drag_display')
   extensions.unload('gameplay_drag_times')
   extensions.unload('gameplay_drag_dragTypes_headsUpDrag')
@@ -51,6 +59,27 @@ end
 -- Loading data from files --
 -----------------------------
 
+local function setSavePath(path)
+  currentSavePath = path and path or (saveRoot .. defaultSaveSlot .. "/")
+end
+local function setCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  if not savePath then return end
+  setSavePath(savePath .. "/career/")
+end
+
+-- this should only be loaded when the career is active
+-- local function onSaveCurrentSaveSlot(currentSavePath, oldSaveDate)
+--   setSavePath(currentSavePath .. "/career/")
+--   for id, dirtyDate in pairs(allDragTimesData) do
+--     if dirtyDate > oldSaveDate then
+--       if gameplay_missions_progress.saveMissionSaveData(id, dirtyDate) == false then
+--         career_saveSystem.saveFailed()
+--       end
+--     end
+--   end
+-- end
+
 local function loadTransform(t)
   for key, data in pairs(t) do
     if key == "rot" then
@@ -59,15 +88,8 @@ local function loadTransform(t)
       t[key] = vec3(data.x, data.y, data.z)
     end
   end
-
-  -- TODO: deduplicate
-  local rot = t.rot
-  local scl = t.scl
   -- compute local unit vectors
-  local x, y, z = rot * vec3(scl.x,0,0), rot * vec3(0,scl.y,0), rot * vec3(0,0,scl.z)
-  t.x = x
-  t.y = y
-  t.z = z
+  t.x, t.y, t.z = t.rot * vec3(t.scl.x,0,0), t.rot * vec3(0,t.scl.y,0), t.rot * vec3(0,0,t.scl.z)
 end
 
 local function loadDragStripData(filepath)
@@ -111,21 +133,27 @@ local function loadDragStripData(filepath)
   data.isStarted = false
 
   data.racers = {}
-  log('I', logTag, 'Loaded drag strip from: '.. filepath)
+  --log('I', logTag, 'Loaded drag strip from: '.. filepath)
 
+  local dir, filename, ext = path.split(filepath, true)
+  filename = filename:gsub('.'..ext, "")
+  data._file = dir..filename
+  data.saveFile = data._file .. "/history.json"
+  --dumpz(data, 1)
   return data
 end
+M.loadDragStripData = loadDragStripData
 
 local function loadPrefabs(data)
   if not data then return end
 
-  log("I", logTag, 'Loading Waypoints...')
+  --log("I", logTag, 'Loading Waypoints...')
   for laneNum, lane in ipairs(data.strip.lanes) do
     for key, waypoint in pairs(lane.waypoints) do
       if waypoint.waypoint  ~= nil then
         local wp = scenetree.findObject(waypoint.name)
         if not wp then
-          log("I", logTag, 'Creating waypoint named "'..waypoint.name..'"')
+          --log("I", logTag, 'Creating waypoint named "'..waypoint.name..'"')
           wp = createObject('BeamNGWaypoint')
           wp:setPosition(waypoint.transform.pos)
           local scl = waypoint.transform.scl or {x = 3, y = 3, z = 3}
@@ -142,19 +170,19 @@ local function loadPrefabs(data)
   end
 
   --Spawn all prefabs aviable in the file
-  log("I", logTag, 'Loading Prefabs...')
+  --log("I", logTag, 'Loading Prefabs...')
   for prefabName, prefabData in pairs(data.prefabs) do
     if prefabData.path and prefabData.isUsed then
       local existingPrefab = scenetree.findObject(prefabName)
       if not existingPrefab then
-        log("I", logTag, 'Spawning Prefab: '..prefabData.path)
+        --log("I", logTag, 'Spawning Prefab: '..prefabData.path)
         local scenetreeObject = spawnPrefab(Sim.getUniqueName(prefabName) , prefabData.path, 0 .. " " .. 0 .. " " .. 0, "0 0 1 0", "1 1 1", false)
         scenetreeObject.canSave = false
         if scenetree.MissionGroup then
           scenetree.MissionGroup:add(scenetreeObject)
           prefabData.prefabId = scenetreeObject:getID()
           needsCollisionRebuild = true
-          log("I", logTag, "Prefab ".. prefabName .." added to MissionGroup")
+          --log("I", logTag, "Prefab ".. prefabName .." added to MissionGroup")
         else
           log("E","","No missiongroup found! MissionGroup = " .. scenetree.MissionGroup)
         end
@@ -213,6 +241,19 @@ local function setupRacer(vehId, lane)
     return
   end
 
+  local oldData = jsonReadFile(currentSavePath .. "dragTimes.json") or {}
+
+  local timesKey =  M.generateHashFromFile(vehId)
+
+  local dial = 10
+  if oldData[timesKey] then
+    dial = oldData[timesKey].time_1_4
+  else
+    --dumpz(core_vehicles.getVehicleDetails(vehId), 2)
+    if core_vehicles.getVehicleDetails(vehId).configs["Drag Times"] then
+      dial = core_vehicles.getVehicleDetails(vehId).configs["Drag Times"].time_1_4 or 10
+    end
+  end
   --Create a table for this vehicle and add to racers
   local racer = {
     vehId = vehId,
@@ -228,8 +269,7 @@ local function setupRacer(vehId, lane)
     canBeTeleported = dragData.canBeTeleported, --if the vehicle can be teleported
     canBeReseted = dragData.canBeReseted, --if the vehicle can be reseted when teleported, if not, if the player breaks the vehicle it will not be reseted and the player will have to restart the race or keep with a broken vehicle
     timers = {
-      -- TODO: this is duplicted in times.lua!
-      dial = {type = "dialTimer", value = 0},
+      dial = {type = "dialTimer", value = dial, isSet = true},
       timer = {type = "timer", value = 0},
       reactionTime = {type = "reactionTimer", value = 0, distance = 0.2, isSet = false, label = "Reaction Time"},
       time_60 = {type = "distanceTimer", value = 0, distance = 18.288, isSet = false, label = "Distance: 60ft / 18.28m"},
@@ -239,7 +279,7 @@ local function setupRacer(vehId, lane)
       time_1_4 = {type = "distanceTimer", value = 0, distance = 402.336, isSet = false, label = "Distance: 1/4th mile / 402.34m"},
       velAt_1_8 = {type = "velocity", value = 0, distance = 201.168, isSet = false, label = "Distance: 1/8th mile / 201.16m"},
       velAt_1_4 = {type = "velocity", value = 0, distance = 402.336, isSet = false, label = "Distance: 1/4th mile / 402.34m"}
-    }
+    },
   }
 
   -- add working vector3 fields
@@ -337,7 +377,7 @@ local function setupRacer(vehId, lane)
     M.selectElement(vehId) --select the vehicle in the editor
   end
 
-  log('I', logTag, "Loaded vehicle " .. vehId .. " at lane: " .. lane)
+  --log('I', logTag, "Loaded vehicle " .. vehId .. " at lane: " .. lane)
   dragData.racers[vehId] = racer
 end
 M.setupRacer = setupRacer
@@ -356,7 +396,7 @@ M.loadDragDataForMission = function (filepath)
   extensions.load('gameplay_drag_dragTypes_headsUpDrag')
   ext = gameplay_drag_dragTypes_headsUpDrag
   dragData = data
-  log('I', logTag, 'Loaded data from file: ' .. filepath)
+  --log('I', logTag, 'Loaded data from file: ' .. filepath)
 end
 
 
@@ -368,6 +408,9 @@ M.setVehicles = function (vehIds)
       return
     end
     dragData.racers[data.id].isPlayable = data.isPlayable
+    if data.dial and data.dial > 0 then
+      dragData.racers[data.id].timers.dial.value = data.dial
+    end
   end
 end
 
@@ -377,8 +420,14 @@ end
 ------------------------------
 
 local function init()
-  return loadDragStripData(levelDir .. "/dragstrips/dragStripData.dragData.json")
+  --return loadDragStripData(levelDir .. "/dragstrips/dragStripData.dragData.json")
 end
+
+local function setDragRaceData(data)
+  if dragData then return end
+  dragData = data
+end
+M.setDragRaceData = setDragRaceData
 
 local tempLanePos = vec3()
 local function getLaneDependingOnDistanceToStage(vehPos)
@@ -400,6 +449,7 @@ local elapsedTime = 0
 local inZone = false
 local dist = 1000
 local function onUpdate(dtReal, dtSim, dtRaw)
+  --[[
   if not levelLoaded then return end
   if gameplay_missions_missionManager.getForegroundMissionId() then return end
   if gameplayContext == "freeroam" then
@@ -425,8 +475,8 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       end
       elapsedTime = elapsedTime + dtSim
     end
-  end
   --drawDebugMenu()
+  end]]
 end
 M.onUpdate = onUpdate
 
@@ -479,15 +529,22 @@ M.startDragRaceActivity = function (lane)
     ext = gameplay_drag_dragTypes_dragPracticeRace
     gameplayContext = dragData.context or 'freeroam'
 
-    log("I",logTag,"Starting Freeroam Dragrace on lane " .. lane)
+    --log("I",logTag,"Starting Freeroam Dragrace on lane " .. lane)
   end
   ext.startActivity()
 end
 
-
+M.getWinnersData = function()
+  return gameplay_drag_utils.generateWinData()
+end
 
 M.getData = function ()
   return dragData
+end
+
+M.getDragIsStarted = function ()
+  if not dragData then return false end
+  return dragData.isStarted or false
 end
 
 
@@ -541,6 +598,155 @@ end
 M.onAnyMissionChanged = onAnyMissionChanged
 
 
+
+-- Save / Load stuff
+local savePathFreeroam = 'settings/cloud/drag/'
+local savePathCareer = '/career/drag/'
+M.getCurrentSavePath = function()
+  local saveFolder = savePathFreeroam
+  if career_career.isActive() then
+    local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+    saveFolder = savePath .. savePathCareer
+  end
+  return saveFolder
+end
+
+-- dials
+local dialData = nil
+M.saveDialTimes = function()
+  if not dialData then
+    dialData = jsonReadFile(M.getCurrentSavePath() .. "dialTimes.json") or {
+      dials = {},
+    }
+  end
+
+  for _, racer in pairs(dragData.racers) do
+    if racer.isPlayable then
+      local hash = M.generateHashFromFile()
+      local prevTime = (dialData.dials[hash] or {})._timestamp or os.time()
+      local doUpdate = prevTime < os.time() - (24*60*60)
+      -- force update if odler than 24h, otherwise only update if time1/4 is better
+
+      local _dirt = {}
+      local timerKeys = {"time_60", "time_330", "time_1_8",  "time_1000", "time_1_4", "velAt_1_4", "velAt_1_8" }
+      for _, key in ipairs(timerKeys) do
+        _dirt[key] = racer.timers[key].value
+      end
+      _dirt._timestamp = os.time()
+      dialData.dials[hash] = _dirt
+      dialData._dirty = true
+    end
+  end
+
+  if not career_career.isActive() then
+    M.saveDialFile(savePathFreeroam)
+  end
+end
+
+M.saveDialFile = function(dir)
+  if dialData and dialData._dirty then
+    dialData._dirty = nil
+    jsonWriteFile(dir .. "dragTimes.json", dialData, true)
+    --log("I","Wrote drag dial times to " .. dir .. "dragTimes.json")
+    dialData = nil
+  end
+end
+
+M.getDialTimes = function()
+  if dialData then
+    return dialData.dials
+  else
+    dialData = jsonReadFile(M.getCurrentSavePath() .. "dialTimes.json") or {
+      dials = {},
+    }
+    return dialData.dials
+  end
+end
+
+-- history
+local historyData = {}
+M.saveHistory = function(timeslip)
+  local file = historyData[dragData.saveFile]
+  if not file then
+    file = jsonReadFile(M.getCurrentSavePath() .. dragData.saveFile) or {
+      history = {}
+    }
+    historyData[dragData.saveFile] = file
+  end
+
+  table.insert(file.history, timeslip)
+  file._dirty = true
+
+  if not career_career.isActive() then
+    M.saveHistoryFile(savePathFreeroam)
+  end
+end
+
+M.saveHistoryFile = function(dir)
+  for file, data in pairs(historyData) do
+    if data._dirty then
+      data._dirty = false
+      jsonWriteFile(dir..file, data, true)
+      --log("I","Wrote drag history to " .. dir..file)
+    end
+  end
+  historyData = {}
+end
+
+local function dateToTimestamp(dateStr)
+  return os.time({
+    year = tonumber(dateStr:sub(11, 14)),
+    month = tonumber(dateStr:sub(5, 6)),
+    day = tonumber(dateStr:sub(8, 9)),
+    hour = tonumber(dateStr:sub(16, 17)),
+    min = tonumber(dateStr:sub(19, 20)),
+    sec = tonumber(dateStr:sub(22, 23)),
+    isdst = false
+  })
+end
+
+
+
+M.getHistory = function(saveFile)
+  if not historyData[saveFile] then
+    local file = jsonReadFile(M.getCurrentSavePath() .. "levels/" .. getCurrentLevelIdentifier() .. "/dragstrips/dragStripData/" .. saveFile) or {
+      history = {}
+    }
+    historyData[saveFile] = file
+  end
+
+  table.sort(historyData[saveFile].history, function(a, b) return dateToTimestamp(a.stripInfo[3]) > dateToTimestamp(b.stripInfo[3]) end)
+
+  return historyData[saveFile].history
+end
+
+M.setCareerRewrads = function ()
+  if not career_career.isActive() or dragData.context == "activity" then return end
+
+  local rewards = {beamXP = math.ceil(careerRewards)}
+  --  return { beamXP = beamXP }
+  --log("I","logTag", "Set Carrer Reward for drag race to "..serialize(rewards) .. " BeamXP")
+  career_modules_playerAttributes.addAttributes(rewards,{label="Rewards for Drag Race", tags={"gameplay"}})
+  return rewards
+end
+
+local function onSaveCurrentSaveSlot(currentSavePath)
+  M.saveDialFile(currentSavePath .. savePathCareer)
+  M.saveHistoryFile(currentSavePath .. savePathCareer)
+end
+M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+
+
+local function onCareerActive()
+  dialData = nil
+  historyData = {}
+end
+M.onCareerActive = onCareerActive
+
+
+
+
+
 --TIMESLIP interface
 
 local timerKeys = {"reactionTime", "time_60", "time_330", "time_1_8",  "time_1000", "time_1_4", }
@@ -585,13 +791,11 @@ local treeNames = {[".400"] = "Pro Tree", [".500"] = "Sportsman Tree"}
 M.clearTimeslip = function()
   guihooks.trigger("onDragRaceTimeslipData", nil)
 end
-M.sendTimeslipDataToUi = function()
-  log("I","","Requesting Timeslip Data...")
+
+M.createTimeslipData = function ()
   if not dragData or not next(dragData) then
-    guihooks.trigger("onDragRaceTimeslipData", nil)
     return
   end
-  -- main data
   local slipData = {}
 
   -- info about the strip itself
@@ -638,6 +842,7 @@ M.sendTimeslipDataToUi = function()
       laneOrder = dragData.strip.lanes[racer.lane].laneOrder,
       laneNum = racer.lane,
       finalTime = racer.timers.time_1_4.value,
+      rewards = M.setCareerRewrads() or {}
     }
     table.insert(racerInfos, racerInfo)
   end
@@ -677,8 +882,79 @@ M.sendTimeslipDataToUi = function()
   slipData.timesTable = tab
 
 
-  guihooks.trigger("onDragRaceTimeslipData", slipData)
 
+
+
+  return slipData
+end
+
+
+M.createTimeslipPanelData = function()
+  local slip = M.createTimeslipData()
+  local ret = {}
+  for _, key in ipairs({"stripInfo","tree","env","racerInfos"}) do
+    ret[key] = slip[key]
+  end
+
+  -- ui grid needs to be in its own function (upgrade timeslip data for vue...)
+  local grid = {
+    labels = {},
+    rows = {}
+  }
+
+  local tab = slip.timesTable
+  for _, l in ipairs(tab[1]) do
+    table.insert(grid.labels, l)
+  end
+  for i = 3, #tab do
+    local row = {}
+    table.insert(row, {
+      text = (tab[i][1]):gsub("%.+$", "")
+    })
+
+    for j = 2, #tab[i] do
+      local txt = tab[i][j]
+      local num = tonumber(txt)
+
+      table.insert(row, {text = txt, mono=true})
+    end
+    table.insert(grid.rows, row)
+  end
+
+  ret.grid = grid
+
+  return ret
+end
+
+
+
+
+
+M.sendTimeslipDataToUi = function()
+  --log("I","","Requesting Timeslip Data...")
+  -- main data
+  local slipData = M.createTimeslipData()
+
+
+  if not slipData or not next(slipData) then
+    --log("I","","Timeslip cleared.")
+    guihooks.trigger("onDragRaceTimeslipData", nil)
+    return
+  end
+
+  M.saveHistory(slipData)
+  --log("I","","Timeslip sent.")
+  guihooks.trigger("onDragRaceTimeslipData", slipData)
+end
+
+M.generateHashFromFile = function(vehId)
+  local currentVeh = vehId and core_vehicles.getVehicleDetails(vehId) or core_vehicles.getCurrentVehicleDetails()
+
+  if string.find(currentVeh.current.pc_file, ".pc") then
+    return hashStringSHA256(serialize(jsonReadFile(currentVeh.current.pc_file)))
+  end
+
+  return hashStringSHA256(currentVeh.current.pc_file)
 end
 
 M.screenshotTimeslip = function()

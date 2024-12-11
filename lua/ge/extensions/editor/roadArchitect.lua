@@ -59,6 +59,11 @@ local isCreateGroup = false                                                     
 local isJctPlaceMode = false                                                                        -- A flag which indicates if the editor is in 'junction placement' mode, or not.
 local stateGroupPre = nil                                                                           -- A table which stores the state of the roads before placing a group.
 
+local isAutoJctMode = false                                                                         -- A flag which indicates if the editor is in 'auto junction' mode, or not.
+local isAutoJctArmed = false                                                                        -- A flag which indicates if the auto-junction tool is 'armed', or not.
+local autoJctCen = vec3(0, 0)                                                                       -- The center of the auto-junction, which is being created.
+local autoJctRad = 1.0                                                                              -- The radius of the auto-junction circle, which is being created.
+
 local isFinalise = false                                                                            -- A flag which indicates if decals have been laid/collision mesh built.
 
 local isConformGroupToTerrain = false                                                               -- A flag which indicates if the group will be conformed to the terrain, or not.
@@ -171,7 +176,7 @@ local mfe = {
   isShowOverlays = im.BoolPtr(true) }
 
 local terraParams = {
-  domainOfInfluence = im.IntPtr(150),                                                               -- Terraforming: The domain of influence, used for terraforming, in meters.
+  domainOfInfluence = im.IntPtr(30),                                                                -- Terraforming: The domain of influence, used for terraforming, in meters.
   terraMargin = im.FloatPtr(1.0),                                                                   -- Terraforming: the margin around roads, in meters.
   isShowSingleRoad = im.BoolPtr(false),                                                             -- Terraforming: a flag which indicates if the group range will be visualised, or not.
   isShowGroup = im.BoolPtr(false) }                                                                 -- Terraforming: a flag which indicates if the selected road will be visualised, or not.
@@ -429,7 +434,7 @@ end
 -- Handles the gimbals for translation.
 local function handleGimbals(pos)
   lastFramePosn = editor.getAxisGizmoTransform():getColumn(3)
-  if not isGroupPlaceMode and not mfe.isGroupsListWinOpen and not isJctPlaceMode then
+  if not isGroupPlaceMode and not isAutoJctMode and not mfe.isGroupsListWinOpen and not isJctPlaceMode then
     local rotation = QuatF(0, 0, 0, 1)
     local transform = rotation:getMatrix()
     transform:setPosition(pos)
@@ -814,6 +819,72 @@ local function handlePlaceGroup(roads, mousePos, isDoubleClick, isMouseDownL, is
   end
 end
 
+-- Handles the creation of auto-junctions.
+local function handleAutoJct(roads, mousePos, isDoubleClick, isMouseDownL, isMouseClickedR, isShiftDown)
+
+  -- Auto-junction placing functionality:
+  -- i)   The mouse is first highlighted with a specific colour.
+  -- ii)  The user left-clicks the mouse button to set the center of the auto-junction region and then drags to set the size.
+  local radSq = autoJctRad * autoJctRad
+  local jNodes, markedRoads = {}, {}
+  if isAutoJctArmed and autoJctRad > 0.1 then
+    for i = 1, #roads do
+      local r = roads[i]
+      local p1, p2 = r.nodes[1].p, r.nodes[#r.nodes].p
+      local dSq1, dSq2 = p1:squaredDistance(autoJctCen), p2:squaredDistance(autoJctCen)
+      if dSq1 < radSq and dSq1 < dSq2 then
+        jNodes[#jNodes + 1] = { rName = r.name, lie = 'start' }
+        markedRoads[i] = true
+        util.drawSphereHighlightRed(p1)
+        util.drawAutoJctMarkup(p1, ffi.string(r.displayName), 'start')
+      end
+      if dSq2 < radSq and dSq2 < dSq1 and not markedRoads[i] then
+        jNodes[#jNodes + 1] = { rName = r.name, lie = 'end' }
+        markedRoads[i] = true
+        util.drawSphereHighlightRed(p2)
+        util.drawAutoJctMarkup(p2, ffi.string(r.displayName), 'end')
+      end
+    end    
+  end
+  
+  -- Render the spheres.
+  if isAutoJctArmed then
+    util.drawHighlightSphereRad(autoJctCen, autoJctRad)
+    util.drawSphereHighlightPurple(autoJctCen)
+  else
+    util.drawSphereHighlightPurple(mousePos)
+  end
+
+  if isMouseDownL then
+    if not isAutoJctArmed then
+      isAutoJctArmed = true
+      autoJctCen:set(mousePos.x, mousePos.y, mousePos.z)
+    end
+    autoJctRad = mousePos:distance(autoJctCen)
+  else
+    isAutoJctArmed = false
+    if #jNodes > 0 then
+      isAutoJctMode = false
+      jctMgr.chopRoadsToSphere(jNodes, autoJctCen, autoJctRad)
+      jctMgr.createAutoJctOverlays(jNodes, 3.5)
+      local allRoadsGroup = { list = {} }
+      local ctr = 1
+      for i = 1, #roadMgr.roads do
+        local tR = roadMgr.roads[i]
+        for j = 1, #tR.nodes do
+          allRoadsGroup.list[ctr] = { r = tR.name, n = j }
+          ctr = ctr + 1
+        end
+      end
+      terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], allRoadsGroup, true)
+    end
+  end
+  if isMouseClickedR then
+    isAutoJctArmed = false
+    isAutoJctMode = false
+  end
+end
+
 -- Handles the placing of junctions.
 local function handlePlaceJct(mousePos, isDoubleClick, isMouseDownL, isMouseClickedR, isShiftDown)
 
@@ -1094,7 +1165,7 @@ local function handleMainToolWindow(roads)
     im.Columns(8, "toolWdwTopRowBtns", false)
 
     -- 'Is Finalise' button.
-    if not isCreateGroup and not isGroupPlaceMode then
+    if not isCreateGroup and not isGroupPlaceMode and not isAutoJctMode then
       local finIcon = editor.icons.roadEditOutline
       if isFinalise then finIcon = editor.icons.roadEditSolid end
       if editor.uiIconImageButton(finIcon, vec40, cols.fullWhite, nil, nil, 'LayDecalsButton') then
@@ -1863,7 +1934,7 @@ local function handleMainToolWindow(roads)
                   ctr = ctr + 1
                 end
               end
-              terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], allRoadsGroup)
+              terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], allRoadsGroup, true)
             end
             im.tooltip('Terraform the terrain to all roads together.')
             im.SameLine()
@@ -3264,10 +3335,19 @@ local function handleMainToolWindow(roads)
         im.SameLine()
         im.NextColumn()
 
-        im.Dummy(vec36)
+        -- 'Create Auto Junction' button.
+        local btnIcon = editor.icons.jointLocked
+        if isAutoJctMode then
+          btnIcon = editor.icons.jointUnlocked
+        end
+        if editor.uiIconImageButton(btnIcon, vec36, nil, nil, nil, 'createAutoJunction') then
+          isAutoJctMode = not isAutoJctMode
+        end
+        im.tooltip('Create an auto-junction by grouping road ends with a polygon. Toggles mode on/off.')
         im.SameLine()
         im.NextColumn()
 
+        -- 'Load Junction' button.
         if editor.uiIconImageButton(editor.icons.roadFolderPlus, vec36, nil, nil, nil, 'loadJunction') then
           jctMgr.loadJunction()
         end
@@ -6402,7 +6482,7 @@ local function handleMainToolWindow(roads)
       im.Separator()
 
       im.Columns(5, "toolWindowCols2bv", false)
-      if not isCreateGroup and not isGroupPlaceMode and not isFinalise then
+      if not isCreateGroup and not isGroupPlaceMode and not isAutoJctMode and not isFinalise then
         local groupsButtonCol = cols.blueB
         if mfe.isGroupsListWinOpen then groupsButtonCol = cols.blueD end
         if editor.uiIconImageButton(editor.icons.roadStack, vec36, groupsButtonCol, nil, nil, 'GroupsButton') then
@@ -6447,7 +6527,7 @@ local function handleMainToolWindow(roads)
       im.NextColumn()
 
       -- 'Create Group' button.
-      if not isGroupPlaceMode and not isFinalise then
+      if not isGroupPlaceMode and not isAutoJctMode and not isFinalise then
         local createGroupButtonCol = cols.blueB
         if isCreateGroup then createGroupButtonCol = cols.blueD end
         if editor.uiIconImageButton(editor.icons.roadStackPlus, vec36, createGroupButtonCol, nil, nil, 'CreateGroupButton') then
@@ -6480,7 +6560,7 @@ local function handleMainToolWindow(roads)
         if im.TreeNode1("Terraform Control [Group]") then
           im.Columns(2, 'TerraGroupRow1', false)
           if editor.uiIconImageButton(editor.icons.terrainToTwoLines, vec36, cols.greenB, nil, nil, 'terraformGroupBtn') then
-            terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], placedGroups[mfe.selectedPlacedGroupIdx])
+            terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], placedGroups[mfe.selectedPlacedGroupIdx], true)
           end
           im.tooltip('Terraform the terrain to the selected group.')
           im.SameLine()
@@ -7342,6 +7422,17 @@ local function handleMeshSelectionSubWindow()
 
         im.EndListBox()
       end
+      if editor.uiIconImageButton(editor.icons.check_box, vec24, cols.blueB, nil, nil, 'meshOkButton') then
+        if mfe.isMeshSelectWinOpen then
+          editor.hideWindow(win.meshSelectWinName)
+          mfe.isMeshSelectWinOpen = false
+          staticMgr.removeAuditionMesh()
+          staticMgr.goToOldView()
+        end
+        mfe.isMeshSelectWinOpen = false           -- Handle close sub-window.
+        editor.hideWindow(win.meshSelectWinName)
+      end
+      im.tooltip('Use the selected mesh and return to the main view.')
       im.PopItemWidth()
     else
       if mfe.isMeshSelectWinOpen then
@@ -7656,6 +7747,8 @@ local function onEditorGui()
       handleCreateGroup(roads, mousePos, isMouseClickedL, isDoubleClick, isMouseClickedR)
     elseif isGroupPlaceMode then                                                                    -- MODE: [group placement]: The user is placing a selected group.
       handlePlaceGroup(roads, mousePos, isDoubleClick, isMouseDownL, isMouseClickedR, isShiftDown)
+    elseif isAutoJctMode then                                                                       -- MODE: [auto junction mode]: The user is creating an auto-junction.
+      handleAutoJct(roads, mousePos, isDoubleClick, isMouseDownL, isMouseClickedR, isShiftDown) 
     else                                                                                            -- MODE: [road]: The user is creating/editing roads.
       handleCreateRoads(
         roads, mousePos,

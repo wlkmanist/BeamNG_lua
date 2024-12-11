@@ -4,7 +4,7 @@
 
 local C = {}
 
-local basePersonality = {aggression = 0.5, anger = 0.5, patience = 0.5, bravery = 0.5}
+local basePersonality = {aggression = 0.5, patience = 0.5, bravery = 0.5}
 
 function C:init(veh, name, data)
   data = data or {}
@@ -14,7 +14,6 @@ function C:init(veh, name, data)
   self.actionName = 'none' -- specific action name
   self.actionTimer = 0
   self.state = 'none' -- generic state name
-  self.randomActionProbability = 0 -- if random actions are enabled, this is the threshold for doing a special action after refresh
   self.ignorePersonality = data.ignorePersonality or false -- if true, personality values stay neutral
   self.keepPersonalityOnRefresh = data.keepPersonalityOnRefresh or false
   self.keepActionOnRefresh = data.keepActionOnRefresh or false
@@ -31,6 +30,7 @@ function C:init(veh, name, data)
   self.actions = {}
   self.baseActions = {
     pullOver = function (args)
+      -- NOTE: I suspect that this is not working properly
       args = args or {}
       if self.veh.isAi then
         local legalSide = map.getRoadRules().rightHandDrive and -1 or 1
@@ -43,22 +43,11 @@ function C:init(veh, name, data)
         self.veh:setAiMode('traffic')
         -- the following calls are delayed while the AI plan rebuilds itself
         self.veh.queuedFuncs.laneChange = {timer = 0.25, vLua = 'ai.laneChange(nil, '..changeLaneDist..', '..sideDist..')'}
-        self.veh.queuedFuncs.setStopPoint = {timer = 0.25, vLua = 'ai.setStopPoint(nil, '..(changeLaneDist + 20)..', {avoidJunction = true})'}
+        self.veh.queuedFuncs.setStopPoint = {timer = 0.25, vLua = 'ai.setStopPoint(nil, '..(changeLaneDist + 20)..')'}
       end
 
       self.flags.pullOver = 1
       self.state = 'pullOver'
-    end,
-    driveToTarget = function (args) -- TODO: not fully supported
-      args = args or {}
-      if self.veh.isAi and args.target then
-        if type(args.target) == 'string' then -- waypoint
-          be:getObjectByID(self.veh.id):queueLuaCommand('ai.setMode("manual")')
-          be:getObjectByID(self.veh.id):queueLuaCommand('ai.setTarget("'..args.target..'")')
-        end
-        self.mapTarget = args.target
-      end
-      self.state = 'driveToTarget'
     end,
     disabled = function ()
       if self.veh.isAi then
@@ -137,6 +126,13 @@ function C:setAction(name, args)
   end
 end
 
+function C:setAggression(baseAggression, ignorePersonality) -- helper method that sets and sends the ai aggression value
+  baseAggression = baseAggression or self.veh.vars.baseAggression
+  local mod = ignorePersonality and 0 or (self.driver.personality.aggression - 0.5) * 0.2
+  self.driver.aggression = clamp(baseAggression + mod, 0.2, 1)
+  be:getObjectByID(self.veh.id):queueLuaCommand('ai.setAggression('..self.driver.aggression..')') -- slightly randomized aggression (mean 0.3)
+end
+
 function C:resetAction()
   if self.lockAction then return end
   if self.veh.isAi then
@@ -157,18 +153,17 @@ function C:generatePersonality() -- returns a randomly generated personality
     return deepcopy(basePersonality)
   end
 
-  local result = {}
-  for _, v in pairs({'aggression', 'anger', 'patience', 'bravery'}) do
+  local personality = {}
+  for _, v in pairs({'aggression', 'patience', 'bravery'}) do
     local mod = {}
     if self.driver.personalityModifiers and self.driver.personalityModifiers[v] then
       mod = self.driver.personalityModifiers[v]
     end
-    local value = v == 'aggression' and randomGauss3() / 3 or math.random()
-
-    result[v] = clamp(value + (mod.median or 0), mod.min or 0, mod.max or 1)
+    local value = mod.isLinear and math.random() or randomGauss3() / 3 -- linear or gaussian randomness
+    personality[v] = clamp(value + (mod.offset or 0), mod.min or 0, mod.max or 1)
   end
 
-  return result
+  return personality
 end
 
 function C:applyPersonality(data) -- sends parameters to ai.lua
@@ -179,16 +174,14 @@ function C:applyPersonality(data) -- sends parameters to ai.lua
   local obj = be:getObjectByID(self.veh.id)
 
   self.driver.personality = tableMerge(self.driver.personality, data)
-  self.driver.aggression = clamp(self.veh.vars.baseAggression + (self.driver.personality.aggression - 0.5) * 0.25, 0.2, 1)
-  --obj:queueLuaCommand('ai.setAggression('..self.driver.aggression..')') -- slightly randomized aggression (mean 0.3)
-  obj:queueLuaCommand('ai.setAggression('..self.veh.vars.baseAggression..')') -- TEMP: removed randomness, for now
+  self:setAggression()
 
-  -- TODO: create more params
-  -- these specific ai parameters may need to be reconsidered
+  -- ai.lua parameters
+  -- it would be nice to have more parameters or do this differently
   local params = {
     trafficWaitTime = data.patience * 6 -- intersection max wait time
   }
-  -- trafficWaitTime may need to be reconsidered, it may be causing conflicts in intersections
+
   obj:queueLuaCommand('ai.setParameters('..serialize(params)..')')
 end
 
@@ -203,7 +196,7 @@ function C:checkTargetVisible(id) -- checks if the other vehicle is visible (sta
   return visible
 end
 
-function C:freezeTrafficSignals(state) -- intended for emergency vehicles
+function C:freezeTrafficSignals(state) -- overrides traffic lights; intended for emergency vehicles
   if not core_trafficSignals.getData().active then return end
   if state then
     self.flags.freezeSignals = 1

@@ -399,19 +399,21 @@ local function processTorsionbars(vehicle)
   if vehicle.torsionbars == nil then return end
   for _, tb in pairs(vehicle.torsionbars) do
     local spring = tb.spring
+    local spring2 = tb.spring2 or spring
     local damp = checkNum(tb.damp)
+    local damp2 = tb.damp2 and checkNum(tb.damp2) or damp
     local id1, id2, id3, id4 = tb.id1, tb.id2, tb.id3, tb.id4
     if type(id1) ~= 'number' then
-      id1, spring, damp = 0, 0, 0
+      id1, spring, spring2, damp, damp2 = 0, 0, 0, 0, 0
     end
     if type(id2) ~= 'number' then
-      id2, spring, damp = 0, 0, 0
+      id2, spring, spring2, damp, damp2 = 0, 0, 0, 0, 0
     end
     if type(id3) ~= 'number' then
-      id3, spring, damp = 0, 0, 0
+      id3, spring, spring2, damp, damp2 = 0, 0, 0, 0, 0
     end
     if type(id4) ~= 'number' then
-      id4, spring, damp = 0, 0, 0
+      id4, spring, spring2, damp, damp2 = 0, 0, 0, 0, 0
     end
 
     tb.precompressionAngle = checkNum(tb.precompressionAngle)
@@ -424,7 +426,7 @@ local function processTorsionbars(vehicle)
       end
     end
 
-    tb.cid = obj:setTorsionbar(-1, id1, id2, id3, id4, spring, spring, damp, damp,
+    tb.cid = obj:setTorsionbar(-1, id1, id2, id3, id4, spring, spring2, damp, damp2,
       checkNum(tb.strength, math.huge), checkNum(tb.deform, math.huge), precompressionAngle)
   end
 end

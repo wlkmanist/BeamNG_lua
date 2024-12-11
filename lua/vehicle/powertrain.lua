@@ -1026,6 +1026,12 @@ local function isPhysicsStepUsed()
   return hasPowertrain
 end
 
+local stateEvents = {}
+
+local function getStateEvents()
+  return stateEvents
+end
+
 M.init = init
 M.reset = reset
 M.initSounds = initSounds
@@ -1070,6 +1076,9 @@ M.setPartCondition = setPartCondition
 
 M.getState = nop
 M.setState = nop
+M.publishStateEvent = nop
+M.triggerStateEvent = nop
+M.getStateEvents = getStateEvents
 
 M.isPhysicsStepUsed = isPhysicsStepUsed
 

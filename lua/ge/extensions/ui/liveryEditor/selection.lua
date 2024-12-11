@@ -6,6 +6,7 @@ local uiCameraApi = extensions.ui_liveryEditor_camera
 local uiLayersApi = extensions.ui_liveryEditor_layers
 local uiCursor = extensions.ui_liveryEditor_layers_cursor
 local uiDecals = extensions.ui_liveryEditor_layers_decals
+local uiDecal = extensions.ui_liveryEditor_layers_decal
 
 local MULTI_TYPES_LAYER_ACTIONS = {"visibility"}
 local MULTI_DECAL_LAYER_ACTIONS = {"group", "material", "duplicate", "mirror", "visibility", "delete"}
@@ -66,7 +67,7 @@ local getAvailableActions = function()
     local selectedLayerType = selectedLayer.type
 
     if selectedLayerType == API.layerTypes.decal then
-      return extensions.ui_liveryEditor_layers_decals.getLayerActions()
+      return extensions.ui_liveryEditor_layers_decal.getLayerActions(selectedLayer.uid)
     elseif selectedLayerType == API.layerTypes.fill then
       return extensions.ui_liveryEditor_layers_fill.getLayerActions(selectedLayer)
     elseif selectedLayerType == API.layerTypes.linkedSet then
@@ -104,6 +105,10 @@ local getAvailableActions = function()
 end
 
 local notifyUiListeners = function()
+  guihooks.trigger("liveryEditor_selection_actionsUpdated", M.getAvailableActions())
+  guihooks.trigger("liveryEditor_selection_selectedChanged", M.getSelectedLayersData())
+
+  -- cleanup and delete this events to have properly formatted names
   guihooks.trigger("LiveryEditor_SelectedLayersChanged", M.selectedLayers)
   guihooks.trigger("LiverEditorLayerActionsUpdated", M.getAvailableActions())
   guihooks.trigger("LiveryEditor_SelectedLayersDataUpdated", M.getSelectedLayersData())
@@ -116,8 +121,8 @@ local notifyUiListeners = function()
 end
 
 local clearSelection = function()
-  API.setEnabled(false)
   M.selectedLayers = nil
+  API.disableDecalHighlighting()
   M.notifyUiListeners()
 end
 
@@ -156,6 +161,9 @@ local select = function(layerIds, highlight)
     M.selectedLayers = layerIds
   else
     M.selectedLayers = {layerIds}
+    if highlight then
+      API.highlightLayerByUid(layerIds)
+    end
   end
 
   M.notifyUiListeners()
@@ -231,7 +239,7 @@ M.getSelectedLayersData = getUiFormattedSelectedLayers
 M.isLayerSelected = isLayerSelected
 M.getAvailableActions = getAvailableActions
 M.notifyUiListeners = notifyUiListeners
--- M.requestInitialData = notifyUiListeners
+M.requestInitialData = notifyUiListeners
 
 -- External hooks. Do not call!
 M.liveryEditor_OnLayerAdded = function(layer)
@@ -254,7 +262,7 @@ end
 M.liveryEditor_onLayersUpdated = function(layerUid)
   if M.isLayerSelected(layerUid) then
     guihooks.trigger("LiveryEditor_SelectedLayersDataUpdated", M.getSelectedLayersData())
-    M.notifyUiListeners()
+    -- M.notifyUiListeners()
   end
 end
 

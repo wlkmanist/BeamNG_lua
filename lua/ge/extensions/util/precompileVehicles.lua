@@ -165,6 +165,7 @@ local function onPreRender(dt)
         if vehicleToLoad > #vehicles then
             log('I', logTag, 'Precompiled data for all vehicles.')
             finished = true
+            quit()
         else
             loadNextVehicle()
         end

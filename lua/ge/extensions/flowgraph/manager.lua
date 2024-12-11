@@ -1159,7 +1159,7 @@ function C:dragDropTarget(payloadType)
     local payload = im.AcceptDragDropPayload(payloadType)
     if payload ~= nil then
       assert(payload.DataSize == ffi.sizeof "char[64]");
-      local path = ffi.string(ffi.cast("char*", payload.Data))
+      local path = ffi.string(payload.Data)
     end
     im.EndDragDropTarget()
   end
@@ -2311,7 +2311,7 @@ function C:getRelativeAbsolutePath(p, disableLogEntryOnFail)
     end
   end
   if not disableLogEntryOnFail then
-    log("E", logTag, "Unable to locate file for flowgraph " .. dumps(self.name) .. ", in neither of these paths: " .. dumps(files))
+    log("W", logTag, "Unable to locate file for flowgraph " .. dumps(self.name) .. ", in neither of these paths: " .. dumps(files))
   end
   return files[1], false
 end

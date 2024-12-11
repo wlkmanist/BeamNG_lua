@@ -14,16 +14,11 @@ local assetBrowserImageInspectorWindowName = "assetBrowserImageInspector"
 local icons = require("editor/iconOverview")
 local setupWasDone = false
 
--- Reference to assetManager module.
-local aM = nil
-
 local logTag = 'editor_assetBrowser: '
 local debug = false
 
 -- TODO: Either cache the data we retrieve from the db or not.
 local cacheResults = false
--- local db = true -- are we using the db implementation or not?!
-local db = false
 
 local draggedObjOffset
 
@@ -296,6 +291,8 @@ var.typeColors = {
   ['part configuration'] = {0.223,0.803,0.835},
   ['jbeam'] = {0.301, 0.576, 0.549},
 }
+
+var.selectInstantiatedObjectId = 0
 
 -- ##### FUNCTIONS
 local function getUniqueId()
@@ -900,32 +897,6 @@ local function selectDirectory(dir, toggleOpen, open, addToHistory, createNoAsse
   end
 end
 
-local function selectDirectoryDB(dir, toggleOpen, open, reloadData)
-  -- editor.logInfo(logTag .. "Select directory: " .. dir.path)
-  if var.selectedDirectory.path ~= dir.path or reloadData==true then
-    if var.selectedDirectory ~= nil then
-      var.selectedDirectory.selected = false
-    end
-    var.selectedDirectory = dir
-
-    filterDirs()
-    createDBFilesTable(aM.getFiles(var.selectedDirectory.path))
-
-    dir.selected = true
-
-    core_jobsystem.create(createAssetDataOfFilteredAssetsJob, 1, var.filteredAssets)
-  end
-
-  -- directory in assetView has been double-clicked
-  if open == true then
-    dir.open = true
-    dir.parent.open = true -- open the parent folder
-  -- directory in tree view
-  elseif toggleOpen == true then
-    dir.open = not dir.open
-  end
-end
-
 local function pathToRoot(path, dir)
   if dir ~= true then
     table.insert(path, 1, dir)
@@ -1158,7 +1129,7 @@ local function instantiateMesh(asset)
   if grp then
     grp:addObject(newObj)
     if editor.getPreference("assetBrowser.general.selectInstantiatedObject") then
-      editor.selectObjectById(newObj:getId())
+      var.selectInstantiatedObjectId = newObj:getId()
     end
     editor.setDirty()
   else
@@ -1589,11 +1560,7 @@ local function showDirectoryInTreeView(dir)
 
   if (var.listIndexCounter == var.currentListIndex and var.arrowNavValueChanged) then
     var.arrowNavValueChanged = false
-    if db == true then
-      selectDirectoryDB(dir, itemDoubleClicked)
-    else
-      selectDirectory(dir, itemDoubleClicked, nil, true)
-    end
+    selectDirectory(dir, itemDoubleClicked, nil, true)
   end
   if dir.open then
     im.Indent(editor.getPreference("assetBrowser.general.treeViewIndentationWidth"))
@@ -1657,32 +1624,25 @@ end
 
 local function treeViewMainPanel()
   if im.BeginChild1("File Tree Child", nil, true) then
-    if (aM and aM.isReady() == true) or db == false then
-      if var.treeViewScrollPos then
-        im.SetScrollY(var.treeViewScrollPos)
-        var.treeViewScrollPos = nil
-      end
-      if var.state == var.state_enum.loading_done then
-        var.listIndexCounter = 0
-        showSavedSearches()
-        showDirectoryInTreeView(var.root)
-        showDirectoryInTreeView(var.commonArt)
-        showDirectoryInTreeView(var.gameplay)
-        showDirectoryInTreeView(var.vehicles)
-        showDirectoryInTreeView(var.allData)
-        var.maxListIndexVal = var.listIndexCounter
+    if var.treeViewScrollPos then
+      im.SetScrollY(var.treeViewScrollPos)
+      var.treeViewScrollPos = nil
+    end
+    if var.state == var.state_enum.loading_done then
+      var.listIndexCounter = 0
+      showSavedSearches()
+      showDirectoryInTreeView(var.root)
+      showDirectoryInTreeView(var.commonArt)
+      showDirectoryInTreeView(var.gameplay)
+      showDirectoryInTreeView(var.vehicles)
+      showDirectoryInTreeView(var.allData)
+      var.maxListIndexVal = var.listIndexCounter
 
-        newFolderPopup()
+      newFolderPopup()
 
-        if var.newFolderModalOpen == true then
-          im.OpenPopup("new_folder_popup")
-          var.newFolderModalOpen = false
-        end
-      end
-    else
-      im.TextUnformatted("Refreshing DB!")
-      if aM then
-        im.TextUnformatted(string.format( "%.2f", aM.getProgress().progress*100) .. " %" )
+      if var.newFolderModalOpen == true then
+        im.OpenPopup("new_folder_popup")
+        var.newFolderModalOpen = false
       end
     end
   end
@@ -1731,11 +1691,7 @@ local function displayDirectoryInAssetView(dir, childSize, parentDir, newLine)
       end
       if im.IsMouseDoubleClicked(0) then
         var.currentListIndex = dir.listIndex
-        if db == true then
-          selectDirectoryDB(dir, nil, true)
-        else
-          selectDirectory(dir, nil, true, true)
-        end
+        selectDirectory(dir, nil, true, true)
       end
     end
   else
@@ -1767,11 +1723,7 @@ local function displayDirectoryInAssetView(dir, childSize, parentDir, newLine)
     end
     if im.IsItemHovered() == true and im.IsMouseDoubleClicked(0) == true then
       var.currentListIndex = dir.listIndex
-      if db == true then
-        selectDirectoryDB(dir, nil, true)
-      else
-        selectDirectory(dir, nil, true, true)
-      end
+      selectDirectory(dir, nil, true, true)
     end
     im.tooltip(dir.name)
 
@@ -2367,133 +2319,130 @@ local function assetViewMainPanel()
     -- [Debug] Number of assets we're currently rendering in the asset view.
     var.displayedItemsCount = 0
 
-    if (db == true and aM and aM.isReady()) or db == false then
-      if var.state == var.state_enum.loading_done then
-        var.assetViewMainPanelSize = im.GetItemRectSize()
+    if var.state == var.state_enum.loading_done then
+      var.assetViewMainPanelSize = im.GetItemRectSize()
 
-        -- Sum of assets we have to display.
-        var.itemCount = (
-          0 +
-          (var.options.filter_displayDirs and var.filteredDirsCount or 0) +
-          (var.options.filter_displayAssets and var.filteredAssetsCount or 0) +
-          (var.options.filter_displayTextureSets and var.filteredTextureSetsCount or 0) +
-          ((var.selectedDirectory and var.selectedDirectory.parent ~= true and var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files) and 1 or 0)
-        )
+      -- Sum of assets we have to display.
+      var.itemCount = (
+        0 +
+        (var.options.filter_displayDirs and var.filteredDirsCount or 0) +
+        (var.options.filter_displayAssets and var.filteredAssetsCount or 0) +
+        (var.options.filter_displayTextureSets and var.filteredTextureSetsCount or 0) +
+        ((var.selectedDirectory and var.selectedDirectory.parent ~= true and var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files) and 1 or 0)
+      )
 
-        -- Calculate the size of each asset in the asset view panel. Is set to -1 if the asset size
-        -- is set to the minimal asset size possible, we're going to render a list view.
-        local childSize = (var.options.thumbnailSize <= var.minThumbnailSize) and -1 or im.ImVec2(var.options.thumbnailSize + var.style.WindowPadding.x * 2, var.options.thumbnailSize + 2 * var.style.WindowPadding.y + var.style.ItemSpacing.x + var.fontSize - 5)
-        -- [Debug]
-        var.childSize = childSize
+      -- Calculate the size of each asset in the asset view panel. Is set to -1 if the asset size
+      -- is set to the minimal asset size possible, we're going to render a list view.
+      local childSize = (var.options.thumbnailSize <= var.minThumbnailSize) and -1 or im.ImVec2(var.options.thumbnailSize + var.style.WindowPadding.x * 2, var.options.thumbnailSize + 2 * var.style.WindowPadding.y + var.style.ItemSpacing.x + var.fontSize - 5)
+      -- [Debug]
+      var.childSize = childSize
 
-        -- adjusts child size to scaling
-        if childSize ~= -1 then
-          local uiScaling = editor.getPreference("ui.general.scale") or defaultUiScale;
-          childSize.x = childSize.x * uiScaling;
-          childSize.y = childSize.y * uiScaling;
-        end
-        -- Items per row
-        var.horizontalItems = (childSize == -1) and 1 or getHorizontalItemsCount(childSize.x, im.GetContentRegionAvailWidth())
-        -- Rows
-        var.verticalItems = (childSize == -1) and var.itemCount or math.ceil(var.itemCount / var.horizontalItems)
+      -- adjusts child size to scaling
+      if childSize ~= -1 then
+        local uiScaling = editor.getPreference("ui.general.scale") or defaultUiScale;
+        childSize.x = childSize.x * uiScaling;
+        childSize.y = childSize.y * uiScaling;
+      end
+      -- Items per row
+      var.horizontalItems = (childSize == -1) and 1 or getHorizontalItemsCount(childSize.x, im.GetContentRegionAvailWidth())
+      -- Rows
+      var.verticalItems = (childSize == -1) and var.itemCount or math.ceil(var.itemCount / var.horizontalItems)
 
-        -- Calculate the max asset view panel height.
-        -- We set the cursor at the end so imgui can draw a properly sized scrollbar.
-        var.maxAssetViewPanelHeight = getAssetViewMainPanelHeight(childSize)
+      -- Calculate the max asset view panel height.
+      -- We set the cursor at the end so imgui can draw a properly sized scrollbar.
+      var.maxAssetViewPanelHeight = getAssetViewMainPanelHeight(childSize)
 
-        if var.selectedDirectory ~= nil then
-          if var.selectedDirectory.processing then
-            im.TextUnformatted("Refreshing ...")
-          else
-            if db == false or (db==true and #ffi.string(var.assetViewFilterDB) == 0) then -- are we searching for files atm?
+      if var.selectedDirectory ~= nil then
+        if var.selectedDirectory.processing then
+          im.TextUnformatted("Refreshing ...")
+        else
+          -- No asset grouping option is selecetd.
+          if var.options.assetGroupingType == var.assetGroupingTypes_enum.none then
+            -- Directories
+            if var.options.filter_displayDirs == true and var.filteredDirs then
+              -- Display the parent dir if there's one.
+              if var.selectedDirectory.parent ~= true and var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files then
+                -- TODO: Check if dir is in viewable area (for virtual scrolling)
+                displayDirectoryInAssetView(var.selectedDirectory.parent, childSize, true)
+              end
 
-              -- No asset grouping option is selecetd.
-              if var.options.assetGroupingType == var.assetGroupingTypes_enum.none then
-                -- Directories
-                if var.options.filter_displayDirs == true and var.filteredDirs then
-                  -- Display the parent dir if there's one.
-                  if var.selectedDirectory.parent ~= true and var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files then
-                    -- TODO: Check if dir is in viewable area (for virtual scrolling)
-                    displayDirectoryInAssetView(var.selectedDirectory.parent, childSize, true)
-                  end
+              -- Disaplay all other directories within the current one.
+              displayDirectories(var.filteredDirs, childSize)
+            end
 
-                  -- Disaplay all other directories within the current one.
-                  displayDirectories(var.filteredDirs, childSize)
-                end
+            -- texture sets
+            if var.filteredTextureSets and var.options.filter_displayTextureSets == true then
+              displayTextureSets(var.filteredTextureSets, childSize)
+            end
 
-                -- texture sets
-                if var.filteredTextureSets and var.options.filter_displayTextureSets == true then
-                  displayTextureSets(var.filteredTextureSets, childSize)
-                end
+            -- assets
+            if var.filteredAssets and var.options.filter_displayAssets == true then
+              displayAssets(var.filteredAssets, childSize)
+            end
 
-                -- assets
-                if var.filteredAssets and var.options.filter_displayAssets == true then
-                  displayAssets(var.filteredAssets, childSize)
-                end
-
-              -- A asset grouping option is selected. We either group the asset by filetype or asset type.
-              elseif var.options.assetGroupingType ~= var.assetGroupingTypes_enum.none then
-                for _, group in ipairs(var.filteredAssetGroupsSorted) do
-                  var.itemPos = 0
-                  -- Display directories.
-                  if group.identifier == "folders" then
-                    if var.options.filter_displayDirs == true and #var.filteredAssetGroups.folders > 0 then
-                      if groupCollapsingHeader(group) == true then
-                        displayDirectories(var.filteredAssetGroups.folders, childSize)
-                      end
+          -- A asset grouping option is selected. We either group the asset by filetype or asset type.
+            elseif var.options.assetGroupingType ~= var.assetGroupingTypes_enum.none then
+              for _, group in ipairs(var.filteredAssetGroupsSorted) do
+                var.itemPos = 0
+                -- Display directories.
+                if group.identifier == "folders" then
+                  if var.options.filter_displayDirs == true and #var.filteredAssetGroups.folders > 0 then
+                    if groupCollapsingHeader(group) == true then
+                      displayDirectories(var.filteredAssetGroups.folders, childSize)
                     end
-                  -- Display assets.
-                  else
-                    if var.options.filter_displayAssets == true then
-                      if groupCollapsingHeader(group) == true then
-                        displayAssets(var.filteredAssetGroups[group.identifier], childSize)
-                      end
+                  end
+                -- Display assets.
+                else
+                  if var.options.filter_displayAssets == true then
+                    if groupCollapsingHeader(group) == true then
+                      displayAssets(var.filteredAssetGroups[group.identifier], childSize)
                     end
                   end
                 end
               end
             end
-            --  Scrolls selection into view
-            if var.scrollSelectionIntoView then
-              local displayedItems = getDisplayedSelectedDirectoryFilteredList()
-              for i, file in ipairs(displayedItems) do
-                if file.selected then
-                  local mScroll = 0
-                  local halfPage = var.assetViewMainPanelHeight / 2
-                  local bottomView = var.maxAssetViewPanelHeight - halfPage
-                  if childSize == -1 then
-                    -- List view
-                    local lineHeight = var.maxAssetViewPanelHeight / (2 + #displayedItems)
-                    local indexScroll = lineHeight * i  -- scroll height at top of selection
-                    if indexScroll > halfPage then
-                      mScroll = (indexScroll >= bottomView) and var.assetViewScrollMax or (indexScroll - halfPage)
-                    end
-                  else
-                    -- Thumbnail view
-                    local itemRow = math.ceil((i + 1) / var.horizontalItems)
-                    local lineHeight = var.maxAssetViewPanelHeight / var.verticalItems
-                    local rowScroll = (itemRow - 1) * lineHeight
-                    halfPage = halfPage - lineHeight / 2
-                    if rowScroll > halfPage then
-                      mScroll = (rowScroll >= bottomView) and var.assetViewScrollMax or (rowScroll - halfPage)
-                    end
-                  end
-                  im.SetScrollY(mScroll)
-                end
-              end
-            end
-            --  Only once
-            var.scrollSelectionIntoView = false
-
           end
-
+          --  Scrolls selection into view
+          if var.scrollSelectionIntoView then
+            local displayedItems = getDisplayedSelectedDirectoryFilteredList()
+            for i, file in ipairs(displayedItems) do
+              if file.selected then
+                local mScroll = 0
+                local halfPage = var.assetViewMainPanelHeight / 2
+                local bottomView = var.maxAssetViewPanelHeight - halfPage
+                if childSize == -1 then
+                  -- List view
+                  local lineHeight = var.maxAssetViewPanelHeight / (2 + #displayedItems)
+                  local indexScroll = lineHeight * i  -- scroll height at top of selection
+                  if indexScroll > halfPage then
+                    mScroll = (indexScroll >= bottomView) and var.assetViewScrollMax or (indexScroll - halfPage)
+                  end
+                else
+                  -- Thumbnail view
+                  local itemRow = math.ceil((i + 1) / var.horizontalItems)
+                  local lineHeight = var.maxAssetViewPanelHeight / var.verticalItems
+                  local rowScroll = (itemRow - 1) * lineHeight
+                  halfPage = halfPage - lineHeight / 2
+                  if rowScroll > halfPage then
+                    mScroll = (rowScroll >= bottomView) and var.assetViewScrollMax or (rowScroll - halfPage)
+                  end
+                end
+                im.SetScrollY(mScroll)
+              end
+            end
+          end
+          --  Only once
+          var.scrollSelectionIntoView = false
+          if var.selectInstantiatedObjectId ~= 0 then
+            editor.selectObjectById(var.selectInstantiatedObjectId)
+            var.selectInstantiatedObjectId = 0
+          end
         end
         im.SetCursorPosY(var.maxAssetViewPanelHeight)
       else
         im.TextUnformatted("Loading assets (" .. tostring(var.assetsProcessed) .. "/" .. tostring(var.numberOfAllAssetsAndDirs) ..")")
         im.TextUnformatted(string.format("%0.2f",(var.assetsProcessed/var.numberOfAllAssetsAndDirs)*100) .. '%')
       end
-    end
   end
   im.EndChild()
 
@@ -2519,11 +2468,7 @@ local function pathBreadcrumb()
         for _, dir in ipairs(dir.dirs) do
           im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(4,0))
           if im.Button(dir.name, im.ImVec2(im.GetContentRegionAvailWidth(),0)) then
-            if db == true then
-              selectDirectoryDB(dir)
-            else
-              selectDirectory(dir, nil, nil, true)
-            end
+            selectDirectory(dir, nil, nil, true)
             im.CloseCurrentPopup()
           end
           im.PopStyleVar()
@@ -2546,11 +2491,7 @@ local function pathBreadcrumb()
   -- Add buttons per directory.
   for k, dir in ipairs(var.selectedDirectory.pathToRoot) do
     if im.Button(dir.name .. "##breadcrump" .. tostring(dir.id)) then
-      if db == true then
-        selectDirectoryDB(dir)
-      else
-        selectDirectory(dir, nil, nil, true)
-      end
+      selectDirectory(dir, nil, nil, true)
     end
     im.SameLine()
     local cursorPos = im.GetCursorPos()
@@ -3072,24 +3013,10 @@ local function assetBrowserMenuBar()
       end
 
       -- Search text filter widget.
-      if db == true then
-        im.PushID1("assetViewFilterDB_inputText")
-        im.PushItemWidth(var.assetViewFilterWidth)
-        if im.InputText("", var.assetViewFilterDB) then
-          if var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
-            createDBFilesTable(aM.getFiles(nil, ffi.string(var.assetViewFilterDB)))
-          elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files then
-            createDBFilesTable(aM.getFiles(var.selectedDirectory.path, ffi.string(var.assetViewFilterDB)))
-          end
-        end
-        im.PopID()
-        im.PopItemWidth()
-      else
-        imguiUtils.drawCursorPos(im.GetCursorPosX(), im.GetCursorPosY())
-        if editor.uiInputSearchTextFilter(nil, var.assetViewFilter, var.assetViewFilterWidth) then
-          filterDirs()
-          filterAssets()
-        end
+      imguiUtils.drawCursorPos(im.GetCursorPosX(), im.GetCursorPosY())
+      if editor.uiInputSearchTextFilter(nil, var.assetViewFilter, var.assetViewFilterWidth) then
+        filterDirs()
+        filterAssets()
       end
 
       -- Restore filter settings button.
@@ -3956,10 +3883,6 @@ local function setupVars()
       end
     },
     {
-      name = "Open file",
-      fn = function(asset) Engine.Platform.openFile(asset.path) end
-    },
-    {
       name = "Show in explorer",
       fn = function(asset) Engine.Platform.exploreFolder(asset.path) end
     },
@@ -4290,35 +4213,28 @@ local function setupJob()
   var.selectedFile = nil
 
   -- get all directories and files of the current level and put them into a tree struct
-  if db == true then
-    extensions.load('core_assetManager')
-    aM = core_assetManager
-    -- only get directories recursively, we will retrieve the files from the db later on
-    getDirs(var.root)
+  getDirsAndFiles(var.root)
+  getDirsAndFiles(var.commonArt)
+
+  -- Create/get thumbnails for the current selected directory.
+  core_jobsystem.create(createAssetDataOfWholeDirJob, 1, var.selectedDirectory)
+
+  if editor.getPreference("assetBrowser.general.loadVehicleAssets")== true then
+    getDirsAndFiles(var.vehicles)
+  end
+
+  if editor.getPreference("assetBrowser.general.loadGameplayAssets") == true then
+    getDirsAndFiles(var.gameplay)
+  end
+
+  if editor.getPreference("assetBrowser.general.showAllDataFolders") == true then
+    getDirsAndFiles(var.allData)
+  end
+
+  if var.currentLevelDirectories[var.levelName] then
+    openDirByPath(var.currentLevelDirectories[var.levelName])
   else
-    getDirsAndFiles(var.root)
-    getDirsAndFiles(var.commonArt)
-
-    -- Create/get thumbnails for the current selected directory.
-    core_jobsystem.create(createAssetDataOfWholeDirJob, 1, var.selectedDirectory)
-
-    if editor.getPreference("assetBrowser.general.loadVehicleAssets")== true then
-      getDirsAndFiles(var.vehicles)
-    end
-
-    if editor.getPreference("assetBrowser.general.loadGameplayAssets") == true then
-      getDirsAndFiles(var.gameplay)
-    end
-
-    if editor.getPreference("assetBrowser.general.showAllDataFolders") == true then
-      getDirsAndFiles(var.allData)
-    end
-
-    if var.currentLevelDirectories[var.levelName] then
-      openDirByPath(var.currentLevelDirectories[var.levelName])
-    else
-      selectDirectory(var.root, false, true)
-    end
+    selectDirectory(var.root, false, true)
   end
 
   -- sort fileTypes alphabetically
@@ -4326,12 +4242,8 @@ local function setupJob()
 
   loadSavedFiletypeFilter()
 
-  if db == true then
-    editor.logInfo(logTag .. "Directory structure has been created.")
-  else
-    var.state = var.state_enum.loading_done
-    editor.logInfo(logTag .. "Files have been received and processed.")
-  end
+  var.state = var.state_enum.loading_done
+  editor.logInfo(logTag .. "Files have been received and processed.")
 
   var.history = {var.root}
 
@@ -4500,7 +4412,6 @@ local function onFileChanged(path, type)
       -- Check if there's a filetype, if not it's probably a folder.
       if filetype then
         if type == 'modified' then
-          print(filename)
           onFileModified(dir, filename, filetype)
         elseif type == 'deleted' then
           -- clear editor selection if the deleted file was selected before
@@ -4532,6 +4443,10 @@ local function onEditorGui()
   var.windowFlags = (var.dragging == var.dragging_enum.dragging or var.dragging == var.dragging_enum.drag_ended) and
   im.flags(im.WindowFlags_MenuBar, im.WindowFlags_NoScrollbar, im.WindowFlags_NoMove) or
   im.flags(im.WindowFlags_MenuBar, im.WindowFlags_NoScrollbar)
+
+  var.style = im.GetStyle()
+  var.io = im.GetIO()
+
   if editor.beginWindow(assetBrowserWindowName, "Asset Browser", var.windowFlags) then
 
     -- we do the setupJob here, otherwise it would lock down the filesystem too much and will load slower if in onEditorActivated
@@ -4543,14 +4458,10 @@ local function onEditorGui()
 
     var.windowPos = im.GetWindowPos()
     var.windowSize = im.GetWindowSize()
-    var.style = im.GetStyle()
-    var.io = im.GetIO()
 
     var.fontSize = math.ceil(im.GetFontSize())
     var.menuBarHeight = 2*var.style.FramePadding.y + var.fontSize
     var.inputFieldSize = var.fontSize + 2 * var.style.FramePadding.y
-
-    imageInspectorWindow()
 
     if var.dragging == var.dragging_enum.dragging and im.IsMouseReleased(0) then
       onDragEnded()
@@ -4584,6 +4495,8 @@ local function onEditorGui()
     end
   end
   editor.endWindow()
+
+  imageInspectorWindow()
 end
 -- ##### GUI: MAIN - END
 

@@ -21,26 +21,14 @@ end
 local function reset()
   -- TODO: this is dupliced in general.lua?
   if not dragData or not dragData.racers then return end
-  log("I", logTag, "Resetting timers for "..#dragData.racers.." racers")
+  --log("I", logTag, "Resetting timers for "..#dragData.racers.." racers")
   for _, racer in pairs(dragData.racers) do
-    if not racer.timers then
-      --The value of the timers are in seconds, the distance is in meters
-      racer.timers = {
-        dial = {type = "timer", value = 0},
-        timer = {type = "timer", value = 0},
-        reactionTime = {type = "reactionTimer", value = 0, distance = 0.2, isSet = false, label = "Reaction Time"},
-        time_60 = {type = "distanceTimer", value = 0, distance = 18.288, isSet = false, label = "Distance: 60ft / 18.28m"},
-        time_330 = {type = "distanceTimer", value = 0, distance = 100.584, isSet = false, label = "Distance: 330ft / 100.58m"},
-        time_1_8 = {type = "distanceTimer", value = 0, distance = 201.168, isSet = false, label = "Distance: 1/8th mile / 201.16m"},
-        time_1000 = {type = "distanceTimer", value = 0, distance = 304.8, isSet = false, label = "Distance: 1000ft / 304.8m"},
-        time_1_4 = {type = "distanceTimer", value = 0, distance = 402.336, isSet = false, label = "Distance: 1/4th mile / 402.34m"},
-        velAt_1_8 = {type = "velocity", value = 0, distance = 201.168, isSet = false, label = "Distance: 1/8th mile / 201.16m"},
-        velAt_1_4 = {type = "velocity", value = 0, distance = 402.336, isSet = false, label = "Distance: 1/4th mile / 402.34m"}
-      }
-    else
-      for timerId,t in pairs(racer.timers) do
+    for timerId,t in pairs(racer.timers) do
+      if t.type ~= "dialTimer" then
         t.value = 0
-        t.isSet = false
+        if t.isSet ~= nil then
+          t.isSet = false
+        end
       end
     end
   end
@@ -82,7 +70,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
           racer.timers.reactionTime.isSet = true
 
-          log('I', logTag, string.format("Racer %d (Lane %d) reaction time: %0.3fs", racer.vehId, racer.lane, racer.timers.reactionTime.value))
+          --log('I', logTag, string.format("Racer %d (Lane %d) reaction time: %0.3fs", racer.vehId, racer.lane, racer.timers.reactionTime.value))
         end
       end
 
@@ -95,13 +83,13 @@ local function onUpdate(dtReal, dtSim, dtRaw)
               -- same thing as for reaction time
               timer.value = prevTime + t*dtSim
               timer.isSet = true
-              log('I', logTag, string.format("Racer %d (Lane %d) took %0.3fs to reach %s", racer.vehId, racer.lane, timer.value, timer.label))
+              --log('I', logTag, string.format("Racer %d (Lane %d) took %0.3fs to reach %s", racer.vehId, racer.lane, timer.value, timer.label))
             end
             if timer.type == "velocity" then
               -- similar thing, but then interpolating the time once we have the normalized distance
               timer.value = lerp(dragData.racers[vehId].prevSpeed, dragData.racers[vehId].vehSpeed, t)
               timer.isSet = true
-              log('I', logTag, string.format("Racer %d (Lane %d) velocity is %s at %s", racer.vehId, racer.lane, velocityInAllUnits(timer.value), timer.label))
+              --log('I', logTag, string.format("Racer %d (Lane %d) velocity is %s at %s", racer.vehId, racer.lane, velocityInAllUnits(timer.value), timer.label))
             end
           end
         end

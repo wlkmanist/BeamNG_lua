@@ -33,7 +33,7 @@ end
 
 
 M.performActivityAction = function(id)
-  -- log('I', logTag, tostring(actionName) .. " action triggered. Looking for " .. tostring(actionName) .. " action in "..dumps(M.buttonsTable))
+  log('I', logTag, tostring(actionName) .. " action triggered. Looking for " .. tostring(actionName) .. " action in "..dumps(M.buttonsTable))
   if M.buttonsTable then
     (M.buttonsTable[id] or nop)()
   end

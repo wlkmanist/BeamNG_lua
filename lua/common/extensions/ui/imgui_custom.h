@@ -29,8 +29,6 @@ void imgui_SetDefaultFont( unsigned int idx);
 
 bool imgui_InputText( const char* label, const char& buf, size_t buf_size, ImGuiInputTextFlags flags, const void* callback, const void* user_data);
 bool imgui_InputTextMultiline( const char* label, const char& buf, size_t buf_size, const ImVec2& size, ImGuiInputTextFlags flags, const void* callback, const void* user_data);
-// imgui lua callback
-bool imgui_InputTextConsole(const char* label, const char& buf, size_t buf_size, ImGuiInputTextFlags flags);
 //void imgui_PlotMultiLines( const char* label, int num_datas, const char* names[], const ImColor* colors, float** datas, int values_count, const char* overlay_text, float scale_min, float scale_max, ImVec2 graph_size);
 //void imgui_PlotMultiHistograms( const char* label, int num_hists, const char** names, const ImColor* colors, float** datas, int values_count, const char* overlay_text, float scale_min, float scale_max, ImVec2 graph_size, bool sumValues);
 
@@ -88,8 +86,6 @@ void imgui_TextEditor_Render(const TextEditor& te, const char* title, const ImVe
 void imgui_TextEditor_SetText(const TextEditor& te, const char* text);
 const char *imgui_TextEditor_GetText(const TextEditor& te);
 bool imgui_TextEditor_IsTextChanged(const TextEditor& te);
-
-void imgui_readGlobalActions();
 
 // Imgui Knob plugin
 typedef int ImGuiKnobFlags;

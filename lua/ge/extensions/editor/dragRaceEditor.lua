@@ -529,7 +529,7 @@ end
 
 local funcContext = {
   ["headsUpRace"] = headsUpRace,
-  ["bracketRace"] = noCtxt,
+  ["bracketRace"] = headsUpRace,
   ["loopRace"] = noCtxt,
   ["tuffTrucksRace"] = noCtxt,
   ["dragPracticeRace"] = headsUpRace,

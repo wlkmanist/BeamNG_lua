@@ -40,6 +40,7 @@ local function resaveMaterial(file)
     if not tableIsEmpty(objects) then
       for _, obj in ipairs(objects) do
         if obj.___type == "class<Material>" then
+          obj.persistentId = ""
           persistenceMgr:setDirty(obj, '')
         end
       end
@@ -140,8 +141,8 @@ local function verifyVersionwork(job, convertdata)
   local count0 = 0
   local countPBR = 0
   local type = 2
-  local loaded = {}
   local isOld = {}
+  local checkedMats = {}
   local output = {}
   job.progress = 0
   job.stop = nil
@@ -191,16 +192,21 @@ local function verifyVersionwork(job, convertdata)
           if obj.___type == "class<Material>" then
             job.yield()
             log('I', '', ' * ' .. tostring(obj:getClassName()) .. ' - ' .. tostring(obj:getName()) .. ' - version: ' .. tostring(obj:getField('version', 0)) )
-            table.insert(loaded, obj:getName())
             local version = tonumber(obj:getField('version', 0))
             --PBR check
             if version and version < 1.5 then
               job.yield()
-              count0 = count0 + 1
+              if not checkedMats[obj:getName()] == true then
+                checkedMats[obj:getName()] = true
+                count0 = count0 + 1
+              end
               isOld[obj:getName()] = obj:getFileName()
             elseif version == 1.5 then
               job.yield()
-              countPBR = countPBR + 1
+              if not checkedMats[obj:getName()] == true then
+                checkedMats[obj:getName()] = true
+                countPBR = countPBR + 1
+              end
             end
           end
         end
@@ -212,6 +218,7 @@ local function verifyVersionwork(job, convertdata)
       job.yield()
       table.insert(output, k.."  in: "..v)
     end
+    table.sort(output, function(a,b) return string.upper(a) < string.upper(b) end)
     job.sleep(0.001)
     log('I', '', 'Found ' ..tostring(count0).. ' old materials' )
     log('I', '', 'Found ' ..tostring(countPBR).. ' PBR materials' )
@@ -274,7 +281,7 @@ local function verifyDuplicatework(job, convertdata, skipCommon)
         do return end
       end
       local dir, basefilename, ext = path.splitWithoutExt(fn)
-      if getFileSize(fn) > 0 then
+      if FS:fileSize(fn) > 0 then
         if string.find(fn, 'materials.cs$') then
           log('I', '', 'Loading cs material file '..fn )
           local f = io.open(fn, "r")
@@ -352,7 +359,7 @@ local function verifyDuplicatework(job, convertdata, skipCommon)
       table.insert(duplicated, k)
       --duplicated["Duplicated Mapping"][k] = v
     end
-
+    table.sort(duplicated, function(a,b) return string.upper(a) < string.upper(b) end)
     log('I', '', 'Found ' ..tostring(countduplicate).. ' duplicates' )
     job.sleep(0.001)
     isDone = 1
@@ -393,11 +400,13 @@ local function fixPIDwork(job, convertdata, skipCommon)
     --we have to check for common art too...
     local materialFiles = FS:findFiles(verifydata, "*materials.json", -1, true, false)
     if skipCommon == false then
-      local commonVeh = FS:findFiles("/vehicles/common", "*materials.json", -1, true, false)
       local commonArt = FS:findFiles("/art", "*materials.json", -1, true, false)
       local commonCore = FS:findFiles("/core", "*materials.json", -1, true, false)
-      for k,v in pairs(commonVeh) do
-        table.insert(materialFiles, v)
+      if string.match(verifydata, "vehicles/") then
+        local commonVeh = FS:findFiles("/vehicles/common", "*materials.json", -1, true, false)
+        for k,v in pairs(commonVeh) do
+          table.insert(materialFiles, v)
+        end
       end
       for k,v in pairs(commonArt) do
         table.insert(materialFiles, v)
@@ -415,7 +424,7 @@ local function fixPIDwork(job, convertdata, skipCommon)
 
     for _, fn in ipairs(materialFiles) do
       local dir, basefilename, ext = path.splitWithoutExt(fn)
-      if getFileSize(fn) > 0 then
+      if FS:fileSize(fn) > 0 then
         log('I', '', 'Loading json material file '..fn )
         matTable[fn] = jsonReadFile(fn) or {}
         if job.stop == true then
@@ -437,16 +446,12 @@ local function fixPIDwork(job, convertdata, skipCommon)
           end
           local mat = v
           if mat and mat.persistentId then
-            mat.persistentId = nil
             job.yield()
             outdatedFiles[path] = true
             count = count + 1
           elseif mat and not mat.persistentId then
             log('W', '', 'Corrupted or incompatible material found '..k)
           end
-        end
-        if outdatedFiles[path] == true then
-          jsonWriteFile(path, v, true)
         end
       end
     end
@@ -458,6 +463,7 @@ local function fixPIDwork(job, convertdata, skipCommon)
       resaveMaterial(k)
       table.insert(editedFiles, k)
     end
+    table.sort(editedFiles, function(a,b) return string.upper(a) < string.upper(b) end)
     log('I', '', 'Removed '..count..' persistendIds' )
     job.progress = 100
     job.sleep(0.001)
@@ -1056,6 +1062,7 @@ local function checkmissingMatswork(job, convertdata)
     if job.stop == true then
       do return end
     end
+    table.sort(missingMat, function(a,b) return string.upper(a) < string.upper(b) end)
     job.progress = 100
     job.sleep(0.001)
     isDone = 1
@@ -1113,18 +1120,19 @@ local function checkStaticwork(job)
     job.yield()
     table.insert(shapes, k)
     log('I', '', 'Found shape '..k )
-    local fsize = getFileSize(k)
+    local fsize = FS:fileSize(k)
     if fsize > 0 and fsize > -1 then
       size = size + fsize
     end
     countduplicate = countduplicate + 1
   end
+  table.sort(shapes, function(a,b) return string.upper(a) < string.upper(b) end)
   job.progress = 90
   job.sleep(0.001)
   job.progress = 100
   job.sleep(0.001)
   isDone = 1
-  size = string.format("%.2f", size*0.000001)
+  size = string.format("%.2f", size/1048576)
   local data = {type, countduplicate, countScene, shapes, isDone, size}
   extensions.editor_resourceChecker.jobData(3, data)
 end
@@ -1175,18 +1183,19 @@ local function checkForestwork(job)
     job.yield()
     table.insert(shapes, k)
     log('I', '', 'Found ForestItem '..k )
-    local fsize = getFileSize(k)
+    local fsize = FS:fileSize(k)
     if fsize > 0 and fsize > -1 then
       size = size + fsize
     end
     countduplicate = countduplicate + 1
   end
+  table.sort(shapes, function(a,b) return string.upper(a) < string.upper(b) end)
   job.progress = 90
   job.sleep(0.001)
   job.progress = 100
   job.sleep(0.001)
   isDone = 1
-  size = string.format("%.2f", size*0.000001)
+  size = string.format("%.2f", size/1048576)
   local data = {type, countduplicate, "dummy", shapes, isDone, size}
   extensions.editor_resourceChecker.jobData(3, data)
 end
@@ -1231,18 +1240,19 @@ local function checkTerrainswork(job)
     job.yield()
     table.insert(shapes, k)
     log('I', '', 'Found terrain '..k )
-    local fsize = getFileSize(k)
+    local fsize = FS:fileSize(k)
     if fsize > 0 and fsize > -1 then
       size = size + fsize
     end
     countduplicate = countduplicate + 1
   end
+  table.sort(shapes, function(a,b) return string.upper(a) < string.upper(b) end)
   job.progress = 90
   job.sleep(0.001)
   job.progress = 100
   job.sleep(0.001)
   isDone = 1
-  size = string.format("%.2f", size*0.000001)
+  size = string.format("%.2f", size/1048576)
   local data = {type, countduplicate, size, shapes, isDone}
   extensions.editor_resourceChecker.jobData(3, data)
 end
@@ -1284,7 +1294,7 @@ local function checkUnusedMatswork(job, levelname, removal)
       end
       job.yield()
       local dir, basefilename, ext = path.splitWithoutExt(fn)
-      if getFileSize(fn) > 0 then
+      if FS:fileSize(fn) > 0 then
         if string.find(fn, 'prefab$') then
           log('I', '', 'Loading ts prefab file '..fn )
           local f = io.open(fn, "r")
@@ -1340,13 +1350,15 @@ local function checkUnusedMatswork(job, levelname, removal)
         do return end
       end
       job.yield()
-      local shapeLoader
-      if not shapeLoader then
-        shapeLoader = ShapePreview()
+      if FS:fileExists(k) then
+        local shapeLoader
+        if not shapeLoader then
+          shapeLoader = ShapePreview()
+        end
+        shapeLoader:setObjectModel(k)
+        table.insert(objmatTable, shapeLoader:getMaterialNames())
+        shapeLoader:clearShape()
       end
-      shapeLoader:setObjectModel(k)
-      table.insert(objmatTable, shapeLoader:getMaterialNames())
-      shapeLoader:clearShape()
     end
     job.progress = 20
     job.sleep(0.001)
@@ -1483,7 +1495,7 @@ local function checkUnusedMatswork(job, levelname, removal)
         do return end
       end
       local dir, basefilename, ext = path.splitWithoutExt(fn)
-      if getFileSize(fn) > 0 then
+      if FS:fileSize(fn) > 0 then
         if string.find(fn, 'materials.cs$') then
           log('I', '', 'Loading cs material file '..fn )
           local f = io.open(fn, "r")
@@ -1573,6 +1585,7 @@ local function checkUnusedMatswork(job, levelname, removal)
         countduplicate = countduplicate + 1
       end
     end
+    table.sort(shapes, function(a,b) return string.upper(a) < string.upper(b) end)
     job.progress = 100
     job.sleep(0.001)
     isDone = 1
@@ -1595,6 +1608,507 @@ end
 
 local function checkUnusedMats(levelname, removal)
   checkUnusedMatsworkJob = extensions.core_jobsystem.create(checkUnusedMatswork, 1, levelname, removal)
+end
+
+local checkUsedMatsworkJob
+
+local function checkUsedMatswork(job, levelname)
+  local luaType = type
+  local type = 8
+  local isDone
+  local countduplicate = 0
+  local sizeTotal = 0
+  local shapes = {}
+  local usages = {}
+  job.progress = 0
+  job.sleep(0.001)
+  job.stop = nil
+  if not levelname then
+    log('E', '', 'There is no level name' )
+    isDone = 2
+  else
+    log('I', '', 'Checking for used materials' )
+    log('I', '', 'Checking Prefabs' )
+    local shapeList = {}
+    local matsInObjects = {}
+    job.progress = 5
+    local prefabs = {}
+    local prefabInstances = scenetree.findClassObjects('Prefab')
+    for k,v in pairs(prefabInstances) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "Prefab object broken "..dumps(v))
+      else
+        if m:getField('filename',0) then
+          table.insert(prefabs, m:getField('filename',0))
+        end
+      end
+    end
+    for _, fn in ipairs(prefabs) do
+      if job.stop == true then
+        do return end
+      end
+      job.yield()
+      local dir, basefilename, ext = path.splitWithoutExt(fn)
+      if FS:fileSize(fn) > 0 then
+        if string.find(fn, 'prefab$') then
+          log('I', '', 'Loading ts prefab file '..fn )
+          local f = io.open(fn, "r")
+          if f then
+            for line in f:lines() do
+              job.yield()
+              if line:match('shapeName') then
+                line = line:gsub('shapeName', '')
+                line = line:gsub('"', "")
+                line = line:gsub(' ', "")
+                line = line:gsub(';', "")
+                line = line:gsub('=', "")
+                shapeList[line] = true
+              end
+            end
+            f:close()
+          end
+        elseif string.find(fn, 'prefab.json$') then
+          log('I', '', 'Loading json prefab file '..fn )
+          local f = io.open(fn, "r")
+          for line in f:lines() do
+            job.yield()
+            local data = json.decode(line)
+            if data.shapeName then
+              shapeList[data.shapeName] = true
+            end
+          end
+          f:close()
+        end
+      end
+    end
+    log('I', '', 'Checking TSForestItemData' )
+    local meshNames = scenetree.findClassObjects('TSForestItemData')
+    local objmatTable = {}
+    local mats = {}
+    local allMatsUsages = {}
+    job.progress = 10
+    job.sleep(0.001)
+    for k,v in pairs(meshNames) do
+      if job.stop == true then
+        do return end
+      end
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "ForestItem object broken "..dumps(v))
+      else
+        shapeList[m:getField("shapeFile",0)] = true
+      end
+    end
+    job.progress = 15
+    job.sleep(0.001)
+    for k,v in pairs(shapeList) do
+      if job.stop == true then
+        do return end
+      end
+      job.yield()
+      if FS:fileExists(k) then
+        local shapeLoader
+        if not shapeLoader then
+          shapeLoader = ShapePreview()
+        end
+        shapeLoader:setObjectModel(k)
+        table.insert(objmatTable, shapeLoader:getMaterialNames())
+        matsInObjects[k] = shapeLoader:getMaterialNames()
+        shapeLoader:clearShape()
+      end
+    end
+    job.progress = 20
+    job.sleep(0.001)
+    log('I', '', 'Checking TSStatics' )
+    local meshNames = scenetree.findClassObjects('TSStatic')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "TSStatic object broken "..dumps(v))
+      else
+        table.insert(objmatTable, m:getMaterialNames())
+        matsInObjects[m:getModelFile()] = m:getMaterialNames()
+      end
+    end
+    job.progress = 25
+    job.sleep(0.001)
+    for k,v in pairs(objmatTable) do
+      job.yield()
+      if (luaType(v) == "table") then
+        for k,v in pairs(v) do
+          mats[v] = true
+          table.insert(allMatsUsages, v)
+        end
+      else
+        log("E","", "Is not a table???")
+      end
+    end
+    job.progress = 30
+    job.sleep(0.001)
+    local terrainMats = {}
+    log('I', '', 'Checking TerrainBlocks' )
+    local meshNames = scenetree.findClassObjects('TerrainBlock')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "TerrainBlock object broken "..dumps(v))
+      else
+        table.insert(terrainMats, m:getMaterials())
+      end
+    end
+    job.progress = 35
+    job.sleep(0.001)
+    for k,v in pairs(terrainMats) do
+      job.yield()
+      for k,v in pairs(v) do
+        mats[v:getInternalName()] = true
+        table.insert(allMatsUsages, v:getInternalName())
+      end
+    end
+    job.progress = 40
+    job.sleep(0.001)
+    log('I', '', 'Checking GroundPlanes' )
+    local meshNames = scenetree.findClassObjects('GroundPlane')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "GroundPlane object broken "..dumps(v))
+      else
+        mats[m:getField("Material",0)] = true
+        table.insert(allMatsUsages, m:getField("Material",0))
+        if not matsInObjects['GroundPlanes'] then matsInObjects['GroundPlanes'] = {} end
+        table.insert(matsInObjects['GroundPlanes'], m:getField("Material",0))
+      end
+    end
+    job.progress = 45
+    job.sleep(0.001)
+    log('I', '', 'Checking GroundCovers' )
+    local meshNames = scenetree.findClassObjects('GroundCover')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "GroundCover object broken "..dumps(v))
+      else
+        mats[m:getField("Material",0)] = true
+        table.insert(allMatsUsages, m:getField("Material",0))
+        if not matsInObjects['GroundCovers'] then matsInObjects['GroundCovers'] = {} end
+        table.insert(matsInObjects['GroundCovers'], m:getField("Material",0))
+      end
+    end
+    job.progress = 50
+    job.sleep(0.001)
+    log('I', '', 'Checking DecalRoads' )
+    local meshNames = scenetree.findClassObjects('DecalRoad')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "DecalRoad object broken "..dumps(v))
+      else
+        mats[m:getField("Material",0)] = true
+        table.insert(allMatsUsages, m:getField("Material",0))
+        if not matsInObjects['DecalRoads'] then matsInObjects['DecalRoads'] = {} end
+        table.insert(matsInObjects['DecalRoads'], m:getField("Material",0))
+      end
+    end
+    job.progress = 55
+    job.sleep(0.001)
+    log('I', '', 'Checking MeshRoads' )
+    local meshNames = scenetree.findClassObjects('MeshRoad')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "MeshRoad object broken "..dumps(v))
+      else
+        mats[m:getField("topMaterial",0)] = true
+        mats[m:getField("sideMaterial",0)] = true
+        mats[m:getField("bottomMaterial",0)] = true
+        table.insert(allMatsUsages, m:getField("topMaterial",0))
+        table.insert(allMatsUsages, m:getField("sideMaterial",0))
+        table.insert(allMatsUsages, m:getField("bottomMaterial",0))
+        if not matsInObjects['MeshRoads'] then matsInObjects['MeshRoads'] = {} end
+        table.insert(matsInObjects['MeshRoads'], m:getField("topMaterial",0))
+        table.insert(matsInObjects['MeshRoads'], m:getField("sideMaterial",0))
+        table.insert(matsInObjects['MeshRoads'], m:getField("bottomMaterial",0))
+      end
+    end
+    job.progress = 60
+    job.sleep(0.001)
+    log('I', '', 'Checking DecalData' )
+    local meshNames = scenetree.findClassObjects('DecalData')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "DecalData object broken "..dumps(v))
+      else
+        mats[m:getField("Material",0)] = true
+        table.insert(allMatsUsages, m:getField("Material",0))
+        if not matsInObjects['DecalData'] then matsInObjects['DecalData'] = {} end
+        table.insert(matsInObjects['DecalData'], m:getField("Material",0))
+      end
+    end
+    job.progress = 65
+    job.sleep(0.001)
+    if job.stop == true then
+      print("STOPPING")
+      do return end
+    end
+    for k,v in pairs(mats) do
+      job.yield()
+      local mat = scenetree.findObject(k)
+      local matSizeCheck = {}
+      if mat and mat.___type == "class<Material>" then
+        local texfields = extensions.editor_resourceChecker_resourceUtil.getMaterialTexFields(mat)
+        local matSize = 0
+        local matName = mat:getFileName()
+        local totalSizeCheck = {}
+        if texfields then
+          for g,h in pairs(texfields) do
+            local file = h
+            if file:find(".color.png") or file:find(".data.png") or file:find(".normal.png") then
+              if FS:fileExists(file:gsub('.png', '.dds')) then
+                file = file:gsub('.png', '.dds')
+              end
+            end
+            if FS:fileExists(file) then
+              local fileData = FS:stat(file)
+              if not matSizeCheck[file] == true then
+                matSizeCheck[file] = true
+                matSize = matSize + fileData.filesize
+              end
+              if not totalSizeCheck[file] == true then
+                totalSizeCheck[file] = true
+                sizeTotal = sizeTotal + fileData.filesize
+              end
+            elseif matName and not FS:fileExists(file) then
+              local dir, basefilename, ext = path.splitWithoutExt(matName)
+              if FS:fileExists(dir..file) then
+                local fileData = FS:stat(dir..file)
+                if not matSizeCheck[dir..file] == true then
+                  matSizeCheck[dir..file] = true
+                  matSize = matSize + fileData.filesize
+                end
+                if not totalSizeCheck[dir..file] == true then
+                  totalSizeCheck[dir..file] = true
+                  sizeTotal = sizeTotal + fileData.filesize
+                end
+              end
+            else
+              log('W', '', 'File not found '..file )
+            end
+          end
+        end
+        local countMat = 0
+        for g,h in pairs(allMatsUsages) do
+          if h == k then
+            countMat = countMat + 1
+          end
+        end
+        mats[k] = {matSize, countMat}
+      end
+    end
+    job.progress = 85
+    job.sleep(0.001)
+    for k,v in pairs(mats) do
+      job.yield()
+      if v and (v == true or v == false) then
+        mats[k] = nil
+      end
+    end
+    for k,v in pairs(mats) do
+      job.yield()
+      table.insert(shapes, {k.."  used: "..tostring(v[2]).." times. Textures memory usage: "..string.format("%.2f", v[1]/1048576).." MB", v[1]})
+      countduplicate = countduplicate + 1
+    end
+    table.sort(shapes, function(a,b) return tonumber(a[2]) > tonumber(b[2]) end)
+    for k,v in pairs(shapes) do
+      shapes[k] = v[1]
+    end
+    sizeTotal = string.format("%.2f", sizeTotal/1048576)
+    for k,v in pairs(matsInObjects) do
+      if (luaType(v) == "table") then
+        for n,p in pairs(v) do
+          if not usages[p] then usages[p] = {} end
+          if not tableContains(usages[p], k) then table.insert(usages[p], k) end
+        end
+      end
+    end
+    job.progress = 100
+    job.sleep(0.001)
+    isDone = 1
+  end
+  local data = {type, countduplicate, sizeTotal, shapes, isDone, usages}
+  extensions.editor_resourceChecker.jobData(3, data)
+end
+
+local function checkUsedMats(levelname, removal)
+  checkUsedMatsworkJob = extensions.core_jobsystem.create(checkUsedMatswork, 1, levelname)
+end
+
+local checkColDataworkJob
+
+local function checkColDatawork(job, levelname)
+  local luaType = type
+  local shapes = {}
+  local type = 9
+  local isDone
+  local polyStats = {0, 0, 0}
+  local countduplicate = 0
+  job.progress = 0
+  job.sleep(0.001)
+  job.stop = nil
+  if not levelname then
+    log('E', '', 'There is no level name' )
+    isDone = 2
+  else
+    log('I', '', 'Checking for used colmeshes' )
+    log('I', '', 'Checking Prefabs' )
+    job.progress = 5
+    local staticInstances = {}
+    local prefabs = {}
+    local prefabInstances = scenetree.findClassObjects('Prefab')
+    for k,v in pairs(prefabInstances) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "Prefab object broken "..dumps(v))
+      else
+        if m:getField('filename',0) then
+          table.insert(prefabs, m:getField('filename',0))
+        end
+      end
+    end
+    for _, fn in pairs(prefabs) do
+      if job.stop == true then
+        do return end
+      end
+      job.yield()
+      local dir, basefilename, ext = path.splitWithoutExt(fn)
+      if FS:fileSize(fn) > 0 then
+        if string.find(fn, 'prefab.json$') then
+          log('I', '', 'Loading json prefab file '..fn )
+          local f = io.open(fn, "r")
+          for line in f:lines() do
+            job.yield()
+            local data = json.decode(line)
+            if data.shapeName then
+              if not staticInstances[data.shapeName] then
+                staticInstances[data.shapeName] = {count = 0, collision = {}, ColPolygons = 0, VisPolygons = 0}
+              end
+              staticInstances[data.shapeName].count = staticInstances[data.shapeName].count + 1
+              if not data.collisionType then
+                table.insert(staticInstances[data.shapeName].collision, 'Collision Mesh')
+              else
+                table.insert(staticInstances[data.shapeName].collision, data.collisionType)
+              end
+            end
+          end
+          f:close()
+        end
+      end
+    end
+    log('I', '', 'Checking Forest Object' )
+    local forestObject = nil
+    if core_forest and core_forest.getForestObject() then
+      forestObject = core_forest.getForestObject()
+    end
+    job.progress = 10
+    job.sleep(0.001)
+    if forestObject then
+      job.yield()
+      for k,v in pairs(forestObject:getData():getItems()) do
+        if not staticInstances[v:getData():getShapeFile()] then
+          staticInstances[v:getData():getShapeFile()] = {count = 0, collision = {}, ColPolygons = 0, VisPolygons = 0}
+        end
+        staticInstances[v:getData():getShapeFile()].count = staticInstances[v:getData():getShapeFile()].count + 1
+        table.insert(staticInstances[v:getData():getShapeFile()].collision, 'Collision Mesh')
+      end
+    end
+    job.progress = 15
+    job.sleep(0.001)
+    log('I', '', 'Checking TSStatics' )
+    local meshNames = scenetree.findClassObjects('TSStatic')
+    for k,v in pairs(meshNames) do
+      job.yield()
+      local m = scenetree.findObject(v)
+      if not m then log("E", "", "TSStatic object broken "..dumps(v))
+      else
+        if not staticInstances[m:getModelFile()] then
+          staticInstances[m:getModelFile()] = {count = 0, collision = {}, ColPolygons = 0, VisPolygons = 0}
+        end
+        staticInstances[m:getModelFile()].count = staticInstances[m:getModelFile()].count + 1
+        table.insert(staticInstances[m:getModelFile()].collision, m:getField('collisionType',0))
+      end
+    end
+    for k,v in pairs(staticInstances) do
+      if job.stop == true then
+        do return end
+      end
+      job.yield()
+      if FS:fileExists(k) then
+        local shapeLoader
+        if not shapeLoader then
+          shapeLoader = ShapePreview()
+        end
+        shapeLoader:setObjectModel(k)
+        shapeLoader.mFixedDetail = true
+        shapeLoader:setCurrentDetail(0)
+        shapeLoader:renderWorld(RectI(0,0,256,256))
+        staticInstances[k].ColPolygons = shapeLoader.mColPolys
+        staticInstances[k].VisPolygons = shapeLoader.mDetailPolys
+        shapeLoader:clearShape()
+      end
+    end
+    for k,v in pairs(staticInstances) do
+      job.yield()
+      local colMeshInst = 0
+      local visMeshInst = 0
+      local totalCount = 0
+      local slow = false
+      if v and v.ColPolygons > 0 then
+        local count = 0
+        for i,c in pairs(v.collision) do
+          if c == "Collision Mesh" then count = count + 1 end
+        end
+        colMeshInst = count
+      end
+      if v and v.VisPolygons > 0 then
+        local count = 0
+        for i,c in pairs(v.collision) do
+          if (c == "Visible Mesh" or c == "Visible Mesh Final")  then count = count + 1 end
+        end
+        visMeshInst = count
+      end
+      if visMeshInst > 0 then
+        slow = true
+      end
+      local colMeshTotSize = colMeshInst*v.ColPolygons
+      local visMeshTotSize = visMeshInst*v.VisPolygons
+      local totalColSize = colMeshTotSize+visMeshTotSize
+      local totalCount = visMeshInst+colMeshInst
+      if slow == true then
+        table.insert(shapes, {k.."   used: "..totalCount.." times. ColPolys: "..v.ColPolygons..". Visible Mesh ColPolys: "..v.VisPolygons..". Total ColPolys: "..totalColSize..". Warning: This mesh is using Visible Mesh Collisions which might be cause performance issues", totalColSize})
+      else
+        table.insert(shapes, {k.."   used: "..totalCount.." times. ColPolys: "..v.ColPolygons..". Total ColPolys: "..totalColSize, totalColSize})
+      end
+      polyStats[1] = polyStats[1] + totalColSize
+      polyStats[2] = polyStats[2] + visMeshTotSize
+      polyStats[3] = polyStats[3] + visMeshInst
+      countduplicate = countduplicate + totalCount
+    end
+    table.sort(shapes, function(a,b) return tonumber(a[2]) > tonumber(b[2]) end)
+    for k,v in pairs(shapes) do
+      shapes[k] = v[1]
+    end
+    job.progress = 100
+    job.sleep(0.001)
+    isDone = 1
+  end
+  local data = {type, countduplicate, polyStats, shapes, isDone}
+  extensions.editor_resourceChecker.jobData(3, data)
+end
+
+local function checkColData(levelname, removal)
+  checkColDataworkJob = extensions.core_jobsystem.create(checkColDatawork, 1, levelname)
 end
 
 local shapestoRemove = {}
@@ -1633,7 +2147,7 @@ local function checkUnusedModelswork(job, levelname, removal)
       end
       job.yield()
       local dir, basefilename, ext = path.splitWithoutExt(fn)
-      if getFileSize(fn) > 0 then
+      if FS:fileSize(fn) > 0 then
         if string.find(fn, 'prefab$') then
           log('I', '', 'Loading ts prefab file '..fn )
           local f = io.open(fn, "r")
@@ -1705,7 +2219,7 @@ local function checkUnusedModelswork(job, levelname, removal)
     for k,v in pairs(forestFiles) do
       job.yield()
       local dir, basefilename, ext = path.splitWithoutExt(v)
-      if getFileSize(v) > 0 then
+      if FS:fileSize(v) > 0 then
         forestInternals[basefilename:gsub('.forest4', '')] = true
       end
     end
@@ -1776,16 +2290,17 @@ local function checkUnusedModelswork(job, levelname, removal)
       else
         table.insert(shapes, k)
       end
-      local fsize = getFileSize(k)
+      local fsize = FS:fileSize(k)
       if fsize > 0 and fsize > -1 then
         size = size + fsize
       end
       countduplicate = countduplicate + 1
     end
+    table.sort(shapes, function(a,b) return string.upper(a) < string.upper(b) end)
     job.progress = 100
     job.sleep(0.001)
     isDone = 1
-    size = string.format("%.2f", size*0.000001)
+    size = string.format("%.2f", size/1048576)
   end
   local data = {type, countduplicate, size, shapes, isDone}
   if removal == 1 then
@@ -2033,16 +2548,17 @@ local function unusedTextureswork(job, levelname, removal)
     for k,v in pairs(unused) do
       job.yield()
       table.insert(shapes, k)
-      local fsize = getFileSize(k)
+      local fsize = FS:fileSize(k)
       if fsize > 0 and fsize > -1 then
         size = size + fsize
       end
       countduplicate = countduplicate + 1
     end
+    table.sort(shapes, function(a,b) return string.upper(a) < string.upper(b) end)
     job.progress = 100
     job.sleep(0.001)
     isDone = 1
-    size = string.format("%.2f", size*0.000001)
+    size = string.format("%.2f", size/1048576)
   end
   local data = {type, countduplicate, size, shapes, isDone}
   if removal == 1 then
@@ -2142,7 +2658,7 @@ local function removeUnusedwork(job, levelname, item, selected)
             file = v
           end
           log('I', '', 'Removing unused shape '..file )
-          local fsize = getFileSize(file)
+          local fsize = FS:fileSize(file)
           local rem = FS:removeFile(file)
           if rem == 0 then
             count = count + 1
@@ -2186,7 +2702,7 @@ local function removeUnusedwork(job, levelname, item, selected)
       if not tableIsEmpty(texturesToRemove) then
         for k,v in pairs(texturesToRemove) do
           log('I', '', 'Removing unused texture '..v )
-          local fsize = getFileSize(v)
+          local fsize = FS:fileSize(v)
           local rem = FS:removeFile(v)
           if rem == 0 then
             count = count + 1
@@ -2216,7 +2732,7 @@ local function removeUnusedwork(job, levelname, item, selected)
     job.progress = 100
     job.sleep(0.001)
     isDone = 1
-    size = string.format("%.2f", size*0.000001)
+    size = string.format("%.2f", size/1048576)
   end
   local data = {type, count, size, "nothing", isDone}
   extensions.editor_resourceChecker.jobData(3, data)
@@ -2259,7 +2775,7 @@ local function duplicateDatawork(job, material)
     end
     for _, fn in ipairs(materialFiles) do
       local dir, basefilename, ext = path.splitWithoutExt(fn)
-      if getFileSize(fn) > 0 then
+      if FS:fileSize(fn) > 0 then
         if string.find(fn, 'materials.cs$') then
           log('I', '', 'Loading cs material file '..fn )
           local f = io.open(fn, "r")
@@ -2383,7 +2899,7 @@ local function removeDummywork(job, convertdata, skipCommon)
     job.sleep(0.001)
     local dummyMat = {}
     for _, fn in ipairs(materialFiles) do
-      if getFileSize(fn) > 0 then
+      if FS:fileSize(fn) > 0 then
         if string.find(fn, 'materials.json$') then
           matTable[fn] = jsonReadFile(fn) or {}
         end
@@ -2438,6 +2954,7 @@ local function removeDummywork(job, convertdata, skipCommon)
     if job.stop == true then
       do return end
     end
+    table.sort(resultTable, function(a,b) return string.upper(a) < string.upper(b) end)
     job.progress = 100
     job.sleep(0.001)
     isDone = 1
@@ -2448,6 +2965,62 @@ end
 
 local function removeDummy(convertdata, skipCommon)
   removeDummyworkJob = extensions.core_jobsystem.create(removeDummywork, 1, convertdata, skipCommon)
+end
+
+local textureExporterworkJob
+
+local function textureExporterwork(job, convertdata, exportpath)
+  local isDone
+  local verifydata = convertdata
+  local type = 10
+  local resultTable = {}
+  local count = 0
+  job.progress = 0
+  job.sleep(0.001)
+  if not verifydata then
+    log('E', '', 'There is no material path' )
+    isDone = 2
+  elseif not string.match(verifydata, "/") then
+    log('E', '', 'Incorrect path' )
+    isDone = 2
+  else
+    log('I', '', 'Exporting textures to PNG' )
+
+    --V2, shortcode much more efficient, checks all types of files at once
+    local meshFiles = FS:findFiles(verifydata, "*.dds", -1, true, false)
+    for k,v in ipairs(meshFiles) do
+      if job.progress < 98 then
+        job.progress = job.progress + 0.1
+      end
+      job.yield()
+      if job.stop == true then
+        do return end
+      end
+      if v and FS:fileExists(v:gsub('.dds', '.png')) == false then
+        local dir, basefilename, ext = path.splitWithoutExt(v)
+        local filepathIn = v
+        local filepath = exportpath..dir..basefilename..".png"
+        if not convertDDSToPNG(filepathIn, filepath) then
+          log('E', 'Unable to convert dds to png: ' .. tostring(filepathIn))
+        end
+        log('I', 'Converted dds to png: ' .. tostring(filepath))
+        table.insert(resultTable, filepath)
+        count = count + 1
+      else
+        log('I', 'PNG file already exists: ' .. tostring(v:gsub('.dds', '.png')))
+      end
+    end
+    table.sort(resultTable, function(a,b) return string.upper(a) < string.upper(b) end)
+    job.progress = 100
+    job.sleep(0.001)
+    isDone = 1
+  end
+  local data = {type, count, "dummy", resultTable, isDone}
+  extensions.editor_resourceChecker.jobData(2, data)
+end
+
+local function textureExporter(convertdata, exportpath)
+  textureExporterworkJob = extensions.core_jobsystem.create(textureExporterwork, 1, convertdata, exportpath)
 end
 
 --interface
@@ -2482,17 +3055,26 @@ local function getProgress()
   if checkUnusedMatsworkJob and checkUnusedMatsworkJob.running then
     return checkUnusedMatsworkJob.progress
   end
+  if checkUsedMatsworkJob and checkUsedMatsworkJob.running then
+    return checkUsedMatsworkJob.progress
+  end
   if checkUnusedModelsworkJob and checkUnusedModelsworkJob.running then
     return checkUnusedModelsworkJob.progress
   end
   if unusedTexturesworkJob and unusedTexturesworkJob.running then
     return unusedTexturesworkJob.progress
   end
+  if checkColDataworkJob and checkColDataworkJob.running then
+    return checkColDataworkJob.progress
+  end
   if removeUnusedworkJob and removeUnusedworkJob.running then
     return removeUnusedworkJob.progress
   end
   if removeDummyworkJob and removeDummyworkJob.running then
     return removeDummyworkJob.progress
+  end
+  if textureExporterworkJob and textureExporterworkJob.running then
+    return textureExporterworkJob.progress
   end
 end
 
@@ -2527,17 +3109,26 @@ local function stopProgress()
   if checkUnusedMatsworkJob and checkUnusedMatsworkJob.running then
     checkUnusedMatsworkJob.stop = true
   end
+  if checkUsedMatsworkJob and checkUsedMatsworkJob.running then
+    checkUsedMatsworkJob.stop = true
+  end
   if checkUnusedModelsworkJob and checkUnusedModelsworkJob.running then
     checkUnusedModelsworkJob.stop = true
   end
   if unusedTexturesworkJob and unusedTexturesworkJob.running then
     unusedTexturesworkJob.stop = true
   end
+  if checkColDataworkJob and checkColDataworkJob.running then
+    checkColDataworkJob.stop = true
+  end
   if removeUnusedworkJob and removeUnusedworkJob.running then
     removeUnusedworkJob.stop = true
   end
   if removeDummyworkJob and removeDummyworkJob.running then
     removeDummyworkJob.stop = true
+  end
+  if textureExporterworkJob and textureExporterworkJob.running then
+    textureExporterworkJob.stop = true
   end
 end
 
@@ -2565,6 +3156,8 @@ M.checkTerrains = checkTerrains
 M.matstoRemove = matstoRemove
 M.checkUnusedMatsworkJob = checkUnusedMatsworkJob
 M.checkUnusedMats = checkUnusedMats
+M.checkUsedMatsworkJob = checkUsedMatsworkJob
+M.checkUsedMats = checkUsedMats
 M.shapestoRemove = shapestoRemove
 M.checkUnusedModelsworkJob = checkUnusedModelsworkJob
 M.checkUnusedModels = checkUnusedModels
@@ -2572,9 +3165,14 @@ M.textoRemove = textoRemove
 M.unusedTexturesworkJob = unusedTexturesworkJob
 M.unusedTextures = unusedTextures
 M.removeUnused = removeUnused
+M.checkColDataworkJob = checkColDataworkJob
+M.checkColData = checkColData
 M.duplicateData = duplicateData
 M.duplicateDataworkJob = duplicateDataworkJob
+M.removeDummyworkJob = removeDummyworkJob
 M.removeDummy = removeDummy
+M.textureExporterworkJob = textureExporterworkJob
+M.textureExporter = textureExporter
 M.getProgress = getProgress
 M.stopProgress = stopProgress
 

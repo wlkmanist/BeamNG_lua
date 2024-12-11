@@ -9,50 +9,49 @@ local toolWindowName = "biomeTool"
 local editModeName = "Edit Biome"
 local imgui = ui_imgui
 local ffi = require('ffi')
-local windows = {}
-local currentWindow = {}
-local testingWindow
-local allFiles = {}
-local searchText = imgui.ArrayChar(256, "")
-local searchText_Items_Modify = imgui.ArrayChar(256, "")
-local searchText_Meshes_Generate = imgui.ArrayChar(256, "")
-local sinkRadiusText = imgui.ArrayChar(256, "1")
 
 local roadRiverGui = extensions.editor_roadRiverGui
-local mouseInfo = {}
-local nameText = imgui.ArrayChar(1024, "")
-local groupItemsBoolPtr = imgui.BoolPtr(1)
-local selectAllBoolPtr = imgui.BoolPtr(0)
 local exclusionZoneIndices = {}
-local selectAreaPopupIndex = imgui.IntPtr(0)
 local isDrawingLassoArea = false
 local valueInspector = require("editor/api/valueInspector")()
 
 local forest
-
-local layerCreateMtlComboIndex = imgui.IntPtr(0)
 local layerCreateMtlComboItemsTbl = {}
 local layerCreateMtlComboItems = imgui.ArrayCharPtrByTbl(layerCreateMtlComboItemsTbl)
-
-local createLayerTypeIndex = imgui.IntPtr(1)
-
-local layerDeleteComboIndex = imgui.IntPtr(0)
-local layerDeleteMtlComboItemsTbl = {}
-local layerDeleteMtlComboItems = imgui.ArrayCharPtrByTbl(layerDeleteMtlComboItemsTbl)
 
 local layerBlendingComboItemsTbl = {"Add", "Replace", "Delete"}
 local layerBlendingComboItems = imgui.ArrayCharPtrByTbl(layerBlendingComboItemsTbl)
 local terrainBlock = nil
 local maskFilePath = imgui.ArrayChar(256,"")
+local randomBaseMaskFilePath = imgui.ArrayChar(256,"")
 local editAreaIndex = nil
 local renameEditEnded = imgui.BoolPtr(false)
-local renameTextValue = imgui.ArrayChar(500)
 local areaMaterialIndex = 0
 
-local areaPaneHeight = 160
-local areaPaneMinHeight = 80
+local levelBiomeToolbarHeight = 50
+local levelBiomeLevelsListHeight = 500
+local levelBiomeLevelPropsHeight = 700
+local biomeAreasToolbarHeight = 50
+local biomeAreasLevelsListHeight = 500
+local biomeAreasLevelPropsHeight = 500
+local seperatorHeight            = 6
+local createForestPopupShown = false
+
 local areaPaneSeparatorHeight = 6
 local editLayerPaneHeight = 160
+local editEnded = imgui.BoolPtr(false)
+local input2FloatValue = imgui.ArrayFloat(2)
+local inputTextValue = imgui.ArrayChar(500)
+
+local highlighAnimation =  {
+  isHighligthing = false,
+  layerType = nil,
+  layerID = nil,
+  zoneType = nil,
+  zoneID = nil,
+  duration = 3.0,
+  elapsed = 0.0
+}
 
 local areaType_enum = {
   lasso = 0,
@@ -60,11 +59,9 @@ local areaType_enum = {
 }
 
 local layerType_enum = {
-  lasso = 0,
-  terrain_material = 1,
-  terrain_mask = 2,
-  random = 3,
-  any = 4
+  terrain = 0,
+  area = 1,
+  any = 2
 }
 
 local blending_enum = {
@@ -90,43 +87,66 @@ local enum_biomeProcType = {
   Field = 2
 }
 
+local enum_tabType = {
+  LevelBiome = 0,
+  BiomeAreas = 1
+}
+
 local noneBrushItemName = "- NONE -"
 
 local fieldInfoTemplate = {
   { name = "LayerName", label = "Layer name", val = "", type = "string", layerType = layerType_enum.any},
-  { name = "TerrainMaterial", label = "Terrain material", val = 1, type = "int", layerType = layerType_enum.any},
-  { name = "TerrainMask", label = "Terrain mask", val = "", type = "string", layerType = layerType_enum.any},
+  { name = "TerrainMaterial", label = "Terrain material", val = 0, type = "int", layerType = layerType_enum.terrain},
+  { name = "TerrainMask", label = "Terrain mask", val = "", type = "string", layerType = layerType_enum.terrain},
   { name = "ForestDensity", label = "Forest density (0 to 1)", val = 1, minValue = 0, maxValue = 1, type = "float", layerType = layerType_enum.any},
   { name = "SlopeInfluence", label = "Slope influence (-1 to 1)", val = 0, minValue = -1, maxValue = 1, type = "int", layerType = layerType_enum.any},
   { name = "SlopeRange", label = "Slope range (0 to 90)", val = {0, 90}, minValue = 0, maxValue = 90, type = "float", layerType = layerType_enum.any},
   { name = "BordersFalloff", label = "Border falloff (-10 to 10)", val = 0, minValue = -10, maxValue = 10, type = "int", layerType = layerType_enum.any},
   { name = "BordersDensity", label = "Border Density (0 to 1)", val = 1, minValue = 0, maxValue = 1, type = "float", layerType = layerType_enum.any},
-  --{ name = "VegetationFalloff", label = "Vegetation falloff (-10 to 10)", val = 0, minValue = -10, maxValue = 10, type = "float", layerType = layerType_enum.any},
   { name = "BlendingMethod", label = "Blending method", val = blending_enum.add, type = "int", layerType = layerType_enum.any},
 
   --lasso only
-  { name = "FieldPlacement", label = "Place Field", val = false, type = "bool", layerType = layerType_enum.lasso},
-  { name = "FieldItemDistance", label = "Items Distance", val = 1, minValue = 0, maxValue = 100, type = "float", layerType = layerType_enum.lasso},
-  { name = "FieldRowDistance", label = "Rows Distance", val = 1, minValue = 0, maxValue = 100, type = "float", layerType = layerType_enum.lasso},
-  { name = "FieldRowOrientation", label = "Rows Orientation", val = 0, minValue = 0, maxValue = 360, type = "float", layerType = layerType_enum.lasso},
-
-  --Random only
-  { name = "RA_Size", label = "Random area size (0 to 1)", val = 0, minValue = 0, maxValue = 1, type = "float", layerType = layerType_enum.random},
-  { name = "RA_SizeVar", label = "Random area size variation (0 to 1)", val = 0, minValue = 0, maxValue = 1, type = "float", layerType = layerType_enum.random},
-  { name = "RA_Density", label = "Random area density (0 to 1)", val = 0, minValue = 0, maxValue = 1, type = "float", layerType = layerType_enum.random},
-  { name = "RA_Seed", label = "Random area seed", val = 0, type = "int", layerType = layerType_enum.random}
+  { name = "FieldPlacement", label = "Place Field", val = false, type = "bool", layerType = layerType_enum.area},
+  { name = "FieldItemDistance", label = "Items Distance", val = 1, minValue = 0, maxValue = 100, type = "float", layerType = layerType_enum.area},
+  { name = "FieldRowDistance", label = "Rows Distance", val = 1, minValue = 0, maxValue = 100, type = "float", layerType = layerType_enum.area},
+  { name = "FieldRowOrientation", label = "Rows Orientation", val = 0, minValue = 0, maxValue = 360, type = "float", layerType = layerType_enum.area},
+  
+  { name = "RA_Map", label = "Random area map", val = "", type = "filename", typeName = "TypeImageFilename", layerType = layerType_enum.any},
+  { name = "RA_Seed", label = "Seed", val = 176312589, minValue = 0, maxValue = 276447231, type = "int", layerType = layerType_enum.any},
+  { name = "RA_Freq", label = "Frequency", val = 1, minValue = 0.001, maxValue = 2.0, type = "float", layerType = layerType_enum.any},
+  { name = "RA_Amp", label = "Size Coeff.", val = 1, minValue = 1, maxValue = 100.0, type = "float", layerType = layerType_enum.any},
+  { name = "RA_Thr", label = "Threshold", val = 0.0, minValue = -1.0, maxValue = 1.0, type = "float", layerType = layerType_enum.any},
+  { name = "RA_Oct", label = "Octave", val = 5, minValue = 1, maxValue = 10, type = "int", layerType = layerType_enum.any},
+  { name = "RA_Mask", label = "Mask file", val = "", type = "string", layerType = layerType_enum.any},
+  { name = "RA_Material", label = "Material", val = "", type = "string", layerType = layerType_enum.any},
+  { name = "RA_LassoAreas", label = "Material", val = "", type = "", layerType = layerType_enum.area},
 }
 
 local rowPlacementFields = { "FieldItemDistance", "FieldRowDistance", "FieldRowOrientation" }
 local areaListFilter = imgui.ImGuiTextFilter()
+local shouldUpdateAreasScroll = false
 local var = {}
+var.layers = {}
+var.layers.layerInfoTbl = {}
+var.layers.layerGlobalIndices = {}
+var.layers.lassoAreaGlobalIndices = {}
+var.layers.exZoneGlobalIndices = {}
+var.layers.fieldInfoTbl = {}
+var.layers.selectedLayerIDs = {}
+var.layers.forestBrushSelectedItems = {}
+var.layers.forestBrushTempSelectedItems = {}
+var.layers.forestItemsTbl = {}
+var.layers.layerBlendingComboIndexTbl = {}
+var.layers.PopupOpenMousePos = {x = 200, y = 200}
+
 var.areas = {}
-var.areas.layerGlobalIndices = {}
 var.areas.layerBlendingComboIndexTbl = {}
 var.areas.areaGlobalIndex = 1
 var.areas.areaInfoTbl = {}
 var.areas.fieldInfoTbl = {}
+var.areas.forestItemsTbl = {}
 var.areas.forestBrushSelectedItems = {}
+var.forestBrushTempSelectedItems = {}
 var.forestBrushes = {}
 var.lassoAreas = {}
 var.lassoPLNodes = {}
@@ -159,142 +179,29 @@ var.lassoDrawInfo = {type = var.enum_lassoDrawType.inclusionZone, areaID = nil, 
 var.areas.exclusionZones = {}
 var.enum_hoveredNodeAreaType = {lassoAction = 0, inclusionZone = 1, exclusionZone = 2}
 var.hoveredNodeAreaType = var.enum_hoveredNodeAreaType.lassoAction
+var.randImgScaleCoeff = 1.0
+var.selectedTab = enum_tabType.LevelBiome
+var.askedToOpenProject = false
 
-local function resetSelectedItemIndices(areaID)
-  if var.groupSelectedIndices_Modify[areaID] then
-    var.groupSelectedIndices_Modify[areaID] = {}
-  end
-end
-
-local function resetSelectedGroupIndices(areaID)
-  if var.itemsSelectedIndices_Modify[areaID] then
-    var.itemsSelectedIndices_Modify[areaID] = {}
-  end
-end
-
-local function getAreaByID(areaID)
-  local area = nil
-  if areaID == nil then return nil end
-  for _, areaItem in ipairs(var.areas.areaInfoTbl) do
-    if areaItem.areaID == areaID then
-      area = areaItem
-      break
-    end
-  end
-  return area
-end
-
-local function resetAreaGroupedItemCount(areaID)
-  for _, entriesInfo in ipairs(var.lassoAreasGroupedMeshTable) do
-    if entriesInfo.areaID == areaID then
-      entriesInfo.meshEntries = {}
-      break
-    end
-  end
-end
-
-local function findItemInGroupedMeshTbl(areaID, itemName)
-  local entry = {areaID = nil, meshEntry = nil}
-  for _, entriesInfo in ipairs(var.lassoAreasGroupedMeshTable) do
-    if entriesInfo.areaID == areaID then
-      entry.areaID = entriesInfo.areaID
-      for _, meshEntry in ipairs(entriesInfo.meshEntries) do
-        if meshEntry.shapeFilePath == itemName then
-          entry.meshEntry = meshEntry
-          break
-        end
-      end
-      break
-    end
-  end
-  return entry
-end
-
-local function getGroupMeshEntriesForArea(areaID)
-  local meshEntries = {}
-  for _, entriesInfo in ipairs(var.lassoAreasGroupedMeshTable) do
-    if entriesInfo.areaID == areaID then
-      meshEntries = entriesInfo.meshEntries
-      break
-    end
-  end
-  return meshEntries
-end
-
-local function findAreaInGroupedMeshTbl(areaID)
-  local area = nil
-  for _, areaItem in ipairs(var.lassoAreasGroupedMeshTable) do
-    if areaItem.areaID == areaID then
-      area = areaItem
-    end
-  end
-  return area
-end
-
-local function incrementGroupedMeshCount(areaID, forestItem)
-  local tblMeshEntry = findItemInGroupedMeshTbl(areaID, forestItem:getData():getShapeFile())
-  if tblMeshEntry.areaID == nil then
-    local meshEntry = {
-      shapeFilePath = tostring(forestItem:getData():getShapeFile()),
-      name = tostring(forestItem:getData():getName()),
-      count = 1
-    }
-    local entryInfo = {
-      areaID = areaID,
-      meshEntries = {meshEntry}
-    }
-    table.insert(var.lassoAreasGroupedMeshTable, entryInfo)
-  elseif tblMeshEntry.meshEntry == nil then
-    local areaEntry = findAreaInGroupedMeshTbl(areaID)
-    local meshEntry = {
-      shapeFilePath = tostring(forestItem:getData():getShapeFile()),
-      name = tostring(forestItem:getData():getName()),
-      count = 1
-    }
-    table.insert(areaEntry.meshEntries, meshEntry)
-  else
-    tblMeshEntry.meshEntry.count = tblMeshEntry.meshEntry.count + 1
-  end
-end
-
-local function groupItemsByMesh(areaID)
-  local area = getAreaByID(areaID)
-  if area then
-    resetAreaGroupedItemCount(areaID)
-    for _, item in ipairs(area.items) do
-      incrementGroupedMeshCount(areaID, item)
-    end
-  end
-end
-
-local function calculateLassoSelectionOnArea(areaID)
-  local area = getAreaByID(areaID)
-  if area == nil then return end
-
-  local lassoNodes2D = {}
-  for _, node in ipairs(area.nodes) do
-    table.insert(lassoNodes2D, Point2F(node.pos.x, node.pos.y))
-  end
-
-  local forestItems = var.forestData:getItemsPolygon(lassoNodes2D)
-  if not forestItems then return end
-  area.items = {}
-
-  for _, item in ipairs(forestItems) do
-    table.insert(area.items, item)
-  end
-  groupItemsByMesh(areaID)
-end
-
-local function getLayers(areaID)
+local function getLayersWithType(layerType)
   local layers = {}
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if area.areaID == areaID then
-      layers = area.layers
-      break
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerType == layerType then
+      table.insert(layers, layer)
     end
   end
   return layers
+end
+
+local function getLayer(layerType, layerID)
+  local ret = nil
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerType == layerType and layer.layerID == layerID then
+      ret = layer
+      break
+    end
+  end
+  return ret
 end
 
 local function getLassoNodeUnderCursor()
@@ -382,88 +289,14 @@ local function castRayDown(startPoint, endPoint)
   return res
 end
 
-local function drawLassoLineSegmented(areaID, originNode, targetNode, lassoAreaType)
+local function drawLassoLineSegmented(originNode, targetNode, lassoAreaType)
   originNode.pos = vec3(originNode.pos.x, originNode.pos.y, originNode.pos.z)
   targetNode.pos = vec3(targetNode.pos.x, targetNode.pos.y, targetNode.pos.z)
   local length = (originNode.pos - targetNode.pos):length()
-  local segmentsCount = length / 4.0
-  local directionVector = (targetNode.pos - originNode.pos):normalized()
-
-  local lastPos = originNode.pos
-  local lineSegments = {}
-  for index = 1, segmentsCount + 1, 1 do
-    local tempTarget = (index < segmentsCount) and (lastPos + (directionVector * 4.0)) or targetNode.pos
-    local tempLineBegin = lastPos
-    local tempLineEnd = tempTarget
-
-    if originNode.isUpdated or targetNode.isUpdated then
-      local rayCastBegin = castRayDown(lastPos + vec3(0,0,100))
-      local rayCastEnd = castRayDown(tempTarget + vec3(0,0,100))
-      if rayCastBegin then
-        tempLineBegin = vec3(lastPos.x,lastPos.y,rayCastBegin.pt.z)
-      end
-      if rayCastEnd then
-        tempLineEnd = vec3(tempTarget.x,tempTarget.y,rayCastEnd.pt.z)
-      end
-    else
-      local areaLineSegments =  var.lassoPLLineSegments[areaID]
-      if areaLineSegments and areaLineSegments[originNode.nodeID] then
-        local currentLassoSegments = areaLineSegments[originNode.nodeID]
-        if currentLassoSegments[index] then
-          tempLineBegin = currentLassoSegments[index].startPos
-          tempLineEnd = currentLassoSegments[index].endPos
-        end
-      end
-    end
-
-    if originNode.isUpdated or targetNode.isUpdated then
-      local segment = {startPos = tempLineBegin, endPos = tempLineEnd}
-      table.insert(lineSegments, segment)
-    end
-    local lineWidth = editor.getPreference("gizmos.general.lineThicknessScale") * 4
-    local lineColor = ColorF(0,0,1,0.5)
-    local renderColor = (lassoAreaType == var.enum_lassoDrawType.inclusionZone) and ColorF(0,0,1,0.5) or ColorF(1,0,0,0.5)
-
-    debugDrawer:drawLineInstance(tempLineBegin, tempLineEnd, lineWidth, renderColor, false)
-    lastPos = lastPos + (directionVector * 4.0)
-  end
-  -- cache segments bw updated nodes so that we don't raycast on every frame
-  -- when there is no update in node positions
-  if originNode.isUpdated or targetNode.isUpdated then
-    local areaLineSegments =  var.lassoPLLineSegments[areaID]
-    if areaLineSegments == nil then areaLineSegments = {} end
-    areaLineSegments[originNode.nodeID] = lineSegments
-  end
-end
-
-local function getAreaLayerGlobalIdx(areaID)
-  local layerIndex = 0
-  local indexFound = false
-  for _, layerGlobalIndexInfo  in ipairs(var.areas.layerGlobalIndices) do
-    if layerGlobalIndexInfo.areaID == areaID then
-      layerIndex = layerGlobalIndexInfo.layerGlobalIndex
-      indexFound = true
-      break
-    end
-  end
-  if not indexFound then
-    table.insert(var.areas.layerGlobalIndices, {areaID = areaID, layerGlobalIndex = 0})
-  end
-  return layerIndex
-end
-
-local function incAreaLayerGlobalIdx(areaID)
-  local indexFound = false
-  for _, layerGlobalIndexInfo  in ipairs(var.areas.layerGlobalIndices) do
-    if layerGlobalIndexInfo.areaID == areaID then
-      layerGlobalIndexInfo.layerGlobalIndex = layerGlobalIndexInfo.layerGlobalIndex + 1
-      indexFound = true
-      break
-    end
-  end
-  if not indexFound then
-    table.insert(var.areas.layerGlobalIndices, {areaID = areaID, layerGlobalIndex = 0})
-  end
+  local lineWidth = editor.getPreference("gizmos.general.lineThicknessScale") * 4
+  local lineColor = ColorF(0,0,1,0.5)
+  local renderColor = (lassoAreaType == var.enum_lassoDrawType.inclusionZone) and ColorF(0,0,1,0.5) or ColorF(1,0,0,0.5)
+  debugDrawer:drawLineInstance(originNode.pos, targetNode.pos, lineWidth, renderColor, false)
 end
 
 local function incExZoneGlobalIdx(areaID, layerID)
@@ -477,70 +310,33 @@ local function incExZoneGlobalIdx(areaID, layerID)
   end
 end
 
-local function getExZoneGlobalIdx(areaID, layerID)
-  local zoneIndex = 1
-  local indexFound = false
-  for _, zoneIndexInfo  in ipairs(exclusionZoneIndices) do
-    if zoneIndexInfo.areaID == areaID and zoneIndexInfo.layerID == layerID then
-      zoneIndex = zoneIndexInfo.zoneIndex
-      indexFound = true
+local function deleteLayer(layerType, layerID)
+  local removeIndex = -1
+  for index, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerType == layerType and layer.layerID == layerID then
+      removeIndex = index
       break
     end
   end
-  if not indexFound then
-    table.insert(exclusionZoneIndices, {areaID = areaID, layerID = layerID, zoneIndex = 1})
-  end
 
-  incExZoneGlobalIdx(areaID, layerID)
-  return zoneIndex
-end
-
-local function deleteExZone(areaID, layerID)
-  for _, exZoneData in ipairs(var.areas.exclusionZones) do
-    if exZoneData.areaID == areaID and exZoneData.layerID == layerID then
-      for index, zone in ipairs(exZoneData.zoneData) do
-        if zone.isSelected then
-          table.remove(exZoneData.zoneData, index)
-        end
-      end
-    end
+  if removeIndex > 0 then
+    table.remove(var.layers.layerInfoTbl, removeIndex)
   end
 end
 
-local function deleteLayer(areaID, layerID)
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if area.areaID == areaID then
-      for index, layer in ipairs(area.layers) do
-        if layer.layerID == layerID then
-          table.remove(area.layers, index)
-          break
-        end
-      end
-      break
-    end
-  end
-  deleteExZone(areaID, layerID)
-end
-
-
-local function insertFieldInfo(areaID, layerID, fieldData)
-  for _, fieldInfo in ipairs(var.areas.fieldInfoTbl) do
-    if fieldInfo.layerID == layerID and fieldInfo.areaID == areaID then
+local function insertFieldInfo(layerType, layerID, fieldData)
+  for _, fieldInfo in ipairs(var.layers.fieldInfoTbl) do
+    if fieldInfo.layerType == layerType and fieldInfo.layerID == layerID then
       table.insert(fieldInfo.fieldsData, fieldData)
     end
   end
 end
 
-local function getLayer(areaID, layerID)
+local function getLayerWithType(layerType, layerID)
   local layerInfo = nil
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if area.areaID == areaID then
-      for _, layer in ipairs(area.layers) do
-        if layer.layerID == layerID then
-          layerInfo = layer
-          break
-        end
-      end
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerType == layerType and layer.layerID == layerID then
+      layerInfo = layer
       break
     end
   end
@@ -575,17 +371,6 @@ local function populateForestBrushes()
   end
 end
 
-local function getAreaType(areaID)
-  local areaType =  areaType_enum.lasso
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if areaID == area.areaID then
-      areaType = area.areaType
-      break
-    end
-  end
-  return areaType
-end
-
 local function getLayerType(areaID, layerID)
   local layerType = nil
   for _, area in ipairs(var.areas.areaInfoTbl) do
@@ -614,10 +399,10 @@ local function getBlendingMethodStr(blendingEnum)
   return blendingMethodStr
 end
 
-local function selectForestBrush(areaID, layerID, internalName, zoneType)
+local function selectForestBrush(layerType, layerID, internalName, zoneType)
   local itemFound = false
-  for _, selectedItemsInfo in ipairs(var.areas.forestBrushSelectedItems) do
-    if selectedItemsInfo.areaID == areaID and selectedItemsInfo.layerID == layerID  and
+  for _, selectedItemsInfo in ipairs(var.layers.forestBrushSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID  and
       selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
       table.insert(selectedItemsInfo.selectedItems, internalName)
       itemFound = true
@@ -626,58 +411,286 @@ local function selectForestBrush(areaID, layerID, internalName, zoneType)
 
   if not itemFound then
     local brushZoneType = zoneType or enum_forestBrushItemZone.central
-    local selectionData = {areaID = areaID, layerID = layerID, zoneType = brushZoneType, selectedItems = {internalName}}
-    table.insert(var.areas.forestBrushSelectedItems, selectionData)
+    local selectionData = {layerType = layerType, layerID = layerID, zoneType = brushZoneType, selectedItems = {internalName}}
+    table.insert(var.layers.forestBrushSelectedItems, selectionData)
   end
 end
 
-local function addLayer(areaID, layerType, materialName, lassoNodes, maskPath)
-  local layerID = nil
-  local layerName
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if area.areaID == areaID then
-      local layerIndex =  getAreaLayerGlobalIdx(area.areaID)
-      incAreaLayerGlobalIdx(area.areaID)
-      local layer = {
-        layerType = layerType,
-        layerID = layerIndex + 1,
-        layerName = "Layer "..tostring(layerIndex + 1),
-        exclusionZones = {}
-      }
-      layerName = layer.layerName
-      if layerType == layerType_enum.terrain_material then
-        layer.materialName = materialName
-      elseif layerType == layerType_enum.terrain_mask then
-        layer.maskFilePath = maskPath
-      elseif layerType == layerType_enum.lasso then
-        layer.lassoNodes = deepcopy(lassoNodes)
-      end
+local function selectForestTempBrush(layerType, layerID, internalName, zoneType)
+  local itemFound = false
+  for _, selectedItemsInfo in ipairs(var.forestBrushTempSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID  and
+      selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
+      table.insert(selectedItemsInfo.selectedItems, internalName)
+      itemFound = true
+    end
+  end
+  if not itemFound then
+    local brushZoneType = zoneType or enum_forestBrushItemZone.central
+    local selectionData = {layerType = layerType, layerID = layerID, zoneType = brushZoneType, selectedItems = {internalName}}
+    table.insert(var.forestBrushTempSelectedItems, selectionData)
+  end
+end
 
-      layerID = layerIndex + 1
-      table.insert(area.layers, layer)
-      selectForestBrush(areaID, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)
-      selectForestBrush(areaID, layerID, noneBrushItemName, enum_forestBrushItemZone.central)
+local function clearForestBrushTempSelection()
+  var.forestBrushTempSelectedItems = {}
+end
+
+local function indexOf(table, value)
+  if not table then return -1 end
+  for i,v in ipairs(table) do
+    if v == value then return i end
+  end
+  return -1
+end
+
+local function isForestBrushTempSelected(layerType, layerID, internalName, zoneType)
+  local selected = false
+  for _, selectedItemsInfo in ipairs(var.forestBrushTempSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID  and
+      selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
+      selected = (indexOf(selectedItemsInfo.selectedItems, internalName) ~= -1)
       break
     end
   end
-  table.insert(var.areas.fieldInfoTbl, {areaID = areaID, layerID = layerID, fieldsData = {}})
+  return selected
+end
+
+local function getForestBrushTempSelection(areaID, layerID, zoneType)
+  local selectionInfo = {}
+  if isForestBrushTempSelected(layerType, layerID, noneBrushItemName, zoneType) then
+    return selectionInfo
+  end
+  for _, selectedItemsInfo in ipairs(var.forestBrushTempSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID and
+       selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
+        selectionInfo = selectedItemsInfo.selectedItems
+      break
+    end
+  end
+  return selectionInfo
+end
+
+local function deselectForestTempBrush(layerType, layerID, internalName, zoneType)
+  for _, selectedItemsInfo in ipairs(var.forestBrushTempSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID  and
+      selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
+      local index = indexOf(selectedItemsInfo.selectedItems, internalName)
+      if index ~= -1 then
+        table.remove(selectedItemsInfo.selectedItems, index)
+      end
+      break
+    end
+  end
+end
+
+local function getFieldsData(layerType, layerID)
+  local data = {}
+  for _, info in ipairs(var.layers.fieldInfoTbl) do
+    if info.layerType == layerType and info.layerID == layerID then
+      data = info.fieldsData
+    end
+  end
+  return data
+end
+
+local function getRandomLayerMapFile(layerType, layerID)
+  local mapFile = ""
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Map" then
+      mapFile = fieldData.val
+    end
+  end
+  return mapFile
+end
+
+local function setRandomLayerMapFile(layerType, layerID, filename)
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Map" then
+      fieldData.val = filename
+      break
+    end
+  end
+end
+
+local function getRandomLayerFrequency(layerType, layerID)
+  local freq = nil
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Freq" then
+      freq = fieldData.val
+    end
+  end
+  return freq
+end
+
+local function getRandomLayerSeed(layerType, layerID)
+  local seed = nil
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Seed" then
+      seed = fieldData.val
+    end
+  end
+  return seed
+end
+
+local function getRandomLayerAmplitude(layerType, layerID)
+  local amp = nil
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Amp" then
+      amp = fieldData.val
+    end
+  end
+  return amp
+end
+
+local function getRandomLayerThreshold(layerType, layerID)
+  local threshold = nil
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Thr" then
+      threshold = fieldData.val
+    end
+  end
+  return threshold
+end
+
+local function getRandomLayerOctave(layerType, layerID)
+  local octave = nil
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Oct" then
+      octave = fieldData.val
+    end
+  end
+  return octave
+end
+
+local function getRandomLayerBaseMaskFile(layerType, layerID)
+  local mapFile = nil
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Mask" then
+      mapFile = fieldData.val
+    end
+  end
+  return mapFile
+end
+
+local function setRandomLayerBaseMaskFile(layerType, layerID, filename)
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Mask" then
+      fieldData.val = filename
+    end
+  end
+end
+
+local function getRandomLayerMaterialIndex(layerType, layerID)
+  local materialName = nil
+  local materialIndex = 0
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_Material" then
+      materialName = fieldData.val
+      break
+    end
+  end
+
+  if terrainBlock then
+    local mtls = terrainBlock:getMaterials()
+    for index, mtl in ipairs(mtls) do
+      if materialName == mtl.internalName then
+        materialIndex = index-1
+      end
+    end
+  end
+  return materialIndex
+end
+
+local function getRandomLayerLassoAreas(layerType, layerID)
+  local lassoAreas = nil
+  local fieldsData = getFieldsData(layerType, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "RA_LassoAreas" then
+      lassoAreas = fieldData.val
+      break
+    end
+  end
+  return lassoAreas
+end
+
+local function getLayerTypeGlobalIdx(layerType)
+  local index = 0
+  local found = false
+  for _, indexData in ipairs(var.layers.layerGlobalIndices) do
+    if indexData.layerType == layerType then
+      index = indexData.index
+      found = true
+    end
+  end
+  if not found then
+    table.insert(var.layers.layerGlobalIndices, {layerType = layerType, index = 0})
+  end
+  return index
+end
+
+local function incLayerTypeGlobalIdx(layerType)
+  local found = false
+  for _, indexData in ipairs(var.layers.layerGlobalIndices) do
+    if indexData.layerType == layerType then
+      indexData.index = indexData.index + 1
+      found = true
+    end
+  end
+  if not found then
+    table.insert(var.layers.layerGlobalIndices, {layerType = layerType, index = 1})
+  end
+end
+
+local function getFieldMinMax(name)
+  local fieldMinMaxPair = {}
+  for _, fieldInfo in ipairs(fieldInfoTemplate) do
+    if fieldInfo.name == name then
+      fieldMinMaxPair = {fieldInfo.minValue, fieldInfo.maxValue}
+      break
+    end
+  end
+  return fieldMinMaxPair
+end
+
+local function addLayerWithType(layerType)
+  local layerID = nil
+  local layerName
+  local layerIndex =  getLayerTypeGlobalIdx(layerType) + 1
+  incLayerTypeGlobalIdx(layerType)
+  local prefix = (layerType == layerType_enum.area) and "Area" or "Terrain" 
+  local layer = {
+    layerType = layerType,
+    layerID = layerIndex,
+    layerName = prefix.." ".."Layer "..tostring(layerIndex),
+    lassoAreas = {}
+  }
+  layerName = layer.layerName
+  layerID = layerIndex
+  table.insert(var.layers.layerInfoTbl, layer)
+  table.insert(var.layers.fieldInfoTbl, {layerType = layerType, layerID = layerID, fieldsData = {}})
+
+  for _, fieldInfo in ipairs(var.layers.fieldInfoTbl) do
+    if fieldInfo.layerType == layerType and fieldInfo.layerID == layerID then
+      table.insert(fieldInfo.fieldsData, fieldData)
+    end
+  end
+
+  
+  insertFieldInfo(layerType, layerID, fieldData)
+
 
   for _, fieldInfo in ipairs(fieldInfoTemplate) do
-    if getLayerType(areaID, layerID) == layerType_enum.terrain_mask then
-      if fieldInfo.name == "TerrainMaterial" then
-        goto continue
-      end
-    end
-    if getLayerType(areaID, layerID) == layerType_enum.terrain_material then
-      if fieldInfo.name == "TerrainMask" then
-        goto continue
-      end
-    end
-    if getAreaType(var.selectedAreaID) == areaType_enum.lasso then
-      if fieldInfo.name == "TerrainMask" or fieldInfo.name == "TerrainMaterial" then
-        goto continue
-      end
-    end
     if fieldInfo.layerType == layerType_enum.any or layerType == fieldInfo.layerType then
       local fieldData = {
         name = fieldInfo.name,
@@ -688,45 +701,40 @@ local function addLayer(areaID, layerType, materialName, lassoNodes, maskPath)
         type = fieldInfo.type,
         layerType = fieldInfo.layerType
       }
-      local layer = getLayer(areaID, layerID)
-      if fieldInfo.name == "TerrainMaterial" then
-        fieldData.val = layer.materialName or ""
-      elseif fieldInfo.name == "TerrainMask" then
-        fieldData.val = layer.maskFilePath
-      elseif fieldInfo.name == "BlendingMethod" then
+      if fieldInfo.name == "BlendingMethod" then
         fieldData.val = getBlendingMethodStr(fieldData.val)
-      elseif fieldInfo.name == "LayerName" then
-        fieldData.val = layerName
       end
-      insertFieldInfo(areaID, layerID, fieldData)
+      insertFieldInfo(layerType, layerID, fieldData)
     end
     ::continue::
   end
-  populateForestBrushes()
-end
 
-local function getLayerTypeStr(areaID, layerID)
-  local layerType = ""
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if area.areaID == areaID then
-      for _, layer in ipairs(area.layers) do
-        if layer.layerID == layerID then
-          if layer.layerType == layerType_enum.lasso then
-            layerType = "Lasso"
-          elseif layer.layerType == layerType_enum.random then
-            layerType = "Random"
-          elseif layer.layerType == layerType_enum.terrain_mask then
-            layerType = "Terrain Mask"
-          elseif layer.layerType == layerType_enum.terrain_material then
-            layerType = "Terrain Material"
-          end
-          break
-        end
-      end
-      break
+
+--[[
+  if layerType == layerType_enum.random_material or  layerType == layerType_enum.random_mask or  layerType == layerType_enum.random_lasso then
+    local baseMask = getRandomLayerBaseMaskFile(areaID, layerID)
+    local materialIndex= getRandomLayerMaterialIndex(areaID, layerID)
+    local seed = getRandomLayerSeed(areaID, layerID)
+    local frequency = getRandomLayerFrequency(areaID, layerID)
+    local amplitude = getRandomLayerAmplitude(areaID, layerID)
+    local threshold = getRandomLayerThreshold(areaID, layerID)
+    local octave = getRandomLayerOctave(areaID, layerID)
+    local maskFileSuffix = areaID.."_"..layerID;
+    local randMaskDataTbl
+    if layerType == layerType_enum.random_material then
+      randMaskDataTbl = var.forestBrushTool:randAreaFromMaterial(materialIndex, seed, frequency, amplitude, threshold, octave, maskFileSuffix)
+    elseif layerType == layerType_enum.random_lasso then
+      randMaskDataTbl = var.forestBrushTool:randAreaFromLasso(seed, frequency, amplitude, threshold, octave, maskFileSuffix, lassoAreas) 
+    else
+      randMaskDataTbl = var.forestBrushTool:randAreaFromMask(baseMask, seed, frequency, amplitude, threshold, octave, maskFileSuffix)
+    end
+    if randMaskDataTbl["maskFile"] ~= "" then
+      setRandomLayerMapFile(areaID, layerID, randMaskDataTbl["maskFile"])
     end
   end
-  return layerType
+  ]]
+  populateForestBrushes()
+  return layer
 end
 
 local function resetDrawActionVariables()
@@ -743,16 +751,12 @@ local function drawLassoPolylineAction()
     if var.lassoSelectionEnded then
       var.shouldRenderCompletionSphere = false;
     else
-      if editor.keyModifiers.alt then
-        var.shouldRenderCompletionSphere = true;
-      else
-        var.shouldRenderCompletionSphere = false;
-      end
+      var.shouldRenderCompletionSphere = true;
     end
   end
 
   -- draw cursor sphere
-  if editor.keyModifiers.alt and not var.shouldRenderCompletionSphere then
+  if not var.shouldRenderCompletionSphere then
     local hit
     if imgui.GetIO().WantCaptureMouse == false then
       hit = cameraMouseRayCast(false, imgui.flags(SOTTerrain))
@@ -762,7 +766,7 @@ local function drawLassoPolylineAction()
       debugDrawer:drawSphere(hit.pos, sphereRadius, roadRiverGui.highlightColors.node, false)
       if not tableIsEmpty(var.lassoPLNodes) then
         local tempNode = {pos = hit.pos, isUpdated = true}
-        drawLassoLineSegmented(var.drawActionAreaID, var.lassoPLNodes[numNodes], tempNode, var.lassoDrawInfo.type)
+        drawLassoLineSegmented(var.lassoPLNodes[numNodes], tempNode, var.lassoDrawInfo.type)
       end
     end
   end
@@ -784,23 +788,23 @@ local function drawLassoPolylineAction()
       debugDrawer:drawSphere(node.pos, sphereRadius, nodeColor, false)
     end
     if index > 1 then
-      drawLassoLineSegmented(var.drawActionAreaID, var.lassoPLNodes[index - 1], node, var.lassoDrawInfo.type)
+      drawLassoLineSegmented(var.lassoPLNodes[index - 1], node, var.lassoDrawInfo.type)
     end
     ::continue::
   end
 
   -- finally draw the closing line if selection ended
   if var.lassoSelectionEnded then
-    drawLassoLineSegmented(var.drawActionAreaID, var.lassoPLNodes[numNodes], var.lassoPLNodes[1], var.lassoDrawInfo.type)
+    drawLassoLineSegmented(var.lassoPLNodes[numNodes], var.lassoPLNodes[1], var.lassoDrawInfo.type)
   end
 
   -- draw completion line and sphere
-  if var.lassoSelectionEnded == false and editor.keyModifiers.alt then
+  if var.lassoSelectionEnded == false then
     if var.shouldRenderCompletionSphere then
       local sphereRadius = (core_camera.getPosition() - var.lassoPLNodes[1].pos):length() * roadRiverGui.nodeSizeFactor * 2
       debugDrawer:drawSphere(var.lassoPLNodes[1].pos, sphereRadius,  ColorF(0,1,0,0.5), false)
       var.lassoPLNodes[1].isUpdated = true
-      drawLassoLineSegmented(var.drawActionAreaID, var.lassoPLNodes[numNodes], var.lassoPLNodes[1], var.lassoDrawInfo.type)
+      drawLassoLineSegmented(var.lassoPLNodes[numNodes], var.lassoPLNodes[1], var.lassoDrawInfo.type)
     end
   end
 
@@ -809,86 +813,110 @@ local function drawLassoPolylineAction()
   end
 end
 
-local function getLassoNodes(areaID, layerID)
-  local lassoNodes = {}
-  local layers = getLayers(areaID)
-  for _, layer in ipairs(layers) do
-    if layer.layerType == layerType_enum.lasso and layer.layerID == layerID then
-      for _, node in ipairs(layer.lassoNodes) do
-        table.insert(lassoNodes, node.pos)
+local function getLassoAreas(layerID)
+  local lassoAreas = {}
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for _, lassoArea in ipairs(layer.lassoAreas) do
+        if lassoArea.zoneType == var.enum_lassoDrawType.inclusionZone then
+          table.insert(lassoAreas, lassoArea)
+        end
+      end
+    break
+    end
+  end
+  return lassoAreas
+end
+
+local function getAllLassoAreas(layerID)
+  local lassoAreas = {}
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for _, lassoArea in ipairs(layer.lassoAreas) do
+        table.insert(lassoAreas, lassoArea)
+      end
+    break
+    end
+  end
+  return lassoAreas
+end
+
+local function getLassoNodes(layerID)
+  local lassoAreas = {}
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for _, lassoArea in ipairs(layer.lassoAreas) do
+        if lassoArea.zoneType == var.enum_lassoDrawType.inclusionZone then
+          local lassoNodes = {}
+          for _, node in ipairs(lassoArea.nodes) do
+            table.insert(lassoNodes, node.pos)
+          end
+          table.insert(lassoAreas, lassoNodes)
+        end
       end
       break
     end
   end
-  return lassoNodes
+  return lassoAreas
 end
 
-local function drawLassoLayers(areaID)
-  -- Draw Inclusion Zones
-  local layers = getLayers(areaID)
-  for _, layer in ipairs(layers) do
-    if layer.layerType == layerType_enum.lasso then
-      local numNodes = #layer.lassoNodes
-      if numNodes == 0 then break end
-      for index, node in ipairs(layer.lassoNodes) do
-        local nodeColor = roadRiverGui.highlightColors.node
-        if var.lassoHoveredNode.exZoneID == nil then
-          if var.lassoHoveredNode.index == index and  var.lassoHoveredNode.layerID == layer.layerID then
-            nodeColor = roadRiverGui.highlightColors.hoveredNode
-          elseif var.lassoAreaSelectedNode.index == index and var.lassoAreaSelectedNode.layerID == layer.layerID then
-            nodeColor = roadRiverGui.highlightColors.selectedNode
+local function getLassoNodesWithAreaID(layerID, lassoAreaID)
+  local lassoAreas = {}
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for _, lassoArea in ipairs(layer.lassoAreas) do
+        if lassoArea.zoneType == var.enum_lassoDrawType.inclusionZone and lassoArea.lassoAreaID == lassoAreaID then
+          local lassoNodes = {}
+          for _, node in ipairs(lassoArea.nodes) do
+            table.insert(lassoNodes, node.pos)
           end
-        end
-        local sphereRadius = (core_camera.getPosition() - node.pos):length() * roadRiverGui.nodeSizeFactor
-        debugDrawer:drawSphere(node.pos, sphereRadius, nodeColor, false)
-
-        if index > 1 then
-          drawLassoLineSegmented(areaID, layer.lassoNodes[index - 1], node, var.enum_lassoDrawType.inclusionZone)
+          table.insert(lassoAreas, lassoNodes)
         end
       end
-      -- finally draw the closing line
-      drawLassoLineSegmented(areaID, layer.lassoNodes[numNodes], layer.lassoNodes[1], var.enum_lassoDrawType.inclusionZone)
-      for _, node in ipairs(layer.lassoNodes) do
-        node.isUpdated = false
-      end
+      break
     end
   end
+  return lassoAreas
+end
 
-  -- Draw Exclusion Zones
-  for _, zone in ipairs(var.areas.exclusionZones) do
-    if zone.areaID == areaID then
-      for _, zoneData in ipairs(zone.zoneData) do
-        local zoneNodes = zoneData.nodes
-        local numNodes = #zoneNodes
-        if numNodes == 0 then break end
-        for index, node in ipairs(zoneNodes) do
-          local nodeColor = roadRiverGui.highlightColors.node
-          if var.lassoHoveredNode.exZoneID == zoneData.ID and  var.lassoHoveredNode.layerID == zone.layerID and var.lassoHoveredNode.index == index then
-            nodeColor = roadRiverGui.highlightColors.hoveredNode
+local function drawLassoAreas(layerID)
+  for index, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID then
+      for index, lassoArea in ipairs(layer.lassoAreas) do
+        if highlighAnimation.isHighligthing and highlighAnimation.elapsed < highlighAnimation.duration then
+          if layer.layerType == highlighAnimation.layerType and layer.layerID == highlighAnimation.layerID and 
+            lassoArea.zoneType == highlighAnimation.zoneType and lassoArea.lassoAreaID == highlighAnimation.zoneID then 
+            highlighAnimation.elapsed = highlighAnimation.elapsed + editor.getDeltaTime()
+              if math.ceil(highlighAnimation.elapsed / 0.5) % 2 ~= 0 then
+                goto continue
+              end
           end
+        end
+        if highlighAnimation.elapsed > highlighAnimation.duration then
+          highlighAnimation.isHighligthing = false
+          highlighAnimation.elapsed = 0.0
+        end
 
+        local numNodes = tableSize(lassoArea.nodes)
+        for index, node in ipairs(lassoArea.nodes) do
+          local nodeColor = roadRiverGui.highlightColors.node
+          if var.lassoHoveredNode.exZoneID == nil then
+            if var.lassoHoveredNode.index == index and  var.lassoHoveredNode.layerID == layer.layerID then
+              nodeColor = roadRiverGui.highlightColors.hoveredNode
+            elseif var.lassoAreaSelectedNode.index == index and var.lassoAreaSelectedNode.layerID == layer.layerID then
+              nodeColor = roadRiverGui.highlightColors.selectedNode
+            end
+          end
           local sphereRadius = (core_camera.getPosition() - node.pos):length() * roadRiverGui.nodeSizeFactor
           debugDrawer:drawSphere(node.pos, sphereRadius, nodeColor, false)
-
           if index > 1 then
-            drawLassoLineSegmented(areaID, zoneNodes[index - 1], node, var.enum_lassoDrawType.exclusionZone)
+            drawLassoLineSegmented(lassoArea.nodes[index - 1], lassoArea.nodes[index], lassoArea.zoneType)
           end
         end
         -- finally draw the closing line
-        drawLassoLineSegmented(areaID, zoneNodes[numNodes], zoneNodes[1], var.enum_lassoDrawType.exclusionZone)
-        for _, node in ipairs(zoneNodes) do
-          node.isUpdated = false
-        end
+        drawLassoLineSegmented(lassoArea.nodes[numNodes], lassoArea.nodes[1], lassoArea.zoneType)
+        ::continue::
       end
-    end
-  end
-end
-
-local function changeAreaName(areaID, newName)
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if areaID == area.areaID then
-      area.areaName = newName
-      break
     end
   end
 end
@@ -905,192 +933,38 @@ local function getAvailableLayerType(areaID)
   return layerType
 end
 
-local function drawAreasList()
-  imgui.Text("Areas")
-  local flags = imgui.flags(imgui.WindowFlags_NoScrollWithMouse, imgui.WindowFlags_NoScrollbar, imgui.WindowFlags_ChildWindow)
-  imgui.BeginChild1("AreasPanel", imgui.ImVec2(imgui.GetContentRegionAvail().x, areaPaneHeight), flags)
-  if imgui.BeginPopupModal("Delete Area") then
-    imgui.TextUnformatted("Are you sure you want to delete the area?")
-    if imgui.Button("Cancel") then
-      imgui.CloseCurrentPopup()
-    end
-    imgui.SameLine()
-    if imgui.Button("OK") then
-      for index, area in ipairs(var.areas.areaInfoTbl) do
-          if var.selectedAreaID == area.areaID then
-            table.remove(var.areas.areaInfoTbl, index)
-          end
-      end
-      for index, area in ipairs(var.areas.fieldInfoTbl) do
-        if var.selectedAreaID == area.areaID then
-          table.remove(var.areas.fieldInfoTbl, index)
-        end
-      end
-      var.selectedAreaID = nil
-      imgui.CloseCurrentPopup()
-    end
-    imgui.EndPopup()
-  end
-
-  if imgui.BeginPopupModal("Create Area") then
-    imgui.TextUnformatted("Please Select the Area type:")
-    if imgui.RadioButton2("Terrain Material Area", selectAreaPopupIndex, 0) then
-      selectAreaPopupIndex = imgui.IntPtr(0)
-    end
-    if imgui.RadioButton2("Lasso Area", selectAreaPopupIndex, 1) then
-      selectAreaPopupIndex = imgui.IntPtr(1)
-    end
-
-    if imgui.Button("Cancel") then
-      imgui.CloseCurrentPopup()
-    end
-    imgui.SameLine()
-
-    editor_terrainEditor.updateMaterialLibrary()
-    layerCreateMtlComboItemsTbl = {}
-
-    if terrainBlock then
-      local mtls = terrainBlock:getMaterials()
-      for index, mtl in ipairs(mtls) do
-        table.insert(layerCreateMtlComboItemsTbl, mtl.internalName)
-      end
-    end
-
-    if imgui.Button("OK") then
-      local area = {
-        areaID    = var.areas.areaGlobalIndex,
-        areaName = "Area",
-        areaType = selectAreaPopupIndex[0] == 0 and areaType_enum.terrain_material or areaType_enum.lasso,
-        layers = {},
-        items = {},
-        materialName = selectAreaPopupIndex[0] == 0 and layerCreateMtlComboItemsTbl[layerCreateMtlComboIndex[0] + 1] or nil
-      }
-      table.insert(var.areas.areaInfoTbl, area)
-      var.selectedAreaID = area.areaID
-      var.areas.areaGlobalIndex = var.areas.areaGlobalIndex + 1
-      if selectAreaPopupIndex[0] == 0 then
-        createLayerTypeIndex[0] = layerType_enum.terrain_material
-      else
-        createLayerTypeIndex[0] = layerType_enum.lasso
-      end
-      imgui.CloseCurrentPopup()
-    end
-    imgui.EndPopup()
-  end
-
-  local topItemsStartPosY = imgui.GetCursorPos().y
-  if imgui.Button("Create Area") then
-    imgui.OpenPopup("Create Area")
-   end
-  imgui.SameLine()
-  if var.selectedAreaID == nil then
-    imgui.BeginDisabled()
-  end
-
-  if imgui.Button("Delete Area") then
-    imgui.OpenPopup("Delete Area")
-  end
-
-  if var.selectedAreaID == nil then
-    imgui.EndDisabled()
-  end
-
-  editor.uiInputText('', searchText)
-  imgui.SameLine()
-  if imgui.SmallButton("x") then
-    searchText = imgui.ArrayChar(256, '')
-  end
-  imgui.Separator()
-  local filter = string.lower(ffi.string(searchText))
-  if filter == '' then
-  end
-  local topItemsEndPosY = imgui.GetCursorPos().y
-
-  local renderAreaNameFunc = function(area, index)
-    local areaTypeStr = (area.areaType == areaType_enum.terrain_material) and "Terrain Material" or "Lasso"
-    if editAreaIndex == index then
-      ffi.copy(renameTextValue, area.areaName)
-      editor.uiInputText("", renameTextValue, ffi.sizeof(renameTextValue), imgui.InputTextFlags_AutoSelectAll, nil, nil, renameEditEnded)
-      if renameEditEnded[0] then
-        local newName = ffi.string(renameTextValue)
-        changeAreaName(area.areaID, newName)
-        editAreaIndex = nil
-      end
-    else
-      if imgui.Selectable1(area.areaName.. " (".. areaTypeStr ..")##"..tostring(area.areaID), var.selectedAreaID == area.areaID) then
-        editAreaIndex = (var.selectedAreaID == area.areaID) and index or nil
-        var.selectedAreaID = area.areaID
-        if area.areaType == areaType_enum.lasso then
-          createLayerTypeIndex[0] = layerType_enum.lasso
-        elseif area.areaType == areaType_enum.terrain_material then
-          local availableLayerType = getAvailableLayerType(var.selectedAreaID)
-            createLayerTypeIndex[0] = availableLayerType or layerType_enum.terrain_mask
-        end
-      end
+local function getForestItemUIDsInLayer(layerType, layerID)
+  if var.layers.forestItemsTbl == nil then var.layers.forestItemsTbl = {} end
+  local forestItemsTbl = {}
+  for _, layerItemsEntry in ipairs(var.layers.forestItemsTbl) do
+    if layerItemsEntry.layerType == layerType and layerItemsEntry.layerID == layerID then
+      forestItemsTbl = layerItemsEntry.forestItems
     end
   end
-
-  imgui.BeginChild1("AreasList", imgui.ImVec2(imgui.GetContentRegionAvail().x, areaPaneHeight - (topItemsEndPosY - topItemsStartPosY) - imgui.GetStyle().FramePadding.y * 12), imgui.WindowFlags_ChildWindow)
-  for index, area in ipairs(var.areas.areaInfoTbl) do
-    if string.find(string.lower(area.areaName), filter) then
-      if var.selectedAreaID == area.areaID then imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(0, 1, 0, 0.5)) end
-      renderAreaNameFunc(area, index)
-      if var.selectedAreaID == area.areaID then imgui.PopStyleColor() end
-    end
-  end
-  imgui.EndChild()
-  imgui.EndChild()
-
-  local separatorPos = imgui.GetCursorPos()
-  imgui.InvisibleButton("SeparatorButton", imgui.ImVec2(imgui.GetContentRegionAvail().x, areaPaneSeparatorHeight))
-  if imgui.IsItemActive() then
-    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
-      local newHeightVal = areaPaneHeight + imgui.GetIO().MouseDelta.y
-      areaPaneHeight = clamp(newHeightVal, 100, 1000)
-    end
-  end
-  if imgui.IsItemActive() or imgui.IsItemHovered() then
-    imgui.SetMouseCursor(3)
-  end
-  imgui.SetCursorPosY(separatorPos.y + areaPaneSeparatorHeight / 2)
-  imgui.Separator()
+  return forestItemsTbl
 end
 
-local function getAreaName(areaID)
-  local areaName = ""
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if areaID == area.areaID then
-      areaName = area.areaName
-      break
-    end
+local function deleteItemsInLayer(layerType, layerID)
+  local itemUIDs = getForestItemUIDsInLayer(layerType, layerID)
+  local forestData = forest:getData()
+  for _, itemUID in ipairs(itemUIDs) do
+    local item = forestData:findItemByUid(itemUID)
+    editor.removeForestItem(forestData, item)
   end
-  return areaName
 end
 
-local function indexOf(table, value)
-  if not table then return -1 end
-  for i,v in ipairs(table) do
-    if v == value then return i end
-  end
-  return -1
-end
-
-local function setLayerName(areaID, layerID, name)
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if areaID == area.areaID then
-      for _, layer in ipairs(area.layers) do
-        if layerID == layer.layerID then
-          layer.layerName = name
-        end
-      end
+local function setLayerName(layerType, layerID, name)
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerType == layerType and layer.layerID == layerID then
+      layer.layerName = name
     end
   end
 end
 
-local function isForestBrushSelected(areaID, layerID, internalName, zoneType)
+local function isForestBrushSelected(layerType, layerID, internalName, zoneType)
   local selected = false
-  for _, selectedItemsInfo in ipairs(var.areas.forestBrushSelectedItems) do
-    if selectedItemsInfo.areaID == areaID and selectedItemsInfo.layerID == layerID  and
+  for _, selectedItemsInfo in ipairs(var.layers.forestBrushSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID  and
       selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
       selected = (indexOf(selectedItemsInfo.selectedItems, internalName) ~= -1)
       break
@@ -1099,24 +973,25 @@ local function isForestBrushSelected(areaID, layerID, internalName, zoneType)
   return selected
 end
 
-local function getForestBrushSelection(areaID, layerID, zoneType)
+local function getForestBrushSelection(layerType, layerID, zoneType)
   local selectionInfo = {}
-  if isForestBrushSelected(areaID, layerID, noneBrushItemName, zoneType) then
+  if isForestBrushSelected(layerType, layerID, noneBrushItemName, zoneType) then
     return selectionInfo
   end
-  for _, selectedItemsInfo in ipairs(var.areas.forestBrushSelectedItems) do
-    if selectedItemsInfo.areaID == areaID and selectedItemsInfo.layerID == layerID and
+  for _, selectedItemsInfo in ipairs(var.layers.forestBrushSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID and
        selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
         selectionInfo = selectedItemsInfo.selectedItems
       break
     end
   end
+  if selectionInfo == nil then selectionInfo = {} end
   return selectionInfo
 end
 
-local function deselectForestBrush(areaID, layerID, internalName, zoneType)
-  for _, selectedItemsInfo in ipairs(var.areas.forestBrushSelectedItems) do
-    if selectedItemsInfo.areaID == areaID and selectedItemsInfo.layerID == layerID  and
+local function deselectForestBrush(layerType, layerID, internalName, zoneType)
+  for _, selectedItemsInfo in ipairs(var.layers.forestBrushSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID  and
       selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
       local index = indexOf(selectedItemsInfo.selectedItems, internalName)
       if index ~= -1 then
@@ -1127,9 +1002,9 @@ local function deselectForestBrush(areaID, layerID, internalName, zoneType)
   end
 end
 
-local function clearForestBrushSelection(areaID, layerID, zoneType)
-  for _, selectedItemsInfo in ipairs(var.areas.forestBrushSelectedItems) do
-    if selectedItemsInfo.areaID == areaID and selectedItemsInfo.layerID == layerID  and
+local function clearForestBrushSelection(layerType, layerID, zoneType)
+  for _, selectedItemsInfo in ipairs(var.layers.forestBrushSelectedItems) do
+    if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID  and
       selectedItemsInfo.zoneType == (zoneType or enum_forestBrushItemZone.central) then
       selectedItemsInfo.selectedItems = {}
       break
@@ -1155,9 +1030,9 @@ local function getElementsForBrush(brushName)
   return forestBrushElements
 end
 
-local function getForestBrushElementsFromSelection(areaID, layerID, zoneType)
+local function getForestBrushElementsFromSelection(layerType, layerID, zoneType)
   local forestBrushElements = {}
-  local brushSelection = getForestBrushSelection(areaID, layerID, zoneType)
+  local brushSelection = getForestBrushSelection(layerType, layerID, zoneType)
   for _, brushName in ipairs(brushSelection) do
     local elements = getElementsForBrush(brushName)
     for id, elementName in pairs(elements) do
@@ -1167,10 +1042,10 @@ local function getForestBrushElementsFromSelection(areaID, layerID, zoneType)
   return forestBrushElements
 end
 
-local function getForestDensity(areaID, layerID)
+local function getForestDensity(layerType, layerID)
   local density = nil
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
       for _, fieldData in ipairs(item.fieldsData) do
         if fieldData.name == "ForestDensity"then
           density = fieldData.val
@@ -1183,10 +1058,24 @@ local function getForestDensity(areaID, layerID)
   return density
 end
 
-local function getBorderDensity(areaID, layerID)
+local function setForestDensity(layerType, layerID, value)
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
+      for _, fieldData in ipairs(item.fieldsData) do
+        if fieldData.name == "ForestDensity"then
+          fieldData.val = value
+          break
+        end
+      end
+      break
+    end
+  end
+end
+
+local function getBorderDensity(layerType, layerID)
   local density = nil
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
       for _, fieldData in ipairs(item.fieldsData) do
         if fieldData.name == "BordersDensity"then
           density = fieldData.val
@@ -1199,10 +1088,24 @@ local function getBorderDensity(areaID, layerID)
   return density
 end
 
-local function getForestBorderFallOff(areaID, layerID)
+local function setBorderDensity(layerType, layerID, value)
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
+      for _, fieldData in ipairs(item.fieldsData) do
+        if fieldData.name == "BordersDensity"then
+          fieldData.val = value
+          break
+        end
+      end
+      break
+    end
+  end
+end
+
+local function getForestBorderFallOff(layerType, layerID)
   local density = nil
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
       for _, fieldData in ipairs(item.fieldsData) do
         if fieldData.name == "BordersFalloff"then
           density = fieldData.val
@@ -1215,20 +1118,18 @@ local function getForestBorderFallOff(areaID, layerID)
   return density
 end
 
-local function getForestVegetationFallOff(areaID, layerID)
-  local density = nil
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
+local function setForestBorderFallOff(layerType, layerID, value)
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
       for _, fieldData in ipairs(item.fieldsData) do
-        if fieldData.name == "VegetationFalloff"then
-          density = fieldData.val
+        if fieldData.name == "BordersFalloff"then
+          fieldData.val = value
           break
         end
       end
       break
     end
   end
-  return density
 end
 
 local function removeItemsActionUndo(actionData)
@@ -1249,8 +1150,8 @@ local function removeItems(items)
 end
 
 local function setFieldValue(fieldName, fieldValue, customData)
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == customData.areaID and item.layerID == customData.layerID then
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == customData.layerType and item.layerID == customData.layerID then
       for _, fieldData in ipairs(item.fieldsData) do
         if fieldData.name == fieldName then
           if fieldData.name == "LayerName" then
@@ -1352,7 +1253,7 @@ local function replaceItemsActionUndo(actionData)
 end
 
 local function replaceItemsActionRedo(actionData)
-  for _, item in pairs(actionData.oldItems) do    
+  for _, item in pairs(actionData.oldItems) do
     editor.removeForestItem(var.forestData, item)
   end
   for _, item in pairs(actionData.newItems) do
@@ -1360,45 +1261,35 @@ local function replaceItemsActionRedo(actionData)
   end
 end
 
-local function getBlendingMethod(areaID, layerID)
+local function getBlendingMethod(layerType, layerID)
   local blendingMethodPtr = 0
   local itemFound = false
-  for _, blendingData in ipairs(var.areas.layerBlendingComboIndexTbl) do
-    if blendingData.areaID == areaID and blendingData.layerID == layerID then
+  for _, blendingData in ipairs(var.layers.layerBlendingComboIndexTbl) do
+    if blendingData.layerType == layerType and blendingData.layerID == layerID then
       blendingMethodPtr = blendingData.blendingMethod
       itemFound = true
       break
     end
   end
   if not itemFound then
-    table.insert(var.areas.layerBlendingComboIndexTbl, {areaID = areaID, layerID = layerID, blendingMethod = blending_enum.add})
+    table.insert(var.layers.layerBlendingComboIndexTbl, {layerType = layerType, layerID = layerID, blendingMethod = blending_enum.add})
     blendingMethodPtr = blending_enum.add
   end
   return blendingMethodPtr
 end
 
-local function setBlendingMethod(areaID, layerID, method)
+local function setBlendingMethod(layerType, layerID, method)
   local itemFound = false
-  for _, blendingData in ipairs(var.areas.layerBlendingComboIndexTbl) do
-    if blendingData.areaID == areaID and blendingData.layerID == layerID then
+  for _, blendingData in ipairs(var.layers.layerBlendingComboIndexTbl) do
+    if blendingData.layerType == layerType and blendingData.layerID == layerID then
       blendingData.blendingMethod = method
       itemFound = true
       break
     end
   end
   if not itemFound then
-    table.insert(var.areas.layerBlendingComboIndexTbl, {areaID = areaID, layerID = layerID, blendingMethod = method})
+    table.insert(var.layers.layerBlendingComboIndexTbl, {layerType = layerType, layerID = layerID, blendingMethod = method})
   end
-end
-
-local function getFieldsData(areaID, layerID)
-  local data = nil
-  for _, info in ipairs(var.areas.fieldInfoTbl) do
-    if info.areaID == areaID and info.layerID == layerID then
-      data = info.fieldsData
-    end
-  end
-  return data
 end
 
 local function initEmptyFieldInfo()
@@ -1413,12 +1304,11 @@ local function initEmptyFieldInfo()
     return available
   end
 
-  local areaID, layerID, fieldName, layerType
-  for _, fieldInfos in ipairs(var.areas.fieldInfoTbl) do
-    areaID = fieldInfos.areaID
+  local layerType, layerID, fieldName, layerType
+  for _, fieldInfos in ipairs(var.layers.fieldInfoTbl) do
+    layerType = fieldInfos.layerType
     layerID = fieldInfos.layerID
     for _, fieldData in ipairs(fieldInfos.fieldsData) do
-      layerType = fieldData.layerType
       for _, fieldInfo in ipairs(fieldInfoTemplate) do
         if layerType == fieldInfo.layerType then
           for _, rowPlFieldName in ipairs(rowPlacementFields) do
@@ -1445,10 +1335,10 @@ local function initEmptyFieldInfo()
   end
 end
 
-local function getFieldPlacement(areaID, layerID)
+local function getFieldPlacement(layerType, layerID)
   local fieldPlacement = false
   local fieldName = "FieldPlacement"
-  local fieldsData = getFieldsData(areaID, layerID)
+  local fieldsData = getFieldsData(layerType, layerID)
   for _, fieldData in ipairs(fieldsData) do
     if fieldData.name == fieldName then
       fieldPlacement = fieldData.val == "true"
@@ -1458,9 +1348,9 @@ local function getFieldPlacement(areaID, layerID)
   return fieldPlacement
 end
 
-local function setFieldPlacement(areaID, layerID, val)
+local function setFieldPlacement(layerType, layerID, val)
   local itemFound = false
-  local fieldsData = getFieldsData(areaID, layerID)
+  local fieldsData = getFieldsData(layerType, layerID)
   for _, fieldData in ipairs(fieldsData) do
     if fieldData.name == "FieldPlacement" then
       fieldData.val = (val and "true" or "false")
@@ -1469,10 +1359,10 @@ local function setFieldPlacement(areaID, layerID, val)
   end
 end
 
-local function getFieldRowDistance(areaID, layerID)
+local function getFieldRowDistance(layerType, layerID)
   local rowDist = false
   local fieldName = "FieldRowDistance"
-  local fieldsData = getFieldsData(areaID, layerID)
+  local fieldsData = getFieldsData(layerType, layerID)
   for _, fieldData in ipairs(fieldsData) do
     if fieldData.name == fieldName then
       rowDist = fieldData.val
@@ -1482,10 +1372,10 @@ local function getFieldRowDistance(areaID, layerID)
   return rowDist
 end
 
-local function getFieldItemDistance(areaID, layerID)
+local function getFieldItemDistance(layerType, layerID)
   local itemDist = false
   local fieldName = "FieldItemDistance"
-  local fieldsData = getFieldsData(areaID, layerID)
+  local fieldsData = getFieldsData(layerType, layerID)
   for _, fieldData in ipairs(fieldsData) do
     if fieldData.name == fieldName then
       itemDist = fieldData.val
@@ -1495,10 +1385,10 @@ local function getFieldItemDistance(areaID, layerID)
   return itemDist
 end
 
-local function getFieldRowOrientation(areaID, layerID)
+local function getFieldRowOrientation(layerType, layerID)
   local rowOrientation = false
   local fieldName = "FieldRowOrientation"
-  local fieldsData = getFieldsData(areaID, layerID)
+  local fieldsData = getFieldsData(layerType, layerID)
   for _, fieldData in ipairs(fieldsData) do
     if fieldData.name == fieldName then
       rowOrientation = fieldData.val
@@ -1508,26 +1398,10 @@ local function getFieldRowOrientation(areaID, layerID)
   return rowOrientation
 end
 
-local function getForestDensity(areaID, layerID)
-  local density = nil
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
-      for _, fieldData in ipairs(item.fieldsData) do
-        if fieldData.name == "ForestDensity"then
-          density = fieldData.val
-          break
-        end
-      end
-      break
-    end
-  end
-  return density
-end
-
-local function getSlopeRange(areaID, layerID)
+local function getSlopeRange(layerType, layerID)
   local slopeRange = {0, 90}
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
       for _, fieldData in ipairs(item.fieldsData) do
         if fieldData.name == "SlopeRange"then
           slopeRange = fieldData.val
@@ -1540,13 +1414,13 @@ local function getSlopeRange(areaID, layerID)
   return slopeRange
 end
 
-local function setSlopeRange(areaID, layerID, range)
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
+local function setSlopeRange(layerType, layerID, range)
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
       for _, fieldData in ipairs(item.fieldsData) do
         if fieldData.name == "SlopeRange"then
           local slopeRangeValid = range
-          local slopeRange = getSlopeRange(areaID, layerID)
+          local slopeRange = getSlopeRange(layerType, layerID)
           slopeRangeValid[1] = math.min(range[1], slopeRange[2])
           slopeRangeValid[2] = math.max(range[1], range[2])
           fieldData.val = slopeRangeValid
@@ -1558,10 +1432,10 @@ local function setSlopeRange(areaID, layerID, range)
   end
 end
 
-local function getSlopeInfluence(areaID, layerID)
+local function getSlopeInfluence(layerType, layerID)
   local slopeInfluence = 0
-  for _, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
       for _, fieldData in ipairs(item.fieldsData) do
         if fieldData.name == "SlopeInfluence"then
           slopeInfluence = fieldData.val
@@ -1574,70 +1448,178 @@ local function getSlopeInfluence(areaID, layerID)
   return slopeInfluence
 end
 
-local function getLayerTerrainMaterialIndex(areaID, layerID)
-  local materialName = nil
-  local materialIndex = 0
-  local fieldsData = getFieldsData(areaID, layerID)
-  for _, fieldData in ipairs(fieldsData) do
-    if fieldData.name == "TerrainMaterial" then
-      materialName = fieldData.val
+local function setSlopeInfluence(layerType, layerID, value)
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType and item.layerID == layerID then
+      for _, fieldData in ipairs(item.fieldsData) do
+        if fieldData.name == "SlopeInfluence"then
+          fieldData.val = value
+          break
+        end
+      end
       break
     end
   end
+end
 
-  if terrainBlock then
-    local mtls = terrainBlock:getMaterials()
-    for index, mtl in ipairs(mtls) do
-      if materialName == mtl.internalName then
-        materialIndex = index-1
-      end
+local function addForestItemUIDToLayerTable(layerType, layerID, itemUIDs)
+  if var.layers.forestItemsTbl == nil then var.layers.forestItemsTbl = {} end
+  local forestItemsTbl = nil
+  for _, layerItemsEntry in ipairs(var.layers.forestItemsTbl) do
+    if layerItemsEntry.layerType == layerType and layerItemsEntry.layerID == layerID then
+      forestItemsTbl = layerItemsEntry.forestItems
+      break
+    end
+  end
+  if forestItemsTbl == nil then
+    forestItemsTbl = {}
+    table.insert(var.layers.forestItemsTbl, {layerType = layerType, layerID = layerID, forestItems = forestItemsTbl})
+  end
+
+  for _, forestItemUid in ipairs(itemUIDs) do
+    table.insert(forestItemsTbl, forestItemUid)
+  end
+end
+
+local function getTerrLayerMaterialIndex(layerID)
+  local materialIndex = 0
+  local fieldsData = getFieldsData(layerType_enum.terrain, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "TerrainMaterial" then
+      materialIndex = fieldData.val
+      break
     end
   end
   return materialIndex
 end
 
-local function drawLayerPanel(areaID, layerID)
-  local layer = getLayer(areaID, layerID)
+local function setTerrLayerMaterial(layerID, materialIndex)
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType_enum.terrain and item.layerID == layerID then
+      for _, fieldData in ipairs(item.fieldsData) do
+        if fieldData.name == "TerrainMaterial" then
+          fieldData.val = materialIndex
+        end
+      end
+    end
+  end
+end
 
-  imgui.BeginChild1("LayerActionsPanel"..layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, 40 * imgui.uiscale[0]), imgui.WindowFlags_ChildWindow)
-  imgui.Text("Actions: ")
+local function getTerrLayerMask(layerID)
+  local maskFilePath = ""
+  local fieldsData = getFieldsData(layerType_enum.terrain, layerID)
+  for _, fieldData in ipairs(fieldsData) do
+    if fieldData.name == "TerrainMask" then
+      maskFilePath = fieldData.val
+      break
+    end
+  end
+  return maskFilePath
+end
+
+local function setTerrLayerMask(layerID, maskFile)
+  for _, item in ipairs(var.layers.fieldInfoTbl) do
+    if item.layerType == layerType_enum.terrain and item.layerID == layerID then
+      for _, fieldData in ipairs(item.fieldsData) do
+        if fieldData.name == "TerrainMask" then
+          fieldData.val = maskFile
+        end
+      end
+    end
+  end
+end
+
+local function getSelectedLayer(layerType)
+  local layer = nil
+  for _, selection in ipairs(var.layers.selectedLayerIDs) do
+    if selection.layerType == layerType then
+      layer = getLayer(layerType, selection.selectedLayerID)
+      break
+    end
+  end
+  return layer
+end
+
+local function biomeProcFunc(isDeletingLayer, layer, lassoAreaID)
+  local layerID = layer.layerID
+  local layerType = layer.layerType
+  local maskFile = getTerrLayerMask(layerID)
+  local materialIndex = getTerrLayerMaterialIndex(layerID)
+  local centralElements = getForestBrushElementsFromSelection(layerType, layerID)
+  local falloffElements = getForestBrushElementsFromSelection(layerType, layerID, enum_forestBrushItemZone.falloff)
+  local lassoNodes = getLassoNodes(layerID)
+  local forestDensity = getForestDensity(layerType, layerID) or 1.0
+  local borderFallOff = getForestBorderFallOff(layerType, layerID) or 1.0
+  local borderDensity = getBorderDensity(layerType, layerID) or 1.0
+  local vegetationFalloff = 0
+  local slopeInfluence = getSlopeInfluence(layerType, layerID) or 0
+  local slopeRange = getSlopeRange(layerType, layerID)
+  local slopeVal = {slopeInfluence, slopeRange[1], slopeRange[2]}
+  local exclusionZones = {}
+  local eraseExistingItems = false
+  local blendingMethod = getBlendingMethod(layerType, layerID)
+
+  if isDeletingLayer then
+    blendingMethod = blending_enum.delete
+    forestDensity = 1.0
+    borderDensity = 1.0
+  elseif lassoAreaID ~= nil and layerType == layerType_enum.area then
+    blendingMethod = blending_enum.delete
+    lassoNodes = getLassoNodesWithAreaID(layerID, lassoAreaID)
+    forestDensity = 1.0
+    borderDensity = 1.0
+  end
+
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for _, lassoArea in ipairs(layer.lassoAreas) do
+        if lassoArea.zoneType == var.enum_lassoDrawType.exclusionZone then
+          local lassoNodes = {}
+          for _, node in ipairs(lassoArea.nodes) do
+            table.insert(lassoNodes, node.pos)
+          end
+          table.insert(exclusionZones, lassoNodes)
+        end
+      end
+      break
+    end
+  end
+
+  local forestItemUIDs = getForestItemUIDsInLayer(layerType, layerID)
+  if layerType == layerType_enum.terrain then
+    local matIndex
+    if maskFile == "" then
+      matIndex = materialIndex
+    else
+      matIndex = -1
+    end
+    var.forestBrushTool:initBiomeMatProc(maskFile, matIndex, {}, centralElements, falloffElements, exclusionZones or {}, forestDensity, borderFallOff, vegetationFalloff, borderDensity, slopeVal, blendingMethod, forestItemUIDs)
+  elseif layerType == layerType_enum.area then
+    eraseExistingItems = false
+    local shouldPlaceField = false -- getFieldPlacement(areaID, layerID)
+    if shouldPlaceField then
+      local rowDistance = getFieldRowDistance(areaID, layerID)
+      local itemDistance = getFieldItemDistance(areaID, layerID)
+      local rowOrientation = getFieldRowOrientation(areaID, layerID)
+      var.forestBrushTool:initBiomeFieldProc(centralElements, lassoNodes, rowDistance, itemDistance, rowOrientation, blendingMethod, forestItemUIDs)
+    else
+      var.forestBrushTool:initBiomeLassoProc(lassoNodes, centralElements, falloffElements, exclusionZones or {}, forestDensity, borderFallOff, vegetationFalloff, borderDensity, blendingMethod, slopeVal, forestItemUIDs)
+    end
+  end
+end
+
+local function drawLayerProperties(layer)
+  imgui.Text(layer.layerName)
+  local layerType = layer.layerType
+  local layerID = layer.layerID
+  local layer = getLayerWithType(layerType, layerID)
+  local buttonSize = imgui.ImVec2(150, 30)
+
+  imgui.BeginChild1("MainPanel#"..layer.layerType..layer.layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y-(imgui.GetStyle().FramePadding.y)), true)
+  imgui.BeginChild1("LayerActionsPanel"..layer.layerType..layer.layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, 40 * imgui.uiscale[0]), nil)
   imgui.SameLine()
 
   local errCode = var.forestBrushTool:getBiomeError()
-  imgui.SetNextWindowSize(imgui.ImVec2(300, 100), imgui.Cond_FirstUseEver)
-  if imgui.BeginPopupModal("Biome Work Progress") then
-    if errCode == 0 then
-      var.forestBrushTool:runBiomeProcess()
-    end
-    local progressStr = var.forestBrushTool:getBiomeWorkName()
-    local progressPercent = var.forestBrushTool:getBiomeWorkProgress()
-    local buttonText = "Cancel"
-    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then
-      progressStr = "Error: " ..var.forestBrushTool:getBiomeErrorStr()
-      imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
-      buttonText = "Ok"
-    end
-    imgui.TextUnformatted(progressStr)
-    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then      
-      imgui.PopStyleColor()
-    end
-
-    if errCode == 0 then
-      imgui.ProgressBar(progressPercent, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), 0), string.format("%d%%", progressPercent * 100))
-    end
-
-    if imgui.Button(buttonText) then
-      var.forestBrushTool:quitBiomeProcess()
-      imgui.CloseCurrentPopup()
-    end
-    if var.forestBrushTool:isBiomeProcCompleted() then
-      if errCode == 0 then
-        imgui.CloseCurrentPopup()
-      end
-    end
-    imgui.EndPopup()  
-  end
-
   if var.forestBrushTool:isBiomeProcCompleted() and errCode == 0 then
     var.forestBrushTool:insertBiomeItems()
     local itemsTbl = var.forestBrushTool:getBiomeItems()
@@ -1656,10 +1638,22 @@ local function drawLayerPanel(areaID, layerID)
       end
     elseif blendingMethod == blending_enum.add then
       if not tableIsEmpty(itemsToAdd) then
+        local itemUIDs = {}
+        local itemKeys = {}
+        for _, key in ipairs(itemsToAdd) do
+          table.insert(itemKeys, key)
+        end
+
+        ---local forestData = forest:getData()
+        ---for _, item in pairs(itemsToAdd) do
+          --local uids = forestData:generateAndSetItemUid(itemKeys)
+          --table.insert(itemUIDs, uid)
+        ---end
+        addForestItemUIDToLayerTable(layerType, layerID, itemUIDs)
         editor.history:commitAction("AddBiomeItems", {items = itemsToAdd}, addItemsActionUndo, addItemsActionRedo, true)
       end
     elseif blendingMethod == blending_enum.delete then
-      if not tableIsEmpty(itemsToDel) then          
+      if not tableIsEmpty(itemsToDel) then
         local delItems = {}
         for _, item in pairs(itemsToDel) do
           table.insert(delItems, item)
@@ -1669,263 +1663,501 @@ local function drawLayerPanel(areaID, layerID)
     end
     var.forestBrushTool:resetBiomeProcState()
   end
+
+  imgui.SetNextWindowSize(imgui.ImVec2(300, 100), imgui.Cond_FirstUseEver)
+  if imgui.BeginPopupModal("No Forest Item Selected") then
+    imgui.TextUnformatted("No Central Forest Item Selected!")
+    if imgui.Button("OK") then
+      imgui.CloseCurrentPopup()
+    end
+    imgui.EndPopup()
+  end
+
+  imgui.EndChild()
+  
+  local getFieldByNameFunc = function (fieldName, layerType, layerID)
+    local field = nil
+    for index, item in ipairs(var.layers.fieldInfoTbl) do
+      if item.layerType == layerType and item.layerID == layerID then
+        for _, fieldData in ipairs(item.fieldsData) do
+          if fieldData.name == fieldName then
+            field = fieldData
+          end
+        end
+      end
+    end
+    return field
+  end
+  
+  local panelWidth = imgui.GetContentRegionAvail().x
+  imgui.BeginChild1("LayerMainPanel##"..tostring(layer.layerType)..tostring(layer.layerID), imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y), nil)
+
+  local syncSelectedBrushListFunc = function (zoneType)
+    local selectionList = {}
+    for _, selectedItemsInfo in ipairs(var.forestBrushTempSelectedItems) do
+      if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID and
+        selectedItemsInfo.zoneType == zoneType then
+        selectionList = selectedItemsInfo.selectedItems
+        break
+      end
+    end
+    local itemFound = false
+    for _, selectedItemsInfo in ipairs(var.layers.forestBrushSelectedItems) do
+      if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID and
+        selectedItemsInfo.zoneType == zoneType then
+        selectedItemsInfo.selectedItems = deepcopy(selectionList)
+        itemFound = true
+        break
+      end
+    end
+
+    if not itemFound then
+      local brushZoneType = zoneType or enum_forestBrushItemZone.central
+      local selectionData = {layerType = layerType, layerID = layerID, zoneType = brushZoneType, selectedItems = selectionList}
+      table.insert(var.layers.forestBrushSelectedItems, selectionData)
+    end
+  end
+
+  local syncSelectedTempBrushListFunc = function (zoneType)
+    local selectionList = {}
+    local itemFound = false
+    for _, selectedItemsInfo in ipairs(var.layers.forestBrushSelectedItems) do
+      if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID and
+        selectedItemsInfo.zoneType == zoneType then
+        selectionList = selectedItemsInfo.selectedItems
+        break
+      end
+    end
+
+    for _, selectedItemsInfo in ipairs(var.forestBrushTempSelectedItems) do
+      if selectedItemsInfo.layerType == layerType and selectedItemsInfo.layerID == layerID and
+        selectedItemsInfo.zoneType == zoneType then
+        selectedItemsInfo.selectedItems = deepcopy(selectionList)
+        itemFound = true
+        break
+      end
+    end
+
+    if not itemFound then
+      local selectionData = {layerType = layerType, layerID = layerID, zoneType = zoneType, selectedItems = deepcopy(selectionList)}
+      table.insert(var.forestBrushTempSelectedItems, selectionData)
+    end
+  end
+
+  --imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowViewport().Size.x * 0.5, imgui.GetWindowViewport().Size.y * 0.5))
+  imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowPos().x + imgui.GetWindowSize().x * 0.5 - 150, imgui.GetWindowPos().y + imgui.GetWindowSize().y * 0.5))
+  local framePadding =  imgui.ImVec2(3, 3) --imgui.GetStyle().FramePadding
+  imgui.PushStyleVar2(imgui.StyleVar_FramePadding, imgui.ImVec2(imgui.GetFontSize(), imgui.GetFontSize()))
+  imgui.SetNextWindowSize(imgui.ImVec2(300, 100), imgui.Cond_FirstUseEver)
+  if imgui.BeginPopupModal("Biome Work Progress") then
+    if errCode == 0 then
+      var.forestBrushTool:runBiomeProcess()
+    end
+    local progressStr = var.forestBrushTool:getBiomeWorkName()
+    local progressPercent = var.forestBrushTool:getBiomeWorkProgress()
+    local buttonText = "Cancel"
+    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then
+      progressStr = "Error: " ..var.forestBrushTool:getBiomeErrorStr()
+      imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
+      buttonText = "Ok"
+    end
+    imgui.TextUnformatted(progressStr)
+    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then
+      imgui.PopStyleColor()
+    end
+
+    if errCode == 0 then
+      imgui.ProgressBar(progressPercent, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), 0), string.format("%d%%", progressPercent * 100))
+    end
+
+    if imgui.Button(buttonText) then
+      var.forestBrushTool:quitBiomeProcess()
+      imgui.CloseCurrentPopup()
+    end
+    if var.forestBrushTool:isBiomeProcCompleted() then
+      if errCode == 0 then
+        imgui.CloseCurrentPopup()
+      end
+    end
+    imgui.EndPopup()
+  end
+  imgui.PopStyleVar()
+  
+  imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowPos().x + imgui.GetWindowSize().x * 0.5, imgui.GetWindowPos().y + imgui.GetWindowSize().y * 0.5))
+  if imgui.BeginPopupModal("No Brush Selected!") then
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
+    imgui.TextUnformatted("Please make brush selection!")
+    imgui.PopStyleColor()
+
+    if imgui.Button("Ok") then
+      imgui.CloseCurrentPopup()
+    end
+    imgui.EndPopup()
+  end
+  imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowPos().x + imgui.GetWindowSize().x * 0.5, imgui.GetWindowPos().y + imgui.GetWindowSize().y * 0.5))
+  if imgui.BeginPopupModal("No Lasso Areas!") then
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
+    imgui.TextUnformatted("Please create at least one lasso area!")
+    imgui.PopStyleColor()
+
+    if imgui.Button("Ok") then
+      imgui.CloseCurrentPopup()
+    end
+    imgui.EndPopup()
+  end
+  local fieldData = getFieldByNameFunc("LayerName", layerType, layerID)
+  local textSize = imgui.CalcTextSize("Blending Method:").x
+  local posX = imgui.GetCursorPosX()
+  imgui.Text("Layer Name:")
+  imgui.SameLine()
+  imgui.SetCursorPosX(posX + textSize + 5)
+  imgui.SetNextItemWidth(200)
+  editor.uiInputText('##LayerName'..layerType..layerID, editor.getTempCharPtr(layer.layerName), nil, imgui.InputTextFlags_ReadOnly)
+  imgui.SameLine()
+  imgui.SetCursorPosX(panelWidth - 180)
+
   if var.forestBrushTool:isBiomeProcRunning() then
     imgui.BeginDisabled()
   end
-  if imgui.Button("Generate Biome ##"..tostring(areaID)..tostring(layerID)) then
-    local materialIndex = getLayerTerrainMaterialIndex(areaID, layerID)
-    local centralElements = getForestBrushElementsFromSelection(areaID, layerID)
-    local falloffElements = getForestBrushElementsFromSelection(areaID, layerID, enum_forestBrushItemZone.falloff)
-    local lassoNodes = getLassoNodes(areaID, layerID)
-    local forestDensity = getForestDensity(areaID, layerID) or 1.0
-    local borderFallOff = getForestBorderFallOff(areaID, layerID) or 1.0
-    local borderDensity = getBorderDensity(areaID, layerID) or 1.0
-    local vegetationFalloff = getForestVegetationFallOff(areaID, layerID) or 1.0
-    local slopeInfluence = getSlopeInfluence(areaID, layerID) or 0
-    local slopeRange = getSlopeRange(areaID, layerID)
-    local slopeVal = {slopeInfluence, slopeRange[1], slopeRange[2]}
-    local exclusionZones = {}
-    local eraseExistingItems = false
-    local blendingMethod = getBlendingMethod(areaID, layerID)
-    for _, zone in ipairs(var.areas.exclusionZones) do
-      if zone.areaID == var.lassoDrawInfo.areaID and zone.layerID == var.lassoDrawInfo.layerID then
-        for _, data in ipairs(zone.zoneData) do
-          local nodes = {}
-          for _, node in ipairs(data.nodes) do
-            table.insert(nodes, node.pos)
-          end
-            table.insert(exclusionZones, nodes)
-        end
-      end
-    end
-
-    if getAreaType(areaID) == areaType_enum.terrain_material then
+  if imgui.Button("Generate Layer", imgui.ImVec2(150, 30)) then
+    local isAddBlending = (getBlendingMethod(layerType, layerID) == blending_enum.add)
+    local brushCentral = getForestBrushSelection(layerType, layerID, enum_forestBrushItemZone.central)
+    local brushBorder = getForestBrushSelection(layerType, layerID, enum_forestBrushItemZone.falloff)
+    local bothBrushesEmpty = tableIsEmpty(brushCentral) and tableIsEmpty(brushBorder)
+    local noLasso = tableIsEmpty(getLassoAreas(layerID))
+    
+    if isAddBlending and bothBrushesEmpty then
+      imgui.OpenPopup("No Brush Selected!")
+    elseif noLasso and layerType == layerType_enum.area then
+      imgui.OpenPopup("No Lasso Areas!")
+    else
+      local isDeletingLayer = false         
+      biomeProcFunc(isDeletingLayer, layer)
       imgui.OpenPopup("Biome Work Progress")
-      local maskFile = layer.maskFilePath
-      local matIndex = -1
-      if getLayerType(areaID, layerID) == layerType_enum.terrain_material then
-        maskFile = ""
-        matIndex = materialIndex
-      end
-      var.forestBrushTool:initBiomeMatProc(maskFile, matIndex, lassoNodes, centralElements, falloffElements, exclusionZones or {}, forestDensity, borderFallOff, vegetationFalloff, borderDensity, slopeVal, blendingMethod)
-    elseif getAreaType(areaID) == areaType_enum.lasso then      
-      imgui.OpenPopup("Biome Work Progress")
-      eraseExistingItems = false
-      local shouldPlaceField = getFieldPlacement(areaID, layerID)
-      local blendingMethod = getBlendingMethod(areaID, layerID)
-      if shouldPlaceField then
-        local rowDistance = getFieldRowDistance(areaID, layerID)
-        local itemDistance = getFieldItemDistance(areaID, layerID)
-        local rowOrientation = getFieldRowOrientation(areaID, layerID)
-        var.forestBrushTool:initBiomeFieldProc(centralElements, lassoNodes, rowDistance, itemDistance, rowOrientation, blendingMethod)
-      else
-        var.forestBrushTool:initBiomeLassoProc(lassoNodes, centralElements, falloffElements, exclusionZones or {}, forestDensity, borderFallOff, vegetationFalloff, borderDensity, blendingMethod, slopeVal)
-      end
     end
   end
   if var.forestBrushTool:isBiomeProcRunning() then
     imgui.EndDisabled()
   end
 
-  imgui.EndChild()
-  imgui.Columns(2, layerID .. "LayersColumn")
-  imgui.BeginChild1("LayerMainPanel"..layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, 240 * imgui.uiscale[0]), imgui.WindowFlags_ChildWindow)
-  imgui.Text("Layer Properties:")
-  imgui.BeginChild1("LayerPanel"..layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, 180 * imgui.uiscale[0]), imgui.WindowFlags_NoScrollbar)
-  for index, item in ipairs(var.areas.fieldInfoTbl) do
-    if item.areaID == areaID and item.layerID == layerID then
-      for _, fieldData in ipairs(item.fieldsData) do
-        if indexOf(rowPlacementFields, fieldData.name) == -1 then
-          valueInspector:valueEditorGui(fieldData.name, tostring(fieldData.val) or "", index,      fieldData.label, nil,       fieldData.type or "", fieldData.type or "", {areaID = item.areaID, layerID = item.layerID}, pasteLayerFieldValue, nil)
-          imgui.Separator()
-          imgui.NextColumn()
-        end
-      end
-      break
-    end
-  end
-  if getAreaType(areaID) == areaType_enum.lasso then
-    local fieldPlacementBoolPtr = imgui.BoolPtr(0)
-    fieldPlacementBoolPtr[0] = getFieldPlacement(areaID, layerID)
-    if fieldPlacementBoolPtr[0] then
-      for index, item in ipairs(var.areas.fieldInfoTbl) do
-        if item.areaID == areaID and item.layerID == layerID then
-          for _, fieldData in ipairs(item.fieldsData) do
-            if indexOf(rowPlacementFields, fieldData.name) ~= -1 then
-              valueInspector:valueEditorGui(fieldData.name, tostring(fieldData.val) or "", index,      fieldData.label, nil,       fieldData.type or "", fieldData.type or "", {areaID = item.areaID, layerID = item.layerID}, pasteLayerFieldValue, nil)
-              imgui.Separator()
-              imgui.NextColumn()
-            end
-          end
-          break
-        end
-      end
-    end
-  end
-  imgui.EndChild()
-
-  imgui.EndChild()
-  imgui.NextColumn()
-  imgui.BeginChild1("LayerForestBrushesFrame"..layerID..areaID, imgui.ImVec2(imgui.GetContentRegionAvail().x,  240 * imgui.uiscale[0]), true, imgui.WindowFlags_ChildWindow)
-  imgui.Columns(3, layerID .. "BrushesColumn")
-  imgui.Text("Forest Brushes (Central):")
-  imgui.BeginChild1("LayerForestBrushes"..layerID..areaID, imgui.ImVec2(imgui.GetContentRegionAvail().x, 180 * imgui.uiscale[0]), imgui.WindowFlags_ChildWindow)
-
-  imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
-  imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushSelected(areaID, layerID, noneBrushItemName)) and var.buttonColor_active or var.buttonColor_inactive)
-  editor.uiIconImage(editor.icons.forest_brushelement, imgui.ImVec2(math.ceil(imgui.GetFontSize()), math.ceil(imgui.GetFontSize())))
+  imgui.Text("Blending Method:")
   imgui.SameLine()
-  local textPos = imgui.GetCursorPos()
-  if imgui.Button("##NoneCentral", imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
-    clearForestBrushSelection(areaID, layerID)
-    selectForestBrush(areaID, layerID, noneBrushItemName)
+  imgui.SetCursorPosX(posX + textSize + 5)
+  imgui.SetNextItemWidth(200)
+  local blendingMethodPtr = imgui.IntPtr(0)
+  blendingMethodPtr[0] = getBlendingMethod(layerType, layerID)
+  if imgui.Combo1("##layersBlendingMth"..layerType..layerID, blendingMethodPtr, layerBlendingComboItems) then
+    setBlendingMethod(layerType, layerID, blendingMethodPtr[0])
   end
-  imgui.SetCursorPos(textPos)
-  imgui.Text("- NONE -")
-  imgui.PopStyleColor()
-  imgui.PopStyleColor()
 
-  for index, item in ipairs(var.forestBrushes) do
-    imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushSelected(areaID, layerID, item.internalName)) and var.buttonColor_active or var.buttonColor_inactive)
+  if layer.layerType == layerType_enum.terrain then
+    imgui.Text("Layer Material:")
+    imgui.SameLine()
+    imgui.SetCursorPosX(posX + textSize + 5)
+    imgui.SetNextItemWidth(200)
+    local mtlPtr = imgui.IntPtr(0)
+    mtlPtr[0] = getTerrLayerMaterialIndex(layerID)
+    if imgui.Combo1("##terrainLayerMaterialCombo"..layerType..layerID, mtlPtr, imgui.ArrayCharPtrByTbl(layerCreateMtlComboItemsTbl)) then
+      setTerrLayerMaterial(layerID, mtlPtr[0])
+    end
+
+    imgui.Dummy(imgui.ImVec2(5,10))
+    imgui.Text("Layer Mask:")
+    imgui.SameLine()
+    imgui.SetCursorPosX(posX + textSize + 5)
+    imgui.SetNextItemWidth(200)
+    local maskFile = getTerrLayerMask(layerID)
+    editor.uiInputText('##LayerMaskFile'..layerType..layerID, editor.getTempCharPtr(maskFile), nil, imgui.InputTextFlags_ReadOnly)    
+    if imgui.IsItemHovered() and maskFile ~= "" then
+      imgui.SetTooltip(maskFile)
+    end
+    imgui.SameLine()
+    if editor.uiIconImageButton(
+      editor.icons.folder,
+      imgui.ImVec2(22, 22)
+    ) then
+      local levelPath, levelName, _ = path.split(getMissionFilename())
+      editor_fileDialog.openFile(
+        function(data)
+          maskFilePath = imgui.ArrayChar(256, data.filepath)
+          setTerrLayerMask(layerID, ffi.string(maskFilePath))
+        end,
+        {{"Images",{".png", ".jpg"}},{"PNG", ".png"}, {"JPG", ".jpg"}},
+        false, levelPath, true)
+    end
+    imgui.SameLine()
+    if imgui.Button("Clear", imgui.ImVec2(40, 30)) then
+      setTerrLayerMask(layerID, "")
+    end
+    
+    imgui.SetCursorPosX(posX + textSize + 5)
+    local imgPosStart = imgui.GetCursorPos()
+    local texture = editor.getTempTextureObj(getTerrLayerMask(layerID))
+    imgui.Image(texture.tex:getID(), imgui.ImVec2(200, 200), nil, nil, nil, editor.color.white.Value)
+    if getTerrLayerMask(layerID) == "" then
+      local textSize = imgui.CalcTextSize("No Mask Selected!")
+      local posX = 100 - textSize.x/2
+      local posY = 100 - textSize.y/2
+      imgui.SetCursorPos(imgui.ImVec2(imgPosStart.x + posX, imgPosStart.y + posY))
+      imgui.Text("No Mask Selected!")
+    end
+    imgui.SetCursorPos(imgui.ImVec2(0, imgPosStart.y + 205))
+  end
+
+  imgui.SetCursorPosY(imgui.GetCursorPosY() + 10)
+  imgui.Text("Layer Brush:")
+  local brush = getForestBrushSelection(layerType, layerID, enum_forestBrushItemZone.central)
+  local brushName = tableIsEmpty(brush) and "None" or brush[1]
+  imgui.SameLine()
+  imgui.SetCursorPosX(posX + textSize + 5)
+  local firstWidgetPos = imgui.GetCursorPosX()
+  imgui.SetNextItemWidth(80)
+  editor.uiInputText('##LayerBrush##', editor.getTempCharPtr(brushName), nil, imgui.InputTextFlags_ReadOnly)
+  imgui.tooltip(brushName)
+  imgui.SameLine()
+  if imgui.Button("Select Brush##Central", imgui.ImVec2(100, 30)) then
+    imgui.OpenPopup("Select Forest Brush (Central)")
+    var.layers.PopupOpenMousePos.x = imgui.GetMousePos().x
+    var.layers.PopupOpenMousePos.y = imgui.GetMousePos().y
+  end
+
+  local shouldWrap = false
+  if imgui.GetContentRegionAvailWidth() < 720 then
+    shouldWrap = true
+  end
+  
+  if not shouldWrap then
+    imgui.SameLine()
+  end
+
+  local posXCol2 = imgui.GetCursorPosX()
+  imgui.SetCursorPosX(posXCol2 + 20)
+  imgui.Text("Density:")
+  imgui.SameLine()
+  if shouldWrap then
+    imgui.SetCursorPosX(firstWidgetPos)
+  else
+    imgui.SetCursorPosX(posXCol2 + imgui.CalcTextSize("Density:").x + 25)
+  end
+  imgui.SetNextItemWidth(120)
+
+  local layerDensityPtr = imgui.FloatPtr(getForestDensity(layerType, layerID))
+  editor.uiInputFloat("##LayerDensity"..layerType..layerID, layerDensityPtr, 0.1, 1.0, nil, nil, editEnded)
+  if editEnded[0] then
+    local minMaxPair = getFieldMinMax("ForestDensity")
+    local value = layerDensityPtr[0]
+    if not tableIsEmpty(minMaxPair) then
+      value = clamp(layerDensityPtr[0], minMaxPair[1], minMaxPair[2])
+    end
+    setForestDensity(layerType, layerID, value)
+  end
+
+  imgui.Separator()
+  
+  imgui.Text("Border Brush:")
+  local borderBrush = getForestBrushSelection(layerType, layerID, enum_forestBrushItemZone.falloff)
+  local borderBrushName = tableIsEmpty(borderBrush) and "None" or borderBrush[1]
+  imgui.SameLine()
+  imgui.SetCursorPosX(posX + textSize + 5)
+  imgui.SetNextItemWidth(80)
+  editor.uiInputText('##BorderBrush##'..layerType..layerID, editor.getTempCharPtr(borderBrushName), nil, imgui.InputTextFlags_ReadOnly)
+  imgui.tooltip(borderBrushName)
+  imgui.SameLine()
+  if imgui.Button("Select Brush##Falloff", imgui.ImVec2(100, 30)) then
+    imgui.OpenPopup("Select Forest Brush (Falloff)")
+    var.layers.PopupOpenMousePos.x = imgui.GetMousePos().x
+    var.layers.PopupOpenMousePos.y = imgui.GetMousePos().y
+  end
+
+  local forestBrPopupPos = imgui.ImVec2(var.layers.PopupOpenMousePos.x + 20, var.layers.PopupOpenMousePos.y - 250)
+  imgui.SetNextWindowPos(forestBrPopupPos)
+  imgui.SetNextWindowSize(imgui.ImVec2(300, 500), imgui.Cond_FirstUseEver)
+  if imgui.BeginPopupModal("Select Forest Brush (Central)") then
+    imgui.BeginChild1("CentralBrushesCentralPopup"..layerType..layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y - 50), imgui.WindowFlags_ChildWindow)
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
+    imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushTempSelected(layerType, layerID, noneBrushItemName, enum_forestBrushItemZone.central)) and var.buttonColor_active or var.buttonColor_inactive)
     editor.uiIconImage(editor.icons.forest_brushelement, imgui.ImVec2(math.ceil(imgui.GetFontSize()), math.ceil(imgui.GetFontSize())))
     imgui.SameLine()
     local textPos = imgui.GetCursorPos()
-    if imgui.Button("##"..item.internalName, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
-      if editor.keyModifiers.ctrl then
-        if isForestBrushSelected(areaID, layerID, item.internalName) then
-          deselectForestBrush(areaID, layerID, item.internalName)
-        else
-          selectForestBrush(areaID, layerID, item.internalName)
-          deselectForestBrush(areaID, layerID, noneBrushItemName)
-        end
-      else
-        clearForestBrushSelection(areaID, layerID)
-        selectForestBrush(areaID, layerID, item.internalName)
-        deselectForestBrush(areaID, layerID, noneBrushItemName)
-      end
+    if imgui.Button("##NoneCentral", imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
+      clearForestBrushTempSelection()
+      selectForestTempBrush(layerType, layerID, noneBrushItemName, enum_forestBrushItemZone.central)
     end
     imgui.SetCursorPos(textPos)
-    imgui.Text(item.internalName)
+    imgui.Text("- NONE -")
     imgui.PopStyleColor()
+    imgui.PopStyleColor()
+
+    for index, item in ipairs(var.forestBrushes) do
+      imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushTempSelected(layerType, layerID, item.internalName, enum_forestBrushItemZone.central)) and var.buttonColor_active or var.buttonColor_inactive)
+      editor.uiIconImage(editor.icons.forest_brushelement, imgui.ImVec2(math.ceil(imgui.GetFontSize()), math.ceil(imgui.GetFontSize())))
+      imgui.SameLine()
+      local textPos = imgui.GetCursorPos()
+      if imgui.Button("##Falloff"..item.id, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
+        clearForestBrushTempSelection()
+        selectForestTempBrush(layerType, layerID, item.internalName, enum_forestBrushItemZone.central)
+        deselectForestTempBrush(layerType, layerID, noneBrushItemName, enum_forestBrushItemZone.central)
+      end
+      imgui.SetCursorPos(textPos)
+      imgui.Text(item.internalName)
+      imgui.PopStyleColor()
+    end
+    imgui.EndChild()
+    if imgui.Button("OK") then
+      imgui.CloseCurrentPopup()
+      syncSelectedBrushListFunc(enum_forestBrushItemZone.central)
+    end
+    imgui.SameLine()
+    if imgui.Button("Cancel") then
+      imgui.CloseCurrentPopup()
+    end
+    if imgui.IsKeyDown(imgui.GetKeyIndex(imgui.Key_Escape)) then
+      imgui.CloseCurrentPopup()
+    end
+
+    if imgui.IsKeyDown(imgui.GetKeyIndex(imgui.Key_Enter)) then
+      syncSelectedBrushListFunc(enum_forestBrushItemZone.central)
+      imgui.CloseCurrentPopup()
+    end
+    imgui.EndPopup()
   end
-  imgui.EndChild()
 
-  imgui.NextColumn()
-  imgui.Text("Forest Brushes (Falloff):")
-  imgui.BeginChild1("LayerFalloffForestBrushes"..layerID..areaID, imgui.ImVec2(imgui.GetContentRegionAvail().x, 180 * imgui.uiscale[0]), imgui.WindowFlags_ChildWindow)
-
-  imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
-  imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushSelected(areaID, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)) and var.buttonColor_active or var.buttonColor_inactive)
-  editor.uiIconImage(editor.icons.forest_brushelement, imgui.ImVec2(math.ceil(imgui.GetFontSize()), math.ceil(imgui.GetFontSize())))
-  imgui.SameLine()
-  local textPos = imgui.GetCursorPos()
-  if imgui.Button("##NoneCentral", imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
-    clearForestBrushSelection(areaID, layerID, enum_forestBrushItemZone.falloff)
-    selectForestBrush(areaID, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)
-  end
-  imgui.SetCursorPos(textPos)
-  imgui.Text("- NONE -")
-  imgui.PopStyleColor()
-  imgui.PopStyleColor()
-
-  for index, item in ipairs(var.forestBrushes) do
-    imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushSelected(areaID, layerID, item.internalName, enum_forestBrushItemZone.falloff)) and var.buttonColor_active or var.buttonColor_inactive)
+  local forestBrPopupPos = imgui.ImVec2(var.layers.PopupOpenMousePos.x + 20, var.layers.PopupOpenMousePos.y - 250)
+  imgui.SetNextWindowPos(forestBrPopupPos)
+  imgui.SetNextWindowSize(imgui.ImVec2(300, 500), imgui.Cond_FirstUseEver)
+  if imgui.BeginPopupModal("Select Forest Brush (Falloff)") then
+    imgui.BeginChild1("FalloffBrushesCentralPopup"..layerType..layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y - 50), imgui.WindowFlags_ChildWindow)
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
+    imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushTempSelected(layerType, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)) and var.buttonColor_active or var.buttonColor_inactive)
     editor.uiIconImage(editor.icons.forest_brushelement, imgui.ImVec2(math.ceil(imgui.GetFontSize()), math.ceil(imgui.GetFontSize())))
     imgui.SameLine()
     local textPos = imgui.GetCursorPos()
-    if imgui.Button("##Falloff"..item.internalName, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
-      if editor.keyModifiers.ctrl then
-        if isForestBrushSelected(areaID, layerID, item.internalName, enum_forestBrushItemZone.falloff) then
-          deselectForestBrush(areaID, layerID, item.internalName, enum_forestBrushItemZone.falloff)
-        else
-          selectForestBrush(areaID, layerID, item.internalName, enum_forestBrushItemZone.falloff)
-          deselectForestBrush(areaID, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)
-        end
-      else
-        clearForestBrushSelection(areaID, layerID, enum_forestBrushItemZone.falloff)
-        selectForestBrush(areaID, layerID, item.internalName, enum_forestBrushItemZone.falloff)
-        deselectForestBrush(areaID, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)
-      end
+    if imgui.Button("##NoneFalloff", imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
+      clearForestBrushTempSelection()
+      selectForestTempBrush(layerType, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)
     end
     imgui.SetCursorPos(textPos)
-    imgui.Text(item.internalName)
+    imgui.Text("- NONE -")
     imgui.PopStyleColor()
-  end
-  imgui.EndChild()
+    imgui.PopStyleColor()
 
-  imgui.NextColumn()
-  imgui.Text("Exclusion Zones:")
-  imgui.BeginChild1("LayerExclusionZones"..tostring(layerID)..tostring(areaID), imgui.ImVec2(imgui.GetContentRegionAvail().x, 180 * imgui.uiscale[0]), imgui.WindowFlags_ChildWindow)
-    for _, zoneItem in ipairs(var.areas.exclusionZones) do
-      if zoneItem.areaID == areaID and zoneItem.layerID == layerID then
-        for _, zoneData in ipairs(zoneItem.zoneData) do
-          local isZoneSelected = isExclusionZoneSelected(zoneItem.areaID, zoneItem.layerID, zoneData.ID)
-          imgui.PushStyleColor2(imgui.Col_Button, isZoneSelected and var.buttonColor_active or var.buttonColor_inactive)
-          editor.uiIconImage(editor.icons.branding_watermark, imgui.ImVec2(math.ceil(imgui.GetFontSize()), math.ceil(imgui.GetFontSize())))
-          imgui.SameLine()
-          local textPos = imgui.GetCursorPos()
-          if imgui.Button("##".."Zone "..tostring(zoneData.ID), imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
-            if editor.keyModifiers.ctrl then
-              if isZoneSelected then
-                deselectExclusionZone(areaID, layerID, zoneData.ID)
-              else
-                selectExclusionZone(areaID, layerID, zoneData.ID)
-              end
-            else
-              clearExZoneSelection(areaID, layerID)
-              selectExclusionZone(areaID, layerID, zoneData.ID)
-            end
-          end
-          imgui.SetCursorPos(textPos)
-          imgui.Text("Zone "..tostring(zoneData.ID))
-          imgui.PopStyleColor()
-        end
+    for index, item in ipairs(var.forestBrushes) do
+      imgui.PushStyleColor2(imgui.Col_Button, (isForestBrushTempSelected(layerType, layerID, item.internalName, enum_forestBrushItemZone.falloff)) and var.buttonColor_active or var.buttonColor_inactive)
+      editor.uiIconImage(editor.icons.forest_brushelement, imgui.ImVec2(math.ceil(imgui.GetFontSize()), math.ceil(imgui.GetFontSize())))
+      imgui.SameLine()
+      local textPos = imgui.GetCursorPos()
+      if imgui.Button("##Falloff"..item.id, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), math.ceil(imgui.GetFontSize()))) then
+          clearForestBrushTempSelection()
+          selectForestTempBrush(layerType, layerID, item.internalName, enum_forestBrushItemZone.falloff)
+          deselectForestTempBrush(layerType, layerID, noneBrushItemName, enum_forestBrushItemZone.falloff)
       end
+      imgui.SetCursorPos(textPos)
+      imgui.Text(item.internalName)
+      imgui.PopStyleColor()
     end
-
-  imgui.EndChild()
-  if var.lassoDrawInfo.type == var.enum_lassoDrawType.exclusionZone then
-    imgui.BeginDisabled()
-  end
-  if imgui.Button("Create Zone") then
-    var.lassoDrawInfo.areaID = areaID
-    var.lassoDrawInfo.layerID = layerID
-    var.lassoDrawInfo.type = var.enum_lassoDrawType.exclusionZone
-    isDrawingLassoArea = true
-  end
-  imgui.SameLine()
-  local shouldDisableDel = not isAnyZoneSelected(areaID, layerID)
-  if shouldDisableDel then
-    imgui.BeginDisabled()
-  end
-  if imgui.Button("Delete Zone") then
-    deleteExZone(areaID, layerID)
-  end
-  if shouldDisableDel then
-    imgui.EndDisabled()
-  end
-  if var.lassoDrawInfo.type == var.enum_lassoDrawType.exclusionZone then
-    imgui.EndDisabled()
+    imgui.EndChild()
+    if imgui.Button("OK") then
+      imgui.CloseCurrentPopup()
+      syncSelectedBrushListFunc(enum_forestBrushItemZone.falloff)
+    end
     imgui.SameLine()
-    local noAreaText = "Now please draw the exclusion lasso area!"
-    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
-    imgui.Text(noAreaText)
-    imgui.PopStyleColor()
-  end
-
-  imgui.EndChild()
-  imgui.Columns(1)
-end
-
-local function getLayerIDByIndex(areaID, layerIndex)
-  local layerID = nil
-  for _, area in ipairs(var.areas.areaInfoTbl) do
-    if area.areaID == areaID and area.layers[layerIndex] then
-      layerID = area.layers[layerIndex].layerID
-      break
+    if imgui.Button("Cancel") then
+      imgui.CloseCurrentPopup()
     end
+    if imgui.IsKeyDown(imgui.GetKeyIndex(imgui.Key_Escape)) then
+      imgui.CloseCurrentPopup()
+    end
+    if imgui.IsKeyDown(imgui.GetKeyIndex(imgui.Key_Enter)) then
+      syncSelectedBrushListFunc(enum_forestBrushItemZone.falloff)
+      imgui.CloseCurrentPopup()
+    end
+    imgui.EndPopup()
   end
-  return layerID
+
+  if not shouldWrap then
+    imgui.SameLine()
+  end
+  imgui.SetCursorPosX(posXCol2 + 20)
+  imgui.Text("Density:")
+  local borderBrush =  "Oak Trees"
+  imgui.SameLine()
+  if not shouldWrap then
+    imgui.SetCursorPosX(posXCol2 + imgui.CalcTextSize("Density:").x + 25)
+  else
+    imgui.SetCursorPosX(firstWidgetPos)
+  end
+  imgui.SetNextItemWidth(120)
+  local borderDensityPtr = imgui.FloatPtr(getBorderDensity(layerType, layerID))
+  
+  editor.uiInputFloat("##BorderDensity"..layerType..layerID, borderDensityPtr, 0.1, 1.0, nil, nil, editEnded)
+  if editEnded[0] then
+    local minMaxPair = getFieldMinMax("BordersDensity")
+    local value = borderDensityPtr[0]
+    if not tableIsEmpty(minMaxPair) then
+      value = clamp(value, minMaxPair[1], minMaxPair[2])
+    end
+    setBorderDensity(layerType, layerID, value)
+  end
+
+  imgui.SameLine()
+  imgui.SetCursorPosX(imgui.GetCursorPos().x + 20)
+  imgui.Text("Border Width:")
+  imgui.SameLine()
+  imgui.SetCursorPosX(imgui.GetCursorPos().x + 5)
+  imgui.SetNextItemWidth(120)
+  local widthEditEnded = imgui.BoolPtr(false)
+  local borderFalloffPtr = imgui.FloatPtr(getForestBorderFallOff(layerType, layerID))
+  editor.uiInputFloat("##BorderWidth"..layerType..layerID, borderFalloffPtr, 1.0, 1.0, nil, nil, editEnded)
+  if editEnded[0] then
+    local minMaxPair = getFieldMinMax("BordersFalloff")
+    local value = borderFalloffPtr[0]
+    if not tableIsEmpty(minMaxPair) then
+      value = clamp(borderFalloffPtr[0], minMaxPair[1], minMaxPair[2])
+    end
+    setForestBorderFallOff(layerType, layerID, value)
+  end
+
+
+
+  imgui.Separator()
+  
+  imgui.Text("Slope Influence:")
+  imgui.SameLine()
+  imgui.SetCursorPosX(posX + textSize + 5)
+  imgui.SetNextItemWidth(120)
+
+  local slopeInfluencePtr = imgui.FloatPtr(getSlopeInfluence(layerType, layerID))
+  editor.uiInputFloat("##SlopeInfluence"..layerType..layerID, slopeInfluencePtr, 1.0, 1.0, nil, nil, editEnded)
+  if editEnded[0] then
+    local minMaxPair = getFieldMinMax("SlopeInfluence")
+    local value = slopeInfluencePtr[0]
+    if not tableIsEmpty(minMaxPair) then
+      value = clamp(slopeInfluencePtr[0], minMaxPair[1], minMaxPair[2])
+    end
+    setSlopeInfluence(layerType, layerID, value)
+  end
+
+  imgui.SameLine()
+  local tempBoolPtr = imgui.BoolPtr(true)
+
+  local slopeRange = getSlopeRange(layerType, layerID)
+  input2FloatValue[0] = slopeRange[1]
+  input2FloatValue[1] = slopeRange[2]
+  imgui.SetNextItemWidth(120)
+  editor.uiInputFloat2("##SlopeRange" .. layerType .. layerID, input2FloatValue, "%.2f", nil, editEnded)
+  imgui.tooltip("Slope Inf. From-To")
+  if editEnded[0] then
+    local minMaxPair = getFieldMinMax("SlopeRange")
+    local minVal = input2FloatValue[0]
+    local maxVal = input2FloatValue[1]
+    --[[if not tableIsEmpty(minMaxPair) then
+      minVal = clamp(input2FloatValue[0], minMaxPair[1], math.min(maxVal, minMaxPair[2]))
+      maxVal = clamp(input2FloatValue[1], math.max(minVal, minMaxPair[1]), minMaxPair[2])
+    end]]
+    setSlopeRange(layerType, layerID, {minVal, maxVal})
+  end
+  imgui.EndChild()
+  imgui.EndChild()
 end
 
 local function populateMaterialsList()
@@ -1938,226 +2170,18 @@ local function populateMaterialsList()
   end
 end
 
-local function drawLayersList()
-  if imgui.CollapsingHeader1("Edit Layers", imgui.TreeNodeFlags_DefaultOpen) then
-    imgui.BeginChild1("CreateLayer", imgui.ImVec2(imgui.GetContentRegionAvail().x, editLayerPaneHeight), imgui.WindowFlags_ChildWindow)
-    imgui.Text("Create Layer:")
-    imgui.SameLine()
-    local xPos = imgui.GetCursorPos().x
-
-    local layersAvailable = not tableIsEmpty(getLayers(var.selectedAreaID))
-    if not layersAvailable and getAreaType(var.selectedAreaID) == areaType_enum.terrain_material then
-      imgui.BeginDisabled()
-    end
-    
-    if getAreaType(var.selectedAreaID) ~= areaType_enum.terrain_material then
-      if imgui.RadioButton2("Lasso", createLayerTypeIndex, layerType_enum.lasso) then
-        createLayerTypeIndex[0] = layerType_enum.lasso
+local function getMaterialName(index)
+  local materialName = ""
+  if terrainBlock then
+    local mtls = terrainBlock:getMaterials()
+    for matIndex, mtl in ipairs(mtls) do
+      if matIndex == index then
+        materialName = mtl.internalName
+        break
       end
-    end
-    if not layersAvailable and getAreaType(var.selectedAreaID) == areaType_enum.terrain_material then
-      imgui.EndDisabled()
-    end
-
-    if getAreaType(var.selectedAreaID) == areaType_enum.terrain_material then
-      imgui.SetCursorPosX(xPos)
-      local availableLayerType = getAvailableLayerType(var.selectedAreaID)
-      if availableLayerType == layerType_enum.terrain_mask then
-        imgui.BeginDisabled()
-      end
-      if imgui.RadioButton2("Terrain Material", createLayerTypeIndex, layerType_enum.terrain_material) then
-        createLayerTypeIndex[0] = layerType_enum.terrain_material
-        layerCreateMtlComboItemsTbl = {}
-        if terrainBlock then
-          local mtls = terrainBlock:getMaterials()
-          for index, mtl in ipairs(mtls) do
-            table.insert(layerCreateMtlComboItemsTbl, mtl.internalName)
-          end
-        end
-      end
-
-      layerCreateMtlComboItems = imgui.ArrayCharPtrByTbl(layerCreateMtlComboItemsTbl)
-      imgui.SameLine()
-      local comboXPos = imgui.GetCursorPos().x
-      if imgui.Combo1("##terrainmaterials", layerCreateMtlComboIndex, layerCreateMtlComboItems) then
-      end
-
-      if availableLayerType == layerType_enum.terrain_mask then
-        imgui.EndDisabled()
-      end
-
-      if availableLayerType == layerType_enum.terrain_material then
-        imgui.BeginDisabled()
-      end
-
-      imgui.SetCursorPosX(xPos)
-      if imgui.RadioButton2("Terrain Mask", createLayerTypeIndex, layerType_enum.terrain_mask) then
-        createLayerTypeIndex[0] = layerType_enum.terrain_mask
-      end
-
-      imgui.SameLine()
-      imgui.SetCursorPosX(comboXPos)
-
-      imgui.InputText("##SearchPaths", maskFilePath, nil, imgui.InputTextFlags_ReadOnly)
-      imgui.SameLine()
-      if editor.uiIconImageButton(
-        editor.icons.folder,
-        imgui.ImVec2(22, 22)
-      ) then
-        editor_fileDialog.openFile(
-          function(data)
-            maskFilePath = imgui.ArrayChar(256, data.filepath)
-          end,
-          {{"Images",{".png", ".jpg"}},{"PNG", ".png"}, {"JPG", ".jpg"}},
-          false, "/", true)
-      end
-      if availableLayerType == layerType_enum.terrain_material then
-        imgui.EndDisabled()
-      end
-
-      imgui.SetCursorPosX(xPos)
-      if not layersAvailable or true then
-        imgui.BeginDisabled()
-      end
-      --if imgui.RadioButton2("Random", createLayerTypeIndex, layerType_enum.random) then
-      --  createLayerTypeIndex[0] = layerType_enum.random
-      --end
-      if not layersAvailable or true then
-        imgui.EndDisabled()
-      end
-    end
-
-    imgui.SetCursorPosX(xPos)
-
-    if isDrawingLassoArea then
-      imgui.BeginDisabled()
-    end
-    if imgui.Button("Create Layer") then
-      if terrainBlock then
-        local mtls = terrainBlock:getMaterials()
-        for index, mtl in ipairs(mtls) do
-          if selectAreaPopupIndex[0] == 0 and layerCreateMtlComboItemsTbl[layerCreateMtlComboIndex[0] + 1] == mtl.internalName then
-            areaMaterialIndex = index-1
-          end
-        end
-      end
-
-      local materialName = nil
-      if getAreaType(var.selectedAreaID) == areaType_enum.terrain_material then
-        materialName = layerCreateMtlComboItemsTbl[layerCreateMtlComboIndex[0] + 1]
-      else
-        materialName = "-"
-      end
-
-      if #getLayers(var.selectedAreaID) == 1 and createLayerTypeIndex[0] == layerType_enum.lasso then
-        createLayerTypeIndex[0] = layerType_enum.lasso
-      end
-
-      if createLayerTypeIndex[0] == layerType_enum.terrain_material then
-        addLayer(var.selectedAreaID, createLayerTypeIndex[0], materialName, nil, nil)
-      elseif createLayerTypeIndex[0] == layerType_enum.terrain_mask then
-        if ffi.string(maskFilePath) == "" or ffi.string(maskFilePath) == nil then
-          imgui.OpenPopup("Mask File Error")
-        else
-          addLayer(var.selectedAreaID, createLayerTypeIndex[0], nil, nil, ffi.string(maskFilePath))
-        end
-      else
-        isDrawingLassoArea = true
-        var.lassoDrawInfo.type = var.enum_lassoDrawType.inclusionZone
-      end
-    end
-
-    if imgui.BeginPopupModal("Mask File Error") then
-      imgui.TextUnformatted("Please provide a mask file!")
-      if imgui.Button("OK") then
-        imgui.CloseCurrentPopup()
-      end
-      imgui.EndPopup()
-    end
-
-    if isDrawingLassoArea then
-      imgui.EndDisabled()
-      imgui.SameLine()
-      local noAreaText = "Now please draw the lasso selection!"
-      imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
-      imgui.Text(noAreaText)
-      imgui.PopStyleColor()
-    end
-    imgui.EndChild()
-
-    imgui.BeginChild1("DeleteLayer", imgui.ImVec2(imgui.GetContentRegionAvail().x, 80), imgui.WindowFlags_ChildWindow)
-    imgui.Text("Delete Layer:")
-    local noLayers = tableIsEmpty(getLayers(var.selectedAreaID))
-    if noLayers then
-      imgui.BeginDisabled()
-    end
-    imgui.SameLine()
-
-    layerDeleteMtlComboItemsTbl = {}
-    for _, layer in ipairs(getLayers(var.selectedAreaID)) do
-      table.insert(layerDeleteMtlComboItemsTbl, layer.layerName)
-    end
-
-    layerDeleteMtlComboItems = imgui.ArrayCharPtrByTbl(layerDeleteMtlComboItemsTbl)
-    imgui.Combo1("##layersDelete", layerDeleteComboIndex, layerDeleteMtlComboItems)
-
-    imgui.SameLine()
-    if imgui.Button("Delete Layer") then
-      imgui.OpenPopup("Delete Layer")
-    end
-
-    if imgui.BeginPopupModal("Delete Layer") then
-      local layerName = layerDeleteMtlComboItemsTbl[layerDeleteComboIndex[0] + 1]
-      imgui.TextUnformatted("Are you sure you want to delete \""..layerName.."\"?")
-      if imgui.Button("Cancel") then
-        imgui.CloseCurrentPopup()
-      end
-      imgui.SameLine()
-      if imgui.Button("OK") then
-        deleteLayer(var.selectedAreaID, getLayerIDByIndex(var.selectedAreaID, layerDeleteComboIndex[0] + 1))
-        imgui.CloseCurrentPopup()
-      end
-      imgui.EndPopup()
-    end
-
-    if noLayers then
-      imgui.EndDisabled()
-    end
-    imgui.EndChild()
-
-  local separatorPos = imgui.GetCursorPos()
-  imgui.InvisibleButton("SeparatorButton", imgui.ImVec2(imgui.GetContentRegionAvail().x, areaPaneSeparatorHeight))
-  if imgui.IsItemActive() then
-    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
-      local newHeightVal = editLayerPaneHeight + imgui.GetIO().MouseDelta.y
-      editLayerPaneHeight = clamp(newHeightVal, 100, 1000)
     end
   end
-  if imgui.IsItemActive() or imgui.IsItemHovered() then
-    imgui.SetMouseCursor(3)
-  end
-  imgui.SetCursorPosY(separatorPos.y + areaPaneSeparatorHeight / 2)
-  imgui.Separator()
-  end
-
-  local filter = ""
-  if imgui.CollapsingHeader1("Layers in "..getAreaName(var.selectedAreaID), imgui.TreeNodeFlags_DefaultOpen) then
-    imgui.BeginChild1("LayersList", imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y - 4), imgui.WindowFlags_ChildWindow)
-    if tableIsEmpty(getLayers(var.selectedAreaID)) then
-      local noAreaText = "N O   L A Y E R S   I N   T H E   A R E A !"
-      imgui.SetCursorPos(imgui.ImVec2(imgui.GetContentRegionAvail().x/2 - imgui.CalcTextSize(noAreaText).x/2, imgui.GetContentRegionAvail().y/2))
-      imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
-      editor.uiTextColoredWithFont(imgui.ImVec4(1, 0, 0, 1), noAreaText, "cairo_bold")
-      imgui.PopStyleColor()
-    else
-      for _, layer in ipairs(getLayers(var.selectedAreaID)) do
-        if imgui.CollapsingHeader1(layer.layerName.." ("..getLayerTypeStr(var.selectedAreaID, layer.layerID)..")" .. '##', imgui.TreeNodeFlags_DefaultOpen) then
-          drawLayerPanel(var.selectedAreaID, layer.layerID)
-        end
-      end
-    end
-    imgui.EndChild()
-  end
+  return materialName
 end
 
 local function setItemTransformUndo(actionData)
@@ -2172,35 +2196,611 @@ local function setItemTransformRedo(actionData)
   end
 end
 
-local function drawAreaPanel(areaID)
-  local areaType = getAreaType(areaID)
-  local areaName = getAreaName(areaID)
-  local areaTypeStr = areaType == areaType_enum.terrain_material and "Terrain Material" or "Lasso"
-  imgui.Text(areaName.." ("..areaTypeStr..")")
-  imgui.BeginChild1("ModifyPanel", imgui.ImVec2((imgui.GetContentRegionAvail().x - 6), imgui.GetContentRegionAvail().y -2), true)
-  drawLayersList()
+local function selectLayer(layer)
+  local found = false
+  for _, selection in ipairs(var.layers.selectedLayerIDs) do
+    if selection.layerType == layer.layerType then
+      selection.selectedLayerID = layer.layerID
+      found = true
+    end
+  end
+  if not found then
+    table.insert(var.layers.selectedLayerIDs, {layerType = layer.layerType, selectedLayerID = layer.layerID})
+  end
+end
+
+local function deselectLayer(layer)
+  local found = false
+  for _, selection in ipairs(var.layers.selectedLayerIDs) do
+    if selection.layerType == layer.layerType and selection.selectedLayerID == layer.layerID then
+      selection.selectedLayerID = -1
+    end
+  end
+end
+
+local function isLayerSelected(layer)
+  local selected = false
+  for _, selection in ipairs(var.layers.selectedLayerIDs) do
+    if selection.layerType == layer.layerType and selection.selectedLayerID == layer.layerID then
+      selected = true
+      break
+    end
+  end
+  return selected
+end
+
+local function deleteLassoArea(layerID, areaID, zoneType)
+  local index = -1
+  local delLayer = nil
+  for _, layer in ipairs(var.layers.layerInfoTbl) do 
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for lassoIndex, lassoArea in ipairs(layer.lassoAreas) do
+        if lassoArea.lassoAreaID == areaID and lassoArea.zoneType == zoneType then
+          index = lassoIndex
+          delLayer = layer
+          break
+        end
+      end
+    end
+  end
+  if index ~= -1 then
+    table.remove(delLayer.lassoAreas, index)
+  end
+end
+
+local function deleteItemsInArea(layerID, lassoAreaID)
+  local lassoNodes2D = {}
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for _, lassoArea in ipairs(layer.lassoAreas) do
+        if lassoArea.zoneType == var.enum_lassoDrawType.inclusionZone and lassoArea.lassoAreaID == lassoAreaID then
+          for _, node in ipairs(lassoArea.nodes) do
+            table.insert(lassoNodes2D, Point2F(node.pos.x, node.pos.y))
+          end
+          break
+        end
+      end
+    end
+  end
+
+  local forestItems = var.forestData:getItemsPolygon(lassoNodes2D)
+  if not forestItems then return end
+
+  --local itemUIDs = getForestItemUIDsInLayer(layerType_enum.area, layerID)
+  local forestData = forest:getData()
+  --for _, itemUID in ipairs(itemUIDs) do
+    for _, item in ipairs(forestItems) do
+      --if item:getUid() == itemUID then
+        editor.removeForestItem(forestData, item)
+      --end
+    end
+  --end
+end
+
+local function drawLassoAreasList(layer)
+  local panelHeight = math.max(imgui.GetContentRegionAvail().y, 200)
+  imgui.BeginChild1("AreasList##"..layer.layerType..layer.layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, panelHeight - 60), imgui.WindowFlags_ChildWindow)
+  local lassoAreas = getAllLassoAreas(layer.layerID)
+  if tableIsEmpty(lassoAreas) then
+    local noAreaText = "N O   L A S S O   A R E A   A V A I L A B L E !"
+    imgui.SetCursorPos(imgui.ImVec2(imgui.GetContentRegionAvail().x/2 - imgui.CalcTextSize(noAreaText).x/2, imgui.GetContentRegionAvail().y/2))
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
+    editor.uiTextColoredWithFont(imgui.ImVec4(1, 0, 0, 1), noAreaText, "cairo_bold")
+    imgui.PopStyleColor()
+  else
+    imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - 150)
+    local arealistHeight = math.max(imgui.GetContentRegionAvail().y, 200)
+    imgui.BeginChild1("AreasListContainer##"..layer.layerType..layer.layerID, imgui.ImVec2(300, arealistHeight - 10), imgui.WindowFlags_ChildWindow)
+    imgui.Text("Lasso Areas")
+    local buttonSize = imgui.ImVec2(180, 30)
+    local framePadding = imgui.ImVec2(3, 3)
+
+    local area = nil
+    for index = #lassoAreas, 1, -1 do
+      area = lassoAreas[index]
+      local p1 = imgui.ImVec2(imgui.GetCursorPos().x - 32, imgui.GetCursorPos().y - 32)
+      local p2 = imgui.ImVec2(imgui.GetCursorPos().x + 150 + 32, imgui.GetCursorPos().y + 30 + 32)
+      imgui.ImDrawList_AddRectFilled(imgui.GetWindowDrawList(), p1, p2, imgui.GetColorU322(imgui.ImVec4(1, 0, 0, 1)))
+      ---imgui.BeginDisabled()
+      if area.zoneType == var.enum_lassoDrawType.inclusionZone then
+        if imgui.Button("Area "..area.lassoAreaID, buttonSize) then
+          highlighAnimation.isHighligthing = true
+          highlighAnimation.layerType = layer.layerType
+          highlighAnimation.layerID = layer.layerID
+          highlighAnimation.zoneType = var.enum_lassoDrawType.inclusionZone
+          highlighAnimation.zoneID = area.lassoAreaID
+          highlighAnimation.elapsed = 0.0
+        end
+      elseif area.zoneType == var.enum_lassoDrawType.exclusionZone then
+        if imgui.Button("Exclusion Zone "..area.lassoAreaID, buttonSize) then
+          highlighAnimation.isHighligthing = true
+          highlighAnimation.layerType = layer.layerType
+          highlighAnimation.layerID = layer.layerID
+          highlighAnimation.zoneType = var.enum_lassoDrawType.exclusionZone
+          highlighAnimation.zoneID = area.lassoAreaID
+          highlighAnimation.elapsed = 0.0
+        end
+      end
+      --imgui.EndDisabled()
+      imgui.SameLine()
+      imgui.Dummy(imgui.ImVec2(5,1))
+      imgui.SameLine()
+
+      imgui.SetNextWindowSize(imgui.ImVec2(300, 100), imgui.Cond_FirstUseEver)
+      if imgui.BeginPopupModal("Delete Lasso Area##"..area.lassoAreaID) then
+        imgui.TextUnformatted("Are you sure you want to delete \"".."Area "..area.lassoAreaID.."\"?")
+        if imgui.Button("Cancel") then
+          imgui.CloseCurrentPopup()
+        end
+        imgui.SameLine()
+        if imgui.Button("OK") then
+          deleteItemsInArea(layerType_enum.area, layer.layerID)
+          deleteLassoArea(layer.layerID, area.lassoAreaID, area.zoneType)
+          imgui.CloseCurrentPopup()
+        end
+        imgui.EndPopup()
+      end
+
+      if imgui.Button("Delete##Area"..layer.layerID..area.lassoAreaID, imgui.ImVec2(50, 30)) then
+        if area.zoneType == var.enum_lassoDrawType.inclusionZone then
+          local isDeletingLayer = false         
+          biomeProcFunc(isDeletingLayer, layer, area.lassoAreaID)
+          
+          var.forestBrushTool:runBiomeProcess()
+          var.forestBrushTool:insertBiomeItems()
+          local itemsTbl = var.forestBrushTool:getBiomeItems()
+          local itemsToAdd = {}
+          local itemsToDel = {}
+          itemsToAdd = itemsTbl["items"]
+          itemsToDel = itemsTbl["itemsToDel"]
+          if not tableIsEmpty(itemsToDel) then
+            local delItems = {}
+            for _, item in pairs(itemsToDel) do
+              table.insert(delItems, item)
+            end
+            editor.history:commitAction("RemoveBiomeItems", {items = delItems}, removeItemsActionUndo, removeItemsActionRedo, true)
+          end
+        end
+        deleteLassoArea(layer.layerID, area.lassoAreaID, area.zoneType)
+      end
+    end
+    imgui.EndChild()
+  end
   imgui.EndChild()
+  
+  local buttonSize = imgui.ImVec2(150, 30)
+  imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - buttonSize.x - 20)
+  local cursorPosMsg = imgui.GetCursorPosX()
+  if imgui.Button("Add New Lasso Area", buttonSize) then
+    var.lassoDrawInfo.layerType = layerType
+    var.lassoDrawInfo.layerID = layerID
+    var.lassoDrawInfo.type = var.enum_lassoDrawType.inclusionZone
+    isDrawingLassoArea = true
+  end
+  imgui.SameLine()
+  imgui.Dummy(imgui.ImVec2(20,1))
+  imgui.SameLine()
+  if imgui.Button("Add Exclusion Zone", buttonSize) then
+    var.lassoDrawInfo.layerType = layerType
+    var.lassoDrawInfo.layerID = layerID
+    var.lassoDrawInfo.type = var.enum_lassoDrawType.exclusionZone
+    isDrawingLassoArea = true
+  end
+
+  if isDrawingLassoArea then
+    local txtSize = imgui.CalcTextSize("Please draw the area on map")
+    imgui.SetCursorPosX(cursorPosMsg - math.abs(buttonSize.x - txtSize.x)/2)
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
+    imgui.Text("Please draw the area on map")
+    imgui.PopStyleColor()
+  end
+end
+
+local function getLassoAreaCount(layerType, layerID)
+  local count = 0
+  for _, layer in ipairs(var.layers.layerInfoTbl) do 
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      count = tableSize(layer.lassoAreas)
+      break
+    end
+  end
+  return count
+end
+
+local function setHeaderState(label, state)
+  local context = imgui.GetCurrentContext()
+  local id = imgui.GetID1(label)
+  imgui.ImGuiStorage_SetInt(imgui.GetStateStorage(), id, state)
+end
+
+local isRenamingLayer = false
+local function drawLayersListWithType(layerType)
+  local layers = getLayersWithType(layerType)
+  imgui.BeginChild1("LayersList", imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y - 4), imgui.WindowFlags_ChildWindow)
+  for _, layer in ipairs(layers) do
+    if imgui.CollapsingHeader1(layer.layerName..'##'..layer.layerID, setHeaderState(layer.layerName..'##'..layer.layerID, isLayerSelected(layer))) then
+      if shouldUpdateAreasScroll then 
+        shouldUpdateAreasScroll = false
+        imgui.SetScrollHereY(-20)
+      end
+      local renamingState = isRenamingLayer
+      if not renamingState then
+        imgui.BeginDisabled()
+      end
+      imgui.SetNextItemWidth(150)
+      inputTextValue = editor.getTempCharPtr(layer.layerName)
+      editor.uiInputText("", inputTextValue, ffi.sizeof(inputTextValue), imgui.InputTextFlags_AutoSelectAll, nil, nil, editEnded)
+      if editEnded[0] then
+        isRenamingLayer = false
+        setLayerName(layer.layerType, layer.layerID,  ffi.string(inputTextValue))
+      end
+      if not renamingState then
+        imgui.EndDisabled()
+      end
+
+      imgui.SameLine()
+      
+      local buttonSize = imgui.ImVec2(150, 30)
+      local cursorPosX = imgui.GetCursorPosX()
+      if imgui.Button("Rename Layer", buttonSize) then
+        isRenamingLayer = true
+      end
+
+      imgui.SameLine()
+      if imgui.Button("Delete Layer", buttonSize) then
+        imgui.OpenPopup("Delete Layer")
+      end
+      
+      imgui.SetNextWindowSize(imgui.ImVec2(200, 100), imgui.Cond_FirstUseEver)
+      if imgui.BeginPopupModal("Delete Layer") then
+        imgui.TextUnformatted("Are you sure you want to delete \""..layer.layerName.."\"?")
+        if imgui.Button("Cancel") then
+          imgui.CloseCurrentPopup()
+        end
+        imgui.SameLine()
+        if imgui.Button("OK") then
+          local isDeletingLayer = true
+          biomeProcFunc(isDeletingLayer, layer)
+
+          var.forestBrushTool:runBiomeProcess()
+          var.forestBrushTool:insertBiomeItems()
+          local itemsTbl = var.forestBrushTool:getBiomeItems()
+          local itemsToAdd = {}
+          local itemsToDel = {}
+          itemsToAdd = itemsTbl["items"]
+          itemsToDel = itemsTbl["itemsToDel"]
+          if not tableIsEmpty(itemsToDel) then
+            local delItems = {}
+            for _, item in pairs(itemsToDel) do
+              table.insert(delItems, item)
+            end
+            editor.history:commitAction("RemoveBiomeItems", {items = delItems}, removeItemsActionUndo, removeItemsActionRedo, true)
+          end
+
+          deleteLayer(layer.layerType, layer.layerID)
+          imgui.CloseCurrentPopup()
+        end
+        imgui.EndPopup()
+      end
+
+      local brush = getForestBrushSelection(layer.layerType, layer.layerID, enum_forestBrushItemZone.central)
+      local brushName = tableIsEmpty(brush) and "None" or brush[1]
+      imgui.Dummy(imgui.ImVec2(10,1))
+      imgui.SameLine()
+      local widgetStartPosX = imgui.GetCursorPosX()
+      imgui.Text("Layer Brush:")
+      imgui.SameLine()
+      imgui.SetNextItemWidth(150)
+      
+      imgui.BeginDisabled()
+      editor.uiInputText("##inputTextBrushName#"..layer.layerType..layer.layerID, editor.getTempCharPtr(brushName))
+      imgui.EndDisabled()
+      imgui.SameLine()
+      imgui.Dummy(imgui.ImVec2(10,1))
+      imgui.SameLine()
+      imgui.Text("Brush Density:")
+      imgui.SameLine()
+      imgui.SetNextItemWidth(150)
+      imgui.BeginDisabled()
+      editor.uiInputText("##inputTextDensity##"..layer.layerType..layer.layerID, editor.getTempCharPtr(string.format("%.1f", getForestDensity(layer.layerType, layer.layerID))))
+      imgui.EndDisabled()
+
+      if layer.layerType == layerType_enum.area then
+        local shouldWrap = false
+        if imgui.GetContentRegionAvailWidth() < 720 then
+          shouldWrap = true
+        end
+
+        if not shouldWrap then
+          imgui.SameLine()
+        else
+          imgui.SetCursorPosX(widgetStartPosX)
+        end
+        imgui.Text("Area Count:")
+        imgui.SameLine()
+        imgui.SetNextItemWidth(150)
+        imgui.BeginDisabled()
+        editor.uiInputText("##inputTextDensity##"..layer.layerType..layer.layerID, editor.getTempCharPtr(tostring(getLassoAreaCount(layer.layerType, layer.layerID))))
+        imgui.EndDisabled()
+      end
+
+      --imgui.SetCursorPosX(cursorPosX)
+      --if imgui.Button("Duplicate Layer", buttonSize) then
+      --end
+      
+      if layer.layerType == layerType_enum.area then
+        drawLassoAreasList(layer)
+      end
+    end
+    if imgui.IsItemClicked() then
+      if not isLayerSelected(layer) then
+        selectLayer(layer)
+      --else
+      --  deselectLayer(layer)
+      end
+    end
+  end
+  imgui.EndChild()
+end
+
+local function drawLevelBiomeToolbar()
+  local buttonSize = imgui.ImVec2(150, 30)
+  imgui.BeginChild1("MainToolbar", imgui.ImVec2((imgui.GetContentRegionAvail().x - 2), levelBiomeToolbarHeight), true)
+  if imgui.Button("(Re)generate all layers", buttonSize) then
+  end
+  imgui.SameLine()
+  if imgui.Button("Undo", buttonSize) then
+  end
+  imgui.SameLine()
+  if imgui.Button("Redo", buttonSize) then
+  end
+  imgui.EndChild()
+
+  local separatorPos = imgui.GetCursorPos()
+  imgui.InvisibleButton("SeparatorButtonLBToolbar", imgui.ImVec2(imgui.GetContentRegionAvail().x, seperatorHeight))
+  if imgui.IsItemActive() then
+    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
+      local newHeightVal = levelBiomeToolbarHeight + imgui.GetIO().MouseDelta.y
+      levelBiomeToolbarHeight = clamp(newHeightVal, 50, 1000)
+    end
+  end
+  if imgui.IsItemActive() or imgui.IsItemHovered() then
+    imgui.SetMouseCursor(3)
+  end
+  imgui.SetCursorPosY(separatorPos.y + seperatorHeight / 2)
+  imgui.Separator()
+end
+
+local function drawLevelBiomeLayersList()
+  imgui.BeginChild1("LevelBiomeLayers", imgui.ImVec2((imgui.GetContentRegionAvail().x - 2), levelBiomeLevelsListHeight), true)
+  imgui.Text("Terrain Layers:")
+  local buttonSize = imgui.ImVec2(150, 30)
+  imgui.BeginChild1("MainPanelLevelBiome", imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y-(buttonSize.y+imgui.GetStyle().FramePadding.y*6)), true)
+  local layers = getLayersWithType(layerType_enum.terrain)
+  if tableIsEmpty(layers) then
+    local noAreaText = "N O   T E R R A I N   L A Y E R   A V A I L A B L E !"
+    imgui.SetCursorPos(imgui.ImVec2(imgui.GetContentRegionAvail().x/2 - imgui.CalcTextSize(noAreaText).x/2, imgui.GetContentRegionAvail().y/2))
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
+    editor.uiTextColoredWithFont(imgui.ImVec4(1, 0, 0, 1), noAreaText, "cairo_bold")
+    imgui.PopStyleColor()
+  else
+    drawLayersListWithType(layerType_enum.terrain)
+  end
+  imgui.EndChild()
+  
+  imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - buttonSize.x/2)
+  imgui.SetCursorPosY(imgui.GetCursorPosY()+imgui.GetStyle().FramePadding.y*2)
+
+  if imgui.Button("New Terrain Layer", buttonSize) then
+    local layer = addLayerWithType(layerType_enum.terrain)
+    selectLayer(layer)
+    shouldUpdateAreasScroll = true
+  end
+  imgui.EndChild()
+  
+  local separatorPos = imgui.GetCursorPos()
+  imgui.InvisibleButton("SeparatorButtonLBLevels", imgui.ImVec2(imgui.GetContentRegionAvail().x, seperatorHeight))
+  if imgui.IsItemActive() then
+    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
+      local newHeightVal = levelBiomeLevelsListHeight + imgui.GetIO().MouseDelta.y
+      levelBiomeLevelsListHeight = clamp(newHeightVal, 50, 1000)
+    end
+  end
+  if imgui.IsItemActive() or imgui.IsItemHovered() then
+    imgui.SetMouseCursor(3)
+  end
+  imgui.SetCursorPosY(separatorPos.y + seperatorHeight / 2)
+  imgui.Separator()
+end
+
+local function drawLevelBiomeLayerProperties()
+  imgui.BeginChild1("LevelBiomeLayerProps", imgui.ImVec2((imgui.GetContentRegionAvail().x - 2), levelBiomeLevelPropsHeight), true)
+  local selectedLayer = getSelectedLayer(layerType_enum.terrain)
+  if selectedLayer == nil then
+    local noAreaText = "N O   L A Y E R   S E L E C T E D !"
+    imgui.SetCursorPos(imgui.ImVec2(imgui.GetContentRegionAvail().x/2 - imgui.CalcTextSize(noAreaText).x/2, imgui.GetContentRegionAvail().y/2))
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
+    editor.uiTextColoredWithFont(imgui.ImVec4(1, 0, 0, 1), noAreaText, "cairo_bold")
+    imgui.PopStyleColor()
+  else
+    drawLayerProperties(selectedLayer)
+  end
+  imgui.EndChild()
+
+  local separatorPos = imgui.GetCursorPos()
+  imgui.InvisibleButton("SeparatorButtonLBLevelsProps", imgui.ImVec2(imgui.GetContentRegionAvail().x, seperatorHeight))
+  if imgui.IsItemActive() then
+    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
+      local newHeightVal = levelBiomeLevelPropsHeight + imgui.GetIO().MouseDelta.y
+      levelBiomeLevelPropsHeight = clamp(newHeightVal, 50, 1000)
+    end
+  end
+  if imgui.IsItemActive() or imgui.IsItemHovered() then
+    imgui.SetMouseCursor(3)
+  end
+  imgui.SetCursorPosY(separatorPos.y + seperatorHeight / 2)
+  imgui.Separator()
+end
+
+local function drawBiomeAreasToolbar()
+  local buttonSize = imgui.ImVec2(150, 30)
+  imgui.BeginChild1("MainToolbar", imgui.ImVec2((imgui.GetContentRegionAvail().x - 2), biomeAreasToolbarHeight), true)
+  if imgui.Button("(Re)generate all layers", buttonSize) then
+  end
+  imgui.SameLine()
+  if imgui.Button("Undo", buttonSize) then
+  end
+  imgui.SameLine()
+  if imgui.Button("Redo", buttonSize) then
+  end
+  imgui.EndChild()
+
+  local separatorPos = imgui.GetCursorPos()
+  imgui.InvisibleButton("SeparatorButtonLBToolbar", imgui.ImVec2(imgui.GetContentRegionAvail().x, seperatorHeight))
+  if imgui.IsItemActive() then
+    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
+      local newHeightVal = biomeAreasToolbarHeight + imgui.GetIO().MouseDelta.y
+      biomeAreasToolbarHeight = clamp(newHeightVal, 50, 1000)
+    end
+  end
+  if imgui.IsItemActive() or imgui.IsItemHovered() then
+    imgui.SetMouseCursor(3)
+  end
+  imgui.SetCursorPosY(separatorPos.y + seperatorHeight / 2)
+  imgui.Separator()
+end
+
+local function drawBiomeAreasLayersList()
+  imgui.BeginChild1("AreaLayers", imgui.ImVec2((imgui.GetContentRegionAvail().x - 2), biomeAreasLevelsListHeight), true)
+  imgui.Text("Area Layers:")
+  local buttonSize = imgui.ImVec2(150, 30)
+  imgui.BeginChild1("MainPanelAL", imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y-(buttonSize.y+imgui.GetStyle().FramePadding.y*6)), true)
+  
+  local layers = getLayersWithType(layerType_enum.area)
+  if tableIsEmpty(layers) then
+    local noAreaText = "N O   A R E A   L A Y E R   A V A I L A B L E !"
+    imgui.SetCursorPos(imgui.ImVec2(imgui.GetContentRegionAvail().x/2 - imgui.CalcTextSize(noAreaText).x/2, imgui.GetContentRegionAvail().y/2))
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
+    editor.uiTextColoredWithFont(imgui.ImVec4(1, 0, 0, 1), noAreaText, "cairo_bold")
+    imgui.PopStyleColor()
+  else
+    drawLayersListWithType(layerType_enum.area)
+  end
+  imgui.EndChild()
+  
+  imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - buttonSize.x/2)
+  imgui.SetCursorPosY(imgui.GetCursorPosY()+imgui.GetStyle().FramePadding.y*2)
+
+  if imgui.Button("New Area Layer", buttonSize) then
+    local layer = addLayerWithType(layerType_enum.area)
+    shouldUpdateAreasScroll = true
+    selectLayer(layer)
+  end
+  imgui.EndChild()
+  
+  local separatorPos = imgui.GetCursorPos()
+  imgui.InvisibleButton("SeparatorButtonALLevels", imgui.ImVec2(imgui.GetContentRegionAvail().x, seperatorHeight))
+  if imgui.IsItemActive() then
+    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
+      local newHeightVal = biomeAreasLevelsListHeight + imgui.GetIO().MouseDelta.y
+      biomeAreasLevelsListHeight = clamp(newHeightVal, 50, 1000)
+    end
+  end
+  if imgui.IsItemActive() or imgui.IsItemHovered() then
+    imgui.SetMouseCursor(3)
+  end
+  imgui.SetCursorPosY(separatorPos.y + seperatorHeight / 2)
+  imgui.Separator()
+end
+
+local function drawBiomeAreasLayerProperties()
+
+  imgui.BeginChild1("BiomeAreaLayerProps", imgui.ImVec2((imgui.GetContentRegionAvail().x - 2), biomeAreasLevelPropsHeight), true)
+  local selectedLayer = getSelectedLayer(layerType_enum.area)
+  if selectedLayer == nil then
+    local noAreaText = "N O   L A Y E R   S E L E C T E D !"
+    imgui.SetCursorPos(imgui.ImVec2(imgui.GetContentRegionAvail().x/2 - imgui.CalcTextSize(noAreaText).x/2, imgui.GetContentRegionAvail().y/2))
+    imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
+    editor.uiTextColoredWithFont(imgui.ImVec4(1, 0, 0, 1), noAreaText, "cairo_bold")
+    imgui.PopStyleColor()
+  else
+    drawLayerProperties(selectedLayer)
+  end
+  imgui.EndChild()
+
+  local separatorPos = imgui.GetCursorPos()
+  imgui.InvisibleButton("SeparatorButtonALLevelsProps", imgui.ImVec2(imgui.GetContentRegionAvail().x, seperatorHeight))
+  if imgui.IsItemActive() then
+    if imgui.GetIO().MouseDelta.y ~= 0 and imgui.IsMouseDown(0)then
+      local newHeightVal = biomeAreasLevelPropsHeight + imgui.GetIO().MouseDelta.y
+      biomeAreasLevelPropsHeight = clamp(newHeightVal, 50, 1000)
+    end
+  end
+  if imgui.IsItemActive() or imgui.IsItemHovered() then
+    imgui.SetMouseCursor(3)
+  end
+  imgui.SetCursorPosY(separatorPos.y + seperatorHeight / 2)
+  imgui.Separator()
+end
+
+local function drawMainToolbar()
+  local buttonSize = imgui.ImVec2(150, 30)
+  imgui.BeginChild1("MainToolbar", imgui.ImVec2((imgui.GetContentRegionAvail().x - 6), 50), true)
+  if imgui.Button("Open Project", buttonSize) then
+  end
+  imgui.SameLine()
+  imgui.Text("levelPath")
+  imgui.SameLine()
+  imgui.Text("LevelName")
+  imgui.SameLine()
+  if imgui.Button("Save", buttonSize) then
+  end
+  imgui.SameLine()
+  if imgui.Button("Exit", buttonSize) then
+    imgui.OpenPopup("Exit Confirmation")
+  end
+  imgui.EndChild()
+end
+
+local function drawMainPanel()
+  var.forestEditorWindowSize = imgui.GetWindowSize()
+  local cursorPos = imgui.GetCursorPos()
+  local tabIconWidth = imgui.GetFontSize() + 6
+  local tabIconSize = imgui.ImVec2(tabIconWidth, tabIconWidth)
+
+  local framePadding =  imgui.ImVec2(6, 6) --imgui.GetStyle().FramePadding
+  imgui.PushStyleVar2(imgui.StyleVar_FramePadding, framePadding)--imgui.ImVec2(imgui.GetFontSize(), imgui.GetFontSize()))
+  if imgui.BeginTabBar("BiomeToolTabBar") then
+    if imgui.BeginTabItem("Level Biome##Tab") then
+      imgui.PushStyleVar2(imgui.StyleVar_FramePadding, framePadding)
+      var.selectedTab = enum_tabType.LevelBiome
+      if imgui.BeginChild1("LevelBiomeChild", imgui.ImVec2((imgui.GetContentRegionAvail().x - 6), (imgui.GetContentRegionAvail().y - 6)), true) then
+        drawLevelBiomeLayersList()
+        drawLevelBiomeLayerProperties()
+      end
+      imgui.EndChild()
+      imgui.PopStyleVar()
+      imgui.EndTabItem()
+    end
+    if imgui.BeginTabItem("Biome Areas##Tab") then
+      imgui.PushStyleVar2(imgui.StyleVar_FramePadding, framePadding)
+      var.selectedTab = enum_tabType.BiomeAreas
+      if imgui.BeginChild1("BiomeAreasChild", imgui.ImVec2((imgui.GetContentRegionAvail().x - 6), (imgui.GetContentRegionAvail().y - 6)), true) then
+        drawBiomeAreasLayersList()
+        drawBiomeAreasLayerProperties()
+      end
+      imgui.EndChild()
+      imgui.PopStyleVar()
+      imgui.EndTabItem()
+    end
+    imgui.EndTabBar()
+  end
+  imgui.PopStyleVar()
 end
 
 local function drawWindow()
   if editor.beginWindow(toolWindowName, "Biome Tool") then
-    local selectedArea = getAreaByID(var.selectedAreaID)
-    drawAreasList()
-    imgui.BeginChild1("MainPanel", imgui.GetContentRegionAvail(), true)
-
-    if var.selectedAreaID == nil then
-      local txtSfx = "S E L E C T E D !"
-      if tableIsEmpty(var.areas.areaInfoTbl) then txtSfx = "A V A I L A B L E !" end
-      local noAreaText = "N O   A R E A   " .. txtSfx
-      imgui.SetCursorPos(imgui.ImVec2(imgui.GetContentRegionAvail().x/2 - imgui.CalcTextSize(noAreaText).x/2, imgui.GetContentRegionAvail().y/2))
-      imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1));
-      editor.uiTextColoredWithFont(imgui.ImVec4(1, 0, 0, 1), noAreaText, "cairo_bold")
-      imgui.PopStyleColor()
-    else
-      drawAreaPanel(var.selectedAreaID)
-    end
-
-    imgui.EndChild()
+    drawMainPanel()
   end
   editor.endWindow()
 end
@@ -2228,13 +2828,141 @@ local function updateNodePosInArea(layerID, nodeIndex, exZoneID, pos)
   end
 end
 
+local function getLassoAreaGlobalIdx(layerID, zoneType)
+  local numAreas = 0
+  for _, layer in ipairs(var.layers.layerInfoTbl) do
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      for _, lassoArea in ipairs(layer.lassoAreas) do
+        if lassoArea.zoneType == zoneType then
+          numAreas = numAreas + 1
+        end
+      end
+      break
+    end
+  end
+
+  local index = 0
+  local found = false
+  if zoneType == var.enum_lassoDrawType.inclusionZone then
+    for _, indexData in ipairs(var.layers.lassoAreaGlobalIndices) do
+      if indexData.layerID == layerID then
+        index = indexData.index
+        found = true
+        if numAreas == 0 then
+          index = 0
+          indexData.index = 0
+        end
+      end
+    end
+    if not found then
+      table.insert(var.layers.lassoAreaGlobalIndices, {layerID = layerID, index = 0})
+    end
+  elseif zoneType == var.enum_lassoDrawType.exclusionZone then
+    found = false
+    for _, indexData in ipairs(var.layers.exZoneGlobalIndices) do
+      if indexData.layerID == layerID then
+        index = indexData.index
+        found = true
+        if numAreas == 0 then
+          index = 0
+          indexData.index = 0
+        end
+      end
+    end
+    if not found then
+      table.insert(var.layers.exZoneGlobalIndices, {layerID = layerID, index = 0})
+    end
+  end
+  return index
+end
+
+local function incLassoAreaGlobalIdx(layerID, zoneType)
+  local found = false
+  if zoneType == var.enum_lassoDrawType.inclusionZone then
+    for _, indexData in ipairs(var.layers.lassoAreaGlobalIndices) do
+      if indexData.layerID == layerID then
+        indexData.index = indexData.index + 1
+        found = true
+      end
+    end
+    if not found then
+      table.insert(var.layers.lassoAreaGlobalIndices, {layerID = layerID, index = 1})
+    end
+  elseif zoneType == var.enum_lassoDrawType.exclusionZone then
+    for _, indexData in ipairs(var.layers.exZoneGlobalIndices) do
+      if indexData.layerID == layerID then
+        indexData.index = indexData.index + 1
+        found = true
+      end
+    end
+    if not found then
+      table.insert(var.layers.exZoneGlobalIndices, {layerID = layerID, index = 1})
+    end
+  end
+end
+
+local function addLassoArea(layerID, zoneType, nodes)
+  for _, layer in ipairs(var.layers.layerInfoTbl) do 
+    if layer.layerID == layerID and layer.layerType == layerType_enum.area then
+      local lassoArea = {lassoAreaID = getLassoAreaGlobalIdx(layerID, zoneType) + 1, zoneType = zoneType, nodes = deepcopy(nodes)}
+      table.insert(layer.lassoAreas, lassoArea)
+      break
+    end
+  end
+  incLassoAreaGlobalIdx(layerID, zoneType)
+end
+
+local function createForestObject()
+  local forest = core_forest and core_forest.getForestObject()
+  if not forest then
+    forest = worldEditorCppApi.createObject("Forest")
+    forest:registerObject("")
+    forest:setName("theForest")
+    scenetree.MissionGroup:addObject(forest)
+    createForestBrushGroup()
+    editor.setDirty()
+  end
+end
+
 local function onEditorGui()
   if not editor.editMode or (editor.editMode.displayName ~= editModeName) then
     return
   end
+  
+  local forest = core_forest and core_forest.getForestObject()
+  if not forest and not createForestPopupShown then
+    editor.openModalWindow("NoForestObjDialog")
+    createForestPopupShown = true
+  end
+
+  if editor.beginModalWindow("NoForestObjDialog", "No Forest Object") then
+    imgui.Spacing()
+    imgui.Text("There is no Forest object, please create one.")
+    imgui.Spacing()
+    imgui.Separator()
+    imgui.Spacing()
+    imgui.Spacing()
+    imgui.Spacing()
+    if imgui.Button("OK") then
+      editor.closeModalWindow("NoForestObjDialog")
+    end
+  end
+  editor.endModalWindow()
+  if not forest then
+    return
+  end
+
+  if not var.askedToOpenProject then
+    --imgui.OpenPopup("Ask Project")
+  end
   drawWindow()
   if isDrawingLassoArea then
     drawLassoPolylineAction()
+  end
+  
+  if imgui.IsKeyDown(imgui.GetKeyIndex(imgui.Key_Escape)) then
+    isDrawingLassoArea = false
+    resetDrawActionVariables()
   end
 
   local hit
@@ -2242,8 +2970,9 @@ local function onEditorGui()
     hit = cameraMouseRayCast(false, imgui.flags(SOTTerrain))
   end
 
-  if var.selectedAreaID then
-    drawLassoLayers(var.selectedAreaID)
+  local layer = getSelectedLayer(layerType_enum.area)
+  if layer ~= nil and var.selectedTab == enum_tabType.BiomeAreas then
+    drawLassoAreas(layer.layerID)
   end
 
   if not imgui.IsMouseDown(0) then
@@ -2261,37 +2990,13 @@ local function onEditorGui()
     end
   end
 
-  if editor.keyModifiers.alt then
     if imgui.IsMouseClicked(0) and isDrawingLassoArea
         and editor.isViewportHovered()
         and not editor.isAxisGizmoHovered() then
       if var.lassoActionHoveredNodeIndex == 1 and #var.lassoPLNodes > 2 then
         var.lassoSelectionEnded = true
         isDrawingLassoArea = false
-
-        if var.lassoDrawInfo.type == var.enum_lassoDrawType.inclusionZone then
-          addLayer(var.selectedAreaID, layerType_enum.lasso, nil, var.lassoPLNodes, nil, nil)
-        else
-          local entryFound = false
-          local areaID = 1
-          for _, zone in ipairs(var.areas.exclusionZones) do
-            if zone.areaID == var.lassoDrawInfo.areaID and zone.layerID == var.lassoDrawInfo.layerID then
-              local data = {isSelected = false, ID = getExZoneGlobalIdx(var.lassoDrawInfo.areaID, var.lassoDrawInfo.layerID), nodes = deepcopy(var.lassoPLNodes)}
-              areaID = data.ID
-              table.insert(zone.zoneData, data)
-              entryFound = true
-            end
-          end
-
-          if not entryFound then
-            local zoneDataTbl = {isSelected = false, ID = getExZoneGlobalIdx(var.lassoDrawInfo.areaID, var.lassoDrawInfo.layerID), nodes = deepcopy(var.lassoPLNodes)}
-            areaID = zoneDataTbl.ID
-            table.insert(var.areas.exclusionZones, {areaID = var.lassoDrawInfo.areaID, layerID = var.lassoDrawInfo.layerID, zoneData = {zoneDataTbl}})
-          end
-          clearExZoneSelection(var.lassoDrawInfo.areaID, var.lassoDrawInfo.layerID)
-          selectExclusionZone(var.lassoDrawInfo.areaID, var.lassoDrawInfo.layerID, areaID)
-          var.lassoDrawInfo.type = var.enum_lassoDrawType.inclusionZone
-        end
+        addLassoArea(layer.layerID, var.lassoDrawInfo.type, var.lassoPLNodes)
         resetDrawActionVariables()
       elseif hit then
         local node = {
@@ -2302,8 +3007,8 @@ local function onEditorGui()
         table.insert(var.lassoPLNodes, node)
       end
     end
-  else
-    if hit then
+
+    if hit and not isDrawingLassoArea then
       if imgui.IsMouseClicked(0)
           and editor.isViewportHovered()
           and not editor.isAxisGizmoHovered() then
@@ -2326,7 +3031,6 @@ local function onEditorGui()
         updateNodePosInArea(var.lassoHoveredNode.layerID, var.lassoHoveredNode.index, var.lassoHoveredNode.exZoneID, hit.pos)
       end
     end
-  end
 end
 
 local function show()
@@ -2336,23 +3040,17 @@ local function show()
 end
 
 local function onActivate()
-  editor.clearObjectSelection()
-  editor_terrainEditor.updateMaterialLibrary()
-  for _, win in ipairs(windows) do
-    if win.onEditModeActivate then
-      win:onEditModeActivate()
-    end
-  end  
-  editor.showWindow(toolWindowName)
+  local forest = core_forest and core_forest.getForestObject()
+  if forest then
+    editor.clearObjectSelection()
+    editor_terrainEditor.updateMaterialLibrary()
+    populateMaterialsList()
+    editor.showWindow(toolWindowName)
+  end
 end
 
 local function onDeactivate()
-  for _, win in ipairs(windows) do
-    if win.onEditModeDeactivate then
-      win:onEditModeDeactivate()
-    end
-  end
-  editor.clearObjectSelection()
+  createForestPopupShown = false
 end
 
 local function initialize()
@@ -2381,17 +3079,6 @@ local function initialize()
   end
 end
 
-local function getMaterialName(index)
-  local materialName = ""
-  for id, mtl in pairs(editor_terrainEditor.getMaterialsInJson()) do
-    if id == index then
-      materialName = mtl.internalName
-      break
-    end
-  end
-  return materialName
-end
-
 local function getLayerTerrainMaterial(areaID, layerID)
   local materialName = nil
   local fieldsData = getFieldsData(areaID, layerID)
@@ -2409,20 +3096,102 @@ local fieldPlacementBoolPtr = imgui.BoolPtr(0)
 local function biomeToolCustomFieldEditor(objectIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
   local fieldVal = fieldValue
   if fieldName == "TerrainMaterial" then
-    fieldVal = getLayerTerrainMaterial(customData.areaID, customData.layerID)
+    fieldVal = getLayerTerrainMaterial(customData.layerType, customData.layerID)
     imgui.BeginDisabled()
     editor.uiInputText('', editor.getTempCharPtr(fieldVal))
     imgui.EndDisabled()
   elseif fieldName == "BlendingMethod" then
     local blendingMethodPtr = imgui.IntPtr(0)
-    blendingMethodPtr[0] = getBlendingMethod(customData.areaID, customData.layerID)
+    blendingMethodPtr[0] = getBlendingMethod(customData.layerType, customData.layerID)
     if imgui.Combo1("##layersDelete", blendingMethodPtr, layerBlendingComboItems) then
-      setBlendingMethod(customData.areaID, customData.layerID, blendingMethodPtr[0])
+      setBlendingMethod(customData.layerType, customData.layerID, blendingMethodPtr[0])
     end
   elseif fieldName == "FieldPlacement" then
-    fieldPlacementBoolPtr[0] = getFieldPlacement(customData.areaID, customData.layerID)
+    fieldPlacementBoolPtr[0] = getFieldPlacement(customData.layerType, customData.layerID)
     if imgui.Checkbox("##fieldPlacementEnabled", fieldPlacementBoolPtr) then
-      setFieldPlacement(customData.areaID, customData.layerID, fieldPlacementBoolPtr[0])
+      setFieldPlacement(customData.layerType, customData.layerID, fieldPlacementBoolPtr[0])
+    end
+  end
+
+  if fieldName == "RA_Map" then
+    local mapFile =  getRandomLayerMapFile(customData.layerType, customData.layerID)
+    local texturePath = (mapFile == "" and "/core/art/missingTexture.dds" or mapFile)
+    local texture = editor.getTempTextureObj(texturePath)
+    if imgui.ImageButton("##imageButton"..tostring(customData.layerType)..tostring(customData.layerID), texture.tex:getID(), imgui.ImVec2(50, 50), nil, nil, nil, editor.color.white.Value, '') then
+      imgui.OpenPopup("Random Map Generator")
+    end
+    
+    if imgui.BeginPopupModal("Random Map Generator") then
+      for index, item in ipairs(var.areas.fieldInfoTbl) do
+        if item.layerType == customData.layerType and item.layerID == customData.layerID then
+          for _, fieldData in ipairs(item.fieldsData) do
+            if fieldData.name == "RA_Seed" or fieldData.name == "RA_Freq" or fieldData.name == "RA_Amp" or
+               fieldData.name == "RA_Mask" or fieldData.name == "RA_Material" or fieldData.name == "RA_Thr" or fieldData.name == "RA_Oct" then
+              if indexOf(rowPlacementFields, fieldData.name) == -1 then
+                valueInspector:valueEditorGui(fieldData.name, tostring(fieldData.val) or "", index,      fieldData.label, nil,       fieldData.type or "", fieldData.typeName or "", {areaID = item.areaID, layerID = item.layerID}, pasteLayerFieldValue, nil)
+                imgui.Separator()
+                imgui.NextColumn()
+              end
+            end
+          end
+          break
+        end
+      end
+
+      if imgui.Button("Generate Mask") then
+        local baseMask = getRandomLayerBaseMaskFile(customData.areaID, customData.layerID)
+        local seed = getRandomLayerSeed(customData.areaID, customData.layerID)
+        local frequency = getRandomLayerFrequency(customData.areaID, customData.layerID)
+        local amplitude = getRandomLayerAmplitude(customData.areaID, customData.layerID)
+        local threshold = getRandomLayerThreshold(customData.areaID, customData.layerID)
+        local octave = getRandomLayerOctave(customData.areaID, customData.layerID)
+        local layerType = getLayerType(customData.areaID, customData.layerID)
+        local materialIndex= getRandomLayerMaterialIndex(customData.areaID, customData.layerID)
+        local maskFileSuffix = customData.areaID.."_"..customData.layerID;
+        if layerType == layerType_enum.random_material then
+          var.forestBrushTool:randAreaFromMaterial(materialIndex, seed, frequency, amplitude, threshold, octave, maskFileSuffix)
+        elseif layerType == layerType_enum.random_lasso then
+          local lassoAreas = getRandomLayerLassoAreas(customData.areaID, customData.layerID)
+          var.forestBrushTool:randAreaFromLasso(seed, frequency, amplitude, threshold, octave, maskFileSuffix, lassoAreas) 
+        else
+          var.forestBrushTool:randAreaFromMask(baseMask, seed, frequency, amplitude, threshold, octave, maskFileSuffix)
+        end
+      end
+      local width = imgui.GetContentRegionAvail().x
+      local height = imgui.GetContentRegionAvail().y - 100
+      local imgSize = math.min(width, height)
+      local flags =  imgui.WindowFlags_ChildWindow + imgui.WindowFlags_NoScrollWithMouse + imgui.WindowFlags_HorizontalScrollbar
+
+      imgui.BeginChild1("##RandomMapGeneratorPopup2"..tostring(layerID)..tostring(areaID), imgui.ImVec2(imgSize+25, imgSize+25), true, flags)
+      local mapFile =  getRandomLayerMapFile(customData.areaID, customData.layerID)
+      local texturePath = (mapFile == '' and "/core/art/missingTexture.dds" or mapFile)
+      local texture = editor.getTempTextureObj(texturePath)
+      imgSize = imgSize*var.randImgScaleCoeff
+      imgui.Image(texture.tex:getID(), imgui.ImVec2(imgSize, imgSize), nil, nil, nil, editor.color.white.Value)
+
+      if imgui.IsItemHovered() then
+        local whDelta = imgui.GetIO().MouseWheel
+        if whDelta ~= 0 then
+          var.randImgScaleCoeff = clamp(var.randImgScaleCoeff + whDelta*0.1, 1, 10)
+          local scroll = (var.randImgScaleCoeff - 1.0) / 10.0
+          imgui.SetScrollHereX(scroll/2.0)
+          imgui.SetScrollHereY(scroll/2.0)
+        end
+      end
+      imgui.EndChild()
+      
+      if imgui.IsKeyDown(imgui.GetKeyIndex(imgui.Key_Escape)) then
+        imgui.CloseCurrentPopup()
+      end
+
+      if imgui.Button("OK") then
+        imgui.CloseCurrentPopup()
+      end
+      imgui.SameLine()
+      if imgui.Button("Cancel") then
+        imgui.CloseCurrentPopup()
+      end
+      imgui.EndPopup()
     end
   end
 
@@ -2436,7 +3205,7 @@ local function biomeToolCustomFieldEditor(objectIds, fieldValue, fieldName, fiel
       range = imgui.TableToArrayFloat(slopeRange)
     end
     local positionSliderEditEnded = imgui.BoolPtr(false)
-    if editor.uiDragFloat2("##" .."SlopeRange"..tostring(customData.areaID)..tostring(customData.layerID), 
+    if editor.uiDragFloat2("##" .."SlopeRange"..tostring(customData.areaID)..tostring(customData.layerID),
       range, 0.2, 0, 90, "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f", 1, positionSliderEditEnded) then
         editingPos = true
     end
@@ -2448,7 +3217,6 @@ local function biomeToolCustomFieldEditor(objectIds, fieldValue, fieldName, fiel
       imgui.EndDisabled()
     end
   end
-  --fieldName == "VegetationFalloff"  
 end
 
 local function getLevelPathAndName()
@@ -2467,31 +3235,33 @@ end
 
 local function onEditorInitialized()
   local levelPath, levelName = getLevelPathAndName()
-  local levelDataPath = string.format("%s/%s", levelPath, "/art/biomeTool.json")
+  local levelDataPath = string.format("%s%s", levelPath, "/art/biomeTool/biomeTool.json")
 
   if FS:fileExists(levelDataPath) then
-    var.areas = jsonReadFile(levelDataPath)
-    initEmptyFieldInfo()
+    var.layers = jsonReadFile(levelDataPath)
+    --initEmptyFieldInfo()
   end
   populateForestBrushes()
-  
+
   editor.editModes.biomeEditMode =
   {
     displayName = editModeName,
     onUpdate = nop,
     onActivate = onActivate,
     onDeactivate = onDeactivate,
+    icon = editor.icons.biome_tool,
     iconTooltip = "Biome Tool",
     sortOrder = 6,
     auxShortcuts = {},
   }
-  editor.addWindowMenuItem("Biome Tool", function() show() end, {groupMenuName="Experimental"})
   editor.registerCustomFieldInspectorEditor("BiomeTool", "TerrainMaterial", biomeToolCustomFieldEditor)
   editor.registerCustomFieldInspectorEditor("BiomeTool", "BlendingMethod", biomeToolCustomFieldEditor)
   editor.registerCustomFieldInspectorEditor("BiomeTool", "SlopeRange", biomeToolCustomFieldEditor)
   editor.registerCustomFieldInspectorEditor("BiomeTool", "VegetationFalloff", biomeToolCustomFieldEditor)
   editor.registerCustomFieldInspectorEditor("BiomeTool", "FieldPlacement", biomeToolCustomFieldEditor)
+  editor.registerCustomFieldInspectorEditor("BiomeTool", "RA_Map", biomeToolCustomFieldEditor)
   editor.registerWindow(toolWindowName, imgui.ImVec2(400, 400))
+  editor.registerModalWindow("NoForestObjDialog")
 
   valueInspector.selectionClassName = "BiomeTool"
   valueInspector.setValueCallback = function(fieldName, fieldValue, arrayIndex, customData, editEnded)
@@ -2523,13 +3293,23 @@ local function onWindowGotFocus(windowName)
 end
 
 local function onEditorAfterSaveLevel()
-  if tableIsEmpty(var.areas) then return end
+  if tableIsEmpty(var.layers) then return end
   local levelPath, levelName = getLevelPathAndName()
-  local levelDataPath = string.format("%s/%s", levelPath, "/art/biomeTool.json")
-  if FS:fileExists("/art/biomeTool.json") then
-    FS:removeFile(currentPath)
+  local biomeDataPath = string.format("%s/%s", levelPath, "/art/biomeTool/biomeTool.json")
+  local areaLayers = getLayersWithType(layerType_enum.area)
+  local terrLayers = getLayersWithType(layerType_enum.terrain)
+  local layerAvailable = not tableIsEmpty(areaLayers) or not tableIsEmpty(terrLayers)
+  if FS:fileExists(biomeDataPath) then
+    FS:removeFile(biomeDataPath)
   end
-  jsonWriteFile(levelDataPath, var.areas, true)
+
+  if layerAvailable then
+    jsonWriteFile(biomeDataPath, var.layers, true)
+  end
+  local forest = core_forest.getForestObject()
+  if forest then
+    forest:saveForest()
+  end
 end
 
 M.onEditorAfterSaveLevel = onEditorAfterSaveLevel

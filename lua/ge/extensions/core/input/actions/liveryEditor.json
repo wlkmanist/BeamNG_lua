@@ -179,12 +179,39 @@
     "title": "Duplicate Active Layer Layer",
     "desc": "Duplicates current active layer"
   },
+  // "stamp_decal": {
+  //   "cat": "gameplay",
+  //   "order": 1,
+  //   "ctx": "tlua",
+  //   "actionMap": "liveryEditorTransformStamp",
+  //   "onDown": "ui_liveryEditor_editMode.apply()",
+  //   "title": "Stamp Decal",
+  //   "desc": "Position and apply decal using mouse"
+  // },
+  "rotate_left_decal": {
+    "cat": "gameplay",
+    "order": 1,
+    "ctx": "tlua",
+    "actionMap": "liveryEditorTransform",
+    "onChange": "ui_liveryEditor_layerEdit.holdRotateLeft(VALUE)",
+    "title": "Stamp Decal",
+    "desc": "Position and apply decal using mouse"
+  },
+  "rotate_right_decal": {
+    "cat": "gameplay",
+    "order": 1,
+    "ctx": "tlua",
+    "actionMap": "liveryEditorTransform",
+    "onChange": "ui_liveryEditor_layerEdit.holdRotateRight(VALUE)",
+    "title": "Stamp Decal",
+    "desc": "Position and apply decal using mouse"
+  },
   "stamp_decal": {
     "cat": "gameplay",
     "order": 1,
     "ctx": "tlua",
     "actionMap": "liveryEditorTransformStamp",
-    "onDown": "ui_liveryEditor_editMode.apply()",
+    "onDown": "ui_liveryEditor_layerEdit.stampDecal()",
     "title": "Stamp Decal",
     "desc": "Position and apply decal using mouse"
   }

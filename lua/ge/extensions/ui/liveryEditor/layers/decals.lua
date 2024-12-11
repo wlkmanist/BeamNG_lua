@@ -5,8 +5,7 @@ local camera = extensions.ui_liveryEditor_camera
 local uiCursor = extensions.ui_liveryEditor_layers_cursor
 local uiUtils = extensions.ui_liveryEditor_utils
 
-local ACTIONS = {"transform", "material", "scale", "skew", "rotate", "order", "duplicate", "mirror", "rename",
-                 "highlight", "visibility", "delete"}
+local ACTIONS = {"transform", "material", "order", "duplicate", "mirror", "rename", "visibility", "delete"}
 local MEASUREMENTS = {
   ROTATE_STEP_UNIT = 0.1,
   SCALE_STEP_UNIT = 0.01,
@@ -78,6 +77,30 @@ end
 
 local notifyListeners = function(layer)
   guihooks.trigger("LiveryEditor_CursorUpdated", M.getData(layer))
+end
+
+local showDecalCursor = function(show)
+  local r, g, b = unpack(api.getDecalColor():toTable())
+  api.setDecalColor(Point4F.fromTable({r, g, b, show and 1 or 0}))
+end
+
+M.layerUid = nil
+M.layerData = nil
+
+M.setLayer = function(layerUid)
+  M.layerUid = layerUid
+  M.layerData = deepcopy(api.getLayerByUid(M.layerUid))
+  -- notify ui and extensions
+end
+
+M.addLayer = function(params)
+  -- use cursor
+  api.toggleSetting(api.settingsFlags.UseMousePos.value)
+  api.setCursorPosition(Point2F(0.5, 0.5))
+
+  showDecalCursor(true)
+  api.setDecalTexturePath("color", params.texturePath)
+  return api.addDecal()
 end
 
 M.setColor = function(layer, color)

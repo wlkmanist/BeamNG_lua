@@ -5,8 +5,9 @@
 local M = {}
 local im = extensions.ui_imgui
 local wndName = "Lights Debug"
-local wndOpen = false
 M.menuEntry = "Lights Debug"
+
+local windowOpen = im.BoolPtr(false)
 
 local zeroVec = vec3(0,0,0)
 
@@ -32,7 +33,7 @@ local function onVehicleEditorRenderJBeams(dtReal, dtSim, dtRaw)
   local spotLightDebugEnabledVal = spotLightDebugEnabled[0]
   local pointLightDebugEnabledVal = pointLightDebugEnabled[0]
 
-  if not (vEditor.vehicle and vEditor.vdata and vEditor.vdata.props and wndOpen and (spotLightDebugEnabledVal or pointLightDebugEnabledVal)) then return end
+  if not (windowOpen[0] and vEditor.vehicle and vEditor.vdata and vEditor.vdata.props and (spotLightDebugEnabledVal or pointLightDebugEnabledVal)) then return end
 
   debugDrawer:setSolidTriCulling(false)
 
@@ -119,33 +120,40 @@ local function onVehicleEditorRenderJBeams(dtReal, dtSim, dtRaw)
   --debugDrawer:setSolidTriCulling(true)
 end
 
-local function onEditorGui()
-  if not vEditor.vehicle then return end
-  if editor.beginWindow(wndName, wndName) then
-    wndOpen = true
+local function onUpdate()
+  if windowOpen[0] ~= true then return end
+
+  if not vEditor or not vEditor.vehicle then return end
+  if im.Begin(wndName, windowOpen) then
     im.Checkbox("Spotlight Debug (SL)", spotLightDebugEnabled)
     im.Checkbox("Pointlight Debug (PL)", pointLightDebugEnabled)
     im.Checkbox("X-Ray Mode", zTestEnabled)
     im.Checkbox("Display Names", displayNames)
     im.Checkbox("Unit Vectors", displayAsUnitVectors)
-  else
-    wndOpen = false
   end
-  editor.endWindow()
+  im.End()
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(200,200))
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
 end
 
 M.open = open
 
 M.onVehicleEditorRenderJBeams = onVehicleEditorRenderJBeams
-M.onEditorGui = onEditorGui
-M.onEditorInitialized = onEditorInitialized
+M.onUpdate = onUpdate
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

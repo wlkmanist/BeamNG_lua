@@ -6,31 +6,20 @@ local C = {}
 
 function C:init()
   self.personalityModifiers = {
-    aggression = {median = 0.2}
+    aggression = {offset = 0.2}
   }
   self.actions = {
-    speed = function ()
-      if self.veh.isAi then
-        be:getObjectByID(self.veh.id):queueLuaCommand('ai.setSpeedMode("off")')
-      end
-    end,
-    reckless = function ()
-      if self.veh.isAi then
-        be:getObjectByID(self.veh.id):queueLuaCommand('ai.setAvoidCars("off")')
-      end
-    end,
     watchPolice = function ()
       self.state = 'wanted'
       self.flags.flee = nil
     end,
     fleePolice = function ()
       if self.veh.isAi then
-        local agg = 0.7 + math.random() * 0.1
         be:getObjectByID(self.veh.id):queueLuaCommand('controller.setFreeze(0)')
         be:getObjectByID(self.veh.id):queueLuaCommand('ai.setMode("flee")')
         be:getObjectByID(self.veh.id):queueLuaCommand('ai.setAggressionMode("off")')
-        be:getObjectByID(self.veh.id):queueLuaCommand('ai.setAggression('..agg..')')
         be:getObjectByID(self.veh.id):queueLuaCommand('ai.driveInLane("off")')
+        self:setAggression(0.75)
       end
       self.veh:modifyRespawnValues(1200, 50)
       self.state = 'flee'
@@ -60,7 +49,7 @@ end
 
 function C:onTrafficTick(tickTime)
   local sightThreshold = self.veh.isAi and 0.25 or 1
-  if self.state == 'wanted' and self.veh.pursuit.sightValue >= sightThreshold then
+  if self.state == 'wanted' and self.veh.pursuit.sightValue >= sightThreshold then -- police start chasing the wanted suspect
     for id, veh in pairs(gameplay_police.getPoliceVehicles()) do
       if not veh.role.flags.pursuit and not veh.role.flags.reset and veh:getInteractiveDistance(self.veh.pos, true) <= square(100) then
         gameplay_police.setPursuitMode(2, self.veh.id, id)

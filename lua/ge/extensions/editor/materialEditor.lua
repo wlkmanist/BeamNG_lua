@@ -499,7 +499,7 @@ local function dragDropTarget(property, layer)
     local payload = im.AcceptDragDropPayload("ASSETDRAGDROP")
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[2048]")
-      local data = ffi.string(ffi.cast("char*",payload.Data))
+      local data = ffi.string(payload.Data)
       -- editor.logInfo(logTag .. "Setting property '" .. property .. "' on layer '" .. tostring(layer or o.layer[0]) .. "' to .. '" .. data .. "'")
       setPropertyWithUndo(property, layer or o.layer[0], data)
     end
@@ -625,8 +625,10 @@ local function imageButton(label, property, layer, additionalGuiFn)
   local imgPath = currentMaterial:getField(property, layer)
   local absPath = imgPath
   local isTaggedTexture = string.startswith(imgPath, '@')
+  local isLevelRelativeTexture = string.startswith(imgPath, '^')
+
   -- Check if path is absolute or relative (exclude tagged textures)
-  if absPath ~= "" and not isTaggedTexture then
+  if absPath ~= "" and not isTaggedTexture and not isLevelRelativeTexture then
     absPath = (string.find(absPath, "/") ~= nil and absPath or (currentMaterial:getPath() .. absPath))
     if absPath ~= imgPath then
       editor.logInfo(logTag .. string.format([[
@@ -1031,7 +1033,7 @@ local function dragDropTargetCubemapFace(index)
     local payload = im.AcceptDragDropPayload("ASSETDRAGDROP")
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[2048]")
-      local data = ffi.string(ffi.cast("char*",payload.Data))
+      local data = ffi.string(payload.Data)
       local oldValue = selectedCubemapObj:getField("cubeFace", index)
       if oldValue ~= data then
         editor.history:commitAction(

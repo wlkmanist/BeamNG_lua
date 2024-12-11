@@ -8,7 +8,6 @@ M.dependencies = {'career_career', 'career_modules_payment', 'career_modules_pla
 
 local plInsuranceDataFileName = "insurance"
 
-local brokenPartsThreshold = 3
 local metersDrivenSinceLastPay = 0
 local bonusDecrease = 0.05
 local policyEditTime = 600 -- have to wait between perks editing
@@ -34,7 +33,7 @@ local currApplicablePolicyId = -1
 
 local repairOptions = {
   repairNoInsurance = function(invVehInfo)
-    local repairDetails = M.getRepairDetailsWithoutPolicy(invVehInfo)
+    local repairDetails = career_modules_valueCalculator.getRepairDetails(invVehInfo)
     return {
       repairTime = repairDetails.repairTime,
       isPolicyRepair = false,
@@ -125,7 +124,9 @@ local gestures = {
 
 -- helper
 local function getPlPerkValue(policyId, perkName)
-  return availablePolicies[policyId].perks[perkName].changeability.changeParams.choices[plPoliciesData[policyId].perks[perkName]]
+  if policyId > -1 then -- -1 means not insured
+    return availablePolicies[policyId].perks[perkName].changeability.changeParams.choices[plPoliciesData[policyId].perks[perkName]]
+  end
 end
 
 local function savePoliciesData(currentSavePath)
@@ -270,58 +271,19 @@ local function loadPoliciesData(resetSomeData)
   initCurrInsurance()
 end
 
--- for now every part needs to be replaced
-local function getDamagedParts(partConditions)
-  local damagedParts = {
-    partsToBeReplaced = {},
-    partsToBeRepaired = {}
-  }
-  for partName, info in pairs(partConditions) do
-    if info.integrityValue and info.integrityValue == 0 then
-      table.insert(damagedParts.partsToBeReplaced, partName)
-    end
-  end
-  return damagedParts
-end
-
-local function getRepairDetailsWithoutPolicy(invVehInfo)
-  local repairTimePerPart = 20
-  local details = {
-    price = 0,
-    repairTime = 0
-  }
-
-  local damagedParts = getDamagedParts(invVehInfo.partConditions)
-  for _, partName in pairs(damagedParts.partsToBeReplaced) do
-    local slotName
-    for sslotName, ppartName in pairs(invVehInfo.config.parts) do
-      if ppartName == partName then
-        slotName = sslotName
-      end
-    end
-    local part = career_modules_partInventory.getPart(invVehInfo.id, slotName)
-    local price = 700
-    if part then
-      price = part.value
-    end
-    details.price = details.price + price * 0.6-- lower the price a bit..
-    details.repairTime = details.repairTime + repairTimePerPart
-  end
-
-  return details
-end
-
-local function getNumberOfBrokenParts(partConditions)
-  local damagedParts = getDamagedParts(partConditions)
-  return #damagedParts.partsToBeRepaired + #damagedParts.partsToBeReplaced
-end
-
 local function purchasePolicy(policyId, forFree)
   if forFree == nil then forFree = false end
   local policyInfo = availablePolicies[policyId]
   local label = string.format("Bought insurance tier '%s'", policyInfo.name)
 
   if career_modules_payment.pay({money = {amount = forFree == true and 0 or policyInfo.initialBuyPrice, canBeNegative = false}}, {label=label}) then
+    -- if we buy a policy that is needed for an uninsured vehicle, then apply it
+    for invVehId, invVehPolicyId in pairs(insuredInvVehs) do
+      if invVehPolicyId < 0 and math.abs(invVehPolicyId) == policyId then -- if not insured
+        insuredInvVehs[tostring(invVehId)] = policyId
+      end
+    end
+
     -- if the bought policy is an upgrade, then move inventory vehicles from old policy to the upgraded policy
     if policyInfo.upgradedToFrom then
       for invVehId, invVehPolicyId in pairs(insuredInvVehs) do
@@ -330,6 +292,7 @@ local function purchasePolicy(policyId, forFree)
         end
       end
     end
+
 
     plPoliciesData[policyId].owned = true
     plHistory.policyHistory[policyId].initialPurchase = {
@@ -340,14 +303,10 @@ local function purchasePolicy(policyId, forFree)
   end
 end
 
-local function partConditionsNeedRepair(partConditions)
-  return getNumberOfBrokenParts(partConditions) >= brokenPartsThreshold
-end
-
 local function inventoryVehNeedsRepair(vehInvId)
   local vehInfo = career_modules_inventory.getVehicles()[vehInvId]
   if not vehInfo then return end
-  return partConditionsNeedRepair(vehInfo.partConditions)
+  return career_modules_valueCalculator.partConditionsNeedRepair(vehInfo.partConditions)
 end
 
 local function repairPartConditions(data)
@@ -518,7 +477,7 @@ local function startRepair(inventoryId, repairOptionData, callback)
   local price = mergeRepairOptionPrices(repairOption.priceOptions and repairOption.priceOptions[repairOptionData.priceOption or 1] or nil)
 
   if price then
-    career_modules_payment.pay(price, {label="Repaired a vehicle: " .. (vehInfo.niceName or "(Unnamed Vehicle)")})
+    career_modules_payment.pay(price, {label="Repaired a vehicle: id " .. inventoryId})
     Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
   end
 
@@ -561,7 +520,7 @@ local function genericVehNeedsRepair(vehId, callback)
   local label = logBookLabel or "Repaired vehicle"
   core_vehicleBridge.requestValue(veh,
     function(res)
-      local needsRepair = partConditionsNeedRepair(res.result)
+      local needsRepair = career_modules_valueCalculator.partConditionsNeedRepair(res.result)
       callback(needsRepair)
     end,
     'getPartConditions')
@@ -718,7 +677,7 @@ local function getRepairData()
   data.baseDeductible = {money = {amount = getPlPerkValue(policyId, "deductible"), canBeNegative = true}}
   data.vehicle = vehInfo
   data.playerAttributes = career_modules_playerAttributes.getAllAttributes()
-  data.numberOfBrokenParts = getNumberOfBrokenParts(career_modules_inventory.getVehicles()[vehInfo.id].partConditions)
+  data.numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[vehInfo.id].partConditions)
   return data
 end
 
@@ -763,10 +722,6 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     updateDistanceDriven(dtReal)
   end
   updateEditPolicyTimer(dtReal)
-end
-
-local function getBrokenPartsThreshold()
-  return brokenPartsThreshold
 end
 
 local conditions = {
@@ -816,9 +771,9 @@ local function changeVehPolicy(invVehId, toPolicyId)
   end
 end
 
--- the actual logic for finding the best, minimum insurance policy for a vehicle
+-- the actual logic for finding the best, minimum (cheapest) insurance policy for a vehicle
 -- should always return at least one insurance policy, or we have a hole in insurance applicable conditions
-local function getApplicablePolicies(conditionData)
+local function getMinApplicablePolicyId(conditionData)
   local applicablePolicies = {}
   local currPriority = 0 -- this is to make sure policies like "commercial" are chosen over lesser priority policies like "Basic" if conditions overlap
   for _, policyInfo in pairs(availablePolicies) do
@@ -837,6 +792,7 @@ local function getApplicablePolicies(conditionData)
             applicablePolicies = {}
           end
           table.insert(applicablePolicies, policyInfo)
+          currPriority = policyInfo.applicableConditions.priority
           break
         end
       end
@@ -844,14 +800,8 @@ local function getApplicablePolicies(conditionData)
 
     ::continue::
   end
-  return applicablePolicies
-end
-
--- "minimum" meaning the cheapest (not final) insurance policy
-local function getMinApplicablePolicy(conditionData)
-  local applicablePolicies = getApplicablePolicies(conditionData)
   table.sort(applicablePolicies, function(a, b) return a.initialBuyPrice < b.initialBuyPrice end)
-  return applicablePolicies[1]
+  return applicablePolicies[1].id
 end
 
 local function getMinApplicablePolicyFromVehicleShoppingData(data)
@@ -863,7 +813,7 @@ local function getMinApplicablePolicyFromVehicleShoppingData(data)
   if data["Commercial Class"] then
     conditionData.commercialClass = tonumber(string.match(data["Commercial Class"], "%d+"))
   end
-  return getMinApplicablePolicy(conditionData)
+  return availablePolicies[getMinApplicablePolicyId(conditionData)]
 end
 
 local function onEnterVehicleFinished()
@@ -1089,10 +1039,16 @@ local function onVehicleAddedToInventory(data)
   local conditionData = {
     vehValue = career_modules_valueCalculator.getInventoryVehicleValue(data.inventoryId),
     population = data.vehicleInfo and data.vehicleInfo.Population or nil,
-    bodyStyle = data.vehicleInfo and ((data.vehicleInfo.BodyStyle and data.vehicleInfo.BodyStyle) or data.vehicleInfo.aggregates["Body Style"]) or nil
+    bodyStyle = data.vehicleInfo and ((data.vehicleInfo.BodyStyle and data.vehicleInfo.BodyStyle) or data.vehicleInfo.aggregates["Body Style"]) or nil,
   }
-  local policyToApply = getMinApplicablePolicy(conditionData)
-  insuredInvVehs[tostring(data.inventoryId)] = policyToApply.id
+
+  if data.vehicleInfo and data.vehicleInfo["Commercial Class"] then
+    conditionData.commercialClass = tonumber(string.match(data.vehicleInfo["Commercial Class"], "%d+"))
+  end
+
+  local requiredPolicyId = getMinApplicablePolicyId(conditionData)
+  if not plPoliciesData[requiredPolicyId].owned then requiredPolicyId = requiredPolicyId * -1 end -- a negative insurance id means it is not insured and would require said insurance
+  insuredInvVehs[tostring(data.inventoryId)] = requiredPolicyId
 end
 
 local function openRepairMenu(vehicle, _originComputerId)
@@ -1237,29 +1193,16 @@ end
 
 -- For UI
 M.getVehPolicyInfo = function(vehInvId)
-  return availablePolicies[insuredInvVehs[tostring(vehInvId)]]
+  return {
+    policyOwned = insuredInvVehs[tostring(vehInvId)] > 0,
+    policyInfo = availablePolicies[math.abs(insuredInvVehs[tostring(vehInvId)])]
+  }
 end
 M.getTestDriveClaimPrice = function()
   return testDriveClaimPrice.money.amount
 end
 M.getPlHistory = function()
   return plHistory
-end
--- used when wanting to change an insurance of a vehicle
--- will return every insurance that you can apply for.
-M.getProposablePoliciesForVehInv = function(vehInvId)
-  local data = {
-    vehValue = career_modules_valueCalculator.getInventoryVehicleValue(vehInvId)
-  }
-  local proposedPolicies = {}
-  local applicablePolicies = getApplicablePolicies(data)
-  local policyId = insuredInvVehs[tostring(vehInvId)] -- find which insurance this vehicle has
-  for i = 1, #applicablePolicies, 1 do
-    if applicablePolicies[i].id ~= policyId then
-      table.insert(proposedPolicies, applicablePolicies[i])
-    end
-  end
-  return proposedPolicies
 end
 
 M.genericVehNeedsRepair = genericVehNeedsRepair
@@ -1273,12 +1216,8 @@ M.openRepairMenu = openRepairMenu
 M.getRepairData = getRepairData
 M.closeMenu = closeMenu
 M.repairPartConditions = repairPartConditions
-M.getNumberOfBrokenParts = getNumberOfBrokenParts
-M.getBrokenPartsThreshold = getBrokenPartsThreshold
-M.partConditionsNeedRepair = partConditionsNeedRepair
 M.purchasePolicy = purchasePolicy
 M.changeVehPolicy = changeVehPolicy
-M.getMinApplicablePolicy = getMinApplicablePolicy
 M.getMinApplicablePolicyFromVehicleShoppingData = getMinApplicablePolicyFromVehicleShoppingData
 M.getPlayerPolicyData = getPlayerPolicyData
 M.payBonusReset = payBonusReset
@@ -1309,7 +1248,6 @@ M.onVehicleRemoved = onVehicleRemovedFromInventory
 
 -- internal use only
 M.getActualRepairPrice = getActualRepairPrice
-M.getRepairDetailsWithoutPolicy = getRepairDetailsWithoutPolicy
 M.getPlPerkValue = getPlPerkValue
 
 -- career debug

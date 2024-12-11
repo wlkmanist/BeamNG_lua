@@ -18,7 +18,9 @@ C.pinSchema = {
   {dir = 'out', type = 'flow', name = 'flow', description = 'Outflow from this node.'},
   {dir = 'out', type = 'flow', name = 'impulse', description = 'Outflow from this node.', impulse=true},
   {dir = 'out', type = 'number', name = 'recoveriesUsed', description = 'Total times the vehicle has been recovered in this race'},
+  {dir = 'out', type = 'table', name = 'recoveredTo', description = 'The recovery point the vehicle was recovered to.'},
 }
+
 
 C.tags = {'scenario'}
 
@@ -28,9 +30,11 @@ function C:work(args)
   local events = self.race.states[self.pinIn.vehId.value].events
   if not events then return end
   self.pinOut.impulse.value = false
+  self.pinOut.recoveredTo.value = nil
   if events.recovered then
     self.pinOut.flow.value = true
     self.pinOut.impulse.value = true
+  self.pinOut.recoveredTo.value = events.recoveredTo
   end
 
   self.pinOut.recoveriesUsed.value = self.race.states[self.pinIn.vehId.value].recoveriesUsed

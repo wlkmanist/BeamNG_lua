@@ -45,7 +45,7 @@ local driftData
 local callbacks
 
 function C:work()
-  driftData = self.mgr.modules.drift:getDriftActiveData()
+  driftData = gameplay_drift_drift.getDriftActiveData()
   callbacks = self.mgr.modules.drift:getCallBacks()
 
   self.pinOut.tapped.value = callbacks.tap.ttl > 0

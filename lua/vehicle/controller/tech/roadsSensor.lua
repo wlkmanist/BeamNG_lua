@@ -37,16 +37,18 @@ local isVisualised = false                                              -- A fla
 -- Navgraph state.
 local graph, coords, widths, normals = {}, {}, {}, {}                   -- Initialise a table to store the navigraph map, nodes, widths and normals.
 
+local p1_prev_Key, p2_prev_Key = nil, nil
+local p1Key, p2Key
 -- The player vehicle state.
-local pos, fwd = vec3(0, 0, 0), vec3(0, 0, 0)                           -- The vehicle's position and forward vector.
+local pos, fwd, vel = vec3(0, 0, 0), vec3(0, 0, 0), vec3(0, 0, 0)                           -- The vehicle's position and forward vector.
 local distToCenterline, distToLeft, distToRight = 0.0, 0.0, 0.0         -- The minimum distances between the vehicle's front axle midpoint to each lane.
-local headingAngle = 0.0                                                -- The heading of the vehicle with respect to the road immediately ahead.
+local headingAngle,headingAngle_prev = 0.0, 0.0                                                -- The heading of the vehicle with respect to the road immediately ahead.
 local halfWidth = 0.0                                                   -- The half-width of the road at the vehicle's front axis.
 local roadRadius = NaN                                                  -- The radius of the road immediately ahead of the vehicle.
 local coeffsCL, coeffsL, coeffsR = {}, {}, {}                           -- Tables to store the polynomial coefficients for each lane spline.
 local coordsCL = {}                                                     -- A table to store the road centerline coordinates (of the next four nodes)
 local drivability, speedLimit, oneWay = NaN, NaN, NaN                   -- Some extra road meta data values related to the road immediately ahead.
-
+local numlane = 0
 local latestReading = {
   time = 0.0, dist2CL = 0.0, dist2Left = 0.0, dist2Right = 0.0,
   halfWidth = 0.0, roadRadius = 0.0, headingAngle = 0.0,
@@ -63,7 +65,7 @@ local latestReading = {
   xStartCL = 0.0, yStartCL = 0.0, zStartCL = 0.0,
   xStartL = 0.0, yStartL = 0.0, zStartL = 0.0,
   xStartR = 0.0, yStartR = 0.0, zStartR = 0.0,
-  drivability = 0.0, speedLimit = 0.0, flag1way = 0.0 }
+  drivability = 0.0, speedLimit = 0.0, flag1way = 0.0, numlane = 0.0 }
 
 -- Computes the closest point on the given line segment (a, b) to the given point p, in 2D.
 local function closestPointBetween2D(p, a, b)
@@ -112,6 +114,61 @@ local function computeRoadEdgePoints(key, dir)
   return coord - lateralVec, coord + lateralVec
 end
 
+local function numOfLanesFromRadius(rad1, rad2)
+  return max(1, math.floor(min(rad1, rad2 or math.huge) * 2 / 3.45 + 0.5)) -- math.floor(min(rad1, rad2) / 2.7) + 1
+end
+
+local function flipLanes(lanes)
+  -- ex. '--+++' becomes '---++'
+  local res = ''
+  for i = #lanes, 1, -1 do
+    local char = lanes:byte(i) == 43 and '-' or lanes:byte(i) == 45 and '+' or '0'
+    res = res..char
+  end
+  return res
+end
+
+local function numOfLanesInDirection(lanes, dir)
+  dir = dir == '+' and 43 or dir == '-' and 45
+  local lanesN = 0
+  for i = 1, #lanes, 1 do
+    if lanes:byte(i) == dir then
+      lanesN = lanesN + 1
+    end
+  end
+  return lanesN
+end
+
+local function getEdgeLaneConfig(inNode, outNode)
+  local lanes
+  local edge = mapmgr.mapData.graph[inNode][outNode]
+  if edge.lanes then
+    lanes = edge.lanes
+  else -- make up some lane data in case they don't exist
+    if edge.oneWay then
+      local numOfLanes = numOfLanesFromRadius(mapmgr.mapData.radius[inNode], mapmgr.mapData.radius[outNode])
+      lanes = string.rep("+", numOfLanes)
+    else
+      local numOfLanes = max(1, math.floor(numOfLanesFromRadius(mapmgr.mapData.radius[inNode], mapmgr.mapData.radius[outNode]) * 0.5))
+      if mapmgr.rules.rightHandDrive then
+        lanes = string.rep("+", numOfLanes)..string.rep("-", numOfLanes)
+      else
+        lanes = string.rep("-", numOfLanes)..string.rep("+", numOfLanes)
+      end
+    end
+  end
+
+  return edge.inNode == inNode and lanes or flipLanes(lanes) -- flip lanes string based on inNode data
+end
+
+local function cubicCurvature(coeff,u)
+  local dx = coeff.uB + 2*coeff.uC*u + 3*coeff.uD*u*u
+  local dy = coeff.vB + 2*coeff.vC*u + 3*coeff.vD*u*u
+  local ddx = 2*coeff.uC + 6*coeff.uD*u
+  local ddy = 2*coeff.vC + 6*coeff.vD*u
+  return abs(dx*ddy - dy*ddx)/max((dx^2 + dy^2)^(3/2),1e-30)
+end
+
 -- Computes the curvature between two vectors.
 local function inCurvature(vec1, vec2)
   local vec1Sqlen, vec2Sqlen = vec1:squaredLength(), vec2:squaredLength()
@@ -132,11 +189,54 @@ local function inCurvature(vec1, vec2)
   return 2 * sqrt((1 - cos8sq) / max(1e-30, vec1:squaredDistance(vec2)))
 end
 
+local function getPointAhead(vpos, vfwd, pl)
+  local p_rearKey, p_frontKey, _ = mapmgr.findBestRoad(vpos, vfwd)
+  local p_front = coords[p_frontKey]
+  local p_prev = coords[p_rearKey]
+
+  if vfwd:dot(p_front) < vfwd:dot(p_prev) then
+    p_rearKey, p_frontKey = p_frontKey, p_rearKey
+    p_front, p_prev = p_prev, p_front
+  end
+
+  local distSq = vpos:squaredDistance(p_front)
+  while distSq - pl*pl < 0 do
+    local cands, c2Ctr = {}, 1
+    for k, _ in pairs(graph[p_frontKey]) do
+      cands[c2Ctr] = k
+      c2Ctr = c2Ctr + 1
+    end
+
+    local len = #cands
+    local bestAbsDot = 0.0
+    local pbest = p_front
+    local pbestKey = p_frontKey
+    for i = 1, len do
+      local p = coords[cands[i]]
+      local Dot = (p_front - p_prev):dot(p - p_front)   --(p - p_front):dot(p_front - p_prev)
+      local absDot = abs(Dot)
+      if (p - p_prev):squaredLength() > 1e-5 and absDot > bestAbsDot and Dot > 0 then
+        pbest, bestAbsDot, pbestKey = p, absDot, cands[i]
+      end
+    end
+    p_prev = p_front
+    p_front = pbest
+    p_frontKey = pbestKey
+    local ds = p_prev:squaredDistance(p_front)
+    distSq = distSq + ds
+  end
+
+  return p_frontKey, p_rearKey, p_front
+end
+
 -- Attempts to find the four point extrusion from two given navgraph keys.
 -- The line segment p1->p2 bounds the vehicle position, and we wish to get valid p0 and p3s from the graph.
 local function getFourBoundingPoints(p1Key, p2Key)
 
-  local p1, p2 = coords[p1Key], coords[p2Key]
+  --local p1, p2 = coords[p1Key], coords[p2Key]
+  local p1,p2 = mapmgr.mapData:getEdgePositions(p1Key, p2Key)
+  p1 = p1 or coords[p1Key]
+  p2 = p2 or coords[p2Key]
 
   -- Fetch all the candidate graph keys from each graph node of the given line segment.
   local cands1, c1Ctr = {}, 1
@@ -159,26 +259,30 @@ local function getFourBoundingPoints(p1Key, p2Key)
   -- Find the best-fitting p0 point from the first candidates array.
   local bestAbsDot = 0.0
   local p0 = p1
+  local p0Key = p1Key
   for i = 1, len1 do
     local p = coords[cands1[i]]
-    local absDot = abs((p1 - p2):dot(p - p1))
-    if (p - p2):squaredLength() > 1e-5 and absDot > bestAbsDot then
-      p0, bestAbsDot = p, absDot
+    local Dot = ((p1 - p2):dot(p - p1))
+    local absDot = abs(Dot)
+    if (p - p2):squaredLength() > 1e-5 and absDot > bestAbsDot and Dot > 0 then --and  dist < bdist  and Dot > 0
+      p0, bestAbsDot, p0Key = p, absDot, cands1[i]
     end
   end
 
   -- Find the best-fitting p3 point from the second candidates array
   bestAbsDot = 0.0
   local p3 = p2
+  local p3Key = p2Key
   for i = 1, len2 do
     local p = coords[cands2[i]]
-    local absDot = abs((p2 - p1):dot(p - p2))
-    if (p - p1):squaredLength() > 1e-5 and absDot > bestAbsDot then
-      p3, bestAbsDot = p, absDot
+    local Dot = ((p2 - p1):dot(p - p2))
+    local absDot = abs(Dot)
+    if (p - p1):squaredLength() > 1e-5 and absDot > bestAbsDot  and Dot > 0 then --and  dist < bdist  and Dot > 0
+      p3, bestAbsDot, p3Key = p, absDot, cands2[i]
     end
   end
 
-  return p0, p1, p2, p3, true
+  return p0, p1, p2, p3, true, p0Key, p3Key
 end
 
 local function getSensorData()
@@ -246,9 +350,9 @@ local function update(dtSim)
   physicsTimer = physicsTimer - physicsUpdateTime
 
   -- Compute the player vehicle pose data.
-  pos, fwd = obj:getPosition(), obj:getDirectionVector()
+  pos, fwd, vel = obj:getPosition(), obj:getDirectionVector(), vec3(obj:getSmoothRefVelocityXYZ())
   fwd:normalize()
-
+  local aiSpeed = vel:length()
   -- Compute the player vehicle wheels data.
   local wp, ctr = {}, 1
   for _, wheel in pairs(wheels.wheels) do
@@ -261,37 +365,48 @@ local function update(dtSim)
   local frontAxleMidpointProjGround = vec3(frontAxleMidpoint.x, frontAxleMidpoint.y, obj:getSurfaceHeightBelow(frontAxleMidpoint))
 
   -- Compute the distances from the player vehicle front axle midpoint to the road centerline and edges.
-  local p1Key, p2Key, _ = mapmgr.findBestRoad(frontAxleMidpointProjGround, fwd)
+  if aiSpeed > 2 then
+    p1Key, p2Key = mapmgr.findBestRoad(frontAxleMidpointProjGround, fwd)
+  else
+    p1Key, p2Key = p1_prev_Key, p2_prev_Key
+  end
+  p1_prev_Key, p2_prev_Key = p1Key, p2Key
   if p1Key ~= nil and p2Key ~= nil then
 
     -- Find the four bounding points from the navgraph, such that p1 and p2 are the local bounds.
     -- If we cannot find four bounding points (eg due to a dead end of a road), then skip computing these properties.
-    local p0, p1, p2, p3, isFourPointsFound = getFourBoundingPoints(p1Key, p2Key, coords)
+    local p0, p1, p2, p3, isFourPointsFound, p0Key, p3Key = getFourBoundingPoints(p1Key, p2Key, coords)
     if isFourPointsFound then
 
       -- Fit a spline to the bounding line segment, to ensure smoothness.
       -- Also store the linearly-interpolated widths for each discretisation point.
       local w1, w2 = widths[p1Key], widths[p2Key]
+      local w0, w3 = widths[p0Key], widths[p3Key]
+      local k1 = max(inCurvature(p1-p0,p2-p1),1e-30)
+      local k2 = max(inCurvature(p2-p1, p3-p2),1e-30)
+      local dk = k2 - k1
       local dw = w2 - w1
-      local disc, wds, ctr = {}, {}, 1
+      local disc, wds, curv, ctr = {}, {}, {}, 1
       for k = 0, splineGranularity do
         local q = k * splineGranInv
         disc[ctr] = catmullRomCentripetal(p0, p1, p2, p3, q, splineSmoothness)
-        wds[ctr] = w1 + q * dw
+        --obj.debugDrawProxy:drawSphere(0.1, disc[ctr] + vec3(0, 0, 0.25), color(255, 255, 255, 255))
+        wds[ctr] = catmullRom(w0, w1, w2, w3, q, splineSmoothness)
+        curv[ctr] = k1 + dk*q
         ctr = ctr + 1
       end
 
       -- Find the closest line segment from the discretised spline (this is not the closest line segment from the navgraph [p1Key, p2Key], which we computed before).
-      local dSqBest, best1, best2, halfWidth, numDisc = 1e99, nil, nil, nil, #disc
+      local dSqBest, best1, best2, curvBest, numDisc = 1e99, nil, nil, nil, #disc
       for i = 2, numDisc do
         local iMinus1 = i - 1
         local tp1, tp2 = disc[iMinus1], disc[i]
         local dSq = frontAxleMidpointProjGround:squaredDistanceToLineSegment(tp1, tp2)
         if dSq < dSqBest then
-          dSqBest, best1, best2, halfWidth = dSq, tp1, tp2, (wds[iMinus1] + wds[i]) * 0.5
+          dSqBest, best1, best2, halfWidth, curvBest = dSq, tp1, tp2, (wds[iMinus1] + wds[i]) * 0.5, (curv[iMinus1] + curv[i]) * 0.5
         end
       end
-
+      roadRadius = 1/curvBest
       -- Compute the normalised line segment, and ensure it has the correct direction (it should point closest to the vehicle forward direction).
       local lineSegNorm = best2 - best1
       lineSegNorm:normalize()
@@ -300,22 +415,33 @@ local function update(dtSim)
       end
 
       -- Compute the heading angle when compared the vehicle forward direction.
-      headingAngle = acos(max(-1, min(1, fwd:dot(lineSegNorm))))
-
+      local fwdproj = vec3(fwd.x, fwd.y, 0); fwdproj:normalize() -- New
+      local lineSegNormproj = vec3(lineSegNorm.x, lineSegNorm.y, 0); lineSegNormproj:normalize() -- New
+      local alfa = 0.5
+      headingAngle = alfa*acos(max(-1, min(1, fwdproj:dot(lineSegNormproj)))) + (1-alfa)*headingAngle_prev-- New
+      if headingAngle < 1.5*math.pi/180 then
+        headingAngle = 0
+      end
+      headingAngle_prev = headingAngle
       -- Compute the shortest distance between the vehicle front axle midpoint and the best-matching line segment (the line segment from the spline, not the navgraph).
       local pInt = closestPointBetween2D(frontAxleMidpointProjGround, best1, best2)
-      pInt.z = 9999
+      pInt.z = p1.z +2 --9999
       pInt.z = obj:getSurfaceHeightBelow(pInt)
 
       -- Extrude outwards along the perpendicular vector to get the local left and right road edge point estimates.
-      local latVec = halfWidth * lineSegNorm:cross(normals[p2Key])
+      local perpVector = vec3(lineSegNorm.y, -lineSegNorm.x, lineSegNorm.z)
+      --local latVec = halfWidth * lineSegNorm:cross(normals[p2Key])
+      local latVec = halfWidth * perpVector
       local pLeftRaw, pRightRaw = pInt - latVec, pInt + latVec
-      pLeftRaw.z, pRightRaw.z = 9999, 9999
+      pLeftRaw.z, pRightRaw.z = p1.z +2, p1.z +2 --9999, 9999
       local pLeft = vec3(pLeftRaw.x, pLeftRaw.y, obj:getSurfaceHeightBelow(pLeftRaw))
       local pRight = vec3(pRightRaw.x, pRightRaw.y, obj:getSurfaceHeightBelow(pRightRaw))
 
       -- Set the distances from the vehicle front axle midpoint to each estimated point.
-      distToCenterline, distToLeft, distToRight = dSqBest, (pLeft - frontAxleMidpointProjGround):length(), (pRight - frontAxleMidpointProjGround):length()
+      distToCenterline, distToLeft, distToRight = sqrt(dSqBest), (pLeft - frontAxleMidpointProjGround):length(), (pRight - frontAxleMidpointProjGround):length()
+      if distToLeft < distToRight then
+        distToCenterline = -distToCenterline
+      end
 
       if isVisualised then
         -- For debugging.
@@ -334,17 +460,20 @@ local function update(dtSim)
   end
 
   -- Compute the parametric polynomials for the road centerline (reference line), road left edge, and road right edge.
-  local pointAhead = rearAxleMidpoint + (lookAheadDistance * fwd)
-  local path = mapmgr.getPointToPointPath(rearAxleMidpoint, pointAhead, nil, 1e-4, nil, nil, nil)
+  --local pointAhead = rearAxleMidpoint + (lookAheadDistance * fwd)
+  --local path = mapmgr.getPointToPointPath(rearAxleMidpoint, pointAhead, nil, 1e-4, nil, nil, nil)
+  local pFKey, pRKey, pH = getPointAhead(frontAxleMidpointProjGround, fwd, lookAheadDistance)
+  local path = mapmgr.mapData:getPath(pRKey, pFKey, nil)
   coeffsCL = { uA = 0, uB = 0, uC = 0, uD = 0, vA = 0, vB = 0, vC = 0, vD = 0 }
   coeffsL = { uA = 0, uB = 0, uC = 0, uD = 0, vA = 0, vB = 0, vC = 0, vD = 0 }
   coeffsR = { uA = 0, uB = 0, uC = 0, uD = 0, vA = 0, vB = 0, vC = 0, vD = 0 }
   coordsCL = { a = vec3(0, 0), b = vec3(0, 0), c = vec3(0, 0), d = vec3(0, 0) }
   local startCL, startL, startR = vec3(0, 0), vec3(0, 0), vec3(0, 0)
-  roadRadius = NaN
+  --roadRadius = NaN
   if #path > 3 then
     local p1, p2, p3, p4 = coords[path[1]], coords[path[2]], coords[path[3]], coords[path[4]]
-    local left1, right1 = computeRoadEdgePoints(path[1], p2 - p1)
+    local inLaneConfig = getEdgeLaneConfig(path[2], path[3])
+    numlane = numOfLanesInDirection(inLaneConfig, '+')    local left1, right1 = computeRoadEdgePoints(path[1], p2 - p1)
     local left2, right2 = computeRoadEdgePoints(path[2], p3 - p1)
     local left3, right3 = computeRoadEdgePoints(path[3], p4 - p2)
     local left4, right4 = computeRoadEdgePoints(path[4], p4 - p3)
@@ -352,19 +481,22 @@ local function update(dtSim)
     coeffsL, coeffsR = computeRefLineCubic(left1, left2, left3, left4), computeRefLineCubic(right1, right2, right3, right4)
     startCL, startL, startR = p2, left2, right2
     coordsCL = { a = p1, b = p2, c = p3, d = p4 }
-    roadRadius = 1.0 / inCurvature(p2 - p1, p3 - p2)
+    --roadRadius = 1.0 / inCurvature(p2 - p1, p3 - p2)
   elseif #path > 2 then
     local p1, p2, p3 = coords[path[1]], coords[path[2]], coords[path[3]]
-    local left1, right1 = computeRoadEdgePoints(path[1], p2 - p1)
+    local inLaneConfig = getEdgeLaneConfig(path[2], path[3])
+    numlane = numOfLanesInDirection(inLaneConfig, '+')    local left1, right1 = computeRoadEdgePoints(path[1], p2 - p1)
     local left2, right2 = computeRoadEdgePoints(path[2], p3 - p1)
     local left3, right3 = computeRoadEdgePoints(path[3], p3 - p2)
     coeffsCL = computeRefLineCubic(p1, p1, p2, p3)
     coeffsL, coeffsR = computeRefLineCubic(left1, left1, left2, left3), computeRefLineCubic(right1, right1, right2, right3)
     startCL, startL, startR = p1, left1, right1
     coordsCL = { a = p1, b = p2, c = p3, d = vec3(NaN, NaN, NaN) }
-    roadRadius = 1.0 / inCurvature(p2 - p1, p3 - p2)
+    --roadRadius = 1.0 / inCurvature(p2 - p1, p3 - p2)
   elseif #path > 1 then
     local p1, p2 = coords[path[1]], coords[path[2]]
+    local inLaneConfig = getEdgeLaneConfig(path[1], path[2])
+    numlane = numOfLanesInDirection(inLaneConfig, '+')
     local dir = p2 - p1
     local left1, right1 = computeRoadEdgePoints(path[1], dir)
     local left2, right2 = computeRoadEdgePoints(path[2], dir)
@@ -372,7 +504,7 @@ local function update(dtSim)
     coeffsL, coeffsR = computeRefLineCubic(left1, left1, left2, left2), computeRefLineCubic(right1, right1, right2, right2)
     startCL, startL, startR = p1, left1, right1
     coordsCL = { a = p1, b = p2, c = vec3(NaN, NaN, NaN), d = vec3(NaN, NaN, NaN) }
-    roadRadius = NaN
+    --roadRadius = NaN
   end
 
   -- Extract some useful road metadata.
@@ -448,7 +580,8 @@ local function update(dtSim)
 
     drivability = drivability,                                            -- The 'drivability' number of the road [smaller = dirt/country roads, larger = highways etc].
     speedLimit = speedLimit,                                              -- The speed limit of the road, in m/s.
-    flag1way = oneWay                                                     -- A flag which indicates if the road is bi-directional (val = 0.0), or one-way (val = 1.0).
+    flag1way = oneWay,                                                     -- A flag which indicates if the road is bi-directional (val = 0.0), or one-way (val = 1.0).
+    numlane = numlane
   }
 
   -- Store the latest readings for this roads sensor in the extension. This is used for sending back on the physics step.

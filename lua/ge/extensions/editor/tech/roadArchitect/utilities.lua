@@ -17,6 +17,9 @@ local highlightColor = color(127, 127, 127, 127)                                
 local highlightColorPurple = color(255, 0, 255, 255)
 local redColor = color(255, 0, 0, 255)                                                              -- The colour used for highlight selected auto junction road end nodes.
 
+local textA = color(0, 0, 0, 255)                                                                   -- The markup text foreground colour.
+local textB = color(255, 255, 255, 255)                                                             -- The markup text background colour.
+
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 local M = {}
@@ -30,6 +33,7 @@ local dbgDraw = require('utils/debugDraw')
 local im = ui_imgui
 local floor, abs, min, max, sqrt = math.floor, math.abs, math.min, math.max, math.sqrt
 local sin, cos, acos = math.sin, math.cos, math.acos
+local twoPi = math.pi * 2.0
 local random = math.random
 local xAxis, yAxis = vec3(1, 0, 0), vec3(0, 1, 0)
 local downVec = vec3(0, 0, -1)
@@ -44,9 +48,16 @@ local function drawGroupSphere(pos) dbgDraw.drawSphere(pos, sqrt(pos:distance(co
 local function drawSphereHighlight(pos) dbgDraw.drawSphere(pos, sqrt(pos:distance(core_camera.getPosition())) * highlightMargin, highlightColor) end
 local function drawSphereHighlightRed(pos) dbgDraw.drawSphere(pos, sqrt(pos:distance(core_camera.getPosition())) * highlightMargin, redColor) end
 local function drawSphereHighlightPurple(pos) dbgDraw.drawSphere(pos, sqrt(pos:distance(core_camera.getPosition())) * highlightMargin, highlightColorPurple) end
+local function drawHighlightSphereRad(pos, rad) dbgDraw.drawSphere(pos, rad, highlightColor) end
 
 -- Draw lines.
 local function drawPurpleLine(p1, p2) dbgDraw.drawLineInstance_MinArg(p1, p2, 5, highlightColorPurple) end
+
+-- Draw text markup for auto junctions.
+local function drawAutoJctMarkup(pos, rName, rLie)
+  dbgDraw.drawTextAdvanced(pos, rName, textA, true, false, textB)
+  dbgDraw.drawTextAdvanced(pos, rLie, textA, true, false, textB)
+end
 
 -- Tests if mouse is hovering over the terrain (as opposed to any windows, etc).
 local function isMouseHoveringOverTerrain() return not im.IsAnyItemHovered() and not im.IsWindowHovered(im.HoveredFlags_AnyWindow) and not editor.isAxisGizmoHovered() end
@@ -94,8 +105,20 @@ local function computeAABB2DGroup(group, roads, map)
   for i = 1, #gList do
     local gL = gList[i]
     local road = roads[map[gL.r]]
-    if not road.isOverlay then
-      local p = road.nodes[gL.n].p
+    local p = road.nodes[gL.n].p
+    local x, y = p.x, p.y
+    xMin, xMax, yMin, yMax = min(xMin, x), max(xMax, x), min(yMin, y), max(yMax, y)
+  end
+  return { xMin = xMin, xMax = xMax, yMin = yMin, yMax = yMax }
+end
+
+-- Computes the 2D axis-aligned bounding box of all roads in the session.
+local function computeAABB2DAllRoads(roads)
+  local xMin, xMax, yMin, yMax = 1e24, -1e24, 1e24, -1e24
+  for i = 1, #roads do
+    local road = roads[i]
+    for j = 1, #road.nodes do
+      local p = road.nodes[j].p
       local x, y = p.x, p.y
       xMin, xMax, yMin, yMax = min(xMin, x), max(xMax, x), min(yMin, y), max(yMax, y)
     end
@@ -126,6 +149,9 @@ local function sqDist2D(a, b)
   local dx, dy = b.x - a.x, b.y - a.y
   return dx * dx + dy * dy
 end
+
+-- Computes the 2D distance between two points, given component-wise.
+local function distance2D(x1, y1, x2, y2) return sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) end
 
 -- Checks if the mouse is close to any existing node, excluding a given avoid road.
 -- [The road and node indices are returned for every road/node combo which is found].
@@ -213,6 +239,28 @@ local function computeRoadLength(rD)
     lengths[i] = total
   end
   return lengths
+end
+
+-- Gets the minimum and maximum lane key values, from a given collection of lanes.
+local function getMinMaxLaneKeys(profile)
+  local l, u = 100, -100
+  for i = -20, 20 do
+    if profile[i] then
+      l, u = min(l, i), max(u, i)
+    end
+  end
+  return l, u
+end
+
+-- Computes the half width of the given road (at the first node - assumes width is equal throughout).
+local function getHalfWidthAtNode(r)
+  local rData = r.renderData
+  local idx1, idx2 = -1, 3
+  if rData[1][1] then
+    idx1, idx2 = 1, 4
+  end
+  local _, lMax = getMinMaxLaneKeys(r.profile)
+  return rData[1][lMax][3]:distance(rData[1][idx1][idx2])
 end
 
 -- Finds the lower and upper bounding div point index of a given length along a road.
@@ -335,9 +383,45 @@ local function intersection2LineSegs(p1, p2, q1, q2)
   local num1 = x1 * y2 - y1 * x2
   local num2 = x3 * y4 - y3 * x4
   local invDenom = 1.0 / ((x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4))
-  return vec3(
-    (num1 * (x3 - x4) - (x1 - x2) * num2) * invDenom,
-    (num1 * (y3 - y4) - (y1 - y2) * num2) * invDenom )
+  return vec3((num1 * (x3 - x4) - (x1 - x2) * num2) * invDenom, (num1 * (y3 - y4) - (y1 - y2) * num2) * invDenom )
+end
+
+-- Function to find the intersection between a 2D line segment and a circle.
+local function intersectionLineSegmentCircle(x1, y1, x2, y2, cx, cy, r)
+  local dx = x2 - x1
+  local dy = y2 - y1
+  local a = dx * dx + dy * dy
+  local b = 2.0 * (dx * (x1 - cx) + dy * (y1 - cy))
+  local c = (x1 - cx) * (x1 - cx) + (y1 - cy) * (y1 - cy) - r * r
+
+  -- Calculate the discriminant.
+  local discriminant = b * b - 4.0 * a * c
+  if discriminant < 0 then
+    return nil
+  end
+
+  -- Calculate the two possible values of t.
+  local sqrtDiscriminant = sqrt(discriminant)
+  local denom = 1.0 / (2.0 * a)
+  local t1 = (-b + sqrtDiscriminant) * denom
+  local t2 = (-b - sqrtDiscriminant) * denom
+
+  local intersectionPoints = {}
+
+  -- Check if the solutions are within the line segment (0 <= t <= 1).
+  if t1 >= 0.0 and t1 <= 1.0 then
+    table.insert(intersectionPoints, { x1 + t1 * dx, y1 + t1 * dy })
+  end
+  if t2 >= 0.0 and t2 <= 1.0 then
+    table.insert(intersectionPoints, { x1 + t2 * dx, y1 + t2 * dy })
+  end
+
+  -- Return the intersection points (if any).
+  if #intersectionPoints == 0 then
+    return nil
+  else
+    return intersectionPoints
+  end
 end
 
 -- Function to project point p onto the line defined by points a and b (in 2D).
@@ -408,6 +492,21 @@ local function angleBetweenVecs(a, b) return angleBetweenVecsNorm(a:normalized()
 -- Computes the (small) angle between two vectors (converted to 2D first).
 local function angleBetweenVecs2D(a, b) return angleBetweenVecs(vec3(a.x, a.y, 0.0), vec3(b.x, b.y, 0.0)) end
 
+-- Computes the clockwise angle between the two given vectors, in 2D
+local function clockwiseAngleBetweenVecs2D(v1, v2)
+  local v1x, v1y, v2x, v2y = v1.x, v1.y, v2.x, v2.y
+  local mag_v1 = sqrt(v1x^2 + v1y^2)
+  local mag_v2 = sqrt(v2x^2 + v2y^2)
+  local dot_product = (v1x * v2x) + (v1y * v2y)
+  local angle = acos(dot_product / (mag_v1 * mag_v2))
+  local cross_product = (v1x * v2y) - (v1y * v2x)
+  if cross_product < 0.0 then
+    return angle
+  else
+    return twoPi - angle
+  end
+end
+
 -- Rotates vector v around unit axis k, by angle theta (in radians).
 -- [This function uses the standard Rodrigues formula].
 local function rotateVecAroundAxis(v, k, theta)
@@ -444,6 +543,8 @@ local function rotateVecByQuaternion(v, q)
   return vec3(qOut.x, qOut.y, qOut.z)
 end
 
+local function isPointOnLeftSideOfLine(p, p1, p2) return (p2.x - p1.x) * (p.y - p1.y) - (p2.y - p1.y) * (p.x - p1.x) > 0 end
+
 -- Determines if the given point is inside the given 2D Axis-Aligned bounding box.
 local function isInBox(p, box)
   local x, y = p.x, p.y
@@ -473,7 +574,11 @@ M.drawGroupSphere =                                       drawGroupSphere
 M.drawSphereHighlight =                                   drawSphereHighlight
 M.drawSphereHighlightRed =                                drawSphereHighlightRed
 M.drawSphereHighlightPurple =                             drawSphereHighlightPurple
+M.drawHighlightSphereRad =                                drawHighlightSphereRad
+
 M.drawPurpleLine =                                        drawPurpleLine
+
+M.drawAutoJctMarkup =                                     drawAutoJctMarkup
 
 M.isMouseHoveringOverTerrain =                            isMouseHoveringOverTerrain
 M.mouseOnMapPos =                                         mouseOnMapPos
@@ -485,11 +590,14 @@ M.removeExtension =                                       removeExtension
 M.removeFileNameFromPath =                                removeFileNameFromPath
 
 M.computeRoadLength =                                     computeRoadLength
+M.getHalfWidthAtNode =                                    getHalfWidthAtNode
 M.findBounds =                                            findBounds
 M.computeDivIndicesFromNode =                             computeDivIndicesFromNode
 M.isInTunnel =                                            isInTunnel
 
 M.computeAABB2DGroup =                                    computeAABB2DGroup
+M.computeAABB2DAllRoads =                                 computeAABB2DAllRoads
+
 M.tryAddGroupIdxToRoad =                                  tryAddGroupIdxToRoad
 
 M.round2 =                                                round2
@@ -497,17 +605,24 @@ M.round2 =                                                round2
 M.polyLerp =                                              polyLerp
 
 M.sqDist2D =                                              sqDist2D
+M.distance2D =                                            distance2D
 M.intersection2Lines =                                    intersection2Lines
 M.intersection2LineSegs =                                 intersection2LineSegs
+M.intersectionLineSegmentCircle =                         intersectionLineSegmentCircle
 M.projectPointToLine =                                    projectPointToLine
 M.circle2DFrom3Points =                                   circle2DFrom3Points
 
 M.slerp =                                                 slerp
 M.angleBetweenVecs =                                      angleBetweenVecs
 M.angleBetweenVecs2D =                                    angleBetweenVecs2D
+M.clockwiseAngleBetweenVecs2D =                           clockwiseAngleBetweenVecs2D
+
 M.rotateVecAroundAxis =                                   rotateVecAroundAxis
 M.getRotationBetweenVecs =                                getRotationBetweenVecs
 M.rotateVecByQuaternion =                                 rotateVecByQuaternion
+
+M.isPointOnLeftSideOfLine =                               isPointOnLeftSideOfLine
+
 M.isInBox =                                               isInBox
 M.isOverTerrain =                                         isOverTerrain
 

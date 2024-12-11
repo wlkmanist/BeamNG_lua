@@ -10,6 +10,7 @@ M.menuEntry = "Aero Debug" -- what the menu item will be
 local im = extensions.ui_imgui
 local imguiUtils = require('ui/imguiUtils')
 local wndName = "Vehicle Aero Debug"
+local windowOpen = im.BoolPtr(false)
 
 local init = false
 
@@ -57,12 +58,14 @@ local function tryAutoFillWheelNames()
   end
 end
 
-local function onEditorGui(dt)
+local function onUpdate(dt)
+  if windowOpen[0] ~= true then return end
+
   if not vEditor or not vEditor.vehicle then return end
 
   -- window
   local wind = vec3(0,0,0)
-  if editor.beginWindow(wndName, wndName) then
+  if im.Begin(wndName, windowOpen) then
 
     if not vEditor.aeroData or (vEditor.aeroData and not (vEditor.aeroData.wheelNameStrings and vEditor.aeroData.totalAeroForce)) then
       vEditor.vehicle:queueLuaCommand('extensions.aeroDebug.enable()')
@@ -135,17 +138,13 @@ local function onEditorGui(dt)
       --end
     end
   end
-  editor.endWindow()
+  im.End()
 end
 
 -- helper function to open the window
-local function open()
-  editor.showWindow(wndName)
-end
-
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(500,500))
-end
+  local function open()
+    windowOpen[0] = true
+  end
 
 -- Disable aeroDebug on old vehicle
 local function onVehicleSwitched(oldVehicle, newVehicle, player)
@@ -167,13 +166,25 @@ end
 local function onEditorActivated()
 end
 
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
+end
+
 -- public interface
-M.onEditorInitialized = onEditorInitialized
-M.onEditorGui = onEditorGui
+M.onUpdate = onUpdate
 M.onVehicleSwitched = onVehicleSwitched
 M.onEditorDeactivated = onEditorDeactivated
 M.onEditorActivated = onEditorActivated
 
 M.open = open
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

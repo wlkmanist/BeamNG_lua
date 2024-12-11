@@ -52,6 +52,7 @@ local presetOutputDestinations = {
 
 local presetResolutions = { -- name, width, height
   {'thumbnail', 500, 281},
+  {'thumbnail temp', 2000, 1124},
   {'720p'   ,  1280, 720},
   {'1080p'  , 1920, 1080},
   {'Square' , 1920, 1920},
@@ -75,6 +76,8 @@ local ctrls = { -- imgui controls
   drivingEnabled = true,
   uiToggled = true,
   resolutionToggled = false,
+  keepAspectRatio = im.BoolPtr(false),
+  multiplyRes = im.FloatPtr(2)
 }
 
 local workConfig = {} -- current screenshot config
@@ -537,6 +540,7 @@ local function setDimHelper(w, h)
   GFXDevice.setVideoMode(vm)
 end
 
+local lastFrameImageResolution = {}
 local function onUpdate(dtReal, dtSim, dtRaw)
   if windowOpen[0] ~= true then return end
 
@@ -574,6 +578,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       if im.IsItemHovered() then im.BeginTooltip() im.Text("Only update thumbnail of current config : '"..currConfigName .."' (Will not update the config itself!)") im.EndTooltip() end
 
       im.Checkbox("Generate missing thumbnails only", ctrls.generateMissingThumbnailsOnly)
+      if im.IsItemHovered() then im.BeginTooltip() im.Text("Checks if the thumbnail file is missing. A blank/white thumbnail is not a missing thumbnail") im.EndTooltip() end
       im.SameLine()
       im.Checkbox("Reload UI when run is finished", ctrls.reloadUIOnJobFinished)
       if im.IsItemHovered() then im.BeginTooltip() im.Text("If not, opening the vehicle menu after updating the thumbnails, won't show the new thumbnails") im.EndTooltip() end
@@ -623,7 +628,39 @@ local function onUpdate(dtReal, dtSim, dtRaw)
           ctrls.imageResolution[1] = preset[3]
         end
 
-        if im.InputInt2("Final image resolution", ctrls.imageResolution) then
+        im.Checkbox("Keep aspect ratio on manual resolution change", ctrls.keepAspectRatio)
+
+        local recalculate = false
+
+        im.InputFloat("##mul", ctrls.multiplyRes)
+        im.SameLine()
+        if im.Button("Multiply current res") then
+          if ctrls.multiplyRes[0] > 0 then
+            ctrls.imageResolution[1] = ctrls.imageResolution[1] * ctrls.multiplyRes[0]
+            ctrls.imageResolution[0] = ctrls.imageResolution[0] * ctrls.multiplyRes[0]
+
+            recalculate = true
+          end
+        end
+
+        if im.InputInt2("Final image resolution", ctrls.imageResolution, im.InputTextFlags_EnterReturnsTrue) then
+
+          -- check if we want to keep the aspect ratio
+          if ctrls.keepAspectRatio[0] then
+            if lastFrameImageResolution[0] == ctrls.imageResolution[0] then
+              local ratio = ctrls.imageResolution[1] / lastFrameImageResolution[1]
+              ctrls.imageResolution[0] = lastFrameImageResolution[0] * ratio
+            elseif lastFrameImageResolution[1] == ctrls.imageResolution[1] then
+              local ratio = ctrls.imageResolution[0] / lastFrameImageResolution[0]
+              ctrls.imageResolution[1] = lastFrameImageResolution[1] * ratio
+            end
+          end
+
+          recalculate = true
+        end
+
+
+        if recalculate then
           local found = false
           -- check if custom resolution matches one of the presets, otherwise use custom
           for i, r in ipairs(presetResolutions) do
@@ -690,6 +727,8 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         x = math.floor(x)
         y = math.floor(y)
 
+        im.Dummy(im.ImVec2(1, 20))
+
         im.TextUnformatted('Final resolution: ' .. tostring(x) .. ' x ' .. tostring(y))
         im.TextUnformatted('Megapixel = ' .. string.format('%0.2f', x * y / 1000000))
         local rawSize = x * y * 3 -- RGB = 3 byte
@@ -723,7 +762,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
         local halfWidth = im.GetContentRegionAvailWidth() / 2
         if im.BeginChild1("unselectedSection", im.ImVec2(halfWidth, 0), true) then
-          im.Text("Unselected Vehicles")
+          im.Text("Unselected Models")
           if im.BeginChild1("unselectedVehs", im.ImVec2(0,0), true) then
             if vehList then
               for _,v in ipairs(vehList) do
@@ -739,7 +778,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
         im.SameLine()
         if im.BeginChild1("selected", im.ImVec2(halfWidth, 0), true) then
-          im.Text("Selected Vehicles")
+          im.Text("Selected Models")
           if im.BeginChild1("selectedVehs", im.ImVec2(0,0), true) then
             if vehList then
               for _,v in ipairs(vehList) do
@@ -1070,6 +1109,9 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     if isRunning then im.EndDisabled() end
   end
   im.End()
+
+  lastFrameImageResolution[0] = ctrls.imageResolution[0]
+  lastFrameImageResolution[1] = ctrls.imageResolution[1]
 end
 
 local function onExtensionLoaded()
@@ -1105,7 +1147,8 @@ local function onSerialize()
     currentlyPreviewingCamera = currentlyPreviewingCamera,
     previousFov = previousFov,
     isCameraSet = isCameraSet,
-    plRes = plRes
+    plRes = plRes,
+    keepAspectRatio = ctrls.keepAspectRatio[0]
   }
 end
 
@@ -1124,6 +1167,7 @@ local function onDeserialized(data)
     previousFov = data.previousFov
     isCameraSet = data.isCameraSet
     plRes = data.plRes
+    ctrls.keepAspectRatio[0] = data.keepAspectRatio
   end
 end
 

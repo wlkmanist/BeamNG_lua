@@ -22,7 +22,7 @@ C.tags = {'gameplay', 'utils'}
 
 local score
 function C:work()
-  score = self.mgr.modules.drift:getScore()
+  score = gameplay_drift_scoring.getScore()
   self.pinOut.score.value = score.score
   self.pinOut.cachedScore.value = score.cachedScore
   self.pinOut.combo.value = score.combo

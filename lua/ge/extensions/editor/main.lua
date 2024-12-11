@@ -30,6 +30,7 @@ local editorHistoryData = {}
 local lastEditModeName = ""
 local CurrentStateFileFormatVersion = 1
 local blockedInputActions = core_input_actionFilter.createActionTemplate({"bigMap"})
+local splashImage
 
 M.initialized = false
 M.active = false
@@ -636,14 +637,23 @@ local function onUpdate()
         -- change UI scale to default, so text fits in the loading window
         imguiUtils.changeUIScale(1)
         local pos = imgui.ImVec2(imgui.GetMainViewport().Pos.x + imgui.GetMainViewport().Size.x / 2, imgui.GetMainViewport().Pos.y + imgui.GetMainViewport().Size.y / 2)
+        if not splashImage then splashImage = imguiUtils.texObj("/core/art/gui/images/editorSplash.png") end
+        local imageSize = splashImage.size
+
         imgui.SetNextWindowPos(pos, imgui.Cond_Appearing, imgui.ImVec2(0.5, 0.5))
-        imgui.SetNextWindowSize(imgui.ImVec2(imgui.uiscale[0] * 300, imgui.uiscale[0] * 50), imgui.Cond_Always)
-        imgui.Begin("loadingEditorWnd", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoResize + imgui.WindowFlags_NoMove)
-        imgui.PushFont3("cairo_semibold_large")
-        imgui.Separator()
-        imgui.Text("\t\t\tLoading World Editor...")
-        imgui.Separator()
-        imgui.PopFont()
+        imgui.SetNextWindowSize(imgui.ImVec2(imgui.uiscale[0] * (imageSize.x + 50), imgui.uiscale[0] * (imageSize.y + 30)), imgui.Cond_Always)
+        imgui.Begin("loadingEditorWnd", nil, imgui.WindowFlags_NoScrollbar + imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoResize + imgui.WindowFlags_NoMove)
+
+        local style = imgui.GetStyle()
+        local size = imgui.uiscale[0] * imageSize.x + style.FramePadding.x * 2.0
+        local avail = imgui.GetContentRegionAvail().x
+        local off = (avail - size) * 0.5;
+
+        if off > 0.0 then
+          imgui.SetCursorPosX(imgui.GetCursorPosX() + off)
+        end
+
+        imgui.Image(splashImage.texId, imgui.ImVec2(imgui.uiscale[0] * imageSize.x, imgui.uiscale[0] * imageSize.y))
         imgui.End()
       end
       frameCount = frameCount + 1

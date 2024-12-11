@@ -1042,7 +1042,7 @@ M.getDeliveryModePenalty = function(onlyVehIdsAsKeys)
         end
         if cargo.organization and penalty[cargo.organization.."Reputation"] then
           penalty[cargo.organization.."Reputation"] = penalty[cargo.organization.."Reputation"] or 0
-          penalty[cargo.organization.."Reputation"] = penalty[cargo.organization.."Reputation"] - math.ceil(cargo.rewards[cargo.organization.."Reputation"])
+          penalty[cargo.organization.."Reputation"] = penalty[cargo.organization.."Reputation"] - math.ceil(cargo.rewards[cargo.organization.."Reputation"] or 0)
         end
       end
     end

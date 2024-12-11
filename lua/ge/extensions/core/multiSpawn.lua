@@ -475,8 +475,12 @@ local function createSpawnPositions(amount, options) -- creates a list of smart 
   local start
   if options.pos then
     pos = options.pos
-    rot = options.rot or core_camera.getQuat() -- quaternion
-    rot = vecY:rotated(rot)
+    if options.dir then
+      rot = options.dir
+    else
+      rot = options.rot or core_camera.getQuat() -- quaternion
+      rot = vecY:rotated(rot)
+    end
     start = 0
   else
     if playerFocus then
@@ -703,11 +707,13 @@ local function setVehicleSpawnData(group, amount) -- parses and sets the vehicle
 
       for j, pName in ipairs({'paintName', 'paintName2', 'paintName3'}) do
         local pKey = paintLayerKeys[j]
-        if options[pName] and options[pName] == 'random' then
-          options[pKey] = paints[paintNames[random(paintCount)]]
-        else
-          if not options[pKey] then
-            options[pKey] = paints[options[pKey]]
+        if options[pName] then
+          if (options[pName] == 'random' or options[pName] == '(Random)') then -- randomly select a paint from the list
+            options[pKey] = paints[paintNames[random(paintCount)]]
+          end
+
+          if not options[pKey] then -- get the paint data by name
+            options[pKey] = paints[options[pName]]
           end
         end
       end

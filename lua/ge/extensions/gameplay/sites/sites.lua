@@ -138,9 +138,10 @@ function C:getRadialLocations(pos, minRadius, maxRadius)
   local ret = {}
   local d = -1
   local loc = nil
+  pos = pos:z0()
   for id in self.quadtreeLocations:query(pos.x-maxRadius, pos.y-maxRadius, -1e30, pos.x+maxRadius, pos.y+maxRadius, 1e30) do
     loc = self.locations.objects[id]
-    d = pos:squaredDistance(loc.pos)
+    d = pos:squaredDistance(loc.pos:z0())
     if d >= minRadiusSquared and d <= maxRadiusSquared then
       table.insert(ret, {loc = loc, squaredDistance = d})
     end
@@ -156,9 +157,10 @@ function C:getRadialParkingSpots(pos, minRadius, maxRadius)
   local ret = {}
   local d = -1
   local ps = nil
+  pos = pos:z0()
   for id in self.quadtreeParkingSpots:query(pos.x-maxRadius, pos.y-maxRadius, -1e30, pos.x+maxRadius, pos.y+maxRadius, 1e30) do
     ps = self.parkingSpots.objects[id]
-    d = pos:squaredDistance(ps.pos)
+    d = pos:squaredDistance(ps.pos:z0())
     if d >= minRadiusSquared and d <= maxRadiusSquared then
       table.insert(ret, {ps = ps, squaredDistance = d})
     end

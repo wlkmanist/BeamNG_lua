@@ -134,6 +134,7 @@ M.sendCurrentLevelMissionsToBigmap = function()
     rating_attempts = {label = "Rating: Attempted"},
     rating_done = {label = "Rating: Done"},
     type_mission = {label = "Mission"},
+    type_driftSpots = {label = "Drift Spots"},
     type_spawnPoint = {label = "Quicktravel Points"},
     type_garage = {label = "Garages"},
     type_gasStation = {label = "Gas Stations"},
@@ -253,11 +254,13 @@ M.sendCurrentLevelMissionsToBigmap = function()
       elseif poi.data.type == 'logisticsOffice' then
         data.poiData[poi.id] = M.formatPoiForBigmap(poi)
         filterData.groupTags['delivery_facility'] = true
+      elseif poi.data.type == "driftSpot" then
+        data.poiData[poi.id] = M.formatPoiForBigmap(poi)
+        filterData.groupTags['type_driftSpots'] = true
       else -- other
         data.poiData[poi.id] = M.formatPoiForBigmap(poi)
         filterData.groupTags['type_other'] = true
       end
-
 
       data.poiData[poi.id].filterData = filterData
 
@@ -303,6 +306,7 @@ M.sendCurrentLevelMissionsToBigmap = function()
     groups = {
       groupData['type_spawnPoint'],
       groupData['type_gasStation'],
+      groupData['type_driftSpots'],
       groupData['type_other'],
     }
   }
@@ -343,6 +347,7 @@ M.sendCurrentLevelMissionsToBigmap = function()
       groupData['type_garage'],
       groupData['type_gasStation'],
       groupData['type_dealership'],
+      groupData['type_driftSpots'],
       groupData['type_other'],
     }
   }
@@ -414,7 +419,7 @@ M.sendCurrentLevelMissionsToBigmap = function()
       canSetRoute = not career_modules_testDrive.isActive()
     }
 
-    data.filterData = {filterBranchTag, filterGarageAndQT}
+    data.filterData = {filterBranchTag,  filterGarageAndQT}
 
     for _, grName in ipairs(branchOrdered) do table.insert(data.filterData, filterBranchIndividuals[grName]) end
     --table.insert(data.filterData, allGroupsFilter)

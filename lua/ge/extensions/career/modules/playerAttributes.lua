@@ -5,7 +5,7 @@
 local M = {}
 local dlog = function(m) log("D","",m) end -- set to nop to disable loggin
 
-M.dependencies = {'career_career', "career_modules_log"}
+M.dependencies = {'career_career'}
 
 local attributes
 local attributeLog

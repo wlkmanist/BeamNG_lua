@@ -106,8 +106,8 @@ local function start(_inventoryId, _originComputerId)
   inventoryId = _inventoryId or career_modules_inventory.getInventoryIdsInClosestGarage(true)
   if not inventoryId or not career_modules_inventory.getMapInventoryIdToVehId()[inventoryId] then return end
 
-  local numberOfBrokenParts = career_modules_insurance.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[inventoryId].partConditions)
-  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_insurance.getBrokenPartsThreshold() then
+  local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[inventoryId].partConditions)
+  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
     career_modules_insurance.startRepair(inventoryId, nil, function() startActual(_originComputerId) end)
   else
     startActual(_originComputerId)
@@ -128,9 +128,7 @@ local function close(_closeMenuAfterSaving)
   if not paintingActive then return end
 
   closeMenuAfterSaving = career_career.isAutosaveEnabled() and _closeMenuAfterSaving
-  if not closeMenuAfterSaving then
-    closeMenu()
-  end
+
   career_modules_inventory.spawnVehicle(inventoryId, 2)
 
   local camData = core_camera.getCameraDataById(be:getPlayerVehicleID(0))
@@ -150,6 +148,10 @@ local function close(_closeMenuAfterSaving)
   core_input_actionFilter.addAction(0, 'paintingBlockedActions', false)
   scenetree.OnlyGui:setFrustumCameraCenterOffset(Point2F(0, 0))
   paintingActive = nil
+
+  if not closeMenuAfterSaving then
+    closeMenu()
+  end
 end
 
 local function onVehicleSaveFinished()

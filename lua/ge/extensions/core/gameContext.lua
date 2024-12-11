@@ -15,29 +15,6 @@ local function getGameContext(...)
 end
 
 local function toggleMenues()
-  -- disabled for the time being
-  --[[
-  -- if missionSystem is offline, just use basic hook.
-  if not settings.getValue("showMissionMarkers") then
-    guihooks.trigger('MenuItemNavigation','toggleMenues')
-    return
-  else
-    if core_input_bindings.isMenuActive then
-      if gameplay_missions_missionManager.getForegroundMissionId() then
-        if simTimeAuthority.getPause() then
-          simTimeAuthority.pause(false)
-        end
-      end
-    else
-      if gameplay_missions_missionManager.getForegroundMissionId() then
-        if not simTimeAuthority.getPause() then
-          simTimeAuthority.pause(true)
-        end
-      end
-    end
-    guihooks.trigger('MenuItemNavigation','toggleMenues')
-  end
-  ]]
 
 end
 
@@ -45,7 +22,21 @@ local function onAnyMissionChanged(state, mission)
   guihooks.trigger('onAnyMissionChanged', state, mission and mission.id)
 end
 
-
+local function getWIPWarningLabel()
+  if gameplay_missions_missionManager.getForegroundMissionId() then
+    local m = gameplay_missions_missions.getMissionById(gameplay_missions_missionManager.getForegroundMissionId())
+    if m then
+      if m.missionType == 'rallyStage' then
+        return "ui.rally.experimentalWarning"
+      end
+    end
+  end
+  if career_career.isActive() then
+    return "ui.career.experimentalWarning"
+  end
+  return nil
+end
+M.getWIPWarningLabel = getWIPWarningLabel
 
 M.onAnyMissionChanged = onAnyMissionChanged
 

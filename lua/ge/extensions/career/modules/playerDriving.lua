@@ -43,6 +43,7 @@ local function setupTraffic(forceSetup)
   if forceSetup or (gameplay_traffic.getState() == "off" and not gameplay_traffic.getTrafficList(true)[1] and playerData.trafficActive == 0) then
     log("I", "career", "Now spawning traffic for career mode")
     local restrict = settings.getValue('trafficRestrictForCareer')
+    if shipping_build then restrict = false end -- this line may be temporary
 
     -- traffic amount
     local amount = settings.getValue('trafficAmount')
@@ -71,23 +72,10 @@ local function setupTraffic(forceSetup)
     playerData.trafficActive = restrict and testTrafficAmounts.active or amount -- store the amount here for future usage
     if playerData.trafficActive == 0 then playerData.trafficActive = math.huge end
 
-    --gameplay_traffic.queueTeleport = true -- forces traffic vehicles to teleport away
-
-    -- TEMP: this is a temporary measure; it spawns vehicles far away, but skips the step of force teleporting them
-    -- hopefully, this cures the vehicle instability issue
-    -- we need to rework the initial loading logic so that the player / camera is already ready, then this hack won't be needed
-    local trafficPos, trafficRot, parkingPos
-    local trafficSpawnPoint = scenetree.findObject("spawns_refinery")
-    local parkingSpawnPoint = scenetree.findObject("spawns_servicestation") -- TODO: replace this with the intended player position (player veh not ready yet)
-    if trafficSpawnPoint then
-      trafficPos, trafficRot = trafficSpawnPoint:getPosition(), quat(trafficSpawnPoint:getRotation()) * quat(0, 0, 1, 0)
-    end
-    if parkingSpawnPoint then
-      parkingPos = parkingSpawnPoint:getPosition()
-    end
-
-    gameplay_parking.setupVehicles(restrict and testTrafficAmounts.parkedCars or parkedAmount, {pos = parkingPos})
-    gameplay_traffic.setupTraffic(restrict and testTrafficAmounts.traffic + extraAmount or amount + extraAmount, 0, {policeAmount = policeAmount, simpleVehs = true, autoLoadFromFile = true, pos = trafficPos, rot = trafficRot})
+    -- this will spawn vehicles near the center of the map (player vehicle not ready yet)
+    -- if this would wait until player vehicle active, then the loading screen would fade out early...
+    gameplay_parking.setupVehicles(restrict and testTrafficAmounts.parkedCars or parkedAmount)
+    gameplay_traffic.setupTraffic(restrict and testTrafficAmounts.traffic + extraAmount or amount + extraAmount, 0, {policeAmount = policeAmount, simpleVehs = true, autoLoadFromFile = true})
     setTrafficVars()
 
     M.ensureTraffic = false
@@ -274,11 +262,10 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
   -- for now, prevent pursuit softlock by making the police give up
   if not playerData.pursuitStuckTimer then playerData.pursuitStuckTimer = 0 end
-  if (playerData.traffic.speed < 3 and playerData.traffic.pursuit.timers.arrest == 0 and playerData.traffic.pursuit.timers.evade == 0)
-  or not gameplay_police.getNearestPoliceVehicle(be:getPlayerVehicleID(0), false, true) then
+  if (playerData.traffic.speed < 3 and playerData.traffic.pursuit.timers.arrest == 0 and playerData.traffic.pursuit.timers.evade == 0) then
     playerData.pursuitStuckTimer = playerData.pursuitStuckTimer + dtSim
     if playerData.pursuitStuckTimer >= 10 then
-      log("I", "career", "Ending pursuit early due to conditions")
+      log("I", "career", "Ending pursuit early due to conflict")
       gameplay_police.evadeVehicle(be:getPlayerVehicleID(0), true)
       playerData.pursuitStuckTimer = 0
     end

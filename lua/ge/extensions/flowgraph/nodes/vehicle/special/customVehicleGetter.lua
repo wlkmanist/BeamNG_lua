@@ -100,7 +100,7 @@ function C:_executionStarted()
 end
 
 function C:getCmd()
-  return 'obj:queueGameEngineLua("core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']:returnValue(\'"..serialize('..self.data.fun..').."\')")'
+  return 'obj:queueGameEngineLua("local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:returnValue(\'"..serialize('..self.data.fun..').."\') end")'
 end
 
 function C:returnValue(value)

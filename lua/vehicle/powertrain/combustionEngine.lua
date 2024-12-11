@@ -454,6 +454,8 @@ local function updateGFX(device, dt)
     end
   end
 
+  electrics.values.electricalLoadCoef = linearScale(device.starterEngagedCoef * min(max(device.outputAV1 * device.invStarterMaxAV, -0.5), 1), 0, 1, 1, 0.3)
+
   device.slowIgnitionErrorTimer = device.slowIgnitionErrorTimer - dt
   if device.slowIgnitionErrorTimer <= 0 then
     device.slowIgnitionErrorTimer = math.random(device.slowIgnitionErrorInterval) * 0.1
@@ -645,7 +647,7 @@ local function revLimiterDisabledMethod(device, engineAV, throttle, dt)
 end
 
 local function revLimiterSoftMethod(device, engineAV, throttle, dt)
-  local limiterAV = min(device.maxAV, device.tempRevLimiterAV)
+  local limiterAV = min(device.revLimiterAV, device.tempRevLimiterAV)
   local correctedThrottle = -throttle * min(max(engineAV - limiterAV, 0), device.revLimiterMaxAVOvershoot) * device.invRevLimiterRange + throttle
 
   if device.isTempRevLimiterActive and correctedThrottle < throttle then
@@ -655,7 +657,7 @@ local function revLimiterSoftMethod(device, engineAV, throttle, dt)
 end
 
 local function revLimiterTimeMethod(device, engineAV, throttle, dt)
-  local limiterAV = min(device.maxAV, device.tempRevLimiterAV)
+  local limiterAV = min(device.revLimiterAV, device.tempRevLimiterAV)
   if device.revLimiterActive then
     device.revLimiterActiveTimer = device.revLimiterActiveTimer - dt
     local revLimiterAVThreshold = min(limiterAV - device.revLimiterMaxAVDrop, limiterAV)
@@ -676,7 +678,7 @@ local function revLimiterTimeMethod(device, engineAV, throttle, dt)
 end
 
 local function revLimiterRPMDropMethod(device, engineAV, throttle, dt)
-  local limiterAV = min(device.maxAV, device.tempRevLimiterAV)
+  local limiterAV = min(device.revLimiterAV, device.tempRevLimiterAV)
   if device.revLimiterActive or engineAV > limiterAV then
     --Deactivate the limiter once below the deactivation threshold
     local revLimiterAVThreshold = min(limiterAV - device.revLimiterAVDrop, limiterAV)
@@ -1909,11 +1911,15 @@ local function new(jbeamData)
   device.applyRevLimiter = revLimiterDisabledMethod
   device.revLimiterActive = false
   device.revLimiterWasActiveTimer = 999
+  local preRevLimiterMaxRPM = device.maxRPM --we need to save the jbeam defined maxrpm for our torque table/drop off calculations later
   device.hasRevLimiter = jbeamData.hasRevLimiter == nil and true or jbeamData.hasRevLimiter --TBD, default should be "no" rev limiter
   if device.hasRevLimiter then
     device.revLimiterType = jbeamData.revLimiterType or "rpmDrop" --alternatives: "timeBased", "soft"
-    local revLimiterRPM = jbeamData.revLimiterRPM or device.maxRPM
-    device.maxRPM = min(maxAvailableRPM, revLimiterRPM)
+    --save the revlimiter RPM/AV for use within the limiting functions
+    device.revLimiterRPM = jbeamData.revLimiterRPM or device.maxRPM
+    device.revLimiterAV = device.revLimiterRPM * rpmToAV
+    --make sure that the reported max RPM/AV is the one from the revlimiter, many other subsystems use this value
+    device.maxRPM = device.revLimiterRPM
     device.maxAV = device.maxRPM * rpmToAV
 
     if device.revLimiterType == "rpmDrop" then --purely rpm drop based
@@ -1944,20 +1950,26 @@ local function new(jbeamData)
   end
 
   local combinedTorquePoints = {}
-  for i = 0, device.maxRPM, 1 do
+  --only use the existing torque table up to our previosuly saved max RPM without rev limiter influence so that the drop off works correctly
+  for i = 0, preRevLimiterMaxRPM, 1 do
     table.insert(combinedTorquePoints, {i, rawCombinedCurve[i] or 0})
   end
 
   --past redline we want to gracefully reduce the torque for a natural redline
-  device.redlineTorqueDropOffRange = clamp(jbeamData.redlineTorqueDropOffRange or 500, 10, device.maxRPM)
+  device.redlineTorqueDropOffRange = clamp(jbeamData.redlineTorqueDropOffRange or 500, 10, preRevLimiterMaxRPM)
 
   --last usable torque value for a smooth transition to past-maxRPM-drop-off
-  local rawMaxRPMTorque = rawCombinedCurve[device.maxRPM] or 0
+  local rawMaxRPMTorque = rawCombinedCurve[preRevLimiterMaxRPM] or 0
 
   --create the drop off past the max rpm for a natural redline
-  table.insert(combinedTorquePoints, {device.maxRPM + device.redlineTorqueDropOffRange * 0.5, rawMaxRPMTorque * 0.7})
-  table.insert(combinedTorquePoints, {device.maxRPM + device.redlineTorqueDropOffRange, rawMaxRPMTorque / 5})
-  table.insert(combinedTorquePoints, {device.maxRPM + device.redlineTorqueDropOffRange * 2, 0})
+  table.insert(combinedTorquePoints, {preRevLimiterMaxRPM + device.redlineTorqueDropOffRange * 0.5, rawMaxRPMTorque * 0.7})
+  table.insert(combinedTorquePoints, {preRevLimiterMaxRPM + device.redlineTorqueDropOffRange, rawMaxRPMTorque / 5})
+  table.insert(combinedTorquePoints, {preRevLimiterMaxRPM + device.redlineTorqueDropOffRange * 2, 0})
+
+  --if our revlimiter RPM is higher than maxRPM, maxRPM _becomes_ that. This means that we need to make sure the torque table is also filled up to that point
+  if preRevLimiterMaxRPM + device.redlineTorqueDropOffRange * 2 < device.maxRPM then
+    table.insert(combinedTorquePoints, {device.maxRPM, 0})
+  end
 
   --actually create the final torque curve
   device.torqueCurve = createCurve(combinedTorquePoints)

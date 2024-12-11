@@ -17,7 +17,7 @@ local round = round
 local psiToPascal = 6894.757293178
 local pascalToPSI = 1 / psiToPascal
 local gasConstant = 8.314 -- J/(mol * K)
-local tinyPressureDiffThreshold = 10
+local tinyPressureDiffThreshold = 25
 
 -- dependent on shape of flow orifice - closer to 1.0 for rounded orifices, decreases with sharpness of edges
 -- we use a constant value of 0.97, which is a decent approximation of a round hole (e.g. a tube connection) without being unrealistically close to 1.0
@@ -25,13 +25,84 @@ local dischargeCoefficient = 0.97
 
 local airTank = nil
 local beamGroups = nil
+local crossFlowGroups = {}
 local enableCrossFlow = false
+local defaultVirtualBufferCapacity = 0
 local pressureDumpFlowRate = 0
 local averagePressure = 0
 local totalBeamCount = 0
 local enableDebug = false
 
 -- TODO: Compare internal calculated pressure with actual internal beam pressure (should match)
+
+local function updateBeamAggregates()
+  averagePressure = 0
+  totalBeamCount = 0
+
+  for _, g in pairs(beamGroups) do
+    g.averagePressure = 0
+    for _, b in ipairs(g.beams) do
+      g.averagePressure = g.averagePressure + b.currentPressure
+      averagePressure = averagePressure + b.currentPressure
+      totalBeamCount = totalBeamCount + 1
+    end
+    g.averagePressure = g.averagePressure * g.invBeamCount
+  end
+
+  if totalBeamCount > 0 then
+    averagePressure = averagePressure / totalBeamCount
+  end
+end
+
+--- Sets the pressure of all cross-flow group buffers to the average pressure of all participating beam groups
+local function resetVirtualBuffers()
+  -- first, initialize the pressure and group count to 0
+  for _, g in pairs(crossFlowGroups) do
+    g.bufferPressure = 0
+    g.beamGroupCount = 0
+  end
+
+  -- now calculate the sum of all beam groups' pressures and the number of beam groups in each cross-flow group
+  for _, g in pairs(beamGroups) do
+    local crossFlowGroup = crossFlowGroups[g.crossFlowTag]
+
+    if crossFlowGroup then
+      crossFlowGroup.bufferPressure = crossFlowGroup.bufferPressure + g.averagePressure
+      crossFlowGroup.beamGroupCount = crossFlowGroup.beamGroupCount + 1
+    end
+  end
+
+  -- finally, normalize the sum to an average using the beam group count, and calculate the stored energy
+  for _, g in pairs(crossFlowGroups) do
+    g.bufferPressure = g.beamGroupCount == 0 and 0 or g.bufferPressure / g.beamGroupCount
+    g.bufferStoredEnergy = g.bufferPressure * g.bufferCapacity
+  end
+end
+
+--- Sets the pressure of a single cross-flow group's buffer to the average pressure of all participating beam groups
+local function resetVirtualBuffer(crossFlowTag)
+  local g = crossFlowGroups[crossFlowTag]
+
+  if not g then
+    return
+  end
+
+  -- first, initialize the pressure and group count to 0
+  g.bufferPressure = 0
+  g.beamGroupCount = 0
+
+  -- now calculate the sum of all beam groups' pressures and the number of beam groups in each cross-flow group
+  for _, bg in pairs(beamGroups) do
+    if bg.crossFlowTag == crossFlowTag then
+      g.bufferPressure = g.bufferPressure + bg.averagePressure
+      g.beamGroupCount = g.beamGroupCount + 1
+    end
+  end
+
+  -- finally, normalize the sum to an average using the beam group count, and calculate the stored energy
+  g.bufferPressure = g.beamGroupCount == 0 and 0 or g.bufferPressure / g.beamGroupCount
+  g.bufferStoredEnergy = g.bufferPressure * g.bufferCapacity
+end
 
 local function setBeamPressureCore(cid, pressure, maxPressure, spring, damp)
   obj:setBeamPressureRel(cid, max(0, pressure - powertrain.currentEnvPressure), max(0, maxPressure - powertrain.currentEnvPressure), spring, damp)
@@ -84,6 +155,38 @@ local function setBeamGroupsMaximumSupplyPressure(groupNames, maxSupplyPressure)
   end
 end
 
+local function setBeamGroupCrossFlowTag(groupName, crossFlowTag)
+  local groupData = beamGroups[groupName]
+  if not groupData then
+    log("W", "actuators.setBeamGroupCrossFlowTag", "Can't find pressure beam group: " .. (groupName or "nil"))
+  else
+    local previousTag = groupData.crossFlowTag
+
+    if previousTag == crossFlowTag then
+      return
+    end
+
+    groupData.crossFlowTag = crossFlowTag
+
+    local prevCrossFlowGroup = crossFlowGroups[previousTag]
+    local newCrossFlowGroup = crossFlowGroups[crossFlowTag]
+
+    -- Update beam group count on previous and new cross flow groups
+    if prevCrossFlowGroup then
+      prevCrossFlowGroup.beamGroupCount = max(0, prevCrossFlowGroup.beamGroupCount - 1)
+    end
+
+    if newCrossFlowGroup then
+      newCrossFlowGroup.beamGroupCount = newCrossFlowGroup.beamGroupCount + 1
+
+      if newCrossFlowGroup.beamGroupCount == 1 then
+        -- If this is the only beam group in the new cross-flow group, reset the average pressure too
+        resetVirtualBuffer(crossFlowTag)
+      end
+    end
+  end
+end
+
 local function getValveState(groupName)
   local groupData = beamGroups[groupName]
   if not groupData then
@@ -129,6 +232,24 @@ local function updateFixedStep(dt)
   local pressureSum = 0
 
   for _, g in pairs(beamGroups) do
+    local crossFlowGroup = crossFlowGroups[g.crossFlowTag]
+
+    if not crossFlowGroup then
+      -- Create an implicit cross-flow group, as this group did not reference an explicitly-defined one
+      log("W", "actuators", ("Creating implicit cross-flow group %q for beam group %q"):format(g.crossFlowTag, g.name))
+      crossFlowGroup = {
+        name = g.crossFlowTag,
+        bufferStoredEnergy = 0,
+        bufferPressure = g.averagePressure,
+        bufferCapacity = defaultVirtualBufferCapacity,
+        invBufferCapacity = 1 / defaultVirtualBufferCapacity,
+        beamGroupCount = 1,
+        enableDebug = false,
+      }
+      crossFlowGroup.bufferStoredEnergy = crossFlowGroup.bufferPressure * crossFlowGroup.bufferCapacity
+      crossFlowGroups[g.crossFlowTag] = crossFlowGroup
+    end
+
     local absValveState = abs(g.valveState)
     local flowRateSum = 0
     local flowRate = 0
@@ -140,20 +261,23 @@ local function updateFixedStep(dt)
     -- Air flows into or out of a virtual "buffer" (essentially representing the air capacity of the hoses) when the
     -- control valve is not fully closed. If cross-flow is enabled, or if the valve is open at all, air also flows
     -- between that virtual buffer and all of the beams.
+    -- Multiple groups sharing the same virtual buffer all "cross flow" between one another, and their valves all
+    -- contribute air flow into or out of the virtual buffer. The buffer essentially plays the role of a phsyical
+    -- hose connecting the different groups' air circuits.
 
     if g.valveState > 0 then
       -- airflow occurring between air tank and virtual buffer
       sourcePressure = min(tankPressure, g.maxSupplyPressure)
-      flowPressureDiff = sourcePressure - g.bufferPressure
+      flowPressureDiff = sourcePressure - crossFlowGroup.bufferPressure
       flowRate = dischargeCoefficient * absValveState * g.supplyHoseCrossSectionArea * sign(flowPressureDiff) * sqrt(2 * abs(flowPressureDiff) * invAirTankAirDensity)
     else
       -- airflow occurring between virtual buffer and environment
       sourcePressure = powertrain.currentEnvPressure
-      flowPressureDiff = sourcePressure - g.bufferPressure
+      flowPressureDiff = sourcePressure - crossFlowGroup.bufferPressure
 
       -- if the absolute buffer pressure is more than twice the env pressure,
       -- flow rate is limited by the speed of sound, so we clamp the maximum to the constant quickReleaseFlowRate.
-      local relativeCurrentPressure = g.bufferPressure - powertrain.currentEnvPressure
+      local relativeCurrentPressure = crossFlowGroup.bufferPressure - powertrain.currentEnvPressure
       local flowRateCoef = clamp(relativeCurrentPressure * powertrain.invCurrentEnvPressure, -1, 1)
 
       flowRate = -pressureDumpFlowRate * absValveState * sign(flowRateCoef) * sqrt(abs(flowRateCoef))
@@ -162,37 +286,29 @@ local function updateFixedStep(dt)
     g.bufferFlowRate = flowRate
 
     if abs(flowPressureDiff) > tinyPressureDiffThreshold then
-      maxAllowedEnergyTransfer = abs(flowPressureDiff) * g.bufferCapacity -- clamp so that we don't "overshoot" the source pressure
+      maxAllowedEnergyTransfer = abs(flowPressureDiff) * crossFlowGroup.bufferCapacity -- clamp so that we don't "overshoot" the source pressure
       airVolumeMoved = abs(flowRate) * dt
-      energyTransferred = min(maxAllowedEnergyTransfer, g.bufferPressure * airVolumeMoved) * sign(flowRate)
+      energyTransferred = min(maxAllowedEnergyTransfer, crossFlowGroup.bufferPressure * airVolumeMoved) * sign(flowRate)
 
       -- determine new stored energy quantity
-      g.bufferStoredEnergy = g.bufferStoredEnergy + energyTransferred
+      crossFlowGroup.bufferStoredEnergy = crossFlowGroup.bufferStoredEnergy + energyTransferred
+      crossFlowGroup.bufferPressure = crossFlowGroup.bufferStoredEnergy * crossFlowGroup.invBufferCapacity -- PV = e, therefore P = e / V
 
       -- we can move energy out of the air tank unconditionally, because it would only ever flow that way if the air tank has a higher pressure.
       -- however, we can only move energy INTO the air tank if the buffer pressure is truly higher.
       -- if energy is leaving the buffer due to the "pressure regulator" (maxSupplyPressure) decreasing, it should be dumped to the atmosphere.
-      if g.valveState > 0 and (energyTransferred > 0 or g.bufferPressure > tankPressure) and not g.disableAirConsumption then
+      if g.valveState > 0 and (energyTransferred > 0 or crossFlowGroup.bufferPressure > tankPressure) and not g.disableAirConsumption then
         airTank.storedEnergy = max(0, airTank.storedEnergy - energyTransferred)
       end
-
-      -- determine new buffer pressure
-      g.bufferPressure = g.bufferStoredEnergy * g.invBufferCapacity -- PV = e, therefore P = e / V
     elseif g.valveState > 0 then
       -- if the flow rate is very tiny, we will simply "snap" the pressure to the source pressure when the valve is open.
       -- otherwise, the pressure will never "settle" because of floating point inaccuracies
-      --[[ if g.bufferPressure ~= sourcePressure then
-        log("W", "actuators", ("[%s] SNAPPING!  |  flowPressureDiff = %10.3f"):format(
-          g.name,
-          flowPressureDiff
-        ))
-      end ]]
-      g.bufferPressure = sourcePressure
-      g.bufferStoredEnergy = g.bufferPressure * g.bufferCapacity
+      crossFlowGroup.bufferPressure = sourcePressure
+      crossFlowGroup.bufferStoredEnergy = crossFlowGroup.bufferPressure * crossFlowGroup.bufferCapacity
     end
 
-    bufferAirMass = g.bufferStoredEnergy * airTank.gasMolarMass * invTempCoefficient
-    bufferAirDensity = bufferAirMass * g.invBufferCapacity
+    bufferAirMass = crossFlowGroup.bufferStoredEnergy * airTank.gasMolarMass * invTempCoefficient
+    bufferAirDensity = bufferAirMass * crossFlowGroup.invBufferCapacity
     invBufferAirDensity = 1 / bufferAirDensity
     g.averagePressure = 0
 
@@ -206,7 +322,7 @@ local function updateFixedStep(dt)
       if absValveState > 0 or enableCrossFlow then
         -- air flowing between virtual buffer and actuators
         local flowCoef = enableCrossFlow and 1 or absValveState
-        sourcePressure = g.bufferPressure
+        sourcePressure = crossFlowGroup.bufferPressure
         flowPressureDiff = sourcePressure - v.currentPressure
         flowRate = dischargeCoefficient * flowCoef * v.supplyHoseCrossSectionArea * sign(flowPressureDiff) * sqrt(2 * abs(flowPressureDiff) * invBufferAirDensity)
       else
@@ -223,7 +339,8 @@ local function updateFixedStep(dt)
         -- determine new stored energy quantities
         v.storedEnergy = v.storedEnergy + energyTransferred
         v.energyDeltaThisTick = v.energyDeltaThisTick + energyTransferred
-        g.bufferStoredEnergy = g.bufferStoredEnergy - energyTransferred
+        crossFlowGroup.bufferStoredEnergy = crossFlowGroup.bufferStoredEnergy - energyTransferred
+        crossFlowGroup.bufferPressure = crossFlowGroup.bufferStoredEnergy * crossFlowGroup.invBufferCapacity -- PV = e, therefore P = e / V
 
         -- determine new actuator/buffer pressures
         v.currentPressure = v.storedEnergy * invBeamVolume -- PV = e, therefore P = e / V
@@ -233,7 +350,7 @@ local function updateFixedStep(dt)
       elseif absValveState > 0 or enableCrossFlow then
         -- if the flow rate is very tiny, we will simply "snap" the pressure to the source pressure when the valve is open.
         -- otherwise, the pressure will never "settle" because of floating point inaccuracies
-        v.currentPressure = g.bufferPressure
+        v.currentPressure = crossFlowGroup.bufferPressure
         v.storedEnergy = v.currentPressure * beamVolume
 
         setBeamPressureCore(v.cid, v.currentPressure, v.maxBeamPressure, v.spring, v.damp)
@@ -241,9 +358,6 @@ local function updateFixedStep(dt)
 
       g.averagePressure = g.averagePressure + v.currentPressure
     end
-
-    -- update buffer pressure since we may have modified stored energy
-    g.bufferPressure = g.bufferStoredEnergy * g.invBufferCapacity -- PV = e, therefore P = e / V
 
     if g.beamCount > 0 then
       g.averageFlowRate = flowRateSum * g.invBeamCount
@@ -266,14 +380,18 @@ local function updateFixedStep(dt)
 end
 
 local function updateGFX(dt)
-  for _, g in pairs(beamGroups) do
+  for _, g in pairs(crossFlowGroups) do
     if g.enableDebug then
       -- streams.drawGraph(g.name .. "_bufferEnergy", { value = g.bufferStoredEnergy, unit = "J" })
-      -- streams.drawGraph(g.name .. "_bufferPressure", { value = (g.bufferPressure - 101325) * pascalToPSI, unit = "PSI" })
-      streams.drawGraph(g.name .. "_bufferFlowRate", { value = g.bufferFlowRate * 1000, unit = "L/s" })
+      streams.drawGraph(g.name .. "_bufferPressure", { value = (g.bufferPressure - 101325) * pascalToPSI, unit = "PSI" })
+    end
+  end
+
+  for _, g in pairs(beamGroups) do
+    if g.enableDebug then
       -- streams.drawGraph(g.name .. "_avgPressure", { value = (g.averagePressure - 101325) * pascalToPSI, unit = "PSI" })
-      -- streams.drawGraph(g.name .. "_avgFlowRate", { value = g.averageFlowRate * 1000, unit = "L/s" })
-      -- streams.drawGraph(g.name .. "_valveState", { value = g.valveState })
+      streams.drawGraph(g.name .. "_avgFlowRate", { value = g.averageFlowRate * 1000, unit = "L/s" })
+      streams.drawGraph(g.name .. "_valveState", { value = g.valveState })
     end
 
     for _, v in pairs(g.beams) do
@@ -346,25 +464,6 @@ local function updateGFX(dt)
   end
 end
 
-local function updateBeamAggregates()
-  averagePressure = 0
-  totalBeamCount = 0
-
-  for _, g in pairs(beamGroups) do
-    g.averagePressure = 0
-    for _, b in ipairs(g.beams) do
-      g.averagePressure = g.averagePressure + b.currentPressure
-      averagePressure = averagePressure + b.currentPressure
-      totalBeamCount = totalBeamCount + 1
-    end
-    g.averagePressure = g.averagePressure * g.invBeamCount
-  end
-
-  if totalBeamCount > 0 then
-    averagePressure = averagePressure / totalBeamCount
-  end
-end
-
 local function reset()
   for _, g in pairs(beamGroups) do
     for _, v in pairs(g.beams) do
@@ -390,11 +489,8 @@ local function reset()
   -- compute average pressure of all beams
   updateBeamAggregates()
 
-  -- initialize group buffers to the average pressure of all beams
-  for _, g in pairs(beamGroups) do
-    g.bufferPressure = g.averagePressure
-    g.bufferStoredEnergy = g.bufferPressure * g.bufferCapacity
-  end
+  -- initialize pressure of all virtual buffers
+  resetVirtualBuffers()
 end
 
 local function init(jbeamData)
@@ -413,11 +509,13 @@ local function init(jbeamData)
     maxSupplyPressure = jbeamData.maxSupplyPressurePSI * psiToPascal + 101325
   end
 
+  defaultVirtualBufferCapacity = jbeamData.virtualBufferCapacity or 0.005
   pressureDumpFlowRate = jbeamData.pressureDumpFlowRate or 0.01 -- m^3/s (used when valve is open to atmosphere)
   enableCrossFlow = jbeamData.crossFlowBetweenBeams == true
   enableDebug = jbeamData.debug or false
 
   local pressureBeamData = v.data[jbeamData.pressuredBeams] or {}
+  local crossFlowGroupData = (jbeamData.crossFlowGroups and v.data[jbeamData.crossFlowGroups]) or {}
 
   local pressuredBeamNames = {}
   for _, v in pairs(pressureBeamData) do
@@ -442,14 +540,30 @@ local function init(jbeamData)
     end
   end
 
+  crossFlowGroups = {}
+  for _, crossFlowData in pairs(crossFlowGroupData) do
+    local groupTag = crossFlowData.crossFlowTag
+    local virtualBufferCapacity = crossFlowData.virtualBufferCapacity or defaultVirtualBufferCapacity
+
+    crossFlowGroups[groupTag] = {
+      name = groupTag,
+      bufferStoredEnergy = 0,
+      bufferPressure = 0,
+      bufferCapacity = virtualBufferCapacity,
+      invBufferCapacity = 1 / virtualBufferCapacity,
+      beamGroupCount = 0,
+      enableDebug = crossFlowData.debug == true,
+    }
+  end
+
   beamGroups = {}
   for _, pressureData in pairs(pressureBeamData) do
     local name = pressureData.beamName
     local groupName = pressureData.groupName
 
+    local crossFlowTag = pressureData.crossFlowTag or groupName
     local beamSupplyHoseRadius = pressureData.supplyHoseRadius or supplyHoseRadius
     local supplyHoseCrossSectionArea = math.pi * beamSupplyHoseRadius ^ 2
-    local virtualBufferCapacity = pressureData.virtualBufferCapacity or 0.005
     local beamMaxSupplyPressure = pressureData.maxSupplyPressure or maxSupplyPressure
     if type(pressureData.maxSupplyPressurePSI) == "number" then
       beamMaxSupplyPressure = pressureData.maxSupplyPressurePSI * psiToPascal + 101325
@@ -470,16 +584,19 @@ local function init(jbeamData)
         averagePressure = 0,
         avgPressureElectricsName = M.name .. "_" .. groupName .. "_pressure_avg",
         supplyHoseCrossSectionArea = supplyHoseCrossSectionArea,
-        bufferStoredEnergy = 0,
-        bufferPressure = 0,
-        bufferCapacity = virtualBufferCapacity,
-        invBufferCapacity = 1 / virtualBufferCapacity,
+        crossFlowTag = crossFlowTag,
         bufferFlowRate = 0,
         maxSupplyPressure = beamMaxSupplyPressure,
         maxSupplyPressureInitial = beamMaxSupplyPressure,
         disableAirConsumption = pressureData.disableAirConsumption or false,
         enableDebug = false
       }
+
+      local crossFlowGroup = crossFlowGroups[crossFlowTag]
+
+      if crossFlowGroup then
+        crossFlowGroup.beamGroupCount = crossFlowGroup.beamGroupCount + 1
+      end -- if it is nil, it will just be initialized in updateFixedStep
     end
 
     local group = beamGroups[groupName]
@@ -518,11 +635,8 @@ local function init(jbeamData)
   -- compute average pressure of all beams
   updateBeamAggregates()
 
-  -- initialize group buffers to the average pressure of all beams
-  for _, g in pairs(beamGroups) do
-    g.bufferPressure = g.averagePressure
-    g.bufferStoredEnergy = g.bufferPressure * g.bufferCapacity
-  end
+  -- initialize pressure of all virtual buffers
+  resetVirtualBuffers()
 end
 
 local function initSounds(jbeamData)
@@ -542,13 +656,13 @@ local function initSounds(jbeamData)
       groupData.flowRateVolumeFactorIncrease = v.flowRateVolumeFactorIncrease or v.flowRateVolumeFactor or 0
       groupData.flowRateVolumeFactorDecrease = v.flowRateVolumeFactorDecrease or v.flowRateVolumeFactor or 0
       if v.soundIncrease then
-        groupData.soundLoopIncrease = obj:createSFXSource(v.soundIncrease, "AudioDefaultLoop3D", "pneumatics_inc_" .. v.groupName, groupData.soundNode)
+        groupData.soundLoopIncrease = obj:createSFXSource2(v.soundIncrease, "AudioDefaultLoop3D", "pneumatics_inc_" .. v.groupName, groupData.soundNode, 0)
         if groupData.soundLoopIncrease then
           bdebug.setNodeDebugText("Pneumatic Actuator", groupData.soundNode, M.name .. " - Inc " .. v.groupName .. ": " .. (v.soundIncrease or "no event"))
         end
       end
       if v.soundDecrease then
-        groupData.soundLoopDecrease = obj:createSFXSource(v.soundDecrease, "AudioDefaultLoop3D", "pneumatics_dec_" .. v.groupName, groupData.soundNode)
+        groupData.soundLoopDecrease = obj:createSFXSource2(v.soundDecrease, "AudioDefaultLoop3D", "pneumatics_dec_" .. v.groupName, groupData.soundNode, 0)
         if groupData.soundLoopDecrease then
           bdebug.setNodeDebugText("Pneumatic Actuator", groupData.soundNode, M.name .. " - Dec " .. v.groupName .. ": " .. (v.soundDecrease or "no event"))
         end
@@ -585,6 +699,7 @@ M.toggleBeamGroupValveState = toggleBeamGroupValveState
 M.toggleBeamGroupsValveState = toggleBeamGroupsValveState
 M.setBeamGroupMaximumSupplyPressure = setBeamGroupMaximumSupplyPressure
 M.setBeamGroupsMaximumSupplyPressure = setBeamGroupsMaximumSupplyPressure
+M.setBeamGroupCrossFlowTag = setBeamGroupCrossFlowTag
 M.getValveState = getValveState
 M.getAverageFlowRate = getAverageFlowRate
 M.getAveragePressure = getAveragePressure

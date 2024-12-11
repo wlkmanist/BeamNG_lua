@@ -395,6 +395,9 @@ end
 
 local function registerRelocatedControllers()
   registerRelocatedController("vehicleController", "vehicleController/vehicleController")
+  registerRelocatedController("AVAS", "sound/AVAS")
+  registerRelocatedController("airbrakes", "sound/airbrakes")
+  registerRelocatedController("reverseWarn", "sound/reverseWarn")
 end
 
 local function init()
@@ -489,7 +492,7 @@ local function init()
   end
 
   if not M.mainController then
-    log("W", "controller.init", "No main controller found, adding a dummy controller!")
+    log("D", "controller.init", "No main controller found, adding a dummy controller!")
     local dummyName = "dummy"
     local controller = require(directory .. dummyName)
     if controller then
@@ -965,6 +968,31 @@ local function getState()
   return tableIsEmpty(data) and nil or data
 end
 
+local stateEvents = {}
+
+local function publishStateEvent(controllerName, ...)
+  local c = getController(controllerName)
+  if not c then
+    log("E", "controller.stateEvent", string.format("Can't find controller '%s', ignoring state event.", controllerName))
+    return
+  end
+  if not c.stateEvent then
+    log("E", "controller.stateEvent", string.format("Controller '%s' does not support state events, ignoring state event.", controllerName))
+    return
+  end
+  c.stateEvent(...)
+end
+
+local function triggerStateEvent(controller, ...)
+  table.insert(stateEvents, controller.name)
+  table.insert(stateEvents, {...})
+  dump(stateEvents)
+end
+
+local function getStateEvents()
+  return stateEvents
+end
+
 local function isPhysicsStepUsed()
   --Check if any controller uses a function relevant to physics step
   return physicsUpdateCount > 0 or fixedStepUpdateCount > 0 or wheelsIntermediateUpdateCount > 0
@@ -1014,6 +1042,9 @@ M.printDebugMethodCalls = printDebugMethodCalls
 
 M.getState = getState
 M.setState = setState
+M.publishStateEvent = publishStateEvent
+M.triggerStateEvent = triggerStateEvent
+M.getStateEvents = getStateEvents
 
 M.isPhysicsStepUsed = isPhysicsStepUsed
 

@@ -35,7 +35,13 @@ function C:setMission(mission)
   self.trafficSimpleVehsInput = im.BoolPtr(self.mission.setupModules.traffic.useSimpleVehs and true or false)
   self.trafficUseCustomGroup = im.BoolPtr(self.mission.setupModules.traffic.useCustomGroup and true or false)
 
-  self.todInput = im.FloatPtr(self.mission.setupModules.timeOfDay.time or 0)
+  self.todInput = im.FloatPtr(self.mission.setupModules.environment.time or 0)
+  self.todScaleInput = im.FloatPtr(self.mission.setupModules.environment.timeScale or 0)
+  self.windSpeedInput = im.FloatPtr(self.mission.setupModules.environment.windSpeed or 0)
+  self.windDirectionInput = im.FloatPtr(self.mission.setupModules.environment.windDirAngle or 0)
+  self.fogDensityInput = im.FloatPtr(self.mission.setupModules.environment.fogDensity or 0)
+  self.todUserSettingInput = im.BoolPtr(self.mission.setupModules.environment.todUserSetting and true or false)
+  self.weatherUserSettingInput = im.FloatPtr(self.mission.setupModules.environment.weatherUserSetting and true or false)
 end
 
 function C:setBackwardsCompatibility()
@@ -46,6 +52,10 @@ function C:setBackwardsCompatibility()
       self.mission.setupModules[k] = deepcopy(v)
     end
   end
+
+  -- remove obsolete setup modules
+  self.mission.setupModules.playerVehicle = nil
+  self.mission.setupModules.timeOfDay = nil
 end
 
 function C:getMissionIssues(m)
@@ -58,7 +68,7 @@ function C:getMissionIssues(m)
     end
   end
 
-  -- TODO: add more issues
+  -- more issues could go here
 
   return issues
 end
@@ -72,6 +82,8 @@ local function todToTime(val)
 end
 
 function C:draw()
+  local inputWidth = 150 * im.uiscale[0]
+
   im.PushID1(self.name)
   im.Columns(2)
   im.SetColumnWidth(0, 150)
@@ -235,39 +247,43 @@ function C:draw()
     end
 
     im.Text("Traffic Setup")
-    im.PushItemWidth(100)
+    im.PushItemWidth(inputWidth)
     if im.InputInt("Amount##traffic", self.trafficAmountInput, 1) then
       setupModule.amount = self.trafficAmountInput[0]
       self.mission._dirty = true
     end
     im.tooltip("Amount of traffic vehicles to spawn; -1 = auto amount")
     im.PopItemWidth()
-    im.PushItemWidth(100)
+
+    im.PushItemWidth(inputWidth)
     if im.InputInt("Active Amount##traffic", self.trafficActiveAmountInput, 1) then
       setupModule.activeAmount = self.trafficActiveAmountInput[0]
       self.mission._dirty = true
     end
     im.tooltip("Amount of active traffic vehicles running at the same time; other vehicles stay hidden until they get cycled.")
     im.PopItemWidth()
+
     if setupModule.amount ~= 0 and setupModule.activeAmount <= 0 then
       im.SameLine()
       im.TextColored(im.ImVec4(1, 1, 0, 1), " Warning: All traffic vehicles will start out as hidden.")
     end
 
-    im.PushItemWidth(100)
+    im.PushItemWidth(inputWidth)
     if im.InputInt("Parked Amount##traffic", self.trafficParkedAmountInput, 1) then
       setupModule.parkedAmount = self.trafficParkedAmountInput[0]
       self.mission._dirty = true
     end
     im.tooltip("Amount of parked vehicles to spawn.")
     im.PopItemWidth()
-    im.PushItemWidth(100)
+
+    im.PushItemWidth(inputWidth)
     if im.InputFloat("Respawn Rate##traffic", self.trafficRespawnRateInput, 0.1, nil, "%.2f") then
       setupModule.respawnRate = self.trafficRespawnRateInput[0]
       self.mission._dirty = true
     end
     im.tooltip("Traffic respawn rate; values can range from 0 to 3.")
     im.PopItemWidth()
+
     if setupModule.respawnRate and setupModule.respawnRate <= 0 then
       im.SameLine()
       im.TextColored(im.ImVec4(1, 1, 0, 1), " Warning: All traffic vehicles will not respawn during gameplay.")
@@ -340,45 +356,62 @@ function C:draw()
 
   im.Separator()
   im.NextColumn()
-  im.Text("Time Of Day")
+  im.Text("Environment")
   im.NextColumn()
 
-  setupModule = self.mission.setupModules.timeOfDay
-  isBlocked = self.blockedSetupModules.timeOfDay
+  setupModule = self.mission.setupModules.environment
+  isBlocked = self.blockedSetupModules.environment
   if isBlocked then
     setupModule.enabled = false
     im.BeginDisabled()
   end
-  if im.Checkbox("##setupModuleTodEnabled", im.BoolPtr(setupModule.enabled)) then
+  if im.Checkbox("##setupModuleEnvironmentEnabled", im.BoolPtr(setupModule.enabled)) then
     setupModule.enabled = not setupModule.enabled
-    if setupModule.enabled then
-      setupModule.time = setupModule.time or (core_environment and core_environment.getTimeOfDay() and core_environment.getTimeOfDay().time)
-    else
-      setupModule.time = nil
-    end
-    self.todInput[0] = setupModule.time or 0
     self.mission._dirty = true
   end
   im.SameLine()
+
   if setupModule.enabled then
-    im.PushItemWidth(100)
+    if not setupModule.time then -- init values
+      setupModule.time = self.todInput[0]
+      setupModule.timeScale = self.todScaleInput[0]
+      setupModule.windSpeed = self.windSpeedInput[0]
+      setupModule.windDirAngle = self.windDirectionInput[0]
+      setupModule.fogDensity = self.fogDensityInput[0]
+      setupModule.todUserSetting = self.todUserSettingInput[0]
+      setupModule.weatherUserSetting = self.weatherUserSettingInput[0]
+    end
+
+    im.Text("Environment Setup")
+    im.PushItemWidth(inputWidth)
     if im.InputFloat("##tod", self.todInput) then
-      self.todInput[0] = math.max(self.todInput[0],0)
-      self.todInput[0] = math.min(self.todInput[0],1)
+      self.todInput[0] = clamp(self.todInput[0], 0, 1)
       setupModule.time = self.todInput[0]
       self.mission._dirty = true
     end
+    im.PopItemWidth()
     im.SameLine()
     im.Text(todToTime(self.todInput[0]))
     im.SameLine()
-    if im.BeginCombo("##todSelector","...") then
-      if im.Selectable1("Now") then
-        setupModule.time = (core_environment and core_environment.getTimeOfDay() and core_environment.getTimeOfDay().time)
-        self.mission._dirty = true
+
+    im.PushItemWidth(100 * im.uiscale[0])
+    if im.BeginCombo("##todSelector", "...") then
+      if core_environment and core_environment.getTimeOfDay() then
+        if im.Selectable1("Default##todSelector") then
+          self.todInput[0] = -1
+          setupModule.time = -1
+          self.mission._dirty = true
+        end
+        if im.Selectable1("Now##todSelector") then
+          local now = core_environment.getTimeOfDay().time
+          self.todInput[0] = now
+          setupModule.time = now
+          self.mission._dirty = true
+        end
       end
       for i = 0, 48 do
         local val = (i / 48 + 0.5) % 1
-        if im.Selectable1(todToTime(val)) then
+        if im.Selectable1(todToTime(val).."##todSelector") then
           setupModule.time = val
           self.todInput[0] = val
           self.mission._dirty = true
@@ -386,13 +419,58 @@ function C:draw()
       end
       im.EndCombo()
     end
+    im.PopItemWidth()
+    im.SameLine()
+    im.Text("Time")
+
+    im.PushItemWidth(inputWidth)
+    if im.InputFloat("Time Scale##environment", self.todScaleInput, 0.1, nil, "%.2f") then
+      self.todScaleInput[0] = math.max(0, self.todScaleInput[0])
+      setupModule.timeScale = self.todScaleInput[0]
+      self.mission._dirty = true
+    end
+    im.tooltip("Set to 0 to ignore this setting.")
+    im.PopItemWidth()
+
+    im.PushItemWidth(inputWidth)
+    if im.InputFloat("Wind Speed##environment", self.windSpeedInput, 0.1, nil, "%.2f") then
+      self.windSpeedInput[0] = math.max(0, self.windSpeedInput[0])
+      setupModule.windSpeed = self.windSpeedInput[0]
+      self.mission._dirty = true
+    end
+    im.PopItemWidth()
+
+    im.PushItemWidth(inputWidth)
+    if im.InputFloat("Wind Direction##environment", self.windDirectionInput, 1, nil, "%.2f") then
+      self.windDirectionInput[0] = clamp(self.windDirectionInput[0], 0, 360)
+      setupModule.windDirAngle = self.windDirectionInput[0]
+      self.mission._dirty = true
+    end
+    im.PopItemWidth()
+
+    im.PushItemWidth(inputWidth)
+    if im.InputFloat("Fog Density##environment", self.fogDensityInput, 0.001, nil, "%.3f") then
+      self.fogDensityInput[0] = clamp(self.fogDensityInput[0], 0, 1)
+      setupModule.fogDensity = self.fogDensityInput[0]
+      self.mission._dirty = true
+    end
+    im.tooltip("Use very low values for typical fog conditions (such as 0.05).")
+    im.PopItemWidth()
+
+    im.PushItemWidth(inputWidth)
+    if im.Checkbox("Enable User Setting for Time##environment", self.todUserSettingInput) then
+      setupModule.todUserSetting = self.todUserSettingInput[0]
+      self.mission._dirty = true
+    end
+    im.tooltip("If true, the user can set the mission time of day.")
+    im.PopItemWidth()
   else
     if isBlocked then
-      im.Text("Time of day setup is not available for this mission type.")
+      im.Text("Environment setup is not available for this mission type.")
     else
-      table.clear(setupModule)
+      table.clear(self.mission.setupModules.environment)
       setupModule.enabled = false
-      im.Text("Select this to set time of day.")
+      im.Text("Select this to enable environment setup.")
     end
   end
   if isBlocked then

@@ -9,17 +9,14 @@ C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'
 
 C.pinSchema = {
-  { dir = 'in', type = 'flow', impulse = true, name = 'resetDrift', description = "Will fire when a tight drift is detected"},
 }
 
 C.tags = {'gameplay', 'utils'}
 
 local callbacks
 function C:work()
-  if self.pinIn.flow.value then
-    self.mgr.modules.drift:resetExtension()
-    self.mgr.modules.drift:resetModule()
-  end
+  gameplay_drift_general.reset()
+  self.mgr.modules.drift:resetModule()
 end
 
 return _flowgraph_createNode(C)

@@ -16,15 +16,12 @@ C.pinSchema = {
   { dir = 'in', type = 'bool', name = 'dontDelete', hidden = true, default = true, description = 'If true, the Prefab will not be deleted when you stop the project.'}
 }
 
-
-
 function C:workOnce()
-  self.mgr.modules.prefab:addPrefab(self.pinIn.id.value, {dontDelete = self.pinIn.dontDelete.value, skipskipNavgraphReload = true, skipCollisionReload = true})
+  self.mgr.modules.prefab:addPrefab(self.pinIn.id.value, {dontDelete = self.pinIn.dontDelete.value, skipNavgraphReload = true, skipCollisionReload = true})
 end
 
 function C:_executionStopped()
 
 end
-
 
 return _flowgraph_createNode(C)

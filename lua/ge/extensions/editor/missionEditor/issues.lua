@@ -94,13 +94,13 @@ local function getSortingFunction(columnIdx)
   return sortByIdx
 end
 
-local severiyColors = {
+local severityColors = {
   error = im.ImVec4(1,0.25, 0.3, 0.95),
   warning = im.ImVec4(1,0.85, 0.15, 0.95),
   minor = im.ImVec4(0.15,0.85, 1, 0.95),
 }
 local function getSeverityColor(type)
-  return severiyColors[type] or im.ImVec4(1, 1, 1, 0.85)
+  return severityColors[type] or im.ImVec4(1, 1, 1, 0.85)
 end
 
 local tableFlags = bit.bor(im.TableFlags_Hideable, im.TableFlags_ScrollY, im.TableFlags_Resizable, im.TableFlags_RowBg, im.TableFlags_Reorderable, im.TableFlags_Sortable, im.TableFlags_Borders)

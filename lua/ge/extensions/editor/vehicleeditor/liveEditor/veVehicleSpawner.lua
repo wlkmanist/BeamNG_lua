@@ -8,6 +8,8 @@ local im = extensions.ui_imgui
 local imguiUtils = require('ui/imguiUtils')
 local wndName = "Vehicle Spawner"
 
+local windowOpen = im.BoolPtr(false)
+
 local vehSelectorWndOpen = im.BoolPtr(false)
 
 local vehsList = {}
@@ -108,8 +110,10 @@ local function vehicleSelectorGui()
   end
 end
 
-local function onEditorGui()
-  if editor.beginWindow(wndName, wndName) then
+local function onUpdate()
+  if windowOpen[0] ~= true then return end
+
+  if im.Begin(wndName, windowOpen) then
     --im.PushItemWidth(100)
     --im.SliderInt("Number of Vehicles", numVehsPtr, 1, 15)
     --im.PopItemWidth()
@@ -136,13 +140,13 @@ local function onEditorGui()
 
     updateFromEditorGui()
   end
-  editor.endWindow()
+  im.End()
 
   vehicleSelectorGui()
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
 local function onEditorInitialized()
@@ -156,12 +160,24 @@ local function onEditorInitialized()
       break
     end
   end
-
-  editor.registerWindow(wndName, im.ImVec2(100,200))
 end
 
-M.onEditorGui = onEditorGui
+
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
+end
+
+M.onUpdate = onUpdate
 M.open = open
 M.onEditorInitialized = onEditorInitialized
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

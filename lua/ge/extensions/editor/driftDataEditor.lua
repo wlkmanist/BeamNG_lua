@@ -9,15 +9,22 @@ local whiteColorF = ColorF(1,1,1,1)
 local blackColorI = ColorI(0,0,0,192)
 
 -- main working data
-local toolWindowName = "Drift data editor"
+local toolWindowName = "Drift editors"
 local currentFileDir = "/gameplay/temp/"
 local currentFileName
 local driftData = nil
 local autoSelectElement = nil
 
 -- editor data
-local selectedElementIndex = 1
+local selectedStuntZoneIndex = 1
 local mouseInfo
+
+-- drift spots editor
+local driftSpotsLoaded = false
+local currDriftSpots = {}
+local selectedDriftSpotId
+local newDriftSpotId = im.ArrayChar(128, "")
+local rawData = im.BoolPtr(false)
 
 local defaultPointsCopy
 local stuntZonesPresets = {
@@ -41,85 +48,18 @@ local function moveStuntZoneOrder(t, old, new)
      table.move(t, old + 1, new, old)
   end
   t[new] = value
-  M.selectElement(new)
+  M.selectStuntZone(new)
 end
 
-local function drawDriftData()
-  im.Columns(2,'mainDrift')
-  -- element selector and "New"
-  im.BeginChild1("element select", im.GetContentRegionAvail(), 1)
-  im.Text("Drift Stunt Zones:")
-  for i, elem in ipairs(driftData.stuntZones) do
-    if im.Selectable1(string.format("%d - %s", i, elem.type), i == selectedElementIndex) then
-      -- select element
-      M.selectElement(i)
-    end
-  end
 
-  im.EndChild()
-
-  im.NextColumn()
-
-  -- element detail
-  im.BeginChild1("element detail", im.GetContentRegionAvail(), 1)
-
-  -- header bar
-  if im.Button("Delete") then
-    table.remove(driftData.stuntZones, selectedElementIndex)
-    -- deletion
-  end
-  im.SameLine()
-  if selectedElementIndex - 1 >= 1 then
-    if im.Button("Move Up") then
-      moveStuntZoneOrder(driftData.stuntZones, selectedElementIndex, selectedElementIndex - 1)
-    end
-    im.SameLine()
-  end
-  if selectedElementIndex + 1 <= #driftData.stuntZones then
-    if im.Button("Move Down") then
-      moveStuntZoneOrder(driftData.stuntZones, selectedElementIndex, selectedElementIndex + 1)
-    end
-  end
-  im.Separator()
-  M.drawElementDetail(driftData.stuntZones[selectedElementIndex])
-  im.EndChild()
-
-  im.NextColumn()
-  im.Columns(0)
-
-  -- then debug drawing
-  for i, elem in ipairs(driftData.stuntZones) do
-    if elem.type == "donut" then
-      debugDrawer:drawTextAdvanced(elem.pos, String(string.format("%d - %s", i, elem.type)), whiteColorF, true, false, blackColorI)
-
-      debugDrawer:drawSphere(elem.pos, elem.scl, ColorF(0,1,0,0.2))
-    end
-
-    if elem.type == "driftThrough" then
-      debugDrawer:drawTextAdvanced(elem.pos, String(string.format("%d - %s", i, elem.type)), whiteColorF, true, false, blackColorI)
-      local x, y, z = elem.rot * vec3(elem.scl.x,0,0), elem.rot * vec3(0,elem.scl.y,0), elem.rot * vec3(0,0,elem.scl.z)
-      local scl = (x+y+z)/2
-      M.drawAxisBox(((-scl*2)+elem.pos),x*2,y*2,z*2,color(0,0,255,0.2*255))
-      --local scl = (x+y+z)
-      --M.drawAxisBox((-scl+elem.pos),x*2,y*2,z*2,color(0,0,255,0.2*255))
-    end
-
-    if elem.type == "hitPole" then
-      debugDrawer:drawTextAdvanced(elem.pos, String(string.format("%d - %s", i, elem.type)), whiteColorF, true, false, blackColorI)
-
-      debugDrawer:drawCylinder(elem.pos, elem.pos + vec3(0,0,3), 0.2,  ColorF(1,0,0,0.2))
-    end
-  end
-end
-
-local transform
+local stuntZoneTransform
 local function drawElementDetail(elem)
   if not elem then return end
 
-  if transform and transform:update(mouseInfo) then
-    elem.pos = transform.allowTranslate and transform.pos or nil
-    elem.rot = transform.allowRotate and transform.rot or nil
-    elem.scl = transform.allowScale and transform.scl or nil
+  if stuntZoneTransform and stuntZoneTransform:update(mouseInfo) then
+    elem.pos = stuntZoneTransform.allowTranslate and stuntZoneTransform.pos or nil
+    elem.rot = stuntZoneTransform.allowRotate and stuntZoneTransform.rot or nil
+    elem.scl = stuntZoneTransform.allowScale and stuntZoneTransform.scl or nil
   end
   if elem.cooldown then
     local rv = im.IntPtr(elem.cooldown)
@@ -146,40 +86,44 @@ local function drawElementDetail(elem)
   end
 end
 
-local function selectElement(index)
-  selectedElementIndex = index
-  local elem = driftData.stuntZones[selectedElementIndex]
+local function createNewTransform(label, allowTranslate, allowRotate, allowScale, pos, rot, scl, oneDimScale)
+  local tr = require('/lua/ge/extensions/editor/util/transformUtil')(label, label)
+  tr.allowTranslate = allowTranslate
+  tr.allowRotate = allowRotate
+  tr.allowScale = allowScale
+  tr:setOneDimensionalScale(oneDimScale)
+  tr:set(pos, rot, scl)
+  tr:enableEditing()
+  return tr
+end
+
+local transformsUtils = {}
+local function selectDriftSpot(id)
+  selectedDriftSpotId = id
+  transformsUtils = {}
+  for lineName, lineData in pairs(currDriftSpots[selectedDriftSpotId].lines) do
+    transformsUtils[lineName.."driftBox"] = createNewTransform("Sign pos", true, true, true, lineData.pos, quatFromEuler(lineData.rot.x, lineData.rot.y, lineData.rot.z), lineData.scl)
+    transformsUtils[lineName.."startDir"] = createNewTransform("Entry dir", true, false, false, lineData.pos + lineData.startDir, nil, nil)
+  end
+end
+
+local function selectStuntZone(index)
+  selectedStuntZoneIndex = index
+  local elem = driftData.stuntZones[selectedStuntZoneIndex]
   local label = string.format("%d-%s",index, elem.type)
 
-  transform = nil
+  stuntZoneTransform = nil
 
   if elem.type == "donut" then
-    transform = require('/lua/ge/extensions/editor/util/transformUtil')(label, label)
-    transform.allowTranslate = true
-    transform.allowRotate = false
-    transform.allowScale = true
-    transform:setOneDimensionalScale(true)
-    transform:set(elem.pos, nil, elem.scl)
-    transform:enableEditing()
+    stuntZoneTransform = createNewTransform(label, true, false, true, elem.pos, nil, elem.scl, true)
   end
 
   if elem.type == "driftThrough" then
-    transform = require('/lua/ge/extensions/editor/util/transformUtil')(label, label)
-    transform.allowTranslate = true
-    transform.allowRotate = true
-    transform.allowScale = true
-    transform:setOneDimensionalScale(false)
-    transform:set(elem.pos, elem.rot, elem.scl)
-    transform:enableEditing()
+    stuntZoneTransform = createNewTransform(label, true, true, true, elem.pos, elem.rot, elem.scl, false)
   end
 
   if elem.type == "hitPole" then
-    transform = require('/lua/ge/extensions/editor/util/transformUtil')(label, label)
-    transform.allowTranslate = true
-    transform.allowRotate = false
-    transform.allowScale = false
-    transform:set(elem.pos, nil, nil)
-    transform:enableEditing()
+    stuntZoneTransform = createNewTransform(label, true, false, false, elem.pos, nil, nil, false)
   end
 end
 
@@ -218,103 +162,401 @@ local function loadDriftData(filename)
 
   driftData = json
 
-  M.selectElement(1)
+  M.selectStuntZone(1)
+end
+
+local function clearStuntZonesEditor()
+  currentFileDir = "/gameplay/temp/"
+  currentFileName = nil
+  driftData = getNewDriftData()
+end
+
+local function sanitizeDriftSpot(spotData)
+  local newDriftSpot = {
+    racePath = spotData.racePath,
+    bounds = spotData.bounds,
+    lines = {},
+    id = spotData.id,
+    name = spotData.name
+  }
+  for lineName, lineData in pairs(spotData.lines) do
+    local newLineData = {
+      pos = vec3(lineData.pos),
+      scl = vec3(lineData.scl),
+      rot = quat(lineData.rot),
+      startDir = vec3(lineData.startDir),
+    }
+
+    newDriftSpot.lines[lineName] = newLineData
+  end
+  return newDriftSpot
+end
+
+local function loadDriftSpotsForCurrLevel()
+  local tempSpot
+  for _, spotData in pairs(gameplay_drift_saveLoad.loadAndSanitizeDriftFreeroamSpotsCurrMap()) do
+    tempSpot = sanitizeDriftSpot(spotData)
+    currDriftSpots[tempSpot.id] = tempSpot
+  end
+end
+
+local function deleteDriftSpot(spotId)
+  currDriftSpots[spotId] = nil
+  for key, value in pairs(currDriftSpots) do
+    selectDriftSpot(key)
+    break
+  end
+  FS:remove(gameplay_drift_saveLoad.getDriftSpotFilePath(spotId))
+end
+
+local function saveCurrentDriftSpots()
+  for spotId, spotData in pairs(currDriftSpots) do
+    local newSpotData = {}
+    for lineName, lineData in pairs(spotData.lines) do
+      local newLineData = {
+        pos = lineData.pos:toTable(),
+        scl = lineData.scl:toTable(),
+        rot = lineData.rot:toTable(),
+        startDir = lineData.startDir:toTable(),
+        signPos = lineData.signPos:toTable(),
+        signRot = lineData.signRot:toTable(),
+        drawnLine = {lineData.drawnLine[1]:toTable(), lineData.drawnLine[2]:toTable()},
+      }
+      newSpotData[lineName] = newLineData
+    end
+    gameplay_drift_saveLoad.saveDriftSpot(newSpotData, spotId)
+  end
+end
+
+local function createNewDriftSpot(name)
+  name = getCurrentLevelIdentifier().."/"..name
+  if currDriftSpots[name] then return end
+  local camPos = core_camera.getPosition()
+  local spotData = {
+    lines = {},
+    racePath = gameplay_drift_saveLoad.getDriftSpotFilePath(name) .. "/race.race.json",
+    bounds = gameplay_drift_saveLoad.getDriftSpotFilePath(name) .. "/bounds.sites.json"
+  }
+
+  for i = 1, 2, 1 do
+    local newLineData = {
+      pos = camPos:toTable(),
+      scl = vec3(1, 1, 1):toTable(),
+      rot = quat(0, 0, 0, 1):toTable(),
+      startDir = vec3(0,0,0),
+    }
+
+    spotData.lines[i == 1 and "lineOne" or "lineTwo"] = newLineData
+  end
+
+  jsonWriteFile(spotData.racePath, {}, true)
+  jsonWriteFile(spotData.bounds, {}, true)
+  gameplay_drift_saveLoad.saveDriftSpot(spotData.lines, name)
+
+  currDriftSpots[name] = sanitizeDriftSpot(spotData)
+
+  selectDriftSpot(name)
+end
+
+local function driftStuntZonesEditor()
+  -- menu bar to load/save/etc
+  if im.BeginMenuBar() then
+    if im.BeginMenu("File") then
+
+      if im.MenuItem1("Load...") then
+        editor_fileDialog.openFile(function(data) loadDriftData(data.filepath) end, {{"driftData Files",".driftData.json"}}, false, currentFileDir)
+      end
+      local canSave = currentFileDir and currentFileName and driftData
+      if not canSave then im.BeginDisabled() end
+      if im.MenuItem1("Save") then
+        saveDriftData(currentFileDir .. currentFileName)
+      end
+      if not canSave then im.EndDisabled() end
+      if im.MenuItem1("Save as...") then
+        extensions.editor_fileDialog.saveFile(function(data) saveDriftData(data.filepath) end, {{"driftData Files",".driftData.json"}}, false, currentFileDir)
+      end
+      if im.MenuItem1("Clear") then
+        clearStuntZonesEditor()
+      end
+      if im.MenuItem1("Create Stunt Zones around Vehicle") then
+        local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
+        if obj then
+          local pos = obj:getPosition()
+          driftData = { stuntZones = {{type = "donut", pos = pos + vec3(10, 0, 0), scl = 10},{type = "driftThrough", rot = quat(0, 0, 0, 1), pos = pos + vec3(10, 20, 0), scl = vec3(8, 1, 1)},{type = "hitPole", pos = pos + vec3(-10, 0, 0)}}}
+        end
+      end
+      im.EndMenu()
+    end
+
+    if im.BeginMenu("Add new stunt zone...") then
+      if im.MenuItem1("Add Donut") then
+        local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
+        if obj then
+          local pos = obj:getPosition()
+          table.insert(driftData.stuntZones,
+          {
+            type = "donut",
+            cooldown = 8,
+            pos = pos + vec3(10, 0, 0),
+            scl = 10,
+            score = shallowcopy(defaultPointsCopy.donutPoints)
+          })
+          autoSelectElement = #driftData.stuntZones
+        end
+      end
+      if im.MenuItem1("Add Drift Through") then
+        local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
+        if obj then
+          local pos = obj:getPosition()
+          table.insert(driftData.stuntZones,
+          {
+            type = "driftThrough",
+            cooldown = 8,
+            rot = quat(0, 0, 0, 1),
+            pos = pos + vec3(10, 20, 0),
+            scl = vec3(8, 1, 1),
+            score = shallowcopy(defaultPointsCopy.driftThroughPoints)
+          })
+          autoSelectElement = #driftData.stuntZones
+        end
+      end
+      if im.MenuItem1("Add Hit Pole") then
+        local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
+        if obj then
+          local pos = obj:getPosition()
+          table.insert(driftData.stuntZones,
+          {
+            type = "hitPole",
+            pos = pos + vec3(-10, 0, 0),
+            score = shallowcopy(defaultPointsCopy.hitPolePoints)
+          })
+          autoSelectElement = #driftData.stuntZones
+        end
+      end
+      im.EndMenu()
+    end
+    im.EndMenuBar()
+  end
+
+  if #driftData.stuntZones > 0 then
+    M.updateMouseInfo()
+    if autoSelectElement then
+      M.selectStuntZone(autoSelectElement)
+    end
+
+    im.Columns(2,'mainDrift')
+    -- element selector and "New"
+    im.BeginChild1("element select", im.GetContentRegionAvail(), 1)
+    im.Text("Drift Stunt Zones:")
+    for i, elem in ipairs(driftData.stuntZones) do
+      if im.Selectable1(string.format("%d - %s", i, elem.type), i == selectedStuntZoneIndex) then
+        -- select element
+        M.selectStuntZone(i)
+      end
+    end
+
+    im.EndChild()
+
+    im.NextColumn()
+
+    -- element detail
+    im.BeginChild1("element detail", im.GetContentRegionAvail(), 1)
+
+    -- header bar
+    if im.Button("Delete") then
+      table.remove(driftData.stuntZones, selectedStuntZoneIndex)
+      -- deletion
+    end
+    im.SameLine()
+    if selectedStuntZoneIndex - 1 >= 1 then
+      if im.Button("Move Up") then
+        moveStuntZoneOrder(driftData.stuntZones, selectedStuntZoneIndex, selectedStuntZoneIndex - 1)
+      end
+      im.SameLine()
+    end
+    if selectedStuntZoneIndex + 1 <= #driftData.stuntZones then
+      if im.Button("Move Down") then
+        moveStuntZoneOrder(driftData.stuntZones, selectedStuntZoneIndex, selectedStuntZoneIndex + 1)
+      end
+    end
+    im.Separator()
+    M.drawElementDetail(driftData.stuntZones[selectedStuntZoneIndex])
+    im.EndChild()
+
+    im.NextColumn()
+    im.Columns(0)
+
+    -- then debug drawing
+    for i, elem in ipairs(driftData.stuntZones) do
+      if elem.type == "donut" then
+        debugDrawer:drawTextAdvanced(elem.pos, String(string.format("%d - %s", i, elem.type)), whiteColorF, true, false, blackColorI)
+
+        debugDrawer:drawSphere(elem.pos, elem.scl, ColorF(0,1,0,0.2))
+      end
+
+      if elem.type == "driftThrough" then
+        debugDrawer:drawTextAdvanced(elem.pos, String(string.format("%d - %s", i, elem.type)), whiteColorF, true, false, blackColorI)
+        local x, y, z = elem.rot * vec3(elem.scl.x,0,0), elem.rot * vec3(0,elem.scl.y,0), elem.rot * vec3(0,0,elem.scl.z)
+        local scl = (x+y+z)/2
+        M.drawAxisBox(((-scl*2)+elem.pos),x*2,y*2,z*2,color(0,0,255,0.2*255))
+        --local scl = (x+y+z)
+        --M.drawAxisBox((-scl+elem.pos),x*2,y*2,z*2,color(0,0,255,0.2*255))
+      end
+
+      if elem.type == "hitPole" then
+        debugDrawer:drawTextAdvanced(elem.pos, String(string.format("%d - %s", i, elem.type)), whiteColorF, true, false, blackColorI)
+        debugDrawer:drawCylinder(elem.pos, elem.pos + vec3(0,0,3), 0.2,  ColorF(1,0,0,0.2))
+      end
+    end
+
+
+  end
+  autoSelectElement = nil
+
+end
+
+local function driftSpotsEditor()
+  if not driftSpotsLoaded then
+    loadDriftSpotsForCurrLevel()
+    driftSpotsLoaded = true
+  end
+
+  if im.BeginMenuBar() then
+    if im.BeginMenu("File") then
+      if im.MenuItem1("Save changes") then
+        saveCurrentDriftSpots()
+      end
+      if im.MenuItem1("Revert changes to last save") then
+        loadDriftSpotsForCurrLevel()
+      end
+      im.EndMenu()
+    end
+    im.EndMenuBar()
+  end
+
+  im.Columns(2, "DriftSpotsCurrLevel")
+
+  im.BeginChild1("driftSpots", im.GetContentRegionAvail(), 1)
+  im.TextWrapped("Drift spots in the current level: ")
+  for spotId, spotData in pairs(currDriftSpots) do
+    if im.Selectable1(spotId, spotId == selectedDriftSpotId) then
+      selectDriftSpot(spotId)
+    end
+  end
+
+  im.Separator()
+  im.InputText("Spot id", newDriftSpotId)
+  if im.Button("Create new drift spot") then
+    if #ffi.string(newDriftSpotId) > 0 then
+      createNewDriftSpot(ffi.string(newDriftSpotId))
+      newDriftSpotId = im.ArrayChar(128, "")
+    end
+  end
+  im.EndChild()
+
+  im.NextColumn()
+
+  im.BeginChild1("Drift spots details", im.GetContentRegionAvail(), 1)
+  if selectedDriftSpotId then
+    im.Checkbox("Raw data", rawData)
+    if rawData[0] then
+      if im.Begin("Raw drift spot's data") then
+        im.Text(dumps(currDriftSpots[selectedDriftSpotId]))
+        im.End()
+      end
+    end
+    if im.Button("Delete") then
+      deleteDriftSpot(selectedDriftSpotId)
+    end
+    im.Text("Drift spot's path")
+    im.SameLine()
+    if im.Button("Open Race Editor") then
+      if editor_raceEditor then
+        if not editor.active then
+          editor.setEditorActive(true)
+        end
+        editor_raceEditor.show()
+        if currDriftSpots[selectedDriftSpotId].racePath then
+          editor_raceEditor.loadRace(currDriftSpots[selectedDriftSpotId].racePath)
+        end
+      end
+    end
+    im.Text("Drift spot's bounds")
+    im.SameLine()
+    if im.Button("Open Sites Editor") then
+      if editor_sitesEditor then
+        if not editor.active then
+          editor.setEditorActive(true)
+        end
+        editor_sitesEditor.show()
+        if currDriftSpots[selectedDriftSpotId].bounds then
+          editor_sitesEditor.loadSites(currDriftSpots[selectedDriftSpotId].bounds)
+        end
+      end
+    end
+    im.Separator()
+    for lineName, lineData in pairs(currDriftSpots[selectedDriftSpotId].lines) do
+      im.Text(lineName)
+      im.Dummy(im.ImVec2(1, 5))
+
+      -- drift detection box
+      local x, y, z = lineData.rot * vec3(lineData.scl.x,0,0), lineData.rot * vec3(0,lineData.scl.y,0), lineData.rot * vec3(0,0,lineData.scl.z)
+      local scl = (x+y+z)/2
+      im.Text("Drift detection box")
+      debugDrawer:drawTextAdvanced(vec3(lineData.pos), String(lineName), whiteColorF, true, false, blackColorI)
+      M.drawAxisBox(((-scl*2)+vec3(lineData.pos)),x*2,y*2,z*2,color(0,0,255,0.2*255))
+      local driftBoxTr = transformsUtils[lineName.."driftBox"]
+      if driftBoxTr and driftBoxTr:update(mouseInfo) then
+        lineData.pos = driftBoxTr.allowTranslate and driftBoxTr.pos or nil
+        lineData.rot = driftBoxTr.allowRotate and driftBoxTr.rot or nil
+        lineData.scl = driftBoxTr.allowScale and driftBoxTr.scl or nil
+      end
+
+      im.Dummy(im.ImVec2(1, 10))
+
+      im.Text("Start dir")
+      debugDrawer:drawTextAdvanced(lineData.startDir + lineData.pos, "Start dir", whiteColorF, true, false, blackColorI)
+      debugDrawer:drawCylinder(lineData.startDir + lineData.pos, lineData.startDir + lineData.pos + vec3(0,0,2), 0.2,  ColorF(0,0,1,0.2))
+      local startDirTr = transformsUtils[lineName.."startDir"]
+      if startDirTr and startDirTr:update(mouseInfo) then
+        lineData.startDir = startDirTr.allowTranslate and startDirTr.pos - lineData.pos or nil
+      end
+
+      if lineName == "lineOne" then
+        im.Dummy(im.ImVec2(1, 10))
+        im.Separator()
+        im.Dummy(im.ImVec2(1, 10))
+      end
+    end
+  end
+  im.EndChild()
+
+  im.NextColumn()
+  im.Columns(0)
 end
 
 local function onEditorGui()
   if editor.beginWindow(toolWindowName,toolWindowName, im.WindowFlags_MenuBar) then
-    defaultPointsCopy = gameplay_drift_scoring.getScoreOptions().defaultPoints
 
-    -- menu bar to load/save/etc
-    if im.BeginMenuBar() then
-      if im.BeginMenu("File") then
+    if getCurrentLevelIdentifier() ~= nil then
+      defaultPointsCopy = gameplay_drift_scoring.getScoreOptions().defaultPoints
 
-        if im.MenuItem1("Load...") then
-          editor_fileDialog.openFile(function(data) loadDriftData(data.filepath) end, {{"driftData Files",".driftData.json"}}, false, currentFileDir)
+      if im.BeginTabBar("mp_tabs##") then
+        if im.BeginTabItem("Drift stunt zones editor") then
+          driftStuntZonesEditor()
+          im.EndTabItem()
         end
-        local canSave = currentFileDir and currentFileName and driftData
-        if not canSave then im.BeginDisabled() end
-        if im.MenuItem1("Save") then
-          saveDriftData(currentFileDir .. currentFileName)
+        if im.BeginTabItem("Drift spots editor") then
+          driftSpotsEditor()
+          M.clearStuntZonesEditor()
+          im.EndTabItem()
         end
-        if not canSave then im.EndDisabled() end
-        if im.MenuItem1("Save as...") then
-          extensions.editor_fileDialog.saveFile(function(data) saveDriftData(data.filepath) end, {{"driftData Files",".driftData.json"}}, false, currentFileDir)
-        end
-        if im.MenuItem1("Clear") then
-          currentFileDir = "/gameplay/temp/"
-          currentFileName = nil
-          driftData = getNewDriftData()
-        end
-        if im.MenuItem1("Create Stunt Zones around Vehicle") then
-          local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
-          if obj then
-            local pos = obj:getPosition()
-            driftData = { stuntZones = {{type = "donut", pos = pos + vec3(10, 0, 0), scl = 10},{type = "driftThrough", rot = quat(0, 0, 0, 1), pos = pos + vec3(10, 20, 0), scl = vec3(8, 1, 1)},{type = "hitPole", pos = pos + vec3(-10, 0, 0)}}}
-          end
-        end
-        im.EndMenu()
+        im.EndTabBar()
       end
-
-      if im.BeginMenu("Add new stunt zone...") then
-        if im.MenuItem1("Add Donut") then
-          local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
-          if obj then
-            local pos = obj:getPosition()
-            table.insert(driftData.stuntZones,
-            {
-              type = "donut",
-              cooldown = 8,
-              pos = pos + vec3(10, 0, 0),
-              scl = 10,
-              score = shallowcopy(defaultPointsCopy.donutPoints)
-            })
-            autoSelectElement = #driftData.stuntZones
-          end
-        end
-        if im.MenuItem1("Add Drift Through") then
-          local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
-          if obj then
-            local pos = obj:getPosition()
-            table.insert(driftData.stuntZones,
-            {
-              type = "driftThrough",
-              cooldown = 8,
-              rot = quat(0, 0, 0, 1),
-              pos = pos + vec3(10, 20, 0),
-              scl = vec3(8, 1, 1),
-              score = shallowcopy(defaultPointsCopy.driftThroughPoints)
-            })
-            autoSelectElement = #driftData.stuntZones
-          end
-        end
-        if im.MenuItem1("Add Hit Pole") then
-          local obj = scenetree.findObjectById(be:getPlayerVehicleID(0))
-          if obj then
-            local pos = obj:getPosition()
-            table.insert(driftData.stuntZones,
-            {
-              type = "hitPole",
-              pos = pos + vec3(-10, 0, 0),
-              score = shallowcopy(defaultPointsCopy.hitPolePoints)
-            })
-            autoSelectElement = #driftData.stuntZones
-          end
-        end
-        im.EndMenu()
-      end
-      im.EndMenuBar()
-
+    else
+      im.Text("Be in a level to work with the drift editor")
     end
 
-    if #driftData.stuntZones > 0 then
-      M.updateMouseInfo()
-      if autoSelectElement then
-        M.selectElement(autoSelectElement)
-      end
-      drawDriftData()
-    end
-    autoSelectElement = nil
     editor.endWindow()
   end
 end
@@ -335,7 +577,7 @@ end
 
 local function onSerialize()
   local ret = {
-    selectedElementIndex = selectedElementIndex,
+    selectedStuntZoneIndex = selectedStuntZoneIndex,
     currentFileDir = currentFileDir,
     currentFileName = currentFileName,
     driftData = driftData,
@@ -347,8 +589,8 @@ local function onDeserialized(data)
   currentFileDir = data.currentFileDir or currentFileDir
   currentFileName = data.currentFileName or currentFileName
   driftData = data.driftData or driftData
-  if data.selectedElementIndex then
-    autoSelectElement = data.selectedElementIndex
+  if data.selectedStuntZoneIndex then
+    autoSelectElement = data.selectedStuntZoneIndex
   end
 end
 
@@ -455,5 +697,6 @@ M.onEditorGui = onEditorGui
 M.drawElementDetail = drawElementDetail
 
 -- INTERNAL
-M.selectElement = selectElement
+M.selectStuntZone = selectStuntZone
+M.clearStuntZonesEditor = clearStuntZonesEditor
 return M

@@ -13,7 +13,6 @@ local secondaryOutputID = 2
 
 local max = math.max
 local min = math.min
-local fsign = fsign
 local sqrt = math.sqrt
 
 local function updateVelocity(device, dt)

@@ -5,10 +5,10 @@
 local M = {}
 
 local function sortByStartable(m1, m2)
-  if m1.tier ~= m2.tier then
-    return m1.tier < m2.tier
+  if m1.unlocks.maxBranchlevel ~= m2.unlocks.maxBranchlevel then
+    return m1.unlocks.maxBranchlevel < m2.unlocks.maxBranchlevel
   end
-  return m1.startable and not m2.startable
+  return m1.unlocks.startable and not m2.unlocks.startable
 end
 
 local function sortByFacId(f1, f2)
@@ -56,7 +56,15 @@ local function getSkillsProgressForUi(branchId)
         unlockInfo = {},
         order = skill.order,
         isInDevelopment = skill.isInDevelopment,
+        hasLevels = skill.hasLevels,
       }
+
+      if skill.showProgressAsStars then
+        local total, unlocked = career_modules_branches_leagues.getStarsForSkill(skill.id)
+        skData.levelLabel = nil
+        skData.min, skData.value, skData.max = 0, unlocked, total
+        skData.showProgressAsStars = true
+      end
 
       local unlocks = skill.levels
 
@@ -195,17 +203,17 @@ local function getFacilityAvailableOrders(fac)
       modifierKeys[mod.type] = true
     end
     local lockedBecauseOfMods, minTier = career_modules_delivery_parcelMods.lockedBecauseOfMods(modifierKeys)
-    amounts[minTier] = amounts[minTier] + 1 
+    amounts[minTier] = amounts[minTier] + 1
     amounts.total = amounts.total + 1
   end
-  
+
   table.insert(ret, {
     icon = "cardboardBox",
     label = "Available Parcels",
     amounts = amounts,
     level = career_branches.getBranchLevel("delivery"),
   })
-  
+
   -- trailers + vehicles
   for _, t in ipairs({
     {key="trailer", icon="smallTrailer", label="Available Trailers", skill="delivery"},
@@ -215,7 +223,7 @@ local function getFacilityAvailableOrders(fac)
     for _, item in ipairs(career_modules_delivery_vehicleOfferManager.getAllOfferAtFacilityUnexpired(fac.id)) do
       if item.data.type == t.key then
         local enabled, reason = career_modules_delivery_vehicleOfferManager.isVehicleTagUnlocked(item.vehicle.unlockTag)
-        amounts[reason.level] = amounts[reason.level] + 1 
+        amounts[reason.level] = amounts[reason.level] + 1
         amounts.total = amounts.total + 1
       end
     end
@@ -291,6 +299,7 @@ local function getBranchPageData(branchId)
       name = branchData.name,
       icon = branchData.icon,
       glyphIcon = branchData.icon,
+      color = branchData.color,
       id = attKey,
       levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
       min = min,
@@ -302,38 +311,83 @@ local function getBranchPageData(branchId)
     branch.details = branchData
   end
 
+  branch.leagues = career_modules_branches_leagues.getLeaguesForProgressBranchPage(branchId)
+
   --get the missions by branch and type
-  local missions = {}
-  for i,m in ipairs(gameplay_missions_missions.get()) do
-    if m.careerSetup.showInCareer and m.careerSetup.branch == branchId then
-      table.insert(missions, m)
+
+  local i = 1
+  for _, skill in ipairs(career_branches.getSortedBranches()) do
+    if skill.isSkill and skill.parentBranch == branchId then
+      local missions = {}
+      for i,m in ipairs(gameplay_missions_missions.get()) do
+        if m.careerSetup.showInCareer and m.careerSetup.skill == skill.id and not career_modules_branches_leagues.startConditionIncludesLeague(m.startCondition) and not m.devMission then
+          table.insert(missions, m)
+          --dump(m.id, m.unlocks.maxBranchlevel)
+        end
+      end
+      -- local driftSpots = {}
+      -- if skill.id == "drift" then
+      --   for i,ds in pairs(gameplay_drift_saveLoad.getDriftSpotsById()) do
+      --     if not ds._isInLeague then
+      --       table.insert(driftSpots, ds)
+      --     end
+      --   end
+      -- end
+
+       if next(missions) then
+         table.sort(missions, sortByStartable)
+         local noLeague = career_modules_branches_leagues.getNoLeague(skill, missions, driftSpots)
+         noLeague.skillId = skill.id
+         table.insert(branch.leagues, i, noLeague)
+         i = i+1
+       end
     end
   end
 
+
   --Sort the misison tables and add them to the main table that will be send to the UI
-  branch.missions = {}
-  for i, m in ipairs(missions) do
-    table.insert(branch.missions, {
-      order = i,
-      skill = {m.careerSetup.skill},
-      rewards = getRewardIcons(m.careerSetup.starRewards),
-      id = m.id,
-      icon = m.bigMapIcon.icon,
-      label = m.name,
-      description = m.description,
-      formattedProgress =  gameplay_missions_progress.formatSaveDataForUi(m.id),
-      startable = m.unlocks.startable,
-      preview = m.previewFile,
-      locked = not m.unlocks.visible,
-      tier = m.unlocks.maxBranchlevel,
-      thumbnailFile = m.thumbnailFile,
-      difficulty = m.additionalAttributes.difficulty,
-      color = branchData.color,
-      blockedColor = changeDarknesssColor(branchData.color, 100)
-    })
+  for _, league in ipairs(branch.leagues) do
+    for i, mId in ipairs(league.missions) do
+      local m = gameplay_missions_missions.getMissionById(mId)
+      league.missions[i] = M.formatMission(m)
+    end
+
+    for i, dsId in ipairs(league.driftSpots or {}) do
+      local spot = gameplay_drift_saveLoad.getDriftSpotById(dsId)
+      league.driftSpots[i] = M.formatDriftSpot(spot)
+    end
+
   end
 
-  table.sort(branch.missions, sortByStartable)
+--[[
+  local driftLeague = {
+    id = "driftSpotLeague",
+    name = "Drift Spots",
+    icon = "drift02",
+    description = "Drift spots around the map.",
+    skillId = "drift",
+    missions = {},
+    _unlocked = true,
+    totalStarsAvailable = 0,
+    totalStarsObtained = 0,
+  }
+  local driftSpots = {}
+  for id, ds in pairs(gameplay_drift_saveLoad.getDriftSpotsById()) do
+    table.insert(driftSpots, ds)
+  end
+  table.sort(driftSpots, function(a,b) return a.id<b.id end)
+  local driftSpotsFormatted = {}
+  for _, ds in ipairs(driftSpots) do
+    driftLeague.totalStarsAvailable = driftLeague.totalStarsAvailable + #ds.info.objectives
+    local formatted = M.formatDriftSpot(ds)
+    if formatted.formattedProgress then
+      driftLeague.totalStarsObtained = driftLeague.totalStarsObtained + formatted.formattedProgress.unlockedStars.defaultCount
+    end
+    table.insert(driftLeague.missions, formatted)
+  end
+  table.insert(branch.leagues, 1, driftLeague)
+]]
+
 
   if branch.details.attributeKey == "labourer" then
     branch.facilities = getFacilitiesData(branchData.color)
@@ -381,7 +435,14 @@ local function getBranchSkillCardData(branchId)
         value = value,
         max = max,
         isInDevelopment = skill.isInDevelopment,
+        hasLevels = skill.hasLevels,
       }
+      if skill.showProgressAsStars then
+        local total, unlocked = career_modules_branches_leagues.getStarsForSkill(skill.id)
+        skillInfo.levelLabel = nil
+        skillInfo.min, skillInfo.value, skillInfo.max = 0, unlocked, total
+        skillInfo.showProgressAsStars = true
+      end
       table.insert(branchInfo.skills, skillInfo)
     end
   end
@@ -396,4 +457,47 @@ M.getBranchPageData = getBranchPageData
 M.getBranchSkillCardData = getBranchSkillCardData
 M.openBigMapWithMissionSelected = openBigMapWithMissionSelected
 
+local formatMission = function(m)
+  return {
+    skill = {m.careerSetup.skill},
+    id = m.id,
+    icon = m.bigMapIcon.icon,
+    label = m.name,
+    formattedProgress =  gameplay_missions_progress.formatSaveDataForUi(m.id),
+    startable = m.unlocks.startable,
+    preview = m.previewFile,
+    locked = not m.unlocks.visible,
+  }
+end
+M.formatMission = formatMission
+
+
+local formatDriftSpot = function(ds)
+  local ret = {
+    skill = {"drift"},
+    id = ds.id,
+    icon = "drift02",
+    label = ds.info.name,
+    startable = true,
+    preview = ds.info.preview,
+  }
+  if ds.info.objectives then
+    local defaults = {}
+    local defaultCount = 0
+    for _, obj in ipairs(ds.info.objectives) do
+      table.insert(defaults, ds.saveData.objectivesCompleted[obj.id] or false)
+      defaultCount = defaultCount + (ds.saveData.objectivesCompleted[obj.id] and 1 or 0)
+    end
+    local formattedProgress = {
+      unlockedStars = {
+        totalBonusStarCount = 0,
+        defaults = defaults,
+        defaultCount = defaultCount
+      }
+    }
+    ret.formattedProgress = formattedProgress
+  end
+  return ret
+end
+M.formatDriftSpot = formatDriftSpot
 return M

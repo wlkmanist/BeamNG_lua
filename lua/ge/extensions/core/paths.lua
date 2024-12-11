@@ -155,9 +155,12 @@ local function loadPath(pathFileName)
       positionSmooth = markerData.positionSmooth or defaultSplineSmoothing,
       bullettime = markerData.bullettime or 1,
       cut = markerData.cut,
-      movingStart = markerData.movingStart or true,
-      movingEnd = markerData.movingEnd or true
+      movingStart = markerData.movingStart,
+      movingEnd = markerData.movingEnd
     }
+    if marker.movingStart == nil then marker.movingStart = true end
+    if marker.movingEnd == nil then marker.movingEnd = true end
+
     table.insert(res.markers, marker)
   end
   -- fix up the rotations

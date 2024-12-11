@@ -177,10 +177,12 @@ M.getMissionEditorForType = getMissionEditorForType
 
 local noPreviewFilepath = "/ui/modules/gameContext/noPreview.jpg"
 local noThumbFilepath = "/ui/modules/gameContext/noThumb.jpg"
+local noVehicleThumbFilepath = "/ui/modules/gameContext/playerVehicle.jpg"
 local previewFilenames = {"/preview.jpg","/preview.png","/preview.jpeg"}
 local thumbFilenames = {"/thumbnail.jpg","/thumbnail.png","/thumbnail.jpeg"}
 M.getNoPreviewFilepath = function() return noPreviewFilepath end
 M.getNoThumbFilepath = function() return noThumbFilepath end
+M.getNoVehicleThumbFilepath = function() return noVehicleThumbFilepath end
 
 local function getMissionPreviewFilepath(missionData)
   -- check in mission Dir
@@ -267,7 +269,7 @@ end
 local defaultMissionTips = {"missions.missions.tips.restart", "missions.missions.tips.bonusStars", "missions.missions.tips.settings", "missions.missions.tips.ratings", "missions.missions.tips.difficulty"}
 local function sanitizeMissionAfterCreation(mission)
   mission.bigMapIcon = mission.bigMapIcon or {}
-  mission.bigMapIcon.icon = mission.bigMapIcon.icon or "mission_primary_01"
+  mission.bigMapIcon.icon = mission.bigMapIcon.icon or "mission_primary_triangle"
   mission.careerSetup._activeStarCache = {}
   local sortedStars, defaultKeysSorted, bonusKeysSorted, defaultStarKeysCache, bonusStarKeysCache = orderStarKeysDefaultThenBonus(mission)
   mission.careerSetup._activeStarCache.sortedStars = sortedStars
@@ -419,7 +421,7 @@ local function sanitizeMission(missionData, filepath)
 
   missionData.setupModules = missionData.setupModules or {}
   missionData.setupData = {stashedVehicles = {}}
-  for _, modName in ipairs({'vehicles', 'traffic', 'timeOfDay'}) do
+  for _, modName in ipairs({'vehicles', 'traffic', 'environment'}) do
     missionData.setupModules[modName] = missionData.setupModules[modName] or {enabled = false}
   end
 
@@ -615,7 +617,7 @@ local function get()
       end
       if type(mission) == 'string' then
         log("E", "", "Unable to construct mission "..dumps(missionData.id).." of type "..dumps(missionData.missionType)..", something went wrong:")
-        print(mission)
+        log("E", "", mission)
         goto continue
       end
 
@@ -633,7 +635,7 @@ local function get()
 
         if err then
           log("E", "", "Mission specific constructor of mission "..dumps(missionData.id).." failed to resolve, something went wrong:")
-          print(err)
+          log("E", "", err)
         end
       end
 
@@ -674,6 +676,9 @@ local function get()
       mission.saveData = gameplay_missions_progress.loadMissionSaveData(mission)
       gameplay_missions_progress.reduceCareerRewardsForDefaultStars(mission)
     end
+
+    -- check if career wants to do anything with mission after loading...
+    extensions.hook("onMissionsLoadedFromFiles", missionsById)
 
     gameplay_missions_unlocks.setUnlockForwardBackward(missions)
     gameplay_missions_unlocks.updateUnlockStatus(missions)
@@ -833,10 +838,11 @@ local function onActivityAcceptGatherData(elemData, activityData)
         preheadings = preheadings,
         props = props,
         buttonLabel = "missions.missions.general.accept.viewDetails",
-        buttonFun = function()  gameplay_markerInteraction.setPreselectedMissionId(m.id) guihooks.trigger('MenuOpenModule','menu.careermission') end,
+        buttonFun = function()  gameplay_missions_missionScreen.setPreselectedMissionId(m.id) guihooks.trigger('MenuOpenModule','mission-details') end,
         sorting = {
           type = "mission",
-          id = m.id
+          id = m.id,
+          order = m.unlocks.depth,
         }
       }
       table.insert(activityData, data)

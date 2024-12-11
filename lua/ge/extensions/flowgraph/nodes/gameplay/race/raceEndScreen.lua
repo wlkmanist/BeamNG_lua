@@ -171,7 +171,7 @@ function C:buttonPushed(action)
 end
 
 function C:getCmd(action)
-  return 'core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']:buttonPushed("'..action..'")'
+  return 'local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:buttonPushed("'..action..'") end'
 end
 
 function C:onResetGameplay()

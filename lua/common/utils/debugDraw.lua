@@ -27,8 +27,6 @@ else
     void BNG_DBG_DRAW_TriSolid(float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3, unsigned int packedCol, bool useZ);
     void BNG_DBG_DRAW_LineInstance_MinArgBatch(const float &data, unsigned int lineCount, float w1, unsigned int packedCol);
     void BNG_DBG_DRAW_TriSolidBatch(const float &data, unsigned int triCount, unsigned int packedCol, bool useZ);
-
-    void copy_vehicle_nodes(int vehID, const Vector3& nodes, int nodeCount);
     ]]
 end
 
@@ -70,8 +68,5 @@ M.drawTriSolid = function (posA,posB,posC,packedCol,useZ)
   if useZ == nil then useZ=true end
   M.TriSolid(posA.x,posA.y,posA.z,posB.x,posB.y,posB.z,posC.x,posC.y,posC.z,packedCol,useZ)
 end
-
-
-M.copy_vehicle_nodes = ffifound and ffi.C.copy_vehicle_nodes or nop
 
 return M

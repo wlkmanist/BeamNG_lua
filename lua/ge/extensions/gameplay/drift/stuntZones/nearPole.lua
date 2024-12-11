@@ -74,12 +74,29 @@ function C:init(data)
   self:createMarker()
 end
 
+function C:accomplish()
+  self:clearMarker()
+  self.activeData.available = false
+
+  local driftActiveData = gameplay_drift_drift.getDriftActiveData()
+
+  extensions.hook("onAnyStuntZoneAccomplished", {
+    stuntZoneId = self.data.id,
+    subHookName = "onNearPoleAccomplished",
+    subHookData =
+    {
+      currDegAngle = driftActiveData and driftActiveData.currDegAngle or 50, -- this safeguard is used in the drift debug imgui menu to test UI
+      closeness = 1-(self.activeData.minCornerDist / maxDist),
+      zoneData = {points = self.data.zoneData.score}
+    }
+  })
+end
+
 local cornerDist
 local plDist
 local currAngle
 local scoredFlag
 function C:detectStunt()
-
   scoredFlag = false
   for _, corner in ipairs(gameplay_drift_drift.getVehCorners()) do
     cornerDist = corner:distance(self.data.zoneData.pos)
@@ -93,6 +110,7 @@ function C:detectStunt()
 
       if plDist > self.activeData.lastFramePlDist and not self.activeData.hitPole then -- we are moving away, so we score
         scoredFlag = true
+        self:clearMarker()
         break
       end
 
@@ -102,17 +120,7 @@ function C:detectStunt()
   end
 
   if scoredFlag then
-    self:clearMarker()
-      self.activeData.available = false
-
-    return {
-      hook = "onNearPoleDetected",
-      hookData = {
-        currDegAngle = gameplay_drift_drift.getDriftActiveData().currDegAngle,
-        closeness = 1-(self.activeData.minCornerDist / maxDist),
-        zoneData = {points = self.data.zoneData.score}
-      }
-    }
+    self:accomplish()
   end
 end
 

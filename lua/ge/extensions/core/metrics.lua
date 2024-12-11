@@ -194,7 +194,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         im.TextUnformatted("Also open with CTRL+SHIFT+F")
         im.EndTooltip()
       end
-      im.PopStyleColor(3)
+      im.PopStyleColor()
 
     end
 

@@ -110,6 +110,10 @@ local function fitViewToSelectionSmooth()
   local maxViewRadius = 16000
   local minViewRadius = 20
 
+  if viewRadius <= 0 then
+    viewRadius = minViewRadius
+  end
+
   if viewRadius > maxViewRadius then
     viewRadius = maxViewRadius
   end
@@ -122,6 +126,7 @@ local function fitViewToSelectionSmooth()
     center = editor.getAxisGizmoTransform():getColumn(3)
     viewRadius = minViewRadius
   end
+
   camVars.center = center
   camVars.camEndPos = center + rot * vec3(0, -viewRadius, 0)
   core_jobsystem.create(cameraSmoothMoveJob, 1, camVars)

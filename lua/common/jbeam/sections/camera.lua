@@ -21,7 +21,8 @@ local function cleanCameraData(d)
     if k == 'group' or k == 'firstGroup' or k == 'partOrigin' or k == 'childParts'
     or k == 'partName' or k == 'slotType' or k == 'collision' or k == 'selfCollision'
     or k == 'nodeWeight' or  k == 'beamnDamp' or k == 'beamDeform' or k == 'beamSpring'
-    or k == 'beamDamp' or k == 'cid' or k == 'globalSkin' or k == 'skinName' or k == 'beamStrength' then
+    or k == 'beamDamp' or k == 'cid' or k == 'globalSkin' or k == 'beamStrength'
+    or k == 'skinName' or k == 'skinType' then
       d[k] = nil
     elseif type(v) == 'table' then
       cleanCameraData(v)

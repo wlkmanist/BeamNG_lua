@@ -1119,6 +1119,28 @@ local function removeInvalidSelectedObjects()
   editor.selection.object = removeInvalidObjects(editor.selection.object)
 end
 
+local function saveSimObjectMemento(obj)
+  local memento = ""
+  if obj then
+    memento = obj:serialize(false, -1)
+  end
+  return memento
+end
+
+local function restoreSimObjectMemento(jsonString)
+  local jsonTable = jsonDecode(jsonString, "restoreSimObjectMemento function")
+  local name = jsonTable['name']
+  jsonTable['name'] = nil
+  jsonTable['persistentId'] = nil
+  local cleanedJsonString = jsonEncode(jsonTable)
+  local objId = Sim.deserializeObjectFromText(cleanedJsonString, true, true)
+  local obj = scenetree.findObjectById(objId)
+  if obj and name then
+    obj:setName(Sim.getUniqueName(name))
+  end
+  return obj
+end
+
 local function initialize(editorInstance)
   editor = editorInstance
   editor.SelectMode_New = 1
@@ -1178,6 +1200,8 @@ local function initialize(editorInstance)
   editor.removeInvalidSelectedObjects = removeInvalidSelectedObjects
   editor.canManipulateObject = canManipulateObject
   editor.getHighestObject = getHighestObject
+  editor.restoreSimObjectMemento = restoreSimObjectMemento
+  editor.saveSimObjectMemento = saveSimObjectMemento
 end
 
 local M = {}

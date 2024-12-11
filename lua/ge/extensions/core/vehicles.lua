@@ -9,7 +9,7 @@ local M = {}
 
 --M.forceLicenceStr = 'BeamNG' -- enables to force a license plate text
 
-M.defaultVehicleModel = string.match(beamng_appname, 'research') and 'etk800' or 'pickup'
+M.defaultVehicleModel = string.match(beamng_appname, 'tech') and 'etk800' or 'pickup'
 
 local filtersWhiteList = { "Drivetrain", "Type", "Config Type", "Transmission", "Country", "Derby Class", "Performance Class",
  "Value", "Brand", "Body Style", "Source", "Weight", "Top Speed", "0-100 km/h", "0-60 mph", "Weight/Power", "Off-Road Score", "Years", 'Propulsion', 'Fuel Type', 'Induction Type' }
@@ -1452,5 +1452,117 @@ M.changeMeshVisibility = changeMeshVisibility
 M.setMeshVisibility = setMeshVisibility
 
 M.convertVehicleInfo = convertVehicleInfo
+
+
+-- new vehicle selector prototype
+
+--------------------------------
+-- Missions Grid Screen --------
+
+
+local function addPropertyFilters(value, card, groupsByKey)
+  for propName, propVal in pairs(value.aggregates) do
+    if tableContains(finalRanges, propName) then
+      --[[
+      --Ignore for now
+      if filter[propName] then
+        filter[propName].min = min(value.aggregates[propName].min, filter[propName].min)
+        filter[propName].max = max(value.aggregates[propName].max, filter[propName].max)
+      else
+        filter[propName] = deepcopy(value.aggregates[propName])
+      end
+      ]]
+    else
+      for propKey,_ in pairs(propVal) do
+        local groupKey = string.format("Prop-%s-%s",propName, propKey)
+        groupsByKey[groupKey] = groupsByKey[groupKey] or {label = string.format("%s: %s", propName, propKey), propName = propName}
+        card.filterData.groupTags[groupKey] = true
+      end
+    end
+  end
+end
+
+local function getVehicleTiles()
+  local tilesById = {}
+  
+  local groupsByKey = {}
+  groupsByKey['allModels'] = {label="All Models"}
+
+  for _, m in ipairs(getModelList(true).models) do
+    local model = getModel(m.key)
+
+    groupsByKey["model-"..m.key] = {
+      label = m.Name,
+      meta = {type = 'simple'}
+    }
+
+    
+    local filterData = {
+      groupTags = {},
+      sortingValues = {},
+    }
+    filterData.groupTags['allModels'] = true
+    local mCard = {
+      id = "model-"..m.key,
+      name = m.Name,
+      image = m.preview,
+      filterData = filterData,
+      expandGroupKey = "model-"..m.key
+    }
+    addPropertyFilters(model.model, mCard, groupsByKey)
+
+    tilesById[mCard.id] = mCard
+
+    for _, c in pairs(model.configs) do
+
+      local filterData = {
+        groupTags = {},
+        sortingValues = {},
+      }
+      filterData.groupTags["model-"..m.key] = true
+      local cCard = {
+        id = "config-"..c.key,
+        name = c.Name,
+        image = c.preview,
+        filterData = filterData,
+      }
+      tilesById[cCard.id] = cCard
+      addPropertyFilters(c, cCard, groupsByKey)
+    end
+
+    ::continue::
+  end
+
+  -- TODO: scenarios and other non-missions
+
+  -- build group lists (new groups might have been added)
+  for key, group in pairs(groupsByKey) do
+    group.tileIdsUnsorted = {}
+    group.meta = group.meta or {type=group.type}
+  end
+
+  -- add tiles to groups
+  for id, tile in pairs(tilesById) do
+    for groupKey, _ in pairs(tile.filterData.groupTags) do
+      if groupsByKey[groupKey] then
+        table.insert(groupsByKey[groupKey].tileIdsUnsorted, id)
+      end
+    end
+  end
+
+  -- groupSets
+  local groupSetsByKey = {}
+  for groupKey, group in pairs(groupsByKey) do
+    table.insert(groupSetsByKey, groupKey)
+  end
+  table.sort(groupSetsByKey)
+  return {
+    tilesById = tilesById,
+    groupsByKey = groupsByKey,
+    groupKeys = groupSetsByKey
+  }
+  
+end
+M.getVehicleTiles = getVehicleTiles
 
 return M

@@ -8,7 +8,6 @@ M.type = "auxiliary"
 local min = math.min
 local abs = math.abs
 local clamp = clamp
-local fsign = fsign
 local sqrt = math.sqrt
 
 local beamGroups

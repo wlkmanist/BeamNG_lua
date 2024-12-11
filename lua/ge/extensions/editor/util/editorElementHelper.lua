@@ -183,7 +183,7 @@ end
 
 function C:addContainerId(label, fieldName, idType, defaultValue, displayOptions)
   defaultValue = defaultValue or "(none)"
-  return self:addElement({type = idType, label = label, fieldName = fieldName, value = defaultValue, defaultValue = defaultValue , displayOptions = displayOptions})
+  return self:addElement({type = "elementId", label = label, fieldName = fieldName, value = defaultValue, defaultValue = defaultValue , displayOptions = displayOptions})
 end
 
 -- decorators
@@ -773,9 +773,7 @@ local function fixedFileDraw(e, ctd, container)
       if not e.foundFile then im.BeginDisabled() end
       if im.Selectable1("Load File into Vehicle Group Manager") then
         if editor_multiSpawnManager then
-          if editor_multiSpawnManager then
-            editor_multiSpawnManager.onWindowMenuItem()
-          end
+          editor_multiSpawnManager.onWindowMenuItem()
           editor_multiSpawnManager.loadGroup(e.foundFile)
         end
       end

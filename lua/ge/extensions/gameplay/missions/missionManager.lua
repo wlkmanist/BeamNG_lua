@@ -397,12 +397,37 @@ local function taskStartMissionStep(step)
     mission.setupModules.traffic._processed = true
   end
 
-  mission.setupModules.timeOfDay._originalTimeOfDay = deepcopy(core_environment.getTimeOfDay())
-  if mission.setupModules.timeOfDay.enabled then
-    mission.setupModules.timeOfDay._processed = true
-    local tod = deepcopy(core_environment.getTimeOfDay())
-    tod.time = mission.setupModules.timeOfDay.time
-    core_environment.setTimeOfDay(tod)
+  mission.setupModules.environment._originalTimeOfDay = deepcopy(core_environment.getTimeOfDay() or {})
+  mission.setupModules.environment._originalFogDensity = core_environment.getFogDensity()
+  if mission.setupModules.environment.enabled then
+    mission.setupModules.environment._processed = true
+    if mission.setupModules.environment._originalTimeOfDay.time then
+      mission.setupModules.environment._originalTimeOfDay.play = mission.setupModules.environment._originalTimeOfDay.play and true or false
+      local tod = deepcopy(core_environment.getTimeOfDay())
+      tod.time = mission.setupModules.environment.time
+      if tod.time == -1 then
+        tod.time = mission.setupModules.environment._originalTimeOfDay.time
+      end
+
+      if mission.setupModules.environment.timeScale > 0 then
+        tod.play = true
+        tod.dayScale = mission.setupModules.environment.timeScale
+        tod.nightScale = mission.setupModules.environment.timeScale
+      end
+      core_environment.setTimeOfDay(tod)
+    end
+
+    if mission.setupModules.environment.fogDensity > 0 then
+      core_environment.setFogDensity(mission.setupModules.environment.fogDensity)
+    end
+
+    if mission.setupModules.environment.windSpeed > 0 then
+      mission.setupModules.environment._windVec = vec3(
+        math.sin(mission.setupModules.environment.windDirAngle) * mission.setupModules.environment.windSpeed,
+        math.cos(mission.setupModules.environment.windDirAngle) * mission.setupModules.environment.windSpeed,
+        0
+      )
+    end
   end
 
   stashVehicles()
@@ -476,11 +501,21 @@ local function taskStopMissionStep(step)
   end
   trafficSetup._prevTraffic, trafficSetup._prevPolice, trafficSetup._prevParking, trafficSetup._processed = nil, nil, nil, nil
 
-  if mission.setupModules.timeOfDay._originalTimeOfDay then
-    core_environment.setTimeOfDay(mission.setupModules.timeOfDay._originalTimeOfDay)
-    mission.setupModules.timeOfDay._originalTimeOfDay = nil
-    mission.setupModules.timeOfDay._processed = nil
+  if mission.setupModules.environment._originalTimeOfDay then
+    core_environment.setTimeOfDay(mission.setupModules.environment._originalTimeOfDay)
+    mission.setupModules.environment._originalTimeOfDay = nil
   end
+  if mission.setupModules.environment._originalFogDensity then
+    core_environment.setFogDensity(mission.setupModules.environment._originalFogDensity)
+    mission.setupModules.environment._originalFogDensity = nil
+  end
+  if mission.setupModules.environment._windVec then -- resets wind; what if previous wind existed?
+    for _, veh in ipairs(getAllVehicles()) do
+      veh:queueLuaCommand("obj:setWind(0, 0, 0)")
+    end
+    mission.setupModules.environment._windVec = nil
+  end
+  mission.setupModules.environment._processed = nil
 
   -- starting info reset
   if mission.restoreStartingInfoSetup and mission._startingInfo then
@@ -571,6 +606,7 @@ M.fadeDuration = 0.75
 M.onScreenFadeState = function(state)
   if delayedStartFromWithinMission then
     if delayedStartFromWithinMission.currMission then
+      delayedStartFromWithinMission.currMission.restoreStartingInfoSetup = true
       M.stop(delayedStartFromWithinMission.currMission, {ignoreFade = true})
       delayedStartFromWithinMission.currMission = nil
       return

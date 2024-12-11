@@ -38,7 +38,7 @@ local pulseFreqCoef = 0
 local blowerRatio = 1
 local maxPressure = 0
 local blowerPressure = 0
-local lastPressure = 0 --pressure at the highest defined blower RPM
+local lastDefinedPressure = 0 --pressure at the highest defined blower RPM
 local lostTorqueCoef = 0
 
 local clutchEngageRPM = 0
@@ -55,8 +55,6 @@ local whineLoop = nil
 local whinePitchPerAV
 local whineVolumePerPascal
 local whineVolumePerRPM
-local fadeInStartRPM = 1200
-local fadeInEndRPM = 2200
 
 local efficiencyCurveRootsTwisted = {b1 = -0.35, b2 = 0, b3 = 1}
 local efficiencyCurveRootsNonTwisted = {b1 = -0.55, b2 = 0, b3 = 1}
@@ -106,14 +104,13 @@ local function setBypassPressure(pressurePSI)
 end
 
 local function updateSounds(dt)
-  -- local volumeFadeIn = min(max((blowerRPM - fadeInStartRPM) / (fadeInEndRPM - fadeInStartRPM), 0), 1)
   local volumePressure = clamp(abs(blowerPressure) * whineVolumePerPascal, 0, 15)
   local volumeRPM = clamp(blowerRPM * whineVolumePerRPM, 0, 15)
-  -- local volume = max(volumePressure, volumeRPM) * volumeFadeIn
+
   local volume = max(volumePressure, volumeRPM)
   local pitch = max(blowerAV * whinePitchPerAV, 0)
   whineLoop:setVolumePitch(volume, pitch)
-  
+
   -- Audio Debug
   -- print(string.format(" SUPRCH VOLRTPC (blowerPressure %7.0f / volumePressure %.2f / volumeRPM %.2f) RTPC = %.2f", blowerPressure, volumePressure, volumeRPM, volume))
   -- print(string.format(" SUPRCH PITRTPC (blowerRPM %7.0f / blowerAV %5.0f / volumeRPM %.2f) RTPC = %.2f", blowerRPM, blowerAV, volumeRPM, pitch))
@@ -165,7 +162,7 @@ local function updateGFX(dt)
   end --add some stability to the output
 
   local boostControllerCoef = boostControllerCurve[math.floor(currentThrottle * 100)] or 1 --get the throttle vs max boost coef
-  local rawPressure = (pressureCurve[math.floor(blowerRPM)] or lastPressure) * pulseCoef --calculate current pressure inlcuding pulse oscillations
+  local rawPressure = (pressureCurve[math.floor(blowerRPM)] or lastDefinedPressure) * pulseCoef --calculate current pressure inlcuding pulse oscillations
   blowerPressure = (rawPressure * psiToPascal) * boostControllerCoef * damagePressureCoef * wearPressureCoef
 
   -- Bypass valve
@@ -216,7 +213,6 @@ end
 
 local function reset(jbeamData)
   pressureSmoother:reset()
-  lastPressure = 0
   damagePressureCoef = 1
   wearPressureCoef = 1
   damageTracker.setDamage("engine", "superchargerDamaged", false)
@@ -233,7 +229,7 @@ local function init(device, jbeamData)
   wearPressureCoef = 1
 
   blowerRatio = jbeamData.gearRatio or 1
-  local maxBlowerRPM = math.ceil(assignedEngine.maxRPM * blowerRatio)
+  local maxBlowerRPM = jbeamData.maxRPM or math.ceil(assignedEngine.maxRPM * blowerRatio) --give it a 50% headroom for engines that can exceed their max physical RPM
 
   crankLossPerRPM = (jbeamData.crankLossPer1kRPM or 5) * 0.001
 
@@ -296,7 +292,7 @@ local function init(device, jbeamData)
   end
 
   pressureCurve = createCurve(pressureCurveTemp)
-  lastPressure = pressureCurve[maxBlowerRPM]
+  lastDefinedPressure = pressureCurve[maxBlowerRPM]
 
   -- Boost Controller a.k.a Boost Control Actuator
   -- Used to limit boost at X throttle

@@ -205,7 +205,7 @@ local function setPursuitMode(mode, targetId, policeId) -- sets pursuit mode; -1
       targetVeh:setRole(targetVeh.autoRole)
     end
     if lastMode == -1 then
-      targetVeh.role.driver.behavioral.askInsurance = false
+      targetVeh.role.driver.enableAskInsurance = false
       targetVeh.pursuit.cooldown = true
 
       local tempData = deepcopy(pursuit)
@@ -224,11 +224,9 @@ local function setPursuitMode(mode, targetId, policeId) -- sets pursuit mode; -1
       if targetVeh.role.state == 'wanted' then -- "wanted" vehicles will always try to flee
         local policePlayer = be:getPlayerVehicleID(0) == policeId and policeVehs[policeId]
         if gameplay_traffic.showMessages and policePlayer and not policePlayer.role.flags.busy then
-          if targetVeh.model.name ~= 'Simplified Traffic Vehicles' then -- TEMP: we need to fix this so that simplified traffic vehicles give a model name
-            local str = translateLanguage('ui.traffic.suspectFlee', 'A suspect is fleeing from you! Vehicle:')
-            str = str..' '..targetVeh.model.name
-            ui_message(str, 5, 'traffic', 'traffic')
-          end
+          local str = translateLanguage('ui.traffic.suspectFlee', 'A suspect is fleeing from you! Vehicle:')
+          str = str..' '..targetVeh.model.name
+          ui_message(str, 5, 'traffic', 'traffic')
         end
 
         targetVeh.role.keepActionOnRefresh = false
@@ -587,9 +585,10 @@ local function onUpdate(dt, dtSim)
               end
 
               if vehIds[min(2, count)] then -- at least 2 vehicles, or 1 if it is the only one
-                spawnData = gameplay_traffic.findSpawnPoint(core_camera.getPosition(), core_camera.getForward(), 100, 240, {pathRandom = 0})
-                if spawnData then
-                  local rbWidth = spawnData.radius * 2 + 1 -- plus a small margin
+                spawnData = gameplay_traffic_trafficUtils.findSpawnPointOnRoute(veh.pos, veh.dirVec, 100, 260, 180, {pathRandomization = 0})
+                if spawnData and spawnData.n1 then
+                  local mapNodes = map.getMap().nodes
+                  local rbWidth = math.min(mapNodes[spawnData.n1].radius, mapNodes[spawnData.n2].radius) * 2 + 1 -- plus a small margin
                   local newVehIds, totalLength = checkRoadblock(vehIds, rbWidth) -- returns vehicles that can fit in the roadblock
                   local maxPropLength = 0
                   local newPropIds
@@ -602,8 +601,8 @@ local function onUpdate(dt, dtSim)
                     end
 
                     newPropIds = checkRoadblock(policePropIds, rbWidth, false)
-                    for _, v in ipairs(newPropIds) do
-                      maxPropLength = max(maxPropLength, be:getObjectByID(v).initialNodePosBB:getExtents().y)
+                    for _, pid in ipairs(newPropIds) do
+                      maxPropLength = max(maxPropLength, be:getObjectByID(pid).initialNodePosBB:getExtents().y)
                     end
                   end
 

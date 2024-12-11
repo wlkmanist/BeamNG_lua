@@ -12,14 +12,14 @@
 
   -- Preload items: Populates the self.items table
   for (item in items) do
-    kdT:preload(item_id, item_xmin, item_ymin, item_xmax, item_ymax)
+    kdT:preLoad(item_id, item_xmin, item_ymin, item_xmax, item_ymax)
   end
 
   -- Build the tree: creates the tree from the preloaded items, i.e. it populates the self.tree table
   kdT:build()
 
-  -- Querring:
-  Two ways to query the items in the tree. Both query function return iterators (to be used in for .. do constructs)
+  -- Querying:
+  Two ways to query the items in the tree. Both query functions return iterators (to be used in for .. do constructs)
 
   1) queries that are not nested
   for item_id in kdT:queryNotNested(query_xmin, query_ymin, query_xmax, query_ymax) do
@@ -116,6 +116,23 @@ local function new(itemCount)
     curAxis = 1,
     itmIdx = -1
   }, kdTree)
+end
+
+-- clear an already existing tree object. Usefull for trees that get updated often.
+function kdTree:clear()
+  if self.tree then
+    table.clear(self.tree)
+    table.clear(self.items)
+    table.clear(self.stack)
+    table.clear(self.queryArea)
+    table.clear(self.items)
+    self.nonLeafLimIdx = nil
+    self.itemCount = 0
+    self.stackIdx = 0
+    self.curNodeIdx = 1
+    self.curAxis = 1
+    self.itmIdx = -1
+  end
 end
 
 function kdTree:export()

@@ -260,6 +260,11 @@ local function getIndeterminateFlagsForFieldValues(fieldInfo, value1, value2)
   local flags = 0
   local elementCount = 1
   local fieldType = fieldInfo.type
+
+  -- some values might be nil (not existent in the first object fields table for example)
+  if nil == value1 then value1 = "" end
+  if nil == value2 then value2 = "" end
+
   local valTbl1 = stringToTable(value1)
   local valTbl2 = stringToTable(value2)
 
@@ -338,6 +343,7 @@ local function objectInspectorGui(inspectorInfo)
     end
   end
 
+  -- if we have multi selection, remove the name field, cant rename all objects at once the same name
   if tableSize(editor.selection.object) > 1 then commonFields["name"] = nil end
 
   -- make it our main fields list again
@@ -438,13 +444,20 @@ local function objectInspectorGui(inspectorInfo)
     for _, val in ipairs(fields) do
       -- simple field
       if not val.isArray and not val.hidden then
+        local fieldLabel = val.name
+        local valChanger = editor.findCustomFieldLabelChanger(val.name, valueInspector.selectionClassName)
+
+        if valChanger then
+          fieldLabel = valChanger.callback(val.name, valueInspector.selectionClassName)
+        end
+
         if val.elementCount == 1 then
           val.value = editor.getFieldValue(valueInspector.selectedIds[1], val.name, 0)
-          valueInspector:valueEditorGui(val.name, val.value or "", 0, val.name, val.fieldDocs, val.type, val.typeName, val, pasteFieldValue, nil, valueInspector.differentValuesFieldFlags[val.name] or 0)
+          valueInspector:valueEditorGui(val.name, val.value or "", 0, fieldLabel, val.fieldDocs, val.type, val.typeName, val, pasteFieldValue, nil, valueInspector.differentValuesFieldFlags[val.name] or 0)
         else
           local customFieldEditor = editor.findCustomFieldEditor(val.name, valueInspector.selectionClassName)
           if customFieldEditor and customFieldEditor.useArray then
-            valueInspector:valueEditorGui(val.name, val.value or "", 0, val.name, val.fieldDocs, val.type, val.typeName, val, pasteFieldValue, nil, valueInspector.differentValuesFieldFlags[val.name] or 0)
+            valueInspector:valueEditorGui(val.name, val.value or "", 0, fieldLabel, val.fieldDocs, val.type, val.typeName, val, pasteFieldValue, nil, valueInspector.differentValuesFieldFlags[val.name] or 0)
           else
             local nodeFlags = imgui.TreeNodeFlags_DefaultClosed
             imgui.PushStyleColor2(imgui.Col_Header, arrayHeaderBgColor)
@@ -452,7 +465,7 @@ local function objectInspectorGui(inspectorInfo)
               imgui.Indent(fieldIndent)
               for i = 0, val.elementCount - 1 do
                 local value = editor.getFieldValue(valueInspector.selectedIds[#valueInspector.selectedIds], val.name, i)
-                valueInspector:valueEditorGui(val.name, value or "", i, val.name .. "["..tostring(i).."]", val.fieldDocs, val.type, val.typeName, val, pasteFieldValue, nil, valueInspector.differentValuesFieldFlags[val.name] or 0)
+                valueInspector:valueEditorGui(val.name, value or "", i, fieldLabel .. "["..tostring(i).."]", val.fieldDocs, val.type, val.typeName, val, pasteFieldValue, nil, valueInspector.differentValuesFieldFlags[val.name] or 0)
               end
               imgui.Unindent(fieldIndent)
               imgui.Separator()
@@ -462,9 +475,16 @@ local function objectInspectorGui(inspectorInfo)
         end
       -- if its and array of fields
       elseif val.isArray then
+        local fieldLabel = val.arrayName
+        local valChanger = editor.findCustomFieldLabelChanger(val.arrayName, valueInspector.selectionClassName)
+
+        if valChanger then
+          fieldLabel = valChanger.callback(val.arrayName, valueInspector.selectionClassName)
+        end
+
         local nodeFlags = imgui.TreeNodeFlags_DefaultClosed
         imgui.PushStyleColor2(imgui.Col_Header, arrayHeaderBgColor)
-        if imgui.CollapsingHeader1(val.arrayName, nodeFlags) then
+        if imgui.CollapsingHeader1(fieldLabel, nodeFlags) then
           imgui.Indent(fieldIndent)
           for i = 0, val.elementCount - 1 do
             imgui.PushID1(val.arrayName .. "_ARRAY_ITEMS_" .. i)
@@ -1416,6 +1436,11 @@ local function customVehicleMetallicFieldEditor(objectIds, fieldValue, fieldName
   end
 end
 
+local function customDecalDataRowsColsLabelChanger(fieldName, objectClass)
+  if fieldName == "texRows" then return "texCols" end
+  if fieldName == "texCols" then return "texRows" end
+end
+
 local function drawGroundCoverUVIndicators(windowPos, cursorPos, widgetWidth)
   local drawlist = imgui.GetWindowDrawList()
   local coloredBGHeight = math.ceil(imgui.GetFontSize())
@@ -1559,7 +1584,8 @@ local function onEditorInitialized()
 
   editor.registerCustomFieldInspectorEditor("BeamNGVehicle", "metallicPaintData", customVehicleMetallicFieldEditor, true)
   editor.registerCustomFieldInspectorEditor("GroundCover", "billboardUVs", customGroundCoverBillBoardUVsFieldEditor, true)
-
+  editor.registerCustomFieldLabelChanger("DecalData", "texRows", customDecalDataRowsColsLabelChanger)
+  editor.registerCustomFieldLabelChanger("DecalData", "texCols", customDecalDataRowsColsLabelChanger)
 end
 
 local function onEditorObjectSelectionChanged()

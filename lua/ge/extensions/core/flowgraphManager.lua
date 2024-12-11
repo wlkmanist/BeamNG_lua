@@ -75,6 +75,24 @@ local function getManagerByID(id)
   return nil
 end
 
+local function getManagerGraphNode(mgrId, graphId, nodeId) -- safely retrieves a node from an active manager; returns nil if any id fails
+  -- use this instead of core_flowgraphManager.getManagerByID(mid).graphs[gid].nodes[nid]
+  local mgr = getManagerByID(mgrId)
+  if mgr then
+    if mgr.graphs[graphId] then
+      return mgr.graphs[graphId].nodes[nodeId]
+    end
+  end
+end
+
+local function getManagerModule(mgrId, moduleName) -- safely retrieves a module from an active manager; returns nil if any id fails
+  -- use this instead of core_flowgraphManager.getManagerByID(mid).modules.moduleName
+  local mgr = getManagerByID(mgrId)
+  if mgr then
+    return mgr.modules[moduleName]
+  end
+end
+
 local function loadManager(filepath, hidden, keepSavedDirs)
   local data = jsonReadFile(filepath)
   local mgr = require('/lua/ge/extensions/flowgraph/manager')(M)
@@ -390,11 +408,11 @@ end
 M.nodePath = nodePath
 M.startNextFrame = startNextFrame
 M.removeNextFrame = removeNextFrame
-M.lightExample = lightExample
 M.getManagerByID = getManagerByID
+M.getManagerGraphNode = getManagerGraphNode
+M.getManagerModule = getManagerModule
 M.onExtensionLoaded = onExtensionLoaded
 M.getNextUniqueIdentifier = getNextUniqueIdentifier
-M.updateHookLists = updateHookLists
 M.removeManager = removeManager
 M.loadManager = loadManager
 M.addManager = addManager

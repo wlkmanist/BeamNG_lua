@@ -10,12 +10,20 @@ local deformGroupMap = {}
 local min, max = math.min, math.max
 
 local function updateProp(val, prop)
-  if not prop.pid then return end
+  if not prop.pid then
+    return
+  end
   --convert any possible bools to 0/1
   val = type(val) ~= "boolean" and val or (val and 1 or 0)
   local pt = prop.translation
   local pr = prop.rotation
   obj:propUpdate(prop.pid, pt.x, pt.y, pt.z, pr.x, pr.y, pr.z, not prop.hidden, val, min(max(val * prop.multiplier, prop.min), prop.max) + prop.offset)
+  if prop.scaleLight and prop.lightBrightness and prop.flareScale and prop.lightColor then
+    local lightBrightness = linearScale(val, prop.scaleLightBrightnessMinInput, prop.scaleLightBrightnessMaxInput, 0, prop.lightBrightness)
+    local flareScale = linearScale(val, prop.scaleLightFlareScaleMinInput, prop.scaleLightFlareScaleMaxInput, 0, prop.flareScale)
+    local lightColor = color(linearScale(val, 1, 0, prop.lightColor.r, prop.lightColor.r - prop.scaleLightColorOffsetRed), linearScale(val, 1, 0, prop.lightColor.g, prop.lightColor.g - prop.scaleLightColorOffsetGreen), linearScale(val, 1, 0, prop.lightColor.b, prop.lightColor.b - prop.scaleLightColorOffsetBlue), prop.lightColor.a)
+    obj:setPropLight(prop.pid, lightBrightness, flareScale, lightColor)
+  end
 end
 
 local function updateGFX()
@@ -28,7 +36,33 @@ local function updateGFX()
   end
 end
 
-M.updateGFX = nop
+local function disablePropsInDeformGroup(deformGroup)
+  if deformGroupMap[deformGroup] then
+    for _, prop in ipairs(deformGroupMap[deformGroup]) do
+      if not prop.disabled then
+        prop.disabled = true
+        prop.hidden = true
+        updateProp(0, prop)
+      end
+    end
+    deformGroupMap[deformGroup] = nil
+  end
+end
+
+local function hidePropsInBreakGroup(breakGroup)
+  if breakGroupMap[breakGroup] then
+    for _, prop in ipairs(breakGroupMap[breakGroup]) do
+      if not (prop.hidden and prop.disabled) then
+        -- log('D', "props.hidePropsInBreakGroup", "prop hidden: ".. tostring(breakGroup))
+        prop.disabled = true
+        prop.hidden = true
+        updateProp(0, prop)
+      end
+    end
+    breakGroupMap[breakGroup] = nil
+  end
+end
+
 local function reset()
   props = v.data.props
   if not props or props[0] == nil then
@@ -74,39 +108,39 @@ local function reset()
         end
       end
     end
-  end
-end
 
-local function disablePropsInDeformGroup(deformGroup)
-  if deformGroupMap[deformGroup] then
-    for _, prop in ipairs(deformGroupMap[deformGroup]) do
-      if not prop.disabled then
-        prop.disabled = true
-        prop.hidden = true
-        updateProp(0, prop)
+    if prop.lightScaling then
+      if type(prop.lightScaling) ~= "table" then
+        prop.lightScaling = {
+          brightnessMinInput = 0,
+          brightnessMaxInput = 1,
+          flareScaleMinInput = 0.6,
+          flareScaleMaxInput = 1,
+          lightColorOffsetRed = 0,
+          lightColorOffsetGreen = 60,
+          lightColorOffsetBlue = 80
+        }
       end
-    end
-    deformGroupMap[deformGroup] = nil
-  end
-end
+      prop.scaleLight = true
+      prop.scaleLightBrightnessMinInput = prop.lightScaling.brightnessMinInput or 0
+      prop.scaleLightBrightnessMaxInput = prop.lightScaling.brightnessMaxInput or 1
+      prop.scaleLightFlareScaleMinInput = prop.lightScaling.flareScaleMinInput or 0.6
+      prop.scaleLightFlareScaleMaxInput = prop.lightScaling.flareScaleMaxInput or 1
+      prop.scaleLightColorOffsetRed = prop.lightColorOffsetRed or 0
+      prop.scaleLightColorOffsetGreen = prop.lightColorOffsetGreen or 60
+      prop.scaleLightColorOffsetBlue = prop.lightColorOffsetBlue or 80
 
-local function hidePropsInBreakGroup(breakGroup)
-  if breakGroupMap[breakGroup] then
-    for _, prop in ipairs(breakGroupMap[breakGroup]) do
-      if not (prop.hidden and prop.disabled) then
-        -- log('D', "props.hidePropsInBreakGroup", "prop hidden: ".. tostring(breakGroup))
-        prop.disabled = true
-        prop.hidden = true
-        updateProp(0, prop)
-      end
+      prop.lightScaling = nil
     end
-    breakGroupMap[breakGroup] = nil
   end
 end
 
 -- public interface
-M.reset = reset
 M.init = reset
+M.reset = reset
+
+M.updateGFX = nop
+
 M.disablePropsInDeformGroup = disablePropsInDeformGroup
 M.hidePropsInBreakGroup = hidePropsInBreakGroup
 

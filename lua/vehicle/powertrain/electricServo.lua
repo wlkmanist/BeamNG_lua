@@ -9,7 +9,6 @@ M.deviceCategories = {engine = true}
 
 local min = math.min
 local abs = math.abs
-local fsign = fsign
 
 local rpmToAV = 0.104719755
 local pi = math.pi

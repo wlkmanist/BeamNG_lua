@@ -643,7 +643,7 @@ local function dragDropTarget(map)
     local payload = im.AcceptDragDropPayload("TrackBuilderMaterialPayload")
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[64]");
-      local texture = ffi.string(ffi.cast("char*",payload.Data))
+      local texture = ffi.string(payload.Data)
       setTexture(map, texture)
     end
     im.EndDragDropTarget();
@@ -666,7 +666,7 @@ local function dragDropTargetTextureSet()
     local payload = im.AcceptDragDropPayload("TrackBuilderTextureSetPayload")
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[64]");
-      local textureSet = ffi.string(ffi.cast("char*",payload.Data))
+      local textureSet = ffi.string(payload.Data)
       applyTextureSet(materialSettings.textureSets[textureSet])
     end
     im.EndDragDropTarget();
@@ -690,7 +690,7 @@ local function dragDropTargetGlowMap(map)
     if payload~=nil then
       dump(payload.DataSize)
       assert(payload.DataSize == ffi.sizeof"char[64]");
-      local glowMap = ffi.string(ffi.cast("char*",payload.Data))
+      local glowMap = ffi.string(payload.Data)
       setTexture(map, materialSettings.glowMaps[glowMap].file)
     end
     im.EndDragDropTarget();

@@ -11,7 +11,8 @@ local _state = {
     nodeDebugTextModes = {
       {name = "off"},
     },
-  }
+  },
+  partsSelected = nil,
 }
 
 local bdebugImpl = nil
@@ -32,6 +33,8 @@ local function initBDebugImpl(bdebugImplSavedState)
     M.onPlayersChanged = bdebugImpl.onPlayersChanged
     M.reset = bdebugImpl.reset
     M.recieveViewportSize = bdebugImpl.recieveViewportSize
+
+    M.setPartsSelected = bdebugImpl.setPartsSelected
 
     M.setNodeDebugText = bdebugImpl.setNodeDebugText
     M.clearNodeDebugText = bdebugImpl.clearNodeDebugText
@@ -67,14 +70,26 @@ setmetatable(M.state, {
   end
 })
 
+M.stateNoReset = {}
+setmetatable(M.stateNoReset, {
+  __index = function(_, key)
+    initBDebugImpl()
+    return bdebugImpl.stateNoReset[key]  -- Redirect read access to the current bdebugImpl.stateNoReset
+  end,
+  __newindex = function(_, key, value)
+    initBDebugImpl()
+    bdebugImpl.stateNoReset[key] = value  -- Redirect write access to the current bdebugImpl.stateNoReset
+  end
+})
+
 local function sendState()
   initBDebugImpl()
   bdebugImpl.requestState()
 end
 
-local function setState(state)
+local function setState(state, stateNoReset)
   initBDebugImpl()
-  bdebugImpl.setState(state)
+  bdebugImpl.setState(state, stateNoReset)
 end
 
 -- Request/send drawn nodes to GE Lua function
@@ -87,26 +102,6 @@ end
 local function requestDrawnBeamsGE(geFuncName)
   initBDebugImpl()
   bdebugImpl.requestDrawnBeamsGE(geFuncName)
-end
-
-local function partsSelectedChanged()
-  initBDebugImpl()
-  bdebugImpl.partsSelectedChanged()
-end
-
-local function showOnlySelectedPartsMeshChanged()
-  initBDebugImpl()
-  bdebugImpl.showOnlySelectedPartsMeshChanged()
-end
-
-local function recievePartsDataFromPartsList(parts)
-  initBDebugImpl()
-  bdebugImpl.recievePartsDataFromPartsList(parts)
-end
-
-local function syncSelectedPartsWithPartsList()
-  initBDebugImpl()
-  bdebugImpl.syncSelectedPartsWithPartsList()
 end
 
 local function isEnabled()
@@ -147,9 +142,9 @@ local function skeletonModeChange(change)
   bdebugImpl.skeletonModeChange(change)
 end
 
-local function toggleColTris()
+local function colTrisModeChange(change)
   initBDebugImpl()
-  bdebugImpl.toggleColTris()
+  bdebugImpl.colTrisModeChange(change)
 end
 
 local function cogChange(change)
@@ -165,6 +160,10 @@ end
 
 -- Following interfaces used for setting for bdebugImpl and can be called before bdebugImpl is initalized.
 -- When initialized, whatever data set before initialization is passed to it.
+
+local function setPartsSelected(parts)
+  _state.partsSelected = parts
+end
 
 -- Sets the text to display at a node using the node debug text visualization
 -- "type" is the group the text belongs to
@@ -263,10 +262,7 @@ M.setState = setState
 M.requestState = sendState
 M.requestDrawnNodesGE = requestDrawnNodesGE
 M.requestDrawnBeamsGE = requestDrawnBeamsGE
-M.partsSelectedChanged = partsSelectedChanged
-M.showOnlySelectedPartsMeshChanged = showOnlySelectedPartsMeshChanged
-M.recievePartsDataFromPartsList = recievePartsDataFromPartsList
-M.syncSelectedPartsWithPartsList = syncSelectedPartsWithPartsList
+M.setPartsSelected = setPartsSelected
 M.isEnabled = isEnabled
 M.setEnabled = setEnabled
 M.toggleEnabled = toggleEnabled
@@ -274,12 +270,14 @@ M.nodetextModeChange = nodetextModeChange
 M.nodevisModeChange = nodevisModeChange
 M.nodedebugtextModeChange = nodedebugtextModeChange
 M.skeletonModeChange = skeletonModeChange
-M.toggleColTris = toggleColTris
+M.colTrisModeChange = colTrisModeChange
 M.cogChange = cogChange
 M.resetModes = resetModes
 
 -- Following interfaces used for setting for bdebugImpl and can be called before bdebugImpl is initalized.
 -- When initialized, whatever data set before initialization is passed to it.
+M.setPartsSelected = setPartsSelected
+
 M.setNodeDebugText = setNodeDebugText
 M.clearNodeDebugText = clearNodeDebugText
 M.clearTypeNodeDebugText = clearTypeNodeDebugText

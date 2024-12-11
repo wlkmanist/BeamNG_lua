@@ -210,7 +210,7 @@ local function getInfo()
 
   if res.os.type == 'linux' then
     if res.os.shortname == "Ubuntu" then
-      if not res.os.fullname:find("20.04") then
+      if not res.os.fullname:find("20.04") and not res.os.fullname:find("22.04") then
         table.insert(res.os.warnings, {type = 'warn', msg = 'ubuntuver'})
       end
     elseif res.os.shortname ~= "SteamOS" and beamng_appname == "BeamNG.drive" then

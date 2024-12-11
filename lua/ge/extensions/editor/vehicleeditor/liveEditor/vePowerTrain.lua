@@ -9,14 +9,18 @@ M.dependencies = {"editor_veMain"}
 
 M.menuEntry = "Powertrain Inspector"
 local wndName = "Powertrain"
+
 local im = ui_imgui
+local windowOpen = im.BoolPtr(false)
 local initialWindowSize = im.ImVec2(800, 800)
 local deviceString
 local devicePtr = im.IntPtr(0)
 local deviceNames = {}
 
-local function onEditorGui(dt)
-  if editor.beginWindow(wndName, wndName) and vEditor.vehicle then
+local function onUpdate(dt)
+  if windowOpen[0] ~= true then return end
+
+  if im.Begin(wndName, windowOpen) and vEditor and vEditor.vehicle then
     vEditor.vehicle:queueLuaCommand([[
       obj:queueGameEngineLua("vEditor.powertrainDevices =" .. powertrain.serializeDevicesInfo())]])
     if vEditor.powertrainDevices and not tableIsEmpty(vEditor.powertrainDevices) then
@@ -57,25 +61,23 @@ local function onEditorGui(dt)
       end
     end
   end
-  editor.endWindow()
+  im.End()
 end
 
 local function onSerialize()
   return {
+    windowOpen = windowOpen[0],
     devicePtr = devicePtr[0]
   }
 end
 
 local function onDeserialize(data)
+  windowOpen[0] = data.windowOpen
   devicePtr[0] = data.devicePtr
 end
 
 local function open()
-  editor.showWindow(wndName)
-end
-
-local function onEditorInitialized()
-  editor.registerWindow(wndName, initialWindowSize)
+  windowOpen[0] = true
 end
 
 local function requestDeviceStringUpdate()
@@ -95,11 +97,10 @@ local function onEditorActivated()
   requestDeviceStringUpdate()
 end
 
-M.onEditorGui = onEditorGui
+M.onUpdate = onUpdate
 M.open = open
 M.onSerialize = onSerialize
 M.onDeserialize = onDeserialize
-M.onEditorInitialized = onEditorInitialized
 M.onVehicleSwitched = onVehicleSwitched
 M.onEditorActivated = onEditorActivated
 

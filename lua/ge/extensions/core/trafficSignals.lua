@@ -9,11 +9,11 @@ local M = {}
 local logTag = 'trafficSignals'
 local instances, controllers, sequences, mapNodeSignals, signalObjectsDict, controllerDefinitions = {}, {}, {}, {}, {}, {}
 local instancesByName, controllersByName, sequencesByName, elementsById = {}, {}, {}, {}
+local instanceColorKeys = {'instanceColor', 'instanceColor1', 'instanceColor2', 'instanceColor3'}
 local lightOff, lightOn = '0 0 0 1', '1 1 1 1'
 local timer = -1
 local loaded = false
 local active = false
-local delayActive = true
 local viewDistSq = 90000
 local vecUp = vec3(0, 0, 1)
 
@@ -130,21 +130,16 @@ function SignalInstance:new(data)
   return o
 end
 
-function SignalInstance:setLights(lightsTable) -- directly sets the lights of all linked signal objects (signal state does not change)
+function SignalInstance:setLights(lightsArray) -- directly sets the lights of all linked signal objects (signal state does not change)
   -- generally, this is only used internally
   if not self.linkedObjects then return end
-  lightsTable = lightsTable or {'black', 'black', 'black'}
-
-  local instanceKeys = {}
-  for i, _ in ipairs(lightsTable) do
-    table.insert(instanceKeys, i > 1 and 'instanceColor'..tostring(i - 1) or 'instanceColor') -- 'instanceColor', 'instanceColor1', etc.
-  end
+  lightsArray = lightsArray or {'black', 'black', 'black'}
 
   for _, id in ipairs(self.linkedObjects) do -- actual traffic signal objects
     local obj = scenetree.findObjectById(id)
     if obj then
-      for i, light in ipairs(lightsTable) do
-        obj:setField(instanceKeys[i], '0', light == 'black' and lightOff or lightOn)
+      for i, light in ipairs(lightsArray) do
+        obj:setField(instanceColorKeys[i], '0', light == 'black' and lightOff or lightOn)
       end
     end
   end
@@ -181,9 +176,15 @@ function SignalInstance:clearSignalObjects(alsoDelete) -- unlinks world objects 
   end
 end
 
-function SignalInstance:assignSignalObject(objId) -- links world objects that will be synced to this signal instance
+function SignalInstance:linkSignalObject(objId) -- links world objects that will be synced to this signal instance (typically traffic lights)
   if scenetree.objectExists(objId) then
     scenetree.findObjectById(objId):setDynDataFieldbyName('signalInstance', 0, self.name)
+  end
+end
+
+function SignalInstance:unlinkSignalObject(objId) -- unlinks world objects from this signal instance
+  if scenetree.objectExists(objId) then
+    scenetree.findObjectById(objId):setDynDataFieldbyName('signalInstance', 0, '')
   end
 end
 
@@ -229,7 +230,7 @@ function SignalInstance:createSignalObject(shapeFile, pos, rot) -- creates and p
   local transform = QuatF(rot.x, rot.y, rot.z, rot.w):getMatrix()
   transform:setPosition(pos)
   obj:setTransform(transform)
-  self:assignSignalObject(obj:getID())
+  self:linkSignalObject(obj:getID())
 
   if scenetree.MissionGroup then
     local group = scenetree.AutoTrafficSignals
@@ -266,7 +267,7 @@ function SignalInstance:setup(pos, dir, controllerId, sequenceId) -- alternative
   end
 end
 
-function SignalInstance:getBestRoad(pos) -- gets data from the best road near the given position
+function SignalInstance:getBestRoad(pos, dir) -- gets data from the best road near the given position
   pos = pos or self.pos
   local n1, n2, dist = map.findClosestRoad(pos)
   if not n1 then
@@ -284,7 +285,7 @@ function SignalInstance:getBestRoad(pos) -- gets data from the best road near th
         nDir:setScaled(-1)
       end
     else -- otherwise, match the direction according to the side of the road
-      local dir = vec3(self.dir)
+      dir = dir or vec3(self.dir)
       if dir:squaredLength() == 0 then
         dir = vec3(nDir)
         dir:setScaled(sign2(pos:xnormOnLine(p1, p1 + nDir:cross(vecUp))))
@@ -434,12 +435,12 @@ end
 
 function SignalInstance:setController(id) -- sets the controller to use, and refreshes the system, if applicable
   self.controllerId = id or 0
-  self:refresh()
+  if active then self:refresh() end
 end
 
 function SignalInstance:setSequence(id) -- sets the sequence to use, and refreshes the system, if applicable
   self.sequenceId = id or 0
-  self:refresh()
+  if active then self:refresh() end
 end
 
 function SignalInstance:setActive(val) -- sets the active state of the signal (boolean)
@@ -1046,6 +1047,10 @@ local function getSequenceByName(name) -- returns the signal sequence via the gi
   return sequencesByName[name]
 end
 
+local function getTimer() -- returns the elapsed time value
+  return timer
+end
+
 local function getData(full) -- returns relevant data from this module
   local data = {
     instances = instances,
@@ -1078,6 +1083,11 @@ local function resetTimer() -- resets the timer & queue, and activates the seque
       instance:setActive(not instance.startDisabled)
     end
   end
+end
+
+local function setTimer(val) -- directly sets the timer, which can instantly update the signal states
+  if not val then resetTimer() end
+  timer = val
 end
 
 local function buildMapNodeSignals() -- creates a reference dict, linking map nodes to signal instances and states
@@ -1119,8 +1129,8 @@ local function runSignals() -- finishes signal setup and activates main logic
   end
 end
 
-local function setActive(val) -- sets the timer active state
-  if not delayActive and not loaded then
+local function setActive(val, autoRun) -- sets the timer active state
+  if autoRun and not loaded then
     runSignals()
     if not loaded then
       log('W', logTag, 'Unable to change active state of signals, due to no signals data')
@@ -1131,7 +1141,17 @@ local function setActive(val) -- sets the timer active state
   active = val and true or false
 end
 
-local function setupSignals(data) -- processes and enables the signals system
+local function setLightsManual(id, stateArray) -- directly sets the visible lights of a traffic signal object (will not affect actual state)
+  local obj = scenetree.findObjectById(id)
+  stateArray = stateArray or {false, false, false}
+  if obj then
+    for i, state in ipairs(stateArray) do
+      obj:setField(instanceColorKeys[i], '0', state and lightOn or lightOff)
+    end
+  end
+end
+
+local function setupSignals(data, merge) -- processes and enables the signals system; can merge with existing ones
   if not be then return end
   loaded = false
   active = false
@@ -1144,20 +1164,51 @@ local function setupSignals(data) -- processes and enables the signals system
   if data then
     setupSignalObjects()
 
-    instances = data.instances or {}
+    if merge then
+      arrayConcat(instances, data.instances or {})
+      arrayConcat(controllers, data.controllers or {})
+      arrayConcat(sequences, data.sequences or {})
+    else
+      instances = data.instances or {}
+      controllers = data.controllers or {}
+      sequences = data.sequences or {}
+    end
+
+    local delInstances, delControllers, delSequences = {}, {}, {}
     for i, v in ipairs(instances) do
-      instancesByName[instances[i].name] = instances[i]
-      elementsById[instances[i].id] = instances[i]
+      if not elementsById[v.id] then
+        instancesByName[v.name] = v
+        elementsById[v.id] = v
+      else
+        table.insert(delInstances, i)
+      end
     end
-    controllers = data.controllers or {}
     for i, v in ipairs(controllers) do
-      controllersByName[controllers[i].name] = controllers[i]
-      elementsById[controllers[i].id] = controllers[i]
+      if not elementsById[v.id] then
+        controllersByName[v.name] = v
+        elementsById[v.id] = v
+      else
+        table.insert(delControllers, i)
+      end
     end
-    sequences = data.sequences or {}
-    for i, v in ipairs(data.sequences) do
-      sequencesByName[sequences[i].name] = sequences[i]
-      elementsById[sequences[i].id] = sequences[i]
+    for i, v in ipairs(sequences) do
+      if not elementsById[v.id] then
+        sequencesByName[v.name] = v
+        elementsById[v.id] = v
+      else
+        table.insert(delSequences, i)
+      end
+    end
+
+    -- remove invalid elements
+    for i = #delInstances, 1, -1 do
+      table.remove(instances, delInstances[i])
+    end
+    for i = #delControllers, 1, -1 do
+      table.remove(controllers, delControllers[i])
+    end
+    for i = #delSequences, 1, -1 do
+      table.remove(sequences, delSequences[i])
     end
 
     setActive(true)
@@ -1227,12 +1278,6 @@ local function loadSignals(filePath) -- loads signals json file from given file 
   return false
 end
 
-local function onNavgraphReloaded() -- reload all signals
-  if active then
-    runSignals()
-  end
-end
-
 local function onUpdate(dt, dtSim)
   if not loaded then return end
 
@@ -1280,14 +1325,26 @@ local function onUpdate(dt, dtSim)
 
   if next(signalUpdates) then -- runs whenever signal updates are queued (can be multiple per frame)
     local signalsData = {}
+    local signalUpdateResults = {}
 
     for k, state in pairs(signalUpdates) do
+      signalUpdateResults[k] = {state = state}
       local instance = instancesByName[k]
       if instance and instance._innerIdx then
         local stateData = instance:getController():getStateData(state)
         local stateAction = stateData and stateData.action or 'none'
+        signalUpdateResults[k].linkedObjects = instance.linkedObjects
+        signalUpdateResults[k].stateAction = stateAction
+
         if state ~= 'none' then
           instance:setLights(stateData and stateData.lights)
+          if stateData then
+            signalUpdateResults[k].lightColors = stateData.lights
+            signalUpdateResults[k].lightStates = {}
+            for _, light in ipairs(stateData.lights) do
+              table.insert(signalUpdateResults[k].lightStates, light ~= 'black')
+            end
+          end
         else
           instance:setLights()
         end
@@ -1305,7 +1362,7 @@ local function onUpdate(dt, dtSim)
     end
 
     be:sendToMailbox('trafficSignalUpdates', lpack.encodeBin(signalsData))
-    extensions.hook('onTrafficSignalUpdate', signalUpdates)
+    extensions.hook('onTrafficSignalUpdate', signalUpdateResults)
     table.clear(signalUpdates)
   end
 
@@ -1342,14 +1399,19 @@ local function onUpdate(dt, dtSim)
   end
 end
 
+local function onNavgraphReloaded() -- reloads all signals (if system is active)
+  -- important: always runs after onClientStartMission and onDeserialized
+  if active then
+    runSignals()
+  end
+end
+
 local function onClientStartMission()
   loadSignals()
-  delayActive = false
 end
 
 local function onClientEndMission()
   resetSignals()
-  delayActive = true
 end
 
 local function onSerialize()
@@ -1390,9 +1452,8 @@ local function onDeserialized(data)
   end
 
   setActive(data.active)
-  delayActive = false
 
-  -- get the highest unique id
+  -- resolves the highest unique id
   _uid = 0
   for k, e in pairs({instances = instances, controllers = controllers, sequences = sequences}) do
     for i, v in ipairs(e) do
@@ -1417,6 +1478,7 @@ M.getSequenceByName = getSequenceByName
 M.getElementById = getElementById
 M.getControllerDefinitions = getControllerDefinitions
 M.getMapNodeSignals = getMapNodeSignals
+M.getTimer = getTimer
 M.getData = getData
 M.getSignalsDict = nop
 
@@ -1428,7 +1490,9 @@ M.loadControllerDefinitions = loadControllerDefinitions
 M.setControllerDefinitions = setControllerDefinitions
 M.resetControllerDefinitions = resetControllerDefinitions
 M.resetTimer = resetTimer
+M.setTimer = setTimer
 M.setActive = setActive
+M.setLightsManual = setLightsManual
 
 M.onNavgraphReloaded = onNavgraphReloaded
 M.onUpdate = onUpdate

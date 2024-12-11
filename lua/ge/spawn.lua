@@ -711,6 +711,7 @@ local function teleportToLastRoad(veh, options)
   queueCallbackInVehicle(veh, "spawn.teleportToLastRoadCallback", "recovery.recoveryPoints", options)
 end
 
+-- NOTE: Spawns in the vehicle rotated by 180 degrees around the z-axis
 local function spawnVehicle(model, partConfig, pos, rot, options)
   local veh = createObject("BeamNGVehicle")
   if not veh then

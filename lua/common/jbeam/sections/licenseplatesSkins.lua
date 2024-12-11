@@ -53,8 +53,8 @@ local function process(objID, vehicleObj, config, activeParts)
 
       -- skin setup
       if isSkin then
-        local skinSlot = part.slotType
-        if skinSlot == 'paint_design' then skinSlot = '' end
+        local skinSlot = (type(part.skinType) == 'string' and part.skinType ~= '') and part.skinType or part.slotType
+        if skinSlot == 'paint_design' or type(skinSlot) ~= 'string' then skinSlot = '' end
         vehicleObj:setSkin(skinSlot .. '.' .. (part.skinName or part.globalSkin or ''))
         if part.default_color ~= nil then
           extensions.core_vehicle_manager.setVehicleColorsNames(objID, {part.default_color, part.default_color_2, part.default_color_3})

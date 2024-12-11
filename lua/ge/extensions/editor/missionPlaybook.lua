@@ -427,7 +427,7 @@ end
   local pagePtr = im.IntPtr(1)
 local function drawBookViewer()
 
-  if #M.book.results == 0 then return end
+  --if #M.book.results == 0 then return end
   im.PushItemWidth(im.GetContentRegionAvailWidth()-150)
   pagePtr[0] = M.book.page
   if im.SliderInt("##SliderIntlaskjdl",pagePtr, 1, #M.book.results) then

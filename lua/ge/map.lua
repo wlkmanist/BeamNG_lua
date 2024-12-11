@@ -33,8 +33,6 @@ local nodeKdTree = nil
 local manualWaypoints
 local buildSerial = -1
 local emptyTable = setmetatable({}, {__newindex = function(t, key, val) log('E', 'map', 'Tried to insert new elements into map.objects') end})
-local vecX = vec3(1,0,0)
-local vecY = vec3(0,1,0)
 local vecUp = vec3(0,0,1)
 local tmpBuf = buffer.new()
 local function highToLow(a, b) return a < b end
@@ -513,25 +511,20 @@ local function surfaceNormal(p, r)
   --   p2
 
   r = r or 2
-  local hr = 1.2 * r -- controls inclination angle up to (at least) which result is correct (arctan(1.2) ~ 50deg)
+  local hr = 1.2 * r -- calculation is guaranteed to be accurate up to ~ 50 deg (argtan(1.2)) inclination
 
-  local p1 = hr * vecUp
-  p1:setAdd(p)
-  p1.y = p1.y + r
-
-  local p2 = (-1.5 * r) * vecY -- -(1 + cos(60)) * r
-  p2:setAdd(p1)
-  local p3 = vec3(p2)
-  p2.x = p2.x + 0.8660254037844386 * r -- sin(60) * r
-  p3.x = p3.x - 0.8660254037844386 * r
+  local p1 = vec3(p.x, p.y + r, p.z + hr)
+  local p2 = vec3(p.x + 0.8660254037844386 * r, p.y - 0.5 * r, p1.z) -- sin(60) => 0.8660254037844386, cos(60) => 0.5
+  local p3 = p2:copy()
+  p3.x = p.x - 0.8660254037844386 * r
 
   p1.z = be:getSurfaceHeightBelow(p1)
   p2.z = be:getSurfaceHeightBelow(p2)
   p3.z = be:getSurfaceHeightBelow(p3)
 
-  -- in what follows p3 becomes the normal vector
-  if min(p1.z, p2.z, p3.z) < p.z - hr then
-    p3:set(vecUp)
+  -- store the result in p3
+  if min(p1.z, p2.z, p3.z) + hr < p.z then
+    p3:set(0, 0, 1)
   else
     p2:setSub(p3)
     p1:setSub(p3)
@@ -2707,53 +2700,87 @@ local function getPointToPointPath(startPos, targetPos, cutOffDrivability, dirMu
   return gp:getPointToPointPath(startPos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
 end
 
-local function saveSVG(filename)
+local function saveSVG(filename, includeLinks, includeNodes)
   local svg = require('libs/EzSVG/EzSVG')
+
+  includeLinks = includeLinks ~= false -- Default to true if not provided
+  includeNodes = includeNodes or false -- Default to false if not provided
 
   local terrain = scenetree.findObject(scenetree.findClassObjects('TerrainBlock')[1])
   local terrainPosition = vec3(terrain:getPosition())
 
-  local svgDoc = svg.Document(2048, 2048, svg.gray(255))
-  local lines = svg.Group()
-
   local m = map
   if not m or not next(m.nodes) then return end
-  -- draw edges
+
+  -- Calculate bounding box for all nodes
+  local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
   for nid, n in pairs(m.nodes) do
-    for lid, dif in pairs(n.links) do
-      local p1 = n.pos - terrainPosition
-      local p2 = m.nodes[lid].pos - terrainPosition
+    local pos = n.pos - terrainPosition
+    minX = math.min(minX, pos.x)
+    minY = math.min(minY, pos.y)
+    maxX = math.max(maxX, pos.x)
+    maxY = math.max(maxY, pos.y)
+  end
 
-      -- TODO: add proper fading between some colors
-      local typeColor = 'black'
-      if dif < 0.9 and dif >= 0 then
-        typeColor = svg.rgb(170, 68, 0) -- dirt road = brown
+  -- Add a margin for link widths
+  local margin = 20
+  minX = minX - margin
+  minY = minY - margin
+  maxX = maxX + margin
+  maxY = maxY + margin
+
+  -- Calculate SVG size
+  local width = maxX - minX
+  local height = maxY - minY
+
+  local svgDoc = svg.Document(width, height, svg.gray(255))
+  local lines = svg.Group()
+
+  -- Draw links
+  if includeLinks then
+    for nid, n in pairs(m.nodes) do
+      for lid, dif in pairs(n.links) do
+        local p1 = n.pos - terrainPosition
+        local p2 = m.nodes[lid].pos - terrainPosition
+
+        -- TODO: add proper fading between some colors
+        local typeColor = 'black'
+        local d = dif
+        if type(dif) == "table" then
+          d = dif.drivability or 0
+        end
+        if d < 0.9 and d >= 0 then
+          typeColor = svg.rgb(170, 68, 0) -- dirt road = brown
+        end
+
+        lines:add(svg.Polyline({p1.x - minX, maxY - p1.y, p2.x - minX, maxY - p2.y}, {
+          fill = 'none',
+          stroke = typeColor,
+          stroke_width = n.radius * 2,
+          stroke_opacity = 0.4,
+        }))
       end
+    end
+    svgDoc:add(lines)
+  end
 
-      lines:add(svg.Polyline({2048 - p1.x, p1.y, 2048 - p2.x, p2.y}, {
-        fill = 'none',
-        stroke = typeColor,
-        stroke_width = n.radius * 2,
-        stroke_opacity=0.4,
+  -- Draw nodes
+  if includeNodes then
+    local nodes = svg.Group()
+    for nid, n in pairs(m.nodes) do
+      local p = n.pos - terrainPosition
+      nodes:add(svg.Circle(p.x - minX, maxY - p.y, n.radius, {
+        fill = 'black',
+        fill_opacity = 0.4,
+        stroke = 'none',
       }))
     end
+    svgDoc:add(nodes)
   end
-  svgDoc:add(lines)
-
-  -- draw nodes
-  local nodes = svg.Group()
-  for nid, n in pairs(m.nodes) do
-    local p = n.pos - terrainPosition
-    nodes:add(svg.Circle(2048 - p.x, p.y, n.radius, {
-      fill = 'black',
-      fill_opacity=0.4,
-      stroke = 'none',
-    }))
-  end
-  svgDoc:add(nodes)
 
   svgDoc:writeTo(filename or 'map.svg')
 end
+
 
 -- returns the displacement value of the lane (negative = left, positive = right)
 local function getLaneOffset(nid1, nid2, width, lane, laneCount)
@@ -2900,7 +2927,7 @@ local function edgeDebugDraw()
 
       -- Draw Edge
       local edgeColor
-      if edgeData.gatedRoad then
+      if edgeData.gated > 0 then
         edgeColor = gatedRoadColor
       else
         local rainbow = rainbowColor(50, clamp(edgeData.drivability, 0, 1) * 15, 1)

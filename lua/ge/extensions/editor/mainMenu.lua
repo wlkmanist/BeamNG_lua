@@ -15,6 +15,7 @@ local smoothCameraRotate = imgui.BoolPtr(false)
 local opened = imgui.BoolPtr(true)
 local displaySceneMetric = imgui.BoolPtr(true)
 local showCompleteSceneTree = imgui.BoolPtr(false)
+local showNavGraphDrivability = imgui.BoolPtr(false)
 
 local defaultWindowMenuItems = {}
 local defaultWindowMenuGroups = {}
@@ -434,6 +435,15 @@ local function viewMenu()
       editor.setPreference("ui.general.showCompleteSceneTree", showCompleteSceneTree[0])
     end
 
+    local isShowNavGraphDrivabilityOn = editor.getVisualizationType("drawNavGraphdrivability")
+    showNavGraphDrivability[0] = isShowNavGraphDrivabilityOn
+    if imgui.Checkbox('Draw Navgraph Road Drivability', showNavGraphDrivability) then
+      editor.setVisualizationType("drawNavGraphdrivability", showNavGraphDrivability[0])
+      if editor.updateVisSettings then
+        editor.updateVisSettings()
+      end
+    end
+
     if imgui.BeginMenu("Layouts", imgui_true) then
       for _, layoutPath in ipairs(editor_layoutManager.getWindowLayouts()) do
         if imgui.MenuItem1(string.match(layoutPath, ".+/(.+)"), nil, imgui_false, imgui_true) then
@@ -774,6 +784,9 @@ end
 
 local function onEditorPreferenceValueChanged(path, value)
   if path == "ui.general.sceneMetric" then displaySceneMetric[0] = value end
+  if path == "gizmos.visualization.visTypes" then
+    showNavGraphDrivability[0] = value["drawNavGraphdrivability"] or false
+  end
 end
 
 M.onEditorGuiMainMenu = onEditorGuiMainMenu

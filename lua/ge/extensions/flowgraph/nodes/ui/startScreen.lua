@@ -75,7 +75,7 @@ function C:buttonPushed(action)
 end
 
 function C:getCmd(action)
-  return 'core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']:buttonPushed("'..action..'")'
+  return 'local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:buttonPushed("'..action..'") end'
 end
 
 function C:closeDialogue()
@@ -104,7 +104,7 @@ function C:openDialogue()
   data.portraitText = data.description
   data.portraitImg = {}
   data.portraitImg.start = self.pinIn.portraitImg.value or nil
-  data.callObj = 'core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']'
+  data.callObj = 'core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..')'
   data.readyHook = data.callObj .. ':started()'
   data.usePopup = self.pinIn.layout.value == 'popup'
 

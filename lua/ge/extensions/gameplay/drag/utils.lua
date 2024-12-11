@@ -54,13 +54,69 @@ local function stopAiVehicle(racer)
   if veh then
     veh:queueLuaCommand('ai.setTarget("drag_stop")')
     veh:queueLuaCommand('ai:scriptStop('..tostring(true)..','..tostring(true)..')')
-    log('I', logTag, 'AI stopped on vehicle: ', racer.vehId)
+    --log('I', logTag, 'AI stopped on vehicle: ', racer.vehId)
   end
 end
+
+local function headsUpWin()
+  local winnerList = {}
+  local dragData = gameplay_drag_general.getData()
+  for _, racer in pairs(dragData.racers) do
+    table.insert(winnerList, {vehId = racer.vehId, time = racer.timers.time_1_4.value, isPlayable = racer.isPlayable})
+  end
+  table.sort(winnerList, function(a,b) return (a.time) < (b.time)end)
+  return winnerList
+end
+
+local function bracketWin()
+  local winnerList = {}
+  local dragData = gameplay_drag_general.getData()
+  for _, racer in pairs(dragData.racers) do
+    local dialDiff = racer.timers.time_1_4.value - racer.timers.dial.value
+    if dialDiff < 0 then dialDiff = math.huge end
+    table.insert(winnerList, {vehId = racer.vehId, dialDiff = dialDiff, isPlayable = racer.isPlayable})
+  end
+
+  table.sort(winnerList, function(a, b) return a.dialDiff < b.dialDiff end)
+  return winnerList
+end
+
+local winConditions = {
+  ["headsUpRace"] = headsUpWin,
+  ["bracketRace"] = bracketWin
+}
 
 -- -----------------
 --PUBLIC FUNCTIONS--
 -- -----------------
+
+M.generateWinData =  function()
+  return winConditions[gameplay_drag_general.getData().dragType]()
+end
+
+M.changeRacerPhase = function(racer)
+  local dragData = gameplay_drag_general.getData()
+  local index = racer.currentPhase + 1
+  if index > #dragData.phases then
+    racer.isFinished = true
+    return
+  end
+  racer.currentPhase = index
+  --log("I", logTag, "This is the new phase: " .. racer.phases[racer.currentPhase].name .. " for vehicle: " .. tostring(racer.vehId))
+end
+
+M.changeAllPhases = function()
+  local dragData = gameplay_drag_general.getData()
+  for vehId, racer in pairs(dragData.racers) do
+    local index = racer.currentPhase + 1
+    if index > #dragData.phases then
+      racer.isFinished = true
+      return
+    end
+    racer.currentPhase = index
+  end
+end
+
 
 --This is called from the dragRace/display.lua once the christmasTree is finished or any other system determine that the race must start
 M.startRaceFromTree = function(vehId)
@@ -100,7 +156,7 @@ M.stage = function(phase, racer, dtSim)
           racer.vehObj:queueLuaCommand('ai.setSpeed('.. (dragData.strip.lanes[racer.lane].waypoints.stage.waypoint.speed - (distance/4)) ..')')
           racer.vehObj:queueLuaCommand('ai.setTarget("'..dragData.strip.lanes[racer.lane].waypoints.endLine.name..'")')
           extensions.hook("stageStarted")
-          log('I', logTag, racer.vehId .. " started stage " .. " command sended" ..dragData.strip.lanes[racer.lane].waypoints.stage.name)
+          --log('I', logTag, racer.vehId .. " started stage " .. " command sended" ..dragData.strip.lanes[racer.lane].waypoints.stage.name)
         end
       end
       if distance > -5 and distance < -0.178 then
@@ -108,12 +164,12 @@ M.stage = function(phase, racer, dtSim)
         racer.vehObj:queueLuaCommand('ai.setSpeed('.. (dragData.strip.lanes[racer.lane].waypoints.stage.waypoint.speed) ..')')
       elseif distance > -0.178 and distance < -0.05 then
         extensions.hook("preStageEnded", racer.vehId)
-        log('I', logTag, racer.vehId .. " completed prestage")
+        --log('I', logTag, racer.vehId .. " completed prestage")
       elseif distance > -0.05 then
         phase.completed = true
         stopAiVehicle(racer)
         extensions.hook("stageEnded", racer.vehId)
-        log('I', logTag, "Stage completed for vehicle: " .. racer.vehId)
+        --log('I', logTag, "Stage completed for vehicle: " .. racer.vehId)
         return
       end
     else
@@ -123,7 +179,7 @@ M.stage = function(phase, racer, dtSim)
         if  phase.timerOffset >= phase.startedOffset then
           phase.started = true
           extensions.hook("stageStarted")
-          log('I', logTag, racer.vehId .. " started stage" )
+          --log('I', logTag, racer.vehId .. " started stage" )
         end
       end
       if distance < -0.278 then
@@ -137,7 +193,7 @@ M.stage = function(phase, racer, dtSim)
         phase.completeTimer = (phase.completeTimer or 0) + dtSim
         if phase.completeTimer > 1 then
           phase.completed = true
-          log('I', logTag, "Stage completed for vehicle: " .. racer.vehId)
+          --log('I', logTag, "Stage completed for vehicle: " .. racer.vehId)
           return
         end
       elseif distance > 0.1 then
@@ -150,7 +206,7 @@ M.stage = function(phase, racer, dtSim)
 
         if phase.completeTimer > 1 then
           phase.completed = true
-          log('I', logTag, "Stage completed for vehicle: " .. racer.vehId)
+          --log('I', logTag, "Stage completed for vehicle: " .. racer.vehId)
           return
         end
       else
@@ -194,7 +250,7 @@ M.countdown = function(phase, racer, dtSim)
             racer.vehObj:queueLuaCommand('ai.setTarget("'..dragData.strip.lanes[racer.lane].waypoints.endLine.name..'")')
           extensions.hook("startDragCountdown")
           phase.started = true
-          log('I', logTag, 'Starting countdown for '..racer.vehId)
+          --log('I', logTag, 'Starting countdown for '..racer.vehId)
         end
       end
     else
@@ -204,16 +260,16 @@ M.countdown = function(phase, racer, dtSim)
         if  phase.timerOffset >= phase.startedOffset then
           extensions.hook("startDragCountdown")
           phase.started = true
-          log('I', logTag, 'Starting countdown for '..racer.vehId)
+          --log('I', logTag, 'Starting countdown for '..racer.vehId)
         end
       end
     end
     --Determines if the vehicle moved too much during the tree lights countdown.
-    if distance < -0.2 or distance > 0.2 then
+    if not racer.isDesqualified and (distance < -0.2 or distance > 0.2) then
       racer.isDesqualified = true
       racer.desqualifiedReason = "missions.dragRace.gameplay.disqualified.jumping"
       extensions.hook("jumpDescualifiedDrag", racer.vehId)
-      log('I', logTag, 'Desqualifying '..racer.vehId)
+      --log('I', logTag, 'Desqualifying '..racer.vehId)
     end
   end
 end
@@ -247,7 +303,7 @@ M.race = function(phase, racer, dtSim)
           racer.vehObj:queueLuaCommand('ai.setTarget("'..dragData.strip.lanes[racer.lane].waypoints.endLine.name..'")')
           phase.started = true
           extensions.hook("dragRaceStarted")
-          log('I', logTag, 'Starting Phase '..phase.name..' for '..racer.vehId)
+          --log('I', logTag, 'Starting Phase '..phase.name..' for '..racer.vehId)
         end
       end
 
@@ -258,26 +314,29 @@ M.race = function(phase, racer, dtSim)
         if  phase.timerOffset >= phase.startedOffset then
           phase.started = true
           extensions.hook("dragRaceStarted")
-          log('I', logTag, 'Starting Phase '..phase.name..' for '..racer.vehId)
+          --log('I', logTag, 'Starting Phase '..phase.name..' for '..racer.vehId)
         end
       end
     end
     if racer.timers.time_1_4.isSet then
       phase.completed = true
       extensions.hook("dragRaceEndLineReached", racer.vehId)
-      log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
+      --log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
       if not gameplay_missions_missionManager.getForegroundMissionId() then
         gameplay_drag_general.sendTimeslipDataToUi()
       end
+      if racer.isPlayable then
+        gameplay_drag_general.saveDialTimes()
+      end
       return
     else
-      if not isRacerInsideBoundary(racer) then
+      if not racer.isDesqualified and not isRacerInsideBoundary(racer) then
         racer.isDesqualified = true
         racer.desqualifiedReason = "missions.dragRace.gameplay.disqualified.outOfLane"
         extensions.hook("jumpDescualifiedDrag", racer.vehId)
       end
       local distance = calculateDistanceFromStagePos(racer)
-      if distance < -0.33 then
+      if not racer.isDesqualified and distance < -0.33 then
         racer.isDesqualified = true
         racer.desqualifiedReason = "missions.dragRace.gameplay.disqualified.outOfLane"
         extensions.hook("jumpDescualifiedDrag", racer.vehId)
@@ -327,7 +386,7 @@ M.stop =  function(phase, racer, dtSim)
     if racer.vehSpeed <= minVelToStop then
       extensions.hook("dragRaceVehicleStopped", racer.vehId)
       phase.completed = true
-      log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
+      --log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
     end
   end
 end
@@ -338,12 +397,12 @@ end
 --       if racer.canBeReseted then
 --         spawn.safeTeleport(veh, dragData.strip.lanes[racer.lane].spawn.transform.pos, dragData.strip.lanes[racer.lane].spawn.transform.rot, nil, nil, nil, true)
 --         phase.completed = true
---         log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
+--         --log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
 --         extensions.hook("dragRaceReturnCompleted", racer.vehId)
 --       else
 --         spawn.safeTeleport(veh, dragData.strip.lanes[racer.lane].spawn.transform.pos, dragData.strip.lanes[racer.lane].spawn.transform.rot, nil, nil, nil, false)
 --         phase.completed = true
---         log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
+--         --log('I', logTag, 'Completed Phase '..phase.name..' for '..racer.vehId)
 --         extensions.hook("dragRaceReturnCompleted", racer.vehId)
 --       end
 --     else

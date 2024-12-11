@@ -5,24 +5,23 @@
 local M = {}
 
 local jbeamIO = require('jbeam/io')
+local jbeamSlotSystem = require('jbeam/slotSystem')
 
 local salesTax = 0.07
 
 local shoppingSessionActive = false
 local initialVehicle
-local initialVehicleParts
 local previewVehicle
 local shoppingCart
 
 local partsInShop = {}
-local partToSlotMap
 local currentVehicle
 local partShopId = 0
-local partsToAdd = {}
 local slotToPartIdMap
 local slotsNiceName = {}
 local partsNiceName = {}
 local engineRunning
+local previewVehicleSlotData = {}
 
 local tutorialPartNames = {cargo_load_box_M_seat_load_R = true}
 
@@ -57,7 +56,7 @@ local function generatePart(partName, currentVehicleData, availableParts, slot, 
   part.description = availableParts[partName] or "no description found"
   part.tags = {}
   part.containingSlot = slot
-  part.slot = jbeamData.slotType
+  part.slotType = jbeamData.slotType
   part.vehicleModel = vehicleObj:getJBeamFilename()
   part.year = 2023
   part.partShopId = partShopId
@@ -97,6 +96,7 @@ local function generatePartShop()
   local availableParts = jbeamIO.getAvailableParts(currentVehicleData.ioCtx)
   local slotMap = jbeamIO.getAvailableSlotMap(currentVehicleData.ioCtx)
   local vehicleObj = getCurrentVehicleObj()
+  previewVehicleSlotData = {}
 
   partsInShop = {}
   for _, partName in pairs(currentVehicleData.chosenParts) do
@@ -109,6 +109,7 @@ local function generatePartShop()
       end
 
       for mainSlotName, chosenPartSlotInfo in pairs(partInfo.slotInfoUi) do
+        previewVehicleSlotData[mainSlotName] = chosenPartSlotInfo
         for _, allowType in ipairs(chosenPartSlotInfo.allowTypes) do
           for _, allowedSlotPartName in ipairs(slotMap[allowType] or {}) do
             local part = generatePart(allowedSlotPartName, currentVehicleData, availableParts, mainSlotName, vehicleObj)
@@ -158,7 +159,6 @@ local function updateShoppingCart()
   shoppingCart.slotList = {}
 
   for slot, part in pairs(shoppingCart.partsIn) do
-    shoppingCart.partsIn[slot] = part
     shoppingCart.partsOut[slot] = career_modules_partInventory.getInventory()[slotToPartIdMap[currentVehicle][slot]]
   end
   for slot, partName in pairs(initialVehicle.config.parts) do
@@ -253,7 +253,6 @@ local function startShoppingActual(_originComputerId)
   previewVehicle = deepcopy(initialVehicle)
 
   partShopId = 0
-  partsToAdd = {}
   generatePartShop()
   originComputerId = _originComputerId
 
@@ -293,8 +292,8 @@ local function startShopping(inventoryId, _originComputerId)
   end
   if not currentVehicle then return end
 
-  local numberOfBrokenParts = career_modules_insurance.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[currentVehicle].partConditions)
-  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_insurance.getBrokenPartsThreshold() then
+  local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[currentVehicle].partConditions)
+  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
     career_modules_insurance.startRepair(currentVehicle, nil, function() startShoppingActual(_originComputerId) end)
   else
     startShoppingActual(_originComputerId)
@@ -321,35 +320,23 @@ M.focusSlot = focusSlot
 
 local function getDefaultPartName(jbeamData, slotName)
   for _, slot in ipairs(jbeamData.slots2) do
-    for _, allowType in ipairs(slot.allowTypes) do
-      if allowType == slotName and slot.default and slot.default ~= "" then return slot.default end
-    end
+    if slot.name == slotName and slot.default and slot.default ~= "" then return slot.default end
   end
 end
 
--- "parts" needs to be all parts added in this shopping session
 local function getNeededAdditionalParts(parts, inventoryId)
   local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
   local vehicleObj = be:getObjectByID(vehId)
-  local jbeamFileName = vehicleObj:getJBeamFilename()
   local currentVehicleData = extensions.core_vehicle_manager.getVehicleData(getCurrentVehicleVehId())
   local availableParts = jbeamIO.getAvailableParts(currentVehicleData.ioCtx)
-  local slotMap = jbeamIO.getAvailableSlotMap(currentVehicleData.ioCtx)
-
-  -- Make a map from part to its slot
-  local partToSlotMap = {}
-  for slotName, partNames in pairs(slotMap) do
-    for _, partName in ipairs(partNames) do
-      partToSlotMap[partName] = slotName
-    end
-  end
 
   -- Make a map from slot to its part for the parts which were already in the vehicle and the parts which we want to add
-  local combinedSlotToPartMap = deepcopy(slotToPartIdMap[inventoryId])
+  local combinedSlotToPartMap = {}
+  for containingSlot, partId in pairs(slotToPartIdMap[inventoryId]) do
+    combinedSlotToPartMap[containingSlot] = career_modules_partInventory.getInventory()[partId]
+  end
   for _, part in pairs(parts) do
-    if part then
-      combinedSlotToPartMap[part.containingSlot] = true
-    end
+    combinedSlotToPartMap[part.containingSlot] = part
   end
 
   -- add the default part if the slot is empty and they have a default part
@@ -359,7 +346,7 @@ local function getNeededAdditionalParts(parts, inventoryId)
     if part.description.slotInfoUi then
       for slotName, slotInfo in pairs(part.description.slotInfoUi) do
 
-        if not combinedSlotToPartMap[slotName] then -- found an empty slot
+        if not combinedSlotToPartMap[slotName] or not jbeamSlotSystem.partFitsSlot(combinedSlotToPartMap[slotName], slotInfo) then -- found an empty slot
           local jbeamData = jbeamIO.getPart(currentVehicleData.ioCtx, part.name)
           local partNameToGenerate = getDefaultPartName(jbeamData, slotName)
 
@@ -369,30 +356,35 @@ local function getNeededAdditionalParts(parts, inventoryId)
             if newGeneratedPart then -- the default part exists in the jbeam
               resultParts[newGeneratedPart.containingSlot] = newGeneratedPart
               addedParts = true
+              if not slotInfo.coreSlot then
+                newGeneratedPart.sourcePart = true
+              end
             end
           end
         end
       end
     end
   end
-
   return resultParts, addedParts
 end
 
-local function findIncompatiblePartsInShoppingCartRec(partName, availableParts, vehicleParts)
+local function findIncompatiblePartsInShoppingCartRec(partName, availableParts, vehicleParts, ioCtx)
   local description = availableParts[partName]
   if not description.slotInfoUi then return end
-  for slot, _ in pairs(description.slotInfoUi) do
+  for slot, slotInfo in pairs(description.slotInfoUi) do
     local subPartName = vehicleParts[slot]
-    if subPartName then
+    local subPart = jbeamIO.getPart(ioCtx, subPartName)
+
+    if subPartName and (subPartName == "" or jbeamSlotSystem.partFitsSlot(subPart, slotInfo)) then
       vehicleParts[slot] = nil
       if subPartName ~= "" then
-        findIncompatiblePartsInShoppingCartRec(subPartName, availableParts, vehicleParts)
+        findIncompatiblePartsInShoppingCartRec(subPartName, availableParts, vehicleParts, ioCtx)
       end
     end
   end
 end
 
+-- TODO this returns "main"
 local function findIncompatiblePartsInShoppingCart()
   local currentVehicleData = extensions.core_vehicle_manager.getVehicleData(getCurrentVehicleVehId())
   local availableParts = jbeamIO.getAvailableParts(currentVehicleData.ioCtx)
@@ -400,34 +392,72 @@ local function findIncompatiblePartsInShoppingCart()
   local mainPartName = jbeamIO.getMainPartName(currentVehicleData.ioCtx)
   local vehicleParts = deepcopy(previewVehicle.config.parts)
   -- Remove all parts of the "vehicleParts" list that are in the vehicle correctly. Then only the incorrect ones will remain
-  findIncompatiblePartsInShoppingCartRec(mainPartName, availableParts, vehicleParts)
+  findIncompatiblePartsInShoppingCartRec(mainPartName, availableParts, vehicleParts, currentVehicleData.ioCtx)
   return vehicleParts
 end
 
-local function updateInstalledParts()
+-- fill the preview vehicle with the initial parts
+local function fillWithInitialParts(containingSlot, currentVehicleData)
+  local initialPartName = initialVehicle.config.parts[containingSlot]
+  local initialPart = jbeamIO.getPart(currentVehicleData.ioCtx, initialPartName)
+
+  if initialPart then
+    previewVehicle.config.parts[containingSlot] = initialPartName
+    previewVehicle.partConditions[initialPartName] = initialVehicle.partConditions[initialPartName]
+    for _, slot in ipairs(initialPart.slots2 or {}) do
+      fillWithInitialParts(slot.name, currentVehicleData)
+    end
+  else
+    previewVehicle.config.parts[containingSlot] = ""
+  end
+end
+
+local function updateInstalledParts(addedParts, removedParts)
   if not shoppingSessionActive then return end
 
-  previewVehicle = deepcopy(initialVehicle)
-  local spawnOptions = {}
-  spawnOptions.config = previewVehicle.config
-  spawnOptions.keepOtherVehRotation = true
-  shoppingCart.partsIn = deepcopy(partsToAdd)
-  local addedParts
-  repeat
-    shoppingCart.partsIn, addedParts = getNeededAdditionalParts(shoppingCart.partsIn, currentVehicle)
-  until not addedParts
+  if addedParts then
+    local werePartsAdded
+    repeat
+      addedParts, werePartsAdded = getNeededAdditionalParts(addedParts, currentVehicle)
+    until not werePartsAdded
+    tableMerge(shoppingCart.partsIn, addedParts)
+  end
+
+  if removedParts then
+    local currentVehicleData = extensions.core_vehicle_manager.getVehicleData(getCurrentVehicleVehId())
+
+    for containingSlot, part in pairs(removedParts) do
+      -- If there was another part in the slot before, put the initial part back in, otherwise leave the slot empty
+      local initialPartName = initialVehicle.config.parts[containingSlot]
+      local initialPart = jbeamIO.getPart(currentVehicleData.ioCtx, initialPartName)
+
+      if initialPartName and initialPartName ~= "" and jbeamSlotSystem.partFitsSlot(initialPart, previewVehicleSlotData[containingSlot]) then
+        fillWithInitialParts(containingSlot, currentVehicleData)
+      else
+        previewVehicle.config.parts[containingSlot] = ""
+      end
+      shoppingCart.partsIn[containingSlot] = nil
+    end
+  end
 
   -- Add new parts to preview vehicle data
   for _, part in pairs(shoppingCart.partsIn) do
-    spawnOptions.config.parts[part.containingSlot] = part.name
+    previewVehicle.config.parts[part.containingSlot] = part.name
   end
 
   -- Find and remove parts from the shopping cart that are not compatible anymore after the installed parts have changed
   local incompatibleParts = findIncompatiblePartsInShoppingCart()
   for slot, partName in pairs(incompatibleParts) do
     shoppingCart.partsIn[slot] = nil
-    partsToAdd[slot] = nil
-    spawnOptions.config.parts[slot] = nil
+    previewVehicle.config.parts[slot] = nil
+  end
+
+  -- Fill the empty slots with initial vehicle parts
+  for slot, partName in pairs(initialVehicle.config.parts) do
+    if not previewVehicle.config.parts[slot] then
+      previewVehicle.config.parts[slot] = partName
+      previewVehicle.partConditions[partName] = initialVehicle.partConditions[partName]
+    end
   end
 
   -- Add the partCondition of the new parts to the previewVehicle
@@ -439,6 +469,10 @@ local function updateInstalledParts()
     local additionalVehicleData = {spawnWithEngineRunning = false}
     core_vehicle_manager.queueAdditionalVehicleData(additionalVehicleData, getCurrentVehicleObj():getID())
   end
+
+  local spawnOptions = {}
+  spawnOptions.config = previewVehicle.config
+  spawnOptions.keepOtherVehRotation = true
 
   core_vehicles.replaceVehicle(previewVehicle.model, spawnOptions, getCurrentVehicleObj())
   getCurrentVehicleObj():queueLuaCommand(string.format("partCondition.initConditions(%s, nil, nil, nil, {%s})", serialize(previewVehicle.partConditions), serialize(career_modules_painting.getPrimerColor())))
@@ -452,17 +486,24 @@ end
 
 local function removePart(part)
   if not shoppingSessionActive then return end
-  partsToAdd[part.containingSlot] = nil
-  updateInstalledParts()
+  local removedParts = {}
+  removedParts[part.containingSlot] = part
+  updateInstalledParts(nil, removedParts)
 end
 
 local function installPart(part)
   if not shoppingSessionActive then return end
-  part.sourcePart = true
-  partsToAdd[part.containingSlot] = part
-  updateInstalledParts()
 
-  extensions.hook("onPartShoppingPartInstalled",{part = part})
+  -- only make this a sourcePart if it is not in a core slot or if the initial vehicle has a part in that slot
+  -- this way we make sure that a core slot can never be empty
+  if not previewVehicleSlotData[part.containingSlot].coreSlot or initialVehicle.config.parts[part.containingSlot] and initialVehicle.config.parts[part.containingSlot] ~= "" then
+    part.sourcePart = true
+  end
+  local newParts = {}
+  newParts[part.containingSlot] = part
+  updateInstalledParts(newParts)
+
+  extensions.hook("onPartShoppingPartInstalled", {part = part})
 end
 
 local function installPartByPartShopId(partShopId)
@@ -475,7 +516,7 @@ local function installPartByPartShopId(partShopId)
 end
 
 local function removePartBySlot(slot)
-  for partName, part in pairs(partsInShop) do
+  for _, part in pairs(shoppingCart.partsIn) do
     if part.containingSlot == slot then
       removePart(part)
       return
@@ -500,7 +541,6 @@ end
 local function endShopping(_closeMenuAfterSaving)
   closeMenuAfterSaving = career_career.isAutosaveEnabled() and _closeMenuAfterSaving
   shoppingSessionActive = false
-  initialVehicleParts = nil
   if not closeMenuAfterSaving then
     closeMenu()
   end
@@ -568,9 +608,7 @@ local function applyShopping()
   end
 
   Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
-
   core_vehicleBridge.executeAction(be:getObjectByID(career_modules_inventory.getVehicleIdFromInventoryId(previewVehicle.id)),'setFreeze', false)
-
   extensions.hook("onPartShoppingTransactionComplete")
 end
 

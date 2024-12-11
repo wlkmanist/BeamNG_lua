@@ -5,6 +5,7 @@
 local M = {}
 
 local csvlib
+local xlsxlib
 
 --function used as a case selector, input can be both int and bool as the first argument, any number of arguments after that
 --in case it's a bool, it works like a ternary if, returning the second param if true, the third if false
@@ -25,16 +26,23 @@ local function case(selector, ...)
   return arg[index] or arg[select("#", ...)] --fetch value from given index or from the last index
 end
 
-local function includeExternalResource(resourceURI)
+local function includeExternalResource(resourceURI, sheetName, cellRef)
   if type(resourceURI) ~= 'string' then return end
   -- TODO: URL, URI, etc
   local _, _, ext = path.split(resourceURI:lower(), true)
-  if ext == '.csv' then
+  if ext == 'csv' then
     csvlib = csvlib or require('csvlib')
     return csvlib.readFileCSV(resourceURI)
+  elseif ext == 'xlsx' then
+    xlsxlib = xlsxlib or require('libs/xlsxlib/xlsxlib')
+    local xlsx = xlsxlib.loadFileXLSX(resourceURI)
+    local res = xlsxlib.getSheetData(xlsx, sheetName, cellRef)
+    --dump{'includeExternalResource', resourceURI, sheetName, cellRef, res}
+    return res
   end
-  log('E', '', 'Unsupported file format: ' .. tostring(filename))
-  return nil, 'Unsupported file format: ' .. tostring(filename)
+
+  log('E', '', 'Unsupported file format: ' .. tostring(resourceURI))
+  return nil, 'Unsupported file format: ' .. tostring(resourceURI)
 end
 
 local varWrapper = {}
@@ -81,7 +89,7 @@ local function parseSafe(expr, vars)
 
   --check if we find a *single standalone* "=" sign and abort parsing if found. >=, <=, == and ~= are allowed to support boolean operations
   if expr:find("[^<>~=]=[^=]") then
-    log('E', "jbeam.expressionParser.parse", "Assignments are not supported inside expressions!")
+    log('E', "jbeam.expressionParser.parse", "Assignments are not supported inside expressions! Expression: " .. originalExpr)
     return nil
   end
 

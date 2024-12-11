@@ -2,7 +2,6 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
-M.dependencies = {"career_modules_milestones_milestones", "career_modules_delivery_progress", "career_modules_delivery_parcelMods"}
 
 local deliveryCounterConfigs = {
   {

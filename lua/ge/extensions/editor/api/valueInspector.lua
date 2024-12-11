@@ -32,6 +32,7 @@ local dataBlockNameFilter = imgui.ImGuiTextFilter()
 local simSetWindowFieldId
 local texObjs = {}
 local customFieldEditors = {}
+local customFieldLabelChangers = {}
 local customFieldFilters = {}
 local fieldValueCached = nil
 local filterTypes = {"Name", "Tag"}
@@ -192,6 +193,25 @@ end
 
 local popupWasPositioned = false
 
+local function positionPopupWindow()
+  if not popupWasPositioned then
+    local mousePos = imgui.GetMousePos()
+    local displaySize = imgui.GetIO().DisplaySize
+    local mainViewPos = imgui.GetMainViewport().Pos
+    mousePos.x = mousePos.x - mainViewPos.x
+    mousePos.y = mousePos.y - mainViewPos.y
+    local windowSize = filteredFieldPopupSize
+    local screenMarginSpacing = 5
+    if displaySize then
+      if mousePos.x + windowSize.x > displaySize.x then mousePos.x = mainViewPos.x + displaySize.x - windowSize.x - screenMarginSpacing end
+      if mousePos.y + windowSize.y > displaySize.y then mousePos.y = mainViewPos.y + displaySize.y - windowSize.y - screenMarginSpacing end
+    end
+    imgui.SetNextWindowPos(imgui.ImVec2(mousePos.x, mousePos.y))
+    imgui.SetNextWindowSize(imgui.ImVec2(windowSize.x, windowSize.y))
+    popupWasPositioned = true
+  end
+end
+
 function C:displaySimSetPopupList(objectSetArray, fieldName, fieldNameId, fieldValue, selectedIds, val, arrayIndex, className)
   if imgui.Button("  ...  ###" .. fieldNameId) then
     simSetWindowFieldId = fieldNameId
@@ -204,10 +224,7 @@ function C:displaySimSetPopupList(objectSetArray, fieldName, fieldNameId, fieldV
   end
   if not simSetWindowFieldId or simSetWindowFieldId ~= fieldNameId then return end
 
-  if not popupWasPositioned then
-    imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetMousePos().x, imgui.GetMousePos().y))
-    popupWasPositioned = true
-  end
+  positionPopupWindow()
 
   if imgui.Begin(fieldNameId .. "SimSetPopup", nil, imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoCollapse + imgui.WindowFlags_NoDocking) then
     imgui.PushID1(fieldNameId .. "SimSetNameFilter")
@@ -220,7 +237,7 @@ function C:displaySimSetPopupList(objectSetArray, fieldName, fieldNameId, fieldV
     if imgui.IsItemHovered() then
       imgui.SetTooltip("Clear Search Filter")
     end
-    imgui.BeginChild1(fieldNameId .. "SetObjNames", filteredFieldPopupSize)
+    imgui.BeginChild1(fieldNameId .. "SetObjNames")
 
     local sortedObjectNameAndClass = {}
 
@@ -295,18 +312,7 @@ function C:displayMaterialPopupList(objectSet, fieldName, fieldNameId, fieldValu
 
   if not simSetWindowFieldId or simSetWindowFieldId ~= fieldNameId then return end
 
-  if not popupWasPositioned then
-    local mousePos = imgui.GetMousePos()
-    local displaySize = imgui.GetIO().DisplaySize
-    local windowSize = filteredFieldPopupSize
-
-    if displaySize then
-      if mousePos.x + windowSize.x > displaySize.x then mousePos.x = displaySize.x - windowSize.x end
-      if mousePos.y + windowSize.y > displaySize.y then mousePos.y = displaySize.y - windowSize.y end
-    end
-    imgui.SetNextWindowPos(imgui.ImVec2(mousePos.x, mousePos.y))
-    popupWasPositioned = true
-  end
+  positionPopupWindow()
 
   -- This emulates a popup window because BeginPopup doesnt work correctly with the "hovered" state of imgui windows
   local windowOpenPtr = imgui.BoolPtr(true)
@@ -334,7 +340,7 @@ function C:displayMaterialPopupList(objectSet, fieldName, fieldNameId, fieldValu
       comboMenuOpen = true
       imgui.EndCombo()
     end
-    imgui.BeginChild1(fieldNameId .. "SetObjNames", filteredFieldPopupSize)
+    imgui.BeginChild1(fieldNameId .. "SetObjNames")
     --TODO: sort by name
     for i = 1, tableSize(objectSet) do
       local obj = objectSet[i]
@@ -447,6 +453,11 @@ local function findCustomFieldFilter(fieldName, className)
   return fieldFilter
 end
 
+local function findCustomFieldLabelChanger(fieldName, className)
+  local fieldLabelChanger = customFieldLabelChangers[fieldName .. className]
+  return fieldLabelChanger
+end
+
 local function registerCustomFieldEditor(className, fieldName, uiCallback, useArray)
   local key = fieldName .. className
   customFieldEditors[key] = {className = className, fieldName = fieldName, uiCallback = uiCallback, useArray = useArray}
@@ -465,6 +476,16 @@ end
 local function unregisterCustomFieldFilter(className, fieldName)
   local key = fieldName .. className
   customFieldFilters[key] = nil
+end
+
+local function registerCustomFieldLabelChanger(className, fieldName, callback)
+  local key = fieldName .. className
+  customFieldLabelChangers[key] = {className = className, fieldName = fieldName, callback = callback}
+end
+
+local function unregisterCustomFieldLabelChanger(className, fieldName)
+  local key = fieldName .. className
+  customFieldLabelChangers[key] = nil
 end
 
 function C:reinitializeTables()
@@ -585,16 +606,23 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
   local fieldFilter = findCustomFieldFilter(fieldName, self.selectionClassName)
 
   if fieldEd then
-    local retInfo = fieldEd.uiCallback(self.selectedIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
-    if retInfo then
-      fieldValue = retInfo.fieldValue
-      self.setValueCallback(fieldName, fieldValue, arrayIndex, customData, retInfo.editEnded)
+    if not fieldEd.uiCallback then
+      editor.logError("No custom field editor uiCallback passed (nil) for field: " .. fieldName)
+    else
+      local retInfo = fieldEd.uiCallback(self.selectedIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
+      if retInfo then
+        fieldValue = retInfo.fieldValue
+        self.setValueCallback(fieldName, fieldValue, arrayIndex, customData, retInfo.editEnded)
+      end
     end
   elseif fieldTypeName == "TypeMaterialName" then
     local materialSet = {}
     if fieldFilter then
-      local filteredSet = fieldFilter.uiCallback(Sim.getMaterialSet())
-      materialSet = filteredSet
+      if not fieldFilter.uiCallback then
+        editor.logError("No custom field filter uiCallback passed (nil), for TypeMaterialName field type set for field: " .. fieldName)
+      else
+        materialSet = fieldFilter.uiCallback(Sim.getMaterialSet())
+      end
     else
       local materials = Sim.getMaterialSet()
       for i = 0, materials:size() - 1 do
@@ -1398,6 +1426,10 @@ editor.findCustomFieldEditor = findCustomFieldEditor
 editor.registerCustomFieldInspectorFilter = registerCustomFieldFilter
 editor.unregisterCustomFieldInspectorFilter = unregisterCustomFieldFilter
 editor.findCustomFieldFilter = findCustomFieldFilter
+
+editor.registerCustomFieldLabelChanger = registerCustomFieldLabelChanger
+editor.unregisterCustomFieldLabelChanger = unregisterCustomFieldLabelChanger
+editor.findCustomFieldLabelChanger = findCustomFieldLabelChanger
 
 editor.valueInspectorCopyPasteMenu = handleCopyPasteMenu
 editor.valueInspectorFilenameContextMenu = filenameContextMenuGui

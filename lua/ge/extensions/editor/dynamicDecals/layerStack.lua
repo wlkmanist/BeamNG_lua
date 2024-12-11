@@ -103,7 +103,7 @@ local function layerDragDropTarget(name, layer, guiId, to, toParentUid, id, addi
       local payload = im.AcceptDragDropPayload(layerDragDropType)
       if payload~=nil then
         assert(payload.DataSize == ffi.sizeof(payloadSize))
-        local data = jsonDecode(ffi.string(ffi.cast("char*", payload.Data)))
+        local data = jsonDecode(ffi.string(payload.Data))
         local from = data.from
         local fromParentUid = data.fromParentUid
         if additionalCheckFn then
@@ -158,7 +158,7 @@ local function layerElement(k, layer, guiId, parentUid, parentStack, layerLevel)
       local payload = im.AcceptDragDropPayload(layerDragDropType)
       if payload~=nil then
         assert(payload.DataSize == ffi.sizeof(payloadSize))
-        local data = jsonDecode(ffi.string(ffi.cast("char*", payload.Data)))
+        local data = jsonDecode(ffi.string(payload.Data))
         local from = data.from
         local fromParentUid = data.fromParentUid
         local to = nil
@@ -688,7 +688,7 @@ local function sectionGui(guiId)
           local payload = im.AcceptDragDropPayload(layerDragDropType)
           if payload~=nil then
             assert(payload.DataSize == ffi.sizeof(payloadSize))
-            local data = jsonDecode(ffi.string(ffi.cast("char*", payload.Data)))
+            local data = jsonDecode(ffi.string(payload.Data))
             local from = data.from
             local fromParentUid = data.fromParentUid
             local to = k
@@ -724,7 +724,7 @@ local function sectionGui(guiId)
         local payload = im.AcceptDragDropPayload(layerDragDropType)
         if payload~=nil then
           assert(payload.DataSize == ffi.sizeof(payloadSize))
-          local data = jsonDecode(ffi.string(ffi.cast("char*", payload.Data)))
+          local data = jsonDecode(ffi.string(payload.Data))
           local from = data.from
           local fromParentUid = data.fromParentUid
           local to = #api.getLayerStack()

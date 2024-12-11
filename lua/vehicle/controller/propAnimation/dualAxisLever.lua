@@ -89,8 +89,11 @@ local function getDesiredMode(dt)
   return electrics.values[electricsNameMode]
 end
 
-local function handleMMode(desiredMode)
-  if desiredMode:sub(1, 1) == "M" then
+local function handleMSModes(desiredMode)
+  local firstLetter = desiredMode:sub(1, 1)
+  if firstLetter == "S" then
+    desiredMode = "S"
+  elseif firstLetter == "M" then
     local gearIndex = desiredMode:sub(2, desiredMode:len())
     desiredMode = "M"
     local secondDesiredMode
@@ -122,7 +125,8 @@ local function updateTargetQueue(dt)
     return
   end
   local desiredMode = getDesiredModeFunction(dt)
-  if not desiredMode then
+  -- ignore any non string values here (like from a manual transmission)
+  if not desiredMode or type(desiredMode) ~= "string" then
     return
   end
   if currentMode == desiredMode and movementState ~= movementStates.moving then
@@ -134,7 +138,7 @@ local function updateTargetQueue(dt)
     return
   end
 
-  local adjustedDesiredMode, secondDesiredMode = handleMMode(desiredMode)
+  local adjustedDesiredMode, secondDesiredMode = handleMSModes(desiredMode)
 
   --push the actual target to the queue
   targetModeQueue:reset()

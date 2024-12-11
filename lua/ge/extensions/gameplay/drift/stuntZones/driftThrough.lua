@@ -18,19 +18,26 @@ function C:init(data)
   self:reset()
 end
 
+function C:accomplish()
+  self.activeData.usedFlag = false
+  self.activeData.currCooldown = self.data.zoneData.cooldown
+
+  local driftActiveData = gameplay_drift_drift.getDriftActiveData()
+
+  extensions.hook("onAnyStuntZoneAccomplished", {
+    stuntZoneId = self.data.id,
+    subHookName = "onDriftThroughAccomplished",
+    subHookData =
+    {
+      currDegAngle = driftActiveData and driftActiveData.currDegAngle or 30, -- this safeguard is used in the drift debug imgui menu to test UI
+      zoneData = {points = self.data.zoneData.score}
+    }
+  })
+end
+
 function C:detectStunt()
   if self.activeData.usedFlag then
-    self.activeData.usedFlag = false
-    self.activeData.currCooldown = self.data.zoneData.cooldown
-
-    return {
-      hook = "onDriftThroughDetected",
-      hookData =
-      {
-        currDegAngle = gameplay_drift_drift.getDriftActiveData().currDegAngle,
-        zoneData = {points = self.data.zoneData.score}
-      }
-    }
+    self:accomplish()
   end
 end
 
@@ -58,6 +65,8 @@ local lerpVecC = vec3()
 local lerpVecD = vec3()
 local color
 function C:sendDecals()
+  if not gameplay_drift_stuntZones.getDrawLines() then return end
+
   cooldownPerc = 100 - self.activeData.currCooldown / self.data.zoneData.cooldown * 100
 
   if cooldownPerc >= 100 then

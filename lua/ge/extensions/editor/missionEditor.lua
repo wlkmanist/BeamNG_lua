@@ -82,6 +82,38 @@ local missionSearchTxt = im.ArrayChar(256, "")
 local missionSearchDisplayResult = false
 local missionSearchResults = {}
 
+local function openRaceEditor(shownMission)
+  if editor_raceEditor then
+    if not editor.active then
+      editor.setEditorActive(true)
+    end
+    editor_raceEditor.show()
+
+    local folder = shownMission.missionFolder
+    local raceFname = folder .. '/race.race.json'
+    log('D', logTag, 'opening RaceEditor with raceFname='..raceFname)
+
+    if not FS:fileExists(raceFname) then
+      jsonWriteFile(raceFname, {}, true)
+    end
+
+    editor_raceEditor.loadRace(raceFname)
+  end
+end
+
+local function openRallyEditor(shownMission)
+  if editor_rallyEditor then
+    if not editor.active then
+      editor.setEditorActive(true)
+    end
+    local notebookFname = editor_rallyEditor.detectNotebookToLoad(shownMission.missionFolder)
+    log('I', logTag, 'opening RallyEditor with notebookFname='..notebookFname)
+    -- editor_rallyEditor.loadNotebook(notebookFname)
+    editor_rallyEditor.loadOrCreateNotebook(notebookFname)
+    editor_rallyEditor.showRallyTool()
+  end
+end
+
 local lastShownMission = nil -- always force an update on first call
 local function displayHeader(clickedMission, hoveredMission, shownMission)
   if shownMission then
@@ -117,6 +149,30 @@ local function displayHeader(clickedMission, hoveredMission, shownMission)
 
     ui_flowgraph_editor.tooltip("Start Mission\n(Needs loaded map and vehicle)")
     im.SameLine()
+
+    if shownMission.missionType == 'rallyStage' then
+      if editor.uiIconImageButton(editor.icons.simobject_bng_waypoint, im.ImVec2(40, 40)) then
+        openRaceEditor(shownMission)
+      end
+      im.tooltip("Open Race Editor")
+      im.SameLine()
+
+      if editor.uiIconImageButton(editor.icons.import_contacts, im.ImVec2(40, 40)) then
+        openRallyEditor(shownMission)
+      end
+      im.tooltip("Open Rally Editor")
+      im.SameLine()
+
+      -- if editor.uiIconImageButton(editor.icons.fg_vehicle_sports_car, im.ImVec2(40, 40)) then
+      --   -- need to open raceEditorTurbo before opening recce flowgraph so that the flowgraph can reference things in the race editor.
+      --   openRallyEditor(shownMission)
+      --   editor_flowgraphEditor.open()
+      --   local recceFname = "/gameplay/missionTypes/rallyStage/recce.flow.json"
+      --   editor_flowgraphEditor.openFile({filepath = recceFname}, true)
+      -- end
+      -- im.tooltip("Open Recce Flowgraph")
+      -- im.SameLine()
+    end
   end
   if shownMission then
     im.Text("Mission ID:\n"..shownMission.id)
@@ -1542,6 +1598,10 @@ end
 
 M.onConsoleLog = function(timer, lvl, origin, line)
   print(timer)
+end
+
+M.getSelectedMissionId = function()
+  return clickedMission
 end
 
 return M

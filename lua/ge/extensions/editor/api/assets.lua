@@ -27,7 +27,7 @@ local function dragDropTarget(dragDropId)
     local payload = imgui.AcceptDragDropPayload(dragDropId)
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[2048]")
-      local str = ffi.string(ffi.cast("char*",payload.Data))
+      local str = ffi.string(payload.Data)
       if dragDropAsset.callback then dragDropAsset.callback(str) end
       dragDropAsset = {}
     end

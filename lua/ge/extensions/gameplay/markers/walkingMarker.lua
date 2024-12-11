@@ -131,8 +131,15 @@ function C:update(data)
     end
   end
 
-  self.anyOverlap = anyOverlap
+  if anyOverlap ~= self.isInAreaLastFrame then
+    if anyOverlap then self.isInAreaChanged = "in" end
+    if not anyOverlap then self.isInAreaChanged = "out" end
+  else
+    self.isInAreaChanged = nil
+  end
+  self.isInAreaLastFrame = anyOverlap
 
+  self.anyOverlap = anyOverlap
 end
 
 

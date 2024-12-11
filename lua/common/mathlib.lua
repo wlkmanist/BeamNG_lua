@@ -424,7 +424,7 @@ function LuaVec3:setLerp(from, to, t)
   local x, y, z = from:xyz()
   local bx, by, bz = to:xyz()
   local t1 = 1 - t
-  self.x, self.y, self.z = x*t1 + bx*t, y*t1+ by*t, z*t1 + bz*t  -- preserves from and to, non monotonic
+  self.x, self.y, self.z = x*t1 + bx*t, y*t1 + by*t, z*t1 + bz*t  -- preserves from and to, non monotonic
 end
 
 function LuaVec3:setCross(a, b)
@@ -1017,7 +1017,7 @@ end
 
 function LuaQuat:toTorqueQuat()
   local sinhalf = math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
-  local tw = math.acos(self.w) * 360 / math.pi
+  local tw = math.acos(clamp(self.w, -1, 1)) * 360 / math.pi
   if sinhalf ~= 0 then
     return {x = self.x / sinhalf, y = self.y / sinhalf, z = self.z / sinhalf, w = tw}
   else
@@ -1361,12 +1361,13 @@ function intersectsRay_Ellipsoid(rpos, rdir, c1, x1, y1, z1)
 end
 
 function intersectsRay_Cylinder(rpos, rdir, cposa, cposb, cR)
-  local rca, cba = cposa - rpos, cposb - cposa
-  local cpnorm = cba:normalized()
+  local rca = cposa - rpos
+  local cpnorm = cposb - cposa; cpnorm:normalize()
   local cp = rca:projectToOriginPlane(cpnorm)
   local rdp = rdir:projectToOriginPlane(cpnorm)
-  local minhit, maxhit = intersectsRay_Sphere(vec3(0,0,0), rdp:normalized(), cp, cR)
   local invrdplen = 1 / (rdp:length() + 1e-30)
+  rdp:setScaled(invrdplen)
+  local minhit, maxhit = intersectsRay_Sphere(newLuaVec3xyz(0, 0, 0), rdp, cp, cR)
   minhit, maxhit = minhit * invrdplen, maxhit * invrdplen
   local plhita, plhitb = intersectsRay_Plane(rpos, rdir, cposa, cpnorm), intersectsRay_Plane(rpos, rdir, cposb, cpnorm)
   minhit, maxhit = max(minhit, min(plhita, plhitb)), min(maxhit, max(plhita, plhitb))

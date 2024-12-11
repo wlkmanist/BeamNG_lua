@@ -96,6 +96,14 @@ function C:update(data)
       iconInfo.color = playModeColorI
     end
   end
+
+  if anyOverlap ~= self.anyOverlap then
+    if anyOverlap then self.isInAreaChanged = "in" end
+    if not anyOverlap then self.isInAreaChanged = "out" end
+  else
+    self.isInAreaChanged = nil
+  end
+
   self.anyOverlap = anyOverlap
 end
 

@@ -216,11 +216,12 @@ local function drawGeneralTab()
   end
   im.tooltip("If true, random events can happen (such as lawless drivers).")
 
-  var = im.BoolPtr(trafficVars.enablePrivateRoads)
-  if im.Checkbox("Enable All Roads For Spawning", var) then
-    gameplay_traffic.setTrafficVars({enablePrivateRoads = var[0]})
-  end
-  im.tooltip("If true, traffic vehicles will try to spawn on any road type.")
+  -- DEPRECATED
+  --var = im.BoolPtr(trafficVars.enablePrivateRoads)
+  --if im.Checkbox("Enable All Roads For Spawning", var) then
+    --gameplay_traffic.setTrafficVars({enablePrivateRoads = var[0]})
+  --end
+  --im.tooltip("If true, traffic vehicles will try to spawn on any road type.")
 
   im.Dummy(im.ImVec2(0, 5))
   im.TextUnformatted("Parking Variables")

@@ -71,6 +71,7 @@ return {
     toggleConsole = { replacement = "toggleConsoleNG" },
     clear_console = { obsolete = true },
     annotatedScreenShot = { obsolete = true},
+    debugmode_toggle_coltris = { replacement = "debugmode_coltris_fwd" },
     key_q               = { obsolete = true},
     key_e               = { obsolete = true},
     key_w               = { obsolete = true},

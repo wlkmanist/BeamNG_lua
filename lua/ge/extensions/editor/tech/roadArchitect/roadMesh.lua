@@ -210,6 +210,7 @@ local function createLeftSidewalkKerb(r, sec, roadMeshIdx, s, folder)
     nCtr2 = nCtr2 + 1
     uvCtr = uvCtr + 4
 
+    --[[
     -- Bottom quad.
     local i1 = (i - 1) + 3
 
@@ -257,6 +258,7 @@ local function createLeftSidewalkKerb(r, sec, roadMeshIdx, s, folder)
     nCtr = nCtr + 1
     nCtr2 = nCtr2 + 1
     uvCtr = uvCtr + 4
+    --]]
 
     -- Left quad.
     local i1 = (i - 1) + 4
@@ -508,6 +510,7 @@ local function createRightSidewalkKerb(r, sec, roadMeshIdx, s, folder)
     nCtr2 = nCtr2 + 1
     uvCtr = uvCtr + 4
 
+    --[[
     -- Bottom quad.
     local i1 = (i - 1) + 3
 
@@ -556,6 +559,7 @@ local function createRightSidewalkKerb(r, sec, roadMeshIdx, s, folder)
     nCtr = nCtr + 1
     nCtr2 = nCtr2 + 1
     uvCtr = uvCtr + 4
+    --]]
 
     -- Left quad.
     local i1 = (i - 1) + 4

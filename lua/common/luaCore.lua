@@ -26,7 +26,7 @@ end
 -- unload a package/module
 function unrequire(m)
   package.loaded[m] = nil
-  _G[m] = nil
+  rawset(_G, m, nil)
 end
 
 -- little snippet that enforces reloading of files

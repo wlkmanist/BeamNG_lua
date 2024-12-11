@@ -165,7 +165,7 @@ local function startRecording(file)
   table.insert(sequence, util_stepHandler.makeStepReturnTrueFunction(
     function(step)
       step.timeout = math.huge
-      test_util_fpsCamRecorder.start()
+      test_util_fpsCamRecorder.start({sampleDuration = sampleDuration})
       core_paths.playPath(core_paths.loadPath(file), 0, initData)
       return true
     end))
@@ -182,7 +182,7 @@ local function startRecording(file)
       if FS:fileExists(annotationFileName) then
         annotation = jsonReadFile(annotationFileName)
       end
-      test_util_fpsCamRecorder.save(fn, nil, {name = fn, camPathFile = file, annotation = annotation})
+      test_util_fpsCamRecorder.save(fn, {name = fn, camPathFile = file, annotation = annotation})
       test_util_fpsCamRecorder.clear()
       ui_message("Done with the recording!")
       return true

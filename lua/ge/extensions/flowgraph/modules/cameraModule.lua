@@ -120,7 +120,7 @@ end
 
 
 function C:getCmd(id)
-  return 'core_flowgraphManager.getManagerByID('..self.mgr.id..').modules.button:buttonClicked('..id..')'
+  return 'local m = core_flowgraphManager.getManagerModule('..self.mgr.id..', "button") if m then m:buttonClicked('..id..') end'
 end
 
 

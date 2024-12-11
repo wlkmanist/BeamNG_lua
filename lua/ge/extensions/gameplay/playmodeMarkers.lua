@@ -14,7 +14,9 @@ local playmodeMarkerTypeNames = {
   parkingMarker = true,
   zoneMarker = true,
   walkingMarker = true,
-  gasStationMarker = true
+  gasStationMarker = true,
+  driftLineMarker = true,
+  invisibleTrigger = true,
 }
 
 local function idSort(a,b) return a.id<b.id end

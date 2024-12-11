@@ -235,6 +235,7 @@ local function handleCommandLineFirstFrame()
     extensions.load('test_singleLevel')
   end
   if tableFindKey(cmdArgs, '-LoadSingleLevelForShaderCache') then
+    --Same but waiting for 2000 frames and 35sec(which happen latest). Usage: -testlevel [level name] -testvehicle [vehicle_name] -testsettings [path to json]
     extensions.load('test_singleLevelLong')
   end
 
@@ -317,7 +318,7 @@ local startupExtensions = {
   'core_paths', 'core_remoteController', 'core_replay', 'core_settings_audio', 'core_settings_graphic',
   'core_settings_settings', 'core_sounds', 'core_vehicle_colors', 'core_vehicle_manager', 'core_vehicles', 'ui_imgui',
   'ui_apps', 'ui_audio', 'ui_flowgraph_editor', 'ui_visibility', 'campaign_campaignsLoader', 'career_branches',
-  'career_career', 'career_saveSystem', 'editor_main', 'editor_veMain', 'freeroam_freeroam', 'gameplay_garageMode',
+  'career_career', 'career_saveSystem', 'freeroam_freeroam', 'gameplay_garageMode',
   'gameplay_missions_missions', 'gameplay_missions_progress', 'gameplay_missions_unlocks', 'gameplay_missions_missionScreen',
   'gameplay_statistic', 'render_hdr', 'scenario_quickRaceLoader', 'scenario_scenariosLoader', 'core_windowsConsole'
   -- DO NOT ADD MORE EXTENSIONS TO THIS LIST unless it's required by game startup procedure. Instead, try the following:
@@ -336,11 +337,31 @@ local presetExtensions = {
   'freeroam_gasStations', 'freeroam_specialTriggers', 'freeroam_organizations', 'gameplay_city', 'gameplay_markerInteraction',
   'gameplay_missions_missionManager', 'gameplay_missions_startTrigger', 'gameplay_parking', 'gameplay_rawPois',
   'gameplay_traffic', 'gameplay_walk', 'trackbuilder_trackBuilder', 'ui_fadeScreen', 'ui_missionInfo', 'util_richPresence',
-  'freeroam_crashCamModeLoader', 'gameplay_speedTraps', 'gameplay_speedTrapLeaderboards', 'gameplay_drift_general', 'gameplay_drag_general', 'gameplay_achievement'
+  'freeroam_crashCamModeLoader', 'gameplay_speedTraps', 'gameplay_speedTrapLeaderboards', 'gameplay_drift_general', 'gameplay_drag_freeroamDragStrip', 'gameplay_achievement'
 }
 
 local cmdlineLevelLoadExtensions = {} -- extensions indicated from command line arguments
 local manualUnloadExtensions = startupExtensions -- by default, we want all startupExtensions to be manually unloaded (we want them to persist across level loads)
+
+local editorExtensions = {
+  'editor_main', 'editor_veMain'
+}
+
+if not PlatformSwitches.useEditor then
+  editor.isEditorActive = function() return false end
+  editor.toggleActive = function(safeMode) end
+end
+
+function prepareStartupExtensionsList()
+  if PlatformSwitches.useEditor then
+    for _,v in ipairs(editorExtensions) do
+      if not tableContains(startupExtensions, v) then
+        table.insert(startupExtensions, v)
+      end
+    end
+  end
+  manualUnloadExtensions = startupExtensions
+end
 
 -- load extensions with unloadMode = "manual"
 function loadManualUnloadExtensions()
@@ -565,6 +586,7 @@ function init(reason)
   -- be sensitive about global writes from now on
   detectGlobalWrites()
 
+  prepareStartupExtensionsList()
   extensions.load(startupExtensions)
 
   table.clear(cmdlineLevelLoadExtensions)
@@ -735,8 +757,6 @@ function importPersistentData()
   -- log('E', 'main', '>>>> persistent data imported: ' .. tostring(s))
   -- deserialize extensions first, so the extensions are loaded before they are trying to get deserialized
   local data = deserialize(s)
-  -- TODO(AK): Remove this stuff post completing serialization work
-  -- writeFile("ge_exportPersistentData.txt", dumps(data))
   deserializePackages(data)
   if data then
     rawset(_G, 'levelLoaded', data.levelLoaded)
@@ -1039,4 +1059,3 @@ function registerCoreModule(extensionName)
   extensionName = extensions.luaPathToExtName(extensionName)
   setExtensionUnloadMode(extensionName, "manual")
 end
-

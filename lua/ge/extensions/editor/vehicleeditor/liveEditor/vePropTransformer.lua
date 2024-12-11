@@ -6,9 +6,10 @@ local M = {}
 local im = ui_imgui
 
 local wndName = "Prop Transformer"
-local wndOpen = false
 local mainWndFlags = bit.bor(im.WindowFlags_NoBringToFrontOnFocus)
 M.menuEntry = "Prop Transformer"
+
+local windowOpen = im.BoolPtr(false)
 
 local nodeRenderRadius = 0.02
 local nodeHoveredRenderRadius = 0.03
@@ -98,7 +99,7 @@ local function setBaseTranslationGlobalWithoutOffset(prop, pos)
   end
   if prop.nodeOffset and type(prop.nodeOffset) == 'table' and prop.nodeOffset.x and prop.nodeOffset.y and prop.nodeOffset.z and not prop.ignoreNodeOffset then
     if prevPosNoNodeOffsetMove then
-      if fsign(prevPosNoNodeOffsetMove.x + (pos - prevPos).x) > 0 then
+      if sign(prevPosNoNodeOffsetMove.x + (pos - prevPos).x) > 0 then
         posNoOffset.x = posNoOffset.x - prop.nodeOffset.x
       else
         posNoOffset.x = posNoOffset.x + prop.nodeOffset.x
@@ -462,7 +463,7 @@ local function switchVehicle(vehID)
 end
 
 local function onVehicleEditorRenderJBeams(dtReal, dtSim, dtRaw)
-  if not (wndOpen and vEditor.vehicle and vEditor.vdata) then return end
+  if not (windowOpen[0] and vEditor.vehicle and vEditor.vdata) then return end
 
   -- Initialize initial state with vehicle data
   if not initVehData then
@@ -480,12 +481,12 @@ local function onVehicleEditorRenderJBeams(dtReal, dtSim, dtRaw)
   end
 end
 
-local function onEditorGui(dt)
-  if not vEditor.vehicle then return end
+local function onUpdate(dt)
+  if windowOpen[0] ~= true then return end
 
-  if editor.beginWindow(wndName, wndName, mainWndFlags) then
-    wndOpen = true
+  if not vEditor or not vEditor.vehicle then return end
 
+  if im.Begin(wndName, windowOpen, mainWndFlags) then
     if state then
       local io = im.GetIO()
       state.propSelectorIdx = clamp(state.propSelectorIdx + clamp(io.MouseWheel, -1, 1), 1, state.propSelectorCount - 1)
@@ -558,10 +559,8 @@ local function onEditorGui(dt)
         end
       end
     end
-  else
-    wndOpen = false
   end
-  editor.endWindow()
+  im.End()
 end
 
 local function onVehicleSwitched(oldVehicle, newVehicle, player)
@@ -574,32 +573,26 @@ local function onVehicleSpawned(id)
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
-local function onEditorToolWindowShow(window)
-  if window == wndName then
-    wndOpen = true
-  end
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
 end
 
-local function onEditorToolWindowHide(window)
-  if window == wndName then
-    wndOpen = false
-  end
-end
-
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(200,100))
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
 end
 
 M.onVehicleEditorRenderJBeams = onVehicleEditorRenderJBeams
-M.onEditorGui = onEditorGui
+M.onUpdate = onUpdate
 M.onVehicleSwitched = onVehicleSwitched
 M.onVehicleSpawned = onVehicleSpawned
 M.open = open
-M.onEditorToolWindowShow = onEditorToolWindowShow
-M.onEditorToolWindowHide = onEditorToolWindowHide
-M.onEditorInitialized = onEditorInitialized
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

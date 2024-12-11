@@ -2,9 +2,13 @@ local M = {}
 
 M.dependencies = {"gameplay_drift_general"}
 
+local driftDebugInfo = {
+  default = true,
+  canBeChanged = true
+}
+
 local im = ui_imgui
 local manualDebug = im.BoolPtr(false)
-local tableFlags = bit.bor(im.TableFlags_Resizable,im.TableFlags_RowBg,im.TableFlags_Borders)
 
 local stuntZonesCount = -1 -- Important to know how many stunt zones we have in order to accurately define variety
 local stallingValue = 1-- the lower the worse
@@ -122,14 +126,14 @@ local function processDrift()
   calculateStallingValue()
 end
 
-local function onDriftStatusChanged(status)
-  if status then
+local function onDriftStatusChanged(isDrifting)
+  if isDrifting then
     processDrift()
   end
 end
 
 local function imguiDebug()
-  if gameplay_drift_general.getDebug() then
+  if gameplay_drift_general.getExtensionDebug("gameplay_drift_stallingSystem") then
     if im.Begin("Drift stalling system") then
       im.Text(string.format("Current stalling value : %0.2f", stallingValue))
       if im.Checkbox('Manual debug', manualDebug) then
@@ -146,14 +150,14 @@ local function imguiDebug()
         end
       end
       im.Text("History")
-        im.BeginTable("History", 1, tableFlags)
-        im.TableNextColumn()
-        if next(history) then
-          for i = #history, 1, -1 do
-            im.Text(string.format("%s %i", history[i].type, history[i].stuntId))
-          end
+      im.BeginTable("History", 1, nil)
+      im.TableNextColumn()
+      if next(history) then
+        for i = #history, 1, -1 do
+          im.Text(string.format("%s %i", history[i].type, history[i].stuntId))
         end
-        im.EndTable()
+      end
+      im.EndTable()
     end
   end
 end
@@ -162,10 +166,16 @@ local function onUpdate()
   imguiDebug()
 end
 
+local function getDriftDebugInfo()
+  return driftDebugInfo
+end
+
 M.reset = reset
 
 M.calculateScore = calculateScore
 M.processStuntZone = processStuntZone
+
+M.getDriftDebugInfo = getDriftDebugInfo
 
 M.onDriftStatusChanged = onDriftStatusChanged
 M.onUpdate = onUpdate

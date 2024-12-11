@@ -10,7 +10,6 @@ local random = math.random
 local C = {}
 
 function C:init()
-  self.randomActionProbability = 0.3
   self.personalityModifiers = {}
   self.actions = {
     fleePostCrash = function (args)
@@ -19,7 +18,7 @@ function C:init()
         local obj = be:getObjectByID(self.veh.id)
         obj:queueLuaCommand('ai.driveInLane("off")')
         obj:queueLuaCommand('ai.setAggressionMode("off")')
-        obj:queueLuaCommand('ai.setAggression(0.6)')
+        self:setAggression(args.aggression or max(0.5, random()))
       end
       self.state = 'flee'
       self.flags.askInsurance = nil
@@ -30,7 +29,7 @@ function C:init()
         local obj = be:getObjectByID(self.veh.id)
         obj:queueLuaCommand('ai.driveInLane("off")')
         obj:queueLuaCommand('ai.setAggressionMode("off")')
-        obj:queueLuaCommand('ai.setAggression(0.3)')
+        self:setAggression(args.aggression or max(0.5, random()))
       end
       self.state = 'follow'
       self.flags.askInsurance = nil
@@ -60,61 +59,41 @@ function C:onRefresh()
   self.actionTimer = 0
   local personality = self.driver.personality
 
-  local selfDamageAction, otherDamageAction = 'none', 'none'
-  local damageThreshold = 1000
-  local hitThreshold = math.huge
+  self.driver.eventType = nil
+  self.driver.damageAction = 'none'
+  self.driver.damageThreshold = 1000
+  self.driver.collisionThreshold = math.huge
 
   if self.veh.isAi then -- only calculates values if vehicle is AI
-    local actionValue = (personality.bravery + personality.anger) * 0.5
-    local result = lerp(actionValue - 0.5, actionValue + 0.5, random())
+    self.driver.damageAction = 'stop'
 
-    -- higher actionValue results in a probability bias towards a higher result
-    if result > 2 / 3 then
-      selfDamageAction = 'followPostCrash'
-      hitThreshold = clamp(5 - ceil(personality.bravery * 4), 1, 4)
-    elseif result > 1 / 3 then
-      selfDamageAction = 'stop'
-    else
-      selfDamageAction = 'fleePostCrash'
-      hitThreshold = clamp(ceil(personality.bravery * 4), 1, 4)
+    if personality.bravery >= 0.55 then
+      self.driver.damageAction = 'followPostCrash'
+    elseif personality.bravery <= 0.45 then
+      self.driver.damageAction = 'fleePostCrash'
     end
 
-    damageThreshold = max(self.veh.damageLimits[1], square(actionValue * 10) * 10)
-
-    -- really not sure about this
-    actionValue = personality.bravery
-    result = lerp(actionValue - 0.5, actionValue + 0.5, random())
-
-    if result <= 0.5 then
-      otherDamageAction = 'fleePostCrash'
-    end
+    local squareRandom = square(random())
+    self.driver.damageThreshold = max(self.veh.damageLimits[1], squareRandom * 1000)
+    self.driver.collisionThreshold = ceil(squareRandom * 6)
   end
 
-  self.driver.behavioral = {
-    selfDamageAction = selfDamageAction,
-    otherDamageAction = otherDamageAction,
-    selfDamageThreshold = damageThreshold, -- minimum self damage to trigger action
-    otherDamageThreshold = max(500, damageThreshold * 4), -- less concerned about other vehicles taking damage
-    selfHitThreshold = hitThreshold,
-    otherHitThreshold = hitThreshold + 1
-  }
-  self.driver.witnessed = {
-    selfHitCount = 0,
-    otherHitCount = 0
-  }
+  self.driver.selfHitCount = 0
+  self.driver.otherHitCount = 0
+  self.driver.enableAskInsurance = true
 end
 
 function C:onCrashDamage(data)
   -- triggers if self is currently not in a collision or witness to one
-  if self.driver.witnessed.eventType ~= 'selfCollision' and self.driver.witnessed.eventType ~= 'otherCollision' then
-    self.driver.witnessed.eventType = 'selfCrash'
+  if self.driver.eventType ~= 'selfCollision' and self.driver.eventType ~= 'otherCollision' then
+    self.driver.eventType = 'selfCrash'
   end
 end
 
 function C:onOtherCrashDamage(otherId, data)
   -- triggers if self is currently not in a collision or witness to one
-  if self.driver.witnessed.eventType ~= 'selfCollision' and self.driver.witnessed.eventType ~= 'otherCollision' then
-    self.driver.witnessed.eventType = 'otherCrash'
+  if self.driver.eventType ~= 'selfCollision' and self.driver.eventType ~= 'otherCollision' then
+    self.driver.eventType = 'otherCrash'
     self:setTarget(otherId)
   end
 end
@@ -123,34 +102,36 @@ function C:onCollision(otherId, data)
   if self.veh.speed >= self.veh.tracking.speedLimit * 1.2 then -- speeding always means collision fault for self
     self.veh.collisions[otherId].fault = true
   end
-  if self.driver.witnessed.eventType ~= 'selfCollision' then -- overrides previous events
-    self.driver.witnessed.eventType = 'selfCollision'
+  if self.driver.eventType ~= 'selfCollision' then -- overrides previous events
+    self.driver.eventType = 'selfCollision'
     self:setTarget(otherId)
-
-    if self.driver.personality.anger > 0.7 then
-      self.veh:honkHorn(max(0.25, (self.driver.personality.anger - 0.7) * 4))
-    end
   end
-  self.driver.witnessed.selfHitCount = data.count
+
+  if self.veh.isAi and not self.flags.askInsurance and self.driver.personality.bravery >= 0.52 and random() >= 0.5 / clamp(data.count, 1, 3) then
+    self.flags.honkHornDelay = 1
+  end
+
+  self.driver.selfHitCount = data.count
 end
 
 function C:onOtherCollision(id1, id2, data)
-  if self.driver.witnessed.eventType ~= 'selfCollision' then
+  if self.driver.eventType ~= 'selfCollision' then
     local targetVeh, secondVeh = gameplay_traffic.getTrafficData()[id1], gameplay_traffic.getTrafficData()[id2]
     if not targetVeh or not secondVeh then return end
     local targetId = targetVeh.speed < secondVeh.speed and id1 or id2 -- target the slower vehicle in collision
     if targetId == id2 then targetVeh = gameplay_traffic.getTrafficData()[targetId] end
 
-    if self:checkTargetVisible(targetId) and self.veh:getInteractiveDistance(targetVeh.pos, true) <= 6400 then
-      if self.driver.witnessed.eventType ~= 'otherCollision' then
-        self.driver.witnessed.eventType = 'otherCollision'
+    if self:checkTargetVisible(targetId) and self.veh:getInteractiveDistance(targetVeh.pos, true) <= 3600 then
+      if self.driver.eventType ~= 'otherCollision' then
+        self.driver.eventType = 'otherCollision'
         self:setTarget(targetId)
-
-        if self.driver.personality.anger > 0.7 then
-          self.veh:honkHorn(max(0.25, (self.driver.personality.anger - 0.7) * 2))
-        end
       end
-      self.driver.witnessed.otherHitCount = data.count
+
+      if self.veh.isAi and self.driver.personality.bravery >= 0.56 and random() >= 0.5 then
+        self.flags.honkHornDelay = 1
+      end
+
+      self.driver.otherHitCount = data.count
     end
   end
 end
@@ -164,55 +145,65 @@ function C:onTrafficTick(tickTime)
 
   local targetVeh = self.targetId and gameplay_traffic.getTrafficData()[self.targetId]
   self.targetVisible = self:checkTargetVisible()
-  self.targetNear = (targetVeh and self.veh:getInteractiveDistance(targetVeh.pos, true) <= 6400) and true or false
+  self.targetNear = (targetVeh and self.veh:getInteractiveDistance(targetVeh.pos, true) <= 3600) and true or false
 
   if targetVeh and self.veh.isAi then
     local driver = self.driver
 
     if self.targetVisible and self.targetNear then
-      local brakeDist = self.veh:getBrakingDistance(self.veh.speed, driver.aggression * 1.5)
-      local driveVecDotTarget = self.veh.driveVec:dot(targetVeh.pos - self.veh.pos)
-      local patienceBraveryValue = (driver.personality.bravery + driver.personality.patience) * 0.5
+      local actionType
 
-      -- target id collided with self
-      if driver.witnessed.eventType == 'selfCollision' and self.veh.damage >= driver.behavioral.selfDamageThreshold then
-        if driver.witnessed.selfHitCount >= driver.behavioral.selfHitThreshold then
-          if driver.behavioral.selfDamageAction == 'followPostCrash' and self.state ~= 'follow' then
-            self:setAction('followPostCrash', {reason = driver.witnessed.eventType, targetId = self.targetId})
-            self.actionTimer = 7 + driver.personality.bravery * 20
-          elseif driver.behavioral.selfDamageAction == 'fleePostCrash' and self.state ~= 'flee' then
-            self:setAction('fleePostCrash', {reason = driver.witnessed.eventType, targetId = self.targetId})
-            self.actionTimer = 7 - driver.personality.bravery * 10
-          end
-          driver.behavioral.selfHitThreshold = driver.behavioral.selfHitThreshold + 1
+      -- target vehicle collided with self
+      if driver.eventType == 'selfCollision' and self.veh.damage >= driver.damageThreshold then
+        if driver.selfHitCount >= driver.collisionThreshold then
+          actionType = 'crashThreshold'
+          driver.collisionThreshold = driver.collisionThreshold + 2
+        else
+          actionType = 'crash'
         end
 
+      -- target vehicle collided with other vehicle
+      elseif driver.eventType == 'otherCollision' and targetVeh.damage >= driver.damageThreshold then
+        if driver.otherHitCount >= driver.collisionThreshold + 1 then -- higher threshold
+          actionType = 'crashThreshold'
+          driver.collisionThreshold = driver.collisionThreshold + 2
+        else
+          actionType = 'crash'
+        end
+
+      -- target vehicle crashed by itself
+      elseif driver.eventType == 'otherCrash' then
+        if self.state == 'none' and driver.personality.bravery + driver.personality.patience >= 0.8
+        and self.veh.driveVec:dot(targetVeh.pos - self.veh.pos) > 0 then
+          actionType = 'crash'
+        end
+      end
+
+      if actionType == 'crashThreshold' then -- follow, flee, etc.
+        local minTime = 5
+        if driver.damageAction == 'followPostCrash' and self.state ~= 'follow' then
+          local chaseTarget = false
+          if targetVeh.tracking.collisions >= 3 and driver.personality.bravery >= 0.6 then -- mode change if target driver is very bad
+            chaseTarget = true
+            minTime = 10
+          end
+          self:setAction('followPostCrash', {reason = driver.eventType, targetId = self.targetId, isChase = chaseTarget})
+          self.actionTimer = max(minTime, (driver.personality.bravery - 0.5) * 60) -- duration for following target
+        elseif driver.damageAction == 'fleePostCrash' and self.state ~= 'flee' then
+          self:setAction('fleePostCrash', {reason = driver.eventType, targetId = self.targetId})
+          self.actionTimer = max(minTime, (0.5 - driver.personality.bravery) * 60) -- duration for fleeing from target
+        else
+          if self.state == 'none' then
+            self:setAction('pullOver', {dist = self.veh:getBrakingDistance(self.veh.speed, driver.aggression * 1.5), reason = driver.eventType, useWarnSignal = true})
+          end
+        end
+      elseif actionType == 'crash' then -- just pull over and stop
         if self.state == 'none' then
-          self:setAction('pullOver', {dist = brakeDist, reason = driver.witnessed.eventType, useWarnSignal = true})
-          self.flags.askInsurance = 1
-          self.actionTimer = 5 + driver.personality.patience * 10
-        end
-
-      -- target id visible and collided with other vehicle
-      elseif driver.witnessed.eventType == 'otherCollision' and targetVeh.damage >= driver.behavioral.otherDamageThreshold then
-        if driver.witnessed.otherHitCount >= driver.behavioral.otherHitThreshold then
-          if driver.behavioral.otherDamageAction == 'fleePostCrash' and self.state ~= 'flee' then
-            self:setAction('fleePostCrash', {reason = driver.witnessed.eventType, targetId = self.targetId})
+          self:setAction('pullOver', {dist = self.veh:getBrakingDistance(self.veh.speed, driver.aggression * 1.5), reason = driver.eventType, useWarnSignal = true})
+          if driver.eventType == 'selfCollision' then
+            self.flags.askInsurance = 1
+            self.actionTimer = max(3, driver.personality.patience * 15) -- timer until insurance action is done
           end
-          driver.behavioral.otherHitThreshold = driver.behavioral.otherHitThreshold + 1
-        end
-
-        if self.state == 'none' and patienceBraveryValue >= 0.3 and driveVecDotTarget > 0 then
-          self:setAction('followPostCrash', {reason = driver.witnessed.eventType, targetId = self.targetId})
-          self.actionTimer = patienceBraveryValue * 40
-        end
-
-      -- target id visible and crashed by itself
-      elseif driver.witnessed.eventType == 'otherCrash' then
-        if not self.flags.pullOver and patienceBraveryValue >= 0.3 and driveVecDotTarget > 0 then
-          self:setAction('pullOver', {dist = brakeDist, reason = driver.witnessed.eventType, useWarnSignal = true})
-          self.flags.stopAndHelp = 1
-          self.actionTimer = patienceBraveryValue * 20
         end
       end
     else -- target not visible or out of range
@@ -222,7 +213,7 @@ function C:onTrafficTick(tickTime)
     end
   end
 
-  if self.veh.speed >= 6 and next(map.objects[self.veh.id].states) then -- lightbar triggers all traffic lights to change to the red state
+  if self.enableTrafficSignalsChange and self.veh.speed >= 6 and next(map.objects[self.veh.id].states) then -- lightbar triggers all traffic lights to change to the red state
     -- this exists here until we have a way to properly recognize emergency vehicles (lightbar exists)
     if map.objects[self.veh.id].states.lightbar then
       self:freezeTrafficSignals(true)
@@ -249,12 +240,14 @@ function C:onUpdate(dt, dtSim)
       if self.flags.askInsurance then
         if self.actionTimer <= 0 then
           if self.targetVisible and self.veh.speed <= 1 and targetVeh.speed <= 1 and self.veh.pos:squaredDistance(targetVeh.pos) <= 400 then
-            self:setAction('askInsurance') -- exchange insurance information
-            if gameplay_traffic.showMessages and self.targetId == be:getPlayerVehicleID(0) then
-              if career_career and career_career.isActive() then
-                -- career insurance logic might go here
-              else
-                ui_message('ui.traffic.interactions.insuranceExchanged', 5, 'traffic', 'traffic')
+            if self.driver.enableAskInsurance then
+              self:setAction('askInsurance') -- exchange insurance information
+              if gameplay_traffic.showMessages and self.targetId == be:getPlayerVehicleID(0) then
+                if career_career and career_career.isActive() then
+                  -- career insurance logic might go here
+                else
+                  ui_message('ui.traffic.interactions.insuranceExchanged', 5, 'traffic', 'traffic')
+                end
               end
             end
             self.targetId = nil
@@ -272,12 +265,13 @@ function C:onUpdate(dt, dtSim)
             self:resetAction()
           end
         end
-      elseif self.flags.stopAndHelp then
-        if self.actionTimer <= 0 then
-          self:resetAction()
-        end
       end
     end
+  end
+
+  if self.flags.honkHornDelay and random() >= 0.9 then
+    self.veh:honkHorn(max(0.25, square(random()) * 1.5))
+    self.flags.honkHornDelay = nil
   end
 end
 

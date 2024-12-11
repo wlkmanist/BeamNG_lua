@@ -66,7 +66,7 @@ M.formatGasStationPoi = formatGasStationPoi
 
 local function onGetRawPoiListForLevel(levelIdentifier, elements)
   local facilities = freeroam_facilities.getFacilities(levelIdentifier)
-  if career_career.isActive() or settings.getValue("enableGasStationsInFreeroam") or true then
+  if career_career.isActive() or settings.getValue("enableGasStationsInFreeroam") then
     for i, gasStation in ipairs(facilities.gasStations or {}) do
       table.insert(elements, formatGasStationPoi(gasStation))
     end

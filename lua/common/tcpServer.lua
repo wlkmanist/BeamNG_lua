@@ -131,7 +131,7 @@ function TCPServer:send(connection, sendData, recData)
   self.headerBuffer.length = ffi.new("uint32_t", messageLength) -- little-endian format
 
   -- Send the header
-  connection:send(ffi.string(self.headerBuffer.identifier, headerSize))
+  connection:send(ffi.string(self.headerBuffer, headerSize))
 
   -- Send the JSON data and the null character
   connection:send(jsonData .. '\0')
@@ -151,11 +151,9 @@ function TCPServer:_onDataRaw(connection, dataRaw, res)
     if #buffer < headerSize then break end -- Header length check
 
     -- Use the FFI to directly access the buffer's memory for header inspection
-    local headerPtr = buffer:ref()
     local header = ffi.new("message_header_t")
-    ffi.copy(header, headerPtr, ffi.sizeof("message_header_t"))
+    ffi.copy(header, buffer, ffi.sizeof("message_header_t"))
 
-    local identifierStr = ffi.string(header.identifier, 4)
     if header.identifier[0] ~= 66 or -- 66 = B
       header.identifier[1] ~= 78 or  -- 78 = N
       header.identifier[2] ~= 48 or  -- 48 = 0
@@ -167,15 +165,13 @@ function TCPServer:_onDataRaw(connection, dataRaw, res)
 
     if #buffer < headerSize + header.length then break end
 
+    buffer:skip(headerSize)
+    local message = buffer:get(header.length) -- Extract the message
     -- Check for null character
-    if headerPtr[headerSize + header.length - 1] ~= 0 then
+    if message:byte(header.length) ~= 0 then
       log('E', 'TCPServer', 'Message format error: Null character not found.')
       return
     end
-
-    buffer:skip(headerSize)
-    local message = ffi.string(buffer:ref(), header.length - 1) -- Extract the message
-    buffer:skip(header.length)
 
     local data = jsonDecode(message, 'tcpConnection')
     if not data then

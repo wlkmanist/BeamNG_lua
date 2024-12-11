@@ -59,6 +59,9 @@ function C:drawProgress()
 
   local progressKeys = self.formattedSaveData.allProgressKeys
   self.currentProgressKey = self.missionInstance.currentProgressKey or self.missionInstance.defaultProgressKey or progressKeys[1] or 'default'
+  if not tableValuesAsLookupDict(progressKeys)[self.currentProgressKey] then
+    self.currentProgressKey = progressKeys[1] or 'default'
+  end
   im.PushItemWidth(200)
   im.Text("Default Key: " .. dumps(self.missionInstance.defaultProgressKey))
   if im.BeginCombo("Progress Key", self.currentProgressKey) then
@@ -68,23 +71,30 @@ function C:drawProgress()
     im.EndCombo()
   end
 
-  local currentAttemptsByKey = self.formattedSaveData.formattedProgressByKey[self.currentProgressKey].attempts
+  local hasAttempts = self.formattedSaveData and self.formattedSaveData.formattedProgressByKey and  self.formattedSaveData.formattedProgressByKey[self.currentProgressKey] and self.formattedSaveData.formattedProgressByKey[self.currentProgressKey].attempts
 
-  if im.BeginTable('MultiProgression', #currentAttemptsByKey.labels) then
+  if hasAttempts then
 
-    for _,l in pairs(currentAttemptsByKey.labels) do
-      im.TableSetupColumn(l)
-    end
+    local currentAttemptsByKey = self.formattedSaveData.formattedProgressByKey[self.currentProgressKey].attempts
 
-    im.TableHeadersRow()
-    im.TableNextColumn()
-    for _, missionData in pairs(currentAttemptsByKey.rows) do
-      for _, c in pairs(missionData) do
-        im.Text(tostring(c.text or "(notext?)"))
-        im.TableNextColumn()
+    if im.BeginTable('MultiProgression', #currentAttemptsByKey.labels) then
+
+      for _,l in pairs(currentAttemptsByKey.labels) do
+        im.TableSetupColumn(l)
       end
+
+      im.TableHeadersRow()
+      im.TableNextColumn()
+      for _, missionData in pairs(currentAttemptsByKey.rows) do
+        for _, c in pairs(missionData) do
+          im.Text(tostring(c.text or "(notext?)"))
+          im.TableNextColumn()
+        end
+      end
+      im.EndTable()
     end
-  im.EndTable()
+  else
+    im.TextWrapped(dumps(self.formattedSaveData))
   end
 
   im.Separator()

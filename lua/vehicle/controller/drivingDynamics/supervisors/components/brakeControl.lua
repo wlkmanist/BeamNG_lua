@@ -157,6 +157,11 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
   return M.isActingAsYC
 end
 
+local function updateBrakeNoABS(wd, brake, invAirspeed, airspeed, airspeedCutOff, dt)
+  local brakeInputSplit = wd.brakeInputSplit
+  return wd.brakeTorque * (min(brake, brakeInputSplit) + max(brake - brakeInputSplit, 0) * wd.brakeSplitCoef)
+end
+
 local function updateBrakeABS(wd, brake, invAirspeed, airspeed, airspeedCutOff, dt)
   local absData = absWheelData[wd.name]
   if not absData then
@@ -270,7 +275,7 @@ end
 
 local function registerWheelBrakeUpdates()
   for wheelName, _ in pairs(absWheelData) do
-    wheels.setWheelBrakeUpdate(wheelName, updateBrakeABS)
+    wheels.setWheelBrakeUpdate(wheelName, updateBrakeNoABS, updateBrakeABS)
   end
 end
 

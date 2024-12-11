@@ -485,6 +485,15 @@ end
 -- called by the host that provides the electrics
 local function importCouplerData(nodeId, data)
   --print(obj:getId() .. "<-importCouplerData(" .. nodeId .. "," .. dumps(data) .. ")")
+
+  --If we are not connected anymore to the vehicle that this data came from, we need to ignore it.
+  --This is very important as the coupler detach can be broadcasted _before_ queued data from the other vehicle can reach this one.
+  --In some systems that do cleanup work in the detach event, this stray data can cause havoc, so here we ignore it.
+  if not attachedCouplers[nodeId] then
+    table.clear(recievedElectrics)
+    return
+  end
+
   if data.electrics then
     table.insert(recievedElectrics, data.electrics)
   end

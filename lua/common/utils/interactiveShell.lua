@@ -70,6 +70,9 @@ local function start()
         if type(updateLuaCore) == 'function' then updateLuaCore() end -- try to do garbage collection and cleanups
         io.write("> ")
         local cmd = io.read()
+        if cmd == nil then
+            break
+        end
 
         -- some shortcuts
         local cc = string.byte(cmd)

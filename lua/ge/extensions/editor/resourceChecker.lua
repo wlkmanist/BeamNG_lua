@@ -343,7 +343,9 @@ local function matHovered(res)
   end
 end
 
-local function resourceContextMenu(res, count, type)
+local resExplorer
+
+local function resourceContextMenu(res, count, type, filepath)
   if im.BeginPopup("Popup_" .. res..count) then
     local dir, basefilename, ext = path.splitWithoutExt(res)
     if basefilename and basefilename ~= "" then
@@ -352,7 +354,7 @@ local function resourceContextMenu(res, count, type)
       im.Text('['..tostring(res)..']')
     end
     if im.Selectable1("Open in Explorer##"..res..count) then
-      if type and type == 'material' or type == 'duplicates' then
+      if type and type == 'material' or type == 'duplicates' or type == 'usedMat' then
         local o = scenetree.findObject(res)
         if o and o.getFileName then
           if FS:fileExists(o:getFileName()) then Engine.Platform.exploreFolder(o:getFileName()) else log('E', '', 'Path :'..tostring(o:getFileName())..' does not exist' ) end
@@ -382,7 +384,7 @@ local function resourceContextMenu(res, count, type)
           end
         else log('E', '', 'Path :'..tostring(res)..' does not exist' ) end
       end
-      if type and type == 'material' or type == 'duplicates'then
+      if type and type == 'material' or type == 'duplicates' or type == 'usedMat' then
         if editor_materialEditor then
           editor_materialEditor.showMaterialEditor()
           editor_materialEditor.selectMaterialByName(res, true)
@@ -400,7 +402,15 @@ local function resourceContextMenu(res, count, type)
         im.CloseCurrentPopup()
       end
     end
-    if not type or type ~= 'material' and type ~= 'duplicates' then
+    if type and type == 'usedMat' then
+      if im.Selectable1("Save all usages data##"..res..count) then
+        local path = filepath.."/resourceChecker_matData_"..res..".json"
+        jsonWriteFile(path, resExplorer[6][res], true)
+        if FS:fileExists(path) then Engine.Platform.exploreFolder(path) else log('E', '', 'Path :'..path..' does not exist' ) end
+        im.CloseCurrentPopup()
+      end
+    end
+    if not type or type ~= 'material' and type ~= 'duplicates' and type ~= 'usedMat' then
       if im.Selectable1("Copy path to clipboard##"..res..count) then
         if not string.startswith(res, '/') then
           res = '/'..res
@@ -453,7 +463,6 @@ local function popUp(name)
 end
 
 local btnpress = 3
-local resExplorer
 local function warning(name, level, count, unusType, selected)
   local win = im.GetMainViewport()
   pos.x = win.Pos.x + win.Size.x / 2
@@ -561,6 +570,9 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
                   im.OpenPopup("Popup_" .. i..count)
                 end
                 if im.IsItemHovered() and im.IsMouseClicked(0) then
+                  if not im.IsKeyDown(im.GetKeyIndex(im.Key_ModShift)) then
+                    isDoubleClicked = {}
+                  end
                   if isDoubleClicked[i] == true then
                     isDoubleClicked[i] = false
                   else
@@ -606,6 +618,9 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
                         im.OpenPopup("Popup_" .. d..count)
                       end
                       if im.IsItemHovered() and im.IsMouseClicked(0) then
+                        if not im.IsKeyDown(im.GetKeyIndex(im.Key_ModShift)) then
+                          isDoubleClicked = {}
+                        end
                         if isDoubleClicked[d] == true then
                           isDoubleClicked[d] = false
                         else
@@ -657,6 +672,9 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
                               end
                             end
                             if im.IsItemHovered() and im.IsMouseClicked(0) then
+                              if not im.IsKeyDown(im.GetKeyIndex(im.Key_ModShift)) then
+                                isDoubleClicked = {}
+                              end
                               if isDoubleClicked[o] == true then
                                 isDoubleClicked[o] = false
                               else
@@ -739,6 +757,9 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
         resourceContextMenu(matName, count, 'material')
       elseif testName == "duplicates" then
         resourceContextMenu(v, count, 'duplicates')
+      elseif testName == "usedMat" then
+        local matName = tostring(v):match("^(%S+)%s+(.+)")
+        resourceContextMenu(matName, count, 'usedMat', filepath)
       else
         path = tostring(v):match(".*. (.+)")
         if path and FS:fileExists(path) then
@@ -775,7 +796,7 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
         end
       end
       if im.IsItemHovered() and im.IsMouseClicked(1) then
-        if testName == "matVersion" or testName == "unusedMat" then
+        if testName == "matVersion" or testName == "unusedMat" or testName == "usedMat" then
           local matName = tostring(v):match("^(%S+)%s+(.+)")
           im.OpenPopup("Popup_" .. matName..count)
         elseif testName == "duplicates" then
@@ -785,6 +806,9 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
         end
       end
       if im.IsItemHovered() and im.IsMouseClicked(0) then
+        if not im.IsKeyDown(im.GetKeyIndex(im.Key_ModShift)) then
+          isDoubleClicked = {}
+        end
         if isDoubleClicked[k] == true then
           isDoubleClicked[k] = false
         else
@@ -792,11 +816,11 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
         end
       elseif im.IsItemHovered() then
         drawRectBg(tostring(v), im.ImVec4(0.2, 0.24, 0.31, 0.78), 1)
-        if testName == "matVersion" or testName == "unusedMat" then
+        if testName == "matVersion" or testName == "unusedMat" or testName == "usedMat" then
           matHovered(tostring(v):match("^(%S+)%s+(.+)"))
         elseif testName == "duplicates" then
           matHovered(tostring(v))
-        elseif testName == "tsstatics" or testName == "forestitems" or testName == "unusedMesh" or testName == "missingMat" then
+        elseif testName == "tsstatics" or testName == "forestitems" or testName == "unusedMesh" or testName == "missingMat" or testName == "colData" then
           if FS:fileExists(tostring(v)) then
             shapeHovered(tostring(v))
           else
@@ -889,7 +913,7 @@ local function resultUI(testName, filepath, text, data, isAdvanced, unusType, le
     if im.Button("Save output to userfolder", im.ImVec2(200* im.uiscale[0],0)) then
       local path = filepath.."/resourceChecker_"..testName..".json"
       jsonWriteFile(path, data, true)
-      local addText = "//"..text.."\n"
+      local addText = "//"..text:gsub('\n','').."\n"
       local f = io.open(path, "r")
       if f then
         for line in f:lines() do
@@ -939,7 +963,7 @@ local function matTab()
       im.EndTooltip()
     end
     popUp("Progress")
-    im.Text("This tool is verifying types of materials and issues")
+    im.Text("Select one of these tools to generate information about materials loaded by this level.")
     if im.Button("Check materials version", im.ImVec2(152* im.uiscale[0],0)) then
       im.OpenPopup("Progress")
       convertdata = matdata
@@ -958,7 +982,7 @@ local function matTab()
     end
     if im.IsItemHovered() then
       im.BeginTooltip()
-      im.Text("Looks for a material duplicates")
+      im.Text("Checks for duplicated materials")
       im.EndTooltip()
     end
     im.SameLine()
@@ -972,6 +996,24 @@ local function matTab()
       im.Text("Removes deprecated Persistent Ids from materials")
       im.EndTooltip()
     end
+    im.SameLine()
+    if im.Button("Convert to PNG", im.ImVec2(121* im.uiscale[0],0)) then
+      editor_fileDialog.openFile(
+        function(data)
+          im.OpenPopup("Progress")
+          convertdata = matdata
+          verifier = resourceUtil.textureExporter(convertdata, data.path)
+        end,
+        {{"All Folders","*"}},
+        true,
+        '/'
+      )
+    end
+    if im.IsItemHovered() then
+      im.BeginTooltip()
+      im.Text("Converts old DDS files to PNG")
+      im.EndTooltip()
+    end
     if im.Button("Check texture map", im.ImVec2(131* im.uiscale[0],0)) then
       im.OpenPopup("Progress")
       convertdata = matdata
@@ -979,7 +1021,7 @@ local function matTab()
     end
     if im.IsItemHovered() then
       im.BeginTooltip()
-      im.Text("Validates textures mapping in materials")
+      im.Text("Validates texture mappings in materials")
       im.EndTooltip()
     end
     im.SameLine()
@@ -990,7 +1032,7 @@ local function matTab()
     end
     if im.IsItemHovered() then
       im.BeginTooltip()
-      im.Text("Checks for a textures issues in materials")
+      im.Text("Checks materials file for texture issues")
       im.EndTooltip()
     end
     im.SameLine()
@@ -1001,7 +1043,7 @@ local function matTab()
     end
     if im.IsItemHovered() then
       im.BeginTooltip()
-      im.Text("Checks for a missing materials mapping in currently loaded models")
+      im.Text("Checks for missing materials mapping in currently loaded models")
       im.EndTooltip()
     end
     if useVeh == true then
@@ -1021,7 +1063,7 @@ local function matTab()
     im.Separator()
     im.Spacing()
     if not verifier and getProgress() == nil then
-      im.Text("Run verifier to get informations!")
+      im.Text("Select a verifier above to see results!")
     elseif not verifier and getProgress() ~= nil then
       im.Text("Working...")
     elseif verifier and verifier[1] == 2 and verifier[5] == 1 then
@@ -1046,6 +1088,9 @@ local function matTab()
     elseif verifier and verifier[1] == 9 and verifier[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Removed dummy mats")
       resultUI("remDummy", matdata, "Removed ("..verifier[2]..") dummy materials: ", verifier[4])
+    elseif verifier and verifier[1] == 10 and verifier[5] == 1 then
+      im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Exported textures")
+      resultUI("textureExporter", matdata, "Exported ("..verifier[2]..") textures: ", verifier[4])
     elseif verifier and verifier[5] == 2 then
       im.TextColored(im.ImVec4(1, 0, 0, 1), "Verification failed")
     end
@@ -1059,7 +1104,7 @@ local function resTab()
   else
     im.Text("Checking: ".."/levels/"..getlevel.."/")
     popUp("Progress")
-    im.Text("Generate informations about assets loaded in game")
+    im.Text("Select one of these tools to generate information about assets loaded by this level.")
     local buttonSize = 140* im.uiscale[0]
     if im.Button("Loaded TSStatics", im.ImVec2(buttonSize,0)) then
       im.OpenPopup("Progress")
@@ -1088,6 +1133,16 @@ local function resTab()
     if im.IsItemHovered() then
       im.BeginTooltip()
       im.Text("Generates a list of used terrains")
+      im.EndTooltip()
+    end
+    im.SameLine()
+    if im.Button("Used Materials", im.ImVec2(buttonSize,0)) then
+      im.OpenPopup("Progress")
+      resExplorer = resourceUtil.checkUsedMats(getlevel)
+    end
+    if im.IsItemHovered() then
+      im.BeginTooltip()
+      im.Text("Generates a list of used materials and its data")
       im.EndTooltip()
     end
     if im.Button("Unused Materials", im.ImVec2(buttonSize,0)) then
@@ -1119,33 +1174,49 @@ local function resTab()
       im.Text("Generates a list of unused textures")
       im.EndTooltip()
     end
+    im.SameLine()
+    if im.Button("Collision Data", im.ImVec2(buttonSize,0)) then
+      im.OpenPopup("Progress")
+      resExplorer = resourceUtil.checkColData(getlevel)
+    end
+    if im.IsItemHovered() then
+      im.BeginTooltip()
+      im.Text("Generates a list with data about collisions in the level")
+      im.EndTooltip()
+    end
     im.Spacing()
     im.Separator()
     im.Spacing()
     if not resExplorer and getProgress() == nil then
-      im.Text("Press one of the buttons to get informations!")
+      im.Text("Select a verifier above to see results!")
     elseif not resExplorer and getProgress() ~= nil then
       im.Text("Working...")
     elseif resExplorer and resExplorer[1] == 1 and resExplorer[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
-      resultUI("tsstatics", "/levels/"..getlevel.."/", "There is currectly ("..resExplorer[2]..") TSStatics loaded in scene with ("..resExplorer[3].. ") instances that have a total size of "..resExplorer[6].." MB: ", resExplorer[4])
+      resultUI("tsstatics", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") TSStatics loaded in scene with ("..resExplorer[3].. ") instances that have a total size of "..resExplorer[6].." MB: ", resExplorer[4])
     elseif resExplorer and resExplorer[1] == 2 and resExplorer[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
-      resultUI("forestitems", "/levels/"..getlevel.."/", "There is currectly ("..resExplorer[2]..") ForestItems available in the level that have a total size of "..resExplorer[6].." MB: ", resExplorer[4])
+      resultUI("forestitems", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") ForestItems available in the level that have a total size of "..resExplorer[6].." MB: ", resExplorer[4])
     elseif resExplorer and resExplorer[1] == 3 and resExplorer[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
-      resultUI("terrains", "/levels/"..getlevel.."/", "There is currectly ("..resExplorer[2]..") TerrainBlocks loaded in scene that have a total size of "..resExplorer[3].." MB: ", resExplorer[4])
+      resultUI("terrains", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") TerrainBlocks loaded in scene that have a total size of "..resExplorer[3].." MB: ", resExplorer[4])
     elseif resExplorer and resExplorer[1] == 4 and resExplorer[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
-      resultUI("unusedMat", "/levels/"..getlevel.."/", "There is currectly ("..resExplorer[2]..") unused Materials in the level: ", resExplorer[4], 0, 1, getlevel, resExplorer[2])
+      resultUI("unusedMat", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") unused Materials in the level: ", resExplorer[4], 0, 1, getlevel, resExplorer[2])
     elseif resExplorer and resExplorer[1] == 5 and resExplorer[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
-      resultUI("unusedMesh", "/levels/"..getlevel.."/", "There is currectly ("..resExplorer[2]..") unused Meshes in the level that have a total size of "..resExplorer[3].." MB: ", resExplorer[4], 0, 2, getlevel, resExplorer[2])
+      resultUI("unusedMesh", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") unused Meshes in the level that have a total size of "..resExplorer[3].." MB: ", resExplorer[4], 0, 2, getlevel, resExplorer[2])
     elseif resExplorer and resExplorer[1] == 6 and resExplorer[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
-      resultUI("unusedTex", "/levels/"..getlevel.."/", "There is currectly ("..resExplorer[2]..") unused textures in the level that have a total size of "..resExplorer[3].." MB: ", resExplorer[4], 0, 3, getlevel, resExplorer[2])
+      resultUI("unusedTex", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") unused textures in the level that have a total size of "..resExplorer[3].." MB: ", resExplorer[4], 0, 3, getlevel, resExplorer[2])
     elseif resExplorer and resExplorer[1] == 7 and resExplorer[5] == 1 then
       im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete, removed: ("..resExplorer[2]..") files with total size of "..resExplorer[3].." MB")
+    elseif resExplorer and resExplorer[1] == 8 and resExplorer[5] == 1 then
+      im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
+      resultUI("usedMat", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") used Materials in the level that have a total size of "..resExplorer[3].." MB: ", resExplorer[4], 0, nil, getlevel, resExplorer[2])
+    elseif resExplorer and resExplorer[1] == 9 and resExplorer[5] == 1 then
+      im.TextColored(im.ImVec4(1, 1, 0.2, 1), "Task complete")
+      resultUI("colData", "/levels/"..getlevel.."/", "There is currently ("..resExplorer[2]..") used static collision meshes in the level that have a total of "..resExplorer[3][1].." polygons.\nThere is ("..resExplorer[3][3]..") static meshes instances that use Visible Mesh Collisions and have total of "..resExplorer[3][2].." polygons: ", resExplorer[4], 0, nil, getlevel, resExplorer[2])
     elseif resExplorer and resExplorer[5] == 2 then
       im.TextColored(im.ImVec4(1, 0, 0, 1), "Task failed")
     end

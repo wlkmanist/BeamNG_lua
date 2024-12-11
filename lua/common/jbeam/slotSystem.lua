@@ -370,6 +370,7 @@ local function unifyPartJournal(ioCtx, unifyJournal)
 end
 
 
+M.partFitsSlot = partFitsSlot
 M.findParts = findParts
 M.unifyPartJournal = unifyPartJournal
 

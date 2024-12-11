@@ -117,7 +117,10 @@ function C:readyUpVehicle(id)
     for tag, _ in pairs(couplerTags) do
       core_vehicleBridge.requestValue(veh,
         function(ret)
-          core_flowgraphManager.getManagerByID(self.mgr.id).modules.vehicle:addCouplerOffset(id, ret.result, tag)
+          local m = core_flowgraphManager.getManagerModule(self.mgr.id, 'vehicle')
+          if m then
+            m:addCouplerOffset(id, ret.result, tag)
+          end
         end
         , 'couplerOffset', tag)
     end

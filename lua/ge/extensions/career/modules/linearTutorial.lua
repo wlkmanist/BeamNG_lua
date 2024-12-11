@@ -266,7 +266,7 @@ local introPopupTable = {
 
   -- shown at the end of the tutorial
   showLogbookSplash = {"logbook"},
-  showTutorialOverSplash = {"finishing", "logbook", "delivey/intro"},
+  showTutorialOverSplash = {"finishing", "logbook", "leagues", "driftSpots"},
 
   -- shown when opening the cargo screen for the first time
   onEnterCargoOverviewScreen = {"delivery/cargoScreen"},
@@ -280,8 +280,12 @@ local introPopupTable = {
 -- this function is custom, because it needs to clear flags to make sure it always shows
 M.showNonTutorialWelcomeSplashscreen = function()
   M.introPopup("welcomeNoTutorial", true)
-  M.introPopup("delivery/intro", true)
+  M.introPopup("leagues", true)
+  M.introPopup("driftSpots", true)
   M.introPopup("logbook", true)
+
+  -- previous "new content"
+  --M.introPopup("delivery/intro", true)
   --M.introPopup("milestones", true)
   --M.introPopup("progress", true)
 end

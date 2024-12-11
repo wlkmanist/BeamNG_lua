@@ -60,7 +60,7 @@ function C:buttonClicked(id)
 end
 
 function C:getCmd(id)
-  return 'core_flowgraphManager.getManagerByID('..self.mgr.id..').modules.button:buttonClicked('..id..')'
+  return 'local m = core_flowgraphManager.getManagerModule('..self.mgr.id..', "button") if m then m:buttonClicked('..id..') end'
 end
 
 local function orderSort(a,b) if a.order == b.order then return a.id < b.id end return a.order < b.order end

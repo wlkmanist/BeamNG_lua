@@ -2,13 +2,15 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+local M = {}
+
+
 local logTag = 'CapturePlayer'
 
-local lastVid = nil
-local portToVid = {}
 local BLOCKING_CALLS = {
   ['LoadScenario'] = 'MapLoaded',
   ['RestartScenario'] = 'ScenarioRestarted',
+  ['StartScenario'] = 'ScenarioStarted',
   ['StopScenario'] = 'ScenarioStopped',
   ['StartVehicleConnection'] = 'StartVehicleConnection',
   ['GetCurrentVehicles'] = 'GetCurrentVehicles',
@@ -16,10 +18,38 @@ local BLOCKING_CALLS = {
   ['Step'] = 'Stepped'
 }
 
-local responsesFile = nil
+-- Some BeamNG requests/responses are needed for us to properly play the capture (the vehicle IDs, for example).
+-- These store the handlers. The handlers are defined below in the file.
+local RequestSync = {}
+local ResponseSync = {}
 
-local M = {}
+-- For some responses (camera data for example), we want to convert the data into a nice format.
+-- These are the handlers which convert the data to a better readable format (defined below).
+local ResponseCallbacks = {}
+
+local responsesFile = nil
+local captureState = {
+  lastVid = nil,
+  portToVid = {},
+  sensors = {}
+}
+
+local ffi = require('ffi')
+local captureBuffer = require('string.buffer').new()
+local shmemManager = Research.SharedMemoryManager.getInstance()
+local pcdLib = require('tech/pcdLib')
+
+local cos = math.cos
+local sin = math.sin
+
 M.dependencies = {'tech_techCore', 'tech_techCapture', 'core_jobsystem'}
+
+local function getAttachmentFilename(name, id)
+  if not responsesFile then return end
+
+  local responsesDir, filename, _ = path.split(responsesFile)
+  return responsesDir .. filename .. '_' .. name .. '_' .. tostring(id)
+end
 
 local function parseIntermediate(file, output)
   -- state machine
@@ -47,6 +77,9 @@ local function parseIntermediate(file, output)
 end
 
 local function mergeCaptures(captureName, captureType, removeIntermediates)
+  if captureType == nil then captureType = 'REQUEST' end
+  if removeIntermediates == nil then removeIntermediates = true end
+
   local files = tech_techCapture.getAllRelatedFiles(captureName, false, true)
   files = tech_techCapture.filterFilesByHeader(files, captureType, 'INTERMEDIATE')
 
@@ -119,31 +152,41 @@ local function waitForResponse(job, request, type)
   end
 end
 
--- Some dynamic BeamNG responses are needed for us to properly play the capture (the vehicle IDs, for example).
--- This function stores them.
-local function synchronizeState(response)
-  if response.type == 'StartVehicleConnection' then
-    local veh = scenetree.findObject(response.vid)
-    lastVid = veh:getID()
+local function syncRequest(request)
+  local func = RequestSync[request.type]
+  if func then
+    func(request)
   end
 end
 
-local function processRequest(job, ctx, payload)
+local function syncResponse(response)
+  local func = ResponseSync[response.type]
+  if func then
+    func(response)
+  end
+end
+
+local function processRequest(job, ctx, payload, forceWait)
   log('D', logTag, 'Processing ' .. ctx .. ' [' .. payload.type .. ']')
   if ctx == 'GE' then
-    local request = tech_techCapture.injectMessage(payload)
+    syncRequest(payload)
+    local callback = ResponseCallbacks[payload.type]
+    local request, processMore = tech_techCapture.injectMessage(payload, callback)
+    if not processMore then
+      job.yield()
+    end
     local waitFor = BLOCKING_CALLS[request.type]
-    if not waitFor then
+    if not waitFor and not forceWait then
       return
     end
     local response = waitForResponse(job, request, waitFor)
-    synchronizeState(response)
+    syncResponse(response)
   else
     local port = tonumber(ctx)
-    if not portToVid[port] then
-      portToVid[port] = lastVid
+    if not captureState.portToVid[port] then
+      captureState.portToVid[port] = captureState.lastVid
     end
-    local vid = portToVid[port]
+    local vid = captureState.portToVid[port]
     local serializedData = string.format("tech_techCapture.injectMessage(lpack.decode(%q))", lpack.encode(payload))
     be:queueObjectLua(vid, serializedData)
   end
@@ -169,6 +212,7 @@ local function techCaptureJob(job, args)
 
   local line = inputFile:read()
   while line do
+    local payload = nil
     if #line == 0 then
       return
     end
@@ -194,27 +238,41 @@ local function techCaptureJob(job, args)
       lastRealTimestamp = realTimestamp
       lastCaptureTimestamp = captureTimestamp
     elseif state == PAYLOAD then
-      local payload = jsonDecode(line)
-      processRequest(job, ctx, payload)
+      payload = jsonDecode(line)
+    end
+
+    line = inputFile:read()
+    if state == PAYLOAD then
+      local eof = line == nil or #line == 0
+
+      processRequest(job, ctx, payload, eof)
       if dtBetweenRequests and dtBetweenRequests > 0 then
         job.sleep(dtBetweenRequests)
       end
     end
 
     state = (state + 1) % NUM_STATES
-    line = inputFile:read()
   end
 
-  job.sleep(5.0) -- TODO: think of a better way how to wait until the response for the last request is written
+  if state ~= TIMESTAMP then
+    log('W', logTag, 'Incomplete capture detected, expected state ' .. tostring(state))
+  end
+
+  job.yield()
+  -- last request is forcefully waited for, so we know we can cleanup
   log('I', logTag, 'Finished playing ' .. args.inputFilename .. '.')
   tech_techCapture.disableResponseCapture()
-  if args.mergeResponses then
+  if args.mergeResponses and responsesFile then
     mergeCaptures(responsesFile .. '.log', 'RESPONSE', true)
+  end
+  if args.quitOnEnd then
+    quit()
   end
 end
 
 local function checkCaptureRequestFile(inputFilename)
   local captureType, captureMerged = tech_techCapture.getCaptureTypeFromFile(inputFilename)
+  if captureType == nil then return nil end
   if captureType ~= 'REQUEST' then
     log('E', logTag, inputFilename .. ' is not a request file but was supplied to function that loads requests.')
     return nil
@@ -230,12 +288,15 @@ local function checkCaptureRequestFile(inputFilename)
   return nil
 end
 
-local function playCapture(inputFilename, outputPrefix, dtBetweenRequests, mergeResponses)
+local function playCapture(inputFilename, outputPrefix, dtBetweenRequests, mergeResponses, quitOnEnd)
   if dtBetweenRequests == nil then
     dtBetweenRequests = -1 -- by default, emulate timestamps from the request file
   end
   if mergeResponses == nil then
-    mergeResponses = false
+    mergeResponses = true
+  end
+  if quitOnEnd == nil then
+    quitOnEnd = false
   end
 
   local completeInputFilename = checkCaptureRequestFile(inputFilename)
@@ -245,9 +306,16 @@ local function playCapture(inputFilename, outputPrefix, dtBetweenRequests, merge
   end
 
   log('I', logTag, 'Playing capture ' .. completeInputFilename .. '.')
-  portToVid = {}
+  captureState = {
+    lastVid = nil,
+    portToVid = {},
+    sensors = {}
+  }
 
   if outputPrefix then
+    if outputPrefix == true then -- automatic name generation if name not provided (but we want to record)
+      outputPrefix = inputFilename:gsub("%.log$", "") .. '_response'
+    end
     outputPrefix = outputPrefix:gsub("%.log$", "") -- if user included the extension, remove it
     responsesFile = outputPrefix
     tech_techCapture.enableResponseCapture(outputPrefix)
@@ -255,16 +323,244 @@ local function playCapture(inputFilename, outputPrefix, dtBetweenRequests, merge
   local args = {
     inputFilename = completeInputFilename,
     dtBetweenRequests = dtBetweenRequests,
-    mergeResponses = mergeResponses
+    mergeResponses = mergeResponses,
+    quitOnEnd = quitOnEnd
   }
   core_jobsystem.create(techCaptureJob, 0.001, args)
 end
 
 local function onInit()
   setExtensionUnloadMode(M, 'manual')
+
+  ffi.cdef([[
+  struct radar_return_t {
+    float range;
+    float dopplerVelocity;
+    float azimuth;
+    float elevation;
+    float radarCrossSection;
+    float signalToNoiseRatio;
+    float facingFactor;
+  };
+  ]])
+end
+
+RequestSync.OpenLidar = function(request)
+  captureState.sensors[request.name] = {
+    isStreaming = request.isStreaming,
+  }
+
+  if request.useSharedMemory then
+    captureState.sensors[request.name].colourShmemSize = request.colourShmemSize
+    captureState.sensors[request.name].colourShmemHandle = request.colourShmemHandle
+    captureState.sensors[request.name].pointCloudShmemSize = request.pointCloudShmemSize
+    captureState.sensors[request.name].pointCloudShmemHandle = request.pointCloudShmemHandle
+  end
+
+  if request.vid then
+    local veh = scenetree.findObject(request.vid)
+    captureState.sensors[request.name].vid = veh:getID()
+  end
+end
+
+RequestSync.OpenCamera = function(request)
+  captureState.sensors[request.name] = {
+    isStreaming = request.isStreaming,
+    size = request.size,
+    renderColours = request.renderColours,
+    renderAnnotations = request.renderAnnotations,
+    renderDepth = request.renderDepth,
+  }
+  if request.useSharedMemory then
+    if request.renderColours then
+      captureState.sensors[request.name].colourShmemName = request.colourShmemName
+      captureState.sensors[request.name].colourShmemSize = request.colourShmemSize
+    end
+    if request.renderAnnotations then
+      captureState.sensors[request.name].annotationShmemName = request.annotationShmemName
+      captureState.sensors[request.name].annotationShmemSize = request.annotationShmemSize
+    end
+    if request.renderDepth then
+      captureState.sensors[request.name].depthShmemName = request.depthShmemName
+      captureState.sensors[request.name].depthShmemSize = request.depthShmemSize
+    end
+  end
+end
+
+RequestSync.OpenUltrasonic = function(request)
+  captureState.sensors[request.name] = {
+    shmemHandle = request.shmemHandle,
+    shmemSize = request.shmemSize,
+    isStreaming = request.isStreaming,
+  }
+
+  if request.vid then
+    local veh = scenetree.findObject(request.vid)
+    captureState.sensors[request.name].vid = veh:getID()
+  end
+end
+
+RequestSync.OpenRadar = function(request)
+  captureState.sensors[request.name] = {
+    shmemName = request.shmemHandle,
+    shmemName2 = request.shmemHandle2,
+    shmemSize = request.shmemSize,
+    isStreaming = request.isStreaming
+  }
+
+  if request.vid then
+    local veh = scenetree.findObject(request.vid)
+    captureState.sensors[request.name].vid = veh:getID()
+  end
+end
+
+ResponseSync.StartVehicleConnection = function(response)
+  local veh = scenetree.findObject(response.vid)
+  captureState.lastVid = veh:getID()
+end
+
+local function saveBitmap(size, data, filename)
+  local bitmap = GBitmap()
+  bitmap:init(size[1], size[2], true)
+  bitmap:fromBuffer(data)
+  bitmap:saveFile(filename)
+  log('I', logTag, 'Saved bitmap to ' .. filename .. '.')
+end
+
+local function depthToRGBA(sensorData)
+  local BYTES_IN_POINT = 4
+  local bytes = #sensorData
+  local points = bytes / BYTES_IN_POINT
+
+  local depthFloat = ffi.new('float[' .. tostring(points) .. ']')
+  ffi.copy(depthFloat, sensorData, bytes)
+
+  sensorData:reset()
+  local alpha = string.char(255)
+  for i = 0, points - 1 do
+    local value = round(clamp(depthFloat[i] * 255.0, 0, 255))
+    local char = string.char(value)
+    sensorData:put(string.rep(char, 3))
+    sensorData:put(alpha)
+  end
+  return sensorData
+end
+
+ResponseCallbacks.PollCamera = function(request, response)
+  local name = request.name
+  local cam = captureState.sensors[name]
+
+  if cam.renderColours then
+    local binary = response.data.colour
+    if cam.colourShmemName then
+      shmemManager:readSharedMemory(cam.colourShmemName, captureBuffer)
+      binary = captureBuffer
+    end
+    local filename = getAttachmentFilename(name, request._id) .. '_colour.png'
+    saveBitmap(cam.size, binary, filename)
+    response.data.colour = filename
+  end
+  if cam.renderAnnotations then
+    local binary = response.data.annotation
+    if cam.annotationShmemName then
+      shmemManager:readSharedMemory(cam.annotationShmemName, captureBuffer)
+      binary = captureBuffer
+    end
+    local filename = getAttachmentFilename(name, request._id) .. '_annotation.png'
+    saveBitmap(cam.size, binary, filename)
+    response.data.annotation = filename
+  end
+  if cam.renderDepth then
+    local binary = response.data.depth
+    if cam.depthShmemName then
+      shmemManager:readSharedMemory(cam.depthShmemName, captureBuffer)
+      binary = captureBuffer
+    end
+    local depthRGB = depthToRGBA(binary)
+    local filename = getAttachmentFilename(name, request._id) .. '_depth.png'
+    saveBitmap(cam.size, depthRGB, filename)
+    response.data.depth = filename
+  end
+end
+
+ResponseCallbacks.PollLidar = function(request, response)
+  local name = request.name
+  local lidar = captureState.sensors[name]
+
+  local binary = response.data.pointCloud
+  if lidar.pointCloudShmemHandle then
+    local numBytes = response.data.points
+    shmemManager:readSharedMemory(lidar.pointCloudShmemHandle, captureBuffer, numBytes)
+    binary = captureBuffer
+  end
+
+  local pcd = pcdLib.newPcd()
+  if lidar.vid then
+    local veh = be:getObjectByID(lidar.vid)
+    pcd:setViewpoint(veh:getPosition(), veh:getRefNodeRotation())
+  end
+
+  pcd:addField('x', 4, 'float')
+  pcd:addField('y', 4, 'float')
+  pcd:addField('z', 4, 'float')
+  pcd:setData(binary, #binary)
+
+  local filename = getAttachmentFilename(name, request._id) .. '_points.pcd'
+  pcd:save(filename)
+  response.data.pointCloud = filename
+end
+
+local function radarReturnsToPointcloud(sensorData)
+  local returnSize = ffi.sizeof('struct radar_return_t')
+  local points = #sensorData / returnSize
+  if points ~= math.floor(points) then
+    log('E', logTag, 'Number of points ' .. tostring(points) .. ' is not an integer!')
+    return nil
+  end
+  local sizeStr = '[' .. tostring(points) .. ']'
+  local returnsFloat = ffi.new('struct radar_return_t' .. sizeStr)
+  ffi.copy(returnsFloat, sensorData, #sensorData)
+
+  local pointcloud = ffi.new('struct __luaVec3_t' .. sizeStr)
+  for i = 0, points - 1 do
+    local point = pointcloud[i]
+    local radarRet = returnsFloat[i]
+
+    point.x = radarRet.range * cos(radarRet.azimuth) * cos(radarRet.elevation)
+    point.y = radarRet.range * sin(radarRet.azimuth) * cos(radarRet.elevation)
+    point.z = radarRet.range * sin(radarRet.elevation)
+  end
+  return pointcloud
+end
+
+ResponseCallbacks.PollRadar = function(request, response)
+  local name = request.name
+  if response.data == nil or #response.data == 0 then
+    log('E', logTag, 'Empty radar data received.')
+    return
+  end
+
+  local radar = captureState.sensors[name]
+  local pointcloud = radarReturnsToPointcloud(response.data)
+  local pcd = pcdLib.newPcd()
+  if radar.vid then
+    local veh = be:getObjectByID(radar.vid)
+    pcd:setViewpoint(veh:getPosition(), veh:getRefNodeRotation())
+  end
+
+  pcd:addField('x', 4, 'float')
+  pcd:addField('y', 4, 'float')
+  pcd:addField('z', 4, 'float')
+  local points = #response.data / ffi.sizeof('struct radar_return_t')
+  pcd:setData(pointcloud, points * ffi.sizeof('struct __luaVec3_t'))
+
+  local filename = getAttachmentFilename(name, request._id) .. '_points.pcd'
+  pcd:save(filename)
+  response.data = filename
 end
 
 M.onInit = onInit
+M.onReset = onInit
 M.mergeCaptures = mergeCaptures
 M.playCapture = playCapture
 

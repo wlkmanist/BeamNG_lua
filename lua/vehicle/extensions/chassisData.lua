@@ -6,7 +6,6 @@ local M = {}
 
 local abs = math.abs
 local max = math.max
-local fsign = fsign
 local chassisData
 
 local function getChassisData()

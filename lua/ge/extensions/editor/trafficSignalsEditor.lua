@@ -13,8 +13,13 @@ local editModeName = "signalsEditMode"
 local instances, controllers, sequences, elements, controllerDefinitions = {}, {}, {}, {}, {}
 local groups, groupsSorted = {}, {}
 local selected = {signal = 1, controller = 1, sequence = 1, phase = 1, ctrlDefState = 1, ctrlDefType = 1, group = 1, flashingLight = 1}
-local signalName, ctrlName, sequenceName, selectedObject, signalCtrlDefinitions
-local ctrlDefinitionStateName, ctrlDefinitionTypeName, instanceGroupName
+local selectedObject, signalCtrlDefinitions
+local signalName = im.ArrayChar(256, "")
+local ctrlName = im.ArrayChar(256, "")
+local sequenceName = im.ArrayChar(256, "")
+local ctrlDefinitionStateName = im.ArrayChar(256, "")
+local ctrlDefinitionTypeName = im.ArrayChar(256, "")
+local instanceGroupName = im.ArrayChar(256, "")
 local colorWarning = im.ImVec4(1, 1, 0, 1)
 local colorError = im.ImVec4(1, 0, 0, 1)
 local dummyVec = im.ImVec2(0, 5)
@@ -24,14 +29,12 @@ local lastUsed = {signalType = "lightsBasic"}
 local timedTexts = {}
 local oldTransform = {pos = vec3(), rot = quat(), scl = 1}
 local options = {displayNameMode = 1, smartSelection = true, showClosestRoad = false}
-local windowFlags = {overwrite = im.BoolPtr(false), instanceGroups = im.BoolPtr(false), ctrlDefinitions = im.BoolPtr(false)}
+local windowFlags = {instanceGroups = im.BoolPtr(false), ctrlDefinitions = im.BoolPtr(false)}
 local tabFlags = {}
-local signalObjects = {}
-local signalObjectFlags = {}
 local selectableControllers = {}
 local groupsEdited = false
 local isDragging = false
-local itemWidth = 100
+local contentWidth, inputWidth
 local trafficSignals
 
 local mousePos = vec3()
@@ -48,7 +51,7 @@ local debugColors = {
 }
 
 local currNode, currSignalObj
-local firstLoad, running = true, false
+local signalsInitialized, running = false, false
 
 local function staticRayCast()
   local rayCastHit
@@ -74,11 +77,10 @@ local function selectInstance(idx)
   local instance = instances[idx]
   if not instance then return end
 
-  signalName = im.ArrayChar(256, instance.name)
+  ffi.copy(signalName, instance.name)
   selected.signal = idx
-  table.clear(signalObjects)
-  table.clear(signalObjectFlags)
   table.clear(selectableControllers)
+  instance.tempSignalObjects = nil
   updateGizmoTransform()
 end
 
@@ -87,7 +89,7 @@ local function selectController(idx)
   local ctrl = controllers[idx]
   if not ctrl then return end
 
-  ctrlName = im.ArrayChar(256, ctrl.name)
+  ffi.copy(ctrlName, ctrl.name)
   selected.controller = idx
 end
 
@@ -96,7 +98,7 @@ local function selectSequence(idx)
   local sequence = sequences[idx]
   if not sequence then return end
 
-  sequenceName = im.ArrayChar(256, sequence.name)
+  ffi.copy(sequenceName, sequence.name)
   selected.sequence = idx
   selected.phase = 1
 end
@@ -203,7 +205,7 @@ local function simulate(val) -- runs the simulation for the traffic lights
       sequence.enableTestTimer = true
     end
 
-    trafficSignals.setupSignals(getCurrentSignals()) -- also activates the signals
+    trafficSignals.setupSignals(getCurrentSignals())
     trafficSignals.debugLevel = 2
     map.reset() -- TEMP: this forces the mapmgr signals to update
     running = true
@@ -325,12 +327,41 @@ local function gizmoMidDrag()
   end
 end
 
+local function smartSelectObjects(radius) -- selects multiple similar objects within the same area and rotation
+  if not editor.selection.object then return end
+
+  local selectedObj = scenetree.findObjectById(editor.selection.object[1])
+  local validIds = {}
+  radius = radius or 40
+
+  if selectedObj:getClassName() == "TSStatic" then
+    local internalName = selectedObj:getInternalName()
+
+    local dir1 = selectedObj:getTransform():getForward()
+    for _, obj in ipairs(getObjectsByClass("TSStatic") or {}) do
+      if (internalName and obj:getInternalName() == internalName) or obj.shapeName == selectedObj.shapeName then
+        if selectedObj:getPosition():squaredDistance(obj:getPosition()) <= square(radius) then
+          -- strong assumption that the TSStatics were created with the same initial rotation
+          local dir2 = obj:getTransform():getForward()
+          if dir1:dot(dir2) >= 0.93 then -- roughly within 20 degrees
+            table.insert(validIds, obj:getId())
+          end
+        end
+      end
+    end
+  end
+
+  if validIds[2] then
+    editor.selectObjects(validIds)
+  end
+end
+
 local function tabCtrlDefinitionTypes()
   if im.BeginCombo("Type##ctrlDefinitionTypes", signalCtrlDefinitions.typesSorted[selected.ctrlDefType] or "(None)") then
     for i, name in ipairs(signalCtrlDefinitions.typesSorted) do
       if im.Selectable1(name.."##ctrlDefinitionType", selected.ctrlDefType == i) then
         selected.ctrlDefType = i
-        ctrlDefinitionTypeName = nil
+        ffi.copy(ctrlDefinitionTypeName, name)
       end
     end
     im.EndCombo()
@@ -338,33 +369,28 @@ local function tabCtrlDefinitionTypes()
   if im.Button("New...##ctrlDefinitionTypes") then
     local name = "Type "..(#signalCtrlDefinitions.typesSorted + 1)
     selected.ctrlDefType = 0
-    ctrlDefinitionTypeName = im.ArrayChar(256, name)
+    ffi.copy(ctrlDefinitionTypeName, name)
     signalCtrlDefinitions.types[name] = {name = name, states = {"basicStop"}}
     signalCtrlDefinitions._update = true
   end
   im.SameLine()
   if im.Button("Remove##ctrlDefinitionTypes") then
-    signalCtrlDefinitions.types[signalCtrlDefinitions.typesSorted[selected.ctrlDefType] or ''] = nil
+    signalCtrlDefinitions.types[signalCtrlDefinitions.typesSorted[selected.ctrlDefType] or ""] = nil
     selected.ctrlDefType = 0
-    ctrlDefinitionTypeName = nil
     signalCtrlDefinitions._update = true
   end
 
   im.Dummy(dummyVec)
-  local currName = signalCtrlDefinitions.typesSorted[selected.ctrlDefType] or ''
+  local currName = signalCtrlDefinitions.typesSorted[selected.ctrlDefType] or ""
   local currData = signalCtrlDefinitions.types[currName]
   if currData then
     currData._edited = true
-    if not ctrlDefinitionTypeName then
-      ctrlDefinitionTypeName = im.ArrayChar(256, currName)
-    end
 
     if editor.uiInputText("Name##ctrlDefinitionTypes", ctrlDefinitionTypeName, nil, im.InputTextFlags_EnterReturnsTrue) then
       local name = ffi.string(ctrlDefinitionTypeName)
       signalCtrlDefinitions.types[name] = signalCtrlDefinitions.types[currName]
       signalCtrlDefinitions.types[name].name = name
       signalCtrlDefinitions.types[currName] = nil
-      ctrlDefinitionTypeName = nil
       selected.ctrlDefType = 0
       signalCtrlDefinitions._update = true
     end
@@ -376,7 +402,7 @@ local function tabCtrlDefinitionTypes()
     currData.defaultIndex = currData.defaultIndex or 1
 
     local var = im.IntPtr(currData.statesArraySize)
-    im.PushItemWidth(100 * im.uiscale[0])
+    im.PushItemWidth(inputWidth)
     if im.InputInt("States Array Size".."##ctrlDefinitionTypeData", var, 1) then
       currData.statesArraySize = clamp(var[0], 1, 20)
     end
@@ -427,7 +453,7 @@ local function tabCtrlDefinitionStates()
     for i, name in ipairs(signalCtrlDefinitions.statesSorted) do
       if im.Selectable1(name.."##ctrlDefinitionState", selected.ctrlDefState == i) then
         selected.ctrlDefState = i
-        ctrlDefinitionStateName = nil
+        ffi.copy(ctrlDefinitionStateName, name)
       end
     end
     im.EndCombo()
@@ -435,7 +461,7 @@ local function tabCtrlDefinitionStates()
   if im.Button("New...##ctrlDefinitionStates") then
     local name = "State "..(#signalCtrlDefinitions.statesSorted + 1)
     selected.ctrlDefState = 0
-    ctrlDefinitionStateName = im.ArrayChar(256, name)
+    ffi.copy(ctrlDefinitionStateName, name)
     signalCtrlDefinitions.states[name] = {name = name, action = "stop", duration = 3, flashingInterval = 0, flashingLights = {}, enableFlashingLights = false, flashingLightsArraySize = 1, lightsArraySize = 3}
     signalCtrlDefinitions._update = true
   end
@@ -443,7 +469,6 @@ local function tabCtrlDefinitionStates()
   if im.Button("Remove##ctrlDefinitionStates") then
     signalCtrlDefinitions.states[signalCtrlDefinitions.statesSorted[selected.ctrlDefState] or ''] = nil
     selected.ctrlDefState = 0
-    ctrlDefinitionStateName = nil
     signalCtrlDefinitions._update = true
   end
 
@@ -452,9 +477,6 @@ local function tabCtrlDefinitionStates()
   local currData = signalCtrlDefinitions.states[currName]
   if currData then
     currData._edited = true
-    if not ctrlDefinitionStateName then
-      ctrlDefinitionStateName = im.ArrayChar(256, currName)
-    end
 
     -- temp data for this window
     if not currData.lightsArraySize then
@@ -474,12 +496,11 @@ local function tabCtrlDefinitionStates()
       signalCtrlDefinitions.states[name] = signalCtrlDefinitions.states[currName]
       signalCtrlDefinitions.states[name].name = name
       signalCtrlDefinitions.states[currName] = nil
-      ctrlDefinitionStateName = nil
       selected.ctrlDefState = 0
       signalCtrlDefinitions._update = true
     end
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if im.BeginCombo("Signal Action##ctrlDefinitionState", currData.action or "(None)") then
       for _, action in ipairs(tableKeysSorted(signalCtrlDefinitions.signalActions)) do
         if im.Selectable1(action.."##ctrlDefinitionState", currData.action == action) then
@@ -491,14 +512,14 @@ local function tabCtrlDefinitionStates()
     im.PopItemWidth()
 
     local var = im.IntPtr(currData.lightsArraySize)
-    im.PushItemWidth(100 * im.uiscale[0])
+    im.PushItemWidth(inputWidth)
     if im.InputInt("Lights Array Size".."##ctrlDefinitionStateLight", var, 1) then
       currData.lightsArraySize = clamp(var[0], 1, 5)
     end
     im.PopItemWidth()
 
     var = im.FloatPtr(currData.duration)
-    im.PushItemWidth(100 * im.uiscale[0])
+    im.PushItemWidth(inputWidth)
     if im.InputFloat("Default Duration##ctrlDefinitionStateLight", var, 0.1, 0.1, "%.2f", im.InputTextFlags_EnterReturnsTrue) then
       currData.duration = math.max(0, var[0])
     end
@@ -512,7 +533,7 @@ local function tabCtrlDefinitionStates()
 
     if currData.enableFlashingLights then
       var = im.FloatPtr(currData.flashingInterval)
-      im.PushItemWidth(100 * im.uiscale[0])
+      im.PushItemWidth(inputWidth)
       if im.InputFloat("Flashing Lights Interval##ctrlDefinitionStateLight", var, 0.1, 0.1, "%.2f", im.InputTextFlags_EnterReturnsTrue) then
         currData.flashingInterval = math.max(0, var[0])
       end
@@ -558,7 +579,7 @@ local function tabCtrlDefinitionStates()
         table.insert(currData.flashingLights[selected.flashingLight], "black")
       end
 
-      im.PushItemWidth(itemWidth)
+      im.PushItemWidth(contentWidth)
       if im.BeginCombo("Light Color #"..i.."##ctrlDefinitionStateLight"..i, currData.flashingLights[selected.flashingLight][i] or "(None)") then
         for _, color in ipairs(tableKeysSorted(signalCtrlDefinitions.signalColors)) do
           if im.Selectable1(color.."##ctrlDefinitionStateLight"..i, currData.flashingLights[selected.flashingLight][i] == color) then
@@ -581,25 +602,6 @@ local function tabCtrlDefinitionStates()
   end
 
   im.Dummy(dummyVec)
-end
-
-local function windowOverwrite()
-  im.SetNextWindowPos(im.GetCursorScreenPos(), im.Cond_Always)
-  im.SetNextWindowSize(im.ImVec2(300, 100), im.Cond_FirstUseEver)
-  if im.Begin("Confirm##trafficSignals", windowFlags.overwrite, bit.bor(im.WindowFlags_NoDocking, im.WindowFlags_NoCollapse)) then
-    im.TextUnformatted("Are you sure you want to clear signals data?")
-    if im.Button("YES") then
-      im.CloseCurrentPopup()
-      windowFlags.overwrite[0] = false
-      resetSignals()
-    end
-    im.SameLine()
-    if im.Button("NO") then
-      im.CloseCurrentPopup()
-      windowFlags.overwrite[0] = false
-    end
-  end
-  im.End()
 end
 
 local function windowInstanceGroups()
@@ -648,10 +650,6 @@ local function windowInstanceGroups()
       groupsEdited = true
     end
 
-    if not instanceGroupName then
-      instanceGroupName = im.ArrayChar(256, "")
-    end
-
     local width = im.GetContentRegionAvailWidth() * 0.5
 
     im.BeginChild1("instanceGroupsList", im.ImVec2(width, 550 * im.uiscale[0]), im.WindowFlags_ChildWindow)
@@ -661,6 +659,7 @@ local function windowInstanceGroups()
     for i, group in ipairs(groupsSorted) do
       if im.Selectable1(group.."##instanceGroup", selected.group == i) then
         selected.group = i
+        ffi.copy(instanceGroupName, group)
       end
     end
 
@@ -677,7 +676,6 @@ local function windowInstanceGroups()
         groups[newGroup] = {}
         groupsSorted = tableKeysSorted(groups)
         selected.group = arrayFindValueIndex(groupsSorted, newGroup) or 0
-        instanceGroupName = nil
         groupsEdited = true
       end
     end
@@ -883,8 +881,8 @@ local function tabInstances()
   im.SameLine()
 
   im.BeginChild1("instanceData", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
-  itemWidth = im.GetContentRegionAvailWidth() * 0.5
-  if not im.IsWindowHovered(im.HoveredFlags_AnyWindow) and not signalObjectFlags.selectObjects and editor.keyModifiers.shift and mousePos then
+  contentWidth = im.GetContentRegionAvailWidth() * 0.5
+  if not im.IsWindowHovered(im.HoveredFlags_AnyWindow) and editor.getCurrentEditModeName() ~= "objectSelect" and editor.keyModifiers.shift and mousePos then
     debugDrawer:drawTextAdvanced(mousePos, "Create Signal Instance", ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 255))
 
     if im.IsMouseClicked(0) then
@@ -906,7 +904,7 @@ local function tabInstances()
 
     im.TextUnformatted("Current Group: "..(currInstance.group or "(None)"))
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if editor.uiInputText("Name##instance", signalName, nil, im.InputTextFlags_EnterReturnsTrue) then
       currInstance.name = ffi.string(signalName)
     end
@@ -916,7 +914,7 @@ local function tabInstances()
     local changed = false
     signalPos[0], signalPos[1], signalPos[2] = currInstance.pos.x, currInstance.pos.y, currInstance.pos.z
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if im.InputFloat3("Position##instance", signalPos, "%0."..editor.getPreference("ui.general.floatDigitCount").."f", im.InputTextFlags_EnterReturnsTrue) then
       changed = true
     end
@@ -943,7 +941,7 @@ local function tabInstances()
       name = "Basic" -- this is a nil sequence
     end
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if im.BeginCombo("Sequence##instance", name) then
       if im.Selectable1("Basic##instanceSequenceBasic", not elem) then
         currInstance:setSequence(0)
@@ -1013,7 +1011,7 @@ local function tabInstances()
       name = "(None)"
     end
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if im.BeginCombo("Controller##instance", name) then
       if im.Selectable1("(None)##instanceController", not elem) then
         currInstance:setController(0)
@@ -1076,15 +1074,12 @@ local function tabInstances()
 
     im.Dummy(dummyVec)
 
-    if not signalObjectFlags.objectsNotFound and not signalObjects[1] then
-      signalObjects = currInstance:getSignalObjects(true)
-      signalObjectFlags.objectsNotFound = not signalObjects[1] and true or false
+    if not currInstance.tempSignalObjects then -- creates a temporary table of linked signal object ids
+      currInstance.tempSignalObjects = currInstance:getSignalObjects(true)
     end
 
-    local selectObjects = signalObjectFlags.selectObjects and true or false
-    if not selectObjects then
+    if editor.getCurrentEditModeName() ~= "objectSelect" then
       if im.Button("Select Objects##signalObjects") then
-        signalObjectFlags.selectObjects = true
         editor.selectEditMode(editor.editModes["objectSelect"])
         timedTexts.selectObjects = {"Currently in Object Selection mode.", 5000}
       end
@@ -1100,32 +1095,8 @@ local function tabInstances()
         -- whenever a single object is selected, all others of the same type, area, and rotation are also selected
         -- use internalName if you want to group varying traffic light shapes together
         -- otherwise, this will only match by shapeName
-
-        -- maybe this should be a function
-        if signalObjectFlags.smartSelectObjects then
-          local selectedObj = scenetree.findObjectById(editor.selection.object[1])
-          local validIds = {}
-          if selectedObj:getClassName() == "TSStatic" then
-            local internalName = selectedObj:getInternalName()
-
-            local dir1 = selectedObj:getTransform():getForward()
-            for _, obj in ipairs(getObjectsByClass("TSStatic") or {}) do
-              if (internalName and obj:getInternalName() == internalName) or obj.shapeName == selectedObj.shapeName then
-                if selectedObj:getPosition():squaredDistance(obj:getPosition()) <= 1600 then -- checks within a 40 m radius
-                  -- strong assumption that the TSStatics were created with the same initial rotation
-                  local dir2 = obj:getTransform():getForward()
-                  if dir1:dot(dir2) >= 0.93 then -- roughly within 20 degrees
-                    table.insert(validIds, obj:getId())
-                  end
-                end
-              end
-            end
-          end
-
-          if validIds[2] then
-            editor.selectObjects(validIds)
-          end
-          signalObjectFlags.smartSelectObjects = nil
+        if editor.selection.object and not editor.selection.object[2] then
+          smartSelectObjects()
         end
       end
 
@@ -1133,12 +1104,14 @@ local function tabInstances()
       if im.Button("Confirm Selection ("..count..")##signalObjects") then
         if count > 0 then
           for _, objId in ipairs(editor.selection.object) do
-            currInstance:assignSignalObject(objId)
+            currInstance:linkSignalObject(objId)
+
+            if not arrayFindValueIndex(currInstance.tempSignalObjects, objId) then
+              table.insert(currInstance.tempSignalObjects, objId)
+            end
           end
           editor.selectEditMode(editor.editModes[editModeName])
           editor.selection.object = nil
-          table.clear(signalObjects)
-          table.clear(signalObjectFlags)
           timedTexts.selectObjects = nil
           timedTexts.signalObjects = nil
           timedTexts.applyFields = {"Updated "..count.." objects: [signalInstance] = "..currInstance.name, 6}
@@ -1150,8 +1123,6 @@ local function tabInstances()
       if im.Button("Cancel##signalObjects") then
         editor.selectEditMode(editor.editModes[editModeName])
         editor.selection.object = nil
-        table.clear(signalObjects)
-        table.clear(signalObjectFlags)
       end
 
       if timedTexts.selectObjects then
@@ -1161,28 +1132,27 @@ local function tabInstances()
 
     im.Dummy(dummyVec)
 
-    if signalObjectFlags.objectsNotFound then
+    if not currInstance.tempSignalObjects[1] then
       im.TextUnformatted("No linked objects found.")
     else
       if im.Button("View Selection##signalObjects") then
-        if not selectedObject and signalObjects[1] then
-          editor.selectObjects({signalObjects[1]})
-          selectedObject = signalObjects[1]
+        if not selectedObject and currInstance.tempSignalObjects[1] then
+          editor.selectObjects({currInstance.tempSignalObjects[1]})
+          selectedObject = currInstance.tempSignalObjects[1]
         end
         editor.fitViewToSelection()
       end
       im.SameLine()
       if im.Button("Clear Object Fields##signalObjects") then
-        for _, id in ipairs(signalObjects) do
-          scenetree.findObjectById(id).signalInstance = ""
+        for _, id in ipairs(currInstance.tempSignalObjects) do
+          currInstance:unlinkSignalObject(id)
         end
+        table.clear(currInstance.tempSignalObjects)
         editor.selection.object = nil
-        table.clear(signalObjects)
-        table.clear(signalObjectFlags)
       end
 
-      im.BeginChild1("signalObjects", im.ImVec2(itemWidth, 150 * im.uiscale[0]), im.WindowFlags_ChildWindow)
-      for _, oid in ipairs(signalObjects) do
+      im.BeginChild1("signalObjects", im.ImVec2(contentWidth, 150 * im.uiscale[0]), im.WindowFlags_ChildWindow)
+      for _, oid in ipairs(currInstance.tempSignalObjects) do
         local obj = scenetree.findObjectById(oid)
         if obj then
           if im.Selectable1(tostring(oid), selectedObject == oid) then
@@ -1226,7 +1196,7 @@ local function tabControllers()
   im.SameLine()
 
   im.BeginChild1("controllerData", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
-  itemWidth = im.GetContentRegionAvailWidth() * 0.5
+  contentWidth = im.GetContentRegionAvailWidth() * 0.5
   local currController = controllers[selected.controller]
   if currController then
     im.TextUnformatted("Current Controller: "..currController.name.." ["..currController.id.."]")
@@ -1238,7 +1208,7 @@ local function tabControllers()
       editor.history:commitAction("Delete Controller", act, createControllerActionRedo, createControllerActionUndo)
     end
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if editor.uiInputText("Name##controller", ctrlName, nil, im.InputTextFlags_EnterReturnsTrue) then
       currController.name = ffi.string(ctrlName)
     end
@@ -1251,7 +1221,7 @@ local function tabControllers()
     local signalTypes = core_trafficSignals.getControllerDefinitions().types
     local typeName = signalTypes[currCtrlType] and signalTypes[currCtrlType].name or "(None)"
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if im.BeginCombo("Signal Type##controller", typeName) then
       for _, k in ipairs(tableKeysSorted(signalTypes)) do
         if im.Selectable1(signalTypes[k].name, k == currController.type) then
@@ -1356,7 +1326,7 @@ local function tabSequences()
   im.SameLine()
 
   im.BeginChild1("sequenceData", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
-  itemWidth = im.GetContentRegionAvailWidth() * 0.5
+  contentWidth = im.GetContentRegionAvailWidth() * 0.5
   local currSequence = sequences[selected.sequence]
   if currSequence then
     im.TextUnformatted("Current Sequence: "..currSequence.name.." ["..currSequence.id.."]")
@@ -1368,14 +1338,14 @@ local function tabSequences()
       editor.history:commitAction("Delete Sequence", act, createSequenceActionRedo, createSequenceActionUndo)
     end
 
-    im.PushItemWidth(itemWidth)
+    im.PushItemWidth(contentWidth)
     if editor.uiInputText("Name##sequence", sequenceName, nil, im.InputTextFlags_EnterReturnsTrue) then
       currSequence.name = ffi.string(sequenceName)
     end
     im.PopItemWidth()
 
     local var = im.FloatPtr(currSequence.startTime)
-    im.PushItemWidth(100 * im.uiscale[0])
+    im.PushItemWidth(inputWidth)
     if im.InputFloat("Start Delay##sequence", var, 0.01, 0.1, "%.2f", im.InputTextFlags_EnterReturnsTrue) then
       currSequence.startTime = var[0]
     end
@@ -1438,7 +1408,7 @@ local function tabSequences()
       end
 
       var = im.IntPtr(count)
-      im.PushItemWidth(100 * im.uiscale[0])
+      im.PushItemWidth(inputWidth)
       if im.InputInt("Count##phaseController", var, 1) then
         while var[0] > #phase.controllerData do
           table.insert(phase.controllerData, {id = 0, required = true})
@@ -1543,11 +1513,8 @@ local function tabSimulation()
         im.NextColumn()
         local currTime = sequence.testTimer or 0
         local maxTime = math.max(1e-6, sequence.sequenceDuration)
-        local r, g, b = HSVtoRGB((sequence.currStep - 1) / (#sequence.sequenceTimings), 1, 0.6)
 
-        im.PushStyleColor2(im.Col_PlotHistogram, im.ImVec4(r, g, b, 1))
         im.ProgressBar(currTime / maxTime, im.ImVec2(im.GetContentRegionAvailWidth(), 0))
-        im.PopStyleColor()
 
         im.NextColumn()
         if im.Button("Advance##simulation"..i) then
@@ -1615,12 +1582,14 @@ local function debugDraw()
           debugDrawer:drawSquarePrism(mapNodes[instance.road.n1].pos, mapNodes[instance.road.n2].pos, Point2F(0.2, 0.2), Point2F(0.2, 0.2), debugColors.road)
         end
 
-        for _, oid in ipairs(signalObjects) do
-          local obj = scenetree.findObjectById(oid)
-          if obj then
-            local abovePos = obj:getWorldBox():getCenter()
-            abovePos.z = abovePos.z + obj:getWorldBox():getExtents().z * 0.5 + 0.25
-            debugDrawer:drawSquarePrism(abovePos, abovePos + vecUp, Point2F(0, 0), Point2F(0.5, 0.5), debugColors.selected)
+        if instance.tempSignalObjects then
+          for _, oid in ipairs(instance.tempSignalObjects) do
+            local obj = scenetree.findObjectById(oid)
+            if obj then
+              local abovePos = obj:getWorldBox():getCenter()
+              abovePos.z = abovePos.z + obj:getWorldBox():getExtents().z * 0.5 + 0.25
+              debugDrawer:drawSquarePrism(abovePos, abovePos + vecUp, Point2F(0, 0), Point2F(0.5, 0.5), debugColors.selected)
+            end
           end
         end
       end
@@ -1646,28 +1615,31 @@ local function debugDraw()
   end
 end
 
+local function initTables() -- runs on first load
+  editor.selectEditMode(editor.editModes[editModeName])
+  trafficSignals = extensions.core_trafficSignals
+  trafficSignals.loadControllerDefinitions(editor.levelPath.."signalControllerDefinitions.json")
+  controllerDefinitions = trafficSignals.getControllerDefinitions()
+
+  if not instances[1] then
+    setCurrentSignals() -- automatically loads active signals data from map
+  end
+
+  selectInstance(selected.signal)
+  selectController(selected.controller)
+  selectSequence(selected.sequence)
+
+  updateGroups()
+
+  signalsInitialized = true
+end
+
 local displayNameModesSorted = {"Signals", "Controllers", "Sequences"}
 local function onEditorGui(dt)
   if editor.beginWindow(editModeName, editWindowName, im.WindowFlags_MenuBar) then
-    if firstLoad then
-      editor.selectEditMode(editor.editModes[editModeName])
-      trafficSignals = extensions.core_trafficSignals
-      trafficSignals.loadControllerDefinitions(editor.levelPath.."signalControllerDefinitions.json")
-      controllerDefinitions = trafficSignals.getControllerDefinitions()
+    if not signalsInitialized then initTables() end
 
-      if not instances[1] then
-        setCurrentSignals() -- automatically loads active signals data from map
-      end
-
-      selectInstance(selected.signal)
-      selectController(selected.controller)
-      selectSequence(selected.sequence)
-
-      updateGroups()
-
-      firstLoad = false
-    end
-
+    inputWidth = 100 * im.uiscale[0]
     mousePos = staticRayCast()
 
     im.BeginMenuBar()
@@ -1679,7 +1651,7 @@ local function onEditorGui(dt)
         saveFile()
       end
       if im.MenuItem1("Clear") then
-        windowFlags.overwrite[0] = true
+        windowFlags.clear = true
       end
       im.EndMenu()
     end
@@ -1739,10 +1711,6 @@ local function onEditorGui(dt)
     end
     im.EndMenuBar()
 
-    if windowFlags.overwrite[0] then
-      windowOverwrite()
-    end
-
     if windowFlags.instanceGroups[0] then
       windowInstanceGroups()
     end
@@ -1772,6 +1740,27 @@ local function onEditorGui(dt)
     end
     table.clear(tabFlags)
 
+    if windowFlags.clear then
+      im.OpenPopup("Confirm##trafficSignals")
+      windowFlags.clear = nil
+    end
+
+    if im.BeginPopupModal("Confirm##trafficSignals", nil, im.WindowFlags_AlwaysAutoResize) then
+      im.TextUnformatted("Are you sure you want to clear signals data?")
+      im.Dummy(dummyVec)
+
+      if im.Button("YES", im.ImVec2(inputWidth, 20 * im.uiscale[0])) then
+        resetSignals()
+        im.CloseCurrentPopup()
+      end
+      im.SameLine()
+      if im.Button("NO", im.ImVec2(inputWidth, 20 * im.uiscale[0])) then
+        im.CloseCurrentPopup()
+      end
+  
+      im.EndPopup()
+    end
+
     debugDraw()
   end
 
@@ -1789,14 +1778,8 @@ local function onActivate()
   editor.clearObjectSelection()
 end
 
-local function onEditorObjectSelectionChanged()
-  if signalObjectFlags.selectObjects and options.smartSelection and tableSize(editor.selection.object) == 1 and not signalObjectFlags.smartSelectObjects then
-    signalObjectFlags.smartSelectObjects = true
-  end
-end
-
 local function onClientEndMission()
-  firstLoad = true
+  signalsInitialized = false
 end
 
 local function onSerialize()
@@ -1811,7 +1794,7 @@ local function onDeserialized(data)
 end
 
 local function onWindowMenuItem()
-  firstLoad = true
+  if not signalsInitialized then initTables() end
   editor.clearObjectSelection()
   editor.showWindow(editModeName)
 end
@@ -1836,7 +1819,6 @@ M.saveFile = saveFile
 M.onEditorInitialized = onEditorInitialized
 M.onWindowMenuItem = onWindowMenuItem
 M.onEditorGui = onEditorGui
-M.onEditorObjectSelectionChanged = onEditorObjectSelectionChanged
 M.onClientEndMission = onClientEndMission
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized

@@ -5,6 +5,7 @@
 local M = {}
 local MT = {} -- metatable
 local logTag = 'extensions'
+local useProfiledHooks = not shipping_build
 
 --------------------------------------------------------------------------
 ---    Deprecating Extensions format and Information                   ---
@@ -23,7 +24,14 @@ local deprecatedExtensions = {
     activated = {replacement = 'onPlayersChanged'}
 }
 
+local ok, ffi = pcall(require, 'ffi')
+if ok then
+  ffi.cdef("void profilerPushEvent(const char* name);")
+  ffi.cdef("void profilerPopEvent();")
+end
+
 local luaMods = {} -- local var that tracks the loaded modules state
+local doNotSerializeModules = {} -- local var for the modules TO NOT serialize when reloading LUA VM (CTRL + L)
 
 local luaExtensionFuncs = {}
 local packagePathTemp = nil
@@ -32,6 +40,8 @@ local resolvedNameToModule = {}
 local resolvedNormalizedNameToModule = {}
 local trackOnExtensionUnloaded = {}
 local trackOnRefresh = {}
+local loadedFreshModules = {}
+local deserializedData = nil
 
 local childExtensions = {} -- for force unloading virtual extensions
 
@@ -42,7 +52,7 @@ local function getUniqueVirtualExtensionNumber()
 end
 
 -- fwd decl of functions
-local extensionLoad
+local extensionLoadInternal
 
 local function luaPathToExtName(filepath)
   -- log('I', logTag, 'luaPathToExtName called '..tostring(filepath))
@@ -191,7 +201,11 @@ local function unloadInternal(extNames, forceUnloadVirtual)
   -- nop the function cache so that existing hook iterations do not get invalidated as they are used
   for fName, fList in pairs(luaExtensionFuncs) do
     for i, _ in ipairs(fList) do
-      fList[i] = nop
+      if useProfiledHooks then
+        fList[i].func = nop
+      else
+        fList[i] = nop
+      end
     end
   end
   table.clear(luaExtensionFuncs)  -- clear the hook function cache
@@ -396,14 +410,16 @@ local function refreshInternal(m, extName, extPath, loadedFresh, extRequested)
 
   trackOnRefresh[m] = true
 
-  if m.onPreLoad then m.onPreLoad() end
+  if m.onPreLoad then
+    m.onPreLoad()
+  end
 
   if m.dependencies then
     for _, depName in ipairs(m.dependencies) do
       -- log('I', logTag, 'Loading dependency for '..extName..': '..depName)
       if not extRequested[depName] then
         extRequested[depName] = true
-        local dependencyLoaded = extensionLoad(depName, nil, extRequested)
+        local dependencyLoaded = extensionLoadInternal(depName, nil, extRequested)
         if not dependencyLoaded then
           log('W', logTag, 'Failed to load dependency: '..depName)
         end
@@ -441,12 +457,8 @@ local function refreshInternal(m, extName, extPath, loadedFresh, extRequested)
     end
 
     -- allow the module to refuse loading
-    if loadedFresh and type(m.onExtensionLoaded) == 'function' then
-      local res = m.onExtensionLoaded()
-      if res == false then
-        trackOnRefresh[m] = nil
-        return nil
-      end
+    if loadedFresh and (type(m.onExtensionLoaded)=='function' or type(m.onInit)=='function') then
+      table.insert(loadedFreshModules, m.__extensionName__)
     end
   end
 
@@ -456,10 +468,6 @@ local function refreshInternal(m, extName, extPath, loadedFresh, extRequested)
 
   -- also add to global scope:
   rawset(_G, extName, m) -- rawset avoids global setter wrapper detections
-
-  if loadedFresh and vmType == 'game' and type(m.onInit) == 'function' then
-    m.onInit()
-  end
 
   trackOnRefresh[m] = nil
   return m
@@ -479,11 +487,11 @@ local function extSafetyCheck(m, extName, extPath)
   end
 end
 
-extensionLoad = function(extName, extPath, extRequested)
+extensionLoadInternal = function(extName, extPath, extRequested)
   if not extPath then
     extPath = extNameToLuaPath(extName)
   end
-  -- log('I', logTag, 'extensionLoad: '.. tostring(extName).. ' from '..tostring(extPath))
+  -- log('I', logTag, 'extensionLoadInternal: '.. tostring(extName).. ' from '..tostring(extPath))
   local m = luaMods[extName] or resolvedNormalizedNameToModule[string.lower(extName)]
   if m ~= nil then
     --log('D', logTag, 'extension already loaded: '..tostring(extName))
@@ -545,7 +553,7 @@ local function loadInternal(manualLoad, ...)
       extPath = extNameToLuaPath(extName)
     end
 
-    local m = extensionLoad(extName, extPath)
+    local m = extensionLoadInternal(extName, extPath)
     if m and manualLoad then
       m.__manuallyLoaded__ = manualLoad
     end
@@ -554,12 +562,57 @@ local function loadInternal(manualLoad, ...)
   table.clear(luaExtensionFuncs)  -- clear the hook function cache
 end
 
+local function processLoadedFreshList()
+  local modulesToUnload = {}
+  local modulesToInit = {}
+  deserializedData = deserializedData or {}
+  for i, moduleName in ipairs(loadedFreshModules) do
+    -- Because modules can load other modules from within onExtensionLoaded, we do the nil clear to prevent reentrant issues
+    if moduleName then
+      loadedFreshModules[i] = false
+      local m = rawget(_G, moduleName)
+      if m then
+        local res = true
+        if m.onExtensionLoaded then
+          -- log('I','','  '..m.__extensionName__..'.onExtensionLoaded('..dumps(deserializedData[m.__extensionName__])..')')
+          res = m.onExtensionLoaded(deserializedData[m.__extensionName__])
+          if res == false then
+            table.insert(modulesToUnload, m.__extensionName__)
+          end
+        end
+        if res ~= false then
+          table.insert(modulesToInit, m.__extensionName__)
+        end
+      end
+    end
+  end
+
+  table.clear(loadedFreshModules)
+
+  unloadInternal(modulesToUnload)
+
+  if vmType == 'game' then
+    for i, moduleName in ipairs(modulesToInit) do
+      if moduleName then
+        modulesToInit[i] = false
+        local m = rawget(_G, moduleName)
+        if m and type(m.onInit) == 'function' then
+          -- log('I','','  '..m.__extensionName__..'.onInit('..dumps(deserializedData[m.__extensionName__])..')')
+          m.onInit(deserializedData[m.__extensionName__])
+        end
+      end
+    end
+  end
+end
+
 local function loadExt(...)
   loadInternal(true, ...)
+  processLoadedFreshList()
 end
 
 local function loadAutoClean(...)
   loadInternal(false, ...)
+  processLoadedFreshList()
 end
 
 local function loadAtRoot(extPath, rootName)
@@ -591,7 +644,7 @@ local function loadAtRoot(extPath, rootName)
     extName = string.gsub(extPath, "(.*/)(.*)", "%2")
   end
 
-  local m = extensionLoad(extName, extPath)
+  local m = extensionLoadInternal(extName, extPath)
 
   if m then
     m.__manuallyLoaded__ = true
@@ -600,6 +653,7 @@ local function loadAtRoot(extPath, rootName)
 
   resolveDependencies()
   table.clear(luaExtensionFuncs)  -- clear the hook function cache
+  processLoadedFreshList()
 
   return extName, m
 end
@@ -655,6 +709,8 @@ local function loadModulesInDirectory(directory, excludeSubdirectories)
   end
   --package.path = savedPath
   resolveDependencies()
+  table.clear(luaExtensionFuncs)  -- clear the hook function cache
+  processLoadedFreshList()
 end
 
 local completedCallbacks = {}
@@ -668,7 +724,7 @@ local function setCompletedCallback(funcName, callback)
 end
 
 local profiler
-local function hookProfiled(funcName, ... )
+local function hookSingleFrameProfiled(funcName, ... )
   for _, m in ipairs(resolvedModules) do
     if type(m) == "table" then
       local func = m[funcName]
@@ -678,6 +734,33 @@ local function hookProfiled(funcName, ... )
         func(...)
         profiler:add(extCallName)
       end
+    end
+  end
+end
+
+local function hookProfiled(funcName, ...)
+  -- This is performance sensitive, please disable transient debug code
+  -- dump("Extension Hook: " .. funcName .. " : " .. dumps(... or {}))
+  local funcList = luaExtensionFuncs[funcName]
+  if funcList == nil then
+    -- rebuild the cache for the function from all loaded modules
+    local hookFuncs = {}
+    luaExtensionFuncs[funcName] = hookFuncs
+    for _, m in ipairs(resolvedModules) do
+      local func = m[funcName]
+      if func ~= nop and type(func) == 'function' then
+        local funcInfo = {func = func, extCallName = m.__extensionName__..'.'..funcName}
+        table.insert(hookFuncs, funcInfo)
+        ffi.C.profilerPushEvent(funcInfo.extCallName)
+        func(...)
+        ffi.C.profilerPopEvent()
+      end
+    end
+  else
+    for _, funcInfo in ipairs(funcList) do
+      ffi.C.profilerPushEvent(funcInfo.extCallName)
+      funcInfo.func(...)
+      ffi.C.profilerPopEvent()
     end
   end
 end
@@ -720,9 +803,28 @@ end
 local function setProfiler(p)
   profiler = p
   if p then
-    M.hook = hookProfiled
+    M.hook = hookSingleFrameProfiled
   else
-    M.hook = hookFast
+    M.hook = useProfiledHooks and hookProfiled or hookFast
+  end
+end
+
+local function wrapFunctionWithProfiler(func, name)
+  return function(...)
+    ffi.C.profilerPushEvent(name)
+    local results = {func(...)}
+    ffi.C.profilerPopEvent()
+    return unpack(results)
+  end
+end
+
+local function wrapAllExtensionsForProfiler()
+  for j, m in ipairs(resolvedModules) do
+    for name, value in pairs(m) do
+      if type(value) == "function" and name ~= "wrapAllExtensions" then
+        m[name] = wrapFunctionWithProfiler(value, m.__extensionName__ .. "." .. name)
+      end
+    end
   end
 end
 
@@ -804,6 +906,7 @@ local function refresh(extName)
   local m = refreshInternal(luaMods[extName], extName, extPath, false)
   resolveDependencies()
   table.clear(luaExtensionFuncs)  -- clear the hook function cache
+  processLoadedFreshList()
   return m
 end
 
@@ -811,6 +914,24 @@ M.reloadModule =  function(modulePath)
                      log("W", logTag, "reloadModule(modulePath) is deprecated. Please switch to reload(modulePath)")
                      reload( modulePath )
                    end
+
+local function disableSerialization(...)
+
+  -- Try to make this table only hold unique entries, no duplicates
+  for _,entry in ipairs({...}) do
+    if type(entry) == 'string' then
+      table.insert(doNotSerializeModules, entry)
+    else
+      for _, v in ipairs(entry) do
+        if type(v) == 'string' then
+          table.insert(doNotSerializeModules, v)
+        else
+          log('W', logTag, "Disabling extension from serialization entry is not valid. It should be a string. entry = " .. dumps(v))
+        end
+      end
+    end
+  end
+end
 
 local function getSerializationData(reason)
   if reason == nil then reason = 'reload' end
@@ -820,13 +941,20 @@ local function getSerializationData(reason)
   -- filter out virtual extensions
   local loadedModules = {}
   for k, m in pairs(luaMods) do
-    if not m.__virtual__ then
-      loadedModules[k] = m.__extensionPath__
+    local ignoreExtension = tableContains(doNotSerializeModules, m.__extensionName__)
+    if not ignoreExtension then
+      if not m.__virtual__ then
+        loadedModules[k] = m.__extensionPath__
+      end
     end
   end
   tmp['extensions'].loadedModules = loadedModules
 
   for _, v in ipairs(resolvedModules) do
+    local ignoreExtension = tableContains(doNotSerializeModules, v.__extensionName__)
+    if ignoreExtension then
+      goto continue
+    end
     local k = v.__extensionName__
     if type(v) == 'table' and v.__virtual__ ~= true and (v['onDeserialized'] ~= nil or v['onDeserialize'] ~= nil or v['onSerialize'] ~= nil) then
       if type(v['onSerialize']) == 'function' then
@@ -840,6 +968,7 @@ local function getSerializationData(reason)
         tmp[k] = v
       end
     end
+    ::continue::
   end
 
   return tmp
@@ -847,6 +976,7 @@ end
 
 local function deserialize(data, filter)
   if data == nil then return end
+  deserializedData = data
   local extensionsData = data['extensions']
   if extensionsData and extensionsData.loadedModules then
     local extbatch = {}
@@ -894,7 +1024,9 @@ local function deserialize(data, filter)
         v['onDeserialized'](data[k])
       end
     end
+    data[k] = nil
   end
+  deserializedData = nil
 end
 
 
@@ -1036,7 +1168,7 @@ M.refresh = refresh
 M.unload = unload
 M.unloadExcept = unloadExcept
 M.isExtensionLoaded = isExtensionLoaded
-M.hook = hookFast
+M.hook = useProfiledHooks and hookProfiled or hookFast
 M.hookExcept = hookExcept
 M.hookNotify = hookNotify
 M.hookUpdate = hookUpdate
@@ -1045,12 +1177,14 @@ M.printExtensions = printExtensions
 M.addModulePath = addModulePath
 M.saveModulePath = saveModulePath
 M.restoreModulePath = restoreModulePath
+M.disableSerialization = disableSerialization
 M.getSerializationData = getSerializationData
 M.deserialize = deserialize
 M.setCompletedCallback = setCompletedCallback
 M.luaPathToExtName = luaPathToExtName
 M.extNameToLuaPath = extNameToLuaPath
 M.setProfiler = setProfiler
+M.wrapAllExtensionsForProfiler = wrapAllExtensionsForProfiler
 
 M.onDeserialized = nop
 M.onDeserialize = nop

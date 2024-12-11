@@ -13,8 +13,9 @@ local M = {}
 local ffi = require('ffi')
 ffi.cdef [[
 typedef struct rgba_pixel_t { uint8_t r, g, b, a; } rgba_pixel_t;
-bool saveRGBABufferToFile(int width, int height, rgba_pixel_t *data, const char* filename);
 ]]
+
+local rgbaBuffer = require('string.buffer').new()
 
 local LuaRGBAPixel = {}
 LuaRGBAPixel.__index = LuaRGBAPixel
@@ -40,15 +41,25 @@ function LuaPixelBuffer:init(width, height)
   self:_allocate_buffer(width * height)
 end
 
+local function saveRGBABufferToFile(width, height, data, filename)
+  local bitmap = GBitmap()
+  bitmap:init(width, height, true)
+
+  rgbaBuffer:reset()
+  rgbaBuffer:set(data, ffi.sizeof(data))
+  if not bitmap:fromBuffer(rgbaBuffer) then
+    log('E', 'pixellib', 'cannot load data to GBitmap')
+  end
+  bitmap:saveFile(filename)
+end
+
 function LuaPixelBuffer:saveFile(filename)
-  return ffi.C.saveRGBABufferToFile(self.width, self.height, self.buf, filename)
+  return saveRGBABufferToFile(self.width, self.height, self.buf, filename)
 end
 
 function LuaPixelBuffer:_allocate_buffer(n)
   self.bufSize = n
   self.buf = ffi.new("rgba_pixel_t[?]", n)
-  --if self.buf then ffi.C.freeARGBBuffer(self.buf) end
-  --self.buf = ffi.C.allocateARGBBuffer(n)
 end
 
 function LuaPixelBuffer:__tostring()

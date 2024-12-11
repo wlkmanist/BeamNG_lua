@@ -777,11 +777,15 @@ local function dumpsMsg(msg)
 end
 
 local function updateGFX(dt)
-  if M.isConnected then
-    local receiveResult, msg = M.receiveCANBus()
-    if receiveResult == M.errorCodes.OK then
-      for _, callback in pairs(canMessageCallbacks) do
-        callback(msg)
+  if M.isConnected and next(canMessageCallbacks) ~= nil then
+    for i = 1, 100 do
+      local receiveResult, msg = M.receiveCANBus()
+      if receiveResult == M.errorCodes.OK then
+        for _, callback in pairs(canMessageCallbacks) do
+          callback(msg)
+        end
+      else
+        break
       end
     end
   end
@@ -794,35 +798,34 @@ local function sendCANMessage(messageId, data, tag)
   end
 end
 
+local sendMsg = ffi.new("TPCANMsg")
 local function sendCANBusRaw(id, data, msgType, channel)
   channel = channel or M.PCANHandles.USBBus1
   msgType = msgType or M.messageType.Standard
 
-  local msg = ffi.new("TPCANMsg")
-  msg.ID = id
-  msg.MSGTYPE = msgType
+  sendMsg.ID = id
+  sendMsg.MSGTYPE = msgType
 
   for index, byte in ipairs(data) do
-    msg.DATA[index - 1] = byte --start data array at [0]
+    sendMsg.DATA[index - 1] = byte --start data array at [0]
   end
 
-  msg.LEN = #data
-  local result = M.canBusAPI.CAN_Write(channel, msg)
+  sendMsg.LEN = #data
+  local result = M.canBusAPI.CAN_Write(channel, sendMsg)
   if result ~= M.errorCodes.OK then
     log("W", "CANBusPeak.receiveCANBus", "Non-OK receive status: " .. M.errorCodeLookup[result])
   end
   return result
 end
 
+local rcvTimestamp = ffi.new("TPCANTimestamp")
 local function receiveCANBus(channel)
   channel = channel or M.PCANHandles.USBBus1
   local msg = ffi.new("TPCANMsg")
-  local timestamp = ffi.new("TPCANTimestamp")
-  local result = M.canBusAPI.CAN_Read(channel, msg, timestamp)
+  local result = M.canBusAPI.CAN_Read(channel, msg, rcvTimestamp)
   if result ~= M.errorCodes.OK and result ~= M.errorCodes.QRCVEmpty then
     log("W", "CANBusPeak.receiveCANBus", "Non-OK receive status: " .. (M.errorCodeLookup[result] or result))
   end
-
   return result, msg
 end
 

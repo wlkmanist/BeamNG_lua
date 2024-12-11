@@ -92,7 +92,7 @@ local function init()
 end
 
 local function clearLights()
-  log("I", logTag, "Clear all the lights")
+  --log("I", logTag, "Clear all the lights")
   rand = math.random() + 2
 
   if not dragData then return end
@@ -108,7 +108,7 @@ local function clearLights()
 end
 
 local function clearDisplay()
-  log("I", logTag, "Clear all the displays")
+  --log("I", logTag, "Clear all the displays")
   if not dragData then return end
   for _, digitTypeData in pairs(dragData.strip.displayDigits) do
     for _,laneTypeData in ipairs(digitTypeData) do
@@ -315,6 +315,7 @@ local function resetDragRaceValues()
 end
 
 M.clearAll = clearAll
+M.onBeforeDragUnloadAllExtensions = clearLights
 M.onUpdate = onUpdate
 M.onExtensionLoaded = onExtensionLoaded
 

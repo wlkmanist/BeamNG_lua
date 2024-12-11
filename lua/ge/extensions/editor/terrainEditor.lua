@@ -291,7 +291,7 @@ local function dragDropTarget(mtlProxy, map, cbData)
     -- if payload~=nil and editor.dragDropAsset~=nil then
     if payload ~= nil then
       assert(payload.DataSize == ffi.sizeof"char[2048]")
-      local path = ffi.string(ffi.cast("char*",payload.Data))
+      local path = ffi.string(payload.Data)
       updateMap(mtlProxy, map, path)
     end
     im.EndDragDropTarget()

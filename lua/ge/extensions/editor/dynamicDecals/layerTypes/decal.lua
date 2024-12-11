@@ -690,7 +690,7 @@ local function decalTextureWidget(type, name, removeTextureOverridePath)
     local payload = im.AcceptDragDropPayload("DynDecalTextureDrapDrop")
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[256]")
-      local path = ffi.string(ffi.cast("char*", payload.Data))
+      local path = ffi.string(payload.Data)
       api.setDecalTexturePath(type, path)
       return true
     end

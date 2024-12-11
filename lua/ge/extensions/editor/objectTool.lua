@@ -133,13 +133,12 @@ end
 local function getMementoFromSelection()
   local mementos = {}
   for _, id in ipairs(editor.selection.object) do
-    local memento = SimObjectMemento()
     local obj = scenetree.findObjectById(id)
     if obj then
-      memento:save(obj, 4) -- 2nd arg is flag SimObject::IgnoreCanSave
       editor.logDebug("Copy id " .. tostring(obj:getId()));
+      local memento = editor.saveSimObjectMemento(obj)
+      table.insert(mementos, memento)
     end
-    table.insert(mementos, memento)
   end
   return mementos
 end
@@ -164,7 +163,9 @@ local function pasteObjects(objectMementos, objectIDs, parentIds)
     if objectIDs and objectIDs[i] then
       SimObject.setForcedId(objectIDs[i])
     end
-    local obj = v:restore()
+
+    local obj = editor.restoreSimObjectMemento(v)
+
     if obj then
       if obj:getClassName() == "Prefab" then
         local pos = Sim.upcast(obj):getTransform():getColumn(3)
@@ -361,7 +362,9 @@ local function gizmoDragging()
     local newTransforms = editor.getTransformsGizmoTranslate(axisGizmoEventState.objects, axisGizmoEventState.objectHeights)
     for index, transform in ipairs(newTransforms) do
       local obj = objects[index]
-      obj:setTransform(transform)
+      if obj then
+        obj:setTransform(transform)
+      end
     end
   elseif worldEditorCppApi.getAxisGizmoMode() == editor.AxisGizmoMode_Rotate then
     editor.rotateObjectSelection(editor.getAxisGizmoTransform(), editor.getAxisGizmoTransform():getColumn(3), axisGizmoEventState.oldTransforms, axisGizmoEventState.initialGizmoTransform)
@@ -374,11 +377,10 @@ end
 local function getMementoFromManipulableSelection()
   local mementos = {}
   for _, id in ipairs(editor.selection.object) do
-    local memento = SimObjectMemento()
     local obj = scenetree.findObjectById(id)
     if obj then
       if editor.canManipulateObject(obj) then
-        memento:save(obj, 4)
+        local memento = editor.saveSimObjectMemento(obj)
         table.insert(mementos, memento)
       end
     end

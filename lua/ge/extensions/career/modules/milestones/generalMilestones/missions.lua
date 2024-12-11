@@ -3,7 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
-M.dependencies = {"career_modules_milestones_milestones", "gameplay_missions_missions"}
+M.dependencies = {"gameplay_missions_missions"}
 local missionIdToMilestonesList = {}
 local milestoneConfigs = {}
 local milestones
@@ -17,7 +17,7 @@ M.onGeneralMilestonesCollect = function(milestonesList)
   for i, mission in ipairs(gameplay_missions_missions.get()) do
     if mission.careerSetup.showInCareer then
       table.insert(careerMissions, mission)
-      for branchKey, _ in pairs(mission.unlocks.branchTags) do
+      for branchKey, _ in pairs(mission.unlocks.branchTags or {}) do
         missionsByBranch[branchKey] = missionsByBranch[branchKey] or {}
         table.insert(missionsByBranch[branchKey], mission)
       end

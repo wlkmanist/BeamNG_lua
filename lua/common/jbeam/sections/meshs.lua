@@ -217,6 +217,18 @@ local function processProps(objID, vehicleObj, vehicle)
             if prop.lightAttenuation then attenuation = vec3(prop.lightAttenuation) end
             plight:setLightArgs(innerAngle, outerAngle, brightness, range, color, attenuation, castShadows)
             plight:setLightArgs2(flareName, flareScale, cookieName, animationType, animationPeriod, animationPhase, texSize, shadowSoftness)
+            -- not needed here because above, but you can also update the light like this:
+            --plight:setLightArgsDynamic(brightness, color)
+          end
+        else
+          if prop.materialOverride then
+            if #prop.materialOverride == 2 and type(prop.materialOverride[1])=="string" and type(prop.materialOverride[2])=="string" then
+              log('E', "jbeam.pushToPhysics", "prop="..dumps(prop.mesh)..".`materialOverride`: need to be array of array")
+            else
+              for i = 1, #prop.materialOverride do
+                p:setMaterialOverride(prop.materialOverride[i][1], prop.materialOverride[i][2])
+              end
+            end
           end
         end
       end
@@ -316,7 +328,7 @@ local function process(objID, vehicleObj, vehicle)
       if v.nodeOffset and type(v.nodeOffset) == 'table' and v.nodeOffset.x and v.nodeOffset.y and v.nodeOffset.z then
         v.pos = v.pos or {x = 0, y = 0, z = 0}
         local nodeOffsetCoef = v.ignoreNodeOffset and 0 or 1
-        v.pos.x = v.pos.x + fsign(v.pos.x) * v.nodeOffset.x * nodeOffsetCoef
+        v.pos.x = v.pos.x + sign(v.pos.x) * v.nodeOffset.x * nodeOffsetCoef
         v.pos.y = v.pos.y + v.nodeOffset.y * nodeOffsetCoef
         v.pos.z = v.pos.z + v.nodeOffset.z * nodeOffsetCoef
       end

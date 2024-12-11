@@ -30,7 +30,7 @@ function C:work()
     veh = getPlayerVehicle(0)
   end
   if not veh then return end
-  
+
   veh:queueLuaCommand(self:getCmd())
   if self.returnedMode ~= nil then
     self.pinOut.aiMode.value = self.returnedMode
@@ -42,7 +42,7 @@ function C:_executionStarted()
 end
 
 function C:getCmd()
-  return 'obj:queueGameEngineLua("core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']:getAIMode(\'"..ai.getState().mode.."\')")'
+  return 'obj:queueGameEngineLua("local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:getAIMode(\'"..ai.getState().mode.."\') end")'
 end
 
 function C:getAIMode(mode)

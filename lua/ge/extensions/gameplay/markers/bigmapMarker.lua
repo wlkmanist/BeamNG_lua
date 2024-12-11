@@ -165,7 +165,7 @@ function C:setup(cluster)
       local bigMapIconName = cluster.icon
       self.iconDataById = {}
 
-      self.bigMapIconId = iconRendererObj:addIcon(cluster.id .. "bigMap", bigMapIconName or "mission_primary_01", self.pos + vec3(0,0,columnHeight))
+      self.bigMapIconId = iconRendererObj:addIcon(cluster.id .. "bigMap", bigMapIconName or "mission_primary_triangle", self.pos + vec3(0,0,columnHeight))
       local iconInfo = iconRendererObj:getIconById(self.bigMapIconId)
       iconInfo.color = ColorI(255,255,255,0)
       iconInfo.customSize = iconWorldSize

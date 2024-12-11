@@ -214,7 +214,7 @@ local function calculateInertia(device)
 
     if grA ~= grB or maxGRA ~= maxGRB then
       --guihooks.message("Caution: Mismatched final drive ratios!  ".. grA.. "  vs  ".. grB, 5)
-      log("W", "differential.calculateInertia", string.format("%s: Found non-matching gear ratios for differential outputs: A: '%.4f', B: '%.4f', A(max): '%.4f', B(max): '%.4f'", device.name, grA, grB, maxGRA, maxGRB))
+      log("D", "differential.calculateInertia", string.format("%s: Found non-matching gear ratios for differential outputs: A: '%.4f', B: '%.4f', A(max): '%.4f', B(max): '%.4f'", device.name, grA, grB, maxGRA, maxGRB))
     else
       cumulativeGearRatio = grA
       maxCumulativeGearRatio = maxGRA

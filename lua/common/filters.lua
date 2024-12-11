@@ -7,6 +7,8 @@
 local max, min, abs, cos, sqrt = math.max, math.min, math.abs, math.cos, math.sqrt
 local pi2 = 2 * math.pi
 
+--MARK: Freq
+
 function freqGenC(period, ampl, t)
   return cos(t * pi2/(period + 1e-30)) * ampl
 end
@@ -202,6 +204,8 @@ end
 function freqExists:reset()
   self.s_prev, self.s_prev2, self.cycleDt, self.N, self.lastAmpl = 0, 0, 0, 0, 0
 end
+
+--MARK: Temporal
 
 -- Spring based temporal
 local temporalSpring = {}
@@ -411,6 +415,8 @@ function temporalSmoothing:set(v)
   self.state = v
 end
 
+--MARK: Fixed dt
+
 -- Linear
 local linearSmoothing = {}
 linearSmoothing.__index = linearSmoothing
@@ -437,7 +443,6 @@ function linearSmoothing:reset()
   self.state = 0
 end
 
--- Exponential
 local exponentialSmoothing = {}
 exponentialSmoothing.__index = exponentialSmoothing
 
@@ -530,85 +535,4 @@ end
 
 function exponentialSmoothingT:reset(value)
   self.st, self[true], self[false] = value or self.startingValue, 0, 0
-end
-
--- Kalman with acceleration
-local kalmanAccel = {}
-kalmanAccel.__index = kalmanAccel
-
-function newKalmanAccel(r, x0, p0)
-  r = r or 0
-  local self = setmetatable({}, kalmanAccel)
-
-  -- The initial state vector, x (position, velocity, acceleration).
-  self.sx0 = x0
-  self.sp0 = p0
-  self.x = vec3(x0 or 0, 0, 0)
-
-  p0 = p0 or 0
-  -- The initial state uncertainty covariance matrix, p, as three row vectors.
-  self.p0, self.p1, self.p2 = vec3(p0, 0, 0), vec3(0, p0, 0), vec3(0, 0, p0)
-
-  -- The measurement noise, r.
-  self.r = r
-
-  return self
-end
-
-function kalmanAccel:get(sample, dt, r)
-  -- Cache x and p throughout the iteration, for faster access.
-  local x, p0, p1, p2 = self.x, self.p0, self.p1, self.p2
-
-  -- Kalman prediction stage. Update x and p.
-  -- X := (A x X) + (B x U). Note: we ignore the B and U terms in this version. They could be added later if ever required.
-  local dtSquared = dt * dt
-  local halfDtSquared = dtSquared * 0.5
-  x.x, x.y = x.x + dt * x.y + halfDtSquared * x.z, x.y + dt * x.z
-
-  -- P := A x (P x A^T) + Q.
-  local dt3 = dtSquared * dt
-  local dt3Over6, dt4Over8 = dt3 / 6, dtSquared * dtSquared * 0.125
-  local f1 = p1.x + p1.y * dt + p1.z * halfDtSquared
-  local f2 = p1.y + p1.z * dt
-  local f3 = p2.x + p2.y * dt + p2.z * halfDtSquared
-  local f4 = p2.y + p2.z * dt
-  p0.x = p0.x + dt * (p0.y + f1) + halfDtSquared * (p0.z + f3) + dt3 * dtSquared * 0.05
-  p0.y = p0.y + dt * (p0.z + f2) + halfDtSquared * f4 + dt4Over8
-  p0.z = p0.z + dt * p1.z + halfDtSquared * p2.z + dt3Over6
-  p1:set(f1 + dt * f3 + dt4Over8, f2 + dt * (f4 + dtSquared / 3), p1.z + dt * p2.z + halfDtSquared)
-  p2:set(f3 + dt3Over6, f4 + halfDtSquared, p2.z + dt)
-
-  -- Kalman update stage. Update x and p again with respect to the Kalman gain.
-  -- X := X + ( K x [ Z - ( H x X ) ] ), where Kalman gain is K := P x ( H^T x S^-1 ).
-  local sInverse = max(min(1 / ((r or self.r) + 1 + p0.x), 1e200), -1e200)
-  local f5 = (sample - x.x) * sInverse
-  x.x, x.y, x.z = x.x + p0.x * f5, x.y + p1.x * f5, x.z + p2.x * f5
-
-  -- P := P - [ K x (S x K^T) ].
-  local tP0X, tP1X, tP2X = p0.x, p1.x, p2.x
-  local sP0X, sP1X, sP2X = sInverse * tP0X, sInverse * tP1X, sInverse * tP2X
-  p0.x, p0.y, p0.z = p0.x - sP0X * tP0X, p0.y - sP0X * tP1X, p0.z - sP0X * tP2X
-  p1.x, p1.y, p1.z = p1.x - sP1X * tP0X, p1.y - sP1X * tP1X, p1.z - sP1X * tP2X
-  p2.x, p2.y, p2.z = p2.x - sP2X * tP0X, p2.y - sP2X * tP1X, p2.z - sP2X * tP2X
-
-  return x.x
-end
-
-function kalmanAccel:value()
-  return self.x.x
-end
-
-function kalmanAccel:set(x0)
-  -- set the state, X.
-  self.x:set(x0 or 0, 0, 0)
-
-  -- Reset the state uncertainty covariance matrix, P.
-  local sp0 = self.sp0 or 0
-  self.p0:set(sp0, 0, 0)
-  self.p1:set(0, sp0, 0)
-  self.p2:set(0, 0, sp0)
-end
-
-function kalmanAccel:reset()
-  self:set(self.sx0 or 0)
 end

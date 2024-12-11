@@ -15,6 +15,7 @@ C.category = 'once_instant'
 C.pinSchema = {
   { dir = 'in', type = 'number', name = 'vehId', default = 0, description = "Vehicle ID. If not present, player vehicle will be used." },
   { dir = 'in', type = 'number', name = 'numberOfOpponents', default = 1, description = 'Number of generated vehicles.' },
+  { dir = 'in', type = 'number', name = 'playerDial', default = -1, description = '' },
   { dir = 'out', type = 'table', name = 'vehicleGroup', description = '' },
 }
 
@@ -37,7 +38,7 @@ end
 function C:selectVehicle()
   local randomVehicles = {}
   local configs = core_vehicles.getConfigList()
-  local weightPower
+  local dial = self.pinIn.playerDial.value or -1
 
   --Get the possible vehicle configurations
   local vehConfigs = {}
@@ -51,38 +52,56 @@ function C:selectVehicle()
     end
   end
 
-  --Get the player configuration if there is any at all.
+  if gameplay_drag_general.getData().dragType == "bracketRace" then
+    for i = 1, self.pinIn.numberOfOpponents.value do
+      local selectedConfig = vehConfigs[math.random(#vehConfigs)]
+      local m = selectedConfig.model_key
+      local c = selectedConfig.key
+      local p = tableKeys(tableValuesAsLookupDict(core_vehicles.getModel(selectedConfig.model_key).model.paints or {}))
+      local n = selectedConfig.Name
+      table.insert(randomVehicles, {
+            model = m,
+            config = c,
+            paint = p[math.random(#p)],
+            dial = selectedConfig["Drag Times"].time_1_4 - 0.5
+          })
+    end
+    return randomVehicles
+  end
+
   local currentVeh = core_vehicles.getCurrentVehicleDetails()
-  local currentConfig
-  if currentVeh.current.key and currentVeh.current.config_key then
-    currentConfig = currentVeh.current.key .. " " .. currentVeh.current.config_key
-  else
-    local min, max = currentVeh.model.aggregates["Weight/Power"].min, currentVeh.model.aggregates["Weight/Power"].max
-    weightPower = ((max - min)/2) + ((max - min)/2) * math.random()
+  if dial < 0 then
+    --Get the data from the savefile just to know the timesTable
+    local configTimes = gameplay_drag_general.getDialTimes()
+
+    local currentConfig = gameplay_drag_general.generateHashFromFile()
+
+    if configTimes[currentConfig] then
+      dial = configTimes[currentConfig].time_1_4
+    else
+      if currentVeh.configs then
+        dial = currentVeh.configs["Drag Times"] and  currentVeh.configs["Drag Times"].time_1_4 or 12
+      end
+    end
+    log("I","","Player dial time: " .. dial)
   end
 
   local similarVehicles = {}
   local similarVehicleCount = 0
 
-  --Save the currentVehicle Weight/Power value to use for comparison
-  if not weightPower then
-    for _,v in pairs(vehConfigs) do
-      if currentConfig and currentConfig == (v.model_key .. " " .. v.key) then
-        if v["Weight/Power"] then
-          weightPower = v["Weight/Power"]
-        end
-      end
-    end
-  end
 
-  --Find vehicles with a very close to the same Weight/Power values
   for i,v in pairs(vehConfigs) do
-    if (v["Weight/Power"] and weightPower)then
-      if v["Weight/Power"] >= weightPower - (weightPower * 0.2) and v["Weight/Power"] < weightPower then
+    if (v["Drag Times"])then
+      if v["Drag Times"].time_1_4 >= dial - 0.5 and v["Drag Times"].time_1_4 < dial + 0.1 then
         table.insert(similarVehicles, v)
         similarVehicleCount = similarVehicleCount + 1
       end
     end
+  end
+
+  if similarVehicleCount == 0 then
+    table.insert(similarVehicles, currentVeh.configs)
+    similarVehicleCount = similarVehicleCount + 1
   end
 
   --Add a random selection of vehicles
@@ -95,11 +114,10 @@ function C:selectVehicle()
     table.insert(randomVehicles, {
           model = m,
           config = c,
-          name = n,
           paint = p[math.random(#p)],
+          dial = selectedConfig["Drag Times"].time_1_4
         })
   end
-
   return randomVehicles
 end
 
@@ -111,10 +129,6 @@ end
 function C:workOnce()
   math.randomseed(os.time())
   local group = self:selectVehicle()
-  if #group ~= self.pinIn.numberOfOpponents.value then
-    log("E", "generateDragOpponent.lua", "Not enough vehicles selected to proceed, trying again")
-    group = self:selectVehicle()
-  end
   self.pinOut.vehicleGroup.value = group
 end
 

@@ -99,7 +99,7 @@ function C:work()
       local group = self.pinIn.group.value and deepcopy(self.pinIn.group.value) or {data = gameplay_traffic.createTrafficGroup()} -- if no given group, create a default traffic group
       if self.pinIn.randomColors.value then
         for _, v in ipairs(group.data) do
-          v.paintName = 'random'
+          v.paintName = '(Random)'
         end
       end
 

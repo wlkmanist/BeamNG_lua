@@ -18,10 +18,6 @@ function C:resetModule()
   }
 end
 
-function C:resetExtension()
-  gameplay_drift_general.reset()
-end
-
 function C:init()
   self:resetModule()
 end
@@ -46,7 +42,6 @@ function C:addCallback(name, data)
   }
 end
 
-
 function C:onDriftSpinout()
   self:addCallback("spinout")
 end
@@ -63,33 +58,8 @@ function C:onDonutDriftScored(score)
   self:addCallback("donut", {score = score})
 end
 
-function C:onDriftCompletedScored(addedScore, cachedScore, combo)
-  self:addCallback("scored", {addedScore = addedScore, cachedScore = cachedScore, combo = combo})
-end
-
-
-function C:getScore()
-  return gameplay_drift_scoring.getScore()
-end
-
-function C:getDriftActiveData()
-  return gameplay_drift_drift.getDriftActiveData()
-end
-
-function C:getVehId()
-  return gameplay_drift_drift.getVehId()
-end
-
-function C:setVehId(vehId)
-  gameplay_drift_drift.setVehId(vehId)
-end
-
-function C:setAllowDonut(value)
-  gameplay_drift_drift.setAllowDonut(value)
-end
-
-function C:setAllowTightDrift(value)
-  gameplay_drift_drift.setAllowTightDrift(value)
+function C:onDriftCompletedScored(data)
+  self:addCallback("scored", {addedScore = data.addedScore, cachedScore = data.cachedScore, combo = data.combo})
 end
 
 function C:onDonutZoneReactivated()

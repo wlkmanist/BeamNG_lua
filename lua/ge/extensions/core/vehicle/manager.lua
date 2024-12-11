@@ -197,7 +197,7 @@ local function liveUpdateVehicleColors(objID, _vehicleObj, index, paint)
     end
 
     vehicleObj:setMetallicPaintData(paintsData)
-      extensions.hook("onVehicleColorChanged", objID, index, paint)
+    extensions.hook("onVehicleColorChanged", objID, index, paint)
   end
 end
 

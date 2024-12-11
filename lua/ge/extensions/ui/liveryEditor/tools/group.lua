@@ -6,40 +6,47 @@ local uiSelectionApi = extensions.ui_liveryEditor_selection
 local uiLayersApi = extensions.ui_liveryEditor_layers
 
 M.moveOrderUp = function()
-  uiTools.doOperation(function(layer)
-    M.moveOrderUpById(layer.uid)
-  end)
+  -- return uiTools.doOperation(function(layer)
+  local layerUid = uiSelectionApi.getFirstSelectedLayer()
+  -- local layer = uiLayersApi.getLayerByUid(layerUid)
+  -- return M.moveOrderUpById(layer.uid)
+  return M.moveOrderUpById(layerUid)
+  -- end)
 end
 
 M.moveOrderDown = function()
-  uiTools.doOperation(function(layer)
-    M.moveOrderDownById(layer.uid)
-  end)
+  -- return uiTools.doOperation(function(layer)
+  local layerUid = uiSelectionApi.getFirstSelectedLayer()
+  return M.moveOrderDownById(layerUid)
+  -- end)
 end
 
 M.changeOrderToTop = function()
-  dump("changeOrderToTop")
-  uiTools.doOperation(function(layer)
-    local uiLayer = uiLayersApi.getLayerByUid(layer.uid)
-    dump("changeOrderToTop", uiLayer)
-    api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.siblingCount, uiLayer.parentUid)
-  end)
+  -- return uiTools.doOperation(function(layer)
+  local layerUid = uiSelectionApi.getFirstSelectedLayer()
+  local uiLayer = uiLayersApi.getLayerByUid(layerUid)
+  local newOrder = uiLayer.siblingCount
+  api.moveLayer(uiLayer.order, uiLayer.parentUid, newOrder, uiLayer.parentUid)
+  return newOrder
+  -- end)
 end
 
 M.changeOrderToBottom = function()
-  dump("changeOrderToBottom")
-  uiTools.doOperation(function(layer)
-    local uiLayer = uiLayersApi.getLayerByUid(layer.uid)
-    dump("changeOrderToBottom", uiLayer)
-    api.moveLayer(uiLayer.order, uiLayer.parentUid, 2, uiLayer.parentUid)
-  end)
+  -- return uiTools.doOperation(function(layer)
+  local layerUid = uiSelectionApi.getFirstSelectedLayer()
+  local uiLayer = uiLayersApi.getLayerByUid(layerUid)
+  local newOrder = 2
+  api.moveLayer(uiLayer.order, uiLayer.parentUid, newOrder, uiLayer.parentUid)
+  return newOrder
+  -- end)
 end
 
 M.setOrder = function(order)
-  uiTools.doOperation(function(layer, order)
-    local uiLayer = uiLayersApi.getLayerByUid(layer.uid)
-    api.moveLayer(uiLayer.order, uiLayer.parentUid, order, uiLayer.parentUid)
-  end, order)
+  -- uiTools.doOperation(function(layer, order)
+  local layerUid = uiSelectionApi.getFirstSelectedLayer()
+  local uiLayer = uiLayersApi.getLayerByUid(layerUid)
+  return api.moveLayer(uiLayer.order, uiLayer.parentUid, order, uiLayer.parentUid)
+  -- end, order)
 end
 
 M.moveOrderUpById = function(layerUid)
@@ -51,7 +58,10 @@ M.moveOrderUpById = function(layerUid)
     return
   end
 
-  api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.order + 1, uiLayer.parentUid)
+  local newOrder = uiLayer.order + 1
+
+  api.moveLayer(uiLayer.order, uiLayer.parentUid, newOrder, uiLayer.parentUid)
+  return newOrder
 end
 
 M.moveOrderDownById = function(layerUid)
@@ -63,7 +73,9 @@ M.moveOrderDownById = function(layerUid)
     return
   end
 
-  api.moveLayer(uiLayer.order, uiLayer.parentUid, uiLayer.order - 1, uiLayer.parentUid)
+  local newOrder = uiLayer.order - 1
+  api.moveLayer(uiLayer.order, uiLayer.parentUid, newOrder, uiLayer.parentUid)
+  return newOrder
 end
 
 M.changeOrder = function(oldOrder, oldParentUid, newOrder, newParentUid)

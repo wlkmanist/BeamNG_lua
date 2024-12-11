@@ -465,7 +465,7 @@ function ConsoleInputCallback(data)
       end
       local inplen = string.len(t)
       local inplenInt = inplen
-      data.Buf = ffi.string(t, math.min(data.BufSize-1, inplen+1))
+      data.Buf = t
       data.CursorPos = inplenInt
       data.SelectionStart = inplenInt
       data.SelectionEnd = inplenInt
@@ -971,7 +971,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
       if mustFocusKeyboard then im.SetKeyboardFocusHere() end
       im.PushItemWidth(im.GetContentRegionAvailWidth() - 70 * uiScale)
-      local exec = im.InputText("##inputText", consoleInputField, ffi.sizeof(consoleInputField), flags, ffi.C.ImGuiInputTextCallbackLua, ffi.cast("void*","ConsoleInputCallback"))
+      local exec = im.InputText("##inputText", consoleInputField, ffi.sizeof(consoleInputField), flags, ffi.C.ImGuiInputTextCallbackLua, "ConsoleInputCallback")
 
 
       im.SameLine()
@@ -1230,9 +1230,6 @@ local function onDeserialized(data)
 end
 
 local function onExtensionLoaded()
-  --inputCallbackC = ffi.cast("ImGuiInputTextCallback", ConsoleInputCallback)
-  -- log('D', 'onExtensionLoaded', 'inputCallbackC = ' .. tostring(inputCallbackC))
-  -- log('D', 'onExtensionLoaded', 'history = ' .. dumps(history))
   settingsLoad()
   if not history then
     history = jsonReadFile(historyPath) or {}

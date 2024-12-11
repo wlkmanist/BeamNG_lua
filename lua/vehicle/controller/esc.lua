@@ -256,7 +256,7 @@ local function updateWheelsIntermediate(dt)
   if wheelAngleFront > 1.5708 then
     wheelAngleFront = (pi - wheelAngleFront)
   end
-  wheelAngleFront = wheelAngleFront * fsign(-steeringInput)
+  wheelAngleFront = wheelAngleFront * sign(-steeringInput)
   if wheelAngleFront ~= wheelAngleFront then
     wheelAngleFront = 0
   end
@@ -264,7 +264,7 @@ local function updateWheelsIntermediate(dt)
   if wheelAngleRear > 1.5708 then
     wheelAngleRear = (pi - wheelAngleRear)
   end
-  wheelAngleRear = wheelAngleRear * fsign(-steeringInput)
+  wheelAngleRear = wheelAngleRear * sign(-steeringInput)
   if wheelAngleRear ~= wheelAngleRear then
     wheelAngleRear = 0
   end
@@ -284,7 +284,7 @@ local function updateWheelsIntermediate(dt)
   desiredYawRateAcceleration = currentESCConfiguration.maxSideAcceleration / (speed + 1e-30)
 
   --get the resulting desired yaw rate (smallest) and make sure to use the sign from the steering part (acceleration part is always positive)
-  desiredYawRate = fsign(desiredYawRateSteering) * min(abs(desiredYawRateSteering), abs(desiredYawRateAcceleration))
+  desiredYawRate = sign(desiredYawRateSteering) * min(abs(desiredYawRateSteering), abs(desiredYawRateAcceleration))
   desiredYawRate = desiredYawSmooth:get(desiredYawRate)
 
   local counterSteerFlag = false
@@ -299,7 +299,7 @@ local function updateWheelsIntermediate(dt)
   local escWheelToBrake = nil
   local escDesiredBrakeTorque = 0
   if speed >= escEnableThreshold and absYawDifference > currentESCConfiguration.escThreshold and not M.pauseESCAction then --only act if we are fast enough and pass the threshold
-    yawDifference = yawDifference - (fsign(yawDifference) * currentESCConfiguration.escThreshold)
+    yawDifference = yawDifference - (sign(yawDifference) * currentESCConfiguration.escThreshold)
 
     if abs(yawRate) > abs(desiredYawRate) or counterSteerFlag then --Oversteer
       if yawRate > 0 then --turning left
@@ -396,7 +396,7 @@ local function updateWheelsIntermediate(dt)
           crossWheelAV = 0
         end
         if wheelAV * crossWheelAV < 0 and (abs(wheelAV) - abs(crossWheelAV) > 10) then
-          crossWheelAV = fsign(wheelAV) * crossWheelAV
+          crossWheelAV = sign(wheelAV) * crossWheelAV
         end
         --And calculate how much deviation there is compared to the diagonal wheel
         local crossWheelSlip = clamp((wheelAV - crossWheelAV) / (wheelAV + 1e-30), 0, 1) * speedSteeringAngleFadeIn --make sure wheelAV can never be exactly 0 so we can divide by it

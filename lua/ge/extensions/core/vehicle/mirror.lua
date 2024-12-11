@@ -75,31 +75,33 @@ local function getAnglesOffset(vid, v)
 
   local mytable = {}
   for k,v in pairs(vdata.vdata.mirrors ) do
-    mytable[v.mesh] = {}
-    mytable[v.mesh].name = v.mesh
-    mytable[v.mesh].id = v.id
-    mytable[v.mesh].angleOffset = {x=0,z=0}
-    if not v.clampX then
-      mytable[v.mesh].clampX = {-MAXDEGREE,MAXDEGREE}
-    else
-      mytable[v.mesh].clampX = v.clampX
-    end
-    if not v.clampZ then
-      mytable[v.mesh].clampZ = {-MAXDEGREE,MAXDEGREE}
-    else
-      mytable[v.mesh].clampZ = v.clampZ
-    end
-    if offsetData[veh.JBeam] then
-      if offsetData[veh.JBeam][configName] then
-        if offsetData[veh.JBeam][configName][ v.mesh ] then
-          mytable[v.mesh].angleOffset = offsetData[veh.JBeam][configName][ v.mesh ]
+    if v.mesh then
+      mytable[v.mesh] = {}
+      mytable[v.mesh].name = v.mesh
+      mytable[v.mesh].id = v.id
+      mytable[v.mesh].angleOffset = {x=0,z=0}
+      if not v.clampX then
+        mytable[v.mesh].clampX = {-MAXDEGREE,MAXDEGREE}
+      else
+        mytable[v.mesh].clampX = v.clampX
+      end
+      if not v.clampZ then
+        mytable[v.mesh].clampZ = {-MAXDEGREE,MAXDEGREE}
+      else
+        mytable[v.mesh].clampZ = v.clampZ
+      end
+      if offsetData[veh.JBeam] then
+        if offsetData[veh.JBeam][configName] then
+          if offsetData[veh.JBeam][configName][ v.mesh ] then
+            mytable[v.mesh].angleOffset = offsetData[veh.JBeam][configName][ v.mesh ]
+          end
         end
       end
+      mytable[v.mesh].position = v.UiColumn
+      mytable[v.mesh].icon = v.icon
+      mytable[v.mesh].row = v.UiRow
+      mytable[v.mesh].label = v.label
     end
-    mytable[v.mesh].position = v.UiColumn
-    mytable[v.mesh].icon = v.icon
-    mytable[v.mesh].row = v.UiRow
-    mytable[v.mesh].label = v.label
   end
 
   return mytable

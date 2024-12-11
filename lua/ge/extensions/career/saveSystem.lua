@@ -5,7 +5,7 @@
 local M = {}
 local saveRoot = 'settings/cloud/saves/'
 local infoFile = 'info.json'
-local saveSystemVersion = 42
+local saveSystemVersion = 44
 local backwardsCompVersion = 36
 local numberOfAutosaves = 3
 local creationDateOfCurrentSaveSlot

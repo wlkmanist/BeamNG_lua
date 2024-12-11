@@ -94,13 +94,14 @@ local penaltyData = {
 
   currDelayToApplyPenalty = 0,
   currTotalPenaltyToApply = 0,
-  currTotalPenalty = 0
+  currTotalPenalty = 0,
+
+  offTrackPath = {} -- record the player's pos when he is off track to better determine a penalty
 }
 
-function C:calcTimePenalty(distCutAlongPath, distCut)
+function C:calcCutTrackTimePenalty(distCutAlongPath, distCut, offPos, onPos, maxCutTrack)
   -- punish people that have cut the track more than people that have gone offtrack along the track
   local diff = distCutAlongPath - distCut
-  dump(diff)
   return tonumber(string.format("%.1f", (distCutAlongPath / 200) * math.max(diff, 0.5)))
 end
 
@@ -118,29 +119,40 @@ function C:detectOffTrack(data, dt)
       data.penaltyData.currDelayToApplyPenalty = 0
     end
 
-    -- just drove off the road
+    -- just drove off the track
     if data.lastFrameIsOnRoad and not data.isOnRoad then
       -- remember where we drove off
       data.offPos = vec3(data.frontPos)
       data.inPrevAiPathIdx = data.aiPathIdx
       data.inNextAiPathIdx = data.aiPathIdx + 1
+
+      data.penaltyData.offTrackPath = {}
     end
 
-    -- drove back on the road
-    if not data.lastFrameIsOnRoad and data.isOnRoad then
-      local distCutAlongPath, distCut = self:getDistOnNav(data.offPos, data.frontPos, data.inNextAiPathIdx, data.inPrevAiPathIdx, data.aiPathIdx + 1, data.aiPathIdx)
+    -- while off the track, we record the player's path, to then later determine how deep he has cut the track
+    if not data.isOnRoad then
+      table.insert(data.penaltyData.offTrackPath, vec3(data.frontPos.x, data.frontPos.y, data.frontPos.z))
+    end
 
+    -- drove back on the track
+    if not data.lastFrameIsOnRoad and data.isOnRoad then
+      local maxCutDepth = 0
+      for _, pos in ipairs(data.penaltyData.offTrackPath) do
+        local cutDepth = pos:distanceToLineSegment(data.offPos, data.frontPos)
+        if cutDepth > maxCutDepth then maxCutDepth = cutDepth end
+      end
+      local distCutAlongPath, distCut = self:getDistOnNav(data.offPos, data.frontPos, data.inNextAiPathIdx, data.inPrevAiPathIdx, data.aiPathIdx + 1, data.aiPathIdx)
       if distCutAlongPath > data.penaltyData.falsePositive then
         data.penaltyData.currTotalPenalty = data.penaltyData.currTotalPenalty + distCutAlongPath
       end
 
       if data.penaltyData.currTotalPenalty > data.penaltyData.totalPenaltyThresh then
-        local timePenalty = self:calcTimePenalty(distCutAlongPath, distCut)
+        local timePenalty = self:calcCutTrackTimePenalty(distCutAlongPath, distCut, data.offPos, data.frontPos, maxCutDepth)
         data.penaltyData.currTotalPenaltyToApply = data.penaltyData.currTotalPenaltyToApply + timePenalty
       end
     end
 
-    -- if we have penalties pending, start delay
+    -- if we have penalties pending, start delay, so we can apply them all at once
     if data.penaltyData.currTotalPenaltyToApply > 0 then
       data.penaltyData.currDelayToApplyPenalty = data.penaltyData.currDelayToApplyPenalty + dt
       if data.penaltyData.currDelayToApplyPenalty > data.penaltyData.delayToApplyPenalty then
@@ -170,46 +182,48 @@ function C:getTrackedData(dt)
       local sqDist = 0
 
       local veh = be:getObjectByID(id)
-      local vehBB = veh:getSpawnWorldOOBB()
-      local dir = sign2(veh:getDirectionVector():dot(veh:getVelocity())) -- negative if driving in reverse
-      data.frontPos:set(vehBB:getCenter() + veh:getDirectionVector() * vehBB:getHalfExtents().y * dir)
+      if veh then
+        local vehBB = veh:getSpawnWorldOOBB()
+        local dir = sign2(veh:getDirectionVector():dot(veh:getVelocity())) -- negative if driving in reverse
+        data.frontPos:set(vehBB:getCenter() + veh:getDirectionVector() * vehBB:getHalfExtents().y * dir)
 
-      if segName then
-        wpIdx = self.path.config.graph[segName].linearCPIndex
-        sqDist = data.frontPos:squaredDistance(self.path.pathnodes.objects[self.path.config.graph[segName].targetNode].pos)
-      end
-
-      local bestDist = math.huge
-      local startIdx, endIdx = 1, pathLen - 1
-      if data.isOnRoad then
-        startIdx, endIdx = math.max(1, data.aiPathIdx - 1), math.min(pathLen - 1, data.aiPathIdx + 1) -- optimized, only previous and next nodes
-      end
-
-      for i = startIdx, endIdx do
-        local dist = data.frontPos:squaredDistanceToLineSegment(self.aiDetailedPath[i].pos, self.aiDetailedPath[i + 1].pos)
-        if dist < bestDist then
-          bestDist = dist
-          data.aiPathIdx = i
+        if segName then
+          wpIdx = self.path.config.graph[segName].linearCPIndex
+          sqDist = data.frontPos:squaredDistance(self.path.pathnodes.objects[self.path.config.graph[segName].targetNode].pos)
         end
-      end
 
-      local n1, n2 = self.aiDetailedPath[data.aiPathIdx], self.aiDetailedPath[data.aiPathIdx + 1]
-      data.isOnRoad = true
-      if n1 and n2 then
-        local xnorm = data.frontPos:xnormOnLine(n1.pos, n2.pos)
-        if data.aiPathIdx > 1 and data.aiPathIdx < pathLen - 1 then
-          xnorm = clamp(xnorm, 0, 1)
+        local bestDist = math.huge
+        local startIdx, endIdx = 1, pathLen - 1
+        if data.isOnRoad then
+          startIdx, endIdx = math.max(1, data.aiPathIdx - 1), math.min(pathLen - 1, data.aiPathIdx + 1) -- optimized, only previous and next nodes
         end
-        -- if vehicle is before the start node or after the finish node, leave the xnorm unclamped
-        local roadPos = linePointFromXnorm(n1.pos, n2.pos, xnorm)
-        local rad = lerp(mapNodes[n1.wp] and mapNodes[n1.wp].radius or 10, mapNodes[n2.wp] and mapNodes[n2.wp].radius or 10, xnorm)
 
-        if data.frontPos:squaredDistance(roadPos) > square(rad) then -- if front position is at the side edge of the road, test all corners
-          data.isOnRoad = false
-          for _, corner in ipairs(data.currentCorners) do
-            if corner:squaredDistance(roadPos) <= square(rad) then
-              data.isOnRoad = true
-              break
+        for i = startIdx, endIdx do
+          local dist = data.frontPos:squaredDistanceToLineSegment(self.aiDetailedPath[i].pos, self.aiDetailedPath[i + 1].pos)
+          if dist < bestDist then
+            bestDist = dist
+            data.aiPathIdx = i
+          end
+        end
+
+        local n1, n2 = self.aiDetailedPath[data.aiPathIdx], self.aiDetailedPath[data.aiPathIdx + 1]
+        data.isOnRoad = true
+        if n1 and n2 then
+          local xnorm = data.frontPos:xnormOnLine(n1.pos, n2.pos)
+          if data.aiPathIdx > 1 and data.aiPathIdx < pathLen - 1 then
+            xnorm = clamp(xnorm, 0, 1)
+          end
+          -- if vehicle is before the start node or after the finish node, leave the xnorm unclamped
+          local roadPos = linePointFromXnorm(n1.pos, n2.pos, xnorm)
+          local rad = lerp(mapNodes[n1.wp] and mapNodes[n1.wp].radius or 10, mapNodes[n2.wp] and mapNodes[n2.wp].radius or 10, xnorm)
+
+          if data.frontPos:squaredDistance(roadPos) > square(rad) then -- if front position is at the side edge of the road, test all corners
+            data.isOnRoad = false
+            for _, corner in ipairs(data.currentCorners) do
+              if corner:squaredDistance(roadPos) <= square(rad) then
+                data.isOnRoad = true
+                break
+              end
             end
           end
         end
@@ -329,66 +343,127 @@ function C:changeRaceVehicle(lastId, newId)
   end
 end
 
+function C:startAiVehicle(id, aggression)
+  if not self.aiPath or not self.aiPath[1] then return end
+
+  local aiPath = shallowcopy(self.aiPath)
+  local lapCount = self.lapCount
+  if self.path.config.closed then
+    table.insert(aiPath, aiPath[1]) -- allows AI to continue to the next lap
+    lapCount = lapCount + 1 -- extra lap after finish
+  else
+    local wpCount = #self.aiPath
+    local finalPn = self.path.pathnodes.objects[self.path.endNode or 0]
+    local finalWp = self.aiPath[wpCount]
+    local finalDir
+    if finalPn and not finalPn.missing and finalPn.normal then
+      finalDir = finalPn.normal
+    else -- try to estimate the direction vector of the finish line
+      local n1, n2 = self.aiPath[wpCount], self.aiPath[wpCount - 1]
+      if n1 and n2 then
+        finalDir = (map.getMap().nodes[n1].pos - map.getMap().nodes[n2].pos):normalized()
+      else
+        finalDir = be:getObjectByID(id):getDirectionVector() -- last resort, this shouldn't happen
+      end
+    end
+    local extPath = map.getGraphpath():getRandomPathG(finalWp, finalDir, 250, nil, nil, false) -- extended path beyond the finish line
+    if extPath[1] == aiPath[wpCount] then
+      table.remove(extPath, 1)
+    end
+    aiPath = arrayConcat(aiPath, extPath) -- combines the ai path with the extended path
+  end
+
+  if self.states[id] then
+    self.states[id].isAiVeh = true -- flags this vehicle as AI controlled
+    if not aggression and self.states[id].baseAggression then
+      aggression = self.states[id].baseAggression
+    end
+  end
+  aggression = aggression or 0.9
+
+  local str = '{wpTargetList = '..serialize(aiPath)
+  str = str..', noOfLaps = '..lapCount
+  str = str..', aggression = '..aggression..'}'
+
+  be:getObjectByID(id):queueLuaCommand('controller.setFreeze(false)')
+  be:getObjectByID(id):queueLuaCommand('ai.driveUsingPath('..str..')')
+end
+
+function C:stopAiVehicle(id)
+  if self.states[id] then
+    self.states[id].isAiVeh = false
+  end
+
+  be:getObjectByID(id):queueLuaCommand('ai.setMode("stop")')
+end
+
 function C:startRace()
   self.started = true
   self.time = 0
   for _, id in ipairs(self.vehIds) do
-    self.recoveryStates[id] = {}
-    self.states[id] = {
-      waitingForRollingStart = self.path.config.rollingStart, -- if we are not started yet, but wait for reachng the first CP.
-      active = true, -- if this vehicle is currently racing.
-      currentSegments = {}, -- the segments the vehicle is currently in.
-      completedPacenotes = {}, --  all the pacenotes that have been triggered
-      currentLap = 0, -- current lap
-      currentTimes = {}, -- times (with begin/end/duration) for the current lap
-      currentHistory = {}, -- segments for the current lap
-      historicTimes = {}, -- all the times so far.
-      historicSegments = {}, -- all the segments reached so far.
-      bestLapTime = {},
-      nextPathnodes = {}, -- currently reachable pathnodes
-      overNextPathnodes = {}, -- all pathnodes reachable after the next ones.
-      nonBranchingShiftedPathnodes = {}, -- all future pathnodes, if the path is not branching. loops around back to the player
-      frontPos = vec3(),
-      aiPathIdx = 1,
-      isOnRoad = true,
-      events = {},
-      eventLog = {},
-      placement = 0,
-      startTime = 0,
-      endTime = 0,
-      reverse = self.path.config.reverse,
-      recoveriesUsed = 0
-    }
-    self.states[id].events.raceStarted = true
-    if not self.path.config.rollingStart then
-      self.states[id].currentSegments = self.path.config.startSegments
-    else
-      self.states[id].currentSegments = {}
-    end
-
-    local vehicle = be:getObjectByID(id)
-    self.states[id].wheelOffsets = {}
-    self.states[id].currentCorners = {}
-    self.states[id].previousCorners = {}
-    local wCount = vehicle:getWheelCount()-1
-    if wCount > 0 then
-      local vehiclePos = vehicle:getPosition()
-      local vRot = quatFromDir(vehicle:getDirectionVector(), vehicle:getDirectionVectorUp())
-      local x,y,z = vRot * vec3(1,0,0),vRot * vec3(0,1,0),vRot * vec3(0,0,1)
-      --local oobbz = vec3(vehicle:getSpawnWorldOOBB():getHalfExtents()).z/2
-      for i=0, wCount do
-        local axisNodes = vehicle:getWheelAxisNodes(i)
-        local nodePos = vec3(vehicle:getNodePosition(axisNodes[1]))
-        local pos = vec3(nodePos:dot(x), nodePos:dot(y), nodePos:dot(z))
-        table.insert(self.states[id].wheelOffsets, pos)
-        table.insert(self.states[id].currentCorners, vRot*pos + vehiclePos)
-        table.insert(self.states[id].previousCorners, vRot*pos + vehiclePos)
+    local veh = be:getObjectByID(id)
+    if veh then
+      self.recoveryStates[id] = {}
+      self.states[id] = {
+        waitingForRollingStart = self.path.config.rollingStart, -- if we are not started yet, but wait for reachng the first CP.
+        active = true, -- if this vehicle is currently racing.
+        currentSegments = {}, -- the segments the vehicle is currently in.
+        completedPacenotes = {}, --  all the pacenotes that have been triggered
+        currentLap = 0, -- current lap
+        currentTimes = {}, -- times (with begin/end/duration) for the current lap
+        currentHistory = {}, -- segments for the current lap
+        historicTimes = {}, -- all the times so far.
+        historicSegments = {}, -- all the segments reached so far.
+        bestLapTime = {}, -- best lap time out of all the laps
+        nextPathnodes = {}, -- currently reachable pathnodes
+        overNextPathnodes = {}, -- all pathnodes reachable after the next ones.
+        nonBranchingShiftedPathnodes = {}, -- all future pathnodes, if the path is not branching. loops around back to the player
+        frontPos = vec3(),
+        aiPathIdx = 1,
+        isOnRoad = true,
+        events = {},
+        eventLog = {},
+        placement = 0,
+        startTime = 0,
+        endTime = 0,
+        reverse = self.path.config.reverse,
+        recoveriesUsed = 0
+      }
+      self.states[id].events.raceStarted = true
+      if not self.path.config.rollingStart then
+        self.states[id].currentSegments = self.path.config.startSegments
+      else
+        self.states[id].currentSegments = {}
       end
-    end
 
-    --self.states[id].insideSegments = self.path.config.startSegments
-    self:findNextPathnodes(id)
+      self.states[id].wheelOffsets = {}
+      self.states[id].currentCorners = {}
+      self.states[id].previousCorners = {}
+      local wCount = veh:getWheelCount()-1
+      if wCount > 0 then
+        local vehiclePos = veh:getPosition()
+        local vRot = quatFromDir(veh:getDirectionVector(), veh:getDirectionVectorUp())
+        local x,y,z = vRot * vec3(1,0,0),vRot * vec3(0,1,0),vRot * vec3(0,0,1)
+        --local oobbz = vec3(vehicle:getSpawnWorldOOBB():getHalfExtents()).z/2
+        for i=0, wCount do
+          local axisNodes = veh:getWheelAxisNodes(i)
+          local nodePos = vec3(veh:getNodePosition(axisNodes[1]))
+          local pos = vec3(nodePos:dot(x), nodePos:dot(y), nodePos:dot(z))
+          table.insert(self.states[id].wheelOffsets, pos)
+          table.insert(self.states[id].currentCorners, vRot*pos + vehiclePos)
+          table.insert(self.states[id].previousCorners, vRot*pos + vehiclePos)
+        end
+      end
+
+      if self.autoAiMode and not veh:isPlayerControlled() then -- automatically assign and start ai vehicle
+        self:startAiVehicle(id)
+      end
+
+      --self.states[id].insideSegments = self.path.config.startSegments
+      self:findNextPathnodes(id)
+    end
   end
+
   if self.useHotlappingApp then
     -- load hotlapping for the hotlapping app.
     if not core_hotlapping then
@@ -403,6 +478,12 @@ function C:stopRace()
   self.started = false
   if self.useHotlappingApp and core_hotlapping then
     core_hotlapping.newRaceStop()
+  end
+
+  for _, id in ipairs(self.vehIds) do
+    if self.states[id].isAiVeh then
+      self:stopAiVehicle(id)
+    end
   end
 end
 
@@ -427,6 +508,10 @@ function C:abortRace(id)
   state.active = false
   state.events.raceAborted = true
   state.endTime = self.time
+
+  if state.isAiVeh then
+    self:stopAiVehicle(id)
+  end
 end
 
 function C:createRecoveryPoint(id, recovery)
@@ -458,6 +543,7 @@ function C:handleRecover(id)
     self.time = snap.time
   end
   self.states[id].events.recovered = #self.recoveryStates
+  self.states[id].events.recoveredTo = snap.recovery
 
   -- disable repair, third param
   snap.recovery:moveResetVehicleTo(id, nil, false)
@@ -474,6 +560,7 @@ function C:completeLap(id, endTime)
     lap = state.currentLap,
     beginTime = state.currentTimes[1].beginTime,
     endTime = endTime,
+    lapTime = endTime - state.currentTimes[1].beginTime,
     segmentTimes = state.currentTimes
   }
   timeInfo.duration = timeInfo.endTime - timeInfo.beginTime
@@ -494,19 +581,25 @@ function C:completeLap(id, endTime)
     state.active = false
     state.events.raceComplete = true
     state.endTime = endTime
-    local veh = scenetree.findObjectById(id) or {partConfig = "None?!", JBeam = "None!?"}
+    local veh = be:getObjectByID(id)
     local simpleInfo = {
       totalTime = state.endTime,
       totalTimeFormatted = self:raceTime(state.endTime),
-      vehConfig = veh.partConfig,
-      vehModel = veh.JBeam,
+      finalPlacement = state.placement or 1,
+      vehConfig = veh and veh.partConfig or "(None)",
+      vehModel = veh and veh.JBeam or "(None)",
       lapTimes = {},
-      lapTimesFormatted = {}
+      lapTimesFormatted = {},
     }
     for _, l in ipairs(state.historicTimes) do
       table.insert(simpleInfo.lapTimes, l.duration)
       table.insert(simpleInfo.lapTimesFormatted, self:raceTime(l.duration))
     end
+
+    if veh and self.states[id].isAiVeh then -- lower aggression past the finish line
+      veh:queueLuaCommand('ai.setAggression(0.5)')
+    end
+
     --do
     --  local fullpath = "raceRecord/"..os.date("!%Y-%m-%d--%H-%M-%S")..(self.saveFileSuffix and ("-"..self.saveFileSuffix) or "").."/"
     --  jsonWriteFile(fullpath.."path.path.json",self.path:onSerialize(), true)
@@ -549,7 +642,7 @@ function C:findNextPathnodes(id)
       local done = false
       local lastId = state.currentSegments[1]
       table.insert(state.nonBranchingShiftedPathnodes, state.currentSegments[1])
-      -- stop alread if ths is the last segment in the last lap
+      -- stop already if ths is the last segment in the last lap
       if lastLap and self.path.config.graph[lastId].overNextCrossesFinish then
         done = true
       end
@@ -710,7 +803,9 @@ function C:updateVehicle(id, dt)
   table.insert(state.currentHistory, state.currentSegments)
   local graphElem = self.path.config.graph[finishedSegmentId]
   local timeInfo = nil
-  if self.path.pathnodes.objects[graphElem.targetNode].visible then
+  local pathnode = self.path.pathnodes.objects[graphElem.targetNode]
+
+  if pathnode.visible then
     -- create event that we reached a pathnode that was visible
     state.events.pathnodeReached = true
     state.events.pathnodeReachedId = self.path.segments.objects[finishedSegmentId]:getTo().id
@@ -731,6 +826,20 @@ function C:updateVehicle(id, dt)
     timeInfo.duration = timeInfo.endTime - timeInfo.beginTime
     table.insert(state.currentTimes, timeInfo)
   end
+
+  -- if AI racer, check if custom aggression value exists
+  if self.states[id].isAiVeh then
+    local val, valType, valid = pathnode.customFields:get("aiAggression")
+    if valid then
+      if val >= 0 then
+        vehicle:queueLuaCommand('ai.setAggression('..val..')')
+      else
+        local aggr = self.states[id].baseAggression or 0.9
+        vehicle:queueLuaCommand('ai.setAggression('..aggr..')')
+      end
+    end
+  end
+
   if lapped then
     -- complete lap if we have done so.
     self:completeLap(id, timeInfo.endTime)

@@ -69,19 +69,28 @@ function C:init(data)
   self:createMarker()
 end
 
+function C:accomplish()
+  self:clearMarker()
+
+  self.activeData.available = false
+
+  local driftActiveData = gameplay_drift_drift.getDriftActiveData()
+
+  extensions.hook("onAnyStuntZoneAccomplished", {
+    stuntZoneId = self.data.id,
+    subHookName = "onHitPoleAccomplished",
+    subHookData =
+    {
+      currDegAngle = driftActiveData and driftActiveData.currDegAngle or 50, -- these safeguard is used in the drift debug imgui menu to test UI
+      currAirSpeed = driftActiveData and driftActiveData.speeds[#driftActiveData.speeds] or 30,
+      zoneData = {points = self.data.zoneData.score}
+    }
+  })
+end
+
 function C:detectStunt()
   if self.activeData.hitPole and not self.activeData.lastFrameHitPole then
-    self.activeData.available = false
-
-    local driftActiveData = gameplay_drift_drift.getDriftActiveData()
-    return {
-      hook = "onHitPoleDetected",
-      hookData = {
-        currDegAngle = driftActiveData.currDegAngle,
-        currAirSpeed = driftActiveData.speeds[#driftActiveData.speeds],
-        zoneData = {points = self.data.zoneData.score}
-      }
-    }
+    self:accomplish()
   end
 end
 

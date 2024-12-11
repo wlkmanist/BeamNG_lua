@@ -451,15 +451,9 @@ function vehicleSetPositionRotation(id, px, py, pz, rx, ry, rz, rw)
 end
 
 local function colorTableToRoundedColorString(color, metallicData)
-  local x = round(color.x*100)/100
-  local y = round(color.y*100)/100
-  local z = round(color.z*100)/100
-  local w = round(color.w*100)/100 -- this is because the TS version was only up to the second decimal
-  local x1 = round(metallicData.x*100)/100
-  local y1 = round(metallicData.y*100)/100
-  local z1 = round(metallicData.z*100)/100
-  local w1 = round(metallicData.w*100)/100
-  return tostring(x).." "..tostring(y).." "..tostring(z).." "..tostring(w).." "..tostring(x1).." "..tostring(y1).." "..tostring(z1).." "..tostring(w1) -- the TS sequence was like this
+  return string.format( "%f %f %f %f %f %f %f %f", -- TS sequence
+    round(color.x*100)*0.01, round(color.y*100)*0.01, round(color.z*100)*0.01, round(color.w*100)*0.01,
+    round(metallicData.x*100)*0.01, round(metallicData.y*100)*0.01, round(metallicData.z*100)*0.01, round(metallicData.w*100)*0.01 )
 end
 
 --[[getVehicleColor
@@ -477,13 +471,8 @@ function getVehicleColor(vehicleID)
   return colorTableToRoundedColorString(vehicle.color, vehicle.metallicPaintData)
 end
 
-function getVehicleColorPalette(index, vehicleID)
-  local vehicle
-  if vehicleID then
-    vehicle = scenetree.findObjectById(vehicleID)
-  else
-    vehicle = getPlayerVehicle(0) -- TODO: add a check whether the game is running?
-  end
+function getVehicleColorPalette(index, vehicleId)
+  local vehicle = vehicleId and scenetree.findObjectById(vehicleId) or getPlayerVehicle(0)
   if not vehicle then return end
   return colorTableToRoundedColorString(vehicle["colorPalette"..index], vehicle.metallicPaintData)
 end
@@ -869,31 +858,21 @@ function createVehiclePaint(color, metallicData)
   if not color or not color.x then
     color = {x = 1, y = 1, z = 1, w = 1}
   end
-  if type(metallicData) ~= 'table' then
-    metallicData = {}
-  end
-
-  local metallic            = metallicData.metallic or tonumber(metallicData[1]) or 0.2
-  local roughness           = metallicData.roughness or tonumber(metallicData[2]) or 0.5
-  local clearcoat           = metallicData.clearcoat or tonumber(metallicData[3]) or 0.8
+  metallicData = type(metallicData) == 'table' and metallicData or {}
+  local metallic = metallicData.metallic or tonumber(metallicData[1]) or 0.2
+  local roughness = metallicData.roughness or tonumber(metallicData[2]) or 0.5
+  local clearcoat = metallicData.clearcoat or tonumber(metallicData[3]) or 0.8
   local clearcoatRoughness  = metallicData.clearcoatRoughness or tonumber(metallicData[4]) or 0.0
 
-  local paint = {baseColor = {color.x, color.y, color.z, color.w},
-                metallic  = metallic,
-                roughness = roughness,
-                clearcoat = clearcoat,
-                clearcoatRoughness = clearcoatRoughness
-              }
+  local paint = {
+    baseColor = {color.x, color.y, color.z, color.w},
+    metallic  = metallic, roughness = roughness, clearcoat = clearcoat, clearcoatRoughness = clearcoatRoughness
+  }
   return paint
 end
 
 function getVehiclePaint(vehicleId)
-  local vehicle
-  if vehicleID then
-    vehicle = scenetree.findObjectById(vehicleId)
-  else
-    vehicle = getPlayerVehicle(0) -- scenetree.findObjectById() -- TODO: add a check whether the game is running?
-  end
+  local vehicle = vehicleId and scenetree.findObjectById(vehicleId) or getPlayerVehicle(0)
   if not vehicle then return nil end
   return createVehiclePaint(vehicle.color, vehicle.metallicPaintData)
 end

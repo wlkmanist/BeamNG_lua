@@ -13,10 +13,14 @@ C.icon = ui_flowgraph_editor.nodeIcons.traffic
 C.category = 'once_instant'
 C.tags = {'traffic', 'ai', 'respawn', 'teleport'}
 
-C.pinSchema = {}
+C.pinSchema = {
+  { dir = 'in', type = 'number', name = 'minDist', description = '(Optional) Minimum distance away from the player to teleport vehicles.' },
+  { dir = 'in', type = 'number', name = 'maxDist', description = '(Optional) Maximum distance away from the player to teleport vehicles.' }
+}
+
 
 function C:workOnce()
-  gameplay_traffic.scatterTraffic()
+  gameplay_traffic.scatterTraffic(nil, self.pinIn.minDist.value, self.pinIn.maxDist.value)
 end
 
 return _flowgraph_createNode(C)

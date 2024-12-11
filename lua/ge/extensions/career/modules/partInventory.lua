@@ -6,10 +6,12 @@ local M = {}
 
 M.dependencies = {'career_career'}
 
-local moduleVersion = 42
+local jbeamSlotSystem = require('jbeam/slotSystem')
+local jbeamIO = require('jbeam/io')
 
 local imgui = ui_imgui
-local jbeamIO = require('jbeam/io')
+
+local minimumVersion = 42
 
 local partInventory = {}
 
@@ -19,7 +21,7 @@ local slotToPartIdMap = {}
 local partInventoryOpen = false
 local closeMenuAfterSaving
 
-local currentVehicleInventoryId
+local currentVehicleInventoryIdForMenu
 
 -- TODO need to find a solution for when there will be multiple of the same part in one vehicle
 -- one solution would be to save {slot = partId} instead of {slot = partName}
@@ -58,13 +60,20 @@ local function getPartIdsFromVehicle(inventoryId)
   return result
 end
 
-local function sellPart(partId)
-  local part = partInventory[partId]
-  if not part or part.location ~= 0 then return end
-  local partName = part.missingFile and "(Missing File)" or part.description.description or "(Unnamed Part)"
-  career_modules_playerAttributes.addAttributes({money=career_modules_valueCalculator.getPartValue(part)}, {tags={"partsSold","selling"},label = "Sold Part: " .. partName})
+local function sellParts(partIds)
+  local total = 0
+  for _, partId in ipairs(partIds) do
+    local part = partInventory[partId]
+    if not part or part.location ~= 0 then return end
+    total = total + career_modules_valueCalculator.getPartValue(part)
+  end
+
+  career_modules_playerAttributes.addAttributes({money=total}, {tags={"partsSold","selling"}, label = "Sold " .. #partIds .. " Parts."})
   Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
-  partInventory[partId] = nil
+  for _, partId in ipairs(partIds) do
+    partInventory[partId] = nil
+  end
+
   if partInventoryOpen then
     M.sendUIData()
   end
@@ -103,9 +112,8 @@ local function removePart(partId, inventoryId)
 
   local partConditions = vehicle.partConditions
 
-  -- repair the car if the damage is below the threshold
-  local numberOfBrokenParts = career_modules_insurance.getNumberOfBrokenParts(partConditions)
-  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_insurance.getBrokenPartsThreshold() then
+  local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(partConditions)
+  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
     career_modules_insurance.repairPartConditions({partConditions = partConditions})
   end
 
@@ -131,10 +139,8 @@ end
 -- TODO one solution would be to allow for empty core slots, but mark them and tell the user that they cant spawn this or use this vehicle until the core slots are filled
 local function findFittingPart(slotInfo, vehicleModel)
   for partId, part in pairs(partInventory) do
-    for _, allowType in ipairs(slotInfo.allowTypes) do
-      if part.location == 0 and part.slot == allowType and part.vehicleModel == vehicleModel then
-        return partId, slotInfo.name
-      end
+    if part.location == 0 and part.vehicleModel == vehicleModel and jbeamSlotSystem.partFitsSlot(part, slotInfo) then
+      return partId, slotInfo.name
     end
   end
 end
@@ -302,8 +308,8 @@ local function installParts(partIds, inventoryId)
   core_vehicles.replaceVehicle(carModelToLoad, vehicleData, vehicleObj)
 
   -- repair the car if the damage is below the threshold
-  local numberOfBrokenParts = career_modules_insurance.getNumberOfBrokenParts(vehicle.partConditions)
-  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_insurance.getBrokenPartsThreshold() then
+  local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(vehicle.partConditions)
+  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
     career_modules_insurance.repairPartConditions({partConditions = vehicle.partConditions})
   end
 
@@ -339,9 +345,7 @@ local function doesPartFitVehicle(inventoryId, part)
   for _, partInVehicle in ipairs(vehicleParts) do
     if partInVehicle.description and partInVehicle.description.slotInfoUi then
       for slotName, slotInfo in pairs(partInVehicle.description.slotInfoUi) do
-        for _, allowType in ipairs(slotInfo.allowTypes) do
-          if part.slot == allowType then return true, slotName end
-        end
+        if jbeamSlotSystem.partFitsSlot(part, slotInfo) then return true, slotName end
       end
     end
   end
@@ -386,7 +390,7 @@ local function generateAndGetPartsFromVehicle(inventoryId, allAvailableParts)
     part.tags = {}
 
     part.containingSlot = partToSlotMap[partName]
-    part.slot = jbeamData.slotType
+    part.slotType = jbeamData.slotType
     part.vehicleModel = vehObj:getJBeamFilename()
     part.location = inventoryId
 
@@ -404,6 +408,7 @@ local function movePart(to, partId)
   if not part then return end
 
   local from = part.location
+  if from == to then return end
 
   -- we cant change parts of inaccessible vehicles
   local vehicles = career_modules_inventory.getVehicles()
@@ -527,9 +532,9 @@ local function debugMenu()
   imgui.Text("Parts in current vehicle")
   imgui.BeginChild1("partsInVehicle", imgui.ImVec2(200, 0), imgui.WindowFlags_ChildWindow)
     for partId, part in pairs(partInventory) do
-      if part.location == currentVehicleInventoryId then
+      if part.location == currentVehicleInventoryIdForMenu then
         local disabled
-        if coreSlots[part.location][part.slot] then
+        if coreSlots[part.location][part.slotType] then
           imgui.BeginDisabled()
           disabled = true
         end
@@ -575,12 +580,12 @@ local function debugMenu()
       imgui.Text("" .. part.location)
       imgui.TableNextColumn()
       local disabled
-      if not doesPartFitVehicle(currentVehicleInventoryId, part) then
+      if not doesPartFitVehicle(currentVehicleInventoryIdForMenu, part) then
         imgui.BeginDisabled()
         disabled = true
       end
       if imgui.Button("Put in vehicle##inInventory" .. partId) then
-        movePart(currentVehicleInventoryId, partId)
+        movePart(currentVehicleInventoryIdForMenu, partId)
       end
       if disabled then imgui.EndDisabled() end
       imgui.TableNextColumn()
@@ -592,7 +597,7 @@ local function debugMenu()
     imgui.Text("The following core slots have been filled automatically with parts from your inventory:")
     for _, partId in ipairs(newParts) do
       local part = partInventory[partId]
-      imgui.Text(string.format("%s: Part Id: %d, %s", part.slot, partId, part.description.description))
+      imgui.Text(string.format("%s: Part Id: %d, %s", partType, partId, part.description.description))
     end
 
     if imgui.Button("OK") then imgui.CloseCurrentPopup() end
@@ -615,13 +620,13 @@ local function onUpdate()
 
   -- Update cached maps for the current vehicle
   -- TODO why does this need to be async?
-  if updateVehicleParts and (currentVehicleInventoryId and career_modules_inventory.getVehicles()[currentVehicleInventoryId].partConditions) then
+  if updateVehicleParts and (career_modules_inventory.getCurrentVehicle() and career_modules_inventory.getVehicles()[career_modules_inventory.getCurrentVehicle()].partConditions) then
     updateVehicleMaps()
     updateVehicleParts = nil
   end
 
   if not shipping_build and partInventoryOpen then
-    debugMenu()
+    --debugMenu()
   end
 end
 
@@ -641,13 +646,13 @@ local function sendUIData()
   end
 
   for partId, part in pairs(partInventory) do
-    if part.slot ~= "main" then
+    if part.slotType ~= "main" then
       local newPart = deepcopy(part)
       if newPart.location ~= 0 and coreSlots[newPart.location][newPart.containingSlot] then
         newPart.isInCoreSlot = true
       end
       newPart.id = partId
-      newPart.fitsCurrentVehicle = doesPartFitVehicle(currentVehicleInventoryId, part) and true or false
+      newPart.fitsCurrentVehicle = doesPartFitVehicle(currentVehicleInventoryIdForMenu, part) and true or false
       newPart.finalValue = career_modules_valueCalculator.getPartValue(newPart)
       newPart.accessible = not (vehicles[newPart.location] and
           (vehicles[newPart.location].timeToAccess or
@@ -658,7 +663,7 @@ local function sendUIData()
     end
   end
   data.partList = partList
-  data.currentVehicle = currentVehicleInventoryId
+  data.currentVehicle = currentVehicleInventoryIdForMenu
   data.vehicles = vehiclesUiData
 
   guihooks.trigger('partInventoryData', data)
@@ -701,7 +706,7 @@ local function updatePartDescriptionsWithJBeamInfo()
       part.description = {}
       part.missingFile = true
     elseif partInfosVehicleModel[part.name] then
-      part.description = jBeamPartInfos[part.vehicleModel][part.name]
+      part.description = partInfosVehicleModel[part.name]
     else
       part.description = {}
       part.missingFile = true
@@ -715,11 +720,31 @@ local function onExtensionLoaded()
   if not saveSlot then return end
 
   local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
-  local outdated = not saveInfo or saveInfo.version < moduleVersion
+  local outdated = not saveInfo or saveInfo.version < minimumVersion
 
   local jsonData = savePath and jsonReadFile(savePath .. "/career/partInventory.json")
   if jsonData and not outdated then
     partInventory = deserialize(jsonData[1])
+
+    -- Not needed right now, because we sell all parts anyway
+    --[[ if saveInfo.version < 43 then
+      -- Update older versions to use "slotType" instead of "slot"
+      for partId, part in pairs(partInventory) do
+        part.slotType = part.slot
+        part.slot = nil
+      end
+    end ]]
+
+    if saveInfo.version < career_saveSystem.getSaveSystemVersion() then
+      -- Sell all parts that are not in a vehicle
+      local partsToSell = {}
+      for partId, part in pairs(partInventory) do
+        if part.location == 0 then
+          table.insert(partsToSell, partId)
+        end
+      end
+      sellParts(partsToSell)
+    end
   else
     partInventory = {}
   end
@@ -766,15 +791,15 @@ end
 local originComputerId
 local function openMenu(_originComputerId)
   partInventoryOpen = true
-  currentVehicleInventoryId = career_modules_inventory.getCurrentVehicle()
-  if not currentVehicleInventoryId then
-    currentVehicleInventoryId = career_modules_inventory.getInventoryIdsInClosestGarage(true)
+  currentVehicleInventoryIdForMenu = career_modules_inventory.getCurrentVehicle()
+  if not currentVehicleInventoryIdForMenu then
+    currentVehicleInventoryIdForMenu = career_modules_inventory.getInventoryIdsInClosestGarage(true)
   end
 
   originComputerId = _originComputerId
 
-  if currentVehicleInventoryId then
-    career_modules_inventory.updatePartConditions(nil, currentVehicleInventoryId, function() guihooks.trigger('ChangeState', {state = 'partInventory', params = {}}) end)
+  if currentVehicleInventoryIdForMenu then
+    career_modules_inventory.updatePartConditions(nil, currentVehicleInventoryIdForMenu, function() guihooks.trigger('ChangeState', {state = 'partInventory', params = {}}) end)
   else
     guihooks.trigger('ChangeState', {state = 'partInventory', params = {}})
   end
@@ -853,7 +878,7 @@ M.getInventory = getInventory
 M.addPartToInventory = addPartToInventory
 M.getPart = getPart
 M.updatePartConditionsInInventory = updatePartConditionsInInventory
-M.sellPart = sellPart
+M.sellParts = sellParts
 
 M.onExtensionLoaded = onExtensionLoaded
 M.onUpdate = onUpdate

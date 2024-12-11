@@ -14,7 +14,7 @@ if not ffifound then
   ffi = {offsetof = function(v, atr) return v[atr] end}
 end
 
---== type definitions ==--
+--MARK: type defs
 -- used in conversions and serializations
 local __typeQuatF = (QuatF ~= nil) and QuatF(0,0,0,1).___type or nil
 
@@ -25,7 +25,7 @@ local str_find, str_len, str_sub, byte = string.find, string.len, string.sub, st
 
 local bufTmp = buffer.new()
 
---== color things ==--
+--MARK: color things
 
 function RGBtoHSV(r, g, b)
   local cMax, cMin = max(r,g,b), min(r,g,b)
@@ -88,16 +88,21 @@ end
 
 -- x in [0..1]
 function ironbowColor(x, a)
-  return color(255 * min(1, max(0, x*1.55/(0.11+x) - 0.4)), 255 * min(1, max(0,x*1.47 - 0.35)), 255 * min(1, max(0, x*6-5, 0.63544-9.4*(x-0.26)*(x-0.26))), a)
+  return color(255*min(1, max(0, x*1.55/(0.11+x) - 0.4)), 255*min(1, max(0,x*1.47 - 0.35)), 255*min(1, max(0, x*6-5, 0.63544-9.4*(x-0.26)*(x-0.26))), a)
 end
 
 -- x in [0..1]
 function jetColor(x, a)
-  return color(255 * min(1, max(0, 4 * x - 2)), 255 * min(1, max(0, 2 - abs(4 * x - 2))), 255 * min(1, max(0, 2 - 4 * x)), a)
+  return color(255*min(1, max(0, 4 * x - 2)), 255*min(1, max(0, 2 - abs(4 * x - 2))), 255*min(1, max(0, 2 - 4 * x)), a)
 end
 
---== String utilities ==--
+-- x in [0..1]
+function greyColor(x, a)
+  local c = 255*x
+  return color(c, c, c, a)
+end
 
+--MARK: String utils
 local inspect = require("libs/inspect/inspect")
 
 function dumps(...)
@@ -281,7 +286,7 @@ function graphs(v, len)
   return '['..string.rep(v>0 and "+" or "-", size) .. string.rep(' ', len - size)..']'
 end
 
---== Json ==--
+--MARK: Json
 local function escapeString(s)
   for i = 1, #s do
     local c = byte(s, i)
@@ -431,7 +436,7 @@ function jsonDecode(content, context)
   return data
 end
 
-function jsonWriteFile(filename, obj, pretty, numberPrecision)
+local function jsonWriteFileActual(filename, obj, pretty, numberPrecision)
   local objType = type(obj)
   if objType ~= "table" then
     log("E", "jsonWriteFile", "Provided objType is not a table but "..dumps(objType)..", unable to write to: "..dumps(filename))
@@ -454,6 +459,26 @@ function jsonWriteFile(filename, obj, pretty, numberPrecision)
     print(debug.tracesimple())
   end
   return false
+end
+
+-- if "atomicWrite" is truthy, the function will write to a temp file first before renaming it to "filename"
+-- if "atomicWrite" is a string, that string will be used as a temp filename, otherwise the function will use a default temp filename
+function jsonWriteFile(filename, obj, pretty, numberPrecision, atomicWrite)
+  if not atomicWrite then
+    return jsonWriteFileActual(filename, obj, pretty, numberPrecision)
+  else
+    local tempFileName = (type(atomicWrite) == "string") and atomicWrite or (filename .. ".tmp")
+    if jsonWriteFileActual(tempFileName, obj, pretty, numberPrecision) then
+      if FS:renameFile(tempFileName, filename) == 0 then
+        return true
+      else
+        log("E", "save", "failed to copy temporary json!")
+      end
+    else
+      log("E", "save", "failed to write json!")
+    end
+    return false
+  end
 end
 
 function jsonReadFile(filename)
@@ -481,11 +506,10 @@ function readDictJSONTable(filename)
     end
     v[1] = nil
   end
-  --dump(data)
   return data
 end
 
---== Table utilities ==--
+--MARK: Table utils
 
 function setEqual(set1, set2)
   if #set1 ~= #set2 then return false end
@@ -602,11 +626,43 @@ function tableMerge(dst, src)
 end
 
 -- http://stackoverflow.com/questions/1283388/lua-merge-tables
+-- IMPORTANT: this is overwriting key/values pairs and will not merge array/lists as you might expect
 function tableMergeRecursive(t1, t2)
   for k, v in pairs(t2) do
     if type(v) == "table" and type(t1[k]) == "table" then
       tableMergeRecursive(t1[k], t2[k])
     else
+      t1[k] = v
+    end
+  end
+  return t1
+end
+
+-- merge tables and arrays correctly by concatenating arrays
+function tableMergeRecursiveArray(t1, t2)
+  for k, v in pairs(t2) do
+    if type(v) == "table" and type(t1[k]) == "table" then
+      if tableIsArraySlow(t1[k]) and tableIsArraySlow(v) then
+        -- Concatenate arrays
+        for i = 1, #v do
+          table.insert(t1[k], v[i])
+        end
+      else
+        -- Merge associative tables recursively
+        tableMergeRecursiveArray(t1[k], v)
+      end
+    elseif type(v) == "table" then
+      -- Copy the table (array or associative)
+      if tableIsArraySlow(v) then
+        t1[k] = {}
+        for i = 1, #v do
+          t1[k][i] = v[i]
+        end
+      else
+        t1[k] = tableMergeRecursiveArray({}, v)
+      end
+    else
+      -- Overwrite or add the value
       t1[k] = v
     end
   end
@@ -794,7 +850,7 @@ function checkTableDataTypes(data, expectedTypes)
   return true
 end
 
---== Input/Output helpers ==--
+--MARK: IO helpers
 
 -- inspects the arguments and writes the output to the file
 function dumpToFile(filename, ...)
@@ -836,7 +892,7 @@ function ui_message(msg, ttl, category, icon)
   guihooks.message(msg, (ttl or 5), (category or ''), icon)
 end
 
---== Extension/Packages ==--
+--MARK: Extensions
 
 local function isPackage(name, entry)
   if name == 'extensions' then
@@ -904,7 +960,7 @@ function deserializePackages(data, filter)
   end
 end
 
---== path/directory utils ==--
+--MARK: path utils
 
 path = {}
 path.dirname = function (filename)
@@ -985,7 +1041,7 @@ function getAllLevelIdentifiers()
   return ret
 end
 
---== Ini settings file ==--
+--MARK: Ini
 -- plain, no section, no nested INI support
 function loadIni(filename)
   local d = {}
@@ -1042,7 +1098,7 @@ function saveIni(filename, d)
   f:close()
 end
 
---== Serialization ==--
+--MARK: Serialization
 
 -- serialization functions, see testSerialization
 local function serialize_rec(v)
@@ -1132,10 +1188,7 @@ function _kv(kv)
 end
 
 function deserialize(s)
-
-  -- if you crash here with "attempt to call a nil value" or alike, the chances are
-  -- that your serialize function emits invalid lua. I.e.: ["windowViewport"]=cdata<struct ImGuiViewport *>: 0x0257e75a5580
-
+  -- if you crash here with "attempt to call a nil value" check if your serialize function emits invalid lua:  ["windowViewport"]=cdata<struct ImGuiViewport *>: 0x0257e75a5580
   if s == nil then return nil end
   return loadstring("return " .. s)()
 end
@@ -1144,26 +1197,22 @@ end
 --   d = {a = "foo", b = {c = 123, d = "foo", p = vec3(1,2,3)}}
 --   print("original data: " .. tostring(d))
 --   dump(d)
-
 --   s = serialize(d)
 --   print("serialized data: " .. tostring(s))
-
 --   da = deserialize(s)
 --   print("restored data: " .. tostring(da))
 --   dump(da)
-
 --   sa = serialize(da)
 --   if sa == s then
 --     print "serialization seems to work"
 --   else
 --     print "serialization got problems, look above"
 --   end
-
 --   if deserialize(serialize(nil)) ~= nil then print "serialize with nil fails to work corectly" end
 -- end
 --testSerialization()
 
---== Other ==--
+--MARK: Other
 
 function detectGlobalWrites()
   setmetatable(_G, {

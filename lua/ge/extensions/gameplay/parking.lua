@@ -8,7 +8,7 @@ local logTag = "parking"
 
 local areaRadius = 200 -- radius to search within for parking spots
 local lookDist = 300 -- distance ahead of camera to start query of parking spots
-local stepDist = 50 -- distance until the next parking spot query refresh
+local checkRadius = 50 -- active radius of the focus position
 local parkedVehIds, parkedVehData = {}, {}
 local trackedVehData = {}
 local currParkingSpots = {}
@@ -20,7 +20,7 @@ local max = math.max
 local random = math.random
 
 local sites, vehPool, vars
-local focusPos = vec3()
+local aheadPos, focusPos, focusVec = vec3(), vec3(), vec3()
 local active = false
 local worldLoaded = false
 local parkingSpotsAmount = 0
@@ -322,7 +322,7 @@ local function enableTracking(vehId, autoDisable) -- enables parking spot tracki
     preParked = false,
     parked = false,
     event = "none",
-    frontPos = vec3(),
+    aheadPos = vec3(),
     focusPos = vec3(),
     maxDist = 80,
     parkingTimer = 0
@@ -368,11 +368,9 @@ local function resetParkingVars() -- resets parking variables to default
 end
 resetParkingVars()
 
-local function setParkingVars(data) -- sets parking related variables
-  if type(data) ~= "table" then
-    if not data then resetParkingVars() end
-    return
-  end
+local function setParkingVars(data, reset) -- sets parking related variables
+  if reset then resetParkingVars() end
+  if type(data) ~= "table" then return end
 
   vars = tableMerge(vars, data)
 
@@ -406,16 +404,16 @@ local function trackParking(vehId) -- tracks parking status of a driving vehicle
   bbHalfExtents:set(be:getObjectOOBBHalfExtentsXYZ(vehId))
 
   vehDirection:setScaled(bbHalfExtents.y)
-  vehData.frontPos:setAdd2(bbCenter, vehDirection)
+  vehData.aheadPos:setAdd2(bbCenter, vehDirection)
 
   local maxDist = M.debugLevel >= 3 and 400 or vehData.maxDist
-  if vehData.focusPos:squaredDistance(vehData.frontPos) >= square(maxDist * 0.5) then -- focus pos and nearby parking spots low frequency update
-    vehData.psList = findParkingSpots(vehData.frontPos, 0, maxDist)
+  if vehData.focusPos:squaredDistance(vehData.aheadPos) >= square(maxDist * 0.5) then -- focus pos and nearby parking spots low frequency update
+    vehData.psList = findParkingSpots(vehData.aheadPos, 0, maxDist)
     vehData.psList = filterParkingSpots(vehData.psList, emptyFilters)
-    vehData.focusPos:set(vehData.frontPos)
+    vehData.focusPos:set(vehData.aheadPos)
   end
 
-  vehData.psList = updateParkingSpots(vehData.psList, vehData.frontPos) or {}
+  vehData.psList = updateParkingSpots(vehData.psList, vehData.aheadPos) or {}
 
   if M.debugLevel > 0 then
     for _, v in ipairs(vehData.psList) do
@@ -610,6 +608,12 @@ local function setupVehicles(amount, options) -- spawns and prepares simple park
 
   core_multiSpawn.spawnGroup(group, amount, {name = "autoParking", mode = "roadBehind", gap = 50, customTransforms = transforms, instant = not worldLoaded, ignoreAdjust = not worldLoaded})
 
+  aheadPos:set(core_camera.getPositionXYZ())
+  focusPos:set(options.pos or aheadPos)
+  focusVec:set(core_camera.getForwardXYZ())
+  focusVec.z = 0
+  focusVec:normalize()
+
   return true
 end
 
@@ -681,11 +685,24 @@ local function onVehicleActiveChanged(vehId, active)
   end
 end
 
-local camPos, vehPos = vec3(), vec3()
+local camPos, camVec, camVecAlt, vehPos = vec3(), vec3(), vec3(), vec3()
 local function onUpdate(dt, dtSim)
   if not active or not sites or not be:getEnabled() or freeroam_bigMapMode.bigMapActive() then return end
 
   camPos:set(core_camera.getPositionXYZ())
+  camPos.z = 0
+  camVec:set(core_camera.getForwardXYZ())
+  camVec.z = 0
+  camVec:normalize()
+  camVec:setScaled(checkRadius * 2)
+
+  if camVecAlt:squaredLength() == 0 then
+    camVecAlt:set(camVec)
+  end
+  local coef = commands.isFreeCamera() and 2 or 0.5
+  camVec:setLerp(camVecAlt, camVec, dtSim * coef) -- camera look direction smoothing
+  camVecAlt:set(camVec)
+  aheadPos:setAdd2(camPos, camVec)
 
   if not worldLoaded and parkedVehIds[1] and camPos.z ~= 0 then
     --scatterParkedCars()
@@ -747,24 +764,27 @@ local function onUpdate(dt, dtSim)
   if not parkedVehIds[1] or parkedVehCount >= parkingSpotsAmount then return end -- unable to teleport vehicles to new parking spots
 
   -- only search for parking spots whenever needed
-  if vars.baseProbability > 0 and focusPos:squaredDistance(camPos) >= square(stepDist) then
-    -- consider using a smoother for the look direction, similar to the traffic system
-    local camDirVec = core_camera.getForward()
-    local playerPos = map.objects[be:getPlayerVehicleID(0)] and map.objects[be:getPlayerVehicleID(0)].pos or camPos
-    local aheadPos = camPos + camDirVec:z0():normalized() * (lookDist + stepDist) + camDirVec:cross(vec3(0, 0, 1)):z0():normalized() * random(-50, 50)
-    currParkingSpots = findParkingSpots(aheadPos, 0, areaRadius)
+  if vars.baseProbability > 0 and aheadPos:squaredDistance(focusPos) >= square(checkRadius) then -- updates parking spots if away from focus position
+    focusVec:set(camVec)
+    focusVec:resize(lookDist)
+    focusPos:setAdd2(camPos, focusVec) -- set the center point of the parking spot search
+
+    currParkingSpots = findParkingSpots(focusPos, 0, areaRadius)
     currParkingSpots = filterParkingSpots(currParkingSpots)
-    focusPos:set(camPos)
-    stepDist = clamp(lerp(stepDist, 50 - #currParkingSpots * 0.5, 0.5), 10, 50) -- smaller step distance if there are more parking spots
+
+    focusVec:resize(checkRadius * 2)
+    focusPos:setAdd2(camPos, focusVec)
+    --checkRadius = clamp(lerp(checkRadius, 50 - #currParkingSpots * 0.5, 0.5), 10, 50) -- smaller check radius if there are more parking spots
 
     for _, id in ipairs(parkedVehIds) do
-      parkedVehData[id].searchFlag = false -- reset search flag for all vehicles
+      parkedVehData[id].searchFlag = false -- reset search flag for vehicles that should be moved
     end
   end
 
   -- cycle through array of parked vehicles one at a time, to save on performance
   local currId = parkedVehIds[queuedIndex] or 0
   local currVeh = parkedVehData[currId]
+  camPos:set(core_camera.getPositionXYZ())
   if be:getObjectActive(currId) then
     vehPos:set(be:getObjectPositionXYZ(currId))
     local dtCoef = max(0.4, parkedVehCount * 0.1)

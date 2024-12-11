@@ -20,6 +20,7 @@ end
 
 -- the "main" mission unlock caluclation. Sets the Startable and Visible flags and infos for missions.
 local function updateUnlockStatus(missions)
+  if career_modules_branches_leagues then career_modules_branches_leagues.clearLeagueUnlockCache() end
   missions = missions or gameplay_missions_missions.get()
   local counts = {startable = 0, visible = 0}
   local referencedMissions = {}
@@ -164,6 +165,12 @@ local function getBranchLevelForCondition(cond, list)
   else
     if cond.type == "branchLevel" then
       list[cond.branchId] = cond.level
+    end
+    if cond.type == "league" and career_modules_branches_leagues then
+      local league = career_modules_branches_leagues.getLeagueById(cond.leagueId)
+      if league then
+        list[league.branchId] = 1
+      end
     end
   end
 end

@@ -55,6 +55,37 @@ local function endMission(p)
     if p then p:add("endMission.finalSet") end
 end
 
+-- this function can patch the loading context depending on the program's command line arguments
+local function patchLoadingContext(ldgCtx)
+  local cmdArgs = Engine.getStartingArgs()
+  local i = 1
+  while i <= #cmdArgs do
+    local v = cmdArgs[i]
+    if v == '-levelOffset' then
+      if i + 3 <= #cmdArgs then
+        local x = tonumber(cmdArgs[i + 1])
+        local y = tonumber(cmdArgs[i + 2])
+        local z = tonumber(cmdArgs[i + 3])
+        if x and y and z then
+          local mat = MatrixF(true)
+          local pos = Point3F(x, y, z)
+          mat:setPosition(pos)
+          ldgCtx.tileTransform = mat
+          log('I', string.format('### Global level offset set to (%.2f, %.2f, %.2f)', x, y, z))
+          i = i + 4 -- Skip the consumed arguments
+        else
+          log('E', 'Invalid argument for -levelOffset: expected three numeric values.')
+        end
+      else
+        log('E', 'Not enough arguments for -levelOffset: expected three numeric values.')
+      end
+    else
+      i = i + 1 -- Move to the next argument
+    end
+  end
+
+end
+
 --seems to work for freeroam
 local function createGameActual(lvlPath, customLoadingFunction)
   local timerFunc = hptimer()
@@ -198,9 +229,12 @@ local function createGameActual(lvlPath, customLoadingFunction)
 
   local timeMat = timer1:stopAndReset()/1000
 
+  local ldgCtx = loadingContext()
+  patchLoadingContext(ldgCtx)
+
   -- if the scenetree folder exists, try to load it
   if FS:directoryExists(levelDir .. 'main/') then
-    LoadingManager:loadLevelJsonObjects(levelDir .. 'main/', '*.level.json') -- new level loading handler
+    LoadingManager:loadLevelJsonObjects(levelDir .. 'main/', ldgCtx)
   else
     -- backward compatibility: single file mode
     local levelName = path.levelFromPath(levelPath)
@@ -256,9 +290,9 @@ local function createGameActual(lvlPath, customLoadingFunction)
 
   -- Load the static level decals.
   if FS:fileExists(levelDir.."main.decals.json") then
-    be:decalManagerLoad(levelDir.."main.decals.json")
+    be:decalManagerLoad(levelDir.."main.decals.json", ldgCtx)
   elseif FS:fileExists(levelDir.."../main.decals.json") then
-    be:decalManagerLoad(levelDir.."../main.decals.json")
+    be:decalManagerLoad(levelDir.."../main.decals.json", ldgCtx)
   end
   local timeDecals = timer1:stopAndReset() / 1000
 

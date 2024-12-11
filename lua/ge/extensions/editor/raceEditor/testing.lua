@@ -23,6 +23,22 @@ function C:setupRace()
   self.race.lapCount = oldLap
   self.race.useDebugDraw = true
   self.race:setVehicleIds({be:getPlayerVehicleID(0)})
+  self.state = 'setup'
+end
+
+function C:startRace(vehIds, enableAi, rollingStart)
+  vehIds = vehIds or {be:getPlayerVehicleID(0)}
+
+  self.race.path.config.rollingStart = rollingStart and true or false
+  self.race:setVehicleIds(vehIds)
+  self.race:startRace()
+  self.state = 'race'
+
+  if enableAi then
+    for _, id in ipairs(vehIds) do
+      self.race:startAiVehicle(id, 0.8)
+    end
+  end
 end
 
 function C:draw(dt)
@@ -34,7 +50,6 @@ function C:draw(dt)
   elseif self.state == 'stopped' then
     self:drawStopped()
   end
-
 end
 
 function C:drawSetup()
@@ -53,22 +68,17 @@ function C:drawSetup()
 
   if im.Button("Start") then
     editor.setEditorActive(false)
-    self.race.path.config.rollingStart = false
-    self.state = 'race'
-    self.race:startRace()
+    self:startRace(nil, false, false)
   end
   if im.Button("Start Rolling") then
     editor.setEditorActive(false)
-    self.race.path.config.rollingStart = true
-    self.state = 'race'
-    self.race:startRace()
+    self:startRace(nil, false, true)
   end
 
   im.Separator()
 
   if im.Button("Move All Vehicles to Starting Positions") then
-    local vehs = getObjectsByClass("BeamNGVehicle")
-    for i, veh in ipairs(vehs) do
+    for i, veh in ipairs(getAllVehiclesByType()) do
       local sp = self.path.startPositions.sorted[i]
       if sp and not sp.missing then
         sp:moveResetVehicleTo(veh:getId())
@@ -77,33 +87,31 @@ function C:drawSetup()
   end
 
   if im.Button("AI Drive Test Current Vehicle") then
-    local veh = getPlayerVehicle(0)
-    self.path:getAiPath()
-    veh:queueLuaCommand('ai.driveUsingPath({wpTargetList = ' .. serialize(self.path.aiPath) .. ', wpSpeeds = ' .. serialize({}) .. ', noOfLaps = ' .. self.race.lapCount .. ', aggression = 1})')
+    self:startRace(nil, true, false)
   end
 
   if im.Button("AI Drive Test All Vehicles") then
-    local veh = getPlayerVehicle(0)
-    self.path:getAiPath()
-    local vehs = getObjectsByClass("BeamNGVehicle")
-    for _, veh in ipairs(vehs) do
-      local isClose = false
-      for i, sp in ipairs(self.path.startPositions.sorted) do
-        if (vec3(sp.pos) - veh:getPosition()):length() < 10 then
-          isClose = true
+    local vehIds = {}
+
+    for _, veh in ipairs(getAllVehiclesByType()) do
+      if self.path.defaultStartPosition and not self.path.startPositions.objects[self.path.defaultStartPosition].missing then
+        if self.path.startPositions.objects[self.path.defaultStartPosition].pos:squaredDistance(veh:getPosition()) <= 10000 then
+          table.insert(vehIds, veh:getId())
         end
-      end
-      if isClose then
-        veh:queueLuaCommand('ai.driveUsingPath({wpTargetList = ' .. serialize(self.path.aiPath) .. ', wpSpeeds = ' .. serialize({}) .. ', noOfLaps = ' .. self.race.lapCount .. ', aggression = 1})')
-        dump('ai.driveUsingPath({wpTargetList = ' .. serialize(self.path.aiPath) .. ', wpSpeeds = ' .. serialize({}) .. ', noOfLaps = ' .. self.race.lapCount .. ', aggression = 1})')
+      else
+        table.insert(vehIds, veh:getId())
       end
     end
+
+    self:startRace(vehIds, true, false)
   end
 end
 
 function C:drawRace(dt)
   if im.Button("Stop") then
-    self.race:abortRace(self.race.vehIds[1])
+    for _, id in ipairs(self.race.vehIds) do
+      self.race:abortRace(id)
+    end
     editor.setEditorActive(true)
     self.state = 'stopped'
     self.raceEditor.show()
@@ -124,13 +132,14 @@ function C:drawStopped()
   if im.Button("Restart") then
     self:setupRace()
     self.state = 'setup'
-  else
-    self:drawEventLog()
-    self:drawTimes()
   end
+  self:drawEventLog()
+  self:drawTimes()
 end
 
 function C:drawTimes()
+  if not self.race.vehIds[1] or not self.race.states[self.race.vehIds[1]] then return end
+
   local avail = im.GetContentRegionAvail()
   im.BeginChild1("Times", im.ImVec2(avail.x, avail.y/2-5), 0, im.WindowFlags_AlwaysVerticalScrollbar)
 
@@ -138,10 +147,11 @@ function C:drawTimes()
     detailedTimes = not detailedTimes
   end
   im.EndChild()
-
 end
 
 function C:drawEventLog()
+  if not self.race.vehIds[1] or not self.race.states[self.race.vehIds[1]] then return end
+
   local avail = im.GetContentRegionAvail()
   im.BeginChild1("EventLog", im.ImVec2(avail.x, avail.y-5), 0, im.WindowFlags_AlwaysVerticalScrollbar)
   self.race:inDrawEventlog(self.race.vehIds[1], im)

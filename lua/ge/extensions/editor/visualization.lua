@@ -294,6 +294,7 @@ local function materialDebugSetter(flag)
 end
 
 local function onEditorInitialized()
+  editor.updateVisSettings = updateVisSettings
   editor.registerWindow(toolWindowName, im.ImVec2(500,600))
   editor.clearVisualizationTypes()
   editor.registerVisualizationType({type = editor.varTypes.Setting, name = "BeamNGWaypointDrawDebug", displayName = "BeamNG: draw waypoints"})

@@ -8,8 +8,6 @@ local kdTreeBox2D = require('kdtreebox2d')
 local buffer = require("string.buffer")
 
 local stringFind, stringSub, stringFormat, max, min = string.find, string.sub, string.format, math.max, math.min
-local vecUp = vec3(0, 0, 1)
-local vecY = vec3(0, 1, 0)
 
 local M = {}
 
@@ -180,6 +178,7 @@ local function getObjects()
   return M.objects
 end
 
+local p1, p2 = vec3(), vec3()
 local function surfaceNormalBelow(p, r)
   --   p3
   --     \
@@ -192,25 +191,20 @@ local function surfaceNormalBelow(p, r)
   --   p2
 
   r = r or 2
-  local hr = 1.2 * r -- controls inclination angle up to (at least) which result is correct (arctan(1.2) ~ 50deg)
+  local hr = 1.2 * r -- calculation is guaranteed to be accurate up to ~ 50 deg (argtan(1.2)) inclination
 
-  local p1 = hr * vecUp;
-  p1:setAdd(p)
-  p1.y = p1.y + r
-
-  local p2 = (-1.5 * r) * vecY -- -(1 + cos(60)) * r
-  p2:setAdd(p1)
-  local p3 = vec3(p2)
-  p2.x = p2.x + 0.8660254037844386 * r -- sin(60) * r
-  p3.x = p3.x - 0.8660254037844386 * r
+  p1:set(p.x, p.y + r, p.z + hr)
+  p2:set(p.x + 0.8660254037844386 * r, p.y - 0.5 * r, p1.z) -- sin(60) => 0.8660254037844386, cos(60) => 0.5
+  local p3 = p2:copy()
+  p3.x = p.x - 0.8660254037844386 * r
 
   p1.z = obj:getSurfaceHeightBelow(p1)
   p2.z = obj:getSurfaceHeightBelow(p2)
   p3.z = obj:getSurfaceHeightBelow(p3)
 
-  -- in what follows p3 becomes the normal vector
-  if min(p1.z, p2.z, p3.z) < p.z - hr then
-    p3:set(vecUp)
+  -- store the result in p3
+  if min(p1.z, p2.z, p3.z) + hr < p.z then
+    p3:set(0, 0, 1)
   else
     p2:setSub(p3)
     p1:setSub(p3)

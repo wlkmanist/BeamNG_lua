@@ -5,16 +5,16 @@
 local C = {}
 local im = ui_imgui
 
-local _uid = 0 -- do not use ever
+local _uid = 0 -- internal use only
 local function getNextUniqueIdentifier()
   _uid = _uid + 1
   return _uid
 end
 
 local paintNameKeys = {"paintName", "paintName2", "paintName3"}
+local defaultPaint = {1, 1, 1, 1}
 local imDummy = im.ImVec2(0, 5)
-local firstColumnWidth = 80
-local updateReason
+local defaultColumnWidth = 80
 
 function C:init(name, data)
   self.id = getNextUniqueIdentifier()
@@ -70,6 +70,16 @@ function C:setConfig(config) -- directly sets the config data, by key (self.mode
   end
 end
 
+function C:setOptions(data) -- sets some specific options for this utility
+  if not data then return end
+
+  for _, key in ipairs({"enableConfigs", "enablePaints", "enableCustomConfig", "paintLayers", "columnWidth"}) do
+    if data[key] then
+      self[key] = data[key]
+    end
+  end
+end
+
 function C:resetModel() -- resets all model data
   self.models = nil
   self.model = nil
@@ -83,6 +93,7 @@ function C:resetConfig() -- resets all config data
   self.configPath = nil
   self.customConfigPath = nil
   self.customConfigActive = false
+  self.customConfigPtr = nil
 end
 
 function C:resetPaint() -- resets all paint data
@@ -102,13 +113,15 @@ function C:resetSelections() -- resets the vehicle selection
 end
 
 function C:resetOptions() -- resets the util options
-  self.allowedTypes = {"Car", "Truck", "Automation", "Prop", "Trailer", "Utility", "Unknown", "Any"}
+  self.allowedTypes = {"Car", "Truck", "Automation", "Trailer", "Prop", "Utility", "Traffic", "Unknown", "Any"}
+  self.allowedSubtypes = {"PropTraffic", "PropParked"} -- subtypes are for configs
   self.modelBlacklist = {}
   self.configBlacklist = {}
 
   self.enableConfigs = true
   self.enablePaints = false
   self.enableCustomConfig = false
+  self.paintLayers = 3
 end
 
 function C:setModelListByField(key, value, disallow) -- whitelists (or blacklists) vehicle models by field name and value
@@ -117,6 +130,26 @@ end
 
 function C:setConfigListByField(model, key, value, disallow) -- whitelists (or blacklists) vehicle configs by field name and value (per model)
   -- TODO
+end
+
+function C:getPaintPtr(paintTbl) -- returns the imgui paint table for the given paint
+  local newPaintTbl
+
+  if type(paintTbl) == "table" then
+    if paintTbl.baseColor then
+      if paintTbl.baseColor[4] then
+        newPaintTbl = deepcopy(paintTbl.baseColor)
+      elseif paintTbl.baseColor.x and paintTbl.baseColor.y and paintTbl.baseColor.z and paintTbl.baseColor.w then
+        newPaintTbl = {paintTbl.baseColor.x, paintTbl.baseColor.y, paintTbl.baseColor.z, paintTbl.baseColor.w}
+      end
+    else
+      newPaintTbl = deepcopy(paintTbl)
+    end
+  else
+    newPaintTbl = deepcopy(defaultPaint)
+  end
+
+  return editor.getTempFloatArray4_TableTable(newPaintTbl)
 end
 
 function C:fetchData() -- retrieves model, config, and paint data, whenever required
@@ -149,7 +182,8 @@ function C:fetchData() -- retrieves model, config, and paint data, whenever requ
 
       for i = #self.configs, 1, -1 do
         local bList = self.configBlacklist[self.model]
-        if bList and bList[self.configs[i].key] then
+        local cType = self.configs[i].Type
+        if (bList and bList[self.configs[i].key]) or (cType and not arrayFindValueIndex(self.allowedSubtypes or {}, cType)) then
           table.remove(self.configs, i)
         end
       end
@@ -170,43 +204,56 @@ function C:fetchData() -- retrieves model, config, and paint data, whenever requ
 end
 
 function C:widget() -- displays the interface
-  updateReason = nil
+  local updateReason = nil
 
   self:fetchData()
 
-  local scale = editor.getPreference("ui.general.scale")
   local elemHeight = im.GetFrameHeightWithSpacing()
-  local elemPadding = 5
+  local elemPadding = 10
   local elemCount = 2
   if self.enableConfigs then
     elemCount = elemCount + 1
   end
   if self.enablePaints then
-    elemCount = elemCount + 3
-    elemPadding = elemPadding + 5
+    elemCount = elemCount + self.paintLayers
+    elemPadding = elemPadding + 10
   end
   if self.enableCustomConfig then
     elemCount = elemCount + 2
-    elemPadding = elemPadding + 5
+    elemPadding = elemPadding + 10
   end
 
-  im.BeginChild1("##vehicleSelector"..dumps(self.id), im.ImVec2(im.GetContentRegionAvailWidth(), elemCount * elemHeight / scale + elemPadding / scale))
+  local columnWidth = self.columnWidth or defaultColumnWidth
+  columnWidth = columnWidth * im.uiscale[0]
+
+  im.BeginChild1("##vehicleSelector"..dumps(self.id), im.ImVec2(im.GetContentRegionAvailWidth(), elemCount * elemHeight + elemPadding))
 
   im.Columns(2)
-  im.SetColumnWidth(0, firstColumnWidth)
+  im.SetColumnWidth(0, columnWidth)
 
   im.Text("Type")
   im.NextColumn()
   im.PushItemWidth(im.GetContentRegionAvailWidth())
+
+  if not self.allowedTypes[2] then
+    if not self.vehType then
+      self.vehType = self.allowedTypes[1] or "Any"
+      updateReason = "type"
+    end
+    im.BeginDisabled()
+  end
+
   if im.BeginCombo("##vehicleSelectorTypes"..dumps(self.id), self.vehType) then
     for _, t in ipairs(self.allowedTypes) do
-      if im.Selectable1(t, t == self.vehType) then
+      if im.Selectable1(t.."##vehicleSelectorTypeNames"..dumps(self.id), t == self.vehType) then
         self.vehType = t
         updateReason = "type"
       end
     end
     im.EndCombo()
   end
+
+  if not self.allowedTypes[2] then im.EndDisabled() end
   im.PopItemWidth()
   im.NextColumn()
 
@@ -219,9 +266,25 @@ function C:widget() -- displays the interface
   end
 
   im.PushItemWidth(im.GetContentRegionAvailWidth())
-  if im.BeginCombo("##vehicleSelectorModels" .. dumps(self.id), label) then
+
+  local imDisabled = false
+  if self.models and not self.models[2] then
+    if not self.model then
+      local modelData = self.models[1]
+      if modelData then
+        self.model = modelData.key
+        self.modelName = modelData.Name
+        updateReason = "model"
+      end
+    end
+    im.BeginDisabled()
+    imDisabled = true
+  end
+
+  if im.BeginCombo("##vehicleSelectorModels"..dumps(self.id), label) then
     for _, m in ipairs(self.models) do
-      if im.Selectable1(m.Name and (m.Name.." ["..m.key.."]") or m.key, m.key == self.model) then
+      local label = m.Name and (m.Name.." ["..m.key.."]")
+      if im.Selectable1(label.."##vehicleSelectorModelNames"..dumps(self.id) or m.key, m.key == self.model) then
         self.model = m.key
         self.modelName = m.Name
         updateReason = "model"
@@ -229,13 +292,32 @@ function C:widget() -- displays the interface
     end
     im.EndCombo()
   end
+
+  if imDisabled then im.EndDisabled() end
   im.PopItemWidth()
   im.NextColumn()
 
   if self.enableConfigs then
     im.Text("Config")
     im.NextColumn()
-    if not self.configs or self.customConfigPath then im.BeginDisabled() end
+
+    local imDisabled = false
+    if not self.configs or self.customConfigPath then
+      im.BeginDisabled()
+      imDisabled = true
+    elseif self.configs and not self.configs[2] then
+      if not self.config then
+        local configData = self.configs[1]
+        if configData then
+          self.config = configData.key
+          self.configName = configData.Name
+          self.configPath = "vehicles/"..self.model.."/"..self.config..".pc"
+          updateReason = "config"
+        end
+      end
+      im.BeginDisabled()
+      imDisabled = true
+    end
 
     local label = "(None)"
     if self.configs then
@@ -248,7 +330,7 @@ function C:widget() -- displays the interface
         local modelData = core_vehicles.getModel(self.model)
         local modelConfigs = modelData and modelData.configs or {}
 
-        if im.Selectable1("(Default)", self.config == nil) then
+        if im.Selectable1("(Default)##vehicleSelectorConfigNames"..dumps(self.id), self.config == nil) then
           self.config = nil
           self.configName = nil
           self.configPath = nil
@@ -256,10 +338,11 @@ function C:widget() -- displays the interface
         end
 
         for _, c in ipairs(self.configs) do
-          if im.Selectable1((dumps(c.Name).." ["..dumps(c.key).."]"), c.key == self.config) then
+          local label = dumps(c.Name).." ["..dumps(c.key).."]"
+          if im.Selectable1(label.."##vehicleSelectorConfigNames"..dumps(self.id), c.key == self.config) then
             self.config = c.key
             self.configName = c.Name
-            self.configPath = "vehicles/"..self.model.."/"..c.key..".pc"
+            self.configPath = "vehicles/"..self.model.."/"..self.config..".pc"
             updateReason = "config"
           end
         end
@@ -268,7 +351,7 @@ function C:widget() -- displays the interface
     end
     im.PopItemWidth()
 
-    if not self.configs or self.customConfigPath then im.EndDisabled() end
+    if imDisabled then im.EndDisabled() end
     im.NextColumn()
   end
 
@@ -276,38 +359,72 @@ function C:widget() -- displays the interface
     im.Columns(1)
     im.Dummy(imDummy)
     im.Columns(2)
-    im.SetColumnWidth(0, firstColumnWidth)
+    im.SetColumnWidth(0, columnWidth)
 
-    for j, key in ipairs(paintNameKeys) do
-      im.Text("Paint "..j)
-      im.NextColumn()
+    local isHovered = false
+    self._hoveredIdx = self._hoveredIdx or 0
 
-      if not self.paints then im.BeginDisabled() end
-
-      local label = "(None)"
-      if self.paints then
-        label = (self[key] and self.paints[self[key]]) and self[key] or "(Default)"
-      end
-
-      im.PushItemWidth(im.GetContentRegionAvailWidth())
-      if im.BeginCombo("##vehicleSelectorPaints "..j..dumps(self.id), label) then
-        if im.Selectable1("(Default)", self[key] == nil) then
-          self[key] = nil
-          updateReason = key
+    for i, key in ipairs(paintNameKeys) do
+      if self.paintLayers and i <= self.paintLayers then
+        if self.paintLayers == 1 then
+          im.Text("Paint")
+        else
+          im.Text("Paint "..i)
         end
 
-        for _, paint in ipairs(self.paintKeys) do
-          if im.Selectable1(paint, self[key] == paint) then
-            self[key] = paint
+        if self.paints then
+          im.SameLine()
+          local currPaint = self.paints[self[key]] and self.paints[self[key]].baseColor
+          if i == self._hoveredIdx then currPaint = self._hoveredPaint end
+          im.ColorEdit4("##vehicleSelectorPaintPreview"..dumps(self.id).."_"..i, self:getPaintPtr(currPaint), im.flags(im.ColorEditFlags_NoPicker, im.ColorEditFlags_NoInputs))
+        end
+        im.NextColumn()
+
+        if not self.paints then im.BeginDisabled() end
+
+        local label = "(None)"
+        if self.paints then
+          label = self[key] or "(Default)"
+        end
+
+        im.PushItemWidth(im.GetContentRegionAvailWidth())
+        if im.BeginCombo("##vehicleSelectorPaints"..dumps(self.id).."_"..i, label) then
+          if im.Selectable1("(Default)##vehicleSelectorPaintNames"..dumps(self.id).."_"..i, self[key] == nil) then
+            self[key] = nil
             updateReason = key
           end
-        end
-        im.EndCombo()
-      end
-      im.PopItemWidth()
 
-      if not self.paints then im.EndDisabled() end
-      im.NextColumn()
+          if im.IsItemHovered() then
+            isHovered = true
+            self._hoveredIdx = i
+            self._hoveredPaint = defaultPaint
+          end
+
+          for _, paint in ipairs(self.paintKeys) do
+            if im.Selectable1(paint.."##vehicleSelectorPaintNames"..dumps(self.id).."_"..i, self[key] == paint) then
+              self[key] = paint
+              updateReason = key
+            end
+
+            if im.IsItemHovered() then
+              isHovered = true
+              self._hoveredIdx = i
+              self._hoveredPaint = self.paints[paint] and self.paints[paint].baseColor
+            end
+          end
+
+          im.EndCombo()
+        end
+        im.PopItemWidth()
+
+        if not self.paints then im.EndDisabled() end
+        im.NextColumn()
+      end
+    end
+
+    if not isHovered then
+      self._hoveredIdx = 0
+      self._hoveredPaint = nil
     end
   end
 
@@ -315,7 +432,7 @@ function C:widget() -- displays the interface
     im.Columns(1)
     im.Dummy(imDummy)
     im.Columns(2)
-    im.SetColumnWidth(0, firstColumnWidth)
+    im.SetColumnWidth(0, columnWidth)
 
     im.TextWrapped("Custom Config (Optional)")
     im.NextColumn()
@@ -327,7 +444,6 @@ function C:widget() -- displays the interface
     im.PushItemWidth(im.GetContentRegionAvailWidth() - 40)
     if editor.uiInputFile("##vehicleSelectorCustom"..dumps(self.id), self.customConfigPtr, nil, nil, {{"Part config files", ".pc"}}, im.InputTextFlags_EnterReturnsTrue) then
       local customConfigPath = ffi.string(self.customConfigPtr)
-      self.customConfigPtr = nil
 
       if customConfigPath == "" then
         self.customConfigPath = nil

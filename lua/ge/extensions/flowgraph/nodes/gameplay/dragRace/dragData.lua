@@ -19,6 +19,10 @@ C.pinSchema = {
 
   { dir = 'out', type = 'flow', name = 'started', description = 'The activity has started.', impulse = true },
   { dir = 'out', type = 'flow', name = 'completed', description = 'The activity has ended', impulse = true },
+
+
+  { dir = 'out', type = 'string', name = 'dragType', description = ''},
+  { dir = 'out', type = 'string', name = 'context', description = ''},
 }
 
 C.tags = {'gameplay', 'utils'}
@@ -40,6 +44,8 @@ function C:work()
 
   self.pinOut.started.value = self.data.isStarted
   self.pinOut.completed.value = self.data.isCompleted
+  self.pinOut.dragType.value = self.data.dragType
+  self.pinOut.context.value = self.data.context
 
 end
 

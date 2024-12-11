@@ -40,6 +40,8 @@ function C:work(args)
       endNode = self.path.pathnodes.objects[self.path.endNode]
     elseif self.path.config.closed and self.path.startNode and self.path.startNode ~= -1 and self.path.pathnodes.objects[self.path.startNode] then
       endNode = self.path.pathnodes.objects[self.path.startNode]
+    elseif self.path.endNode == -1 then
+      log("E","","No end node found! It should be explicitely marked in the race editor." .. dumps(self.id).."!")
     end
 
     self.pinOut.existing.value = false

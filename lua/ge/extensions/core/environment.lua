@@ -24,6 +24,8 @@ M.groundModels = {}
 M.loadedGroundModelFiles = {}
 
 local envObjectIdCache = {}
+local environmentChangesEnabled = true
+local updatingWholeState = false
 
 local gm_filename = 'art/groundmodels.json'
 local simSpeed = 1
@@ -116,6 +118,9 @@ local function setTimeOfDay(timeOfDay)
   local timeObj = getObject("TimeOfDay")
 
   if timeObj and timeOfDay.time then
+    if not updatingWholeState then extensions.hook('onEnvironmentChanged', shallowcopy(timeOfDay)) end
+    if not environmentChangesEnabled then return end
+
     timeObj.time = timeOfDay.time
     setColors(timeObj.time)
     timeObj.play = timeOfDay.play
@@ -142,22 +147,16 @@ local function getTimeOfDay()
   end
 end
 
-local function cycleTimeOfDay(controlLights)
+local function cycleTimeOfDay()
   local v = getTimeOfDay()
   if not v then return end
-
   local t = v.time
-  local lights = 2
   if t < 0.2 then
     t = 0.23
   elseif t >= 0.5 then
     t = 0.05
-    lights = 0
   else
     t = 0.5
-  end
-  if controlLights then
-    be:queueAllObjectLua('electrics.setLightsState('..lights..')')
   end
   v.time = t
   setTimeOfDay(v)
@@ -316,6 +315,9 @@ end
 local function setWindSpeed(windSpeed)
   local cloudObj = getObject("CloudLayer")
   if cloudObj and windSpeed then
+    if not updatingWholeState then extensions.hook('onEnvironmentChanged', {windSpeed = windSpeed}) end
+    if not environmentChangesEnabled then return end
+
     cloudObj.windSpeed = windSpeed
     cloudObj:postApply()
   end
@@ -333,6 +335,9 @@ end
 local function setCloudCover(cloud)
   local cloudObj = getObject("CloudLayer")
   if cloudObj and cloud then
+    if not updatingWholeState then extensions.hook('onEnvironmentChanged', {cloudCover = cloud}) end
+    if not environmentChangesEnabled then return end
+
     cloudObj.coverage = cloud
     cloudObj:postApply()
   end
@@ -430,6 +435,8 @@ end
 local function setFogDensity(fog)
   local fogObj = getObject("LevelInfo")
   if fogObj and fog then
+    if not updatingWholeState then extensions.hook('onEnvironmentChanged', {fogDensity = fog}) end
+    if not environmentChangesEnabled then return end
     fogObj.fogDensity = fog
     fogObj:postApply()
   end
@@ -480,6 +487,9 @@ end
 
 local function setGravity(grav)
   if not grav then return end
+  if not updatingWholeState then extensions.hook('onEnvironmentChanged', {gravity = grav}) end
+  if not environmentChangesEnabled then return end
+
   -- important: let the level known about the change
   -- otherwise the spawning of objects will have the wrong gravity
   if scenetree.theLevelInfo then
@@ -553,7 +563,10 @@ end
 
 local function setState(state)
   if state then
+    extensions.hook('onEnvironmentChanged', state)
+    if not environmentChangesEnabled then return end
     local timeObj = {time = state.time, play = state.play, dayScale = state.dayScale, nightScale = state.nightScale, azimuthOverride = state.azimuthOverride}
+    updatingWholeState = true
     setTimeOfDay(timeObj)
     setWindSpeed(state.windSpeed)
     setCloudCover(state.cloudCover)
@@ -562,6 +575,7 @@ local function setState(state)
     end
     setPrecipitation(state.numOfDrops)
     setGravity(state.gravity)
+    updatingWholeState = false
   end
 end
 
@@ -733,11 +747,21 @@ local function reset()
     tempCurve = levelInfo:getTemperatureCurveC()
   end
   guihooks.trigger("EnvironmentStateUpdate", getState())
+  guihooks.trigger("EnvironmentCanUpdateChanged", environmentChangesEnabled)
   reloadGroundModels()
 end
 
 local function reset_init()
   setState(init_env)
+end
+
+local function enableChanges(enabled)
+  environmentChangesEnabled = enabled
+  guihooks.trigger("EnvironmentCanUpdateChanged", environmentChangesEnabled)
+end
+
+local function canChange()
+  return environmentChangesEnabled
 end
 
 local function onClientPreStartMission(levelPath)
@@ -783,6 +807,7 @@ end
 
 local function sendState()
   guihooks.trigger("EnvironmentStateUpdate", getState())
+  guihooks.trigger("EnvironmentCanUpdateChanged", environmentChangesEnabled)
 end
 
 local function invertLerp(from,to,value)
@@ -915,6 +940,8 @@ M.getGravity = getGravity
 M.setPrecipitation = setPrecipitation
 M.getPrecipitation = getPrecipitation
 -- Other
+M.enableChanges = enableChanges
+M.canChange = canChange
 M.getTemperatureK = getTemperatureK
 M.reloadGroundModels = reloadGroundModels
 M.onClientPreStartMission = onClientPreStartMission

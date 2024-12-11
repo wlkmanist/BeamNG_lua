@@ -216,7 +216,7 @@ local function getRewardsWithBreakdown(taskData)
   log("I","",string.format("Time Taken: %0.1f seconds (expected: %0.1fs)", timeTaken, expectedTime))
 
 
-  local brokenPartsThreshold = career_modules_insurance.getBrokenPartsThreshold()
+  local brokenPartsThreshold = career_modules_valueCalculator.getBrokenPartsThreshold()
 
   local origMoney = originalRewards.money
   local reputationRewards = {}
@@ -307,7 +307,7 @@ local function getVehicleDataWithRewardsSummary()
               core_vehicleBridge.requestValue(veh, function(res)
                 local partConditions = res.result
                 if tableSize(partConditions) > 0 then
-                  taskData.brokenPartsNumber = career_modules_insurance.getNumberOfBrokenParts(partConditions)
+                  taskData.brokenPartsNumber = career_modules_valueCalculator.getNumberOfBrokenParts(partConditions)
                   taskData.partsNumber = tableSize(partConditions)
                 end
                 step.brokenPartsRequested = true
@@ -375,7 +375,7 @@ M.finishTasks = function(offerIds)
                 core_vehicleBridge.requestValue(veh, function(res)
                   local partConditions = res.result
                   if tableSize(partConditions) > 0 then
-                    taskData.brokenPartsNumber = career_modules_insurance.getNumberOfBrokenParts(partConditions)
+                    taskData.brokenPartsNumber = career_modules_valueCalculator.getNumberOfBrokenParts(partConditions)
                     taskData.partsNumber = tableSize(partConditions)
                   end
                   step.brokenPartsRequested = true

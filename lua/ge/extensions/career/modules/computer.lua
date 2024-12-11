@@ -14,12 +14,12 @@ local computerId
 local computerFacilityName
 local menuData = {}
 
-local function openMenu(computerFacility)
+local function openMenu(computerFacility, resetActiveVehicleIndex)
   computerFunctions = {general = {}, vehicleSpecific = {}}
   computerId = computerFacility.id
   computerFacilityName = computerFacility.name
 
-  menuData = {vehiclesInGarage = {}}
+  menuData = {vehiclesInGarage = {}, resetActiveVehicleIndex = resetActiveVehicleIndex}
   local inventoryIds = career_modules_inventory.getInventoryIdsInClosestGarage()
 
   for _, inventoryId in ipairs(inventoryIds) do
@@ -80,6 +80,7 @@ local function getComputerUIData()
   data.computerFunctions = computerFunctionsForUI
   data.vehicles = vehiclesForUI
   data.facilityName = computerFacilityName
+  data.resetActiveVehicleIndex = menuData.resetActiveVehicleIndex
   return data
 end
 

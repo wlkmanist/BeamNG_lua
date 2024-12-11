@@ -9,6 +9,7 @@ local normalActionsCache = {}                     -- normal actions, [true] for 
 
 local M = {}
 M.dependencies = { "core_input_categories", "core_input_deprecatedActions", "tech_license" }
+M.menuIndependentPrefix = "MenuIndependent_"
 
 -- mangle the action name, needed to prevent collisions with other vehicles' action names
 local function nameToUniqueName(actionName, vehicleName)
@@ -155,6 +156,7 @@ local function actionToCommands(action)
   if c["cat"]      =='menu' then actionMap = "Menu" end
   if c["ctx"]      =='vlua' then actionMap = "VehicleCommon" end
   if c["actionMap"]  ~= nil then actionMap = c["actionMap"]; end
+  if actionMap  == "MenuIndependent" then actionMap = M.menuIndependentPrefix..action end
   if c["vehicle"]    ~= nil then actionMap = "VehicleSpecific" end
   if c["onChange"]   ~= nil then onChange = c["onChange"]; actsOnChange = true; end
   if c["onRelative"] ~= nil then onChange = c["onRelative"]; actsOnChange = true; isRelative = true; end

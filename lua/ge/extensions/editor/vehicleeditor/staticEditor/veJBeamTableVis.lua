@@ -14,6 +14,8 @@ local plotParams = {
 local plotHelperUtil = require('/lua/ge/extensions/editor/util/plotHelperUtil')(plotParams)
 local wndName = "JBeam Table Visualizer"
 
+local windowOpen = im.BoolPtr(false)
+
 local jbeamFileName = nil
 local jbeamFilePath = nil
 local jbeamData = nil
@@ -131,9 +133,11 @@ local function loadJBeamFile(fileDialogData)
   loadJBeamFileInMemory(jbeamData)
 end
 
-local function onEditorGui(dt)
+local function onUpdate(dt)
   if not vEditor.vehicle then return end
-  if editor.beginWindow(wndName, wndName) then
+  if windowOpen[0] ~= true then return end
+
+  if im.Begin(wndName, windowOpen) then
     if im.Button("Open JBeam File...") then
       -- Opens a file dialog to choose JBeam file to load
       editor_fileDialog.openFile(function(data)
@@ -170,20 +174,28 @@ local function onEditorGui(dt)
     local size = im.GetContentRegionAvail()
     plotHelperUtil:draw(size.x-10, size.y-10, dt)
   end
-  editor.endWindow()
+  im.End()
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(700,400))
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
 end
 
 M.open = open
 
-M.onEditorGui = onEditorGui
-M.onEditorInitialized = onEditorInitialized
+M.onUpdate = onUpdate
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

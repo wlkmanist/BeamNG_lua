@@ -41,7 +41,30 @@ local compTime3rdParty = im.FloatPtr(0.0005)                                    
 local pingTime = im.FloatPtr(0.00001)                                                               -- The expected udp socket ping time.
 local sIP, rIP = im.ArrayChar(16, "127.0.0.1"), im.ArrayChar(16, "127.0.0.1")                       -- The IP addresses for the udp communication (3rd party computer).
 local sPort, rPort = im.IntPtr(64890), im.IntPtr(64891)                                             -- The port numbers for the udp communication.
-local isKinematics, isDriver, isWheels = im.BoolPtr(true), im.BoolPtr(true), im.BoolPtr(true)       -- Flags which indicate which groups to include in avail. signals list.
+
+
+
+-- ImGui Pointer Variables
+local isKinematics, isDriver, isWheels, isVSL, isCosim = im.BoolPtr(true), im.BoolPtr(true), im.BoolPtr(true), im.BoolPtr(false), im.BoolPtr(false)
+-- These are pointers (`im.BoolPtr`) that ImGui uses to modify the values by reference, useful for checkbox or UI elements.
+
+
+-- TODO: Add frequency option
+-- Logging Frequency
+-- local loggingFrequency = im.IntPtr(5)  -- Frequency for logging, set as an integer pointer
+
+-- Separate Flags for Tracking State
+local isVSLEnabled = false  -- Boolean flag to manage the state of VSL (Logging)
+local isCosimEnabled = false  -- Boolean flag to manage the state of Co-Simulation
+
+-- Enable/Disable Flags
+local enableVSL = false  -- Boolean flag to determine whether logging is enabled or disabled
+local enableCosim = false  -- Boolean flag to determine whether co-simulation is enabled or disabled
+
+-- Previous State Tracking
+local prevVSLState = false  -- Boolean flag to store the previous state of VSL for comparison
+
+
 local isElectrics, isPowertrain, isSensors = im.BoolPtr(true), im.BoolPtr(true), im.BoolPtr(true)
 local isPose = im.BoolPtr(false)                                                                    -- A flag which indicates whether to store the vehicle pose, or not.
 
@@ -1435,7 +1458,9 @@ local function execute()
         sensorMap = sensorMap,
         time3rdParty = time3rdParty, pingTime = roundTripTime,
         udpSendPort = udpSendPort, udpReceivePort = udpReceivePort,
-        udpSendIP = udpSendIP, udpReceiveIP = udpReceiveIP }
+        udpSendIP = udpSendIP, udpReceiveIP = udpReceiveIP,
+        enableVSL=enableVSL,
+        enableCosim=enableCosim}
       be:queueObjectLua(vid, string.format("controller.loadControllerExternal('tech/cosimulationCoupling', 'cosimulationCoupling', %s)", serialize(lpack.encode({cData}))))
 
     end,
@@ -1445,29 +1470,38 @@ local function execute()
 end
 
 -- Stops executing the coupling.
+local function triggerStartLogging()
+  be:queueObjectLua(vehicles[selectedVehicleIdx].vid, "controller.getController('cosimulationCoupling').StartLogging()")
+-- Stops executing the coupling.
+end
 local function stopExecute()
   be:queueObjectLua(vehicles[selectedVehicleIdx].vid, "controller.getController('cosimulationCoupling').stop()")
   be:queueObjectLua(vehicles[selectedVehicleIdx].vid, "controller.unloadControllerExternal('cosimulationCoupling')")
   isExecuting = false
 end
 
--- Manages the main tool window.
+
+
+
+-- Manage the main tool window.
 local function manageMainToolWindow()
   if editor.beginWindow(toolWinName, "Scene Vehicles###1", im.WindowFlags_NoTitleBar) then
     im.Separator()
-    if im.BeginListBox("", im.ImVec2(385, 180), im.WindowFlags_ChildWindow) then
+    if im.BeginListBox("", im.ImVec2(530, 180), im.WindowFlags_ChildWindow) then
       local numVehicles = #vehicles
-      selectedVehicleIdx = max(1, min(numVehicles, selectedVehicleIdx))
+      selectedVehicleIdx = math.max(1, math.min(numVehicles, selectedVehicleIdx))
+
       for i = 1, numVehicles do
         local veh = vehicles[i]
-        im.Columns(7, "sceneVehiclesListBoxColumns", false)
-        im.SetColumnWidth(0, 175)
+        im.Columns(8, "sceneVehiclesListBoxColumns", false) -- Adjusted number of columns to 8 to include dropdown.
+        im.SetColumnWidth(0, 200)
         im.SetColumnWidth(1, 32)
         im.SetColumnWidth(2, 32)
         im.SetColumnWidth(3, 32)
         im.SetColumnWidth(4, 32)
         im.SetColumnWidth(5, 32)
         im.SetColumnWidth(6, 32)
+        im.SetColumnWidth(7, 110) -- Adjusted for the dropdown.
 
         -- Handle the individual row selection.
         local vName = tostring(veh.vid .. ": " .. veh.name .. " - " .. veh.jBeam)
@@ -1478,25 +1512,22 @@ local function manageMainToolWindow()
             return
           end
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Remove Vehicle' button.
-        -- [This is only available if there is at least one vehicle in the scene].
         if #vehicles > 1 then
           if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), redB, nil, nil, 'removeVehicleButton') then
-            local veh = vehicles[i]
-            veh.veh:delete()
+            local vehToDelete = vehicles[i]
+            vehToDelete.veh:delete()
             if not vehicles[selectedVehicleIdx] then
               table.clear(signals)
               return
             end
-            selectedVehicleIdx = min(numVehicles, selectedVehicleIdx)
+            selectedVehicleIdx = math.min(numVehicles, selectedVehicleIdx)
             return
           end
           im.tooltip('Remove this vehicle from scene.')
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Go To Vehicle' button.
@@ -1510,7 +1541,6 @@ local function manageMainToolWindow()
           end
         end
         im.tooltip('Go to the selected vehicle.')
-        im.SameLine()
         im.NextColumn()
 
         -- 'Open Signals Window' button.
@@ -1518,9 +1548,9 @@ local function manageMainToolWindow()
         if isSignalsWinOpen and i == selectedVehicleIdx then btnCol = blueD end
         if editor.uiIconImageButton(editor.icons.code, im.ImVec2(19, 19), btnCol, nil, nil, 'openSignalsWinButton') then
           if i == selectedVehicleIdx or not isSignalsWinOpen then
-            isSignalsWinOpen = not isSignalsWinOpen                                                 -- Only toggle window open/closed if this is the same vehicle.
+            isSignalsWinOpen = not isSignalsWinOpen
           end
-          if isSignalsWinOpen then                                                                  -- If window is open and this is a different vehicle, just update the window.
+          if isSignalsWinOpen then
             editor.showWindow(signalsWinName)
           else
             editor.hideWindow(signalsWinName)
@@ -1548,29 +1578,71 @@ local function manageMainToolWindow()
           end
           im.tooltip('Start/stop coupling with 3rd party.')
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Save Signals Configuration' button.
-        -- [Only available for the selected vehicle].
         if selectedVehicleIdx == i then
           if editor.uiIconImageButton(editor.icons.floppyDisk, im.ImVec2(19, 19), nil, nil, nil, 'saveSignalsConfig') then
             saveConfiguration(vehicles[i])
           end
           im.tooltip('Save the current signals configuration, for this vehicle, to disk.')
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Load Signals Configuration' button.
-        -- [Only available for the selected vehicle].
         if selectedVehicleIdx == i then
           if editor.uiIconImageButton(editor.icons.folder, im.ImVec2(19, 19), dullWhite, nil, nil, 'loadSignalsConfig') then
             loadConfiguration(vehicles[i])
           end
           im.tooltip('Load a signals configuration, for this vehicle, from disk.')
         end
-        im.SameLine()
+        im.NextColumn()
+
+
+        -- Custom Mode Dropdown Implementation
+        if selectedVehicleIdx == i then
+          local modeChanged = false
+          local modes = { "VSL", "VSL+CoSim", "CoSim" }
+          local currentMode = im.IntPtr(0) -- Default to VSL (index 0)
+
+          if enableCosim and enableVSL then
+              currentMode = im.IntPtr(1) -- VSL+CoSim
+          elseif enableCosim and not enableVSL then
+              currentMode = im.IntPtr(2) -- CoSim
+          end
+
+          im.SetNextItemWidth(100) -- Set width for dropdown
+          if im.BeginCombo("##ModeDropdown", modes[currentMode[0] + 1]) then
+              for j, mode in ipairs(modes) do
+                  if im.Button(mode) then
+                      currentMode[0] = j - 1
+                      modeChanged = true
+                      im.CloseCurrentPopup()
+                      break
+                  end
+              end
+              im.EndCombo()
+          end
+
+          if modeChanged then
+              if currentMode[0] == 0 then
+                  enableCosim = false
+                  enableVSL = true
+                  log('I', logTag, "Mode switched to VSL: Logging enabled without Co-Simulation.")
+              elseif currentMode[0] == 1 then
+                  enableCosim = true
+                  enableVSL = true
+                  log('I', logTag, "Mode switched to VSL+CoSim: Logging and Co-Simulation enabled.")
+              elseif currentMode[0] == 2 then
+                  enableCosim = true
+                  enableVSL = false
+                  log('I', logTag, "Mode switched to CoSim: Co-Simulation enabled without Logging.")
+              end
+          end
+
+          im.tooltip("Select the mode: VSL (Logging only), VSL+CoSim (Logging and Co-Simulation), or CoSim (Co-Simulation only).")
+        end
+
         im.NextColumn()
 
         im.Separator()
@@ -1582,7 +1654,10 @@ local function manageMainToolWindow()
   editor.endWindow()
 end
 
--- Manages the vehicle signals window.
+
+
+
+
 local function manageVehicleSignalsWindow()
   if isSignalsWinOpen and vehicles[selectedVehicleIdx] then
     if editor.beginWindow(signalsWinName, vehicles[selectedVehicleIdx].name .. " [available signals]###2") then
@@ -1865,6 +1940,18 @@ local function manageVehicleSignalsWindow()
       im.tooltip('Set the port number on the 3rd party computer.')
       im.PopItemWidth()
       rPort = im.IntPtr(max(1025, min(65536, rPort[0])))
+
+      -- im.Separator()
+      -- TODO: Add frequency option
+      -- Logging frequency input box with text label before it.
+      -- im.PushItemWidth(85)  -- Set input box width to fit 2-3 digits
+      -- im.Text("Logging frequency (sec):")
+      -- im.SameLine()  -- Place the input box right after the label
+      -- im.InputInt("", loggingFrequency, 1, 10)  -- Leave the label in InputInt blank to avoid duplicate text
+      -- loggingFrequency[0] = math.max(1, loggingFrequency[0])  -- Ensure it's an integer with a minimum value of 1
+      -- im.tooltip('The signal logging frequency in seconds.')
+
+      -- im.PopItemWidth()
 
     else
       editor.hideWindow(signalsWinName) -- Handle window close.

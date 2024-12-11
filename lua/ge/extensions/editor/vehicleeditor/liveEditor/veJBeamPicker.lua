@@ -8,10 +8,11 @@ local imguiUtils = require('ui/imguiUtils')
 local im = ui_imgui
 
 local wndName = "JBeam Picker"
-local wndOpen = false
 local mainWndFlags = bit.bor(im.WindowFlags_MenuBar, im.WindowFlags_NoBringToFrontOnFocus)
 
 M.menuEntry = "JBeam Picker"
+
+local windowOpen = im.BoolPtr(false)
 
 local inputSuggestWndName = "inputSuggestionPopup"
 
@@ -721,7 +722,7 @@ local function renderPickedBeamsTree()
 end
 
 local function onVehicleEditorRenderJBeams(dtReal, dtSim, dtRaw)
-  if not wndOpen or not vEditor.vehicle or not vEditor.vdata then return end
+  if not windowOpen[0] or not vEditor.vehicle or not vEditor.vdata then return end
 
   -- Render picked stuff
   renderPickedJBeamObjs()
@@ -733,10 +734,10 @@ local function onVehicleEditorRenderJBeams(dtReal, dtSim, dtRaw)
   end
 end
 
-local function onEditorGui(dt)
-  if editor.beginWindow(wndName, wndName, mainWndFlags) then
-    wndOpen = true
+local function onUpdate(dt)
+  if windowOpen[0] ~= true then return end
 
+  if im.Begin(wndName, windowOpen, mainWndFlags) then
     renderMenuBar()
     im.Text("Pick with Node/Beam Debug Modes (Ctrl + M/Ctrl + B)")
     im.Spacing()
@@ -767,33 +768,16 @@ local function onEditorGui(dt)
     if be:getEnabled() then
       plotOffset = plotOffset + 1 >= plotLen and 0 or plotOffset + 1
     end
-
-  else
-    wndOpen = false
   end
 
-  editor.endWindow()
+  im.End()
 end
 
 local function open()
-  editor.showWindow(wndName)
-end
-
-local function onEditorToolWindowShow(window)
-  if window == wndName then
-    wndOpen = true
-  end
-end
-
-local function onEditorToolWindowHide(window)
-  if window == wndName then
-    wndOpen = false
-  end
+  windowOpen[0] = true
 end
 
 local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(200,200))
-
   -- Populate beamTypesRendering table
   for k,v in pairs(beamTypesNames) do
     beamTypesRendering[k] = im.BoolPtr(true)
@@ -801,13 +785,24 @@ local function onEditorInitialized()
   end
 end
 
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
+end
+
 M.requestDrawnNodesCallback = requestDrawnNodesCallback
 M.requestDrawnBeamsCallback = requestDrawnBeamsCallback
 M.onVehicleEditorRenderJBeams = onVehicleEditorRenderJBeams
-M.onEditorGui = onEditorGui
+M.onUpdate = onUpdate
 M.open = open
-M.onEditorToolWindowShow = onEditorToolWindowShow
-M.onEditorToolWindowHide = onEditorToolWindowHide
 M.onEditorInitialized = onEditorInitialized
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

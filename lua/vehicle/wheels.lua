@@ -208,7 +208,7 @@ local function updateThermalsGFX(dt)
       wd.isBrakeMolten = wd.brakeCoreTemperature > wd.brakeMeltingPoint or wd.isBrakeMolten
 
       local thermalEfficiency = wd.isBrakeMolten and 0 or calculateThermalEfficiency(wd.brakeSurfaceTemperature, wd.thermalEfficiencyConfig)
-      local slopeSwitchBit = wd.isBrakeMolten and 0 or max(fsign(calculateThermalEfficiency(wd.brakeSurfaceTemperature + 1, wd.thermalEfficiencyConfig) - thermalEfficiency), 0)
+      local slopeSwitchBit = wd.isBrakeMolten and 0 or max(sign(calculateThermalEfficiency(wd.brakeSurfaceTemperature + 1, wd.thermalEfficiencyConfig) - thermalEfficiency), 0)
 
       local relativeBrakingCoef = max(abs(wd.coreData.brakeTorqueApplied) - wd.frictionTorque, 0) * wd.invRelativeBrakingTorqueCoef
       local glazingInput = (slopeSwitchBit <= 0 and thermalEfficiency < 0.9) and ((1 - thermalEfficiency) * wd.padGlazingSusceptibility) or (-0.4 * relativeBrakingCoef * clamp((abs(wd.angularVelocityBrakeCouple) - 0.5), 0, 1))
@@ -431,7 +431,7 @@ local function updateVirtualAirspeed(dt)
   end
   wheelSpeedSum = wheelSpeedSum * virtualAirspeedMap.wheelCoef
 
-  local accSign = wheelspeed > 2 and fsign(electrics.values.avgWheelAV) or lastAccSign
+  local accSign = wheelspeed > 2 and sign(electrics.values.avgWheelAV) or lastAccSign
   lastAccSign = accSign
 
   local accSpeed = (lastVirtualAirspeed - ffiSensors.sensorY * dt * accSign) * virtualAirspeedMap.acceleration

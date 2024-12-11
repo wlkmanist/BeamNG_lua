@@ -19,22 +19,27 @@ function C:init(data)
   self:reset()
 end
 
+function C:accomplish()
+  self.activeData.totalDriftAngle = 0
+  self.activeData.currCooldown = self.data.zoneData.cooldown
+
+  extensions.hook("onAnyStuntZoneAccomplished", {
+    stuntZoneId = self.data.id,
+    subHookName = "onDonutDriftAccomplished",
+    subHookData =
+    {
+      zoneData = {points = self.data.zoneData.score}
+    }
+  })
+end
+
 function C:detectStunt()
   self.activeData.totalDriftAngle = self.activeData.totalDriftAngle + gameplay_drift_drift.getAngleDiff()
-  if gameplay_drift_general.getDebug() then
+  if gameplay_drift_general.getGeneralDebug() then
     debugDrawer:drawTextAdvanced(self.data.zoneData.pos, self.activeData.totalDriftAngle, ColorF(1,1,1,1), true, false, ColorI(0,0,0,255))
   end
   if self.activeData.totalDriftAngle >= 360 then
-    self.activeData.totalDriftAngle = 0
-    self.activeData.currCooldown = self.data.zoneData.cooldown
-
-    return {
-      hook = "onDonutDriftDetected",
-      hookData =
-      {
-        zoneData = {points = self.data.zoneData.score}
-      }
-    }
+    self:accomplish()
   end
 end
 
@@ -58,6 +63,8 @@ local lastPos = vec3()
 local pos = vec3()
 local color
 function C:sendDecals()
+  if not gameplay_drift_stuntZones.getDrawLines() then return end
+
   filledPerc = self.activeData.totalDriftAngle / 360 * 100
   cooldownPerc = 100 - self.activeData.currCooldown / self.data.zoneData.cooldown * 100
 
@@ -76,12 +83,10 @@ function C:sendDecals()
     pos = vec3(x,y,self.data.zoneData.pos.z or 0)
     color = gameplay_drift_stuntZones.getDecalColor(cooldownPerc, filledPerc, t)
 
-    if gameplay_drift_stuntZones.getDrawLines() then
-      if i > 0 then
-        debugDrawer:drawLineInstance(pos, lastPos, gameplay_drift_stuntZones.getLineThickness(pos), color)
-      end
-      lastPos:set(pos)
+    if i > 0 then
+      debugDrawer:drawLineInstance(pos, lastPos, gameplay_drift_stuntZones.getLineThickness(pos), color)
     end
+    lastPos:set(pos)
 
   end
 end

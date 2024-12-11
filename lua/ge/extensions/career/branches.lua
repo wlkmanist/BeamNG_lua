@@ -64,6 +64,8 @@ local function sanitizeBranch(branch, filePath)
     end
   end
 
+  branch.hasLevels = #branch.levels > 1
+
   --branch/skill itself unlock
   branch.unlocked = true
   if branch.startLocked then
@@ -166,6 +168,14 @@ local function getBranchXP(id)
   return attValue or -1
 end
 
+local function getXPNeededForLevel(id, level)
+  local branch = getBranchById(id)
+  if branch.id == 'missing' then return nil end
+  local levels = branch.levels or {}
+  if not levels[level] then return -1 end
+  return levels[level].requiredValue
+end
+
 local function getBranchIcon(id)
   local branch = getBranchById(id)
   if branch.id == 'missing' then return nil end
@@ -259,6 +269,7 @@ M.getBranchById = getBranchById
 M.getSortedBranches = getSortedBranches
 M.getBranchLevel = getBranchLevel
 M.getBranchXP = getBranchXP
+M.getXPNeededForLevel = getXPNeededForLevel
 M.getBranchIcon = getBranchIcon
 M.calcBranchLevelFromValue = calcBranchLevelFromValue
 

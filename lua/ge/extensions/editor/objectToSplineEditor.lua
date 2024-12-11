@@ -72,15 +72,14 @@ local function createObjects(objId, points, params, presetIds) -- actually creat
   local xyOffset = obj:getObjectBox():getCenter():z0()
   xyOffset:set(xyOffset:componentMul(obj:getScale()))
 
-  local memento = SimObjectMemento()
-  memento:save(obj, 4) -- original object
+  local memento = editor.saveSimObjectMemento(obj)
   local grp = newGroup or scenetree.MissionGroup
 
   for _, v in ipairs(points) do
     if presetIds and presetIds[i] then
       SimObject.setForcedId(presetIds[i])
     end
-    local obj = memento:restore()
+    local obj = editor.restoreSimObjectMemento(memento)
     grp:addObject(obj)
     table.insert(newIds, obj:getId())
 

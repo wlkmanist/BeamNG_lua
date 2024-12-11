@@ -38,7 +38,7 @@ local displayPreview = im.BoolPtr(true)
 local previewWindowSize
 
 local drawDistance = 600 -- only draw in 200 meter radius
-local windowAspectRatio
+local windowAspectRatio = 1
 
 local hoveredMarker
 local hoveredPath

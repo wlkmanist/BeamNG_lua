@@ -4,7 +4,6 @@
 
 require("utils")
 local json = require("json")
-local imgui = ui_imgui
 local M = {}
 M.dependencies = { "core_input_actions", "core_input_categories", "core_multiseat", "tech_license" }
 M.isMenuActive = false
@@ -132,6 +131,8 @@ local function dumpbinding(binding)
   return dumps(cleanBindingDefaults(deepcopy(binding))):gsub("\n", " "):gsub(" +", " ")
 end
 
+local menuActionMapNames = {}
+
 local function sendBindingsToGE(devname, bindings, player)
   -- upload the provided bindings data into torque3d, associated with an specific device name
   if bindings == nil then
@@ -156,11 +157,14 @@ local function sendBindingsToGE(devname, bindings, player)
 
     b = fillNormalizeBindingDefaults(b)
 
-    local actionMapName = actionMap.."ActionMap"
-    local am = scenetree.findObject(actionMapName)
+    actionMap = actionMap.."ActionMap"
+    local isMenuAction = string.startswith(actionMap, core_input_actions.menuIndependentPrefix)
+    if isMenuAction then menuActionMapNames[actionMap] = true end
+    local am = scenetree.findObject(actionMap)
     if not am then
-      am = ActionMap(actionMapName)
-      --log('D', 'bindings', "Registered new action map: "..actionMapName)
+      am = ActionMap(actionMap)
+      if isMenuAction then am:push() end
+      --log('D', 'bindings', "Registered new action map: "..actionMap)
     end
     am:bind(devname, b.action, b.control, isCentered, b.deadzoneResting, b.deadzoneEnd, b.linearity, b.angle, b.lockType, b.isInverted, b.isForceEnabled, b.isForceInverted, b.useLogitechSDK, b.logitechVibrotactileCoef, b.logitechVibrotactileFreqMax, b.ffb.updateType, jsonEncode(b.ffb), actsOnChange, onChange, actsOnDown, onDown, actsOnUp, onUp, b.filterType, isRelative, player, ctx)
     count = count + 1
@@ -703,16 +707,13 @@ local function notifyGE(reason)
   end
 
 
+  table.clear(menuActionMapNames)
   for _,data in pairs(M.bindings) do
     sendBindingsToGE(data.devname, data.contents.bindings, M.assignedPlayers[data.devname])
   end
 
   -- uncomment for creating a nice file to debug things
   --jsonWriteFile('current_bindings.json', M.bindings, true)
-
-  if imgui then
-    imgui.readGlobalActions()
-  end
 end
 local function getFFBConfigForAction(veh, action)
   local FFBID = veh:getFFBID(action) -- will automatically return -1 if no player is seated there with an ffb input controller
@@ -909,14 +910,38 @@ local function onVehicleSpawned(vehId, veh)
   M.bindings = getAllBindings(M.devices, M.assignedPlayers, newId)
 end
 
+-- you can call either: setMenuActionEnabled(true, "menu_item_up")
+-- or:                  setMenuActionEnabled(true, "MenuIndependent_menu_item_upActionMap")
+local function setMenuActionEnabled(enabled, actionName, actionMapName)
+  local prefix = core_input_actions.menuIndependentPrefix
+  actionMapName = actionMapName or prefix..actionName.."ActionMap"
+  local isMenuIndependent = string.startswith(actionMapName, prefix)
+  local isMenuActionMap = isMenuIndependent or (actionMapName == "MenuActionMap")
+  if not isMenuActionMap then
+    log("E", "", string.format("Failed to run setMenuActionEnabled(%q, %q, %q): the action map name '%q' isn't related to menus", enabled, actionName, actionMapName, actionMapName, prefix))
+    return
+  end
+  local isMenuIndependentValid = not isMenuIndependent or (isMenuIndependent and (menuActionMapNames[actionMapName] ~= nil))
+  if not isMenuIndependentValid then
+    log("E", "", string.format("Failed to run setMenuActionEnabled(%q, %q, %q): the %q action map name '%q' isn't recognized", enabled, actionName, actionMapName, prefix, actionMapName))
+    return
+  end
+  local am = scenetree[actionMapName]
+  if not am then
+    log("E", "", string.format("Failed to run setMenuActionEnabled(%q, %q, %q): the action map '%q' does not exist", enabled, actionName, actionMapName, actionMapName))
+    return
+  end
+  am:setEnabled(enabled)
+end
+
 local function setMenuActionMapEnabled(enabled)
   if M.isMenuActive == enabled then return end
-  if scenetree.MenuActionMap then scenetree.MenuActionMap:setEnabled(enabled)
-  else log("E", "", "Unable to setMenuActionMapEnabled:setEnabled("..dumps(enabled)..")") end
-  if scenetree._UINavActionMap then scenetree._UINavActionMap:setEnabled(enabled)
-  else log("E", "", "Unable to _UINavActionMap:setEnabled("..dumps(enabled)..")") end
+  setMenuActionEnabled(enabled, nil, "MenuActionMap")
+  for menuActionMapName,_ in pairs(menuActionMapNames) do
+    setMenuActionEnabled(enabled, nil, menuActionMapName)
+  end
   M.isMenuActive = enabled
-  guihooks.trigger('UINavMapEnabled', enabled)
+  guihooks.trigger('MenuActionMapEnabled', enabled)
 end
 
 local function getAssignedPlayers()
@@ -1000,6 +1025,7 @@ M.saveBindingsToDisk = saveBindingsToDisk
 M.notifyUI = notifyUI
 M.menuActive = deprecatedMenuActive
 M.setMenuActionMapEnabled = setMenuActionMapEnabled
+M.setMenuActionEnabled = setMenuActionEnabled
 M.getAssignedPlayers= getAssignedPlayers
 M.onFileChanged = onFileChanged
 M.onDeviceChanged = onDeviceChanged

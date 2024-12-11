@@ -4,9 +4,12 @@
 
 local M = {}
 
+local wndName = "TCS Debug"
 M.menuEntry = "TCS" -- what the menu item will be
 
 local im = extensions.ui_imgui
+
+local windowOpen = im.BoolPtr(false)
 
 local throttleFactors = {}
 local allWheelSlips = {}
@@ -29,9 +32,11 @@ local function getGraphColor(colorTable)
   return im.ImColorByRGB(colorTable[1], colorTable[2], colorTable[3], colorTable[4])
 end
 
-local function onEditorGui(dt)
-if not vEditor.vehicle then return end
-  if editor.beginWindow("TCS Debug", "TCS Debug") then
+local function onUpdate(dt)
+  if windowOpen[0] ~= true then return end
+
+  if not vEditor or not vEditor.vehicle then return end
+  if im.Begin(wndName, windowOpen) then
     vEditor.vehicle:queueLuaCommand([[
       local escControllers = controller.getControllersByType("esc")
       local tcsData = (#escControllers >= 1) and escControllers[1].debugData.tcs or nil
@@ -189,13 +194,13 @@ if not vEditor.vehicle then return end
     end
   end
 
-  editor.endWindow()
+  im.End()
 end
 
 -- helper function to open the window
-local function open()
-  editor.showWindow("TCS Debug")
-end
+  local function open()
+    windowOpen[0] = true
+  end
 
 -- called when the extension is loaded (might be invisible still)
 local function onExtensionLoaded()
@@ -208,18 +213,25 @@ end
 local function onExtensionUnloaded()
 end
 
-local function onEditorInitialized()
-  editor.registerWindow("TCS Debug", defaultWindowSize)
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
 end
 
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
+end
 
 -- public interface
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
-M.onEditorInitialized = onEditorInitialized
 
-M.onEditorGui = onEditorGui
+M.onUpdate = onUpdate
 
 M.open = open
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

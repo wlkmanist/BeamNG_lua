@@ -10,7 +10,9 @@ local ORTHOGRAPHIC_VIEWS = {
   topfront = vec3(180, -90, 0),
   topleft = vec3(-90, -90, 0),
   topright = vec3(90, -90, 0),
-  topback = vec3(0, -90, 0)
+  topback = vec3(0, -90, 0),
+
+  default = vec3(145, -5, 0)
 }
 
 local orientationCoordinates = {
@@ -121,6 +123,17 @@ local function setCameraRotationInJob(job)
   core_camera.resetCamera(0)
 end
 
+local function setToOrbitCameraJob(job)
+  commands.setGameCamera()
+  core_camera.setByName(0, "orbit", false)
+
+  local resetCam = job.args and job.args[1] or false
+  if resetCam then
+    core_camera.resetCamera(0)
+  end
+  job.sleep(0.00001) -- sleep for one frame so the orbit cam can update correctly
+end
+
 local function setCameraPosRotInJob(job)
   local layer = job.args[1]
   local pos = layer.camPosition
@@ -143,11 +156,20 @@ local notifyUiListeners = function(data)
   guihooks.trigger("LiveryEditor_OnCameraChanged", data)
 end
 
+M.setCameraByLayer = function(layer)
+  core_jobsystem.create(setCameraPosRotInJob, nil, layer)
+end
+
 M.setOrthographicView = function(view)
-  orthographicView = view
-  core_jobsystem.create(setCameraRotationInJob, nil, ORTHOGRAPHIC_VIEWS[orthographicView])
-  resetCursorPosition()
-  notifyUiListeners(view)
+  -- orthographicView = view
+  core_jobsystem.create(setCameraRotationInJob, nil, M.orthographicViews[view])
+  -- core_jobsystem.create(setCameraRotationInJob, nil, ORTHOGRAPHIC_VIEWS[orthographicView])
+  -- resetCursorPosition()
+  -- notifyUiListeners(view)
+end
+
+M.switchToOrbit = function(resetCam)
+  core_jobsystem.create(setToOrbitCameraJob, nil, resetCam)
 end
 
 M.setOrthographicViewByPosition = function(pos)
@@ -227,5 +249,7 @@ end
 M.getCoordinates = function()
   return orientationCoordinates[orthographicView]
 end
+
+M.orthographicViews = ORTHOGRAPHIC_VIEWS
 
 return M

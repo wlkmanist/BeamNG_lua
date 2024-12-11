@@ -1282,18 +1282,16 @@ local checkUpdate = extensions.core_jobsystem.wrap(function(job)
             if v['action'] == "deactivate" then
               deactivateModId(v.id)
               guihooks.trigger('modmanagerError', 'You have an outdated version of [ '..tostring(getModNameFromID(v.id))..' ]. This mod has been deactivated`')
-            else if v['action'] == "update" or v['action'] == "missing" then
+            elseif v['action'] == "update" or v['action'] == "missing" then
               v.reason = v.action
               log('I', 'checkUpdate', tostring(v['action'])..' -- ' .. tostring(v.id) .. "  to " .. tostring(v.ver))
               extensions.core_repository.addUpdateQueue(v)
-              else if v['action'] == "404OLD" then
-                log('I', 'checkUpdate', 'update OLD Didn\'t found any replacement :' .. v.name)
-                guihooks.trigger('modmanagerError', "Didn't found replacement for this mod : "..v.name)
-                deactivateMod(v.name)
-                else
-                    log('I', 'checkUpdate', 'unknown action for mod ' .. tostring(v.id))
-                end
-              end
+            elseif v['action'] == "404OLD" then
+              log('I', 'checkUpdate', 'update OLD Didn\'t found any replacement :' .. v.name)
+              guihooks.trigger('modmanagerError', "Didn't found replacement for this mod : "..v.name)
+              deactivateMod(v.name)
+            else
+              log('I', 'checkUpdate', 'unknown action for mod ' .. tostring(v.id))
             end
           end
           guihooks.trigger('checkUpdateCheckedMod', "SYNC "..tostring(core_modmanager.getModNameFromID(v.id) or v.filename:gsub(".zip","")) )

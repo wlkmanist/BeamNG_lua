@@ -7,7 +7,6 @@ local M = {}
 local max = math.max
 local min = math.min
 local abs = math.abs
-local fsign = fsign
 
 local constants = {rpmToAV = 0.104719755, avToRPM = 9.549296596425384}
 

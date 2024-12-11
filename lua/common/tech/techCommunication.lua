@@ -6,10 +6,12 @@ local logTag = 'TechCom'
 
 local mp = require('libs/lua-MessagePack/MessagePack')
 local socket = require('libs/luasocket/socket.socket')
+local ffi = require('ffi')
 
-local recvBufs = {} -- used only when receiving messages.
-local BUF_SIZE = 131072
 local HEADER_SIZE = 4
+local BUF_SIZE = 131072
+local headerBuffer = ffi.new('char[?]', HEADER_SIZE)
+local recvBufs = {} -- used only when receiving messages.
 
 local tcomDebug = not shipping_build -- when true, errors in BeamNGpy protocol crash the communication and full stacktrace is shown
 local isRecording = nil
@@ -18,7 +20,11 @@ local recorder = nil
 M.protocolVersion = 'v1.22'
 
 local function packUnsignedInt32Network(n)
-  return string.char(math.floor(n / 0x1000000), math.floor(n / 0x10000) % 0x100, math.floor(n / 0x100) % 0x100, n % 0x100)
+  headerBuffer[0] = math.floor(n / 0x1000000)
+  headerBuffer[1] = math.floor(n / 0x10000) % 0x100
+  headerBuffer[2] = math.floor(n / 0x100) % 0x100
+  headerBuffer[3] = n % 0x100
+  return headerBuffer
 end
 
 local function unpackUnsignedInt32Network(c)
@@ -284,19 +290,9 @@ local function sendMessage(skt, message)
   end
 
   message = mp.packPrefixWorkBuffer('\0\0\0\0', message)
-  local length = #message - HEADER_SIZE
-  local lenPrefix = packUnsignedInt32Network(length)
-  if length < 9000 then -- 6 * MTU
-    ffi.copy(message, lenPrefix, HEADER_SIZE)
-    length = #message
-  else
-    local err = sendAll(skt, lenPrefix, HEADER_SIZE)
-    message:get(HEADER_SIZE) -- consume the header part as it was already sent
-    if err then
-      log('E', logTag, 'Error writing to socket: ' .. tostring(err))
-      return
-    end
-  end
+  local length = #message
+  local lenPrefix = packUnsignedInt32Network(length - HEADER_SIZE)
+  ffi.copy(message, lenPrefix, HEADER_SIZE)
   local err = sendAll(skt, message, length)
 
   if err then
@@ -311,6 +307,14 @@ local function openServer(port, ip)
   local server, error = socket.bind(ip, port)
   if server == nil then
     log('E', logTag, error)
+    if error == 'permission denied' then
+      local msg =
+[[Access to the port %d was denied by the operating system. That can mean:
+    1. The port is already in use by another program (can be also another instance of BeamNG).
+    2. The port is inaccessible with your user privileges (ports under 1000 can cause this issue).
+Try to restart BeamNG and use a different port number.]]
+      log('E', logTag, string.format(msg, port))
+    end
     return nil
   end
   ip, port = server:getsockname()

@@ -216,12 +216,6 @@ return function(M)
     return C.imgui_InputTextMultiline(label, buf, buf_size, size, flags, callback, user_data)
   end
 
-  function M.InputTextConsole(label, buf, buf_size, flags)
-    if not buf_size then buf_size = ffi.sizeof(buf) end
-    if not flags then flags = 0 end
-
-    return C.imgui_InputTextConsole(label, buf, buf_size, flags)
-  end
   function M.Combo1(label, current_item, items, items_count, popup_max_height_in_items)
     if popup_max_height_in_items == nil then popup_max_height_in_items = -1 end
     if items_count == nil then items_count = M.GetLengthArrayCharPtr(items) end
@@ -439,10 +433,6 @@ return function(M)
 
   function M.TextEditor_IsTextChanged(te)
     return C.imgui_TextEditor_IsTextChanged(te)
-  end
-
-  function M.readGlobalActions()
-    C.imgui_readGlobalActions()
   end
 
   function M.BeginDisabled(disable)

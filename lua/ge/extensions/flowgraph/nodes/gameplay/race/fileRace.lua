@@ -15,20 +15,21 @@ C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'idle', hidden = true, description = 'If this pin has flow, the race will not count the timer and not count as active.' },
   { dir = 'in', type = 'flow', name = 'reset', description = 'Resets this node.', impulse = true },
   { dir = 'in', type = 'number', name = 'lapCount', default = 1, hardcoded = true, hidden = true, description = 'Number of laps (min 1).' },
-  { dir = 'in', type = 'table', name = 'pathData', tableType = 'pathData', description = 'Path data' },
+  { dir = 'in', type = 'table', name = 'pathData', tableType = 'pathData', description = 'Path data, from the File Path node.' },
   { dir = 'in', type = 'bool', name = 'rolling', description = 'If the path should be with a rolling start, if possible.'},
-  { dir = 'in', type = 'bool', name = 'hasSecVeh', description = 'If the player have a secondary vehicle'},
-  { dir = 'in', type = 'bool', name = 'changeVeh', hidden = true, description = 'Primary ID for the player vehicle' },
-  { dir = 'in', type = 'number', name = 'primVehId', hidden = true, description = 'primary ID for the player vehicle' },
-  { dir = 'in', type = 'number', name = 'secVehId', hidden = true, description = 'secondary ID for the player vehicle' },
+  { dir = 'in', type = 'bool', name = 'autoStartAI', description = 'If true, vehicles that have their id linked to this node and are not player controlled will start racing.'},
+  { dir = 'in', type = 'bool', name = 'hasSecVeh', hidden = true, description = 'If the player have a secondary vehicle to swap to.'},
+  { dir = 'in', type = 'bool', name = 'changeVeh', hidden = true, description = 'Switch to the secondary vehicle.' },
+  { dir = 'in', type = 'number', name = 'primVehId', hidden = true, description = 'Primary ID for the player vehicle.' },
+  { dir = 'in', type = 'number', name = 'secVehId', hidden = true, description = 'Secondary ID for the player vehicle.' },
 
   { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow from this node.' },
-  { dir = 'out', type = 'table', name = 'raceData', tableType = 'raceData',  description = 'Data from the race for other nodes to process.' },
-  { dir = 'out', type = 'table', name = 'aiPath', tableType = 'navgraphPath',  description = 'AI navgraph path; can be used with the Follow Waypoints node.' },
   { dir = 'out', type = 'flow', name = 'active', description = 'Outflow when race is active.' },
   { dir = 'out', type = 'flow', name = 'complete', description = 'Outflow when race is complete.' },
-  { dir = 'out', type = 'number', name = 'time', description = 'Total time when completed.' },
-  { dir = 'out', type = 'flow', name = 'vehicleChanged', description = ''},
+  { dir = 'out', type = 'flow', name = 'vehicleChanged', hidden = true, description = 'True if the vehicle got changed.'},
+  { dir = 'out', type = 'table', name = 'raceData', tableType = 'raceData',  description = 'Data from the race for other nodes to process.' },
+  { dir = 'out', type = 'table', name = 'aiPath', tableType = 'navgraphPath',  description = 'AI navgraph path; can be used with the Follow Waypoints node.' },
+  { dir = 'out', type = 'number', name = 'time', description = 'Total time when race is completed.' }
 }
 
 C.tags = {'scenario'}
@@ -130,6 +131,8 @@ function C:work(args)
       self.race:setPath(self.pinIn.pathData.value)
       self.race.path.config.rollingStart = self.pinIn.rolling.value
       self.race.lapCount = self.pinIn.pathData.value.config.closed and math.max(self.pinIn.lapCount.value or 1, 1) or 1
+      self.race.autoAiMode = self.pinIn.autoStartAI.value
+
       self.race.useHotlappingApp = self.data.useHotlappingApp
       self.race.useDebugDraw = self.data.useDebugDraw
       self.race.useWaypointAudio = self.data.useWaypointAudio

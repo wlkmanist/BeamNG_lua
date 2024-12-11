@@ -74,7 +74,7 @@ local function getRawPoiListByLevel(levelIdentifier)
         e.markerInfo.bigmapMarker.cluster = true
       end
 
-      if (not career_modules_testDrive or not career_modules_testDrive.isActive() or e.data.type == "testDriveEnd") then
+      if (not career_modules_testDrive or not career_modules_testDrive.isActive() or (e.data and e.data.type == "testDriveEnd")) then
         table.insert(elements, e)
       end
     end

@@ -17,7 +17,8 @@ local facilityTypeToListName = {
   dealership = "dealerships",
   computer = "computers",
   privateSeller = "privateSellers",
-  deliveryProvider = "deliveryProviders"
+  deliveryProvider = "deliveryProviders",
+  dragstrip = "dragstrips"
 }
 
 local facilityTypeToUiLabelSingular = {
@@ -26,7 +27,8 @@ local facilityTypeToUiLabelSingular = {
   dealership = "Dealership",
   computer = "Computer",
   privateSeller = "Private Seller",
-  deliveryProvider = "Delivery Provider"
+  deliveryProvider = "Delivery Provider",
+  dragstrip = "Drag Strip"
 }
 
 
@@ -318,6 +320,13 @@ local facilityPoiDefaults = {
     quickTravelAvailable = false,
     clusterType = 'walkingMarker',
   },
+  dragstrip = {
+    clusterInBigMap = true,
+    clusterInPlayMode = false,
+    interactableInPlayMode = true,
+    quickTravelAvailable = false,
+    clusterType = 'walkingMarker',
+  },
 }
 
 M.zoneMarkerFormatFacility = function(f, elements, bigMapIcon)
@@ -406,6 +415,9 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
       --M.zoneMarkerFormatFacility(garage, elements, "poi_garage_2")
     --end
   end
+  for i, dragstrip in ipairs(facilities.dragstrips or {}) do
+    M.walkingMarkerFormatFacility(dragstrip, elements)
+  end
 end
 M.onGetRawPoiListForLevel = onGetRawPoiListForLevel
 
@@ -454,9 +466,23 @@ local function onActivityAcceptGatherData(elemData, activityData)
         data.buttonLabel = "Use Computer"
         data.buttonFun = function()
           if career_career.isActive() then
-            career_modules_computer.openMenu(elem.facility)
+            career_modules_computer.openMenu(elem.facility, true)
           end
         end
+        table.insert(activityData, data)
+      end
+      if elem.type == "dragstrip" then
+        data.props = {}
+        for _, prop in ipairs(elem.facility.activityAcceptProps or {}) do
+          table.insert(data.props,{
+           icon = prop.icon or "stopwatchArrows01",
+           keyLabel = prop.keyLabel,
+           valueLabel = prop.valueLabel,
+         })
+        end
+        data.buttonLabel = "View History"
+        data.buttonFun = function() gameplay_drag_freeroamDragStrip.openHistoryScreen(elem.facility) end
+
         table.insert(activityData, data)
       end
     end

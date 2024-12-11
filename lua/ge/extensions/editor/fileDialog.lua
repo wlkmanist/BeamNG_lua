@@ -539,14 +539,19 @@ local function onEditorGui()
         end
         im.PopItemWidth()
         im.SameLine()
-        if im.Button("Create Folder") or createNow then
+        if im.Button("Create") or createNow then
           local crtPath = ffi.string(pathPointer)
           local newPath = crtPath .. ffi.string(textinputNewFolder)
-          FS:directoryCreate(newPath)
-          if FS:directoryExists(newPath) then
-            refreshCache(newPath)
+
+          if ffi.string(textinputNewFolder) == "" then
+            editor.logWarn("Input a valid name for the new folder in the File Dialog")
+          else
+            FS:directoryCreate(newPath)
+            if FS:directoryExists(newPath) then
+              refreshCache(newPath)
+            end
+            ffi.copy(textinputNewFolder, "")
           end
-          ffi.copy(textinputNewFolder, "")
         end
       end
 

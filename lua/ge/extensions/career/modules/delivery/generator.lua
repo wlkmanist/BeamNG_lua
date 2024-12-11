@@ -3,7 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {"freeroam_facilities", "gameplay_sites_sitesManager", "career_modules_delivery_general", "util_configListGenerator"}
+M.dependencies = {"freeroam_facilities", "gameplay_sites_sitesManager", "util_configListGenerator"}
 local im = ui_imgui
 local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehOfferManager, dParcelMods, dVehOfferManager
 M.onCareerActivated = function()
@@ -926,8 +926,9 @@ local function triggerGenerator(fac, generator, timeOffset)
 end
 M.triggerGenerator = triggerGenerator
 
-
-local function onUpdate(dtReal, dtSim, dtRaw)
+local hasGeneratedThisFrame = false
+local function triggerAllGenerators()
+  if hasGeneratedThisFrame then return end
   for _, fac in ipairs(facilities or {}) do
     for _, generator in ipairs(fac.logisticGenerators) do
       if generator.nextGenerationTimestamp - dGeneral.time() <= 0 then
@@ -936,6 +937,11 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       end
     end
   end
+  hasGeneratedThisFrame = true
+end
+
+local function onUpdate(dtReal, dtSim, dtRaw)
+  hasGeneratedThisFrame = false
 end
 M.onUpdate = onUpdate
 
@@ -1288,13 +1294,13 @@ local function setupFacilities(loadData)
       for _, generator in ipairs(fac.logisticGenerators) do
         if generator.type == "materialProvider" then
           local rate = (generator.rate / generator.interval)
-          materialRatesProvided[generator.materialType] = materialRatesProvided[generator.materialType] or {total = 0} 
+          materialRatesProvided[generator.materialType] = materialRatesProvided[generator.materialType] or {total = 0}
           materialRatesProvided[generator.materialType].total = materialRatesProvided[generator.materialType].total + rate
           materialRatesProvided[generator.materialType][fac.id] = (materialRatesProvided[generator.materialType][fac.id] or 0) + rate
         end
         if generator.type == "materialReceiver" then
           local rate = (generator.rate / generator.interval)
-          materialRatesReceived[generator.materialType] = materialRatesReceived[generator.materialType] or {total = 0} 
+          materialRatesReceived[generator.materialType] = materialRatesReceived[generator.materialType] or {total = 0}
           materialRatesReceived[generator.materialType].total = materialRatesReceived[generator.materialType].total + rate
           materialRatesReceived[generator.materialType][fac.id] = (materialRatesReceived[generator.materialType][fac.id] or 0) + rate
         end
@@ -1416,4 +1422,5 @@ end
 M.getDistanceBetweenFacilities = getDistanceBetweenFacilities
 M.getLocationCoordinates = getLocationCoordinates
 M.distanceBetween = distanceBetween
+M.triggerAllGenerators = triggerAllGenerators
 return M

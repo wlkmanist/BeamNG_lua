@@ -243,6 +243,7 @@ local function sameLocation(a,b)
 end
 
 local function getAllOfferCustomFilter(filter, ...)
+  career_modules_delivery_generator.triggerAllGenerators()
   local ret = {}
   for _, offer in ipairs(allOffers) do
     if filter(offer, ...) then
@@ -257,6 +258,7 @@ local function getAllOfferForLocation(loc)
 end
 
 local function getAllOfferUnexpired()
+  career_modules_delivery_generator.triggerAllGenerators()
   local ret = {}
   for _, offer in ipairs(allOffers) do
     if offer.offerExpiresAt > dGeneral.time()
@@ -269,6 +271,7 @@ local function getAllOfferUnexpired()
 end
 
 local function getAllOfferAtFacilityUnexpired(facId, psPath)
+  career_modules_delivery_generator.triggerAllGenerators()
   local ret = {}
   for _, offer in ipairs(allOffers) do
     if    offer.origin.facId == facId

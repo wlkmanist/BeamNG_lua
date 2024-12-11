@@ -171,6 +171,8 @@ function C:drawRightColumn()
     end
   end
 
+  ---- obsolete scenario examples ----
+  --[[
   im.Dummy(im.ImVec2(1,5))
   headerText('Scenario Examples')
   im.TextWrapped("These are some more advanced examples, taken from actual scenarios from the game. In these, you can see how different scenarios are set up.")
@@ -186,6 +188,7 @@ function C:drawRightColumn()
       self.fgEditor.setManager(mgr)
     end
   end
+  ]]--
 
   im.PopTextWrapPos()
   im.EndGroup()

@@ -121,6 +121,7 @@ M.formatDataForUi = function()
     end
   end
   table.sort(dataToSend, gameplay_missions_unlocks.depthIdSort)
+
   return dataToSend
 end
 
@@ -231,56 +232,51 @@ end
 M.getGameContext = getGameContext
 
 
-
-local detailPromptOpen = false
 local promptData = {}
-local function openViewDetailPrompt(elemData)
-  --[[
-  table.clear(promptData)
-  extensions.hook("onPoiDetailPromptOpening", elemData, promptData)
-  if next(promptData) then
-    local label = "Prompt"
-    local buttons = {}
-    if #promptData == 1 then
-      label = promptData[1].label
-      table.insert(buttons, {
-          action = "accept",
-          text = promptData[1].buttonText,
-          cmd = "gameplay_markerInteraction.onSelectDetailPromptClicked(1)"
-        })
-      table.insert(buttons, {
-        action = "decline",
-        text = "missions.missions.general.accept.close",
-        cmd = "gameplay_markerInteraction.onCloseDetailPropmptClicked()"
-      })
+
+local sortActivityData = function(a, b)
+  -- Check if elements have a sorting table
+  local hasSortingA = a.sorting ~= nil
+  local hasSortingB = b.sorting ~= nil
+
+  if hasSortingA and not hasSortingB then
+    return true
+  elseif not hasSortingA and hasSortingB then
+    return false
+  elseif hasSortingA and hasSortingB then
+    -- Both have a sorting table; prioritize by type
+    if a.sorting.type == "mission" and b.sorting.type ~= "mission" then
+      return true
+    elseif a.sorting.type ~= "mission" and b.sorting.type == "mission" then
+      return false
+    elseif a.sorting.type ~= b.sorting.type then
+      return a.sorting.type < b.sorting.type
     else
-      -- todo: design proper solution for overlapping pois...
-      log("E","","Multipe Prompts are currently not supported :D")
-    end
-    local content = {title = label, typeName = "", altMode = false, actionMap = true, buttons = buttons }
-    ui_missionInfo.openDialogue(content)
-    -- TODO: fix this :)
-    local missionCount = 0
-    for _, elem in ipairs(elemData) do
-      if elem.type == "mission" then
-        missionCount = missionCount + 1
+      -- Same type; sort by order
+      if (a.sorting.order or 0) == (b.sorting.order or 0) then
+        return (a.sorting.id or a.heading) < (b.sorting.id or b.heading)
       end
+      return (a.sorting.order or 0) < (b.sorting.order or 0)
     end
-    guihooks.trigger("onMissionAvailabilityChanged", {missionCount = missionCount})
-    extensions.hook("onOpenViewDetailPrompt", {missionCount = missionCount, elemData = elemData, promptData = promptData})
-    detailPromptOpen = true
   else
-    log("E","","There is no prompt data to open the prompt!")
+    -- Neither have a sorting table; sort by heading
+    return (a.heading or "") < (b.heading or "")
   end
-  ]]
+end
+
+local function openViewDetailPrompt(elemData)
   local activityData = {}
   extensions.hook("onActivityAcceptGatherData", elemData, activityData)
+
+  table.sort(activityData, sortActivityData)
+  --for _, a in ipairs(activityData) do
+  --  dump(a.heading, (a.sorting and a.sorting.type) or "no type", a.sorting)
+  --end
   ui_missionInfo.openActivityAcceptDialogue(activityData)
   --guihooks.trigger('ActivityAcceptUpdate', activityData)
 end
 
 local function onSelectDetailPromptClicked(idx)
-  detailPromptOpen = false
   ui_missionInfo.closeDialogue()
   guihooks.trigger('ActivityAcceptUpdate', nil)
   local prompt = promptData[idx]
@@ -292,27 +288,14 @@ end
 M.onSelectDetailPromptClicked = onSelectDetailPromptClicked
 
 
-
-
 local function closeViewDetailPrompt(force)
-  if detailPromptOpen or force then
+  if force then
     ui_missionInfo.closeDialogue()
     guihooks.trigger("onMissionAvailabilityChanged", {missionCount = 0})
     guihooks.trigger('ActivityAcceptUpdate', nil)
-    detailPromptOpen = false
     extensions.hook("onMissionAvailabilityChanged", {missionCount = 0})
   end
 end
-M.onCloseDetailPropmptClicked = function()
-  closeViewDetailPrompt()
-end
-
-local function onUiChangedState(newUIState, prevUIState)
-  if newUIState:sub(1, 4) == 'menu' then
-    closeViewDetailPrompt()
-  end
-end
-
 
 local screenWidth, screenHeight, screenRatio = 1,1,1
 local function onSettingsChanged()
@@ -352,6 +335,8 @@ local lastCamPos = vec3()
 local lastCamVel = vec3()
 local playerVelLast = vec3()
 local timeSincePlayerTeleport
+
+local markerVisibilityBySetting = {}
 
 local function displayMissionMarkers(level, dtSim, dtReal)
   profilerPushEvent("MissionMarker precalc")
@@ -397,6 +382,7 @@ local function displayMissionMarkers(level, dtSim, dtReal)
   local parkingSpeedFactor, isAtParkingSpeed, parkingSpeedChanged = getParkingSpeedFactor(playerVelocity)
   local cruisingSpeedFactor, isAtcruisingSpeed, cruisingSpeedChanged = getCruisingSpeedFactor(playerVelocity)
 
+
   profilerPopEvent("MissionEnter parkingSpeedFactor")
   -- put reference for icon manager in
   updateData.parkingSpeedFactor = parkingSpeedFactor
@@ -421,8 +407,15 @@ local function displayMissionMarkers(level, dtSim, dtReal)
   if   (not freeroam_bigMapMode.bigMapActive())
     or (freeroam_bigMapMode.bigMapActive() and freeroam_bigMapMode.isTransitionActive()) then
     local clusterQt = gameplay_playmodeMarkers.getPlaymodeClustersAsQuadtree()
+
     for id in clusterQt:queryNotNested(updateData.playerPosition.x-maxRadius, updateData.playerPosition.y-maxRadius, updateData.playerPosition.x+maxRadius, updateData.playerPosition.y + maxRadius) do
       nearbyIds[id] = true
+    end
+
+    if updateData.isFreeCam then
+      for id in clusterQt:queryNotNested(updateData.camPos.x-maxRadius, updateData.camPos.y-maxRadius, updateData.camPos.x+maxRadius, updateData.camPos.y + maxRadius) do
+        nearbyIds[id] = true
+      end
     end
   end
 
@@ -435,15 +428,22 @@ local function displayMissionMarkers(level, dtSim, dtReal)
   --tableKeys(visibleIds, visibleIdsSorted)
   --table.sort(visibleIdsSorted)
   profilerPopEvent("MissionEnter precalc")
-  if not isAtParkingSpeed then
-    table.clear(currentInteractableElements)
-  end
+
+  -- now cleared at the end
+  --if not isAtParkingSpeed then
+    --table.clear(currentInteractableElements)
+  --end
+  
   table.clear(decals)
 
   local decalCount = 0
   local careerActive = (career_career and career_career.isActive())
   table.clear(interactableElements)
-  local showMissionMarkers = markersVisibleTemporary and (careerActive or settings.getValue("showMissionMarkers"))
+  local showMissionMarkers = markersVisibleTemporary
+  markerVisibilityBySetting.showMissionMarkers = (careerActive or settings.getValue("showMissionMarkers"))
+  --markerVisibilityBySetting.enableDragRaceInFreeroam = (careerActive or settings.getValue("enableDragRaceInFreeroam"))
+  --markerVisibilityBySetting.enableDriftInFreeroam = (careerActive or settings.getValue("enableDriftInFreeroam"))
+  --markerVisibilityBySetting.enableGasStationsInFreeroam = (careerActive or settings.getValue("enableGasStationsInFreeroam"))
   -- draw/show all visible markers.
   --[[
   if not timeSincePlayerTeleport then
@@ -454,11 +454,16 @@ local function displayMissionMarkers(level, dtSim, dtReal)
     if timeSincePlayerTeleport <= 0 then timeSincePlayerTeleport = nil end
   end]]
   --local testId = "parkingMarker#/levels/west_coast_usa/facilities/delivery/mechanics.sites.json#exhaustShop_parking"
+  local anyMarkerIsInAreaChanged = false
   for i, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
     local marker = gameplay_playmodeMarkers.getMarkerForCluster(cluster)
     if nearbyIds[cluster.id] or marker.focus then
       -- Check if the marker should be visible
-      local showMarker = not photoModeOpen and not (editor and editor.active) and (showMissionMarkers or cluster.focus)
+
+      local showMarker = not photoModeOpen
+                         and not (editor and editor.active)
+                         and (showMissionMarkers or cluster.focus)
+      showMarker = showMarker and (not cluster.visibleBySetting or markerVisibilityBySetting[cluster.visibleBySetting])
       if showMarker then
         -- debug drawing for testing
         --debugDrawer:drawTextAdvanced(marker.pos, String(tostring(cluster.id)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
@@ -466,16 +471,32 @@ local function displayMissionMarkers(level, dtSim, dtReal)
         marker:show()
         marker:update(updateData)
         -- post-marker decals, so they can be all drawn at once
+
+        -- TODO: optimize
         if marker.groundDecalData then
-          decalCount = decalCount + 1
-          decals[decalCount] = marker.groundDecalData
+          if marker.groundDecalData.texture then
+            decalCount = decalCount + 1
+            decals[decalCount] = marker.groundDecalData
+          else
+            for _, decal in ipairs(marker.groundDecalData) do
+              decalCount = decalCount + 1
+              decals[decalCount] = decal
+            end
+          end
         end
 
-        if not freeroam_bigMapMode.bigMapActive() and not activeMission and not core_recoveryPrompt.isOpen() then
+        if not freeroam_bigMapMode.bigMapActive() and not activeMission and not core_recoveryPrompt.isOpen() and not
+          (gameplay_drift_freeroam_freeroam and gameplay_drift_freeroam_freeroam.getIsInFreeroamChallenge()) then
           if marker.interactInPlayMode then
             -- todo: optimize this
             if veh then
               local canInteract = isAtParkingSpeed and (forceReevaluateOpenPrompt or parkingSpeedChanged)
+              if updateData.isWalking then
+                canInteract = marker.isInAreaChanged or forceReevaluateOpenPrompt
+                if marker.isInAreaChanged then
+                  anyMarkerIsInAreaChanged = marker.isInAreaChanged
+                end
+              end
 
               updateData.canInteract = canInteract
               if updateData.canInteract then
@@ -483,6 +504,9 @@ local function displayMissionMarkers(level, dtSim, dtReal)
               end
               --simpleDebugText3d(dumps(marker.cluster.clusterId), marker.cluster.pos, 0.25)
             end
+          end
+          if marker.interactWhileMoving then
+            marker:interactWhileMoving(updateData)
           end
         end
       else
@@ -506,7 +530,13 @@ local function displayMissionMarkers(level, dtSim, dtReal)
     openViewDetailPrompt(interactableElements)
   end
   if not activeMission and not next(interactableElements) then
-    if not isAtParkingSpeed or parkingSpeedChanged then
+    if updateData.isWalking then
+      if anyMarkerIsInAreaChanged == "out" then
+        table.clear(currentInteractableElements)
+        closeViewDetailPrompt(true)
+      end
+    elseif not isAtParkingSpeed or parkingSpeedChanged then
+      table.clear(currentInteractableElements)
       closeViewDetailPrompt(parkingSpeedChanged)
     end
   end
@@ -551,7 +581,6 @@ end
 local function onPreRender(dtReal, dtSim)
   if not M.isStateFreeroam() then
     gameplay_playmodeMarkers.clear()
-    closeViewDetailPrompt()
     return
   end
   profilerPushEvent("MissionEnter onPreRender")
@@ -608,8 +637,6 @@ end
 local function showMissionMarkersToggled(active)
   gameplay_rawPois.clear()
   freeroam_bigMapPoiProvider.forceSend()
-
-  closeViewDetailPrompt()
 end
 
 
@@ -654,7 +681,6 @@ M.onPreRender = onPreRender
 M.getClusterMarker = getClusterMarker
 
 M.onNavigateToMission = onNavigateToMission
-M.onUiChangedState = onUiChangedState
 M.onAnyMissionChanged = onAnyMissionChanged
 M.onClientEndMission = onClientEndMission
 M.clearCache = clearCache

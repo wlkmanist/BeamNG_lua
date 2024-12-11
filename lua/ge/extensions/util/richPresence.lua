@@ -281,7 +281,7 @@ local function onUiReady()
   local state = 0 --invalid
   if extensions.core_gamestate.state.state then
     local s = extensions.core_gamestate.state.state
-    log("E","onUiReady",dumps(s))
+    --log("E","onUiReady",dumps(s))
     if string.startswith(s,"menu.") then
       state = 3 --menu
       if Steam then

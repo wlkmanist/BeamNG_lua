@@ -13,6 +13,10 @@ function C:init()
   for k, v in pairs(setup) do
   --  self[k] = v
   end
+  self.ignoreUserSettingsKeyForActiveStars = {
+    setupModuleEnvironmentTime = true,
+    useGroundmarkers = true
+  }
 end
 
 function C:getProgressKeyTranslation(progressKey)
@@ -62,7 +66,7 @@ function C:setupFlowgraphManager(fgFile, variables)
   end
 end
 
--- common settings that any mission type may use (vehicles, traffic, time of day, etc.)
+-- common settings that any mission type may use (vehicles, traffic, environment, etc.)
 function C:getCommonSettingsData()
   local data = {}
 
@@ -85,18 +89,23 @@ function C:getCommonSettingsData()
           vehModelConfig = vehModelConfig.." "
         end
 
-        --local config = v.config and core_vehicles.getModel(v.model).configs[v.config]
-        --if config and config.Configuration then
-          --vehModelConfig = vehModelConfig..config.Configuration
-        --end
+        local config = v.config and core_vehicles.getModel(v.model).configs[v.config]
+        local thumb = nil
 
-        table.insert(values, {l = vehModelConfig, v = i})
+        if config and config.Configuration then
+          --vehModelConfig = vehModelConfig..config.Configuration
+          thumb = config.preview
+        end
+
+        table.insert(values, {l = vehModelConfig, v = i, thumb = thumb})
       end
     end
 
     local lastIdx = #values + 1
     if setupModule.includePlayerVehicle or lastIdx == 1 then
-      table.insert(values, {l = 'Player Vehicle', v = lastIdx, type = 'player'})
+      local thumbnail = career_career.isActive() and career_modules_inventory and career_modules_inventory.getVehicleThumbnail(career_modules_inventory.getCurrentVehicle())
+      thumbnail = thumbnail or gameplay_missions_missions.getNoVehicleThumbFilepath()
+      table.insert(values, {l = 'missions.missions.general.userSettings.playerVehicle', v = lastIdx, type = 'player', thumb = thumbnail})
     end
 
     local initIdx = (setupModule.includePlayerVehicle and setupModule.prioritizePlayerVehicle) and lastIdx or 1
@@ -106,7 +115,9 @@ function C:getCommonSettingsData()
         label = 'ui.busRoute.vehicle',
         type = 'select',
         values = values,
-        value = initIdx
+        value = initIdx,
+        currentOption = values[initIdx],
+        isVehicleSelector = true,
       })
     end
   end
@@ -120,9 +131,28 @@ function C:getCommonSettingsData()
     })
   end
 
-  --if self.setupModules.timeOfDay.enabled and self.setupModules.timeOfDay.enableUserTime then
+  if self.setupModules.environment.enabled then
+    if self.setupModules.environment.todUserSetting then
+      local times = {sunrise = 0.775, morning = 0.85, earlyNoon = 0.9, noon = 0, lateNoon = 0.1, afternoon = 0.175, evening = 0.23, sunset = 0.245, night = 0.5}
+      local timesSorted = {"sunrise", "morning", "earlyNoon", "noon", "lateNoon", "afternoon", "evening", "sunset"}
 
-  --end
+      local values = {{l = "ui.common.default", v = self.setupModules.environment.time}}
+      for _, t in ipairs(timesSorted) do
+        table.insert(values, {l = "ui.quickrace.tod."..t, v = times[t]})
+      end
+
+      table.insert(data, {
+        key = 'setupModuleEnvironmentTime',
+        label = 'missions.missions.general.userSettings.timeOfDay',
+        type = 'select',
+        values = values,
+        value = self.setupModules.environment.time,
+        currentOption = values[1]
+      })
+    end
+
+    -- weather user setting can go here
+  end
 
   return data
 end
@@ -132,6 +162,7 @@ function C:processCommonSettings(settings)
   self.setupModules.vehicles._selectionIdx = settings.setupModuleVehicles or 0
   self.setupModules.vehicles.usePlayerVehicle = (self.setupModules.vehicles.enabled and self.setupModules.vehicles.vehicles and not self.setupModules.vehicles.vehicles[self.setupModules.vehicles._selectionIdx]) and true or false
   self.setupModules.traffic.useTraffic = settings.setupModuleTraffic and true or false
+  self.setupModules.environment.time = settings.setupModuleEnvironmentTime or self.setupModules.environment.time
 end
 
 function C:processUserSettings(settings)
@@ -142,7 +173,7 @@ end
 function C:setBackwardsCompatibility(keyAliases)
   keyAliases = keyAliases or {} -- aliases for mission variable names (because they may be different in various mission types)
   local playerModel, playerConfig, playerConfigPath
-  if not self.setupModules.vehicles.enabled and self.missionTypeData[keyAliases.presetVehicleActive or "presetVehicleActive"] then
+  if not self.setupModules.vehicles.enabled and self.missionTypeData[keyAliases.presetVehicleActive or "presetVehicleActive"] then -- old flowgraph variables
     self.setupModules.vehicles.enabled = true
     self.setupModules.vehicles.mode = "provided"
     playerModel = self.missionTypeData[keyAliases.playerModel or "playerModel"]
@@ -150,7 +181,7 @@ function C:setBackwardsCompatibility(keyAliases)
     playerConfigPath = self.missionTypeData[keyAliases.playerConfigPath or "playerConfigPath"]
   end
 
-  if self.setupModules.vehicles.mode then
+  if self.setupModules.vehicles.mode then -- old player vehicle setup modes
     local hasPlayerVehicle = self.setupModules.vehicles.mode == "own" or self.setupModules.vehicles.mode == "choice"
     local prioritizePlayerVehicle = self.setupModules.vehicles.mode == "own"
     local paintName
@@ -169,10 +200,10 @@ function C:setBackwardsCompatibility(keyAliases)
     self.setupModules.vehicles.includePlayerVehicle = hasPlayerVehicle
     self.setupModules.vehicles.prioritizePlayerVehicle = prioritizePlayerVehicle
     self.setupModules.vehicles.vehicles = {}
-    self.setupModules.vehicles._compatibility = true
+    self.setupModules.vehicles._compatibility = true -- DEVS: use this flag whenever new properties are added to setup modules
     self.additionalAttributes.vehicle = nil
 
-    if playerModel then
+    if playerModel then -- include the player vehicle info in the vehicles list
       table.insert(self.setupModules.vehicles.vehicles, {
         model = playerModel,
         config = playerConfig,
@@ -181,6 +212,23 @@ function C:setBackwardsCompatibility(keyAliases)
         useCustomConfig = useCustomConfig
       })
     end
+  end
+
+  if type(self.setupModules.timeOfDay) == "number" then
+    self.setupModules.timeOfDay = {enabled = true, time = self.setupModules.timeOfDay}
+  end
+
+  if self.setupModules.timeOfDay and self.setupModules.timeOfDay.enabled then -- old time of day setup module
+    local oldTime = self.setupModules.timeOfDay.time or 0
+    self.setupModules.timeOfDay = nil
+
+    self.setupModules.environment = {enabled = true}
+    self.setupModules.environment.time = oldTime
+    self.setupModules.environment.timeScale = 0
+    self.setupModules.environment.windSpeed = 0
+    self.setupModules.environment.windDirAngle = 0
+    self.setupModules.environment.fogDensity = 0
+    self.setupModules.environment._compatibility = true
   end
 
   if not self.additionalAttributes.vehicle then -- auto generates this attribute
@@ -200,11 +248,25 @@ end
 -- when the activity starts.
 function C:onStart()
   if not self.mgr then
-    if self:setupFlowgraphManager(self.fgPath, self.fgVariables) then
+    local tempVariables = deepcopy(self.fgVariables)
+
+    for k, v in pairs(self.oneOffVariables or {}) do
+      tempVariables[k] = v
+    end
+    self.oneOffVariables = nil
+
+    if self:setupFlowgraphManager(self.fgPath, tempVariables) then
       log("E", "", "There has been an error setting up the FG. See errors above. ("..dumps(self.id)..")")
       return true
     end
   end
+
+  -- if not self.mgr then
+  --   if self:setupFlowgraphManager(self.fgPath, self.fgVariables) then
+  --     log("E", "", "There has been an error setting up the FG. See errors above. ("..dumps(self.id)..")")
+  --     return true
+  --   end
+  -- end
   -- setup existing progress variables.
   for name, v in pairs(self.progressVariables or {}) do
     local value = v
@@ -216,12 +278,14 @@ function C:onStart()
     end
   end
 
+  self.lastUserSettings = {}
   if self.userSettings then
     for name, value in pairs(self.userSettings) do
       if self:addOrSetVariable(name, value) then
         log("E", "", "Cannot set user setting variable "..dumps(name).." for activity "..dumps(self.id).." to value: "..dumps(value))
       end
     end
+    self.lastUserSettings = deepcopy(self.userSettings)
     self.userSettings = nil
   end
 
@@ -249,6 +313,17 @@ function C:onUpdate(dtReal, dtSim, dtRaw)
   --self.mgr:broadcastCall('onUpdate', dtReal, dtSim, dtRaw)
   if self.script and self.script.onUpdate then
     self.script:onUpdate(dtReal, dtSim, dtRaw)
+  end
+
+  -- TEMP: wind gets applied every frame; needs improvement!!
+  if self.setupModules.environment and self.setupModules.environment._windVec then
+    local wind = self.setupModules.environment._windVec
+
+    for _, veh in ipairs(getAllVehicles()) do
+      if veh:isReady() then
+        veh:queueLuaCommand("obj:setWind("..string.format('%2f, %2f, %2f', wind.x, wind.y, wind.z)..")")
+      end
+    end
   end
 end
 
@@ -298,7 +373,7 @@ function C:addOrSetVariable(name, value)
       return true
     end
   else
-    log("W", "", "Cannot set Mission Variable "..dumps(name).." for activity "..dumps(self.id) .." - The variable does not exit in the FG.")
+    log("I", "", "Ignoring Mission Variable "..dumps(name).." for activity "..dumps(self.id) .." - The variable does not exist in the FG.")
     --if not self.mgr.variables:addVariable(name, value, t, mergeStrat, fixedType, undeletable) then
     --  log("E", "", "Cannot add fg variable "..dumps(name).." for activity "..dumps(self.id))
     --  return true

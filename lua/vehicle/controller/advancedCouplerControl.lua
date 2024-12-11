@@ -109,6 +109,10 @@ local function syncGroupState()
 end
 
 local function tryAttachGroupImpulse()
+  if couplerGroup.groupState == couplerStates.attached then
+    return
+  end
+
   if couplerGroup.groupType == couplerGroupTypes.manualClose or couplerGroup.groupType == couplerGroupTypes.manualCloseMultiPoint then
     for _, cnp in ipairs(couplerGroup.couplerNodePairs) do
       if cnp.state == couplerStates.detached then
@@ -130,6 +134,10 @@ local function tryAttachGroupImpulse()
 end
 
 local function detachGroup()
+  if couplerGroup.groupState == couplerStates.autoCoupling or couplerGroup.groupState == couplerStates.detached then
+    return
+  end
+
   for _, cnp in ipairs(couplerGroup.couplerNodePairs) do
     obj:detachCoupler(cnp.cid1, 0)
   end

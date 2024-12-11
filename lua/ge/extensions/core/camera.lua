@@ -47,7 +47,7 @@ local vehicleCamerasCache
 
 local resPos, resTargetPos, resRot = vec3(), vec3(), quat()
 
-local camData = { veh = 0, vid = 0, dtSim = 0.0001, dtReal = 0.0001, dtRaw = 0.0001, dt = 0.0001, speed = 30, pos=vec3(), prevPos=vec3(), vel=vec3(), prevVel=vec3(), res = {pos = resPos, targetPos = resTargetPos, rot = resRot, fov = 60} }
+local camData = { veh = 0, vid = 0, dtSim = 0.0001, dtReal = 0.0001, dtRaw = 0.0001, dt = 0.0001, speed = 30, pos=vec3(), prevPos = vec3(), vehPos=vec3(), prevVehPos=vec3(), vel=vec3(), prevVel=vec3(), res = {pos = resPos, targetPos = resTargetPos, rot = resRot, fov = 60} }
 
 local function addVehicleData(vid, target)
   local vdata = target[vid] or {}
@@ -418,10 +418,9 @@ local function setByName(...)
 end
 
 local nodePos = vec3()
-local function isWithinRadius(cameraName, camPos, veh, vehPos, vdata, radius)
+local function isWithinRadius(cameraName, camPos, veh, vdata, radius)
   if not vdata.cameras[cameraName] then return false end
-  nodePos:set(veh:getNodePositionXYZ(vdata.cameras[cameraName].camNodeID))
-  nodePos:setAdd(vehPos)
+  nodePos:set(veh:getNodeAbsPositionXYZ(vdata.cameras[cameraName].camNodeID))
   return nodePos:squaredDistance(camPos) < radius * radius
 end
 
@@ -429,7 +428,7 @@ local function isUnicycle(vehId)
   return not activeGlobalCameraName and core_vehicle_manager and core_vehicle_manager.getPlayerVehicleData() and core_vehicle_manager.getVehicleData(vehId).mainPartName == "unicycle"
 end
 
-local vehPos, bbCenter, bbHalfAxis0, bbHalfAxis1, bbHalfAxis2 = vec3(), vec3(), vec3(), vec3(), vec3()
+local bbCenter, bbHalfAxis0, bbHalfAxis1, bbHalfAxis2 = vec3(), vec3(), vec3(), vec3()
 local function isCameraInside(player, camPos)
   local veh = getPlayerVehicle(player)
   if not veh then return 0 end
@@ -445,8 +444,7 @@ local function isCameraInside(player, camPos)
 
   if not containsOBB_point(bbCenter, bbHalfAxis0, bbHalfAxis1, bbHalfAxis2, camPos) then return 0 end
 
-  vehPos:set(veh:getPositionXYZ())
-  return (isWithinRadius("onboard.driver", camPos, veh, vehPos, vdata, 0.6) or isWithinRadius("onboard.rider", camPos, veh, vehPos, vdata, 0.6)) and 1 or 0
+  return (isWithinRadius("onboard.driver", camPos, veh, vdata, 0.6) or isWithinRadius("onboard.rider", camPos, veh, vdata, 0.6)) and 1 or 0
 end
 
 local function getCameraDataById(vid)
@@ -750,7 +748,6 @@ local finalCameraData = {pos = vec3(), rot = quat(), fovDeg = 0}
 -- Provides high-quality near shadows when using interior camera, by adjusting the logWeight parameter of the shadows
 local lastLogWeight
 local isCameraInsidePrevious = false
-local vehPos = vec3()
 local function setShadowLogWeight(veh)
   lastLogWeight = lastLogWeight or core_environment.getShadowLogWeight() -- initialize LogWeight value from the level
 
@@ -763,8 +760,7 @@ local function setShadowLogWeight(veh)
   local vdata = getVehicleData()[vehId]
   if not vdata then return false end
 
-  vehPos:set(veh:getPositionXYZ())
-  local isCameraInsideNow = isWithinRadius("onboard.driver", camPos, veh, vehPos, vdata, 0.6) or isWithinRadius("onboard.rider", camPos, veh, vehPos, vdata, 0.6)
+  local isCameraInsideNow = isWithinRadius("onboard.driver", camPos, veh, vdata, 0.6) or isWithinRadius("onboard.rider", camPos, veh, vdata, 0.6)
   local updateShadowLogWeight = (isCameraInsideNow ~= isCameraInsidePrevious)
   if updateShadowLogWeight and not (freeroam_bigMapMode and freeroam_bigMapMode.bigMapActive()) then
     local oobb = veh:getSpawnWorldOOBB()
@@ -868,11 +864,15 @@ local function onPreRender(dtReal, dtSim, dtRaw)
   camData.dtRaw = dtRaw  * M.speedFactor -- gfx render dt, in seconds from wall clock
   camData.dt = camData.dtReal * M.speedFactor
   camData.prevPos:set(camData.pos)
+  camData.prevVehPos:set(camData.vehPos)
+
   camData.openxrSessionRunning = render_openxr and render_openxr.isSessionRunning() or false
   if veh then
-    camData.pos:set(veh:getPositionXYZ()) -- vehicle position
+    camData.pos:set(veh:getPositionXYZ()) -- scene object position - this jumps on the floating point grid
+    camData.vehPos:set(veh:getRefNodeAbsPositionXYZ()) -- vehicle's actual position on a double precision grid
   else
     camData.pos:set(0,0,0)
+    camData.vehPos:set(0,0,0)
   end
 
   local paused = dtSim < 0.00001
@@ -880,8 +880,8 @@ local function onPreRender(dtReal, dtSim, dtRaw)
     camData.teleported = false
   else
     camData.prevVel:set(camData.vel)
-    camData.vel:set(camData.pos)
-    camData.vel:setSub(camData.prevPos)
+    camData.vel:set(camData.vehPos)
+    camData.vel:setSub(camData.prevVehPos)
     camData.vel:setScaled(1/dtSim)
     camData.teleported = objectTeleported(camData.pos, camData.prevPos, camData.prevVel, dtSim)
     if camData.teleported then

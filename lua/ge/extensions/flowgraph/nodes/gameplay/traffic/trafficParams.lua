@@ -19,9 +19,7 @@ C.pinSchema = {
   { dir = 'in', type = 'number', name = 'directionBias', description = 'Respawn direction bias; can be between -1 and 1 (-1 is away from you, and 1 is towards you).' },
   { dir = 'in', type = 'number', name = 'risk', description = 'Average risk (or aggression) value of all traffic vehicles.' },
   { dir = 'in', type = 'number', name = 'poolActiveAmount', hidden = true, description = 'Amount of active and visible vehicles in the vehicle pooling system.' },
-  { dir = 'in', type = 'bool', name = 'enableRandomEvents', hidden = true, default = true, description = 'Enable or disable random events in traffic (suspects, emergencies, etc.).' },
-  { dir = 'in', type = 'number', name = 'minRoadDrivability', hidden = true, description = 'Minimum road drivability to spawn traffic on.' },
-  { dir = 'in', type = 'number', name = 'minRoadRadius', hidden = true, default = true, description = 'Minimum road radius to spawn traffic on.' }
+  { dir = 'in', type = 'bool', name = 'enableRandomEvents', hidden = true, default = true, description = 'Enable or disable random events in traffic (suspects, emergencies, etc.).' }
 }
 
 C.legacyPins = {
@@ -69,12 +67,6 @@ function C:workOnce()
   end
   if self.pinIn.enableRandomEvents.value ~= nil then
     self.vars.enableRandomEvents = self.pinIn.enableRandomEvents.value
-  end
-  if self.pinIn.minRoadDrivability.value ~= nil then
-    self.vars.minRoadDrivability = self.pinIn.minRoadDrivability.value
-  end
-  if self.pinIn.minRoadRadius.value ~= nil then
-    self.vars.minRoadRadius = self.pinIn.minRoadRadius.value
   end
 
   if next(self.vars) then

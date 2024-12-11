@@ -29,14 +29,19 @@ local radarBufferPoints = {}                    -- RADAR sensor.
 local radarBufferPPI = {}
 local radarBufferRangeDoppler = {}
 
+-- Raw LiDAR sensor structures.
+local rawLidarData = {}                         -- Stores the data for the RAW Lidar sensors (indexed by unique sensor Id).
+
 -- Ultrasonic sensor visualisation data/parameters.
 local visualisedUltrasonicSensors = {}
-local pulseWidthDispersion = 0.1                -- The rate of longitudinal growth of the pulse (width). Used for the ultrasonic sensor visualisation.
-local minPulseWidth = 0.1                       -- The minimum possible displayed pulse width. Used for the ultrasonic sensor visualisation.
-local maxPulseWidth = 0.25                      -- The maximum possible displayed pulse width. Used for the ultrasonic sensor visualisation.
-local minAlpha = 0.02                           -- The smallest possible displayed alpha channel value. Used for the ultrasonic sensor visualisation.
-local animationPeriod = 1.50                    -- The animation wave period length (in seconds). Used for the ultrasonic sensor visualisation.
-local animationSpeed = 6.0                      -- The animation wave speed (in m/s). Used for the ultrasonic sensor visualisation.
+local usParameters = {
+  pulseWidthDispersion = 0.1,                   -- The rate of longitudinal growth of the pulse (width). Used for the ultrasonic sensor visualisation.
+  minPulseWidth = 0.1,                          -- The minimum possible displayed pulse width. Used for the ultrasonic sensor visualisation.
+  maxPulseWidth = 0.25,                         -- The maximum possible displayed pulse width. Used for the ultrasonic sensor visualisation.
+  minAlpha = 0.02,                              -- The smallest possible displayed alpha channel value. Used for the ultrasonic sensor visualisation.
+  animationPeriod = 1.50,                       -- The animation wave period length (in seconds). Used for the ultrasonic sensor visualisation.
+  animationSpeed = 6.0                          -- The animation wave speed (in m/s). Used for the ultrasonic sensor visualisation.
+}
 
 local function unpack_float(b4, b3, b2, b1)
   local sign = b1 > 0x7F and -1 or 1
@@ -51,6 +56,19 @@ local function unpack_float(b4, b3, b2, b1)
   end
 end
 
+-- Rotates vector v around unit axis k, by angle theta (in radians).
+-- [This function uses the standard Rodrigues formula].
+local function rotateVecAroundAxis(v, k, theta)
+  local c = math.cos(theta)
+  return v * c + k:cross(v) * math.sin(theta) + k * k:dot(v) * (1.0 - c)
+end
+
+-- Computes the (small) angle between two unit vectors, in radians.
+local function angleBetweenVecsNorm(a, b) return math.acos(a:dot(b)) end
+
+-- Computes the (small) angle between two vectors of arbitrary length, in radians.
+local function angleBetweenVecs(a, b) return angleBetweenVecsNorm(a:normalized(), b:normalized()) end
+
 local function getUniqueRequestId()
   requestId = requestId + 1
   return requestId
@@ -61,6 +79,9 @@ local function doesSensorExist(sensorId)
 end
 
 local function removeSensor(sensorId)
+  if rawLidarData[sensorId] then
+    rawLidarData[sensorId].fileRef.onRemove()                                                       -- If a RAW LiDAR sensor, call the users remove function, if implemented.
+  end
   Research.SensorManager.removeSensor(sensorId)
 end
 
@@ -80,41 +101,19 @@ local function setMaxLoadPerFrame(maxLoadPerFrame)
   Research.GpuRequestManager.setMaxLoadPerFrame(maxLoadPerFrame)
 end
 
-local function sendCameraRequest(sensorId)
-  return Research.GpuRequestManager.sendAdHocCameraGpuRequest(sensorId)
-end
+-- Ad-hoc polling functions.
+local function sendCameraRequest(sensorId) return Research.GpuRequestManager.sendAdHocCameraGpuRequest(sensorId) end
+local function sendLidarRequest(sensorId) return Research.GpuRequestManager.sendAdHocLidarGpuRequest(sensorId) end
+local function sendUltrasonicRequest(sensorId) return Research.GpuRequestManager.sendAdHocUltrasonicGpuRequest(sensorId) end
+local function sendRadarRequest(sensorId) return Research.GpuRequestManager.sendAdHocRadarGpuRequest(sensorId) end
 
-local function sendLidarRequest(sensorId)
-  return Research.GpuRequestManager.sendAdHocLidarGpuRequest(sensorId)
-end
+local function collectCameraRequest(requestId) return Research.GpuRequestManager.collectAdHocCameraGpuRequest(requestId) end
 
-local function sendUltrasonicRequest(sensorId)
-  return Research.GpuRequestManager.sendAdHocUltrasonicGpuRequest(sensorId)
-end
+local function collectLidarRequest(requestId) return Research.GpuRequestManager.collectAdHocLidarGpuRequest(requestId) end
+local function collectUltrasonicRequest(requestId) return Research.GpuRequestManager.collectAdHocUltrasonicGpuRequest(requestId) end
+local function collectRadarRequest(requestId) return Research.GpuRequestManager.collectAdHocRadarGpuRequest(requestId) end
 
-local function sendRadarRequest(sensorId)
-  return Research.GpuRequestManager.sendAdHocRadarGpuRequest(sensorId)
-end
-
-local function collectCameraRequest(requestId)
-  return Research.GpuRequestManager.collectAdHocCameraGpuRequest(requestId)
-end
-
-local function collectLidarRequest(requestId)
-  return Research.GpuRequestManager.collectAdHocLidarGpuRequest(requestId)
-end
-
-local function collectUltrasonicRequest(requestId)
-  return Research.GpuRequestManager.collectAdHocUltrasonicGpuRequest(requestId)
-end
-
-local function collectRadarRequest(requestId)
-  return Research.GpuRequestManager.collectAdHocRadarGpuRequest(requestId)
-end
-
-local function isRequestComplete(requestId)
-  return Research.GpuRequestManager.isAdHocGpuRequestComplete(requestId)
-end
+local function isRequestComplete(requestId) return Research.GpuRequestManager.isAdHocGpuRequestComplete(requestId) end
 
 -- TODO Should be replaced when GE-2170 is complete.
 local function getFullCameraRequest(sensorId)
@@ -241,7 +240,7 @@ local function attachSensor(sensorId, pos, dir, up, vid, isSensorStatic, isSnapp
 end
 
 local function getSensorMatrix(sensorId)
-  Research.SensorMatrixManager.getSensorMatrixExternal(sensorId)
+  return Research.SensorMatrixManager.getSensorMatrixExternal(sensorId)
 end
 
 local function getWorldFrame(sensorId)
@@ -343,18 +342,15 @@ end
 local function processCameraData(sensorId)
   local binary = getCameraData(sensorId)
   local colourData, cData = {}, binary.colour
-  local numCData = #cData
-  for i = 1, numCData do
+  for i = 1, #cData do
     table.insert(colourData, cData:byte(i))
   end
   local annotationData, aData = {}, binary.annotation
-  local numAData = #aData
-  for i = 1, numAData do
+  for i = 1, #aData do
     table.insert(annotationData, aData:byte(i))
   end
   local depthData, dData = {}, binary.depth
-  local numDData = #dData
-  for i = 1, numDData, 4 do
+  for i = 1, #dData, 4 do
     table.insert(depthData, unpack_float(dData:byte(i), dData:byte(i + 1), dData:byte(i + 2), dData:byte(i + 3)))
   end
   return { colour = colourData, annotation = annotationData, depth = depthData}
@@ -380,13 +376,13 @@ local function getCameraUpdatePriority(sensorId)
   return Research.Camera.getUpdatePriority(sensorId)
 end
 
-local function setCameraSensorPosition(sensorId, pos)
-  Research.Camera.setSensorPosition(sensorId, pos)
-end
-
-local function setCameraSensorDirection(sensorId, dir)
-  Research.Camera.setSensorDirection(sensorId, dir)
-end
+-- Functions to set the fustrum properties of an existing camera sensor.
+local function setCameraSensorPosition(sensorId, pos) Research.Camera.setSensorPosition(sensorId, pos) end
+local function setCameraSensorDirection(sensorId, dir) Research.Camera.setSensorDirection(sensorId, dir) end
+local function setCameraSensorUp(sensorId, dir) Research.Camera.setSensorUp(sensorId, dir) end
+local function setCameraSensorResolution(sensorId, x, y) Research.Camera.setSensorResolution(sensorId, x, y) end
+local function setCameraSensorFOVX(sensorId, x) Research.Camera.setSensorFOVX(sensorId, x) end
+local function setCameraSensorNearFarPlanes(sensorId, pNear, pFar) Research.Camera.setSensorNearFarPlanes(sensorId, pNear, pFar) end
 
 local function setCameraMaxPendingGpuRequests(sensorId, maxPendingGpuRequests)
   Research.Camera.setMaxPendingGpuRequests(sensorId, maxPendingGpuRequests)
@@ -402,6 +398,63 @@ end
 
 local function convertWorldPointToPixel(sensorId, point)
   return Research.Camera.convertWorldPointToPixel(sensorId, point)
+end
+
+-- Creates a new Raw LiDAR sensor.
+-- [Note: these are managed in a special way. We return only the sector of data, based on the position of the sensor due to its rotation, since the last frame, and poll it ad-hoc.]
+local function createRawLidar(vid, filename, args)
+
+  -- Get a reference to the user's lua file.
+  local fileRef = require(filename)
+  if not fileRef then
+    log('E', 'sensors', 'ERROR - user .lua file not found at the given path: ' .. tostring(filename))
+  end
+
+  -- Call the user's lua initialisation callback.
+  local initData = fileRef.onInit(args)
+  if not initData then
+    log('E', 'sensors', 'Initialization of user .lua file failed.')
+    return
+  end
+
+  local args = {}
+  args.pos = vec3(initData.posX, initData.posY, initData.posZ)
+  args.up = vec3(initData.upX, initData.upY, initData.upZ)
+  args.size = { initData.resX, initData.resY }
+  args.fovY = initData.fovY
+  args.nearFarPlanes = { initData.pNear, initData.pFar }
+  args.updateTime = -1.0                                                                            -- We will only use ad-hoc polling with this sensor type.
+  args.renderColours = true
+  args.renderAnnotations = true
+  args.renderInstance = false
+  args.renderDepth = true
+
+  -- Create the four sensors (one per each quadrant, with direction set to the center of each quadrant, with the required amount of overlap)
+  local aperture = math.pi * 0.5 + initData.overlap
+  local dir = vec3(initData.dirX, initData.dirY, initData.dirZ)
+  args.dir = rotateVecAroundAxis(dir, args.up, -math.pi * 0.25)                                     -- The first quadrant sensor is centered at -45 degrees.
+  local sensorId1 = Research.SensorManager.createCameraSensorWithoutSharedMemory(vid, args)
+  setCameraSensorFOVX(sensorId1, aperture)
+  args.dir = rotateVecAroundAxis(dir, args.up, math.pi * 0.25)                                      -- The second quadrant sensor is centered at 45 degrees.
+  local sensorId2 = Research.SensorManager.createCameraSensorWithoutSharedMemory(vid, args)
+  setCameraSensorFOVX(sensorId2, aperture)
+  args.dir = rotateVecAroundAxis(dir, args.up, math.pi * 0.75)                                      -- The third quadrant sensor is centered at 135 degrees.
+  local sensorId3 = Research.SensorManager.createCameraSensorWithoutSharedMemory(vid, args)
+  setCameraSensorFOVX(sensorId3, aperture)
+  args.dir = rotateVecAroundAxis(dir, args.up, -math.pi * 0.75)                                     -- The third quadrant sensor is centered at -135 degrees.
+  local sensorId4 = Research.SensorManager.createCameraSensorWithoutSharedMemory(vid, args)
+  setCameraSensorFOVX(sensorId4, aperture)
+
+  Engine.Annotation.enable(true)                                                                    -- Ensure that annotations are switched on in the engine.
+
+  -- Cache the sensor set's data. [Note: the sensors are stored using the unique Id of the first sensor].
+  rawLidarData[sensorId1] = {
+    fileRef = fileRef,
+    sensorId1 = sensorId1, sensorId2 = sensorId2, sensorId3 = sensorId3, sensorId4 = sensorId4,
+    pos = args.pos, dir = dir, up = args.up, resX = args.size.x, resY = args.size.y, fovY = args.fovY, pNear = args.nearFarPlanes[1], pFar = args.nearFarPlanes[2],
+    requests1 = {}, requests2 = {}, requests3 = {}, requests4 = {} }
+
+  return { sensorId1, sensorId2, sensorId3, sensorId4 }
 end
 
 local function createLidar(vid, args)
@@ -607,8 +660,8 @@ local function visualiseUltrasonicSensor(sensorId, dtSim)
 
   -- Cycle the animation phase based on the simDt value and the wave parameters (period, speed).
   local animationTime = visualisedUltrasonicSensors[sensorId].animationTime + dtSim
-  if animationTime >= animationPeriod then
-    animationTime = animationTime - animationPeriod
+  if animationTime >= usParameters.animationPeriod then
+    animationTime = animationTime - usParameters.animationPeriod
   end
 
   visualisedUltrasonicSensors[sensorId].animationTime = animationTime
@@ -619,7 +672,7 @@ local function visualiseUltrasonicSensor(sensorId, dtSim)
   local lastWindowMin = lastReadings['windowMin']
 
   -- Compute the physical distance travelled by the outgoing pulse, at the current animation phase.
-  local pulseDistance = animationSpeed * animationTime
+  local pulseDistance = usParameters.animationSpeed * animationTime
 
   -- If we are in the transmission phase, draw the red transmission pulse (heading outward from the sensor).
   if pulseDistance <= lastDistance then
@@ -628,7 +681,9 @@ local function visualiseUltrasonicSensor(sensorId, dtSim)
     local pulseCentre = pos + pulseDistance * dir
 
     -- Compute the half width of the pulse. The pulse slowly disperses longitudinally as the distance increases.
-    local halfPulseWidth = math.min(maxPulseWidth, math.max(minPulseWidth, lastDistance - lastWindowMin) + pulseDistance * pulseWidthDispersion)
+    local halfPulseWidth = math.min(
+      usParameters.maxPulseWidth,
+      math.max(usParameters.minPulseWidth, lastDistance - lastWindowMin) + pulseDistance * usParameters.pulseWidthDispersion)
 
     -- Compute the top and bottom cylinder points for the pulse. We use the measurement window width as the height.
     local halfCylinderVector = halfPulseWidth * dir
@@ -637,7 +692,7 @@ local function visualiseUltrasonicSensor(sensorId, dtSim)
 
     -- Compute the radius and alpha channel value for the pulse at this distance.
     local radius = getUltrasonicSensorRadius(sensorId, pulseDistance)
-    local alpha = math.max(minAlpha, 1.0 - pulseDistance)
+    local alpha = math.max(usParameters.minAlpha, 1.0 - pulseDistance)
 
     -- Draw a red cylinder to represent the outgoing pulse.
     debugDrawer:drawCylinder(firstPoint, secondPoint, radius, ColorF(1, 0, 0, alpha))
@@ -657,7 +712,7 @@ local function visualiseUltrasonicSensor(sensorId, dtSim)
     local pulseCentre = pos + pulseDistance * dir
 
     -- Compute the half width of the pulse. The pulse slowly disperses longitudinally as the distance increases.
-    local halfPulseWidth = math.max(minPulseWidth, lastDistance - lastWindowMin) + bounceDistance * pulseWidthDispersion
+    local halfPulseWidth = math.max(usParameters.minPulseWidth, lastDistance - lastWindowMin) + bounceDistance * usParameters.pulseWidthDispersion
 
     -- Compute the top and bottom cylinder points for the pulse. We use the measurement window width as the height.
     local halfCylinderVector = halfPulseWidth * dir
@@ -666,7 +721,7 @@ local function visualiseUltrasonicSensor(sensorId, dtSim)
 
     -- Compute the radius and alpha channel value for the pulse at this distance.
     local radius = getUltrasonicSensorRadius(sensorId, lastDistance) + bounceDistance * 0.1
-    local alpha = math.max(minAlpha, 1 - bounceDistance)
+    local alpha = math.max(usParameters.minAlpha, 1 - bounceDistance)
 
     -- Draw a blue cylinder to represent the returning pulse. The radius grows linearly for this pulse (unlike the outgoing pulse).
     debugDrawer:drawCylinder(firstPoint, secondPoint, radius, ColorF(0, 0, 1, alpha))
@@ -1257,19 +1312,60 @@ local function removeTyreBarrierTest(vid, sensorId)
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
+
+  -- Manage all the Raw LiDAR sensor updates.
+  for _, d in pairs(rawLidarData) do
+
+    -- Dispatch new poll requests for each sensor in the set.
+    local id1, id2, id3, id4 = d.sensorId1, d.sensorId2, d.sensorId3, d.sensorId4
+    table.insert(d.requests1, Research.GpuRequestManager.sendAdHocCameraGpuRequest(id1))
+    table.insert(d.requests2, Research.GpuRequestManager.sendAdHocCameraGpuRequest(id2))
+    table.insert(d.requests3, Research.GpuRequestManager.sendAdHocCameraGpuRequest(id3))
+    table.insert(d.requests4, Research.GpuRequestManager.sendAdHocCameraGpuRequest(id4))
+
+    -- Collect the most-recently completed set of poll request.
+    if #d.requests1 > 0 then
+      local req1, req2, req3, req4 = d.requests1[1], d.requests2[1], d.requests3[1], d.requests4[1]
+      if isRequestComplete(req1) and isRequestComplete(req2) and isRequestComplete(req3) and isRequestComplete(req4) then
+        -- Collect the completed requests from each sensor in the set [Note: the data here is in binary string format].
+        cameraBufferDepth[id1], cameraBufferAnnotations[id1] = cameraBufferDepth[id1] or buffer.new(), cameraBufferAnnotations[id1] or buffer.new()
+        Research.GpuRequestManager.collectAdHocCameraGpuRequestBuffer(req1, cameraBufferDepth[id1], cameraBufferAnnotations[id1])
+        cameraBufferDepth[id2], cameraBufferAnnotations[id2] = cameraBufferDepth[id2] or buffer.new(), cameraBufferAnnotations[id2] or buffer.new()
+        Research.GpuRequestManager.collectAdHocCameraGpuRequestBuffer(req2, cameraBufferDepth[id2], cameraBufferAnnotations[id2])
+        cameraBufferDepth[id3], cameraBufferAnnotations[id3] = cameraBufferDepth[id3] or buffer.new(), cameraBufferAnnotations[id3] or buffer.new()
+        Research.GpuRequestManager.collectAdHocCameraGpuRequestBuffer(req3, cameraBufferDepth[id3], cameraBufferAnnotations[id3])
+        cameraBufferDepth[id4], cameraBufferAnnotations[id4] = cameraBufferDepth[id4] or buffer.new(), cameraBufferAnnotations[id4] or buffer.new()
+        Research.GpuRequestManager.collectAdHocCameraGpuRequestBuffer(req4, cameraBufferDepth[id4], cameraBufferAnnotations[id4])
+
+        -- Send the data to the user's lua update callback.
+        d.fileRef.onUpdate(
+          dtSim,
+          cameraBufferDepth[id1], cameraBufferDepth[id2], cameraBufferDepth[id3], cameraBufferDepth[id4],
+          cameraBufferAnnotations[id1], cameraBufferAnnotations[id2], cameraBufferAnnotations[id3], cameraBufferAnnotations[id4])
+
+        -- Pop the request queues for each sensor in the set, now that the requests have been handled.
+        table.remove(d.requests1, 1)
+        table.remove(d.requests2, 1)
+        table.remove(d.requests3, 1)
+        table.remove(d.requests4, 1)
+      end
+    end
+  end
+
+  -- Perform visualisation for all ultrasonic sensors which require it.
   for sensorId, _ in pairs(visualisedUltrasonicSensors) do
-    visualiseUltrasonicSensor(sensorId, dtSim)              -- Perform visualisation for all ultrasonic sensors which require it.
+    visualiseUltrasonicSensor(sensorId, dtSim)
   end
 end
 
 local function onDeserialized(data)
   if Research then
-    Research.GpuRequestManager.reset()                      -- Upon a Lua reload, we need to re-compute the GPU scheduler, since sensor parameters may have changed.
+    Research.GpuRequestManager.reset()                                        -- On a Lua reload, we need to re-compute the GPU scheduler, since sensor parameters may have changed.
   end
 end
 
 local function onVehicleDestroyed(vid)
-  removeAllSensorsFromVehicle(vid)                          -- Removes any sensors attached to the destroyed vehicle.
+  removeAllSensorsFromVehicle(vid)                                            -- Removes any sensors attached to the destroyed vehicle.
 end
 
 
@@ -1286,7 +1382,7 @@ M.getMaxLoadPerFrame                        = getMaxLoadPerFrame
 M.setMaxLoadPerFrame                        = setMaxLoadPerFrame
 
 -- Ad-hoc sensor reading functions (for C++ managed sensors).
-M.getFullCameraRequest                      = getFullCameraRequest            -- TODO This hack should be replaced when GE-2170 is complete.
+M.getFullCameraRequest                      = getFullCameraRequest                                  -- TODO This hack should be replaced when GE-2170 is complete.
 M.sendCameraRequest                         = sendCameraRequest
 M.sendLidarRequest                          = sendLidarRequest
 M.sendUltrasonicRequest                     = sendUltrasonicRequest
@@ -1310,7 +1406,7 @@ M.sendRoadsSensorRequest                    = sendRoadsSensorRequest
 M.collectRoadsSensorRequest                 = collectRoadsSensorRequest
 M.sendMeshRequest                           = sendMeshRequest
 M.collectMeshRequest                        = collectMeshRequest
-M.isVluaRequestComplete                     = isVluaRequestComplete           -- this query is generic to any request from vlua.
+M.isVluaRequestComplete                     = isVluaRequestComplete                                 -- this query is generic to any request from vlua.
 
 -- Sensor matrix manager functions.
 M.attachSensor                              = attachSensor
@@ -1332,29 +1428,36 @@ M.createCameraWithSharedMemory              = createCameraWithSharedMemory
 M.getCameraImage                            = getCameraImage
 M.getCameraAnnotations                      = getCameraAnnotations
 M.getCameraDepth                            = getCameraDepth
-M.getCameraData                             = getCameraData                   -- returns a binary string.
+M.getCameraData                             = getCameraData                                         -- returns a binary string.
 M.getCameraDataShmem                        = getCameraDataShmem
-M.processCameraData                         = processCameraData               -- returns processed data.
+M.processCameraData                         = processCameraData                                     -- returns processed data.
 M.getCameraSensorPosition                   = getCameraSensorPosition
 M.getCameraSensorDirection                  = getCameraSensorDirection
 M.getCameraMaxPendingGpuRequests            = getCameraMaxPendingGpuRequests
 M.getCameraRequestedUpdateTime              = getCameraRequestedUpdateTime
 M.getCameraUpdatePriority                   = getCameraUpdatePriority
-M.setCameraSensorPosition                   = setCameraSensorPosition
+M.setCameraSensorPosition                   = setCameraSensorPosition                               -- Camera property setters (for existing camera sensors).
 M.setCameraSensorDirection                  = setCameraSensorDirection
+M.setCameraSensorUp                         = setCameraSensorUp
+M.setCameraSensorResolution                 = setCameraSensorResolution
+M.setCameraSensorFOVX                       = setCameraSensorFOVX
+M.setCameraSensorNearFarPlanes              = setCameraSensorNearFarPlanes
 M.setCameraMaxPendingGpuRequests            = setCameraMaxPendingGpuRequests
 M.setCameraRequestedUpdateTime              = setCameraRequestedUpdateTime
 M.setCameraUpdatePriority                   = setCameraUpdatePriority
 M.convertWorldPointToPixel                  = convertWorldPointToPixel
 
+-- Raw LiDAR-specific sensor functions.
+M.createRawLidar                            = createRawLidar                                        -- Create up a new Raw LiDAR sensor (to be managed in a special way).
+
 -- LiDAR-specific sensor functions.
 M.createLidar                               = createLidar
 M.createLidarWithSharedMemory               = createLidarWithSharedMemory
-M.getLidarPointCloud                        = getLidarPointCloud              -- returns a binary string.
-M.getLidarColourData                        = getLidarColourData              -- returns a binary string.
+M.getLidarPointCloud                        = getLidarPointCloud                                    -- returns a binary string.
+M.getLidarColourData                        = getLidarColourData                                    -- returns a binary string.
 M.getLidarPointCloudShmem                   = getLidarPointCloudShmem
 M.getLidarColourDataShmem                   = getLidarColourDataShmem
-M.getLidarDataPositions                     = getLidarDataPositions           -- returns the LiDAR point cloud positions (processed data).
+M.getLidarDataPositions                     = getLidarDataPositions                                 -- returns the LiDAR point cloud positions (processed data).
 M.getActiveLidarSensors                     = getActiveLidarSensors
 M.getLidarSensorPosition                    = getLidarSensorPosition
 M.getLidarSensorDirection                   = getLidarSensorDirection

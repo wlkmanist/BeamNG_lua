@@ -16,24 +16,19 @@ local techUtils = require('tech/techUtils')
 
 local tcomParams = {
   ip = '*',
-  port = 64256,
+  port = 25252,
   debug = nil
 }
 
 local quitRequested = false
 
 local conSleep = 1
-local stepsLeft = 0
 
-local blocking = nil
-local blockingData = nil
-local waiting = nil
-local responsePending = nil
-
-local spawnPending = nil
-
-local vehicleInfoPending = {}
-local vehicleInfo = nil
+local blocking = {
+  reason = nil,
+  data = nil,
+  socket = nil,
+}
 
 local frameDelayFuncQueue = {}
 
@@ -79,8 +74,8 @@ local debugObjectCounter = {sphereNum = 0,
                             prismNum = 0
                           }
 
-local hostOS = Engine.Platform.getOSInfo().type
 local scenarios = nil
+local currentMissionState = nil
 
 local showServerGUI = false
 local openServerGuiData = {
@@ -96,33 +91,45 @@ local function addFrameDelayFunc(func, delay)
 end
 
 local function block(reason, request, data)
-  if blocking ~= nil then
-    request:sendBNGError('Cannot fullfill this request. It needs blocking, but BeamNG.tech is already blocked (\'' .. reason .. '\').')
+  if blocking.reason ~= nil then
+    request:sendBNGError('Cannot fullfill this request. It needs blocking, but BeamNG.tech is already blocked (\'' .. blocking.reason .. '\' <- \'' .. reason .. '\').')
     return false
   end
-  blocking = reason
-  waiting = request
-  blockingData = data
+  blocking.reason = reason
+  blocking.socket = request
+  blocking.data = data
 
   return true
 end
 
+local function isBlocking(reason)
+  if reason == nil then
+    return blocking.reason ~= nil
+  end
+  return blocking.reason == reason
+end
+
 local function stopBlocking()
-  blocking = nil
-  blockingData = nil
-  waiting = nil
+  local tmp, tmpData = blocking.socket, blocking.data
+  blocking.reason = nil
+  blocking.socket = nil
+  blocking.data = nil
+  return tmp, tmpData
 end
 
 local function checkVehicleInfoPending()
-  if blocking == 'vehicleInfo' and next(vehicleInfoPending) == nil then
-    local resp = {}
-    for _, v in pairs(vehicleInfo) do
-      resp[v.name] = v
+  if isBlocking('vehicleInfo') then
+    local vehicleInfoPending = blocking.data.vehicleInfoPending
+    if next(vehicleInfoPending) == nil then
+      local vehicleInfo = blocking.data.vehicleInfo
+      local resp = {}
+      for _, v in pairs(vehicleInfo) do
+        resp[v.name] = v
+      end
+      resp = {type = 'GetCurrentVehicles', result = resp}
+      local waiting = stopBlocking()
+      waiting:sendResponse(resp)
     end
-    resp = {type = 'GetCurrentVehicles', result = resp}
-    waiting:sendResponse(resp)
-    vehicleInfo = nil
-    stopBlocking()
   end
 end
 
@@ -134,6 +141,31 @@ local function getRunningFlowgraphManager()
       return mgrs[i]
     end
   end
+end
+
+local function getCurrentMissionMainButton()
+  local mgrs = extensions.core_flowgraphManager.getAllManagers()
+  local button = nil
+  for i = 1, #mgrs do
+    if mgrs[i].runningState ~= 'running' then goto continue end
+    local ui = mgrs[i].modules.ui
+    if not ui then goto continue end
+    local uiLayout = ui.uiLayout
+    if not uiLayout then goto continue end
+    local buttons = uiLayout.buttons
+    if not buttons then goto continue end
+
+    for i = 1, #buttons do
+      if buttons[i].main then
+        button = buttons[i]
+        goto foundbutton
+      end
+    end
+    ::continue::
+  end
+
+  ::foundbutton::
+  return button
 end
 
 local function translateNested(name)
@@ -171,7 +203,7 @@ local function refreshScenarioList()
     if v.levelName == nil then
       _, v.levelName = v.map:gmatch('([^%.]+)')
     end
-    scenarios[scenarioPath] = v
+    scenarios[scenarioPath:lower()] = v
   end
 end
 
@@ -298,17 +330,10 @@ end
 
 M.onAnyMissionChanged = function(state)
   if state == 'started' then
-    if blocking == 'loadMission' then
+    if isBlocking('loadMission') then
+      local waiting = stopBlocking()
       waiting:sendACK('MapLoaded')
-      stopBlocking()
     end
-  end
-end
-
-M.onCountdownEnded = function()
-  if blocking == 'startScenario' then
-    waiting:sendACK('ScenarioStarted')
-    stopBlocking()
   end
 end
 
@@ -438,14 +463,18 @@ M.onInit = function()
 end
 
 M.onLoadingScreenFadeout = function()
-  if blocking == 'loadScenarioFG' then
+  if isBlocking('loadScenarioFG') then
+    local waiting = stopBlocking()
     waiting:sendACK('MapLoaded')
-    stopBlocking()
-  elseif blocking == 'restartScenarioFG' then
+  elseif isBlocking('restartScenarioFG') then
     guihooks.trigger('ScenarioPlay')
+    local waiting = stopBlocking()
     waiting:sendACK('ScenarioRestarted')
-    stopBlocking()
   end
+end
+
+M.onRequestMissionScreenData = function(mode)
+  currentMissionState = mode
 end
 
 M.openServerGUI = function()
@@ -517,33 +546,32 @@ M.onPreRender = function(dt)
     end
   end
 
-  if blocking ~= nil then
-    if blocking == 'returnMainMenu' then
+  if isBlocking() then
+    if isBlocking('returnMainMenu') then
       if next(core_gamestate.state) == nil then
+        local waiting = stopBlocking()
         waiting:sendACK('ScenarioStopped')
-        stopBlocking()
         goto continue
       end
     end
 
-    if blocking == 'returnMainMenuCreateScenario' then
+    if isBlocking('returnMainMenuCreateScenario') then
       if next(core_gamestate.state) == nil then
-        waiting:sendResponse(responsePending)
-        responsePending = nil
-        stopBlocking()
+        local waiting, response = stopBlocking()
+        waiting:sendResponse(response)
         goto continue
       end
     end
 
-    if blocking == 'step' then
-      stepsLeft = stepsLeft - 1
-      if stepsLeft == 0 then
+    if isBlocking('step') then
+      -- stepsLeft = blocking.data
+      blocking.data = blocking.data - 1
+      if blocking.data == 0 then
+        local waiting = stopBlocking()
         waiting:sendACK('Stepped')
-        stopBlocking()
         goto continue
       end
     end
-
     return
   end
 
@@ -569,34 +597,34 @@ M.onPreRender = function(dt)
 end
 
 M.onScenarioLoaded = function()
-  if blocking == 'loadScenario' then
+  if isBlocking('loadScenario') then
+    local waiting = stopBlocking()
     waiting:sendACK('MapLoaded')
-    stopBlocking()
   end
 end
 
 M.onScenarioRestarted = function(scenario)
-  if blocking == 'restartScenario' then
+  if isBlocking('restartScenario') then
     scenario_scenarios.changeState('running')
     scenario.showCountdown = false
     scenario.countDownTime = 0
 
     guihooks.trigger('ScenarioPlay')
 
-    local restrictActions = blockingData
+    local restrictActions = blocking.data
     if not restrictActions then -- allow freeroam-like controls of the scenario
       core_input_actionFilter.clear(0)
       core_gamestate.setGameState('exploration', nil, 'freeroam', 'freeroam')
     end
 
+    local waiting = stopBlocking()
     waiting:sendACK('ScenarioRestarted')
-    stopBlocking()
   end
 end
 
 M.onVehicleConnectionReady = function(vehicleID, port)
   log('I', logTag, 'New vehicle connection: ' .. tostring(vehicleID) .. ', ' .. tostring(port))
-  if blocking == 'vehicleConnection' then
+  if isBlocking('vehicleConnection') then
     local name = ''
     local veh = scenetree.findObjectById(vehicleID)
     if veh ~= nil then
@@ -606,30 +634,32 @@ M.onVehicleConnectionReady = function(vehicleID, port)
       name = tostring(vehicleID)
     end
     local resp = {type = 'StartVehicleConnection', vid = name, result = port}
+    local waiting = stopBlocking()
     waiting:sendResponse(resp)
-    stopBlocking()
   end
 end
 
 M.onVehicleInfoReady = function(vehicleID, info)
-  if blocking == 'vehicleInfo' then
-    local current = vehicleInfo[vehicleID]
+  if isBlocking('vehicleInfo') then
+    local current = blocking.data.vehicleInfo[vehicleID]
     current['port'] = info.port
-    vehicleInfoPending[vehicleID] = nil
+    blocking.data.vehicleInfoPending[vehicleID] = nil
 
     checkVehicleInfoPending()
   end
 end
 
 M.onVehicleSpawned = function(vID)
-  if blocking == 'spawnVehicle' and spawnPending ~= nil then
-    local obj = scenetree.findObject(spawnPending)
-    log('I', logTag, 'Vehicle spawned: ' .. tostring(vID))
-    if obj ~= nil and obj:getID() == vID then
-      local resp = {type = 'VehicleSpawned', name = spawnPending, success = true}
-      spawnPending = nil
-      waiting:sendResponse(resp)
-      stopBlocking()
+  if isBlocking('spawnVehicle') then
+    local spawnPending = blocking.data
+    if spawnPending ~= nil then
+      local obj = scenetree.findObject(spawnPending)
+      log('I', logTag, 'Vehicle spawned: ' .. tostring(vID))
+      if obj ~= nil and obj:getID() == vID then
+        local resp = {type = 'VehicleSpawned', name = spawnPending, success = true}
+        local waiting = stopBlocking()
+        waiting:sendResponse(resp)
+      end
     end
   end
 end
@@ -658,7 +688,7 @@ end
 M.handleQuit = function(request)
   request:sendACK('Quit')
   quitRequested = true
-  blocking = 'quit'
+  block('quit')
 end
 
 M.handleLoadScenario = function(request)
@@ -677,11 +707,15 @@ M.handleLoadScenario = function(request)
   FS:updateDirectoryWatchers() -- late prefab file notification could cause a bug, update explicitly
 
   log('I', logTag, 'Loading scenario: ' .. scenarioPath)
-  local sc = scenarios[scenarioPath]
+  local sc = scenarios[scenarioPath:lower()]
   if not sc then
-    log('I', logTag, 'Scenario not found...')
-    request:sendBNGValueError('Scenario not found: "' .. scenarioPath .. '"')
-    return false
+    -- try to load it anyways, it may not be in one of the default folders
+    sc = scenario_scenariosLoader.loadScenario(scenarioPath:lower())
+    if not sc then
+      log('I', logTag, 'Scenario not found...')
+      request:sendBNGValueError('Scenario not found: "' .. scenarioPath .. '"')
+      return false
+    end
   end
 
   log('I', logTag, 'Scenario found...')
@@ -692,6 +726,7 @@ M.handleLoadScenario = function(request)
   else
     if not block('loadScenario', request) then return false end
   end
+  sc.forceNoCountDown = true
   scenariosLoader.start(sc)
 
   return false -- keep false here -> do not process any more commands in this frame after loadscenario to avoid bugs
@@ -699,9 +734,6 @@ end
 
 M.handleStartScenario = function(request)
   local scenario = scenario_scenarios and scenario_scenarios.getScenario()
-  if scenario then -- blocked until countdown ends
-    if not block('startScenario', request) then return false end
-  end
 
   if not scenario and not gameplay_missions_missionManager.getForegroundMissionId() and not getRunningFlowgraphManager() then
     request:sendBNGError('No scenario is running.')
@@ -710,18 +742,22 @@ M.handleStartScenario = function(request)
 
   if scenario then -- 'normal' scenario loading (not flowgraph)
     scenario_scenarios.changeState('running')
-    scenario.showCountdown = false
-    scenario.countDownTime = 0
   end
+
   guihooks.trigger('ScenarioPlay')
+  if currentMissionState == 'startScreen' then -- starting a mission
+    currentMissionState = 'startedFromTech'
+    local startButton = getCurrentMissionMainButton()
+    if startButton then
+      extensions.hook('onMissionScreenButtonClicked', startButton)
+    end
+  end
 
   if not request['restrict_actions'] then -- allow freeroam-like controls of the scenario
     core_input_actionFilter.clear(0)
     core_gamestate.setGameState('exploration', nil, 'freeroam', 'freeroam')
   end
-  if not scenario then
-    request:sendACK('ScenarioStarted')
-  end
+  request:sendACK('ScenarioStarted')
   return true
 end
 
@@ -798,9 +834,8 @@ end
 
 M.handleStep = function(request)
   local count = request["count"]
-  stepsLeft = count
   if request['ack'] then
-    if not block('step', request) then return false end
+    if not block('step', request, count) then return false end
   end
   be:physicsStep(count)
   return true
@@ -884,8 +919,7 @@ end
 
 M.handleWaitForSpawn = function(request)
   local name = request['name']
-  spawnPending = name
-  return block('spawnVehicle', request)
+  return block('spawnVehicle', request, name)
 end
 
 M.handleSpawnVehicle = function(request)
@@ -893,7 +927,7 @@ M.handleSpawnVehicle = function(request)
 
   local alreadyExists = scenetree.findObject(request['name'])
   if alreadyExists and not replace then
-    local resp = {type = 'VehicleSpawned', name = spawnPending, success = false}
+    local resp = {type = 'VehicleSpawned', name = request['name'], success = false}
     request:sendResponse(resp)
     return false
   end
@@ -928,8 +962,7 @@ M.handleSpawnVehicle = function(request)
   options.color3 = request['color3']
   options.licenseText = request['licenseText']
 
-  spawnPending = name
-  if not block('spawnVehicle', request) then return false end
+  if not block('spawnVehicle', request, name) then return false end
 
   local veh = nil
   if replace then
@@ -939,7 +972,6 @@ M.handleSpawnVehicle = function(request)
       veh = scenetree.findObject(replaceVid)
       if not veh then
         request:sendBNGError('Vehicle \'' .. replaceVid .. '\' to be replaced was not found.')
-        spawnPending = nil
         stopBlocking()
         return false
       end
@@ -2803,15 +2835,24 @@ end
 
 M.handleQueueLuaCommandGE = function(request)
   local func, loading_err = load(request.chunk)
+  local status, err
   if func then
-    local status, err = pcall(func)
+    status, err = pcall(func)
     if not status then
       log('E', logTag, 'execution error: "' .. err .. '"')
     end
   else
     log('E', logTag, 'compilation error in: "' .. request.chunk .. '"')
   end
-  request:sendACK('ExecutedLuaChunkGE')
+  if request.resp then
+    if not status then
+      request:sendBNGError(err)
+    else
+      request:sendResponse({type ='ExecutedLuaChunkGE', resp = tostring(err)})
+    end
+  else
+    request:sendACK('ExecutedLuaChunkGE')
+  end
 end
 
 M.handleGetLevels = function(request)
@@ -2867,7 +2908,7 @@ M.handleGetCurrentScenario = function(request)
     end
   end
 
-  local scenario = scenarios[sourceFile]
+  local scenario = scenarios[sourceFile:lower()]
   local level = core_levels.getLevelByName(scenario.levelName)
   scenario.level = level
 
@@ -2951,16 +2992,16 @@ M.handleCreateScenario = function(request)
   outFile:flush()
   outFile:close()
 
-  scenarios[infoPath] = scenariosLoader.loadScenario(infoPath)
+  scenarios[infoPath:lower()] = scenariosLoader.loadScenario(infoPath)
 
   FS:updateDirectoryWatchers() -- late prefab file notification could cause a bug, update explicitly
   local resp = {type = 'CreateScenario', result = infoPath}
 
-  if blocking ~= 'returnMainMenuCreateScenario' then
-    request:sendResponse(resp)
-  else
-    responsePending = resp
+  if isBlocking('returnMainMenuCreateScenario') then
+    blocking.data = resp
     request:markHandled() -- will be handled after we get back to main menu
+  else
+    request:sendResponse(resp)
   end
 
   return false
@@ -3011,7 +3052,8 @@ end
 
 
 M.handleGetCurrentVehicles = function(request)
-  vehicleInfo = {}
+  local vehicleInfo = {}
+  local vehicleInfoPending = {}
 
   for k, veh in pairs(getAllVehicles()) do
     if not veh:getActive() then goto continue end
@@ -3050,7 +3092,10 @@ M.handleGetCurrentVehicles = function(request)
   if next(vehicleInfo) == nil then
     request:sendResponse({type = 'GetCurrentVehicles', result = vehicleInfo})
   else
-    return block('vehicleInfo', request)
+    return block('vehicleInfo', request, {
+      vehicleInfo = vehicleInfo,
+      vehicleInfoPending = vehicleInfoPending
+    })
   end
 end
 
@@ -3357,12 +3402,18 @@ M.handleLoadTrackBuilderTrack = function(request)
 end
 
 M.handleSetLicensePlate = function(request)
+  if settings.getValue('SkipGenerateLicencePlate') then
+    local err = 'Dynamic license plates are disabled, check you are not running on \'Low\' graphic settings and that the \'Skip generation of License Plates\' option is unchecked.'
+    request:sendBNGError(err)
+    return false
+  end
   local veh = scenetree.findObject(request['vid'])
   if not veh then
     request:sendBNGValueError('Vehicle not found: "' .. tostring(request['vid']) .. '"')
     return false
   end
   core_vehicles.setPlateText(request['text'], veh:getID())
+  request:sendACK('SetLicensePlate')
 end
 
 M.handleGetSystemInfo = function(request)
@@ -3446,7 +3497,16 @@ end
 M.handleUnpackVehicleSensorConfiguration = function(request)
   local filepath, vid = request.filepath, request.vid
   local veh = scenetree.findObject(vid)
+  if not veh then
+    request:sendBNGError('Vehicle ' .. vid .. ' not found.')
+    return false
+  end
+
   local loadedJson = jsonReadFile(filepath)
+  if not loadedJson then
+    request:sendBNGError('File ' .. filepath .. ' not found.')
+    return false
+  end
   local sData = lpack.decode(loadedJson.data).sensors
   local numSensors = #sData
   for i = 1, numSensors do
@@ -3461,6 +3521,10 @@ end
 M.handleUnpackMapSensorConfiguration = function(request)
   local filepath = request.filepath
   local loadedJson = jsonReadFile(filepath)
+  if not loadedJson then
+    request:sendBNGError('File ' .. filepath .. ' not found.')
+    return false
+  end
   local sData = lpack.decode(loadedJson.data)
   request:sendResponse({ type = 'UnpackMapSensorConfiguration', data = sData })
 end

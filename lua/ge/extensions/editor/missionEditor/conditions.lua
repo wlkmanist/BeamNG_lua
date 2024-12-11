@@ -199,12 +199,28 @@ local function displayBranchLevel(self, condition)
   im.PopItemWidth()
 end
 
+local function displayLeague(self, condition)
+  index = index + 1
+  local editEnded = im.BoolPtr(false)
+  im.SameLine()
+  im.PushItemWidth(im.GetContentRegionAvailWidth())
+  local val, name =  'vName'..index, 'vnName'..index
+  if not self.fields[val] then self.fields[val] = im.ArrayChar(1024, condition.leagueId or '') end
+  if im.InputText("##"..'valueInput'..index, self.fields[val], 1024) then
+    self.mission._dirty = true
+    condition.leagueId = ffi.string(self.fields[val])
+  end
+  im.tooltip("leagueIds")
+
+end
+
 conditionFunctions.displayCondition = displayCondition
 conditionFunctions.displayMissionCondition = displayMissionCondition
 conditionFunctions.displayNestedCondition = displayNestedCondition
 conditionFunctions.displaySimpleCondition = displaySimpleCondition
 conditionFunctions.displayMissionConditionWithProgressKey = displayMissionConditionWithProgressKey
 conditionFunctions.displayBranchLevel = displayBranchLevel
+conditionFunctions.displayLeague = displayLeague
 
 
 function C:draw()

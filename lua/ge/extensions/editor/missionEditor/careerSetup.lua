@@ -279,7 +279,7 @@ function C:starSlotSelector(key)
       end
       self.mission._dirty = true
     end
-    for i = 1, 3 do
+    for i = 1, #tableKeys(self.mission.careerSetup.starsActive) do
       if im.Selectable1("Default Star " .. i, currentSlot == "Default Star " .. i) then
         if idx then
           self.mission.careerSetup.defaultStarKeys[idx] = nil

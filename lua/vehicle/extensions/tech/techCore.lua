@@ -444,15 +444,24 @@ end
 
 M.handleQueueLuaCommandVE = function(request)
   local func, loading_err = load(request.chunk)
+  local status, err
   if func then
-    local status, err = pcall(func)
+    status, err = pcall(func)
     if not status then
       log('E', logTag, 'execution error: "' .. err .. '"')
     end
   else
     log('E', logTag, 'compilation error in: "' .. request.chunk .. '"')
   end
-  request:sendACK('ExecutedLuaChunkVE')
+  if request.resp then
+    if not status then
+      request:sendBNGError(err)
+    else
+      request:sendResponse({type ='ExecutedLuaChunkVE', resp = tostring(err)})
+    end
+  else
+    request:sendACK('ExecutedLuaChunkVE')
+  end
 end
 
 M.handleAddIMUPosition = function(request)
@@ -598,7 +607,7 @@ M.handlePollIdealRADARVE = function(request)
 
   -- The sensor was not found, or the readings did not exist, so send an empty response.
   local resp = {type = 'PollIdealRADARVE', data = {} }
-  log('I', 'WARNING: Ideal RADAR sensor not found')
+  log('I', logTag, 'WARNING: Ideal RADAR sensor not found')
   request:sendResponse(resp)
 end
 

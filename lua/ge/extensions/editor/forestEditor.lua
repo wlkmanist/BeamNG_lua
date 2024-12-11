@@ -1601,7 +1601,7 @@ local function textureSetImageButton(imgSize, id, tooltip)
     local payload = im.AcceptDragDropPayload("ASSETDRAGDROP")
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[2048]")
-      local data = ffi.string(ffi.cast("char*",payload.Data))
+      local data = ffi.string(payload.Data)
       local path, filepath, extension = path.split(data)
       if extension == "png" or extension == "jpg" then
         if not pM_textureSets.data[selectedTextureSetIdStr] then
@@ -2757,6 +2757,7 @@ local function onEditorInitialized()
     actionMap = "forestTools", -- if available, not required
     icon = editor.icons.create_forest,
     iconTooltip = "Forest Tools",
+    sortOrder = 6,
     hideObjectIcons = true,
     getLegendCurrentActionNames = function()
       return var.legendCurrentActionNames
@@ -2868,6 +2869,7 @@ M.onEditorAxisGizmoModeChanged = onEditorAxisGizmoModeChanged
 M.onEditorInspectorFieldChanged = onEditorInspectorFieldChanged
 M.onDeserialize = onDeserialize
 M.onSerialize = onSerialize
+M.dependencies = {"core_forest"}
 
 M.changeBrush = changeBrush
 M.selectBrushByIndex = selectBrushByIndex

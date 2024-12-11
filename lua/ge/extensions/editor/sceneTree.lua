@@ -228,6 +228,7 @@ local function cacheGroupNodeInternal(instance, node, groupsToChildren, nestingL
   end
 
   local childrenIds = groupsToChildren[node.id]
+
   if childrenIds then
     for _, objId in ipairs(childrenIds) do
       local object = scenetree.findObjectById(objId)
@@ -252,7 +253,13 @@ local function cacheGroupNodeInternal(instance, node, groupsToChildren, nestingL
             renderOrderIndex = #node.renderChildrenOrder + 1
           }
           node.children[objId] = child
-          table.insert(node.renderChildrenOrder, objId)
+          -- table.insert(node.renderChildrenOrder, objId)
+          local childIndex = arrayFindValueIndex(node.renderChildrenOrder, objId)
+          if not childIndex then
+            table.insert(node.renderChildrenOrder, objId)
+          -- else
+          --   log('E','', node.id..': Duplicated child index detected child = '..objId..' (site 2)')
+          end
         end
 
         -- also cache this node if its a group
@@ -589,8 +596,13 @@ local function applyNodeOpenStatus(node, openStatus)
   end
 end
 
-local function recacheAllNodes(incomingObjectIds, keepOpenStatus)
+local function recacheAllNodes(keepOpenStatus)
   local rootGrp = getRootGroup()
+  local incomingObjectIds = {}
+  if rootGrp then
+    incomingObjectIds = rootGrp:getScenetreeData()
+  end
+
   for index, instance in pairs(guiInstancer.instances) do
     local openStatus
     if keepOpenStatus and instance.rootNode then
@@ -613,8 +625,6 @@ local function recacheAllNodes(incomingObjectIds, keepOpenStatus)
         children = nil,
         renderChildrenOrder = nil
       }
-
-      incomingObjectIds = rootGrp:getScenetreeData()
     end
 
     cacheGroupNode(instance, instance.rootNode, incomingObjectIds, 0)
@@ -1010,13 +1020,13 @@ local function submitTransactions(transactions)
   local submitBatchedOperation = function(operation, batchedData)
     -- log('I','','Submitting batch '..opTypeToString[operation + 1]..' batchedData = '..dumps(batchedData))
     if operation == opClearSet then
-      recacheAllNodes(nil, true) -- improve this. Maybe we can remove that set alone. instead of recaching all nodes
+      recacheAllNodes(true) -- improve this. Maybe we can remove that set alone. instead of recaching all nodes
     elseif operation == opAddObject then
       if tableSize(batchedData) > 0 then
         refreshAllNodes(batchedData)
       end
     elseif operation == opRemoveObject then
-        for _, instance in pairs(guiInstancer.instances) do
+      for _, instance in pairs(guiInstancer.instances) do
         removeNodesByObjectIds(instance, batchedData)
       end
       refreshAllNodes()
@@ -1079,7 +1089,7 @@ end
 
 local function setFieldRec(node, v, objectIDs)
   table.insert(objectIDs, node.id)
-  for _, n in ipairs(node.children or {}) do
+  for _, n in pairs(node.children or {}) do
     setFieldRec(n, v, objectIDs)
   end
 end
@@ -1089,8 +1099,8 @@ local function boolFieldButton(instance, node, field, iconOn, iconOff)
   if not object then return end
   local value = object:getField(field, 0) == "1"
   local icon = value and iconOn or iconOff
-  local newValue = not value
   if editor.uiIconImageButton(icon, iconSize, iconColor, "", nil, nil, iconColor, node.textBG, activateOnRelease) then
+    local newValue = not value
     local objectIDs = {}
     table.insert(objectIDs, node.id)
     if node.selected then
@@ -1098,7 +1108,7 @@ local function boolFieldButton(instance, node, field, iconOn, iconOff)
         setFieldRec(n, newValue, objectIDs)
       end
     end
-    for _, n in ipairs(node.children or {}) do
+    for _, n in pairs(node.children or {}) do
       setFieldRec(n, newValue, objectIDs)
     end
     objectHistoryActions.changeObjectFieldWithUndo(objectIDs, field, tostring(newValue), 0)
@@ -1198,7 +1208,7 @@ local function nodeSelectable(instance, node, icon, iconColor, iconSize, selecti
   -- ==============================
   -- following are the buttons for the table
 
-  -- hide/unhide
+  -- hide/unhide, check if it has an isHidden method
   if object and object.isHidden then
     if boolFieldButton(instance, node, "hidden", editor.icons.visibility_off, editor.icons.visibility) then
       clickedOnNode = true
@@ -1207,7 +1217,7 @@ local function nodeSelectable(instance, node, icon, iconColor, iconSize, selecti
     if object.isLocked then imgui.SameLine() end
   end
 
-  -- lock/unlock
+  -- lock/unlock, check if it has an isLocked method
   if object and object.isLocked then
     if boolFieldButton(instance, node, "locked", editor.icons.lock, editor.icons.lock_open) then
       clickedOnNode = true
@@ -1261,6 +1271,25 @@ local showSelectionClicked = false
 local lockSelectionClicked = false
 local unlockSelectionClicked = false
 local objectRemoved = false
+
+
+
+local function TEMP_LOOK_FOR_CORRECT_PLACE_replace_group_with_prefab_instance(prefab, parentGroup, instanceName)
+  if not prefab then
+    return nil
+  end
+
+  local pos = vec3(6, 3, 2)
+  local scale = vec3(1, 1, 1)
+  local instance = prefab:spawn(instanceName, pos, QuatF(0, 0, 0, 1), scale)
+
+  if instance then
+    if parentGroup then
+      parentGroup:addObject(instance)
+    end
+  end
+  return instance
+end
 
 local function renderSceneGroup(instance, node, selectMode)
   if not showGroups then return end
@@ -1322,6 +1351,12 @@ local function renderSceneGroup(instance, node, selectMode)
   if imgui.BeginPopup("##sceneItemPopupMenu"..node.id) then
     if not nodeIsInTheSelection(instance, node) then
       selectNode(instance, node, editor.SelectMode_New)
+    end
+    if imgui.Selectable1("Select Children") then
+      if tableSize(instance.selectedNodes) == 1 then
+        local parentNode = instance.selectedNodes[1]
+        selectChildren(instance, parentNode)
+      end
     end
     if imgui.Selectable1("New Group") then
       local grp = addNewGroupToSceneTree(instance)
@@ -1391,13 +1426,6 @@ local function renderSceneGroup(instance, node, selectMode)
           objectRemoved = true
           return
         end
-      end
-    end
-
-    if imgui.Selectable1("Select Children") then
-      if tableSize(instance.selectedNodes) == 1 then
-        local parentNode = instance.selectedNodes[1]
-        selectChildren(instance, parentNode)
       end
     end
     imgui.Separator()
@@ -2104,7 +2132,6 @@ end
 local function onWindowGotFocus(windowName)
   for index, instance in pairs(guiInstancer.instances) do
     if windowName == sceneTreeWindowNamePrefix .. index then
-      editor.selectEditMode(editor.editModes.objectSelect)
       instance.focused = true
       pushActionMap("SceneTree")
       return
@@ -2152,7 +2179,7 @@ local function onEditorBeforeSaveLevel()
 end
 
 local function onEditorObjectAdded()
-  recacheAllNodes(nil, true)
+  recacheAllNodes(true)
   for index, instance in pairs(guiInstancer.instances) do
     refreshNodeCache(instance)
   end
@@ -2192,6 +2219,18 @@ local function closeAllInstances()
   end
 end
 
+local function debugNode(id, level)
+  local object = scenetree.findObjectById(id)
+  if object then
+    for index, instance in pairs(guiInstancer.instances) do
+      local node = findNodeByObject(instance, nil, object)
+      if node then
+        log('I','',tostring(id)..' node = '..dumpsz(node, level))
+      end
+    end
+  end
+end
+
 M.onEditorInitialized = onEditorInitialized
 M.onEditorActivated = onEditorActivated
 M.onEditorGui = onEditorGui
@@ -2212,4 +2251,5 @@ M.refreshAllNodes = refreshAllNodes
 M.recacheAllNodes = recacheAllNodes
 M.closeAllInstances = closeAllInstances
 M.openSceneTree = openSceneTree
+M.debugNode = debugNode
 return M

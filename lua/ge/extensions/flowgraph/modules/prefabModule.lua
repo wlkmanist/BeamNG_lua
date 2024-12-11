@@ -20,7 +20,7 @@ end
 function C:afterTrigger()
   if self.flags.reloadCollisionOnAfterTrigger then
     self.flags.reloadCollisionOnAfterTrigger = false
-    log("I","Reloading collision in afterTrigger, after spawning a prefab.")
+    log("I", "prefabModule", "Reloading collision in afterTrigger, after spawning a prefab.")
     be:reloadCollision()
   end
   if self.flags.rebuildNavgraphOnAfterTrigger then
@@ -39,22 +39,36 @@ local function findObjectsRecursive(obj, list, slf)
 
   local cn = obj:getClassName()
   list[cn] = list[cn] or {}
-  table.insert(list[cn],obj:getId())
-
-  if slf.mgr.activity then
-    if obj:getName() ~= "" and obj:getName() ~= nil then
-      log("W","","Prefab Object "..dumps(obj:getName()).." uses Name field instead of InternalName field. This can cause prefabs to not be loaded properly. Please set Name to empty and use InternalName.")
-    end
-  end
-
+  table.insert(list[cn], obj:getId())
 end
 
 local function findAllObjects(obj, slf)
   local objectsByType = {}
   findObjectsRecursive(obj, objectsByType, slf)
+
+  if slf.mgr.activity then
+    local ignoredClasses = {BeamNGTrigger = 1, BeamNGWaypoint = 1, DecalRoad = 1, SimGroup = 1, Prefab = 1} -- these class objects are required to or benefit from having a name
+
+    for k, v in pairs(objectsByType) do
+      if not ignoredClasses[k] then
+        for _, id in ipairs(v) do
+          local name = scenetree.findObjectById(id):getName() or ""
+          if k == "BeamNGVehicle" then
+            if string.startswith(name, "clone") then
+              log("W", "prefabModule", "Prefab BeamNGVehicle object with Name value starting with 'clone': "..dumps(name).."; to prevent conflicts, please rename this to something else.")
+            end
+          else
+            if name ~= "" then
+              log("W", "prefabModule", "Prefab object with Name field: "..dumps(name).."; to prevent conflicts, please clear Name field and use Internal Name field instead.")
+            end
+          end
+        end
+      end
+    end
+  end
+
   return objectsByType
 end
-
 
    -- find out if any colliders are contained.
 local function containsColliders(data)

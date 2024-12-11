@@ -2,6 +2,11 @@ local M = {}
 
 M.dependencies = {"gameplay_drift_general"}
 
+local driftDebugInfo = {
+  default = true,
+  canBeChanged = true
+}
+
 local im = ui_imgui
 
 local drawLines = im.BoolPtr(true)
@@ -85,7 +90,7 @@ local result
 local pos = vec3()
 
 local function imguiDebug()
-  if gameplay_drift_general.getChallengeMode() == "Gymkhana" and gameplay_drift_general.getDebug() then
+  if gameplay_drift_general.getChallengeMode() == "Gymkhana" and gameplay_drift_general.getExtensionDebug("gameplay_drift_stuntZones") then
     if im.Begin("Drift stunt zones") then
       im.Separator()
       im.Text("Gymkhana options")
@@ -102,10 +107,10 @@ local function imguiDebug()
         })
       end
       if im.Button("Remove stunt zones") then
-        M.clearStuntZones()
+        M.clear()
       end
       if im.Button("Reset stunt zones") then
-        M.resetStuntZones()
+        M.reset()
       end
 
       im.Separator()
@@ -114,25 +119,25 @@ local function imguiDebug()
       im.InputInt("Spawn n stunt zones", benchmarkCount)
       if im.Button("Spawn donut zones") then
         for i = 1, benchmarkCount[0], 1 do
-          table.insert(tempStuntZones, {type = "donut", cooldown = 8, pos = pos + vec3(i * 20.5, 0, 0), scl = 10})
+          table.insert(tempStuntZones, {type = "donut", cooldown = 8, pos = pos + vec3(0, i * 20.5, 0), scl = 10})
         end
         M.setStuntZones(tempStuntZones)
       end
       if im.Button("Spawn drift throughs") then
         for i = 1, benchmarkCount[0], 1 do
-          table.insert(tempStuntZones, {type = "driftThrough", cooldown = 8, rot = quat(0, 0, 0, 1), pos = pos + vec3(i * 10, 0, 0), scl = vec3(8, 1, 1)})
+          table.insert(tempStuntZones, {type = "driftThrough", cooldown = 8, rot = quat(0, 0, 0, 1), pos = pos + vec3(0, i * 10, 0), scl = vec3(8, 1, 1)})
         end
         M.setStuntZones(tempStuntZones)
       end
       if im.Button("Spawn hit poles") then
         for i = 1, benchmarkCount[0], 1 do
-          table.insert(tempStuntZones,{type = "hitPole", pos = pos + vec3(i * 10, 0, 0)})
+          table.insert(tempStuntZones,{type = "hitPole", pos = pos + vec3(0, i * 10, 0)})
         end
         M.setStuntZones(tempStuntZones)
       end
       if im.Button("Spawn near poles") then
         for i = 1, benchmarkCount[0], 1 do
-          table.insert(tempStuntZones, {type = "nearPole", pos = pos + vec3(i * 10, 20, 0)})
+          table.insert(tempStuntZones, {type = "nearPole", pos = pos + vec3(20, i * 10, 0)})
         end
         M.setStuntZones(tempStuntZones)
       end
@@ -140,6 +145,17 @@ local function imguiDebug()
       im.Separator()
       im.Text("Stunt zone count : " .. #stuntZones)
       im.Checkbox('Draw lines', drawLines)
+
+      if im.BeginChild1("Stunt zones", im.ImVec2(im.GetWindowContentRegionWidth(), 150)) then
+        for _, stuntZone in ipairs(stuntZones) do
+          im.Text(stuntZone.data.zoneData.type .. " id : " .. stuntZone.data.id)
+          im.SameLine()
+          if im.Button("Score ##"..stuntZone.data.id) then
+            stuntZone:accomplish()
+          end
+        end
+      end
+      im.End()
     end
   end
 end
@@ -149,7 +165,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
   imguiDebug()
 
-  if gameplay_drift_general.getContext() == "stopped" or gameplay_drift_general.getFrozen() then return end
+  if gameplay_drift_general.getPaused() or gameplay_drift_general.getFrozen() then return end
 
   isDrifting = gameplay_drift_drift.getIsDrifting()
 
@@ -173,14 +189,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
           end
 
           if isInside then
-            result = stuntZone:detectStunt()
-            if result ~= nil and next(result) then
-              if gameplay_drift_stallingSystem then
-                gameplay_drift_stallingSystem.processStuntZone(stuntZone.data.id)
-              end
-              extensions.hook("onAnyStuntZoneScored")
-              extensions.hook(result.hook, result.hookData or {})
-            end
+            stuntZone:detectStunt()
           end
         end
       end
@@ -193,13 +202,13 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   end
 end
 
-local function resetStuntZones()
+local function reset()
   for _, stuntZone in ipairs(stuntZones) do
     stuntZone:reset()
   end
 end
 
-local function clearStuntZones()
+local function clear()
   for i = #stuntZones, 1, -1 do
     M.clearStuntZone(stuntZones[i].data.id)
   end
@@ -209,7 +218,7 @@ local function clearStuntZones()
 end
 
 local function setStuntZones(zones)
-  clearStuntZones()
+  clear()
 
   local stuntZoneId = 1
   -- specific setup if needed / sanitizing
@@ -273,8 +282,8 @@ local function setStuntZones(zones)
   end
 end
 
-local function onDriftStatusChanged(status)
-  if not status then
+local function onDriftStatusChanged(isDrifting)
+  if not isDrifting then
     for _, stuntZone in ipairs(stuntZones) do
       if stuntZone.data.zoneData.type == "donut" then
         stuntZone.activeData.totalDriftAngle = 0
@@ -301,11 +310,11 @@ local function getStuntZones()
 end
 
 local function onExtensionUnloaded()
-  clearStuntZones()
+  clear()
 end
 
 local function onSerialize()
-  clearStuntZones()
+  clear()
 end
 
 
@@ -333,6 +342,10 @@ local function getRedColor()
   return red
 end
 
+local function getDriftDebugInfo()
+  return driftDebugInfo
+end
+
 local function getLineThickness(linePos)
   return 250 / linePos:distance(core_camera.getPosition())
 end
@@ -341,16 +354,23 @@ local function onDriftDebugChanged()
   drawLines = im.BoolPtr(true)
 end
 
+local function onAnyStuntZoneAccomplished(data)
+  if gameplay_drift_stallingSystem then
+    gameplay_drift_stallingSystem.processStuntZone(data.stuntZoneId)
+  end
+
+  extensions.hook(data.subHookName, data.subHookData)
+end
+
 M.onUpdate = onUpdate
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onDriftStatusChanged = onDriftStatusChanged
 M.onDriftDebugChanged = onDriftDebugChanged
 M.onVehicleDestroyed = onVehicleDestroyed
 M.onSerialize = onSerialize
-M.clearStuntZone = clearStuntZone
-
-M.clearStuntZones = clearStuntZones
-M.resetStuntZones = resetStuntZones
+M.onAnyStuntZoneAccomplished = onAnyStuntZoneAccomplished
+M.clear = clear
+M.reset = reset
 M.setStuntZones = setStuntZones
 M.getStuntZones = getStuntZones
 
@@ -360,6 +380,7 @@ M.getLineThickness = getLineThickness
 M.getGreenColor = getGreenColor
 M.getWhiteColor = getWhiteColor
 M.getRedColor = getRedColor
+M.getDriftDebugInfo = getDriftDebugInfo
 
 -- TEST
 M.getDrawLines = getDrawLines

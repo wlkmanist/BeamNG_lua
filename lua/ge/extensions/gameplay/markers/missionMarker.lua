@@ -57,8 +57,12 @@ function C:init()
 end
 
 local function inverseLerp(min, max, value)
- if math.abs(max - min) < 1e-30 then return min end
- return (value - min) / (max - min)
+  if math.abs(max - min) < 1e-30 then return min end
+  return (value - min) / (max - min)
+end
+
+function C:playerIsInArea(data)
+  return data.vehPos:distance(self.pos) <= self.radius
 end
 
 local missionIconColor = ColorF(0,0,1,1):asLinear4F()
@@ -158,6 +162,16 @@ function C:update(data)
     end
   end
 
+  local isInAreaNow = data.isWalking and self:playerIsInArea(data)
+
+  if isInAreaNow ~= self.isInArea then
+    if isInAreaNow then self.isInAreaChanged = "in" end
+    if not isInAreaNow then self.isInAreaChanged = "out" end
+  else
+    self.isInAreaChanged = nil
+  end
+  self.isInArea = isInAreaNow
+
   profilerPopEvent("Mission Marker Icons")
 
   self.missionMarkerAlphaLastFrame = missionMarkerAlpha
@@ -187,10 +201,7 @@ function C:setup(cluster)
     columnObj:updateInstanceRenderData()
   end
 
-
-
   -- setting up the icon
-
   iconRendererObj = scenetree.findObjectById(self.iconRendererId)
   if iconRendererObj then
     self.iconDataById = {}
@@ -201,8 +212,6 @@ function C:setup(cluster)
     iconInfo.drawIconShadow = false
     self.iconDataById[self.missionIconId] = iconInfo
   end
-    --self.visibleInPlayMode = cluster.visibleInPlayMode
-
 
   -- setting up the smoothers
   self.markerAlphaSmoother:set(0)
@@ -345,7 +354,7 @@ end
 -- Interactivity
 function C:interactInPlayMode(interactData, interactableElements)
   if interactData.canInteract then
-    if interactData.vehPos:distance(self.pos) <= self.radius then
+    if self:playerIsInArea(interactData) then
       for _, elem in ipairs(self.cluster.elemData) do
         table.insert(interactableElements, elem)
       end
@@ -373,6 +382,7 @@ local function merge(pois, idPrefix)
     containedIdsLookup = {},
     elemData = {},
     create = create,
+    visibleBySetting = "showMissionMarkers",
   }
   local containsMissions = false
   local count = 0

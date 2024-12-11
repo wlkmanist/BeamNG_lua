@@ -127,6 +127,10 @@ local function getActionTemplates()
   return actionTemplates
 end
 
+local function getBlockedActions()
+  return blockedActions
+end
+
 M.addAction = addAction
 M.clear = clear
 M.setGroup = setGroup
@@ -137,5 +141,8 @@ M.getActionTemplates = getActionTemplates
 
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
+
+-- debug
+M.getBlockedActions = getBlockedActions
 
 return M

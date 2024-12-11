@@ -8,6 +8,8 @@ local im = extensions.ui_imgui
 local imguiUtils = require('ui/imguiUtils')
 local wndName = "Adjustable Tech Car Tuner"
 
+local windowOpen = im.BoolPtr(false)
+
 local debug = false
 
 local carViews = {
@@ -162,10 +164,13 @@ local function applyTuning()
   core_vehicle_partmgmt.setConfigVars(vehData.config.vars)
 end
 
-local function onEditorGui()
+local function onUpdate()
+  if windowOpen[0] ~= true then return end
+
   local veh = be:getPlayerVehicle(0)
   if not veh or veh.Jbeam ~= 'adjustable_tech_car' then return end
-  if editor.beginWindow(wndName, wndName) then
+
+  if im.Begin(wndName, windowOpen) then
     if not initFlag then
       init()
       initFlag = true
@@ -211,11 +216,7 @@ local function onEditorGui()
       im.Text(string.format("Mouse Pos Rel Img: %0.3f, %0.3f", x / viewToDebug.imgSize.x, y / viewToDebug.imgSize.y))
     end
   end
-  editor.endWindow()
-end
-
-local function open()
-  editor.showWindow(wndName)
+  im.End()
 end
 
 local function onEditorInitialized()
@@ -230,9 +231,26 @@ local function onVehicleResetted(vid)
   initFlag = false
 end
 
-M.onEditorGui = onEditorGui
+local function open()
+  windowOpen[0] = true
+end
+
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
+end
+
+M.onUpdate = onUpdate
 M.onEditorInitialized = onEditorInitialized
 M.open = open
 M.onVehicleResetted = onVehicleResetted
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

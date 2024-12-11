@@ -30,7 +30,8 @@ C.pinSchema = {
   {dir = 'out', type = 'flow', name = 'selected', impulse = true, hidden = true, description = 'Sends a pulse after a vehicle is selected.'},
   {dir = 'out', type = 'string', name = 'model', description= 'The model of the selected vehicle.'},
   {dir = 'out', type = 'string', name = 'config', description= 'The config of the selected vehicle.'},
-  {dir = 'out', type = {'color', 'string'}, name = 'color', description= 'The color of the selected vehicle.'}
+  {dir = 'out', type = {'color', 'string'}, name = 'color', description= 'The color of the selected vehicle.'},
+  {dir = 'out', type = 'number', name = 'dial', description= 'The dial of the config.'},
 }
 C.dependencies = {'core_input_bindings'}
 
@@ -75,7 +76,7 @@ function C:buttonPushed(action)
 end
 
 function C:getCmd(action)
-  return 'core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']:buttonPushed("'..action..'")'
+  return 'local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:buttonPushed("'..action..'") end'
 end
 
 function C:closeDialogue()
@@ -92,9 +93,6 @@ function C:onVehicleSelectedInitially(vehData, fullData)
 end
 
 function C:onVehicleSelected(vehData, fullData)
-  --dump("selected vehicle: ")
-  --dump(vehData)
-  --dump(fullData)
   self._selectedVehData = vehData
   self._selectedFullData = fullData
   self.pinOut.ready.value = true
@@ -116,7 +114,7 @@ function C:openDialogue()
   data.portraitText = data.description
   data.portraitImg = {}
   data.portraitImg.start = self.pinIn.portraitImg.value or nil
-  data.callObj = 'core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']'
+  data.callObj = 'core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..')'
   data.readyHook = data.callObj .. ':started()'
   data.exitHook = data.callObj .. ':exited()'
   data.selectionText = self.pinIn.selectionText.value or "ui.quickrace.selectVehicle"
@@ -195,6 +193,7 @@ function C:work()
     if self._selectedVehData then
       self.pinOut.model.value = self._selectedVehData.model
       self.pinOut.config.value = self._selectedVehData.config or ""
+      self.pinOut.dial.value = self._selectedFullData.file["Drag Times"] and self._selectedFullData.file["Drag Times"].time_1_4 or 12
       self.pinOut.color.value = {}
       if self._selectedVehData.color then
         for substring in self._selectedVehData.color:gmatch("%S+") do

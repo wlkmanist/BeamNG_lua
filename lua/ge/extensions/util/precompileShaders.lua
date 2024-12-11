@@ -74,6 +74,7 @@ local function onPreRender(dt)
         if levelToLoad > #levels then
             log('I', logTag, 'Precompiled data for all levels.')
             finished = true
+            quit()
         else
             loadNextLevel()
         end

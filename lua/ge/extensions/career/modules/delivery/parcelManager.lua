@@ -5,7 +5,7 @@
 local M = {}
 
 local ffi = require('ffi')
-M.dependencies = {"freeroam_facilities", "career_modules_delivery_general"}
+M.dependencies = {"freeroam_facilities"}
 
 local cargoLocationsChangedThisFrame = false
 
@@ -249,6 +249,7 @@ local function sameLocation(a,b)
 end
 
 local function getAllCargoCustomFilter(filter, ...)
+  career_modules_delivery_generator.triggerAllGenerators()
   local ret = {}
   for _, cargo in ipairs(allCargo) do
     if filter(cargo, ...) then
@@ -259,12 +260,23 @@ local function getAllCargoCustomFilter(filter, ...)
 end
 
 local function getAllCargoForLocation(loc)
-  return M.getAllCargoCustomFilter(M.sameLocationCargo, loc)
+  if loc.type == "facilityParkingspot" then
+    career_modules_delivery_generator.triggerAllGenerators()
+  end
+  local ret = {}
+  for _, cargo in ipairs(allCargo) do
+    if M.sameLocation(cargo.location, loc) then
+      table.insert(ret, cargo)
+    end
+  end
+  return ret
 end
 
 
-
 local function getAllCargoForLocationUnexpired(loc)
+  if loc.type == "facilityParkingspot" then
+    career_modules_delivery_generator.triggerAllGenerators()
+  end
   local ret = {}
   for _, cargo in ipairs(allCargo) do
     if M.sameLocation(cargo.location, loc) and cargo.offerExpiresAt > dGeneral.time() then
@@ -276,6 +288,9 @@ end
 
 
 local function getAllCargoForLocationUnexpiredUndelivered(loc, timeExpire, timeGenerated)
+  if loc.type == "facilityParkingspot" then
+    career_modules_delivery_generator.triggerAllGenerators()
+  end
   local ret = {}
   for _, cargo in ipairs(allCargo) do
     if    M.sameLocation(cargo.location, loc)
@@ -289,6 +304,7 @@ local function getAllCargoForLocationUnexpiredUndelivered(loc, timeExpire, timeG
 end
 
 local function getAllCargoForFacilityUnexpiredUndelivered(facId, timeExpire, timeGenerated)
+  career_modules_delivery_generator.triggerAllGenerators()
   local ret = {}
   for _, cargo in ipairs(allCargo) do
     if cargo.location.type == "facilityParkingspot" and cargo.location.facId == facId
@@ -302,21 +318,9 @@ local function getAllCargoForFacilityUnexpiredUndelivered(facId, timeExpire, tim
 end
 M.getAllCargoForFacilityUnexpiredUndelivered = getAllCargoForFacilityUnexpiredUndelivered
 
-local function getAllCargoForDestinationStillAtOriginUnexpired(loc, timeExpire, timeGenerated)
-  local ret = {}
-  for _, cargo in ipairs(allCargo) do
-    if    M.sameLocation(cargo.destination, loc)
-      and M.sameLocation(cargo.location, cargo.origin)
-      and cargo.offerExpiresAt > (timeExpire or dGeneral.time())
-      and cargo.generatedAtTimestamp <= (timeGenerated or math.huge) then
-      table.insert(ret, cargo)
-    end
-  end
-  return ret
-end
-
 
 local function getAllCargoForDestinationFacilityStillAtOriginUnexpired(facId)
+  career_modules_delivery_generator.triggerAllGenerators()
   local ret = {}
   for _, cargo in ipairs(allCargo) do
     if    cargo.destination.facId == facId
@@ -328,8 +332,8 @@ local function getAllCargoForDestinationFacilityStillAtOriginUnexpired(facId)
   return ret
 end
 
-
 local function getAllCargoAtFacilityUnexpired(facId)
+  career_modules_delivery_generator.triggerAllGenerators()
   local ret = {}
   for _, cargo in ipairs(allCargo) do
     if    M.sameLocation(cargo.location, cargo.origin)
@@ -357,7 +361,6 @@ M.getAllCargoCustomFilter = getAllCargoCustomFilter
 M.getAllCargoForLocation = getAllCargoForLocation
 M.getAllCargoForLocationUnexpired = getAllCargoForLocationUnexpired
 M.getAllCargoForLocationUnexpiredUndelivered = getAllCargoForLocationUnexpiredUndelivered
-M.getAllCargoForDestinationStillAtOriginUnexpired = getAllCargoForDestinationStillAtOriginUnexpired
 M.getAllCargoForDestinationFacilityStillAtOriginUnexpired = getAllCargoForDestinationFacilityStillAtOriginUnexpired
 M.getAllCargoAtFacilityUnexpired = getAllCargoAtFacilityUnexpired
 M.getAllCargoInVehicles = getAllCargoInVehicles

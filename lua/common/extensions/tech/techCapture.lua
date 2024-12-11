@@ -16,15 +16,15 @@ local tcomResponseFile = nil
 
 local captureRequests = false
 local captureResponses = false
-
-local lastFlush = os.clockhp()
 -- limits the time between I/O flushes
 --  <=0 = flush after every command
 --  > 0 = flush the next request/response after n seconds since the last flush of any type
 --  nil = never flush, count on I/O or clean close of the file
 -- Default is set to 0 to be on the safe side during debugging. If you are recording a trace for
--- reproducibility reasons and you know that you will
-local DEFAULT_FLUSH_INTERVAL = 0
+-- reproducibility reasons and you know that you will close the file, you can leave it set to nil.
+local _flushInterval = nil
+
+local lastFlush = os.clockhp()
 
 -- Helper functions
 
@@ -39,15 +39,19 @@ local function getAllRelatedFiles(pathToFile, completeMatch, intermediateMatch)
   local filteredFiles = {}
   for i, file in pairs(files) do -- this is a more fine-grained filter to preserve files with similar capture names
     local _, filename = path.split(file)
+    local filenameLower = filename:lower()
     local interPattern1 = '^' .. baseFilename .. '%.[%d]+%.' .. extension .. '$'
+    interPattern1 = interPattern1:lower()
     local interPattern2 = '^' .. baseFilename .. '%.GE%.' .. extension .. '$'
+    interPattern2 = interPattern2:lower()
     local compPattern = '^' .. baseFilename .. '%.' .. extension .. '$'
+    compPattern = compPattern:lower()
 
-    if intermediateMatch and filename:match(interPattern1) then
+    if intermediateMatch and filenameLower:match(interPattern1) then
       table.insert(filteredFiles, dirname ..filename)
-    elseif intermediateMatch and filename:match(interPattern2) then
+    elseif intermediateMatch and filenameLower:match(interPattern2) then
       table.insert(filteredFiles, dirname .. filename)
-    elseif completeMatch and filename:match(compPattern) then
+    elseif completeMatch and filenameLower:match(compPattern) then
       table.insert(filteredFiles, dirname .. filename)
     end
   end
@@ -84,7 +88,11 @@ local function filterFilesByHeader(files, captureType, captureMerged)
   local filteredFiles = {}
   for i, file in ipairs(files) do
     local fileType, fileMerged = getCaptureTypeFromFile(file)
-    if fileType and fileType == captureType then
+    if captureType ~= nil and captureMerged ~= nil then
+      if fileType == captureType and fileMerged == captureMerged then
+        table.insert(filteredFiles, file)
+      end
+    elseif fileType and fileType == captureType then
       table.insert(filteredFiles, file)
     elseif fileMerged and fileMerged == captureMerged then
       table.insert(filteredFiles, file)
@@ -109,7 +117,7 @@ end
 local function convertBinaryDataToString(data)
   local t = type(data)
   if t == 'userdata' then
-    return ffi.string(data)
+    return 'userdata'
   elseif t == 'table' then
     for k, v in pairs(data) do
       data[k] = convertBinaryDataToString(v)
@@ -150,7 +158,7 @@ local function openRequestFile(captureName)
     tcomRequestFile:write('TECH CAPTURE v1 INTERMEDIATE\n')
   end
 
-  return captureName
+  return filename
 end
 
 local function isRecordingRequests()
@@ -175,7 +183,9 @@ local function recordRequest(request)
   local clock = os.clockhp()
   local json = jsonEncode(requestData)
   tcomRequestFile:write(tostring(clock), '\n', LUA_CONTEXT, '\n', json, '\n')
-  if DEFAULT_FLUSH_INTERVAL <= 0 or (clock - lastFlush) > DEFAULT_FLUSH_INTERVAL then
+
+  if _flushInterval == nil then return true end
+  if _flushInterval <= 0 or (clock - lastFlush) > _flushInterval then
     tcomRequestFile:flush()
     lastFlush = clock
   end
@@ -210,12 +220,13 @@ end
 local function recordResponse(response)
   if not isRecordingResponses() then return end
 
-  -- log('D', logTag, 'Handling response: ', response)
+  log('D', logTag, 'Handling response [' .. response.type .. '].')
   local clock = os.clockhp()
   response = convertBinaryDataToString(response)
   local json = jsonEncode(response)
   tcomResponseFile:write(tostring(clock), '\n', LUA_CONTEXT, '\n', json, '\n')
-  if DEFAULT_FLUSH_INTERVAL <= 0 or (clock - lastFlush) > DEFAULT_FLUSH_INTERVAL then
+  if _flushInterval == nil then return end
+  if _flushInterval <= 0 or (clock - lastFlush) > _flushInterval then
     tcomResponseFile:flush()
     lastFlush = clock
   end
@@ -234,17 +245,25 @@ end
 -- and it is a mock for the real network requests (see `techCommunication.lua`).
 local TechCaptureRequest = {}
 
-function TechCaptureRequest:new(o)
+function TechCaptureRequest:new(o, callback)
   o = o or {}
   setmetatable(o, self)
   self.__index = self
   self.response = nil
+  self._callback = callback
   return o
 end
 
 function TechCaptureRequest:markHandled() end
 
 function TechCaptureRequest:sendResponse(message)
+  message['_id'] = self['_id']
+  local error = message.bngError or message.bngValueError
+  if error then
+    log('E', logTag, 'Error in response [' .. tostring(message._id) .. ']: ' .. error)
+  elseif self._callback then
+    self._callback(self, message) -- this can mutate the message
+  end
   self.response = message
   M.recordResponse(message)
 end
@@ -258,23 +277,21 @@ function TechCaptureRequest:sendACK(type)
 end
 
 function TechCaptureRequest:sendBNGError(message)
-  log('E', logTag, 'Error in response: ' .. message)
   self:sendResponse({bngError = message})
 end
 
 function TechCaptureRequest:sendBNGValueError(message)
-  log('E', logTag, 'Error in response: ' .. message)
   self:sendResponse({bngValueError = message})
 end
 
-local function newRequest(payload)
-  return TechCaptureRequest:new(payload)
-end
-
-local function enableRequestCapture(captureName)
+local function enableRequestCapture(captureName, flushInterval)
+  if flushInterval ~= nil then
+    _flushInterval = flushInterval
+  end
   tcom.enableDebug()
   captureRequests = true
-  openRequestFile(captureName)
+  captureName = openRequestFile(captureName)
+  log('I', logTag, 'Recording requests to ' .. captureName .. '.')
 end
 
 local function disableRequestCapture()
@@ -286,6 +303,7 @@ local function enableResponseCapture(captureName)
   captureResponses = true
   if captureName then
     openResponseFile(captureName)
+    log('I', logTag, 'Recording responses to ' .. captureName .. '.log.')
   end
 end
 
@@ -294,17 +312,18 @@ local function disableResponseCapture()
   closeResponseFile()
 end
 
-local function injectMessage(payload)
-  local request = newRequest(payload)
-  tcom.callRequestHandler(tech_techCore, request)
-  return request
+local function injectMessage(payload, callback)
+  local request = TechCaptureRequest:new(payload, callback)
+  local processMore = tcom.callRequestHandler(tech_techCore, request)
+  return request, processMore
 end
 
 local function export()
   return {
     captureName = tcomCaptureName,
     captureRequests = captureRequests,
-    captureResponses = captureResponses
+    captureResponses = captureResponses,
+    flushInterval = _flushInterval
   }
 end
 
@@ -312,6 +331,7 @@ local function import(info)
   tcomCaptureName = info.captureName
   captureRequests = info.captureRequests
   captureResponses = info.captureResponses
+  _flushInterval = info.flushInterval
 
   if captureRequests then
     openRequestFile(tcomCaptureName)
@@ -331,7 +351,6 @@ M.getAllRelatedFiles = getAllRelatedFiles
 M.getCaptureTypeFromFile = getCaptureTypeFromFile
 M.filterFilesByHeader = filterFilesByHeader
 
-M.newRequest = newRequest
 M.openRequestFile = openRequestFile
 M.recordRequest = recordRequest
 M.closeRequestFile = closeRequestFile
@@ -340,6 +359,7 @@ M.isRecordingRequests = isRecordingRequests
 M.openResponseFile = openResponseFile
 M.recordResponse = recordResponse
 M.closeResponseFile = closeResponseFile
+M.isRecordingResponses = isRecordingResponses
 
 M.enableRequestCapture = enableRequestCapture
 M.disableRequestCapture = disableRequestCapture

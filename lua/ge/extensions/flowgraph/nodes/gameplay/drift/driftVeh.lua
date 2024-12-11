@@ -23,10 +23,10 @@ C.tags = {'gameplay', 'utils'}
 
 function C:work()
   if self.pinIn.setVehId.value then
-    self.mgr.modules.drift:setVehId(self.pinIn.vehId.value)
+    gameplay_drift_drift.setVehId(self.pinIn.vehId.value)
   end
 
-  self.pinOut.vehId.value = self.mgr.modules.drift:getVehId()
+  self.pinOut.vehId.value = gameplay_drift_drift.getVehId()
 end
 
 return _flowgraph_createNode(C)

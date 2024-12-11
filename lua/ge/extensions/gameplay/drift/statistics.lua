@@ -10,6 +10,8 @@ local function setNewMaxStat(name, value)
 end
 
 local function onDriftCompleted(data)
+  if not data.chainDriftData then return end
+
   gameplay_statistic.metricAdd("drift/rightDrifts", data.chainDriftData.rightDrifts)
   gameplay_statistic.metricAdd("drift/leftDrifts", data.chainDriftData.leftDrifts)
 
@@ -18,9 +20,9 @@ local function onDriftCompleted(data)
   setNewMaxStat("drift/maxChainedDrifts", data.chainDriftData.chainedDrifts)
 end
 
-local function onDriftCompletedScored(addedScore)
-  gameplay_statistic.metricAdd("drift/totalScore", addedScore)
-  setNewMaxStat("drift/maxDriftScore", addedScore)
+local function onDriftCompletedScored(data)
+  gameplay_statistic.metricAdd("drift/totalScore", data.addedScore)
+  setNewMaxStat("drift/maxDriftScore", data.addedScore)
 end
 
 local function onDriftSpinout()

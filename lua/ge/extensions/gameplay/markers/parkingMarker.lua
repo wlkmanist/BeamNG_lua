@@ -242,6 +242,14 @@ function C:update(data)
   end
   self.lastAlpha = cruisingFactor
 
+  if self.overlap ~= self.isInAreaLastFrame then
+    if self.overlap then self.isInAreaChanged = "in" end
+    if not self.overlap then self.isInAreaChanged = "out" end
+  else
+    self.isInAreaChanged = nil
+  end
+  self.isInAreaLastFrame = self.overlap
+
   self.groundDecalData.fadeEnd = decalFadeEnd + self.overlapSmoother:get(self.overlap and 1 or 0, data.dt) * 20
 end
 

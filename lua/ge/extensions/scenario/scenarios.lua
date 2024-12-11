@@ -1572,7 +1572,7 @@ local function tickRunning(dt, dtSim)
   -- countdown state
   if scenario.countDownTime and scenario.raceState == 'countdown' then
     scenario.countDownTime = scenario.countDownTime - dtSim
-    if scenario.countDownTime <= 3 and not scenario.countDownShowed and scenario.showCountdown then
+    if scenario.countDownTime <= 3 and not scenario.countDownShowed and scenario.showCountdown and not scenario.forceNoCountDown then
       -- tell the UI to actually count down
       guihooks.trigger('ScenarioFlashMessageReset')
       guihooks.trigger('ScenarioFlashMessage', {{3,1, "Engine.Audio.playOnce('AudioGui', 'event:UI_Countdown1')", true},
@@ -1581,11 +1581,11 @@ local function tickRunning(dt, dtSim)
 
       scenario.countDownShowed = true
       extensions.hook("onCountdownStarted")
-    elseif scenario.countDownTime < 1 and not scenario.countDownShowed and not scenario.showCountdown then
+    elseif scenario.countDownTime < 1 and not scenario.countDownShowed and not scenario.showCountdown and not scenario.forceNoCountDown then
       guihooks.trigger('ScenarioFlashMessageReset')
       guihooks.trigger('ScenarioFlashMessage', {{'ui.scenarios.ready',1, "", true}})
       scenario.countDownShowed = true
-    elseif scenario.countDownTime <= 0 then
+    elseif scenario.countDownTime <= 0 or scenario.forceNoCountDown then
       guihooks.trigger('ScenarioFlashMessageReset')
       guihooks.trigger('ScenarioFlashMessage', {{"ui.scenarios.go", 1, "Engine.Audio.playOnce('AudioGui', 'event:UI_CountdownGo')", true}})
 

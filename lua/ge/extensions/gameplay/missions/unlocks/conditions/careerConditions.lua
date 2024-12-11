@@ -11,5 +11,15 @@ M.branchLevel = {
   conditionMet = function(self) return ((not career_career) or (not career_career.isActive()) or (not career_branches)) or career_branches.getBranchLevel(self.branchId) >= self.level end
 }
 
+M.league = {
+  info = "The user has to have a league unlocked.",
+  editorFunction = "displayLeague",
+  getLabel  = function(self) return "League" end,
+  conditionMet = function(self)
+    if not career_career.isActive() or not career_modules_branches_leagues then return false end
+    local leagueUnlocked = career_modules_branches_leagues.isLeagueUnlocked(self.leagueId)
+    return leagueUnlocked
+  end
+}
 
 return M

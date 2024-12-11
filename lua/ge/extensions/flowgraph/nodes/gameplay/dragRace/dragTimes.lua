@@ -21,6 +21,7 @@ C.tags = {'gameplay', 'utils'}
 
 local timers = {
   reactionTime = {type = "reactionTimer", value = 0, distance = 0.1, isSet = false},
+  dial = {type = "dialTimer", value = 0, distance = 0.1, isSet = true},
   time_60 = {type = "distanceTimer", value = 0, distance = 18.288, isSet = false},
   time_330 = {type = "distanceTimer", value = 0, distance = 100.584, isSet = false},
   time_1_8 = {type = "distanceTimer", value = 0, distance = 201.168, isSet = false},
@@ -43,6 +44,7 @@ end
 
 function C:updateInfos()
   self.timerData = gameplay_drag_general.getTimers(self.pinIn.vehId.value)
+  dump(self.timerData)
 end
 
 
@@ -50,7 +52,7 @@ local vehId
 function C:work()
   self:updateInfos()
   for timerId, data in pairs(self.timerData) do
-    if (data.type ~= "dialTimer" or data.type ~= "timer") and data.isSet then
+    if data.type ~= "timer" and data.isSet then
       self.pinOut["flow_" .. timerId].value = data.isSet
       self.pinOut[timerId].value = data.value
     end

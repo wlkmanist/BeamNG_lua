@@ -8,7 +8,7 @@ M.dependencies = {'career_career'}
 
 local function canPay(price)
   for currency, info in pairs(price) do
-    if not info.canBeNegative and career_modules_playerAttributes.getAttributeValue(currency) < info.amount then
+    if not info.canBeNegative and info.amount > 0 and career_modules_playerAttributes.getAttributeValue(currency) < info.amount then
       return false
     end
   end

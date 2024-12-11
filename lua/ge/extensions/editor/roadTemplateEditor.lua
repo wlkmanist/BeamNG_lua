@@ -222,7 +222,7 @@ local function onEditorGui()
       im.Begin("Save as...", saveDialog, 0)
       im.InputText("Template Name", saveName)
       if im.Button("Save") then
-        local name = ffi.string(ffi.cast("char*",saveName))
+        local name = ffi.string(saveName)
         saveTemplate(name)
         chosenTemplateName = name
         saveDialog[0] = false

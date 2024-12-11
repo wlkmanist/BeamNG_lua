@@ -36,8 +36,7 @@ gp:edge("e", "f", 9)
 print( table.concat( gp:getPath("a","e"), "->") )
 ]]
 
-require('mathlib')
-local bit = require "bit"
+local bit = require("bit")
 
 local tableInsert, min, max, random, rshift = table.insert, math.min, math.max, math.random, bit.rshift
 
@@ -1484,7 +1483,8 @@ function Graphpath:getRandomPathG(startNode, initialDir, pathLenLimit, rndDirCoe
     local curPos = graphpos[prevNode]
     local prevDir = curPos - ropePos
     local prevDirLen = prevDir:length()
-    ropePos = curPos - prevDir * (min(prevDirLen, 15) / (prevDirLen + 1e-30))
+    prevDir = prevDir / (prevDirLen + 1e-30) -- prevDir gets normalized here, to use with next randomization of prevDir
+    ropePos = curPos - prevDir * min(prevDirLen, 15)
 
     -- randomize dir
     local rDistDirCoef = min(1, pathLen * rndDistCoef) * rndDirCoef

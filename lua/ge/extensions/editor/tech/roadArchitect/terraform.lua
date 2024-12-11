@@ -7,9 +7,7 @@
 -- Module constants.
 local downShift = vec3(0, 0, 0.03)                                                                  -- The vertical offset when terraforming to the road top surface.
 local fixedMargin = 2.0                                                                             -- The fixed margin around the road.
-local averagingMargin = 2.0                                                                      -- Used when averaging the mask.
-
-local prominence = 500.0                                                                            -- The maximum allowed Z-value. Height is thus in range [0, prominence].
+local averagingMargin = 2.0                                                                         -- Used when averaging the mask.
 
 local lowerVec = vec3(0, 0, 999)
 
@@ -29,8 +27,6 @@ local util = require('editor/tech/roadArchitect/utilities')                     
 local im = ui_imgui
 local min, max, floor, ceil = math.min, math.max, math.floor, math.ceil
 local sqrt, exp, twoPi = math.sqrt, math.exp, 2.0 * math.pi
-local uint16Scale = 65535 / prominence
-local uint16ScaleInv = 1.0 / uint16Scale
 
 
 -- Undo callback for terraforming operations.
@@ -215,11 +211,15 @@ local function getTriangles(road, excess)
 end
 
 -- Gets the bottom surface triangles from the relevant roads.
-local function getTrianglesMulti(roads, box, excess)
+local function getTrianglesMulti(roads, box, excess, isBloat)
+  local bloatFactor = 0.0
+  if isBloat then
+    bloatFactor = 1.0
+  end
   local tris, ctr = {}, 1
   for _, road in pairs(roads) do
     local rData = road.renderData
-    if #rData > 1 and not road.isOverlay and not road.isBridge then
+    if #rData > 1 and not road.isBridge then
 
       -- Bloat the outermost points laterally, using the local binormal (lateral) vector.
       local lMin, lMax = profileMgr.getMinMaxLaneKeys(road.profile)
@@ -232,11 +232,11 @@ local function getTrianglesMulti(roads, box, excess)
       end
 
       -- Bloat the first and last points longitudinally.
-      left[1] = left[1] + (left[1] - left[2]):normalized() * excess
-      right[1] = right[1] + (right[1] - right[2]):normalized() * excess
+      left[1] = left[1] + bloatFactor * (left[1] - left[2]):normalized() * excess
+      right[1] = right[1] + bloatFactor * (right[1] - right[2]):normalized() * excess
       local lastIdx2nd = lastIdx - 1
-      left[lastIdx] = left[lastIdx] + (left[lastIdx] - left[lastIdx2nd]):normalized() * excess
-      right[lastIdx] = right[lastIdx] + (right[lastIdx] - right[lastIdx2nd]):normalized() * excess
+      left[lastIdx] = left[lastIdx] + bloatFactor * (left[lastIdx] - left[lastIdx2nd]):normalized() * excess
+      right[lastIdx] = right[lastIdx] + bloatFactor * (right[lastIdx] - right[lastIdx2nd]):normalized() * excess
 
       -- Now form the triangles.
       -- [Do not include any inside tunnel sections].
@@ -312,7 +312,7 @@ local function conformTerrainToRoad(rIdx, DOI, margin)
   local center = tb:getWorldBox():getCenter()
   local xHalf, yHalf = extents.x * 0.5, extents.y * 0.5
   local tXMin, tXMax, tYMin, tYMax = center.x - xHalf, center.x + xHalf, center.y - xHalf, center.y + xHalf
-  local zOff = tb:getTransform():getPosition().z
+  local zMin, zMax = tb:getPosition().z, tb.maxHeight
 
   -- Compute the AABB.
   local box = roadMgr.computeAABB2D(rIdx)
@@ -384,7 +384,7 @@ local function conformTerrainToRoad(rIdx, DOI, margin)
         --local sqTriNorm = triNorm:squaredLength()
         --local z = intersectsUp_Triangle(pWS, tCA, tBC, tC, triNorm, sqTriNorm)
         if z then
-          heightX[y] = (maskX[y] == 0 and z - zOff) or min(z - zOff, heightX[y])
+          heightX[y] = (maskX[y] == 0 and z - zMin) or min(z - zMin, heightX[y])
           maskX[y] = 1
         end
       end
@@ -483,7 +483,9 @@ end
 
 -- Terraforms the whole terrain block to the existing road network (or the group with the given index).
 -- [Does not include overlays or bridges].
-local function terraformMultiRoads(DOI, margin, group)
+local function terraformMultiRoads(DOI, margin, group, isBloat)
+
+  roadMgr.computeAllRoadRenderData()
 
   -- If there is no terrain block (eg smallgrid) then leave immediately.
   local tb = extensions.editor_terrainEditor.getTerrainBlock()
@@ -495,7 +497,7 @@ local function terraformMultiRoads(DOI, margin, group)
   local center = tb:getWorldBox():getCenter()
   local xHalf, yHalf = extents.x * 0.5, extents.y * 0.5
   local tXMin, tXMax, tYMin, tYMax = center.x - xHalf, center.x + xHalf, center.y - xHalf, center.y + xHalf
-  local zOff = tb:getTransform():getPosition().z
+  local zMin, zMax = tb:getPosition().z, tb.maxHeight
 
   -- Compute the bounding box of the whole road network or group (if given).
   local roads = roadMgr.getRoadsFromGroup(group)
@@ -523,7 +525,7 @@ local function terraformMultiRoads(DOI, margin, group)
   end
 
   -- Compute the triangles, expanded up to the inner margin, then populate a kd-tree with them.
-  local tris = getTrianglesMulti(roads, box, fixedMargin)
+  local tris = getTrianglesMulti(roads, box, fixedMargin, isBloat)
   local tree = populateTree(tris)
 
   -- Iterate over the grid bounding box, and add contributions to the road mask.
@@ -552,7 +554,7 @@ local function terraformMultiRoads(DOI, margin, group)
   end
 
   -- Compute the triangles, expanded up to the outer margin, and populate a kd-tree with them.
-  local tris = getTrianglesMulti(roads, box, margin + fixedMargin)
+  local tris = getTrianglesMulti(roads, box, margin + fixedMargin, isBloat)
   local tree = populateTree(tris)
 
   -- Iterate over the grid bounding box, and add contributions to the road mask.
@@ -571,7 +573,7 @@ local function terraformMultiRoads(DOI, margin, group)
         --local sqTriNorm = triNorm:squaredLength()
         --local z = intersectsUp_Triangle(pWS, tCA, tBC, tC, triNorm, sqTriNorm)
         if z then
-          heightX[y] = (maskX[y] == 0 and z - zOff) or min(z - zOff, heightX[y])
+          heightX[y] = (maskX[y] == 0 and z - zMin) or min(z - zMin, heightX[y])
           maskX[y] = 1
         end
       end
@@ -681,12 +683,15 @@ local function writeHeightmapToPng(path)
   local tXMin, tXMax, tYMin, tYMax = center.x - xHalf, center.x + xHalf, center.y - xHalf, center.y + xHalf
   local xSize, ySize = tXMax - tXMin, tYMax - tYMin
 
+  local zMin, zMax = tb:getPosition().z, tb.maxHeight
+  local uint16Scale = 65535 / (zMax - zMin)
+
   local bmp = GBitmap()
   bmp:init(xSize, ySize)
   bmp:allocateBitmap(xSize, ySize, false, "GFXFormatR16")
   for x = 0, xSize do
     for y = 0, ySize do
-      local val = max(0, tb:getHeightGrid(x, y)) * uint16Scale
+      local val = (max(0, max(tb:getHeightGrid(x, y))) - zMin) * uint16Scale
       bmp:setTexel(x, y, val, val, val, val)
     end
   end
@@ -708,6 +713,10 @@ local function setHeightmapFromPng(path)
   local tXMin, tXMax, tYMin, tYMax = center.x - xHalf, center.x + xHalf, center.y - xHalf, center.y + xHalf
   local xSize, ySize = tXMax - tXMin, tYMax - tYMin
 
+  local zMin, zMax = tb:getPosition().z, tb.maxHeight
+  local uint16Scale = 65535 / (zMax - zMin)
+  local uint16ScaleInv = 1.0 / uint16Scale
+
   -- Load the terrain.
   local bmp = GBitmap()
   if not bmp:loadFile(path) then
@@ -718,7 +727,7 @@ local function setHeightmapFromPng(path)
   for x = 0, xSize do
     local rx = x + tXMin
     for y = 0, ySize do
-      tb:setHeightGrid(x, y, max(0, bmp:getTexel(x, y) * uint16ScaleInv))
+      tb:setHeightGrid(x, y, max(0, bmp:getTexel(x, y) * uint16ScaleInv) + zMin)
     end
   end
 

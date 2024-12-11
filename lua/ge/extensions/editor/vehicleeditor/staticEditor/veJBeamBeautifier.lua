@@ -12,6 +12,8 @@ local jsonDebug = require('jsonDebug')
 local wndName = "JBeam Beautifier"
 M.menuEntry = "JBeam Beautifier"
 
+local windowOpen = im.BoolPtr(false)
+
 local sectionsToBeautifyTblPtr = {
   {'beams', im.BoolPtr(false)},
   {'nodes', im.BoolPtr(true)},
@@ -356,8 +358,10 @@ local function beautifyJBeamFiles(pathToBeautify)
   print('Done!')
 end
 
-local function onEditorGui()
-  if editor.beginWindow(wndName, wndName) then
+local function onUpdate()
+  if windowOpen[0] ~= true then return end
+
+  if im.Begin(wndName, windowOpen) then
     im.PushFont3("cairo_semibold_large")
     im.Text("Sections to Beautify:")
     im.PopFont()
@@ -412,20 +416,28 @@ local function onEditorGui()
   end
 
   ::continue::
-  editor.endWindow()
+  im.End()
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(500,400))
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
 end
 
 M.open = open
 
-M.onEditorGui = onEditorGui
-M.onEditorInitialized = onEditorInitialized
+M.onUpdate = onUpdate
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

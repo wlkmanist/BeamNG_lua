@@ -28,7 +28,7 @@ local function fixStartEnd(p, a, b)
     a.wp = nil
   end
 
-  a.distToTarget = (a.pos-b.pos):length() + (b.distToTarget or 0)
+  a.distToTarget = a.pos:distance(b.pos) + (b.distToTarget or 0)
 
   profilerPopEvent()
 end
@@ -59,16 +59,35 @@ function C:stepAhead(stepDist, reset) -- returns data from a distance along the 
   return {n1 = self.path[pathCount - 1].wp, n2 = self.path[pathCount].wp, idx = pathCount - 1, pos = self.path[pathCount].pos, xnorm = 1}
 end
 
+function C:calcDistance()
+  local dist = 0
+  for i = #self.path, 2, -1 do
+    self.path[i].distToTarget = dist
+    dist = dist + self.path[i].pos:distance(self.path[i - 1].pos)
+  end
+  self.path[1].distToTarget = dist
+
+  return dist
+end
+
 function C:setupPath(fromPos, toPos)
   self:setupPathMulti({fromPos, toPos})
 end
 
-function C:setupPathMultiNavgraphNames(names)
-  local positions = {}
-  for i, name in ipairs(names) do
-    positions[i] = map.getMap().nodes[name].pos
+function C:setupPathMultiWaypoints(wpList)
+  profilerPushEvent("Route - setupPathMultiWaypoints")
+  for i = 1, #wpList-1 do
+    local path = map.getPath(wpList[i], wpList[i + 1], self.cutOffDrivability, self.dirMult, self.penaltyAboveCutoff, self.penaltyBelowCutoff)
+    local pathLen = #self.path
+    for j, pwp in ipairs(path) do
+      if not self.path[pathLen] or self.path[pathLen].wp ~= pwp then
+        table.insert(self.path, {pos = map.getMap().nodes[pwp].pos, wp = pwp, linkCount = map.getNodeLinkCount(pwp)})
+      end
+    end
   end
-  self:setupPathMulti(positions)
+
+  self:calcDistance()
+  profilerPopEvent()
 end
 
 function C:setupPathMulti(positions)
@@ -94,20 +113,19 @@ function C:setupPathMulti(positions)
   end
 
   -- merge too-close nodes into one and preserve fields wp and fixed
-  local closeDist = 1
+  local closeDistSquared = 1
   local newPath = {self.path[1]}
   local last = self.path[1]
   for i = 2, #self.path do
     local cur = self.path[i]
-    local dist = (cur.pos-last.pos):length()
-    if dist <= closeDist then
+    if cur.pos:squaredDistance(last.pos) <= closeDistSquared then
       -- merge
       last.wp = last.wp or cur.wp
       last.fixed = last.fixed or cur.fixed
     else
       -- skip
       last = cur
-      table.insert(newPath,cur)
+      table.insert(newPath, cur)
     end
   end
   self.path = newPath
@@ -115,20 +133,15 @@ function C:setupPathMulti(positions)
   if #self.path >= 3 then
     fixStartEnd(self.path[1], self.path[2], self.path[3])
     --merge first two nodes if already on path
-    if (self.path[1].pos - self.path[2].pos):length() < onPathDist then
-      table.remove(self.path,1)
+    if self.path[1].pos:squaredDistance(self.path[2].pos) < onPathDist * onPathDist then
+      table.remove(self.path, 1)
     end
   end
   if #self.path >= 3 then
     fixStartEnd(self.path[#self.path], self.path[#self.path-1], self.path[#self.path-2])
   end
-  local dist = 0
-  for i = #self.path, 2, -1 do
-    self.path[i].distToTarget = dist
-    dist = dist + (self.path[i].pos - self.path[i-1].pos):length()
-  end
-  self.path[1].distToTarget = dist
 
+  self:calcDistance()
   profilerPopEvent()
 end
 
@@ -157,25 +170,24 @@ end
 --local offPathDist = 25
 function C:getPositionOffset(currentPos)
   profilerPushEvent("Route - getPositionOffset")
-  local dist = 0
   -- go through all segments and check where we are on that line
   local minDistance, totalMinDist = math.huge, math.huge
   local lowIdx = 0
   for i = 1, #self.path-1 do
-    local aPos, bPos = self.path[i].pos, self.path[i+1].pos
-    local dist = currentPos:distanceToLineSegment(aPos, bPos)
-    totalMinDist = math.min(totalMinDist, dist)
-    if dist > minDistance then break end
-    if dist < onPathDist then
-      minDistance = dist
+    local distSq = currentPos:squaredDistanceToLineSegment(self.path[i].pos, self.path[i+1].pos)
+    totalMinDist = math.min(totalMinDist, distSq)
+
+    if distSq > minDistance then break end
+
+    if distSq < onPathDist * onPathDist then
+      minDistance = distSq
       lowIdx = i
-    end
-    if dist >= onPathDist and self.path[i].fixed then
+    elseif self.path[i].fixed then
       break
     end
   end
   profilerPopEvent()
-  return lowIdx, totalMinDist
+  return lowIdx, math.sqrt(totalMinDist)
 end
 
 function C:shortenPath(idx)

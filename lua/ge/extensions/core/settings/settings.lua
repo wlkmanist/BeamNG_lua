@@ -26,6 +26,7 @@ local options = {
   trafficSetup = {modes={keys={'smart', 'smartConfigs', 'random', 'randomConfigs', 'simple'}, values={'ui.common.smart', 'ui.common.smartConfigs', 'ui.common.random', 'ui.common.randomConfigs', 'ui.common.simpleVehicles'}}},
   communityTranslations = {modes={keys={'enable', 'disable'}, values={'ui.common.enable', 'ui.common.disable'}}},
   showMissionMarkers = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
+  enableDragRaceInFreeroam = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
   enableGasStationsInFreeroam = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
   enableMissionReplay = {modes = {keys={'count', 'maxSize'}, values = {'ui.common.replayCount', 'ui.common.size'}}},
   AudioMaxVoices = { modes={keys={512, 384, 256, 128}, values={'ui.options.audio.Ultra', 'ui.options.audio.High', 'ui.options.audio.Normal', 'ui.options.audio.Low'}} },
@@ -384,6 +385,18 @@ local function initSettings(reason)
   core_settings_graphic.onInitSettings(values)
 end
 
+local function loadPlatformSettings(platformSettingsPath)
+  if platformSettingsPath and platformSettingsPath ~= "" then
+    log('D', '', 'Loading platform-specific setings from: ' .. platformSettingsPath)
+    local platformSettings = jsonReadFile(platformSettingsPath)
+    if not platformSettings then
+      log('E', '', 'Could not load custom settings JSON from: ' .. testSettingsPath)
+    else
+      setState(platformSettings)
+    end
+  end
+end
+
 local function finalizeInit()
   -- force application of all settings the first time, since init() has not correctly applied all of them
   -- we could make init() call load(), but that would fail because it's still too early, and some stuff is not initialized yet
@@ -393,6 +406,9 @@ local function finalizeInit()
 
   local techLicense = false
   if ResearchVerifier ~= nil then techLicense = ResearchVerifier.isTechLicenseVerified() end
+
+  --Could be more optimal to call earlier?
+  loadPlatformSettings(PlatformSwitches.settingsJsonPath)
 
   if not techLicense and values.onlineFeatures == 'enable' and values.telemetry == 'enable' then
     extensions.load('telemetry/gameTelemetry')
@@ -434,6 +450,7 @@ M.save = requestSave
 M.load = load
 M.initSettings = initSettings
 M.settingsTick = nop
+M.loadPlatformSettings = loadPlatformSettings
 M.exit = exit
 
 return M

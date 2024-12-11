@@ -8,6 +8,8 @@ local im = extensions.ui_imgui
 local imguiUtils = require('ui/imguiUtils')
 local wndName = "General Data"
 
+local windowOpen = im.BoolPtr(false)
+
 local function formatVec3(x, y, z)
   local formatStringX = (sign(x) ~= -1 and " " or "") .. "%.4f"
   local formatStringY = (sign(y) ~= -1 and " " or "") .. "%.4f"
@@ -15,9 +17,11 @@ local function formatVec3(x, y, z)
   return string.format(formatStringX .. ", " .. formatStringY .. ", " .. formatStringZ, x, y, z)
 end
 
-local function onEditorGui()
-  if not vEditor.vehicle then return end
-  if editor.beginWindow(wndName, wndName) then
+local function onUpdate()
+  if windowOpen[0] ~= true then return end
+
+  if not vEditor or not vEditor.vehicle then return end
+  if im.Begin(wndName, windowOpen) then
     vEditor.vehicle:queueLuaCommand([[
       local data = {}
       data.heading = vec3(obj:getDirectionVector())
@@ -81,20 +85,28 @@ local function onEditorGui()
       im.Text("No vehicle data")
     end
   end
-  editor.endWindow()
+  im.End()
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(700,400))
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
 end
 
 M.open = open
 
-M.onEditorGui = onEditorGui
-M.onEditorInitialized = onEditorInitialized
+M.onUpdate = onUpdate
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

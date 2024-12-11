@@ -1,9 +1,7 @@
 local M = {}
 
 M.dependencies = {"editor_api_dynamicDecals_textures"}
-
-local brushes = {}
-local fonts = {}
+local texturesApi = extensions.editor_api_dynamicDecals_textures
 
 -- Category properties
 -- id
@@ -15,7 +13,15 @@ local fonts = {}
 -- preview
 -- type sdf or normal
 -- category
-M.textures = {}
+
+local notifyListeners = function(hookName, hookData)
+  local fullHookName = "liveryEditor_resources"
+  if hookName then
+    fullHookName = fullHookName .. "_" .. hookName
+  end
+
+  guihooks.trigger(fullHookName, hookData)
+end
 
 local function parseTextures(taggedTextures)
   M.textures = {}
@@ -40,29 +46,48 @@ local function parseTextures(taggedTextures)
   end
 end
 
+M.textures = {}
+
 M.setup = function()
-  extensions.editor_api_dynamicDecals_textures.setup()
-  local taggedTextures = extensions.editor_api_dynamicDecals_textures.getTagsWithRefs()
+  texturesApi.setup()
+  local taggedTextures = texturesApi.getTagsWithRefs()
   parseTextures(taggedTextures)
+
+  -- set textures without tags
+  local items = {}
+
+  for k, texture in ipairs(texturesApi.getTextureFiles()) do
+    local sidecarFile = texturesApi.readSidecarFile(texture)
+    if not sidecarFile or not sidecarFile.tags or #sidecarFile.tags == 0 then
+      local _, filename, _ = path.split(texture)
+      table.insert(items, {
+        name = filename,
+        label = filename,
+        value = filename,
+        preview = texture
+      })
+    end
+  end
+
+  if #items > 0 then
+    table.insert(M.textures, {
+      value = "others",
+      label = "Others",
+      items = items
+    })
+  end
+end
+
+M.requestData = function()
+  notifyListeners("data", M.textures)
 end
 
 M.getTextureCategories = function()
-  local tags = extensions.editor_api_dynamicDecals_textures.getTagsWithRefs()
-  local categories = {}
-
-  for key, value in pairs(tags) do
-    table.insert(categories, {
-      label = key,
-      value = key,
-      preview = value[1]
-    })
-  end
-
-  table.sort(categories, function(a, b)
+  table.sort(M.textures, function(a, b)
     return a.label:lower() < b.label:lower()
   end)
 
-  return categories
+  return M.textures
 end
 
 M.getTexturesByCategory = function(category)
@@ -75,6 +100,10 @@ end
 
 M.getDecalTextures = function()
   return M.textures
+end
+
+M.getCategories = function()
+  return M.categories
 end
 
 M.dynamicDecals_onTextureFileAdded = function(textureFilePath)

@@ -7,6 +7,8 @@ local ceil = math.ceil
 local min = math.min
 local max = math.max
 
+local customValueParser = require("electricsCustomValueParser")
+
 M.values = {
   throttle = 0,
   brake = 0,
@@ -25,20 +27,7 @@ M.values = {
 
 M.disabledState = {}
 
-local smoothers = {
-  wheelspeed = newExponentialSmoothing(10),
-  gear_A = newExponentialSmoothing(10),
-  --gear_M = newExponentialSmoothing(10),
-  rpm = newExponentialSmoothing(10),
-  lights = newExponentialSmoothing(10),
-  fuel = newExponentialSmoothing(100),
-  oiltemp = newExponentialSmoothing(100),
-  watertemp = newExponentialSmoothing(100),
-  turnsignal = newExponentialSmoothing(10),
-  airspeed = newExponentialSmoothing(10),
-  airflowspeed = newExponentialSmoothing(10),
-  altitude = newExponentialSmoothing(10)
-}
+local smoothers = {}
 
 local rpmSmoother = newTemporalSigmoidSmoothing(50000, 75000, 50000, 75000, 0)
 
@@ -73,6 +62,7 @@ local hasSteered = false -- used to see whether right/left-turn has been finishe
 local automatic_indicator_stop = nop
 local generateBlinkPulse = nop
 
+local spawnVehicleIgnitionLevel
 local ignitionLevelSanitization
 local previousIgnitionLevel
 local updateElectricsWithIgnitionLevel  --used to alter the electrics output based on ignition state, made to support multiple different countries/regulations
@@ -314,12 +304,10 @@ local function updateGFX(dt)
       end
     end
   end
+end
 
-  for f, s in pairs(smoothers) do
-    if vals[f] ~= nil then
-      vals[f] = s:get(vals[f])
-    end
-  end
+local function updateCustomValues(dt)
+  customValueParser.updateGFX(dt)
 end
 
 local function updateGFXSecondStep(dt)
@@ -333,6 +321,15 @@ local function updateGFXSecondStep(dt)
   beamstate.updateRemoteElectrics(false)
 
   updateElectricsWithIgnitionLevel()
+
+  updateCustomValues(dt)
+
+  --apply the smoothers as the last thing
+  for f, s in pairs(smoothers) do
+    if values[f] ~= nil then
+      values[f] = s:get(values[f], dt)
+    end
+  end
 end
 
 local function updateElectricsWithIgnitionLevelEuropean()
@@ -442,7 +439,7 @@ local function reset()
   M.disabledState = {}
 
   for _, s in pairs(smoothers) do
-    s:set(0)
+    s:reset()
   end
 
   M.values.throttle = 0
@@ -457,36 +454,124 @@ local function reset()
   M.values.horn = false
   M.values.boost = 0
   M.values.boostMax = 0
+  M.values.electricalLoadCoef = 1
 
   --lightbarState = 0
   lightsSavedState = 0
 
   toggleSound(lightbarState == 2, sirenSound)
 
-  local allowedIgnitionLevels = (v.data.electrics and v.data.electrics.allowedIgnitionLevels) or {0, 1, 2, 3} --read allowed ingition levels from jbeam or use all of them by default
+  ignitionHoldingStarter = false
+  ignitionHoldingStarterTimer = 0
+  ignitionWasStartingEngine = false
+
+  M.values.ignitionLevel = spawnVehicleIgnitionLevel
+  previousIgnitionLevel = spawnVehicleIgnitionLevel - 1
+end
+
+--used for creating smoother from jbeam settings
+local function newSmoother(smootherType, params)
+  if smootherType == "exponential" then
+    return newExponentialSmoothing(unpack(params))
+  elseif smootherType == "temporal" then
+    return newTemporalSmoothing(unpack(params))
+  elseif smootherType == "temporalNonLinear" then
+    return newTemporalSmoothingNonLinear(unpack(params))
+  end
+end
+
+local function init()
+  M.disabledState = {}
+
+  M.values.throttle = 0
+  M.values.brake = 0
+  M.values.steering = 0
+  M.values.clutch = 0
+  M.values.wheelspeed = 0
+  M.values.odometer = 0
+  M.values.avgWheelAV = 0
+  M.values.airspeed = 0
+  M.values.airflowspeed = 0
+  M.values.horn = false
+  M.values.boost = 0
+  M.values.boostMax = 0
+  M.values.electricalLoadCoef = 1
+
+  --lightbarState = 0
+  lightsSavedState = 0
+
+  toggleSound(lightbarState == 2, sirenSound)
+
+  --look at both the regular electrics data as well as the components version for deep merging
+  local jbeamData = tableMergeRecursive(v.data.electrics or {}, v.data.components.electrics or {})
+
+  --default smoothers for backwards compat (we've always used them)
+  local defaultSmoothersSettings = {
+    {electricsName = "wheelspeed", smootherType = "exponential", params = {10}},
+    {electricsName = "gear_A", smootherType = "exponential", params = {10}},
+    {electricsName = "rpm", smootherType = "exponential", params = {10}},
+    {electricsName = "lights", smootherType = "exponential", params = {10}},
+    {electricsName = "fuel", smootherType = "exponential", params = {100}},
+    {electricsName = "oiltemp", smootherType = "exponential", params = {100}},
+    {electricsName = "watertemp", smootherType = "exponential", params = {100}},
+    {electricsName = "turnsignal", smootherType = "exponential", params = {10}},
+    {electricsName = "airspeed", smootherType = "exponential", params = {10}},
+    {electricsName = "airflowspeed", smootherType = "exponential", params = {10}},
+    {electricsName = "altitude", smootherType = "exponential", params = {10}}
+  }
+
+  smoothers = {}
+
+  --load jbeam smoother data
+  local jbeamSmootherSettings = jbeamData.smoothers or {}
+  --convert data into a usable table
+  jbeamSmootherSettings = tableFromHeaderTable(jbeamSmootherSettings)
+  --merge default and jbeam data for final settings
+  local smootherSettings = tableMergeRecursive(defaultSmoothersSettings, jbeamSmootherSettings)
+  --dump(smootherSettings)
+
+  --iterate over all desired smoothers and create them with the correct settings
+  for _, smootherSetting in ipairs(smootherSettings) do
+    smoothers[smootherSetting.electricsName] = newSmoother(smootherSetting.smootherType, smootherSetting.params)
+  end
+
+  local defaultCustomValues = {}
+
+  local jbeamCustomValues = jbeamData.customValues or {}
+  jbeamCustomValues = tableFromHeaderTable(jbeamCustomValues)
+  --merge default and jbeam data for final settings
+  local customValues = tableMergeRecursive(defaultCustomValues, jbeamCustomValues)
+
+  customValueParser.compileCustomValueUpdates(customValues)
+
+  --set all smoothers to the starting value of their respective electrics value
+  for electricsName, smoother in pairs(smoothers) do
+    if M.values[electricsName] ~= nil then
+      smoother:set(M.values[electricsName])
+    end
+  end
+
+  local allowedIgnitionLevels = jbeamData.allowedIgnitionLevels or {0, 1, 2, 3} --read allowed ignition levels from jbeam or use all of them by default
   setAllowedIgnitionLevels(allowedIgnitionLevels)
 
   ignitionHoldingStarter = false
   ignitionHoldingStarterTimer = 0
   ignitionWasStartingEngine = false
 
-  local spawnVehicleIgnitionLevel = settings.getValue("spawnVehicleIgnitionLevel") or 3
+  spawnVehicleIgnitionLevel = settings.getValue("spawnVehicleIgnitionLevel") or 3
   if v.config.additionalVehicleData and v.config.additionalVehicleData.spawnWithEngineRunning ~= nil then
     spawnVehicleIgnitionLevel = v.config.additionalVehicleData.spawnWithEngineRunning and 3 or 0
   end
-  M.values.ignitionLevel = sanitizeIgnitionLevel(spawnVehicleIgnitionLevel)
+  spawnVehicleIgnitionLevel = sanitizeIgnitionLevel(spawnVehicleIgnitionLevel)
+  M.values.ignitionLevel = spawnVehicleIgnitionLevel
   previousIgnitionLevel = spawnVehicleIgnitionLevel - 1
 
-  local ignitionLevelOverrideType = (v.data.electrics and v.data.electrics.ignitionLevelOverrideType) or "european"
+  local ignitionLevelOverrideType = jbeamData.ignitionLevelOverrideType or "european"
   if ignitionLevelOverrideType == "european" then
     updateElectricsWithIgnitionLevel = updateElectricsWithIgnitionLevelEuropean
   elseif ignitionLevelOverrideType == "none" then
     updateElectricsWithIgnitionLevel = nop
   end
-end
-
-local function init()
-  reset()
 end
 
 local function initLastStage()

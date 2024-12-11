@@ -379,7 +379,7 @@ local function registerDefaultMenus()
         icon = "mirrorInteriorMiddle",
         priority = 95,
         onSelect = function()
-          guihooks.trigger('ChangeState', {state = 'menu.vehicleconfig.vue.tuning.mirrors', params = {exitRoute = "play"}})
+          guihooks.trigger('ChangeState', {state = 'menu.vehicleconfig.tuning.mirrors', params = {exitRoute = "play"}})
           return {'hideMeOnly'}
         end
       })

@@ -4,7 +4,7 @@
 
 local M = {}
 
-M.dependencies = {'career_career', 'career_modules_inspectVehicle', 'util_configListGenerator'}
+M.dependencies = {'career_career', 'util_configListGenerator'}
 
 local moduleVersion = 42
 
@@ -13,6 +13,7 @@ local imgui = ui_imgui
 
 local vehicleDeliveryDelay = 60
 local shopGenerationDelay = 15 * 60
+local vehiclesPerDealership = 10
 local salesTax = 0.07
 local customLicensePlatePrice = 300
 
@@ -29,6 +30,15 @@ local paySoundId
 
 local tether
 local tetherRange = 4 --meter
+
+local function getVehiclesPerDealership() return vehiclesPerDealership end
+local function setVehiclesPerDealership(amount)
+  vehiclesPerDealership = amount
+  lastGenerationTime = 0
+end
+
+local function getShopGenerationDelay() return shopGenerationDelay end
+local function setShopGenerationDelay(amount) shopGenerationDelay = amount end
 
 local function convertKeysToStrings(t)
   local newTable = {}
@@ -107,7 +117,7 @@ local function generateVehicleList()
 
   vehiclesInShop = {}
   for _, seller in ipairs(sellers) do
-    local randomVehicleInfos = util_configListGenerator.getRandomVehicleInfos(seller, 10, eligibleVehicles, "adjustedPopulation")
+    local randomVehicleInfos = util_configListGenerator.getRandomVehicleInfos(seller, vehiclesPerDealership, eligibleVehicles, "adjustedPopulation")
 
     for _, randomVehicleInfo in ipairs(randomVehicleInfos) do
       randomVehicleInfo.sellerId = seller.id
@@ -661,6 +671,11 @@ M.cancelShopping = cancelShopping
 M.cancelPurchase = cancelPurchase
 
 M.getVehiclesInShop = getVehiclesInShop
+
+M.getVehiclesPerDealership = getVehiclesPerDealership
+M.setVehiclesPerDealership = setVehiclesPerDealership
+M.getShopGenerationDelay = getShopGenerationDelay
+M.setShopGenerationDelay = setShopGenerationDelay
 
 M.onClientStartMission = onClientStartMission
 M.onVehicleSpawnFinished = onVehicleSpawnFinished

@@ -672,6 +672,7 @@ local function copyRoad(r)
   rCopy.profile = profileMgr.copyProfile(r.profile)
 
   rCopy.nodes = nodesCopy
+
   rCopy.isVis = im.BoolPtr(r.isVis[0])
   rCopy.isHidden = r.isHidden
   rCopy.isJctRoad = r.isJctRoad
@@ -743,6 +744,7 @@ local function splitRoad(rIdx, nIdx)
   local roadA = createRoadFromProfile(profile)
   roadA.displayName = im.ArrayChar(32, ffi.string(r.displayName) .. ' [A]')
   roadA.nodes = copiedNodesA
+
   roadA.isDrivable = r.isDrivable
   roadA.isOverlay = r.isOverlay
   roadA.groupIdx = {}
@@ -793,6 +795,7 @@ local function splitRoad(rIdx, nIdx)
   local roadB = createRoadFromProfile(profileMgr.copyProfile(profile))
   roadB.displayName = im.ArrayChar(32, ffi.string(r.displayName) .. ' [B]')
   roadB.nodes = copiedNodesB
+
   roadB.isDrivable = r.isDrivable
   roadB.isOverlay = r.isOverlay
   roadB.groupIdx = {}
@@ -1233,33 +1236,6 @@ local function convertDecalRoads2RoadArchitect()
 	end
 end
 
--- Imports a collection of roads from the L-System.
-local function importRoadsFromLSystem(lRoads)
-  for i = 1, #lRoads do
-    local lRoad = lRoads[i]
-    local nodesIn, roadType = lRoad.nodes, lRoad.road_type                                          -- TODO: road_type is not used currently.
-    local nodes, widths = {}, {}
-    for j = 1, #nodesIn do
-      local n = nodesIn[j]
-      local x, y = n.x, n.y
-      tmp0:set(x, y, 0)
-      nodes[j] = vec3(x, y, core_terrain.getTerrainHeight(tmp0))                                    -- Sample terrain to get the Z-value.
-      widths[j] = n.width
-    end
-    local profile = profileMgr.createProfileFromDecalData(1, 1)                                     -- TODO: Currently assumes two-way, one lane per side.
-    local newRoad = createRoadFromProfile(profile)
-    local rIdx = #roads + 1                                                                         -- Add the newly-created road to the collections.
-      roads[rIdx] = newRoad
-      roadMap[newRoad.name] = rIdx
-
-    for j = 1, #nodes do
-      addNodeToRoad(rIdx, nodes[j])
-      newRoad.nodes[#newRoad.nodes].widths[-1] = im.FloatPtr(widths[j])                             -- TODO: widths are assumed as half widths, roads symmetric around center.
-      newRoad.nodes[#newRoad.nodes].widths[1] = im.FloatPtr(widths[j])
-    end
-  end
-end
-
 -- Vertically-offsets all roads to the terrain.
 local function offsetRoads2Terrain()
   for _, road in ipairs(roads) do
@@ -1480,6 +1456,7 @@ local function serialiseRoad(r)
 
     name = r.name,
     nodes = serNodes,
+
     profile = profileMgr.serialiseProfile(r.profile),
 
     overlayMat = r.overlayMat,
@@ -1642,7 +1619,6 @@ M.updateRoadsAfterRemovingGroup =                         updateRoadsAfterRemovi
 M.updateMultiAfterRemove =                                updateMultiAfterRemove
 
 M.convertDecalRoads2RoadArchitect =                       convertDecalRoads2RoadArchitect
-M.importRoadsFromLSystem =                                importRoadsFromLSystem
 
 M.finalise =                                              finalise
 M.unfinalise =                                            unfinalise

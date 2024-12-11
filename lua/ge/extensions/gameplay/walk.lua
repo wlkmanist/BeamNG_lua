@@ -308,6 +308,7 @@ end
 local function onDeserialize(data)
   togglingEnabled = data.togglingEnabled
   vehicleBlacklist = data.vehicleBlacklist
+  active = getPlayerUnicycle() ~= nil
 end
 
 local function getPosRot()

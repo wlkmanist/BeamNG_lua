@@ -17,12 +17,16 @@ local uiToolsApi = extensions.ui_liveryEditor_tools
 local uiUtilsApi = extensions.ui_liveryEditor_utils
 local uiUserDataApi = extensions.ui_liveryEditor_userData
 local uiEditMode = extensions.ui_liveryEditor_editMode
+local uiFillLayer = extensions.ui_liveryEditor_layers_fill
+
+local uiResources = extensions.ui_liveryEditor_resources
 
 local SAVE_FILENAME_PATTERN = "^[a-zA-Z0-9_-]+$"
 
 local setupComplete = false
 local isRunning = false
 local currentFile = nil
+local skinName = nil
 local hasLoadedFile = false
 local applyOnExit = false
 
@@ -47,14 +51,34 @@ local createNew = function()
   local vehicleObj = getPlayerVehicle(0)
 
   api.clearLayerStack()
-  api.setFillLayerColorPaletteMapId(1)
-  api.setFillLayerColor(vehicleObj.color)
-  api.addFillLayer()
+  local fillLayer = uiFillLayer.addLayer({
+    color = vehicleObj.color
+  })
+  uiFillLayer.fillLayerUid = fillLayer.uid
 
   local history = api.getHistory()
   history:clear()
 
   api.onUpdate_()
+end
+
+M.setup = function()
+  api.setLayerNameBuildString("@type { - @colormap}")
+  api.setup()
+  core_vehicle_partmgmt.setSkin("dynamicTextures")
+  uiResources.setup()
+
+  -- disable api update if editor extensions has been loaded
+  extensions.editor_dynamicDecalsTool.doApiUpdate = false
+
+  -- TODO: check on turning off vehicle entirely
+  -- disable vehicle action map
+  toggleVehicleControls(false)
+
+  isRunning = true
+
+  -- initially disable the api and to be manually toggled for each edit state
+  api.setEnabled(false)
 end
 
 M.startEditor = function()
@@ -118,6 +142,7 @@ M.loadFile = function(file)
 end
 
 M.save = function(filename)
+  dump("save", filename)
   if not hasLoadedFile and not filename then
     log("W", "", "No loaded file saved or specified filename. Cannot save")
     return
@@ -128,6 +153,7 @@ M.save = function(filename)
 
   local path = uiUserDataApi.createSaveFile(filename)
   currentFile = path
+  skinName = filename
   hasLoadedFile = true
   guihooks.trigger("LiveryEditor_onSaveFileLoaded", {
     name = filename,
@@ -136,8 +162,10 @@ M.save = function(filename)
 end
 
 M.applySkin = function()
-  if hasLoadedFile and currentFile then
-    core_vehicle_partmgmt.setSkin(currentFile)
+  dump("applySkin", skinName)
+  if hasLoadedFile and skinName then
+    dump("applySkin applying skin", skinName)
+    core_vehicle_partmgmt.setSkin(skinName)
     applyOnExit = true
   else
     log("W", "", "No loaded file saved or specified filename. Cannot apply skin")
@@ -149,8 +177,11 @@ M.exitEditor = function()
     core_vehicle_partmgmt.setSkin(nil)
   end
 
+  api.clearLayerStack()
+  api.setEnabled(false)
   uiControlsApi.disableAllActionMaps()
   currentFile = nil
+  skinName = nil
   hasLoadedFile = false
   applyOnExit = false
   isRunning = false

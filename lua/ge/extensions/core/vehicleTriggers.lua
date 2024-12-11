@@ -615,6 +615,7 @@ end
 M.onCefVisibilityChanged = onCefVisibilityChanged
 M.onUpdate = onUpdate
 M.onActionEvent = onActionEvent
+M.triggerEvent = triggerEvent
 M.triggerEventWithoutVdata = triggerEventWithoutVdata
 M.onCursorVisibilityChanged = onCursorVisibilityChanged
 M.onMouseLocked = onMouseLocked

@@ -157,7 +157,7 @@ local function toggleUltrasonic()
     local z = 0.3
     for _,x in ipairs({-3, 3}) do -- sideways
       for _,y in ipairs({-3, 3}) do -- longitudinally
-        local posRef = vec3(0, fsign(y)*(math.abs(y)-1.5), z)
+        local posRef = vec3(0, sign(y)*(math.abs(y)-1.5), z)
         local args = {}
         args.pos = vec3(x, y, z)
         args.dir = (args.pos - posRef):z0()

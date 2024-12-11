@@ -7,3 +7,6 @@
 - display.lua is responsible for sending the information to the UI
 - stallingSystem.lua incentivize the player to diversify their drifting technics by lowering the rewards if a certain technic is repeated to many times
 - saveLoad.lua takes care of loading a driftData file and sending its components to the corresponding drift systems (only stunt zones for now)
+- destination.lua ; loads a race file. Detects when a player goes the wrong way
+- bounds.lua loads a site file to use its "bounds" component
+- quickMessages.lua takes care of displaying "Nice drift!" kind of messages in freeroam

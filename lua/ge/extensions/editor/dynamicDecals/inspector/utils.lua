@@ -45,7 +45,7 @@ local function decalTextureWidgetInspect(layer, property, guiId, removeTextureOv
     local payload = im.AcceptDragDropPayload("DynDecalTextureDrapDrop")
     if payload~=nil then
       assert(payload.DataSize == ffi.sizeof"char[256]")
-      local path = ffi.string(ffi.cast("char*", payload.Data))
+      local path = ffi.string(payload.Data)
       layer[property] = path
       api.setLayer(layer, true)
     end

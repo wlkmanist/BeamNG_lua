@@ -13,19 +13,6 @@ local vehsPartsData = {}
 local attachedCouplers = {}
 
 -- If inVehID is nil, it uses player vehicle
-local function getVehPartsData(inVehID)
-  local vehObj = inVehID and be:getObjectByID(inVehID) or getPlayerVehicle(0)
-  if not vehObj then return nil end
-  local vehID = vehObj:getID()
-
-  if not vehsPartsData[vehID] then
-    vehsPartsData[vehID] = {vehName = vehObj:getJBeamFilename(), alpha = 1, partsHighlighted = nil}
-  end
-
-  return vehsPartsData[vehID]
-end
-
--- If inVehID is nil, it uses player vehicle
 local function getVehData(inVehID)
   local vehObj = inVehID and be:getObjectByID(inVehID) or getPlayerVehicle(0)
   if not vehObj then return end
@@ -35,7 +22,25 @@ local function getVehData(inVehID)
   if not vehData then return end
 
   if not vehsPartsData[vehID] then
-    vehsPartsData[vehID] = {vehName = vehObj:getJBeamFilename(), alpha = 1, partsHighlighted = nil}
+    local partsSorted = tableKeysSorted(vehData.vdata.activeParts)
+    local partsHighlighted = {}
+    local partsHighlightedIdxs = {}
+    local partNameToIdx = {}
+
+    for k, partName in ipairs(partsSorted) do
+      partsHighlighted[partName] = true
+      table.insert(partsHighlightedIdxs, k)
+      partNameToIdx[partName] = k
+    end
+
+    vehsPartsData[vehID] = {
+      vehName = vehObj:getJBeamFilename(),
+      alpha = 1,
+      partsSorted = partsSorted,
+      partsHighlighted = partsHighlighted,
+      partsHighlightedIdxs = partsHighlightedIdxs,
+      partNameToIdx = partNameToIdx,
+    }
   end
 
   return vehObj, vehData, vehID, vehsPartsData[vehID]
@@ -294,15 +299,12 @@ local function savedefault()
 end
 
 local function sendDataToUI()
-  local vehObj, vehData, vehID, partsData
-  local playerVehicle = getPlayerVehicle(0)
-  if playerVehicle then
-    vehObj, vehData, vehID, partsData = getVehData(playerVehicle:getID())
-  end
-  if not vehObj then
+  local playerVehID = be:getPlayerVehicleID(0)
+  if not playerVehID then
     log('E', 'partmgmt', 'no active vehicle')
     return
   end
+  local vehObj, vehData, vehID, partsData = getVehData(playerVehID)
 
   local pcFilename = vehData.config.partConfigFilename
   local configDefaults = nil
@@ -319,13 +321,14 @@ local function sendDataToUI()
   end
 
   local data = {
-    mainPartName     = vehData.mainPartName,
-    chosenParts      = vehData.chosenParts,
-    variables        = vehData.vdata.variables,
-    availableParts   = jbeamIO.getAvailableParts(vehData.ioCtx),
-    slotMap          = jbeamIO.getAvailableSlotMap(vehData.ioCtx),
-    partsHighlighted = partsData.partsHighlighted,
-    defaults         = configDefaults,
+    mainPartName         = vehData.mainPartName,
+    chosenParts          = vehData.chosenParts,
+    variables            = vehData.vdata.variables,
+    -- TODO: availableParts slotInfoForUi needs to be calculated dynamically!
+    availableParts       = jbeamIO.getAvailableParts(vehData.ioCtx),
+    slotMap              = jbeamIO.getAvailableSlotMap(vehData.ioCtx),
+    defaults             = configDefaults,
+    partsHighlighted     = partsData.partsHighlighted,
   }
 
   -- enrich the data a bit for the UI
@@ -514,42 +517,37 @@ end
 
 -- Actually sets transparency of meshes related to parts
 local function setPartsMeshesAlpha(vehObj, vdata, partNames, alpha, notSelectedAlpha)
-  -- If parts is nil, then set whole vehicle mesh transparency
-  -- Otherwise set individual meshes transparencies
-  if not partNames then
-    vehObj:setMeshAlpha(alpha, "", false)
-  else
-    vehObj:setMeshAlpha(notSelectedAlpha or 0, "", false)
+  vehObj:setMeshAlpha(notSelectedAlpha or 0, "", false)
 
-    if vdata.flexbodies then
-      for _, flexbody in pairs(vdata.flexbodies) do
-        if flexbody.mesh and flexbody.mesh ~= 'SPOTLIGHT' and flexbody.mesh ~= 'POINTLIGHT' and flexbody.meshLoaded then
-          if flexbody.partOrigin == nil then
-            vehObj:setMeshAlpha(alpha, flexbody.mesh, false) -- if mesh not related to part, just set mesh to alpha value
-          else
-            if partNames[flexbody.partOrigin] then
-              if not vehObj:setMeshAlpha(alpha, flexbody.mesh, false) then
-                log('W', 'mesh', 'unable to set mesh alpha: ' ..  dumps{'mesh: ', flexbody.mesh, 'alpha: ', alpha, 'existing alpha: ', vehObj:getMeshAlpha(flexbody.mesh)})
-              end
-            else
-              --log('W', '', 'part not highlighted: ' .. tostring(flexbody.partOrigin))
-            end
-          end
-        end
-      end
-    end
-    if vdata.props then
-      for _, prop in pairs(vdata.props) do
-        if prop.partOrigin == nil and prop.mesh then
-          vehObj:setMeshAlpha(alpha, prop.mesh, false) -- if mesh not related to part, just set mesh to alpha value
+  if vdata.flexbodies then
+    for _, flexbody in pairs(vdata.flexbodies) do
+      if flexbody.mesh and flexbody.mesh ~= 'SPOTLIGHT' and flexbody.mesh ~= 'POINTLIGHT' and flexbody.meshLoaded then
+        if flexbody.partOrigin == nil then
+          vehObj:setMeshAlpha(alpha, flexbody.mesh, false) -- if mesh not related to part, just set mesh to alpha value
         else
-          if partNames[prop.partOrigin] and prop.mesh then
-            vehObj:setMeshAlpha(alpha, prop.mesh, false)
+          if partNames[flexbody.partOrigin] then
+            if not vehObj:setMeshAlpha(alpha, flexbody.mesh, false) then
+              log('W', 'mesh', 'unable to set mesh alpha: ' ..  dumps{'mesh: ', flexbody.mesh, 'alpha: ', alpha, 'existing alpha: ', vehObj:getMeshAlpha(flexbody.mesh)})
+            end
+          else
+            --log('W', '', 'part not highlighted: ' .. tostring(flexbody.partOrigin))
           end
         end
       end
     end
   end
+  if vdata.props then
+    for _, prop in pairs(vdata.props) do
+      if prop.partOrigin == nil and prop.mesh then
+        vehObj:setMeshAlpha(alpha, prop.mesh, false) -- if mesh not related to part, just set mesh to alpha value
+      else
+        if partNames[prop.partOrigin] and prop.mesh then
+          vehObj:setMeshAlpha(alpha, prop.mesh, false)
+        end
+      end
+    end
+  end
+  vehObj:queueLuaCommand(string.format('bdebug.setPartsSelected(%s)', serialize(partNames)))
 end
 
 -- Sets transparency of highlighted parts
@@ -589,27 +587,28 @@ local function highlightParts(parts, inVehID)
   local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
-  if not partsData.partsHighlighted then
-    partsData.partsHighlighted = {}
-  end
+  table.clear(partsData.partsHighlightedIdxs)
 
   local chosenParts = vehData.chosenParts
-  for slot, part in pairs(chosenParts) do
-    if slot ~= 'main' and part ~= '' then
-      partsData.partsHighlighted[part] = parts[part] or false
+  for slot, partName in pairs(chosenParts) do
+    if partName ~= '' then
+      if parts[partName] then
+        partsData.partsHighlighted[partName] = parts[partName]
+        table.insert(partsData.partsHighlightedIdxs, partsData.partNameToIdx[partName])
+      else
+        partsData.partsHighlighted[partName] = false
+      end
     end
   end
-
   setPartsMeshesAlpha(vehObj, vehData.vdata, parts, partsData.alpha)
 end
 
 -- selecting refers to hovering over a part in the UI (only temporary)
 -- If inVehID is nil, it uses player vehicle
-local function selectParts(partNamesToHighlight, inVehID)
+local function selectParts(parts, inVehID)
   local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
-
-  setPartsMeshesAlpha(vehObj, vehData.vdata, partNamesToHighlight, partsData.alpha, 0.2)
+  setPartsMeshesAlpha(vehObj, vehData.vdata, parts, partsData.alpha, 0.2)
 end
 
 local function setSubPartsHighlight(part, highlight, partsHighlighted, vehData)
@@ -701,28 +700,53 @@ local function setNewParts(inVehID)
     end
   end
 
-  vehsPartsData[vehID].partsHighlighted = newHighlightedParts
+  local mainPartName = vehData.chosenParts['main']
+  newHighlightedParts[mainPartName] = oldPartsHighlighted[mainPartName]
+
+  local partsSorted = tableKeysSorted(vehData.vdata.activeParts)
+  partsData.partsHighlighted = newHighlightedParts
+  partsData.partsSorted = partsSorted
+
+  table.clear(partsData.partsHighlightedIdxs)
+  table.clear(partsData.partNameToIdx)
+
+  for k, partName in ipairs(partsSorted) do
+    if newHighlightedParts[partName] then
+      table.insert(partsData.partsHighlightedIdxs, k)
+    end
+    partsData.partNameToIdx[partName] = k
+  end
 end
 
-local function onSerialize()
-  return {
-    vehsPartsData = vehsPartsData,
-    attachedCouplers = attachedCouplers,
-  }
-end
-
-local function onDeserialized(data)
-  vehsPartsData = data.vehsPartsData
-  attachedCouplers = data.attachedCouplers
-end
-
--- Sets parts highlights to false
--- If inVehID is nil, it uses player vehicle
-local function clearVehicleHighlights(inVehID)
-  local vehObj, vehData, vehID, partsData = getVehData(inVehID)
+local function sendPartsSelectorStateToUI()
+  local vehObj, vehData, vehID, partsData = getVehData()
   if not vehObj then return end
 
-  partsData.partsHighlighted = nil
+  local uiData = {
+    vehID = vehID,
+    partsSorted = partsData.partsSorted,
+    partsHighlightedIdxs = partsData.partsHighlightedIdxs,
+  }
+  guihooks.trigger("PartsSelectorUpdate", uiData)
+end
+
+local function partsSelectorChangedDebounced(state)
+  local vehObj, vehData, vehID, partsData = getVehData(state.vehID)
+  if not vehObj then return end
+
+  local partsSelected = {}
+  for _, idx in ipairs(state.partsHighlightedIdxs) do
+    partsSelected[state.partsSorted[idx]] = true
+  end
+  highlightParts(partsSelected, vehID)
+end
+
+local partsSelectorChangedTime = nil
+local partsSelectorChangedState = nil
+
+local function partsSelectorChanged(state)
+  partsSelectorChangedState = state
+  partsSelectorChangedTime = os.clockhp()
 end
 
 -- Clears out all highlights data (parts highlighted, mesh transparency, and vehicle)
@@ -801,6 +825,16 @@ local function resetVarsToLoadedConfig()
   setConfigVars(vars, true)
 end
 
+local function onUpdate(dt)
+  if partsSelectorChangedTime then
+    if os.clockhp() - partsSelectorChangedTime > 0.1 then
+      partsSelectorChangedDebounced(partsSelectorChangedState)
+      partsSelectorChangedState = nil
+      partsSelectorChangedTime = nil
+    end
+  end
+end
+
 local function onCouplerAttached( objId1, objId2, nodeId, obj2nodeId)
   table.insert(attachedCouplers, {objId1, objId2, nodeId, obj2nodeId})
 end
@@ -814,8 +848,19 @@ local function onCouplerDetached(obj1id, obj2id, nodeId, obj2nodeId)
   end
 end
 
+local function onSerialize()
+  return {
+    vehsPartsData = vehsPartsData,
+    attachedCouplers = attachedCouplers,
+  }
+end
+
+local function onDeserialized(data)
+  vehsPartsData = data.vehsPartsData
+  attachedCouplers = data.attachedCouplers
+end
+
 -- public interface
-M.getVehPartsData = getVehPartsData
 M.save = savePartConfigFile
 M.savePartConfigFileStage2 = savePartConfigFileStage2_Format3
 
@@ -825,18 +870,17 @@ M.highlightParts = highlightParts
 M.selectParts = selectParts
 M.setNewParts = setNewParts
 M.showHighlightedParts = showHighlightedParts
-M.clearVehicleHighlights = clearVehicleHighlights
 M.resetVehicleHighlights = resetVehicleHighlights
 M.setConfig = mergeConfig
 M.setConfigPaints = setConfigPaints
 M.setConfigVars = setConfigVars
 M.setPartsConfig = setPartsConfig
 M.getConfig = getConfig
-M.onSerialize = onSerialize
-M.onDeserialized = onDeserialized
 M.resetConfig = resetConfig
 M.reset = reset
 M.sendDataToUI = sendDataToUI
+M.sendPartsSelectorStateToUI = sendPartsSelectorStateToUI
+M.partsSelectorChanged = partsSelectorChanged
 M.vehicleResetted = reset
 M.getConfigSource = getConfigSource
 M.getConfigList = getConfigList
@@ -853,9 +897,14 @@ M.savedefault = savedefault
 M.hasAvailablePart = hasAvailablePart
 M.setSkin = setSkin
 M.findAttachedVehicles = findAttachedVehicles
+M.onUpdate = onUpdate
 
 M.onCouplerAttached = onCouplerAttached
 M.onCouplerDetached = onCouplerDetached
 
 M.buildConfigFromString = buildConfigFromString
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
+
 return M

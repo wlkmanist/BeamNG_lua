@@ -67,7 +67,7 @@ function C:buttonPushed(action)
 end
 
 function C:getCmd(action)
-  return 'core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']:buttonPushed("'..action..'")'
+  return 'local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:buttonPushed("'..action..'") end'
 end
 
 function C:closeDialogue()
@@ -87,7 +87,7 @@ function C:openDialogue()
       default = true,
       class = "main",
       label = self.pinIn.buttonText.value or "ui.scenarios.start.start",
-      clickLua = 'core_flowgraphManager.getManagerByID('..self.mgr.id..').graphs['..self.graph.id..'].nodes['..self.id..']' .. ':started()'
+      clickLua = 'local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:started() end'
     }
   }
 

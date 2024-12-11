@@ -3,7 +3,7 @@ local M = {}
 local api = extensions.editor_api_dynamicDecals
 local utils = extensions.ui_liveryEditor_utils
 local uiCameraApi = extensions.ui_liveryEditor_camera
-local uiFillApi = extensions.ui_liveryEditor_layers_fill
+local uiFillLayer = extensions.ui_liveryEditor_layers_fill
 
 -- Layer Cached Data
 -- Id
@@ -34,20 +34,14 @@ local transformLayerUiFormat = function(layer, coordinates)
       x = utils.roundAndTruncateDecimal(layer.decalSkew.x),
       y = utils.roundAndTruncateDecimal(layer.decalSkew.y)
     }
-    formattedLayer.position = utils.getXYCoordinates(layer.decalPos, uiCameraApi.getCoordinates())
+    -- formattedLayer.position = utils.getXYCoordinates(layer.decalPos, uiCameraApi.getCoordinates())
     formattedLayer.color = layer.color:toTable()
     formattedLayer.metallicIntensity = layer.metallicIntensity
     formattedLayer.normalIntensity = layer.normalIntensity
     formattedLayer.roughnessIntensity = layer.roughnessIntensity
   elseif layer.type == api.layerTypes.fill then
     formattedLayer.colorPaletteMapId = layer.colorPaletteMapId
-
-    if layer.colorPaletteMapId == 0 then
-      formattedLayer.color = layer.color:toTable()
-    else
-      local colorPaletteData = uiFillApi.getColorPaletteDataById(layer.colorPaletteMapId)
-      formattedLayer.color = colorPaletteData.color
-    end
+    formattedLayer.color = layer.color:toTable()
   elseif layer.type == api.layerTypes.linkedSet then
     for k, property in ipairs(layer.properties) do
       if property.id == "color" then

@@ -12,6 +12,8 @@ local tableInsert, tableClear = table.insert, table.clear
 local wndName = "JBeam Modifier Leaking Visualizer"
 M.menuEntry = "JBeam Modifier Leaking Visualizer"
 
+local windowOpen = im.BoolPtr(false)
+
 local tableFlags = bit.bor(im.TableFlags_ScrollX, im.TableFlags_ScrollY, im.TableFlags_RowBg, im.TableFlags_BordersOuter, im.TableFlags_BordersV, im.TableFlags_Hideable)
 
 local imRedCol = im.ImVec4(1,0,0,1)
@@ -901,8 +903,10 @@ end
 
 local tempColVec = vec3(1,1,1)
 
-local function onEditorGui()
-  if editor.beginWindow(wndName, wndName) then
+local function onUpdate()
+  if windowOpen[0] ~= true then return end
+
+  if im.Begin(wndName, windowOpen) then
     if not vEditor.vehicle then goto continue end
 
     if im.Button("Start Analysis") then
@@ -1073,20 +1077,28 @@ local function onEditorGui()
   end
 
   ::continue::
-  editor.endWindow()
+  im.End()
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(200,200))
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
 end
 
 M.open = open
 
-M.onEditorGui = onEditorGui
-M.onEditorInitialized = onEditorInitialized
+M.onUpdate = onUpdate
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

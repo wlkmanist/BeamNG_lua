@@ -257,12 +257,16 @@ local function updateGFX(dt)
     else
       if volBreak > 0.004 then
         if (mat1 == 3 and mat2 == 3) then
-          if impactPlasticEvent then
-            sounds.playSoundOnceFollowNode(breakPlasticEvent, breakNode, volBreak)
+          local nodeBreakPlasticEvent = v.data.nodes[breakNode].breakPlasticEvent or breakPlasticEvent
+          if nodeBreakPlasticEvent then
+            --print(string.format("%d: Break Plastic (%.2f) -> %q", objectId, volBreak, nodeBreakPlasticEvent))
+            sounds.playSoundOnceFollowNode(nodeBreakPlasticEvent, breakNode, volBreak)
           end
         else
-          if breakGenericEvent then
-            sounds.playSoundOnceFollowNode(breakGenericEvent, breakNode, volBreak)
+          local nodeBreakGenericEvent = v.data.nodes[breakNode].breakGenericEvent or breakGenericEvent
+          if nodeBreakGenericEvent then
+            --print(string.format("%d: Break Generic (%.2f) -> %q", objectId, volBreak, nodeBreakGenericEvent))
+            sounds.playSoundOnceFollowNode(nodeBreakGenericEvent, breakNode, volBreak)
           end
         end
       -- print (string.format("     PART BREAK / mat1=%.2d / mat2=%.2d / impactEnergy=%9.2f / breakEnergy=%9.2f /                 /                 / volBreak=%.3f ", mat1, mat2, impactEnergy, breakEnergy, volBreak))
@@ -1188,7 +1192,7 @@ local function init()
             -- finally, insert it for graphing
             table.insert(beamSounds, soundTable)
           else
-            log('E', 'sounds.init', 'unable to load sound: ' .. tostring(soundFile))
+            log("E", "sounds.init", "unable to load sound: " .. tostring(soundFile))
           end
         end
       end

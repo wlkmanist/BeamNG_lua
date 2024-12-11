@@ -46,16 +46,8 @@ local updateMovementSoundFunction
 local updateSegmentSoundFunction
 local updateEndstopsSoundFunction
 
-local function updateMovementSound(dt)
-  --get the current length of our sensor beam
-  local positionSensorBeamLength = obj:getBeamLength(positionSensorBeamCid)
-  --calculate a smoothed velocity of that beam length
-  local movementVelocity = abs(movementVelocitySmoother:get((positionSensorBeamLength - lastPositionSensorBeamLength) / dt, dt))
-  --calculate the desird pitch based on the beam length velocity
-  local pitch = linearScale(movementVelocity, movementSoundPitchMinVelocity, movementSoundPitchMaxVelocity, movementSoundMinPitch, movementSoundMaxPitch)
-  --calculate our volume based on the base volume from jbeam and a little fade coef based on the beam length velocity
-  local volume = movementSoundVolume * linearScale(movementVelocity, movementSoundVolumeCoefMinVelocity, movementSoundVolumeCoefMaxVelocity, 0, 1)
-  obj:setVolumePitchCT(movementSound, volume, pitch, 0, 0)
+local function updateMovementSound(positionSensorBeamLength, movementVelocity, movementDirection, volume, pitch, dt)
+  obj:setVolumePitchCT(movementSound, volume, pitch, movementDirection, 0)
 
   --handle starting and stopping the sound, we don't want to start it if the velocity is really low or the volume is barely audible
   if movementVelocity >= movementSoundPlayingThresholdVelocity and volume > movementSoundPlayingThresholdVolume then
@@ -73,95 +65,104 @@ local function updateMovementSound(dt)
   lastPositionSensorBeamLength = positionSensorBeamLength
 end
 
-local function updateSegmentSound(dt)
+local function updateSegmentSound(positionSensorBeamLength, volume, pitch, dt)
+  --if we have a segmented part to this sound, calculate it
+  --calculate a position starting at 0 and consider the calibration offset
+  local adjustedPosition = positionSensorBeamLength - positionSensorBeamMinPosition + positionCalibrationOffset
+  --we want to calculate the modulus to detect whenever we went past one segment length of travel
+  local segmentMod = adjustedPosition % segmentLength
+  --see how much the mod changed since the last frame
+  local segmentModDelta = lastSegmentMod - segmentMod
+  --adjust the segment event based on movement direction
+  local segmentSoundEvent = sign(segmentModDelta) > 0 and segmentIncSoundEvent or segmentDecSoundEvent
+  --if our delta is suddenly very large, we jumped to the next segment and want to emit a sound
+  --usually it's very small frame-to-frame, so we just check against half the segment length as the trigger
+  if segmentSoundEvent and abs(segmentModDelta) > segmentLength * 0.5 then
+    --color == 1 is the trigger for fmod to play the segment part on top of the noise part
+    obj:playSFXOnceCT(segmentSoundEvent, soundNode, volume, pitch, 0, 0)
+  end
+  --remember the last modulus for the next frame
+  lastSegmentMod = segmentMod
 end
 
-local function updateEndstopsSound(dt)
+local function updateEndstopsSound(positionSensorBeamLength, volume, pitch, dt)
+  --only handle endstop sounds if we need them
+  --only play the start sound once and at the start position
+  if not hasPlayedStartSound and positionSensorBeamLength <= positionSensorBeamMinPosition and minPositionSoundEvent then
+    --trigger the start sound
+    obj:playSFXOnceCT(minPositionSoundEvent, soundNode, volume, pitch, 0, 0)
+    --prevent further start sounds from playing
+    hasPlayedStartSound = true
+  end
+
+  --only play the end sound once and at the end position
+  if not hasPlayedEndSound and positionSensorBeamLength >= positionSensorBeamMaxPosition and maxPositionSoundEvent then
+    --trigger the end sound
+    obj:playSFXOnceCT(maxPositionSoundEvent, soundNode, volume, pitch, 0, 0)
+    --prevent further end sounds from playing
+    hasPlayedEndSound = true
+  end
+
+  --if we played the start sound and moved far enough away from the start position, reset it
+  if hasPlayedStartSound and positionSensorBeamLength > positionSensorBeamMinPosition + movementLength * 0.05 then
+    hasPlayedStartSound = false
+  end
+  --if we played the end sound and moved far enough away from the end position, reset it
+  if hasPlayedEndSound and positionSensorBeamLength < positionSensorBeamMaxPosition - movementLength * 0.05 then
+    hasPlayedEndSound = false
+  end
 end
 
 local function updateGFX(dt)
   --get the current length of our sensor beam
   local positionSensorBeamLength = obj:getBeamLength(positionSensorBeamCid)
   --calculate a smoothed velocity of that beam length
-  local movementVelocity = absMovementVelocitySmoother:get(abs(movementVelocitySmoother:get((positionSensorBeamLength - lastPositionSensorBeamLength) / dt, dt)), dt)
+  local smoothDirectionalMovementVelocity = movementVelocitySmoother:get((positionSensorBeamLength - lastPositionSensorBeamLength) / dt, dt)
+  local movementVelocity = absMovementVelocitySmoother:get(abs(smoothDirectionalMovementVelocity), dt)
+  local movementDirection = sign(smoothDirectionalMovementVelocity)
   --calculate the desird pitch based on the beam length velocity
   local pitch = linearScale(movementVelocity, movementSoundPitchMinVelocity, movementSoundPitchMaxVelocity, movementSoundMinPitch, movementSoundMaxPitch)
   --calculate our volume based on the base volume from jbeam and a little fade coef based on the beam length velocity
   local volume = movementSoundVolume * linearScale(movementVelocity, movementSoundVolumeCoefMinVelocity, movementSoundVolumeCoefMaxVelocity, 0, 1)
-  obj:setVolumePitchCT(movementSound, volume, pitch, 0, 0)
 
-  --if we have a segmented part to this sound, calculate it
-  if hasSegments then
-    --calculate a position starting at 0 and consider the calibration offset
-    local adjustedPosition = positionSensorBeamLength - positionSensorBeamMinPosition + positionCalibrationOffset
-    --we want to calculate the modulus to detect whenever we went past one segment length of travel
-    local segmentMod = adjustedPosition % segmentLength
-    --see how much the mod changed since the last frame
-    local segmentModDelta = lastSegmentMod - segmentMod
-    --adjust the segment event based on movement direction
-    local segmentSoundEvent = sign(segmentModDelta) > 0 and segmentIncSoundEvent or segmentDecSoundEvent
-    --if our delta is suddenly very large, we jumped to the next segment and want to emit a sound
-    --usually it's very small frame-to-frame, so we just check against half the segment length as the trigger
-    if segmentSoundEvent and abs(segmentModDelta) > segmentLength * 0.5 then
-      --color == 1 is the trigger for fmod to play the segment part on top of the noise part
-      obj:playSFXOnceCT(segmentSoundEvent, soundNode, volume, pitch, 0, 0)
-    end
-    --remember the last modulus for the next frame
-    lastSegmentMod = segmentMod
-  end
-
-  --only handle endstop sounds if we need them
-  if hasEndstops then
-    --only play the start sound once and at the start position
-    if not hasPlayedStartSound and positionSensorBeamLength <= positionSensorBeamMinPosition and minPositionSoundEvent then
-      --trigger the start sound
-      obj:playSFXOnceCT(minPositionSoundEvent, soundNode, volume, pitch, 0, 0)
-      --prevent further start sounds from playing
-      hasPlayedStartSound = true
-    end
-
-    --only play the end sound once and at the end position
-    if not hasPlayedEndSound and positionSensorBeamLength >= positionSensorBeamMaxPosition and maxPositionSoundEvent then
-      --trigger the end sound
-      obj:playSFXOnceCT(maxPositionSoundEvent, soundNode, volume, pitch, 0, 0)
-      --prevent further end sounds from playing
-      hasPlayedEndSound = true
-    end
-
-    --if we played the start sound and moved far enough away from the start position, reset it
-    if hasPlayedStartSound and positionSensorBeamLength > positionSensorBeamMinPosition + movementLength * 0.05 then
-      hasPlayedStartSound = false
-    end
-    --if we played the end sound and moved far enough away from the end position, reset it
-    if hasPlayedEndSound and positionSensorBeamLength < positionSensorBeamMaxPosition - movementLength * 0.05 then
-      hasPlayedEndSound = false
-    end
-  end
-
-  --handle starting and stopping the sound, we don't want to start it if the velocity is really low or the volume is barely audible
-  if movementVelocity >= movementSoundPlayingThresholdVelocity and volume > movementSoundPlayingThresholdVolume then
-    if not isPlaying then
-      obj:playSFX(movementSound)
-      isPlaying = true
-    end
-  else
-    if isPlaying then
-      obj:stopSFX(movementSound)
-      isPlaying = false
-    end
-  end
-
-  lastPositionSensorBeamLength = positionSensorBeamLength
+  updateMovementSoundFunction(positionSensorBeamLength, movementVelocity, movementDirection, volume, pitch, dt)
+  updateSegmentSoundFunction(positionSensorBeamLength, volume, pitch, dt)
+  updateEndstopsSoundFunction(positionSensorBeamLength, volume, pitch, dt)
 
   if printDebug then
     print(string.format("%s: position: %.2f, velocity: %.2f, volume: %.2f, pitch: %.2f, isPlaying: %s", M.name, positionSensorBeamLength, movementVelocity, volume, pitch, isPlaying))
   end
 end
 
+local function initEndstops()
+  --if we use endstops, init the endstop sound play variables according to the current position
+  if hasEndstops then
+    local positionSensorBeamLength = obj:getBeamLength(positionSensorBeamCid)
+    if positionSensorBeamLength <= positionSensorBeamMinPosition then
+      --prevent further start sounds from playing
+      hasPlayedStartSound = true
+    end
+
+    --only play the end sound once and at the end position
+    if positionSensorBeamLength >= positionSensorBeamMaxPosition then
+      --prevent further end sounds from playing
+      hasPlayedEndSound = true
+    end
+  end
+end
+
+local function updateSoundMethods()
+  --check which functionality we actually need and update our methods accordingly
+  updateMovementSoundFunction = movementSound and updateMovementSound or nop
+  updateSegmentSoundFunction = hasSegments and updateSegmentSound or nop
+  updateEndstopsSoundFunction = hasEndstops and updateEndstopsSound or nop
+end
+
 local function resetSounds(jbeamData)
-  obj:stopSFX(movementSound)
-  hasPlayedEndSound = false
-  hasPlayedStartSound = false
+  if movementSound then
+    obj:stopSFX(movementSound)
+  end
+  initEndstops()
 end
 
 local function reset(jbeamData)
@@ -175,14 +176,16 @@ local function initSounds(jbeamData)
   --base volume for both the noise part and the segment/endstop sounds
   movementSoundVolume = jbeamData.movementSoundVolume or 1
   --event for the overall movement sound, this includes the constant part, the segment part and the endstops
-  local movementSoundEvent = jbeamData.movementSoundEvent or "event:>Vehicle>Sliding>Test"
+  local movementSoundEvent = jbeamData.movementSoundEvent
   segmentIncSoundEvent = jbeamData.segmentIncSoundEvent or jbeamData.segmentSoundEvent
   segmentDecSoundEvent = jbeamData.segmentDecSoundEvent or jbeamData.segmentSoundEvent
   minPositionSoundEvent = jbeamData.minPositionSoundEvent
   maxPositionSoundEvent = jbeamData.maxPositionSoundEvent
   --a single node where the sound is emitted
   soundNode = jbeamData.movementSoundNode_nodes and jbeamData.movementSoundNode_nodes[1] or 0
-  movementSound = obj:createSFXSource2(movementSoundEvent, "AudioDefaultLoop3D", "segmentedMovement." .. M.name, soundNode, 0)
+  if movementSoundEvent then
+    movementSound = obj:createSFXSource2(movementSoundEvent, "AudioDefaultLoop3D", "segmentedMovement." .. M.name, soundNode, 0)
+  end
 
   --the velocity at which the minimum pitch applies
   movementSoundPitchMinVelocity = jbeamData.movementSoundPitchMinVelocity or 0
@@ -222,6 +225,9 @@ local function initSounds(jbeamData)
   bdebug.setNodeDebugText("Linear Movement", soundNode, M.name .. " - Segment Dec: " .. (segmentDecSoundEvent or "no event"))
   bdebug.setNodeDebugText("Linear Movement", soundNode, M.name .. " - Position Min: " .. (minPositionSoundEvent or "no event"))
   bdebug.setNodeDebugText("Linear Movement", soundNode, M.name .. " - Position Max: " .. (maxPositionSoundEvent or "no event"))
+
+  initEndstops()
+  updateSoundMethods()
 end
 
 local function init(jbeamData)
@@ -256,8 +262,6 @@ local function init(jbeamData)
   local absVelocitySmoothingOut = jbeamData.absVelocitySmoothingOut or absVelocitySmoothing
   absMovementVelocitySmoother = newTemporalSmoothing(absVelocitySmoothingIn, absVelocitySmoothingOut)
   lastSegmentMod = 0
-  hasPlayedEndSound = false
-  hasPlayedStartSound = false
 
   printDebug = jbeamData.debugMode or false
 

@@ -10,6 +10,8 @@ local jsonAST = require('json-ast')
 local wndName = "JBeam Spellchecker"
 M.menuEntry = "JBeam Spellchecker"
 
+local windowOpen = im.BoolPtr(false)
+
 local allSections = {
   flexbodies = {
     pos = true,
@@ -443,28 +445,38 @@ local function analyze()
   end
 end
 
-local function onEditorGui()
-  if editor.beginWindow(wndName, wndName) then
+local function onUpdate()
+  if windowOpen[0] ~= true then return end
+
+  if im.Begin(wndName, windowOpen) then
     if im.Button("Start Analysis") then
       analyze()
     end
   end
 
   ::continue::
-  editor.endWindow()
+  im.End()
 end
 
 local function open()
-  editor.showWindow(wndName)
+  windowOpen[0] = true
 end
 
-local function onEditorInitialized()
-  editor.registerWindow(wndName, im.ImVec2(200,200))
+local function onSerialize()
+  return {
+    windowOpen = windowOpen[0],
+  }
+end
+
+local function onDeserialized(data)
+  windowOpen[0] = data.windowOpen
 end
 
 M.open = open
 
-M.onEditorGui = onEditorGui
-M.onEditorInitialized = onEditorInitialized
+M.onUpdate = onUpdate
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

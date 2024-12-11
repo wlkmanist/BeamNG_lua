@@ -15,14 +15,20 @@ end
 
 -- formats a single mission.
 local function formatMission(m)
+  local previewFile = m.previewFile
+  if previewFile:sub(1, 1) == "/" then
+      previewFile = previewFile:sub(2)
+  end
   local info = {
     id = m.id,
     name = m.name,
+    icon = m.bigMapIcon.icon,
     description = m.description,
-    previews = {m.previewFile},
+    previews = {previewFile},
     missionTypeLabel = m.missionTypeLabel or mission.missionType,
     userSettings = m:getUserSettingsData() or {},
     defaultUserSettings = m.defaultUserSettings or {},
+    lastUserSettings = m.lastUserSettings,
     activeStars = M.getActiveStarsForUserSettings(m.id, m.defaultUserSettings),
     additionalAttributes = {},
     progress = m.saveData.progress,
@@ -73,6 +79,11 @@ local function formatMission(m)
 
   --info.gameContextUiButtons = {}
   info.gameContextUiButtons = m.getMissionScreenDataUiButtons and m:getMissionScreenDataUiButtons()
+
+  --some career info like leagues
+  if career_modules_branches_leagues then
+    info.leagues = career_modules_branches_leagues.getLeaguesForMission(m.id)
+  end
   return info
 end
 
@@ -99,7 +110,7 @@ local function formatOngoingMission()
       activeMission = m
     end
   end
-  return {context = 'ongoingMission', mission = M.formatMission(activeMission)}
+  return {context = 'ongoingMission', missions = {M.formatMission(activeMission)}, preselectedMissionId = gameplay_missions_missionManager.getForegroundMissionId()}
 end
 
 local function getMissionScreenData()
@@ -169,7 +180,6 @@ local function requestStartingOptionsForUserSettings(id, userSettings)
     end
 
     local missionUserSettings = m:getUserSettingsData() or {}
-    
     local missionUserSettingByKey = {}
     for _, setting in ipairs(missionUserSettings) do
       missionUserSettingByKey[setting.key] = setting
@@ -254,6 +264,13 @@ local function getActiveStarsForUserSettings(id, userSettings)
       flattendedSettings[setting.key] = setting.value
     end
 
+    if m.ignoreUserSettingsKeyForActiveStars then
+      for key, _ in pairs(m.ignoreUserSettingsKeyForActiveStars) do
+        flattendedSettings[key] = nil
+        defaultUserSettings[key] = nil
+      end
+    end
+
     -- check if settings are actually equal
     local same = true
     for k, v in pairs(defaultUserSettings) do
@@ -262,29 +279,45 @@ local function getActiveStarsForUserSettings(id, userSettings)
     for k, v in pairs(flattendedSettings) do
       same = same and defaultUserSettings[k] == v
     end
+    if not same then
+      --dump(defaultUserSettings)
+      --dump(flattendedSettings)
+    end
 
     -- if same, enable all stars. if false, enable only bonus stars.
     -- TODO: make this a mission base class function. this way, each mission can handle this on its own.
     -- for example, some bonus stars could only be active with specific user settings (traffic on etc)
+
+    local starInfo = {}
+    local message = nil
     local starKeys, defaultCache = m.careerSetup._activeStarCache.sortedStars, m.careerSetup._activeStarCache.defaultStarKeysByKey
-    local activeStars = {}
-    for _, key in ipairs(starKeys) do
-      if defaultCache[key] then
-        activeStars[key] = same
-      else
-        activeStars[key] = true
+    if m.getActiveStarsForUserSettings then
+      starInfo, message = m:getActiveStarsForUserSettings(flattendedSettings, starKeys, defaultCache, same)
+    else
+      -- fallback: default stars need same, bonus stars always on
+      for _, key in ipairs(starKeys) do
+        local info = {
+          visible = true,
+          message = nil
+        }
+        if defaultCache[key] then
+          info.enabled = same
+        else
+          info.enabled = true
+        end
+        starInfo[key] = info
+      end
+      -- message if stars are disabled...
+      if not same then
+        message = "Main Objectives are only available with default settings."
       end
     end
 
-    -- message if stars are disabled...
-    local message = nil
-    if not same then
-      message = "Default Stars are only available with default mission settings."
-    end
+
 
     return {
       message = message,
-      activeStars = activeStars
+      starInfo = starInfo,
     }
   end
   return {}
@@ -312,6 +345,7 @@ local function startMissionById(id, userSettings, startingOptions)
 end
 
 local function stopMissionById(id, force)
+  id = id or gameplay_missions_missionManager.getForegroundMissionId()
   for _, m in ipairs(gameplay_missions_missions.get()) do
     if m.id == id then
       gameplay_missions_missionManager.attemptAbandonMissionWithFade(m, force)
@@ -319,6 +353,7 @@ local function stopMissionById(id, force)
     end
   end
 end
+M.abandonCurrentMission = function() stopMissionById(nil, true) end
 
 local function changeUserSettings(id, settings)
   local mission = gameplay_missions_missions.getMissionById(id)
@@ -339,13 +374,169 @@ local function isStateFreeroam()
   return false
 end
 
+-- Sound stuff
+local soundId = nil
+local function setupSounds()
+  soundId = soundId or Engine.Audio.createSource('AudioGui', 'event:>UI>Career>EndScreen_Snapshot')
+end
+
+local function activateSoundBlur(active)
+  setupSounds()
+  local sound = scenetree.findObjectById(soundId)
+  if sound then
+    if active then
+      sound:play(-1)
+      log("I","","Activated Sound Blur for Mission-Control")
+    else
+      sound:stop(-1)
+      log("I","","Deactivated Sound Blur for Mission-Control")
+    end
+    sound:setTransform(getCameraTransform())
+  end
+end
+
+local function tryDeleteSoundObject()
+  local sound = scenetree.findObjectById(soundId)
+  if sound then
+    sound:stop(-1)
+    sound:delete()
+  end
+  soundId = nil
+end
+
+local function onExtensionUnloaded()
+  tryDeleteSoundObject()
+end
+
+local function onClientEndMission(levelPath)
+  tryDeleteSoundObject()
+
+end
+
+M.onExtensionUnloaded = onExtensionUnloaded
+M.activateSoundBlur = activateSoundBlur
+M.onClientEndMission = onClientEndMission
+
+
+--------------------------------
+-- Missions Grid Screen (WIP) --------
+
+local difficultyValues = {veryLow=0, low=1, medium=2, high=3, veryHigh=4}
+local function getMissionTiles()
+  local tilesById = {}
+  
+  local groupsByKey = {}
+  for _, diff in pairs(gameplay_missions_missions.getAdditionalAttributes().difficulty.valuesByKey) do
+    groupsByKey["difficulty_"..diff.key] = {label = "Difficulty: " ..diff.translationKey, meta = {type = "difficulty"}}
+  end
+
+
+  for _, m in ipairs(gameplay_missions_missions.get()) do
+    if not m.careerSetup or not m.careerSetup.showInFreeroam 
+      or not m.unlocks.visible then goto continue end
+
+    local filterData = {
+      groupTags = {},
+      sortingValues = {},
+    }
+    tilesById[m.id] = {
+      name = m.name,
+      image = m.thumbnailFile,
+    }
+
+    -- missionType
+    filterData.groupTags['missionType_'..m.missionTypeLabel] = true
+    if not groupsByKey['missionType_'..m.missionTypeLabel] then
+      groupsByKey['missionType_'..m.missionTypeLabel] = {label = m.missionTypeLabel, meta = {type = "missionType"}}
+    end
+
+    -- difficulty
+    if m.additionalAttributes.difficulty then
+      filterData.groupTags['difficulty_'..m.additionalAttributes.difficulty] = true
+      filterData.sortingValues['difficulty'] = difficultyValues[m.additionalAttributes.difficulty]
+    end
+
+    -- level
+    local levelId = m.startTrigger and m.startTrigger.level
+    local level = core_levels.getLevelByName(levelId)
+    if not groupsByKey['level_'..levelId] then
+      if level then
+        groupsByKey['level_'..levelId] = {label = level.title, meta = {type = "level"}}
+      end
+    end
+    filterData.groupTags['level_'..levelId] = true
+
+   
+
+    tilesById[m.id].filterData = filterData
+
+    ::continue::
+  end
+
+  -- TODO: scenarios and other non-missions
+
+  -- build group lists (new groups might have been added)
+  for key, group in pairs(groupsByKey) do
+    group.tileIdsUnsorted = {}
+    group.meta = group.meta or {type=group.type}
+  end
+
+  -- add tiles to groups
+  for id, tile in pairs(tilesById) do
+    for groupKey, _ in pairs(tile.filterData.groupTags) do
+      if groupsByKey[groupKey] then
+        table.insert(groupsByKey[groupKey].tileIdsUnsorted, id)
+      end
+    end
+  end
+
+  -- groupSets
+  local groupSetsByKey = {}
+  for groupKey, group in pairs(groupsByKey) do
+    if group.meta.type == "level" then
+      table.insert(groupSetsByKey, groupKey)
+    end
+  end
+  return {
+    tilesById = tilesById,
+    groupsByKey = groupsByKey,
+    groupKeys = groupSetsByKey
+  }
+  
+end
+M.getMissionTiles = getMissionTiles
+
 M.isStateFreeroam = isStateFreeroam
 
 M.formatMission = formatMission
 M.getMissionsAtCurrentLocationFormatted = getMissionsAtCurrentLocationFormatted
 M.startMissionById = startMissionById
 M.stopMissionById = stopMissionById
+M.startFromWithinMission = function(id, settings)
+  local flatSettings = {}
+  for _, setting in ipairs(settings or {}) do
+    flatSettings[setting.key] = setting.value
+  end
+ gameplay_missions_missionManager.startFromWithinMission(gameplay_missions_missions.getMissionById(id), flatSettings) 
+end
 M.changeUserSettings = changeUserSettings
 M.setPreselectedMissionId = setPreselectedMissionId
 M.getMissionScreenData = getMissionScreenData
+
+-- Testing: Todo: Remove
+M.onRequestMissionScreenData = function(mode)
+  if mode == "endScreenTest" then
+    local data = jsonReadFile("/gameplay/testing/missionScreen.json")
+    guihooks.trigger("onRequestMissionScreenDataReady", data)
+  end
+end
+
+M.isAnyMissionActive = function() return gameplay_missions_missionManager.getForegroundMissionId() ~= nil end
+M.isMissionStartOrEndScreenActive = function()
+  local screensActive = {}
+  extensions.hook("onGetIsMissionStartOrEndScreenActive", screensActive)
+  return screensActive[1] or false
+end
+
+
 return M

@@ -22,42 +22,18 @@ local function clear()
 end
 
 local function onExtensionLoaded()
-  log("I", logTag, "gameplay_drag_dragTypes_headsUpDrag extension loaded")
+  --log("I", logTag, "gameplay_drag_dragTypes_headsUpDrag extension loaded")
   dGeneral = gameplay_drag_general
   dUtils = gameplay_drag_utils
 
   clear()
 end
 
-local function changeRacerPhase(racer)
-  local index = racer.currentPhase + 1
-  if index > #dragData.phases then
-    racer.isFinished = true
-    return
-  end
-  racer.currentPhase = index
-  log("I", logTag, "This is the new phase: " .. racer.phases[racer.currentPhase].name .. " for vehicle: " .. tostring(racer.vehId))
-end
-
-local function changeAllPhases()
-  for vehId, racer in pairs(dragData.racers) do
-    local index = racer.currentPhase + 1
-    if index > #dragData.phases then
-      racer.isFinished = true
-      return
-    end
-    racer.currentPhase = index
-  end
-end
-
---This will have all the phases aviable in all the different types of the drag gameplay, so if we want to add any phase we will only have to add it here.
-
-
 local function resetDragRace()
   if not dragData then
     dragData = dGeneral.getData()
   end
-  log('I', logTag, 'Reseting Drag Race')
+  --log('I', logTag, 'Reseting Drag Race')
   hasActivityStarted = false
   debugStart = false
 
@@ -65,14 +41,14 @@ local function resetDragRace()
   dragData.isCompleted = false
 
   for vehId, racer in pairs(dragData.racers) do
-    log('I', logTag, 'Reseting racer: '.. vehId)
+    --log('I', logTag, 'Reseting racer: '.. vehId)
     racer.currentPhase = 1
     racer.isDesqualified = false
     racer.desqualifiedReason = "None"
     racer.isFinished = false
 
     --Reset Phases
-    log('I', logTag, 'Reseting phases for: '.. vehId)
+    --log('I', logTag, 'Reseting phases for: '.. vehId)
     for _, p in ipairs(racer.phases) do
       p.started = false
       p.completed = false
@@ -82,11 +58,12 @@ local function resetDragRace()
     if racer.canBeTeleported then
       local veh = scenetree.findObjectById(racer.vehId)
       spawn.safeTeleport(veh, dragData.strip.lanes[racer.lane].waypoints.spawn.transform.pos, dragData.strip.lanes[racer.lane].waypoints.spawn.transform.rot, nil, nil, nil, racer.canBeReseted)
-      log('I', logTag, 'Teleported back to start: ' .. vehId)
+      --log('I', logTag, 'Teleported back to start: ' .. vehId)
     end
   end
   extensions.hook("resetDragRaceValues")
 end
+
 
 local function startActivity()
   dragData = dGeneral.getData()
@@ -108,14 +85,12 @@ end
 local function startDebugPhase(pIndex, dData)
   if not pIndex or not dData then return end
   dragData = dData
-  log("I", logTag, "Starting debug phase for index: ".. pIndex)
+  --log("I", logTag, "Starting debug phase for index: ".. pIndex)
   for _, racer in pairs(dragData.racers) do
     racer.currentPhase = pIndex
   end
   debugStart = true
 end
-
-
 
 local function onUpdate(dtReal, dtSim, dtRaw)
   if hasActivityStarted then
@@ -138,8 +113,8 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       dUtils[phase.name](phase, racer, dtSim)
 
       if phase.completed and not phase.dependency and not racer.isFinished then
-        log('I', logTag, 'Racer: '.. vehId ..' completed phase: '.. phase.name)
-        changeRacerPhase(racer)
+        --log('I', logTag, 'Racer: '.. vehId ..' completed phase: '.. phase.name)
+        dUtils.changeRacerPhase(racer)
       end
     end
 
@@ -157,7 +132,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     end
 
     if dependenciesCompleted then
-      changeAllPhases()
+      dUtils.changeAllPhases()
     end
   end
 

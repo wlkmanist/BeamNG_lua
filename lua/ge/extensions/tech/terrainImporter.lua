@@ -6,7 +6,7 @@
 
 -- Control parameters.
 local foldername = 'terrain'                                                                -- The name of the temporary folder into which the heightmap will be stored.
-local materialsPath = 'levels/template_tech/art/terrains/main.materials.json'               -- The path for the terrain materials.
+local materialsPath = 'levels/tech_ground/art/terrains/main.materials.json'               -- The path for the terrain materials.
 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -61,8 +61,8 @@ local function importHeightmap(data, w, h, scale, zMin, zMax, isYFlipped)
 
   -- Generate a terrain block from the saved heightmap .png file.
   local tg = extensions.util_terrainGenerator.new()
-  tg:setPngData(foldername .. '/temp_heightmap.png', bmpSize, prominence, scale or 1, isYFlipped or true)
   tg:setUserDir(foldername)
+  tg:setPngData(foldername .. '/temp_heightmap.png', bmpSize, prominence, scale or 1, isYFlipped or true)
   tg:setMaterials({filePath = materialsPath})
   tg:createTerrain()
 end

@@ -362,7 +362,7 @@ local function unifyComponents(vehicle, svars, target, source_raw, level, slotOp
       for k3, v3 in pairs(section) do
         if type(v3) == 'table' then
           vehicle.components[k3] = vehicle.components[k3] or {}
-          tableMergeRecursive( vehicle.components[k3], replaceTableKeysRecursive(v3, svars) )
+          tableMergeRecursiveArray( vehicle.components[k3], replaceTableKeysRecursive(v3, svars) )
         else
           vehicle.components[k3] = v3
         end

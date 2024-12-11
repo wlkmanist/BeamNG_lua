@@ -307,7 +307,7 @@ local function onEditorGui()
         im.InputText("Filename", tmpSaveFilename)
 
         if im.Button('OK') then
-          local filename = ffi.string(ffi.cast("char*",tmpSaveFilename))
+          local filename = ffi.string(tmpSaveFilename)
           saveRecording(bo, vehId, filename)
           im.CloseCurrentPopup()
         end

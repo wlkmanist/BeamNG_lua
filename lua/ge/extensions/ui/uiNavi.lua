@@ -386,14 +386,17 @@ end
 local function requestUIDashboardMap()
   print("Requesting UI Dashboard Map...")
   local d = {}
-  local levelData = core_levels.getLevelByName(getCurrentLevelIdentifier())
-  if levelData then
-    if not levelData.minimap then
-      levelData.minimap = minimapFromTerrainBlock()
+  local levelId = getCurrentLevelIdentifier()
+  if levelId then
+    local levelData = core_levels.getLevelByName(levelId)
+    if levelData then
+      if not levelData.minimap then
+        levelData.minimap = minimapFromTerrainBlock()
+      end
+      d.terrainTiles = levelData.minimap
+      -- account for old mods still using the old system
+      addOldFormatFromMinimap(d, terrainTiles)
     end
-    d.terrainTiles = levelData.minimap
-    -- account for old mods still using the old system
-    addOldFormatFromMinimap(d, terrainTiles)
   end
 
   local tmp = getPointsOfInterest()

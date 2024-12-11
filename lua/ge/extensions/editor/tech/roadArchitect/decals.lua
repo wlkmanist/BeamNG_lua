@@ -18,7 +18,8 @@ local M = {}
 local util = require('editor/tech/roadArchitect/utilities')                                         -- A utilities module.
 
 -- Private constants.
-local min, max, sin, cos = math.min, math.max, math.sin, math.cos
+local abs, min, max, sin, cos, deg2Rad = math.abs, math.min, math.max, math.sin, math.cos, math.rad
+local vertical = vec3(0, 0, 1)
 local raised = vec3(0, 0, 4.2)
 
 -- Module state.
@@ -73,6 +74,17 @@ local function computeSectionGeom(road, sStart, sEnd)
   return nodes, widths
 end
 
+-- Gets the minimum and maximum lane key values, from a given collection of lanes.
+local function getMinMaxLaneKeys(profile)
+  local l, u = 100, -100
+  for i = -20, 20 do
+    if profile[i] then
+      l, u = min(l, i), max(u, i)
+    end
+  end
+  return l, u
+end
+
 -- Creates a decal set for the given road.
 -- [A decal set contains the main road decal, the centerline decal, road edge decals, lane division decals, and start/end junction line decals].
 -- [The user can control the combination of these which will be rendered for the road, using the appropriate Imgui buttons].
@@ -107,14 +119,27 @@ local function createDecal(road, folder)
       folder:addObject(dRoad)
       local nodes, sectionWidths = computeSectionGeom(road, sStart, sEnd)
       local numNodes, decalId = #nodes, dRoad:getID()
+      local last = vec3(0, 0, 1e24)
       if sStart > 0 and sEnd > 0 then
+        local ctr = 0
         for i = 1, numNodes do                                                                      -- For +ve only sections, we need to flip the node order.
           local idx = numNodes - i + 1
-          editor.addRoadNode(decalId, { pos = nodes[idx] + raised, width = sectionWidths[idx], index = i - 1 })
+          local pos = nodes[idx] + raised
+          if pos:squaredDistance(last) > 1.0 then
+            editor.addRoadNode(decalId, { pos = pos, width = sectionWidths[idx], index = ctr })
+            ctr = ctr + 1
+            last = pos
+          end
         end
       else
+        local ctr = 0
         for i = 1, numNodes do
-          editor.addRoadNode(decalId, { pos = nodes[i] + raised, width = sectionWidths[i], index = i - 1 })
+          local pos = nodes[i] + raised
+          if pos:squaredDistance(last) > 1.0 then
+            editor.addRoadNode(decalId, { pos = pos, width = sectionWidths[i], index = ctr })
+            ctr = ctr + 1
+            last = pos
+          end
         end
       end
 
@@ -134,8 +159,15 @@ local function createDecal(road, folder)
       dRoad:registerObject("")
       folder:addObject(dRoad)
       local decalId = dRoad:getID()
+      local last = vec3(0, 0, 1e24)
+      local ctr = 0
       for i = 1, #road.nodes do
-        editor.addRoadNode(decalId, { pos = road.nodes[i].p + raised, width = road.nodes[i].widths[1][0], index = i - 1 })
+        local pos = road.nodes[i].p + raised
+        if pos:squaredDistance(last) > 1.0 then
+          editor.addRoadNode(decalId, { pos = pos, width = road.nodes[i].widths[1][0], index = ctr })
+          ctr = ctr + 1
+          last = pos
+        end
       end
     end
   end
@@ -163,9 +195,7 @@ local function createDecal(road, folder)
       end
       layerDecal:setField("renderPriority", 0, i)
       layerDecal:setField("textureLength", 0, layer.texLen[0])
-      if layerType ~= 2 then
-        layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
-      end
+      layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
       layerDecal:setField("material", 0, layer.mat)
       layerDecal:setField("drivability", 0, -1.0)
       layerDecal:setField("hidden", 0, "false")
@@ -200,15 +230,26 @@ local function createDecal(road, folder)
         dNodes[#dNodes] = dNodes[#dNodes] + (dNodes[#dNodes - 1] - dNodes[#dNodes]):normalized() * extraGapSpace
       end
 
+      local last = vec3(0, 0, 1e24)
       if layer.isReverse[0] then
         local ctr = 0
         for j = #dNodes, 1, -1 do
-          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = dWidths[j], index = ctr })
-          ctr = ctr + 1
+          local pos = dNodes[j] + latOffs[j] + raised
+          if pos:squaredDistance(last) > 1.0 then
+            editor.addRoadNode(decalId, { pos = pos, width = dWidths[j], index = ctr })
+            ctr = ctr + 1
+            last = pos
+          end
         end
       else
+        local ctr = 0
         for j = 1, #dNodes do
-          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = dWidths[j], index = j - 1 })
+          local pos = dNodes[j] + latOffs[j] + raised
+          if pos:squaredDistance(last) > 1.0 then
+            editor.addRoadNode(decalId, { pos = pos, width = dWidths[j], index = ctr })
+            ctr = ctr + 1
+            last = pos
+          end
         end
       end
 
@@ -223,9 +264,7 @@ local function createDecal(road, folder)
       end
       layerDecal:setField("renderPriority", 0, i)
       layerDecal:setField("textureLength", 0, layer.texLen[0])
-      if layerType ~= 2 then
-        layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
-      end
+      layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
       layerDecal:setField("material", 0, layer.mat)
       layerDecal:setField("drivability", 0, -1.0)
       layerDecal:setField("hidden", 0, "false")
@@ -238,7 +277,7 @@ local function createDecal(road, folder)
         sideIdx = 1
       end
       local startDivIdx, endDivIdx = 1, #rData
-      if not layer.isSpanLong[0] then                                                               -- If the user has limited the longitudinal span, only iterate in the chosen interval.
+      if not layer.isSpanLong[0] then                                                               -- If the user has limited the longitudinal span, only iterate in chosen interval.
         startDivIdx = util.computeDivIndicesFromNode(layer.nMin[0], road)
         endDivIdx = util.computeDivIndicesFromNode(layer.nMax[0], road)
       end
@@ -258,15 +297,26 @@ local function createDecal(road, folder)
         dNodes[#dNodes] = dNodes[#dNodes] + (dNodes[#dNodes - 1] - dNodes[#dNodes]):normalized() * extraGapSpace
       end
 
+      local last = vec3(0, 0, 1e24)
       if layer.isReverse[0] then
         local ctr = 0
         for j = #dNodes, 1, -1 do
-          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = fixedWidth, index = ctr })
-          ctr = ctr + 1
+          local pos = dNodes[j] + latOffs[j] + raised
+          if pos:squaredDistance(last) > 1.0 then
+            editor.addRoadNode(decalId, { pos = pos, width = fixedWidth, index = ctr })
+            ctr = ctr + 1
+            last = pos
+          end
         end
       else
+        local ctr = 0
         for j = 1, #dNodes do
-          editor.addRoadNode(decalId, { pos = dNodes[j] + latOffs[j] + raised, width = fixedWidth, index = j - 1 })
+          local pos = dNodes[j] + latOffs[j] + raised
+          if pos:squaredDistance(last) > 1.0 then
+            editor.addRoadNode(decalId, { pos = pos, width = fixedWidth, index = ctr })
+            ctr = ctr + 1
+            last = pos
+          end
         end
       end
 
@@ -281,9 +331,6 @@ local function createDecal(road, folder)
       end
       layerDecal:setField("renderPriority", 0, i)
       layerDecal:setField("textureLength", 0, layer.texLen[0])
-      if layerType ~= 2 then
-        layerDecal:setField('startEndFade', 0, string.format("%f %f", layer.fadeS[0], layer.fadeE[0]))
-      end
       layerDecal:setField("material", 0, layer.mat)
       layerDecal:setField("drivability", 0, -1.0)
       layerDecal:setField("hidden", 0, "false")
@@ -335,9 +382,9 @@ local function createDecal(road, folder)
 
       local lIdx = layer.lane[0]
       local lengths = util.computeRoadLength(rData)
-      local pEval = layer.off[0] * lengths[#lengths]                                                  -- The longitudinal evaluation position on the road, in meters.
+      local pEval = layer.off[0] * lengths[#lengths]                                                -- The longitudinal evaluation position on the road, in meters.
       local lower, upper = util.findBounds(pEval, lengths)
-      local q = (pEval - lengths[lower]) / (lengths[upper] - lengths[lower])                          -- The q in [0, 1] between div points (linear interpolation).
+      local q = (pEval - lengths[lower]) / (lengths[upper] - lengths[lower])                        -- The q in [0, 1] between div points (linear interpolation).
       local pL = nil
       if layer.isLeft[0] then
         local pL1 = rData[lower][lIdx][1]
