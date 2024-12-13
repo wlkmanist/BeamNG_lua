@@ -296,7 +296,9 @@ end
 
 local function startLevel(levelPath)
   M.requestedStartLevel = true
-  core_levels.startLevel(levelPath, nil, nil, false) -- don't spawn a vehicle by default
+  local levelName = core_levels.getLevelName(levelPath)
+  local spawnVehicle = false  -- don't spawn a vehicle by default
+  freeroam_freeroam.startFreeroamByName(levelName, nil, nil, spawnVehicle)  -- don't spawn a vehicle by default
 end
 
 -- public interface

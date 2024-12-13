@@ -9,7 +9,7 @@ local function openHistoryScreen(facility)
   if career_career.isActive() then
     tether = career_modules_tether.startSphereTether(dragPos, dragTetherRange, M.closeMenu)
   end
-  guihooks.trigger('ChangeState', {state = 'dragHistory'})
+  guihooks.trigger('ChangeState', {state = 'dragHistory', params = {id = facility.id, name = facility.name, level = facility.level}})
 end
 M.openHistoryScreen = openHistoryScreen
 

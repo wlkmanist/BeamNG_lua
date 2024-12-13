@@ -40,13 +40,14 @@ function C:work()
     log("W", logTag, "No drag data found!")
     return
   end
-  for _, racerData in pairs(dragData.racers) do
+  for racerId, racerData in pairs(dragData.racers) do
     table.insert(self.panel.dials,
     {
       label = racerData.isPlayable and "Player's Dial: Lane " .. racerData.lane or "Opponent's Dial: Lane " .. racerData.lane,
       key = racerData.isPlayable and "player" or "opponent",
       value = racerData.timers.dial.value or 10,
-      disabled = not racerData.isPlayable
+      disabled = not racerData.isPlayable,
+      racerId = racerId
     })
   end
   self.mgr.modules.ui:addUIElement(self.panel)

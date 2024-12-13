@@ -77,10 +77,10 @@ local function startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
   end
 end
 
-local function startFreeroamByName(levelName, startPointName)
+local function startFreeroamByName(levelName, startPointName, wasDelayed, spawnVehicle)
   local level = core_levels.getLevelByName(levelName)
   if level then
-    startFreeroam(level, startPointName)
+    startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
     return true
   end
   return false

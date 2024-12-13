@@ -73,11 +73,15 @@ local function bracketWin()
   local dragData = gameplay_drag_general.getData()
   for _, racer in pairs(dragData.racers) do
     local dialDiff = racer.timers.time_1_4.value - racer.timers.dial.value
-    if dialDiff < 0 then dialDiff = math.huge end
     table.insert(winnerList, {vehId = racer.vehId, dialDiff = dialDiff, isPlayable = racer.isPlayable})
   end
 
-  table.sort(winnerList, function(a, b) return a.dialDiff < b.dialDiff end)
+  table.sort(winnerList, function(a, b)
+    if a.dialDiff < 0 and b.dialDiff < 0 then
+      return a.dialDiff > b.dialDiff
+    end
+    return a.dialDiff < b.dialDiff
+  end)
   return winnerList
 end
 

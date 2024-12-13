@@ -2564,7 +2564,7 @@ local function planAhead(route, baseRoute)
 
     for _, v in ipairs(trafficTable) do -- side avoidance loop
       local xnorm = v.posFront:xnormOnLine(midPos + lenVec, midPos - lenVec)
-      if ai.speed > 1 and v.vel:dot(ai.dirVec) > 0 and xnorm > 0 and xnorm < 1 then
+      if ai.speed > 1 and v.vel:dot(ai.dirVec) > 0 and xnorm > 0 and xnorm < 1 and abs(v.posFront.z - ai.pos.z) < 4 then
         fl = fl or midPos - ai.rightVec * ai.width * 0.5 + lenVec
         rl = rl or fl - lenVec * 2
         fr = fr or midPos + ai.rightVec * ai.width * 0.5 + lenVec

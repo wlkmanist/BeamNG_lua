@@ -60,9 +60,19 @@ function C:load()
 end
 
 function C:findClosestImage(direction, number)
+  -- print('findClosestImage direction=' .. tostring(direction) .. ' number=' .. tostring(number))
+
   if direction == nil or number == nil then return nil end
   -- Convert direction to left/right string
-  local dirStr = direction > 0 and "right" or "left"
+  local dirStr = nil
+  if direction == 0 then
+    -- dirStr = "straight"
+    return nil
+  elseif direction == 1 then
+    dirStr = "right"
+  elseif direction == -1 then
+    dirStr = "left"
+  end
 
   local targetNum = tonumber(number)
   if not targetNum or targetNum < 0 then return nil end

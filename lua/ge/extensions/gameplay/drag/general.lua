@@ -137,7 +137,7 @@ local function loadDragStripData(filepath)
 
   local dir, filename, ext = path.split(filepath, true)
   filename = filename:gsub('.'..ext, "")
-  data._file = dir..filename
+  data._file = dir..data.stripInfo.id
   data.saveFile = data._file .. "/history.json"
   --dumpz(data, 1)
   return data
@@ -707,17 +707,16 @@ end
 
 
 
-M.getHistory = function(saveFile)
-  if not historyData[saveFile] then
-    local file = jsonReadFile(M.getCurrentSavePath() .. "levels/" .. getCurrentLevelIdentifier() .. "/dragstrips/dragStripData/" .. saveFile) or {
-      history = {}
+M.getHistory = function(id)
+  local filePath = M.getCurrentSavePath() .. "levels/" .. getCurrentLevelIdentifier() .. "/dragstrips/" .. id .. "/history.json"
+  if not historyData[filePath] then
+    local file = jsonReadFile(filePath) or {
+      history = {},
     }
-    historyData[saveFile] = file
+    historyData[filePath] = file
   end
-
-  table.sort(historyData[saveFile].history, function(a, b) return dateToTimestamp(a.stripInfo[3]) > dateToTimestamp(b.stripInfo[3]) end)
-
-  return historyData[saveFile].history
+  table.sort(historyData[filePath].history, function(a, b) return dateToTimestamp(a.stripInfo[3]) > dateToTimestamp(b.stripInfo[3]) end)
+  return historyData[filePath]
 end
 
 M.setCareerRewrads = function ()
@@ -765,6 +764,7 @@ local rowsInfo = {
   { key = "time_1_4", label = "1/4 mile" },
   { key = "velAt_1_4_kmh", label = "km/h" },
   { key = "velAt_1_4_mph", label = "mph" },
+
 }
 local racerRowsInfo = {
   { key = "lane", label = "Lane" },
@@ -833,6 +833,10 @@ M.createTimeslipData = function ()
       dataByLane[racer.lane][key..'_kmh'] = string.format("%0.3f",racer.timers[key].value * 3.6)
       dataByLane[racer.lane][key..'_mph'] = string.format("%0.3f",racer.timers[key].value * 2.23694)
     end
+    --if racer.timers['dial'] then
+      --dataByLane[racer.lane]['dial'] = string.format("%0.3f",racer.timers['dial'].value)
+      --dataByLane[racer.lane]['dial_diff'] = string.format("%0.3f",racer.timers['time_1_4'] - racer.timers['dial'].value)
+    --end
 
     local racerInfo = {
       name = racer.niceName,
@@ -842,7 +846,9 @@ M.createTimeslipData = function ()
       laneOrder = dragData.strip.lanes[racer.lane].laneOrder,
       laneNum = racer.lane,
       finalTime = racer.timers.time_1_4.value,
-      rewards = M.setCareerRewrads() or {}
+      rewards = M.setCareerRewrads() or {},
+      dialDiff = racer.timers.time_1_4.value - racer.timers.dial.value,
+      dial = racer.timers.dial.value,
     }
     table.insert(racerInfos, racerInfo)
   end
@@ -871,10 +877,33 @@ M.createTimeslipData = function ()
   end
 
   if #racerInfos > 1 then
-    if racerInfos[1].finalTime < racerInfos[2].finalTime then
-      table.insert(tab, {'',string.format("+%0.3f",racerInfos[2].finalTime - racerInfos[1].finalTime),'WINNER'})
+    if dragData.dragType == "bracketRace" then
+      table.insert(tab, {'Dial',string.format("%0.3f", racerInfos[2].dial), string.format("%0.3f", racerInfos[1].dial)})
+      table.insert(tab, {'Dial Difference',string.format("%s%0.3f", racerInfos[2].dialDiff > 0 and "+" or "",racerInfos[2].dialDiff), string.format("%s%0.3f",racerInfos[1].dialDiff > 0 and "+" or "", racerInfos[1].dialDiff)})
+
+      if racerInfos[2].dialDiff == racerInfos[1].dialDiff then
+        table.insert(tab, {'',"TIE", "TIE", })
+      elseif racerInfos[2].dialDiff > 0 and racerInfos[1].dialDiff > 0 then
+        -- both got their dial, lower (closer to 0) value wins
+        if racerInfos[2].dialDiff < racerInfos[1].dialDiff then
+          table.insert(tab, {'',"WINNER", " "})
+        else
+          table.insert(tab, {''," ", "WINNER", })
+        end
+      else
+
+        if racerInfos[2].dialDiff > racerInfos[1].dialDiff then
+          table.insert(tab, {'',"WINNER", "Break Out"})
+        else
+          table.insert(tab, {'',"Break Out", "WINNER", })
+        end
+      end
     else
-      table.insert(tab, {'','WINNER',string.format("+%0.3f",racerInfos[1].finalTime - racerInfos[2].finalTime)})
+      if racerInfos[2].finalTime < racerInfos[1].finalTime then
+        table.insert(tab, {'',string.format("+%0.3f",racerInfos[1].finalTime - racerInfos[2].finalTime),'WINNER'})
+      else
+        table.insert(tab, {'','WINNER',string.format("+%0.3f",racerInfos[2].finalTime - racerInfos[1].finalTime)})
+      end
     end
 
   end

@@ -475,7 +475,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
         data.props = {}
         for _, prop in ipairs(elem.facility.activityAcceptProps or {}) do
           table.insert(data.props,{
-           icon = prop.icon or "stopwatchArrows01",
+           icon = prop.icon or "drag02",
            keyLabel = prop.keyLabel,
            valueLabel = prop.valueLabel,
          })

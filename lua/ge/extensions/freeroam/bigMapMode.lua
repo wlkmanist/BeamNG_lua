@@ -91,6 +91,15 @@ local function blockUiActions(block)
   core_input_actionFilter.addAction(0, 'bigmapUiActions', block)
 end
 
+local function resetCamMovement()
+  core_camera.moveForwardBackward(0)
+  core_camera.moveLeftRight(0)
+  core_camera.moveforward(0)
+  core_camera.movebackward(0)
+  core_camera.moveleft(0)
+  core_camera.moveright(0)
+end
+
 local function clearCylinderCache()
   if mapBoundsFogPool then
     for _, fog in ipairs(mapBoundsFogPool) do
@@ -865,7 +874,7 @@ end
 
 local function exitBigMap(instant, closeEscMenu, forceGameCam)
   if not bigMap then return end
-
+  resetCamMovement()
   -- when forcing the game cam and previousFreeCamData is not nil, then we change it to orbit cam
   if forceGameCam and previousFreeCamData then
     previousFreeCamData = nil

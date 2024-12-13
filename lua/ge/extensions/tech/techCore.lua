@@ -718,6 +718,16 @@ M.handleLoadScenario = function(request)
     end
   end
 
+  if sc.mission then
+    local infoPath = tostring(sc.mission) .. '/info.json'
+    if not FS:fileExists(infoPath) then
+      local msg = 'Level not found: "' .. tostring(sc.mission) .. '"'
+      log('E', logTag, msg)
+      request:sendBNGValueError(msg)
+      return false
+    end
+  end
+
   log('I', logTag, 'Scenario found...')
   if sc.isMission then
     if not block('loadMission', request) then return false end
