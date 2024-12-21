@@ -293,6 +293,7 @@ M.race = function(phase, racer, dtSim)
           racer.vehObj:queueLuaCommand('ai.setAggression(2)')
           racer.vehObj:queueLuaCommand('controller.setFreeze(0)')
           racer.vehObj:queueLuaCommand('ai.setSpeedMode("' .. dragData.strip.lanes[racer.lane].waypoints.endLine.waypoint.mode .. '")')
+          racer.vehObj:queueLuaCommand('ai.setParameters({understeerThrottleControl = "off",oversteerThrottleControl = "off",throttleTcs = "off"})')
           --veh:queueLuaCommand('ai.setSpeed('.. dragData.strip.lanes[racer.lane].waypoints.endLine.waypoint.wpSpeed ..')')
           racer.vehObj:queueLuaCommand([[
             local ts = controller.getController("twoStep")

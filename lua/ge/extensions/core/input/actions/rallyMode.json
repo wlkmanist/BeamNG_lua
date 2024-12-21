@@ -18,16 +18,16 @@
   "codriver_timing_earlier": {
     "cat": "gameplay",
     "ctx": "tlua",
-    "order": -8,
-    "title": "Rally - Co-driver Timing Earlier",
+    "order": 1000,
+    "title": "Rally: Co-driver Timing Earlier",
     "desc": "Make co-driver give calls earlier.",
     "onDown": "extensions.gameplay_aipacenotes_inputActions.action_codriver_calls_earlier()"
   },
   "codriver_timing_later": {
     "cat": "gameplay",
     "ctx": "tlua",
-    "order": -7,
-    "title": "Rally - Co-driver Timing Later",
+    "order": 1001,
+    "title": "Rally: Co-driver Timing Later",
     "desc": "Make co-driver give calls later.",
     "onDown": "extensions.gameplay_aipacenotes_inputActions.action_codriver_calls_later()"
   },
@@ -40,19 +40,20 @@
   //   "desc": "If a recording is running, this stops it and immediately starts another.",
   //   "onDown": "extensions.gameplay_aipacenotes_inputActions.action_transcribe_recording_cut()"
   // },
+
   "recce_move_pacenote_forward": {
     "cat": "gameplay",
     "ctx": "tlua",
-    "order": 2,
-    "title": "Rally - Move Pacenote Forward in Recce",
+    "order": 1002,
+    "title": "Rally: Move Pacenote Forward in Recce App",
     "desc": "Move the next pacenote toward CornerStart along snaproad and save notebook.",
     "onDown": "extensions.gameplay_aipacenotes_inputActions.action_recce_move_pacenote_forward()"
   },
   "recce_move_pacenote_backward": {
     "cat": "gameplay",
     "ctx": "tlua",
-    "order": 3,
-    "title": "Rally - Move Pacenote Backward in Recce",
+    "order": 1003,
+    "title": "Rally: Move Pacenote Backward in Recce App",
     "desc": "Move the next pacenote towards vehicle along snaproad and save notebook.",
     "onDown": "extensions.gameplay_aipacenotes_inputActions.action_recce_move_pacenote_backward()"
   },
@@ -60,24 +61,25 @@
   "recce_move_vehicle_forward": {
     "cat": "gameplay",
     "ctx": "tlua",
-    "order": 4,
-    "title": "Rally - Move Vehicle Forward in Recce",
+    "order": 1004,
+    "title": "Rally: Move Vehicle Forward in Recce App",
     "desc": "Move the next vehicle toward CornerStart along snaproad and save notebook.",
     "onDown": "extensions.gameplay_aipacenotes_inputActions.action_recce_move_vehicle_forward()"
   },
   "recce_move_vehicle_backward": {
     "cat": "gameplay",
     "ctx": "tlua",
-    "order": 5,
-    "title": "Rally - Move Vehicle Backward in Recce",
+    "order": 1005,
+    "title": "Rally: Move Vehicle Backward in Recce App",
     "desc": "Move the next vehicle towards vehicle along snaproad and save notebook.",
     "onDown": "extensions.gameplay_aipacenotes_inputActions.action_recce_move_vehicle_backward()"
   },
+
   "recce_debug_mode": {
     "cat": "gameplay",
     "ctx": "tlua",
-    "order": 10,
-    "title": "Rally - Toggle recce debug mode",
+    "order": 1006,
+    "title": "Rally: Toggle Debug Mode in Recce App",
     "desc": "",
     "onDown": "extensions.gameplay_aipacenotes_inputActions.action_recce_toggle_debug_mode()"
   },
@@ -85,99 +87,99 @@
   "rallyEditorSave": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 1,
+    "order": 1007,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Save",
+    "title": "RallyEditor: Save",
     "desc": "Save the current notebook.",
     "onDown": "editor_rallyEditor.saveNotebook()"
   },
   "rallyEditorPacenoteSelectNext": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 2,
+    "order": 1008,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Select Next Pacenote",
+    "title": "RallyEditor: Select Next Pacenote",
     "desc": "Select the next pacenote.",
     "onDown": "editor_rallyEditor.selectNextPacenote()"
   },
   "rallyEditorPacenoteSelectPrev": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 3,
+    "order": 1009,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Select Previous Pacenote",
+    "title": "RallyEditor: Select Previous Pacenote",
     "desc": "Select the previous pacenote.",
     "onDown": "editor_rallyEditor.selectPrevPacenote()"
   },
   "rallyEditorDeselect": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 4,
+    "order": 1010,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Deselect",
+    "title": "RallyEditor: Deselect",
     "desc": "Deselect.",
     "onDown": "editor_rallyEditor.deselect()"
   },
   "rallyEditorInsertMode": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 5,
+    "order": 1011,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Edit Note Text",
+    "title": "RallyEditor: Edit Note Text",
     "desc": "Shortcut to focus the cursor on editing the currently selected note text.",
     "onDown": "editor_rallyEditor.insertMode()"
   },
   "rallyEditorCameraPathPlay": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 6,
+    "order": 1012,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Play/Stop Camera Path",
+    "title": "RallyEditor: Play/Stop Camera Path",
     "desc": "If a pacenote is selected, play/stop camera path playback.",
     "onDown": "editor_rallyEditor.cameraPathPlay()"
   },
   "rallyEditorToggleCornerCalls": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 6,
+    "order": 1013,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Show/Hide Corner Call Labels",
+    "title": "RallyEditor: Show/Hide Corner Call Labels",
     "desc": "If a pacenote is selected, show corner calls along the driveline.",
     "onDown": "editor_rallyEditor.toggleCornerCalls()"
   },
   "rallyEditorSelectNextWaypoint": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 20,
+    "order": 1014,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Select Next Waypoint",
+    "title": "RallyEditor: Select Next Waypoint",
     "desc": "If a pacenote is selected, select the next waypoint.",
     "onDown": "editor_rallyEditor.selectNextWaypoint()"
   },
   "rallyEditorMoveSelectedWaypointForward": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 21,
+    "order": 1015,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Move Waypoint Forward",
+    "title": "RallyEditor: Move Waypoint Forward",
     "desc": "If a waypoint is selected, move forward along snaproad.",
     "onChange": "editor_rallyEditor.moveSelectedWaypointForward(VALUE)"
   },
   "rallyEditorMoveSelectedWaypointBackward": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 22,
+    "order": 1016,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Move Waypoint Backward",
+    "title": "RallyEditor: Move Waypoint Backward",
     "desc": "If a waypoint is selected, move backward along snaproad.",
     "onChange": "editor_rallyEditor.moveSelectedWaypointBackward(VALUE)"
   },
   "rallyEditorCycleCodriverWait": {
     "cat": "editor",
     "ctx": "tlua",
-    "order": 23,
+    "order": 1017,
     "actionMap": "rallyEditor",
-    "title": "RallyEditor - Cycle Codriver Wait",
+    "title": "RallyEditor: Cycle Codriver Wait",
     "desc": "Cycle the selected pacenote's CodriverWait value.",
     "onDown": "editor_rallyEditor.cycleCodriverWait()"
   }

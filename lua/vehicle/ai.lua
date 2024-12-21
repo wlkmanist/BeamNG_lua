@@ -296,7 +296,10 @@ local function resetParameters()
     lookAheadKv = 0.6,
     applyWidthMarginOffset = true,
     planErrorSmoothing = true,
-    springForceIntegratorDispLim = 0.1 -- node displacement force magnitude limit
+    springForceIntegratorDispLim = 0.1, -- node displacement force magnitude limit
+    understeerThrottleControl = 'on', -- anything other than an 'off' value will keep this active
+    oversteerThrottleControl = 'on', -- anything other than an 'off' value will keep this active
+    throttleTcs = 'on' -- anything other than an 'off' value will keep this active
   }
 end
 resetParameters()
@@ -443,17 +446,18 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
   local dirAngle = asin(ai.rightVec:dot(targetVec))
 
   -- oversteer
-  local throttleCoef = 1
+  local throttleOverCoef = 1
   if ai.speed > 1 then
     local rightVel = ai.rightVec:dot(ai.vel)
     if rightVel * ai.rightVec:dot(targetPos - ai.pos) > 0 then
       local rotVel = min(1, (ai.prevDirVec:projectToOriginPlane(ai.upVec):normalized()):distance(ai.dirVec) * dt * 10000)
-      throttleCoef = throttleCoef * max(0, 1 - abs(rightVel * ai.speed * 0.05) * min(1, dirAngle * dirAngle * ai.speed * 6) * rotVel)
+      throttleOverCoef = max(0, 1 - abs(rightVel * ai.speed * 0.05) * min(1, dirAngle * dirAngle * ai.speed * 6) * rotVel)
     end
   end
 
   local dirVel = ai.vel:dot(ai.dirVec)
   local absAiSpeed = abs(dirVel)
+  local throttleUnderCoef = 1
   local brakeCoef = 1
 
   if plan and plan[3] and dirVel > 3 then
@@ -472,7 +476,7 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
       local steerCoef = outDeviation * absAiSpeed * absAiSpeed * min(1, dirAngle * dirAngle * 4)
       local understeerCoef = max(0, steerCoef) * min(1, abs(ai.vel:dot(p2p1DirVec) * 3))
       local noUndersteerCoef = max(0, 1 - understeerCoef)
-      throttleCoef = throttleCoef * noUndersteerCoef
+      throttleUnderCoef = noUndersteerCoef
       brakeCoef = min(brakeCoef, max(0, 1 - understeerCoef * understeerCoef))
     end
   else
@@ -480,6 +484,7 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
   end
 
   -- wheel speed
+  local throttleTcsCoef = 1
   if absAiSpeed > 0.05 then
     if sensors.gz <= 0.1 then
       local totalSlip = 0
@@ -509,11 +514,22 @@ local function driveToTarget(targetPos, throttle, brake, targetSpeed)
       -- tcs
       propSlip = propSlip * (parameters.driveStyle == 'offRoad' and 0.25 or 1)
       local tcsCoef = max(0, absAiSpeed - propSlip * propSlip) / absAiSpeed
-      throttleCoef = throttleCoef * min(tcsCoef, smoothTcs:get(tcsCoef, dt))
+      throttleTcsCoef = min(tcsCoef, smoothTcs:get(tcsCoef, dt))
     else
       brakeCoef = 0
-      throttleCoef = 0
+      throttleTcsCoef = 0
     end
+  end
+
+  local throttleCoef = 1
+  if parameters.oversteerThrottleControl ~= 'off' then
+    throttleCoef = throttleCoef * throttleOverCoef
+  end
+  if parameters.understeerThrottleControl ~= 'off' then
+    throttleCoef = throttleCoef * throttleUnderCoef
+  end
+  if parameters.throttleTcs ~= 'off' then
+    throttleCoef = throttleCoef * throttleTcsCoef
   end
 
   local dirTarget = ai.dirVec:dot(targetVec)
@@ -5257,9 +5273,14 @@ local function driveUsingPath(arg)
   else
     setState({mode = 'manual'})
 
-    setParameters({driveStyle = arg.driveStyle or 'default',
-                  staticFrictionCoefMult = max(0.95, arg.staticFrictionCoefMult or 0.95),
-                  lookAheadKv = max(0.1, arg.lookAheadKv or parameters.lookAheadKv)})
+    setParameters({
+      driveStyle = arg.driveStyle or 'default',
+      staticFrictionCoefMult = max(0.95, arg.staticFrictionCoefMult or 0.95),
+      lookAheadKv = max(0.1, arg.lookAheadKv or parameters.lookAheadKv),
+      understeerThrottleControl = arg.understeerThrottleControl,
+      oversteerThrottleControl = arg.oversteerThrottleControl,
+      throttleTcs = arg.throttleTcs
+    })
 
     noOfLaps = arg.noOfLaps and max(arg.noOfLaps, 1) or 1
     wpList = arg.wpTargetList

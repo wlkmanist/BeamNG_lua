@@ -659,7 +659,7 @@ local currentRecoveryOptionId = nil
 local currentRecoveryOptionTarget = nil
 local fadeDuration = 0.3
 local function buttonPressed(buttonId, target)
-  if career_career and career_career.isActive() and not gameplay_walk.isWalking() then
+  if career_career and career_career.isActive() and not gameplay_walk.isWalking() and not gameplay_missions_missionManager.getForegroundMissionId() then
     core_vehicleBridge.executeAction(getPlayerVehicle(0), 'createPartConditionSnapshot', "beforeTeleport")
     core_vehicleBridge.executeAction(getPlayerVehicle(0), 'setPartConditionResetSnapshotKey', "beforeTeleport")
   end

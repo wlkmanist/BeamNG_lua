@@ -11,16 +11,7 @@ local logTag = 'cosimulationCoupling'
 local dat = require('tech/cosimulationNames')
 local lpack = require("lpack")
 local csvlib = require('csvlib')
-local csvSendData
-local csvReceiveData
-local logReceive
-local enableVSL
-local enableCosim
-local initialized = false
-local cycleTime = 0.0                   -- The cycle time.  This is the most-recently measured time between two send operations, in seconds.
-local lastTimeOfSend = os.clockhp()     -- The time at which the last message was sent from Lua to Simulink.
 
--- local csvPhysicsSteps
 -- Module constants.
 local min, max, floor, ceil = math.min, math.max, math.floor, math.ceil
 local abs, sqrt, acos = math.abs, math.sqrt, math.acos
@@ -52,57 +43,6 @@ local wheelRotators, wheelIds = wheels.wheelRotators, wheels.wheelRotatorIDs    
 local wheelsOrder = {}                                                                              -- An array used to provide a fixed order for the vehicle wheels.
 local inTorques, pTorqueKeys, bTorqueKeys, fTorqueKeys = { {}, {}, {} }, {}, {}, {}                 -- Arrays for the incoming torque values for each wheel.
 local vehSensors = {}                                                                               -- An ordered array of attached sensors, referenced by the signals.
-
-
-local function linspace(length)
-  local out = {}
-  for i=1,length,1 do
-    out[i] = tostring(i)
-  end
-  return out
-end
-
-
-
-
-local function createCSV(sendKeys, receiveKeys)
-  -- if enableVSL then
-    log('I', logTag, 'Initializing CSV logging...')
-
-    csvSendData = csvlib.newCSV('time', unpack(sendKeys))
-    csvReceiveData = csvlib.newCSV('time', unpack(receiveKeys))
-
-    if csvSendData == nil then
-      log('E', logTag, 'Failed to create csvSendData.')
-    else
-      log('I', logTag, 'csvSendData has been successfully created.')
-    end
-
-    if csvReceiveData == nil then
-      log('E', logTag, 'Failed to create csvReceiveData.')
-    else
-      log('I', logTag, 'csvReceiveData has been successfully created.')
-    end
-  -- end
-end
-
-
-local function saveCSV()
-  -- Get current date and time in the desired format
-  local timestamp = os.date("%Y-%m-%d_%H-%M-%S")
-
-  -- Create filenames with date and time
-  local sendFileName = string.format("CoSimulationInternalLog_%s.csv", timestamp)
-  csvSendData:write(sendFileName)
-
-
-  if enableCosim then
-    local receiveFileName = string.format("CoSimulationExternalLog_%s.csv", timestamp)
-    csvReceiveData:write(receiveFileName)
-  end
-
-  log('I', logTag, 'logs saved in csv')
-end
 
 
 -- Gathers the Kinematics properties for the outgoing message.
@@ -284,8 +224,6 @@ end
 
 -- Handles received message. Sets the appropriate vehicle system properties.
 local function handleMessageReceive()
-
-
 
   -- If the id of the received message is not new, then skip it. This is either redundant or a ghost message.
   if msgIn[1] <= maxRecvId then
@@ -749,8 +687,7 @@ local function init(dataEncoded)
   time3rdParty, pingTime = data.time3rdParty, data.pingTime
   udpSendIP, udpSendPort = data.udpSendIP, data.udpSendPort
   udpReceiveIP, udpReceivePort = data.udpReceiveIP, data.udpReceivePort
-  enableVSL=data.enableVSL
-  enableCosim=data.enableCosim
+
   -- Cache some properties known at init, in state.
   initLength, initWidth, initHeight = obj:getInitialLength(), obj:getInitialWidth(), obj:getInitialHeight()
 
@@ -758,18 +695,9 @@ local function init(dataEncoded)
   -- [This structure maps the sensor name to the sensor id in the simulator (either ge lua or gameengine)].
   vehSensors = data.sensorMap
   local IMUs, GPSs, idealRADARs, roads = vehSensors.IMUs, vehSensors.GPSs, vehSensors.idealRADARs, vehSensors.roads
-
-  local idOffset = 0
   for i = 1, #IMUs do
-    while IMUs[i].ctrl == nil do
     IMUs[i].ctrl = controller.getController('advancedIMU' .. IMUs[i].id)
-        IMUs[i].ctrl = controller.getController('advancedIMU' .. (IMUs[i].id + idOffset))
-        if IMUs[i].ctrl == nil then
-            idOffset = idOffset + 1
-        end
-    end
   end
-
   for i = 1, #GPSs do
     GPSs[i].ctrl = controller.getController('GPS' .. GPSs[i].id)
   end
@@ -785,51 +713,24 @@ local function init(dataEncoded)
 
   -- Set up the UDP send and receive sockets.
   -- [We always start with a non-blocking receive socket (by using zero timeout)].
-  if enableCosim then
-    udpSendSocket = socket.udp()
-    local _, error = udpSendSocket:setpeername(udpSendIP, udpSendPort)
-    if error then
-      log('E', logTag, 'UDP send socket could not be set up.')
-    end
-    udpRecvSocket = socket.udp()
-    udpRecvSocket:settimeout(0.0)
-    local _, error = udpRecvSocket:setsockname(udpReceiveIP, udpReceivePort)
-    if error then
-      log('E', logTag, 'UDP receive socket could not be set up.')
-    end
-
-    -- Compute some internal control parameters, relating to the coupling window.
-    sendSkips = ceil(time3rdParty / physicsDt) - 1
-    unanswered = ceil(pingTime / time3rdParty)
-
-    log('I', logTag, 'Coupling between BeamNG and 3rd party has started.')
+  udpSendSocket = socket.udp()
+  local _, error = udpSendSocket:setpeername(udpSendIP, udpSendPort)
+  if error then
+    log('E', logTag, 'UDP send socket could not be set up.')
+  end
+  udpRecvSocket = socket.udp()
+  udpRecvSocket:settimeout(0.0)
+  local _, error = udpRecvSocket:setsockname(udpReceiveIP, udpReceivePort)
+  if error then
+    log('E', logTag, 'UDP receive socket could not be set up.')
   end
 
-  -- Create CSV files if VSL is enabled
-  if enableVSL then
-    local sendIndexes = linspace(#data.signalsTo)
-    local receiveIndexes = linspace(#data.signalsFrom)
+  -- Compute some internal control parameters, relating to the coupling window.
+  sendSkips = ceil(time3rdParty / physicsDt) - 1
+  unanswered = ceil(pingTime / time3rdParty)
 
-    if #sendIndexes == 0 or #receiveIndexes == 0 then
-      log('E', logTag, 'Signal indexes are empty. CSV cannot be created.')
-    else
-      log('I', logTag, 'Creating CSV files for logging.')
-      createCSV(sendIndexes, receiveIndexes)
-    end
-
-    -- Debug log to check if csvSendData is successfully created
-    if csvSendData then
-      log('I', logTag, 'csvSendData successfully initialized.')
-    else
-      log('E', logTag, 'Failed to initialize csvSendData.')
-    end
-  end
-
-
-initialized = true
-
+  log('I', logTag, 'Coupling between BeamNG and 3rd party has started.')
 end
-
 
 -- Callback for setting wheel torques.
 local function updateWheelsIntermediate(dt)
@@ -851,26 +752,6 @@ end
 -- Update callback.
 local function update(dt)
 
-  if enableVSL and csvSendData == nil then
-    log('W', logTag, 'csvSendData is nil. Attempting to initialize CSV again.')
-    local sendIndexes = linspace(#dat.names)  -- Adjust dat.names if needed to fit your signal structure
-    local receiveIndexes = linspace(#dat.names)
-    createCSV(sendIndexes, receiveIndexes)
-    if csvSendData == nil then
-        log('E', logTag, 'Failed to initialize csvSendData in update(). Skipping CSV logging.')
-        return
-    else
-        log('I', logTag, 'csvSendData successfully created during update().')
-    end
-  end
-
-if not initialized then
-  log('W', logTag, 'Update called before initialization is complete.')
-  return
-end
-
-
-if enableCosim then
   if stepsSinceLastSend >= sendSkips then                                                           -- Determine if we should skip sending in this cycle.
     -- We will send in this cycle. Check if we have reached the window width.
     -- [This is when we have received the same number of messages as we have sent out].
@@ -881,21 +762,10 @@ if enableCosim then
         table.clear(msgIn)
         lpack.decodeDoubleArray(rawMsgFrom3rdParty, msgIn)
         handleMessageReceive()
-        if enableVSL then
-        csvReceiveData:add(os.clockhp(), unpack(msgIn))
-        end
-
       end
       createMessage()
       udpSendSocket:send(lpack.encodeDoubleArray(msgOut))
       sendCtr, stepsSinceLastSend = sendCtr + 1, 0
-      if enableVSL then
-        cycleTime = os.clockhp()  - lastTimeOfSend
-        lastTimeOfSend = os.clockhp()
-        csvSendData:add(os.clockhp(), unpack(msgOut))
-      end
-
-
     else
       udpRecvSocket:settimeout(blockingTimeoutLength)                                               -- Reached the window width, so do blocking receive and send a new msg.
       local rawMsgFrom3rdParty = udpRecvSocket:receive()
@@ -906,72 +776,29 @@ if enableCosim then
           createMessage()
           udpSendSocket:send(lpack.encodeDoubleArray(msgOut))
           sendCtr, stepsSinceLastSend = sendCtr + 1, 0
-          if enableVSL then
-            cycleTime = os.clockhp()  - lastTimeOfSend
-            lastTimeOfSend = os.clockhp()
-            csvSendData:add(os.clockhp(), unpack(msgOut))
-          end
         end
       else
         sendCtr, maxRecvId = 0, 0
       end
     end
   else
-      udpRecvSocket:settimeout(0.0)                                                                   -- Must skip sending in this cycle, so only perform a non-blocking recv.
-      local rawMsgFrom3rdParty = udpRecvSocket:receive()
-      if rawMsgFrom3rdParty ~= nil then
-        table.clear(msgIn)
-        lpack.decodeDoubleArray(rawMsgFrom3rdParty, msgIn)
-        handleMessageReceive()
-        if enableVSL then
-        csvReceiveData:add(os.clockhp(), unpack(msgIn))
-        end
-
-
+    udpRecvSocket:settimeout(0.0)                                                                   -- Must skip sending in this cycle, so only perform a non-blocking recv.
+    local rawMsgFrom3rdParty = udpRecvSocket:receive()
+    if rawMsgFrom3rdParty ~= nil then
+      table.clear(msgIn)
+      lpack.decodeDoubleArray(rawMsgFrom3rdParty, msgIn)
+      handleMessageReceive()
     end
     stepsSinceLastSend = stepsSinceLastSend + 1
   end
-
-  else
-
-    if not csvSendData then
-      log('E', logTag, 'csvSendData is not initialized. Skipping CSV logging.')
-      return
-    end
-    cycleTime = os.clockhp() - lastTimeOfSend
-    lastTimeOfSend = os.clockhp()
-
-    -- Create message data for logging
-    createMessage()
-
-    -- Add to CSV for logging
-    csvSendData:add(os.clockhp(), unpack(msgOut))
-    -- log('I', logTag, 'VSL only from controller, logging data.')
-
-
-
-
-end
-
-
-
-
 end
 
 -- Stops the coupling between BeamNG and the 3rd party.
 local function stop()
-  if enableCosim then
   udpSendSocket:close()
   udpRecvSocket:close()
-  end
-  if enableVSL then
-    saveCSV()
-    log('I', logTag, 'Coupling between BeamNG and 3rd party has terminated and CSV saved too')
-  end
-
+  log('I', logTag, 'Coupling between BeamNG and 3rd party has terminated.')
 end
-
-
 
 
 -- Public interface.
