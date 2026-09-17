@@ -17,7 +17,7 @@ C.pinSchema = {
   { dir = 'in', type = 'bool', name = 'activate', default = true, description = 'Activate or deactivate all vehicles.' }
 }
 
-C.dependencies = {'core_vehiclePoolingManager'}
+C.dependencies = {'core_vehicleActivePooling'}
 C.tags = {'traffic', 'budget', 'pooling'}
 
 function C:workOnce()

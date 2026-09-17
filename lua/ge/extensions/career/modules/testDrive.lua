@@ -6,10 +6,7 @@ local M = {}
 
 M.dependencies = {}
 
-local imgui = ui_imgui
-
-local timeLimit = 0.5 * 60 -- test time limit in s
-
+local maxDistanceFromVeh = 10
 local vehicleId
 local active
 
@@ -17,15 +14,6 @@ local startPosRot
 local id
 
 local testDriveInfo
-local offZoneTimeLimit = 20
-local currOffZoneTimer
-local routeNodes = {} -- if player has to follow a route, this list will contains the positions
-local warnings = {
-  {2, "Don't go off the testing road"},
-  {7,  "Last warning"},
-  {12,  "You are done"}
-}
-local currWarnings = 0
 
 local function rtMessageJob(job)
   local message = job.args[1] or ""
@@ -38,11 +26,15 @@ local function rtMessageJob(job)
   guihooks.trigger('ScenarioRealtimeDisplay', {msg = ""})
 end
 
-local function showMessage(message)
-  local helper = {
+local helper = {}
+local function showMessage(message, clear)
+  if clear == nil then clear = true end
+
+  helper = {
     ttl = 5,
     msg = message,
-    category = "t"
+    category = "t",
+    clear = clear
   }
   guihooks.trigger('Message',helper)
 end
@@ -54,7 +46,6 @@ end
 
 local function setActive(value)
   active = value
-  guihooks.trigger('testDriveActive',value)
   gameplay_rawPois.clear()
 end
 
@@ -62,8 +53,19 @@ local function resetData()
   setActive(false)
 end
 
+local function displayTimeLeft(time)
+  helper.clear = false
+  helper.ttl = 5
+  helper.msg = "Test drive time left: " .. time
+  helper.category = "testDriveTimeLeft"
+  helper.icon = nil
+  guihooks.trigger('Message',helper)
+
+  --showMessage("(WIP temporary) Time left: " .. time, true)
+end
+
 local function checkTimeLeft(dtSim)
-  if testDriveInfo.timeLimit and not gameplay_walk.isWalking() then
+  if testDriveInfo.timeLimit then
     local timeBefore = round(testDriveInfo.timeLimit)
     testDriveInfo.timeLimit = testDriveInfo.timeLimit - dtSim
     if testDriveInfo.timeLimit < 0 then
@@ -71,7 +73,7 @@ local function checkTimeLeft(dtSim)
     else
       local timeAfter = round(testDriveInfo.timeLimit)
       if timeBefore ~= timeAfter then
-        guihooks.trigger('updateTestDriveTimer', timeAfter)
+        displayTimeLeft(timeAfter)
       end
       return true
     end
@@ -79,84 +81,25 @@ local function checkTimeLeft(dtSim)
   return true
 end
 
-local function checkAreaLimit()
-  if testDriveInfo.areaLimit then
-    local inZone = true
-    -- get actual sites data
-    local path = "levels/west_coast_usa/facilities/"..testDriveInfo.areaLimit..".sites.json"
-    if not FS:fileExists(path) then return true end
-    local sites = gameplay_sites_sitesManager.loadSites(path, true, true)
-    sites:finalizeSites()
-
-    -- check for in zone
-    local veh = scenetree.findObjectById(vehicleId)
-    if veh then
-      local oobb = veh:getSpawnWorldOOBB()
-      for i = 0, 8 do
-        local test = oobb:getPoint(0)
-        local zones = sites:getZonesForPosition(test)
-        if #zones == 0 then
-          inZone = false
-          showMessage("Out of area, canceling test drive.")
-        end
-      end
-    end
-
-    -- draw some visuals
-    local red = {1,0,0}
-    local white = {1,1,1}
-    red[2] = math.abs(math.sin(Engine.Platform.getRuntime()*2))
-    red[3] = red[2]
-    for _, zone in pairs(sites.zones.objects) do
-      zone:drawDebug(nil, inZone and red or white, 2, -0.5, not inZone)
-    end
-    return inZone
+local function checkPlayerNotTooFarFromVeh()
+  local veh = getObjectByID(vehicleId)
+  if not veh then return end
+  local vehPos = veh:getPosition()
+  local playerPos = getObjectByID(be:getPlayerVehicleID(0)):getPosition()
+  if playerPos:distance(vehPos) > maxDistanceFromVeh then
+    return false
   end
   return true
 end
 
--- returns true if ok
-local function checkTestDriveInfo(dtSim)
-  if not testDriveInfo then return true end --no rules, therefore ok
-
-  return checkTimeLeft(dtSim) and checkAreaLimit()
-end
-
 local function setTestDriveInfo(_testDriveInfo)
-  testDriveInfo = _testDriveInfo
-  -- if the player has to follow a route, extract the positions from a .race
-  if testDriveInfo.route then
-    local actualPath = "levels/west_coast_usa/facilities/"..testDriveInfo.route..".race.json"
-    if not FS:fileExists(actualPath) then return true end
-
-    local path = require('/lua/ge/extensions/gameplay/race/path')("New Path")
-    path:onDeserialized(jsonReadFile(actualPath))
-    path:autoConfig()
-
-    local routeNodes = {}
-    for i, pn in ipairs(path.config.linearSegments) do
-      table.insert(routeNodes, path.pathnodes.objects[pn].pos)
-    end
-    core_groundMarkers.setPath(routeNodes)
-  end
-end
-
--- creates the end parking spot when the player is far enough
-local function checkCreateEndParkingSpot()
-  if not testDriveInfo.endParkingSpot or testDriveInfo.endParkingSpotCreated then return end
-  local veh = map.objects[vehicleId]
-  if veh then
-    if veh.pos:distance(testDriveInfo.endParkingSpot.pos) > 120 then
-      gameplay_rawPois.clear()
-      testDriveInfo.endParkingSpotCreated = true
-    end
-  end
+  testDriveInfo = deepcopy(_testDriveInfo)
 end
 
 local function start(_vehicleId, testDriveInfo)
   setTestDriveInfo(testDriveInfo)
   vehicleId = _vehicleId
-  local vehObj = be:getObjectByID(vehicleId)
+  local vehObj = getObjectByID(vehicleId)
   gameplay_walk.getInVehicle(vehObj)
   startPosRot = {pos = vehObj:getPosition(), rot = quat(0,0,1,0) * quat(vehObj:getRefNodeRotation())}
 
@@ -171,16 +114,9 @@ local function start(_vehicleId, testDriveInfo)
   career_career.setAutosaveEnabled(false)
 end
 
-local function tpTestDriveVehBackToDealership(vehicle)
-  vehicle = vehicle or be:getObjectByID(vehicleId)
-  spawn.safeTeleport(vehicle, startPosRot.pos, startPosRot.rot, nil, nil, nil, nil, false)
-end
-
 local function resetDataAfterTestDriveDone()
-  core_groundMarkers.resetAll()
   testDriveInfo = nil
-  currWarnings = 0
-  gameplay_markerInteraction.clearCache()
+  --gameplay_markerInteraction.clearCache()
   id = -1
   vehicleId = nil
 end
@@ -199,24 +135,21 @@ local function endTestDriveJob(job)
   end
   job.sleep(1.5)
 
-  --execute actions with the test drive vehicle
-  local vehicle = be:getObjectByID(vehicleId)
-  if vehicle then
-    if tp then
-      tpTestDriveVehBackToDealership(vehicle)
+  local vehicle = getObjectByID(vehicleId)
+  if vehicle and tp then
+    spawn.safeTeleport(vehicle, startPosRot.pos, startPosRot.rot, nil, nil, nil, nil, false)
 
-      job.sleep(0.1)-- setWalkingMode needs to wait a little bit after the vehicle is tp, or the player is set to walking mode where the veh was before the tp
+    job.sleep(0.1)-- setWalkingMode needs to wait a little bit after the vehicle is tp, or the player is set to walking mode where the veh was before the tp
 
-      if gameplay_walk.isWalking() then
-        gameplay_walk.getInVehicle(vehicle) -- hack
-      end
+    if gameplay_walk.isWalking() then
+      gameplay_walk.getInVehicle(vehicle) -- hack
+    end
 
-      core_vehicleBridge.executeAction(vehicle,'setIgnitionLevel', 0)
-      core_vehicleBridge.executeAction(vehicle, 'setFreeze', true)
+    core_vehicleBridge.executeAction(vehicle,'setIgnitionLevel', 0)
+    core_vehicleBridge.executeAction(vehicle, 'setFreeze', true)
 
-      local vehicleData = map.objects[vehicleId]
-      if not vehicleData then return end
-
+    local vehicleData = map.objects[vehicleId]
+    if vehicleData then
       local veh = scenetree.findObjectById(vehicleId)
       local oobb = veh:getSpawnWorldOOBB()
 
@@ -224,18 +157,21 @@ local function endTestDriveJob(job)
       local dir = (oobb:getPoint(0) - vehPos)
       dir:normalize()
 
+      job.sleep(0.1)
+
       local finalPos = oobb:getPoint(0) + (dir * 1.3)
       gameplay_walk.setWalkingMode(true, finalPos, quatFromDir(-dir, vec3(0,0,1)))
     else
-      --career_modules_inspectVehicle.showVehicle(nil)
+      log("W", "testDrive", "world-map data for test drive vehicle not ready right after teleport; using default walking-mode placement")
+      gameplay_walk.setWalkingMode(true)
     end
   end
 
-  --reset stuff
   resetDataAfterTestDriveDone()
 
   simTimeAuthority.set(1)
   if tp then
+    guihooks.trigger('ChangeState', {state = 'play'})
     ui_fadeScreen.stop(1)
     -- fade screen changes the ui state, so we need to change it back here
     extensions.hook('onTestDriveEndedAfterFade')
@@ -251,7 +187,7 @@ end
 local function stop()
   if not active then return end
 
-  core_jobsystem.create(endTestDriveJob, 1, tp)
+  core_jobsystem.create(endTestDriveJob, 1)
   career_career.setAutosaveEnabled(true)
 end
 
@@ -267,19 +203,22 @@ local function abandonTestDrive()
       ui_message(label, 5, 'test1')
       career_modules_payment.pay({money = { amount = testDriveInfo.abandonFees, canBeNegative = true}}, {label = logBookLabel})
     end
-    ui_message("You have abandoned the sale.", 5, 'test')
     resetDataAfterTestDriveDone()
+    career_modules_inspectVehicle.onTestDriveAbandoned()
   end, 1)
 
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
   if not vehicleId then return end
+
   if active then
-    if not checkTestDriveInfo(dtSim) then -- will stop the test drive if the player doesn't comply with the test drive rules
+    if not checkTimeLeft(dtSim) then
       stop()
     end
-    checkCreateEndParkingSpot()
+    if not checkPlayerNotTooFarFromVeh() then
+      abandonTestDrive()
+    end
   end
 end
 
@@ -291,19 +230,6 @@ local function isActive()
   return active
 end
 
-local function onRecalculatedRoute()
-  if not testDriveInfo or not testDriveInfo.route then return end
-
-  currWarnings = currWarnings + 1
-  for i, node in pairs(warnings) do
-    if node[1] == currWarnings then
-      showMessage(node[2])
-      if i == #warnings then
-        stop()
-      end
-    end
-  end
-end
 
 local function formatTestDriveToRawPoi(elements)
   if testDriveInfo == nil or not active or not testDriveInfo.endParkingSpot or not testDriveInfo.endParkingSpotCreated then return end
@@ -342,24 +268,50 @@ local function onPoiDetailPromptOpening(elemData, promptData)
   end
 end
 
-local function onCareerModulesActivated(alreadyInLevel)
+local function onCareerActive(active)
+  if not active then return end
   resetData()
 end
 
+local quickAccessInitialized
+local function onBeforeRadialOpened()
+  if quickAccessInitialized then return end
+  quickAccessInitialized = true
+  core_quickAccess.addEntry(
+    {
+      level = "/root/sandbox/career/",
+      generator = function(entries)
+        if not isActive() then return end
+        table.insert(entries, {
+          title = "Stop Test Drive",
+          icon = "abandon",
+          priority = 90,
+          enabled = true,
+          uniqueID = "stopTestDrive",
+          ignoreAsRecentActionForCategory = "sandbox",
+          onSelect = function()
+            career_modules_testDrive.stop()
+            return {"hide"}
+          end
+        })
+      end
+    }
+  )
+end
+M.onBeforeRadialOpened = onBeforeRadialOpened
 
+M.abandonTestDrive = abandonTestDrive
 M.onGetRawPoiListForLevel = onGetRawPoiListForLevel
 M.onPoiDetailPromptOpening = onPoiDetailPromptOpening
-M.onRecalculatedRoute = onRecalculatedRoute
 M.getTimeLeft = getTimeLeft
 M.stop = stop
-M.abandonTestDrive = abandonTestDrive
 M.start = start
 M.isActive = isActive
 M.formatTestDriveToRawPoi = formatTestDriveToRawPoi
 M.resetData = resetData
 
 M.onUpdate = onUpdate
-M.onCareerModulesActivated = onCareerModulesActivated
+M.onCareerActive = onCareerActive
 M.onVehicleRepairedByInsurance = onVehicleRepairedByInsurance
 
 return M

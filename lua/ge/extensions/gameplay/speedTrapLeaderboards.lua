@@ -20,7 +20,7 @@ end
 
 local function loadLeaderboards(folderPath)
   folderPath = folderPath or freeroamSaveFolder
-  log("I", logTag, "Loading leaderboards from " .. folderPath)
+  --log("I", logTag, "Loading leaderboards from " .. folderPath)
   table.clear(leaderboards)
   local files = FS:findFiles(folderPath, '*.json', 0, false, false)
   for _, filePath in pairs(files) do
@@ -52,7 +52,7 @@ local function createEntry(playerSpeed, overSpeed, veh)
     modelName = jbeamName
   end
 
-  return {speed = playerSpeed, modelName = modelName, date = os.date("!%Y-%m-%dT%XZ")}
+  return {speed = playerSpeed, modelName = modelName, date = os.date("!%Y-%m-%dT%H:%M:%SZ")}
 end
 
 local function addRecord(speedTrapData, playerSpeed, overSpeed, veh)

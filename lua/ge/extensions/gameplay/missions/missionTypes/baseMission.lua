@@ -17,6 +17,8 @@ function C:getProgressKeyTranslation(progressKey)
   return progressKey
 end
 
+
+
 -- when the mission starts
 function C:onStart() end
 -- called each frame

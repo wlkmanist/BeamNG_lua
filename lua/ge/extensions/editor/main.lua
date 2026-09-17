@@ -319,6 +319,7 @@ local function initializeModules()
   M.materialModule.initialize(M)
   M.navigationModule.initialize(M)
   M.objectModule.initialize(M)
+  M.objectModule.initializeFocusLock()
   M.roadRiverModule.initialize(M)
   M.sketchModule.initialize(M)
   M.terrainModule.initialize(M)
@@ -388,19 +389,10 @@ local function getSmoothCameraParams()
   end
 end
 
-local function anyToolDirty()
-  if not tableIsEmpty(editor.dirtyTools) then
-    editor.openModalWindow("saveDirtyTools")
-    return true
-  end
-
-  return false
-end
-
 local function setEditorActiveInternal(activate, safeMode)
   if not activate and M.active then
     -- first check if we can close editor
-    if anyToolDirty() then return end
+    if editor.anyToolDirty() then return end
   end
 
   local wasInitedNow = false
@@ -437,7 +429,7 @@ local function setEditorActiveInternal(activate, safeMode)
     local state = loadState()
     loadAndInitializeExtensions()
     editor.registerModalWindow("saveDirtyTools", imgui.ImVec2(600, 300), nil, true)
-    editor.loadWindowsState()
+    editor_layoutManager.loadCurrentWindowLayout()
     extensions.hook("onEditorLoadState", state)
     wasInitedNow = true
     editor.dirtyTools = {}
@@ -477,7 +469,7 @@ local function setEditorActiveInternal(activate, safeMode)
 
     if not wasInitedNow then
       local state = loadState()
-      editor.loadWindowsState()
+      editor_layoutManager.loadCurrentWindowLayout()
       extensions.hook("onEditorLoadState", state)
     end
 
@@ -535,11 +527,16 @@ local function setEditorActiveInternal(activate, safeMode)
       editor.logInfo("Deactivating editor...")
       editor.defocusFocusedWindow()
       enableEditingMode(false)
-      editor.rebuildCollision()
+      local hostOS = Engine.Platform.getOSInfo().type
+      if hostOS == 'linux' or hostOS == 'windows' then
+        if Engine.getNeedCollisionRebuild() then
+          editor.rebuildCollision(true)
+        end
+      end
       M.savePreferences()
       -- save windows state only when not in headless mode
       if not editor.headless then
-        editor.saveWindowsState()
+        editor_layoutManager.saveCurrentWindowLayout()
       end
       saveState()
       --TODO: remove if window state behaves ok
@@ -548,6 +545,7 @@ local function setEditorActiveInternal(activate, safeMode)
       -- end
       lastEditModeName = editor.getCurrentEditModeName()
       editor.selectEditMode(nil)
+      worldEditorCppApi.setHoveredObjectId(0)
       setSelectedObjectFlags(false)
       extensions.hook("onEditorDeactivated")
       popActionMap("EditorKeyMods")
@@ -596,6 +594,7 @@ end
 
 local function shutdown()
   if not M.initialized then return end
+
   setEditorActiveInternal(false)
   extensions.hook("onEditorShutdown")
   unloadEditorExtensions()
@@ -610,19 +609,22 @@ local function onClientStartMission()
 end
 
 local function onPreWindowClose()
-  if editor.dirty or anyToolDirty() and editor.initialized then
-    local result = messageBox("World Editor - Exiting BeamNG", "You have edited this level.\nDo you want to save your changes made to this level ?", 4, 2)
-    if result == 1 then
-      editor.saveLevel()
-    elseif result == 2 then
-      Engine.cancelShutdown()
-    end
+  if editor and editor.checkDirtyAndSave then
+    editor.checkDirtyAndSave()
   end
+end
+
+local function onPreExit()
 end
 
 local function onClientEndMission()
   saveState()
   guihooks.trigger('ShowApps', true)
+
+  if editor and editor.checkDirtyAndSave then
+    editor.checkDirtyAndSave(true)
+  end
+
   shutdown()
 end
 
@@ -633,27 +635,19 @@ local function onUpdate()
     if frameCount < 1 then
       -- show it only we want to activate editor
       if doActivate then
-        --TODO: we need to get editor UI scale somehow, at this point preferences are not loaded yet
-        -- change UI scale to default, so text fits in the loading window
-        imguiUtils.changeUIScale(1)
+        -- editor preferences (and the final UI scale) are not loaded yet, so we cannot rely on
+        -- imgui.uiscale[0] here. Size the splash from the window's own DPI scale, queried inside the
+        -- window where it is valid. Sizing it before Begin used GetWindowDpiScale() outside any window,
+        -- which returned a stale/leftover value and made the splash scale randomly between runs.
         local pos = imgui.ImVec2(imgui.GetMainViewport().Pos.x + imgui.GetMainViewport().Size.x / 2, imgui.GetMainViewport().Pos.y + imgui.GetMainViewport().Size.y / 2)
         if not splashImage then splashImage = imguiUtils.texObj("/core/art/gui/images/editorSplash.png") end
         local imageSize = splashImage.size
 
         imgui.SetNextWindowPos(pos, imgui.Cond_Appearing, imgui.ImVec2(0.5, 0.5))
-        imgui.SetNextWindowSize(imgui.ImVec2(imgui.uiscale[0] * (imageSize.x + 50), imgui.uiscale[0] * (imageSize.y + 30)), imgui.Cond_Always)
-        imgui.Begin("loadingEditorWnd", nil, imgui.WindowFlags_NoScrollbar + imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoResize + imgui.WindowFlags_NoMove)
+        imgui.Begin("loadingEditorWnd", nil, imgui.WindowFlags_NoScrollbar + imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoResize + imgui.WindowFlags_NoMove + imgui.WindowFlags_AlwaysAutoResize)
 
-        local style = imgui.GetStyle()
-        local size = imgui.uiscale[0] * imageSize.x + style.FramePadding.x * 2.0
-        local avail = imgui.GetContentRegionAvail().x
-        local off = (avail - size) * 0.5;
-
-        if off > 0.0 then
-          imgui.SetCursorPosX(imgui.GetCursorPosX() + off)
-        end
-
-        imgui.Image(splashImage.texId, imgui.ImVec2(imgui.uiscale[0] * imageSize.x, imgui.uiscale[0] * imageSize.y))
+        local dpi = imgui.GetWindowDpiScale()
+        imgui.Image(splashImage.texId, imgui.ImVec2(dpi * imageSize.x, dpi * imageSize.y))
         imgui.End()
       end
       frameCount = frameCount + 1
@@ -747,6 +741,12 @@ local function onFirstUpdate()
     --TODO: objects need serializable formats not C++ object refs
     --editor.history:deserialize(editorHistoryData)
   end
+
+  -- if the game has -worldEditor argument present, start editor automagically
+  if worldEditorCppApi.mustOpenEditorOnStart() then
+    worldEditorCppApi.setOpenEditorOnStart(false) -- set it to false now, since Lua reloads will reopen again, we dont want that
+    setEditorActive(true)
+  end
 end
 
 M.log = editorLog
@@ -758,7 +758,6 @@ M.initializeModules = initializeModules
 M.toggleActive = toggleActive
 M.setEditorActive = setEditorActive
 M.isEditorActive = isEditorActive
-M.anyToolDirty = anyToolDirty
 M.saveState = saveState
 M.loadState = loadState
 M.savePreferences = savePreferences
@@ -773,6 +772,7 @@ M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
 M.onExit = onExit
 M.onPreWindowClose = onPreWindowClose
+M.onPreExit = onPreExit
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onSerialize = onSerialize

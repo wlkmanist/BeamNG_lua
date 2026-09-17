@@ -43,7 +43,7 @@ function C:workOnce()
   self.angle = self.pinIn.startAngle.value or self.angle
   self.angle = self.angle + 180
   if self.pinIn.vehId.value then -- if vehicle id is given, the start angle is relative to the vehicle orientation
-    local veh = be:getObjectByID(self.pinIn.vehId.value)
+    local veh = getObjectByID(self.pinIn.vehId.value)
     if veh then
       local dirVec = veh:getDirectionVector()
       self.angle = self.angle + math.deg(math.atan2(dirVec.x, dirVec.y))
@@ -55,7 +55,7 @@ function C:work()
   if self.pinIn.centerPos.value then
     self.centerPos:setFromTable(self.pinIn.centerPos.value)
   else
-    local veh = be:getObjectByID(self.pinIn.vehId.value or be:getPlayerVehicleID(0))
+    local veh = getObjectByID(self.pinIn.vehId.value or be:getPlayerVehicleID(0))
     if veh then
       self.centerPos:set(veh:getSpawnWorldOOBB():getCenter())
     end

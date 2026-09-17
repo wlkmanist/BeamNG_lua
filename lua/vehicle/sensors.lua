@@ -35,18 +35,9 @@ end
 
 local function init()
   M.ffiSensors = obj:getSensorsFFI()
-
-  if not v.data.refNodes then
-    return
-  end
-
-  if v.data.engine == nil and (v.data.hydros == nil or tableIsEmpty(v.data.hydros)) then
-    return
-  end
-
-  M.reset()
+  reset()
 end
--- public interface
+
 M.updateGFX = updateGFX
 M.reset = reset
 M.init = init

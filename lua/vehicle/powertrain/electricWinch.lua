@@ -4,13 +4,8 @@
 
 local M = {}
 
-M.outputPorts = {[1] = true}
+M.outputPorts = {}
 M.deviceCategories = {winch = true, torqueConsumer = true}
-M.requiredExternalInertiaOutputs = {1}
-
-local max = math.max
-local min = math.min
-local abs = math.abs
 
 local function updateVelocity(device, dt)
   device.inputAV = device.outputAV1 * device.gearRatio
@@ -23,7 +18,7 @@ local function updateTorque(device)
   local force = -electrics.values.ignitionLevel * 500000
   local slipForce = 0
   local frictionForce = 0
-  obj:actuateBeam(beamstate.tagBeamMap.ropeTest[1], force, 10, slipForce, frictionForce, 10, 0, 100)
+  obj:actuateBeam(beamstate.tagBeamMap.ropeTest[1], force, 10, slipForce, frictionForce, 10, 0, 100, 0, 0)
 end
 
 local function applyDeformGroupDamage(device, damageAmount)

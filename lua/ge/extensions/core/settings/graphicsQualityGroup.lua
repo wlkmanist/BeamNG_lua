@@ -37,9 +37,9 @@ function C:apply(qualityLevel)
   if type(qualityLevel) == 'table' then
     local changeDetected = false
     for key,value in pairs(qualityLevel) do
-      local currentValue = TorqueScriptLua.getVar(key)
+      local currentValue = VariableRegistry.get(key)
       changeDetected = changeDetected or tostring(currentValue) ~= tostring(value)
-      TorqueScriptLua.setVar(key, value)
+      VariableRegistry.set(key, value)
     end
     if changeDetected then
       self:onApply()

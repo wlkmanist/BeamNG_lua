@@ -42,6 +42,7 @@ function C:resetVehicle()
   end
   if veh then
     spawn.safeTeleport(veh, veh:getPosition(), quatFromDir(veh:getDirectionVector()), nil, nil, nil, nil, false )
+    extensions.hook('onVehicleFlippedUpright', veh:getID())
   end
 end
 

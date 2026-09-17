@@ -17,6 +17,7 @@ local quitOnDone = false
 local function changeLanguage(lang)
   Lua.userLanguage = lang
   Lua:reloadLanguages()
+  extensions.hook('onSettingsChanged')
   local langNow = Lua:getSelectedLanguage()
   if langNow ~= lang then
     log('E', '', 'Unable to switch to language ' .. tostring(lang) .. ' - game is chose ' .. tostring(langNow))
@@ -32,25 +33,13 @@ local function jsonOut(filename, data)
   f:close()
 end
 
-local function getLanguagesAvailable()
-  local locales = FS:findFiles('/locales/', '*.json', -1, true, false)
-  local res = {}
-  for _, l in pairs(locales) do
-    local key = string.match(l, 'locales/(.*).json')
-    if key ~= "not-shipping.internal" then
-      table.insert(res, key)
-    end
-  end
-  return res
-end
-
 local function cleanupTable(job, tbl)
   if type(tbl) == 'table' then
     for k, v in pairs(tbl) do
       if type(v) == 'table' then
         cleanupTable(job, v)
       elseif type(v) == 'string' then
-        tbl[k] = translateLanguage(v, v, true) -- true = silent logs
+        tbl[k] = _tr(v) -- true = silent logs
         v = tbl[k]
 
         if string.len(v) > 0 and FS:fileExists(v) then
@@ -288,8 +277,8 @@ local function run(job)
   FS:directoryCreate(outputFolderResources)
   --exportData('en-US')
 
-  for _, lang in ipairs(getLanguagesAvailable()) do
-    exportDataLangSpecific(job, lang)
+  for _, lang in ipairs(extensions.core_locales.getAvailableLanguages()) do
+    exportDataLangSpecific(job, lang.key)
   end
   exportDataCommon(job)
   print("DONE")

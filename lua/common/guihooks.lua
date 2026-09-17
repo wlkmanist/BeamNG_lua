@@ -4,9 +4,10 @@
 
 local M = {}
 
-local currentVehicle = '' -- table ptr
+local currentVehicle -- table ptr
 
 local cache = {}
+local tmpTab = {}
 
 local playerInfo = playerInfo or {firstPlayerSeated = true}
 local vehicleLuaSpecific = nop
@@ -21,80 +22,75 @@ elseif be then
   queueStreamDataJS = function(...) be:queueStreamDataJS(...) end
 end
 
-local bits = {}
+-- Garbage sensitive, do not change if you don't know what garbage is
 local function trigger(hookName, ...)
-  table.clear(bits)
+  local i1 = 0
   for i = 1, select('#', ...) do
-    bits[#bits+1] = jsonEncode(select(i, ...))
+    local tv = select(i, ...)
+    if tv ~= nil then
+      i1 = i1 + 1
+      tmpTab[i1] = tv
+    end
   end
-  local js = '['..table.concat(bits,',')..']'
-  queueHookJS(hookName, js, execCtxWebId or 0)
+
+  queueHookJS(hookName, i1 == 0 and '[]' or jsonEncodeWorkBuffer(tmpTab), execCtxWebId or 0)
+  table.clear(tmpTab)
 end
 
--- Removed as prone to issues when one of the values is nil (breaks jsonEncode)
--- local function trigger(hookName, ...)
---   for i = 1, select('#', ...) do
---     tmpTab[i] = select(i, ...)
---   end
---   local js = jsonEncode(tmpTab)
---   table.clear(tmpTab)
-
---   if js == '{}' then js = '[]' end -- this is important for the JS side
---   queueHookJS(hookName, js, execCtxWebId or 0)
--- end
-
-local function triggerClient(hookName, ...)
-  local bits = {}
+-- Garbage sensitive, do not change if you don't know what garbage is
+local function triggerClient(targetDsmId, hookName, ...)
+  local i1 = 0
   for i = 1, select('#', ...) do
-    bits[#bits+1] = jsonEncode(select(i, ...))
+    local tv = select(i, ...)
+    if tv ~= nil then
+      i1 = i1 + 1
+      tmpTab[i1] = tv
+    end
   end
-  local js = '['..table.concat(bits,',')..']'
-  queueHookJS(hookName, js, targetDsmId)
+  queueHookJS(hookName, i1 == 0 and '[]' or jsonEncodeWorkBuffer(tmpTab), targetDsmId)
+  table.clear(tmpTab)
 end
-
--- Removed as prone to issues when one of the values is nil (breaks jsonEncode)
--- local function triggerClient(targetDsmId, hookName, ...)
---   for i = 1, select('#', ...) do
---     tmpTab[i] = select(i, ...)
---   end
---   local js = jsonEncode(tmpTab)
---   table.clear(tmpTab)
-
---   if js == '{}' then js = '[]' end -- this is important for the JS side
---   queueHookJS(hookName, js, targetDsmId)
--- end
 
 local function triggerRawJS(hookName, rawJs)
-  queueHookJS(hookName, '[' .. tostring(rawJs) .. ']')
+  queueHookJS(hookName, concatWorkBuffer('[', tostring(rawJs), ']'))
 end
 
 local function triggerStream(streamName, streamData)
-  queueStreamDataJS(streamName, jsonEncode(streamData))
+  queueStreamDataJS(streamName, jsonEncodeWorkBuffer(streamData))
 end
 
 local function checkStreamsAndVehicle()
-    streams.update()
+  streams.update()
 
-    --vehicleChange
-    if currentVehicle ~= tostring(v.data) then
-        currentVehicle = tostring(v.data)
-        trigger("VehicleChange", v.data.vehicleDirectory)
-        trigger("VehicleReset", 0)
-    end
+  --vehicleChange
+  if currentVehicle ~= v.data then
+    currentVehicle = v.data
+    trigger("VehicleChange", v.data.vehicleDirectory)
+    trigger("VehicleReset", 0)
+  end
 end
 
 if obj then
   vehicleLuaSpecific = checkStreamsAndVehicle
 end
 
--- in ge this should be onPreRender
--- in vehicle this should be updateGFX
--- WARNING: this can currently only be called from vehicle lua side. from ge this will break
+local sendStreamsToGELua = nop
+--[[
+if obj then
+  sendStreamsToGELua = function(streams)
+    local command = string.format('extensions.hook("onGeLuaStreamsFromVehicleTest", %q)', lpack.encode(streams))
+    obj:queueGameEngineLua(command)
+  end
+end
+]]
+
+-- WARNING: this can only be called from vehicle onGraphicsStep
 local function sendStreams()
   vehicleLuaSpecific()
   for streamName, data in pairs(cache) do
     queueStreamDataJS(streamName, jsonEncodeWorkBuffer(data))
   end
+  sendStreamsToGELua(cache)
   table.clear(cache)
 end
 
@@ -107,30 +103,29 @@ local function reset()
   end
 end
 
--- cache data to be send later
-local function queueStream(key, value)
-  if M.updateStreams then
+local queueStream = nop
+if obj then
+  -- cache data to be send later
+  queueStream = function(key, value)
+    if M.updateStreams then
+      cache[key] = value
+    end
+  end
+elseif be then
+  queueStream = function(key, value)
+    -- set a flag that we will send streams later (see main.lua guihooks.sendStreams(dtReal))
+    M.updateStreams = true
     cache[key] = value
   end
 end
 
+
 -- todo replace ui_message
 -- instead message should directly call the hook
 -- in light of different message types emerging it might be interesting to have a seperate message module
-local function message(msg, ttl, category, icon)
+local function message(msg, ttl, category, icon, availableOptionsCount, currentOptionIndex)
   if not playerInfo.firstPlayerSeated then return end
-
-  trigger('Message', {msg = msg, ttl = (ttl or 5), category = (category or ''), icon = icon})
-end
-
--- lighten the color, intended to be used as light foreground against some dark background
-local function lightColor(color)
-  local result = {}
-  for j,c in ipairs(color) do
-    result[j] = math.floor(255 * (1 - 0.65*c))
-  end
-  result[4] = 255
-  return result
+  trigger('Message', {msg = msg, ttl = (ttl or 5), category = (category or ''), icon = icon, availableOptionsCount = availableOptionsCount, currentOptionIndex = currentOptionIndex})
 end
 
 -- UI app graph. accepts any amount of arguments, each argument can define in this order: { key, value, scale, unit, renderNegatives, color }
@@ -144,7 +139,7 @@ local function graph(a, ...)
     v[3] = v[3] or 1 -- scale
     v[4] = v[4] or "" -- unit
     v[5] = v[5] or false -- renderNegatives
-    v[6] = v[6] or lightColor(rainbowColor(numOfSteps, i, 1)) -- color
+    v[6] = v[6] or { colorGetRGBA(jetColor(i / numOfSteps)) }
   end
   queueStream('genericGraphSimple', values)
   return values

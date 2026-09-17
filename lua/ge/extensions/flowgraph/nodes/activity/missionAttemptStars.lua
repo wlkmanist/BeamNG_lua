@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -17,9 +16,6 @@ C.pinSchema = {
   { dir = 'in',  type = 'table', name = "attempt", tableType = "attemptData", description = "Attempt Data for other nodes to process", fixed=true },
   { dir = 'out', type = 'table', name = "attempt", tableType = "attemptData", description = "Attempt Data for other nodes to process", fixed=true },
 }
-
-
-
 
 C.tags = {'activity', 'mission'}
 

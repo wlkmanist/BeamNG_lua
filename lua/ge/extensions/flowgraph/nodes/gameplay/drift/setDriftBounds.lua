@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Drift bounds'
+C.name = 'Drift Bounds'
 
-C.description = 'Uses a sites file to create the bounds for the drift mission'
+C.description = 'Uses a sites file to create the bounds for the drift mission.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

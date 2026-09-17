@@ -79,8 +79,8 @@ local function onEditorGui(dt)
       local size = im.GetContentRegionAvail()
       plotHelperUtil:draw(size.x-10, size.y-10, dt)
     end
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 

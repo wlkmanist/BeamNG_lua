@@ -22,7 +22,6 @@ local visibilityPoint
 local smallVehicle = false
 local checkOnlyStatics
 local removeTraffic = true
-local recursionLimitReached
 local airSpawn = false
 local vehiclesPositionedThisFrame = {}
 local vehiclesWerePositionedThisFrame
@@ -141,8 +140,20 @@ local function intersectingOtherVehicle(otherVeh, axis0, axis1, axis2, halfExten
     end
     local newVehicleBBMaxExtents = vec3(halfExtentsX, halfExtentsY, halfExtentsZ):length()
 
+    local otherVehicleLarge = false
+    local otherSpawnWorldOOBB = otherVeh:getSpawnWorldOOBB()
+    if otherSpawnWorldOOBB then
+      local otherSpawnWorldOOBBHalfExtents = otherSpawnWorldOOBB:getHalfExtents()
+      local otherVehicleAverageSideLength = (otherSpawnWorldOOBBHalfExtents.x + otherSpawnWorldOOBBHalfExtents.y) -- add the halfExtents together to get the average side length
+      otherVehicleLarge = otherVehicleAverageSideLength > 10
+    end
+
     for _, nodePos in ipairs(vehicleNodes[vehID]) do
-      if smallVehicle then
+      if otherVehicleLarge then
+        if nodePos:distance(bbCenter) < max(newVehicleBBMaxExtents, 5) then
+          return true
+        end
+      elseif smallVehicle then
         if nodePos:distance(bbCenter) < max(newVehicleBBMaxExtents, 0.5) then
           return true
         end
@@ -163,7 +174,7 @@ local function moveTrafficVehiclesAway(bb, vehID)
   local halfExtentsX, halfExtentsY, halfExtentsZ = bb:getHalfExtents().x, bb:getHalfExtents().y, bb:getHalfExtents().z
 
   for _, otherId in ipairs(gameplay_traffic.getTrafficList()) do
-    if otherId ~= vehID and (not map.isCrashAvoidable(otherId, bbCenter, vehRadius) or intersectingOtherVehicle(be:getObjectByID(otherId), axis0, axis1, axis2, halfExtentsX, halfExtentsY, halfExtentsZ, bbCenter)) then
+    if otherId ~= vehID and (not map.isCrashAvoidable(otherId, bbCenter, vehRadius) or intersectingOtherVehicle(getObjectByID(otherId), axis0, axis1, axis2, halfExtentsX, halfExtentsY, halfExtentsZ, bbCenter)) then
       gameplay_traffic.forceTeleport(otherId, bbCenter)
     end
   end
@@ -254,7 +265,7 @@ local function getAutoplaceRange(vehBB)
 end
 
 local rayCastStartPositionFactor = 0.4
-local function moveBBToGround(vehBB, raycastDown)
+local function moveBBToGround(vehBB, raycastDown, unlimitedSafeSpawnRange)
   -- Turn it around if upside down
   if vehBB:getAxis(2):dot(vec3(0, 0, 1)) < 0 then
     local mat = vehBB:getMatrix()
@@ -268,7 +279,12 @@ local function moveBBToGround(vehBB, raycastDown)
   local halfExtentsX, halfExtentsY, halfExtentsZ = abs(vehBB:getHalfExtents().x), abs(vehBB:getHalfExtents().y), abs(vehBB:getHalfExtents().z)
   local downVec = raycastDown and vec3(0,0,-1) or -axis2
   -- first raycast straight down
-  local rayDist = getAutoplaceRange(vehBB) + vehBB:getHalfExtents().z/2
+  local rayDist
+  if unlimitedSafeSpawnRange then
+    rayDist = 10000
+  else
+    rayDist = getAutoplaceRange(vehBB) + vehBB:getHalfExtents().z/2
+  end
   local rayCastHits = {}
   local startPosBase = vehBB:getCenter() + axis2 * halfExtentsZ
   for x = -1, 1 do
@@ -310,16 +326,32 @@ end
 -- replacement for autoplace, do a raycast from the actual wheel nodes down
 -- the vehBB has a horizontal rotation and wheelPositions are relative positions
 -- TODO maybe use wheelpositions in the future
-local function getBBOnGround(vehBB, vehOrigin)
+local function getBBOnGround(vehBB, vehOrigin, unlimitedSafeSpawnRange)
   local newBB = OrientedBox3F()
   local mat = vehBB:getMatrix()
-  mat:setPosition(vehBB:getCenter())
-  newBB:set2(mat, vehBB:getHalfExtents() * 2)
+  local halfExtents = vehBB:getHalfExtents()
 
-  moveBBToGround(newBB, true)
+  -- move the BB up a bit in case it is partially underground after a crash
+  local averageHalfExtentsTwoShortestSides = (halfExtents.x + halfExtents.y + halfExtents.z - math.max(halfExtents.x, halfExtents.y, halfExtents.z)) / 2
+  local offset = averageHalfExtentsTwoShortestSides/3 -- lower the offset by a bit to work better in low ceiling environments. the offset shouldnt be too low either though, because then some raycasts might start underground
+  mat:setPosition(vehBB:getCenter() + vec3(0, 0, offset))
+
+  newBB:set2(mat, halfExtents * 2)
+
+  if moveBBToGround(newBB, true, unlimitedSafeSpawnRange) then
+    -- if the first moveBBToGround call doesnt hit anything with the raycast, it might be that it is slightly underground, so we try again with an even higher position
+    local newBBHigher = OrientedBox3F()
+    mat:setPosition(vehBB:getCenter() + vec3(0,0,(halfExtents.x + halfExtents.y + halfExtents.z)/3))
+    newBBHigher:set2(mat, vehBB:getHalfExtents() * 2)
+    if not moveBBToGround(newBBHigher, true, unlimitedSafeSpawnRange) then
+      -- if the second moveBBToGround call hits something with the raycast, we use that updated BB
+      newBB = newBBHigher
+    end
+  end
   -- TODO put some limit on the angle of the BB
+
   -- second raycast in direction of vehicle down
-  local floating = moveBBToGround(newBB)
+  local floating = moveBBToGround(newBB, true, unlimitedSafeSpawnRange)
 
   return newBB, floating
 end
@@ -349,23 +381,18 @@ local recDepth = 0
 local factor = 2
 local bestCandidate = {}
 
-local function placeVehRec(vehBB, newVehID, vehDir, vehRight, isBBFloating)
-  --[[if candidates then
-    table.insert(candidates, {center = vehBB:getCenter(), dir = -vehBB:getAxis(1), up = vehBB:getAxis(2)})
-  end]]
-
+local function placeVehRec(vehBB, newVehID, vehDir, vehRight, isBBFloating, unlimitedSafeSpawnRange)
   recDepth = recDepth + 1
   if recDepth > 400 then
     recDepth = 0
     gridX = -1
     gridY = -1
-    recursionLimitReached = true
     if bestCandidate.bb then
       log('I', logTag, "Using best found spawn position")
       return bestCandidate.bb
     else
-      log('W', logTag, "Couldnt find suitable spawning position. Putting the vehicle a little higher.")
-      return initialBB
+      log('W', logTag, "Couldnt find suitable spawning position.")
+      return nil
     end
   end
 
@@ -398,13 +425,13 @@ local function placeVehRec(vehBB, newVehID, vehDir, vehRight, isBBFloating)
     mat:setPosition(intendedBB:getCenter() + offset)
     local newVehBB = OrientedBox3F()
     newVehBB:set2(mat, vehBB:getHalfExtents() * factor)
-    local newVehBB, isBBFloating_ = getBBOnGround(newVehBB)
-    return placeVehRec(newVehBB, newVehID, vehDir, vehRight, isBBFloating_)
+    local newVehBB, isBBFloating_ = getBBOnGround(newVehBB, nil, unlimitedSafeSpawnRange)
+    return placeVehRec(newVehBB, newVehID, vehDir, vehRight, isBBFloating_, unlimitedSafeSpawnRange)
   end
   return vehBB
 end
 
-local function placeVehicle(vehBB, newVehID)
+local function placeVehicle(vehBB, newVehID, unlimitedSafeSpawnRange)
   -- Reset variables
   gridX = -1
   gridY = -1
@@ -421,14 +448,22 @@ local function placeVehicle(vehBB, newVehID)
   if isIntersecting(vehBB, newVehID) or (visibilityPoint and getVisibilityStatus(visibilityPoint, vehBB) < 2) then
     local vehDir = -vehBB:getAxis(1)
     local vehRight = -vehBB:getAxis(0)
-    vehBB = placeVehRec(vehBB, newVehID, vehDir, vehRight)
+    vehBB = placeVehRec(vehBB, newVehID, vehDir, vehRight, nil, unlimitedSafeSpawnRange)
   end
 
   intendedBB = nil
   return vehBB
 end
 
-local function setSafePositionRec(veh, pos, rot, centeredPosition, useInitialNodePositions)
+local function setSafePositionRec(params)
+  local veh = params.veh
+  local pos = params.pos
+  local rot = params.rot
+  local centeredPosition = params.centeredPosition
+  local useInitialNodePositions = params.useInitialNodePositions
+  local unlimitedSafeSpawnRange = params.unlimitedSafeSpawnRange
+  local removeWhenNoPositionFound = params.removeWhenNoPositionFound
+
   bestCandidate = {}
 
   -- Copy the initialBB
@@ -456,12 +491,21 @@ local function setSafePositionRec(veh, pos, rot, centeredPosition, useInitialNod
     boundingBox:set2(mat, boundingBox:getHalfExtents() * 2)
   end
 
-  boundingBox, airSpawn = getBBOnGround(boundingBox)
+  boundingBox, airSpawn = getBBOnGround(boundingBox, nil, unlimitedSafeSpawnRange)
 
   if not boundingBox then return end
-  local newBB = placeVehicle(boundingBox, veh:getId())
+  local newBB = placeVehicle(boundingBox, veh:getId(), unlimitedSafeSpawnRange)
+  if not newBB then
+    if removeWhenNoPositionFound then
+      ui_message("ui.spawn.noPositionFound", 5, "spawn")
+      veh:delete()
+      return nil
+    else
+      newBB = initialBB
+    end
+  end
   local actuallyRemoveTraffic = false
-  if newBB and not checkOnlyStatics and gameplay_traffic and removeTraffic then
+  if not checkOnlyStatics and gameplay_traffic and removeTraffic then
     actuallyRemoveTraffic = true
   end
   visibilityPoint = nil
@@ -484,14 +528,19 @@ local function setSafePositionRec(veh, pos, rot, centeredPosition, useInitialNod
     vehiclesPositionedThisFrame[veh:getId()] = {pos = localRefNode, rot = newRot}
     vehiclesWerePositionedThisFrame = true
   end
-  --veh:setPositionRotation(localRefNode.x, localRefNode.y, localRefNode.z, newRot.x, newRot.y, newRot.z, newRot.w)
-  veh:setClusterPosRelRot(veh:getRefNodeId(), localRefNode.x, localRefNode.y, localRefNode.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
-  veh:applyClusterVelocityScaleAdd(veh:getRefNodeId(), 0, 0, 0, 0)
+
+  local refNodeId = useInitialNodePositions and -1 or veh:getRefNodeId() -- "-1" means teleporting all clusters
+  veh:setClusterPosRelRot(refNodeId, localRefNode.x, localRefNode.y, localRefNode.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
+  veh:applyClusterVelocityScaleAdd(refNodeId, 0, 0, 0, 0)
   veh:setOriginalTransform(localRefNode.x, localRefNode.y, localRefNode.z, newRot.x, newRot.y, newRot.z, newRot.w)
+  return true
 end
 
 
-local function setSafePosition(veh, pos, rot, centeredPosition, useInitialNodePositions)
+local function setSafePosition(params)
+  local veh = params.veh
+  local useInitialNodePositions = params.useInitialNodePositions
+
   vehiclesPositionedThisFrame[veh:getID()] = nil
   if useInitialNodePositions then
     initialBB = buildBoundingBox(veh)
@@ -499,10 +548,10 @@ local function setSafePosition(veh, pos, rot, centeredPosition, useInitialNodePo
     initialBB = buildClusterBoundingBox(veh)
   end
 
-  recursionLimitReached = false
   recDepth = 0
-  setSafePositionRec(veh, pos, rot, centeredPosition, useInitialNodePositions)
+  local result = setSafePositionRec(params)
   removeTraffic = true
+  return result
 end
 
 local function centerVehicle(veh, pos, rot)
@@ -516,7 +565,6 @@ local function centerVehicle(veh, pos, rot)
 end
 
 local function setVehicleObject(veh, options)
-  --dump{'setVehicleObject: ', veh, options}
   if not veh then
     log('E', logTag, 'setVehicleObject Failed, no vehicle provided.')
     return
@@ -556,6 +604,10 @@ local function setVehicleObject(veh, options)
   -- TODO the rotation by 180 degrees needs to happen before the other rotation. The order might still be wrong in some places
   rot = quat(0,0,1,0) * rot -- rotate 180 degrees
   local activeVehicle = true
+  if not veh.spawnObjectWithPosRot then
+    log('E', '', 'Unable to spawn vehicle, wrong Scene object returned?')
+    return
+  end
   veh:spawnObjectWithPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w, activeVehicle)
   if options.centeredPosition then
     centerVehicle(veh, pos, rot)
@@ -582,11 +634,20 @@ local function setVehicleObject(veh, options)
   else
     vehGroup:addObject(veh.obj)
   end
-  setSafePosition(veh, nil, nil, nil, true)
+  if options.safeSpawn == true or options.safeSpawn == nil then
+    return setSafePosition({
+      veh = veh,
+      useInitialNodePositions = true,
+      unlimitedSafeSpawnRange = options.unlimitedSafeSpawnRange,
+      removeWhenNoPositionFound = options.removeWhenNoPositionFound == nil and true or options.removeWhenNoPositionFound
+    })
+  end
+  return true
 end
 
--- TODO this breaks if you teleport multiple vehicles on the same spot on the same frame without resetting, because the OOBB is not up to date
-local function safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, removeTraffic_, centeredPosition, resetVehicle)
+-- TODO move all the options into one table
+-- TODO have separate options for "checkIntersectionTraffic", "checkIntersectionVehicles", "checkIntersectionStatic"
+local function safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, removeTraffic_, centeredPosition, resetVehicle, player, unlimitedSafeSpawnRange)
   --candidates = {}
   --TODO Make a simplified version for traffic
   if resetVehicle == nil then resetVehicle = true end
@@ -603,7 +664,15 @@ local function safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, 
     veh:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
     veh:resetBrokenFlexMesh()
   end
-  setSafePosition(veh, pos, rot, centeredPosition, resetVehicle)
+  setSafePosition({
+    veh = veh,
+    pos = pos,
+    rot = rot,
+    centeredPosition = centeredPosition,
+    useInitialNodePositions = resetVehicle,
+    player = player,
+    unlimitedSafeSpawnRange = unlimitedSafeSpawnRange,
+  })
 end
 
 local function teleportToLastRoadCallback(data, options)
@@ -626,30 +695,36 @@ local function teleportToLastRoadCallback(data, options)
         local n1 = mapData.nodes[n1Id]
         local n2 = mapData.nodes[n2Id]
         if dist <= (n1.radius+n2.radius)/2 then
-          -- Found a recovery point on a road
 
-          local oneWay = mapData.nodes[n1Id].links[n2Id].oneWay
-          local roadDir = (n2.pos - n1.pos)
+          if not n1.links[n2Id] and n2.links[n1Id] then
+            -- swap nodes if the links are in opposite directions
+            n1, n2 = n2, n1
+            n1Id, n2Id = n2Id, n1Id
+          end
+          -- Found a recovery point on a road
+          local oneWay = n1.links[n2Id].oneWay
+          local segmentDir = (n2.pos - n1.pos)
+          local drivingDir = segmentDir
 
           if options.destinationPos then
-            -- if there is a destinationPos then always put the vehicle in that direction irregardless of other rules
+            -- if there is a destinationPos then always put the vehicle in that direction regardless of other rules
 
             local routePlanner = require('gameplay/route/route')()
             routePlanner:setupPath(n1.pos, options.destinationPos)
 
             if routePlanner.path and routePlanner.path[2] then
-              if roadDir:dot(routePlanner.path[2].pos - n1.pos) < 0 then
-                roadDir = -roadDir
+              if drivingDir:dot(routePlanner.path[2].pos - n1.pos) < 0 then
+                drivingDir = -drivingDir
               end
             end
             oneWay = true
 
-          -- if the road is oneWay, flip the roadDir if it is incorrect
+          -- if the road is oneWay, flip the drivingDir if it is incorrect
           elseif oneWay and (mapData.nodes[n1Id].links[n2Id].inNode ~= n1Id) then
-            roadDir = -roadDir
+            drivingDir = -drivingDir
           end
 
-          local perpendicular = roadDir:cross(n1.normal)
+          local perpendicular = drivingDir:cross(n1.normal)
 
           -- In a oneWay road, always put the vehicle on the legal driving side, otherwise check which side is closer
           local roadSide
@@ -662,7 +737,7 @@ local function teleportToLastRoadCallback(data, options)
               core_groundMarkers.routePlanner:trackPosition(recoveryPoint.pos)
               if core_groundMarkers.routePlanner.path[2] then
                 local routeDir = core_groundMarkers.routePlanner.path[2].pos - getPlayerVehicle(0):getPosition()
-                roadSide = roadDir:dot(routeDir) > 0 and legalSide or -legalSide
+                roadSide = drivingDir:dot(routeDir) > 0 and legalSide or -legalSide
               end
             end
 
@@ -671,13 +746,17 @@ local function teleportToLastRoadCallback(data, options)
             end
           end
 
-          -- Project the recovery position on the road
-          local scalarProjection = clamp(roadDir:dot((recoveryPoint.pos - n1.pos)) / (roadDir:length()^2), 0, 1)
-          local projectedPosition = n1.pos + roadDir * scalarProjection
-          pos = projectedPosition + perpendicular:normalized() * roadSide * ((n1.radius+n2.radius)/2 - veh.initialNodePosBB:getExtents().x/2)
+          -- Project the recovery point on the road segment
+          local segLenSq = segmentDir:length()^2
+          local scalarProjection = 0
+          if segLenSq > 0 then
+            scalarProjection = clamp(segmentDir:dot((recoveryPoint.pos - n1.pos)) / segLenSq, 0, 1)
+          end
+          local projectedPosition = n1.pos + segmentDir * scalarProjection
+          pos = projectedPosition + perpendicular:normalized() * roadSide * (lerp(n1.radius, n2.radius, scalarProjection) - veh.initialNodePosBB:getExtents().x/2)
 
           -- Find the rotation that puts the vehicle correctly in the driving direction
-          rot = quatFromDir(roadDir * legalSide * roadSide, n1.normal)
+          rot = quatFromDir(drivingDir * legalSide * roadSide, n1.normal)
           break
         end
       end
@@ -701,7 +780,7 @@ local function teleportToLastRoadCallback(data, options)
     rot = quatFromDir(veh:getDirectionVector(), veh:getDirectionVectorUp())
   end
 
-  safeTeleport(veh, pos, rot, nil, nil, nil, nil, options.resetVehicle)
+  safeTeleport(veh, pos, rot, nil, nil, nil, true, options.resetVehicle, nil, options.unlimitedSafeSpawnRange)
 end
 
 local function teleportToLastRoad(veh, options)
@@ -733,6 +812,9 @@ local function spawnVehicle(model, partConfig, pos, rot, options)
   local autoEnterVehicle = tostring(options.autoEnterVehicle ~= false) -- nil defaults to 'true'
   veh:setDynDataFieldbyName("autoEnterVehicle", 0, autoEnterVehicle)
 
+  local autoEnterVehiclePlayer = options.autoEnterVehiclePlayer ~= nil and tostring(options.autoEnterVehiclePlayer) or ""
+  veh:setDynDataFieldbyName("autoEnterVehiclePlayer", 0, autoEnterVehiclePlayer)
+
   local spawnDatablock = "default_vehicle"
   local dataBlock = scenetree.findObject(spawnDatablock)
 
@@ -752,13 +834,15 @@ local function spawnVehicle(model, partConfig, pos, rot, options)
   veh:registerObject(vehicleName)
   options.vehicleName = vehicleName
 
-  --veh.licenseText = TorqueScriptLua.getVar( "$beamngVehicleLicenseName","") -- core_vehicles will manage license text
   options.model = model
   options.config = partConfig
   options.pos = pos
   options.rot = rot
   options.cling = options.cling ~= false
-  setVehicleObject(veh, options)
+  local result = setVehicleObject(veh, options)
+  if not result then
+    return nil
+  end
   return veh
 end
 
@@ -851,16 +935,13 @@ local function spawnCamera()
   RenderViewManagerInstance:getOrCreateView('main'):setCameraObject(cam.obj)
 end
 
-local function spawnPlayer()
-  local spawnClass, spawnDatablock, spawnProperties, spawnScript, player
+
+
+local function spawnPlayerOld()
+  local spawnClass, player
   local spawnPoint = pickSpawnPoint('player')
 
-  if M.preventPlayerSpawning then
-    M.preventPlayerSpawning = nil
-    log('D',logTag,'not spawning player upon request')
-    return
-  end
-  local vehicleModel = TorqueScriptLua.getVar("$beamngVehicle")
+  local vehicleModel = VariableRegistry.get("$beamngVehicle")
   if vehicleModel == "" then
     log("D", "", "A vehicle has not been provided, not spawning it by default ")
     return
@@ -870,33 +951,28 @@ local function spawnPlayer()
   end
   if spawnPoint then
     spawnClass      = "BeamNGVehicle"
-    spawnDatablock  = "default_vehicle"
     if spawnPoint.spawnClass ~=""  then
       spawnClass = spawnPoint.spawnClass
     end
-    --[[
-    This may seem redundant given the above but it allows
-    the SpawnSphere to override the datablock without
-    overriding the default player class
-    ]]
-    if spawnPoint.spawnDatablock and scenetree.findObject(spawnPoint.spawnDatablock) then
-      spawnDatablock = spawnPoint.spawnDatablock
-    end
 
-    local config = TorqueScriptLua.getVar("$beamngVehicleConfig")
-    local color = stringToTable(TorqueScriptLua.getVar("$beamngVehicleColor"))
-    local paintData = stringToTable(TorqueScriptLua.getVar("$beamngVehicleMetallicPaintData"))
-    color = color or {}
-    color[1] = color[1] or 1
-    color[2] = color[2] or 1
-    color[3] = color[3] or 1
-    color[4] = color[4] or 1
     local options = {}
-    options.paint = createVehiclePaint({x = color[1], y = color[2], z = color[3], w = color[4]}, paintData)
-    options.paint2 = options.paint
-    options.paint3 = options.paint
+    local config = VariableRegistry.get("$beamngVehicleConfig")
+    local color = stringToTable(VariableRegistry.get("$beamngVehicleColor"))
+    local paintData = stringToTable(VariableRegistry.get("$beamngVehicleMetallicPaintData"))
+    if next(color) or next(paintData) then
+      color[1] = color[1] or 1
+      color[2] = color[2] or 1
+      color[3] = color[3] or 1
+      color[4] = color[4] or 1
+      options.paint = createVehiclePaint({x = color[1], y = color[2], z = color[3], w = color[4]}, paintData)
+      options.paint2 = options.paint
+      options.paint3 = options.paint
+    end
     options.vehicleName = "thePlayer"
-    player = spawnVehicle(vehicleModel, config, spawnPoint:getPosition(), quat(spawnPoint:getRotation()) * quat(0,0,1,0), options)
+    options.config = config
+    options.pos = spawnPoint:getPosition()
+    options.rot = quat(spawnPoint:getRotation()) * quat(0,0,1,0)
+    player = core_vehicles.spawnNewVehicle(vehicleModel, options)
   end
 
   -- Update the default camera to start with the player
@@ -931,9 +1007,28 @@ local function spawnPlayer()
   gameConnection.player = player
 end
 
+local function spawnPlayer()
+  if M.preventPlayerSpawning then
+    M.preventPlayerSpawning = nil
+    log('D',logTag,'not spawning player upon request')
+    return
+  end
+  -- keep old TS spawning code for backward compatibility.
+  -- previously, this was set via vehicles.loadMaybeVehicle(). now that code is changed so it spawns the vehicles directly
+  local vehicleModel = VariableRegistry.get("$beamngVehicle")
+  if vehicleModel and vehicleModel ~= "" then
+    log("W", logTag, "Using Old TS Spawning Code to spawn vehicle!: " .. dumps(vehicleModel))
+    print(debug.tracesimple())
+    spawnPlayerOld()
+    return
+  end
+  if core_levels then
+    core_levels.maybeSpawnDefaultVehicle()
+  end
+end
 
 ----------------
-local function calculateRelativeVehiclePlacement(transform0, coupler0_offset, transform1, coupler1_offset)
+local function calculateRelativeVehiclePlacement(transform0, coupler0_offset, coupler1_offset, rotOffset)
   local coupler0_ws
   do
     local coupler0_os = MatrixF(true)
@@ -945,33 +1040,47 @@ local function calculateRelativeVehiclePlacement(transform0, coupler0_offset, tr
   do
     local coupler1_os = MatrixF(true)
     coupler1_os:setColumn(3, coupler1_offset)
-    local coupler1_ws = transform1 * coupler1_os
 
-    res = coupler0_ws * (coupler1_ws:inverse() * transform1)
+    if rotOffset then
+      res = coupler0_ws * rotOffset * coupler1_os:inverse()
+    else
+      res = coupler0_ws * coupler1_os:inverse()
+    end
   end
   return res
 end
 
-local function placeTrailer(vehId, couplerOffsetVeh, trailerId, couplerOffsetTrailer, couplerTag)
+local function couplerIsOnFrontSide(couplerOffset, veh)
+  if not couplerOffset then return false end
+  local refNodeInitial = veh:getInitialNodePosition(veh:getRefNodeId())
+  local centerOffset = veh.initialCollidableNodePosBB:getCenter() - refNodeInitial
+  local res = (couplerOffset - centerOffset):dot(localVehForward) > 0
+  return res
+end
 
-  local veh = be:getObjectByID(vehId)
+local function placeTrailer(vehId, couplerOffsetVeh, trailerId, couplerOffsetTrailer, couplerTag, rotOffset)
+  local veh = getObjectByID(vehId)
   if not veh then return end
 
-  local veh2 = be:getObjectByID(trailerId)
+  local veh2 = getObjectByID(trailerId)
   if not veh2 then return end
 
   local transform0 = veh:getRefNodeMatrix()
-  local coupler0_offset = couplerOffsetVeh--vec3(0, 3, 0.2)
-  local transform1 = veh2:getRefNodeMatrix()
-  local coupler1_offset = couplerOffsetTrailer--vec3(0.3, -3.3, 0)
 
-  local mat = calculateRelativeVehiclePlacement(transform0, coupler0_offset, transform1, coupler1_offset)
+  -- If both couplers are on the same end (both "front" or both "rear") then flip the trailer 180° around
+  if couplerIsOnFrontSide(couplerOffsetVeh, veh) == couplerIsOnFrontSide(couplerOffsetTrailer, veh2) then
+    local flip = MatrixF(true)
+    flip:setFromEuler(vec3(0, 0, math.pi))
+    rotOffset = (rotOffset and (rotOffset * flip)) or flip
+  end
+
+  local mat = calculateRelativeVehiclePlacement(transform0, couplerOffsetVeh, couplerOffsetTrailer, rotOffset)
 
   veh2:setTransform(mat)
   veh2:queueLuaCommand('obj:requestReset(RESET_PHYSICS)')
   veh2:resetBrokenFlexMesh()
 
-  if core_trailerRespawn.getCouplerTagsOptions()[couplerTag] == "autoCouple" then
+  if core_vehicles.couplerTagsOptions[couplerTag] == "autoCouple" then
     veh:queueLuaCommand(string.format('beamstate.activateAutoCoupling("%s")', couplerTag))
   end
 end
@@ -1006,6 +1115,7 @@ M.spawnVehicle                      = spawnVehicle
 M.setVehicleObject                  = setVehicleObject
 M.spawnCamera                       = spawnCamera
 M.spawnPlayer                       = spawnPlayer
+M.pickSpawnPoint                    = pickSpawnPoint
 M.calculateRelativeVehiclePlacement = calculateRelativeVehiclePlacement
 M.placeTrailer                      = placeTrailer
 M.safeTeleport                      = safeTeleport

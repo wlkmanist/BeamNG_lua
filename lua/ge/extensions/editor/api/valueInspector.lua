@@ -10,17 +10,13 @@ local globalsInitialized = false
 local comboMenuOpen = false
 local inputTextShortStringMaxSize = 1024
 local differentValuesColor = imgui.ImVec4(1, 0.5, 0, 1)
-local arrayHeaderBgColor = imgui.ImVec4(0.04, 0.15, 0.1, 1)
 local annotationsTbl = nil
 local annotations = {}
-local maxGroupCount = 500
 local dataBlocksTbl = {}
 local dataBlockNames = {}
 local noDataBlockString = "<None>"
 local noValueString = "<None>"
 local noAnnotationString = "<None>"
-local minFloatValue = -1000000000
-local maxFloatValue = 1000000000
 local undefinedInteger = 2147483647
 local filteredFieldPopupSize = imgui.ImVec2(500, 500)
 local tooltipLongTextLength = 70
@@ -375,7 +371,7 @@ function C:displayMaterialPopupList(objectSet, fieldName, fieldNameId, fieldValu
             if texture then
               if not (texture.texId == nil) then
                 if imgui.ImageButton(
-				  "##DisplayMaterialButton",
+                  "##DisplayMaterialButton_" .. objName,
                   texture.texId,
                   imgui.ImVec2(32, 32),
                   imgui.ImVec2Zero,
@@ -572,7 +568,7 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
 
   if nil == indeterminateFlags then indeterminateFlags = 0 end
 
-  imgui.PushID1(self.inspectorName .. "_FIELDS_COLUMN")
+  imgui.PushID1(self.inspectorName .. "_FIELD_" .. fieldName .. (arrayIndex or ""))
   imgui.Columns(2, self.inspectorName .. "FieldsColumn")
 
   if isDifferent then
@@ -589,13 +585,40 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
 
   setCopyPasteMenu(fieldName, fieldType, fieldValue, arrayIndex, customData, pasteCallback, contextMenuUI)
 
-  if imgui.IsItemHovered() and fieldDesc and fieldDesc ~= "" then
-    if self.addTypeToTooltip then fieldDesc = fieldDesc .. "\n\nType: " .. fieldType .. "\nTypeName: " .. fieldTypeName end
-    imgui.BeginTooltip()
-    imgui.PushTextWrapPos(imgui.GetCursorPos().x + 400)
-    imgui.Text(fieldDesc)
-    imgui.PopTextWrapPos()
-    imgui.EndTooltip()
+  if imgui.IsItemHovered() then
+    editor.disableGlobalCopyPaste = true
+    if fieldDesc and fieldDesc ~= "" then
+      if self.addTypeToTooltip then fieldDesc = fieldDesc .. "\n\nType: " .. fieldType .. "\nTypeName: " .. fieldTypeName end
+      imgui.BeginTooltip()
+      imgui.PushTextWrapPos(imgui.GetCursorPos().x + 400)
+      imgui.Text(fieldDesc)
+      imgui.PopTextWrapPos()
+      imgui.EndTooltip()
+    end
+
+    if editor.getPreference("ui.general.inspectorFieldNameHoverCopyPaste") == true then
+      local io = imgui.GetIO()
+      if io.KeyCtrl then
+        if imgui.IsKeyPressed(imgui.GetKeyIndex(imgui.Key_C)) then
+          setClipboard(jsonEncode({copiedValue = fieldValue, copiedFieldType = fieldType}))
+        end
+        if imgui.IsKeyPressed(imgui.GetKeyIndex(imgui.Key_V)) then
+          local tbl = jsonDecodeSilent(getClipboard(), "ValueInspectorCopyPasteMenu")
+          local isPasteDisabled = not tbl or fieldType ~= tbl.copiedFieldType
+
+          local destIsString = fieldType == "string"
+            or fieldType == "caseString"
+            or fieldType == "BString"
+            or fieldType == "stdString"
+
+          if not destIsString and isPasteDisabled then
+            editor.logWarn("Cannot paste, different field types.")
+          elseif tbl and tbl.copiedValue and pasteCallback then
+            pasteCallback(fieldName, tbl.copiedValue, arrayIndex, customData)
+          end
+        end
+      end
+    end
   end
 
   imgui.NextColumn()
@@ -691,7 +714,7 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     else
       ffi.copy(self.inputTextValue, "")
     end
-    local changed = editor.uiInputText(fieldNameId, self.inputTextValue, ffi.sizeof(self.inputTextValue), nil, nil, nil, self.editEnded)
+    local changed = editor.uiInputText(fieldNameId, self.inputTextValue, imgui.ArraySize(self.inputTextValue), nil, nil, nil, self.editEnded)
 
     if changed then
       fieldValueCached = ffi.string(self.inputTextValue)
@@ -740,7 +763,7 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     local res = false
 
     if isDifferent then
-      res = editor.uiInputText(fieldNameId, self.inputTextValue, ffi.sizeof(self.inputTextValue), nil, nil, nil, self.editEnded)
+      res = editor.uiInputText(fieldNameId, self.inputTextValue, imgui.ArraySize(self.inputTextValue), nil, nil, nil, self.editEnded)
     else
       if editor.getPreference("ui.general.useSlidersInInspector") then
         res = editor.uiDragFloat(fieldNameId, self.input4FloatValue, 0.1, nil, nil, floatFormat, nil, self.editEnded)
@@ -787,7 +810,7 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
 
     local res = false
     if isDifferent then
-      res = editor.uiInputText(fieldNameId, self.inputTextValue, ffi.sizeof(self.inputTextValue), nil, nil, nil, self.editEnded)
+      res = editor.uiInputText(fieldNameId, self.inputTextValue, imgui.ArraySize(self.inputTextValue), nil, nil, nil, self.editEnded)
     else
       if editor.getPreference("ui.general.useSlidersInInspector") then
         res = editor.uiDragInt(fieldNameId, self.input4IntValue, 1, nil, nil, nil, nil, self.editEnded)
@@ -840,7 +863,13 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     local filename = ""
     local extensions = nil
 
-    if fieldTypeName == "TypeShapeFilename" then extensions = {"Collada", {".dae"}} end
+    if fieldTypeName == "TypeShapeFilename" then
+      -- match what the engine can actually load: .dae/.dts/.cdae, plus every assimp format when -assimp is active
+      local list = getSupportedShapeExtensions and getSupportedShapeExtensions() or ".dae"
+      local exts = {}
+      for e in string.gmatch(list, "[^;]+") do exts[#exts + 1] = e end
+      extensions = {"Meshes", exts}
+    end
     if fieldTypeName == "TypeImageFilename" then extensions = {"Images", {".png", ".dds", ".jpg"}} end
     if fieldTypeName == "TypePrefabFilename" then extensions = {"Prefabs", {".prefab", ".prefab.json"}} end
     if imgui.Button("  ...  " .. fieldNameId) then
@@ -849,7 +878,7 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
       if extensions then fileSpec = {extensions, {"All Files","*"}} end
       editor_fileDialog.openFile(function(data)
         if data.filepath ~= "" then
-          fieldValue = data.filepath
+          fieldValue = editor.linkifyPath(data.filepath)
           self.setValueCallback(fieldName, fieldValue, arrayIndex, customData, self.editEnded[0] or changed)
         end
       end, fileSpec, false, dir)
@@ -859,10 +888,20 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     if fieldValue ~= nil then
       ffi.copy(self.inputTextValue, fieldValue)
     end
-    if editor.uiInputText(fieldNameId, self.inputTextValue, ffi.sizeof(self.inputTextValue), nil, nil, nil, self.editEnded) and self.editEnded[0] then
-      fieldValue = ffi.string(self.inputTextValue)
+    if editor.uiInputText(fieldNameId, self.inputTextValue, imgui.ArraySize(self.inputTextValue), nil, nil, nil, self.editEnded) and self.editEnded[0] then
+      fieldValue = editor.linkifyPath(ffi.string(self.inputTextValue))
       self.setValueCallback(fieldName, fieldValue, arrayIndex, customData, self.editEnded[0])
     end
+    if imgui.BeginDragDropTarget() then
+      local payload = imgui.AcceptDragDropPayload("ASSETDRAGDROP")
+      if payload~=nil then
+        assert(payload.DataSize == 2048)
+        fieldValue = editor.linkifyPath(ffi.string(payload.Data))
+        self.setValueCallback(fieldName, fieldValue, arrayIndex, customData, self.editEnded[0])
+      end
+      imgui.EndDragDropTarget()
+    end
+
     setFilenameContextMenu(fieldName, fieldType, fieldValue, arrayIndex, customData, pasteCallback, contextMenuUI)
 
     imgui.PopItemWidth()
@@ -1275,9 +1314,18 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     end
   -------------------------------------------------------------------------------------------------------------------------
   elseif customData and customData.isDataBlock then
-    if imgui.Button("  ...  ###" .. fieldNameId) then
+    if editor.uiIconImageButton(editor.icons.more_horiz, imgui.ImVec2(20, 20), nil, nil, nil) then
       imgui.OpenPopup(fieldNameId .. "DataBlockPopup")
     end
+    imgui.tooltip("Pick Datablock")
+    imgui.SameLine()
+    if editor.uiIconImageButton(editor.icons.edit, imgui.ImVec2(20, 20), nil, nil, nil) then
+      local obj = scenetree.findObject(fieldValue)
+      if obj then
+        editor.openDatablockEditor(obj:getID(), self.selectedIds[1])
+      end
+    end
+    imgui.tooltip("Edit Datablock")
     imgui.SameLine()
     if fieldValue == "" then
       imgui.Text(noValueString)
@@ -1399,7 +1447,7 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     end
 
     imgui.PushItemWidth(imgui.GetContentRegionAvailWidth())
-    local changed = editor.uiInputText(fieldNameId, self.inputTextValue, ffi.sizeof(self.inputTextValue), nil, nil, nil, self.editEnded)
+    local changed = editor.uiInputText(fieldNameId, self.inputTextValue, imgui.ArraySize(self.inputTextValue), nil, nil, nil, self.editEnded)
     if changed then
       fieldValueCached = ffi.string(self.inputTextValue)
     end
@@ -1414,7 +1462,6 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     imgui.tooltip("This field's type: '".. fieldType .."' is not known by Inspector, hence a default text input editor was provided")
   end
   imgui.PopItemWidth()
-  if isDifferent then imgui.PopStyleColor() end
   imgui.Columns(1)
   imgui.PopID()
 end

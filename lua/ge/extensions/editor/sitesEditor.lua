@@ -1,29 +1,25 @@
-  -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-local u_32_max_int = 4294967295
+
 local logTag = 'sites_editor_tool'
 local toolWindowName = "sitesEditorTool"
 local editModeName = "Edit Sites"
 local im = ui_imgui
 local ffi = require('ffi')
-local currentMode = 'Locations'
-local previousFilepath = "/gameplay/sites/"
+local previousFilepath = path.split(getMissionFilename()) or "/gameplay/sites/"
 local previousFilename = "newSite.sites.json"
 local windows = {}
 local currentWindow = {}
-local testingWindow
 local currentSites = require('/lua/ge/extensions/gameplay/sites/sites')("New Sites")
 local allFiles = {}
 
-
 local mouseInfo = {}
-local nameText = im.ArrayChar(1024, "")
 
 local function saveSites(sites, savePath)
-  local dir, filename, ext = path.split(savePath)
+  local dir, filename, _ = path.split(savePath)
   sites.dir = dir
   sites.name = filename
   local json = sites:onSerialize()
@@ -35,7 +31,7 @@ local function loadSites(loadPath)
   local sites = extensions.gameplay_sites_sitesManager.loadSites(loadPath)
   if sites then
     currentSites = sites
-    local dir, filename, ext = path.split(loadPath)
+    local dir, _, _ = path.split(loadPath)
     previousFilepath = dir
     for _, window in ipairs(windows) do
       window:setSites(currentSites)
@@ -88,7 +84,7 @@ local function onEditorGui()
             window:unselect()
           end
           currentWindow:selected()
-          previousFilepath = "/gameplay/sites/"
+          previousFilepath = path.split(getMissionFilename()) or "/gameplay/sites/"
         end
         if im.MenuItem1("Load...") then
           editor_fileDialog.openFile(function(data) currentSites = loadSites(data.filepath) end, {{"Sites Files",".sites.json"}}, false, previousFilepath)
@@ -219,6 +215,7 @@ local function managerSites()
     local levelSites = extensions.gameplay_sites_sitesManager.getSitesFilesByLevel()
     local lvlNamesSorted = {}
     local emptyLevelNamesSorted = {}
+    local gameplaySites = FS:findFiles('/gameplay', '*.sites.json', -1, false, true) or {}
     for level, sites in pairs(levelSites) do
       if #sites > 0 then
         table.insert(lvlNamesSorted, level)
@@ -228,6 +225,7 @@ local function managerSites()
     end
     table.sort(lvlNamesSorted)
     table.sort(emptyLevelNamesSorted)
+    table.sort(gameplaySites)
 
     if im.MenuItem1("Refresh") then
       extensions.gameplay_sites_sitesManager.getAllLevelSites()
@@ -235,6 +233,22 @@ local function managerSites()
     if im.BeginMenu("Empty Levels") then
       for _, name in ipairs(emptyLevelNamesSorted) do
         im.MenuItem1(name)
+      end
+      im.EndMenu()
+    end
+    if im.BeginMenu("/gameplay") then
+      for _, site in ipairs(gameplaySites) do
+        local siteName = site:gsub("^/gameplay/", "")
+        if im.MenuItem1(siteName) then
+          currentSites = extensions.gameplay_sites_sitesManager.loadSites(site)
+          for _, window in ipairs(windows) do
+            window:setSites(currentSites)
+            window:unselect()
+          end
+          currentWindow:selected()
+          previousFilepath = currentSites.dir
+        end
+        im.tooltip(site)
       end
       im.EndMenu()
     end
@@ -288,16 +302,14 @@ local function onDeactivate()
 end
 
 local function onEditorInitialized()
-  editor.registerWindow(toolWindowName, im.ImVec2(400, 400))
+  editor.registerWindow(toolWindowName, im.ImVec2(500, 500))
   editor.editModes.sitesEditMode =
   {
     displayName = editModeName,
     onUpdate = nop,
     onActivate = onActivate,
     onDeactivate = onDeactivate,
-    auxShortcuts = {},
-    --icon = editor.icons.tb_close_track,
-    --iconTooltip = "Race Editor"
+    auxShortcuts = {}
   }
   editor.editModes.sitesEditMode.auxShortcuts[editor.AuxControl_LMB] = "Select"
   editor.addWindowMenuItem("Sites Editor", function() show() end, {groupMenuName="Gameplay"})
@@ -320,16 +332,16 @@ local function onEditorInitialized()
   table.insert(windows, spotsList)
 
   local locTags = require('/lua/ge/extensions/editor/sitesEditor/tags')(M,'locations')
-  locTags.windowDescription = "Loc Tags"
+  locTags.windowDescription = "Location Tags"
   table.insert(windows, locTags)
-
-  local psTags = require('/lua/ge/extensions/editor/sitesEditor/tags')(M,'parkingSpots')
-  psTags.windowDescription = "Parking Spot Tags"
-  table.insert(windows, psTags)
 
   local zoneTags = require('/lua/ge/extensions/editor/sitesEditor/tags')(M,'zones')
   zoneTags.windowDescription = "Zone Tags"
   table.insert(windows, zoneTags)
+
+  local psTags = require('/lua/ge/extensions/editor/sitesEditor/tags')(M,'parkingSpots')
+  psTags.windowDescription = "Parking Spot Tags"
+  table.insert(windows, psTags)
 
 --  table.insert(windows, require('/lua/ge/extensions/editor/sitesEditor/zones')(M))
   --table.insert(windows, require('/lua/ge/extensions/editor/sitesEditor/general')(M))

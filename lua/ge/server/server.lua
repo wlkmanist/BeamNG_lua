@@ -12,7 +12,8 @@ local function endMission(p)
     local missionFilename = getMissionFilename()
     log('I', logTag,"*** Level ended: "..missionFilename)
 
-    TorqueScriptLua.setVar("$instantGroup", 0)
+    -- $instantGroup expects strings
+    VariableRegistry.set("$instantGroup", "0")
     if p then p:add("endMission.vars") end
     clientEndMission(missionFilename)
     if p then p:add("endMission.clientEndMission") end
@@ -55,35 +56,29 @@ local function endMission(p)
     if p then p:add("endMission.finalSet") end
 end
 
+local levelOffsetOverride = nil
+
+local function setLevelOffset(x, y, z)
+  if x == nil then
+    levelOffsetOverride = nil
+    return
+  end
+  if x ~= nil and y ~= nil and z ~= nil then
+    levelOffsetOverride = Point3F(x, y, z)
+  else
+    log('E', logTag, 'Invalid argument for levelOffset: expected three numeric values.')
+  end
+end
+
 -- this function can patch the loading context depending on the program's command line arguments
 local function patchLoadingContext(ldgCtx)
-  local cmdArgs = Engine.getStartingArgs()
-  local i = 1
-  while i <= #cmdArgs do
-    local v = cmdArgs[i]
-    if v == '-levelOffset' then
-      if i + 3 <= #cmdArgs then
-        local x = tonumber(cmdArgs[i + 1])
-        local y = tonumber(cmdArgs[i + 2])
-        local z = tonumber(cmdArgs[i + 3])
-        if x and y and z then
-          local mat = MatrixF(true)
-          local pos = Point3F(x, y, z)
-          mat:setPosition(pos)
-          ldgCtx.tileTransform = mat
-          log('I', string.format('### Global level offset set to (%.2f, %.2f, %.2f)', x, y, z))
-          i = i + 4 -- Skip the consumed arguments
-        else
-          log('E', 'Invalid argument for -levelOffset: expected three numeric values.')
-        end
-      else
-        log('E', 'Not enough arguments for -levelOffset: expected three numeric values.')
-      end
-    else
-      i = i + 1 -- Move to the next argument
-    end
+  if levelOffsetOverride then
+    local mat = MatrixF(true)
+    local pos = levelOffsetOverride
+    mat:setPosition(pos)
+    ldgCtx.tileTransform = mat
+    log('I', string.format('### Global level offset set to (%.2f, %.2f, %.2f)', pos.x, pos.y, pos.z))
   end
-
 end
 
 --seems to work for freeroam
@@ -107,7 +102,7 @@ local function createGameActual(lvlPath, customLoadingFunction)
   local timer1 = hptimer()
   timer2 = hptimer()
 
-  TorqueScriptLua.setVar("$loadingLevel", true)  -- DO NOT REMOVE, this is used on the c++ side
+  VariableRegistry.set("$loadingLevel", true)  -- DO NOT REMOVE, this is used on the c++ side
   levelPath = levelPath:lower()
   if not levelPath:find(".json") and not levelPath:find(".mis") then
     local levelName = path.levelFromPath(levelPath)
@@ -117,9 +112,9 @@ local function createGameActual(lvlPath, customLoadingFunction)
   profilerPushEvent('clientPreStartMission')
 
   clientPreStartMission(levelPath)
-  profilerPopEvent() -- clientPreStartMission
+  profilerPopEvent("clientPreStartMission")
 
-  TorqueScriptLua.setVar("$Physics::isSinglePlayer", "true")
+  VariableRegistry.set("$Physics::isSinglePlayer", "true")
 
   local timeInit = timer1:stopAndReset() / 1000
 
@@ -128,8 +123,8 @@ local function createGameActual(lvlPath, customLoadingFunction)
     TorqueScriptLua.exec("core/art/datablocks/datablockExec.cs")
   end
 
-  profilerPopEvent() -- init
-  loadingProgress:update(-1, 'init done')
+  profilerPopEvent("init")
+  loadingProgress:update(-1, _tr("ui.loading.level.initDone"))
 
   profilerPushEvent('datablocks')
 
@@ -149,16 +144,26 @@ local function createGameActual(lvlPath, customLoadingFunction)
     TorqueScriptLua.exec("art/decals/managedDecalData.cs")
     loadingProgress:update(-1, '')
   end
-  TorqueScriptLua.exec("art/datablocks/datablockExec.cs")
+
+  loadJsonMaterialsFile("art/datablocks/audioProfiles.datablocks.json")
   loadingProgress:update(-1, '')
+  loadJsonMaterialsFile("art/datablocks/sounds.datablocks.json")
+  loadingProgress:update(-1, '')
+  if FS:fileExists("art/datablocks/player.datablocks.json") then
+    loadJsonMaterialsFile("art/datablocks/player.datablocks.json")
+    loadingProgress:update(-1, '')
+  end
+  loadJsonMaterialsFile("art/datablocks/datablockExec.datablocks.json")
+  loadingProgress:update(-1, '')
+
   loadJsonMaterialsFile("art/datablocks/lights.datablocks.json")
   loadingProgress:update(-1, '')
   loadJsonMaterialsFile("art/datablocks/managedDatablocks.datablocks.json")
 
   local timeDatablocks = timer1:stopAndReset() / 1000
 
-  profilerPopEvent() -- datablocks
-  loadingProgress:update(-1, 'datablocks done')
+  profilerPopEvent("datablocks")
+  loadingProgress:update(-1, _tr("ui.loading.level.datablocksDone"))
   profilerPushEvent('materials')
 
   endMission()
@@ -171,10 +176,10 @@ local function createGameActual(lvlPath, customLoadingFunction)
   LevelLoadingGroup:registerObject("LevelLoadingGroup")
 
   --Make the LevelLoadingGroup group the place where all new objects will automatically be added.
-  TorqueScriptLua.setVar("$instantGroup", "LevelLoadingGroup")
+  VariableRegistry.set("$instantGroup", "LevelLoadingGroup")
 
 
-  TorqueScriptLua.setVar("$missionRunning", "false")
+  VariableRegistry.set("$missionRunning", "false")
   setMissionFilename(levelPath:gsub("//", "/"))
 
   local levelDir = path.dirname(levelPath)
@@ -183,7 +188,7 @@ local function createGameActual(lvlPath, customLoadingFunction)
   end
   setMissionPath(levelDir)
 
-  TorqueScriptLua.setVar("$Server::LoadFailMsg", "")
+  VariableRegistry.set("$Server::LoadFailMsg", "")
 
   -- clear LevelInfo so there is no conflict with the actual LevelInfo loaded in the level
   local levelInfo = scenetree.findObject("theLevelInfo")
@@ -223,8 +228,8 @@ local function createGameActual(lvlPath, customLoadingFunction)
     TorqueScriptLua.exec(filename)
   end
 
-  profilerPopEvent() -- materials
-  loadingProgress:update(-1, 'materials done')
+  profilerPopEvent("materials")
+  loadingProgress:update(-1, _tr("ui.loading.level.materialsDone"))
   profilerPushEvent('objects')
 
   local timeMat = timer1:stopAndReset()/1000
@@ -268,11 +273,11 @@ local function createGameActual(lvlPath, customLoadingFunction)
   misCleanup:registerObject("MissionCleanup")
 
   --Make the MissionCleanup group the place where all new objects will automatically be added.
-  TorqueScriptLua.setVar("$instantGroup", misCleanup:getID())
+  VariableRegistry.set("$instantGroup", misCleanup:getIdString())
 
   log('I', 'levelLoading', "Level loaded: "..getMissionFilename())
 
-  TorqueScriptLua.setVar("$missionRunning", 1)
+  VariableRegistry.set("$missionRunning", 1)
 
   -- be:physicsStartSimulation()
   extensions.hook('onClientCustomObjectSpawning', mission)
@@ -296,15 +301,15 @@ local function createGameActual(lvlPath, customLoadingFunction)
   end
   local timeDecals = timer1:stopAndReset() / 1000
 
-  profilerPopEvent() -- objects
-  loadingProgress:update(-1, 'objects done')
+  profilerPopEvent("objects")
+  loadingProgress:update(-1, _tr("ui.loading.level.objectsDone"))
   profilerPushEvent('start physics')
 
   be:physicsStartSimulation()
   local timePhysics = timer1:stopAndReset() / 1000
 
-  profilerPopEvent() -- start physics
-  loadingProgress:update(-1, 'physics done')
+  profilerPopEvent("start physics")
+  loadingProgress:update(-1, _tr("ui.loading.level.physicsDone"))
   profilerPushEvent('spawn player')
 
   -- NOTE(AK): These spawns are only needed by freeroam. Scenario does it's own spawning
@@ -313,7 +318,7 @@ local function createGameActual(lvlPath, customLoadingFunction)
   spawn.spawnPlayer()
   extensions.hook('onPlayerCameraReady')
   local timePlayer = timer1:stopAndReset() / 1000
-  profilerPopEvent() -- spawn player
+  profilerPopEvent("spawn player")
 
   ------------------------------------
   if customLoadingFunction then
@@ -335,7 +340,7 @@ local function fadeoutLoadingScreen(skipStart)
     log("W",'fadeoutLoadingScreen',"levelPath is already nil.")
     return
   end
-  loadingProgress:update(-1, 'player done')
+  loadingProgress:update(-1, _tr("ui.loading.level.playerDone"))
 
   core_gamestate.requestExitLoadingScreen(logTag)
 
@@ -344,18 +349,18 @@ local function fadeoutLoadingScreen(skipStart)
 
     clientPostStartMission(levelPath)
 
-    profilerPopEvent() -- clientPostStartMission
+    profilerPopEvent("clientPostStartMission")
     profilerPushEvent('clientStartMission')
 
     clientStartMission(getMissionFilename())
 
-    profilerPopEvent() -- clientStartMission
+    profilerPopEvent("clientStartMission")
   else
     guihooks.trigger('MenuHide')
   end
 
   Engine.Platform.taskbarSetProgressState(0)
-  TorqueScriptLua.setVar("$loadingLevel", false) -- DO NOT REMOVE, this is used on the c++ side
+  VariableRegistry.set("$loadingLevel", false) -- DO NOT REMOVE, this is used on the c++ side
 
   LoadingManager:pop(loadingProgress)
 
@@ -369,7 +374,7 @@ local function fadeoutLoadingScreen(skipStart)
 end
 
 local function destroy(p)
-  TorqueScriptLua.setVar("$missionRunning", "false")
+  VariableRegistry.set("$missionRunning", "false")
   if p then p:add("server.destroy.setvar") end
 
   --End any running levels
@@ -379,7 +384,7 @@ local function destroy(p)
   be:physicsDestroyWorld()
   if p then p:add("server.destroy.physics") end
 
-  TorqueScriptLua.setVar("$Server::GuidList", "")
+  VariableRegistry.set("$Server::GuidList", "")
   if p then p:add("server.destroy.setvar") end
 
   -- Delete all the data blocks...
@@ -388,8 +393,8 @@ local function destroy(p)
 
   -- Increase the server session number.  This is used to make sure we're
   -- working with the server session we think we are.
-  local sessionCnt = (tonumber(TorqueScriptLua.getVar("$Server::Session")) or 0) +1
-  TorqueScriptLua.setVar("$Server::Session", sessionCnt)
+  local sessionCnt = (tonumber(VariableRegistry.get("$Server::Session")) or 0) +1
+  VariableRegistry.set("$Server::Session", sessionCnt)
   if p then p:add("server.destroy.sessioncount") end
 
   rawset(_G, 'levelLoaded', nil)
@@ -414,4 +419,5 @@ M.createGame = createGameWrapper
 M.destroy = destroy
 M.loadingProgress = loadingProgress
 M.fadeoutLoadingScreen = fadeoutLoadingScreen
+M.setLevelOffset = setLevelOffset
 return M

@@ -15,7 +15,7 @@ local function getSpawnPointTranslation(spawnPointName)
   if levelData and levelData.spawnPoints then
     for _, spawnPointData in ipairs(levelData.spawnPoints) do
       if spawnPointData.objectname == spawnPointName then
-        return translateLanguage(spawnPointData.translationId, spawnPointData.translationId)
+        return _tr(spawnPointData.translationId)
       end
     end
   end
@@ -27,7 +27,7 @@ local updateTime = 1
 local lastUpdateTimer = updateTime
 local function onUpdate(dtReal, dtSim, dtRaw)
   -- Check if an undiscovered spawn point is close
-  if not career_modules_linearTutorial.getTutorialFlag('spawnPointDiscoveryEnabled') then return end
+  if career_modules_tutorial.isActive() then return end
   if not (getCurrentLevelIdentifier() and career_modules_inventory and career_modules_inventory.getCurrentVehicle() and getPlayerVehicle(0)) then return end
   lastUpdateTimer = lastUpdateTimer + dtReal
   if lastUpdateTimer < updateTime then return end
@@ -78,7 +78,7 @@ local function getUnlockedSpawnpointsData()
 end
 
 local function loadDataFromFile()
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   if not saveSlot then return end
 
   local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
@@ -100,25 +100,20 @@ local function onExtensionLoaded()
 end
 
 local function onCareerActive(active)
+  if not active then return end
   loadDataFromFile()
 end
 
 -- this should only be loaded when the career is active
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   career_saveSystem.jsonWriteFileSafe(currentSavePath .. "/career/"..fileName, unlockedSpawnpoints, true)
 end
-
-local function onClientStartMission()
-
-end
-
 
 
 M.onUpdate = onUpdate
 M.onExtensionLoaded = onExtensionLoaded
 M.onCareerActive = onCareerActive
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 M.isSpawnPointDiscovered = isSpawnPointDiscovered
-M.onClientStartMission = onClientStartMission
 M.getUnlockedSpawnpointsData = getUnlockedSpawnpointsData
 return M

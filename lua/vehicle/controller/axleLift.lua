@@ -4,7 +4,6 @@
 
 local M = {}
 M.type = "auxiliary"
-M.relevantDevice = "transfercase"
 
 local min = math.min
 local abs = math.abs
@@ -12,7 +11,10 @@ local abs = math.abs
 local hasBuiltPie
 
 local currentMode
-local modes = { auto = "auto", manual = "manual", off = "off" }
+local modes = {auto = "auto", manual = "manual", off = "off"}
+
+local frontAxleLiftElectricsName
+local rearAxleLiftElectricsName
 
 local velocityThresholdDisable
 local velocityThresholdEnable
@@ -46,8 +48,8 @@ local function updateGFX(dt)
     rearPos = rearLoweredPosition
   end
 
-  electrics.values.strut_F_axleLift = frontPos
-  electrics.values.strut_R_axleLift = rearPos
+  electrics.values[frontAxleLiftElectricsName] = frontPos
+  electrics.values[rearAxleLiftElectricsName] = rearPos
 end
 
 local function setMode(mode)
@@ -69,6 +71,11 @@ local function toggleMode()
   setMode(getNextMode())
 end
 
+local function reset()
+  electrics.values[frontAxleLiftElectricsName] = 0
+  electrics.values[rearAxleLiftElectricsName] = 0
+end
+
 local function init(jbeamData)
   velocityThresholdDisable = jbeamData.velocityThresholdDisable or 14
   velocityThresholdEnable = jbeamData.velocityThresholdEnable or 0.1
@@ -77,9 +84,11 @@ local function init(jbeamData)
   rearLoweredPosition = jbeamData.rearLoweredPosition or 0
   frontRaisedPosition = jbeamData.frontRaisedPosition or 1
   rearRaisedPosition = jbeamData.rearRaisedPosition or 1
+  frontAxleLiftElectricsName = jbeamData.frontAxleLiftElectricsName or "strut_F_axleLift"
+  rearAxleLiftElectricsName = jbeamData.rearAxleLiftElectricsName or "strut_R_axleLift"
 
-  electrics.values.strut_F_axleLift = 0
-  electrics.values.strut_R_axleLift = 0
+  electrics.values[frontAxleLiftElectricsName] = 0
+  electrics.values[rearAxleLiftElectricsName] = 0
 
   velocitySmoother:reset()
   setMode(modes.auto)
@@ -87,15 +96,16 @@ local function init(jbeamData)
   if not hasBuiltPie then
     core_quickAccess.addEntry(
       {
-        level = "/powertrain/",
+        level = "/root/playerVehicle/vehicleFeatures/",
         generator = function(entries)
           local noEntry = {
-            title = "Axle Lift",
+            title = "ui.radialmenu2.axleLift",
             priority = 40,
-            icon = "radial_wheel_lift",
+            icon = "axleLift",
+            uniqueID = "axleLiftToggleMode_" .. M.name,
             onSelect = function()
-              controller.getControllerSafe("axleLift").toggleMode()
-              return { "reload" }
+              controller.getControllerSafe(M.name).toggleMode()
+              return {"reload"}
             end
           }
           table.insert(entries, noEntry)
@@ -122,6 +132,7 @@ local function setParameters(parameters)
 end
 
 M.init = init
+M.reset = reset
 M.updateGFX = updateGFX
 M.toggleMode = toggleMode
 M.setMode = setMode

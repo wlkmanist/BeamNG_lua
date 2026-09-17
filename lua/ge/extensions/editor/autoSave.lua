@@ -13,15 +13,16 @@ local showWindowNow = false
 local autosaves = nil
 local selectedAutosaveIndex = 0
 local wasNotCleanExit = false
+local levelAutoSavePath = "/temp/level_autosaves/"
 
 local function gatherAvailableAutoSaves()
   if editor.getLevelName() == "" then return end
-  local folders = FS:directoryList("/settings/editor/autosaves/" .. editor.getLevelName(), false, true)
+  local folders = FS:directoryList(levelAutoSavePath .. editor.getLevelName(), false, true)
   autosaves = {}
   for i = 1, tableSize(folders) do
     table.insert(autosaves, {
        path = folders[i],
-       displayPath = string.gsub(folders[i], "/settings/editor/autosaves/", ""),
+       displayPath = string.gsub(folders[i], levelAutoSavePath, ""),
        datetime = os.date("%x %X", FS:stat(folders[i]).modtime)
        })
   end
@@ -155,7 +156,7 @@ local function onEditorRegisterPreferences(prefsRegistry)
   {
     -- {name = {type, default value, desc, label (nil for auto Sentence Case), min, max, hidden, advanced, customUiFunc, enumLabels}}
     {active = {"bool", false, "If checked, the level scene tree will be saved at a specific interval to /settings/editor/autosaves folder in the user folder"}},
-    {saveBackupCopy = {"bool", false, "If checked, a backup copy of the level scene tree will be saved in the /settings/editor/backups folder in the user folder,\n when Save Level is executed manually, regardless if AutoSave is active or not"}},
+    {saveBackupCopy = {"bool", false, "If checked, a backup copy of the level scene tree will be saved in the /settings/editor/level_backups folder in the user folder,\n when Save Level is executed manually, regardless if AutoSave is active or not"}},
     {interval = {"int", 120, "The interval in seconds at which the current level scene tree is saved", "Auto Save Interval (Seconds)"}},
     {noticeInterval = {"int", 10, "The countdown interval in seconds to warn user that an autosave will occur"}},
     {maxAutoSaveCountPerSession = {"int", 3, "The maximum autosaves per game session, before the counter will be reset and overwriting will occur for the autosaved files"}},

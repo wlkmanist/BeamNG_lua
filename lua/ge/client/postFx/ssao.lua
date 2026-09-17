@@ -7,12 +7,12 @@ local ssaoPostFxCallbacks = {}
 ssaoPostFxCallbacks.onEnabled = function()
   -- This tells the AL shaders to reload and sample
   -- from our #ssaoMask texture target.
-  setConsoleVariable("$AL::UseSSAOMask", true)
+  VariableRegistry.set("$AL::UseSSAOMask", true)
   return true;
 end
 
 ssaoPostFxCallbacks.onDisabled = function()
-  setConsoleVariable("$AL::UseSSAOMask", false)
+  VariableRegistry.set("$AL::UseSSAOMask", false)
 end
 
 local currentWasVis = nil
@@ -25,7 +25,7 @@ ssaoPostFxCallbacks.onAdd = function()
 end
 
 ssaoPostFxCallbacks.preProcess = function()
-  local quality = TorqueScriptLua.getVar("$SSAOPostFx::quality")
+  local quality = VariableRegistry.get("$SSAOPostFx::quality")
   if quality ~= currentQuality then
     currentQuality = tostring(clamp(round(tonumber(quality)), 0, 2))
     local ssaoPostFx = scenetree.findObject("SSAOPostFx")
@@ -33,7 +33,7 @@ ssaoPostFxCallbacks.preProcess = function()
       ssaoPostFx:setShaderMacro( "QUALITY", currentQuality)
     end
   end
-  currentTargetScale = TorqueScriptLua.getVar("$SSAOPostFx::targetScale")
+  currentTargetScale = VariableRegistry.get("$SSAOPostFx::targetScale")
 end
 
 ssaoPostFxCallbacks.setShaderConsts = function()
@@ -42,24 +42,24 @@ ssaoPostFxCallbacks.setShaderConsts = function()
     return
   end
 
-  ssaoPostFx:setShaderConst("$overallStrength", TorqueScriptLua.getVar("$SSAOPostFx::overallStrength"))
+  ssaoPostFx:setShaderConst("$overallStrength", VariableRegistry.get("$SSAOPostFx::overallStrength"))
 
   -- Abbreviate is s-small l-large.
-  ssaoPostFx:setShaderConst("$sRadius", TorqueScriptLua.getVar("$SSAOPostFx::sRadius"))
-  ssaoPostFx:setShaderConst("$sStrength", TorqueScriptLua.getVar("$SSAOPostFx::sStrength"))
-  ssaoPostFx:setShaderConst("$sDepthMin", TorqueScriptLua.getVar("$SSAOPostFx::sDepthMin"))
-  ssaoPostFx:setShaderConst("$sDepthMax", TorqueScriptLua.getVar("$SSAOPostFx::sDepthMax"))
-  ssaoPostFx:setShaderConst("$sDepthPow", TorqueScriptLua.getVar("$SSAOPostFx::sDepthPow"))
-  ssaoPostFx:setShaderConst("$sNormalTol", TorqueScriptLua.getVar("$SSAOPostFx::sNormalTol"))
-  ssaoPostFx:setShaderConst("$sNormalPow", TorqueScriptLua.getVar("$SSAOPostFx::sNormalPow"))
+  ssaoPostFx:setShaderConst("$sRadius", VariableRegistry.get("$SSAOPostFx::sRadius"))
+  ssaoPostFx:setShaderConst("$sStrength", VariableRegistry.get("$SSAOPostFx::sStrength"))
+  ssaoPostFx:setShaderConst("$sDepthMin", VariableRegistry.get("$SSAOPostFx::sDepthMin"))
+  ssaoPostFx:setShaderConst("$sDepthMax", VariableRegistry.get("$SSAOPostFx::sDepthMax"))
+  ssaoPostFx:setShaderConst("$sDepthPow", VariableRegistry.get("$SSAOPostFx::sDepthPow"))
+  ssaoPostFx:setShaderConst("$sNormalTol", VariableRegistry.get("$SSAOPostFx::sNormalTol"))
+  ssaoPostFx:setShaderConst("$sNormalPow", VariableRegistry.get("$SSAOPostFx::sNormalPow"))
 
-  ssaoPostFx:setShaderConst("$lRadius",   TorqueScriptLua.getVar("$SSAOPostFx::lRadius"))
-  ssaoPostFx:setShaderConst("$lStrength", TorqueScriptLua.getVar("$SSAOPostFx::lStrength"))
-  ssaoPostFx:setShaderConst("$lDepthMin", TorqueScriptLua.getVar("$SSAOPostFx::lDepthMin"))
-  ssaoPostFx:setShaderConst("$lDepthMax", TorqueScriptLua.getVar("$SSAOPostFx::lDepthMax"))
-  ssaoPostFx:setShaderConst("$lDepthPow", TorqueScriptLua.getVar("$SSAOPostFx::lDepthPow"))
-  ssaoPostFx:setShaderConst("$lNormalTol",TorqueScriptLua.getVar("$SSAOPostFx::lNormalTol"))
-  ssaoPostFx:setShaderConst("$lNormalPow",TorqueScriptLua.getVar("$SSAOPostFx::lNormalPow"))
+  ssaoPostFx:setShaderConst("$lRadius",   VariableRegistry.get("$SSAOPostFx::lRadius"))
+  ssaoPostFx:setShaderConst("$lStrength", VariableRegistry.get("$SSAOPostFx::lStrength"))
+  ssaoPostFx:setShaderConst("$lDepthMin", VariableRegistry.get("$SSAOPostFx::lDepthMin"))
+  ssaoPostFx:setShaderConst("$lDepthMax", VariableRegistry.get("$SSAOPostFx::lDepthMax"))
+  ssaoPostFx:setShaderConst("$lDepthPow", VariableRegistry.get("$SSAOPostFx::lDepthPow"))
+  ssaoPostFx:setShaderConst("$lNormalTol",VariableRegistry.get("$SSAOPostFx::lNormalTol"))
+  ssaoPostFx:setShaderConst("$lNormalPow",VariableRegistry.get("$SSAOPostFx::lNormalPow"))
 
   -- NOTE(AK) 04/04/2022: I have to come back to thins once I know what to do as I have
   --                      no idea where the blur object comes from
@@ -84,37 +84,37 @@ rawset(_G, "SSAOPostFxCallbacks", ssaoPostFxCallbacks)
 local ssaoPostFx = scenetree.findObject("SSAOPostFx")
 if not ssaoPostFx then
   -- only set these when we start the game. On reloading lua, we don't want to set these values
-  TorqueScriptLua.setVar("$SSAOPostFx::overallStrength", "2.0")
+  VariableRegistry.set("$SSAOPostFx::overallStrength", "2.0")
 
   -- The small radius SSAO settings.
-  TorqueScriptLua.setVar("$SSAOPostFx::sRadius", "0.1")
-  TorqueScriptLua.setVar("$SSAOPostFx::sStrength", "6.0")
-  TorqueScriptLua.setVar("$SSAOPostFx::sDepthMin", "0.1")
-  TorqueScriptLua.setVar("$SSAOPostFx::sDepthMax", "1.0")
-  TorqueScriptLua.setVar("$SSAOPostFx::sDepthPow", "1.0")
-  TorqueScriptLua.setVar("$SSAOPostFx::sNormalTol", "0.0")
-  TorqueScriptLua.setVar("$SSAOPostFx::sNormalPow", "1.0")
+  VariableRegistry.set("$SSAOPostFx::sRadius", "0.1")
+  VariableRegistry.set("$SSAOPostFx::sStrength", "6.0")
+  VariableRegistry.set("$SSAOPostFx::sDepthMin", "0.1")
+  VariableRegistry.set("$SSAOPostFx::sDepthMax", "1.0")
+  VariableRegistry.set("$SSAOPostFx::sDepthPow", "1.0")
+  VariableRegistry.set("$SSAOPostFx::sNormalTol", "0.0")
+  VariableRegistry.set("$SSAOPostFx::sNormalPow", "1.0")
 
   -- The large radius SSAO settings.
-  TorqueScriptLua.setVar("$SSAOPostFx::lRadius", "1.0")
-  TorqueScriptLua.setVar("$SSAOPostFx::lStrength", "10.0")
-  TorqueScriptLua.setVar("$SSAOPostFx::lDepthMin", "0.2")
-  TorqueScriptLua.setVar("$SSAOPostFx::lDepthMax", "2.0")
-  TorqueScriptLua.setVar("$SSAOPostFx::lDepthPow", "0.2")
-  TorqueScriptLua.setVar("$SSAOPostFx::lNormalTol", "-0.5")
-  TorqueScriptLua.setVar("$SSAOPostFx::lNormalPow", "2.0")
+  VariableRegistry.set("$SSAOPostFx::lRadius", "1.0")
+  VariableRegistry.set("$SSAOPostFx::lStrength", "10.0")
+  VariableRegistry.set("$SSAOPostFx::lDepthMin", "0.2")
+  VariableRegistry.set("$SSAOPostFx::lDepthMax", "2.0")
+  VariableRegistry.set("$SSAOPostFx::lDepthPow", "0.2")
+  VariableRegistry.set("$SSAOPostFx::lNormalTol", "-0.5")
+  VariableRegistry.set("$SSAOPostFx::lNormalPow", "2.0")
 
   -- Valid values: 0, 1, 2
-  TorqueScriptLua.setVar("$SSAOPostFx::quality", "0")
+  VariableRegistry.set("$SSAOPostFx::quality", "0")
 
   --
-  TorqueScriptLua.setVar("$SSAOPostFx::blurDepthTol", "0.001")
+  VariableRegistry.set("$SSAOPostFx::blurDepthTol", "0.001")
 
   --
-  TorqueScriptLua.setVar("$SSAOPostFx::blurNormalTol", "0.95")
+  VariableRegistry.set("$SSAOPostFx::blurNormalTol", "0.95")
 
   --
-  TorqueScriptLua.setVar("$SSAOPostFx::targetScale", "0.5 0.5")
+  VariableRegistry.set("$SSAOPostFx::targetScale", "0.5 0.5")
 
   -----------------------------------------------------------------------------
   -- PostEffects

@@ -62,6 +62,7 @@ end
 local function reset(storage)
   storage.currentLeakRate = 0
   storage.storedEnergy = storage.startingCapacity * storage.energyDensity
+  storage.remainingMass = storage.storedEnergy / storage.energyDensity
   storage.remainingRatio = storage.energyCapacity > 0 and storage.storedEnergy / storage.energyCapacity or 0
 
   --apply final weight as soon as possible

@@ -23,10 +23,14 @@ local avgPowerSmoother = newExponentialSmoothing(1000)
 
 local currentPowerSmoother = newExponentialSmoothing(30)
 local currentTorqueSmoother = newExponentialSmoothing(30)
-local avgConsumptionSmoother = newExponentialSmoothing(5000)
+local avgConsumptionSmoother = newExponentialSmoothing(1800) --update every 0.5 seconds, use values of last 10 minutes
 local fuelDisplaySmoother = newTemporalSmoothing(5, 3)
 
 local avgConsumptionPer100km = 0
+local lastAVGConsumptionPer100km = 0
+local avgConsumptionSmootherTimer = 0
+local avgConsumptionSmootherTime = 0.5
+local avgConsumptionDefaultValue = 10
 
 local previousFuel = 0
 local fuelSmoother = newTemporalSmoothing(50, 50)
@@ -39,12 +43,12 @@ local function updateGaugeData(moduleData, dt)
   local isMoving = wheelspeed > 0.5
 
   local fuelVolume = electrics.values.fuelVolume or 0
-  local fuelConsumption = min(max((previousFuel - fuelVolume) / (dt * wheelspeed) * 1000 * 100, 0), 100) -- l/100km
+  local fuelConsumption = clamp((previousFuel - fuelVolume) / (dt * wheelspeed) * 1000 * 100, 0, 50) -- l/100km
   fuelConsumption = fuelSmoother:getUncapped(fuelConsumption, dt)
   previousFuel = fuelVolume
 
   if updateFuelDisplay then
-    local fuelDisplay = min(max((3 * fuelConsumption) / 30, 0), 3)
+    local fuelDisplay = clamp((3 * fuelConsumption) / 30, 0, 3)
     if (electrics.values.engineLoad or 0) <= 0 then
       fuelDisplay = -1
     end
@@ -55,9 +59,20 @@ local function updateGaugeData(moduleData, dt)
   end
 
   if updateFuelConsumption then
-    avgConsumptionPer100km = avgConsumptionSmoother:get(min(max(fuelConsumption, 0), 50))
+    if isMoving then
+      avgConsumptionSmootherTimer = avgConsumptionSmootherTimer + dt
+      if avgConsumptionSmootherTimer >= avgConsumptionSmootherTime then
+        avgConsumptionPer100km = avgConsumptionSmoother:get(fuelConsumption)
+        avgConsumptionSmootherTimer = avgConsumptionSmootherTimer - avgConsumptionSmootherTime
+      end
+    else
+      avgConsumptionPer100km = lastAVGConsumptionPer100km
+      avgConsumptionSmootherTimer = 0
+    end
     moduleData.averageFuelConsumption = avgConsumptionPer100km
     moduleData.currentFuelConsumption = fuelConsumption
+
+    lastAVGConsumptionPer100km = avgConsumptionPer100km
   end
 
   if updatePowerCalculation then
@@ -107,13 +122,14 @@ local function reset()
   avgPowerSmoother:reset()
   currentPowerSmoother:reset()
   currentTorqueSmoother:reset()
-  avgConsumptionSmoother:set(10)
   fuelDisplaySmoother:reset()
   fuelSmoother:reset()
+
+  avgConsumptionSmootherTimer = 0
 end
 
 local function init(jbeamData)
-  avgConsumptionSmoother:set(10)
+  avgConsumptionSmoother:set(avgConsumptionDefaultValue)
 end
 
 M.init = init

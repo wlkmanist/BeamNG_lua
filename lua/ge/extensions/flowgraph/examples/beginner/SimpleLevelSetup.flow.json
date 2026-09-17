@@ -1,12 +1,14 @@
 {
   "activeGraphId":1,
+  "authors":"BeamNG",
   "currentGraphID":1,
+  "date":1741623979,
   "debugEnabled":false,
   "description":"This project shows you how to load a level and spawn a vehicle without the player noticing.",
+  "difficulty":40,
   "frecency":{},
   "graphs":{
     "1":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -70,8 +72,8 @@
       "name":"New State",
       "nodes":{
         "2":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -86,10 +88,10 @@
           "pos":[
             -88,
             50
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "8":{
-          "type":"util/loadLevel",
           "data":{
             "customLoadingScreen":true,
             "delayBufferFrames":0,
@@ -98,6 +100,7 @@
             "preventPlayerSpawning":true,
             "stopRunningOnClientEndMission":false
           },
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -110,10 +113,12 @@
           "pos":[
             374,
             50
-          ]
+          ],
+          "type":"util/loadLevel"
         },
         "9":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -125,30 +130,31 @@
             150,
             120
           ],
-          "string":"gridmap",
+          "string":"smallgrid",
           "type":"types/string"
         },
         "10":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
             642,
             435
           ],
-          "commentText":"This part loads the gridmap level. \\nThe \"Load Level\" node has the \"customLoadingScreen\" field set to true. \\nThis means we have to hide the loading screen when we are done loading the remaining assets.\\nThe node only lets the flow through once the level is loaded.",
+          "commentText":"This part loads the \"smallgrid\" level. \\nThe \"Load Level\" node has the \"customLoadingScreen\" field set to true. \\nThis means we have to hide the loading screen when we are done loading the remaining assets.\\nThe node only lets the flow through once the level is loaded.",
           "commentTitle":"Loading Level",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             84,
@@ -164,20 +170,28 @@
           "type":"debug/comment"
         },
         "11":{
-          "type":"vehicle/spawnVehicle",
           "data":{},
+          "dynamicMode":"repeat",
+          "hardcodedPins":{
+            "licenseText":{
+              "type":"string",
+              "value":"BeamNG"
+            }
+          },
           "hiddenPins":{
             "p_in":{
               "color":true,
               "config":false,
-              "dontDelete":true,
               "flow":false,
-              "keepCurrent":true,
+              "keepCamera":true,
+              "keepOnReset":true,
+              "keepVehicle":true,
               "licenseText":true,
               "model":false,
               "name":true,
               "pos":false,
-              "replaceCurrent":true,
+              "randomColor":true,
+              "replacePlayer":true,
               "reset":true,
               "rot":false
             },
@@ -190,32 +204,37 @@
           "pos":[
             1200,
             50
-          ]
+          ],
+          "type":"vehicle/spawnVehicle"
         },
         "12":{
           "config":"d15_4wd_A",
-          "configName":"D-Series D15 V8 4WD (A)",
+          "configName":"\"D-Series D15 V8 4WD (A)\"",
           "configPath":"vehicles/pickup/d15_4wd_A.pc",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
               "config":false,
-              "model":false
+              "configName":true,
+              "model":false,
+              "modelName":true
             }
           },
           "model":"pickup",
-          "modelName":"D-Series",
+          "modelName":"\"D-Series\"",
           "pos":[
             822,
             106
           ],
           "type":"vehicle/vehicleConfigProvider",
-          "vehType":"Truck"
+          "vehType":"Car"
         },
         "13":{
           "data":{},
           "displayMode":"default",
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -227,17 +246,17 @@
           "markerClr":[
             1,
             0,
-            0.5,
-            0.25
+            0.50000000000000000000,
+            0.25000000000000000000
           ],
           "mode":"gizmo",
           "pos":[
-            962,
-            218
+            948,
+            244
           ],
           "position":[
             0,
-            15,
+            25,
             0
           ],
           "rotation":[
@@ -255,34 +274,36 @@
           "useQuatForRotation":false
         },
         "14":{
-          "type":"util/hideLoadingScreen",
           "data":{},
+          "dynamicMode":"once",
           "hiddenPins":{
             "p_in":{
               "flow":false,
               "reset":true
             },
             "p_out":{
+              "finished":false,
               "flow":true
             }
           },
           "pos":[
             1592,
             50
-          ]
+          ],
+          "type":"util/hideLoadingScreen"
         },
         "15":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -292,6 +313,7 @@
           "commentText":"This spawns a vehicle for the player. \\nYou can change the vehicle through the \"Vehicle Config Provider\" node.\\nYou can also change where the vehicle spawns through the \"Transform\" node.\\nThe node only lets the flow through once the vehicle is spawned completely.\\nIt also gives you the vehicle Id, which is needed to interact with the vehicle through nodes.\\n\\nIn the \"Spawn Vehicle\" node, you can also set additional properties of the vehicle, \\nsuch as color and license plate text.",
           "commentTitle":"Vehicle Spawning",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             798,
@@ -307,17 +329,17 @@
           "type":"debug/comment"
         },
         "16":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -327,6 +349,7 @@
           "commentText":"Now that all additional assets have been loaded,\\nwe can hide the loading screen.\\n\\nNote: If we dont use the \"customLoadingScreen\" \\nflag in the \"Load Level\" node, the loading screen\\nwill go away before we spawn the vehicle. \\nThis means the player will briefly see the level\\nwithout the vehicle and notice the small loading\\ndelay when the vehicle is spawned.",
           "commentTitle":"Loading Level Completion",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             1540,
@@ -344,15 +367,17 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -73.1891785,
-        -155.608368
+        59.88068389892578125000,
+        -228.85133361816406250000
       ],
-      "viewZoom":0.5
+      "viewZoom":0.74999988079071044922
     },
     "3":{
-      "children":{},
       "description":"This is the description for graph States",
       "dirty":false,
       "isStateGraph":true,
@@ -369,6 +394,7 @@
       "nodes":{
         "4":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -379,24 +405,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             0,
@@ -406,8 +435,8 @@
           "type":"states/stateNode"
         },
         "5":{
-          "type":"states/stateEntry",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -417,10 +446,12 @@
           "pos":[
             -400,
             0
-          ]
+          ],
+          "type":"states/stateEntry"
         },
         "6":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -428,12 +459,13 @@
             "p_out":{}
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             400,
@@ -445,19 +477,26 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -172.895966,
-        -308.546234
+        -172.89596557617187500000,
+        -308.54623413085937500000
       ],
-      "viewZoom":1.17052019
+      "viewZoom":1.17052018642425537109
     }
   },
+  "isScenario":false,
   "macros":{},
   "name":"Simple Level Setup",
   "savedDir":"/lua/ge/extensions/flowgraph/examples/beginner/",
   "savedFilename":"SimpleLevelSetup.flow.json",
   "stateGraphId":3,
-  "variables":{},
-  "version":0.1
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
+  "version":0.20000000000000001110
 }

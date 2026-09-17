@@ -8,6 +8,7 @@ local ffi = require("ffi")
 local guiInstancer = require("editor/api/guiInstancer")()
 local valueInspector = require("editor/api/valueInspector")()
 local objectHistoryActions = require("editor/api/objectHistoryActions")()
+local colorTempUI = require("editor/api/colorTemperatureUI")
 local imgui = ui_imgui
 
 local inspectorWindowNamePrefix = "inspector"
@@ -18,6 +19,10 @@ local inspectorTypeHandlers = {}
 local inspectorFieldModifiers = {}
 local collapseGroups = {}
 local arrayHeaderBgColor = imgui.ImVec4(0.04, 0.15, 0.1, 1)
+
+-- One-shot scroll reset for the *unlocked* inspector window(s).
+-- Used by external tools (e.g. DataBlock Editor) to avoid keeping stale scroll position when switching selection.
+local pendingInspectorScrollTopSelectionId = nil
 local headerMenus = {
   {
     groupName = "Transform",
@@ -227,6 +232,169 @@ local function setMultiSelectionDynamicFieldValue(selectedIds, fieldName, fieldV
   end
   if editEnded then
     editor.setDirty()
+  end
+end
+
+local nightLightingRegistryFields = {
+  nightLight = true,
+  dayIntensity = true,
+  nightIntensity = true,
+  nightEmissive = true,
+  nightEmissiveColor = true,
+  child = true
+}
+
+local pendingNightLightingRefreshFrames = nil
+
+local function requestNightLightingRefresh()
+  pendingNightLightingRefreshFrames = 2
+end
+
+local function processPendingNightLightingRefresh()
+  if not pendingNightLightingRefreshFrames then return end
+  pendingNightLightingRefreshFrames = pendingNightLightingRefreshFrames - 1
+  if pendingNightLightingRefreshFrames > 0 then return end
+  pendingNightLightingRefreshFrames = nil
+  if core_environment and core_environment.refreshnightLightsObjects then
+    core_environment.refreshnightLightsObjects()
+  end
+end
+
+local function nightLightingTruthy(value)
+  value = tostring(value or ""):lower()
+  return value == "1" or value == "true" or value == "yes" or value == "on"
+end
+
+local function getNightLightingFieldValue(objectId, fieldName, arrayIndex)
+  local obj = scenetree.findObjectById(objectId)
+  arrayIndex = arrayIndex or 0
+  if obj and obj.getDynDataFieldbyName then
+    local ok, value = pcall(obj.getDynDataFieldbyName, obj, fieldName, arrayIndex)
+    if ok and value ~= nil and tostring(value) ~= "" then
+      return tostring(value)
+    end
+  end
+  return editor.getFieldValue(objectId, fieldName, arrayIndex) or ""
+end
+
+local function getNightLightingSelectionValue(objectIds, fieldName, arrayIndex)
+  if not objectIds or #objectIds == 0 then return "", false end
+  local value = getNightLightingFieldValue(objectIds[1], fieldName, arrayIndex)
+  for i = 2, #objectIds do
+    if getNightLightingFieldValue(objectIds[i], fieldName, arrayIndex) ~= value then
+      return value, true
+    end
+  end
+  return value, false
+end
+
+local function setNightLightingDynamicField(objectIds, fieldName, fieldValue, arrayIndex, editEnded)
+  if editEnded == nil then editEnded = true end
+  setMultiSelectionDynamicFieldValue(objectIds, fieldName, fieldValue, arrayIndex or 0, editEnded)
+  if editEnded and nightLightingRegistryFields[fieldName] then
+    requestNightLightingRefresh()
+  end
+end
+
+local function isNightLightingLightObject(obj)
+  if not obj then return false end
+  if obj.isSubClassOf then
+    local ok, result = pcall(obj.isSubClassOf, obj, "LightBase")
+    if ok and result == true then return true end
+  end
+  local className = obj.getClassName and obj:getClassName() or obj.className or ""
+  return className == "PointLight" or className == "SpotLight"
+end
+
+local function getNightLightingSelectionKind(objectIds)
+  local kind = nil
+  for _, id in ipairs(objectIds or {}) do
+    local obj = scenetree.findObjectById(id)
+    local className = obj and obj.getClassName and obj:getClassName() or ""
+    local objKind = nil
+    if isNightLightingLightObject(obj) then
+      objKind = "light"
+    elseif className == "TSStatic" then
+      objKind = "mesh"
+    end
+    if not objKind then return nil end
+    if kind and kind ~= objKind then return nil end
+    kind = objKind
+  end
+  return kind
+end
+
+local function normalizeNightLightingFieldValue(fieldName, fieldValue)
+  if fieldName == "nightLight" or fieldName == "nightEmissive" then
+    return nightLightingTruthy(fieldValue) and "1" or ""
+  end
+
+  if fieldName == "nightEmissiveColor" then
+    local color = stringToTable(fieldValue or "")
+    return string.format("%d %d %d",
+      math.floor((tonumber(color[1]) or 0) + 0.5),
+      math.floor((tonumber(color[2]) or 0) + 0.5),
+      math.floor((tonumber(color[3]) or 0) + 0.5)
+    )
+  end
+
+  return tostring(fieldValue or "")
+end
+
+local function drawNightLightingField(objectIds, fieldName, label, desc, fieldType, fieldTypeName)
+  local fieldValue, mixed = getNightLightingSelectionValue(objectIds, fieldName)
+  if fieldName == "nightEmissiveColor" then
+    local color = stringToTable(fieldValue)
+    local storedAs255 = (tonumber(color[1]) or 0) > 1 or (tonumber(color[2]) or 0) > 1 or (tonumber(color[3]) or 0) > 1
+    local scale = storedAs255 and 1 or 255
+    local fallback = storedAs255 and 255 or 1
+    fieldValue = string.format("%d %d %d 255",
+      math.floor((tonumber(color[1]) or fallback) * scale + 0.5),
+      math.floor((tonumber(color[2]) or fallback) * scale + 0.5),
+      math.floor((tonumber(color[3]) or fallback) * scale + 0.5)
+    )
+  end
+
+  local oldSetValueCallback = valueInspector.setValueCallback
+  local oldDifferentFlag = valueInspector.differentValuesFieldFlags[fieldName]
+  local oldSelectedIds = valueInspector.selectedIds
+
+  valueInspector.selectedIds = objectIds
+  valueInspector.differentValuesFieldFlags[fieldName] = mixed and 0 or nil
+  valueInspector.setValueCallback = function(changedFieldName, changedFieldValue, arrayIndex, customData, editEnded)
+    local ids = customData and customData.objectId and { customData.objectId } or objectIds
+    setNightLightingDynamicField(ids, changedFieldName, normalizeNightLightingFieldValue(changedFieldName, changedFieldValue), arrayIndex, editEnded)
+  end
+
+  valueInspector:valueEditorGui(fieldName, fieldValue, 0, label, desc, fieldType, fieldTypeName, {}, nil, nil, mixed and 0 or nil)
+
+  valueInspector.setValueCallback = oldSetValueCallback
+  valueInspector.selectedIds = oldSelectedIds
+  valueInspector.differentValuesFieldFlags[fieldName] = oldDifferentFlag
+end
+
+local function drawNightLightingLightSection(objectIds)
+  drawNightLightingField(objectIds, "nightLight", "Night controlled", "Marks this light for automatic night on/off control by night lighting manager.", "bool", "TypeBool")
+  drawNightLightingField(objectIds, "dayIntensity", "Day Intensity", "Optional intensity used during daytime when day/night intensity control is active. Useful for tunnels.", "float", "TypeF32")
+  drawNightLightingField(objectIds, "nightIntensity", "Night Intensity", "Optional intensity used during nighttime when day/night intensity control is active. Useful for tunnels.", "float", "TypeF32")
+end
+
+local function drawNightLightingMeshSection(objectIds)
+  drawNightLightingField(objectIds, "nightEmissive", "Night emissive", "Enables automatic night-time instanceColor control for this TSStatic.", "bool", "TypeBool")
+  drawNightLightingField(objectIds, "nightEmissiveColor", "Night Emissive Color", "Color used for instance color for emissive during night time.", "ColorI", "ColorI")
+  drawNightLightingField(objectIds, "child", "Linked child lights", "Optional, space or comma separated light object names linked to this mesh. Linked lights are enabled at night and the first linked light supplies emissive color.", "string", "TypeString")
+end
+
+local function displayNightLightingSection(objectIds)
+  local kind = getNightLightingSelectionKind(objectIds)
+  if not kind then return end
+
+  if imgui.CollapsingHeader1("Night Lighting", imgui.TreeNodeFlags_DefaultOpen) then
+    if kind == "light" then
+      drawNightLightingLightSection(objectIds)
+    elseif kind == "mesh" then
+      drawNightLightingMeshSection(objectIds)
+    end
   end
 end
 
@@ -648,6 +816,8 @@ local function objectInspectorGui(inspectorInfo)
   -- Static fields
   --
   ctx.matchedFilterStaticFields = true
+  editor.disableGlobalCopyPaste = false
+
   -- a bit of info about the selection
   if general and general.fields then
     if valueInspector.selectedIds and #valueInspector.selectedIds == 1 and valueInspector.selectedIds[1] ~= 0 then
@@ -656,6 +826,11 @@ local function objectInspectorGui(inspectorInfo)
       if obj then
         local textColor = imgui.GetStyleColorVec4(imgui.Col_Text)
         imgui.TextUnformatted("Class:") imgui.SameLine() imgui.TextColored(textColor, valueInspector.selectionClassName)
+
+        if imgui.GetIO().KeyCtrl then
+          imgui.tooltip(obj:getClassDocString())
+        end
+
         if #valueInspector.selectedIds == 1 then
           imgui.SameLine()
           imgui.Text("    ")
@@ -670,6 +845,21 @@ local function objectInspectorGui(inspectorInfo)
           local grp = obj:getGroup()
           if grp then
             imgui.TextUnformatted("Parent:") imgui.SameLine() imgui.TextColored(textColor, tostring(grp:getName()))
+          end
+          if valueInspector.selectionClassName == "GroundCover" then
+            if imgui.Button("Open in Ground Cover Editor") then
+              if not editor_groundCoverEditor then
+                extensions.load("editor_groundCoverEditor")
+              end
+              if editor_groundCoverEditor and editor_groundCoverEditor.show then
+                editor_groundCoverEditor.show()
+              else
+                editor.showWindow("groundCoverEditor")
+                if editor.editModes and editor.editModes.groundCoverEditMode then
+                  editor.selectEditMode(editor.editModes.groundCoverEditMode)
+                end
+              end
+            end
           end
         end
       end
@@ -693,6 +883,8 @@ local function objectInspectorGui(inspectorInfo)
     imgui.Text("<No search matches>")
     imgui.PopStyleColor()
   end
+
+  displayNightLightingSection(valueInspector.selectedIds)
 
   --
   -- Dynamic fields
@@ -746,13 +938,13 @@ local function objectInspectorGui(inspectorInfo)
           if fieldValue ~= nil then
             ffi.copy(ctx.inputTextValue, fieldValue)
           end
-          imgui.PushID1("FIELDS_COL")
+          imgui.PushID1("FIELDS_COL_" .. dynFields[i])
           imgui.Columns(2, "FieldsColumn")
           imgui.Text(dynFields[i])
           imgui.NextColumn()
           local fieldNameId = "##" .. dynFields[i]
           -- if dynamic field value is changed and the value it's not empty string then update it
-          if editor.uiInputText(fieldNameId, ctx.inputTextValue, ffi.sizeof(ctx.inputTextValue), nil, nil, nil, ctx.editEnded) and ctx.editEnded[0] and ffi.string(ctx.inputTextValue) ~= "" then
+          if editor.uiInputText(fieldNameId, ctx.inputTextValue, imgui.ArraySize(ctx.inputTextValue), nil, nil, nil, ctx.editEnded) and ctx.editEnded[0] and ffi.string(ctx.inputTextValue) ~= "" then
             fieldValue = ffi.string(ctx.inputTextValue)
             setMultiSelectionDynamicFieldValue(valueInspector.selectedIds, dynFields[i], fieldValue, arrayIndex)
           end
@@ -778,7 +970,7 @@ local function objectInspectorGui(inspectorInfo)
     local wantsToAddField = false
 
     imgui.Text("Add new field named:")
-    if imgui.InputText("##newDynField", ctx.newFieldName, ffi.sizeof(ctx.newFieldName), imgui.InputTextFlags_EnterReturnsTrue) then
+    if imgui.InputText("##newDynField", ctx.newFieldName, imgui.ArraySize(ctx.newFieldName), imgui.InputTextFlags_EnterReturnsTrue) then
       wantsToAddField = true
     end
     imgui.SameLine()
@@ -798,6 +990,8 @@ local function inspectorHasField(fieldName)
   return sharedCtx.inspectorCurrentFieldNames[fieldName] ~= nil
 end
 
+local customGroundCoverBillBoardUVsFieldEditor
+
 local function registerApi()
   editor.addInspectorInstance = addInspectorInstance
   editor.closeInspectorInstance = closeInspectorInstance
@@ -808,6 +1002,9 @@ local function registerApi()
   editor.registerInspectorFieldModifier = registerInspectorFieldModifier
   editor.unregisterInspectorFieldModifier = unregisterInspectorFieldModifier
   editor.inspectorHasField = inspectorHasField
+  editor.groundCoverBillboardUVFieldEditor = function(objectIds, fieldValue, arrayIndex, objID)
+    return customGroundCoverBillBoardUVsFieldEditor(objectIds, fieldValue, "billboardUVs", "Billboard UVs", "", nil, "TypeRectUV", {arrayIndex = arrayIndex, objID = objID}, nil, nil)
+  end
 end
 
 local function onExtensionLoaded()
@@ -1084,7 +1281,7 @@ local function groundCoverUVWindow(customData, retTbl)
         local imageSize = math.min(availableImageSize.x, availableImageSize.y) - 6*imgui.GetStyle().ChildBorderSize
         local size = imgui.ImVec2(imageSize, imageSize)
 
-        local groundCoverId = valueInspector.selectedIds[#valueInspector.selectedIds]
+        local groundCoverId = customData.objID or valueInspector.selectedIds[#valueInspector.selectedIds]
         local groundCover = scenetree.findObjectById(groundCoverId)
         local groundCoverMaterialName = groundCover:getField("Material", "")
         local groundCoverMaterial = scenetree.findObject(groundCoverMaterialName)
@@ -1288,7 +1485,10 @@ local function groundCoverUVWindow(customData, retTbl)
 end
 
 local function onEditorGui()
+  processPendingNightLightingRefresh()
+
   if guiInstancer.instances then
+    local didApplyScrollReset = false
     for key, inspectorInfo in pairs(guiInstancer.instances) do
       local wndName = inspectorWindowNamePrefix .. key
 
@@ -1296,7 +1496,16 @@ local function onEditorGui()
         editor.closeInspectorInstance(key)
       end
 
-      if editor.beginWindow(wndName, "Inspector##" .. key, imgui.WindowFlags_AlwaysVerticalScrollbar) then
+      if editor.beginWindow(wndName, "Inspector", imgui.WindowFlags_AlwaysVerticalScrollbar) then
+        -- Reset scroll position (to top) once, but only for the unlocked inspector and only for the requested selection.
+        if not inspectorInfo.selection and pendingInspectorScrollTopSelectionId then
+          local sel = editor.selection.object
+          if sel and sel[1] and sel[1] == pendingInspectorScrollTopSelectionId then
+            imgui.SetScrollY(0)
+            didApplyScrollReset = true
+          end
+        end
+
         if inspectorInfo.selection then
           if editor.uiIconImageButton(editor.icons.lock, imgui.ImVec2(24, 24)) then
             inspectorInfo.selection = nil
@@ -1353,6 +1562,7 @@ local function onEditorGui()
                   break -- stop at first viable type handler, just show this type inspector ui
                 end
               end
+            -- else use the editor selection
             elseif editor.selection[typeName] ~= nil then
               if typeHandler.guiCallback then
                 typeHandler.guiCallback(inspectorInfo)
@@ -1367,6 +1577,10 @@ local function onEditorGui()
         end
       end
       editor.endWindow()
+    end
+
+    if didApplyScrollReset then
+      pendingInspectorScrollTopSelectionId = nil
     end
   end
   checkEditorDirtyFlag()
@@ -1436,6 +1650,458 @@ local function customVehicleMetallicFieldEditor(objectIds, fieldValue, fieldName
   end
 end
 
+-- IES cookie import for PointLight / SpotLight cookie field
+local function resolveCookieTexturePath(path)
+  if not path or path == "" then return nil end
+
+  local p = tostring(path):gsub("\\", "/")
+
+  if FS and p:sub(1, 1) ~= "/" and FS:fileExists("/" .. p) then
+    p = "/" .. p
+  end
+
+  if FS and FS.isLinkFile and FS:isLinkFile(p) then
+    local ok, link = pcall(jsonReadFile, p .. ".link")
+    if ok and type(link) == "table" and link.path and link.path ~= "" then
+      p = tostring(link.path):gsub("\\", "/")
+      if FS and p:sub(1, 1) ~= "/" and FS:fileExists("/" .. p) then
+        p = "/" .. p
+      end
+    end
+  end
+
+  return p
+end
+
+local function readIESCookieJson(cookieTexturePath)
+  local tex = resolveCookieTexturePath(cookieTexturePath)
+  if not tex then return nil, nil, nil end
+
+  if tex:lower():sub(-#".color.png") ~= ".color.png" then
+    return nil, nil, tex
+  end
+
+  local jsonPath = tex:sub(1, #tex - #".color.png") .. ".cookie.json"
+
+  if FS and not FS:fileExists(jsonPath) then
+    return nil, jsonPath, tex
+  end
+
+  local ok, data = pcall(jsonReadFile, jsonPath)
+  if not ok or type(data) ~= "table" then
+    return nil, jsonPath, tex
+  end
+
+  return data, jsonPath, tex
+end
+
+local function jsonNumber(data, ...)
+  for i = 1, select("#", ...) do
+    local cur = data
+
+    for part in tostring(select(i, ...)):gmatch("[^%.]+") do
+      cur = type(cur) == "table" and cur[part] or nil
+      if cur == nil then break end
+    end
+
+    local n = tonumber(cur)
+    if n then return n end
+  end
+end
+
+local function applyIESCookieData(objectIds, data)
+  if type(data) ~= "table" then return false end
+
+  local candela = jsonNumber(data, "light.candela", "photometry.candela")
+  local lumens = jsonNumber(data, "light.lumens", "photometry.lumens")
+  local outerAngle = jsonNumber(data, "light.fields.outerAngle", "conversion.outerAngle")
+  local innerAngle = jsonNumber(data, "light.fields.innerAngle") or (outerAngle and outerAngle * 0.9)
+  local kelvin = jsonNumber(data, "light.colorTemperatureKelvin")
+
+  local color = nil
+  if kelvin and colorTempUI and colorTempUI.kelvinToRGBLinear then
+    local r, g, b = colorTempUI.kelvinToRGBLinear(kelvin)
+    color = string.format("%.6f %.6f %.6f 1", r, g, b)
+  end
+
+  editor.history:beginTransaction("ApplyIESCookieData")
+
+  for _, id in ipairs(objectIds) do
+    local obj = scenetree.findObjectById(id)
+    local className = obj and obj:getClassName() or ""
+
+    if className == "SpotLight" then
+      local cd = candela
+
+      if not cd and lumens and outerAngle then
+        local theta = math.rad(outerAngle * 0.5)
+        local solidAngle = 2 * math.pi * (1 - math.cos(theta))
+        cd = lumens / math.max(solidAngle, 0.000001)
+      end
+
+      if cd then
+        objectHistoryActions.changeObjectFieldWithUndo({id}, "intensity", tostring(cd), 0)
+        objectHistoryActions.changeObjectDynFieldWithUndo({id}, "intensityUnit", "cd", 0)
+      end
+
+      if outerAngle then
+        objectHistoryActions.changeObjectFieldWithUndo({id}, "outerAngle", tostring(outerAngle), 0)
+      end
+
+      if innerAngle then
+        objectHistoryActions.changeObjectFieldWithUndo({id}, "innerAngle", tostring(innerAngle), 0)
+      end
+
+    elseif className == "PointLight" then
+      local lm = lumens or (candela and candela * 4 * math.pi)
+
+      if lm then
+        objectHistoryActions.changeObjectFieldWithUndo({id}, "intensity", tostring(lm), 0)
+        objectHistoryActions.changeObjectDynFieldWithUndo({id}, "intensityUnit", "lm", 0)
+      end
+    end
+
+    if color then
+      objectHistoryActions.changeObjectFieldWithUndo({id}, "color", color, 0)
+      objectHistoryActions.changeObjectDynFieldWithUndo({id}, "useColorTemperature", "true", 0)
+      objectHistoryActions.changeObjectDynFieldWithUndo({id}, "colorTemperatureKelvin", tostring(kelvin), 0)
+      objectHistoryActions.changeObjectDynFieldWithUndo({id}, "colorTemperatureFilamentId", "blackbody", 0)
+      objectHistoryActions.changeObjectDynFieldWithUndo({id}, "colorTemperatureDegradation", "0", 0)
+    end
+  end
+
+  editor.history:endTransaction()
+  editor.setDirty()
+
+  return true
+end
+
+local function customLightCookieFieldEditor(objectIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
+  customData.cookieBuf = customData.cookieBuf or imgui.ArrayChar(valueInspector.inputTextShortStringMaxSize)
+
+  local value = fieldValue or ""
+
+  if customData.cookieBufValue ~= value and not customData.cookieEditing then
+    ffi.copy(customData.cookieBuf, value)
+    customData.cookieBufValue = value
+  end
+
+  local fieldNameId = "##cookie" .. fieldName
+  local extensions = {"Images", {".png", ".dds", ".jpg"}}
+  local fileSpec = {extensions, {"All Files", "*"}}
+
+  -- Same picker button behavior as default filename fields.
+  if imgui.Button("  ...  " .. fieldNameId .. "_browse") then
+    local dir = nil
+
+    if value ~= "" and path and path.split then
+      dir = path.split(value)
+    end
+
+    editor_fileDialog.openFile(function(data)
+      if data.filepath and data.filepath ~= "" then
+        local newValue = editor.linkifyPath(data.filepath)
+
+        ffi.copy(customData.cookieBuf, newValue)
+        customData.cookieBufValue = newValue
+        customData.cookieEditing = false
+
+        setMultiSelectionFieldValue(objectIds, fieldName, newValue, 0, true)
+      end
+    end, fileSpec, false, dir)
+  end
+
+  imgui.SameLine()
+  imgui.PushItemWidth(imgui.GetContentRegionAvailWidth())
+
+  if editor.uiInputText(
+    fieldNameId,
+    customData.cookieBuf,
+    imgui.ArraySize(customData.cookieBuf),
+    nil,
+    nil,
+    nil,
+    sharedCtx.editEnded
+  ) then
+    customData.cookieEditing = not sharedCtx.editEnded[0]
+
+    if sharedCtx.editEnded[0] then
+      local newValue = editor.linkifyPath(ffi.string(customData.cookieBuf))
+
+      ffi.copy(customData.cookieBuf, newValue)
+      customData.cookieBufValue = newValue
+      customData.cookieEditing = false
+
+      setMultiSelectionFieldValue(objectIds, fieldName, newValue, 0, true)
+      sharedCtx.editEnded[0] = false
+    end
+  end
+
+  if imgui.BeginDragDropTarget() then
+    local payload = imgui.AcceptDragDropPayload("ASSETDRAGDROP")
+    if payload ~= nil then
+      assert(payload.DataSize == 2048)
+
+      local newValue = editor.linkifyPath(ffi.string(payload.Data))
+
+      ffi.copy(customData.cookieBuf, newValue)
+      customData.cookieBufValue = newValue
+      customData.cookieEditing = false
+
+      setMultiSelectionFieldValue(objectIds, fieldName, newValue, 0, true)
+    end
+    imgui.EndDragDropTarget()
+  end
+
+  imgui.PopItemWidth()
+
+  if imgui.Button("Apply IES if available##" .. fieldName) then
+    local cookiePath = ffi.string(customData.cookieBuf)
+    local data, jsonPath, tex = readIESCookieJson(cookiePath)
+
+    if data and applyIESCookieData(objectIds, data) then
+      log("I", logTag, "Applied IES cookie JSON: " .. tostring(jsonPath))
+    else
+      log(
+        "E",
+        logTag,
+        "No IES cookie JSON found for texture: "
+          .. tostring(tex or cookiePath)
+          .. " expected: "
+          .. tostring(jsonPath or "-")
+      )
+    end
+  end
+
+  if imgui.IsItemHovered() then
+    imgui.SetTooltip("Apply IES data from matching .cookie.json")
+  end
+end
+
+-- Light color editor with Kelvin
+local function customLightColorFieldEditor(objectIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
+  local v = stringToTable(fieldValue or "")
+  local r = tonumber(v[1]) or 1
+  local g = tonumber(v[2]) or 1
+  local b = tonumber(v[3]) or 1
+  local a = tonumber(v[4]) or 1
+
+  local storedCT = editor.getFieldValue(objectIds[1], "useColorTemperature")
+  if customData.useColorTemperature == nil then
+    customData.useColorTemperature = storedCT == "true"
+  end
+  local useCTPtr = imgui.BoolPtr(customData.useColorTemperature)
+  if imgui.Checkbox("Use Color Temperature##"..fieldName, useCTPtr) then
+    customData.useColorTemperature = useCTPtr[0]
+    setMultiSelectionFieldValue(
+      valueInspector.selectedIds,
+      "useColorTemperature",
+      tostring(useCTPtr[0]),
+      nil,
+      true
+    )
+  end
+  local useCT = customData.useColorTemperature
+
+  local colorPtr = imgui.ArrayFloat(4)
+  colorPtr[0] = r; colorPtr[1] = g; colorPtr[2] = b; colorPtr[3] = a
+  local floatFormat = "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f"
+
+  local flags = imgui.flags(imgui.ColorEditFlags_AlphaBar, imgui.ColorEditFlags_AlphaPreviewHalf)
+
+  local changed = false
+  if editor.uiColorEdit4("Color##"..fieldName, colorPtr, flags, sharedCtx.editEnded) then
+    changed = true
+    if not useCT then
+      local newVal = string.format("%s %s %s %s",
+        string.format(floatFormat, colorPtr[0]),
+        string.format(floatFormat, colorPtr[1]),
+        string.format(floatFormat, colorPtr[2]),
+        string.format(floatFormat, colorPtr[3])
+      )
+      setMultiSelectionFieldValue(valueInspector.selectedIds, fieldName, newVal, 0, false)
+    end
+  end
+  if not useCT and sharedCtx.editEnded[0] then
+    local newVal = string.format("%s %s %s %s",
+      string.format(floatFormat, colorPtr[0]),
+      string.format(floatFormat, colorPtr[1]),
+      string.format(floatFormat, colorPtr[2]),
+      string.format(floatFormat, colorPtr[3])
+    )
+    setMultiSelectionFieldValue(valueInspector.selectedIds, fieldName, newVal, 0, true)
+    sharedCtx.editEnded[0] = false
+  end
+
+  if useCT then
+    colorTempUI.draw({
+      id = "light_color_" .. tostring(valueInspector.selectedIds[1] or 0),
+      label = nil,
+      getRGBA = function()
+        local vv = stringToTable(editor.getFieldValue(valueInspector.selectedIds[1], fieldName) or "")
+        local lr = tonumber(vv[1]) or 1
+        local lg = tonumber(vv[2]) or 1
+        local lb = tonumber(vv[3]) or 1
+        local la = tonumber(vv[4]) or 1
+        return lr, lg, lb, la
+      end,
+      getKelvin = function()
+        return tonumber(editor.getFieldValue(valueInspector.selectedIds[1], "colorTemperatureKelvin"))
+      end,
+      setKelvin = function(kelvin, isFinal)
+        setMultiSelectionDynamicFieldValue(
+          valueInspector.selectedIds,
+          "colorTemperatureKelvin",
+          string.format("%.0f", kelvin or 6500),
+          0,
+          isFinal ~= false
+        )
+      end,
+      setRGBA = function(lr, lg, lb, la, isFinal)
+        local newVal = string.format("%s %s %s %s",
+          string.format(floatFormat, lr),
+          string.format(floatFormat, lg),
+          string.format(floatFormat, lb),
+          string.format(floatFormat, la)
+        )
+        setMultiSelectionFieldValue(valueInspector.selectedIds, fieldName, newVal, 0, isFinal ~= false)
+      end,
+      getFilamentId = function()
+        local filamentId = editor.getFieldValue(valueInspector.selectedIds[1], "colorTemperatureFilamentId")
+        if filamentId == nil or filamentId == "" then return "blackbody" end
+        return filamentId
+      end,
+      setFilamentId = function(filamentId, isFinal)
+        setMultiSelectionDynamicFieldValue(
+          valueInspector.selectedIds,
+          "colorTemperatureFilamentId",
+          filamentId or "blackbody",
+          0,
+          isFinal ~= false
+        )
+      end,
+      getDegradation = function()
+        return tonumber(editor.getFieldValue(valueInspector.selectedIds[1], "colorTemperatureDegradation")) or 0
+      end,
+      setDegradation = function(degradation, isFinal)
+        setMultiSelectionDynamicFieldValue(
+          valueInspector.selectedIds,
+          "colorTemperatureDegradation",
+          string.format("%.6f", degradation or 0),
+          0,
+          isFinal ~= false
+        )
+      end
+    })
+  end
+end
+
+local intensityUnits = {
+  { id = "lm", label = "Lumens - Luminous Flux" },
+  { id = "cd", label = "Candelas - Luminous Intensity" },
+  { id = "ev", label = "EV - Exposure Value" },
+  { id = "w", label = "Watts - Radiant Power" }
+}
+
+local lumensPerWatt = 683
+
+local function getUnitLabel(id)
+  for _, u in ipairs(intensityUnits) do
+    if u.id == id then return u.label end
+  end
+  return id
+end
+
+local function convertIntensity(value, fromUnit, toUnit, isSpot, solidAngle)
+  if fromUnit == toUnit then return value end
+  local cd
+  if fromUnit == "lm" then
+    cd = isSpot and (value / solidAngle) or (value / (4 * math.pi))
+  elseif fromUnit == "cd" then
+    cd = value
+  elseif fromUnit == "ev" then
+    cd = math.pow(2, value)
+  elseif fromUnit == "w" then
+    cd = value * lumensPerWatt / (4 * math.pi)
+  end
+  if toUnit == "lm" then
+    return isSpot and (cd * solidAngle) or (cd * (4 * math.pi))
+  elseif toUnit == "cd" then
+    return cd
+  elseif toUnit == "ev" then
+    return math.log(cd) / math.log(2)
+  elseif toUnit == "w" then
+    return cd * (4 * math.pi) / lumensPerWatt
+  end
+  return value
+end
+
+local function customLightIntensityEditor(objectIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
+  local obj = scenetree.findObjectById(objectIds[1])
+  local className = obj and obj:getClassName() or ""
+  local isSpot = className == "SpotLight"
+
+  local outerAngle = tonumber(editor.getFieldValue(objectIds[1], "outerAngle")) or 90
+  local theta = math.rad(outerAngle * 0.5)
+  local solidAngle = 2 * math.pi * (1 - math.cos(theta))
+
+  local engineUnit = isSpot and "cd" or "lm"
+
+  local storedUnit = editor.getFieldValue(objectIds[1], "intensityUnit")
+  if customData.unit == nil then
+    if storedUnit == "lm" or storedUnit == "cd" or storedUnit == "ev" or storedUnit == "w" then
+      customData.unit = storedUnit
+    else
+      customData.unit = isSpot and "cd" or "lm"
+    end
+  end
+
+  local currentVal = tonumber(fieldValue) or 0
+
+  local displayVal = convertIntensity(currentVal, engineUnit, customData.unit, isSpot, solidAngle)
+  local ptr = imgui.FloatPtr(displayVal)
+
+  imgui.PushItemWidth(imgui.GetContentRegionAvailWidth())
+  if editor.uiInputFloat("##intensity"..fieldName, ptr, nil, nil, nil, nil, sharedCtx.editEnded) then
+    local newEngineVal = convertIntensity(ptr[0], customData.unit, engineUnit, isSpot, solidAngle)
+    setMultiSelectionFieldValue(objectIds, fieldName, tostring(newEngineVal), 0, false)
+  end
+  imgui.PopItemWidth()
+
+  if imgui.BeginCombo("##unit"..fieldName, getUnitLabel(customData.unit)) then
+    for _, unit in ipairs(intensityUnits) do
+      local selected = (customData.unit == unit.id)
+
+      if imgui.Selectable1(unit.label, selected) then
+        local oldUnit = customData.unit
+        local newUnit = unit.id
+
+        local currentVal = tonumber(editor.getFieldValue(objectIds[1], fieldName)) or 0
+
+        local displayVal = convertIntensity(currentVal, engineUnit, oldUnit, isSpot, solidAngle)
+        local newDisplayVal = convertIntensity(displayVal, oldUnit, newUnit, isSpot, solidAngle)
+        local newEngineVal = convertIntensity(newDisplayVal, newUnit, engineUnit, isSpot, solidAngle)
+
+        setMultiSelectionFieldValue(objectIds, fieldName, tostring(newEngineVal), 0, true)
+
+        customData.unit = newUnit
+        setMultiSelectionFieldValue(objectIds, "intensityUnit", newUnit, nil, true)
+      end
+
+      if selected then
+        imgui.SetItemDefaultFocus()
+      end
+    end
+    imgui.EndCombo()
+  end
+
+  if sharedCtx.editEnded[0] then
+    local finalVal = convertIntensity(ptr[0], customData.unit, engineUnit, isSpot, solidAngle)
+    setMultiSelectionFieldValue(objectIds, fieldName, tostring(finalVal), 0, true)
+    sharedCtx.editEnded[0] = false
+  end
+end
+
 local function customDecalDataRowsColsLabelChanger(fieldName, objectClass)
   if fieldName == "texRows" then return "texCols" end
   if fieldName == "texCols" then return "texRows" end
@@ -1498,7 +2164,7 @@ local function drawGroundCoverUVIndicators(windowPos, cursorPos, widgetWidth)
 end
 
 local billboardUVValue = imgui.ArrayFloat(4)
-local function customGroundCoverBillBoardUVsFieldEditor(objectIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
+customGroundCoverBillBoardUVsFieldEditor = function(objectIds, fieldValue, fieldName, fieldLabel, fieldDesc, fieldType, fieldTypeName, customData, pasteCallback, contextMenuUI)
   local uvVec = stringToTable(fieldValue)
   if uvVec[1] == nil then uvVec[1] = "0" end
   if uvVec[2] == nil then uvVec[2] = "0" end
@@ -1563,6 +2229,9 @@ end
 
 local function onEditorRegisterApi()
   editor.checkEditorDirtyFlag = checkEditorDirtyFlag
+  editor.requestInspectorScrollToTopOnceForSelection = function(selectionId)
+    pendingInspectorScrollTopSelectionId = selectionId
+  end
 end
 
 local function onEditorInitialized()
@@ -1586,6 +2255,11 @@ local function onEditorInitialized()
   editor.registerCustomFieldInspectorEditor("GroundCover", "billboardUVs", customGroundCoverBillBoardUVsFieldEditor, true)
   editor.registerCustomFieldLabelChanger("DecalData", "texRows", customDecalDataRowsColsLabelChanger)
   editor.registerCustomFieldLabelChanger("DecalData", "texCols", customDecalDataRowsColsLabelChanger)
+  for _, cls in ipairs({"PointLight", "SpotLight"}) do
+    editor.registerCustomFieldInspectorEditor(cls, "color", customLightColorFieldEditor, false)
+    editor.registerCustomFieldInspectorEditor(cls, "intensity", customLightIntensityEditor, false)
+    editor.registerCustomFieldInspectorEditor(cls, "cookie", customLightCookieFieldEditor, false)
+  end
 end
 
 local function onEditorObjectSelectionChanged()

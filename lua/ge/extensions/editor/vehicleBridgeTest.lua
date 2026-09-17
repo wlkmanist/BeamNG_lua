@@ -35,15 +35,15 @@ local function onEditorGui()
       result = "Waiting for Reply..."
     end
     im.Text(dumps(result))
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 local function onWindowMenuItem() editor.showWindow(toolWindowName) end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(400,600))
-  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = 'Vehicles'})
   extensions.load("core_vehicleBridge")
 end
 

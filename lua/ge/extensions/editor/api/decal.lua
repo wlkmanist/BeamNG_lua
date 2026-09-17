@@ -74,11 +74,17 @@ local function addDecalInstanceWithTanForceId(pos, normal, tangent, template, de
 end
 
 local function getDecalInstance(index)
-  return Engine.Render.DecalMgr.getDecalInstance(index)
+  local inst = Engine.Render.DecalMgr.getDecalInstance(index)
+  local ok, uid = pcall(function() return inst.id, inst.uid end)
+  if not (ok and uid) then return nil
+  else return inst end
 end
 
 local function getDecalInstanceByUid(uid)
-  return Engine.Render.DecalMgr.getDecalInstanceByUid(uid)
+  local inst = Engine.Render.DecalMgr.getDecalInstance(uid)
+  local ok, uid = pcall(function() return inst.id, inst.uid end)
+  if not (ok and uid) then return nil
+  else return inst end
 end
 
 local function getDecalInstanceVecSize()

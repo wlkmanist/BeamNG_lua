@@ -1,9 +1,6 @@
---[[
-This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
-If a copy of the bCDDL was not distributed with this
-file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
-This module contains a set of functions which manipulate behaviours of vehicles.
-]]
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
 
@@ -106,9 +103,7 @@ local function addBeamByData(vehicle, beam)
     beam.springExpansion = beam.springExpansion or beam.beamSpring
     beam.dampExpansion = beam.dampExpansion or beam.beamDamp
     local longBound = type(beam.beamLongExtent) == 'number' and -max(0, beam.beamLongExtent) or max(0, beam.beamLongBound or math.huge)
-    obj:setBeamAnisotropic(bid, beam.springExpansion, beam.dampExpansion,
-      type(beam.transitionZone) == 'number' and beam.transitionZone or 0, longBound
-    )
+    obj:setBeamAnisotropic(bid, beam.springExpansion, beam.dampExpansion, type(beam.transitionZone) == 'number' and beam.transitionZone or 0, longBound)
   elseif(beam.beamType == BEAM_BOUNDED) then
     local longBound = type(beam.longBoundRange) == 'number' and -max(0, beam.longBoundRange) or max(0, beam.beamLongBound or 1)
     local shortBound = type(beam.shortBoundRange) == 'number' and -max(0, beam.shortBoundRange) or max(0, beam.beamShortBound or 1)
@@ -141,7 +136,12 @@ local function addBeamByData(vehicle, beam)
     beam.maxPressure = beam.maxPressure or (beam.maxPressurePSI * 6894.757 + 101325)
     beam.maxPressurePSI = (beam.maxPressure - 101325) / 6894.757
     if beam.maxPressure < 0 then beam.maxPressure = math.huge end
-    obj:setBeamPressured(bid, beam.pressure, beam.surface, beam.volumeCoef, beam.maxPressure)
+
+    if beam.pressureLimit == nil and beam.pressureLimitPSI == nil then beam.pressureLimit = math.huge end
+    beam.pressureLimit = beam.pressureLimit or (beam.pressureLimitPSI * 6894.757 + 101325)
+    beam.pressureLimitPSI = (beam.pressureLimit - 101325) / 6894.757
+    if beam.pressureLimit < 0 then beam.pressureLimit = math.huge end
+    obj:setBeamPressured(bid, beam.pressure, beam.surface, beam.volumeCoef, beam.maxPressure, beam.pressureLimit)
   elseif(beam.beamType == BEAM_LBEAM) then
     obj:setBeamLbeam(bid, beam.id3,
       type(beam.springExpansion) == 'number' and beam.springExpansion or beam.beamSpring,
@@ -181,7 +181,7 @@ local function processNodes(vehicle)
     if node.staticCollision ~= nil then
       staticCollision = node.staticCollision
     else
-      staticCollision = true
+      staticCollision = collision
     end
 
     local frictionCoef = type(node.frictionCoef) == 'number' and node.frictionCoef or 1
@@ -273,7 +273,7 @@ local function processWheels(vehicle)
       local wid = obj:setWheel(wheel.cid, wheel.node1, wheel.node2, wheel.nodeArm or -1,
         torqueArm or -1, torqueCouple or -1, checkNum(wheel.torqueArm2, -1),
         checkNum(wheel.torqueJointNode1, -1), checkNum(wheel.torqueJointNode2, -1),
-        math.max(checkNum(wheel.brakeTorque), checkNum(wheel.parkingTorque), 1) * checkNum(wheel.brakeSpring, 10))
+        math.max(checkNum(wheel.brakeTorque), checkNum(wheel.parkingTorque), 1) * checkNum(wheel.brakeSpring, 10), checkNum(wheel.brakeDamp, 0))
 
       for _, v in ipairs(wheel.nodes) do
         obj:addWheelNode(wid, v)
@@ -416,6 +416,12 @@ local function processTorsionbars(vehicle)
       id4, spring, spring2, damp, damp2 = 0, 0, 0, 0, 0
     end
 
+    if id1 == id2 or id1 == id3 or id1 == id4 or id2 == id3 or id2 == id4 or id3 == id4 then
+      local n = vehicle.nodes
+      log('E', "jbeam.pushToPhysics", "Found degenerate torsionbar with nodes: "..n[id1].name..', '..n[id2].name..', '..n[id3].name..', '..n[id4].name)
+      spring, spring2, damp, damp2 = 0, 0, 0, 0
+    end
+
     tb.precompressionAngle = checkNum(tb.precompressionAngle)
     local precompressionAngle = tb.precompressionAngle
     if type(tb.precompressionTime) == 'number' and tb.precompressionTime > 0 then
@@ -472,9 +478,14 @@ local function processTriangles(vehicle)
     local externalCollision = 1 -- full collisions
     if triangle.externalCollisionBias == 'out' then externalCollision = 2 end
     if triangle.externalCollisionBias == 'in' then externalCollision = 3 end
+    if triangle.externalCollisionBias == 'oneWayOut' then externalCollision = 4 end
+    if triangle.externalCollisionBias == 'oneWayIn' then
+      externalCollision = 4
+      triangle.id2, triangle.id3 = triangle.id3, triangle.id2
+    end
+
     if triangle.id1 == triangle.id2 or triangle.id1 == triangle.id3 or triangle.id2 == triangle.id3 then
-      local t1, t2, t3 = n[triangle.id1].name, n[triangle.id2].name, n[triangle.id3].name
-      log('E', "jbeam.pushToPhysics", "Found degenerate collision triangle with nodes: "..t1..', '..t2..', '..t3)
+      log('E', "jbeam.pushToPhysics", "Found degenerate collision triangle with nodes: "..n[triangle.id1].name..', '..n[triangle.id2].name..', '..n[triangle.id3].name)
     end
 
     triangle.cid = obj:setTriangle(-1, triangle.id1, triangle.id2, triangle.id3, dragCoef * 0.01, liftCoef * 0.01,
@@ -493,7 +504,7 @@ local function processRefNodes(vehicle)
       refNode0.leftCorner or refNode0.ref, refNode0.rightCorner or refNode0.ref
     )
   else
-    log('E', "jbeam.pushToPhysics", "Reference nodes missing. Please add them")
+    log('E', "jbeam.pushToPhysics", "Reference nodes missing. Please add them. Installed dummy ref nodes.")
     vehicle.refNodes[0] = {ref = 0, back = 1, left = 2, up = 0}
   end
 end
@@ -534,7 +545,7 @@ local function loadVehicleStage2(vdataStage1)
   -- backward compatibility
   M.vehicleDirectory = M.data.vehicleDirectory
 
-  profilerPopEvent() -- jbeam/loadVehicleStage2
+  profilerPopEvent("jbeam/loadVehicleStage2")
 
   log('D', 'loader', 'Vehicle loading took: ' .. tostring(t:stop()) .. ' ms')
   return vdataStage1.vdata

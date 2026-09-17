@@ -4,10 +4,9 @@
 
 local im  = ui_imgui
 
-
 local C = {}
 
-C.name = 'onVehicleSpawned'
+C.name = 'On Vehicle Spawned'
 C.description = 'Triggers when a new vehicle is spawned.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle

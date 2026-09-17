@@ -114,11 +114,10 @@ local function setAiPath(arg)
     Speed in m/s this will apply to the entire route defined by "waypoints"
   -- routeSpeedMode (type: string)
     Options -> 'limit' / 'set'
-    defines whether the routeSpeed argument above will act as a limiter (AI will not exceed difined speed) or will be forced on the AI vehicle
+    defines whether the routeSpeed argument above will act as a limiter (AI will not exceed defined speed) or will be forced on the AI vehicle
   -- driveInLane (type: string)
     Options -> 'on' / 'off'
     AI will drive in the appropriate side (lane) of the road in two way streets.
-    Currently only works correctly with bidirectional roads one lane in each direction.
   -- lapCount (type: number)
     Defines the number of laps a vehicle will do on a circuit.
     In order for this to work the first and last waypoints in the "waypoints" list above should be the same (i.e. define a closed route).
@@ -164,8 +163,7 @@ local function setAiPath(arg)
   local aggression = arg.aggression or 1
   local avoidCars = arg.avoidCars or 'off'
   local aggressionMode = arg.aggressionMode or '' -- rubberBand or nil (aggression decreases with distance from opponent)
-  local resetLearning = arg.resetLearning and 'true' or 'false'
-  queueLuaCommandByName(vehicleName, 'ai.driveUsingPath({wpTargetList = '..serialize(waypoints)..', routeSpeed = '..routeSpeed..', routeSpeedMode = "'..routeSpeedMode..'", driveInLane = "'..driveInLane..'", wpSpeeds = '..serialize(speeds)..', noOfLaps = '..lapCount..', aggression = '..aggression..', aggressionMode = "'..aggressionMode..'", resetLearning = '..resetLearning..', avoidCars = "'..tostring(avoidCars)..'"})')
+  queueLuaCommandByName(vehicleName, 'ai.driveUsingPath({wpTargetList = '..serialize(waypoints)..', routeSpeed = '..routeSpeed..', routeSpeedMode = "'..routeSpeedMode..'", driveInLane = "'..driveInLane..'", wpSpeeds = '..serialize(speeds)..', noOfLaps = '..lapCount..', aggression = '..aggression..', aggressionMode = "'..aggressionMode..'", avoidCars = "'..tostring(avoidCars)..'"})')
 
   -- we need this stored somewhere so when we reset ai vehicles we can set this again
   if core_checkpoints then

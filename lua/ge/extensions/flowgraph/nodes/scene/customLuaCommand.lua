@@ -12,11 +12,11 @@ C.category = 'once_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'string', name = 'func', description = 'The function that will be called in Lua.' },
-  { dir = 'out', type = 'any', name = 'return', description = 'return value' },
+  { dir = 'out', type = 'any', name = 'return', description = 'The function return value, if any.' },
 }
 C.color = ui_flowgraph_editor.nodeColors.scene
 C.icon = ui_flowgraph_editor.nodeIcons.scene
-C.tags = {}
+C.tags = {'lua', 'command', 'code'}
 
 function C:init()
   self.clearOutPinsOnStart = false

@@ -14,7 +14,7 @@ function C:init(sites, name, forceId)
   self.radius = 5
   self._drawMode = 'faded'
   self.sortOrder = 999999
-  self.customFields = require('/lua/ge/extensions/gameplay/sites/customFields')()
+  self.customFields = require('/lua/ge/extensions/gameplay/util/customFields')()
 end
 
 function C:onSerialize()

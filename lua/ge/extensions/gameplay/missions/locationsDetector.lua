@@ -20,7 +20,7 @@ local function getMissionsAtLocation(level, playerPosition, nearbyLocations, acc
     end
   end
   --[[
-  for _,mission in ipairs(gameplay_missions_missions.get()) do
+  for _,mission in ipairs(gameplay_missions_missions.getAllMissions()) do
     local isNearby = false
     if accessible and gameplay_missions_missionManager.isVisible(mission) and not gameplay_missions_missionManager.isOngoing(mission) then
       for _,location in ipairs(gameplay_missions_missions.getLocations(mission)) do

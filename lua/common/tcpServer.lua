@@ -113,7 +113,7 @@ function TCPServer:new(listenHost, port)
     end
   else
     self.serverASIO = createNetworkServer('tcp', port)
-    log('I', 'TCPServer', 'Editor toolchain loaded using ASIO')
+    --log('I', 'TCPServer', 'Editor toolchain loaded using ASIO')
   end
 
 
@@ -252,6 +252,7 @@ function TCPServer:destroy()
   self.buffers = {}
   if self.serverASIO and destroyNetworkServer then
     destroyNetworkServer('tcp', self.port)
+    self.serverASIO = nil
   end
   if self.serverLuasocket then
     -- Close all connections

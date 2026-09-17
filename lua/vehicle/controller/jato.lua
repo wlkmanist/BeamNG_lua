@@ -3,7 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.type = "auxilliary"
+M.type = "auxiliary"
 M.defaultOrder = 1100
 
 M.fuelCoef = 1

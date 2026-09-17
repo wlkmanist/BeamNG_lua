@@ -11,13 +11,19 @@ C.description = 'Allow Flowgraph to track the Prefab spawned outside Flowgraph.'
 C.category = 'once_instant'
 
 C.pinSchema = {
-  {dir = 'in', type = 'flow', name = 'flow', description = "Inflow for this node."},
+  { dir = 'in', type = 'flow', name = 'flow', description = "Inflow for this node."},
   { dir = 'in', type = 'number', name = 'id', default = 0, description = "Prefab ID. If not present, player Prefab will be used." },
-  { dir = 'in', type = 'bool', name = 'dontDelete', hidden = true, default = true, description = 'If true, the Prefab will not be deleted when you stop the project.'}
+  { dir = 'in', type = 'bool', name = 'dontDelete', hidden = true, default = true, description = 'If true, the Prefab will not be deleted when you stop the project.'},
+  { dir = 'in', type = 'bool', name = 'skipNavgraphReload', hidden = true, default = true, description = 'If true, the Navgraph will not be reloaded when you stop the project.'},
+  { dir = 'in', type = 'bool', name = 'skipCollisionReload', hidden = true, default = true, description = 'If true, the Collision will not be reloaded when you stop the project.'},
 }
 
 function C:workOnce()
-  self.mgr.modules.prefab:addPrefab(self.pinIn.id.value, {dontDelete = self.pinIn.dontDelete.value, skipNavgraphReload = true, skipCollisionReload = true})
+  self.mgr.modules.prefab:addPrefab(self.pinIn.id.value, {
+    dontDelete = self.pinIn.dontDelete.value,
+    skipNavgraphReload = self.pinIn.skipNavgraphReload.value,
+    skipCollisionReload = self.pinIn.skipCollisionReload.value
+  })
 end
 
 function C:_executionStopped()

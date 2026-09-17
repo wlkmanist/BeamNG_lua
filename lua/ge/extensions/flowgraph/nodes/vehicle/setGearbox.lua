@@ -12,7 +12,7 @@ C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 
 C.description = 'Sets gearbox mode. If no ID is given, the current player vehicle is used.'
-C.category = 'repeat_instant'
+C.category = 'once_f_duration'
 
 C.pinSchema = {
   { dir = 'in', type = 'number', name = 'vehId', description = 'Id of the vehicle to affect.' },
@@ -22,13 +22,22 @@ C.pinSchema = {
 C.tags = {}
 
 function C:init()
-
+  self:onNodeReset()
 end
 function C:postInit()
   self.pinInLocal.mode.hardTemplates = {{value = 'arcade' },{value = 'realistic'}}
 end
 
-function C:work()
+function C:_executionStarted()
+  self:onNodeReset()
+end
+
+function C:onNodeReset()
+  self.receivedInfo = nil
+  self:setDurationState('inactive')
+end
+
+function C:workOnce()
   local veh
   if self.pinIn.vehId.value then
     veh = scenetree.findObjectById(self.pinIn.vehId.value)
@@ -37,6 +46,16 @@ function C:work()
   end
   if veh then
     core_vehicleBridge.executeAction(veh,'setGearboxMode', self.pinIn.mode.value)
+    -- ping the vehicle so we know the setGearboxMode action has actually been processed
+    core_vehicleBridge.requestValue(veh, function(val) self.receivedInfo = true end, 'ping')
+    self:setDurationState('started')
+  end
+end
+
+function C:work()
+  if self.receivedInfo then
+    self.receivedInfo = nil
+    self:setDurationState('finished')
   end
 end
 

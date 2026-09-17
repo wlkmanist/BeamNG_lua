@@ -4,7 +4,6 @@
 
 local im  = ui_imgui
 
-
 local C = {}
 
 C.name = 'Custom UI Layout'
@@ -14,7 +13,7 @@ C.icon = ui_flowgraph_editor.nodeIcons.ui
 C.category = 'provider'
 
 C.pinSchema = {
-  { dir = 'out', type = 'table',tableType = 'layoutData', name = 'layout', default = 'scenario', description = 'The stored layout.' },
+  { dir = 'out', type = 'table', tableType = 'layoutData', name = 'layout', description = 'The stored layout.' },
 }
 
 C.tags = {}

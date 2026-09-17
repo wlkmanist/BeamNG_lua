@@ -3,10 +3,12 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {'editor_aiEditor'} -- Having this dependency is not nice, but it's the easiest way to have navgraph vis in here as well as in the ai editor
+M.dependencies = {'editor_aiViz'} -- Having this dependency is not nice, but it's the easiest way to have navgraph vis in here as well as in the ai editor
 local logTag = 'editor_visualization'
 local im = ui_imgui
 local toolWindowName = "visualization"
+local lightDebugSettingsWindowName = "visualizationLightDebugSettings"
+local materialDebugViz = require('/lua/ge/extensions/util/materialDebugViz')
 
 local var = {}
 var.visualizationTypesDefault = {}
@@ -17,6 +19,171 @@ local vizFilter = im.ImGuiTextFilter()
 
 local materialDebugVisualizationType = im.IntPtr(0)
 local materialDebugVisualizationTypes = nil
+local lightDebugVisualizationEnabled = false
+local lightDebugData = {}
+local lightDebugDataRefreshTime = -1
+local lightDebugSettings = {
+  sphereRadius = {min = 0.05, max = 5},
+  drawDistance = {min = 10, max = 2000}
+}
+local lightDebugSphereRadius = 0.5
+local lightDebugDrawDistance = 120
+
+local lightDebugColors = {
+  nightControlled = ColorF(0.15, 0.45, 1, 1),
+  enabled = ColorF(0.05, 1, 0.2, 1),
+  disabled = ColorF(1, 0.12, 0.08, 1),
+  text = ColorF(1, 1, 1, 1),
+  textBg = ColorI(0, 0, 0, 190)
+}
+
+local lightDebugLegend = {
+  {label = "Night controlled", color = lightDebugColors.nightControlled, imColor = im.ImVec4(0.15, 0.45, 1, 1)},
+  {label = "Enabled", color = lightDebugColors.enabled, imColor = im.ImVec4(0.05, 1, 0.2, 1)},
+  {label = "Disabled", color = lightDebugColors.disabled, imColor = im.ImVec4(1, 0.12, 0.08, 1)}
+}
+
+local function truthy(value)
+  value = tostring(value or ""):lower()
+  return value == "1" or value == "true" or value == "yes" or value == "on"
+end
+
+local function getField(obj, fieldName)
+  if not obj or not fieldName then return nil end
+  if obj.getDynDataFieldbyName then
+    local value = obj:getDynDataFieldbyName(fieldName, 0)
+    if value ~= nil and tostring(value) ~= "" then return tostring(value) end
+  end
+  if obj.getField then
+    local value = obj:getField(fieldName, 0)
+    if value ~= nil and tostring(value) ~= "" then return tostring(value) end
+  end
+end
+
+local function isLightObject(obj)
+  if not obj then return false end
+  if obj.isSubClassOf then
+    local ok, result = pcall(obj.isSubClassOf, obj, "LightBase")
+    if ok and result then return true end
+  end
+  local className = obj.getClassName and obj:getClassName() or obj.className or ""
+  return className == "PointLight" or className == "SpotLight" or className == "LightBase"
+end
+
+local function getLightPosition(obj)
+  if obj and obj.getPosition then
+    local ok, pos = pcall(obj.getPosition, obj)
+    if ok and pos then return pos end
+  end
+  if obj and obj.getWorldBox then
+    local ok, box = pcall(obj.getWorldBox, obj)
+    if ok and box and box.getCenter then return box:getCenter() end
+  end
+end
+
+local function refreshLightDebugData()
+  local now = os.clock()
+  if now - lightDebugDataRefreshTime < 0.75 then return end
+  lightDebugDataRefreshTime = now
+
+  local names = {}
+  if scenetree.findSubClassObjects then
+    names = scenetree.findSubClassObjects("LightBase") or {}
+  else
+    local seen = {}
+    for _, className in ipairs({"LightBase", "PointLight", "SpotLight"}) do
+      for _, name in ipairs(scenetree.findClassObjects(className) or {}) do
+        if not seen[name] then
+          seen[name] = true
+          names[#names + 1] = name
+        end
+      end
+    end
+  end
+
+  table.clear(lightDebugData)
+  for _, name in ipairs(names) do
+    local obj = scenetree.findObject(name)
+    if obj and isLightObject(obj) then
+      local pos = getLightPosition(obj)
+      if pos then
+        local nightControlled = truthy(getField(obj, "nightLight"))
+        local enabledValue = getField(obj, "isEnabled")
+        local enabled = enabledValue == nil or truthy(enabledValue)
+        local color = nightControlled and lightDebugLegend[1].color or (enabled and lightDebugLegend[2].color or lightDebugLegend[3].color)
+        local className = obj.getClassName and obj:getClassName() or obj.className or "Light"
+        local radius = tonumber(getField(obj, className == "SpotLight" and "range" or "radius")) or 0
+
+        lightDebugData[#lightDebugData + 1] = {
+          pos = vec3(pos),
+          color = color,
+          label = string.format(
+            "%s\n%s%s%s",
+            obj.getName and obj:getName() or tostring(name),
+            enabled and "enabled" or "disabled",
+            nightControlled and " | night controlled" or "",
+            radius > 0 and string.format(" | %.1fm", radius) or ""
+          )
+        }
+      end
+    end
+  end
+end
+
+local function drawLightDebugVisualization()
+  if not lightDebugVisualizationEnabled or not debugDrawer or not scenetree then return end
+  refreshLightDebugData()
+
+  local camPos = core_camera and core_camera.getPosition and core_camera.getPosition()
+  if not camPos then return end
+
+  local drawDistanceSq = lightDebugDrawDistance * lightDebugDrawDistance
+  local textDistanceSq = math.min(lightDebugDrawDistance, 25) ^ 2
+  local textCount = 0
+
+  for _, data in ipairs(lightDebugData) do
+    local distSq = (data.pos - camPos):squaredLength()
+    if distSq <= drawDistanceSq then
+      debugDrawer:drawSphere(data.pos, lightDebugSphereRadius, data.color)
+
+      if distSq <= textDistanceSq and textCount < 12 then
+        textCount = textCount + 1
+        debugDrawer:drawTextAdvanced(data.pos, String(data.label), lightDebugColors.text, true, false, lightDebugColors.textBg)
+      end
+    end
+  end
+end
+
+local function drawLightDebugSettingsWindow()
+  if not lightDebugVisualizationEnabled then return end
+
+  if editor.beginWindow(lightDebugSettingsWindowName, "Light Visualization", im.WindowFlags_AlwaysAutoResize, true) then
+    local sphereRadius = im.FloatPtr(lightDebugSphereRadius)
+    im.Text("Sphere size")
+    im.SameLine()
+    im.SetNextItemWidth(180)
+    if im.SliderFloat("##lightDebugSphereRadius", sphereRadius, lightDebugSettings.sphereRadius.min, lightDebugSettings.sphereRadius.max, "%.2fm") then
+      lightDebugSphereRadius = sphereRadius[0]
+    end
+
+    local drawDistance = im.FloatPtr(lightDebugDrawDistance)
+    im.Text("Draw distance")
+    im.SameLine()
+    im.SetNextItemWidth(180)
+    if im.SliderFloat("##lightDebugDrawDistance", drawDistance, lightDebugSettings.drawDistance.min, lightDebugSettings.drawDistance.max, "%.0fm") then
+      lightDebugDrawDistance = drawDistance[0]
+    end
+
+    im.Separator()
+    im.Text("Legend")
+    for _, item in ipairs(lightDebugLegend) do
+      im.ColorButton("##lightDebugLegend" .. item.label, item.imColor, 0, im.ImVec2(16, 16))
+      im.SameLine()
+      im.Text(item.label)
+    end
+  end
+  editor.endWindow()
+end
 
 local function updateVisSettings()
   local tbl = {}
@@ -58,6 +225,8 @@ local function drawResetButton(itemPath)
 end
 
 local function onEditorGui()
+  drawLightDebugVisualization()
+
   if editor.beginWindow(toolWindowName, "Visualization") then
     --  Viz type filter search box
     im.Text("Filter Types:")
@@ -180,6 +349,8 @@ local function onEditorGui()
     im.EndChild()
   end
   editor.endWindow()
+  drawLightDebugSettingsWindow()
+  materialDebugViz.drawLegendWindow()
 end
 
 local function onEditorPreferenceValueChanged(path, value)
@@ -242,13 +413,13 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {selectable = {"table", {}, "", nil, nil, nil, true}},
     {visualizationDrawDistance = {"int", 250, "Maximum distance to draw debug shapes (only for certain visual and editor modes)", nil, 50, 2000}},
     {saveVisualizationSettings = {"bool", true, "Enable persistent visualization settings"}},
+    {showMaterialDebugLegend = {"bool", true, "Show Material Debug legend overlay on screen"}},
   })
 end
 
 local function createRenderModeSetter(objName, varName, functionName)
   return function(on)
-    local boolToNumber = on and "1" or "0"
-    setConsoleVariable(varName, boolToNumber)
+    VariableRegistry.set(varName, on)
     if _G["toggleLightVisualizer"] then
       _G["toggleLightVisualizer"](objName, on, varName)
     end
@@ -258,49 +429,20 @@ end
 local function registerNavgraphVisualization(tpe, name)
   editor.registerVisualizationType(
     {type = editor.varTypes.Custom, name = "drawNavGraph"..tpe, displayName = "Navgraph: "..name,
-     setter = function(on) editor_aiEditor.enableDrawMode(tpe, on)   end,
-     getter = function() return editor_aiEditor.getDrawMode() == tpe end})
-end
-
-local renderDebugFlags = {
-  FlagsDebugNone = 0,
-  FlagsDebugBaseColor = bit.lshift(1,0),
-  FlagsDebugOpacity = bit.lshift(1,1),
-  FlagsDebugMetallic = bit.lshift(1,2),
-  FlagsDebugRoughness = bit.lshift(1,3),
-  FlagsDebugAmbientOcclusion = bit.lshift(1,4),
-  FlagsDebugClearCoat = bit.lshift(1,5),
-  FlagsDebugClearCoatRoughness = bit.lshift(1,6),
-  FlagsDebugUV0 = bit.lshift(1,7),
-  FlagsDebugUV0Checkerboard = bit.lshift(1,8),
-  FlagsDebugUV0ColorGrid = bit.lshift(1,9),
-  FlagsDebugUV1 = bit.lshift(1,10),
-  FlagsDebugUV1Checkerboard = bit.lshift(1,11),
-  FlagsDebugUV1ColorGrid = bit.lshift(1,12),
-  FlagsDebugMaterialDeprecated = bit.lshift(1,13),
-  FlagsDebugLayerCount = bit.lshift(1,14),
-  FlagsDebugNormalsWS = bit.lshift(1,15),
-  FlagsDebugEmissive = bit.lshift(1,16),
-  FlagsDebugTriangleSize = bit.lshift(1,17),
-}
-
-local function materialDebugSetter(flag)
-  materialDebugSetFlag(flag)
-  if flag == renderDebugFlags.FlagsDebugNone then
-    enableMaterialDebug(false)
-  else
-    enableMaterialDebug(true)
-  end
+     setter = function(on) editor_aiViz.enableDrawMode(tpe, on)   end,
+     getter = function() return editor_aiViz.getDrawMode() == tpe end})
 end
 
 local function onEditorInitialized()
   editor.updateVisSettings = updateVisSettings
   editor.registerWindow(toolWindowName, im.ImVec2(500,600))
+  editor.registerWindow(lightDebugSettingsWindowName, im.ImVec2(300, 155))
   editor.clearVisualizationTypes()
   editor.registerVisualizationType({type = editor.varTypes.Setting, name = "BeamNGWaypointDrawDebug", displayName = "BeamNG: draw waypoints"})
   registerNavgraphVisualization('type', 'Road Type')
   registerNavgraphVisualization('drivability', 'Road Drivability')
   registerNavgraphVisualization('speedLimit', 'Speed Limit')
+  registerNavgraphVisualization('hiddenInNavi', 'Hidden in Navi')
   editor.registerVisualizationType({type = editor.varTypes.Setting, name = "DebugDrawDrawAdvancedText", displayName = "Advanced text drawing"})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "GFXDevice.renderWireframe", displayName = "Wireframe Mode"})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "SceneManager.renderBoundingBoxes", displayName = "Bounding Boxes"})
@@ -311,6 +453,14 @@ local function onEditorInitialized()
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "TerrainBlock.debugRender", displayName = "Terrain"})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "Engine.Render.DecalMgr.debugRender", displayName = "Decals"})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "LightShadowMap.renderFrustums", displayName = "Light Frustums"})
+  editor.registerVisualizationType({type = editor.varTypes.Custom, name = "editorLightDebugVisualization", displayName = "Lights Status",
+                                    setter = function(on)
+                                      lightDebugVisualizationEnabled = on
+                                      lightDebugDataRefreshTime = -1
+                                      table.clear(lightDebugData)
+                                      editor.setWindowVisibility(lightDebugSettingsWindowName, on)
+                                    end,
+                                    getter = function() return lightDebugVisualizationEnabled end})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "SceneCullingState.disableZoneCulling", displayName = "Disable Zone Culling"})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "SceneCullingState.disableTerrainOcclusion", displayName = "Disable Terrain Occlusion"})
 
@@ -331,103 +481,34 @@ local function onEditorInitialized()
 
   editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_LightColorVisualizeVar", displayName = "Advanced Lighting: Light Color Viz",
                                     setter = createRenderModeSetter("AL_LightColorVisualize", "$AL_LightColorVisualizeVar", "toggleLightColorViz"),
-                                    getter = function() return getConsoleVariable("$AL_LightColorVisualizeVar") == "1" end})
+                                    getter = function() return VariableRegistry.get("$AL_LightColorVisualizeVar", false) end})
 
-  editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_LightSpecularVisualizeVar", displayName = "Advanced Lighting: Light Specular Viz",
+                                    editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_LightSpecularVisualizeVar", displayName = "Advanced Lighting: Light Specular Viz",
                                     setter = createRenderModeSetter("AL_LightSpecularVisualize", "$AL_LightSpecularVisualizeVar", "toggleLightSpecularViz"),
-                                    getter = function() return getConsoleVariable("$AL_LightSpecularVisualizeVar") == "1" end})
+                                    getter = function() return VariableRegistry.get("$AL_LightSpecularVisualizeVar", false) end})
 
-  editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_NormalsVisualizeVar", displayName = "Advanced Lighting: Normals Viz",
+                                    editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_NormalsVisualizeVar", displayName = "Advanced Lighting: Normals Viz",
                                     setter = createRenderModeSetter("AL_NormalsVisualize", "$AL_NormalsVisualizeVar", "toggleNormalsViz"),
-                                    getter = function() return getConsoleVariable("$AL_NormalsVisualizeVar") == "1" end})
+                                    getter = function() return VariableRegistry.get("$AL_NormalsVisualizeVar", false) end})
 
-  editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_DepthVisualizeVar", displayName = "Advanced Lighting: Depth Viz",
+                                    editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_DepthVisualizeVar", displayName = "Advanced Lighting: Depth Viz",
                                     setter = createRenderModeSetter("AL_DepthVisualize", "$AL_DepthVisualizeVar", "toggleDepthViz"),
-                                    getter = function() return getConsoleVariable("$AL_DepthVisualizeVar") == "1" end})
+                                    getter = function() return VariableRegistry.get("$AL_DepthVisualizeVar", false) end})
 
-  if ResearchVerifier.isTechLicenseVerified() then
+                                    editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AL_VelocityVisualizeVar", displayName = "Advanced Lighting: Velocity Buffer Viz",
+                                    setter = createRenderModeSetter("AL_VelocityVisualize", "$AL_VelocityVisualizeVar", "toggleVelocityViz"),
+                                    getter = function() return VariableRegistry.get("$AL_VelocityVisualizeVar", false) end})
+
+                                    if ResearchVerifier.isTechLicenseVerified() then
     editor.registerVisualizationType({type = editor.varTypes.Custom, name = "$AnnotationVisualizeVar", displayName = "Annotation Viz",
                                       setter = createRenderModeSetter("AnnotationVisualize", "$AnnotationVisualizeVar", "toggleAnnotationVisualize"),
-                                      getter = function() return getConsoleVariable("$AnnotationVisualizeVar") == "1" end})
+                                      getter = function() return VariableRegistry.get("$AnnotationVisualizeVar", false) end})
   end
 
   -- Material Debug Visualization
-  materialDebugVisualizationTypes = {
-    {type = editor.varTypes.Custom, name = "Material_None", displayName = "None",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugNone) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugNone end},
-    {type = editor.varTypes.Custom, name = "Material_TriSize", displayName = "Triangle size",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugTriangleSize) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugTriangleSize end},
-    {type = editor.varTypes.Custom, name = "Material_BaseColor", displayName = "Base Color",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugBaseColor) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugBaseColor end},
-    {type = editor.varTypes.Custom, name = "Material_Opacity", displayName = "Opacity",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugOpacity) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugOpacity end},
-    {type = editor.varTypes.Custom, name = "Material_Metallic", displayName = "Metallic",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugMetallic) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugMetallic end},
-    {type = editor.varTypes.Custom, name = "Material_Roughness", displayName = "Roughness",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugRoughness) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugRoughness end},
-    {type = editor.varTypes.Custom, name = "Material_NormalsWS", displayName = "Normals World Space",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugNormalsWS) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugNormalsWS end},
-    {type = editor.varTypes.Custom, name = "Material_AmbientOcclusion", displayName = "Ambient Occlusion",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugAmbientOcclusion) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugAmbientOcclusion end},
-    {type = editor.varTypes.Custom, name = "Material_Emissive", displayName = "Emissive",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugEmissive) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugEmissive end},
-    {type = editor.varTypes.Custom, name = "Material_ClearCoat", displayName = "Clear Coat",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugClearCoat) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugClearCoat end},
-    {type = editor.varTypes.Custom, name = "Material_ClearCoatRoughness", displayName = "Clear Coat Roughness",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugClearCoatRoughness) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugClearCoatRoughness end},
-    {type = editor.varTypes.Custom, name = "Material_UV0", displayName = "UV0",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugUV0) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugUV0 end},
-    {type = editor.varTypes.Custom, name = "Material_UV0Checkerboard", displayName = "UV0 Checkerboard",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugUV0Checkerboard) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugUV0Checkerboard end},
-    {type = editor.varTypes.Custom, name = "Material_UV0ColorGrid", displayName = "UV0 Color Grid",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugUV0ColorGrid) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugUV0ColorGrid end},
-    {type = editor.varTypes.Custom, name = "Material_UV1", displayName = "UV1",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugUV1) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugUV1 end},
-    {type = editor.varTypes.Custom, name = "Material_UV1Checkerboard", displayName = "UV1 Checkerboard",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugUV1Checkerboard) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugUV1Checkerboard end},
-    {type = editor.varTypes.Custom, name = "Material_UV1ColorGrid", displayName = "UV1 Color Grid",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugUV1ColorGrid) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugUV1ColorGrid end},
-    {type = editor.varTypes.Custom, name = "Material_MaterialDeprecated", displayName = "Deprecated Material",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugMaterialDeprecated) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugMaterialDeprecated end,
-      info = function()
-        im.ColorEdit3("Deprecated Material", editor.getTempFloatArray3_TableTable({1, 0, 0}), im.flags(im.ColorEditFlags_NoTooltip, im.ColorEditFlags_NoInputs, im.ColorEditFlags_NoPicker))
-        im.ColorEdit3("New Material", editor.getTempFloatArray3_TableTable({0, 1, 0}), im.flags(im.ColorEditFlags_NoTooltip, im.ColorEditFlags_NoInputs, im.ColorEditFlags_NoPicker))
-      end},
-    {type = editor.varTypes.Custom, name = "Material_LayerCount", displayName = "Layer Count",
-      setter = function() materialDebugSetter(renderDebugFlags.FlagsDebugLayerCount) end,
-      getter = function() return materialDebugGetFlag() == renderDebugFlags.FlagsDebugLayerCount end,
-      info = function()
-        im.ColorEdit3("New material", editor.getTempFloatArray3_TableTable({0, 0, 1}), im.flags(im.ColorEditFlags_NoTooltip, im.ColorEditFlags_NoInputs, im.ColorEditFlags_NoPicker))
-        im.ColorEdit3("1 Layer", editor.getTempFloatArray3_TableTable({0, 1, 0}), im.flags(im.ColorEditFlags_NoTooltip, im.ColorEditFlags_NoInputs, im.ColorEditFlags_NoPicker))
-        im.ColorEdit3("2 Layer", editor.getTempFloatArray3_TableTable({1/3, 2/3, 0}), im.flags(im.ColorEditFlags_NoTooltip, im.ColorEditFlags_NoInputs, im.ColorEditFlags_NoPicker))
-        im.ColorEdit3("3 Layer", editor.getTempFloatArray3_TableTable({2/3, 1/3, 0}), im.flags(im.ColorEditFlags_NoTooltip, im.ColorEditFlags_NoInputs, im.ColorEditFlags_NoPicker))
-        im.ColorEdit3("4 Layer", editor.getTempFloatArray3_TableTable({1, 0, 0}), im.flags(im.ColorEditFlags_NoTooltip, im.ColorEditFlags_NoInputs, im.ColorEditFlags_NoPicker))
-      end}
-  }
-  for k, v in ipairs(materialDebugVisualizationTypes) do
-    if v.getter() then
-      materialDebugVisualizationType[0] = (k-1)
-      return
-    end
-  end
+  materialDebugViz.onExtensionLoaded()
+  materialDebugVisualizationTypes = materialDebugViz.getTypes()
+  materialDebugVisualizationType = materialDebugViz.getIndexPtr()
 
   if not editor.getPreference("gizmos.visualization.saveVisualizationSettings") then
     editor.preferencesRegistry:addNonPersistentItemPath("gizmos.visualization.visTypes")

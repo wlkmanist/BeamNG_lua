@@ -222,6 +222,7 @@ function C:SetStage(stage)
     self.headerSize = 0
     self.expectedOutPinWidth = 0
     self.expectedHeaderWidth = 0
+    im.PopID()
   elseif oldStage == 'header' then
     --im.EndHorizontal()
     im.EndGroup()
@@ -231,6 +232,7 @@ function C:SetStage(stage)
 
     -- spacing between header and content
   elseif oldStage == 'content' then
+    im.PopID()
   elseif oldStage == 'input' then
     ui_flowgraph_editor.PopStyleVar(2)
     local endPos = im.GetCursorPos()
@@ -417,7 +419,7 @@ function C:makeAlignmentPin(pin)
   self:BeginPinDynamic(pin)
   --ui_flowgraph_editor.BeginPin(pin.id, "invis")
   im.SetCursorPosY(im.GetCursorPosY() + 12 )
-  im.Dummy(im.ImVec2(00,12))
+  im.Dummy(im.ImVec2(0,12))
   --ui_flowgraph_editor.EndPin()
   self:EndPinDynamic(pin)
   im.SetCursorPosY(im.GetCursorPosY() + 1 )
@@ -427,6 +429,7 @@ function C:makeAlignmentPin(pin)
     local col = im.GetColorU322(im.ImVec4(0.6, 0.9, 0, 0.4))
     im.ImDrawList_AddRectFilled(im.GetWindowDrawList(), rMin, rMax, col)
   end
+  im.Dummy(im.ImVec2(0,0))
 end
 
 return function(...)

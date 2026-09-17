@@ -34,37 +34,11 @@
   ["SPIKE_STRIP", 64, 100, 40]
 ],
 "particles":[
-/*
-  existing particles on the torque side:
-  0 = UNDEF - not emitted
-  1 = SPARKS
-  2 = DUST_LIGHT
-  3 = DUST_DARK
-  4 = DUST_DIRT
-  5 = DIRT
-  6 = SMOKE_WHITE
-  7 = SMOKE_BLACK
-  8 = DUST_SAND
-  9 = SPLASH_MUD
-  10 = LEAVES
-  11 = BARK
-  12 = SPLASH_WATER
-  13 = CHUNKS
-  14 = CHUNKS_SPARKS
-  15 = SHATTER_GLASS
-  16 = GRAVEL
-  17 = SAND
-  18 = MUD
-  18 = GLASSBREAK
-  20 = SMOKE_WHITE2
-  21 = GRASS
-  22 = ICE
-  23 = SNOW
-  25 = FIRESMALL
-  26 = SMOKESMALLBLACK
-  27 = FIREMEDIUM
-  29 = FIRELARGE
-*/
+  // Note: for a list of suitable 'particleType' numbers:
+  // - Open editor with F11 > top button bar > 'Particle Editor' > 'Inspector' window > click the first dropdown
+  // - Any emitters named 'BNGP_<NUMBER>' are usable in the table below.
+  // - E.g. typing 1234 below will use the particle emitter called 'BNGP_1234'
+  // (for implementation details, check processNewParticle on C++ side)
   ["materialID1", "materialID2" , "slipVel" , "perpendicularVel", "width", "veloMult", "count", "particleType"]
   //friction particles
   ["RUBBER"     , "ASPHALT"     , "X>18"    , ""                , 0.1    , 1         , 1      , 6]
@@ -86,6 +60,12 @@
   ["RUBBER"     , "MUD"         , "X>5"     , ""                , 0.1    , 1         , 1      , 18]
   ["RUBBER"     , "MUD"         , "X>0.5"   , ""                , 0.1    , 1         , 2      , 54]
   ["GLASS"      , "MUD"         , "X>0.6"   , ""                , 0.1    , 1         , 1      , 18]
+  //snow
+  ["METAL"      , "SNOW"        , "X>0.6"   , ""                , 0.1    , 1         , 1      , 83]
+  ["PLASTIC"    , "SNOW"        , "X>0.6"   , ""                , 0.1    , 1         , 1      , 83]
+  ["RUBBER"     , "SNOW"        , "X>5"     , ""                , 0.1    , 1         , 1      , 83]
+  ["RUBBER"     , "SNOW"        , "X>0.5"   , ""                , 0.1    , 1         , 2      , 83]
+  ["GLASS"      , "SNOW"        , "X>0.6"   , ""                , 0.1    , 1         , 1      , 83]
   //sand
   ["METAL"      , "SAND"        , "X>2.5"   , ""                , 0      , 1         , 1      , 10]
   ["METAL"      , "SAND"        , "X>10"    , ""                , 0.1    , 1         , 1      , 11]

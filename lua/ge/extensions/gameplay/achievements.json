@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "stats": [
+    {
+      "id": "dev_template_stat",
+      "career": false,
+      "metric": "category/entry",
+      "scale":1,
+      "submitMinDelta":1, //value after scalling applyed
+      "disabled": true, //will drop this entry
+      "platformsOverride": {
+        "test": {
+          "scale": 0.001
+          //anything can be overwritten per platform but career,metric
+        },
+      }
+    },
+    {
+      "id": "meters_driven",
+      "career": false,
+      "metric": "vehicle/total_odometer.length",
+      "submitMinDelta":500
+    },
+    {
+      "id": "spawned_vehicle_stat",
+      "career": false,
+      "metric": "vehicle/spawned",
+      "submitMinDelta":10
+    },
+    {
+      "id": "air_time_minute",
+      "career": false,
+      "metric": "vehicle/airtime.time",
+      "scale":0.0166666,
+      "submitMinDelta":1,
+    },
+    {
+      "id": "roll_over_stat",
+      "career": false,
+      "metric": "vehicle/rollover",
+      "submitMinDelta":500
+    }
+  ],
+  "achievements": [
+    {
+      "id": "DEV_TEMPLATE",
+      "name": "unused",
+      "description": "unused",
+      "career": false,
+      "metric": "category/entry",
+      "scale":1,
+      "unlockAt": 10, //scale applied
+      "disabled": true, //will drop this entry
+      "progressStatEnabled" : false,
+      "progressStat" : "dev_template_stat",
+      "progressScale": 1,
+      "progressSubmitMinDelta": 1, //progressScale applied
+      "platformsOverride": {
+        //warning anything can be overwritten
+        "test": {
+          "scale": 0.001
+        },
+      }
+    },
+    {
+      "id": "LONG_WAY_AROUND",
+      "name": "Long Way Around",
+      "description": "Drive 1000 km.",
+      "career": false,
+      "metric": "vehicle/total_odometer.length",
+      "unlockAt": 1000000,
+      "platformsOverride": {
+        "test": {
+          "scale": 0.001
+        },
+        "BlueMelon":{
+          "progressStat":"UpdateMeters",
+          "progressStatEnabled": false
+        }
+      }
+    },
+    {
+      "id": "REAL_MILEAGE",
+      "name": "Real Mileage",
+      "description": "",
+      "career": false,
+      "metric": "vehicle/total_odometer.length",
+      "unlockAt": 250000,
+      "platformsOverride": {
+        "BlueMelon":{
+          "progressStat":"UpdateMeters",
+          "progressStatEnabled": false
+        }
+      }
+    },
+    {
+      "id": "AIRTIME",
+      "name": "airtime",
+      "description": "",
+      "career": false,
+      "metric": "vehicle/airtime.time",
+      "unlockAt": 600,
+      "platformsOverride": {
+        "BlueMelon":{
+          "progressStat":"air_time_minute",
+          "progressScale": 0.0166666,
+          "progressStatEnabled": true
+        }
+      }
+    },
+    {
+      "id": "ROLLOVER",
+      "name": "ROLLOVER",
+      "description": "",
+      "career": false,
+      "metric": "vehicle/rollover",
+      "unlockAt": 100,
+      "platformsOverride": {
+        "BlueMelon":{
+          "progressStat":"roll_over_stat",
+          "progressStatEnabled": true
+        }
+      }
+    },
+    {
+      "id": "SPAWN_FEW_VEHICLES",
+      "name": "SPAWN_FEW_VEHICLES",
+      "description": "",
+      "career": false,
+      "metric": "vehicle/spawned",
+      "unlockAt": 100,
+      "platformsOverride": {
+        "BlueMelon":{
+          "progressStat":"spawned_vehicle_stat",
+          "progressStatEnabled": true
+        }
+      }
+    },
+    {
+      "id": "SPAWN_MANY_VEHICLES",
+      "name": "SPAWN_MANY_VEHICLES",
+      "description": "",
+      "career": false,
+      "metric": "vehicle/spawned",
+      "unlockAt": 5000,
+      "platformsOverride": {
+        "BlueMelon":{
+          "progressStat":"spawned_vehicle_stat",
+          "progressStatEnabled": true
+        }
+      }
+    }
+
+
+  ]
+}

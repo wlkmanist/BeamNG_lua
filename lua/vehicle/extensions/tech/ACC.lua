@@ -2,738 +2,658 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
 local M = {}
 
--- Other control parameters.
-local maxVehicleRangeSq = 2500.0        -- The maximum squared distance from the player vehicle, at which other vehicles can be detected.
-local NaN = 0/0
+-- Nearby vehicle perception.
+local maxVehicleRangeSq = 10000.0
+local leaderLateralWindow = 2.0
+local leaderDirectionDotMin = 0.45
+local leaderDirectionDotMinCorner = 0.05
+local leaderRearAllowance = 2.5
+local leaderLateralLookaheadGain = 0.2
+local leaderLateralLookaheadMax = 10.0
+local leaderCorridorHalfLen = 27.5
+local leaderCorridorHalfZ = 1.0
+local leaderVerticalWindow = 3.0
+local leaderVerticalLookaheadGain = 0.04
+local leaderVerticalLookaheadMax = 2.0
+local lastPos = {}
+local egoHalfWidth = 0.0
+local egoCorridorC, egoCorridorX, egoCorridorY, egoCorridorZ = vec3(), vec3(), vec3(), vec3()
+local targetCorridorC, targetCorridorX, targetCorridorY, targetCorridorZ = vec3(), vec3(), vec3(), vec3()
+local leaderState = {
+  closingSpeed = 0.0,
+  leadAccel = 0.0,
+  age = 0.0,
+  persisted = false
+}
 
-local max, min, abs, sqrt, acos, deg = math.max, math.min, math.abs, math.sqrt, math.acos, math.deg  -- for objects data
--- Local road data/other vehicle data.
-local lastVelPlayer = vec3(0, 0)     -- An initial (default) starting value for the player vehicle velocity.
-local lastPos, lastVel = {}, {}         -- Initialise tables to store the last-known position and velocity data, for all other vehicles in the simulator.
-local lastDt = 0.0                      -- The previous time step (used for velocity and acceleration computations).
-local vehiclesOldData = {}
+-- ACC state.
+local driverOverrideThreshold = 0.03
+local targetSpeedVal, loaded, debug = 0.0, false, false
+local accLeaderMode = "auto"
+local externalLeader = {objectId = nil, leadSpeed = nil, leadAccel = nil}
+local driverOverrideCallback
 
--- Player vehicle state.
-local pos = vec3(0, 0)                                                    -- The player vehicle position.
-local fwd, right = vec3(0,0), vec3(0, 0)                                 -- The player vehicle orthogonal frame.
-local vehFront = vec3(0, 0)                                               -- The player vehicle front/rear bumper midpoint positions.
-local vel, acc = vec3(0, 0), vec3(0, 0)                                   -- The player vehicle velocity and acceleration vectors.
+local tableUnpack = rawget(table, "unpack") or rawget(_G, "unpack")
+local logTimer, csvData
+local debugFields = {
+  "targetSpeed", "egoSpeed", "leaderId", "leaderPersisted", "leaderAge",
+  "leadSpeed", "leaderAccel", "closingSpeed", "dAvail", "requiredBrakeAccel",
+  "unfilteredAccTarget", "accTarget", "desiredDecel", "measuredDecel", "decelError",
+  "actuatorMode", "throttle", "brake", "actuator"
+}
 
-local nullReading = {
-  vehicleID = 0, width = 0, length = 0,
-  positionB = { x = 0, y = 0, z = 0 },
-  distToPlayerVehicleSq = 0, relDistX = 0, relDistY = 0,
-  velBB = { x = 0, y = 0, z = 0 }, acc = { x = 0, y = 0, z = 0 },
-  relVelX = 0, relVelY = 0, relAccX = 0, relAccY = 0 }
+local eps = 0.1
+local leaderConst = {holdTime = 3.0, switchThreatMargin = 2.5}
+local ctrl = {
+  maxAccel = 2.0,
+  brakePedalRefDecel = 9.0,
+  accelAggression = 2.3,
+  throttleOverrideReengageTime = 1.0,
+  actuatorCoastDeadband = 0.05,
+  lowTargetSpeedVal = 0.5,
+  standstillSpeed = 0.3,
+  standstillHoldMargin = 0.3,
+  holdBrakeMin = 0.3,
+  throttleModel = {
+    weightMin = 0.05,
+    weightMax = 12.0,
+    biasMin = -4.0,
+    biasMax = 0.0,
+    coastThrottle = 0.001,
+    driveThrottle = 0.03,
+    minLearnSpeed = 1.0,
+    accelMargin = 0.5,
+    recoveryAccel = 0.5,
+    recoveryLongAccel = 0.05
+  }
+}
 
--- the other vehicles
-local simData = {
-  closestVehicles1 = nullReading,
-  closestVehicles2 = nullReading,
-  closestVehicles3 = nullReading,
-  closestVehicles4 = nullReading }
+local accTune = {
+  auto = {
+    headway = {
+      standStillDistance = 3.0,
+      speedHeadwayGain = 1.00,
+      maxDynamicHeadway = 90.0
+    },
+    leader = {
+      speedFilterTau = 0.20,
+      accelFilterTau = 0.40,
+      accelFilterTauBrake = 0.15
+    },
+    kinematic = {
+      Kv = 0.40,
+      K_gap = 1.0,
+      K_gapClose = 0.9,
+      Kff = 0.25,
+      KffBrake = 0.2,
+      comfortDecel = 1.2,
+      tau = 0.3
+    }
+  },
+  external = {
+    headway = {
+      standStillDistance = 2.0,
+      speedHeadwayGain = 0.32,
+      maxDynamicHeadway = 38.0
+    },
+    leader = {
+      speedFilterTau = 0.20,
+      accelFilterTau = 0.40,
+      accelFilterTauBrake = 0.10
+    },
+    kinematic = {
+      Kv = 0.40,
+      K_gap = 0.40,
+      K_gapClose = 1.0,
+      Kff = 0.25,
+      KffBrake = 0.8,
+      comfortDecel = 1.2,
+      tau = 0.20
+    }
+  }
+}
 
-local csvWriter = require('csvlib')
+local params = accTune.auto
 
-local timer
-local csvData
+local throttleAccModel = newLineFitting(3, 0.3, -0.1, nil, ctrl.throttleModel.weightMin, ctrl.throttleModel.weightMax, ctrl.throttleModel.biasMin, ctrl.throttleModel.biasMax)
+local brakeAccModel = newLineFitting(3, ctrl.brakePedalRefDecel, 0.0, nil, 0.1, nil, -0.2, 0.2)
+for _, model in ipairs({throttleAccModel, brakeAccModel}) do
+  model.weightStartingValue, model.biasStartingValue = model.weight, model.bias
+end
 
-local standStillDistance = 10    -- target distance at v = 0 in m
-local deltaTime = 3               -- delta time in s
-local prevDistance = 0
-local prevDistanceToCars = {}
-local prevSpeed = 0
-local distanceToLeadCar = 100
-local leadingSpeed = 100
-local leadingVehicle
+local throttleAccModelSmoother = newTemporalSmoothingNonLinear(1e30, 1, 0)
 
-local pastU = 0
-local mass = 0
-local prevLeaderSpeed = 0
-local WINDOW_SIZE = 20
-local leaderSpeedBuffer = {}
+local controlState = {
+  longAccel = 0.0,
+  lastActuator = "neutral",
+  inputAuthority = 1.0
+}
 
---local vid
-local WIDTH = 100
-local HEIGHT = 100
-local resolution = {WIDTH, HEIGHT}
-local targetSpeed
-local data
-local debug
-local vehicleID
-local noCars
-local mode
-local lastUpdateTime = os.clock()  -- Initialize the last update time
-local maintainSpeedFlag = false
+local lastCommand = {throttle = 0.0, brake = 0.0}
 
--- Projects a vector onto another vector.
-local function project(a, b) return (a:dot(b) / b:dot(b)) * b end
-
--- Computes the relative quantity (difference) between two vectors in the direction of a given axis.
-local function getRelativeQuantity(v1, v2, axis) return project(v2, axis):length() - project(v1, axis):length() end
-
--- Sorts a table by instances' squared distance value.
-local function getKeysSortedByDistanceSq(tbl, sortFunction)
-  local keys = {}
-  for key in pairs(tbl) do
-    table.insert(keys, key)
+local function writeDebugSample(sample, shouldLog)
+  local csvValues = {}
+  local logValues = shouldLog and {} or nil
+  for i, field in ipairs(debugFields) do
+    local value = sample[field]
+    if shouldLog then
+      logValues[i] = field .. ": " .. tostring(value)
+    end
+    if type(value) == "boolean" then
+      value = value and 1 or 0
+    elseif type(value) == "number" then
+      value = roundNear(value, 1e-3)
+    end
+    csvValues[i] = value
   end
-  table.sort(keys, function(a, b)
-    return sortFunction(tbl[a], tbl[b])
-  end)
-  return keys
+  if shouldLog then
+    log("D", "ACC", table.concat(logValues, ", "))
+  end
+  csvData:add(tableUnpack(csvValues))
 end
 
--- A sort function, used to sort vehicles by squared distance to player vehicle.
-local function sortAscending(a, b) return a.distToPlayerVehicleSq < b.distToPlayerVehicleSq end
-
-local function createCSV()
-  csvData = csvWriter.newCSV("time", "speed", "targetSpeed", "throttle")
-  timer = 0
+local function horizSpeed(v)
+  return math.sqrt(square(v.x) + square(v.y))
 end
 
-local function saveCSV()
-  -- save in AppData/Local/BeamNG/<current Version>
-  csvData:write('testLog')
+local function blendToward(current, target, tau, dtSim)
+  return lerp(current, target, dtSim / (tau + dtSim))
 end
 
-local function mMultiplication(A, B)
-  local rows = #A
-  local columns = #B[1]
-  local length = #B
-  local C = {}
+local function leaderLookahead(relLong, gain, max)
+  return clamp(math.max(relLong, 0.0) * gain, 0.0, max)
+end
 
-  for i = 1, rows do
-    table.insert(C, i, {})
-    for j = 1, columns do
-      table.insert(C[i], j, 0)
-      for l = 1, length do
-        C[i][j] = C[i][j] + A[i][l] * B[l][j]
+local function measuredLongAccel()
+  return sensors and sensors.gy and -sensors.gy or controlState.longAccel
+end
+
+local function updateThrottleModelBiasLimits()
+  throttleAccModel.biasMin = ctrl.throttleModel.biasMin
+  throttleAccModel.biasMax = ctrl.throttleModel.biasMax
+
+  local worldGravityDir = rawget(_G, "gravityDir")
+  local fwd = worldGravityDir and obj:getForwardVector()
+  if not fwd then
+    return
+  end
+
+  fwd:normalize()
+  throttleAccModel.biasMax = clamp(
+    math.min(ctrl.throttleModel.biasMax, fwd:dot(worldGravityDir) * 9.81),
+    ctrl.throttleModel.biasMin,
+    ctrl.throttleModel.biasMax
+  )
+  throttleAccModel.bias = clamp(throttleAccModel.bias, throttleAccModel.biasMin, throttleAccModel.biasMax)
+end
+
+local function computeTargetDistance(leadSpeed)
+  return params.headway.standStillDistance + clamp(leadSpeed * params.headway.speedHeadwayGain, 0.0, params.headway.maxDynamicHeadway)
+end
+
+local function filterLeadAccel(current, raw, dtSim)
+  return blendToward(current, raw, raw < current and params.leader.accelFilterTauBrake or params.leader.accelFilterTau, dtSim)
+end
+
+local function resetLeaderState(clearHistory)
+  if clearHistory then
+    lastPos = {}
+  end
+  leaderState.objectId, leaderState.distance, leaderState.leadSpeed = nil, nil, nil
+  leaderState.closingSpeed, leaderState.leadAccel, leaderState.age, leaderState.persisted = 0.0, 0.0, 0.0, false
+end
+
+local function updateLeaderState(objectId, distance, leadSpeed, egoSpeed, dtSim, externalLeadAccel, closingSpeed)
+  local sameLeader = leaderState.objectId == objectId and leaderState.leadSpeed ~= nil
+  if sameLeader then
+    if externalLeadAccel ~= nil then
+      leaderState.leadAccel = externalLeadAccel
+      leaderState.leadSpeed = leadSpeed
+    else
+      local rawLeadAccel = (leadSpeed - leaderState.leadSpeed) / math.max(eps, dtSim)
+      leaderState.leadAccel = filterLeadAccel(leaderState.leadAccel, rawLeadAccel, dtSim)
+      leaderState.leadSpeed = blendToward(leaderState.leadSpeed, leadSpeed, params.leader.speedFilterTau, dtSim)
+    end
+  else
+    leaderState.objectId = objectId
+    leaderState.leadSpeed = leadSpeed
+    leaderState.leadAccel = externalLeadAccel or 0.0
+  end
+
+  leaderState.distance = distance
+  leaderState.closingSpeed = math.max(0.0, closingSpeed or egoSpeed - leadSpeed)
+  leaderState.age = 0.0
+  leaderState.persisted = false
+end
+
+local function getPersistedLeader(dtSim, objects, egoSpeed)
+  if leaderState.objectId == nil or leaderState.distance == nil or leaderState.age >= leaderConst.holdTime or not objects[leaderState.objectId] then
+    resetLeaderState()
+    return
+  end
+
+  leaderState.age = leaderState.age + dtSim
+  leaderState.closingSpeed = math.max(0.0, egoSpeed - (leaderState.leadSpeed or 0.0))
+  leaderState.distance = math.max(0.0, leaderState.distance - leaderState.closingSpeed * dtSim)
+  leaderState.persisted = true
+end
+
+local function resetControlTracking(inputAuthority, resetModels)
+  controlState.filteredAccTarget, controlState.lastLongVel = nil, nil
+  controlState.longAccel, controlState.inputAuthority = 0.0, inputAuthority
+  resetLeaderState(true)
+
+  lastCommand.throttle, lastCommand.brake = 0.0, 0.0
+  throttleAccModelSmoother:set(0.0)
+
+  if resetModels then
+    controlState.lastActuator = "neutral"
+    throttleAccModel:reset()
+    brakeAccModel:reset()
+  end
+end
+
+local function applyControl(throttle, brake)
+  throttle = clamp(throttle or 0.0, 0.0, 1.0)
+  brake = clamp(brake or 0.0, 0.0, 1.0)
+
+  if throttle > 0 and brake > 0 then
+    if throttle > brake then brake = 0.0 else throttle = 0.0 end
+  end
+
+  controlState.lastActuator = throttle > 0 and "throttle" or brake > 0 and "brake" or "neutral"
+
+  if extensions.tech_adasInput.apply(throttle, brake, "standard") then
+    throttleAccModelSmoother:set(throttle)
+    lastCommand.throttle = throttle
+    lastCommand.brake = brake
+    return true
+  end
+  return false
+end
+
+local function prepareLeaderScan()
+  local fwd = obj:getForwardVector():normalized()
+  local right = obj:getDirectionVectorRight():normalized()
+  local vel = obj:getVelocity()
+  local frame = {
+    pos = obj:getPosition(),
+    vel = vel,
+    egoSpeed = horizSpeed(vel),
+    selfFront = obj:getFrontPosition(),
+    fwd = fwd,
+    right = right,
+    up = fwd:cross(right):normalized(),
+    selfId = obj:getID()
+  }
+
+  egoCorridorX:setScaled2(frame.fwd, leaderCorridorHalfLen)
+  egoCorridorC:setAdd2(frame.selfFront, egoCorridorX)
+  egoCorridorY:setScaled2(frame.right, egoHalfWidth)
+  egoCorridorZ:setScaled2(frame.up, leaderCorridorHalfZ)
+
+  local objects = mapmgr.getObjects() or {}
+  for objectId, _ in pairs(lastPos) do
+    if not objects[objectId] then
+      lastPos[objectId] = nil
+    end
+  end
+  return frame, objects
+end
+
+local function scanLeaderCandidate(objectId, frame, dtSim)
+  if objectId == frame.selfId then
+    return
+  end
+
+  local posB = obj:getObjectCenterPosition(objectId)
+  if not posB then
+    return
+  end
+
+  local previousPosB = lastPos[objectId]
+  lastPos[objectId] = posB
+  local velB = previousPosB and (posB - previousPosB) * (1.0 / math.max(1e-4, dtSim)) or nil
+
+  local fwdB = obj:getObjectDirectionVector(objectId)
+  if not fwdB then
+    return
+  end
+  fwdB:normalize()
+
+  local targetLength = obj:getObjectInitialLength(objectId)
+  local targetFront = obj:getObjectFrontPosition(objectId)
+  if not targetLength or not targetFront then
+    return
+  end
+
+  local relPos = posB - frame.pos
+  local relLong, relLat, relVert = relPos:dot(frame.fwd), relPos:dot(frame.right), relPos:dot(frame.up)
+  if relLong <= -leaderRearAllowance
+    or math.abs(relLat) > leaderLateralWindow + leaderLookahead(relLong, leaderLateralLookaheadGain, leaderLateralLookaheadMax)
+    or math.abs(relVert) > leaderVerticalWindow + leaderLookahead(relLong, leaderVerticalLookaheadGain, leaderVerticalLookaheadMax)
+    or relPos:lenSquared() >= maxVehicleRangeSq
+    or frame.fwd:dot(fwdB) <= (relLong > 8.0 and leaderDirectionDotMin or leaderDirectionDotMinCorner) then
+    return
+  end
+
+  local upB = obj:getObjectDirectionVectorUp(objectId)
+  if not upB then
+    return
+  end
+  upB:normalize()
+  targetCorridorX:setScaled2(fwdB, -leaderCorridorHalfLen)
+  targetCorridorC:setSub2(targetFront, fwdB * (targetLength + leaderCorridorHalfLen))
+  targetCorridorY:setCross(upB, fwdB)
+  targetCorridorY:setScaled(obj:getObjectInitialWidth(objectId) * 0.5 / math.max(targetCorridorY:length(), 1e-30))
+  targetCorridorZ:setScaled2(upB, leaderCorridorHalfZ)
+  if not overlapsOBB_OBB(egoCorridorC, egoCorridorX, egoCorridorY, egoCorridorZ, targetCorridorC, targetCorridorX, targetCorridorY, targetCorridorZ) then
+    return
+  end
+
+  local distanceToLeader = (targetFront - fwdB * targetLength - frame.selfFront):length()
+  local closingSpeedCandidate = velB and math.max(0.0, (frame.vel - velB):dot(frame.fwd)) or 0.0
+  local leadSpeedCandidate = velB and horizSpeed(velB) or frame.egoSpeed
+  local candidateScore = distanceToLeader - computeTargetDistance(leadSpeedCandidate) -
+    square(closingSpeedCandidate) / (2.0 * ctrl.brakePedalRefDecel)
+  return distanceToLeader, velB and leadSpeedCandidate or nil, candidateScore, closingSpeedCandidate
+end
+
+local function getLeader(dtSim)
+  local frame, objects = prepareLeaderScan()
+  local objectId, distance, leadSpeed, externalAccel, closingSpeed
+
+  if accLeaderMode == "external" then
+    objectId = externalLeader.objectId
+    if objectId and objects[objectId] then
+      local dist, _, _, closeSpd = scanLeaderCandidate(objectId, frame, dtSim)
+      distance = dist
+      if distance then
+        leadSpeed = externalLeader.leadSpeed or frame.egoSpeed
+        externalAccel = externalLeader.leadAccel
+        closingSpeed = closeSpd
       end
     end
-  end
-  return C
-end
+  else
+    local nearestId, nearestDist, nearestLeadSpd, nearestScore, nearestClose = nil, nil, nil, math.huge, nil
+    local currentId, currentDist, currentLeadSpd, currentScore, currentClose = nil, nil, nil, math.huge, nil
 
-local function mPower(A, n)
-  local B = A
-  for i = 1, (n - 1) do
-    B = mMultiplication(B, A)
-  end
-  return B
-end
-
-local function mSum(A, B)
-  local C = {}
-  for i = 1, #A do
-    table.insert(C, i, {})
-    for j = 1, #A[1] do
-      table.insert(C[i], j, A[i][j] + B[i][j])
-    end
-  end
-
-  return C
-end
-
-local function mMultiplicationScalar(A, b)
-  local C = {}
-  for i = 1, #A do
-    table.insert(C, i, {})
-    for j = 1, #A[1] do
-      table.insert(C[i], j, A[i][j] * b)
-    end
-  end
-
-  return C
-end
-
-local function mTranspose(A)
-  local AT = {}
-  for i = 1, #A[1] do
-    table.insert(AT, i, {})
-    for j = 1, #A do
-      table.insert(AT[i], j, 0)
-    end
-  end
-
-  for i = 1, #A[1] do
-    for j = 1, #A do
-      AT[i][j] = A[j][i]
-    end
-  end
-  return AT
-end
-
-local function mDeterminant(A)
-  local n = #A
-  local toggle = 1
-  local lum = {}
-  for i = 1, #A do
-    table.insert(lum, i, {})
-    for j = 1, #A do
-      table.insert(lum[i], j, A[i][j])
-    end
-  end
-
-  local perm = {}
-  for i = 1, n do
-    table.insert(perm, i, i)
-  end
-
-  for j = 1, n do
-    local max = math.abs(lum[j][j])
-    local piv = j
-
-    for i = j+1, n do
-      local xij = math.abs(lum[i][j])
-      if xij > max then
-        max = xij
-        piv = i
-      end
-    end
-
-    if piv ~= j then
-      lum[j] = A[piv]
-      lum[piv] = A[j]
-
-      local t = perm[piv]
-      perm[piv] = perm[j]
-      perm[j] = t
-
-      toggle = - toggle
-    end
-
-    local xjj = lum[j][j]
-
-    if xjj ~= 0 then
-      for i = j+1, n do
-        local xij = lum[i][j] / xjj
-        lum[i][j] = xij
-        for k = j+1, n do
-          lum[i][k] = lum[i][k] - xij * lum[j][k]
+    for oid, _ in pairs(objects) do
+      local dist, leadSpd, score, closeSpd = scanLeaderCandidate(oid, frame, dtSim)
+      if dist then
+        score, closeSpd = score or math.huge, closeSpd or 0.0
+        if oid == leaderState.objectId then
+          currentId, currentDist, currentLeadSpd, currentScore, currentClose = oid, dist, leadSpd, score, closeSpd
+        end
+        if score < nearestScore then
+          nearestId, nearestDist, nearestLeadSpd, nearestScore, nearestClose = oid, dist, leadSpd, score, closeSpd
         end
       end
     end
-  end
 
-  local det = toggle
-  for i = 1, n do
-    det = det * lum[i][i]
-  end
-
-  return det
-end
-
-local function mInverse(A)
-  local adj = {}
-  for i = 1, #A do
-    table.insert(adj, i, {})
-    for j = 1, #A do
-      local M = {}
-      for i = 1, #A do
-        table.insert(M, i, {})
-        for j = 1, #A do
-          table.insert(M[i], j, A[i][j])
-        end
-      end
-      table.remove(M, i)
-      for k = 1, #M do
-        table.remove(M[k], j)
-      end
-      table.insert(adj[i], j, (-1)^(i + j)*mDeterminant(M))
+    if currentId and nearestId ~= currentId and nearestScore > currentScore - leaderConst.switchThreatMargin then
+      nearestId, nearestDist, nearestLeadSpd, nearestClose = currentId, currentDist, currentLeadSpd, currentClose
     end
-  end
-  return mMultiplicationScalar(adj, 1/mDeterminant(A))
-end
 
-local function printMatrix(A)
-  for i = 1, #A do
-    dump(A[i])
-  end
-end
-
-local function getMass()
-  for _, n in pairs(v.data.nodes) do
-    mass = mass + n.nodeWeight
-  end
-end
-
-local function average(t)
-  local sum = 0
-  for _,v in pairs(t) do
-    sum = sum + v
-  end
-  return sum / #t
-end
-
-local function getAccFactor()
-  local totalForce = 0
-  local devices = powertrain.getDevicesByCategory("engine")
-  for i = 1, #devices do
-    local torqueData = devices[i].torqueCurve
-    local gearRatio = devices[i].cumulativeGearRatio
-    local torque = average(torqueData) * gearRatio
-    local connectedWheels = powertrain.getChildWheels(devices[i], 1)
-    local radius = connectedWheels[1].dynamicRadius
-    local force = torque / radius
-    totalForce = totalForce + force
-  end
-  local accFactor = totalForce /mass
-  return accFactor
-end
-
-local function computeKmpc()
-  local resFactor = - 0.0306
-  local accFactor = getAccFactor()
-  local Ts = 0.1
-  local N = 5
-  local Q = {{1}}
-  local R = 10
-
-  local A = {{1 + resFactor * Ts, Ts * (1 + 1/2*resFactor*Ts) * accFactor}, {0, 1}}
-  local B = {{Ts * (1 + 1/2*resFactor*Ts) * accFactor}, {1}}
-  local C = {{1, 0}}
-
-  local Phi = {}
-  for i = 1, N do
-    local A_i = mPower(A, i)
-    table.insert(Phi, i*2 - 1, A_i[1])
-    table.insert(Phi, i*2, A_i[2])
-  end
-
-  local Gamma = {}
-  for i = 1, N*2 do
-    table.insert(Gamma, i, {})
-    for j = 1, N do
-      table.insert(Gamma[i], j, 0)
+    if nearestId then
+      objectId = nearestId
+      distance = nearestDist
+      leadSpeed = nearestLeadSpd or (leaderState.objectId == nearestId and leaderState.leadSpeed) or frame.egoSpeed
+      closingSpeed = nearestClose or 0.0
     end
   end
 
-  for i = 2, N do
-    for j = 1, (i - 1) do
-      local A_i = mPower(A, i - j)
-      local Gamma_i = mMultiplication(A_i, B)
-      Gamma[i*2 - 1][j] = Gamma_i[1][1]
-      Gamma[i*2][j] = Gamma_i[2][1]
-    end
-  end
-  for i = 1, N do
-    Gamma[i*2 - 1][i] = B[1][1]
-    Gamma[i*2][i] = B[2][1]
-  end
-
-  local Omega = {}
-  for i = 1, N*2 do
-    table.insert(Omega, i, {})
-    for j = 1, N*2 do
-      table.insert(Omega[i], j, 0)
-    end
-  end
-  local Omega_i = mMultiplication(mMultiplication(mTranspose(C), Q), C)
-  for i = 1, N do
-    Omega[i*2 - 1][i*2 - 1] = Omega_i[1][1]
-    Omega[i*2][i*2 - 1] = Omega_i[2][1]
-    Omega[i*2 - 1][i*2] = Omega_i[1][2]
-    Omega[i*2][i*2] = Omega_i[2][2]
-  end
-
-  local Sigma = {}
-  for i = 1, N*2 do
-    table.insert(Sigma, i, {})
-    for j = 1, N do
-      table.insert(Sigma[i], j, 0)
-    end
-  end
-  local Sigma_i = mMultiplication(mTranspose(C), Q)
-  for i = 1, N do
-    Sigma[i*2 - 1][i] = Sigma_i[1][1]
-    Sigma[i*2][i] = Sigma_i[2][1]
-  end
-
-  local Psi = {}
-  for i = 1, N do
-    table.insert(Psi, i, {})
-    for j = 1, N do
-      table.insert(Psi[i], j, 0)
-      if i == j then
-        Psi[i][j] = R
-      end
-    end
-  end
-
-  local G = mMultiplicationScalar(mSum(mMultiplication(mMultiplication(mTranspose(Gamma), Omega), Gamma), Psi), 2)
-  local F = mMultiplicationScalar(mMultiplication(mMultiplication(mTranspose(Gamma), Omega), Phi), 2)
-  local F_2 = mMultiplicationScalar(mMultiplication(mTranspose(Gamma), Sigma), -2)
-  for i = 1, #F do
-    for j = 1, #F_2[1] do
-      table.insert(F[i], 2 + j, F_2[i][j])
-    end
-  end
-
-  local I = {{-1}}
-  for i = 2, N do
-    table.insert(I[1], i, 0)
-  end
-
-  local Kmpc = mMultiplication(mMultiplication(I, mInverse(G)), F)
-  return Kmpc[1]
-end
--------------------------------------------------
-
-local function calcAvgSpeed (speeds)
-  local total = 0
-  for _, speed in ipairs(speeds) do
-    total = total + speed
-  end
-  return total/#speeds
-end
-
-local function detectSpeedTrend(currentSpeed, targetSpeedIn) --function for calculating the speed trends
-  table.insert(leaderSpeedBuffer, currentSpeed)--adding new speeds to the buffer and removing the oldest ones
-
-  if #leaderSpeedBuffer > WINDOW_SIZE then
-    table.remove(leaderSpeedBuffer, 1)
-  end
-
-  local averageSpeed = calcAvgSpeed(leaderSpeedBuffer)
-  local threshold = 0.1 --threshold for detecting the acceleration of decelration
-
-
-  if targetSpeedIn == 0 then
-    return "Car Stopped"
-  elseif currentSpeed > averageSpeed + threshold then
-    return "Accelerating"
-  elseif currentSpeed < averageSpeed - threshold then
-    return "Decelerating"
+  if objectId and distance then
+    updateLeaderState(objectId, distance, leadSpeed, frame.egoSpeed, dtSim, externalAccel, closingSpeed)
+  elseif accLeaderMode == "external" and not (objectId and objects[objectId]) then
+    resetLeaderState()
   else
-    return "Maintaining Speed"
+    getPersistedLeader(dtSim, objects, frame.egoSpeed)
   end
+  return frame.egoSpeed
 end
 
-local function adjustThrottle(velocityDifference)
-  local throttlePower = 0
-  local maxVelocityDifference = 5
+-- Follow law: vDes = lead + gapRate(gapErr), a = Kv*(vDes-ego) + kff*leadAccel, capped by v²/2room when inside the desired gap.
+local function computeKinematicAccel(egoSpeed, distanceToLeader, leadSpeed, closingSpeed, leadAccel, hasNoLeadCar, dtSim)
+  local km = params.kinematic
 
-  if velocityDifference > 0 then
-    throttlePower = math.min(1, velocityDifference / maxVelocityDifference)
-  elseif velocityDifference < 0 then
-    throttlePower = math.max(0, -velocityDifference / maxVelocityDifference)
+  local gapDes = hasNoLeadCar and math.huge or computeTargetDistance(leadSpeed)
+  local gapErr = hasNoLeadCar and 0.0 or (distanceToLeader - gapDes)
+  local dAvail = hasNoLeadCar and math.huge or math.max(0.0, gapErr)
+  local gapRate = gapErr >= 0.0 and math.sqrt(2.0 * km.comfortDecel * km.K_gap * gapErr) or km.K_gapClose * gapErr
+  local vDes = hasNoLeadCar and targetSpeedVal or clamp(leadSpeed + gapRate, 0.0, targetSpeedVal)
+
+  local kff = leadAccel < 0.0 and km.KffBrake or km.Kff
+  local aCmd = km.Kv * (vDes - egoSpeed) + kff * leadAccel
+  local aReqBrake = 0.0
+
+  if not hasNoLeadCar then
+    if closingSpeed > eps and gapErr < 0.0 then
+      local room = math.max(distanceToLeader - params.headway.standStillDistance, eps)
+      local aStop = -square(closingSpeed) / (2.0 * room)
+      aReqBrake, aCmd = -aStop, math.min(aCmd, aStop)
+    end
+    if egoSpeed < ctrl.standstillSpeed and leadSpeed < ctrl.standstillSpeed and math.abs(gapErr) <= ctrl.standstillHoldMargin then
+      aCmd = math.min(aCmd, 0.0)
+    end
   end
+  aCmd = hasNoLeadCar and clamp(aCmd, -km.comfortDecel, ctrl.maxAccel) or math.min(aCmd, ctrl.maxAccel)
 
-  return throttlePower
+  controlState.filteredAccTarget = blendToward(controlState.filteredAccTarget or 0, aCmd, km.tau, dtSim)
+  local accTarget = hasNoLeadCar and math.max(controlState.filteredAccTarget, -km.comfortDecel) or controlState.filteredAccTarget
+
+  return accTarget, vDes, gapDes, dAvail, aReqBrake, aCmd
 end
 
-local function MPC(mode, encodedDistances, targetSpeedIn, inputSpeed, vehicleID, dtSim, debug)
-  local currentTime = os.clock()
+local function updateThrottleModel(dtSim, egoSpeed)
+  local tm = ctrl.throttleModel
+  local clutch = (electrics and electrics.values and electrics.values.clutch) or 0.0
+  local throttle = clamp(lastCommand.throttle, 0.0, 1.0)
+  local isCoastingSample = throttle <= tm.coastThrottle
+  local isDriveSample = throttle >= tm.driveThrottle
 
-  -- Calculate the time elapsed since the last update
-  deltaTime = currentTime - lastUpdateTime
-
-  -- Update the last update time for the next iteration
-  lastUpdateTime = currentTime
-
-  local velocityyx = obj:getVelocity().x
-  local velocityyy = obj:getVelocity().y
-  local velocityyz = obj:getVelocity().z
-
-  local velocityy = math.sqrt(velocityyx^2 + velocityyy^2 + velocityyz^2)
-
-  local currentSpeed = electrics.values.wheelspeed    --speed of the vehicle with the acc
-  local speedDifference = math.sqrt((velocityy-targetSpeedIn)^2)
-  local distanceToCars = encodedDistances
-  local targetDistance = standStillDistance + deltaTime * currentSpeed --for testing
-
-
-  if mode=="acc" then
-    local targetDistance = standStillDistance + deltaTime * currentSpeed
+  if lastCommand.brake > 0 or clutch > 0 or egoSpeed <= tm.minLearnSpeed or (not isCoastingSample and not isDriveSample) then
+    return
   end
 
-  if vehiclesOldData[vehicleID] then
-    local observedSpeed = (distanceToCars - vehiclesOldData[vehicleID]) / dtSim + prevSpeed --changed to variable the form the function call instead of from the for loop on the table
-    distanceToLeadCar = distanceToCars
-    leadingSpeed = observedSpeed
-  end
+  updateThrottleModelBiasLimits()
 
-  local speed2 = leadingSpeed + (distanceToLeadCar - targetDistance) / dtSim --is negative, maintain same speed, add it with the conditions for acc and dec
-
-  local speed2 = velocityy + (distanceToLeadCar - targetDistance) / dtSim
-
-  targetSpeed = math.min(math.max(speed2, velocityy), targetSpeedIn) --add .max for -ve speed and the velocity is fot the leading vehicle's speed --brakes because of zero
-  local distanceError = distanceToLeadCar - targetDistance
-  local Kp = 0.1
-
-  if distanceToLeadCar > targetDistance*1.1 then
-    maintainSpeedFlag = false
-    targetSpeed = targetSpeedIn + distanceError/targetDistance*targetSpeedIn
-  elseif distanceToLeadCar < targetDistance*0.98 then
-    targetSpeed = 0.5*targetSpeedIn
-    maintainSpeedFlag = false
+  local longAccel = measuredLongAccel()
+  if isCoastingSample then
+    longAccel = clamp(longAccel, throttleAccModel.biasMin, throttleAccModel.biasMax)
   else
-    maintainSpeedFlag = true
-    targetSpeed = targetSpeedIn
+    local minPlausibleAccel = tm.biasMin - tm.accelMargin
+    local maxPlausibleAccel = tm.biasMax + throttle * tm.weightMax + tm.accelMargin
+    if longAccel < minPlausibleAccel or longAccel > maxPlausibleAccel then
+      return
+    end
   end
 
-  local Kmpc = computeKmpc()
-  local deltaU = Kmpc[1]*velocityy + Kmpc[2]*pastU + Kmpc[3]*targetSpeed + Kmpc[4]*targetSpeed + Kmpc[5]*targetSpeed + Kmpc[6]*targetSpeed + Kmpc[7]*targetSpeed
-  local u = pastU + deltaU
+  throttleAccModel:get(throttle, longAccel, dtSim)
+end
 
-  if math.floor(distanceToLeadCar) > math.floor(targetDistance) and targetSpeedIn > 0 then
-    targetSpeed = targetSpeedIn + distanceError/targetDistance*targetSpeedIn
-    u = adjustThrottle(targetSpeedIn-targetSpeed)
-  elseif math.floor(distanceToLeadCar) > math.floor(targetDistance) and targetSpeedIn == 0 then --brakes on and off issue still on
-    targetSpeed = inputSpeed
-    u = 1
+local function mapAccelerationToPedals(accTarget, targetSpeedControl, dtSim)
+  local throttle, brake, actuatorMode = 0.0, 0.0, "coast"
+  local tm = ctrl.throttleModel
+  local coastBias = throttleAccModel.bias
 
-  end
-  local velDiff = velocityy - targetSpeedIn
-
-  if targetSpeedIn == 0 then
-    targetDistance = standStillDistance
-  end
-
-  if distanceToLeadCar > targetDistance  and targetSpeedIn == 0 then
-    targetSpeed = targetSpeedIn + Kp * distanceError
-    u = adjustThrottle(targetSpeedIn-targetSpeed)
-  end
-
-
-
-  local leaderSpeedingState = detectSpeedTrend(targetSpeed, targetSpeedIn) --using the leading speed value in this function
-
-
-  if u >= 1  then
-    u = 1
-  elseif u <= -0.5 then
-    u = -0.5
-  elseif electrics.values.isShifting and velDiff < 0 and distanceToLeadCar-targetDistance > 0 then
-    u = adjustThrottle(targetSpeed)
-
+  if targetSpeedControl >= ctrl.lowTargetSpeedVal and accTarget >= coastBias then
+    actuatorMode = "throttle"
+    local throttleTarget = clamp(throttleAccModel:getX(accTarget), 0.0, 1.0)
+    if accTarget > tm.recoveryAccel and throttleTarget < tm.driveThrottle and controlState.longAccel <= tm.recoveryLongAccel then
+      throttleAccModel:reset()
+      throttleTarget = clamp(throttleAccModel:getX(accTarget), 0.0, 1.0)
+    end
+    throttle = throttleAccModelSmoother:getWithRate(throttleTarget, dtSim, ctrl.accelAggression)
+  elseif accTarget <= coastBias - ctrl.actuatorCoastDeadband then
+    actuatorMode = "brake"
+    local modelBrake = clamp(brakeAccModel:getX(coastBias - accTarget), 0.0, 1.0)
+    local holdBrakeMin = sign(math.max(0, ctrl.lowTargetSpeedVal - targetSpeedControl)) * ctrl.holdBrakeMin
+    local arcadeAutoBrakeSwitch = sign(math.max(0, (electrics.values.smoothShiftLogicAV or 0) - 3)) -- arcade autobrake comes in at |smoothShiftLogicAV| < 5
+    brake = clamp(modelBrake, holdBrakeMin, 1.0) * arcadeAutoBrakeSwitch
   end
 
-
-  if maintainSpeedFlag == true then
-    u =pastU
+  if actuatorMode == "brake" then
+    throttleAccModelSmoother:set(0.0)
   end
 
-  if u > 0  then
-    electrics.values.throttleOverride = u electrics.values.brakeOverride = nil
-  elseif (u == 0 and targetSpeed > 0)  then --added for ego vehicle to move once leader vehicle moves
-    electrics.values.throttleOverride = u electrics.values.brakeOverride = nil
-  else -- added the if and then parts
-    electrics.values.throttleOverride = nil electrics.values.brakeOverride = -u --stopping and pressing breaks
+  return clamp(throttle, 0.0, 1.0), clamp(brake, 0.0, 1.0), actuatorMode
+end
+
+local function updateLongitudinalControl(egoSpeed, dtSim)
+  local hasNoLeadCar = leaderState.distance == nil
+  local distanceToLeader = hasNoLeadCar and math.huge or leaderState.distance
+  local leadSpeed = clamp(leaderState.leadSpeed or targetSpeedVal, 0.0, targetSpeedVal)
+  local closingSpeed = leaderState.closingSpeed or 0.0
+  local leadAccel = leaderState.leadAccel or 0.0
+
+  controlState.longAccel = controlState.lastLongVel and (egoSpeed - controlState.lastLongVel) / math.max(eps, dtSim) or 0.0
+  controlState.lastLongVel = egoSpeed
+
+  local accTarget, targetSpeedControl, _, dAvail, aReqBrake, unfilteredAccTarget =
+    computeKinematicAccel(egoSpeed, distanceToLeader, leadSpeed, closingSpeed, leadAccel, hasNoLeadCar, dtSim)
+
+  updateThrottleModel(dtSim, egoSpeed)
+
+  local throttle, brake, actuatorMode = mapAccelerationToPedals(accTarget, targetSpeedControl, dtSim)
+  local desiredDecel = math.max(0.0, -accTarget)
+  if controlState.inputAuthority < 1.0 then
+    controlState.inputAuthority = math.min(1.0, controlState.inputAuthority + dtSim / math.max(eps, ctrl.throttleOverrideReengageTime))
+    local inputAuthority = smoothstep(controlState.inputAuthority)
+    throttle = throttle * inputAuthority
+    brake = brake * inputAuthority
   end
+  if not applyControl(throttle, brake) then
+    return
+  end
+
   if debug then
-    local time = math.floor(timer * 1000) / 1000 -- Make sure time doesn't have dozen of digits
-    csvData:add(time, velocityy, targetSpeed, u) timer = timer + dtSim
+    local measuredDecel = math.max(0.0, -measuredLongAccel())
+    local decelError = measuredDecel - desiredDecel
+    local sample = {
+      targetSpeed = targetSpeedControl, egoSpeed = egoSpeed,
+      leaderId = leaderState.objectId or -1, leaderPersisted = leaderState.persisted, leaderAge = leaderState.age,
+      leadSpeed = leadSpeed, leaderAccel = leadAccel, closingSpeed = closingSpeed,
+      dAvail = dAvail, requiredBrakeAccel = aReqBrake, unfilteredAccTarget = unfilteredAccTarget, accTarget = accTarget,
+      desiredDecel = desiredDecel, measuredDecel = measuredDecel, decelError = decelError,
+      actuatorMode = actuatorMode, throttle = throttle, brake = brake, actuator = controlState.lastActuator
+    }
+
+    logTimer = logTimer + dtSim
+
+    local shouldLog = logTimer > 0.2
+    writeDebugSample(sample, shouldLog)
+    if shouldLog then
+      logTimer = 0
+    end
   end
-
-  pastU = u
-
-  prevSpeed = velocityy
-
-  vehiclesOldData[vehicleID] = distanceToCars
 end
 
------------------------------------------------------------------
-
-local function changeSpeed(speed)
-  targetSpeed = speed
-end
-
-local function updateGFX(dtSim)
-
-
+local function unload()
   if not loaded then
     return
   end
-  -- compute the objects data
-  -- Update the player vehicle properties.
-  pos = obj:getPosition()
-  vel = obj:getVelocity()
-  fwd = obj:getForwardVector():normalized()
-  right = obj:getDirectionVectorRight():normalized()
-  vehFront = obj:getFrontPosition()
-  local playerPosToFront = vehFront - pos
-  local lastDtInv = 1.0 / max(1e-12, lastDt)
-  acc = (vel - lastVelPlayer) * lastDtInv                                                                         -- Use FD once to get acceleration.
-  lastVelPlayer = vel
 
-  -- Compute the relevant properties for the other vehicles.
-  local vehicles, ctr = {}, 1
-  for k, _ in pairs(mapmgr.getObjects()) do
-    if k ~= objectId then
-      -- Compute the position, velocity and acceleration of this other vehicle.
-      local posB, velB, accB = obj:getObjectCenterPosition(k), vec3(0, 0, 0), vec3(0, 0, 0)
-      if lastPos[k] ~= nil then
-        velB = (posB - lastPos[k]) * lastDtInv                                                                    -- Use FD once to get velocity.
-      end
-      if lastVel[k] ~= nil then
-        accB = (velB - lastVel[k]) * lastDtInv                                                                    -- Use FD twice to get acceleration.
-      end
-      lastPos[k], lastVel[k] = posB, velB
-
-      -- Store the data of all other vehicles which satisfy the following conditions:
-      -- i) within a certain range of the player vehicle.
-      -- ii) facing the same direction as the player vehicle.
-      -- iii) in front of the player vehicle.
-      local fwdB = obj:getObjectDirectionVector(k)
-      fwdB:normalize()
-      local distantPoint = pos + (1e12 * fwd)                                                                     -- A point on the player vehicle forward vector, far in the distance.
-      if fwd:dot(fwdB) > 0.0 and (distantPoint - pos):lenSquared() > (distantPoint - posB):lenSquared() then      -- Test that other vehicle is in front hemisphere and has same dir.
-        local distToPlayerVehicleSq = (pos - posB):lenSquared()                                                   -- The squared distance between the player and other vehicle.
-        if distToPlayerVehicleSq < maxVehicleRangeSq then                                                         -- Only consider vehicles which are within the set range.
-          local upB = obj:getObjectDirectionVectorUp(k)                                                           -- The other vehicle's frame.
-          upB:normalize()
-          local widthB, lengthB = obj:getObjectInitialWidth(k), obj:getObjectInitialLength(k)                     -- The other vehicle's dimensions.
-          local frontB = obj:getObjectFrontPosition(k)                                                            -- The other vehicle's front/rear bumper midpoint positions.
-          local rearB = frontB - (fwdB * lengthB)
-          local playerPosToBRear = rearB - pos                                                                    -- The vector from the player position to the other vehicle rear.
-          local relDistX = getRelativeQuantity(playerPosToFront, playerPosToBRear, fwd)                           -- The relative distance to the player vehicle front position.
-          local relDistY = getRelativeQuantity(playerPosToFront, playerPosToBRear, right)
-          local relVelX, relVelY = getRelativeQuantity(vel, velB, fwd), getRelativeQuantity(vel, velB, right)     -- The relative velocity wrt the player vehicle frame.
-          local relAccX, relAccY = getRelativeQuantity(acc, accB, fwd), getRelativeQuantity(acc, accB, right)     -- The relative acceleration wrt the player vehicle frame.
-
-          vehicles[ctr] = {
-            vehicleID = k,
-            width = widthB, length = lengthB,
-            distToPlayerVehicleSq = distToPlayerVehicleSq or 0.0,
-            relDistX = relDistX, relDistY = relDistY,
-            velBB = velB,
-            relVelX = relVelX, relVelY = relVelY,
-            acc = accB,
-            relAccX = relAccX, relAccY = relAccY }
-          ctr = ctr + 1
-        end
-      end
-    end
-  end
-  -- Sort the candidate vehicles by their squared distance to the player vehicle, ascending.
-  local vClosest1, vClosest2, vClosest3, vClosest4 = nullReading, nullReading, nullReading, nullReading
-  local sortMap = getKeysSortedByDistanceSq(vehicles, sortAscending)
-  if sortMap[1] ~= nil then
-    vClosest1 = vehicles[sortMap[1]]
-  end
-  if sortMap[2] ~= nil then
-    vClosest2 = vehicles[sortMap[2]]
-  end
-  if sortMap[3] ~= nil then
-    vClosest3 = vehicles[sortMap[3]]
-  end
-  if sortMap[4] ~= nil then
-    vClosest4 = vehicles[sortMap[4]]
-  end
-
-  simData = {
-    -- time = obj:getSimTime(),
-    closestVehicles1 = vClosest1,
-    closestVehicles2 = vClosest2,
-    closestVehicles3 = vClosest3,
-    closestVehicles4 = vClosest4 }
-   -- Cycle the dt values, so we have a recent memory (used in the velocity and acceleration computations).
-  lastDt = dtSim
-
-  local distance
-
-  if next(simData) ~= nil then
-    for k, v in pairs(simData) do
-      if type(v) == "table" then
-        if k =="closestVehicles1" then
-          for k2,v2 in pairs(v) do
-            if k2 == "distToPlayerVehicleSq" then
-              if v2 ~= nil and v2 ~= 0 then
-                distance = math.sqrt(v2)
-              end
-            end
-            if k2 == "vehicleID" then
-              vehicleID = v2
-            end
-
-            if k2 == "velBB" then
-              if type(v2) == "cdata" then
-                local x = tonumber(v2.x)
-                local y = tonumber(v2.y)
-                local z = tonumber(v2.z)
-                local sq2 = math.sqrt( x^2 + y^2)
-
-
-                if sq2 <= 0.01 then
-                  sq2 = 0
-                end
-
-                targetSpeed = sq2
-              end
-            end
-
-
-          end
-        end
-      end
-
-    end
-  end
-  if distance then
-    local inputSpeed = 3
-    MPC(mode, distance, targetSpeed, inputSpeed, vehicleID, dtSim, debug)
-  end
-end
-
-local function loadWithIDPlatoon(vid, speed, debugFlag)
-  loaded = true
-  mode = "platoon"
-
-
-  if not vid or vid == -1 then
-    return
-  end
-  assert(vid >= 0, "adaptiveCruiseControlWithRadar.lua - Failed to get a valid vehicle ID")
-  local radarArgs = {}
-  targetSpeed = speed
-  getMass()
-
-  debug = debugFlag
-  if debug then
-    createCSV()
-  end
-  ui_message("ACC extension loaded", 5, "Tech", "forward")
-end
-
-
-
-local function loadACC(speed, debugFlag)
-  loaded = true
-  mode = "acc"
-
-  local radarArgs = {}
-  targetSpeed = speed
-  getMass()
-
-  debug = debugFlag
-  if debug then
-    createCSV()
-  end
-  ui_message("ACC extension loaded", 5, "Tech", "forward")
-end
-
-local function unloadACC()
   loaded = false
-  electrics.values.throttleOverride = nil
-  electrics.values.brakeOverride = nil
-  log('I', 'ACC', 'adaptiveCruiseControlWithRadar extension unloaded')
+  accLeaderMode = "auto"
+  params = accTune.auto
+  externalLeader.objectId, externalLeader.leadSpeed, externalLeader.leadAccel = nil, nil, nil
+  input.event("throttle", 0, 1, nil, nil, nil, "adas")
+  input.event("brake", 0, 1, nil, nil, nil, "adas")
+  resetControlTracking(1.0, true)
+  extensions.tech_adasInput.setAiEnabled(true)
+
+  log("I", "ACC", "ACC extension unloaded")
   if debug then
-    saveCSV()
+    csvData:write("accLog")
   end
   ui_message("ACC extension unloaded", 5, "Tech", "forward")
 end
 
--- Public interface.
+local function updateGFX(dtSim)
+  if not loaded then
+    return
+  end
+
+  local playerInputs = input.lastInputs["local"] or {}
+  if (playerInputs["brake"] or 0) > driverOverrideThreshold then
+    unload()
+    if driverOverrideCallback then
+      driverOverrideCallback("brake")
+    end
+    return
+  end
+  if (playerInputs["throttle"] or 0) > driverOverrideThreshold then
+    input.event("brake", 0, 1, nil, nil, nil, "adas")
+    resetControlTracking(0.0)
+    return
+  end
+
+  updateLongitudinalControl(getLeader(dtSim), dtSim)
+end
+
+local function load(speed, debugFlag)
+  if loaded then
+    return
+  end
+
+  targetSpeedVal = math.max(0.0, speed or horizSpeed(obj:getVelocity()))
+  loaded = true
+  egoHalfWidth = obj:getInitialWidth() * 0.5
+  debug = debugFlag == true
+  extensions.tech_adasInput.setAiEnabled(false)
+  resetControlTracking(1.0, true)
+
+  if debug then
+    csvData = require("csvlib").newCSV(tableUnpack(debugFields))
+    logTimer = 0
+  end
+  ui_message("ACC extension loaded", 5, "Tech", "forward")
+end
+
+local function changeSpeed(speed)
+  targetSpeedVal = math.max(0.0, speed or 0.0)
+  if accLeaderMode ~= "external" then
+    ui_message("Speed set", 5, "Tech", "forward")
+  end
+end
+
+local function setLeaderMode(mode)
+  if accLeaderMode == mode then
+    return
+  end
+
+  resetLeaderState(mode == "auto")
+  accLeaderMode = mode
+  params = accTune[mode]
+end
+
+local function setExternalLeader(objectId, leadSpeed, leadAccel)
+  externalLeader.objectId = tonumber(objectId)
+  externalLeader.leadSpeed = math.max(0.0, leadSpeed)
+  externalLeader.leadAccel = leadAccel
+  setLeaderMode("external")
+end
+
+local function clearExternalLeader()
+  externalLeader.objectId, externalLeader.leadSpeed, externalLeader.leadAccel = nil, nil, nil
+  setLeaderMode("auto")
+end
+
+local function setDriverOverrideCallback(callback)
+  driverOverrideCallback = callback
+end
+
 M.updateGFX = updateGFX
-M.unloadACC           = unloadACC
-M.loadWithIDPlatoon   = loadWithIDPlatoon
-M.changeSpeed         = changeSpeed
-M.loadACC             = loadACC
+M.onUnload = unload
+M.unload = unload
+M.load = load
+M.changeSpeed = changeSpeed
+M.setLeaderMode = setLeaderMode
+M.setExternalLeader = setExternalLeader
+M.clearExternalLeader = clearExternalLeader
+M.setDriverOverrideCallback = setDriverOverrideCallback
 
 return M

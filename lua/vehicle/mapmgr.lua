@@ -7,12 +7,13 @@ local pointBBox = require('quadtree').pointBBox
 local kdTreeBox2D = require('kdtreebox2d')
 local buffer = require("string.buffer")
 
-local stringFind, stringSub, stringFormat, max, min = string.find, string.sub, string.format, math.max, math.min
+local stringFormat, max, min = string.format, math.max, math.min
 
 local M = {}
 
 M.objects = {}
 M.objectCollisionIds = {}
+local signalTable = {}
 
 local mapData, mapBuildSerial, edgeKdTree, maxRadius, customMap
 local lastSimTime = -1
@@ -51,7 +52,7 @@ local function setMap(newbuildSerial)
   maxRadius = _map.maxRadius
   M.nodeAliases = _map.nodeAliases
 
-  mapData = graphpath.newGraphpath()
+  mapData = graphpath.newGraphpath(_map.graphData.nodeCount)
   mapData:import(_map.graphData)
   updateDrivabilities()
   M.mapData = mapData
@@ -98,7 +99,7 @@ local function updateSignals(data)
   end
 end
 
-local buf = buffer.new() -- https://luajit.org/ext_buffer.html
+local buf = buffer.new()
 local states = {}
 local currentMailboxVersion = nil
 local function sendTracking()
@@ -106,7 +107,8 @@ local function sendTracking()
     local lastMailboxVersion = obj:getLastMailboxVersion("trafficSignalUpdates")
     if currentMailboxVersion ~= lastMailboxVersion then
       currentMailboxVersion = lastMailboxVersion
-      updateSignals(lpack.decode(obj:getLastMailbox("trafficSignalUpdates")))
+      obj:getLastMailboxToBuffer("trafficSignalUpdates", buf)
+      updateSignals(lpack.decode(buf, signalTable))
     end
   end
 
@@ -118,6 +120,7 @@ local function sendTracking()
   if electrics.values.lightbar ~= 0 then states.lightbar = electrics.values.lightbar end
   if electrics.values.hazard_enabled ~= 0 then states.hazard_enabled = electrics.values.hazard_enabled end
   if electrics.values.ignitionLevel == 0 or electrics.values.ignitionLevel == 1 then states.ignitionLevel = electrics.values.ignitionLevel end
+  if electrics.values.turnsignal ~= 0 then states.turnsignal = electrics.values.turnsignal end
 
   buf:reset():putf('map.objectData(%s,%s,%s,', objectId, playerInfo.anyPlayerSeated, math.floor(beamstate.damage))
 
@@ -171,23 +174,25 @@ end
 local function getObjects()
   local simTime = obj:getSimTime()
   if simTime ~= lastSimTime then
-    local objData = obj:getLastMailbox("objUpdate")
-    M.objects = objData == "" and {} or lpack.decode(objData)
+    obj:getLastMailboxToBuffer("objUpdate", buf)
+    if #buf == 0 then
+      table.clear(M.objects)
+    else
+      lpack.decode(buf, M.objects)
+    end
     lastSimTime = simTime
   end
   return M.objects
 end
 
 local p1, p2 = vec3(), vec3()
-local function surfaceNormalBelow(p, r)
+local function setSurfaceNormalBelow(v, p, r)
   --   p3
-  --     \
-  --      \ r
-  --       \     r
-  --        p - - - - p1     | - > y
-  --       /                 v
-  --      / r                x
-  --     /
+  --     \ r
+  --      \    r
+  --       p - - - p1     + > y
+  --      /               v
+  --     / r              x
   --   p2
 
   r = r or 2
@@ -195,24 +200,28 @@ local function surfaceNormalBelow(p, r)
 
   p1:set(p.x, p.y + r, p.z + hr)
   p2:set(p.x + 0.8660254037844386 * r, p.y - 0.5 * r, p1.z) -- sin(60) => 0.8660254037844386, cos(60) => 0.5
-  local p3 = p2:copy()
-  p3.x = p.x - 0.8660254037844386 * r
+  v.x = p.x - 0.8660254037844386 * r
+  v.y = p2.y
+  v.z = p2.z
 
   p1.z = obj:getSurfaceHeightBelow(p1)
   p2.z = obj:getSurfaceHeightBelow(p2)
-  p3.z = obj:getSurfaceHeightBelow(p3)
+  v.z = obj:getSurfaceHeightBelow(v)
 
-  -- store the result in p3
-  if min(p1.z, p2.z, p3.z) + hr < p.z then
-    p3:set(0, 0, 1)
+  if min(p1.z, p2.z, v.z) + hr < p.z then
+    v:set(0, 0, 1)
   else
-    p2:setSub(p3)
-    p1:setSub(p3)
-    p3:set(p2.y * p1.z - p2.z * p1.y, p2.z * p1.x - p2.x * p1.z, p2.x * p1.y - p2.y * p1.x) -- p2 x p1
-    p3:normalize()
+    p2:setSub(v)
+    p1:setSub(v)
+    v:set(p2.y * p1.z - p2.z * p1.y, p2.z * p1.x - p2.x * p1.z, p2.x * p1.y - p2.y * p1.x) -- p2 x p1
+    v:normalize()
   end
+end
 
-  return p3
+local function surfaceNormalBelow(p, r)
+  local v = vec3()
+  setSurfaceNormalBelow(v, p, r)
+  return v
 end
 
 local function sqDistToLineSegmentZBias(s, a, b, wZ)
@@ -235,9 +244,7 @@ local function findClosestRoad(pos, wZ)
     local minCurDist = searchRadiusSq * 4
     bestDist = searchRadiusSq
     for item_id in edgeKdTree:queryNotNested(pointBBox(pos.x, pos.y, searchRadius)) do
-      local i = stringFind(item_id, '\0')
-      local n1id = stringSub(item_id, 1, i-1)
-      local n2id = stringSub(item_id, i+1, #item_id)
+      local n1id, n2id = mapData:getNodesFromEdgeId(item_id)
       local n1Pos, n2Pos = mapData:getEdgePositions(n1id, n2id)
       local curDist = sqDistToLineSegmentZBias(pos, n1Pos, n2Pos, wZ)
 
@@ -258,45 +265,48 @@ end
 
 local function findBestRoad(pos, dir, wZ)
   -- searches for best road with respect to position and direction, with a fallback to the generic findClosestRoad function
+  local graph = mapData.graph
   pos = pos or obj:getPosition()
   dir = dir or obj:getDirectionVector()
 
-  local nodePositions = mapData.positions
-  local nodeRadius = mapData.radius
-  local bestRoad1, bestRoad2, bestDist
-  local currRoads = {}
+  local nodePositions, nodeRadius = mapData.positions, mapData.radius
+  local currRoads, currRoadsCount = {}, 0
 
   for item_id in edgeKdTree:queryNotNested(pointBBox(pos.x, pos.y, 20)) do -- assuming that no roads would have a radius greater than 20 m
-    local i = stringFind(item_id, '\0')
-    local n1id = stringSub(item_id, 1, i-1)
-    local n2id = stringSub(item_id, i+1, #item_id)
+    local n1id, n2id = mapData:getNodesFromEdgeId(item_id)
     local curDist = sqDistToLineSegmentZBias(pos, nodePositions[n1id], nodePositions[n2id], wZ)
 
     if curDist <= square(math.max(nodeRadius[n1id], nodeRadius[n2id])) then
       local xnorm = pos:xnormOnLine(nodePositions[n1id], nodePositions[n2id])
       if xnorm >= 0 and xnorm <= 1 then -- insert result if it is within road boundaries
-        table.insert(currRoads, {n1id, n2id, curDist})
+        currRoadsCount = currRoadsCount + 3
+        currRoads[currRoadsCount-2] = n1id
+        currRoads[currRoadsCount-1] = n2id
+        currRoads[currRoadsCount] = curDist
       end
     end
   end
 
-  if not currRoads[1] then
+  if currRoadsCount == 0 then
     --log('W', 'mapmgr', 'no results for findBestRoad, now using findClosestRoad')
     return findClosestRoad(pos, wZ) -- fallback
-  elseif not currRoads[2] then -- only one entry in the table
-    return currRoads[1][1], currRoads[1][2], math.sqrt(currRoads[1][3])
+  elseif currRoadsCount == 3 then -- only one entry in the table (in terms of full edge informations, hence 3 elements stored)
+    return currRoads[1], currRoads[2], math.sqrt(currRoads[3])
   end
 
-  local bestDot = 0
-  for _, v in ipairs(currRoads) do
-    local dirDot = math.abs(dir:dot((nodePositions[v[1]] - nodePositions[v[2]]):normalized()))
-    if dirDot >= bestDot then -- best direction
-      bestDot = dirDot
-      bestRoad1, bestRoad2, bestDist = v[1], v[2], v[3]
+  local bestScore, bestIdx = -math.huge, nil
+  for i = 1, currRoadsCount, 3 do
+    local edge = graph[currRoads[i]][currRoads[i+1]]
+    local score = push3(dir):dot((push3(nodePositions[edge.outNode]) - push3(nodePositions[edge.inNode])):normalized())
+    if not edge.oneWay then score = math.abs(score) end -- manage edges with multiple directions
+    score = score - edge.gated -- add gated road penalty to penalize choosing a gated road
+    if score >= bestScore then
+      bestScore = score
+      bestIdx = i
     end
   end
 
-  return bestRoad1, bestRoad2, math.sqrt(bestDist)
+  return currRoads[bestIdx], currRoads[bestIdx+1], math.sqrt(currRoads[bestIdx+2])
 end
 
 local function startPosLinks(position, wZ)
@@ -324,9 +334,7 @@ local function startPosLinks(position, wZ)
         for item_id in edgeKdTree:queryNotNested(pointBBox(position.x, position.y, searchRadius)) do
           if not seenEdges[item_id] then
             seenEdges[item_id] = true
-            local i = stringFind(item_id, '\0')
-            local n1id = stringSub(item_id, 1, i-1)
-            local n2id = stringSub(item_id, i+1, #item_id)
+            local n1id, n2id = mapData:getNodesFromEdgeId(item_id)
             local n1Pos = nodePositions[n1id]
             edgeVec:set(nodePositions[n2id])
             edgeVec:setSub(n1Pos)
@@ -389,6 +397,7 @@ M.enableTracking = enableTracking
 M.disableTracking = disableTracking
 M.getObjects = getObjects
 M.updateDrivabilities = updateDrivabilities
+M.setSurfaceNormalBelow = setSurfaceNormalBelow
 M.surfaceNormalBelow = surfaceNormalBelow
 M.findClosestRoad = findClosestRoad
 M.findBestRoad = findBestRoad

@@ -10,19 +10,21 @@ local buffer = require("string.buffer")
 -- cache frequently used functions from other modules in upvalues
 local min, max, abs, sqrt, huge = math.min, math.max, math.abs, math.sqrt, math.huge
 local tableInsert, tableClear = table.insert, table.clear
-local stringMatch, stringFind, stringSub = string.match, string.find, string.sub
+local stringMatch = string.match
 local pointBBox = quadtree.pointBBox
 
 local M = {}
 
 M.objectNames = {}
 M.objects = {}
-
 local objectsCache = {}
+local objectSend = {}
+local objectSendCache = {}
+
 local mapFilename = ''
 local map = {nodes = {}}
 local loadedMap = false
-local objectsReset = true
+local objectsCount = 0
 local maxRadius = nil
 local rules = nil
 local isEditorEnabled
@@ -38,6 +40,8 @@ local tmpBuf = buffer.new()
 local function highToLow(a, b) return a < b end
 local function lowToHigh(a, b) return a > b end
 local function randomOrder(a, b) return math.random() > math.random() end
+
+local trafficExclusionZones = {}
 
 local _pairs = pairs
 -- for debugging issues in the deterministic build of the navgraph
@@ -579,13 +583,20 @@ local function loadJsonDecalMap()
 
   do -- load DecalRoad data
     local nodePos, nodeSqRad, stack, stackIdx = {}, {}, {}, 0
+    local rnum = 1
     for _, decalRoadName in ipairs(scenetree.findClassObjects('DecalRoad')) do
       local road = scenetree.findObject(decalRoadName)
       if road and road.drivability > 0 then
         local edgeCount = road:getEdgeCount()
         local nodeCount = road:getNodeCount()
         if max(edgeCount, nodeCount) > 1 then
-          local prefix = (tonumber(decalRoadName) and 'DR'..decalRoadName..'_') or decalRoadName
+          local prefix
+          if tonumber(decalRoadName) then
+            prefix = 'DR'..rnum..'_'
+            rnum = rnum + 1
+          else
+            prefix = decalRoadName
+          end
           local drivability = road.drivability
           local hiddenInNavi = road.hiddenInNavi
           local roadType = road.gatedRoad and 'private' or road.type -- TODO: deprecate gatedRoad if we get more road types?
@@ -622,6 +633,10 @@ local function loadJsonDecalMap()
               lanes = ('-'):rep(lanesLeft)..('+'):rep(lanesRight)
             end
             oneWay = isOneWay(lanes)
+            if oneWay and lanes:byte(1) == 45 then --> 45 is ascii code for '-'
+              lanes = flipLanes(lanes)
+              flipDirection = not flipDirection
+            end
           end
 
           if edgeCount > 2 and edgeCount >= nodeCount and road.useSubdivisions then -- use decalRoad edge (subdivision) data to generate AI path
@@ -769,7 +784,7 @@ local function loadJsonDecalMap()
   _updateProgress()
 
   -- load manual road segments
-  local levelDir, filename, ext = path.split(getMissionFilename())
+  local levelDir = path.split(getMissionFilename())
   if not levelDir then return end
   mapFilename = levelDir .. 'map.json'
   --log('D', 'map', 'loading map.json: '.. mapFilename)
@@ -843,6 +858,10 @@ local function loadJsonDecalMap()
         lanes = ('-'):rep(lanesLeft)..('+'):rep(lanesRight)
       end
       oneWay = isOneWay(lanes)
+      if oneWay and lanes:byte(1) == 45 then --> 45 is ascii code for '-'
+        lanes = flipLanes(lanes)
+        flipDirection = not flipDirection
+      end
     end
 
     local noMerge
@@ -857,7 +876,10 @@ local function loadJsonDecalMap()
       for i = 2, nodeCount do
         local wp2 = v.nodes[i]
         if wp2 ~= wp1 then -- guards against a node name appearing consequtively in the nodelist.
-          if mapNodes[wp2] == nil then log('E', 'map', "manual waypoint not found: "..tostring(wp2)); break; end
+          if mapNodes[wp2] == nil then
+            log('E', 'map', "the manual waypoint (beamNGWaypoint) "..tostring(wp2).." referenced in "..mapFilename.." does not exist")
+            break
+          end
           mapNodes[wp2].noMerge = noMerge
           local inNode = flipDirection and wp2 or wp1
           local outNode = inNode == wp2 and wp1 or wp2
@@ -1571,12 +1593,10 @@ local function resolveXJunctions()
   _updateProgress()
 end
 
--- Merge nodes to lines if they are closeby
-local function mergeNodesToLines()
+local function mergeNodesToLines() -- if they are closeby
   local edges = getEdgeList()
   local edgeCount = #edges
 
-  -- Create a quadtree with map edges
   local q_edges = kdTreeBox2D.new(edgeCount)
   for i = 1, edgeCount do
     if not edges[i][3].noMerge then
@@ -1736,22 +1756,27 @@ local function processPrivateRoads()
       count = count + 1
     end
 
-    if count >= 2 then
-      local otherCount = count - privateCount
-      --if privateCount == 1 and otherCount == 1 then
-        --log('W', 'map', "Node "..tostring(nid).." has single private link connected to single public link; it is recommended to make the private road join to an intersection.")
-      --elseif otherCount == 1 and privateCount == count - 1 then
-        --log('W', 'map', "Node "..tostring(nid).." has single public link connected to only private links; it is recommended to make this public road private as well.")
-      --end
+    -- node has at least one private link and at least one non private link
+    if privateCount > 0 and privateCount < count then
+      -- if privateCount == count - 1 then
+      --   if privateCount == 1 then
+      --     log('W', 'map', "Node "..tostring(nid).." has single private link connected to single public link; it is recommended to make the private road join to an intersection.")
+      --   else
+      --     log('W', 'map', "Node "..tostring(nid).." has single public link connected to only private links; it is recommended to make this public road private as well.")
+      --   end
+      -- end
 
-      -- this section sets single segments, to be processed later by graphpath
-      if otherCount == 1 and privateCount == count - 1 then
+      -- Sets apropriate links to gated
+      if privateCount == count - 1 then
+        -- Node has exactly one non private link, set it to gated. (Note: Possibly only one private link also)
         for lnid, d in pairs(n.links) do
-          if d.type ~= 'private' then -- processes non-private segment due to it being the only one compared to the other links
+          if d.type ~= 'private' then
             n.links[lnid].gatedRoad = true
+            break -- non-private link found so break.
           end
         end
-      elseif privateCount >= 1 and otherCount >= 1 then
+      else
+        -- Node has more than one non private links. Set all private links to gated (might be one or multiple).
         for lnid, d in pairs(n.links) do
           if d.type == 'private' then
             n.links[lnid].gatedRoad = true
@@ -1770,33 +1795,36 @@ local function isJunction(nId)
     return true
   else
     local n1Id, d1 = next(map.nodes[nId].links)
-    local _, d2 = next(map.nodes[nId].links, n1Id)
-    return not (is2SegMergeValid(nId, d1, d2) and (d1.type == d2.type) and d1.drivability == d2.drivability and d1.speedLimit == d2.speedLimit)
+    local n2Id, d2 = next(map.nodes[nId].links, n1Id)
+    local sqDist = -math.huge -- min(map.nodes[nId].pos:squaredDistance(map.nodes[n2Id].pos), map.nodes[nId].pos:squaredDistance(map.nodes[n1Id].pos))
+    return not (is2SegMergeValid(nId, d1, d2) and (d1.type == d2.type) and d1.drivability == d2.drivability and d1.speedLimit == d2.speedLimit and sqDist < 10000)
   end
 end
 
 local function optimizeNodes()
+  -- identify "junction" nodes
   local isJunctionNode = {}
-  -- identify junction nodes
   for nid in _pairs(map.nodes) do
     isJunctionNode[nid] = isJunction(nid)
   end
 
-  local visited = {}
-  local path, nodesToKeep, stack, pathLen = {}, {}, {}, {}
+  -- Simplify paths between any two junction nodes
+  local visited, path, nodesToKeep, stack, pathLen = {}, {}, {}, {}, {}
   for nid in _pairs(map.nodes) do
-    if not (visited[nid] or isJunctionNode[nid]) then -- isJunction(nid)
+    if not (visited[nid] or isJunctionNode[nid]) then
 
       ------------------------------------------------------------------------------
       -- Unfold the path (set of nodes between two "junction" nodes) containing nid
       ------------------------------------------------------------------------------
 
-      path[1] = nid
       local pathCount = 1
+      path[1] = nid
       visited[nid] = true
-      while true do -- explore the path nid belongs to
-        local nextNid = next(map.nodes[path[pathCount]].links)
-        nextNid = nextNid ~= path[pathCount-1] and nextNid or next(map.nodes[path[pathCount]].links, nextNid)
+
+      -- explore the path nid belongs to
+      while true do
+        -- get a neighbour of nid that is not already in the path
+        local nextNid = next(map.nodes[path[pathCount]].links, path[pathCount-1]) or next(map.nodes[path[pathCount]].links)
 
         if nextNid == nid then -- search has come full circle without encountering a junction node. Path is an isolated loop.
           local iMin = 1
@@ -1826,25 +1854,31 @@ local function optimizeNodes()
         path[pathCount] = nextNid
         visited[nextNid] = true
 
-        if isJunctionNode[nextNid] then -- isJunction(nextNid)
-          if path[1] == nid then -- first junction node reached
+        -- check if path has reached an end/junction
+        if isJunctionNode[nextNid] then
+          -- check if the first node in the path is also an end/junction
+          if isJunctionNode[path[1]] then
+            -- both end nodes of the path have been discovered. Terminate the search
+            break
+          else
+            -- reverse the path up to this point to place junction node at the path start
             local n = pathCount
-            for i = 1, n * 0.5 do -- reverse path up to this point to place junction node at the path start
+            for i = 1, n * 0.5 do
               path[i], path[n] = path[n], path[i]
               n = n - 1
             end
-          else
-            break
           end
         end
       end
 
-      -- order path deterministically
+      -- We want to always traverse the path reduction algorithm in the same order
+      -- so make sure that the minimum position node (in the min3D sense) is at the start of the path
+      -- and reverse path oreder if necessary
       local first, last
       if path[1] ~= path[pathCount] then -- path is not a loop
         first = path[1]
         last = path[pathCount]
-      else -- path is a loop
+      else -- path is a loop (first and last nodes are the same) so pick the second and one before last nodes to decide on the path order
         first = path[2]
         last = path[pathCount-1]
       end
@@ -1861,6 +1895,7 @@ local function optimizeNodes()
       -------------------------
 
       -- Consider positions
+      -- Decides which nodes need to be part of the path based on their positions
       local i, k = 1, pathCount
       local pi = map.nodes[path[i]].pos
       repeat
@@ -1886,6 +1921,7 @@ local function optimizeNodes()
       until not k
 
       -- Consider radii
+      -- Decides which nodes need to be part of the path based on their radius
       pathLen[1] = 0
       for i = 2, pathCount do
         pathLen[i] = pathLen[i-1] + map.nodes[path[i]].pos:distance(map.nodes[path[i-1]].pos)
@@ -1913,7 +1949,7 @@ local function optimizeNodes()
         end
       until not k
 
-      -- Remove nodes
+      -- Remove nodes that don't need to be part of the path.
       local prevNode
       for i = 2, pathCount-1 do
         if not nodesToKeep[i] then
@@ -2202,7 +2238,7 @@ local function linkMap()
   print('')
   --]]
 
-  convertToSingleSided()
+  local edgeCount, nodeCount = convertToSingleSided()
   --[[ Convert to single sided Hashes
   print('------------------ Convert To Single Sided ----------------------')
   -- checkLinks() -- this does not work for single sided links
@@ -2212,7 +2248,7 @@ local function linkMap()
   print('')
   --]]
 
-  return graphDataHistory
+  return edgeCount, nodeCount, graphDataHistory
 end
 
 -- local function colorNodes(mapNodes)
@@ -2300,6 +2336,164 @@ local function colorNodes(mapNodes)
   end
 end
 
+local function getNodesNearPositions(trafficExlusionZones)
+  local nodes = {}
+  for i = 1, #trafficExlusionZones do
+    local pos = trafficExlusionZones[i].pos
+    local radius = trafficExlusionZones[i].radius
+    for item_id in nodeKdTree:queryNotNested(pointBBox(pos.x, pos.y, radius)) do
+      if gp.positions[item_id]:squaredDistance(pos) <= radius * radius then
+        table.insert(nodes, item_id)
+      end
+    end
+  end
+  return nodes
+end
+M.getNodesNearPositions = getNodesNearPositions
+
+local excludeSet = {}
+local initialExcludeSet = {} -- TODO For debugging purposes. REmove
+local function createTrafficExclusionArea(trafficExlusionZones)
+  table.clear(excludeSet)
+  table.clear(initialExcludeSet)
+  local initNodeSet = getNodesNearPositions(trafficExlusionZones)
+  if not initNodeSet[1] then return end
+  initialExcludeSet = initNodeSet
+  local nodesToExplore = {}
+  local nodesToExploreDict = {}
+  local j = 0
+  for i = 1, #initNodeSet do
+    -- TODO: only explore the nodes whose neighboors are not all already in the initNodeSet
+    if not nodesToExploreDict[initNodeSet[i]] then
+      j = j + 1
+      nodesToExplore[j] = initNodeSet[i]
+      nodesToExploreDict[initNodeSet[i]] = true
+      excludeSet[initNodeSet[i]] = true
+    end
+  end
+
+  local i = 1
+  while nodesToExplore[i] do
+    local nid = nodesToExplore[i]
+    nodesToExploreDict[nid] = nil
+
+    if not excludeSet[nid] then
+      local totalLinks, blockedLinks = 0, 0
+      for k in pairs(gp.graph[nid]) do
+        totalLinks = totalLinks + 1
+        if excludeSet[k] then blockedLinks = blockedLinks + 1 end
+      end
+      if totalLinks - blockedLinks < 2 then
+        excludeSet[nid] = true
+      else
+        goto continue
+      end
+    end
+
+    for k, v in pairs(gp.graph[nid]) do
+      local curNode, prevNode = k, nid
+      while not excludeSet[curNode] do
+        local totalLinks, blockedLinks = 0, 0
+        for k1 in pairs(gp.graph[curNode]) do
+          totalLinks = totalLinks + 1
+          if excludeSet[k1] then blockedLinks = blockedLinks + 1 end
+        end
+        if totalLinks - blockedLinks < 2 then
+          excludeSet[curNode] = true
+          if totalLinks <= 2 then
+            local nextNode = next(gp.graph[curNode], prevNode) or next(gp.graph[curNode])
+            curNode, prevNode = nextNode, curNode
+          else
+            if not nodesToExploreDict[curNode] then
+              table.insert(nodesToExplore, curNode)
+              nodesToExploreDict[curNode] = true
+            end
+            break
+          end
+        else
+          if not nodesToExploreDict[curNode] then
+            table.insert(nodesToExplore, curNode)
+            nodesToExploreDict[curNode] = true
+          end
+          break
+        end
+      end
+    end
+
+    ::continue::
+    i = i + 1
+  end
+
+  -- set private and gated roads
+  for n1id in pairs(excludeSet) do
+    for n2id, edgeData in pairs(gp.graph[n1id]) do
+      if excludeSet[n2id] then -- both are in the exclude set, set this road to private
+        if n1id > n2id then
+          -- this is needed because map.nodes is single sided
+          if map.nodes[n1id] and map.nodes[n1id].links[n2id] then
+            map.nodes[n1id].links[n2id].originalType = map.nodes[n1id].links[n2id].type
+            map.nodes[n1id].links[n2id].type = 'private'
+          else
+            map.nodes[n2id].links[n1id].originalType = map.nodes[n2id].links[n1id].type
+            map.nodes[n2id].links[n1id].type = 'private'
+          end
+        end
+      else -- one node is in the exclude set the other is not. this road is gated.
+        edgeData.gated = 10000
+        -- in this case i will only see the edge from the n1id -> n2id direction since n2id is not in the exclude set.
+        -- this is needed because map.nodes is single sided
+        if map.nodes[n1id] and map.nodes[n1id].links[n2id] then
+          map.nodes[n1id].links[n2id].originalType = map.nodes[n1id].links[n2id].type
+          map.nodes[n1id].links[n2id].type = 'private'
+          map.nodes[n1id].links[n2id].originalGatedRoad = map.nodes[n1id].links[n2id].gated
+          map.nodes[n1id].links[n2id].gated = true
+        else
+          map.nodes[n2id].links[n1id].originalType = map.nodes[n2id].links[n1id].type
+          map.nodes[n2id].links[n1id].type = 'private'
+          map.nodes[n2id].links[n1id].originalGatedRoad = map.nodes[n2id].links[n1id].gated
+          map.nodes[n2id].links[n1id].gated = true
+        end
+      end
+    end
+  end
+end
+M.createTrafficExclusionArea = createTrafficExclusionArea
+
+local function _drawExcludeSet()
+  for k, v in pairs(excludeSet) do
+    debugDrawer:drawSphere(gp.positions[k], gp.radius[k], ColorF(1, 0, 0, 1))
+  end
+end
+
+local drawExcludeSet = nop
+local function toggleDrawExcludeSet()
+  if drawExcludeSet == nop then
+    drawExcludeSet = _drawExcludeSet
+  else
+    drawExcludeSet = nop
+  end
+end
+M.toggleDrawExcludeSet = toggleDrawExcludeSet
+
+local function _drawInitialExcludeSet()
+  if not initialExcludeSet then return end
+
+  for i = 1, #initialExcludeSet do
+    local nid = initialExcludeSet[i]
+    debugDrawer:drawSphere(gp.positions[nid], gp.radius[nid], ColorF(1, 1, 1, 1))
+  end
+end
+
+local drawInitialExcludeSet = nop
+local function toggleDrawInitialExcludeSet()
+  if drawInitialExcludeSet == nop then
+    drawInitialExcludeSet = _drawInitialExcludeSet
+  else
+    drawInitialExcludeSet = nop
+  end
+end
+M.toggleDrawInitialExcludeSet = toggleDrawInitialExcludeSet
+
 local function loadMap(customMapNodes)
   if not be then return end
   --log('A', "map.loadMap-calledby", debug.traceback())
@@ -2321,7 +2515,7 @@ local function loadMap(customMapNodes)
     map.nodes = customMapNodes
     edgeCount, nodeCount = convertToSingleSided()
   else
-    linkMap()
+    edgeCount, nodeCount = linkMap()
 
     --[[ For debugging: comment out linkMap() call above.
     print('============== Load Map ===============')
@@ -2329,7 +2523,7 @@ local function loadMap(customMapNodes)
 
     local graphHistory = {}
 
-    graphHistory[1] = linkMap()
+    edgeCount, nodeCount, graphHistory[1] = linkMap()
 
     print('')
     print('=========================================================================')
@@ -2340,7 +2534,7 @@ local function loadMap(customMapNodes)
     tableClear(map)
     map.nodes = nodes
 
-    graphHistory[2] = linkMap()
+    edgeCount, nodeCount, graphHistory[2] = linkMap()
     print('')
 
     local checkTabNames = {'load', 'Merge_Nodes_1', 'T_Junctions', 'X_Junctions', 'mergeNodesToLines', 'Merge_Nodes_2', 'optimizeNodes', 'convertToSingleSided'}
@@ -2378,10 +2572,9 @@ local function loadMap(customMapNodes)
 
   -- build the graph and the tree
   maxRadius = 4 -- case there are no nodes in the map i.e. next(map.nodes) == nil avoids infinite loop in findClosestRoad()
-  gp = graphpath.newGraphpath()
+  gp = graphpath.newGraphpath(nodeCount)
   edgeKdTree = kdTreeBox2D.new(edgeCount)
   nodeKdTree = kdTreeBox2D.new(nodeCount)
-  local edgeTab = {'','\0',''}
 
   for nid, n in pairs(mapNodes) do -- edges are now single sided
     local nPos = n.pos
@@ -2390,7 +2583,6 @@ local function loadMap(customMapNodes)
     nodeKdTree:preLoad(nid, pointBBox(nPos.x, nPos.y, radius))
     maxRadius = max(maxRadius, radius)
     local nidDrivability = nodeDrivabilities[nid]
-    edgeTab[1] = nid
     for lid, data in pairs(n.links) do
       local edgeDrivability = min(1, max(1e-30, (nodeDrivabilities[lid] + nidDrivability) * 0.5 * data.drivability))
       local distanceConst = data.gatedRoad and 10000 or 0
@@ -2410,12 +2602,13 @@ local function loadMap(customMapNodes)
         mapNodes[outNodeId].pos ~= data.outPos and data.outPos or nil,
         mapNodes[outNodeId].radius ~= data.ouRadius and data.outRadius or nil
       )
-      edgeTab[3] = lid
-      edgeKdTree:preLoad(table.concat(edgeTab), quadtree.lineBBox(data.inPos.x, data.inPos.y, data.outPos.x, data.outPos.y, min(data.inRadius, data.outRadius)))
+      edgeKdTree:preLoad(gp.graph[inNodeId][outNodeId].eId, quadtree.lineBBox(data.inPos.x, data.inPos.y, data.outPos.x, data.outPos.y, min(data.inRadius, data.outRadius)))
     end
 
     n.normal = surfaceNormal(nPos, radius * 0.5)
   end
+
+  gp:generateEdgeIndex()
 
   maxRadius = min(15, maxRadius)
 
@@ -2427,24 +2620,39 @@ local function loadMap(customMapNodes)
 
   _updateProgress()
 
-  -- Find closest mapNode to a manualWaypoint not in the map and create Alias
   local nodeAliases = {}
   if not customMapNodes then
+    local radii = {}
     for nodeName, v in pairs(manualWaypoints) do
-      if mapNodes[nodeName] == nil or gp.graph[nodeName] == nil then
-        local closestNode
-        local minDist = huge
-        local vPos = v.pos
-        for item_id in nodeKdTree:queryNotNested(pointBBox(vPos.x, vPos.y, v.radius)) do
-          if item_id ~= nodeName then -- what if the closest node is also an orphan?
-            local dist = mapNodes[item_id].pos:squaredDistance(vPos)
-            if dist < minDist then
-              closestNode = item_id
-              minDist = dist
+      if type(v) == 'table' and v.pos then
+        -- convertToSingleSided() clears n.manual before we get here, so do not rely on manual==1.
+        -- Every entry in this loop is a scene BeamNGWaypoint from loadJsonDecalMap; if it still has
+        -- no edges after the graph build, snap it onto the nearest linked drivable node.
+        if gp.graph[nodeName] == nil then
+          local closestNode, minDist, vPos = nil, huge, v.pos
+          -- Try waypoint gizmo radius first, then fall back (small gizmo vs sparse graph / KD misses).
+          radii[1], radii[2], radii[3], radii[4] = v.radius, max(v.radius, 25), max(v.radius, 50), 100
+          for ri = 1, #radii do
+            closestNode, minDist = nil, huge
+            for item_id in nodeKdTree:queryNotNested(pointBBox(vPos.x, vPos.y, radii[ri])) do
+              if item_id ~= nodeName then
+                local other = gp.graph[item_id]
+                if other and next(other) ~= nil then
+                  local dist = gp.positions[item_id]:squaredDistance(vPos)
+                  if dist < minDist then
+                    closestNode = item_id
+                    minDist = dist
+                  end
+                end
+              end
             end
+            if closestNode then break end
+          end
+          nodeAliases[nodeName] = closestNode
+          if closestNode == nil then
+            log('W', 'map', string.format('Manual waypoint %s: no drivable graph node inside snap radii up to %.2f m', tostring(nodeName), radii[#radii]))
           end
         end
-        nodeAliases[nodeName] = closestNode
       end
       manualWaypoints[nodeName] = 1
     end
@@ -2452,6 +2660,8 @@ local function loadMap(customMapNodes)
   map.nodeAliases = nodeAliases
 
   _updateProgress()
+
+  createTrafficExclusionArea(trafficExclusionZones)
 
   buildSerial = (buildSerial or -1) + 1
   map.buildSerial = buildSerial
@@ -2470,7 +2680,7 @@ local function loadMap(customMapNodes)
   be:sendToMailbox("updateDrivabilities", lpack.encodeBinWorkBuffer(nil)) -- clear updateDrivabilities mailbox
 
   guihooks.trigger("NavigationMapChanged", map)
-  profilerPopEvent() -- aiMap
+  profilerPopEvent('aiMap')
 
   _updateProgress()
   extensions.hook("onNavgraphReloaded")
@@ -2490,9 +2700,7 @@ local function findClosestRoad(pos, searchRadiusLim)
   repeat
     closestDist = searchRadius * searchRadius
     for item_id in edgeKdTree:queryNotNested(pointBBox(pos.x, pos.y, searchRadius)) do
-      local i = stringFind(item_id, '\0')
-      local n1id = stringSub(item_id, 1, i-1)
-      local n2id = stringSub(item_id, i+1, #item_id)
+      local n1id, n2id = gp:getNodesFromEdgeId(item_id)
       local curDist = pos:squaredDistanceToLineSegment(mapNodes[n1id].pos, mapNodes[n2id].pos)
       if curDist < closestDist then
         closestDist = curDist
@@ -2509,41 +2717,39 @@ end
 local function findBestRoad(pos, dir)
   -- searches for best road with respect to position and direction, with a fallback to the generic findClosestRoad function
   local mapNodes = map.nodes
-  local bestRoad1, bestRoad2, bestDist
-  local currRoads = {}
+  local candidateRoads = {}
 
+  local j = 0
   for item_id in edgeKdTree:queryNotNested(pointBBox(pos.x, pos.y, 20)) do -- assuming that no roads would have a radius greater than 20 m
-    local i = stringFind(item_id, '\0')
-    local n1id = stringSub(item_id, 1, i-1)
-    local n2id = stringSub(item_id, i+1, #item_id)
-    local curDist = pos:squaredDistanceToLineSegment(mapNodes[n1id].pos, mapNodes[n2id].pos)
-
-    if curDist <= square(math.max(mapNodes[n1id].radius, mapNodes[n2id].radius)) then
+    local n1id, n2id = gp:getNodesFromEdgeId(item_id)
+    local sqDist = pos:squaredDistanceToLineSegment(mapNodes[n1id].pos, mapNodes[n2id].pos)
+    if sqDist <= square(max(mapNodes[n1id].radius, mapNodes[n2id].radius)) then
       local xnorm = pos:xnormOnLine(mapNodes[n1id].pos, mapNodes[n2id].pos)
       if xnorm >= 0 and xnorm <= 1 then -- insert result if it is within road boundaries
-        table.insert(currRoads, {n1id, n2id, curDist})
+        j = j + 3
+        candidateRoads[j-2], candidateRoads[j-1], candidateRoads[j] = n1id, n2id, sqDist
       end
     end
   end
 
-  if not currRoads[1] then
+  if not candidateRoads[1] then
     --log('W', 'map', 'no results for findBestRoad, now using findClosestRoad')
-    return findClosestRoad(pos, wZ) -- fallback
-  elseif not currRoads[2] then -- only one entry in the table
-    return currRoads[1][1], currRoads[1][2], math.sqrt(currRoads[1][3])
+    return findClosestRoad(pos) -- fallback
+  elseif not candidateRoads[4] then -- only one entry in the table
+    return candidateRoads[1], candidateRoads[2], sqrt(candidateRoads[3])
     -- need to return inNode to outNode
   end
 
-  local bestDot = 0
-  for _, v in ipairs(currRoads) do
-    local dirDot = math.abs(dir:dot((mapNodes[v[1]].pos - mapNodes[v[2]].pos):normalized()))
+  local bestDot, bestIdx = 0, nil
+  for i = 1, j, 3 do
+    local dirDot = abs((push3(mapNodes[candidateRoads[i]].pos) - mapNodes[candidateRoads[i+1]].pos):normalized():dot(dir))
     if dirDot >= bestDot then -- best direction
       bestDot = dirDot
-      bestRoad1, bestRoad2, bestDist = v[1], v[2], v[3]
+      bestIdx = i
     end
   end
 
-  return bestRoad1, bestRoad2, math.sqrt(bestDist)
+  return candidateRoads[bestIdx], candidateRoads[bestIdx+1], sqrt(candidateRoads[bestIdx+2])
 end
 
 local function getPath(start, target, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff)
@@ -2646,9 +2852,7 @@ local function startPosLinks(position, wZ)
         for item_id in edgeKdTree:queryNotNested(pointBBox(position.x, position.y, searchRadius)) do
           if not seenEdges[item_id] then
             seenEdges[item_id] = true
-            local i = stringFind(item_id, '\0')
-            local n1id = stringSub(item_id, 1, i-1)
-            local n2id = stringSub(item_id, i+1, #item_id)
+            local n1id, n2id = gp:getNodesFromEdgeId(item_id)
             local n1Pos = nodePositions[n1id]
             edgeVec:setSub2(nodePositions[n2id], n1Pos)
             tmpVec:setSub2(position, n1Pos) -- node1ToPosVec
@@ -2698,6 +2902,13 @@ local function getPointToPointPath(startPos, targetPos, cutOffDrivability, dirMu
   wZ = wZ or 4
   local iter = startPosLinks(startPos, wZ)
   return gp:getPointToPointPath(startPos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
+end
+
+local function getPointToPointPathJob(job, startPos, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wD, wZ)
+  if gp == nil then return {} end
+  wZ = wZ or 4
+  local iter = startPosLinks(startPos, wZ)
+  return gp:getPointToPointPathJob(job, startPos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
 end
 
 local function saveSVG(filename, includeLinks, includeNodes)
@@ -2781,6 +2992,431 @@ local function saveSVG(filename, includeLinks, includeNodes)
   svgDoc:writeTo(filename or 'map.svg')
 end
 
+-- curvature formulation based on interpolating circle
+local function inCurvature(vec1, vec2)
+  --[[
+    Given three points A, B, C (with AB being the vector from A to B), the curvature (= 1 / radius)
+    of the circle going through them is:
+
+    curvature = 2 * (AB x BC) / ( |AB| * |BC| * |CA| ) =>
+              = 2 * |AB| * |BC| * Sin(th) / ( |AB| * |BC| * |CA| ) =>
+              = 2 * (+/-) * sqrt ( 1 - Cos^2(th) ) / |CA| =>
+              = 2 * (+/-) sqrt [ ( 1 - Cos^2(th) ) / |CA|^2 ) ] -- This is an sqrt optimization step
+
+    In the calculation below the (+/-) which indicates the turning direction (direction of AB x BC) has been dropped
+  --]]
+
+  local vec1Sqlen, vec2Sqlen = vec1:squaredLength(), vec2:squaredLength()
+  local dot12 = vec1:dot(vec2)
+  local cos8sq = min(1, dot12 * dot12 / max(0, 1e-100 + vec1Sqlen * vec2Sqlen))
+
+  if dot12 < 0 then -- angle between the two segments is acute
+    local minDsq = min(vec1Sqlen, vec2Sqlen)
+    local maxDsq = minDsq / max(1e-30, cos8sq)
+    if max(vec1Sqlen, vec2Sqlen) > (minDsq + maxDsq) * 0.5 then
+      if vec1Sqlen > vec2Sqlen then
+        vec1, vec2 = vec2, vec1
+        vec1Sqlen, vec2Sqlen = vec2Sqlen, vec1Sqlen
+      end
+      vec2:setScaled(sqrt(0.5 * (minDsq + maxDsq) / max(0, 1e-100 + vec2Sqlen)))
+    end
+  end
+
+  vec2:setScaled(-1)
+  return 2 * sqrt((1 - cos8sq) / max(0, 1e-100 + vec1:squaredDistance(vec2)))
+end
+
+-- an alternative discrete curvature formulation
+local function dCurvature(v1, v2)
+  local l1, l2 = v1:length(), v2:length()
+  return 2 * math.acos(clamp(v1:dot(v2) / (l1 * l2), -1, 1)) / (l1 + l2)
+end
+
+local function createTrajectory(path, s, useRawPos)
+  useRawPos = useRawPos or false
+  local pathCount = #path
+  -- Read path data
+  local trajectory = table.new(pathCount, 0)
+  trajectory.converged = false
+
+  for i = 1, pathCount do
+    local p = nil
+    local r = nil
+    if useRawPos then
+      p = path[i].pos
+      r = path[i].radius
+    else
+      p = gp.positions[path[i]]
+      r = gp.radius[path[i]]
+    end
+
+    trajectory[i] = {
+      posOrig = vec3(p),
+      pos = vec3(p),
+      normalOrig = vec3(),
+      normal = vec3(),
+      biNormal = surfaceNormal(p, r * 0.5),
+      edgeVec = vec3(),
+      radius = r,
+      halfWidth = r,
+      radiusMult = 1,
+      curvature = 0,
+      pathNode = true,
+      fixed = s.fixPathNodes or ((i == 1 or i == pathCount) and s.fixEndpoints),
+      evolveNormal = ((i == 1 or i == pathCount) and (s.evolveEndNormals and s.evolvePathNormals)) or ((i ~= 1 and i ~= pathCount) and s.evolvePathNormals),
+      force = vec3(),
+      length = nil,
+      prevFDir = 0,
+      lateralXnorm = 0,
+    }
+  end
+
+  local trajectoryCount = pathCount
+  if s.segDistSplitLim then
+    -- Augment path data: adds nodes to the path to increase fidelity, such that the maximum distance between two nodes is less or equal to segDistSplitLim
+    -- smaller distances between nodes is known to increase convergence time (number of iterations to converge)
+    local dd = s.segDistSplitLim * s.segDistSplitLim
+    repeat
+      local noSplit = true -- will keep traversing the trajectory until no segment is split
+      for i = 1, trajectoryCount-1 do
+        if trajectory[i].pos:squaredDistance(trajectory[i+1].pos) > dd then
+          local posOrig = (trajectory[i].posOrig + trajectory[i+1].posOrig) * 0.5
+          local radius = (trajectory[i].radius + trajectory[i+1].radius) * 0.5
+          local node = {
+            posOrig = posOrig,
+            pos = vec3(posOrig),
+            normalOrig = vec3(),
+            normal = vec3(),
+            biNormal = surfaceNormal(posOrig, radius * 0.5),
+            edgeVec = vec3(),
+            radius = radius,
+            halfWidth = radius,
+            radiusMult = 1,
+            curvature = 0,
+            pathNode = false,
+            fixed = false,
+            evolveNormal = s.evolveMidNormals,
+            force = vec3(),
+            length = nil,
+            prevFDir = 0,
+            lateralXnorm = 0,
+          }
+          table.insert(trajectory, i+1, node)
+          trajectoryCount = trajectoryCount + 1
+          noSplit = false
+          break
+        end
+      end
+    until noSplit
+  end
+
+  -- Calculate Edge Vectors and lengths
+  for i = 1, trajectoryCount-1 do
+    trajectory[i].edgeVec:setSub2(trajectory[i+1].pos, trajectory[i].pos)
+    trajectory[i].length = trajectory[i].edgeVec:length()
+  end
+
+  -- Calculate Initial path normal vectors and adjust node halfwidth
+  trajectory[1].normalOrig:setCross(trajectory[1].biNormal, trajectory[1].edgeVec); trajectory[1].normalOrig:normalize()
+  trajectory[1].normal:set(trajectory[1].normalOrig)
+  local nVec1, nVec2 = vec3(), vec3()
+  for i = 2, trajectoryCount-1 do
+    nVec1:setCross(trajectory[i].biNormal, trajectory[i-1].edgeVec); nVec1:normalize()
+    nVec2:setCross(trajectory[i].biNormal, trajectory[i].edgeVec); nVec2:normalize()
+
+    trajectory[i].normalOrig:setAdd2(nVec2, nVec1)
+    local normVecLen = trajectory[i].normalOrig:length()
+    trajectory[i].normalOrig:setScaled(1 / max(normVecLen, 1e-30))
+
+    trajectory[i].normal:set(trajectory[i].normalOrig)
+
+    trajectory[i].radiusMult = (1 - nVec1:dot(nVec2) * 0.5) * normVecLen
+    trajectory[i].halfWidth = trajectory[i].radius * trajectory[i].radiusMult
+  end
+  trajectory[trajectoryCount].normalOrig:setCross(trajectory[trajectoryCount].biNormal, trajectory[trajectoryCount-1].edgeVec); trajectory[trajectoryCount].normalOrig:normalize()
+  trajectory[trajectoryCount].normal:set(trajectory[trajectoryCount].normalOrig)
+
+  local energy = 0
+  trajectory[1].curvature = 0
+  for i = 2, trajectoryCount-1 do
+    trajectory[i].curvature = inCurvature(-trajectory[i-1].edgeVec, -trajectory[i].edgeVec)
+    --trajectory[i].curvature = dCurvature(trajectory[i-1].edgeVec, trajectory[i].edgeVec)
+    energy = energy + trajectory[i].curvature * trajectory[i].curvature
+  end
+  trajectory[trajectoryCount].curvature = 0
+  trajectory.energy = energy
+
+  return trajectory
+end
+
+local function curvatureFlow(trajectory, s)
+  local trajectoryCount = #trajectory
+
+  -- init forces
+  for i = 1, trajectoryCount do trajectory[i].force:set(0, 0, 0) end
+
+  -- Calculate gradient ("spring") forces
+  local nforce, v1, v2 = vec3(), vec3(), vec3()
+  for i = 2, trajectoryCount-1 do
+    v1:setScaled2(trajectory[i-1].edgeVec, 1 / trajectory[i-1].length)
+    v2:setScaled2(trajectory[i].edgeVec, 1 / trajectory[i].length)
+
+    nforce:setSub2(v2, v1); nforce:normalize() -- force in the direction of the angle bisector
+
+    -- force scales with either the angle between the edges incident on node i or the path curvature at node i
+    if s.forceMag == 'angle' then
+      nforce:setScaled(max(0, 1 - v1:dot(v2)) * s.forceMultiplier)
+    elseif s.forceMag == 'curvature' then
+      nforce:setScaled(trajectory[i].curvature * s.forceMultiplier)
+    end
+
+    if s.forceScale == 'normalize' then
+      nforce:setScaled(1 / (s.fRange * 2))
+    end
+
+    -- when applying a force to a node, we subtract equal and opposite (in sum) forces from its adjacent nodes
+    -- when fRange is 1 we subtract those forces only from the immediate neighboors (1 left and 1 right) of node i.
+    -- the sum of these forces i.e. force applied to node i and nodes i-nw, i+fRange, should equal zero.
+    for j = max(1, i-s.fRange), min(i+s.fRange, trajectoryCount) do
+      if j ~= i then
+        trajectory[j].force:setSub(nforce) -- subtract nforce from node i's adjecent nodes (these are the reaction forces)
+        trajectory[i].force:setAdd(nforce) -- add nforce to node i
+      end
+    end
+  end
+
+  -- Integrate Forces
+  local tmpVec = vec3()
+  local nodeConv = true
+  for i = 1, trajectoryCount do
+    if not trajectory[i].fixed then
+      local k = trajectory[i].normal:dot(trajectory[i].force)
+      local forceDir = sign(k) * max(0, sign2(k * trajectory[i].prevFDir)) -- stop moving before switching direction (improves stability)
+      local displacement = forceDir * min(abs(k), s.hta)
+      trajectory[i].prevFDir = forceDir
+
+      local dispFromCenter = s.dispLimFromCenterAbs or (s.dispLimFromCenterRel and s.dispLimFromCenterRel * trajectory[i].halfWidth) or math.huge
+
+      -- Calculate the new bounded lateral co-ordinate (x-norm) of the node
+      local leftLimit = max(-trajectory[i].halfWidth + s.distFromEdge, -dispFromCenter)  -- left limit
+      local rightLimit = min(trajectory[i].halfWidth - s.distFromEdge, dispFromCenter) -- right limit
+      local newLateralXnorm = clamp(trajectory[i].lateralXnorm + displacement, leftLimit, rightLimit)
+
+      -- Calculate the new node position
+      tmpVec:setScaled2(trajectory[i].normal, newLateralXnorm - trajectory[i].lateralXnorm)
+      trajectory[i].pos:setAdd(tmpVec)
+      trajectory[i].lateralXnorm = newLateralXnorm
+
+      -- check if I'm not limited by frame limit or if I'm limited by frame limit but I'm hitting lower/upper bounds
+      if abs(k) < s.hta then
+        nodeConv = nodeConv and true
+      elseif newLateralXnorm == leftLimit or newLateralXnorm == rightLimit then
+        nodeConv = nodeConv and true
+      else
+        nodeConv = nodeConv and false
+      end
+
+      -- tmpVec:setScaled2(trajectory[i].normal, displacement)
+      -- trajectory[i].pos:setAdd(tmpVec)
+
+      -- -- Check boundaries
+      -- -- TODO: This does not work nicely with evolving normals
+      -- if not trajectory[i].pathNode then -- TODO: if a node would go beyond the boundary do not displace it (to avoid node drifting)
+      --   local xnorm = trajectory[i].pos:xnormOnLine(trajectory[i-1].posOrig, trajectory[i+1].posOrig)
+      --   local dist = trajectory[i].pos:distanceToLine(trajectory[i-1].posOrig, trajectory[i+1].posOrig)
+      --   local halfWidth = trajectory[i-1].halfWidth + (trajectory[i+1].halfWidth - trajectory[i-1].halfWidth) * xnorm
+      --   local p = linePointFromXnorm(trajectory[i-1].posOrig, trajectory[i+1].posOrig, xnorm)
+      --   local dispFromCenter = s.dispLimFromCenterAbs or (s.dispLimFromCenterRel and s.dispLimFromCenterRel * halfWidth) or math.huge
+      --   -- this line might not work nicely if p and trajectory[i].pos are very close together
+      --   -- but (p - trajectory[i].pos) should be parallel to the original normal
+      --   -- trajectory[i].pos:setSub((p - trajectory[i].pos):normalized() * max(0, dist - min(dispFromCenter, min(0, halfWidth - s.distFromEdge)))) -- TODO: add distFromEdge limit here
+      --   local dirSign = sign2((p - trajectory[i].pos):dot(trajectory[i].normalOrig))
+      --   trajectory[i].pos:setSub(dirSign * trajectory[i].normalOrig * max(0, dist - min(dispFromCenter, min(0, halfWidth - s.distFromEdge))))
+      -- else
+      --   -- if node position is outside the boundaries move it back
+      --   local dispFromCenter = s.dispLimFromCenterAbs or (s.dispLimFromCenterRel and s.dispLimFromCenterRel * trajectory[i].halfWidth) or math.huge
+      --   local xnorm = trajectory[i].pos:xnormOnLine(trajectory[i].posOrig, trajectory[i].posOrig + trajectory[i].normalOrig)
+      --   trajectory[i].pos:setAdd(sign(xnorm) * min(0, max(0, min(dispFromCenter, trajectory[i].halfWidth - s.distFromEdge)) - abs(xnorm)) * trajectory[i].normalOrig)
+      -- end
+    end
+  end
+
+  -- Update Edge Vectors and lengths
+  for i = 1, trajectoryCount-1 do
+    trajectory[i].edgeVec:setSub2(trajectory[i+1].pos, trajectory[i].pos)
+    trajectory[i].length = trajectory[i].edgeVec:length()
+  end
+
+  -- Update normals wherever applicable
+  if trajectory[1].evolveNormal then
+    trajectory[1].normal:setCross(trajectory[1].biNormal, trajectory[1].edgeVec)
+    trajectory[1].normal:normalize()
+  end
+  for i = 2, trajectoryCount-1 do
+    if trajectory[i].evolveNormal then
+      v1:setCross(trajectory[i].biNormal, trajectory[i-1].edgeVec); v1:normalize()
+      v2:setCross(trajectory[i].biNormal, trajectory[i].edgeVec); v2:normalize()
+      trajectory[i].normal:setAdd2(v2, v1); trajectory[i].normal:normalize()
+    end
+  end
+  if trajectory[trajectoryCount].evolveNormal then
+    trajectory[trajectoryCount].normal:setCross(trajectory[trajectoryCount].biNormal, trajectory[trajectoryCount-1].edgeVec)
+    trajectory[trajectoryCount].normal:normalize()
+  end
+
+  -- Calculate curvatures
+  local energy_prev = trajectory.energy
+  local energy = 0
+  trajectory[1].curvature = 0
+  for i = 2, trajectoryCount-1 do
+    trajectory[i].curvature = inCurvature(trajectory[i-1].pos - trajectory[i].pos, trajectory[i].pos - trajectory[i+1].pos)
+    --trajectory[i].curvature = dCurvature(trajectory[i-1].edgeVec, trajectory[i].edgeVec)
+    energy = energy + trajectory[i].curvature * trajectory[i].curvature
+  end
+  trajectory[trajectoryCount].curvature = 0
+  trajectory.energy = energy
+
+  -- Trajectory has converged if:
+  -- 1. The change in total curvature energy is less than 0.1% of previous energy
+  -- 2. All points have converged (nodeConv is true)
+  -- Sets to nil if not converged, true if converged
+  trajectory.converged = abs(energy - energy_prev) < s.tolFactor * energy_prev and nodeConv
+
+  return trajectory
+end
+
+
+
+local function optimizePath(path, s, useRawPos)
+  --[[ Inputs:
+    path: a sequence of navigraph waypoint names ('strings')
+
+    Optional:
+    s = {
+      segDistSplitLim = nil, -- Optional: will generate new nodes between path nodes that guarantee the maximum distance between any two nodes does not exceed segDistSplitLim meters
+      fixPathNodes = nil, -- Do not dispace trajectory nodes that are path nodes (will only displace the generated intermediate nodes)
+      fixEndpoints = nil, -- Value: boolean/nil. End points of path will not be displaced
+      evolvePathNormals = nil, -- Value: boolean/nil. normal vectors of path nodes will be recalculated on each iteration (might affect stability, when road width limits are reached)
+      evolveMidNormals = nil, -- Value: boolean/nil. normal vectors of generated nodes (nodes not belonging to the original path) will be recalculated on each iteration (might affect stability, when road width limits are reached)
+      evolveEndNormals = false, -- Value: boolean/nil. normal vectors of path end nodes will be recalculated on each iteration (might affect stability, when road width limits are reached)
+      hta = 0.5, -- maximum displacement on each optimization cycle (meters). Higher values means faster convergence but posibly lower stability
+      fRange = 1, -- number of nodes before and after node i onto which reaction forces from node i will be applied (a value of 1 will only apply reaction forces to the immediate neighboors of a node)
+      forceMag = 'curvature', -- Values: 'curvature' or 'angle' -- whether the force on each node will scale with the angle between the incident edges on that node or with the curvature calculated for that node
+      forceScale = nil, -- Values: 'normalize' or nil
+      forceMultiplier = 1, -- default: 1. A multiplier to forceMag.
+      iterations = 120, -- number of optimizations cycles. -- TODO: At this point this is just a guess.
+      distFromEdge = 1 -- Distance limit from road edge (m)
+      dispLimFromCenterAbs = nil -- Displacement limit from road centerline (m)
+      dispLimFromCenterRel = nil -- Displacement limit from road centerline in units relative to the road half width (radius) at that point
+      logData = nil, -- If not nil, bending energy data will be logged to a csv file. If a string, it will be used as the file name.
+      logTrajectory = nil, -- If not nil, trajectory data will be logged to a csv file. If a string, it will be used as the file name.
+      s.tolFactor = nil -- (Typ. Val 0.001) Optimization will terminate if the relative difference between the previous and current iteration bending energy is less than tolFactor
+                        -- The bending energy is calculated as the squared sum of node curvatures
+    }
+    useRawPos: boolean/nil. If true, the path is expected to be a list of {pos = vec3, radius = number} tuples. If false, the path is expected to be a list of navigraph waypoint names ('strings')
+  --]]
+
+  if not path[2] then return end
+
+  useRawPos = useRawPos or false
+
+  s.hta = s.hta or 0.1
+  s.fRange = s.fRange or 1
+  s.forceMag = s.forceMag or 'angle'
+  s.forceMultiplier = s.forceMultiplier or 2
+  s.iterations = s.iterations or 120
+  s.distFromEdge = s.distFromEdge or 1
+  s.tolFactor = s.tolFactor or 0
+
+  local dataToCSV
+  local trajectoryToCSV2
+  if s.logData then
+    dataToCSV = require('csvlib').newCSV("Iteration (i)", "energy (1/m^2)")
+  end
+  if s.logTrajectory then
+    trajectoryToCSV2 = require('csvlib').newCSV("posX", "posY", "posZ", "radius")
+  end
+
+  --timeprobe()
+  local trajectory = createTrajectory(path, s, useRawPos)
+
+  if dataToCSV then
+    dataToCSV:add(0, trajectory.energy)
+  end
+
+  for i = 1, s.iterations do
+    curvatureFlow(trajectory, s)
+
+    if dataToCSV then
+      dataToCSV:add(i, trajectory.energy)
+    end
+
+    if trajectory.converged then
+     break
+    end
+  end
+  --timeprobe()
+
+  if trajectoryToCSV2 then
+    for i = 1, #trajectory do
+      trajectoryToCSV2:add(trajectory[i].pos.x, trajectory[i].pos.y, trajectory[i].pos.z, trajectory[i].halfWidth)
+    end
+  end
+
+  if dataToCSV then
+    dataToCSV:write(type(s.logData) == 'string' and s.logData or nil)
+  end
+
+  if trajectoryToCSV2 then
+    trajectoryToCSV2:write(type(s.logTrajectory) == 'string' and s.logTrajectory or nil)
+  end
+
+  return trajectory
+end
+
+local function trajectoryVisualDebug(trajectory)
+  local red = ColorF(1, 0, 0, 1)
+  local blue = ColorF(0, 0, 1, 1)
+  local gray = ColorF(0.5, 0.5, 0.5, 1)
+  local grayOpaque = ColorF(0, 0, 0, 0.1)
+  local black = ColorF(0, 0, 0, 1)
+  local green = ColorF(0, 1, 0, 1)
+
+  -- Draw Nodes
+  for i = 1, #trajectory do
+    -- Position
+    debugDrawer:drawSphere(trajectory[i].pos, 0.2, red)
+
+    -- Original Position
+    debugDrawer:drawSphere(trajectory[i].posOrig, 0.1, black)
+
+    -- Node width
+    debugDrawer:drawSphere(trajectory[i].posOrig, trajectory[i].halfWidth, grayOpaque)
+
+    -- Normal Vector
+    debugDrawer:drawLine(trajectory[i].pos, trajectory[i].pos + trajectory[i].normal, red)
+
+    -- Force Vector
+    debugDrawer:drawLine(trajectory[i].pos, trajectory[i].pos + trajectory[i].force * 10, green)
+  end
+
+  -- Draw Edges
+  for i = 1, #trajectory-1 do
+    debugDrawer:drawCylinder(trajectory[i].pos, trajectory[i+1].pos, 0.02, red)
+  end
+end
+
+local drawTrajectory = nop
+local trajectoryToDraw = nil
+local function debugDrawTrajectory(trajectory)
+  if trajectory then
+    drawTrajectory = trajectoryVisualDebug
+    trajectoryToDraw = trajectory
+  else
+    drawTrajectory = nop
+    trajectoryToDraw = nil
+  end
+end
 
 -- returns the displacement value of the lane (negative = left, positive = right)
 local function getLaneOffset(nid1, nid2, width, lane, laneCount)
@@ -2892,15 +3528,13 @@ local function edgeDebugDraw()
 
     local tmpPos, edgeDirVec, right1 = vec3(), vec3(), vec3()
     for edgeID in edgeKdTree:queryNotNested(quadtree.pointBBox(camPos.x, camPos.y, drawDist)) do
-      local i = stringFind(edgeID, '\0')
-      local node1id = stringSub(edgeID, 1, i-1)
-      local node2id = stringSub(edgeID, i+1, #edgeID)
+      local node1id, node2id = gp:getNodesFromEdgeId(edgeID)
 
       local n1Pos, n2Pos = gp:getEdgePositions(node1id, node2id)
       local n1Rad, n2Rad = gp:getEdgeRadii(node1id, node2id)
 
-      -- Draw node 1 sphere if node is a junction
-      if map.nodes[node1id].junction then
+      -- Draw node 1 sphere if node is a junction or of degree 1
+      if map.nodes[node1id].junction or not next(gp.graph[node1id], next(gp.graph[node1id])) then
         debugDrawer:drawSphere(n1Pos, n1Rad, jetColorF(stringToNumber(node1id) / 12, 0.3))
         --debugDrawer:drawSphere(n1Pos, n1Rad, jetColorF(map.nodes[node1id].debugColorCode, 0.3))
         if not nodeIdsDrawn[node1id] then
@@ -2911,8 +3545,8 @@ local function edgeDebugDraw()
         end
       end
 
-      -- Draw node 2 sphere if node is a junction
-      if map.nodes[node2id].junction then
+      -- Draw node 2 sphere if node is a junction or of degree 1
+      if map.nodes[node2id].junction or not next(gp.graph[node2id], next(gp.graph[node2id])) then
         debugDrawer:drawSphere(n2Pos, n2Rad, jetColorF(stringToNumber(node2id) / 12, 0.3))
         --debugDrawer:drawSphere(n2Pos, n2Rad, jetColorF(map.nodes[node2id].debugColorCode, 0.3))
         if not nodeIdsDrawn[node2id] then
@@ -2989,14 +3623,20 @@ local function toggleDrawNavGraph()
   end
 end
 
-local function updateGFX(dtReal)
-  be:sendToMailbox("objUpdate", lpack.encodeBinWorkBuffer(M.objects))
-
-  objectsReset = true
-
+local function updateGFX(dtReal, dtSim)
+  if dtSim > 0 then
+    be:sendToMailbox("objUpdate", lpack.encodeBinWorkBuffer(M.objects))
+    if objectsCount == 0 then
+      tableClear(M.objects)
+      tableClear(objectSend)
+    end
+    objectsCount = 0
+  end
   delayedLoad:update(dtReal)
-
+  drawTrajectory(trajectoryToDraw)
   drawNavGraph()
+  drawExcludeSet()
+  drawInitialExcludeSet()
 end
 
 local function Mload()
@@ -3144,7 +3784,7 @@ local function getState()
   end
   for k, v in pairs(M.objects) do
     v.name = v.name or ''
-    local vehicle = be:getObjectByID(k)
+    local vehicle = getObjectByID(k)
     v.licensePlate = vehicle and vehicle:getDynDataFieldbyName("licenseText", 0) or dumps(k)
   end
   return M
@@ -3168,12 +3808,13 @@ end
 
 -- recieves vehicle data from vehicles
 local function objectData(objId, isactive, damage, states, objectCollisions)
-  if objectsReset then
+  if objectsCount == 0 then
     tableClear(M.objects)
-    objectsReset = false
+    tableClear(objectSend)
   end
+  objectsCount = objectsCount + 1
 
-  local object = be:getObjectByID(objId)
+  local object = getObjectByID(objId)
   if object and M.objects[objId] == nil then
     local obj = objectsCache[objId] or {view = true, pos = vec3(), vel = vec3(), dirVec = vec3(), dirVecUp = vec3()}
 
@@ -3191,15 +3832,26 @@ local function objectData(objId, isactive, damage, states, objectCollisions)
 
     objectsCache[objId] = obj
     M.objects[objId] = obj
+
+    local objs = objectSendCache[objId] or {}
+    objs.active = isactive
+    objs.damage = damage
+    objs.states = obj.states
+    objs.uiState = obj.uiState
+    objs.isParked = obj.isParked
+
+    objectSendCache[objId] = objs
+    objectSend[objId] = objs
   end
 end
 
 -- used to add explicit vehicle data
 local function tempObjectData(objId, isactive, pos, vel, dirVec, dirVecUp, damage, objectCollisions)
-  if objectsReset then
+  if objectsCount == 0 then
     tableClear(M.objects)
-    objectsReset = false
+    tableClear(objectSend)
   end
+  objectsCount = objectsCount + 1
 
   local obj = objectsCache[objId] or {
     id = objId,
@@ -3210,7 +3862,7 @@ local function tempObjectData(objId, isactive, pos, vel, dirVec, dirVecUp, damag
     dirVec = dirVec,
     dirVecUp = dirVecUp,
     damage = damage,
-    objectCollisions = objectCollisions}
+  }
 
   obj.id = objId
   obj.active = isactive
@@ -3223,6 +3875,16 @@ local function tempObjectData(objId, isactive, pos, vel, dirVec, dirVecUp, damag
 
   objectsCache[objId] = obj
   M.objects[objId] = obj
+
+  local objs = objectSendCache[objId] or {}
+  objs.active = isactive
+  objs.damage = damage
+  objs.states = obj.states
+  objs.uiState = obj.uiState
+  objs.isParked = obj.isParked
+
+  objectSendCache[objId] = objs
+  objectSend[objId] = objs
 end
 
 local function setNameForId(name, id)
@@ -3232,7 +3894,7 @@ end
 local function isCrashAvoidable(objectID, pos, radius)
   -- check if position (pos) with dimension radius is safe to spawn given object (objectID) in motion
 
-  local obj = be:getObjectByID(objectID)
+  local obj = getObjectByID(objectID)
   if not obj then return true end
 
   radius = radius or 7.5
@@ -3260,11 +3922,34 @@ end
 local function safeTeleport(vehId, posX, posY, posZ, rotX, rotY, rotZ, rotW, checkOnlyStatics_, visibilityPoint_, removeTraffic_, centeredPosition, resetVehicle)
   -- Wrapper function for spawn.safeTeleport()
   local veh = scenetree.findObject(vehId)
-  --local veh = be:getObjectByID(id)
+  --local veh = getObjectByID(id)
   local pos = vec3(posX, posY, posZ)
   local rot = quat(rotX, rotY, rotZ, rotW)
   spawn.safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, removeTraffic_, centeredPosition, resetVehicle)
 end
+
+local function getTrafficExclusionZones()
+  return trafficExclusionZones
+end
+M.getTrafficExlucsionZones = getTrafficExclusionZones
+
+local function clearTrafficExclusionZones()
+  table.clear(trafficExclusionZones)
+end
+M.clearTrafficExclusionZones = clearTrafficExclusionZones
+
+local function setTrafficExclusionZones(zones)
+  if type(zones) ~= 'table' then
+    log('E', 'map', 'setTrafficExclusionZones: zones must be a table')
+    return
+  end
+
+  clearTrafficExclusionZones()
+  trafficExclusionZones = zones
+
+  -- loadMap()
+end
+M.setTrafficExclusionZones = setTrafficExclusionZones
 
 -- public interface
 M.updateGFX = updateGFX
@@ -3296,6 +3981,7 @@ M.getNodesFromPathDist = getNodesFromPathDist
 M.getPathLen = getPathLen
 M.getPointNodePath = getPointNodePath
 M.getPointToPointPath = getPointToPointPath
+M.getPointToPointPathJob = getPointToPointPathJob
 M.saveSVG = saveSVG
 M.onSerialize = onSerialize
 M.onDeserialize = onDeserialize
@@ -3305,6 +3991,8 @@ M.nameNode = nameNode
 M.getNodeLinkCount = getNodeLinkCount
 M.updateDrivabilities = updateDrivabilities
 M.safeTeleport = safeTeleport
+M.optimizePath = optimizePath
+M.debugDrawTrajectory = debugDrawTrajectory
 M.toggleDrawNavGraph = toggleDrawNavGraph
 M.logGraphHashes = logGraphHashes
 M.toggleShuffledPairs = toggleShuffledPairs

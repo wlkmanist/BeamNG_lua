@@ -1,6 +1,11 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
 M.dependencies = {"util_stepHandler"}
+
+local dateUtils = require('utils/dateUtils')
 
 local walkAwayRadius = 100
 local comeBackRadius = 95
@@ -92,10 +97,10 @@ M.spawnAllOffers = spawnAllOffers
 
 local function returnVehicleActual(inventoryId)
   local vehInfo = career_modules_inventory.getVehicles()[inventoryId]
-  if career_modules_insurance.inventoryVehNeedsRepair(inventoryId) and vehInfo.loanType == "work" and vehInfo.owningOrganization then
+  if career_modules_insurance_insurance.inventoryVehNeedsRepair(inventoryId) and vehInfo.loanType == "work" and vehInfo.owningOrganization then
     local fine = {}
     fine[vehInfo.owningOrganization .. "Reputation"] = career_modules_reputation.getValueForEvent("returnLoanerDamaged")
-    career_modules_playerAttributes.addAttributes(fine, {tags={"fine"}, label=("Reputation cost for damaging the loaned vehicle")})
+    career_modules_playerAttributes.addAttributes(fine, {tags={"fine"}, label="ui.career.attributeLog.loanerDamagedReputationCost"})
     guihooks.trigger("toastrMsg", {type="warning", label = "loanReturnedDamaged", title="Loaner returned damaged", msg="Lost reputation due to returning a damaged loaned vehicle."})
   end
   career_modules_inventory.removeVehicle(inventoryId)
@@ -214,31 +219,6 @@ local function getLoaningOrgsOfVehicle(vehId)
   return res
 end
 
--- Function to parse ISO 8601 date-time string
-local function parse_iso8601(datetime)
-  local pattern = "(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)Z"
-  local year, month, day, hour, min, sec = datetime:match(pattern)
-
-  -- Convert to Unix timestamp
-  return os.time({
-    year = tonumber(year),
-    month = tonumber(month),
-    day = tonumber(day),
-    hour = tonumber(hour),
-    min = tonumber(min),
-    sec = tonumber(sec),
-    isdst = false
-  })
-end
-
--- Function to calculate time difference
-local function time_since(datetime)
-  local past = parse_iso8601(datetime)
-  local now = os.time(os.date("!*t"))
-  local diff = os.difftime(now, past)
-  return diff
-end
-
 local function getNumberOfLoanersToBeSpawned()
   local numberNonTrailers, numberTrailers = 0, 0
   for id, offer in pairs(markedForSpawningLoaners) do
@@ -306,9 +286,9 @@ local function formatLoanerOfferForUi(facility)
   if not organization then return nil end
   local ret = {}
 
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   local saveData = (savePath and jsonReadFile(savePath .. "/info.json")) or {}
-  local secondsSinceSaveFileCreation = time_since(saveData.creationDate)
+  local secondsSinceSaveFileCreation = dateUtils.timeSince(saveData.creationDate)
 
   for idx, rentalVehicleInfo in ipairs(organization.loanableVehicles or {}) do
     local configInfo = core_vehicles.getConfig(rentalVehicleInfo.model, rentalVehicleInfo.config)
@@ -350,10 +330,10 @@ local function formatLoanerOfferForUi(facility)
       enabled = false
       disableReason = {
         type = "locked", icon = "peopleOutline", level = rentalVehicleInfo.reputationLvl,
-        label = string.format("Requires Reputation '%s' with %s", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, organization.name)
+        label = string.format("Requires Reputation '%s' with %s", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, _tr(organization.name))
       }
       unlockInfo = {
-        type = "minLevel", icon = "peopleOutline", longLabel = string.format("Requires Reputation '%s' with %s", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, organization.name), shortLabel = string.format("%s (lvl %d)", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, rentalVehicleInfo.reputationLvl)
+        type = "minLevel", icon = "peopleOutline", longLabel = string.format("Requires Reputation '%s' with %s", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, _tr(organization.name)), shortLabel = string.format("%s (lvl %d)", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, rentalVehicleInfo.reputationLvl)
       }
     end
 

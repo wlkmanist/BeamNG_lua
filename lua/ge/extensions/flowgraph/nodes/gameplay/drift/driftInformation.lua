@@ -29,7 +29,6 @@ C.pinSchema = {
 
   { dir = 'out', type = 'number', name = 'closestWallDistance', description = "Distance from the closest wall" },
   { dir = 'out', type = 'number', name = 'driftAngle', description = "Current drift angle" },
-  { dir = 'out', type = 'number', name = 'driftAngleAvg', hidden = true, description = "The average angle of the current drift"},
   { dir = 'out', type = 'number', name = 'driftVelocity', hidden = true, description = "Drift speed"},
 
   { dir = 'out', type = 'number', name = 'totalDriftDeg', hidden = true, description = "Total drift angle"},
@@ -64,7 +63,6 @@ function C:work()
 
     self.pinOut.closestWallDistance.value = driftData.closestWallDistance
     self.pinOut.driftAngle.value = driftData.currDegAngle
-    self.pinOut.driftAngleAvg.value = driftData.avgDriftAngle
     self.pinOut.driftVelocity.value = driftData.angleVelocity
 
     self.pinOut.totalDriftDeg.value = driftData.totalDriftAngle
@@ -76,7 +74,6 @@ function C:work()
 
     self.pinOut.closestWallDistance.value = -1
     self.pinOut.driftAngle.value = -1
-    self.pinOut.driftAngleAvg.value = -1
     self.pinOut.driftVelocity.value = -1
 
     self.pinOut.totalDriftDeg.value = -1

@@ -33,15 +33,19 @@ C.allowedManualPinTypes = {
 function C:init()
   self.savePins = true
   self.allowCustomInPins = true
+  self.pinOutTable = { context = {} }
 end
 
 function C:work()
-  self.pinOut.value.value = { txt = self.pinIn.translationString.value, context = {} }
+  self.pinOutTable.txt = self.pinIn.translationString.value
+  table.clear(self.pinOutTable.context)
+
   for nm, pin in pairs(self.pinInLocal) do
     if nm ~= 'flow' and nm ~= 'translationString' then
-      self.pinOut.value.value.context[nm] = self.pinIn[nm].value
+      self.pinOutTable.context[nm] = self.pinIn[nm].value
     end
   end
+  self.pinOut.value.value = self.pinOutTable
 end
 
 function C:drawCustomProperties()
@@ -78,7 +82,7 @@ function C:drawCustomProperties()
 
       -- do translation
       self.string = self.pinIn["translationString"].value or ""
-      translationString = translateLanguage(self.string, self.string)
+      translationString = _tr(self.string)
 
       dump("string: "..self.string)
       -- update state

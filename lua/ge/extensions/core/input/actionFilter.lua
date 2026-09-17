@@ -32,30 +32,37 @@ end
 
 actionTemplates.vehicleTeleporting = {"dropPlayerAtCamera", "dropPlayerAtCameraNoReset", "recover_vehicle", "recover_vehicle_alt", "recover_to_last_road", "reload_vehicle", "reload_all_vehicles", "loadHome", "saveHome", "reset_all_physics" } -- no "reset_physics" as this is often used as a normal reset in scenarios
 actionTemplates.vehicleMenues = {"vehicle_selector", "parts_selector", "vehicledebugMenu"}
-actionTemplates.physicsControls = {"slower_motion", "faster_motion", "toggle_slow_motion", "nodegrabberAction", "nodegrabberGrab", "nodegrabberRender", "nodegrabberStrength"}
+actionTemplates.nodegrabber = {"nodegrabberAction", "nodegrabberGrab", "nodegrabberRender", "nodegrabberStrength", "nodegrabberPadGrab", "nodegrabberPadMode"}
+actionTemplates.physicsControls = {"slower_motion", "faster_motion", "toggle_slow_motion"}
+arrayConcat(actionTemplates.physicsControls, actionTemplates.nodegrabber)
 actionTemplates.aiControls = {"toggleTraffic", "toggleAITraffic"}
 actionTemplates.vehicleSwitching = {"switch_next_vehicle", "switch_previous_vehicle", "switch_next_vehicle_multiseat"}
 actionTemplates.editor = {"editorToggle", "objectEditorToggle", "editorSafeModeToggle"}
 actionTemplates.freeCam = {"toggleCamera", "dropCameraAtPlayer"}
-if shipping_build then
-  arrayConcat(actionTemplates.freeCam, actionTemplates.editor)
-end
+--if shipping_build then
+--  arrayConcat(actionTemplates.freeCam, actionTemplates.editor)
+--end
 actionTemplates.gameCam = {"camera_1","camera_10","camera_2","camera_3","camera_4","camera_5","camera_6","camera_7","camera_8","camera_9", "center_camera", "look_back", "rotate_camera_down","rotate_camera_horizontal", "rotate_camera_hz_mouse", "rotate_camera_left", "rotate_camera_right", "rotate_camera_up", "rotate_camera_vertical", "rotate_camera_vt_mouse", "switch_camera_next", "switch_camera_prev", "changeCameraSpeed", "movedown", "movefast", "moveup", "rollAbs", "xAxisAbs", "yAxisAbs", "yawAbs", "zAxisAbs", "pitchAbs"}
-actionTemplates.funStuff = {"forceField", "funBoom", "funBreak", "funExtinguish", "funFire", "funHinges", "funTires", "funRandomTire"}
+actionTemplates.funStuff = {"forceField", "funBoom", "funBreak", "funExtinguish", "funFire", "funHinges", "funTires", "funRandomTire", "latchesOpen", "latchesClose", "funBoost", "funBoostBackwards", "funFling", "funFlingDownward"}
 actionTemplates.walkingMode = {"toggleWalkingMode"}
 actionTemplates.photoMode = {"photomode"}
 actionTemplates.trackBuilder = {"toggleTrackBuilder"}
 actionTemplates.bigMap = {"toggleBigMap"}
 actionTemplates.couplers = {"couplersLock", "couplersToggle", "couplersUnlock"}
 actionTemplates.vehicleTriggers = {"triggerAction0", "triggerAction1", "triggerAction2"}
-actionTemplates.radialMenu = {"menu_item_radial_x", "menu_item_radial_y"}
+actionTemplates.radialMenu = {"menu_item_focus_lr", "menu_item_focus_ud"}
 actionTemplates.pause = {"pause"}
 actionTemplates.missionPopup = {"accept", "decline"}
 actionTemplates.resetPhysics = {"reset_physics"}
+actionTemplates.vehicleRecovery = {"recover_vehicle", "recover_vehicle_alt", "recover_to_last_road"}
+actionTemplates.vehicleTeleportOnly = {"dropPlayerAtCamera", "dropPlayerAtCameraNoReset", "loadHome", "saveHome"}
 actionTemplates.appedit = {"appedit"}
 actionTemplates.miniMap = {"toggle_minimap"}
+actionTemplates.radialMenuActivate = {"toggleRadialMenuSandbox", "toggleRadialMenuPlayerVehicle", "toggleRadialMenuFavorites", "toggleRadialMenuMulti"}
+actionTemplates.setShifterMode = {"toggleShifterMode", "gearR", "gear1", "gear2", "gear3", "gear4", "gear5", "gear6", "gear7", "gear8", "gearN"}
+actionTemplates.uiReloading = {"cefdev_reload_ui"}
 
-actionTemplates.competitive = createActionTemplate({"vehicleTeleporting", "vehicleMenues", "physicsControls", "aiControls", "vehicleSwitching", "freeCam", "funStuff"})
+actionTemplates.competitive = createActionTemplate({"vehicleTeleporting", "vehicleMenues", "physicsControls", "aiControls", "vehicleSwitching", "freeCam", "funStuff", "editor"})
 
 
 local function addToFilter(filter, actionName, filtered)
@@ -82,6 +89,7 @@ local function updateFilters(filter)
       addToFilter(filter, actionGroupName, filtered)
     end
   end
+  extensions.hook("onActionFilterUpdated")
 end
 
 local function addAction(filter, actionName, filtered)

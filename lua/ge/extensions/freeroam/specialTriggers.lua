@@ -211,8 +211,7 @@ local function isVehicleValid(key, vehId) -- checks if vehicle is allowed for th
   if not triggers[key] then return false end
   local trigger = triggers[key]
   local valid = false
-  -- TODO: more filters
-  if be:getObjectByID(vehId) and be:getObjectByID(vehId):getActive() then
+  if scenetree.objectExistsById(vehId) and be:getObjectActive(vehId) then
     if (trigger.subjectIds and arrayFindValueIndex(trigger.subjectIds, vehId)) or
     (not trigger.subjectType or trigger.subjectType == 'all') or
     (trigger.subjectType == 'player' and vehId == be:getPlayerVehicleID(0)) or
@@ -246,12 +245,12 @@ local function useTrigger(data) -- called whenever a trigger or zone detects an 
   end
 
   if valid and (trigger.vehIds[data.vehId] == nil or trigger.vehIds[data.vehId] ~= active) then -- checks if a state change occurred for this vehicle
-    local obj = be:getObjectByID(data.vehId)
+    local obj = getObjectByID(data.vehId)
     if obj then
       if active and trigger.enterVehCommand then
-        be:getObjectByID(data.vehId):queueLuaCommand(trigger.enterVehCommand)
+        getObjectByID(data.vehId):queueLuaCommand(trigger.enterVehCommand)
       elseif not active and trigger.exitVehCommand then
-        be:getObjectByID(data.vehId):queueLuaCommand(trigger.exitVehCommand)
+        getObjectByID(data.vehId):queueLuaCommand(trigger.exitVehCommand)
       end
     end
     trigger.vehIds[data.vehId] = active
@@ -333,6 +332,7 @@ end
 
 local function onTick() -- tick to check for zones, if applicable
   if not M.active or not gameplay_city then return end
+  if true then return end
 
   local zones = gameplay_city.getSites() and gameplay_city.getSites().zones
   if not zones or not zones.sorted[1] then return end

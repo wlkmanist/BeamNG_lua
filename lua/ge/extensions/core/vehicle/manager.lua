@@ -5,13 +5,15 @@
 local M = {}
 
 local jbeamIO = require('jbeam/io')
+local jbeamLoader = require("jbeam/loader")
 local im
 
 local vehicles = {}
 
 local materialsCache = {}
 local debugEnabled = false
-local debugMgrContext
+
+M.autoSpawnPhysics = true
 
 local toolWindowName = 'Vehicle Manager'
 
@@ -26,6 +28,12 @@ end
 
 local function toggleDebug()
   setDebug(not debugEnabled)
+end
+
+local profileVehicleLoading = tableFindKey(Engine.getStartingArgs(), '-profileVehicleLoading')
+local debugVehicleLoading = tableFindKey(Engine.getStartingArgs(), '-debugVehicleLoading')
+if debugVehicleLoading then
+  debugEnabled = true
 end
 
 local function loadVehicleMaterialsDirectory(path)
@@ -48,15 +56,12 @@ end
 
 local function onFileChanged(filename, type)
   jbeamIO.onFileChanged(filename, type)
+  jbeamLoader.onFileChanged(filename, type)
   local path = string.match(filename, "^(/vehicles/[^/]*/)[^%.]*%.materials%.json$")
   if path then
     log('D', 'vehicleLoader', 'Materials changed in vehicle path, invalidating cache: ' .. tostring(path))
     materialsCache[path] = nil
   end
-end
-
-local function onFileChangedEnd()
-  jbeamIO.onFileChangedEnd()
 end
 
 local additionalVehicleData
@@ -66,7 +71,40 @@ local function queueAdditionalVehicleData(data, vehId)
   additionalDataId = vehId
 end
 
-local function spawnCCallback(objID, vehicleDir, configDataIn)
+local function spawnPhysicsForVehicle(objID, vehicleObj, vehicleBundle)
+  if not objID then
+    objID = be:getPlayerVehicleID(0)
+  end
+  local _vehicleBundle = vehicleBundle or vehicles[objID]
+  if not vehicleObj or not _vehicleBundle then
+    vehicleObj = scenetree.findObject(objID)
+    if not vehicleObj then return end
+  end
+
+  if not _vehicleBundle or not _vehicleBundle.vdata then
+    -- send an empty vehicle bundle to the physics engine to avoid stale data
+    _vehicleBundle = {vdata = {}, config = {}}
+  end
+
+  profilerPushEvent('serialize')
+  -- do not send everything, filter some UI things that are not required
+  local vehicleBundleDataString = lpack.encode({
+    vdata  = _vehicleBundle.vdata,
+    config = _vehicleBundle.config,
+  })
+  profilerPopEvent('serialize')
+
+  local luaVMType = 0 -- 0 = vehicle, 1 = object pool, 2 = none
+
+  profilerPushEvent('spawnPhysics')
+  vehicleObj:spawnPhysics(vehicleBundleDataString or '', luaVMType)
+  profilerPopEvent('spawnPhysics')
+end
+
+local function spawnCCallback(objID, vehicleDir, configDataIn, reloading)
+  if profileVehicleLoading and simpleProfilerStart then
+    simpleProfilerStart(false)
+  end
   profilerPushEvent('spawn')
   local vehicleObj = scenetree.findObject(objID)
   if not vehicleObj then
@@ -75,14 +113,16 @@ local function spawnCCallback(objID, vehicleDir, configDataIn)
     return
   end
 
+
+  profilerPushEvent('spawn/materials')
   loadVehicleMaterialsDirectory(vehicleDir)
   loadVehicleMaterialsDirectory('/vehicles/common/')
+  profilerPopEvent('spawn/materials')
 
   -- makes the object available for every call, etc
   be:addObject(vehicleObj, false)
 
   local timer = hptimer()
-  local jbeamLoader = require("jbeam/loader")
   log('D', 'vehicleLoader', 'partConfigData [' .. type(configDataIn) .. '] = ' .. dumps(configDataIn))
   local vehicleConfig = extensions.core_vehicle_partmgmt.buildConfigFromString(vehicleDir, configDataIn)
 
@@ -102,53 +142,72 @@ local function spawnCCallback(objID, vehicleDir, configDataIn)
 
   local vehicleBundle
 
-  local status, err = xpcall(function () vehicleBundle = jbeamLoader.loadVehicleStage1(objID, vehicleDir, vehicleConfig, debugMgrContext) end, debug.traceback)
+  local status, err = xpcall(function () vehicleBundle = jbeamLoader.loadVehicleStage1(objID, vehicleDir, vehicleConfig) end, debug.traceback)
   vehicles[objID] = vehicleBundle
 
   if not vehicleBundle then
     log('E', 'loader', 'Spawning vehicle failed, missing stage 1 data: '..dumps(objID, vehicleDir, configDataIn))
     if err then log('E', 'loader', err) end
-  else
-    log('D', 'loader', "GE load time: " .. tostring(timer:stopAndReset() / 1000) .. ' s')
+  end
+  log('D', 'loader', "GE load time: " .. tostring(timer:stopAndReset() / 1000) .. ' s')
 
-    --jsonWriteFile('jbeam_loading_NEW_stage1.json', vehicleBundle, true)
-    local spawnPhysics = true
-    if vehicleObj.NoPhysics == 'true' then
-      spawnPhysics = false
-    end
+  --jsonWriteFile('jbeam_loading_NEW_stage1.json', vehicleBundle, true)
+  local spawnPhysics = M.autoSpawnPhysics
+  if vehicleObj.NoPhysics == 'true' then
+    log('I', '', 'NOT spawning the physics ...')
+    spawnPhysics = false
+  end
 
-    local dataString
+  -- this will finish the 3d meshes and alike
+  profilerPushEvent('finishConstructionGESide')
+  vehicleObj:finishConstructionGESide()
+  profilerPopEvent('finishConstructionGESide')
 
-    if spawnPhysics then
-      profilerPushEvent('serialize')
-      -- do not send everything, filter some UI things that are not required
-      dataString = lpack.encode({
-        vdata  = vehicleBundle.vdata,
-        config = vehicleBundle.config,
-      })
-      profilerPopEvent() -- serialize
-    end
+  vehicleSpawned(objID) -- callback to main function
 
-    profilerPushEvent('continueSpawnObject')
-    vehicleObj:continueSpawnObject(dataString or '', spawnPhysics, luaVMType)
-    profilerPopEvent() -- spawnObjectPhysics
-
-    -- remove the additionalVehicleData, because it's only supposed to be temporary
-    if vehicleBundle.config then
-      vehicleBundle.config.additionalVehicleData = nil
-    end
-
-    vehicleSpawned(objID) -- callback to main function
-    if vehicleObj.autoEnterVehicle ~= "false" then
-      be:enterVehicle(0, vehicleObj) -- will trigger onVehicleSwitched
-    end
-    vehicleObj:setDynDataFieldbyName("autoEnterVehicle", 0, "")
-
-    -- this enables the UI to react on the changed vehicle
+  -- this enables the UI to react on the changed vehicle
+  if vehicleBundle and vehicleBundle.vdata then
     guihooks.trigger('VehicleChange', vehicleBundle.vdata.vehicleDirectory, spawnPhysics)
   end
 
-  profilerPopEvent()
+  if vehicleObj.autoEnterVehicle ~= "false" then -- and not reloading
+    -- TODO: FIXME: do not call enterVehicle if the player is already in the vehicle or we reload: "and not reloading"
+    local player = vehicleObj.autoEnterVehiclePlayer ~= "" and tonumber(vehicleObj.autoEnterVehiclePlayer) or 0
+    be:enterVehicle(player, vehicleObj) -- will trigger onVehicleSwitched
+  end
+  vehicleObj:setDynDataFieldbyName("autoEnterVehicle", 0, "")
+  vehicleObj:setDynDataFieldbyName("autoEnterVehiclePlayer", 0, "")
+
+  if spawnPhysics then
+    spawnPhysicsForVehicle(objID, vehicleObj, vehicleBundle)
+  end
+
+  -- remove the additionalVehicleData, because it's only supposed to be temporary
+  if vehicleBundle and vehicleBundle.config then
+    vehicleBundle.config.additionalVehicleData = nil
+  end
+
+  profilerPopEvent('spawn')
+
+  if profileVehicleLoading and simpleProfilerStop then
+    simpleProfilerStop()
+    local vehName = vehicleObj and vehicleObj.jbeam or (vehicleBundle and vehicleBundle.vdata and vehicleBundle.vdata.vehicleDirectory) or 'Unknown'
+    -- capture cache usage stats
+    local jbeamStats = jbeamIO and jbeamIO.getLastStartLoadingStats and jbeamIO.getLastStartLoadingStats() or nil
+    local jbeamCached = jbeamStats and jbeamStats.cachedHits > 0
+    -- mesh cache summary via new API (may be nil if not available)
+    local meshCacheSummary = nil
+    if vehicleObj and vehicleObj.getMeshCacheRebuildSummary then
+      local ok, summary = pcall(function() return vehicleObj:getMeshCacheRebuildSummary() end)
+      if ok and type(summary) == 'table' then meshCacheSummary = summary end
+    end
+    extensions.utils_simpleProfiler_report.createReport('vehicle_loading', 'Vehicle Spawn', {
+      vehicleName = vehName,
+      jbeamCached = jbeamCached,
+      meshCacheSummary = meshCacheSummary,
+    })
+    simpleProfilerDestroy()
+  end
 end
 
 local function onVehicleSwitched(oldID, newID, player)
@@ -220,15 +279,19 @@ end
 -- to support Lua reloads, we serialize the data
 local function onDeserialized(data)
   vehicles = {}
-  for k, v in pairs(data) do
+  for k, v in pairs(data.vehicles) do
     vehicles[k] = lpack.decode(v)
   end
+  M.autoSpawnPhysics = data.autoSpawnPhysics
 end
 
 local function onSerialize()
-  local data = {}
+  local data = {
+    vehicles = {},
+    autoSpawnPhysics = M.autoSpawnPhysics
+  }
   for k, v in pairs(vehicles) do
-    data[k] = lpack.encode(v)
+    data.vehicles[k] = lpack.encode(v)
   end
   return data
 end
@@ -253,23 +316,32 @@ end
 
 local function onEditorGui()
   if editor.beginWindow(toolWindowName, "Vehicle Manager") then
-    if im.Checkbox('Debug vehicle construction', debugMgrContext.dumpDebug) then
-      reloadVehicle(0)
-    end
-    im.SameLine()
-    if im.Button("reload") then
-      reloadVehicle(0)
-    end
-    for _, t in ipairs(debugMgrContext.debugTexts) do
-      im.TextUnformatted(t)
-    end
-    if im.Button('Clear') then
-      FS:removeFile('vehicleDebug_data.json')
-      FS:removeFile('vehicleDebug_activeParts.json')
-      FS:removeFile('vehicleDebug_config.json')
-      FS:removeFile('vehicleDebug_chosenParts.json')
-      debugMgrContext.debugTexts = {}
-    end
+    im.Spacing()
+    im.Spacing()
+    im.Separator()
+    im.Spacing()
+
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 0.2, 0.2, 1))
+    im.TextWrapped("/!\\ THIS TOOL IS OBSOLETE /!\\")
+    im.PopStyleColor()
+
+    im.Spacing()
+    im.Separator()
+    im.Spacing()
+
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 0.8, 0, 1))
+    im.TextWrapped("Please use the following command line argument instead:")
+    im.PopStyleColor()
+
+    im.Spacing()
+
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(0.3, 1, 0.3, 1))
+    im.TextWrapped("-debugVehicleLoading")
+    im.PopStyleColor()
+
+    im.Spacing()
+    im.Separator()
+    im.Spacing()
   end
   editor.endWindow()
 end
@@ -280,13 +352,8 @@ end
 
 local function onEditorInitialized()
   im = ui_imgui
-  debugMgrContext = {
-    dumpDebug = im.BoolPtr(false),
-    debugTexts = {}
-  }
-
   editor.registerWindow(toolWindowName, im.ImVec2(420, 500))
-  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = 'Vehicles'})
 end
 
 local function onUpdate()
@@ -300,7 +367,6 @@ M.onSerialize        = onSerialize
 M.onDeserialized     = onDeserialized
 M.onClientEndMission = onClientEndMission
 M.onFileChanged      = onFileChanged
-M.onFileChangedEnd   = onFileChangedEnd
 M.onUpdate = onUpdate
 
 
@@ -310,6 +376,7 @@ M.onEditorGui = onEditorGui
 
 -- API
 M.getPlayerVehicleData = getPlayerVehicleData
+M.spawnPhysicsForVehicle = spawnPhysicsForVehicle
 M.setVehicleColorsNames = setVehicleColorsNames
 M.setVehiclePaintsNames = setVehicleColorsNames
 M.liveUpdateVehicleColors = liveUpdateVehicleColors

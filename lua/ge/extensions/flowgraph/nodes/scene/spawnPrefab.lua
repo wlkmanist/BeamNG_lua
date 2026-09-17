@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -49,7 +48,7 @@ function C:createObject()
   end
 
   self.pinOut.origVehId.value = be:getPlayerVehicleID(0)
-  local dir, fn, ext = path.split(self.pinIn.path.value, true)
+  local dir, fn, _ = path.split(self.pinIn.path.value, true)
   dir = dir or ""
   local filePath = dir..fn
   local checkPaths = {filePath, filePath .. '.prefab', filePath .. '.prefab.json'}

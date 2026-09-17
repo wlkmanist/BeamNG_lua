@@ -627,7 +627,7 @@ function C:plan()
       if cInDeps[node] == nil or next(cInDeps[node]) == nil then
         table.insert(fun, '\n  -- ' .. (node.name or '') .. ': ' .. node.id)
         if debug_work_order then
-          table.insert(fun, '\nlog("D","","Work:"..orderList[' .. i .. '].name.."/"..orderList[' .. i .. '].id)')
+          table.insert(fun, '\nlog("D",orderList[' .. i .. '].name,"Work:"..orderList[' .. i .. '].name.."/"..orderList[' .. i .. '].id)')
         end
 
         -- use the correct work function depending on the node dynamic mode.
@@ -679,7 +679,7 @@ function C:plan()
 
         -- call work
         if debug_work_order then
-          table.insert(fun, '\n    log("D","","Work:"..orderList[' .. i .. '].name.."/"..orderList[' .. i .. '].id)')
+          table.insert(fun, '\n    log("D",orderList[' .. i .. '].name,"Work:"..orderList[' .. i .. '].name.."/"..orderList[' .. i .. '].id)')
         end
         if self.mgr.gcprobe_enabled then
           -- before work()
@@ -818,7 +818,7 @@ end
 function C:createNode(nodeType, forceId, ...)
   local _, lookup = self.mgr:getAvailableNodeTemplates()
   if not lookup[nodeType] then
-    log('E', '', 'unable to find node type: "' .. tostring(nodeType) .. '". Available types: ' .. dumps(tableKeys(lookup)))
+    log('E', 'flowgraph_graph.createNode', 'unable to find node type: "' .. tostring(nodeType) .. '". Available types: ' .. dumps(tableKeys(lookup)))
     return
   end
 
@@ -1003,7 +1003,8 @@ function C:_onSerialize()
   local viewPos
   local viewZoom
   if self.viewPos and self.viewZoom then
-    viewPos = { self.viewPos[0].x, self.viewPos[0].y }
+    local deref = im.ImVecPtrDeref(self.viewPos)
+    viewPos = { deref.x, deref.y }
     viewZoom = self.viewZoom[0]
   end
 

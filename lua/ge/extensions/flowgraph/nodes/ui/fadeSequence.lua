@@ -11,6 +11,7 @@ C.description = 'Fades the screen to and from black, with an optional pause time
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
 C.category = 'once_f_duration'
+C.todo = 'Obsolete; use Fade To Black and Fade From Black nodes instead.'
 
 C.fadedTriggered = false -- needed for impulse of faded pin
 C.pinSchema = {
@@ -23,7 +24,7 @@ C.pinSchema = {
 C.legacyPins = {
   out = {
     done = 'complete'
-  },
+  }
 }
 
 C.dependencies = { 'ui_fadeScreen', 'gameplay_missions_missionManager' }
@@ -36,10 +37,10 @@ end
 
 function C:postInit()
   self.pinInLocal.startDuration.hardTemplates = {
-    {label = "Default Mission Fade Duration", value =  0.75},
+    {label = "Default Mission Fade Duration", value = 0.75},
   }
   self.pinInLocal.endDuration.hardTemplates = {
-    {label = "Default Mission Fade Duration", value =  0.75},
+    {label = "Default Mission Fade Duration", value = 0.75},
   }
 end
 
@@ -57,8 +58,8 @@ function C:onNodeReset()
 end
 
 function C:workOnce()
-  ui_fadeScreen.cycle(self.pinIn.startDuration.value or 1, self.pinIn.pauseDuration.value or 0, self.pinIn.endDuration.value or 1)
   self:setDurationState('started')
+  ui_fadeScreen.fadeSequence(self.pinIn.startDuration.value or 1, self.pinIn.pauseDuration.value or 0, self.pinIn.endDuration.value or 1)
 end
 
 function C:work()

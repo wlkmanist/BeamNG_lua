@@ -1014,6 +1014,11 @@ local function onEditorObjectSelectionChanged()
   selectedMeshId = newSelectedMesh and newSelectedMesh:getID()
 end
 
+local function onDeselect()
+  selectNode(nil)
+  editor.clearObjectSelection()
+end
+
 local function onActivate()
   editModeName = "Edit " .. M.type
   onEditorObjectSelectionChanged()
@@ -1028,6 +1033,7 @@ M.onEditorObjectSelectionChanged_ = onEditorObjectSelectionChanged
 M.onUpdate_ = onUpdate
 M.onToolbar_ = onToolbar
 M.onActivate_ = onActivate
+M.onDeselect_ = onDeselect
 
 M.copySettingsAM = copySettingsAM
 M.pasteFieldsAM = pasteFieldsAM

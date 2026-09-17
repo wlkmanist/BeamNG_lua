@@ -41,7 +41,7 @@ function C:work()
   if self.vehGroup == nil then
     local file, valid = self.mgr:getRelativeAbsolutePath({self.pinIn.file.value, self.pinIn.file.value..'.vehGroup.json'})
     if not valid then
-      self:__setNodeError('file', 'unable to find vehicle group file: '..file)
+      self:__setNodeError('file', 'Failed to find vehicle group file: '..file)
       return
     end
 

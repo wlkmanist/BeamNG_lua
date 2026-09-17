@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 local im = ui_imgui
 
@@ -25,25 +28,19 @@ local function setBounds(filePath, drawBounds_)
   sites:finalizeSites()
 end
 
-local veh
-local oobb
+local tempData
+local zones
 local function detectOutOfBounds()
   if not sites then return end
 
-  veh = scenetree.findObjectById(gameplay_drift_drift.getVehId())
+  if gameplay_drift_drift.getVehId() == -1 then return end
 
-  if gameplay_drift_drift.getVehId() == -1 or not veh or not veh.getSpawnWorldOOBB then return end
-
-  oobb = veh:getSpawnWorldOOBB()
   isOutOfBounds = false
 
-  for i = 0, 8 do
-    local test = oobb:getPoint(0)
-    local zones = sites:getZonesForPosition(test)
-    if #zones == 0 then
-      isOutOfBounds = true
-      return
-    end
+  zones = sites:getZonesForPosition(gameplay_drift_drift.getVehPos())
+  if #zones == 0 then
+    isOutOfBounds = true
+    return
   end
 end
 
@@ -63,6 +60,7 @@ local function imguiDebug()
     if im.Begin("Drift bounds") then
       im.Text("Is out of bounds : " ..tostring(isOutOfBounds))
     end
+    im.End()
   end
 end
 
@@ -72,7 +70,7 @@ local function onUpdate()
   if gameplay_drift_general.getGeneralDebug() then profiler:start() end
 
   detectOutOfBounds()
-  drawZones()
+  --drawZones()
 
   if gameplay_drift_general.getGeneralDebug() then
     profiler:add("Drift bounds")

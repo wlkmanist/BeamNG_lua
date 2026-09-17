@@ -67,7 +67,7 @@ if not al_DepthVisualize then
   al_DepthVisualize:setField("stateBlock", 0, "AL_DepthVisualizeState")
   al_DepthVisualize:setField("texture", 0, "#prepass[RT0]")
   al_DepthVisualize:setField("texture", 1, "#prepass[Depth]")
-  al_DepthVisualize:setField("texture", 2, "lua/ge/client/lighting/advanced/depthviz.png")
+  al_DepthVisualize:setField("texture", 2, "lua/ge/client/lighting/advanced/depthviz.dds")
   al_DepthVisualize:setField("target", 0, "$backBuffer")
   al_DepthVisualize.renderPriority = 9999
   al_DepthVisualize:registerObject("AL_DepthVisualize")
@@ -158,6 +158,34 @@ if not al_LightSpecularVisualize then
   al_LightSpecularVisualize:registerObject("AL_LightSpecularVisualize")
 end
 
+local al_VelocityVisualizeShader = scenetree.findObject("AL_VelocityVisualizeShader")
+if not al_VelocityVisualizeShader then
+  al_VelocityVisualizeShader = createObject("ShaderData")
+  al_VelocityVisualizeShader.DXVertexShaderFile  = "shaders/common/lighting/advanced/dbgVelocityVisualizeP.hlsl"
+  al_VelocityVisualizeShader.DXPixelShaderFile   = "shaders/common/lighting/advanced/dbgVelocityVisualizeP.hlsl"
+  al_VelocityVisualizeShader:setField("samplerNames", 0, "velocityTex")
+  al_VelocityVisualizeShader.pixVersion = 5.0;
+  al_VelocityVisualizeShader:registerObject("AL_VelocityVisualizeShader")
+end
+
+local al_VelocityVisualizeCallbacks = {}
+al_VelocityVisualizeCallbacks.onEnabled = function()
+  onEnabledVisualization("AL_VelocityVisualize");
+  return true
+end
+rawset(_G, "AL_VelocityVisualizeCallbacks", al_VelocityVisualizeCallbacks)
+
+local al_VelocityVisualize = scenetree.findObject("AL_VelocityVisualize")
+if not al_VelocityVisualize then
+  al_VelocityVisualize = createObject("PostEffect")
+  al_VelocityVisualize:setField("shader", 0, "AL_VelocityVisualizeShader")
+  al_VelocityVisualize:setField("stateBlock", 0, "AL_DefaultVisualizeState")
+  al_VelocityVisualize:setField("texture", 0, "#VelocityBuffer")
+  al_VelocityVisualize:setField("target", 0, "$backBuffer")
+  al_VelocityVisualize.renderPriority = 9999
+  al_VelocityVisualize:registerObject("AL_VelocityVisualize")
+end
+
 local annotationVisualizeShader = scenetree.findObject("AnnotationVisualizeShader")
 if not annotationVisualizeShader then
   annotationVisualizeShader = createObject("ShaderData")
@@ -208,7 +236,7 @@ local function toggleLightVisualizer(objName, enable, tsVariable)
   local isEnabled = vizualiser:isEnabled()
   -- log('I','lightViz', objName..'.enabled = '..tostring(isEnabled))
   if enable == nil or enable == "" then
-    TorqueScriptLua.setVar(tsVariable, not isEnabled)
+    VariableRegistry.set(tsVariable, not isEnabled)
     vizualiser:toggle()
   elseif enable then
     vizualiser:enable()
@@ -222,3 +250,4 @@ rawset(_G, "toggleDepthViz",           function (enable) toggleLightVisualizer("
 rawset(_G, "toggleNormalsViz",         function (enable) toggleLightVisualizer("AL_NormalsVisualize",      enable, "$AL_NormalsVisualizeVar") end)
 rawset(_G, "toggleLightColorViz",      function (enable) toggleLightVisualizer("AL_LightColorVisualize",    enable, "$AL_LightColorVisualizeVar") end)
 rawset(_G, "toggleLightSpecularViz",   function (enable) toggleLightVisualizer("AL_LightSpecularVisualize", enable, "$AL_LightSpecularVisualizeVar") end)
+rawset(_G, "toggleVelocityViz",        function (enable) toggleLightVisualizer("AL_VelocityVisualize",      enable, "$AL_VelocityVisualizeVar") end)

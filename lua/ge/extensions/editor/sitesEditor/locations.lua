@@ -137,7 +137,9 @@ function C:drawElement(loc)
     editor.updateAxisGizmo(function() self:beginDrag() end, function() self:endDragging() end, function() self:dragging() end)
     editor.drawAxisGizmo()
   end
-  local avail = im.GetContentRegionAvail()
+
+  local n1, n2 = map.findClosestRoad(self.current.pos)
+  im.Text("Closest Road: " .. tostring(n1) .. ", " .. tostring(n2))
 end
 
 return function(...)

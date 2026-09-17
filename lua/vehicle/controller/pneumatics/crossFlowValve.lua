@@ -15,8 +15,21 @@ local dischargeCoefficient = 0.97 -- closer to 1.0 for rounded orifices, decreas
 local sourceTank
 local targetTank
 local flowPipeCrossSectionArea = 0
+local flowValveCrossSectionArea = 0
 local sourceTankMinPressure = 0
 local pressureDiffForFullFlow = 0
+
+local function getEffectiveFlowArea(primaryArea, secondaryArea)
+  if primaryArea <= 0 then
+    return 0
+  end
+  if not secondaryArea or secondaryArea <= 0 then
+    return primaryArea
+  end
+
+  -- Combine the pipe and the valve metering orifice as two restrictions in series.
+  return 1 / sqrt((1 / (primaryArea * primaryArea)) + (1 / (secondaryArea * secondaryArea)))
+end
 
 local function updateFixedStep(dt)
   local sourcePressure = sourceTank.currentPressure
@@ -30,7 +43,7 @@ local function updateFixedStep(dt)
     local pressureDiff = max(0, sourcePressure - targetPressure)
     local flowCoef = min(1, pressureDiff / pressureDiffForFullFlow)
 
-    flowRate = flowCoef * dischargeCoefficient * flowPipeCrossSectionArea * sqrt(2 * pressureDiff / avgAirDensity)
+    flowRate = flowCoef * dischargeCoefficient * flowValveCrossSectionArea * sqrt(2 * pressureDiff / avgAirDensity)
   end
 
   local airVolumeMoved = flowRate * dt
@@ -67,8 +80,10 @@ local function init(jbeamData)
   end
 
   local flowPipeRadius = jbeamData.flowPipeRadius or 0.0075 -- m
+  local flowValveRadius = jbeamData.flowValveRadius or (flowPipeRadius * 0.2) -- m; models the valve metering orifice separately from the pipe bore
 
   flowPipeCrossSectionArea = math.pi * flowPipeRadius ^ 2
+  flowValveCrossSectionArea = getEffectiveFlowArea(flowPipeCrossSectionArea, math.pi * flowValveRadius ^ 2)
 
   sourceTankMinPressure = jbeamData.sourceTankMinPressure or 0
   if type(jbeamData.sourceTankMinPressurePSI) == "number" then

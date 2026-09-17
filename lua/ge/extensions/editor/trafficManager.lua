@@ -12,35 +12,35 @@ local realName = "Traffic Manager"
 local simGroupName = "TrafficSession"
 local version = 1
 
-local windows = {
+local windows = { -- editor windows names, layouts, and states
   main = {
     key = "trafficManager",
     name = realName,
     size = im.ImVec2(360, 80)
   },
   vehicles = {
-    key = "trafficManager_vehicles",
+    key = "trafficManagerVehicles",
     name = "Traffic Vehicles & Props",
     icon = "car",
     size = im.ImVec2(600, 560),
     active = false
   },
   lights = {
-    key = "trafficManager_lights",
+    key = "trafficManagerLights",
     name = "Traffic Lights",
     icon = "traffic",
     size = im.ImVec2(500, 560),
     active = false
   },
   signs = {
-    key = "trafficManager_signs",
+    key = "trafficManagerSigns",
     name = "Traffic Signs",
     icon = "directions",
     size = im.ImVec2(500, 560),
     active = false
   },
   options = {
-    key = "trafficManager_options",
+    key = "trafficManagerOptions",
     name = "Options",
     icon = "settings",
     size = im.ImVec2(240, 240),
@@ -74,14 +74,16 @@ local debugColors = {
   background = ColorI(0, 0, 0, 200)
 }
 
-local mousePos, anchorPos, tempVec, tempVecAlt = vec3(), vec3(), vec3(), vec3()
+local mousePos, anchorPos, tempVec = vec3(), vec3(), vec3()
 local confirmData = {}
 local speedUnits = {"km/h", "mph", "m/s"}
 local distanceUnits = {"m", "km", "ft", "mi"}
+local validVehTypes = {Car = 1, Truck = 1, Automation = 1, Traffic = 1}
 local vecUp = vec3(0, 0, 1)
 local vecY = vec3(0, 1, 0)
 local imDefaultPos = im.ImVec2(60, 180) -- places new windows below the main window
 local prevFilePath = "/"
+local tempFilePath = nil
 local isDragging = false
 local isUserTransform = false
 local clickLock = false
@@ -93,9 +95,10 @@ local tickTimer = 0
 local vehSelector, signSelector, session, options, currTransform, currSelection, activeWindow, aiModes, inputWidth
 local mouseMode, tempEditMode
 
+M.assertLevel = true
 M.debugMode = false
 
-local function convertDistance(val, unit)
+local function convertDistance(val, unit) -- converts distance units for vehicle stats
   if unit == "km" then
     val = val / 1000
   elseif unit == "ft" then
@@ -107,7 +110,7 @@ local function convertDistance(val, unit)
   return val
 end
 
-local function convertSpeed(val, unit)
+local function convertSpeed(val, unit) -- converts speed units for vehicle stats
   if unit == "km/h" then
     val = val * 3.6
   elseif unit == "mph" then
@@ -128,11 +131,11 @@ local function staticRayCast()
 end
 
 local function mouseHandler(tip) -- helper function for mouse actions for certain mouse modes
-  if clickLock then return end
+  if clickLock then return end -- prevents mouse input
 
   debugDrawer:drawSphere(mousePos, 0.25, debugColors.guide)
   if not isDragging then
-    debugDrawer:drawTextAdvanced(mousePos, String(tip), debugColors.main, true, false, debugColors.background)
+    debugDrawer:drawTextAdvanced(mousePos, tip, debugColors.main, true, false, debugColors.background)
   end
 
   if not isDragging and im.IsMouseClicked(0) then
@@ -140,7 +143,7 @@ local function mouseHandler(tip) -- helper function for mouse actions for certai
     isDragging = true
   end
 
-  if isDragging then
+  if isDragging then -- drag direction out from anchor position
     tempVec:setSub2(mousePos, anchorPos)
     if tempVec:squaredLength() > 1 then
       tempVec:normalize()
@@ -158,13 +161,13 @@ local function mouseHandler(tip) -- helper function for mouse actions for certai
 end
 
 local function mouseGizmoHandler()
+  -- TODO: copy from other modules
 end
 
 local function checkSimGroup() -- checks the traffic session SimGroup and updates the session data if changes were found
   if not scenetree.objectExists(simGroupName) then return end
 
   local group = scenetree.findObject(simGroupName)
-  local vehTypes = {Car = 1, Truck = 1, Automation = 1, Traffic = 1}
   table.clear(session.vehiclesSorted)
   table.clear(session.propsSorted)
 
@@ -173,26 +176,28 @@ local function checkSimGroup() -- checks the traffic session SimGroup and update
     local className = obj:getClassName()
 
     if className == "BeamNGVehicle" then
-      obj:setInternalName("vehicle")
+      obj:setInternalName("vehicle") -- internal name helps with classification within this editor
 
       local isVehicle = false
       local modelData = core_vehicles.getModel(obj.jbeam)
       if modelData and next(modelData) and modelData.model.Type then
-        isVehicle = vehTypes[modelData.model.Type] and true or false
+        isVehicle = validVehTypes[modelData.model.Type] and true or false
       end
+
+      -- maybe signs should be excluded from the props table
       table.insert(isVehicle and session.vehiclesSorted or session.propsSorted, obj:getName())
     elseif className == "TSStatic" then
       if obj.signalInstance then -- traffic light object
-        obj:setInternalName("signal")
+        obj:setInternalName("signal") -- object is linked to a traffic light
       else
-        obj:setInternalName("sign")
+        obj:setInternalName("sign") -- assumes that object is a sign (?)
       end
     end
   end
 
   table.sort(session.vehiclesSorted)
   table.sort(session.propsSorted)
-  session.objectCount = group:getCount()
+  session.objectCount = group:getCount() -- object count is used to check if the SimGroup got updated
 end
 
 local function deleteSimGroup() -- deletes the existing traffic session SimGroup, and everything in it
@@ -216,7 +221,9 @@ local function resetSession(fullReset) -- resets all session data; optionally de
     author = "",
     description = "Traffic session description.",
     active = false,
+    play = false,
     lightsActive = false,
+    lightsPreloaded = false,
     playerId = be:getPlayerVehicleID(0),
     objectCount = 0,
     vehicles = {},
@@ -239,6 +246,7 @@ local function resetSession(fullReset) -- resets all session data; optionally de
     vehicleGroupMode = im.IntPtr(1),
     vehicleGroupFile = im.ArrayChar(1024, ""),
     vehicleGroupRandomPaint = im.BoolPtr(false),
+    vehicleAutoAlign = im.BoolPtr(true),
     vehicleMulti = im.IntPtr(1),
     speedUnits = im.IntPtr(1),
     distanceUnits = im.IntPtr(1),
@@ -246,6 +254,7 @@ local function resetSession(fullReset) -- resets all session data; optionally de
     objPos = im.ArrayFloat(3),
     objRot = im.ArrayFloat(3),
     aiData = {},
+    includePlayerVehicle = im.BoolPtr(false),
     signalsKeepOriginal = im.BoolPtr(true),
     signalsSaveApart = im.BoolPtr(false),
     debugMode = im.BoolPtr(false)
@@ -254,7 +263,7 @@ local function resetSession(fullReset) -- resets all session data; optionally de
     basic = {traffic = "Traffic", random = "Random", flee = "Flee", chase = "Chase", follow = "Follow", stop = "Stop"},
     script = {script = "Script"},
     target = {target = "Drive to Target"},
-    user = {advanced = "Advanced"}
+    user = {flowgraph = "Flowgraph"}
   }
 
   imColors.basicLights = {
@@ -272,12 +281,12 @@ local function resetSession(fullReset) -- resets all session data; optionally de
     im.ImVec4(0.8, 0.8, 1, 1)
   }
   debugColors.controllers = {
-    ColorF(0.2, 1, 0.2, 0.5),
-    ColorF(0.6, 1, 0.6, 0.5),
-    ColorF(0.2, 1, 1, 0.5),
-    ColorF(0.6, 1, 1, 0.5),
-    ColorF(0.2, 0.2, 1, 0.5),
-    ColorF(0.6, 0.6, 1, 0.5)
+    ColorF(0.2, 1, 0.2, 0.6),
+    ColorF(0.6, 1, 0.6, 0.6),
+    ColorF(0.2, 1, 1, 0.6),
+    ColorF(0.6, 1, 1, 0.6),
+    ColorF(0.2, 0.2, 1, 0.6),
+    ColorF(0.6, 0.6, 1, 0.6)
   }
 
   currTransform = {pos = vec3(), rot = quat(), scl = 0}
@@ -290,7 +299,7 @@ local function resetSession(fullReset) -- resets all session data; optionally de
   end
 
   if fullReset then
-    core_trafficSignals.loadSignals()
+    core_trafficSignals.loadSignals() -- loads original signals of map
     core_trafficSignals.setActive(true, true)
     core_trafficSignals.debugLevel = 0
     deleteSimGroup()
@@ -310,7 +319,7 @@ end
 
 local function enableVehicleAi(name) -- activates or updates the stored AI mode for this vehicle
   local sessionData = session.vehicles[name] or {id = 0}
-  local veh = be:getObjectByID(sessionData.id)
+  local veh = getObjectByID(sessionData.id)
   if not sessionData or not veh then return end
 
   sessionData.aiActive = true
@@ -334,18 +343,33 @@ local function enableVehicleAi(name) -- activates or updates the stored AI mode 
   elseif sessionData.aiType == "script" then
     local script = jsonReadFile(aiData.scriptFile or "")
     if script then
-      script = script.recording
+      -- annoyingly, there are two ScriptAI formats that we need to differentiate between here
+      -- so we need to check if script.recording exists, and if not, then just use the script as is
+      script = script.recording or script
       veh:queueLuaCommand('ai.startFollowing('..serialize(script)..')')
+    end
+  elseif sessionData.aiType == "user" then
+    sessionData._tempData.flowgraph = core_flowgraphManager.loadManager(aiData.flowgraphFile)
+    if sessionData._tempData.flowgraph then
+      sessionData._tempData.flowgraph.transient = true -- prevents flowgraph from restarting after ctrl+L
+      if sessionData._tempData.flowgraph.variables:variableExists("currentId") then
+        sessionData._tempData.flowgraph.variables:changeBase("currentId", sessionData.id) -- sets the flowgraph variable as this vehicle id
+      end
+      if sessionData._tempData.flowgraph.variables:variableExists("playerId") then
+        sessionData._tempData.flowgraph.variables:changeBase("playerId", be:getPlayerVehicleID(0) or 0) -- sets the flowgraph variable as the active player vehicle id
+      end
+      sessionData._tempData.flowgraph:setRunning(true)
+      sessionData._tempData.flowgraph.modules.traffic.keepTrafficState = true
     end
   end
 
-  if aiData.targetName ~= nil then
+  if aiData.targetName ~= nil then -- target vehicle for AI mode
     local targetVeh = scenetree.findObject(aiData.targetName)
     if targetVeh then
       veh:queueLuaCommand('ai.setTargetObjectID('..targetVeh:getID()..')')
     end
   end
-  if aiData.targetPos ~= nil then
+  if aiData.targetPos ~= nil then -- target position for AI mode
     local n1, n2 = map.findClosestRoad(aiData.targetPos)
     if n1 and n2 then
       local p1, p2 = map.getMap().nodes[n1].pos, map.getMap().nodes[n2].pos
@@ -371,12 +395,22 @@ local function enableVehicleAi(name) -- activates or updates the stored AI mode 
   if aiData.avoidCars ~= nil then
     veh:queueLuaCommand('ai.setAvoidCars("'..(aiData.avoidCars and 'on' or 'off')..'")')
   end
+
+  if aiData.enableDebug ~= nil then
+    veh:queueLuaCommand('ai.setVehicleDebugMode({debugMode = "'..(aiData.enableDebug and 'speeds' or 'off')..'"})')
+  end
 end
 
 local function disableVehicleAi(name) -- stops the AI mode for this vehicle
   local sessionData = session.vehicles[name] or {id = 0}
-  local veh = be:getObjectByID(sessionData.id)
+  local veh = getObjectByID(sessionData.id)
   if not sessionData or not veh then return end
+
+  if sessionData._tempData.flowgraph then
+    sessionData._tempData.flowgraph:setRunning(false)
+    core_flowgraphManager.removeManager(sessionData._tempData.flowgraph)
+    sessionData._tempData.flowgraph = nil
+  end
 
   sessionData.aiActive = false
 
@@ -387,21 +421,21 @@ end
 local function deleteVehicles()
   for id, data in pairs(session.vehicles) do
     if scenetree.objectExists(id) and not data.locked then
-      be:getObjectByID(data.id):delete()
+      getObjectByID(data.id):delete()
     end
   end
 end
 
-local function getDefaultAiData(aiType)
+local function getDefaultAiData(aiType) -- gets default AI parameters
   local aiData = {}
   if aiType == "basic" then
-    aiData = {aggression = 0.35, speed = 16.7, useSpeedLimit = false, driveInLane = true, avoidCars = true, enableTraffic = false}
+    aiData = {aggression = 0.35, speed = 16.7, useSpeedLimit = false, driveInLane = true, avoidCars = true, enableTraffic = false, enableDebug = false}
   elseif aiType == "script" then
     aiData = {scriptFile = ""}
   elseif aiType == "target" then
-    aiData = {aggression = 0.35, speed = 16.7, useSpeedLimit = false, driveInLane = true, avoidCars = true, targetPos = vec3(), directRadius = 0}
+    aiData = {aggression = 0.35, speed = 16.7, useSpeedLimit = false, driveInLane = true, avoidCars = true, targetPos = vec3(), directRadius = 0} -- directRadius is unused
   elseif aiType == "user" then
-    aiData = {}
+    aiData = {flowgraphFile = ""}
   end
   table.clear(options.aiData)
 
@@ -409,7 +443,7 @@ local function getDefaultAiData(aiType)
 end
 
 local function createVehicleData(vehId, vehData) -- creates or updates vehicle data
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
   if not veh then return end
 
   local name = veh:getName()
@@ -430,12 +464,16 @@ local function createVehicleData(vehId, vehData) -- creates or updates vehicle d
   vehData.aiActive = vehData.aiActive and true or false
   if vehData.locked == nil then vehData.locked = false end
 
-  vehData.stats = {timer = 0, prevPos = vec3(), prevVel = vec3(), gForce = 0, distance = 0, avgSpeed = 0, maxSpeed = 0}
+  vehData._tempData = vehData._tempData or {} -- temporary data, does not get saved
+
+  vehData.stats = {timer = 0, prevPos = vec3(), prevVel = vec3(), gForce = 0, distance = 0, avgSpeed = 0, maxSpeed = 0} -- reset stats
+
+  veh:queueLuaCommand("mapmgr.enableTracking()") -- always enable tracking for vehicles in the traffic manager
 
   session.vehicles[name] = vehData
 end
 
-local function enableSignals()
+local function enableSignals() -- activates the traffic lights
   local tempLights = {}
   for _, id in ipairs(session.lightsSorted) do
     table.insert(tempLights, session.lights[id])
@@ -502,11 +540,11 @@ local function createSignalControllersAndSequences() -- creates default controll
   end
 end
 
-local function createSignalData(name)
+local function createSignalData(name) -- creates a new signal instance
   if not name then
-    session._lightCounter = session._lightCounter or 0
-    session._lightCounter = session._lightCounter + 1
-    name = "autoLightInstance"..session._lightCounter
+    session._lightId = session._lightId or #session.lightsSorted
+    session._lightId = session._lightId + 1
+    name = "autoLightInstance"..session._lightId
   end
 
   local pos = core_camera.getPosition() - core_camera.getForward():z0()
@@ -516,13 +554,18 @@ local function createSignalData(name)
   end
 
   session._elementId = session._elementId + 1
+  local maxId = 0
+  for id, _ in pairs(session.signalElements) do -- quick element id duplicate check (maybe do this after loading signals)
+    if session._elementId == id then
+      maxId = math.max(maxId, id)
+    end
+  end
+  if maxId > 0 then session._elementId = maxId + 1 end
+
   local signal = core_trafficSignals.newSignal({name = name, id = session._elementId, pos = pos})
   signal:setController(session.signalControllers[1].id)
   signal:setSequence(session.signalSequences[1].id)
   signal.choiceIndex = 1
-
-  local ctrl = session.signalElements[signal.controllerId]
-  local seq = session.signalElements[signal.sequenceId]
 
   session.lights[name] = signal
   session.signalElements[signal.id] = signal
@@ -541,7 +584,7 @@ local function deleteLights()
 end
 
 local function enableSimulation() -- starts the vehicle and traffic lights simulations, returns true if successful
-  if not session or not next(session.vehicles) then return false end
+  if not session then return false end
 
   for id, data in pairs(session.vehicles) do
     if not data.locked then
@@ -551,11 +594,14 @@ local function enableSimulation() -- starts the vehicle and traffic lights simul
   enableSignals()
   if editor.dirty then be:reloadCollision() end
 
+  session.play = true
+
+  log("I", logTag, "Traffic manager simulation started.")
   return true
 end
 
 local function disableSimulation() -- stops the vehicle and traffic lights simulations, returns true if successful
-  if not session or not next(session.vehicles) then return false end
+  if not session then return false end
 
   for id, data in pairs(session.vehicles) do
     if not data.locked then
@@ -564,8 +610,81 @@ local function disableSimulation() -- stops the vehicle and traffic lights simul
   end
   disableSignals()
 
+  session.play = false
+
+  log("I", logTag, "Traffic manager simulation stopped.")
   return true
 end
+
+
+local function getLaneAwareSpawning(pos, mapNode1, mapNode2)
+  local mapData = map.getGraphpath()
+  local link = mapData.graph[mapNode1][mapNode2]
+
+  if not link then
+    -- local p1, p2 = mapData.positions(mapNode1), mapData.positions(mapNode2)
+    -- now spawns in the camera direction - consider if OK
+    return pos, core_camera.getForward(), false
+  end
+
+  mapNode1, mapNode2 = link.inNode, link.outNode
+  local p1, p2 = mapData:getEdgePositions(mapNode1, mapNode2)
+
+  -- Calculate Road direction vector
+  local p2p1DirVec = (push3(p2) - p1):normalized():copy()
+  -- Calculate the normalized position along the road segment
+  local xnorm = clamp(pos:xnormOnLine(p1, p2), 0, 1)
+  -- Interpolate radius between the two road nodes
+  local r1, r2 = mapData:getEdgeRadii(mapNode1, mapNode2)
+  local radius = lerp(r1, r2, xnorm)
+  -- calculate tentative spawn position as the road center line position closest to pos
+  local spawnPos = linePointFromXnorm(p1, p2, xnorm)
+
+  -- if the position is out of the road segment, then return the position and adjacent road direction as is for spawning
+  -- consider change the spawn direction here to camera's : core_camera.getForward() or make it relevant to the driving direction of the roadside
+  if pos:squaredDistance(spawnPos) >= radius * radius then
+    return pos, p2p1DirVec, false
+  end
+
+  -- get the road surface normal at this position
+  local normal = map.surfaceNormal(spawnPos, radius)
+  -- lateral direction vector to the surface made by normal and p2p1DirVec
+  local lateralDirVec = push3(p2p1DirVec):cross(normal):normalized():copy()
+  -- lateral x norm
+  local lateralXNorm = clamp(pos:xnormOnLine(spawnPos, spawnPos + lateralDirVec), -radius, radius)
+
+  -- check if the road segment has lanes
+  local lanes = link.lanes
+  if not lanes then
+    if link.oneWay then
+      lanes = '+'
+    else
+      -- with respect to traffic rule for driving side
+      if map.getRoadRules().rightHandDrive then
+        lanes = '+-'
+      else
+        lanes = '-+'
+      end
+    end
+  end
+
+  -- find which lane lateralXnorm belongs to
+  local laneCount = #lanes
+  local laneWidth = 2 * radius / laneCount
+  local lane = laneCount
+  for i = 1, laneCount do
+    if lateralXNorm <= -radius + laneWidth * i then
+      lane = i
+      break
+    end
+  end
+
+  spawnPos:set(((lane - 0.5) * laneWidth - radius) * push3(lateralDirVec) + spawnPos) -- spawn position
+  p2p1DirVec:setScaled((lanes:byte(lane) == 43 and 1 or -1)) -- spawn direction
+  -- return spawn position, spawn direction, and true flag as lanes exist and spawning is on a lane
+  return spawnPos, p2p1DirVec, true
+end
+
 
 local function tabVehicleSelector()
   local availWidth = im.GetContentRegionAvailWidth()
@@ -574,32 +693,33 @@ local function tabVehicleSelector()
     vehSelector = require("/lua/ge/extensions/editor/util/vehicleSelectUtil")("Vehicle##trafficManager")
     vehSelector.enablePaints = true
     vehSelector.paintLayers = 1
-    vehSelector.allowedTypes = {"Traffic"}
+    vehSelector.allowedTypes = {"Car", "Truck", "Automation"}
     vehSelector.allowedSubtypes = {"PropTraffic"}
     vehSelector:resetSelections()
   end
 
   im.TextUnformatted("Filter by Type:")
+  -- Vehicle types: Standard, Simple, Parked, Props, Any
 
-  if im.RadioButton2("Simple Vehicles##trafficManager", options.vehicleType, im.Int(1)) then
-    vehSelector.allowedTypes = {"Traffic"}
-    vehSelector.allowedSubtypes = {"PropTraffic"}
-    vehSelector:resetSelections()
-  end
-  im.SameLine()
-  im.Dummy(imSizes.dummy)
-  im.SameLine()
-  if im.RadioButton2("Parked Vehicles##trafficManager", options.vehicleType, im.Int(2)) then
-    vehSelector.allowedTypes = {"Traffic"}
-    vehSelector.allowedSubtypes = {"PropParked"}
-    vehSelector:resetSelections()
-  end
-  im.SameLine()
-  im.Dummy(imSizes.dummy)
-  im.SameLine()
-  if im.RadioButton2("Standard Vehicles##trafficManager", options.vehicleType, im.Int(3)) then
+  if im.RadioButton2("Standard Vehicles##trafficManager", options.vehicleType, im.Int(1)) then
     vehSelector.allowedTypes = {"Car", "Truck", "Automation"}
     vehSelector.allowedSubtypes = {"PropTraffic"}
+    vehSelector:resetSelections()
+  end
+  im.SameLine()
+  im.Dummy(imSizes.dummy)
+  im.SameLine()
+  if im.RadioButton2("Simple Vehicles##trafficManager", options.vehicleType, im.Int(2)) then
+    vehSelector.allowedTypes = {"Traffic"}
+    vehSelector.allowedSubtypes = {"PropTraffic"}
+    vehSelector:resetSelections()
+  end
+  im.SameLine()
+  im.Dummy(imSizes.dummy)
+  im.SameLine()
+  if im.RadioButton2("Parked Vehicles##trafficManager", options.vehicleType, im.Int(3)) then
+    vehSelector.allowedTypes = {"Traffic"}
+    vehSelector.allowedSubtypes = {"PropParked"}
     vehSelector:resetSelections()
   end
 
@@ -623,13 +743,11 @@ local function tabVehicleSelector()
     vehSelector:resetSelections()
   end
 
-  vehSelector:widget()
+  vehSelector:widget() -- renders the vehicle selector here
 
-  im.Checkbox("Enable Advanced Selection", options.vehicleGroupEnabled)
+  im.Checkbox("Enable Multiple Spawn Mode", options.vehicleGroupEnabled)
 
   if options.vehicleGroupEnabled[0] then
-    im.TextUnformatted("Advanced Mode:")
-
     if im.RadioButton2("Multiple Vehicles##trafficManager", options.vehicleGroupMode, im.Int(1)) then
       options.vehicleMulti[0] = 1
       ffi.copy(options.vehicleGroupFile, "")
@@ -665,6 +783,14 @@ local function tabVehicleSelector()
     im.tooltip(tip)
 
     im.Checkbox("Randomize Vehicle Paints##trafficManager", options.vehicleGroupRandomPaint)
+  end
+
+  if options.vehicleGroupEnabled[0] then
+    im.BeginDisabled()
+  end
+  im.Checkbox("Auto-Align on Road", options.vehicleAutoAlign)
+  if options.vehicleGroupEnabled[0] then
+    im.EndDisabled()
   end
 
   im.Dummy(imSizes.dummy)
@@ -727,12 +853,12 @@ local function tabVehicleSelector()
     if not vehSelector.model then
       vehSelector.model = "simple_traffic"
     end
-    if options.vehicleType[0] == 2 and not vehSelector.config then -- ensures that config is a parked vehicle if it was not defined
+    if options.vehicleType[0] == 3 and not vehSelector.config then -- ensures that config is a parked vehicle if it was not defined
       vehSelector.model = "simple_traffic"
       vehSelector.config = "bastion_base_parked"
     end
 
-    if not options.vehicleGroupEnabled[0] then
+    if not options.vehicleGroupEnabled[0] then -- single vehicle spawn
       local spawnOptions = {config = vehSelector.config, paintName = vehSelector.paintName}
       spawnOptions = fillVehicleSpawnOptionDefaults(vehSelector.model, spawnOptions)
       spawnOptions.autoEnterVehicle = false
@@ -746,10 +872,28 @@ local function tabVehicleSelector()
         if z > 1e-6 then
           spawnOptions.pos.z = z
         end
+        anchorPos:set(spawnOptions.pos)
+      end
+
+      if options.vehicleAutoAlign[0] then -- finds nearest road and use its direction for spawn orientation
+        local searchRadiusLim = 6.1  -- after road width assumption for 2 lanes split, each of 3.05m width; can be adjusted
+        local n1, n2 = map.findClosestRoad(anchorPos, searchRadiusLim)
+        if n1 and n2 then
+          -- lane-aware spawning logique hereafter
+          local spawnPos, spawnDir, hasLanes = getLaneAwareSpawning(anchorPos, n1, n2)
+          if hasLanes then
+            -- update spawnOptions : pos and rot, upon lane-aware spawning
+            spawnOptions.pos = spawnPos
+            spawnOptions.rot = quatFromDir(spawnDir, vecUp)
+          else  -- road found, no lanes : road direction for spawning
+            spawnOptions.pos = anchorPos  -- use anchorPos as spawnPos; consider if the computed value is better
+            spawnOptions.rot = quatFromDir(spawnDir, vecUp)
+          end
+        end
       end
 
       core_vehicles.spawnNewVehicle(vehSelector.model, spawnOptions)
-    else
+    else -- multiple vehicle spawn
       local vehGroup
       local vehGroupFile = ffi.string(options.vehicleGroupFile)
       if vehGroupFile:len() > 0 then
@@ -774,7 +918,22 @@ local function tabVehicleSelector()
       local spawnOptions = {startIndex = 0, gap = 12}
       if isUserTransform then
         spawnOptions.pos = anchorPos
-        spawnOptions.dir = (mousePos - anchorPos):normalized()
+        -- spawnOptions.dir = (mousePos - anchorPos):normalized()
+        -- Find the closest road and use its direction for spawn orientation
+        local n1, n2 = map.findClosestRoad(anchorPos)
+        if n1 and n2 then
+          local mapNodes = map.getMap().nodes
+          local p1, p2 = mapNodes[n1].pos, mapNodes[n2].pos
+          local roadDir = (p2 - p1):normalized()
+          -- may reverse direction wrt which end is closer to anchorPos
+          if anchorPos:distance(p2) < anchorPos:distance(p1) then
+            roadDir = - roadDir  -- inversed
+          end
+          spawnOptions.dir = roadDir
+        else
+          -- no road found, use the camera direction
+          spawnOptions.dir = core_camera.getForward()
+        end
       end
 
       spawnOptions.mode = altLock and "lineAhead" or "roadAhead" -- hold down Alt to ignore road snapping
@@ -786,76 +945,60 @@ local function tabVehicleSelector()
   spawnDelayFrames = math.max(-1, spawnDelayFrames - 1)
 end
 
+local vehiclesPropsSorted = {"vehiclesSorted", "propsSorted"}
 local function tabVehicleManager()
   im.BeginChild1("vehicleManagerList##trafficManager", im.ImVec2(240 * im.uiscale[0], 440 * im.uiscale[0]), im.WindowFlags_ChildWindow)
 
-  for i, key in ipairs({"vehiclesSorted", "propsSorted"}) do
+  local deleteId -- if this gets set, the vehicle will be queued to be deleted
+
+  for i, key in ipairs(vehiclesPropsSorted) do
     local label = string.lower(key:gsub("Sorted", ""))
     if im.CollapsingHeader1(label.."##trafficManagerHeader", im.TreeNodeFlags_DefaultOpen) then
-      im.Columns(3, key.."Columns##trafficManager", false)
-      im.SetColumnWidth(0, 160 * im.uiscale[0])
+      im.Columns(2, key.."Columns##trafficManager", false)
+      im.SetColumnWidth(0, 190 * im.uiscale[0])
       im.SetColumnWidth(1, 30 * im.uiscale[0])
 
-      for _, id in ipairs(session[key]) do
-        local veh = scenetree.findObject(id)
+      for _, nameId in ipairs(session[key]) do
+        local veh = scenetree.findObject(nameId)
         if veh then
           local vehId = veh:getID()
-          if not session.vehicles[id] then
+          if not session.vehicles[nameId] then
             createVehicleData(vehId)
           end
 
-          if session.vehicles[id] then
+          if session.vehicles[nameId] then
             local str = "["..tostring(vehId).."] "..veh.jbeam
-            if key == "vehiclesSorted" and not map.objects[vehId] then
-              str = str.." *"
-            end
 
             local textColor = imColors.active
-            if session.vehicles[id].locked then
-              textColor = session.vehicles[id].aiActive and imColors.inactiveLive or imColors.inactive
+            if session.vehicles[nameId].locked then
+              textColor = session.vehicles[nameId].aiActive and imColors.inactiveLive or imColors.inactive
             else
-              textColor = session.vehicles[id].aiActive and imColors.activeLive or imColors.active
+              textColor = session.vehicles[nameId].aiActive and imColors.activeLive or imColors.active
             end
 
             im.PushStyleColor2(im.Col_Text, textColor)
-            if im.Selectable1(str, id == currSelection.vehicle, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then
-              currSelection.vehicle = id
-              currSelection.vehicleFocus = nil
+            if im.Selectable1(str, nameId == currSelection.vehicle, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then
+              currSelection.vehicle = nameId
               table.clear(options.aiData)
-              ffi.copy(options.vehicleName, session.vehicles[id].name)
-              ffi.copy(options.vehicleClass, session.vehicles[id].class)
+              ffi.copy(options.vehicleName, session.vehicles[nameId].name)
+              ffi.copy(options.vehicleClass, session.vehicles[nameId].class)
               if not commands.isFreeCamera() then
                 if scenetree.objectExists(session.playerId or 0) then
-                  be:enterVehicle(0, be:getObjectByID(session.playerId))
+                  be:enterVehicle(0, getObjectByID(session.playerId))
                 end
                 commands.setFreeCamera()
               end
             end
             im.PopStyleColor()
-
             im.NextColumn()
-
-            if editor.uiIconImageButton(editor.icons.survellianceCamera, imSizes.small) then
-              editor.clearObjectSelection()
-              editor.selectObjects({vehId})
-              editor.fitViewToSelection()
-              currSelection.vehicleFocus = id
+            if editor.uiIconImageButton(session.vehicles[nameId].locked and editor.icons.lock or editor.icons.lock_open, imSizes.small) then
+              session.vehicles[nameId].locked = not session.vehicles[nameId].locked
             end
-            if im.IsItemHovered() and im.IsMouseDoubleClicked(0) then
-              veh.playerUsable = true
-              be:enterVehicle(0, veh)
-              commands.setGameCamera()
-            end
-            im.tooltip("Focus Selection (double click to enter)")
-            im.NextColumn()
-            if editor.uiIconImageButton(session.vehicles[id].locked and editor.icons.lock or editor.icons.lock_open, imSizes.small) then
-              session.vehicles[id].locked = not session.vehicles[id].locked
-            end
-            im.tooltip(session.vehicles[id].locked and "Unlock Object" or "Lock Object")
+            im.tooltip(session.vehicles[nameId].locked and "Unlock Object" or "Lock Object")
             im.NextColumn()
           end
         else
-          session.vehicles[id] = nil
+          session.vehicles[nameId] = nil
           session.objectCount = 0
         end
       end
@@ -865,12 +1008,31 @@ local function tabVehicleManager()
   end
   im.EndChild()
 
+  if options.includePlayerVehicle[0] then
+    local playerId = be:getPlayerVehicleID(0)
+    if playerId and playerId > 0 then
+      local playerVeh = getObjectByID(playerId)
+      if playerVeh then
+        local name = playerVeh:getName() or "playerVeh"
+        if not session.vehicles[name] then -- TODO: simplify this
+          if not scenetree.objectExists(simGroupName) then
+            createSimGroup()
+          end
+          local innerGroup = scenetree.findObject(simGroupName)
+          innerGroup:addObject(playerVeh)
+
+          createVehicleData(playerId, {aiMode = "disabled"})
+        end
+      end
+    end
+  end
+
   im.SameLine()
 
   im.BeginChild1("vehicleManagerData##trafficManager", im.ImVec2(0, 440 * im.uiscale[0]), im.WindowFlags_None)
   local sessionData = session.vehicles[currSelection.vehicle]
   local vehId = sessionData and sessionData.id or 0
-  local currVeh = be:getObjectByID(vehId)
+  local currVeh = getObjectByID(vehId)
   if not currVeh then
     if not next(session.vehicles) then
       im.TextUnformatted("Spawn an object via the Vehicle Selector to begin.")
@@ -879,13 +1041,25 @@ local function tabVehicleManager()
     end
   else
     local mapVehData = map.objects[vehId]
-    local isDrivable = mapVehData and true or false
-    local queueDelete
+    local isDrivable = validVehTypes[sessionData.vehType] and true or false -- assumed drivable from vehicle type
+    -- currVeh.partConfig seems to cause a crash even though vehicle got deleted
+    --if isDrivable and string.find(currVeh.partConfig, "_parked") then -- parked vehicles can not be drivable
+      --isDrivable = false
+    --end
 
     mapVehData = mapVehData or {}
 
-    im.Columns(2, "trafficManagerMainButtons")
-    im.SetColumnWidth(0, 160)
+    im.Columns(3, "trafficManagerMainButtons")
+    im.SetColumnWidth(0, 40)
+    im.SetColumnWidth(1, 155)
+
+    if editor.uiIconImageButton(editor.icons.portrait, imSizes.medium) then
+      currVeh.playerUsable = true
+      be:enterVehicle(0, currVeh)
+      commands.setGameCamera()
+    end
+    im.tooltip("Enter Vehicle")
+    im.NextColumn()
 
     if not isDrivable then im.BeginDisabled() end
     if editor.uiIconImageButton(editor.icons.play_arrow, imSizes.medium, sessionData.aiActive and im.GetStyleColorVec4(im.Col_ButtonActive)) then
@@ -911,7 +1085,7 @@ local function tabVehicleManager()
     im.tooltip("Reset")
     im.SameLine()
     if editor.uiIconImageButton(editor.icons.delete_forever, imSizes.medium) then
-      queueDelete = true
+      deleteId = vehId
     end
     im.tooltip("Delete")
 
@@ -957,10 +1131,20 @@ local function tabVehicleManager()
 
     im.Separator()
 
+    im.PushFont3("cairo_regular_medium")
     im.TextUnformatted("Properties")
-    local niceName = core_vehicle_manager.getVehicleData(vehId).vdata.information.name or currVeh.jbeam
+    im.PopFont()
+
+    local vehData = core_vehicle_manager.getVehicleData(vehId)
+    local niceName = vehData and vehData.vdata.information.name
+    if niceName then
+      niceName = core_locales.translateWithOrWithoutContext(niceName) -- from context to string
+    else
+      niceName = currVeh.jbeam
+    end
+
     if niceName == "Simple Traffic Vehicle" then
-      -- get config nice name instead
+      -- get config nice name instead (ask about having an alias in the data for this)
     end
     im.Selectable1(niceName.."##trafficManager", true)
 
@@ -981,17 +1165,18 @@ local function tabVehicleManager()
     end
 
     if not isDrivable then
-      im.TextColored(imColors.warning, "This vehicle is currently determined to be undrivable.")
+      im.TextColored(imColors.warning, "This object is currently undrivable.")
     else
       local prevType = sessionData.aiType
       local prevMode = sessionData.aiMode
 
       local label = aiModes[sessionData.aiType] and aiModes[sessionData.aiType][sessionData.aiMode]
+      local edited = false
 
-      if im.BeginCombo("AI Mode##trafficManager", label or "(None)") then
+      if im.BeginCombo("AI Mode##trafficManagerVehAi", label or "(None)") then
         for _, t in ipairs(tableKeysSorted(aiModes)) do
           for _, mode in ipairs(tableKeysSorted(aiModes[t])) do
-            if im.Selectable1(aiModes[t][mode].."##trafficManagerAiMode", sessionData.aiMode == mode) then
+            if im.Selectable1(aiModes[t][mode].."##trafficManagerVehAi", sessionData.aiMode == mode) then
               sessionData.aiType = t
               sessionData.aiMode = mode
             end
@@ -1009,24 +1194,82 @@ local function tabVehicleManager()
         enableVehicleAi(currSelection.vehicle)
       end
 
-      if im.Button("AI Parameters...") then
-        im.OpenPopup("AI Parameters##trafficManager")
+      if sessionData.aiData.scriptFile ~= nil then
+        options.aiData.scriptFile = options.aiData.scriptFile or im.ArrayChar(1024, sessionData.aiData.scriptFile)
+        if editor.uiInputFile("ScriptAi File##trafficManagerVehAi", options.aiData.scriptFile, nil, nil, {{"ScriptAI Recordings", {".track.json", ".json"}}}, im.InputTextFlags_EnterReturnsTrue) then
+          sessionData.aiData.scriptFile = ffi.string(options.aiData.scriptFile)
+          edited = true
+        end
       end
-      if im.BeginPopup("AI Parameters##trafficManager") then
+
+      if sessionData.aiData.targetPos ~= nil then
+        -- maybe there should be a way to click and set the target position
+        if im.Button("Set Target Position Here##trafficManagerVehAi") then
+          sessionData.aiData.targetPos = core_camera.getPosition()
+          local z = be:getSurfaceHeightBelow(sessionData.aiData.targetPos) -- snap to ground below camera view
+          if z > 1e-6 then
+            sessionData.aiData.targetPos.z = z
+          end
+          edited = true
+        end
+      end
+
+      if sessionData.aiData.flowgraphFile ~= nil then
+        options.aiData.flowgraphFile = options.aiData.flowgraphFile or im.ArrayChar(1024, sessionData.aiData.flowgraphFile)
+        if editor.uiInputFile("Flowgraph File##trafficManagerVehAi", options.aiData.flowgraphFile, nil, nil, {{"Flowgraphs", {".flow.json"}}}, im.InputTextFlags_EnterReturnsTrue) then
+          sessionData.aiData.flowgraphFile = ffi.string(options.aiData.flowgraphFile)
+          sessionData._tempData.varCurrentId = nil
+          sessionData._tempData.varPlayerId = nil
+          edited = true
+        end
+
+        if im.Button("Check Variables") then
+          local tempFg = jsonReadFile(sessionData.aiData.flowgraphFile)
+          if tempFg then
+            sessionData._tempData.varCurrentId = false
+            sessionData._tempData.varPlayerId = false
+            local varArray = tempFg.variables.customVariableOrder -- assuming that this exists
+            if varArray then
+              for _, var in ipairs(varArray) do
+                if var == "currentId" then
+                  sessionData._tempData.varCurrentId = true
+                elseif var == "playerId" then
+                  sessionData._tempData.varPlayerId = true
+                end
+              end
+            end
+          end
+        end
+
+        if sessionData._tempData.varCurrentId ~= nil then
+          im.SameLine()
+          editor.uiIconImage(sessionData._tempData.varCurrentId and editor.icons.check or editor.icons.close, imSizes.small)
+          im.tooltip("Variable: currentId")
+          im.SameLine()
+          editor.uiIconImage(sessionData._tempData.varPlayerId and editor.icons.check or editor.icons.close, imSizes.small)
+          im.tooltip("Variable: playerId")
+
+          im.TextWrapped('Tip: If you want, you can create a number variable named "currentId" in the flowgraph to use this vehicle as input. Same with "playerId", for the ego vehicle. Ensure that you link the variables to nodes.')
+        end
+      end
+
+      if im.Button("AI Parameters...") then
+        im.OpenPopup("AI Parameters##trafficManagerVehAi")
+      end
+      if im.BeginPopup("AI Parameters##trafficManagerVehAi") then
         local aiData = sessionData.aiData
-        local edited = false
 
         if sessionData.aiMode == "chase" or sessionData.aiMode == "follow" or sessionData.aiMode == "flee" then
           if not aiData.targetName then
-            aiData.targetName = be:getPlayerVehicle(0) and be:getPlayerVehicle(0):getName() or ""
+            aiData.targetName = getPlayerVehicle(0) and getPlayerVehicle(0):getName() or ""
           end
 
           im.PushItemWidth(160)
-          if im.BeginCombo("Target Vehicle##trafficManagerAiMode", aiData.targetName) then
+          if im.BeginCombo("Target Vehicle##trafficManagerVehAi", aiData.targetName) then
             for _, veh in ipairs(getAllVehiclesByType()) do
               local vehName = veh:getName()
               if vehName ~= currVeh:getName() then
-                if im.Selectable1(vehName.."##trafficManagerAiMode", aiData.targetName == vehName) then
+                if im.Selectable1(vehName.."##trafficManagerVehAi", aiData.targetName == vehName) then
                   aiData.targetName = vehName
                   edited = true
                 end
@@ -1042,7 +1285,7 @@ local function tabVehicleManager()
         if aiData.aggression ~= nil then
           im.PushItemWidth(160)
           options.aiData.aggression = options.aiData.aggression or im.FloatPtr(aiData.aggression)
-          if editor.uiSliderFloat("Risk##trafficManagerAi", options.aiData.aggression, 0.1, 1.25, "%.2f") then
+          if editor.uiSliderFloat("Risk##trafficManagerVehAi", options.aiData.aggression, 0.1, 1.25, "%.2f") then
             aiData.aggression = options.aiData.aggression[0]
             edited = true
           end
@@ -1055,7 +1298,7 @@ local function tabVehicleManager()
           end
           im.PushItemWidth(160)
           options.aiData.speed = options.aiData.speed or im.FloatPtr(aiData.speed)
-          if editor.uiSliderFloat("Speed (m/s)##trafficManagerAi", options.aiData.speed, 0, 80, "%.1f") then
+          if editor.uiSliderFloat("Speed (m/s)##trafficManagerVehAi", options.aiData.speed, 0, 80, "%.1f") then
             aiData.speed = options.aiData.speed[0]
             edited = true
           end
@@ -1073,7 +1316,7 @@ local function tabVehicleManager()
 
         if aiData.useSpeedLimit ~= nil then
           options.aiData.useSpeedLimit = options.aiData.useSpeedLimit or im.BoolPtr(aiData.useSpeedLimit)
-          if im.Checkbox("Use Road Speed Limit##trafficManagerAi", options.aiData.useSpeedLimit) then
+          if im.Checkbox("Use Road Speed Limit##trafficManagerVehAi", options.aiData.useSpeedLimit) then
             aiData.useSpeedLimit = options.aiData.useSpeedLimit[0]
             edited = true
           end
@@ -1081,7 +1324,7 @@ local function tabVehicleManager()
 
         if aiData.driveInLane ~= nil then
           options.aiData.driveInLane = options.aiData.driveInLane or im.BoolPtr(aiData.driveInLane)
-          if im.Checkbox("Use Road Lanes##trafficManagerAi", options.aiData.driveInLane) then
+          if im.Checkbox("Use Road Lanes##trafficManagerVehAi", options.aiData.driveInLane) then
             aiData.driveInLane = options.aiData.driveInLane[0]
             edited = true
           end
@@ -1089,19 +1332,8 @@ local function tabVehicleManager()
 
         if aiData.avoidCars ~= nil then
           options.aiData.avoidCars = options.aiData.avoidCars or im.BoolPtr(aiData.avoidCars)
-          if im.Checkbox("Avoid Collisions##trafficManagerAi", options.aiData.avoidCars) then
+          if im.Checkbox("Avoid Collisions##trafficManagerVehAi", options.aiData.avoidCars) then
             aiData.avoidCars = options.aiData.avoidCars[0]
-            edited = true
-          end
-        end
-
-        if aiData.targetPos ~= nil then
-          if im.Button("Set Target Position Here##trafficManagerAi") then
-            aiData.targetPos = core_camera.getPosition()
-            local z = be:getSurfaceHeightBelow(aiData.targetPos) -- snap to ground below camera view
-            if z > 1e-6 then
-              aiData.targetPos.z = z
-            end
             edited = true
           end
         end
@@ -1110,31 +1342,29 @@ local function tabVehicleManager()
           im.Separator()
 
           options.aiData.enableTraffic = options.aiData.enableTraffic or im.BoolPtr(aiData.enableTraffic)
-          if im.Checkbox("Use as Dynamic Traffic##trafficManagerAi", options.aiData.enableTraffic) then
+          if im.Checkbox("Use as Dynamic Traffic##trafficManagerVehAi", options.aiData.enableTraffic) then
             aiData.enableTraffic = options.aiData.enableTraffic[0]
             edited = true
           end
           im.tooltip("If true, this vehicle will automatically respawn if it drives away from the camera view.")
         end
 
-        if aiData.scriptFile ~= nil then
-          options.aiData.scriptFile = options.aiData.scriptFile or im.ArrayChar(1024, aiData.scriptFile)
-          if editor.uiInputFile("ScriptAi File##trafficManagerAi", options.aiData.scriptFile, nil, nil, {{"ScriptAI Recordings", ".track.json"}}, im.InputTextFlags_EnterReturnsTrue) then
-            aiData.scriptFile = ffi.string(options.aiData.scriptFile)
-            edited = true
-          end
-        end
-
-        if sessionData.aiType == "user" then
-          if not sessionData.aiData.record then
-            im.TextUnformatted("Failed to initialize advanced AI data.")
-          end
-        end
-
-        if edited and sessionData.aiActive then -- instantly updates the vehicle ai if it is already running
-          enableVehicleAi(currSelection.vehicle)
-        end
         im.EndPopup()
+      end
+
+      if sessionData.aiData.enableDebug ~= nil then
+        im.SameLine()
+        im.Dummy(imSizes.dummy)
+        im.SameLine()
+        options.aiData.enableDebug = options.aiData.enableDebug or im.BoolPtr(sessionData.aiData.enableDebug)
+        if im.Checkbox("Debug Mode##trafficManagerVehAi", options.aiData.enableDebug) then
+          sessionData.aiData.enableDebug = options.aiData.enableDebug[0]
+          edited = true
+        end
+      end
+
+      if edited and sessionData.aiActive then -- instantly updates the vehicle ai if it is already running
+        enableVehicleAi(currSelection.vehicle)
       end
     end
 
@@ -1144,14 +1374,14 @@ local function tabVehicleManager()
 
     local pos = mapVehData.pos or currVeh:getPosition()
     options.objPos[0], options.objPos[1], options.objPos[2] = pos.x, pos.y, pos.z
-    if im.InputFloat3("Position##trafficManagerVehPos", options.objPos, floatFormat, im.InputTextFlags_EnterReturnsTrue) then
+    if im.InputFloat3("Position##trafficManagerVehStats", options.objPos, floatFormat, im.InputTextFlags_EnterReturnsTrue) then
       pos.x, pos.y, pos.z = options.objPos[0], options.objPos[1], options.objPos[2]
       spawn.safeTeleport(currVeh, pos, quatFromDir(currVeh:getDirectionVector(), currVeh:getDirectionVectorUp()), nil, nil, false, true)
     end
 
     local dirVec = mapVehData.dirVec or currVeh:getDirectionVector()
     options.objRot[0], options.objRot[1], options.objRot[2] = dirVec.x, dirVec.y, dirVec.z
-    if im.InputFloat3("Direction##trafficManagerVehDirVec", options.objRot, floatFormat, im.InputTextFlags_EnterReturnsTrue) then
+    if im.InputFloat3("Direction##trafficManagerVehStats", options.objRot, floatFormat, im.InputTextFlags_EnterReturnsTrue) then
       dirVec.x, dirVec.y, dirVec.z = options.objRot[0], options.objRot[1], options.objRot[2]
       spawn.safeTeleport(currVeh, currVeh:getPosition(), quatFromDir(dirVec, vecUp), nil, nil, false, true)
     end
@@ -1190,7 +1420,9 @@ local function tabVehicleManager()
     if isDrivable then
       im.Separator()
 
+      im.PushFont3("cairo_regular_medium")
       im.TextUnformatted("Stats")
+      im.PopFont()
 
       im.Columns(2, "trafficManagerVehStats1")
       im.SetColumnWidth(0, 120)
@@ -1249,10 +1481,6 @@ local function tabVehicleManager()
         im.Columns(1)
       end
     end
-
-    if queueDelete then
-      currVeh:delete()
-    end
   end
   im.EndChild()
 
@@ -1284,7 +1512,7 @@ local function tabVehicleManager()
   if editor.uiIconImageButton(editor.icons.refresh, imSizes.medium) then
     for id, data in pairs(session.vehicles) do
       if scenetree.objectExists(id) and not data.locked then
-        be:getObjectByID(data.id):queueLuaCommand('recovery.loadHome()')
+        getObjectByID(data.id):queueLuaCommand('recovery.loadHome()')
         createVehicleData(data.id)
       end
     end
@@ -1300,12 +1528,15 @@ local function tabVehicleManager()
 
   im.NextColumn()
 
-  if im.Button("Advanced...##trafficManagerAllVehicles") then -- dropdown with special functions
+  if im.Button("More Options...##trafficManagerAllVehicles") then -- dropdown with special functions
     im.OpenPopup("Advanced Functions##trafficManagerAllVehicles")
   end
   if im.BeginPopup("Advanced Functions##trafficManagerAllVehicles") then
     if im.Selectable1("Include All Vehicles From Scene##trafficManagerAllVehicles") then -- adds the player vehicle and all other vehicles to the session data
       for _, veh in ipairs(getAllVehiclesByType()) do
+        if not scenetree.objectExists(simGroupName) then
+          createSimGroup()
+        end
         local innerGroup = scenetree.findObject(simGroupName)
         innerGroup:addObject(veh)
       end
@@ -1320,6 +1551,10 @@ local function tabVehicleManager()
 
   im.NextColumn()
   im.Columns(1)
+
+  if deleteId then
+    getObjectByID(deleteId):delete()
+  end
 end
 
 local function windowVehicles() -- manage traffic vehicles
@@ -1337,9 +1572,8 @@ local function windowVehicles() -- manage traffic vehicles
         tabVehicleManager()
         im.EndTabItem()
       end
+      im.EndTabBar()
     end
-  else
-    windows.vehicles.active = false
   end
   editor.endWindow()
 end
@@ -1350,8 +1584,9 @@ local function windowTrafficLights() -- simplified traffic lights
   if editor.beginWindow(windows.lights.key, windows.lights.name) then
     if im.IsWindowFocused(im.FocusedFlags_RootAndChildWindows) then activeWindow = "lights" end
 
-    if not session.signalControllers then -- initialize signal controller and sequence data
+    if not session.lightsPreloaded then -- initialize signal controller and sequence data
       createSignalControllersAndSequences()
+      session.lightsPreloaded = true
     end
 
     im.BeginChild1("trafficLightsList##trafficManager", im.ImVec2(160 * im.uiscale[0], 440 * im.uiscale[0]), im.WindowFlags_ChildWindow)
@@ -1433,7 +1668,9 @@ local function windowTrafficLights() -- simplified traffic lights
 
       im.Separator()
 
+      im.PushFont3("cairo_regular_medium")
       im.TextUnformatted("Properties")
+      im.PopFont()
 
       if not currInstance.description then
         local ctrl = session.signalElements[currInstance.controllerId] or {}
@@ -1492,24 +1729,15 @@ local function windowTrafficLights() -- simplified traffic lights
 
       if currController and currSequence then
         if not currController.isSimple and currController.states[1] then -- checks if state durations are enabled
-          if not currController.totalDuration then
-            currController.totalDuration = 0
-            for _, state in ipairs(currController.states) do
-              currController.totalDuration = currController.totalDuration + state.duration
-            end
+          if not currController.totalDuration or currController.totalDuration == 0 then
+            currController:calcDuration()
+            currSequence:calcDuration(session.signalElements)
           end
 
-          currSequence.totalDuration = 0
-          for _, phase in ipairs(currSequence.phases) do
-            for _, state in ipairs(session.signalElements[phase.controllerData[1].id].states) do
-              currSequence.totalDuration = currSequence.totalDuration + state.duration
-            end
-          end
-
-          im.BeginTable("lightStateDurations", #currController.states, bit.bor(im.TableFlags_RowBg, im.TableFlags_Borders))
+          im.BeginTable("lightStateDurations", #currController.states, bit.bor(im.TableFlags_RowBg, im.TableFlags_Borders)) -- fancy table with colored cells representing states
 
           for i, state in ipairs(currController.states) do
-            im.TableSetupColumn("state"..i, nil, clamp(state.duration, 0.01, 1e6))
+            im.TableSetupColumn("state"..i, im.TableColumnFlags_WidthStretch, clamp(state.duration, 0.01, 1e6))
           end
           for i, state in ipairs(currController.states) do
             im.TableNextColumn()
@@ -1531,7 +1759,7 @@ local function windowTrafficLights() -- simplified traffic lights
               im.PushItemWidth(inputWidth)
               if im.InputFloat(stateData.name.."##trafficManagerControllerState"..i, var, 0.1, 0.1, "%.2f", im.InputTextFlags_EnterReturnsTrue) then
                 state.duration = math.max(0, var[0])
-                currController.totalDuration = nil
+                currController.totalDuration = 0 -- forces recalculation of total duration
               end
               im.PopItemWidth()
               if state.state == "redTrafficLight" then
@@ -1557,29 +1785,9 @@ local function windowTrafficLights() -- simplified traffic lights
           currInstance.tempSignalObjects = currInstance:getSignalObjects(true)
         end
 
-        im.Text("Traffic Light Objects")
-
-        if not scenetree.objectExistsById(currInstance.spawnedObjectId or 0) then
-          im.SameLine()
-          if im.Button("Use Default") then -- NOTE: only works for right side of road
-            local pos = vec3(currInstance.road and currInstance.road.pos or currInstance.pos)
-            local offset = currInstance.road and currInstance.road.radius or 5
-            pos = pos + currInstance.dir:cross(vecUp) * (offset + 1)
-            local rot = quatFromDir(currInstance.dir:z0(), vecUp)
-            local obj = currInstance:createSignalObject("art/shapes/objects/s_trafficlight_boom_sn.dae", pos, rot)
-
-            if obj then
-              if not scenetree.objectExists(simGroupName) then
-                createSimGroup()
-              end
-              currInstance.spawnedObjectId = obj:getID()
-              scenetree[simGroupName]:addObject(obj.obj)
-              currInstance:linkSignalObject(currInstance.spawnedObjectId)
-              table.insert(currInstance.tempSignalObjects, currInstance.spawnedObjectId)
-            end
-          end
-          im.tooltip("Places and links a standard traffic light object.")
-        end
+        im.PushFont3("cairo_regular_medium")
+        im.TextUnformatted("Objects")
+        im.PopFont()
 
         if editor.uiIconImageButton(editor.icons.add_circle, imSizes.medium, tempEditMode == "objectSelect" and im.GetStyleColorVec4(im.Col_ButtonActive)) then
           if tempEditMode ~= "objectSelect" then
@@ -1639,7 +1847,28 @@ local function windowTrafficLights() -- simplified traffic lights
 
           im.Columns(1)
         else
-          im.TextWrapped("Object list is empty; click the Add button and select a traffic signal object in the world.")
+          im.TextUnformatted("No traffic light objects linked.")
+
+          if not scenetree.objectExistsById(currInstance.spawnedObjectId or 0) then
+            if im.Button("Use Default") then -- NOTE: only works for right side of road
+              local pos = vec3(currInstance.road and currInstance.road.pos or currInstance.pos)
+              local offset = currInstance.road and currInstance.road.radius or 5
+              pos = pos + currInstance.dir:cross(vecUp) * (offset + 1)
+              local rot = quatFromDir(currInstance.dir:z0(), vecUp)
+              local obj = currInstance:createSignalObject("art/shapes/objects/s_trafficlight_boom_sn.dae", pos, rot)
+
+              if obj then
+                if not scenetree.objectExists(simGroupName) then
+                  createSimGroup()
+                end
+                currInstance.spawnedObjectId = obj:getID()
+                scenetree[simGroupName]:addObject(obj.obj)
+                currInstance:linkSignalObject(currInstance.spawnedObjectId)
+                table.insert(currInstance.tempSignalObjects, currInstance.spawnedObjectId)
+              end
+            end
+            im.tooltip("Places and links a standard traffic light object.")
+          end
         end
 
         if queueDelete then
@@ -1695,13 +1924,18 @@ local function windowTrafficLights() -- simplified traffic lights
 
     im.NextColumn()
     im.Columns(1)
-  else
-    windows.lights.active = false
   end
   editor.endWindow()
 end
 
 local function windowTrafficSigns() -- place traffic signs
+
+  --[[ NOTE: Road sign properties for vehicle AI are not a feature yet.
+  Therefore, these signs are visual only and do not affect vehicle AI.
+  Also, it would be better to use TSStatic signs instead of full objects.
+  These TSStatic signs need to be available in a common folder, for all levels to use.
+  ]]--
+
   if not windows.signs.active then return end
 
   if editor.beginWindow(windows.signs.key, windows.signs.name) then
@@ -1778,7 +2012,7 @@ local function windowTrafficSigns() -- place traffic signs
 
     im.Dummy(imSizes.dummy)
 
-    im.TextColored(imColors.inactive, "Sign actions not available yet.")
+    im.TextColored(imColors.inactive, "WIP! Sign actions not available yet.")
 
     if activeWindow == "signs" and mouseMode == "spawn" and not im.IsWindowHovered(im.HoveredFlags_AnyWindow) then
       if mouseHandler("Click and drag to spawn here") then
@@ -1805,8 +2039,6 @@ local function windowTrafficSigns() -- place traffic signs
 
       core_vehicles.spawnNewVehicle(signSelector.model, spawnOptions)
     end
-  else
-    windows.signs.active = false
   end
   editor.endWindow()
 end
@@ -1837,9 +2069,11 @@ local function windowOptions()
       dump(session)
     end
 
+    im.Checkbox("Always Include Player Vehicle##trafficManager", options.includePlayerVehicle)
+
     im.Checkbox("Save Traffic Lights Separately##trafficManager", options.signalsSaveApart)
 
-    if im.Checkbox("Toggle Debug Mode##trafficManager", options.debugMode) then
+    if im.Checkbox("Enable Debug Mode##trafficManager", options.debugMode) then
       M.debugMode = options.debugMode[0]
       core_trafficSignals.debugLevel = M.debugMode and 1 or 0
     end
@@ -1848,13 +2082,18 @@ local function windowOptions()
       setWindowConfirm("Are you sure you want to reset everything?", resetAll)
     end
     im.EndPopup()
-  else
-    windows.options.active = false
   end
 end
 
 local function loadSession(filePath)
-  if not filePath then return end
+  if not filePath then
+    if tempFilePath then -- exists if level mismatch was detected
+      filePath = tempFilePath
+      M.assertLevel = false -- disables level assertion from now on (or until enabled again)
+    else
+      return
+    end
+  end
 
   if string.endswith(filePath, ".prefab.json") then -- tries to load the actual data file instead of the prefab
     filePath = filePath:gsub(".prefab.json", ".json")
@@ -1862,14 +2101,20 @@ local function loadSession(filePath)
 
   local data = jsonReadFile(filePath)
   if data then
+    if M.assertLevel and data.level ~= getCurrentLevelIdentifier() then
+      tempFilePath = filePath
+      setWindowConfirm("Level mismatch ("..tostring(data.level).."); do you still want to load this session?", loadSession)
+      return
+    end
     resetSession(true)
 
     ffi.copy(options.sessionName, data.name)
     ffi.copy(options.sessionAuthor, data.author)
     ffi.copy(options.sessionDescription, data.description)
-    options.debugMode[0] = data.debugMode
+    options.includePlayerVehicle[0] = data.includePlayerVehicle
     options.signalsKeepOriginal[0] = data.signalsKeepOriginal
     options.signalsSaveApart[0] = data.signalsSaveApart
+    options.debugMode[0] = data.debugMode
     session.playerId = be:getPlayerVehicleID(0)
 
     M.debugMode = data.debugMode
@@ -1898,7 +2143,7 @@ local function loadSession(filePath)
           if sessionData then
             sessionData.home.pos = vec3(sessionData.home.pos)
             sessionData.home.rot = quat(sessionData.home.rot)
-            sessionData._loaded = true
+            sessionData._loaded = true -- temporary flag, gets unset when home transform is processed
           end
         end
       end
@@ -1906,7 +2151,8 @@ local function loadSession(filePath)
 
     if data.signals then
       core_trafficSignals.loadSignals() -- load original signals, if applicable
-      core_trafficSignals.setActive(true, true)
+      core_trafficSignals.setActive(true, true) -- this is required to actually run the signals simulation
+      -- see comment in core_trafficSignals.setActive for more details
 
       local signalsData = data.signals
       if data.signalsFile then
@@ -1943,16 +2189,18 @@ local function loadSession(filePath)
       core_trafficSignals.loadSignals() -- attempt to load original traffic signals
     end
 
-    if be:getObjectByID(session.playerId) then
-      be:enterVehicle(0, be:getObjectByID(session.playerId))
+    if getObjectByID(session.playerId) then
+      be:enterVehicle(0, getObjectByID(session.playerId))
     end
 
     prevFilePath = path.split(filePath)
+    tempFilePath = nil
 
-    if data.level ~= getCurrentLevelIdentifier() then
+    if data.level ~= getCurrentLevelIdentifier() then -- checks if the level from the data matches the current level
       editor.showNotification("Warning, level mismatch from data ("..tostring(data.level)..").", nil, nil, 10)
       log("W", logTag, "Wrong level! Expected: "..tostring(data.level)..", Actual: "..tostring(getCurrentLevelIdentifier()))
     else
+      log("I", logTag, "Traffic manager session loaded: "..filePath)
       editor.showNotification("Session data loaded.", nil, nil, 5)
     end
   else
@@ -1964,7 +2212,7 @@ end
 local function saveSession(filePath)
   if not filePath then return end
 
-  if not next(session.vehicles) and not next(session.lights) and not next(session.signs) then
+  if not next(session.vehicles) and not next(session.lights) and not next(session.signs) then -- checks if there is any data to save
     editor.showNotification("Missing session data!", nil, nil, 5)
     log("E", logTag, "Failed to save session data!")
     return
@@ -1983,24 +2231,26 @@ local function saveSession(filePath)
   saveData.description = session.description
   saveData.level = getCurrentLevelIdentifier()
   saveData.version = version
-  saveData.debugMode = options.debugMode[0]
+
+  saveData.includePlayerVehicle = options.includePlayerVehicle[0]
   saveData.signalsKeepOriginal = options.signalsKeepOriginal[0]
   saveData.signalsSaveApart = options.signalsSaveApart[0]
+  saveData.debugMode = options.debugMode[0]
 
   saveData.vehicles = {}
   saveData.signals = {instances = {}, controllers = {}, sequences = {}}
 
-  for _, key in ipairs({"vehiclesSorted", "propsSorted"}) do
-    for i, id in ipairs(session[key]) do
-      if scenetree.objectExists(id) then
-        local obj = scenetree.findObject(id)
+  for _, key in ipairs(vehiclesPropsSorted) do
+    for i, nameId in ipairs(session[key]) do
+      if scenetree.objectExists(nameId) then
+        local obj = scenetree.findObject(nameId)
         spawn.safeTeleport(obj, obj:getPosition(), quatFromDir(obj:getDirectionVector(), obj:getDirectionVectorUp()), nil, nil, false, true)
 
-        local vehData = deepcopy(session.vehicles[id])
-        vehData.home.pos = session.vehicles[id].home.pos:toTable()
-        vehData.home.rot = session.vehicles[id].home.rot:toTable()
+        local vehData = deepcopy(session.vehicles[nameId])
+        vehData.home.pos = session.vehicles[nameId].home.pos:toTable()
+        vehData.home.rot = session.vehicles[nameId].home.rot:toTable()
 
-        vehData.aiActive, vehData.stats, vehData._frameDelay = nil, nil, nil
+        vehData.aiActive, vehData.stats, vehData._tempData = nil, nil, nil
         table.insert(saveData.vehicles, vehData)
       end
     end
@@ -2048,6 +2298,7 @@ local function saveSession(filePath)
 
   prevFilePath = path.split(filePath)
 
+  log("I", logTag, "Traffic manager session saved: "..filePath)
   editor.showNotification("Session data saved.", nil, nil, 5)
 end
 
@@ -2059,45 +2310,30 @@ local function debugDraw()
   if not session then return end
 
   if windows.vehicles.active then
-    if currSelection.vehicleFocus and scenetree.objectExists(currSelection.vehicleFocus) then
-      local obj = scenetree.findObject(currSelection.vehicleFocus)
-      tempVec:set(be:getObjectOOBBCenterXYZ(obj:getID()))
-      tempVec.z = tempVec.z + 3
-      tempVecAlt:setAdd2(tempVec, vecUp * 2)
-      debugDrawer:drawSquarePrism(tempVec, tempVecAlt, Point2F(0, 0), Point2F(1, 1), debugColors.selected)
-    end
-
     local sessionData = session.vehicles[currSelection.vehicle]
     if sessionData and (M.debugMode or not sessionData.aiActive) then
       if sessionData.aiData.targetPos then
         debugDrawer:drawCylinder(sessionData.aiData.targetPos, sessionData.aiData.targetPos + vec3(0, 0, 25), 0.2, debugColors.main)
       end
       if sessionData.home then
-        tempVec:setAdd2(sessionData.home.pos, vecY:rotated(sessionData.home.rot) * 2)
-        debugDrawer:drawSquarePrism(sessionData.home.pos, tempVec, Point2F(0.3, 1), Point2F(0.3, 0), debugColors.main)
+        if not sessionData.home.p1 then
+          local veh = scenetree.findObject(currSelection.vehicle)
+          if veh then
+            local oobb = veh:getSpawnWorldOOBB()
+            sessionData.home.p1 = linePointFromXnorm(oobb:getPoint(0), oobb:getPoint(3), 0.5)
+            sessionData.home.p2 = linePointFromXnorm(oobb:getPoint(4), oobb:getPoint(7), 0.5)
+          end
+        end
+        if sessionData.home.p1 then
+          debugDrawer:drawSquarePrism(sessionData.home.p1, sessionData.home.p2, Point2F(0.2, 2.2), Point2F(0.2, 2.2), debugColors.main) -- draws a box under the vehicle
+        end
       end
     end
   end
 
-  if windows.lights.active then
+  if windows.lights.active and not session.lightsActive then
     for _, id in ipairs(session.lightsSorted) do
-      local instance = session.lights[id]
-      local posUp = instance.pos + vec3(0, 0, 5)
-      debugDrawer:drawCylinder(instance.pos, posUp, 0.1, id == currSelection.light and debugColors.selected or debugColors.main)
-      debugDrawer:drawSphere(posUp, 0.3, session.lights[id].choiceIndex and debugColors.controllers[session.lights[id].choiceIndex] or debugColors.error)
-      debugDrawer:drawSquarePrism(instance.pos, instance.pos + instance.dir * 2, Point2F(0.3, 1), Point2F(0.3, 0), debugColors.guide)
-    end
-
-    local currInstance = session.lights[currSelection.light]
-    if currInstance then
-      for _, id in ipairs(currInstance.tempSignalObjects) do
-        local obj = scenetree.findObjectById(id)
-        if obj then
-          local abovePos = obj:getWorldBox():getCenter()
-          abovePos.z = abovePos.z + obj:getWorldBox():getExtents().z * 0.5 + 0.25
-          debugDrawer:drawSquarePrism(abovePos, abovePos + vecUp, Point2F(0, 0), Point2F(0.5, 0.5), debugColors.selected)
-        end
-      end
+      session.lights[id]:drawDebug(true, id == currSelection.light, false, session.lights[id].choiceIndex and debugColors.controllers[session.lights[id].choiceIndex], 5, 2)
     end
   end
 end
@@ -2162,15 +2398,16 @@ local function onEditorGui()
       im.TextUnformatted(confirmData.txt)
       im.Dummy(imSizes.dummy)
 
-      if im.Button("YES", im.ImVec2(inputWidth, 20 * im.uiscale[0])) then
+      if im.Button("YES", im.ImVec2(inputWidth, im.GetFrameHeight())) then
         confirmData.yesFunc()
         im.CloseCurrentPopup()
       end
       im.SameLine()
-      if im.Button("NO", im.ImVec2(inputWidth, 20 * im.uiscale[0])) then
+      if im.Button("NO", im.ImVec2(inputWidth, im.GetFrameHeight())) then
         confirmData.noFunc()
         im.CloseCurrentPopup()
       end
+      im.EndPopup()
     end
 
     mousePos:set(staticRayCast() or vecUp)
@@ -2198,7 +2435,7 @@ local function onUpdate(dt, dtSim)
   if session.vehiclesTemp then -- adds newly spawned vehicles to the traffic session SimGroup
     for _, id in ipairs(session.vehiclesTemp) do
       local prefix = "obj"
-      local obj = be:getObjectByID(id)
+      local obj = getObjectByID(id)
       local modelData = core_vehicles.getModel(obj.jbeam)
       if modelData then
         prefix = string.lower(modelData.model.Type or "unknown")
@@ -2220,7 +2457,7 @@ local function onUpdate(dt, dtSim)
     local mapVehData = map.objects[data.id] -- ensures only drivable vehicles get stat updates
     if mapVehData then
       data.isDrivable = true
-      data._frameDelay = nil
+      data._tempData.frameDelay = nil
 
       local distanceStep = mapVehData.pos:distance(data.stats.prevPos)
       if distanceStep >= 10 then distanceStep = 0 end
@@ -2248,18 +2485,21 @@ local function onUpdate(dt, dtSim)
         end
       end
 
-      data.stats.timer = data.stats.timer + dtSim
       data.stats.prevVel:set(mapVehData.vel)
       data.stats.prevPos:set(mapVehData.pos)
+
+      if data.aiActive then
+        data.stats.timer = data.stats.timer + dtSim
+      end
     else
       data.isDrivable = false
       if be:getEnabled() then
-        if data._frameDelay then
+        if data._tempData.frameDelay then
           data.aiType = "basic"
           data.aiMode = "stop"
           data.aiData = {}
         else
-          data._frameDelay = true -- just in case map object data is not ready on this frame
+          data._tempData.frameDelay = true -- just in case map object data is not ready on this frame
         end
       end
     end

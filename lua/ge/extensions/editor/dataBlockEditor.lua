@@ -15,6 +15,8 @@ local newDataBlockClass
 local newDataBlockName = im.ArrayChar(128)
 local dataBlockToCopyName = ""
 local dataBlockToCopyID
+local previousSelectedObjectIdInInspector
+local autoSelectDatablockId
 
 -- Create Emitter
 local function createDataBlockActionUndo(actionData)
@@ -58,7 +60,6 @@ local function deleteDataBlockActionRedo(actionData)
   end
 end
 
-
 local function onWindowMenuItem()
   editor.showWindow(dataBlockEditorWindowName)
 end
@@ -87,11 +88,36 @@ local function getAllDataBlockClasses()
   return resultTable
 end
 
+local function openDatablockEditor(dataBlockId, previousInspectorObjectId)
+  if editor.requestInspectorScrollToTopOnceForSelection then
+    editor.requestInspectorScrollToTopOnceForSelection(dataBlockId)
+  end
+  editor.selectObjectById(dataBlockId)
+  previousSelectedObjectIdInInspector = previousInspectorObjectId
+  autoSelectDatablockId = dataBlockId
+  onWindowMenuItem()
+end
+
+local function onEditorInspectorHeaderGui(inspectorInfo)
+  if previousSelectedObjectIdInInspector and editor.selection.object and tableSize(editor.selection.object[1]) then
+    local id = editor.selection.object[1]
+    local obj = scenetree.findObjectById(id)
+    if obj and obj:isSubClassOf("SimDataBlock") then
+      if im.Button("<< Back To Previously Selected Object") then
+        editor.selectObjectById(previousSelectedObjectIdInInspector)
+        previousSelectedObjectIdInInspector = nil
+      end
+    end
+  end
+end
+
 local function onEditorInitialized()
   editor.addWindowMenuItem("DataBlock Editor", onWindowMenuItem)
   editor.registerWindow(dataBlockEditorWindowName, im.ImVec2(200, 400))
   editor.registerWindow(createDataBlockWindowName, im.ImVec2(300, 200))
   dataBlockClasses = getAllDataBlockClasses()
+
+  editor.openDatablockEditor = openDatablockEditor
 end
 
 local function onExtensionLoaded()
@@ -120,11 +146,38 @@ local function onEditorGui()
       windowPos = im.GetWindowPos()
       if im.BeginTabBar("dataBlockEditor##") then
         local inExistingTab = false
-        if im.BeginTabItem("Existing") then
+        local existingTabFlags = nil
+        if autoSelectDatablockId then
+          existingTabFlags = im.TabItemFlags_SetSelected
+        end
+        if im.BeginTabItem("Existing", nil, existingTabFlags) then
           im.BeginChild1("Existing_Child", im.ImVec2(0, 0), false)
             inExistingTab = true
+            local autoSelectClassName = nil
+            if autoSelectDatablockId then
+              local autoObj = scenetree.findObjectById(autoSelectDatablockId)
+              if autoObj and autoObj.getClassName then
+                autoSelectClassName = autoObj:getClassName()
+              end
+            end
             for className, dataBlocks in pairs(dataBlockClasses) do
               if not tableIsEmpty(dataBlocks) then
+                -- If we couldn't resolve the class name (or selection isn't a datablock yet),
+                -- fall back to scanning the table by ID.
+                if autoSelectDatablockId and not autoSelectClassName then
+                  for _, dataBlock in ipairs(dataBlocks) do
+                    if dataBlock and dataBlock.getID and dataBlock:getID() == autoSelectDatablockId then
+                      autoSelectClassName = className
+                      break
+                    end
+                  end
+                end
+
+                -- Force-open the class tree node while auto-select is active.
+                -- Using Cond_Always here is important: Cond_Once may not override stored open/close state.
+                if autoSelectClassName and className == autoSelectClassName then
+                  im.SetNextItemOpen(true, im.Cond_Always)
+                end
                 if im.TreeNode1(className) then
                   for _, dataBlock in ipairs(dataBlocks) do
                     local flags = im.TreeNodeFlags_Leaf
@@ -136,6 +189,10 @@ local function onEditorGui()
                     end
                     im.TreeNodeEx1(dataBlock:__tostring() .. (editor.isDataBlockDirty(dataBlock) and "*" or ""), flags)
                     im.TreePop()
+                    if autoSelectDatablockId and dataBlock:getID() == autoSelectDatablockId then
+                      im.SetScrollHereY(0.5)
+                      autoSelectDatablockId = nil
+                    end
                     if im.IsItemClicked() then
                       editor.selectObjectById(dataBlock:getID())
                     end
@@ -232,9 +289,15 @@ local function onEditorInspectorFieldChanged(selectedIds, fieldName, fieldValue,
   end
 end
 
+local function onEditorObjectSelectionChanged()
+  previousSelectedObjectIdInInspector = nil
+end
+
 M.onEditorInspectorFieldChanged = onEditorInspectorFieldChanged
 M.onEditorGui = onEditorGui
 M.onEditorInitialized = onEditorInitialized
 M.onExtensionLoaded = onExtensionLoaded
+M.onEditorInspectorHeaderGui = onEditorInspectorHeaderGui
+M.onEditorObjectSelectionChanged = onEditorObjectSelectionChanged
 
 return M

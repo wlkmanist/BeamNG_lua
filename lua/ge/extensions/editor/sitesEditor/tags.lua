@@ -2,11 +2,9 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local im  = ui_imgui
-local nameText = im.ArrayChar(1024, "")
-local descText = im.ArrayChar(2048, "")
+
 local C = {}
 C.windowDescription = 'Tags'
-
 
 function C:init(sitesEditor, key)
   self.sitesEditor = sitesEditor
@@ -15,8 +13,8 @@ end
 
 function C:setSites(sites)
   self.sites = sites
-
 end
+
 function C:selected()
   --self.sites:finalizeSites()
   self.tag = nil
@@ -49,9 +47,7 @@ function C:selectTag(tag)
       table.insert(self.noTag, elem)
     end
   end
-
 end
-
 
 function C:drawGeneralInfo()
   im.BeginChild1("Tags", im.ImVec2(125 * im.uiscale[0], 0 ), im.WindowFlags_ChildWindow)

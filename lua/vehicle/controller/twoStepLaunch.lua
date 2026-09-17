@@ -91,21 +91,24 @@ local function init(jbeamData)
     if engine then
       core_quickAccess.addEntry(
         {
-          level = "/powertrain/",
+          level = "/root/playerVehicle/vehicleFeatures/",
           generator = function(entries)
-            table.insert(entries, {title = "Two-Step", priority = 40, ["goto"] = "/powertrain/twoStep/", icon = "radial_flee"})
+            table.insert(entries, {title = "Two-Step", priority = 40, ["goto"] = "/root/playerVehicle/vehicleFeatures/twoStep/", icon = "raceFlag", uniqueID = "twoStep"})
           end
         }
       )
 
       core_quickAccess.addEntry(
         {
-          level = "/powertrain/twoStep",
+          level = "/root/playerVehicle/vehicleFeatures/twoStep",
           generator = function(entries)
             local enableEntry = {
               title = "Toggle",
               priority = 30,
-              icon = "radial_toggle",
+              icon = "powerOnOff",
+              startSlot = 0.5,
+              endSlot = 1.5,
+              originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "twoStep"},
               onSelect = function()
                 controller.getController("twoStepLaunch").toggleTwoStep()
                 return {"reload"}
@@ -117,7 +120,10 @@ local function init(jbeamData)
             local upEntry = {
               title = "RPM Up",
               priority = 10,
-              icon = "material_keyboard_arrow_up",
+              icon = "arrowLargeUp",
+              startSlot = 2.5,
+              endSlot = 3.5,
+              originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "twoStep"},
               onSelect = function()
                 controller.getController("twoStepLaunch").changeTwoStepRPM(100)
                 return {"reload"}
@@ -126,7 +132,10 @@ local function init(jbeamData)
             local downEntry = {
               title = "RPM Down",
               priority = 20,
-              icon = "material_keyboard_arrow_down",
+              icon = "arrowLargeDown",
+              startSlot = 6.5,
+              endSlot = 7.5,
+              originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "twoStep"},
               onSelect = function()
                 controller.getController("twoStepLaunch").changeTwoStepRPM(-100)
                 return {"reload"}

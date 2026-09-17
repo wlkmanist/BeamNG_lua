@@ -1,0 +1,375 @@
+{
+  "phrases":[
+    {
+      "hash":"30",
+      "phrase":"30"
+    },
+    {
+      "hash":"40",
+      "phrase":"40"
+    },
+    {
+      "hash":"50",
+      "phrase":"50"
+    },
+    {
+      "hash":"60",
+      "phrase":"60"
+    },
+    {
+      "hash":"70",
+      "phrase":"70"
+    },
+    {
+      "hash":"80",
+      "phrase":"80"
+    },
+    {
+      "hash":"90",
+      "phrase":"90"
+    },
+    {
+      "hash":"100",
+      "phrase":"100"
+    },
+    {
+      "hash":"1_50",
+      "phrase":"1 50"
+    },
+    {
+      "hash":"200",
+      "phrase":"200"
+    },
+    {
+      "hash":"2_50",
+      "phrase":"2 50"
+    },
+    {
+      "hash":"300",
+      "phrase":"300"
+    },
+    {
+      "hash":"3_50",
+      "phrase":"3 50"
+    },
+    {
+      "hash":"400",
+      "phrase":"400"
+    },
+    {
+      "hash":"4_50",
+      "phrase":"4 50"
+    },
+    {
+      "hash":"500",
+      "phrase":"500"
+    },
+    {
+      "hash":"5_50",
+      "phrase":"5 50"
+    },
+    {
+      "hash":"600",
+      "phrase":"600"
+    },
+    {
+      "hash":"6_50",
+      "phrase":"6 50"
+    },
+    {
+      "hash":"700",
+      "phrase":"700"
+    },
+    {
+      "hash":"7_50",
+      "phrase":"7 50"
+    },
+    {
+      "hash":"800",
+      "phrase":"800"
+    },
+    {
+      "hash":"8_50",
+      "phrase":"8 50"
+    },
+    {
+      "hash":"900",
+      "phrase":"900"
+    },
+    {
+      "hash":"9_50",
+      "phrase":"9 50"
+    },
+    {
+      "hash":"1_km",
+      "phrase":"1 km"
+    },
+    {
+      "hash":"1_point_2_5_km",
+      "phrase":"1 point 2 5 km"
+    },
+    {
+      "hash":"1_point_5_km",
+      "phrase":"1 point 5 km"
+    },
+    {
+      "hash":"1_point_7_5_km",
+      "phrase":"1 point 7 5 km"
+    },
+    {
+      "hash":"2_km",
+      "phrase":"2 km"
+    },
+    {
+      "hash":"into",
+      "phrase":"into"
+    },
+    {
+      "hash":"and",
+      "phrase":"and"
+    },
+    {
+      "hash":"tight_hairpin_right",
+      "phrase":"tight hairpin right"
+    },
+    {
+      "hash":"tight_hairpin_left",
+      "phrase":"tight hairpin left"
+    },
+    {
+      "hash":"hairpin_right",
+      "phrase":"hairpin right"
+    },
+    {
+      "hash":"hairpin_left",
+      "phrase":"hairpin left"
+    },
+    {
+      "hash":"open_hairpin_right",
+      "phrase":"open hairpin right"
+    },
+    {
+      "hash":"open_hairpin_left",
+      "phrase":"open hairpin left"
+    },
+    {
+      "hash":"one_right",
+      "phrase":"one right"
+    },
+    {
+      "hash":"one_left",
+      "phrase":"one left"
+    },
+    {
+      "hash":"two_right",
+      "phrase":"two right"
+    },
+    {
+      "hash":"two_left",
+      "phrase":"two left"
+    },
+    {
+      "hash":"three_right",
+      "phrase":"three right"
+    },
+    {
+      "hash":"three_left",
+      "phrase":"three left"
+    },
+    {
+      "hash":"four_right",
+      "phrase":"four right"
+    },
+    {
+      "hash":"four_left",
+      "phrase":"four left"
+    },
+    {
+      "hash":"five_right",
+      "phrase":"five right"
+    },
+    {
+      "hash":"five_left",
+      "phrase":"five left"
+    },
+    {
+      "hash":"six_right",
+      "phrase":"six right"
+    },
+    {
+      "hash":"six_left",
+      "phrase":"six left"
+    },
+    {
+      "hash":"square_right",
+      "phrase":"square right"
+    },
+    {
+      "hash":"square_left",
+      "phrase":"square left"
+    },
+    {
+      "hash":"short",
+      "phrase":"short"
+    },
+    {
+      "hash":"long",
+      "phrase":"long"
+    },
+    {
+      "hash":"extra_long",
+      "phrase":"extra long"
+    },
+    {
+      "hash":"opens",
+      "phrase":"opens"
+    },
+    {
+      "hash":"tightens",
+      "phrase":"tightens"
+    },
+    {
+      "hash":"caution",
+      "phrase":"caution"
+    },
+    {
+      "hash":"double_caution",
+      "phrase":"double caution"
+    },
+    {
+      "hash":"triple_caution",
+      "phrase":"triple caution"
+    },
+    {
+      "hash":"over_bump",
+      "phrase":"over bump"
+    },
+    {
+      "hash":"bump",
+      "phrase":"bump"
+    },
+    {
+      "hash":"narrows",
+      "phrase":"narrows"
+    },
+    {
+      "hash":"bumpy",
+      "phrase":"bumpy"
+    },
+    {
+      "hash":"watersplash",
+      "phrase":"watersplash"
+    },
+    {
+      "hash":"over_crest",
+      "phrase":"over crest"
+    },
+    {
+      "hash":"crest",
+      "phrase":"crest"
+    },
+    {
+      "hash":"over_jump",
+      "phrase":"over jump"
+    },
+    {
+      "hash":"jump",
+      "phrase":"jump"
+    },
+    {
+      "hash":"dont_cut",
+      "phrase":"don't cut"
+    },
+    {
+      "hash":"over_finish",
+      "phrase":"over finish"
+    },
+    {
+      "hash":"our_start_time_has_been_rescheduled_make_sure_the_car_is_staged_at_the_start_line",
+      "phrase":"Our start time has been rescheduled. Make sure the car is staged at the start line."
+    },
+    {
+      "hash":"go",
+      "phrase":"go"
+    },
+    {
+      "hash":"20_seconds",
+      "phrase":"20 seconds"
+    },
+    {
+      "hash":"double_check_your_belts",
+      "phrase":"double-check your belts"
+    },
+    {
+      "hash":"good_job_stop_at_stop_control",
+      "phrase":"Good job! Stop at Stop Control..."
+    },
+    {
+      "hash":"very_nice_now_to_stop_control",
+      "phrase":"Very nice! Now to Stop Control..."
+    },
+    {
+      "hash":"good_luck",
+      "phrase":"Good luck!"
+    },
+    {
+      "hash":"best_of_luck",
+      "phrase":"Best of luck!"
+    },
+    {
+      "hash":"five",
+      "phrase":"five"
+    },
+    {
+      "hash":"the_first_note_is",
+      "phrase":"The first note is:"
+    },
+    {
+      "hash":"heres_the_first_note",
+      "phrase":"Here's the first note:"
+    },
+    {
+      "hash":"four",
+      "phrase":"four"
+    },
+    {
+      "hash":"60_seconds",
+      "phrase":"60 seconds"
+    },
+    {
+      "hash":"one",
+      "phrase":"one"
+    },
+    {
+      "hash":"radio_check",
+      "phrase":"radio check"
+    },
+    {
+      "hash":"three",
+      "phrase":"three"
+    },
+    {
+      "hash":"two",
+      "phrase":"two"
+    },
+    {
+      "hash":"30_seconds",
+      "phrase":"30 seconds"
+    },
+    {
+      "hash":"well_get_a_false_start_penalty_for_that",
+      "phrase":"We'll get a false start penalty for that."
+    },
+    {
+      "hash":"10_seconds",
+      "phrase":"10 seconds"
+    }
+  ],
+  "stats":{
+    "distancePhrases":30,
+    "notePhrases":41,
+    "systemPhrases":20,
+    "totalChars":861,
+    "totalPhrases":91
+  }
+}

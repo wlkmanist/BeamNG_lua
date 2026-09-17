@@ -242,7 +242,7 @@ local function updateGFX(dt)
           local nodeImpactMetalEvent = v.data.nodes[breakNode].impactMetalEvent or impactMetalEvent
           if nodeImpactMetalEvent then
             --print(string.format("%d: Impact Metal (%.2f) -> %q", objectId, volImpact, nodeImpactMetalEvent))
-            -- print (string.format("    PART IMPACT / mat1=%.2d / mat2=%.2d / impactEnergy=%9.2f / breakEnergy=%9.2f /                 / volImpact=%.3f  ", mat1, mat2, impactEnergy, breakEnergy, volImpact))
+            --print (string.format("    PART IMPACT / mat1=%.2d / mat2=%.2d / impactEnergy=%9.2f / breakEnergy=%9.2f /                 / volImpact=%.3f  ", mat1, mat2, impactEnergy, breakEnergy, volImpact))
             sounds.playSoundOnceFollowNode(nodeImpactMetalEvent, breakNode, volImpact)
           end
         else
@@ -369,12 +369,17 @@ local function updateGFX(dt)
   -- wind
   if aeroSpeed > 3 and windSoundEvent then
     -- TODO: Find a better place to emit wind sounds. Maybe at the windows?
-    windSound = windSound or createSoundObj(windSoundEvent, "AudioDefaultLoop3D", "WindTestSound", windSoundEventNode)
-    --local vol = clamp(aeroSpeed * 0.015, 0, 1)
-    local vol = aeroSpeed * 0.02
-    --local pitch = clamp(aeroSpeed * 0.012, 0, 1) -- controls pitch of large buffet so goes up at a slower rate
-    local pitch = aeroSpeed * 0.012
-    windSound:setVolumePitch(vol, pitch)
+    if ai.mode ~= 'traffic' then
+      windSound = windSound or createSoundObj(windSoundEvent, "AudioDefaultLoop3D", "WindTestSound", windSoundEventNode)
+    end
+
+    if windSound then
+      --local vol = clamp(aeroSpeed * 0.015, 0, 1)
+      local vol = aeroSpeed * 0.02
+      --local pitch = clamp(aeroSpeed * 0.012, 0, 1) -- controls pitch of large buffet so goes up at a slower rate
+      local pitch = aeroSpeed * 0.012
+      windSound:setVolumePitch(vol, pitch)
+    end
   -- print (string.format("WINDSPEED KPH=%.0f MPH=%.0f  Wind vol=%.2f  pitch=%.2f", (speed*3.657), (speed*2.285), vol, pitch))
   end
 
@@ -461,15 +466,26 @@ local function updateGFX(dt)
       rigidSkidPitch = tirePressure
       rigidSkidSlip = vehicleWheelSpeedDiffSlip * wheelSound.tirePropertiesSlip
 
-    --Mark Test lock spin on color, slide on something else skid asphalt v6a
-    -- rigidSkidVolume = (sideSlip * 0.05) * wheelSound.tirePropertiesSlip * asphaltContactSmooth
-    -- rigidSkidPitch = tirePressure
-    -- rigidSkidSlip = vehicleWheelSpeedDiffSlip * wheelSound.tirePropertiesSlip * asphaltContactSmooth
-    -- DON'T DELETE
-    -- if wd.name == "RR" then
-    -- if rigidRollVolume > 0.01  then print (string.format("ASPHAT KPH=%3.0f MPH=%3.0f / absWhlSpeed %5.1f / rollVolume %4.2f / RollPitch %4.2f / tirePressure%6.2f / Contact %.1f", (absWheelSpeed*3.656), (absWheelSpeed*2.285), absWheelSpeed, rigidRollVolume, rigidRollPitch, tirePressure, asphaltContactSmooth).." "..wd.name); end
-    -- if rigidSkidVolume > 0.01 then print (string.format(" "..wd.name.." ".."Skid Volume %.2f : Pitch %.2f : Color(+0.5) %.2f : tirePressure %.2f : Slip %6.2f : wd.lastSlip %6.2f : wd.slipEnergy %6.0f", rigidSkidVolume, rigidSkidPitch, rigidSkidSlip + 0.5, tirePressure, slip, wd.lastSlip, wd.slipEnergy)); end
-    -- end
+      --Mark Test lock spin on color, slide on something else skid asphalt v6a
+      -- rigidSkidVolume = (sideSlip * 0.05) * wheelSound.tirePropertiesSlip * asphaltContactSmooth
+      -- rigidSkidPitch = tirePressure
+      -- rigidSkidSlip = vehicleWheelSpeedDiffSlip * wheelSound.tirePropertiesSlip * asphaltContactSmooth
+      -- DON'T DELETE
+      -- if wd.name == "RR" then
+      -- if rigidRollVolume > 0.01  then print (string.format("ASPHAT KPH=%3.0f MPH=%3.0f / absWhlSpeed %5.1f / rollVolume %4.2f / RollPitch %4.2f / tirePressure%6.2f / Contact %.1f", (absWheelSpeed*3.656), (absWheelSpeed*2.285), absWheelSpeed, rigidRollVolume, rigidRollPitch, tirePressure, asphaltContactSmooth).." "..wd.name); end
+      -- if rigidSkidVolume > 0.01 then print (string.format(" "..wd.name.." ".."Skid Volume %.2f : Pitch %.2f : Color(+0.5) %.2f : tirePressure %.2f : Slip %6.2f : wd.lastSlip %6.2f : wd.slipEnergy %6.0f", rigidSkidVolume, rigidSkidPitch, rigidSkidSlip + 0.5, tirePressure, slip, wd.lastSlip, wd.slipEnergy)); end
+      -- end
+
+      -- RIGID asphalt kickup
+      local wheelPeripherySpeedKickup = max(slip * wheelSound.tirePropertiesKickup * 10, absWheelSpeed * wheelSound.tirePropertiesKickup * 1)
+      wheelSound.looseSurfaceKickupLimit = wheelSound.looseSurfaceKickupLimit - dt * wheelPeripherySpeedKickup
+      if wheelSound.looseSurfaceKickupLimit <= 0 and wheelPeripherySpeedKickup > 2 and wd.tireSoundVolumeCoef > 0 then
+        local kickupVolume = min(1, wheelPeripherySpeedKickup * 0.01 * wheelSound.tirePropertiesKickup)
+        playSoundOnceAtNode("event:>Surfaces>kickup_asphalt", wd.node1, kickupVolume * wd.tireSoundVolumeCoef, wheelSound.tirePropertiesVolRoll, wheelSound.tirePropertiesPitch, 1)
+        wheelSound.looseSurfaceKickupLimit = randomGauss3() * 8 / wheelSound.tirePropertiesKickup
+      -- print(string.format("KICKUP ASPHALT Vol=%.2f : Pitch=%.2f : Color=%.2f : tirePropertiesKickup=%.2f", kickupVolume, wheelSound.tirePropertiesVolRoll, wheelSound.tirePropertiesPitch, wheelSound.tirePropertiesKickup) .. " " .. wd.name)
+      -- streams.drawGraph(wd.name.." kickupVolume", {value = kickupVolume, min = 0, max = 1})
+      end
     end
 
     -- RIGID asphalt wet
@@ -559,7 +575,7 @@ local function updateGFX(dt)
     -- streams.drawGraph(wd.name.." rigidSkidSlip + 0.5", {value = rigidSkidSlip + 0.5, min = 0, max = 1})
     -- streams.drawGraph(wd.name.." slip * 0.01", {value = slip * 0.01, min = 0, max = 1})
 
-    -- prints for foll/skid RTPC's for an individual wheel
+    -- prints for roll/skid RTPC's for an individual wheel
     -- if wd.name == "RR" then
     -- streams.drawGraph(wd.name.." rigidSkidVolume (slip)", {value = rigidSkidVolume, min = 0, max = 1})
     -- streams.drawGraph(wd.name.." rigidSkidPitch (pressure on surface)", {value = rigidSkidPitch, min = 0, max = 1})
@@ -786,11 +802,11 @@ local function updateGFX(dt)
     -- MISC flat tire
     if wd.isTireDeflated and not wd.isBroken and mat >= 0 then
       wd.deflatedTireAngle = wd.deflatedTireAngle + clamp(wd.angularVelocity, -100, 100) * dt
-      if abs(wd.deflatedTireAngle) > twoPi then
+      if abs(wd.deflatedTireAngle) >= twoPi then
         local downForceVolume = clamp(wd.downForce / 5000, 0, 1)
         local speedPitch = clamp(abs(wd.angularVelocity) / 200, 0, 1)
         obj:playSFXOnceCT(wd.flatTireSound, wd.node1, downForceVolume, speedPitch, wd.tireVolume * 5, max(M.scrapeLoosenessMap[mat] or 0, M.scrapeLoosenessMap[mat2] or 0))
-        wd.deflatedTireAngle = 0
+        wd.deflatedTireAngle = wd.deflatedTireAngle - twoPi * sign(wd.deflatedTireAngle)
       end
     end
 
@@ -1022,8 +1038,8 @@ local function bodyCollision(p)
 end
 
 local function updateCabinFilter()
-  obj:queueGameEngineLua(string.format("core_sounds.cabinFilterStrength = %f", clamp(cabinFilterCoef, 0, 1)))
-  -- print(string.format("%d: Setting Cabin Filter -> %f", objectId, cabinFilterCoef))
+  obj:queueGameEngineLua(string.format("core_sounds.setCabinFilterStrength(%d, %f)", obj:getID(), clamp(cabinFilterCoef, 0, 1)))
+  -- print(string.format("%d: Setting Cabin Filter -> %f", objectId, clamp(cabinFilterCoef, 0, 1)))
 end
 
 local function init()
@@ -1188,6 +1204,7 @@ local function init()
 
             -- Audio debug - display the current suspension setup from jbeam
             -- print (string.format("Suspension : %s color=%.2f  attack=%.0f  volume=%.2f  decay=%.0f  pitch=%.2f  maxStress=%.0f", bm.soundFile, bm.colorFactor, bm.attackFactor, bm.volumeFactor, bm.decayFactor, bm.pitchFactor, bm.maxStress))
+            -- print (string.format("Suspension : %s color=%s  attack=%s  volume=%s  decay=%s  pitch=%s  maxStress=%s", dumps(bm.soundFile), dumps(bm.colorFactor), dumps(bm.attackFactor), dumps(bm.volumeFactor), dumps(bm.decayFactor), dumps(bm.pitchFactor), dumps(bm.maxStress)))
 
             -- finally, insert it for graphing
             table.insert(beamSounds, soundTable)
@@ -1219,10 +1236,6 @@ local function init()
     scrapeMap[3] = v.data.sounds.scrapePlastic == nil and scrapeMap[3] or v.data.sounds.scrapePlastic
 
     cabinFilterCoef = v.data.sounds.cabinFilterCoef == nil and 1 or v.data.sounds.cabinFilterCoef
-  end
-
-  if playerInfo.anyPlayerSeated then
-    updateCabinFilter()
   end
 
   for matId, event in pairs(scrapeMap) do
@@ -1310,7 +1323,7 @@ local function reset()
   end
 
   --resend all static tire properties upon reset because the GE param cache is cleared upon vehicle reset
-  for wi, wh in pairs(wheelsSounds) do
+  for wi, wh in pairs(wheelsSounds or {}) do
     local wd = wheels.wheels[wi]
     if wd.tireSoundVolumeCoef > 0 then
       wh.rigidRoll:setParameter("c_tirPrpVolRol", wh.tirePropertiesVolRoll)

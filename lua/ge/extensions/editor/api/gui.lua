@@ -22,9 +22,12 @@ local dockOpen = imgui.BoolPtr(true)
 local windowsState = {}
 local fileDialogContexts = {}
 local windowVisibleStack = {} -- used for beginWindow/endWindow
+local windowShouldCallEndStack = {} -- used for beginWindow/endWindow
 local modalWindowVisibleStack = {} -- used for beginModalWindow/endModalWindow
 local defaultIconButtonSize = imgui.ImVec2(32, 32)
-local WindowsStateFileFormatVersion = 1
+local WindowsStateFileFormatVersion = 2
+
+local viewportsEnabled = bit.band(imgui.GetIO().ConfigFlags, imgui.ConfigFlags_ViewportsEnable) ~= 0
 
 --- Returns a table with the loaded texture information
 -- @param path the path to a texture image
@@ -143,6 +146,8 @@ local function uiIconImage(icon, size, col, borderCol, label)
 end
 
 local textHighlightColor = imgui.ImVec4(1, 1, 0, 1)
+local uiIconImageButtonAutoIdFrame = -1
+local uiIconImageButtonAutoId = 0
 
 local function uiHighlightedText(text, highlightText, textColor)
   if not textColor then textColor = imgui.GetStyleColorVec4(imgui.Col_Text) end
@@ -180,7 +185,6 @@ end
 local function uiIconImageButton(icon, size, col, label, backgroundCol, id, textColor, textBG, onRelease, highlightText)
   if not size then size = defaultIconButtonSize end
   if not col then col = imgui.GetStyleColorVec4(imgui.Col_Text) end
-  if not backgroundCol then backgroundCol = imgui.GetStyleColorVec4(imgui.Col_Button) end
   local ux = icon.x / editor.atlasWidth
   local uy = icon.y / editor.atlasHeight
   local vx = (icon.x + icon_width) / editor.atlasWidth
@@ -207,11 +211,21 @@ local function uiIconImageButton(icon, size, col, label, backgroundCol, id, text
     end
   else
     size = imgui.ImVec2(size.x * imgui.uiscale[0], size.y * imgui.uiscale[0])
-    if id then imgui.PushID1(id) end
+    if not id then
+      local frame = imgui.GetFrameCount()
+      if uiIconImageButtonAutoIdFrame ~= frame then
+        uiIconImageButtonAutoIdFrame = frame
+        uiIconImageButtonAutoId = 0
+      end
+      uiIconImageButtonAutoId = uiIconImageButtonAutoId + 1
+      id = "uiIconImageButtonAutoId" .. tostring(uiIconImageButtonAutoId)
+    end
+    imgui.PushID1(id)
     imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0,0,0,0))
+    if not backgroundCol then backgroundCol = imgui.GetStyleColorVec4(imgui.Col_Button) end
     imgui.ImageButton("##ImageButton", iconsTex.texId, size, imgui.ImVec2(ux, uy), imgui.ImVec2(vx, vy), backgroundCol, col)
     imgui.PopStyleColor()
-    if id then imgui.PopID() end
+    imgui.PopID()
     if onRelease then
       if imgui.IsItemHovered() and imgui.IsMouseReleased(0) and not imgui.IsMouseDragging(0) then
         return true
@@ -242,16 +256,19 @@ end
 
 local function uiVertSeparator(float_height, vec2_offset, width)
   imgui.SameLine()
+  local separatorHeight = imgui.uiscale[0] * (float_height or imgui.GetFontSize())
+  local separatorWidth = width or 1
   local winPos = imgui.GetWindowPos()
   local cursor = imgui.GetCursorPos()
   imgui.ImDrawList_AddLine(
     imgui.GetWindowDrawList(),
     (vec2_offset and imgui.ImVec2(winPos.x + cursor.x + vec2_offset.x, winPos.y + cursor.y + vec2_offset.y) or imgui.ImVec2(winPos.x + cursor.x, winPos.y + cursor.y)),
-    (vec2_offset and imgui.ImVec2(winPos.x + cursor.x + vec2_offset.x, winPos.y + cursor.y + imgui.uiscale[0] * (float_height or imgui.GetFontSize()) + vec2_offset.y) or imgui.ImVec2(winPos.x + cursor.x, winPos.y + cursor.y + imgui.uiscale[0] * (float_height or imgui.GetFontSize()))),
+    (vec2_offset and imgui.ImVec2(winPos.x + cursor.x + vec2_offset.x, winPos.y + cursor.y + separatorHeight + vec2_offset.y) or imgui.ImVec2(winPos.x + cursor.x, winPos.y + cursor.y + separatorHeight)),
     imgui.GetColorU321(imgui.Col_Separator),
-    width or 1
+    separatorWidth
   )
-  imgui.SetCursorPosX(cursor.x + ((width or 1) + imgui.GetStyle().ItemSpacing.x))
+  imgui.Dummy(imgui.ImVec2(separatorWidth, separatorHeight))
+  imgui.SameLine()
 end
 
 local function drawBrushSolidEdgeEllipse(pos, fromPoint, toPoint, color)
@@ -428,13 +445,13 @@ local function presentGui(dtReal, dtSim, dtRaw)
   if bit.band(io.ConfigFlags, imgui.ConfigFlags_DockingEnable) ~= 0 then
     -- this adds a transparent window we can dock into
     local viewport = imgui.GetMainViewport()
-    imgui.SetNextWindowPos(viewport.Pos);
-    imgui.SetNextWindowSize(viewport.Size);
+    imgui.SetNextWindowPos(viewport.WorkPos);
+    imgui.SetNextWindowSize(viewport.WorkSize);
     imgui.SetNextWindowViewport(viewport.ID);
     imgui.PushStyleVar1(imgui.StyleVar_WindowRounding, 0)
     imgui.PushStyleVar1(imgui.StyleVar_WindowBorderSize, 0)
     imgui.PushStyleVar2(imgui.StyleVar_WindowPadding, imgui.ImVec2(0, 0))
-    local window_flags = bit.bor(imgui.WindowFlags_MenuBar, imgui.WindowFlags_NoDocking, imgui.WindowFlags_NoTitleBar, imgui.WindowFlags_NoCollapse, imgui.WindowFlags_NoResize, imgui.WindowFlags_NoMove, imgui.WindowFlags_NoBringToFrontOnFocus, imgui.WindowFlags_NoNavFocus, imgui.WindowFlags_NoBackground, imgui.WindowFlags_NoFocusOnAppearing)
+    local window_flags = bit.bor(imgui.WindowFlags_NoDocking, imgui.WindowFlags_NoTitleBar, imgui.WindowFlags_NoCollapse, imgui.WindowFlags_NoResize, imgui.WindowFlags_NoMove, imgui.WindowFlags_NoBringToFrontOnFocus, imgui.WindowFlags_NoNavFocus, imgui.WindowFlags_NoBackground, imgui.WindowFlags_NoFocusOnAppearing)
     imgui.Begin("MainDockSpace", dockOpen, window_flags);
     imgui.PopStyleVar(3)
     -- init the dockspace
@@ -444,12 +461,15 @@ local function presentGui(dtReal, dtSim, dtRaw)
 
   extensions.hook("onEditorGuiMainMenu")
   extensions.hook("onEditorGuiToolBar")
+  -- Capture file dialog visibility before any tool runs, so objectTool can ignore mouse up when dialog just closed
+  editor.fileDialogVisibleAtFrameStart = editor.isWindowVisible("fileDialog")
   extensions.hook("onEditorGui", dtReal, dtSim, dtRaw)
   extensions.hook("onEditorGuiStatusBar")
   checkWindowResize()
 end
 
 local function screenToClient(pt2i)
+  if not viewportsEnabled then return pt2i end
   --TODO: remove any Canvas usage, maybe use imgui
   if not canvasObject then canvasObject = scenetree.findObject("Canvas") end
   return canvasObject:screenToClient(pt2i)
@@ -948,7 +968,9 @@ end
 -- @param defaultVisibleBoolean if this is not nil, it will be the default first time open state of the window
 -- @param modal if the window is a modal window
 -- @param centered if the window is centered by default
-local function registerWindow(windowName, defaultSize, defaultPos, defaultVisibleBoolean, modal, centered, groupName)
+-- @param groupName the group name for the window, used to open or close many windows at once
+-- @param toolName what tool this window belongs to, so window state can be applied on a tool basis if needed
+local function registerWindow(windowName, defaultSize, defaultPos, defaultVisibleBoolean, modal, centered, groupName, toolName)
   local prevVis = defaultVisibleBoolean or false
   if windowsState[windowName] then prevVis = windowsState[windowName].visible[0] end
   windowsState[windowName] =
@@ -959,7 +981,8 @@ local function registerWindow(windowName, defaultSize, defaultPos, defaultVisibl
     defaultPos = defaultPos,
     modal = modal,
     groupName = groupName,
-    centered = centered
+    centered = centered,
+    toolName = toolName
   }
 end
 
@@ -974,8 +997,9 @@ end
 -- @param defaultPos the default first time size of the window, as imgui ImVec2
 -- @param defaultVisibleBoolean if this is not nil, it will be the default first time open state of the window
 -- @param centered if the window is centered by default
-local function registerModalWindow(windowName, defaultSize, defaultPos, centered)
-  registerWindow(windowName, defaultSize, defaultPos, nil, true, centered)
+-- @param toolName what tool this window belongs to, so window state can be applied on a tool basis if needed
+local function registerModalWindow(windowName, defaultSize, defaultPos, centered, toolName)
+  registerWindow(windowName, defaultSize, defaultPos, nil, true, centered, nil, toolName)
 end
 
 local function checkAndTriggerWindowHooks(wndName, wnd)
@@ -1097,6 +1121,10 @@ local function setupWindow(windowName)
     imgui.SetNextWindowSize(wnd.defaultSize, flag)
   end
 
+  if editor and editor.getPreference("ui.general.forceExpandWindowOnFirstShow") then
+    imgui.SetNextWindowCollapsed(false, imgui.Cond_Once)
+  end
+
   if wnd.centered then
     local pos = imgui.ImVec2(imgui.GetMainViewport().Pos.x + imgui.GetMainViewport().Size.x / 2, imgui.GetMainViewport().Pos.y + imgui.GetMainViewport().Size.y / 2)
     imgui.SetNextWindowPos(pos, imgui.Cond_Appearing, imgui.ImVec2(0.5, 0.5))
@@ -1125,6 +1153,9 @@ local function checkWindowFocus(windowName)
 end
 
 local function beginWindow(windowName, title, flags, noClose)
+  table.insert(windowVisibleStack, false)
+  table.insert(windowShouldCallEndStack, false)
+
   if not windowsState[windowName] then
     editor.logWarn("No registered window named: " .. windowName)
     return false
@@ -1132,7 +1163,7 @@ local function beginWindow(windowName, title, flags, noClose)
   -- push windowName's visibility bool in a table stack so endWindow can grab it and check if window is visible
   local isWndVisible = isWindowVisible(windowName)
   if not windowsState[windowName].modal then
-    table.insert(windowVisibleStack, isWndVisible)
+    windowVisibleStack[#windowVisibleStack] = isWndVisible
   end
 
   if not windowsState[windowName].title then
@@ -1145,9 +1176,10 @@ local function beginWindow(windowName, title, flags, noClose)
   if not noClose then visPtr = getWindowVisibleBoolPtr(windowName) end
   local ret
   if not windowsState[windowName].modal then
-    ret = imgui.Begin(title, visPtr, flags)
+    ret = imgui.Begin(title .. "##" .. windowName, visPtr, flags)
+    windowShouldCallEndStack[#windowShouldCallEndStack] = true
   else
-    ret = imgui.BeginPopupModal(title, visPtr, flags)
+    ret = imgui.BeginPopupModal(title .. "##" .. windowName, visPtr, flags)
     table.insert(modalWindowVisibleStack, ret)
   end
   if ret then checkWindowFocus(windowName) end
@@ -1158,21 +1190,27 @@ local function beginModalWindow(windowName, title, flags, noClose)
   -- we check to see if the modal is marked as visible by openModalWindow
   -- because OpenPopup doesnt work if its called from within another Begin - End in imgui
   if windowsState[windowName].visible[0] == true then
-    imgui.OpenPopup(title)
+    imgui.OpenPopup(title .. "##" .. windowName)
   end
   return beginWindow(windowName, title, flags, noClose)
 end
 
 local function endWindow()
   local isWndVisible = table.remove(windowVisibleStack, #windowVisibleStack)
-  -- always call End (the only exception of Begin* End* pairs)
-  imgui.End()
+  local shouldCallEnd = table.remove(windowShouldCallEndStack, #windowShouldCallEndStack)
+
+  if shouldCallEnd then
+    -- always call End (the only exception of Begin* End* pairs)
+    imgui.End()
+  end
 end
 
 local function endModalWindow()
-  local isWndVisible = table.remove(modalWindowVisibleStack, #modalWindowVisibleStack)
+  local isWndVisible = table.remove(windowVisibleStack, #windowVisibleStack)
+  local isModalWndVisible = table.remove(modalWindowVisibleStack, #modalWindowVisibleStack)
+  local shouldCallEnd = table.remove(windowShouldCallEndStack, #windowShouldCallEndStack)
   -- only call if popup was visible
-  if isWndVisible then imgui.EndPopup() end
+  if isModalWndVisible then imgui.EndPopup() end
 end
 
 local function openModalWindow(windowName)
@@ -1184,10 +1222,12 @@ local function closeModalWindow(windowName)
   imgui.CloseCurrentPopup()
 end
 
-local function saveWindowsState(customFilename)
+local function saveWindowsState(customFilename, toolName)
   -- we must collapse the visible imgui.BoolPtr to a normal bool
   local state = {}
+  local filteredWindowsState = {}
   state.version = WindowsStateFileFormatVersion
+
   for key, val in pairs(windowsState) do
     -- we do this because we cant serialize ffi and C++ objects
     val.isVisible = val.visible[0]
@@ -1201,12 +1241,17 @@ local function saveWindowsState(customFilename)
     if val.defaultPos then
       val.defaultWindowPos = {x = val.defaultPos.x, y = val.defaultPos.y}
     end
+
+    if nil == toolName or val.toolName == toolName then
+      filteredWindowsState[key] = val
+    end
   end
+
   -- let extensions save their gui instances info
   state.guiInstancers = {}
   extensions.hook("onEditorSaveGuiInstancerState", state.guiInstancers)
-  extensions.hook("onEditorSaveWindowsState", windowsState)
-  state.windowsState = windowsState
+  extensions.hook("onEditorSaveWindowsState", filteredWindowsState)
+  state.windowsState = filteredWindowsState
   jsonWriteFile(customFilename or windowsStateFileName, state, true)
 end
 
@@ -1219,12 +1264,16 @@ local function loadWindowsState(customFilename, toolName)
     local defaultWindowsStateFileName = "settings/" .. (toolName or "editor") .. "/layouts/Default/windowsState.json"
 
     editor.logWarn("Editor windows state file '" .. tostring(finalFilename) .. "' format version mismatch. Expected: " .. WindowsStateFileFormatVersion .. " File: " .. tostring(wstate.version) .. ", will upgrade.")
+    editor.log("Loading " .. defaultWindowsStateFileName)
     wstate = jsonReadFile(defaultWindowsStateFileName)
+    wstateFileExists = true
+    editor.needsDefaultImguiIniLoad = true
     --TODO: upgrade code for older versions of the file
   end
 
   if not wstateFileExists then
     print("Windows state file does not exists: " .. finalFilename)
+    return
   end
 
   -- hide all registered windows and set isVisible (used in the json and below code) to false
@@ -1236,25 +1285,38 @@ local function loadWindowsState(customFilename, toolName)
   end
 
   -- copy over the state for each window
-  for key, val in pairs(wstate.windowsState or {}) do
-    windowsState[key] = val
+  if wstate then
+    for key, val in pairs(wstate.windowsState or {}) do
+      -- if we load for a tool, then check if the loaded state for the window is for this tool, ignore others
+      if toolName then
+        if wstate.windowsState[key] and wstate.windowsState[key].toolName == toolName then
+          windowsState[key] = val
+        end
+      else
+        windowsState[key] = val
+      end
+    end
   end
 
   -- resolve the size, pos and visibility
-  for key, val in pairs(windowsState) do
-    val.visible = imgui.BoolPtr(val.isVisible or false)
-    if val.defaultWindowSize and val.defaultWindowSize.x and val.defaultWindowSize.y then
-      val.defaultSize = imgui.ImVec2(val.defaultWindowSize.x, val.defaultWindowSize.y)
+  if windowsState then
+    for key, val in pairs(windowsState) do
+      val.visible = imgui.BoolPtr(val.isVisible or false)
+      if val.defaultWindowSize and val.defaultWindowSize.x and val.defaultWindowSize.y then
+        val.defaultSize = imgui.ImVec2(val.defaultWindowSize.x, val.defaultWindowSize.y)
+      end
+      if val.defaultWindowPos and val.defaultWindowPos.x and val.defaultWindowPos.y then
+        val.defaultPos = imgui.ImVec2(val.defaultWindowPos.x, val.defaultWindowPos.y)
+      end
+      -- delete the serialized bool member
+      val.isVisible = nil
     end
-    if val.defaultWindowPos and val.defaultWindowPos.x and val.defaultWindowPos.y then
-      val.defaultPos = imgui.ImVec2(val.defaultWindowPos.x, val.defaultWindowPos.y)
-    end
-    -- delete the serialized bool member
-    val.isVisible = nil
   end
 
-  extensions.hook("onEditorLoadWindowsState", wstate.windowsState or {})
-  extensions.hook("onEditorLoadGuiInstancerState", wstate.guiInstancers or {})
+  if wstate then
+    extensions.hook("onEditorLoadWindowsState", wstate.windowsState or {})
+    extensions.hook("onEditorLoadGuiInstancerState", wstate.guiInstancers or {})
+  end
 end
 
 local function callShowWindowHookForVisibleWindows()
@@ -1663,11 +1725,11 @@ end
 
 local tempBoolPtr = imgui.BoolPtr(false)
 local tempIntPtr = imgui.IntPtr(0)
-local tempIntArr2 = ffi.new("int[2]", {0, 0})
+local tempIntArr2 = imgui.ArrayInt(2)
 local tempFloatPtr = imgui.FloatPtr(0)
-local tempFloatArr2 = ffi.new("float[2]", {0, 0})
-local tempFloatArr3 = ffi.new("float[3]", {0, 0, 0})
-local tempFloatArr4 = ffi.new("float[4]", {0, 0, 0, 0})
+local tempFloatArr2 = imgui.ArrayFloat(2)
+local tempFloatArr3 = imgui.ArrayFloat(3)
+local tempFloatArr4 = imgui.ArrayFloat(4)
 local tempCharPtr = imgui.ArrayChar(256, "")
 local tempTextureObj = nil
 local tempVec3 = vec3(0,0,0)
@@ -1906,7 +1968,7 @@ local function getTempFloatArray4_StringString(value)
         tempFloatArr4[3] = col[4]
       else
         editor.logError(logTag .. "Cannot find stock color '" .. value .. "'! Fallback to white.")
-        res = ffi.new("float[4]", {1.0, 1.0, 1.0, 1.0})
+        res = imgui.ArrayFloatByTbl({1.0, 1.0, 1.0, 1.0})
       end
     elseif tblLength == 3 then
       tempFloatArr4[0] = tonumber(res[1])

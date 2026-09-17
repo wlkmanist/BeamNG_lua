@@ -22,6 +22,7 @@ end
 
 local claimFunctions = {}
 local claimRefreshFunctions = {}
+local getMilestones
 local function storeClaimFunctions(list)
   table.clear(claimFunctions)
   for i, elem in ipairs(list) do
@@ -45,7 +46,25 @@ local function claim(id)
 end
 M.claim = claim
 
-local function getMilestones(filter)
+local function claimAllUnclaimed()
+  local data = getMilestones()
+  local claimed = 0
+  for _, milestone in ipairs(data.list or {}) do
+    if milestone.claimable and milestone.claimId then
+      claim(milestone.claimId)
+      claimed = claimed + 1
+    end
+  end
+
+  getMilestones()
+  return {
+    claimed = claimed,
+    unclaimedMilestonesCount = M.saveData.unclaimedMilestonesCount or 0,
+  }
+end
+M.claimAllUnclaimed = claimAllUnclaimed
+
+function getMilestones(filter)
   local list = { }
   extensions.hook("onGetMilestones", list, filter)
   --table.sort(list, sortByTimeAndId)
@@ -77,9 +96,9 @@ M.onGetMilestones = onGetMilestones
 -- put here so it can eventually be delayed if in a mission, grouped up if multiple...
 local function milestoneReached(label)
   if type(label) == "string" then
-    guihooks.trigger("toastrMsg", {type="success", title="Milestone Reached!", msg=label})
+    guihooks.trigger("toastrMsg", {type="success", title=_tr("ui.career.milestones.notification.reached.title"), msg=label})
   elseif type(label) == "table" then
-    guihooks.trigger("toastrMsg", {type="success", title="Milestone Reached!", msg=label.txt, context=label.context})
+    guihooks.trigger("toastrMsg", {type="success", title=_tr("ui.career.milestones.notification.reached.title"), msg=core_locales.contextTranslate(label.txt, label.context)})
   end
   M.saveData.unclaimedMilestonesCount = M.saveData.unclaimedMilestonesCount + 1
 end
@@ -90,7 +109,7 @@ local saveFile = "milestones.json"
 M.saveData = {}
 
 local function loadSaveData()
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   if not saveSlot then return end
 
   local data = (savePath and jsonReadFile(savePath .. "/career/"..saveFile)) or {}
@@ -103,7 +122,7 @@ local function onExtensionLoaded()
   loadSaveData()
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   local filePath = currentSavePath .. "/career/" .. saveFile
   career_saveSystem.jsonWriteFileSafe(filePath, M.saveData, true)
 end
@@ -114,31 +133,30 @@ end
 
 local function notifyUnclaimedMilestonesCount()
   if M.saveData.unclaimedMilestonesCount > 0 then
-    guihooks.trigger("toastrMsg", {type="success", title="Unclaimed Milestones: " .. M.saveData.unclaimedMilestonesCount, msg="Check out Milestones in Pause>Progress>Milestones"})
+    guihooks.trigger("toastrMsg", {
+      type="success",
+      title=core_locales.contextTranslate("ui.career.milestones.notification.unclaimed.title", {count = M.saveData.unclaimedMilestonesCount}),
+      msg=_tr("ui.career.milestones.notification.unclaimed.message")
+    })
   end
 end
 
-local function onCareerModulesActivated(alreadyInLevel)
-  if alreadyInLevel then
-    notifyUnclaimedMilestonesCount()
-  end
-end
-local function onClientStartMission()
+local function onCareerActive(active)
+  if not active then return end
   notifyUnclaimedMilestonesCount()
 end
 
 M.loadSaveData = loadSaveData
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 M.onExtensionLoaded = onExtensionLoaded
 
 
 M.unclaimedMilestonesCount = unclaimedMilestonesCount
-M.onCareerModulesActivated = onCareerModulesActivated
-M.onClientStartMission = onClientStartMission
+M.onCareerActive = onCareerActive
 
 -- common reward functions
-M.minorLinear = function(step) return {{attributeKey="money",rewardAmount=100*(step+1)}, {attributeKey="beamXP",rewardAmount=5*(step+1)}} end
-M.majorLinear = function(step) return {{attributeKey="money",rewardAmount=250*(step+1)}, {attributeKey="beamXP",rewardAmount=10*(step+1)}} end
+M.minorLinear = function(step) return {{attributeKey="money",rewardAmount=100*(step+1)}} end
+M.majorLinear = function(step) return {{attributeKey="money",rewardAmount=250*(step+1)}} end
 
 M.colorGeneralGray = "var(--bng-cool-gray-700-rgb)"
 M.colorMissionBlue = "var(--bng-add-blue-500-rgb)"

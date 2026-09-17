@@ -25,6 +25,7 @@ C.tags = {'scenario', 'sites'}
 
 
 function C:init(mgr, ...)
+  self.data.fixedHeight = 0
   self.options = {"key"}
 end
 
@@ -34,7 +35,6 @@ end
 
 function C:updateKeys()
   local flowLinks = {}
-  local strLinks = {}
   for _, lnk in pairs(self.graph.links) do
     if lnk.sourceNode == self and tableContains(self.oldOptions, lnk.sourcePin.name) then
       table.insert(flowLinks, lnk)
@@ -119,7 +119,9 @@ function C:work(args)
     self.pinOut.pos.value = self._spot.pos:toTable()
     self.pinOut.rot.value = self._spot.rot:toTable()
     self.pinOut.scl.value = self._spot.scl:toTable()
-    self.pinOut.scl.value[3] = 10
+    if self.data.fixedHeight > 0 then
+      self.pinOut.scl.value[3] = self.data.fixedHeight
+    end
     for _, o in ipairs(self.options) do
       self.pinOut[o].value = self._spot.customFields.values[o]
     end

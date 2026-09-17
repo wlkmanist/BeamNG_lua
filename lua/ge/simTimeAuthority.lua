@@ -63,14 +63,27 @@ end
 
 local function reportSpeed(speed, simplified)
   if speed > 1.001 then
-    ui_message({txt="vehicle.bullettime.changeFast", context={speed=speed}}, 5, "bullettime")
+    guihooks.trigger('Message', {
+      txt = 'vehicle.bullettime.changeFast',
+      ttl = 5,
+      category = 'bullettime',
+      icon = "playPause",
+    })
   elseif speed > 0.999 then
-    if not simplified then
-      ui_message("vehicle.bullettime.realtime", 5, "bullettime")
-    end
+    guihooks.trigger('Message', {
+      txt = 'vehicle.bullettime.realtime',
+      ttl = 5,
+      category = 'bullettime',
+      icon = "playPause",
+    })
   else
     if simplified then
-      ui_message("vehicle.bullettime.slowmotion", 5, "bullettime")
+      guihooks.trigger('Message', {
+        txt = 'vehicle.bullettime.slowmotion',
+        ttl = 5,
+        category = 'bullettime',
+        icon = "playPause",
+      })
     else
       local times = 1/speed
       local rounded = math.floor(times+0.5)
@@ -79,12 +92,23 @@ local function reportSpeed(speed, simplified)
       else
         times = rounded
       end
-      ui_message({txt="vehicle.bullettime.changeSlow", context={slowmoTimes=times}}, 5, "bullettime")
+      local slot = bulletTimeSlots[M.selectionSlot]
+
+      guihooks.trigger('Message', {
+        txt = 'vehicle.bullettime.changeSlow',
+        ttl = 5,
+        category = 'bullettime',
+        icon = "playPause",
+        context = {slowmoTimes = times},
+        currentOptionIndex = slot and (#bulletTimeSlots - M.selectionSlot -1) or nil,
+        availableOptionsCount = slot and (#bulletTimeSlots -1) or nil,
+      })
     end
   end
 end
 
 local function setTargetSpeed(val)
+
   if type(val) ~= "number" then
     log("E","bullettime","Tried to set non-numeric speed: "..dumps(val))
     return
@@ -144,7 +168,9 @@ local function requestValue()
 end
 
 local function pause(paused, playPauseSound)
-  if playPauseSound == nil then playPauseSound = true end
+
+  if not getCurrentLevelIdentifier() then return end
+  --if playPauseSound == nil then playPauseSound = true end
   extensions.hook("onSimTimePauseCalled", paused)
   if core_replay.state.state == "playback" then
     core_replay.pause(paused)
@@ -171,7 +197,7 @@ local function pause(paused, playPauseSound)
 end
 
 local function pauseSmooth(paused, rateLimit, startAccel, stopAccel, playPauseSound)
-  if playPauseSound == nil then playPauseSound = true end
+  --if playPauseSound == nil then playPauseSound = true end
   extensions.hook("simTimePauseCalled", paused)
   if core_replay.state.state == "playback" then
     core_replay.pause(paused)
@@ -200,15 +226,55 @@ local function pauseSmooth(paused, rateLimit, startAccel, stopAccel, playPauseSo
   end
 end
 
-local function togglePause()
+local function togglePause(playPauseSound)
   extensions.hook("onTogglePause")
   if core_replay.state.state == "playback" then
     core_replay.togglePlay()
   else
-    pause(not getPause())
+    pause(not getPause(), playPauseSound)
   end
 end
 
+local pauseCounter = 0
+local wasPausedBeforePushRequest = false
+local pauseRequests = {}
+
+local function pushPauseRequest(id)
+  if core_intapi and not core_intapi.debug_isPauseAllowed() then return end
+  if pauseRequests[id] then
+    return
+  end
+  pauseRequests[id] = true
+  if pauseCounter == 0 then
+    wasPausedBeforePushRequest = getPause()
+  end
+  pauseCounter = pauseCounter + 1
+  log("D","simTimeAuthority", string.format("pushPauseRequest id: %s, pauseCounter: %d", id, pauseCounter))
+  pause(true)
+end
+
+local function popPauseRequest(id)
+  if core_intapi and not core_intapi.debug_isPauseAllowed() then return end
+  if not pauseRequests[id] then
+    return
+  end
+  pauseRequests[id] = nil
+  pauseCounter = math.max(0, pauseCounter - 1)
+  log("D","simTimeAuthority", string.format("popPauseRequest id: %s, pauseCounter: %d", id, pauseCounter))
+  if pauseCounter == 0 and not wasPausedBeforePushRequest then
+    pause(false)
+  end
+end
+
+local function clearPauseStack()
+  pauseCounter = 0
+  pauseRequests = {}
+  pause(false)
+end
+
+local function onUIInitialised()
+  clearPauseStack()
+end
 
 local function onSerialize()
   -- TODO: serialize speed and state properly
@@ -219,6 +285,8 @@ local function onDeserialized(data)
   -- TODO: verify this is working
   M.simulationSpeed = data.simulationSpeed
   initialTimeScale = data.initialTimeScale
+
+  clearPauseStack()
 end
 
 local function getInitialTimeScale()
@@ -244,9 +312,13 @@ M.togglePause = togglePause
 M.requestValue = requestValue
 M.reportSpeed = reportSpeed
 M.getInitialTimeScale = getInitialTimeScale
+M.pushPauseRequest = pushPauseRequest
+M.popPauseRequest = popPauseRequest
+M.clearPauseStack = clearPauseStack
 
 M.onSerialize    = onSerialize
 M.onDeserialized = onDeserialized
+M.onUIInitialised = onUIInitialised
 
 
 return M

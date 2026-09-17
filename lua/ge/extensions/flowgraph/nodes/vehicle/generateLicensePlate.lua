@@ -20,7 +20,7 @@ C.tags = {'plate', 'license'}
 
 function C:workOnce()
   local vehId = self.pinIn.vehId.value or be:getPlayerVehicleID(0)
-  local veh = be:getObjectByID(vehId) or getPlayerVehicle(0)
+  local veh = getObjectByID(vehId) or getPlayerVehicle(0)
   if not veh then return end
   core_vehicles.setPlateText(nil,nil,nil,nil,true)
   local generatedText = core_vehicles.regenerateVehicleLicenseText(veh)

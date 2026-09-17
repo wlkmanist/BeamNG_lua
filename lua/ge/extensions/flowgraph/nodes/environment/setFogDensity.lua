@@ -13,7 +13,6 @@ C.category = 'dynamic_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'number', name = 'density', description = "Set fog density." },
-  { dir = 'in', type = 'number', name = 'densityOffset', description = "Distance from the camera at which the fog will start to appear." },
   { dir = 'in', type = 'number', name = 'atmosphereHeight', description = "Atmospheric fog height." },
 }
 
@@ -40,7 +39,6 @@ end
 
 function C:_executionStarted()
   self.storedfogDensity = core_environment.getFogDensity()
-  self.storedfogDensityOffset = core_environment.getFogDensityOffset()
   self.storedfogAtmosphereHeight = core_environment.getFogAtmosphereHeight()
   self.storedfog = true
 end
@@ -48,7 +46,6 @@ end
 function C:_executionStopped()
   if self.data.restoreTod and self.storedfog then
     core_environment.setFogDensity(self.storedfogDensity)
-    core_environment.setFogDensityOffset(self.storedfogDensityOffset)
     core_environment.setFogAtmosphereHeight(self.storedfogAtmosphereHeight)
     self.storedfog = nil
   end
@@ -66,7 +63,6 @@ end
 
 function C:setFogParameters()
   core_environment.setFogDensity(self.pinIn.density.value)
-  core_environment.setFogDensityOffset(self.pinIn.densityOffset.value)
   core_environment.setFogAtmosphereHeight(self.pinIn.atmosphereHeight.value)
 end
 

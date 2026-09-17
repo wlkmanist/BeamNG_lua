@@ -113,27 +113,35 @@ end
 local function updateGFX(dt)
   for i = 1, gfxUpdateCount, 1 do
     --profilerPushEvent(controllerNameLookup.updateGFXStep[i] .. ":updateGFXStep")
+    --gcprobe()
     gfxUpdates[i](dt)
-    --profilerPopEvent()
+    --print(controllerNameLookup.updateGFXStep[i] .. ":updateGFXStep: " .. gcprobe())
+    --profilerPopEvent(controllerNameLookup.updateGFXStep[i] .. ":updateGFXStep")
   end
 end
 
 local function updateFixedStep(dt)
+  --print("updateFixedStep gcprobe")
   --profilerPushEvent("controller:updateFixedStep")
   for i = 1, fixedStepUpdateCount, 1 do
     --profilerPushEvent(controllerNameLookup.updateFixedStep[i] .. ":updateFixedStep")
+    --gcprobe()
     fixedStepUpdates[i](dt)
-    --profilerPopEvent()
+    --print(controllerNameLookup.updateFixedStep[i] .. ":updateFixedStep: " .. gcprobe())
+    --profilerPopEvent(controllerNameLookup.updateFixedStep[i] .. ":updateFixedStep")
   end
-  --profilerPopEvent()
+  --profilerPopEvent("controller:updateFixedStep")
 end
 
 local function updateWithFixedStep(dt)
   --profilerPushEvent("controller:updatePhysicsStep")
+  --print("updateWithFixedStep gcprobe")
   for i = 1, physicsUpdateCount, 1 do
     --profilerPushEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
+    --gcprobe()
     physicsUpdates[i](dt)
-    --profilerPopEvent()
+    --print(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep: " .. gcprobe())
+    --profilerPopEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
   end
 
   --if below code needs to change, make sure to copy the changes to the hardcoded export version at the end of this file as well
@@ -142,14 +150,14 @@ local function updateWithFixedStep(dt)
     updateFixedStep(fixedStepTimer)
     fixedStepTimer = fixedStepTimer - fixedStepTime
   end
-  --profilerPopEvent()
+  --profilerPopEvent("controller:updatePhysicsStep")
 end
 
 local function updateWithoutFixedStep(dt)
   for i = 1, physicsUpdateCount, 1 do
     --profilerPushEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
     physicsUpdates[i](dt)
-    --profilerPopEvent()
+    --profilerPopEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
   end
 end
 
@@ -157,7 +165,7 @@ local function updateWheelsIntermediate(dt)
   for i = 1, wheelsIntermediateUpdateCount, 1 do
     --profilerPushEvent(controllerNameLookup.updateWheelsIntermediate[i] .. ":updateWheelsIntermediate")
     wheelsIntermediateUpdates[i](dt)
-    --profilerPopEvent()
+    --profilerPopEvent(controllerNameLookup.updateWheelsIntermediate[i] .. ":updateWheelsIntermediate")
   end
 end
 
@@ -217,7 +225,7 @@ local function settingsChanged()
   end
 end
 
-local function getAllControllers(name)
+local function getAllControllers()
   return loadedControllers
 end
 
@@ -230,18 +238,32 @@ local function getControllerSafe(name)
   if controller then
     return controller
   else
-    log("D", "controller.getControllerSafe", string.format("Didn't find controller '%s', returning nilController.", name))
-    --log("D", "controller.getControllerSafe", debug.traceback())
-    --return our nilController that accepts all indexes and can be called without errors
-    return M.nilController
+    if relocatedControllers[name] then --check for relocated controllers
+      log("D", "controller.getControllersByType", string.format("Using relocated controller '%s' instead of original '%s'.", relocatedControllers[name], name))
+      controller = loadedControllers[relocatedControllers[name]]
+      if controller then --if we found a relocated controller
+        if not controller.hasCustomName then --and it has no custom name
+          return controller --use that one
+        else --if we do have a custom name that happens to match the typeName of a relocated controller, we ignore it out of precaution
+          log("D", "controller.getControllerSafe", string.format("Relocated controller has a custom name '%s', ignoring it...", controller.name))
+        end
+      end
+    end
   end
+  log("D", "controller.getControllerSafe", string.format("Didn't find controller '%s', returning nilController.", name))
+  --log("D", "controller.getControllerSafe", debug.traceback())
+  --return our nilController that accepts all indexes and can be called without errors
+  return M.nilController
 end
 
 local function getControllersByType(typeName)
   local controllers = {}
-  for _, v in pairs(loadedControllers) do
-    if v.typeName == typeName then
-      table.insert(controllers, v)
+  for _, c in pairs(loadedControllers) do
+    if c.typeName == typeName then
+      table.insert(controllers, c)
+    elseif relocatedControllers[typeName] and relocatedControllers[typeName] == c.typeName and not c.hasCustomName then --check if we have a relocated controller that matches
+      log("D", "controller.getControllersByType", string.format("Using relocated controller type '%s' instead of original '%s'.", relocatedControllers[typeName], typeName))
+      table.insert(controllers, c)
     end
   end
   return controllers
@@ -299,7 +321,6 @@ local function loadControllerExternal(fileName, controllerName, controllerData)
 
       if c.type == "main" then
         error(string.format("Can't load mainController at runtime! FileName: %q, ControllerName: %q", fileName, c.name))
-        return nil
       end
     end
   end
@@ -310,14 +331,18 @@ local function loadControllerExternal(fileName, controllerName, controllerData)
     log("E", "controller.loadControllerExternal", debug.traceback())
   end
 
+  if not c then
+    return
+  end
+
   if c.initSecondStage then
-    c.initSecondStage(controllerJbeamData[controller.name])
+    c.initSecondStage(controllerJbeamData[c.name])
   end
   if c.initSounds then
-    c.initSounds(controllerJbeamData[controller.name])
+    c.initSounds(controllerJbeamData[c.name])
   end
-  if c.initLasttage then
-    c.initLasttage(controllerJbeamData[controller.name])
+  if c.initLastStage then
+    c.initLastStage(controllerJbeamData[c.name])
   end
 
   table.clear(sortedControllers)
@@ -394,10 +419,18 @@ local function adjustControllersPreInit(controllers)
 end
 
 local function registerRelocatedControllers()
+  --vehicle controller
   registerRelocatedController("vehicleController", "vehicleController/vehicleController")
+  --sound
   registerRelocatedController("AVAS", "sound/AVAS")
   registerRelocatedController("airbrakes", "sound/airbrakes")
   registerRelocatedController("reverseWarn", "sound/reverseWarn")
+  --braking
+  registerRelocatedController("adaptiveBrakeLights", "braking/adaptiveBrakeLights")
+  registerRelocatedController("brakedDifferentialSteering", "braking/brakedDifferentialSteering")
+  registerRelocatedController("compressionBrake", "braking/compressionBrake")
+  registerRelocatedController("postCrashBrake", "braking/postCrashBrake")
+  registerRelocatedController("transbrake", "braking/transbrake")
 end
 
 local function init()
@@ -462,12 +495,15 @@ local function init()
     local filePath = directory .. c.fileName
     local loadFunc = function()
       local controller = rerequire(filePath)
-      if controller then
+      if controller and type(controller) == "table" then
         local data = tableMergeRecursive(c, v.data[k] or {})
         c.name = c.name or k
         controllerJbeamData[c.name] = data
         controller.name = c.name
         controller.typeName = c.fileName
+        controller.hasCustomName = c.fileName ~= c.name
+        --log("I", "controller.init", string.format("Name: '%s', typeName: '%s', hasCustomName: '%s'", controller.name, controller.typeName, controller.hasCustomName))
+
         controller.init(data)
         controller.manualOrder = data.manualOrder
         loadedControllers[c.name] = controller
@@ -481,6 +517,8 @@ local function init()
             M.mainController = controller
           end
         end
+      else
+        error(string.format("Controller '%s' at '/%s.lua' is not a table, skipping...", k, filePath))
       end
     end
     local result, errorStr = pcall(loadFunc)
@@ -497,8 +535,10 @@ local function init()
     local controller = require(directory .. dummyName)
     if controller then
       loadedControllers[dummyName] = controller
-      controller.init()
       controller.name = dummyName
+      controller.typeName = dummyName
+      controller.hasCustomName = false
+      controller.init()
       M.mainController = controller
     end
   end
@@ -525,17 +565,11 @@ local function init()
     end
   )
 
+  --dumpz(sortedControllers, 2)
+
   --  for k,v in pairs(sortedControllers) do
   --    print(string.format("%s -> %d", v.name, v.order))
   --  end
-
-  --backwards compatiblity for old scenario.lua:freeze(), we don't know if any mod ever used this, just here as a precaution
-  scenario = {
-    freeze = function(mode)
-      log("W", "controller", "scenario.freeze(mode) is deprecated. Please switch to controller.setFreeze(mode)")
-      setFreeze(mode)
-    end
-  }
 end
 
 local function cacheControllerFunctions(controller)
@@ -677,6 +711,7 @@ local function cacheAllControllerFunctions()
   gfxUpdates = {}
   fixedStepUpdates = {}
   beamBrokens = {}
+  beamDeformeds = {}
   nodeCollisions = {}
   couplerAttachedEvents = {}
   couplerDetachedEvents = {}
@@ -968,31 +1003,6 @@ local function getState()
   return tableIsEmpty(data) and nil or data
 end
 
-local stateEvents = {}
-
-local function publishStateEvent(controllerName, ...)
-  local c = getController(controllerName)
-  if not c then
-    log("E", "controller.stateEvent", string.format("Can't find controller '%s', ignoring state event.", controllerName))
-    return
-  end
-  if not c.stateEvent then
-    log("E", "controller.stateEvent", string.format("Controller '%s' does not support state events, ignoring state event.", controllerName))
-    return
-  end
-  c.stateEvent(...)
-end
-
-local function triggerStateEvent(controller, ...)
-  table.insert(stateEvents, controller.name)
-  table.insert(stateEvents, {...})
-  dump(stateEvents)
-end
-
-local function getStateEvents()
-  return stateEvents
-end
-
 local function isPhysicsStepUsed()
   --Check if any controller uses a function relevant to physics step
   return physicsUpdateCount > 0 or fixedStepUpdateCount > 0 or wheelsIntermediateUpdateCount > 0
@@ -1042,9 +1052,6 @@ M.printDebugMethodCalls = printDebugMethodCalls
 
 M.getState = getState
 M.setState = setState
-M.publishStateEvent = publishStateEvent
-M.triggerStateEvent = triggerStateEvent
-M.getStateEvents = getStateEvents
 
 M.isPhysicsStepUsed = isPhysicsStepUsed
 

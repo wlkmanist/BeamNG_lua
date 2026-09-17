@@ -41,8 +41,8 @@ local function disconnectActual(callback, loadingScreen, p)
   -- Disable mission lighting if it's going, this is here
   -- in case we're disconnected while the mission is loading.
 
-  TorqueScriptLua.setVar("$lightingMission", "false")
-  TorqueScriptLua.setVar("$sceneLighting::terminateLighting", "true")
+  VariableRegistry.set("$lightingMission", false)
+  VariableRegistry.set("$sceneLighting::terminateLighting", true)
   if p then p:add("disconnectActual.setVars") end
 
   -- Call destroyServer in case we're hosting

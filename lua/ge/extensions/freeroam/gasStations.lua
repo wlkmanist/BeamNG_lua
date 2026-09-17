@@ -5,6 +5,7 @@
 -- this module manages simple fueling for fuel stations. it defers to the career refueling module if career is loaded.
 
 local M = {}
+M.dependencies = {"gameplay_achievement"}
 
 local ignoreFuelTypes = {
   air = true,
@@ -51,12 +52,13 @@ M.gasStationCenterRadius = gasStationCenterRadius
 
 local function formatGasStationPoi(gasStation)
   local center, radius = gasStationCenterRadius(gasStation)
+  local isElectric = tableValuesAsLookupDict(gasStation.energyTypes or {"any"}).electricEnergy
   local elem = {
     id = gasStation.id,
     data = { type = "gasStation", facility = gasStation},
     markerInfo = {
-      gasStationMarker = {pumps = gasStation.pumps, pos = center, radius = radius, electric = tableValuesAsLookupDict(gasStation.energyTypes or {"any"}).electricEnergy},
-      bigmapMarker = { pos = center, icon = "poi_fuel_round", name = gasStation.name, description = gasStation.description, thumbnail = gasStation.preview, previews = {gasStation.preview}}
+      gasStationMarker = {pumps = gasStation.pumps, pos = center, radius = radius, electric = isElectric},
+      bigmapMarker = { pos = center, icon = isElectric and "poi_charge_round" or "poi_fuel_round", name = gasStation.name, description = gasStation.description, thumbnail = gasStation.preview, previews = {gasStation.preview}, cardIcon = isElectric and "charge" or "fuelPump"}
     }
   }
   return elem
@@ -110,6 +112,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
       data.props = props
       data.buttonLabel = ("ui.freeroam."..key..".prompt")
       data.buttonFun = function() M.refuelCar(elem, fuelTypes, getPlayerVehicle(0)) end
+      data.buttonSoundClass = "bng_hover_generic"
       table.insert(activityData, data)
     end
   end
@@ -156,12 +159,13 @@ local function refuelCar(gasStation, fuelTypes, veh)
         else
           guihooks.trigger('Message',{msg = "ui.freeroam."..key..".partial", category = "refueling", icon = "warning", ttl=8})
         end
+        gameplay_achievement.unlockAchievement("VEHICLE_REFUELLED")
       else
         guihooks.trigger('Message',{msg = "ui.freeroam.refuel.failed", category = "refueling", icon = "error", ttl=8})
       end
       if not allSuccess then
         for _, fuelType in ipairs(tableKeysSorted(invalidTanks)) do
-          guihooks.trigger('Message',{msg = {txt = "ui.freeroam.refuel.notFilled", context = {fuelType = translateLanguage("ui.general.fuelType."..fuelType, fuelType, true)}}, category = "refueling-"..fuelType, icon = "warning", ttl=8})
+          guihooks.trigger('Message',{msg = {txt = "ui.freeroam.refuel.notFilled", context = {fuelType = _tr("ui.general.fuelType."..fuelType, fuelType)}}, category = "refueling-"..fuelType, icon = "warning", ttl=8})
         end
       end
     end

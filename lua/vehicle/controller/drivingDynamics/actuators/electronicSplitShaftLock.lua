@@ -38,6 +38,9 @@ local preOverrideClutchRatio = 0
 local clutchRatioPID
 local applyMinimumLockOnlyWithThrottle = true
 
+local isBrakingThreshold = 0.1
+local isNotAcceleratingThreshold = 0.0
+
 local function resetOverride()
   M.overrideMin = 0
   M.overrideMax = 1
@@ -65,12 +68,13 @@ local function updateWheelsIntermediate(dt)
       clutchRatio = clutchRatioPID:get(-protectedAVDiff, -params.avDiffThreshold, dt)
     end
 
-    local isBraking = electrics.values.brake > 0
+    local isBraking = electrics.values.brake > isBrakingThreshold
+    local isNotAccelerating = electrics.values.throttle <= isNotAcceleratingThreshold
+    local isLeftFootBraking = isBraking and not isNotAccelerating
     local isShifting = electrics.values.isShifting
     local isUsingParkingBrake = electrics.values.parkingbrake > 0
-    local isESCActive = false
 
-    if isBraking or isESCActive or electrics.values.throttle <= 0 then
+    if (isBraking or isNotAccelerating) and not isLeftFootBraking then
       clutchRatio = 0
     end
 
@@ -199,6 +203,10 @@ local function registerCMU(cmu)
 end
 
 local function setParameters(parameters)
+  if not CMU then
+    return
+  end
+
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "avDiffThreshold")
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "avThreshold")
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "minimumLock")
@@ -239,6 +247,7 @@ M.registerCMU = registerCMU
 M.setDebugMode = setDebugMode
 M.shutdown = shutdown
 M.setParameters = setParameters
+M.setConfig = setConfig
 M.getConfig = getConfig
 M.sendConfigData = sendConfigData
 

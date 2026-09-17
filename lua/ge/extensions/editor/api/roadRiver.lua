@@ -177,10 +177,10 @@ local function createMesh(type, nodes, fields)
     mesh:setField("waveSpeed", 2, "1")
 
     mesh:setField("baseColor", 0, "45 108 171 255")
-    mesh:setField("rippleTex", 0, "core/art/water/ripple.dds")
-    mesh:setField("foamTex", 0, "core/art/water/foam.dds")
+    mesh:setField("rippleTex", 0, "/core/art/water/ripple_nm.normal.dds")
+    mesh:setField("foamTex", 0, "/core/art/water/foam_b.color.png")
     mesh:setField("cubemap", 0, "DefaultSkyCubemap")
-    mesh:setField("depthGradientTex", 0, "core/art/water/depthcolor_ramp.png")
+    mesh:setField("depthGradientTex", 0, "core/art/water/depthcolor_ramp_b.color.png")
   end
 
   editor.pasteFields(fields, mesh:getID(), false)

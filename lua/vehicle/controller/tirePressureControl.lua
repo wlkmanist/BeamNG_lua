@@ -121,15 +121,16 @@ local function registerQuickAccess()
     if not tableIsEmpty(wheelGroups) then
       core_quickAccess.addEntry(
         {
-          level = "/",
+          level = "/root/playerVehicle/vehicleFeatures/",
           generator = function(entries)
             table.insert(
               entries,
               {
                 title = "ui.radialmenu2.tirePressureControl.title",
                 priority = 40,
-                icon = "tire-pressure_tire-pressure-line",
-                ["goto"] = "/tirePressureControl/"
+                icon = "tirePressureGaugeOutlined01",
+                uniqueID = "tirePressureControl",
+                ["goto"] = "/root/playerVehicle/vehicleFeatures/tirePressureControl/"
               }
             )
           end
@@ -137,14 +138,15 @@ local function registerQuickAccess()
       )
       core_quickAccess.addEntry(
         {
-          level = "/tirePressureControl/",
+          level = "/root/playerVehicle/vehicleFeatures/tirePressureControl/",
           generator = function(entries)
             table.insert(
               entries,
               {
                 title = "ui.radialmenu2.tirePressureControl.startInflating",
                 priority = 10,
-                icon = "tire-pressure_pressure-increase",
+                icon = "tirePressureIncrease01",
+                originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "tirePressureControl"},
                 onSelect = function()
                   controller.getControllerSafe(M.name).startInflateActiveGroups()
                   return {"reload"}
@@ -156,7 +158,8 @@ local function registerQuickAccess()
               {
                 title = "ui.radialmenu2.tirePressureControl.startDeflating",
                 priority = 20,
-                icon = "tire-pressure_pressure-decrease",
+                icon = "tirePressureDecrease01",
+                originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "tirePressureControl"},
                 onSelect = function()
                   controller.getControllerSafe(M.name).startDeflateActiveGroups()
                   return {"reload"}
@@ -168,7 +171,8 @@ local function registerQuickAccess()
               {
                 title = "ui.radialmenu2.tirePressureControl.stopChanges",
                 priority = 30,
-                icon = "tire-pressure_pressure-stop-line",
+                icon = "tirePressureStopLine",
+                originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "tirePressureControl"},
                 onSelect = function()
                   controller.getControllerSafe(M.name).stopActiveGroups()
                   return {"reload"}
@@ -184,6 +188,7 @@ local function registerQuickAccess()
                   context = {groupName = wheelGroup.uiName},
                   priority = 40,
                   icon = wheelGroup.uiIcon,
+                  originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "tirePressureControl"},
                   onSelect = function()
                     controller.getControllerSafe(M.name).toggleGroupState(groupName)
                     return {"reload"}

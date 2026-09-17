@@ -161,6 +161,7 @@ local function startOnLoadingScreenFadeout(fg)
   table.insert(startOnLoadingScreenFadeoutList, fg)
 end
 
+local managersReloaded = false
 local function onUpdate()
   for _, mgr in ipairs(managers) do
     mgr:resolveHooksAndReset()
@@ -173,6 +174,7 @@ local function onUpdate()
   end
   table.clear(nextFrameRemove)
   table.clear(nextFrameStart)
+  managersReloaded = false
   for _, mgr in ipairs(managers) do
     mgr:broadcastCall("onFlowgraphManagerPreUpdate")
   end
@@ -185,6 +187,7 @@ local function reInitOnFileChange(filename)
   local requireFilename = string.sub(filename, 1, string.len(filename) - 4)
   log("I","flowgraphManager","Reloading Node: " .. tostring(requireFilename))
   nodeLookup = nil
+  if managersReloaded then return end -- prevents managers from reloading again
   -- TODO: reinit everything
   local eSer, fgEditor
   if editor_flowgraphEditor then
@@ -240,7 +243,6 @@ end
 
 local function onDeserialized(data)
   M.clearAllManagers()
-  --dumpz(data, 1)
   if next(data) then
     if data.mgrs then
       for i, mgr in ipairs(data.mgrs) do
@@ -254,6 +256,7 @@ local function onDeserialized(data)
       end
     end
   end
+  managersReloaded = true -- temporarily prevents managers from reloading again (function reInitOnFileChange was causing a loop)
 end
 
 local function getAvailableNodeTemplates()

@@ -28,10 +28,10 @@ function C:getMissionIssues(m)
   if self.mission.description == "" then
     table.insert(issues, {label = 'Description is missing!', severity='error'})
   end
-  if translateLanguage(self.mission.name, self.mission.name, true) == self.mission.name then
+  if _tr(self.mission.name) == self.mission.name then
     table.insert(issues, {label = 'Name has no translation!', severity='warning'})
   end
-  if translateLanguage(self.mission.description, self.mission.description, true) == self.mission.description then
+  if type(self.mission.description) == "string" and _tr(self.mission.description) == self.mission.description then
     table.insert(issues, {label = 'Description has no translation!', severity='warning'})
   end
   return issues
@@ -67,7 +67,7 @@ function C:draw()
   end
   im.SameLine()
   if not self._titleTranslated then
-    self._titleTranslated = translateLanguage(self.mission.name, noTranslation, true)
+    self._titleTranslated = _tr(self.mission.name, noTranslation)
   end
   editor.uiIconImage(editor.icons.translate, imVec24x24 , (self._titleTranslated or noTranslation) == noTranslation and imVec4Red or imVec4Green)
   if im.IsItemHovered() then
@@ -79,18 +79,28 @@ function C:draw()
 
   im.Text("Description")
   im.NextColumn()
-  editEnded = im.BoolPtr(false)
-  im.PushItemWidth(im.GetContentRegionAvailWidth() - 35)
-  editor.uiInputTextMultiline("##Description", self.descText, 2048, im.ImVec2(0,100), nil, nil, nil, editEnded)
-  im.PopItemWidth()
-  if editEnded[0] then
-    self.mission.description = ffi.string(self.descText)
-    self._descTranslated = nil
-    self.mission._dirty = true
+  if type(self.mission.description) == "string" or self.mission.description == nil then
+    editEnded = im.BoolPtr(false)
+    im.PushItemWidth(im.GetContentRegionAvailWidth() - 35)
+    editor.uiInputTextMultiline("##Description", self.descText, 2048, im.ImVec2(0,100), nil, nil, nil, editEnded)
+    im.PopItemWidth()
+    if editEnded[0] then
+      self.mission.description = ffi.string(self.descText)
+      self._descTranslated = nil
+      self.mission._dirty = true
+    end
   end
-    im.SameLine()
+  if type(self.mission.description) == "table" then
+    im.Text("Description is a table, editing is not supported!")
+    im.Text(dumps(self.mission.description))
+  end
+  im.SameLine()
   if not self._descTranslated then
-    self._descTranslated = translateLanguage(self.mission.description, noTranslation, true)
+    local str = self.mission.description
+    if type(str) == "table" and str.txt then
+      str = str.txt
+    end
+    self._descTranslated = _tr(str, noTranslation)
   end
   editor.uiIconImage(editor.icons.translate, imVec24x24 , (self._descTranslated or noTranslation) == noTranslation and imVec4Red or imVec4Green)
   if im.IsItemHovered() then

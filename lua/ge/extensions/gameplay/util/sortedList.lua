@@ -71,16 +71,16 @@ end
 
 function C:buildNamesDir()
   table.clear(self.byName)
-  for _, zone in ipairs(self.sorted) do
-    if not self.byName[zone.name] then
-      self.byName[zone.name] = zone
+  for _, obj in ipairs(self.sorted) do
+    if not self.byName[obj.name] then
+      self.byName[obj.name] = obj
     end
   end
 end
 
-function C:drawDebug()
+function C:drawDebug(drawMode)
   for _,o in ipairs(self.sorted) do
-    o:drawDebug()
+    o:drawDebug(drawMode)
   end
 end
 

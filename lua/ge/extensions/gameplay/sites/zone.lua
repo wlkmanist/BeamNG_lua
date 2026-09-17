@@ -14,7 +14,7 @@ function C:init(sites, name, forceId)
   self.labelPos = vec3(0,0,-math.huge)
   self._drawMode = 'faded'
   self.sortOrder = 999999
-  self.customFields = require('/lua/ge/extensions/gameplay/sites/customFields')()
+  self.customFields = require('/lua/ge/extensions/gameplay/util/customFields')()
   self.aabb = {xMin = -math.huge, xMax = math.huge, yMin = -math.huge, yMax = math.huge, zMin = -math.huge, zMax = math.huge, invalid = true}
   self.top = {pos = vec3(0,0,10), normal = vec3(0,0,1), active = false}
   self.bot = {pos = vec3(0,0,-10), normal = vec3(0,0,-1), active = false}
@@ -91,7 +91,7 @@ function C:processVertices()
   self.vertexCount = #self.vertices
   if #self.vertices == 0 then
     self.aabb.invalid = true
-    log("E","","Zone has no vertices! " .. self.name)
+    log("E","Sites_Zone","Zone has no vertices! " .. self.name)
     return
   end
   for i, v in ipairs(self.vertices) do
@@ -187,7 +187,7 @@ function C:vertexPlaneIntersection(vertex, plane)
   local ln = l:dot(plane.normal)
   if math.abs(ln) <= 1e-30 then
     -- this should not happen, planes are not allowed to be aligned with the z-axis
-    log("E","","vertex plane intersection, plane is aligned with z-axis, not allowed!")
+    log("E","Sites_Zone","vertex plane intersection, plane is aligned with z-axis, not allowed!")
     return vertex
   end
   local d = (plane.pos - vertex):dot(plane.normal) / ln
@@ -200,8 +200,8 @@ function C:aabbCheck(point)
   or point.x > self.aabb.xMax
   or point.y < self.aabb.yMin
   or point.y > self.aabb.yMax
-  or point.z < self.aabb.zMin
-  or point.z > self.aabb.zMax
+  --or point.z < self.aabb.zMin
+  --or point.z > self.aabb.zMax
   then
     return false
   end
@@ -376,6 +376,14 @@ function C:drawPlane(plane, clrF)
   end
 
 end
+local t1, t2 = vec3(), vec3()
+function C:drawMinimap(td)
+  for i_, v in ipairs(self.vertices) do
+    ui_apps_minimap_utils.worldToMapXYZ(t1, v.pos)
+    ui_apps_minimap_utils.worldToMapXYZ(t2, self.vertices[v.next].pos)
+    td:line(t1.x, t1.y, t2.x, t2.y, 1, 1, 0, 0, color(255, 255, 255, 250), color(255, 255, 255, 250), color(255, 255, 255, 250), color(255, 255, 255, 250))
+  end
+end
 
 
 local defaultDrawDistance = 30
@@ -459,7 +467,7 @@ function C:makeHighResolutionFence(maxStep)
     end
   end
   if #self.vertices ~= #newVerts then
-    log("D","Zones","Increased resolution of fence from " .. vCount.." Vertices to " .. #newVerts.." Vertices.")
+    log("D","Sites_Zone","Increased resolution of fence from " .. vCount.." Vertices to " .. #newVerts.." Vertices.")
   end
   self.vertices = newVerts
   self:processVertices()

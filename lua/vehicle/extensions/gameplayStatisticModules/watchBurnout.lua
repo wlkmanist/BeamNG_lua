@@ -6,23 +6,37 @@ local M = {}
 
 local wd
 local velocity
-local currently = false
 local initialWheelCount = 0
 local wheelsBurnout = {}
 local max, min = math.max, math.min
+local startTime = 0
+local curTrigger = false
 
 local function watchBurnout()
-
+  local prevTrigger = curTrigger
   velocity = obj:getGroundSpeed() * 1.5
-  currently = false
+  curTrigger = false
   if initialWheelCount ~= wheels.wheelCount then return end --if we lose a wheel
   for _, wIndex in ipairs(wheelsBurnout) do
     wd = wheels.wheels[wIndex]
     if wd.isBroken == false and wd.wheelSpeed > 2 and wd.wheelSpeed > velocity and (wd.lastSlip * min(wd.downForce * 0.1, 1))>4 and wd.contactMaterialID1 ~=-1 and wd.contactMaterialID2 ~=-1 then
-      currently = true
+      curTrigger = true
+      break
     end
   end
-  gameplayStatistic.refreshTimer("vehicle/burnout.time", currently, 0.1, true)
+
+  if curTrigger then
+    if not prevTrigger then
+      startTime = obj:getSimTime()
+    end
+  else
+    if prevTrigger then
+      local burnOutTime = obj:getSimTime() - startTime
+      if burnOutTime > 0.1 then
+        gameplayStatistic.metricAdd("vehicle/burnout.time", burnOutTime, true)
+      end
+    end
+  end
 end
 
 local function onExtensionLoaded()

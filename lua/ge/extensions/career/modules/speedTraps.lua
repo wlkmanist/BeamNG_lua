@@ -63,11 +63,11 @@ local function onSpeedTrapTriggered(speedTrapData, playerSpeed, overSpeed)
   if penaltyType == "default" then
     local fine = getFineFromSpeed(overSpeed)
     career_modules_payment.pay(fine, {label="Fine for speeding", tags={"fine"}})
-    ui_message(string.format("Traffic Violation: \n - %q | Fine %d$\n - {{%f | unit: \"speed\":0}} | ({{%f | unit: \"speed\":0}})", core_vehicles.getVehicleLicenseText(veh), fine.money.amount, playerSpeed, speedTrapData.speedLimit), 10, "speedTrap")
+    ui_message({txt="ui.career.speedTrap.speedingMessage", context={licensePlate = core_vehicles.getVehicleLicenseText(veh), fine = fine.money.amount, recordedSpeed = playerSpeed, speedLimit = speedTrapData.speedLimit}}, 10, 'speedTrap')
     Engine.Audio.playOnce('AudioGui','event:>UI>Career>Speedcam_Snapshot')
 
   elseif penaltyType == "noLicensePlate" then
-    ui_message(string.format("Traffic Violation: \n - No license plate detected | Fine could not be issued\n - {{%f | unit: \"speed\":0}} | ({{%f | unit: \"speed\":0}})", playerSpeed, speedTrapData.speedLimit), 10, "speedTrap")
+    ui_message({txt="ui.career.speedTrap.noLicensePlateMessage", context={recordedSpeed = playerSpeed, speedLimit = speedTrapData.speedLimit}}, 10, 'speedTrap')
     Engine.Audio.playOnce('AudioGui','event:>UI>Career>Speedcam_Snapshot')
 
   elseif penaltyType == "workVehicle" then
@@ -118,12 +118,12 @@ end
 
 local function onExtensionLoaded()
   if not career_career.isActive() then return false end
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
 
   gameplay_speedTrapLeaderboards.loadLeaderboards(savePath .. leaderboardFolder)
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   -- TODO maybe add option to only save file for current level
   gameplay_speedTrapLeaderboards.saveLeaderboards(currentSavePath .. leaderboardFolder, true)
 end
@@ -131,6 +131,6 @@ end
 M.onSpeedTrapTriggered = onSpeedTrapTriggered
 M.onRedLightCamTriggered = onRedLightCamTriggered
 M.onExtensionLoaded = onExtensionLoaded
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 
 return M

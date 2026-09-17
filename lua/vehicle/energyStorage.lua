@@ -17,9 +17,6 @@ local storageCount = 0
 
 local breakTriggerBeams = {} --shaft break beam cache
 
-local function nop()
-end
-
 local function updateGFX(dt)
   for i = 1, storageCount, 1 do
     local storage = orderedStorages[i]

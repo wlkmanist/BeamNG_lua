@@ -60,7 +60,7 @@ function C:work(args)
   if self.sites == nil then
     local file, valid = self.mgr:getRelativeAbsolutePath({self.pinIn.file.value, self.pinIn.file.value..'.sites.json'})
     if not valid then
-      self:__setNodeError('file', 'unable to find sites file: '..file)
+      self:__setNodeError('file', 'Failed to find sites file: '..file)
       return
     end
 

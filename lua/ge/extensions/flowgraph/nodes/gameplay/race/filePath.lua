@@ -69,7 +69,7 @@ function C:work(args)
   if self.path == nil and self.pinIn.file.value then
     local file, valid = self.mgr:getRelativeAbsolutePath({self.pinIn.file.value, self.pinIn.file.value..'.race.json'})
     if not valid then
-      self:__setNodeError('file', 'unable to find race file: '..file)
+      self:__setNodeError('file', 'Failed to find race file: '..file)
       return
     end
 

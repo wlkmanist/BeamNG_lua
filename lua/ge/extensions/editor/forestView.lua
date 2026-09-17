@@ -1,3 +1,7 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
+
 local M = {}
 local logTag = 'editor_scene_tree'
 local toolWindowName = "forestEditorView"
@@ -90,8 +94,8 @@ local function onEditorGui()
       imgui.EndChild()
       -- imgui.TreePop()
     -- end
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 local function populateForestItems()

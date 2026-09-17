@@ -6,7 +6,7 @@ local M = {}
 
 M.dependencies = {"core_vehicleBridge"}
 
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehOfferManager, dParcelMods, dVehicleTasks
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehOfferManager, dParcelMods, dVehicleTasks, dTutorial
 local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
@@ -17,6 +17,7 @@ M.onCareerActivated = function()
   dVehOfferManager = career_modules_delivery_vehicleOfferManager
   dParcelMods = career_modules_delivery_parcelMods
   dVehicleTasks = career_modules_delivery_vehicleTasks
+  dTutorial = career_modules_delivery_tutorial
   step = util_stepHandler
 end
 
@@ -93,7 +94,7 @@ local function formatCargoGroup(group, playerCargoContainers, showFirstSeen)
 
     ids = {}, -- implicit count of included objects in this group
 
-    name = group[1].name,
+    name = _tr(group[1].name),
     loadedAtTimeStamp = group[1].loadedAtTimeStamp,
 
     originName = dParcelManager.getLocationLabelShort(group[1].origin),
@@ -172,10 +173,10 @@ local function formatCargoGroup(group, playerCargoContainers, showFirstSeen)
   local modifierKeys = {}
   for _, mod in ipairs(group[1].modifiers) do
     local modData = dParcelMods.getModData(mod.type)
+    modifierKeys[mod.type] = true
     if not modData.hidden then
       local modProp = {type = mod.type, icon = modData.icon, active = true, label = modData.label, description = modData.shortDescription, important = modData.important}
       table.insert(ret.modifiers, modProp)
-      modifierKeys[mod.type] = true
       if mod.type == "timed" then
         ret.hasTimerMod = true
         ret.remainingTime = {}
@@ -237,17 +238,25 @@ local function formatCargoGroup(group, playerCargoContainers, showFirstSeen)
     return ret
   end
 
+  -- if tutorial is active and this is not a tutorial parcel, disable it
+  local isCargoDeliveryTutorialActive = dTutorial.isCargoDeliveryTutorialActive()
+  if isCargoDeliveryTutorialActive then
+    local template = dGenerator.getParcelTemplateById(group[1].templateId)
+    if template and not template.isTutorialParcel then
+      ret.enabled = false
+      ret.disableReason = {type = "tutorial", label = _tr("ui.career.delivery.cargoScreen.disabledDuringTutorial")}
+      return ret
+    end
+  end
+
   -- if this item is locked because of progress, disable it.
-  local lockedBecauseOfMods, minTier = dParcelMods.lockedBecauseOfMods(modifierKeys)
-  ret.unlockInfo = {
-    type = "minLevel", icon = "boxPickUp03", longLabel = string.format("Requires Skill 'Cargo Delivery' lvl %d", minTier), shortLabel = string.format("lvl %d", minTier)
-  }
+  local lockedBecauseOfMods, flagDefinition = dParcelMods.lockedBecauseOfMods(modifierKeys)
+  if flagDefinition then
+    ret.unlockInfo = flagDefinition.unlockInfo
+  end
   if lockedBecauseOfMods then
     ret.enabled = false
-    ret.disableReason = {
-      type = "locked", icon = "boxPickUp03", level = minTier,
-      label = string.format("Requires Skill 'Cargo Delivery' lvl %d", minTier)
-    }
+    ret.disableReason = flagDefinition and flagDefinition.lockedReason
     return ret
   end
 
@@ -412,6 +421,7 @@ local function formatVehicleOfferForUi(offers)
   local ret = {}
 
   local hasSpawnWhenCommitingCargoOffer = false
+  local isVehicleDeliveryTutorialActive = dTutorial.isVehicleDeliveryTutorialActive()
   for _, offer in ipairs(offers) do
     hasSpawnWhenCommitingCargoOffer = hasSpawnWhenCommitingCargoOffer or offer.spawnWhenCommitingCargo
   end
@@ -449,7 +459,8 @@ local function formatVehicleOfferForUi(offers)
       bigMapIds = {}
     }
 
-    local enabled, reason = dVehOfferManager.isVehicleTagUnlocked(offer.vehicle.unlockTag)
+    local enabled, flagDefinition = dVehOfferManager.isVehicleTagUnlocked(offer.vehicle.unlockTag)
+    local isCargoDeliveryTutorialActive = dTutorial.isCargoDeliveryTutorialActive()
     item.bigMapIds[string.format("delivery-parking-%s-%s", offer.task.destination.facId, offer.task.destination.psPath)] = true
 
     -- if this item is expired, return early.
@@ -459,16 +470,34 @@ local function formatVehicleOfferForUi(offers)
       goto continue
     end
 
-    item.unlockInfo = reason
+    -- if tutorial is active, only allow tutorial vehicles
+    if isCargoDeliveryTutorialActive then
+      if not (offer.data and offer.data.isTutorialVehicle) then
+        item.enabled = false
+        item.disableReason = {type = "tutorial", label = _tr("ui.career.delivery.cargoScreen.disabledDuringTutorial")}
+        goto continue
+      end
+    end
+
+    -- if vehicle delivery tutorial is active, only allow tutorial vehicles
+    if isVehicleDeliveryTutorialActive then
+      if not (offer.data and offer.data.isTutorialVehicle) then
+        item.enabled = false
+        item.disableReason = {type = "tutorial", label = _tr("ui.career.delivery.cargoScreen.disabledDuringTutorial")}
+        goto continue
+      end
+    end
+
+    item.unlockInfo = flagDefinition and flagDefinition.unlockInfo
     if not enabled then
       item.enabled = false
-      item.disableReason = reason -- this can already include levels
+      item.disableReason = flagDefinition and flagDefinition.lockedReason
       goto continue
     end
 
     if next(dVehicleTasks.getVehicleTasks()) or hasSpawnWhenCommitingCargoOffer then
       item.enabled = false
-      item.disableReason = {type="limit", limit=1, label ="You can deliver at most 1 vehicle at a time."}
+      item.disableReason = {type="limit", limit=1, label =_tr("ui.career.delivery.cargoScreen.vehicleDeliveryLimit")}
       goto continue
     end
 
@@ -524,23 +553,25 @@ local function formatAcceptedOfferForUI(offer)
     }
   end
 
-  item.taskList = {"No task..?"}
+  item.taskList = {_tr("ui.career.delivery.cargoScreen.noTask")}
   local task = dVehicleTasks.getVehicleTaskForOffer(offer)
   if not task or not task.tasks then
     if item.type == "vehicle" then
-      item.taskList = {string.format("Enter the vehicle.")}
+      item.taskList = {_tr("ui.career.delivery.cargoScreen.enterVehicle")}
     else
-      item.taskList = {string.format("Couple the trailer.")}
+      item.taskList = {_tr("ui.career.delivery.cargoScreen.coupleTrailer")}
     end
   else
     local task = task.tasks[task.activeTaskIndex]
     item.taskList = {task.type or "no type?"}
     if task.type == "coupleTrailer" then
-      item.taskList = {string.format("Couple the trailer.")}
+      item.taskList = {_tr("ui.career.delivery.cargoScreen.coupleTrailer")}
     elseif task.type == "enterVehicle" then
-      item.taskList = {string.format("Enter the vehicle.")}
+      item.taskList = {_tr("ui.career.delivery.cargoScreen.enterVehicle")}
     elseif task.type == "bringToDestination" or task.type == "confirmDropOff" then
-      item.taskList = {string.format("Drop off %s at %s.", item.type == "trailer" and "the trailer" or "the vehicle", item.destinationName)}
+      item.taskList = {item.type == "trailer"
+        and core_locales.contextTranslate("ui.career.delivery.cargoScreen.dropOffTrailer", {destination = item.destinationName})
+        or core_locales.contextTranslate("ui.career.delivery.cargoScreen.dropOffVehicle", {destination = item.destinationName})}
     elseif task.type == "putIntoParkingSpot" then
       --not used atm
     end
@@ -799,7 +830,7 @@ local function formatMaterialStorage(fac, facPsLocation, playerCargoContainers)
   for _, materialType in ipairs(tableKeysSorted(fac.materialStorages)) do
     local storage = fac.materialStorages[materialType]
     local material = dGenerator.getMaterialsTemplatesById(materialType)
-    local locked, minTier = dParcelMods.lockedBecauseOfMods({[material.type]=true})
+    local locked, flagDefinition = dParcelMods.lockedBecauseOfMods({[material.type]=true})
     if storage.isProvider then
       local fluidData = {
         id = storage.id,
@@ -812,9 +843,7 @@ local function formatMaterialStorage(fac, facPsLocation, playerCargoContainers)
         rewardMoneyPerLiter = material.money,
         enabled = true,
         _transientMaterialMoveAmount = 0,
-        unlockInfo  = {
-          type = "minLevel", icon = "boxPickUp03", longLabel = string.format("Requires Skill 'Cargo Delivery' lvl %d", minTier), shortLabel = string.format("lvl %d", minTier)
-        },
+        unlockInfo  = flagDefinition and flagDefinition.unlockInfo,
         bigMapIds = {},
       }
       for _, loc in ipairs(fluidData.locations or {}) do
@@ -832,13 +861,20 @@ local function formatMaterialStorage(fac, facPsLocation, playerCargoContainers)
 
       if locked then
         fluidData.enabled = false
-        fluidData.disableReason = {type = "locked"}
+        fluidData.disableReason = flagDefinition.lockedReason
+      end
+
+      -- if tutorial is active, disable material storage
+      local isCargoDeliveryTutorialActive = dTutorial.isCargoDeliveryTutorialActive()
+      if isCargoDeliveryTutorialActive then
+        fluidData.enabled = false
+        fluidData.disableReason = {type = "tutorial", label = _tr("ui.career.delivery.cargoScreen.disabledDuringTutorial")}
       end
 
       local label, desc = dParcelMods.getLabelAndShortDescription(material.type)
       table.insert(fluidData.modifiers, {type = material.type, icon = dParcelMods.getModifierIcon(material.type), active = true, label = label, description = desc})
 
-      fluidData.name = material.name
+      fluidData.name = _tr(material.name)
       fluidData.density = material.density
       fluidData.rewardMoney = material.money
       table.insert(data, fluidData)
@@ -913,10 +949,10 @@ end
 
 M.deliveryScreenExternalButtonPressed = function(id)
   if id == "openDeliveryProgress" then
-    guihooks.trigger('ChangeState', {state = 'branchPage', params = {branchKey = 'labourer', skillKey = 'delivery'}})
+    guihooks.trigger('ChangeState', {state = 'career.branchPage', params = {pathId = 'logistics-delivery'}})
   end
   if id == "openVehicleDeliveryProgress" then
-    guihooks.trigger('ChangeState', {state = 'branchPage', params = {branchKey = 'labourer', skillKey = 'vehicleDelivery'}})
+    guihooks.trigger('ChangeState', {state = 'career.branchPage', params = {pathId = 'logistics-vehicleDelivery'}})
   end
 end
 
@@ -935,40 +971,41 @@ local function requestCargoDataForUi(facId, psPath, updateMaxTimeTimestamp)
       },
       availableSystems = {},
       settings = dGeneral.getSettings(),
+      tutorialInfo = dTutorial.getTutorialInfo(),
       facilityPanels = {
         {
           type = "skill",
-          skillInfo = career_modules_branches_landing.getBranchSkillCardData("delivery"),
-          branchId = "labourer", skillId="delivery",
+          skillInfo = career_modules_branches_landing.getBranchSkillCardData("logistics-delivery"),
+          branchId = "labourer", skillId="logistics-delivery",
           filterValueButtons = {'parcel','trailer','material'},
-          heading = "Cargo Delivery",
-          description = 'Deliver parcels, fluids, dry bulk in containers, or haul small and large trailers.',
+          heading = _tr("ui.career.cargoOverview.cargoDeliveryHeading"),
+          description = _tr("ui.career.cargoOverview.cargoDeliveryDescription", "ui.career.cargoOverview.cargoDeliveryDescription"),
           externalButtons = { {
             type = "progress",
-            label = "Progress",
+            label = _tr("ui.career.cargoOverview.progress"),
             externalButtonId = 'openDeliveryProgress',
           } }
         }, {
           type = "skill",
-          skillInfo = career_modules_branches_landing.getBranchSkillCardData("vehicleDelivery"),
-          branchId = "labourer", skillId="vehicleDelivery",
+          skillInfo = career_modules_branches_landing.getBranchSkillCardData("logistics-vehicleDelivery"),
+          branchId = "labourer", skillId="logistics-vehicleDelivery",
           filterValueButtons = {'vehicle'},
-          heading = "Car Jockey",
-          description = 'Drive a wide variety of vehicles safely to their destination.',
+          heading = _tr("ui.career.cargoOverview.carJockeyHeading"),
+          description = _tr("ui.career.cargoOverview.carJockeyDescription"),
           externalButtons = { {
             type = "progress",
-            label = "Progress",
+            label = _tr("ui.career.cargoOverview.progress"),
             externalButtonId = 'openVehicleDeliveryProgress',
           } }
         }, {
           type = "services",
           filterValueButtons = {'loaner'},
-          heading = "Services",
-          description = 'Earn reputation to increase rewards. Loan vehicles to use as delivery vehicle.',
+          heading = _tr("ui.career.cargoOverview.servicesHeading"),
+          description = _tr("ui.career.cargoOverview.servicesDescription"),
           externalButtons = {
             {
               type = "reputaion",
-              label = "View Reputation Details",
+              label = _tr("ui.career.cargoOverview.viewReputationDetails"),
               externalButtonId = 'reputation',
             }
           }
@@ -1001,7 +1038,7 @@ local function requestCargoDataForUi(facId, psPath, updateMaxTimeTimestamp)
       local organization = freeroam_organizations.getUIDataForOrg(fac.associatedOrganization)
       uiData.facility = {
         name = fac.name,
-        longDescription = fac.facilityInformation or "No facility information written yet.",
+        longDescription = fac.facilityInformation or _tr("ui.career.cargoOverview.noFacilityInformation"),
         id = fac.id,
         preview = fac.preview,
         outgoingCargo = {},
@@ -1100,21 +1137,21 @@ local function requestCargoDataForUi(facId, psPath, updateMaxTimeTimestamp)
         taskList = {},
       }
       for _, formatted in ipairs(entry.cargo) do
-        formatted.nextTasks = {{label="Bring to " .. formatted.destinationName, checked = false}}
-        formatted.taskList = {"Deliver to " .. formatted.destinationName}
+        formatted.nextTasks = {{label=core_locales.contextTranslate("ui.career.delivery.cargoScreen.bringTo", {destination = formatted.destinationName}), checked = false}}
+        formatted.taskList = {core_locales.contextTranslate("ui.career.delivery.cargoScreen.deliverTo", {destination = formatted.destinationName})}
       end
 
       for _, formatted in ipairs(clusterFormatCargo(con.transientCargo)) do
         formatted.transientMove = true
         formatted.nextTasks = { }
         if facPsLocation and dParcelManager.sameLocation(formatted.location, facPsLocation) then
-          formatted.nextTasks[1] = {label="Loading here", checked = true}
-          formatted.taskList = {"Deliver to " .. formatted.destinationName}
+          formatted.nextTasks[1] = {label=_tr("ui.career.delivery.cargoScreen.loadingHere"), checked = true}
+          formatted.taskList = {core_locales.contextTranslate("ui.career.delivery.cargoScreen.deliverTo", {destination = formatted.destinationName})}
         else
-          formatted.nextTasks[1] = {label="Load at " .. formatted.locationNameLong, checked = false}
-          formatted.taskList = {"Pick up at " .. formatted.locationNameLong}
+          formatted.nextTasks[1] = {label=core_locales.contextTranslate("ui.career.delivery.cargoScreen.loadAt", {location = formatted.locationNameLong}), checked = false}
+          formatted.taskList = {core_locales.contextTranslate("ui.career.delivery.cargoScreen.pickUpAt", {location = formatted.locationNameLong})}
         end
-        formatted.nextTasks[2] = {label="Bring to " .. formatted.destinationNameLong, checked = false}
+        formatted.nextTasks[2] = {label=core_locales.contextTranslate("ui.career.delivery.cargoScreen.bringTo", {destination = formatted.destinationNameLong}), checked = false}
 
         table.insert(entry.cargo, formatted)
       end
@@ -1342,6 +1379,31 @@ local function enterCargoOverviewScreen(facilityId, parkingSpotPath)
     cargoOverviewScreenOpenedTime = dGeneral.time() - pastDeliveryTimespan
     cargoOverviewMaxTimeTimestamp = dGeneral.time()
 
+    -- Trigger tutorial generator if this is the tutorial facility
+    if facilityId then
+      local isCargoDeliveryTutorialActive = dTutorial.isCargoDeliveryTutorialActive()
+      local isVehicleDeliveryTutorialActive = dTutorial.isVehicleDeliveryTutorialActive()
+      local fac = dGenerator.getFacilityById(facilityId)
+
+      if isCargoDeliveryTutorialActive and fac and fac.isTutorialForCargoDelivery then
+        -- Trigger all tutorial generators at this facility
+        for _, generator in ipairs(fac.logisticGenerators or {}) do
+          if generator.isTutorialGenerator then
+            dGenerator.triggerGenerator(fac, generator)
+          end
+        end
+      end
+
+      if isVehicleDeliveryTutorialActive and fac and fac.isTutorialForVehicleDelivery then
+        -- Trigger all tutorial vehicle generators at this facility
+        for _, generator in ipairs(fac.logisticGenerators or {}) do
+          if generator.isTutorialGenerator then
+            dGenerator.triggerGenerator(fac, generator)
+          end
+        end
+      end
+    end
+
     gameplay_rawPois.clear()
 
     local options = {
@@ -1353,9 +1415,9 @@ local function enterCargoOverviewScreen(facilityId, parkingSpotPath)
     }
     freeroam_bigMapMode.enterBigMapWithCustomPOIs({}, M.deliveryMarkerSelected, options)
     if facilityId == nil and parkingSpotPath == nil then
-      guihooks.trigger('ChangeState', {state = 'cargoOverview', params = {}})
+      guihooks.trigger('ChangeState', {state = 'career.cargoOverview', params = {}})
     else
-      guihooks.trigger('ChangeState', {state = 'cargoOverview', params = {facilityId = facilityId, parkingSpotPath = parkingSpotPath}})
+      guihooks.trigger('ChangeState', {state = 'career.cargoOverview', params = {facilityId = facilityId, parkingSpotPath = parkingSpotPath}})
     end
     extensions.hook("onEnterCargoOverviewScreen")
   end)
@@ -1437,7 +1499,7 @@ local function commitDeliveryConfiguration()
         }
         step.startStepSequence(sequence, callback)
         -- add loading progress bar
-        guihooks.trigger("OpenSimpleDelayPopup",{timer=maxDelay, heading="Loading Cargo..."})
+        guihooks.trigger("OpenSimpleDelayPopup",{timer=maxDelay, heading=_tr("ui.career.delivery.general.loadingCargo")})
       else
         -- no delay, no freeze
         for vehId, data in pairs(data) do
@@ -1460,7 +1522,7 @@ local function cancelDeliveryConfiguration()
   end
   career_modules_loanerVehicles.unmarkAllForSpawning()
   dGeneral.getNearbyVehicleCargoContainers(nop)
-  ui_message("Cancelled Delivery Configuration.")
+  ui_message(_tr("ui.career.delivery.cargoScreen.cancelledDeliveryConfiguration"))
 end
 
 M.enterCargoOverviewScreen = enterCargoOverviewScreen
@@ -1570,10 +1632,10 @@ local function onDeliveryRewardsPopupClosed()
   local sequence = {
     step.makeStepWait(0.5),
     step.makeStepReturnTrueFunction(function()
-      career_modules_linearTutorial.introPopup("delivery/cargoDelivered")
+      career_modules_tutorialPopups.introPopup("delivery/cargoDelivered")
       if gameplay_walk.isWalking() then
-        ui_message("Press [action=reset_physics] to open the recovery menu to take a taxi.",6,"post_delivery","local_taxi")
-        career_modules_linearTutorial.introPopup("delivery/postDeliveryTaxi")
+        ui_message(_tr("ui.career.delivery.cargoScreen.takeTaxiHint"),6,"post_delivery","local_taxi")
+        career_modules_tutorialPopups.introPopup("delivery/postDeliveryTaxi")
       end
       return true
   end)}
@@ -1760,7 +1822,7 @@ M.setVisibleIdsForBigMap = setVisibleIdsForBigMap
 -- other/utility functions
 M.exitDeliveryMode = function() dGeneral.exitDeliveryMode() end
 M.showCargoContainerHelpPopup = function()
-  career_modules_linearTutorial.introPopup("cargoContainerHowTo", true)
+  career_modules_tutorialPopups.introPopup("cargoContainerHowTo", true)
 end
 M.unloadCargoPopupClosed = function() dProgress.unloadCargoPopupClosed() end
 M.requestDropOffData = function(...) dProgress.requestDropOffData(...) end

@@ -4,34 +4,55 @@
 
 local im  = ui_imgui
 
-local ffi = require('ffi')
-
 local C = {}
 
-C.name = 'End Screen Results'
+C.name = 'EndScreen Results'
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
-C.description = "Shows the end screen of a scenario with customizable buttons."
+C.description = "Shows the mission results on the end screen."
 C.category = 'repeat_instant'
-C.todo = "Showing two of these at the same time will break everything."
-C.behaviour = {singleActive = true}
 
 C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = '', chainFlow = true },
   { dir = 'out', type = 'flow', name = 'flow', description = '', chainFlow = true },
   { dir = 'in', type = {'string','table'},  name = 'text', description = 'Subtext of the menu.' },
-  { dir = 'in', type = 'table', name = 'change', description = 'Change from the attempt. use aggregate attempt node (test only)'},
-  { dir = 'in', type = 'bool', name = 'includeObjectives', description = 'if true, adds Objectives after the panel ',  },
-  { dir = 'in', type = 'bool', name = 'includeRatings', description = 'if true, adds ratings after the panel',  },
+  { dir = 'in', type = 'table', name = 'change', description = 'Change from the attempt. Use the aggregate attempt node.' },
+  { dir = 'in', type = 'bool', name = 'includeObjectives', description = 'if true, automatically adds objectives after the panel.' },
+  { dir = 'in', type = 'bool', name = 'includeRatings', description = 'if true, automatically adds ratings after the panel.' },
 }
+
+C.tags = { 'end', 'finish', 'screen', 'outro', 'ui' }
 
 function C:init()
 end
 
 function C:work()
   self.pinOut.flow.value = self.pinIn.flow.value
+
+  local header = "ui.missions.results.title"
+  local text = self.pinIn.text.value
+  if (type(text) == 'table' and text.txt == '') or text == '' then
+    text = nil
+  end
+  if self.pinIn.change.value and self.pinIn.change.value.formattedAttempt  then
+    self.mgr.modules.ui:addUIElement({
+      type = 'textPanel',
+      header = header,
+      attempt = self.pinIn.change.value.formattedAttempt,
+      pages = {
+        main = true,
+      }})
+    header = nil
+  end
   if self.pinIn.text.value then
-    self.mgr.modules.ui:addUIElement({type = 'textPanel', header = "Results", text = self.pinIn.text.value, attempt = self.pinIn.change.value.formattedAttempt})
+    self.mgr.modules.ui:addUIElement({
+      type = 'textPanel',
+      header = header,
+      text = self.pinIn.text.value,
+      pages = {
+        main = true,
+    }})
+    header = nil
   end
   if self.pinIn.includeObjectives.value then
     self.mgr.modules.ui:addObjectives(self.pinIn.change.value)

@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -52,7 +51,7 @@ function C:work()
   if self.pinIn.flow.value then
     if not self.marker then
       local marker =  createObject('TSStatic')
-      marker:setField('shapeName', 0, 'art/shapes/collectible/s_marker_BNG.dae')
+      marker:setField('shapeName', 0, 'art/shapes/collectible/s_collect_BNG.dae')
       marker:setPosition(vec3(0, 0, 0))
       marker.scale = vec3(2, 2, 2)
       marker:registerObject(self.id.."marker")

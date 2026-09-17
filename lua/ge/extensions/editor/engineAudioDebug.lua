@@ -75,7 +75,11 @@ local function updateVehicleData()
 end
 
 local changed = true
-local function onEditorGui(dt)
+-- Switched from onEditorGui to onUpdate so that the window can persist after the editor is closed.
+local function onUpdate(dtReal, dtSim, dtRaw)
+  if not editor or not editor.beginWindow then return end
+  if not editor.isWindowRegistered(wndName) then return end
+
   local veh = getPlayerVehicle(0)
   if not veh then return end
   if not editor_engineAudioDebug.engine or not editor_engineAudioDebug.engine.engineSoundData then
@@ -294,14 +298,30 @@ local function onEditorActivated()
   updateVehicleData()
 end
 
+local function onEditorToolWindowHide(windowName)
+  if windowName == wndName then
+    M.onUpdate = nop
+    extensions.hookUpdate("onUpdate")
+  end
+end
+
+local function onEditorToolWindowShow (windowName)
+  if windowName == wndName then
+    M.onUpdate = onUpdate
+    extensions.hookUpdate("onUpdate")
+  end
+end
+
 -- public interface
 M.onExtensionLoaded = onExtensionLoaded
 M.onEditorInitialized = onEditorInitialized
-M.onEditorGui = onEditorGui
+M.onUpdate = nop
 M.onDebugDrawActive = onDebugDrawActive
 M.onVehicleSwitched = onVehicleSwitched
 M.onEditorDeactivated = onEditorDeactivated
 M.onEditorActivated = onEditorActivated
+M.onEditorToolWindowHide = onEditorToolWindowHide
+M.onEditorToolWindowShow = onEditorToolWindowShow
 
 M.open = open
 

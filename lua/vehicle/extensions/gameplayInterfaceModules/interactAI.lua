@@ -7,19 +7,27 @@ local moduleName = "interactAI"
 M.moduleActions = {}
 M.moduleLookups = {}
 
-local function setAIMode(params)
-  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, { "string" })
+local function getAIMode(params)
+  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, {})
   if not dataTypeCheck then
-    return { failReason = dataTypeError }
+    return {failReason = dataTypeError}
+  end
+  return {aiMode = ai.mode}
+end
+
+local function setAIMode(params)
+  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, {"string"})
+  if not dataTypeCheck then
+    return {failReason = dataTypeError}
   end
   local mode = params[1]
   ai.setMode(mode)
 end
 
 local function setOtherVehiclesAIMode(params)
-  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, { "string" })
+  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, {"string"})
   if not dataTypeCheck then
-    return { failReason = dataTypeError }
+    return {failReason = dataTypeError}
   end
   local mode = params[1]
 
@@ -27,31 +35,31 @@ local function setOtherVehiclesAIMode(params)
     BeamEngine:queueAllObjectLua('ai.setMode("stop")')
     obj:queueGameEngineLua("extensions.gameplay_traffic.deactivate()")
     obj:queueGameEngineLua('extensions.hook("trackAIAllVeh", "disabled")')
-
+    BeamEngine:queueAllObjectLuaExcept("ai.setRacing(false)", objectId)
   elseif mode == "random" then
     BeamEngine:queueAllObjectLuaExcept('ai.setSpeedMode("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.driveInLane("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.setState({mode = "random", extAggression = 1, targetObjectID = ' .. tostring(objectId) .. "})", objectId)
+    BeamEngine:queueAllObjectLuaExcept("ai.setRacing(false)", objectId)
     obj:queueGameEngineLua('extensions.hook("trackAIAllVeh", "random")')
-
   elseif mode == "flee" then
     BeamEngine:queueAllObjectLuaExcept('ai.setSpeedMode("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.driveInLane("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.setState({mode = "flee", targetObjectID = ' .. tostring(objectId) .. "})", objectId)
+    BeamEngine:queueAllObjectLuaExcept("ai.setRacing(false)", objectId)
     obj:queueGameEngineLua('extensions.hook("trackAIAllVeh", "flee")')
-
   elseif mode == "chase" then
     BeamEngine:queueAllObjectLuaExcept('ai.setSpeedMode("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.driveInLane("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.setState({mode = "chase", targetObjectID = ' .. tostring(objectId) .. "})", objectId)
+    BeamEngine:queueAllObjectLuaExcept("ai.setRacing(false)", objectId)
     obj:queueGameEngineLua('extensions.hook("trackAIAllVeh", "chase")')
-
   elseif mode == "follow" then
     BeamEngine:queueAllObjectLuaExcept('ai.setSpeedMode("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.driveInLane("off")', objectId)
     BeamEngine:queueAllObjectLuaExcept('ai.setState({mode = "follow", targetObjectID = ' .. tostring(objectId) .. "})", objectId)
+    BeamEngine:queueAllObjectLuaExcept("ai.setRacing(false)", objectId)
     obj:queueGameEngineLua('extensions.hook("trackAIAllVeh", "follow")')
-
   else
     log("W", "interactAI", "unknown ai command: " .. mode)
   end
@@ -64,6 +72,7 @@ end
 local function onExtensionLoaded()
   M.moduleActions.setAIMode = setAIMode
   M.moduleActions.setOtherVehiclesAIMode = setOtherVehiclesAIMode
+  M.moduleLookups.aiMode = getAIMode
 end
 
 M.onExtensionLoaded = onExtensionLoaded

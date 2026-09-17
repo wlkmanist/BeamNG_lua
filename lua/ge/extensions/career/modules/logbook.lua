@@ -90,7 +90,7 @@ local function addNewLogbookEntry(entry, skipSave)
   if not skipSave then
     table.insert(logbook,1, entry)
     --log("I","","New Unlock Event: " ..dumps(entry))
-    if entry.showMessage and not career_modules_linearTutorial.isLinearTutorialActive() then
+    if entry.showMessage and not career_modules_tutorial.isActive() then
       local helper = {}
       helper.ttl = 15
       helper.msg = {txt="ui.career.logbook.newEntry", context={title=entry.title}}
@@ -158,7 +158,7 @@ local function genericInfoUnlocked(title, text, cover, ratio, flavour, type)
   })
 
   -- guard so we don't play the same sound multiple times per frame
-  if not career_modules_linearTutorial.isLinearTutorialActive() and not playedLogbookSoundThisFrame then
+  if not career_modules_tutorial.isActive() and not playedLogbookSoundThisFrame then
     Engine.Audio.playOnce('AudioGui', 'event:UI_Checkpoint')
     playedLogbookSoundThisFrame = true
   end
@@ -206,20 +206,21 @@ end
 
 
 local function loadDataFromFile()
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   if not saveSlot then return end
-  local data = {}--(savePath and jsonReadFile(savePath .. "/career/"..fileName)) or {}
+  local data = (savePath and jsonReadFile(savePath .. "/career/"..fileName)) or {}
   logbook = data.logbook or {}
-  idCounter = #logbook
+  idCounter = 0
+  for _, e in ipairs(logbook) do
+    if e.entryId and e.entryId >= idCounter then
+      idCounter = e.entryId + 1
+    end
+  end
 end
 
 local function onCareerActive(active)
-  local clear = false
-  if not clear then
-    loadDataFromFile()
-  else
-    logbook = {}
-  end
+  if not active then return end
+  loadDataFromFile()
   if not next(logbook) then
     for _, key in ipairs(arrayReverse(logbookEntries)) do
       M.logbookEntry(key)
@@ -228,7 +229,7 @@ local function onCareerActive(active)
 end
 
 -- this should only be loaded when the career is active
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   career_saveSystem.jsonWriteFileSafe(currentSavePath .. "/career/"..fileName,
     {
       logbook = logbook
@@ -240,7 +241,7 @@ local function onUpdate()
 end
 
 M.onCareerActive = onCareerActive
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 
 M.getLogbook = getLogbook
 M.setLogbookEntryRead = setLogbookEntryRead

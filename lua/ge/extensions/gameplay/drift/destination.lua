@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 local im = ui_imgui
 
@@ -7,7 +10,7 @@ local extractedWaypoints
 local remainingDist
 local goingWrongWay
 local wrongWayFail
-local distToIntendedRoad
+local distToIntendedRoad = 0.1
 
 local maxWrongWayDist
 local defaultMaxWrongWayDist = 10
@@ -93,6 +96,18 @@ local function calcRemainingDist()
   end
 end
 
+local function setWrongWayFail(value)
+  if value and not wrongWayFail then
+    core_jobsystem.create(function(job) -- this wait is because when vehicle resets, the wrong way flag is set to true before onVehicleResetted is called, and we want to prioritize the reset for flash message
+      job.sleep(0.2)
+      wrongWayFail = true
+      end
+    )
+  elseif not value and wrongWayFail then
+    wrongWayFail = false
+  end
+end
+
 local currWrongWayDist = 0
 local lastFramePos = vec3()
 local function calcWrongWayFail()
@@ -104,10 +119,10 @@ local function calcWrongWayFail()
     end
 
     if currWrongWayDist > maxWrongWayDist then
-      wrongWayFail = true
+      setWrongWayFail(true)
     end
   else
-    wrongWayFail = false
+    setWrongWayFail(false)
   end
 
   lastFramePos:set(gameplay_drift_drift.getVehPos())
@@ -125,6 +140,7 @@ local function imguiDebug()
         im.Text(string.format("Dist to intended road : %i m", distToIntendedRoad))
       end
     end
+    im.End()
   end
 end
 
@@ -187,7 +203,12 @@ local function reset()
   lastFramePos = vec3()
 end
 
+local function onVehicleResetted(vehicleId)
+  lastFramePos = vec3()
+end
+
 M.onUpdate = onUpdate
+M.onVehicleResetted = onVehicleResetted
 
 M.setRacePath = setRacePath
 

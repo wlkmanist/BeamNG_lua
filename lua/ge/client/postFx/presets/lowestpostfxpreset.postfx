@@ -4,6 +4,7 @@
   "DOF": {
     "Enable": "0",
     "EnableDebugMode" : "0",
+    "EnableAutoFocus" : "0"
   },
 
   "HDR1": {
@@ -12,10 +13,6 @@
   },
 
   "SSAO": {
-    "Enable": "0",
-  },
-
-  "LightRays": {
     "Enable": "0",
   }
 }

@@ -11,7 +11,16 @@ local logTag = 'cosimulationCoupling'
 local dat = require('tech/cosimulationNames')
 local lpack = require("lpack")
 local csvlib = require('csvlib')
+local csvSendData
+local csvReceiveData
+local logReceive
+local enableVSL
+local enableCosim
+local initialized = false
+local cycleTime = 0.0                   -- The cycle time.  This is the most-recently measured time between two send operations, in seconds.
+local lastTimeOfSend = os.clockhp()     -- The time at which the last message was sent from Lua to Simulink.
 
+-- local csvPhysicsSteps
 -- Module constants.
 local min, max, floor, ceil = math.min, math.max, math.floor, math.ceil
 local abs, sqrt, acos = math.abs, math.sqrt, math.acos
@@ -43,6 +52,61 @@ local wheelRotators, wheelIds = wheels.wheelRotators, wheels.wheelRotatorIDs    
 local wheelsOrder = {}                                                                              -- An array used to provide a fixed order for the vehicle wheels.
 local inTorques, pTorqueKeys, bTorqueKeys, fTorqueKeys = { {}, {}, {} }, {}, {}, {}                 -- Arrays for the incoming torque values for each wheel.
 local vehSensors = {}                                                                               -- An ordered array of attached sensors, referenced by the signals.
+
+
+local function linspace(length)
+  local out = {}
+  for i=1,length,1 do
+    out[i] = tostring(i)
+  end
+  return out
+end
+
+
+
+local function createCSV(sendNames, receiveNames)
+  log('I', logTag, 'Initializing CSV logging with correct offset...')
+
+  -- Insert "signal_number" after "time" and before the actual signal names
+  local sendHeaders = { "time", "message_index", unpack(sendNames) }
+  local receiveHeaders = { "time", "message_index", unpack(receiveNames) }
+
+  -- Create CSV files with updated headers
+  csvSendData = csvlib.newCSV(unpack(sendHeaders))
+  csvReceiveData = csvlib.newCSV(unpack(receiveHeaders))
+
+  if csvSendData then
+    log('I', logTag, 'csvSendData successfully created with offset column.')
+  else
+    log('E', logTag, 'Failed to create csvSendData.')
+  end
+
+  if csvReceiveData then
+    log('I', logTag, 'csvReceiveData successfully created with offset column.')
+  else
+    log('E', logTag, 'Failed to create csvReceiveData.')
+  end
+end
+
+
+
+
+local function saveCSV()
+  -- Get current date and time in the desired format
+  local timestamp = os.date("%Y-%m-%d_%H-%M-%S")
+
+  -- Create filenames with date and time
+  local sendFileName = string.format("CoSimulationInternalLog_%s.csv", timestamp)
+  csvSendData:write(sendFileName)
+
+
+  if enableCosim then
+    local receiveFileName = string.format("CoSimulationExternalLog_%s.csv", timestamp)
+    csvReceiveData:write(receiveFileName)
+  end
+
+  log('I', logTag, 'logs saved in csv')
+end
 
 
 -- Gathers the Kinematics properties for the outgoing message.
@@ -114,91 +178,95 @@ local function gatherPowertrainProperties() master[4] = powertrain.getDevices() 
 local function gatherSensorsProperties()
   local sOut, sCtr = master[5][1], 1
   for _, v in ipairs(vehSensors.IMUs) do                                                            -- Append all the IMU readings.
-    local d = v.ctrl.getLatest(v.id)
-    local pos = d.pos
-    sOut[sCtr], sOut[sCtr + 1], sOut[sCtr + 2] = pos[1], pos[2], pos[3]
-    local dir1 = d.dirX
-    sOut[sCtr + 3], sOut[sCtr + 4], sOut[sCtr + 5] = dir1[1], dir1[2], dir1[3]
-    local dir2 = d.dirY
-    sOut[sCtr + 6], sOut[sCtr + 7], sOut[sCtr + 8] = dir2[1], dir2[2], dir2[3]
-    local dir3 = d.dirZ
-    sOut[sCtr + 9], sOut[sCtr + 10], sOut[sCtr + 11] = dir3[1], dir3[2], dir3[3]
-    sOut[sCtr + 12] = d.mass
-    local angVelRaw = d.angVel
-    sOut[sCtr + 13], sOut[sCtr + 14], sOut[sCtr + 15] = angVelRaw[1], angVelRaw[2], angVelRaw[3]
-    local angVelSm = d.angVelSmooth
-    sOut[sCtr + 16], sOut[sCtr + 17], sOut[sCtr + 18] = angVelSm[1], angVelSm[2], angVelSm[3]
-    local accelRaw = d.accRaw
-    sOut[sCtr + 19], sOut[sCtr + 20], sOut[sCtr + 21] = accelRaw[1], accelRaw[2], accelRaw[3]
-    local accelSm = d.accSmooth
-    sOut[sCtr + 22], sOut[sCtr + 23], sOut[sCtr + 24] = accelSm[1], accelSm[2], accelSm[3]
-    local angAccel = d.angAccel
-    sOut[sCtr + 25], sOut[sCtr + 26], sOut[sCtr + 27] = angAccel[1], angAccel[2], angAccel[3]
-    sOut[sCtr + 28] = d.time
+    if v.ctrl then
+      local d = v.ctrl.getLatest(v.id)
+      local pos = d.pos
+      sOut[sCtr], sOut[sCtr + 1], sOut[sCtr + 2] = pos[1], pos[2], pos[3]
+      local dir1 = d.dirX
+      sOut[sCtr + 3], sOut[sCtr + 4], sOut[sCtr + 5] = dir1[1], dir1[2], dir1[3]
+      local dir2 = d.dirY
+      sOut[sCtr + 6], sOut[sCtr + 7], sOut[sCtr + 8] = dir2[1], dir2[2], dir2[3]
+      local dir3 = d.dirZ
+      sOut[sCtr + 9], sOut[sCtr + 10], sOut[sCtr + 11] = dir3[1], dir3[2], dir3[3]
+      sOut[sCtr + 12] = d.mass
+      local angVelRaw = d.angVel
+      sOut[sCtr + 13], sOut[sCtr + 14], sOut[sCtr + 15] = angVelRaw[1], angVelRaw[2], angVelRaw[3]
+      local angVelSm = d.angVelSmooth
+      sOut[sCtr + 16], sOut[sCtr + 17], sOut[sCtr + 18] = angVelSm[1], angVelSm[2], angVelSm[3]
+      local accelRaw = d.accRaw
+      sOut[sCtr + 19], sOut[sCtr + 20], sOut[sCtr + 21] = accelRaw[1], accelRaw[2], accelRaw[3]
+      local accelSm = d.accSmooth
+      sOut[sCtr + 22], sOut[sCtr + 23], sOut[sCtr + 24] = accelSm[1], accelSm[2], accelSm[3]
+      local angAccel = d.angAccel
+      sOut[sCtr + 25], sOut[sCtr + 26], sOut[sCtr + 27] = angAccel[1], angAccel[2], angAccel[3]
+      sOut[sCtr + 28] = d.time
+    end
     sCtr = sCtr + 29
   end
   for _, v in ipairs(vehSensors.GPSs) do                                                            -- Append all the GPS readings.
-    local d = v.ctrl.getLatest(v.id)
-    sOut[sCtr], sOut[sCtr + 1] = d.x, d.y
-    sOut[sCtr + 2], sOut[sCtr + 3] = d.lon, d.lat
-    sOut[sCtr + 4] = d.time
+    if v.ctrl then
+      local d = v.ctrl.getLatest(v.id)
+      sOut[sCtr], sOut[sCtr + 1] = d.x, d.y
+      sOut[sCtr + 2], sOut[sCtr + 3] = d.lon, d.lat
+      sOut[sCtr + 4] = d.time
+    end
     sCtr = sCtr + 5
   end
   for _, v in ipairs(vehSensors.idealRADARs) do                                                     -- Append the Ideal RADAR readings.
-    local d = v.ctrl.getLatest(v.id)
-    local veh = d.closestVehicles1
-    sOut[sCtr] = sqrt(veh.distToPlayerVehicleSq)
-    sOut[sCtr + 1], sOut[sCtr + 2] = d.length, d.width
-    local vel = veh.vel
-    sOut[sCtr + 3], sOut[sCtr + 4], sOut[sCtr + 5] = vel.x, vel.y, vel.z
-    local accel = veh.acc
-    sOut[sCtr + 6], sOut[sCtr + 7], sOut[sCtr + 8] = accel.x, accel.y, accel.z
-    sOut[sCtr + 9], sOut[sCtr + 10] = veh.relDistX, veh.relDistY
-    sOut[sCtr + 11], sOut[sCtr + 12] = veh.relVelX, veh.relVelY
-    sOut[sCtr + 13], sOut[sCtr + 14] = veh.relAccX, veh.relAccY
-    veh = d.closestVehicles2
-    sOut[sCtr + 15] = sqrt(veh.distToPlayerVehicleSq)
-    sOut[sCtr + 16], sOut[sCtr + 17] = d.length, d.width
-    local vel = veh.vel
-    sOut[sCtr + 18], sOut[sCtr + 19], sOut[sCtr + 20] = vel.x, vel.y, vel.z
-    local accel = veh.acc
-    sOut[sCtr + 21], sOut[sCtr + 22], sOut[sCtr + 23] = accel.x, accel.y, accel.z
-    sOut[sCtr + 24], sOut[sCtr + 25] = veh.relDistX, veh.relDistY
-    sOut[sCtr + 26], sOut[sCtr + 27] = veh.relVelX, veh.relVelY
-    sOut[sCtr + 28], sOut[sCtr + 29] = veh.relAccX, veh.relAccY
-    veh = d.closestVehicles3
-    sOut[sCtr + 30] = sqrt(veh.distToPlayerVehicleSq)
-    sOut[sCtr + 31], sOut[sCtr + 32] = d.length, d.width
-    local vel = veh.vel
-    sOut[sCtr + 33], sOut[sCtr + 34], sOut[sCtr + 35] = vel.x, vel.y, vel.z
-    local accel = veh.acc
-    sOut[sCtr + 36], sOut[sCtr + 37], sOut[sCtr + 38] = accel.x, accel.y, accel.z
-    sOut[sCtr + 39], sOut[sCtr + 40] = veh.relDistX, veh.relDistY
-    sOut[sCtr + 41], sOut[sCtr + 42] = veh.relVelX, veh.relVelY
-    sOut[sCtr + 43], sOut[sCtr + 44] = veh.relAccX, veh.relAccY
-    veh = d.closestVehicles4
-    sOut[sCtr + 45] = sqrt(veh.distToPlayerVehicleSq)
-    sOut[sCtr + 46], sOut[sCtr + 47] = d.length, d.width
-    local vel = veh.vel
-    sOut[sCtr + 48], sOut[sCtr + 49], sOut[sCtr + 50] = vel.x, vel.y, vel.z
-    local accel = veh.acc
-    sOut[sCtr + 51], sOut[sCtr + 52], sOut[sCtr + 53] = accel.x, accel.y, accel.z
-    sOut[sCtr + 54], sOut[sCtr + 55] = veh.relDistX, veh.relDistY
-    sOut[sCtr + 56], sOut[sCtr + 57] = veh.relVelX, veh.relVelY
-    sOut[sCtr + 58], sOut[sCtr + 59] = veh.relAccX, veh.relAccY
-    sOut[sCtr + 60] = d.time
+    if v.ctrl then
+      local d = v.ctrl.getLatest(v.id)
+      local veh = d.closestVehicles1
+      local vel, accel = veh.velBB, veh.acc
+      sOut[sCtr] = sqrt(veh.distToPlayerVehicleSq or 0)
+      sOut[sCtr + 1], sOut[sCtr + 2] = veh.length or 0, veh.width or 0
+      sOut[sCtr + 3], sOut[sCtr + 4], sOut[sCtr + 5] = vel.x, vel.y, vel.z
+      sOut[sCtr + 6], sOut[sCtr + 7], sOut[sCtr + 8] = accel.x, accel.y, accel.z
+      sOut[sCtr + 9], sOut[sCtr + 10] = veh.relDistX, veh.relDistY
+      sOut[sCtr + 11], sOut[sCtr + 12] = veh.relVelX, veh.relVelY
+      sOut[sCtr + 13], sOut[sCtr + 14] = veh.relAccX, veh.relAccY
+      veh = d.closestVehicles2
+      vel, accel = veh.velBB, veh.acc
+      sOut[sCtr + 15] = sqrt(veh.distToPlayerVehicleSq or 0)
+      sOut[sCtr + 16], sOut[sCtr + 17] = veh.length or 0, veh.width or 0
+      sOut[sCtr + 18], sOut[sCtr + 19], sOut[sCtr + 20] = vel.x, vel.y, vel.z
+      sOut[sCtr + 21], sOut[sCtr + 22], sOut[sCtr + 23] = accel.x, accel.y, accel.z
+      sOut[sCtr + 24], sOut[sCtr + 25] = veh.relDistX, veh.relDistY
+      sOut[sCtr + 26], sOut[sCtr + 27] = veh.relVelX, veh.relVelY
+      sOut[sCtr + 28], sOut[sCtr + 29] = veh.relAccX, veh.relAccY
+      veh = d.closestVehicles3
+      vel, accel = veh.velBB, veh.acc
+      sOut[sCtr + 30] = sqrt(veh.distToPlayerVehicleSq or 0)
+      sOut[sCtr + 31], sOut[sCtr + 32] = veh.length or 0, veh.width or 0
+      sOut[sCtr + 33], sOut[sCtr + 34], sOut[sCtr + 35] = vel.x, vel.y, vel.z
+      sOut[sCtr + 36], sOut[sCtr + 37], sOut[sCtr + 38] = accel.x, accel.y, accel.z
+      sOut[sCtr + 39], sOut[sCtr + 40] = veh.relDistX, veh.relDistY
+      sOut[sCtr + 41], sOut[sCtr + 42] = veh.relVelX, veh.relVelY
+      sOut[sCtr + 43], sOut[sCtr + 44] = veh.relAccX, veh.relAccY
+      veh = d.closestVehicles4
+      vel, accel = veh.velBB, veh.acc
+      sOut[sCtr + 45] = sqrt(veh.distToPlayerVehicleSq or 0)
+      sOut[sCtr + 46], sOut[sCtr + 47] = veh.length or 0, veh.width or 0
+      sOut[sCtr + 48], sOut[sCtr + 49], sOut[sCtr + 50] = vel.x, vel.y, vel.z
+      sOut[sCtr + 51], sOut[sCtr + 52], sOut[sCtr + 53] = accel.x, accel.y, accel.z
+      sOut[sCtr + 54], sOut[sCtr + 55] = veh.relDistX, veh.relDistY
+      sOut[sCtr + 56], sOut[sCtr + 57] = veh.relVelX, veh.relVelY
+      sOut[sCtr + 58], sOut[sCtr + 59] = veh.relAccX, veh.relAccY
+      sOut[sCtr + 60] = d.time or 0
+    end
     sCtr = sCtr + 61
   end
   for _, v in ipairs(vehSensors.roads) do                                                    -- Append all the Roads Sensor readings.
-    local d = v.ctrl.getLatest(v.id)
-    sOut[sCtr], sOut[sCtr + 1], sOut[sCtr + 2] = d.halfWidth, d.roadRadius, d.headingAngle
-    sOut[sCtr + 3], sOut[sCtr + 4], sOut[sCtr + 5] = d.dist2CL, d.dist2Left, d.dist2Right
-    sOut[sCtr + 6], sOut[sCtr + 7], sOut[sCtr + 8] = d.drivability, d.speedLimit, d.flag1way
-    sOut[sCtr + 9], sOut[sCtr + 10], sOut[sCtr + 11] = d.xP0onCL, d.yP0onCL, d.zP0onCL
-    sOut[sCtr + 12], sOut[sCtr + 13], sOut[sCtr + 14] = d.xP1onCL, d.yP1onCL, d.zP1onCL
-    sOut[sCtr + 15], sOut[sCtr + 16], sOut[sCtr + 17] = d.xP2onCL, d.yP2onCL, d.zP2onCL
-    sOut[sCtr + 18], sOut[sCtr + 19], sOut[sCtr + 20] = d.xP3onCL, d.yP3onCL, d.zP3onCL
-    sOut[sCtr + 21] = d.time
+    if v.ctrl then
+      local d = v.ctrl.getLatest(v.id)
+      sOut[sCtr], sOut[sCtr + 1], sOut[sCtr + 2] = d.halfWidth, d.roadRadius, d.headingAngle
+      sOut[sCtr + 3], sOut[sCtr + 4], sOut[sCtr + 5] = d.dist2CL, d.dist2Left, d.dist2Right
+      sOut[sCtr + 6], sOut[sCtr + 7], sOut[sCtr + 8] = d.drivability, d.speedLimit, d.flag1way
+      sOut[sCtr + 9], sOut[sCtr + 10], sOut[sCtr + 11] = d.xP0onCL, d.yP0onCL, d.zP0onCL
+      sOut[sCtr + 12], sOut[sCtr + 13], sOut[sCtr + 14] = d.xP1onCL, d.yP1onCL, d.zP1onCL
+      sOut[sCtr + 15], sOut[sCtr + 16], sOut[sCtr + 17] = d.xP2onCL, d.yP2onCL, d.zP2onCL
+      sOut[sCtr + 18], sOut[sCtr + 19], sOut[sCtr + 20] = d.xP3onCL, d.yP3onCL, d.zP3onCL
+      sOut[sCtr + 21] = d.time
+    end
     sCtr = sCtr + 22
   end
 end
@@ -225,6 +293,8 @@ end
 -- Handles received message. Sets the appropriate vehicle system properties.
 local function handleMessageReceive()
 
+
+
   -- If the id of the received message is not new, then skip it. This is either redundant or a ghost message.
   if msgIn[1] <= maxRecvId then
     return false
@@ -243,10 +313,12 @@ local function handleMessageReceive()
   -- Set the 'Driver' group controls from the incoming message signals.
   for _, data in ipairs(inDMap) do
     local iF = data.iFreeze                                                                         -- The index to the freeze channel, if it exists (otherwise 1).
-    local fFreeze = sign(abs(msgIn[iF]))                                                            -- Clamp the freeze channel value to 0 or 1.
+    local fFreeze = sign(abs(msgIn[iF] or 0))                                                       -- Clamp the freeze channel value to 0 or 1.
     local i1 = data.i1
     local fR, fM, fA = data.fReplace, data.fMultiply, data.fAdd                                     -- The flags for each component (replace, multiply, add).
-    local vR, vM, vA = msgIn[data.iValue], msgIn[data.iMultiply], msgIn[data.iAdd]                  -- The multiply and add signal values.
+    local vR = msgIn[data.iValue] or 0
+    local vM = msgIn[data.iMultiply] or 0
+    local vA = msgIn[data.iAdd] or 0
     local fMInv, fAInv = 1 - fM, 1 - fA                                                             -- The multiply and add channel flag opposite values.
     local cReplace = max(0, fMInv + fAInv - 1) * fR * vR                                            -- The masked 'replace' contribution.
     local vMvR = vM * vR
@@ -257,17 +329,25 @@ local function handleMessageReceive()
     local posPart = fFreeze * frozenValues[iF]
     local freezeOpp = 1.0 - fFreeze                                                                 -- The freeze channel flag opposite value.
     local evalWithModeAndFreeze = freezeOpp * evalWithMode + posPart                                -- Mask with the freeze channel value (0 or 1).
-    input.event(i1, evalWithModeAndFreeze, FILTER_DIRECT)
+    if i1 == 'gearIndex' then
+      if controller.mainController and controller.mainController.shiftToGearIndex then
+        controller.mainController.shiftToGearIndex(math.floor(evalWithModeAndFreeze + 0.5))
+      end
+    else
+      input.event(i1, evalWithModeAndFreeze, FILTER_DIRECT)
+    end
     frozenValues[iF] = freezeOpp * evalWithModeAndFreeze + posPart                                  -- Update the frozen value, as required.
   end
 
   -- Set the 'Wheels' group controls from the incoming message signals.
   for _, data in ipairs(inWMap) do
     local iF = data.iFreeze                                                                         -- The index to the freeze channel, if it exists (otherwise 1).
-    local fFreeze = sign(abs(msgIn[iF]))                                                            -- Clamp the freeze channel value to 0 or 1.
+    local fFreeze = sign(abs(msgIn[iF] or 0))                                                      -- Clamp the freeze channel value to 0 or 1.
     local i1, WRI = data.i1, data.WRI
     local fR, fM, fA = data.fReplace, data.fMultiply, data.fAdd                                     -- The flags for each component (replace, multiply, add).
-    local vR, vM, vA = msgIn[data.iValue], msgIn[data.iMultiply], msgIn[data.iAdd]                  -- The multiply and add signal values.
+    local vR = msgIn[data.iValue] or 0
+    local vM = msgIn[data.iMultiply] or 0
+    local vA = msgIn[data.iAdd] or 0
     local fMInv, fAInv = 1 - fM, 1 - fA                                                             -- The multiply and add channel flag opposite values.
     local cReplace = max(0, fMInv + fAInv - 1) * fR * vR                                            -- The masked 'replace' contribution.
     local vMvR = vM * vR
@@ -346,6 +426,7 @@ local function driverName2Id(name)
   if name == names.parkingBrakeInput then return 'parkingbrake_input' end
   if name == names.steeringWheelPosition then return 'steering' end
   if name == names.steeringWheelPositionInput then return 'steering_input' end
+  if name == names.gearIndex then return 'gearIndex' end
   log('E', logTag, 'Drivers group target not found from given name.')
   return nil
 end
@@ -677,6 +758,17 @@ local function computeMappingStructures(signalsTo, signalsFrom, sensorMap)
   frozenValues[defaultIndex] = 0.0                                                                  -- Set a zero freeze value at the default index position.
 end
 
+
+
+local function extractSignalNames(signals)
+  local names = {}
+  for i, signal in ipairs(signals) do
+    names[i] = signal.name -- Extract the actual signal name
+  end
+  return names
+end
+
+
 -- Initialisation callback.
 local function init(dataEncoded)
 
@@ -687,7 +779,8 @@ local function init(dataEncoded)
   time3rdParty, pingTime = data.time3rdParty, data.pingTime
   udpSendIP, udpSendPort = data.udpSendIP, data.udpSendPort
   udpReceiveIP, udpReceivePort = data.udpReceiveIP, data.udpReceivePort
-
+  enableVSL=data.enableVSL
+  enableCosim=data.enableCosim
   -- Cache some properties known at init, in state.
   initLength, initWidth, initHeight = obj:getInitialLength(), obj:getInitialWidth(), obj:getInitialHeight()
 
@@ -695,17 +788,39 @@ local function init(dataEncoded)
   -- [This structure maps the sensor name to the sensor id in the simulator (either ge lua or gameengine)].
   vehSensors = data.sensorMap
   local IMUs, GPSs, idealRADARs, roads = vehSensors.IMUs, vehSensors.GPSs, vehSensors.idealRADARs, vehSensors.roads
+
   for i = 1, #IMUs do
-    IMUs[i].ctrl = controller.getController('advancedIMU' .. IMUs[i].id)
+    local ctrl = controller.getController('advancedIMU' .. IMUs[i].id)
+    if not ctrl then
+      -- Sensor create is queued just before this controller loads; allow a small id skew.
+      for offset = 0, 8 do
+        ctrl = controller.getController('advancedIMU' .. (IMUs[i].id + offset))
+        if ctrl then break end
+      end
+    end
+    if not ctrl then
+      log('E', logTag, 'Advanced IMU controller not found for sensor id ' .. tostring(IMUs[i].id))
+    end
+    IMUs[i].ctrl = ctrl
   end
+
   for i = 1, #GPSs do
     GPSs[i].ctrl = controller.getController('GPS' .. GPSs[i].id)
+    if not GPSs[i].ctrl then
+      log('E', logTag, 'GPS controller not found for sensor id ' .. tostring(GPSs[i].id))
+    end
   end
   for i = 1, #idealRADARs do
     idealRADARs[i].ctrl = controller.getController('idealRADARSensor' .. idealRADARs[i].id)
+    if not idealRADARs[i].ctrl then
+      log('E', logTag, 'Ideal RADAR controller not found for sensor id ' .. tostring(idealRADARs[i].id))
+    end
   end
   for i = 1, #roads do
     roads[i].ctrl = controller.getController('roadsSensor' .. roads[i].id)
+    if not roads[i].ctrl then
+      log('E', logTag, 'Roads sensor controller not found for sensor id ' .. tostring(roads[i].id))
+    end
   end
 
   -- Compute the in/out mapping structures.
@@ -713,23 +828,51 @@ local function init(dataEncoded)
 
   -- Set up the UDP send and receive sockets.
   -- [We always start with a non-blocking receive socket (by using zero timeout)].
-  udpSendSocket = socket.udp()
-  local _, error = udpSendSocket:setpeername(udpSendIP, udpSendPort)
-  if error then
-    log('E', logTag, 'UDP send socket could not be set up.')
-  end
-  udpRecvSocket = socket.udp()
-  udpRecvSocket:settimeout(0.0)
-  local _, error = udpRecvSocket:setsockname(udpReceiveIP, udpReceivePort)
-  if error then
-    log('E', logTag, 'UDP receive socket could not be set up.')
+  if enableCosim then
+    udpSendSocket = socket.udp()
+    local _, error = udpSendSocket:setpeername(udpSendIP, udpSendPort)
+    if error then
+      log('E', logTag, 'UDP send socket could not be set up.')
+    end
+    udpRecvSocket = socket.udp()
+    udpRecvSocket:settimeout(0.0)
+    local _, error = udpRecvSocket:setsockname(udpReceiveIP, udpReceivePort)
+    if error then
+      log('E', logTag, 'UDP receive socket could not be set up.')
+    end
+
+    -- Compute some internal control parameters, relating to the coupling window.
+    sendSkips = ceil(time3rdParty / physicsDt) - 1
+    unanswered = ceil(pingTime / time3rdParty)
+
+    log('I', logTag, 'Coupling between BeamNG and 3rd party has started.')
+    guihooks.message("Co-Simulation active", 5, "cosimulationCoupling")
   end
 
-  -- Compute some internal control parameters, relating to the coupling window.
-  sendSkips = ceil(time3rdParty / physicsDt) - 1
-  unanswered = ceil(pingTime / time3rdParty)
 
-  log('I', logTag, 'Coupling between BeamNG and 3rd party has started.')
+  -- Create CSV files if VSL is enabled
+  if enableVSL then
+    local sendNames = extractSignalNames(data.signalsTo)
+    local receiveNames = extractSignalNames(data.signalsFrom)
+
+    if #sendNames == 0 or #receiveNames == 0 then
+      log('E', logTag, 'Signal indexes are empty. CSV cannot be created.')
+    else
+      log('I', logTag, 'Creating CSV files for logging.')
+      createCSV(sendNames, receiveNames)
+    end
+
+    -- Debug log to check if csvSendData is successfully created
+    if csvSendData then
+      log('I', logTag, 'csvSendData successfully initialized.')
+    else
+      log('E', logTag, 'Failed to initialize csvSendData.')
+    end
+  end
+
+
+initialized = true
+
 end
 
 -- Callback for setting wheel torques.
@@ -749,9 +892,37 @@ local function updateWheelsIntermediate(dt)
   end
 end
 
+
+
+local function addToCSV(msgOut)
+  cycleTime = os.clockhp()  - lastTimeOfSend
+  lastTimeOfSend = os.clockhp()
+  csvSendData:add(os.clockhp(), unpack(msgOut))
+end
+
 -- Update callback.
 local function update(dt)
 
+  if enableVSL and csvSendData == nil then
+    log('W', logTag, 'csvSendData is nil. Attempting to initialize CSV again.')
+    local sendIndexes = linspace(#dat.names)  -- Adjust dat.names if needed to fit your signal structure
+    local receiveIndexes = linspace(#dat.names)
+    createCSV(sendIndexes, receiveIndexes)
+    if csvSendData == nil then
+        log('E', logTag, 'Failed to initialize csvSendData in update(). Skipping CSV logging.')
+        return
+    else
+        log('I', logTag, 'csvSendData successfully created during update().')
+    end
+  end
+
+if not initialized then
+  log('W', logTag, 'Update called before initialization is complete.')
+  return
+end
+
+
+if enableCosim then
   if stepsSinceLastSend >= sendSkips then                                                           -- Determine if we should skip sending in this cycle.
     -- We will send in this cycle. Check if we have reached the window width.
     -- [This is when we have received the same number of messages as we have sent out].
@@ -762,10 +933,19 @@ local function update(dt)
         table.clear(msgIn)
         lpack.decodeDoubleArray(rawMsgFrom3rdParty, msgIn)
         handleMessageReceive()
+        if enableVSL then
+        csvReceiveData:add(os.clockhp(), unpack(msgIn))
+        end
+
       end
       createMessage()
       udpSendSocket:send(lpack.encodeDoubleArray(msgOut))
       sendCtr, stepsSinceLastSend = sendCtr + 1, 0
+      if enableVSL then
+        addToCSV(msgOut)
+      end
+
+
     else
       udpRecvSocket:settimeout(blockingTimeoutLength)                                               -- Reached the window width, so do blocking receive and send a new msg.
       local rawMsgFrom3rdParty = udpRecvSocket:receive()
@@ -776,29 +956,72 @@ local function update(dt)
           createMessage()
           udpSendSocket:send(lpack.encodeDoubleArray(msgOut))
           sendCtr, stepsSinceLastSend = sendCtr + 1, 0
+          if enableVSL then
+            addToCSV(msgOut)
+          end
         end
       else
         sendCtr, maxRecvId = 0, 0
       end
     end
   else
-    udpRecvSocket:settimeout(0.0)                                                                   -- Must skip sending in this cycle, so only perform a non-blocking recv.
-    local rawMsgFrom3rdParty = udpRecvSocket:receive()
-    if rawMsgFrom3rdParty ~= nil then
-      table.clear(msgIn)
-      lpack.decodeDoubleArray(rawMsgFrom3rdParty, msgIn)
-      handleMessageReceive()
+      udpRecvSocket:settimeout(0.0)                                                                   -- Must skip sending in this cycle, so only perform a non-blocking recv.
+      local rawMsgFrom3rdParty = udpRecvSocket:receive()
+      if rawMsgFrom3rdParty ~= nil then
+        table.clear(msgIn)
+        lpack.decodeDoubleArray(rawMsgFrom3rdParty, msgIn)
+        handleMessageReceive()
+        if enableVSL then
+        csvReceiveData:add(os.clockhp(), unpack(msgIn))
+        end
+
+
     end
     stepsSinceLastSend = stepsSinceLastSend + 1
   end
+
+  else
+
+    if not csvSendData then
+      log('E', logTag, 'csvSendData is not initialized. Skipping CSV logging.')
+      return
+    end
+    cycleTime = os.clockhp() - lastTimeOfSend
+    lastTimeOfSend = os.clockhp()
+
+    -- Create message data for logging
+    createMessage()
+
+    -- Add to CSV for logging
+    csvSendData:add(os.clockhp(), unpack(msgOut))
+    -- log('I', logTag, 'VSL only from controller, logging data.')
+
+
+
+
 end
+
+
+
+
+end
+
 
 -- Stops the coupling between BeamNG and the 3rd party.
 local function stop()
+  guihooks.message("Co-Simulation stopped", 5, "cosimulationCoupling")
+  if enableCosim then
   udpSendSocket:close()
   udpRecvSocket:close()
-  log('I', logTag, 'Coupling between BeamNG and 3rd party has terminated.')
+  end
+  if enableVSL then
+    saveCSV()
+    log('I', logTag, 'Coupling between BeamNG and 3rd party has terminated and CSV saved too')
+  end
+
 end
+
+
 
 
 -- Public interface.

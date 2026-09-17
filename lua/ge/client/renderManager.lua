@@ -11,7 +11,7 @@ M.initRenderManager = function()
   local alFormatToken = createObject("RenderFormatToken")
   alFormatToken.enabled = false
   alFormatToken:setField("format", 0, "GFXFormatR8G8B8A8")
-  alFormatToken:setField("depthFormat", 0, getConsoleVariable("$GFXFormatDefaultDepth"))
+  alFormatToken:setField("depthFormat", 0, VariableRegistry.get("$GFXFormatDefaultDepth", "GFXFormatD24S8"))
   alFormatToken.aaLevel = 0 -- -1 = match backbuffer
 
   -- The contents of the back buffer before this format token is executed

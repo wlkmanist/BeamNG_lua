@@ -4,13 +4,11 @@
 
 local im = ui_imgui
 
-local ffi = require('ffi')
-
 local C = {}
 
 C.name = 'EndScreen Drag Time Slip'
 C.color = ui_flowgraph_editor.nodeColors.ui
-C.description = 'Attempts to create a string out of the input.'
+C.description = 'Displays the drag race time slip with detailed info.'
 C.category = 'repeat_instant'
 
 C.pinSchema = {
@@ -18,20 +16,23 @@ C.pinSchema = {
   { dir = 'out', type = 'flow', name = 'flow', description = '', chainFlow = true },
 }
 
-C.tags = { 'string' }
+C.tags = { 'end', 'finish', 'screen', 'outro', 'ui' }
 
 function C:init()
   self.panel = {
     type = "dragTimeSlip",
     header = "Timeslip",
-    timeslip = {}
+    timeslip = {},
+    pages = {
+      timeslip = true,
+    }
   }
 end
 
 function C:work()
   self.pinOut.flow.value = self.pinIn.flow.value
   -- add it to the layout
-  local slipData = gameplay_drag_general.createTimeslipData()
+  local slipData = gameplay_drag_dragBridge.createTimeslipData()
   --dump(dragData)
   if not slipData then
     self.mgr.modules.ui:addUIElement(self.panel)

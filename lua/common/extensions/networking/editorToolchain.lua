@@ -31,12 +31,13 @@ local function onData(connection, data)
 
   if data == 'disconnect' then
     subscriptions[connection] = nil
+    selectedNodes = nil
     print('Connection closed: ' .. tostring(connection))
     return
   end
 
   if data['cmd'] == 'ping' then
-    log('I', 'editorToolchain', getPeerName(connection) .. ' - ping')
+    --log('I', 'editorToolchain', getPeerName(connection) .. ' - ping')
     server:send(connection, {cmd='pong'}, data)
 
   elseif data['cmd'] == 'init' then
@@ -125,7 +126,7 @@ local function onPreRender(dtReal, dtSim, dtRaw)
   local frameId = Engine.Render.getFrameId()
   local vId = be:getPlayerVehicleID(0)
   local vData = core_vehicle_manager.getVehicleData(vId)
-  local veh = be:getObjectByID(vId)
+  local veh = getObjectByID(vId)
 
   for connection, subs in pairs(subscriptions) do
     for _, sub in ipairs(subs) do
@@ -153,11 +154,17 @@ end
 local function onExtensionUnloaded()
   if server then
     server:destroy()
+    server = nil
   end
+end
+
+local function onInit()
+  setExtensionUnloadMode(M, 'manual')
 end
 
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onPreRender = onPreRender
+M.onInit = onInit
 
 return M

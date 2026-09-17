@@ -15,7 +15,7 @@ local sign = sign
 local sqrt = math.sqrt
 
 local function updateVelocity(device)
-  --calculate input AV based on the two differential output AVs (weighted by base torque split as the split is created by different sized gears on each output)
+  --calculate input AV based on the two differential output AVs (weighted by base torque split as the split is created by different spider gear ratios on each output)
   --inputAV is the carrier AV * gear ratio
   device.inputAV = (device.outputAV1 * device.diffTorqueSplitA + device.outputAV2 * device.diffTorqueSplitB) * device.gearRatio
   device.parent[device.parentOutputAVName] = device.inputAV
@@ -26,59 +26,68 @@ local function openUpdateTorque(device)
   --divide out the gear ratio to get the carrier AV
   local outputAV1diff = device.outputAV1 - inputAV * device.invGearRatio
   local outputAV2diff = device.outputAV2 - inputAV * device.invGearRatio
-
+  local outputAVdiff = device.outputAV1 - device.outputAV2
   local absMaxOutputAVdiff = max(abs(outputAV1diff), abs(outputAV2diff))
+
   local friction = (device.friction * clamp(inputAV, -1, 1) + device.dynamicFriction * inputAV + device.torqueLossCoef * device.parent[device.parentOutputTorqueName]) * device.wearFrictionCoef * device.damageFrictionCoef
   local inputTorque = (device.parent[device.parentOutputTorqueName] - friction) * (1 - min(device.speedLimitCoef * absMaxOutputAVdiff * absMaxOutputAVdiff * absMaxOutputAVdiff, 1)) * device.gearRatio
 
   --some small locking torque due to friction effects
-  local openTorque = 0.01 * abs(inputTorque)
+  local openTorque = 0.034 * abs(inputTorque)
   device.inputTorque = inputTorque
-  device.outputTorque1 = inputTorque * device.diffTorqueSplitA - openTorque * clamp(outputAV1diff * device.diffTorqueSplitA, -1, 1)
-  device.outputTorque2 = inputTorque * device.diffTorqueSplitB - openTorque * clamp(outputAV2diff * device.diffTorqueSplitB, -1, 1)
+  device.outputTorque1 = inputTorque * device.diffTorqueSplitA - openTorque * clamp(outputAVdiff, -0.1, 0.1)
+  device.outputTorque2 = inputTorque * device.diffTorqueSplitB - openTorque * clamp(outputAVdiff, -0.1, 0.1)
 end
 
-local function LSDUpdateTorque(device)
+local function LSDUpdateTorque(device, dt)
   local inputAV = device.inputAV
+  --divide out the gear ratio to get the carrier AV
   local outputAV1diff = device.outputAV1 - inputAV * device.invGearRatio
   local outputAV2diff = device.outputAV2 - inputAV * device.invGearRatio
-
+  local outputAVdiff = device.outputAV1 - device.outputAV2
   local absMaxOutputAVdiff = max(abs(outputAV1diff), abs(outputAV2diff))
+
   local friction = (device.friction * clamp(inputAV, -1, 1) + device.dynamicFriction * inputAV + device.torqueLossCoef * device.parent[device.parentOutputTorqueName]) * device.wearFrictionCoef * device.damageFrictionCoef
   local inputTorque = (device.parent[device.parentOutputTorqueName] - friction) * (1 - min(device.speedLimitCoef * absMaxOutputAVdiff * absMaxOutputAVdiff * absMaxOutputAVdiff, 1)) * device.gearRatio
 
   --lsd works with an initial preload torque + input torque sensing locking ability
   local torqueSign = sign(inputTorque)
-  local lsdLockCoef = max(torqueSign, 0) * device.lsdLockCoef - min(torqueSign, 0) * device.lsdRevLockCoef
-  local lsdTorque = device.lsdPreload + lsdLockCoef * abs(inputTorque)
+  local lsdLockCoef = min(max(torqueSign, 0) * device.lsdLockCoef - min(torqueSign, 0) * device.lsdRevLockCoef, 1)
+  --active locking support added but not active unless appropriate controller is used
+  local lsdTorque = device.lsdPreload + lsdLockCoef * abs(inputTorque) + device.activeLockTorque * device.activeLockCoef
+
+  device.maxDiffAngle = sqrt(lsdTorque / device.lockSpring)
+  device.diffAngle = clamp(device.diffAngle + outputAVdiff * dt, -device.maxDiffAngle, device.maxDiffAngle)
+  local lockTorque = clamp(device.diffAngle * device.diffAngle * device.lockSpring * sign(device.diffAngle), -device.lockTorque, device.lockTorque)
+
   device.inputTorque = inputTorque
-  device.outputTorque1 = inputTorque * device.diffTorqueSplitA - device.lsdTorque1Smoother:get(lsdTorque * clamp(outputAV1diff * device.diffTorqueSplitA, -1, 1))
-  device.outputTorque2 = inputTorque * device.diffTorqueSplitB - device.lsdTorque2Smoother:get(lsdTorque * clamp(outputAV2diff * device.diffTorqueSplitB, -1, 1))
+  device.outputTorque1 = inputTorque * device.diffTorqueSplitA - lockTorque
+  device.outputTorque2 = inputTorque * device.diffTorqueSplitB + lockTorque
 end
 
 local function viscousLSDUpdateTorque(device)
   local inputAV = device.inputAV
+  --divide out the gear ratio to get the carrier AV
   local outputAV1diff = device.outputAV1 - inputAV * device.invGearRatio
   local outputAV2diff = device.outputAV2 - inputAV * device.invGearRatio
-
+  local outputAVdiff = device.outputAV1 - device.outputAV2
   local absMaxOutputAVdiff = max(abs(outputAV1diff), abs(outputAV2diff))
+
   local friction = (device.friction * clamp(inputAV, -1, 1) + device.dynamicFriction * inputAV + device.torqueLossCoef * device.parent[device.parentOutputTorqueName]) * device.wearFrictionCoef * device.damageFrictionCoef
   local inputTorque = (device.parent[device.parentOutputTorqueName] - friction) * (1 - min(device.speedLimitCoef * absMaxOutputAVdiff * absMaxOutputAVdiff * absMaxOutputAVdiff, 1)) * device.gearRatio
 
   --vlsd works with speed sensitive locking torque
-  local viscousTorque = device.viscousTorque
-  local viscousTorque1 = clamp(device.viscousCoef * outputAV1diff * device.diffTorqueSplitA, -viscousTorque, viscousTorque)
-  local viscousTorque2 = clamp(device.viscousCoef * outputAV2diff * device.diffTorqueSplitB, -viscousTorque, viscousTorque)
+  local viscousTorque = device.viscousTorque1Smoother:get(clamp(device.viscousCoef * outputAVdiff, -device.viscousTorque, device.viscousTorque))
   device.inputTorque = inputTorque
-  device.outputTorque1 = inputTorque * device.diffTorqueSplitA - device.viscousTorque1Smoother:get(viscousTorque1)
-  device.outputTorque2 = inputTorque * device.diffTorqueSplitB - device.viscousTorque2Smoother:get(viscousTorque2)
+  device.outputTorque1 = inputTorque * device.diffTorqueSplitA - viscousTorque
+  device.outputTorque2 = inputTorque * device.diffTorqueSplitB + viscousTorque
 end
 
 local function lockedUpdateTorque(device, dt)
   local inputAV = device.inputAV
   local outputAVdiff = device.outputAV1 - device.outputAV2
-
   local absOutputAVdiff = abs(outputAVdiff)
+
   local friction = (device.friction * clamp(inputAV, -1, 1) + device.dynamicFriction * inputAV + device.torqueLossCoef * device.parent[device.parentOutputTorqueName]) * device.wearFrictionCoef * device.damageFrictionCoef
   local inputTorque = (device.parent[device.parentOutputTorqueName] - friction) * (1 - min(device.speedLimitCoef * absOutputAVdiff * absOutputAVdiff * absOutputAVdiff, 1)) * device.gearRatio
 
@@ -92,23 +101,24 @@ end
 
 local function activeLockUpdateTorque(device, dt)
   local inputAV = device.inputAV
-  local outputAVdiff = device.outputAV1 - device.outputAV2
+  --divide out the gear ratio to get the carrier AV
   local outputAV1diff = device.outputAV1 - inputAV * device.invGearRatio
   local outputAV2diff = device.outputAV2 - inputAV * device.invGearRatio
+  local outputAVdiff = device.outputAV1 - device.outputAV2
 
   local absMaxOutputAVdiff = max(abs(outputAV1diff), abs(outputAV2diff))
   local friction = (device.friction * clamp(inputAV, -1, 1) + device.dynamicFriction * inputAV + device.torqueLossCoef * device.parent[device.parentOutputTorqueName]) * device.wearFrictionCoef * device.damageFrictionCoef
   local inputTorque = (device.parent[device.parentOutputTorqueName] - friction) * (1 - min(device.speedLimitCoef * absMaxOutputAVdiff * absMaxOutputAVdiff * absMaxOutputAVdiff, 1)) * device.gearRatio
 
   --integrate a position difference for the locking spring to act on, but constrain it to deform if too much torque
-  device.diffAngle = clamp(device.diffAngle + outputAVdiff * dt, -device.maxDiffAngle, device.maxDiffAngle)
-  local maxClutchLockTorque = device.lockTorque * device.activeLockCoef
+  local maxClutchLockTorque = device.activeLockTorque * device.activeLockCoef
   device.maxDiffAngle = sqrt(maxClutchLockTorque / device.lockSpring)
+  device.diffAngle = clamp(device.diffAngle + outputAVdiff * dt, -device.maxDiffAngle, device.maxDiffAngle)
 
   local lockTorque = clamp(device.diffAngle * device.diffAngle * device.lockSpring * sign(device.diffAngle) + device.lockDamp * outputAVdiff, -maxClutchLockTorque, maxClutchLockTorque)
   device.inputTorque = inputTorque
-  device.outputTorque1 = inputTorque * 0.5 - lockTorque
-  device.outputTorque2 = inputTorque * 0.5 + lockTorque
+  device.outputTorque1 = inputTorque * device.diffTorqueSplitA - lockTorque
+  device.outputTorque2 = inputTorque * device.diffTorqueSplitB + lockTorque
 end
 
 local function selectUpdates(device)
@@ -250,16 +260,15 @@ local function reset(device, jbeamData)
 
   device.invGearRatio = 1 / device.gearRatio
 
-  --lsd specific
-  device.lsdTorque1Smoother:reset()
-  device.lsdTorque2Smoother:reset()
-
   --viscous specific
   device.viscousTorque1Smoother:reset()
   device.viscousTorque2Smoother:reset()
 
   --locked specific
   device.diffAngle = 0
+
+  --active locking specific
+  device.activeLockCoef = 0
 
   device.wearFrictionCoef = 1
   device.damageFrictionCoef = 1
@@ -324,12 +333,11 @@ local function new(jbeamData)
   device.lsdPreload = jbeamData.lsdPreload or 50
   device.lsdLockCoef = jbeamData.lsdLockCoef or 0.2
   device.lsdRevLockCoef = jbeamData.lsdRevLockCoef or device.lsdLockCoef
-  device.lsdTorque1Smoother = newExponentialSmoothing(jbeamData.lsdSmoothing or 25)
-  device.lsdTorque2Smoother = newExponentialSmoothing(jbeamData.lsdSmoothing or 25)
 
   --viscous specific
   device.viscousCoef = jbeamData.viscousCoef or 5
   device.viscousTorque = jbeamData.viscousTorque or device.viscousCoef * 10
+  device.viscousExponent = jbeamData.viscousExponent or 1
   device.viscousTorque1Smoother = newExponentialSmoothing(jbeamData.viscousSmoothing or 25)
   device.viscousTorque2Smoother = newExponentialSmoothing(jbeamData.viscousSmoothing or 25)
 
@@ -338,8 +346,10 @@ local function new(jbeamData)
   device.lockTorque = jbeamData.lockTorque or 500
   device.lockSpring = jbeamData.lockSpring or device.lockTorque
   device.lockDampRatio = jbeamData.lockDampRatio or 0.1 --1 is critically damped
-  device.activeLockCoef = 0
 
+  --active locking (affects activeLock and lsd with appropriate controller)
+  device.activeLockCoef = 0
+  device.activeLockTorque = jbeamData.activeLockTorque or device.lockTorque
   device.lockSpringAutoCalc = jbeamData.lockSpring == nil and jbeamData.lockTorque == nil
 
   selectUpdates(device)

@@ -28,19 +28,9 @@ function C:init()
 
   self.demoProjects = {
     {
-      name = "East Coast Chase",
-      description = 'Stop an AI-controlled vehicle from escaping.',
-      data = jsonReadFile('levels/east_coast_usa/scenarios/chase_1/chase_1.flow.json')
-    },
-    {
-      name = "Port Escape",
-      description = 'Drive through the mazy port and reach the boat.',
-      data = jsonReadFile('levels/Industrial/scenarios/portEscape/portEscape.flow.json')
-    },
-    {
-      name = "Gravity Fuel",
-      description = 'Roll down the mountain road and refuel your vehicle.',
-      data = jsonReadFile('levels/italy/scenarios/noFuel_v2/gravityFuel2.flow.json')
+      name = "Simple Race",
+      description = 'Compete in a short race versus an AI-controlled vehicle.',
+      data = jsonReadFile('/lua/ge/extensions/flowgraph/examples/scenarios/simpleRace/race.flow.json')
     }
   }
 
@@ -99,11 +89,12 @@ local function fancyIconButton(id, icon, iconHover, txt, lowerTxt)
   local btn = im.InvisibleButton("##"..id, size)
   hoverState[id] = im.IsItemHovered()
   im.SetCursorPos(cursorBefore)
+  im.Dummy(im.ImVec2(0, 0))
   return btn
 end
 
 function C:drawLeftColumn()
-  im.BeginChild1("##leftColumn", im.ImVec2(450, 0), nil, im.WindowFlags_NoScrollWithMouse)
+  im.BeginChild1("##leftColumn", im.ImVec2(450, 820), nil, im.WindowFlags_NoScrollWithMouse)
   im.Dummy(im.ImVec2(0, 10))
   headerText('Projects')
   if fancyIconButton('NewProject', editor.icons.folder_open, editor.icons.create_new_folder, "New Project", "") then
@@ -124,7 +115,7 @@ function C:drawLeftColumn()
       end
       btnCount = btnCount +1
     end
-    if btnCount > 5 then
+    if btnCount > 10 then
       break
     end
   end
@@ -139,19 +130,17 @@ function C:drawRightColumn()
   im.Dummy(im.ImVec2(0, 20))
   im.PushTextWrapPos(im.GetCursorPosX() + math.max(minWrap,math.min(im.GetContentRegionAvailWidth(), maxWrap)))
 
-  headerText('Disclaimer')
-  im.TextWrapped("Welcome to the Flowgraph Editor! You can use it to create new gameplay for BeamNG. If you're new, there are examples you can check out below.")
-  im.Dummy(im.ImVec2(1,1))
-  im.TextWrapped("If you are returning, you might notice some changes around here. Most notably, we added a State System, which greatly reduces Flowgraph size and complexity. It also makes it easier to modify existing projects.")
-  im.Dummy(im.ImVec2(1,1))
+  headerText('Introduction')
+  im.TextWrapped("Welcome to the Flowgraph Editor! You can use it to create gameplay, experiments, and other interactive content for BeamNG. If you're new, there are examples you can check out below.")
+  im.Dummy(im.ImVec2(0,1))
   im.TextWrapped("Please keep in mind, while the Flowgraph Editor is in a good shape and can already be used to create new content, it is still WIP. That means projects that work now may not work after another update in the future.")
-  im.Dummy(im.ImVec2(1,5))
+  im.Dummy(im.ImVec2(0,5))
 
   headerText('Basic Examples')
-  im.TextWrapped("These are some simple examples you can check out to learn about Flowgraph. They showcase basic concepts of the Editor, such as creating and editing nodes, or working with the new state system.")
-  im.Dummy(im.ImVec2(1,1))
+  im.TextWrapped("These are some simple examples you can check out to learn about Flowgraph. They showcase basic concepts of the Editor, such as creating and editing nodes, or working with the state system.")
+  im.Dummy(im.ImVec2(0,1))
   im.TextWrapped("You can find more examples in the Examples Window when you have a project opened.")
-  im.Dummy(im.ImVec2(1,5))
+  im.Dummy(im.ImVec2(0,5))
 
 
   if not self._examplesSorted then
@@ -171,14 +160,10 @@ function C:drawRightColumn()
     end
   end
 
-  ---- obsolete scenario examples ----
-  --[[
-  im.Dummy(im.ImVec2(1,5))
-  headerText('Scenario Examples')
-  im.TextWrapped("These are some more advanced examples, taken from actual scenarios from the game. In these, you can see how different scenarios are set up.")
-  im.Dummy(im.ImVec2(1,1))
-  im.TextWrapped("All of these examples can also be found in the Main Game Menu.")
-  im.Dummy(im.ImVec2(1,5))
+  im.Dummy(im.ImVec2(0,5))
+  headerText('Advanced Examples')
+  im.TextWrapped("These are some more complex examples, containing many states and nodes. Take a look and discover the full potential of the Flowgraph Editor.")
+  im.Dummy(im.ImVec2(0,5))
 
 
   for k, p in pairs(self.demoProjects) do
@@ -188,7 +173,6 @@ function C:drawRightColumn()
       self.fgEditor.setManager(mgr)
     end
   end
-  ]]--
 
   im.PopTextWrapPos()
   im.EndGroup()

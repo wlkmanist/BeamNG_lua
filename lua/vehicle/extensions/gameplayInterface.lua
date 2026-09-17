@@ -4,6 +4,9 @@
 
 local M = {}
 
+local stringBuffer = require("string.buffer")
+local messageBuffer = stringBuffer.new()
+
 local registeredActions = {}
 local registeredLookups = {}
 
@@ -22,8 +25,9 @@ local function vLuaCallback(callback, requestId, data)
 end
 
 local function geLuaCallback(callbackString, requestId, data)
-  local cmdString = string.format("%s(%d, %d, %q)", callbackString, objectId, requestId, serialize(data))
-  obj:queueGameEngineLua(cmdString)
+  messageBuffer:reset()
+  messageBuffer:putf("%s(%s,%d,%s)", callbackString, objectId, requestId, serialize(lpack.encode(data)))
+  obj:queueGameEngineLua(messageBuffer)
 end
 
 local function triggerCallback(callbackId, requestId, data)

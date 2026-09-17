@@ -340,7 +340,10 @@ end
 -- effect if auto focus is currently enabled. Makes use of the parameters set by
 -- setFocusParams.
 local function setFocalDist(dof, dist)
-  dof.focalDist = dist
+  -- Only set manual focal distance if autofocus is disabled
+  if not dof.autoFocusEnabled then
+    dof.focalDist = dist
+  end
 end
 
 -- This method sets auto focus enabled or disabled. Makes use of the parameters set
@@ -366,29 +369,55 @@ local function setFocusParams(dof, nearBlurMax, farBlurMax, minRange, maxRange, 
   dof.farSlope = tonumber(farSlope)
 end
 
-local function autoFocus(dof)
+local function calculateFocusDistance()
   local camera = getCamera()
-  if not camera then return end
+  if not camera then return nil end
 
-  local m1 = tonumber(TorqueScriptLua.getVar("$TypeMasks::StaticObjectType"))
-  local m2 = tonumber(TorqueScriptLua.getVar("$TypeMasks::TerrainObjectType"))
-  local m3 = tonumber(TorqueScriptLua.getVar("$TypeMasks::VehicleObjectType"))
-  local m4 = tonumber(TorqueScriptLua.getVar("$TypeMasks::DynamicShapeObjectType"))
+  local camPos = vec3(core_camera.getPosition())
+
+  -- First try to focus on player vehicle if it's visible
+  local veh = be:getPlayerVehicle(0)
+  if veh then
+    local sceneObject = scenetree.findObjectById(be:getPlayerVehicleID(0))
+    if sceneObject and not Engine.sceneGetCameraFrustum():isBoxOutside(sceneObject:getWorldBox()) then
+      local vehPos = vec3(veh:getPosition())
+      -- Calculate distance between camera and vehicle
+      return (vehPos - camPos):length()
+    end
+  end
+
+  -- Fallback to center raycast if vehicle is not in view
+  local direction = vec3(core_camera.getForward())
+  local farDist = VariableRegistry.get("$Param::FarDist")
+  local endPoint = camPos + farDist * direction
+
+  local m1 = tonumber(VariableRegistry.get("$TypeMasks::StaticObjectType"))
+  local m2 = tonumber(VariableRegistry.get("$TypeMasks::TerrainObjectType"))
+  local m3 = tonumber(VariableRegistry.get("$TypeMasks::VehicleObjectType"))
+  local m4 = tonumber(VariableRegistry.get("$TypeMasks::DynamicShapeObjectType"))
   local mask = m1 + m2 + m3 + m4
 
-  local direction = vec3(core_camera.getForward())
-  local startPoint = vec3(core_camera.getPosition())
-  local farDist = tonumber(TorqueScriptLua.getVar("$Param::FarDist"))
-  local endPoint = startPoint + farDist * direction
-
-  local result = containerRayCast(startPoint:toPoint3F(), endPoint:toPoint3F(), mask, camera, true )
+  local result = containerRayCast(camPos:toPoint3F(), endPoint:toPoint3F(), mask, camera, true)
 
   local resultArgs = split(result, ' ')
   if result == "" or tableSize(resultArgs) < 4 or not resultArgs[1] or not resultArgs[2] or not resultArgs[3] then
-    dof.focalDist = farDist
-  else
-    local hitPos = vec3(tonumber(resultArgs[2]), tonumber(resultArgs[3]), tonumber(resultArgs[4]))
-    dof.focalDist = (hitPos - startPoint):length()
+    return farDist
+  end
+
+  local hitPos = vec3(tonumber(resultArgs[2]), tonumber(resultArgs[3]), tonumber(resultArgs[4]))
+  return (hitPos - camPos):length()
+end
+
+-- Add temporal smoothing helper
+local viewSmoother = newTemporalSmoothing()
+local afSpeed = 150 -- Adjust this value to control smoothing speed (higher = faster)
+
+local function autoFocus(dof)
+  local targetDistance = calculateFocusDistance()
+  if targetDistance then
+    -- Apply temporal smoothing to the focus distance
+    local smoothedDistance = viewSmoother:getWithRateUncapped(targetDistance, dtReal or 0.016, afSpeed)
+    dof.focalDist = smoothedDistance
   end
 end
 
@@ -432,7 +461,7 @@ dOFPostEffectCallbacks.setShaderConsts = function()
     autoFocus(dofPostEffect)
   end
 
-  local farDist = tonumber(TorqueScriptLua.getVar("$Param::FarDist"))
+  local farDist = VariableRegistry.get("$Param::FarDist")
   local fd = dofPostEffect.focalDist / farDist
 
   -- rangeNear is done in two phases, so that it can be clamped with rangeFar
@@ -560,19 +589,19 @@ M.updateDOFSettings = function()
   if not dofPostEffect then
     return
   end
-  local blurMin = TorqueScriptLua.getVar('$DOFPostFx::BlurMin')
-  local blurMax = TorqueScriptLua.getVar('$DOFPostFx::BlurMax')
-  local focusRangeMin = TorqueScriptLua.getVar('$DOFPostFx::FocusRangeMin')
-  local focusRangeMax = TorqueScriptLua.getVar('$DOFPostFx::FocusRangeMax')
-  local blurCurveNear = TorqueScriptLua.getVar('$DOFPostFx::BlurCurveNear')
-  local blurCurveFar = TorqueScriptLua.getVar('$DOFPostFx::BlurCurveFar')
+  local blurMin = VariableRegistry.get('$DOFPostFx::BlurMin')
+  local blurMax = VariableRegistry.get('$DOFPostFx::BlurMax')
+  local focusRangeMin = VariableRegistry.get('$DOFPostFx::FocusRangeMin')
+  local focusRangeMax = VariableRegistry.get('$DOFPostFx::FocusRangeMax')
+  local blurCurveNear = VariableRegistry.get('$DOFPostFx::BlurCurveNear')
+  local blurCurveFar = VariableRegistry.get('$DOFPostFx::BlurCurveFar')
 
   setFocusParams(dofPostEffect, blurMin, blurMax, focusRangeMin, focusRangeMax, -blurCurveNear, blurCurveFar)
-  setAutoFocus(dofPostEffect, TorqueScriptLua.getBoolVar("$DOFPostFx::EnableAutoFocus"))
-  setDebugMode(dofPostEffect, TorqueScriptLua.getBoolVar("$DOFPostFx::EnableDebugMode"))
+  setAutoFocus(dofPostEffect, VariableRegistry.get("$DOFPostFx::EnableAutoFocus"))
+  setDebugMode(dofPostEffect, VariableRegistry.get("$DOFPostFx::EnableDebugMode"))
   setFocalDist(dofPostEffect, 0)
 
-  if TorqueScriptLua.getBoolVar("$DOFPostFx::Enable") then
+  if VariableRegistry.get("$DOFPostFx::Enable") then
     dofPostEffect:enable()
   else
     dofPostEffect:disable()

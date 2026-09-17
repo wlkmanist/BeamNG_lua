@@ -5,25 +5,35 @@
 local M = {}
 
 local initialWheelCount = 0
-local wd
-local currently
-local tmpVec = vec3(0,0,0)
-local upVector = vec3(0,0,1)
+local startTime = 0
+local curTrigger = false
 
 local function watchAirtime()
   if initialWheelCount ~= wheels.wheelCount then return end --if we lose a wheel
-  currently = obj:getGroundSpeed() > 6
+  local prevTrigger = curTrigger
+  local curTrigger = obj:getGroundSpeed() > 6
 
   for i = 0, initialWheelCount-1 do
-    wd = wheels.wheels[i]
-    currently = currently and wd.contactMaterialID1 ==-1 and wd.contactMaterialID2 ==-1
-    if not currently then break end
+    local wd = wheels.wheels[i]
+    curTrigger = curTrigger and wd.contactMaterialID1 ==-1 and wd.contactMaterialID2 ==-1
+    if not curTrigger then break end
   end
   --todo redo this
-  tmpVec:set(obj:getDirectionVectorUpXYZ())
-  currently = currently and (upVector:dot(tmpVec) > 0.707 ) --45deg
+  local _, _, z = obj:getDirectionVectorUpXYZ()
+  curTrigger = curTrigger and ( z > 0.707 ) --45deg
 
-  gameplayStatistic.refreshTimer("vehicle/airtime.time", currently, 0.1, true)
+  if curTrigger then
+    if not prevTrigger then
+      startTime = obj:getSimTime()
+    end
+  else
+    if prevTrigger then
+      local airTime = obj:getSimTime() - startTime
+      if airTime > 0.1 then
+        gameplayStatistic.metricAdd("vehicle/airtime.time", airTime, true)
+      end
+    end
+  end
 end
 
 local function onExtensionLoaded()
@@ -35,7 +45,6 @@ local function onExtensionLoaded()
   if initialWheelCount==0 then
     return false
   end
-
 end
 
 M.onExtensionLoaded = onExtensionLoaded

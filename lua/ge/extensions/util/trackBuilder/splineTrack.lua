@@ -374,16 +374,15 @@ local function positionVehicle(reverse, index)
 
   local off = M.rotateVectorByQuat(vec3(0, -3, 0), rot)
   local pos = vec3(0, 0, 0.25) + point.markerInfo.position + off
-  local scenario = scenario_scenarios
+  local scenario = scenario_scenarios and scenario_scenarios.getScenario()
   if scenario then
-    scenario = scenario.getScenario()
     scenario.startingTransforms['scenario_player0'].pos = pos
     scenario.startingTransforms['scenario_player0'].rot = rot
     vehicleSetPositionRotation(scenario.vehicleNameToId['scenario_player0'], pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
   else
     --dump(scenetree.findObject("thePlayer"))
     --dump(scenetree.findObject("thePlayer"):getID())
-    --dump(be:getObjectByID(scenetree.findObject("thePlayer"):getID()))
+    --dump(getObjectByID(scenetree.findObject("thePlayer"):getID()))
     local id = scenetree.findObject("thePlayer"):getID()
     vehicleSetPositionRotation(id, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
   end

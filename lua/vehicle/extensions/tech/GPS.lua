@@ -66,6 +66,16 @@ local function remove(sensorId)
   GPSs[sensorId] = nil
 end
 
+local function removeAll()
+  local ids = {}
+  for sensorId in pairs(GPSs) do
+    ids[#ids + 1] = sensorId
+  end
+  for i = 1, #ids do
+    remove(ids[i])
+  end
+end
+
 local function setUpdateTime(sensorId, GFXUpdateTime) GPSs[sensorId].GFXUpdateTime = GFXUpdateTime end
 
 local function setIsVisualised(data)
@@ -104,6 +114,7 @@ end
 -- Public interface:
 M.create                                                  = create
 M.remove                                                  = remove
+M.removeAll                                               = removeAll
 M.adHocRequest                                            = adHocRequest
 M.cacheLatestReading                                      = cacheLatestReading
 M.getGPSReading                                           = getGPSReading

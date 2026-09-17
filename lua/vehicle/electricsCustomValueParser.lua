@@ -11,6 +11,8 @@ local customElectricsEnv
 local pwmEnv
 local updateCustomElectricsFunction
 
+local customDefaultValues
+
 --function used as a case selector, input can be both int and bool as the first argument, any number of arguments after that
 --in case it's a bool, it works like a ternary if, returning the second param if true, the third if false
 --if the selector is an int n, it simply returns the nth+1 param it was given, if n > #params it returns the last given param
@@ -88,11 +90,6 @@ local function updateEnvElectrics(dt)
   pwmEnv.pwmTime = (pwmEnv.pwmTime + dt) % 3600
 end
 
-local function updateFunctionEnvironments()
-  --it appears we don't need to do that and the env updates transparently
-  --setfenv(updateCustomElectricsFunction, customElectricsEnv)
-end
-
 local function updateElectrics(dt)
   for electricsName, customValue in pairs(customElectricsEnv.electrics) do
     electrics.values[electricsName] = customValue
@@ -104,9 +101,6 @@ local function updateGFX(dt)
   --copy our main electrics into the sandboxed environment
   updateEnvElectrics(dt)
 
-  --upadate the environment of the sandboxed methods
-  updateFunctionEnvironments()
-
   --this method runs with its own sandboxed environment
   updateCustomElectricsFunction(dt)
 
@@ -114,10 +108,25 @@ local function updateGFX(dt)
   updateElectrics(dt)
 end
 
+local function resetCustomValues()
+  --print("resetCustomValues")
+  --dump(customDefaultValues)
+  for electricsName, value in pairs(customDefaultValues) do
+    electrics.values[electricsName] = value
+  end
+end
+
 local function parse(expr)
   --check if we find a *single standalone* "=" sign and abort parsing if found. >=, <=, == and ~= are allowed to support boolean operations
+
   if expr:find("[^<>~=]=[^=]") then
     log("E", "electricsCustomValueParser.parse", "Assignments are not supported inside expressions!")
+    return nil
+  end
+
+  --special case: since we use components for the data storage, tables don't merge correctly.
+  --this means that we can end up with multiple table headers in our data, this check here tries to identify that and skips
+  if expr == "electricsFunction" then
     return nil
   end
 
@@ -144,7 +153,7 @@ local function parse(expr)
 end
 
 local function sanitizeCustomExpression(expr)
-  return expr
+  return expr or "" --return empty string if no expression exists (this is needed for custom values that need the reset but no updates)
 end
 
 local function compileCustomValueUpdates(customValueData)
@@ -155,25 +164,41 @@ local function compileCustomValueUpdates(customValueData)
   --print("customValueData")
   --dump(customValueData)
 
+  customDefaultValues = {}
+
   local customValueUpdateStrings = {}
   for _, customValue in ipairs(customValueData) do
     local sanitizedExpression = sanitizeCustomExpression(customValue.electricsFunction)
     local parseResult = parse(sanitizedExpression)
     if parseResult then
-      table.insert(customValueUpdateStrings, customValue.electricsName)
-      table.insert(customValueUpdateStrings, sanitizedExpression)
+      --only add to updates if there is a function (empty functions are still valid, but don't need updates here)
+      if customValue.electricsFunction then
+        table.insert(customValueUpdateStrings, customValue.electricsName)
+        table.insert(customValueUpdateStrings, sanitizedExpression)
+      end
+      if customValue.electricsDefault then
+        customDefaultValues[customValue.electricsName] = customValue.electricsDefault
 
-      --init custom value in normal electrics
-      electrics.values[customValue.electricsName] = 0
+        --init custom value in normal electrics
+        electrics.values[customValue.electricsName] = customValue.electricsDefault
+      else
+        log("D", "electricsCustomValueParser.compileCustomValueUpdates", string.format("No default value for custom electrics value: %s", customValue.electricsName))
+      end
     end
   end
+
+  --print("customDefaultValues")
+  --dump(customDefaultValues)
 
   --print("customValueUpdateStrings")
   --dump(customValueUpdateStrings)
 
   local customValueUpdates = {}
   for i = 1, #customValueUpdateStrings, 2 do
-    table.insert(customValueUpdates, string.format("electrics.%s = %s", customValueUpdateStrings[i], customValueUpdateStrings[i + 1]))
+    --check length of code string and only add to updates if it's not empty (empty update strings are still valid, but don't need updates here)
+    if #customValueUpdateStrings[i + 1] > 0 then
+      table.insert(customValueUpdates, string.format("electrics.%s = %s", customValueUpdateStrings[i], customValueUpdateStrings[i + 1]))
+    end
   end
 
   --print("customValueUpdates")
@@ -194,6 +219,7 @@ local function compileCustomValueUpdates(customValueData)
 end
 
 M.compileCustomValueUpdates = compileCustomValueUpdates
+M.resetCustomValues = resetCustomValues
 M.updateGFX = updateGFX
 
 return M

@@ -34,6 +34,8 @@ function C:postInit()
     {value = 'brake_input'},
     {value = 'parkingbrake'},
     {value = 'parkingbrake_input'},
+    {value = 'gear'},
+    {value = 'clutch'},
   }
 end
 function C:_executionStarted()

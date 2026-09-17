@@ -1,3 +1,7 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
+
 local M = {}
 
 local api = extensions.editor_api_dynamicDecals
@@ -102,13 +106,13 @@ local performTransform = function(layer)
   end
 
   uiLayerEdit.editExistingLayer(layer.uid, true)
-  guihooks.trigger("liveryEditor_changeView", "LayerTransform")
+  guihooks.trigger("liveryEditor_changeView", "livery.editor.decals.transform")
 end
 
 local performMaterials = function(layer)
   uiLayerEdit.editExistingLayer(layer.uid, false)
   api.disableDecalHighlighting()
-  guihooks.trigger("liveryEditor_changeView", "LayerMaterials")
+  guihooks.trigger("liveryEditor_changeView", "livery.editor.decals.materials")
 end
 
 local performEnabled = function(layerUids)

@@ -102,6 +102,7 @@ function C:update(dt, dtSim)
       self:hide()
     end
   end
+  --debugDrawer:drawTextAdvanced(self.pos, String(string.format("mode: %s, colorTimer: %0.2f, visible: %s", self.mode, self.colorTimer, self.visible and "true" or "false")), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
   if not self.visible then return end
 
   playerPosition:set(core_camera.getPosition())
@@ -139,6 +140,7 @@ function C:update(dt, dtSim)
   local sideRadius = math.max(0.125, distanceFromMarker*0.03)
   local sideHeight = clamp(inverseLerp(60,180,distanceFromMarker),0,20)+1 +clamp(inverseLerp(1800,2040,distanceFromMarker),0,20)
   --debugDrawer:drawTextAdvanced(self.pos, String(string.format("%0.2f -> %0.2f / %0.2f / %0.2f", distanceFromMarker, sideRadius, sideHeight, baseHeight)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
+
   left = scenetree.findObjectById(self.leftId)
   if left then
     left.instanceColor = self.currentColor
@@ -146,6 +148,8 @@ function C:update(dt, dtSim)
     left:updateInstanceRenderData()
     scale:set(sideRadius, sideRadius, sideHeight)
     left:setScale(scale)
+    --local leftPos = self.pos - self.side * self.radius + markerOffset
+    --debugDrawer:drawTextAdvanced(leftPos, String(string.format("left: (%0.2f %0.2f %0.2f), color: (%0.2f %0.2f %0.2f %0.2f)", leftPos.x, leftPos.y, leftPos.z, self.currentColor.x, self.currentColor.y, self.currentColor.z, self.currentColor.w)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
   end
   right = scenetree.findObjectById(self.rightId)
   if right then

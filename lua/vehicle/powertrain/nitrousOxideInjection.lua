@@ -107,13 +107,6 @@ local function updateFuelUsage()
 end
 
 local function updateGFX(dt)
-  if assignedEngine.engineDisabled then
-    M.updateGFX = nop
-    M.isArmed = false
-    M.isActive = false
-    return
-  end
-
   updateFuelUsage()
 
   local purgeActive = purgeActiveTime > 0

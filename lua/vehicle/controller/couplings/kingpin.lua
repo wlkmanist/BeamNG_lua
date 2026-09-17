@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: The secondary part of the fifthwheel/kingpin system. Sends data about the kingpin to the primary part if requested
+
 local M = {}
 M.type = "auxiliary"
 
@@ -9,7 +11,7 @@ local kingpinNodeCid
 local kingpinKey
 
 local function sendDataToVehicle(objId, controllerName, couplerTag)
-  local hasMatchingCoupler = true
+  local hasMatchingCoupler = couplerTag == kingpinKey
   if hasMatchingCoupler then
     local position = obj:getPosition()
     local nodePosition = obj:getNodePosition(kingpinNodeCid)

@@ -240,6 +240,11 @@ local function collect(s)
   return stack[1]
 end
 
+-- True for element nodes from collect(); false for text chunks and non-node fields (e.g. empty=1 on self-closing tags).
+local function isXmlElement(t)
+  return type(t) == 'table' and type(t.label) == 'string'
+end
+
 -- Converts the 3D reference polyline to the editor node format polyline.
 local function format3DPoly(raw)
   local poly, numNodes = {}, #raw
@@ -496,6 +501,11 @@ end
 -- [Each input data type is an ordered array, by OpenDRIVE s-value].
 local function convertRoad(data)
 
+  -- OpenDRIVE may include geometry-only roads with an empty <lanes> block; the importer requires laneSection data.
+  if not data.lanes or #data.lanes < 1 then
+    log('W', 'roadArchitect.import', 'Skipping OpenDRIVE road id=' .. tostring(data.id) .. ': no laneSection data')
+    return
+  end
   -- Convert the core geometric data to the native road structure.
   local refPoly2D = compute2DRefPolyLine(data.geom)                                                   -- Fit a 2D polyline through the given road reference line data.
   local arcLengths = computeArcLengthsNodes(refPoly2D)                                                -- Approximate the arc length (from start) at every point in the ref polyline.
@@ -509,6 +519,9 @@ local function convertRoad(data)
   for i = 1, numSplits do
     if #splits[i] > 1 then
 
+      if not data.lanes[i] then
+        log('W', 'roadArchitect.import', 'Skipping OpenDRIVE road id=' .. tostring(data.id) .. ' segment ' .. tostring(i) .. ': missing laneSection for this segment')
+      else
       -- Apply the elevation sections to the 2D ref polyline, to get a 3D ref polyline.
       local LSAL = arcLengthsLS[i]
       local refPoly3D = applyElevation(splits[i], data.elev, LSAL)
@@ -540,12 +553,57 @@ local function convertRoad(data)
       roadMgr.roads[rIdx] = road
       roadMgr.map[road.name] = rIdx
       roadMgr.setDirty(road)
+      end
+    end
+  end
+end
+
+-- placeMode: 0 = as in file, 1 = custom (placeX, placeY), 2 = current camera XY.
+local function applyImportPlacement(roadsBefore, placeMode, placeX, placeY)
+  if placeMode == 0 then
+    return
+  end
+
+  local roads = roadMgr.roads
+  local firstIdx = roadsBefore + 1
+  if firstIdx > #roads then
+    return
+  end
+
+  local anchorRoad = roads[firstIdx]
+  local nodes = anchorRoad and anchorRoad.nodes
+  if not nodes or #nodes < 1 then
+    return
+  end
+
+  local ax, ay = nodes[1].p.x, nodes[1].p.y
+  local tx, ty = placeX, placeY
+  if placeMode == 2 then
+    local camPos = core_camera.getPosition()
+    tx, ty = camPos.x, camPos.y
+  end
+
+  local dx, dy = tx - ax, ty - ay
+  if abs(dx) < 1e-9 and abs(dy) < 1e-9 then
+    return
+  end
+
+  for rIdx = firstIdx, #roads do
+    local road = roads[rIdx]
+    local rNodes = road and road.nodes
+    if rNodes then
+      local numNodes = #rNodes
+      for i = 1, numNodes do
+        local p = rNodes[i].p
+        p.x, p.y = p.x + dx, p.y + dy
+      end
+      roadMgr.setDirty(road)
     end
   end
 end
 
 -- Imports an .xodr file from disk, and creates a Road Architect network from the data.
-local function import(importO2T, importCO, importTT2I, importCustomOffset, domainOfInfluence, margin)
+local function import(importO2T, importCO, importTT2I, importCustomOffset, domainOfInfluence, margin, placeMode, placeX, placeY)
 
   extensions.editor_fileDialog.openFile(
     function(data)
@@ -560,19 +618,20 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
       for _, v1 in pairs(d[2]) do
 
         -- Collect all road data.
-        if v1.label == 'road' then
+        if isXmlElement(v1) and v1.label == 'road' then
 
           -- Iterate over the second children.
           local pred, succ, geom, elev, sElev, lanes, laneOffsets = nil, nil, {}, {}, {}, {}, {}
           for _, v2 in pairs(v1) do
-
+            if not isXmlElement(v2) then
+              -- skip text and collect() metadata values
             -- Collect the road connectivity data, if any exists.
-            if v2.label == 'link' then
+            elseif v2.label == 'link' then
               for _, v3 in pairs(v2) do
-                if v3.label == 'predecessor' then
+                if isXmlElement(v3) and v3.label == 'predecessor' then
                   local dP = v3.xarg
                   pred = { type = dP.elementType, id = tonumber(dP.elementId), contactPoint = dP.contactPoint }
-                elseif v3.label == 'successor' then
+                elseif isXmlElement(v3) and v3.label == 'successor' then
                   local dS = v3.xarg
                   succ = { type = dS.elementType, id = tonumber(dS.elementId), contactPoint = dS.contactPoint }
                 end
@@ -582,25 +641,31 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
             elseif v2.label == 'planView' then
               for _, v3 in pairs(v2) do
                 local gInner = {}
-                if v3.label == 'geometry' then
+                if isXmlElement(v3) and v3.label == 'geometry' then
                   for _, v4 in pairs(v3) do
-                    if v4.label == 'line' then
+                    if not isXmlElement(v4) then
+                      -- skip text / collect() metadata (e.g. empty=1 on self-closing primitives)
+                    elseif v4.label == 'line' then
                       gInner.type = 'line'
+                      break                                                                               -- One primitive per geometry tag.
                     elseif v4.label == 'arc' then
                       gInner.type, gInner.k = 'arc', tonumber(v4.xarg.curvature)
+                      break
                     elseif v4.label == 'spiral' then
                       local dS = v4.xarg
                       gInner.type, gInner.k1, gInner.k2 = 'spiral', tonumber(dS.curvStart), tonumber(dS.curvEnd)
+                      break
                     elseif v4.label == 'poly3' then
                       local dP = v4.xarg
                       gInner.type, gInner.a, gInner.b, gInner.c, gInner.d = 'poly3', tonumber(dP.a), tonumber(dP.b), tonumber(dP.c), tonumber(dP.d)
+                      break
                     elseif v4.label == 'paramPoly3' then
                       local dP = v4.xarg
                       gInner.type = 'paramPoly3'
                       gInner.aU, gInner.bU, gInner.cU, gInner.dU = tonumber(dP.aU), tonumber(dP.bU), tonumber(dP.cU), tonumber(dP.dU)
                       gInner.aV, gInner.bV, gInner.cV, gInner.dV = tonumber(dP.aV), tonumber(dP.bV), tonumber(dP.cV), tonumber(dP.dV)
+                      break
                     end
-                    break                                                                           -- We assume only one primitive per geometry tag.
                   end
                   local dG = v3.xarg
                   geom[#geom + 1] = { s = tonumber(dG.s), start = vec3(tonumber(dG.x), tonumber(dG.y)), hdg = tonumber(dG.hdg), length = tonumber(dG.length), geom = gInner }
@@ -610,7 +675,7 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
             -- Collect the road elevation data, if it exists.
             elseif v2.label == 'elevationProfile' then
               for _, v3 in pairs(v2) do
-                if v3.label == 'elevation' then
+                if isXmlElement(v3) and v3.label == 'elevation' then
                   local dE = v3.xarg
                   elev[#elev + 1] = { s = tonumber(dE.s), a = tonumber(dE.a), b = tonumber(dE.b), c = tonumber(dE.c), d = tonumber(dE.d) }
                 end
@@ -619,7 +684,7 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
             -- Collect the road lateral profile data, if it exists.
             elseif v2.label == 'lateralProfile' then
               for _, v3 in pairs(v2) do
-                if v3.label == 'superelevation' then
+                if isXmlElement(v3) and v3.label == 'superelevation' then
                   local dSE = v3.xarg
                   sElev[#sElev + 1] = { s = tonumber(dSE.s), a = tonumber(dSE.a), b = tonumber(dSE.b), c = tonumber(dSE.c), d = tonumber(dSE.d) }
                 end
@@ -628,29 +693,31 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
             -- Collect the road lanes data.
             elseif v2.label == 'lanes' then
               for _, v3 in pairs(v2) do
-                if v3.label == 'laneSection' then
+                if isXmlElement(v3) and v3.label == 'laneSection' then
                   local lSecData = { s = tonumber(v3.xarg.s) }
                   for _, v4 in pairs(v3) do
-                    if v4.label == 'left' or v4.label == 'right' then
+                    if isXmlElement(v4) and (v4.label == 'left' or v4.label == 'right') then
                       for _, v5 in pairs(v4) do
-                        if v5.label == 'lane' then
+                        if isXmlElement(v5) and v5.label == 'lane' then
                           local lD = v5.xarg
                           local laneId = tonumber(lD.id)
                           lSecData[laneId] = { type = tonumber(lD.type), dir = lD.direction, widths = {}, heights = {} }
                           for _, v6 in pairs(v5) do
-                            local lA = v6.xarg
-                            if v6.label == 'width' then
-                              local numWidths = #lSecData[laneId].widths
-                              lSecData[laneId].widths[numWidths + 1] = { sOffset = tonumber(lA.sOffset), a = tonumber(lA.a), b = tonumber(lA.b), c = tonumber(lA.c), d = tonumber(lA.d) }
-                            elseif v6.label == 'height' then
-                              local numHeights = #lSecData[laneId].heights
-                              lSecData[laneId].heights[numHeights + 1] = { sOffset = tonumber(lA.sOffset), inner = tonumber(lA.inner), outer = tonumber(lA.outer) }
-                            elseif v6.label == 'link' then
-                              for _, v7 in pairs(v6) do
-                                if v7.label == 'predecessor' then
-                                  lSecData[laneId].pred = tonumber(v7.xarg.id)
-                                elseif v7.label == 'successor' then
-                                  lSecData[laneId].succ = tonumber(v7.xarg.id)
+                            if isXmlElement(v6) then
+                              local lA = v6.xarg
+                              if v6.label == 'width' then
+                                local numWidths = #lSecData[laneId].widths
+                                lSecData[laneId].widths[numWidths + 1] = { sOffset = tonumber(lA.sOffset), a = tonumber(lA.a), b = tonumber(lA.b), c = tonumber(lA.c), d = tonumber(lA.d) }
+                              elseif v6.label == 'height' then
+                                local numHeights = #lSecData[laneId].heights
+                                lSecData[laneId].heights[numHeights + 1] = { sOffset = tonumber(lA.sOffset), inner = tonumber(lA.inner), outer = tonumber(lA.outer) }
+                              elseif v6.label == 'link' then
+                                for _, v7 in pairs(v6) do
+                                  if isXmlElement(v7) and v7.label == 'predecessor' then
+                                    lSecData[laneId].pred = tonumber(v7.xarg.id)
+                                  elseif isXmlElement(v7) and v7.label == 'successor' then
+                                    lSecData[laneId].succ = tonumber(v7.xarg.id)
+                                  end
                                 end
                               end
                             end
@@ -660,7 +727,7 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
                     end
                   end
                   lanes[#lanes + 1] = lSecData
-                elseif v3.label == 'laneOffset' then
+                elseif isXmlElement(v3) and v3.label == 'laneOffset' then
                   local lOD = v3.xarg
                   laneOffsets[#laneOffsets + 1] = { s = tonumber(lOD.s), a = tonumber(lOD.a), b = tonumber(lOD.b), c = tonumber(lOD.c), d = tonumber(lOD.d) }
                 end
@@ -677,14 +744,14 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
             geom = geom, elev = elev, sElev = sElev, lanes = lanes, laneOffsets = laneOffsets }
 
         -- Collect all junction data.
-        elseif v1.label == 'junction' then
+        elseif isXmlElement(v1) and v1.label == 'junction' then
           local jId, jType, conn = tonumber(v1.xarg.id), v1.xarg.type, {}
           for _, v2 in pairs(v1) do
-            if v2.label == 'connection' then
+            if isXmlElement(v2) and v2.label == 'connection' then
               local rIn, rOut, cp = tonumber(v2.xarg.incomingRoad), tonumber(v2.xarg.linkedRoad), v2.xarg.contactPoint
               local links = {}
               for _, v3 in pairs(v2) do
-                if v3.label == 'laneLink' then
+                if isXmlElement(v3) and v3.label == 'laneLink' then
                   links[#links + 1] = { from = tonumber(v3.xarg.from), to = tonumber(v3.xarg.to) }
                 end
               end
@@ -697,10 +764,13 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
 
       -- Convert the collected OpenDRIVE primitive-based roads into independent, native roads.
       -- [Also creates a map from OpenDRIVE road ids to native road id in roads container].
+      local roadsBefore = #roadMgr.roads
       local numRoadPrims = #rPrims
       for i = 1, numRoadPrims do
         convertRoad(rPrims[i])
       end
+
+      applyImportPlacement(roadsBefore, placeMode or 0, placeX or 0, placeY or 0)
 
       -- Perform any request post-processing on the import.
       if importO2T then
@@ -710,7 +780,7 @@ local function import(importO2T, importCO, importTT2I, importCustomOffset, domai
       end
       if importTT2I then
         roadMgr.computeAllRoadRenderData()
-        terra.terraformMultiRoads(domainOfInfluence, margin, nil, true)
+        terra.terraformMultiRoads(domainOfInfluence, margin, nil)
       end
 
     end,

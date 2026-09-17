@@ -173,8 +173,8 @@ local function initSecondStage(jbeamData)
   relevantWheels[1] = {}
   relevantWheels[-1].wheels = powertrain.getChildWheels(relevantDifferential, 1)
   relevantWheels[1].wheels = powertrain.getChildWheels(relevantDifferential, 2)
-  relevantWheels[-1].invWheelCount = #relevantWheels[-1].wheels > 0 and #relevantWheels[-1].wheels or 1
-  relevantWheels[1].invWheelCount = #relevantWheels[1].wheels > 0 and #relevantWheels[1].wheels or 1
+  relevantWheels[-1].invWheelCount = #relevantWheels[-1].wheels > 0 and (1 / #relevantWheels[-1].wheels) or 1
+  relevantWheels[1].invWheelCount = #relevantWheels[1].wheels > 0 and (1 / #relevantWheels[1].wheels) or 1
 
   if relevantWheels[-1].wheels and relevantWheels[1].wheels then
     M.isActive = true
@@ -192,6 +192,10 @@ local function registerCMU(cmu)
 end
 
 local function setParameters(parameters)
+  if not CMU then
+    return
+  end
+
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "avDiffThreshold")
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "isEnabled")
 

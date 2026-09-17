@@ -8,13 +8,13 @@ local im = ui_imgui
 local ffi = require('ffi')
 local imguiUtils = require('ui/imguiUtils')
 local toolWindowName = "extensionsDebug"
-local funCheck = ffi.new("bool[1]",false)
-local numCheck = ffi.new("bool[1]",false)
-local strCheck = ffi.new("bool[1]",false)
-local cdataCheck = ffi.new("bool[1]",false)
-local boolCheck = ffi.new("bool[1]",false)
-local tblCheck = ffi.new("bool[1]",false)
-local filter = ffi.new("bool[1]",false)
+local funCheck = im.BoolPtr(false)
+local numCheck = im.BoolPtr(false)
+local strCheck = im.BoolPtr(false)
+local cdataCheck = im.BoolPtr(false)
+local boolCheck = im.BoolPtr(false)
+local tblCheck = im.BoolPtr(false)
+local filter = im.BoolPtr(false)
 
 --[[local function addFilter()
   im.Checkbox("Function", funCheck)
@@ -58,7 +58,7 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName)
-  editor.addWindowMenuItem("Extensions Debug", onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem("Extensions Debug", onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
 

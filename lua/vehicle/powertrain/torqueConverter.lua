@@ -33,14 +33,13 @@ local function updateTorque(device, dt)
   local lockupTorque = (min(max(device.lockupClutchAngle * device.lockupClutchSpring + device.lockupClutchDamp * avDiff * lockupClutchRatio, -lockupClutchTorque), lockupClutchTorque))
 
   local kFactor = device.kFactorSmoother:get(-0.004 * device.converterStiffness * (avRatio - 1) / (1 + device.converterStiffness * abs(avRatio - 1)))
-
   local inputTorque = min(max(kFactor * device.kFactorCoef * inputAV * inputAV * sign(inputAV), -device.converterTorque), device.converterTorque)
 
   local torqueRatio = min(max(stallTorqueRatio - (stallTorqueRatio - 1) * avRatio / device.couplingAVRatio, 1), stallTorqueRatio)
   --local torqueRatioLimit = max(avRatio, abs(inputAV / outputAV1))
 
-  device.outputTorque1 = inputTorque * torqueRatio + lockupTorque
-  device.torqueDiff = inputTorque + lockupTorque
+  device.outputTorque1 = (inputTorque * torqueRatio + lockupTorque) * device.impellerClutchCoef
+  device.torqueDiff = (inputTorque + lockupTorque) * device.impellerClutchCoef
 
   --local efficiency = device.outputAV1 * device.outputTorque1 / device.inputAV / device.torqueDiff
 end
@@ -123,6 +122,7 @@ local function reset(device, jbeamData)
   device.inputAV = 0
   device.outputTorque1 = 0
   device.isBroken = false
+  device.impellerClutchCoef = 1
 
   device.lockupClutchAngle = 0
   device.damageLockupClutchTorqueCoef = 1
@@ -151,6 +151,7 @@ local function new(jbeamData)
     inputAV = 0,
     outputTorque1 = 0,
     torqueDiff = 0,
+    impellerClutchCoef = 1,
     damageLockupClutchTorqueCoef = 1,
     wearLockupClutchTorqueCoef = 1,
     isBroken = false,

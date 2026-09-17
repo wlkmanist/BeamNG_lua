@@ -10,9 +10,8 @@ if not smaaStateBlock then
   smaaStateBlock = createObject("GFXStateBlockData")
   smaaStateBlock:inheritParentFields(pfxDefaultStateBlock)
   smaaStateBlock.samplersDefined = true
-  smaaStateBlock:setField("samplerStates", 0, "SamplerClampLinear")
+  smaaStateBlock:setField("samplerStates", 0, "SamplerClampPoint")
   smaaStateBlock:setField("samplerStates", 1, "SamplerClampLinear")
-  smaaStateBlock:setField("samplerStates", 2, "SamplerClampLinear")
   smaaStateBlock:registerObject("SMAA_StateBlock")
 end
 
@@ -63,18 +62,18 @@ smaaPostEffectCallbacks.preProcess = function()
   local smaaPostEffect = scenetree.findObject("SMAA_PostEffect")
   if smaaPostEffect then
     local rtSize = smaaPostEffect:getRenderTargetSize()
-    local rtResolution = string.format("float4(1.0 / %d, 1.0 / %d, %d, %d)", rtSize.x, rtSize.y, rtSize.x, rtSize.y)
+    local rtResolution = string.format("%f %f %f %f", 1.0 / rtSize.x, 1.0 / rtSize.y, rtSize.x, rtSize.y)
     local currentRTResolution = smaaPostEffect:getField("rtResolution", 0)
     if rtResolution ~= currentRTResolution then
       smaaPostEffect:setField("rtResolution", 0, rtResolution)
-      smaaPostEffect:setShaderMacro("SMAA_RT_METRICS", rtResolution)
+      smaaPostEffect:setShaderConst("$smaaRtMetrics", rtResolution)
       local smaaPostEffect1 = scenetree.findObject("SMAA_PostEffect1")
       if smaaPostEffect1 then
-        smaaPostEffect1:setShaderMacro("SMAA_RT_METRICS", rtResolution)
+        smaaPostEffect1:setShaderConst("$smaaRtMetrics", rtResolution)
       end
       local smaaPostEffect2 = scenetree.findObject("SMAA_PostEffect2")
       if smaaPostEffect2 then
-        smaaPostEffect2:setShaderMacro("SMAA_RT_METRICS", rtResolution)
+        smaaPostEffect2:setShaderConst("$smaaRtMetrics", rtResolution)
       end
     end
   end

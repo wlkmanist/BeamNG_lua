@@ -4,11 +4,14 @@
 
 local M = {}
 
+if not Research then return M end
 
 local logTag = 'sensorConfigurationEditor'
 
 -- External modules used.
 local util = require('editor/tech/sensorConfiguration/utilities')                                   -- A utility class for the sensor configuration editors.
+local conversions = require('editor/tech/sensorConfiguration/conversions')                          -- A utility class for the sensor configuration editors.
+local techUtils = require('tech/techUtils')
 
 -- Module constants.
 local im = ui_imgui
@@ -19,16 +22,55 @@ local sqrt, pow = math.sqrt, math.pow
 local toolWinName, toolWinSize = 'SensorConfigurationEditor', im.ImVec2(300, 230)                   -- The main tool window of the editor. The main UI entry point.
 local attachedSensorsWinName, attachedSensorsWinSize = 'AttachedSensorsWindow', im.ImVec2(230, 290) -- The per-vehicle 'attached sensors' window.
 local sensorPropWinName, sensorPropWinSize = 'SensorPropertiesWindow', im.ImVec2(290, 880)          -- The per-sensor 'sensor properties' window.
-local isAttachedSensorsWinOpen = false                                                              -- A flag which indicates if the attached sensors window is open or closed.
-local isSensorPropWinOpen = false                                                                   -- A flag which indicates if the sensor properties window is open or closed.
-local tCamera, tLiDAR, tUltrasonic, tRADAR = 'camera', 'LiDAR', 'ultrasonic', 'RADAR'               -- String identifiers for each sensor Cycle through available lane types.
-local tIMU, tGPS, tIdealRADAR, tRoads = 'IMU', 'GPS', 'idealRADAR', 'roads'
-local tPowertrain, tMesh = 'powertrain', 'mesh'
-local ctrCamera, ctrLiDAR, ctrUltrasonic, ctrRADAR, ctrIMU, ctrGPS = 1, 1, 1, 1, 1, 1               -- Incrementable unique id counters for each sensor type.
+local isAttachedSensorsWinOpen = false
+local isSensorPropWinOpen = false
+local stype = extensions.tech_sensors.stype
+local previewConfigs = {
+  [stype.tCamera] = {
+    winBaseName = 'CameraPreviewWindow',
+    winSize = im.ImVec2(290, 600),
+    render = nil,
+    cleanup = function(sensor) extensions.tech_cameraPreview.stopVisualizeCameraById(sensor.id) end,
+    icon = nil,
+    buttonId = 'previewSensorButton',
+    tooltip = 'Preview camera outputs.',
+    openPreviews = {}
+  },
+  [stype.tIMU] = {
+    winBaseName = 'IMUPreviewWindow',
+    winSize = im.ImVec2(290, 600),
+    render = nil,
+    cleanup = nil,
+    icon = nil,
+    buttonId = 'previewIMUSensorButton',
+    tooltip = 'Preview IMU sensor data.',
+    openPreviews = {}
+  },
+  [stype.tUltrasonic] = {
+    winBaseName = 'UltrasonicPreviewWindow',
+    winSize = im.ImVec2(400, 200),
+    render = nil,
+    cleanup = nil,
+    icon = nil,
+    buttonId = 'previewUltrasonicSensorButton',
+    tooltip = 'Preview Ultrasonic sensor data.',
+    openPreviews = {}
+  }
+}
+local previewIdCounter = 0
+local ctrSensor = {                                                                                 -- Incrementable unique id counters for each sensor type.
+  [stype.tCamera] = 1,
+  [stype.tLiDAR] = 1,
+  [stype.tUltrasonic] = 1,
+  [stype.tRADAR] = 1,
+  [stype.tIMU] = 1,
+  [stype.tGPS] = 1
+}
 local dullWhite = im.ImVec4(1, 1, 1, 0.5)                                                           -- Some commonly-used Imgui colour vectors.
 local redB = im.ImVec4(0.7, 0.5, 0.5, 1)
 local greenB, greenD = im.ImVec4(0.5, 0.7, 0.5, 1), im.ImVec4(0.5, 0.7, 0.5, 0.5)
 local blueB, blueD = im.ImVec4(0.5, 0.5, 0.7, 1), im.ImVec4(0.5, 0.5, 0.7, 0.5)
+local gray = im.ImVec4(0.5, 0.5, 0.5, 1)
 local sensorIcon = im.ImVec2(32, 32)                                                                -- Some commonly-used Imgui icon size vectors.
 local beginDragRotation = vec3(0, 0)
 
@@ -44,6 +86,13 @@ local poiData = {}                                                              
 local isVluaDataReturned = false                                                                    -- A flag which indicates if requested vlua data has been returned to ge lua.
 local isRequestSent = false                                                                         -- A flag which indicates if a request has been sent to vlua.
 
+local pythonCodeLen = 4096
+local pythonCodePtr = im.ArrayChar(pythonCodeLen)
+
+local plotLen = 600
+local plotOffset = 0
+local plotSize = im.ImVec2(500, 70)
+local imuPlotData = {}
 
 -- The callback function for use when collecting vehicle POI data from vlua.
 local function updateCollectedVehiclePOIData(collectedData)
@@ -163,139 +212,10 @@ local function handleFinishPlacingSensor(posVS)
   local vid, veh = vehicle.vid, vehicle.veh
   local sensors = sensorConfigs[vid]
   local pos = util.posVS2Coeffs(posVS, veh)
-  if placing == tCamera then
-    sensors[#sensors + 1] = {
-      isLive = false,
-      id = nil,
-      name = 'Camera ' .. ctrCamera,
-      type = tCamera,
-      pos = pos,
-      dir = vec3(1, 0, 0),
-      up = vec3(0, 0, 1),
-      size = { 200, 200 },
-      fovY = 70,
-      nearFarPlanes = { 0.05, 100.0 },
-      updateTime = 0.05,
-      updatePriority = 0.0,
-      isRenderColours = true,
-      isRenderAnnotations = true,
-      isRenderInstance = false,
-      isRenderDepth = true,
-      isVisualised = true,
-      isSnappingDesired = false }
-    ctrCamera = ctrCamera + 1
-  elseif placing == tLiDAR then
-    sensors[#sensors + 1] = {
-      isLive = false,
-      id = nil,
-      name = 'LiDAR ' .. ctrLiDAR,
-      type = tLiDAR,
-      pos = pos,
-      dir = vec3(1, 0, 0),
-      up = vec3(0, 0, 1),
-      verticalResolution = 64,
-      verticalAngle = 26.9,
-      horizontalAngle = 120.0,
-      frequency = 20.0,
-      maxDistance = 120.0,
-      isRotate = false, is360 = true,
-      updateTime = 0.05,
-      updatePriority = 0.0,
-      isVisualised = true,
-      isAnnotated = false,
-      isSnappingDesired = false }
-    ctrLiDAR = ctrLiDAR + 1
-  elseif placing == tUltrasonic then
-    sensors[#sensors + 1] = {
-      isLive = false,
-      id = nil,
-      name = 'Ultrasonic ' .. ctrUltrasonic,
-      type = tUltrasonic,
-      pos = pos,
-      dir = vec3(1, 0, 0),
-      up = vec3(0, 0, 1),
-      size = { 200, 200 },
-      fovY = 70,
-      nearFarPlanes = { 0.05, 5.1 },
-      rangeRoundness = -1.15,
-      rangeCutoffSensitivity = 0.0,
-      rangeShape = 0.3,
-      rangeFocus = 0.376,
-      rangeMinCutoff = 0.1,
-      rangeDirectMaxCutoff = 5.0,
-      sensitivity = 3.0,
-      fixedWindowSize = 10.0,
-      updateTime = 0.05,
-      updatePriority = 0.0,
-      isVisualised = true,
-      isSnappingDesired = false }
-    ctrUltrasonic = ctrUltrasonic + 1
-  elseif placing == tRADAR then
-    sensors[#sensors + 1] = {
-      isLive = false,
-      id = nil,
-      name = 'RADAR ' .. ctrRADAR,
-      type = tRADAR,
-      pos = pos,
-      dir = vec3(1, 0, 0),
-      up = vec3(0, 0, 1),
-      size = { 200, 200 },
-      fovY = 70,
-      nearFarPlanes = { 0.05, 5.1 },
-      rangeRoundness = -1.27,
-      rangeCutoffSensitivity = 0.0,
-      rangeShape = 0.09,
-      rangeFocus = 0.37,
-      rangeMinCutoff = 0.7,
-      rangeDirectMaxCutoff = 300.0,
-      rangeBins = 200,
-      azimuthBins = 200,
-      velBins = 200,
-      rangeMin = 0.1,
-      rangeMax = 100.0,
-      halfAngleDeg = 30.0,
-      velMin = -50.0,
-      velMax = 50.0,
-      updateTime = 0.05,
-      updatePriority = 0.0,
-      isVisualised = true,
-      isSnappingDesired = false }
-    ctrRADAR = ctrRADAR + 1
-  elseif placing == tIMU then
-    sensors[#sensors + 1] = {
-      isLive = false,
-      id = nil,
-      name = 'IMU ' .. ctrIMU,
-      type = tIMU,
-      pos = pos,
-      dir = vec3(1, 0, 0),
-      up = vec3(0, 0, 1),
-      physicsUpdateTime = 0.01,
-      GFXUpdateTime = 0.0,
-      isUsingGravity = false,
-      isAllowWheelNodes = false,
-      accelWindowWidth =  50,
-      gyroWindowWidth = 50,
-      isVisualised = true,
-      isSnappingDesired = false }
-    ctrIMU = ctrIMU + 1
-  elseif placing == tGPS then
-    sensors[#sensors + 1] = {
-      isLive = false,
-      id = nil,
-      name = 'GPS ' .. ctrGPS,
-      type = tGPS,
-      pos = pos,
-      dir = vec3(1, 0, 0),
-      up = vec3(0, 0, 1),
-      physicsUpdateTime = 0.01,
-      GFXUpdateTime = 0.0,
-      isAllowWheelNodes = false,
-      refLon = 0.0,
-      refLat = 0.0,
-      isVisualised = true,
-      isSnappingDesired = false }
-    ctrGPS = ctrGPS + 1
+  local newSensor = conversions.createNewSensor(placing, ctrSensor[placing], pos)
+  if newSensor ~= nil then
+    sensors[#sensors + 1] = newSensor
+    ctrSensor[placing] = ctrSensor[placing] + 1
   end
   isPlaceMode, placing = false, nil
   selectedSensorIdx = #sensors
@@ -303,123 +223,11 @@ end
 
 -- Handles the switching between 'edit mode' and 'live mode', for a given sensor.
 local function handleEditLiveModeSwitch(sensors, idx)
-  local s = sensors[idx]
   local vehicle = vehicles[selectedVehicleIdx]
-  local t, sid, veh, vid = s.type, s.id, vehicle.veh, vehicle.vid
-  if s.isLive then
-    if t == tCamera then
-      local posVS = util.coeffs2PosVS(s.pos, veh)
-      local dir, up = util.sensor2VS(s.dir, s.up, veh)
-      local args = {
-        pos = posVS, dir = dir, up = up,
-        updateTime = s.updateTime, updatePriority = s.updatePriority,
-        size = s.size, fovY = s.fovY, nearFarPlanes = s.nearFarPlanes,
-        renderColours = s.isRenderColours,
-        renderAnnotations = s.isRenderAnnotations,
-        renderInstance = s.isRenderInstance,
-        renderDepth = s.isRenderDepth,
-        isVisualised = s.isVisualised, isStatic = false,
-        isDirWorldSpace = true,
-        isSnappingDesired = s.isSnappingDesired, isForceInsideTriangle = s.isSnappingDesired }
-      s.id = extensions.tech_sensors.createCamera(vid, args)
-    elseif t == tLiDAR then
-      local posVS = util.coeffs2PosVS(s.pos, veh)
-      local dir, up = util.sensor2VS(s.dir, s.up, veh)
-      local args = {
-        pos = posVS, dir = dir, up = up,
-        updateTime = s.updateTime, updatePriority = s.updatePriority,
-        verticalResolution = s.verticalResolution, verticalAngle = s.verticalAngle,
-        horizontalAngle = s.horizontalAngle, frequency = s.frequency,
-        maxDistance = s.maxDistance,
-        isRotate = s.isRotate, is360 = s.is360,
-        isVisualised = s.isVisualised, isAnnotated = s.isAnnotated, isStatic = false,
-        isDirWorldSpace = true,
-        isSnappingDesired = s.isSnappingDesired, isForceInsideTriangle = s.isSnappingDesired }
-      s.id = extensions.tech_sensors.createLidar(vid, args)
-    elseif t == tUltrasonic then
-      local posVS = util.coeffs2PosVS(s.pos, veh)
-      local dir, up = util.sensor2VS(s.dir, s.up, veh)
-      local args = {
-        pos = posVS, dir = dir, up = up,
-        updateTime = s.updateTime, updatePriority = s.updatePriority,
-        size = s.size, fovY = s.fovY, nearFarPlanes = s.nearFarPlanes,
-        rangeRoundness = s.rangeRoundess, rangeCutoffSensitivity = s.rangeCutoffSensitivity,
-        rangeShape = s.rangeShape, rangeFocus = s.rangeFocus,
-        rangeMinCutoff = s.rangeMinCutoff, rangeDirectMaxCutoff = s.rangeDirectMaxCutoff,
-        sensitivity = s.sensitivity, fixedWindowSize = s.fixedWindowSize,
-        isVisualised = s.isVisualised, isStatic = false,
-        isDirWorldSpace = true,
-        isSnappingDesired = s.isSnappingDesired, isForceInsideTriangle = s.isSnappingDesired }
-      s.id = extensions.tech_sensors.createUltrasonic(vid, args)
-    elseif t == tRADAR then
-      local posVS = util.coeffs2PosVS(s.pos, veh)
-      local dir, up = util.sensor2VS(s.dir, s.up, veh)
-      local args = {
-        pos = posVS, dir = dir, up = up,
-        updateTime = s.updateTime, updatePriority = s.updatePriority,
-        size = s.size, fovY = s.fovY, nearFarPlanes = s.nearFarPlanes,
-        rangeRoundness = s.rangeRoundess, rangeCutoffSensitivity = s.rangeCutoffSensitivity,
-        rangeShape = s.rangeShape, rangeFocus = s.rangeFocus,
-        rangeMinCutoff = s.rangeMinCutoff, rangeDirectMaxCutoff = s.rangeDirectMaxCutoff,
-        rangeBins = s.rangeBins, azimuthBins = s.azimuthBins, velBins = s.velBins,
-        rangeMin = s.rangeMin, rangeMax = s.rangeMax,
-        halfAngleDeg = s.halfAngleDeg,
-        velMin = s.velMin, velMax = s.velMax,
-        isVisualised = s.isVisualised, isStatic = false,
-        isDirWorldSpace = true,
-        isSnappingDesired = s.isSnappingDesired, isForceInsideTriangle = s.isSnappingDesired }
-      s.id = extensions.tech_sensors.createRadar(vid, args)
-    elseif t == tIMU then
-      local posVS = util.coeffs2PosVS(s.pos, veh)
-      local dir, up = util.sensor2VS(s.dir, s.up, veh)
-      local args = {
-        pos = posVS, dir = dir, up = up,
-        physicsUpdateTime = s.physicsUpdateTime, GFXUpdateTime = s.GFXUpdateTime,
-        isUsingGravity = s.isUsingGravity, isAllowWheelNodes = s.isAllowWheelNodes,
-        accelWindowWidth = s.accelWindowWidth, gyroWindowWidth = s.gyroWindowWidth,
-        isVisualised = s.isVisualised, isStatic = false,
-        isDirWorldSpace = true,
-        isSnappingDesired = s.isSnappingDesired, isForceInsideTriangle = s.isSnappingDesired }
-      s.id = extensions.tech_sensors.createAdvancedIMU(vid, args)
-    elseif t == tGPS then
-      local posVS = util.coeffs2PosVS(s.pos, veh)
-      local dir, up = util.sensor2VS(s.dir, s.up, veh)
-      local args = {
-        pos = posVS, dir = dir, up = up,
-        physicsUpdateTime = s.physicsUpdateTime, GFXUpdateTime = s.GFXUpdateTime,
-        isAllowWheelNodes = s.isAllowWheelNodes,
-        refLon = s.refLon, refLat = s.refLat,
-        isVisualised = s.isVisualised,  isStatic = false,
-        isDirWorldSpace = true,
-        isSnappingDesired = s.isSnappingDesired, isForceInsideTriangle = false }
-      s.id = extensions.tech_sensors.createGPS(vid, args)
-    elseif t == tIdealRADAR then
-      s.id = extensions.tech_sensors.createIdealRADARSensor(vid, { physicsUpdateTime = s.physicsUpdateTime, GFXUpdateTime = s.GFXUpdateTime })
-    elseif t == tRoads then
-      s.id = extensions.tech_sensors.createRoadsSensor(vid, { physicsUpdateTime = s.physicsUpdateTime, GFXUpdateTime = s.GFXUpdateTime })
-    elseif t == tPowertrain then
-      s.id = extensions.tech_sensors.createPowertrainSensor(vid, { physicsUpdateTime = s.physicsUpdateTime, GFXUpdateTime = s.GFXUpdateTime })
-    elseif t == tMesh then
-      s.id = extensions.tech_sensors.createMeshSensor(vid, { physicsUpdateTime = s.physicsUpdateTime, GFXUpdateTime = s.GFXUpdateTime })
-    end
+  if sensors[idx].isLive then
+    conversions.makeSensorLive(sensors[idx], vehicle)
   else
-    if sid then
-      if t == tCamera or t == tLiDAR or t == tUltrasonic or t == tRADAR then
-        extensions.tech_sensors.removeSensor(sid)
-      elseif t == tIMU then
-        extensions.tech_sensors.removeAdvancedIMU(vid, sid)
-      elseif t == tGPS then
-        extensions.tech_sensors.removeGPS(vid, sid)
-      elseif t == tIdealRADAR then
-        extensions.tech_sensors.removeIdealRADARSensor(vid, sid)
-      elseif t == tRoads then
-        extensions.tech_sensors.removeRoadsSensor(vid, sid)
-      elseif t == tPowertrain then
-        extensions.tech_sensors.removePowertrainSensor(vid, sid)
-      elseif t == tMesh then
-        extensions.tech_sensors.removeMeshSensor(vid, sid)
-      end
-    end
+    conversions.makeSensorNotLive(sensors[idx], vehicle)
   end
 end
 
@@ -438,11 +246,69 @@ local function handlePlaceSensor()
   end
 end
 
+local function findPreview(sensorType, vehicleIdx, sensorIdx)
+  local config = previewConfigs[sensorType]
+  if not config then return nil end
+  for i, preview in ipairs(config.openPreviews) do
+    if preview.vehicleIdx == vehicleIdx and preview.sensorIdx == sensorIdx then
+      return preview, i
+    end
+  end
+  return nil
+end
+
+local function addPreview(sensorType, vehicleIdx, sensorIdx)
+  previewIdCounter = previewIdCounter + 1
+  local config = previewConfigs[sensorType]
+  local winName = config.winBaseName .. previewIdCounter
+  local preview = {
+    vehicleIdx = vehicleIdx,
+    sensorIdx = sensorIdx,
+    winName = winName,
+    id = previewIdCounter
+  }
+  table.insert(config.openPreviews, preview)
+  editor.registerWindow(winName, config.winSize)
+  return preview
+end
+
+local function removePreview(sensorType, previewIdx)
+  local config = previewConfigs[sensorType]
+  if config and config.openPreviews[previewIdx] then
+    editor.hideWindow(config.openPreviews[previewIdx].winName)
+    table.remove(config.openPreviews, previewIdx)
+  end
+end
+
 -- Removes the given sensor.
 local function removeSensor(sensors, idx)
-  sensors[idx].isLive = false
+  local sensor = sensors[idx]
+  sensor.isLive = false
   handleEditLiveModeSwitch(sensors, idx)
+  if sensor.type == stype.tIMU and sensor.id then
+    imuPlotData[sensor.id] = nil
+  end
+  local config = previewConfigs[sensor.type]
+  if config then
+    for i = #config.openPreviews, 1, -1 do
+      local preview = config.openPreviews[i]
+      if preview.vehicleIdx == selectedVehicleIdx then
+        if preview.sensorIdx == idx then
+          removePreview(sensor.type, i)
+        elseif preview.sensorIdx > idx then
+          preview.sensorIdx = preview.sensorIdx - 1
+        end
+      end
+    end
+  end
   table.remove(sensors, idx)
+end
+
+local function getPythonCode()
+  local vehicle = vehicles[selectedVehicleIdx]
+  local sensors = sensorConfigs[vehicle.vid]
+
+  extensions.tech_pythonExport.getFullConfig(vehicle.veh, sensors, pythonCodePtr)
 end
 
 -- Saves the current sensor configuration to disk.
@@ -454,7 +320,7 @@ local function saveConfiguration()
         jBeam = vehicle.jBeam,
         config = vehicle.config,
         sensors = sensorConfigs[vehicle.vid] }
-      jsonWriteFile(data.filepath, { data = lpack.encode(d) }, true)
+      jsonWriteFile(data.filepath, d, true)
     end,
     {{"JSON",".json"}},
     false,
@@ -469,7 +335,8 @@ local function loadConfiguration()
       local vehicle = vehicles[selectedVehicleIdx]
       local vid = vehicle.vid
       local loadedJson = jsonReadFile(data.filepath)
-      local d = lpack.decode(loadedJson.data)
+      local d = loadedJson.data and lpack.decode(loadedJson.data) or techUtils.tableToVec3Recursive(loadedJson)
+      d = techUtils.migrateOldKeysRecursive(d)
       if vehicle.jBeam ~= d.jBeam or vehicle.config ~= d.config then
         log('W', logTag, 'The selected vehicle does not fully match the vehicle stored with the configuration -- some sensors may attach at the wrong positions.')
       end
@@ -518,9 +385,10 @@ local function manageMainToolWindow()
 
         -- 'Remove Vehicle' button.
         if #vehicles > 1 then
-          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), redB, nil, nil, 'removeVehicleButton') then
+          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), redB, nil, nil, 'removeVehicleButton' .. i) then
             vehicles[i].veh:delete()
             selectedVehicleIdx = min(numVehicles, selectedVehicleIdx)
+            editor.endWindow()
             return
           end
           im.tooltip('Remove this vehicle from scene.')
@@ -529,7 +397,7 @@ local function manageMainToolWindow()
         im.NextColumn()
 
         -- 'Go To Vehicle' button.
-        if editor.uiIconImageButton(editor.icons.cameraFocusOnVehicle2, im.ImVec2(21, 21), greenB, nil, nil, 'goToVehicleButton') then
+        if editor.uiIconImageButton(editor.icons.cameraFocusOnVehicle2, im.ImVec2(21, 21), greenB, nil, nil, 'goToVehicleButton' .. i) then
           core_camera.setByName(0, "orbit", false)
           be:enterVehicle(0, scenetree.findObject(vehicle.vid))
           if i ~= selectedVehicleIdx then
@@ -544,7 +412,7 @@ local function manageMainToolWindow()
         -- 'Open Attached Sensors Window' button.
         local btnCol = blueB
         if isAttachedSensorsWinOpen and i == selectedVehicleIdx then btnCol = blueD end
-        if editor.uiIconImageButton(editor.icons.wifi, im.ImVec2(19, 19), btnCol, nil, nil, 'openAttachedSensorsWinButton') then
+        if editor.uiIconImageButton(editor.icons.wifi, im.ImVec2(19, 19), btnCol, nil, nil, 'openAttachedSensorsWinButton' .. i) then
           if i == selectedVehicleIdx or not isAttachedSensorsWinOpen then
             isAttachedSensorsWinOpen = not isAttachedSensorsWinOpen                                 -- Only toggle window open/closed if this is the same vehicle.
           end
@@ -572,7 +440,7 @@ end
 local function manageAttachedSensorsWindow()
   local veh = vehicles[selectedVehicleIdx]
   if veh then
-    if editor.beginWindow(attachedSensorsWinName, veh.name .. " [sensors]###211") then
+    if editor.beginWindow(attachedSensorsWinName, veh.name .. " [sensors]###211", im.WindowFlags_AlwaysAutoResize) then
       im.Separator()
       local vid = veh.vid
       if not sensorConfigs[vid] then
@@ -603,9 +471,10 @@ local function manageAttachedSensorsWindow()
           im.NextColumn()
 
           -- 'Remove Sensor' button.
-          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), redB, nil, nil, 'removeSensorButton') then
+          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), redB, nil, nil, 'removeSensorButton' .. i) then
             selectedSensorIdx = min(numSensors, selectedSensorIdx)
             removeSensor(sensors, i)
+            editor.endWindow()
             return
           end
           im.tooltip('Remove this sensor from the configuration.')
@@ -617,7 +486,7 @@ local function manageAttachedSensorsWindow()
           if not sensor.isLive then
             local btnCol = greenB
             if isSensorPropWinOpen and i == selectedSensorIdx then btnCol = greenD end
-            if editor.uiIconImageButton(editor.icons.build, im.ImVec2(21, 21), btnCol, nil, nil, 'editSensorButton') then
+            if editor.uiIconImageButton(editor.icons.build, im.ImVec2(21, 21), btnCol, nil, nil, 'editSensorButton' .. i) then
               if i == selectedSensorIdx or not isSensorPropWinOpen then
                 isSensorPropWinOpen = not isSensorPropWinOpen                                       -- Only toggle window open/closed if this is the same sensor.
               end
@@ -629,6 +498,24 @@ local function manageAttachedSensorsWindow()
               selectedSensorIdx = i
             end
             im.tooltip('Edit the selected sensor.')
+          else
+            local config = previewConfigs[sensor.type]
+            if config then
+              local preview, previewIdx = findPreview(sensor.type, selectedVehicleIdx, i)
+              local btnCol = greenB
+              if preview then btnCol = greenD end
+              if editor.uiIconImageButton(config.icon, im.ImVec2(21, 21), btnCol, nil, nil, config.buttonId .. i) then
+                if preview then
+                  removePreview(sensor.type, previewIdx)
+                else
+                  preview = addPreview(sensor.type, selectedVehicleIdx, i)
+                  editor.showWindow(preview.winName)
+                end
+                isSensorPropWinOpen = false
+                selectedSensorIdx = i
+              end
+              im.tooltip(config.tooltip)
+            end
           end
           im.SameLine()
           im.NextColumn()
@@ -636,12 +523,16 @@ local function manageAttachedSensorsWindow()
           -- 'Live Sensor' toggle button.
           local btnCol, btnIcon = blueB, editor.icons.wifi
           if sensor.isLive then btnCol, btnIcon = blueD, editor.icons.wifi_lock end
-          if editor.uiIconImageButton(btnIcon, im.ImVec2(19, 19), btnCol, nil, nil, 'toggleLiveSensorButton') then
+          if editor.uiIconImageButton(btnIcon, im.ImVec2(19, 19), btnCol, nil, nil, 'toggleLiveSensorButton' .. i) then
             sensor.isLive = not sensor.isLive
             handleEditLiveModeSwitch(sensors, i)
-            if isSensorPropWinOpen then
+            if isSensorPropWinOpen and i == selectedSensorIdx then
               editor.hideWindow(sensorPropWinName)
               isSensorPropWinOpen = false
+            end
+            local preview, previewIdx = findPreview(sensor.type, selectedVehicleIdx, i)
+            if preview then
+              removePreview(sensor.type, previewIdx)
             end
           end
           im.tooltip('Toggle between Edit and Live modes.')
@@ -655,50 +546,50 @@ local function manageAttachedSensorsWindow()
 
       -- 'Add Camera Sensor' button.
       if editor.uiIconImageButton(editor.icons.survellianceCamera, sensorIcon, greenB, nil, nil, 'addNewCamera') then
-        placing, isPlaceMode = tCamera, true
+        placing, isPlaceMode = stype.tCamera, true
       end
       im.tooltip('Add a Camera Sensor to the configuration.')
       im.SameLine()
 
       -- 'Add LiDAR Sensor' button.
       if editor.uiIconImageButton(editor.icons.carWithLidar, sensorIcon, greenB, nil, nil, 'addNewLiDAR') then
-        placing, isPlaceMode = tLiDAR, true
+        placing, isPlaceMode = stype.tLiDAR, true
       end
       im.tooltip('Add a LiDAR Sensor to the configuration.')
       im.SameLine()
 
       -- 'Add Ultrasonic Sensor' button.
       if editor.uiIconImageButton(editor.icons.proximitySensorsOutline, sensorIcon, greenB, nil, nil, 'addNewUltrasonic') then
-        placing, isPlaceMode = tUltrasonic, true
+        placing, isPlaceMode = stype.tUltrasonic, true
       end
       im.tooltip('Add an Ultrasonic Sensor to the configuration.')
       im.SameLine()
 
       -- 'Add RADAR Sensor' button.
       if editor.uiIconImageButton(editor.icons.radar, sensorIcon, greenB, nil, nil, 'addNewRADAR') then
-        placing, isPlaceMode = tRADAR, true
+        placing, isPlaceMode = stype.tRADAR, true
       end
       im.tooltip('Add a RADAR Sensor to the configuration.')
       im.SameLine()
 
       -- 'Add IMU Sensor' button.
       if editor.uiIconImageButton(editor.icons.gyroscope, sensorIcon, greenB, nil, nil, 'addNewIMU') then
-        placing, isPlaceMode = tIMU, true
+        placing, isPlaceMode = stype.tIMU, true
       end
       im.tooltip('Add an IMU Sensor to the configuration.')
       im.SameLine()
 
       -- 'Add GPS Sensor' button.
       if editor.uiIconImageButton(editor.icons.public, sensorIcon, greenB, nil, nil, 'addNewGPS') then
-        placing, isPlaceMode = tGPS, true
+        placing, isPlaceMode = stype.tGPS, true
       end
       im.tooltip('Add a GPS Sensor to the configuration.')
 
       -- Check if each of the one-time, non-placeable sensors are present in this configuration.
-      local isIdealRadarSensor = doesContainSensorType(sensors, tIdealRADAR)
-      local isRoadsSensor = doesContainSensorType(sensors, tRoads)
-      local isPowertrainSensor = doesContainSensorType(sensors, tPowertrain)
-      local isMeshSensor = doesContainSensorType(sensors, tMesh)
+      local isIdealRadarSensor = doesContainSensorType(sensors, stype.tIdealRADAR)
+      local isRoadsSensor = doesContainSensorType(sensors, stype.tRoads)
+      local isPowertrainSensor = doesContainSensorType(sensors, stype.tPowertrain)
+      local isMeshSensor = doesContainSensorType(sensors, stype.tMesh)
 
       -- 'Add Ideal RADAR Sensor' button.
       local btnCol = blueB
@@ -709,7 +600,7 @@ local function manageAttachedSensorsWindow()
             isLive = false,
             id = nil,
             name = 'Ideal RADAR',
-            type = tIdealRADAR,
+            type = stype.tIdealRADAR,
             physicsUpdateTime = 0.015,
             GFXUpdateTime = 0.1 }
         end
@@ -726,7 +617,7 @@ local function manageAttachedSensorsWindow()
             isLive = false,
             id = nil,
             name = 'Local Roads [Info]',
-            type = tRoads,
+            type = stype.tRoads,
             physicsUpdateTime = 0.015,
             GFXUpdateTime = 0.1 }
         end
@@ -743,7 +634,7 @@ local function manageAttachedSensorsWindow()
             isLive = false,
             id = nil,
             name = 'Powertrain [Info]',
-            type = tPowertrain,
+            type = stype.tPowertrain,
             physicsUpdateTime = 0.015,
             GFXUpdateTime = 0.1 }
         end
@@ -760,7 +651,7 @@ local function manageAttachedSensorsWindow()
             isLive = false,
             id = nil,
             name = 'Mesh Distribution',
-            type = tMesh,
+            type = stype.tMesh,
             physicsUpdateTime = 0.015,
             GFXUpdateTime = 0.1 }
         end
@@ -780,11 +671,205 @@ local function manageAttachedSensorsWindow()
         loadConfiguration()
       end
       im.tooltip('Load a sensor configuration, for this vehicle, from disk.')
+
+      -- 'Export to Python' button.
+      im.Separator()
+      if im.Button('Export Python code...') then
+        getPythonCode()
+        im.OpenPopup("Python Code")
+      end
+      im.SameLine()
+
+      if im.BeginPopupModal("Python Code", nil, im.WindowFlags_AlwaysAutoResize) then
+        im.Text("You can use this code to recreate the configuration in BeamNGpy:")
+        im.InputTextMultiline("##pythonCode", pythonCodePtr, pythonCodeLen, im.ImVec2(1200, 400))
+        im.Separator()
+        if im.Button("Copy to clipboard") then
+          setClipboard(ffi.string(pythonCodePtr))
+        end
+        im.SameLine()
+        if im.Button("Close popup") then
+          im.CloseCurrentPopup()
+        end
+        im.EndPopup()
+      end
     else
       isAttachedSensorsWinOpen = false  -- Handle window close.
     end
   end
   editor.endWindow()
+end
+
+local function showNoDataMessage()
+  im.TextColored(gray, "Waiting for sensor data...")
+  im.Text("Make sure the vehicle is active and the sensor is live.")
+end
+
+local function renderCameraPreview(sensor, vehicle, dt)
+  im.TextColored(gray, "Note: At least 'High' graphic setting is recommended for quality previews.")
+  local ptr = im.BoolPtr(sensor.forceGimbals)
+  im.Checkbox("Show gizmo", ptr)
+  im.Separator()
+  sensor.forceGimbals = ptr[0]
+  if sensor.forceGimbals then
+    if sensor.nextPreviewUpdate ~= nil then
+      sensor.nextPreviewUpdate = sensor.nextPreviewUpdate - dt
+    end
+    if sensor.nextPreviewUpdate == nil or sensor.nextPreviewUpdate < 0 then
+        simTimeAuthority.pause(false, false) -- TODO: after sensors are fixed to update on paused physics, we can remove
+      conversions.updateLiveSensorPositionDirection(sensor, vehicle)
+      sensor.nextPreviewUpdate = sensor.requestedUpdateTime * 2
+    end
+  else
+    sensor.nextPreviewUpdate = nil
+  end
+  extensions.tech_cameraPreview.visualizeCameraById(sensor.id)
+end
+
+local function renderIMUPreview(sensor)
+  local sensorId = sensor.id
+  local plotData = imuPlotData[sensorId]
+  if not plotData then
+    plotData = {
+      accX = im.ArrayFloat(plotLen), accY = im.ArrayFloat(plotLen), accZ = im.ArrayFloat(plotLen),
+      angVelX = im.ArrayFloat(plotLen), angVelY = im.ArrayFloat(plotLen), angVelZ = im.ArrayFloat(plotLen),
+      lastAccX = 0, lastAccY = 0, lastAccZ = 0, lastAngVelX = 0, lastAngVelY = 0, lastAngVelZ = 0, hasData = false
+    }
+    imuPlotData[sensorId] = plotData
+  end
+
+  local readings = extensions.tech_sensors.getAdvancedIMUReadings(sensorId)
+  if readings and readings[0] then
+    local data = readings[0]
+    if data.accSmooth then
+      plotData.lastAccX = data.accSmooth[1] or 0
+      plotData.lastAccY = data.accSmooth[3] or 0
+      plotData.lastAccZ = data.accSmooth[2] or 0
+    end
+    if data.angVel then
+      plotData.lastAngVelX = data.angVel[1] or 0
+      plotData.lastAngVelY = data.angVel[2] or 0
+      plotData.lastAngVelZ = data.angVel[3] or 0
+    end
+    plotData.hasData = true
+  end
+
+  if plotData.hasData then
+    plotData.accX[plotOffset] = plotData.lastAccX
+    plotData.accY[plotOffset] = plotData.lastAccY
+    plotData.accZ[plotOffset] = plotData.lastAccZ
+    plotData.angVelX[plotOffset] = plotData.lastAngVelX
+    plotData.angVelY[plotOffset] = plotData.lastAngVelY
+    plotData.angVelZ[plotOffset] = plotData.lastAngVelZ
+    local nextOffset = plotOffset + 1 >= plotLen and 0 or plotOffset + 1
+
+    im.TextColored(greenB, "Acceleration (m/s²)")
+    im.Spacing()
+    im.Text("Forward/Backward")
+    im.PlotLines1("##forward/backward", plotData.accX, plotLen, nextOffset, string.format("%+7.2f m/s²", plotData.lastAccX), FLT_MAX, FLT_MAX, plotSize)
+    im.Text("Right/Left")
+    im.PlotLines1("##right/left", plotData.accY, plotLen, nextOffset, string.format("%+7.2f m/s²", plotData.lastAccY), FLT_MAX, FLT_MAX, plotSize)
+    im.Text("Up/Down")
+    im.PlotLines1("##up/down", plotData.accZ, plotLen, nextOffset, string.format("%+7.2f m/s²", plotData.lastAccZ), FLT_MAX, FLT_MAX, plotSize)
+    im.Spacing()
+    im.Separator()
+    im.Spacing()
+    im.TextColored(greenB, "Angular Velocity (rad/s)")
+    im.Spacing()
+    im.Text("Pitch")
+    im.PlotLines1("##angVelX", plotData.angVelX, plotLen, nextOffset, string.format("%+7.3f rad/s", plotData.lastAngVelX), FLT_MAX, FLT_MAX, plotSize)
+    im.Text("Roll")
+    im.PlotLines1("##angVelY", plotData.angVelY, plotLen, nextOffset, string.format("%+7.3f rad/s", plotData.lastAngVelY), FLT_MAX, FLT_MAX, plotSize)
+    im.Text("Yaw")
+    im.PlotLines1("##angVelZ", plotData.angVelZ, plotLen, nextOffset, string.format("%+7.3f rad/s", plotData.lastAngVelZ), FLT_MAX, FLT_MAX, plotSize)
+  else
+    showNoDataMessage()
+  end
+end
+
+local function renderUltrasonicPreview(sensor)
+  local currentDist = extensions.tech_sensors.getUltrasonicReadings(sensor.id)["distance"]
+  local minDist, maxDist = sensor.nearFarPlanes[1], sensor.nearFarPlanes[2]
+
+  im.TextColored(greenB, "Distance Measurement")
+  im.Spacing()
+  im.Text(string.format("Range: %.2f m - %.2f m", minDist, maxDist))
+  im.Spacing()
+
+  if currentDist then
+    im.Text(string.format("Current: %.2f m", currentDist))
+    im.Spacing()
+
+    local sliderWidth, sliderHeight, padding = 350, 40, 10
+    local drawList = im.GetWindowDrawList()
+    local cursorPos = im.GetCursorScreenPos()
+    local sliderStart = im.ImVec2(cursorPos.x + padding, cursorPos.y)
+    local sliderEnd = im.ImVec2(cursorPos.x + padding + sliderWidth, cursorPos.y + sliderHeight)
+
+    local bgColor = im.GetColorU322(im.ImVec4(0.3, 0.3, 0.3, 1.0))
+    local borderColor = im.GetColorU322(im.ImVec4(0.6, 0.6, 0.6, 1.0))
+    local markerColor = im.GetColorU322(greenB)
+
+    im.ImDrawList_AddRectFilled(drawList, sliderStart, sliderEnd, bgColor)
+    im.ImDrawList_AddRect(drawList, sliderStart, sliderEnd, borderColor, 0, 0, 2)
+
+    local normalizedPos = max(0, min(1, (currentDist - minDist) / (maxDist - minDist)))
+    local markerX = sliderStart.x + normalizedPos * sliderWidth
+
+    im.ImDrawList_AddLine(drawList, im.ImVec2(markerX, sliderStart.y), im.ImVec2(markerX, sliderEnd.y), markerColor, 4)
+    im.ImDrawList_AddCircleFilled(drawList, im.ImVec2(markerX, sliderStart.y + sliderHeight * 0.5), 8, markerColor)
+
+    im.Dummy(im.ImVec2(sliderWidth + padding * 2, sliderHeight + 10))
+  else
+    showNoDataMessage()
+  end
+end
+
+previewConfigs[stype.tCamera].render = renderCameraPreview
+previewConfigs[stype.tIMU].render = renderIMUPreview
+previewConfigs[stype.tUltrasonic].render = renderUltrasonicPreview
+
+local function initPreviewIcons()
+  previewConfigs[stype.tCamera].icon = editor.icons.photo_camera
+  previewConfigs[stype.tIMU].icon = editor.icons.gyroscope
+  previewConfigs[stype.tUltrasonic].icon = editor.icons.proximitySensorsOutline
+end
+
+local function managePreviewWindow(sensorType, dt)
+  local config = previewConfigs[sensorType]
+  if not config then return end
+
+  for i = #config.openPreviews, 1, -1 do
+    local preview = config.openPreviews[i]
+    local vehicle = vehicles[preview.vehicleIdx]
+    local shouldRemove = false
+
+    if not vehicle then
+      shouldRemove = true
+    else
+      local sensors = sensorConfigs[vehicle.vid]
+      if not sensors then
+        shouldRemove = true
+      else
+        local sensor = sensors[preview.sensorIdx]
+        if not sensor or not sensor.isLive or sensor.type ~= sensorType then
+          shouldRemove = true
+        else
+          if editor.beginWindow(preview.winName, sensor.name .. " [Preview]###" .. preview.id, im.flags(im.WindowFlags_NoCollapse)) then
+            config.render(sensor, vehicle, dt)
+          else
+            if config.cleanup then config.cleanup(sensor) end
+            shouldRemove = true
+          end
+          editor.endWindow(preview.winName)
+        end
+      end
+    end
+
+    if shouldRemove then
+      removePreview(sensorType, i)
+    end
+  end
 end
 
 -- Manages the sensor properties Open/close the roads list window.
@@ -800,8 +885,8 @@ local function manageSensorPropWindow()
       return
     end
     local ctr = 1
-    if editor.beginWindow(sensorPropWinName, sensor.name .. " [Edit Properties]###3") then
-      if sensor.type == tCamera then
+    if editor.beginWindow(sensorPropWinName, sensor.name .. " [Edit Properties]###3", im.flags(im.WindowFlags_NoCollapse)) then
+      if sensor.type == stype.tCamera then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -928,13 +1013,13 @@ local function manageSensorPropWindow()
 
         -- 'Set Update Time' input box.
         im.TextColored(greenB, 'Camera Update Properties:')
-        local oldVal = sensor.updateTime
+        local oldVal = sensor.requestedUpdateTime
         local uiVal = im.FloatPtr(oldVal)
         im.PushItemWidth(130)
         im.InputFloat("Sensor Refresh Rate ###" .. tostring(ctr), uiVal, 0.01, nil, "%.4f s")
         im.tooltip('Set the time between sensor updates.')
         im.PopItemWidth()
-        sensor.updateTime = max(0.0001, min(60.0, uiVal[0]))
+        sensor.requestedUpdateTime = max(0.0001, min(60.0, uiVal[0]))
         ctr = ctr + 1
 
         -- 'Set Update Priority' slider.
@@ -955,26 +1040,31 @@ local function manageSensorPropWindow()
 
         -- 'Is Visualised' checkbox.
         im.TextColored(greenB, 'Camera Operation Flags:')
-        local oldVal = sensor.isRenderColours
+        local oldVal = sensor.renderColours
         local uiVal = im.BoolPtr(oldVal)
         im.Checkbox("Render Color Image", uiVal)
         im.tooltip('Toggle whether to include the colour image in output.')
-        sensor.isRenderColours = uiVal[0]
-        local oldVal = sensor.isRenderAnnotations
+        sensor.renderColours = uiVal[0]
+        local oldVal = sensor.renderAnnotations
         local uiVal = im.BoolPtr(oldVal)
         im.Checkbox("Render Class Annotations", uiVal)
         im.tooltip('Toggle whether to include class annotations (segmentation) in output.')
-        sensor.isRenderAnnotations = uiVal[0]
-        local oldVal = sensor.isRenderInstance
+        sensor.renderAnnotations = uiVal[0]
+        local oldVal = sensor.renderInstance
         local uiVal = im.BoolPtr(oldVal)
         im.Checkbox("Render Instance Annotations", uiVal)
         im.tooltip('Toggle whether to include instance annotations (segmentation) in output.')
-        sensor.isRenderInstance = uiVal[0]
-        local oldVal = sensor.isRenderDepth
+        sensor.renderInstance = uiVal[0]
+        local oldVal = sensor.renderDepth
         local uiVal = im.BoolPtr(oldVal)
         im.Checkbox("Render Depth Image", uiVal)
         im.tooltip('Toggle whether to include the depth image in output.')
-        sensor.isRenderDepth = uiVal[0]
+        sensor.renderDepth = uiVal[0]
+        local oldVal = sensor.renderTranslucentAsOpaqueDepth or false
+        local uiVal = im.BoolPtr(oldVal)
+        im.Checkbox("Render Translucents In Depth", uiVal)
+        im.tooltip('Include translucent surfaces in the depth image. Requires Render Depth Image.')
+        sensor.renderTranslucentAsOpaqueDepth = uiVal[0]
         local oldVal = sensor.isVisualised
         local uiVal = im.BoolPtr(oldVal)
         im.Checkbox("Visualise On Map", uiVal)
@@ -991,7 +1081,7 @@ local function manageSensorPropWindow()
         im.Dummy(im.ImVec2(5, 0))
         im.Separator()
 
-      elseif sensor.type == tLiDAR then
+      elseif sensor.type == stype.tLiDAR then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -1147,13 +1237,13 @@ local function manageSensorPropWindow()
 
         -- 'Set Update Time' input box.
         im.TextColored(greenB, 'LiDAR Update Properties:')
-        local oldVal = sensor.updateTime
+        local oldVal = sensor.requestedUpdateTime
         local uiVal = im.FloatPtr(oldVal)
         im.PushItemWidth(130)
         im.InputFloat("Sensor Refresh Rate ###" .. tostring(ctr), uiVal, 0.01, nil, "%.4f s")
         im.tooltip('Set the time between sensor updates.')
         im.PopItemWidth()
-        sensor.updateTime = max(0.0001, min(60.0, uiVal[0]))
+        sensor.requestedUpdateTime = max(0.0001, min(60.0, uiVal[0]))
         ctr = ctr + 1
 
         -- 'Set Update Priority' slider.
@@ -1197,7 +1287,7 @@ local function manageSensorPropWindow()
         im.Dummy(im.ImVec2(5, 0))
         im.Separator()
 
-      elseif sensor.type == tUltrasonic then
+      elseif sensor.type == stype.tUltrasonic then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -1467,13 +1557,13 @@ local function manageSensorPropWindow()
 
         -- 'Set Update Time' input box.
         im.TextColored(greenB, 'Ultrasonic Update Properties:')
-        local oldVal = sensor.updateTime
+        local oldVal = sensor.requestedUpdateTime
         local uiVal = im.FloatPtr(oldVal)
         im.PushItemWidth(130)
         im.InputFloat("Sensor Refresh Rate ###" .. tostring(ctr), uiVal, 0.01, nil, "%.4f s")
         im.tooltip('Set the time between sensor updates.')
         im.PopItemWidth()
-        sensor.updateTime = max(0.0001, min(60.0, uiVal[0]))
+        sensor.requestedUpdateTime = max(0.0001, min(60.0, uiVal[0]))
         ctr = ctr + 1
 
         -- 'Set Update Priority' slider.
@@ -1510,7 +1600,7 @@ local function manageSensorPropWindow()
         im.Dummy(im.ImVec2(5, 0))
         im.Separator()
 
-      elseif sensor.type == tRADAR then
+      elseif sensor.type == stype.tRADAR then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -1795,13 +1885,13 @@ local function manageSensorPropWindow()
 
         -- 'Set Update Time' input box.
         im.TextColored(greenB, 'RADAR Update Properties:')
-        local oldVal = sensor.updateTime
+        local oldVal = sensor.requestedUpdateTime
         local uiVal = im.FloatPtr(oldVal)
         im.PushItemWidth(130)
         im.InputFloat("Sensor Refresh Rate ###" .. tostring(ctr), uiVal, 0.01, nil, "%.4f s")
         im.tooltip('Set the time between sensor updates.')
         im.PopItemWidth()
-        sensor.updateTime = max(0.0001, min(60.0, uiVal[0]))
+        sensor.requestedUpdateTime = max(0.0001, min(60.0, uiVal[0]))
         ctr = ctr + 1
 
         -- 'Set Update Priority' slider.
@@ -1838,7 +1928,7 @@ local function manageSensorPropWindow()
         im.Dummy(im.ImVec2(5, 0))
         im.Separator()
 
-      elseif sensor.type == tIMU then
+      elseif sensor.type == stype.tIMU then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -1936,27 +2026,15 @@ local function manageSensorPropWindow()
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
 
-        -- 'Set Acceleration Window Width (Smoothing)' input box.
+        -- 'Set Smoother Strength' input box.
         im.TextColored(greenB, 'IMU Post-Processing Properties:')
-        local oldVal = sensor.accelWindowWidth
-        local uiVal = im.IntPtr(oldVal)
+        local oldVal = sensor.smootherStrength
+        local uiVal = im.FloatPtr(oldVal)
         im.PushItemWidth(130)
-        im.InputInt("Acceleration Smoothing", uiVal, 1, 500)
-        im.tooltip('Set the window width for the smoothing of the accelerometer data.')
+        im.InputFloat("Smoother Strength", uiVal, 0.0, 5.0, "%.1f")
+        im.tooltip('Set the strength of the smoothing of the accelerometer and gyroscopic data.')
         im.PopItemWidth()
-        sensor.accelWindowWidth = max(1, min(500.0, uiVal[0]))
-        ctr = ctr + 1
-
-        -- 'Set Gyroscopic Window Width (Smoothing)' slider.
-        local oldVal = sensor.gyroWindowWidth
-        local uiVal = im.IntPtr(oldVal)
-        im.PushStyleVar1(im.StyleVar_GrabMinSize, 20)
-        im.PushItemWidth(130)
-        im.InputInt("Gyroscopic Smoothing", uiVal, 1, 500)
-        im.tooltip('Set the window width for the smoothing of the gyroscopic data.')
-        im.PopItemWidth()
-        im.PopStyleVar()
-        sensor.gyroWindowWidth = max(1, min(500.0, uiVal[0]))
+        sensor.smootherStrength = max(0.0, min(5.0, uiVal[0]))
         ctr = ctr + 1
 
         im.Dummy(im.ImVec2(5, 0))
@@ -1995,7 +2073,7 @@ local function manageSensorPropWindow()
         im.Dummy(im.ImVec2(5, 0))
         im.Separator()
 
-      elseif sensor.type == tGPS then
+      elseif sensor.type == stype.tGPS then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -2145,7 +2223,7 @@ local function manageSensorPropWindow()
         im.Dummy(im.ImVec2(5, 0))
         im.Separator()
 
-      elseif sensor.type == tIdealRADAR then
+      elseif sensor.type == stype.tIdealRADAR then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -2185,7 +2263,7 @@ local function manageSensorPropWindow()
         sensor.GFXUpdateTime = max(0.0, min(360.0, uiVal[0]))
         ctr = ctr + 1
 
-      elseif sensor.type == tRoads then
+      elseif sensor.type == stype.tRoads then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -2226,7 +2304,7 @@ local function manageSensorPropWindow()
         sensor.GFXUpdateTime = max(0.0, min(360.0, uiVal[0]))
         ctr = ctr + 1
 
-      elseif sensor.type == tPowertrain then
+      elseif sensor.type == stype.tPowertrain then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -2266,7 +2344,7 @@ local function manageSensorPropWindow()
         sensor.GFXUpdateTime = max(0.0, min(360.0, uiVal[0]))
         ctr = ctr + 1
 
-      elseif sensor.type == tMesh then
+      elseif sensor.type == stype.tMesh then
 
         im.Separator()
         im.Dummy(im.ImVec2(5, 0))
@@ -2316,7 +2394,7 @@ local function manageSensorPropWindow()
 end
 
 -- World editor main callback for rendering the UI.
-local function onEditorGui()
+local function onEditorGui(dt)
   if not isSensorConfigurationEditor then
     return
   end
@@ -2324,12 +2402,16 @@ local function onEditorGui()
   -- Manage the back end.
   getCurrentVehicleList()
 
+  if not vehicles[selectedVehicleIdx] then
+    return
+  end
+
   -- Dispatch a request to vlua, to collect all the POI data.
   if not isRequestSent then
     table.clear(poiData)
     isRequestSent, isVluaDataReturned = true, false
     local vid = vehicles[selectedVehicleIdx].vid
-    be:queueObjectLua(vid, "extensions.tech_vehiclePOI.collectVehiclePOIData()")
+    be:queueObjectLua(vid, "extensions.tech_vehiclePOI.collectVehiclePOIData('editor_sensorConfigurationEditor.updateCollectedVehiclePOIData')")
   end
 
   -- Do not go any further until the requested data has been returned from vlua.
@@ -2356,7 +2438,7 @@ local function onEditorGui()
       local fwd, up = util.sensor2VS(s.dir, s.up, veh)
       local right = fwd:cross(up)
       util.renderSensorBoxAndFrame(pos, fwd, up, right)
-      if s.type == tUltrasonic or s.type == tRADAR then
+      if s.type == stype.tUltrasonic or s.type == stype.tRADAR then
         util.renderBeamShape(s, pos, fwd, up, right)
       end
     end
@@ -2364,7 +2446,7 @@ local function onEditorGui()
 
   if not isPlaceMode then
     local s = sensors[selectedSensorIdx]
-    if s and s.pos and not s.isLive then
+    if s and s.pos and (not s.isLive or s.forceGimbals) then
       local posWS = util.coeffs2PosVS(s.pos, veh) + vPos
       local dir, up = util.sensor2VS(s.dir, s.up, veh)
       handleGimbals(posWS)
@@ -2380,6 +2462,13 @@ local function onEditorGui()
   manageMainToolWindow()
   manageAttachedSensorsWindow()
   manageSensorPropWindow()
+  managePreviewWindow(stype.tCamera, dt)
+  managePreviewWindow(stype.tIMU, dt)
+  managePreviewWindow(stype.tUltrasonic, dt)
+
+  if be:getEnabled() and #previewConfigs[stype.tIMU].openPreviews > 0 then
+    plotOffset = plotOffset + 1 >= plotLen and 0 or plotOffset + 1
+  end
 end
 
 -- Called when the 'Sensor Configuration Editor' icon is pressed.
@@ -2394,29 +2483,73 @@ local function onDeactivate()
   editor.hideWindow(toolWinName)
   editor.hideWindow(attachedSensorsWinName)
   editor.hideWindow(sensorPropWinName)
+  for _, config in pairs(previewConfigs) do
+    for _, preview in ipairs(config.openPreviews) do
+      editor.hideWindow(preview.winName)
+    end
+    table.clear(config.openPreviews)
+  end
   isSensorConfigurationEditor = false
   isAttachedSensorsWinOpen = false
   isSensorPropWinOpen = false
 end
 
--- Called upon world editor initialization.
-local function onEditorInitialized()
-  if tech_license.isValid() then
-    editor.editModes.sensorConfigurationEditMode = {
-      displayName = "Edit Sensor Configuration",
-      onUpdate = nop,
-      onActivate = onActivate,
-      onDeactivate = onDeactivate,
-      icon = editor.icons.carSensors,
-      iconTooltip = "Sensor Configuration Editor",
-      auxShortcuts = {},
-      hideObjectIcons = true,
-      sortOrder = 9002 }
-    editor.registerWindow(toolWinName, toolWinSize)
-    editor.registerWindow(attachedSensorsWinName, attachedSensorsWinSize)
-    editor.registerWindow(sensorPropWinName, sensorPropWinSize)
+local function loadExistingSensor(sensorType, sensorId, conf)
+  local existingSensor = conversions.getLiveSensorConfiguration(sensorType, sensorId, conf)
+  if not sensorConfigs[existingSensor.vid] then
+    sensorConfigs[existingSensor.vid] = {existingSensor}
+    if ctrSensor[sensorType] ~= nil then
+      ctrSensor[sensorType] = ctrSensor[sensorType] + 1
+    end
+  else
+    local sensors = sensorConfigs[existingSensor.vid]
+    for sid = 1, #sensors + 1 do
+      if sensors[sid] == nil then
+        sensors[sid] = existingSensor
+        if ctrSensor[sensorType] ~= nil then
+          ctrSensor[sensorType] = ctrSensor[sensorType] + 1
+        end
+      end
+      if sensors[sid].name == conf.name then
+        sensors[sid] = tableMerge(sensors[sid], existingSensor)
+        return
+      end
+    end
   end
 end
+
+local function loadExistingSensors()
+  local activeSensors = extensions.tech_sensors.getActiveSensors()
+  for i = 1, #activeSensors do
+    local sensorType, sensorId = unpack(activeSensors[i])
+    local conf = extensions.tech_sensors.getSensorConfiguration(sensorType, sensorId)
+    if not conf.isStatic then
+      loadExistingSensor(sensorType, sensorId, conf)
+    end
+  end
+end
+
+-- Called upon world editor initialization.
+local function onEditorInitialized()
+  if not tech_license.isValid() then return end
+  editor.editModes.sensorConfigurationEditMode = {
+    displayName = "Edit Sensor Configuration",
+    onUpdate = nop,
+    onActivate = onActivate,
+    onDeactivate = onDeactivate,
+    icon = editor.icons.carSensors,
+    iconTooltip = "Sensor Configuration Editor",
+    auxShortcuts = {},
+    hideObjectIcons = true }
+  initPreviewIcons()
+  editor.registerWindow(toolWinName, toolWinSize)
+  editor.registerWindow(attachedSensorsWinName, attachedSensorsWinSize)
+  editor.registerWindow(sensorPropWinName, sensorPropWinSize)
+  loadExistingSensors()
+end
+
+-- Pull live vehicle sensors into sensorConfigs (IMU/GPS/etc. created via API or other tools).
+M.syncFromActiveSensors = loadExistingSensors
 
 -- Serialization function.
 local function onSerialize()
@@ -2429,7 +2562,7 @@ local function onSerialize()
       end
     end
   end
-  return { d = lpack.encode(sensorConfigs) }
+  return { d = lpack.encode(sensorConfigs), ctrSensor = ctrSensor }
 end
 
 -- Deserialization function.
@@ -2437,6 +2570,7 @@ local function onDeserialized(dataIn)
   getCurrentVehicleList()
   table.clear(sensorConfigs)
   local data = lpack.decode(dataIn.d)
+  ctrSensor = dataIn.ctrSensor
   for i = 1, #vehicles do
     local v = vehicles[i]
     if data[v.vid] then
@@ -2445,6 +2579,24 @@ local function onDeserialized(dataIn)
   end
 end
 
+local function onSensorCreated(sensorType, sensorId)
+  local conf = extensions.tech_sensors.getSensorConfiguration(sensorType, sensorId)
+  if conf ~= nil and not conf.isStatic and conf.name ~= nil then
+    loadExistingSensor(sensorType, sensorId, conf)
+  end
+end
+
+local function onSensorRemoved(sensorType, sensorId)
+  for i = 1, #sensorConfigs do
+    local sensors = sensorConfigs[i]
+    for j = 1, #sensors do
+      if sensors[j].id == sensorId and sensors[j].isLive then
+        table.remove(sensors, j)
+        return
+      end
+    end
+  end
+end
 
 -- Public interface.
 M.sensorConfigs =                                         sensorConfigs
@@ -2456,5 +2608,7 @@ M.onEditorGui =                                           onEditorGui
 M.onEditorInitialized =                                   onEditorInitialized
 M.onSerialize =                                           onSerialize
 M.onDeserialized =                                        onDeserialized
+M.onSensorCreated =                                       onSensorCreated
+M.onSensorRemoved =                                       onSensorRemoved
 
 return M

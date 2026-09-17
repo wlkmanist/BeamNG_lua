@@ -127,8 +127,8 @@ function C:work(args)
 
   local vehId = self.pinIn.vehId.value or be:getPlayerVehicleID(0)
   local noData = false
-  if vehId and be:getObjectByID(vehId) then
-    local veh = be:getObjectByID(vehId)
+  if vehId and getObjectByID(vehId) then
+    local veh = getObjectByID(vehId)
 
     if veh then
       if self.data.highPrecision then

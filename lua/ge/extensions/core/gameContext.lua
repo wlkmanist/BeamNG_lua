@@ -26,8 +26,10 @@ local function getWIPWarningLabel()
   if gameplay_missions_missionManager.getForegroundMissionId() then
     local m = gameplay_missions_missions.getMissionById(gameplay_missions_missionManager.getForegroundMissionId())
     if m then
-      if m.missionType == 'rallyStage' then
-        return "ui.rally.experimentalWarning"
+      if m.missionType == 'rallyStage' or m.missionType == 'rallyLoop' or m.missionType == 'rallyLoop2' then
+        if not settings.getValue('rallyHideExperimentalBanner') then
+          return "ui.rally.experimentalWarning"
+        end
       end
     end
   end

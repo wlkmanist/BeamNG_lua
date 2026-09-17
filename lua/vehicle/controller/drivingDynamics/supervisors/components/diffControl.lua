@@ -121,7 +121,7 @@ end
 
 --returns true if component did act as yaw control
 --called from updateFixedStep
-local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, dt)
+local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, frontSlipAngle, rearSlipAngle, dt)
   M.isActingAsYC = false
   if relevantFrontDiff then
     relevantFrontDiff.resetOverride()

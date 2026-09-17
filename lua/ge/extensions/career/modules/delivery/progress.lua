@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dParcelMods, dVehOfferManager, dVehicleTasks
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dParcelMods, dVehOfferManager, dVehicleTasks, dTutorial
 local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
@@ -13,6 +13,7 @@ M.onCareerActivated = function()
   dParcelMods = career_modules_delivery_parcelMods
   dVehOfferManager = career_modules_delivery_vehicleOfferManager
   dVehicleTasks = career_modules_delivery_vehicleTasks
+  dTutorial = career_modules_delivery_tutorial
   step = util_stepHandler
 end
 
@@ -390,7 +391,7 @@ M.confirmDropOffCheckComplete = function()
   end
     -- format each group individually
   for gId, group in pairs(cargoByGroupId) do
-    table.insert(itemNames, string.format("%dx %s", #group, group[1].name))
+    table.insert(itemNames, string.format("%dx %s", #group, _tr(group[1].name)))
   end
 
   for _, formattedOffer in ipairs(confirmedDropOffData.offers) do
@@ -428,7 +429,13 @@ M.confirmDropOffCheckComplete = function()
       }
   end
   ]]
-  career_modules_playerAttributes.addAttributes(rewardSum,{label=string.format("Rewards for %s", table.concat(itemNames, ", ")), tags={"gameplay"}})
+  career_modules_playerAttributes.addAttributes(rewardSum, {
+    label = {
+      txt = "ui.career.attributeLog.deliveryRewardsFor",
+      context = { items = table.concat(itemNames, ", ") },
+    },
+    tags = {"gameplay", "reward", "delivery"},
+  })
 
   for key, _ in pairs(branchInfo) do
 
@@ -439,7 +446,7 @@ M.confirmDropOffCheckComplete = function()
         icon = "peopleOutline",
         order = 7000,
         animationData = {
-          name = "Reputation: " .. organization.name,
+          name = core_locales.contextTranslate("ui.career.organizations.reputationAnimationName", {organizationName = _tr(organization.name)}),
           max = organization.reputation.nextThreshold,
           min = organization.reputation.prevThreshold,
           value = organization.reputation.value
@@ -455,15 +462,15 @@ M.confirmDropOffCheckComplete = function()
         animationData = career_modules_branches_landing.getBranchSkillCardData(key),
         branchLevels = deepcopy(branch.levels),
         showLevelUpPopup = true,
-        unlockPopupHeader = string.format("%s %s: Level %d", translateLanguage(branch.name, branch.name), branch.isSkill and "Skill" or "Branch", career_branches.getBranchLevel(branch.id) or 0)
+        unlockPopupHeader = string.format("%s %s: Level %d", _tr(branch.name), branch.isSkill and "Skill" or "Branch", career_branches.getBranchLevel(branch.id) or 0)
       }
 
       for i, levelInfo in ipairs(branchInfo[key].branchLevels) do
         levelInfo.levelLabel = "Level " .. i
       end
 
-      if branch.isBranch then branchInfo[key].animationData.name = "Branch: " .. translateLanguage(branchInfo[key].animationData.name, branchInfo[key].animationData.name) end
-      if branch.isSkill then branchInfo[key].animationData.name = "Skill: " .. translateLanguage(branchInfo[key].animationData.name, branchInfo[key].animationData.name) end
+      if branch.isBranch then branchInfo[key].animationData.name = "Branch: " .. _tr(branchInfo[key].animationData.name) end
+      if branch.isSkill then branchInfo[key].animationData.name = "Skill: " .. _tr(branchInfo[key].animationData.name) end
     end
 
     if key == "money" then
@@ -511,10 +518,10 @@ end
 
 M.unloadCargoPopupClosed = function()
   Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_02')
-  career_modules_linearTutorial.introPopup("cargoDelivered")
+  career_modules_tutorialPopups.introPopup("cargoDelivered")
   if next(showSystemPopup) then
     for _, key in ipairs(showSystemPopup) do
-      career_modules_linearTutorial.introPopup(key.."Unlocked")
+      career_modules_tutorialPopups.introPopup(key.."Unlocked")
     end
   end
   gameplay_markerInteraction.setForceReevaluateOpenPrompt()
@@ -546,7 +553,14 @@ M.isFacilityUnlocked = function(facId)
   return true
 end
 
-M.isFacilityVisible = function(facId)
+M.isFacilityVisible = function(facId, isCargoDeliveryTutorialActive)
+  if isCargoDeliveryTutorialActive then
+    if not dGenerator.getFacilityById(facId).isTutorialForCargoDelivery then
+      return false
+    end
+  end
+
+
   local fac = dGenerator.getFacilityById(facId)
   if not fac.visibleCondition then
     return true
@@ -578,8 +592,7 @@ end
 
 
 M.getMoneyMultiplerForSkill = function(skill, tier)
-  tier = tier or career_branches.getBranchLevel(skill)
-  return math.pow(1.2, tier-1)
+  return career_branches.getLevelRewardMultiplier("logistics")
 end
 
 
@@ -612,9 +625,9 @@ local function activateSound(soundLabel, active)
     end
   end
 end
+M.activateSound = activateSound
 
 
 M.onBranchTierReached = onBranchTierReached
-M.activateSound = activateSound
 
 return M

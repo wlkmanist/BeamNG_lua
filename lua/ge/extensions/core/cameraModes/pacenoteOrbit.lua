@@ -96,6 +96,10 @@ function C:update(data)
 
   -- Zoom control
   local zoomChange = MoveManager.zoomIn - MoveManager.zoomOut
+
+  MoveManager.zoomIn = 0
+  MoveManager.zoomOut = 0
+
   local zoomSpeed = 3.0
   self.camDist = clamp(self.camDist + zoomChange * dtfactor * zoomSpeed, self.camMinDist, self.camMaxDist)
 

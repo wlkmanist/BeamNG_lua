@@ -26,9 +26,22 @@ local function getZonesByPrioForPosition(pos) -- returns a dict of zones that co
   return zonesByPrio, highestPrio
 end
 
+local zonesIteratorCtx = {}
 local function getHighestPrioZone(pos) -- returns the first highest priority zone that contains the position
-  local zonesByPrio, highestPrio = getZonesByPrioForPosition(pos)
-  return zonesByPrio[highestPrio][1]
+  local highestPrio = -math.huge
+  local highestPrioZone = nil
+
+  if not sites then return nil end
+
+  for _, zone in sites:zonesForPositionIterator(pos, zonesIteratorCtx) do
+    local prio = zone.customFields:get(prioFieldName) or 0
+    if prio > highestPrio then
+      highestPrio = prio
+      highestPrioZone = zone
+    end
+  end
+
+  return highestPrioZone
 end
 
 local function getMergedFieldsFromZones(pos, fieldName) -- returns an array of values from zone custom fields, given the position and field names

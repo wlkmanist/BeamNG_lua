@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -208,7 +207,7 @@ function C:checkParking()
   self.pinOut.forwardDistanceRelative.value = math.abs(alignedOffset:dot(yVec)) / sc.y
 
   self.pinOut.stopping.value = false
-  if self.pinOut.inside.value and vehicleData.vel:length() <= 0.075 then
+  if self.pinOut.inside.value and vehicleData.vel:length() <= 0.15 then
     self.stopTimer = self.stopTimer-self.mgr.dtSim
     self.pinOut.stoppedPercent.value = 1-clamp(self.stopTimer / (self.pinIn.stop_timer.value or 1), 0, 1)
     self.pinOut.stopping.value = true

@@ -36,6 +36,7 @@ M.clutchRatio = 1
 M.shiftingAggression = 0
 M.isArcadeSwitched = false
 M.isSportModeActive = false
+M.isManualModeActive = false
 
 M.smoothedAvgAVInput = 0
 M.rpm = 0
@@ -58,9 +59,9 @@ M.checkEngine = false
 M.energyStorages = {}
 
 local automaticHandling = {
-  availableModes = {"P", "R", "N", "D", "S", "1", "2", "M"},
-  hShifterModeLookup = {[-1] = "R", [0] = "N", "P", "D", "S", "2", "1", "M1"},
-  forwardModes = {["D"] = true, ["S"] = true, ["1"] = true, ["2"] = true, ["M"] = true},
+  availableModes = {"P", "R", "N", "D", "S", "1", "2", "3", "4", "5", "6", "7", "8", "9", "M"},
+  hShifterModeLookup = {},
+  forwardModes = {["D"] = true, ["S"] = true, ["1"] = true, ["2"] = true, ["3"] = true, ["4"] = true, ["5"] = true, ["6"] = true, ["7"] = true, ["8"] = true, ["9"] = true, ["M"] = true},
   availableModeLookup = {},
   existingModeLookup = {},
   modeIndexLookup = {},
@@ -88,6 +89,11 @@ local torqueConverterHandling = {
   updateLockup = nop
 }
 
+--shift LEDs are in use if we are in manual control over the gear selection
+local function areShiftLEDsInUse()
+  return M.gearboxHandling.behavior ~= "arcade" and M.isManualModeActive
+end
+
 local function getGearName()
   local modePrefix = ""
   if automaticHandling.mode == "S" then
@@ -109,11 +115,9 @@ local function applyGearboxModeRestrictions()
   end
   local maxGearIndex = gearbox.maxGearIndex
   local minGearIndex = gearbox.minGearIndex
-  if automaticHandling.mode == "1" then
-    maxGearIndex = 1
-    minGearIndex = 1
-  elseif automaticHandling.mode == "2" then
-    maxGearIndex = 2
+  local numberMode = tonumber(automaticHandling.mode)
+  if numberMode then
+    maxGearIndex = numberMode
     minGearIndex = 1
   elseif manualModeIndex then
     maxGearIndex = manualModeIndex
@@ -147,6 +151,7 @@ local function applyGearboxMode()
   end
 
   M.isSportModeActive = automaticHandling.mode == "S"
+  M.isManualModeActive = string.sub(automaticHandling.mode, 1, 1) == "M"
 end
 
 local function gearboxBehaviorChanged(behavior)
@@ -175,7 +180,7 @@ end
 local function setDefaultForwardMode(mode)
   --todo directly set the active mode as well if we are in forward
   automaticHandling.defaultForwardMode = mode
-  if automaticHandling.mode == "D" or automaticHandling.mode == "S" or automaticHandling.mode == "1" or automaticHandling.mode == "2" or string.sub(automaticHandling.mode, 1, 1) == "M" then
+  if automaticHandling.mode == "D" or automaticHandling.mode == "S" or tonumber(automaticHandling.mode) or string.sub(automaticHandling.mode, 1, 1) == "M" then
     if mode == "M1" then --we just shifted into M1
       automaticHandling.mode = "M" .. tostring(max(gearbox.gearIndex, 1))
     else
@@ -458,6 +463,10 @@ local function updateInGearArcade(dt)
   end
 
   gearIndex = determineTargetGearIndex()
+  --enforce things like L and M modes
+  if not M.isManualModeActive then
+    gearIndex = min(max(gearIndex, automaticHandling.minGearIndex), automaticHandling.maxGearIndex)
+  end
   updateTorqueConverter(dt)
 
   -- neutral gear handling
@@ -470,12 +479,14 @@ local function updateInGearArcade(dt)
       gearIndex = 0
       automaticHandling.mode = "N"
       applyGearboxMode()
+      applyGearboxModeRestrictions()
     else
       if M.smoothedValues.throttleInput > 0 and M.inputValues.throttle > 0 and M.smoothedValues.brakeInput <= 0 and M.smoothedValues.avgAV > -1 and gearIndex < 1 then
         gearIndex = 1
         M.timer.neutralSelectionDelayTimer = M.timerConstants.neutralSelectionDelay
         automaticHandling.mode = automaticHandling.defaultForwardMode
         applyGearboxMode()
+        applyGearboxModeRestrictions()
       end
 
       if M.smoothedValues.brakeInput > 0.1 and M.inputValues.brake > 0 and M.smoothedValues.throttleInput <= 0 and M.smoothedValues.avgAV <= 0.15 and gearIndex > -1 then
@@ -483,6 +494,7 @@ local function updateInGearArcade(dt)
         M.timer.neutralSelectionDelayTimer = M.timerConstants.neutralSelectionDelay
         automaticHandling.mode = "R"
         applyGearboxMode()
+        applyGearboxModeRestrictions()
       end
     end
 
@@ -491,6 +503,7 @@ local function updateInGearArcade(dt)
       M.timer.neutralSelectionDelayTimer = M.timerConstants.neutralSelectionDelay
       automaticHandling.mode = "P"
       applyGearboxMode()
+      applyGearboxModeRestrictions()
     end
   end
 
@@ -637,6 +650,14 @@ local function init(jbeamData, sharedFunctionTable)
     end
   end
 
+  if jbeamData.hShifterModePositions then
+    for mode, index in pairs(jbeamData.hShifterModePositions) do
+      automaticHandling.hShifterModeLookup[index] = mode
+    end
+  else
+    automaticHandling.hShifterModeLookup = {[-1] = "R", [0] = "N", "P", "D", "S", "2", "1", "M1"}
+  end
+
   if torqueConverter then
     torqueConverterHandling.currentLockup = 0
     torqueConverterHandling.hasTorqueConverter = true
@@ -719,6 +740,8 @@ M.getGearName = getGearName
 M.getGearPosition = getGearPosition
 M.setDefaultForwardMode = setDefaultForwardMode
 M.sendTorqueData = sendTorqueData
+
+M.areShiftLEDsInUse = areShiftLEDsInUse
 
 M.getState = getState
 M.setState = setState

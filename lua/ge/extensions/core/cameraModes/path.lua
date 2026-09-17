@@ -54,13 +54,15 @@ function C:getGlobalTime(path, index, looped)
 end
 
 function C:update(data)
-  if self.customData and self.customData.useJsonVersion then
-    if not self.path and self.customData then
-      self.path = self.customData:getNextPath()
-    end
-  else
-    if not self.pathName and self.customData then
-      self.pathName = self.customData:getNextPath()
+  if self.customData and self.customData.getNextPath then
+    if self.customData.useJsonVersion then
+      if not self.path then
+        self.path = self.customData:getNextPath()
+      end
+    else
+      if not self.pathName then
+        self.pathName = self.customData:getNextPath()
+      end
     end
   end
 
@@ -92,8 +94,8 @@ function C:update(data)
 
   if self.ctrlPoint == 0 then
     if self.customData and self.customData.useJsonVersion and (self.camT < markers[1].time) then
-      data.res.pos = markers[1].pos
-      data.res.rot = markers[1].rot
+      data.res.pos:set(markers[1].pos)
+      data.res.rot:set(markers[1].rot)
       if path.manualFov then
         if self.fovOffset > 0 then
           local rdz = 4.5*data.dt*(MoveManager.zoomIn - MoveManager.zoomOut) * 120 / (120 - markers[1].fov) * 0.5
@@ -174,6 +176,33 @@ function C:update(data)
   local target = origin
   if data.pos then
     target = data.pos
+
+    -- Apply tracking offset if available (World Editor tool, or Workbench Path Camera Editor).
+    if data.veh and extensions then
+      local trackingOffset
+      if extensions.editor_camPathEditor and extensions.editor_camPathEditor.getTrackingOffset then
+        trackingOffset = extensions.editor_camPathEditor.getTrackingOffset()
+      end
+      if not trackingOffset then
+        for _, name in ipairs(extensions.getLoadedExtensionsNames()) do
+          if name:find('pathCameraEditor', 1, true) then
+            local e = rawget(extensions, name)
+            if e and type(e.getTrackingOffset) == 'function' then
+              trackingOffset = e.getTrackingOffset()
+              if trackingOffset then break end
+            end
+          end
+        end
+      end
+      if trackingOffset then
+        local veh = data.veh
+        local forward = vec3(veh:getDirectionVector())
+        local up = vec3(veh:getDirectionVectorUp())
+        local right = up:cross(forward):normalized()
+        local offsetWorld = right * trackingOffset.x + forward * trackingOffset.y + up * trackingOffset.z
+        target = target + offsetWorld
+      end
+    end
   end
   local targetRotation = quatFromDir(target - pos, vec3(0,0,1))
 

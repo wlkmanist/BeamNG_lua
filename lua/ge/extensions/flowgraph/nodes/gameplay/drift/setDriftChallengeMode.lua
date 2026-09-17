@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Set drift challenge mode'
+C.name = 'Set Drift Challenge Mode'
 
-C.description = 'A drift challenge mode a certain amount of drift rules/display'
+C.description = 'Sets the drift challenge mode.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
 M.dependencies = {"gameplay_drift_general"}
@@ -159,6 +162,7 @@ local function imguiDebug()
       end
       im.EndTable()
     end
+    im.End()
   end
 end
 

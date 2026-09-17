@@ -87,7 +87,7 @@ local function createRoadFromProfile(profile)
 
     granFactor = im.IntPtr(1),                                                                      -- The granularity factor for this road.
 
-    name = worldEditorCppApi.generateUUID(),                                                        -- The unique id of the road.
+    name = Engine.generateUUID(),                                                                   -- The unique id of the road.
 
     nodes = {},                                                                                     -- The collection of reference nodes for this road.
 
@@ -129,7 +129,7 @@ end
 local function createRoadFromTemplate(profileTemplateName)
   return createRoadFromProfile(profileMgr.createProfileFromTemplate(
     profileTemplateName,
-    worldEditorCppApi.generateUUID()))
+    Engine.generateUUID()))
 end
 
 -- Computes a 2D Axis-Aligned Bounding Box which represents the given road.
@@ -326,7 +326,15 @@ local function computeAABB2D(rIdx)
 end
 
 -- Gets the subset of roads from the given group.
+-- When group is nil (whole-network terraform), returns every road in the session.
 local function getRoadsFromGroup(group)
+  if not group then
+    local rOut = {}
+    for i = 1, #roads do
+      rOut[i] = roads[i]
+    end
+    return rOut
+  end
   local rOut, mark, ctr = {}, {}, 1
   local groupList = group.list
   for i = 1, #groupList do

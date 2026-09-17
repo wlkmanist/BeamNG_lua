@@ -21,9 +21,9 @@ C.pinSchema = {
 
 C.tags = {'scenario', 'sites'}
 
+local pos = vec3()
 
 function C:init(mgr, ...)
-
 end
 
 function C:_executionStarted()
@@ -32,8 +32,9 @@ end
 
 function C:work(args)
   local zone = self.pinIn.zone.value
-  if zone and not zone.missing then
-    local inside = zone:containsPoint2D(vec3(self.pinIn.pos.value))
+  if zone and not zone.missing and self.pinIn.pos.value then
+    pos:setFromTable(self.pinIn.pos.value)
+    local inside = zone:containsPoint2D(pos)
     self.pinOut.inside.value = inside
     self.pinOut.outside.value = not inside
 

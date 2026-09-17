@@ -6,7 +6,7 @@
 
 local M = {}
 local materials
-local materialsMap
+local materialsMap = {}
 
 local function getMaterialByID(mats, i)
     if i == nil then return nil end
@@ -46,11 +46,13 @@ end
 local function preloadParticlesTable()
     local mix = readDictJSONTable("lua/common/particles.json")
 
+
+
     --dump(mix)
 
     local particles = mix.particles
     materials = mix.materials
-    materialsMap = {}
+    table.clear(materialsMap)
 
     -- 0 = simple equals, 1 = expression
     --comparefields = {materialID1=0, materialID2=0, perpendicularVel=1, slipVel=1} -- material ids by the dict

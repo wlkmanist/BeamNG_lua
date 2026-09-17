@@ -8,7 +8,7 @@ function C:init()
   self.funs = {}
   self.uniqueFuns = {}
   self.prefabs = {}
-  self.isLoadingLevel = false
+  --self.isLoadingLevel = false
   self.reloadCollisionOnLevelLoading = false
   self.reloadCollisionOnAfterTrigger = false
   self:clear()
@@ -17,13 +17,13 @@ function C:clear()
   table.clear(self.funs)
   table.clear(self.uniqueFuns)
   table.clear(self.prefabs)
-  self.isLoadingLevel = false
+  --self.isLoadingLevel = false
   self.reloadCollisionOnLevelLoading = false
   self.reloadCollisionOnAfterTrigger = false
 end
 
 function C:beginLoadingLevel()
-  self.isLoadingLevel = true
+  --self.isLoadingLevel = true
 end
 
 function C:finishedLevelLoading()
@@ -35,7 +35,7 @@ function C:finishedLevelLoading()
     fun()
   end
   table.clear(self.funs)
-  self.isLoadingLevel = false
+  --self.isLoadingLevel = false
 end
 
 function C:afterTrigger()
@@ -47,7 +47,7 @@ end
 
 -- this function will delay another function until finishedLevelLoading is called, or will call it instantly if not level is being loaded.
 function C:delayOrInstantFunction(fun)
-  if self.isLoadingLevel then
+  if core_gamestate.loading() then
     table.insert(self.funs, fun)
   else
     fun()
@@ -55,7 +55,7 @@ function C:delayOrInstantFunction(fun)
 end
 
 function C:prefabLoaded(id)
-  if self.isLoadingLevel then
+  if core_gamestate.loading() then
     self.reloadCollisionOnLevelLoading = true
   else
     self.reloadCollisionOnAfterTrigger = true

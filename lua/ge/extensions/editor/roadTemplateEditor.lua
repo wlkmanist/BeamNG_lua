@@ -405,7 +405,7 @@ local function onWindowMenuItem()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("Road Template Editor", onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem("Road Template Editor", onWindowMenuItem, {groupMenuName = 'Roads'})
   editor.registerWindow(toolWindowName, im.ImVec2(200, 400))
 end
 

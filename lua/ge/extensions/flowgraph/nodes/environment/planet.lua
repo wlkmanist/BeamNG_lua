@@ -74,22 +74,21 @@ function C:workOnce()
 
   veh:queueLuaCommand(command)
 
-
-
-  TorqueScript.eval([[
-    singleton Material(procheightmapMat)
-{
-    mapTo = "procheightmapMat";
-    diffuseColor[0] = "0.803922 0.803922 0.803922 1";
-    useAnisotropic[0] = "1";
-    doubleSided = "0";
-    translucentBlendOp = "None";
-    materialTag1 = "RoadAndPath";
-    materialTag0 = "beamng";
-
-   colorMap[0] = "core/art/trackBuilder/track_editor_mud_d.dds";
-     groundType = "DIRT";
-};]])
+  if not scenetree.findObject("procheightmapMat") then
+    local mat = createObject("Material")
+    mat:setField("mapTo", 0, "procheightmapMat")
+    mat:setField("diffuseColor", 0, "0.803922 0.803922 0.803922 1")
+    mat:setField("useAnisotropic", 0, "1")
+    mat.doubleSided = false
+    mat.translucent = true
+    mat:setField("translucentBlendOp", 0, "None")
+    mat:setField("materialTag1", 0, "RoadAndPath")
+    mat:setField("materialTag0", 0, "beamng")
+    mat:setField("colorMap", 0, "core/art/trackBuilder/track_editor_mud_d.dds")
+    mat:setField("groundType", 0, "DIRT")
+    mat.canSave = false
+    mat:registerObject("procheightmapMat")
+  end
 
   local r = self.pinIn.radius.value
   local dLength = math.sqrt(2*r*r)
@@ -456,20 +455,21 @@ function C:getSquare(grid, size, identifier, dimensions)
 end
 
 local function test()
-  TorqueScript.eval([[
-    singleton Material(procheightmapMat)
-{
-    mapTo = "procheightmapMat";
-    diffuseColor[0] = "0.803922 0.803922 0.803922 1";
-    useAnisotropic[0] = "1";
-    doubleSided = "0";
-    translucentBlendOp = "None";
-    materialTag1 = "RoadAndPath";
-    materialTag0 = "beamng";
-
-   colorMap[0] = "core/art/trackBuilder/track_editor_mud_d.dds";
-     groundType = "DIRT";
-};]])
+  if not scenetree.findObject("procheightmapMat") then
+    local mat = createObject("Material")
+    mat:setField("mapTo", 0, "procheightmapMat")
+    mat:setField("diffuseColor", 0, "0.803922 0.803922 0.803922 1")
+    mat:setField("useAnisotropic", 0, "1")
+    mat.doubleSided = false
+    mat.translucent = true
+    mat:setField("translucentBlendOp", 0, "None")
+    mat:setField("materialTag1", 0, "RoadAndPath")
+    mat:setField("materialTag0", 0, "beamng")
+    mat:setField("colorMap", 0, "core/art/trackBuilder/track_editor_mud_d.dds")
+    mat:setField("groundType", 0, "DIRT")
+    mat.canSave = false
+    mat:registerObject("procheightmapMat")
+  end
 
   local hm = M.heightmapFromPNG("terrain.png",vec3(500,500,30))
   hm = M.warpSphere(250, hm)

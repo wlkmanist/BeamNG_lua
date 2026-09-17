@@ -26,7 +26,7 @@ function C:init()
 end
 
 function C:setGlobal(global)
-  self.global = global
+  self.global = global and true or false
   if global then
     self.color = self.globalColor
     self.target = self.graph.mgr.variables

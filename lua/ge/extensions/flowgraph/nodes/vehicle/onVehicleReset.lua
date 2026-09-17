@@ -4,10 +4,9 @@
 
 local im  = ui_imgui
 
-
 local C = {}
 
-C.name = 'on Vehicle Reset'
+C.name = 'On Vehicle Reset'
 C.description = 'Detects when a vehicle is reset.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle

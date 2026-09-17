@@ -10,6 +10,8 @@ local max = math.max
 
 M.cabinFilterStrength = 1
 
+local debugEnabled = false --// Enable this line to add logging for audio blur.
+
 local lastCamPos = nil
 local lastCameraForward = nil
 local cameraForward = vec3()
@@ -23,15 +25,17 @@ local insideModifier = settings.getValue('AudioInsideModifier')
 local gameAudioBlurValue = 0
 local missionMarkerInteraction = false
 local interactingWithMissionUI = false
-local blurRate, blurAccel, blurBrake = 10, 70, 4
-local blurSmoother = newTemporalSigmoidSmoothing(blurRate, blurAccel, blurBrake, blurRate, gameAudioBlurValue)
+local previousTOD = nil
+local previousWind = nil
+local g_Tod_combinedHoursMinutes = nil
 
 local function onPreRender(dtReal, dtSim, dtRaw)
-  local gameAudioBlurValueSm = blurSmoother:get(gameAudioBlurValue, dtReal)
   if Engine.Audio.getGlobalParams then
     local globalParams = Engine.Audio.getGlobalParams()
     if globalParams then
-      globalParams:setParameterValue("g_GameAudioBlur", gameAudioBlurValueSm)
+
+      globalParams:setParameterValue("g_GameAudioBlur", gameAudioBlurValue)
+
       camPos:set(core_camera.getPositionXYZ())
       cameraForward:set(core_camera.getForwardXYZ())
 
@@ -47,7 +51,17 @@ local function onPreRender(dtReal, dtSim, dtRaw)
       if frameFlag then
         local tod = scenetree.tod
         if tod and tod.time then
-          globalParams:setParameterValue("g_Tod", tod.time)
+          if previousTOD ~=  tod.time then
+            -- tod.time is in a strange range, 0.0 is Noon, 0.25 is 18:00, 0.75 is 06:00, 0.459 is 23:00, 0.541667 is 01:00 and 0.5 is Midnight
+            g_Tod_combinedHoursMinutes = math.fmod(tod.time + 0.5, 1.0) * 24.0
+            previousTOD = tod.time
+          end
+          globalParams:setParameterValue("g_Tod", g_Tod_combinedHoursMinutes)
+        end
+        local wind = core_environment.getGroundWind():length()
+        if wind ~= previousWind then
+          globalParams:setParameterValue("g_WindSpeedMS", wind)
+          previousWind = wind
         end
 
         local camAngle = math.atan2(cameraForward.x, -cameraForward.y) * 180 / math.pi + 180.0
@@ -140,13 +154,13 @@ local function onUiChangedState(toState, fromState)
     gameAudioBlurValue = 1
     if fromState == 'play' and toState == 'blank' then
       gameAudioBlurValue = 1
-    elseif fromState == 'play' and toState == 'scenario-start' then
+    elseif fromState == 'play' and toState == 'scenario.start' then
       gameAudioBlurValue = 1
       interactingWithMissionUI = false
-    elseif fromState == 'scenario-start' and toState == 'play' then
+    elseif fromState == 'scenario.start' and toState == 'play' then
       gameAudioBlurValue = 0
       interactingWithMissionUI = false
-    elseif fromState == 'play' and toState == 'scenario-end' then
+    elseif fromState == 'play' and toState == 'scenario.end' then
       gameAudioBlurValue = 0
       interactingWithMissionUI = false
     elseif fromState == 'menu' and toState == 'play' then
@@ -155,13 +169,18 @@ local function onUiChangedState(toState, fromState)
     elseif fromState == 'fadeScreen' and toState == 'play' then
       gameAudioBlurValue = 0
       interactingWithMissionUI = false
+    elseif fromState == 'blank' and toState == 'play' then
+      gameAudioBlurValue = 0
+      interactingWithMissionUI = false
     end
   else
     gameAudioBlurValue = 0
     interactingWithMissionUI = false
   end
 
-  -- log('I','AUDIO',string.format("ui changed: %s => %s  gameAudioBlurValue = %0.1f (old = %0.1f) (interactingWithMissionUI = %s)", tostring(fromState), tostring(toState), gameAudioBlurValue, old_value, tostring(interactingWithMissionUI)))
+  if debugEnabled then
+    log('I','AUDIO',string.format("ui changed: %s => %s  gameAudioBlurValue = %0.1f (old = %0.1f) (interactingWithMissionUI = %s)", tostring(fromState), tostring(toState), gameAudioBlurValue, old_value, tostring(interactingWithMissionUI)))
+  end
 end
 
 local function onMissionInfoChangedState(fromState, toState, content)
@@ -175,11 +194,15 @@ local function onMissionInfoChangedState(fromState, toState, content)
     interactingWithMissionUI = false
     gameAudioBlurValue = 0
   end
-  log('I','AUDIO',string.format("missionInfo changed: %s => %s  gameAudioBlurValue = %0.1f (interactingWithMissionUI = %s)", tostring(fromState), tostring(toState), gameAudioBlurValue, tostring(interactingWithMissionUI)))
+  if debugEnabled then
+    log('I','AUDIO',string.format("missionInfo changed: %s => %s  gameAudioBlurValue = %0.1f (interactingWithMissionUI = %s)", tostring(fromState), tostring(toState), gameAudioBlurValue, tostring(interactingWithMissionUI)))
+  end
 end
 
 local function onActivityAcceptGatherData(elemData, activityData)
-  -- log('I','AUDIO',string.format("onActivityAcceptGatherData: elemData = %s, activityData = %s",dumps(elemData),(activityData)))
+  if debugEnabled then
+    log('I','AUDIO',string.format("onActivityAcceptGatherData: elemData = %s, activityData = %s",dumps(elemData),(activityData)))
+  end
   missionMarkerInteraction = false
   for i,v in ipairs(elemData) do
     if v.type == "mission" then
@@ -191,6 +214,25 @@ end
 local function onMissionAvailabilityChanged(data)
   if data and data.missionCount == 0 then
     missionMarkerInteraction = false
+  end
+end
+
+local function setCabinFilterStrength(objId, value)
+  if not getPlayerVehicle(0) or objId ~= getPlayerVehicle(0):getId() then return end
+  M.cabinFilterStrength = value
+end
+
+local function onVehicleSwitched(oldId, newId, player)
+  if player ~= 0 then return end
+  local newVehicle = getObjectByID(newId)
+  if not newVehicle then return end
+  newVehicle:queueLuaCommand("sounds.updateCabinFilter()")
+end
+
+local function onDeserialized(data)
+  -- Refresh the vehicle cabin filter value because we loose it when we reload LUA
+  for _, vehicle in ipairs(getAllVehicles()) do
+    vehicle:queueLuaCommand("sounds.updateCabinFilter()")
   end
 end
 
@@ -206,8 +248,14 @@ M.onUiChangedState              = onUiChangedState
 M.onMissionInfoChangedState     = onMissionInfoChangedState
 M.onActivityAcceptGatherData    = onActivityAcceptGatherData
 M.onMissionAvailabilityChanged  = onMissionAvailabilityChanged
+M.onVehicleSwitched             = onVehicleSwitched
+M.setCabinFilterStrength        = setCabinFilterStrength
+M.onDeserialized                = onDeserialized
 
 M.setAudioBlur = function (value)
+  if debugEnabled then
+    log('I','AUDIO',string.format("gameAudioBlurValue changed manually: gameAudioBlurValue = %0.1f (old = %0.1f)", value, gameAudioBlurValue))
+  end
   gameAudioBlurValue = value
 end
 

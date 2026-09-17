@@ -13,10 +13,10 @@ local typeOrder = {
 
 
 local milestones
-M.onCareerModulesActivated = function(alreadyInLevel)
+M.onCareerActive = function(active)
+  if not active then return end
   milestoneConfigs = {}
   milestonesById = {}
-  if not alreadyInLevel then return end
   milestones = career_modules_milestones_milestones
   milestones.saveData.general = milestones.saveData.general or {}
   -- get all milestones from subsystems.
@@ -42,18 +42,6 @@ M.onCareerModulesActivated = function(alreadyInLevel)
   -- notify systems to set up callbacks, if they have any.
   extensions.hook('onGeneralMilestonesSetupCallbacks')
 end
-
-local function onClientStartMission(levelPath)
-  if tableIsEmpty(milestoneConfigs) then
-    M.onCareerModulesActivated(true)
-  end
-end
-
-M.onClientStartMission = onClientStartMission
-
-
-
-
 
 -- milestone system interaction
 local function claim(id)
@@ -162,10 +150,10 @@ M.printDebug = function()
   for _, c in ipairs(milestoneConfigs) do
     for s = 1, (c.maxStep or 1) do
       local name = c.getLabel(s, -1, -1)
-      if type(name) == "table" then name = translateLanguage(name.txt,name.txt, true) .. (dumps(name.context or {})) end
+      if type(name) == "table" then name = _tr(name.txt) .. (dumps(name.context or {})) end
       local target = c.getTarget(s)
       local desc = c.getDescription(s, -1, target)
-      if type(desc) == "table" then desc = translateLanguage(desc.txt,desc.txt, true) .. (dumps(desc.context or {})) end
+      if type(desc) == "table" then desc = _tr(desc.txt) .. (dumps(desc.context or {})) end
 
       local r = c.getRewards(s)
 

@@ -47,7 +47,7 @@ local function loadDefaultSpawnpoint(levelName)
       if SP then
         return dataLevel.defaultSpawnPointName
       else
-          log('W', logTag, tostring(dataLevel.defaultSpawnPointName)..' not in the mission file spawn vehicle in the default position')
+        log('W', logTag, tostring(dataLevel.defaultSpawnPointName)..' not in the mission file spawn vehicle in the default position')
       end
     end
   end

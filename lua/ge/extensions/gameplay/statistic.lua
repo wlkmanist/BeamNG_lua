@@ -25,11 +25,17 @@ local max = math.max
 local min = math.min
 local callbacks = {}
 local callbacksCareer = {}
+local callbackWildcard = {}
 local currentPlayerVehicleId = nil
 local currentPlayerVehicleObj = nil
 local statSchedule = {}
 local lenstatSchedule=0
 local currentStatSchedule=1
+local SAVE_ON_EVENT_INTERVAL = 60
+local SAVE_DECAY_INTERVAL = 60*1
+local lastSaveTime = 0
+local dirtEntries = {}
+local dirtEntriesSize = 0
 
 local function _loadData()
   -- log("E","load","load!!!!!!")
@@ -39,6 +45,7 @@ local function _loadData()
   else
     fileData = {version=1, entries={}}
   end
+  lastSaveTime = os.clock()
 end
 
 local function _saveData()
@@ -49,17 +56,21 @@ local function _saveData()
   else
     log("E","save","failed to write json!")
   end
-  -- career saving has been moved to onSaveCurrentSaveSlot
+  -- career saving has been moved to onSaveCurrentProfile
 end
 
-local function onInit()
+local function onFirstUpdate()
+  log("I", "onFirstUpdate", "loading data")
   _loadData()
 end
 
 local function _save()
   --log("E","_save","!!!!!!!!!!!!!!!!!!!!")
+  lastSaveTime = os.clock()
   M.forceTimerUpdate()
   _saveData()
+  dirtEntries={}
+  dirtEntriesSize = 0
 end
 
 local function onExit()
@@ -86,6 +97,7 @@ local function onSerialize()
 end
 
 local function onDeserialized(data)
+  _loadData()
   if data.currentActivity then currentActivity = data.currentActivity end
   if data.currentLevel then currentLevel = data.currentLevel end
   if data.currentMod then currentMod = data.currentMod end
@@ -96,6 +108,26 @@ local function onDeserialized(data)
   if fileDataCareer then
     M.onGameStateUpdate()
   end
+end
+
+local function checkSaveDecay()
+  local saveAge = os.clock() - lastSaveTime
+  if dirtEntriesSize >= 8 then
+
+    --_save()
+    saveNextFrame = true
+  end
+  if saveAge > SAVE_ON_EVENT_INTERVAL and dirtEntriesSize >= 4 then
+
+    --_save()
+    saveNextFrame = true
+  end
+end
+
+local function markDirty(name)
+  if dirtEntries[name] then return end
+  dirtEntries[name] = true
+  dirtEntriesSize = dirtEntriesSize + 1
 end
 
 local function addSchedule(fn)
@@ -143,11 +175,25 @@ end
 
 local function _runCallback(name, oldentry, newentry, career)
   local cbs = nil
+
   if career then
     cbs = callbacksCareer[name]
   else
     cbs = callbacks[name]
   end
+
+  for  cb in pairs(callbackWildcard) do
+    if string.match(name, callbackWildcard[cb].name) then
+      if not callbackWildcard[cb].trigger or (callbackWildcard[cb].trigger and newentry.value >= callbackWildcard[cb].trigger) then
+        -- log("I", "_runCallback", "running callbackWildcard".. dumps(name).. " n="..dumps(callbackWildcard[cb].name))
+        callbackWildcard[cb].func(name, oldentry, newentry)
+        if callbackWildcard[cb] and callbackWildcard[cb].trigger then
+          callbackWildcard[cb] = nil
+        end
+      end
+    end
+  end
+
   -- log("E", "_runCallback "..name, dumps(cbs).."\t career="..dumps(callbacksCareer[name]).."\t gen="..dumps(callbacks[name]))
   if not cbs then return end
   local nval = deepcopy(newentry)
@@ -194,6 +240,9 @@ local function metricAdd(name,value,aggregate)
   if not oldEntry then
     fileData.entries[name] = r
   end
+
+  markDirty(name)
+  -- checkSaveDecay()
   _runCallback(name,oldEntry,r,false)
 
   if fileDataCareer then
@@ -231,6 +280,9 @@ local function metricSet(name,value,aggregate)
   if value==nil then log("E", "metricSet", "invalid value") return end
   local oldEntry = deepcopy(fileData.entries[name])
   fileData.entries[name] = _metricSet(fileData.entries[name],name,value,aggregate)
+  markDirty(name)
+  -- checkSaveDecay()
+
   _runCallback(name,oldEntry,fileData.entries[name],false)
 
   if fileDataCareer then
@@ -255,6 +307,22 @@ local function metricGet(name, carreer)
   else
     return deepcopy(entry)
   end
+end
+
+local function metricGetMatchPattern(namePattern, carreer)
+  local entries = {}
+  local r = {}
+  if fileDataCareer and carreer then
+    entries = fileDataCareer.entries
+  else
+    entries = fileData.entries
+  end
+  for name, entry in pairs(entries) do
+    if string.match(name, namePattern) then
+      r[name] = deepcopy(entry)
+    end
+  end
+  return r
 end
 
 local function timerStart(name, increment, aggregate, useSimTime)
@@ -292,6 +360,10 @@ end
 
 local function callbackRegister(name, trigger, callbackFunction, career)
   local entry = {}
+  if name:find("*") then
+    callbackWildcard[name..tostring(trigger)..tostring(callbackFunction)] = {name=name, trigger=trigger, func=callbackFunction}
+    return
+  end
   if career then
     if not callbacksCareer[name]then
       callbacksCareer[name]= {}
@@ -306,7 +378,7 @@ local function callbackRegister(name, trigger, callbackFunction, career)
   entry.func = callbackFunction
   if career then
     callbacksCareer[name][tostring(trigger)..tostring(callbackFunction)] = entry
-    log("I","",string.format("Registered callback for %s at %0.2f", name, trigger))
+    --log("D","callbackRegister","Registered callback for "..dumps(name).." at "..dumps(trigger))
   else
     callbacks[name][tostring(trigger)..tostring(callbackFunction)] = entry
   end
@@ -314,6 +386,15 @@ end
 
 local function callbackRemove(name, trigger, callbackFunction, career)
   local target
+  if name:find("*") then
+    for cb in pairs(callbackWildcard) do
+      if name == callbackWildcard[cb].name and callbackFunction == callbackWildcard[cb].func then
+        callbackWildcard[cb] = nil
+        return true
+      end
+    end
+    return false
+  end
   if career then
     target = callbacksCareer[name]
   else
@@ -344,7 +425,7 @@ local function _levelPath(fullpath)
 end
 
 local function endActivity()
-  if not currentActivity then log("E","endAct","no activity"); return end
+  if not currentActivity then return end--log("E","endAct","no activity"); return end
   if timers[currentActivity] then
     timerStop(currentActivity)
   end
@@ -440,7 +521,7 @@ end
 
 local function _callbackTest(name,old,new)
   log("E","_callbackTest", dumps(name).."\t"..dumps(old.value).."\t"..dumps(new.value).."\t"..dumps(new.career))
-  callbackRegister("vehicle/burnout.time", new.value+2 ,_callbackTest, new.career)
+  -- callbackRegister("vehicle/burnout.time", new.value+2 ,_callbackTest, new.career)
 end
 
 local function onClientStartMission(levelPath)
@@ -449,6 +530,7 @@ end
 
 local function onClientEndMission(levelPath)
   endActivity()
+  _save()
 end
 
 local function onClientPostStartMission(levelPath)
@@ -474,7 +556,7 @@ end
 
 local function onUiChangedState(toState, fromState)
   -- log("E","onUiChangedState", dumps(toState))
-  if "scenario-start" == toState then
+  if "scenario.start" == toState then
     -- startActivity(currentActivity.levelPath)
   end
 end
@@ -509,6 +591,20 @@ local function onGameStateUpdate(newState)
   startActivity()
 end
 
+local function onVehicleSelectorSpawnNew()
+  metricAdd("vehicle/spawned",1)
+end
+local function onVehicleSelectorReplaceCurrent()
+  metricAdd("vehicle/spawned",1)
+end
+local function onPlayerVehicleCloned()
+  metricAdd("vehicle/spawned",1)
+end
+local function onSpawnDefaultVehicle()
+  metricAdd("vehicle/spawned",1)
+end
+
+local sortedEntries = {}
 local function onUpdate(dtReal, dtSim, dtRaw)
 
   realtimer = realtimer + dtReal
@@ -520,6 +616,11 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     if currentStatSchedule > lenstatSchedule then currentStatSchedule = 1 end
   end
 
+  -- if os.clock() - lastSaveTime > SAVE_DECAY_INTERVAL or saveNextFrame then
+  --   _save()
+  --   saveNextFrame = false
+  -- end
+
   if windowOpen[0] ~= true then return end
   im.SetNextWindowSize(initialWindowSize, im.Cond_FirstUseEver)
   im.SetNextWindowPos(initialWindowSize, im.Cond_FirstUseEver)
@@ -529,6 +630,8 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         im.TextUnformatted("activity: "..dumps(currentActivity))
         im.TextUnformatted("mod: "..dumps(currentMod))
         im.TextUnformatted("level: "..dumps(currentLevel))
+        im.TextUnformatted("save age: "..string.format("%.0f", os.clock() - lastSaveTime))
+        im.TextUnformatted("dirtEntries: "..dumps(dirtEntriesSize))
         if im.TreeNode1("Timers") then
           for k,v in pairs(timers) do
             im.TextUnformatted(k..": "..dumps(v))
@@ -538,12 +641,25 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         im.EndTabItem()
       end
       if im.BeginTabItem("entries") then
-        for k,v in pairs(fileData.entries) do
+        if im.Button("Sort/refresh")then
+          sortedEntries = {}
+
+          for k,v in pairs(fileData.entries) do
+            table.insert(sortedEntries, k)
+          end
+          table.sort(sortedEntries, function(a,b) return a < b end)
+        end
+        --for k,v in pairs(fileData.entries) do
+        local v
+        for _,k in ipairs(sortedEntries) do
+          v = fileData.entries[k]
+          if not v then goto continue_dbgentries end
           if v.max then
             im.TextUnformatted(k..": "..dumps(v))
           else
             im.TextUnformatted(k..": v="..dumps(v.value))
           end
+          ::continue_dbgentries::
         end
         im.EndTabItem()
       end
@@ -573,6 +689,12 @@ local function onUpdate(dtReal, dtSim, dtRaw)
           end
           im.TreePop()
         end
+        if im.TreeNode1("callbacks general wildcard") then
+          for k,v in pairs(callbackWildcard) do
+            im.TextUnformatted(k..": v="..dumps(v))
+          end
+          im.TreePop()
+        end
         im.EndTabItem()
       end
       im.EndTabBar()
@@ -590,7 +712,7 @@ local function onVehicleSwitched(oldid, newid, player)
     if newid == -1 or not newid then
       currentPlayerVehicleObj = nil
     else
-      currentPlayerVehicleObj = be:getObjectByID(newid)
+      currentPlayerVehicleObj = getObjectByID(newid)
     end
     metricAdd("vehicle/switch",1)
   end
@@ -616,6 +738,9 @@ local function setDebug(newValue)
 end
 
 local function sendGUIState()
+  if dirtEntriesSize>0 or (os.clock() - lastSaveTime > SAVE_DECAY_INTERVAL) then
+    _save()
+  end
   local data = {general= fileData.entries}
   if fileDataCareer then
     data.career = fileDataCareer.entries
@@ -624,7 +749,7 @@ local function sendGUIState()
 
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   -- save local career data into the saveslot folder
   M.forceTimerUpdate()
   local careerSaveFilePath = currentSavePath .. "/career/gameplay_stat.json"
@@ -637,7 +762,7 @@ end
 local function onCareerActive(active)
   if active then
     -- load current saveslot stats
-    local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+    local saveSlot, savePath = career_saveSystem.getCurrentProfile()
     if not saveSlot then return end
     fileDataCareer = jsonReadFile(savePath.. "/career/gameplay_stat.json")
     -- if no stats are found, create empty data.
@@ -664,14 +789,14 @@ local function forceTimerUpdate()
 end
 
 
-M.onInit = onInit
+M.onFirstUpdate = onFirstUpdate
 M.onExit = onExit
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
 M.onExtensionLoaded = onExtensionLoaded
 
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 M.onCareerActive = onCareerActive
 
 M.onClientStartMission = onClientStartMission
@@ -685,11 +810,16 @@ M.onScenarioLoaded = onScenarioLoaded
 M.onScenarioFinished = onScenarioFinished
 M.onScenarioRestarted = onScenarioRestarted
 M.onUpdate = onUpdate
--- M.onVehicleSpawned = onVehicleSpawned
+M.onVehicleSpawned = onVehicleSpawned
 M.onVehicleSwitched = onVehicleSwitched
 M.onVehicleResetted = onVehicleResetted
 M.onVehicleDestroyed = onVehicleDestroyed
 M.onGameStateUpdate = onGameStateUpdate
+M.onSpawnDefaultVehicle = onSpawnDefaultVehicle
+
+M.onVehicleSelectorSpawnNew = onVehicleSelectorSpawnNew
+M.onVehicleSelectorReplaceCurrent = onVehicleSelectorReplaceCurrent
+M.onPlayerVehicleCloned = onPlayerVehicleCloned
 
 M.sendGUIState = sendGUIState
 M.forceTimerUpdate = forceTimerUpdate
@@ -697,6 +827,7 @@ M.forceTimerUpdate = forceTimerUpdate
 M.metricAdd = metricAdd
 M.metricSet = metricSet
 M.metricGet = metricGet
+M.metricGetMatchPattern = metricGetMatchPattern
 M.timerStart = timerStart
 M.timerStop = timerStop
 M.callbackRegister = callbackRegister

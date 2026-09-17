@@ -24,8 +24,19 @@ C.tags = {}
 function C:work()
   if self.pinIn.cur.value then
     guihooks.trigger('WayPointChange', {current = self.pinIn.cur.value, count = self.pinIn.max.value})
+    ui_apps_genericMissionData.setData({
+      title = "missions.missions.general.checkpoint",
+      txt = self.pinIn.cur.value.." / "..self.pinIn.max.value,
+      category = "raceCheckpoints",
+      style = "text",
+      order = 100,
+    })
   else
     guihooks.trigger('WayPointReset')
+    ui_apps_genericMissionData.setData({
+      category = "raceCheckpoints",
+      clear = true,
+    })
   end
 end
 

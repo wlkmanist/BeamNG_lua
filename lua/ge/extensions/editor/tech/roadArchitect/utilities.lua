@@ -97,21 +97,6 @@ local function isMouseOverNode(roads)
   return nil, nil, nil                                                                              -- The mouse is not over any node of any road, so return nil.
 end
 
--- Computes the 2D axis-aligned bounding box of the given group.
--- [Only nodes in the group are included - not all nodes in each group road].
-local function computeAABB2DGroup(group, roads, map)
-  local gList = group.list
-  local xMin, xMax, yMin, yMax = 1e24, -1e24, 1e24, -1e24
-  for i = 1, #gList do
-    local gL = gList[i]
-    local road = roads[map[gL.r]]
-    local p = road.nodes[gL.n].p
-    local x, y = p.x, p.y
-    xMin, xMax, yMin, yMax = min(xMin, x), max(xMax, x), min(yMin, y), max(yMax, y)
-  end
-  return { xMin = xMin, xMax = xMax, yMin = yMin, yMax = yMax }
-end
-
 -- Computes the 2D axis-aligned bounding box of all roads in the session.
 local function computeAABB2DAllRoads(roads)
   local xMin, xMax, yMin, yMax = 1e24, -1e24, 1e24, -1e24
@@ -122,6 +107,25 @@ local function computeAABB2DAllRoads(roads)
       local x, y = p.x, p.y
       xMin, xMax, yMin, yMax = min(xMin, x), max(xMax, x), min(yMin, y), max(yMax, y)
     end
+  end
+  return { xMin = xMin, xMax = xMax, yMin = yMin, yMax = yMax }
+end
+
+-- Computes the 2D axis-aligned bounding box of the given group.
+-- [Only nodes in the group are included - not all nodes in each group road].
+-- When group is nil (whole-network terraform), uses every node of every road.
+local function computeAABB2DGroup(group, roads, map)
+  if not group then
+    return computeAABB2DAllRoads(roads)
+  end
+  local gList = group.list
+  local xMin, xMax, yMin, yMax = 1e24, -1e24, 1e24, -1e24
+  for i = 1, #gList do
+    local gL = gList[i]
+    local road = roads[map[gL.r]]
+    local p = road.nodes[gL.n].p
+    local x, y = p.x, p.y
+    xMin, xMax, yMin, yMax = min(xMin, x), max(xMax, x), min(yMin, y), max(yMax, y)
   end
   return { xMin = xMin, xMax = xMax, yMin = yMin, yMax = yMax }
 end

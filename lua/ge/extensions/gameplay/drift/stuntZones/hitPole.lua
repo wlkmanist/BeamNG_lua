@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local C = {}
 
 function C:clear()
@@ -81,9 +84,9 @@ function C:accomplish()
     subHookName = "onHitPoleAccomplished",
     subHookData =
     {
-      currDegAngle = driftActiveData and driftActiveData.currDegAngle or 50, -- these safeguard is used in the drift debug imgui menu to test UI
-      currAirSpeed = driftActiveData and driftActiveData.speeds[#driftActiveData.speeds] or 30,
-      zoneData = {points = self.data.zoneData.score}
+      currDegAngle = driftActiveData and driftActiveData.currDegAngle or 50, -- these safeguards is used in the drift debug imgui menu to test UI
+      currAirSpeed = gameplay_drift_drift.getAirSpeed() or 30,
+      zoneData = {points = gameplay_drift_scoring.getStuntZoneBasePoints("hitPole")}
     }
   })
 end

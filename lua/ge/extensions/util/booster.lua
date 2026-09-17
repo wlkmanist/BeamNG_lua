@@ -9,7 +9,7 @@ function M.trigger(data)
   dump(data)
 
   if event == 'enter' then
-    local veh = be:getObjectByID(data.subjectID)
+    local veh = getObjectByID(data.subjectID)
     if veh then
       veh:queueLuaCommand("extensions.core_booster.boost(vec3(0,0,1),0.01)")
     end

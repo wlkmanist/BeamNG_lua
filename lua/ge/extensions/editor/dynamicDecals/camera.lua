@@ -41,6 +41,7 @@ local function sectionGui(guiId)
 end
 
 local function presetsGui()
+  tool = tool or extensions.editor_dynamicDecalsTool
   local presets = editor.getPreference("dynamicDecalsTool.camera.presets")
   local i = 1
   local changed = false

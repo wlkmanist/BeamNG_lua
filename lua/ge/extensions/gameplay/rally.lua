@@ -2,386 +2,502 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
--- Well hello there. All the code below is in a *really early* work-in-progress state, since it's just a brief incursion in my spare time. It will likely end up fully replaced, or abandoned, depending on time constraints, on other blocking tasks, etc. So best if you assume this will lead nowhere in the foreseeable future - stenyak
+-- extension name: gameplay_rally
+
+
+--'flipMission', 'recoverMission', 'submitMission', 'restartMission'
+-- extensions.hook("onRecoveryPromptButtonPressed", 'restartMission')
+-- extensions.hook("onRecoveryPromptButtonPressed", 'flipMission')
+-- extensions.hook("onMissionScreenButtonClicked", { mgrId = core_flowgraphManager.getAllManagers()[0].id, funId = 1 })
+-- gameplay_rally.setDebugLogging(true)
+-- gameplay_rally.toggleDebug()
+
+
+local im  = ui_imgui
+
+local RallyUtil = require('/lua/ge/extensions/gameplay/rally/util')
+local RallyManager = require('/lua/ge/extensions/gameplay/rally/rallyManager')
+local RecceApp = require('/lua/ge/extensions/gameplay/rally/recceApp')
+local RallyToolbox = require('/lua/ge/extensions/gameplay/rally/tools/rallyToolbox')
+local ExtHelper = require('/lua/ge/extensions/gameplay/rally/extHelper')
+local voicepack = require('/lua/ge/extensions/gameplay/rally/voicepack')
+local CodriverTiming = require('/lua/ge/extensions/gameplay/rally/codriverTiming')
+local UiColors = require('/lua/ge/extensions/gameplay/rally/loop/uiColors')
+
+local logTag = ''
 
 local M = {}
 
-local debug = true
+local rallyManager = nil
+local rallyManagerOwner = nil
+local errorMsgForUser = nil
 
--- from the 3 points, assume they form a circle, and return:
---   - distance from p1 to p2
---   - distance from p2 to p3
---   - circle center
---   - circle angle covered by the points
-local function circleDist1Dist2CenterAngleFromPoints(p1, p2, p3)
-  local d1 = p1 - p3
-  local d2 = p2 - p3
-  local asql = d1:squaredLength()
-  local bsql = d2:squaredLength()
-  local adotb = d1:dot(d2)
+------------------------------
+-- debug variables
 
-  -- calculate lengths
-  local d1l = math.sqrt(asql)
-  local d2l = math.sqrt(bsql)
+local debugLogging = false
+local showRallyToolbox = im.BoolPtr(false)
 
-  -- calculate center
-  local condVec = d1:cross(d2)
-  local condVecSqLen = condVec:squaredLength()
-  local center = p3 + ((bsql * (asql - adotb)) * d1 - (asql * (adotb - bsql)) * d2) / (2 * condVecSqLen + 1e-30), math.sqrt(condVecSqLen)
+-- end debug variables
+------------------------------
 
-  -- calculate angle
-  local angleCos = adotb / (d1l*d2l + 1e-30)
-  local angleRad = math.acos(clamp(angleCos, -1, 1))
-  local angle = math.deg(angleRad)*2
+local rallyToolbox = nil
+local theRace = nil
 
-  return d1, d2, d1l, d2l, center, angle
+local function isFreeroam()
+  return core_gamestate.state and core_gamestate.state.state == "freeroam"
 end
 
-local ci = ColorI(0,0,0,0)
-local function temporaryColorI(color)
-  ci.r, ci.g, ci.b, ci.a = math.floor(color.r*255), math.floor(color.g*255), math.floor(color.b*255), math.floor(color.a*255)
-  return ci
+local function getMissionVoicepackPick(missionId)
+  local mission = gameplay_missions_missions and gameplay_missions_missions.getMissionById(missionId) or nil
+  local userSettings = mission and mission.lastUserSettings or nil
+  local value = userSettings and userSettings.rallyVoicepackPick or nil
+
+  return voicepack.pickFromSettingValue(value)
 end
 
-local green = ColorF(0.1, 0.9, 0.1, 0.6)
-local blue = ColorF(0.1, 0.1, 0.9, 0.6)
-local grey = ColorF(0.5, 0.5, 0.5, 1.0)
-local black = ColorF(0.0, 0.0, 0.0, 1.0)
-local red = ColorF(0.9, 0.1, 0.1, 0.6)
-local yellow = ColorF(0.9, 0.9, 0.1, 0.6)
-local white = ColorF(1.0, 1.0, 1.0, 1.0)
+local function getMissionBoolSetting(missionId, key, defaultValue)
+  local mission = missionId and gameplay_missions_missions and gameplay_missions_missions.getMissionById(missionId) or nil
+  local userSettings = mission and mission.lastUserSettings or nil
+  local value = userSettings and userSettings[key]
+  if value ~= nil then
+    return value
+  end
 
-local darkgreen  = ColorF(0.15, 0.73, 0.15, 1.0)
-local darkorange = ColorF(1.00, 0.45, 0.00, 1.0)
-local darkred    = ColorF(0.85, 0.00, 0.00, 1.0)
-local darkviolet = ColorF(0.58, 0.00, 0.83, 1.0)
-local darkcyan   = ColorF(0.00, 0.85, 0.95, 1.0)
-local darkblue   = ColorF(0.36, 0.55, 0.80, 1.0)
-
-local inf = 1/0
-local severities = { }
-table.insert(severities, {name="Hairpin" , velmax=50 , color=darkviolet, name2="square", name3="Slow" })
-table.insert(severities, {name="Medium"  , velmax=70 , color=darkred    })
-table.insert(severities, {name="Fast"    , velmax=100, color=darkorange })
-table.insert(severities, {name="Easy"    , velmax=130, color=darkgreen  })
-table.insert(severities, {name="Flat"    , velmax=170, color=darkblue   })
-table.insert(severities, {name="Straight", velmax=inf, color=white      })
-local severities = { }
-table.insert(severities, {name="Hairpin", velmax=50 , color=darkviolet, name2="K", name3="Slow" })
-table.insert(severities, {name="2",       velmax=80 , color=darkred    })
-table.insert(severities, {name="3",       velmax=110, color=darkorange })
-table.insert(severities, {name="4",       velmax=150, color=darkgreen  })
-table.insert(severities, {name="5",       velmax=200, color=darkcyan   })
-table.insert(severities, {name="6",       velmax=300, color=darkblue   })
-table.insert(severities, {name="",        velmax=inf, color=white      })
-local tightestId = 1
-local slowId = 2
-local straightId = #severities
-
-
-local function getTurnVelocityWithSlickTires(radius)
-  local frictionCoef = 1.7 -- slick tires
-  local downforce = 9.8 -- earth gravity
-  local accel = frictionCoef * downforce
-  return math.sqrt(accel*radius) -- velocity in m/s
-end
-
-local pacenotes = nil
-local function initPacenotes(newRoute)
-  local route = newRoute
-
-  -- 1st pass:
-  local arcs = {}
-  local arcPrev = nil
-  for k,v in ipairs(route) do
-    -- on each point
-    if k > 3 then
-      local arc = {}
-
-      -- get positions and circle data
-      local p1, p2, p3 = route[k-2].pos, route[k-1].pos, route[k].pos
-      local p1z, p2z, p3z = p1:z0(), p2:z0(), p3:z0()
-      local d1, d2, d1l, d2l, center, angle = circleDist1Dist2CenterAngleFromPoints(p1z, p2z, p3z)
-      center.z = p2.z
-      arc.center = center
-      arc.positions = { p1, p2, p3 }
-      arc.midpositions = { 0.5*(p1+p2), p2, 0.5*(p2+p3) }
-      arc.deltas = { d1, d2 }
-      arc.lengths = { d1l, d2l }
-      arc.length = 0.5*(d1l+d2l)
-
-      -- get radius
-      local radius = p1:distance(center)
-      arc.radius = radius
-
-      -- get velocity of turn
-      local vel = getTurnVelocityWithSlickTires(arc.radius)
-      arc.vel = vel*3.6 -- in kmh
-
-      -- get time of turn
-      arc.time = arc.length / vel
-
-      if arcPrev then
-        local dist = arcPrev.lengths[2] + arc.lengths[1]
-
-        -- get velocity accel against previous arc
-        local accel = (arcPrev.vel - arc.vel) / dist
-        arc.accel = accel
-
-        -- get radius accel against previous arc
-        local raccel = (arcPrev.radius - arc.radius) / dist
-        arc.raccel = raccel
-      end
-
-      -- get severity (based on velocity)
-      for severityId,severity in ipairs(severities) do
-        if arc.vel < severity.velmax then
-          arc.severityId = severityId
-          arc.severity = severity
-          break
-        end
-      end
-
-      -- get direction
-      local cross = (p3z-p2z):cross(p2z-p1z).z
-      arc.direction = arc.severityId == straightId and "" or (cross > 0 and " right" or " left")
-
-      -- get angle
-      arc.angle = angle * sign(cross) -- positive is right, negative is left
-
-      -- add pacenote
-      table.insert(arcs, arc)
-      arcPrev = arc
+  if settings and settings.getValue then
+    value = settings.getValue(key)
+    if value ~= nil then
+      return value
     end
   end
 
-  -- 2nd pass: merge identical consecutive arcs into a single pacenote
-  pacenotes = {}
-  local pacenote = {arcs={}, angle=0, length=0, time=0}
-  for i,arc in ipairs(arcs) do
-    -- detect if this arc is part of the running pacenote, or should be a new one
-    local samePacenote = false
-    local lastArc = pacenote.arcs[#pacenote.arcs]
-    if lastArc then
-      local sameDirection = lastArc.direction == arc.direction
-      if sameDirection then
-        if math.abs(arc.accel) < 4 then samePacenote = true end
-      end
-      if (arc.severityId == straightId) and (lastArc.severityId == arc.severityId) then samePacenote = true end
-    end
+  return defaultValue
+end
 
-    -- write pacenote and start a new one
-    if not samePacenote then
-      if next(pacenote.arcs) then
-        table.insert(pacenotes, pacenote)
-        pacenote = {arcs={}, angle=0, length=0, time=0}
-      end
-    end
-
-    -- add this arc to current pacenote
-    table.insert(pacenote.arcs, arc)
-    pacenote.angle = pacenote.angle + arc.angle
-    pacenote.length = pacenote.length + arc.length
-    pacenote.time = pacenote.time + arc.time
-  end
-  -- write final pacenote
-  if next(pacenote.arcs) then
-    table.insert(pacenotes, pacenote)
+local function canManageMission(owner)
+  owner = owner or 'external'
+  if owner == 'mission' then
+    return true
   end
 
-  -- 3rd pass: recompute tightest arcs into square/hairpin/slow
-  for i,pacenote in ipairs(pacenotes) do
-    local tightestArc = pacenote.arcs[1]
-    local velLowest = 1e10
-    for i,c in ipairs(pacenote.arcs) do
-      if c.vel < velLowest then
-        velLowest = c.vel
-        tightestArc = c
-      end
-    end
-    pacenote.tightestArc = tightestArc
-    pacenote.severityId = tightestArc.severityId
-    pacenote.severity = tightestArc.severity
-    pacenote.name = pacenote.severity.name
-    if tightestArc.severityId == tightestId then
-      if math.abs(pacenote.angle) < 60 then
-        pacenote.name = pacenote.severity.name3
-      elseif math.abs(pacenote.angle) < 120 then
-        pacenote.name = pacenote.severity.name2
-      end
-    elseif tightestArc.severityId == straightId then
-      pacenote.name = string.format("%i", math.floor(pacenote.length/10)*10)
-    end
+  if owner == 'recce' and not isFreeroam() then
+    return false, 'recce rally manager is only available in freeroam'
+  end
+
+  local foregroundMissionId = gameplay_missions_missionManager
+    and gameplay_missions_missionManager.getForegroundMissionId
+    and gameplay_missions_missionManager.getForegroundMissionId()
+    or nil
+  if foregroundMissionId then
+    return false, string.format('rally manager is owned by foreground mission %s', foregroundMissionId)
+  end
+  if rallyManagerOwner == 'mission' then
+    return false, 'rally manager is mission-owned'
+  end
+  return true
+end
+
+local function loadMission(missionId, missionDir, drivelineMode, voicepackPick, options)
+  options = options or {}
+  local owner = options.owner or 'external'
+  local allowed, reason = canManageMission(owner)
+  if not allowed then
+    log('W', logTag, string.format('rejected rally manager load owner=%s missionId=%s: %s', owner, tostring(missionId), reason))
+    return false, reason
+  end
+
+  errorMsgForUser = nil
+  local newRallyManager = RallyManager(missionDir, missionId)
+  newRallyManager:setVoicepackPick(voicepackPick or getMissionVoicepackPick(missionId))
+  -- if drivelineMode then
+  --   newRallyManager:setDrivelineMode(drivelineMode)
+  -- end
+  if not newRallyManager:rebuildAssets() then
+    log('E', logTag, 'failed to load RallyManager')
+    errorMsgForUser = newRallyManager:getErrorMsgForUser()
+    return false, errorMsgForUser
+  end
+  rallyManager = newRallyManager
+  rallyManagerOwner = owner
+  return true
+end
+
+local function unloadMission(options)
+  options = options or {}
+  local owner = options.owner or 'external'
+  local reason
+  if rallyManagerOwner and rallyManagerOwner ~= owner then
+    reason = string.format('rally manager is owned by %s', rallyManagerOwner)
+    log('W', logTag, string.format('rejected rally manager unload owner=%s: %s', owner, reason))
+    return false, reason
+  end
+  rallyManager = nil
+  rallyManagerOwner = nil
+  errorMsgForUser = nil
+  return true
+end
+
+local function isReady()
+  if rallyManager then
+    return true
+  end
+
+  return false
+end
+
+local function enableRecceApp(val)
+  RecceApp.setEnabled(val)
+end
+
+local function onUpdate(dtReal, dtSim, dtRaw)
+  profilerPushEvent("gameplay_rally - onUpdate")
+
+  -- gcprobe()
+  RecceApp.onUpdate(dtReal, dtSim, dtRaw)
+  -- gcprobe()
+
+  -- gcprobe()
+  if rallyManager and not RecceApp.isRecording() then
+    rallyManager:onUpdate(dtReal, dtSim, dtRaw)
+  end
+  -- gcprobe()
+
+  -- gcprobe()
+  if rallyToolbox and showRallyToolbox[0] then
+    im.Begin("Rally Toolbox", showRallyToolbox)
+      rallyToolbox:draw()
+    im.End()
+  end
+  -- gcprobe()
+
+  profilerPopEvent("gameplay_rally - onUpdate")
+end
+
+-- local function onGuiUpdate(dtReal, dtSim, dtRaw)
+-- end
+
+local function onVehicleResetted(vehicleID)
+  if vehicleID ~= be:getPlayerVehicleID(0) then return end
+
+  if debugLogging then log('D', logTag, '>>> gameplay_rally VEHICLE RESET ENTRYPOINT <<<') end
+  if debugLogging then log('D', logTag, 'onVehicleResetted') end
+
+  if rallyManager then
+    rallyManager:onVehicleResetted()
   end
 end
 
-local rlcolor = ColorF(0,0,0,0)
-local tagPos = vec3()
-
-local function renderArc(arc, renderLine, renderText)
-  local color = arc.severity.color
-  if renderLine then
-    debugDrawer:drawSphere(arc.midpositions[1], 0.7, white)
-    debugDrawer:drawCylinder(arc.midpositions[1], arc.midpositions[2], 0.15, color)
-    debugDrawer:drawCylinder(arc.midpositions[2], arc.midpositions[3], 0.15, color)
-  end
-
-  if renderText then
-    local c = arc.angle > 0 and darkblue or darkred
-    local vel = currentVelocity or arc.vel
-    local mul = clamp(arc.vel/(200), 0, 1)
-    rlcolor.r, rlcolor.g, rlcolor.b, rlcolor.a = c.r*mul, c.g*mul, c.b*mul, c.a
-    --rlcolor = color
-    local txt = string.format("%.0fkmh, %.0fm, %.0fdeg, %.1fm/ss", vel, arc.length, arc.angle, arc.accel or 0)
-    --local txt = string.format("%.0fkmh, %0.1fs", vel, arc.time)
-    tagPos:set(arc.midpositions[1])
-    tagPos.z = tagPos.z + 2
-    debugDrawer:drawCylinder(arc.midpositions[1], tagPos, 0.05, color)
-    debugDrawer:drawSphere(arc.midpositions[1], 0.7, white)
-    debugDrawer:drawSphere(arc.midpositions[2], 0.7, color)
-    debugDrawer:drawTextAdvanced(tagPos, txt, black, true, false, temporaryColorI(color))
-  end
+local function onVehicleSwitched(oid, nid, player)
+  -- log('D', logTag, 'onVehicleSwitched')
 end
 
-local function getPacenoteCall(txt, pacenote, pacenoteNext)
-  local linkText = " into"
-  if not pacenoteNext then
-    linkText = ""
-  elseif pacenoteNext.severityId == straightId then
-    linkText = " "..pacenoteNext.name
-  end
-  return  txt..linkText
-end
-local function getPacenoteText(pacenote)
-  local shortThreshold = 0.7 -- in seconds
-  local longThreshold = 4.0 -- in seconds
-  local tightensThreshold = 1.6 -- in normalized percentage (1.6 means 60% tightening)
-
-  local tightestArc = pacenote.tightestArc
-  local firstArc = pacenote.arcs[1]
-  local lastArc = pacenote.arcs[#pacenote.arcs]
-  local long = tightestArc.severityId ~= straightId and (pacenote.time > longThreshold) or false
-  local short = tightestArc.severityId ~= straightId and (pacenote.time < shortThreshold) or false
-  local tightens = tightestArc.severityId ~= straightId and (firstArc.vel / lastArc.vel > tightensThreshold) or false
-  local opens = tightestArc.severityId ~= straightId and (firstArc.vel / lastArc.vel < 1/tightensThreshold)
-  return string.format("%s%s%s%s%s%s" -- %.0fdeg"
-    ,pacenote.name
-    ,tightestArc.direction
-    ,long and " long" or ""
-    ,short and " short" or ""
-    ,tightens and " tightens" or ""
-    ,opens and " opens" or ""
-    --,pacenote.angle
-  )
+local function onVehicleSpawned(vid, v)
+  -- log('D', logTag, 'onVehicleSpawned')
 end
 
-local pacenoteThickness = 0.35
-local pacenoteThickness = 0.15
-local function renderPacenote(pacenote, txt)
-  local tightestArc = pacenote.tightestArc
-  local color = pacenote.severity.color
-  for i,arc in ipairs(pacenote.arcs) do
-    if i == 1 then
-      tagPos:set(arc.midpositions[1])
-      tagPos.z = tagPos.z + 2
-      debugDrawer:drawCylinder(arc.midpositions[1], tagPos, 0.05, color)
-      debugDrawer:drawSphere(arc.midpositions[1], pacenoteThickness*2, white)
-      debugDrawer:drawTextAdvanced(tagPos, txt, black, true, false, temporaryColorI(white))
-    end
-    debugDrawer:drawSphere(arc.midpositions[1], pacenoteThickness * (i==1 and 2 or 0.2), i==1 and color or white)
-    debugDrawer:drawCylinder(arc.midpositions[1], arc.midpositions[2], pacenoteThickness, color)
-    debugDrawer:drawCylinder(arc.midpositions[2], arc.midpositions[3], pacenoteThickness, color)
-  end
+local function onVehicleActiveChanged(vehicleID, active)
+  -- log('D', logTag, 'onVehicleActiveChanged')
 end
 
-local minAmountToRender = 2
-local function renderNextPacenotes(timeToRender, currentPosition, currentVelocity)
-  local predictedTime = 4 -- upcoming distance to show pacenotes for
-  local iClosest, jClosest, distClosest = nil, nil, 1e30
-  for i,pacenote in ipairs(pacenotes) do
-    for j,arc in ipairs(pacenote.arcs) do
-      local dist = currentPosition:squaredDistance(arc.midpositions[1])
-      if dist < distClosest then
-        iClosest, jClosest, distClosest = i, j, dist
-      end
-    end
-  end
-
-  if iClosest then
-    local amountRendered = 0
-    local timeToRender = predictedTime -- how many seconds worth of pacenotes to show on screen at once
-    local nextArc = jClosest
-    for i=iClosest, #pacenotes do
-      local pacenote = pacenotes[i]
-      for j=nextArc or 1, #pacenote.arcs do
-        local arc = pacenote.arcs[j]
-        local arcVel = math.min(currentVelocity, arc.vel) -- at current or potential reduced speed
-        local arcTime = arc.length / arcVel
-        timeToRender = timeToRender - arcTime
-      end
-      nextArc = nil
-      local txt = getPacenoteText(pacenote)
-      renderPacenote(pacenote, txt)
-      amountRendered = amountRendered + 1
-      if amountRendered == 2 then
-        if pacenote.severityId ~= straightId then
-          local pacenoteNext = pacenotes[i+1]
-          local txtCall = getPacenoteCall(txt, pacenote, pacenoteNext)
-          guihooks.trigger('ScenarioRealtimeDisplay', {msg = txtCall})
-        end
-      end
-      if amountRendered >= minAmountToRender and timeToRender <= 0 then break end
-    end
-  end
+local function onExtensionLoaded()
+  if debugLogging then log('D', logTag, 'onExtensionLoaded') end
+  ExtHelper.load()
+  if debugLogging then log('I', logTag, 'gameplay_rally extension loaded') end
+  guihooks.trigger('rally.onExtensionLoaded', {})
 end
 
-local function renderAllPacenotes(showArcs)
-  for i,pacenote in ipairs(pacenotes) do
-    for j,arc in ipairs(pacenote.arcs) do
-      if showArcs then
-        local dist = core_camera.getPosition():distance(arc.midpositions[1])
-        renderArc(arc, dist < 1000, dist < 100)
-      end
-    end
-
-    if not showArcs then
-      local txt = getPacenoteText(pacenote)
-      renderPacenote(pacenote, txt)
-    end
-  end
+local function onExtensionUnloaded()
+  if debugLogging then log('D', logTag, 'onExtensionUnloaded') end
+  ExtHelper.unload()
+  if debugLogging then log('I', logTag, 'gameplay_rally extension unloaded') end
 end
 
-local vehPos = vec3()
-local vehVel = vec3()
-local function onUpdate(dt, dtSim)
-  if not core_groundMarkers.currentlyHasTarget() then
-    pacenotes = nil
-    return
-  end
-  --if dtSim < 0.001 then return end
+local function isRecceAppLoaded()
+  if not RecceApp then return end
+  return RecceApp.isEnabled()
+end
 
-  if not pacenotes then
-    initPacenotes(core_groundMarkers.routePlanner.path)
+M.actionToggleMouseLikeVehicle = function()
+  if not isRecceAppLoaded() then return end
+  RecceApp.toggleMouseLikeVehicle()
+end
+
+M.actionTranscribeRecordingCut = function()
+  guihooks.trigger('rallyInputActionCutRecording')
+end
+
+M.actionRecceMoveVehicleForward = function()
+  if not isRecceAppLoaded() then return end
+  guihooks.trigger('rallyInputActionRecceMoveVehicleForward')
+end
+
+M.actionRecceMoveVehicleBackward = function()
+  if not isRecceAppLoaded() then return end
+  guihooks.trigger('rallyInputActionRecceMoveVehicleBackward')
+end
+
+-- M.actionCodriverVolumeUp = function()
+--   guihooks.trigger('rallyInputActionCodriverVolumeUp')
+-- end
+
+-- M.actionCodriverVolumeDown = function()
+--   guihooks.trigger('rallyInputActionCodriverVolumeDown')
+-- end
+
+local function changeCodriverTiming(higher)
+  local tick = higher and 0.1 or -0.1
+  -- shift both ends of the delay range together (min = setting, max persisted to json)
+  local newMin, newMax = CodriverTiming.nudge(tick)
+  local msg = _tr('ui.rally.codriverTiming', 'Co-driver timing')
+  guihooks.trigger('Message', {
+    ttl = 5,
+    msg = string.format('%s: %.1fs', msg, newMin),
+    category = 'rally',
+  })
+end
+
+local function toggleDebug()
+  showRallyToolbox[0] = not showRallyToolbox[0]
+
+  if not rallyToolbox then
+    rallyToolbox = RallyToolbox()
   end
 
-  local veh = getPlayerVehicle(0)
-  local vel = 0
-  if veh then
-    vehPos:set(veh:getPositionXYZ())
-    vehVel:set(veh:getVelocityXYZ())
-    vel = vehVel:length()
-  end
+  -- if showRallyToolbox[0] and rallyManager and rallyToolbox then
+  --   rallyToolbox:setDrivelineMode(rallyManager:getDrivelineMode())
+  -- end
+end
 
-  if vel < 1 then
-    if debug then
-      renderAllPacenotes(dtSim < 0.001)
-    end
+local function getRallyToolbox()
+  return rallyToolbox
+end
+
+M.actionCodriverCallsEarlier = function()
+  changeCodriverTiming(false)
+end
+
+M.actionCodriverCallsLater = function()
+  changeCodriverTiming(true)
+end
+
+-- race hooks
+-- M.onRaceStarted = function(event)
+--   log('W', logTag, 'onRaceStarted')
+-- end
+
+M.onRacePathnodeReached = function(event)
+  -- log('I', logTag, 'onRacePathnodeReached')
+  local pathnode = event.pathnode
+  local time = event.time
+  -- local race = event.race
+  if pathnode and rallyManager then
+    -- log('D', logTag, string.format('Rally.onRacePathnodeReached name=%s id=%d time=%0.1f', pathnode.name, pathnode.id, time))
+    rallyManager:recordSplit(pathnode.id, time)
+
+
+    -- local splitPathnode = rallyManager:getSplitPathnode(pathnode.name)
+    -- if splitPathnode then
+    --   local rp = splitPathnode:getRoutePoint()
+    --   if rp then
+    --     local md = rp.metadata
+    --     if md then
+    --       local source = md.source
+    --       local racePathnodeType = md.racePathnodeType
+    --       if source and racePathnodeType then
+    --         local distance = rallyManager:getPointDistanceFromStartKm(rp)
+    --         -- log('W', logTag, string.format('pathnode route point source=%s racePathnodeType=%s distance=%.1fkm', source, racePathnodeType, distance))
+    --         if debugLogging then log('D', logTag, string.format('RallyMode: reached %s (%s %.1fkm)', pathnode.name, racePathnodeType, distance)) end
+    --       else
+    --         if debugLogging then log('W', logTag, 'no source or racePathnodeType in onRacePathnodeReached') end
+    --       end
+    --     else
+    --       if debugLogging then log('W', logTag, 'no metadata in onRacePathnodeReached') end
+    --     end
+    --   else
+    --     if debugLogging then log('W', logTag, 'no route point in onRacePathnodeReached') end
+    --   end
+    -- else
+    --   if debugLogging then log('D', logTag, string.format('onRacePathnodeReached name=%s split=%s', pathnode.name, tostring(pathnode.useAsSplit))) end
+    -- end
   else
-    local timeToRender = 4
-    renderNextPacenotes(timeToRender, vehPos, vel)
+    -- if debugLogging then
+      log('W', logTag, 'no pathnode in onRacePathnodeReached')
+    -- end
   end
 end
 
+-- M.onRaceComplete = function(event)
+--   log('W', logTag, 'onRaceComplete')
+--   dumpz(event, 2)
+-- end
+
+-- M.onRaceAborted = function(event)
+--   log('W', logTag, 'onRaceAborted')
+--   dumpz(event, 2)
+-- end
+
+-- -- rally hooks
+-- M.onRallySessionStart = function()
+--   log('W', logTag, 'onRallySessionStart')
+-- end
+
+-- M.onRallyStageStart = function()
+--   log('W', logTag, 'onRallyStageStart')
+-- end
+
+M.onRallyRegisterRace = function(raceData)
+  if debugLogging then log('D', logTag, 'onRallyRegisterRace raceData='..dumpsz(raceData,1)) end
+  theRace = raceData
+  if rallyManager then
+    rallyManager:setRaceData(raceData)
+  end
+end
+
+M.onRallyVehicleRecovery = function(recoveryType)
+  if rallyManager and rallyManager.addRecoveryRaceTime then
+    rallyManager:addRecoveryRaceTime(recoveryType)
+  end
+end
+
+-- M.onRallyStageFlyingFinish = function()
+--   log('W', logTag, 'onRallyStageFlyingFinish')
+-- end
+
+-- M.onRallyStageComplete = function()
+--   log('W', logTag, 'onRallyStageComplete')
+-- end
+
+-- M.onRallySessionEnd = function()
+--   log('W', logTag, 'onRallySessionEnd')
+-- end
+
+-- extension hooks
 M.onUpdate = onUpdate
+-- M.onGuiUpdate = onGuiUpdate
+M.onVehicleResetted = onVehicleResetted
+-- M.onVehicleSpawned = onVehicleSpawned
+-- M.onVehicleSwitched = onVehicleSwitched
+-- M.onVehicleActiveChanged = onVehicleActiveChanged
+M.onExtensionLoaded = onExtensionLoaded
+M.onExtensionUnloaded = onExtensionUnloaded
+M.onSettingsChanged = function()
+  if rallyManager then
+    rallyManager:onSettingsChanged()
+  end
+end
+
+-- rally API
+M.enableRecceApp = enableRecceApp
+M.loadMission = loadMission
+M.unloadMission = unloadMission
+M.canManageMission = canManageMission
+
+M.isReady = isReady
+M.getRallyManager = function() return rallyManager end
+M.getRallyManagerOwner = function() return rallyManagerOwner end
+M.getErrorMsgForUser = function() return errorMsgForUser end
+M.getRecoveryRepairVehicle = function()
+  local loopManager = gameplay_rallyLoop and gameplay_rallyLoop.getManager and gameplay_rallyLoop.getManager()
+  if loopManager and loopManager.getRecoveryRepairVehicle then
+    return loopManager:getRecoveryRepairVehicle()
+  end
+  local missionId = rallyManager and rallyManager.missionId
+  if not missionId and gameplay_missions_missionManager then
+    missionId = gameplay_missions_missionManager.getForegroundMissionId()
+  end
+  return getMissionBoolSetting(missionId, 'rallyRepairVehicleOnRecovery', true)
+end
+M.setStageRuntimeAuthorityMode = function(mode)
+  if rallyManager and rallyManager.setStageRuntimeAuthorityMode then
+    rallyManager:setStageRuntimeAuthorityMode(mode)
+  end
+end
+M.getStageRuntimeAuthorityMode = function()
+  return rallyManager and rallyManager.getStageRuntimeAuthorityMode and rallyManager:getStageRuntimeAuthorityMode() or 'shadow'
+end
+M.getStageObserverState = function()
+  return rallyManager and rallyManager.getStageObserverState and rallyManager:getStageObserverState() or nil
+end
+
+M.recceApp = RecceApp
+M.getDebugLogging = function() return debugLogging end
+M.setDebugLogging = function(val) debugLogging = val end
+
+-- Override rallyLoop stream theme (Stage Timing / Progress). Clear with nil/"".
+-- gameplay_rally.setUiColor("#ff0000")
+-- gameplay_rally.setUiColor()
+local function resolveStreamTheme()
+  local override = UiColors.getThemeOverride()
+  if override then return override end
+
+  local manager = gameplay_rallyLoop and gameplay_rallyLoop.getManager and gameplay_rallyLoop.getManager() or nil
+  if manager and manager.uiColors then
+    UiColors.updateForLoop(manager.uiColors, manager.isNgrcMode == true)
+    return manager.uiColors.theme
+  end
+
+  local ok, Standalone = pcall(require, '/lua/ge/extensions/gameplay/rally/loop/standaloneFallbackStream')
+  if ok and Standalone and type(Standalone.getStreamData) == "function" then
+    local okSd, sd = pcall(Standalone.getStreamData)
+    if okSd and sd and sd.uiColors and sd.uiColors.theme then
+      return sd.uiColors.theme
+    end
+  end
+
+  return "#009a1a"
+end
+
+M.setUiColor = function(hex)
+  UiColors.setThemeOverride(hex)
+end
+M.getUiColor = function()
+  return resolveStreamTheme()
+end
+M.getUiColorOverride = function()
+  return UiColors.getThemeOverride()
+end
+
+M.toggleDebug = toggleDebug
+M.getRallyToolbox = getRallyToolbox
+M.isRallyToolboxVisible = function() return showRallyToolbox[0] end
+
+M.getRace = function() return theRace end
 
 return M
+
+
+
+-- lua/ge/main.lua|399 col 3| extensions.hook('onClientPreStartMission', levelPath)
+-- lua/ge/main.lua|408 col 3| extensions.hook('onClientPostStartMission', levelPath)
+-- lua/ge/main.lua|414 col 3| extensions.hookNotify('onClientStartMission', levelPath)
+-- lua/ge/main.lua|425 col 3| extensions.hookNotify('onClientEndMission', levelPath)
+-- lua/ge/main.lua|434 col 3| extensions.hook('onEditorEnabled', enabled)
+-- lua/ge/main.lua|451 col 3| extensions.hook('onPreRender', dtReal, dtSim, dtRaw)
+-- lua/ge/main.lua|454 col 3| extensions.hook('onDrawDebug', Lua.lastDebugFocusPos, dtReal, dtSim, dtRaw)
+-- lua/ge/main.lua|475 col 7| extensions.hook('onWorldReadyState', worldReadyState)
+-- lua/ge/main.lua|483 col 3| extensions.hook('onFirstUpdate')
+-- lua/ge/main.lua|504 col 3| extensions.hook('onUpdate', dtReal, dtSim, dtRaw)
+-- lua/ge/main.lua|507 col 5| extensions.hook('onGuiUpdate', dtReal, dtSim, dtRaw)
+-- lua/ge/main.lua|523 col 3| extensions.hook('onUiReady')
+-- lua/ge/main.lua|563 col 3| extensions.hook('onBeamNGWaypoint', args)
+-- lua/ge/main.lua|568 col 3| extensions.hook('onBeamNGTrigger', data)
+-- lua/ge/main.lua|575 col 3| extensions.hook('onFilesChanged', files)
+-- lua/ge/main.lua|579 col 5| extensions.hook('onFileChanged', v.filename, v.type)
+-- lua/ge/main.lua|581 col 3| extensions.hook('onFileChangedEnd')
+-- lua/ge/main.lua|586 col 3| extensions.hook('onPhysicsEngineEvent', args)
+-- lua/ge/main.lua|599 col 3| extensions.hook('onVehicleSpawned', vid, v)
+-- lua/ge/main.lua|610 col 3| extensions.hook('onVehicleSwitched', oid, nid, player)
+-- lua/ge/main.lua|615 col 3| extensions.hook('onVehicleResetted', vehicleID)
+-- lua/ge/main.lua|621 col 3| extensions.hook('onVehicleActiveChanged', vehicleID, active)
+-- lua/ge/main.lua|625 col 3| extensions.hook('onMouseLocked', locked)
+-- lua/ge/main.lua|630 col 3| extensions.hook('onVehicleDestroyed', vid)
+-- lua/ge/main.lua|641 col 3| extensions.hook('onCouplerAttached', objId1, objId2, nodeId, obj2nodeId)
+-- lua/ge/main.lua|645 col 3| extensions.hook('onCouplerDetached', objId1, objId2, nodeId, obj2nodeId)
+-- lua/ge/main.lua|653 col 3| extensions.hook('onCouplerDetach', objId, nodeId)
+-- lua/ge/main.lua|657 col 3| extensions.hook('onAiModeChange', vehicleID, newAiMode)
+-- lua/ge/main.lua|707 col 5| extensions.hook('onPhysicsUnpaused')
+-- lua/ge/main.lua|709 col 5| extensions.hook('onPhysicsPaused')
+-- lua/ge/main.lua|739 col 3| extensions.hook('onResetGameplay', playerID)
+-- lua/ge/main.lua|804 col 3| extensions.hook('onPreWindowClose')
+-- lua/ge/main.lua|808 col 3| extensions.hook('onPreExit')
+-- lua/ge/main.lua|813 col 5| extensions.hook('onExit')

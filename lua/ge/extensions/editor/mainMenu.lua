@@ -1,14 +1,13 @@
 -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
-
 local M = {}
 local logTag = 'editor_main_menu'
 M.dependencies = {"editor_layoutManager"}
 local ffi = require('ffi')
 local imgui = ui_imgui
-local imgui_true = ffi.new("bool", true)
-local imgui_false = ffi.new("bool", false)
+local imgui_true = imgui.BoolTrue()
+local imgui_false = imgui.BoolFalse()
 local drawGizmoPlane = imgui.BoolPtr(true)
 local smoothCameraMove = imgui.BoolPtr(false)
 local smoothCameraRotate = imgui.BoolPtr(false)
@@ -21,9 +20,103 @@ local defaultWindowMenuItems = {}
 local defaultWindowMenuGroups = {}
 local windowMenuItems = {}
 local windowMenuGroups = {}
+local recentWindowMenuKeys = {}
+
+local function getRecentWindowMenuLimit()
+  -- preference lives in Preferences -> General -> General
+  -- user-facing location: Preferences -> General -> User Interface (ui.general)
+  local limit = editor and editor.getPreference and editor.getPreference("ui.general.recentWindowMenuCount") or 5
+  if type(limit) ~= "number" then limit = 5 end
+  limit = math.floor(limit)
+  if limit < 0 then limit = 0 end
+  return limit
+end
+
+local function makeWindowMenuKey(item)
+  if not item then return nil end
+  if item.menuGroupName and item.menuGroupName ~= "" then
+    return tostring(item.menuGroupName) .. " > " .. tostring(item.itemText)
+  end
+  return tostring(item.itemText)
+end
+
+local function trimRecentWindowMenuKeys()
+  local limit = getRecentWindowMenuLimit()
+  if limit <= 0 then
+    table.clear(recentWindowMenuKeys)
+    return
+  end
+  while #recentWindowMenuKeys > limit do
+    table.remove(recentWindowMenuKeys)
+  end
+end
+
+local function findWindowMenuItemByKey(key)
+  if not key or key == "" then return nil end
+  local scan = function(menuGroups, menuItems)
+    for _, item in ipairs(menuItems) do
+      if item.isGroup then
+        local groupName = item.itemText
+        for _, subitem in ipairs(menuGroups[groupName] or {}) do
+          if makeWindowMenuKey(subitem) == key then return subitem end
+        end
+      else
+        if makeWindowMenuKey(item) == key then return item end
+      end
+    end
+    return nil
+  end
+
+  -- try non-default tools first (most likely), then default section
+  return scan(windowMenuGroups, windowMenuItems) or scan(defaultWindowMenuGroups, defaultWindowMenuItems)
+end
+
+local function pruneRecentWindowMenuKeys()
+  -- Remove any entries that no longer exist in the current Window menu,
+  -- and dedupe while preserving the MRU order.
+  local seen = {}
+  for i = #recentWindowMenuKeys, 1, -1 do
+    local key = recentWindowMenuKeys[i]
+    if type(key) ~= "string" or key == "" then
+      table.remove(recentWindowMenuKeys, i)
+    elseif seen[key] then
+      table.remove(recentWindowMenuKeys, i)
+    else
+      local item = findWindowMenuItemByKey(key)
+      if not item or not item.actionFunc then
+        table.remove(recentWindowMenuKeys, i)
+      else
+        seen[key] = true
+      end
+    end
+  end
+  trimRecentWindowMenuKeys()
+end
+
+local function recordRecentWindowMenuItem(item)
+  if not item or item.isDefaultToolWindow then return end -- avoid duplicating built-in default tools section
+  local limit = getRecentWindowMenuLimit()
+  if limit <= 0 then return end
+  local key = makeWindowMenuKey(item)
+  if not key or key == "" then return end
+
+  for i = #recentWindowMenuKeys, 1, -1 do
+    if recentWindowMenuKeys[i] == key then
+      table.remove(recentWindowMenuKeys, i)
+      break
+    end
+  end
+  table.insert(recentWindowMenuKeys, 1, key)
+  trimRecentWindowMenuKeys()
+end
 
 local metrics = {}
 local metricsTim = 0
+local systemMemoryInfo
+local gpuMemoryInfo
+local metricWarningColor = imgui.ImVec4(1, 1, 0.2, 1)
+local metricCriticalColor = imgui.ImVec4(1, 0.3, 0.3, 1)
+local bytesPerGiB = 1024 * 1024 * 1024
 
 local bor = bit.bor
 local notificationShowTime = 4 -- seconds, total time to show a notification
@@ -48,10 +141,10 @@ local windowSearchDisplayResult = false
 local windowSearchResults = {}
 
 local function rebuildCollision(force)
-  if force or editor.needsCollisionRebuild then
+  if force or Engine.getNeedCollisionRebuild() then
     log("I", "", "Rebuilding Static Collision Data...")
     be:reloadCollision()
-    editor.needsCollisionRebuild = false
+    Engine.clearNeedCollisionRebuild()
     editor.showNotification("Rebuilt Static Collision Data")
   end
 end
@@ -102,29 +195,16 @@ local function updateNotifications()
   notification.time = notification.time + editor.getDeltaTime()
 end
 
-local function renderLoginMenuItem()
-  if not editor_auth then return end
-  local loggedIn = editor_auth.isLoggedIn()
-
-  if loggedIn then
-    if imgui.MenuItem1("Logout", nil, imgui_false, imgui_true) then
-      editor_auth.logOut()
-    end
-  elseif imgui.MenuItem1("Login...", nil, imgui_false, imgui_true) then
-    editor_auth.openWindow()
-  end
-end
-
 local function fileMenu()
-  if imgui.BeginMenu("File", imgui_true) then
-    if imgui.MenuItem1("New Level", "Ctrl+N", imgui_false, imgui_true) then
+  if imgui.BeginMenu(_tr("editor.menu.file"), imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.newLevel"), "Ctrl+N", imgui_false, imgui_true) then
       editor.doNewLevel()
     end
-    if imgui.MenuItem1("Open Level...", "Ctrl+O", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.openLevel"), "Ctrl+O", imgui_false, imgui_true) then
       editor.doOpenLevel()
     end
     imgui.Separator()
-    if imgui.MenuItem1("Save Level", "Ctrl+S", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.saveLevel"), "Ctrl+S", imgui_false, imgui_true) then
       editor.doSaveLevel()
     end
     --TODO: Save As disabled because issues with replacing old level paths to new copied level path/name
@@ -139,7 +219,7 @@ local function fileMenu()
       imgui.tooltip("Will delete all the current level's files found in the user folder (doesn't affect official files)")
     end
     imgui.Separator()
-    if imgui.MenuItem1("Export Selected as Collada", "", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.exportToCollada"), "", imgui_false, imgui_true) then
       editor_fileDialog.saveFile(
         function(data)
           worldEditorCppApi.colladaExportSelection(data.filepath)
@@ -150,9 +230,7 @@ local function fileMenu()
         "File already exists.\nDo you want to overwrite the file?"
       )
     end
-    imgui.Separator()
-    renderLoginMenuItem()
-    if imgui.MenuItem1("Exit Editor", "F11", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.exit"), "F11", imgui_false, imgui_true) then
       editor.toggleActive()
     end
     imgui.EndMenu()
@@ -160,52 +238,52 @@ local function fileMenu()
 end
 
 local function editMenu()
-  if imgui.BeginMenu("Edit", imgui_true) then
-    if imgui.MenuItem1("Undo", "Ctrl+Z", imgui_false, imgui_true) then
+  if imgui.BeginMenu(_tr("editor.menu.edit"), imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.undo"), "Ctrl+Z", imgui_false, imgui_true) then
       editor.undo()
     end
-    if imgui.MenuItem1("Redo", "Ctrl+Y", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.redo"), "Ctrl+Y", imgui_false, imgui_true) then
       editor.redo()
     end
     imgui.Separator()
-    if imgui.MenuItem1("Cut", "Ctrl+X", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.cut"), "Ctrl+X", imgui_false, imgui_true) then
       editor.cut()
     end
-    if imgui.MenuItem1("Copy", "Ctrl+C", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.copy"), "Ctrl+C", imgui_false, imgui_true) then
       editor.copy()
     end
-    if imgui.MenuItem1("Paste", "Ctrl+V", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.paste"), "Ctrl+V", imgui_false, imgui_true) then
       editor.paste()
     end
-    if imgui.MenuItem1("Duplicate", "Ctrl+D", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.duplicate"), "Ctrl+D", imgui_false, imgui_true) then
       editor.duplicate()
     end
     imgui.Separator()
-    if imgui.MenuItem1("Select All", "Ctrl+A", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.selectAll"), "Ctrl+A", imgui_false, imgui_true) then
       editor.selectAll()
     end
-    if imgui.MenuItem1("Deselect", "X", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.deselect"), "X", imgui_false, imgui_true) then
       editor.deselect()
     end
-    if imgui.MenuItem1("Delete Selection", "Delete", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.delete"), "Delete", imgui_false, imgui_true) then
       editor.deleteSelection()
     end
     imgui.Separator()
-    if imgui.MenuItem1("Rebuild Collision", "Ctrl+F7") then
+    if imgui.MenuItem1(_tr("editor.menu.rebuildCollision"), "Ctrl+F7") then
       -- we force the rebuild
       editor.rebuildCollision(true)
     end
-    if imgui.MenuItem1("Reload Navgraph") then
+    if imgui.MenuItem1(_tr("editor.menu.reloadNavgraph")) then
       if map then
         log("I", "", "Reloading Navgraph Data...")
         map.reset()
       end
     end
-    if imgui.MenuItem1("Toggle Mute Game Audio", nil, imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.toggleMuteGameAudio"), nil, imgui_false, imgui_true) then
       editor.muteAudio(not editor.muted)
     end
     imgui.Separator()
-    if imgui.MenuItem1("Editor Preferences...", nil, imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.preferences"), nil, imgui_false, imgui_true) then
       editor.showPreferences()
     end
     imgui.EndMenu()
@@ -213,35 +291,35 @@ local function editMenu()
 end
 
 local function cameraMenu()
-  if imgui.BeginMenu("Camera", imgui_true) then
+  if imgui.BeginMenu(_tr("editor.menu.camera"), imgui_true) then
     if imgui.MenuItem1("Game Camera", "Ctrl+1", imgui_false, imgui_true) then
       editor.selectCamera(editor.CameraType_Game)
     end
-    if imgui.MenuItem1("Free Camera", "Ctrl+2", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.freeCamera"), "Ctrl+2", imgui_false, imgui_true) then
       editor.selectCamera(editor.CameraType_Free)
     end
-    if imgui.MenuItem1("Toggle Free Camera", "Shift+C", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.toggleFreeCamera"), "Shift+C", imgui_false, imgui_true) then
       editor.toggleFreeCamera()
     end
-    if imgui.MenuItem1("Place Camera at Selection", "Ctrl+Q", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.placeCameraAtSelection"), "Ctrl+Q", imgui_false, imgui_true) then
       editor.placeCameraAtSelection()
     end
-    if imgui.MenuItem1("Place Camera at Player", "Alt+Q", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.placeCameraAtPlayer"), "Alt+Q", imgui_false, imgui_true) then
       editor.placeCameraAtPlayer()
     end
-    if imgui.MenuItem1("Place Player at Camera", "Alt+W", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.placePlayerAtCamera"), "Alt+W", imgui_false, imgui_true) then
       editor.placePlayerAtCamera()
     end
-    if imgui.MenuItem1("Fit View to Selection", "F", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.fitViewToSelection"), "F", imgui_false, imgui_true) then
       editor.fitViewToSelectionSmooth()
     end
     imgui.Separator()
     smoothCameraMove[0] = editor.getPreference("camera.general.smoothCameraMove")
-    if imgui.Checkbox('Smooth Camera Movement', smoothCameraMove) then
+    if imgui.Checkbox(_tr("editor.menu.smoothCameraMovement"), smoothCameraMove) then
       editor.setPreference("camera.general.smoothCameraMove", smoothCameraMove[0])
     end
     smoothCameraRotate[0] = editor.getPreference("camera.general.smoothCameraRotate")
-    if imgui.Checkbox('Smooth Camera Rotation', smoothCameraRotate) then
+    if imgui.Checkbox(_tr("editor.menu.smoothCameraRotation"), smoothCameraRotate) then
       editor.setPreference("camera.general.smoothCameraRotate", smoothCameraRotate[0])
     end
     imgui.EndMenu()
@@ -249,69 +327,73 @@ local function cameraMenu()
 end
 
 local function objectMenu()
-  if imgui.BeginMenu("Object", imgui_true) then
-    if imgui.MenuItem1("Lock Selection", "Ctrl+Alt+L", imgui_false, imgui_true) then
+  if imgui.BeginMenu(_tr("editor.menu.object"), imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.lockSelection"), "Ctrl+Alt+L", imgui_false, imgui_true) then
       editor.lockObjectSelection()
     end
-    if imgui.MenuItem1("Unlock Selection", "Ctrl+Shift+L", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.unlockSelection"), "Ctrl+Shift+L", imgui_false, imgui_true) then
       editor.unlockObjectSelection()
     end
     imgui.Separator()
-    if imgui.MenuItem1("Hide Selection", "Ctrl+H", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.hideSelection"), "Ctrl+H", imgui_false, imgui_true) then
       editor.hideObjectSelection()
     end
-    if imgui.MenuItem1("Show Selection", "Ctrl+Shift+H", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.showSelection"), "Ctrl+Shift+H", imgui_false, imgui_true) then
       editor.showObjectSelection()
     end
     imgui.Separator()
 
-    if imgui.BeginMenu("Align Bounds", imgui_true) then
-      if imgui.MenuItem1("-X Axis") then
+    if imgui.BeginMenu(_tr("editor.menu.alignBounds"), imgui_true) then
+      if imgui.MenuItem1(_tr("editor.menu.negXAxis")) then
         editor.alignObjectSelectionByBounds(0)
       end
-      if imgui.MenuItem1("+X Axis") then
+      if imgui.MenuItem1(_tr("editor.menu.posXAxis")) then
         editor.alignObjectSelectionByBounds(1)
       end
-      if imgui.MenuItem1("-Y Axis") then
+      if imgui.MenuItem1(_tr("editor.menu.negYAxis")) then
         editor.alignObjectSelectionByBounds(2)
       end
-      if imgui.MenuItem1("+Y Axis") then
+      if imgui.MenuItem1(_tr("editor.menu.posYAxis")) then
         editor.alignObjectSelectionByBounds(3)
       end
-      if imgui.MenuItem1("-Z Axis") then
+      if imgui.MenuItem1(_tr("editor.menu.negZAxis")) then
         editor.alignObjectSelectionByBounds(4)
       end
-      if imgui.MenuItem1("+Z Axis") then
+      if imgui.MenuItem1(_tr("editor.menu.posZAxis")) then
         editor.alignObjectSelectionByBounds(5)
       end
       imgui.EndMenu()
     end
 
-    if imgui.BeginMenu("Align Center", nil, imgui_false, imgui_true) then
-      if imgui.MenuItem1("X Axis") then
+    if imgui.BeginMenu(_tr("editor.menu.alignCenter"), nil, imgui_false, imgui_true) then
+      if imgui.MenuItem1(_tr("editor.menu.xAxis")) then
         editor.alignObjectSelectionByCenter(0)
       end
-      if imgui.MenuItem1("Y Axis") then
+      if imgui.MenuItem1(_tr("editor.menu.yAxis")) then
         editor.alignObjectSelectionByCenter(1)
       end
-      if imgui.MenuItem1("Z Axis") then
+      if imgui.MenuItem1(_tr("editor.menu.zAxis")) then
         editor.alignObjectSelectionByCenter(2)
       end
       imgui.EndMenu()
     end
 
-    if imgui.MenuItem1("Set Selection Transform from Camera", "", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.moveSelectionInFrontOfCamera"), "Ctrl+Shift+J", imgui_false, imgui_true) then
+      editor.moveSelectionAtCamera()
+    end
+
+    if imgui.MenuItem1(_tr("editor.menu.setSelectionTransformFromCamera"), "Ctrl+Shift+K", imgui_false, imgui_true) then
       editor.setObjectSelectionTransformFromCamera()
     end
 
     imgui.Separator()
-    if imgui.MenuItem1("Reset Selected Transforms", "Ctrl+Alt+R", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.resetSelectedTransforms"), "Ctrl+Alt+R", imgui_false, imgui_true) then
       editor.resetObjectSelectionTransform()
     end
-    if imgui.MenuItem1("Reset Selected Rotations", "Ctrl+Shift+R", imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.resetSelectedRotations"), "Ctrl+Shift+R", imgui_false, imgui_true) then
       editor.resetObjectSelectionRotation()
     end
-    if imgui.MenuItem1("Reset Selected Scale", nil, imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.resetSelectedScale"), nil, imgui_false, imgui_true) then
       editor.resetObjectSelectionScale()
     end
     imgui.EndMenu()
@@ -319,20 +401,20 @@ local function objectMenu()
 end
 
 local function windowMenu()
-  if imgui.BeginMenu("Window", imgui_true) then
+  if imgui.BeginMenu(_tr("editor.menu.window"), imgui_true) then
     local menuGenerator = function(menuGroups, menuItems)
         for _, item in ipairs(menuItems) do
           if item.isGroup then
             if imgui.BeginMenu(item.itemText, imgui_true) then
               for _, subitem in ipairs(menuGroups[item.itemText]) do
-                if imgui.MenuItem1(subitem.itemText, nil, imgui_false, imgui_true) then
+                if imgui.MenuItem1(subitem.itemText .. "##windowMenuItem_" .. makeWindowMenuKey(subitem), nil, imgui_false, imgui_true) then
                   if subitem.actionFunc then subitem.actionFunc() end
                 end
               end
               imgui.EndMenu()
             end
           else
-            if imgui.MenuItem1(item.itemText, nil, imgui_false, imgui_true) then
+            if imgui.MenuItem1(item.itemText .. "##windowMenuItem_" .. makeWindowMenuKey(item), nil, imgui_false, imgui_true) then
               if item.actionFunc then item.actionFunc() end
             end
           end
@@ -371,14 +453,30 @@ local function windowMenu()
     if windowSearchDisplayResult then
       for _, item in ipairs(windowSearchResults) do
         if imgui.MenuItem1(item.name, nil, imgui_false, imgui_true) then
-          ffi.fill(windowSearchTxt, ffi.sizeof(windowSearchTxt))
+          ffi.fill(windowSearchTxt, imgui.ArraySize(windowSearchTxt))
           windowSearchDisplayResult = false
           if item.actionFunc then item.actionFunc() end
         end
       end
     else
+      imgui.SeparatorText("Main Windows")
       menuGenerator(defaultWindowMenuGroups, defaultWindowMenuItems)
-      imgui.Separator()
+      local limit = getRecentWindowMenuLimit()
+      local haveRecent = limit > 0 and #recentWindowMenuKeys > 0
+      if haveRecent then
+        -- Separator between built-in default tools and recently-used tools
+        imgui.SeparatorText("Recent Windows")
+          for _, key in ipairs(recentWindowMenuKeys) do
+          local recentItem = findWindowMenuItemByKey(key)
+          if recentItem and recentItem.actionFunc then
+            if imgui.MenuItem1(key .. "##recentWindowMenuItem_" .. key, nil, imgui_false, imgui_true) then
+              recentItem.actionFunc()
+            end
+          end
+        end
+      end
+      -- Separator between recently-used tools and the rest of tools
+      imgui.SeparatorText("All Windows")
       menuGenerator(windowMenuGroups, windowMenuItems)
     end
 
@@ -387,17 +485,17 @@ local function windowMenu()
 end
 
 local function helpMenu()
-  if imgui.BeginMenu("Help", imgui_true) then
-    if imgui.MenuItem1("Editor Documentation...", "F1", imgui_false, imgui_true) then
+  if imgui.BeginMenu(_tr("editor.menu.help"), imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.editorDocumentation"), "F1", imgui_false, imgui_true) then
       editor.openHelp()
     end
-    if imgui.MenuItem1("Editor Coding Documentation...", nil, imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.editorCodingDocumentation"), nil, imgui_false, imgui_true) then
       editor.openCodingHelp()
     end
-    if imgui.MenuItem1("News/Release Notes", nil, imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.newsReleaseNotes"), nil, imgui_false, imgui_true) then
       editor.setPreference("newsMessage.general.newsMessageShown", false)
     end
-    if imgui.MenuItem1("About", nil, imgui_false, imgui_true) then
+    if imgui.MenuItem1(_tr("editor.menu.about"), nil, imgui_false, imgui_true) then
       editor.openModalWindow(aboutDlgName)
     end
     imgui.EndMenu()
@@ -410,41 +508,32 @@ local resetLayoutsWindow = imgui.BoolPtr(false)
 local layoutName = imgui.ArrayChar(128)
 
 local function viewMenu()
-  if imgui.BeginMenu("View", imgui_true) then
+  if imgui.BeginMenu(_tr("editor.menu.view"), imgui_true) then
     drawGizmoPlane[0] = editor.getPreference("gizmos.general.drawGizmoPlane")
-    if imgui.Checkbox('Draw Gizmo Plane', drawGizmoPlane) then
+    if imgui.Checkbox(_tr("editor.menu.drawGizmoPlane") .. "    Ctrl+G", drawGizmoPlane) then
       editor.setPreference("gizmos.general.drawGizmoPlane", drawGizmoPlane[0])
-      if drawGizmoPlane[0] then
-        worldEditorCppApi.setAxisGizmoRenderPlane(true)
-        worldEditorCppApi.setAxisGizmoRenderPlaneHashes(true)
-        worldEditorCppApi.setAxisGizmoRenderMoveGrid(true)
-      else
-        worldEditorCppApi.setAxisGizmoRenderPlane(false)
-        worldEditorCppApi.setAxisGizmoRenderPlaneHashes(false)
-        worldEditorCppApi.setAxisGizmoRenderMoveGrid(false)
-      end
     end
 
     displaySceneMetric[0] = editor.getPreference("ui.general.sceneMetric")
-    if imgui.Checkbox('Display Scene Metric', displaySceneMetric) then
+    if imgui.Checkbox(_tr("editor.menu.displaySceneMetric"), displaySceneMetric) then
       editor.setPreference("ui.general.sceneMetric", displaySceneMetric[0])
     end
 
     showCompleteSceneTree[0] = editor.getPreference("ui.general.showCompleteSceneTree")
-    if imgui.Checkbox('Show Complete Scene Tree', showCompleteSceneTree) then
+    if imgui.Checkbox(_tr("editor.menu.showCompleteSceneTree"), showCompleteSceneTree) then
       editor.setPreference("ui.general.showCompleteSceneTree", showCompleteSceneTree[0])
     end
 
     local isShowNavGraphDrivabilityOn = editor.getVisualizationType("drawNavGraphdrivability")
     showNavGraphDrivability[0] = isShowNavGraphDrivabilityOn
-    if imgui.Checkbox('Draw Navgraph Road Drivability', showNavGraphDrivability) then
+    if imgui.Checkbox(_tr("editor.menu.drawNavgraphRoadDrivability"), showNavGraphDrivability) then
       editor.setVisualizationType("drawNavGraphdrivability", showNavGraphDrivability[0])
       if editor.updateVisSettings then
         editor.updateVisSettings()
       end
     end
 
-    if imgui.BeginMenu("Layouts", imgui_true) then
+    if imgui.BeginMenu(_tr("editor.menu.layouts"), imgui_true) then
       for _, layoutPath in ipairs(editor_layoutManager.getWindowLayouts()) do
         if imgui.MenuItem1(string.match(layoutPath, ".+/(.+)"), nil, imgui_false, imgui_true) then
           editor_layoutManager.loadWindowLayout(layoutPath)
@@ -452,19 +541,19 @@ local function viewMenu()
       end
 
       imgui.Separator()
-      if imgui.MenuItem1("Save Layout...", nil, imgui_false, imgui_true) then
+      if imgui.MenuItem1(_tr("editor.menu.saveLayout"), nil, imgui_false, imgui_true) then
         editor.showWindow(saveLayoutWindowName)
       end
-      if imgui.MenuItem1("Delete Layout...", nil, imgui_false, imgui_true) then
+      if imgui.MenuItem1(_tr("editor.menu.deleteLayout"), nil, imgui_false, imgui_true) then
         editor.showWindow(deleteLayoutWindowName)
       end
-      if imgui.MenuItem1("Revert to Factory Settings...", nil, imgui_false, imgui_true) then
+      if imgui.MenuItem1(_tr("editor.menu.revertToFactorySettings"), nil, imgui_false, imgui_true) then
         editor.showWindow(resetLayoutsWindowName)
       end
       imgui.EndMenu()
     end
 
-    if imgui.MenuItem1("Visualization Settings...") then
+    if imgui.MenuItem1(_tr("editor.menu.visualizationSettings")) then
       editor.showWindow("visualization")
     end
     imgui.EndMenu()
@@ -543,33 +632,57 @@ local function statusBarGui()
   end
 end
 
+local function getGpuMemoryTotalBytes(mem)
+    if not mem then return end
+    if mem.isDedicatedMemory and mem.dedicatedBytes and mem.dedicatedBytes > 0 then return mem.dedicatedBytes end
+    if mem.sharedBytes and mem.sharedBytes > 0 then return mem.sharedBytes end
+    if mem.dedicatedBytes and mem.dedicatedBytes > 0 then return mem.dedicatedBytes end
+    return mem.budgetBytes
+end
+
+local function drawMetric(critical, warning, format, ...)
+    local color = critical and metricCriticalColor or warning and metricWarningColor or imgui.GetStyleColorVec4(imgui.Col_Text)
+    imgui.TextColored(color, format, ...)
+end
+
+local function memoryMetric(label, usedBytes, totalBytes)
+    if not usedBytes or not totalBytes or totalBytes <= 0 then
+        drawMetric(false, false, "%s: ?", label)
+        return
+    end
+
+    local freeRatio = clamp((totalBytes - usedBytes) / totalBytes, 0, 1)
+    drawMetric(freeRatio < 0.1, freeRatio < 0.25, "%s: %.1f/%.1f GiB", label, usedBytes / bytesPerGiB, totalBytes / bytesPerGiB)
+end
+
 local function sceneMetric()
   local io = imgui.GetIO()
   local fps = fpsSmoother:get(io.Framerate)
 
-  local txtSize = imgui.CalcTextSize("FPS: 999 ").y + imgui.CalcTextSize("GpuWait: 00.0f ").y + imgui.CalcTextSize("Poly: 123456789").y
-  imgui.SetCursorPosX(imgui.GetCursorPosX() + imgui.GetContentRegionAvailWidth() - txtSize*4)
-
-  if fps < 30 then
-    imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, 1), "FPS: %.0f", fps)
-  elseif fps < 60 then
-    imgui.TextColored(imgui.ImVec4(1, 1, 0.2, 1), "FPS: %.0f", fps)
-  else
-    imgui.Text("FPS: %.0f", fps)
-  end
+  local metricSpacing = 16 * imgui.uiscale[0]
+  local metricsWidth = imgui.CalcTextSize("VRAM: 99.9/99.9 GiB").x + imgui.CalcTextSize("RAM: 99.9/99.9 GiB").x
+    + imgui.CalcTextSize("FPS: 999").x + imgui.CalcTextSize("GpuWait: 00.0f").x + metricSpacing * 3
+  imgui.SetCursorPosX(imgui.GetCursorPosX() + imgui.GetContentRegionAvailWidth() - metricsWidth + imgui.GetStyle().WindowPadding.x)
 
   if metricsTim < Engine.Platform.getRuntime() -0.5 then
     metricsTim = Engine.Platform.getRuntime()
     Engine.Debug.getLastPerformanceMetrics(metrics)
+    systemMemoryInfo = Engine.Platform.getMemoryInfo()
+    gpuMemoryInfo = Engine.Render.getMemoryInfo()
   end
-  if metrics["FramePresent"] < 0.3 then
-    imgui.Text("GpuWait: %.1f", metrics["FramePresent"])
-  elseif metrics["FramePresent"] < 1 or fps > 30 then
-    imgui.TextColored(imgui.ImVec4(1, 1, 0.2, 1), "GpuWait: %3.1f", metrics["FramePresent"])
-  else
-    imgui.TextColored(imgui.ImVec4(1, 0.3, 0.3, 1), "GpuWait: %3.1f", metrics["FramePresent"])
-  end
-  imgui.Text("Poly: "..getConsoleVariable("$GFXDeviceStatistics::polyCount"))
+
+  local gpuMemoryTotal = getGpuMemoryTotalBytes(gpuMemoryInfo)
+  local gpuMemoryUsed = gpuMemoryInfo and gpuMemoryInfo.valid and gpuMemoryTotal and gpuMemoryInfo.availableBytes and math.max(0, gpuMemoryTotal - gpuMemoryInfo.availableBytes)
+  memoryMetric("VRAM", gpuMemoryUsed, gpuMemoryTotal)
+  imgui.SameLine(0, metricSpacing)
+  memoryMetric("RAM", systemMemoryInfo and systemMemoryInfo.osPhysUsed, systemMemoryInfo and systemMemoryInfo.osPhysAvailable)
+  imgui.SameLine(0, metricSpacing)
+
+  drawMetric(fps < 30, fps < 60, "FPS: %.0f", fps)
+  imgui.SameLine(0, metricSpacing)
+
+  local gpuWait = metrics["FramePresent"]
+  drawMetric(gpuWait >= 1 and fps <= 30, gpuWait >= 0.3, "GpuWait: %3.1f", gpuWait)
 end
 
 local function onEditorGuiMainMenu()
@@ -606,28 +719,18 @@ local function onEditorGuiMainMenu()
       imgui.PopStyleColor()
     end
     if openSafeModePopup then editor.openModalWindow(safeModeDlgName) openSafeModePopup = false end
-    if editor.beginModalWindow(safeModeDlgName, "Safe Mode", imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoScrollbar) then
-      imgui.Text(
-        [[
-
-You have opened the World Editor in Safe Mode.
-
-Safe Mode only loads the bare minimum and many apps/features will be missing.
-
-        ]])
-
+    if editor.beginModalWindow(safeModeDlgName, _tr("editor.msgbox.safeMode"), imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoScrollbar) then
+      imgui.Text(_tr("editor.msgbox.safeModeMessage"))
       if imgui.Button("OK", imgui.ImVec2(120, 0)) then editor.closeModalWindow(safeModeDlgName) end
     end
     editor.endModalWindow()
 
-    if editor.beginModalWindow(aboutDlgName, "About Editor", imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoScrollbar) then
-      imgui.Text(
-        [[
-
-BeamNG ]] .. beamng_versionb .. [[ World Editor (level editor)
-
-The editor is used to edit and create new content/levels for the game.
-        ]])
+    if editor.beginModalWindow(aboutDlgName, _tr("editor.msgbox.aboutEditor"), imgui.WindowFlags_AlwaysAutoResize + imgui.WindowFlags_NoScrollbar) then
+      local msg = core_locales.contextTranslate("editor.msgbox.aboutEditorMessage", {beamngVersion = beamng_versionb})
+      imgui.Text(msg)
+      if not shipping_build then
+        imgui.Text("ImGui version: " .. imgui.GetVersion())
+      end
       if imgui.Button("OK", imgui.ImVec2(120, 0)) then editor.closeModalWindow(aboutDlgName) end
     end
     editor.endModalWindow()
@@ -695,7 +798,25 @@ end
 -- @param gameplay [boolean] if true, then this extension tool will be shown on the gameplay Window menu (reduced editor, for gameplay only), but when full editor is on, it will also be visible in the Window menu
 -- @param defaultToolWindow [boolean] if true, then this menu item will be shown at the top of the Window menu
 local function addWindowMenuItem(itemText, actionFunc, info, defaultToolWindow)
-  local item = {itemText = itemText, actionFunc = actionFunc, info = info}
+  local item = {
+    itemText = itemText,
+    actionFunc = nil, -- set below (wrapped)
+    info = info,
+    menuGroupName = info and info.groupMenuName or nil,
+    isDefaultToolWindow = defaultToolWindow or false
+  }
+  local originalActionFunc = actionFunc
+  item.actionFunc = function()
+    recordRecentWindowMenuItem(item)
+    if extensions.telemetry_core then
+      extensions.telemetry_core.addEvent({
+        name = "editorToolWindowOpened",
+        toolName = item.itemText,
+        entryPoint = "windowMenu"
+      })
+    end
+    if originalActionFunc then originalActionFunc() end
+  end
   local menuGroups
   local menuItems
 
@@ -730,6 +851,7 @@ local function onExtensionLoaded()
   defaultWindowMenuGroups = {}
   windowMenuItems = {}
   windowMenuGroups = {}
+  recentWindowMenuKeys = {}
 
   editor.notificationQueue = {}
   editor.maxNotificationCount = 100 -- how many notification messages to keep in the queue to be viewed
@@ -746,6 +868,7 @@ local function onEditorActivated()
   worldEditorCppApi.setAxisGizmoRenderPlane(editor.getPreference("gizmos.general.drawGizmoPlane"))
   worldEditorCppApi.setAxisGizmoRenderPlaneHashes(editor.getPreference("gizmos.general.drawGizmoPlane"))
   worldEditorCppApi.setAxisGizmoRenderMoveGrid(editor.getPreference("gizmos.general.drawGizmoPlane"))
+  worldEditorCppApi.setAxisGizmoHighlightSelectedMeshes(editor.getPreference("gizmos.general.highlightSelectedMeshes"))
 end
 
 local function onEditorInitialized()
@@ -787,6 +910,26 @@ local function onEditorPreferenceValueChanged(path, value)
   if path == "gizmos.visualization.visTypes" then
     showNavGraphDrivability[0] = value["drawNavGraphdrivability"] or false
   end
+  if path == "ui.general.recentWindowMenuCount" then
+    pruneRecentWindowMenuKeys()
+  end
+end
+
+local function onEditorSaveState(state)
+  -- Persist the MRU list into settings/editor/currentState.json
+  state.windowMenuRecentTools = deepcopy(recentWindowMenuKeys)
+end
+
+local function onEditorLoadState(state)
+  recentWindowMenuKeys = {}
+  if state and type(state.windowMenuRecentTools) == "table" then
+    for _, key in ipairs(state.windowMenuRecentTools) do
+      if type(key) == "string" and key ~= "" then
+        table.insert(recentWindowMenuKeys, key)
+      end
+    end
+  end
+  pruneRecentWindowMenuKeys()
 end
 
 M.onEditorGuiMainMenu = onEditorGuiMainMenu
@@ -794,5 +937,7 @@ M.onExtensionLoaded = onExtensionLoaded
 M.onEditorActivated = onEditorActivated
 M.onEditorInitialized = onEditorInitialized
 M.onEditorPreferenceValueChanged = onEditorPreferenceValueChanged
+M.onEditorSaveState = onEditorSaveState
+M.onEditorLoadState = onEditorLoadState
 
 return M

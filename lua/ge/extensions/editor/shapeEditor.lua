@@ -36,6 +36,15 @@ local highlightMaterialName = nil
 local lodSloppy = im.BoolPtr(false)
 local lodErrorTarget = im.FloatPtr(1.0)
 local lodBrokenMesh = false
+local comboSeqCurrentItem = im.IntPtr(0)
+local comboSeqCtxTxt = ""
+local orbitNeedsInit = true
+
+local function clamp(x, a, b)
+  if x < a then return a end
+  if x > b then return b end
+  return x
+end
 
 local function onWindowMenuItem()
   dirtyRdr = true
@@ -74,6 +83,17 @@ local function _getShapeInfo()
     end
     lodDetDest[0] = math.floor(highestDetail*0.8)
     comboCtxTxt = comboCtxTxt.."\0"
+    if shapeInfo.sequences then
+      comboSeqCtxTxt = ""
+      for k,v in pairs(shapeInfo.sequences) do
+        log("I","info.seq", dumps(k).."|"..dumps(v.name))
+        comboSeqCtxTxt = comboSeqCtxTxt..dumps(v.name).."\0"
+      end
+      comboSeqCtxTxt = comboSeqCtxTxt.."\0"
+    else
+      comboSeqCtxTxt = "\0\0"
+      comboSeqCurrentItem[0] = -1
+    end
   end
 end
 
@@ -309,6 +329,42 @@ local function menuSize(width,height)
   return im.ImVec2(menuW, menuH)
 end
 
+local function orbitZoom()
+  if orbitNeedsInit == true then
+    local ds = tonumber(shapePrev.mDetailSize) or 0
+    local base = (ds > 0) and ds or 1.0
+
+    orbitDist[0] = math.max(base * 0.2, 0.001)
+
+    orbitNeedsInit = false
+    shapePrev:setZoom(orbitDist[0])
+    dirtyRdr = true
+  end
+
+  local io = im.GetIO()
+  local wheel = io.MouseWheel
+
+  if im.IsItemHovered() and wheel ~= 0 then
+    local ds = tonumber(shapePrev.mDetailSize) or 0
+    local ps = tonumber(shapePrev.mPixelSize) or 0
+
+    local scale = (ds > 0) and ds or ((ps > 0) and (ps * 0.02) or 1.0)
+    local factor = 0.01
+    local step = scale * factor
+
+    step = clamp(step, 0.01, 5000)
+
+    if orbitDist[0] <= 0 then
+      orbitDist[0] = math.max(scale * 2.0, 0.001)
+    end
+
+    orbitDist[0] = orbitDist[0] - wheel * step
+    orbitDist[0] = math.max(orbitDist[0], 1e-6)
+    shapePrev:setZoom(orbitDist[0])
+    dirtyRdr = true
+  end
+end
+
 local function onEditorGui()
   if shapePrev and editor.beginWindow(toolWindowName, windowTitle, im.WindowFlags_NoCollapse) then
     renderSize[1] = im.GetContentRegionAvail().x
@@ -337,6 +393,8 @@ local function onEditorGui()
       editor.endWindow()
       return
     end
+
+    orbitZoom()
 
     local mod = false
 
@@ -503,6 +561,19 @@ local function onEditorGui()
         displayTree(nodes)
         im.EndTabItem()
       end
+      if beamng_buildtype=="INTERNAL" and im.BeginTabItem("Sequence") then
+        if shapeInfo.sequences then
+          if im.Combo2("animation", comboSeqCurrentItem, comboSeqCtxTxt) then
+            -- log( "E", "seq", dumps(comboSeqCurrentItem[0])  )
+            -- log( "E", "seq", dumps(shapeInfo.sequences[comboSeqCurrentItem[0]+1] ) )
+            shapePrev:setActiveThreadSequence(shapeInfo.sequences[comboSeqCurrentItem[0]+1].name, 0,0, true)
+          end
+          dirtyRdr = true
+        else
+          im.TextUnformatted("No sequences found")
+        end
+        im.EndTabItem()
+      end
       if im.BeginTabItem("Material") then
         local mname = shapePrev:getMaterialNames()
         local matHover = nil
@@ -625,7 +696,7 @@ local function onEditorGui()
       im.EndTabBar()
     end
     im.EndChild()
-    shapePrev:setInputEnabled(not im.IsItemHovered())
+    shapePrev:setInputEnabledEx(true, true, true, false, true)
   end
   editor.endWindow()
 end
@@ -661,7 +732,7 @@ local function showShapeEditorLoadFile(filename)
   end
   meshFile = filename
   shapePrev:setObjectModel(filename)
-  shapePrev:fitToShape()
+  orbitNeedsInit = true
   onWindowMenuItem()
   _getShapeInfo()
   _readMeshConstructor()

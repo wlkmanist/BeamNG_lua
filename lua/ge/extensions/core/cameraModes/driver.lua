@@ -33,6 +33,13 @@ function C:init()
   self.relativePitch = 0
   self.fwdSpeed = 0
   self.manualzoom = manualzoom()
+  self.zoomSmoother = newTemporalSmoothing(20)
+  self.dxSmoother = newTemporalSmoothing(3,1)
+  self.dySmoother = newTemporalSmoothing(3,1)
+  self.dzSmoother = newTemporalSmoothing(3,1)
+  self.prevCarPos = vec3()
+  self.icon = "personSolid"
+  self.canUseVehicleTriggerCrosshair = true
   self:onVehicleCameraConfigChanged()
   self:onSettingsChanged()
   self.vehicleIsMoving = false
@@ -47,15 +54,31 @@ function C:onVehicleCameraConfigChanged()
   self.marginX = nil
   self.cameraResetted = 3
 end
+function C:onCameraChanged(focused)
+  if focused then
+    self._driverZoomActionMapPushed = pushActionMap("DriverCameraZoom")
+  else
+    if self._driverZoomActionMapPushed then
+      popActionMap("DriverCameraZoom")
+    end
+    self._driverZoomActionMapPushed = nil
+    core_camera.setCameraDriverZoom(0, self.player)
+  end
+  self.zoomSmoother:reset()
+  core_camera.setCameraDriverZoom(0, self.player)
+end
+
 function C:onSettingsChanged()
   self.physicsFactor = settings.getValue('cameraDriverPhysics') / 100 -- 0..1 multiplier
   self.autocenter = settings.getValue('cameraDriverAutocenter')
   self.allowSeatAdjustments = settings.getValue('cameraDriverAllowSeatAdjustments')
   self.stableHorizonFactor = settings.getValue('cameraDriverStableHorizon') / 100 -- 0..1 multiplier
+  self.stablePitchFactor = settings.getValue('cameraDriverStablePitch') / 100 -- 0..1 multiplier
   self.lookAheadAngle = settings.getValue("cameraDriverLookAheadAngle") / 100
   self.lookAheadSmoothness = settings.getValue("cameraDriverLookAheadSmoothness") / 100
   self.manualzoom:init(settings.getValue('cameraDriverFov'), nil, nil, "ui.camera.fovDriver")
   self.openXRsnapTurnDriver = settings.getValue('openXRsnapTurnDriver')
+  self.openXRhorizonLockDriver = settings.getValue('openXRhorizonLockDriver')
 end
 
 function C:resetSeat()
@@ -63,6 +86,8 @@ function C:resetSeat()
   self.seatPosition = vec3()
   self.seatRotation = 0
   self.saveTimeout = 0 -- trigger save instantaneously
+  self.zoomSmoother:reset()
+  core_camera.setCameraDriverZoom(0, self.player)
 end
 
 function C:resetSeatAll()
@@ -77,13 +102,11 @@ function C:reset()
   self.relativeYaw = 0
   self.relativePitch = 0
   self.rockPos = vec3()
+  self.zoomSmoother:reset()
+  core_camera.setCameraDriverZoom(0, self.player)
 end
 
-local dxSmoother = newTemporalSmoothing(3,1)
-local dySmoother = newTemporalSmoothing(3,1)
-local dzSmoother = newTemporalSmoothing(3,1)
-
-local currentCarPos, prevCarPos = vec3(), vec3()
+local currentCarPos = vec3()
 local rot = vec3()
 local left, ref, back = vec3(), vec3(), vec3()
 local carLeft, carFwd, carUp, carRot, carRotInverse = vec3(), vec3(), vec3(), quat(), quat()
@@ -93,8 +116,12 @@ local camPosLocal, combinedPos, rotationOffset = vec3(), vec3(), vec3()
 local intermediateCamPos = vec3()
 local nRockPos, projectedRockPos = vec3(), vec3()
 
+local transitionStart = math.rad(50) -- full horizon lock within this margin
+local transitionEnd = math.rad(70) -- start fully following vehicle beyond this angle
+
 function C:update(data)
   local carPos = data.pos
+  self.player = data.player -- remember which view/player this instance drives, for zoom resets
   -- retrieve camera node (except when resetting, because data is not reliable then)
   self.cameraResetted = max(self.cameraResetted - 1, 0)
   if self.cameraResetted > 0 then
@@ -103,6 +130,9 @@ function C:update(data)
     return
   end
   local camNodeID, rightHandDrive = core_camera.getDriverData(data.veh)
+
+  local zoomSmoothed = self.zoomSmoother:get(data.driverZoom or 0, data.dtSim)
+  local rotZoomMul = 1 - zoomSmoothed * 0.88
 
   -- read seat adjustment settings
   if self.seatPosition == nil then
@@ -127,16 +157,14 @@ function C:update(data)
 
   if self.autocenter and data.veh then
     currentCarPos:set(data.veh:getPositionXYZ())
-    if prevCarPos then
-      local newValue = (prevCarPos:distance(currentCarPos) / data.dt) > 0.3
-      if not self.mouseIsLocked and newValue and newValue ~= self.vehicleIsMoving then
-        -- send back to center
-        self.relativeYaw = 0
-        self.relativePitch = 0
-      end
-      self.vehicleIsMoving = newValue
+    local newValue = (self.prevCarPos:distance(currentCarPos) / data.dt) > 0.3
+    if not self.mouseIsLocked and newValue and newValue ~= self.vehicleIsMoving then
+      -- send back to center
+      self.relativeYaw = 0
+      self.relativePitch = 0
     end
-    prevCarPos:set(currentCarPos)
+    self.vehicleIsMoving = newValue
+    self.prevCarPos:set(currentCarPos)
   end
 
   if data.openxrSessionRunning and self.openXRsnapTurnDriver then
@@ -146,19 +174,19 @@ function C:update(data)
 
   if self.autocenter and not self.mouseIsLocked and self.vehicleIsMoving then
     -- camera will go back to center as soon as the controller is released
-    absPitch = MoveManager.pitchDown - MoveManager.pitchUp
-    absYaw   = MoveManager.yawRight  - MoveManager.yawLeft
+    absPitch = (MoveManager.pitchDown - MoveManager.pitchUp) * rotZoomMul
+    absYaw   = (MoveManager.yawRight  - MoveManager.yawLeft) * rotZoomMul
     if filter == FILTER_KBD or filter == FILTER_KBD2 then
       -- keyboard look-to-rear key combo (press both left+right to look back)
-      absYaw = 0.5*(MoveManager.yawRight - MoveManager.yawLeft)
+      absYaw = 0.5*(MoveManager.yawRight - MoveManager.yawLeft) * rotZoomMul
       if MoveManager.yawLeft > 0 and MoveManager.yawRight > 0 then
         absYaw = absYaw + sign(self.camRot.x)
       end
     end
   else
     -- camera will stay where it is when the controller is released
-    self.relativeYaw   = self.relativeYaw   + (MoveManager.yawRight  - MoveManager.yawLeft) * 0.01 * data.dt * 60
-    self.relativePitch = self.relativePitch + (MoveManager.pitchDown - MoveManager.pitchUp) * 0.04 * data.dt * 60
+    self.relativeYaw   = self.relativeYaw   + (MoveManager.yawRight  - MoveManager.yawLeft) * 0.01 * data.dt * 60 * rotZoomMul
+    self.relativePitch = self.relativePitch + (MoveManager.pitchDown - MoveManager.pitchUp) * 0.04 * data.dt * 60 * rotZoomMul
   end
 
   local sideInput = self.relativeYaw   + absYaw
@@ -169,11 +197,12 @@ function C:update(data)
   end
 
   -- convert input into angles
-  local maxAngle = 160 -- max degrees the head will be looking back
-  self.camRot.x = sideInput * maxAngle
-  if data.lookBack then self.camRot.x = rightHandDrive and -maxAngle or maxAngle end
-  self.camRot.y = vertInput * 20
-  if vertInput > 0 then self.camRot.y = self.camRot.y * 3 end
+  local maxAngleYaw = 160 -- max degrees the head will be looking back
+  self.camRot.x = sideInput * maxAngleYaw
+  if data.lookBack then self.camRot.x = rightHandDrive and -maxAngleYaw or maxAngleYaw end
+  local maxAngleTiltUp = 40 -- max degrees the head will be looking up
+  local maxAngleTiltDown = 60 -- max degrees the head will be looking down
+  self.camRot.y = vertInput * (vertInput > 0 and maxAngleTiltDown or maxAngleTiltUp)
 
   -- orientation
   rot:set(math.rad(self.camRot.x), math.rad(self.camRot.y), math.rad(self.camRot.z))
@@ -213,7 +242,7 @@ function C:update(data)
   else
     self.rockPos:resize(min(self.rockPos:length(), self.lookAheadSmoothness))
   end
-  -- Stable horizon
+  -- Lock roll to horizon
   carRot:setFromDir(carFwd, carUp)
   camRot:setFromDir(-push3(carFwd))
   camUp:setRotate(camRot, vecZ)
@@ -230,16 +259,27 @@ function C:update(data)
   self.rockPos:setScaled((1 - data.dt * 0.1) * clamp(self.fwdSpeed / 20, 0, 1))
   lookAheadAngleOffset = clamp(lookAheadAngleOffset, -1.1, 1.1) * lookAheadAngle * clamp(self.fwdSpeed / 15, 0, 1)
 
-  -- Pitch smoothing
+  -- Lock pitch to horizon
+  local flatFwdLen = math.sqrt(square(carFwd.x) + square(carFwd.y))
+  local carPitch = math.atan2(carFwd.z, flatFwdLen > 0 and flatFwdLen or 1e-12)
+  local carPitchFactor = self.stablePitchFactor * sign(carUp.z) * smootheststep(clamp((transitionEnd - abs(carPitch)) / (transitionEnd - transitionStart), 0, 1))
+  local camPitch = math.rad(self.camRot.y) - carPitch * carPitchFactor
 
   --local roll, pitch, yaw = data.veh:getRollPitchYawAngularVelocity()
-  local pitch = 0
-  camRot = rotateEuler(math.rad(self.camRot.x) + lookAheadAngleOffset, math.rad(self.camRot.y) - pitch, camRoll, camRot) -- stable hood line
+  camRot = rotateEuler(math.rad(self.camRot.x) + lookAheadAngleOffset, camPitch, camRoll, camRot) -- stable hood line
+
+  if data.openxrSessionRunning and self.openXRhorizonLockDriver then
+    local fwd = camRot * vecY
+    fwd.z = 0
+    fwd:normalize()
+    camRot:setFromDir(fwd, vecZ)
+  end
 
   local notifiedFov = self.manualzoom:update(data)
   if notifiedFov then
     self.saveTimeout = 1
   end
+  data.res.fov = zoomSmoothed * 27 + (1 - zoomSmoothed) * self.manualzoom.fov
 
   -- physics-based position
   nodePos:set(data.veh:getNodePositionXYZ(camNodeID or 0))
@@ -253,15 +293,16 @@ function C:update(data)
     local origSpawnAABB = data.veh:getSpawnLocalAABB()
     local minExt = origSpawnAABB.minExtents
     local maxExt = origSpawnAABB.maxExtents
-    self.marginX = (maxExt.x - minExt.x)*0.5 - abs(data.veh:getInitialNodePosition(camNodeID or 0).x-(maxExt.x + minExt.x)*0.5) -- distance to boundingbox lateral
+    local camInitX = data.veh:getInitialNodePosition(camNodeID or 0).x - data.veh:getInitialNodePosition(self.refNodes.ref).x
+    self.marginX = (maxExt.x - minExt.x) * 0.5 - abs(camInitX - (maxExt.x + minExt.x) * 0.5) -- distance to boundingbox lateral
   end
 
   -- physics+static position combination
-  combinedPos:setLerp(self.camPosInitialLocal, camPosLocal, self.physicsFactor)
+  combinedPos:setLerp(self.camPosInitialLocal, camPosLocal, data.openxrSessionRunning and 0 or self.physicsFactor)
 
   -- left/right head sticking out position
   local minAngle = 70 -- starting angle when driver will start looking back
-  local headOut = clamp(abs(self.camRot.x) - minAngle, 0, maxAngle) / (maxAngle - minAngle) -- how much the head is looking back, from 0 to 1
+  local headOut = clamp(abs(self.camRot.x) - minAngle, 0, maxAngleYaw) / (maxAngleYaw - minAngle) -- how much the head is looking back, from 0 to 1
   local lateralFactor = headOut
   local forwardFactor = headOut
   local verticalFactor = headOut
@@ -298,9 +339,9 @@ function C:update(data)
   -- apply seat adjustment
   local dr, dy, dz = 0, 0 ,0
   if self.allowSeatAdjustments then
-    dr = dxSmoother:getCapped(MoveManager.left     - MoveManager.right  , data.dt)
-    dy = dySmoother:getCapped(MoveManager.backward - MoveManager.forward, data.dt)
-    dz = dzSmoother:getCapped(MoveManager.up       - MoveManager.down   , data.dt)
+    dr = self.dxSmoother:getCapped(MoveManager.left     - MoveManager.right  , data.dt)
+    dy = self.dySmoother:getCapped(MoveManager.backward - MoveManager.forward, data.dt)
+    dz = self.dzSmoother:getCapped(MoveManager.up       - MoveManager.down   , data.dt)
     local adjustedSpeed = data.fastSpeedModifier and data.speed * 3 or data.speed
     local pdr = dr * data.dt * adjustedSpeed * 2
     local pdy = dy * data.dt * adjustedSpeed / 50
@@ -339,7 +380,7 @@ function C:update(data)
     vehConfigs = jsonDecode(vehConfigs) -- and then deserialize, so we can follow the user settings
     vehConfigs[vehicleName] = vehConfig
     settings.setValue('cameraDriverVehicleConfigs', jsonEncode(vehConfigs))
-    settings.setValue('cameraDriverFov', data.res.fov)
+    settings.setValue('cameraDriverFov', self.manualzoom.fov)
     self.saveTimeout = nil
   end
 end

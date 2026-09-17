@@ -6,17 +6,17 @@ local im  = ui_imgui
 
 local C = {}
 
-C.name = 'Get action control'
-C.description = 'Returns the control to a given input action'
-C.color = im.ImVec4(1, 1, 0, 0.75)
+C.name = 'Get Action Control'
+C.description = 'Returns the control to a given input action.'
+C.color = im.ImVec4(0, 0.3, 1, 0.75)
 C.category = 'repeat_instant'
 
 C.pinSchema = {
-  { dir = 'in', type = 'string', name = 'actionName', description = 'The name of the input action' },
-  { dir = 'out', type = 'string', name = 'controlName', description = 'The name of the control for that action' }
+  { dir = 'in', type = 'string', name = 'actionName', description = 'The name of the input action.' },
+  { dir = 'out', type = 'string', name = 'controlName', description = 'The name of the control for that action.' }
 }
 
-C.tags = {'scenario'}
+C.tags = {'scenario', 'control', 'input', 'action' }
 
 function C:work(args)
   self.pinOut.controlName.value = core_input_bindings.getControlForAction(self.pinIn.actionName.value)

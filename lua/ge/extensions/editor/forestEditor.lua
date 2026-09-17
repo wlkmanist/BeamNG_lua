@@ -1,4 +1,4 @@
- -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -21,10 +21,19 @@ local parallaxMappingTextureSetEditor_WindowId = "Forest Editor - Paralax Mappin
 local pM_textureSetsFilePath = nil
 local pM_textureSets = nil
 local pM_textureSetDirty = false
-local pM_selectedTextureSetId = 0
+local pM_selectedTextureSetId = -1 -- -1 = none selected (set ids are 0-based)
 -- local pM_selectedTextureSetData = nil
 local pM_lastTexturePath = "/"
 local pM_textureSetCopy = nil
+local pM_selectedTextureSetName = ""
+local pM_depth = 1.0
+local pM_intermediaryLayerDepth = 0.5
+local pM_intensity = 1.0
+local pM_emissiveWeight = 1.0
+local pM_wrapTextures = false
+local pM_splitFrontTexture = false
+local pM_enableIntermediaryLayer = false
+
 
 local valueInspector = require("editor/api/valueInspector")()
 local objectHistoryActions = require("editor/api/objectHistoryActions")()
@@ -65,7 +74,10 @@ local dataBlockNames = {}
 local tooltipLongTextLength = 70
 
 local transformToolSettingsOpen = false
+local snapOptionsOpen = false
+local enableSnapSinkOption = false
 local selectionStylePopupPos =  im.ImVec2(0, 0)
+local snapOptionPopupPos =  im.ImVec2(0, 0)
 local u_32_max_int = 4294967295
 
 var.forestEditorWindowSize = nil
@@ -167,11 +179,21 @@ end
 local function readOrIntializeParallaxMappingTextureSets()
   if FS:fileExists(pM_textureSetsFilePath) then
     pM_textureSets = jsonReadFile(pM_textureSetsFilePath)
+    if pM_textureSets.header.version < 3 then
+      pM_textureSets = {
+        header = {
+          version = 3,
+          info = "1=top; 2=left; 3=back; 4=right; 5=bottom; 6=front; 7=intermediary"
+        },
+        data = {}
+      }
+      jsonWriteFile(pM_textureSetsFilePath, pM_textureSets, true)
+    end
   else
     pM_textureSets = {
       header = {
-        version = 1,
-        info = "1=top; 2=left; 3=back; 4=right; 5=bottom; 6=front"
+        version = 3,
+        info = "1=top; 2=left; 3=back; 4=right; 5=bottom; 6=front; 7=intermediary"
       },
       data = {}
     }
@@ -218,14 +240,36 @@ local function updateCentroid()
   selectionCentroid.z = selectionCentroid.z / numObjects;
 end
 
+local function clearForestItemsSelection()
+  if editor.selection and editor.selection.forestItem then
+    for _, item in ipairs(editor.selection.forestItem) do
+      editor.setForestItemSelected(var.forestData, item:getKey(), false)
+    end
+
+    worldEditorCppApi.rebuildForestManagerInstanceData()
+    editor.selection.forestItem = {}
+  end
+end
+
 local function selectForestItems(forestItems, addToSelection)
+  if not addToSelection and editor.selection and editor.selection.forestItem then
+    for _, item in ipairs(editor.selection.forestItem) do
+      editor.setForestItemSelected(var.forestData, item:getKey(), false)
+    end
+    if not forestItems then
+      worldEditorCppApi.rebuildForestManagerInstanceData()
+    end
+  end
+
   if not addToSelection or not editor.selection or not editor.selection.forestItem then
     editor.selection = {}
     editor.selection.forestItem = {}
   end
+
   if not forestItems then return end
 
   for _, item in ipairs(forestItems) do
+    editor.setForestItemSelected(var.forestData, item:getKey(), true)
     table.insert(editor.selection.forestItem, item)
   end
 
@@ -248,6 +292,7 @@ local function selectForestItems(forestItems, addToSelection)
     var.meshPreview:setRenderState(false,false,false,false,false,true)
   end
 
+  worldEditorCppApi.rebuildForestManagerInstanceData()
   extensions.hook("onEditorObjectSelectionChanged")
 end
 
@@ -323,7 +368,7 @@ local function selectTool(tool)
         if #var.selectedForestBrushes == 1 then
           editor.selectObjectById(var.selectedForestBrushes[1].id) -- Select the brush again that was selected before
         end
-        editor.selection.forestItem = {}
+        clearForestItemsSelection()
       end
       if (tool.type == var.enum_toolType.transformTool) then
         editor.selection = {}
@@ -403,6 +448,13 @@ local function selectForestBrush(item, addToSelection)
   if tableSize(var.selectedForestBrushes) == 1 then
     editor.selectObjectById(var.selectedForestBrushes[1].id)
     local obj = scenetree.findObjectById(var.selectedForestBrushes[1].id)
+
+    -- If object doesn't exist yet (e.g., during undo), ensure selection happens once it's restored
+    if not obj then
+      -- Store the item ID to select it later when the object is restored
+      var.pendingBrushSelection = var.selectedForestBrushes[1].id
+    end
+
     local shapeFilename = ""
 
     if obj and obj.getClassName and obj:getClassName() == "ForestBrushElement" and obj.forestItemData then
@@ -415,6 +467,54 @@ local function selectForestBrush(item, addToSelection)
     var.meshPreview:setObjectModel(shapeFilename)
     var.meshPreview:fitToShape()
     var.meshPreview:setRenderState(false,false,false,false,false,true)
+  end
+end
+
+local function getVisibleForestBrushItems()
+  local items = {}
+  if not var.forestBrushes then
+    return items
+  end
+  for _, brush in ipairs(var.forestBrushes) do
+    table.insert(items, brush)
+    if brush.open then
+      for _, element in ipairs(brush.elements or {}) do
+        table.insert(items, element)
+      end
+    end
+  end
+  return items
+end
+
+local function findForestBrushItemIndex(items, itemId)
+  for i, item in ipairs(items) do
+    if item.id == itemId then
+      return i
+    end
+  end
+  return nil
+end
+
+local function selectForestBrushRange(targetItem)
+  local anchorId = var.lastForestBrushSelectionId
+  if not anchorId then
+    selectForestBrush(targetItem, false)
+    return
+  end
+
+  local items = getVisibleForestBrushItems()
+  local anchorIndex = findForestBrushItemIndex(items, anchorId)
+  local targetIndex = findForestBrushItemIndex(items, targetItem.id)
+  if not anchorIndex or not targetIndex then
+    selectForestBrush(targetItem, false)
+    return
+  end
+
+  local startIndex = math.min(anchorIndex, targetIndex)
+  local endIndex = math.max(anchorIndex, targetIndex)
+  selectForestBrush(items[startIndex], false)
+  for i = startIndex + 1, endIndex do
+    selectForestBrush(items[i], true)
   end
 end
 
@@ -518,6 +618,9 @@ local function removeItemUndo(actionData)
 
   if actionData.forestBrushesIndex then
     table.insert(var.forestBrushes, actionData.forestBrushesIndex, item)
+    -- Select the brush to show inspector fields
+    -- Note: editor.selectObjectById will work even if object doesn't exist yet
+    -- as it will queue the selection, and the inspector will update once the object is restored
     selectForestBrush(item)
   end
 
@@ -656,7 +759,7 @@ end
 
 local function newForestItemData(data)
   local name = Sim.getUniqueName(data.filename:match("(.+)%."))
-  local objId = editor.createDataBlock(name, "TSForestItemData", nil, editor.levelPath .. "art/forest/managedItemData.json")
+  local objId = editor.createDataBlock(name, "ForestItemData", nil, editor.levelPath .. "art/forest/managedItemData.json")
   local obj = scenetree.findObjectById(objId)
   obj:setName(name)
   obj:setInternalName(name)
@@ -925,7 +1028,7 @@ local function assetInspectorGuiForestItem(inspectorInfo)
 
     im.Columns(1, "assetInspectorGuiForestItem_columns")
     im.SeparatorText("Parallax Mapping Properties")
-    im.Columns(2, "assetInspectorGuiForestItem_columns")
+    im.Columns(2, "assetInspectorGuiForestItem_parallaxProperties_columns")
     im.TextUnformatted("Parallax Mapping")
     im.NextColumn()
     if im.Checkbox("##enableParallaxMapping_checkbox", editor.getTempBool_BoolBool(enableParallaxMapping)) then
@@ -949,7 +1052,7 @@ local function assetInspectorGuiForestItem(inspectorInfo)
     if enableParallaxMapping == false then im.EndDisabled() end
     im.NextColumn()
 
-    im.Columns(1, "assetInspectorGuiForestItem_columns")
+    im.Columns(1, "assetInspectorGuiForestItem_parallaxProperties_columns")
     if im.Button("Open TextureSet editor##ForestItemInspector", im.ImVec2(im.GetContentRegionAvailWidth(), 0)) then
       editor.showWindow(parallaxMappingTextureSetEditor_WindowId)
     end
@@ -964,8 +1067,8 @@ local function assetInspectorGuiForestItem(inspectorInfo)
     im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0,0))
     if im.BeginChild1("MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
       var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
-      im.EndChild()
     end
+    im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
     im.PopStyleVar()
 
     if im.Button("Select ForestItemData", im.ImVec2(im.GetContentRegionAvailWidth(), 0)) then
@@ -992,6 +1095,16 @@ local function sliderFloat(text, id, val, vmin, vmax, format, power, editEnded, 
   return res
 end
 
+local function dragFloat(text, id, val, speed, vmin, vmax, format, editEnded, fn, tooltip, mouseWheelPower)
+  im.TextUnformatted(text)
+  im.SameLine()
+  local res = editor.uiDragFloat(id, val, speed, vmin, vmax, format, 0, editEnded)
+  if tooltip then
+    im.tooltip(tooltip)
+  end
+  return res
+end
+
 local function setBrushSize()
   var.forestBrushTool:setSize(editor.getPreference("forestEditor.general.brushSize") / 2)
 end
@@ -1002,6 +1115,18 @@ end
 
 local function setBrushHardness()
   var.forestBrushTool:setHardness(editor.getPreference("forestEditor.general.brushHardness") / 100)
+end
+
+local function setBrushDepthOffset()
+  var.forestBrushTool:setDepthOffset(editor.getPreference("forestEditor.general.brushDepthOffset"))
+end
+
+local function setForceAlignToTerrain()
+  var.forestBrushTool.forceAlignToTerrain = editor.getPreference("forestEditor.general.forceAlignToTerrain")
+end
+
+local function setSnapAnyForestItemType()
+  var.forestBrushTool.snapAnyForestItemType = editor.getPreference("forestEditor.general.snapAnyForestItemType")
 end
 
 local function changeBrushSize(value, step)
@@ -1055,11 +1180,41 @@ local function toolbarToolIcon(tool, type)
   if tool.type == var.enum_toolType.transformTool and im.IsItemHovered() and im.IsMouseClicked(1) then
     transformToolSettingsOpen = not transformToolSettingsOpen
     selectionStylePopupPos = im.ImVec2(im.GetWindowPos().x + im.GetCursorPosX(), im.GetWindowPos().y + im.GetCursorPosY() + 30)
+  elseif tool.mode == var.enum_brushMode.snap and im.IsItemHovered() and im.IsMouseClicked(1) then
+    snapOptionsOpen = not snapOptionsOpen
+    snapOptionPopupPos = im.ImVec2(im.GetWindowPos().x + im.GetCursorPosX(), im.GetWindowPos().y + im.GetCursorPosY() + 30)
   end
 end
 
 
 -- ##### GUI TOOLBAR END #####
+
+local function refreshForestItemDataList()
+  var.forestItemData = {}
+
+  local forestItemDataNames = scenetree.findClassObjects("ForestItemData") or {}
+  for k, forestItemDataId in ipairs(forestItemDataNames) do
+    local cobj = scenetree.findObject(forestItemDataId)
+    if cobj then
+      local item = {
+        pos = k,
+        id = cobj:getId(),
+        dirty = false,
+        type = var.enum_forestObjType.forestItemData,
+        selected = false
+      }
+      table.insert(var.forestItemData, item)
+    end
+  end
+
+  table.sort(var.forestItemData, forestItemSortByNameFunc)
+
+  initializeDataBlockTables()
+
+  if valueInspector then
+    valueInspector:initializeTables(true)
+  end
+end
 
 -- ##### INITIALIZE #####
 local function initializeForestBrushes()
@@ -1086,7 +1241,7 @@ local function initializeForestBrushes()
   end
 
   -- ForestItemData
-  local forestItemDataNames = scenetree.findClassObjects("TSForestItemData")
+  local forestItemDataNames = scenetree.findClassObjects("ForestItemData")
   var.forestItemData = {}
   for k, forestItemDataId in ipairs(forestItemDataNames) do
     local cobj = scenetree.findObject(forestItemDataId)
@@ -1247,7 +1402,7 @@ local function initialize()
     {
       label = "snap",
       type = var.enum_toolType.brush,
-      tooltip = "Snap To Terrain",
+      tooltip = "Snap To Terrain, right click for options.",
       description = "Snap To Terrain Tool - This brush snaps selected ForestItems to the TerrainBlock.",
       icon = editor.icons.forest_snap_terrain,
       mode = var.enum_brushMode.snap
@@ -1342,7 +1497,40 @@ local function forestToolsEditModeToolbar()
         updateLegendCurrentActionNames(var.transformToolSelectionMode)
         extensions.hook("onEditorEditModeChanged", nil, nil)
       end
+    end
+  end
 
+  if snapOptionsOpen then
+    local transformTool = nil
+    local selectionModeValue = im.IntPtr(0)
+    if var.transformToolSelectionMode == var.enum_toolMode.lassoSelect then
+      selectionModeValue = im.IntPtr(1)
+    end
+    im.SetNextWindowPos(snapOptionPopupPos, im.Cond_Appearing)
+    local wndOpen = im.BoolPtr(snapOptionsOpen)
+    im.Begin("Snap To Terrain Options", wndOpen, im.WindowFlags_NoCollapse)
+    local boolPtr = im.BoolPtr(enableSnapSinkOption)
+    if im.Checkbox("Sink Items##enableSnapSink", boolPtr) then
+      enableSnapSinkOption = boolPtr[0]
+      var.forestBrushTool.snapSinkEnabled = boolPtr[0]
+    end
+    local snapSinkPtr = im.FloatPtr(var.forestBrushTool.snapSink)
+    local editEnded = im.BoolPtr(false)
+    if not enableSnapSinkOption then
+      im.BeginDisabled()
+    end
+    im.Text("Sink Value:")
+    im.SameLine()
+    editor.uiInputFloat("##snapSink", snapSinkPtr, 0.1, 1.0, nil, nil, editEnded)
+    if not enableSnapSinkOption then
+      im.EndDisabled()
+    end
+    if editEnded[0] then
+      var.forestBrushTool.snapSink = snapSinkPtr[0]
+    end
+    im.End()
+    if not wndOpen[0] then
+      snapOptionsOpen = false
     end
   end
 
@@ -1384,8 +1572,10 @@ local function forestToolsEditModeToolbar()
     im.SameLine()
     local brushSizeEditEnded = im.BoolPtr(false)
     local brushPressureEditEnded = im.BoolPtr(false)
+    local brushDepthOffsetEditEnded = im.BoolPtr(false)
     local brushSize = im.FloatPtr(editor.getPreference("forestEditor.general.brushSize"))
     local brushPressure = im.FloatPtr(editor.getPreference("forestEditor.general.brushPressure"))
+    local brushDepthOffset = im.FloatPtr(editor.getPreference("forestEditor.general.brushDepthOffset"))
     im.PushItemWidth(120)
     if sliderFloat("Size", "##BrushSize", brushSize, 1, 150, "%.1f", nil, brushSizeEditEnded, setBrushSize, "Brush Size\nUse the mouse wheel to adjust the value.", 0.5) then
       editor.setPreference("forestEditor.general.brushSize", brushSize[0])
@@ -1394,6 +1584,37 @@ local function forestToolsEditModeToolbar()
     if sliderFloat("Density", "##BrushPressure", brushPressure, 1, 100, "%.0f%", nil, brushPressureEditEnded, setBrushPressure, "Brush Density") then
       editor.setPreference("forestEditor.general.brushPressure", brushPressure[0])
     end
+
+    if var.selectedTool and var.selectedTool.mode == var.enum_brushMode.paint then
+      im.SameLine()
+      if dragFloat("Depth Offset", "##BrushDepthOffset", brushDepthOffset, 0.1, -10, 10, "%.2f", brushDepthOffsetEditEnded, setBrushDepthOffset, "Depth Offset\nOffset to place objects above/below terrain, relative to mesh pivot point.") then
+        editor.setPreference("forestEditor.general.brushDepthOffset", brushDepthOffset[0])
+      end
+      im.SameLine()
+      if im.Button("Reset Depth Offset##resetDepthOffset") then
+        editor.setPreference("forestEditor.general.brushDepthOffset", 0)
+        setBrushDepthOffset()
+      end
+    end
+
+    im.SameLine()
+    local forceAlignToTerrainPtr = im.BoolPtr(editor.getPreference("forestEditor.general.forceAlignToTerrain"))
+    if im.Checkbox("Force Align To Terrain##forceAlignToTerrain", forceAlignToTerrainPtr) then
+      editor.setPreference("forestEditor.general.forceAlignToTerrain", forceAlignToTerrainPtr[0])
+      setForceAlignToTerrain()
+    end
+    im.tooltip("Force align all items to terrain, ignoring per-item settings")
+
+    if var.selectedTool and var.selectedTool.mode == var.enum_brushMode.snap then
+      im.SameLine()
+      local snapAnyForestItemTypePtr = im.BoolPtr(editor.getPreference("forestEditor.general.snapAnyForestItemType"))
+      if im.Checkbox("Snap Any Item Type##snapAnyForestItemType", snapAnyForestItemTypePtr) then
+        editor.setPreference("forestEditor.general.snapAnyForestItemType", snapAnyForestItemTypePtr[0])
+        setSnapAnyForestItemType()
+      end
+      im.tooltip("Apply sink to all forest item types, not only those selected")
+    end
+
     im.PopItemWidth()
 
     if brushSizeEditEnded[0] then
@@ -1402,6 +1623,10 @@ local function forestToolsEditModeToolbar()
 
     if brushPressureEditEnded[0] then
       setBrushPressure()
+    end
+
+    if brushDepthOffsetEditEnded[0] then
+      setBrushDepthOffset()
     end
   end
 
@@ -1475,8 +1700,13 @@ local function forestBrushItemButton(item)
     im.PushStyleColor2(im.Col_Button, (item.selected == true) and var.buttonColor_active or var.buttonColor_inactive)
     local id = item.type == var.enum_forestObjType.forestBrush and ("##" .. item.internalName .. "_button_FB_" .. tostring(item.id)) or ("##" .. item.internalName .. "_button_FBE_" .. tostring(item.id))
     if im.Button(id, im.ImVec2(im.GetContentRegionAvailWidth(), var.fontSize)) then
-      -- add to selection if ctrl is held
-      selectForestBrush(item, editor.keyModifiers.ctrl)
+      if editor.keyModifiers.shift then
+        selectForestBrushRange(item)
+      else
+        -- add to selection if ctrl is held
+        selectForestBrush(item, editor.keyModifiers.ctrl)
+      end
+      var.lastForestBrushSelectionId = item.id
     end
     if editor.IsItemDoubleClicked() == true then
       var.editingObject = item
@@ -1544,33 +1774,33 @@ local function textureSetImageButton(imgSize, id, tooltip)
 
   local popupId = string.format("%d##textureSet_Preview_Popup", id)
   if im.BeginPopup(popupId) then
-    if not pM_textureSets.data[selectedTextureSetIdStr] or not pM_textureSets.data[selectedTextureSetIdStr][id] or pM_textureSets.data[selectedTextureSetIdStr][id] == "" then
+    if not pM_textureSets.data[selectedTextureSetIdStr] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] or pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] == "" then
       im.BeginDisabled()
     end
     if im.Button(string.format("Remove texture##%d", id)) then
-      pM_textureSets.data[selectedTextureSetIdStr][id] = ""
+      pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] = ""
 
       local empty = true
       for i = 1, 6 do
-        if pM_textureSets.data[selectedTextureSetIdStr][i] ~= "" then
+        if pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] ~= "" then
           empty = false
         end
       end
       if empty then
-        pM_textureSets.data[selectedTextureSetIdStr] = nil
+        pM_textureSets.data[selectedTextureSetIdStr]["textures"] = nil
       end
       pM_textureSetDirty = true
 
       im.CloseCurrentPopup()
     end
-    if not pM_textureSets.data[selectedTextureSetIdStr] or not pM_textureSets.data[selectedTextureSetIdStr][id] or pM_textureSets.data[selectedTextureSetIdStr][id] == "" then
+    if not pM_textureSets.data[selectedTextureSetIdStr] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] or pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] == "" then
       im.EndDisabled()
     end
     im.EndPopup()
   end
 
-  if pM_textureSets.data[selectedTextureSetIdStr] and pM_textureSets.data[selectedTextureSetIdStr][id] then
-    imgPath = pM_textureSets.data[selectedTextureSetIdStr][id]
+  if pM_textureSets.data[selectedTextureSetIdStr] and pM_textureSets.data[selectedTextureSetIdStr]["textures"] and pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] then
+    imgPath = pM_textureSets.data[selectedTextureSetIdStr]["textures"][id]
   end
   local img = editor.getTempTextureObj(imgPath)
   if im.ImageButton(string.format("TextureSetImageButton_%d", id), img.texId, im.ImVec2(imgSize, imgSize)) then
@@ -1579,13 +1809,16 @@ local function textureSetImageButton(imgSize, id, tooltip)
       if not pM_textureSets.data[selectedTextureSetIdStr] then
         pM_textureSets.data[selectedTextureSetIdStr] = {}
       end
+      if not pM_textureSets.data[selectedTextureSetIdStr]["textures"] then
+        pM_textureSets.data[selectedTextureSetIdStr]["textures"] = {}
+      end
       for i = 1, 6 do
-        if not pM_textureSets.data[selectedTextureSetIdStr][i] then
-          pM_textureSets.data[selectedTextureSetIdStr][i] = ""
+        if not pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] then
+          pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] = ""
         end
       end
 
-      pM_textureSets.data[selectedTextureSetIdStr][id] = data.filepath
+      pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] = data.filepath
       pM_lastTexturePath = data.path
       pM_textureSetDirty = true
 
@@ -1600,20 +1833,23 @@ local function textureSetImageButton(imgSize, id, tooltip)
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload("ASSETDRAGDROP")
     if payload~=nil then
-      assert(payload.DataSize == ffi.sizeof"char[2048]")
+      assert(payload.DataSize == 2048)
       local data = ffi.string(payload.Data)
       local path, filepath, extension = path.split(data)
       if extension == "png" or extension == "jpg" then
         if not pM_textureSets.data[selectedTextureSetIdStr] then
           pM_textureSets.data[selectedTextureSetIdStr] = {}
         end
+        if not pM_textureSets.data[selectedTextureSetIdStr]["textures"] then
+          pM_textureSets.data[selectedTextureSetIdStr]["textures"] = {}
+        end
         for i = 1, 6 do
-          if not pM_textureSets.data[selectedTextureSetIdStr][i] then
-            pM_textureSets.data[selectedTextureSetIdStr][i] = ""
+          if not pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] then
+            pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] = ""
           end
         end
 
-        pM_textureSets.data[selectedTextureSetIdStr][id] = path .. filepath
+        pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] = path .. filepath
         pM_lastTexturePath = path
         pM_textureSetDirty = true
       else
@@ -1626,12 +1862,11 @@ local function textureSetImageButton(imgSize, id, tooltip)
   if im.IsItemClicked(1) then
     im.OpenPopup(popupId)
   end
-  im.tooltip(string.format("%s\n%s\nLMB: Select texture\nRMB: Open context menu", tooltip, (pM_textureSets.data[selectedTextureSetIdStr] and pM_textureSets.data[selectedTextureSetIdStr][id]) and pM_textureSets.data[selectedTextureSetIdStr][id] or "-none-"))
+  im.tooltip(string.format("%s\n%s\nLMB: Select texture\nRMB: Open context menu", tooltip, (pM_textureSets.data[selectedTextureSetIdStr] and pM_textureSets.data[selectedTextureSetIdStr]["textures"] and pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] ~= "") and pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] or "-none-"))
 end
 
 local function parallaxMappingTextureSetEditorGui()
-  im.Columns(2, "parallaxMappingTextureSetEditorColumns")
-  im.SetColumnWidth(0, 80)
+  im.Columns(3, "parallaxMappingTextureSetEditorColumns")
   im.BeginChild1("parallaxMappingTextureSetEditor_textureSet_List_Child", nil, true)
 
   local windowDrawList = im.GetWindowDrawList()
@@ -1641,7 +1876,7 @@ local function parallaxMappingTextureSetEditorGui()
   local fontSize = im.GetFontSize()
   local cPos
 
-  for i = 1, 128 do
+  for i = 0, 127 do
     if pM_textureSets.data[tostring(i)] then
       local cPos = im.GetCursorPos()
       im.ImDrawList_AddRectFilled(
@@ -1655,9 +1890,25 @@ local function parallaxMappingTextureSetEditorGui()
       )
     end
     im.Indent()
-    if im.Selectable1(string.format("%d##pMTextureSetList", i), i == pM_selectedTextureSetId and true or false) then
+    local selectableName = string.format("%d##pMTextureSetList", i)
+    if pM_textureSets.data[tostring(i)] then
+      selectableName = string.format("%d - %s##pMTextureSetList", i, pM_textureSets.data[tostring(i)].name or "")
+    end
+    if im.Selectable1(selectableName, i == pM_selectedTextureSetId and true or false) then
       if pM_selectedTextureSetId ~= i then
         pM_selectedTextureSetId = i
+        local i_str = tostring(i)
+        if pM_textureSets.data[i_str] then
+          pM_selectedTextureSetName = pM_textureSets.data[i_str].name or ""
+          pM_depth = pM_textureSets.data[i_str].depth or 1.0
+          pM_intermediaryLayerDepth = pM_textureSets.data[i_str].intermediaryLayerDepth or 0.5
+          pM_intensity = pM_textureSets.data[i_str].intensity or 1.0
+          pM_emissiveWeight = pM_textureSets.data[i_str].emissiveWeight or 1.0
+          pM_wrapTextures = pM_textureSets.data[i_str].wrapTextures or false
+          pM_splitFrontTexture = pM_textureSets.data[i_str].splitFrontTexture or false
+          pM_enableIntermediaryLayer = pM_textureSets.data[i_str].enableIntermediaryLayer or false
+        end
+        pM_textureSetDirty = false
       end
     end
     im.Unindent()
@@ -1666,39 +1917,40 @@ local function parallaxMappingTextureSetEditorGui()
   im.NextColumn()
 
   local pM_selectedTextureSetData = pM_textureSets.data[tostring(pM_selectedTextureSetId)]
+
   --
-  if pM_selectedTextureSetId > 0 then
+  if pM_selectedTextureSetId >= 0 then
     im.TextUnformatted(string.format("Selected texture set: %d", pM_selectedTextureSetId))
     im.SameLine()
   end
-  if pM_selectedTextureSetId < 1 or pM_selectedTextureSetData == nil then im.BeginDisabled() end
+  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.BeginDisabled() end
   if im.Button("Copy##TextureSet") then
     pM_textureSetCopy = deepcopy(pM_textureSets.data[tostring(pM_selectedTextureSetId)])
   end
   im.tooltip("Copy texture set properties")
-  if pM_selectedTextureSetId < 1 or pM_selectedTextureSetData == nil then im.EndDisabled() end
+  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.EndDisabled() end
 
   im.SameLine()
-  if pM_selectedTextureSetId < 1 or pM_textureSetCopy == nil then im.BeginDisabled() end
+  if pM_selectedTextureSetId < 0 or pM_textureSetCopy == nil then im.BeginDisabled() end
   if im.Button("Paste##TextureSet") then
     pM_textureSets.data[tostring(pM_selectedTextureSetId)] = deepcopy(pM_textureSetCopy)
     pM_textureSetDirty = true
   end
   im.tooltip("Paste texture set properties")
-  if pM_selectedTextureSetId < 1 or pM_textureSetCopy == nil then im.EndDisabled() end
+  if pM_selectedTextureSetId < 0 or pM_textureSetCopy == nil then im.EndDisabled() end
 
   im.SameLine()
-  if pM_selectedTextureSetId < 1 or pM_selectedTextureSetData == nil then im.BeginDisabled() end
+  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.BeginDisabled() end
   if im.Button("Clear##TextureSet") then
     pM_textureSets.data[tostring(pM_selectedTextureSetId)] = nil
     pM_textureSetDirty = true
   end
   im.tooltip("Clear texture set properties")
-  if pM_selectedTextureSetId < 1 or pM_selectedTextureSetData == nil then im.EndDisabled() end
+  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.EndDisabled() end
 
   im.BeginChild1("parallaxMappingTextureSetEditor_textureSet_TexturePreview_Child", im.ImVec2(0, im.GetContentRegionAvail().y - (math.ceil(im.GetFontSize() + im.GetStyle().ItemSpacing.y * 2))), true)
 
-  if pM_selectedTextureSetId > 0 then
+  if pM_selectedTextureSetId >= 0 then
     local imgSize = (im.GetContentRegionAvailWidth() - (im.GetStyle().WindowPadding.x + 8 * im.GetStyle().ItemSpacing.x + 8 * im.GetStyle().FramePadding.x)) / 4
     im.SetCursorPosX(imgSize + im.GetStyle().ItemSpacing.x + im.GetStyle().WindowPadding.x + 2 * im.GetStyle().FramePadding.x)
     textureSetImageButton(imgSize, 1, "Top")
@@ -1713,30 +1965,121 @@ local function parallaxMappingTextureSetEditorGui()
     im.SameLine()
 
     im.SetCursorPosX(im.GetCursorPosX() + 5 * im.GetStyle().ItemSpacing.x)
-    textureSetImageButton(imgSize, 6, "Front")
+    local cPosX_intermediary = im.GetCursorPosX()
+    textureSetImageButton(imgSize, 6, "Front Layer")
 
     im.SetCursorPosX(imgSize + im.GetStyle().ItemSpacing.x + im.GetStyle().WindowPadding.x + 2 * im.GetStyle().FramePadding.x)
     textureSetImageButton(imgSize, 5, "Bottom")
+
+    im.SameLine()
+    im.SetCursorPosX(cPosX_intermediary)
+    textureSetImageButton(imgSize, 7, "Intermediary Layer")
   end
 
   im.EndChild()
-  if im.Button("Save##SaveCurrentTextureSetButton") then
-    pM_textureSets.data[tostring(pM_selectedTextureSetId)] = pM_selectedTextureSetData
-    jsonWriteFile(pM_textureSetsFilePath, pM_textureSets, true)
-    pM_textureSetDirty = false
+  -- editor.(label, buf, buf_size, flags, callback, user_data, editEnded)
+  if pM_selectedTextureSetId >= 0 then
+    im.PushItemWidth(120)
+    if editor.uiInputText("##Texture Set Name", editor.getTempCharPtr(pM_selectedTextureSetName), nil, nil, nil, nil, editor.getTempBool_BoolBool(false)) then
+      pM_selectedTextureSetName = editor.getTempCharPtr()
+    end
+    im.PopItemWidth()
+    im.tooltip("Texture Set Name")
+    if editor.getTempBool_BoolBool() == true then
+      pM_selectedTextureSetName = editor.getTempCharPtr()
+      pM_textureSetDirty = true
+    end
+    im.SameLine(160)
+    if im.Button("Save##SaveCurrentTextureSetButton") then
+      if not pM_selectedTextureSetData then
+        pM_selectedTextureSetData = {
+          name = ""
+        }
+      end
+      pM_selectedTextureSetData.name = pM_selectedTextureSetName
+      pM_selectedTextureSetData.depth = pM_depth
+      pM_selectedTextureSetData.intermediaryLayerDepth = pM_intermediaryLayerDepth
+      pM_selectedTextureSetData.intensity = pM_intensity
+      pM_selectedTextureSetData.emissiveWeight = pM_emissiveWeight
+      pM_selectedTextureSetData.wrapTextures = pM_wrapTextures
+      pM_selectedTextureSetData.splitFrontTexture = pM_splitFrontTexture
+      pM_selectedTextureSetData.enableIntermediaryLayer = pM_enableIntermediaryLayer
+      pM_textureSets.data[tostring(pM_selectedTextureSetId)] = pM_selectedTextureSetData
+      jsonWriteFile(pM_textureSetsFilePath, pM_textureSets, true)
+      pM_textureSetDirty = false
+    end
+    im.tooltip("Save current texture set")
   end
-  im.tooltip("Save current texture set")
 
   if pM_textureSetDirty then
     im.SameLine(nil, im.GetStyle().ItemSpacing.x * 4)
     if im.Button("Revert changes##TextureSetEditor") then
       readOrIntializeParallaxMappingTextureSets()
+      pM_selectedTextureSetName = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].name or ""
+      pM_depth = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].depth or 1.0
+      pM_intermediaryLayerDepth = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].intermediaryLayerDepth or 0.5
+      pM_intensity = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].intensity or 1.0
+      pM_emissiveWeight = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].emissiveWeight or 1.0
+      pM_wrapTextures = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].wrapTextures or false
+      pM_splitFrontTexture = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].splitFrontTexture or false
+      pM_enableIntermediaryLayer = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].enableIntermediaryLayer or false
       pM_textureSetDirty = false
+
     end
     im.tooltip("Revert changes")
     im.SameLine()
     im.TextColored(editor.color.warning.Value, "TextureSet has been modified. Hit the save button to write the changes to disk.")
   end
+
+  im.NextColumn()
+  im.SetCursorPosY(im.GetCursorPosY() + (math.ceil(im.GetFontSize() + im.GetStyle().ItemSpacing.y * 2)))
+  im.BeginChild1("parallaxMappingTextureSetEditor_textureSet_Properties_Child", im.ImVec2(0, im.GetContentRegionAvail().y - (math.ceil(im.GetFontSize() + im.GetStyle().ItemSpacing.y * 2))), true)
+
+  if pM_selectedTextureSetData then
+    im.TextUnformatted("Properties")
+    im.TextUnformatted("Depth")
+    if im.SliderFloat("##pM_depth", editor.getTempFloat_NumberNumber(pM_depth), 0.0, 1.0, "%.2f") then
+      pM_depth = editor.getTempFloat_NumberNumber()
+      pM_textureSetDirty = true
+    end
+
+    im.TextUnformatted("Intensity")
+    if im.SliderFloat("##pM_intensity", editor.getTempFloat_NumberNumber(pM_intensity), 0.0, 1.0, "%.2f") then
+      pM_intensity = editor.getTempFloat_NumberNumber()
+      pM_textureSetDirty = true
+    end
+
+    im.TextUnformatted("Emissive Weight")
+    if im.SliderFloat("##pM_emissiveWeight", editor.getTempFloat_NumberNumber(pM_emissiveWeight), 0.0, 1.0, "%.2f") then
+      pM_emissiveWeight = editor.getTempFloat_NumberNumber()
+      pM_textureSetDirty = true
+    end
+
+    im.TextUnformatted("Wrap Textures")
+    if im.Checkbox("##pM_wrapTextures", editor.getTempBool_BoolBool(pM_wrapTextures)) then
+      pM_wrapTextures = editor.getTempBool_BoolBool()
+      pM_textureSetDirty = true
+    end
+
+    im.TextUnformatted("Split Front Texture")
+    if im.Checkbox("##pM_splitFrontTexture", editor.getTempBool_BoolBool(pM_splitFrontTexture)) then
+      pM_splitFrontTexture = editor.getTempBool_BoolBool()
+      pM_textureSetDirty = true
+    end
+
+    im.TextUnformatted("Enable Intermediary Layer")
+    if im.Checkbox("##pM_enableIntermediaryLayer", editor.getTempBool_BoolBool(pM_enableIntermediaryLayer)) then
+      pM_enableIntermediaryLayer = editor.getTempBool_BoolBool()
+      pM_textureSetDirty = true
+    end
+
+    im.TextUnformatted("Intermediary Layer Depth")
+    if im.SliderFloat("##pM_intermediaryLayerDepth", editor.getTempFloat_NumberNumber(pM_intermediaryLayerDepth), 0.05, 1.0, "%.2f") then
+      pM_intermediaryLayerDepth = editor.getTempFloat_NumberNumber()
+      pM_textureSetDirty = true
+    end
+  end
+  im.EndChild()
 
   im.Columns(1, "parallaxMappingTextureSetEditorColumns")
 end
@@ -1782,6 +2125,7 @@ local function onEditorGui()
 
     if im.BeginTabBar("ForestEditorTabBar") then
       if im.BeginTabItem("Brushes##Tab") then
+        im.tooltip("The forest item brushes that can be used to paint foliage on terrain.\nThey contain groups of meshes that spawn under certain rules.")
         if var.selectedTab == var.enum_tabType.meshes then
           var.selectedTab = var.enum_tabType.brushes
           if #var.selectedForestBrushes == 1 then
@@ -1799,6 +2143,7 @@ local function onEditorGui()
         im.EndTabItem()
       end
       if im.BeginTabItem("Meshes##Tab") then
+        im.tooltip("The forest item individual meshes that can be used to paint foliage on terrain.")
         if var.selectedTab == var.enum_tabType.brushes then
           var.selectedTab = var.enum_tabType.meshes
           if #var.selectedForestItemDatas == 1 then
@@ -2141,6 +2486,16 @@ local function drawLassoFreehand()
 end
 
 local function forestToolsEditModeUpdate()
+  -- Check if there's a pending brush selection (e.g., after undo when object didn't exist yet)
+  if var.pendingBrushSelection then
+    local obj = scenetree.findObjectById(var.pendingBrushSelection)
+    if obj then
+      -- Object now exists, select it to show inspector fields
+      editor.selectObjectById(var.pendingBrushSelection)
+      var.pendingBrushSelection = nil
+    end
+  end
+
   local rayRange = editor.getPreference("forestEditor.general.toolWorkingDistance")
   if not forest then return end
   if var.selectedTool ~= nil then
@@ -2148,7 +2503,8 @@ local function forestToolsEditModeUpdate()
     if var.selectedTool.type == var.enum_toolType.brush then
       if im.GetIO().WantCaptureMouse == false then
         if (var.selectedForestBrushes and #var.selectedForestBrushes > 0) or
-        ((var.selectedTool.type == var.enum_toolType.brush) and (var.selectedTool.mode == var.enum_brushMode.erase)) then
+        ((var.selectedTool.type == var.enum_toolType.brush) and (var.selectedTool.mode == var.enum_brushMode.erase)) or
+        ((var.selectedTool.type == var.enum_toolType.brush) and (var.selectedTool.mode == var.enum_brushMode.snap) and var.forestBrushTool.snapAnyForestItemType) then
           forest:disableCollision()
           local hit = cameraMouseRayCast(false, nil, rayRange)
           forest:enableCollision()
@@ -2175,7 +2531,7 @@ local function forestToolsEditModeUpdate()
               if var.selectedTool.label == "snap" then
                 local items = var.forestData:getItemsCircle(hit.pos, editor.getPreference("forestEditor.general.brushSize") / 2)
                 for _, item in ipairs(items) do
-                  snappedItems[item:getKey()] = item:getTransform()
+                  snappedItems[item:getKey()] = editor.matrixToTable(item:getTransform())
                 end
               end
 
@@ -2212,7 +2568,7 @@ local function forestToolsEditModeUpdate()
                   local items = var.forestData:getItemsCircle(hit.pos, editor.getPreference("forestEditor.general.brushSize") / 2)
                   for _, item in ipairs(items) do
                     if not snappedItems[item:getKey()] then
-                      snappedItems[item:getKey()] = item:getTransform()
+                      snappedItems[item:getKey()] = editor.matrixToTable(item:getTransform())
                     end
                   end
                 end
@@ -2270,14 +2626,35 @@ local function forestToolsEditModeUpdate()
               elseif var.selectedTool.label == "snap" then
                 local oldTransforms = {}
                 local newTransforms = {}
+                local newTransformsUnique = {}
                 local scales = {}
+                local itemsUnique = {}
+                local itemsTbl = {}
                 for _, item in ipairs(items) do
-                  table.insert(oldTransforms, snappedItems[item:getKey()])
-                  table.insert(newTransforms, item:getTransform())
+                  newTransforms[item:getKey()] = editor.matrixToTable(item:getTransform())
+                  itemsUnique[item:getKey()] = item
                   table.insert(scales, item:getScale())
                 end
+
+                -- make sure old and new transforms are in the same order as items
+                for itemKey, item in pairs(itemsUnique) do
+                  table.insert(itemsTbl, item)
+                  for sKey, transformTbl in pairs(snappedItems) do
+                    if sKey == itemKey then
+                      table.insert(oldTransforms, transformTbl)
+                      break
+                    end
+                  end
+                  for newTransformKey, transform in pairs(newTransforms) do
+                    if newTransformKey == itemKey then
+                      table.insert(newTransformsUnique, transform)
+                      break
+                    end
+                  end
+                end
+
                 editor.history:commitAction("SetForestItemTransform",
-                      {items = items, newTransforms = newTransforms, oldTransforms = oldTransforms,
+                      {items = itemsTbl, newTransforms = newTransformsUnique, oldTransforms = oldTransforms,
                       newScales = scales, oldScales = scales},
                       setItemTransformUndo, setItemTransformRedo, true)
                 snappedItems = {}
@@ -2306,7 +2683,6 @@ local function forestToolsEditModeUpdate()
           var.lassoHoveredNodeIndex = nil
           var.lassoPLSelectedNodeIndex = nil
           var.mouseButtonHeldOnLassoNode = false
-
           var.lassoFHLastMousePos = nil
           var.lassoFHLineSegments = {}
           var.lassoSelectMode = var.enum_lassoSelectMode.freehand
@@ -2434,13 +2810,16 @@ local function forestToolsEditModeUpdate()
         local cam = getCameraMouseRay()
         var.gui3DMouseEvent.pos = cam.pos
         var.gui3DMouseEvent.vec = cam.dir
+
         local forestItem = forest:castRayRendered(cam.pos, cam.pos + cam.dir * rayRange).forestItem
-        if forestItem then
+
+        if forestItem and not mouseDragStartPos then
           worldEditorCppApi.renderForestBBs({forestItem}, colorWhite)
         end
+
         if im.IsMouseClicked(0)
-            and editor.isViewportHovered()
-            and not editor.isAxisGizmoHovered() then
+          and editor.isViewportHovered()
+          and not editor.isAxisGizmoHovered() then
 
           if forestItem and editor.isAxisGizmoHovered() == false then
             selectForestItems({forestItem}, editor.keyModifiers.ctrl)
@@ -2450,6 +2829,7 @@ local function forestToolsEditModeUpdate()
           mouseDragStartPos = im.GetMousePos()
         end
 
+        -- rectangle selection
         if im.IsMouseDragging(0) and mouseDragStartPos then
           isMouseDragging = true
           local delta = im.GetMouseDragDelta(0)
@@ -2507,7 +2887,7 @@ local function forestToolsEditModeUpdate()
     end
   end
 
-  if editor.selection.forestItem then
+  if editor.selection.forestItem and not isMouseDragging then
     worldEditorCppApi.renderForestBBs(editor.selection.forestItem, colorOrange)
   end
 end
@@ -2601,6 +2981,7 @@ end
 
 local function forestEditModeDeactivate()
   createForestPopupShown = false
+  clearForestItemsSelection()
 end
 
 local shapeFilenameChanged = false
@@ -2643,8 +3024,8 @@ local function forestItemShapeFileCustomFieldEditor(objectIds, fieldValue, field
   im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0,0))
   if im.BeginChild1(fieldName .. "MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
     var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
-    im.EndChild()
   end
+  im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
   im.PopStyleVar()
 end
 
@@ -2662,7 +3043,7 @@ local function brushElementForestItemDataCustomFieldEditor(objectIds, fieldValue
     im.Text(fieldValue)
   end
   if im.BeginPopup("##" .. fieldName .. "DataBlockPopup") then
-    im.PushID1("##" .. fieldName .. "DataBlockNameFilter")
+    im.PushID1(fieldName .. "DataBlockNameFilter")
     im.ImGuiTextFilter_Draw(dataBlockNameFilter, "", 200)
     im.PopID()
     im.SameLine()
@@ -2723,8 +3104,8 @@ local function brushElementForestItemDataCustomFieldEditor(objectIds, fieldValue
   im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0,0))
   if im.BeginChild1(fieldName .. "MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
     var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
-    im.EndChild()
   end
+  im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
   im.PopStyleVar()
 
   if brushElementForestItemDataChanged then
@@ -2740,7 +3121,7 @@ local function onEditorInitialized()
   editor.registerModalWindow("noForestMsgDlg")
   editor.registerModalWindow("noForestBrushGroupMsgDlg")
   editor.registerInspectorTypeHandler("forestItem", assetInspectorGuiForestItem)
-  editor.registerCustomFieldInspectorEditor("TSForestItemData", "shapeFile", forestItemShapeFileCustomFieldEditor)
+  editor.registerCustomFieldInspectorEditor("ForestItemData", "shapeFile", forestItemShapeFileCustomFieldEditor)
   editor.registerCustomFieldInspectorEditor("ForestBrushElement", "ForestItemData", brushElementForestItemDataCustomFieldEditor)
   editor.editModes.forestToolsEditMode =
   {
@@ -2767,6 +3148,9 @@ local function onEditorInitialized()
   setBrushSize()
   setBrushPressure()
   setBrushHardness()
+  setBrushDepthOffset()
+  setForceAlignToTerrain()
+  setSnapAnyForestItemType()
   initializeDataBlockTables()
 
   pM_textureSetsFilePath = string.format("%sart/parallaxMappingTextureSets.json", path.split(getMissionFilename()))
@@ -2802,7 +3186,7 @@ local function onEditorInspectorFieldChanged(selectedIds, fieldName, fieldValue,
       var.dirtyBrushes = true
     end
     local fieldNameLower = string.lower(fieldName)
-    if object and object:getClassName() == "TSForestItemData" and fieldNameLower == "shapefile" then
+    if object and object:getClassName() == "ForestItemData" and fieldNameLower == "shapefile" then
       local shapeFilename = tostring(object.shapeFile)
       var.meshPreview:setObjectModel(shapeFilename)
       var.meshPreview:fitToShape()
@@ -2834,6 +3218,9 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {brushPressureChangeStepWithWheel = {"float", 5, "When using mouse wheel to resize brush", nil, 0.01, 100}},
     {brushPressure = {"float", 10, nil, "Brush Density"}},
     {brushHardness = {"float", 100}},
+    {brushDepthOffset = {"float", 0, "Depth offset to place objects above/below terrain, relative to mesh pivot point", nil, -10, 10}},
+    {forceAlignToTerrain = {"bool", false, "Force align all items to terrain, ignoring per-item settings"}},
+    {snapAnyForestItemType = {"bool", false, "Whether to snap all forest item types, or only those selected"}},
     {toolWorkingDistance = {"float", 2000, "Max. working distance when using forest tool", nil, 1000, 50000}},
   })
 end
@@ -2856,6 +3243,7 @@ local function onDeserialize(data)
 end
 
 local function onSerialize()
+  clearForestItemsSelection()
   return true -- this is just so onDeserialize will be triggered on a lua reload
 end
 
@@ -2877,5 +3265,7 @@ M.beginChangeBrushSizeWithKeys = function (direction) changeBrushSizeAutoRepeatO
 M.endChangeBrushSizeWithKeys = function () changeBrushSizeAutoRepeatOn = false changeBrushSizeTimer = 0 end
 M.selectForestItems = selectForestItems
 M.selectToolByName = selectToolByName
+M.clearForestItemsSelection = clearForestItemsSelection
+M.refreshForestItemDataList = refreshForestItemDataList
 
 return M

@@ -11,6 +11,9 @@ local zVector = vec3(0,0,1)
 local zeroVector = vec3(0,0,0)
 local zeroQuat = quat(0,0,0,1)
 
+local tempPos, tempDirVec, tempQuat = vec3(), vec3(), quat() -- general vectors and quaternions
+local tempXVec, tempYVec, tempZVec = vec3(), vec3(), vec3() -- component vectors
+
 function C:init(sites, name, forceId)
   self.sites = sites
   self.id = forceId or sites:getNextUniqueIdentifier()
@@ -26,7 +29,7 @@ function C:init(sites, name, forceId)
 
   self._drawMode = 'faded'
   self.sortOrder = 999999
-  self.customFields = require('/lua/ge/extensions/gameplay/sites/customFields')()
+  self.customFields = require('/lua/ge/extensions/gameplay/util/customFields')()
 end
 
 function C:onSerialize()
@@ -78,10 +81,10 @@ function C:set(pos, rot, scl)
 end
 
 function C:getPath()
-  return self.sites.dir .. self.sites.filename .. '#'..self.name
+  return string.format('%s%s#%s', self.sites.dir, self.sites.filename, self.name)
 end
 
-function C:drawDebug(drawMode, clr)
+function C:drawDebug(drawMode, clr, customHeight, drawDirection)
   if self.isProcedural then
     return
   end
@@ -106,25 +109,28 @@ function C:drawDebug(drawMode, clr)
   end
   local shapeAlpha = (drawMode == 'highlight') and 0.5 or 0.25
 
+  if drawDirection == nil then drawDirection = true end
+
   local tmpSpotAmount = 1
   if self.isMultiSpot then
     tmpSpotAmount = self.multiSpotData.spotAmount
   end
   for i = 0, tmpSpotAmount - 1 do
-    local rot = self.rot
-    local dirVec
     if self.multiSpotData.spotDirection == "Left" then
-      dirVec = rot * vec3(-i * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
+      tempDirVec:set(-i * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
     elseif self.multiSpotData.spotDirection == "Right" then
-      dirVec = rot * vec3(i * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
+      tempDirVec:set(i * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
     elseif self.multiSpotData.spotDirection == "Front" then
-      dirVec = rot * vec3(0, i * (self.scl.y + self.multiSpotData.spotOffset), 0)
+      tempDirVec:set(0, i * (self.scl.y + self.multiSpotData.spotOffset), 0)
     elseif self.multiSpotData.spotDirection == "Back" then
-      dirVec = rot * vec3(0, -i * (self.scl.y + self.multiSpotData.spotOffset), 0)
+      tempDirVec:set(0, -i * (self.scl.y + self.multiSpotData.spotOffset), 0)
     end
-    rot = quatFromEuler(0,0,self.multiSpotData.spotRotation) * rot
-    local pos = self.pos + dirVec
-    local x, y, z = rot * vec3(self.scl.x / 2, 0, 0), rot * vec3(0, self.scl.y / 2, 0), rot * vec3(0, 0, self.scl.z / 2)
+    tempDirVec:setRotate(self.rot)
+    tempPos:setAdd2(self.pos, tempDirVec)
+    tempQuat:setFromEuler(0, 0, self.multiSpotData.spotRotation)
+    tempQuat:setMul2(tempQuat, self.rot)
+    local debugHeight = customHeight or self.scl.z
+    local x, y, z = tempQuat * vec3(self.scl.x / 2, 0, 0), tempQuat * vec3(0, self.scl.y / 2, 0), tempQuat * vec3(0, 0, debugHeight / 2) -- TODO: optimize this
     local clrI
 
     if self.isMultiSpot and i == 0 then
@@ -133,58 +139,60 @@ function C:drawDebug(drawMode, clr)
       clrI = color(clr[1] * 255, clr[2] * 255, clr[3] * 255, shapeAlpha * 255)
     end
     -- one side
-    self:drawSide(pos + x + y, pos + x - y, z, clrI)
-    self:drawSide(pos + x - y, pos - x - y, z, clrI)
-    self:drawSide(pos - x - y, pos - x + y, z, clrI)
-    self:drawSide(pos - x + y, pos + x + y, z, clrI)
+    tempXVec:setAdd2(tempPos, x); tempXVec:setAdd(y); tempYVec:setAdd2(tempPos, x); tempYVec:setSub(y)
+    self:drawSide(tempXVec, tempYVec, z, clrI)
+    tempXVec:setAdd2(tempPos, x); tempXVec:setSub(y); tempYVec:setSub2(tempPos, x); tempYVec:setSub(y)
+    self:drawSide(tempXVec, tempYVec, z, clrI)
+    tempXVec:setSub2(tempPos, x); tempXVec:setSub(y); tempYVec:setSub2(tempPos, x); tempYVec:setAdd(y)
+    self:drawSide(tempXVec, tempYVec, z, clrI)
+    tempXVec:setSub2(tempPos, x); tempXVec:setAdd(y); tempYVec:setAdd2(tempPos, x); tempYVec:setAdd(y)
+    self:drawSide(tempXVec, tempYVec, z, clrI)
     if self.isMultiSpot and i == 0 then
       clrI = color(0.91 * 255, 0.49 * 255, 0.24 * 255, shapeAlpha * 128)
     else
       clrI = color(clr[1] * 255, clr[2] * 255, clr[3] * 255, shapeAlpha * 128)
     end
 
-    if camSqDist <= square(drawDist * 0.333) then -- for performance reasons
-      debugDrawer:drawTriSolid(
-              vec3(pos + x + y),
-              vec3(pos + x - y),
-              vec3(pos - x - y),
-              clrI)
-      debugDrawer:drawTriSolid(
-              vec3(pos - x - y),
-              vec3(pos - x + y),
-              vec3(pos + x + y),
-              clrI)
+    if drawDirection and camSqDist <= square(drawDist * 0.333) then -- for performance reasons
+      tempXVec:setAdd2(tempPos, x); tempXVec:setAdd(y)
+      tempYVec:setAdd2(tempPos, x); tempYVec:setSub(y)
+      tempZVec:setSub2(tempPos, x); tempZVec:setSub(y)
+      debugDrawer:drawTriSolid(tempXVec, tempYVec, tempZVec, clrI)
 
-      debugDrawer:drawTriSolid(
-              vec3(pos - x - y + z / 2),
-              vec3(pos + y + z / 2),
-              vec3(pos + x - y + z / 2),
-              clrI)
+      tempXVec:setSub2(tempPos, x); tempXVec:setSub(y)
+      tempYVec:setSub2(tempPos, x); tempYVec:setAdd(y)
+      tempZVec:setAdd2(tempPos, x); tempZVec:setAdd(y)
+      debugDrawer:drawTriSolid(tempXVec, tempYVec, tempZVec, clrI)
+
+      tempXVec:setSub2(tempPos, x); tempXVec:setSub(y); tempXVec:setAdd(z / 2)
+      tempYVec:setAdd2(tempPos, y); tempYVec:setAdd(z / 2)
+      tempZVec:setAdd2(tempPos, x); tempZVec:setSub(y); tempZVec:setAdd(z / 2)
+      debugDrawer:drawTriSolid(tempXVec, tempYVec, tempZVec, clrI)
     end
   end
 end
 
+local xDraw, yDraw, zDraw = vec3(), vec3(), vec3()
 function C:drawSide(a, b, z, clrI)
-  debugDrawer:drawTriSolid(
-          vec3(a),
-          vec3(a + z),
-          vec3(b + z),
-          clrI)
-  debugDrawer:drawTriSolid(
-          vec3(b + z),
-          vec3(b),
-          vec3(a),
-          clrI)
-  debugDrawer:drawTriSolid(
-          vec3(a),
-          vec3(b + z),
-          vec3(a + z),
-          clrI)
-  debugDrawer:drawTriSolid(
-          vec3(b + z),
-          vec3(a),
-          vec3(b),
-          clrI)
+  xDraw:set(a)
+  yDraw:setAdd2(a, z)
+  zDraw:setAdd2(b, z)
+  debugDrawer:drawTriSolid(xDraw, yDraw, zDraw, clrI)
+
+  xDraw:setAdd2(b, z)
+  yDraw:set(b)
+  zDraw:set(a)
+  debugDrawer:drawTriSolid(xDraw, yDraw, zDraw, clrI)
+
+  xDraw:set(a)
+  yDraw:setAdd2(b, z)
+  zDraw:setAdd2(a, z)
+  debugDrawer:drawTriSolid(xDraw, yDraw, zDraw, clrI)
+
+  xDraw:setAdd2(b, z)
+  yDraw:set(a)
+  zDraw:set(b)
+  debugDrawer:drawTriSolid(xDraw, yDraw, zDraw, clrI)
 end
 
 function C:generateMultiSpots(parkingSpotList)
@@ -199,23 +207,24 @@ function C:generateMultiSpots(parkingSpotList)
 
   for i = 1, self.multiSpotData.spotAmount do
     if i > 1 then -- generates a new parking spot
-      local dirVec
       local j = i - 1
 
       if self.multiSpotData.spotDirection == "Left" then
-        dirVec = self.rotOrig * vec3(-j * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
+        tempDirVec:set(-j * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
       elseif self.multiSpotData.spotDirection == "Right" then
-        dirVec = self.rotOrig * vec3(j * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
+        tempDirVec:set(j * (self.scl.x + self.multiSpotData.spotOffset), 0, 0)
       elseif self.multiSpotData.spotDirection == "Front" then
-        dirVec = self.rotOrig * vec3(0, j * (self.scl.y + self.multiSpotData.spotOffset), 0)
+        tempDirVec:set(0, j * (self.scl.y + self.multiSpotData.spotOffset), 0)
       elseif self.multiSpotData.spotDirection == "Back" then
-        dirVec = self.rotOrig * vec3(0, -j * (self.scl.y + self.multiSpotData.spotOffset), 0)
+        tempDirVec:set(0, -j * (self.scl.y + self.multiSpotData.spotOffset), 0)
       end
 
-      local pos = self.pos + dirVec
-      local rot = quatFromEuler(0, 0, self.multiSpotData.spotRotation) * self.rotOrig
-      local newSpot = parkingSpotList:create(self.name .. "." .. (i + 1))
-      newSpot:set(pos, rot, self.scl)
+      tempDirVec:setRotate(self.rotOrig)
+      tempPos:setAdd2(self.pos, tempDirVec)
+      tempQuat:setFromEuler(0, 0, self.multiSpotData.spotRotation)
+      tempQuat:setMul2(tempQuat, self.rotOrig)
+      local newSpot = parkingSpotList:create(string.format("%s.%d", self.name, (i + 1)))
+      newSpot:set(tempPos, tempQuat, self.scl)
 
       for _, tag in ipairs(self.customFields.sortedTags) do
         newSpot.customFields:addTag(tag)
@@ -236,11 +245,12 @@ function C:calcVerts()
   table.clear(self.vertices)
 
   for i = 1, 4 do -- 2D vertices
-    local a = (i == 2 or i == 3) and 1 or -1
-    local b = i <= 2 and 1 or -1
+    local pos = vec3()
     local x = self.rot * vec3(self.scl.x / 2, 0, 0)
     local y = self.rot * vec3(0, self.scl.y / 2, 0)
-    table.insert(self.vertices, self.pos + x * a + y * b)
+    x:setScaled((i == 2 or i == 3) and 1 or -1); y:setScaled(i <= 2 and 1 or -1)
+    pos:setAdd2(self.pos, x); pos:setAdd(y)
+    table.insert(self.vertices, pos)
   end
 end
 
@@ -255,7 +265,7 @@ function C:containsPoint(pos)
     local dy = yVector:rotated(self.rot)
     local dz = zVector:rotated(self.rot)
 
-    return math.abs(offset:dot(dx)) <= self.scl.x / 2 and math.abs(offset:dot(dx)) <= self.scl.y / 2 and math.abs(offset:dot(dx)) <= self.scl.z / 2
+    return math.abs(offset:dot(dx)) <= self.scl.x / 2 and math.abs(offset:dot(dy)) <= self.scl.y / 2 and math.abs(offset:dot(dz)) <= self.scl.z / 2
   end
 
   return false
@@ -264,16 +274,16 @@ end
 local p1, p2, p3, p4, p5, p6, p7, p8 = vec3(), vec3(), vec3(), vec3(), vec3(), vec3(), vec3(), vec3()
 local bbPoints = {}
 local function getBBPoints(bbCenter, bbAxis0, bbAxis1, bbAxis2)
-  p1:set(bbCenter) p1:setAdd(bbAxis0) p1:setAdd(bbAxis1) p1:setSub(bbAxis2)
-  p2:set(bbCenter) p2:setAdd(bbAxis0) p2:setAdd(bbAxis1) p2:setAdd(bbAxis2)
-  p3:set(bbCenter) p3:setSub(bbAxis0) p3:setAdd(bbAxis1) p3:setAdd(bbAxis2)
-  p4:set(bbCenter) p4:setSub(bbAxis0) p4:setAdd(bbAxis1) p4:setSub(bbAxis2)
-  p5:set(bbCenter) p5:setAdd(bbAxis0) p5:setSub(bbAxis1) p5:setSub(bbAxis2)
-  p6:set(bbCenter) p6:setAdd(bbAxis0) p6:setSub(bbAxis1) p6:setAdd(bbAxis2)
-  p7:set(bbCenter) p7:setSub(bbAxis0) p7:setSub(bbAxis1) p7:setAdd(bbAxis2)
-  p8:set(bbCenter) p8:setSub(bbAxis0) p8:setSub(bbAxis1) p8:setSub(bbAxis2)
-  bbPoints[1] = p1; bbPoints[2] = p2; bbPoints[3] = p3; bbPoints[4] = p4;
-  bbPoints[5] = p5; bbPoints[6] = p6; bbPoints[7] = p7; bbPoints[8] = p8;
+  p1:set(bbCenter); p1:setAdd(bbAxis0); p1:setSub(bbAxis1); p1:setSub(bbAxis2)
+  p2:set(bbCenter); p2:setAdd(bbAxis0); p2:setSub(bbAxis1); p2:setAdd(bbAxis2)
+  p3:set(bbCenter); p3:setSub(bbAxis0); p3:setSub(bbAxis1); p3:setAdd(bbAxis2)
+  p4:set(bbCenter); p4:setSub(bbAxis0); p4:setSub(bbAxis1); p4:setSub(bbAxis2)
+  p5:set(bbCenter); p5:setAdd(bbAxis0); p5:setAdd(bbAxis1); p5:setSub(bbAxis2)
+  p6:set(bbCenter); p6:setAdd(bbAxis0); p6:setAdd(bbAxis1); p6:setAdd(bbAxis2)
+  p7:set(bbCenter); p7:setSub(bbAxis0); p7:setAdd(bbAxis1); p7:setAdd(bbAxis2)
+  p8:set(bbCenter); p8:setSub(bbAxis0); p8:setAdd(bbAxis1); p8:setSub(bbAxis2)
+  bbPoints[0] = p1; bbPoints[1] = p2; bbPoints[2] = p3; bbPoints[3] = p4
+  bbPoints[4] = p5; bbPoints[5] = p6; bbPoints[6] = p7; bbPoints[7] = p8
   return bbPoints
 end
 
@@ -285,7 +295,7 @@ function C:checkParking(vehId, precision, drivingSpeed, parkingSpeed)
   local valid = false
   local res = { false, false, false, false } -- for each vertice of the parking spot
 
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
   if not veh then
     return valid, res
   end
@@ -319,8 +329,7 @@ function C:checkParking(vehId, precision, drivingSpeed, parkingSpeed)
         bbAxis2:set(be:getObjectOOBBHalfAxisXYZ(vehId, 2))
         local bbPoints = getBBPoints(bbCenter, bbAxis0, bbAxis1, bbAxis2)
         for i, pointId in ipairs(pointIds) do
-          local checkPos = linePointFromXnorm(bbCenter, bbPoints[pointId+1], precision)
-          if self:containsPoint(checkPos) then
+          if self:containsPoint(linePointFromXnorm(bbCenter, bbPoints[pointId], precision)) then
             res[i] = true
           else
             valid = false
@@ -335,93 +344,103 @@ function C:checkParking(vehId, precision, drivingSpeed, parkingSpeed)
   return valid, res
 end
 
+function C:boxFits(extentsX, extentsY, extentsZ)
+  return extentsX <= self.scl.x and extentsY <= self.scl.y and extentsZ <= self.scl.z
+end
+
 function C:vehicleFits(vehId)
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
   if not veh then return false end
 
   local vehicleExtents = veh.initialNodePosBB:getExtents()
-  return vehicleExtents.x <= self.scl.x and vehicleExtents.y <= self.scl.y and vehicleExtents.z <= self.scl.z
+  return self:boxFits(vehicleExtents.x, vehicleExtents.y, vehicleExtents.z)
 end
 
 function C:hasAnyVehicles(playerId)
   -- if playerId is given, ignores this vehicle for this spot
-  local state = false
+  local hasVehicles = false
   local spotVehIds = {}
 
   if not self.vertices[1] then
     self:calcVerts()
   end
 
-  local selfRadius = self.pos:distance(self.vertices[1])
-  for _, veh in ipairs(getAllVehiclesByType({"Car", "Truck", "Automation", "Traffic", "Trailer"})) do
+  for _, veh in ipairs(getAllVehicles()) do
     local vehId = veh:getID()
     if veh:getActive() and (not playerId or playerId ~= vehId) then
-      local oobb = veh:getSpawnWorldOOBB()
-      local radius = oobb:getCenter():distance(oobb:getPoint(0))
-      if oobb:getCenter():squaredDistance(self.pos) <= square(radius + selfRadius) then -- check corner radii first, as an optimization
-        for i, p1 in ipairs(bbPointIds) do -- this method may lack precision
-          local p2 = bbPointIds[i + 1] or bbPointIds[1]
-          local pos1, pos2 = oobb:getPoint(p1), oobb:getPoint(p2)
-          local checkPos = linePointFromXnorm(pos1, pos2, clamp(self.pos:xnormOnLine(pos1, pos2), 0, 1))
-          if self:containsPoint(checkPos) then
-            state = true
-            table.insert(spotVehIds, vehId)
-            break
+      bbCenter:set(be:getObjectOOBBCenterXYZ(vehId))
+
+      if self:containsPoint(bbCenter) then -- simple check for all vehicles, including props
+        hasVehicles = true
+        table.insert(spotVehIds, vehId)
+      else
+        if map.objects[vehId] then -- complex check for tracked vehicles
+          bbAxis0:set(be:getObjectOOBBHalfAxisXYZ(vehId, 0))
+          bbAxis1:set(be:getObjectOOBBHalfAxisXYZ(vehId, 1))
+          bbAxis2:set(be:getObjectOOBBHalfAxisXYZ(vehId, 2))
+          local bbPoints = getBBPoints(bbCenter, bbAxis0, bbAxis1, bbAxis2)
+          for i, a in ipairs(bbPointIds) do
+            local b = bbPointIds[i + 1] or bbPointIds[1]
+            if self:containsPoint(linePointFromXnorm(bbPoints[a], bbPoints[b], clamp(self.pos:xnormOnLine(bbPoints[a], bbPoints[b]), 0, 1))) then
+              hasVehicles = true
+              table.insert(spotVehIds, vehId)
+              break
+            end
           end
         end
       end
     end
   end
 
-  return state, spotVehIds
+  return hasVehicles, spotVehIds
 end
 
 local backwardsQuat = quat(0, 0, 1, 0)
-function C:moveResetVehicleTo(vehId, lowPrecision, backwards, addedOffsetPos, addedOffsetRot, useSafeTeleport, removeTraffic, resetVehicleInSafeTeleport)
-  local veh = be:getObjectByID(vehId)
+function C:moveResetVehicleTo(vehId, lowPrecision, backwards, addedOffsetPos, addedOffsetRot, useSafeTeleport, removeTraffic, resetVehicleInSafeTeleport, options)
+  local veh = getObjectByID(vehId)
   if not veh then return end
 
+  options = options or {}
   addedOffsetPos = addedOffsetPos or zeroVector
   addedOffsetRot = addedOffsetRot or zeroQuat
 
-  local selfRot = quat(self.rot)
+  tempQuat:set(self.rot)
   if backwards then
-    selfRot = selfRot * backwardsQuat
+    tempQuat:setMul2(tempQuat, backwardsQuat)
   end
 
   -- the following code applies a positional and rotational offset to the spawn transform, and ensures that the vehicle corners are still contained in the spot
-  local vehRot = addedOffsetRot * selfRot
-
-  local oobb = veh:getSpawnWorldOOBB()
-  local fl  = oobb:getPoint(0)
-  local fr  = oobb:getPoint(3)
-  local bl  = oobb:getPoint(4)
-  local flU = oobb:getPoint(1)
-
-  local xVeh = (fr -fl) xVeh:normalize()
-  local yVeh = (fl -bl) yVeh:normalize()
-  local zVeh = (flU-fl) zVeh:normalize()
-
-  local pos = veh:getPosition()
-  local posOffset = (pos - fl)
-  local localOffset = vec3(xVeh:dot(posOffset), yVeh:dot(posOffset), zVeh:dot(posOffset))
-
-  local xLine, yLine, zLine = selfRot * xVector, selfRot * yVector, selfRot * zVector
-  local newFLPos = self.pos - xLine * fl:distance(fr) * 0.5 + yLine * fl:distance(bl) * 0.5
-  local newAddedOffset = xLine * addedOffsetPos.x + yLine * addedOffsetPos.y
-
-  local newOffset = xLine * localOffset.x + yLine * localOffset.y + zLine * localOffset.z
-  local newPos = newFLPos + newOffset + newAddedOffset
-
-  if lowPrecision then -- this must be used if the vehicle is loaded in the first frame, because the OOBB does not work correctly then
-    newPos = self.pos + yLine * 2 + zLine * 0.5 -- spawn the vehicle 2m behind and 0.5m above self
-  end
-
+  local vehRot = addedOffsetRot * tempQuat
+  local newPos = vec3(self.pos)
   if useSafeTeleport then
-    spawn.safeTeleport(veh, self.pos, vehRot, nil, nil, removeTraffic, true, resetVehicleInSafeTeleport)
+    spawn.safeTeleport(veh, self.pos, vehRot, options.skipVehicleIntersectionCheck, nil, removeTraffic, true, resetVehicleInSafeTeleport)
   else
-    vehRot = vehRot * backwardsQuat
+    local oobb = veh:getSpawnWorldOOBB()
+    p1:set(oobb:getPoint(0)); p2:set(oobb:getPoint(3)); p3:set(oobb:getPoint(4)); p4:set(oobb:getPoint(1)) -- frontLeft, frontRight, backLeft, frontLeftUp
+
+    local xVeh = (p2 - p1); xVeh:normalize()
+    local yVeh = (p1 - p3); yVeh:normalize()
+    local zVeh = (p4 - p1); zVeh:normalize()
+
+    tempPos:set(veh:getPositionXYZ())
+    tempPos:setSub(p1) -- vector from frontLeft to refnode
+    local localOffset = vec3(xVeh:dot(tempPos), yVeh:dot(tempPos), zVeh:dot(tempPos)) -- vehicle refnode offset vector, local space
+
+    xVeh:setRotate(tempQuat, xVector); yVeh:setRotate(tempQuat, yVector); zVeh:setRotate(tempQuat, zVector) -- corrected rotation vectors
+
+    if lowPrecision then -- this must be used if the vehicle is loaded in the first frame, because the OOBB does not work correctly then
+      newPos:setAdd(yVeh * 2); newPos:setAdd(zVeh * 0.5) -- spawn the vehicle 2m behind and 0.5m above self
+    else
+      newPos:setSub(xVeh * (p1:distance(p2) * 0.5)); newPos:setAdd(yVeh * (p1:distance(p3) * 0.5)) -- add frontLeft offset
+      tempDirVec:set(xVeh * localOffset.x); tempDirVec:setAdd(yVeh * localOffset.y); tempDirVec:setAdd(zVeh * localOffset.z)
+      newPos:setAdd(tempDirVec) -- add refnode offset
+      tempDirVec:set(xVeh * addedOffsetPos.x); tempDirVec:setAdd(yVeh * addedOffsetPos.y)
+      newPos:setAdd(tempDirVec) -- add extra offset
+    end
+
+    vehRot:setMul2(vehRot, backwardsQuat)
     veh:setPositionRotation(newPos.x, newPos.y, newPos.z, vehRot.x, vehRot.y, vehRot.z, vehRot.w)
+    veh:resetBrokenFlexMesh()
     veh:autoplace(false)
   end
 

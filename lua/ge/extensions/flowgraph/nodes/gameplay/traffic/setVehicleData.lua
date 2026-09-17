@@ -14,7 +14,7 @@ C.category = 'once_instant'
 C.tags = {'traffic', 'ai', 'mode', 'settings', 'parameters'}
 
 C.pinSchema = {
-  { dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle Id.' },
+  { dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle id.' },
   { dir = 'in', type = 'string', name = 'role', description = 'Class or role of the vehicle (standard, police, service, etc.).' },
   { dir = 'in', type = 'bool', name = 'enableRespawn', default = true, description = 'Enables or disables respawning for the vehicle.' },
   { dir = 'in', type = 'bool', name = 'enableTracking', default = true, description = 'Enables or disables tracking of driving stats, offenses, and police interactions.' },
@@ -35,6 +35,10 @@ function C:workOnce()
     if self.pinIn.role.value ~= nil then
       veh:setRole(self.pinIn.role.value)
     end
+    if self.pinIn.enableActions.value ~= nil then
+      veh.role.lockAction = not self.pinIn.enableActions.value
+    end
+
     if self.pinIn.enableRespawn.value ~= nil then
       self.vars.enableRespawn = self.pinIn.enableRespawn.value
     end
@@ -44,12 +48,8 @@ function C:workOnce()
     if self.pinIn.enablePoolCycle.value ~= nil then
       self.vars.enableAutoPooling = self.pinIn.enablePoolCycle.value
     end
-    if self.pinIn.enableActions.value ~= nil then
-      veh.role.lockAction = not self.pinIn.enableActions.value
-    end
-
     if self.pinIn.changePaint.value ~= nil then
-      veh.model.paintMode = self.pinIn.changePaint.value and 1 or 0
+      self.vars.useRandomPaint = self.pinIn.changePaint.value
     end
 
     for k, v in pairs(self.vars) do

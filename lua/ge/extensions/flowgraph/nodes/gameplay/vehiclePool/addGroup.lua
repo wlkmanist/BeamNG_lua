@@ -13,11 +13,11 @@ C.icon = ui_flowgraph_editor.nodeIcons.traffic
 C.category = 'once_instant'
 
 C.pinSchema = {
-  { dir = 'in', type = 'table', name = 'vehPool', tableType = 'vehiclePool',   description = 'Vehicle pool object; use the Create Pool node.' },
-  { dir = 'in', type = 'table', name = 'vehGroup', tableType = 'vehicleIds', description = 'Table of vehicle IDs; use the Spawn Vehicle Group node.' }
+  { dir = 'in', type = 'table', name = 'vehPool', tableType = 'vehiclePool', description = 'Vehicle pool object; use the Create Pool node.' },
+  { dir = 'in', type = 'table', name = 'vehGroup', tableType = 'vehicleIds', description = 'Table of vehicle ids; use the Spawn Vehicle Group node.' }
 }
 
-C.dependencies = {'core_vehiclePoolingManager'}
+C.dependencies = {'core_vehicleActivePooling'}
 C.tags = {'traffic', 'budget', 'pooling'}
 
 function C:workOnce()

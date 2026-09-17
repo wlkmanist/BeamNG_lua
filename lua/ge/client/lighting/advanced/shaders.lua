@@ -22,6 +22,8 @@ if not al_VectorLightState then
   al_VectorLightState:setField("samplerStates", 4, "SamplerWrapPoint") -- Random Direction Map
   al_VectorLightState:setField("samplerStates", 5, "SamplerClampPoint") -- G-buffer
   al_VectorLightState:setField("samplerStates", 6, "SamplerClampPoint") -- G-buffer
+  al_VectorLightState:setField("samplerStates", 12, "SamplerClampLinear") -- Cloud transmittance cookie
+  al_VectorLightState:setField("samplerStates", 13, "SamplerClampLinear") -- Sun shadow mask
   al_VectorLightState.cullDefined = true
   al_VectorLightState:setField("cullMode", 0, "GFXCullNone")
   al_VectorLightState.stencilDefined = true
@@ -53,11 +55,14 @@ if not al_VectorLightMaterial then
   al_VectorLightMaterial:setField("sampler", "prePassDepthBuffer", "#prepass[Depth]")
   al_VectorLightMaterial:setField("sampler", "ShadowMap", "$dynamiclight")
   al_VectorLightMaterial:setField("sampler", "ssaoMask", "#ssaoMask")
+  al_VectorLightMaterial:setField("sampler", "sssMask", "#sssMask")
   al_VectorLightMaterial:setField("sampler", "prePassBuffer1", "#prepass[RT1]")
   al_VectorLightMaterial:setField("sampler", "prePassBuffer2", "#prepass[RT2]")
   al_VectorLightMaterial:setField("sampler", "prePassBuffer3", "#prepass[RT3]")
+  al_VectorLightMaterial:setField("sampler", "cloudTransmittanceCookie", "#cloudTransmittanceCookie")
   al_VectorLightMaterial:setField("sampler", "prePassBuffer4", "#prepass[RT4]")
   al_VectorLightMaterial:setField("sampler", "prePassBuffer5", "#prepass[RT5]")
+  al_VectorLightMaterial:setField("sampler", "sunShadowMask", "#sunShadowMask")
   al_VectorLightMaterial:setField("target", 0, "lightinfo")
   al_VectorLightMaterial.pixVersion = 5.0
   al_VectorLightMaterial:registerObject("AL_VectorLightMaterial")
@@ -76,7 +81,7 @@ if not al_ConvexLightState then
   al_ConvexLightState.zDefined = true;
   al_ConvexLightState.zEnable = true;
   al_ConvexLightState.zWriteEnable = false;
-  local useReversedDepthBuffer = TorqueScriptLua.getBoolVar("$Scene::useReversedDepthBuffer")
+  local useReversedDepthBuffer = VariableRegistry.get("$Scene::useReversedDepthBuffer")
   if useReversedDepthBuffer then
     al_ConvexLightState:setField("zFunc", 0, "GFXCmpLessEqual")
   else

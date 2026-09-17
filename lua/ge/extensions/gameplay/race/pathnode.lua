@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local C = {}
-local modes = {"manual","navgraph"}
 
 function C:init(path, name, forceId)
   self.path = path
@@ -21,10 +20,14 @@ function C:init(path, name, forceId)
   self.sidePadding = vec3(1,3)
 
   self.visible = true
+  self.useAsSplit = true
   self.recovery = -1
   self.reverseRecovery = -1
 
-  self.customFields = require('/lua/ge/extensions/gameplay/sites/customFields')()
+  self.routePoint = nil
+  self.staticRoutePoint = nil
+
+  self.customFields = require('/lua/ge/extensions/gameplay/util/customFields')()
 end
 
 function C:setNormal(normal)
@@ -135,6 +138,7 @@ function C:onSerialize()
     recovery = self.recovery,
     reverseRecovery = self.reverseRecovery,
     visible = self.visible,
+    useAsSplit = self.useAsSplit,
     sidePadding = {self.sidePadding.x, self.sidePadding.y},
     customFields = self.customFields:onSerialize()
   }
@@ -155,6 +159,7 @@ function C:onDeserialized(data, oldIdMap)
   self.recovery = oldIdMap and oldIdMap[data.recovery] or data.recovery or -1
   self.reverseRecovery = oldIdMap and oldIdMap[data.reverseRecovery] or data.reverseRecovery or -1
   self.visible = data.visible or (data.visible == nil)
+  self.useAsSplit = data.useAsSplit or (data.useAsSplit == nil)
   self.sidePadding = data.sidePadding and vec3(data.sidePadding[1], data.sidePadding[2],0) or vec3()
 
   self.customFields:onDeserialized(data.customFields or {})
@@ -174,6 +179,7 @@ function C:drawDebug(drawMode, clr, extraText)
   if drawMode == 'highlight' then clr = {1,1,1,1} end
   if drawMode == 'faded' then clr = {1,1,1,0.25} end
   local shapeAlpha = (drawMode == 'highlight') and 0.5 or 0.25
+  local shapeAlphaArrow = (drawMode == 'highlight') and 0.8 or 0.6
   if not self.visible  then
     clr[1] = clr[1] * 0.3 + 0.25
     clr[2] = clr[2] * 0.3 + 0.25
@@ -185,33 +191,54 @@ function C:drawDebug(drawMode, clr, extraText)
   local alpha = (drawMode == 'normal') and 0.5 or 1
   if drawMode ~= 'faded' then
     local str = self.name
+    if self.useAsSplit then
+      str = "*"..str
+    end
     if not self.visible then
       str = '('..str..')'
     end
     if extraText then
       str = str .. ' ' .. extraText
     end
+
+    if editor and editor.getPreference and editor.getPreference("raceEditor.general.showCustomFields") then
+      for i, name in ipairs(self.customFields.names) do
+        if self.customFields.types[name] == 'number' then
+          local color = {r=1, g=1, b=1}
+          if name == "aiAggression" then
+            local a = self.customFields.values[name]
+            color.r = clamp( a*0.5 + 0.5,0,1)
+            color.g = clamp(-a*0.5 + 0.5,0,1)
+            color.b = 0
+          end
+          debugDrawer:drawTextAdvanced(self.pos,
+            string.format("%s: %0.3f",name,self.customFields.values[name]),
+            ColorF(1,1,1,alpha*0.8),true, false,
+            ColorI(color.r*64,color.g*64,color.b*64,alpha*0.8*255), false, false)
+        end
+      end
+    end
     debugDrawer:drawTextAdvanced((self.pos),
       String(str),
       ColorF(1,1,1,alpha),true, false,
-      ColorI(0,0,0,alpha*255))
+      ColorI(0,0,0,alpha*255), false, false)
   end
 
   if self.hasNormal then
     local midWidth = self.radius*2 --- self.sidePadding.x - self.sidePadding.y
-    local side = self.normal:cross(vec3(0,0,1)) *(self.radius-self.sidePadding.y - midWidth/2)
+    --local side = self.normal:cross(vec3(0,0,1)) *(self.radius-self.sidePadding.y - midWidth/2)
     debugDrawer:drawSquarePrism(
       self.pos,
       (self.pos + self.radius * self.normal),
       Point2F(1,self.radius/2),
       Point2F(0,0),
-      ColorF(clr[1],clr[2],clr[3],shapeAlpha*1.0))
+      ColorF(clr[1],clr[2],clr[3],shapeAlphaArrow*1.0))
     debugDrawer:drawSquarePrism(
       (self.pos),
       (self.pos + 0.25 * self.normal ),
       Point2F(5,midWidth),
       Point2F(0,0),
-      ColorF(clr[1],clr[2],clr[3],shapeAlpha*0.4))
+      ColorF(clr[1],clr[2],clr[3],shapeAlphaArrow*1.0))
   end
 end
 
@@ -262,6 +289,25 @@ function C:getSideTransforms(posOffset, rotOffset, sclOffset, alignMode)
     self:convertRayHitToTransform(hitLeft,  quatFromEuler(rotOffset.x, -rotOffset.y, -rotOffset.z), posOffset.z, sclOffset,'l', alignMode),
     self:convertRayHitToTransform(hitRight, quatFromEuler(rotOffset.x,  rotOffset.y,  rotOffset.z), posOffset.z, sclOffset,'r', alignMode)
   }
+end
+
+function C:setRoutePoint(rp)
+  self.routePoint = rp
+  -- have to store the original distToTarget because it changes when the route
+  -- point becomes the one at index 1. ie, the one tracking the vehicle.
+  -- self.originalDistToTarget = rp.distToTarget or 0.0
+end
+
+function C:getRoutePoint()
+  return self.routePoint
+end
+
+function C:setStaticRoutePoint(rp)
+  self.staticRoutePoint = rp
+end
+
+function C:getStaticRoutePoint()
+  return self.staticRoutePoint
 end
 
 return function(...)

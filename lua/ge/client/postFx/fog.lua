@@ -23,6 +23,10 @@ local fogPassStateBlock = scenetree.findObject("FogPassStateBlock")
 if not fogPassStateBlock then
   fogPassStateBlock = createObject("GFXStateBlockData")
   fogPassStateBlock:inheritParentFields(pfxDefaultStateBlock)
+  fogPassStateBlock.samplersDefined = true
+  fogPassStateBlock:setField("samplerStates", 0, "SamplerClampLinear")
+  fogPassStateBlock:setField("samplerStates", 1, "SamplerClampPoint")
+  fogPassStateBlock:setField("samplerStates", 2, "SamplerClampLinear")
   fogPassStateBlock.blendDefined = true
   fogPassStateBlock.blendEnable = true
   fogPassStateBlock:setField("blendSrc", 0, "GFXBlendSrcAlpha")
@@ -41,6 +45,7 @@ if not fogPostFx then
   fogPostFx:setField("stateBlock", 0, "FogPassStateBlock")
   fogPostFx:setField("texture", 0, "#prepass[RT0]")
   fogPostFx:setField("texture", 1, "#prepass[Depth]")
+  fogPostFx:setField("texture", 2, "$skyCameraVolume")
   fogPostFx.renderPriority = 5
   fogPostFx:registerObject("FogPostFx")
 end

@@ -19,7 +19,7 @@ C.pinSchema = {
 C.legacyPins = {
   out = {
     done = 'complete'
-  },
+  }
 }
 
 C.dependencies = { 'ui_fadeScreen', 'gameplay_missions_missionManager' }
@@ -31,13 +31,14 @@ end
 
 function C:postInit()
   self.pinInLocal.duration.hardTemplates = {
-    {label = "Default Mission Fade Duration", value =  0.75},
+    {label = "Default Mission Fade Duration", value = 0.75},
   }
 end
 
 function C:_executionStopped()
   --ui_fadeScreen.stop(0)
   self:setDurationState('inactive')
+  self.mgr.modules.ui.isFadeScreenActive = false
 end
 
 function C:onNodeReset()
@@ -46,7 +47,17 @@ end
 
 function C:workOnce()
   self:setDurationState('started')
-  ui_fadeScreen.stop(self.pinIn.duration.value)
+  if core_gamestate.loading() then
+    server.fadeoutLoadingScreen()
+    self.mgr.modules.level:finishedLevelLoading()
+    self:setDurationState('finished')
+  else
+    ui_fadeScreen.fadeFromBlack(self.pinIn.duration.value)
+    if not self.mgr.modules.ui.isFadeScreenActive then -- if already inactive, skip to finish state
+      self:setDurationState('finished')
+    end
+    self.mgr.modules.ui.isFadeScreenActive = false
+  end
 end
 
 function C:onScreenFadeState(state)

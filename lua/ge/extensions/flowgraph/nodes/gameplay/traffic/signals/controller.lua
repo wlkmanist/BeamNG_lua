@@ -16,7 +16,7 @@ C.pinSchema = {
   {dir = 'in', type = 'table', name = 'controllerData', tableType = 'signalControllerData', description = 'Signal controller data.'},
   {dir = 'out', type = 'string', name = 'signalType', description = 'Controller type.'},
   {dir = 'out', type = 'number', name = 'stateCount', description = 'Number of states.'},
-  {dir = 'out', type = 'number', name = 'totalDuration', description = 'Complete duration of all states.'}
+  {dir = 'out', type = 'number', name = 'duration', description = 'Total duration of all states.'}
 }
 
 C.tags = {'traffic', 'signals'}
@@ -81,12 +81,7 @@ function C:work(args)
   if ctrl then
     self.pinOut.signalType.value = ctrl.type
     self.pinOut.stateCount.value = tableSize(ctrl.states)
-    if not self.pinOut.totalDuration.value then
-      self.pinOut.totalDuration.value = 0
-      for _, state in ipairs(ctrl.states) do
-        self.pinOut.totalDuration.value = self.pinOut.totalDuration.value + state.duration
-      end
-    end
+    self.pinOut.duration.value = ctrl.totalDuration
 
     for i = 1, self.count do
       local state = ctrl.states[i]

@@ -11,7 +11,7 @@ local allMissionData = {}
 local function init() end
 
 local function setCurrentSaveSlot()
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   if not savePath then return end
   gameplay_missions_progress.setSavePath(savePath .. "/career/missions/")
   gameplay_missions_missions.reloadCompleteMissionSystem()
@@ -30,13 +30,11 @@ local function onExtensionUnloaded()
 end
 
 -- this should only be loaded when the career is active
-local function onSaveCurrentSaveSlot(currentSavePath, oldSaveDate)
+local function onSaveCurrentProfile(currentSavePath)
   gameplay_missions_progress.setSavePath(currentSavePath .. "/career/missions/")
   for id, dirtyDate in pairs(allMissionData) do
-    if dirtyDate > oldSaveDate then
-      if gameplay_missions_progress.saveMissionSaveData(id, dirtyDate) == false then
-        career_saveSystem.saveFailed()
-      end
+    if gameplay_missions_progress.saveMissionSaveData(id, dirtyDate) == false then
+      career_saveSystem.saveFailed()
     end
   end
 end
@@ -46,7 +44,7 @@ local function setMissionInfo(id, dirtyDate)
 end
 
 local function cacheMissionData(id, dirtyDate)
-  setMissionInfo(id, dirtyDate and dirtyDate or os.date("!%Y-%m-%dT%XZ"))
+  setMissionInfo(id, dirtyDate and dirtyDate or os.date("!%Y-%m-%dT%H:%M:%SZ"))
 end
 
 local function onMissionLoaded(id, dirtyDate)
@@ -61,7 +59,9 @@ end
 local function onAnyMissionChanged(state, mission)
   if mission and state == "stopped" then
     career_modules_playerDriving.resetPlayerState()
-    saveMission(mission.id)
+    if career_career.isAutosaveEnabled() then
+      saveMission(mission.id)
+    end
   end
 end
 
@@ -76,14 +76,6 @@ end
 local function preMissionHandling(step, task)
   missionStartStep = step
 
-  -- create a part condition snapshot
-  local vehId = career_modules_inventory.getCurrentVehicleId()
-  if vehId then
-    local veh = be:getObjectByID(vehId)
-    if veh then
-      core_vehicleBridge.executeAction(veh, 'createAndSetPartConditionResetSnapshotKey', "beforeMission")
-    end
-  end
   if career_career.isAutosaveEnabled() then
     career_saveSystem.saveCurrent()
   else
@@ -97,7 +89,7 @@ M.onMissionLoaded = onMissionLoaded
 M.saveMission = saveMission
 M.preMissionHandling = preMissionHandling
 
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onAnyMissionChanged = onAnyMissionChanged

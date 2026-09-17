@@ -8,9 +8,6 @@ M.outputPorts = {[1] = true, [2] = true}
 M.deviceCategories = {shaft = true, differential = true}
 M.requiredExternalInertiaOutputs = {1, 2}
 
-local primaryOutputID = 1
-local secondaryOutputID = 2
-
 local max = math.max
 local min = math.min
 local sqrt = math.sqrt
@@ -36,7 +33,7 @@ end
 local function viscousUpdateTorque(device)
   local avDiff = device[device.primaryOutputAVName] - device[device.secondaryOutputAVName]
   local viscousTorque = device.viscousTorque * device.wearViscousTorqueCoef * device.damageViscousTorqueCoef
-  local secondaryTorque = device.torqueSmoother:get(clamp(device.viscousCoef * avDiff, -viscousTorque, viscousTorque))
+  local secondaryTorque = device.torqueSmoother:get(clamp(device.viscousCoef * math.abs(avDiff) ^ device.viscousExponent * sign(avDiff), -viscousTorque, viscousTorque))
 
   device[device.primaryOutputTorqueName] = (device.parent[device.parentOutputTorqueName] - (device.friction * clamp(device.inputAV, -1, 1) + device.dynamicFriction * device.inputAV + device.torqueLossCoef * device.parent[device.parentOutputTorqueName]) * device.wearFrictionCoef * device.damageFrictionCoef) * device.gearRatio - secondaryTorque
   device[device.secondaryOutputTorqueName] = secondaryTorque
@@ -133,13 +130,13 @@ local function calculateInertia(device)
   local cumulativeGearRatio = 1
   local maxCumulativeGearRatio = 1
   if device.children then
-    if device.children[primaryOutputID] then
-      outputInertia = device.children[primaryOutputID].cumulativeInertia
-      cumulativeGearRatio = device.children[primaryOutputID].cumulativeGearRatio
-      maxCumulativeGearRatio = device.children[primaryOutputID].maxCumulativeGearRatio
+    if device.children[device.primaryOutputID] then
+      outputInertia = device.children[device.primaryOutputID].cumulativeInertia
+      cumulativeGearRatio = device.children[device.primaryOutputID].cumulativeGearRatio
+      maxCumulativeGearRatio = device.children[device.primaryOutputID].maxCumulativeGearRatio
     end
-    if device.children[secondaryOutputID] then
-      secondaryOutputInertia = device.children[secondaryOutputID].cumulativeInertia
+    if device.children[device.secondaryOutputID] then
+      secondaryOutputInertia = device.children[device.secondaryOutputID].cumulativeInertia
     end
   end
 
@@ -238,13 +235,13 @@ local function new(jbeamData)
 
   device.torqueLossCoef = clamp(device.torqueLossCoef, 0, 1)
 
-  primaryOutputID = min(max(jbeamData.primaryOutputID or 1, 1), 2) --must be either 1 or 2
-  secondaryOutputID = math.abs(primaryOutputID * 3 - 5) --converts 1 -> 2 and 2 -> 1
+  device.primaryOutputID = min(max(jbeamData.primaryOutputID or 1, 1), 2) --must be either 1 or 2
+  device.secondaryOutputID = math.abs(device.primaryOutputID * 3 - 5) --converts 1 -> 2 and 2 -> 1
 
-  device.primaryOutputTorqueName = "outputTorque" .. tostring(primaryOutputID)
-  device.primaryOutputAVName = "outputAV" .. tostring(primaryOutputID)
-  device.secondaryOutputTorqueName = "outputTorque" .. tostring(secondaryOutputID)
-  device.secondaryOutputAVName = "outputAV" .. tostring(secondaryOutputID)
+  device.primaryOutputTorqueName = "outputTorque" .. tostring(device.primaryOutputID)
+  device.primaryOutputAVName = "outputAV" .. tostring(device.primaryOutputID)
+  device.secondaryOutputTorqueName = "outputTorque" .. tostring(device.secondaryOutputID)
+  device.secondaryOutputAVName = "outputAV" .. tostring(device.secondaryOutputID)
 
   if jbeamData.canDisconnect then
     device.availableModes = {"connected", "disconnected"}
@@ -266,6 +263,7 @@ local function new(jbeamData)
   --viscous specific
   device.viscousCoef = jbeamData.viscousCoef or 10
   device.viscousTorque = jbeamData.viscousTorque or device.viscousCoef * 10
+  device.viscousExponent = jbeamData.viscousExponent or 1
   device.torqueSmoother = newExponentialSmoothing(jbeamData.viscousSmoothing or 25)
 
   device.breakTriggerBeam = jbeamData.breakTriggerBeam

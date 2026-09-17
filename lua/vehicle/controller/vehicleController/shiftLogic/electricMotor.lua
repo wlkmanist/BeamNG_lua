@@ -17,6 +17,8 @@ local sharedFunctions = nil
 local gearboxAvailableLogic = nil
 local gearboxLogic = nil
 
+local hasRegisteredQuickAccessMenu
+
 M.gearboxHandling = nil
 M.timer = nil
 M.timerConstants = nil
@@ -96,6 +98,11 @@ local brakeHandling = {
   frictionTorqueToCoef = {},
   frictionCoefToTorque = {}
 }
+
+--shift LEDs are not in use at all atm
+local function areShiftLEDsInUse()
+  return false
+end
 
 local function getGearName()
   return automaticHandling.mode
@@ -415,14 +422,110 @@ local function setIgnition(enabled)
   end
 end
 
+local function registerQuickAccessMenu()
+  if not core_quickAccess or hasRegisteredQuickAccessMenu then
+    return
+  end
+  hasRegisteredQuickAccessMenu = true
+
+  -- electric motor regeneration
+  core_quickAccess.addEntry(
+    {
+      level = "/root/playerVehicle/vehicleFeatures/",
+      generator = function(entries)
+        local hasElectricMotor = #powertrain.getDevicesByType("electricMotor") > 0
+
+        if hasElectricMotor and electrics.values.maxRegenStrength then
+          -- TODO: icon
+          table.insert(entries, {title = "ui.radialmenu2.powertrain.regen", ["goto"] = "/root/playerVehicle/vehicleFeatures/regen/", icon = "charging", uniqueID = "regen"})
+        end
+      end
+    }
+  )
+
+  -- regenerative braking
+  -- TODO: Icons
+  core_quickAccess.addEntry(
+    {
+      level = "/root/playerVehicle/vehicleFeatures/regen/",
+      generator = function(entries)
+        local hasElectricMotor = #powertrain.getDevicesByType("electricMotor") > 0
+        if hasElectricMotor and electrics.values.maxRegenStrength then
+          local maxStrength = electrics.values.maxRegenStrength or 3
+
+          for strength = 0, maxStrength do
+            local title, icon, context
+            local numItems = maxStrength + 1
+            local priority = (strength + math.floor(numItems / 2)) % numItems * 10
+
+            if strength == 0 then
+              title = "ui.radialmenu2.powertrain.regen.off"
+              icon = "powerOnOff"
+            elseif strength == maxStrength then
+              title = "ui.radialmenu2.powertrain.regen.full"
+              icon = "charging"
+            else
+              title = "ui.radialmenu2.powertrain.regen.level"
+              icon = "charge"
+              context = {level = strength, percent = math.floor(strength * 100 / maxStrength + 0.5)}
+            end
+
+            local e = {
+              title = title,
+              icon = icon,
+              context = context,
+              priority = priority,
+              originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "regen"},
+              onSelect = function()
+                electrics.values.regenStrength = strength
+                return {"reload"}
+              end
+            }
+
+            if (electrics.values.regenStrength or 0) == strength then
+              e.color = "#ff6600"
+            end
+
+            table.insert(entries, e)
+          end
+        end
+      end
+    }
+  )
+end
+
 local function init(jbeamData, sharedFunctionTable)
   sharedFunctions = sharedFunctionTable
 
   M.currentGearIndex = 0
+  M.maxGearIndex = 1
+  M.minGearIndex = -1
   M.throttle = 0
   M.brake = 0
   M.regen = 0
   M.clutchRatio = 1
+  M.shiftingAggression = 0
+  M.throttleInput = 0
+  M.isArcadeSwitched = false
+  M.isSportModeActive = false
+
+  M.smoothedAvgAVInput = 0
+  M.rpm = 0
+  M.idleRPM = 0
+  M.maxRPM = 0
+
+  M.engineThrottle = 0
+  M.engineLoad = 0
+  M.engineTorque = 0
+  M.flywheelTorque = 0
+  M.gearboxTorque = 0
+
+  M.ignition = true
+  M.isEngineRunning = 0
+
+  M.oilTemp = 0
+  M.waterTemp = 0
+  M.checkEngine = false
 
   gearboxAvailableLogic = {
     arcade = {
@@ -538,6 +641,8 @@ local function init(jbeamData, sharedFunctionTable)
   M.minGearIndex = abs(automaticHandling.minGearIndex)
   M.energyStorages = sharedFunctions.getEnergyStorages(motors)
 
+  registerQuickAccessMenu()
+
   applyGearboxMode()
 end
 
@@ -578,6 +683,8 @@ M.sendTorqueData = sendTorqueData
 M.setIgnition = setIgnition
 M.onDeserialize = onDeserialize
 M.onSerialize = onSerialize
+
+M.areShiftLEDsInUse = areShiftLEDsInUse
 
 M.getState = getState
 M.setState = setState

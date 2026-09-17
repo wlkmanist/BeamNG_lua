@@ -1,12 +1,14 @@
 {
   "activeGraphId":1,
+  "authors":"BeamNG",
   "currentGraphID":1,
+  "date":1741625368,
   "debugEnabled":false,
   "description":"Learn about Variables and how they are used.",
+  "difficulty":40,
   "frecency":{},
   "graphs":{
     "1":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -119,17 +121,17 @@
       "name":"New State",
       "nodes":{
         "8":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -139,6 +141,7 @@
           "commentText":"Variables can be used to store data inside a single graph or for the whole project.\\nYou can view the variables in the \"Variables\" window. There, you can also add new\\nVariables to use in your project.\\n\\n - Current Graph: Variables are only accessible in the very graph you are viewing.\\n - Manager Variables: Variables are accessible in the complete project.\\n\\nVariables can have the same types as pins, with some exceptions like Table and Flow.\\nVariables can be changed and accessed with the \"Set\" and \"Get\" nodes.\\n\\nOne thing to keep in mind with variables is that they are only actually set at the end \\nof the frame. This is important if you want to set and get variables at the same time.\\nSee the example below.\\n\\nThis graph is a simple timer using variables.",
           "commentTitle":"Variables",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             616,
@@ -154,8 +157,8 @@
           "type":"debug/comment"
         },
         "10":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -170,10 +173,12 @@
           "pos":[
             -88,
             190
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "11":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "anchor":{
               "type":"string",
@@ -216,13 +221,14 @@
             }
           },
           "pos":[
-            920,
-            526
+            900,
+            525
           ],
           "type":"ui/imgui/elemental/imBegin"
         },
         "12":{
           "data":{},
+          "dynamicMode":"repeat",
           "global":false,
           "hiddenPins":{
             "p_in":{},
@@ -239,6 +245,7 @@
         },
         "13":{
           "data":{},
+          "dynamicMode":"repeat",
           "global":false,
           "hardcodedPins":{
             "timer":{
@@ -264,6 +271,7 @@
         },
         "14":{
           "data":{},
+          "dynamicMode":"repeat",
           "global":false,
           "hiddenPins":{
             "p_in":{
@@ -282,34 +290,34 @@
           "varName":"timer"
         },
         "15":{
-          "type":"util/time",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
-              "time":true,
-              "dtRaw":true,
               "dtReal":false,
-              "dtSim":true
+              "dtSim":true,
+              "time":true
             }
           },
           "pos":[
             -116,
             526
-          ]
+          ],
+          "type":"util/time"
         },
         "16":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -319,6 +327,7 @@
           "commentText":"Setting the Timer to 0 when entering\\nthis state. Variables will have a default\\nvalue which will be set when the project\\nis started.",
           "commentTitle":"Start Value",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             294,
@@ -334,17 +343,17 @@
           "type":"debug/comment"
         },
         "17":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -352,8 +361,9 @@
             338
           ],
           "commentText":"Setting the Timer to its current value + the current dt (time difference between frames).",
-          "commentTitle":"Updating timer",
+          "commentTitle":"Updating Timer",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             -154,
@@ -369,11 +379,11 @@
           "type":"debug/comment"
         },
         "18":{
-          "type":"math/math",
           "data":{
             "expression":"a+b",
             "safeMode":true
           },
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "a":false,
@@ -387,10 +397,12 @@
           "pos":[
             94,
             526
-          ]
+          ],
+          "type":"math/math"
         },
         "19":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "B":{
               "type":"number",
@@ -404,16 +416,16 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":false,
               "flow":false,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"<",
           "pos":[
             640,
-            498
+            497
           ],
           "type":"logic/compare"
         },
@@ -422,6 +434,7 @@
           "data":{
             "pattern":"Timer: %0.1fs / 10.0s"
           },
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -433,14 +446,14 @@
             }
           },
           "pos":[
-            1158,
-            526
+            1138,
+            525
           ],
           "type":"string/format"
         },
         "22":{
-          "type":"ui/imgui/elemental/imText",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -451,13 +464,14 @@
             }
           },
           "pos":[
-            1410,
-            526
-          ]
+            1460,
+            525
+          ],
+          "type":"ui/imgui/elemental/imText"
         },
         "23":{
-          "type":"ui/imgui/elemental/imEnd",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -467,22 +481,23 @@
             }
           },
           "pos":[
-            1648,
-            526
-          ]
+            1656,
+            525
+          ],
+          "type":"ui/imgui/elemental/imEnd"
         },
         "24":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.489679098,
-            0.194932938,
-            0.194932938,
-            0.5
+            0.70762550830841064453,
+            0.18162982165813446045,
+            0.18162982165813446045,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -492,6 +507,7 @@
           "commentText":"Notice how we use the result from the \"Expression\" node rather than the value from the \"Get Timer\" node.\\nThis will give us the already increased value for the timer. Because we set the timer variable in this frame, any \"Get Timer\" nodes\\nwill still get the value the variable had at the beginning of the frame. The variable will be updated to the new value after all nodes\\nhave been processed, at the end of the frame.",
           "commentTitle":"Notice",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             616,
@@ -507,8 +523,8 @@
           "type":"debug/comment"
         },
         "25":{
-          "type":"debug/stopManager",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -516,22 +532,23 @@
             "p_out":{}
           },
           "pos":[
-            1270,
-            834
-          ]
+            1256,
+            818
+          ],
+          "type":"debug/stopManager"
         },
         "27":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -539,12 +556,13 @@
             212
           ],
           "commentText":"When the timer runs out, stop the project.",
-          "commentTitle":"Comment",
+          "commentTitle":"Stop Project",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             784,
-            714
+            728
           ],
           "simple":false,
           "textColor":[
@@ -556,11 +574,13 @@
           "type":"debug/comment"
         },
         "36":{
-          "data":{
-            "logTag":"Node #49",
-            "logType":"I"
-          },
+          "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
+            "logType":{
+              "type":"string",
+              "value":"I"
+            },
             "value":{
               "type":"string",
               "value":"Timer ran out!"
@@ -569,6 +589,8 @@
           "hiddenPins":{
             "p_in":{
               "flow":false,
+              "logTag":true,
+              "logType":true,
               "value":false
             },
             "p_out":{
@@ -576,32 +598,36 @@
             }
           },
           "pos":[
-            920,
-            834
+            914,
+            818
           ],
           "type":"debug/log"
         }
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"timer",
-          "type":"number",
-          "value":0
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "timer"
+        ],
+        "list":[
+          {
+            "fixedType":false,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"timer",
+            "type":"number",
+            "value":0
+          }
+        ]
+      },
       "viewPos":[
-        -289.493317,
-        -150.185379
+        -204.92236328125000000000,
+        -127.31732177734375000000
       ],
-      "viewZoom":0.330000013
+      "viewZoom":0.50000000000000000000
     },
     "3":{
-      "children":{},
       "description":"This is the description for graph States",
       "dirty":false,
       "isStateGraph":true,
@@ -618,6 +644,7 @@
       "nodes":{
         "4":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -628,24 +655,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             374,
@@ -655,8 +685,8 @@
           "type":"states/stateNode"
         },
         "5":{
-          "type":"states/stateEntry",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -666,10 +696,12 @@
           "pos":[
             -4,
             -6
-          ]
+          ],
+          "type":"states/stateEntry"
         },
         "6":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -677,12 +709,13 @@
             "p_out":{}
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             794,
@@ -694,7 +727,10 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
         -200,
         -200
@@ -702,11 +738,15 @@
       "viewZoom":1
     }
   },
+  "isScenario":false,
   "macros":{},
   "name":"Variables",
   "savedDir":"/lua/ge/extensions/flowgraph/examples/intermediate/",
   "savedFilename":"Variables.flow.json",
   "stateGraphId":3,
-  "variables":{},
-  "version":0.1
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
+  "version":0.20000000000000001110
 }

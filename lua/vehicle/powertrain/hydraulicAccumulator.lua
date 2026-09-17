@@ -40,6 +40,10 @@ local function updateTorque(device, dt)
 end
 
 local function updateGFX(device, dt)
+  for _, consumer in ipairs(device.connectedConsumers) do
+    consumer:updateGFX(device.accumulatorPressure, dt)
+  end
+
   --consumer side---
   if device.hydraulicPTOSupplyPressureElectricsName and device.hydraulicPTOSupplyFlowElectricsName and device.hydraulicPTOSupplyMaxFlowRateElectricsName then
     local supplyPressure = electrics.values[device.hydraulicPTOSupplyPressureElectricsName] or 0 --supply pressure from our supply (which can be another consumer, but we don't care)

@@ -10,7 +10,7 @@ M.dependencies = {"freeroam_facilities"}
 local cargoLocationsChangedThisFrame = false
 
 local allCargo = {}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dTasklist
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dTasklist, dTutorial, dPrecisionParking
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
@@ -18,6 +18,8 @@ M.onCareerActivated = function()
   dGenerator = career_modules_delivery_generator
   dProgress = career_modules_delivery_progress
   dTasklist = career_modules_delivery_tasklist
+  dTutorial = career_modules_delivery_tutorial
+  dPrecisionParking = career_modules_delivery_precisionParking
 end
 
 local allVehiclesWithCargo = {}
@@ -367,8 +369,7 @@ M.getAllCargoInVehicles = getAllCargoInVehicles
 
 local function getLocationLabelShort(loc)
   if loc.type == "facilityParkingspot" then
-    return string.format("%s",
-      dGenerator.getFacilityById(loc.facId).name)
+    return _tr(dGenerator.getFacilityById(loc.facId).name)
   elseif loc.type == "vehicle" then
     if be:getPlayerVehicleID(0) == loc.vehId then
       return string.format("Current Vehicle (%d)", loc.vehId)
@@ -391,9 +392,10 @@ end
 local function getLocationLabelLong(loc)
   if loc.type == "facilityParkingspot" then
     local ps = dGenerator.getParkingSpotByPath(loc.psPath)
+    local facName = _tr(dGenerator.getFacilityById(loc.facId).name)
     return ps.customFields:has("name") and string.format("%s - %s",
-      dGenerator.getFacilityById(loc.facId).name,
-      ps.customFields:get("name")) or dGenerator.getFacilityById(loc.facId).name
+      facName,
+      _tr(ps.customFields:get("name"))) or facName
 
   elseif loc.type == "vehicle" then
     if be:getPlayerVehicleID(0) == loc.vehId then
@@ -423,9 +425,13 @@ local function getCargoById(cargoId)
   end
 end
 
+local function getSkillRewardKey(cargo)
+  return cargo.materialType and "logistics-materials" or "logistics-delivery"
+end
 
 local function getRewardsWithBreakdown(cargo)
   local originalRewards, breakdown, adjustedRewards = deepcopy(cargo.rewards), {} , deepcopy(cargo.rewards)
+  local skillRewardKey = getSkillRewardKey(cargo)
 
   -- check modifiers adjustment on rewards
   for _,mod in ipairs(cargo.modifiers or {}) do
@@ -437,6 +443,7 @@ local function getRewardsWithBreakdown(cargo)
       if expiredTime <= mod.timeUntilDelayed then
         timedStatus = "On Time"
         timedMultiplier = 1
+        gameplay_achievement.unlockAchievement("ON_SCHEDULE")
       elseif expiredTime <= mod.timeUntilLate then
         timedStatus = "Delayed"
         timedMultiplier = (0.2 + ((expiredTime-mod.timeUntilDelayed) / (mod.timeUntilLate-mod.timeUntilDelayed)) *0.6)
@@ -483,6 +490,71 @@ local function getRewardsWithBreakdown(cargo)
     table.insert(breakdown, organizationElement)
   end
 
+
+  local branchMultiplier = career_branches.getLevelRewardMultiplier("logistics")
+  if branchMultiplier > 1 then
+    local level = career_branches.getBranchLevel("logistics")
+    table.insert(breakdown, {
+      label = "Level " .. level .. " Multiplier",
+      rewards = {money = originalRewards.money * branchMultiplier - originalRewards.money},
+      simpleBreakdownType = "branch",
+    })
+  end
+
+  -- Calculate precision parking and add to breakdown
+  local destinationParkingSpot = nil
+  local cargoVehicleId = be:getPlayerVehicleID(0)
+  if cargo.destination and cargo.destination.psPath then
+    destinationParkingSpot = dGenerator.getParkingSpotByPath(cargo.destination.psPath)
+  end
+
+  if cargo.location and cargo.location.type == "vehicle" then
+    cargoVehicleId = cargo.location.vehId
+  end
+
+  if destinationParkingSpot and cargoVehicleId then
+    local precisionData = dPrecisionParking.calculateVehiclePrecisionScore(cargoVehicleId, destinationParkingSpot)
+    if precisionData then
+      local precisionBonus = dPrecisionParking.getPrecisionParkingBonus(precisionData)
+
+      -- Add precision parking breakdown entry
+      local precisionBreakdown = {
+        label = "Precision Parking (" .. precisionBonus.precisionLevel:gsub("^%l", string.upper) .. ")",
+        rewards = {},
+        simpleBreakdownType = (precisionBonus.moneyFlat >= 0 and precisionBonus.logisticsFlat >= 0) and "bonus" or "penalty",
+        precisionData = precisionData
+      }
+
+      -- Calculate money reward
+      local moneyReward = precisionBonus.moneyFlat + (originalRewards.money * precisionBonus.moneyPercent)
+      if moneyReward ~= 0 then
+        precisionBreakdown.rewards.money = math.ceil(moneyReward)
+      end
+
+      -- Calculate logistics XP reward
+      local logisticsReward = precisionBonus.logisticsFlat + (originalRewards["logistics"] or 0) * precisionBonus.logisticsPercent
+      if logisticsReward ~= 0 then
+        precisionBreakdown.rewards["logistics"] = math.ceil(logisticsReward)
+      end
+
+      -- Calculate skill XP reward (same as logistics for cargo delivery)
+      local skillReward = precisionBonus.skillFlat + (originalRewards[skillRewardKey] or 0) * precisionBonus.skillPercent
+      if skillReward ~= 0 then
+        precisionBreakdown.rewards[skillRewardKey] = (precisionBreakdown.rewards[skillRewardKey] or 0) + math.ceil(skillReward)
+      end
+
+      -- Calculate reputation reward
+      if cargo.organization then
+        local reputationReward = precisionBonus.reputationFlat + (originalRewards[cargo.organization.."Reputation"] or 0) * precisionBonus.reputationPercent
+        if reputationReward ~= 0 then
+          precisionBreakdown.rewards[cargo.organization.."Reputation"] = math.ceil(reputationReward)
+        end
+      end
+
+      table.insert(breakdown, precisionBreakdown)
+    end
+  end
+
   -- compute final adjusted rewards
   for _, bd in ipairs(breakdown) do
     for key, amount in pairs(bd.rewards) do
@@ -508,6 +580,9 @@ local function addParcelRewardsSummary(cargo)
     cargoByGroupId[gId] = cargoByGroupId[gId] or {}
     -- finalize the fields that require "costly" computation at this point
     table.insert(cargoByGroupId[gId], c)
+
+    -- Precision parking is now calculated in getRewardsWithBreakdown
+
     c.originalRewards, c.breakdown, c.adjustedRewards = getRewardsWithBreakdown(c)
   end
   -- format each group individually
@@ -541,10 +616,10 @@ local function updateModifiers(dtSim)
           local expiredTime = dGeneral.time() - cargo.loadedAtTimeStamp
 
           if not mod.delayedMessageFlag and expiredTime > mod.timeUntilDelayed then
-            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("Delivery of %s to %s is now delayed.",cargo.name, M.getLocationLabelShort(cargo.destination)), category = "delivery", icon = "warning"})
+            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("Delivery of %s to %s is now delayed.",_tr(cargo.name), M.getLocationLabelShort(cargo.destination)), category = "delivery", icon = "warning"})
             mod.delayedMessageFlag = true
           elseif not mod.lateMessageFlag and expiredTime > mod.timeUntilLate then
-            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("Delivery of %s to %s is now late.",cargo.name, M.getLocationLabelShort(cargo.destination)), category = "delivery", icon = "warning"})
+            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("Delivery of %s to %s is now late.",_tr(cargo.name), M.getLocationLabelShort(cargo.destination)), category = "delivery", icon = "warning"})
             mod.lateMessageFlag = true
           end
         end
@@ -597,7 +672,7 @@ local function cleanUpCargo()
   end
 end
 
-
+--[[
 local function onBranchTierReached(skill, tier)
   if skill == "delivery" then
     local prevMult, nextMult = dProgress.getMoneyMultiplerForSkill('delivery', tier-1), dProgress.getMoneyMultiplerForSkill('delivery', tier)
@@ -610,6 +685,7 @@ local function onBranchTierReached(skill, tier)
   end
 end
 M.onBranchTierReached = onBranchTierReached
+--]]
 
 M.getLocationLabelShort = getLocationLabelShort
 M.getLocationLabelLong = getLocationLabelLong

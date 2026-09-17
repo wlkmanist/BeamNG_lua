@@ -3,10 +3,9 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
-local logTag = 'Remove Vehicle'
+
 C.name = 'Remove Vehicle'
 C.description = "Removes a Vehicle."
 C.color = ui_flowgraph_editor.nodeColors.vehicle

@@ -6,7 +6,7 @@ local M = {}
 M.dependencies = {"gameplay_rawPois"}
 local playmodeClusters = nil
 local markersByClusterId = {}
-local playmodeQt = nil
+local playmodeKd = nil
 
 -- this list should be built dynamicly
 local playmodeMarkerTypeNames = {
@@ -17,20 +17,95 @@ local playmodeMarkerTypeNames = {
   gasStationMarker = true,
   driftLineMarker = true,
   invisibleTrigger = true,
+  inspectVehicleMarker = true,
+  crawlMarker = true,
+  vehicleTrigger = true,
 }
 
 local function idSort(a,b) return a.id<b.id end
 
+local iconRendererName = "markerIconRenderer"
+local bigmapIconRendererName = "bigmapIconRenderer"
+local iconRendererId = nil
+local bigmapIconRendererId = nil
+local function removeBigmapIconRenderer()
+  if bigmapIconRendererId and scenetree.findObjectById(bigmapIconRendererId) then
+    local bigmapIconRendererObj = scenetree.findObjectById(bigmapIconRendererId)
+    if bigmapIconRendererObj then
+      bigmapIconRendererObj:delete()
+    end
+    bigmapIconRendererId = nil
+  end
+end
+local function removeIconRenderer()
+  if iconRendererId and scenetree.findObjectById(iconRendererId) then
+    local iconRendererObj = scenetree.findObjectById(iconRendererId)
+    if iconRendererObj then
+      iconRendererObj:delete()
+    end
+    iconRendererId = nil
+  end
+end
 local function clearPlaymodeClusters()
-  if playmodeClusters or playmodeQt or next(markersByClusterId) then
+  if playmodeClusters or playmodeKd or next(markersByClusterId) then
     log("D","","Playmode clusters and markers cleared")
   end
   playmodeClusters = nil
-  playmodeQt = nil
+  playmodeKd = nil
   for _, marker in pairs(markersByClusterId) do
     marker:clearObjects()
   end
   table.clear(markersByClusterId)
+
+  --if iconRendererId and scenetree.findObjectById(iconRendererId) then
+    --local iconRendererObj = scenetree.findObjectById(iconRendererId)
+    --iconRendererObj:removeAllIcons()
+  --end
+end
+
+
+local function createIconRenderer(rendererName, maxIconScale, loadAtlas)
+  local rendererObj = createObject("BeamNGWorldIconsRenderer")
+  rendererObj:registerObject(rendererName)
+  rendererObj.maxIconScale = maxIconScale
+  rendererObj.mConstantSizeIcons = true
+  rendererObj.canSave = false
+  if loadAtlas then
+    rendererObj:loadIconAtlas("core/art/gui/images/iconAtlas.png", "core/art/gui/images/iconAtlas.json")
+  end
+  return rendererObj:getId()
+end
+
+local function setupIconRenderers()
+  local bigmapRendererExists = bigmapIconRendererId and scenetree.findObjectById(bigmapIconRendererId)
+  local markerRendererExists = iconRendererId and scenetree.findObjectById(iconRendererId)
+
+  if markerRendererExists and bigmapRendererExists then
+    return
+  end
+
+  if not markerRendererExists then
+    iconRendererId = createIconRenderer(iconRendererName, 2, true)
+  end
+  if not bigmapRendererExists then
+    bigmapIconRendererId = createIconRenderer(bigmapIconRendererName, 1, false)
+  end
+end
+M.getIconRendererId = function()
+  setupIconRenderers()
+  return iconRendererId
+end
+M.getIconRendererObj = function()
+  setupIconRenderers()
+  return scenetree.findObjectById(iconRendererId)
+end
+M.getBigmapRendererId = function()
+  setupIconRenderers()
+  return bigmapIconRendererId
+end
+M.getBigmapRendererObj = function()
+  setupIconRenderers()
+  return scenetree.findObjectById(bigmapIconRendererId)
 end
 
 local function sanitizeCluster(cluster)
@@ -85,17 +160,17 @@ local function getPlaymodeClusters()
   return playmodeClusters
 end
 
-local quadtree = require('quadtree') -- change to KD Tree?
+local kdTree = require('kdtreebox2d') -- change to KD Tree?
 local function getPlaymodeClustersAsQuadtree()
   checkGeneration()
-  if not playmodeQt then
-    playmodeQt = quadtree.newQuadtree()
+  if not playmodeKd then
+    playmodeKd = kdTree.new()
     for _, cluster in ipairs(getPlaymodeClusters()) do
-      playmodeQt:preLoad(cluster.id, quadtree.pointBBox(cluster.visibilityPos.x, cluster.visibilityPos.y, cluster.visibilityRadius))
+      playmodeKd:preLoad(cluster.id, cluster.visibilityPos.x-cluster.visibilityRadius, cluster.visibilityPos.y-cluster.visibilityRadius, cluster.visibilityPos.x+cluster.visibilityRadius, cluster.visibilityPos.y+cluster.visibilityRadius)
     end
-    playmodeQt:build()
+    playmodeKd:build()
   end
-  return playmodeQt
+  return playmodeKd
 end
 M.getPlaymodeClusters = getPlaymodeClusters
 M.getPlaymodeClustersAsQuadtree = getPlaymodeClustersAsQuadtree
@@ -112,8 +187,32 @@ local function getMarkerForCluster(cluster)
 end
 M.getMarkerForCluster = getMarkerForCluster
 
-M.onClientEndMission = clearPlaymodeClusters
-M.onSerialize = clearPlaymodeClusters
+
+-- this can be adjusted to allow other states to have playmode markers
+M.validPlaymodeMarkersStates = {
+  freeroam = true,
+  career = true,
+}
+local function isStateWithPlaymodeMarkers()
+  if core_gamestate.state and M.validPlaymodeMarkersStates[core_gamestate.state.state] then
+    return true
+  end
+  return false
+end
+M.isStateWithPlaymodeMarkers = isStateWithPlaymodeMarkers
+
+M.onClientStartMission = setupIconRenderers
+M.onClientEndMission = function()
+  clearPlaymodeClusters()
+  removeIconRenderer()
+  removeBigmapIconRenderer()
+end
+
+M.onSerialize = function()
+  clearPlaymodeClusters()
+  removeIconRenderer()
+  removeBigmapIconRenderer()
+end
 M.clear = clearPlaymodeClusters
 
 return M

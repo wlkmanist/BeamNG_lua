@@ -19,24 +19,12 @@ C.pinSchema = {
   { dir = 'in', type = 'string', name = 'fogScaleGradientFile', hardcoded = true, hidden = true,  description = "Texture used to modulate the fog color." },
   { dir = 'in', type = 'string', name = 'nightGradientFile', hardcoded = true, hidden = true, description = "Texture used to modulate the ambient color at night time." },
   { dir = 'in', type = 'string', name = 'nightFogGradientFile', hardcoded = true, hidden = true, description = "Texture used to modulate the fog color at night time." },
-  { dir = 'in', type = 'number', name = 'shadowDistance', description = "Maximum distance from the camera at which shadows will be visible." },
-  { dir = 'in', type = 'number', name = 'shadowSoftness', description = "How soft shadows will appear." },
-  { dir = 'in', type = 'number', name = 'logWeight',description = "Balance between shadow distance and quality. Higher values will make shadows appear sharper closer to the camera, at cost of drawing distance" },
 }
 
 C.tags = {'environment', 'tod'}
 
 function C:init(mgr)
   self.data.restoreScatterSky = true
-end
-
-function C:postInit()
-  self.pinInLocal.logWeight.numericSetup = {
-    min = 0,
-    max = 1,
-    type = 'float',
-    gizmo = 'slider',
-  }
 end
 
 function C:_executionStarted()
@@ -48,10 +36,6 @@ function C:_executionStarted()
   self.storedfogScaleGradientFile = core_environment.getFogScaleGradientFile()
   self.storednightGradientFile = core_environment.getNightGradientFile()
   self.storednightFogGradientFile = core_environment.getNightFogGradientFile()
-
-  self.storedshadowDistance = core_environment.getShadowDistance()
-  self.storedshadowSoftness = core_environment.getShadowSoftness()
-  self.storedlogWeight = core_environment.getShadowLogWeight()
 
   self.storedScatterSky = true
 end
@@ -65,10 +49,6 @@ function C:_executionStopped()
     core_environment.setFogScaleGradientFile(self.storedfogScaleGradientFile)
     core_environment.setNightGradientFile(self.storednightGradientFile)
     core_environment.setNightFogGradientFile(self.storednightFogGradientFile)
-
-    core_environment.setShadowDistance(self.storedshadowDistance)
-    core_environment.setShadowSoftness(self.storedshadowSoftness)
-    core_environment.setShadowLogWeight(self.storedlogWeight)
   end
 end
 
@@ -91,10 +71,6 @@ function C:setScatterSkyParameters()
   core_environment.setFogScaleGradientFile(self.pinIn.fogScaleGradientFile.value)
   core_environment.setNightGradientFile(self.pinIn.nightGradientFile.value)
   core_environment.setNightFogGradientFile(self.pinIn.nightFogGradientFile.value)
-
-  core_environment.setShadowDistance(self.pinIn.shadowDistance.value)
-  core_environment.setShadowSoftness(self.pinIn.shadowSoftness.value)
-  core_environment.setShadowLogWeight(self.pinIn.logWeight.value)
 
   --  This is needed to update the gradients
   local tod = core_environment.getTimeOfDay()

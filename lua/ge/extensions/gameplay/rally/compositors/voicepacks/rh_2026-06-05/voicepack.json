@@ -1,0 +1,15 @@
+{
+  "persona": "ui.options.rally.personas.rh.name",
+  "language": "ui.options.rally.languages.english.name",
+  "dialect": "ui.options.rally.dialects.en-GB.name",
+  "compositorStyle": "english/enthusiast",
+  "notebooks": ["enthusiast", "structured"],
+  "styleLabel": "ui.options.rally.styles.enthusiast.name",
+  "styleDetailLevel": 50,
+  "enableSpeedScaling": true,
+  "codriverTimingOffsetSeconds": 0.0,
+  "linkWordGapMs": 0,
+  "cornerGapMs": -30,
+  "phraseGapMs": 0,
+  "pacenoteGapMs": 200
+}

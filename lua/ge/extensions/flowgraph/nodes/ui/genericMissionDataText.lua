@@ -17,6 +17,7 @@ C.author = 'BeamNG'
 C.pinSchema = {
   {dir = 'in', type = 'string', name = 'title', description = "Title of the info", default="missions.missions.general.time", hardcoded = true},
   {dir = 'in', type = 'any', name = 'txt', description = "Text of the info"},
+  {dir = 'in', type = 'string', name = 'icon', description = "Icon of the info", default = "info"},
   {dir = 'in', type = 'number', name = 'order', description = "Order of the info. Higher order will be shown rightmost."},
   {dir = 'in', type = 'string', name = 'category',  default = 'flowgraph',  description = "Category for the info. Only one message per category can be displayed. If not set, uses title.", hidden = true},
   {dir = 'in', type = 'string', name = 'style', description = "Display mode for the info.", hidden=true, hardcoded = true, default = "text"},
@@ -34,7 +35,7 @@ function C:postInit()
   self.pinInLocal.title.hardTemplates = {}
   for _, k in ipairs({"time","recoveries"}) do
     local key = "missions.missions.general." .. k
-    table.insert(self.pinInLocal.title.hardTemplates, {label=translateLanguage(key, k, true), value = key})
+    table.insert(self.pinInLocal.title.hardTemplates, {label=_tr(key, k), value = key})
   end
 end
 
@@ -42,18 +43,35 @@ end
 function C:work()
   if (self.pinIn.title.value == nil and self.pinIn.txt.value == nil) or self.pinIn.clear.value then
     if self.pinIn.category.value == nil then
-      guihooks.trigger('SetGenericMissionDataResetAll')
+      ui_apps_genericMissionData.clearData()
     else
-      guihooks.trigger('SetGenericMissionData', {category = self.pinIn.category.value or self.pinIn.title.value, clear = true})
+      ui_apps_genericMissionData.setData({category = self.pinIn.category.value or self.pinIn.title.value, clear = true})
     end
   else
-    guihooks.trigger('SetGenericMissionData',{
+    local data = {
       title = self.pinIn.title.value,
       txt = self.pinIn.txt.value,
       category = self.pinIn.category.value or self.pinIn.title.value,
       style = self.pinIn.style.value,
       order = self.pinIn.order.value,
-    })
+      icon = self.pinIn.icon.value,
+    }
+
+    if self.pinIn.style.value == "time" then
+      data.txt = string.format("%02d:%02d", math.floor(self.pinIn.txt.value / 60), math.floor(self.pinIn.txt.value % 60))
+      data.minutes = string.format("%02d", math.floor(self.pinIn.txt.value / 60))
+      data.seconds = string.format("%02d", math.floor(self.pinIn.txt.value % 60))
+      data.style = "text"
+    elseif self.pinIn.style.value == "timemillis" then
+      data.txt = string.format("%02d:%02d.%03d", math.floor(self.pinIn.txt.value / 60), math.floor(self.pinIn.txt.value % 60), math.floor((self.pinIn.txt.value % 1) * 1000))
+      data.minutes = string.format("%02d", math.floor(self.pinIn.txt.value / 60))
+      data.seconds = string.format("%02d", math.floor(self.pinIn.txt.value % 60))
+      data.milliseconds = string.format("%03d", math.floor((self.pinIn.txt.value % 1) * 1000))
+      data.style = "text"
+    elseif self.pinIn.style.value == "text" then
+      data.txt = self.pinIn.txt.value
+    end
+    ui_apps_genericMissionData.setData(data)
   end
   self.mgr.modules.ui.genericMissionDataChanged = true
 end

@@ -200,7 +200,7 @@ function C:drawTooltip(mgr)
     self.graph.mgr:DrawTypeIcon(self.type, connectedLink ~= nil, 1, nil, (constValue ~= nil) and im.ImVec4(0, 0, 1, 1) or nil)
     im.SameLine()
     im.TextUnformatted(self.name)
-    im.Separator();
+    im.Separator()
 
     local typeTxt
     if self.direction == 'out' then
@@ -234,11 +234,11 @@ function C:drawTooltip(mgr)
     --im.TextUnformatted("lastUsed: " .. tostring(self._frameLastUsed))
 
     if self.description then
-      im.Separator();
+      im.Separator()
       im.TextUnformatted('Description: ' .. tostring(self.description))
     end
     if editor.getPreference("flowgraph.debug.displayIds") then
-      im.Separator();
+      im.Separator()
       im.TextUnformatted("ID: " .. self.id)
     end
     im.PopTextWrapPos()
@@ -260,8 +260,6 @@ function C:highlightLinks()
 end
 
 function C:draw(builder, style, isHeader, constValue, outWidth)
-  local mgr = self.graph.mgr
-
   local alpha = style.Alpha
   local isActive = self:isActive()
   if not isActive then
@@ -306,7 +304,7 @@ function C:hoverDraw(mgr)
 end
 
 function C:showContextMenu(menuPos, main)
-  im.SetWindowFontScale(editor.getPreference("ui.general.scale"))
+  im.SetWindowFontScale(1)
   if self.node.graph.mgr.allowEditing then
     main:showQuickAccessSubmenu(menuPos, self)
 
@@ -336,13 +334,11 @@ function C:showContextMenu(menuPos, main)
   end
   if editor.getPreference("flowgraph.debug.editorDebug") then
     if im.BeginMenu('Dumpz Node') then
-      --im.SetWindowFontScale(editor.getPreference("ui.general.scale"))
       for i = 1, 5 do
         if im.MenuItem1("Depth " .. i) then
           dumpz(self, i)
         end
       end
-      --im.SetWindowFontScale(1)
       im.EndMenu()
     end
   end

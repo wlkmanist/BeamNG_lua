@@ -3,11 +3,50 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local C = {}
+local defaultPreviewCache = {
+
+}
+
+local missionDefaultEnvironmentTimeValue = "__missionDefaultEnvironmentTime"
+
+local function resolveEnvironmentTime(environment, state)
+  if type(environment) ~= "table" then return nil end
+
+  if environment.normalizedTime ~= nil then
+    local time = core_environment.getTimeOfDayValueForNormalizedTime(environment.normalizedTime, state)
+    if time ~= nil then return time end
+  end
+
+  local time = environment.time
+  if type(time) ~= "string" then
+    return time
+  end
+  return core_environment.getSolarTimeOfDayValue(time, state)
+end
+
+local function getMissionEnvironmentTimeState(environment)
+  local state = deepcopy(core_environment.getTimeOfDay() or {})
+  local resolvedTime = resolveEnvironmentTime(environment, state)
+  if resolvedTime ~= nil and resolvedTime ~= -1 then
+    state.time = resolvedTime
+  end
+  return state
+end
 
 -- This is called when a mission of this type is being created. Load files, initialize variables etc
 function C:init()
   self.missionTypeLabel = "bigMap.missionLabels."..self.missionType
   self.progressKeyTranslations = {default = "missions.progressKeyLabels.default", custom = 'missions.progressKeyLabels.custom'}
+
+  self.defaultPreviewFile = "/gameplay/missionTypes/"..self.missionType.."/defaultPreview.jpg"
+  local exists = defaultPreviewCache[self.defaultPreviewFile]
+  if exists == nil then
+    exists = FS:fileExists(self.defaultPreviewFile)
+    defaultPreviewCache[self.defaultPreviewFile] = exists
+  end
+  if not exists then
+    self.defaultPreviewFile = nil
+  end
   -- copy in the generic progress setup for this missiontype
   local setup = deepcopy(gameplay_missions_missions.getMissionProgressSetupData(self.missionType))
   for k, v in pairs(setup) do
@@ -15,7 +54,9 @@ function C:init()
   end
   self.ignoreUserSettingsKeyForActiveStars = {
     setupModuleEnvironmentTime = true,
-    useGroundmarkers = true
+    useGroundmarkers = true,
+    missionVehicleClass = true,
+    shuffleGroup = true,
   }
 end
 
@@ -75,12 +116,12 @@ function C:getCommonSettingsData()
     local setupModule = self.setupModules.vehicles
     setupModule.vehicles = setupModule.vehicles or {}
 
+    extensions.load("gameplay_vehiclePerformance")
     for i, v in ipairs(setupModule.vehicles) do
-      -- this is temporary until a nice vehicle selection UI gets done
-      if v.model then
+      local model = core_vehicles.getModel(v.model or "").model
+      if model then
         local vehModelConfig
-        local model = core_vehicles.getModel(v.model).model
-        if model and model.Name then
+        if model.Name then
           vehModelConfig = model.Brand and model.Brand.." "..model.Name or model.Name
         else
           vehModelConfig = v.model
@@ -97,7 +138,8 @@ function C:getCommonSettingsData()
           thumb = config.preview
         end
 
-        table.insert(values, {l = vehModelConfig, v = i, thumb = thumb})
+        local vehicleClass = gameplay_vehiclePerformance and gameplay_vehiclePerformance.getClassFromConfig(v.model, v.config) or nil
+        table.insert(values, {l = vehModelConfig, v = i, thumb = thumb, vehicleClass = vehicleClass})
       end
     end
 
@@ -107,8 +149,23 @@ function C:getCommonSettingsData()
       thumbnail = thumbnail or gameplay_missions_missions.getNoVehicleThumbFilepath()
       table.insert(values, {l = 'missions.missions.general.userSettings.playerVehicle', v = lastIdx, type = 'player', thumb = thumbnail})
     end
+    local allowCustom = setupModule.includePlayerVehicle and not self.careerSetup.showInCareer
+    -- add a custom vehicle option
+    -- disable custom vehicles for now
+    if allowCustom and false then
+      table.insert(values, {l = 'Custom', v = lastIdx + 1, type = 'custom', thumb = gameplay_missions_missions.getNoVehicleThumbFilepath(), viaUserSettingsKey = 'setupModuleVehiclesCustom'})
+      table.insert(data, {
+        key = 'setupModuleVehiclesCustom',
+        label = 'Hidden',
+        type = 'hidden',
+        value = {model = "unselected", config = "unselected"}
+      })
+    end
 
-    local initIdx = (setupModule.includePlayerVehicle and setupModule.prioritizePlayerVehicle) and lastIdx or 1
+    -- Default selection rules live in gameplay_vehiclePerformance.getDefaultMissionVehicleSpec
+    -- so the UI (mission details / big map) and this settings panel stay in sync.
+    local defaultSpec = gameplay_vehiclePerformance and gameplay_vehiclePerformance.getDefaultMissionVehicleSpec(setupModule)
+    local initIdx = (defaultSpec and defaultSpec.kind == "player") and lastIdx or 1
     if values[1] then -- maybe should use values[2]
       table.insert(data, {
         key = 'setupModuleVehicles',
@@ -118,6 +175,7 @@ function C:getCommonSettingsData()
         value = initIdx,
         currentOption = values[initIdx],
         isVehicleSelector = true,
+        allowCustom = allowCustom,
       })
     end
   end
@@ -133,12 +191,12 @@ function C:getCommonSettingsData()
 
   if self.setupModules.environment.enabled then
     if self.setupModules.environment.todUserSetting then
-      local times = {sunrise = 0.775, morning = 0.85, earlyNoon = 0.9, noon = 0, lateNoon = 0.1, afternoon = 0.175, evening = 0.23, sunset = 0.245, night = 0.5}
-      local timesSorted = {"sunrise", "morning", "earlyNoon", "noon", "lateNoon", "afternoon", "evening", "sunset"}
-
-      local values = {{l = "ui.common.default", v = self.setupModules.environment.time}}
-      for _, t in ipairs(timesSorted) do
-        table.insert(values, {l = "ui.quickrace.tod."..t, v = times[t]})
+      local defaultValue = self.setupModules.environment.normalizedTime ~= nil
+        and missionDefaultEnvironmentTimeValue
+        or self.setupModules.environment.time
+      local values = {{l = "ui.common.default", v = defaultValue}}
+      for _, option in ipairs(core_environment.getSolarTimeOfDayOptions(getMissionEnvironmentTimeState(self.setupModules.environment))) do
+        table.insert(values, {l = option.label, v = option.key})
       end
 
       table.insert(data, {
@@ -146,7 +204,7 @@ function C:getCommonSettingsData()
         label = 'missions.missions.general.userSettings.timeOfDay',
         type = 'select',
         values = values,
-        value = self.setupModules.environment.time,
+        value = defaultValue,
         currentOption = values[1]
       })
     end
@@ -157,12 +215,87 @@ function C:getCommonSettingsData()
   return data
 end
 
+function C:setPreviewsForCustomVehicles(userSettings)
+  for _, s in ipairs(userSettings or {}) do
+    if s.type == "select" and s.isVehicleSelector then
+      for _, v in ipairs(s.values) do
+        if v.type == "custom" and v.viaUserSettingsKey == 'setupModuleVehiclesCustom' then
+          -- get the via setting
+          local viaSetting = nil
+          for _, l in ipairs(userSettings) do
+            if l.key == v.viaUserSettingsKey then
+              viaSetting = l
+              break
+            end
+          end
+          if viaSetting.value.model == "unselected" or viaSetting.value.config == "unselected" or not viaSetting.value.model or not viaSetting.value.config then
+            v.thumb = gameplay_missions_missions.getNoVehicleThumbFilepath()
+            v.l = "Custom: (None Selected)"
+            v.vehicleClass = nil
+            goto continue
+          end
+          local model = core_vehicles.getModel(viaSetting.value.model or "").model
+          if model then
+
+            local vehModelConfig
+            if model.Name then
+              vehModelConfig = model.Brand and model.Brand.." "..model.Name or model.Name
+            else
+              vehModelConfig = viaSetting.value.model
+            end
+            if not string.endswith(vehModelConfig, " ") then
+              vehModelConfig = vehModelConfig.." "
+            end
+
+            local config = viaSetting.value.config and core_vehicles.getModel(viaSetting.value.model).configs[viaSetting.value.config]
+            local thumb = nil
+
+            if config and config.Configuration then
+              --vehModelConfig = vehModelConfig..config.Configuration
+              thumb = config.preview
+            end
+            v.thumb = thumb
+            v.l = "Custom: "..vehModelConfig
+            extensions.load("gameplay_vehiclePerformance")
+            v.vehicleClass = gameplay_vehiclePerformance and gameplay_vehiclePerformance.getClassFromConfig(viaSetting.value.model, viaSetting.value.config) or nil
+          end
+          break
+        end
+        ::continue::
+      end
+      s.currentOption = s.values[s.value]
+    end
+  end
+end
+
 -- apply common settings for the mission
-function C:processCommonSettings(settings)
-  self.setupModules.vehicles._selectionIdx = settings.setupModuleVehicles or 0
+function C:processCommonSettings(flatSettings)
+  if gameplay_missions_missionManager.getForegroundMissionId() then
+    log("E","","called processCommonSettings during mission active! This shouldnt happen.")
+    print(debug.tracesimple())
+  end
+  local settings = self:getUserSettingsData() or {}
+  self.setupModules.vehicles._customVehicle = nil
+  local viaKey = nil
+  for _, s in ipairs(settings) do
+    if s.key == 'setupModuleVehicles' then
+      if s.values[flatSettings.setupModuleVehicles] and s.values[flatSettings.setupModuleVehicles].type == "custom" then
+        viaKey = s.values[flatSettings.setupModuleVehicles].viaUserSettingsKey
+      end
+    end
+  end
+  if viaKey then
+    self.setupModules.vehicles._customVehicle = flatSettings[viaKey]
+  end
+
+  self.setupModules.vehicles._selectionIdx = flatSettings.setupModuleVehicles or 0
   self.setupModules.vehicles.usePlayerVehicle = (self.setupModules.vehicles.enabled and self.setupModules.vehicles.vehicles and not self.setupModules.vehicles.vehicles[self.setupModules.vehicles._selectionIdx]) and true or false
-  self.setupModules.traffic.useTraffic = settings.setupModuleTraffic and true or false
-  self.setupModules.environment.time = settings.setupModuleEnvironmentTime or self.setupModules.environment.time
+  self.setupModules.vehicles.useCustomConfig = self.setupModules.vehicles._customVehicle ~= nil
+  self.setupModules.traffic.useTraffic = flatSettings.setupModuleTraffic and true or false
+  if flatSettings.setupModuleEnvironmentTime ~= nil and flatSettings.setupModuleEnvironmentTime ~= missionDefaultEnvironmentTimeValue then
+    self.setupModules.environment.time = flatSettings.setupModuleEnvironmentTime
+    self.setupModules.environment.normalizedTime = nil
+  end
 end
 
 function C:processUserSettings(settings)
@@ -200,7 +333,7 @@ function C:setBackwardsCompatibility(keyAliases)
     self.setupModules.vehicles.includePlayerVehicle = hasPlayerVehicle
     self.setupModules.vehicles.prioritizePlayerVehicle = prioritizePlayerVehicle
     self.setupModules.vehicles.vehicles = {}
-    self.setupModules.vehicles._compatibility = true -- DEVS: use this flag whenever new properties are added to setup modules
+    self.setupModules.vehicles._compatibility = true -- DEVS: use this flag whenever major categories are added or changed in setup modules
     self.additionalAttributes.vehicle = nil
 
     if playerModel then -- include the player vehicle info in the vehicles list
@@ -231,6 +364,11 @@ function C:setBackwardsCompatibility(keyAliases)
     self.setupModules.environment._compatibility = true
   end
 
+  if self.setupModules.environment and self.setupModules.environment.enabled and not self.setupModules.environment.cloudCover then
+    self.setupModules.environment.cloudCover = 0
+    self.setupModules.environment.cloudWindSpeed = 0
+  end
+
   if not self.additionalAttributes.vehicle then -- auto generates this attribute
     if not self.setupModules.vehicles.enabled then -- this assumes that the mission type will use the player vehicle
       self.additionalAttributes.vehicle = "own"
@@ -245,8 +383,26 @@ function C:setBackwardsCompatibility(keyAliases)
   end
 end
 
+function C:getEntryFee(userSettings)
+  local entryFee = self.careerSetup.entryFee or {}
+  if entryFee[1] then
+    local flat = {}
+    for _, e in ipairs(entryFee) do
+      flat[e.attributeKey] = e.rewardAmount
+    end
+    entryFee = flat
+  end
+  return next(entryFee) and entryFee or nil
+end
+function C:getDynamicStarReward(key, userSettings) end
+
 -- when the activity starts.
 function C:onStart()
+  gameplay_missions_missions.logMissionIssues(self)
+
+  if self.onPreStart then
+    self:onPreStart()
+  end
   if not self.mgr then
     local tempVariables = deepcopy(self.fgVariables)
 
@@ -255,7 +411,17 @@ function C:onStart()
     end
     self.oneOffVariables = nil
 
-    if self:setupFlowgraphManager(self.fgPath, tempVariables) then
+    if self.preprocessMissionTypeData then
+      tempVariables = self:preprocessMissionTypeData(tempVariables)
+    end
+
+    local fgPath = self.fgPath
+
+    if self.getFgPath then
+      fgPath = self:getFgPath()
+    end
+
+    if self:setupFlowgraphManager(fgPath, tempVariables) then
       log("E", "", "There has been an error setting up the FG. See errors above. ("..dumps(self.id)..")")
       return true
     end
@@ -294,6 +460,9 @@ function C:onStart()
     self.mgr:setRunning(true)
   end
   --self.mgr:broadcastCall('onStartActivity')
+  if self.script and self.script.onStart then
+    self.script:onStart()
+  end
 end
 
 function C:onFlowgraphStateStarted(stateName, state, transData)
@@ -308,6 +477,22 @@ function C:onFlowgraphStateStopped(stateName, state)
   end
 end
 
+function C:onMissionScreenReady(mode)
+  if self.script and self.script.onMissionScreenReady then
+    self.script:onMissionScreenReady(mode)
+  end
+
+  if mode == 'startScreen' and self.setupModules.environment and self.setupModules.environment.timeScale > 0 then -- if world time passed by, reset it here
+    local timeScale = self.setupModules.environment.timeScale
+    local tod = {
+      time = resolveEnvironmentTime(self.setupModules.environment, core_environment.getTimeOfDay()),
+      play = (timeScale or 0) > 0,
+    }
+    if (timeScale or 0) > 0 then tod.dayLength = 1800 / timeScale end
+    core_environment.setTimeOfDay(tod)
+  end
+end
+
 -- update each frame
 function C:onUpdate(dtReal, dtSim, dtRaw)
   --self.mgr:broadcastCall('onUpdate', dtReal, dtSim, dtRaw)
@@ -315,13 +500,12 @@ function C:onUpdate(dtReal, dtSim, dtRaw)
     self.script:onUpdate(dtReal, dtSim, dtRaw)
   end
 
-  -- TEMP: wind gets applied every frame; needs improvement!!
   if self.setupModules.environment and self.setupModules.environment._windVec then
     local wind = self.setupModules.environment._windVec
 
     for _, veh in ipairs(getAllVehicles()) do
       if veh:isReady() then
-        veh:queueLuaCommand("obj:setWind("..string.format('%2f, %2f, %2f', wind.x, wind.y, wind.z)..")")
+        veh:queueLuaCommand("obj:setWind("..string.format('%2f, %2f, %2f', wind.x, wind.y, wind.z)..")") -- wind gets applied every frame
       end
     end
   end
@@ -341,6 +525,13 @@ function C:onStop(data)
     --gameplay_missions_progress.saveMissionSaveData(self.id)
   end
   extensions.hook("onMissionProgressChanged", self)
+  if self.script and self.script.onStop then
+    self.script:onStop()
+  end
+
+  if self.onPostStop then
+    self:onPostStop()
+  end
 end
 
 function C:attemptAbandonMission()
@@ -373,7 +564,7 @@ function C:addOrSetVariable(name, value)
       return true
     end
   else
-    log("I", "", "Ignoring Mission Variable "..dumps(name).." for activity "..dumps(self.id) .." - The variable does not exist in the FG.")
+    log("D", "", "  Ignoring Mission Variable "..dumps(name).." for activity "..dumps(self.id) .." - The variable does not exist in the FG.")
     --if not self.mgr.variables:addVariable(name, value, t, mergeStrat, fixedType, undeletable) then
     --  log("E", "", "Cannot add fg variable "..dumps(name).." for activity "..dumps(self.id))
     --  return true
@@ -414,6 +605,56 @@ function C:getGameContextUiButtons()
   end
   table.sort(results, sortBtns)
   return results
+end
+
+function C:getRules()
+  local pages = {}
+  local rulesFiles = {}
+  for _, layer in ipairs(self.layers or {}) do
+    local rulesFolder = layer.dir .. "rules/"
+    arrayConcat(rulesFiles,FS:findFiles(rulesFolder, "*.html", -1, true, false))
+  end
+  table.sort(rulesFiles, function(a,b)
+    local _, fnA, _ = path.split(a)
+    local _, fnB, _ = path.split(b)
+    return fnA < fnB
+  end)
+  for _, file in ipairs(rulesFiles) do
+    local content = readFile(file):gsub("\r\n","")
+    table.insert(pages, content)
+  end
+  return pages
+end
+
+function C:hasRules()
+  -- disabled for now
+  return false
+  --return next(self:getRules()) ~= nil
+end
+
+function C:showRulesAsPopups()
+  local entries = {}
+  for _, page in ipairs(self:getRules()) do
+    local entry = {
+      type = "info",
+      content = page,
+      isPopup = true,
+    }
+    table.insert(entries, entry)
+  end
+  if next(entries) then
+    guihooks.trigger("introPopupTutorial", entries)
+  end
+end
+
+-- expose all script hooks to the mission type
+local scriptHooks = {'onVehicleReset'}
+for _, hook in ipairs(scriptHooks) do
+  C[hook] = function(self, ...)
+    if self.script and self.script[hook] then
+      self.script[hook](self, ...)
+    end
+  end
 end
 
 

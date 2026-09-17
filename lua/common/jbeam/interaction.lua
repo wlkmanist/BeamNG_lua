@@ -11,6 +11,18 @@ local jbeamUtils = require("jbeam/utils")
 
 local supportedFileVersion = 2
 
+local function applyActionIconOverrides(vehicle, actions)
+  local icons = vehicle.components and vehicle.components.actionIconOverrides
+  if type(icons) ~= 'table' then
+    return
+  end
+  for actionName, icon in pairs(icons) do
+    if type(actionName) == 'string' and type(icon) == 'string' and actions[actionName] then
+      actions[actionName].icon = icon
+    end
+  end
+end
+
 local function process(vehicle)
   profilerPushEvent('jbeam/interaction.process')
 
@@ -42,6 +54,8 @@ local function process(vehicle)
     ::continue::
   end
 
+  applyActionIconOverrides(vehicle, actions)
+
   --dump{'interactionGroups', interactionGroups}
   --dump{'actionCategories', actionCategories}
   --dump{'actions', actions}
@@ -53,7 +67,7 @@ local function process(vehicle)
   vehicle.actionCategories = actionCategories
   vehicle.inputActions = actions
 
-  profilerPopEvent() -- jbeam/interaction.process
+  profilerPopEvent('jbeam/interaction.process')
 end
 
 M.process = process

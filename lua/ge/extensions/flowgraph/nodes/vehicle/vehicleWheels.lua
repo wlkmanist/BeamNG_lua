@@ -4,25 +4,26 @@
 
 local im  = ui_imgui
 
-
 local C = {}
 
 C.name = 'Get Vehicle Wheel Center'
-C.description = 'Provides Vehicle front wheel center.'
+C.description = 'Provides average position of all wheels.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'number', name = 'vehId', default = 0, description = "Vehicle ID. If not present, player vehicle will be used." },
-  { dir = 'out', type = 'vec3', name = 'wheelCenter', description = "Average of all wheel positions." },
+  { dir = 'out', type = 'vec3', name = 'wheelCenter', description = "Average of all wheel positions." }
 }
-C.tags = {'telemtry','vehicle info'}
+
+C.tags = {'telemetry', 'wheel', 'info'}
 
 function C:init(mgr, ...)
 end
 
-local wCenter = vec3()
+local wCenter, wPos = vec3(), vec3()
+
 function C:work(args)
   local veh
   if self.pinIn.vehId.value then
@@ -33,19 +34,17 @@ function C:work(args)
   if not veh then return end
 
   wCenter:set(0,0,0)
-  local wCount = veh:getWheelCount()-1
+  local wCount = veh:getWheelCount() - 1
   if wCount > 0 then
-    for i=0, wCount do
+    for i = 0, wCount do
       local axisNodes = veh:getWheelAxisNodes(i)
-      local nodePos = veh:getNodePosition(axisNodes[1])
-      local wheelNodePos = vec3(nodePos.x, nodePos.y, nodePos.z)
-      wCenter = wCenter + wheelNodePos
+      wPos:set(veh:getNodePosition(axisNodes[1]))
+      wCenter:setAdd(wPos)
     end
-    wCenter = wCenter / (wCount+1)
-    wCenter = wCenter + veh:getPosition()
+    wCenter:setScaled(1 / (wCount + 1))
+    wCenter:setAdd(veh:getPosition())
   end
   self.pinOut.wheelCenter.value = wCenter:toTable()
-
 end
 
 return _flowgraph_createNode(C)

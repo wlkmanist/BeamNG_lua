@@ -4,6 +4,7 @@
 
 -- settings
 require("jit")
+require("lua/console/console-lib").initConsole()
 local physicsFPS = 2000
 local defaultVehicleCount = 40
 local testVehicles = {'pickup'}

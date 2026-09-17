@@ -18,9 +18,9 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       color = milestones.colorGeneralGray,
       maxStep = 8,
       getValue = function() return (gameplay_statistic.metricGet("vehicle/total_odometer.length", true) or {value=0}).value end,
-      getLabel = function(step, current, target) return "Long Distance Driver" end,
-      getDescription = function(step, current, target) return string.format("Drive a total distance of %0.1fkm.", target/1000) end,
-      getProgressLabel = function(step, current, target) return string.format("%0.1fkm / %0.1fkm", current/1000, target/1000) end,
+      getLabel = function(step, current, target) return "ui.career.milestones.statistic.distance.label" end,
+      getDescription = function(step, current, target) return {txt="ui.career.milestones.statistic.distance.description", context={distance = string.format("%0.1f", target/1000)}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.statistic.distance.progressLabel", context={current = string.format("%0.1f", current/1000), target = string.format("%0.1f", target/1000)}} end,
       getTarget = function(step) return step == 0 and 0 or ({10,20,35,60,90,145,215,300})[step]*1000 end,
       getRewards = milestones.majorLinear,
     },
@@ -34,9 +34,9 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       color = milestones.colorGeneralGray,
       maxStep = 8,
       getValue = function() return (gameplay_statistic.metricGet("general/mode/career.time", true) or {value=0}).value end,
-      getLabel = function(step, current, target) return "Play the Game" end,
-      getDescription = function(step, current, target) return string.format("Play the game for %dh.", target/3600) end,
-      getProgressLabel = function(step, current, target) return string.format("%dh %dm / %dh", math.floor(current / 3600),math.floor(((current % 3600) or 0) / 60),target/3600) end,
+      getLabel = function(step, current, target) return "ui.career.milestones.statistic.playtime.label" end,
+      getDescription = function(step, current, target) return {txt="ui.career.milestones.statistic.playtime.description", context={hours = target/3600}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.statistic.playtime.progressLabel", context={currentHours = math.floor(current / 3600), currentMinutes = math.floor(((current % 3600) or 0) / 60), targetHours = target/3600}} end,
       getTarget = function(step) return step == 0 and 0 or math.max(1,(step)*5)*3600 end,
       getRewards = milestones.majorLinear,
     },
@@ -50,9 +50,9 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       color = milestones.colorGeneralGray,
       maxStep = 8,
       getValue = function() return (gameplay_statistic.metricGet("vehicle/rollover", true)  or {value=0}).value end,
-      getLabel = function(step, current, target) return string.format('Rollovers') end,
-      getDescription = function(step, current, target) return string.format("Do %d rollovers in your vehicles.", target) end,
-      getProgressLabel = function(step, current, target) return string.format("%d / %d", current, target) end,
+      getLabel = function(step, current, target) return "ui.career.milestones.statistic.rollovers.label" end,
+      getDescription = function(step, current, target) return {txt="ui.career.milestones.statistic.rollovers.description", context={count = target}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.progress.count", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or math.max(1,math.floor(math.pow(step-1,1.5))*5) end,
       getRewards = milestones.majorLinear,
     },
@@ -66,9 +66,9 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       color = milestones.colorGeneralGray,
       maxStep = 8,
       getValue = function() return (gameplay_statistic.metricGet("vehicle/airtime.time", true) or {value=0}).value  end,
-      getLabel = function(step, current, target) return string.format('Airtime') end,
-      getDescription = function(step, current, target) return string.format("Be airborne with your vehicle for %dm %ds.", target/60, target%60) end,
-      getProgressLabel = function(step, current, target) return string.format("%dm %ds / %dm %ds", current/60, current%60, target/60, target%60) end,
+      getLabel = function(step, current, target) return "ui.career.milestones.statistic.airtime.label" end,
+      getDescription = function(step, current, target) return {txt="ui.career.milestones.statistic.airtime.description", context={minutes = math.floor(target/60), seconds = target%60}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.statistic.airtime.progressLabel", context={currentMinutes = math.floor(current/60), currentSeconds = math.floor(current%60), targetMinutes = math.floor(target/60), targetSeconds = target%60}} end,
       getTarget = function(step) return step == 0 and 0 or math.max(1,math.floor(math.pow(step,1.5)))*30 end,
       getRewards = milestones.majorLinear,
     },
@@ -97,11 +97,13 @@ local function registerStastisticCallback(milestone)
 
   M.clearStatisticCallback(milestone)
 
-  local step = milestones.saveData.general[milestone.id].claimedStep + 1
+  local saveEntry = milestones.saveData.general[milestone.id]
+  local step = math.max(saveEntry.claimedStep, saveEntry.notificationStep or 0) + 1
   if step < milestone.maxStep then
     local statCallback = function()
       log("I","",string.format("Milestone Reached: %s %0.2f!", milestone.getLabel(step), milestone.getTarget(step)))
       milestones.milestoneReached(milestone.getLabel(step))
+      saveEntry.notificationStep = step
       milestone._statCallback = nil
     end
     milestone._statCallback = statCallback

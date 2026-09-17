@@ -106,7 +106,7 @@ local function toggleAnnotations()
 
   toggleAnnotationVisualize("")
 
-  M.annotations = getConsoleVariable("$AnnotationVisualizeVar") == "1"
+  M.annotations = VariableRegistry.get("$AnnotationVisualizeVar", "0") == "1"
   if M.annotations then
     if M.ultrasonic then M.toggleUltrasonic() end
     if M.lidar then M.toggleLidar() end
@@ -171,7 +171,7 @@ end
 
 local function disableAll()
   if M.lidar then toggleLidar() end
-  if getConsoleVariable("$AnnotationVisualizeVar") == "1" then toggleAnnotations() end
+  if VariableRegistry.get("$AnnotationVisualizeVar", "0") == "1" then toggleAnnotations() end
   if M.ultrasonic then toggleUltrasonic() end
 end
 
@@ -256,7 +256,7 @@ end
 local function toggleVehicleSystemsCoupling()
   updateUI('<h2>Toggling vehicle coupling</h2>')
   if M.vehicleSystemsCoupling then
-    local veh = be:getObjectByID(M.vehicleSystemsCoupling)
+    local veh = getObjectByID(M.vehicleSystemsCoupling)
     updateUI('<h2>Vehicle coupling: OFF</h2>')
 
     if veh then

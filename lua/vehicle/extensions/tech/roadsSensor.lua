@@ -10,9 +10,11 @@ local latestReadings = {}       -- The collection of latest readings for each ro
 
 -- Send the roads sensor readings to ge lua.
 local function updateRoadsSensorGFXStep(dtSim, sensorId, isAdHocRequest, adHocRequestId)
+  local entry = roadsSensors[sensorId]
+  if entry == nil or entry.controller == nil then return end
 
   -- Get the latest roads sensor data from the controller.
-  local controller = roadsSensors[sensorId].controller
+  local controller = entry.controller
   local data = controller.getSensorData()
 
   -- If we are not ready to poll this roads sensor, then increment the timer and leave.
@@ -69,7 +71,12 @@ end
 
 local function getRoadsSensorReading(sensorId) return latestReadings[sensorId] end
 
-local function getLatest(sensorId) return roadsSensors[sensorId].controller.getLatest() end
+-- Return cached reading only (written by controller on physics step). Avoids calling into the
+-- controller from the encoder and prevents cross-thread access with updateGFX.
+local function getLatest(sensorId)
+  if roadsSensors[sensorId] == nil then return nil end
+  return latestReadings[sensorId]
+end
 
 local function updateGFX(dtSim)
   for sensorId, _ in pairs(roadsSensors) do

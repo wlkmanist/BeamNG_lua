@@ -133,8 +133,10 @@ function C:drawStopped()
     self:setupRace()
     self.state = 'setup'
   end
-  self:drawEventLog()
-  self:drawTimes()
+  if self.state == 'stopped' then -- prevents error if button was pressed
+    self:drawEventLog()
+    self:drawTimes()
+  end
 end
 
 function C:drawTimes()

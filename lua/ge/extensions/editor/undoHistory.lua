@@ -38,14 +38,16 @@ local function onEditorGui()
       imgui.SetTooltip("This will leave changes as they are. Warning, this action cannot be undone.")
     end
     imgui.Separator()
+
     imgui.Columns(2)
     imgui.TextUnformatted("Undo Stack")
+    imgui.SameLine()
     if imgui.Button("Undo Selected") then editor.undo(tableSize(editor.history.undoStack) - selectedIndex + 1) end
     imgui.BeginChild1("undos", imgui.ImVec2(0, imgui.GetContentRegionAvail().y))
     for k = tableSize(editor.history.undoStack), 1, -1 do
       local isSel = (k >= selectedIndex)
       local action = editor.history.undoStack[k]
-      imgui.PushID1(tostring(k))
+      imgui.PushID4(k)
       if imgui.Selectable1(tostring(k) .. ": " .. action.name, isSel) then selectedIndex = k end
       if imgui.IsItemHovered() then
         imgui.SetTooltip(getTooltipTextFromAction(action))
@@ -53,14 +55,17 @@ local function onEditorGui()
       imgui.PopID()
     end
     imgui.EndChild()
+
     imgui.NextColumn()
+
     imgui.TextUnformatted("Redo Stack")
+    imgui.SameLine()
     if imgui.Button("Redo Selected") then editor.redo(tableSize(editor.history.redoStack) - selectedIndex2 + 1) end
     imgui.BeginChild1("redos", imgui.ImVec2(0, imgui.GetContentRegionAvail().y))
     for k = tableSize(editor.history.redoStack), 1, -1 do
       local isSel = (k >= selectedIndex2)
       local action = editor.history.redoStack[k]
-      imgui.PushID1(tostring(k) .. "redo")
+      imgui.PushID1("redo_" .. tostring(k))
       if imgui.Selectable1(tostring(k) .. ": " .. action.name, isSel) then selectedIndex2 = k end
       if imgui.IsItemHovered() then
         imgui.SetTooltip(getTooltipTextFromAction(action))

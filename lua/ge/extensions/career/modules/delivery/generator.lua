@@ -5,7 +5,8 @@
 local M = {}
 M.dependencies = {"freeroam_facilities", "gameplay_sites_sitesManager", "util_configListGenerator"}
 local im = ui_imgui
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehOfferManager, dParcelMods, dVehOfferManager
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehOfferManager, dParcelMods, dVehicleTasks, dTutorial
+local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
@@ -13,8 +14,10 @@ M.onCareerActivated = function()
   dGenerator = career_modules_delivery_generator
   dProgress = career_modules_delivery_progress
   dVehOfferManager = career_modules_delivery_vehicleOfferManager
+  dTutorial = career_modules_delivery_tutorial
   dParcelMods = career_modules_delivery_parcelMods
-  dVehOfferManager = career_modules_delivery_vehicleOfferManager
+  dVehicleTasks = career_modules_delivery_vehicleTasks
+  step = util_stepHandler
 end
 
 -- data holders
@@ -147,17 +150,19 @@ local function finalizeParcelItemDistanceAndRewards(item)
 
   item.data.originalDistance = distance
   local template = deepcopy(M.getParcelTemplateById(item.templateId))
+  local xpAmount = baseXP + round(distance/1000)
+  local skillRewardKey = item.materialType and "logistics-materials" or "logistics-delivery"
+
   item.modifiers = dParcelMods.generateModifiers(item, template, distance)
   item.rewards = {
-    money = getMoneyRewardForParcelItem(item, distance) * dProgress.getMoneyMultiplerForSkill('delivery'),
-    beamXP = baseXP + round(distance/1000),
-    labourer = baseXP + round(distance/1000),
-    delivery = baseXP + round(distance/1000)
+    money = getMoneyRewardForParcelItem(item, distance),
+    logistics = xpAmount,
   }
+  item.rewards[skillRewardKey] = xpAmount + (template.isTutorialParcel and 10 or 0)
   if item.organization then
     local organizationData = freeroam_organizations.getOrganization(item.organization)
     if organizationData then
-      item.rewards[item.organization .. "Reputation"] = baseXP + round(distance/1000)
+      item.rewards[item.organization .. "Reputation"] = xpAmount
       item.rewards.money = item.rewards.money * organizationData.reputationLevels[organizationData.reputation.level+2].deliveryBonus.value
     end
   end
@@ -294,6 +299,41 @@ local function generateItemWithDuplicates(template, origin, destination, timeOff
 end
 
 local function triggerParcelGenerator(fac, generator, timeOffset)
+  -- Check if this is a tutorial generator
+  local isCargoDeliveryTutorialActive = dTutorial.isCargoDeliveryTutorialActive()
+
+  -- Skip tutorial generator if tutorial is completed
+  if generator.isTutorialGenerator and not isCargoDeliveryTutorialActive then
+    return
+  end
+
+  -- Skip non-tutorial generators if tutorial is active and facility is tutorial facility
+  if not generator.isTutorialGenerator and isCargoDeliveryTutorialActive and fac.isTutorialForCargoDelivery then
+    return
+  end
+
+  -- If tutorial is active and this is the tutorial generator, check if tutorial parcel already exists
+  if generator.isTutorialGenerator and isCargoDeliveryTutorialActive then
+    -- Check if tutorial parcel already exists at facility or in player's vehicle
+    local existingTutorialParcels = dParcelManager.getAllCargoForFacilityUnexpiredUndelivered(fac.id)
+    local playerCargo = dParcelManager.getAllCargoInVehicles(true)
+
+    -- Check if any of these are tutorial parcels
+    for _, cargo in ipairs(existingTutorialParcels) do
+      local template = M.getParcelTemplateById(cargo.templateId)
+      if template and template.isTutorialParcel then
+        return -- Tutorial parcel already exists, don't generate another
+      end
+    end
+
+    for _, cargo in ipairs(playerCargo) do
+      local template = M.getParcelTemplateById(cargo.templateId)
+      if template and template.isTutorialParcel then
+        return -- Player already has tutorial parcel
+      end
+    end
+  end
+
   -- how many new items should be generated?
   local typeAmount = math.random(generator.min, generator.max)
   -- proceed only if items are to be generated.
@@ -462,15 +502,19 @@ local function finalizeVehicleOffer(offer)
 
     offer.rewards = {
       money = filter.baseReward + round(filter.rewardPerKm * distance/1000),
-      beamXP = 5 + round(distance/400),
-      labourer = 5 + round(distance/400)
+      logistics = 5 + round(distance/400)
     }
     if offer.data.type == "vehicle" then
-      offer.rewards.money = offer.rewards.money * dProgress.getMoneyMultiplerForSkill('vehicleDelivery')
-      offer.rewards.vehicleDelivery = 5 + round(distance/400)
+      offer.rewards.money = offer.rewards.money
+      offer.rewards["logistics-vehicleDelivery"] = 5 + round(distance/400)
     elseif offer.data.type == "trailer" then
-      offer.rewards.money = offer.rewards.money * dProgress.getMoneyMultiplerForSkill('delivery')
-      offer.rewards.delivery = 5 + round(distance/400)
+      offer.rewards.money = offer.rewards.money
+      offer.rewards["logistics-delivery"] = 5 + round(distance/400)
+    end
+
+    -- Ensure tutorial vehicles give at least 10 XP
+    if offer.data.isTutorialVehicle then
+      offer.rewards["logistics-vehicleDelivery"] = math.max(10, offer.rewards["logistics-vehicleDelivery"])
     end
     if offer.organization then
       offer.rewards[offer.organization .. "Reputation"] = 5 + round(distance/4000)
@@ -482,10 +526,53 @@ M.finalizeVehicleOffer = finalizeVehicleOffer
 
 local testVehicleList
 local function triggerVehicleOfferGenerator(fac, generator, timeOffset)
+  -- Check if this is a tutorial generator
+  local isVehicleDeliveryTutorialActive = dTutorial.isVehicleDeliveryTutorialActive()
+
+  -- Skip tutorial generator if tutorial is completed
+  if generator.isTutorialGenerator and not isVehicleDeliveryTutorialActive then
+    return
+  end
+
+  -- Skip non-tutorial generators if tutorial is active and facility is tutorial facility
+  if not generator.isTutorialGenerator and isVehicleDeliveryTutorialActive and fac.isTutorialForVehicleDelivery then
+    return
+  end
+
+  -- If tutorial is active and this is the tutorial generator, check if tutorial vehicle already exists
+  if generator.isTutorialGenerator and isVehicleDeliveryTutorialActive then
+    -- Check if tutorial vehicle already exists at facility or in player's vehicle
+    local existingTutorialVehicles = dVehOfferManager.getAllOfferAtFacilityUnexpired(fac.id)
+    local playerVehicleTasks = dVehicleTasks.getVehicleTasks()
+
+    -- Check if any of these are tutorial vehicles
+    for _, offer in ipairs(existingTutorialVehicles) do
+      if offer.data and offer.data.isTutorialVehicle then
+        return -- Tutorial vehicle already exists, don't generate another
+      end
+    end
+
+    for _, task in ipairs(playerVehicleTasks) do
+      if task.offer and task.offer.data and task.offer.data.isTutorialVehicle then
+        return -- Player already has tutorial vehicle
+      end
+    end
+  end
+
   local count = math.random(generator.min, generator.max)
+
+  -- For tutorial vehicles, only generate one
+  if generator.isTutorialGenerator and isVehicleDeliveryTutorialActive then
+    count = 1
+  end
 
   for  i = 1, count do
     local logisticType = randomFromList(generator.logisticTypes)
+
+
+    if generator.isTutorialGenerator and isVehicleDeliveryTutorialActive then
+      logisticType = "tutorialVehicleDelivery" -- Use vehicle delivery type for tutorial
+    end
 
     local originAp = selectAccessPointByLookupKeyByType(fac.accessPointsByName, logisticType, "logisticTypesProvidedLookup")
     if not originAp then
@@ -527,6 +614,9 @@ local function triggerVehicleOfferGenerator(fac, generator, timeOffset)
       }
       type = "vehicle"
       name = "Vehicle Transport"
+      if generator.isTutorialGenerator and isVehicleDeliveryTutorialActive then
+        name = "Tutorial Vehicle Transport: " .. name
+      end
     elseif vehType == "trailer" then
       task = {
         type = "trailerDropOff",
@@ -562,7 +652,8 @@ local function triggerVehicleOfferGenerator(fac, generator, timeOffset)
       origin = origin,
 
       data = {
-        type = type
+        type = type,
+        isTutorialVehicle = generator.isTutorialGenerator and isVehicleDeliveryTutorialActive
       },
 
       generatorLabel = generator.name,
@@ -759,7 +850,7 @@ local function addMaterialAsParcelToContainer(con, storage, amount, sourceFacId,
 
   local item = {
     templateId = -1,
-    name = string.format("%s from %s",materialData.name, fac.name),
+    name = string.format("%s from %s",_tr(materialData.name), _tr(fac.name)),
     type = materialData.type,
     slots = amount,
     materialType = materialType,
@@ -869,7 +960,7 @@ local function changeMaterialAmountInFacility(facId, materialType, change)
   if not fac.materialStorages or not fac.materialStorages[materialType] then return end
 
   local storage = fac.materialStorages[materialType]
-  local facName = translateLanguage(fac.name, fac.name, true)
+  local facName = _tr(fac.name)
   log("I","",string.format("Moved %d %s from %s (%d -> %d)", change, materialType, facName, storage.storedVolume, storage.storedVolume + change))
 
   storage.storedVolume = storage.storedVolume + change
@@ -893,9 +984,8 @@ local function finalizeMaterialDistanceRewards(item, destination)
   --(3+(max(0,($D24/2000)-1))) * (E$23/400)
   local distance = getDistanceBetweenFacilities(item.origin, destination)
   local xpAmount = round((3+math.max(0,(distance/2000)-1)) * (item.slots / 400))
-  item.rewards.beamXP = xpAmount
-  item.rewards.labourer = xpAmount
-  item.rewards.delivery = xpAmount
+  item.rewards.logistics = xpAmount
+  item.rewards["logistics-materials"] = xpAmount
 
   if item.organization then
     local organizationData = freeroam_organizations.getOrganization(item.organization)
@@ -1343,7 +1433,7 @@ local function setupFacilities(loadData)
     end
   ]]
 
-    table.sort(facilities, function(a,b) return translateLanguage(a.name, a.name, true) < translateLanguage(b.name, b.name, true)end)
+    table.sort(facilities, function(a,b) return _tr(a.name) < _tr(b.name)end)
 
     log("I","",string.format("Setup Logistics Facilities: %d Facilities (%d only provide, %d mixed, %d only receive), %d Parking spots", #tableKeys(facilitiesById), countProviders, countMixed, countReceivers, #tableKeys(parkingSpotsByPath)))
     facilitiesSetup = true

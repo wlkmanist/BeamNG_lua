@@ -15,11 +15,25 @@ local function ping(params)
   return {ping = true}
 end
 
+local function latchesOpen()
+  for k, v in pairs(controller.getControllersByType("advancedCouplerControl")) do
+    v.detachGroup()
+  end
+end
+
+local function latchesClose()
+  for k, v in pairs(controller.getControllersByType("advancedCouplerControl")) do
+    v.tryAttachGroupImpulse()
+  end
+end
+
 local function requestRegistration(gi)
   gi.registerModule(moduleName, M.moduleActions, M.moduleLookups)
 end
 
 local function onExtensionLoaded()
+  M.moduleActions.latchesOpen = latchesOpen
+  M.moduleActions.latchesClose = latchesClose
   M.moduleLookups.ping = ping
 end
 

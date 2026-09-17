@@ -8,17 +8,17 @@ C.windowDescription = 'Sites'
 
 function C:init(sitesEditor, key, elementEditor)
   self.key = key
-  self.sitesEditor = sitesEditor
   self.index = nil
   self.mouseInfo = {}
+  self.sitesEditor = sitesEditor
   self.elementEditor = elementEditor
+  self.customFieldsUtil = require('/lua/ge/extensions/editor/util/customFieldsUtil')(key)
   self.createByShift = true
   self.selectByClick = true
   self.search = im.ArrayChar(256, "")
   editor.selection[self.key] = {}
   self.selections = editor.selection[self.key]
-  self.currTags = {}
-  self.sharedSelectedTags = {}
+  self.activeTags = {}
 end
 
 function C:setSites(sites)
@@ -26,13 +26,17 @@ function C:setSites(sites)
   self.objects = sites[self.key].objects
   self.sorted = sites[self.key].sorted
   self.elementEditor:setSites(sites)
+  self:updateActiveTags()
+end
 
+function C:updateActiveTags()
+  table.clear(self.activeTags)
   for _, o in pairs(self.objects) do
     for _, tag in ipairs(o.customFields.sortedTags) do
-      if not self.currTags[tag] then
-        self.currTags[tag] = 1
+      if not self.activeTags[tag] then
+        self.activeTags[tag] = 1
       else
-        self.currTags[tag] = self.currTags[tag] + 1
+        self.activeTags[tag] = self.activeTags[tag] + 1
       end
     end
   end
@@ -67,12 +71,11 @@ function C:selectElement(id, mode)
   local idx = mode ~= 'add' and arrayFindValueIndex(self.selections, id)
   if idx then
     table.remove(self.selections, idx)
-    self:updateSharedSelectedTags()
   else
     table.insert(self.selections, id)
-    self:updateSharedSelectedTags()
   end
-  self.index = self.selections[1]
+
+  self.index = self.selections[#self.selections]
 
   for _, o in pairs(self.objects) do
     o._drawMode = 'normal'
@@ -82,13 +85,14 @@ function C:selectElement(id, mode)
       end
     end
   end
-  local elem = self.objects[self.selections[1]]
+  local elem = self.objects[self.index]
   if not elem or elem.missing then
     elem = nil
   end
 
   --if self.sitesEditor.allowGizmo() then
   self.elementEditor:select(elem)
+  self:updateActiveTags()
   --end
 
   if elem then
@@ -99,37 +103,9 @@ function C:selectElement(id, mode)
     self.color[2] = im.Float(elem.color.z)
     self.color[3] = im.Float(1)
     self.fields = {}
-    self.addFieldText = im.ArrayChar(256, "")
-    self.addTagText = im.ArrayChar(256, "")
+    self.customFieldsUtil:setFields(elem.customFields)
+    self.customFieldsUtil.presetTags = tableKeysSorted(self.activeTags)
   end
-end
-
-function C:updateSharedSelectedTags()
-  local tmpTags = {}
-  -- go through all selections
-  for _, id in ipairs(self.selections) do
-
-    -- go through all their tags
-    for _, tag in ipairs(self.objects[id].customFields.sortedTags) do
-
-      -- check if already approved tag
-      if tmpTags[tag] then
-        goto continue
-      end
-
-      -- check if all selections share this tag
-      for _, compareId in ipairs(self.selections) do
-        if not tableContains(self.objects[compareId].customFields.sortedTags, tag) then
-          goto continue
-        end
-      end
-      tmpTags[tag] = true
-
-      :: continue ::
-    end
-  end
-
-  self.sharedSelectedTags = tmpTags
 end
 
 function C:draw(mouseInfo)
@@ -188,7 +164,7 @@ function C:setField(name, value)
 end
 
 function C:drawList()
-  local avail = im.GetContentRegionAvail()
+  --local avail = im.GetContentRegionAvail()
   local disabled = self.selections[2] and true or false
 
   im.BeginChild1(self.key, im.ImVec2(180 * im.uiscale[0], 0), im.WindowFlags_ChildWindow)
@@ -270,9 +246,9 @@ function C:drawList()
       im.Separator()
       --editor.drawAxisGizmo()
       self.elementEditor:drawElement(o, self.mouseInfo)
+
       im.Separator()
-      self:drawTags(o.customFields)
-      im.Separator()
+
       self:drawCustomFields(o.customFields)
     else
       self:selectElement(nil)
@@ -282,76 +258,7 @@ function C:drawList()
 end
 
 function C:drawCustomFields(fields)
-  im.Text("Custom Fields")
-  local remove
-  for i, name in ipairs(fields.names) do
-    if fields.types[name] == 'string' then
-      if not self.fields[name] then
-        self.fields[name] = im.ArrayChar(4096, fields.values[name])
-      end
-      local editEnded = im.BoolPtr(false)
-      editor.uiInputText(name, self.fields[name], nil, nil, nil, nil, editEnded)
-      if editEnded[0] then
-        for _, id in ipairs(self.selections) do
-          self.objects[id].customFields.values[name] = ffi.string(self.fields[name])
-        end
-      end
-    elseif fields.types[name] == 'number' then
-      if not self.fields[name] then
-        self.fields[name] = im.FloatPtr(fields.values[name])
-      end
-      local editEnded = im.BoolPtr(false)
-      editor.uiInputFloat(name, self.fields[name], nil, nil, nil, nil, editEnded)
-      if editEnded[0] then
-        for _, id in ipairs(self.selections) do
-          self.objects[id].customFields.values[name] = (self.fields[name])[0]
-        end
-      end
-    elseif fields.types[name] == 'vec3' then
-      debugDrawer:drawTextAdvanced((fields.values[name]),
-              String(name),
-              ColorF(1, 1, 1, 1), true, false,
-              ColorI(0, 0, 0, 1 * 255))
-      debugDrawer:drawSphere((fields.values[name]), 1, ColorF(1, 0, 0, 0.5))
-      if not self.fields[name] then
-        self.fields[name] = im.ArrayFloat(3)
-        self.fields[name][0] = fields.values[name].x
-        self.fields[name][1] = fields.values[name].y
-        self.fields[name][2] = fields.values[name].z
-      end
-      local editEnded = im.BoolPtr(false)
-      editor.uiInputFloat3(name, self.fields[name], nil, nil, editEnded)
-      if editEnded[0] then
-        local tbl = { self.fields[name][0], self.fields[name][1], self.fields[name][2] }
-        fields.values[name] = vec3(tbl)
-      end
-    end
-    im.SameLine()
-    if im.SmallButton("X##" .. i) then
-      remove = name
-    end
-  end
-  if remove then
-    for _, id in ipairs(self.selections) do
-      self.objects[id].customFields:remove(remove)
-    end
-  end
-
-  editor.uiInputText("##new", self.addFieldText)
-  if im.Button("New String") then
-    for _, id in ipairs(self.selections) do
-      self.objects[id].customFields:add(ffi.string(self.addFieldText), 'string', "value")
-    end
-    self.addFieldText = im.ArrayChar(256, "")
-  end
-  im.SameLine()
-  if im.Button("New Number") then
-    for _, id in ipairs(self.selections) do
-      self.objects[id].customFields:add(ffi.string(self.addFieldText), 'number', 0)
-    end
-    self.addFieldText = im.ArrayChar(256, "")
-  end
-  im.Separator()
+  self.customFieldsUtil:widget()
 
   if im.Button("Copy Fields") then
     self.cfData = fields:onSerialize()
@@ -363,117 +270,17 @@ function C:drawCustomFields(fields)
   end
   if im.Button("Paste Fields") then
     fields:onDeserialized(self.cfData)
-    self:updateSharedSelectedTags()
   end
   if not self.cfData then
     im.EndDisabled()
   end
   im.tooltip("Pastes the stored custom fields into this object.")
-  --im.SameLine()
-  --if im.Button("Populate Others") then
-    --local cfData = fields:onSerialize()
-    --for _, o in ipairs(self.sorted) do
-      --o.customFields:onDeserialized(cfData)
-    --end
-  --end
-  --im.tooltip("Replaces all other object's custom fields with the contents of this one.")
-end
-
-function C:drawTags()
-  if #self.selections > 1 then
-    im.Text("Shared Tags")
-  else
-    im.Text("Tags")
-  end
-  local padding = im.GetStyle().FramePadding
-  local totalWidth = im.GetContentRegionAvailWidth()
-  local removeTag
-  im.BeginChild1("##child1", im.ImVec2(0, 22), false)
-  im.SetCursorPosY(im.GetCursorPosY() + 2)
-  if not self.sharedSelectedTags or tableSize(self.sharedSelectedTags) == 0 then
-    im.Text("No Tags yet")
-  else
-    for t, _ in pairs(self.sharedSelectedTags or {}) do
-      if im.GetCursorPosX() + im.CalcTextSize(t).x + 10 > totalWidth then
-        im.EndChild()
-        im.BeginChild1(t, im.ImVec2(0, 22), false)
-        im.SetCursorPosY(im.GetCursorPosY() + 2)
-      end
-      if im.SmallButton(t) then
-        self.popupTag = t
-        im.OpenPopup("TagPopup")
-      end
-      im.SameLine()
-    end
-    if self.popupTag and im.BeginPopup("TagPopup") then
-      im.Text("Tag: " .. self.popupTag)
-      im.Separator()
-      if im.Selectable1("Remove Tag") then
-        removeTag = self.popupTag
-      end
-      im.EndPopup()
-    end
-  end
-
-  im.EndChild()
-  if removeTag then
-    for _, id in ipairs(self.selections) do
-      self.objects[id].customFields:removeTag(removeTag)
-
-      if self.currTags[removeTag] == 1 then
-        self.currTags[removeTag] = nil
-      else
-        self.currTags[removeTag] = self.currTags[removeTag] - 1
-      end
-
-      self:updateSharedSelectedTags()
-    end
-  end
-  if editor.uiInputText("##tagInput", self.addTagText, nil, im.InputTextFlags_EnterReturnsTrue) then
-    self:addTag()
-  end
-  im.SameLine()
-  if tableSize(self.currTags) >= 1 then
-    im.PushItemWidth(45)
-    if im.BeginCombo("##tagSelect", "...") then
-      for tag, _ in pairs(self.currTags) do
-        if im.Selectable1(tag) then
-          self.addTagText = im.ArrayChar(256, tag)
-          self:addTag()
-        end
-      end
-      im.EndCombo()
-    end
-    im.PopItemWidth()
-  end
-  im.SameLine()
-  if im.Button("Add Tag") then
-    self:addTag()
-  end
-end
-
-function C:addTag()
-  local tag = ffi.string(self.addTagText)
-  if tag == '' then
-    return
-  end
-
-  for _, id in ipairs(self.selections) do
-    self.objects[id].customFields:addTag(tag)
-
-    if not self.currTags[tag] then
-      self.currTags[tag] = 1
-    else
-      self.currTags[tag] = self.currTags[tag] + 1
-    end
-  end
-  self:updateSharedSelectedTags()
-  self.addTagText = im.ArrayChar(256, "")
 end
 
 function C:getCurrentSelected()
   return self.objects and self.objects[self.index] or nil
 end
+
 return function(...)
   local o = {}
   setmetatable(o, C)

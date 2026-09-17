@@ -11,6 +11,8 @@ local sensorMgr = require('extensions/tech/sensors')
 local vSensors = require('editor/sensorConfigurationEditor')                                        -- The sensor configuration (vehicles) module.
 local dat = require('tech/cosimulationNames')
 local csvlib = require('csvlib')
+local signalListGenerator = require('util/signalListGenerator')
+local vehicleSignalData = require('util/vehicleSignalData')
 
 -- Module constants.
 local im = ui_imgui
@@ -18,13 +20,14 @@ local abs, min, max, floor, ceil = math.abs, math.min, math.max, math.floor, mat
 
 -- Module constants (UI).
 local names, groups = dat.names, dat.groups                                                         -- The common string values used with cosimulation coupling.
-local toolWinName, toolWinSize = 'cosimulationSignalEditor', im.ImVec2(396, 225)                    -- The main tool window of the editor. The main UI entry point.
-local signalsWinName, signalsWinSize = 'SignalsWindow', im.ImVec2(676, 515)                         -- The vehicle signals window.
+local toolWinName, toolWinSize = 'cosimulationSignalEditor', im.ImVec2(580, 225)                    -- The main tool window of the editor. The main UI entry point.
+local signalsWinName, signalsWinSize = 'SignalsWindow', im.ImVec2(750, 600)                         -- The vehicle signals window.
 local isSignalsWinOpen = false                                                                      -- A flag which indicates if the vehicle signals window is open or closed.
 local dullWhite = im.ImVec4(1, 1, 1, 0.5)                                                           -- Some commonly-used Imgui colour vectors.
 local redB, redD = im.ImVec4(0.7, 0.5, 0.5, 1), im.ImVec4(0.7, 0.5, 0.5, 0.5)
 local greenB, greenD = im.ImVec4(0.5, 0.7, 0.5, 1), im.ImVec4(0.5, 0.7, 0.5, 0.5)
 local blueB, blueD = im.ImVec4(0.5, 0.5, 0.7, 1), im.ImVec4(0.5, 0.5, 0.7, 0.5)
+local orangeB = im.ImVec4(184/255, 127/255, 75/255, 1)
 
 -- Module state (back-end).
 local vehicles = {}                                                                                 -- An ordered list of all vehicles currently in the scene.
@@ -36,14 +39,90 @@ local isExecuting = false                                                       
 local isVluaDataReturned = false                                                                    -- A flag which indicates if requested vlua data has returned to ge lua.
 local isRequestSent = false                                                                         -- A flag which indicates if a request has been sent to vlua.
 
+-- True until buildSignalList has run for the current category filter / vehicle data generation.
+local signalsListNeedsRebuild = true
+
 -- Module state (front-end).
 local compTime3rdParty = im.FloatPtr(0.0005)                                                        -- The expected 3rd party computation time (per cycle).
 local pingTime = im.FloatPtr(0.00001)                                                               -- The expected udp socket ping time.
 local sIP, rIP = im.ArrayChar(16, "127.0.0.1"), im.ArrayChar(16, "127.0.0.1")                       -- The IP addresses for the udp communication (3rd party computer).
 local sPort, rPort = im.IntPtr(64890), im.IntPtr(64891)                                             -- The port numbers for the udp communication.
-local isKinematics, isDriver, isWheels = im.BoolPtr(true), im.BoolPtr(true), im.BoolPtr(true)       -- Flags which indicate which groups to include in avail. signals list.
+
+
+local isKinematics, isDriver, isWheels = im.BoolPtr(true), im.BoolPtr(true), im.BoolPtr(true)
 local isElectrics, isPowertrain, isSensors = im.BoolPtr(true), im.BoolPtr(true), im.BoolPtr(true)
 local isPose = im.BoolPtr(false)                                                                    -- A flag which indicates whether to store the vehicle pose, or not.
+
+-- Set when "Select all listed" / "Unselect all listed" is clicked; applied after signal list rebuild.
+local pendingSelectAllListed = false
+local pendingUnselectAllListed = false
+
+-- Text filter for the signals list (group, name, description, type).
+local signalListFilterBuf = im.ArrayChar(256, "")
+-- When enabled, only rows currently set to incoming (From / 3rd party -> BeamNG) are shown.
+local showIncomingDirectionOnly = im.BoolPtr(false)
+
+local function trimString(s)
+  return (tostring(s or ""):gsub("^%s*(.-)%s*$", "%1"))
+end
+
+local function signalRowMatchesFilter(signal)
+  if showIncomingDirectionOnly[0] then
+    if signal.readOnly or not signal.isFrom then
+      return false
+    end
+  end
+  local q = trimString(string.lower(ffi.string(signalListFilterBuf)))
+  if q == "" then
+    return true
+  end
+  local function fieldMatches(v)
+    return string.find(string.lower(tostring(v or "")), q, 1, true)
+  end
+  return fieldMatches(signal.groupName) or fieldMatches(signal.name) or fieldMatches(signal.description) or fieldMatches(signal.type)
+end
+
+-- Persists include/from/mode choices across signal list rebuilds (category toggles, reload).
+local savedSignalChoices = {}
+
+local function signalSelectionKey(s)
+  return s.groupName .. '\0' .. s.name
+end
+
+local function snapshotSignalChoicesFrom(list)
+  for i = 1, #list do
+    local s = list[i]
+    savedSignalChoices[signalSelectionKey(s)] = {
+      isIncluded = s.isIncluded,
+      isFrom = s.isFrom,
+      isMultiply = s.isMultiply,
+      isAdd = s.isAdd,
+      isFreeze = s.isFreeze,
+    }
+  end
+end
+
+local function clearSignalChoicesStorage()
+  table.clear(savedSignalChoices)
+end
+
+local function applySavedSignalChoices(list)
+  for i = 1, #list do
+    local s = list[i]
+    local p = savedSignalChoices[signalSelectionKey(s)]
+    if p then
+      s.isIncluded = p.isIncluded
+      if not s.readOnly then
+        s.isFrom = p.isFrom
+        s.isMultiply = p.isMultiply
+        s.isAdd = p.isAdd
+        s.isFreeze = p.isFreeze
+      else
+        s.isFrom = false
+      end
+    end
+  end
+end
 
 
 -- Compute the vehicle space position of a sensor, given the local reference frame coefficients.
@@ -67,6 +146,7 @@ end
 -- The callback function for use when collecting vehicle data from vlua.
 local function updateCollectedVehicleData(collectedData)
   cData, isVluaDataReturned = lpack.decode(collectedData), true
+  vehicleSignalData.setData(cData)
 end
 
 -- Populate the current vehicles list.
@@ -78,884 +158,128 @@ local function getCurrentVehicleList()
       vid = vid, veh = veh, name = veh:getName(),
       jBeam = veh.JBeam, config = veh:getField('partConfig', '0')}
     ctr = ctr + 1
+    -- Match sensorConfigurationEditor: ensure a sensor table exists per vid so cosim/VSL see the same config.
+    if not vSensors.sensorConfigs[vid] then
+      vSensors.sensorConfigs[vid] = {}
+    end
   end
 end
 
--- Populates the current available signals list.
-local function updateSignalsList()
-
-  -- Dispatch a request to vlua, to collect all the relevant possible signals.
-  if not isRequestSent then
-    table.clear(cData)
-    isRequestSent, isVluaDataReturned = true, false
-    local vid = vehicles[selectedVehicleIdx].vid
-    be:queueObjectLua(vid, "extensions.tech_vehicleSearcher.collectVehicleData()")
+local function syncSensorConfigsFromVehicle()
+  extensions.load('tech_sensors')
+  extensions.load('editor_sensorConfigurationEditor')
+  if vSensors.syncFromActiveSensors then
+    vSensors.syncFromActiveSensors()
   end
+end
 
-  -- Do not go any further until the requested data has been returned from vlua.
-  if not isVluaDataReturned then
+local function invalidateVehicleSignalData()
+  isRequestSent, isVluaDataReturned = false, false
+  table.clear(cData)
+end
+
+local function markSignalsListStale()
+  signalsListNeedsRebuild = true
+  table.clear(signals)
+end
+
+local function applySelectAllListed()
+  for i = 1, #signals do
+    signals[i].isIncluded = true
+  end
+  snapshotSignalChoicesFrom(signals)
+  log('I', logTag, string.format('Select all listed: %d rows', #signals))
+end
+
+local function applyUnselectAllListed()
+  for i = 1, #signals do
+    signals[i].isIncluded = false
+  end
+  snapshotSignalChoicesFrom(signals)
+  log('I', logTag, string.format('Unselect all listed: %d rows', #signals))
+end
+
+local function buildSignalsListFromCache()
+  local vehicle = vehicles[selectedVehicleIdx]
+  if not vehicle then
     return false
   end
-  isRequestSent, isVluaDataReturned = false, false
-  local vid = vehicles[selectedVehicleIdx].vid
-
-  -----------------------
-  -- Kinematics Group:
-  -----------------------
-  if isKinematics[0] then
-
-    -- Vehicle position.
-    signals[#signals + 1] = {
-      name = names.vehiclePositionX, groupName = groups.kinematics, description = 'Vehicle position - Lateral - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.vehiclePositionY, groupName = groups.kinematics, description = 'Vehicle position - Longitudinal - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.vehiclePositionZ, groupName = groups.kinematics, description = 'Vehicle position - Vertical - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = true }
-
-    -- Vehicle velocity.
-    signals[#signals + 1] = {
-      name = names.vehicleVelocityX, groupName = groups.kinematics, description = 'Vehicle velocity - Lateral - m/s',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.vehicleVelocityY, groupName = groups.kinematics, description = 'Vehicle velocity - Longitudinal - m/s',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.vehicleVelocityZ, groupName = groups.kinematics, description = 'Vehicle velocity - Vertical - m/s',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = true }
-
-    -- Vehicle acceleration.
-    signals[#signals + 1] = {
-      name = names.vehicleAccelerationX, groupName = groups.kinematics, description = 'Vehicle acceleration - Lateral - ms^-2',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleAccelerationY, groupName = groups.kinematics, description = 'Vehicle acceleration - Longitudinal - ms^-2',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleAccelerationZ, groupName = groups.kinematics, description = 'Vehicle acceleration - Vertical - ms^-2',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Vehicle roll/pitch/yaw.
-    signals[#signals + 1] = {
-      name = names.vehicleRoll, groupName = groups.kinematics, description = 'Roll angle - rad',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehiclePitch, groupName = groups.kinematics, description = 'Pitch angle - rad',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleYaw, groupName = groups.kinematics, description = 'Yaw angle - rad',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Vehicle roll/pitch/yaw rate.
-    signals[#signals + 1] = {
-      name = names.vehicleRollRate, groupName = groups.kinematics, description = 'Roll rate - rad/s',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehiclePitchRate, groupName = groups.kinematics, description = 'Pitch rate - rad/s',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleYawRate, groupName = groups.kinematics, description = 'Yaw rate - rad/s',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Ground speed.
-    signals[#signals + 1] = {
-      name = names.vehicleGroundSpeed, groupName = groups.kinematics, description = 'Vehicle ground speed - m/s',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Altitude.
-    signals[#signals + 1] = {
-      name = names.vehicleAltitude, groupName = groups.kinematics, description = 'Vehicle altitude - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Vehicle local orthonormal frame.
-    signals[#signals + 1] = {
-      name = names.vehicleForwardX, groupName = groups.kinematics, description = 'Unit forward vector - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleForwardY, groupName = groups.kinematics, description = 'Unit forward vector - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleForwardZ, groupName = groups.kinematics, description = 'Unit forward vector - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleUpX, groupName = groups.kinematics, description = 'Unit up vector - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleUpY, groupName = groups.kinematics, description = 'Unit up vector - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleUpZ, groupName = groups.kinematics, description = 'Unit up vector - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleRightX, groupName = groups.kinematics, description = 'Unit right vector - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleRightY, groupName = groups.kinematics, description = 'Unit right vector - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleRightZ, groupName = groups.kinematics, description = 'Unit right vector - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Vehicle length/width/height (initial values).
-    signals[#signals + 1] = {
-      name = names.vehicleInitialLength, groupName = groups.kinematics, description = 'Initial vehicle length - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleInitialWidth, groupName = groups.kinematics, description = 'Initial vehicle width - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleInitialHeight, groupName = groups.kinematics, description = 'Initial vehicle height - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Vehicle Center-of-Gravity (COG) [with and without wheels included].
-    signals[#signals + 1] = {
-      name = names.vehicleCOGWithWheelsX, groupName = groups.kinematics, description = 'COG (inc. wheels) - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleCOGWithWheelsY, groupName = groups.kinematics, description = 'COG (inc. wheels) - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleCOGWithWheelsZ, groupName = groups.kinematics, description = 'COG (inc. wheels) - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleCOGWithoutWheelsX, groupName = groups.kinematics, description = 'COG (not inc. wheels) - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleCOGWithoutWheelsY, groupName = groups.kinematics, description = 'COG (not inc. wheels) - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleCOGWithoutWheelsZ, groupName = groups.kinematics, description = 'COG (not inc. wheels) - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Vehicle mid-front-bumper and mid-rear-bumper positions.
-    signals[#signals + 1] = {
-      name = names.vehicleMidFrontBumperX, groupName = groups.kinematics, description = 'Front bumper midpoint - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleMidFrontBumperY, groupName = groups.kinematics, description = 'Front bumper midpoint - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleMidFrontBumperZ, groupName = groups.kinematics, description = 'Front bumper midpoint - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleMidRearBumperX, groupName = groups.kinematics, description = 'Rear bumper midpoint - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleMidRearBumperY, groupName = groups.kinematics, description = 'Rear bumper midpoint - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleMidRearBumperZ, groupName = groups.kinematics, description = 'Rear bumper midpoint - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Vehicle front-axle-midpoint and rear-axle-midpoint positions.
-    signals[#signals + 1] = {
-      name = names.vehicleFrontAxleMidpointX, groupName = groups.kinematics, description = 'Front axle midpoint - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleFrontAxleMidpointY, groupName = groups.kinematics, description = 'Front axle midpoint - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleFrontAxleMidpointZ, groupName = groups.kinematics, description = 'Front axle midpoint - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleRearAxleMidpointX, groupName = groups.kinematics, description = 'Rear axle midpoint - Lat - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleRearAxleMidpointY, groupName = groups.kinematics, description = 'Rear axle midpoint - Long - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-    signals[#signals + 1] = {
-      name = names.vehicleRearAxleMidpointZ, groupName = groups.kinematics, description = 'Rear axle midpoint - Vert - meters',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-  end
-
-  -----------------------
-  -- Driver Control Group:
-  -----------------------
-
-  if isDriver[0] then
-
-    -- Throttle pedal.
-    signals[#signals + 1] = {
-      name = names.throttle, groupName = groups.driver, description = 'Throttle pedal - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = true, readOnly = false, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.throttleInput, groupName = groups.driver, description = 'Throttle pedal input value - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Brake pedal.
-    signals[#signals + 1] = {
-      name = names.brake, groupName = groups.driver, description = 'Brake pedal - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = true, readOnly = false, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.brakeInput, groupName = groups.driver, description = 'Brake pedal input value - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Clutch pedal.
-    signals[#signals + 1] = {
-      name = names.clutch, groupName = groups.driver, description = 'Clutch pedal - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = true, readOnly = false, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.clutchInput, groupName = groups.driver, description = 'Clutch pedal input value - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Parking brake.
-    signals[#signals + 1] = {
-      name = names.parkingBrake, groupName = groups.driver, description = 'Parking brake - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = true, readOnly = false, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.parkingBrakeInput, groupName = groups.driver, description = 'Parking brake input value - range [0..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-
-    -- Steering wheel.
-    signals[#signals + 1] = {
-      name = names.steeringWheelPosition, groupName = groups.driver, description = 'Steering wheel position - range [-1..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = true, readOnly = false, isIncluded = true }
-    signals[#signals + 1] = {
-      name = names.steeringWheelPositionInput, groupName = groups.driver, description = 'Steering wheel input value - range [-1..1]',
-      type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-      isFrom = false, readOnly = true, isIncluded = false }
-  end
-
-  -----------------------
-  -- Wheels Group:
-  -----------------------
-
-  if isWheels[0] then
-    local wheelData = cData.wheels
-    local numWheels = #wheelData
-    for i = 1, numWheels do
-      local wId = tostring(wheelData[i])
-      signals[#signals + 1] = {
-        name = names.wheelSpeed .. wId, groupName = groups.wheels, description = wId .. ' - Wheel speed - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.angularVelocity .. wId, groupName = groups.wheels, description = wId .. ' - Angular velocity - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.downforce .. wId, groupName = groups.wheels, description = wId .. ' - Downforce - N-m',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.brakingTorque .. wId, groupName = groups.wheels, description = wId .. ' - Braking torque - N-m',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = false, isIncluded = true }
-      signals[#signals + 1] = {
-        name = names.propulsionTorque .. wId, groupName = groups.wheels, description = wId .. ' - Propulsion torque - N-m',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = false, isIncluded = true }
-      signals[#signals + 1] = {
-        name = names.frictionTorque .. wId, groupName = groups.wheels, description = wId .. ' - Friction torque - N-m',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = false, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.wheelAngle .. wId, groupName = groups.wheels, description = wId .. ' - Wheel angle - rad',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-    end
-  end
-
-  -----------------------
-  -- Electrics Group:
-  -----------------------
-  if isElectrics[0] then
-    local elecData = cData.electrics
-    local numElec = #elecData
-    for i = 1, numElec do
-      signals[#signals + 1] = {
-        name = elecData[i].name, groupName = groups.electrics, description = elecData[i].name,
-        type = elecData[i].type, isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-    end
-  end
-
-  -----------------------
-  -- Powertrain Group:
-  -----------------------
-  if isPowertrain[0] then
-    local pTData = cData.powertrain
-    local numPT = #pTData
-    for i = 1, numPT do
-      signals[#signals + 1] = {
-        name = pTData[i].name, groupName = groups.powertrain, description = pTData[i].name,
-        type = pTData[i].type, isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-    end
-  end
-
-  -----------------------
-  -- IMU Sensors Group(s):
-  -----------------------
-  if isSensors[0] then
-    local sensors = vSensors.sensorConfigs[vid]
-    local numIMU, IMUids = vSensors.numberOfSensorType(sensors, 'IMU')
-    for i = 1, numIMU do
-      local sensor = sensors[IMUids[i]]
-      local name = sensor.name
-      signals[#signals + 1] = {
-        name = names.imuPositionX, groupName = name, description = 'Position - Lateral - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuPositionY, groupName = name, description = 'Position - Longitudinal - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuPositionZ, groupName = name, description = 'Position - Vertical - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis1DirectionX, groupName = name, description = 'Axis 1 direction - Lat - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis1DirectionY, groupName = name, description = 'Axis 1 direction - Long - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis1DirectionZ, groupName = name, description = 'Axis 1 direction - Vert - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis2DirectionX, groupName = name, description = 'Axis 2 direction - Lat - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis2DirectionY, groupName = name, description = 'Axis 2 direction - Long - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis2DirectionZ, groupName = name, description = 'Axis 2 direction - Vert - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis3DirectionX, groupName = name, description = 'Axis 3 direction - Lat - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis3DirectionY, groupName = name, description = 'Axis 3 direction - Long - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAxis3DirectionZ, groupName = name, description = 'Axis 3 direction - Vert - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuMass, groupName = name, description = 'Mass at sensor position - kg',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularVelocityRawAxis1, groupName = name, description = 'Angular velocity raw - Lat - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularVelocityRawAxis2, groupName = name, description = 'Angular velocity raw - Long - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularVelocityRawAxis3, groupName = name, description = 'Angular velocity raw - Vert - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularVelocitySmoothedAxis1, groupName = name, description = 'Angular velocity smoothed - Lat - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularVelocitySmoothedAxis2, groupName = name, description = 'Angular velocity smoothed - Long - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularVelocitySmoothedAxis3, groupName = name, description = 'Angular velocity smoothed - Vert - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAccelerationRawAxis1, groupName = name, description = 'Acceleration raw - Lat - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAccelerationRawAxis2, groupName = name, description = 'Acceleration raw - Long - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAccelerationRawAxis3, groupName = name, description = 'Acceleration raw - Vert - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAccelerationSmoothedAxis1, groupName = name, description = 'Acceleration smoothed - Lat - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAccelerationSmoothedAxis2, groupName = name, description = 'Acceleration smoothed - Long - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAccelerationSmoothedAxis3, groupName = name, description = 'Acceleration smoothed - Vert - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularAccelerationAxis1, groupName = name, description = 'Angular acceleration - Lat - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularAccelerationAxis2, groupName = name, description = 'Angular acceleration - Long - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuAngularAccelerationAxis3, groupName = name, description = 'Angular acceleration - Vert - rad/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.imuReadingTimestamp, groupName = name, description = 'IMU Reading timestamp - seconds',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-    end
-
-    -----------------------
-    -- GPS Sensors Group(s):
-    -----------------------
-    local numGPS, GPSids = vSensors.numberOfSensorType(sensors, 'GPS')
-    for i = 1, numGPS do
-      local sensor = sensors[GPSids[i]]
-      local name = sensor.name
-      signals[#signals + 1] = {
-        name = names.gpsXCoordinate, groupName = name, description = 'Lateral Pos - world-space - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.gpsYCoordinate, groupName = name, description = 'Longitudinal Pos - world-space - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.gpsLongitude, groupName = name, description = 'Longitude - degrees',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.gpsLatitude, groupName = name, description = 'Latitude - degrees',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.gpsReadingTimestamp, groupName = name, description = 'GPS Reading timestamp - seconds',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-    end
-
-    -----------------------
-    -- Ideal Radar Group:
-    -----------------------
-    if vSensors.doesContainSensorType(sensors, 'idealRADAR') then
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1Distance, groupName = groups.idealRADAR, description = 'Vehicle #1 - distance to - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1Length, groupName = groups.idealRADAR, description = 'Vehicle #1 - length - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1Width, groupName = groups.idealRADAR, description = 'Vehicle #1 - width - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1VelocityX, groupName = groups.idealRADAR, description = 'Vehicle #1 - velocity - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1VelocityY, groupName = groups.idealRADAR, description = 'Vehicle #1 - velocity - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1VelocityZ, groupName = groups.idealRADAR, description = 'Vehicle #1 - velocity - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1AccelerationX, groupName = groups.idealRADAR, description = 'Vehicle #1 - acceleration - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1AccelerationY, groupName = groups.idealRADAR, description = 'Vehicle #1 - acceleration - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1AccelerationZ, groupName = groups.idealRADAR, description = 'Vehicle #1 - acceleration - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1RelativeDistanceX, groupName = groups.idealRADAR, description = 'Vehicle #1 - relative dist - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1RelativeDistanceY, groupName = groups.idealRADAR, description = 'Vehicle #1 - relative dist - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1RelativeVelocityX, groupName = groups.idealRADAR, description = 'Vehicle #1 - relative vel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1RelativeVelocityY, groupName = groups.idealRADAR, description = 'Vehicle #1 - relative vel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1RelativeAccelerationX, groupName = groups.idealRADAR, description = 'Vehicle #1 - relative accel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle1RelativeAccelerationY, groupName = groups.idealRADAR, description = 'Vehicle #1 - relative accel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2Distance, groupName = groups.idealRADAR, description = 'Vehicle #2 - distance to - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2Length, groupName = groups.idealRADAR, description = 'Vehicle #2 - length - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2Width, groupName = groups.idealRADAR, description = 'Vehicle #2 - width - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2VelocityX, groupName = groups.idealRADAR, description = 'Vehicle #2 - velocity - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2VelocityY, groupName = groups.idealRADAR, description = 'Vehicle #2 - velocity - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2VelocityZ, groupName = groups.idealRADAR, description = 'Vehicle #2 - velocity - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2AccelerationX, groupName = groups.idealRADAR, description = 'Vehicle #2 - acceleration - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2AccelerationY, groupName = groups.idealRADAR, description = 'Vehicle #2 - acceleration - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2AccelerationZ, groupName = groups.idealRADAR, description = 'Vehicle #2 - acceleration - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2RelativeDistanceX, groupName = groups.idealRADAR, description = 'Vehicle #2 - relative dist - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2RelativeDistanceY, groupName = groups.idealRADAR, description = 'Vehicle #2 - relative dist - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2RelativeVelocityX, groupName = groups.idealRADAR, description = 'Vehicle #2 - relative vel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2RelativeVelocityY, groupName = groups.idealRADAR, description = 'Vehicle #2 - relative vel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2RelativeAccelerationX, groupName = groups.idealRADAR,  description = 'Vehicle #2 - relative accel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle2RelativeAccelerationY, groupName = groups.idealRADAR,  description = 'Vehicle #2 - relative accel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3Distance, groupName = groups.idealRADAR, description = 'Vehicle #3 - distance to - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3Length, groupName = groups.idealRADAR, description = 'Vehicle #3 - length - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3Width, groupName = groups.idealRADAR, description = 'Vehicle #3 - width - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3VelocityX, groupName = groups.idealRADAR, description = 'Vehicle #3 - velocity - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3VelocityY, groupName = groups.idealRADAR, description = 'Vehicle #3 - velocity - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3VelocityZ, groupName = groups.idealRADAR, description = 'Vehicle #3 - velocity - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3AccelerationX, groupName = groups.idealRADAR, description = 'Vehicle #3 - acceleration - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3AccelerationY, groupName = groups.idealRADAR, description = 'Vehicle #3 - acceleration - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3AccelerationZ, groupName = groups.idealRADAR, description = 'Vehicle #3 - acceleration - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3RelativeDistanceX, groupName = groups.idealRADAR, description = 'Vehicle #3 - relative dist - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3RelativeDistanceY, groupName = groups.idealRADAR, description = 'Vehicle #3 - relative dist - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3RelativeVelocityX, groupName = groups.idealRADAR, description = 'Vehicle #3 - relative vel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3RelativeVelocityY, groupName = groups.idealRADAR, description = 'Vehicle #3 - relative vel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3RelativeAccelerationX, groupName = groups.idealRADAR,  description = 'Vehicle #3 - relative accel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle3RelativeAccelerationY, groupName = groups.idealRADAR,  description = 'Vehicle #3 - relative accel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4Distance, groupName = groups.idealRADAR, description = 'Vehicle #4 - distance to - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4Length, groupName = groups.idealRADAR, description = 'Vehicle #4 - length - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4Width, groupName = groups.idealRADAR, description = 'Vehicle #4 - width - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4VelocityX, groupName = groups.idealRADAR, description = 'Vehicle #4 - velocity - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4VelocityY, groupName = groups.idealRADAR, description = 'Vehicle #4 - velocity - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4VelocityZ, groupName = groups.idealRADAR, description = 'Vehicle #4 - velocity - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4AccelerationX, groupName = groups.idealRADAR, description = 'Vehicle #4 - acceleration - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4AccelerationY, groupName = groups.idealRADAR, description = 'Vehicle #4 - acceleration - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4AccelerationZ, groupName = groups.idealRADAR, description = 'Vehicle #4 - acceleration - Vert - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4RelativeDistanceX, groupName = groups.idealRADAR,
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false, description = 'Vehicle #4 - relative dist - Lat - m/s',
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4RelativeDistanceY, groupName = groups.idealRADAR,
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false, description = 'Vehicle #4 - relative dist - Long - m/s',
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4RelativeVelocityX, groupName = groups.idealRADAR, description = 'Vehicle #4 - relative vel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4RelativeVelocityY, groupName = groups.idealRADAR, description = 'Vehicle #4 - relative vel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4RelativeAccelerationX, groupName = groups.idealRADAR,  description = 'Vehicle #4 - relative accel - Lat - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.idealRADARVehicle4RelativeAccelerationY, groupName = groups.idealRADAR,  description = 'Vehicle #4 - relative accel - Long - m/s',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-
-      signals[#signals + 1] = {
-        name = names.idealRADARReadingTimestamp, groupName = groups.idealRADAR, description = 'Reading timestamp',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-    end
-
-    -------------------------
-    -- Roads Sensor Group:
-    -------------------------
-    if vSensors.doesContainSensorType(sensors, 'roads') then
-      signals[#signals + 1] = {
-        name = names.roadsRoadHalfWidth, groupName = groups.roadsSensor, description = 'Local road half-width - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsRoadRadius, groupName = groups.roadsSensor, description = 'Local road radius - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsRoadHeading, groupName = groups.roadsSensor, description = 'Local road heading - rad',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsDistanceToCenterline, groupName = groups.roadsSensor, description = 'Distance to road centerline - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsDistanceToRoadLeftEdge, groupName = groups.roadsSensor, description = 'Distance to road left edge - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsDistanceToRoadRightEdge, groupName = groups.roadsSensor, description = 'Distance to road right edge - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsDrivability, groupName = groups.roadsSensor, description = 'Road drivability score',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsSpeedLimit, groupName = groups.roadsSensor, description = 'Road speed limit',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsIsOneWay, groupName = groups.roadsSensor, description = 'Is one-way road',
-        type = 'boolean', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsClosestPointX, groupName = groups.roadsSensor, description = 'Closest road point - Lat - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsClosestPointY, groupName = groups.roadsSensor, description = 'Closest road point - Long - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsClosestPointZ, groupName = groups.roadsSensor, description = 'Closest road point - Vert - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads2ndClosestPointX, groupName = groups.roadsSensor, description = '2nd closest road point - Lat - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads2ndClosestPointY, groupName = groups.roadsSensor, description = '2nd closest road point - Long - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads2ndClosestPointZ, groupName = groups.roadsSensor, description = '2nd closest road point - Vert - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads3rdClosestPointX, groupName = groups.roadsSensor, description = '3rd closest road point - Lat - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads3rdClosestPointY, groupName = groups.roadsSensor, description = '3rd closest road point - Long - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads3rdClosestPointZ, groupName = groups.roadsSensor, description = '3rd closest road point - Vert - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads4thClosestPointX, groupName = groups.roadsSensor, description = '4th closest road point - Lat - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads4thClosestPointY, groupName = groups.roadsSensor, description = '4th closest road point - Long - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roads4thClosestPointZ, groupName = groups.roadsSensor, description = '4th closest road point - Vert - meters',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-      signals[#signals + 1] = {
-        name = names.roadsReadingTimestamp, groupName = groups.roadsSensor, description = 'Reading timestamp - seconds',
-        type = 'number', isMultiply = false, isAdd = false, isFreeze = false,
-        isFrom = false, readOnly = true, isIncluded = false }
-    end
+  local vid = vehicle.vid
+  local sensors = vSensors.sensorConfigs[vid]
+  signals = signalListGenerator.buildSignalList({
+    includeKinematics = isKinematics[0],
+    includeDriver = isDriver[0],
+    includeWheels = isWheels[0],
+    includeElectrics = isElectrics[0],
+    includePowertrain = isPowertrain[0],
+    includeSensors = isSensors[0],
+    cData = cData,
+    sensors = sensors
+  })
+  applySavedSignalChoices(signals)
+  if pendingSelectAllListed then
+    pendingSelectAllListed = false
+    applySelectAllListed()
+  elseif pendingUnselectAllListed then
+    pendingUnselectAllListed = false
+    applyUnselectAllListed()
   end
   return true
 end
 
+-- Populates the current available signals list.
+local function updateSignalsList()
+  if not isVluaDataReturned then
+    if not isRequestSent then
+      isRequestSent = true
+      local vehicle = vehicles[selectedVehicleIdx]
+      if vehicle then
+        vehicleSignalData.requestVehicleData(vehicle.vid)
+      end
+    end
+    return false
+  end
+  isRequestSent = false
+  return buildSignalsListFromCache()
+end
+
+local function requestSelectAllListed()
+  syncSensorConfigsFromVehicle()
+  pendingUnselectAllListed = false
+  if signalsListNeedsRebuild or #signals < 1 then
+    pendingSelectAllListed = true
+    if not isVluaDataReturned then
+      invalidateVehicleSignalData()
+    end
+    markSignalsListStale()
+    return
+  end
+  applySelectAllListed()
+end
+
+local function requestUnselectAllListed()
+  syncSensorConfigsFromVehicle()
+  pendingSelectAllListed = false
+  if signalsListNeedsRebuild or #signals < 1 then
+    pendingUnselectAllListed = true
+    if not isVluaDataReturned then
+      invalidateVehicleSignalData()
+    end
+    markSignalsListStale()
+    return
+  end
+  applyUnselectAllListed()
+end
+
 -- Unlink all signals (reset configuration).
 local function unlinkAllSignals()
+  clearSignalChoicesStorage()
   local numSignals = #signals
   for i = 1, numSignals do
     signals[i].isIncluded = false
   end
 end
+
 
 -- Fetches two ordered arrays containing the included 'to' and 'from' signals, respectively.
 local function getToFromSignals()
@@ -1051,8 +375,7 @@ local function saveConfiguration(vehicle)
         csv:add('sensors', name, 'GFXUpdateTime', tostring(sensor.GFXUpdateTime), 'number', nil, nil, nil)
         csv:add('sensors', name, 'isUsingGravity', tostring(sensor.isUsingGravity), 'boolean', nil, nil, nil)
         csv:add('sensors', name, 'isAllowWheelNodes', tostring(sensor.isAllowWheelNodes), 'boolean', nil, nil, nil)
-        csv:add('sensors', name, 'accelWindowWidth', tostring(sensor.accelWindowWidth), 'number', nil, nil, nil)
-        csv:add('sensors', name, 'gyroWindowWidth', tostring(sensor.gyroWindowWidth), 'number', nil, nil, nil)
+        csv:add('sensors', name, 'smootherStrength', tostring(sensor.smootherStrength), 'number', nil, nil, nil)
         csv:add('sensors', name, 'isVisualised', tostring(sensor.isVisualised), 'boolean', nil, nil, nil)
         csv:add('sensors', name, 'isStatic', tostring(sensor.isStatic), 'boolean', nil, nil, nil)
         csv:add('sensors', name, 'isSnappingDesired', tostring(sensor.isSnappingDesired), 'boolean', nil, nil, nil)
@@ -1110,8 +433,12 @@ local function loadConfiguration(vehicle)
     function(data)
 
       -- Get the original signals list and remove all linking.
-      isRequestSent = false
-      updateSignalsList()
+      markSignalsListStale()
+      if not updateSignalsList() then
+        log('W', logTag, 'loadConfiguration: vehicle signal data not ready yet')
+        return
+      end
+      signalsListNeedsRebuild = false
       unlinkAllSignals()
 
       -- Read the .csv file into a lines structure.
@@ -1435,8 +762,12 @@ local function execute()
         sensorMap = sensorMap,
         time3rdParty = time3rdParty, pingTime = roundTripTime,
         udpSendPort = udpSendPort, udpReceivePort = udpReceivePort,
-        udpSendIP = udpSendIP, udpReceiveIP = udpReceiveIP }
-      be:queueObjectLua(vid, string.format("controller.loadControllerExternal('tech/cosimulationCoupling', 'cosimulationCoupling', %s)", serialize(lpack.encode({cData}))))
+        udpSendIP = udpSendIP, udpReceiveIP = udpReceiveIP,
+        enableVSL = false,
+        enableCosim = true,
+      }
+      local preload = "local c=controller.getController('cosimulationCoupling');if c then c.stop();controller.unloadControllerExternal('cosimulationCoupling') end;"
+      be:queueObjectLua(vid, preload .. string.format("controller.loadControllerExternal('tech/cosimulationCoupling', 'cosimulationCoupling', %s)", serialize(lpack.encode({cData}))))
 
     end,
     {{"csv",".csv"}},
@@ -1451,82 +782,103 @@ local function stopExecute()
   isExecuting = false
 end
 
--- Manages the main tool window.
+
+
+
+-- Manage the main tool window.
 local function manageMainToolWindow()
   if editor.beginWindow(toolWinName, "Scene Vehicles###1", im.WindowFlags_NoTitleBar) then
     im.Separator()
-    if im.BeginListBox("", im.ImVec2(385, 180), im.WindowFlags_ChildWindow) then
+    local listWidth = toolWinSize.x - 125  -- account for scrollbar width
+    local listHeight = toolWinSize.y - 30
+    if im.BeginListBox("", im.ImVec2(listWidth, listHeight), im.WindowFlags_ChildWindow) then
       local numVehicles = #vehicles
-      selectedVehicleIdx = max(1, min(numVehicles, selectedVehicleIdx))
+      selectedVehicleIdx = math.max(1, math.min(numVehicles, selectedVehicleIdx))
+
       for i = 1, numVehicles do
         local veh = vehicles[i]
-        im.Columns(7, "sceneVehiclesListBoxColumns", false)
-        im.SetColumnWidth(0, 175)
+        -- im.Columns(8, "sceneVehiclesListBoxColumns", false) -- Adjusted number of columns to 8 to include dropdown.
+        im.Columns(7, "sceneVehiclesListBoxColumns", false) -- Adjusted number of columns to 8 to include dropdown.
+        im.SetColumnWidth(0, 260)
         im.SetColumnWidth(1, 32)
         im.SetColumnWidth(2, 32)
         im.SetColumnWidth(3, 32)
         im.SetColumnWidth(4, 32)
         im.SetColumnWidth(5, 32)
         im.SetColumnWidth(6, 32)
+        -- im.SetColumnWidth(7, 110) -- Adjusted for the dropdown.
 
         -- Handle the individual row selection.
         local vName = tostring(veh.vid .. ": " .. veh.name .. " - " .. veh.jBeam)
         if im.Selectable1(vName, i == selectedVehicleIdx, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then
-          if i ~= selectedVehicleIdx then
+          if i ~= selectedVehicleIdx and not isExecuting then
+            -- when executing it should not be possible to select another vehicle
+            -- because clicking "stop coupling" on a different vehicle would not work correctly
+            -- this is also why the "remove vehicle" button is disabled when executing
             selectedVehicleIdx = i
-            table.clear(signals)
+            clearSignalChoicesStorage()
+            invalidateVehicleSignalData()
+            markSignalsListStale()
             return
           end
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Remove Vehicle' button.
-        -- [This is only available if there is at least one vehicle in the scene].
-        if #vehicles > 1 then
-          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), redB, nil, nil, 'removeVehicleButton') then
-            local veh = vehicles[i]
-            veh.veh:delete()
-            if not vehicles[selectedVehicleIdx] then
-              table.clear(signals)
+        do
+          local text = 'Remove this vehicle from scene.'
+          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), redB, nil, nil, 'removeVehicleButton' .. i) then
+            if not isExecuting then
+              local vehToDelete = vehicles[i]
+              vehToDelete.veh:delete()
+              if not vehicles[selectedVehicleIdx] then
+                clearSignalChoicesStorage()
+                invalidateVehicleSignalData()
+                markSignalsListStale()
+                return
+              end
+              selectedVehicleIdx = math.min(numVehicles, selectedVehicleIdx)
               return
             end
-            selectedVehicleIdx = min(numVehicles, selectedVehicleIdx)
-            return
           end
-          im.tooltip('Remove this vehicle from scene.')
+          if isExecuting then
+            text = 'Cannot remove vehicle while coupling is active.'
+          end
+          im.tooltip(text)
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Go To Vehicle' button.
-        if editor.uiIconImageButton(editor.icons.cameraFocusOnVehicle2, im.ImVec2(21, 21), greenB, nil, nil, 'goToVehicleButton') then
+        if editor.uiIconImageButton(editor.icons.cameraFocusOnVehicle2, im.ImVec2(21, 21), greenB, nil, nil, 'goToVehicleButton' .. i) then
           core_camera.setByName(0, "orbit", false)
           be:enterVehicle(0, scenetree.findObject(veh.vid))
-          if i ~= selectedVehicleIdx then
+          if i ~= selectedVehicleIdx and not isExecuting then
             selectedVehicleIdx = i
-            table.clear(signals)
+            clearSignalChoicesStorage()
+            invalidateVehicleSignalData()
+            markSignalsListStale()
             return
           end
         end
         im.tooltip('Go to the selected vehicle.')
-        im.SameLine()
         im.NextColumn()
 
         -- 'Open Signals Window' button.
         local btnCol = blueB
         if isSignalsWinOpen and i == selectedVehicleIdx then btnCol = blueD end
-        if editor.uiIconImageButton(editor.icons.code, im.ImVec2(19, 19), btnCol, nil, nil, 'openSignalsWinButton') then
+        if editor.uiIconImageButton(editor.icons.code, im.ImVec2(19, 19), btnCol, nil, nil, 'openSignalsWinButton' .. i) then
           if i == selectedVehicleIdx or not isSignalsWinOpen then
-            isSignalsWinOpen = not isSignalsWinOpen                                                 -- Only toggle window open/closed if this is the same vehicle.
+            isSignalsWinOpen = not isSignalsWinOpen
           end
-          if isSignalsWinOpen then                                                                  -- If window is open and this is a different vehicle, just update the window.
+          if isSignalsWinOpen then
             editor.showWindow(signalsWinName)
           else
             editor.hideWindow(signalsWinName)
           end
           if i ~= selectedVehicleIdx then
-            table.clear(signals)
+            clearSignalChoicesStorage()
+            invalidateVehicleSignalData()
+            markSignalsListStale()
             return
           end
           selectedVehicleIdx = i
@@ -1536,44 +888,41 @@ local function manageMainToolWindow()
 
         -- 'Start/Stop Coupling' toggle button.
         if selectedVehicleIdx == i then
-          local btnCol = redB
+          local btnCol = dullWhite
           local btnIcon = editor.icons.jointUnlocked
-          if isExecuting then btnCol, btnIcon = redD, editor.icons.jointLocked end
-          if editor.uiIconImageButton(btnIcon, im.ImVec2(19, 19), btnCol, nil, nil, 'executeToggleButton') then
+          local btnText = 'Start coupling with 3rd party.'
+          local btnTextStop = 'Stop coupling with 3rd party.'
+          if isExecuting then
+            btnCol, btnIcon, btnText = orangeB, editor.icons.jointLocked, btnTextStop
+          end
+          if editor.uiIconImageButton(btnIcon, im.ImVec2(19, 19), btnCol, nil, nil, 'executeToggleButton' .. i) then
             if not isExecuting then
               execute()
             else
               stopExecute()
             end
           end
-          im.tooltip('Start/stop coupling with 3rd party.')
+          im.tooltip(btnText)
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Save Signals Configuration' button.
-        -- [Only available for the selected vehicle].
         if selectedVehicleIdx == i then
-          if editor.uiIconImageButton(editor.icons.floppyDisk, im.ImVec2(19, 19), nil, nil, nil, 'saveSignalsConfig') then
+          if editor.uiIconImageButton(editor.icons.floppyDisk, im.ImVec2(19, 19), nil, nil, nil, 'saveSignalsConfig' .. i) then
             saveConfiguration(vehicles[i])
           end
           im.tooltip('Save the current signals configuration, for this vehicle, to disk.')
         end
-        im.SameLine()
         im.NextColumn()
 
         -- 'Load Signals Configuration' button.
-        -- [Only available for the selected vehicle].
         if selectedVehicleIdx == i then
-          if editor.uiIconImageButton(editor.icons.folder, im.ImVec2(19, 19), dullWhite, nil, nil, 'loadSignalsConfig') then
+          if editor.uiIconImageButton(editor.icons.folder, im.ImVec2(19, 19), dullWhite, nil, nil, 'loadSignalsConfig' .. i) then
             loadConfiguration(vehicles[i])
           end
           im.tooltip('Load a signals configuration, for this vehicle, from disk.')
         end
-        im.SameLine()
         im.NextColumn()
-
-        im.Separator()
       end
       im.EndListBox()
     end
@@ -1582,7 +931,10 @@ local function manageMainToolWindow()
   editor.endWindow()
 end
 
--- Manages the vehicle signals window.
+
+
+
+
 local function manageVehicleSignalsWindow()
   if isSignalsWinOpen and vehicles[selectedVehicleIdx] then
     if editor.beginWindow(signalsWinName, vehicles[selectedVehicleIdx].name .. " [available signals]###2") then
@@ -1593,111 +945,74 @@ local function manageVehicleSignalsWindow()
       im.SameLine()
       im.Dummy(im.ImVec2(15, 0))
       im.SameLine()
+      -- Category toggles: same behavior as vslSignalEditor — always rebuild the list on change.
+      -- (Previous cosim-only logic omitted "Sensors" from sibling checks and could block refresh, leaving a stale list without IMU/GPS rows.)
       if im.Checkbox("Kinematics", isKinematics) then
-        if isDriver[0] or isWheels[0] or isElectrics[0] or isPowertrain[0] then
-          isRequestSent, isVluaDataReturned = false, false
-          table.clear(signals)
-        else
-          isKinematics = im.BoolPtr(true)
-        end
+        if #signals > 0 then snapshotSignalChoicesFrom(signals) end
+        markSignalsListStale()
       end
       im.tooltip('Include the Kinematics signals group.')
       im.SameLine()
       im.Dummy(im.ImVec2(15, 0))
       im.SameLine()
       if im.Checkbox("Driver", isDriver) then
-        if isKinematics[0] or isWheels[0] or isElectrics[0] or isPowertrain[0] then
-          isRequestSent, isVluaDataReturned = false, false
-          table.clear(signals)
-        else
-          isDriver = im.BoolPtr(true)
-        end
+        if #signals > 0 then snapshotSignalChoicesFrom(signals) end
+        markSignalsListStale()
       end
       im.tooltip('Include the Driver signals group.')
       im.SameLine()
       im.Dummy(im.ImVec2(15, 0))
       im.SameLine()
       if im.Checkbox("Wheels", isWheels) then
-        if isKinematics[0] or isDriver[0] or isElectrics[0] or isPowertrain[0] then
-          isRequestSent, isVluaDataReturned = false, false
-          table.clear(signals)
-        else
-          isWheels = im.BoolPtr(true)
-        end
+        if #signals > 0 then snapshotSignalChoicesFrom(signals) end
+        markSignalsListStale()
       end
       im.tooltip('Include the Wheels signals group.')
       im.SameLine()
       im.Dummy(im.ImVec2(15, 0))
       im.SameLine()
       if im.Checkbox("Electrics", isElectrics) then
-        if isKinematics[0] or isDriver[0] or isWheels[0] or isPowertrain[0] then
-          isRequestSent, isVluaDataReturned = false, false
-          table.clear(signals)
-        else
-          isElectrics = im.BoolPtr(true)
-        end
+        if #signals > 0 then snapshotSignalChoicesFrom(signals) end
+        markSignalsListStale()
       end
       im.tooltip('Include the Electrics signals group.')
       im.SameLine()
       im.Dummy(im.ImVec2(15, 0))
       im.SameLine()
       if im.Checkbox("Powertrain", isPowertrain) then
-        if isKinematics[0] or isDriver[0] or isWheels[0] or isElectrics[0] then
-          isRequestSent, isVluaDataReturned = false, false
-          table.clear(signals)
-        else
-          isPowertrain = im.BoolPtr(true)
-        end
+        if #signals > 0 then snapshotSignalChoicesFrom(signals) end
+        markSignalsListStale()
       end
       im.tooltip('Include the Powertrain signals group.')
       im.SameLine()
       im.Dummy(im.ImVec2(15, 0))
       im.SameLine()
       if im.Checkbox("Sensors", isSensors) then
-        if isKinematics[0] or isDriver[0] or isWheels[0] or isElectrics[0] or isPowertrain[0] then
-          isRequestSent, isVluaDataReturned = false, false
-          table.clear(signals)
-        else
-          isSensors = im.BoolPtr(true)
-        end
+        if #signals > 0 then snapshotSignalChoicesFrom(signals) end
+        markSignalsListStale()
       end
       im.tooltip('Include the Attached Sensors signals group.')
+
+      im.Separator()
+
+      im.PushItemWidth(420)
+      im.InputText("Filter signals##cosimSigFilter", signalListFilterBuf)
+      im.PopItemWidth()
+      im.SameLine()
+      im.TextColored(dullWhite, "(group, name, description, type)")
+      im.tooltip("Filter by partial text match. To/From indices and message size still count all signals.")
+      im.Checkbox("Incoming (From) only##cosimInSigOnly", showIncomingDirectionOnly)
+      im.tooltip("Show only signals set to incoming direction (3rd party -> BeamNG). Read-only (outgoing) rows are hidden.")
 
       im.Separator()
 
       -- Signals listbox.
       if im.BeginListBox("", im.ImVec2(665, 370), im.WindowFlags_ChildWindow) then
         local numSignals = #signals
+        local lastVisibleGroupName = nil
         for i = 1, numSignals do
           local signal = signals[i]
-          im.Columns(6, "vehSignalsListBoxColumns", true)
-          im.SetColumnWidth(0, 40)
-          im.SetColumnWidth(1, 55)
-          im.SetColumnWidth(2, 110)
-          im.SetColumnWidth(3, 260)
-          im.SetColumnWidth(4, 60)
-          im.SetColumnWidth(5, 32)
-
-          -- Handle the individual row selection.
-          if im.Selectable1("", false, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then end
-          im.SameLine()
-
-          -- 'Include Signal' checkbox.
-          if signals[i].isIncluded then
-            if editor.uiIconImageButton(editor.icons.check_box, im.ImVec2(20, 20), redB, nil, nil, 'includeSignalButton') then
-              signals[i].isIncluded = false
-            end
-            im.tooltip('Do not include this signal in the vehicle signals configuration.')
-          else
-            if editor.uiIconImageButton(editor.icons.check_box_outline_blank, im.ImVec2(20, 20), redD, nil, nil, 'discludeSignalButton') then
-              signals[i].isIncluded = true
-            end
-            im.tooltip('Include this signal in the vehicle signals configuration.')
-          end
-          im.SameLine()
-          im.NextColumn()
-
-          -- Currently-assigned signal position (index in configuration file).
+          -- To/From indices and message-size counters must include every row, even when filtered out.
           local posStr, ctrCol = ' ', greenB
           if signal.isIncluded then
             if signal.isFrom then
@@ -1720,8 +1035,42 @@ local function manageVehicleSignalsWindow()
               toCtr = toCtr + 1
             end
           end
-          im.TextColored(ctrCol, posStr)
+
+          if signalRowMatchesFilter(signal) then
+          if lastVisibleGroupName and lastVisibleGroupName ~= signal.groupName then
+            im.Separator()
+          end
+          lastVisibleGroupName = signal.groupName
+
+          im.Columns(6, "vehSignalsListBoxColumns", true)
+          im.SetColumnWidth(0, 40)
+          im.SetColumnWidth(1, 65)
+          im.SetColumnWidth(2, 110)
+          im.SetColumnWidth(3, 325)
+          im.SetColumnWidth(4, 66)
+          im.SetColumnWidth(5, 32)
+
+          -- Handle the individual row selection.
+          if im.Selectable1("##sigRow"..i, false, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then end
           im.SameLine()
+
+          -- 'Include Signal' checkbox.
+          if signals[i].isIncluded then
+            if editor.uiIconImageButton(editor.icons.check_box, im.ImVec2(20, 20), redB, nil, nil, 'includeSignalButton') then
+              signals[i].isIncluded = false
+            end
+            im.tooltip('Do not include this signal in the vehicle signals configuration.')
+          else
+            if editor.uiIconImageButton(editor.icons.check_box_outline_blank, im.ImVec2(20, 20), redD, nil, nil, 'discludeSignalButton') then
+              signals[i].isIncluded = true
+            end
+            im.tooltip('Include this signal in the vehicle signals configuration.')
+          end
+          im.SameLine()
+          im.NextColumn()
+
+          -- Currently-assigned signal position (index in configuration file).
+          im.TextColored(ctrCol, posStr)
           im.NextColumn()
 
           -- Signal group name, name, and data type.
@@ -1762,10 +1111,6 @@ local function manageVehicleSignalsWindow()
           end
 
           im.NextColumn()
-
-          -- Add an extra separator between signal groups.
-          if i < numSignals and signal.groupName ~= signals[i + 1].groupName then
-            im.Separator()
           end
         end
         im.EndListBox()
@@ -1774,8 +1119,9 @@ local function manageVehicleSignalsWindow()
 
       -- 'Reload Signals' button.
       if editor.uiIconImageButton(editor.icons.autorenew, im.ImVec2(28, 28), nil, nil, nil, 'reloadSignals') then
-        isRequestSent, isVluaDataReturned = false, false
-        table.clear(signals)
+        if #signals > 0 then snapshotSignalChoicesFrom(signals) end
+        invalidateVehicleSignalData()
+        markSignalsListStale()
       end
       im.tooltip("Reload available signals.")
       im.SameLine()
@@ -1786,6 +1132,19 @@ local function manageVehicleSignalsWindow()
       end
       im.tooltip("Unlink all selected signals (reset configuration).")
       im.SameLine()
+
+      if im.Button("Select all listed##cosimSelectAllListed") then
+        requestSelectAllListed()
+      end
+      im.tooltip("Include every signal row currently listed (respects category checkboxes, not the text filter). Watch UDP size limits.")
+      im.SameLine()
+
+      if im.Button("Unselect all listed##cosimUnselectAllListed") then
+        requestUnselectAllListed()
+      end
+      im.tooltip("Clear inclusion for every signal row currently listed (respects category checkboxes, not the text filter).")
+      im.SameLine()
+
 
       im.Dummy(im.ImVec2(15, 0))
       im.SameLine()
@@ -1812,7 +1171,7 @@ local function manageVehicleSignalsWindow()
       im.SameLine()
 
       -- 3rd party computation time input box.
-      im.PushItemWidth(110)
+      im.PushItemWidth(200)
       im.InputFloat("3rd Party Computation Time", compTime3rdParty, 1e-4, 0.0, "%.5f s")
       compTime3rdParty = im.FloatPtr(max(1e-4, min(1e4, compTime3rdParty[0])))
       im.tooltip('The expected computation time for each 3rd party cycle in the coupling.')
@@ -1825,7 +1184,7 @@ local function manageVehicleSignalsWindow()
       im.SameLine()
 
       -- UDP ping time input box.
-      im.PushItemWidth(110)
+      im.PushItemWidth(200)
       im.InputFloat("UDP Ping Time", pingTime, 1e-5, 0.0, "%.5f s")
       pingTime = im.FloatPtr(max(1e-5, min(1e4, pingTime[0])))
       im.tooltip('The expected udp socket ping time.')
@@ -1884,11 +1243,11 @@ local function onEditorGui()
   getCurrentVehicleList()
 
   -- Compute the signals list, if required.
-  -- [This is only done if it does not currently exist, such as after a vehicle change].
-  if #signals < 1 then
+  if #vehicles > 0 and signalsListNeedsRebuild then
     if not updateSignalsList() then
       return
     end
+    signalsListNeedsRebuild = false
   end
 
   -- Manage the front end.
@@ -1901,6 +1260,8 @@ local function onActivate()
   editor.clearObjectSelection()
   editor.showWindow(toolWinName)
   isCosimulationSignalEditor = true
+  syncSensorConfigsFromVehicle()
+  signalsListNeedsRebuild = true
 end
 
 -- Called when the 'Cosimulation Signal Editor' is exited.
@@ -1914,16 +1275,17 @@ end
 -- Called upon world editor initialization.
 local function onEditorInitialized()
   if tech_license.isValid() then
+    vehicleSignalData.ensureCosimEditorRegistered()
+    vehicleSignalData.ensureExtensionRegistered()
     editor.editModes.cosimulationSignalEditMode = {
       displayName = "Edit Co-Simulation Signals",
       onUpdate = nop,
       onActivate = onActivate,
       onDeactivate = onDeactivate,
       icon = editor.icons.jointLocked,
-      iconTooltip = "Co-Simulation Signal Editor",
+      iconTooltip = "Co-Simulation Editor",
       auxShortcuts = {},
-      hideObjectIcons = true,
-      sortOrder = 9001 }
+      hideObjectIcons = true }
     editor.registerWindow(toolWinName, toolWinSize)
     editor.registerWindow(signalsWinName, signalsWinSize)
   end
@@ -1931,7 +1293,9 @@ end
 
 -- Callback for when the vehicle has been changed.
 local function onVehicleReplaced(vid)
-  table.clear(signals)
+  clearSignalChoicesStorage()
+  invalidateVehicleSignalData()
+  markSignalsListStale()
 end
 
 -- Serialization function.

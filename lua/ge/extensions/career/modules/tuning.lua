@@ -4,7 +4,7 @@
 
 local M = {}
 
-M.dependencies = {"career_career"}
+M.dependencies = {"career_career", "gameplay_achievement"}
 
 local inventoryId
 local vehicleVarsBefore
@@ -122,7 +122,7 @@ end
 
 local function setupTether()
   local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
 
   -- calculate the size of the vehicle to use for tethering
   local oobb = veh:getSpawnWorldOOBB()
@@ -140,8 +140,11 @@ end
 
 local closeMenuAfterSaving
 local function applyShopping()
+  career_modules_vehiclePerformance.invalidateCertification(inventoryId)
   career_modules_inventory.setVehicleDirty(inventoryId)
-  career_modules_playerAttributes.addAttributes({money=-shoppingCart.total}, {tags={"tuning", "buying"}, label="Tuned vehicle"})
+  career_modules_playerAttributes.addAttributes({money=-shoppingCart.total}, {tags={"tuning", "buying"}, label = "ui.career.tuning.tunedVehicle"})
+
+  gameplay_achievement.unlockAchievement("VEHICLE_TUNED")
 
   Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
   if career_career.isAutosaveEnabled() then
@@ -159,11 +162,18 @@ local function onVehicleSaveFinished()
   end
 end
 
-local function getTuningData()
+local function getRawTuningData()
   local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
   if not vehId then return end
   local vehData = core_vehicle_manager.getVehicleData(vehId)
+  if not vehData then return end
   return deepcopy(vehData.vdata.variables)
+end
+
+local function getTuningData()
+  local variables = getRawTuningData()
+  if not variables then return end
+  return core_vehicle_partmgmt.translateTuningData(variables)
 end
 
 local function sendShoppingCartToUI(shoppingCartUI)
@@ -173,7 +183,7 @@ local function sendShoppingCartToUI(shoppingCartUI)
 end
 
 local function createShoppingCart()
-  local tuningData = getTuningData()
+  local tuningData = getRawTuningData()
   shoppingCart = {items = {}}
   local total = 0
   for varName, value in pairs(changedVars) do
@@ -182,34 +192,38 @@ local function createShoppingCart()
     -- Construct the shopping cart and calculate prices for each item
     local varPrice
     if isOnBlackList(varData) then
-      shoppingCart.items[varName] = {name = varName, title = string.format("%s %s %s", varData.category, varData.subCategory, varData.title)}
+      shoppingCart.items[varName] = {name = varName, title = string.format("%s %s %s",
+        core_vehicle_partmgmt.getTranslation(varData.category, "ui.vehicleconfig.variables.category."),
+        core_vehicle_partmgmt.getTranslation(varData.subCategory, "ui.vehicleconfig.variables.subCategory."),
+        core_vehicle_partmgmt.getTranslation(varData.title, "ui.vehicleconfig.variables.title.")
+      )}
       varPrice = 0
     elseif varData.category then
       -- Add the category to the shopping cart if it's not there yet
       if not shoppingCart.items[varData.category] then
         local price = getPriceCategory(varData.category)
         total = total + price
-        shoppingCart.items[varData.category] = { type = "category", items = {}, price = price, title = varData.category}
+        shoppingCart.items[varData.category] = { type = "category", items = {}, price = price, title = core_vehicle_partmgmt.getTranslation(varData.category, "ui.vehicleconfig.variables.category.")}
       end
 
       -- Add the subCategory to the shopping cart if it's not there yet
       if varData.subCategory and not shoppingCart.items[varData.category].items[varData.subCategory] then
         local price = getPriceSubCategory(varData.category, varData.subCategory)
         total = total + price
-        shoppingCart.items[varData.category].items[varData.subCategory] = { type = "subCategory", items = {}, price = price, title = varData.subCategory}
+        shoppingCart.items[varData.category].items[varData.subCategory] = { type = "subCategory", items = {}, price = price, title = core_vehicle_partmgmt.getTranslation(varData.subCategory, "ui.vehicleconfig.variables.subCategory.")}
       end
 
       if varData.subCategory then
         varPrice = getPrice(varData.category, varData.subCategory, varName)
-        shoppingCart.items[varData.category].items[varData.subCategory].items[varName] = {name = varName, title = varData.title, price = varPrice}
+        shoppingCart.items[varData.category].items[varData.subCategory].items[varName] = {name = varName, title = core_vehicle_partmgmt.getTranslation(varData.title, "ui.vehicleconfig.variables.title."), price = varPrice}
       else
         varPrice = getPrice(varData.category, varData.subCategory, varName)
-        shoppingCart.items[varData.category].items[varName] = {name = varName, title = varData.title, price = varPrice}
+        shoppingCart.items[varData.category].items[varName] = {name = varName, title = core_vehicle_partmgmt.getTranslation(varData.title, "ui.vehicleconfig.variables.title."), price = varPrice}
       end
 
     else
       varPrice = getPrice(varData.category, varData.subCategory, varName)
-      shoppingCart.items[varName] = {name = varName, title = varData.title, price = varPrice}
+      shoppingCart.items[varName] = {name = varName, title = core_vehicle_partmgmt.getTranslation(varData.title, "ui.vehicleconfig.variables.title."), price = varPrice}
     end
 
     total = total + varPrice
@@ -248,10 +262,10 @@ local function startActual(_originComputerId)
   shoppingCart = {}
   changedVars = {}
   if originComputerId then
-    guihooks.trigger('ChangeState', {state = 'tuning', params = {}})
+    extensions.ui_router.navigate("career.computer.tuning")
     extensions.hook("onCareerTuningStarted")
     createShoppingCart()
-    local veh = be:getObjectByID(career_modules_inventory.getVehicleIdFromInventoryId(inventoryId))
+    local veh = getObjectByID(career_modules_inventory.getVehicleIdFromInventoryId(inventoryId))
     core_vehicleBridge.executeAction(veh, 'setFreeze', true)
     setupTether()
   end
@@ -272,7 +286,7 @@ local function start(_inventoryId, _originComputerId)
 
   local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[inventoryId].partConditions)
   if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
-    career_modules_insurance.startRepair(inventoryId, nil, function() startActual(_originComputerId) end)
+    career_modules_insurance_insurance.startRepair(inventoryId, nil, function() startActual(_originComputerId) end)
   else
     startActual(_originComputerId)
   end
@@ -280,7 +294,7 @@ end
 
 local function apply(tuningValues, callback)
   local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
-  local oldVeh = be:getObjectByID(vehId)
+  local oldVeh = getObjectByID(vehId)
   local vehicleTransform = {pos = oldVeh:getPosition(), rot = quat(0,0,1,0) * quat(oldVeh:getRefNodeRotation())}
 
   -- add the new tuning values to the existing vars and then reload the vehicle by entering again
@@ -289,7 +303,7 @@ local function apply(tuningValues, callback)
 
   career_modules_inventory.spawnVehicle(inventoryId, 2, callback)
 
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
   spawn.safeTeleport(veh, vehicleTransform.pos, vehicleTransform.rot, nil, nil, nil, nil, false)
   core_vehicleBridge.executeAction(veh, 'setFreeze', true)
 
@@ -325,7 +339,7 @@ local function close()
   else
     career_career.closeAllMenus()
   end
-  core_vehicleBridge.executeAction(be:getObjectByID(career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)), 'setFreeze', false)
+  core_vehicleBridge.executeAction(getObjectByID(career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)), 'setFreeze', false)
   if tether then
     tether.remove = true
     tether = nil
@@ -338,7 +352,8 @@ local function onComputerAddFunctions(menuData, computerFunctions)
   for _, vehicleData in ipairs(menuData.vehiclesInGarage) do
     local computerFunctionData = {
       id = "tuning",
-      label = "Tuning",
+      routeTarget = "career.computer.tuning",
+      label = _tr("ui.career.shared.pathTuning"),
       callback = function() start(vehicleData.inventoryId, menuData.computerFacility.id) end,
       disabled = buttonDisabled,
       order = 10
@@ -349,9 +364,9 @@ local function onComputerAddFunctions(menuData, computerFunctions)
       computerFunctionData.reason = career_modules_computer.reasons.needsRepair
     end
     -- tutorial active
-    if menuData.tutorialPartShoppingActive or menuData.tutorialTuningActive then
+    if not menuData.hasBoughtStarterVehicle then
       computerFunctionData.disabled = true
-      computerFunctionData.reason = career_modules_computer.reasons.tutorialActive
+      computerFunctionData.reason = career_modules_computer.reasons.hasBoughtStarterVehicle
     end
 
     -- generic gameplay reason

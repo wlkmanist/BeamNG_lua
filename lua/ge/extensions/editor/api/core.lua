@@ -87,12 +87,13 @@ end
 -- @param path the level folder, relative to game root
 local function openLevel(path)
   worldEditorCppApi.disableSimSetAndSimObjectSignals()
-  editor.newLevel()
   extensions.hook("onEditorBeforeOpenLevel")
+  editor.newLevel()
   if path ~= "" then
     editor.shutdown()
     editor.active = true -- force active true, because shutdown set it to false, we need it so, when onClientMissionStart called, need to reactivate editor
     core_levels.startLevel(path)
+    extensions.hook("onEditorAfterOpenLevel")
   end
   -- after this function the level assets (textures, shaders) load and compile async
 end
@@ -103,7 +104,7 @@ local function saveLevelBackup()
   --TODO: must delete all files one by one, FS:directoryRemove will not delete non emtpy folders
   -- it should be done selectively, since deleting all might affect repository commits
   local path = editor.levelPath .. "main"
-  local backupPath = "/settings/editor/backups/" .. editor.getLevelName() .. "/main"
+  local backupPath = "/settings/editor/level_backups/" .. editor.getLevelName() .. "/main"
   copyDirectory(path, backupPath)
   editor.log("Saving level backup: " .. path)
   extensions.hook("onEditorAfterSaveLevelBackup")
@@ -141,8 +142,7 @@ end
 -- Save the level's scene tree to the specified path.
 local function saveLevelAs(levelPath)
   editor.levelPath = levelPath
-  local levelName = path.levelFromPath(levelPath)
-  setMissionFilename(path.getPathLevelMain(levelName))
+  setMissionFilename(levelPath .. "info.json")
   editor.saveLevel()
 end
 
@@ -161,13 +161,12 @@ local function autoSaveLevel()
   local counter = editor.getPreference("files.autoSave.counter")
 
   folderName = string.format("%04d", counter)
-  local path = "/settings/editor/autosaves/" .. editor.getLevelName() .. "/" .. folderName
+  local path = "/temp/level_autosaves/" .. editor.getLevelName() .. "/" .. folderName .. "/"
   editor.autosavingNow = true
   saveLevelAs(path)
   editor.autosavingNow = false
   editor.levelPath = oldLevelPath
-  local levelName = path.levelFromPath(editor.levelPath)
-  setMissionFilename(path.getPathLevelMain(levelName))
+  setMissionFilename(editor.levelPath .. "info.json")
   counter = counter + 1
   editor.setPreference("files.autoSave.counter", counter)
   editor.dirty = oldDirty
@@ -238,7 +237,6 @@ end
 --- Set the editor state to dirty, level needs to be saved.
 local function setDirty()
   editor.dirty = true
-  editor.needsCollisionRebuild = true
   setCleanExitInfo()
 end
 
@@ -319,7 +317,7 @@ local function setVisualizationType(name, on)
   for _, type in ipairs(visualizationTypes) do
     if type.name == name then
       if type.type == varTypes.ConVar then
-        setConsoleVariable(name, on and "1" or "0")
+        VariableRegistry.set(name, on)
       elseif type.type == varTypes.LuaVar then
         local f = loadstring(type.name .. " = " .. tostring(on))
         f()
@@ -341,7 +339,7 @@ local function getVisualizationType(name)
   for _, type in ipairs(visualizationTypes) do
     if type.name == name then
       if type.type == varTypes.ConVar then
-        return getConsoleVariable(name) == "1"
+        return VariableRegistry.get(name, false) == true
       elseif type.type == varTypes.LuaVar then
         local f = loadstring("return " .. type.name)
         return f()
@@ -474,6 +472,7 @@ end
 --- Copy the current selection. The copy action is routed to the current edit mode, calling its ``onCopy()`` callback, see `Edit Modes`.
 -- The global extension hook ``onEditorCopy`` will also be invoked, which can be used by other tools if they're in focus and don't have edit modes registered.
 local function copy()
+  if editor.disableGlobalCopyPaste then return end
   if editor.editMode and editor.editMode.onCopy then
     editor.editMode.onCopy()
   end
@@ -483,6 +482,7 @@ end
 --- Paste the current selection. The paste action is routed to the current edit mode, calling its ``onPaste()`` callback, see `Edit Modes`.
 -- The global extension hook ``onEditorPaste`` will also be invoked, which can be used by other tools if they're in focus and don't have edit modes registered.
 local function paste()
+  if editor.disableGlobalCopyPaste then return end
   if editor.editMode and editor.editMode.onPaste then
     editor.editMode.onPaste()
   end
@@ -541,8 +541,33 @@ local function getLevelPath()
   return levelPath or ""
 end
 
+local function anyToolDirty()
+  if not tableIsEmpty(editor.dirtyTools) then
+    editor.openModalWindow("saveDirtyTools")
+    return true
+  end
+
+  return false
+end
+
+local function checkDirtyAndSave(noCancelButton)
+  if editor.dirty or anyToolDirty() and editor.initialized then
+    local result = messageBox(_tr("editor.msgbox.worldEditorSaveTitle"), _tr("editor.msgbox.worldEditorSaveText"), noCancelButton and 3 or 4, 2)
+    if result == 1 then
+      editor.saveLevel()
+    elseif result == 2 then
+      Engine.cancelShutdown()
+    else
+      -- no save, so we need to reset the dirty flag
+      resetDirty()
+      resetAllDirtyTools()
+    end
+  end
+end
+
 --- Used by editor UI to do new level, complete with all the open dialog
 local function doNewLevel()
+  editor.checkDirtyAndSave()
   editor_fileDialog.openFile(function(data)
     if data.path ~= "" then
       local path = data.path
@@ -557,6 +582,7 @@ end
 
 --- Used by editor UI to open a level, complete with open file dialog
 local function doOpenLevel()
+  editor.checkDirtyAndSave()
   editor_fileDialog.openFile(function(data)
     if data.path ~= "" then
       local path = data.path
@@ -636,6 +662,56 @@ local function muteAudio(muteIt)
   end
 end
 
+local function linkifyPath(targetPath)
+    if not targetPath or targetPath == "" then
+        return ""
+    end
+
+    local levelPath = editor.getLevelPath()
+    if not levelPath or levelPath == "" then
+        editor.logWarn("Cannot linkify path: no level is open")
+        return targetPath
+    end
+
+    if not levelPath:match("^/") then
+        levelPath = "/" .. levelPath
+    end
+
+    levelPath = levelPath:gsub("^levels/", "/levels/"):gsub("^/levels", "/levels")
+
+    if levelPath:sub(-1) ~= "/" then
+        levelPath = levelPath .. "/"
+    end
+
+    local normalizedTarget = targetPath:gsub("^/", "")
+    normalizedTarget = "/" .. normalizedTarget
+    normalizedTarget = normalizedTarget:gsub("^/levels$", "/levels/"):gsub("^/levels", "/levels")
+
+    local relativePath
+    local compareLevelPath = levelPath:lower()
+    local compareTarget = normalizedTarget:lower()
+    if compareTarget:sub(1, #compareLevelPath) == compareLevelPath then
+        relativePath = normalizedTarget:sub(#levelPath + 1)
+    else
+        relativePath = normalizedTarget:gsub("^/", "")
+    end
+
+    local newFilePath = levelPath .. relativePath
+    local linkFilePath = newFilePath .. ".link"
+
+    local linkDir, _, _ = path.split(linkFilePath)
+    if linkDir and linkDir ~= "" then
+        FS:directoryCreate(linkDir, true)
+    end
+
+    local linkJsonData = {}
+    linkJsonData["path"] = targetPath
+
+    jsonWriteFile(linkFilePath, linkJsonData, true)
+
+    return newFilePath
+end
+
 local function initialize(editorInstance)
   editor = editorInstance
   -- constants
@@ -689,6 +765,8 @@ local function initialize(editorInstance)
   editor.resetDirtyTool = resetDirtyTool
   editor.resetAllDirtyTools = resetAllDirtyTools
   editor.autoSaveLevel = autoSaveLevel
+  editor.anyToolDirty = anyToolDirty
+  editor.checkDirtyAndSave = checkDirtyAndSave
   editor.quitEditor = quitEditor
   editor.quitGame = quitGame
   editor.getDeltaTime = function() return imgui.GetIO().DeltaTime end
@@ -717,6 +795,7 @@ local function initialize(editorInstance)
   editor.deleteSelection = deleteSelection
   editor.getLevelName = getLevelName
   editor.getLevelPath = getLevelPath
+  editor.linkifyPath = linkifyPath
   editor.doNewLevel = doNewLevel
   editor.doOpenLevel = doOpenLevel
   editor.doSaveLevel = doSaveLevel

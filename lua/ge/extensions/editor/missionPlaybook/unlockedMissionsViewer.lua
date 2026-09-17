@@ -41,8 +41,8 @@ local function onEditorGui()
 
       im.Columns(1)
     end
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 
@@ -66,9 +66,11 @@ local function onPlaybookLogAfterStep(resultData)
   for _, id in ipairs(gameplay_missions_missions.getAllIds()) do
     local m = gameplay_missions_missions.getMissionById(id)
     if m.careerSetup.showInCareer then
-      if m.unlocks.startable and m.unlocks.visible then
+      local startable = gameplay_missions_unlocks.isMissionStartable(m)
+      local visible = gameplay_missions_unlocks.isMissionVisible(m)
+      if startable and visible then
         table.insert(data.startable, id)
-      elseif m.unlocks.visible then
+      elseif visible then
         table.insert(data.visible, id)
       else
         table.insert(data.invisible, id)

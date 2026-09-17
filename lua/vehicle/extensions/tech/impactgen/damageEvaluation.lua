@@ -19,7 +19,7 @@ local function getDeformSumEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -63,7 +63,7 @@ local function getDeformMaxEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -106,7 +106,7 @@ local function getDeformCountEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -154,7 +154,7 @@ local function getStretchSumEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -197,7 +197,7 @@ local function getStretchMaxEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -238,7 +238,7 @@ local function getStretchCountEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -284,7 +284,7 @@ local function getContractSumEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -326,7 +326,7 @@ local function getContractMaxEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -367,7 +367,7 @@ local function getContractCountEvaluation()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     local p1 = obj:getNodePositionRelative(id1)
     local p2 = obj:getNodePositionRelative(id2)
@@ -411,7 +411,7 @@ local function getBreakPercentage()
   local beamCounts = {}
 
   for i, beam in pairs(v.data.beams) do
-    local part = beam.partOrigin
+    local part = beam.partPath
 
     if beamCounts[part] == nil then
       beamCounts[part] = 0
@@ -457,7 +457,7 @@ M.getPartBeams = function()
   for i, beam in pairs(v.data.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
     local n1 = v.data.nodes[id1].name
     local n2 = v.data.nodes[id2].name
 

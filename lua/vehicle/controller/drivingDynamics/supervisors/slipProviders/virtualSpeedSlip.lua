@@ -46,7 +46,8 @@ local function calculateSlipTractionControl(wheelGroup, steeringCoef, velocityOf
     local wheelData = wheelGroup.wheels[j]
     local wd = wheelData.wd
     local wheelSpeed = wd.wheelSpeed * (CMU.vehicleData.turningCircleSpeedRatios[wd.name] or 1)
-    local wheelSlip = wheelData.slipSmoother:get(abs(min(max(((wheelSpeed + velocityOffset) / (vehicleVelocity + velocityOffset)) - 1, -0.5), 0.5)) * slipCoef)
+    --we only want positive slip here, ie wheels faster than vehicle as TC doesn't care about brake-induced slip
+    local wheelSlip = wheelData.slipSmoother:get(min(max(((wheelSpeed + velocityOffset) / (vehicleVelocity + velocityOffset)) - 1, 0), 0.5) * slipCoef)
 
     wheelData.slip = wheelSlip
     wheelGroup.maxSlip = max(wheelGroup.maxSlip, wheelSlip)
@@ -110,11 +111,6 @@ end
 local function initSecondStage(jbeamData)
   local tractionControl = CMU.getSupervisor("tractionControl")
   local absControl = CMU.getSupervisor("absControl")
-
-  if not (tractionControl or absControl) then
-    M.isActive = false
-    return
-  end
 
   if tractionControl then
     tractionControl.registerSlipProvider(M)

@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: The primary part of the fifthwheel/kingpin system. Controls the attachment of the fifthwheel to the kingpin
+
 local M = {}
 M.type = "auxiliary"
 
@@ -41,6 +43,8 @@ local couplerState = {
 local state = couplerState.detached
 
 local isCollidingWithLookup = {}
+
+local hasBuiltPie = false
 
 local function debugDrawMethod(focusPos)
   obj.debugDrawProxy:drawNodeSphere(fifthwheelNodeCid, 0.15, getContrastColor(stringHash(fifthwheelKey), 150))
@@ -83,7 +87,7 @@ local function requestKingpinData(obj2Id)
         for _, kingpin in ipairs(kingpins) do
           kingpin.sendDataToVehicle(%d, %q, %q)
         end
-      ]], objectId, M.name, "fifthwheel_v2")
+      ]], objectId, M.name, fifthwheelKey)
   obj:queueObjectLuaCommand(obj2Id, kingpinCmd)
   kingpinRequestTimeouts[obj2Id] = kingpinRequestTimeouts[obj2Id] or 1
 end
@@ -246,6 +250,27 @@ local function init(jbeamData)
   detachingKingpinNodeCid = nil
 
   electrics.values[attachmentStateElectricsName] = 0
+
+  if not hasBuiltPie then
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/helperSystems/",
+        generator = function(entries)
+          local noEntry = {
+            title = "ui.radialmenu2.fifthwheel.detach",
+            icon = "jointUnlocked",
+            uniqueID = "fifthWheelDetach_" .. M.name,
+            onSelect = function()
+              controller.getControllerSafe(M.name).detachFifthwheel()
+              return {"reload"}
+            end
+          }
+          table.insert(entries, noEntry)
+        end
+      }
+    )
+  end
+  hasBuiltPie = true
 end
 
 M.init = init

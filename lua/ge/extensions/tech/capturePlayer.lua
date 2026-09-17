@@ -48,6 +48,7 @@ local function getAttachmentFilename(name, id)
   if not responsesFile then return end
 
   local responsesDir, filename, _ = path.split(responsesFile)
+  if responsesDir == nil then responsesDir = '/' end
   return responsesDir .. filename .. '_' .. name .. '_' .. tostring(id)
 end
 
@@ -496,7 +497,7 @@ ResponseCallbacks.PollLidar = function(request, response)
 
   local pcd = pcdLib.newPcd()
   if lidar.vid then
-    local veh = be:getObjectByID(lidar.vid)
+    local veh = getObjectByID(lidar.vid)
     pcd:setViewpoint(veh:getPosition(), veh:getRefNodeRotation())
   end
 
@@ -544,7 +545,7 @@ ResponseCallbacks.PollRadar = function(request, response)
   local pointcloud = radarReturnsToPointcloud(response.data)
   local pcd = pcdLib.newPcd()
   if radar.vid then
-    local veh = be:getObjectByID(radar.vid)
+    local veh = getObjectByID(radar.vid)
     pcd:setViewpoint(veh:getPosition(), veh:getRefNodeRotation())
   end
 

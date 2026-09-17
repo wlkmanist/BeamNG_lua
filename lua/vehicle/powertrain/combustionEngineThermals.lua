@@ -746,9 +746,7 @@ local function updateWaterCoolingGFX(dt)
   local oilRadiatorActive = min((hasOilRadiator and M.oilTemperature > oilThermostatTemperature and not parentEngine.isDisabled) and M.oilTemperature - oilThermostatTemperature or 0, 1)
   --Efficiency of the cooling system drops with decreasing coolant mass and raising temps above damage threshold
   local coolantEmpty = fluidReservoirs.coolant.currentMass <= constants.minimumCoolantMass
-  local coolantIsMaxTemp = M.coolantTemperature >= constants.maxCoolantTemperature
-  local useRegularCoolantLogic = not (coolantEmpty or coolantIsMaxTemp)
-  local coolantEfficiency = useRegularCoolantLogic and (fluidReservoirs.coolant.currentMass * fluidReservoirs.coolant.invInitialMass * max(min((constants.maxCoolantTemperature - M.coolantTemperature) * 0.1, 1), 0)) or 0.01
+  local coolantEfficiency = (not coolantEmpty) and (fluidReservoirs.coolant.currentMass * fluidReservoirs.coolant.invInitialMass) or 0.01
 
   local underWaterBlockCoolingCoef = 1
   --if a node is underwater we want to increase the block to air cooling to simulate water cooling of the block
@@ -1238,6 +1236,111 @@ local function parseExhaustTree(currentBranch, currentExhaustBeams, startNodeLoo
   return currentBranch
 end
 
+local function getExhaustGraphNodeData(branch)
+  local nodeData = v.data.nodes[branch.cid] or {}
+  local adjustments = {
+    afterFireAudioCoef = nodeData.afterFireAudioCoef or 1,
+    afterFireVolumeCoef = nodeData.afterFireVolumeCoef or 1,
+    afterFireMufflingCoef = nodeData.afterFireMufflingCoef or 1,
+    afterFireVisualCoef = nodeData.afterFireVisualCoef or 1,
+    exhaustAudioOpennessCoef = nodeData.exhaustAudioMufflingCoef or nodeData.exhaustAudioOpennessCoef or 1,
+    exhaustAudioGainChange = nodeData.exhaustAudioGainChange or 0
+  }
+  local cumulative = {
+    afterFireAudioCoef = branch.afterFireAudioCoef,
+    afterFireVolumeCoef = branch.afterFireVolumeCoef,
+    afterFireMufflingCoef = branch.afterFireMufflingCoef,
+    afterFireVisualCoef = branch.afterFireVisualCoef,
+    exhaustAudioOpennessCoef = branch.exhaustAudioOpennessCoef,
+    exhaustAudioGainChange = branch.exhaustAudioGainChange
+  }
+
+  return {
+    cid = branch.cid,
+    name = nodeData and nodeData.name or tostring(branch.cid),
+    level = branch.level,
+    childrenCount = branch.childrenCount,
+    initialChildrenCount = branch.initialChildrenCount,
+    isStartNode = branch.isStartNode,
+    isBroken = branch.isBroken or false,
+    adjustments = adjustments,
+    cumulative = cumulative
+  }
+end
+
+local function addExhaustGraphNode(branch, graph, graphNodes)
+  local graphNode = graphNodes[branch.cid]
+  if not graphNode then
+    graphNode = getExhaustGraphNodeData(branch)
+    graphNodes[branch.cid] = graphNode
+    table.insert(graph.nodes, graphNode)
+  elseif branch.isBroken then
+    graphNode.isBroken = true
+  end
+end
+
+local function addExhaustGraphEdge(branch, graph, graphEdges)
+  if not branch.previous then
+    return
+  end
+
+  local edgeFrom = min(branch.previous, branch.cid)
+  local edgeTo = max(branch.previous, branch.cid)
+  local edgeKey = tostring(edgeFrom) .. ":" .. tostring(edgeTo)
+  local edge = graphEdges[edgeKey]
+  if not edge then
+    edge = {
+      from = edgeFrom,
+      to = edgeTo,
+      isBroken = branch.isBroken or false,
+      brokenTo = branch.isBroken and branch.cid or nil
+    }
+    graphEdges[edgeKey] = edge
+    table.insert(graph.edges, edge)
+  elseif branch.isBroken then
+    edge.isBroken = true
+    edge.brokenTo = branch.cid
+  end
+end
+
+local function addExhaustBranchToGraph(branch, graph, graphNodes, graphEdges)
+  addExhaustGraphNode(branch, graph, graphNodes)
+  addExhaustGraphEdge(branch, graph, graphEdges)
+
+  for _, child in pairs(branch.children or {}) do
+    addExhaustBranchToGraph(child, graph, graphNodes, graphEdges)
+  end
+end
+
+local function requestExhaustTreeData()
+  local data = {
+    vehicleId = objectId,
+    engineName = parentEngine and parentEngine.name or nil,
+    exhaustEndNodes = M.exhaustEndNodes,
+    graph = {
+      roots = {},
+      nodes = {},
+      edges = {}
+    }
+  }
+  local graphNodes = {}
+  local graphEdges = {}
+
+  for _, exhaustTree in ipairs(exhaustTrees) do
+    local root = exhaustTree.children[exhaustTree.startCid]
+    table.insert(data.graph.roots, exhaustTree.startCid)
+    if root then
+      addExhaustBranchToGraph(root, data.graph, graphNodes, graphEdges)
+    end
+  end
+
+  table.sort(data.graph.roots)
+  table.sort(data.graph.nodes, function(a, b) return a.cid < b.cid end)
+  table.sort(data.graph.edges, function(a, b) return a.from == b.from and a.to < b.to or a.from < b.from end)
+
+  guihooks.trigger("ExhaustTreeDataChanged", data)
+end
+
 local function buildExhaustTree()
   exhaustStartNodes = {}
   exhaustBeams = {}
@@ -1366,6 +1469,8 @@ local function beamBroke(id)
     --dump(nodes.exhaustEnds)
 
     parentEngine:exhaustEndNodesChanged(nodes.exhaustEnds)
+    M.exhaustEndNodes = nodes.exhaustEnds
+    requestExhaustTreeData()
 
     if not damageTracker.getDamage("engine", "exhaustBroken") then
       damageTracker.setDamage("engine", "exhaustBroken", true)
@@ -1512,14 +1617,12 @@ end
 local function initThermals(jbeamData)
   thermalsEnabled = false
   tEnv = obj:getEnvTemperature() + conversion.kelvinToCelsius
-  startPreHeated = settings.getValue("startThermalsPreHeated")
-  --default temperatures, can be adjusted to fit whatever our goal is (starting up with cold vs warm car)
-  local startingTemperature = startPreHeated and constants.preHeatTemperature or tEnv
-  M.engineBlockTemperature = startingTemperature
-  M.cylinderWallTemperature = startingTemperature
-  M.oilTemperature = startingTemperature
-  M.coolantTemperature = startingTemperature
-  M.exhaustTemperature = startingTemperature
+  --default temperatures, can be adjusted to fit whatever our goal is
+  M.engineBlockTemperature = tEnv
+  M.cylinderWallTemperature = tEnv
+  M.oilTemperature = tEnv
+  M.coolantTemperature = tEnv
+  M.exhaustTemperature = tEnv
   if not jbeamData.thermalsEnabled then
     --disable the whole thing unless stated otherwise
     --log("D", "engine.initThermals", "Engine thermals are disabled since they are missing in JBeam")
@@ -1646,6 +1749,16 @@ local function initThermals(jbeamData)
   if radiatorFanTemperature > radiatorFanTemperatureDesired then
     log("W", "engine.initThermals", string.format("Increased desired radiator fan temperature from '%dC' to '%dC' to prevent fan trigger issues with thermostat at '%dC'.", radiatorFanTemperatureDesired, radiatorFanTemperature, thermostatTemperature))
   end
+
+  startPreHeated = settings.getValue("startThermalsPreHeated")
+  --default temperatures, can be adjusted to fit whatever our goal is (starting up with cold vs warm car)
+  constants.preHeatTemperature = max(thermostatTemperature - 10, tEnv)
+  local startingTemperature = startPreHeated and constants.preHeatTemperature or tEnv
+  M.engineBlockTemperature = startingTemperature
+  M.cylinderWallTemperature = startingTemperature
+  M.oilTemperature = startingTemperature
+  M.coolantTemperature = startingTemperature
+  M.exhaustTemperature = startingTemperature
 
   airRegulatorClosedCoef = jbeamData.airRegulatorClosedCoef or 0.1
   oilThermostatTemperature = jbeamData.oilThermostatTemperature or 110
@@ -1821,6 +1934,7 @@ M.resetSounds = resetSounds
 M.reset = reset
 M.updateGFX = updateGFX
 M.beamBroke = beamBroke
+M.requestExhaustTreeData = requestExhaustTreeData
 
 M.applyDeformGroupDamageRadiator = applyDeformGroupDamageRadiator
 M.applyDeformGroupDamageOilpan = applyDeformGroupDamageOilpan

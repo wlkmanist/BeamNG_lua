@@ -12,15 +12,16 @@ local function getCareerStatusData()
   data.money = career_modules_playerAttributes.getAttributeValue("money")
   data.beamXP = career_modules_playerAttributes.getAttributeValue("beamXP")
   data.vouchers = career_modules_playerAttributes.getAttributeValue("vouchers")
+  data.insuranceScore = career_modules_insurance_insurance.getDriverScore()
   return data
 end
 M.getCareerStatusData = getCareerStatusData
 
 --CareerSimpleStats vue component
 local function getCareerSimpleStats()
-  local currentSaveSlot, _ = career_saveSystem.getCurrentSaveSlot()
+  local currentSaveSlot, _ = career_saveSystem.getCurrentProfile()
   local data = {
-    saveSlotName = currentSaveSlot,
+    saveSlotName = career_saveSystem.getCurrentDisplayName() or currentSaveSlot,
     branches = {}
   }
 
@@ -59,25 +60,64 @@ local function callCareerPauseContextButtons(functionId)
   if fun then fun() end
 end
 local function getCareerPauseContextButtons()
-  local data = {
-    buttons = {
-      {
-        label = "Log Test",
-        icon = "beampXPFull",
-        fun = function() dump("Log Test with icon beampXPFull") end
-      },
-      {
-        label = "Bigmap Test",
-        icon = "eyeFillOpened",
-        fun = function() freeroam_bigMapMode.enterBigMap() end
-      },
-      {
-        label = "Disabled Test",
-        icon = "fragile",
-        disabled = true,
-      }
-    }
-  }
+  local data = {buttons = {}}
+
+  if career_modules_delivery_general.isDeliveryModeActive() then
+    table.insert(data.buttons, {
+      label = "Map (My Cargo)",
+      icon = "map",
+      fun = function() career_modules_delivery_cargoScreen.enterMyCargo() end
+    })
+  else
+    table.insert(data.buttons, {
+      label = "Map",
+      icon = "map",
+      fun = function() freeroam_bigMapMode.enterBigMap({instant=true}) end
+    })
+  end
+
+  table.insert(data.buttons, {
+    label = "Logbook",
+    icon = "book",
+    fun = function() guihooks.trigger('ChangeState', {state = 'career.logbook'}) end
+  })
+
+  local tutorialActive = career_modules_tutorial and career_modules_tutorial.isActive()
+  if not tutorialActive and career_career.hasBoughtStarterVehicle() then
+    table.insert(data.buttons, {
+      label = "ui.career.landingPage.name",
+      icon = "progress",
+      fun = function() guihooks.trigger('ChangeState', {state = 'career.domainSelection'}) end,
+      showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0
+    })
+
+    table.insert(data.buttons, {
+      label = "Milestones",
+      icon = "trophy",
+      fun = function() guihooks.trigger('ChangeState', {state = 'career.milestones'}) end,
+      showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0
+    })
+
+  end
+
+  if career_modules_vehiclePerformance.isTestInProgress() then
+    table.insert(data.buttons, {
+      label = "Cancel Certification",
+      icon = "cancel",
+      fun = function() career_modules_vehiclePerformance.cancelTest() end,
+      showIndicator = true
+    })
+  end
+
+  if career_modules_testDrive.isActive() then
+    table.insert(data.buttons, {
+      label = "Cancel Test Drive",
+      icon = "cancel",
+      fun = function() career_modules_testDrive.stop() end,
+      showIndicator = true
+    })
+  end
+
   storeCareerPauseContextButtons(data)
   return data
 end

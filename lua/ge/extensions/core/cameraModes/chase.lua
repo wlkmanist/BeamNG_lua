@@ -57,6 +57,17 @@ function C:onSettingsChanged()
   self:reset() --TODO is this really necessary?
 end
 
+-- tunable for the camera-control / video-stream UI (distance is recomputed each frame, so only FOV)
+function C:listParams()
+  return {
+    { key = 'fov', icon = 'fa-expand', title = 'Field of view', kind = 'range', type = 'int', value = self.fov, default = 65, min = 10, max = 140, step = 1, unit = '°' },
+  }
+end
+
+function C:setParam(key, value)
+  if key == 'fov' then self.fov = tonumber(value) or self.fov end
+end
+
 function C:reset()
   self.camRot = vec3(self.defaultRotation)
   self.camRot.x = 0

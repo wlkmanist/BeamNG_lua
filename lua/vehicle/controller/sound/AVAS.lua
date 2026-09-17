@@ -5,6 +5,8 @@
 local M = {}
 M.type = "auxiliary"
 
+local abs = math.abs
+
 local forwardSound
 local reverseSound
 
@@ -17,7 +19,7 @@ local currentState
 
 local function updateGFX(dt)
   local gear = electrics.values.gear
-  local speed = electrics.values.wheelspeed or 0
+  local speed = abs(electrics.values.wheelspeed or 0)
 
   local desiredState = "stopped"
   if forwardModes[gear] then

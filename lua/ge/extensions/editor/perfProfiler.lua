@@ -1,4 +1,4 @@
-  -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -126,8 +126,8 @@ local function drawCharts(dt)
           end
           chart.plotHelperUtil:overlayTextLines(lines)
         end
-        editor.endWindow()
       end
+      editor.endWindow()
         --print("removing chart..")
         --charts[i] = nil
       --end
@@ -339,17 +339,16 @@ local function drawTableComparator()
     local cols = {}
     for _, col in ipairs(columns) do
       if col.enabled then activeKeys = activeKeys + 1 table.insert(cols, col) end
-
     end
 
     if im.BeginTable('', activeKeys+3, tableFlags) then
       im.TableSetupScrollFreeze(0,1)
-      im.TableSetupColumn("Plot", nil, 10)
-      im.TableSetupColumn("Clr", nil, 10)
-      im.TableSetupColumn("File", nil, 60)
+      im.TableSetupColumn("Plot", im.TableColumnFlags_WidthStretch, 10)
+      im.TableSetupColumn("Clr", im.TableColumnFlags_WidthStretch, 10)
+      im.TableSetupColumn("File", im.TableColumnFlags_WidthStretch, 60)
       for i, col in ipairs(cols) do
         local label = settingNames[table.concat(col.keys, "/")] or table.concat(col.keys, " / ")
-        im.TableSetupColumn(label, nil, 30)
+        im.TableSetupColumn(label, im.TableColumnFlags_WidthStretch, 30)
         im.tooltip(table.concat(col.keys, " > "))
       end
       im.TableHeadersRow()
@@ -437,10 +436,8 @@ M.loadFile = function(data)
     local lastFolder = dir:match(".-([^/]+)/$")
     if lastFolder then
       local lvl, annotationFilename = string.match(dir,".-([^/]+)/([^/]+)/$")
-      dump(lvl, annotationFilename)
       if lvl and annotationFilename then
         local file = "/levels/"..lvl.."/perfRecordingCampaths/"..annotationFilename..".perfAnnotation.json"
-        dump(file)
         if FS:fileExists(file) then
           fileData.meta.annotation = jsonReadFile(file)
           log("I","Loaded annotation file for recording. It might be out of date. ".. file)
@@ -462,7 +459,6 @@ M.loadFile = function(data)
 end
 
 local function onEditorGui(dt)
-
   if editor.beginWindow(toolWindowName, toolWindowName, im.WindowFlags_MenuBar) then
     if im.BeginMenuBar() then
       if im.MenuItem1("Record...") then
@@ -480,9 +476,9 @@ local function onEditorGui(dt)
     end
 
     if im.BeginTable("filesForFPS",3) then
-      im.TableSetupColumn("Plot", nil, 10)
-      im.TableSetupColumn("Clr", nil, 10)
-      im.TableSetupColumn("File", nil, 60)
+      im.TableSetupColumn("Plot", im.TableColumnFlags_WidthStretch, 10)
+      im.TableSetupColumn("Clr", im.TableColumnFlags_WidthStretch, 10)
+      im.TableSetupColumn("File", im.TableColumnFlags_WidthStretch, 60)
       im.TableNextColumn()
       im.Text("Plot")
       im.TableNextColumn()
@@ -522,7 +518,7 @@ local function onEditorGui(dt)
         if file.enabled then
           if not file.clr then
             local clr = rainbowColor(5.5, (f-1)%5.5, 1)
-            file.clr = ffi.new("float[4]", {[0] = clr[1], clr[2], clr[3], clr[4]})
+            file.clr = im.ArrayFloatByTbl({clr[1], clr[2], clr[3], clr[4]})
           end
           table.insert(globalNames, file.name)
           table.insert(globalColors, {file.clr[0],file.clr[1],file.clr[2],file.clr[3]})
@@ -534,11 +530,11 @@ local function onEditorGui(dt)
       end
     end
 
-    editor.endWindow()
     drawCharts(dt)
     drawTableComparator()
     drawMetadataWindow()
   end
+  editor.endWindow()
   if openRecordPopup then
     im.OpenPopup("NewRecording")
     openRecordPopup = nil
@@ -546,14 +542,13 @@ local function onEditorGui(dt)
   newRecordingPopup()
 end
 
-
 local function show()
   editor.showWindow(toolWindowName)
 end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(500, 500), im.ImVec2(500, 500))
-  editor.addWindowMenuItem("Performance Recorder", function() show() end,{groupMenuName="Experimental"})
+  editor.addWindowMenuItem("Performance Recorder", function() show() end,{groupMenuName="Debug"})
 end
 
 M.show = show

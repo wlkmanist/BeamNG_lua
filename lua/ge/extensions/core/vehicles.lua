@@ -4,26 +4,57 @@
 
 local min, max, random = math.min, math.max, math.random
 local pathDefaultConfig = "settings/default.pc"
+local vehManager = extensions.core_vehicle_manager
+
+local plateDesign = require('core/licensePlateDesign')
 
 local M = {}
+M.dependencies = { 'core_vehiclePaints', 'core_locales', 'core_skiaTemplate' }
 
 --M.forceLicenceStr = 'BeamNG' -- enables to force a license plate text
 
 M.defaultVehicleModel = string.match(beamng_appname, 'tech') and 'etk800' or 'pickup'
 
-local filtersWhiteList = { "Drivetrain", "Type", "Config Type", "Transmission", "Country", "Derby Class", "Performance Class",
- "Value", "Brand", "Body Style", "Source", "Weight", "Top Speed", "0-100 km/h", "0-60 mph", "Weight/Power", "Off-Road Score", "Years", 'Propulsion', 'Fuel Type', 'Induction Type' }
+-- coupler tags + a tag for the auto couple function
+M.couplerTagsOptions = {
+  tow_hitch = "autoCouple",
+  fifthwheel = "autoCouple",
+  gooseneck_hitch = "autoCouple",
+  pintle = "autoCouple",
+  fifthwheel_v2 = true
+}
+
+M.vehiclePlayersMap = {}
+M.playerVehicleMap = {}
+
+M.resetVehCollectionEnabled = true
+
+M.vehCollections = {}
+M.vehIdToVehCollection = {}
+
+M.initVehCollections = {}
+M.initVehIdToVehCollection = {}
+
+M.attachedCouplers = {}
+M.vehsCouplerCache = {}
+M.vehsCouplerTags = {}
+M.vehsCouplerOffset = {}
+
+local filtersWhiteList = { "Drivetrain", "Type", "Config Type", "Transmission", "Country", "Derby Class", "Performance Class", "Value", "Brand", "Body Style", "Source", "Weight", "Top Speed", "0-100 km/h", "0-60 mph", "Weight/Power", "Off-Road Score", "Years", 'Propulsion', 'Fuel Type', 'Induction Type', 'Commercial Class', "Region", "InsuranceClass" }
 
 local range = {'Years'}
-local beamStats = {}
+
+local _showInvalidPcFiles = false
 
 -- agregates only, attribute stays the same
 local convertToRange = { 'Value', 'Weight', 'Top Speed', '0-100 km/h', '0-60 mph', 'Weight/Power', "Off-Road Score" }
+local convertToDict = { "Region", "InsuranceClass" }
 
 -- so the ui knows when to interpret the data as range
 local finalRanges = {}
 arrayConcat(finalRanges, range)
 arrayConcat(finalRanges, convertToRange)
+M.finalRanges = finalRanges
 
 local displayInfo = {
   ranges = {
@@ -55,10 +86,13 @@ local displayInfo = {
 }
 
 -- TODO: Think about only operating on cache and not cache + local variable in function
-local showStandalonePcs = settings.getValue('showStandalonePcs')
+local showStandalonePcs = true--settings.getValue('showStandalonePcs')
 local SteamLicensePlateVehicleId
 local cache = {}
 local anyCacheFileModified = false
+
+local vehsSpawningFlag = {}
+local vehsPreventCollectionResetFlag = {}
 
 local function _parseVehicleNameBackwardCompatibility(vehicleName)
   -- try to read the name.cs
@@ -112,12 +146,32 @@ local function _fillAggregates(data, destination)
         destination[key].min = min(data[key], destination[key].min)
         destination[key].max = max(data[key], destination[key].max)
       end
+    elseif tableContains(convertToDict, key) then
+      if not destination[key] then
+        destination[key] = {}
+      end
+      if type(value) == 'string' then
+        destination[key][value] = true
+      end
+      if type(value) == 'table' then
+        for value, active in pairs(value or {}) do
+          if active then
+            destination[key][value] = true
+          end
+        end
+      end
     elseif tableContains(filtersWhiteList, key) then
       if not destination[key] then
         destination[key] = {}
       end
 
-      destination[key][value] = true
+      if type(value) == 'table' then
+        for _, value2 in ipairs(value) do
+          destination[key][value2] = true
+        end
+      else
+        destination[key][value] = true
+      end
     end
   end
 end
@@ -131,6 +185,15 @@ local function _mergeAggregates(data, destination)
         destination[key].min = min(data[key].min, destination[key].min)
         destination[key].max = max(data[key].max, destination[key].max)
       end
+    elseif tableContains(convertToDict, key) then
+      if not destination[key] then
+        destination[key] = {}
+      end
+      for value, active in pairs(value or {}) do
+        if active then
+          destination[key][value] = true
+        end
+      end
     elseif tableContains(filtersWhiteList, key) then
       if not destination[key] then
         destination[key] = deepcopy(data[key])
@@ -143,83 +206,215 @@ local function _mergeAggregates(data, destination)
   end
 end
 
+local shouldBeString = {"Name", "Description","Drivetrain", "Config Type", "Body Style", "Transmission", "Brand", "Country", "Source", "Type", "Derby Class", 'Propulsion', 'Fuel Type', 'Induction Type', 'Commercial Class', 'Configuration'}
+local shouldBeNumber = { "Value", "Braking G"}
+local shouldBeDict = { "Region" }
+for key, _ in pairs(displayInfo.units) do table.insert(shouldBeNumber, key) end
+for key, _ in pairs(displayInfo.predefinedUnits) do table.insert(shouldBeNumber, key) end
+local shouldBeStringLookup = tableValuesAsLookupDict(shouldBeString)
+local shouldBeNumberLookup = tableValuesAsLookupDict(shouldBeNumber)
+local shouldBeDictLookup = tableValuesAsLookupDict(shouldBeDict)
+
+local function sanitizeInfoFile(data, filepath)
+  local newData = deepcopy(data)
+  for key, value in pairs(data) do
+    if shouldBeStringLookup[key] and type(value) ~= "string" then
+      log('W', '', 'Info file '..filepath..' has a non-string value for key '..key..': '..dumps(value)..'('..type(value)..'). Converting to string.')
+      newData[key] = tostring(value)
+    end
+    if shouldBeNumberLookup[key] and type(value) ~= "number" then
+      newData[key] = tonumber(value)
+      if newData[key] == nil then
+        log('E', '', 'Info file '..filepath..' has a non-number value for key '..key..': '..dumps(value)..'('..type(value)..') that could not be converted to a number.')
+      else
+        log('W', '', 'Info file '..filepath..' has a non-number value for key '..key..': '..dumps(value)..'('..type(value)..'). Converting to number.')
+      end
+    end
+    if shouldBeDictLookup[key] then
+      if type(value) ~= "table" then
+        --log('W', '', 'Info file '..filepath..' has a non-table value for key '..key..': '..dumps(value)..'('..type(value)..'). Converting to table.')
+        newData[key] = { [value] = true }
+      end
+      if newData[key][1] ~= nil then
+        newData[key] = tableValuesAsLookupDict(newData[key])
+        for k, v in pairs(newData[key]) do
+          newData[key][k] = true
+        end
+      end
+    end
+    if key == "Years" then
+      if type(value) == "string" then
+        newData[key] = tostring(value)
+        if newData[key] == nil then
+          log('E', '', 'Info file '..filepath..' has a invalid value for key '..key..': '..dumps(value)..'('..type(value)..') that could not be converted to a string.')
+        else
+          log('W', '', 'Info file '..filepath..' has a invalid value for key '..key..': '..dumps(value)..'('..type(value)..'). Converting to string.')
+        end
+      elseif type(value) == "table" and (type(value.min) ~= "number" or type(value.max) ~= "number") then
+        newData[key] = {min = tonumber(value.min), max = tonumber(value.max)}
+        if newData[key].min == nil or newData[key].max == nil then
+          log('E', '', 'Info file '..filepath..' has a invalid value for key '..key..': '..dumps(value)..'('..type(value)..') that could not be converted to a number.')
+        else
+          log('W', '', 'Info file '..filepath..' has a invalid value for key '..key..': '..dumps(value)..'('..type(value)..'). Converting to number.')
+        end
+        if newData[key].min == nil and newData[key].max == nil then
+          newData[key] = nil
+        else
+          newData[key].min = newData[key].min or newData[key].max or 0
+          newData[key].max = newData[key].max or newData[key].min or 0
+        end
+      end
+    end
+  end
+  return newData
+end
+
+
 -- gets all files related to vehicle info
 local profilerEnabled = true
 local p
+
+
 local function computeFilesCaches()
-  local jfiles = FS:findFiles("/vehicles/", "info*.json\t*.pc\t*.png\t*.jpg", -1, true, true)
+  profilerPushEvent("computeFileCache")
+  local jfiles
+  local yieldFn = nop
+  if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+    yieldFn = util_asyncBulkLoader.yield
+    jfiles = core_jobsystem.findFilesAsync("/vehicles/", "info*.json\t*.pc\t*.png\t*.jpg\t*.paintLibrary.json", yieldFn)
+  else
+    jfiles = FS:findFiles("/vehicles/", "info*.json\t*.pc\t*.png\t*.jpg\t*.paintLibrary.json", -1, true, true)
+  end
+
   if p then p:add("find") end
-  local filesJson, filesPC, filesImages, filesParsed = {}, {}, {}, {}
+  local filesJson, filesPC, filesImages, filesParsed, filesPaints = {}, {}, {}, {}, {}
   for _, filename in ipairs(jfiles) do
-    if shouldHideUNRELIABLE("/vehicles/", filename) then
-      --log('W', '', 'Skipping hidden file: '.. filename)
-    else
-      if string.lower(filename:sub(-5)) == '.json' then
-        table.insert(filesJson, filename)
-      elseif string.lower(filename:sub(-3)) == '.pc' then
-        table.insert(filesPC, filename)
-      elseif string.lower(filename:sub(-4)) == '.png' or string.lower(filename:sub(-4)) == '.jpg' then
-        filesImages[filename] = true
+    if string.lower(filename:sub(-5)) == '.json' then
+      if string.lower(filename:sub(-18)) == '.paintlibrary.json' then
+        table.insert(filesPaints, filename)
       else
-        log('E', 'vehicles', 'Bug in vehicles.lua code (unrecognized file: '.. filename..')')
+        table.insert(filesJson, filename)
       end
+    elseif string.lower(filename:sub(-3)) == '.pc' then
+      table.insert(filesPC, filename)
+    elseif string.lower(filename:sub(-4)) == '.png' or string.lower(filename:sub(-4)) == '.jpg' then
+      filesImages[filename] = true
+    else
+      log('E', 'vehicles', 'Bug in vehicles.lua code (unrecognized file: '.. filename..')')
     end
   end
   if p then p:add("classify") end
-  for _, fn in ipairs(filesJson) do
-    local data = readFile(fn)
-    if p then p:add("json read") end
-    if data then
-      data = jsonDecode(data)
-      if p then p:add("json decode") end
-      if not data then
-        log('E', 'vehicles', 'unable to read info file, ignoring: '.. fn)
-      else
-        filesParsed[fn] = data
-      end
-    else
-      log('E', 'vehicles', 'unable to read file, ignoring: '.. fn)
+
+  local reportScanProgress = util_asyncBulkLoader and util_asyncBulkLoader.isLoading()
+    and util_asyncBulkLoader.reportScanPercent
+  local totalDecode = #filesJson + #filesPaints + #filesPC
+  local decoded = 0
+  local lastPercent = nil
+
+  local function reportDecodeProgress()
+    if not reportScanProgress or totalDecode <= 0 then return end
+    local percent = math.floor(decoded * 100 / totalDecode)
+    if percent > 100 then percent = 100 end
+    if percent ~= lastPercent then
+      lastPercent = percent
+      reportScanProgress(percent)
     end
+  end
+
+  local function afterDecodeFile(yieldLabel)
+    decoded = decoded + 1
+    reportDecodeProgress()
+    yieldFn(yieldLabel)
+  end
+
+  if reportScanProgress and totalDecode > 0 then
+    reportScanProgress(0)
+    lastPercent = 0
+  end
+
+  for _, fn in ipairs(filesJson) do
+    local data = jsonReadFile(fn)
+    if data then
+      if p then p:add("json decode") end
+      filesParsed[fn] = data
+    else
+      log('E', 'vehicles', 'invalid JSON file, ignoring: '.. fn)
+    end
+    afterDecodeFile("computeFilesCaches json " .. fn)
     if p then p:add("json end") end
   end
-  for _, fn in ipairs(filesPC) do
-    local data = readFile(fn)
-    if p then p:add("pc read") end
+  for _, fn in ipairs(filesPaints) do
+    local data = jsonReadFile(fn)
     if data then
-      data = jsonDecode(data)
-      if p then p:add("pc decode") end
-      if not data then
-        log('E', 'vehicles', 'unable to read PC file, ignoring: '.. fn)
-      else
-        filesParsed[fn] = data
-      end
+      if p then p:add("paints decode") end
+      filesParsed[fn] = data
     else
-      log('E', 'vehicles', 'unable to read file, ignoring: '.. fn)
+      log('E', 'vehicles', 'invalid paints file, ignoring: '.. fn)
     end
+    afterDecodeFile("computeFilesCaches paints " .. fn)
+    if p then p:add("paints end") end
+  end
+  for _, fn in ipairs(filesPC) do
+    local data = jsonReadFile(fn)
+    if data then
+      if p then p:add("pc decode") end
+      filesParsed[fn] = data
+    else
+      log('E', 'vehicles', 'invalid PC file, ignoring: '.. fn)
+    end
+    afterDecodeFile("computeFilesCaches pc " .. fn)
     if p then p:add("pc end") end
   end
-  return filesJson, filesPC, filesImages, filesParsed
+
+  if reportScanProgress then
+    reportScanProgress(-1)
+  end
+  profilerPopEvent("computeFileCache")
+  return filesJson, filesPC, filesImages, filesPaints, filesParsed
 end
 
-local filesJsonCache, filesPCCache, filesImagesCache, filesParsedCache
+local filesJsonCache, filesPCCache, filesImagesCache, filesPaintsCache, filesParsedCache
 local function getFilesJson()
-  if not filesJsonCache then filesJsonCache, filesPCCache, filesImagesCache, filesParsedCache = computeFilesCaches() end
+  if not filesJsonCache then filesJsonCache, filesPCCache, filesImagesCache, filesPaintsCache, filesParsedCache = computeFilesCaches() end
   return filesJsonCache
 end
+M.getFilesJson = getFilesJson
 
 local function getFilesPC()
-  if not filesPCCache then filesJsonCache, filesPCCache, filesImagesCache, filesParsedCache = computeFilesCaches() end
+  if not filesPCCache then filesJsonCache, filesPCCache, filesImagesCache, filesPaintsCache, filesParsedCache = computeFilesCaches() end
   return filesPCCache
 end
 
 local function getFilesImages()
-  if not filesImagesCache then filesJsonCache, filesPCCache, filesImagesCache, filesParsedCache = computeFilesCaches() end
+  if not filesImagesCache then filesJsonCache, filesPCCache, filesImagesCache, filesPaintsCache, filesParsedCache = computeFilesCaches() end
   return filesImagesCache
 end
 
 local function getFilesParsed()
-  if not filesParsedCache then filesJsonCache, filesPCCache, filesImagesCache, filesParsedCache = computeFilesCaches() end
+  if not filesParsedCache then filesJsonCache, filesPCCache, filesImagesCache, filesPaintsCache, filesParsedCache = computeFilesCaches() end
   return filesParsedCache
+end
+M.getFilesParsed = getFilesParsed
+
+local function getPaintFiles()
+  if not filesPaintsCache then filesJsonCache, filesPCCache, filesImagesCache, filesPaintsCache, filesParsedCache = computeFilesCaches() end
+  return filesPaintsCache
+end
+M.getPaintFiles = getPaintFiles
+
+-- finds all jbeam files for a model
+local function getModelsJbeamFiles_cached(cache, model, path)
+  if cache[model] ~= nil then return cache[model] end
+  local vehicleDirectory = path or '/vehicles/' .. model .. '/'
+  if string.sub(vehicleDirectory, -1) ~= '/' then vehicleDirectory = vehicleDirectory .. '/' end
+  local res
+  if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+    res = core_jobsystem.findFilesAsync(vehicleDirectory, '*.jbeam', util_asyncBulkLoader.yield)
+  else
+    res = FS:findFiles(vehicleDirectory, '*.jbeam', -1, false, false)
+  end
+  cache[model] = res
+  return res
 end
 
 -- returns all found model names
@@ -227,6 +422,7 @@ local modelsDataCache
 local function getModelsData()
   if not modelsDataCache then
     local modelsData = {}
+    local _jbeamFilesCache = {}
 
     local modelRegex  = "^/vehicles/([%w|_|%-|%s]+)/info[_]?(.*)%.json"
     local modelRegexPC  = "^/vehicles/([%w|_|%-|%s]+)/(.*)%.pc"
@@ -240,7 +436,7 @@ local function getModelsData()
         if not modelsData[model] then modelsData[model] = { info = {}, configs = {}} end
         modelsData[model]['info'][path] = configName
       else
-        log("E", "", string.format("Unable to understand vehicle path %s (attempted regex was: %s)", dumps(path), dumps(modelRegex)))
+        log("E", "", string.format("Cannot parse path %s with regex %s. Can be caused by uncommon characters, subfolders...", dumps(path), dumps(modelRegex)))
       end
     end
 
@@ -249,9 +445,23 @@ local function getModelsData()
       if model then
         if not modelsData[model] then
           if showStandalonePcs then
+            local jbeamFilesCount = #getModelsJbeamFiles_cached(_jbeamFilesCache, model)
+            if jbeamFilesCount == 0 then
+              log('W', '', 'standalone pc file without any jbeam files ignored: ' .. tostring(path))
+              --- comment this out to see all standalone pc files
+              if not _showInvalidPcFiles then
+                goto continue_pc
+              end
+            end
             modelsData[model] = { info = {}, configs = {}}
+            if jbeamFilesCount == 0 then
+              modelsData[model].missingJbeamFiles = true
+            end
           else
             log('W', '', 'standalone pc file without info file ignored: ' .. tostring(path))
+            if not _showInvalidPcFiles then
+              goto continue_pc
+            end
           end
         end
         if modelsData[model] then
@@ -268,20 +478,17 @@ local function getModelsData()
           end
         end
       else
-        log('E', '', 'Malformed pc json: ' .. tostring(path))
+        log("E", "", string.format("Cannot parse path %s with regex %s. Can be caused by uncommon characters, subfolders...", dumps(path), dumps(modelRegexPC)))
       end
+      ::continue_pc::
     end
 
     -- find any vehicles without configurations
     local vehicleDirs = FS:directoryList('/vehicles/', false, true)
     for _, path in ipairs(vehicleDirs) do
-      if shouldHideUNRELIABLE("/vehicles/", path) then
-        --log("W", "", "Skipping hidden vehicleDir: "..dumps(path))
-        goto continue
-      end
       local model = string.match(path, modelRegexDir)
       if not model then
-        log("E", "", string.format("Unable to understand vehicle path %s (attempted regex was: %s)", dumps(path), dumps(modelRegexDir)))
+        log("E", "", string.format("Cannot parse path %s with regex %s. Can be caused by uncommon characters, subfolders...", dumps(path), dumps(modelRegexDir)))
         goto continue
       end
       if model == "common" then
@@ -291,7 +498,7 @@ local function getModelsData()
         goto continue
       end
       -- ok, we don't know about this vehicle, lets figure out if there are jbeam files in there
-      local jbeamFiles = FS:findFiles(path .. '/', "*.jbeam", 0, false, false)
+      local jbeamFiles = getModelsJbeamFiles_cached(_jbeamFilesCache, model, path)
       if #jbeamFiles == 0 then
         log('W', '', 'Warning: vehicle folder does not contain any jbeam files: ' .. tostring(path) .. '. Ignored.')
         goto continue
@@ -323,6 +530,11 @@ local function getModelsData()
   end
   return modelsDataCache
 end
+M.getModelsData = getModelsData
+
+local function isModelsDataLoaded()
+  return modelsDataCache ~= nil
+end
 
 local _cachedGamePath = FS:getGamePath()
 local function _isOfficialContentVPathFast(vpath)
@@ -339,8 +551,9 @@ local function getSourceAttr(path)
   end
 end
 
-local function convertVehicleInfo(info)
-  -- log('I', 'convert', 'Convert vehicle info: '..dump(info))
+local default_color_keys = {'default_color', 'default_color_2', 'default_color_3'}
+local function convertVehicleInfo(info, infoFilename)
+  --log('I', 'convert', 'Convert vehicle info: '..dumps(infoFilename))
   local color = {x=0,y=0,z=0,w=0}
   local metallicData = {}
   local paints = {}
@@ -364,6 +577,14 @@ local function convertVehicleInfo(info)
     info.paints = paints
     info.colors = nil
   end
+  for _, key in ipairs(default_color_keys) do
+    if info[key] and type(info[key]) == 'table' and #info[key] == 4 then
+      log("W","", "Outdated default color format in "..dumps(infoFilename)..". Converting to paint: "..dumps(info[key]))
+      info[key] = createVehiclePaint({x = info[key][1], y = info[key][2], z = info[key][3], w = info[key][4]})
+      info[key].name = (info.Name or "") .. " " .. key
+    end
+  end
+
   info.defaultPaintName1 = info.default_color
   info.default_color = nil
 
@@ -384,8 +605,13 @@ local function  _imageExistsDefault(...)
   return '/ui/images/appDefault.png'
 end
 
+local function constructName(modelName, configName)
+  return modelName .. " " .. configName
+end
+
 local function _modelConfigsHelper(key, model, ignoreCache)
   --dump{'_modelConfigsHelper', key, model}
+
   if type(key) ~= 'string' then return nil end
   local vehFiles = getModelsData()[key]
   if not vehFiles then
@@ -397,18 +623,36 @@ local function _modelConfigsHelper(key, model, ignoreCache)
     return cache[key].configs
   end
 
+
   if not cache[key].configs then
     cache[key].configs = {}
   end
 
   local configs = {}
+  local yieldFn = nop
+  if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+    yieldFn = util_asyncBulkLoader.yield
+    util_asyncBulkLoader.addTotal(tableSize(vehFiles.configs))
+  end
 
   for configFilename, configName in pairs(vehFiles.configs) do
     local contentSource = getSourceAttr(configFilename)
-    local infoFilename = "/vehicles/" .. key .. "/info_" .. configName .. ".json"
+    -- use format
+    local infoFilename = string.format("/vehicles/%s/info_%s.json", key, configName)
+    local mod = extensions.core_modmanager.getModFromPath(configFilename, true)
     local readData = {}
     if vehFiles.info[infoFilename] and getFilesParsed()[infoFilename] then
       readData = getFilesParsed()[infoFilename]
+      local source = infoFilename
+      if mod then
+        -- use format
+        if mod.modData and mod.modData.title then
+          source = string.format("%s (from Mod: %s)", infoFilename, mod.modData.title)
+        else
+          source = string.format("%s (from Mod: %s)", infoFilename, mod.modname)
+        end
+      end
+      readData = sanitizeInfoFile(readData, source)
     else
       if FS:fileExists(infoFilename) then
         log('E', 'vehicles', 'unable to read info file, ignoring: '.. infoFilename)
@@ -421,13 +665,37 @@ local function _modelConfigsHelper(key, model, ignoreCache)
     end
 
     if readData.colors or readData.default_color or readData.default_color_2 or readData.default_color_3 then
-      convertVehicleInfo(readData)
+      convertVehicleInfo(readData, infoFilename)
+    end
+
+    -- sanitize colors
+    if readData then
+      local validatedPaints = {}
+      for name, data in pairs(readData.paints or {}) do
+        if type(data) ~= 'table' then
+          log("E","","Invalid paint setup in "..dumps(infoFilename)..". Paint "..dumps(name).." is not a valid paint: "..dumps(data))
+          validatedPaints[name] = createVehiclePaint({x = 1, y = 1, z = 1, w = 1})
+        else
+          validatedPaints[name] = data
+        end
+      end
+      readData.paints = validatedPaints
+    end
+
+    if readData.allowPaintSelectionInSelector == nil then
+      readData.allowPaintSelectionInSelector = true
     end
 
 
     local configData = readData
-    --configData.infoFilename = infoFilename
-    --configData.pcFilename = configFilename
+    configData.infoFilename = infoFilename
+    configData.pcFilename = configFilename
+
+    if configData.useSubCluster == nil then
+      configData.useSubCluster = model.useSubCluster
+    end
+    configData.vehicleSelectorSubCluster = (configData.vehicleSelectorSubCluster and core_locales.translate(configData.vehicleSelectorSubCluster)) or (model.vehicleSelectorSubCluster and core_locales.translate(model.vehicleSelectorSubCluster))
+    configData.vehicleSelectorSubGroup = (configData.vehicleSelectorSubGroup and core_locales.translate(configData.vehicleSelectorSubGroup)) or (model.vehicleSelectorSubGroup and core_locales.translate(model.vehicleSelectorSubGroup))
 
     configData.Source = contentSource
 
@@ -443,22 +711,16 @@ local function _modelConfigsHelper(key, model, ignoreCache)
     if not configData.Configuration then
       configData.Configuration = configName
     end
-    configData.Name = model.Name .. " " .. configData.Configuration
-
-    configData.preview = _imageExistsDefault('/vehicles/' .. key .. '/' .. configName .. '.png', '/vehicles/' .. key .. '/' .. configName .. '.jpg')
-
-    if configData.defaultPaintName1 ~= nil and configData.defaultPaintName1 ~= '' then
-      if not model.paints then
-        model.paints = model.paints or {}
-        log('E', 'vehicles', key..':'..configName..': cannot set default paint for model with no paints data.')
-      end
-
-      configData.defaultPaint = model.paints[configData.defaultPaintName1]
+    configData.Configuration = _tr(configData.Configuration)
+    configData.Name = constructName(model.Name, configData.Configuration)
+    configData.Description = configData.Description and _tr(configData.Description) or nil
+    if configData.Brand then
+      configData.Brand = core_locales.translateWithPrefixFallback(configData.Brand,"ui.vehicleconfig.brand.")
     end
 
-    if configData.Value then --if we have a value number
-      configData.Value = tonumber(configData.Value) or configData.Value --make sure it's actually a NUMBER and not a string
-    end
+    -- use format
+    configData.preview = _imageExistsDefault(string.format('/vehicles/%s/%s.png', key, configName), string.format('/vehicles/%s/%s.jpg', key, configName))
+
 
     configData.is_default_config = (configName == model.default_pc)
 
@@ -466,19 +728,38 @@ local function _modelConfigsHelper(key, model, ignoreCache)
       _fillAggregates(readData, configData.aggregates)
     end
 
-    --configData.mod, configData.modFingerprint = extensions.core_modmanager.getModFromPath(configFilename, true) -- TODO: FIXME: SUPER SLOW
+    if configData.isAuxiliary == nil then
+      configData.isAuxiliary = model.isAuxiliary
+    end
 
+
+    if mod then
+      configData.modID = mod.modID
+      configData.Source = mod.modname
+      if mod.modData and mod.modData.title then
+        configData.Source = mod.modData.title
+      end
+
+    end
+
+    if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+      util_asyncBulkLoader.addCount(1)
+    end
+
+    yieldFn("getModelConfigsHelper " .. configFilename)
     configs[configName] = configData
   end
 
   return configs
 end
 
+
 -- get all info to one model
 local function getModel(key)
   if type(key) ~= 'string' then return {} end
-  if not getModelsData()[key] then
-    log('E', '', 'Vehicle not available: ' .. tostring(key))
+  local modelsData = getModelsData()[key]
+  if not modelsData then
+    log('E', '', 'Vehicle not available: ' .. dumps(key))
     return {}
   end
 
@@ -486,10 +767,26 @@ local function getModel(key)
     return cache[key]
   end
 
-  local infoFilename = "/vehicles/"..key.."/info.json"
+
+
+  -- use format
+  local infoFilename = string.format("/vehicles/%s/info.json", key)
   local data = getFilesParsed()[infoFilename]
+  if data then
+    local mod = extensions.core_modmanager.getModFromPath(infoFilename, true)
+    local source = infoFilename
+    if mod then
+      -- use format
+      if mod.modData and mod.modData.title then
+        source = string.format("%s (from Mod: %s)", infoFilename, mod.modData.title)
+      else
+        source = string.format("%s (from Mod: %s)", infoFilename, mod.modname)
+      end
+    end
+    data = sanitizeInfoFile(data, source)
+  end
   if data and (data.colors or data.default_color or data.default_color_2 or data.default_color_3) then
-    convertVehicleInfo(data)
+    convertVehicleInfo(data, infoFilename)
   end
 
   local fixedVehicle = false
@@ -498,7 +795,22 @@ local function getModel(key)
     fixedVehicle = true
   end
 
+  -- sanitize colors
+  if data then
+    local validatedPaints = {}
+    for name, data in pairs(data.paints or {}) do
+      if type(data) ~= 'table' then
+        log("E","","Invalid paint setup in "..dumps(infoFilename)..". Paint "..dumps(name).." is not a valid paint: "..dumps(data))
+        validatedPaints[name] = createVehiclePaint({x = 1, y = 1, z = 1, w = 1})
+      else
+        validatedPaints[name] = data
+      end
+    end
+    data.paints = validatedPaints
+  end
+
   -- Patch up old vehicles for new System
+  profilerPushEvent("patchUpOldVehicles")
   local missingInfoConfigs = nil
   if data.configs then
     missingInfoConfigs = data.configs
@@ -509,18 +821,24 @@ local function getModel(key)
         mConfig.is_default_config = true
       end
       mConfig.aggregates = {}
-      mConfig.Configuration = mConfigName
-      mConfig.Name = data.Name .. ' ' .. mConfigName
+      mConfig.Configuration = _tr(mConfigName)
+      mConfig.Name = constructName(data.Name, mConfigName)
       mConfig.key = mConfigName
       mConfig.model_key = key
-      mConfig.preview = _imageExistsDefault('/vehicles/' .. key .. '/' .. mConfigName .. '.png', '/vehicles/' .. key .. '/' .. mConfigName .. '.jpg')
+      -- use format
+      mConfig.preview = _imageExistsDefault(string.format('/vehicles/%s/%s.png', key, mConfigName), string.format('/vehicles/%s/%s.jpg', key, mConfigName))
     end
     data.configs = nil
   end
+  profilerPopEvent("patchUpOldVehicles")
 
   local model = {}
   if data then
     model = deepcopy(data)
+    model.Name = _tr(model.Name)
+    if model.Brand then
+      model.Brand = core_locales.translateWithPrefixFallback(model.Brand,"ui.vehicleconfig.brand.")
+    end
 
     if not data.Type then
       model.Type = "Unknown"
@@ -530,22 +848,21 @@ local function getModel(key)
     model.aggregates = {} -- values for filtering
   end
 
-  -- get preview if it exists
-  model.preview = _imageExistsDefault('/vehicles/' .. key .. '/default.png', '/vehicles/' .. key .. '/default.jpg')
 
+  -- get preview if it exists
+  profilerPushEvent("getPreview")
+  -- use format
+  model.preview = _imageExistsDefault(string.format('/vehicles/%s/default.png', key), string.format('/vehicles/%s/default.jpg', key))
+  profilerPopEvent("getPreview")
   --model.infoFilename = infoFilename
   --model.pcFilename = ''
 
-  model.logo = _imageExistsDefault('/vehicles/' .. key .. '/logo.png', '/vehicles/' .. key .. '/logo.jpg')
+  profilerPushEvent("getLogo")
 
-  if model.defaultPaintName1 then
-    if model.paints then
-      model.defaultPaint = model.paints[model.defaultPaintName1]
-    end
-  else
-    model.defaultPaint = {}
-    model.defaultPaintName1 = ""
-  end
+  model.logo = _imageExistsDefault(string.format('/vehicles/%s/logo.png', key), string.format('/vehicles/%s/logo.jpg', key))
+  profilerPopEvent("getLogo")
+
+
 
   model.key = key -- redundant but makes life easy
 
@@ -555,18 +872,26 @@ local function getModel(key)
   cache[key] = {}
   cache[key].model = model
 
+  profilerPushEvent("getConfigs")
   cache[key].configs = missingInfoConfigs or _modelConfigsHelper(key, model, ignoreCache)
+  profilerPopEvent("getConfigs")
 
   if cache[key].configs and tableSize(cache[key].configs) < 1 then
     cache[key].configs[key] = deepcopy(model)
     if cache[key].configs[key].model_key == nil then
       cache[key].configs[key].model_key = cache[key].configs[key].key
+      cache[key].configs[key].infoFilename = infoFilename
     end
     if cache[key].model.default_pc == nil then
       cache[key].model.default_pc = key
     end
   end
 
+  model.missingJbeamFiles = modelsData.missingJbeamFiles
+
+  profilerPushEvent("setupPaints")
+  extensions.core_vehiclePaints.setupPaints(model, cache[key].configs)
+  profilerPopEvent("setupPaints")
   if data then
     data.Source = getSourceAttr(infoFilename)
 
@@ -587,6 +912,14 @@ local function getModel(key)
   end
   _mergeAggregates(aggHelper, cache[key].model.aggregates)
 
+  if util_asyncBulkLoader then
+    util_asyncBulkLoader.addCount(1)
+  end
+
+  if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+    util_asyncBulkLoader.yield("getModel " .. key)
+  end
+
   return cache[key]
 end
 
@@ -594,7 +927,7 @@ end
 -- one could also use: playerVehicle:getJBeamFilename()
 local function getVehicleDetails(id)
   local res = {}
-  local vehicle = be:getObjectByID(id)
+  local vehicle = getObjectByID(id)
   if vehicle then
     res.key       = vehicle.JBeam
     res.pc_file   = vehicle.partConfig
@@ -637,7 +970,13 @@ local function createFilters(list)
             filter[propName] = {}
           end
           for key,_ in pairs(propVal) do
-            filter[propName][key .. ''] = true
+            if type(key) == 'table' then
+              for _, key2 in pairs(key) do
+                filter[propName][key2 .. ''] = true
+              end
+            else
+              filter[propName][key .. ''] = true
+            end
           end
         end
       end
@@ -646,12 +985,19 @@ local function createFilters(list)
 
   return filter
 end
+M.createFilters = createFilters
 
 -- get the list of all available models
 local function getModelList(array)
   local models = {}
-  for modelName, _ in pairs(getModelsData()) do
+  local modelsData = getModelsData()
+  if util_asyncBulkLoader then
+    util_asyncBulkLoader.addTotal(tableSize(modelsData))
+  end
+  for modelName, _ in pairs(modelsData) do
+    profilerPushEvent("getModel")
     local model = getModel(modelName)
+    profilerPopEvent("getModel")
     if array then
       table.insert(models, model.model)
     else
@@ -659,6 +1005,22 @@ local function getModelList(array)
     end
   end
   return {models = models, filters = createFilters(models), displayInfo = displayInfo}
+end
+
+local function loadModelListNoGarbage()
+  local modelsData = getModelsData()
+  for modelName, _ in pairs(modelsData) do
+     getModel(modelName)
+  end
+  return true
+end
+
+local function isModelListLoaded()
+  if not modelsDataCache then return false end
+  for modelName, _ in pairs(modelsDataCache) do
+    if not cache[modelName] then return false end
+  end
+  return true
 end
 
 -- get the list of all available configurations
@@ -692,6 +1054,35 @@ local function getConfig(modelName, configKey)
 end
 
 local function openSelectorUI()
+  if getMissionFilename() == '' then
+    -- no vehicle selector in main menu
+    return
+  end
+  if ui_menuManager.isPauseV2Enabled() then
+    ui_vehicleSelector_general.openFromPause()
+  else
+    ui_vehicleSelector_general.openVehicleSelectorForFreeroam()
+  end
+end
+
+local function openPartsSelectorUI()
+  if getMissionFilename() == '' then
+    -- no vehicle selector in main menu
+    return
+  end
+  if ui_menuManager.isPauseV2Enabled() then
+    extensions.ui_router.navigate("pause.vehicle.configurationcombined")
+  else
+    guihooks.trigger('MenuOpenModule','vehicleconfig')
+  end
+end
+
+-- the old vehicle selector can still be opened using this
+local function openSelectorUI_legcay()
+  if getMissionFilename() == '' then
+    -- no vehicle selector in main menu
+    return
+  end
   log("I", "", "Vehicle selector triggered")
   if profilerEnabled then p = LuaProfiler("Vehicle Selector menu (triggered by a binding)") end
   if p then p:start() end
@@ -782,110 +1173,681 @@ local function finalizeSpawn(options, _vehicle)
       vehicle:setField('name', '', options.vehicleName)
     end
 
-    if be:getObjectCount() > 1 then
+    if be:getObjectCount() > 1 and not core_input_actionFilter.isActionBlocked("switch_next_vehicle") then
       if vehicle:getField('JBeam','0') ~= "unicycle" then
-        ui_message("ui.hints.switchVehicle", 10, "spawn")
+        guihooks.trigger("Message", {
+          ttl = 10,
+          category = "spawn",
+          icon = "car",
+          actionItems = fillActionLabelSimple({"switch_next_vehicle","switch_previous_vehicle"}),
+        })
       end
     end
   end
 end
 
-local function _spawnMultipleVehicles(data, vehiclesToReuse)
-  -- figure out positioning
-  for vehIdx, vehData in ipairs(data.vehicles or {}) do
-    local config = {
-      autoEnterVehicle = false,
-      config = vehData,
+local function resetVehicleCollection(collection)
+  collection.resetState = {
+    reset = {},
+    coupled = {},
+  }
+end
+
+local function initVehicleCollection()
+  local collection = {}
+  return collection
+end
+
+local function buildInitVehCollectionCache(initCollection, collection)
+  local function buildInitVehCollectionCacheRec(initParentVehData, initVehData, parentVehData, vehData)
+    local vehId = initVehData.vehId
+    initVehData.parent, vehData.parent = parentVehData, parentVehData
+    initCollection.vehsData[vehId], collection.vehsData[vehId] = initVehData, vehData
+    M.initVehIdToVehCollection[vehId], M.vehIdToVehCollection[vehId] = initCollection, collection
+
+    for childVehId, initChildVehData in pairs(initVehData.children or {}) do
+      buildInitVehCollectionCacheRec(initVehData, initChildVehData, vehData, vehData.children[childVehId])
+    end
+  end
+  initCollection.vehsData, collection.vehsData = {}, {}
+  local initMainVehData, mainVehData = initCollection.mainVehData, collection.mainVehData
+  M.vehCollections[initMainVehData.vehId] = collection
+  buildInitVehCollectionCacheRec(nil, initMainVehData, nil, mainVehData)
+end
+
+-- Builds the vehicle collection cache for a given collection
+-- Sets collection.vehsData and M.vehIdToVehCollection for all vehicles in the collection
+-- Warning: This only adds vehicles to M.vehIdToVehCollection. If vehicles are to be removed, you need to manually remove vehicles from M.vehIdToVehCollection first
+local function buildVehCollectionCache(collection)
+  local function buildVehCollectionCacheRec(parentVehData, vehData)
+    local vehId = vehData.vehId
+    vehData.parent = parentVehData
+    collection.vehsData[vehId] = vehData
+    M.vehIdToVehCollection[vehId] = collection
+
+    for childVehId, childVehData in pairs(vehData.children or {}) do
+      buildVehCollectionCacheRec(vehData, childVehData)
+    end
+  end
+  collection.vehsData = {}
+  buildVehCollectionCacheRec(nil, collection.mainVehData)
+end
+
+local function removeVehicleCollection(collection)
+  for vehId, vehData in pairs(collection.vehsData) do
+    M.vehIdToVehCollection[vehId] = nil
+  end
+  M.vehCollections[collection.mainVehData.vehId] = nil
+end
+
+local function addVehicleToNewCollectionRec(collection, vehData)
+  M.vehIdToVehCollection[vehData.vehId] = collection
+  collection.vehsData[vehData.vehId] = vehData
+  for childVehId, childVehData in pairs(vehData.children or {}) do
+    addVehicleToNewCollectionRec(collection, childVehData)
+  end
+end
+
+local function addVehicleToCollectionViaCoupling(collection, parentVehId, parentNode, vehId, vehNode)
+  local oldCollection = M.vehIdToVehCollection[vehId]
+  if not oldCollection then return end
+
+  local vehData = oldCollection.vehsData[vehId]
+
+  -- Remove the vehicle from the old collection
+  removeVehicleCollection(oldCollection)
+
+  -- Add the vehicle to the new collection
+  local parentVehData = collection.vehsData[parentVehId]
+  if parentVehData then
+    parentVehData.children = parentVehData.children or {}
+    parentVehData.children[vehData.vehId] = vehData
+    vehData.parent = parentVehData
+    vehData.offsetData = {
+      type = "coupledNodes",
+      parentNode = parentNode,
+      node = vehNode,
+      offset = {rx = 0, ry = 0, rz = 0},
     }
-    if vehIdx == 1 then
-      core_vehicles.replaceVehicle(vehData.model, config)
-    else
-      local vehicleIdToReplace = table.remove(vehiclesToReuse)
-      --dump{'vehicleIdToReplace = ', vehicleIdToReplace}
-      if vehicleIdToReplace then
-        local veh = be:getObjectByID(vehicleIdToReplace)
-        core_vehicles.replaceVehicle(vehData.model, config, veh)
-        --veh:respawn(serialize(vehData.config))
-        --local paintCount = tableSize(vehData.paints)
-        --for i = 1, paintCount do
-        --  vehManager.liveUpdateVehicleColors(veh:getId(), veh, i, inData.paints[i])
-        --end
-        --veh:setField('partConfig', '', serialize(vehData.config))
-      else
-        core_vehicles.spawnNewVehicle(vehData.model, config)
+  end
+  addVehicleToNewCollectionRec(collection, vehData)
+end
+
+-- Remove the target vehicle from the collection and add the remaining vehicles to new collections
+local function removeVehicleFromCollection(targetVehId)
+  local collection = M.vehIdToVehCollection[targetVehId]
+  if not collection then return end
+
+  local vehData = collection.vehsData[targetVehId]
+
+  -- Remove the target vehicle from the parent vehicle
+  collection.vehsData[targetVehId] = nil
+  M.vehIdToVehCollection[targetVehId] = nil
+
+  local parentVehData = vehData.parent
+  if parentVehData then
+    parentVehData.children[targetVehId] = nil
+    buildVehCollectionCache(collection)
+  else
+    removeVehicleCollection(collection)
+  end
+
+  -- Add the remaining vehicles to new collections
+  for childVehId, childVehData in pairs(vehData.children or {}) do
+    local newCollection = initVehicleCollection()
+    newCollection.mainVehData = childVehData
+    childVehData.parent = nil
+    childVehData.offsetData = nil
+    M.vehCollections[childVehData.vehId] = newCollection
+    buildVehCollectionCache(newCollection)
+  end
+end
+
+-- Splits the vehicle collection into two separate collections:
+-- - The first half of the vehicles before the target vehicle
+-- - The target vehicle and its children
+local function splitVehicleCollection(targetVehId)
+  local function removeVehicleFromCollectionRec(collection, vehData)
+    local vehId = vehData.vehId
+    collection.vehsData[vehId] = nil
+    M.vehIdToVehCollection[vehId] = nil
+    for childVehId, childVehData in pairs(vehData.children or {}) do
+      removeVehicleFromCollectionRec(collection, childVehData)
+    end
+  end
+
+  local collection = M.vehIdToVehCollection[targetVehId]
+  if not collection then return end
+
+  local vehData = collection.vehsData[targetVehId]
+  if not vehData then return end
+
+  local parentVehData = vehData.parent
+  if not parentVehData then return end
+
+  -- Remove the child vehicle from the parent vehicle and the whole collection
+  parentVehData.children[targetVehId] = nil
+  removeVehicleFromCollectionRec(collection, vehData)
+  vehData.offsetData = nil
+
+  -- Create a new collection for the child vehicles
+  local newCollection = initVehicleCollection()
+  newCollection.mainVehData = vehData
+  M.vehCollections[vehData.vehId] = newCollection
+  buildVehCollectionCache(newCollection)
+end
+
+-- Checks if the vehicle collection is fully reset and vehicles are connected to each other
+-- If so, it broadcasts the event "onVehicleCollectionReset"
+local function checkVehicleCollectionReset(collection)
+  if not collection then return false end
+  if not collection.resetState then return false end
+
+  local mainVehId = collection.mainVehData.vehId
+
+  local function checkResetRec(collection, currVid)
+    -- Vehicle is part of a vehicle collection
+    local veh = getObjectByID(currVid)
+    if not veh then return false end
+
+    local vehsData = collection.vehsData
+    local vehData = vehsData[currVid]
+
+    for childVehId, childVehData in pairs(vehData.children or {}) do
+      local childVeh = getObjectByID(childVehId)
+      if not childVeh then
+        return false
+      end
+      local offsetData = childVehData.offsetData
+      if offsetData.type == "default" then
+        return checkResetRec(collection, childVehId)
+      elseif offsetData.type == "coupledNodes" then
+        -- Check if the child vehicle is connected to the parent vehicle
+        local coupledData = collection.resetState.coupled
+        if coupledData[currVid] and coupledData[currVid][childVehId] then
+          return checkResetRec(collection, childVehId)
+        else
+          --log('W', 'checkVehicleCollectionReset', "Vehicle " .. currVid .. " and " .. childVehId .. " are not connected to each other")
+          return false
+        end
+      end
+    end
+    return true
+  end
+
+  local res = checkResetRec(collection, mainVehId)
+  if res then
+    collection.resetState = nil
+    log('D', 'checkVehicleCollectionReset', "Vehicle collection " .. collection.mainVehData.vehId .. " reset")
+    extensions.hook("onVehicleCollectionReset", collection)
+  end
+end
+
+local function findAttachedVehicles(vehId)
+  local visited = {}
+  local connected = {}
+
+  local function search(vehicle)
+    visited[vehicle] = true
+    for _, cdata in ipairs(M.attachedCouplers) do
+      if cdata[1] == vehicle and not visited[cdata[2]] then
+        table.insert(connected, cdata[2])
+        search(cdata[2])
+      elseif cdata[2] == vehicle and not visited[cdata[1]] then
+        table.insert(connected, cdata[1])
+        search(cdata[1])
       end
     end
   end
+  search(vehId)
+  return connected
+end
 
-  -- remove remaining vehicles
-  for _, vehId in ipairs(vehiclesToReuse) do
-    local veh = be:getObjectByID(vehId)
-    if veh then
-      veh:delete()
+local function getNodeByCid(vehicleData, nodeCid)
+  for nodeId, node in pairs(vehicleData.vdata.nodes) do
+    if node.cid == nodeCid then
+      return node
+    end
+  end
+end
+
+local function getNodeFromName(vdata, nodeName)
+  if not vdata or not vdata.nodes then return end
+  for nodeId, node in pairs(vdata.nodes) do
+    if node.name == nodeName then
+      return node
+    end
+  end
+end
+
+local function _generateAttachedVehiclesTree(visitedVehs, vehId, parentCouplerData)
+  local entry = {vehId = vehId, children = {}}
+
+  local veh = getObjectByID(vehId)
+  if not veh then
+    return
+  end
+  local vehData = vehManager.getVehicleData(vehId)
+
+  -- If attached to another vehicle, record the coupled nodes and offset
+  if parentCouplerData then
+    local parentVehicle = getObjectByID(parentCouplerData.parentVehId)
+    if parentVehicle then
+      entry.offsetData = {
+        type = "coupledNodes",
+        parentNode = parentCouplerData.parentNode.name or parentCouplerData.parentNode.cid,
+        node = parentCouplerData.node.name or parentCouplerData.node.cid,
+      }
     end
   end
 
-  -- position and coupling
-  -- TODO: POSITION THE VEHICLES
-  return
+  for _, coupler in ipairs(M.attachedCouplers) do
+    -- objId1, objId2, obj1nodeId, obj2nodeId
+    local childVehId, nodeId, childNodeId = nil, nil, nil
+
+    if coupler[1] == vehId and coupler[2] then
+      childVehId, nodeId, childNodeId = coupler[2], coupler[3], coupler[4]
+    elseif coupler[2] == vehId and coupler[1] then
+      childVehId, nodeId, childNodeId = coupler[1], coupler[4], coupler[3]
+    else
+      goto continue
+    end
+
+    local childVeh = getObjectByID(childVehId)
+    if not childVeh then
+      goto continue
+    end
+    local childVehData = vehManager.getVehicleData(childVehId)
+
+    local node = getNodeByCid(vehData, nodeId)
+    local childNode = getNodeByCid(childVehData, childNodeId)
+
+    if not node or not childNode then
+      goto continue
+    end
+
+    if node.couplerTag then
+      local couplerData = {parentVehId = vehId, parentNode = node, node = childNode}
+      visitedVehs[childVehId] = true
+      local childEntry = _generateAttachedVehiclesTree(visitedVehs, childVehId, couplerData)
+      if childEntry then
+        table.insert(entry.children, childEntry)
+      end
+    end
+
+    ::continue::
+  end
+
+  return entry
 end
 
--- this checks if we need to spawn multiple vehicles and call the function accordingly
-local function checkSpawmMulti(model, opt, otherVeh)
-  if type(opt.config) == 'string' then
+local function generateAttachedVehiclesTree(vehId)
+  local visitedVehs = {}
+  local entry = _generateAttachedVehiclesTree(visitedVehs, vehId, nil)
+  return entry
+end
+
+local function getCouplerOffset(vehId, couplerTag)
+  local veh = getObjectByID(vehId)
+  if not veh then return end
+
+  local vdata = core_vehicle_manager.getVehicleData(vehId).vdata
+  if not vdata.nodes then return end
+
+  local couplerCache = M.vehsCouplerCache[vehId]
+
+  local refPos = vdata.nodes[vdata.refNodes[0].ref].pos
+  local couplerOffset = {}
+  for _, c in pairs(couplerCache) do
+    if c.couplerTag == couplerTag or c.tag == couplerTag or couplerTag == "" or not couplerTag then
+      local pos = vdata.nodes[c.cid].pos
+      couplerOffset[c.cid] = {x = pos.x - refPos.x, y = pos.y - refPos.y, z = pos.z - refPos.z, couplerTag = c.couplerTag, tag = c.tag}
+    end
+  end
+
+  return couplerOffset
+end
+
+local function positionChildVehicle(vehId, vehTransform, childVehId, childVehOffset)
+  local veh = getObjectByID(vehId)
+  if not veh then return end
+  local veh2 = getObjectByID(childVehId)
+  if not veh2 then return end
+
+  local mat = vehTransform * childVehOffset
+
+  veh2:setTransform(mat)
+  --veh2:queueLuaCommand('obj:requestReset(RESET_PHYSICS)')
+  veh2:resetBrokenFlexMesh()
+
+  return mat
+end
+
+local function placeChildVeh(vehId, vehTransform, childVehId, offsetData)
+  local rotOffset = offsetData.offset
+  local trailerOffset = MatrixF(true)
+  local rotOffsetVec = vec3(math.rad(rotOffset.rx or 0), math.rad(rotOffset.ry or 0), math.rad(rotOffset.rz or 0))
+  trailerOffset:setFromEuler(rotOffsetVec)
+
+  local vehCouplerOffset = M.vehsCouplerOffset[vehId][offsetData.parentNode]
+  local trailerCouplerOffset = M.vehsCouplerOffset[childVehId][offsetData.node]
+  local vehCouplerTag = M.vehsCouplerTags[vehId][offsetData.parentNode]
+
+  local veh = getObjectByID(vehId)
+  if not veh then return end
+  local veh2 = getObjectByID(childVehId)
+  if not veh2 then return end
+
+  local mat = spawn.calculateRelativeVehiclePlacement(vehTransform, vehCouplerOffset, trailerCouplerOffset, trailerOffset)
+
+  veh2:setTransform(mat)
+  --veh2:queueLuaCommand('obj:requestReset(RESET_PHYSICS)')
+  veh2:resetBrokenFlexMesh()
+
+  if M.couplerTagsOptions[vehCouplerTag] == "autoCouple" then
+    veh:queueLuaCommand(string.format('beamstate.activateAutoCoupling("%s")', vehCouplerTag))
+  end
+
+  return mat
+end
+
+local spawnMultipleVehicles -- forward declaration
+
+local function buildVehicleOffsettingDependencyTree(initVehsData)
+  local function getFirstVehData(vehData)
+    if not vehData.vehId then
+      return getFirstVehData(vehData[1])
+    end
+    return vehData
+  end
+
+  -- build the dependency tree
+  for id, vehData in ipairs(initVehsData) do
+    vehData = getFirstVehData(vehData)
+    if vehData then
+      local vehId = vehData.vehId
+      local offsetData = vehData.offsetData
+      if offsetData and (offsetData.type == "default" or offsetData.type == "coupledNodes") then
+        local parentVehData = initVehsData[offsetData.parentId]
+        if parentVehData then
+          local parentVehId = parentVehData.vehId
+          parentVehData.children = parentVehData.children or {}
+          parentVehData.children[vehId] = vehData
+
+          if offsetData.type == "coupledNodes" then
+            local vdata, parentVdata = core_vehicle_manager.getVehicleData(vehId).vdata, core_vehicle_manager.getVehicleData(parentVehId).vdata
+            if vdata and parentVdata then
+              local node, parentNode = getNodeFromName(vdata, offsetData.node), getNodeFromName(parentVdata, offsetData.parentNode)
+              if node and parentNode then
+                offsetData.node = node.cid
+                offsetData.parentNode = parentNode.cid
+              end
+            end
+          end
+          offsetData.parentId = nil
+        end
+      end
+    end
+  end
+end
+
+local function prepareConfigData(modelName, opts)
+  local model = core_vehicles.getModel(modelName)
+
+  if tableIsEmpty(model) then return false end
+
+  if not opts.config then
+    opts.config = 'vehicles/' .. modelName .. '/' .. model.model.default_pc .. '.pc'
+  elseif type(opts.config) == 'string' and not string.find(opts.config, '.pc') and FS:fileExists('/vehicles/' .. modelName .. '/' .. opts.config .. '.pc') then
+    opts.config = 'vehicles/' .. modelName .. '/' .. opts.config .. '.pc'
+  end
+
+  if type(opts.config) == 'string' and opts.config ~= '' and not string.find(opts.config, '{') then
     -- if we provide a pc file: can be a basename or a full path
-    local filename = opt.config
+    local filename = opts.config
     if not FS:fileExists(filename) then
-      filename = '/vehicles/' .. tostring(model) .. '/' .. tostring(opt.config)
+      filename = '/vehicles/' .. tostring(modelName) .. '/' .. tostring(opts.config)
     end
     if not string.endswith(filename, '.pc') then filename = filename .. '.pc' end
     local data = jsonReadFile(filename)
-    if data and data.format == 3 then
-      -- figure out what vehicles to replace / reuse
-      local vehiclesToReuse = {}
-      if otherVeh then
-        vehiclesToReuse = core_vehicle_partmgmt.findAttachedVehicles(otherVeh:getId())
-      end
-      _spawnMultipleVehicles(data, vehiclesToReuse)
-      return true
+    -- If the pc file format is 2, keep the config as the filename
+    if data and data.format == 4 then
+      opts.config = data
     end
-  elseif type(opt.vehicles) == 'table' and opt.format == 3 then
-    -- we provide vehicles via data directly?
-    local vehiclesToReuse = {}
-    if otherVeh then
-      vehiclesToReuse = core_vehicle_partmgmt.findAttachedVehicles(otherVeh:getId())
-    end
-    _spawnMultipleVehicles(opt, vehiclesToReuse)
-    return true
   end
+
+  return true
+end
+
+local function prepareMultiVehConfig(modelName, config)
+  if config.linkedPCFile then
+    local data = jsonReadFile(config.linkedPCFile)
+    if data and data.format == 4 then
+      return true, data
+    end
+  elseif config.format == 4 then
+    return true, config
+  end
+
   return false
 end
 
--- called by the UI directly
-local function spawnNewVehicle(model, opt)
-  local options = sanitizeVehicleSpawnOptions(model, opt)
-
-  -- spawn multi
-  if checkSpawmMulti(model, opt, nil) then
-    return
+local function _spawnNewVehicle(modelName, config, state, localOptions, level)
+  if level == 1 then
+    local isMultiVehConfig, multiVehConfig = prepareMultiVehConfig(modelName, config)
+    if isMultiVehConfig then
+      -- spawn multi
+      local vehs, vehsData = spawnMultipleVehicles(multiVehConfig, state, localOptions, level)
+      if vehs then
+        return vehs, vehsData
+      end
+      return nil
+    end
   end
 
   -- spawn single
-  local veh = spawn.spawnVehicle(model, options.config, options.pos, options.rot, options)
-  finalizeSpawn(options, veh)
-  return veh
+  if state.initVehCollection.mainVehData then
+    if localOptions.autoEnterVehicle == nil then
+      localOptions.autoEnterVehicle = false
+    end
+  else
+    if localOptions.autoEnterVehicle == nil then
+      localOptions.autoEnterVehicle = true
+    end
+  end
+
+  localOptions.model = modelName
+
+  if type(config) == 'table' and config.linkedPCFile then
+    localOptions.config = config.linkedPCFile
+  else
+    localOptions.config = config
+  end
+
+  local opt = sanitizeVehicleSpawnOptions(modelName, localOptions)
+  local veh = spawn.spawnVehicle(modelName, opt.config, opt.pos, opt.rot, opt)
+  if not veh then
+    return nil
+  end
+  local vehId = veh:getID()
+  finalizeSpawn(opt, veh)
+  vehsSpawningFlag[vehId] = true
+
+  local initVehData = {vehId = vehId, offsetData = config.offsetData}
+
+  if not state.initVehCollection.mainVehData then
+    state.initVehCollection.mainVehData = initVehData
+    M.initVehCollections[vehId] = state.initVehCollection
+  end
+
+  return veh, initVehData
 end
 
 local function replaceOtherVehicle(model, opt, otherVeh)
   opt.model = model
   opt.licenseText = otherVeh.licenseText -- copy the current license text
   local options = sanitizeVehicleSpawnOptions(model, opt)
-  if options.cling == nil then
-    options.cling = true
+  if options.safeSpawn == nil then
+    options.safeSpawn = true
   end
+  options.removeWhenNoPositionFound = false
   spawn.setVehicleObject(otherVeh, options)
   finalizeSpawn(options, otherVeh)
   return otherVeh
+end
+
+local function _replaceVehicle(modelName, config, state, localOptions, level)
+  --dump("replaceVehicle: ", model, opt, otherVeh)
+  -- Get the other collection's vehicles
+
+  if level == 1 then
+    local isMultiVehConfig, multiVehConfig = prepareMultiVehConfig(modelName, config)
+    if isMultiVehConfig then
+      -- spawn multi
+      local vehs, vehsData = spawnMultipleVehicles(multiVehConfig, state, localOptions, level)
+      if vehs then
+        return vehs, vehsData
+      end
+      return nil
+    end
+  end
+
+  -- spawn single
+  local vehId = table.remove(state.vehsToReuse)
+  local veh = getObjectByID(vehId or -1)
+
+  -- when no vehicle is spawned, spawn a new one instead
+  if not veh then
+    return _spawnNewVehicle(modelName, config, state, localOptions, level)
+  else -- spawn new vehicle in place and remove other
+    extensions.hook("onBeforeVehicleReplaced", vehId)
+    local enterVehicle = vehId == be:getPlayerVehicleID(0)
+
+    localOptions.model = modelName
+
+    if type(config) == 'table' and config.linkedPCFile then
+      localOptions.config = config.linkedPCFile
+    else
+      localOptions.config = config
+    end
+
+    localOptions.pos = veh:getPosition()
+    if localOptions.keepOtherVehRotation then
+      localOptions.rot = quat(0,0,1,0) * quat(veh:getRefNodeRotation())
+    end
+    localOptions.vehicleName = veh:getField('name', '')
+
+    if state.initVehCollection.mainVehData then
+      if localOptions.autoEnterVehicle == nil then
+        localOptions.autoEnterVehicle = false
+      end
+    else
+      if localOptions.autoEnterVehicle == nil then
+        localOptions.autoEnterVehicle = true
+      end
+    end
+
+    local opt = sanitizeVehicleSpawnOptions(modelName, localOptions)
+
+    veh:setDynDataFieldbyName("autoEnterVehicle", 0, "false")
+    veh = replaceOtherVehicle(modelName, opt, veh)
+    veh:setDynDataFieldbyName("autoEnterVehicle", 0, "true")
+    vehsSpawningFlag[vehId] = true
+
+    local initVehData = {vehId = vehId, offsetData = config.offsetData}
+
+    if not state.initVehCollection.mainVehData then
+      state.initVehCollection.mainVehData = initVehData
+      M.initVehCollections[vehId] = state.initVehCollection
+    end
+
+    if enterVehicle then be:enterVehicle(0, veh) end
+    extensions.hook("onVehicleReplaced", vehId)
+
+    return veh, initVehData
+  end
+end
+
+spawnMultipleVehicles = function (configs, state, localOptions, level)
+  local vehs = {}
+  local initVehsData = {}
+
+  -- spawn the main vehicle and all its vehicles
+  for i, config in ipairs(configs.vehicles) do
+    if level > 1 and i > 1 then
+      log('E', 'spawnMultipleVehicles', 'Cannot reference a pc file containing more than one vehicle. Only the first vehicle will be spawned.')
+      break
+    end
+
+    if level > 2 then
+      log('E', 'spawnMultipleVehicles', 'Cannot reference a pc file from a pc file from a pc file.')
+      break
+    end
+
+    local opt, modelName
+    if i == 1 then
+      opt = localOptions and localOptions[i] or localOptions or {}
+    else
+      opt = localOptions and localOptions[i] or {}
+    end
+
+    if config.model then
+      modelName = config.model
+      opt.config = config
+    elseif config.linkedPCFile then
+      modelName = string.match(config.linkedPCFile, 'vehicles/([%w|_|%-|%s]+)')
+      opt.config = config.linkedPCFile
+    end
+
+    if modelName then
+      --config = sanitizeVehicleSpawnOptions(modelName, opt)
+
+      local newVeh, initVehData = _replaceVehicle(modelName, config, state, opt, level + 1)
+      if newVeh then
+        if type(newVeh) == 'table' then
+          for _, veh in ipairs(newVeh) do
+            table.insert(vehs, veh)
+          end
+        else
+          table.insert(vehs, newVeh)
+        end
+        table.insert(initVehsData, initVehData)
+      end
+    end
+  end
+
+  buildVehicleOffsettingDependencyTree(initVehsData)
+
+  return vehs, initVehsData
+end
+
+-- called by the UI directly
+local function spawnNewVehicle(modelName, opt)
+  if opt.canSpawnAnotherVehicleCheck ~= false and not canSpawnAnotherVehicle() then return false end
+
+  -- Get the config data
+  opt = deepcopy(opt) or {}
+  local res = prepareConfigData(modelName, opt)
+  if not res then return end
+
+  local state = {
+    initVehCollection = initVehicleCollection(),
+    vehsToReuse = {},
+  }
+  resetVehicleCollection(state.initVehCollection)
+
+  local vehs = _spawnNewVehicle(modelName, opt.config, state, opt, 1)
+  if not vehs then
+    return nil
+  end
+  local vehCollection = deepcopy(state.initVehCollection)
+  buildInitVehCollectionCache(state.initVehCollection, vehCollection)
+
+  if type(vehs) == 'table' then
+    return vehs[1], vehs
+  else
+    return vehs, {vehs}
+  end
 end
 
 local function removeCurrent()
@@ -895,12 +1857,24 @@ local function removeCurrent()
     if be:getEnterableObjectCount() == 0 then
       commands.setFreeCamera() -- reuse current vehicle camera position for free camera, before removing vehicle
     end
+  else
+    log('E', 'vehicles', 'unable to remove vehicle: player 0 vehicle not found')
   end
 end
 
 -- called by the UI directly
-local function replaceVehicle(model, opt, otherVeh)
-  --dump("replaceVehicle: ", model, opt, otherVeh)
+local function replaceVehicle(modelName, opt, otherVeh, replaceWholeCollection)
+  -- Get the config data
+  opt = deepcopy(opt) or {}
+  local res = prepareConfigData(modelName, opt)
+  if not res then return end
+
+  local state = {
+    initVehCollection = initVehicleCollection(),
+    vehsToReuse = {},
+  }
+  resetVehicleCollection(state.initVehCollection)
+
   local other
   if otherVeh then
     other = otherVeh
@@ -908,30 +1882,44 @@ local function replaceVehicle(model, opt, otherVeh)
     other = getPlayerVehicle(0)
   end
 
-  -- spawn multi
-  if checkSpawmMulti(model, opt, otherVeh) then
-    return
+  local otherVehCollection, otherVehId = nil, nil
+  if other then
+    otherVehId = other:getID()
+    otherVehCollection = M.vehIdToVehCollection[otherVehId]
   end
 
-  -- spawn single
-
-  -- when no vehicle is spawned, spawn a new one instead
-  if not other then
-    return spawnNewVehicle(model, opt)
-  else -- spawn new vehicle in place and remove other
-    local enterVehicle = other:getID() == be:getPlayerVehicleID(0)
-    opt.model = model
-    opt.pos = other:getPosition()
-    if opt.keepOtherVehRotation then
-      opt.rot = quat(0,0,1,0) * quat(other:getRefNodeRotation())
+  if replaceWholeCollection then
+    -- get all vehicles to reuse from the other vehicle collection
+    for vehId, _ in pairs(otherVehCollection.vehsData) do
+      table.insert(state.vehsToReuse, vehId)
     end
-    opt.vehicleName = other:getField('name', '')
-    other:setDynDataFieldbyName("autoEnterVehicle", 0, "false")
-    local vehicle = replaceOtherVehicle(model, opt, other)
-    vehicle:setDynDataFieldbyName("autoEnterVehicle", 0, "true")
-    if enterVehicle then be:enterVehicle(0, vehicle) end
-    extensions.hook("onVehicleReplaced", vehicle:getID())
-    return vehicle
+  else
+    table.insert(state.vehsToReuse, otherVehId)
+    splitVehicleCollection(otherVehId)
+    removeVehicleFromCollection(otherVehId)
+  end
+
+  local vehs = _replaceVehicle(modelName, opt.config, state, opt, 1)
+  if not vehs then
+    return nil
+  end
+  -- remove remaining vehicles
+  for _, vehId in ipairs(state.vehsToReuse) do
+    M.vehCollections[vehId] = nil
+    M.vehIdToVehCollection[vehId] = nil
+    local veh = getObjectByID(vehId)
+    if veh then
+      veh:delete()
+    end
+  end
+
+  local vehCollection = deepcopy(state.initVehCollection)
+  buildInitVehCollectionCache(state.initVehCollection, vehCollection)
+
+  if type(vehs) == 'table' then
+    return vehs[1], vehs
+  else
+    return vehs, {vehs}
   end
 end
 
@@ -951,6 +1939,8 @@ local function cloneCurrent()
     log('E', 'vehicles', 'unable to clone vehicle: player 0 vehicle not found')
     return false
   end
+  if not canSpawnAnotherVehicle() then return false end
+  if gameplay_walk and gameplay_walk.isWalking() then return false end
 
   -- we get the current vehicles parameters and feed it into the spawning function
   local metallicPaintData = veh:getMetallicPaintData()
@@ -961,8 +1951,9 @@ local function cloneCurrent()
     paint2 = createVehiclePaint(veh.colorPalette0, metallicPaintData[2]),
     paint3 = createVehiclePaint(veh.colorPalette1, metallicPaintData[3])
   }
+  extensions.hook("onPlayerVehicleCloned")
 
-  spawnNewVehicle(veh.JBeam, options)
+  return spawnNewVehicle(veh.JBeam, options)
 end
 
 local function removeAll()
@@ -985,6 +1976,46 @@ local function clearCache()
   modelsDataCache = nil
 end
 
+-- local function resetToInitState(vid)
+--   local collection = deepcopy(M.initVehIdToVehCollection[vid])
+--   if collection then
+--     local mainVehData = collection.mainVehData
+--     if vid == mainVehData.vehId then
+--       -- Remove the vehicles from the other collections
+--       for otherMainVehId, otherCollection in pairs(M.vehCollections) do
+--         for vehId, vehData in pairs(collection.vehsData) do
+--           if otherCollection.vehsData[vehId] then
+--             removeVehicleFromCollection(vehId)
+--           end
+--         end
+--       end
+
+--       M.vehCollections[vid] = collection
+--       buildVehCollectionCache(collection)
+--       local veh = getObjectByID(vid)
+--       if veh then
+--         veh:requestReset()
+--         veh:resetBrokenFlexMesh()
+--       end
+--     end
+--   end
+-- end
+
+-- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+-- local function resetAllToInitState()
+--   M.vehCollections = deepcopy(M.initVehCollections)
+--   M.vehIdToVehCollection = deepcopy(M.initVehIdToVehCollection)
+
+--   for mainVehId, vehCollection in pairs(M.vehCollections) do
+--     buildVehCollectionCache(vehCollection)
+--     local mainVeh = getObjectByID(mainVehId)
+--     if mainVeh then
+--       mainVeh:requestReset()
+--       mainVeh:resetBrokenFlexMesh()
+--     end
+--   end
+-- end
+
 local function onFileChanged(filename, type)
   if string.find(filename, '/vehicles/') == 1 or string.find(filename, '/mods/') == 1 then
     local fLower = string.lower(filename)
@@ -1005,68 +2036,15 @@ local function onFileChangedEnd()
 end
 
 local function onSettingsChanged()
-  local showStandalonePcsNew = settings.getValue('showStandalonePcs')
+  local showStandalonePcsNew = true--settings.getValue('showStandalonePcs')
   if showStandalonePcsNew ~= showStandalonePcs  then
     clearCache()
     showStandalonePcs = showStandalonePcsNew
   end
 end
 
-local function generateLicenceText(designData,veh)
-  local T = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'}
-  if not designData then
-    --default_gen
-    return T[random(1, #T)] .. T[random(1, #T)] .. T[random(1, #T)] ..'-'..random(0, 9)..random(0, 9)..random(0, 9)..random(0, 9)
-  else
-    if not designData.gen or not designData.gen.pattern then
-      return generateLicenceText() --go back to default
-    end
-
-    local formattxt = veh:getDynDataFieldbyName("licenseFormats", 0)
-    local formats = {}
-    if formattxt and string.len(formattxt) >0 then
-      formats = jsonDecode(formattxt )
-    else
-      formats = {"30-15"}
-    end
-    for _,v in ipairs(formats)do
-      if designData.format[v] and designData.format[v].gen then
-        if designData.format[v].gen.pattern then
-          designData.gen.pattern = designData.format[v].gen.pattern
-        end
-        if designData.format[v].gen.patternData then
-          tableMerge(designData.gen.patternData, designData.format[v].gen.patternData )
-        end
-      end
-    end
-
-    if not designData.gen.patternData then
-      designData.gen.patternData = {}
-    end
-
-    local strtmp = designData.gen.pattern
-    if type(strtmp) == "table" then
-      strtmp = strtmp[random(1, #strtmp)]
-    end
-    designData.gen.patternData.c = function() return T[random(1, #T)] end
-    designData.gen.patternData.D = function() return random(1, 9) end
-    designData.gen.patternData.d = function() return random(0, 9) end
-    designData.gen.patternData.vid = function() if veh then return veh:getId() else return 0 end end
-    designData.gen.patternData.vname = function() if veh then return veh:getJBeamFilename() else return "" end end
-
-    for k,fn in pairs(designData.gen.patternData) do
-      if type(fn) == "table" then
-        local tmpfn = function() return fn[random(1, #fn)]  end --return one random for each use instead of same
-        strtmp = string.gsub(strtmp, "%%"..k, tmpfn)
-      else
-        strtmp = string.gsub(strtmp, "%%"..k, fn)
-      end
-    end
-    strtmp = string.gsub(strtmp, "%%%%", "%%")
-    return strtmp
-
-    -- return string.gsub(designData.gen.pattern, "%%([^%%])", designData.gen.patternData)
-  end
+local function onLanguageChanged()
+  clearCache()
 end
 
 local function makeVehicleLicenseText(veh, designPath)
@@ -1084,7 +2062,7 @@ local function makeVehicleLicenseText(veh, designPath)
 
   veh = veh or getPlayerVehicle(0)
   if type(veh) == 'number' then
-    veh = be:getObjectByID(veh)
+    veh = getObjectByID(veh)
   end
   if not veh then return '' end
 
@@ -1093,20 +2071,17 @@ local function makeVehicleLicenseText(veh, designPath)
     return txt
   end
 
-  local design = nil
-  if designPath then
-    design = jsonReadFile(designPath)
-  end
+  local design = designPath and plateDesign.loadDesign(designPath)
 
-  if settings.getValue("useSteamName") and core_gamestate.state.state == "freeroam" and veh.autoEnterVehicle and SteamLicensePlateVehicleId == nil and Steam and Steam.isWorking and Steam.accountLoggedIn then
+  if settings.getValue("useSteamName") and core_gamestate.state.state == "freeroam" and veh.autoEnterVehicle and SteamLicensePlateVehicleId == nil and OnlineServiceProvider and OnlineServiceProvider.isWorking and OnlineServiceProvider.accountLoggedIn then
     SteamLicensePlateVehicleId = veh:getId()
-    txt = Steam.playerName
+    txt = OnlineServiceProvider.playerName
     txt = txt:gsub('"', "'") -- replace " with '
     -- more cleaning up required?
-  elseif not design or not design.data or not design.version or (design.version and design.version == 1) then
-    txt = generateLicenceText()
-  elseif design.version and design.version > 1 then
-    txt = generateLicenceText(design.data or nil, veh)
+  else
+    -- the driver's text generator falls back to an "AAA-0000" style when the design
+    -- has no usable `plate` var (covers legacy/no design too)
+    txt = extensions.core_skiaTemplate.generateText(design, veh)
   end
 
   return txt
@@ -1132,11 +2107,51 @@ local function getVehicleLicenseText(veh)
   return licenseText
 end
 
+local function isLicensePlateValid(text)
+  return not text or not text:find('"')
+end
+
+local function isUtf8ContinuationByte(c)
+  return c and c >= 0x80 and c <= 0xBF
+end
+
+local function clampUtf8String(text, maxChars)
+  if type(text) ~= "string" or type(maxChars) ~= "number" or maxChars < 0 then return text end
+
+  local byteLen, bytePos = #text, 1
+  for _ = 1, maxChars do
+    if bytePos > byteLen then return text end
+
+    local c = text:byte(bytePos)
+    local nextBytePos = bytePos + 1
+    if c >= 0xC2 and c <= 0xDF then
+      local c2 = text:byte(bytePos + 1)
+      if isUtf8ContinuationByte(c2) then nextBytePos = bytePos + 2 end
+    elseif c >= 0xE0 and c <= 0xEF then
+      local c2, c3 = text:byte(bytePos + 1, bytePos + 2)
+      if isUtf8ContinuationByte(c2) and isUtf8ContinuationByte(c3) then nextBytePos = bytePos + 3 end
+    elseif c >= 0xF0 and c <= 0xF4 then
+      local c2, c3, c4 = text:byte(bytePos + 1, bytePos + 3)
+      if isUtf8ContinuationByte(c2) and isUtf8ContinuationByte(c3) and isUtf8ContinuationByte(c4) then nextBytePos = bytePos + 4 end
+    end
+
+    bytePos = nextBytePos
+  end
+
+  return bytePos > byteLen and text or text:sub(1, bytePos - 1)
+end
+
+local DEFAULT_SKTEMPLATE_PATH = 'vehicles/common/licenseplates/default/licensePlate-default.sktemplate.json'
+
 -- nil values are equal last values
 local function setPlateText(txt, vehId, designPath, formats)
+  if not isLicensePlateValid(txt) then
+    return
+  end
+
   local veh = nil
   if vehId then
-    veh = be:getObjectByID(vehId)
+    veh = getObjectByID(vehId)
   else
     veh = getPlayerVehicle(0)
   end
@@ -1154,33 +2169,31 @@ local function setPlateText(txt, vehId, designPath, formats)
     designPath = veh:getDynDataFieldbyName("licenseDesign", 0) or ''
   end
 
-  local design
-  if designPath and designPath~="" and FS:fileExists(designPath) then
-    design = jsonReadFile(designPath)
-  end
-  -- dump(design)
-  if not design or not design.data then
-    if designPath:len() > 0 then
+  local design = plateDesign.loadDesign(designPath)
+
+  if not (design and design.format) then
+    if designPath ~= "" then
       log('E', 'setPlateText', "License plate "..designPath.." not existing")
     end
     local levelName = core_levels.getLevelName(getMissionFilename())
     if levelName then
-      -- log('E', 'setPlateText', "levelName = "..tostring(levelName))
-      designPath =  'vehicles/common/licenseplates/'..levelName..'/licensePlate-default.json'
-      if FS:fileExists(designPath) then
-        design = jsonReadFile(designPath)
-      end
+      designPath = 'vehicles/common/licenseplates/'..levelName..'/licensePlate-default.sktemplate.json'
+      design = plateDesign.loadDesign(designPath)
     end
   end
 
-  if not design or not design.data then
-    designPath = 'vehicles/common/licenseplates/default/licensePlate-default.json'
-    design = jsonReadFile(designPath)
+  if not (design and design.format) then
+    designPath = DEFAULT_SKTEMPLATE_PATH
+    design = plateDesign.loadDesign(designPath)
   end
 
   if not txt then
     txt = makeVehicleLicenseText(veh, designPath)
   end
+
+  -- clamp to the design's max plate length
+  local maxLen = (design and design.vars and design.vars.plate and tonumber(design.vars.plate.maxLength)) or 32
+  txt = clampUtf8String(txt, maxLen)
 
   local currentFormat = veh:getDynDataFieldbyName("licenseFormats", 0)
   local currentDesign = veh:getDynDataFieldbyName("licenseDesign", 0)
@@ -1192,80 +2205,27 @@ local function setPlateText(txt, vehId, designPath, formats)
   veh:setDynDataFieldbyName("licenseDesign", 0, designPath)
   veh:setDynDataFieldbyName("licenseText", 0, txt)
 
-  ----adding licenseplate html generator and characterlayout to Json file
-
-  local skipGen = settings.getValue('SkipGenerateLicencePlate') or veh:getDynDataFieldbyName("licenseNoGen", 0)
+  local skipGen = settings.getValue('SkipGenerateLicencePlate')
+                  or veh:getDynDataFieldbyName("licenseNoGen", 0)
+                  or headless_mode
 
   if design then
-    local designData = nil
-    if design.version == 1 then
-      local dtmp = {}; dtmp.data={};dtmp.data.format={}
-      dtmp.data.format["30-15"] = design.data
-      design = dtmp;
-    end
-    for _,curFormat in pairs(formats) do
-      designData={}; designData.data=design.data.format[curFormat]
-      local textureTagPrefix = "@licenseplate-default"
-      if curFormat ~= "30-15" then
-        textureTagPrefix = string.format("@licenseplate-%s", curFormat)
-      end
-      if skipGen then
-        veh:setTaggedTexture(textureTagPrefix, "/vehicles/common/licenseplates/premade"..textureTagPrefix..".dds")
-        veh:setTaggedTexture(textureTagPrefix.."-normal", "/vehicles/common/licenseplates/premade"..textureTagPrefix.."-normal"..".dds")
-        veh:setTaggedTexture(textureTagPrefix.."-specular", "/vehicles/common/licenseplates/premade"..textureTagPrefix.."-specular"..".dds")
-        goto continue
-      end
-      if not designData.data then
-        log("W", "setPlateText", "license plate format not found '"..tostring(curFormat).."' in style '"..tostring(designPath).."'")
-        local defaultDesignFallBackPath = 'vehicles/common/licenseplates/default/licensePlate-default-'..curFormat..'.json'
-        if FS:fileExists(defaultDesignFallBackPath) then
-          local defaultDesign = jsonReadFile(defaultDesignFallBackPath)
-          if defaultDesign then
-            designData.data = defaultDesign.data.format[curFormat]
-            log("I", "setPlateText", "license plate fallback used '"..tostring(defaultDesignFallBackPath).."'")
-          else
-            log('E',tostring(defaultDesignFallBackPath) , 'Json error')
-            goto continue
-          end
-        else
-          log('E', "setPlateText", '[NO TEXTURE] No fallback for this licence plate format. Please create a default file here : "'..tostring(defaultDesignFallBackPath)..'"')
-          goto continue
+    local skia = extensions.core_skiaTemplate
+    local renderDesignPath = skipGen and DEFAULT_SKTEMPLATE_PATH or designPath
+    local renderDesign = skipGen and plateDesign.loadDesign(renderDesignPath) or design
+    local renderText = skipGen and "BEAMNG" or txt
+
+    local defaultDesign
+    for _, curFormat in pairs(formats) do
+      if renderDesign and not skia.renderToVehicle(veh, renderDesign, curFormat, renderText) then
+        -- fall back to the default sktemplate for formats this design lacks
+        if renderDesignPath ~= DEFAULT_SKTEMPLATE_PATH then
+          defaultDesign = defaultDesign or plateDesign.loadDesign(DEFAULT_SKTEMPLATE_PATH)
+        end
+        if not (defaultDesign and skia.renderToVehicle(veh, defaultDesign, curFormat, renderText)) then
+          log("E", "setPlateText", "skia plate render failed for '"..tostring(renderDesignPath).."' ("..tostring(curFormat)..")")
         end
       end
-      if designData.data.characterLayout then
-        if FS:fileExists(designData.data.characterLayout) then
-          designData.data.characterLayout = jsonReadFile(designData.data.characterLayout)
-        else
-          log('E',tostring(designData.data.characterLayout) , ' File not existing')
-        end
-      else
-        designData.data.characterLayout= "vehicles/common/licenseplates/default/platefont.json"
-        designData.data.characterLayout= jsonReadFile(designData.data.characterLayout)
-      end
-
-      if designData.data.generator then
-        if FS:fileExists(designData.data.generator) then
-          designData.data.generator = "local://local/" .. designData.data.generator
-        else
-          log('E',tostring(designData.data.generator) , ' File not existing')
-        end
-      else
-        designData.data.generator = "local://local/vehicles/common/licenseplates/default/licenseplate-default.html"
-      end
-
-      designData.data.format = curFormat
-
-      -- log('D', "setPlateText", "cef tex :"..tostring(curFormat).. "   gen="..tostring(designData.data.generator) .. "prefix="..tostring(textureTagPrefix) )
-      veh:createUITexture(textureTagPrefix, designData.data.generator, designData.data.size.x, designData.data.size.y, UI_TEXTURE_USAGE_AUTOMATIC, 1) --UI_TEXTURE_USAGE_MANUAL
-      veh:queueJSUITexture(textureTagPrefix, 'init("diffuse","' .. txt .. '", '.. jsonEncode(designData) .. ');')
-
-      veh:createUITexture(textureTagPrefix.."-normal", designData.data.generator, designData.data.size.x, designData.data.size.y, UI_TEXTURE_USAGE_AUTOMATIC, 1)
-      veh:queueJSUITexture(textureTagPrefix.."-normal", 'init("bump","' .. txt .. '", '.. jsonEncode(designData) .. ');')
-
-      veh:createUITexture(textureTagPrefix.."-specular", designData.data.generator, designData.data.size.x, designData.data.size.y, UI_TEXTURE_USAGE_AUTOMATIC, 1)
-      veh:queueJSUITexture(textureTagPrefix.."-specular", 'init("specular","' .. txt .. '", '.. jsonEncode(designData) .. ');')
-
-      ::continue::
     end
   end
   extensions.hook("onLicensePlateChanged", txt, veh:getID(), designPath, formats)
@@ -1273,34 +2233,169 @@ end
 
 local function loadDefaultPickup()
   local modelName = M.defaultVehicleModel
+
   log('D', 'main', "Loading the default vehicle " .. modelName)
+  local model = M.getModel(modelName)
 
-  local vehicleInfo = jsonReadFile('vehicles/' .. modelName .. '/info.json')
-  if not vehicleInfo then
-    log('E', 'main', "No info.json for default pickup found.")
-    return
-  end
-
-  if vehicleInfo.colors or vehicleInfo.default_color or vehicleInfo.default_color2 or vehicleInfo.default_color_3 then
-    convertVehicleInfo(vehicleInfo)
-  end
-
-  local defaultPC = vehicleInfo.default_pc
-  local paint = vehicleInfo.paints and vehicleInfo.paints[vehicleInfo.defaultPaintName1]
-  paint = validateVehiclePaint(paint)
+  local defaultPC = model.model.default_pc
+  local defaultConfig = model.configs[defaultPC]
+  local opt = sanitizeVehicleSpawnOptions(modelName, {model = modelName, config = defaultConfig})
+  local paint = validateVehiclePaint(opt.paint)
   local color = string.format("%s %s %s %s", paint.baseColor[1], paint.baseColor[2], paint.baseColor[3], paint.baseColor[4])
   local metallicPaintData = vehicleMetallicPaintString(paint.metallic, paint.roughness, paint.clearcoat, paint.clearcoatRoughness)
-  TorqueScriptLua.setVar( '$beamngVehicle', modelName)
-  TorqueScriptLua.setVar( '$beamngVehicleColor', color)
-  TorqueScriptLua.setVar( '$beamngVehicleMetallicPaintData', metallicPaintData)
-  TorqueScriptLua.setVar( '$beamngVehicleConfig', 'vehicles/' .. modelName .. '/' .. defaultPC .. '.pc' )
+  VariableRegistry.set( '$beamngVehicle', modelName)
+  VariableRegistry.set( '$beamngVehicleColor', color)
+  VariableRegistry.set( '$beamngVehicleMetallicPaintData', metallicPaintData)
+  VariableRegistry.set( '$beamngVehicleConfig', 'vehicles/' .. modelName .. '/' .. defaultPC .. '.pc' )
 end
 
 local function loadCustomVehicle(modelName, data)
-  TorqueScriptLua.setVar( '$beamngVehicle', modelName)
-  TorqueScriptLua.setVar( '$beamngVehicleConfig', data.config)
+  VariableRegistry.set( '$beamngVehicle', modelName)
+  VariableRegistry.set( '$beamngVehicleConfig', data.config)
 end
 
+local defaultPickupParams = {'pickup', {config = 'vehicles/pickup/d15_4wd_A.pc'}}
+if M.defaultVehicleModel == 'etk800' then
+  defaultPickupParams = {'etk800', {config = 'vehicles/etk800/854_190d_A.pc'}}
+end
+
+local function getDefaultVehicleParams()
+  log('D', 'main', 'Loading default vehicle')
+  local arg = parseArgs.args.vehicleConfig
+  if arg then
+    local pathConfig = "vehicles/"..arg
+    local modelRegexPC  = "^([%w|_|%-|%s]+)/(.*)%.pc"
+    local model, _ = string.match(arg, modelRegexPC)
+    local modelData = M.getModel(model)
+    if modelData and next(modelData) then
+      return {model, {config = pathConfig}}
+    else
+      log('E', 'main', "Model of vehicle via parseArgs (" ..dumps(arg)..") ("..dumps(model)..") doesn't exist.")
+    end
+  end
+  local myveh = VariableRegistry.get('$beamngVehicleArgs')
+  if myveh and myveh ~= ""  then
+    --VariableRegistry.set( '$beamngVehicle', myveh )
+    local mycolor = getVehicleColor()
+    log('I', 'main', 'myColor = '..dumps(mycolor))
+    --VariableRegistry.set( '$beamngVehicleColor', mycolor )
+    local myvehModel = M.getModel(myveh)
+    if myvehModel and next(myvehModel) then
+      return {myveh, {color = mycolor}}
+    else
+      log('E', 'main', "Model of vehicle via VariableRegistry.get('$beamngVehicleArgs') (" ..dumps(myveh)..") doesn't exist.")
+    end
+  end
+
+  local dir = FS:directoryExists('vehicles')
+  if not dir then
+    log('E', 'main', '"/vehicles/" directory not found!')
+    return nil
+  end
+
+  if not parseArgs.args.useDefaultPc then
+    local freeroamConfigurator = freeroam_freeroamConfigurator.getConfiguration() or {}
+    local currentVehicle = freeroamConfigurator.currentVehicle
+    if currentVehicle and currentVehicle.modelKey and currentVehicle.configKey then
+      local params = {currentVehicle.modelKey, {config = currentVehicle.configKey}}
+      if currentVehicle.additionalData then
+        params[2].paint = currentVehicle.additionalData.paint
+        params[2].paint2 = currentVehicle.additionalData.paint2
+        params[2].paint3 = currentVehicle.additionalData.paint3
+      end
+      local modelData = M.getModel(params[1])
+      if modelData and modelData.model then
+        params[2].paint = modelData.model.paints[params[2].paint]
+        params[2].paint2 = modelData.model.paints[params[2].paint2]
+        params[2].paint3 = modelData.model.paints[params[2].paint3]
+      end
+      return params
+    end
+  end
+
+  local data = jsonReadFile(pathDefaultConfig)
+  if not data then
+    return defaultPickupParams
+  end
+
+  if not data.format or data.format == 2 then
+    if data.model then
+      if next(FS:findFiles('/vehicles/'..data.model..'/', '*.jbeam', 1, false, false)) then
+        --VariableRegistry.set( '$beamngVehicle', data.model ) -- Set the model
+        --VariableRegistry.set( '$beamngVehicleConfig', pathDefaultConfig ) -- Set the parts and color
+        --VariableRegistry.set( '$beamngVehicleLicenseName', data.licenseName and data.licenseName or "") -- Set the license plate
+        return {data.model, {config = pathDefaultConfig, licenseText = data.licenseName and data.licenseName or ""}}
+      else
+        log('E', 'main', "Model of default vehicle doesn't exist. Loading default pickup.")
+        return defaultPickupParams
+      end
+    else
+      return defaultPickupParams
+    end
+  elseif data.format == 4 then
+    local allVehDirsExist = false
+
+    if type(data.vehicles) == "table" and next(data.vehicles) then
+      local visitedDirs = {}
+      allVehDirsExist = true
+      for vehIdx, vehData in ipairs(data.vehicles) do
+        local modelName
+        if vehData.model then
+          modelName = vehData.model
+        elseif vehData.linkedPCFile then
+          modelName = string.match(vehData.linkedPCFile, 'vehicles/([%w|_|%-|%s]+)')
+        end
+
+        if not modelName then
+          allVehDirsExist = false
+          break
+        end
+
+        if not visitedDirs[modelName] then
+          if not next(FS:findFiles('/vehicles/'..modelName..'/', '*.jbeam', 1, false, false)) then
+            allVehDirsExist = false
+            break
+          end
+          visitedDirs[modelName] = true
+        end
+      end
+    else
+      log('E', 'main', "No vehicles exist in default vehicle collection. Loading default pickup.")
+      return defaultPickupParams
+    end
+
+    if allVehDirsExist then
+      local pcData = data.vehicles[1]
+      if not pcData then
+        log('E', 'main', "No vehicles exist in default vehicle collection. Loading default pickup.")
+        return defaultPickupParams
+      end
+
+      local modelName
+      if pcData.model then
+        modelName = pcData.model
+      elseif pcData.linkedPCFile then
+        modelName = string.match(pcData.linkedPCFile, 'vehicles/([%w|_|%-|%s]+)')
+      end
+
+      if modelName then
+        --VariableRegistry.set( '$beamngVehicle', modelName ) -- Set the model
+        --VariableRegistry.set( '$beamngVehicleConfig', pathDefaultConfig ) -- Set the parts and color
+        --VariableRegistry.set( '$beamngVehicleLicenseName', data.licenseName and data.licenseName or "") -- Set the license plate
+        return {modelName, {config = pathDefaultConfig, licenseText = data.licenseName and data.licenseName or ""}}
+      else
+        log('E', 'main', "Model of first vehicle in default vehicle collection couldn't be determined. Loading default pickup.")
+        return defaultPickupParams
+      end
+    else
+      log('E', 'main', "Model(s) of default vehicle collection don't exist. Loading default pickup.")
+      return defaultPickupParams
+    end
+  end
+end
+
+--[[
+-- this old code was used to set the default spawning parameters for freeroam - no longer used
 --check if there is default vehicle or not
 --if not then use the defaultVehicleModel
 local function loadDefaultVehicle()
@@ -1310,42 +2405,106 @@ local function loadDefaultVehicle()
     local pathConfig = "vehicles/"..arg
     local modelRegexPC  = "^([%w|_|%-|%s]+)/(.*)%.pc"
     local model, config = string.match(arg, modelRegexPC)
-    TorqueScriptLua.setVar('$beamngVehicle', model)
-    TorqueScriptLua.setVar('$beamngVehicleConfig', pathConfig)
+    VariableRegistry.set('$beamngVehicle', model)
+    VariableRegistry.set('$beamngVehicleConfig', pathConfig)
     return
   end
-  local myveh = TorqueScriptLua.getVar('$beamngVehicleArgs')
+  local myveh = VariableRegistry.get('$beamngVehicleArgs')
   if myveh ~= ""  then
-    TorqueScriptLua.setVar( '$beamngVehicle', myveh )
+    VariableRegistry.set( '$beamngVehicle', myveh )
     local mycolor = getVehicleColor()
     log('I', 'main', 'myColor = '..dumps(mycolor))
-    TorqueScriptLua.setVar( '$beamngVehicleColor', mycolor )
+    VariableRegistry.set( '$beamngVehicleColor', mycolor )
+    return
+  end
+
+  local dir = FS:directoryExists('vehicles')
+  if not dir then
+    log('E', 'main', '"/vehicles/" directory not found!')
     return
   end
 
   local data = jsonReadFile(pathDefaultConfig)
-  if data then
+  if not data then
+    loadDefaultPickup() -- If there is no pathDefaultConfig file, load the default pickup
+    return
+  end
+
+  if not data.format or data.format == 2 then
     if data.model then
-      local dir = FS:directoryExists('vehicles')
-      if dir then
-        if #FS:findFiles('/vehicles/'..data.model..'/', '*.jbeam', 1, false, false) > 0 then
-          TorqueScriptLua.setVar( '$beamngVehicle', data.model ) -- Set the model
-          TorqueScriptLua.setVar( '$beamngVehicleConfig', pathDefaultConfig ) -- Set the parts and color
-          TorqueScriptLua.setVar( '$beamngVehicleLicenseName', data.licenseName and data.licenseName or "") -- Set the license plate
-          return
-        else
-          log('E', 'main', "Model of default vehicle doesnt exist. Loading default pickup")
-          loadDefaultPickup()
-          return
+      if next(FS:findFiles('/vehicles/'..data.model..'/', '*.jbeam', 1, false, false)) then
+        VariableRegistry.set( '$beamngVehicle', data.model ) -- Set the model
+        VariableRegistry.set( '$beamngVehicleConfig', pathDefaultConfig ) -- Set the parts and color
+        VariableRegistry.set( '$beamngVehicleLicenseName', data.licenseName and data.licenseName or "") -- Set the license plate
+      else
+        log('E', 'main', "Model of default vehicle doesn't exist. Loading default pickup.")
+        loadDefaultPickup()
+      end
+    else
+      loadDefaultPickup()
+    end
+  elseif data.format == 4 then
+    local allVehDirsExist = false
+
+    if type(data.vehicles) == "table" and next(data.vehicles) then
+      local visitedDirs = {}
+      allVehDirsExist = true
+      for vehIdx, vehData in ipairs(data.vehicles) do
+        local modelName
+        if vehData.model then
+          modelName = vehData.model
+        elseif vehData.linkedPCFile then
+          modelName = string.match(vehData.linkedPCFile, 'vehicles/([%w|_|%-|%s]+)')
+        end
+
+        if not modelName then
+          allVehDirsExist = false
+          break
+        end
+
+        if not visitedDirs[modelName] then
+          if not next(FS:findFiles('/vehicles/'..modelName..'/', '*.jbeam', 1, false, false)) then
+            allVehDirsExist = false
+            break
+          end
+          visitedDirs[modelName] = true
         end
       end
     else
-      log('E', 'main', "The chosen default vehicle in "..dumps(pathDefaultConfig).." is broken. You can either delete "..dumps(pathDefaultConfig).." or set a new default vehicle.")
+      log('E', 'main', "No vehicles exist in default vehicle collection. Loading default pickup.")
+      loadDefaultPickup()
+      return
+    end
+
+    if allVehDirsExist then
+      local pcData = data.vehicles[1]
+      if not pcData then
+        log('E', 'main', "No vehicles exist in default vehicle collection. Loading default pickup.")
+        loadDefaultPickup()
+        return
+      end
+
+      local modelName
+      if pcData.model then
+        modelName = pcData.model
+      elseif pcData.linkedPCFile then
+        modelName = string.match(pcData.linkedPCFile, 'vehicles/([%w|_|%-|%s]+)')
+      end
+
+      if modelName then
+        VariableRegistry.set( '$beamngVehicle', modelName ) -- Set the model
+        VariableRegistry.set( '$beamngVehicleConfig', pathDefaultConfig ) -- Set the parts and color
+        --VariableRegistry.set( '$beamngVehicleLicenseName', data.licenseName and data.licenseName or "") -- Set the license plate
+      else
+        log('E', 'main', "Model of first vehicle in default vehicle collection couldn't be determined. Loading default pickup.")
+        loadDefaultPickup()
+      end
+    else
+      log('E', 'main', "Model(s) of default vehicle collection don't exist. Loading default pickup.")
+      loadDefaultPickup()
     end
   end
-  loadDefaultPickup() -- If there is no pathDefaultConfig file, load the default pickup
 end
-
 local function loadMaybeVehicle(maybeVehicle)
   if maybeVehicle == nil then
     loadDefaultVehicle()
@@ -1360,29 +2519,288 @@ local function loadMaybeVehicle(maybeVehicle)
     return false
   end
 end
+]]
 
-local function spawnDefault()
+local function spawnDefault(options)
   local vehicle = getPlayerVehicle(0)
+  options = options or {}
+  if not vehicle and not canSpawnAnotherVehicle() then return false end
+  extensions.hook("onSpawnDefaultVehicle")
   if FS:fileExists(pathDefaultConfig) then
     local data = jsonReadFile(pathDefaultConfig)
+    options.config = pathDefaultConfig
+    options.licenseText = options.licenseText or data.licenseName
+
     if vehicle then
-      replaceVehicle(data.model, {config = pathDefaultConfig, licenseText = data.licenseName})
+      return replaceVehicle(data.model, options)
     else
-      spawnNewVehicle(data.model, {config = pathDefaultConfig, licenseText = data.licenseName})
+      return spawnNewVehicle(data.model, options)
     end
   else
+    options.config = nil
     if vehicle then
-      replaceVehicle(M.defaultVehicleModel, {})
+      return replaceVehicle(M.defaultVehicleModel, options)
     else
-      spawnNewVehicle(M.defaultVehicleModel)
+      return spawnNewVehicle(M.defaultVehicleModel, options)
+    end
+  end
+end
+
+local function onPreVehicleSpawned(vehId)
+  local veh = getObjectByID(vehId)
+  if not veh then return end
+
+  M.vehsCouplerCache[vehId], M.vehsCouplerTags[vehId], M.vehsCouplerOffset[vehId] = {}, {}, {}
+  local couplerCache, couplerTags, couplerOffset = M.vehsCouplerCache[vehId], M.vehsCouplerTags[vehId], M.vehsCouplerOffset[vehId]
+
+  local vehData = core_vehicle_manager.getVehicleData(vehId)
+  if not vehData or not vehData.vdata then return end
+  local vdata = vehData.vdata
+
+  if not vdata.nodes then return end
+  local refPos = vdata.nodes[vdata.refNodes[0].ref].pos
+
+  for _, n in pairs(vdata.nodes) do
+    if n.couplerTag or n.tag then
+      local cid = n.cid
+      couplerTags[cid] = n.couplerTag
+      local data = shallowcopy(n)
+      couplerCache[cid] = data
+
+      local pos = vdata.nodes[cid].pos
+      couplerOffset[cid] = vec3(pos.x - refPos.x, pos.y - refPos.y, pos.z - refPos.z)
+    end
+  end
+
+  M.vehiclePlayersMap[vehId] = {}
+end
+
+local function onVehicleSwitched(oldId, newId, player)
+  -- Track what players are in what vehicles
+  if oldId ~= -1 then
+    if M.vehiclePlayersMap[oldId] then
+      M.vehiclePlayersMap[oldId][player] = nil
+    else
+      log("W", "onVehicleSwitched", "Old vehicle "..oldId.." not found in M.vehiclePlayersMap")
+    end
+    M.playerVehicleMap[player] = nil
+  end
+  if newId ~= -1 then
+    if M.vehiclePlayersMap[newId] then
+      M.vehiclePlayersMap[newId][player] = true
+      M.playerVehicleMap[player] = newId
+    else
+      log("W", "onVehicleSwitched", "New vehicle "..newId.." not found in M.vehiclePlayersMap")
     end
   end
 end
 
 local function onVehicleDestroyed(vid)
+  for i, coupler in ipairs(M.attachedCouplers) do
+    if coupler[1] == vid then
+      table.remove(M.attachedCouplers, i)
+    end
+  end
+
+  M.vehsCouplerCache[vid], M.vehsCouplerTags[vid], M.vehsCouplerOffset[vid] = nil, nil, nil
+
+  -- Remove vehicle and children from vehicle collection
+  --removeVehicleFromCollection(vid)
+
+  if M.vehiclePlayersMap[vid] then
+    local players = M.vehiclePlayersMap[vid]
+    for player, _ in pairs(players) do
+      M.playerVehicleMap[player] = nil
+    end
+    M.vehiclePlayersMap[vid] = nil
+  end
+
   if SteamLicensePlateVehicleId == vid then
     SteamLicensePlateVehicleId = nil
   end
+end
+
+local function vehicleCollectionReset(vid)
+  local function collectionResetRec(collection, currVid, parentTransform)
+    -- Vehicle is part of a vehicle collection
+    local veh = getObjectByID(currVid)
+    if not veh then return end
+
+    local transform = parentTransform or veh:getRefNodeMatrix()
+    local vehData = collection.vehsData[currVid]
+
+    -- Place the children vehicles relative to us
+    for childVehId, childVehData in pairs(vehData.children or {}) do
+      local childVeh = getObjectByID(childVehId)
+      if childVeh then
+        local offsetData = childVehData.offsetData
+        if offsetData then
+          if offsetData.type == "default" then
+            local offset = offsetData.offset
+            local offsetMat = MatrixF(true)
+            offsetMat:setFromEuler(vec3(math.rad(offset.rx or 0), math.rad(offset.ry or 0), math.rad(offset.rz or 0)))
+            offsetMat:setPosition(vec3(offset.x or 0, offset.y or 0, offset.z or 0))
+            vehsPreventCollectionResetFlag[childVehId] = true
+            local childTransform = positionChildVehicle(currVid, transform, childVehId, offsetMat)
+            collectionResetRec(collection, childVehId, childTransform)
+          elseif offsetData.type == "coupledNodes" then
+            vehsPreventCollectionResetFlag[childVehId] = true
+            local childTransform = placeChildVeh(currVid, transform, childVehId, offsetData)
+            collectionResetRec(collection, childVehId, childTransform)
+          end
+        end
+      end
+    end
+  end
+
+  local collection = M.vehIdToVehCollection[vid]
+  if collection then
+    local mainVehData = collection.mainVehData
+    if mainVehData.vehId == vid then
+      -- main vehicle of collection
+      -- TODO: uncomment setGhostEnabled() when its able to work well
+      --be:queueObjectFastLua(vid, "obj:setGhostEnabled(true)")
+      collectionResetRec(collection, vid)
+      --be:queueObjectLua(vid, "obj:setGhostEnabled(false)")
+      resetVehicleCollection(collection)
+    else
+      -- TODO: Implement this
+      -- other vehicles in collection
+      -- local mainVeh = getObjectByID(collection.mainVehData.vehId)
+      -- if mainVeh then
+      --   mainVeh:requestReset(RESET_PHYSICS)
+      --   mainVeh:resetBrokenFlexMesh()
+      -- end
+    end
+    if collection.resetState then
+      collection.resetState.reset[vid] = true
+      checkVehicleCollectionReset(collection)
+    end
+  end
+end
+
+-- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+-- local function onVehicleResetted(vid)
+--   if M.resetVehCollectionEnabled then
+--     if not vehsSpawningFlag[vid] then
+--       if vehsPreventCollectionResetFlag[vid] then
+--         vehsPreventCollectionResetFlag[vid] = nil
+--       else
+--         vehicleCollectionReset(vid)
+--       end
+--     end
+--   end
+-- end
+
+-- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+-- local function onSetClusterPosRelRot(vehicleID, cNodeId)
+--   if M.resetVehCollectionEnabled then
+--     if vehsSpawningFlag[vehicleID] then
+--       vehicleCollectionReset(vehicleID)
+--       vehsSpawningFlag[vehicleID] = nil
+--       return
+--     end
+--   end
+-- end
+
+local function onCouplerAttached(objId1, objId2, nodeId, obj2nodeId)
+  table.insert(M.attachedCouplers, {objId1, objId2, nodeId, obj2nodeId})
+
+  -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+  -- -- if the two vehicles coupled together are not part of the same vehicle collection, remove both collections
+  -- local collection = M.vehIdToVehCollection[objId1]
+  -- if collection then
+  --   if collection.vehsData[objId2] then
+  --     -- The two vehicles are part of the same vehicle collection
+  --     if collection.resetState then
+  --       -- On resets, record down coupled vehicles
+  --       local coupledData = collection.resetState.coupled
+  --       coupledData[objId1], coupledData[objId2] = coupledData[objId1] or {}, coupledData[objId2] or {}
+  --       coupledData[objId1][objId2], coupledData[objId2][objId1] = true, true
+  --       checkVehicleCollectionReset(collection)
+  --     end
+  --   else
+  --     -- The two vehicles are part of different vehicle collections
+
+  --     -- Determine who is the parent and who is the child
+  --     local obj1CouplerTag = M.vehsCouplerTags[objId1][nodeId]
+  --     local obj2CouplerTag = M.vehsCouplerTags[objId2][obj2nodeId]
+  --     local couplerTag = obj1CouplerTag or obj2CouplerTag
+
+  --     local parentVehicleId, childVehicleId, parentNode, vehNode
+
+  --     if obj1CouplerTag then
+  --       -- obj1 is the parent, obj2 is the child
+  --       parentVehicleId = objId1
+  --       childVehicleId = objId2
+  --       parentNode = nodeId
+  --       vehNode = obj2nodeId
+  --     else
+  --       -- obj2 is the parent, obj1 is the child
+  --       parentVehicleId = objId2
+  --       childVehicleId = objId1
+  --       parentNode = obj2nodeId
+  --       vehNode = nodeId
+  --     end
+
+  --     -- Remove the child vehicle collection and add the vehicles to the parent vehicle collection
+  --     local parentCollection, childCollection = M.vehIdToVehCollection[parentVehicleId], M.vehIdToVehCollection[childVehicleId]
+  --     addVehicleToCollectionViaCoupling(parentCollection, parentVehicleId, parentNode, childVehicleId, vehNode)
+
+  --     -- Remove vehicles attached logically (rather than physically) to the parent vehicle collection with same coupler tag
+  --     local parentVehData = parentCollection.vehsData[parentVehicleId]
+  --     for vehId, vehData in pairs(parentVehData.children or {}) do
+  --       if vehData.offsetData and vehData.offsetData.type == "coupledNodes" then
+  --         local vdata = core_vehicle_manager.getVehicleData(vehId).vdata
+  --         local childNode = getNodeFromName(vdata, vehData.offsetData.node)
+  --         if childNode and childNode.tag == couplerTag then
+  --           removeVehicleFromCollection(vehId)
+  --         end
+  --       end
+  --     end
+  --   end
+  -- end
+end
+
+-- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+-- --Trigered when trailer coupler is detached by the user
+-- local function onCouplerDetach(objId1, nodeId)
+--   -- if the vehicle is part of a vehicle collection, remove the whole collection
+--   local collection = M.vehIdToVehCollection[objId1]
+--   --removeVehicleCollection(collection.mainVehData.vehId)
+
+--   local vehData = collection.vehsData[objId1]
+--   --local couplerTag = M.vehsCouplerTags[objId1][nodeId]
+
+--   for childVehId, childVehData in pairs(vehData.children or {}) do
+--     if childVehData.offsetData and childVehData.offsetData.type == "coupledNodes" then
+--       -- TODO: We currently assume that the child vehicle is connected to one parent coupler
+--       splitVehicleCollection(childVehId)
+--     end
+--   end
+-- end
+
+-- Trigered when trailer coupler is detached in any way
+local function onCouplerDetached(obj1id, obj2id, nodeId, obj2nodeId)
+  for i, coupler in ipairs(M.attachedCouplers) do
+    if coupler[1] == obj1id and coupler[2] == obj2id and coupler[3] == nodeId and coupler[4] == obj2nodeId then
+      table.remove(M.attachedCouplers, i)
+      break
+    end
+  end
+
+  -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+  -- local collection = M.vehIdToVehCollection[obj1id]
+  -- if collection and collection.resetState then
+  --   if collection.resetState.coupled[obj1id] then
+  --     collection.resetState.coupled[obj1id][obj2id] = nil
+  --   end
+  --   if collection.resetState.coupled[obj2id] then
+  --     collection.resetState.coupled[obj2id][obj1id] = nil
+  --   end
+  -- end
+
+  --onCouplerDetach(obj1id, nodeId)
 end
 
 local function reloadVehicle(playerId)
@@ -1402,17 +2820,113 @@ local function setMeshVisibility(alpha)
   extensions.core_vehicle_partmgmt.setHighlightedPartsVisiblity(alpha)
 end
 
+local function getAttributesWhiteList() return filtersWhiteList end
+local function getAttributesConvertToDict() return convertToDict end
+local function getAttributesConvertToRange() return convertToRange end
+
+local function onSerialize()
+  -- Don't serialize the vehsData list in the vehicle collections
+  for mainVehId, initVehCollection in pairs(M.initVehCollections) do
+    for vehId, vehData in pairs(initVehCollection.vehsData) do
+      vehData.parent = nil
+    end
+    initVehCollection.vehsData = nil
+  end
+  for mainVehId, collection in pairs(M.vehCollections) do
+    for vehId, vehData in pairs(collection.vehsData) do
+      vehData.parent = nil
+    end
+    collection.vehsData = nil
+  end
+
+  local data = {
+    vehiclePlayersMap = M.vehiclePlayersMap,
+    playerVehicleMap = M.playerVehicleMap,
+    attachedCouplers = M.attachedCouplers,
+    vehsCouplerCache = M.vehsCouplerCache,
+    vehsCouplerTags = M.vehsCouplerTags,
+    vehsCouplerOffset = M.vehsCouplerOffset,
+
+    resetVehCollectionEnabled = M.resetVehCollectionEnabled,
+    initVehCollections = M.initVehCollections,
+    vehCollections = M.vehCollections,
+  }
+  return data
+end
+
+local function onDeserialized(data)
+  M.vehiclePlayersMap = data.vehiclePlayersMap
+  M.playerVehicleMap = data.playerVehicleMap
+  M.attachedCouplers = data.attachedCouplers
+  M.vehsCouplerCache = data.vehsCouplerCache
+  M.vehsCouplerTags = data.vehsCouplerTags
+  M.vehsCouplerOffset = data.vehsCouplerOffset
+
+  M.resetVehCollectionEnabled = data.resetVehCollectionEnabled
+  M.initVehCollections = data.initVehCollections
+  M.vehCollections = data.vehCollections
+
+  for mainVehId, initVehCollection in pairs(M.initVehCollections) do
+    buildVehCollectionCache(initVehCollection)
+  end
+  for mainVehId, collection in pairs(M.vehCollections) do
+    buildVehCollectionCache(collection)
+  end
+end
+
+local function onInstabilityDetected(vid, returnData)
+  if not settings.getValue('pauseGameOnInstability') then
+    return
+  end
+  local veh = getObjectByID(vid)
+  if veh then
+    veh:requestReset()
+    veh:resetBrokenFlexMesh()
+  end
+  simTimeAuthority.pause(true)
+  if returnData then
+    returnData.instabilityHandled = true
+  end
+end
+
+-- Debug UI
+-- M.onUpdate = function(dt)
+--   local im = ui_imgui
+
+--   local function drawVehicleCollectionRec(vehData)
+--     im.Text('  -' .. vehData.vehId)
+--     for childVehId, childVehData in pairs(vehData.children or {}) do
+--       drawVehicleCollectionRec(childVehData)
+--     end
+--   end
+
+--   if im.Begin("Vehicle Collections Debug") then
+--     for mainVehId, collection in pairs(M.vehCollections) do
+--       im.Text('Main Veh ID: ' .. mainVehId)
+--       drawVehicleCollectionRec(collection.mainVehData)
+--     end
+--   end
+--   im.End()
+-- end
+
 --public interface
 M.getCurrentVehicleDetails = getCurrentVehicleDetails
 M.getVehicleDetails = getVehicleDetails
 
 M.getModel = getModel
 M.openSelectorUI = openSelectorUI
+M.openPartsSelectorUI = openPartsSelectorUI
+M.openSelectorUI_legcay = openSelectorUI_legcay
 M.requestList = notifyUI
 M.requestListEnd = notifyUIEnd
 M.getModelList = getModelList
+M.loadModelListNoGarbage = loadModelListNoGarbage
+M.isModelsDataLoaded = isModelsDataLoaded
+M.isModelListLoaded = isModelListLoaded
 M.getConfigList = getConfigList
 M.getConfig = getConfig
+M.generateAttachedVehiclesTree = generateAttachedVehiclesTree
+M.getCouplerOffset = getCouplerOffset
 
 M.replaceVehicle = replaceVehicle
 M.spawnNewVehicle = spawnNewVehicle
@@ -1422,28 +2936,43 @@ M.removeAll = removeAll
 M.removeAllExceptCurrent = removeAllExceptCurrent
 M.removeAllWithProperty = removeAllWithProperty
 M.clearCache = clearCache
-
+--M.resetToInitState = resetToInitState -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+--M.resetAllToInitState = resetAllToInitState -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
 
 -- used to delete the cached data
 M.onFileChanged = onFileChanged
 M.onFileChangedEnd = onFileChangedEnd
 M.onSettingsChanged = onSettingsChanged
+M.onLanguageChanged = onLanguageChanged
 
 -- License plate
 M.setPlateText = setPlateText
 M.getVehicleLicenseText = getVehicleLicenseText
 M.makeVehicleLicenseText = makeVehicleLicenseText
 M.regenerateVehicleLicenseText = regenerateVehicleLicenseText
+M.isLicensePlateValid = isLicensePlateValid
 
 M.reloadVehicle = reloadVehicle
 
 -- Default Vehicle
-M.loadDefaultVehicle  = loadDefaultVehicle
+M.getDefaultVehicleParams = getDefaultVehicleParams
+--M.loadDefaultVehicle  = loadDefaultVehicle
 M.loadCustomVehicle   = loadCustomVehicle
 M.spawnDefault        = spawnDefault
-M.loadMaybeVehicle    = loadMaybeVehicle
+--M.loadMaybeVehicle    = loadMaybeVehicle
 
-M.onVehicleDestroyed = onVehicleDestroyed
+M.onPreVehicleSpawned = onPreVehicleSpawned
+M.onVehicleSwitched   = onVehicleSwitched
+M.onVehicleDestroyed  = onVehicleDestroyed
+M.onInstabilityDetected = onInstabilityDetected
+--M.onVehicleResetted   = onVehicleResetted -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+--M.onSetClusterPosRelRot = onSetClusterPosRelRot -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+M.onCouplerAttached = onCouplerAttached
+M.onCouplerDetached = onCouplerDetached
+--M.onCouplerDetach = onCouplerDetach -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
+
+M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 -- ui2
 M.getVehicleList = getVehicleList
@@ -1453,116 +2982,208 @@ M.setMeshVisibility = setMeshVisibility
 
 M.convertVehicleInfo = convertVehicleInfo
 
-
--- new vehicle selector prototype
-
---------------------------------
--- Missions Grid Screen --------
+M.getAttributesWhiteList = getAttributesWhiteList
+M.getAttributesConvertToDict = getAttributesConvertToDict
+M.getAttributesConvertToRange = getAttributesConvertToRange
 
 
-local function addPropertyFilters(value, card, groupsByKey)
-  for propName, propVal in pairs(value.aggregates) do
-    if tableContains(finalRanges, propName) then
-      --[[
-      --Ignore for now
-      if filter[propName] then
-        filter[propName].min = min(value.aggregates[propName].min, filter[propName].min)
-        filter[propName].max = max(value.aggregates[propName].max, filter[propName].max)
-      else
-        filter[propName] = deepcopy(value.aggregates[propName])
-      end
+
+M.paintSignature = function(paint)
+  --[[
+        "baseColor":[
+        0.31,
+        0,
+        0.03,
+        1.2
+      ],
+      "clearcoat":0.8,
+      "clearcoatRoughness":0.387,
+      "metallic":0.8,
+      "roughness":0.786
       ]]
-    else
-      for propKey,_ in pairs(propVal) do
-        local groupKey = string.format("Prop-%s-%s",propName, propKey)
-        groupsByKey[groupKey] = groupsByKey[groupKey] or {label = string.format("%s: %s", propName, propKey), propName = propName}
-        card.filterData.groupTags[groupKey] = true
-      end
-    end
-  end
+  return string.format("{\"baseColor\":[%0.5f,%0.5f,%0.5f,%0.5f],\"clearcoat\":%0.5f,\"clearcoatRoughness\":%0.5f,\"metallic\":%0.5f,\"roughness\":%0.5f}", paint.baseColor[1], paint.baseColor[2], paint.baseColor[3], paint.baseColor[4], paint.clearcoat, paint.clearcoatRoughness, paint.metallic, paint.roughness)
+
+
 end
 
-local function getVehicleTiles()
-  local tilesById = {}
-  
-  local groupsByKey = {}
-  groupsByKey['allModels'] = {label="All Models"}
-
-  for _, m in ipairs(getModelList(true).models) do
-    local model = getModel(m.key)
-
-    groupsByKey["model-"..m.key] = {
-      label = m.Name,
-      meta = {type = 'simple'}
-    }
-
-    
-    local filterData = {
-      groupTags = {},
-      sortingValues = {},
-    }
-    filterData.groupTags['allModels'] = true
-    local mCard = {
-      id = "model-"..m.key,
-      name = m.Name,
-      image = m.preview,
-      filterData = filterData,
-      expandGroupKey = "model-"..m.key
-    }
-    addPropertyFilters(model.model, mCard, groupsByKey)
-
-    tilesById[mCard.id] = mCard
-
-    for _, c in pairs(model.configs) do
-
-      local filterData = {
-        groupTags = {},
-        sortingValues = {},
-      }
-      filterData.groupTags["model-"..m.key] = true
-      local cCard = {
-        id = "config-"..c.key,
-        name = c.Name,
-        image = c.preview,
-        filterData = filterData,
-      }
-      tilesById[cCard.id] = cCard
-      addPropertyFilters(c, cCard, groupsByKey)
-    end
-
-    ::continue::
-  end
-
-  -- TODO: scenarios and other non-missions
-
-  -- build group lists (new groups might have been added)
-  for key, group in pairs(groupsByKey) do
-    group.tileIdsUnsorted = {}
-    group.meta = group.meta or {type=group.type}
-  end
-
-  -- add tiles to groups
-  for id, tile in pairs(tilesById) do
-    for groupKey, _ in pairs(tile.filterData.groupTags) do
-      if groupsByKey[groupKey] then
-        table.insert(groupsByKey[groupKey].tileIdsUnsorted, id)
-      end
-    end
-  end
-
-  -- groupSets
-  local groupSetsByKey = {}
-  for groupKey, group in pairs(groupsByKey) do
-    table.insert(groupSetsByKey, groupKey)
-  end
-  table.sort(groupSetsByKey)
-  return {
-    tilesById = tilesById,
-    groupsByKey = groupsByKey,
-    groupKeys = groupSetsByKey
+M.extractProperties = function()
+  local propNamePrefix, propValuePrefix = "ui.vehicles.propName.", "ui.vehicles.propValue."
+  local onlyNames = {
+    "Name",
+    "Years",
+    "Power",
+    "Weight",
+    "Brand",
+    "Value",
+    'Torque',
+    'Top Speed',
+    'Braking G',
+    'Weight/Power',
+    'Off-Road Score',
+    'Source',
+    "Performance Class",
+    '0-60 mph',
+    '0-100 mph',
+    '0-200 mph',
+    '60-100 mph',
+    '60-0 mph',
+    '0-100 km/h',
+    '0-200 km/h',
+    '0-300 km/h',
+    '100-200 km/h',
+    '100-0 km/h',
   }
-  
+  local withValues = {
+    "Type",
+    "Config Type",
+    "Transmission",
+    "Derby Class",
+    "Drivetrain",
+    'Propulsion',
+    'Fuel Type',
+    'Induction Type',
+    'Commercial Class',
+    "Country",
+    "Body Style",
+    "Region",
+  }
+  local results = {}
+  for _, name in ipairs(withValues) do results[name] = { key = propNamePrefix .. name, values = {} } end
+  for modelKey,_ in pairs(getModelsData()) do
+    local model = getModel(modelKey)
+    for c, config in pairs(model.configs) do
+      for _, name in ipairs(withValues) do
+        local value = config[name]
+        if value == nil then
+          value = model.model[name]
+        end
+        if value ~= nil and type(value) == "string" then
+          results[name].values[value] = (results[name].values[value] or 0) + 1
+        end
+        if value ~= nil and type(value) == "table" then
+          for v, _ in pairs(value) do
+            results[name].values[v] = (results[name].values[v] or 0) + 1
+          end
+        end
+      end
+    end
+  end
+  dump(results)
+  local keys = {}
+  for _, name in ipairs(tableKeysSorted(tableValuesAsLookupDict(onlyNames))) do
+    print(string.format('"%s": "%s",', propNamePrefix .. name, name))
+  end
+  print("")
+  for _, name in ipairs(tableKeysSorted(results)) do
+    print(string.format('"%s": "%s",', results[name].key, name))
+    for _, value in ipairs(tableKeysSorted(results[name].values)) do
+      local count = results[name].values[value]
+      print(string.format('"%s": "%s",', propValuePrefix .. name .. "." .. value, value, count))
+    end
+    print("")
+  end
 end
-M.getVehicleTiles = getVehicleTiles
+
+M.extractVehicles = function()
+  -- go through all models, all configs. open the .pc file for every config. check if it contains a "paints" field that is non empty.
+  -- list out all the model/config combinations
+  local resultsByMatchCount = {}
+
+  for modelKey,_ in pairs(getModelsData()) do
+    local model = getModel(modelKey)
+    for c, config in pairs(model.configs) do
+      local pcFile = getFilesParsed()[config.pcFilename]
+      if pcFile and pcFile.paints and next(pcFile.paints) then
+        local infoFilename = "/vehicles/" .. modelKey .. "/info_" .. c .. ".json"
+
+        local pcPaints = pcFile.paints
+        local infoPaints = config.paints
+        if not infoPaints or not next(infoPaints) then
+          infoPaints = {}
+          table.insert(infoPaints, model.model.paints[config.defaultPaintName1])
+          table.insert(infoPaints, model.model.paints[config.defaultPaintName2])
+          table.insert(infoPaints, model.model.paints[config.defaultPaintName3])
+        end
+
+        local paintResults = {}
+        local matchCount = 0
+
+        for i, pcPaint in ipairs(pcPaints) do
+          local infoPaint = infoPaints[i]
+          local pcSignature = M.paintSignature(pcPaint)
+          local infoSignature = infoPaint and M.paintSignature(infoPaint) or nil
+          local isMatching = infoSignature and pcSignature == infoSignature
+
+          if isMatching then
+            matchCount = matchCount + 1
+          end
+
+          table.insert(paintResults, {
+            index = i,
+            pcSignature = pcSignature,
+            infoSignature = infoSignature,
+            isMatching = isMatching
+          })
+        end
+
+        if not resultsByMatchCount[matchCount] then
+          resultsByMatchCount[matchCount] = {}
+        end
+
+        table.insert(resultsByMatchCount[matchCount], {
+          modelKey = modelKey,
+          configName = c,
+          infoFilename = infoFilename,
+          pcFilename = config.pcFilename,
+          paints = paintResults
+        })
+      end
+    end
+  end
+
+  -- Print results grouped by match count as markdown
+  local matchCounts = {}
+  for count, _ in pairs(resultsByMatchCount) do
+    table.insert(matchCounts, count)
+  end
+  table.sort(matchCounts, function(a, b) return a > b end)
+
+  print("# Vehicle Paint Matching Report\n")
+
+  for _, matchCount in ipairs(matchCounts) do
+    local results = resultsByMatchCount[matchCount]
+    local totalPaints = #results[1].paints
+    print(string.format("## %d/%d matches (%d configs)\n", matchCount, totalPaints, #results))
+
+    for _, result in ipairs(results) do
+      print(string.format("### `%s` `%s`\n", result.modelKey, result.configName))
+      print(string.format("- **Config file:** `%s`", result.infoFilename))
+      print(string.format("- **PC file:** `%s`\n", result.pcFilename))
+
+      for _, paint in ipairs(result.paints) do
+        local matchSymbol = paint.isMatching and "✓" or "✗"
+        local matchStatus = paint.isMatching and "matching" or "not matching"
+
+        print(string.format("- %s **Paint %d** %s", matchSymbol, paint.index, matchStatus))
+        print(string.format("  - **pcPaint signature:**"))
+        print(string.format("    ```json"))
+        print(string.format("    %s", paint.pcSignature))
+        print(string.format("    ```"))
+        if paint.infoSignature then
+          print(string.format("  - **infoPaint signature:**"))
+          print(string.format("    ```json"))
+          print(string.format("    %s", paint.infoSignature))
+          print(string.format("    ```"))
+        else
+          print(string.format("  - **infoPaint signature:** `(none)`"))
+        end
+        print("")
+      end
+      print("")
+    end
+  end
+
+end
 
 return M
+

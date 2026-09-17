@@ -33,7 +33,7 @@ end
 
 function C:work()
   if career_career.isActive() and not self.flag then
-    career_modules_playerAttributes.addAttributes({[self.pinIn.playerAttribute.value]=self.pinIn.amount.value * ((self.pinIn.add.value == true) and 1 or -1)}, {label = self.pinIn.reason.value or "Unknown Reason (Flowgraph)"})
+    career_modules_playerAttributes.addAttributes({[self.pinIn.playerAttribute.value]=self.pinIn.amount.value * ((self.pinIn.add.value == true) and 1 or -1)}, {label = self.pinIn.reason.value or "ui.career.attributeLog.unknownFlowgraphReason"})
     self.flag = true
   end
 

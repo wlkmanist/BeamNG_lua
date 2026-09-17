@@ -1,12 +1,14 @@
 {
   "activeGraphId":1,
+  "authors":"BeamNG",
   "currentGraphID":1,
+  "date":1741648952,
   "debugEnabled":false,
   "description":"This example shows you how to set up the groundmarkers node to lead the player to a location.",
+  "difficulty":40,
   "frecency":{},
   "graphs":{
     "1":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -77,14 +79,14 @@
           30,
           "enter",
           28,
-          "reset",
+          "clear",
           false
         ],
         [
           29,
           "pos",
           28,
-          "pos",
+          "target",
           false
         ],
         [
@@ -133,8 +135,8 @@
       "name":"New State",
       "nodes":{
         "2":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -149,10 +151,10 @@
           "pos":[
             -2117,
             51
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "8":{
-          "type":"util/loadLevel",
           "data":{
             "customLoadingScreen":false,
             "delayBufferFrames":0,
@@ -161,6 +163,7 @@
             "preventPlayerSpawning":true,
             "stopRunningOnClientEndMission":false
           },
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -173,10 +176,12 @@
           "pos":[
             -1422,
             78
-          ]
+          ],
+          "type":"util/loadLevel"
         },
         "9":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -192,20 +197,22 @@
           "type":"types/string"
         },
         "10":{
-          "type":"vehicle/spawnVehicle",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "color":true,
               "config":false,
-              "dontDelete":true,
               "flow":false,
-              "keepCurrent":true,
+              "keepCamera":true,
+              "keepOnReset":true,
+              "keepVehicle":true,
               "licenseText":true,
               "model":false,
               "name":true,
               "pos":false,
-              "replaceCurrent":true,
+              "randomColor":true,
+              "replacePlayer":true,
               "reset":true,
               "rot":false
             },
@@ -218,18 +225,22 @@
           "pos":[
             -498,
             78
-          ]
+          ],
+          "type":"vehicle/spawnVehicle"
         },
         "11":{
           "config":"TT_RWD_S_M",
           "configName":"SBR4 RWD TT S (M)",
           "configPath":"vehicles/sbr/TT_RWD_S_M.pc",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
               "config":false,
-              "model":false
+              "configName":true,
+              "model":false,
+              "modelName":true
             }
           },
           "model":"sbr",
@@ -244,6 +255,7 @@
         "12":{
           "data":{},
           "displayMode":"fullBox",
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -255,24 +267,24 @@
           "markerClr":[
             1,
             0,
-            0.5,
-            0.25
+            0.50000000000000000000,
+            0.25000000000000000000
           ],
           "mode":"gizmo",
           "pos":[
-            -675,
-            247
+            -718,
+            271
           ],
           "position":[
-            616.41748,
-            -191.793732,
-            53.4543419
+            616.41747999999995499820,
+            -191.79373200000000565524,
+            53.45434190000000285181
           ],
           "rotation":[
             0,
             0,
-            0.914607171,
-            0.404343571
+            0.91460717099999999657,
+            0.40434357100000012375
           ],
           "scale":[
             1,
@@ -283,40 +295,36 @@
           "useQuatForRotation":false
         },
         "13":{
-          "type":"util/hideLoadingScreen",
           "data":{},
+          "dynamicMode":"once",
           "hiddenPins":{
             "p_in":{
               "flow":false,
               "reset":true
             },
             "p_out":{
+              "finished":false,
               "flow":false
             }
           },
           "pos":[
             104,
             78
-          ]
+          ],
+          "type":"util/hideLoadingScreen"
         },
         "28":{
           "data":{
-            "step":8,
-            "color":[
-              0.2,
-              0.53,
-              1,
-              1
-            ],
             "fadeEnd":150,
             "fadeStart":100
           },
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "color":{
               "type":"color",
               "value":[
-                0.2,
-                0.53,
+                0.20000000000000001110,
+                0.53000000000000002665,
                 1,
                 1
               ]
@@ -324,16 +332,17 @@
           },
           "hiddenPins":{
             "p_in":{
+              "clear":false,
               "color":true,
               "cutOffDrivability":true,
               "flow":false,
               "penaltyAboveCutoff":true,
               "penaltyBelowCutoff":true,
-              "pos":false,
-              "reset":false,
-              "waypoint":true
+              "target":false
             },
-            "p_out":{}
+            "p_out":{
+              "flow":false
+            }
           },
           "pos":[
             1532,
@@ -344,6 +353,7 @@
         "29":{
           "data":{},
           "displayMode":"default",
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -355,8 +365,8 @@
           "markerClr":[
             1,
             0,
-            0.5,
-            0.25
+            0.50000000000000000000,
+            0.25000000000000000000
           ],
           "mode":"gizmo",
           "pos":[
@@ -364,9 +374,9 @@
             275
           ],
           "position":[
-            707.61969,
-            -505.447174,
-            57.229702
+            707.61968999999999141437,
+            -505.44717400000001816807,
+            57.22970200000000318141
           ],
           "rotation":[
             0,
@@ -384,8 +394,10 @@
         },
         "30":{
           "data":{
-            "debug":false
+            "debug":false,
+            "highPrecision":false
           },
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -399,6 +411,7 @@
               "exit":true,
               "flow":false,
               "inside":true,
+              "outside":false,
               "vehId":true
             }
           },
@@ -411,6 +424,7 @@
         },
         "31":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -429,17 +443,17 @@
           "type":"logic/flowSwitch"
         },
         "63":{
-          "alpha":0.800000012,
+          "alpha":0.80000001192092895508,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -449,6 +463,7 @@
           "commentText":"This part loads the east_coast_usa level.\\nThe \"Load Level\" node has the \"customLoadingScreen\" field set to true.\\nThis means we have to hide the loading screen when we completed loading the remaining assets.\\nThe node will only let the flow through once the level is loaded.",
           "commentTitle":"Loading Level",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withNodes",
           "pos":[
             -1834,
@@ -464,17 +479,17 @@
           "type":"debug/comment"
         },
         "64":{
-          "alpha":0.800000012,
+          "alpha":0.80000001192092895508,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -484,6 +499,7 @@
           "commentText":"This spawns a vehicle for the player.\\nYou can select which vehicle through the \"Vehicle Config Provider\" node.\\nYou can also change where the vehicle spawns through the \"Transform\" node.\\nThe node only lets the flow through once the vehicle is spawned completely.\\nIt also gives you the vehicle id, which is needed to interacit with the vehicle through nodes.\\n\\nIn the \"Spawn Vehicle\" node, you can also set additional properties of the vehicle, such as colour, and licence plate text.",
           "commentTitle":"Vehicle Spawn",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withNodes",
           "pos":[
             -952,
@@ -499,17 +515,17 @@
           "type":"debug/comment"
         },
         "65":{
-          "alpha":0.800000012,
+          "alpha":0.80000001192092895508,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -519,6 +535,7 @@
           "commentText":"Now that all additional assets have been loaded, \\nwe can hide the loading screen.\\n\\nNote: If we don't use the \"customLoadingScreen\" \\nflag in the \"Load Level\" node, the loading screen will \\ngo away before we spawn the vehicle. This means the \\nplayer will briefly see the level without the vehicle and \\nnotice the small loading delay when the vehicle is spawned.",
           "commentTitle":"Loading Level Completion",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withNodes",
           "pos":[
             0,
@@ -534,17 +551,17 @@
           "type":"debug/comment"
         },
         "66":{
-          "alpha":0.800000012,
+          "alpha":0.80000001192092895508,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -554,6 +571,7 @@
           "commentText":"With this system you will be able to show the shortest path from the vehicle to the selected destination.\\n\\nIn order to select this destination, we create a \"Transform\" node to indicate the position of it. \\n\\nFinally, we connect the flow to the \"GroundMarkers\" node and specify the position through the \"Transform\" node.\\n\\nNote: These \"Custom Trigger\" and \"Flow Switch\" nodes are not necessary for the implementation of the \"GroundMarker\" node, but this way you will be able to stop \\nthe flow of the \"Groundmarker\" once the vehicle reaches the destination.\\nTo achieve this, we can introduce the \"Flow Switch\" node that will allow you to stop the execution of the next node depending on the conditions that you introduce \\nin the connections ON and OFF.\\nIn this case, the ON connection can be empty.\\nOn the other hand, the OFF connection will be activated when the vehicle has entered the \"Custom Trigger\" boundaries. This \"Custom Trigger\" node will detect whenever \\nthe vehicle is in the boundary of the trigger. The boundary is determinated by the same \"Transform\" node you used for the \"GroundMarker\" node.\\n",
           "commentTitle":"GroundMarker",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withNodes",
           "pos":[
             560,
@@ -571,15 +589,17 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -428.759857,
-        -208.807785
+        -655.64221191406250000000,
+        -323.84686279296875000000
       ],
-      "viewZoom":0.200000003
+      "viewZoom":0.33000001311302185059
     },
     "3":{
-      "children":{},
       "description":"This is the description for graph States",
       "dirty":false,
       "isStateGraph":true,
@@ -596,6 +616,7 @@
       "nodes":{
         "4":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -606,24 +627,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             -22,
@@ -633,8 +657,8 @@
           "type":"states/stateNode"
         },
         "5":{
-          "type":"states/stateEntry",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -644,10 +668,12 @@
           "pos":[
             -400,
             0
-          ]
+          ],
+          "type":"states/stateEntry"
         },
         "6":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -655,12 +681,13 @@
             "p_out":{}
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             400,
@@ -672,19 +699,26 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -415.634369,
-        -397.379761
+        -415.63436889648437500000,
+        -397.37976074218750000000
       ],
-      "viewZoom":0.74999994
+      "viewZoom":0.74999994039535522461
     }
   },
+  "isScenario":false,
   "macros":{},
-  "name":"GroundMarkerExample",
+  "name":"Groundmarker Example",
   "savedDir":"/lua/ge/extensions/flowgraph/examples/nodes/groundmarkers/",
   "savedFilename":"GroundMarkerExample.flow.json",
   "stateGraphId":3,
-  "variables":{},
-  "version":0.1
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
+  "version":0.20000000000000001110
 }

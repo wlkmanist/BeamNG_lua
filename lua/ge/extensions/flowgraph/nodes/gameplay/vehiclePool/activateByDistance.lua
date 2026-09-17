@@ -15,15 +15,20 @@ C.category = 'repeat_instant'
 C.pinSchema = {
   { dir = 'in', type = 'table', name = 'vehPool', tableType = 'vehiclePool', description = 'Vehicle pool object; use the Create Pool node.' },
   { dir = 'in', type = 'vec3', name = 'pos', description = 'Focus position; if none given, uses the camera position.' },
-  { dir = 'in', type = 'number', name = 'distance', description = 'Maximum distance to keep vehicles activated.' },
+  { dir = 'in', type = 'number', name = 'distance', description = 'Maximum distance to keep vehicles activated.' }
 }
 
-C.dependencies = {'core_vehiclePoolingManager'}
+C.dependencies = {'core_vehicleActivePooling'}
 C.tags = {'traffic', 'budget', 'pooling'}
 
+local pos = vec3()
 function C:work()
   if self.pinIn.vehPool.value then
-    local pos = self.pinIn.pos.value and vec3(self.pinIn.pos.value) or vec3(core_camera.getPosition())
+    if self.pinIn.pos.value then
+      pos:set(self.pinIn.pos.value)
+    else
+      pos:set(core_camera.getPositionXYZ())
+    end
     self.pinIn.vehPool.value:activateByDistanceTo(pos, self.pinIn.distance.value)
   end
 end

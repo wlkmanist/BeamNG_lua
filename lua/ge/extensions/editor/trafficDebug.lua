@@ -16,8 +16,9 @@ local parkingAmountChange = im.IntPtr(0)
 local drawTab = nop
 local currId = 0
 
-local generalKeys = {"damage", "crashDamage", "speed", "distCam", "respawnCount", "activeProbability", "camVisible", "isAi"}
-local respawnKeys = {"spawnValue", "spawnDirBias", "sightStrength", "sightDirValue", "finalRadius"}
+local generalKeys = {"damage", "crashDamage", "speed", "focusDist", "respawnCount", "activeProbability", "camVisible", "isAi"}
+local roadKeys = {"n1", "n2", "speedLimit", "alignment", "roadOffset", "isOnRoad"}
+local respawnKeys = {"spawnValue", "spawnDirBias", "activeRadius", "finalRadius", "staticVisibility"}
 local pursuitKeys = {"mode", "score", "offensesCount", "uniqueOffensesCount"}
 local timerKeys = {"main", "arrest", "evade", "arrestValue", "evadeValue"}
 local roleKeys = {"actionTimer", "targetId", "targetNear", "targetVisible"}
@@ -35,9 +36,9 @@ local colors = {
 local logs = {}
 local maxLogsPerVeh = 100
 
-local function appendLog(id, data) -- inserts an entry into the log table
+local function appendLog(id, action, data) -- inserts an entry into the log table
   if not logs[id] then logs[id] = {} end
-  table.insert(logs[id], {Engine.Platform.getRuntime(), data.name, data.data and data.data.reason})
+  table.insert(logs[id], {Engine.Platform.getRuntime(), action})
 end
 
 local function doBulletTextInfo(key, value) -- validates and displays a bullet point line of text
@@ -87,39 +88,55 @@ local function drawGeneralTab()
   im.PushItemWidth(100)
   im.InputInt("Add / Remove Traffic Vehicles", trafficAmountChange, 1)
   im.PopItemWidth()
+  im.tooltip("Use negative values to remove vehicles.")
   im.SameLine()
   local num = math.abs(trafficAmountChange[0])
   local str = trafficAmountChange[0] >= 0 and "Add ("..num..")##trafficAmount" or "Remove ("..num..")##trafficAmount"
-  if im.Button(str) then
+
+  if trafficAmountChange[0] ~= 0 then
+    im.PushStyleColor2(im.Col_Button, im.GetStyleColorVec4(im.Col_ButtonHovered))
+  end
+  if im.Button(str, im.ImVec2(100, im.GetFrameHeight())) then
     if trafficAmountChange[0] > 0 then
-      gameplay_traffic.setupTraffic(trafficAmountChange[0], nil, {ignoreDelete = true})
+      gameplay_traffic.setupTraffic(trafficAmountChange[0], {keepCurrent = true})
     elseif trafficAmountChange[0] < 0 then
       local trafficAiVehsList = gameplay_traffic.getTrafficList()
       for i = trafficAmount, trafficAmount + trafficAmountChange[0], -1 do
-        if trafficAiVehsList[i] then
-          be:getObjectByID(trafficAiVehsList[i]):delete()
+        if trafficAiVehsList[i] and scenetree.objectExistsById(trafficAiVehsList[i]) then
+          getObjectByID(trafficAiVehsList[i]):delete()
         end
       end
     end
+  end
+  if trafficAmountChange[0] ~= 0 then
+    im.PopStyleColor()
   end
 
   im.PushItemWidth(100)
   im.InputInt("Add / Remove Parked Vehicles", parkingAmountChange, 1)
   im.PopItemWidth()
+  im.tooltip("Use negative values to remove vehicles.")
   im.SameLine()
   num = math.abs(parkingAmountChange[0])
   str = parkingAmountChange[0] >= 0 and "Add ("..num..")##parkingAmount" or "Remove ("..num..")##parkingAmount"
-  if im.Button(str) then
+
+  if parkingAmountChange[0] ~= 0 then
+    im.PushStyleColor2(im.Col_Button, im.GetStyleColorVec4(im.Col_ButtonHovered))
+  end
+  if im.Button(str, im.ImVec2(100, im.GetFrameHeight())) then
     if parkingAmountChange[0] > 0 then
-      gameplay_parking.setupVehicles(parkingAmountChange[0], {ignoreDelete = true, ignoreParkingSpots = true})
+      gameplay_parking.setupVehicles(parkingAmountChange[0], {keepCurrent = true, bypassChecks = true})
     elseif parkingAmountChange[0] < 0 then
       local parkedVehsList = gameplay_parking.getParkedCarsList()
       for i = parkedAmount, parkedAmount + parkingAmountChange[0], -1 do
-        if parkedVehsList[i] then
-          be:getObjectByID(parkedVehsList[i]):delete()
+        if parkedVehsList[i] and scenetree.objectExistsById(parkedVehsList[i]) then
+          getObjectByID(parkedVehsList[i]):delete()
         end
       end
     end
+  end
+  if parkingAmountChange[0] ~= 0 then
+    im.PopStyleColor()
   end
 
   if im.Button("Scatter Traffic Vehicles") then
@@ -216,13 +233,6 @@ local function drawGeneralTab()
   end
   im.tooltip("If true, random events can happen (such as lawless drivers).")
 
-  -- DEPRECATED
-  --var = im.BoolPtr(trafficVars.enablePrivateRoads)
-  --if im.Checkbox("Enable All Roads For Spawning", var) then
-    --gameplay_traffic.setTrafficVars({enablePrivateRoads = var[0]})
-  --end
-  --im.tooltip("If true, traffic vehicles will try to spawn on any road type.")
-
   im.Dummy(im.ImVec2(0, 5))
   im.TextUnformatted("Parking Variables")
 
@@ -265,40 +275,42 @@ end
 
 local function drawVehiclesTab()
   im.BeginChild1("Vehicles##trafficDebug", im.ImVec2(180 * im.uiscale[0], 0 ), im.WindowFlags_ChildWindow)
-  for id, veh in pairs(traffic) do
-    if not veh.isAi then
-      im.PushStyleColor2(im.Col_Text, colors.yellow)
-      if im.Selectable1("["..id.."] "..veh.model.key, id == currId) then
+  if im.CollapsingHeader1("Traffic##trafficDebugList", im.TreeNodeFlags_DefaultOpen) then
+    for id, veh in pairs(traffic) do
+      if not veh.isAi then
+        im.PushStyleColor2(im.Col_Text, colors.yellow)
+        if im.Selectable1("["..id.."] "..veh.model, id == currId) then
+          currId = id
+        end
+        im.PopStyleColor()
+      end
+    end
+
+    for _, id in ipairs(gameplay_traffic.getTrafficList()) do
+      local veh = traffic[id]
+      local txtColor = colors.white
+      if veh.state == "fadeIn" then
+        txtColor = colors.red
+      elseif not getObjectByID(id):getActive() then
+        txtColor = colors.grey
+      end
+
+      im.PushStyleColor2(im.Col_Text, txtColor)
+      if im.Selectable1("["..id.."] "..veh.model, id == currId) then
         currId = id
       end
       im.PopStyleColor()
     end
   end
 
-  for _, id in ipairs(gameplay_traffic.getTrafficList()) do
-    local veh = traffic[id]
-    local txtColor = colors.white
-    if veh.state == "fadeIn" then
-      txtColor = colors.red
-    elseif not be:getObjectByID(id):getActive() then
-      txtColor = colors.grey
+  if im.CollapsingHeader1("Parking##trafficDebugList", im.TreeNodeFlags_DefaultOpen) then
+    for _, id in ipairs(gameplay_parking.getParkedCarsList()) do
+      im.PushStyleColor2(im.Col_Text, colors.silver)
+      if im.Selectable1("["..id.."] "..getObjectByID(id).jbeam, id == currId) then
+        currId = id
+      end
+      im.PopStyleColor()
     end
-
-    im.PushStyleColor2(im.Col_Text, txtColor)
-    if im.Selectable1("["..id.."] "..veh.model.key, id == currId) then
-      currId = id
-    end
-    im.PopStyleColor()
-  end
-
-  im.Separator()
-
-  for _, id in ipairs(gameplay_parking.getParkedCarsList()) do
-    im.PushStyleColor2(im.Col_Text, colors.silver)
-    if im.Selectable1("["..id.."] "..be:getObjectByID(id).jbeam, id == currId) then
-      currId = id
-    end
-    im.PopStyleColor()
   end
 
   im.EndChild()
@@ -306,16 +318,11 @@ local function drawVehiclesTab()
 
   im.BeginChild1("Current Vehicle##trafficDebug", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
   local currVeh = traffic[currId]
-  local obj = be:getObjectByID(currId)
 
-  if obj then
+  if scenetree.objectExistsById(currId) then
     im.Text("Information")
 
-    local system = currVeh and "traffic" or "parking"
-    im.BulletText("System: "..system)
-    im.Dummy(im.ImVec2(0, 5))
-
-    local pos = obj:getPosition()
+    local pos = vec3(be:getObjectPositionXYZ(currId))
     local dist = pos:distance(core_camera.getPosition())
     local height = clamp(dist / 10, 10, 40)
     local alpha = clamp((dist - 50) / 450, 0.2, 0.8)
@@ -323,7 +330,9 @@ local function drawVehiclesTab()
   end
 
   if currVeh then
-    im.BulletText("Model: "..currVeh.model.name)
+    local obj = getObjectByID(currId)
+
+    im.BulletText("Model: "..currVeh.modelName)
     im.BulletText("State: "..currVeh.state)
     im.BulletText("Role: "..currVeh.role.name)
     im.BulletText("Action: "..currVeh.role.actionName)
@@ -332,6 +341,13 @@ local function drawVehiclesTab()
     if im.TreeNode1("General Info") then
       for _, key in ipairs(generalKeys) do
         doBulletTextInfo(key, currVeh[key])
+      end
+      im.TreePop()
+    end
+
+    if im.TreeNode1("Road Info") then
+      for _, key in ipairs(roadKeys) do
+        doBulletTextInfo(key, currVeh.tracking[key])
       end
       im.TreePop()
     end
@@ -413,7 +429,7 @@ local function drawVehiclesTab()
     end
 
     if im.Button("Reset Vehicle") then
-      local obj = be:getObjectByID(currVeh.id)
+      local obj = getObjectByID(currVeh.id)
       obj:queueLuaCommand("recovery.recoverInPlace()")
       currVeh:onRefresh()
     end
@@ -449,7 +465,7 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(400, 600))
-  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = "Experimental"})
+  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = "Debug"})
 end
 
 local function onEditorGui()
@@ -481,8 +497,8 @@ local function onEditorGui()
   editor.endWindow()
 end
 
-local function onTrafficAction(id, data)
-  appendLog(id, data)
+local function onTrafficAction(id, action, data)
+  appendLog(id, action, data)
 end
 
 M.onEditorDeactivated = onEditorDeactivated

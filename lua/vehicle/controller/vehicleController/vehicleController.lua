@@ -13,6 +13,8 @@ M.brake = 0
 M.clutchRatio = 0
 M.drivingAggression = 0
 M.shiftingAggression = 0
+M.isArcadeSwitched = false
+M.gearboxBehavior = nil
 -----
 
 local min = math.min
@@ -39,6 +41,8 @@ local gearboxHandling = {
   isTryingToAutoStartEngine = false
 }
 
+local drivingStrategy
+
 local energyStorageData = {
   ratio = 0,
   volume = 0,
@@ -47,6 +51,8 @@ local energyStorageData = {
 }
 
 local shiftPreventionData = {
+  shiftPreventionSlipEnabled = false,
+  shiftPreventionJumpEnabled = false,
   wheelSlipUpThreshold = 0,
   wheelSlipDownThreshold = 0,
   wheelSlipShiftDown = false,
@@ -138,7 +144,9 @@ local aggressionOverride
 local topSpeedLimit = 0
 local topSpeedLimitReverse = 0
 local topSpeedLimitPID
---local rpmLedsEnabled = false
+local topSpeedLimitTemporary = nil
+local topSpeedLimitTemporaryActive = false
+local lastShiftLEDsInUse = nil
 
 local inputValues = {throttle = 0, clutch = 0}
 
@@ -146,11 +154,21 @@ local isFrozen = false
 
 local controlLogicModule = nil
 
-local drivingStrategies = {
-  availableStrategies = {},
-  currentWeights = {},
-  currentStrategyIndex = {}
-}
+local function setTopSpeedLimitTemporary(speedLimit)
+  topSpeedLimitTemporary = speedLimit
+end
+
+local function changeTopSpeedLimitTemporary(change)
+  topSpeedLimitTemporary = (topSpeedLimitTemporary or 0) + change
+end
+
+local function setTopSpeedLimitTemporaryActive(active)
+  topSpeedLimitTemporaryActive = active
+end
+
+local function toggleTopSpeedLimitTemporaryActive()
+  topSpeedLimitTemporaryActive = not topSpeedLimitTemporaryActive
+end
 
 local function setAggressionOverride(aggression)
   aggressionOverride = aggression
@@ -173,6 +191,7 @@ local function setGearboxBehavior(behavior)
   end
 
   gearboxHandling.behavior = behavior
+  M.gearboxBehavior = behavior
   guihooks.message(
     {
       txt = "vehicle.vehicleController.shifterModeChanged",
@@ -213,14 +232,13 @@ sharedFunctions.switchToRealisticBehavior = function(gearIndex)
 end
 
 sharedFunctions.warnCannotShiftSequential = function()
-  guihooks.message(
-    {
-      txt = "vehicle.vehicleController.cannotShiftSequential",
-      context = {shifterModeName = getGearboxBehaviorName()}
-    },
-    2,
-    "vehicle.shiftLogic.cannotShift"
-  )
+  guihooks.trigger("Message", {
+    msg = "vehicle.vehicleController.cannotShiftSequential",
+    context = {shifterModeName = getGearboxBehaviorName()},
+    ttl = 2,
+    category = "vehicle.shiftLogic.cannotShift",
+    actionItems = {{ action = "toggleShifterMode", label = "ui.inputActions.vehicle.toggleShifterMode.title" }},
+  })
 end
 
 sharedFunctions.updateAvgAVSingleDevice = function(deviceName, deviceProperty)
@@ -309,13 +327,20 @@ local function handleStalling(isEngineRunning, dt)
         if not isEngineRunning then
           if timer.stalledEngineMessageTimer <= 0 then
             local message
+            local actionItems
             if gearboxHandling.autoClutch then
               message = "vehicle.vehicleController.stalledAutoClutch"
+              actionItems = {{ action = "activateStarterMotor", label = "ui.inputActions.vehicle.toggleIgnitonLevel.title" }}
             else
               message = "vehicle.vehicleController.stalled"
+              actionItems = {{ action = "clutch", label = "ui.inputActions.vehicle.clutch.title" },{ action = "activateStarterMotor", label = "ui.inputActions.vehicle.toggleIgnitonLevel.title" }}
             end
-            guihooks.message({txt = message}, 2, "vehicle.engine.isStalling")
-            timer.stalledEngineMessageTimer = 1.8
+            guihooks.trigger("Message", {
+              msg = message,
+              ttl = 2,
+              category = "vehicle.engine.isStalling",
+              actionItems = actionItems,
+            })
           end
         end
       end
@@ -346,11 +371,8 @@ local function updateWheelSlip(dt)
   local averagePropulsedWheelSlip = wheelSlipCount > 0 and overallWheelSlip / wheelSlipCount or 0
   handBrakeHandling.smartParkingBrakeSlip = handBrakeHandling.smartParkingBrakeSlip / wheels.wheelCount
 
-  shiftPreventionData.wheelSlipShiftDown = true
-  if (averagePropulsedWheelSlip > shiftPreventionData.wheelSlipDownThreshold or groundContactCoef < 1) then -- and M.throttle <= 0.5 then
-    shiftPreventionData.wheelSlipShiftDown = false
-  end
-  shiftPreventionData.wheelSlipShiftUp = groundContactCoef >= 1 and averagePropulsedWheelSlip < shiftPreventionData.wheelSlipUpThreshold
+  shiftPreventionData.wheelSlipShiftDown = (groundContactCoef >= 1 or not shiftPreventionData.shiftPreventionJumpEnabled) and (averagePropulsedWheelSlip < shiftPreventionData.wheelSlipDownThreshold or not shiftPreventionData.shiftPreventionSlipEnabled)
+  shiftPreventionData.wheelSlipShiftUp = (groundContactCoef >= 1 or not shiftPreventionData.shiftPreventionJumpEnabled) and (averagePropulsedWheelSlip < shiftPreventionData.wheelSlipUpThreshold or not shiftPreventionData.shiftPreventionSlipEnabled)
 
   if not hasPressureWheels then
     shiftPreventionData.wheelSlipShiftDown = true
@@ -445,6 +467,8 @@ local function updateGFXGeneric(dt)
   updateWheelSlip(dt)
   handleArcadeIgniton(dt)
 
+  --drivingStrategy.core.updateGFX(dt)
+
   controlLogicModule.gearboxHandling = gearboxHandling
   controlLogicModule.timer = timer
   controlLogicModule.timerConstants = timerConstants
@@ -457,6 +481,7 @@ local function updateGFXGeneric(dt)
   M.brake = controlLogicModule.brake
   M.clutchRatio = controlLogicModule.clutchRatio
   M.shiftingAggression = controlLogicModule.shiftingAggression or 0
+  M.isArcadeSwitched = controlLogicModule.isArcadeSwitched
   gearboxHandling.isArcadeSwitched = controlLogicModule.isArcadeSwitched
   currentGearIndex = controlLogicModule.currentGearIndex
   local gearName = controlLogicModule.getGearName()
@@ -466,6 +491,9 @@ local function updateGFXGeneric(dt)
 
   local vehicleSpeed = electrics.values.wheelspeed or 0
   local speedLimit = (type(gearName) == "string" and gearName:sub(1, 1) == "R") and topSpeedLimitReverse or topSpeedLimit
+  if topSpeedLimitTemporaryActive and topSpeedLimitTemporary then
+    speedLimit = topSpeedLimitTemporary
+  end
   if speedLimit > 0 then
     local speedError = vehicleSpeed - speedLimit
     local throttleCoef = 1 - topSpeedLimitPID:get(-speedError, 0, dt)
@@ -562,10 +590,16 @@ local function updateGFXGeneric(dt)
     M.engineInfo[22] = controlLogicModule.flywheelTorque * controlLogicModule.rpm * constants.rpmToAV * 0.001 * 1.35962
   end
 
-  --RPM LEDs are currently disabled due to strong correlations with FFB issues, see init for more details
-  -- if rpmLedsEnabled and playerInfo.firstPlayerSeated and engine then
-  --   hydros.sendRPMLeds(engine.outputAV1 or 0, (engine.maxAV or 1) * 0.8, engine.maxAV or 1)
-  -- end
+  --send shift RPM led data to supported input devices if needed
+  local shiftLEDsInUse = controlLogicModule.areShiftLEDsInUse and controlLogicModule.areShiftLEDsInUse() or false --check if current gearbox wants to use shift LEDs
+  if shiftLEDsInUse ~= lastShiftLEDsInUse then
+    lastShiftLEDsInUse = shiftLEDsInUse
+    --send that info to GE so it can fallback to some default if not used by vlua
+    obj:queueGameEngineLua(string.format("extensions.hook('onVehicleRPMledStateChanged', %d, %s)", objectId, shiftLEDsInUse))
+  end
+  if playerInfo.anyPlayerSeated and engine and shiftLEDsInUse then
+    hydros.sendRPMLeds(engine.outputAV1 or 0, (engine.maxAV or 1) * 0.7, (engine.maxAV or 1) * 0.95)
+  end
 
   if gearbox then
     if streams.willSend("gearboxData") then
@@ -591,7 +625,7 @@ local function updateGFXGeneric(dt)
           aggression = smoothedValues.drivingAggression,
           wheelSlipDown = shiftPreventionData.wheelSlipShiftDown,
           wheelSlipUp = shiftPreventionData.wheelSlipShiftUp,
-          lockupRatio = electrics.values.lockupClutchRatio
+          lockupRatio = roundNear(electrics.values.lockupClutchRatio or 0, 1e-2)
         }
       )
     end
@@ -724,11 +758,52 @@ local function applySettings()
   gearboxHandling.autoClutch = settings.getValue("autoClutch", true)
   gearboxHandling.autoThrottle = settings.getValue("autoThrottle", true)
   gearboxHandling.gearboxSafety = settings.getValue("gearboxSafety", true)
-  --rpmLedsEnabled = settings.getValue("rpmLedsEnabled", false) -- permanently disable the rpm led functionality since we strongly belief it causes issues with FFB
+
+  --default changed, apply to current vehicle only
+  local gearboxBehavior = settings.getValue("defaultGearboxBehavior")
+  if playerInfo.firstPlayerSeated and gearboxBehavior ~= nil and gearboxBehavior ~= gearboxHandling.behavior then
+    setGearboxBehavior(gearboxBehavior)
+  end
 end
 
 local function settingsChanged()
   applySettings()
+end
+
+local hasRegisteredQuickAccessMenu = false
+
+local function registerQuickAccessMenu()
+  if not core_quickAccess then
+    return
+  end
+
+  if not hasRegisteredQuickAccessMenu then
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/helperSystems/",
+        generator = function(entries)
+          table.insert(
+            entries,
+            {
+              title = "ui.radialmenu2.powertrain.gearbox_mode",
+              icon = gearboxHandling.behavior == "arcade" and "gamepad" or (gearboxType == "automaticGearbox" and "transmissionA" or "transmissionM"),
+              action = "toggleShifterMode",
+              uniqueID = "toggleShifterMode",
+              desc = {
+                txt = "vehicle.vehicleController.shifterModeCurrent",
+                context = {shifterModeName = getGearboxBehaviorName()}
+              },
+              onSelect = function()
+                controller.mainController.cycleGearboxModes()
+                return {"reload"}
+              end
+            }
+          )
+        end
+      }
+    )
+    hasRegisteredQuickAccessMenu = true
+  end
 end
 
 local function calculateOptimalLoadShiftPoints(shiftDownRPMOffsetCoef)
@@ -772,10 +847,114 @@ local function calculateOptimalLoadShiftPoints(shiftDownRPMOffsetCoef)
   end
 end
 
+local function setParkingBrakeOnSpawn()
+  --can be disabled in jbeam
+  if handBrakeHandling.smartParkingBrakeActiveUponSpawn then
+    smartParkingBrake(1)
+    --only make it the smart version if we are in arcade mode
+    handBrakeHandling.smartParkingBrakeActive = true
+  end
+end
+
+local function reset(jbeamData)
+  M.throttle = 0
+  M.brake = 0
+  M.clutchRatio = 0
+  M.isArcadeSwitched = false
+  M.gearboxBehavior = gearboxHandling.behavior
+  gearboxHandling.isArcadeSwitched = false
+  gearboxHandling.isTryingToAutoStartEngine = false
+  gearboxHandling.arcadeAutoBrakeAmount = jbeamData.arcadeAutoBrakeAmount or 0.3
+  isFrozen = false
+
+  timer.gearChangeDelayTimer = 0
+  timer.shiftDelayTimer = 0
+  timer.revMatchTimer = 0
+  timer.neutralSelectionDelayTimer = 0
+  timer.stalledEngineMessageTimer = 0
+  timer.stalledEngineTryingToStartTimer = 0
+  timer.aggressionHoldOffThrottleTimer = 0
+
+  lastAggressionThrottle = 0
+  lastShiftLEDsInUse = nil
+
+  topSpeedLimitTemporaryActive = false
+
+  smoothedValues.throttle = 0
+  smoothedValues.brake = 0
+  smoothedValues.throttleInput = 0
+  smoothedValues.brakeInput = 0
+  smoothedValues.drivingAggression = 0.75
+  smoothedValues.avgAV = 0
+
+  shiftPreventionData.wheelSlipShiftDown = false
+  shiftPreventionData.wheelSlipShiftUp = false
+
+  energyStorageData.ratio = 0
+  energyStorageData.volume = 0
+  --energyStorageData.capacity = 0
+  --energyStorageData.invEnergyStorageCount = 0
+
+  handBrakeHandling.smartParkingBrakeActive = false
+  handBrakeHandling.smartParkingBrakeSlip = 0
+
+  smoother.throttle:reset()
+  smoother.brake:reset()
+  smoother.throttleInput:reset()
+  smoother.brakeInput:reset()
+  smoother.aggressionAxis:reset()
+  smoother.aggressionKey:reset()
+  smoother.avgAV:reset()
+  smoother.wheelSlipShiftUp:reset()
+  smoother.groundContactSmoother:reset()
+
+  smoother.aggressionAxis:set(smoothedValues.drivingAggression)
+  smoother.aggressionKey:set(smoothedValues.drivingAggression)
+
+  topSpeedLimitPID:reset()
+
+  if controlLogicModule then
+    controlLogicModule.init(jbeamData, sharedFunctions)
+    controlLogicModule.gearboxHandling = gearboxHandling
+    controlLogicModule.timer = timer
+    controlLogicModule.timerConstants = timerConstants
+    controlLogicModule.inputValues = inputValues
+    controlLogicModule.shiftPreventionData = shiftPreventionData
+    controlLogicModule.shiftBehavior = shiftBehavior
+    controlLogicModule.smoothedValues = smoothedValues
+    controlLogicModule.smoothedAvgAVInput = 0
+  end
+
+  M.setDefaultForwardMode = controlLogicModule.setDefaultForwardMode
+
+  -- local energyStorageCount = 0
+  -- for _, s in pairs(controlLogicModule.energyStorages or {}) do
+  --   local energyStorage = energyStorage.getStorage(s)
+  --   if energyStorage and energyStorage.type ~= "n2oTank" then
+  --     energyStorageData.capacity = energyStorageData.capacity + energyStorage.capacity
+  --     energyStorageCount = energyStorageCount + 1
+  --   end
+  -- end
+  -- energyStorageData.invEnergyStorageCount = energyStorageCount > 0 and 1 / energyStorageCount or 0
+
+  setGearboxBehavior(gearboxHandling.previousBehavior or settings.getValue("defaultGearboxBehavior") or "arcade")
+
+  --sendTorqueData()
+
+  M.updateGFX = updateGFXGeneric
+end
+
+local function resetLastStage(jbeamData)
+  setParkingBrakeOnSpawn()
+
+  gearboxHandling.isTryingToAutoStartEngine = false
+end
+
 local function init(jbeamData)
   M.throttle = 0
   M.brake = 0
   M.clutchRatio = 0
+  M.isArcadeSwitched = false
   gearboxHandling.isArcadeSwitched = false
   gearboxHandling.isTryingToAutoStartEngine = false
   gearboxHandling.arcadeAutoBrakeAmount = jbeamData.arcadeAutoBrakeAmount or 0.3
@@ -854,6 +1033,9 @@ local function init(jbeamData)
 
   shiftPreventionData.wheelSlipUpThreshold = jbeamData.wheelSlipUpThreshold or 20000
   shiftPreventionData.wheelSlipDownThreshold = jbeamData.wheelSlipDownThreshold or 30000
+
+  shiftPreventionData.shiftPreventionSlipEnabled = jbeamData.shiftPreventionSlipEnabled == nil and true or jbeamData.shiftPreventionSlipEnabled
+  shiftPreventionData.shiftPreventionJumpEnabled = jbeamData.shiftPreventionJumpEnabled == nil and true or jbeamData.shiftPreventionJumpEnabled
 
   engine = powertrain.getDevice("mainEngine")
   gearbox = powertrain.getDevice("gearbox")
@@ -962,26 +1144,26 @@ local function init(jbeamData)
   end
   energyStorageData.invEnergyStorageCount = energyStorageCount > 0 and 1 / energyStorageCount or 0
 
+  local drivingStrategyModuleDirectory = "controller/vehicleController/drivingStrategy/"
+  local drivingStrategyCoreModulePath = drivingStrategyModuleDirectory .. "drivingStrategy"
+  drivingStrategy = {}
+  --drivingStrategy.core = require(drivingStrategyCoreModulePath)
+  --drivingStrategy.core.init(M)
+
+  --for _, v in pairs(drivingStrategy.core.strategies) do
+  --  drivingStrategy[v] = require(drivingStrategyModuleDirectory .. v)
+  --  drivingStrategy[v].init(M)
+  --end
+
   setGearboxBehavior(gearboxHandling.previousBehavior or settings.getValue("defaultGearboxBehavior") or "arcade")
 
-  --sendTorqueData()
+  registerQuickAccessMenu()
 
   M.updateGFX = updateGFXGeneric
 end
 
 local function initLastStage()
-  if handBrakeHandling.smartParkingBrakeActiveUponSpawn then
-    smartParkingBrake(1)
-    handBrakeHandling.smartParkingBrakeActive = true
-  end
-end
-
-local function resetLastStage()
-  if handBrakeHandling.smartParkingBrakeActiveUponSpawn then
-    smartParkingBrake(1)
-    handBrakeHandling.smartParkingBrakeActive = true
-  end
-  gearboxHandling.isTryingToAutoStartEngine = false
+  setParkingBrakeOnSpawn()
 end
 
 local function vehicleActivated()
@@ -999,6 +1181,7 @@ local function onDeserialize(data)
   if data.controlLogicModuleData and controlLogicModule.onDeserialize then
     controlLogicModule.onDeserialize(data.controlLogicModuleData)
   end
+  setParkingBrakeOnSpawn()
 end
 
 local function onSerialize()
@@ -1035,6 +1218,7 @@ end
 
 M.init = init
 M.initLastStage = initLastStage
+M.reset = reset
 M.resetLastStage = resetLastStage
 M.updateGFX = nop
 M.settingsChanged = settingsChanged
@@ -1047,6 +1231,11 @@ M.setState = setState
 
 M.setAggressionOverride = setAggressionOverride
 M.setDefaultForwardMode = nop
+
+M.setTopSpeedLimitTemporary = setTopSpeedLimitTemporary
+M.changeTopSpeedLimitTemporary = changeTopSpeedLimitTemporary
+M.setTopSpeedLimitTemporaryActive = setTopSpeedLimitTemporaryActive
+M.toggleTopSpeedLimitTemporaryActive = toggleTopSpeedLimitTemporaryActive
 
 --Mandatory main controller API
 M.shiftDownOnUp = shiftDownOnUp

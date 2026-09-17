@@ -14,6 +14,7 @@ C.category = 'repeat_instant'
 
 C.pinSchema = {
   { dir = 'out', type = 'flow', name = 'closed', description = "Outflow once when the intropopup is closed", impulse = true },
+  { dir = 'out', type = 'any', name = 'id', description = "The id of the closed popup" },
 }
 C.dependencies = {}
 
@@ -25,14 +26,18 @@ end
 
 function C:work(args)
   self.pinOut.closed.value = false
+  self.pinOut.id.value = nil
   for flag, act in pairs(self.flags) do
     self.pinOut[flag].value = act
   end
   table.clear(self.flags)
 end
 
-function C:onIntroPopupCareerClosed(data)
+function C:onIntroPopupCareerClosed(id)
   self.flags.closed = true
+  if id ~= nil then
+    self.flags.id = id
+  end
 end
 
 

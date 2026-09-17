@@ -35,13 +35,13 @@ function C:workOnce()
     self.vars.strictness = self.pinIn.policeStrictness.value
   end
   if self.pinIn.arrestLimit.value ~= nil then
-    self.vars.arrestLimit = self.pinIn.arrestLimit.value
+    self.vars.arrestTime = self.pinIn.arrestLimit.value
   end
   if self.pinIn.arrestRadius.value ~= nil then
     self.vars.arrestRadius = self.pinIn.arrestRadius.value
   end
   if self.pinIn.evadeLimit.value ~= nil then
-    self.vars.evadeLimit = self.pinIn.evadeLimit.value
+    self.vars.evadeTime = self.pinIn.evadeLimit.value
   end
   if self.pinIn.evadeRadius.value ~= nil then
     self.vars.evadeRadius = self.pinIn.evadeRadius.value

@@ -14,15 +14,33 @@ local sizeMax = im.ImVec2(-1, -1)
 
 local function toggle()
   M.currentMode = (M.currentMode+1) % 4
+  Engine.Debug.setGpuTimingOverlayVisible(M.currentMode ~= 0)
+  if M.currentMode == 2 then
+    logMemoryInfo("I")
+  end
   if M.currentMode == 0 then
     extensions.unload(M)
   end
 end
 
 local function getConsoleNumber(varName)
-  local result = getConsoleVariable(varName)
-  return result == "" and -1 or result
+  local result = VariableRegistry.get("$"..varName, -1)
+  return tonumber(result)
 end
+
+local function frameTimeText()
+  local gpuTime = getConsoleNumber("fps::gpuTime")
+  return string.format("CPU: %5.2f ms | GPU: %s", getConsoleNumber("fps::cpuTime"), gpuTime >= 0 and string.format("%5.2f ms", gpuTime) or "N/A")
+end
+
+local function gib(bytes)
+  return string.format("%.1f GiB", bytes / (1024 * 1024 * 1024))
+end
+
+local function memoryUsageLineText(label, usedBytes, totalBytes, totalLabel)
+  return string.format("%s  %s: used %s / %s %s | free %s", graphs(clamp(usedBytes / totalBytes, 0, 1) * 20, 20), label, gib(usedBytes), totalLabel, gib(totalBytes), gib(totalBytes - usedBytes))
+end
+
 local function onUpdate(dtReal, dtSim, dtRaw)
   if M.currentMode == 0 then return end
   local win = im.GetMainViewport()
@@ -39,9 +57,6 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   -- limit size
   sizeMax.x = win.Size.x - posX
   sizeMax.y = win.Size.y - posY
-  if M.currentMode == 1 then
-    sizeMax.y = 15
-  end
   im.SetNextWindowSizeConstraints(sizeMin, sizeMax)
 
   -- reduce padding and set bg
@@ -52,11 +67,10 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   if im.Begin("##metricsWindow", nil, im.WindowFlags_AlwaysAutoResize+im.WindowFlags_NoResize+im.WindowFlags_NoMove+im.WindowFlags_NoCollapse+im.WindowFlags_NoDocking+im.WindowFlags_NoTitleBar) then
     local lineTexts = imguiVisible or {}
     local lineText
-    local rnd = settings.getValue("FPSLimiterEnabled") and settings.getValue("FPSLimiterRandomness") or 0
-    im.SetCursorPosY(-4)
+    local rnd = settings.getValue("fpsLimitEnabled") and settings.getValue("FPSLimiterRandomness") or 0
     -- minimum stats
     if M.currentMode == 1 then
-      lineText = string.format("FPS: %5.1f [Avg %5.1f | Min %5.1f | Max %5.1f%s]", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::avg"), getConsoleNumber("fps::min"), getConsoleNumber("fps::max"), rnd == 0 and "" or ", randomness "..rnd.."%")
+      lineText = string.format("FPS: %5.1f [Avg %5.1f | Min %5.1f | Max %5.1f%s] | %s", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::avg"), getConsoleNumber("fps::min"), getConsoleNumber("fps::max"), rnd == 0 and "" or ", randomness "..rnd.."%", frameTimeText())
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
     end
@@ -70,7 +84,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("%5.1f fps [Unmanaged: %5.1f fps]", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::instantaneousUncap"))
+        columnText = string.format("%5.1f fps", getConsoleNumber("fps::instantaneous"))
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -129,7 +143,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
-        columnText = string.format("%5.2f ms [Unmanaged: %5.1f ms]", 1000 / getConsoleNumber("fps::instantaneous"), 1000 / getConsoleNumber("fps::instantaneousUncap"))
+        columnText = string.format("%5.2f ms", 1000 / getConsoleNumber("fps::instantaneous"))
         if not imguiVisible then table.insert(lineTexts, columnText) end
         im.TextUnformatted(columnText)
         im.TableNextColumn()
@@ -167,20 +181,25 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       im.EndTable()
       end
 
+      lineText = frameTimeText()
+      im.TextUnformatted(lineText)
+      if not imguiVisible then table.insert(lines, lineText) end
+
       lineText = string.format("WaitforGPU: %4.2f ms%s", getConsoleNumber("fps::waitForGPU"), rnd == 0 and "" or ", WARNING: RANDOMNESS="..rnd.."%")
       local managers = {}
       if render_openxr and render_openxr.isSessionRunning() then
-        table.insert(managers, "OpenXR")
+        table.insert(managers, "VR")
       else
-        if settings.getValue("FPSLimiterEnabled") then table.insert(managers, "FPS limiter (normal)") end
-        if settings.getValue("vsync") then table.insert(managers, "Vertical sync") end
-        if not scenetree.MissionGroup then table.insert(managers, "FPS limiter (menu)") end
-        if settings.getValue("SleepInBackground") and not Engine.isProgramFocused() then table.insert(managers, "FPS limiter (background)") end
+        if settings.getValue("fpsLimitEnabled") then table.insert(managers, "normal") end
+        if settings.getValue("vsync") then table.insert(managers, "vsync") end
+        if not scenetree.MissionGroup then table.insert(managers, "menu") end
+        if settings.getValue("fpsLimitBackgroundEnabled") and not Engine.isProgramFocused() then table.insert(managers, "background") end
       end
-      if not next(managers) then
+      local limited = next(managers) and true or false
+      if not limited then
         table.insert(managers, "<none>")
       end
-      lineText = lineText.."  Framerate Managed: "..table.concat(managers, ", ")
+      lineText = lineText..string.format(" (%sfps limiter: %s)", limited and string.format("%5.1f ", getConsoleNumber("fps::instantaneousUncap")) or "", table.concat(managers, " + "))
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
 
@@ -195,6 +214,18 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         im.EndTooltip()
       end
       im.PopStyleColor()
+
+      local mem = Engine.Platform.getMemoryInfo()
+      lineText = string.format("Available memory: %s", gib(mem.availableBytes))
+      im.TextUnformatted(lineText)
+      if not imguiVisible then table.insert(lines, lineText) end
+
+      local gpuMem = Engine.Render.getMemoryInfo()
+      if gpuMem.valid then
+        lineText = string.format("Available GPU memory: %s", gib(gpuMem.availableBytes))
+        im.TextUnformatted(lineText)
+        if not imguiVisible then table.insert(lines, lineText) end
+      end
 
     end
 
@@ -253,6 +284,7 @@ end
 
 local function onInit()
   setExtensionUnloadMode(M, "manual")
+  Engine.Debug.setGpuTimingOverlayVisible(M.currentMode ~= 0)
 end
 
 local function onSerialize()
@@ -260,7 +292,8 @@ local function onSerialize()
 end
 
 local function onDeserialized(d)
-  M.currrentMode = d.currentMode
+  M.currentMode = d.currentMode
+  Engine.Debug.setGpuTimingOverlayVisible(M.currentMode ~= 0)
 end
 
 M.onInit = onInit

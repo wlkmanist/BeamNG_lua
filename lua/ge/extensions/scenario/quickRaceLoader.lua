@@ -46,16 +46,16 @@ end
 
 -- this function returns a list containing all levels that contain quickraces.
 -- each level has a 'tracks'-property, which contains a list of all quickrace tracks for this level.
-local function getQuickraceList()
-  local files = M.getLevelList()
+local function getQuickraceList(levelList)
+  local levelList = levelList or M.getLevelList()
 
   local proceduralLevel = {}
   local levels = {}
   local addingProcedural = true
 
   local trackBuilderTracks =  M.getTrackEditorTracks()
- --dump(files)
-  for _, levelName in ipairs(files) do
+
+  for _, levelName in ipairs(levelList) do
     --print(levelName)
     local levelPath = '/levels/' .. levelName .. '/quickrace/'
     local quickraceFiles =  FS:findFiles(levelPath, '*.json', -1, true, false)
@@ -163,7 +163,7 @@ local function getLevel(levelName)
   local raceList = getQuickraceList()
   if raceList then
     for _,raceLevel in ipairs(raceList) do
-      if raceLevel.levelInfo.title == levelName or raceLevel.name == levelName then
+      if raceLevel.levelInfo.title == levelName or raceLevel.levelName == levelName then
         return raceLevel
       end
     end
@@ -457,6 +457,10 @@ local function loadQuickrace(scenarioKey, scenarioFile, trackFile, vehicleFile, 
   end
   scenarioFile.scenarioName = trackFile.trackName
   scenarioFile.lapCount = trackFile.lapCount
+  -- Translated in the ScenarioStart.vue. Only keep here the key.
+  if scenarioFile.lapCount and scenarioFile.lapCount > 0 then
+    scenarioFile.description = { txt = "missions.timeTrials.general.intro.general" }
+  end
   scenarioFile.lapConfig = trackFile.lapConfig
   if trackFile.lapConfigBranches then
     scenarioFile.lapConfigBranches = trackFile.lapConfigBranches
@@ -547,14 +551,10 @@ end
 local function starQuickRaceFromUI(scenarioFile, trackFile, vehicleFile, raceType)
   if scenetree.MissionGroup then
     log('D', logTag, 'Delaying start of quickrace until current level is unloaded...')
-
-    M.triggerDelayedStart = function()
-      log('D', logTag, 'Triggering a delayed start of quickrace...')
-      M.triggerDelayedStart = nil
+    local func = function()
       M.startQuickrace(scenarioFile, trackFile, vehicleFile,raceType)
     end
-
-    endActiveGameMode(M.triggerDelayedStart)
+    endActiveGameMode(triggerDelayedStartGenerator(logTag, 'quickrace', func, true))
   else
     -- log('I', logTag, 'Start of quickrace: ' .. dumps(trackFile))
     local modules = {}

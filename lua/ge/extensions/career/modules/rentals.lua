@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
 local fileName = "insurance"
@@ -42,7 +45,7 @@ end
 
 local function beginRenting(vehInfo)
   --Spawn vehicle
-  local vehicleInfo = career_modules_vehicleShopping.getVehiclesInShop()[shopId]
+  local vehicleInfo = career_modules_vehicleShopping.getVehicleInfoByShopId(shopId)
   local spawnOptions = {}
   spawnOptions.config = vehicleInfo.key
   spawnOptions.autoEnterVehicle = false
@@ -88,7 +91,7 @@ local function onExtensionLoaded()
   loadData()
 end
 
-local function onSaveCurrentSaveSlot()
+local function onSaveCurrentProfile()
   saveData(saveData)
 end
 
@@ -96,7 +99,7 @@ end
 M.isRenting = isRenting
 
 -- M.onExtensionLoaded = onExtensionLoaded
--- M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+-- M.onSaveCurrentProfile = onSaveCurrentProfile
 -- M.onUpdate = onUpdate
 
 return M

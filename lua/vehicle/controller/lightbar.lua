@@ -8,47 +8,77 @@ M.type = "auxiliary"
 local min = math.min
 
 local hasRegisteredQuickAccess = false
+local lightbarElectric  -- Will store the electric value name
 
 local modes = nil
 local currentMode = nil
 local currentModeIndex = 1
-local lastLightbarElectric = -1
 
-local function updateOnceElectrics(mode)
+local resetTriggerElectricNames = nil
+local resetTriggerElectricLastValues = nil
+
+-- Updates electrical values that are static (non-animated) for the current mode
+-- These are values that stay constant and don't change with pattern timing
+local function updateOnceElectrics()
+  -- Skip if no mode is selected
   if not currentMode then
     return
   end
+
+  -- Apply each static electrical value
   for k, value in pairs(currentMode.electricsOnce) do
-    electrics.values[k] = value * min(electrics.values.lightbar, 1)
+    -- Set the electrical output, scaled by the electric's value (capped at 1.0)
+    -- This ensures the output changes properly when electric is reduced
+    electrics.values[k] = value * min(electrics.values[lightbarElectric] or 0, 1)
   end
 end
 
+-- Main update function for animated lighting patterns
+-- @param dt: Delta time since last frame in seconds
 local function updateGFX(dt)
-  if lastLightbarElectric ~= electrics.values.lightbar then
-    for k, v in pairs(currentMode.electrics) do
-      v.timer = 0
-      v.stateIndex = 1
-      electrics.values[k] = 0
-    end
-    lastLightbarElectric = electrics.values.lightbar
-    updateOnceElectrics(currentMode)
-  end
-
-  if not currentMode or electrics.values.lightbar <= 0 then
+  -- Skip if lightbar system isn't active
+  if not electrics.values[lightbarElectric] then
     return
   end
+
+  --iterate through the additional electrics that trigger a reset of the lightbar patterns when they change
+  for _, name in pairs(resetTriggerElectricNames) do
+    --if the value of the electric has changed, reset the lightbar patterns
+    if electrics.values[name] ~= resetTriggerElectricLastValues[name] then
+      resetTriggerElectricLastValues[name] = electrics.values[name]
+      for k, v in pairs(currentMode.electrics) do
+        v.timer = 0 -- Reset pattern timing
+        v.stateIndex = 1 -- Reset to first state
+        electrics.values[k] = 0 -- Turn off output
+      end
+      updateOnceElectrics(currentMode) -- Update static electrics values
+    end
+  end
+
+  -- Skip if no mode selected or lightbar is off
+  if not currentMode or electrics.values[lightbarElectric] <= 0 then
+    return
+  end
+
+  -- Update each electrics pattern
   for k, v in pairs(currentMode.electrics) do
-    if electrics.values.lightbar > 0 then
+    if electrics.values[lightbarElectric] > 0 then
+      -- Advance pattern timer
       v.timer = v.timer + dt
+      -- Check if it's time to move to next state
       if v.timer >= v.states[v.stateIndex].duration then
+        -- Reset timer and advance to next state
         v.timer = v.timer - v.states[v.stateIndex].duration
         v.stateIndex = v.stateIndex + 1
+        -- Loop back to start if pattern completed
         if v.stateIndex > #v.states then
           v.stateIndex = 1
         end
-        electrics.values[k] = v.states[v.stateIndex].value * min(electrics.values.lightbar, 1) --limit lightbar value to 1 since it turns to 2 when the siren is on....
+        -- Apply new state value, scaled by electrics value
+        electrics.values[k] = v.states[v.stateIndex].value * clamp(electrics.values[lightbarElectric], 0, 1)
       end
     else
+      -- Reset pattern if electric value is off
       v.timer = 0
       v.stateIndex = 1
       electrics.values[k] = 0
@@ -56,43 +86,69 @@ local function updateGFX(dt)
   end
 end
 
+-- Sets the lightbar mode to a specific index and resets all patterns
+-- @param index: The index of the desired mode in the modes table
 local function setModeIndex(index)
+  -- Update mode tracking variables
+  if not modes[index] then
+    return
+  end
   currentModeIndex = index
   currentMode = modes[currentModeIndex]
 
+  -- Reset all pattern states and timers for the new mode
   for k, v in pairs(currentMode.electrics) do
-    v.timer = 0
-    v.stateIndex = 1
-    electrics.values[k] = 0
+    v.timer = 0 -- Reset pattern timing
+    v.stateIndex = 1 -- Start at first state
+    electrics.values[k] = 0 -- Turn off output
   end
 
+  -- Apply any static (non-animated) electrical values
   updateOnceElectrics(currentMode)
 
+  -- Show mode change notification to user
   guihooks.message("Lightbar Mode: " .. currentMode.name, 5, "vehicle.lightbar.mode")
 end
 
+-- Cycles to the next available lightbar mode
 local function toggleMode()
   currentModeIndex = currentModeIndex + 1
+  -- Loop back to first mode if at end
   if currentModeIndex > #modes then
     currentModeIndex = 1
   end
   setModeIndex(currentModeIndex)
 end
 
+local function reset(jbeamData)
+  setModeIndex(jbeamData.defaultModeIndex or 1)
+  resetTriggerElectricLastValues = {}
+end
+
 local function init(jbeamData)
+  -- Load the electric value name from jbeam data, default to "lightbar" for backwards compatibility
+  lightbarElectric = jbeamData.lightbarElectricsName or "lightbar"
+
+  -- Process mode configurations from jbeam data
   modes = tableFromHeaderTable(jbeamData.modes)
   for _, vm in pairs(modes) do
+    -- Convert mode config into usable format
     local configEntries = tableFromHeaderTable(deepcopy(vm.config))
     vm.config = nil
-    vm.electrics = {}
-    vm.electricsOnce = {}
+    vm.electrics = {} -- stores animated patterns
+    vm.electricsOnce = {} -- stores static values
+
+    -- Process each config entry into pattern states
     for _, j in pairs(configEntries) do
+      -- Create new pattern if it doesn't exist
       if not vm.electrics[j.electric] then
         vm.electrics[j.electric] = {states = {}, timer = 0, stateIndex = 1}
       end
+      -- Add this state to the pattern
       table.insert(vm.electrics[j.electric].states, {duration = j.duration, value = j.value})
     end
-    --local electricsToRemove = {}
+
+    -- Optimize: Move single-state patterns to electricsOnce for better performance
     for electricName, data in pairs(vm.electrics) do
       if #data.states == 1 then
         vm.electricsOnce[electricName] = data.states[1].value
@@ -100,34 +156,48 @@ local function init(jbeamData)
       end
     end
   end
-  --dump(modes)
+
+  --additional electrics that trigger a reset of the lightbar patterns when they change
+  resetTriggerElectricNames = jbeamData.resetTriggerElectricNames or {}
+  resetTriggerElectricLastValues = {}
+
+  --normal lightbar electric always triggers a reset
+  table.insert(resetTriggerElectricNames, lightbarElectric)
+
+  -- Set initial mode and state
   currentModeIndex = jbeamData.defaultModeIndex or 1
   currentMode = modes[currentModeIndex]
-  lastLightbarElectric = electrics.values.lightbar
 
+  -- Register quick access menu if multiple modes exist
   if not hasRegisteredQuickAccess and #modes > 1 then
     core_quickAccess.addEntry(
       {
-        level = "/electrics/",
-        generator = function(entries)
-          if controller.getController("lightbar") then
-            table.insert(entries, {title = "Lightbar Modes", priority = 40, ["goto"] = "/electrics/lightbarmodes/", icon = "settings"})
-          end
-        end
+        level = "/root/playerVehicle/lights/",
+        uniqueID = "lightbarmodes",
+        title = "Lightbar Modes",
+        icon = "wigwags",
+        ["goto"] = "/root/playerVehicle/lights/lightbarmodes/"
       }
     )
+
     core_quickAccess.addEntry(
       {
-        level = "/electrics/lightbarmodes/",
+        level = "/root/playerVehicle/lights/lightbarmodes/",
         generator = function(entries)
+          -- Create menu entry for each available mode
           for k, v in pairs(modes) do
             local entry = {
-              title = v.name,
+              uniqueID = v.name .. jbeamData.cid, -- Unique identifier for this mode
+              title = v.name, -- Display name
+              icon = "wigwags", -- Menu icon
+              originalActionInfo = {level = "/root/playerVehicle/lights/", uniqueID = "lightbarmodes"},
               onSelect = function()
+                -- Handler when mode is selected
                 setModeIndex(k)
                 return {"reload"}
               end
             }
+            -- Highlight currently active mode
             if currentModeIndex == k then
               entry.color = "#ff6600"
             end
@@ -141,6 +211,7 @@ local function init(jbeamData)
 end
 
 M.init = init
+M.reset = reset
 M.updateGFX = updateGFX
 M.toggleMode = toggleMode
 M.setModeIndex = setModeIndex

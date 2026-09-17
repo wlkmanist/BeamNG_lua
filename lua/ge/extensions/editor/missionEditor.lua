@@ -20,10 +20,13 @@ local missionTypeData
 local additionalAttributes
 local setupModules
 local careerSetup
+local objectives
 local progressSingle
 local progressMulti
 local playbookUtils
-local unsavedColor = im.ImVec4(1, 0.6, 0.5, 1.0)
+local unsavedColor = im.ImVec4(1, 0.3, 0.1, 1.0)
+local colorLightRed = im.ImVec4(1, 0.8, 0.7, 1.0)
+local colorLightGreen = im.ImVec4(0.5, 1.0, 0.8, 1.0)
 local windows = {}
 local tabs = {}
 local showWindows = {
@@ -36,6 +39,9 @@ local showWindows = {
 local generalWindows, additionalWindows, setupModulesWindows, missionTypeWindows = {}, {}, {}, {}
 local missionTypeWindow = {}
 local oldMissionTypeData = {}
+
+-- Add mission start position editor
+local missionStartPositionEditor = require('/lua/ge/extensions/editor/missionStartPositionEditor')
 
 local filter = {
   onlyCurrentLevel = false,
@@ -59,6 +65,7 @@ local groupingNamesSorted = {
   {name = "Level", key = "level"},
   {name = "Mission Type", key = "type"},
   {name = "Date", key = "date"},
+  {name = "Branch", key = "branch"},
 }
 
 
@@ -81,6 +88,12 @@ local missionSearch = require('/lua/ge/extensions/editor/util/searchUtil')()
 local missionSearchTxt = im.ArrayChar(256, "")
 local missionSearchDisplayResult = false
 local missionSearchResults = {}
+
+local function getShortId(id)
+  local p, fn, _ = path.split(id)
+  return fn
+end
+
 
 local function openRaceEditor(shownMission)
   if editor_raceEditor then
@@ -106,10 +119,7 @@ local function openRallyEditor(shownMission)
     if not editor.active then
       editor.setEditorActive(true)
     end
-    local notebookFname = editor_rallyEditor.detectNotebookToLoad(shownMission.missionFolder)
-    log('I', logTag, 'opening RallyEditor with notebookFname='..notebookFname)
-    -- editor_rallyEditor.loadNotebook(notebookFname)
-    editor_rallyEditor.loadOrCreateNotebook(notebookFname)
+    editor_rallyEditor.loadOrCreateForMissionEditor(shownMission.missionFolder)
     editor_rallyEditor.showRallyTool()
   end
 end
@@ -128,29 +138,68 @@ local function displayHeader(clickedMission, hoveredMission, shownMission)
       ui_flowgraph_editor.tooltip("No unsaved changes for this mission")
     end
     im.SameLine()
-    if editor.uiIconImageButton(editor.icons.play_arrow, im.ImVec2(40, 40)) then
+    local playerVehicle = getPlayerVehicle(0)
+    local instance = gameplay_missions_missions.getMissionById(shownMission.id)
+    local canTeleport = (getCurrentLevelIdentifier() == shownMission.startTrigger.level) and playerVehicle and shownMission.startTrigger
+    if not canTeleport then im.BeginDisabled() end
+    if editor.uiIconImageButton(editor.icons.flag, im.ImVec2(40, 40)) then
       -- check if map loaded and player has vehicle
       -- TODO: load map and player vehicle if not loaded
-      local playerVehicle = getPlayerVehicle(0)
-      if (getCurrentLevelIdentifier() == shownMission.startTrigger.level) and playerVehicle and shownMission.startTrigger then
-        -- teleport vehicle
-        spawn.safeTeleport(playerVehicle,vec3(shownMission.startTrigger.pos), quat(shownMission.startTrigger.rot))
 
-        -- deactivate editor
-        editor.setEditorActive(false)
+      -- teleport vehicle
+      spawn.safeTeleport(playerVehicle,vec3(shownMission.startTrigger.pos), quat(shownMission.startTrigger.rot))
 
-        -- exitBigMap
-        freeroam_bigMapMode.exitBigMap(true,true)
+      gameplay_missions_unlocks.overrideStartable(instance, true)
+      gameplay_missions_unlocks.overrideVisible(instance, true)
+      gameplay_rawPois.clear()
 
-        -- TODO: open mission popup
-        -- TODO: switch to this mission in cluster
-      end
+      -- deactivate editor
+      editor.setEditorActive(false)
+
+      -- exitBigMap
+      freeroam_bigMapMode.exitBigMap(true,true)
+
+      gameplay_missions_missionScreen.setPreselectedMissionId(shownMission.id)
+      guihooks.trigger('MenuOpenModule','mission.details')
+
+      -- TODO: open mission popup
+      -- TODO: switch to this mission in cluster
+    end
+    if not canTeleport then im.EndDisabled() end
+    if canTeleport then
+      im.tooltip("Teleports you to the mission start trigger, make mission visible and startable and closes the editor.")
+    else
+      im.tooltip("Either wrong level loaded, no vehicle for player, or no start trigger for mission.")
     end
 
-    ui_flowgraph_editor.tooltip("Start Mission\n(Needs loaded map and vehicle)")
     im.SameLine()
+    local startable = gameplay_missions_unlocks.isMissionStartable(instance)
+    if editor.uiIconImageButton(startable and editor.icons.assignment_turned_in or editor.icons.assignment_late, im.ImVec2(40, 40), startable and colorLightGreen or colorLightRed) then
+      gameplay_missions_unlocks.overrideStartable(instance, not startable)
+      gameplay_rawPois.clear()
+    end
+    local startText = gameplay_missions_unlocks.isMissionStartable(instance) and "startable" or "not startable (locked)"
+    im.tooltip("Mission is currently ".. startText .. " (click to toggle)")
 
-    if shownMission.missionType == 'rallyStage' then
+    im.SameLine()
+    local visible = gameplay_missions_unlocks.isMissionVisible(instance)
+    if editor.uiIconImageButton(visible and editor.icons.visibility or editor.icons.visibility_off, im.ImVec2(40, 40), visible and colorLightGreen or colorLightRed) then
+      gameplay_missions_unlocks.overrideVisible(instance, not visible)
+      gameplay_rawPois.clear()
+    end
+    local visibleText = gameplay_missions_unlocks.isMissionVisible(instance) and "visible" or "not visible"
+    im.tooltip("Mission is currently ".. visibleText .. " (click to toggle)")
+
+    im.SameLine()
+    -- Add button to edit start position
+    if editor.uiIconImageButton(editor.icons.edit_location, im.ImVec2(40, 40)) then
+      missionStartPositionEditor.setSelectedMission(shownMission)
+      editor.selectEditMode(editor.editModes.missionStartPositionEditMode)
+    end
+    im.tooltip("Edit mission start position")
+
+    im.SameLine()
+    if shownMission.missionType == 'rallyStage' or shownMission.missionType == 'rallyRoadSection' then
       if editor.uiIconImageButton(editor.icons.simobject_bng_waypoint, im.ImVec2(40, 40)) then
         openRaceEditor(shownMission)
       end
@@ -162,23 +211,16 @@ local function displayHeader(clickedMission, hoveredMission, shownMission)
       end
       im.tooltip("Open Rally Editor")
       im.SameLine()
-
-      -- if editor.uiIconImageButton(editor.icons.fg_vehicle_sports_car, im.ImVec2(40, 40)) then
-      --   -- need to open raceEditorTurbo before opening recce flowgraph so that the flowgraph can reference things in the race editor.
-      --   openRallyEditor(shownMission)
-      --   editor_flowgraphEditor.open()
-      --   local recceFname = "/gameplay/missionTypes/rallyStage/recce.flow.json"
-      --   editor_flowgraphEditor.openFile({filepath = recceFname}, true)
-      -- end
-      -- im.tooltip("Open Recce Flowgraph")
-      -- im.SameLine()
     end
   end
   if shownMission then
-    im.Text("Mission ID:\n"..shownMission.id)
+    im.HeaderText(_tr(shownMission.name))
+    im.SameLine()
+    im.SetCursorPosY(im.GetCursorPosY() + 6)
+    im.Text(shownMission.id)
   else
     im.BeginDisabled()
-    im.Text("Mission ID:\n(no mission selected)")
+    im.Text("(no mission selected)")
     im.EndDisabled()
   end
 end
@@ -194,27 +236,34 @@ local function loadWindows()
   table.insert(windows, issuesWindow)
 
   --prefabs = require('/lua/ge/extensions/editor/missionEditor/prefabs')(M)
+  local preview = require('/lua/ge/extensions/editor/missionEditor/previewChecker')(M)
+  table.insert(windows, preview)
+  table.insert(generalWindows, preview)
+
   startTrigger = require('/lua/ge/extensions/editor/missionEditor/startTrigger')(M)
   table.insert(windows, startTrigger)
   table.insert(generalWindows, startTrigger)
 
-
-  local preview = require('/lua/ge/extensions/editor/missionEditor/previewChecker')(M)
-  table.insert(windows, preview)
-  table.insert(additionalWindows, preview)
+  careerSetup = require('/lua/ge/extensions/editor/missionEditor/careerSetup')(M)
+  table.insert(windows, careerSetup)
+  table.insert(generalWindows, careerSetup)
 
   -- additional Info
   startCondition = require('/lua/ge/extensions/editor/missionEditor/conditions')(M, 'startCondition','Start Condition')
   table.insert(windows, startCondition)
-  table.insert(additionalWindows, startCondition)
+  table.insert(generalWindows, startCondition)
 
   visibleCondition = require('/lua/ge/extensions/editor/missionEditor/conditions')(M, 'visibleCondition','Visibility Conditions')
   table.insert(windows, visibleCondition)
-  table.insert(additionalWindows, visibleCondition)
+  table.insert(generalWindows, visibleCondition)
 
   additionalAttributes = require('/lua/ge/extensions/editor/missionEditor/additionalAttributes')(M)
   table.insert(windows, additionalAttributes)
   table.insert(additionalWindows, additionalAttributes)
+
+  local layers = require('/lua/ge/extensions/editor/missionEditor/layers')(M)
+  table.insert(windows, layers)
+  table.insert(additionalWindows, layers)
 
   -- setup modules
   setupModules = require('/lua/ge/extensions/editor/missionEditor/setupModules')(M)
@@ -226,9 +275,10 @@ local function loadWindows()
   table.insert(windows, missionTypeWindow)
   table.insert(missionTypeWindows, missionTypeWindow)
 
-  careerSetup = require('/lua/ge/extensions/editor/missionEditor/careerSetup')(M)
-  table.insert(windows, careerSetup)
-  table.insert(tabs, careerSetup)
+
+  objectives = require('/lua/ge/extensions/editor/missionEditor/objectives')(M)
+  table.insert(windows, objectives)
+  table.insert(tabs, objectives)
 
   progressSingle = require('/lua/ge/extensions/editor/missionEditor/progressSingle')(M)
   table.insert(windows, progressSingle)
@@ -371,6 +421,7 @@ local function idSort(a,b) return a.id < b.id end
 local function getMissionType(mission) return mission.missionType end
 local function getMissionLevelOrNone(mission) return mission.startTrigger.level or "No Level" end
 local function getMissionDateOrNone(mission) return mission.date and os.date('%Y-%m-%d', mission.date)  or "No Date Set!" end
+local function getMissionBranchOrNone(mission) return string.format("%s", mission.careerSetup.skill or "No Skill") end
 local function groupMissionsByFunction(missions, propertyFunction)
   local result = {missions = {}, sortedKeys = {}}
   for _, mission in ipairs(missions) do
@@ -402,6 +453,9 @@ local function applyGrouping()
   elseif grouping.mode == "date" then
     grouping = groupMissionsByFunction(missionList, getMissionDateOrNone)
     grouping.mode = "date"
+  elseif grouping.mode == "branch" then
+    grouping = groupMissionsByFunction(missionList, getMissionBranchOrNone)
+    grouping.mode = "branch"
   end
 end
 
@@ -588,8 +642,8 @@ local function makeTranslation()
     end
   end
   for _, elem in ipairs(translation) do
-    if translateLanguage(elem.value, "NoTranslation!") ~= "NoTranslation!" then
-      elem.value = translateLanguage(elem.value, elem.value)
+    if _tr(elem.value, "NoTranslation!") ~= "NoTranslation!" then
+      elem.value = _tr(elem.value)
     end
   end
 
@@ -602,24 +656,47 @@ local function makeTranslation()
   translationData.translation = translation
 end
 
-local function exportMissionOverview()
+local function exportBranchInfo()
+  local csvdata = require('csvlib').newCSV("Branch ID", "Branch Name", "Branch Domain", "Branch Parent ID", "Branch Parent Domain")
+end
+local function exportMissionsWithStars()
   local branchNames = {}
   for _, branch in ipairs(career_branches.getSortedBranches()) do
-    table.insert(branchNames, branch.attributeKey)
+    if not branch.showProgressAsStars then
+      table.insert(branchNames, branch.attributeKey)
+    end
   end
-  local csvdata = require('csvlib').newCSV("Mission ID", "Mission Name", "Mission Type", "Branch", "Tier", "Star Id", "Star Label", "Star Type", "money", "beamXP",unpack(branchNames))
+  if not career_modules_branches_leagues then
+    extensions.load("career_modules_branches_leagues")
+
+  end
+  local csvdata = require('csvlib').newCSV("Mission ID", "Mission Name", "Mission Type", "Branch", "Leagues", "Tier", "Star Id", "Star Label", "Star Type", "money", "vouchers",unpack(branchNames))
 
   for _, mission in ipairs(missionList) do
     local instance = gameplay_missions_missions.getMissionById(mission.id)
-    local translatedName = translateLanguage(mission.name, mission.name, true)
+    local translatedName = _tr(mission.name)
     local missionType = mission.missionType
-    local firstBranch = nil
-    for b, _ in pairs(instance.unlocks.branchTags) do
-      firstBranch = b
+    local firstBranch = mission.careerSetup.skill
+    local leagues = career_modules_branches_leagues.getLeaguesForMission(mission.id)
+    local leagueNames = {}
+    for _, league in ipairs(leagues) do
+      table.insert(leagueNames, league.id)
     end
+    leagueNames = table.concat(leagueNames, ",")
 
     for _, key in ipairs(instance.careerSetup._activeStarCache.sortedStars) do
-      local translatedStarLabel = translateLanguage(instance.starLabels[key], instance.starLabels[key], true)
+      local translatedStarLabel = instance.starLabels[key]
+      if type(translatedStarLabel) == "function" then
+        translatedStarLabel = instance.starLabels[key](instance, {})
+      end
+
+      if type(translatedStarLabel) == "string" then
+        translatedStarLabel = _tr(translatedStarLabel)
+      elseif type(translatedStarLabel) == "table" and translatedStarLabel.txt then
+        translatedStarLabel = _tr(translatedStarLabel.txt)
+      else
+        translatedStarLabel = "Star..."
+      end
       local rewards = {}
       for _, r in ipairs(instance.careerSetup._activeStarCache.sortedStarRewardsByKey[key] or {}) do
         rewards[r.attributeKey] = r.rewardAmount
@@ -629,23 +706,50 @@ local function exportMissionOverview()
         table.insert(branchRewards, rewards[branch] or 0)
       end
       local starType = instance.careerSetup._activeStarCache.defaultStarKeysByKey[key] and "default" or "bonus"
-      csvdata:add(mission.id, translatedName, missionType, firstBranch, instance.unlocks.maxBranchlevel, key, translatedStarLabel, starType, rewards.money or 0,rewards.beamXP or 0,unpack(branchRewards))
+      local maxBranchLevel = gameplay_missions_unlocks.getForwardMissionInfo(instance).maxBranchLevel
+      csvdata:add(mission.id, translatedName, missionType, firstBranch, leagueNames, maxBranchLevel, key, translatedStarLabel, starType, rewards.money or 0,rewards.vouchers or 0,unpack(branchRewards))
     end
   end
   csvdata:write("missionOverview.csv")
+  Engine.Platform.exploreFolder("missionOverview.csv")
 end
 
-local function exportContentOverview()
-  local csvdata = require('csvlib').newCSV("Name","Date","Origin","Map","Type 1","Type 2", "Type 3")
+
+local function exportMissionsSimple()
+  local csvdata = require('csvlib').newCSV("Mission ID", "Mission Name", "Mission Type", "Level", "Gamemode")
+  local levelNameById = {}
 
   for _, mission in ipairs(missionList) do
     local instance = gameplay_missions_missions.getMissionById(mission.id)
-    local translatedName = translateLanguage(mission.name, mission.name, true)
+    local translatedName = _tr(mission.name)
+    local missionType = mission.missionType
+    local level = mission.id:match("^([^/]+)")
+    local gamemode = instance.careerSetup.showInCareer and "Career" or "Freeroam"
+    csvdata:add(mission.id, translatedName, missionType, level, gamemode)
+  end
+  csvdata:write("missionOverview.csv")
+  Engine.Platform.exploreFolder("missionOverview.csv")
+end
+
+local function exportContentOverview()
+  local csvdata = require('csvlib').newCSV("Folder", "Name","Date","Origin","Map","Type 1","Type 2", "Type 3")
+
+  for _, mission in ipairs(missionList) do
+    local instance = gameplay_missions_missions.getMissionById(mission.id)
+    local translatedName = _tr(mission.name)
     local type2 = ""
     local origin = "Mission"
     if mission.procedural and mission.missionType == "busMode" then origin = "Bus Route" end
     if mission.procedural and mission.missionType == "generatedTimeTrial" then origin = "Time Trials" end
-    csvdata:add(translatedName, mission.date or -1, origin, mission.startTrigger and mission.startTrigger.level or "None", mission.missionType, mission.careerSetup.showInFreeroam and "Freeroam" or "Career")
+
+    -- Convert timestamp to human-readable date (YYYY-MM-DD format)
+    local dateStr = "-"
+    if mission.date and mission.date > 0 then
+      dateStr = os.date("%Y-%m-%d", mission.date)
+    end
+
+    local folder = mission.missionFolder or "None"
+    csvdata:add(folder, translatedName, dateStr, origin, mission.startTrigger and mission.startTrigger.level or "None", mission.missionType, mission.careerSetup.showInFreeroam and "Freeroam" or "Career")
   end
 
   for _, scenario in ipairs(scenario_scenariosLoader.getList()) do
@@ -654,8 +758,15 @@ local function exportContentOverview()
 
     local type2 = ""
     if scenario.isCreatedFromFlowgraph or scenario.flowgraph then type2 = "Flowgraph" end
-    if not scenario.isCreatedFromMission then
-      csvdata:add(translateLanguage(scenario.name, scenario.name, true), tonumber(scenario.date or -1), origin, string.lower(scenario.levelName), type2)
+
+    -- Convert timestamp to human-readable date (YYYY-MM-DD format)
+    local dateStr = "-"
+    if scenario.date and tonumber(scenario.date) and tonumber(scenario.date) > 0 then
+      dateStr = os.date("%Y-%m-%d", tonumber(scenario.date))
+    end
+
+    if not scenario.isMissionAsScenario then
+      csvdata:add(scenario.sourceFile, _tr(scenario.name), dateStr, origin, string.lower(scenario.levelName), type2)
     end
   end
 
@@ -664,74 +775,95 @@ local function exportContentOverview()
 --  end
 
   csvdata:write("content.csv")
+  Engine.Platform.exploreFolder("missionOverview.csv")
 end
 
 
-local function updateToSkills()
-  local typeToSkill = {
-    aiRace = {"motorsport","apexRacing"},
-    cannon = {"adventurer","miniGames"},
-    chase = {"specialized","police"},
-    crawl = {"motorsport","crawl"},
-    drift = {"motorsport","drift"},
-    evade = {"adventurer","criminal"},
-    knockAway = {"adventurer","miniGames"},
-    longjump = {"adventurer","miniGames"},
-    precisionParking = {"adventurer","miniGames"},
-    targetJump = {"adventurer","miniGames"},
-    timeTrial = {"motorsport","apexRacing"},
-  }
+local function fixStartTriggerForLeagues()
 
-  local skillKeys = {}
+  local validSkills = {}
   for _, branch in ipairs(career_branches.getSortedBranches()) do
-    if branch.isSkill then
-      skillKeys[branch.id] = true
+    if branch.parentDomain == "apm" then
+      validSkills[branch.id] = true
+    end
+    if branch.parentId then
+      local parent = career_branches.getBranchById(branch.parentId)
+      if parent.parentDomain == "apm" or parent.id == "apm" then
+        validSkills[branch.id] = true
+      end
     end
   end
 
   for _, mission in ipairs(missionList) do
     local instance = gameplay_missions_missions.getMissionById(mission.id)
     local missionType = mission.missionType
-    if mission.careerSetup.showInCareer and typeToSkill[missionType] then
+    dump(string.format("%s - %s", mission.careerSetup.skill, mission.id))
+    if mission.careerSetup.showInCareer and validSkills[mission.careerSetup.skill] then
       dump(string.format("%s - %s", mission.name, mission.id))
-      dump("Before:")
-      dump(mission.careerSetup.starRewards)
-      for _, key in ipairs(instance.careerSetup._activeStarCache.sortedStars) do
-        local translatedStarLabel = translateLanguage(instance.starLabels[key], instance.starLabels[key], true)
-        local starType = instance.careerSetup._activeStarCache.defaultStarKeysByKey[key] and "default" or "bonus"
+      mission.startTrigger = {}
+      mission.startTrigger.type = "league"
+      mission.startTrigger.level = "west_coast_usa"
+      mission._dirty = true
+    end
+  end
+end
 
-        local from, to = typeToSkill[missionType][1], typeToSkill[missionType][2]
-        mission.careerSetup.branch = from
-        mission.careerSetup.skill = to
-        mission._dirty = true
-
-        if starType == "default" then
-          -- step 1: remove all rewards with skill attreibute keys
-          local newRewards = {}
-          for _, r in ipairs(mission.careerSetup.starRewards[key]) do
-            if not skillKeys[r.attributeKey] then
-              table.insert(newRewards, r)
+local ignoreAttributeKeys = {
+  money = true,
+  vouchers = true,
+}
+local function removeNonAttributeStarRewards()
+  print("Removing non-attribute star rewards...")
+  for _, mission in ipairs(missionList) do
+    local shortId = getShortId(mission.id)
+    local validXP = mission.careerSetup.skill
+    local branch = career_branches.getBranchById(validXP)
+    while branch and not branch.missing and branch.showProgressAsStars do
+      validXP = branch.parentId
+      branch = career_branches.getBranchById(validXP)
+    end
+    if validXP == "(none)" then
+      print(string.format(" > Skipped mission %s: invalid XP via %s", shortId, mission.careerSetup.skill))
+    else
+      for key, list in pairs(mission.careerSetup.starRewards) do
+        local newRewards = {}
+        local containedAttributes = {}
+        local hasAddedValidXP = false
+        local invalidXP = nil
+        shortId = getShortId(mission.id) .. "-" .. key
+        for _, reward in ipairs(list) do
+          if ignoreAttributeKeys[reward.attributeKey] then
+            table.insert(newRewards, reward)
+          else
+            if validXP ~= reward.attributeKey then
+              print(string.format("For mission %s: removed %s (only allowed XP is %s via %s)", shortId, reward.attributeKey, validXP, mission.careerSetup.skill))
+              mission._dirty = true
+              invalidXP = reward
+            else
+              local branch = career_branches.getBranchById(reward.attributeKey)
+              if not branch.missing and not branch.showProgressAsStars then
+                if not containedAttributes[reward.attributeKey] then
+                  table.insert(newRewards, reward)
+                  containedAttributes[reward.attributeKey] = true
+                else
+                  print(string.format("For mission %s: removed %s (duplicate)", shortId, reward.attributeKey))
+                  mission._dirty = true
+                end
+              else
+                print(string.format("For mission %s: removed %s", shortId, reward.attributeKey))
+                mission._dirty = true
+              end
             end
-          end
-
-          -- add one skill-xp-reward based on the missiontype and branch type
-
-          local add = nil
-          local from, to = typeToSkill[missionType][1], typeToSkill[missionType][2]
-          for _, r in ipairs(newRewards) do
-            if r.attributeKey == from then
-              add = {attributeKey = to, rewardAmount = r.rewardAmount, _originalRewardAmount = r._originalRewardAmount}
-            end
-          end
-          if add then
-            table.insert(newRewards, add)
-            mission.careerSetup.starRewards[key] = newRewards
-            mission._dirty = true
           end
         end
+        if not hasAddedValidXP and invalidXP then
+          print(string.format(" ! For mission %s: Fixing To %s (from %s)", shortId, validXP, invalidXP.attributeKey))
+          invalidXP.attributeKey = validXP
+          table.insert(newRewards, invalidXP)
+          hasAddedValidXP = true
+        end
+        mission.careerSetup.starRewards[key] = newRewards
       end
-      dump("After:")
-      dump(mission.careerSetup.starRewards)
     end
   end
 end
@@ -748,10 +880,12 @@ local function loadMissionCSV()
   local data = {}
   local keys = {}
   for x in header:gmatch("([^',']+)") do table.insert(keys, x) end
+  dump(keys)
   local row = f:read()
   while row do
     local values, idx = {}, 1
     for x in row:gmatch("([^,]+)") do
+      dump(x)
       --print(idx, x)
       local val = tonumber(x) or x
       values[keys[idx]] = val
@@ -766,6 +900,14 @@ end
 
 local function importMissionOverview()
   local data = loadMissionCSV()
+
+  local branchNames = {}
+  for _, branch in ipairs(career_branches.getSortedBranches()) do
+    if not branch.showProgressAsStars then
+      table.insert(branchNames, branch.attributeKey)
+    end
+  end
+
   local fDataById = {}
   for _, m in ipairs(gameplay_missions_missions.getFilesData()) do
     fDataById[m.id] = m
@@ -775,7 +917,7 @@ local function importMissionOverview()
     if mission then
       local starKey = row['Star Id']
       local rewards = {}
-      for _, key in ipairs({"money", "beamXP","motorsport","labourer","adventurer","specialized"}) do
+      for _, key in ipairs({"money", "vouchers",unpack(branchNames)}) do
         if row[key] ~= 0 then
           table.insert(rewards,{attributeKey = key, rewardAmount = row[key]})
         end
@@ -835,9 +977,9 @@ local function getTranslatableStrings()
     end
     local count = 0
     for _, elem in ipairs(translation) do
-      if elem ~= "" and translateLanguage(elem, "NoTranslation!") ~= "NoTranslation!" then
+      if elem ~= "" and _tr(elem, "NoTranslation!") ~= "NoTranslation!" then
         if not addedKeys[elem] then
-          table.insert(finalList,{key = elem, value = translateLanguage(elem, elem)})
+          table.insert(finalList,{key = elem, value = _tr(elem)})
           count = count +1
         end
         addedKeys[elem] = true
@@ -885,17 +1027,13 @@ local function applyTranslation()
   clickedMission._dirty = true
 end
 
+
+
+
 local function missionTranslationHelperPopup()
   if im.BeginPopup("missionTranslationHelper") then
     if translationData == nil then
-      local shortId = nil
-      local f,t =  string.find(clickedMission.id, "-[^-]*$")
-      if not f or not t then
-        local p, fn, _ = path.split(clickedMission.id)
-        shortId = fn
-      else
-        shortId = clickedMission.id:sub(f+1,t)
-      end
+      local shortId = getShortId(clickedMission.id)
       local level = clickedMission.startTrigger and clickedMission.startTrigger.level or "noLevel"
       translationData = {
         copyPastaPtr = im.ArrayChar(100000),
@@ -1121,8 +1259,11 @@ local function onEditorGui()
           im.EndMenu()
         end
 
-        if im.MenuItem1("Export Mission Overview") then
-          exportMissionOverview()
+        if im.MenuItem1("Export Missions with Stars") then
+          exportMissionsWithStars()
+        end
+        if im.MenuItem1("Export Missions Simple") then
+          exportMissionsSimple()
         end
         if im.MenuItem1("Import Mission Overview") then
           importMissionOverview()
@@ -1130,8 +1271,11 @@ local function onEditorGui()
         if im.MenuItem1("Export Content Overview") then
           exportContentOverview()
         end
-        if im.MenuItem1("Update To Skills") then
-          updateToSkills()
+        if im.MenuItem1("Fix Start Trigger For Leagues") then
+          fixStartTriggerForLeagues()
+        end
+        if im.MenuItem1("Remove non-attribute star rewards") then
+          removeNonAttributeStarRewards()
         end
         im.Separator()
         if im.MenuItem1("Time Updater") then
@@ -1284,8 +1428,15 @@ local function onEditorGui()
               elseif grouping.mode == 'level' then
                 other = getMissionType(missionData)
               end
-              if other and prevOther and other ~= prevOther then
-                im.Separator()
+              if other and other ~= prevOther then
+                if prevOther then
+                  im.Separator()
+                end
+                if editor.getPreference('missionEditor.general.shortIds') or grouping.mode == 'level' or grouping.mode == 'type' then
+                  im.BeginDisabled()
+                  im.Text("  "..other)
+                  im.EndDisabled()
+                end
               end
               displayMissionSelector(missionData)
               prevOther = other
@@ -1321,6 +1472,7 @@ local function onEditorGui()
     im.EndChild()
 
     im.NextColumn()
+    displayHeader(clickedMission, hoveredMission, shownMission)
     if im.BeginTabBar('MissionEditorTabBar##') then
       local selectTab = nil
       if M.forceOpenTab then
@@ -1331,13 +1483,8 @@ local function onEditorGui()
       if im.BeginTabItem('Mission Properties', nil, selectTab) then
         M.lastTabItemShown = 'Mission Properties'
         -- mission details ----
-        local areaWidth = im.GetWindowContentRegionWidth() - im.GetCursorPos().x
-        im.BeginChild1("missionDetails", im.ImVec2(areaWidth, winHeight-20), false, 0)
-
-        -- header
-        displayHeader(clickedMission, hoveredMission, shownMission)
-        im.Separator()
-        im.NewLine()
+        local areaWidth = im.GetWindowContentRegionWidth() - im.GetCursorPos().x + 15
+        im.BeginChild1("missionDetails", im.ImVec2(areaWidth, winHeight-45), false, 0)
 
         -- details
         if shownMission then
@@ -1401,6 +1548,26 @@ local function onEditorGui()
             im.Separator()
           end
 
+
+
+        else
+          im.Text("No Mission Selected.")
+        end
+        im.EndChild()
+        im.EndTabItem()
+      end
+      selectTab = nil
+      if M.forceOpenTab then
+        if M.forceOpenTab == 'Setup Modules' then
+          selectTab = im.TabItemFlags_SetSelected
+        end
+      end
+      if im.BeginTabItem('Setup Modules', nil, selectTab) then
+        M.lastTabItemShown = 'Setup Modules'
+        local areaWidth = im.GetWindowContentRegionWidth() - im.GetCursorPos().x + 15
+        im.BeginChild1("missionDetails", im.ImVec2(areaWidth, winHeight-45), false, 0)
+        if shownMission then
+
           im.HeaderText("Setup Modules")
           if im.IsItemClicked() then
             showWindows.setupModulesWindows = not showWindows.setupModulesWindows
@@ -1419,7 +1586,23 @@ local function onEditorGui()
             im.HeaderText("(...)")
             im.Separator()
           end
-
+        else
+          im.Text("No Mission Selected.")
+        end
+        im.EndChild()
+        im.EndTabItem()
+      end
+      selectTab = nil
+      if M.forceOpenTab then
+        if M.forceOpenTab == 'Mission Type Data' then
+          selectTab = im.TabItemFlags_SetSelected
+        end
+      end
+      if im.BeginTabItem('Mission Type Data', nil, selectTab) then
+        M.lastTabItemShown = 'Mission Type Data'
+        local areaWidth = im.GetWindowContentRegionWidth() - im.GetCursorPos().x + 15
+        im.BeginChild1("missionDetails", im.ImVec2(areaWidth, winHeight-45), false, 0)
+        if shownMission then
           im.HeaderText("Mission Type Data")
           if im.IsItemClicked() then
             showWindows.missionTypeWindows = not showWindows.missionTypeWindows
@@ -1456,7 +1639,7 @@ local function onEditorGui()
         if im.BeginTabItem(tab.tabName, nil, selectTab) then
           M.lastTabItemShown = tab.tabName
           local areaWidth = im.GetWindowContentRegionWidth() - im.GetCursorPos().x
-          im.BeginChild1(tab.tabName.."windowhild", im.ImVec2(areaWidth, winHeight-20), false, 0)
+          im.BeginChild1(tab.tabName.."windowhild", im.ImVec2(areaWidth, winHeight-45), false, 0)
           if shownMission then
             local mission = gameplay_missions_missions.getMissionById(shownMission.id)
             if mission then

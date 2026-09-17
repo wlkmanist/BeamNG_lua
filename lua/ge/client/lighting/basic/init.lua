@@ -15,7 +15,7 @@ if not bl_ProjectedShadowSBData then
   bl_ProjectedShadowSBData.zDefined = true
   bl_ProjectedShadowSBData.zEnable = true
   bl_ProjectedShadowSBData.zWriteEnable = false
-  if TorqueScriptLua.getBoolVar("$Scene::useReversedDepthBuffer") then
+  if VariableRegistry.get("$Scene::useReversedDepthBuffer") then
       bl_ProjectedShadowSBData:setField("zBias", 0, 1)
       bl_ProjectedShadowSBData:setField("zSlopeBias", 0, 1)
   else

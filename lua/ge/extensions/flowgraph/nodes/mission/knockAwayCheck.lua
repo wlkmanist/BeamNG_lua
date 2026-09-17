@@ -38,6 +38,7 @@ end
 
 function C:init()
   self.data.zOffset = 0
+  self.positions = {}
 end
 
 function C:_executionStopped()
@@ -80,14 +81,16 @@ function C:work()
       self.currentPoints = 0
       self.pinOut.maxPoints.value = 0
       self.originalVehicleTransforms = self:getOriginalVehicleTransforms(prefabData)
+      self.positions = {}
       for id, val in pairs(prefabData.originalVehicleTransforms) do
-        if be:getObjectByID(id) and not string.find(be:getObjectByID(id):getInternalName() or "",'ignore') then
+        if getObjectByID(id) and not string.find(getObjectByID(id):getInternalName() or "",'ignore') then
           self.vehicleHit[id] = false
           local veh = scenetree.findObjectById(id)
           local pts = tonumber(veh:getDynDataFieldbyName("knockAwayPoints", 0)) or self.pinIn.defaultPoints.value or 1
           self.vehiclePoints[id] = pts
           self.pinOut.maxPoints.value = self.pinOut.maxPoints.value + pts
           self.totalCount = self.totalCount + 1
+          self.positions[id] = val.pos
         end
       end
 
@@ -97,7 +100,7 @@ function C:work()
         local wps = {}
         local modes = {}
         for id, val in pairs(self.originalVehicleTransforms) do
-          if be:getObjectByID(id) and not string.find(be:getObjectByID(id):getInternalName() or "",'ignore') then
+          if getObjectByID(id) and not string.find(getObjectByID(id):getInternalName() or "",'ignore') then
             table.insert(wps, {name = id, pos = val.pos + vec3(0,0,self.data.zOffset), radius = 1})
             modes[id] = 'default'
           end
@@ -112,10 +115,10 @@ function C:work()
     local change, changed  = {}, false
     for id, val in pairs(self.originalVehicleTransforms) do
       change[id] = 'hidden'
-      if not self.vehicleHit[id] and be:getObjectByID(id) and not string.find(be:getObjectByID(id):getInternalName() or "",'ignore') then
+      if not self.vehicleHit[id] and getObjectByID(id) and not string.find(getObjectByID(id):getInternalName() or "",'ignore') then
         local mapData = map.objects[id]
         if not mapData then
-          be:getObjectByID(id):queueLuaCommand('mapmgr.enableTracking()')
+          getObjectByID(id):queueLuaCommand('mapmgr.enableTracking()')
         end
         if mapData then
           local tipped = false
@@ -160,5 +163,17 @@ function C:onPreRender(dt, dtSim)
     self.markers.render(dt, dtSim)
   end
 end
+
+local clr = color(255,0.333 * 255,0,255)
+function C:onDrawOnMinimap(td)
+  for id, pos in pairs(self.positions) do
+    if not self.vehicleHit[id] then
+      if not ui_apps_minimap_utils.drawEdgePointer(pos, clr, nil, nil, 150) then
+        ui_apps_minimap_utils.simpleCircle(pos, clr)
+      end
+    end
+  end
+end
+
 
 return _flowgraph_createNode(C)

@@ -28,6 +28,7 @@ local function buildPrefabCache(levelPath)
       cacheTable[dir] = cacheTable[dir] or {}
       local internal_dic = cacheTable[dir]
       internal_dic[pathScenarioName] = prefabPath
+      systemYield()
     end
     M.prefabCache[levelPath] = cacheTable
   end
@@ -43,6 +44,20 @@ local function processScenarioData(scenarioKey, scenarioData, scenarioFilename)
       scenarioData.official = isOfficialContentVPath(string.sub(scenarioFilename, 0))
       scenarioData.levelName = string.gsub(scenarioFilename, "(.*/)(.*)/scenarios/(.*)%.json", "%2")
       scenarioData.map = "ui.common.unknown"
+
+      -- add mod information
+      local mod = extensions.core_modmanager.getModFromPath(scenarioFilename, true)
+      if mod then
+        scenarioData.modID = mod.modID
+        scenarioData.modName = mod.modname
+        if mod.modData and mod.modData.title then
+          scenarioData.modTitle = mod.modData.title
+        end
+      else
+        scenarioData.modID = nil
+        scenarioData.modName = 'BeamNG'
+        scenarioData.modTitle = 'BeamNG.drive'
+      end
       if scenarioFilename ~= 'flowgraphEditor' and scenarioData.levelName ~= 'flowgraphEditor' then
         -- improve the data a little bit
         scenarioData.mission = path.getPathLevelMain(scenarioData.levelName)
@@ -264,8 +279,51 @@ local function loadScenario(scenarioPath, key)
 end
 
 local loadMissionAsScenarioFlowgraph = 'lua/ge/extensions/scenario/loadMissionAsScenario.flow.json'
+
+local function getScenarioDataForMission(m)
+  local additionalAttributes, additionalAttributesSortedKeys = gameplay_missions_missions.getAdditionalAttributes()
+  local diffString = additionalAttributes.difficulty.valuesByKey[m.additionalAttributes.difficulty] and additionalAttributes.difficulty.valuesByKey[m.additionalAttributes.difficulty].translationKey
+  local scenarioData = {
+    name = m.name,
+    description = m.description,
+    authors = m.author or "Anonymous",
+    difficultyLabel = diffString or nil,
+    difficulty = m.additionalAttributes.difficulty,
+    date = ((m.date ~= 0 and m.date) or "") .. "",
+    flowgraph = loadMissionAsScenarioFlowgraph,
+    variables = {
+      level = m.startTrigger.level,
+      missionId = m.id,
+    },
+    isMissionAsScenario = true,
+    scenarioName = m.id,
+    levelName = m.startTrigger.level,
+    previews = {m.previewFile},
+    official = isOfficialContentVPath(m.missionFolder .. "/info.json") and m.author == "BeamNG",
+    customOrderKey = m.missionType,
+    additionalAttributes = {{
+      labelKey = "bigMap.missionLabels.missionType",
+      valueKey = m.missionTypeLabel,
+      icon = 'bubble_chart'}
+    },
+  }
+
+  -- add mod information from the mission
+  if m.modID then
+    scenarioData.modID = m.modID
+    scenarioData.modName = m.modName
+    scenarioData.modTitle = m.modTitle
+  else
+    scenarioData.modID = nil
+    scenarioData.modName = 'BeamNG'
+    scenarioData.modTitle = 'BeamNG.drive'
+  end
+
+  return processScenarioData(nil, scenarioData, nil)
+end
+M.getScenarioDataForMission = getScenarioDataForMission
 -- this function is used by the UI to display the list of scenarios, and by techCore to get the list of available scenarios
-local function getList(subdirectory, includeAll)
+local function getList(subdirectory, includeAll, skipMissions)
   displayedRestrictMessage = false
   local levelPaths = core_levels.getLevelPaths()
   local scenarios = {}
@@ -281,7 +339,16 @@ local function getList(subdirectory, includeAll)
   table.insert(paths, "flowgraphEditor/scenarios/")
   -- find all normal scenarios.
   for _, path in ipairs(paths) do
-    local subfiles = FS:findFiles(path, '*.json', -1, true, false)
+    local subfiles = {}
+    if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+      subfiles = core_jobsystem.findFilesAsync(path, '*.json', util_asyncBulkLoader.yield)
+    else
+      subfiles = FS:findFiles(path, '*.json', -1, true, false)
+    end
+
+    if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+      util_asyncBulkLoader.addTotal(#subfiles)
+    end
     for _, scenarioFilename in ipairs(subfiles) do
       local newScenario = loadScenario(scenarioFilename)
       if newScenario then
@@ -289,11 +356,25 @@ local function getList(subdirectory, includeAll)
           table.insert(scenarios, newScenario)
         end
       end
+      if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+        util_asyncBulkLoader.addCount(1)
+        util_asyncBulkLoader.yield("loadScenario " .. scenarioFilename)
+      end
+      systemYield()
     end
   end
   -- find all Scenario-enabled flowgraphs.
   for _, p in ipairs(paths) do
-    local fgFiles = FS:findFiles(p, '*.flow.json', -1, true, false)
+    local fgFiles = {}
+    if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+      fgFiles = core_jobsystem.findFilesAsync(p, '*.flow.json', util_asyncBulkLoader.yield)
+    else
+      fgFiles = FS:findFiles(p, '*.flow.json', -1, true, false)
+    end
+
+    if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+      util_asyncBulkLoader.addTotal(#fgFiles)
+    end
     for _, fgPath in ipairs(fgFiles) do
       local fgData = jsonReadFile(fgPath)
 
@@ -315,41 +396,26 @@ local function getList(subdirectory, includeAll)
           end
         end
       end
+      if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+        util_asyncBulkLoader.addCount(1)
+        util_asyncBulkLoader.yield("loadScenarioFlowgraph " .. fgPath)
+      end
+      systemYield()
     end
   end
-  local additionalAttributes, additionalAttributesSortedKeys = gameplay_missions_missions.getAdditionalAttributes()
-  for _, m in ipairs(gameplay_missions_missions.get()) do
-    if m.startTrigger.level and core_levels.getLevelByName(m.startTrigger.level) and m.isAvailableAsScenario then
-      local diffString = additionalAttributes.difficulty.valuesByKey[m.additionalAttributes.difficulty] and additionalAttributes.difficulty.valuesByKey[m.additionalAttributes.difficulty].translationKey
-      local scenarioData = {
-        name = m.name,
-        description = m.description,
-        authors = m.author or "Anonymous",
-        difficultyLabel = diffString or nil,
-        date = (m.date ~= 0 and m.date) .. "",
-        flowgraph = loadMissionAsScenarioFlowgraph,
-        variables = {
-          level = m.startTrigger.level,
-          missionId = m.id,
-        },
-        scenarioName = m.id,
-        levelName = m.startTrigger.level,
-        previews = {m.previewFile},
-        official = isOfficialContentVPath(m.missionFolder .. "/info.json") and m.author == "BeamNG",
-        customOrderKey = m.missionType,
-        additionalAttributes = {{
-          labelKey = "bigMap.missionLabels.missionType",
-          valueKey = m.missionTypeLabel,
-          icon = 'bubble_chart'}
-        },
-      }
 
-      local newScenario = processScenarioData(nil, scenarioData, nil)
-      if newScenario then
-        if (not shipping_build or includeAll)  or  (shipping_build and not newScenario.restrictToCampaign) then
-          table.insert(scenarios, newScenario)
+  if not skipMissions then
+    -- missions already uses asyncBulkLoader
+    for _, m in ipairs(gameplay_missions_missions.getAllMissions()) do
+      if m.startTrigger.level and core_levels.getLevelByName(m.startTrigger.level) and (includeAll or m.isAvailableAsScenario) then
+        local scenarioData = M.getScenarioDataForMission(m)
+        if scenarioData then
+          if (not shipping_build or includeAll)  or  (shipping_build and not scenarioData.restrictToCampaign) then
+            table.insert(scenarios, scenarioData)
+          end
         end
       end
+      systemYield()
     end
   end
 
@@ -364,14 +430,10 @@ local function start(sc)
 
   if scenetree.MissionGroup then
     log('D', logTag, 'Delaying start of scenario until current level is unloaded...')
-
-    M.triggerDelayedStart = function()
-      log('D', logTag, 'Triggering a delayed start of scenario...')
-      M.triggerDelayedStart = nil
+    local func = function()
       start(sc)
     end
-
-   endActiveGameMode(M.triggerDelayedStart)
+    endActiveGameMode(triggerDelayedStartGenerator(logTag, 'scenario', func, true))
   else
     if sc.flowgraph then
       local fgPath = sc.flowgraph
@@ -392,7 +454,7 @@ local function start(sc)
       end
       unloadAutoExtensions()
       loadPresetExtensions()
-      extensions.hook("startTracking", {Name = "ScenarioRunning", ScenarioName = sc.name, File = sc.sourceFile})
+      extensions.telemetry_core.startActivity("scenarioRunning", {scenarioName = sc.name, file = sc.sourceFile})
       mgr:setRunning(true)
       mgr.stopRunningOnClientEndMission = true -- make mgr self-destruct when level is ended.
     else
@@ -487,8 +549,8 @@ local function  customPreviewLoader(levelInfo,  levelName)
   return previews
 end
 
-local function getLevels(subdirectory)
-  local levelList = core_levels.getLevelNames()
+local function getLevels(subdirectory, levelList)
+  levelList = levelList or core_levels.getLevelNames()
   local levels = {}
 
   for _, levelName in ipairs(levelList) do
@@ -522,8 +584,10 @@ local function getLevels(subdirectory)
           -- For now we assume there is only one bus scenario therefore
           -- we just use this as a 'template' for each route.
           local scenario = loadScenario(busScenarios[1])
-          -- assign scenario name to route direction
-          scenario.name = route.routeID .. ' ' .. route.direction
+          -- Route display name: prefer explicit locale key from buslines JSON.
+          scenario.name = route.name or (route.routeID .. ' ' .. route.direction)
+          -- Clear the template's own placeholder description. Replaced below with the stop count.
+          scenario.description = nil
           -- check if starting position for the line exists
           if route.spawnLocation then
             scenario.spawnLocation = route.spawnLocation
@@ -542,6 +606,8 @@ local function getLevels(subdirectory)
             for _, task in pairs(route.tasklist) do
               scenario.stopCount = scenario.stopCount + 1
             end
+            -- Translated in the ScenarioStart.vue. Only keep here the key.
+            scenario.description = { txt = "scenarios.busRoutes.startText" }
           end
 
           -- scenario.busdriver.simulatePassengers = true

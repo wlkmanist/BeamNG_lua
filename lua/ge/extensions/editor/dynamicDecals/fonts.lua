@@ -92,7 +92,8 @@ local function browserTabGui()
           local glyph = glyphs[tostring(key)]
           if glyph and glyph.exists == true then
             local char = glyphs[tostring(i)]
-            im.ImageButton2(
+            im.ImageButton(
+              string.format("%s##GlyphImageButton", key),
               fontAtlasTexObj.texId,
               im.ImVec2(previewSize, previewSize),
               im.ImVec2(glyph.monospaced_x / header.atlas_monospaced_width, glyph.monospaced_y / header.atlas_monospaced_height),
@@ -250,12 +251,12 @@ local function fontPreviewWindowGui()
         local textureObject = editor.getTempTextureObj(string.format("%s%s/%s%s", destinationDirectory, getSelectedFontAtlasName(), getSelectedFontAtlasName(), "_monospaced.png"))
         for i = header.first_char, (header.first_char + header.glyph_count - 1), 1 do
           local char = glyphs[tostring(i)]
-          im.ImageButton2(
+          im.ImageButton(
+            string.format("%s##FontPreviewGlyphsChildImageButton", tostring(i)),
             textureObject.texId,
             im.ImVec2(glyphPreviewSize, glyphPreviewSize),
             im.ImVec2(char.monospaced_x / header.atlas_monospaced_width, char.monospaced_y / header.atlas_monospaced_height),
             im.ImVec2((char.monospaced_x + header.glyph_pixel_height) / header.atlas_monospaced_width, (char.monospaced_y + header.glyph_pixel_height) / header.atlas_monospaced_height),
-            0,
             (editor.getPreference("dynamicDecalsTool.fonts.markMissingGlyphs") and char.exists == false) and im.ImVec4(1, 0, 0, 0.1) or nil
           )
           im.tooltip(string.format("%d : %s\nxadvance: %f", i, i == 32 and "space" or string.char(i), char.xadvance))
@@ -284,12 +285,12 @@ local function fontPreviewWindowGui()
         local textureObject = editor.getTempTextureObj(string.format("%s%s/%s%s", destinationDirectory, getSelectedFontAtlasName(), getSelectedFontAtlasName(), "_sdf_monospaced.png"))
         for i = header.first_char, (header.first_char + header.glyph_count - 1), 1 do
           local char = glyphs[tostring(i)]
-          im.ImageButton2(
+          im.ImageButton(
+            string.format("%s##FontPreviewGlyphsChildSDFImageButton", tostring(i)),
             textureObject.texId,
             im.ImVec2(glyphPreviewSize, glyphPreviewSize),
             im.ImVec2(char.monospaced_x / header.atlas_monospaced_width, char.monospaced_y / header.atlas_monospaced_height),
             im.ImVec2((char.monospaced_x + header.glyph_pixel_height) / header.atlas_monospaced_width, (char.monospaced_y + header.glyph_pixel_height) / header.atlas_monospaced_height),
-            0,
             (editor.getPreference("dynamicDecalsTool.fonts.markMissingGlyphs") and char.exists == false) and im.ImVec4(1, 0, 0, 0.1) or nil
           )
           im.tooltip(string.format("%d : %s\nxadvance: %f", i, i == 32 and "space" or string.char(i), char.xadvance))

@@ -25,7 +25,7 @@ local initialControlParameters
 local configPacket = {sourceType = "awdControl", packetType = "config", config = controlParameters}
 local debugPacket = {sourceType = "awdControl", tractionControl = {}, yawControl = {}}
 
-local relevantElectronicSplitShaft
+local relevantActuator
 local lockOverrideMethod
 
 --returns true if component did act as traction control
@@ -49,9 +49,9 @@ end
 
 --returns true if component did act as yaw control
 --called from updateFixedStep
-local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, dt)
+local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, frontSlipAngle, rearSlipAngle, dt)
   M.isActingAsYC = false
-  relevantElectronicSplitShaft.resetOverride()
+  relevantActuator.resetOverride()
 
   local overrideMin = 0
   local overrideMax = 1
@@ -63,8 +63,8 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
     end
   end
 
-  relevantElectronicSplitShaft.overrideMin = overrideMin
-  relevantElectronicSplitShaft.overrideMax = overrideMax
+  relevantActuator.overrideMin = overrideMin
+  relevantActuator.overrideMax = overrideMax
 
   M.isActingAsYC = (overrideMin > 0.01) or (overrideMax < 0.99)
   return false -- don't let the CMU know that we are acting, otherwise the UI will be notified as well and that might be too intrusive for AWD control
@@ -98,6 +98,8 @@ local function applyControlParameters()
     lockOverrideMethod = yawControlFrontMain
   elseif controlParameters.controlMode == "rearMain" then
     lockOverrideMethod = yawControlRearMain
+  elseif controlParameters.controlMode == "centerDiff" then
+    lockOverrideMethod = yawControlRearMain -- for now use the same as rearMain
   end
 end
 
@@ -114,8 +116,10 @@ local function init(jbeamData)
 end
 
 local function initSecondStage(jbeamData)
-  relevantElectronicSplitShaft = CMU.getActuator("electronicSplitShaftLock")
-  if relevantElectronicSplitShaft then
+  local awdActuatorName = jbeamData.awdActuatorName or "electronicSplitShaftLock"
+  relevantActuator = CMU.getActuator(awdActuatorName)
+
+  if relevantActuator then
     local tractionControl = CMU.getSupervisor("tractionControl")
     if tractionControl then
       tractionControl.registerComponent(M)

@@ -128,7 +128,6 @@ local function loadPath(pathFileName)
   end
   for _, path in ipairs(paths) do
     if path.filename == pathFileName then
-      log('W', 'core_paths.loadPath', 'Returning path because it was already loaded: ' .. tostring(pathFileName))
       return path
     end
   end

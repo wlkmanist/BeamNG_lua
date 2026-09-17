@@ -36,6 +36,12 @@ local function updateGFX(dt)
     return
   end
 
+  --check for post crash brake triggered
+  if electrics.values.postCrashBrakeTriggered then
+    M.setEnabled(false)
+    return
+  end
+
   if input.brake > 0 then
     --disable cruise control when braking
     M.setEnabled(false)

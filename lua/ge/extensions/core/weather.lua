@@ -338,7 +338,7 @@ local function onClientPostStartMission(levelPath)
   profilerPushEvent('loadWeather')
   --log('I', 'weather', "map loaded: " .. tostring(mission))
   loadPresets()
-  profilerPopEvent() -- loadWeather
+  profilerPopEvent('loadWeather')
 end
 
 local function dumpWeatherPresets()

@@ -19,9 +19,42 @@ local electricsConfig
 local powertrainConfig
 local customModuleConfig
 
+local hasPopupMessageSupport = false
+
 local electricsUpdate = nop
 local powertrainUpdate = nop
 local customModuleUpdate = nop
+
+local function displayPopupMessage(message, iconId, timeout, highlightColor)
+  if not hasPopupMessageSupport then
+    return
+  end
+  local msgId = "test" .. math.random(1, 1000000)
+  local data = {
+    iconId = iconId,
+    text = message,
+    id = msgId,
+    durationSec = timeout,
+    highlightColor = highlightColor
+  }
+
+  gaugeHTMLTexture:callJS("messageQueue", data)
+  return msgId
+end
+
+local function clearPopupMessage(msgId)
+  if not hasPopupMessageSupport then
+    return
+  end
+  gaugeHTMLTexture:callJS("messageClearById", msgId)
+end
+
+local function clearAllPopupMessages()
+  if not hasPopupMessageSupport then
+    return
+  end
+  gaugeHTMLTexture:callJS("messageClearAll")
+end
 
 local function updateElectricsData(dt)
   for _, v in ipairs(electricsConfig) do
@@ -149,6 +182,8 @@ local function initSecondStage(jbeamData)
   local width = configData.displayWidth
   local height = configData.displayHeight
 
+  hasPopupMessageSupport = configData.hasPopupMessageSupport or false
+
   if not gaugesScreenName then
     log("E", "genericGauges.initSecondStage", "Got no material name for the texture, can't display anything...")
     return
@@ -212,6 +247,10 @@ M.initSecondStage = initSecondStage
 M.reset = reset
 --nop
 M.updateGFX = updateGFX
+
+M.displayPopupMessage = displayPopupMessage
+M.clearPopupMessage = clearPopupMessage
+M.clearAllPopupMessages = clearAllPopupMessages
 
 M.setParameters = setParameters
 

@@ -13,12 +13,9 @@ C.category = 'dynamic_instant'
 
 C.pinSchema = {
     { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
-    { dir = 'in', type = 'number', name = 'time', description = "Time of day on a scale from 0 to 1. 0/1 is midday, 0.5 is midnight ." },
-    { dir = 'in', type = 'bool', name = 'play', description = "Play or pause the ToD progression." },
-    { dir = 'in', type = 'number', name = 'dayScale', hidden = true, description = "Scalar applied to time that elapses while the sun is up." },
-    { dir = 'in', type = 'number', name = 'nightScale', hidden = true, description = "Scalar applied to time that elapses while the sun is down." },
-    { dir = 'in', type = 'number', name = 'dayLength', hidden = true, description = "length of day in real world seconds." },
-    { dir = 'in', type = 'number', name = 'azimuthOverride', hidden = true, description = "Used to specify an azimuth that will stay constant throughout the day cycle." }
+    { dir = 'in', type = 'number', name = 'time', description = "Time of day on a scale from 0 to 1. 0/1 is midday, 0.5 is midnight." },
+    { dir = 'in', type = 'bool', name = 'play', description = "Play or pause the time of day progression." },
+    { dir = 'in', type = 'number', name = 'dayLength', hidden = true, description = "Length of a full day-night cycle in real world seconds." }
 }
 
 C.tags = {'environment', 'tod'}
@@ -44,35 +41,32 @@ function C:postInit()
 end
 
 function C:_executionStarted()
-    --self.storedTod = core_environment.getTimeOfDay()
+  --self.storedTod = core_environment.getTimeOfDay()
 end
 function C:_executionStopped()
-    --if self.data.restoreTod and self.storedTod then
-        --core_environment.setTimeOfDay(self.storedTod)
-    --    self.storedTod = nil
-    --end
+  --if self.data.restoreTod and self.storedTod then
+    --core_environment.setTimeOfDay(self.storedTod)
+    --self.storedTod = nil
+  --end
 end
 
 function C:workOnce()
-    self:setTimeOfDay()
+  self:setTimeOfDay()
 end
 
 function C:work()
-    if self.dynamicMode == 'repeat' then
-        self:setTimeOfDay()
-    end
+  if self.dynamicMode == 'repeat' then
+    self:setTimeOfDay()
+  end
 end
 
 function C:setTimeOfDay()
-    self.mgr.modules.mission.todChanged = true
-    core_environment.setTimeOfDay({
-        time = self.pinIn.time.value % 1,
-        play = self.pinIn.play.value,
-        dayScale = self.pinIn.dayScale.value,
-        nightScale = self.pinIn.nightScale.value,
-        dayLength = self.pinIn.dayLength.value,
-        azimuthOverride = self.pinIn.azimuthOverride.value,
-    })
+  self.mgr.modules.mission.todChanged = true
+  core_environment.setTimeOfDay({
+    time = self.pinIn.time.value % 1,
+    play = self.pinIn.play.value,
+    dayLength = self.pinIn.dayLength.value,
+  })
 end
 
 return _flowgraph_createNode(C)

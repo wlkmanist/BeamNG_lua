@@ -31,9 +31,7 @@ function C:draw()
   scale = editor.getPreference("ui.general.scale")
   if not editor.isWindowVisible(self.windowName) then return end
   if self:Begin("Variables") then
-
     local totalWidth = im.GetContentRegionAvailWidth()
-    local prePos = im.GetCursorPos()
     im.PushFont3("cairo_regular_medium")
     im.TextColored(localColor,"Current Graph Variables")
     im.SameLine()
@@ -57,7 +55,6 @@ function C:draw()
 
     self:drawTarget(self.mgr.graph.variables, 'Current Graph','-1')
     im.Separator()
-    prePos = im.GetCursorPos()
     im.PushFont3("cairo_regular_medium")
     im.TextColored(globalColor,"Project Variables")
     im.PopFont()
@@ -105,7 +102,7 @@ function C:draw()
       local w = im.GetContentRegionAvailWidth()
       im.PushItemWidth(w-50)
       local acceptCreate = false
-      if editor.uiInputText("##addVariableName", self.addVariableSettings.name,nil, im.InputTextFlags_EnterReturnsTrue) then
+      if editor.uiInputText("##addVariableName", self.addVariableSettings.name, nil, im.InputTextFlags_EnterReturnsTrue) then
         acceptCreate = true
       end
       im.SameLine()
@@ -119,10 +116,8 @@ function C:draw()
         im.tooltip("This name is used or invalid.")
       end
       im.PopItemWidth()
-      local pushedItemWidth = false
       if self.addVariableSettings.type ~= 'auto' then
         im.PushItemWidth(120)
-        pushedItemWidth = true
         self.mgr:DrawTypeIcon(self.addVariableSettings.type, false, 1, 20/scale)
         im.SameLine()
       else
@@ -170,15 +165,15 @@ function C:draw()
       if acceptCreate then
         local name = ffi.string(self.addVariableSettings.name)
         if name ~= "" then
-          local type = self.addVariableSettings.type
-          if type == 'auto' then
-            type = self:getAutoTypeFromName(name)
+          local varType = self.addVariableSettings.type
+          if varType == 'auto' then
+            varType = self:getAutoTypeFromName(name)
           end
           local value = self.addVariableSettings.value and self.addVariableSettings.value.value
           if value == nil then
-            value = fg_utils.getDefaultValueForType(type)
+            value = fg_utils.getDefaultValueForType(varType)
           end
-          self.targets[self.addVariableSettings.target].target:addVariable(name, value, type)
+          self.targets[self.addVariableSettings.target].target:addVariable(name, value, varType)
           if self.addVariableSettings.addAnother then
             self.addVariableSettings = {target = self.addVariableSettings.target, addAnother = true}
           else
@@ -195,8 +190,6 @@ function C:draw()
   end
   if not im.IsMouseDown(0) then self.dragPayload = nil end
   self:End()
-
-
 end
 
 function C:getAutoTypeFromName(name)
@@ -206,10 +199,11 @@ end
 
 function C:drawVariableCard(target, varName, global)
   local variable = target:getFull(varName)
-  if editor.getPreference("flowgraph.general.alwaysExpandVariables") then  variable.expanded = true end
-  im.PushID1(target.id..varName..dumps(global).."pushed")
-  local flags = bit.bor(im.WindowFlags_NoScrollbar, im.WindowFlags_NoScrollWithMouse)
-  im.BeginChild1(target.id..varName..dumps(global), im.ImVec2(im.GetContentRegionAvailWidth(), scale*(variable.expanded and 58 or 24)+16), true, (not variable.expanded) and flags)
+  if editor.getPreference("flowgraph.general.alwaysExpandVariables") then variable.expanded = true end
+  local cardId = target.id..varName..dumps(global)
+  im.PushID1(cardId)
+  local flags = (not variable.expanded) and bit.bor(im.WindowFlags_NoScrollbar, im.WindowFlags_NoScrollWithMouse) or nil
+  im.BeginChild1(cardId, im.ImVec2(im.GetContentRegionAvailWidth(), scale*(variable.expanded and 68 or 24)+16), true, flags)
 
   local valueText = ui_flowgraph_editor.shortValueString(variable.value, variable.type)
   local width = im.GetContentRegionAvailWidth()
@@ -244,8 +238,6 @@ function C:drawVariableCard(target, varName, global)
     end
     ui_flowgraph_editor.tooltip("Creates a getter node for this variable. (Drag and Drop also works)")
 
-
-
     im.SameLine()
      editor.uiIconImageButton(editor.icons.cloud_upload, im.ImVec2(24,24))
      if im.IsItemHovered() and im.IsMouseReleased(0) and not self.dragPayload then
@@ -263,7 +255,6 @@ function C:drawVariableCard(target, varName, global)
     ui_flowgraph_editor.tooltip("Creates a setter node for this variable. (Drag and Drop also works)")
     im.SameLine()
   end
-
 
   im.SetCursorPosX(width - 22*scale)
   editor.uiIconImageButton(editor.icons.reorder, im.ImVec2(24,24), self.dragPayload and self.dragPayload.name == varName and self.dragPayload.target.id == target.id and highlightColor or nil)
@@ -289,19 +280,15 @@ function C:drawVariableCard(target, varName, global)
     ui_flowgraph_editor.variableEditor(target, varName, {global = global, showNodes = true, allowDelete = true})
   end
 
-
-
   im.EndChild()
   im.PopID()
-
 end
 
 local lineColor = im.GetColorU322(highlightColor)
 function C:drawTarget(target, name, id, global)
   local mouseXMin = im.GetCursorScreenPos().x + 10
   local mouseXMax = im.GetCursorScreenPos().x + im.GetContentRegionAvailWidth()-10
-  local id = id or target.id
-
+  id = id or target.id
 
   local dragReleaseVerticalDistance = 20
   local insertPositions = {}
@@ -309,7 +296,6 @@ function C:drawTarget(target, name, id, global)
     if self.dragPayload then
       table.insert(insertPositions, im.GetCursorScreenPos().y)
     end
-
 
     --end
     --local variable = target:getFull(nm)
@@ -334,10 +320,7 @@ function C:drawTarget(target, name, id, global)
         end
       end
     end
-
   end
-
-
 end
 
 function C:drawGraph(graph)

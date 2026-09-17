@@ -3,9 +3,9 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local logTag = 'aipacenotes'
+local logTag = ''
 
-local re_util = require('/lua/ge/extensions/editor/rallyEditor/util')
+local rallyUtil = require('/lua/ge/extensions/gameplay/rally/util')
 
 local C = {}
 C.windowDescription = 'Test'
@@ -25,12 +25,8 @@ end
 function C:selected()
   if not self.path then return end
 
-  local missionDir = self.path:getMissionDir()
-  self.driveline = require('/lua/ge/extensions/gameplay/aipacenotes/driveline')(missionDir)
-  if not self.driveline:load() then
-    self.driveline = nil
-    return
-  end
+  -- Note: driveline loading removed as it was not being used
+  -- If needed, use DrivelineV3 or Recce to load driveline
 
   -- force redraw of shortcutLegend window
   extensions.hook("onEditorEditModeChanged", nil, nil)
@@ -51,36 +47,24 @@ function C:draw()
   end
 
   if im.Button("Load Recce Mission") then
-    local mid = self.path:missionId()
+    local mid = self.path:getMissionId()
     local missionDir = self.path:getMissionDir()
-    extensions.unload("ui_aipacenotes_recceApp")
+    extensions.unload("gameplay_rally_recceApp")
 
-    -- if extensions.isExtensionLoaded("ui_aipacenotes_recceApp") then
-    --   print('loaded')
-    --   ui_aipacenotes_recceApp.setDrawDebug(true)
-    -- end
-
-    extensions.load("ui_aipacenotes_recceApp")
-    ui_aipacenotes_recceApp.loadMission(mid, missionDir)
-    ui_aipacenotes_recceApp.setDrawDebug(true)
-    ui_aipacenotes_recceApp.setLuaAudioBackend(true)
+    extensions.load("gameplay_rally_recceApp")
+    gameplay_rally_recceApp.loadMission(mid, missionDir)
+    gameplay_rally_recceApp.setDrawDebug(true)
   end
 
   if im.Button("Unload Recce Mission") then
-    extensions.unload("ui_aipacenotes_recceApp")
+    extensions.unload("gameplay_rally_recceApp")
   end
 end
 
 function C:test1()
   print('-- test1 --------------------------------------------------------')
 
-  local pnName = self.path:getRandomStaticPacenote('firstnoteintro')
-  print(tostring(pnName))
-
-  pnName = self.path:getRandomStaticPacenote('firstnoteoutro')
-  print(tostring(pnName))
-
-  pnName = self.path:getRandomStaticPacenote('finish')
+  local pnName = self.path:getRandomSystemPacenote('precountdown')
   print(tostring(pnName))
 end
 

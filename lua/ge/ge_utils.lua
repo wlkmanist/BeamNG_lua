@@ -78,8 +78,18 @@ scenetree = setmetatable({}, scenetree)
 -------------------------------------------------------------------------------
 -------------------------------------------------------------------------------
 
-
-
+function triggerDelayedStartGenerator(logTag, startType, func, waitForCleanup)
+  return extensions.core_jobsystem.wrap(function(job)
+    if waitForCleanup then -- gpu resources take multiple frames to fully deallocate
+      local endWaitFrame = Engine.Render.getFrameId() + 3
+      repeat
+        job.yield()
+      until (Engine.Render.getFrameId() >= endWaitFrame)
+    end
+    log('D', logTag, string.format('Triggering a delayed start of %s...', startType))
+    func()
+  end)
+end
 
 -- tests from thomas
 -- TODO: convert to proper unit-tests :)
@@ -277,44 +287,13 @@ end
 
 TorqueScriptLua = {}
 TorqueScriptLua.call = function( functor, ...)
-  local arg = {...}
-  local argsStr = ""
-  local separator = ""
-  for i,v in ipairs(arg) do
-    argsStr = argsStr..separator
-
-    if type(v) == 'string' then
-      argsStr = argsStr .. '"' .. v .. '"'
-    else
-      argsStr = argsStr .. tostring(v)
-    end
-
-    separator = ','
-  end
-
-  --print( functor..'('..argsStr..')' )
-  return TorqueScript.eval( 'return '..functor..'('..argsStr..');' )
+  log('E',logTag,'TorqueScriptLua.call is deprecated. Switch to using Lua for this call. Call was: '..functor..","..serialize({...}))
+  log('E',logTag, debug.tracesimple())
 end
 
 -- TODO: how is this diferent from TorqueScriptLua.call?
 TorqueScriptLua.callNoReturn = function( functor, ...)
-  local arg = {...}
-  local argsStr = ""
-  local separator = ""
-  for i,v in ipairs(arg) do
-    argsStr = argsStr..separator
-
-    if type(v) == 'string' then
-      argsStr = argsStr .. '"' .. v .. '"'
-    else
-      argsStr = argsStr .. tostring(v)
-    end
-
-    separator = ','
-  end
-
-  --print( functor..'('..argsStr..')' )
-  return TorqueScript.eval( functor..'('..argsStr..');' )
+  TorqueScriptLua.call(functor, ...)
 end
 
 TorqueScriptLua.exec = function(filePath)
@@ -322,24 +301,23 @@ TorqueScriptLua.exec = function(filePath)
 end
 
 TorqueScriptLua.getBoolVar = function( name )
-  -- emulate the same conversion performed by C++ side function "Con::getBoolVariable"
-  local stringValue = getConsoleVariable( name )
+  log('E',logTag,'TorqueScriptLua.getBoolVar is deprecated. Switch to VariableRegistry.get. Call was: TorqueScriptLua.getBoolVar('..name..")")
+  log('E',logTag, debug.tracesimple())
+  local stringValue = VariableRegistry.get(name, "0")
   local numberValue = tonumber(stringValue) or 0
   return string.lower(stringValue) == "true" or numberValue ~= 0
 end
 
 TorqueScriptLua.getVar = function( name )
-  return getConsoleVariable( name )
+  log('E',logTag,'TorqueScriptLua.getVar is deprecated. Switch to VariableRegistry.get. Call was: TorqueScriptLua.getVar('..name..")")
+  log('E',logTag, debug.tracesimple())
+  return VariableRegistry.get(name, "")
 end
 
 TorqueScriptLua.setVar = function( name, value )
-  -- booleans need a special care becouse "true" and "false" dont exist on TS
-  if value == false then
-    value = 0
-  elseif value == true then
-    value = 1
-  end
-  setConsoleVariable( name, tostring(value) )
+  log('E',logTag,'TorqueScriptLua.setVar is deprecated. Switch to VariableRegistry.set. Call was: TorqueScriptLua.setVar('..name..","..serialize(value)..")")
+  log('E',logTag, debug.tracesimple())
+  VariableRegistry.set(name, value)
 end
 
 function testZIP()
@@ -351,7 +329,7 @@ function testZIP()
 
   -- addFile( path [, pathInZIP, overrideFile] )
   zip:addFile( 'torque3d.log', 'logs/torque3d.log', true )
-  zip:addFile( settings.impl.pathTorquescript )
+  zip:addFile( settings.impl.pathVariables )
   zip:addFile( settings.impl.pathLocal )
   zip:addFile( settings.impl.pathCloud )
   zip:close()
@@ -399,6 +377,31 @@ function prefabIsChildOfGroup(obj, groupName)
   return false
 end
 
+function getOwningPrefab(obj)
+  local prefab = nil
+  -- Get the top level prefab of the object
+  local foundObject = obj
+  repeat
+    foundObject = Prefab.getPrefabByChild(foundObject)
+    if foundObject then
+      prefab = foundObject
+    end
+  until not foundObject
+  return prefab
+end
+
+function getOwningPrefabInstance(obj)
+  local prefabInstnce = nil
+  -- Get the top level Prefab v2 prefabInstance of the object
+  local foundObject = obj
+  repeat
+    foundObject = Engine.Prefab.findContainingPrefabInstance(foundObject)
+    if foundObject then
+      prefabInstnce = foundObject
+    end
+  until not foundObject
+  return prefabInstnce
+end
 
 --function testLicensePlate()
   --local v = playerVehicle
@@ -429,22 +432,39 @@ end
 
 -- optimized getPlayerVehicle cache system, will save 64bytes of garbage generation per call. it's a replacement for be:getPlayerVehicle(), using the same arguments
 local playerVehicles = {}
+local vehicleObjectsCache = {}
 function invalidatePlayerVehicles()
   table.clear(playerVehicles)
+  table.clear(vehicleObjectsCache)
 end
+
 function getPlayerVehicle(player)
   local veh = playerVehicles[player]
   if veh == nil then -- nil means the cache hasn't been computed
     veh = be:getPlayerVehicle(player) or false -- false means the cache has been computed but there's no vehicle
     playerVehicles[player] = veh
   end
-  return veh or nil -- replace "false" with nil
+  return veh or nil -- replaces "false" with nil
 end
 
-function vehicleSetPositionRotation(id, px, py, pz, rx, ry, rz, rw)
-  local bo = be:getObjectByID(id)
+function getObjectByID(id)
+  local veh = vehicleObjectsCache[id]
+  if veh == nil then -- nil means the cache hasn't been computed
+    veh = be:getObjectByID(id) or false -- false means the cache has been computed but there's no vehicle
+    vehicleObjectsCache[id] = veh
+  end
+  return veh or nil -- replaces "false" with nil
+end
+
+function vehicleSetPositionRotation(id, px, py, pz, rx, ry, rz, rw, player)
+  local bo = getObjectByID(id)
   if bo then
     bo:setPositionRotation(px, py, pz, rx, ry, rz, rw)
+    -- if core_intapi and player then
+    --   core_intapi.debug_setPosRot(player, id, px, py, pz, rx, ry, rz, rw)
+    -- else
+    --   bo:setPositionRotation(px, py, pz, rx, ry, rz, rw)
+    -- end
   else
     log('E', "vehicleSetPositionRotation", 'vehicle not found: ' .. tostring(id))
   end
@@ -513,44 +533,51 @@ function getAllVehiclesByType(typeList)
   return res
 end
 
-function vehiclesIterator()
-  if not allVehiclesCache then
-    getAllVehicles()
-  end
-  local vehiclesIndex = 0
-  local vehiclesCount = table.getn(allVehiclesCache)
-
-  return function()
-    while(vehiclesIndex < vehiclesCount) do
-      vehiclesIndex = vehiclesIndex + 1
-      local veh = allVehiclesCache[vehiclesIndex]
-      if veh then
-        return allVehiclesIdCache[vehiclesIndex], veh
-      end
+local function _vehiclesIterator(ctx)
+  while ctx.vehiclesIndex < ctx.vehiclesCount do
+    ctx.vehiclesIndex = ctx.vehiclesIndex + 1
+    local veh = allVehiclesCache[ctx.vehiclesIndex]
+    if veh then
+      return allVehiclesIdCache[ctx.vehiclesIndex], veh
     end
   end
 end
 
-function activeVehiclesIterator()
+function vehiclesIterator(ctx)
   if not allVehiclesCache then
     getAllVehicles()
   end
-  local vehiclesIndex = 0
-  local vehiclesCount = table.getn(allVehiclesCache)
 
-  return function()
-    while(vehiclesIndex < vehiclesCount) do
-      vehiclesIndex = vehiclesIndex + 1
-      local veh = allVehiclesCache[vehiclesIndex]
-      if veh and veh:getActive() then
-        return allVehiclesIdCache[vehiclesIndex], veh
-      end
+  ctx = ctx or {}
+  ctx.vehiclesIndex = 0
+  ctx.vehiclesCount = table.getn(allVehiclesCache)
+
+  return _vehiclesIterator, ctx
+end
+
+local function _activeVehiclesIterator(ctx)
+  while ctx.vehiclesIndex < ctx.vehiclesCount do
+    ctx.vehiclesIndex = ctx.vehiclesIndex + 1
+    local veh = allVehiclesCache[ctx.vehiclesIndex]
+    if veh and veh:getActive() then
+      return allVehiclesIdCache[ctx.vehiclesIndex], veh
     end
   end
+end
+
+function activeVehiclesIterator(ctx)
+  if not allVehiclesCache then
+    getAllVehicles()
+  end
+  ctx = ctx or {}
+  ctx.vehiclesIndex = 0
+  ctx.vehiclesCount = table.getn(allVehiclesCache)
+
+  return _activeVehiclesIterator, ctx
 end
 
 function getClosestVehicle(requesterID, callbackfct)
-  local vehr = be:getObjectByID(requesterID)
+  local vehr = getObjectByID(requesterID)
   if not vehr then return end
   local pos1 = vec3(vehr:getPosition())
 
@@ -599,43 +626,6 @@ function setAudioChannelsVolume(data)
     if AudioChannel then AudioChannel:setVolume(v) end
   end
 end
-
-
--- unreliably try to filter out files mentioned in the prepack files
--- this is NOT meant tobe used as a reliable way to filter out files. it does not correctly parse the prepack file format. do NOT use in production, only for checks that you don't mind completely failing to filter files.
-local unreliableSharedPrepackMatches = {}
-local function geUnreliablePrepackMatches(prefix)
-  local prefixMatch = "^"..prefix
-  if unreliableSharedPrepackMatches[prefix] then return unreliableSharedPrepackMatches[prefix] end
-  unreliableSharedPrepackMatches[prefix] = {}
-  local txt = "DevTools/deployfilters/shared_prepack.txt"
-  local content = readFile(txt) or ""
-  for line in content:gmatch("[^\r\n]+") do
-    local hideMatch = string.gsub(line, "#.*", "") -- remove comments
-    hideMatch = string.gsub(hideMatch, '^%s*(.-)%s*$', '%1') -- trim spaces
-    hideMatch = string.gsub(hideMatch, '/$', '') -- trim traling slashes
-    hideMatch = string.gsub(hideMatch, '*', '.*') -- replace single asterisks
-    if hideMatch:match(prefixMatch) then
-      table.insert(unreliableSharedPrepackMatches[prefix], "^"..hideMatch)
-    end
-  end
-  --print(table.concat(unreliableSharedPrepackMatches[prefix], "\n"))
-  return unreliableSharedPrepackMatches[prefix]
-end
-
--- DO NOT USE IN PRODUCTION - will attempt to figure out if a file should be hidden from public view or not, based on a VERY UNRELIABLE use of the shared_prepack.txt file. THIS DOES NOT FULLY SUPPORT THE TXT FILE FORMAT, and it WILL fail here and there.
-local unreliableHiding = FS:fileExists("unreliableHiding.txt")
-function shouldHideUNRELIABLE(prefix, filename)
-  if not unreliableHiding then return false end
-  for _,hideMatch in ipairs(geUnreliablePrepackMatches(prefix)) do
-    if filename:find(hideMatch) then
-      --log("W", "", "Skipping "..dumps(filename).." -------- because of  match: "..dumps(hideMatch))
-      return true
-    end
-  end
-  return false
-end
-
 
 -- TODO remove
 function testSounds()
@@ -716,6 +706,24 @@ function setTimeOfDay(inp)
   tod.time = (((inp.hours * 3600 + inp.mins * 60 + inp.secs) / 86400) + 0.5) % 1
 end
 
+local function prefabFilenameToTemplateName(filename)
+  local templateName = filename:gsub('_', '__'):gsub('/', '_')
+  log('E','prefabFilenameToTemplateName',filename..' ==> '..templateName)
+  return templateName
+end
+
+function loadPrefabv2Template(filename)
+  local prefabTemplateName = prefabFilenameToTemplateName(filename)
+  local prefab = PrefabV2()
+  prefab:load(filename)
+  prefab:registerObject(prefabTemplateName)
+
+  local found = scenetree.findObject(prefabTemplateName)
+  if found then
+    log('I','','loaded prefab asset: '..dumpsz(found, 1))
+  end
+end
+
 function addPrefab(objName, objFileName, objPos, objRotation, objScale, useGlobalTranslation)
   local obj = scenetree[objName]
   if not obj then
@@ -739,13 +747,65 @@ function addPrefab(objName, objFileName, objPos, objRotation, objScale, useGloba
 end
 
 function spawnPrefab(objName, objFileName, objPos, objRotation, objScale, useGlobalTranslation)
+  if string.endswith(objFileName, ".prefab.json") then
+    local jsonData = jsonReadFile(objFileName)
+
+    if jsonData.class and jsonData.class == 'PrefabV2' then
+      local prefabTemplateName = prefabFilenameToTemplateName(objFileName)
+      local prefab = scenetree.findObject(prefabTemplateName)
+      if not prefab then
+        loadPrefabv2Template(objFileName)
+        prefab = scenetree.findObject(prefabTemplateName)
+        if not prefab then
+          log('E','','loading prefab template failed')
+          return
+        end
+      end
+
+      if type(objPos) == 'string' then
+        local x, y, z = string.match(objPos, "([0-9]*)%s*([0-9]*)%s*([0-9]*)%s*")
+        objPos = vec3(tonumber(x), tonumber(y), tonumber(z))
+      end
+
+      if type(objRotation) == 'string' then
+        local x, y, z, w = string.match(objRotation, "([0-9]*)%s*([0-9]*)%s*([0-9]*)%s*([0-9]*)")
+        objRotation = QuatF(x,y,z,w)
+      end
+
+      if type(objScale) == 'string' then
+        local x, y, z = string.match(objScale, "([0-9]*)%s*([0-9]*)%s*([0-9]*)%s*")
+        objScale = vec3(tonumber(x), tonumber(y), tonumber(z))
+      end
+
+      local instance = prefab:spawn(objName, objPos, objRotation, objScale)
+      if instance then
+        local missionGroup = scenetree.MissionGroup
+        if editor and editor.resolveAddGroup then missionGroup = editor.resolveAddGroup(missionGroup) end
+        if missionGroup then
+          missionGroup:addObject(instance)
+        end
+        if editor and editor.active then
+          Engine.setNeedCollisionRebuild(true)
+        end
+      else
+        log('E','','spawning prefab instance failed')
+      end
+
+      return instance
+    end
+  end
+
   local p = addPrefab(objName, objFileName, objPos, objRotation, objScale, useGlobalTranslation)
   if p then
     log('D', logTag, 'loading prefab '..objName)
     p:load()
     local missionGroup = scenetree.MissionGroup
+    if editor and editor.resolveAddGroup then missionGroup = editor.resolveAddGroup(missionGroup) end
     if missionGroup then
       missionGroup:addObject(p)
+    end
+    if editor and editor.active then
+      Engine.setNeedCollisionRebuild(true)
     end
   end
   return p
@@ -809,10 +869,46 @@ function setVehicleProperty(vid, propertyName, value)
 end
 
  -- gets estimated maximum amount of vehicles to run based on CPU
-function getMaxVehicleAmount(cap)
-  return Engine.Platform.getCPUInfo() and clamp(Engine.Platform.getCPUInfo().coresPhysical or 1, 1, cap or math.huge) or 4
+function getMaxVehicleAmount(limit)
+  local availableMemoryGB = math.ceil(Engine.Platform.getMemoryInfo().osPhysAvailable / (1024 * 1024 * 1024)) -- math.floor?
+  limit = clamp(availableMemoryGB, 1, limit or 128)
+  return clamp(Engine.Platform.getCPUInfo().coresPhysical or 1, 1, limit)
 end
 
+-- this function is used by the main options, and exists here because gameplay_traffic may not be loaded
+function setMaxVehicleAmountForTraffic(limit)
+  local availableMemoryGB = math.ceil(Engine.Platform.getMemoryInfo().osPhysAvailable / (1024 * 1024 * 1024))
+  local maxAmount = getMaxVehicleAmount(limit or 8) -- safe maximum of 8
+  local trafficAmount = math.max(1, maxAmount - 1) -- minus 1 to account for player vehicle
+  local parkingAmount = clamp(maxAmount * 2, 1, availableMemoryGB - maxAmount) -- unsure about this
+  settings.setValue("trafficAmount", trafficAmount)
+  settings.setValue("trafficParkedAmount", parkingAmount)
+  log('I', '', string.format("Updated traffic amounts for settings: %d traffic, %d parking", trafficAmount, parkingAmount))
+end
+
+local requiredMemoryGB = 1.0
+function logMemoryInfo(lovLevel)
+  local mem = Engine.Platform.getMemoryInfo()
+  log(lovLevel, '', "RAM stats:")
+  for k,v in pairs(mem) do log(lovLevel, '', string.format("%20s = %6.2f GB (%i bytes)", k, v / (1024 * 1024 * 1024), v)) end
+end
+
+function canSpawnAnotherVehicle(minGB)
+  local platform = Engine.Platform.getPlatform()
+  if platform ~= "ps5" and platform ~= "ps5pro" then return true end
+  minGB = minGB or requiredMemoryGB
+  local m = Engine.Platform.getMemoryInfo()
+  local availableGB = m.availableBytes / (1024 * 1024 * 1024)
+  if availableGB >= minGB then
+    -- temporary additional log spam, to better understand the OOM spawn preventer situation
+    log('I', '', string.format("Apparently able to spawn another vehicle, available memory: %5.3f GB free, %5.3f GB required", availableGB, minGB))
+    logMemoryInfo('D')
+  end
+  if availableGB >= minGB then return true end
+  guihooks.trigger("toastrMsg", {type="info", title="ui.tooManyVehicles.title", msg="ui.tooManyVehicles.msg", config={timeOut=15000}})
+  log('W', '', string.format("Unable to spawn another vehicle, available memory is too low: only %5.3f GB free, %5.3f GB required", availableGB, minGB))
+  logMemoryInfo('W')
+end
 
 ------------------------------------------------------------------------------
 
@@ -931,7 +1027,7 @@ end
 
 -- gets a random paint, with a bias for real world paints
 function getRandomPaint(vehId, commonPaintProb)
-  local obj = be:getObjectByID(vehId or 0)
+  local obj = getObjectByID(vehId or 0)
   local model = obj and obj.jbeam or 'pessima' -- if vehId or vehicle is nil, uses this vehicle paint data as a fallback
   local config = obj and tostring(obj.partConfig)
   if not obj then
@@ -1283,7 +1379,7 @@ function convertVehicleIdKeysToVehicleNameKeys(data)
   if data and type(data) == 'table' then
     result = {}
     for vid,v in pairs(data) do
-      local vehicle = be:getObjectByID(vid)
+      local vehicle = getObjectByID(vid)
       if vehicle then
         local name = vehicle:getField('name', '')
         if not name then
@@ -1610,6 +1706,20 @@ local comparisonOps = {
 function getComparisonOps() return comparisonOps end
 
 --== Package loaders ==--
+-- Optional override: called with the module name when the default lookup below
+-- fails to find a file; returns a loader chunk (or nil). Lets features resolve
+-- paths the default can't without touching the default.
+-- Default resolves workbench runtime-panel plugins: their dotted id+version path
+-- (workbench/panels/<id>/<version>/<file>) gets mangled by the dot->slash default
+-- loader, so load them from their literal VFS path. Defined here (not in the
+-- workbench extension) so it exists during a Lua reload's deserialize, which
+-- reloads those panel plugins before the extension that would otherwise set it.
+moduleLoaderFallback = function(modulename)
+  if not modulename:find("^workbench/panels/") then return nil end
+  local src = readFile(modulename .. ".lua")
+  if src then return loadstring(src, "@" .. modulename .. ".lua") end
+end
+
 -- test for writing our own package loader
 local function advancedModuleLoader(modulename)
   local modulepath = string.gsub(modulename, "%.", "/")
@@ -1632,6 +1742,7 @@ local function advancedModuleLoader(modulename)
     end
     --errmsg = errmsg.."\n\tno file '"..filename.."' (checked with custom loader)"
   end
+  if moduleLoaderFallback then return moduleLoaderFallback(modulename) end
   return nil
 end
 
@@ -1667,3 +1778,8 @@ function setCEFFocus()
   log("E", "", "The 'setCEFFocus()' function is deprecated and doesn't need to be called by the following code:")
   print(debug.tracesimple())
 end
+
+-- deprecated functions below
+serializeJsonToFile = jsonWriteFile
+
+

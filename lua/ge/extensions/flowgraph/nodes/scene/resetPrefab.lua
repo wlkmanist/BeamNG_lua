@@ -3,12 +3,11 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
 C.name = 'Reset Prefab'
-C.description = 'Resets a prefab, restoring the '
+C.description = 'Resets a prefab, restoring the transforms of all objects within it.'
 C.category = 'once_instant'
 C.author = 'BeamNG'
 

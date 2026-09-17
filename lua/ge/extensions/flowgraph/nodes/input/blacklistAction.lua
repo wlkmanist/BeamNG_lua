@@ -21,12 +21,11 @@ C.pinSchema = {
   { dir = 'out', type = 'number', name = 'id', description = 'Id of this set of actions, so you can un-do a specific set of actions.', hidden = true },
 }
 C.dependencies = { 'core_input_actionFilter' }
-C.tags = { 'blacklist', 'whitelist', 'allow', 'deny', 'block', 'unblock', 'disallow', 'command', 'control' }
+C.tags = { 'blacklist', 'whitelist', 'allow', 'block', 'command', 'control', 'input', 'action' }
 
 local presets = {
   { name = "Empty", desc = "No Actions.", list = {} },
   { name = "Scenario", desc = "Default Scenario actions.", list = { "switch_next_vehicle", "switch_previous_vehicle", "loadHome", "saveHome", "recover_vehicle", "reload_vehicle", "reload_all_vehicles", "vehicle_selector", "parts_selector", "dropPlayerAtCamera", "nodegrabberRender", "slower_motion", "faster_motion", "toggle_slow_motion", "toggleWalkingMode", "toggleCamera", "toggleTraffic", "toggleAITraffic" } }
-
 }
 
 function C:init()
@@ -47,8 +46,8 @@ local function getActions()
     for name, info in pairs(allActions) do
       allCategories[info.cat] = allCategories[info.cat] or {}
       table.insert(allCategories[info.cat], name)
-      info.title = translateLanguage(info.title, info.title, true)
-      info.desc = translateLanguage(info.desc or "No Description", info.desc or "No Description", true)
+      info.title = _tr(info.title)
+      info.desc = _tr(info.desc or "No Description")
     end
     sortedCategories = tableKeys(allCategories)
     local orderSort = function(a, b)
@@ -228,19 +227,25 @@ function C:drawCustomProperties()
     local rem = nil
     table.sort(self.list)
     for i, e in ipairs(self.list) do
-      if im.SmallButton("X##" .. i) then
-        rem = i
+      if (allActions[e] == nil) then
+        im.BeginDisabled()
+        im.Text(e .. " hasn't been found")
+        im.EndDisabled()
+      else
+        if im.SmallButton("X##" .. i) then
+          rem = i
+        end
+        im.SameLine()
+        im.BeginDisabled()
+        im.Text(allActions[e].cat .. ": ")
+        im.EndDisabled()
+        im.SameLine()
+        im.Text(allActions[e].title)
+        im.SameLine()
+        im.BeginDisabled()
+        im.Text(e)
+        im.EndDisabled()
       end
-      im.SameLine()
-      im.BeginDisabled()
-      im.Text(allActions[e].cat .. ": ")
-      im.EndDisabled()
-      im.SameLine()
-      im.Text(allActions[e].title)
-      im.SameLine()
-      im.BeginDisabled()
-      im.Text(e)
-      im.EndDisabled()
     end
     --print(rem)
     if rem then
@@ -278,7 +283,7 @@ function C:workOnce()
   local list = self.list
   if self.pinIn.ignoreUnrestriced.value and (not settings.getValue('restrictScenarios', true)) then
     list = {}
-    log('W', logTag, '**** Restrictions on Scenario Turned off in game settings. Ignoring Set Input Actions actions. ****')
+    log('I', logTag, '**** Restrictions on Scenario Turned off in game settings. Ignoring Set Input Actions actions. ****')
   end
 
   if not self.pinOut.id.value then

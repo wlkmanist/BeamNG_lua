@@ -142,7 +142,7 @@ function C:work(args)
       end
       local vids = {}
       for i = 1, self.count do
-        if be:getObjectByID(self.pinIn['vehId_'..i].value) then
+        if getObjectByID(self.pinIn['vehId_'..i].value) then
           table.insert(vids, self.pinIn['vehId_'..i].value)
         end
       end
@@ -166,7 +166,7 @@ function C:work(args)
     local state = self.race.states[self.pinIn.vehId_1.value]
     self.pinOut.complete.value = state and state.complete or false
     if self.pinOut.complete.value then
-      self.pinOut.time.value = state.historicTimes[#state.historicTimes].endTime
+      self.pinOut.time.value = state.endTime - state.startTime
     end
     self.pinOut.active.value = state and state.active or false
     if not self.pinOut.active.value and self.pinIn.idle.value ~= nil then

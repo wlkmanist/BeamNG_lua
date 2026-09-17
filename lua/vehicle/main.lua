@@ -2,12 +2,13 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
--- jit.opt.start(3,'minstitch=10000000','fma')
+if jit then	jit.opt.start('minstitch=10000000','maxtrace=2000', 'maxmcode=4000', 'maxside=10', 'hotexit=200') end
 vmType = "vehicle"
 
 package.path = "lua/vehicle/?.lua;?.lua;lua/common/?.lua;lua/common/libs/luasocket/?.lua;lua/?.lua;?.lua"
 package.cpath = ""
 require("luaCore")
+require('common/cdefMath')
 
 print = function(...)
   log("A", "print", tostring(...))
@@ -27,38 +28,31 @@ debug.tracesimple = STP.stacktraceSimple
 -- nop's for the profiler functions if not present
 profilerPushEvent = profilerPushEvent or nop
 profilerPopEvent = profilerPopEvent or nop
+shippingBuild = profilerPushEvent == nop
 
 extensions = require("extensions")
 extensions.addModulePath("lua/vehicle/extensions/")
 extensions.addModulePath("lua/common/extensions/")
-extensions.load("core_performance")
 
-core_performance.pushEvent("lua init")
+profilerPushEvent("lua init")
 
 settings = require("settings")
 backwardsCompatibility = require("backwardsCompatibility")
-objectId = obj:getId() -- also set by c++
 vehiclePath = nil
 
 playerInfo = {
-  seatedPlayers = {}, -- list of players seated in this vehicle; players are indexed from 0 to N (e.g. { [1]=true, [4]=true } for 2nd and 5th players)
+  -- seatedPlayers = nil, -- list of players seated in this vehicle; players are indexed from 0 to N (e.g. { [1]=true, [4]=true } for 2nd and 5th players)
   firstPlayerSeated = false,
   anyPlayerSeated = false
 }
 lastDt = 1 / 20
 physicsDt = obj:getPhysicsDt()
 
-local initCalled = false
+ghostOnReset, ghostOnTp = false, false
+
 local extensionsHook = nop
 
 function updateCorePhysicsStepEnabled()
-  -- print("Controller: " .. tostring(controller.isPhysicsStepUsed()))
-  -- print("Powertrain: " .. tostring(powertrain.isPhysicsStepUsed()))
-  -- print("Wheels: " .. tostring(wheels.isPhysicsStepUsed()))
-  -- print("Thrusters: " .. tostring(thrusters.isPhysicsStepUsed()))
-  -- print("Hydros: " .. tostring(hydros.isPhysicsStepUsed()))
-  -- print("Beamstate: " .. tostring(beamstate.isPhysicsStepUsed()))
-  -- print("---")
   obj:setPhysicsStepEnabled(controller.isPhysicsStepUsed() or powertrain.isPhysicsStepUsed() or wheels.isPhysicsStepUsed() or thrusters.isPhysicsStepUsed() or hydros.isPhysicsStepUsed() or beamstate.isPhysicsStepUsed() or protocols.isPhysicsStepUsed() or extensionsHook ~= nop)
 end
 
@@ -66,6 +60,8 @@ function enablePhysicsStepHook()
   extensionsHook = extensions.hook
   updateCorePhysicsStepEnabled()
 end
+
+--function onUnstableNode(nodeId) print("onUnstableNode: " .. nodeId) end -- !!! PERFORMANCE HEAVY, DEBUG ONLY !!!
 
 -- step functions
 function onPhysicsStep(dtPhys)
@@ -81,7 +77,6 @@ function onPhysicsStep(dtPhys)
   extensionsHook("onPhysicsStep", dtPhys)
 end
 
--- This is called in the local scope, so it is NOT safe to do things that contact things outside the vehicle
 function onGraphicsStep(dtSim)
   lastDt = dtSim
   sensors.updateGFX(dtSim) -- must be before input and ai
@@ -130,22 +125,21 @@ function onDebugDraw(x, y, z)
   controller.debugDraw(focusPos)
   hydros.debugDraw()
   extensions.hook("onDebugDraw", focusPos)
-
   if playerInfo.anyPlayerSeated then
     extensions.hook("onDebugDrawActive", focusPos)
   end
 end
 
 function initSystems()
-  core_performance.pushEvent("3.1 init - compat")
+  profilerPushEvent("3.1 init - compat")
   backwardsCompatibility.init()
-  core_performance.popEvent() -- 3.1 init - compat
+  profilerPopEvent("3.1 init - compat")
 
-  core_performance.pushEvent("3.2.X init - materials (sum)")
+  profilerPushEvent("3.2.X init - materials (sum)")
   material.init()
-  core_performance.popEvent() -- 3.2.X init - materials (sum)
+  profilerPopEvent("3.2.X init - materials (sum)")
 
-  core_performance.pushEvent("3.2 init - first stage")
+  profilerPushEvent("3.2 init - first stage")
   bdebug.init()
   electrics.init()
   damageTracker.init()
@@ -156,25 +150,25 @@ function initSystems()
   energyStorage.init()
   input.init()
   controller.init() -- needs to go after input first stage
-  core_performance.popEvent() -- 3.2 init - first stage
+  profilerPopEvent("3.2 init - first stage")
 
-  core_performance.pushEvent("3.3 init - second stage")
+  profilerPushEvent("3.3 init - second stage")
   wheels.initSecondStage()
   controller.initSecondStage()
   drivetrain.init()
-  core_performance.popEvent() -- 3.3 init - second stage
+  profilerPopEvent("3.3 init - second stage")
 
-  core_performance.pushEvent("3.4 init - groupA")
+  profilerPushEvent("3.4 init - groupA")
   sensors.reset()
   thrusters.init()
   hydros.init()
-  core_performance.popEvent() -- 3.4 init - groupA
+  profilerPopEvent("3.4 init - groupA")
 
-  core_performance.pushEvent("3.5 init - audio")
+  profilerPushEvent("3.5 init - audio")
   sounds.init()
-  core_performance.popEvent() -- 3.5 init - audio
+  profilerPopEvent("3.5 init - audio")
 
-  core_performance.pushEvent("3.6 init - groupB")
+  profilerPushEvent("3.6 init - groupB")
   props.init()
   input.initSecondStage() -- needs to go after sounds & electrics
   recovery.init()
@@ -184,13 +178,13 @@ function initSystems()
   powertrain.initSounds()
   controller.initSounds()
   guihooks.message("", 0, "^vehicle\\.") -- clear damage messages on vehicle restart
-  core_performance.popEvent() -- 3.6 init - groupB
+  profilerPopEvent("3.6 init - groupB")
 
-  core_performance.pushEvent("3.7 init - extensions")
+  profilerPushEvent("3.7 init - extensions")
   extensions.hook("onInit")
-  core_performance.popEvent() -- 3.7 init - extensions
+  profilerPopEvent("3.7 init - extensions")
 
-  core_performance.pushEvent("3.8 init - last stage")
+  profilerPushEvent("3.8 init - last stage")
   mapmgr.init()
 
   electrics.initLastStage()
@@ -200,14 +194,13 @@ function initSystems()
   -- be sensitive about global writes from now on
   detectGlobalWrites()
   updateCorePhysicsStepEnabled()
-  initCalled = true
-  core_performance.popEvent() -- 3.8 init - last stage
+  profilerPopEvent("3.8 init - last stage")
 end
 
 function init(path, initData)
-  core_performance.pushEvent("4.X.X.X total (sum)")
+  profilerPushEvent("4.X.X.X total (sum)")
 
-  core_performance.pushEvent("0 startup")
+  profilerPushEvent("0 startup")
 
   if not obj then
     log("W", "default.init", "Error getting main object: unable to spawn")
@@ -221,6 +214,7 @@ function init(path, initData)
   extensions.loadModulesInDirectory(path .. "/lua", {"controller", "powertrain", "energyStorage"})
 
   extensions.load("core_quickAccess")
+  extensions.load("input_haptics")
 
   damageTracker = require("damageTracker")
   drivetrain = require("drivetrain")
@@ -256,16 +250,16 @@ function init(path, initData)
   fire = require("fire")
   partCondition = require("partCondition")
 
-  core_performance.popEvent() -- 0 startup
+  profilerPopEvent("0 startup")
 
-  core_performance.pushEvent("loadVehicleStage2 (sum)")
+  profilerPushEvent("loadVehicleStage2 (sum)")
 
   -- care about the config before pushing to the physics
   local vehicle
   if type(initData) == "string" and string.len(initData) > 0 then
-    core_performance.pushEvent("deserialize")
+    profilerPushEvent("deserialize")
     local state, initData = pcall(lpack.decode, initData)
-    core_performance.popEvent() -- deserialize
+    profilerPopEvent("deserialize")
     if state and type(initData) == "table" then
       if initData.vdata then
         vehicle = v.loadVehicleStage2(initData)
@@ -281,7 +275,7 @@ function init(path, initData)
     log("E", "loader", "vehicle loading failed fatally")
     return false -- return false = unload lua
   end
-  core_performance.popEvent()
+  profilerPopEvent("loadVehicleStage2 (sum)")
 
   -- you can change the data in here before it gets submitted to the physics
 
@@ -289,15 +283,24 @@ function init(path, initData)
     v.data = {}
   end
 
+  -- on invalid spawn data - make sure the data stubs are there
+  local nodesMissing = false
+  if v.data.components == nil then v.data.components = {} end
+  if v.data.nodes == nil then
+    v.data.nodes = {}
+    nodesMissing = true
+  end
+  if v.data.beams == nil then v.data.beams = {} end
+
   -- disable lua for simple vehicles
   if v.data.information and v.data.information.simpleObject == true then
     log("I", "", "lua disabled!")
     return false -- return false = unload lua
   end
 
-  core_performance.pushEvent("3.X init systems (sum)")
+  profilerPushEvent("3.X init systems (sum)")
   initSystems()
-  core_performance.popEvent() -- 3.X init systems (sum)
+  profilerPopEvent("3.X init systems (sum)")
 
   -- temporary tire mark setting
   obj:setSlipTireMarkThreshold(10)
@@ -305,23 +308,23 @@ function init(path, initData)
   --Load skeleton extension that draws nice(r) beams and nodes if there are no meshes, unloads itself immediately otherwise
   extensions.load("skeleton")
 
-  core_performance.pushEvent("5 postspawn")
+  profilerPushEvent("5 postspawn")
 
-  -- load the extensions at this point in time, so the whole jbeam is parsed already
+  -- extensions that always load, load the extensions at this point in time, so the whole jbeam is parsed already
   extensions.loadModulesInDirectory("lua/vehicle/extensions/auto")
-
-  -- extensions that always load
 
   extensions.hook("onVehicleLoaded", retainDebug)
 
   --extensions.load('vehicleEditor_veMain')
   extensions.load("gameplayStatistic")
 
-  core_performance.popEvent() -- 5 postspawn
-  core_performance.popEvent() -- 4.X.X.X total (sum)
+  profilerPopEvent("5 postspawn")
+  profilerPopEvent("4.X.X.X total (sum)")
 
-  --core_performance.printReport()
-
+  if nodesMissing then
+    -- show the spawn failed error
+    error('nodesMissing')
+  end
   return true -- false = unload Lua
 end
 
@@ -359,12 +362,13 @@ end
 
 -- only being called if the beam has deform triggers
 function onBeamDeformed(id, ratio)
-  beamstate.beamDeformed(id, ratio)
+  beamstate.onBeamDeformed(id, ratio)
   controller.beamDeformed(id, ratio)
   extensions.hook("onBeamDeformed", id, ratio)
 end
 
 function onTorsionbarBroken(id, energy)
+  beamstate.torsionBarBroken(id, energy)
   extensions.hook("onTorsionbarBroken", id, energy)
 end
 
@@ -395,6 +399,11 @@ function onCouplerDetached(nodeId, obj2id, obj2nodeId, breakForce)
   extensions.hook("onCouplerDetached", nodeId, obj2id, obj2nodeId, breakForce)
 end
 
+function onSlidenodeDetached(nodeId, railId, energy)
+  -- print('onSlidenodeDetached'..','..nodeId..','..railId..','..energy)
+  extensions.hook("onSlidenodeDetached", nodeId, railId, energy)
+end
+
 function onDynamicBeamAdded(dbId, nodeId, tag)
 end
 
@@ -414,44 +423,54 @@ function onDespawnObject()
   end
 end
 
+function onSetClusterPosRelRot(cNodeId, pos, relRot)
+  if ghostOnTp then
+    obj:setGhostEnabled(true)
+  end
+
+  extensions.hook("onSetClusterPosRelRot", cNodeId, pos, relRot)
+end
+
 -- called when the user pressed I
 function onVehicleReset(retainDebug)
+  if ghostOnReset then
+    obj:setGhostEnabled(true)
+  end
+
   guihooks.reset()
   extensions.hook("onReset", retainDebug)
   ai.reset()
   mapmgr.reset()
 
-  if not initCalled then
-    --log('D', "default.vehicleResetted", "vehicleResetted()")
-    damageTracker.reset()
-    beamstate.reset() --needs to be before any calls to beamnstate.registerExternalCouplerBreakGroup(), for example controller.lua
-    protocols.reset()
-    wheels.reset()
-    electrics.reset()
-    powertrain.reset()
-    energyStorage.reset()
-    controller.reset()
-    wheels.resetSecondStage()
-    controller.resetSecondStage()
-    drivetrain.reset()
-    props.reset()
-    sensors.reset()
-    bdebug.reset()
-    thrusters.reset()
-    input.reset()
-    hydros.reset()
-    material.reset()
-    fire.reset()
-    powertrain.resetSounds()
-    controller.resetSounds()
-    sounds.reset()
-    partCondition.reset()
+  --log('D', "default.vehicleResetted", "vehicleResetted()")
+  damageTracker.reset()
+  beamstate.reset() --needs to be before any calls to beamnstate.registerExternalCouplerBreakGroup(), for example controller.lua
+  protocols.reset()
+  wheels.reset()
+  electrics.reset()
+  powertrain.reset()
+  energyStorage.reset()
+  controller.reset()
+  wheels.resetSecondStage()
+  controller.resetSecondStage()
+  drivetrain.reset()
+  props.reset()
+  sensors.reset()
+  bdebug.reset()
+  thrusters.reset()
+  input.reset()
+  hydros.reset()
+  material.reset()
+  fire.reset()
+  powertrain.resetSounds()
+  controller.resetSounds()
+  sounds.reset()
+  partCondition.reset()
 
-    electrics.resetLastStage()
-    controller.resetLastStage() --meant to be last in reset
-    powertrain.sendTorqueData()
-  end
-  initCalled = false
+  electrics.resetLastStage()
+  controller.resetLastStage() --meant to be last in reset
+  powertrain.sendTorqueData()
+  updateCorePhysicsStepEnabled()
 
   guihooks.message("", 0, "^vehicle\\.") -- clear damage messages on vehicle restart
 end
@@ -485,7 +504,6 @@ function setControllingPlayers(players)
 
     powertrain.sendTorqueData()
     damageTracker.sendNow() --send over damage data of (now) active vehicle
-    sounds.updateCabinFilter()
   end
 
   bdebug.onPlayersChanged(playerInfo.anyPlayerSeated)
@@ -516,4 +534,4 @@ function onSettingsChanged()
   protocols.settingsChanged()
 end
 
-core_performance.popEvent() -- lua init
+profilerPopEvent("lua init")

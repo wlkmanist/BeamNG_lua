@@ -12,12 +12,17 @@ C.description = 'Will stop the current recording if currently recording'
 
 C.pinSchema = {
   {dir = 'in', type = 'flow', impulse = true, name = 'stopRec', description = 'Will stop the current recording if currently recording'},
+  {dir = 'in', type = 'bool', name = 'attemptNotCompleted', description = 'Needs to be true if the mission attempt is not finished'},
 }
 
 C.tags = {}
 
 function C:work()
-  self.mgr.modules.autoReplay:stopIfRec()
+  if self.pinIn.attemptNotCompleted.value then
+    self.mgr.modules.missionReplay:saveMetaInfoWithoutAttempt()
+  end
+
+  self.mgr.modules.missionReplay:stopIfRec()
 end
 
 

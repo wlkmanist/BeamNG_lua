@@ -22,6 +22,9 @@ local useSmartSpawn = true
 local upVector = vec3(0,0,1)
 local recoverTimer
 local rewindPosition
+local beamsCount = 0
+
+local relativeNodePositions = {}
 
 local objPos = vec3()
 
@@ -74,15 +77,6 @@ local function getRollPitch(dirFront, dirUp)
   return roll, pitch
 end
 
-local isFreeCamActive = true
-local function setFreeCamActiveFlag(active)
-  isFreeCamActive = active
-end
-
-local function getFreeCamActiveFlag()
-  return isFreeCamActive
-end
-
 local function constructAABB()
   local pmin = vec3(math.huge, math.huge, math.huge)
   local pmax = vec3(-math.huge, -math.huge, -math.huge)
@@ -107,9 +101,9 @@ local function constructAABB()
 end
 
 local lastRecoveryPoint
-local camPos
-local camRot
-local function setRecoveryPoint(recPoint, resetVehicle, moveTraffic)
+local camPos = vec3()
+local camRot = quat()
+local function setRecoveryPoint(recPoint, resetVehicle, moveTraffic, player)
   lastRecoveryPoint = recPoint
   -- if the angle limits (in degrees) are surpassed, car is reset to upright position, maintaining the recpoint heading
   local dirFront = vec3(recPoint.dirFront)
@@ -118,7 +112,7 @@ local function setRecoveryPoint(recPoint, resetVehicle, moveTraffic)
   if resetVehicle then
     if useSmartSpawn then
       local rot = quatFromDir(dirFront, dirUp)
-      obj:queueGameEngineLua("spawn.safeTeleport(be:getObjectByID("..obj:getId().."), vec3("..recPoint.pos.x..","..recPoint.pos.y..","..recPoint.pos.z.."), quat("..rot.x..","..rot.y..","..rot.z..","..rot.w.."), nil, nil, " .. tostring(moveTraffic) ..  ")")
+      obj:queueGameEngineLua("spawn.safeTeleport(getObjectByID("..obj:getId().."), vec3("..recPoint.pos.x..","..recPoint.pos.y..","..recPoint.pos.z.."), quat("..rot.x..","..rot.y..","..rot.z..","..rot.w.."), nil, nil, " .. tostring(moveTraffic) ..  ",nil,nil," .. tostring(player) .. ")")
     else
       -- Dont use autoplace when not using smart spawn
       -- if the angle limits (in degrees) are surpassed, car is reset to upright position, maintaining the recpoint heading
@@ -131,7 +125,7 @@ local function setRecoveryPoint(recPoint, resetVehicle, moveTraffic)
       else
         rot = quatFromDir(-dirFront, dirUp)
       end
-      obj:queueGameEngineLua("vehicleSetPositionRotation("..obj:getId()..","..recPoint.pos.x..","..recPoint.pos.y..","..recPoint.pos.z..","..rot.x..","..rot.y..","..rot.z..","..rot.w..")")
+      obj:queueGameEngineLua("vehicleSetPositionRotation("..obj:getId()..","..recPoint.pos.x..","..recPoint.pos.y..","..recPoint.pos.z..","..rot.x..","..rot.y..","..rot.z..","..rot.w.."," .. tostring(player) .. ")")
     end
   end
 end
@@ -146,7 +140,7 @@ end
 local function loadHome(moveTraffic)
   if M.homePoint == nil then return end
   obj:requestReset(RESET_PHYSICS)     -- fix vehicle + reset velocity
-  obj:queueGameEngineLua('be:getObjectByID('..tostring(obj:getId())..'):resetBrokenFlexMesh()')
+  obj:queueGameEngineLua('getObjectByID('..tostring(obj:getId())..'):resetBrokenFlexMesh()')
   setRecoveryPoint(M.homePoint, true, moveTraffic)
   guihooks.message("vehicle.recovery.loadHome", 5, "recovery")
 end
@@ -176,33 +170,36 @@ local function updateGFXRecord(dtSim)
   end
 end
 
-local function stopRecovering()
+local function stopRecovering(player)
   material.forceReset() --here on purpurse, it get called a second type on key up and then it fixed what ever material was stuck
   if M.updateGFX == updateGFXRecord then return end
   M.updateGFX = updateGFXRecord
   --obj:setMeshNameAlpha(1, "", true) -- show everything again
-  obj:queueGameEngineLua('be:getObjectByID('..tostring(obj:getId())..'):resetBrokenFlexMesh()')
+  obj:queueGameEngineLua('getObjectByID('..tostring(obj:getId())..'):resetBrokenFlexMesh()')
   obj:queueGameEngineLua('be.nodeGrabber:clearVehicleFixedNodes('..tostring(obj:getId())..')')
-  setRecoveryPoint(lastRecoveryPoint, true)
+  setRecoveryPoint(lastRecoveryPoint, true, nil, player)
   lastRecoveryPoint = nil
   if M.recoveryPoints:is_empty() then
-    guihooks.message("vehicle.recovery.end", 5, "recovery")
+    guihooks.message("vehicle.recovery.end", 5, "recovery", "tow")
   else
     if snapshotTimeSmoother:value() > 0.9 then
-      guihooks.message("vehicle.recovery.quick", 7, "recovery")
+      guihooks.message("vehicle.recovery.quick", 7, "recovery", "tow")
     else
-      guihooks.message("vehicle.recovery.recovered", 3, "recovery")
+      guihooks.message("vehicle.recovery.recovered", 3, "recovery", "tow")
     end
   end
-  if not isFreeCamActive then
-    obj:queueGameEngineLua("commands.setGameCamera()")
-  end
-  setFreeCamActiveFlag(nil)
+  obj:queueGameEngineLua(string.format("if core_recoveryCamera then core_recoveryCamera.endRecoveryCamera(%d) end", obj:getId()))
+  obj:queueGameEngineLua("extensions.hook(\"onStopRecovering\", " .. recoverTimer .. ")")
   rewindPosition = false
 end
 
 local aabb
 local camOffsetVec = vec3(0,0,0.1)
+local p1, p2, t1, t2, backVec, tempVec = vec3(), vec3(), vec3(), vec3(), vec3(), vec3()
+local oobb = {vec3(), vec3(), vec3(), vec3()}
+local rot = quat()
+local nodeRenderPositions = {}
+local nodeRenderPositionsUpToDate = {}
 local function updateGFXRecovery(dtSim)
   local dtReal = obj:getRealdt()
 
@@ -211,10 +208,10 @@ local function updateGFXRecovery(dtSim)
   if not rewindPosition and recoverTimer > rewindPositionDelay then
     aabb = constructAABB()
     rewindPosition = true
-    obj:queueGameEngineLua('be:queueObjectLua('..tostring(obj:getId())..', "if recovery.getFreeCamActiveFlag() ~= nil then recovery.setFreeCamActiveFlag(" .. tostring(commands.isFreeCamera()) .. ") end") commands.setFreeCamera()')
+    obj:queueGameEngineLua(string.format("if core_recoveryCamera then core_recoveryCamera.beginRecoveryCamera(%d) end", obj:getId()))
     snapshotTimeSmoother:set(1)
     blendTime = 0
-    guihooks.message("vehicle.recovery.recovering", 5, "recovery")
+    guihooks.message("vehicle.recovery.recovering", 5, "recovery", "tow")
   end
   if not rewindPosition then return end
 
@@ -247,32 +244,45 @@ local function updateGFXRecovery(dtSim)
     end
   end
   if lastRecoveryPoint and aabb then
-    local dirFront = vec3(lastRecoveryPoint.dirFront)
-    local dirUp = vec3(lastRecoveryPoint.dirUp)
-    local rot = quatFromDir(-dirFront, dirUp)
-    local oobb = {}
-    for _, point in ipairs(aabb) do
-      table.insert(oobb, lastRecoveryPoint.pos + (rot * point))
-    end
-    local backVec = vec3(oobb[3]-oobb[1])
-    backVec:normalize()
-    camPos = (oobb[1]+oobb[4])/2 + (oobb[2]-oobb[1]).z * 1.3 * upVector + (oobb[3]-oobb[1]) * 1.5 + backVec
-    camRot = quatFromDir(dirFront - camOffsetVec, upVector)
-    local beams = v.data.beams
-    local nodes = v.data.nodes
-    local refPos = vec3(nodes[v.data.refNodes[0].ref].pos)
+    local dirFront = lastRecoveryPoint.dirFront
+    local dirUp = lastRecoveryPoint.dirUp
 
-    local p1, p2, t1, t2, rpos = vec3(), vec3(), vec3(), vec3(), lastRecoveryPoint.pos
-    for i=0, tableSizeC(beams) - 1 do
-      t1:setSub2(nodes[beams[i].id1].pos, refPos)
-      t2:setSub2(nodes[beams[i].id2].pos, refPos)
-      p1:setAdd2(rpos, rot * t1)
-      p2:setAdd2(rpos, rot * t2)
-      obj.debugDrawProxy:drawLine(p1, p2, debugColor)
+    backVec:setScaled2(dirFront, -1)
+    rot:setFromDir(backVec, dirUp)
+
+    for i, point in ipairs(aabb) do
+      oobb[i]:setRotate(rot, point)
+      oobb[i]:setAdd(lastRecoveryPoint.pos)
     end
-    if not isFreeCamActive then
-      obj:queueGameEngineLua("core_camera.setPosRot(0, "..camPos.x..","..camPos.y..","..camPos.z..","..camRot.x..","..camRot.y..","..camRot.z..","..camRot.w..")")
+
+    local beams = v.data.beams
+
+    table.clear(nodeRenderPositionsUpToDate)
+    for i=0, beamsCount - 1 do
+      local beam = beams[i]
+      if not nodeRenderPositionsUpToDate[beam.id1] then
+        t1:set(relativeNodePositions[beam.id1])
+        t1:setRotate(rot)
+        p1:setAdd2(lastRecoveryPoint.pos, t1)
+        nodeRenderPositionsUpToDate[beam.id1] = true
+        nodeRenderPositions[beam.id1]:set(p1)
+      end
+
+      if not nodeRenderPositionsUpToDate[beam.id2] then
+        t2:set(relativeNodePositions[beam.id2])
+        t2:setRotate(rot)
+        p2:setAdd2(lastRecoveryPoint.pos, t2)
+        nodeRenderPositionsUpToDate[beam.id2] = true
+        nodeRenderPositions[beam.id2]:set(p2)
+      end
+
+      obj.debugDrawProxy:drawLine(nodeRenderPositions[beam.id1], nodeRenderPositions[beam.id2], debugColor)
     end
+
+    camPos:set((push3(oobb[1])+oobb[4])/2 + push3(upVector) * (oobb[2].z-oobb[1].z) * 1.3 + (push3(oobb[3])-oobb[1]) * 1.5 + push3(backVec))
+    tempVec:setSub2(dirFront, camOffsetVec)
+    camRot:setFromDir(tempVec, upVector)
+    obj:queueGameEngineLua(string.format("if core_recoveryCamera then core_recoveryCamera.setRecoveryCameraPosRot(%d, %.9g, %.9g, %.9g, %.9g, %.9g, %.9g, %.9g) end", obj:getId(), camPos.x, camPos.y, camPos.z, camRot.x, camRot.y, camRot.z, camRot.w))
   end
   --obj:setMeshNameAlpha(0.6, "", true) -- fade it away... need to be set here becouse sync issues with reset broken props
 end
@@ -287,6 +297,7 @@ local function startRecovering(useAltMode)
   local newRecoveryPoint = newRecoveryPoint()
   setRecoveryPoint(newRecoveryPoint, false)
   M.recoveryPoints:push_right(newRecoveryPoint)
+  obj:queueGameEngineLua("extensions.hook(\"onStartRecovering\")")
 end
 
 local function recoverInPlace()
@@ -295,6 +306,14 @@ end
 
 local function init(path)
   M.updateGFX = updateGFXRecord
+  beamsCount = v.data.beams and tableSizeC(v.data.beams) or 0
+
+  local nodes = v.data.nodes or {}
+  table.clear(relativeNodePositions)
+  for i = 0, tableSizeC(nodes) - 1 do
+    relativeNodePositions[i] = nodes[i].pos - nodes[v.data.refNodes[0].ref].pos
+    nodeRenderPositions[i] = vec3()
+  end
 end
 
 -- public interface
@@ -306,8 +325,5 @@ M.loadHome = loadHome
 M.onDeserialized = onDeserialized
 M.clear = clear
 M.recoverInPlace = recoverInPlace
-
-M.setFreeCamActiveFlag = setFreeCamActiveFlag
-M.getFreeCamActiveFlag = getFreeCamActiveFlag
 
 return M

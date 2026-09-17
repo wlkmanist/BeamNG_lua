@@ -60,9 +60,12 @@ function C:work()
       core_trafficSignals.loadSignals()
     end
 
+    core_trafficSignals.setActive(true, true) -- this is required to actually run the signals simulation
+    -- see comment in core_trafficSignals.setActive for more details
+
     self.pinOut.signalsData.value = core_trafficSignals.getData()
     if not self.pinOut.signalsData.value.loaded then
-      self:__setNodeError('signals', 'signals loading failed')
+      self:__setNodeError('signals', 'Failed to load traffic signals')
     end
   end
 end

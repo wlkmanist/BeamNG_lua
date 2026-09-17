@@ -8,18 +8,24 @@ function C:init(race, name)
   self.race = race
   self.id = race:getNextUniqueIdentifier()
   self.name = name or "Start Position " .. self.id
+  self.group = 'start' -- start, rollingStart, recovery, other
 
   self.pos = vec3()
   self.rot = quat()
 
   self._drawMode = 'faded'
   self.sortOrder = 999999
-end
 
+  self.routePoint = nil
+  self.originalDistToTarget = nil
+  self.staticRoutePoint = nil
+  self.staticOriginalDistToTarget = nil
+end
 
 function C:onSerialize()
   local ret = {
     name = self.name,
+    group = self.group,
     pos = {self.pos.x,self.pos.y,self.pos.z},
     rot = {self.rot.x,self.rot.y,self.rot.z,self.rot.w},
     oldId = self.id
@@ -29,8 +35,13 @@ end
 
 function C:onDeserialized(data)
   self.name = data.name
+  self.group = data.group
   self.pos = vec3(data.pos)
   self.rot = quat(data.rot)
+
+  if not data.group then
+    self.group = string.find(data.name, 'Recovery') and 'recovery' or 'start'
+  end
 end
 
 function C:set(pos, rot)
@@ -121,15 +132,13 @@ function C:drawDebug(drawMode, clr)
     debugDrawer:drawTextAdvanced(self.pos,
       String(self.name),
       ColorF(1,1,1,alpha),true, false,
-      ColorI(0,0,0,alpha*255))
+      ColorI(0,0,0,alpha*255), false, false)
   end
 end
 
-function C:moveResetVehicleTo(vehId, lowPrecision, repair)
+function C:calculateVehiclePosRot(vehId, lowPrecision)
   local veh = scenetree.findObjectById(vehId)
-  if not veh then return end
-  -- default for repairing is true, unless explictly disabled
-  if repair == nil then repair = true end
+  if not veh then return nil, nil end
 
   local fl  = vec3(veh:getSpawnWorldOOBB():getPoint(0))
   local fr  = vec3(veh:getSpawnWorldOOBB():getPoint(3))
@@ -154,10 +163,25 @@ function C:moveResetVehicleTo(vehId, lowPrecision, repair)
   if lowPrecision then -- this must be used if the vehicle is loaded in the first frame, because the OOBB does not work correctly then.
     newPos = self.pos + yLine*2 + zLine * 0.5 -- spawn the vehicle 2m behin and 0.5m above self.
   end
+
+  return newPos, vehRot
+end
+
+function C:moveResetVehicleTo(vehId, lowPrecision, repair)
+  local veh = scenetree.findObjectById(vehId)
+  log('D', logTag, 'moving vehicle to start position')
+  if not veh then return end
+  -- default for repairing is true, unless explictly disabled
+  if repair == nil then repair = true end
+
+  local newPos, vehRot = self:calculateVehiclePosRot(vehId, lowPrecision)
+  if not newPos or not vehRot then return end
+
   if repair then
     veh:setPositionRotation(newPos.x, newPos.y, newPos.z, vehRot.x, vehRot.y, vehRot.z, vehRot.w)
   else
     local correctedRot = vehRot * quat(0,0,-1,0)
+    log('D', logTag, 'safe teleporting vehicle to start position with corrected rotation')
     spawn.safeTeleport(veh, vec3(newPos), quat(correctedRot), nil, nil, nil, nil, false)
   end
   return newPos, vehRot
@@ -182,6 +206,26 @@ function C:setToVehicle(vehId)
   end
   self.pos = center
 
+end
+
+function C:setRoutePoint(rp)
+  self.routePoint = rp
+  -- have to store the original distToTarget because it changes when the route
+  -- point becomes the one at index 1. ie, the one tracking the vehicle.
+  self.originalDistToTarget = rp.distToTarget or 0.0
+end
+
+function C:getRoutePoint()
+  return self.routePoint
+end
+
+function C:setStaticRoutePoint(rp)
+  self.staticRoutePoint = rp
+  self.staticOriginalDistToTarget = rp.distToTarget or 0.0
+end
+
+function C:getStaticRoutePoint()
+  return self.staticRoutePoint
 end
 
 return function(...)

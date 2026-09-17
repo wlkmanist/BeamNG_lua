@@ -5,6 +5,7 @@ local C = {}
 C.moduleOrder = 1000 -- low first, high later
 C.idCounter = 0
 C.hooks = {'onRequestMissionScreenData', 'onMissionScreenButtonClicked', "onGetIsMissionStartOrEndScreenActive"}
+C.dependencies = {'ui_appContainers_topCenter'}
 function C:getFreeId()
   self.idCounter = self.idCounter + 1
   return self.idCounter
@@ -15,12 +16,21 @@ function C:init()
 end
 
 function C:clear()
+  self.isFadeScreenActive = false
   self.isBuilding = false
   self.uiLayout = nil
+  self.appContainerContext = nil
 end
 
 function C:setGameState(...)
   core_gamestate.setGameState(...)
+end
+
+function C:setAppContainerContext(context)
+  if context and context ~= '' and ui_appContainers_topCenter then
+    ui_appContainers_topCenter.setContainerContext('topCenter', context)
+    self.appContainerContext = context
+  end
 end
 
 function C:keepGameState(keep)
@@ -36,10 +46,121 @@ function C:startUIBuilding(uiMode, node)
     log("E","","Tried to start building, but is already building!")
     return
   end
-  self.uiLayout = { mode = uiMode, header = nil, layout = {}, buttons = {}, _node = {nodeId = node.id, graphId = node.graph.id} }
+  self.uiLayout = { mode = uiMode, header = nil, layout = {}, buttons = {}, _node = {nodeId = node.id, graphId = node.graph.id}, supportsReplay = false, buildId = tostring(self.mgr and self.mgr.id) .. ":" .. self:getFreeId() }
+  self.pageIconOverrides = {}
   self.isBuilding = true
   log("I","","Starting to build.")
   self:clearButtonFunctions()
+end
+
+function C:setPageIcon(pageName, icon)
+  if not self.isBuilding or not pageName or not icon then return end
+  self.pageIconOverrides[pageName] = icon
+end
+
+function C:setupPages()
+  -- Static page configuration
+  local pageConfig = {
+    timeslip = {
+      order = 1,
+      icon = "timer",
+      mandatory = true
+    },
+    main = {
+      order = 2,
+      icon = "medal",
+      mandatory = true
+    },
+    rewards = {
+      order = 3,
+      icon = "beamCurrency",
+      mandatory = true,
+      hideInCareer = true
+    },
+    unlocks = {
+      order = 4,
+      icon = "lockOpened",
+      mandatory = true
+    },
+    leaderboards = {
+      order = 5,
+      icon = "chartBars"
+    },
+    aiCompetitors = {
+      order = 6,
+      icon = "personSolid"
+    },
+    drift = {
+      order = 6,
+      icon = "drift01"
+    },
+    lapTimes = {
+      order = 7,
+      icon = "timer"
+    },
+    rules = {
+      order = 8,
+      icon = "roadInfo"
+    },
+    recording = {
+      order = 10,
+      icon = "playRound"
+    },
+    crashAnalysisStep = {
+      order = 9,
+      icon = "test",
+      mandatory = true
+    }
+  }
+
+  -- Build pages lookup from all panels
+  local pages = {}
+  local nextOrder = 0
+
+  -- Find highest predefined order
+  for _, config in pairs(pageConfig) do
+    if config.order > nextOrder then
+      nextOrder = config.order
+    end
+  end
+  nextOrder = nextOrder + 1
+
+  if not next(self.uiLayout.layout) then
+    log("W","","No layout elements found for mission start/end screen!")
+    self:addUIElement({
+      type = 'textPanel',
+      header = "No layout elements found",
+      text = "You havent added any elements to this screen.",
+      experimental = true,
+      pages = {main = true},
+    })
+  end
+
+  -- Process layout elements
+  for _, element in ipairs(self.uiLayout.layout) do
+    if element.pages then
+      for pageName, enabled in pairs(element.pages) do
+        if not career_career.isActive() and pageConfig[pageName].hideInCareer then
+          enabled = false
+        end
+        if enabled and not pages[pageName] then
+          local config = pageConfig[pageName] or {}
+          pages[pageName] = {
+            order = config.order or nextOrder,
+            icon = self.pageIconOverrides[pageName] or config.icon or "info",
+            label = pageName,
+            mandatory = self.uiLayout.mode == 'endScreen' and config.mandatory or false
+          }
+          if not config.order then
+            nextOrder = nextOrder + 1
+          end
+        end
+      end
+    end
+  end
+
+  -- Add pages info to layout
+  self.uiLayout.pages = pages
 end
 
 function C:finishUIBuilding()
@@ -51,34 +172,67 @@ function C:finishUIBuilding()
   log("I","","Finishing Build...")
   log("I", "", dumpsz(self.uiLayout.layout, 2))
 
-
   if self.uiLayout.mode == 'startScreen' then
-
     table.insert(self.uiLayout.buttons, self:addButton(function()
       self.mgr.graphs[self.uiLayout._node.graphId].nodes[self.uiLayout._node.nodeId]:startFromUi()
        end, {
-        label = "ui.scenarios.start.start",
+        label = self.uiLayout.startButtonText or "ui.scenarios.start.start",
         focus = true,
         main = true,
       }))
 
-    print("Going to mission start!")
-    guihooks.trigger('ChangeState', {state = 'mission-control', params = { mode = 'startScreen'}})
+    if mission and mission:hasRules() then
+      table.insert(self.uiLayout.buttons, self:addButton(function()
+        mission:showRulesAsPopups()
+      end, {
+        label = "Rules",
+        focus = false,
+        main = false,
+      }))
+    end
+
+    self:addReplayPanelAndSupportsReplay()
+    self:setupPages()
+    guihooks.trigger('ChangeState', {state = 'mission.control', params = { mode = 'startScreen'}})
   elseif self.uiLayout.mode == 'endScreen' then
-    print("Going to mission end!")
-    guihooks.trigger('ChangeState', {state = 'mission-control', params = { mode = 'endScreen'}})
+    self:addReplayPanelAndSupportsReplay()
+    self:setupPages()
+    guihooks.trigger('ChangeState', {state = 'mission.control', params = { mode = 'endScreen'}})
   end
+
+  if self.uiLayout and (self.uiLayout.mode == 'startScreen' or self.uiLayout.mode == 'endScreen') then
+    guihooks.trigger("onRequestMissionScreenDataReady", self.uiLayout)
+  end
+
   log("I","","Done.")
   self.isBuilding = false
 end
 
+function C:setStartScreenAsSimple()
+  self.uiLayout.simpleStartScreen = true
+end
+
+function C:addReplayPanelAndSupportsReplay()
+  if self.mgr.activity and self.mgr.activity.supportsReplay and ((self.uiLayout.simpleStartScreen ~= nil and not self.uiLayout.simpleStartScreen) or self.uiLayout.simpleStartScreen == nil)then
+    self:addUIElement({
+      type = "replayPanel",
+      header = "Replay Recording",
+      recordingFiles = core_replay.getMissionReplayFiles(self.mgr.activity),
+      pages = {
+        recording = true
+      }
+    })
+    self.uiLayout.supportsReplay = true
+  end
+end
+
 function C:onRequestMissionScreenData(mode)
-  if self.uiLayout and mode ~= "endScreenTest" then
-    --print("sending layout...")
-    --jsonWriteFile("gameplay/testing/missionScreen.json", self.uiLayout, true)
-    guihooks.trigger("onRequestMissionScreenDataReady", self.uiLayout)
---    dumpz(self.uiLayout,2)
-    --dump(self.uiLayout.buttons)
+  if self.uiLayout and not string.find(mode, "test") then
+    guihooks.trigger("onRequestMissionScreenDataReady", self.uiLayout )
+    extensions.hook("onMissionScreenReady", mode, self.uiLayout)
+    if self.mgr.activity and self.mgr.activity.onMissionScreenReady then
+      self.mgr.activity:onMissionScreenReady(mode)
+    end
   end
 end
 
@@ -93,7 +247,10 @@ function C:onMissionScreenButtonClicked(button)
     return
   end
   self.buttonFunctions[button.funId]()
-  self.uiLayout = nil
+  -- in-panel buttons (e.g. the vehicle selector "change" button) keep the screen alive
+  if not button.keepLayout then
+    self.uiLayout = nil
+  end
 end
 
 
@@ -129,7 +286,18 @@ function C:addButton(fun, meta)
 end
 
 
-function C:addObjectives(change)
+-- Buttons added before finishUIBuilding appear above the start button.
+function C:addScreenButton(fun, meta)
+  if not self.isBuilding then
+    log("E","","Tried to add screen button, but is currently not building! ")
+    return
+  end
+  local btn = self:addButton(fun, meta)
+  table.insert(self.uiLayout.buttons, btn)
+  return btn
+end
+
+function C:addObjectives(change, pages)
   if not self.isBuilding then
     log("E","","Tried to add objectives, but is currently not building! ")
     return
@@ -150,6 +318,7 @@ function C:addObjectives(change)
       star.enabled = activeRewards.starInfo[star.key].enabled
       star.message = activeRewards.starInfo[star.key].message
       star.visible = activeRewards.starInfo[star.key].visible
+      star.label = activeRewards.starInfo[star.key].label
       anyVisible = star.visible
     end
 
@@ -159,6 +328,12 @@ function C:addObjectives(change)
     if change and change.unlockedStarsChanged then
       star.unlockChange = change.unlockedStarsChanged[star.key]
     end
+    if change and change.starRewards and change.starRewards.originalRewardsPerStar and change.starRewards.originalRewardsPerStar[star.key] then
+      star.rewards = change.starRewards.originalRewardsPerStar[star.key]
+      for _, reward in ipairs(star.rewards) do
+        reward.icon = career_branches.getBranchIcon(reward.attributeKey)
+      end
+    end
   end
 
   if anyVisible then
@@ -167,12 +342,36 @@ function C:addObjectives(change)
       formattedProgress = {
         stars = stars,
         message = activeRewards.message,
-      }
+      },
+      pages = pages or { main = true }
     })
+
+    -- Add element again for rewards page with only unlockAttempt stars
+    local rewardsStars = {}
+    for _, star in ipairs(stars) do
+      if star.unlockAttempt then
+        table.insert(rewardsStars, star)
+      end
+    end
+    --[[
+    if change and #rewardsStars > 0 and career_career.isActive() then
+      self:addUIElement({
+        type = "objectiveRewards",
+        formattedProgress = {
+          stars = rewardsStars,
+          message = activeRewards.message,
+        },
+        pages = {
+          rewards = true,
+        }
+      })
+    end
+    ]]--
   end
 end
 
 local formatMission = function(m)
+  local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(m)
   return {
     order = i,
     skill = {m.careerSetup.skill},
@@ -181,13 +380,17 @@ local formatMission = function(m)
     label = m.name,
     description = m.description,
     formattedProgress =  gameplay_missions_progress.formatSaveDataForUi(m.id),
-    startable = m.unlocks.startable,
+    startable = gameplay_missions_unlocks.isMissionStartable(m),
     preview = m.previewFile,
-    locked = not m.unlocks.visible,
-    tier = m.unlocks.maxBranchlevel,
+    locked = not gameplay_missions_unlocks.isMissionVisible(m),
+    tier = forwardInfo.maxBranchLevel,
     thumbnailFile = m.thumbnailFile,
     difficulty = m.additionalAttributes.difficulty,
   }
+end
+
+function C:setStartButtonText(text)
+  self.uiLayout.startButtonText = text
 end
 
 function C:addRatings(change)
@@ -249,9 +452,162 @@ function C:addRatings(change)
     type = "ratings",
     change = change,
     progress = prog,
+    pages = {
+      leaderboards = true,
+    },
     --ownAggregate = ownAggregate
   })
+  if change then
+    if career_career.isActive() and change.starRewards and next(change.starRewards.list or {}) then
+      self:addUIElement({
+        type = "rewards",
+        change = change,
+        pages = {
+          rewards = true,
+        },
+      })
+    end
+    if next(change.unlockedMissions or {}) or next(change.unlockedLeagues or {}) then
+      self:addUIElement({
+        type = "unlocks",
+        change = change,
+        pages = {
+          unlocks = true,
+        },
+      })
+    end
+  end
 
+end
+
+function C:addCrashAnalysisStepDetails(stepDetails)
+  local speedScoreDataRows = {}
+  if stepDetails.stepScoreData.speedScore then
+    table.insert(speedScoreDataRows, {
+      { text = stepDetails.stepScoreData.speedScore.targetSpeed },
+      { text = stepDetails.stepScoreData.speedScore.actualSpeed },
+      { text = stepDetails.stepScoreData.speedScore.diff },
+      { text = stepDetails.stepScoreData.speedScore.score },
+    })
+  end
+
+  self:addUIElement({
+    type = "crashTestStepDetails",
+    header = _tr("missions.crashTest.general.stagePoints"),
+    stepScoreData = stepDetails.stepScoreData,
+    fullHeight = true,
+    pages = {
+      main = true
+    },
+  })
+end
+
+function C:addDriftStats(driftStats)
+  -- performance stats table
+  local perfStatsRows = {}
+  for _, statData in pairs(driftStats.perfStats) do
+    table.insert(perfStatsRows, {
+      { text = statData.name },
+      { text = statData.value },
+      order = statData.order
+    })
+  end
+  local perfStatsGrid = {
+    labels = { '', '', },
+    rows = perfStatsRows,
+    leaderboardIndex = 0
+  }
+  table.sort(perfStatsGrid.rows, function(a, b) return a.order < b.order end)
+  for _, statData in ipairs(perfStatsGrid.rows) do
+    statData.order = nil
+  end
+
+  -- tier stats table
+  local tierRows = {}
+  local totalTiersScore = 0
+  for _, statData in pairs(driftStats.tiersStats) do
+    totalTiersScore = totalTiersScore + statData.totalScore
+    table.insert(tierRows, {
+      { text = statData.name },
+      { text = statData.count },
+      { text = statData.totalScore },
+      order = statData.order
+    })
+  end
+  table.insert(tierRows, {
+    { text = "Total :", styling = {totalRow = true} },
+    { text = "" },
+    { text = tostring(totalTiersScore) .. " points", styling = {totalRow = true} },
+    order = 1000
+  })
+  local tierGrid = {
+    labels = {"", "Count", "Total Score"},
+    rows = tierRows,
+    leaderboardIndex = 0
+  }
+  table.sort(tierGrid.rows, function(a, b) return a.order < b.order end)
+  for _, statData in ipairs(tierGrid.rows) do
+    statData.order = nil
+  end
+
+
+  -- drift events table
+  local driftEventsRows = {}
+  local totalDriftEventsScore = 0
+  for _, eventData in pairs(driftStats.driftEvents) do
+    totalDriftEventsScore = totalDriftEventsScore + eventData.totalScoreEarned
+    table.insert(driftEventsRows, {
+      { text = eventData.msg },
+      { text = eventData.count },
+      { text = eventData.totalScoreEarned },
+    })
+  end
+  table.insert(driftEventsRows, {
+    { text = "Total :", styling = {totalRow = true} },
+    { text = "" },
+    { text = tostring(totalDriftEventsScore) .. " points",  styling = {totalRow = true}  },
+  })
+  local driftEventsGrid = {
+    labels = { "", "Count", "Total score" },
+    rows = driftEventsRows,
+    leaderboardIndex = 0
+  }
+
+  self:addUIElement({
+    type = "textPanel",
+    header = _tr("missions.drift.general.perfStats"),
+    attempt = {
+      grids = { perfStatsGrid }
+    },
+    fullHeight = true,
+    pages = {
+      drift = true
+    }
+  })
+
+  self:addUIElement({
+    type = "textPanel",
+    header = _tr("missions.drift.general.tiers"),
+    attempt = {
+      grids = { tierGrid }
+    },
+    fullHeight = true,
+    pages = {
+      drift = true
+    }
+  })
+
+  self:addUIElement({
+    type = "textPanel",
+    header = _tr("missions.drift.general.events"),
+    attempt = {
+      grids = { driftEventsGrid }
+    },
+    fullHeight = true,
+    pages = {
+      drift = true
+    }
+  })
 end
 
 function C:addLaptimesForVehicle(state, attempt)
@@ -296,10 +652,12 @@ function C:addLaptimesForVehicle(state, attempt)
     header = "Lap Times",
     attempt = {
       grids = { grid }
-    }
+    },
+    pages = {
+      lapTimes = true,
+    },
   })
 end
-
 
 -- will probably only be used by startPage
 function C:nextPage()
@@ -312,8 +670,11 @@ function C:executionStarted()
   self.gameStateBeginning = deepcopy(core_gamestate.state)
   self.recoverGameStateWhenExecutionStopped = true
   self.genericMissionDataChanged = false
+  self.pointsBarChanged = false
+  self.appContainerContext = nil
   core_recoveryPrompt.setActive(false)
-
+  extensions.load('ui_apps_genericMissionData')
+  extensions.load('ui_apps_pointsBar')
   if self.mgr.activity then
     guihooks.trigger('ClearTasklist')
   end
@@ -321,7 +682,13 @@ end
 
 function C:executionStopped()
   if self.genericMissionDataChanged then
-    guihooks.trigger('SetGenericMissionDataResetAll')
+    ui_apps_genericMissionData.clearData()
+  end
+  if self.pointsBarChanged then
+    ui_apps_pointsBar.clearData()
+  end
+  if ui_appContainers_topCenter then
+    ui_appContainers_topCenter.resetContainerContext('topCenter')
   end
 
   if self.serializedRecoveryPromptState then
@@ -339,8 +706,5 @@ function C:executionStopped()
     guihooks.trigger('ClearTasklist')
   end
 end
-
-
-
 
 return _flowgraph_createModule(C)

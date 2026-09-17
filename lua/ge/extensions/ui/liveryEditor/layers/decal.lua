@@ -1,3 +1,7 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
+
 local M = {}
 
 local api = extensions.editor_api_dynamicDecals
@@ -89,7 +93,9 @@ M.addLayerCentered = function(params)
   local layer = M.addLayer(params)
   resetCursor()
   showCursor(false)
-  return layer
+  return {
+    uid = layer.uid
+  }
 end
 
 M.updateLayer = function(params)

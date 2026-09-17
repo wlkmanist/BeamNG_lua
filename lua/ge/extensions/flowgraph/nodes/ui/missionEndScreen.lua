@@ -183,6 +183,7 @@ function C:closeDialogue()
     --core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
     --guihooks.trigger('MenuHide')
     --guihooks.trigger('ChangeState', 'menu')
+    guihooks.trigger('ChangeState', 'play')
     self.open = false
   end
 end
@@ -199,7 +200,14 @@ function C:openDialogue()
     for _, mid in ipairs(self.mgr.activity.nextMissions or {}) do
       local mission = gameplay_missions_missions.getMissionById(mid)
       if mission then
-        table.insert(defaultBtns,{label="Start Next Mission '" .. translateLanguage(mission.name, mission.name).."'" , cmd='gameplay_missions_missionManager.startFromWithinMission(gameplay_missions_missions.getMissionById("'..mid..'"))', disabled = not mission.unlocks.startable})
+        table.insert(
+          defaultBtns,
+          {
+            label="Start Next Mission '" .. _tr(mission.name).."'" ,
+            cmd='gameplay_missions_missionManager.startFromWithinMission(gameplay_missions_missions.getMissionById("'..mid..'"))',
+            disabled = not gameplay_missions_unlocks.isMissionStartable(mission)
+          }
+        )
       end
     end
   end
@@ -224,7 +232,7 @@ function C:openDialogue()
   end
 
   -- in the tutorial, restrict buttons manually.
-  local isTutorial = career_modules_linearTutorial and (not career_modules_linearTutorial.getTutorialFlag('completedTutorialMission'))
+  local isTutorial = career_career.isActive() and career_modules_tutorial.isActive()
   if isTutorial then
     defaultBtns = {{label='missions.missions.general.end.continueHere', cmd=self:getCmd("contHere")}}
   end
@@ -290,7 +298,7 @@ function C:openDialogue()
 
   endData =  {missionData = missionData, stats = statsData}
   --dump(endData)
-  guihooks.trigger('ChangeState', {state = 'scenario-end', params = endData})
+  extensions.ui_router.navigate("scenario.end", endData)
 end
 
 function C:onNodeReset()

@@ -19,8 +19,8 @@ end
 
 function C:init()
   self.hidden = true
-  self.manualzoom = manualzoom()
-  self.manualzoom:init(55)
+  self.canUseVehicleTriggerCrosshair = true
+  self.zoomSmoother = newTemporalSmoothing(20)
   self:onSettingsChanged()
   self:reset()
 end
@@ -46,7 +46,7 @@ end
 
 function C:reset()
   --TODO what should reset do?
-  self.manualzoom:reset()
+  self.zoomSmoother:reset()
   --self.pos = nil
   --self.rotVec = nil
 end
@@ -180,9 +180,13 @@ function C:update(data)
     --return
   --end
 
+  -- zoom
+  local zoomValue = self.zoomSmoother:get(data.unicycleZoom or 0, dt)
+  data.res.fov = zoomValue * 27 + (1 - zoomValue) * 55
+
   -- rotation
-  local rdx = MoveManager.yawRelative   + 20*dt*(MoveManager.yawRight - MoveManager.yawLeft  )
-  local rdyNotMouse = 20*dt*(MoveManager.pitchUp - MoveManager.pitchDown)
+  local rdx = MoveManager.yawRelative   + (1-zoomValue * 0.88) * 20*dt*(MoveManager.yawRight - MoveManager.yawLeft  )
+  local rdyNotMouse = (1-zoomValue * 0.88) * 20*dt*(MoveManager.pitchUp - MoveManager.pitchDown)
   local rdy = MoveManager.pitchRelative + rdyNotMouse
   if data.openxrSessionRunning and self.openXRsnapTurnUnicycle then
     local mustTurn = false
@@ -239,7 +243,7 @@ function C:update(data)
   local carPos = data.pos
   self.pos = carPos + nodePos
 
-  --self.manualzoom:update(data) -- disable for now, freeing up buttons on gamepad
+
 
   -- application
   data.res.pos = self.pos

@@ -46,7 +46,7 @@ end
 -- maskedBlurFX.obj:addFrameBlurRect(0, 0.15, 1, 0.8, ColorF(1, 1, 1, 1))
 
 local function onPreRender()
-  if not extensions.ui_visibility.getCef() then return end
+  if not extensions.ui_visibility.getCef() and not extensions.isExtensionLoaded('test_singleLevelLong') then return end
   if render_openxr and render_openxr.isSessionRunning() then return end
   local maskedBlurFX = scenetree.ScreenBlurFX
   if maskedBlurFX and maskedBlurFX.obj then

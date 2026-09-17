@@ -15,15 +15,15 @@ local overwriteGroupWindowName = "overwriteGroup"
 local currGroup = {}
 local commonGroups, tempGroup
 local prevFilePath = "vehicleGroups/"
-local prevFileName = "traffic.vehGroup.json"
+--local prevFileName = "traffic.vehGroup.json"
 local spawnState = 0
 local amountWarn = 12
 local timedTexts = {}
 local comboWidth, inputWidth
 local dummy = im.ImVec2(5, 5)
-local colorWarning, colorError = im.ImVec4(1, 1, 0, 1), im.ImVec4(1, 0, 0, 1)
+local colorWarning = im.ImVec4(1, 1, 0, 1)
 
-local vehSelector, defaultPaint, defaultGenerator, paintKeysTable, options, imValues, selections -- these get initialized when this editor gets enabled
+local vehSelector, defaultPaint, defaultGenerator, paintKeysTable, options, imValues -- these get initialized when this editor gets enabled
 
 M.filePaths = {"vehicleGroups/", "settings/editor/vehicleGroups/"} -- default file paths to auto load from
 
@@ -159,11 +159,13 @@ local function processGroup(groupData) -- returns group data for saving or spawn
   cleanupGroup(groupData)
 
   local processedGroup = deepcopy(groupData)
-  for i, data in ipairs(processedGroup.data) do
-    data.type = nil
-    for _, p in ipairs(paintKeysTable) do
-      if data[p[1]] ~= "(Custom)" then -- if paint is not custom, clear the paint table
-        data[p[2]] = nil
+  if processedGroup.data then -- this can be nil for generator groups
+    for i, data in ipairs(processedGroup.data) do
+      data.type = nil
+      for _, p in ipairs(paintKeysTable) do
+        if data[p[1]] ~= "(Custom)" then -- if paint is not custom, clear the paint table
+          data[p[2]] = nil
+        end
       end
     end
   end
@@ -208,7 +210,7 @@ local function loadGroup(filePath) -- loads and prepares a group from a file
     cleanupGroup(currGroup)
     selectVehIndex(1)
 
-    prevFilePath, prevFileName = path.split(filePath)
+    prevFilePath, _ = path.split(filePath)
     if not oldIdx then
       table.insert(commonGroups, {name = currGroup.name, file = filePath})
     end
@@ -220,7 +222,7 @@ end
 
 local function saveGroup(file, filePath) -- saves the current group to file
   jsonWriteFile(filePath, processGroup(currGroup), true)
-  prevFilePath, prevFileName = path.split(filePath)
+  prevFilePath, _ = path.split(filePath)
   commonGroups[options.groupListIdx].file = filePath
   log("I", logTag, "Saved "..currGroup.name.." to "..filePath.." .")
 end
@@ -728,37 +730,28 @@ local function initTables() -- runs on first load
   defaultPaint = {1, 1, 1, 1}
   defaultGenerator = {amount = 10, allMods = false, allConfigs = false, minPop = 0, modelPopPower = 0, configPopPower = 0, popDecreaseFactor = 0.05, maxYear = 0}
   paintKeysTable = {{"paintName", "paint"}, {"paintName2", "paint2"}, {"paintName3", "paint3"}}
-  
+
   options = {}
   options.spawnModesDict = {road = "Road", traffic = "Traffic", lineAhead = "Line (Ahead)", lineBehind = "Line (Behind)", lineLeft = "Line (Left)", lineRight = "Line (Right)", lineAbove = "Line (Above)", raceGrid = "Race Grid", raceGridAlt = "Race Grid (Alt)"}
   options.spawnMode = "road"
   options.spawnModeValue = options.spawnModesDict.road
-  
+
   options.types = {Car = "Car", Truck = "Truck", Trailer = "Trailer", Prop = "Prop", Utility = "Utility", Automation = "Automation", Traffic = "Traffic"}
   options.typesSorted = {"Car", "Truck", "Trailer", "Prop", "Utility", "Automation", "Traffic"}
-  
+
   options.countries = {"(Default)", "United States", "France", "Germany", "Italy", "Poland", "Japan"} -- temporary typical list of countries of origin
-  
+
   options.models, options.configs, options.paints, options.generatedGroup = {}, {}, {}, {}
   options.vehIdx, options.groupListIdx = 0, 0
 
   options.spawnModesSorted = createSortedArray(options.spawnModesDict)
-  
+
   imValues = {}
   imValues.amount, imValues.spawnGap, imValues.shuffle = im.IntPtr(1), im.IntPtr(15), im.BoolPtr(false)
   imValues.collectionAmount, imValues.allMods, imValues.allConfigs = im.IntPtr(10), im.BoolPtr(false), im.BoolPtr(false)
   imValues.minPop, imValues.modelPopPower, imValues.configPopPower, imValues.popDecreaseFactor = im.IntPtr(1), im.FloatPtr(0), im.FloatPtr(0), im.FloatPtr(0)
   imValues.maxYear = im.IntPtr(0)
   imValues.tagName, imValues.groupName = im.ArrayChar(256, ""), im.ArrayChar(256, "")
-  
-  selections = {
-    {name = "Type", type = "types", key = "type", sortedRef = "typesSorted", default = "Car", active = true},
-    {name = "Model", type = "models", key = "model", sortedRef = "modelsSorted", default = "(None)", active = true},
-    {name = "Config", type = "configs", key = "config", sortedRef = "configsSorted", default = "(Default)", active = true},
-    {name = "Paint 1", type = "paints", key = "paintName", paintKey = "paint", sortedRef = "paintsSorted", default = "(Default)", active = true},
-    {name = "Paint 2", type = "paints", key = "paintName2", paintKey = "paint2", sortedRef = "paintsSorted", default = "(Default)", active = false},
-    {name = "Paint 3", type = "paints", key = "paintName3", paintKey = "paint3", sortedRef = "paintsSorted", default = "(Default)", active = false}
-  }
 
   autoLoadGroups()
 end

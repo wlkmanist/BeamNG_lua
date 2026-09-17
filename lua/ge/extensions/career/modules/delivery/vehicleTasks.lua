@@ -1,6 +1,9 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 M.dependencies = {"util_stepHandler"}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dTasklist
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dTasklist, dTutorial, dPrecisionParking
 local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
@@ -9,6 +12,8 @@ M.onCareerActivated = function()
   dGenerator = career_modules_delivery_generator
   dProgress = career_modules_delivery_progress
   dTasklist = career_modules_delivery_tasklist
+  dTutorial = career_modules_delivery_tutorial
+  dPrecisionParking = career_modules_delivery_precisionParking
   step = util_stepHandler
 end
 
@@ -58,7 +63,7 @@ local function navigateToTask(task)
     local destinationPos = dGenerator.getParkingSpotByPath(activeTaskStep.destination.psPath).pos
     core_groundMarkers.setPath(destinationPos, {clearPathOnReachingTarget = false})
   elseif activeTaskStep.type == "enterVehicle" or activeTaskStep.type == "coupleTrailer" then
-    local veh = be:getObjectByID(task.vehId)
+    local veh = getObjectByID(task.vehId)
     if veh then
       core_groundMarkers.setPath(veh:getPosition(), {clearPathOnReachingTarget = false})
     end
@@ -210,6 +215,9 @@ local function getRewardsWithBreakdown(taskData)
   local brokenPartsRelative = taskData.brokenPartsNumber / taskData.partsNumber
   log("I","",string.format("Broken Parts: %0.1f%% (%d / %d)", brokenPartsRelative*100, taskData.brokenPartsNumber, taskData.partsNumber))
   local distanceDriven = (taskData.offer.endingOdometer - taskData.offer.startingOdometer)
+  if taskData.offer.startingOdometer == -1 or taskData.offer.endingOdometer == -1 then
+    distanceDriven = 0
+  end
   log("I","",string.format("Driven Distance: %0.3fkm (%0.1f%% of allowed %0.3fkm)", distanceDriven/1000, 100*distanceDriven/taskData.offer.data.originalDistance, 1.2*taskData.offer.data.originalDistance/1000))
   local timeTaken = dGeneral.time() - taskData.startedTimestamp
   local expectedTime = (taskData.offer.data.originalDistance/12 + 30 )
@@ -250,12 +258,14 @@ local function getRewardsWithBreakdown(taskData)
   table.insert(breakdown, partsBreakdown)
 
   if brokenPartsMultipler == 1 then
-    if distanceDriven/taskData.offer.data.originalDistance < 1.2 then
-      local rewards = {money=origMoney*0.15+10}
-      for rewardKey, rewardValue in pairs(reputationRewards) do
-        rewards[rewardKey] = math.ceil(rewardValue*0.125)
+    if distanceDriven > 0 then
+      if distanceDriven/taskData.offer.data.originalDistance < 1.2 then
+        local rewards = {money=origMoney*0.15+10}
+        for rewardKey, rewardValue in pairs(reputationRewards) do
+          rewards[rewardKey] = math.ceil(rewardValue*0.125)
+        end
+        table.insert(breakdown, {label = "No Detours", rewards = rewards, simpleBreakdownType="bonus", })
       end
-      table.insert(breakdown, {label = "No Detours", rewards = rewards, simpleBreakdownType="bonus", })
     end
     if timeTaken < expectedTime then
       local rewards = {money=origMoney*0.15+10}
@@ -281,6 +291,63 @@ local function getRewardsWithBreakdown(taskData)
     table.insert(breakdown, organizationElement)
   end
 
+  local branchMultiplier = career_branches.getLevelRewardMultiplier("logistics")
+  if branchMultiplier > 1 then
+    local level = career_branches.getBranchLevel("logistics")
+    table.insert(breakdown, {
+      label = "Level " .. level .. " Multiplier",
+      rewards = {money = originalRewards.money * branchMultiplier - originalRewards.money},
+      simpleBreakdownType = "branch",
+    })
+  end
+
+  -- Calculate precision parking and add to breakdown
+  if taskData.dropOffPsPath then
+    local targetParkingSpot = dGenerator.getParkingSpotByPath(taskData.dropOffPsPath)
+    if targetParkingSpot then
+      local precisionData = dPrecisionParking.calculateVehiclePrecisionScore(taskData.vehId, targetParkingSpot)
+      if precisionData then
+        local precisionBonus = dPrecisionParking.getPrecisionParkingBonus(precisionData)
+
+        -- Add precision parking breakdown entry
+        local precisionBreakdown = {
+          label = "Precision Parking (" .. precisionBonus.precisionLevel:gsub("^%l", string.upper) .. ")",
+          rewards = {},
+          simpleBreakdownType = (precisionBonus.moneyFlat >= 0 and precisionBonus.logisticsFlat >= 0) and "bonus" or "penalty",
+          precisionData = precisionData
+        }
+
+        -- Calculate money reward
+        local moneyReward = precisionBonus.moneyFlat + (originalRewards.money * precisionBonus.moneyPercent)
+        if moneyReward ~= 0 then
+          precisionBreakdown.rewards.money = math.ceil(moneyReward)
+        end
+
+        -- Calculate logistics XP reward
+        local logisticsReward = precisionBonus.logisticsFlat + (originalRewards["logistics"] or 0) * precisionBonus.logisticsPercent
+        if logisticsReward ~= 0 then
+          precisionBreakdown.rewards["logistics"] = math.ceil(logisticsReward)
+        end
+
+        -- Calculate skill XP reward (same as logistics for vehicle delivery)
+        local skillReward = precisionBonus.skillFlat + (originalRewards["logistics-vehicleDelivery"] or 0) * precisionBonus.skillPercent
+        if skillReward ~= 0 then
+          precisionBreakdown.rewards["logistics-vehicleDelivery"] = (precisionBreakdown.rewards["logistics-vehicleDelivery"] or 0) + math.ceil(skillReward)
+        end
+
+        -- Calculate reputation reward
+        if taskData.offer and taskData.offer.organization then
+          local reputationReward = precisionBonus.reputationFlat + (originalRewards[taskData.offer.organization.."Reputation"] or 0) * precisionBonus.reputationPercent
+          if reputationReward ~= 0 then
+            precisionBreakdown.rewards[taskData.offer.organization.."Reputation"] = math.ceil(reputationReward)
+          end
+        end
+
+        table.insert(breakdown, precisionBreakdown)
+      end
+    end
+  end
+
   local adjustedRewards = deepcopy(originalRewards)
   for _, bd in ipairs(breakdown) do
     for key, amount in pairs(bd.rewards) do
@@ -298,7 +365,7 @@ local function getVehicleDataWithRewardsSummary()
     local activeTask = taskData.tasks[taskData.activeTaskIndex]
     if activeTask.type == "confirmDropOff" then
       table.insert(vehicleRewardData, formatted)
-      local veh = be:getObjectByID(taskData.vehId)
+      local veh = getObjectByID(taskData.vehId)
       if veh then
         local sequence = {
           step.makeStepReturnTrueFunction(function(step)
@@ -321,8 +388,13 @@ local function getVehicleDataWithRewardsSummary()
               local vehData = core_vehicle_manager.getVehicleData(taskData.vehId)
               core_vehicleBridge.requestValue(veh, function(res)
                 step.odometerComplete = true
-                local part = res.result[vehData.config.mainPartName]
-                taskData.offer.endingOdometer = part.odometer
+                local mainPartName = "/" .. vehData.config.mainPartName
+                local part = res.result[mainPartName]
+                if part then
+                  taskData.offer.endingOdometer = part.odometer
+                else
+                  taskData.offer.endingOdometer = -1
+                end
               end, 'getPartConditions')
             end
             return step.odometerComplete or false
@@ -366,7 +438,7 @@ M.finishTasks = function(offerIds)
       taskData.finished = false
       local activeTask = taskData.tasks[taskData.activeTaskIndex]
       if activeTask.type == "confirmDropOff" then
-        local veh = be:getObjectByID(taskData.vehId)
+        local veh = getObjectByID(taskData.vehId)
         if veh then
           local sequence = {
             step.makeStepReturnTrueFunction(function(step)
@@ -389,8 +461,13 @@ M.finishTasks = function(offerIds)
                 local vehData = core_vehicle_manager.getVehicleData(taskData.vehId)
                 core_vehicleBridge.requestValue(veh, function(res)
                   step.odometerComplete = true
-                  local part = res.result[vehData.config.mainPartName]
-                  taskData.offer.endingOdometer = part.odometer
+                  local mainPartName = "/" .. vehData.config.mainPartName
+                  local part = res.result[mainPartName]
+                  if part then
+                    taskData.offer.endingOdometer = part.odometer
+                  else
+                    taskData.offer.endingOdometer = -1
+                  end
                 end, 'getPartConditions')
               end
               return step.odometerComplete or false
@@ -466,7 +543,13 @@ local function processGiveBack(taskData)
 
     local fine = M.getFineForAbandon(taskData)
 
-    career_modules_playerAttributes.addAttributes(fine, {tags={"gameplay", "delivery","fine"}, label="Abandoned Delivery Penalty for " .. taskData.offer.name})
+    career_modules_playerAttributes.addAttributes(fine, {
+      tags = {"gameplay", "delivery", "fine"},
+      label = {
+        txt = "ui.career.attributeLog.abandonedDeliveryPenaltyFor",
+        context = { deliveryName = taskData.offer.name },
+      },
+    })
     taskData.remove = true
 
     local message = string.format("Delivery %s abandoned. \n %0.2f$ penalty. " .. (taskData.offer.organization and "\n%d reputation lost." or ""), taskData.offer.name, -fine.money, taskData.offer.organization and -fine[taskData.offer.organization .. "Reputation"] or 0)
@@ -607,8 +690,8 @@ local function drawDebugMenu()
   if im.Begin("Trailer Tasks Debug") then
     im.Text(dumps(vehicleTasks))
 
-    im.End()
   end
+  im.End()
 end
 
 M.drawDebugMenu = drawDebugMenu

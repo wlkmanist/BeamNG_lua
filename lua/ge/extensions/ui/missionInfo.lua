@@ -33,7 +33,7 @@ end
 
 
 M.performActivityAction = function(id)
-  log('I', logTag, tostring(actionName) .. " action triggered. Looking for " .. tostring(actionName) .. " action in "..dumps(M.buttonsTable))
+  log('I', logTag, tostring(id) .. " action triggered. Looking for " .. tostring(id) .. " action in "..dumps(M.buttonsTable))
   if M.buttonsTable then
     (M.buttonsTable[id] or nop)()
   end
@@ -47,13 +47,14 @@ M.openActivityAcceptDialogue = function(content)
   --  if am then am:push() end
   --end
   M.buttonsTable = {}
+  M.elemDataTable = {}
   for i, elem in ipairs(content) do
     M.buttonsTable[i] = elem.buttonFun
     elem.missionInfoPerformActionIndex = i
+    M.elemDataTable[i] = elem.data
   end
   extensions.hook('onActivityAcceptUpdate', content)
   guihooks.trigger('ActivityAcceptUpdate', content)
-  Engine.Audio.playOnce('AudioGui','event:>UI>Missions>Info_Open')
 
   local oldState = M.openState
   M.openState = "opened"
@@ -65,10 +66,20 @@ M.closeDialogue = function()
   if am then am:pop() end
   M.buttonsTable = nil
   guihooks.trigger('MissionInfoUpdate', nil)
+  guihooks.trigger('ActivityAcceptClose', nil)
 
   local oldState = M.openState
   M.openState = "closed"
   extensions.hook('onMissionInfoChangedState', oldState, M.openState)
+end
+
+M.setActivityIndexVisible = function(index)
+  if index == -1 then
+    extensions.hook('onActivityIndexVisible', nil)
+  else
+    local data = M.elemDataTable[index+1]
+    extensions.hook('onActivityIndexVisible', data)
+  end
 end
 
 return M

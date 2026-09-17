@@ -6,7 +6,8 @@ local im = ui_imgui
 
 local C = {}
 
-C.name = 'CategoryTest'
+C.name = 'Category Test'
+C.description = 'Tests once_f_duration.'
 C.category = 'once_f_duration'
 
 function C:init(mgr, ...)
@@ -30,7 +31,7 @@ function C:drawMiddle(builder, style)
 end
 
 function C:workOnce()
-  timer = 0
+  self.timer = 0
   self:setDurationState('started')
 end
 

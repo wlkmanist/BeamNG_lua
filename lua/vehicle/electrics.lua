@@ -43,7 +43,7 @@ local hornState = false
 local fogLightsState = false
 
 local blinkPulse = false
-local blinkTimerThreshold = 0.4
+local blinkTimerThreshold = 0.5
 local blinkTimer = 0
 
 -- sounds
@@ -59,14 +59,14 @@ local lightOff
 local hasSteered = false -- used to see whether right/left-turn has been finished
 
 -- set to nop in the beginning - this avoids conflict with the warn signal
-local automatic_indicator_stop = nop
-local generateBlinkPulse = nop
-
+local automaticIndicatorStopHandler = nop
+local generateBlinkPulseHandler = nop
 local spawnVehicleIgnitionLevel
 local ignitionLevelSanitization
+local allowedIgnitionLevels
+local allowedIgnitionLevelsLookup = {}
 local previousIgnitionLevel
-local updateElectricsWithIgnitionLevel  --used to alter the electrics output based on ignition state, made to support multiple different countries/regulations
-local ignitionHoldingStarter = false
+local updateIgnitionStarterHandler = nop
 local ignitionHoldingStarterTimer = 0
 local ignitionWasStartingEngine = false
 local ignitionMessageLookup = {
@@ -75,9 +75,22 @@ local ignitionMessageLookup = {
   [2] = "ui.common.vehicleOn"
 }
 
+local ignitionLevelOverrideType
+local updateElectricsWithIgnitionLevelHandler = nop --used to alter the electrics output based on ignition state, made to support multiple different countries/regulations
+local updateElectricsWithIgnitionLevelHandlers
+
+local hasRegisteredQuickAccessMenu = false
+
+local function resetIndicatorPulse()
+  --reset indicator pulse to work properly. Timer needs to be at threshold so that it flips immediately AND causes the sound to happen
+  --if we were to start with clock at 0 and pulse active, the first half cycle wouldn't have sounds
+  blinkTimer = blinkTimerThreshold --start with clock at threshold, resets immediately
+  blinkPulse = false --start with pulse off so that indicator flips immediately to true due to timer condition
+end
+
 local function generateBlinkPulseFun(dt)
   blinkTimer = blinkTimer + dt
-  if blinkTimer > blinkTimerThreshold then
+  if blinkTimer >= blinkTimerThreshold then
     if blinkPulse then
       indLoopSnd1 = indLoopSnd1 or sounds.createSoundscapeSound("indLoop1")
       sounds.playSoundSkipAI(indLoopSnd1)
@@ -86,53 +99,56 @@ local function generateBlinkPulseFun(dt)
       sounds.playSoundSkipAI(indLoopSnd2)
     end
     blinkPulse = not blinkPulse
-    blinkTimer = 0
+    blinkTimer = blinkTimer - blinkTimerThreshold
   end
 end
 
 local function updateSignals()
-  generateBlinkPulse = (signalLeftState or signalRightState) and generateBlinkPulseFun or nop
+  generateBlinkPulseHandler = (signalLeftState or signalRightState) and generateBlinkPulseFun or nop
 end
 
 -- stops automatically indicator if turn has been finished or if wheel is steered in opposite direction
-local function manage_automatic_indicator_stop()
-  local controlPoint = 100
+local function manageAutomaticIndicatorStop()
   local steering = M.values.steering
   if steering == nil then
     return
   end
 
+  local controlPointLatch = 60
+  local controlPointReset = 10
+
   --check whether user has steered in the desired direction
-  if signalLeftState and steering > controlPoint then
+  if signalLeftState and steering > controlPointLatch then
     hasSteered = true
-  elseif signalRightState and steering < -controlPoint then
+  elseif signalRightState and steering < -controlPointLatch then
     hasSteered = true
   end
 
   --if the wheel has returned to the neutral position, turn indicator off
-  if signalLeftState and hasSteered and steering <= 0 then
+  if signalLeftState and hasSteered and steering <= controlPointReset then
     signalLeftState = false
     hasSteered = false
     sounds.playSoundSkipAI(indStopSnd)
-    automatic_indicator_stop = nop
-  elseif signalRightState and hasSteered and steering >= 0 then
+    automaticIndicatorStopHandler = nop
+  elseif signalRightState and hasSteered and steering >= -controlPointReset then
     signalRightState = false
     hasSteered = false
     sounds.playSoundSkipAI(indStopSnd)
-    automatic_indicator_stop = nop
+    automaticIndicatorStopHandler = nop
   end
 
   updateSignals()
 end
 
 local function stop_turn_signal()
+  resetIndicatorPulse()
   if not signalWarnState then
     if signalLeftState or signalRightState then
       signalLeftState = false
       signalRightState = false
       hasSteered = false
       sounds.playSoundSkipAI(indStopSnd)
-      automatic_indicator_stop = nop
+      automaticIndicatorStopHandler = nop
     end
 
     updateSignals()
@@ -141,6 +157,7 @@ end
 
 -- user input functions
 local function toggle_left_signal()
+  resetIndicatorPulse()
   if not signalWarnState then
     signalLeftState = not signalLeftState
   else
@@ -149,14 +166,45 @@ local function toggle_left_signal()
   if signalLeftState then
     signalRightState = false
     signalWarnState = false
-    indStartSnd = indStartSnd or sounds.createSoundscapeSound("indicatorStart")
-    sounds.playSoundSkipAI(indStartSnd)
-    automatic_indicator_stop = manage_automatic_indicator_stop
-    indStopSnd = indStopSnd or sounds.createSoundscapeSound("indicatorStop")
+    if M.values.ignitionLevel > 0 then
+      indStartSnd = indStartSnd or sounds.createSoundscapeSound("indicatorStart")
+      sounds.playSoundSkipAI(indStartSnd)
+      automaticIndicatorStopHandler = manageAutomaticIndicatorStop
+      indStopSnd = indStopSnd or sounds.createSoundscapeSound("indicatorStop")
+    end
   end
   if not signalLeftState then
-    sounds.playSoundSkipAI(indStopSnd)
-    automatic_indicator_stop = nop
+    if M.values.ignitionLevel > 0 then
+      sounds.playSoundSkipAI(indStopSnd)
+    end
+    automaticIndicatorStopHandler = nop
+    hasSteered = false
+  end
+
+  updateSignals()
+end
+
+local function set_left_signal(state, autoCancel)
+  resetIndicatorPulse()
+  if state and not signalLeftState then
+    signalLeftState = true
+    signalRightState = false
+    signalWarnState = false
+    if M.values.ignitionLevel > 0 then
+      indStartSnd = indStartSnd or sounds.createSoundscapeSound("indicatorStart")
+      sounds.playSoundSkipAI(indStartSnd)
+      if autoCancel then
+        automaticIndicatorStopHandler = manageAutomaticIndicatorStop
+      end
+      indStopSnd = indStopSnd or sounds.createSoundscapeSound("indicatorStop")
+    end
+  end
+  if not state and signalLeftState then
+    signalLeftState = false
+    if M.values.ignitionLevel > 0 then
+      sounds.playSoundSkipAI(indStopSnd)
+    end
+    automaticIndicatorStopHandler = nop
     hasSteered = false
   end
 
@@ -164,6 +212,7 @@ local function toggle_left_signal()
 end
 
 local function toggle_right_signal()
+  resetIndicatorPulse()
   if not signalWarnState then
     signalRightState = not signalRightState
   else
@@ -172,14 +221,45 @@ local function toggle_right_signal()
   if signalRightState then
     signalLeftState = false
     signalWarnState = false
-    indStartSnd = indStartSnd or sounds.createSoundscapeSound("indicatorStart")
-    sounds.playSoundSkipAI(indStartSnd)
-    automatic_indicator_stop = manage_automatic_indicator_stop
-    indStopSnd = indStopSnd or sounds.createSoundscapeSound("indicatorStop")
+    if M.values.ignitionLevel > 0 then
+      indStartSnd = indStartSnd or sounds.createSoundscapeSound("indicatorStart")
+      sounds.playSoundSkipAI(indStartSnd)
+      automaticIndicatorStopHandler = manageAutomaticIndicatorStop
+      indStopSnd = indStopSnd or sounds.createSoundscapeSound("indicatorStop")
+    end
   end
   if not signalRightState then
-    automatic_indicator_stop = nop
-    sounds.playSoundSkipAI(indStopSnd)
+    automaticIndicatorStopHandler = nop
+    if M.values.ignitionLevel > 0 then
+      sounds.playSoundSkipAI(indStopSnd)
+    end
+    hasSteered = false
+  end
+
+  updateSignals()
+end
+
+local function set_right_signal(state, autoCancel)
+  resetIndicatorPulse()
+  if state and not signalRightState then
+    signalRightState = true
+    signalLeftState = false
+    signalWarnState = false
+    if M.values.ignitionLevel > 0 then
+      indStartSnd = indStartSnd or sounds.createSoundscapeSound("indicatorStart")
+      sounds.playSoundSkipAI(indStartSnd)
+      if autoCancel then
+        automaticIndicatorStopHandler = manageAutomaticIndicatorStop
+      end
+      indStopSnd = indStopSnd or sounds.createSoundscapeSound("indicatorStop")
+    end
+  end
+  if not state and signalRightState then
+    signalRightState = false
+    if M.values.ignitionLevel > 0 then
+      sounds.playSoundSkipAI(indStopSnd)
+    end
+    automaticIndicatorStopHandler = nop
     hasSteered = false
   end
 
@@ -198,30 +278,119 @@ local function toggleSound(val, snd)
   end
 end
 
+local function sanitizeIgnitionLevel(desiredIgnitionLevel)
+  --return the _actual_ ignition level for a desired one so that certain levels can be "forbidden"
+  return ignitionLevelSanitization[desiredIgnitionLevel] or 0
+end
+
+local function updateElectricsWithIgnitionLevelEuropean()
+  local values = M.values
+  --adjustments in "off" mode
+  values.brakelights = 0
+  values.parkingbrakelight = 0
+  values.brakelight_signal_R = 0
+  values.brakelight_signal_L = 0
+
+  values.parking = 0
+  values.reverse = 0
+
+  values.lights = 0
+  values.lights_state = 0
+
+  values.turnsignal = 0
+  values.signal_L = 0
+  values.signal_R = 0
+  values.hazard = 0
+  values.hazard_enabled = 0
+  values.lightbar = 0
+  lightbarState = 0
+  values.lowpressure = 0
+  values.oil = 0
+  values.lowhighbeam = 0
+  values.lowbeam = 0
+  values.highbeam = 0
+  values.fog = 0
+  values.horn = 0
+  values.lowhighbeam_signal_R = 0
+  values.lowhighbeam_signal_L = 0
+  values.highbeam_wigwag_R = 0
+  values.highbeam_wigwag_L = 0
+  values.reverse_wigwag_R = 0
+  values.reverse_wigwag_L = 0
+  values.signal_right_input = 0
+  values.signal_left_input = 0
+
+  signalLeftState = false
+  signalRightState = false
+  signalWarnState = false
+
+  automaticIndicatorStopHandler = nop
+  generateBlinkPulseHandler = nop
+
+  values.fuel = 0
+  values.lowfuel = 0
+
+  values.abs = 0
+  values.esc = 0
+  values.tcs = 0
+
+  values.oiltemp = 0
+  values.watertemp = 0
+  values.checkengine = 0
+  values.ignition = 0
+  values.running = 0
+  values.engineRunning = 0
+end
+
+-- use to update the handler method that overwrites electrics values based on ignition state
+local function updateIgnitionLevelElectricsOverrideHandler()
+  updateElectricsWithIgnitionLevelHandler = M.values.ignitionLevel == 0 and updateElectricsWithIgnitionLevelHandlers[ignitionLevelOverrideType] or nop
+end
+
+local function setIgnitionLevel(ignitionLevel)
+  --print("Ignition Level: " .. ignitionLevel)
+  previousIgnitionLevel = M.values.ignitionLevel
+  local newIgnitionLevel = sanitizeIgnitionLevel(ignitionLevel)
+  M.values.ignitionLevel = newIgnitionLevel
+
+  if ignitionMessageLookup[newIgnitionLevel] then
+    guihooks.message({txt = ignitionMessageLookup[newIgnitionLevel], context = {}}, 4, "vehicle.ignition.ignitionLevel")
+  end
+
+  if newIgnitionLevel == 0 or newIgnitionLevel == 1 then
+    controller.mainController.setEngineIgnition(false)
+    controller.mainController.setStarter(false)
+  elseif newIgnitionLevel == 2 then
+    controller.mainController.setEngineIgnition(true)
+    controller.mainController.setStarter(false)
+  elseif newIgnitionLevel == 3 then
+    controller.mainController.setEngineIgnition(true)
+    controller.mainController.setStarter(true)
+  end
+
+  updateIgnitionLevelElectricsOverrideHandler()
+end
+
 local function updateIgnitionStarter(dt)
-  if ignitionHoldingStarter then
-    ignitionHoldingStarterTimer = ignitionHoldingStarterTimer + dt
-    if ignitionHoldingStarterTimer > 0.5 then
-      if not ignitionWasStartingEngine then
-        ignitionWasStartingEngine = true
-        M.setIgnitionLevel(3)
-      end
-    else
-      ignitionWasStartingEngine = false
+  ignitionHoldingStarterTimer = ignitionHoldingStarterTimer + dt
+  if ignitionHoldingStarterTimer > 0.5 then
+    if not ignitionWasStartingEngine then
+      ignitionWasStartingEngine = true
+      M.setIgnitionLevel(3)
     end
   else
-    ignitionHoldingStarterTimer = 0
+    ignitionWasStartingEngine = false
   end
 end
 
 local function updateGFX(dt)
-  updateIgnitionStarter(dt)
-  generateBlinkPulse(dt)
+  updateIgnitionStarterHandler(dt)
+  generateBlinkPulseHandler(dt)
 
   local vals = M.values
   -- the primary source values
 
-  automatic_indicator_stop()
+  automaticIndicatorStopHandler()
 
   vals.accXSmooth = sensors.gx2
   vals.accYSmooth = sensors.gy2
@@ -306,10 +475,6 @@ local function updateGFX(dt)
   end
 end
 
-local function updateCustomValues(dt)
-  customValueParser.updateGFX(dt)
-end
-
 local function updateGFXSecondStep(dt)
   local values = M.values
   --make sure to update the brakelights value based on the brake value
@@ -320,9 +485,9 @@ local function updateGFXSecondStep(dt)
   -- inject imported electrics events second time, this should be the last step before update electrics by ignition state so that we can override everything if needed
   beamstate.updateRemoteElectrics(false)
 
-  updateElectricsWithIgnitionLevel()
+  updateElectricsWithIgnitionLevelHandler()
 
-  updateCustomValues(dt)
+  customValueParser.updateGFX(dt)
 
   --apply the smoothers as the last thing
   for f, s in pairs(smoothers) do
@@ -332,83 +497,256 @@ local function updateGFXSecondStep(dt)
   end
 end
 
-local function updateElectricsWithIgnitionLevelEuropean()
-  local values = M.values
-  if values.ignitionLevel == 0 then
-    --adjustments in "off" mode
-    values.brakelights = 0
-    values.parkingbrakelight = 0
-    values.brakelight_signal_R = 0
-    values.brakelight_signal_L = 0
+local function registerQuickAccessMenu()
+  if not core_quickAccess or hasRegisteredQuickAccessMenu then
+    return
+  end
+  hasRegisteredQuickAccessMenu = true
 
-    values.parking = 0
-    values.reverse = 0
+  if #allowedIgnitionLevels > 1 then
+    -- headlights
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/lights/",
+        generator = function(entries)
+          local e = {title = "ui.radialmenu2.electrics.headlights", ["goto"] = "/root/playerVehicle/lights/headlights/", icon = "lowBeam", action = "toggle_headlights", uniqueID = "headlights"}
+          if electrics.values.lights_state == 1 then
+            e.color = "#33ff33"
+            e.icon = "lowBeam"
+          end
+          if electrics.values.lights_state == 2 then
+            e.color = "#3333ff"
+            e.icon = "highBeam"
+          end
+          table.insert(entries, e)
+        end
+      }
+    )
 
-    values.lights = 0
-    values.lights_state = 0
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/lights/headlights/",
+        uniqueID = "headlights",
+        generator = function(entries)
+          local e = {
+            title = "ui.radialmenu2.electrics.headlights.off",
+            icon = "lowBeam",
+            originalActionInfo = {level = "/root/playerVehicle/lights/", uniqueID = "headlights"},
+            uniqueID = "headlights_off",
+            onSelect = function()
+              M.setLightsState(0)
+              return {"hide"}
+            end
+          }
+          if M.values.lights_state == 0 then
+            e.color = "#ff6600"
+          end
+          table.insert(entries, e)
 
-    values.turnsignal = 0
-    values.signal_L = 0
-    values.signal_R = 0
-    values.hazard = 0
-    values.hazard_enabled = 0
-    values.lightbar = 0
-    lightbarState = 0
-    values.lowpressure = 0
-    values.oil = 0
-    values.lowhighbeam = 0
-    values.lowbeam = 0
-    values.highbeam = 0
-    values.fog = 0
-    values.horn = 0
-    values.lowhighbeam_signal_R = 0
-    values.lowhighbeam_signal_L = 0
-    values.highbeam_wigwag_R = 0
-    values.highbeam_wigwag_L = 0
-    values.reverse_wigwag_R = 0
-    values.reverse_wigwag_L = 0
-    values.signal_right_input = 0
-    values.signal_left_input = 0
+          e = {
+            title = "ui.radialmenu2.electrics.headlights.low",
+            icon = "lowBeam",
+            originalActionInfo = {level = "/root/playerVehicle/lights/", uniqueID = "headlights"},
+            uniqueID = "headlights_low",
+            onSelect = function()
+              M.setLightsState(1)
+              return {"hide"}
+            end
+          }
+          if M.values.lights_state == 1 then
+            e.color = "#33ff33"
+          end
+          table.insert(entries, e)
 
-    signalLeftState = false
-    signalRightState = false
-    signalWarnState = false
+          e = {
+            title = "ui.radialmenu2.electrics.headlights.high",
+            icon = "highBeam",
+            originalActionInfo = {level = "/root/playerVehicle/lights/", uniqueID = "headlights"},
+            uniqueID = "headlights_high",
+            onSelect = function()
+              M.setLightsState(2)
+              return {"hide"}
+            end
+          }
+          if M.values.lights_state == 2 then
+            e.color = "#3333ff"
+          end
+          table.insert(entries, e)
+        end
+      }
+    )
 
-    automatic_indicator_stop = nop
-    generateBlinkPulse = nop
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/lights/",
+        generator = function(entries)
+          -- warning lights
+          local e = {
+            title = "ui.radialmenu2.electrics.hazard_lights",
+            icon = "hazardLights",
+            action = "toggle_hazard_signal",
+            uniqueID = "hazard_lights",
+            onSelect = function()
+              M.toggle_warn_signal()
+              return {"hide"}
+            end
+          }
+          if M.values.hazard_enabled == 1 then
+            e.color = "#ff0000"
+          end
+          table.insert(entries, e)
 
-    values.fuel = 0
-    values.lowfuel = 0
+          -- fog lights
+          e = {
+            title = "ui.radialmenu2.electrics.fog_lights",
+            icon = "fogLight",
+            action = "toggle_foglights",
+            uniqueID = "fog_lights",
+            onSelect = function()
+              M.toggle_fog_lights()
+              return {"hide"}
+            end
+          }
+          if M.values.fog == 1 then
+            e.color = "#ff6600"
+          end
+          table.insert(entries, e)
 
-    values.abs = 0
-    values.esc = 0
-    values.tcs = 0
+          -- lightbar
+          e = {
+            title = "ui.radialmenu2.electrics.lightbar",
+            icon = "wigwags",
+            action = "toggle_lightbar_signal",
+            uniqueID = "lightbar",
+            onSelect = function()
+              M.toggle_lightbar_signal()
+              return {"hide"}
+            end
+          }
+          if M.values.lightbar == 1 then
+            e.color = "#ff6600"
+          end
+          if M.values.lightbar == 2 then
+            e.color = "#ff0000"
+          end
+          table.insert(entries, e)
 
-    values.oiltemp = 0
-    values.watertemp = 0
-    values.checkengine = 0
-    values.ignition = 0
-    values.running = 0
-    values.engineRunning = 0
-  elseif values.ignitionLevel == 1 then
-    --adjustments in "accessory" mode
-  else
-    --adjustments in "on" mode
+          -- signals
+          e = {title = "ui.radialmenu2.electrics.signals", icon = "twoArrowsHorizontal", ["goto"] = "/root/playerVehicle/lights/signals/", uniqueID = "signals"}
+          if M.values.hazard_enabled == 0 and (M.values.signal_left_input == 1 or M.values.signal_right_input == 1) then
+            e.color = "#33ff33"
+          end
+          table.insert(entries, e)
+        end
+      }
+    )
+
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/lights/signals/",
+        generator = function(entries)
+          local e = {
+            startSlot = 0.5,
+            endSlot = 1.5,
+            title = "ui.radialmenu2.electrics.signals.left",
+            priority = 2,
+            icon = "arrowSolidLeft",
+            action = "toggle_left_signal",
+            uniqueID = "toggle_left_signal",
+            originalActionInfo = {level = "/root/playerVehicle/lights/", uniqueID = "signals"},
+            ignoreAsRecentActionForCategory = "playerVehicle",
+            onSelect = function()
+              M.toggle_left_signal()
+              return {"hide"}
+            end
+          }
+          if M.values.hazard_enabled == 0 and M.values.signal_left_input == 1 then
+            e.color = "#33ff33"
+          end
+          table.insert(entries, e)
+
+          e = {
+            startSlot = 4.5,
+            endSlot = 5.5,
+            title = "ui.radialmenu2.electrics.signals.right",
+            priority = 1,
+            icon = "arrowSolidRight",
+            action = "toggle_right_signal",
+            uniqueID = "toggle_right_signal",
+            originalActionInfo = {level = "/root/playerVehicle/lights/", uniqueID = "signals"},
+            ignoreAsRecentActionForCategory = "playerVehicle",
+            onSelect = function()
+              M.toggle_right_signal()
+              return {"hide"}
+            end
+          }
+          if M.values.hazard_enabled == 0 and M.values.signal_right_input == 1 then
+            e.color = "#33ff33"
+          end
+          table.insert(entries, e)
+        end
+      }
+    )
+
+    -- ignition level 0-2
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/vehicleFeatures/",
+        generator = function(entries)
+          local currentIgnitionLevel = M.values.ignitionLevel
+          local e = {
+            title = "ui.radialmenu2.powertrain.toggleIgnitionLevel",
+            desc = {txt = "ui.radialmenu2.currentValue", context = {value = ignitionMessageLookup[currentIgnitionLevel]}},
+            ignoreAsRecentActionForCategory = "playerVehicle",
+            action = "",
+            icon = "keys2",
+            uniqueID = "toggleIgnitionLevel",
+            onSelect = function()
+              --this toggles through 0 to 2 and skips 3 because there is not time between onDown and onUp
+              --TODO implement "hold" functionality like the normal input system
+              M.toggleIgnitionLevelOnDown()
+              M.toggleIgnitionLevelOnUp()
+            end
+          }
+          table.insert(entries, e)
+        end
+      }
+    )
+  end
+
+  --check if level 3 is allowed
+  if allowedIgnitionLevelsLookup[3] then
+    --starter button (ignition level 3)
+    --this is a bandaid for the missing "hold" functionality of the radial menu
+    core_quickAccess.addEntry(
+      {
+        level = "/root/playerVehicle/vehicleFeatures/",
+        generator = function(entries)
+          local e = {
+            title = "ui.radialmenu2.powertrain.engine",
+            desc = "ui.radialmenu2.powertrain.engine.desc",
+            action = "activateStarterMotor",
+            icon = "keys2",
+            uniqueID = "activateStarterMotor",
+            onSelect = function()
+              M.setIgnitionLevel(3)
+            end
+          }
+          table.insert(entries, e)
+        end
+      }
+    )
   end
 end
 
-local function sanitizeIgnitionLevel(desiredIgnitionLevel)
-  --return the _actual_ ignition level for a desired one so that certain levels can be "forbidden"
-  return ignitionLevelSanitization[desiredIgnitionLevel] or 0
-end
-
-local function setAllowedIgnitionLevels(allowedIgnitionLevels)
-  if #allowedIgnitionLevels <= 0 then --make sure that we always have at least one allowed ignition level
-    allowedIgnitionLevels = {0}
+local function setAllowedIgnitionLevels(newAllowedIgnitionLevels)
+  if #newAllowedIgnitionLevels <= 0 then --make sure that we always have at least one allowed ignition level
+    newAllowedIgnitionLevels = {0}
   --print warning
   end
-  local allowedIgnitionLevelsLookup = {}
-  for _, level in ipairs(allowedIgnitionLevels) do
+  allowedIgnitionLevels = newAllowedIgnitionLevels
+  allowedIgnitionLevelsLookup = {}
+  for _, level in ipairs(newAllowedIgnitionLevels) do
     allowedIgnitionLevelsLookup[level] = true
   end
 
@@ -423,7 +761,7 @@ local function setAllowedIgnitionLevels(allowedIgnitionLevels)
         end
       end
 
-      if not allowedIgnitionLevelsLookup[i] then --if we couldn't find anything higher allowed
+      if ignitionLevelSanitization[i] == i then --if we couldn't find anything higher allowed (cehcks if disallowed level is still untouched from previous search above)
         for j = max(i - 1, 0), 0, -1 do --try to find anything lower that is allowed...
           if allowedIgnitionLevelsLookup[j] then
             ignitionLevelSanitization[i] = j
@@ -456,17 +794,23 @@ local function reset()
   M.values.boostMax = 0
   M.values.electricalLoadCoef = 1
 
+  customValueParser.resetCustomValues()
+
   --lightbarState = 0
   lightsSavedState = 0
 
+  resetIndicatorPulse()
+
   toggleSound(lightbarState == 2, sirenSound)
 
-  ignitionHoldingStarter = false
+  updateIgnitionStarterHandler = nop
   ignitionHoldingStarterTimer = 0
   ignitionWasStartingEngine = false
 
+  --set these without the setter because it has additional runtime logic that is not desired upon reset
   M.values.ignitionLevel = spawnVehicleIgnitionLevel
   previousIgnitionLevel = spawnVehicleIgnitionLevel - 1
+  updateIgnitionLevelElectricsOverrideHandler()
 end
 
 --used for creating smoother from jbeam settings
@@ -503,7 +847,7 @@ local function init()
   toggleSound(lightbarState == 2, sirenSound)
 
   --look at both the regular electrics data as well as the components version for deep merging
-  local jbeamData = tableMergeRecursive(v.data.electrics or {}, v.data.components.electrics or {})
+  local jbeamData = tableMergeRecursiveArray(v.data.electrics or {}, v.data.components.electrics or {})
 
   --default smoothers for backwards compat (we've always used them)
   local defaultSmoothersSettings = {
@@ -520,27 +864,49 @@ local function init()
     {electricsName = "altitude", smootherType = "exponential", params = {10}}
   }
 
-  smoothers = {}
-
   --load jbeam smoother data
   local jbeamSmootherSettings = jbeamData.smoothers or {}
   --convert data into a usable table
   jbeamSmootherSettings = tableFromHeaderTable(jbeamSmootherSettings)
-  --merge default and jbeam data for final settings
-  local smootherSettings = tableMergeRecursive(defaultSmoothersSettings, jbeamSmootherSettings)
-  --dump(smootherSettings)
 
+  --merge default and jbeam data for final settings
+  local combinedSmootherSettings = {}
+  for _, setting in pairs(defaultSmoothersSettings) do
+    combinedSmootherSettings[setting.electricsName] = setting
+  end
+  for _, setting in pairs(jbeamSmootherSettings) do
+    combinedSmootherSettings[setting.electricsName] = setting
+  end
+
+  smoothers = {}
   --iterate over all desired smoothers and create them with the correct settings
-  for _, smootherSetting in ipairs(smootherSettings) do
+  for _, smootherSetting in pairs(combinedSmootherSettings) do
     smoothers[smootherSetting.electricsName] = newSmoother(smootherSetting.smootherType, smootherSetting.params)
   end
 
   local defaultCustomValues = {}
 
+  --this can come from components which do not offer proper table merging and might therefore contain multiple table headers
+  --this is dealt with in the customValueParser by ignoring the table headers
   local jbeamCustomValues = jbeamData.customValues or {}
   jbeamCustomValues = tableFromHeaderTable(jbeamCustomValues)
   --merge default and jbeam data for final settings
-  local customValues = tableMergeRecursive(defaultCustomValues, jbeamCustomValues)
+  local customValues = {}
+  local customValueNames = {}
+  for _, value in ipairs(jbeamCustomValues) do
+    if not customValueNames[value.electricsName] then
+      customValueNames[value.electricsName] = true
+      table.insert(customValues, value)
+    end
+  end
+
+  for _, value in ipairs(defaultCustomValues) do
+    if not customValueNames[value.electricsName] then
+      table.insert(customValues, value)
+    end
+  end
+
+  --dump(customValues)
 
   customValueParser.compileCustomValueUpdates(customValues)
 
@@ -551,10 +917,18 @@ local function init()
     end
   end
 
-  local allowedIgnitionLevels = jbeamData.allowedIgnitionLevels or {0, 1, 2, 3} --read allowed ignition levels from jbeam or use all of them by default
-  setAllowedIgnitionLevels(allowedIgnitionLevels)
+  --build the table of supported electrics override schemes
+  updateElectricsWithIgnitionLevelHandlers = {
+    european = updateElectricsWithIgnitionLevelEuropean
+  }
+  ignitionLevelOverrideType = jbeamData.ignitionLevelOverrideType or "european"
 
-  ignitionHoldingStarter = false
+  setAllowedIgnitionLevels(jbeamData.allowedIgnitionLevels or {0, 1, 2, 3}) --read allowed ignition levels from jbeam or use all of them by default
+
+  local indicatorCycleTime = jbeamData.indicatorCycleTime or 0.8
+  blinkTimerThreshold = indicatorCycleTime * 0.5 --threshold is half a cycle
+
+  updateIgnitionStarterHandler = nop
   ignitionHoldingStarterTimer = 0
   ignitionWasStartingEngine = false
 
@@ -563,29 +937,31 @@ local function init()
     spawnVehicleIgnitionLevel = v.config.additionalVehicleData.spawnWithEngineRunning and 3 or 0
   end
   spawnVehicleIgnitionLevel = sanitizeIgnitionLevel(spawnVehicleIgnitionLevel)
+
+  --these are set without the setter intentionally because the setter has added runtime logic that is not desired here
   M.values.ignitionLevel = spawnVehicleIgnitionLevel
   previousIgnitionLevel = spawnVehicleIgnitionLevel - 1
 
-  local ignitionLevelOverrideType = jbeamData.ignitionLevelOverrideType or "european"
-  if ignitionLevelOverrideType == "european" then
-    updateElectricsWithIgnitionLevel = updateElectricsWithIgnitionLevelEuropean
-  elseif ignitionLevelOverrideType == "none" then
-    updateElectricsWithIgnitionLevel = nop
-  end
+  resetIndicatorPulse()
+
+  registerQuickAccessMenu()
+
+  updateIgnitionLevelElectricsOverrideHandler()
 end
 
 local function initLastStage()
   if M.values.ignitionLevel == 3 then
-    M.values.ignitionLevel = 2
+    setIgnitionLevel(2)
     previousIgnitionLevel = 3
   end
 end
 
 local function set_warn_signal(value)
+  resetIndicatorPulse()
   signalWarnState = value
   signalRightState = signalWarnState
   signalLeftState = signalWarnState
-  automatic_indicator_stop = nop
+  automaticIndicatorStopHandler = nop
   updateSignals()
 end
 
@@ -603,6 +979,19 @@ local function toggle_lights()
     sounds.playSoundSkipAI(lightOn)
   elseif lightsState == 3 then
     lightsState = 0
+    lightOff = lightOff or sounds.createSoundscapeSound("LightOff")
+    sounds.playSoundSkipAI(lightOff)
+  end
+end
+
+local function toggle_highbeams()
+  --no function if state is 0/off
+  if lightsState == 1 then
+    lightsState = 2
+    lightOn = lightOn or sounds.createSoundscapeSound("LightOn")
+    sounds.playSoundSkipAI(lightOn)
+  elseif lightsState == 2 then
+    lightsState = 1
     lightOff = lightOff or sounds.createSoundscapeSound("LightOff")
     sounds.playSoundSkipAI(lightOff)
   end
@@ -666,29 +1055,8 @@ local function horn(state)
   end
 end
 
-local function setIgnitionLevel(ignitionLevel)
-  --print("Ignition Level: " .. ignitionLevel)
-  previousIgnitionLevel = M.values.ignitionLevel
-  local newIgnitionLevel = sanitizeIgnitionLevel(ignitionLevel)
-  M.values.ignitionLevel = newIgnitionLevel
-  if ignitionMessageLookup[newIgnitionLevel] then
-    guihooks.message({txt = ignitionMessageLookup[newIgnitionLevel], context = {}}, 4, "vehicle.ignition.ignitionLevel")
-  end
-
-  if newIgnitionLevel == 0 or newIgnitionLevel == 1 then
-    controller.mainController.setEngineIgnition(false)
-    controller.mainController.setStarter(false)
-  elseif newIgnitionLevel == 2 then
-    controller.mainController.setEngineIgnition(true)
-    controller.mainController.setStarter(false)
-  elseif newIgnitionLevel == 3 then
-    controller.mainController.setEngineIgnition(true)
-    controller.mainController.setStarter(true)
-  end
-end
-
 local function toggleIgnitionLevelOnDown()
-  ignitionHoldingStarter = true
+  updateIgnitionStarterHandler = updateIgnitionStarter
 end
 
 local function toggleIgnitionLevelOnUp()
@@ -700,7 +1068,8 @@ local function toggleIgnitionLevelOnUp()
     setIgnitionLevel(3)
   end
   local currentIgnitionLevel = M.values.ignitionLevel
-  ignitionHoldingStarter = false
+  updateIgnitionStarterHandler = nop
+  ignitionHoldingStarterTimer = 0
   ignitionWasStartingEngine = false
 
   if currentIgnitionLevel == 0 then
@@ -723,6 +1092,8 @@ M.updateGFX = updateGFX
 M.updateGFXSecondStep = updateGFXSecondStep
 M.toggle_left_signal = toggle_left_signal
 M.toggle_right_signal = toggle_right_signal
+M.set_left_signal = set_left_signal
+M.set_right_signal = set_right_signal
 M.stop_turn_signal = stop_turn_signal
 M.toggle_warn_signal = toggle_warn_signal
 M.set_warn_signal = set_warn_signal
@@ -731,6 +1102,7 @@ M.set_lightbar_signal = set_lightbar_signal
 M.toggle_fog_lights = toggle_fog_lights
 M.set_fog_lights = set_fog_lights
 M.toggle_lights = toggle_lights
+M.toggle_highbeams = toggle_highbeams
 M.light_flash_highbeams = light_flash_highbeams
 M.setLightsState = setLightsState
 M.horn = horn

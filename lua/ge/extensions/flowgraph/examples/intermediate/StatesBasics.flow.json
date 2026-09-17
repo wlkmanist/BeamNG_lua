@@ -1,12 +1,14 @@
 {
-  "activeGraphId":43,
-  "currentGraphID":43,
+  "activeGraphId":3,
+  "authors":"BeamNG",
+  "currentGraphID":3,
+  "date":1741628612,
   "debugEnabled":false,
   "description":"This example shows you the basics of the state system.",
+  "difficulty":40,
   "frecency":{},
   "graphs":{
     "1":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -49,8 +51,8 @@
       "name":"State A",
       "nodes":{
         "2":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -65,14 +67,17 @@
           "pos":[
             -18,
             204
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "8":{
-          "data":{
-            "logTag":"Node #8",
-            "logType":"I"
-          },
+          "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
+            "logType":{
+              "type":"string",
+              "value":"I"
+            },
             "value":{
               "type":"string",
               "value":"Enter A!"
@@ -81,6 +86,8 @@
           "hiddenPins":{
             "p_in":{
               "flow":false,
+              "logTag":true,
+              "logType":true,
               "value":false
             },
             "p_out":{
@@ -94,26 +101,27 @@
           "type":"debug/log"
         },
         "9":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.646700919,
-            0.455052257,
-            0.255325109,
-            0.5
+            0.64670091867446899414,
+            0.45505225658416748047,
+            0.25532510876655578613,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
             667,
             141
           ],
-          "commentText":"Every flowgraph  (like the one you see right now) represents either a state in your stategraph,\\nor is a subgraph of another flowgraph.\\n\\nYou can see the stategraph by clicking on the \"States\" Tab above.",
+          "commentText":"Every flowgraph (like the one you see right now) represents either a state in your state graph,\\nor is a subgraph of another flowgraph.\\n\\nYou can see the state graph by clicking on the \"States\" Tab above.",
           "commentTitle":"States",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             0,
@@ -129,17 +137,17 @@
           "type":"debug/comment"
         },
         "10":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -149,6 +157,7 @@
           "commentText":"A state can be enabled or disabled. \\nAn enabled state will trigger the \"on Update\" node once per frame.\\nA disabled state will not do this, and none of the nodes will do any work.\\n\\nWhen a state is entered, the \"on Update\" node is triggered once with only the \"enterState\" pin active.\\nLikewise, when a state is exited, the same thing happens with the \"exitState\" pin.\\nThis can be used to setup a state, or clean up when the state is finished.",
           "commentTitle":"Comment",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             -42,
@@ -164,11 +173,13 @@
           "type":"debug/comment"
         },
         "12":{
-          "data":{
-            "logTag":"Node #8",
-            "logType":"I"
-          },
+          "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
+            "logType":{
+              "type":"string",
+              "value":"I"
+            },
             "value":{
               "type":"string",
               "value":"Flowing ~ A"
@@ -177,6 +188,8 @@
           "hiddenPins":{
             "p_in":{
               "flow":false,
+              "logTag":true,
+              "logType":true,
               "value":false
             },
             "p_out":{
@@ -191,6 +204,7 @@
         },
         "13":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "frames":{
               "type":"number",
@@ -214,11 +228,13 @@
           "type":"logic/frameDelay"
         },
         "14":{
-          "data":{
-            "logTag":"Node #8",
-            "logType":"I"
-          },
+          "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
+            "logType":{
+              "type":"string",
+              "value":"I"
+            },
             "value":{
               "type":"string",
               "value":"Exit A!"
@@ -227,6 +243,8 @@
           "hiddenPins":{
             "p_in":{
               "flow":false,
+              "logTag":true,
+              "logType":true,
               "value":false
             },
             "p_out":{
@@ -241,6 +259,7 @@
         },
         "15":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -262,17 +281,17 @@
           "type":"states/transition"
         },
         "16":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -282,6 +301,7 @@
           "commentText":"This state will wait for 5 frames and then transition to the next state.\\nThe next state is the one connected by the \"success\" link coming from \\nthe current state in the states graph.",
           "commentTitle":"Comment",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             742,
@@ -299,15 +319,17 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        310.278046,
-        -154.040741
+        -44.31657409667968750000,
+        -165.74389648437500000000
       ],
-      "viewZoom":0.74999994
+      "viewZoom":1
     },
     "3":{
-      "children":{},
       "description":"This is the description for graph States",
       "dirty":false,
       "isStateGraph":true,
@@ -359,6 +381,7 @@
       "nodes":{
         "4":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -368,18 +391,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             -172,
@@ -389,8 +414,8 @@
           "type":"states/stateNode"
         },
         "5":{
-          "type":"states/stateEntry",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -400,29 +425,31 @@
           "pos":[
             -466,
             8
-          ]
+          ],
+          "type":"states/stateEntry"
         },
         "11":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
             488,
             360
           ],
-          "commentText":"This is the stategraph. It is different from a flowgraph in some ways:\\n - Each node (with the exception of the green \"Entry\" and red \"Exit\" nodes)\\n    represents another state. It can be a flowgraph, or another\\n    stategraph (grouped state).\\n - Links can go in any direction.\\n - There is no flow: States can either be enabled or disabled. States can\\n    transition to other states. Then the previous state is disabled, and the\\n    next state is enabled.\\n\\nDouble click on a state node to enter the represented graph.\\n\\nThe states connected to the state \"Entry\" node are started when the\\nproject is started.\\n\\nCheck out state transitions in the Event Log.",
+          "commentText":"This is the state graph. It is different from a flowgraph in some ways:\\n - Each node (with the exception of the green \"Entry\" and red \"Exit\" nodes)\\n    represents another state. It can be a flowgraph, or another\\n    state graph (grouped state).\\n - Links can go in any direction.\\n - There is no flow: States can either be enabled or disabled. States can\\n    transition to other states. Then the previous state is disabled, and the\\n    next state is enabled.\\n\\nDouble click on a state node to enter the represented graph.\\n\\nThe states connected to the state \"Entry\" node are started when the\\nproject is started.\\n\\nCheck out state transitions in the Event Log.",
           "commentTitle":"State Graph",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             -140,
@@ -439,6 +466,7 @@
         },
         "20":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -449,24 +477,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             178,
@@ -476,26 +507,27 @@
           "type":"states/stateNode"
         },
         "26":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
             372,
             100
           ],
-          "commentText":"You can change a states available \"Out-Pins\" by adding, \\nrenaming or removing pins in the \"Properties\" Window\\nwhen having a state node selected.",
+          "commentText":"You can change a states available out-pins by adding, \\nrenaming or removing pins in the Properties window\\nwhen having a state node selected.",
           "commentTitle":"Out-Pins",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             434,
@@ -512,6 +544,7 @@
         },
         "36":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -521,18 +554,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             486,
@@ -543,6 +578,7 @@
         },
         "41":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -552,18 +588,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             514,
@@ -574,6 +612,7 @@
         },
         "44":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -581,12 +620,13 @@
             "p_out":{}
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             878,
@@ -598,15 +638,17 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -510.569153,
-        -192.942245
+        -336.89489746093750000000,
+        -470.15209960937500000000
       ],
-      "viewZoom":0.74999994
+      "viewZoom":0.74999988079071044922
     },
     "17":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -656,8 +698,8 @@
       "name":"State B",
       "nodes":{
         "18":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -672,21 +714,28 @@
           "pos":[
             -18,
             204
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "19":{
-          "data":{
-            "duration":3
+          "data":{},
+          "dynamicMode":"repeat",
+          "hardcodedPins":{
+            "duration":{
+              "type":"number",
+              "value":3
+            }
           },
-          "duration":3,
           "hiddenPins":{
             "p_in":{
+              "duration":false,
               "flow":false,
               "reset":false,
               "useDtSim":true
             },
             "p_out":{
-              "flow":false
+              "flow":false,
+              "impulse":false
             }
           },
           "pos":[
@@ -696,17 +745,17 @@
           "type":"logic/wait"
         },
         "21":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -716,6 +765,7 @@
           "commentText":"This state waits 3 seconds and then transitions either along the \"success\" or \"failure\" transition.",
           "commentTitle":"Comment",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             -42,
@@ -732,6 +782,7 @@
         },
         "23":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "condition":{
               "type":"bool",
@@ -756,17 +807,17 @@
           "type":"logic/branch"
         },
         "24":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -776,6 +827,7 @@
           "commentText":"Change the value in the \"condition\" pin to change what state comes next.",
           "commentTitle":"Comment",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             602,
@@ -792,6 +844,7 @@
         },
         "31":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -813,11 +866,13 @@
           "type":"states/transition"
         },
         "32":{
-          "data":{
-            "logTag":"Node #8",
-            "logType":"I"
-          },
+          "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
+            "logType":{
+              "type":"string",
+              "value":"I"
+            },
             "value":{
               "type":"string",
               "value":"Enter B!"
@@ -826,6 +881,8 @@
           "hiddenPins":{
             "p_in":{
               "flow":false,
+              "logTag":true,
+              "logType":true,
               "value":false
             },
             "p_out":{
@@ -839,11 +896,13 @@
           "type":"debug/log"
         },
         "38":{
-          "data":{
-            "logTag":"Node #8",
-            "logType":"I"
-          },
+          "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
+            "logType":{
+              "type":"string",
+              "value":"I"
+            },
             "value":{
               "type":"string",
               "value":"Exit B!"
@@ -852,6 +911,8 @@
           "hiddenPins":{
             "p_in":{
               "flow":false,
+              "logTag":true,
+              "logType":true,
               "value":false
             },
             "p_out":{
@@ -866,6 +927,7 @@
         },
         "39":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -889,15 +951,17 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -520.529053,
-        -198.375671
+        -47.60317993164062500000,
+        -123.92626953125000000000
       ],
-      "viewZoom":0.330000013
+      "viewZoom":1
     },
     "35":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -918,31 +982,9 @@
       ],
       "name":"Wait Success",
       "nodes":{
-        "59":{
-          "data":{},
-          "hiddenPins":{
-            "p_in":{
-              "flow":false
-            },
-            "p_out":{}
-          },
-          "pins":[
-            [
-              "in",
-              "flow",
-              "flow"
-            ]
-          ],
-          "pos":[
-            374,
-            78
-          ],
-          "transitionName":"success",
-          "type":"states/transition"
-        },
         "51":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -957,29 +999,31 @@
           "pos":[
             -88,
             50
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "57":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
-            642,
-            239
+            702,
+            261
           ],
           "commentText":"This state waits 3 seconds before continuing along the \"success\" transition.\\n",
           "commentTitle":"Wait",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             -102,
@@ -995,18 +1039,24 @@
           "type":"debug/comment"
         },
         "58":{
-          "data":{
-            "duration":3
+          "data":{},
+          "dynamicMode":"repeat",
+          "hardcodedPins":{
+            "duration":{
+              "type":"number",
+              "value":3
+            }
           },
-          "duration":3,
           "hiddenPins":{
             "p_in":{
+              "duration":false,
               "flow":false,
               "reset":false,
               "useDtSim":true
             },
             "p_out":{
-              "flow":false
+              "flow":false,
+              "impulse":false
             }
           },
           "pos":[
@@ -1014,19 +1064,44 @@
             78
           ],
           "type":"logic/wait"
+        },
+        "59":{
+          "data":{},
+          "dynamicMode":"repeat",
+          "hiddenPins":{
+            "p_in":{
+              "flow":false
+            },
+            "p_out":{}
+          },
+          "pins":[
+            [
+              "in",
+              "flow",
+              "flow"
+            ]
+          ],
+          "pos":[
+            430,
+            77
+          ],
+          "transitionName":"success",
+          "type":"states/transition"
         }
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -486.661255,
-        -161.273376
+        -143.67579650878906250000,
+        -239.07333374023437500000
       ],
-      "viewZoom":0.5
+      "viewZoom":1
     },
     "40":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -1047,31 +1122,9 @@
       ],
       "name":"Wait Fail",
       "nodes":{
-        "50":{
-          "data":{},
-          "hiddenPins":{
-            "p_in":{
-              "flow":false
-            },
-            "p_out":{}
-          },
-          "pins":[
-            [
-              "in",
-              "flow",
-              "flow"
-            ]
-          ],
-          "pos":[
-            486,
-            22
-          ],
-          "transitionName":"success",
-          "type":"states/transition"
-        },
         "42":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -1086,29 +1139,31 @@
           "pos":[
             10,
             -6
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "48":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
-            642,
-            239
+            684,
+            269
           ],
           "commentText":"This state waits 3 seconds before continuing along the \"success\" transition.\\n",
           "commentTitle":"Wait",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             -14,
@@ -1124,18 +1179,24 @@
           "type":"debug/comment"
         },
         "49":{
-          "data":{
-            "duration":3
+          "data":{},
+          "dynamicMode":"repeat",
+          "hardcodedPins":{
+            "duration":{
+              "type":"number",
+              "value":3
+            }
           },
-          "duration":3,
           "hiddenPins":{
             "p_in":{
+              "duration":false,
               "flow":false,
               "reset":false,
               "useDtSim":true
             },
             "p_out":{
-              "flow":false
+              "flow":false,
+              "impulse":false
             }
           },
           "pos":[
@@ -1143,19 +1204,44 @@
             22
           ],
           "type":"logic/wait"
+        },
+        "50":{
+          "data":{},
+          "dynamicMode":"repeat",
+          "hiddenPins":{
+            "p_in":{
+              "flow":false
+            },
+            "p_out":{}
+          },
+          "pins":[
+            [
+              "in",
+              "flow",
+              "flow"
+            ]
+          ],
+          "pos":[
+            514,
+            21
+          ],
+          "transitionName":"success",
+          "type":"states/transition"
         }
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -65.269577,
-        -233.729889
+        -65.26957702636718750000,
+        -233.72988891601562500000
       ],
-      "viewZoom":1.24999988
+      "viewZoom":1.24999988079071044922
     },
     "43":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -1176,35 +1262,9 @@
       ],
       "name":"Finished",
       "nodes":{
-        "52":{
-          "data":{
-            "logTag":"Node #52",
-            "logType":"I"
-          },
-          "hardcodedPins":{
-            "value":{
-              "type":"string",
-              "value":"Finished the project."
-            }
-          },
-          "hiddenPins":{
-            "p_in":{
-              "flow":false,
-              "value":false
-            },
-            "p_out":{
-              "flow":false
-            }
-          },
-          "pos":[
-            262,
-            -90
-          ],
-          "type":"debug/log"
-        },
         "45":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -1219,11 +1279,12 @@
           "pos":[
             38,
             -6
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "46":{
-          "type":"debug/stopManager",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -1233,33 +1294,35 @@
           "pos":[
             262,
             22
-          ]
+          ],
+          "type":"debug/stopManager"
         },
         "47":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
-            632,
-            267
+            558,
+            311
           ],
           "commentText":"This state simply stops the project.\\n",
           "commentTitle":"Finished",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            -4,
-            -154
+            -14,
+            -168
           ],
           "simple":false,
           "textColor":[
@@ -1269,23 +1332,60 @@
             1
           ],
           "type":"debug/comment"
+        },
+        "52":{
+          "data":{},
+          "dynamicMode":"repeat",
+          "hardcodedPins":{
+            "logType":{
+              "type":"string",
+              "value":"I"
+            },
+            "value":{
+              "type":"string",
+              "value":"Finished the project."
+            }
+          },
+          "hiddenPins":{
+            "p_in":{
+              "flow":false,
+              "logTag":true,
+              "logType":true,
+              "value":false
+            },
+            "p_out":{
+              "flow":false
+            }
+          },
+          "pos":[
+            262,
+            -105
+          ],
+          "type":"debug/log"
         }
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -108.320023,
-        -280.819336
+        -185.19305419921875000000,
+        -322.86932373046875000000
       ],
-      "viewZoom":1.25
+      "viewZoom":1
     }
   },
+  "isScenario":false,
   "macros":{},
   "name":"State Basics ",
   "savedDir":"/lua/ge/extensions/flowgraph/examples/intermediate/",
   "savedFilename":"StatesBasics.flow.json",
   "stateGraphId":3,
-  "variables":{},
-  "version":0.1
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
+  "version":0.20000000000000001110
 }

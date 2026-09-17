@@ -20,31 +20,27 @@ C.pinSchema = {
 
 C.tags = {'quat', 'quaternion', 'rotation'}
 
+local dirVec, dirVecUp = vec3(), vec3()
+local rot = quat()
+
 function C:init()
-  self.up = vec3(0,0,1)
-end
-
-
-function C:drawCustomProperties()
-  local reason = nil
-  im.Columns(2)
-  im.Text("Up Vector")
-  im.NextColumn()
-  local pos = im.ArrayFloat(3)
-  pos[0] = im.Float(self.up.x)
-  pos[1] = im.Float(self.up.y)
-  pos[2] = im.Float(self.up.z)
-  if im.DragFloat3("##pos"..self.id,pos, 0.5) then
-    self.up:set(pos[0], pos[1], pos[2])
-    reason = "Changed up vector"
-  end
-  im.Columns(1)
-  return reason
 end
 
 function C:work()
-  local quat = quatFromDir(vec3(self.pinIn.to.value) - vec3(self.pinIn.from.value), self.pinIn.up.value and vec3(self.pinIn.up.value):normalized() or self.up)
-  self.pinOut.value.value = {quat.x, quat.y, quat.z, quat.w}
+  if not self.pinIn.from.value or not self.pinIn.to.value then return end
+
+  dirVecUp:setFromTable(self.pinIn.from.value)
+  dirVec:setFromTable(self.pinIn.to.value)
+  dirVec:setSub(dirVecUp)
+
+  if self.pinIn.up.value then
+    dirVecUp:setFromTable(self.pinIn.up.value)
+  else
+    dirVecUp:set(0, 0, 1)
+  end
+
+  rot:setFromDir(dirVec, dirVecUp)
+  self.pinOut.value.value = rot:toTable()
 end
 
 return _flowgraph_createNode(C)

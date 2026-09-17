@@ -35,7 +35,7 @@ local originFilterImC = im.ArrayChar(256, "")
 local invalidOriginFilter = false
 local paused = false
 local winTitle = beamng_appname..".consoleNG - "..beamng_versiond .." - ".. beamng_buildtype .." - ".. beamng_arch .."##consoleNG"
-local consoleInputField = ffi.new("char[4096]", "")
+local consoleInputField = im.ArrayChar(4096, "")
 --local inputCallbackC = nil
 local comboCurrentItem = im.IntPtr(0)
 local fontConsoleFact = im.FloatPtr(0.95)
@@ -84,8 +84,6 @@ Pattern Item:
 local filterErr =""
 local vehicleActionMaps = {"VehicleCommonActionMap", "VehicleSpecificActionMap"}
 local interestingLines = {}
-
-ffi.cdef("int ImGuiInputTextCallbackLua(const ImGuiInputTextCallbackData* data);")
 
 local function settingsSave()
  local s = {
@@ -342,14 +340,14 @@ local function menuToolbar(uiScale)
     end
 
     local fsize = 24--*uiScale--im.CalcTextSize("test").y
-    if gui.uiIconImageButton(gui.icons.delete, {x=fsize, y=fsize}, iconButtonFgColor.Value, nil, iconButtonBgColor.Value) then
+    if gui.uiIconImageButton(gui.icons.delete, {x=fsize, y=fsize}, iconButtonFgColor.Value, nil, iconButtonBgColor.Value, "ui_console_clear") then
       clearConsole()
     end
     im.tooltip("Clear console")
     -- im.TextUnformatted(string.format("upd=%.3fms add=%.3fms", rollAvgCalc(rollAvgUpdate), rollAvgCalc(rollAvgAdd)) )
 
     im.SetCursorPosX(im.GetCursorPosX() + im.GetContentRegionAvailWidth() - fsize)
-    if gui.uiIconImageButton(fullscreen and gui.icons.fullscreen_exit or gui.icons.fullscreen, {x=fsize, y=fsize}, iconButtonFgColor.Value, nil, iconButtonBgColor.Value) then
+    if gui.uiIconImageButton(fullscreen and gui.icons.fullscreen_exit or gui.icons.fullscreen, {x=fsize, y=fsize}, iconButtonFgColor.Value, nil, iconButtonBgColor.Value, "ui_console_fullscreen") then
       if fullscreen then
         fullscreen = false
         im.SetWindowPos1(im.ImVec2(winstate[1] or 0,winstate[2] or 0), im.ImGuiCond_Always)
@@ -570,7 +568,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   previouslyShown = true
   -- local tim = hptimer()
 
-  if im.IsKeyReleased(112) then --scroll lock
+  if im.IsKeyReleased(im.Key_ScrollLock) then
     paused = not paused
   end
 
@@ -593,8 +591,8 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   im.SetNextWindowSize(initialWindowSize, im.Cond_FirstUseEver)
   if fullscreen then
     local vspace = im.GetMainViewport()
-    im.SetNextWindowPos(vspace.Pos, im.ImGuiCond_Always)
-    im.SetNextWindowSize(vspace.Size, im.ImGuiCond_Always)
+    im.SetNextWindowPos(vspace.WorkPos, im.ImGuiCond_Always)
+    im.SetNextWindowSize(vspace.WorkSize, im.ImGuiCond_Always)
     -- im.SetNextWindowFocus()
     im.SetNextWindowBgAlpha(winBgAlpha[2][0])
   else
@@ -900,7 +898,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
               -- im.TextColored(lcol,"%s",tostring(v))
               local txtwidth = im.CalcTextSize(tostring(v)).x
               if v ~= 2 and im.GetContentRegionAvailWidth() < txtwidth then
-                im.TextColored(lcol,"%s",tostring(v):sub(1,256) )
+                im.TextColored(lcol,string.format("%s", tostring(v):sub(1,256) ))
                 txtwidth = txtwidth * (1/fontConsoleFact[0])
                 local vp = im.GetWindowViewport()
                 local chunkSize = tostring(v):len() * vp.Size.x / txtwidth
@@ -926,7 +924,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
                   end
                 end
               else
-                im.TextColored(lcol,"%s",tostring(v))
+                im.TextColored(lcol, "%s", tostring(v))
               end
               im.TableNextColumn()
               ::continue_skipcol::
@@ -971,7 +969,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
       if mustFocusKeyboard then im.SetKeyboardFocusHere() end
       im.PushItemWidth(im.GetContentRegionAvailWidth() - 70 * uiScale)
-      local exec = im.InputText("##inputText", consoleInputField, ffi.sizeof(consoleInputField), flags, ffi.C.ImGuiInputTextCallbackLua, "ConsoleInputCallback")
+      local exec = im.InputText("##inputText", consoleInputField, im.ArraySize(consoleInputField), flags, ffi.C.ImGuiInputTextCallbackLua, "ConsoleInputCallback")
 
 
       im.SameLine()
@@ -1057,13 +1055,13 @@ local function onUpdate(dtReal, dtSim, dtRaw)
           else
             local vid = vehIds[comboCurrentItem[0]-2]
             if not vid then log("E","exec","Selected vehicle invalid");refreshCombo();goto skipcmd end
-            local v = be:getObjectByID(vid)
+            local v = getObjectByID(vid)
             if not v then log("E","exec","Selected vehicle dosn't exist");refreshCombo();goto skipcmd end
             log("I", "exec", "veh "..tostring(vid).." < "..dumps(cmd))
             v:queueLuaCommand(cmd)
           end
 
-          ffi.fill(consoleInputField, ffi.sizeof(consoleInputField))
+          ffi.fill(consoleInputField, im.ArraySize(consoleInputField))
 
           while(#history > 20) do
             table.remove(history, 1)

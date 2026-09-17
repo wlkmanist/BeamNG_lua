@@ -1,6 +1,7 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local C = {}
--- icon renderer
-local iconRendererName = "markerIconRenderer"
 local markerIndexCorrection = { { 3, 4, 2, 1 }, { 1, 2, 4, 3 } }
 local vecZero = vec3(0,0,0)
 local vecOne = vec3(1,1,1)
@@ -35,7 +36,7 @@ function C:setup(cluster)
   self.iconLift = cluster.iconLift or 0.25
   self.iconOffsetHeight = cluster.iconOffsetHeight or 1.45
 
-  iconRendererObj = scenetree.findObjectById(self.iconRendererId)
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
   for idx, ntuple in ipairs(cluster.doors or {}) do
     local area = scenetree.findObject(ntuple[1])
     local icon = scenetree.findObject(ntuple[2])
@@ -65,7 +66,7 @@ function C:setup(cluster)
       if iconRendererObj then
         local iconId = iconRendererObj:addIcon(string.format("%s-gsIcon-%d",cluster.id, idx), cluster.icon, iconPos)
         local iconInfo = iconRendererObj:getIconById(iconId)
-        iconInfo.color = ColorI(255,255,255,255)
+        iconInfo.color = ColorI(255,255,255,0)
         iconInfo.customSize = iconWorldSize
         iconInfo.drawIconShadow = false
 
@@ -80,7 +81,7 @@ function C:setup(cluster)
 end
 
 function C:update(data)
-  if not self.visible or not data.veh then return end
+  if not self.visible then return end
 
   local anyOverlap = false
   for idx, area in ipairs(self.doors or {}) do
@@ -145,28 +146,16 @@ end
 
 function C:createObjects()
   self:clearObjects()
-  iconRendererObj = scenetree.findObject(iconRendererName)
-  if not iconRendererObj then
-    iconRendererObj = createObject("BeamNGWorldIconsRenderer")
-    iconRendererObj:registerObject(iconRendererName);
-    iconRendererObj.maxIconScale = 2
-    iconRendererObj.mConstantSizeIcons = true
-    iconRendererObj.canSave = false
-    iconRendererObj:loadIconAtlas("core/art/gui/images/iconAtlas.png", "core/art/gui/images/iconAtlas.json");
-  end
-  self.iconRendererId = iconRendererObj:getId()
 end
 
 function C:hide()
   if not self.visible then return end
   self.visible = false
-  if self.iconRendererId then
-    iconRendererObj = scenetree.findObject(self.iconRendererId)
-    if iconRendererObj then
-      for idx, area in ipairs(self.doors or {}) do
-        playModeColorI.alpha = 0
-        area.iconInfo.color = playModeColorI
-      end
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+  if iconRendererObj then
+    for idx, area in ipairs(self.doors or {}) do
+      playModeColorI.alpha = 0
+      area.iconInfo.color = playModeColorI
     end
   end
   for idx, area in ipairs(self.doors or {}) do
@@ -183,12 +172,10 @@ function C:show()
 end
 
 function C:clearObjects()
-  if self.iconRendererId then
-    iconRendererObj = scenetree.findObject(self.iconRendererId)
-    if iconRendererObj then
-      for idx, area in ipairs(self.doors or {}) do
-        iconRendererObj:removeIconById(area.iconId)
-      end
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+  if iconRendererObj then
+    for idx, area in ipairs(self.doors or {}) do
+      iconRendererObj:removeIconById(area.iconId)
     end
   end
   for idx, area in ipairs(self.doors or {}) do
@@ -268,6 +255,13 @@ function C:drawAxisBox(corner, x, y, z, clr)
       vec3(c+corner+b  ),
       vec3(c+corner+a+b),
       clr)
+  end
+end
+
+-- minimap
+function C:drawOnMinimap(td)
+  for _, door in ipairs(self.doors or {}) do
+    ui_apps_minimap_utils.simpleCircle(door.iconPos)
   end
 end
 

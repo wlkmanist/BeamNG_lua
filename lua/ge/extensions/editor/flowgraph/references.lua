@@ -429,7 +429,7 @@ function C:drawViewMode1()
         end
       im.EndTable()
       end
-      
+
       im.Separator()
       im.Text("Existing Node Types: ")
       im.SameLine()
@@ -452,10 +452,10 @@ function C:drawViewMode1()
   end
   if im.BeginTable('NodeRef', 4) then
 
-    im.TableSetupColumn("Node", 0, 2)
-    im.TableSetupColumn("Occurrences")
-    im.TableSetupColumn("Projects used in")
-    im.TableSetupColumn("Categories")
+    im.TableSetupColumn("Node", im.TableColumnFlags_WidthStretch, 40)
+    im.TableSetupColumn("Occurrences", im.TableColumnFlags_WidthStretch, 20)
+    im.TableSetupColumn("Projects", im.TableColumnFlags_WidthStretch, 20)
+    im.TableSetupColumn("Categories", im.TableColumnFlags_WidthStretch, 20)
 
     im.TableHeadersRow()
     im.TableNextColumn()
@@ -499,25 +499,16 @@ function C:drawViewMode2()
   local rows = math.max(#self.nodeTable[self.inspectedNode].pins.inPins, #self.nodeTable[self.inspectedNode].pins.outPins)
   if rows > 0 then
     if im.BeginTable('', 4) then
-      im.TableSetupColumn("Input Pins", 0, im.GetContentRegionAvailWidth() / 6)
-      im.TableSetupColumn("Description", 0, im.GetContentRegionAvailWidth() / 3)
-      im.TableSetupColumn("Output Pins", 0, im.GetContentRegionAvailWidth() / 6)
-      im.TableSetupColumn("Description", 0, im.GetContentRegionAvailWidth() / 3)
+      im.TableSetupColumn("Input Pins", im.TableColumnFlags_WidthStretch, 20)
+      im.TableSetupColumn("Description", im.TableColumnFlags_WidthStretch, 30)
+      im.TableSetupColumn("Output Pins", im.TableColumnFlags_WidthStretch, 20)
+      im.TableSetupColumn("Description", im.TableColumnFlags_WidthStretch, 30)
       im.TableHeadersRow()
       im.TableNextColumn()
-      for i = 1, 4 do
-        im.TableSetBgColor(im.TableBgTarget_CellBg, im.GetColorU322(columnBackground), 0)
-        im.TableSetBgColor(im.TableBgTarget_CellBg, im.GetColorU322(columnBackground), 2)
-        im.Dummy(im.ImVec2(0, 3))
-        im.TableNextColumn()
-      end
 
       for i = 1, rows do
-
-        local pin = self.nodeTable[self.inspectedNode].pins.inPins[i]
         im.TableSetBgColor(im.TableBgTarget_CellBg, im.GetColorU322(columnBackground), 0)
-        im.TableSetBgColor(im.TableBgTarget_CellBg, im.GetColorU322(columnBackground), 2)
-
+        local pin = self.nodeTable[self.inspectedNode].pins.inPins[i]
         if pin then
           self.mgr:DrawTypeIcon(pin.chainFlow and 'chainFlow' or pin.impulse and 'impulse' or pin.type, true, 1, pinPreviewSize)
           im.SameLine()
@@ -537,6 +528,7 @@ function C:drawViewMode2()
           end
         end
 
+        im.TableSetBgColor(im.TableBgTarget_CellBg, im.GetColorU322(columnBackground), 2)
         pin = self.nodeTable[self.inspectedNode].pins.outPins[i]
         if pin then
           self.mgr:DrawTypeIcon(pin.chainFlow and 'chainFlow' or pin.impulse and 'impulse' or pin.type, true, 1, pinPreviewSize)
@@ -564,8 +556,8 @@ function C:drawViewMode2()
   if tableSize(self.nodeTable[self.inspectedNode].behaviour) > 0 then
 
     if im.BeginTable("", 2) then
-      im.TableSetupColumn("Behaviour", 0, im.CalcTextSize("Behaviour").x + 10)
-      im.TableSetupColumn("Description", 0, im.GetContentRegionAvailWidth())
+      im.TableSetupColumn("Behaviour", im.TableColumnFlags_WidthStretch, 25)
+      im.TableSetupColumn("Description", im.TableColumnFlags_WidthStretch, 75)
       im.TableHeadersRow()
       im.TableNextColumn()
       im.Dummy(im.ImVec2(0, 3))
@@ -585,8 +577,8 @@ function C:drawViewMode2()
   end
 
   if im.BeginTable('ProjectsForNode', 2) then
-    im.TableSetupColumn("Project", 0, 3.25)
-    im.TableSetupColumn("Occurrences")
+    im.TableSetupColumn("Project", im.TableColumnFlags_WidthStretch, 75)
+    im.TableSetupColumn("Occurrences", im.TableColumnFlags_WidthStretch, 25)
     im.TableHeadersRow()
     im.TableNextColumn()
 
@@ -616,7 +608,7 @@ function C:drawViewMode2()
       im.Text("None")
     end
   im.EndTable()
-  end  
+  end
 end
 
 return _flowgraph_createMgrWindow(C)

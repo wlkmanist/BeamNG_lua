@@ -16,6 +16,7 @@ C.pinSchema = {
   { dir = 'in', type = 'number', name = 'vehId_1', description = 'VehId 1 that will be set to the lane 1 of the dragRace.' },
   { dir = 'in', type = 'bool', name = 'isPlayable_1', description = '' },
   { dir = 'in', type = 'number', name = 'dial_1', description = '' },
+  { dir = 'in', type = 'number', name = 'lane_1', description = '' },
   { dir = 'out', type = 'flow', name = 'flow', description = 'Impulse out flow for when all vehicles are into the dragRace system.', impulse = true },
 }
 
@@ -81,10 +82,14 @@ function C:updatePins(old, new)
         if lnk.sourcePin == self.pinInLocal['dial_'..i] then
           self.graph:deleteLink(lnk)
         end
+        if lnk.sourcePin == self.pinInLocal['lane_'..i] then
+          self.graph:deleteLink(lnk)
+        end
       end
       self:removePin(self.pinInLocal['vehId_'..i])
       self:removePin(self.pinInLocal['isPlayable_'..i])
       self:removePin(self.pinInLocal['dial_'..i])
+      self:removePin(self.pinInLocal['lane_'..i])
     end
 
   else
@@ -93,6 +98,7 @@ function C:updatePins(old, new)
       self:createPin('in', 'number', 'vehId_' .. i, nil, 'Vehicle in lane ' .. i .. ' that will be set.')
       self:createPin('in', 'number', 'dial_' .. i, nil, 'dial in lane ' .. i .. ' that will be set.')
       self:createPin('in', 'bool', 'isPlayable_' .. i, nil, '')
+      self:createPin('in', 'number', 'lane_' .. i, nil, '')
     end
   end
   self.count = new
@@ -104,13 +110,14 @@ function C:workOnce()
     local vehId = self.pinIn['vehId_'..i].value
     local isPlayable = self.pinIn['isPlayable_'..i].value or false
     local dial = self.pinIn['dial_' .. i].value or -1
+    local lane = self.pinIn['lane_' .. i].value or 1
     if vehId and vehId > 0 then
-      table.insert(vehicleList, {id = vehId, isPlayable = isPlayable, dial = dial})
+      table.insert(vehicleList, {id = vehId, isPlayable = isPlayable, dial = dial, lane = lane})
     end
   end
 
   if #vehicleList == 0 then return end
-  gameplay_drag_general.setVehicles(vehicleList)
+  gameplay_drag_dragBridge.setVehicles(vehicleList)
   self.pinOut.flow.value = true
 end
 

@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local C = {}
 
 local markerIndexCorrection = { { 3, 4, 2, 1 }, { 1, 2, 4, 3 } }
@@ -25,7 +28,7 @@ function C:setup(cluster)
   self.cluster = cluster
 
   self.pumps = {}
-  iconRendererObj = scenetree.findObjectById(self.iconRendererId)
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
   for idx, pair in ipairs(cluster.pumps or {}) do
     local area = scenetree.findObject(pair[1])
     local icon = scenetree.findObject(pair[2])
@@ -107,32 +110,19 @@ function C:update(data)
   self.anyOverlap = anyOverlap
 end
 
-local iconRendererName = "markerIconRenderer"
 function C:createObjects()
   self:clearObjects()
-  iconRendererObj = scenetree.findObject(iconRendererName)
-  if not iconRendererObj then
-    iconRendererObj = createObject("BeamNGWorldIconsRenderer")
-    iconRendererObj:registerObject(iconRendererName);
-    iconRendererObj.maxIconScale = 2
-    iconRendererObj.mConstantSizeIcons = true
-    iconRendererObj.canSave = false
-    iconRendererObj:loadIconAtlas("core/art/gui/images/iconAtlas.png", "core/art/gui/images/iconAtlas.json");
-  end
-  self.iconRendererId = iconRendererObj:getId()
 end
 
 function C:hide()
   if not self.visible then return end
   self.visible = false
-  if self.iconRendererId then
-    iconRendererObj = scenetree.findObject(self.iconRendererId)
-    if iconRendererObj then
-      for idx, area in ipairs(self.pumps or {}) do
-        playModeColorI.alpha = 0
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+  if iconRendererObj then
+    for idx, area in ipairs(self.pumps or {}) do
+      playModeColorI.alpha = 0
 
-        area.iconInfo.color = playModeColorI
-      end
+      area.iconInfo.color = playModeColorI
     end
   end
 end
@@ -143,12 +133,10 @@ function C:show()
 end
 
 function C:clearObjects()
-  if self.iconRendererId then
-    iconRendererObj = scenetree.findObject(self.iconRendererId)
-    if iconRendererObj then
-      for idx, area in ipairs(self.pumps or {}) do
-        iconRendererObj:removeIconById(area.iconId)
-      end
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+  if iconRendererObj then
+    for idx, area in ipairs(self.pumps or {}) do
+      iconRendererObj:removeIconById(area.iconId)
     end
   end
   self.pumps = nil
@@ -222,6 +210,14 @@ function C:drawAxisBox(corner, x, y, z, clr)
       vec3(c+corner+b  ),
       vec3(c+corner+a+b),
       clr)
+  end
+end
+
+
+-- minimap
+function C:drawOnMinimap(td)
+  for _, pump in ipairs(self.pumps or {}) do
+    ui_apps_minimap_utils.simpleCircle(pump.iconPos)
   end
 end
 

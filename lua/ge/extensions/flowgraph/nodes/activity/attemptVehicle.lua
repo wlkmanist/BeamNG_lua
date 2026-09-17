@@ -3,13 +3,12 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
-C.name = 'ActivityAttempt Vehicle'
+C.name = 'Activity Attempt Vehicle'
 C.color = im.ImVec4(0.03,0.41,0.64,0.75)
-C.description = "Creates an attempt for an activity."
+C.description = "Processes a vehicle for the activity attempt."
 C.category = 'once_instant'
 
 C.pinSchema = {
@@ -39,6 +38,20 @@ function C:workOnce()
         config = veh.partConfig,
         isConfigFile = string.endswith(veh.partConfig,'.pc')
       }
+
+      if career_career.isActive() then
+        if self.mgr.activity.setupModules.vehicles.usePlayerVehicle then
+          local inventoryId = career_modules_inventory.getInventoryIdFromVehicleId(veh:getID())
+          if inventoryId then
+            vData.originId = inventoryId
+            vData.originKey = "careerInventory"
+          end
+        else
+          vData.originId = self.mgr.activity.setupModules.vehicles._selectionIdx
+          vData.originKey = "providedBySetupModule"
+        end
+      end
+
       local attempt = self.pinIn.attempt.value
       attempt[self.pinIn.vehKey.value or "vehicle"] = vData
       self.pinOut.attempt.value = attempt

@@ -4,10 +4,9 @@
 
 local im  = ui_imgui
 
-
 local C = {}
 
-C.name = 'on Vehicle Destroyed'
+C.name = 'On Vehicle Destroyed'
 C.description = 'Detects when a vehicle is destroyed.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle

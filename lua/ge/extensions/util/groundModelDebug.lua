@@ -12,6 +12,15 @@ local windowOpen = im.BoolPtr(false)
 local groundModels = {}
 local groundDebug = im.BoolPtr(false)
 local staticDebug = im.BoolPtr(false)
+local debugtype = -1
+
+-- Collision density related variables
+local colDensityEnabled = im.BoolPtr(false)
+local colDensityShowText = im.BoolPtr(true)
+local colDensityThreshold = im.FloatPtr(25)
+local colDensityTileCount = im.IntPtr(100)
+local colDensityTileSize = im.FloatPtr(5)
+
 local depthDebug = im.BoolPtr(false)
 local mouseFocus = im.BoolPtr(true)
 local distance = im.FloatPtr(20)
@@ -42,6 +51,10 @@ local function serializeSettings()
   tbl.options.distance = distance[0]
   tbl.options.tileSize = tileSize[0]
   tbl.options.depthScale = depthScale[0]
+  tbl.options.colDensityThreshold = colDensityThreshold[0]
+  tbl.options.colDensityTileCount = colDensityTileCount[0]
+  tbl.options.colDensityTileSize = colDensityTileSize[0]
+  tbl.options.colDensityShowText = colDensityShowText[0]
   jsonWriteFile(settingsPath, tbl, true)
 end
 
@@ -58,6 +71,10 @@ local function deserializeSettings()
       distance[0] = tbl.options.distance
       tileSize[0] = tbl.options.tileSize
       depthScale[0] = tbl.options.depthScale
+      colDensityThreshold[0] = tbl.options.colDensityThreshold or 0
+      colDensityTileCount[0] = tbl.options.colDensityTileCount or 50
+      colDensityTileSize[0] = tbl.options.colDensityTileSize or 5
+      colDensityShowText[0] = tbl.options.colDensityShowText ~= false
     end
   end
 end
@@ -132,7 +149,6 @@ local function drawGroundModel(visibleGroundModels, debugtype, focusPos, gmName,
     drawn = drawn + debugDrawer:renderGroundModelDebug(debugtype, gmName, col, distance[0], tileSize[0], focusPos, depthScale[0])
   end
   if staticDebug[0] then
-    --print(distance[0])
     drawn = drawn + debugDrawer:renderStaticColDebug(debugtype, gmName, col, distance[0], tileSize[0], focusPos, depthScale[0])
   end
   if drawn > 0 then
@@ -146,7 +162,9 @@ local function openWindow()
   windowOpen[0] = true
 end
 
-local function onUpdate()
+local timeToNextDrawCount = 0
+local axisToDraw = false -- x axis, vs y axis
+local function onUpdate(dt)
   if windowOpen[0] ~= true then return end
 
   -- mouse
@@ -160,15 +178,7 @@ local function onUpdate()
       -- removes the object - fun minigame ;)
       --if res.object then res.object:delete() end
       focusPos = vec3(res.pos)
-      debugDrawer:drawSphere(focusPos, 0.03, ColorF(0,1,0,1))
-
-      local data = {}
-      data.texture = 'art/circle'
-      data.position = focusPos
-      data.color = ColorF(1, 0, 0, 0.75)
-      data.forwardVec = vec3(0, 1, 0)
-      data.scale = (vec3(1,1,1) * distance[0])
-      Engine.Render.DynamicDecalMgr.addDecal(data)
+      debugDrawer:drawSphere(focusPos, math.min(math.max(res.distance * 0.02, 0.02), 1.0), ColorF(0,1,0,1))
     end
   end
 
@@ -183,16 +193,17 @@ local function onUpdate()
       end
       im.EndMenuBar()
     end
-    local debugtype = -1
     if groundDebug[0] and depthDebug[0] then debugtype = 2
     elseif groundDebug[0] and not depthDebug[0] then debugtype = 0
-    elseif not groundDebug[0] and depthDebug[0] then debugtype = 1 end
+    elseif not groundDebug[0] and depthDebug[0] then debugtype = 1
+    else debugtype = -1 end
 
     im.Checkbox("Ground", groundDebug) im.SameLine()
     im.Checkbox("Depth", depthDebug) im.SameLine()
     if im.Checkbox("Static", staticDebug) then
-      Engine.setStaticColDebugEnabled(staticDebug[0])
+      Engine.setStaticColDebugEnabled(staticDebug[0] or colDensityEnabled[0])
     end
+
     if im.TreeNode1("Options") then
       im.SameLine()
       im.Dummy(im.ImVec2(30,0)) im.SameLine()
@@ -222,8 +233,27 @@ local function onUpdate()
       im.TreePop()
     end
 
-    im.Dummy(im.ImVec2(0,10))
+    if im.Checkbox("Coltris/m² (freezes on click to build cache)", colDensityEnabled) then
+      Engine.setStaticColDebugEnabled(staticDebug[0] or colDensityEnabled[0])
+    end
 
+    -- Add density threshold slider when static counters are enabled
+    if colDensityEnabled[0] then
+      im.PushItemWidth(120)
+      if im.SliderInt("Render area", colDensityTileCount, 3, 100, string.format("%d x %d (%d tiles)", colDensityTileCount[0], colDensityTileCount[0], colDensityTileCount[0]*colDensityTileCount[0])) then
+        serializeSettings()
+      end
+      if im.SliderFloat("Tile size (freezes on click to build cache)", colDensityTileSize, 5, 30, "%.1f") then
+        serializeSettings()
+      end
+      im.SliderFloat("Color threshold", colDensityThreshold, 1, 100, "%.0f coltris/m²")
+      if im.Checkbox("Render labels", colDensityShowText) then
+        serializeSettings()
+      end
+      im.PopItemWidth()
+    end
+
+    im.Dummy(im.ImVec2(0,10))
     im.Separator()
 
     -- TODO: use ImGuiListClipper
@@ -365,6 +395,9 @@ local function onUpdate()
         end
       end
     end
+    if colDensityEnabled[0] then
+      debugDrawer:renderStaticColCounter(focusPos, colDensityTileSize[0], colDensityTileCount[0], colDensityThreshold[0], colDensityShowText[0])
+    end
 
     local textLineHeight = im.GetTextLineHeight()
 
@@ -414,7 +447,7 @@ local function onUpdate()
 
     -- ## commented out following stuff for the time being cause it caused a huuuge framedrop and made the tool unuseable ##
 
-    -- if staticDebug[0] then
+    -- if staticDebug[0] and staticCounterOnly[0] then
     --   local c = Engine.getCollisionDebugData()
     --   if c then
     --     -- postprocessing: sort, do some global stats, etc
@@ -480,14 +513,16 @@ local function onSerialize()
   return {
     windowOpen = windowOpen[0],
     staticDebug = staticDebug[0],
+    colDensityEnabled = colDensityEnabled[0],
   }
 end
 
 local function onDeserialized(data)
   windowOpen[0] = data.windowOpen
   staticDebug[0] = data.staticDebug
+  colDensityEnabled[0] = data.colDensityEnabled
 
-  Engine.setStaticColDebugEnabled(staticDebug[0])
+  Engine.setStaticColDebugEnabled(staticDebug[0] or colDensityEnabled[0])
 end
 
 M.openWindow = openWindow

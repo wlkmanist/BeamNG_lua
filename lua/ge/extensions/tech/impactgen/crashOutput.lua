@@ -314,7 +314,7 @@ M.handleImpactGenGenerateOutput = function(request)
     camera = nil
 
     state = nop
-    local parts = extensions.core_vehicle_manager.getPlayerVehicleData().chosenParts
+    local parts = extensions.core_vehicle_manager.getPlayerVehicleData().config.partsTree
     parts = getRelevantParts(parts)
     parts = jsonEncodePretty(restructureParts(parts))
 

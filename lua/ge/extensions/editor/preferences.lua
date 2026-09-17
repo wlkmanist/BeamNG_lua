@@ -357,7 +357,10 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {playSoundOnNotifications = {"bool", true, "Play a sound beep when title bar notifications appear."}},
     {muteGameAudioOnEditorActivate = {"bool", false, "Mute game audio when editor is activated (restore it on deactivate)"}},
     {lockedObjectTextColor = {"ColorF", ColorF(0, 1, 1, 1), "Color of the text of locked objects in scene tree"}},
-    })
+    {inspectorFieldNameHoverCopyPaste = {"bool", false, "Allow copy paste of field values by hovering field labels in Inspector and pressing Ctrl+C or Ctrl+V"}},
+    {forceExpandWindowOnFirstShow = {"bool", false, "Expand any collapsed (minimized) windows on first show in current session (requires game restart)"}},
+    {recentWindowMenuCount = {"int", 5, "How many recently-used Window menu tool items to show in the main menu (0 disables).", "Recent Window tools count", 0, 50}},
+  })
 
   prefsRegistry:registerSubCategory("camera", "general", nil,
   {

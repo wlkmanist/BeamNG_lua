@@ -1,6 +1,9 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 M.dependencies = {"util_stepHandler"}
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehicleTasks
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehicleTasks, dTutorial
 local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
@@ -9,6 +12,7 @@ M.onCareerActivated = function()
   dGenerator = career_modules_delivery_generator
   dProgress = career_modules_delivery_progress
   dVehicleTasks = career_modules_delivery_vehicleTasks
+  dTutorial = career_modules_delivery_tutorial
   step = util_stepHandler
 end
 
@@ -41,81 +45,59 @@ M.makeTaskLabel = makeTaskLabel
 
 local vehicleTags = {
   junkerVeh = {
-    requirements = {
-      vehicleDelivery = 1
-    },
+    unlockFlag = "junkerVeh",
     labelPlural = "Junker Cars",
     labelSingular = "Junker Car",
   },
   smallVeh = {
-    requirements = {
-      vehicleDelivery = 2
-    },
+    unlockFlag = "smallVeh",
     labelPlural = "Small Vehicles",
     labelSingular = "Small Vehicle",
   },
   largeVeh = {
-    requirements = {
-      vehicleDelivery = 3
-    },
+    unlockFlag = "largeVeh",
     labelPlural = "Large Vehicles",
     labelSingular = "Large Vehicle",
   },
   fleetVeh = {
-    requirements = {
-      vehicleDelivery = 4
-    },
+    unlockFlag = "fleetVeh",
     labelPlural = "Fleet Cars",
     labelSingular = "Fleet Car",
   },
   exoticVeh = {
-    requirements = {
-      vehicleDelivery = 5
-    },
+    unlockFlag = "exoticVeh",
     labelPlural = "Exotic Cars",
     labelSingular = "Exotic Car",
   },
 
 
   emptySmallTrailers = {
-    requirements = {
-      delivery = 3
-    },
+    unlockFlag = "smallTrailersDelivery",
     labelPlural = "Small Empty Trailers",
     labelSingular = "Small Empty Trailer",
   },
   loadedSmallTrailers = {
-    requirements = {
-      delivery = 3
-    },
+    unlockFlag = "smallTrailersDelivery",
     labelPlural = "Small Loaded Trailers",
     labelSingular = "Small Loaded Trailer",
   },
   emptyMediumTrailers = {
-    requirements = {
-      delivery = 3
-    },
+    unlockFlag = "smallTrailersDelivery",
     labelPlural = "Medium Empty Trailers",
     labelSingular = "Medium Empty Trailer",
   },
   loadedMediumTrailers = {
-    requirements = {
-      delivery = 3
-    },
+    unlockFlag = "smallTrailersDelivery",
     labelPlural = "Medium Loaded Trailers",
     labelSingular = "Medium Loaded Trailer",
   },
   emptyLargeTrailer = {
-    requirements = {
-      delivery = 4
-    },
+    unlockFlag = "largeTrailersDelivery",
     labelPlural = "Large Empty Trailers",
     labelSingular = "Large Empty Trailer",
   },
   loadedLargeTrailers = {
-    requirements = {
-      delivery = 4
-    },
+    unlockFlag = "largeTrailersDelivery",
     labelPlural = "Large Loaded Trailers",
     labelSingular = "Large Loaded Trailer",
   }
@@ -126,20 +108,15 @@ local skillIcons = {
   vehicleDelivery = "keys1"
 }
 local function isVehicleTagUnlocked(tag)
-  local unlocked = true
-  local reason = nil
+  if not vehicleTags[tag] then return true end
+  if not vehicleTags[tag].unlockFlag then return true end
 
-  if not vehicleTags[tag] then return unlocked end
-  for skill, level in pairs(vehicleTags[tag].requirements or {}) do
-    if career_branches.getBranchLevel(skill) < level then
-      unlocked = false
-    end
-    local name = career_branches.getBranchById(skill).name
-    name = translateLanguage(name, name, true)
-    reason = { type="locked", icon = skillIcons[skill] or "noIcon", level = level, skill = skill, longLabel = string.format("Requires Skill '%s' lvl %d", name, level), shortLabel = string.format("lvl %d", level)}
-  end
-  return unlocked, reason
+  local unlocked = career_modules_unlockFlags.getFlag(vehicleTags[tag].unlockFlag)
+  local flagDefinition = career_modules_unlockFlags.getFlagDefinition(vehicleTags[tag].unlockFlag)
+
+  return unlocked, flagDefinition
 end
+
 M.isVehicleTagUnlocked = isVehicleTagUnlocked
 local function getVehicleTagUnlockedSimple()
   local status = {}
@@ -317,7 +294,7 @@ local function spawnOffer(offerId, fadeToBlack, callback)
       local ps = dGenerator.getParkingSpotByPath(offer.spawnLocation.psPath)
       ps:moveResetVehicleTo(vehId, nil, false, nil, nil, true)
       -- setup mileage
-      local veh = be:getObjectByID(vehId)
+      local veh = getObjectByID(vehId)
       local mileage = offer.vehicle.mileage or 0
       offer.vehicle.vehId = vehId
       veh:queueLuaCommand(string.format("partCondition.initConditions(nil, %d, nil, %f)", mileage, career_modules_vehicleShopping.getVisualValueFromMileage(mileage)))
@@ -329,7 +306,7 @@ local function spawnOffer(offerId, fadeToBlack, callback)
     step.makeStepReturnTrueFunction(function(step)
       if not step.sentCommand then
         step.sentCommand = true
-        local veh = be:getObjectByID(vehId)
+        local veh = getObjectByID(vehId)
         core_vehicleBridge.requestValue(veh, function(res)
           step.pingComplete = true
         end, 'ping')
@@ -340,18 +317,24 @@ local function spawnOffer(offerId, fadeToBlack, callback)
       if not step.sentCommand then
         step.sentCommand = true
         local vehData = core_vehicle_manager.getVehicleData(vehId)
-        local veh = be:getObjectByID(vehId)
+        local veh = getObjectByID(vehId)
         core_vehicleBridge.requestValue(veh, function(res)
           step.odometerComplete = true
-          local part = res.result[vehData.config.mainPartName]
-          offer.startingOdometer = part.odometer
+          local mainPartName = "/" .. vehData.config.mainPartName
+          local part = res.result[mainPartName]
+          if not part then
+            log("W","","Could not find part "..dumps(mainPartName) .." - starting odometer will be -1")
+            offer.startingOdometer = -1
+          else
+            offer.startingOdometer = part.odometer
+          end
         end, 'getPartConditions')
       end
       return step.odometerComplete or false
     end),
     step.makeStepReturnTrueFunction(function()
       if gameplay_walk.isWalking() then
-        local veh = be:getObjectByID(vehId)
+        local veh = getObjectByID(vehId)
         gameplay_walk.setRot(veh:getPosition() - getPlayerVehicle(0):getPosition())
       end
 
@@ -366,7 +349,7 @@ local function spawnOffer(offerId, fadeToBlack, callback)
     end),
 
     step.makeStepReturnTrueFunction(function()
-      local veh = be:getObjectByID(vehId)
+      local veh = getObjectByID(vehId)
       local camDir = veh:getPosition() - getPlayerVehicle(0):getPosition()
       if gameplay_walk.isWalking() then
         gameplay_walk.setRot(camDir)
@@ -386,7 +369,7 @@ end
 M.spawnOffer = spawnOffer
 
 
-
+--[[
 local function onBranchTierReached(skill, tier)
   if skill == "vehicleDelivery" then
     local prevMult, nextMult = dProgress.getMoneyMultiplerForSkill('vehicleDelivery', tier-1), dProgress.getMoneyMultiplerForSkill('vehicleDelivery', tier)
@@ -408,6 +391,7 @@ local function onBranchTierReached(skill, tier)
   end
 end
 M.onBranchTierReached = onBranchTierReached
+--]]
 
 M.addOffer = addOffer
 M.getOfferById = getOfferById

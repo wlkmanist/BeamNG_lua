@@ -33,21 +33,16 @@ local function initBaseClient()
   local postFxModule = require("client/postFx")
   rawset(_G, "postFxModule", postFxModule)
 
-  -- TorqueScriptLua.exec("/core/scripts/client/postFx.cs")
 
   local renderManagerModule = require("client/renderManager")
-  -- TorqueScriptLua.exec("/core/scripts/client/renderManager.cs")
 
   local lightingModule = require("client/lighting")
-  -- TorqueScriptLua.exec("/core/scripts/client/lighting.cs")
 
   -- print("initRenderManager");
   renderManagerModule.initRenderManager()
-  -- TorqueScript.eval("initRenderManager();")
 
   -- print("initLightingSystems");
   lightingModule.initLightingSystems()
-  -- TorqueScript.eval("initLightingSystems();")
 
   local adapterCount = GFXInit.getAdapterCount()
   if adapterCount == 1 and GFXInit.getAdapterName(0) == "GFX Null Device" then
@@ -58,10 +53,8 @@ local function initBaseClient()
   -- -- Initialize all core post effects.
   -- log('I','client', "Initialize the post effect manager")
   postFxModule.initPostEffects()
-  -- TorqueScript.eval("initPostEffects();")
 
   -- Get the default preset settings
-  -- TorqueScript.eval("PostFXManager.settingsApplyDefaultPreset();")
   postFxModule.applyDefaultPreset()
 
   -- log('I','client', "... initBaseClient done")
@@ -72,17 +65,13 @@ local function reloadBaseClient()
   -- Base client functionality
   local postFxModule = require("client/postFx");
   rawset(_G, "postFxModule", postFxModule)
-  -- TorqueScriptLua.exec("/core/scripts/client/postFx.cs")
 
   local renderManagerModule = require("client/renderManager");
-  -- TorqueScriptLua.exec("/core/scripts/client/renderManager.cs")
 
   local lightingModule = require("client/lighting");
-  -- TorqueScriptLua.exec("/core/scripts/client/lighting.cs")
 
   -- print("initLightingSystems");
   lightingModule.reloadLightingSystems();
-  -- TorqueScript.eval("initLightingSystems();")
 
   local adapterCount = GFXInit.getAdapterCount()
   if adapterCount == 1 and GFXInit.getAdapterName(0) == "GFX Null Device" then
@@ -93,7 +82,6 @@ local function reloadBaseClient()
   -- -- Initialize all core post effects.
   -- log('I','client', "Initialize the post effect manager")
   postFxModule.reloadPostEffects()
-  -- TorqueScript.eval("initPostEffects();")
 
   -- log('I','client', "... initBaseClient done")
 end
@@ -102,14 +90,20 @@ M.loadMainMenu = function()
   -- Startup the client with the Main menu...
   local onlyGui = scenetree.findObject("OnlyGui")
   local canvas = scenetree.findObject("Canvas")
-  local cursor = scenetree.findObject("DefaultCursor")
-  if onlyGui and canvas and cursor then
+  if onlyGui and canvas then
     canvas:setContent(onlyGui)
-    canvas:setCursor(cursor)
   end
 end
 
 local function createGameViewportCtrl()
+  local cmdArgs = Engine.getStartingArgs()
+  if tableFindKey(cmdArgs, '-noui') then
+    -- -headless is working differenly than expected and should not be used
+    -- it only prevents opening a main window
+    log('I', 'startup', "UI is disabled, skipping GameViewportCtrl creation")
+    return
+  end
+
   local onlyGui = createObject("GameViewportCtrl")
   onlyGui.forceFOV = 0
   onlyGui.reflectPriority = 1
@@ -128,7 +122,6 @@ local function createGameViewportCtrl()
   onlyGui:setField("tooltipProfile", 0, "GuiToolTipProfile")
   onlyGui:setField("hovertime", 0, "1000")
   onlyGui:setField("helpTag", 0, "0")
-  onlyGui:setField("noCursor", 0, "0")
   onlyGui.visible = 1
   onlyGui.active = 1
   onlyGui.isContainer = 1
@@ -139,30 +132,31 @@ local function createGameViewportCtrl()
 
   -- DO NOT RENAME maincef, its name is hardcoded in c++
   local maincef = createObject("CefGui")
-  maincef:setField("docking", 0, "Client")
-  maincef:setField("margin", 0, "0 0 0 0")
-  maincef:setField("padding", 0, "0 0 0 0")
-  maincef:setField("anchorTop", 0, "1")
-  maincef:setField("anchorBottom", 0, "0")
-  maincef:setField("anchorLeft", 0, "1")
-  maincef:setField("anchorRight", 0, "0")
-  maincef:setField("position", 0, "0 0")
-  maincef:setField("extent", 0, "1024 768")
-  maincef:setField("minExtent", 0, "8 2")
-  maincef:setField("horizSizing", 0, "right")
-  maincef:setField("vertSizing", 0, "bottom")
-  maincef:setField("profile", 0, "GuiCEFProfile")
-  maincef:setField("tooltipProfile", 0, "GuiToolTipProfile")
-  maincef:setField("hovertime", 0, "1000")
-  maincef:setField("StartURL", 0, "local://local/ui/entrypoints/main/index.html")
-  maincef.visible = 1
-  maincef.active = 1
-  maincef.isContainer = 1
-  maincef.canSave = 1
-  maincef.canSaveDynamicFields = 0
-  maincef:registerObject("maincef")
-
-  onlyGui:add(maincef)
+  if maincef ~= nil then
+    maincef:setField("docking", 0, "Client")
+    maincef:setField("margin", 0, "0 0 0 0")
+    maincef:setField("padding", 0, "0 0 0 0")
+    maincef:setField("anchorTop", 0, "1")
+    maincef:setField("anchorBottom", 0, "0")
+    maincef:setField("anchorLeft", 0, "1")
+    maincef:setField("anchorRight", 0, "0")
+    maincef:setField("position", 0, "0 0")
+    maincef:setField("extent", 0, "1024 768")
+    maincef:setField("minExtent", 0, "8 2")
+    maincef:setField("horizSizing", 0, "right")
+    maincef:setField("vertSizing", 0, "bottom")
+    maincef:setField("profile", 0, "GuiCEFProfile")
+    maincef:setField("tooltipProfile", 0, "GuiToolTipProfile")
+    maincef:setField("hovertime", 0, "1000")
+    maincef:setField("StartURL", 0, "local://local/ui/entrypoints/main/index.html")
+    maincef.visible = 1
+    maincef.active = 1
+    maincef.isContainer = 1
+    maincef.canSave = 1
+    maincef.canSaveDynamicFields = 0
+    maincef:registerObject("maincef")
+    onlyGui:add(maincef)
+  end
 end
 
 local cmdArgs = Engine.getStartingArgs()
@@ -170,47 +164,22 @@ local cmdArgs = Engine.getStartingArgs()
 M.initClient = function()
   -- log('I','client', "initClient start...")
 
-  -- These should be game specific GuiProfiles.  Custom profiles are saved out
-  -- from the Gui Editor.  Either of these may override any that already exist.
-  -- NOTE(AK) 22/03/2022: These are not used, left as comment so we know the delete them
-  -- TorqueScriptLua.exec("art/gui/gameProfiles.cs")
-  -- TorqueScriptLua.exec("art/gui/customProfiles.cs")
-
   -- The common module provides basic client functionality
   initBaseClient()
 
   createGameViewportCtrl()
 
   -- default cubemap for levels without LevelInfo.globalEnviromentMap
-  setConsoleVariable("$defaultLevelEnviromentMap", "BNG_Sky_02_cubemap")
+  VariableRegistry.set("$defaultLevelEnviromentMap", "BNG_Sky_02_cubemap")
 
   if not tableFindKey(cmdArgs, '-convertCSMaterials') then
     loadDirRec("core/art/datablocks/")
     loadDirRec("art/")
+    loadDirRec("assets/")
 
     --TODO: check funcs
     if FS:fileExists(FS:expandFilename("./audioData.cs")) then
       TorqueScriptLua.exec( "./audioData.cs" )
-    end
-  end
-
-  -- Start up the main menu... this is separated out into a
-  -- method for easier mod override.
-  -- log('I','main_entry','$startWorldEditor = '..tostring(getConsoleBoolVariable("$startWorldEditor")))
-  if getConsoleBoolVariable("$startWorldEditor") then
-    -- Editor GUI's will start up in the primary main.lua once
-    -- engine is initialized.
-    return
-  end
-
-  -- Otherwise go to the splash screen.
-  local canvas = scenetree.findObject("Canvas")
-  -- log('I','main_entry','scenetree.findObject("Canvas") = '..dumps(canvas))
-  if canvas then
-    local cursor = scenetree.findObject("DefaultCursor")
-    if cursor then
-      -- log('I','main_entry','scenetree.findObject("DefaultCursor") = '..dumps(cursor))
-      canvas:setCursor(cursor)
     end
   end
 
@@ -226,15 +195,5 @@ M.reloadClient = function()
 
   -- The common module provides basic client functionality
   reloadBaseClient()
-
-  --[[ -- After porting thest cs files to lua, check if there is a need to run them again when we reload lua
-  TorqueScriptLua.exec("core/art/datablocks/datablockExec.cs")
-  loadDirRec("art/")
-
-  --TODO: check funcs
-  if FS:fileExists(FS:expandFilename("./audioData.cs")) then
-    TorqueScriptLua.exec( "./audioData.cs" )
-  end
-  ]]
 end
 return M

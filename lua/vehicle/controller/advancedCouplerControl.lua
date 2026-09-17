@@ -17,9 +17,9 @@ local couplerStates = {
 
 local couplerGroupTypes = {
   default = "default",
-  autoCoupling = "autoCoupling",
-  manualClose = "manualClose",
-  manualCloseMultiPoint = "manualCloseMultiPoint"
+  autoCoupling = "autoCoupling", --for doors and other latches that latch automatically
+  manualClose = "manualClose", --latches that don't latch automatically, but can be closed manually
+  manualCloseMultiPoint = "manualCloseMultiPoint" --latches that don't latch automatically, but can be closed manually, and have multiple points of attachment
 }
 
 local detachSoundStateLookup = {
@@ -54,6 +54,12 @@ local couplerGroup
 local autoLatchesToActivate
 local externalCouplerBreakGroups
 
+local stateData
+local stateDataNameGroupState
+
+local notAttachedElectricsName
+local attachedElectricsName
+
 local function updateCid2(cnp, roundRobin)
   if cnp.cid2Count == 1 then
     cnp.cid2 = cnp.availableCid2[1]
@@ -87,6 +93,31 @@ local function updateCid2(cnp, roundRobin)
   return foundCloserNode
 end
 
+local function requestLocalAttach(cnp, radius)
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "requestLocalAttach", cnp.cid1, cnp.cid2, cnp.autoCouplingStrength, radius, cnp.autoCouplingLockRadius, cnp.autoCouplingSpeed)
+  obj:attachLocalCoupler(cnp.cid1, cnp.cid2, cnp.autoCouplingStrength, radius, cnp.autoCouplingLockRadius, cnp.autoCouplingSpeed, true)
+  cnp.state = couplerStates.autoCoupling
+end
+
+local function queueAutoLatch(couplerIndex)
+  for _, queuedCouplerIndex in ipairs(autoLatchesToActivate) do
+    if queuedCouplerIndex == couplerIndex then
+      return
+    end
+  end
+  table.insert(autoLatchesToActivate, couplerIndex)
+end
+
+local function requestInitialCouplings()
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "requestInitialCouplings")
+  for _, cnp in ipairs(couplerGroup.couplerNodePairs) do
+    if cnp.couplingStartRadius and cnp.state ~= couplerStates.attached and cnp.state ~= couplerStates.broken then
+      updateCid2(cnp)
+      requestLocalAttach(cnp, cnp.couplingStartRadius)
+    end
+  end
+end
+
 local function syncGroupState()
   local currentStates = {}
   for _, coupler in ipairs(couplerGroup.couplerNodePairs) do
@@ -104,11 +135,12 @@ local function syncGroupState()
     end
   end
   couplerGroup.groupState = groupState
-  local notAttachedElectricsName = M.name .. "_notAttached"
   electrics.values[notAttachedElectricsName] = groupState == couplerStates.attached and 0 or 1
+  electrics.values[attachedElectricsName] = groupState == couplerStates.attached and 1 or 0
 end
 
 local function tryAttachGroupImpulse()
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "tryAttachGroupImpulse")
   if couplerGroup.groupState == couplerStates.attached then
     return
   end
@@ -121,11 +153,16 @@ local function tryAttachGroupImpulse()
           updateCid2(cnp)
         end
         --obj:attachLocalCoupler(nid1, nid2, strength, radius, lockRadius, latchSpeed, bool persistLatch)
-        obj:attachLocalCoupler(cnp.cid1, cnp.cid2, cnp.autoCouplingStrength, cnp.autoCouplingRadius, cnp.autoCouplingLockRadius, cnp.autoCouplingSpeed, true)
-        cnp.state = couplerStates.autoCoupling
+        requestLocalAttach(cnp, cnp.autoCouplingRadius)
         if couplerGroup.attachingUIMessage then
           guihooks.message(couplerGroup.attachingUIMessage, 3, "vehicle.couplers.advanced." .. M.name)
         end
+      end
+    end
+  elseif couplerGroup.groupType == couplerGroupTypes.autoCoupling then
+    for _, cnp in ipairs(couplerGroup.couplerNodePairs) do
+      if cnp.state == couplerStates.detached or cnp.state == couplerStates.autoCoupling then
+        requestLocalAttach(cnp, cnp.autoCouplingRadius)
       end
     end
   end
@@ -134,6 +171,7 @@ local function tryAttachGroupImpulse()
 end
 
 local function detachGroup()
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "detachGroup")
   if couplerGroup.groupState == couplerStates.autoCoupling or couplerGroup.groupState == couplerStates.detached then
     return
   end
@@ -169,6 +207,7 @@ local function detachGroup()
 end
 
 local function toggleGroup()
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "toggleGroup")
   if couplerGroup.openForceTimer > 0 or couplerGroup.closeForceTimer > 0 then
     return
   end
@@ -180,6 +219,7 @@ local function toggleGroup()
 end
 
 local function toggleGroupConditional(conditions)
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "toggleGroupConditional")
   for _, c in ipairs(conditions) do
     if #c < 2 then
       log("E", "advancedCouplerControl.toggleGroupConditional", "Wrong amount of data for condition, expected 2:")
@@ -210,6 +250,7 @@ local function toggleGroupConditional(conditions)
 end
 
 local function updateGFX(dt)
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "updateGFX, group state: " .. couplerGroup.groupState)
   if couplerGroup.spawnSoundDelayTimer > 0 then
     couplerGroup.spawnSoundDelayTimer = couplerGroup.spawnSoundDelayTimer - dt
     if couplerGroup.spawnSoundDelayTimer <= 0 then
@@ -227,14 +268,13 @@ local function updateGFX(dt)
         table.insert(activatedAutoLatches, key)
         if cnp.state == couplerStates.detached then
           --obj:attachLocalCoupler(nid1, nid2, strength, radius, lockRadius, latchSpeed, bool persistLatch)
-          obj:attachLocalCoupler(cnp.cid1, cnp.cid2, cnp.autoCouplingStrength, cnp.autoCouplingRadius, cnp.autoCouplingLockRadius, cnp.autoCouplingSpeed, true)
-          cnp.state = couplerStates.autoCoupling
+          requestLocalAttach(cnp, cnp.autoCouplingRadius)
         end
       end
     end
 
-    for _, key in ipairs(activatedAutoLatches) do
-      table.remove(autoLatchesToActivate, key)
+    for i = #activatedAutoLatches, 1, -1 do
+      table.remove(autoLatchesToActivate, activatedAutoLatches[i])
     end
 
     syncGroupState()
@@ -244,8 +284,7 @@ local function updateGFX(dt)
     for _, cnp in ipairs(couplerGroup.couplerNodePairs) do
       local foundCloserNode = updateCid2(cnp, true)
       if foundCloserNode then
-        obj:attachLocalCoupler(cnp.cid1, cnp.cid2, cnp.autoCouplingStrength, cnp.autoCouplingRadius, cnp.autoCouplingLockRadius, cnp.autoCouplingSpeed, true)
-        cnp.state = couplerStates.autoCoupling
+        requestLocalAttach(cnp, cnp.autoCouplingRadius)
       end
     end
   end
@@ -267,11 +306,16 @@ end
 
 local function onCouplerFound(nodeId, obj2id, obj2nodeId)
   --dump(couplerGroup)
+  --local couplerIndex = couplerGroup.couplerNodeIdLookup[nodeId]
+  --if couplerIndex then
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "onCouplerFound, " .. nodeId .. ", " .. obj2id .. ", " .. obj2nodeId)
+  --end
 end
 
 local function onCouplerAttached(nodeId, obj2id, obj2nodeId, attachForce)
   local couplerIndex = couplerGroup.couplerNodeIdLookup[nodeId]
   if couplerIndex then
+    --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "onCouplerAttached, " .. nodeId .. ", " .. obj2id .. ", " .. obj2nodeId .. ", " .. attachForce)
     couplerGroup.couplerNodePairs[couplerIndex].state = couplerStates.attached
 
     local isCorrectPastState = attachSoundStateLookup[couplerGroup.groupState]
@@ -297,9 +341,10 @@ end
 local function onCouplerDetached(nodeId, obj2id, obj2nodeId, breakForce)
   local couplerIndex = couplerGroup.couplerNodeIdLookup[nodeId]
   if couplerIndex then
+    --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "onCouplerDetached, " .. nodeId .. ", " .. obj2id .. ", " .. obj2nodeId .. ", " .. breakForce)
     couplerGroup.couplerNodePairs[couplerIndex].state = breakForce <= 0 and couplerStates.detached or couplerStates.broken
     if couplerGroup.couplerNodePairs[couplerIndex].state == couplerStates.detached and couplerGroup.groupType == couplerGroupTypes.autoCoupling then
-      table.insert(autoLatchesToActivate, couplerIndex)
+      queueAutoLatch(couplerIndex)
     end
     local isCorrectPastState = detachSoundStateLookup[couplerGroup.groupState]
     syncGroupState()
@@ -327,6 +372,7 @@ local function resetSounds(jbeamData)
 end
 
 local function reset(jbeamData)
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "reset")
   autoLatchesToActivate = {}
   couplerGroup.canPlaySounds = false
   couplerGroup.spawnSoundDelayTimer = 0.1
@@ -335,11 +381,11 @@ local function reset(jbeamData)
   couplerGroup.groupState = couplerStates.detached
   for _, cnp in ipairs(couplerGroup.couplerNodePairs) do
     cnp.state = couplerStates.detached
-    if cnp.couplingStartRadius then
-      updateCid2(cnp)
-      obj:attachLocalCoupler(cnp.cid1, cnp.cid2, cnp.autoCouplingStrength, cnp.couplingStartRadius, cnp.autoCouplingLockRadius, cnp.autoCouplingSpeed, true)
-    end
   end
+  requestInitialCouplings()
+  syncGroupState()
+
+  table.clear(stateData)
 
   registerExternalCouplerBreakGroups()
 end
@@ -350,7 +396,7 @@ end
 local function init(jbeamData)
   --print(M.name)
   --dump(jbeamData)
-
+  --print((v.config.mainPartName or "nil") .. "-" .. M.name .. ": " .. "init")
   couplerGroup = {
     couplerNodeIdLookup = {},
     couplerNodePairs = {},
@@ -381,6 +427,9 @@ local function init(jbeamData)
   bdebug.setNodeDebugText("Latches", couplerGroup.soundNode, M.name .. ": " .. (couplerGroup.breakSoundEvent or "no break event"))
 
   local nodeData = tableFromHeaderTable(jbeamData.couplerNodes)
+
+  notAttachedElectricsName = M.name .. "_notAttached"
+  attachedElectricsName = M.name .. "_attached"
 
   externalCouplerBreakGroups = {}
 
@@ -419,10 +468,6 @@ local function init(jbeamData)
       for _, cid2 in ipairs(couplerNodePairData.availableCid2) do
         couplerGroup.couplerNodeIdLookup[cid2] = couplerGroup.couplerNodeIdLookup[couplerNodePairData.cid1]
       end
-      if couplerNodePairData.couplingStartRadius then
-        updateCid2(couplerNodePairData)
-        obj:attachLocalCoupler(couplerNodePairData.cid1, couplerNodePairData.cid2, couplerNodePairData.autoCouplingStrength, couplerNodePairData.couplingStartRadius, couplerNodePairData.autoCouplingLockRadius, couplerNodePairData.autoCouplingSpeed, true)
-      end
       if couplerNodePairData.breakGroup then
         table.insert(externalCouplerBreakGroups, {breakGroup = couplerNodePairData.breakGroup, cid = couplerNodePairData.cid1})
       end
@@ -436,10 +481,48 @@ local function init(jbeamData)
   end
   couplerGroup.invCouplerNodePairCount = 1 / #couplerGroup.couplerNodePairs
 
+  stateData = {}
+  stateDataNameGroupState = M.name .. "_groupState"
+
   registerExternalCouplerBreakGroups()
 
   autoLatchesToActivate = {}
+  requestInitialCouplings()
   syncGroupState()
+end
+
+local function getState()
+  stateData[stateDataNameGroupState] = couplerGroup.groupState
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local groupState = data[stateDataNameGroupState]
+
+  if groupState then
+    if couplerGroup.groupState ~= groupState then
+      --don't do this here as it will internally desync and not actually execute the state change, maybe needed afterwards? s
+      --couplerGroup.groupState = groupState
+
+      if groupState == couplerStates.attached or groupState == couplerStates.desyncedAttached then
+        --if it's now attached, try to attach via normal impulse interaction
+        tryAttachGroupImpulse()
+      elseif groupState == couplerStates.detached or groupState == couplerStates.desyncedDetached or groupState == couplerStates.autoCoupling then
+        --if it's detached, try to replicate that
+        detachGroup()
+      elseif groupState == couplerStates.broken then
+        --if the overall group state is broken, we don't really know what exactly caused it
+        --instead of trying to somehow replicate the original break, we just break all coupler pairs
+        for _, coupler in ipairs(couplerGroup.couplerNodePairs) do
+          obj:detachCoupler(coupler.cid1, math.huge)
+        end
+      end
+    end
+  end
 end
 
 M.init = init
@@ -461,5 +544,8 @@ M.toggleGroupConditional = toggleGroupConditional
 M.tryAttachGroupImpulse = tryAttachGroupImpulse
 M.detachGroup = detachGroup
 M.getGroupState = getGroupState
+
+M.getState = getState
+M.setState = setState
 
 return M

@@ -212,7 +212,7 @@ function C:drawLabel(sPin, tPin)
 end
 
 function C:showContextMenu(menuPos)
-  im.SetWindowFontScale(editor.getPreference("ui.general.scale"))
+  im.SetWindowFontScale(1)
   if im.MenuItem1("Toggle Hide") then
     self.hidden = not self.hidden
   end

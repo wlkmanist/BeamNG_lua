@@ -424,6 +424,7 @@ local function onClientStartMission(levelPath)
   -- Disclaimer message for campaign mode.
   -- guihooks.trigger('toastrMsg', {type="warning", title="Work in Progress", msg = "Campaign mode is a work in progress and is still subject to further changes.", config = {timeOut = 0}})
   local state = M.state
+  pushActionMap("ExplorationGeneral")
   if state.pendingSpawningData then
     log('D', logTag, 'onClientStartMission called....with sectionName '..tostring(state.pendingSpawningData.subsectionKey))
     local tempData = state.pendingSpawningData
@@ -551,7 +552,6 @@ local function openLocationExtraUI(locationKey)
 end
 
 local function processOnEvent(onEventData)
- dump(onEventData)
  if onEventData and onEventData.inventory then
     core_inventory.processOnEvent(onEventData.inventory)
  end
@@ -663,7 +663,7 @@ local function onBeamNGTrigger(data)
 
   -- Save the position when driving on a ramp
   if data.rampTriggerA and data.event == "enter" then
-    local vehicle = be:getObjectByID(vid)
+    local vehicle = getObjectByID(vid)
     local vehiclePosition = vehicle:getPosition()
     local vehicleDirection = vehicle:getDirectionVector()
     lastRampTriggerPos = {desiredPos = vehiclePosition, desiredDir = vehicleDirection}
@@ -674,7 +674,7 @@ local function onBeamNGTrigger(data)
   -- Set the checkpoint when jumping off a ramp
   if data.rampTriggerB and data.rampName == lastRampTrigger
      and data.event == "enter" then
-    local vehicle = be:getObjectByID(vid)
+    local vehicle = getObjectByID(vid)
     core_checkpoints.saveCheckpoint(vid, vehicle:getField('name', ''), lastRampTriggerPos)
     log('I', logTag, 'Set checkpoint to ramp: ' .. data.rampName)
     return
@@ -881,7 +881,8 @@ local function updateMapUI()
 
   local player = getPlayerVehicle(0)
   if player and minimap then
-    uiParams.player = {}
+    uiParams.player = uiParams.player or {}
+    table.clear(uiParams.player)
     uiParams.player.x = (player:getPosition().x - minimap.worldCoord.x) / minimap.worldCoord.w
     uiParams.player.y = 1 - ((player:getPosition().y - minimap.worldCoord.y) / minimap.worldCoord.h)
     local matrix = player:getRefNodeMatrix()
@@ -920,12 +921,11 @@ local function onPreRender(dt)
   destinationMarker:update(dt)
   --
   if spawningPlayer and M.recentlySpawnedVehicle then
-    local campaign = campaign_campaigns.getCampaign()
     local playerId = be:getPlayerVehicleID(0)
     log('I', logTag, 'Updating for spawned vehicle. PlayerID: '..playerId..' Spawned: '..tostring(M.recentlySpawnedVehicle))
 
     if M.recentlySpawnedVehicle == playerId then
-      local veh = be:getObjectByID(playerId)
+      local veh = getObjectByID(playerId)
 
       if scenetree.ExplorationGroup then
         scenetree.ExplorationGroup:addObject(veh)
@@ -935,7 +935,7 @@ local function onPreRender(dt)
       if endTrigger then
         local transform = endTrigger:getTransform()
         veh:setTransform(transform)
-        veh:queueLuaCommand('obj:queueGameEngineLua("if be:getObjectByID('..playerId..') then be:getObjectByID('..playerId..'):autoplace(false) end")')
+        veh:queueLuaCommand('obj:queueGameEngineLua("if getObjectByID('..playerId..') then getObjectByID('..playerId..'):autoplace(false) end")')
         simTimeAuthority.set(1)
         veh:queueLuaCommand('recovery.clear()')
         local state = M.state

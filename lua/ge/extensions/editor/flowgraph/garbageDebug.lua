@@ -135,7 +135,18 @@ end
 local whiteColor = im.ImColorByRGB(255,255,255,255)
 local orangeColor = im.ImColorByRGB(255,128,0,255)
 local blueColor = im.ImColorByRGB(128,220,255,128)
+local plotParams = {
+  autoScale = true,
+  showCatmullRomCurve = false,
+  catmullromCurveLines = 1,
+  pointSize = 2,
+  pointThickness = 2,
+  allowZoom = false,
+  formatX = "%d",
+  formatY = "%d",
+}
 
+local plotHelperUtil = require('/lua/ge/extensions/editor/util/plotHelperUtil')(plotParams)
 local scale = 1
 function C:drawStats(label, entry)
   if not entry or entry.value == -1 or entry.activeCount == 0 then return end
@@ -155,6 +166,10 @@ function C:drawStats(label, entry)
     end
   end
   im.Text(label)
+  if  entry.activeCount  then
+    im.SameLine()
+    im.Text(string.format("[%d]", entry.activeCount))
+  end
   im.PushFont2(1)
   local valueText = tostring(entry.value) .. " " .. self.valueUnit
   local valueTextSize = im.CalcTextSize(valueText)
@@ -172,9 +187,27 @@ function C:drawStats(label, entry)
       self:handleMeta(entry)
       if not im.IsWindowFocused(im.FocusedFlags_RootAndChildWindows) then im.BeginDisabled() end
       im.Text("Total")
-      im.PlotMultiLines("Total##total"..label, 2, {"Total","Active"}, {whiteColor,blueColor}, {entry.totalHistory, entry.activeList}, self.mgr.garbageData.frames, "", entry.minTotal, entry.maxTotal, im.ImVec2(im.GetContentRegionAvailWidth(),100))
+
+      local plot = {}
+      for i = 1, #entry.totalHistory do
+        plot[i] = {i, entry.totalHistory[i], entry.activeList[i]}
+      end
+      plotHelperUtil.id = label.." total"
+      plotHelperUtil:setDataMulti({plot})
+      plotHelperUtil:setSeriesNames({"Total","Active"})
+      plotHelperUtil:setSeriesColors({{1,1,1,1},{0,0,1,1}})
+      plotHelperUtil:draw(im.GetContentRegionAvailWidth(),250, im.GetIO().DeltaTime)
       im.Text(string.format("Change | Avg: %d | Q25: %d | Q75: %d | Q90: %d   | (only active)", entry.averageChange or -1, entry.q25 or -1, entry.q50 or -1, entry.q75 or -1))
-      im.PlotMultiLines("Change##change"..label, 2, {"Change","Active"}, {orangeColor,blueColor}, {entry.history, entry.activeList}, self.mgr.garbageData.frames, "", -0.25 * entry.maxChange, entry.maxChange, im.ImVec2(im.GetContentRegionAvailWidth(),100))
+      table.clear(plot)
+      for i = 1, #entry.history do
+        plot[i] = {i, entry.history[i], entry.activeList[i]}
+      end
+      plotHelperUtil.id = label.." change"
+      plotHelperUtil:setDataMulti({plot})
+      plotHelperUtil:setSeriesNames({"Change","Active"})
+      plotHelperUtil:setSeriesColors({{1,0,0,1},{0,0,1,1}})
+      plotHelperUtil:draw(im.GetContentRegionAvailWidth(),250, im.GetIO().DeltaTime)
+
       if not im.IsWindowFocused(im.FocusedFlags_RootAndChildWindows) then im.EndDisabled() end
     else
       im.Text("No History!")
@@ -200,8 +233,10 @@ function C:handleMeta(e)
     if im.Button("View Graph##" ..e.meta.graph.name.."/"..e.meta.graph.id, im.ImVec2(im.GetContentRegionAvailWidth(), 0)) then
       self.mgr:unselectAll()
       self.mgr:selectGraph(e.meta.graph)
-      e.meta.node.graph.focusContent = true
-      e.meta.node.graph.focusDelay = 1
+      if e.meta.node then
+        e.meta.node.graph.focusContent = true
+        e.meta.node.graph.focusDelay = 1
+      end
     end
   end
 end

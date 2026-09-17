@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -44,11 +43,17 @@ function C:workOnce()
   for _, star in ipairs(self.mgr.activity.careerSetup._activeStarCache.sortedStars) do
     if self.mgr.activity.careerSetup.starsActive[star] then
       local hook = "SetTasklistTask"
-      guihooks.trigger(hook, {
+      local label = self.mgr.activity.starLabels[star] or "Missing Star Description"
+      if type(label) == "string" then
         label = {
-          txt = self.mgr.activity.starLabels[star] or "Missing Star Description",
+          txt = label,
           context = tryBuildContext(self.mgr.activity.starLabels[star], self.mgr.activity.missionTypeData),
-        },
+        }
+      elseif type(label) == "function" then
+        label = label(self.mgr.activity)
+      end
+      guihooks.trigger(hook, {
+        label = label,
         done = false,
         fail = false,
         active = true,

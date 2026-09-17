@@ -6,7 +6,7 @@ local M = {}
 M.dependencies = {'core_environment'}
 local imUtils = require('ui/imguiUtils')
 local im = ui_imgui
-local imgui_true, imgui_false = ffi.new("bool", true), ffi.new("bool", false)
+local imgui_true, imgui_false = im.BoolTrue(), im.BoolFalse()
 local toolbarWindowName = "veToolbar"
 local toolbarFlags = bit.bor(im.WindowFlags_HorizontalScrollbar, im.WindowFlags_NoScrollWithMouse)
 local innerToolbarFlags = bit.bor(im.WindowFlags_NoDecoration, im.WindowFlags_NoMove, im.WindowFlags_NoScrollWithMouse, im.WindowFlags_NoSavedSettings, im.WindowFlags_NoBringToFrontOnFocus, im.WindowFlags_NoBackground, im.WindowFlags_MenuBar)
@@ -93,7 +93,7 @@ local function layoutsMenu()
   if im.BeginMenu("Layouts", imgui_true) then
     for _, layoutPath in ipairs(editor_layoutManager.getWindowLayouts(vEditor.getEditorName())) do
       if im.MenuItem1(string.match(layoutPath, ".+/(.+)"), nil, imgui_false, imgui_true) then
-        editor_layoutManager.loadWindowLayout(layoutPath)
+        editor_layoutManager.loadWindowLayout(layoutPath, vEditor.getEditorName())
       end
     end
 
@@ -177,8 +177,8 @@ local function staticEditorToolbar()
       end
       im.EndMenuBar()
     end
-    im.EndChild()
   end
+  im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
   im.PopStyleColor()
 end
 
@@ -248,8 +248,8 @@ local function liveEditorToolbar()
 
       im.EndMenuBar()
     end
-    im.EndChild()
   end
+  im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
   im.PopStyleColor()
 
   im.SameLine()
@@ -257,7 +257,18 @@ local function liveEditorToolbar()
   cameraTodSliders()
 end
 
+local inited = false
+
 local function onEditorGuiToolBar()
+  -- only run when Vehicle Editor is active
+  if not vEditor or not vEditor.editorActive then return end
+
+  -- after layout load all windows are hidden; toolbar has toolName "vehicleEditor" so it is not
+  -- restored when loading vehicleEditorStatic/Live layout. ensure it is shown.
+  if editor.isWindowRegistered(toolbarWindowName) and not editor.isWindowVisible(toolbarWindowName) then
+    editor.showWindow(toolbarWindowName)
+  end
+
   -- no menu, dont show toolbars
   --if not editor.menuHeight then return end
   editor.menuHeight = 0
@@ -265,7 +276,16 @@ local function onEditorGuiToolBar()
   im.PushStyleColor2(im.Col_Button, im.ImVec4(0,0,0,0))
   if editor.beginWindow(toolbarWindowName, toolbarWindowName, toolbarFlags, true) then
     if im.BeginTabBar("##tabs") then
-      if im.BeginTabItem("Static Editor") then
+      local staticEditorFlag, liveEditorFlag = 0, 0
+      if not inited then
+        if vEditor.editorMode == vEditor.EDITOR_MODE_STATIC then
+          staticEditorFlag = im.TabItemFlags_SetSelected
+        elseif vEditor.editorMode == vEditor.EDITOR_MODE_LIVE then
+          liveEditorFlag = im.TabItemFlags_SetSelected
+        end
+        inited = true
+      end
+      if im.BeginTabItem("Static Editor", nil, staticEditorFlag) then
         -- Change editor mode on clicking tab
         if vEditor.editorMode ~= vEditor.EDITOR_MODE_STATIC then
           vEditor.setEditorMode(vEditor.EDITOR_MODE_STATIC)
@@ -274,7 +294,7 @@ local function onEditorGuiToolBar()
         staticEditorToolbar()
         im.EndTabItem()
       end
-      if im.BeginTabItem("Live Editor") then
+      if im.BeginTabItem("Live Editor", nil, liveEditorFlag) then
         -- Change editor mode on clicking tab
         if vEditor.editorMode ~= vEditor.EDITOR_MODE_LIVE then
           vEditor.setEditorMode(vEditor.EDITOR_MODE_LIVE)
@@ -306,9 +326,8 @@ local function onEditorGuiToolBar()
     ]]--
     layoutsWindows()
   end
-
-  ::finishWindow::
   editor.endWindow()
+
   if noDisplay then
     goto safeFinish
   end
@@ -348,7 +367,7 @@ local function onEditorInitialized()
     table.insert(vehsList, unsortedList[v])
   end
 
-  editor.registerWindow(toolbarWindowName)
+  editor.registerWindow(toolbarWindowName, im.ImVec2(800, 40), nil, nil, nil, nil, nil, "vehicleEditor")
   editor.showWindow(toolbarWindowName)
 end
 

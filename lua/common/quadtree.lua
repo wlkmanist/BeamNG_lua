@@ -78,20 +78,11 @@ quadTree.__index = quadTree
 
 local emptyNode = {itemCount = 0}
 
-local function pointBBox(x, y, radius)
-  return x - radius, y - radius, x + radius, y + radius
-end
-
-local function lineBBox(x1, y1, x2, y2, radius)
-  local enlarge = radius or 0
-  return min(x1, x2) - enlarge, min(y1, y2) - enlarge, max(x1, x2) + enlarge, max(y1, y2) + enlarge
-end
-
 local function newQuadtree(numOfItems)
   return setmetatable({
     tree = {},
     children = {},
-    itm_preld = table.new((numOfItems or 0) * 5, 0),
+    itm_preld = table.new(max(0, numOfItems or 0) * 5, 0),
     itm_preldLen = 0,
     nodeCount = 0,
     maxDepth = 10,
@@ -210,7 +201,7 @@ function quadTree:remove(itm_id, itm_x, itm_y)
       local node = tree[node_i]
       if node[j] == itm_id then
         local itemCount = node.itemCount
-        local tmp_items = table.new(itemCount-5, 1) -- allows us to remove items while a in an active query
+        local tmp_items = table.new(max(0, itemCount-5), 1) -- allows us to remove items while a in an active query
         for i = 1, j-1 do tmp_items[i] = node[i] end
         for i = j+5, itemCount do tmp_items[i-5] = node[i] end
         tmp_items.itemCount = node.itemCount - 5
@@ -358,7 +349,7 @@ function quadTree:compress()
   local tree = self.tree
   for i, node in pairs(tree) do
     local itemCount = node.itemCount
-    local tmp = table.new(itemCount, 1)
+    local tmp = table.new(max(0, itemCount), 1)
     tmp.itemCount = itemCount
     for j = 1, itemCount do
       tmp[j] = node[j]
@@ -395,6 +386,6 @@ function quadTree:analytics()
 end
 
 M.newQuadtree = newQuadtree
-M.pointBBox = pointBBox
-M.lineBBox = lineBBox
+M.pointBBox = pointBB2d
+M.lineBBox = lineBB2d
 return M

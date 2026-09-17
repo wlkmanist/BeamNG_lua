@@ -47,17 +47,18 @@ local function playComic(comicData, comicFinishedCallback)
           audio:setVolume(0)
         end
       end
-      forEachAudioChannel(audioCallback)
-      guihooks.trigger('ChangeState', {state = 'comic', params = {comiclist = comicPanels}})
+      -- TODO: not muting other channels here, this is buggy and makes it not unmute sometimes
+      -- forEachAudioChannel(audioCallback)
+      guihooks.trigger('ChangeState', {state = 'campaign.comic', params = {comiclist = comicPanels}})
     end
 end
 
 local function onSpineAnimationFinished()
-  if not onSpineAnimationFinished_callback then return end
-
   log('I', logTag, 'finished displaying comic')
-  onSpineAnimationFinished_callback()
-  onSpineAnimationFinished_callback = false
+  if onSpineAnimationFinished_callback then
+    onSpineAnimationFinished_callback()
+    onSpineAnimationFinished_callback = false
+  end
   reset()
 
   local channel = scenetree.AudioChannelGui

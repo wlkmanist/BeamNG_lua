@@ -93,7 +93,7 @@ function C:init(editName, objectName)
   self:set()
 
   self.isDragging = false
-
+  if not editor or not editor.editModes then return end
   editor.editModes[self.editName] = {
     editName = self.editName,
     displayName = editName,
@@ -162,6 +162,7 @@ end
 
 -- updates the transform associated with the object
 function C:updateTransform()
+  if not editor or not editor.setAxisGizmoTransform then return end
   if editor.getAxisGizmoAlignment() == editor.AxisGizmoAlignment_Local then
     self.transform = QuatF(self.rot.x, self.rot.y, self.rot.z, self.rot.w):getMatrix()
   else
@@ -485,7 +486,7 @@ function C:combinedWidget()
     im.SetCursorPosX(prePos.x + 35 * scale)
     im.PushItemWidth(width - (im.GetCursorPosX() - startPosX))
     if im.InputFloat4("##Rot", self.inputRot, "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f") then
-      self.rot = quat(self.inputRot[0], self.inputRot[1], self.inputRot[2], self.inputRot[3])
+      self.rot = quat(self.inputRot[0], self.inputRot[1], self.inputRot[2], self.inputRot[3]):normalized()
       changed = true
     end
     im.PopItemWidth()

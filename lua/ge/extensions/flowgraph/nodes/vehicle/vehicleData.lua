@@ -40,17 +40,17 @@ C.legacyPins = {
   },
 }
 
-C.tags = {'telemtry','damage','velocity','direction', 'vehicle info'}
+C.tags = {'telemetry', 'damage', 'velocity', 'direction', 'info'}
 
 function C:init(mgr, ...)
 
 end
 
 local veh, vehicleData
-local wCenter = vec3()
+local wCenter, wPos = vec3(), vec3()
+local vehQuat = quat()
+
 function C:work(args)
-
-
   if self.pinIn.vehId.value then
     veh = scenetree.findObjectById(self.pinIn.vehId.value)
   else
@@ -68,19 +68,19 @@ function C:work(args)
     self.pinOut.position.value = vehicleData.pos:toTable()
     self.pinOut.velocityVector.value = vehicleData.vel:toTable()
     self.pinOut.velocity.value = vehicleData.vel:length()
-    self.pinOut.rotation:valueSetQuat(quatFromDir(vehicleData.dirVec, vehicleData.dirVecUp))
+    vehQuat:setFromDir(vehicleData.dirVec, vehicleData.dirVecUp)
+    self.pinOut.rotation:valueSetQuat(vehQuat)
 
     wCenter:set(0,0,0)
-    local wCount = veh:getWheelCount()-1
+    local wCount = veh:getWheelCount() - 1
     if wCount > 0 then
-      for i=0, wCount do
+      for i = 0, wCount do
         local axisNodes = veh:getWheelAxisNodes(i)
-        local nodePos = veh:getNodePosition(axisNodes[1])
-        local wheelNodePos = vec3(nodePos.x, nodePos.y, nodePos.z)
-        wCenter = wCenter + wheelNodePos
+        wPos:set(veh:getNodePosition(axisNodes[1]))
+        wCenter:setAdd(wPos)
       end
-      wCenter = wCenter / (wCount+1)
-      wCenter = wCenter + vehicleData.pos
+      wCenter:setScaled(1 / (wCount + 1))
+      wCenter:setAdd(vehicleData.pos)
     end
     self.pinOut.wheelCenter.value = wCenter:toTable()
 

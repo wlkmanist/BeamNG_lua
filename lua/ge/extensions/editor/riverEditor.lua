@@ -28,6 +28,7 @@ local function onEditorInitialized()
     onSelectAll = meshEditor.onSelectAll,
     icon = editor.icons.create_river,
     iconTooltip = "River Editor",
+    editObjectClass = meshEditor.type,
     auxShortcuts = {},
     hideObjectIcons = true
   }

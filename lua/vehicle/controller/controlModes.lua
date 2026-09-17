@@ -72,10 +72,10 @@ local function init(jbeamData)
   if not hasRegisteredQuickAccess then
     core_quickAccess.addEntry(
       {
-        level = "/",
+        level = "/root/playerVehicle/general/",
         generator = function(entries)
           if controller.getController("controlModes") then
-            table.insert(entries, {title = "Modes", priority = 40, ["goto"] = "/controlmodes/", icon = "settings"})
+            table.insert(entries, {title = "Modes", priority = 40, ["goto"] = "/root/playerVehicle/general/controlmodes/", icon = "settings", uniqueID = "controlModes"})
           end
         end
       }
@@ -83,11 +83,12 @@ local function init(jbeamData)
 
     core_quickAccess.addEntry(
       {
-        level = "/controlmodes/",
+        level = "/root/playerVehicle/general/controlmodes/",
         generator = function(entries)
           for k, v in pairs(controlModes) do
             local entry = {
               title = v.name,
+              originalActionInfo = {level = "/root/playerVehicle/general/", uniqueID = "controlModes"},
               onSelect = function()
                 setControlModeIndex(k)
                 return {"reload"}

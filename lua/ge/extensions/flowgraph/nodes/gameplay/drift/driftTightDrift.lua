@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Drift through detected'
+C.name = 'Drift Through Detected'
 
-C.description = "Set the tight drift zones"
+C.description = "Detects tight drift zones."
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

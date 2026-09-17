@@ -26,19 +26,19 @@ local function updateMesh(dtSim, sensorId, isAdHocRequest, adHocRequestId)
   -- Compute the latest node data.
   local nodesCount = obj:getNodeCount()
   for i=0, nodesCount do
-    nodes[i] = nodes[i] or { pos = vec3(), force = vec3(), vel = vec3(), mass = 0.0, partOrigin = "no part origin" }
-    nodes[i].pos:set(obj:getNodePositionRelativeXYZ(i))
-    nodes[i].force:set(obj:getNodeForceVectorXYZ(i))
-    nodes[i].vel:set(obj:getNodeVelocityVector(i))
-    nodes[i].mass = obj:getNodeMass(i)
-    nodes[i].partOrigin = partOrigins[i]
+    -- pos, force, vel, mass, partOrigin
+    nodes[i] = nodes[i] or { vec3(), vec3(), vec3(), 0.0, "no part origin" }
+    nodes[i][1]:set(obj:getNodePositionRelativeXYZ(i))
+    nodes[i][2]:set(obj:getNodeForceVectorXYZ(i))
+    nodes[i][3]:set(obj:getNodeVelocityVector(i))
+    nodes[i][4] = obj:getNodeMass(i)
+    nodes[i][5] = partOrigins[i]
   end
 
   -- Compute the latest beam data.
   local beamCount = obj:getBeamCount()
   for i=0, beamCount do
-    beams[i] = beams[i] or { stress = 0.0 }
-    beams[i].stress = obj:getBeamStress(i)
+    beams[i] = obj:getBeamStress(i)
   end
 
   -- Update the latest reading data.
@@ -88,6 +88,10 @@ local function getMeshReading(sensorId)
   return latestReadings[sensorId]
 end
 
+local function getPartOrigins()
+  return partOrigins
+end
+
 local function onVehicleDestroyed(vid)
   for sensorId, _ in pairs(meshes) do
     if vid == objectId then
@@ -110,6 +114,7 @@ M.create                                    = create
 M.remove                                    = remove
 M.adHocRequest                              = adHocRequest
 M.getMeshReading                            = getMeshReading
+M.getPartOrigins                            = getPartOrigins
 
 -- Property setters.
 M.setUpdateTime                             = setUpdateTime

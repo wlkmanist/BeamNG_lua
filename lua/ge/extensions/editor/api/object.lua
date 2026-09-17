@@ -52,7 +52,57 @@ local function canManipulateObject(object)
   end
 end
 
+-- Focus-Lock: when set, the scene tree only shows this group, only objects inside
+-- it can be selected in the viewport, and newly created objects are placed into it.
+local focusLockedGroupId = nil
+
+local function getFocusLockedGroup()
+  if not focusLockedGroupId then return nil end
+  local group = scenetree.findObjectById(focusLockedGroupId)
+  if not group then
+    -- group no longer exists, auto-clear the stale lock
+    focusLockedGroupId = nil
+    return nil
+  end
+  return group
+end
+
+local function isFocusLockActive()
+  return getFocusLockedGroup() ~= nil
+end
+
+local function setFocusLockedGroup(id)
+  focusLockedGroupId = id
+  extensions.hook("onEditorFocusLockChanged")
+end
+
+local function clearFocusLock()
+  focusLockedGroupId = nil
+  extensions.hook("onEditorFocusLockChanged")
+end
+
+local function isObjectInFocusLockedGroup(object)
+  local group = getFocusLockedGroup()
+  if not group then return true end
+  if not object then return false end
+  local groupId = group:getID()
+  if object:getID() == groupId then return true end
+  local current = object:getGroup()
+  while current do
+    if current:getID() == groupId then return true end
+    current = current:getGroup()
+  end
+  return false
+end
+
+local function resolveAddGroup(defaultGroup)
+  return getFocusLockedGroup() or defaultGroup
+end
+
 local function isObjectSelectable(object)
+  if not isObjectInFocusLockedGroup(object) then
+    return false
+  end
   if object:isSubClassOf("SceneObject") then
     return object:isSelectionEnabled()
   else
@@ -62,6 +112,17 @@ end
 
 local function isObjectSelectionEmpty()
   return (not editor.selection.object or tableIsEmpty(editor.selection.object))
+end
+
+local function isObjectSelected(objectId)
+  if editor.selection and editor.selection.object then
+    for i,id in ipairs(editor.selection.object) do
+      if id == objectId then
+        return true
+      end
+    end
+  end
+  return false
 end
 
 local function updateCentroid()
@@ -139,8 +200,30 @@ local function computeSelectionBBox(updateGizmo)
     local obj = Sim.findObjectById(editor.selection.object[i])
     if obj and obj.getWorldBox then
       local wb = obj:getWorldBox()
-      editor.objectSelectionBBox:extend(wb.minExtents)
-      editor.objectSelectionBBox:extend(wb.maxExtents)
+      -- Validate bounds are not infinite before extending
+      if wb and wb.minExtents and wb.maxExtents then
+        local minValid = math.abs(wb.minExtents.x) < 1e10 and math.abs(wb.minExtents.y) < 1e10 and math.abs(wb.minExtents.z) < 1e10
+        local maxValid = math.abs(wb.maxExtents.x) < 1e10 and math.abs(wb.maxExtents.y) < 1e10 and math.abs(wb.maxExtents.z) < 1e10
+        if minValid and maxValid and wb.minExtents.x <= wb.maxExtents.x and wb.minExtents.y <= wb.maxExtents.y and wb.minExtents.z <= wb.maxExtents.z then
+          editor.objectSelectionBBox:extend(wb.minExtents)
+          editor.objectSelectionBBox:extend(wb.maxExtents)
+        else
+          -- Invalid bounds, try to use objBox transformed to world space as fallback
+          if obj.getObjBox and obj.getTransform then
+            local objBox = obj:getObjBox()
+            if objBox and objBox.minExtents and objBox.maxExtents then
+              local mat = obj:getTransform()
+              local center = objBox:getCenter()
+              local extents = objBox:getExtents()
+              local worldCenter = mat:mulP3F(center)
+              local worldMin = worldCenter - extents * 0.5
+              local worldMax = worldCenter + extents * 0.5
+              editor.objectSelectionBBox:extend(worldMin)
+              editor.objectSelectionBBox:extend(worldMax)
+            end
+          end
+        end
+      end
     end
   end
 
@@ -167,6 +250,7 @@ local function setObjectSelectedBool(objectIds, selected)
       local obj = scenetree.findObjectById(objId)
       if obj then obj:setSelected(selected or false) end
     end
+    worldEditorCppApi.rebuildShapeManagerInstanceData()
   end
 end
 
@@ -174,6 +258,7 @@ local function setObjectSelectedBoolSingle(objectId, selected)
   if objectId then
     local obj = scenetree.findObjectById(objectId)
     if obj then obj:setSelected(selected) end
+    worldEditorCppApi.rebuildShapeManagerInstanceData()
   end
 end
 
@@ -502,7 +587,7 @@ local function getObjectsByRectangle(rect, forestData)
                       viewFrustum:getTransform())
 
   if forestData then
-    return forestData:getItemsFrustum(rectFrustum), rectFrustum
+    return forestData:getItemsFrustum(rectFrustum, true), rectFrustum
   else
     local defaultFlags = bit.bor(SOTTerrain, SOTWater, SOTStaticShape, SOTPlayer, SOTItem, SOTVehicle, SOTLight)
     return findObjectListFrustum(rectFrustum, defaultFlags), rectFrustum
@@ -916,6 +1001,93 @@ local function getHighestObject(objects)
   return highestObject
 end
 
+local function calculateObjectsCenter(objects)
+  local stack = shallowcopy(objects)
+
+  local objectsCentroid = vec3(0, 0, 0)
+  local divisor = 0
+  local stackSize = tableSize(stack)
+  while stackSize > 0 do
+    local id = stack[stackSize]
+    table.remove(stack, stackSize)
+
+    local currentObject = scenetree.findObjectById(id)
+    if currentObject and currentObject:getClassName() == "SimGroup" then
+      local groupData = currentObject:getScenetreeData()
+      local dataCount = #groupData
+      if dataCount > 0 then
+        -- increment index by 2 because getScenetreeData() array format is [childId, childGroupId, childId, childGroupId,......]
+        for index = 1, dataCount, 2 do
+          local childObjId = groupData[index]
+          local child = scenetree.findObjectById(childObjId)
+          if child then
+            if child:getClassName() == "SimGroup" then
+              table.insert(stack, childId)
+            elseif child.getTransform then
+              local mat = child:getTransform()
+              local wPos = mat:getColumn(3)
+
+              objectsCentroid.x = objectsCentroid.x + wPos.x
+              objectsCentroid.y = objectsCentroid.y + wPos.y
+              objectsCentroid.z = objectsCentroid.z + wPos.z
+              divisor = divisor + 1
+            end
+          end
+        end
+      end
+    end
+
+    stackSize = tableSize(stack)
+  end
+
+  objectsCentroid.x = objectsCentroid.x / divisor;
+  objectsCentroid.y = objectsCentroid.y / divisor;
+  objectsCentroid.z = objectsCentroid.z / divisor;
+  return objectsCentroid
+end
+
+local function calculateBoundingBoxCenter(objects)
+  local stack = shallowcopy(objects)
+  local bbox = Box3F()
+  bbox.minExtents:set(editor.FloatMax, editor.FloatMax, editor.FloatMax)
+  bbox.maxExtents:set(editor.FloatMin, editor.FloatMin, editor.FloatMin)
+
+  local stackSize = tableSize(stack)
+  while stackSize > 0 do
+    local id = stack[stackSize]
+    table.remove(stack, stackSize)
+
+    local currentObject = scenetree.findObjectById(id)
+    if currentObject and currentObject:getClassName() == "SimGroup" then
+      local groupData = currentObject:getScenetreeData()
+      local dataCount = #groupData
+      if dataCount > 0 then
+        -- increment index by 2 because getScenetreeData() array format is [childId, childGroupId, childId, childGroupId,......]
+        for index = 1, dataCount, 2 do
+          local childObjId = groupData[index]
+          local child = scenetree.findObjectById(childObjId)
+          if child then
+            if child:getClassName() == "SimGroup" then
+              table.insert(stack, childId)
+            else
+              local childBounds = child:getWorldBox()
+              if childBounds:isValidBox() then
+                bbox:extend(childBounds.minExtents)
+                bbox:extend(childBounds.maxExtents)
+              end
+            end
+          end
+        end
+      end
+    end
+
+    stackSize = tableSize(stack)
+  end
+
+  local objectsBoxCenter = bbox:getCenter()
+  return objectsBoxCenter
+end
+
 --- Create a new prefab from the current selection.
 -- @param newPrefabFilename prefab destination filename
 --TODO: add undo
@@ -1077,6 +1249,97 @@ local function explodeSelectedPrefab()
   return groups
 end
 
+local function convertSelectedPrefabsToV2()
+  local prefabList = {}
+
+  for i = 1, #editor.selection.object do
+    local obj = scenetree.findObjectById(editor.selection.object[i])
+    if obj and obj:getClassName() == "Prefab" then
+      table.insert(prefabList, obj)
+    end
+  end
+
+  if #prefabList == 0 then
+    return
+  end
+
+  editor.clearObjectSelection()
+  local prefabInstances = {}
+  for i = 1, #prefabList do
+    local prefab = prefabList[i]
+    local objects = prefab:getChildrenObjectIds()
+    local bboxCenter = editor.calculateBoundingBoxCenter(objects)
+    local parentGroup = prefab:getGroup()
+    local name = "prefab"
+    if prefab:getName() and prefab:getName() ~= "" then
+        name = prefab:getName()
+    end
+    local convertedPrefab = prefab:convertToV2(true)
+    if convertedPrefab then
+      name = Sim.getUniqueName(name)
+      local instance = editor.replaceGroupWithPrefabInstance(convertedPrefab, parentGroup, name, bboxCenter)
+      prefab:deleteObject()
+      table.insert(prefabInstances, instance)
+      editor.selectObjectById(instance:getId())
+    else
+      editor.logError("Could not convert prefab into v2: " .. prefab:getName())
+    end
+  end
+
+  editor.setDirty()
+  return prefabInstances
+end
+
+local function unpackageSelectedPrefabInstance()
+  local prefabInstanceList = {}
+
+  for i = 1, #editor.selection.object do
+    local obj = scenetree.findObjectById(editor.selection.object[i])
+    if obj then
+      table.insert(prefabInstanceList, obj)
+    end
+  end
+
+  if #prefabInstanceList == 0 then
+    return
+  end
+
+  editor.clearObjectSelection()
+  log('I','','prefabs = '..dumps(prefabInstanceList))
+  for i,v in ipairs(prefabInstanceList) do
+    log('I','','  '..tostring(v:getName())..' or '..tostring(v:getInternalName()))
+  end
+  dumps(prefabInstanceList)
+
+  local groups = {}
+  for i = 1, #prefabInstanceList do
+    local prefabInstance = prefabInstanceList[i]
+    local newGroup = prefabInstance:unpackage()
+    prefabInstance:deleteObject()
+    if newGroup then
+      table.insert(groups, newGroup)
+    end
+  end
+
+  editor.setDirty()
+  return groups
+end
+
+local function replaceGroupWithPrefabInstance(prefab, parentGroup, instanceName, position)
+  if not prefab then
+    return nil
+  end
+  local scale = vec3(1, 1, 1)
+  local instance = prefab:spawn(instanceName, position, QuatF(0, 0, 0, 1), scale)
+  if instance then
+    if parentGroup then
+      parentGroup:addObject(instance)
+    end
+  end
+  Engine.setNeedCollisionRebuild(true)
+  return instance
+end
+
 -- debug functions
 local function debugObjectSelection()
   editor.logDebug("Selection:")
@@ -1153,6 +1416,7 @@ local function initialize(editorInstance)
   editor.tableToMatrix = tableToMatrix
   editor.getObjectSelection = getObjectSelection
   editor.isObjectSelectionEmpty = isObjectSelectionEmpty
+  editor.isObjectSelected = isObjectSelected
   editor.getSelectionCentroid = getSelectionCentroid
   editor.enableEditorOnObjects = enableEditorOnObjects
   editor.validateObjectName = validateObjectName
@@ -1190,6 +1454,8 @@ local function initialize(editorInstance)
   editor.findFirstSelectedByType = findFirstSelectedByType
   editor.createPrefabFromObjectSelection = createPrefabFromObjectSelection
   editor.explodeSelectedPrefab = explodeSelectedPrefab
+  editor.convertSelectedPrefabsToV2 = convertSelectedPrefabsToV2
+  editor.replaceGroupWithPrefabInstance = replaceGroupWithPrefabInstance
   editor.matrixToTable = matrixToTable
   editor.tableToMatrix = tableToMatrix
   editor.computeSelectionBBox = computeSelectionBBox
@@ -1202,9 +1468,27 @@ local function initialize(editorInstance)
   editor.getHighestObject = getHighestObject
   editor.restoreSimObjectMemento = restoreSimObjectMemento
   editor.saveSimObjectMemento = saveSimObjectMemento
+
+  --editor.packagePrefabInstance = packagePrefabInstance
+  editor.unpackageSelectedPrefabInstance = unpackageSelectedPrefabInstance
+
+  editor.calculateObjectsCenter = calculateObjectsCenter
+  editor.calculateBoundingBoxCenter = calculateBoundingBoxCenter
+
+end
+
+-- Registered separately from initialize() to keep that function under Lua's 60 upvalue limit.
+local function initializeFocusLock()
+  editor.getFocusLockedGroup = getFocusLockedGroup
+  editor.isFocusLockActive = isFocusLockActive
+  editor.setFocusLockedGroup = setFocusLockedGroup
+  editor.clearFocusLock = clearFocusLock
+  editor.isObjectInFocusLockedGroup = isObjectInFocusLockedGroup
+  editor.resolveAddGroup = resolveAddGroup
 end
 
 local M = {}
 M.initialize = initialize
+M.initializeFocusLock = initializeFocusLock
 
 return M

@@ -12,9 +12,9 @@ local function addLog(message, origin, severity)
   table.insert(logList, string.format("%d|%s|%s|%s", os.time(), severity or "I", origin or "", message))
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   local saveRoot = career_saveSystem.getSaveRootDirectory()
-  local saveSlot, _ = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, _ = career_saveSystem.getCurrentProfile()
   if not saveSlot then return end
 
   addLog(string.format("Save game to %s", currentSavePath), "log")
@@ -27,15 +27,16 @@ local function onSaveCurrentSaveSlot(currentSavePath)
   logList = {}
 end
 
-local function onCareerModulesActivated()
+local function onCareerActive(active)
+  if not active then return end
   logList = {}
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   addLog(string.format("Loaded game %s", savePath), "log")
 end
 
 M.addLog = addLog
 
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
-M.onCareerModulesActivated = onCareerModulesActivated
+M.onSaveCurrentProfile = onSaveCurrentProfile
+M.onCareerActive = onCareerActive
 
 return M

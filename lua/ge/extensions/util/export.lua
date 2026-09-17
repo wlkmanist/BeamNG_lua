@@ -19,87 +19,6 @@ local EXTENSION_JBEAM = "BNG_JBeamData"
 local EXTENSION_DIRECTION = "BNG_Direction"
 local abs = math.abs
 
-if not _G['__gpuFlexMesh_t_cdef'] then
-  ffi.cdef[[
-  typedef struct gpuPrimitive_t {
-    uint32_t startIndex;
-    uint32_t indexCount;
-    uint32_t materialId;
-  } gpuPrimitive_t;
-  ]]
-
-  --[[ not needed anymore, but may be useful for reference
-  typedef struct gpuFlexMesh_t {
-    const char* meshName;
-    uint32_t primitivesCount;
-    const gpuPrimitive_t* primitives;
-  } gpuFlexMesh_t;
-
-  typedef struct gpuPropMesh_t {
-    const char* meshName;
-    float position[3];
-    float rotation[4];
-
-    uint32_t indicesCount;
-    const uint32_t* indices;
-
-    uint32_t verticesCount;
-    const float* vertices;
-
-    uint32_t normalsCount;
-    const float* normals;
-
-    uint32_t tangentsCount;
-    const float* tangents;
-
-    uint32_t uv1Count;
-    const float* uv1; // Vector2
-
-    uint32_t uv2Count;
-    const float* uv2; // Vector2
-
-    uint32_t vertColorsCount;
-    const uint32_t* vertColors; // RGB packed
-
-    uint32_t primitivesCount;
-    const gpuPrimitive_t* primitives;
-  } gpuPropMesh_t;
-
-  typedef struct gpuMesh_t {
-    uint32_t indicesCount;
-    const uint32_t* indices;
-
-    uint32_t verticesCount;
-    const float* vertices;
-
-    uint32_t normalsCount;
-    const float* normals;
-
-    uint32_t tangentsCount;
-    const float* tangents;
-
-    uint32_t uv1Count;
-    const float* uv1;
-
-    uint32_t uv2Count;
-    const float* uv2;
-
-    uint32_t vertColorsCount;
-    const uint32_t* vertColors;
-
-    uint32_t flexmeshesCount;
-    const gpuFlexMesh_t* flexmeshes;
-
-    uint32_t propmeshesCount;
-    const gpuPropMesh_t* propmeshes;
-
-    bool dataIsReady;
-  } gpuMesh_t;
-  ]]--
-
-  rawset(_G, '__gpuFlexMesh_t_cdef', true)
-end
-
 -- constants
 local base64Prefix = "data:application/octet-stream;base64,"
 local floatByteSize = ffi.sizeof('float')
@@ -501,7 +420,7 @@ local function _getPartNodeBeams(veh, v)
   for i, beam in pairs(v.vdata.beams) do
     local id1 = beam.id1
     local id2 = beam.id2
-    local part = beam.partOrigin
+    local part = beam.partPath
     if part then
       local n1 = v.vdata.nodes[id1].name
       local n2 = v.vdata.nodes[id2].name
@@ -581,7 +500,7 @@ local function _addMeshNodes(node, meshes, meshNodeMap)
   end
 end
 
-local function _createPartTree(gltfRoot, chosenParts, slotMap, partToFlexMesh, meshNodeMap, partNodeBeams, createdNodeIDs)
+local function _createPartTree(gltfRoot, vehiclePartTree, slotMap, partToFlexMesh, meshNodeMap, partNodeBeams, createdNodeIDs)
   partToFlexMesh = deepcopy(partToFlexMesh)
   gltfRoot.scenes[1].nodes = {}
 
@@ -597,32 +516,47 @@ local function _createPartTree(gltfRoot, chosenParts, slotMap, partToFlexMesh, m
   local partNodeIDs = {}
   local rootNodes = {}
 
-  -- log("I", logTag, "===================================  chosenParts")
+  --log("I", logTag, "===================================  vehiclePartTree")
+  local parentPart = {}
 
-  for part, choice in pairs(chosenParts) do
-    local node = _createOrGetNode(gltfRoot, partNodes, partNodeIDs, rootNodes, partNodeBeams, part)
+  local partTreeParser
+  partTreeParser = function (partNode,parentName)
+    local node
+    if partNode.chosenPartName == "" then
+      goto continueChosenParts
+    end
+    node = _createOrGetNode(gltfRoot, partNodes, partNodeIDs, rootNodes, partNodeBeams, partNode.id )
     -- log("I", logTag, dbgNodeName(gltfRoot,partNodeIDs[part]))
 
-    if partToFlexMesh[part] ~= nil then
-      _addMeshNodes(node, partToFlexMesh[part], meshNodeMap)
-      partToFlexMesh[part] = nil
+    if partToFlexMesh[partNode.partPath] ~= nil then
+      _addMeshNodes(node, partToFlexMesh[partNode.partPath], meshNodeMap)
+      partToFlexMesh[partNode.partPath] = nil
+      parentPart[partNode.chosenPartName] = parentName
     end
 
-    if partToFlexMesh[choice] ~= nil then
-      _addMeshNodes(node, partToFlexMesh[choice], meshNodeMap)
-      partToFlexMesh[choice] = nil
+    if partToFlexMesh[partNode.chosenPartName] ~= nil then
+      _addMeshNodes(node, partToFlexMesh[partNode.chosenPartName], meshNodeMap)
+      partToFlexMesh[partNode.chosenPartName] = nil
+      parentPart[partNode.chosenPartName] = parentName
+    end
+    ::continueChosenParts::
+    if partNode.children then
+      for _, child in pairs(partNode.children) do
+        partTreeParser(child,partNode.chosenPartName)
+      end
     end
   end
+  partTreeParser(vehiclePartTree,"scene")
 
   -- log("I", logTag, "===================================  slotMap")
 
   for part, data in pairs(slotMap) do
-    if chosenParts[part] ~= nil and chosenParts[part] ~= '' then
+    if parentPart[part] ~= nil and parentPart[part] ~= '' then
       local node = _createOrGetNode(gltfRoot, partNodes, partNodeIDs, rootNodes, partNodeBeams, part)
       -- log("I", logTag, dbgNodeName(gltfRoot,partNodeIDs[part]))
       if data.slots ~= nil then
         for subPart, d in pairs(data.slots) do
-          if chosenParts[subPart] ~= nil and chosenParts[subPart] ~= '' then
+          if parentPart[subPart] ~= nil and parentPart[subPart] ~= '' then
             if partNodes[subPart] ~= nil then
               if node.children == nil then
                 node.children = {}
@@ -1002,21 +936,21 @@ local function processExport()
   end
   local partToFlexMesh = {}
   for _, flexMesh in pairs(v.vdata.flexbodies or {}) do
-    local origin = flexMesh.partOrigin or ""
-    if partToFlexMesh[origin] == nil then
-      partToFlexMesh[origin] = {}
+    local path = flexMesh.partPath or ""
+    if partToFlexMesh[path] == nil then
+      partToFlexMesh[path] = {}
     end
 
-    partToFlexMesh[origin][flexMesh.mesh] = true
+    partToFlexMesh[path][flexMesh.mesh] = true
   end
   for _, prop in pairs(v.vdata.props or {}) do
     -- print("prop["..dumps(_)..dumps(prop.mesh))
     if prop.mesh ~= "SPOTLIGHT" then
-      local origin = prop.partOrigin or ""
-      if partToFlexMesh[origin] == nil then
-        partToFlexMesh[origin] = {}
+      local path = prop.partPath or ""
+      if partToFlexMesh[path] == nil then
+        partToFlexMesh[path] = {}
       end
-      partToFlexMesh[origin][prop.mesh] = true
+      partToFlexMesh[path][prop.mesh] = true
       -- dump(prop)
     end
   end
@@ -1030,7 +964,7 @@ local function processExport()
 
   local slotMap = jbeamIO.getAvailableParts(v.ioCtx)
 
-  local rootNodes = _createPartTree(gltfRoot, v.chosenParts, slotMap, partToFlexMesh, meshNodeMap, partNodeBeams)
+  local rootNodes = _createPartTree(gltfRoot, v.config.partsTree, slotMap, partToFlexMesh, meshNodeMap, partNodeBeams)
 
   gltfRoot.scenes[1].nodes = {}
   for nodeID, root in pairs(rootNodes) do

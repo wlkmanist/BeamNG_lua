@@ -257,6 +257,14 @@ local function aggregateProgress(progress, attempt, change, mission)
   aggregate.attemptCount = aggregate.attemptCount + 1
   attempt.attemptNumber = aggregate.attemptCount
 
+  attempt.dnfCount = 0
+  if attempt.dnf then
+    aggregate.dnfCount = (aggregate.dnfCount or 0) + 1
+  else
+    attempt.dnfCount = aggregate.dnfCount
+    aggregate.dnfCount = 0
+  end
+
   -- update "recent" leaderboard
   local leaderboard = progress.leaderboards['recent']
   table.insert(leaderboard, 1, #progress.attempts)
@@ -318,8 +326,13 @@ local function sanitizeAttempt(attempt, mission)
   attempt.type = attempt.type or 'none'
   -- remove all non-active stars from attempt
   local unlockedClean = {}
+
+  local activeStars = gameplay_missions_missionScreen.getActiveStarsForUserSettings(mission.id, mission.lastUserSettings or {}) or {}
+  local starInfo = activeStars.starInfo or {}
+
   for key, val in pairs(attempt.unlockedStars or {}) do
-    if mission.careerSetup.starsActive[key] then
+
+    if mission.careerSetup.starsActive[key] and starInfo and starInfo[key].visible and starInfo[key].enabled then
       unlockedClean[key] = val
     end
   end
@@ -336,7 +349,7 @@ local function sanitizeAttempt(attempt, mission)
   end
   for key, _ in pairs(mission.careerSetup._activeStarCache.bonusStarKeysByKey) do
     if attempt.unlockedStars[key] then
-      bonusStarsUnlockedCount = defaultStarsUnlockedCount +1
+      bonusStarsUnlockedCount = bonusStarsUnlockedCount + 1
     end
   end
   if defaultStarsUnlockedCount >= 1 then
@@ -349,6 +362,18 @@ local function sanitizeAttempt(attempt, mission)
   attempt.type = currentType
   --dumpz(attempt, 3)
 end
+
+local missionTypeToAchievement = {
+  rallyStage = "CHALLENGE_RALLY_STAGE",
+  rallyLoop = "CHALLENGE_RALLY_LOOP",
+  timeTrial = "CHALLENGE_TIME_TRIAL",
+  aiRace = "CHALLENGE_AI_RACE",
+  precisionParking = "CHALLENGE_PRECISION_PARKING",
+  chase = "CHALLENGE_CHASE",
+  busMode = "CHALLENGE_BUS_MODE",
+  crawl = "CHALLENGE_CRAWL",
+  freeformDelivery = "CHALLENGE_FREEFORM_DELIVERY",
+}
 
 local function aggregateAttempt(id, attempt, progressKey)
   local mission = gameplay_missions_missions.getMissionById(id)
@@ -365,7 +390,6 @@ local function aggregateAttempt(id, attempt, progressKey)
   end
   -- sanitize attempt
   sanitizeAttempt(attempt, mission)
-  extensions.hook("onMissionAttemptAggregated", attempt, mission)
   -- insert into progress
   table.insert(progress.attempts, attempt)
 
@@ -376,38 +400,93 @@ local function aggregateAttempt(id, attempt, progressKey)
     plog("I", "aggregating regular progress.")
   end
 
+  -- aggregate generic values
+  progress.aggregate = aggregateProgress(progress, attempt, aggregateChange, mission)
 
-  -- aggregate stars
+  extensions.hook("onMissionAttemptAggregated", attempt, mission, progressKey)
+
+    -- adjust dynamic rewards before adding the rewards
+  M.setDynamicStarRewards(mission, mission.lastUserSettings)
+
+
+  -- aggregate stars: which have been achieven and how often?
+  -- this is for the whole mission, not for a progress key.
   local unlockedStarsChanged = {}
-  local starRewards = {list = {}, sums = {}, sumList = {}}
+  local starRewards = {list = {}, sums = {}, sumList = {}, rewardMultiplierAdditionalAmount = 0, originalRewardsPerStar = {}}
+  local branchMultiplier = 1
+  local rewardBranch = nil
+  if career_career and career_career.isActive() then
+    local branch = career_branches.getBranchById(mission.careerSetup.skill)
+    branchMultiplier = career_branches.getLevelRewardMultiplier(branch.id)
+    if branchMultiplier then
+      rewardBranch = branch.id
+    end
+    if not branchMultiplier then
+      local parentBranch = career_branches.getBranchById(branch.parentId)
+      branchMultiplier = career_branches.getLevelRewardMultiplier(parentBranch.id)
+      if branchMultiplier then
+        rewardBranch = parentBranch.id
+      end
+    end
+    if not branchMultiplier then
+      branchMultiplier = 1
+    end
+  end
   for star, _ in pairs(attempt.unlockedStars or {}) do
     if mission.careerSetup.starsActive[star] then
+
       mission.saveData.unlockedStars[star] = mission.saveData.unlockedStars[star] or 0
 
       if attempt.unlockedStars[star] then
         unlockedStarsChanged[star] = mission.saveData.unlockedStars[star] == 0
         mission.saveData.unlockedStars[star] = mission.saveData.unlockedStars[star] + 1
-
-        for _, reward in ipairs(mission.careerSetup.starRewards[star] or {}) do
-          starRewards.sums[reward.attributeKey] = (starRewards.sums[reward.attributeKey] or 0) + reward.rewardAmount
-          local rCopy = deepcopy(reward)
-          rCopy.sourceStar = star
-          table.insert(starRewards.list, rCopy)
+        if career_career and career_career.isActive() then
+          local rewards = mission.careerSetup.starRewards[star] or {}
+          starRewards.originalRewardsPerStar[star] = deepcopy(rewards)
+          for _, reward in ipairs(rewards) do
+            local baseAmount = (starRewards.sums[reward.attributeKey] or 0)
+            starRewards.sums[reward.attributeKey] = baseAmount + reward.rewardAmount
+            if reward.attributeKey == "money" then
+              starRewards.sums[reward.attributeKey] = baseAmount + reward.rewardAmount * branchMultiplier
+              starRewards.rewardMultiplierAdditionalAmount = starRewards.rewardMultiplierAdditionalAmount + reward.rewardAmount * (branchMultiplier - 1)
+              starRewards.rewardMultiplierBasedOnBranch = rewardBranch
+              starRewards.multiplierValue = branchMultiplier
+            end
+            local rCopy = deepcopy(reward)
+            rCopy.sourceStar = star
+            table.insert(starRewards.list, rCopy)
+          end
         end
       end
     end
   end
+
   local ordered = tableKeysSorted(starRewards.sums)
   career_branches.orderAttributeKeysByBranchOrder(ordered)
   for _, key in ipairs(ordered) do
     table.insert(starRewards.sumList,{attributeKey = key, rewardAmount = starRewards.sums[key], icon = career_branches.getBranchIcon(key) })
   end
 
+  -- count completed default stars from save data
+  local completedDefaultStars = 0
+  for key, _ in pairs(mission.careerSetup._activeStarCache.defaultStarKeysByKey) do
+    local star = mission.saveData.unlockedStars[key]
+    if type(star) == "number" and star > 0 then
+      completedDefaultStars = completedDefaultStars + 1
+    end
+  end
+  if completedDefaultStars >= 1 then
+    gameplay_achievement.unlockAchievement("CHALLENGE_ONE_STAR")
+    if missionTypeToAchievement[mission.missionType] then
+      gameplay_achievement.unlockAchievement(missionTypeToAchievement[mission.missionType])
+    end
+  end
+  if completedDefaultStars >= 3 then
+    gameplay_achievement.unlockAchievement("CHALLENGE_THREE_STARS")
+  end
 
-
-
-  -- aggregate generic values
-  progress.aggregate = aggregateProgress(progress, attempt, aggregateChange, mission)
+  -- add career rewards info
+  local formattedRewards = M.addCareerRewardInfo(starRewards, mission, attempt)
 
   -- configurable aggregates
   for _, config in ipairs(mission.autoAggregates or {}) do
@@ -417,16 +496,14 @@ local function aggregateAttempt(id, attempt, progressKey)
     end
   end
   -- let the mission also aggregate, for leaderboards, custom scores etc
-  if mission.aggregateProgress then
+  if mission.aggregateAttempt then
     plog("I", "aggregating mission custom progress.")
     local succ, err, agg = xpcall(function()
-      mission:aggregateProgress(progress, attempt, aggregateChange)
+      mission:aggregateAttempt(mission.saveData, progress, attempt, aggregate, aggregateChange)
     end, debug.traceback)
     if not succ then
-      plog("E", "", "Error while aggregating progress for mission ID: " .. dumps(id) .. ". Error follows:")
+      plog("E", "", "Error while aggregating attempt for mission ID: " .. dumps(id) .. ". Error follows:")
       plog("E", "", err)
-    else
-      progress.aggregate = agg
     end
   end
 
@@ -439,7 +516,6 @@ local function aggregateAttempt(id, attempt, progressKey)
   mission.saveData.userSettingsUnlocked = attempt.type == 'completed' or attempt.type == 'passed' or mission.saveData.userSettingsUnlocked
 
 
-
   -- do rewards
   if career_career and career_career.isActive() then
     local sumChange = {}
@@ -447,7 +523,13 @@ local function aggregateAttempt(id, attempt, progressKey)
       sumChange[key] = (sumChange[key] or 0) + amount
     end
     if next(sumChange) then
-      career_modules_playerAttributes.addAttributes(sumChange, {tags={"gameplay","reward","mission"}, label="Received challenge rewards: " .. (translateLanguage(mission.name,mission.name,true) or "(Unnamed Mission)")})
+      career_modules_playerAttributes.addAttributes(sumChange, {
+        tags = {"gameplay", "reward", "mission"},
+        label = {
+          txt = "ui.career.attributeLog.challengeRewards",
+          context = { missionName = mission.name or "ui.career.attributeLog.unnamedMission" },
+        },
+      })
     end
   end
 
@@ -460,8 +542,9 @@ local function aggregateAttempt(id, attempt, progressKey)
   M.reduceCareerRewardsForDefaultStars(mission)
 
 
+
   if not batchMode then
-    gameplay_missions_unlocks.updateUnlockStatus()
+    gameplay_missions_unlocks.clearUnlockStatusCache()
     local unlockMissionsAfter = gameplay_missions_unlocks.getSimpleUnlockedStatus()
     local unlockChange = gameplay_missions_unlocks.getUnlockDiff(unlockMissionsBefore, unlockMissionsAfter)
     local unlockedMissions = unlockChange.missionsList or {}
@@ -485,6 +568,7 @@ local function aggregateAttempt(id, attempt, progressKey)
       unlockedStarsAttempt = attempt.unlockedStars,
       unlockedStarsChanged = unlockedStarsChanged,
       starRewards = starRewards,
+      formattedRewards = formattedRewards,
     }
     if career_career.isActive() then
       local unlockLeaguesAfter = career_modules_branches_leagues.getSimpleUnlockedStatus()
@@ -506,6 +590,227 @@ local function aggregateAttempt(id, attempt, progressKey)
   end
   -- actually save progress
   --saveMissionSaveData(id)
+end
+
+local function calculateRewardDuration(rewardAmount, scaleFactor)
+  -- Uses sigmoid-like scaling for smoother progression
+  -- Minimum duration: 0.4s, Maximum duration: 3.0s
+  -- Base duration is 0.4s
+  -- Additional duration approaches max smoothly
+  local baseDuration = 0.4
+  local maxAdditionalDuration = 2.6 -- (3.0 - 0.4)
+  scaleFactor = scaleFactor or 300 -- Controls how quickly the curve flattens
+
+  if rewardAmount <= 0 then return baseDuration, 0 end
+
+  -- Calculate duration using sigmoid-like curve with slower scaling
+  local additionalDuration = maxAdditionalDuration * (1 - (1 / (1 + rewardAmount/(scaleFactor*2))))
+  local duration = baseDuration + additionalDuration
+
+  -- Calculate pitch using sigmoid-like curve
+  -- Approaches 1 asymptotically as rewardAmount increases
+  local pitch = 1 - (1 / (1 + rewardAmount/scaleFactor))
+
+  return duration, pitch
+end
+
+M.addCareerRewardInfo = function(starRewards, mission, attempt)
+  if not career_career.isActive() then
+    return
+  end
+  -- for each attribute, add an element to the list with total rewards
+  local formattedRewards = {list = {}}
+
+  -- Group rewards by attribute
+  local rewardsByAttribute = {}
+  for star, rewards in pairs(starRewards.originalRewardsPerStar) do
+    for _, reward in ipairs(rewards) do
+      if not rewardsByAttribute[reward.attributeKey] then
+        rewardsByAttribute[reward.attributeKey] = {
+          attributeKey = reward.attributeKey,
+          total = 0,
+          icon = career_branches.getBranchIcon(reward.attributeKey),
+          breakdown = {}
+        }
+      end
+
+      -- Add to total if star was unlocked
+      if attempt.unlockedStars[star] then
+        local rewardAmount = reward.rewardAmount
+        rewardsByAttribute[reward.attributeKey].total = rewardsByAttribute[reward.attributeKey].total + rewardAmount
+      end
+    end
+  end
+
+  -- Create single breakdown entry with total for each attribute
+  for _, rewardData in pairs(rewardsByAttribute) do
+    if rewardData.total > 0 then
+      -- Calculate duration based on total reward
+      local duration = calculateRewardDuration(rewardData.total)
+      table.insert(rewardData.breakdown, {
+        label = "Earned",
+        before = 0,
+        after = rewardData.total,
+        duration = -1
+      })
+      if rewardData.attributeKey == "money" and starRewards.rewardMultiplierAdditionalAmount > 0 and starRewards.rewardMultiplierBasedOnBranch then
+        local branch = career_branches.getBranchById(starRewards.rewardMultiplierBasedOnBranch)
+        table.insert(rewardData.breakdown, {
+          label = {txt = "ui.career.rewards.branchMultiplier", context = {branch = branch.longName or branch.name}},
+          before = starRewards.rewardMultiplierAdditionalAmount,
+          after = starRewards.rewardMultiplierAdditionalAmount,
+        })
+      end
+    end
+  end
+
+  -- Convert to ordered list
+  local ordered = tableKeysSorted(rewardsByAttribute)
+  career_branches.orderAttributeKeysByBranchOrder(ordered)
+  for _, key in ipairs(ordered) do
+    local rewardInfo = rewardsByAttribute[key]
+
+    -- Add attribute name/label and color
+    local branch = career_branches.getBranchById(key)
+    rewardInfo.soundClass = "progressBar"
+    local endSound = false
+    local scaleFactor = 300
+    if branch and not branch.missing then
+      rewardInfo.attributeName = _tr(branch.name)
+      rewardInfo.attributeColor = branch.color
+      rewardInfo.icon = branch.icon
+      endSound = "event:>UI>Career>EndScreen_Receive_XP"
+      rewardInfo.soundClass = "xp"
+      scaleFactor = 50
+    elseif key == "money" then
+      rewardInfo.attributeName = "Money"
+      rewardInfo.icon = "beamCurrency"
+      rewardInfo.soundClass = "money"
+      endSound = "event:>UI>Career>EndScreen_Receive_Money"
+      scaleFactor = 1000
+    elseif key == "beamXP" then
+      rewardInfo.attributeName = "BeamXP"
+      rewardInfo.icon = "beamXPLong"
+      endSound = "event:>UI>Career>EndScreen_Receive_XP"
+      rewardInfo.soundClass = "xp"
+      scaleFactor = 50
+    elseif key == "vouchers" then
+      rewardInfo.attributeName = "Vouchers"
+      rewardInfo.icon = "voucherHorizontal3"
+      rewardInfo.attributeColor = "var(--bng-add-blue-400-rgb)"
+      endSound = "event:>UI>Career>EndScreen_Receive_Voucher"
+      rewardInfo.tickingOneShots = "event:>UI>Career>EndScreen_Counting_Voucher"
+      scaleFactor = 1
+    end
+
+    -- Calculate duration for progress bar based on total reward
+    local progressBarDuration, pitch = calculateRewardDuration(rewardInfo.total, scaleFactor)
+    if scaleFactor == 1 then
+      progressBarDuration = 0.3*rewardInfo.total
+    end
+    local totalDuration = progressBarDuration
+
+    local totalReward = {
+      before = career_modules_playerAttributes.getAttributeValue(key),
+      after = career_modules_playerAttributes.getAttributeValue(key) + rewardInfo.total,
+      large = true,
+      label = "Total",
+      duration = progressBarDuration,
+      endSound = endSound,
+      pitch = pitch
+    }
+    table.insert(rewardInfo.breakdown, totalReward)
+
+
+
+    -- Add progress bar info
+    if career_career and career_career.isActive() and not branch.missing then
+      local level, curLvlProgress, neededForNext, prevThreshold, nextThreshold =
+        career_branches.calcBranchLevelFromValue(
+          career_modules_playerAttributes.getAttributeValue(key),
+          key
+        )
+      local levelAfter, curLvlProgressAfter, neededForNextAfter, prevThresholdAfter, nextThresholdAfter =
+        career_branches.calcBranchLevelFromValue(
+          career_modules_playerAttributes.getAttributeValue(key) + rewardInfo.total,
+          key
+        )
+
+      rewardInfo.progressBar = {
+        name = _tr(branch.name),
+        level = "Level " .. level,
+        levelAfter = "Level " .. levelAfter,
+        animations = {}
+      }
+
+      if level == levelAfter then
+        -- Same level animation
+        table.insert(rewardInfo.progressBar.animations, {
+          level = level,
+          min = 0,
+          max = neededForNext,
+          from = curLvlProgress,
+          to = curLvlProgress + rewardInfo.total,
+          duration = progressBarDuration
+        })
+      else
+        local totalDuration = 0
+        -- First animation: current level progress to max
+        local weight = (neededForNext-curLvlProgress) / rewardInfo.total
+        table.insert(rewardInfo.progressBar.animations, {
+          level = level,
+          min = 0,
+          max = neededForNext,
+          from = curLvlProgress,
+          to = neededForNext,
+          duration = weight * progressBarDuration
+        })
+        totalDuration = totalDuration + weight * progressBarDuration
+
+        -- Middle animations: full levels if needed
+        for l = level + 1, levelAfter - 1 do
+          local branch = career_branches.getBranchByPath(key)
+          -- Check if both current and next level exist
+          if branch.levels[l] and branch.levels[l + 1] then
+            local prevT = 0
+            local nextT = branch.levels[l + 1].requiredValue - branch.levels[l].requiredValue
+            local weight = (nextT-prevT) / rewardInfo.total
+            table.insert(rewardInfo.progressBar.animations, {
+              level = l,
+              min = prevT,
+              max = nextT,
+              from = prevT,
+              to = nextT,
+              duration = weight * progressBarDuration
+            })
+            totalDuration = totalDuration + weight * progressBarDuration
+          end
+        end
+
+        -- Final animation: 0 to final progress in new level
+        local weight = (curLvlProgressAfter-0) / rewardInfo.total
+        table.insert(rewardInfo.progressBar.animations, {
+          level = levelAfter,
+          min = 0,
+          max = neededForNextAfter,
+          from = 0,
+          to = curLvlProgressAfter,
+          duration = weight * progressBarDuration
+        })
+        totalDuration = totalDuration + weight * progressBarDuration
+      end
+      rewardInfo.duration = totalDuration
+    end
+
+
+    for _, bd in ipairs(rewardInfo.breakdown) do
+      bd.soundClass = rewardInfo.soundClass
+      bd.tickingOneShots = rewardInfo.tickingOneShots
+      bd.pitch = bd.pitch or 0
+    end
+    table.insert(formattedRewards.list, rewardInfo)
+  end
+  return formattedRewards
 end
 
 local function getCleanSaveData(mission)
@@ -562,9 +867,7 @@ local function getCleanSaveData(mission)
 end
 
 local function updateSaveData(mission, saveData)
-  log("I", "", "UpdateSaveData was called")
   local fileVersion = saveData.version
-  log("I", "", dumps(saveData))
 
   -- iterate over version updates
   while (fileVersion < mission.latestVersion) do
@@ -611,7 +914,7 @@ local function updateSaveData(mission, saveData)
 
   -- cleanup
   FS:removeFile(backupFile)
-  plog("I", "", "Updated Mission Progress for mission id " .. dumps(mission.id))
+  plog("I", "", "Updated Mission Progress for mission id " .. dumps(mission.id) .. " (this log should only appear once)")
 
   return mission.saveData
 end
@@ -619,10 +922,12 @@ end
 local function loadMissionSaveData(mission)
   local id = mission.id
   local path = savePath .. id .. '.json'
+  local updated = false
 
   if FS:fileExists(path) then
     local state, result = xpcall(function()
       local saveData = jsonReadFile(path)
+      local updated = false
       -- fallback for old savedata format
       if saveData.unlockedStars then
         for k, v in pairs(saveData.unlockedStars) do
@@ -630,70 +935,103 @@ local function loadMissionSaveData(mission)
           if v == true then saveData.unlockedStars[k] = 1 end
         end
       end
-      if career_career and career_career.isActive() then
-        career_modules_missionWrapper.onMissionLoaded(id, saveData.dirtyDate)
+      if career_career and career_career.isActive()  then
+        if not career_modules_missionWrapper then
+          plog("E", "", "Trying to load mission with career_modules_missionWrapper not loaded but career_career is active ("..dumps(id)..")")
+        else
+          career_modules_missionWrapper.onMissionLoaded(id, saveData.dirtyDate)
+        end
       end
 
       -- check if saveData is outdated and if it has an update function
       if saveData.version < mission.latestVersion and mission.updateAttempt then
+        updated = true
         saveData = updateSaveData(mission, saveData)
       end
 
       -- upgrade start unlocks into star attempts count.
 
-      return saveData
+      return {saveData, updated}
     end, debug.traceback)
     if state ~= false and result ~= nil then
+      local saveData, wasUpdated = result[1], result[2]
+      updated = wasUpdated or updated
       -- sanitize progress (add default)
       if mission.loadSaveData then
         local succ, err, prog = xpcall(function()
-          mission:loadSaveData(result)
+          mission:loadSaveData(saveData)
         end, debug.traceback)
         if not succ then
           plog("E", "", "Error loading custom mission progress, ID: " .. dumps(id) .. ". Error follows:")
           plog("E", "", err)
         else
-          result = prog
+          saveData = prog
         end
       end
-      return result
+      return saveData, updated
     else
       -- check for backupFile
+      plog("E", "", "Error loading mission save data for ID: " .. dumps(id) .. ". Error follows:")
+      plog("E", "", result)
     end
   end
 
-  return getCleanSaveData(mission)
+  return getCleanSaveData(mission), updated
 end
 
-local function reduceCareerRewardsForDefaultStars(mission)
-  if career_career.isActive() then
-    for key, starCount in pairs(mission.saveData.unlockedStars) do
-      if mission.careerSetup._activeStarCache.defaultStarKeysByKey[key] then
-        local list = mission.careerSetup.starRewards[key] or {}
-        if starCount then
-          local rewardMultiplier = starCount == 0 and 1 or 0.1 --math.max(0.1,(1-(starCount or 0) * 0.2))
-          print(string.format("%s - %s reduced to x%0.2f", mission.id, key, rewardMultiplier*100 ))
-          for _, reward in ipairs(list) do
-            reward.rewardAmount = (round(reward._originalRewardAmount*rewardMultiplier))
-          end
-        end
-      end
-    end
-  end
-
+local function computeStarRewardSums(mission)
   -- always compute totals/sums
   mission.careerSetup._activeStarCache.sortedStarRewardsByKey = {}
   for key, list in pairs(mission.careerSetup.starRewards) do
     local newList = {}
     for _, reward in ipairs(list) do
       local elem = {rewardAmount = reward.rewardAmount, icon = career_branches.getBranchIcon(reward.attributeKey), attributeKey = reward.attributeKey}
-      table.insert(newList, elem)
+      if elem.rewardAmount > 0 then
+        table.insert(newList, elem)
+      end
     end
     mission.careerSetup._activeStarCache.sortedStarRewardsByKey[key] = newList
   end
 end
 
+local function reduceCareerRewardsForDefaultStars(mission)
+  if career_career.isActive() then
+    for key, starCount in pairs(mission.saveData.unlockedStars) do
+      if mission.careerSetup.starsActive[key] then
+        local list = mission.careerSetup.starRewards[key] or {}
+        if starCount then
+          local rewardMultiplier = starCount == 0 and 1 or 0.1 --math.max(0.1,(1-(starCount or 0) * 0.2))
+          log("D","", string.format("%s - %s reduced to x%0.2f", mission.id, key, rewardMultiplier*100 ))
+          for _, reward in ipairs(list) do
+            if reward.attributeKey == "money" then
+              reward.rewardAmount = (round(reward._originalRewardAmount*rewardMultiplier))
+            end
+            if reward.attributeKey == "vouchers" and starCount > 0 then
+              reward.rewardAmount = 0
+            end
+          end
+        end
+      end
+    end
+  end
+
+  computeStarRewardSums(mission)
+end
+
 M.reduceCareerRewardsForDefaultStars = reduceCareerRewardsForDefaultStars
+
+local function setDynamicStarRewards(mission, userSettings)
+  for _, key in ipairs(mission.careerSetup._activeStarCache.sortedStars) do
+    if mission.getDynamicStarReward then
+      local r = mission:getDynamicStarReward(key, userSettings or mission.lastUserSettings)
+      if r then
+        mission.careerSetup.starRewards[key] = r
+      end
+    end
+  end
+  computeStarRewardSums(mission)
+end
+M.setDynamicStarRewards = setDynamicStarRewards
 
 local function ensureProgressExistsForKey(missionInstance, progressKey)
   if not missionInstance.saveData.progress[progressKey] then
@@ -713,6 +1051,7 @@ local function ensureProgressExistsForKey(missionInstance, progressKey)
     }
   end
 end
+
 
 M.missionHasQuickTravelUnlocked = function(missionId)
   local mission = gameplay_missions_missions.getMissionById(missionId)
@@ -809,6 +1148,20 @@ local genericUiAttemptProgress = {
       attemptIsSource = true,
       formatFunction = "stars"
     }
+  },
+  rallyHighscore = {
+    {
+      type = 'simple',
+      customValue = true,
+      columnLabel = '#',
+    },
+    {
+      type = 'simple',
+      attemptKey = 'date',
+      columnLabel = '',
+      attemptIsSource = true,
+      formatFunction = "timespan"
+    }
   }
 }
 --[[{
@@ -827,7 +1180,12 @@ local genericUiAggregateProgress = {
   {
     type = 'simple',
     aggregateKey = 'attemptCount',
-    columnLabel = 'Attempts',
+    columnLabel = 'bigMap.progressLabels.attempts',
+  },
+  {
+    type = 'simple',
+    aggregateKey = 'dnfCount',
+    columnLabel = 'ui.missions.ratings.currentDnfs',
   },
 
   --[[
@@ -852,14 +1210,51 @@ local genericUiAggregateProgress = {
 -- formats text depending on formatFunction
 local function tryFormatValueForFunction(val, fun, m)
   if val == nil then
-    return { text = "-" }
+    if fun == 'rallyTimeFormatterWithDNF' then
+      return { text = "DNF" }
+    else
+      return { text = "-" }
+    end
   end
+
   -- add new formatFunctions here if needed
   if fun == 'distance' then
     local result, unit = translateDistance(val, 'auto')
     return { format = "distance", distance = val or 0, text = string.format("%.2f %s", result, unit) }
-  elseif fun == 'detailledTime' then
+  elseif fun == 'detailledTime' or fun == 'detailledTimeWithDNF' then
+    if val == 'DNF' then
+      return { text = "DNF" }
+    end
     return { format = "detailledTime", detailledTime = val or 0, text = string.format("%d:%02d:%03d", math.floor(val / 60), val % 60, 1000 * (val % 1)) }
+  elseif fun == 'rallyTimeFormatter' or fun == 'rallyTimeFormatterWithDNF' then
+    -- Round to nearest tenth of a second
+    local roundedSeconds = math.floor((val or 0) * 10 + 0.5) / 10
+    local hours = math.floor(roundedSeconds / 3600)
+    local minutes = math.floor((roundedSeconds % 3600) / 60)
+    local secs = math.floor(roundedSeconds % 60)
+    local tenths = math.floor((roundedSeconds % 1) * 10 + 0.5) % 10
+
+    -- Build time string based on which components are non-zero
+    local timeStr
+    if hours > 0 then
+      -- Show hours: H:MM:SS.T or HH:MM:SS.T
+      timeStr = string.format("%d:%02d:%02d.%d", hours, minutes, secs, tenths)
+    elseif minutes > 0 then
+      -- Show minutes: M:SS.T or MM:SS.T (no leading zero for minutes)
+      timeStr = string.format("%d:%02d.%d", minutes, secs, tenths)
+    else
+      -- Show only seconds: S.T or SS.T (no leading zero for seconds)
+      timeStr = string.format("%d.%d", secs, tenths)
+    end
+
+    return { format = "rallyTimeFormatter", rallyTime = val or 0, text = timeStr }
+  elseif fun == 'rallyPenaltyFormatter' then
+    if not val or val == 0 then
+      return { format = "rallyPenaltyFormatter", penalty = 0, text = "0s" }
+    else
+      local roundedPenalty = math.floor(val + 0.5)
+      return { format = "rallyPenaltyFormatter", penalty = val, text = string.format("+%ds", roundedPenalty) }
+    end
   elseif fun == 'timespan' then
     return { format = 'timespan', timestamp = val or 0, text = "ts: " .. (val or 0) }
   elseif fun == 'stars' then
@@ -891,9 +1286,13 @@ end
 -- gets value from attempt depending on type (type defines the location of value in attempt table)
 local function getValueForAttemptUiProgressType(attempt, config)
   local res = nil
-  local src = attempt.data
+  local src = attempt.data or {}
   if config.attemptIsSource then
     src = attempt
+  end
+
+  if config.showDnf and (attempt.dnf or src.dnf) then
+    return 'DNF'
   end
 
   if config.type == 'simple' then
@@ -925,8 +1324,12 @@ local function formatAttemptSimple(attempt, mission)
 
     table.insert(ret.list, {
       value = value,
-      label = label
+      label = label,
+      mainResult = col.mainResult or false
     })
+  end
+  if not next(ret.list) then
+    ret.list = nil
   end
   return ret
 end
@@ -942,17 +1345,43 @@ local function reverse(list)
     j = j - 1
   end
 end
-local function formatAttempts(mission, progressKey, limit, includeMostRecentAttempt)
+local function formatAttempts(mission, progressKey, limit, includeMostRecentAttempt, fillAttempts, autoRecordings)
   local res = { labels = {}, rows = {} }
 
   local missionInstance = gameplay_missions_missions.getMissionById(mission.id)
   M.ensureProgressExistsForKey(missionInstance, progressKey)
-  local attemptsForProgressKey = missionInstance.saveData.progress[progressKey].attempts
+  local progressForKey = missionInstance.saveData.progress[progressKey]
+  local attemptsForProgressKey = progressForKey.attempts
   local leaderboardKey = mission.defaultLeaderboardKey or 'recent'
-  local attemptIndices = missionInstance.saveData.progress[progressKey].leaderboards[leaderboardKey] or {}
+  local leaderboardUiKey = mission.defaultLeaderboardUiKey or leaderboardKey
+  local leaderboards = progressForKey.leaderboards or {}
+  local attemptIndices = deepcopy(leaderboards[leaderboardKey]) or {}
+  local genericCols = genericUiAttemptProgress[leaderboardUiKey] or genericUiAttemptProgress[leaderboardKey] or {}
+
+  if mission.includeDnfAttemptsInLeaderboardFill and leaderboardKey ~= 'recent' and fillAttempts and #attemptIndices < fillAttempts then
+    local usedAttemptIndices = {}
+    for _, attemptIndex in ipairs(attemptIndices) do
+      usedAttemptIndices[attemptIndex] = true
+    end
+    for _, attemptIndex in ipairs(leaderboards.recent or {}) do
+      local attempt = attemptsForProgressKey[attemptIndex]
+      if attempt and (attempt.dnf or (attempt.data and attempt.data.dnf)) and not usedAttemptIndices[attemptIndex] then
+        table.insert(attemptIndices, attemptIndex)
+        usedAttemptIndices[attemptIndex] = true
+        if #attemptIndices >= fillAttempts then
+          break
+        end
+      end
+    end
+  end
+
+  while #attemptIndices < (fillAttempts or 0) do
+    table.insert(attemptIndices, -1)
+  end
+  local replaysByAttemptId = {}
 
   -- genericData column headers
-  for _, col in pairs(genericUiAttemptProgress[leaderboardKey] or {}) do
+  for _, col in pairs(genericCols) do
     table.insert(res.labels, col.columnLabel)
   end
 
@@ -960,17 +1389,24 @@ local function formatAttempts(mission, progressKey, limit, includeMostRecentAtte
   for _, col in pairs(mission.autoUiAttemptProgress or {}) do
     table.insert(res.labels, col.columnLabel)
   end
-
   -- customData column headers would be here
 
+  if autoRecordings and #autoRecordings > 0 then
+    table.insert(res.labels, " ")
+    for _, recording in ipairs(autoRecordings) do
+      if recording.meta.attempt.progressKey == progressKey then
+        replaysByAttemptId[recording.meta.attempt.attemptNumber] = recording
+      end
+    end
+  end
   -- build rows
   for count, attemptIndex in ipairs(attemptIndices) do
     if not limit or count <= limit then
-      local attempt = attemptsForProgressKey[attemptIndex]
-      local row = {}--{ { text = translateLanguage(mission.name, mission.name, true) } }
+      local attempt = attemptsForProgressKey[attemptIndex] or {}
+      local row = {}--{ { text = _tr(mission.name) } }
 
       -- genericData cells
-      for _, col in pairs(genericUiAttemptProgress[leaderboardKey] or {}) do
+      for _, col in pairs(genericCols) do
         if col.customValue then
           table.insert(row, { text = tonumber(count) })
         else
@@ -983,17 +1419,26 @@ local function formatAttempts(mission, progressKey, limit, includeMostRecentAtte
         table.insert(row, tryFormatValueForFunction(getValueForAttemptUiProgressType(attempt, col), col.formatFunction, mission))
       end
 
+      if autoRecordings then
+        local replay = replaysByAttemptId[attempt.attemptNumber]
+        if replay then
+          table.insert(row, {format = "replay", text ="yes" })
+        else
+          table.insert(row, { text = "" })
+        end
+      end
       -- customData cells would be here
       table.insert(res.rows, row)
     end
   end
 
+
   if includeMostRecentAttempt then
     local attempt = attemptsForProgressKey[#attemptsForProgressKey]
-    local row = {}--{ { text = translateLanguage(mission.name, mission.name, true) } }
+    local row = {}--{ { text = _tr(mission.name) } }
 
     -- genericData cells
-    for _, col in pairs(genericUiAttemptProgress[leaderboardKey] or {}) do
+    for _, col in pairs(genericCols) do
       if col.customValue then
         table.insert(row, { text = "DNQ" })
       else
@@ -1011,13 +1456,62 @@ local function formatAttempts(mission, progressKey, limit, includeMostRecentAtte
   end
   --reverse(res.rows)
 
+  -- Filter out empty columns if mission type or individual columns request it
+  if #res.rows > 0 then
+    local columnsToKeep = {}
+    local genericColCount = #genericCols
+
+    -- Check each column
+    for colIndex = 1, #res.labels do
+      local autoColIndex = colIndex - genericColCount
+      local genericCol = genericCols[colIndex]
+      local autoCol = mission.autoUiAttemptProgress and mission.autoUiAttemptProgress[autoColIndex]
+      local shouldCheckEmpty = mission.hideEmptyAttemptColumns or (genericCol and genericCol.hideEmpty) or (autoCol and autoCol.hideEmpty)
+
+      if shouldCheckEmpty then
+        -- Check if column has any non-empty values
+        local hasValue = false
+        for _, row in ipairs(res.rows) do
+          if row[colIndex] and row[colIndex].text ~= "-" and row[colIndex].text ~= "" then
+            hasValue = true
+            break
+          end
+        end
+        columnsToKeep[colIndex] = hasValue
+      else
+        -- Keep column regardless of content
+        columnsToKeep[colIndex] = true
+      end
+    end
+
+    -- Rebuild labels and rows with only kept columns (preserving order)
+    local newLabels = {}
+    for colIndex = 1, #res.labels do
+      if columnsToKeep[colIndex] then
+        table.insert(newLabels, res.labels[colIndex])
+      end
+    end
+
+    local newRows = {}
+    for _, row in ipairs(res.rows) do
+      local newRow = {}
+      for colIndex = 1, #row do
+        if columnsToKeep[colIndex] then
+          table.insert(newRow, row[colIndex])
+        end
+      end
+      table.insert(newRows, newRow)
+    end
+
+    res.labels = newLabels
+    res.rows = newRows
+  end
 
   return res
 end
 
 local function formatAggregates(mission, progressKey, onlySelf)
   local res = { labels = {--[['Mission']]}, rows = {}, newBestKeys = {} }
-  local missions = gameplay_missions_missions.getMissionsByMissionType(mission.missionType)
 
   -- genericData column headers
   for _, col in pairs(genericUiAggregateProgress or {}) do
@@ -1032,29 +1526,32 @@ local function formatAggregates(mission, progressKey, onlySelf)
   end
 
   -- customData column headers would be here
-
+  local missions = {}
+  if not onlySelf then
+    missions = gameplay_missions_missions.getMissionsByMissionType(mission.missionType)
+  else
+    missions = { mission }
+  end
   -- build rows
   for _, m in pairs(missions) do
-    if not onlySelf or (m == mission) then
-      local missionInstance = gameplay_missions_missions.getMissionById(m.id)
-      if missionInstance.saveData.progress[progressKey] ~= nil then
-        local row = {}--{ { text = translateLanguage(m.name, m.name, true) } }
-        local aggregateForProgressKey = missionInstance.saveData.progress[progressKey].aggregate
+    local missionInstance = gameplay_missions_missions.getMissionById(m.id)
+    if missionInstance.saveData.progress[progressKey] ~= nil then
+      local row = {}--{ { text = _tr(m.name) } }
+      local aggregateForProgressKey = missionInstance.saveData.progress[progressKey].aggregate
 
-        -- genericData cells
-        for _, col in pairs(genericUiAggregateProgress or {}) do
-          table.insert(row, tryFormatValueForFunction(getValueForAggregateUiProgressType(aggregateForProgressKey, col), col.formatFunction, m))
-        end
-
-        -- automaticData cells
-        for _, col in pairs(mission.autoUiAggregateProgress or {}) do
-          local value = table.insert(row, tryFormatValueForFunction(getValueForAggregateUiProgressType(aggregateForProgressKey, col), col.formatFunction, m))
-        end
-
-        -- customData cells would be here
-
-        table.insert(res.rows, row)
+      -- genericData cells
+      for _, col in pairs(genericUiAggregateProgress or {}) do
+        table.insert(row, tryFormatValueForFunction(getValueForAggregateUiProgressType(aggregateForProgressKey, col), col.formatFunction, m))
       end
+
+      -- automaticData cells
+      for _, col in pairs(mission.autoUiAggregateProgress or {}) do
+        local value = table.insert(row, tryFormatValueForFunction(getValueForAggregateUiProgressType(aggregateForProgressKey, col), col.formatFunction, m))
+      end
+
+      -- customData cells would be here
+
+      table.insert(res.rows, row)
     end
   end
 
@@ -1074,6 +1571,7 @@ local function tryBuildContext(label, data)
   end
   return context
 end
+M.tryBuildContext = tryBuildContext
 
 local function formatStars(mission)
   if--[[ not career_career or not career_career.isActive() or ]]not mission.saveData.unlockedStars
@@ -1096,13 +1594,18 @@ local function formatStars(mission)
 
   for i, key in ipairs(starKeys) do
     local count = mission.saveData.unlockedStars[key] or 0
-
+    local label = mission.starLabels[key] or "Missing Star Description"
+    if type(label) == "string" then
+      label = {
+        txt = label,
+        context = tryBuildContext(mission.starLabels[key], mission.missionTypeData),
+      }
+    elseif type(label) == "function" then
+      label = label(mission)
+    end
     local elem = {
       key = key,
-      label = {
-        txt = mission.starLabels[key] or "Missing Star Description",
-        context = tryBuildContext(mission.starLabels[key], mission.missionTypeData),
-      },
+      label = label,
       rewards = career_career.isActive() and mission.careerSetup._activeStarCache.sortedStarRewardsByKey[key] or {},
       unlocked = count > 0,
       isDefaultStar = defaultCache[key] and true or false,
@@ -1133,7 +1636,7 @@ local function formatStars(mission)
   return unlockedStarsFormatted
 end
 
-local function formatSaveDataForUi(id, onlyKey, includeMostRecentAttempt)
+local function formatSaveDataForUi(id, onlyKey, includeMostRecentAttempt, fillAttempts)
   local mission = gameplay_missions_missions.getMissionById(id)
   if not mission then
     plog("E", "", "Trying to formatSaveDataForUi nonexitent mission by ID: " .. dumps(id))
@@ -1144,9 +1647,13 @@ local function formatSaveDataForUi(id, onlyKey, includeMostRecentAttempt)
   if onlyKey then
     allProgressKeys = { onlyKey }
   end
+
+  local autoRecordings = core_replay.getMissionReplayFiles(mission, true)
+
   for _, key in ipairs(allProgressKeys) do
+    M.ensureProgressExistsForKey(mission, key)
     formattedProgressByKey[key] = {
-      attempts = formatAttempts(mission, key, nil, includeMostRecentAttempt),
+      attempts = formatAttempts(mission, key, nil, includeMostRecentAttempt, fillAttempts, autoRecordings),
       --aggregates = formatAggregates(mission, key),
       ownAggregate = formatAggregates(mission, key, true)
     }
@@ -1190,7 +1697,7 @@ local function formatSaveDataForBigmap(id)
 
   local agg = (mission.saveData.progress[bigmapConf.rating.progressKey or mission.defaultProgressKey] or {}).aggregate or {}
 
-  if not mission.unlocks.startable then
+  if not gameplay_missions_unlocks.isMissionStartable(mission) then
     ret.rating = { type = 'locked' }
   elseif agg.attemptCount == 0 then
     ret.rating = { type = 'new' }
@@ -1310,7 +1817,11 @@ M.generateAttempt = function(id, addAttemptData)
   local totalChange = M.aggregateAttempt(id, attempt, mission.defaultProgressKey)
 
   if career_career and career_career.isActive() then
-    career_modules_missionWrapper.saveMission(id)
+    if not career_modules_missionWrapper then
+      plog("E", "", "Trying to save mission with career_modules_missionWrapper not loaded but career_career is active ("..dumps(id)..")")
+    else
+      career_modules_missionWrapper.saveMission(id)
+    end
   else
     M.saveMissionSaveData(id)
   end
@@ -1337,7 +1848,11 @@ M.generateAttempts = function(id, amount, dumpChange)
     end
   end
   if career_career and career_career.isActive() then
-    career_modules_missionWrapper.saveMission(id)
+    if not career_modules_missionWrapper then
+      plog("E", "", "Trying to save mission with career_modules_missionWrapper not loaded but career_career is active ("..dumps(id)..")")
+    else
+      career_modules_missionWrapper.saveMission(id)
+    end
   else
     M.saveMissionSaveData(id)
   end
@@ -1349,6 +1864,9 @@ M.startBatchMode = function()
 end
 M.endBatchMode = function()
   batchMode = false
+end
+M.getBatchMode = function()
+  return batchMode
 end
 
 M.exportAllProgressToCSV = function()

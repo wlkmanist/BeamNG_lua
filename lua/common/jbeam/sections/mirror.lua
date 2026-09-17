@@ -54,7 +54,7 @@ local function process(objID, vehicleObj, vehicle)
     end
   end
 
-  profilerPopEvent() -- jbeam/mirror.process
+  profilerPopEvent('jbeam/mirror.process')
 end
 
 M.process = process

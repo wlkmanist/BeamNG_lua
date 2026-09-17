@@ -662,7 +662,7 @@ local function sanitizeConfiguration(config, name)
   config.brakingIntegralFactor = config.brakingIntegralFactor or 0
 
   config.maxBrakingFactor = clamp(config.maxBrakingFactor or 0, 0, 1)
-  config.minThrottleFactor = clamp(config.minThrottleFactor or 1, 1, 0)
+  config.minThrottleFactor = clamp(config.minThrottleFactor or 1, 0, 1)
 
   config.brakeThrottleSwitchThreshold = config.brakeThrottleSwitchThreshold or 10
 
@@ -692,7 +692,8 @@ local function setESCMode(key)
   preCalculate() -- make sure to update our precalculated values with the new config
 
   lastESCConfigurationKey = currentESCConfigurationKey
-  guihooks.message(currentESCConfiguration.name, 5, "vehicle.esc.mode")
+
+  guihooks.message("ui.radialmenu2.ESC." .. currentESCConfiguration.name:gsub(" ", "_"), 5, "vehicle.esc.mode")
 end
 
 local function toggleESCMode()
@@ -715,21 +716,22 @@ local function registerQuickAccess()
   if not hasRegisteredQuickAccess then
     core_quickAccess.addEntry(
       {
-        level = "/",
+        level = "/root/playerVehicle/vehicleFeatures/",
         generator = function(entries)
-          table.insert(entries, {title = "ui.radialmenu2.ESC", priority = 40, ["goto"] = "/esc/", icon = "radial_regular_esc"})
+          table.insert(entries, {title = "ui.radialmenu2.ESC", priority = 40, ["goto"] = "/root/playerVehicle/vehicleFeatures/esc/", icon = "ESC", uniqueID = "escMode"})
         end
       }
     )
 
     core_quickAccess.addEntry(
       {
-        level = "/esc/",
+        level = "/root/playerVehicle/vehicleFeatures/esc/",
         generator = function(entries)
           for k, v in pairs(escConfigurations) do
             local entry = {
               title = "ui.radialmenu2.ESC." .. v.name:gsub(" ", "_"),
               icon = "radial_" .. string.lower(v.name:gsub(" ", "_")),
+              originalActionInfo = {level = "/root/playerVehicle/vehicleFeatures/", uniqueID = "escMode"},
               onSelect = function()
                 controller.getController("esc").setESCMode(k)
                 return {"reload"}

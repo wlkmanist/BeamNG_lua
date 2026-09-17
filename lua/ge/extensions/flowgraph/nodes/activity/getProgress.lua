@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -13,8 +12,6 @@ C.description = "Shows the aggregated progress for the current progressKey."
 C.category = 'once_p_duration'
 
 C.pinSchema = {
-
-
   { dir = 'out', type = 'table', name = "aggregate", description = "Aggregate Object", fixed=true },
   { dir = 'out', type = 'string', name = "bestType", description = "Best Type", fixed=true, hidden=true },
   { dir = 'out', type = 'bool', name = "passed", description = "Passed", fixed=true, hidden=true },
@@ -46,11 +43,11 @@ function C:workOnce()
     for _, k in ipairs(keysSorted) do
       local val = aggregate[k]
       if type(val) == 'number' then
-        text = text .. string.format("%s: %0.2d. ", k, val)
-        html = html .. string.format("<li>%s: %0.2d</li>", k, val)
+        text = text .. string.format("%s: %0.2d. ", k, val or 0)
+        html = html .. string.format("<li>%s: %0.2d</li>", k, val or 0)
       else
-        text = text .. string.format("%s: %s. ", k, val)
-        html = html .. string.format("<li>%s: %s</li>", k, val)
+        text = text .. string.format("%s: %s. ", k, val or "")
+        html = html .. string.format("<li>%s: %s</li>", k, val or "")
       end
     end
     html = html.."</ul>"

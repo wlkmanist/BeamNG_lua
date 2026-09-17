@@ -10,15 +10,14 @@ C.color = ui_flowgraph_editor.nodeColors.recoveryPrompt
 C.category = 'once_instant'
 
 C.pinSchema = {
-  { dir = 'in', type = 'string', name = 'buttonId', description = 'ID of the button.' },
+  { dir = 'in', type = 'string', name = 'buttonId', description = 'Id of the button.' },
   { dir = 'in', type = 'string', name = 'label', default = "Button", description = 'Displayed text for the button.' },
-  { dir = 'in', type = 'number', name = 'order', description = 'This buttons order in the button list. Leave empty for automatic order (last entry).' },
-  { dir = 'in', type = 'bool', name = 'fadeActive', hidden = true, default = true, hardcoded = true, description = 'If fadeToBack effect should happen' },
-  { dir = 'in', type = 'string', name = 'icon', description = 'id of the icon to use for the button' },
+  { dir = 'in', type = 'number', name = 'order', description = 'Order index in the button list; leave empty for automatic order (last entry).' },
+  { dir = 'in', type = 'bool', name = 'fadeActive', hidden = true, default = true, hardcoded = true, description = 'If screen fade transition should happen.' },
+  { dir = 'in', type = 'string', name = 'icon', description = 'Id of the icon to use for the button.' }
 }
 
 function C:workOnce()
-
   core_recoveryPrompt.addButton(self.pinIn.buttonId.value, self.pinIn.label.value, nop, self.pinIn.order.value, nil, true, true, self.pinIn.fadeActive.value, self.pinIn.icon.value)
 end
 

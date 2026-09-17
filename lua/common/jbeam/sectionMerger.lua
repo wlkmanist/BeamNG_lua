@@ -14,6 +14,9 @@ local jbeamUtils = require("jbeam/utils")
 -- not tested, be careful
 local function mergeNumberedSections(vehicle, sectionNameTarget, sectionNameSource)
   -- safety guards
+  vehicle.validTables = vehicle.validTables or {}
+  vehicle.validTables[sectionNameTarget] = true
+
   vehicle[sectionNameTarget] = vehicle[sectionNameTarget] or {}
   vehicle[sectionNameSource] = vehicle[sectionNameSource] or {}
 
@@ -30,7 +33,7 @@ local function mergeNumberedSections(vehicle, sectionNameTarget, sectionNameSour
   -- add the rows at the end of the target table
   for i = 0, #vehicle[sectionNameSource] do
     if vehicle[sectionNameSource][i] then
-      vehicle.triggers[rowCounter + i] = vehicle[sectionNameSource][i]
+      vehicle[sectionNameTarget][rowCounter + i] = vehicle[sectionNameSource][i]
     end
   end
 
@@ -38,10 +41,15 @@ local function mergeNumberedSections(vehicle, sectionNameTarget, sectionNameSour
   vehicle[sectionNameSource] = nil
 end
 
-local function mergeNamedSections(vehicle, sectionNameTarget, sectionNameSource)
+local function mergeNamedSections(vehicle, sectionNameTarget, sectionNameSource, isTableCid)
   -- safety guards
-  vehicle.validTables = vehicle.validTables or {}
-  vehicle.validTables[sectionNameTarget] = true
+
+  -- this is renumbering the tables later
+  if isTableCid then
+    vehicle.validTables = vehicle.validTables or {}
+    vehicle.validTables[sectionNameTarget] = true
+  end
+
   vehicle[sectionNameTarget] = vehicle[sectionNameTarget] or {}
   vehicle[sectionNameSource] = vehicle[sectionNameSource] or {}
 
@@ -59,15 +67,17 @@ local function mergeNamedSections(vehicle, sectionNameTarget, sectionNameSource)
   vehicle.validTables[sectionNameSource] = nil
 end
 
-
 local function process(vehicle, sectionRenames)
   profilerPushEvent('jbeam/sectionMerger.process')
 
   -- merge triggers2 into triggers
-  mergeNamedSections(vehicle, 'triggers', 'triggers2')
+  mergeNamedSections(vehicle, 'triggers', 'triggers2', true)
   sectionRenames['triggers2'] = 'triggers'
 
-  profilerPopEvent() -- jbeam/sectionMerger.process
+  mergeNamedSections(vehicle, 'rails', 'rails2', false)
+  sectionRenames['rails2'] = 'rails'
+
+  profilerPopEvent('jbeam/sectionMerger.process')
   return true
 end
 

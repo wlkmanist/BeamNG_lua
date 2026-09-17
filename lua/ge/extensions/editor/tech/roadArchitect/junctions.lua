@@ -10105,7 +10105,18 @@ local function chopRoadsToSphere(jNodes, jCen, jRad)
     for j = #road.nodes - 1, 2, -1 do
       local p1, p2, p3 = road.nodes[j].p, road.nodes[j - 1].p, road.nodes[j + 1].p
       local d1, d2 = p1:squaredDistance(p2), p1:squaredDistance(p3)
-      if min(d1, d2) < 1000.0 and #road.nodes > 1 then
+      if min(d1, d2) < 25.0 and #road.nodes > 1 then
+        table.remove(road.nodes, j)
+      end
+    end
+
+    local startNode = road.nodes[1]
+    local endNode = road.nodes[#road.nodes]
+
+    for j = #road.nodes-1, 2, -1 do
+      local p1= road.nodes[j].p
+      local d1,d2 = p1:distance(startNode.p), p1:distance(endNode.p)
+      if min(d1,d2) < 50.0 then
         table.remove(road.nodes, j)
       end
     end
@@ -10190,28 +10201,148 @@ local function createAutoJctOverlays(jNodes, laneWidth, jctCen)
   roadMgr.recomputeMap()
 end
 
+local function createLSystemJctOverlay(p1, p2, p3, p4, startWidth, endWidth)
+  startWidth = startWidth/2
+  endWidth = endWidth/2
+
+  local roads = roadMgr.roads
+  local cProf = profileMgr.createOverlayProfile(1)
+  cProf[-1] = {
+    type = 'road_lane',
+    width = im.FloatPtr(1), heightL = im.FloatPtr(0.01), heightR = im.FloatPtr(0.01),
+    isLeftSide = im.BoolPtr(false), cornerDrop = im.FloatPtr(0.0), vStart = im.IntPtr(0),
+    kerbWidth = im.FloatPtr(0.12), cornerLatOff = im.FloatPtr(0.0) }
+
+  local cRoad = roadMgr.createRoadFromProfile(cProf)
+  cRoad.isOverlay = true
+  cRoad.isJctRoad = false
+  cRoad.isDrivable = false
+  cRoad.displayName = im.ArrayChar(32, 'Jct Overlay')
+  local rIdx = #roads + 1
+  roads[rIdx] = cRoad
+
+  roadMgr.addNodeToRoad(rIdx, p2)
+  roadMgr.addNodeToRoad(rIdx, catmullRomChordal(p1, p2, p3, p4, 0.25, 0.75))
+  roadMgr.addNodeToRoad(rIdx, catmullRomChordal(p1, p2, p3, p4, 0.5, 0.75))
+  roadMgr.addNodeToRoad(rIdx, catmullRomChordal(p1, p2, p3, p4, 0.75, 0.75))
+  roadMgr.addNodeToRoad(rIdx, p3)
+
+  local inc = (endWidth - startWidth) / (#roads[rIdx].nodes - 1)
+  for i = 1, #roads[rIdx].nodes do
+    local node = roads[rIdx].nodes[i]
+    node.widths[1][0] = startWidth + inc * (i - 1)
+    node.widths[-1][0] = startWidth + inc * (i - 1)
+  end
+
+  roadMgr.setDirty(roads[rIdx])
+end
+
+
+local function createLSystemJctOverlays(jNodes, jctCen)
+  local jZ = jctCen.z
+  local roads, map = roadMgr.roads, roadMgr.map
+  local numJRoads = #jNodes
+  for i = 1, numJRoads do
+    local jNodeI = jNodes[i]
+    local roadI, lieI = roads[map[jNodeI.rName]], jNodeI.lie
+    local rDataI = roadI.renderData
+    for j = i + 1, numJRoads do
+      local jNodeJ = jNodes[j]
+      local roadJ, lieJ = roads[map[jNodeJ.rName]], jNodeJ.lie
+      local rDataJ = roadJ.renderData
+      if lieI == 'start' then
+        if lieJ == 'start' then                                                                     -- CASE:  start -> start.
+          local nodeI = roadI.nodes[1]
+          local nodeJ = roadJ.nodes[1]
+          local laneWidthI = nodeI.widths[1][0]
+          local laneWidthJ = nodeJ.widths[-1][0]
+          local p1, p2 = rDataI[min(#rDataI, 2)][1][7], rDataI[min(#rDataI, 1)][1][7]
+          local p3, p4 = rDataJ[min(#rDataJ, 1)][-1][7], rDataJ[min(#rDataJ, 2)][-1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+          local laneWidthI = nodeI.widths[-1][0]
+          local laneWidthJ = nodeJ.widths[1][0]
+          local p1, p2 = rDataI[min(#rDataI, 2)][-1][7], rDataI[min(#rDataI, 1)][-1][7]
+          local p3, p4 = rDataJ[min(#rDataJ, 1)][1][7], rDataJ[min(#rDataJ, 2)][1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+        else                                                                                        -- CASE:  start -> end.
+          local nodeI = roadI.nodes[1]
+          local nodeJ = roadJ.nodes[#roadJ.nodes]
+          local laneWidthI = nodeI.widths[1][0]
+          local laneWidthJ = nodeJ.widths[1][0]
+          local p1, p2 = rDataI[min(#rDataI, 2)][1][7], rDataI[min(#rDataI, 1)][1][7]
+          local p3, p4 = rDataJ[max(1, #rDataJ)][1][7], rDataJ[max(1, #rDataJ - 1)][1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+          local laneWidthI = nodeI.widths[-1][0]
+          local laneWidthJ = nodeJ.widths[-1][0]
+          local p1, p2 = rDataI[min(#rDataI, 2)][-1][7], rDataI[min(#rDataI, 1)][-1][7]
+          local p3, p4 = rDataJ[max(1, #rDataJ)][-1][7], rDataJ[max(1, #rDataJ - 1)][-1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+        end
+      else
+        if lieJ == 'start' then                                                                     -- CASE:  end -> start.
+          local nodeI = roadI.nodes[#roadI.nodes]
+          local nodeJ = roadJ.nodes[1]
+          local laneWidthI = nodeI.widths[1][0]
+          local laneWidthJ = nodeJ.widths[1][0]
+          local p1, p2 = rDataI[max(1, #rDataI - 1)][1][7], rDataI[max(1, #rDataI)][1][7]
+          local p3, p4 = rDataJ[min(#rDataJ, 1)][1][7], rDataJ[min(#rDataJ, 2)][1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+          local laneWidthI = nodeI.widths[-1][0]*2
+          local laneWidthJ = nodeJ.widths[-1][0]*2
+          local p1, p2 = rDataI[max(1, #rDataI - 1)][-1][7], rDataI[max(1, #rDataI)][-1][7]
+          local p3, p4 = rDataJ[min(#rDataJ, 1)][-1][7], rDataJ[min(#rDataJ, 2)][-1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+        else                                                                                        -- CASE:  end -> end.
+          local nodeI = roadI.nodes[#roadI.nodes]
+          local nodeJ = roadJ.nodes[#roadJ.nodes]
+          local laneWidthI = nodeI.widths[1][0]
+          local laneWidthJ = nodeJ.widths[-1][0]
+          local p1, p2 = rDataI[max(1, #rDataI - 1)][1][7], rDataI[max(1, #rDataI)][1][7]
+          local p3, p4 = rDataJ[max(1, #rDataJ)][-1][7], rDataJ[max(1, #rDataJ - 1)][-1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+          local laneWidthI = nodeI.widths[-1][0]
+          local laneWidthJ = nodeJ.widths[1][0]
+          local p1, p2 = rDataI[max(1, #rDataI - 1)][-1][7], rDataI[max(1, #rDataI)][-1][7]
+          local p3, p4 = rDataJ[max(1, #rDataJ)][1][7], rDataJ[max(1, #rDataJ - 1)][1][7]
+          p1.z, p2.z, p3.z, p4.z = jZ, jZ, jZ, jZ
+          createLSystemJctOverlay(p1, p2, p3, p4, laneWidthI, laneWidthJ)
+        end
+      end
+    end
+  end
+  roadMgr.recomputeMap()
+end
+
 local function distance2D(a, b)
   local x1, y1, x2, y2 = a.x, a.y, b.x, b.y
   return sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
 end
 
 -- Imports a road network from the L-System tool.
-local function importRoadsFromLSystem(roadNetwork, laneWidth)
+local function importRoadsFromLSystem(roadNetwork, intersections, DOI, margin, doTerraform)
   roadMgr.computeAllRoadRenderData()
   local roads, map = roadMgr.roads, roadMgr.map
-  local firstRoadIdx = #roads + 1
 
   -- Create the Road Architect roads from each unique road in the hash table.
   for k, uniqueRoad in pairs(roadNetwork) do
-    local nodesIn, roadType = uniqueRoad.nodes, uniqueRoad.type                                     -- TODO: road_type is not used currently.
+    local nodesIn, roadType = uniqueRoad.splineNodes, uniqueRoad.type                                     -- TODO: road_type is not used currently.
       local nodes, widths = {}, {}
+      local roadWidth = uniqueRoad.width
       for j = 1, #nodesIn do
-        local n = nodesIn[j]
-        nodes[j] = n.pos
-        widths[j] = n.width
+        local n = nodesIn[j].pos
+        nodes[j] = n
+        widths[j] = roadWidth / 2
       end
-      local profile = profileMgr.createProfileFromDecalData(1, 1)                                   -- TODO: Currently assumes two-way, one lane per side.
+      local profile = profileMgr.createProfileFromDecalData(1,1)                                   -- TODO: Currently assumes two-way, one lane per side.
       local newRoad = roadMgr.createRoadFromProfile(profile)
+      newRoad.name = uniqueRoad.id
       local rIdx = #roads + 1
       roads[rIdx] = newRoad
       map[newRoad.name] = rIdx
@@ -10222,91 +10353,42 @@ local function importRoadsFromLSystem(roadNetwork, laneWidth)
       end
   end
 
-  -- Create the junctions using the auto-junction feature.
-  local placedJcts = {}
-  local jctPosns = {}
-  local forbidden = {}
-  local jNodes = {}
-  local exitFlag = false
-  while not exitFlag do
-    roadMgr.computeAllRoadRenderData()
-    local isFoundWork = false
-    for i = firstRoadIdx, #roads do
-      local rTest = roads[i]
-      if not forbidden[rTest.name] and not rTest.isOverlay then
-        local pS = rTest.nodes[1].p
-        if not placedJcts[floor(pS.x + pS.y + pS.z)] then
-          table.clear(jNodes)
-          for j = firstRoadIdx, #roads do
-            if i ~= j then
-              local rTrial = roads[j]
-              local qS, qE = rTrial.nodes[1].p, rTrial.nodes[#rTrial.nodes].p
-              if qS:squaredDistance(pS) < 0.01 then
-                jNodes[#jNodes + 1] = { rName = rTrial.name, lie = 'start' }
-              end
-              if qE:squaredDistance(pS) < 0.01 then
-                jNodes[#jNodes + 1] = { rName = rTrial.name, lie = 'end' }
-              end
-            end
-          end
-          if #jNodes > 0 then
-            jNodes[#jNodes + 1] = { rName = rTest.name, lie = 'start' }
-            chopRoadsToSphere(jNodes, pS, jctFlattenRad)
-            roadMgr.computeAllRoadRenderData()
-            createAutoJctOverlays(jNodes, laneWidth, pS)
-            isFoundWork = true
-            placedJcts[floor(pS.x + pS.y + pS.z)] = true
-            jctPosns[#jctPosns + 1] = vec3(pS.x, pS.y, pS.z)
-            break
-          end
-        end
+  roadMgr.computeAllRoadRenderData()
 
-        local pE = rTest.nodes[#rTest.nodes].p
-        if not placedJcts[floor(pE.x + pE.y + pE.z)] then
-          table.clear(jNodes)
-          for j = firstRoadIdx, #roads do
-            if i ~= j then
-              local rTrial = roads[j]
-              local qS, qE = rTrial.nodes[1].p, rTrial.nodes[#rTrial.nodes].p
-              if qS:squaredDistance(pE) < 0.01 then
-                jNodes[#jNodes + 1] = { rName = rTrial.name, lie = 'start' }
-              end
-              if qE:squaredDistance(pE) < 0.01 then
-                jNodes[#jNodes + 1] = { rName = rTrial.name, lie = 'end' }
-              end
-            end
-          end
-          if #jNodes > 0 then
-            jNodes[#jNodes + 1] = { rName = rTest.name, lie = 'end' }
-            chopRoadsToSphere(jNodes, pE, jctFlattenRad)
-            roadMgr.computeAllRoadRenderData()
-            createAutoJctOverlays(jNodes, laneWidth, pE)
-            isFoundWork = true
-            placedJcts[floor(pE.x + pE.y + pE.z)] = true
-            jctPosns[#jctPosns + 1] = vec3(pE.x, pE.y, pE.z)
-            break
-          end
-        end
+  for nodeId, intersectionData in pairs(intersections) do
+    local roadIds = intersectionData.connectedRoads
+    local radius = intersectionData.radius
+    local pos = intersectionData.pos
+    local jNodes = {}
+    for _,roadId in ipairs(roadIds) do
+      local road = roadNetwork[roadId]
+      local nS,nE = road.nodes[1],road.nodes[#road.nodes]
+      if nodeId == nS.id then
+        jNodes[#jNodes + 1] = { rName = roadId, lie = 'start' }
+      elseif nodeId == nE.id then
+        jNodes[#jNodes + 1] = { rName = roadId, lie = 'end' }
       end
     end
-    if not isFoundWork then
-      exitFlag = true
-    end
+
+    chopRoadsToSphere(jNodes, pos, radius)
+    roadMgr.computeAllRoadRenderData()
+    createLSystemJctOverlays(jNodes, pos)
   end
 
-  -- Terraform to the refined L-System road network.
-  local allRoadsGroup = { list = {} }
-  local ctr = 1
-  for i = 1, #roadMgr.roads do
-    local tR = roadMgr.roads[i]
-    for j = 1, #tR.nodes do
-      allRoadsGroup.list[ctr] = { r = tR.name, n = j }
-      ctr = ctr + 1
+  if doTerraform then
+    -- Terraform to the refined L-System road network.
+    local allRoadsGroup = { list = {} }
+    local ctr = 1
+    for i = 1, #roadMgr.roads do
+      local tR = roadMgr.roads[i]
+      for j = 1, #tR.nodes do
+        allRoadsGroup.list[ctr] = { r = tR.name, n = j }
+        ctr = ctr + 1
+      end
     end
+    terra.terraformMultiRoads(DOI, margin, allRoadsGroup)
   end
-  terra.terraformMultiRoads(150.0, 0.0, allRoadsGroup, false)
 end
-
 
 -- Public interface.
 M.junctions =                                             junctions

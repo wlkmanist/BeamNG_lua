@@ -7,42 +7,14 @@ local M = {}
 local diskUsage = nil
 local diskUsageRunning = false
 
-local function getFallbackReason()
-  local cmdArgs = Engine.getStartingArgs()
-  local fallbackIndex = tableFindKey(cmdArgs, '-fallback')
-  if fallbackIndex ~= nil and #cmdArgs >= fallbackIndex + 1 then
-  --print("fallback: " .. cmdArgs[fallbackIndex + 1])
-  return cmdArgs[fallbackIndex + 1]
-  end
-  return nil
-end
-
 local function getInfo()
   local res = {}
-
-  local fb = getFallbackReason()
 
   res.os = Engine.Platform.getOSInfo()
   res.pwr = Engine.Platform.getPowerInfo()
   res.os.warnings = {}
   res.mem = Engine.Platform.getMemoryInfo()
   res.mem.warnings = {}
-
-  -- warning tests:
-  --fb = 'memory'
-
-  if fb == 'win7' then
-    table.insert(res.os.warnings, {type = 'error', msg = 'oldwin7'})
-    print("win 7 warn")
-  elseif fb == '32bitos' then
-    -- well, 32 bit windows, not going to warn
-  elseif fb == '64missing' then
-    table.insert(res.mem.warnings, {type = 'error', msg = 'missing64binary'})
-  elseif fb == 'memory' then
-    table.insert(res.mem.warnings, {type = 'warn', msg = 'toolessmemoryfor64bit'})
-  elseif fb == 'lavasoft' then
-    table.insert(res.mem.warnings, {type = 'error', msg = 'thirdpartysoftware'})
-  end
 
   -- enhance the memory information
   if res.os.gamearch == 'x64' then
@@ -52,74 +24,27 @@ local function getInfo()
     res.mem.osVirtUsedPercent = res.mem.osVirtUsed / res.mem.osVirtAvailable
   end
 
-
-  if res.os.type == 'windows' then
-    local xinput_available = Engine.Platform.getXInputSupport()
-    -- warning test
-    --xinput_available = false
-    if not xinput_available then
-      table.insert(res.os.warnings, {type = 'error', msg = 'xinput'})
-    end
-
-    local dinput_available = Engine.Platform.getDirectInputSupport()
-    --dinput_available = false
-    if not dinput_available then
-      table.insert(res.os.warnings, {type = 'error', msg = 'dinput'})
-    end
+  -- enhance linux information
+  if res.os.type == 'linux' then
+    res.os.windowsystem = Engine.Platform.getVideoDriver()
   end
 
-  -- warning test:
-  --res.mem.osPhysAvailable = 6000000000
-  --res.mem.osPhysUsedPercent = 0.9
-
-  if res.os.gamearch == 'x64' then
-    if res.mem.osPhysAvailable > 4000000000 and res.mem.osPhysAvailable < 8000000000 then
-      table.insert(res.mem.warnings, {type = 'warn', msg = 'lowmem'})
-    elseif res.mem.osPhysAvailable < 4000000000 then
-      table.insert(res.mem.warnings, {type = 'error', msg = 'minmem'})
-    end
-
-    -- memory usage only works reliable on x64
-    if res.mem.osPhysUsedPercent > 0.8 then
-      table.insert(res.mem.warnings, {type = 'warn', msg = 'memused'})
-    end
-    if res.mem.osPhysAvailable >= 4000000000 then
-      -- only warn if we have enough memory in the first place
-      if res.mem.osPhysAvailable - res.mem.osPhysUsed < 2000000000 then
-        table.insert(res.mem.warnings, {type = 'warn', msg = 'freememlow'})
-      end
-    end
-  elseif res.os.gamearch == 'x86' and fb == nil then
-    if res.mem.osPhysAvailable < 4000000000 then
-      table.insert(res.mem.warnings, {type = 'error', msg = 'minmem'})
+  if not disableHwWarnings then
+    local freememlow = 1 -- in GB
+    local minmem = 16 -- in GB
+    local minmemThreshold = 0.6 * minmem -- give steamdeck's shared memory system some leeway, since it reports 14gb of ram (below minspecs)
+    --res.mem.osPhysAvailable = minmemThreshold*1024*1024*1024 - 1             -- uncomment to force warning
+    --res.mem.osPhysUsed = res.mem.osPhysAvailable*1024*1024*1024 - 1 -- uncomment to force warning
+    if res.mem.osPhysAvailable < minmemThreshold*1024*1024*1024 then
+      table.insert(res.mem.warnings, {type = 'warn', msg = 'minmem', context = { amount = minmem } })
+    elseif res.mem.osPhysAvailable - res.mem.osPhysUsed < freememlow*1024*1024*1024 then
+      table.insert(res.mem.warnings, {type = 'warn', msg = 'freememlow', context = { amount = freememlow } })
     end
   end
 
   -- CPU
   res.cpu = Engine.Platform.getCPUInfo()
   res.cpu.warnings = {}
-
-  -- warning test:
-  --res.cpu.coresPhysical = 2
-  --res.cpu.clockSpeed = 1800
-  --res.cpu.arch = 'x32'
-
-  local cores = res.cpu.coresPhysical
-  if res.cpu.vendor == "AuthenticAMD" then
-    -- AMD CPUs don't have Hyper Threading but use a modul system. Therefore logical cores should be checked.
-    cores = res.cpu.coresLogical
-  end
-  if cores <= 1 then
-    table.insert(res.cpu.warnings, {type = 'error', msg = 'cpuonecore'})
-  elseif cores > 1 and cores < 4 then
-    table.insert(res.cpu.warnings, {type = 'warn', msg = 'cpuquadcore'})
-  end
-  if res.cpu.clockSpeed <= 1950 then -- the hw information can have some differences
-    table.insert(res.cpu.warnings, {type = 'warn', msg = 'cpulowclock'})
-  end
-  if res.cpu.arch ~= 'x64' then
-    table.insert(res.cpu.warnings, {type = 'warn', msg = 'cpu64bits'})
-  end
 
   -- GPU
   res.gpu = Engine.Platform.getGPUInfo()
@@ -130,96 +55,19 @@ local function getInfo()
   --res.gpu.name = 'AMD Radeon R9 M295X'
   --res.gpu.memoryMB = 256
 
-  local lowercaseGpuName = res.gpu.name:lower()
-  if lowercaseGpuName:find('rdpudd') then
-    table.insert(res.gpu.warnings, {type = 'warn', msg = 'remotedesktop'})
-  end
-  if lowercaseGpuName:find('intel') and not lowercaseGpuName:find('arc%(tm%)') then
-    table.insert(res.gpu.warnings, {type = 'error', msg = 'intelgpu'})
-  end
-
-  -- nvidia series detection
-  local gtx_ver, gtx_type = res.gpu.name:match("NVIDIA GeForce GTX (%d+)(.*)") --ascii
-  if gtx_ver == nil and gtx_type == nil then
-    gtx_ver, gtx_type = res.gpu.name:match("NVIDIA GeForce GTX (%d+)(.*)") --utf8
-  end
-  if gtx_ver and tonumber(gtx_ver) ~= nil and tonumber(gtx_ver) < 550 then
-    table.insert(res.gpu.warnings, {type = 'warn', msg = 'geforcemin'})
-  end
-
-  --amd_ver, amd_type = res.gpu.name:match("AMD Radeon HD (%d+)(.*)")
-  --if amd_ver and tonumber(amd_ver) ~= nil and tonumber(amd_ver) < 550 then
-  --  table.insert(res.gpu.warnings, {type = 'warn', msg = 'amdhd'})
-  --end
-
-  --amd_vernew = res.gpu.name:match("AMD Radeon R(%d)")
-  --if amd_vernew and tonumber(amd_vernew) ~= nil and tonumber(amd_vernew) < 8 then
-  --  table.insert(res.gpu.warnings, {type = 'warn', msg = 'amdradeon'})
-  --end
-
-  -- gpu memory reporting is not reliable yet
-  --if res.gpu.memoryMB < 512 then
-  --  table.insert(res.gpu.warnings, {type = 'error', 'gpulowmem'})
-  --elseif res.gpu.memoryMB < 2048 then
-  --  table.insert(res.gpu.warnings, {type = 'warn', msg = 'gpurecmem'})
-  --end
-
-
-  if res.os.bits == 32 then
-    if res.cpu.arch == 'x64' then
-      table.insert(res.cpu.warnings, {type = 'warn', msg = 'os32bits'})
-    end
-  end
-
-  if res.os.gamearch == 'x86' then
-    -- below windows 8 we switch to 32 bit mode
-    if res.os.type == 'windows' and res.os.versionMajor < 6 then
-      table.insert(res.os.warnings, {type = 'warn', msg = 'oswin8'})
-    else
-      table.insert(res.os.warnings, {type = 'warn', msg = 'app32'})
+  if not disableHwWarnings then
+    local lowercaseGpuName = res.gpu.name:lower()
+    if lowercaseGpuName:find('intel') and not lowercaseGpuName:find('arc%(tm%)') and not lowercaseGpuName:find('bmg') then
+      table.insert(res.gpu.warnings, {type = 'error', msg = 'intelgpu'})
     end
   end
 
   -- warning tests:
-  --res.pwr.batteryPresent = true
-  --res.pwr.ACOnline = false
-  --res.pwr.batteryState = 'critical'
   --res.os.versionMajor = 5
   --res.os.shortname = 'WindowsXP'
   --res.os.type = 'os_type'
   -- res.os.shortname = 'random'
   -- res.os.fullname = 'fullname'
-
-  if res.pwr.batteryPresent then
-    if not res.pwr.ACOnline then
-      table.insert(res.os.warnings, {type = 'error', msg = 'powerdisconnected'})
-    end
-    --if not res.pwr.batteryCharging then
-    --  table.insert(osWarnings, {'warn', "Battery not charging"})
-    --end
-    if res.pwr.batteryState == 'low' then
-      table.insert(res.os.warnings, {type = 'warn', msg = 'batterylow'})
-    elseif res.pwr.batteryState == 'critical' then
-      table.insert(res.os.warnings, {type = 'error', msg = 'batterycritical'})
-    end
-  end
-
-  if res.os.versionMajor < 6 and res.os.type == 'windows' then
-    table.insert(res.os.warnings, {type = 'warn', msg = 'win8rec'})
-  end
-
-  if res.os.type == 'linux' then
-    if res.os.shortname == "Ubuntu" then
-      if not res.os.fullname:find("20.04") and not res.os.fullname:find("22.04") then
-        table.insert(res.os.warnings, {type = 'warn', msg = 'ubuntuver'})
-      end
-    elseif res.os.shortname ~= "SteamOS" and beamng_appname == "BeamNG.drive" then
-      table.insert(res.os.warnings, {type = 'warn', msg = 'unsupportedlinuxdist'})
-      log("E","core_hwinfo","unsupported linux distribution\n"..dumps(res.os))
-    end
-  end
-
-
 
   if core_modmanager.isReady() then
     res.mods = core_modmanager.getStats()
@@ -240,8 +88,14 @@ local function getInfo()
   res.disk.warnings = {}
   res.disk.freeSpace = Engine.Platform.getDiskFreeSpace()
   res.disk.usage = diskUsage
-  if res.disk.freeSpace.root < 1073741824 or res.disk.freeSpace.user < 1073741824 then --minimun on each disk 1 GB free
+  local lowfreespace = 1 * 1024 * 1024 * 1024 -- 1 GB
+  if res.disk.freeSpace.root < lowfreespace or res.disk.freeSpace.user < lowfreespace then --minimun on each disk 1 GB free
     table.insert(res.disk.warnings, {type = 'warn', msg = 'lowfreespace'})
+  end
+
+  if res.os.type == 'linux' then
+    res.disk.caseSensiGame = FS:isGamePathCaseSensitive()
+    res.disk.caseSensiUser = FS:isUserPathCaseSensitive()
   end
 
   local originalSize = -1
@@ -270,11 +124,6 @@ local function getInfo()
   end
   if string.find( FS:getUserPath(), ".:\\Users\\.-\\OneDrive") then
     table.insert(res.disk.warnings, {type = 'warn', msg = 'onedrive'})
-  end
-
-  local cache = FS:findFiles("/", "cache.*", 1, false, true )
-  if #cache > 5 then
-    table.insert(res.disk.warnings, {type = 'warn', msg = 'toomanycache'})
   end
 
   local stateLevels = { ['ok'] = 1, ['warn'] = 2, ['error'] = 3 }

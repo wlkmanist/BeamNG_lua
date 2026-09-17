@@ -68,7 +68,7 @@ local function startHotlapping()
 
   local vehicle = getPlayerVehicle(0)
   if not vehicle then
-    log('E', logTag, 'No vehicle found; hotlapping mode disabled')
+    log('W', logTag, 'No vehicle found; hotlapping mode disabled')
     editMode = false
     return
   end
@@ -177,7 +177,7 @@ local function start()
 
   if editMode then
     if not validatePathData() then
-      log('W', logTag, 'Could not start hotlapping: Not enough checkpoint data!')
+      log('I', logTag, 'Instantly stopping hotlapping, due to not enough checkpoint data!')
       M.stopTimer()
       return
     end
@@ -448,7 +448,6 @@ local function onUpdate(dt, dtSim)
     end
     M.setTime()
     M.passTimeToGUI()
-
     justStarted = false
     justPassedCPWithinLap = false
     justLapped = false
@@ -589,14 +588,17 @@ end
 -- gets the full time info for a certain index
 local retNormal = {}
 local retDetail = {}
+local timeInfoRes = {}
 local function getTimeInfo()
   local i = 0
-  table.clear(retNormal)
-  table.clear(retDetail)
   for lapIndex,lapValue in ipairs(times) do
 
     -- normal times
-    retNormal[lapIndex] = {}
+    if retNormal[lapIndex] then
+      table.clear(retNormal[lapIndex])
+    else
+      retNormal[lapIndex] = {}
+    end
     retNormal[lapIndex].lap = lapIndex
     retNormal[lapIndex].total = M.formatMillis(lapValue['endTime'])
     retNormal[lapIndex].duration = M.formatMillis(lapValue['duration'])
@@ -631,7 +633,11 @@ local function getTimeInfo()
     i = i + 1
     -- first, all sections
     for cpIndex,cpValue in ipairs(times[lapIndex]) do
-      retDetail[i] = {}
+      if retDetail[i] then
+        table.clear(retDetail[i])
+      else
+        retDetail[i] = {}
+      end
       retDetail[i].lap = lapIndex ..'-'.. cpIndex
       retDetail[i].duration = M.formatMillis(cpValue['duration'])
       retDetail[i].durationMillis = cpValue['duration']
@@ -658,7 +664,11 @@ local function getTimeInfo()
     end
 
     -- previous laps. include all sections with diffs, then summary of the lap
-    retDetail[i] = {}
+    if retDetail[i] then
+      table.clear(retDetail[i])
+    else
+      retDetail[i] = {}
+    end
     retDetail[i].lap = lapIndex
     retDetail[i].duration = M.formatMillis(lapValue['duration'])
     retDetail[i].durationStyle = 'text-align:left; '
@@ -680,7 +690,24 @@ local function getTimeInfo()
     end
   end
 
-  return {normal = retNormal, detail = retDetail}
+  -- Trim retNormal to match times length
+  if #retNormal > #times then
+    for i = #times + 1, #retNormal do
+      retNormal[i] = nil
+    end
+  end
+
+  -- Trim retDetail to match times length
+  if #retDetail > i then
+    for j = i + 1, #retDetail do
+      retDetail[j] = nil
+    end
+  end
+
+  table.clear(timeInfoRes)
+  timeInfoRes.normal = retNormal
+  timeInfoRes.detail = retDetail
+  return timeInfoRes
 end
 
 -- formats the time given nicely
@@ -762,14 +789,14 @@ local function load(originalFilename)
     log('I', logTag, 'Loaded hotlap config from file: '..filePath)
     guihooks.trigger('HotlappingSuccessfullyLoaded', originalFilename)
   else
-    log('W', logTag, 'Could not load file: '..filePath)
+    log('I', logTag, 'Invalid file: '..filePath)
   end
 end
 
 -- saves the path data to the given file
 local function save(filePath)
   if not validatePathData() then
-    log('W', logTag, 'Could not serialize course: Not enough checkpoint data!')
+    log('I', logTag, 'Failed to save file, due to not enough checkpoint data!')
     return
   end
 
@@ -785,12 +812,15 @@ end
 -- renames a file
 local function rename(oldName, newName)
   local pre = rootDir..getCurrentLevelIdentifier() ..'/'
-  if not FS:fileExists(pre..oldName..'.race.json') then
-    log('W', logTag, 'Failed renaming '..oldName..' to '..newName..': File not found')
+  local oldFilePath = pre..oldName..'.race.json'
+  local newFilePath = pre..newName..'.race.json'
+  if not FS:fileExists(oldFilePath) then
+    log('I', logTag, 'Invalid file: '..oldFilePath)
     return
   end
-  FS:renameFile(pre..oldName..'.race.json', pre..newName..'.race.json')
-  FS:removeFile(pre..oldName..'.race.json')
+  FS:renameFile(oldFilePath, newFilePath)
+  FS:removeFile(oldFilePath)
+  log('I', logTag, 'Successfully renamed file: '..oldName..' to '..newName)
 end
 
 -- reloads the list of all available tracks, and sends them to the app
@@ -949,12 +979,12 @@ local function onRaceStart()
   started = true
   isBranchingScenario = scenario_scenarios.getScenario().lapConfigBranches ~= nil
   if isBranchingScenario then
-    log('I',logTag,'This race has branches. Lap and Checkpoint comparisons will be disabled.')
+    log('I', logTag, 'This race has branches. Lap and Checkpoint comparisons will be disabled.')
   end
 end
 
 local function onRaceWaypointReached(wpInfo)
-  if wpInfo.vehId ~= be:getPlayerVehicleID(0) then return end
+  if wpInfo.vehicleId ~= be:getPlayerVehicleID(0) then return end
 
   if not wpInfo.next then -- end raced
     started = false

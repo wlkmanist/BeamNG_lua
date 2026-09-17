@@ -43,21 +43,48 @@ function C:_executionStarted()
 end
 
 function C:updateInfos()
-  self.timerData = gameplay_drag_general.getTimers(self.pinIn.vehId.value)
-  dump(self.timerData)
+  local vehId = self.pinIn.vehId.value
+
+  -- Check if vehicle ID is provided
+  if not vehId or vehId == 0 then
+    local errorMsg = "Vehicle ID not provided or invalid"
+    self:__setNodeError('input', errorMsg)
+    self.timerData = timers
+    return
+  end
+
+  local timerData = gameplay_drag_dragBridge.getTimers(vehId)
+
+  if not timerData then
+    local errorMsg = string.format("Timer data not found for vehicle ID: %s. Vehicle may not be part of the drag race.", tostring(vehId))
+    self:__setNodeError('timers', errorMsg)
+    self.timerData = timers
+    return
+  end
+
+  -- Clear error if data is available
+  self:__setNodeError(nil, nil)
+  self.timerData = timerData
 end
 
-
-local vehId
 function C:work()
   self:updateInfos()
+
+  if not self.timerData then
+    self.timerData = timers
+  end
+
   for timerId, data in pairs(self.timerData) do
     if data.type ~= "timer" and data.isSet then
-      self.pinOut["flow_" .. timerId].value = data.isSet
-      self.pinOut[timerId].value = data.value
+      if self.pinOut["flow_" .. timerId] then
+        self.pinOut["flow_" .. timerId].value = data.isSet
+        self.pinOut[timerId].value = data.value
+      end
     end
   end
-  self.pinOut.timer.value = self.timerData.timer.value or 0
+  if self.timerData.timer then
+    self.pinOut.timer.value = self.timerData.timer.value or 0
+  end
 end
 
 return _flowgraph_createNode(C)

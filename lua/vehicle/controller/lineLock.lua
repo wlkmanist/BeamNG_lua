@@ -76,18 +76,19 @@ local function init(jbeamData)
   if not hasBuiltPie then
     core_quickAccess.addEntry(
       {
-        level = "/powertrain/",
+        level = "/root/playerVehicle/vehicleFeatures/",
         generator = function(entries)
           local noEntry = {
             title = "Line Lock",
             priority = 40,
-            icon = "radial_line_lock",
+            icon = "drag01",
+            uniqueID = "lineLockToggle",
             onSelect = function()
               controller.getController(name).toggleLineLock()
               return {"reload"}
             end
           }
-          if electrics.values[electricsName] >= 1 then
+          if electrics.values[electricsName] ~= nil and electrics.values[electricsName] >= 1 then
             noEntry.color = "#ff6600"
           end
           table.insert(entries, noEntry)

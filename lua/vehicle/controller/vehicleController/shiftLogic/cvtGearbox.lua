@@ -36,6 +36,7 @@ M.shiftingAggression = 0
 M.throttleInput = 0
 M.isArcadeSwitched = false
 M.isSportModeActive = false
+M.isManualModeActive = false
 
 M.smoothedAvgAVInput = 0
 M.rpm = 0
@@ -90,6 +91,11 @@ local torqueConverterHandling = {
   lockupMinGear = 0,
   hasLockup = false
 }
+
+--shift LEDs are in use if we are in manual control over the gear selection
+local function areShiftLEDsInUse()
+  return M.gearboxHandling.behavior ~= "arcade" and M.isManualModeActive
+end
 
 local function getGearName()
   return automaticHandling.mode
@@ -147,6 +153,7 @@ local function applyGearboxMode()
   end
 
   M.isSportModeActive = automaticHandling.mode == "S"
+  M.isManualModeActive = string.sub(automaticHandling.mode, 1, 1) == "M"
 end
 
 local function shiftUp()
@@ -328,9 +335,34 @@ local function init(jbeamData, sharedFunctionTable)
   torqueConverter = powertrain.getDevice("torqueConverter")
 
   M.currentGearIndex = 0
+  M.maxGearIndex = 1
+  M.minGearIndex = -1
   M.throttle = 0
   M.brake = 0
   M.clutchRatio = 1
+  M.shiftingAggression = 0
+  M.throttleInput = 0
+  M.isArcadeSwitched = false
+  M.isSportModeActive = false
+  M.isManualModeActive = false
+
+  M.smoothedAvgAVInput = 0
+  M.rpm = 0
+  M.idleRPM = 0
+  M.maxRPM = 0
+
+  M.engineThrottle = 0
+  M.engineLoad = 0
+  M.engineTorque = 0
+  M.flywheelTorque = 0
+  M.gearboxTorque = 0
+
+  M.ignition = true
+  M.isEngineRunning = 0
+
+  M.oilTemp = 0
+  M.waterTemp = 0
+  M.checkEngine = false
 
   gearboxAvailableLogic = {
     arcade = {
@@ -442,6 +474,8 @@ M.updateGearboxGFX = nop
 M.getGearName = getGearName
 M.getGearPosition = getGearPosition
 M.sendTorqueData = sendTorqueData
+
+M.areShiftLEDsInUse = areShiftLEDsInUse
 
 M.getState = getState
 M.setState = setState

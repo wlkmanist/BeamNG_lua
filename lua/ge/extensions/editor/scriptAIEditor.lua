@@ -11,13 +11,16 @@ local consts = {
   incMPS = 0.27777777777777777777777,
   minMPS = 0.1,
   maxMPS = 41.6666666666666666666667,
-  stdUp = vec3(0.0, 0.0, 1.0) }
+  stdFwd = vec3(0.0, 1.0, 0.0),
+  stdUp = vec3(0.0, 0.0, 1.0)
+}
+
+local editModeName = "Edit ScriptAI Scenario"
 
 -- State counters.
 local timer = hptimer()
 local uniqueId = 0
 local colCtr = 0
-local isScriptAIEditor = false
 
 -- Asset collections.
 local sceneVehicles = {}
@@ -30,10 +33,10 @@ local mState = {
   isDragArmed = false,
   nodeSelectData = nil,
   vehSelectData = nil,
-  camSelectData = nil }
+  camSelectData = nil
+}
 
 -- Window stylings.
-local vehWinButtonAlpha, trajWinButtonAlpha, camWinButtonAlpha = 1.0, 1.0, 1.0
 local colors = {
   textA = ColorF(0.1, 0.1, 0.1, 1.0),
   textB = ColorI(255, 255, 255, 192),
@@ -44,7 +47,8 @@ local colors = {
   lock = im.ImVec4(0.05, 0.05, 0.05, 1.0),
   wOpen = im.ImVec4(1.0, 1.0, 1.0, 0.5),
   white = im.ImVec4(1.0, 1.0, 1.0, 1.0),
-  black = im.ImVec4(0.0, 0.0, 0.0, 1.0) }
+  black = im.ImVec4(0.0, 0.0, 0.0, 1.0)
+}
 
 -- Main tool window state.
 local toolWinData = {
@@ -61,23 +65,24 @@ local toolWinData = {
   isLooping = im.BoolPtr(false),
   manualT = im.FloatPtr(30.0),
   isDispInExe = im.BoolPtr(true),
-  isOverlay = im.BoolPtr(true) }
+  isOverlay = im.BoolPtr(true)
+}
 
 -- Vehicles window state.
 local vehWinData = {
   name = "scriptAIEditor_VehWin",
   winSize = im.ImVec2(482, 250),
-  isVisible = false,
   isRecording = {},
   recordMode = {},
-  selectedVeh = 1 }
+  selectedVeh = 1
+}
 
 -- Trajectory list window state.
 local trajWinData = {
   name = "scriptAIEditor_TrajListWin",
   winSize = im.ImVec2(182, 288),
-  isVisible = false,
-  selectedTraj = nil }
+  selectedTraj = nil
+}
 
 -- The three individual trajectory windows state.
 local indTrajWinData = {
@@ -88,13 +93,13 @@ local indTrajWinData = {
   idx2 = nil,
   name3 = "scriptAIEditor_TrajWin3",
   idx3 = nil,
-  winSize = im.ImVec2(342, 500) }
+  winSize = im.ImVec2(342, 500)
+}
 
 -- Camera window state.
 local camWinData = {
   name = "scriptAIEditor_CamWin",
   winSize = im.ImVec2(833, 182),
-  isVisible = false,
   nodes = {},
   spline = {},
   selectedNode = 1,
@@ -102,7 +107,8 @@ local camWinData = {
   col = im.ArrayFloat(3),
   isRigidTranslation = im.BoolPtr(false),
   isDisplay = im.BoolPtr(true),
-  isOnExecute = im.BoolPtr(false) }
+  isOnExecute = im.BoolPtr(false)
+}
 
 -- Draw window state.
 local drawWinData = {
@@ -111,7 +117,21 @@ local drawWinData = {
   drawNodes = {},
   mode = im.IntPtr(1),
   isDrawIn = false,
-  drawCol = im.ArrayFloat(3) }
+  drawCol = im.ArrayFloat(3)
+}
+
+-- State for windows after onDeserialized
+local winStates = {
+  vehWin = {visible = false, buttonAlpha = 1},
+  trajWin = {visible = false, buttonAlpha = 1},
+  camWin = {visible = false, buttonAlpha = 1}
+}
+
+local _uid = 0 -- do not use ever
+local function getNextUniqueId()
+  _uid = _uid + 1
+  return _uid
+end
 
 -- Rounding functions.
 local function round1(n) return tonumber(string.format("%.1f", n)) end
@@ -223,6 +243,42 @@ local function setFixedVelPtr(d, vel)
     n1.t = im.FloatPtr(timeStamp)
   end
   return d
+end
+
+-- Converts a polyline to nodes, used during execution or export.
+local function buildNodes(poly, tr)
+  local nodes, len = {}, #poly
+  if tr.isTimeBased == true then
+    for i = 1, len do
+      local n = poly[i]
+      nodes[i] = { x = n.x[0], y = n.y[0], z = n.z[0], t = n.t[0] }
+    end
+  else
+    for i = 1, len do
+      local n = poly[i]
+      nodes[i] = { x = n.x[0], y = n.y[0], z = n.z[0], v = n.v[0] }
+    end
+  end
+
+  if not nodes[1] then
+    nodes[1] = { x = 0, y = 0, z = 0, t = 0, v = 0 }
+  end
+  nodes[1].dir, nodes[1].up = vec3(consts.stdFwd), vec3(consts.stdUp)                  -- The first node is special, since it contains the dir and up vectors.
+  local firstPos = vec3(nodes[1].x, nodes[1].y, nodes[1].z)
+  for i, n in ipairs(nodes) do
+    if i > 1 then
+      local pos = vec3(n.x, n.y, n.z)
+      local dirVec = pos - firstPos
+      if dirVec:squaredLength() >= 1 then                                              -- Threshold of 1 m, to prevent tiny movements from causing a wrong direction.
+        dirVec:normalize()
+        nodes[1].dir:set(dirVec)
+        nodes[1].up:set(map.surfaceNormal(pos, 1))
+        break
+      end
+    end
+  end
+
+  return nodes
 end
 
 -- Deep copies an array of nodes (without time stamps).
@@ -726,10 +782,15 @@ end
 -- Creates a trajectory from some given polyLine data, and an optional vehicle Id.
 local function createTrajectory(d, vehId, color, externalForce, isTimeBased)
   local nodes = {}
-  if isTimeBased == true then                                                     -- Case #V: We have a speed-based script with speed values supplied.
-    nodes = polyVal2PtrT(d)
-  else                                                                            -- Case #T: We have a time-based script with time values supplied.
-    nodes = polyVal2PtrV(d)
+  -- Check if data is already in pointer format (has .x[0] structure) or value format (has .x structure).
+  if d[1] and d[1].x and type(d[1].x) == "table" and d[1].x[0] ~= nil then -- Data is already in pointer format.
+    nodes = d
+  else -- Data is in value format, convert to pointer format.
+    if isTimeBased == true then                                                     -- Case #V: We have a speed-based script with speed values supplied.
+      nodes = polyVal2PtrT(d)
+    else                                                                            -- Case #T: We have a time-based script with time values supplied.
+      nodes = polyVal2PtrV(d)
+    end
   end
   local len = #nodes
   for i = 1, len do                                                               -- Ensure the locking properties is added, and defaulted to false everywhere.
@@ -811,24 +872,9 @@ local function execute()
     if tr.vehicle ~= "" and tr.vid ~= nil then
       local poly = getPolyRef(tr)
       local vid = tr.vid                                                          -- Compute the executable script.
-      local polyLine = { path = {} }
-      local nodes = polyLine.path
-      local len = #poly
-      if tr.isTimeBased == true then
-        for j = 1, len do
-          local sn = poly[j]
-          nodes[j] = { t = sn.t[0], x = sn.x[0], y = sn.y[0], z = sn.z[0] }
-        end
-      else
-        for j = 1, len do
-          local sn = poly[j]
-          nodes[j] = { v = sn.v[0], x = sn.x[0], y = sn.y[0], z = sn.z[0] }
-        end
-      end
-      local n1, n2 = poly[1], poly[2]
-      local dirVec = (vec3(n2.x[0], n2.y[0], n2.z[0]) - vec3(n1.x[0], n1.y[0], n1.z[0]))
-      dirVec:normalize()
-      nodes[1].dir, nodes[1].up = dirVec, consts.stdUp                            -- The first node is special, since it contains the dir and up vectors.
+      local polyLine = {}
+      local nodes = buildNodes(poly, tr)
+      polyLine.path = nodes
       polyLinesToExecute[vid] = polyLine
       polyLine.externalForce = tr.isExternalForce[0]                              -- Add the external force (AI assist) to the top level of the script (outside 'path').
       if tr.isTimeBased == true and poly[1].t[0] > 0.0 then
@@ -940,9 +986,9 @@ local function save(d)
         selectedVeh = vehWinData.selectedVeh,
         uniqueTrajectoryId = uniqueId,
         selectedTraj = trajWinData.selectedTraj,
-        isVehWinVisible = vehWinData.isVisible,
-        isTrajWinVisible = trajWinData.isVisible,
-        isCamWinVisible = camWinData.isVisible })}
+        isVehWinVisible = editor.isWindowVisible(vehWinData.name),
+        isTrajWinVisible = editor.isWindowVisible(trajWinData.name),
+        isCamWinVisible = editor.isWindowVisible(camWinData.name) })}
       jsonWriteFile(data.filepath, encodedData, true)
     end,
     {{"JSON",".json"}},
@@ -962,9 +1008,11 @@ local function load(d)
       toolWinData.t = im.FloatPtr(data.t)
       vehWinData.selectedVeh = data.selectedVeh
       uniqueId = data.uniqueTrajectoryId
-      vehWinData.isVisible = data.isVehWinVisible
-      trajWinData.isVisible = data.isTrajWinVisible
-      camWinData.isVisible = data.isCamWinVisible
+
+      if data.isVehWinVisible then editor.showWindow(vehWinData) end
+      if data.isTrajWinVisible then editor.showWindow(trajWinData) end
+      if data.isCamWinVisible then editor.showWindow(camWinData) end
+
       core_vehicles.removeAll()                                                 -- Remove any currently-spawned cars.
       local vehicles, numTrajectories, numVehicles = data.vehicles, 0, 0        -- Compute valid starting positions for all the vehicles which are to be spawned.
       for k, tr in pairs(trajectories) do
@@ -1050,12 +1098,8 @@ end
 local function import()
   extensions.editor_fileDialog.openFile(
     function(data)
-      local ctr = 1
-      for k, tr in pairs(trajectories) do
-        ctr = ctr + 1
-      end
       local importedData = jsonReadFile(data.filepath)
-      local tIdx = "imported_" .. tostring(ctr)
+      local tIdx = "imported_" .. tostring(getNextUniqueId())
       local isTimeBased = true
       if importedData.path[1].v ~= nil then
         isTimeBased = false
@@ -1070,22 +1114,7 @@ end
 
 -- Export a single trajectory to file (compatible with standard scriptAI scripts).
 local function export(poly, tr)
-  local nodes, len = {}, #poly                                                  -- Create the nodes table, based on the mode.
-  if tr.isTimeBased == true then
-    for j = 1, len do
-      local nd = poly[j]
-      nodes[j] = { x = nd.x[0], y = nd.y[0], z = nd.z[0], t = nd.t[0] }
-    end
-  else
-    for j = 1, len do
-      local nd = poly[j]
-      nodes[j] = { x = nd.x[0], y = nd.y[0], z = nd.z[0], v = nd.v[0] }
-    end
-  end
-  local n1, n2 = poly[1], poly[2]
-  local dirVec = (vec3(n2.x[0], n2.y[0], n2.z[0]) - vec3(n1.x[0], n1.y[0], n1.z[0]))
-  dirVec:normalize()
-  nodes[1].dir, nodes[1].up = dirVec, consts.stdUp                                     -- Add the frame to the first node.
+  local nodes = buildNodes(poly, tr)
   local script = {}                                                             -- Populate the final script.
   script.path = nodes
   if tr.isExternalForce[0] == true then
@@ -1958,10 +1987,7 @@ local function fitSplineToTraj(tr)
 end
 
 local function onEditorGui()
-
-  if not isScriptAIEditor then
-    return
-  end
+  if not editor.editMode or editor.editMode.displayName ~= editModeName then return end
 
   -- Compute the scenario interval.
   local numTrajectories = 0
@@ -2043,7 +2069,7 @@ local function onEditorGui()
 
   -- Display the Main Tool Window.
   local twd = toolWinData
-  if editor.beginWindow(twd.name, "Script AI Editor", im.WindowFlags_NoTitleBar) then
+  if editor.beginWindow(twd.name, "Script AI Editor") then
     -- Draw the time transport slider.
     im.PushStyleVar1(im.StyleVar_GrabMinSize, 20)
     im.PushItemWidth(549)
@@ -2132,6 +2158,7 @@ local function onEditorGui()
         end
         im.tooltip('Rewind time-transport guide')
         im.PopStyleVar()
+        im.PopButtonRepeat()
 
         im.SameLine()
         im.PushButtonRepeat(true)
@@ -2143,6 +2170,7 @@ local function onEditorGui()
           end
         end
         im.tooltip('Fast forward time-transport guide')
+        im.PopButtonRepeat()
       end
       im.EndListBox()
     end
@@ -2155,43 +2183,37 @@ local function onEditorGui()
     im.Dummy(im.ImVec2(5, 0))
 
     im.SameLine()
-    if editor.uiIconImageButton(editor.icons.car, im.ImVec2(29, 29), im.ImVec4(1, 1, 1, vehWinButtonAlpha), nil, nil, 'openVehiclesWindow') then
-      if vehWinData.isVisible == false then
-        vehWinData.isVisible = true
-        editor.showWindow(vehWinData.name)
-        vehWinButtonAlpha = 0.5
-      else
-        vehWinData.isVisible = false
+    if editor.uiIconImageButton(editor.icons.car, im.ImVec2(29, 29), im.ImVec4(1, 1, 1, winStates.vehWin.buttonAlpha), nil, nil, 'openVehiclesWindow') then
+      if editor.isWindowVisible(vehWinData.name) then
         editor.hideWindow(vehWinData.name)
-        vehWinButtonAlpha = 1
+        winStates.vehWin.buttonAlpha = 1
+      else
+        editor.showWindow(vehWinData.name)
+        winStates.vehWin.buttonAlpha = 0.5
       end
     end
     im.tooltip('Open/close vehicles window')
 
     im.SameLine()
-    if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(27, 27), im.ImVec4(1, 1, 1, trajWinButtonAlpha), nil, nil, 'openTrajectoriesWindow') then
-      if trajWinData.isVisible == false then
-        trajWinData.isVisible = true
-        editor.showWindow(trajWinData.name)
-        trajWinButtonAlpha = 0.5
-      else
-        trajWinData.isVisible = false
+    if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(27, 27), im.ImVec4(1, 1, 1, winStates.trajWin.buttonAlpha), nil, nil, 'openTrajectoriesWindow') then
+      if editor.isWindowVisible(trajWinData.name) then
         editor.hideWindow(trajWinData.name)
-        trajWinButtonAlpha = 1.0
+        winStates.trajWin.buttonAlpha = 1.0
+      else
+        editor.showWindow(trajWinData.name)
+        winStates.trajWin.buttonAlpha = 0.5
       end
     end
     im.tooltip('Open/close trajectories window')
 
     im.SameLine()
-    if editor.uiIconImageButton(editor.icons.switch_video, im.ImVec2(29, 29), im.ImVec4(1, 1, 1, camWinButtonAlpha), nil, nil, 'openCameraWindow') then
-      if camWinData.isVisible == false then
-        camWinData.isVisible = true
-        editor.showWindow(camWinData.name)
-        camWinButtonAlpha = 0.5
-      else
-        camWinData.isVisible = false
+    if editor.uiIconImageButton(editor.icons.switch_video, im.ImVec2(29, 29), im.ImVec4(1, 1, 1, winStates.camWin.buttonAlpha), nil, nil, 'openCameraWindow') then
+      if editor.isWindowVisible(camWinData.name) then
         editor.hideWindow(camWinData.name)
-        camWinButtonAlpha = 1
+        winStates.camWin.buttonAlpha = 1
+      else
+        editor.showWindow(camWinData.name)
+        winStates.camWin.buttonAlpha = 0.5
       end
     end
     im.tooltip('Open/close camera window')
@@ -2216,8 +2238,9 @@ local function onEditorGui()
   editor.endWindow()
 
   -- Manage the vehicles window.
-  if vehWinData.isVisible == true and numVehicles > 0 and drawWinData.isDrawIn == false and twd.isExecuting == false then
+  if editor.isWindowVisible(vehWinData.name) and numVehicles > 0 and drawWinData.isDrawIn == false and twd.isExecuting == false then
     -- Compute a string for each vehicle, which represents its attachment to a trajectory, or no attachment.
+    --TODO: maybe cache this and not do it every frame ?
     local vehicleAttachStates = {}
     for i = 1, numVehicles do
       local vehicle = sceneVehicles[i]
@@ -2234,7 +2257,7 @@ local function onEditorGui()
     local vwd = vehWinData
     if editor.beginWindow(vwd.name, "Scene Vehicles") then
       im.Separator()
-      if im.BeginListBox("", im.ImVec2(470, 180), im.WindowFlags_ChildWindow) then
+      if im.BeginListBox("", im.ImVec2(480, 180), im.WindowFlags_ChildWindow) then
         local ctr = 1
         for i = numVehicles, 1, -1 do
           local vehicle = sceneVehicles[i]
@@ -2243,7 +2266,7 @@ local function onEditorGui()
           im.SetColumnWidth(1, 30)
           im.SetColumnWidth(2, 30)
           im.SetColumnWidth(3, 30)
-          im.SetColumnWidth(4, 190)
+          im.SetColumnWidth(4, 200)
           local flag = false
           if i == vwd.selectedVeh then
             flag = true
@@ -2251,9 +2274,8 @@ local function onEditorGui()
           if im.Selectable1(vehicle.string, flag, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then
             vwd.selectedVeh = i
           end
-          im.SameLine()
           im.NextColumn()
-          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), nil, nil, nil, 'removeVehicle') then
+          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), nil, nil, nil, 'removeVehicle' .. i) then
             local selectedVehicle = sceneVehicles[i]
             selectedVehicle.veh:delete()
             table.remove(sceneVehicles, i)
@@ -2263,19 +2285,18 @@ local function onEditorGui()
               end
             end
             vwd.selectedVeh = 1
+            editor.endWindow()
             return
           end
           im.tooltip('Remove this vehicle.')
-          im.SameLine()
           im.NextColumn()
-          if editor.uiIconImageButton(editor.icons.car, im.ImVec2(21, 21), nil, nil, nil, 'goToSelectedVehicle') then
+          if editor.uiIconImageButton(editor.icons.car, im.ImVec2(21, 21), nil, nil, nil, 'goToSelectedVehicle' .. i) then
             core_camera.setByName(0, "orbit", false)
             be:enterVehicle(0, scenetree.findObject(vehicle.vid))
           end
           im.tooltip('Go to the selected vehicle.')
+          im.NextColumn()
           if vehicleAttachStates[i] ~= "[not attached]" then
-            im.SameLine()
-            im.NextColumn()
             local idx = nil
             for k, tr in pairs(trajectories) do
               if vehicle.vid == tr.vid then
@@ -2283,22 +2304,19 @@ local function onEditorGui()
               end
             end
             local btnCol = getTrajButtonCol(idx)
-            if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(19, 19), btnCol, nil, nil, 'editTrajectoryVehicleWindow') then
+            if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(19, 19), btnCol, nil, nil, 'editTrajectoryVehicleWindow' .. i) then
               if idx ~= nil then
                 assignTrajWin(idx)
               end
             end
             im.tooltip('Open the linked trajectory window.')
-          else
-            im.NextColumn()
           end
+          im.NextColumn()
           local vas = vehicleAttachStates[i]
           if vas == '[not attached]' then
-            im.SameLine()
-            im.NextColumn()
             local veh = sceneVehicles[i]
             if vwd.isRecording[i] == false then
-              if editor.uiIconImageButton(editor.icons.fiber_manual_record, im.ImVec2(21, 21), colors.rec, nil, nil, 'startRecordingScript') then
+              if editor.uiIconImageButton(editor.icons.fiber_manual_record, im.ImVec2(21, 21), colors.rec, nil, nil, 'startRecordingScript' .. i) then
                 core_camera.setByName(0, "orbit", false)
                 be:enterVehicle(0, scenetree.findObject(veh.vid))
                 if twd.isOverlay[0] == true then
@@ -2322,15 +2340,13 @@ local function onEditorGui()
               if im.RadioButton2("V-Based###" .. tostring(ctr + 1), vwd.recordMode[i], im.Int(2)) then end
               ctr = ctr + 2
             else
-              if editor.uiIconImageButton(editor.icons.stop, im.ImVec2(21, 21), nil, nil, nil, 'stopRecordingScript') then
+              if editor.uiIconImageButton(editor.icons.stop, im.ImVec2(21, 21), nil, nil, nil, 'stopRecordingScript' .. i) then
                 scenetree.findObject(veh.vid):queueLuaCommand('obj:queueGameEngineLua("extensions.hook(\\"onVehicleSubmitRecording\\","..tostring(objectId)..","..serialize(ai.stopRecording())..")")')
                 stopExecute()
                 twd.isPlaying, vwd.isRecording[i] = false, false
               end
               im.tooltip('Stop recording.')
             end
-          else
-            im.NextColumn()
           end
           im.NextColumn()
           im.Separator()
@@ -2341,14 +2357,14 @@ local function onEditorGui()
       -- Display the attachment state of the currently-selected vehicle at the bottom of the window.
       im.Text(vehicleAttachStates[vwd.selectedVeh])
     else
-      vehWinButtonAlpha, vwd.isVisible = 1, false
+      winStates.vehWin.buttonAlpha = 1
     end
     editor.endWindow()
   end
 
   -- Manage the trajectory list window.
   local tlwd = trajWinData
-  if tlwd.isVisible == true and numVehicles > 0 and drawWinData.isDrawIn == false and twd.isExecuting == false then
+  if editor.isWindowVisible(tlwd.name) and numVehicles > 0 and drawWinData.isDrawIn == false and twd.isExecuting == false then
     if editor.beginWindow(tlwd.name, "Scene Trajectories") then
       im.Separator()
       if im.BeginListBox("", im.ImVec2(170, 180), im.WindowFlags_ChildWindow) then
@@ -2362,9 +2378,8 @@ local function onEditorGui()
           if im.Selectable1(tostring(k), flag, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then
             tlwd.selectedTraj = k
           end
-          im.SameLine()
           im.NextColumn()
-          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), nil, nil, nil, 'removeTrajectory') then
+          if editor.uiIconImageButton(editor.icons.trashBin2, im.ImVec2(22, 22), nil, nil, nil, 'removeTrajectory' .. tostring(k)) then
             local oldTrajData = serializeTrajData()
             trajectories[k] = nil
             tlwd.selectedTraj = nil
@@ -2380,19 +2395,17 @@ local function onEditorGui()
             local newTrajData = serializeTrajData()
             local data = { old = oldTrajData, new = newTrajData }
             editor.history:commitAction("Remove trajectory.", data, trajWinUndo, trajWinRedo)
+            editor.endWindow()
             return
           end
           im.tooltip('Remove the selected trajectory.')
+          im.NextColumn()
           if numTrajectories > 0 and tr ~= nil then
-            im.SameLine()
-            im.NextColumn()
             local btnCol = getTrajButtonCol(k)
-            if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(19, 19), btnCol, nil, nil, 'editTrajectoryTrajectoryWindow') then
+            if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(19, 19), btnCol, nil, nil, 'editTrajectoryTrajectoryWindow' .. tostring(k)) then
               assignTrajWin(k)
             end
             im.tooltip('Open the linked trajectory window.')
-          else
-            im.NextColumn()
           end
           im.NextColumn()
           im.Separator()
@@ -2422,8 +2435,7 @@ local function onEditorGui()
       end
       im.tooltip('Import a trajectory from file.')
     else
-      trajWinButtonAlpha = 1
-      trajWinData.isVisible = false
+      winStates.trajWin.buttonAlpha = 1
     end
     editor.endWindow()
   end
@@ -2474,28 +2486,21 @@ local function onEditorGui()
               if im.Selectable1("[" .. j .. "] :", flag, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then
                 tr.selectedNode = j
               end
-              im.SameLine()
               im.NextColumn()
               if isTimeBased == true then
                 im.Text(round1(n.t[0]) .. "s")
               else
                 im.Text(round1(n.v[0] * 3.6) .. "kph")
               end
-              im.SameLine()
               im.NextColumn()
               im.Text("(x: " .. round1(n.x[0]) .. ",")
-              im.SameLine()
               im.NextColumn()
               im.Text("y: " .. round1(n.y[0]) .. ",")
-              im.SameLine()
               im.NextColumn()
               im.Text("z: " .. round1(n.z[0]) .. ")")
-              if n.isLocked == false then
-                im.NextColumn()
-              else
-                im.SameLine()
-                im.NextColumn()
-                if editor.uiIconImageButton(editor.icons.lock, im.ImVec2(17, 17), colors.lock, nil, nil, 'unlockNode') then
+              im.NextColumn()
+              if n.isLocked then
+                if editor.uiIconImageButton(editor.icons.lock, im.ImVec2(17, 17), colors.lock, nil, nil, 'unlockNode' .. j) then
                   if tr.isTimeBased == true then
                     local oldNodes = polyPtr2ValT(polyLine)
                     n.isLocked = false
@@ -2533,6 +2538,7 @@ local function onEditorGui()
                 polyLine[tr.selectedNode].v = im.FloatPtr(min(consts.maxMPS, polyLine[tr.selectedNode].v[0] + consts.incMPS))
               end
               im.tooltip('Increase the velocity at the highlighted node.')
+              im.PopButtonRepeat()
               im.SameLine()
               im.Dummy(im.ImVec2(gapB, 0))
               im.SameLine()
@@ -2541,6 +2547,7 @@ local function onEditorGui()
                 polyLine[tr.selectedNode].v = im.FloatPtr(max(consts.minMPS, polyLine[tr.selectedNode].v[0] - consts.incMPS))
               end
               im.tooltip('Decrease the velocity at the highlighted node.')
+              im.PopButtonRepeat()
               im.SameLine()
               im.Dummy(im.ImVec2(gapB, 0))
               im.SameLine()
@@ -2616,6 +2623,7 @@ local function onEditorGui()
               local data = { old = oldNodes, new = newNodes, isSpline = isSpline, tIdx = tIdx }
               editor.history:commitAction("Remove Node", data, nodesUndo, nodesRedo)
             end
+            editor.endWindow()
             return
           end
           im.tooltip('Remove the highlighted node.')
@@ -2661,18 +2669,19 @@ local function onEditorGui()
           im.SameLine()
           im.Dummy(im.ImVec2(gapB, 0))
           im.SameLine()
-          if editor.uiIconImageButton(editor.icons.floppyDisk, im.ImVec2(23, 23), nil, nil, nil, 'exportTrajectory') then
-            export(polyLine, tr)
-          end
-          im.tooltip('Export this trajectory to file.')
-          im.SameLine()
-          im.Dummy(im.ImVec2(gapB, 0))
-          im.SameLine()
           if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(24, 24), nil, nil, nil, 'revealTrajectory') then
             moveCam2Traj(tr.polyLine)
           end
           im.tooltip('Reveal this trajectory on the map, from a top-down view.')
+          im.SameLine()
+          im.Dummy(im.ImVec2(gapB, 0))
+          im.SameLine()
+          if editor.uiIconImageButton(editor.icons.floppyDisk, im.ImVec2(23, 23), nil, nil, nil, 'exportTrajectory') then
+            export(polyLine, tr)
+          end
+          im.tooltip('Export this trajectory to file.')
           im.Separator()
+
           -- Display the mode, interval range, attach status, and attachment buttons, for this trajectory
           if isTimeBased == true then
             im.Text("Mode: [Time-Based]")
@@ -2788,11 +2797,9 @@ local function onEditorGui()
           -- The top row of checkboxes.
           im.Checkbox("Trajectory", tr.isDisplay)
           im.tooltip('Switch the visual display of this trajectory on/off.')
-          im.SameLine()
           im.NextColumn()
           im.Checkbox("Nodes", tr.isMarkNodes)
           im.tooltip('Includes/Removes the trajectory nodes on the display.')
-          im.SameLine()
           im.NextColumn()
           im.Checkbox("Velocities", tr.isMarkVelocities)
           im.tooltip('Includes/Removes the line segment velocities on the display.')
@@ -2802,21 +2809,17 @@ local function onEditorGui()
           im.Checkbox("Rigid Path", tr.isUseRigidTranslation)
           im.tooltip('Treats the full trajectory as a rigid body when moving it on the map.')
           if isTimeBased == true then
-            im.SameLine()
             im.NextColumn()
             im.Checkbox("AI Assistant", tr.isExternalForce)
             im.tooltip('Switches AI assistance on/off. This helps to keep the vehicle on course.')
-            im.SameLine()
             im.NextColumn()
             im.Checkbox("Hold Velocity", tr.isHoldVelocity)
             im.tooltip('Maintains the average velocities of each section, as nodes are moved on the map.')
             im.NextColumn()
           else
             im.Dummy(im.ImVec2(25, 25))
-            im.SameLine()
             im.NextColumn()
             im.Dummy(im.ImVec2(25, 25))
-            im.SameLine()
             im.NextColumn()
           end
           -- A slider for setting the attraction force field, for when editing the trajectory on the map.
@@ -2828,6 +2831,7 @@ local function onEditorGui()
             im.PushStyleVar1(im.StyleVar_GrabMinSize, 20)
             im.PushItemWidth(340)
             im.SliderFloat("", tr.fieldRange, 0.1, 200.0, "Field = %.3f")
+            im.tooltip('Sets the attraction force field while editing this trajectory on the map.')
             im.PopItemWidth()
             im.PopStyleVar()
           end
@@ -2848,9 +2852,11 @@ local function onEditorGui()
 
   -- Display the Camera trajectory window.
   local cwd = camWinData
-  if cwd.isVisible == true and numVehicles > 0 and drawWinData.isDrawIn == false and twd.isExecuting == false then
+  if editor.isWindowVisible(cwd.name) and numVehicles > 0 and drawWinData.isDrawIn == false and twd.isExecuting == false then
     local isChange = false
+    local isDisabled = false
     local oldVals = camPathPtr2Val()
+
     if editor.beginWindow(camWinData.name, "Camera Trajectory") then
       -- The camera nodes list.
       im.Separator()
@@ -2858,7 +2864,7 @@ local function onEditorGui()
         im.Columns(6, "camWinColumns", false)
         im.SetColumnWidth(0, 60)
         im.SetColumnWidth(1, 220)
-        im.SetColumnWidth(2, 250)
+        im.SetColumnWidth(2, 260)
         im.SetColumnWidth(3, 120)
         im.SetColumnWidth(4, 120)
         im.SetColumnWidth(5, 40)
@@ -2869,37 +2875,30 @@ local function onEditorGui()
           local flag = false
           if j == cwd.selectedNode then flag = true end
           if im.Selectable1("[" .. j .. "] :", flag, bit.bor(im.SelectableFlags_SpanAllColumns, im.SelectableFlags_AllowItemOverlap)) then cwd.selectedNode = j end
-          im.SameLine()
           im.NextColumn()
           local tOld = n.t[0]
-          if im.InputFloat("time(s)###" .. tostring(ctr), n.t, 0.1, 1.0) then
+          if im.InputFloat("Time##" .. tostring(ctr), n.t, 0.1, 1.0) then
             isChange = true
           end
           im.tooltip('Change the time when the camera should arrive at this node.')
           if (j > 1 and n.t[0] <= nodes[j - 1].t[0]) or (j < numNodes and n.t[0] >= nodes[j + 1].t[0]) then n.t = im.FloatPtr(tOld) end
           if n.t[0] < 0.0 then n.t = im.FloatPtr(0.0) end
-          im.SameLine()
           im.NextColumn()
-          if im.InputFloat(" Smoothness ###" .. tostring(ctr + 1), n.smoothness, 0.1, 0.1) then
+          if im.InputFloat("Smoothness##" .. tostring(ctr + 1), n.smoothness, 0.1, 0.1) then
             isChange = true
           end
           im.tooltip('Change the smoothness value of this node, in [0, 1].')
           if n.smoothness[0] < 0.0 then n.smoothness = im.FloatPtr(0.0) end
           if n.smoothness[0] > 1.0 then n.smoothness = im.FloatPtr(1.0) end
-          im.SameLine()
           im.NextColumn()
-          im.Checkbox("Moving Start###" .. tostring(ctr + 2), n.movingStart)
+          im.Checkbox("Moving Start##" .. tostring(ctr + 2), n.movingStart)
           im.tooltip('Set whether or not to allow continuous movement on approach to this node.')
-          im.SameLine()
           im.NextColumn()
-          im.Checkbox("Moving End###" .. tostring(ctr + 3), n.movingEnd)
+          im.Checkbox("Moving End##" .. tostring(ctr + 3), n.movingEnd)
           im.tooltip('Set whether or not to allow continuous movement on departure from this node.')
-          if n.isLocked == false then
-            im.NextColumn()
-          else
-            im.SameLine()
-            im.NextColumn()
-            if editor.uiIconImageButton(editor.icons.lock, im.ImVec2(17, 17), colors.lock, nil, nil, 'unlockNode') then
+          im.NextColumn()
+          if n.isLocked then
+            if editor.uiIconImageButton(editor.icons.lock, im.ImVec2(17, 17), colors.lock, nil, nil, 'unlockNode' .. j) then
               n.isLocked = false
               isChange = true
             end
@@ -2914,79 +2913,77 @@ local function onEditorGui()
       im.Separator()
 
       im.Columns(8, "camWinButtonCols", false)
-      im.SetColumnWidth(0, 45)
+      im.SetColumnWidth(0, 40)
       im.SetColumnWidth(1, 40)
-      im.SetColumnWidth(2, 45)
-      im.SetColumnWidth(3, 45)
-      im.SetColumnWidth(4, 45)
+      im.SetColumnWidth(2, 40)
+      im.SetColumnWidth(3, 40)
+      im.SetColumnWidth(4, 40)
       im.SetColumnWidth(5, 200)
-      im.SetColumnWidth(6, 200)
+      im.SetColumnWidth(6, 260)
       im.SetColumnWidth(7, 200)
       local tNow = toolWinData.t[0]
       local nodes, numNodes = cwd.nodes, #cwd.nodes
-      if numNodes < 1 or tNow > nodes[numNodes].t[0] then
-        if editor.uiIconImageButton(editor.icons.nodeAddFirst01, im.ImVec2(26, 26), nil, nil, nil, 'addCamNode') then
-          local oldData = serializeCamData()
-          local pos, rot = core_camera.getPosition(), core_camera.getQuat()
-          rot:normalize()
-          nodes[numNodes + 1] = {
-            x = im.FloatPtr(pos.x), y = im.FloatPtr(pos.y), z = im.FloatPtr(pos.z),
+
+      isDisabled = numNodes > 1 and tNow > nodes[numNodes].t[0]
+      if isDisabled then im.BeginDisabled() end
+      if editor.uiIconImageButton(editor.icons.nodeAddFirst01, im.ImVec2(26, 26), nil, nil, nil, 'addCamNode') then
+        local oldData = serializeCamData()
+        local pos, rot = core_camera.getPosition(), core_camera.getQuat()
+        rot:normalize()
+        nodes[numNodes + 1] = {
+          x = im.FloatPtr(pos.x), y = im.FloatPtr(pos.y), z = im.FloatPtr(pos.z),
+          qx = rot.x, qy = rot.y, qz = rot.z, qw = rot.w,
+          t = im.FloatPtr(tNow),
+          smoothness = im.FloatPtr(0.5),
+          movingStart = im.BoolPtr(true), movingEnd = im.BoolPtr(true),
+          isLocked = false }
+        local newData = serializeCamData()
+        local data = { old = oldData, new = newData }
+        editor.history:commitAction("Adjust camera node time.", data, camWinUndo, camWinRedo)
+      end
+      im.tooltip('Adds a camera trajectory node at the current camera position and current time.')
+      if isDisabled then im.EndDisabled() end
+      im.NextColumn()
+      isDisabled = numNodes < 1
+      if isDisabled then im.BeginDisabled() end
+      if editor.uiIconImageButton(editor.icons.nodeRemove, im.ImVec2(26, 26), nil, nil, nil, 'removeCamNode') then
+        local oldData = serializeCamData()
+        table.remove(nodes, cwd.selectedNode)
+        cwd.selectedNode = min(max(1, cwd.selectedNode), #nodes)
+        local newData = serializeCamData()
+        local data = { old = oldData, new = newData }
+        editor.history:commitAction("Adjust camera node time.", data, camWinUndo, camWinRedo)
+      end
+      im.tooltip('Removes the selected camera node.')
+      if isDisabled then im.EndDisabled() end
+      im.NextColumn()
+      isDisabled = numTrajectories < 1 or trajWinData.selectedTraj == nil
+      if isDisabled then im.BeginDisabled() end
+      if editor.uiIconImageButton(editor.icons.touch_app, im.ImVec2(25, 25), nil, nil, nil, 'camAutoGenerate') then
+        local tr = trajectories[trajWinData.selectedTraj]
+        local poly = getPolyRef(tr)
+        local len = #poly
+        table.clear(cwd.nodes)
+        local rot = quatFromDir(vec3(0, 0, -1))
+        rot:normalize()
+        for i = 1, len do
+          local n = poly[i]
+          cwd.nodes[i] = {
+            x = im.FloatPtr(n.x[0]), y = im.FloatPtr(n.y[0]), z = im.FloatPtr(n.z[0] + 30.0),
             qx = rot.x, qy = rot.y, qz = rot.z, qw = rot.w,
-            t = im.FloatPtr(tNow),
+            t = im.FloatPtr(n.t[0]),
             smoothness = im.FloatPtr(0.5),
             movingStart = im.BoolPtr(true), movingEnd = im.BoolPtr(true),
             isLocked = false }
-          local newData = serializeCamData()
-          local data = { old = oldData, new = newData }
-          editor.history:commitAction("Adjust camera node time.", data, camWinUndo, camWinRedo)
-          return
         end
-        im.tooltip('Adds a camera trajectory node at the current camera position.')
       end
-      im.SameLine()
-      im.NextColumn()
-      if numNodes > 0 then
-        if editor.uiIconImageButton(editor.icons.nodeRemove, im.ImVec2(26, 26), nil, nil, nil, 'removeCamNode') then
-          local oldData = serializeCamData()
-          table.remove(nodes, cwd.selectedNode)
-          cwd.selectedNode = min(max(1, cwd.selectedNode), #nodes)
-          local newData = serializeCamData()
-          local data = { old = oldData, new = newData }
-          editor.history:commitAction("Adjust camera node time.", data, camWinUndo, camWinRedo)
-          return
-        end
-        im.tooltip('Removes the selected camera node.')
-      end
-      im.SameLine()
-      im.NextColumn()
-      if trajWinData.selectedTraj ~= nil and numTrajectories > 0 then
-        if editor.uiIconImageButton(editor.icons.touch_app, im.ImVec2(25, 25), nil, nil, nil, 'camAutoGenerate') then
-          local tr = trajectories[trajWinData.selectedTraj]
-          local poly = getPolyRef(tr)
-          local len = #poly
-          table.clear(cwd.nodes)
-          local rot = quatFromDir(vec3(0, 0, -1))
-          rot:normalize()
-          for i = 1, len do
-            local n = poly[i]
-            cwd.nodes[i] = {
-              x = im.FloatPtr(n.x[0]), y = im.FloatPtr(n.y[0]), z = im.FloatPtr(n.z[0] + 30.0),
-              qx = rot.x, qy = rot.y, qz = rot.z, qw = rot.w,
-              t = im.FloatPtr(n.t[0]),
-              smoothness = im.FloatPtr(0.5),
-              movingStart = im.BoolPtr(true), movingEnd = im.BoolPtr(true),
-              isLocked = false }
-          end
-        end
-        im.tooltip('Auto generate a simple top-down camera path along the currently-selected trajectory.')
-      end
-      im.SameLine()
+      im.tooltip('Auto generate a simple top-down camera path along the currently-selected trajectory.')
+      if isDisabled then im.EndDisabled() end
       im.NextColumn()
       if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, im.ImVec2(24, 24), nil, nil, nil, 'camTrajReveal') then
         moveCam2Traj(cwd.nodes)
       end
       im.tooltip('Shows a top-down view of the full camera trajectory.')
-      im.SameLine()
       im.NextColumn()
       if #cwd.nodes > 0 and cwd.selectedNode > 0 and cwd.selectedNode <= #cwd.nodes then
         local nSel = nodes[cwd.selectedNode]
@@ -3002,35 +2999,33 @@ local function onEditorGui()
           im.tooltip('Unlock the highlighted node, so it can be moved in time/space.')
         end
       end
-      im.SameLine()
       im.NextColumn()
       im.Checkbox("Display", cwd.isDisplay)
       im.tooltip('Toggles the camera trajectory display on the map, when editing.')
       im.SameLine()
       im.Checkbox("On Execute", cwd.isOnExecute)
       im.tooltip('Toggles whether the camera path will be used during execution.')
-      im.SameLine()
       im.NextColumn()
       im.PushStyleVar1(im.StyleVar_GrabMinSize, 20)
-      im.PushItemWidth(140)
+      im.PushItemWidth(200)
       im.SliderFloat("", cwd.fieldRange, 0.1, 200.0, "Field = %.3f")
+      im.tooltip('Sets the attraction force field while editing this camera path.')
       im.PopItemWidth()
       im.PopStyleVar()
-      im.SameLine()
       im.NextColumn()
       im.ColorEdit3("", cwd.col)
       im.tooltip('Selects a color for the camera trajectory.')
       im.NextColumn()
     else
-      camWinButtonAlpha = 1
-      camWinData.isVisible = false
+      winStates.camWin.buttonAlpha = 1
     end
+    editor.endWindow()
+
     if isChange == true then
       local newVals = camPathPtr2Val()
       local data = { old = oldVals, new = newVals }
       editor.history:commitAction("Camera path value changed.", data, camNodesUndo, camNodesRedo)
     end
-    editor.endWindow()
   end
 
   -- Manage the Draw-In Window.
@@ -3049,14 +3044,11 @@ local function onEditorGui()
           im.SetColumnWidth(2, 60)
           im.SetColumnWidth(3, 60)
           im.Text("[" .. i .. "]:")
-          im.SameLine()
           im.NextColumn()
           local n = dwd.drawNodes[i]
           im.Text("(x: " .. round1(n.x) .. ",")
-          im.SameLine()
           im.NextColumn()
           im.Text("y: " .. round1(n.y) .. ",")
-          im.SameLine()
           im.NextColumn()
           im.Text("z: " .. round1(n.z) .. ")")
           im.NextColumn()
@@ -3066,13 +3058,13 @@ local function onEditorGui()
         im.EndListBox()
       end
       im.Separator()
-      if im.RadioButton2("T-Based", dwd.mode, im.Int(1)) then end
+      im.RadioButton2("T-Based", dwd.mode, im.Int(1))
       im.SameLine()
-      if im.RadioButton2("V-Based", dwd.mode, im.Int(2)) then end
+      im.RadioButton2("V-Based", dwd.mode, im.Int(2))
       im.Separator()
       if #dwd.drawNodes > 1 then
         if editor.uiIconImageButton(editor.icons.check, im.ImVec2(26, 26), nil, nil, nil, 'finishDrawInTrajectory') then
-          local tIdx = "drawn_" .. tostring(numTrajectories + 1)
+          local tIdx = "drawn_" .. tostring(getNextUniqueId())
           local isTimeBased = true
           if dwd.mode[0] == 2 then isTimeBased = false end
           if isTimeBased == true then                                                       -- For time-based mode, set default times to ensure a constant speed of 30 kph.
@@ -3117,7 +3109,6 @@ end
 local function onActivate()
   editor.clearObjectSelection()
   editor.showWindow(toolWinData.name)
-  isScriptAIEditor = true
 end
 
 -- Called when the ScriptAI Editor is exited.
@@ -3130,23 +3121,20 @@ local function onDeactivate()
   editor.hideWindow(indTrajWinData.name3)
   editor.hideWindow(camWinData.name)
   editor.hideWindow(drawWinData.name)
-  vehWinData.isVisible, trajWinData.isVisible, camWinData.isVisible = false, false, false
-  vehWinButtonAlpha, trajWinButtonAlpha, camWinButtonAlpha = 1, 1, 1
-  isScriptAIEditor = false
+  winStates.vehWin.buttonAlpha, winStates.trajWin.buttonAlpha, winStates.camWin.buttonAlpha = 1, 1, 1
 end
 
 -- Called upon world editor initialization.
 local function onEditorInitialized()
   editor.editModes.scriptAIEditMode = {
-    displayName = "Edit ScriptAI Scenario",
+    displayName = editModeName,
     onUpdate = nop,
     onActivate = onActivate,
     onDeactivate = onDeactivate,
     icon = editor.icons.BNGMicrochip,
     iconTooltip = "ScriptAI Editor",
     auxShortcuts = {},
-    hideObjectIcons = true,
-    sortOrder = 9000 }
+    hideObjectIcons = true }
   editor.registerWindow(toolWinData.name, toolWinData.winSize)
   editor.registerWindow(vehWinData.name, vehWinData.winSize)
   editor.registerWindow(trajWinData.name, trajWinData.winSize)
@@ -3155,20 +3143,22 @@ local function onEditorInitialized()
   editor.registerWindow(indTrajWinData.name3, indTrajWinData.winSize)
   editor.registerWindow(camWinData.name, camWinData.winSize)
   editor.registerWindow(drawWinData.name, drawWinData.winSize)
+
+  if winStates.vehWin.visible then editor.showWindow(vehWinData.name) end
+  if winStates.trajWin.visible then editor.showWindow(trajWinData.name) end
+  if winStates.camWin.visible then editor.showWindow(camWinData.name) end
 end
 
 -- Triggering when a recording is stopped.
 local function onVehicleSubmitRecording(vid, data)
-  if isScriptAIEditor == false then
-    return
-  end
+  if not editor.editMode or editor.editMode.displayName ~= editModeName then return end
 
   detachTrajectory(findVehDataByVid(vid))
   local numTrajectories = 0
   for k, tr in pairs(trajectories) do
     numTrajectories = numTrajectories + 1
   end
-  local tIdx = "recorded_" .. tostring(numTrajectories + 1)
+  local tIdx = "recorded_" .. tostring(getNextUniqueId())
   local isTimeBased = true
   if data.path[1].v ~= nil then isTimeBased = false end
   trajectories[tIdx] = createTrajectory(data.path, vid, nil, nil, isTimeBased)
@@ -3201,12 +3191,12 @@ local function onSerialize()
     selectedVeh = vehWinData.selectedVeh,
     uniqueTrajectoryId = uniqueId,
     selectedTraj = trajWinData.selectedTraj,
-    isVehWinVisible = vehWinData.isVisible,
-    isTrajWinVisible = trajWinData.isVisible,
-    isCamWinVisible = camWinData.isVisible,
-    vehWinButtonAlpha = vehWinButtonAlpha,
-    trajWinButtonAlpha = trajWinButtonAlpha,
-    camWinButtonAlpha = camWinButtonAlpha } }
+    isVehWinVisible = false,
+    isTrajWinVisible = false,
+    isCamWinVisible = false,
+    vehWinButtonAlpha = winStates.vehWin.buttonAlpha,
+    trajWinButtonAlpha = winStates.trajWin.buttonAlpha,
+    camWinButtonAlpha = winStates.camWin.buttonAlpha } }
 end
 
 -- Deserialization function.
@@ -3217,14 +3207,13 @@ local function onDeserialized(dataIn)
   toolWinData.t = im.FloatPtr(data.t)
   vehWinData.selectedVeh = data.selectedVeh
   uniqueId = data.uniqueTrajectoryId
-  vehWinData.isVisible = data.isVehWinVisible
-  trajWinData.isVisible = data.isTrajWinVisible
-  camWinData.isVisible = data.isCamWinVisible
-  vehWinButtonAlpha = data.vehWinButtonAlpha
-  trajWinButtonAlpha = data.trajWinButtonAlpha
-  camWinButtonAlpha = data.camWinButtonAlpha
+  winStates.vehWin.visible = data.isVehWinVisible
+  winStates.trajWin.visible = data.isTrajWinVisible
+  winStates.camWin.visible = data.isCamWinVisible
+  winStates.vehWin.buttonAlpha = data.vehWinButtonAlpha
+  winStates.trajWin.buttonAlpha = data.trajWinButtonAlpha
+  winStates.camWin.buttonAlpha = data.camWinButtonAlpha
 end
-
 
 -- Public interface.
 

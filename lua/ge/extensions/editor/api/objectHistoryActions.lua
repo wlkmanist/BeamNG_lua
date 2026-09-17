@@ -158,6 +158,42 @@ local function changeObjectFieldRedo(actionData)
   extensions.hook("onEditorInspectorFieldChanged", actionData.objectIds, actionData.fieldName, actionData.newFieldValue, actionData.arrayIndex)
 end
 
+local function changeObjectFieldMultipleValuesUndo(actionData)
+  for i = 1, tableSize(actionData.objectIds) do
+    editor.setFieldValue(actionData.objectIds[i], actionData.fieldName, actionData.oldFieldValues[i] or "", actionData.arrayIndex)
+ end
+
+  if editor.updateObjectSelectionAxisGizmo then editor.updateObjectSelectionAxisGizmo() end
+
+  if actionData.fieldName == "position" or actionData.fieldName == "rotation" or actionData.fieldName == "scale" then
+    editor.computeSelectionBBox()
+  end
+
+  if editor_sceneTree then
+    editor_sceneTree.recacheAllNodes()
+  end
+
+  extensions.hook("onEditorInspectorFieldChanged", actionData.objectIds, actionData.fieldName, actionData.oldFieldValues, actionData.arrayIndex)
+end
+
+local function changeObjectFieldMultipleValuesRedo(actionData)
+  for i = 1, tableSize(actionData.objectIds) do
+    editor.setFieldValue(actionData.objectIds[i], actionData.fieldName, actionData.newFieldValues[i], actionData.arrayIndex)
+  end
+
+  if editor.updateObjectSelectionAxisGizmo then editor.updateObjectSelectionAxisGizmo() end
+
+  if actionData.fieldName == "position" or actionData.fieldName == "rotation" or actionData.fieldName == "scale" then
+    editor.computeSelectionBBox()
+  end
+
+  if editor_sceneTree then
+    editor_sceneTree.recacheAllNodes()
+  end
+
+  extensions.hook("onEditorInspectorFieldChanged", actionData.objectIds, actionData.fieldName, actionData.newFieldValues, actionData.arrayIndex)
+end
+
 local function changeObjectDynFieldUndo(actionData)
   for i = 1, tableSize(actionData.objectIds) do
     editor.setDynamicFieldValue(actionData.objectIds[i], actionData.fieldName, actionData.oldFieldValues[i] or "", actionData.arrayIndex)
@@ -267,6 +303,19 @@ local function changeObjectFieldWithUndo(objIds, fieldName, newFieldValue, array
   editor.history:commitAction("ChangeField", {objectIds = objIds, fieldName = fieldName, arrayIndex = arrayIndex, oldFieldValues = oldFieldValues, newFieldValue = newFieldValue}, changeObjectFieldUndo, changeObjectFieldRedo)
 end
 
+local function changeObjectFieldMultipleValuesWithUndo(objIds, fieldName, newFieldValues, arrayIndex)
+  if arrayIndex and arrayIndex >= 0 then arrayIndex = tostring(arrayIndex) elseif not arrayIndex then arrayIndex = "" end
+  local oldFieldValues = {}
+  for i, id in ipairs(objIds) do
+    local obj = Sim.findObjectById(id)
+    if obj then
+      oldFieldValues[i] = obj:getField(fieldName, arrayIndex)
+    end
+  end
+
+  editor.history:commitAction("ChangeFieldMultipleValues", {objectIds = objIds, fieldName = fieldName, arrayIndex = arrayIndex, oldFieldValues = oldFieldValues, newFieldValues = newFieldValues}, changeObjectFieldMultipleValuesUndo, changeObjectFieldMultipleValuesRedo)
+end
+
 local function changeObjectFieldWithOldValues(objIds, fieldName, newFieldValue, oldFieldValues, arrayIndex)
   if arrayIndex and arrayIndex >= 0 then arrayIndex = tostring(arrayIndex) elseif not arrayIndex then arrayIndex = "" end
   editor.history:commitAction("ChangeField", {objectIds = objIds, fieldName = fieldName, arrayIndex = arrayIndex, oldFieldValues = oldFieldValues, newFieldValue = newFieldValue}, changeObjectFieldUndo, changeObjectFieldRedo)
@@ -312,6 +361,21 @@ local function callHookWithUndo(hookName, ...)
   callHookUndo, callHookRedo)
 end
 
+local function selectObjectsWithUndo(newSelection, oldSelection)
+  if newSelection and oldSelection and setEqual(newSelection, oldSelection) then return end
+  -- check top of undo stack to see if we have the same selection, if so, dont add
+  if #editor.history.undoStack > 0 then
+    local trans = editor.history.undoStack[#editor.history.undoStack]
+    local action = trans.actions[1]
+
+    if action.name == "SelectObjects" then
+      if action.newSelection and newSelection and setEqual(action.newSelection, newSelection) then return end
+    end
+  end
+  editor.history:commitAction("SelectObjects", {newSelection = deepcopy(newSelection), oldSelection = deepcopy(oldSelection)}, selectObjectsUndo, selectObjectsRedo)
+  editor.setDirty()
+end
+
 local M = {}
 
 M.createObjectUndo = createObjectUndo
@@ -333,9 +397,11 @@ M.createObjectWithUndo = createObjectWithUndo
 M.deleteObjectWithUndo = deleteObjectWithUndo
 M.deleteSelectedObjectsWithUndo = deleteSelectedObjectsWithUndo
 M.changeObjectFieldWithUndo = changeObjectFieldWithUndo
+M.changeObjectFieldMultipleValuesWithUndo = changeObjectFieldMultipleValuesWithUndo
 M.changeObjectFieldWithOldValues = changeObjectFieldWithOldValues
 M.changeObjectDynFieldWithUndo = changeObjectDynFieldWithUndo
 M.callHookWithUndo = callHookWithUndo
+M.selectObjectsWithUndo = selectObjectsWithUndo
 
 return function()
   editor.lockObjectSelectionWithUndo = lockObjectSelectionWithUndo

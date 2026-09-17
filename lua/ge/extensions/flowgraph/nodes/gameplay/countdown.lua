@@ -76,10 +76,10 @@ function C:startTimer()
   self.pinOut.flow.value = false
 end
 
-function C:show(msg, big, duration)
+function C:show(msg, big, duration, luaCall)
   --ui_message(msg, 1, "")
   duration = duration or (big and 1.4 or 0.95)
-  guihooks.trigger('ScenarioFlashMessage', {{msg, duration , "", big}})
+  guihooks.trigger('ScenarioFlashMessage', {{msg, duration , luaCall or "", big}})
   if self.data.useMessages then
     guihooks.trigger('Message', {
       ttl = 1,
@@ -96,10 +96,8 @@ function C:countdown()
   local old = math.floor(self.timer)
   self.timer = self.timer - self.mgr.dtSim
   if self.timer <= 0 then
-    self:show(self.msg, self.data.bigFinishMsg, self.pinIn.finishMsgDuration.value)
-    if self.data.playSounds then
-      Engine.Audio.playOnce('AudioGui', 'event:UI_CountdownGo')
-    end
+    local finishSound = self.data.playSounds and "Engine.Audio.playOnce('AudioGui', 'event:UI_CountdownGo')" or ""
+    self:show(self.msg, self.data.bigFinishMsg, self.pinIn.finishMsgDuration.value, finishSound)
     self.flags.finished = true
     self.running = false
     self.pinOut.flow.value = true
@@ -109,10 +107,8 @@ function C:countdown()
       self.countdownMsg = self.pinIn.countdownMsg.value or "%d"
       local countdownMsg = string.format(self.countdownMsg, old)
       local bigMsg = self.countdownMsg == "%d"
-      self:show(countdownMsg, bigMsg, 0.95)
-      if self.data.playSounds then
-        Engine.Audio.playOnce('AudioGui', 'event:UI_Countdown1')
-      end
+      local countdownSound = self.data.playSounds and "Engine.Audio.playOnce('AudioGui', 'event:UI_Countdown1')" or ""
+      self:show(countdownMsg, bigMsg, 0.95, countdownSound)
     end
     if self.data.useImgui then
       local avail = im.GetContentRegionAvail()

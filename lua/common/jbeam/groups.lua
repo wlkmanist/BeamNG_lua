@@ -50,7 +50,7 @@ local function process(vehicle)
     --    log('D', "jbeam.postProcess","  - "..k.." : "..g)
     --end
   end
-  profilerPopEvent() -- jbeam/groups.process
+  profilerPopEvent('jbeam/groups.process')
 end
 
 M.process = process

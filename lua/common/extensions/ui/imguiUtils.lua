@@ -7,8 +7,6 @@ local logTag = 'imguiUtils'
 local ffi = require("ffi")
 local imgui = ui_imgui
 
-local style = ffi.new('ImGuiStyle[1]')
-
 function M.changeUIScale(uiscale)
   local finalScale = uiscale
 
@@ -22,7 +20,7 @@ function M.changeUIScale(uiscale)
 
   imgui.uiscale[0] = finalScale
   local io = imgui.GetIO(io)
-  imgui.ImGuiIO_FontGlobalScale(io, imgui.uiscale[0]);
+  imgui.ImGuiIO_FontGlobalScale(io, imgui.uiscale[0])
 end
 
 function M.drawCursorPos(posX, posY)
@@ -542,7 +540,7 @@ end
 
 M.sampleFloatDisplayState = {}
 local dataPlotLen = 300
-local dataPlot = ffi.new("float[" .. dataPlotLen .. "]", 0)
+local dataPlot = imgui.ArrayFloat(dataPlotLen)
 local offset = 0
 local dataTbl = {}
 local sampleTbl ={}

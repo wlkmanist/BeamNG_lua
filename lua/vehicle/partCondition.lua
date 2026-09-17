@@ -9,6 +9,8 @@ local max = math.max
 
 local hasExecutedInitWork = false
 
+local activeParts = {}
+
 local partTypeData = {}
 local partOdometerAbsoluteBaseValues = {}
 local partOdometerRelativeStartingValues = {}
@@ -23,7 +25,7 @@ local hasSetPartCondition = {}
 local savedConditionSnapshots = {}
 local resetSnapshotKey
 
-local rootPartName
+local rootPartId
 
 local paintAgingConstants = {
   wearStartOdometer = 5000000,
@@ -69,66 +71,66 @@ local function setResetSnapshotKey(snapshotKey)
   resetSnapshotKey = snapshotKey
 end
 
-local function lookForPowertrainClues(partName, partData)
+local function lookForPowertrainClues(partId, partData)
   local partTypeTags
   for k, v in pairs(partData) do
     if type(v) == "table" then
       if k == "powertrain" then
-        local previousPartOrigin
+        local previousPartPath
         for i = 2, #v do
-          if v[i].partOrigin then
-            previousPartOrigin = v[i].partOrigin
+          if v[i].partPath then
+            previousPartPath = v[i].partPath
           else
             if type(v) == "table" and #v[i] > 1 then
               local deviceType = v[i][1]
               local deviceName = v[i][2]
-              local devicePartName = partName
-              if previousPartOrigin then
-                devicePartName = previousPartOrigin
+              local devicePartId = partId
+              if previousPartPath then
+                devicePartId = previousPartPath
               end
               partTypeTags = partTypeTags or {}
-              partTypeTags[devicePartName] = partTypeTags[devicePartName] or {}
-              table.insert(partTypeTags[devicePartName], "powertrainDevice:" .. deviceName)
-            --print(string.format("%s -> %s:%s", devicePartName, deviceType, deviceName))
+              partTypeTags[devicePartId] = partTypeTags[devicePartId] or {}
+              table.insert(partTypeTags[devicePartId], "powertrainDevice:" .. deviceName)
+            --print(string.format("%s -> %s:%s", devicePartId, deviceType, deviceName))
             end
           end
         end
       elseif k == "energyStorage" then
-        local previousPartOrigin
+        local previousPartPath
         for i = 2, #v do
-          if v[i].partOrigin then
-            previousPartOrigin = v[i].partOrigin
+          if v[i].partPath then
+            previousPartPath = v[i].partPath
           else
             if type(v) == "table" and #v[i] > 1 then
               local storageType = v[i][1]
               local storageName = v[i][2]
-              local storagePartName = partName
-              if previousPartOrigin then
-                storagePartName = previousPartOrigin
+              local storagePartId = partId
+              if previousPartPath then
+                storagePartId = previousPartPath
               end
               partTypeTags = partTypeTags or {}
-              partTypeTags[storagePartName] = partTypeTags[storagePartName] or {}
-              table.insert(partTypeTags[storagePartName], "energyStorage:" .. storageName)
-            --print(string.format("%s -> %s:%s", storagePartName, storageType, storageName))
+              partTypeTags[storagePartId] = partTypeTags[storagePartId] or {}
+              table.insert(partTypeTags[storagePartId], "energyStorage:" .. storageName)
+            --print(string.format("%s -> %s:%s", storagePartId, storageType, storageName))
             end
           end
         end
       else
         if v.radiatorArea and not v.inertia then --look for the radiator part
-          --print(string.format("%s -> %s:%s", partName, k, "radiator"))
+          --print(string.format("%s -> %s:%s", partId, k, "radiator"))
           partTypeTags = partTypeTags or {}
-          partTypeTags[partName] = partTypeTags[partName] or {}
-          table.insert(partTypeTags[partName], string.format("powertrainDevice:%s:%s", k, "radiator"))
+          partTypeTags[partId] = partTypeTags[partId] or {}
+          table.insert(partTypeTags[partId], string.format("powertrainDevice:%s:%s", k, "radiator"))
         elseif v.torqueModExhaust and not v.inertia then --look for the exhaust part
-          --print(string.format("%s -> %s:%s", partName, k, "exhaust"))
+          --print(string.format("%s -> %s:%s", partId, k, "exhaust"))
           partTypeTags = partTypeTags or {}
-          partTypeTags[partName] = partTypeTags[partName] or {}
-          table.insert(partTypeTags[partName], string.format("powertrainDevice:%s:%s", k, "exhaust"))
+          partTypeTags[partId] = partTypeTags[partId] or {}
+          table.insert(partTypeTags[partId], string.format("powertrainDevice:%s:%s", k, "exhaust"))
         elseif v.turbocharger and not v.inertia then
           partTypeTags = partTypeTags or {}
-          partTypeTags[partName] = partTypeTags[partName] or {}
-          table.insert(partTypeTags[partName], string.format("powertrainDevice:%s:%s", k, "turbocharger"))
-        --print(string.format("%s -> %s:%s", partName, k, "turbocharger"))
+          partTypeTags[partId] = partTypeTags[partId] or {}
+          table.insert(partTypeTags[partId], string.format("powertrainDevice:%s:%s", k, "turbocharger"))
+        --print(string.format("%s -> %s:%s", partId, k, "turbocharger"))
         end
       end
     end
@@ -141,9 +143,9 @@ local function lookForFlexbodyClues()
   local partTypeTags = {}
   for _, flexbody in pairs(v.data.flexbodies) do
     --TODO: check maybe a tag that tells us if the flexbody can change color (and how?), paint vs glas vs plastic etc
-    if flexbody.partOrigin then
-      partTypeTags[flexbody.partOrigin] = partTypeTags[flexbody.partOrigin] or {}
-      table.insert(partTypeTags[flexbody.partOrigin], string.format("jbeam:flexbody:%s", flexbody.mesh))
+    if flexbody.partPath then
+      partTypeTags[flexbody.partPath] = partTypeTags[flexbody.partPath] or {}
+      table.insert(partTypeTags[flexbody.partPath], string.format("jbeam:flexbody:%s", flexbody.mesh))
     end
   end
   return partTypeTags
@@ -154,40 +156,40 @@ local function lookForJbeamClues()
   local didFindClues = false
   local beamsPerPart = {}
   for _, beam in pairs(v.data.beams) do
-    if beam.partOrigin then
-      local partName = beam.partOrigin
+    if beam.partPath then
+      local partId = beam.partPath
       if beam.beamDampRebound and beam.beamDampRebound > 0 and beam.beamDampFast and beam.beamDampVelocitySplit and beam.beamDampVelocitySplit < math.huge and beam.beamDampReboundFast then
         didFindClues = true
-        partTypeTags[partName] = partTypeTags[partName] or {}
-      --table.insert(partTypeTags[partName], string.format("jbeam:damper:%s", beam.name))
+        partTypeTags[partId] = partTypeTags[partId] or {}
+      --table.insert(partTypeTags[partId], string.format("jbeam:damper:%s", beam.name))
       end
       if beam.breakGroup then
         didFindClues = true
-        partTypeTags[partName] = partTypeTags[partName] or {}
+        partTypeTags[partId] = partTypeTags[partId] or {}
         local breakGroups = type(beam.breakGroup) == "table" and beam.breakGroup or {beam.breakGroup}
         for _, breakGroup in ipairs(breakGroups) do
-          table.insert(partTypeTags[partName], string.format("jbeam:breakGroup:%s", breakGroup))
+          table.insert(partTypeTags[partId], string.format("jbeam:breakGroup:%s", breakGroup))
         end
       end
-      beamsPerPart[beam.partOrigin] = beamsPerPart[beam.partOrigin] or {beamCids = {}, deformableBeams = 0, breakableBeams = 0}
+      beamsPerPart[beam.partPath] = beamsPerPart[beam.partPath] or {beamCids = {}, deformableBeams = 0, breakableBeams = 0}
       --exclude support beams
       if beam.beamType ~= 7 and beam.beamDeform < math.huge and beam.beamDeform < beam.beamStrength then
-        beamsPerPart[beam.partOrigin].deformableBeams = (beamsPerPart[beam.partOrigin].deformableBeams or 0) + 1
+        beamsPerPart[beam.partPath].deformableBeams = (beamsPerPart[beam.partPath].deformableBeams or 0) + 1
       end
       if beam.beamType ~= 7 and beam.beamStrength < math.huge then
-        beamsPerPart[beam.partOrigin].breakableBeams = (beamsPerPart[beam.partOrigin].breakableBeams or 0) + 1
+        beamsPerPart[beam.partPath].breakableBeams = (beamsPerPart[beam.partPath].breakableBeams or 0) + 1
       end
-      table.insert(beamsPerPart[beam.partOrigin].beamCids, beam.cid)
+      table.insert(beamsPerPart[beam.partPath].beamCids, beam.cid)
     end
   end
 
-  for partName, partData in pairs(beamsPerPart) do
+  for partId, partData in pairs(beamsPerPart) do
     if partData.deformableBeams > 0 or partData.breakableBeams > 0 then
       didFindClues = true
-      partTypeTags[partName] = partTypeTags[partName] or {}
+      partTypeTags[partId] = partTypeTags[partId] or {}
       for _, beamCid in ipairs(partData.beamCids) do
         if v.data.beams[beamCid] and v.data.beams[beamCid].beamType ~= 7 then --exclude support beams (type 7 -> bdebug.lua)
-          table.insert(partTypeTags[partName], string.format("jbeam:beamDamage:%d", beamCid))
+          table.insert(partTypeTags[partId], string.format("jbeam:beamDamage:%d", beamCid))
         end
       end
     end
@@ -197,9 +199,23 @@ local function lookForJbeamClues()
 end
 
 local function preparePartData()
-  for k, v in pairs(v.data.activeParts) do
-    local partName = k
-    local powertrainClues = lookForPowertrainClues(partName, v)
+  --combine the part ids with their part data
+  --this comes from the loader in two tables, but we need them combined in one table
+  --v.data.activeParts is the part ids ("paths"), v.data.activePartsData is the part data
+  activeParts = {}
+  for partId, partTypeName in pairs(v.data.activeParts) do
+    activeParts[partId] = v.data.activePartsData[partTypeName]
+  end
+
+  rootPartId = nil
+
+  for partId, partData in pairs(activeParts) do
+    --save root part id for later
+    if partData.slotType == "main" then
+      rootPartId = partId
+    end
+
+    local powertrainClues = lookForPowertrainClues(partId, partData)
     if powertrainClues then
       for part, types in pairs(powertrainClues) do
         partTypeData[part] = partTypeData[part] or {}
@@ -230,50 +246,31 @@ local function preparePartData()
     end
   end
 
-  for partName, types in pairs(partTypeData) do
+  for partId, types in pairs(partTypeData) do
     local deduplication = {}
     for _, partType in pairs(types) do
       deduplication[partType] = true
     end
-    partTypeData[partName] = {}
+    partTypeData[partId] = {}
     for partType, _ in pairs(deduplication) do
-      table.insert(partTypeData[partName], partType)
+      table.insert(partTypeData[partId], partType)
     end
   end
-  --dump(partTypeData)
   hasExecutedInitWork = true
 end
 
 local function getRootPartOdometerValue()
-  if not rootPartName then
-    for _, part in pairs(v.data.activeParts) do
-      if part.slotType == "main" then
-        rootPartName = part.partName or ""
-        break
-      end
-    end
-  end
-
-  local spawnTimeOdometer = partOdometerAbsoluteBaseValues[rootPartName] or 0
-  local odometer = spawnTimeOdometer + max(extensions.odometer.getRelativeRecording() - (partOdometerRelativeStartingValues[rootPartName] or 0), 0)
+  local spawnTimeOdometer = partOdometerAbsoluteBaseValues[rootPartId] or 0
+  local odometer = spawnTimeOdometer + max(extensions.odometer.getRelativeRecording() - (partOdometerRelativeStartingValues[rootPartId] or 0), 0)
   return odometer
 end
 
 local function getRootPartTripValue()
-  if not rootPartName then
-    for _, part in pairs(v.data.activeParts) do
-      if part.slotType == "main" then
-        rootPartName = part.partName or ""
-        break
-      end
-    end
-  end
-
-  local trip = max(extensions.odometer.getRelativeRecording() - (partOdometerRelativeStartingValues[rootPartName] or 0), 0)
+  local trip = max(extensions.odometer.getRelativeRecording() - (partOdometerRelativeStartingValues[rootPartId] or 0), 0)
   return trip
 end
 
-local function setPartMeshPaints(partName, paints)
+local function setPartMeshPaints(partId, paints)
   local baseColor1 = paints[1].baseColor or {0, 0, 0, 0}
   local baseColor2 = paints[2].baseColor or baseColor1
   local baseColor3 = paints[3].baseColor or baseColor1
@@ -293,13 +290,13 @@ local function setPartMeshPaints(partName, paints)
   local paintData3Clearcoat = paints[3].clearcoat or 0
   local paintData3ClearcoatRoughness = paints[3].clearcoatRoughness or 0
 
-  for _, partType in ipairs(partTypeData[partName] or {}) do
+  for _, partType in ipairs(partTypeData[partId] or {}) do
     local split = split(partType, ":")
     if split[1] == "jbeam" and split[2] == "flexbody" then
       --TODO improve interface to GE for setting mesh colors
-      local colorCmd = string.format("be:getObjectByID(%d):setMeshColor(%q, ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d))", objectId, split[3], baseColor1[1] * 255, baseColor1[2] * 255, baseColor1[3] * 255, 255, baseColor2[1] * 255, baseColor2[2] * 255, baseColor2[3] * 255, 255, baseColor3[1] * 255, baseColor3[2] * 255, baseColor3[3] * 255, 255)
+      local colorCmd = string.format("getObjectByID(%d):setMeshColor(%q, ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d))", objectId, split[3], baseColor1[1] * 255, baseColor1[2] * 255, baseColor1[3] * 255, 255, baseColor2[1] * 255, baseColor2[2] * 255, baseColor2[3] * 255, 255, baseColor3[1] * 255, baseColor3[2] * 255, baseColor3[3] * 255, 255)
       --ColorI(roughness0, metallic0, clearCoatFactor0, clearCoatRoughness0)
-      local paintDataCmd = string.format("be:getObjectByID(%d):setMeshPaintData(%q, ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d))", objectId, split[3], paintData1Roughness * 255, paintData1Metallic * 255, paintData1Clearcoat * 255, paintData1ClearcoatRoughness * 255, paintData2Roughness * 255, paintData2Metallic * 255, paintData2Clearcoat * 255, paintData2ClearcoatRoughness * 255, paintData3Roughness * 255, paintData3Metallic * 255, paintData3Clearcoat * 255, paintData3ClearcoatRoughness * 255)
+      local paintDataCmd = string.format("getObjectByID(%d):setMeshPaintData(%q, ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d), ColorI(%d,%d,%d,%d))", objectId, split[3], paintData1Roughness * 255, paintData1Metallic * 255, paintData1Clearcoat * 255, paintData1ClearcoatRoughness * 255, paintData2Roughness * 255, paintData2Metallic * 255, paintData2Clearcoat * 255, paintData2ClearcoatRoughness * 255, paintData3Roughness * 255, paintData3Metallic * 255, paintData3Clearcoat * 255, paintData3ClearcoatRoughness * 255)
       obj:queueGameEngineLua(colorCmd)
       obj:queueGameEngineLua(paintDataCmd)
     end
@@ -313,15 +310,19 @@ local function getAgedPaint(paint, paintOdometer)
 
   local wearStartOdometer = paintAgingConstants.wearStartOdometer
   local wearEndOdometer = paintAgingConstants.wearEndOdometer
-  local clearcoatRougnessIncrease = linearScale(paintOdometer, wearStartOdometer, wearEndOdometer, 0, paintAgingConstants.maxClearcoatRoughnessIncrease)
+  local roughnessIncrease = linearScale(paintOdometer, wearStartOdometer, wearEndOdometer, 0, paintAgingConstants.maxClearcoatRoughnessIncrease)
   local saturationCoef = linearScale(paintOdometer, wearStartOdometer, wearEndOdometer, 1, paintAgingConstants.minSaturationCoef)
   local colorBrightnessIncrease = {}
   colorBrightnessIncrease[1] = linearScale(paintOdometer, wearStartOdometer, wearEndOdometer, 0, paintAgingConstants.maxColorBrightnessIncreaseR)
   colorBrightnessIncrease[2] = linearScale(paintOdometer, wearStartOdometer, wearEndOdometer, 0, paintAgingConstants.maxColorBrightnessIncreaseG)
   colorBrightnessIncrease[3] = linearScale(paintOdometer, wearStartOdometer, wearEndOdometer, 0, paintAgingConstants.maxColorBrightnessIncreaseG)
 
-  -- a) decrease clearcoat roughness
-  agedPaint.clearcoatRoughness = min(agedPaint.clearcoatRoughness + clearcoatRougnessIncrease, 1)
+  -- a) decrease paint roughness
+  if agedPaint.clearcoat > 0 then
+    agedPaint.clearcoatRoughness = min(agedPaint.clearcoatRoughness + roughnessIncrease, 1)
+  else
+    agedPaint.roughness = min(agedPaint.roughness + roughnessIncrease, 1)
+  end
 
   -- b) decrease overall saturation
   local h, s, v = RGBtoHSV(agedColor[1], agedColor[2], agedColor[3])
@@ -344,21 +345,21 @@ local function getAgedPaints(paints, paintOdometer)
   return agedPaints
 end
 
-local function setPartPaints(partName, paints, paintOdometer)
+local function setPartPaints(partId, paints, paintOdometer)
   paints[2] = paints[2] or paints[1]
   paints[3] = paints[3] or paints[1]
-  partPaints[partName] = paints
+  partPaints[partId] = paints
   local agedPaints = getAgedPaints(paints, paintOdometer)
-  setPartMeshPaints(partName, agedPaints)
+  setPartMeshPaints(partId, agedPaints)
 end
 
 local function setAllPartPaints(paints, paintOdometer)
-  for partName, _ in pairs(v.data.activeParts) do
-    setPartPaints(partName, paints, paintOdometer)
+  for partId, _ in pairs(activeParts) do
+    setPartPaints(partId, paints, paintOdometer)
   end
 end
 
-local function setPaintCondition(partName, visual, defaultPaints)
+local function setPaintCondition(partId, visual, defaultPaints)
   local visualState = visual
   if type(visual) == "number" then
     local visualValue = visual
@@ -379,65 +380,65 @@ local function setPaintCondition(partName, visual, defaultPaints)
     return
   end
 
-  paintOdometerAbsoluteBaseValues[partName] = visualState.paint.odometer --TODO paint
-  paintOdometerRelativeStartingValues[partName] = extensions.odometer.getRelativeRecording()
+  paintOdometerAbsoluteBaseValues[partId] = visualState.paint.odometer --TODO paint
+  paintOdometerRelativeStartingValues[partId] = extensions.odometer.getRelativeRecording()
 
   if visualState.paint.originalPaints then
-    setPartPaints(partName, visualState.paint.originalPaints, visualState.paint.odometer)
+    setPartPaints(partId, visualState.paint.originalPaints, visualState.paint.odometer)
   end
 end
 
-local function getPaintCondition(partName)
+local function getPaintCondition(partId)
   local canProvidePaintCondition = false
   local paintCondition = {odometer = 0, visualValue = 1}
   local hasFlexbody = false
-  for _, partType in ipairs(partTypeData[partName] or {}) do
+  for _, partType in ipairs(partTypeData[partId] or {}) do
     local split = split(partType, ":")
     if split[1] == "jbeam" and split[2] == "flexbody" then
       hasFlexbody = true
     end
   end
-  if hasFlexbody and paintOdometerAbsoluteBaseValues[partName] then
-    local paintOdometer = (paintOdometerAbsoluteBaseValues[partName] or 0) + max(extensions.odometer.getRelativeRecording() - (paintOdometerRelativeStartingValues[partName] or 0), 0)
-    paintCondition = {odometer = paintOdometer, visualValue = linearScale(paintOdometer, paintAgingConstants.wearStartOdometer, paintAgingConstants.wearEndOdometer, 1, 0), originalPaints = deepcopy(partPaints[partName])}
+  if hasFlexbody and paintOdometerAbsoluteBaseValues[partId] then
+    local paintOdometer = (paintOdometerAbsoluteBaseValues[partId] or 0) + max(extensions.odometer.getRelativeRecording() - (paintOdometerRelativeStartingValues[partId] or 0), 0)
+    paintCondition = {odometer = paintOdometer, visualValue = linearScale(paintOdometer, paintAgingConstants.wearStartOdometer, paintAgingConstants.wearEndOdometer, 1, 0), originalPaints = deepcopy(partPaints[partId])}
     canProvidePaintCondition = true
   end
   return paintCondition, canProvidePaintCondition
 end
 
-local function initCondition(partName, odometer, integrity, visual, defaultPaints)
-  if hasSetPartCondition[partName] then
-    log("E", "partCondition.initCondition", string.format("Trying to set part condition on part %q twice. Unexpected results might follow...", partName))
+local function initCondition(partId, odometer, integrity, visual, defaultPaints)
+  if hasSetPartCondition[partId] then
+    log("E", "partCondition.initCondition", string.format("Trying to set part condition on part %q twice. Unexpected results might follow...", partId))
   end
-  lastAppliedPartConditions[partName] = {odometer = odometer, integrity = integrity, visual = visual}
-  hasSetPartCondition[partName] = true
+  lastAppliedPartConditions[partId] = {odometer = odometer, integrity = integrity, visual = visual}
+  hasSetPartCondition[partId] = true
 
-  local partTypes = partTypeData[partName] or {}
+  local partTypes = partTypeData[partId] or {}
   powertrain.setPartCondition(partTypes, odometer, integrity, visual)
   energyStorage.setPartCondition(partTypes, odometer, integrity, visual)
-  beamstate.setPartCondition(partName, partTypes, odometer, integrity, visual)
-  setPaintCondition(partName, visual, defaultPaints)
+  beamstate.setPartCondition(partId, partTypes, odometer, integrity, visual)
+  setPaintCondition(partId, visual, defaultPaints)
 
-  partOdometerAbsoluteBaseValues[partName] = odometer
-  partOdometerRelativeStartingValues[partName] = extensions.odometer.getRelativeRecording()
+  partOdometerAbsoluteBaseValues[partId] = odometer
+  partOdometerRelativeStartingValues[partId] = extensions.odometer.getRelativeRecording()
 
   extensions.odometer.startRecording()
 end
 
-local function getCondition(partName)
-  local partOdometerValue = (partOdometerAbsoluteBaseValues[partName] or 0) + max(extensions.odometer.getRelativeRecording() - (partOdometerRelativeStartingValues[partName] or 0), 0)
+local function getCondition(partId)
+  local partOdometerValue = (partOdometerAbsoluteBaseValues[partId] or 0) + max(extensions.odometer.getRelativeRecording() - (partOdometerRelativeStartingValues[partId] or 0), 0)
 
-  local partData = partTypeData[partName]
-  local spawnTimeCondition = lastAppliedPartConditions[partName]
+  local partData = partTypeData[partId]
+  local spawnTimeCondition = lastAppliedPartConditions[partId]
   if not spawnTimeCondition then
-    log("E", "partCondition.getCondition", "No spawnTimeCondition found for part: " .. dumps(partName))
+    log("E", "partCondition.getCondition", "No spawnTimeCondition found for part: " .. dumps(partId))
     return nil
   end
 
   local powertrainCondition, canProvidePowertrainIntegrityCondition, canProvidePowertrainVisualCondition = powertrain.getPartCondition(partData)
   local energyStorageCondition, canProvideEnergyStorageIntegrityCondition, canProvideEnergyStorageVisualCondition = energyStorage.getPartCondition(partData)
-  local jbeamCondition, canProvideBeamstateCondition = beamstate.getPartCondition(partName, partData)
-  local paintCondition, canProvidePaintCondition = getPaintCondition(partName, partData)
+  local jbeamCondition, canProvideBeamstateCondition = beamstate.getPartCondition(partId, partData)
+  local paintCondition, canProvidePaintCondition = getPaintCondition(partId, partData)
 
   local hasIntegrityCondition = canProvidePowertrainIntegrityCondition or canProvideEnergyStorageIntegrityCondition or canProvideBeamstateCondition
   local hasVisualCondition = canProvidePowertrainVisualCondition or canProvideEnergyStorageVisualCondition or canProvidePaintCondition
@@ -495,14 +496,14 @@ local function getConditions()
   end
 
   local result = {}
-  for partName in pairs(v.data.activeParts) do
+  for partId, _ in pairs(activeParts) do
     xpcall(
       function()
-        result[partName] = getCondition(partName)
-        --log("I", "partCondition.getConditions", string.format("Got condition for partName %25s: ", partName) .. string.sub(serialize(result[partName]), 1, 100))
+        result[partId] = getCondition(partId)
+        --log("I", "partCondition.getConditions", string.format("Got condition for partId %25s: ", partId) .. string.sub(serialize(result[partId]), 1, 100))
       end,
       function(err)
-        log("E", "partCondition.getConditions", "Unable to get condition for partName " .. dumps(partName) .. ":")
+        log("E", "partCondition.getConditions", "Unable to get condition for partId " .. dumps(partId) .. ":")
         log("E", "partCondition.getConditions", err)
         log("E", "partCondition.getConditions", debug.traceback())
       end
@@ -518,16 +519,16 @@ local function initConditions(partsCondition, fallbackOdometer, fallbackIntegrit
 
   if not partsCondition then
     log("I", "partCondition.initConditions", "Parts condition not provided for vehicle, assuming fresh vehicle state for vehicle Id: " .. dumps(objectId))
-    for k, _ in pairs(v.data.activeParts) do
-      initCondition(k, fallbackOdometer or 0, fallbackIntegrityValue or 1, fallbackVisualValue or 1, defaultPaints)
+    for partId, _ in pairs(activeParts) do
+      initCondition(partId, fallbackOdometer or 0, fallbackIntegrityValue or 1, fallbackVisualValue or 1, defaultPaints)
     end
     createConditionSnapshot("reset")
     setResetSnapshotKey("reset")
     return
   end
-  for partName in pairs(v.data.activeParts) do
+  for partId in pairs(activeParts) do
     local odometer, integrity, visual
-    local partCondition = partsCondition[partName]
+    local partCondition = partsCondition[partId]
     if partCondition then
       odometer = partCondition.odometer
       local integrityValue = partCondition.integrityValue
@@ -543,9 +544,9 @@ local function initConditions(partsCondition, fallbackOdometer, fallbackIntegrit
     integrity = integrity or fallbackIntegrityValue or 1
     visual = visual or fallbackVisualValue or 1
     if odometer and integrity --[[and visual--]] then
-      initCondition(partName, odometer, integrity, visual, defaultPaints)
+      initCondition(partId, odometer, integrity, visual, defaultPaints)
     else
-      log("E", "partCondition.initConditions", "Missing odometer, integrityValue or visualValue for part name " .. dumps(partName) .. " in vehicle " .. dumps(objectId) .. ": " .. dumps(partCondition))
+      log("E", "partCondition.initConditions", "Missing odometer, integrityValue or visualValue for part name " .. dumps(partId) .. " in vehicle " .. dumps(objectId) .. ": " .. dumps(partCondition))
     end
   end
 

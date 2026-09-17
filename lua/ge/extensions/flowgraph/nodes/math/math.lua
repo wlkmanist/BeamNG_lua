@@ -123,6 +123,7 @@ function C:buildBaseEnv()
   env.quat = quat
   env.euler = quatFromEuler
   env.quatFromEuler = quatFromEuler
+  env.random = math.random
 
   env.pingpong = function(t, max)
     local v = (t % (2 * max))

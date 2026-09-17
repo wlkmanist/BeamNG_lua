@@ -10,3 +10,7 @@
 - destination.lua ; loads a race file. Detects when a player goes the wrong way
 - bounds.lua loads a site file to use its "bounds" component
 - quickMessages.lua takes care of displaying "Nice drift!" kind of messages in freeroam
+- scoreboard.lua is to gather stats over a drift challenge to display them in the end screen
+- sounds.lua is to create sounds …
+- driftSpots.lua manages the activation/deactivation of the drift spots
+- cruising.lua enables/disables the drift UI apps when drifting in freeroam

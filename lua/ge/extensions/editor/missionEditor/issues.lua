@@ -129,15 +129,15 @@ function C:drawIssuesWindow()
       im.EndMenuBar()
     end
 
-    if im.BeginTable('', 7, tableFlags) then
+    if im.BeginTable('##missionIssuesTable', 7, tableFlags) then
       im.TableSetupScrollFreeze(0,1)
-      im.TableSetupColumn("#",nil,4)
-      im.TableSetupColumn("Type",nil,5) -- severity
-      im.TableSetupColumn("Mission",nil,20)
-      im.TableSetupColumn("MissionType",im.TableColumnFlags_DefaultHide,5)
-      im.TableSetupColumn("Level",im.TableColumnFlags_DefaultHide,5)
-      im.TableSetupColumn("Availability",im.TableColumnFlags_DefaultHide,5)
-      im.TableSetupColumn("Label", nil,60)
+      im.TableSetupColumn("#",im.TableColumnFlags_WidthStretch,4)
+      im.TableSetupColumn("Type",im.TableColumnFlags_WidthStretch,5) -- severity
+      im.TableSetupColumn("Mission",im.TableColumnFlags_WidthStretch,20)
+      im.TableSetupColumn("MissionType",im.TableColumnFlags_WidthStretch,5)
+      im.TableSetupColumn("Level",im.TableColumnFlags_WidthStretch,5)
+      im.TableSetupColumn("Availability",im.TableColumnFlags_WidthStretch,5)
+      im.TableSetupColumn("Label",im.TableColumnFlags_WidthStretch,60)
       im.TableHeadersRow()
       im.TableNextColumn()
       if im.TableGetSortSpecs().SpecsDirty then
@@ -175,8 +175,8 @@ function C:drawIssuesWindow()
       im.EndTable()
     end
 
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 function C:showIssuesWindow()

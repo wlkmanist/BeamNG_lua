@@ -58,10 +58,7 @@ local function create(data)
     triangleSpaceUp = decodedData.triangleSpaceUp,
     isVisualised = decodedData.isVisualised,
     isUsingGravity = decodedData.isUsingGravity,
-    accelWindowWidth = decodedData.accelWindowWidth,
-    gyroWindowWidth = decodedData.gyroWindowWidth,
-    accelFrequencyCutoff = decodedData.accelFrequencyCutoff,
-    gyroFrequencyCutoff = decodedData.gyroFrequencyCutoff,
+    smootherStrength = decodedData.smootherStrength,
     isSendImmediately = decodedData.isSendImmediately }
 
   advancedIMUs[decodedData.sensorId] = {
@@ -72,6 +69,16 @@ end
 local function remove(sensorId)
   controller.unloadControllerExternal('advancedIMU' .. sensorId)
   advancedIMUs[sensorId] = nil
+end
+
+local function removeAll()
+  local ids = {}
+  for sensorId in pairs(advancedIMUs) do
+    ids[#ids + 1] = sensorId
+  end
+  for i = 1, #ids do
+    remove(ids[i])
+  end
 end
 
 local function setUpdateTime(sensorId, GFXUpdateTime) advancedIMUs[sensorId].GFXUpdateTime = GFXUpdateTime end
@@ -117,6 +124,7 @@ end
 -- Public interface:
 M.create                                                  = create
 M.remove                                                  = remove
+M.removeAll                                               = removeAll
 M.adHocRequest                                            = adHocRequest
 M.cacheLatestReading                                      = cacheLatestReading
 M.getAdvancedIMUReading                                   = getAdvancedIMUReading

@@ -48,7 +48,7 @@ end
 function C:work()
   local veh
   if self.pinIn.vehId.value then
-    veh = be:getObjectByID(self.pinIn.vehId.value)
+    veh = getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end

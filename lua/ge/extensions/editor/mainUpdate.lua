@@ -6,22 +6,20 @@ local M = {}
 local logTag = 'editor_main_update'
 local imgui = ui_imgui
 
-local function updateMainEditor()
-  editor.updateObjectIcons()
-  -- on each frame, we call the hook for the preferences that were changed during the last frame
-  if editor.preferencesRegistry:broadcastPreferenceValueChanged() then
-    -- if we had any item changed, then save the prefs to file
-    editor.savePreferences()
-  end
-end
-
 local function drawMainEditorGizmos()
   editor.drawObjectIcons()
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
   if editor.active then
-    updateMainEditor()
+    editor.updateObjectIcons()
+    -- on each frame, we call the hook for the preferences that were changed during the last frame
+    if editor.preferencesRegistry:broadcastPreferenceValueChanged() then
+      -- if we had any item changed, then save the prefs to file
+      --TODO: add a delay, do not save every frame, some prefs might change very fast every frame
+      editor.savePreferences()
+    end
+
     if editor.editMode and editor.editMode.onUpdate then
       editor.editMode.onUpdate(dtReal, dtSim, dtRaw)
     end

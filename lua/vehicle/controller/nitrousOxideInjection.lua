@@ -91,12 +91,13 @@ local function init(jbeamData)
     if not hasBuiltPie then
       core_quickAccess.addEntry(
         {
-          level = "/powertrain/",
+          level = "/root/playerVehicle/vehicleFeatures/",
           generator = function(entries)
             local noEntry = {
               title = "Nitrous Oxide",
               priority = 40,
-              icon = "radial_nitrous_oxide",
+              icon = "N2OHoriz",
+              uniqueID = "n2oToggle",
               onSelect = function()
                 controller.getController(name).toggleActive()
                 return {"reload"}

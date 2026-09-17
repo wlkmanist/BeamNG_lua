@@ -75,7 +75,7 @@ local function updateGFX(storage, dt)
   --only leak if something is actually broken and if our current pressure is > ambient
   if storage.currentLeakRate > 0 and storage.currentPressure > powertrain.currentEnvPressure then
     -- Leak rate limited by speed of sound when absolute pressure is greater than twice env pressure (i.e. relative pressure is greater than env pressure)
-    local leakRateCoef = min(1, storage.currentPressure * powertrain.invCurrentEnvPressure)
+    local leakRateCoef = clamp(storage.currentPressure * powertrain.invCurrentEnvPressure, 0, 1)
     local effectiveLeakRate = storage.currentLeakRate * sqrt(leakRateCoef)
 
     local volumeLeaked = effectiveLeakRate * dt
@@ -237,7 +237,7 @@ local function reset(storage)
     obj:setNodeMass(k, v + storage.remainingMass * storage.nodeMassCoef)
   end
 
-  electrics.values[storage.pressureElectricName] = storage.currentPressure
+  electrics.values[storage.pressureElectricName] = storage.currentPressure - powertrain.currentEnvPressure
 
   --reset all the supply/consumer electrics values
   electrics.values[storage.pneumaticPTOConsumerPressureElectricsName] = 0
@@ -270,7 +270,7 @@ local function new(jbeamData)
     name = jbeamData.name,
     type = jbeamData.type,
     energyType = jbeamData.energyType or "air",
-    gasMolarMass = jbeamData.gasMolarMass or 28.9647, -- g/mol (default value is the approximate molar mass of air)
+    gasMolarMass = (jbeamData.gasMolarMass or 28.9647) * 0.001, --stored unit: kg/mol, default air: g/mol (default value is the approximate molar mass of air)
     assignedDevices = {},
     remainingRatio = 1,
     remainingMass = 1,
@@ -337,7 +337,7 @@ local function new(jbeamData)
 
   --apply final weight as soon as possible
   for k, v in pairs(storage.nodes) do
-    obj:setNodeMass(k, v + storage.storedEnergy * storage.nodeMassCoef)
+    obj:setNodeMass(k, v + storage.remainingMass * storage.nodeMassCoef)
   end
 
   --base electrics name that needs to match between vehicles for a connection to work
@@ -380,7 +380,7 @@ local function new(jbeamData)
   storage.damageDeformGroup = jbeamData.tankDamageDeformGroup
   storage.previousLeakRate = 0
 
-  electrics.values[storage.pressureElectricName] = storage.currentPressure
+  electrics.values[storage.pressureElectricName] = storage.currentPressure - powertrain.currentEnvPressure
 
   electrics.values[storage.pneumaticPTOConsumerPressureElectricsName] = 0
   electrics.values[storage.pneumaticPTOConsumerFlowElectricsName] = 0

@@ -60,7 +60,7 @@ local function update(dtSim)
   local lon, lat = xY2LonLat(pos.x, pos.y, refLon, refLat)
 
   -- Gather the latest reading data.
-  latestReading = { time = obj:getSimTime(), x = pos.x, y = pos.y, lon = lon, lat = lat }
+  latestReading = { time = obj:getSimTime(), x = pos.x, y = pos.y, z = pos.z, lon = lon, lat = lat }
 
   -- Store the latest readings for this GPS sensor in the extension. This is used for sending back on the physics step.
   -- NOTE: this is for when polling directly through the vlua - python socket, so we get the latest reading.

@@ -67,13 +67,12 @@ M.initPostEffects = function()
   require("client/postFx/flash")
   require('client/postFx/fog')
   require('client/postFx/fxaa')
-  require('client/postFx/GammaPostFX')
   require('client/postFx/glow')
-  require('client/postFx/lightRay')
   require('client/postFx/maskedScreenBlur')
   require('client/postFx/MotionBlurFx')
   require('client/postFx/smaa');
   require('client/postFx/ssao');
+  require('client/postFx/screenSpaceShadows');
   require('client/postFx/turbulence');
 
   -- log('I', 'postFx', "... initPostEffects done");
@@ -91,13 +90,12 @@ M.reloadPostEffects = function()
   require("client/postFx/flash")
   require('client/postFx/fog')
   require('client/postFx/fxaa')
-  require('client/postFx/GammaPostFX')
   require('client/postFx/glow')
-  require('client/postFx/lightRay')
   require('client/postFx/maskedScreenBlur')
   require('client/postFx/MotionBlurFx')
   require('client/postFx/smaa');
   require('client/postFx/ssao');
+  require('client/postFx/screenSpaceShadows');
   require('client/postFx/turbulence');
 
   -- log('I', 'postFx', "... reloadPostEffects done");
@@ -116,7 +114,26 @@ local function shouldSaveCurrentValues()
   return M.backupSettings == nil
 end
 
+local function normalizeBoolean(value, fallback)
+  if value == nil then
+    return fallback
+  end
+  if value == true or value == 1 or value == "1" or value == "true" then
+    return true
+  end
+  if value == false or value == 0 or value == "0" or value == "false" then
+    return false
+  end
+  return fallback
+end
+
 M.savePresetFile = function(filename)
+  local adapterCount = GFXInit.getAdapterCount()
+  if adapterCount == 1 and GFXInit.getAdapterName(0) == "GFX Null Device" then
+    log('I', 'postFx', "% - PostFX Manager - Null graphics device detected, skipping saving preset file.")
+    return
+  end
+
   -- log('I','postfx','savePresetFile called: '..tostring(filename))
   filename = makeRelativePath(filename,"")
 
@@ -125,13 +142,51 @@ M.savePresetFile = function(filename)
     M.settingsApplyAll()
   end
 
-  local exports = exportToJson("$PostFXManager::Settings::*")
+  local exports = VariableRegistry.exportToTable("$PostFXManager::Settings::*")
   -- log('I','','exported $PostFXManager::Settings::* = '..dumps(exports))
-  exports.header = {version = 1}
+  exports.header = {version = 1.2}
 
   jsonWriteFile(filename, exports, true)
 
   log('I','postFx', "% - PostFX Manager - Save complete. Preset saved at : " ..filename)
+end
+
+local function loadPresetDataVersion1(data)
+  for key, value in pairs(data) do
+    local flag =  string.format("$PostFXManager::Settings::%s", key)
+    if type(value) ~= "table" then
+      VariableRegistry.set(flag, value)
+    else
+      for fieldName, fieldValue in pairs(value) do
+        local fullFlag =  string.format("%s::%s", flag, fieldName)
+        VariableRegistry.set(fullFlag, fieldValue)
+      end
+    end
+  end
+end
+
+local function convertV1FormatToV1_2(data)
+  local object = {}
+  for key, value in pairs(data) do
+    if type(value) ~= "table" then
+      local convertedValue = tonumber(value) or tostring(value)
+      if key:find("^Enable") or key:find("^enable") then
+        convertedValue = convertedValue == 1 and true or false
+      end
+      object[key] = convertedValue
+    else
+      local objTable = {}
+      for fieldName, fieldValue in pairs(value) do
+        local convertedValue = tonumber(fieldValue) or tostring(fieldValue)
+        if fieldName:find("^Enable") or fieldName:find("^enable") then
+          convertedValue = convertedValue == 1 and true or false
+        end
+        objTable[fieldName] = convertedValue
+      end
+      object[key] = objTable
+    end
+  end
+  return object
 end
 
 M.loadPresetFile = function(filename)
@@ -140,19 +195,23 @@ M.loadPresetFile = function(filename)
     presetFilename = makeRelativePath( presetFilename, "")
     -- log('I', 'postFx', "loadPresetFile loading: "..presetFilename)
     local preset = jsonReadFile(presetFilename)
-    preset.header = nil -- remove header first before parsing to create TS flags
+    local version = preset.header and preset.header.version
+    preset.header = nil -- remove header first before parsing to create flags
+    if version == 1 then
+      preset = convertV1FormatToV1_2(preset)
+    end
 
     for key, obj in pairs(preset) do
       local flag =  string.format("$PostFXManager::Settings::%s", key)
       if type(obj) ~= "table" then
-        TorqueScriptLua.setVar(flag, obj)
+        VariableRegistry.set(flag, obj)
       else
         for field, value in pairs(obj) do
           local fullFlag =  string.format("%s::%s", flag, field)
-          TorqueScriptLua.setVar(fullFlag, value)
+          VariableRegistry.set(fullFlag, value)
         end
-      end
     end
+  end
     return true
   end
   return false
@@ -173,10 +232,10 @@ end
 
 M.applyDefaultPreset = function()
   -- log('I', 'postfx', "PostFX Manager - applyDefaultPreset called.....")
-  TorqueScriptLua.setVar("$PostFXManager::highPreset",   "lua/ge/client/postFx/presets/defaultPostfxPreset.postfx")
-  TorqueScriptLua.setVar("$PostFXManager::normalPreset", "lua/ge/client/postFx/presets/lowestPostfxPreset.postfx")
-  TorqueScriptLua.setVar("$PostFXManager::lowPreset",    "lua/ge/client/postFx/presets/lowestPostfxPreset.postfx")
-  TorqueScriptLua.setVar("$PostFXManager::lowestPreset", "lua/ge/client/postFx/presets/lowestPostfxPreset.postfx")
+  VariableRegistry.set("$PostFXManager::highPreset",   "lua/ge/client/postFx/presets/defaultPostfxPreset.postfx")
+  VariableRegistry.set("$PostFXManager::normalPreset", "lua/ge/client/postFx/presets/lowestPostfxPreset.postfx")
+  VariableRegistry.set("$PostFXManager::lowPreset",    "lua/ge/client/postFx/presets/lowestPostfxPreset.postfx")
+  VariableRegistry.set("$PostFXManager::lowestPreset", "lua/ge/client/postFx/presets/lowestPostfxPreset.postfx")
 
   -- Preset Migration for 1st time a user start after switch to LUA startup
   migrateDefaultPresetCSFile()
@@ -191,59 +250,55 @@ M.applyDefaultPreset = function()
 end
 
 M.applySSAOPreset = function()
-  TorqueScriptLua.setVar("$SSAOPostFx::Enable",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::Enable"))
-  TorqueScriptLua.setVar("$SSAOPostFx::blurDepthTol",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::blurDepthTol"))
-  TorqueScriptLua.setVar("$SSAOPostFx::blurNormalTol",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::blurNormalTol"))
-  TorqueScriptLua.setVar("$SSAOPostFx::lDepthMax",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::lDepthMax"))
-  TorqueScriptLua.setVar("$SSAOPostFx::lDepthMin",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::lDepthMin"))
-  TorqueScriptLua.setVar("$SSAOPostFx::lDepthPow",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::lDepthPow"))
-  TorqueScriptLua.setVar("$SSAOPostFx::lNormalPow",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::lNormalPow"))
-  TorqueScriptLua.setVar("$SSAOPostFx::lNormalTol",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::lNormalTol"))
-  TorqueScriptLua.setVar("$SSAOPostFx::lRadius",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::lRadius"))
-  TorqueScriptLua.setVar("$SSAOPostFx::lStrength",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::lStrength"))
-  TorqueScriptLua.setVar("$SSAOPostFx::overallStrength",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::overallStrength"))
-  TorqueScriptLua.setVar("$SSAOPostFx::quality",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::quality"))
-  TorqueScriptLua.setVar("$SSAOPostFx::sDepthMax",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::sDepthMax"))
-  TorqueScriptLua.setVar("$SSAOPostFx::sDepthMin",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::sDepthMin"))
-  TorqueScriptLua.setVar("$SSAOPostFx::sDepthPow",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::sDepthPow"))
-  TorqueScriptLua.setVar("$SSAOPostFx::sNormalPow",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::sNormalPow"))
-  TorqueScriptLua.setVar("$SSAOPostFx::sNormalTol",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::sNormalTol"))
-  TorqueScriptLua.setVar("$SSAOPostFx::sRadius",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::sRadius"))
-  TorqueScriptLua.setVar("$SSAOPostFx::sStrength",  TorqueScriptLua.getVar("$PostFXManager::Settings::SSAO::sStrength"))
+  VariableRegistry.set("$SSAOPostFx::Enable",  VariableRegistry.get("$PostFXManager::Settings::SSAO::Enable"))
+  VariableRegistry.set("$SSAOPostFx::blurDepthTol",  VariableRegistry.get("$PostFXManager::Settings::SSAO::blurDepthTol"))
+  VariableRegistry.set("$SSAOPostFx::blurNormalTol",  VariableRegistry.get("$PostFXManager::Settings::SSAO::blurNormalTol"))
+  VariableRegistry.set("$SSAOPostFx::lDepthMax",  VariableRegistry.get("$PostFXManager::Settings::SSAO::lDepthMax"))
+  VariableRegistry.set("$SSAOPostFx::lDepthMin",  VariableRegistry.get("$PostFXManager::Settings::SSAO::lDepthMin"))
+  VariableRegistry.set("$SSAOPostFx::lDepthPow",  VariableRegistry.get("$PostFXManager::Settings::SSAO::lDepthPow"))
+  VariableRegistry.set("$SSAOPostFx::lNormalPow",  VariableRegistry.get("$PostFXManager::Settings::SSAO::lNormalPow"))
+  VariableRegistry.set("$SSAOPostFx::lNormalTol",  VariableRegistry.get("$PostFXManager::Settings::SSAO::lNormalTol"))
+  VariableRegistry.set("$SSAOPostFx::lRadius",  VariableRegistry.get("$PostFXManager::Settings::SSAO::lRadius"))
+  VariableRegistry.set("$SSAOPostFx::lStrength",  VariableRegistry.get("$PostFXManager::Settings::SSAO::lStrength"))
+  VariableRegistry.set("$SSAOPostFx::overallStrength",  VariableRegistry.get("$PostFXManager::Settings::SSAO::overallStrength"))
+  VariableRegistry.set("$SSAOPostFx::quality",  VariableRegistry.get("$PostFXManager::Settings::SSAO::quality"))
+  VariableRegistry.set("$SSAOPostFx::sDepthMax",  VariableRegistry.get("$PostFXManager::Settings::SSAO::sDepthMax"))
+  VariableRegistry.set("$SSAOPostFx::sDepthMin",  VariableRegistry.get("$PostFXManager::Settings::SSAO::sDepthMin"))
+  VariableRegistry.set("$SSAOPostFx::sDepthPow",  VariableRegistry.get("$PostFXManager::Settings::SSAO::sDepthPow"))
+  VariableRegistry.set("$SSAOPostFx::sNormalPow",  VariableRegistry.get("$PostFXManager::Settings::SSAO::sNormalPow"))
+  VariableRegistry.set("$SSAOPostFx::sNormalTol",  VariableRegistry.get("$PostFXManager::Settings::SSAO::sNormalTol"))
+  VariableRegistry.set("$SSAOPostFx::sRadius",  VariableRegistry.get("$PostFXManager::Settings::SSAO::sRadius"))
+  VariableRegistry.set("$SSAOPostFx::sStrength",  VariableRegistry.get("$PostFXManager::Settings::SSAO::sStrength"))
 end
 
 M.applyHDRPreset = function()
-  TorqueScriptLua.setVar("$HDRPostFX::Enable",  TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::Enable"))
-  TorqueScriptLua.setVar("$HDRPostFX::adaptRate", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::adaptRate"))
-  TorqueScriptLua.setVar("$HDRPostFX::blueShiftColor", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::blueShiftColor"))
-  TorqueScriptLua.setVar("$HDRPostFX::brightPassThreshold", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::brightPassThreshold"))
-  TorqueScriptLua.setVar("$HDRPostFX::enableBloom", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::enableBloom"))
-  TorqueScriptLua.setVar("$HDRPostFX::enableBlueShift", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::enableBlueShift"))
-  TorqueScriptLua.setVar("$HDRPostFX::enableToneMapping", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::enableToneMapping"))
-  TorqueScriptLua.setVar("$HDRPostFX::gaussMean", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::gaussMean"))
-  TorqueScriptLua.setVar("$HDRPostFX::gaussMultiplier", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::gaussMultiplier"))
-  TorqueScriptLua.setVar("$HDRPostFX::gaussStdDev", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::gaussStdDev"))
-  TorqueScriptLua.setVar("$HDRPostFX::keyValue", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::keyValue"))
-  TorqueScriptLua.setVar("$HDRPostFX::minLuminace", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::minLuminace"))
-  TorqueScriptLua.setVar("$HDRPostFX::whiteCutoff", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::whiteCutoff"))
-  TorqueScriptLua.setVar("$HDRPostFX::colorCorrectionStrength", TorqueScriptLua.getVar("PostFXManager::Settings::HDR1::colorCorrectionStrength"))
-  TorqueScriptLua.setVar("$HDRPostFX::colorCorrectionRamp", TorqueScriptLua.getVar("$PostFXManager::Settings::HDR1::ColorCorrectionRamp2"))
-end
-
-M.applyLightRaysPreset = function()
-  TorqueScriptLua.setVar("$LightRayPostFX::Enable",  TorqueScriptLua.getVar("$PostFXManager::Settings::LightRays::Enable"))
-  TorqueScriptLua.setVar("$LightRayPostFX::brightScalar", TorqueScriptLua.getVar("$PostFXManager::Settings::LightRays::brightScalar"))
+  VariableRegistry.set("$HDRPostFX::Enable",  VariableRegistry.get("$PostFXManager::Settings::HDR1::Enable"))
+  VariableRegistry.set("$HDRPostFX::adaptRate", VariableRegistry.get("$PostFXManager::Settings::HDR1::adaptRate"))
+  VariableRegistry.set("$HDRPostFX::blueShiftColor", VariableRegistry.get("$PostFXManager::Settings::HDR1::blueShiftColor"))
+  VariableRegistry.set("$HDRPostFX::brightPassThreshold", VariableRegistry.get("$PostFXManager::Settings::HDR1::brightPassThreshold"))
+  VariableRegistry.set("$HDRPostFX::enableBloom", VariableRegistry.get("$PostFXManager::Settings::HDR1::enableBloom"))
+  VariableRegistry.set("$HDRPostFX::enableBlueShift", VariableRegistry.get("$PostFXManager::Settings::HDR1::enableBlueShift"))
+  VariableRegistry.set("$HDRPostFX::enableToneMapping", VariableRegistry.get("$PostFXManager::Settings::HDR1::enableToneMapping"))
+  VariableRegistry.set("$HDRPostFX::gaussMean", VariableRegistry.get("$PostFXManager::Settings::HDR1::gaussMean"))
+  VariableRegistry.set("$HDRPostFX::gaussMultiplier", VariableRegistry.get("$PostFXManager::Settings::HDR1::gaussMultiplier"))
+  VariableRegistry.set("$HDRPostFX::gaussStdDev", VariableRegistry.get("$PostFXManager::Settings::HDR1::gaussStdDev"))
+  VariableRegistry.set("$HDRPostFX::keyValue", VariableRegistry.get("$PostFXManager::Settings::HDR1::keyValue"))
+  VariableRegistry.set("$HDRPostFX::minLuminace", VariableRegistry.get("$PostFXManager::Settings::HDR1::minLuminace"))
+  VariableRegistry.set("$HDRPostFX::whiteCutoff", VariableRegistry.get("$PostFXManager::Settings::HDR1::whiteCutoff"))
+  VariableRegistry.set("$HDRPostFX::colorCorrectionStrength", VariableRegistry.get("PostFXManager::Settings::HDR1::colorCorrectionStrength"))
+  VariableRegistry.set("$HDRPostFX::colorCorrectionRamp", VariableRegistry.get("$PostFXManager::Settings::HDR1::ColorCorrectionRamp2", ""))
 end
 
 M.applyDOFPreset = function()
-  TorqueScriptLua.setVar("$DOFPostFx::Enable",  TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::Enable"))
-  TorqueScriptLua.setVar("$DOFPostFx::EnableDebugMode", TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::EnableDebugMode"))
-  TorqueScriptLua.setVar("$DOFPostFx::BlurMin", TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::BlurNear"))
-  TorqueScriptLua.setVar("$DOFPostFx::BlurMax", TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::BlurFar"))
-  TorqueScriptLua.setVar("$DOFPostFx::FocusRangeMin", TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::FocusAperture"))
-  TorqueScriptLua.setVar("$DOFPostFx::FocusRangeMax", TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::FocusDistance"))
-  TorqueScriptLua.setVar("$DOFPostFx::BlurCurveNear", TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::BlurCurveNear"))
-  TorqueScriptLua.setVar("$DOFPostFx::BlurCurveFar", TorqueScriptLua.getVar("$PostFXManager::Settings::DOF::BlurCurve"))
+  VariableRegistry.set("$DOFPostFx::Enable",  VariableRegistry.get("$PostFXManager::Settings::DOF::Enable"))
+  VariableRegistry.set("$DOFPostFx::EnableDebugMode", VariableRegistry.get("$PostFXManager::Settings::DOF::EnableDebugMode"))
+  VariableRegistry.set("$DOFPostFx::EnableAutoFocus", normalizeBoolean(VariableRegistry.get("$PostFXManager::Settings::DOF::EnableAutoFocus"), false))
+  VariableRegistry.set("$DOFPostFx::BlurMin", VariableRegistry.get("$PostFXManager::Settings::DOF::BlurNear"))
+  VariableRegistry.set("$DOFPostFx::BlurMax", VariableRegistry.get("$PostFXManager::Settings::DOF::BlurFar"))
+  VariableRegistry.set("$DOFPostFx::FocusRangeMin", VariableRegistry.get("$PostFXManager::Settings::DOF::FocusAperture"))
+  VariableRegistry.set("$DOFPostFx::FocusRangeMax", VariableRegistry.get("$PostFXManager::Settings::DOF::FocusDistance"))
+  VariableRegistry.set("$DOFPostFx::BlurCurveNear", VariableRegistry.get("$PostFXManager::Settings::DOF::BlurCurveNear"))
+  VariableRegistry.set("$DOFPostFx::BlurCurveFar", VariableRegistry.get("$PostFXManager::Settings::DOF::BlurCurve"))
 
   -- make sure we apply the correct settings to the DOF
   dofModule.updateDOFSettings()
@@ -258,45 +313,32 @@ M.settingsApplyFromPreset = function()
   -- HDR settings
   M.applyHDRPreset()
 
-  -- Light rays settings
-  M.applyLightRaysPreset()
-
   -- DOF settings
   M.applyDOFPreset()
 
-  local enablePostFX = TorqueScriptLua.getBoolVar("$PostFXManager::Settings::EnablePostFX")
-  TorqueScriptLua.setVar("$PostFX::Enabled",  enablePostFX)
+  local enablePostFX = VariableRegistry.get("$PostFXManager::Settings::EnablePostFX")
   M.settingsSetEnabled(enablePostFX)
 end
 
 M.settingsSetEnabled = function(enablePostFX)
-  TorqueScriptLua.setVar("$PostFX::Enabled", enablePostFX)
+  VariableRegistry.set("$PostFX::Enabled", enablePostFX)
+  local dof = scenetree.findObject("DOFPostEffect")
+  local ssao = scenetree.findObject("SSAOPostFx")
+  local hdrPostFx = scenetree.findObject("HDRPostFx")
+
   -- if to enable the postFX, apply the ones that are enabled
   if enablePostFX then
-    -- SSAO, HDR, LightRays, DOF
-    local dof = scenetree.findObject("DOFPostEffect")
-    local ssao = scenetree.findObject("SSAOPostFx")
-    local lightRay = scenetree.findObject("LightRayPostFX")
-    local hdrPostFx = scenetree.findObject("HDRPostFx")
-
+    -- SSAO, HDR, DOF
     if ssao then
-      if TorqueScriptLua.getBoolVar("$SSAOPostFx::Enable") then
+      if VariableRegistry.get("$SSAOPostFx::Enable") then
         ssao:enable()
       else
         ssao:disable()
-        end
-    end
-
-    if lightRay then
-      if TorqueScriptLua.getBoolVar("$LightRayPostFX::Enable") then
-        lightRay:enable()
-      else
-        lightRay:disable()
       end
     end
 
     if dof then
-      if TorqueScriptLua.getBoolVar("$DOFPostFx::Enable") then
+      if VariableRegistry.get("$DOFPostFx::Enable") then
         dof:enable()
       else
         dof:disable()
@@ -307,8 +349,7 @@ M.settingsSetEnabled = function(enablePostFX)
   else
     -- Disable all postFX
     if ssao then ssao:disable() end
-    if hdr then hdr:disable() end
-    if lightRay then lightRay:disable() end
+    if hdrPostFx then hdrPostFx:disable() end
     if dof then dof:disable() end
 
     -- log('I','postfx',"PostFX Manager - PostFX disabled")
@@ -321,59 +362,55 @@ M.backupCurrentSettings = function()
     M.backupSettings = {}
 
     local DOF = {}
-    DOF.Enable          = TorqueScriptLua.getVar('$DOFPostFx::Enable')
-    DOF.EnableDebugMode = TorqueScriptLua.getVar('$DOFPostFx::EnableDebugMode')
-    DOF.BlurMin         = TorqueScriptLua.getVar('$DOFPostFx::BlurMin')
-    DOF.BlurMax         = TorqueScriptLua.getVar('$DOFPostFx::BlurMax')
-    DOF.FocusRangeMin   = TorqueScriptLua.getVar('$DOFPostFx::FocusRangeMin')
-    DOF.FocusRangeMax   = TorqueScriptLua.getVar('$DOFPostFx::FocusRangeMax')
-    DOF.BlurCurveNear   = TorqueScriptLua.getVar('$DOFPostFx::BlurCurveNear')
-    DOF.BlurCurveFar    = TorqueScriptLua.getVar('$DOFPostFx::BlurCurveFar')
+    DOF.Enable          = VariableRegistry.get('$DOFPostFx::Enable')
+    DOF.EnableDebugMode = VariableRegistry.get('$DOFPostFx::EnableDebugMode')
+    DOF.EnableAutoFocus = normalizeBoolean(VariableRegistry.get('$DOFPostFx::EnableAutoFocus'), false)
+    DOF.BlurMin         = VariableRegistry.get('$DOFPostFx::BlurMin')
+    DOF.BlurMax         = VariableRegistry.get('$DOFPostFx::BlurMax')
+    DOF.FocusRangeMin   = VariableRegistry.get('$DOFPostFx::FocusRangeMin')
+    DOF.FocusRangeMax   = VariableRegistry.get('$DOFPostFx::FocusRangeMax')
+    DOF.BlurCurveNear   = VariableRegistry.get('$DOFPostFx::BlurCurveNear')
+    DOF.BlurCurveFar    = VariableRegistry.get('$DOFPostFx::BlurCurveFar')
     M.backupSettings.DOF = DOF
 
-    local LightRay = {}
-    LightRay.Enable = TorqueScriptLua.getVar('$LightRayPostFX::Enable')
-    LightRay.brightScalar = TorqueScriptLua.getVar('$LightRayPostFX::brightScalar')
-    M.backupSettings.LightRay = LightRay
-
     local HDR = {}
-    HDR.Enable              = TorqueScriptLua.getVar('$HDRPostFX::Enable')
-    HDR.adaptRate           = TorqueScriptLua.getVar('$HDRPostFX::adaptRate')
-    HDR.blueShiftColor      = TorqueScriptLua.getVar('$HDRPostFX::blueShiftColor')
-    HDR.brightPassThreshold = TorqueScriptLua.getVar('$HDRPostFX::brightPassThreshold')
-    HDR.enableBloom         = TorqueScriptLua.getVar('$HDRPostFX::enableBloom')
-    HDR.enableBlueShift     = TorqueScriptLua.getVar('$HDRPostFX::enableBlueShift')
-    HDR.enableToneMapping   = TorqueScriptLua.getVar('$HDRPostFX::enableToneMapping')
-    HDR.gaussMean           = TorqueScriptLua.getVar('$HDRPostFX::gaussMean')
-    HDR.gaussMultiplier     = TorqueScriptLua.getVar('$HDRPostFX::gaussMultiplier')
-    HDR.gaussStdDev         = TorqueScriptLua.getVar('$HDRPostFX::gaussStdDev')
-    HDR.keyValue            = TorqueScriptLua.getVar('$HDRPostFX::keyValue')
-    HDR.minLuminace             = TorqueScriptLua.getVar('$HDRPostFX::minLuminace')
-    HDR.whiteCutoff             = TorqueScriptLua.getVar('$HDRPostFX::whiteCutoff')
-    HDR.colorCorrectionStrength = TorqueScriptLua.getVar('$HDRPostFX::colorCorrectionStrength')
-    HDR.colorCorrectionRamp     = TorqueScriptLua.getVar('$HDRPostFX::colorCorrectionRamp')
+    HDR.Enable              = VariableRegistry.get('$HDRPostFX::Enable')
+    HDR.adaptRate           = VariableRegistry.get('$HDRPostFX::adaptRate')
+    HDR.blueShiftColor      = VariableRegistry.get('$HDRPostFX::blueShiftColor')
+    HDR.brightPassThreshold = VariableRegistry.get('$HDRPostFX::brightPassThreshold')
+    HDR.enableBloom         = VariableRegistry.get('$HDRPostFX::enableBloom')
+    HDR.enableBlueShift     = VariableRegistry.get('$HDRPostFX::enableBlueShift')
+    HDR.enableToneMapping   = VariableRegistry.get('$HDRPostFX::enableToneMapping')
+    HDR.gaussMean           = VariableRegistry.get('$HDRPostFX::gaussMean')
+    HDR.gaussMultiplier     = VariableRegistry.get('$HDRPostFX::gaussMultiplier')
+    HDR.gaussStdDev         = VariableRegistry.get('$HDRPostFX::gaussStdDev')
+    HDR.keyValue            = VariableRegistry.get('$HDRPostFX::keyValue')
+    HDR.minLuminace             = VariableRegistry.get('$HDRPostFX::minLuminace')
+    HDR.whiteCutoff             = VariableRegistry.get('$HDRPostFX::whiteCutoff')
+    HDR.colorCorrectionStrength = VariableRegistry.get('$HDRPostFX::colorCorrectionStrength')
+    HDR.colorCorrectionRamp     = VariableRegistry.get('$HDRPostFX::colorCorrectionRamp', "")
     M.backupSettings.HDR = HDR
 
     local SSAO = {}
-    SSAO.Enable           = TorqueScriptLua.getBoolVar("$SSAOPostFx::Enable")
-    SSAO.blurDepthTol     = TorqueScriptLua.getVar('$SSAOPostFx::blurDepthTol')
-    SSAO.blurNormalTol    = TorqueScriptLua.getVar('$SSAOPostFx::blurNormalTol')
-    SSAO.lDepthMax        = TorqueScriptLua.getVar('$SSAOPostFx::lDepthMax')
-    SSAO.lDepthMin        = TorqueScriptLua.getVar('$SSAOPostFx::lDepthMin')
-    SSAO.lDepthPow        = TorqueScriptLua.getVar('$SSAOPostFx::lDepthPow')
-    SSAO.lNormalPow       = TorqueScriptLua.getVar('$SSAOPostFx::lNormalPow')
-    SSAO.lNormalTol       = TorqueScriptLua.getVar('$SSAOPostFx::lNormalTol')
-    SSAO.lRadius          = TorqueScriptLua.getVar('$SSAOPostFx::lRadius')
-    SSAO.lStrength        = TorqueScriptLua.getVar('$SSAOPostFx::lStrength')
-    SSAO.overallStrength  = TorqueScriptLua.getVar('$SSAOPostFx::overallStrength')
-    SSAO.quality          = TorqueScriptLua.getVar('$SSAOPostFx::quality')
-    SSAO.sDepthMax        = TorqueScriptLua.getVar('$SSAOPostFx::sDepthMax')
-    SSAO.sDepthMin        = TorqueScriptLua.getVar('$SSAOPostFx::sDepthMin')
-    SSAO.sDepthPow        = TorqueScriptLua.getVar('$SSAOPostFx::sDepthPow')
-    SSAO.sNormalPow       = TorqueScriptLua.getVar('$SSAOPostFx::sNormalPow')
-    SSAO.sNormalTol       = TorqueScriptLua.getVar('$SSAOPostFx::sNormalTol')
-    SSAO.sRadius          = TorqueScriptLua.getVar('$SSAOPostFx::sRadius')
-    SSAO.sStrength        = TorqueScriptLua.getVar('$SSAOPostFx::sStrength')
+    SSAO.Enable           = VariableRegistry.get("$SSAOPostFx::Enable")
+    SSAO.blurDepthTol     = VariableRegistry.get('$SSAOPostFx::blurDepthTol')
+    SSAO.blurNormalTol    = VariableRegistry.get('$SSAOPostFx::blurNormalTol')
+    SSAO.lDepthMax        = VariableRegistry.get('$SSAOPostFx::lDepthMax')
+    SSAO.lDepthMin        = VariableRegistry.get('$SSAOPostFx::lDepthMin')
+    SSAO.lDepthPow        = VariableRegistry.get('$SSAOPostFx::lDepthPow')
+    SSAO.lNormalPow       = VariableRegistry.get('$SSAOPostFx::lNormalPow')
+    SSAO.lNormalTol       = VariableRegistry.get('$SSAOPostFx::lNormalTol')
+    SSAO.lRadius          = VariableRegistry.get('$SSAOPostFx::lRadius')
+    SSAO.lStrength        = VariableRegistry.get('$SSAOPostFx::lStrength')
+    SSAO.overallStrength  = VariableRegistry.get('$SSAOPostFx::overallStrength')
+    SSAO.quality          = VariableRegistry.get('$SSAOPostFx::quality')
+    SSAO.sDepthMax        = VariableRegistry.get('$SSAOPostFx::sDepthMax')
+    SSAO.sDepthMin        = VariableRegistry.get('$SSAOPostFx::sDepthMin')
+    SSAO.sDepthPow        = VariableRegistry.get('$SSAOPostFx::sDepthPow')
+    SSAO.sNormalPow       = VariableRegistry.get('$SSAOPostFx::sNormalPow')
+    SSAO.sNormalTol       = VariableRegistry.get('$SSAOPostFx::sNormalTol')
+    SSAO.sRadius          = VariableRegistry.get('$SSAOPostFx::sRadius')
+    SSAO.sStrength        = VariableRegistry.get('$SSAOPostFx::sStrength')
     M.backupSettings.SSAO = SSAO
   end
 end
@@ -384,64 +421,60 @@ end
 
 
 local function settingsApplySSAO()
-  TorqueScriptLua.setVar("$PostFXManager::Settings::SSAO::Enable",          TorqueScriptLua.getBoolVar("$SSAOPostFx::Enable"))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::blurDepthTol',    TorqueScriptLua.getVar('$SSAOPostFx::blurDepthTol'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::blurNormalTol',   TorqueScriptLua.getVar('$SSAOPostFx::blurNormalTol'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::lDepthMax',       TorqueScriptLua.getVar('$SSAOPostFx::lDepthMax'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::lDepthMin',       TorqueScriptLua.getVar('$SSAOPostFx::lDepthMin'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::lDepthPow',       TorqueScriptLua.getVar('$SSAOPostFx::lDepthPow'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::lNormalPow',      TorqueScriptLua.getVar('$SSAOPostFx::lNormalPow'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::lNormalTol',      TorqueScriptLua.getVar('$SSAOPostFx::lNormalTol'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::lRadius',         TorqueScriptLua.getVar('$SSAOPostFx::lRadius'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::lStrength',       TorqueScriptLua.getVar('$SSAOPostFx::lStrength'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::overallStrength', TorqueScriptLua.getVar('$SSAOPostFx::overallStrength'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::quality',         TorqueScriptLua.getVar('$SSAOPostFx::quality'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::sDepthMax',       TorqueScriptLua.getVar('$SSAOPostFx::sDepthMax'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::sDepthMin',       TorqueScriptLua.getVar('$SSAOPostFx::sDepthMin'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::sDepthPow',       TorqueScriptLua.getVar('$SSAOPostFx::sDepthPow'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::sNormalPow',      TorqueScriptLua.getVar('$SSAOPostFx::sNormalPow'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::sNormalTol',      TorqueScriptLua.getVar('$SSAOPostFx::sNormalTol'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::sRadius',         TorqueScriptLua.getVar('$SSAOPostFx::sRadius'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::SSAO::sStrength',       TorqueScriptLua.getVar('$SSAOPostFx::sStrength'))
+  VariableRegistry.set("$PostFXManager::Settings::SSAO::Enable",          VariableRegistry.get("$SSAOPostFx::Enable"))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::blurDepthTol',    VariableRegistry.get('$SSAOPostFx::blurDepthTol'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::blurNormalTol',   VariableRegistry.get('$SSAOPostFx::blurNormalTol'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::lDepthMax',       VariableRegistry.get('$SSAOPostFx::lDepthMax'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::lDepthMin',       VariableRegistry.get('$SSAOPostFx::lDepthMin'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::lDepthPow',       VariableRegistry.get('$SSAOPostFx::lDepthPow'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::lNormalPow',      VariableRegistry.get('$SSAOPostFx::lNormalPow'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::lNormalTol',      VariableRegistry.get('$SSAOPostFx::lNormalTol'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::lRadius',         VariableRegistry.get('$SSAOPostFx::lRadius'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::lStrength',       VariableRegistry.get('$SSAOPostFx::lStrength'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::overallStrength', VariableRegistry.get('$SSAOPostFx::overallStrength'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::quality',         VariableRegistry.get('$SSAOPostFx::quality'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::sDepthMax',       VariableRegistry.get('$SSAOPostFx::sDepthMax'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::sDepthMin',       VariableRegistry.get('$SSAOPostFx::sDepthMin'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::sDepthPow',       VariableRegistry.get('$SSAOPostFx::sDepthPow'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::sNormalPow',      VariableRegistry.get('$SSAOPostFx::sNormalPow'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::sNormalTol',      VariableRegistry.get('$SSAOPostFx::sNormalTol'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::sRadius',         VariableRegistry.get('$SSAOPostFx::sRadius'))
+  VariableRegistry.set('$PostFXManager::Settings::SSAO::sStrength',       VariableRegistry.get('$SSAOPostFx::sStrength'))
 end
 
 local function settingsApplyHDR()
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::Enable',                  TorqueScriptLua.getVar('$HDRPostFX::Enable'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::adaptRate',               TorqueScriptLua.getVar('$HDRPostFX::adaptRate'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::blueShiftColor',          TorqueScriptLua.getVar('$HDRPostFX::blueShiftColor'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::brightPassThreshold',     TorqueScriptLua.getVar('$HDRPostFX::brightPassThreshold'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::enableBloom',             TorqueScriptLua.getVar('$HDRPostFX::enableBloom'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::enableBlueShift',         TorqueScriptLua.getVar('$HDRPostFX::enableBlueShift'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::enableToneMapping',       TorqueScriptLua.getVar('$HDRPostFX::enableToneMapping'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::gaussMean',               TorqueScriptLua.getVar('$HDRPostFX::gaussMean'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::gaussMultiplier',         TorqueScriptLua.getVar('$HDRPostFX::gaussMultiplier'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::gaussStdDev',             TorqueScriptLua.getVar('$HDRPostFX::gaussStdDev'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::keyValue',                TorqueScriptLua.getVar('$HDRPostFX::keyValue'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::minLuminace',             TorqueScriptLua.getVar('$HDRPostFX::minLuminace'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::whiteCutoff',             TorqueScriptLua.getVar('$HDRPostFX::whiteCutoff'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::colorCorrectionStrength', TorqueScriptLua.getVar('$HDRPostFX::colorCorrectionStrength'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::HDR1::ColorCorrectionRamp2',    TorqueScriptLua.getVar('$HDRPostFX::colorCorrectionRamp'))
-end
-
-local function settingsApplyLightRays()
-  TorqueScriptLua.setVar('$PostFXManager::Settings::LightRays::Enable',       TorqueScriptLua.getVar('$LightRayPostFX::Enable'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::LightRays::brightScalar', TorqueScriptLua.getVar('$LightRayPostFX::brightScalar'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::Enable',                  VariableRegistry.get('$HDRPostFX::Enable'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::adaptRate',               VariableRegistry.get('$HDRPostFX::adaptRate'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::blueShiftColor',          VariableRegistry.get('$HDRPostFX::blueShiftColor'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::brightPassThreshold',     VariableRegistry.get('$HDRPostFX::brightPassThreshold'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::enableBloom',             VariableRegistry.get('$HDRPostFX::enableBloom'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::enableBlueShift',         VariableRegistry.get('$HDRPostFX::enableBlueShift'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::enableToneMapping',       VariableRegistry.get('$HDRPostFX::enableToneMapping'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::gaussMean',               VariableRegistry.get('$HDRPostFX::gaussMean'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::gaussMultiplier',         VariableRegistry.get('$HDRPostFX::gaussMultiplier'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::gaussStdDev',             VariableRegistry.get('$HDRPostFX::gaussStdDev'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::keyValue',                VariableRegistry.get('$HDRPostFX::keyValue'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::minLuminace',             VariableRegistry.get('$HDRPostFX::minLuminace'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::whiteCutoff',             VariableRegistry.get('$HDRPostFX::whiteCutoff'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::colorCorrectionStrength', VariableRegistry.get('$HDRPostFX::colorCorrectionStrength'))
+  VariableRegistry.set('$PostFXManager::Settings::HDR1::ColorCorrectionRamp2',    VariableRegistry.get('$HDRPostFX::colorCorrectionRamp', ""))
 end
 
 local function settingsApplyDOF()
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::Enable',           TorqueScriptLua.getVar('$DOFPostFx::Enable'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::EnableDebugMode',  TorqueScriptLua.getVar('$DOFPostFx::EnableDebugMode'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::BlurNear',         TorqueScriptLua.getVar('$DOFPostFx::BlurMin'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::BlurFar',          TorqueScriptLua.getVar('$DOFPostFx::BlurMax'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::FocusAperture',    TorqueScriptLua.getVar('$DOFPostFx::FocusRangeMin'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::FocusDistance',    TorqueScriptLua.getVar('$DOFPostFx::FocusRangeMax'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::BlurCurveNear',    TorqueScriptLua.getVar('$DOFPostFx::BlurCurveNear'))
-  TorqueScriptLua.setVar('$PostFXManager::Settings::DOF::BlurCurve',        TorqueScriptLua.getVar('$DOFPostFx::BlurCurveFar'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::Enable',           VariableRegistry.get('$DOFPostFx::Enable'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::EnableDebugMode',  VariableRegistry.get('$DOFPostFx::EnableDebugMode'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::EnableAutoFocus',  normalizeBoolean(VariableRegistry.get('$DOFPostFx::EnableAutoFocus'), false))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::BlurNear',         VariableRegistry.get('$DOFPostFx::BlurMin'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::BlurFar',          VariableRegistry.get('$DOFPostFx::BlurMax'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::FocusAperture',    VariableRegistry.get('$DOFPostFx::FocusRangeMin'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::FocusDistance',    VariableRegistry.get('$DOFPostFx::FocusRangeMax'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::BlurCurveNear',    VariableRegistry.get('$DOFPostFx::BlurCurveNear'))
+  VariableRegistry.set('$PostFXManager::Settings::DOF::BlurCurve',        VariableRegistry.get('$DOFPostFx::BlurCurveFar'))
 end
 
 M.settingsApplyAll = function()
   -- Apply settings which control if effects are on/off altogether.
-  TorqueScriptLua.setVar("$PostFXManager::Settings::EnablePostFX", TorqueScriptLua.getBoolVar("$PostFX::Enabled"))
+  VariableRegistry.set("$PostFXManager::Settings::EnablePostFX", VariableRegistry.get("$PostFX::Enabled"))
 
   -- Apply settings should save the values in the system to the
   -- the preset structure ($PostFXManager::Settings::*)
@@ -450,8 +483,6 @@ M.settingsApplyAll = function()
   settingsApplySSAO()
   -- HDR settings
   settingsApplyHDR()
-  -- Light rays settings
-  settingsApplyLightRays()
   -- DOF
   settingsApplyDOF()
 

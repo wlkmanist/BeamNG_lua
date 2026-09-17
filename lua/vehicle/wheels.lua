@@ -19,9 +19,12 @@ M.rotatorCount = 0
 M.wheelPower = 0
 M.wheelTorque = 0
 
+M.brakeSurfaceTempOverride = nil
+
 local max, min, abs = math.max, math.min, math.abs
 local random = math.random
 local pi = math.pi
+local twoPi = math.pi * 2
 local exp = math.exp
 
 local kelvinToCelsius = -273.15
@@ -180,7 +183,7 @@ local function updateThermalsGFX(dt)
   for i = 0, initialWheelRotatorCountDec do
     local wd = M.wheelRotators[i]
     local brakeSquealVolume, brakeSquealPitch, brakeSquealColor = 0, 0, 0
-    if wd.enableBrakeThermals and not wd.isBroken then
+    if wd.enableBrakeThermals then
       local isUnderWater = 1 + (obj:inWater(wd.node1) and wd.underwaterSurfaceCoolingCoef or 0)
       local isRotatingBrakeCouple = wd.obj:isRotatingBrakeCouple() --0,1 coef based on instability detection of the wheel AV inside the core
       local avBrakeCouple = wd.angularVelocityBrakeCouple * isRotatingBrakeCouple
@@ -200,9 +203,9 @@ local function updateThermalsGFX(dt)
       local energyBrakeSurfaceToCore = (wd.brakeSurfaceTemperature - wd.brakeCoreTemperature) * wd.kSurfaceToCore * wd.brakeCoolingArea
       local energyBrakeCoreToAir = (wd.brakeCoreTemperature - tEnv) * coreCooling * wd.brakeCoolingArea
       local fireTemperature, fireDistance = fire.getClosestHotNodeTempDistance(wd.node1)
-      local energyFireToDiskSurface = max((fireTemperature - wd.brakeSurfaceTemperature) * 20 * max(10 - fireDistance, 0), 0)
+      local energyFireToDiskSurface = max((fireTemperature - wd.brakeSurfaceTemperature) * 5 * max(10 - fireDistance, 0), 0)
 
-      wd.brakeSurfaceTemperature = max(wd.brakeSurfaceTemperature + ((energyToBrakeSurface + energyFireToDiskSurface) - (energyBrakeSurfaceToAir + energyRadiationToAir + energyBrakeSurfaceToCore)) * (dt * wd.brakeSurfaceEnergyCoef), tEnv)
+      wd.brakeSurfaceTemperature = M.brakeSurfaceTempOverride or max(wd.brakeSurfaceTemperature + ((energyToBrakeSurface + energyFireToDiskSurface) - (energyBrakeSurfaceToAir + energyRadiationToAir + energyBrakeSurfaceToCore)) * (dt * wd.brakeSurfaceEnergyCoef), tEnv)
       wd.brakeCoreTemperature = max(wd.brakeCoreTemperature + (energyBrakeSurfaceToCore - energyBrakeCoreToAir) * (dt * wd.brakeCoreEnergyCoef), tEnv)
 
       wd.isBrakeMolten = wd.brakeCoreTemperature > wd.brakeMeltingPoint or wd.isBrakeMolten
@@ -219,6 +222,8 @@ local function updateThermalsGFX(dt)
       electrics.values.wheelThermals[wd.name].brakeSurfaceTemperature = wd.brakeSurfaceTemperature
       electrics.values.wheelThermals[wd.name].brakeCoreTemperature = wd.brakeCoreTemperature
       electrics.values.wheelThermals[wd.name].brakeThermalEfficiency = wd.brakeThermalEfficiency
+
+      electrics.values[wd.brakeGlowElectricsName] = linearScale(wd.brakeSurfaceTemperature, wd.brakeGlowTempStart, wd.brakeGlowTempEnd, 0, 1)
 
       if slopeSwitchBit < 1 and thermalEfficiency <= brakeSmokeEfficiencyThreshold then
         wd.smokeParticleTick = wd.smokeParticleTick > 1 and 0 or wd.smokeParticleTick + dt * 50 * min((brakeSmokeEfficiencyThreshold - thermalEfficiency), 0.08)
@@ -257,61 +262,33 @@ local function updateThermalsGFX(dt)
       wd.brakeSquealLoop:setVolumePitch(brakeSquealVolume, brakeSquealPitch, brakeSquealColor, 1)
 
       if updateGUI then
-        if wheelInfo[wd.name] then
-          local wi = wheelInfo[wd.name]
-          wi.energyToBrakeSurface = energyToBrakeSurface
-          wi.brakeSurfaceTemperature = wd.brakeSurfaceTemperature
-          wi.brakeCoreTemperature = wd.brakeCoreTemperature
-          wi.surfaceCooling = surfaceCooling
-          wi.coreCooling = coreCooling
-          wi.energyBrakeSurfaceToAir = energyBrakeSurfaceToAir
-          wi.energyBrakeSurfaceToCore = energyBrakeSurfaceToCore
-          wi.energyBrakeCoreToAir = energyBrakeCoreToAir
-          wi.energyRadiationToAir = energyRadiationToAir
-          wi.finalBrakeEfficiency = wd.brakeThermalEfficiency
-          wi.brakeThermalEfficiency = thermalEfficiency
-          wi.padGlazingFactor = wd.padGlazingFactor
-          wi.slopeSwitchBit = slopeSwitchBit
-          wi.brakeType = wd.brakeType
-          wi.padMaterial = wd.padMaterial
-        else
-          wheelInfo[wd.name] = {
-            energyToBrakeSurface = energyToBrakeSurface,
-            brakeSurfaceTemperature = wd.brakeSurfaceTemperature,
-            brakeCoreTemperature = wd.brakeCoreTemperature,
-            surfaceCooling = surfaceCooling,
-            coreCooling = coreCooling,
-            energyBrakeSurfaceToAir = energyBrakeSurfaceToAir,
-            energyBrakeSurfaceToCore = energyBrakeSurfaceToCore,
-            energyBrakeCoreToAir = energyBrakeCoreToAir,
-            energyRadiationToAir = energyRadiationToAir,
-            finalBrakeEfficiency = wd.brakeThermalEfficiency,
-            brakeThermalEfficiency = thermalEfficiency,
-            padGlazingFactor = wd.padGlazingFactor,
-            slopeSwitchBit = slopeSwitchBit,
-            brakeType = wd.brakeType,
-            padMaterial = wd.padMaterial
-          }
+        -- Get tire temperature and pressure data
+        local tirePressure = 0
+        if wd.pressureGroup and v.data.pressureGroups and v.data.pressureGroups[wd.pressureGroup] then
+          tirePressure = obj:getGroupPressure(v.data.pressureGroups[wd.pressureGroup])
         end
+
+        wheelInfo[wd.name] = wheelInfo[wd.name] or {}
+        local wi = wheelInfo[wd.name]
+        wi.energyToBrakeSurface = energyToBrakeSurface
+        wi.brakeSurfaceTemperature = wd.brakeSurfaceTemperature
+        wi.brakeCoreTemperature = wd.brakeCoreTemperature
+        wi.surfaceCooling = surfaceCooling
+        wi.coreCooling = coreCooling
+        wi.energyBrakeSurfaceToAir = energyBrakeSurfaceToAir
+        wi.energyBrakeSurfaceToCore = energyBrakeSurfaceToCore
+        wi.energyBrakeCoreToAir = energyBrakeCoreToAir
+        wi.energyRadiationToAir = energyRadiationToAir
+        wi.finalBrakeEfficiency = wd.brakeThermalEfficiency
+        wi.brakeThermalEfficiency = thermalEfficiency
+        wi.padGlazingFactor = wd.padGlazingFactor
+        wi.slopeSwitchBit = slopeSwitchBit
+        wi.brakeType = wd.brakeType
+        wi.padMaterial = wd.padMaterial
+        wi.tireAvgTemperature = obj:getWheelAvgTemperature(wd.wheelID)
+        wi.tireCoreTemperature = obj:getWheelCoreTemperature(wd.wheelID)
+        wi.tirePressure = tirePressure
       end
-    elseif wd.enableBrakeThermals and wd.isBroken and updateGUI then
-      wheelInfo[wd.name] = {
-        energyToBrakeSurface = 0,
-        brakeSurfaceTemperature = 0,
-        brakeCoreTemperature = 0,
-        surfaceCooling = 0,
-        coreCooling = 0,
-        energyBrakeSurfaceToAir = 0,
-        energyBrakeSurfaceToCore = 0,
-        energyBrakeCoreToAir = 0,
-        energyRadiationToAir = 0,
-        finalBrakeEfficiency = 0,
-        brakeThermalEfficiency = 0,
-        padGlazingFactor = 0,
-        slopeSwitchBit = 0,
-        brakeType = wd.brakeType,
-        padMaterial = wd.padMaterial
-      }
     end
     if wd.brakeSquealLoop then
       wd.brakeSquealLoop:setVolumePitch(brakeSquealVolume, brakeSquealPitch, brakeSquealColor, 1) --always update brake squeal, even if broken
@@ -338,8 +315,82 @@ local function updateWheelsGFX(dt)
 
     wd.dynamicRadius = wd.dynamicRadiusSmoother:get(wd.lastTreadContactNode and obj:nodeLineSectionDistance(wd.lastTreadContactNode, wd.node1, wd.node2) or wd.radius, dt)
 
-    if wd.contactMaterialID1 == 32 or wd.contactMaterialID2 == 32 then
-      beamstate.deflateTire(wd.cid)
+    --check for spike strip groundmodel
+    if (wd.contactMaterialID1 == 32 or wd.contactMaterialID2 == 32) and not wd.isPunctured and not wd.isTireDeflated then
+      if not v.data.pressureGroups[wd.pressureGroup] then
+        wd.isPunctured = false
+        beamstate.deflateTire(wd.cid)
+      else
+        --puncture tire
+        wd.isPunctured = true
+        wd.punctureAngle = 0 --start angle tracking at 0
+        if wd.tirePunctureSoundEvent then
+          wd.tirePunctureLoop = obj:createSFXSource2(wd.tirePunctureSoundEvent, "AudioDefaultLoop3D", "", wd.node1, 0)
+          obj:playSFX(wd.tirePunctureLoop)
+        end
+      end
+      guihooks.message({txt = "vehicle.wheels.tirePunctured", context = {wheelName = wd.name}}, 5, "vehicle.damage.tirePunctured." .. wd.name)
+    end
+
+    if wd.isPunctured then
+      --track wheel angle for puncture sound volume difference
+      wd.punctureAngle = wd.punctureAngle + clamp(wd.angularVelocity, -100, 100) * dt
+      if abs(wd.punctureAngle) >= twoPi then --reset angle past 2pi
+        wd.punctureAngle = wd.punctureAngle - twoPi * sign(wd.punctureAngle)
+      end
+
+      local minPressure = 105000 --min pressure we want to fall down to, this is similarly hardcoded in other places
+      local currentPressure = obj:getGroupPressure(v.data.pressureGroups[wd.pressureGroup])
+      currentPressure = clamp(currentPressure - wd.punctureLeakRate * dt, minPressure, currentPressure) --reduce target pressure
+      obj:setGroupPressure(v.data.pressureGroups[wd.pressureGroup], currentPressure) --apply new pressure
+
+      --calculate "how" deflated the tire is
+      --this is required to be gradual as otherwise the final "deflate" from beamstate has way too much effect
+      local beamCoef = linearScale(currentPressure, minPressure, wd.startingPressure, 0.1, 1)
+
+      --once we reach our desired minimum pressure, call the deflate function to finialize the tire leak
+      if currentPressure <= minPressure then
+        beamstate.deflateTire(wd.cid)
+        wd.isPunctured = false
+        if wd.tirePunctureLoop then
+          obj:stopSFX(wd.tirePunctureLoop)
+        end
+        wd.punctureAngle = 0
+      end
+
+      --update beam properties based on the beam coef
+      local wheelData = v.data.wheels[wd.cid]
+      if wheelData.treadBeams ~= nil then
+        for _, beamcid in pairs(wheelData.treadBeams) do
+          obj:setBeamSpringDamp(beamcid, v.data.beams[beamcid].beamSpring * beamCoef, 2, -1, -1)
+        end
+      end
+
+      if wheelData.sideBeams ~= nil then
+        for _, beamcid in pairs(wheelData.sideBeams) do
+          obj:setBeamSpringDamp(beamcid, 0, 10, -1, -1)
+        end
+      end
+
+      if wheelData.peripheryBeams ~= nil then
+        for _, beamcid in pairs(wheelData.peripheryBeams) do
+          obj:setBeamSpringDamp(beamcid, v.data.beams[beamcid].beamSpring * beamCoef, 2, -1, -1)
+        end
+      end
+
+      if wheelData.reinfBeams ~= nil then
+        for _, beamcid in pairs(wheelData.reinfBeams) do
+          obj:setBeamSpringDamp(beamcid, v.data.beams[beamcid].beamSpring * beamCoef, 0.7, 0, 0)
+        end
+      end
+
+      local punctureVolume = linearScale(currentPressure, minPressure, wd.startingPressure, 0, 1) --volume is based on pressure
+      local puncturePitch = linearScale(abs(wd.punctureAngle), 0, twoPi, 0, 1) --pitch is tracking the wheel angle so that fmod can apply some volume difference along the rotation
+      local punctureColor = linearScale(wd.tireVolume, 0, 1, 0, 5) or 0
+
+      if wd.tirePunctureLoop then
+        obj:setVolumePitchCT(wd.tirePunctureLoop, punctureVolume, puncturePitch, punctureColor, 1)
+      end
     end
   end
 
@@ -514,7 +565,6 @@ local function updateWheelVelocities(dt)
   local airspeedCutOffSpeed = 5
   local airspeedCutOff = airspeed > airspeedCutOffSpeed
 
-  local brake = electrics.values.brake or 0
   local parkingbrakeInput = input.parkingbrake or 0
   absActive = false
 
@@ -528,6 +578,7 @@ local function updateWheelVelocities(dt)
   for i = 0, initialWheelCountDec do
     local wd = wheels[i]
     if not wd.isBroken then
+      local brake = electrics.values[wd.brakeElectricsName] or 0
       wd.lastAngularVelocity = wd.angularVelocity
       wd.lastAngularVelocityBrakeCouple = wd.angularVelocityBrakeCouple
       local wav = wd.coreData
@@ -550,6 +601,7 @@ local function updateWheelVelocities(dt)
   for i = 0, initialRotatorCountDec do
     local wd = rotators[i]
     if not wd.isBroken then
+      local brake = electrics.values[wd.brakeElectricsName] or 0
       local wav = wd.coreData
       wd.lastAngularVelocity = wd.angularVelocity
       wd.lastAngularVelocityBrakeCouple = wd.angularVelocityBrakeCouple
@@ -571,8 +623,12 @@ local function updateWheelVelocities(dt)
   end
 
   local evals = electrics.values
-  evals.avgWheelAV = avgAV * invSpeedoWheelCount
-  evals.wheelspeed = abs(avgWheelSpeed) * invSpeedoWheelCount
+  avgAV = avgAV * invSpeedoWheelCount
+  avgAV = isnaninf(avgAV) and 0 or avgAV
+  evals.avgWheelAV = avgAV
+  avgWheelSpeed = abs(avgWheelSpeed) * invSpeedoWheelCount
+  avgWheelSpeed = isnaninf(avgWheelSpeed) and 0 or avgWheelSpeed
+  evals.wheelspeed = avgWheelSpeed
 
   brakeABSCoefLimits.left = brakeABSCoefLimitCache.left
   brakeABSCoefLimits.right = brakeABSCoefLimitCache.right
@@ -653,10 +709,21 @@ local function setWheelRotatorType(wheelID, rotatorType)
   M.wheelRotators[wheelID].rotatorType = rotatorType
 end
 
+local function deflateTire(wheelID)
+  M.wheelRotators[wheelID].isPunctured = true
+end
+
+local function deflateAllTires()
+  for i = 0, initialWheelRotatorCountDec do
+    M.wheelRotators[i].isPunctured = true
+  end
+end
+
 local function resetThermals()
   local tEnv = obj:getEnvTemperature() + kelvinToCelsius
   local startPreHeated = settings.getValue("startBrakeThermalsPreHeated")
   electrics.values.wheelThermals = {}
+  M.brakeSurfaceTempOverride = nil
 
   if brakeThermalsEnabled then
     for _, wd in pairs(M.wheelRotators) do
@@ -722,6 +789,8 @@ local function resetWheels()
     wd.slipErrorIntegral = 0
     wd.lastSlipError = 0
     wd.isBroken = false
+    wd.isPunctured = false
+    wd.punctureAngle = 0
     wd.absTimer = 0
 
     wd.propulsionTorque = 0
@@ -747,6 +816,9 @@ local function resetWheels()
     end
     if wd.initialParkingTorque then
       wd.parkingTorque = wd.initialParkingTorque
+    end
+    if wd.tirePunctureLoop then
+      obj:cutSFX(wd.tirePunctureLoop)
     end
   end
 
@@ -780,6 +852,8 @@ local function initThermals()
 
   local startPreHeated = settings.getValue("startBrakeThermalsPreHeated")
   electrics.values.wheelThermals = {}
+
+  M.brakeSurfaceTempOverride = nil
 
   for _, wd in pairs(M.wheelRotators) do
     if wd.enableBrakeThermals then
@@ -871,6 +945,8 @@ local function initThermals()
       wd.brakeSurfaceTemperature = startTemp
       wd.brakeCoreTemperature = startTemp
 
+      electrics.values[wd.brakeGlowElectricsName] = 0
+
       electrics.values.wheelThermals[wd.name] = {}
       electrics.values.wheelThermals[wd.name].brakeSurfaceTemperature = wd.brakeSurfaceTemperature
       electrics.values.wheelThermals[wd.name].brakeCoreTemperature = wd.brakeCoreTemperature
@@ -938,6 +1014,7 @@ local function initWheels()
         rayCount = wd.numRays,
         pressureGroup = wd.pressureGroup,
         isPropulsed = false, --powertrain.lua sets this to true for actually propulsed wheels
+        brakeElectricsName = wd.brakeElectricsName or "brake",
         brakeMass = wd.brakeMass,
         padMaterial = wd.padMaterial,
         padGlazingSusceptibility = wd.padGlazingSusceptibility,
@@ -970,6 +1047,11 @@ local function initWheels()
         lastSlipError = 0,
         slipRatioTarget = wd.absSlipRatioTarget or 0.18,
         isBroken = false,
+        isPunctured = false,
+        punctureAngle = 0,
+        punctureLeakRate = wd.punctureLeakRate or 20000, --Pa/s
+        tirePunctureSoundEvent = wd.tirePunctureSoundEvent or "event:>Vehicle>Failures>tire_leak",
+        startingPressure = (wd.pressurePSI or 105000) * 6894.76 + 101325, --convert to Pa and add atmospheric pressure (assumed to be this number in other places as well)
         isSpeedo = wd.speedo and 1 or (wd.speedo == nil and 1 or 0),
         hasABS = wd.enableABSactuator or wd.enableABS or false,
         absTimer = 0,
@@ -991,17 +1073,37 @@ local function initWheels()
         coreData = obj:getWheelFFI(wd.cid),
         brakeInputSplit = clamp(wd.brakeInputSplit or 1, 0, 1),
         brakeSplitCoef = clamp(wd.brakeSplitCoef or 1, 0, 1),
-        brakePressureDelay = newLinearSmoothing(physicsDt, (wd.brakeTorque or 0) / ((wd.brakePressureInDelay or 0.05) + 1e-30), (wd.brakeTorque or 0) / ((wd.brakePressureOutDelay or 0.1) + 1e-30)),
         brakeThermalEfficiency = 1,
         squealCoefNatural = wd.squealCoefNatural or 0,
         squealCoefLowSpeed = wd.squealCoefLowSpeed or 0,
         squealCoefGlazing = wd.squealCoefGlazing or 1,
-        tireSoundVolumeCoef = wd.tireSoundVolumeCoef or 1
+        tireSoundVolumeCoef = wd.tireSoundVolumeCoef or 1,
+        brakeGlowElectricsName = "brakeGlow_" .. wd.name,
+        brakeGlowTempStart = wd.brakeGlowTempStart or 600,
+        brakeGlowTempEnd = wd.brakeGlowTempEnd or 900
       }
       wheel.initialBrakeTorque = wheel.brakeTorque
-      wheel.invInitialBrakeTorque = 1 / wheel.brakeTorque
+      if wheel.brakeTorque > 0 then
+        wheel.invInitialBrakeTorque = 1 / wheel.brakeTorque
+      else
+        wheel.invInitialBrakeTorque = 0
+      end
       wheel.useDefaultBrakeInput = wd.useDefaultBrakeInput == nil and (wheel.rotatorType == "wheel" and true or false) or wd.useDefaultBrakeInput
       wheel.defaultBrakeInputUsageCoef = wheel.useDefaultBrakeInput and 1 or 0
+
+      --calculate brake pressure delay rates
+      --we need some smoothing in physics update because input changes at gfx rate
+      --in the past this was used with large values to simulate air brake systems, so it remains here for backwards compatibility
+      local brakePressureInRate = max(wd.brakeTorque or 0, wd.parkingTorque or 0) / ((wd.brakePressureInDelay or 0.04) + 1e-30)
+      local brakePressureOutRate = max(wd.brakeTorque or 0, wd.parkingTorque or 0) / ((wd.brakePressureOutDelay or 0.04) + 1e-30)
+      if brakePressureInRate == 0 then
+        brakePressureInRate = math.huge
+      end
+      if brakePressureOutRate == 0 then
+        brakePressureOutRate = math.huge
+      end
+
+      wheel.brakePressureDelay = newLinearSmoothing(physicsDt, brakePressureInRate, brakePressureOutRate)
 
       if wheel.pressureGroup and v.data.pressureGroups then
         wheel.pressureGroupId = v.data.pressureGroups[wheel.pressureGroup]
@@ -1075,7 +1177,7 @@ local function resetSecondStage()
 end
 
 local function initSecondStage()
-  if not v.data.refNodes or not v.data.nodes then
+  if not v.data.refNodes or not v.data.nodes or not v.data.nodes[v.data.refNodes[0].ref] then
     return
   end
 
@@ -1092,10 +1194,12 @@ local function initSecondStage()
   M.rotatorCount = 0
 
   local avgWheelPos = vec3(0, 0, 0)
+  local brakeEnabledWheelCount = 0
   for _, rotator in pairs(M.wheelRotators) do
     if rotator.brakeTorque > 0 then
       local wheelNodePos = v.data.nodes[rotator.node1].pos --find the wheel position
       avgWheelPos = avgWheelPos + wheelNodePos --sum up all positions
+      brakeEnabledWheelCount = brakeEnabledWheelCount + 1
     end
     if rotator.isSpeedo == 1 then
       speedoWheelCount = speedoWheelCount + 1
@@ -1117,7 +1221,11 @@ local function initSecondStage()
   invWheelCount = M.wheelCount > 0 and 1 / M.wheelCount or 0
   invSpeedoWheelCount = speedoWheelCount > 0 and 1 / speedoWheelCount or 0
   initialSpeedoWheelCount = speedoWheelCount
-  avgWheelPos = avgWheelPos * invWheelCount --make the average of all positions
+
+  --if we have any brake enabled wheels, use the average position of those to calculate the avg wheel pos
+  if brakeEnabledWheelCount > 0 then
+    avgWheelPos = avgWheelPos / brakeEnabledWheelCount
+  end
 
   local vectorForward = vec3(v.data.nodes[v.data.refNodes[0].ref].pos) - vec3(v.data.nodes[v.data.refNodes[0].back].pos) --vector facing forward
   local vectorUp = vec3(v.data.nodes[v.data.refNodes[0].up].pos) - vec3(v.data.nodes[v.data.refNodes[0].ref].pos)
@@ -1203,6 +1311,9 @@ M.nodeCollision = nodeCollision
 M.scaleBrakeTorque = scaleBrakeTorque
 M.isPhysicsStepUsed = isPhysicsStepUsed
 M.setWheelBrakeUpdate = setWheelBrakeUpdate
+
+M.deflateTire = deflateTire
+M.deflateAllTires = deflateAllTires
 
 M.updateABSCoef = updateABSCoef
 

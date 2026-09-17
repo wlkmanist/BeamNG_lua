@@ -88,9 +88,9 @@ local function blinkParts(dtReal, dtSim, dtRaw, vehicle)
   end
 end
 
-
+-- FIXME: use chosenPartsTree instead of chosenParts
 local function setVizRec(vehicle, partName, alpha, nonRec)
-  local part = vBundle.vdata.activeParts[partName]
+  local part = vBundle.vdata.activePartsData[partName]
   if not part then
     log('E', '', 'part not found: ' .. tostring(partName))
     return
@@ -138,7 +138,7 @@ local function updateVehicleData()
     return false
   end
   availableParts   = jbeamIO.getAvailableParts(vBundle.ioCtx)
-  slotMap          = jbeamIO.getAvailableSlotMap(vBundle.ioCtx)
+  slotMap          = jbeamIO.getAvailableSlotNameMap(vBundle.ioCtx)
 
   --dumpz({'vBundle = ', vBundle}, 3)
   --dumpz({'availableParts = ', availableParts}, 2)
@@ -196,7 +196,7 @@ local function selectPart(partName)
 
   selectedPartName = partName
 
-  local part = vBundle.vdata.activeParts[partName]
+  local part = vBundle.vdata.activePartsData[partName]
   if not part then
     log('E', '', 'part not found: ' .. tostring(partName))
     return
@@ -232,7 +232,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   text("****************************************************************************************************************")
   text("* Welcome to the ingame vehicle editor :D - usage: left/right/up/down to navigate. select: e, back: r, exit: g *")
   text("****************************************************************************************************************")
-  text(" " .. tostring(tableSize(vBundle.vdata.activeParts)) .. " active parts")
+  text(" " .. tostring(tableSize(vBundle.vdata.activePartsData)) .. " active parts")
   text(" " .. tostring(tableSize(availableParts)) .. " available parts")
   if selectedPartName then
     text(' ### selected part: ' .. selectedPartName .. ' ###')

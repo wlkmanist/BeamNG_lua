@@ -29,6 +29,7 @@ local followInitCounter = 0
 local loopCounter = 0
 local loopType = "alwaysReset"
 local externalForce = 0
+local externalForceDebug = {active = false, pos = vec3(), accel = vec3()}
 local hasCollided = false
 
 local logDataToCSV = nil
@@ -354,6 +355,7 @@ local function scriptStop(centerWheel, engageParkingbrake)
     logDataToCSV = nil
   end
 
+  ai.restoreSavedGearboxMode()
   script = {}
   M.updateGFX = nop
 end
@@ -497,6 +499,7 @@ local function updateGFXfollow(dt)
   targetLength = max(aiVelLen * 0.65, 3)
 
   local extForceVel = 0
+  externalForceDebug.active = false
 
   -- apply external force
   if externalForce ~= 0 and not hasCollided then
@@ -523,10 +526,13 @@ local function updateGFXfollow(dt)
         posAccel = posAccel + (reqVel * fwd - vel) * dt / clamp(posAccel:length() / max(1e-30, vel:dot(posAccel:normalized())), dt, 1)
         local posAccelL = posAccel:dot(fwd)
         local posAccelT = posAccel - posAccelL * fwd
-        posAccel = min(externalForce * 5, 1) * posAccelL * fwd + (externalForce * abs(a - 0.5) * 2) * posAccelT
-        posAccel = posAccel:projectToOriginPlane(up) / (dt * dt)
+        posAccel = min(externalForce, 1) * posAccelL * fwd + (externalForce * abs(a - 0.5) * 2) * posAccelT
+        posAccel = posAccel:projectToOriginPlane(up) / dt
         thrusters.applyAccel(posAccel, dt)
         extForceVel = posAccel:dot(fwd) * dt
+        externalForceDebug.active = true
+        externalForceDebug.pos:set(aiPos)
+        externalForceDebug.accel:set(posAccel)
         -- if s2.t-time<=dt then print((targetPos - aiPos):projectToOriginPlane(up):length()) end -- measure error
       end
     end
@@ -674,7 +680,8 @@ local function startFollowing(_inScript, _timeOffset, _loopCounter, _loopType, _
 
   -- _externalForce = true -- debug
   if _externalForce == nil then _externalForce = inScript.externalForce end
-  externalForce = _externalForce and (type(_externalForce) == 'number' and _externalForce or 0.0004) or 0
+  externalForce = _externalForce and (type(_externalForce) == 'number' and _externalForce or 1) or 0
+  externalForce = min(externalForce, 1)
   hasCollided = false
 
   loopType = _loopType or "alwaysReset"
@@ -784,12 +791,13 @@ local function startFollowing(_inScript, _timeOffset, _loopCounter, _loopType, _
   if dir then
     if loopType == "alwaysReset" or (loopType == "startReset" and loopCounter == totalLoopCount) then
       obj:requestReset(RESET_PHYSICS)
-      obj:queueGameEngineLua("be:getObjectByID(" .. tostring(obj:getId()) .. "):resetBrokenFlexMesh()")
+      obj:queueGameEngineLua("getObjectByID(" .. tostring(obj:getId()) .. "):resetBrokenFlexMesh()")
       local rot = quatFromDir(dir:cross(up):cross(up), up)
-      obj:queueGameEngineLua("be:getObjectByID(" .. obj:getId() .. "):autoplace(false);vehicleSetPositionRotation(" .. obj:getId() .. "," .. pos.x .. "," .. pos.y .. "," .. pos.z .. "," .. rot.x .. "," .. rot.y .. "," .. rot.z .. "," .. rot.w .. ")")
+      obj:queueGameEngineLua("getObjectByID(" .. obj:getId() .. "):autoplace(false);vehicleSetPositionRotation(" .. obj:getId() .. "," .. pos.x .. "," .. pos.y .. "," .. pos.z .. "," .. rot.x .. "," .. rot.y .. "," .. rot.z .. "," .. rot.w .. ")")
     end
 
     if controller.mainController then
+      ai.saveGearboxMode()
       controller.mainController.setGearboxMode("arcade")
     end
 
@@ -815,6 +823,13 @@ local function debugDraw()
   if M.debugMode == "all" or M.debugMode == "path" then
     for _, s in ipairs(script) do
       debugDrawer:drawSphere(0.2, vec3(s), color(255, 0, 0, 255))
+    end
+  end
+
+  if M.debugMode == "all" or M.debugMode == "externalForce" then
+    if M.updateGFX == updateGFXfollow and externalForceDebug.active then
+      debugDrawer:drawSphere(0.15, externalForceDebug.pos, color(255, 165, 0, 255))
+      debugDrawer:drawCylinder(externalForceDebug.pos, externalForceDebug.pos + externalForceDebug.accel * 0.2, 0.03, color(255, 165, 0, 255))
     end
   end
 end

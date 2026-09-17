@@ -1,0 +1,10 @@
+[
+  ["/user/hand/left/input/aim/pose", "XR_ACTION_TYPE_POSE_INPUT", "aimPose"],
+  ["/user/hand/left/input/grip/pose", "XR_ACTION_TYPE_POSE_INPUT", "gripPose"],
+  ["/user/hand/left/input/select/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis0"],
+  ["/user/hand/left/input/squeeze/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis1"],
+  ["/user/hand/right/input/aim/pose", "XR_ACTION_TYPE_POSE_INPUT", "aimPose"],
+  ["/user/hand/right/input/grip/pose", "XR_ACTION_TYPE_POSE_INPUT", "gripPose"],
+  ["/user/hand/right/input/select/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis2"],
+  ["/user/hand/right/input/squeeze/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis3"]
+]

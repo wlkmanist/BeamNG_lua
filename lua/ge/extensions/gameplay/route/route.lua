@@ -3,11 +3,34 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local C = {}
-local onPathDist = 15
+local onPathDist = 18
+local pathJobMaxDt = 0.00000000001
+
+local function logRouteJobDuration(label, t0)
+  log('I', 'route', string.format('%s: route calculated in %.3f s', label, os.clock() - t0))
+end
+
+local routeDebugPathJobs = true
+local function debugLog(...)
+  if not routeDebugPathJobs then return end
+  local n = select('#', ...)
+  if n == 0 then return end
+  local parts = { ... }
+  local s = tostring(parts[1])
+  for i = 2, n do
+    s = s .. ' ' .. tostring(parts[i])
+  end
+  log('I', 'route', s)
+end
+debugLog = nop
 
 function C:init()
   self.path = {}
   self.dirMult = 1e3
+  self.distance = 0
+  self._pathMultiJobHandle = nil
+  self._recalculateJobHandle = nil
+  self._recalculateAnchorPos = nil
 end
 
 function C:setRouteParams(cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wD, wZ)
@@ -30,7 +53,7 @@ local function fixStartEnd(p, a, b)
 
   a.distToTarget = a.pos:distance(b.pos) + (b.distToTarget or 0)
 
-  profilerPopEvent()
+  profilerPopEvent("Route - fixStartEnd")
 end
 
 function C:stepAhead(stepDist, reset) -- returns data from a distance along the route (and also saves the last position, to optimize for looping)
@@ -61,11 +84,17 @@ end
 
 function C:calcDistance()
   local dist = 0
+  if self.path[1] then self.path[1].distToTarget = 0 end
+  if not self.path[2] then
+    self.distance = dist
+    return dist
+  end
   for i = #self.path, 2, -1 do
     self.path[i].distToTarget = dist
     dist = dist + self.path[i].pos:distance(self.path[i - 1].pos)
   end
   self.path[1].distToTarget = dist
+  self.distance = dist
 
   return dist
 end
@@ -87,65 +116,140 @@ function C:setupPathMultiWaypoints(wpList)
   end
 
   self:calcDistance()
-  profilerPopEvent()
+  profilerPopEvent("Route - setupPathMultiWaypoints")
 end
 
-function C:setupPathMulti(positions)
+-- getPathFn(from, to) -> node path array (sync getPointToPointPath or job-based getPointToPointPathJob from a jobsystem coroutine)
+-- Returns the built path table; does not assign self.path (so async jobs can swap only when finished).
+local function runSetupPathMultiBuild(self, positions, getPathFn)
   profilerPushEvent("Route - setupPathMulti")
-  table.clear(self.path)
-  table.insert(self.path, {pos = positions[1], wp = nil})
+  local path = {}
+  table.insert(path, {pos = vec3(positions[1]), wp = nil})
   for i = 1, #positions-1 do
     local from, to = positions[i], positions[i+1]
     profilerPushEvent("Route - get point to point")
-    local path = map.getPointToPointPath(from, to, self.cutOffDrivability, self.dirMult, self.penaltyAboveCutoff, self.penaltyBelowCutoff, self.wD, self.wZ)
-    profilerPopEvent()
-    local lastIdx = #self.path
-    for i, p in ipairs(path) do
-      table.insert(self.path, {pos = map.getMap().nodes[p].pos, wp = p, linkCount = map.getNodeLinkCount(p)})
+    local nodePath = getPathFn(from, to)
+    profilerPopEvent("Route - get point to point")
+    local lastIdx = #path
+    for _, p in ipairs(nodePath) do
+      table.insert(path, {pos = map.getMap().nodes[p].pos, wp = p, linkCount = map.getNodeLinkCount(p)})
     end
-    table.insert(self.path, {pos = to, wp = nil, fixed = true})
-    if #self.path >= 3 and #path >= 2 then
-      fixStartEnd(self.path[lastIdx], self.path[lastIdx+1], self.path[lastIdx+2])
+    table.insert(path, {pos = vec3(to), wp = nil, fixed = true})
+    if #path >= 3 and #nodePath >= 2 then
+      fixStartEnd(path[lastIdx], path[lastIdx+1], path[lastIdx+2])
     end
-    if #self.path >= 3 and #path >= 2 then
-      fixStartEnd(self.path[#self.path], self.path[#self.path-1], self.path[#self.path-2])
+    if #path >= 3 and #nodePath >= 2 then
+      fixStartEnd(path[#path], path[#path-1], path[#path-2])
     end
   end
 
   -- merge too-close nodes into one and preserve fields wp and fixed
   local closeDistSquared = 1
-  local newPath = {self.path[1]}
-  local last = self.path[1]
-  for i = 2, #self.path do
-    local cur = self.path[i]
+  local newPath = {path[1]}
+  local last = path[1]
+  for i = 2, #path do
+    local cur = path[i]
     if cur.pos:squaredDistance(last.pos) <= closeDistSquared then
-      -- merge
       last.wp = last.wp or cur.wp
       last.fixed = last.fixed or cur.fixed
     else
-      -- skip
       last = cur
       table.insert(newPath, cur)
     end
   end
-  self.path = newPath
+  path = newPath
 
-  if #self.path >= 3 then
-    fixStartEnd(self.path[1], self.path[2], self.path[3])
-    --merge first two nodes if already on path
-    if self.path[1].pos:squaredDistance(self.path[2].pos) < onPathDist * onPathDist then
-      table.remove(self.path, 1)
+  if #path >= 3 then
+    fixStartEnd(path[1], path[2], path[3])
+    if path[1].pos:squaredDistance(path[2].pos) < onPathDist * onPathDist then
+      table.remove(path, 1)
     end
   end
-  if #self.path >= 3 then
-    fixStartEnd(self.path[#self.path], self.path[#self.path-1], self.path[#self.path-2])
+  if #path >= 3 then
+    fixStartEnd(path[#path], path[#path-1], path[#path-2])
   end
 
+  profilerPopEvent("Route - setupPathMulti")
+  return path
+end
+
+local function runSetupPathMulti(self, positions, getPathFn)
+  self.path = runSetupPathMultiBuild(self, positions, getPathFn)
   self:calcDistance()
-  profilerPopEvent()
+end
+
+function C:setupPathMulti(positions)
+  local inst = self
+  runSetupPathMulti(inst, positions, function(from, to)
+    return map.getPointToPointPath(from, to, inst.cutOffDrivability, inst.dirMult, inst.penaltyAboveCutoff, inst.penaltyBelowCutoff, inst.wD, inst.wZ)
+  end)
+end
+
+local function cancelPathMultiJob(inst)
+  local h = inst._pathMultiJobHandle
+  if h and h.running then
+    debugLog('setupPathMultiJob: cancel active path job')
+    extensions.core_jobsystem.cancelJob(h)
+    inst._pathMultiJobHandle = nil
+  end
+end
+
+local function cancelRecalculateJob(inst)
+  local h = inst._recalculateJobHandle
+  if h and h.running then
+    debugLog('recalculateRoute: cancel active recalculate job')
+    extensions.core_jobsystem.cancelJob(h)
+    inst._recalculateJobHandle = nil
+  end
+  inst._recalculateAnchorPos = nil
+end
+
+local function setRecalculateAnchor(inst, startPos)
+  if not inst._recalculateAnchorPos then
+    inst._recalculateAnchorPos = vec3()
+  end
+  inst._recalculateAnchorPos:set(startPos)
+end
+
+-- Same as setupPathMulti but pathfinding runs in core_jobsystem (yields between search steps). Optional onComplete(route) when done.
+-- self.path is updated only when the job finishes. If called again while a job is still active, the previous job is cancelled and replaced (warning logged).
+function C:setupPathMultiJob(positions, onComplete)
+  local inst = self
+  cancelRecalculateJob(inst)
+  local prev = inst._pathMultiJobHandle
+  if prev and prev.running then
+    log('W', 'route', 'setupPathMultiJob: previous path job still active; cancelling and replacing it')
+    debugLog('setupPathMultiJob: replacing previous path job')
+    extensions.core_jobsystem.cancelJob(prev)
+    inst._pathMultiJobHandle = nil
+  end
+  debugLog('setupPathMultiJob: scheduling, waypoints=', #positions)
+  local jobHandle = extensions.core_jobsystem.create(function(job, positions, onComplete)
+    local t0 = os.clock()
+    debugLog('setupPathMultiJob: job started (coroutine running)')
+    local newPath = runSetupPathMultiBuild(inst, positions, function(from, to)
+      return map.getPointToPointPathJob(job, from, to, inst.cutOffDrivability, inst.dirMult, inst.penaltyAboveCutoff, inst.penaltyBelowCutoff, inst.wD, inst.wZ)
+    end)
+    debugLog('setupPathMultiJob: build finished, path nodes=', #newPath)
+    inst.path = newPath
+    inst:calcDistance()
+    if onComplete then onComplete(inst) end
+    logRouteJobDuration('setupPathMultiJob', t0)
+    debugLog('setupPathMultiJob: work finished (before job exit)')
+  end, global_pathJobMaxDt or pathJobMaxDt, positions, onComplete)
+  inst._pathMultiJobHandle = jobHandle
+  jobHandle.setExitCallback(function(handle)
+    debugLog('setupPathMultiJob: job finished (exit callback, coroutine dead)')
+    if inst._pathMultiJobHandle == handle then
+      inst._pathMultiJobHandle = nil
+    end
+  end)
 end
 
 function C:clear()
+  cancelPathMultiJob(self)
+  cancelRecalculateJob(self)
+  self._recalculateAnchorPos = nil
   table.clear(self.path)
 end
 
@@ -155,16 +259,114 @@ function C:getNextFixedWP()
   end
 end
 
-function C:recalculateRoute(startPos)
-  profilerPushEvent("Route - recalculateRoute")
-  local fixedWps = {}
-  table.insert(fixedWps, startPos)
+function C:unflagFirstFixedNode()
   for _, wp in ipairs(self.path) do
-    if wp.fixed then table.insert(fixedWps, wp.pos) end
+    if wp.fixed then
+      wp.fixed = nil
+      return true
+    end
   end
-  self:setupPathMulti(fixedWps)
-  extensions.hook('onRecalculatedRoute')
-  profilerPopEvent()
+  return false
+end
+
+local function stitchRecalculateTail(path, savedTail)
+  if #path > 0 and path[#path].fixed then
+    table.remove(path, #path)
+  end
+  local closeDistSquared = 1
+  for _, wp in ipairs(savedTail) do
+    local last = path[#path]
+    if last and wp.pos:squaredDistance(last.pos) <= closeDistSquared then
+      last.wp = last.wp or wp.wp
+      last.fixed = last.fixed or wp.fixed
+    else
+      table.insert(path, wp)
+    end
+  end
+end
+
+function C:recalculateRoute(startPos)
+  debugLog('recalculateRoute: scheduling, startPos=', startPos)
+  profilerPushEvent("Route - recalculateRoute")
+
+  cancelPathMultiJob(self)
+  cancelRecalculateJob(self)
+
+  local fixedIdx
+  for i, wp in ipairs(self.path) do
+    if wp.fixed then
+      fixedIdx = i
+      break
+    end
+  end
+
+  local inst = self
+
+  if not fixedIdx then
+    local lastPos = self.path[#self.path] and self.path[#self.path].pos
+    if not lastPos then
+      profilerPopEvent("Route - recalculateRoute")
+      return
+    end
+    local positions = {startPos, lastPos}
+    debugLog('recalculateRoute: job (no fixed WP) queued, positions=', #positions)
+    local jobHandle = extensions.core_jobsystem.create(function(job, positions)
+      local t0 = os.clock()
+      debugLog('recalculateRoute: job started (no fixed WP), coroutine running')
+      local newPath = runSetupPathMultiBuild(inst, positions, function(from, to)
+        return map.getPointToPointPathJob(job, from, to, inst.cutOffDrivability, inst.dirMult, inst.penaltyAboveCutoff, inst.penaltyBelowCutoff, inst.wD, inst.wZ)
+      end)
+      debugLog('recalculateRoute: build finished (no fixed WP), path nodes=', #newPath)
+      inst.path = newPath
+      inst:calcDistance()
+      extensions.hook('onRecalculatedRoute')
+      logRouteJobDuration('recalculateRoute (no fixed WP)', t0)
+      debugLog('recalculateRoute: work finished (no fixed WP, before job exit)')
+    end, global_pathJobMaxDt or pathJobMaxDt, positions)
+    inst._recalculateJobHandle = jobHandle
+    setRecalculateAnchor(inst, startPos)
+    jobHandle.setExitCallback(function(handle)
+      debugLog('recalculateRoute: job finished (no fixed WP, exit callback, coroutine dead)')
+      if inst._recalculateJobHandle == handle then
+        inst._recalculateJobHandle = nil
+        inst._recalculateAnchorPos = nil
+      end
+    end)
+    profilerPopEvent("Route - recalculateRoute")
+    return
+  end
+
+  local savedTail = {}
+  for i = fixedIdx, #self.path do
+    table.insert(savedTail, self.path[i])
+  end
+  local positions = {startPos, savedTail[1].pos}
+
+  debugLog('recalculateRoute: job (fixed WP) queued, tailLen=', #savedTail)
+  local jobHandle = extensions.core_jobsystem.create(function(job, positions, savedTail)
+    local t0 = os.clock()
+    debugLog('recalculateRoute: job started (fixed WP), coroutine running')
+    local newPath = runSetupPathMultiBuild(inst, positions, function(from, to)
+      return map.getPointToPointPathJob(job, from, to, inst.cutOffDrivability, inst.dirMult, inst.penaltyAboveCutoff, inst.penaltyBelowCutoff, inst.wD, inst.wZ)
+    end)
+    stitchRecalculateTail(newPath, savedTail)
+    debugLog('recalculateRoute: build finished (fixed WP), path nodes=', #newPath)
+    inst.path = newPath
+    inst:calcDistance()
+    extensions.hook('onRecalculatedRoute')
+    logRouteJobDuration('recalculateRoute (fixed WP)', t0)
+    debugLog('recalculateRoute: work finished (fixed WP, before job exit)')
+  end, global_pathJobMaxDt or pathJobMaxDt, positions, savedTail)
+  inst._recalculateJobHandle = jobHandle
+  setRecalculateAnchor(inst, startPos)
+  jobHandle.setExitCallback(function(handle)
+    debugLog('recalculateRoute: job finished (fixed WP, exit callback, coroutine dead)')
+    if inst._recalculateJobHandle == handle then
+      inst._recalculateJobHandle = nil
+      inst._recalculateAnchorPos = nil
+    end
+  end)
+  profilerPopEvent("Route - recalculateRoute")
 end
 
 --local offPathDist = 25
@@ -179,6 +381,10 @@ function C:getPositionOffset(currentPos)
 
     if distSq > minDistance then break end
 
+    if self.lockFixedNodes and self.path[i].fixed then
+      break
+    end
+
     if distSq < onPathDist * onPathDist then
       minDistance = distSq
       lowIdx = i
@@ -186,7 +392,7 @@ function C:getPositionOffset(currentPos)
       break
     end
   end
-  profilerPopEvent()
+  profilerPopEvent("Route - getPositionOffset")
   return lowIdx, math.sqrt(totalMinDist)
 end
 
@@ -195,37 +401,53 @@ function C:shortenPath(idx)
   for i = 2, idx do
     table.remove(self.path, 1)
   end
-  profilerPopEvent()
+  profilerPopEvent("Route - shortenPath")
 end
 
 function C:trackVehicle(veh) return self:updatePathForPos(veh:getPosition()) end
 function C:trackCamera() return self:updatePathForPos(core_camera.getPosition()) end
 function C:trackPosition(pos) return self:updatePathForPos(pos) end
 
+local startEndPosTable = {pos = vec3()}
 function C:updatePathForPos(pos)
   profilerPushEvent("Route - updatePathForPos")
   -- are we there yet? no path or only one element remaining?
   if not next(self.path) or #self.path < 2 then
     self.done = true
-    profilerPopEvent()
+    profilerPopEvent("Route - updatePathForPos")
     return
   end
 
   -- did we pass any of the first positions, moving forward on the track?
-  local idx, minDistance = self:getPositionOffset(pos)
-  --
-  if idx == 0 and minDistance >= onPathDist then
-    -- re-do route
-    self:recalculateRoute(pos)
+  local idx, routeDist = self:getPositionOffset(pos)
+  local onPathDistSq = onPathDist * onPathDist
+
+  -- Close enough to the route line: cancel an in-flight async recalculation (back on route)
+  if routeDist < onPathDist then
+    cancelRecalculateJob(self)
+  elseif self._recalculateJobHandle and self._recalculateJobHandle.running and self._recalculateAnchorPos then
+    -- Still off-route but moved too far from where this recalculation started: redo from current position
+    if pos:squaredDistance(self._recalculateAnchorPos) > onPathDistSq then
+      print("recalculateRoute(pos)")
+      cancelRecalculateJob(self)
+      self:recalculateRoute(pos)
+    end
+  end
+
+  if idx == 0 and routeDist >= onPathDist then
+    if not (self._recalculateJobHandle and self._recalculateJobHandle.running) then
+      self:recalculateRoute(pos)
+    end
   elseif idx >= 2 then
     -- if we passed the first segment, truncate path accordingly
     self:shortenPath(idx)
   end
-  fixStartEnd({pos = pos}, self.path[1], self.path[2])
-
-  profilerPopEvent()
-
-  return idx, minDistance
+  if not (self.lockFixedNodes and self.path[1] and self.path[1].fixed) then
+    startEndPosTable.pos:set(pos)
+    fixStartEnd(startEndPosTable, self.path[1], self.path[2])
+  end
+  profilerPopEvent("Route - updatePathForPos")
+  return idx, routeDist
 end
 
 return function(...)

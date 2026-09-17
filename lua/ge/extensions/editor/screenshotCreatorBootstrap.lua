@@ -11,7 +11,7 @@ local function onWindowMenuItem()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("Vehicle Screenshot Creator", onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem("Vehicle Screenshot Creator", onWindowMenuItem, {groupMenuName = 'Vehicles'})
 end
 
 -- public interface

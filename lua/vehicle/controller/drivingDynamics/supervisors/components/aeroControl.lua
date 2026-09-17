@@ -36,7 +36,7 @@ end
 
 --returns true if component did act as yaw control
 --called from updateFixedStep
-local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, dt)
+local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, frontSlipAngle, rearSlipAngle, dt)
   M.isActingAsYC = false
   local requestReduceOversteer = false
   if controlParameters.yawControl.isEnabled then
@@ -46,7 +46,9 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
     M.isActingAsYC = requestReduceOversteer
   end
 
-  electrics.values.yawControlRequestReduceOversteer = sign(reduceOversteerSmoother:getUncapped(requestReduceOversteer and 1 or 0, dt))
+  local reduceOversteer = reduceOversteerSmoother:get(requestReduceOversteer and 1 or 0, dt)
+  electrics.values.yawControlRequestReduceOversteer = sign(reduceOversteer)
+
   return M.isActingAsYC
 end
 

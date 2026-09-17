@@ -24,8 +24,19 @@ C.tags = {}
 function C:work()
   if self.pinIn.cur.value then
     guihooks.trigger('RaceLapChange', {current = self.pinIn.cur.value, count = self.pinIn.max.value})
+    ui_apps_genericMissionData.setData({
+      title = "missions.missions.general.lap",
+      txt = self.pinIn.cur.value.." / "..self.pinIn.max.value,
+      category = "raceLaps",
+      style = "text",
+      order = 110,
+    })
   else
     guihooks.trigger('RaceLapClear')
+    ui_apps_genericMissionData.setData({
+      category = "raceLaps",
+      clear = true,
+    })
   end
 end
 

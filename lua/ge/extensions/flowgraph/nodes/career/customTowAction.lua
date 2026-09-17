@@ -29,19 +29,6 @@ function C:work(args)
   end
   table.clear(self.flags)
 end
---[[
-function C:_executionStarted()
-  if career_career.isActive() and career_modules_linearTutorial then
-    career_modules_linearTutorial.setTutorialFlag("customTowHookEnabled", true)
-  end
-end
-
-function C:_executionStopped()
-  if career_career.isActive() and career_modules_linearTutorial then
-    career_modules_linearTutorial.setTutorialFlag("customTowHookEnabled", false)
-  end
-end
-]]
 
 function C:onCareerCustomTowHook(poiId)
   self.flags.tow = true

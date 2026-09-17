@@ -63,6 +63,19 @@ local invTotalActuatorCapacity = 0
 -- Flow characteristics
 local dischargeCoefficient = 0.97 -- closer to 1.0 for rounded orifices, decreases with sharpness of edges
 local quickReleaseFlowRate = 0 -- m^3/s
+local brakeValveCrossSectionArea = 0 -- m^2
+
+local function getEffectiveFlowArea(primaryArea, secondaryArea)
+  if primaryArea <= 0 then
+    return 0
+  end
+  if not secondaryArea or secondaryArea <= 0 then
+    return primaryArea
+  end
+
+  -- Combine the pipe and the valve metering orifice as two restrictions in series.
+  return 1 / sqrt((1 / (primaryArea * primaryArea)) + (1 / (secondaryArea * secondaryArea)))
+end
 
 local function updateWheelBrakeABS(wd, brake, invAirspeed, airspeed, airspeedCutOff, dt)
   local absCoef = wheels.updateABSCoef(wd, brakeTorqueCoef, invAirspeed, airspeed, airspeedCutOff, dt)
@@ -92,7 +105,7 @@ local function updateServiceBrakes(dt)
   if actuatorPressure < regulatorPressure then
     local pressureDiff = max(0, tankPressure - actuatorPressure)
 
-    flowRate = dischargeCoefficient * brakePipeCrossSectionArea * sqrt(2 * pressureDiff / airDensity)
+    flowRate = dischargeCoefficient * brakeValveCrossSectionArea * sqrt(2 * pressureDiff / airDensity)
   elseif actuatorPressure > regulatorPressure + 1000 then -- small window of buffer
     -- if the absolute actuator pressure is more than twice the env pressure,
     -- flow rate is limited by the speed of sound, so we clamp the maximum to the constant quickReleaseFlowRate.
@@ -174,7 +187,7 @@ local function updateParkingBrake(dt)
   if springActuatorPressure < targetPressure then
     local pressureDiff = max(0, tankPressure - springActuatorPressure)
 
-    flowRate = dischargeCoefficient * brakePipeCrossSectionArea * sqrt(2 * pressureDiff / airDensity)
+    flowRate = dischargeCoefficient * brakeValveCrossSectionArea * sqrt(2 * pressureDiff / airDensity)
   elseif springActuatorPressure > targetPressure + 1000 then -- small window of buffer
     -- if the absolute actuator pressure is more than twice the env pressure,
     -- flow rate is limited by the speed of sound, so we clamp the maximum to the constant quickReleaseFlowRate.
@@ -361,6 +374,9 @@ local function init(jbeamData)
 
   brakePipeRadius = jbeamData.brakePipeRadius or 0.0075 -- m
   brakePipeCrossSectionArea = math.pi * brakePipeRadius ^ 2
+  local brakeValveRadius = jbeamData.brakeValveRadius or (brakePipeRadius * 0.2) -- m; models the brake valve metering orifice separately from the pipe bore
+  local brakeValveRestrictionArea = math.pi * brakeValveRadius ^ 2
+  brakeValveCrossSectionArea = getEffectiveFlowArea(brakePipeCrossSectionArea, brakeValveRestrictionArea)
 
   local brakeActuatorDiameter = jbeamData.brakeActuatorDiameter or 0.16 -- m
   local brakeActuatorStroke = jbeamData.brakeActuatorStroke or 0.0635 -- m

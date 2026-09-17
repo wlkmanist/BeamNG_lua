@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local C = {}
 
 local vecZero = vec3(0,0,0)
@@ -11,8 +14,6 @@ local outlineMarker = "art/shapes/interface/park_outline_marker.dae"
 
 local decalFadeStart, decalFadeEnd = 3.5, 6
 local decalFadeStartFocus, decalFadeEndFocus = 3.5, 6
--- icon renderer
-local iconRendererName = "markerIconRenderer"
 local lineColorF = ColorF(1,1,1,1)
 local colorAsLinear4F = ColorF(1,1,1,1):asLinear4F()
 local lineColorFFullAlpha = ColorF(1,1,1,1)
@@ -38,7 +39,7 @@ function C:init()
 end
 local outlineTmp
 function C:setup(cluster)
-  iconRendererObj = scenetree.findObjectById(self.iconRendererId)
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
 
   self.pos = cluster.pos or vecZero
   self.rot = cluster.rot or quatZero
@@ -237,7 +238,7 @@ function C:update(data)
       colorAsLinear4F.w = lineColorF.alpha
       outlineTmp.instanceColor = colorAsLinear4F
       outlineTmp:updateInstanceRenderData()
-      outlineTmp:setScaleXYZ(self.scl.x / 1, self.scl.y / 2.05, cruisingFactor * 0.2)
+      outlineTmp:setScaleXYZ(self.scl.x / 1, self.scl.y / 2.05, math.max(cruisingFactor * 0.2, 0.01))
     end
   end
   self.lastAlpha = cruisingFactor
@@ -300,16 +301,6 @@ end
 
 function C:createObjects()
   self:clearObjects()
-  iconRendererObj = scenetree.findObject(iconRendererName)
-  if not iconRendererObj then
-    iconRendererObj = createObject("BeamNGWorldIconsRenderer")
-    iconRendererObj:registerObject(iconRendererName);
-    iconRendererObj.maxIconScale = 2
-    iconRendererObj.mConstantSizeIcons = true
-    iconRendererObj.canSave = false
-    iconRendererObj:loadIconAtlas("core/art/gui/images/iconAtlas.png", "core/art/gui/images/iconAtlas.json");
-  end
-  self.iconRendererId = iconRendererObj:getId()
 end
 
 function C:hide()
@@ -322,12 +313,10 @@ function C:hide()
     outlineTmp:updateInstanceRenderData()
   end
 
-  if self.iconRendererId then
-    iconRendererObj = scenetree.findObject(self.iconRendererId)
-    if iconRendererObj and self.iconInfo then
-      playModeColorI.alpha = 0
-      self.iconInfo.color = playModeColorI
-    end
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+  if iconRendererObj and self.iconInfo then
+    playModeColorI.alpha = 0
+    self.iconInfo.color = playModeColorI
   end
 end
 
@@ -352,13 +341,11 @@ function C:clearObjects()
   self.outlineId = nil
 
   -- floating icon
-  if self.iconRendererId then
-    iconRendererObj = scenetree.findObject(self.iconRendererId)
-    if iconRendererObj and self.iconId then
-      iconRendererObj:removeIconById(self.iconId)
-      self.iconInfo = nil
-      self.iconId = nil
-    end
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+  if iconRendererObj and self.iconId then
+    iconRendererObj:removeIconById(self.iconId)
+    self.iconInfo = nil
+    self.iconId = nil
   end
 end
 
@@ -376,8 +363,68 @@ end
 -----------------------------------
 
 
+-- minimap
+local fillColor = color(72,125,249,255)
+function C:drawOnMinimap(td)
+  ui_apps_minimap_utils.simpleCircle(self.pos, fillColor)
+end
+--[[
+local radius, strikeWidth = 8, 3
+local topAngle = 0
+-- Create 6 vertices for hexagon (60 degrees apart)
+local hexagonVertices = {}
+for i = 0, 5 do
+  local angle = math.rad(topAngle + i * 60)
+  table.insert(hexagonVertices, vec3(math.sin(angle), math.cos(angle), 0))
+end
+local center = vec3()
+local a, b, c = vec3(), vec3(), vec3()
+local fillOrange = color(255,165,0,255)
+local strikeColor = color(255,255,255,255)
+local bgColor = color(255,255,255,255) -- white background
+function C:drawOnMinimap(td)
+  -- Convert center position to map coordinates
+  center:set(self.pos)
+  ui_apps_minimap_utils.worldToMapXYZ(center, center)
+  local color = fillColor
+  if self.icon == "poi_dropoff_round" then
+    color = fillOrange
+  end
 
+  -- Draw white background hexagon first (larger)
+  for i = 1, 6 do
+    local nextI = (i % 6) + 1
 
+    -- Triangle vertices: center, current vertex, next vertex
+    a:set(center)
+    b:set(center)
+    b.x = b.x + hexagonVertices[i].x * radius
+    b.y = b.y + hexagonVertices[i].y * radius
+    c:set(center)
+    c.x = c.x + hexagonVertices[nextI].x * radius
+    c.y = c.y + hexagonVertices[nextI].y * radius
+
+    td:triangle(a.x, a.y, b.x, b.y, c.x, c.y, 1, 2, bgColor, bgColor, bgColor, bgColor)
+  end
+
+  -- Draw smaller filled hexagon on top
+  local smallerRadius = radius -2 -- 80% of original size
+  for i = 1, 6 do
+    local nextI = (i % 6) + 1
+
+    -- Triangle vertices: center, current vertex, next vertex
+    a:set(center)
+    b:set(center)
+    b.x = b.x + hexagonVertices[i].x * smallerRadius
+    b.y = b.y + hexagonVertices[i].y * smallerRadius
+    c:set(center)
+    c.x = c.x + hexagonVertices[nextI].x * smallerRadius
+    c.y = c.y + hexagonVertices[nextI].y * smallerRadius
+
+    td:triangle(a.x, a.y, b.x, b.y, c.x, c.y, 1, 1, color, color, color, color)
+  end
+end
+]]
 
 
 function C:drawAxisBox(corner, x, y, z, clr)

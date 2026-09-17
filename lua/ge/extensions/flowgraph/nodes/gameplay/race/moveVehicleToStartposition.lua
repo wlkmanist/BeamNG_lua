@@ -6,7 +6,7 @@ local im  = ui_imgui
 
 local C = {}
 
-C.name = 'Move Veh to Start Pos'
+C.name = 'Move Veh to Start Position'
 C.description = 'Moves a vehicle to a starting position of a path.'
 C.category = 'repeat_instant'
 C.color = im.ImVec4(1, 1, 0, 0.75)
@@ -72,6 +72,7 @@ function C:work(args)
       self.mgr:logEvent("Could not find starting position!", "W", nil, { type = "node", node = self })
       return
     end
+
     self.pinOut.exists.value = true
     if self.pinIn.vehId.value then
       local pos, rot = sp:moveResetVehicleTo(self.pinIn.vehId.value, self.pinIn.lowPrecision.value or false, self.pinIn.repair.value)

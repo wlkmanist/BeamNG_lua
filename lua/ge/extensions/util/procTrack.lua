@@ -129,23 +129,21 @@ local function makeGymkhana(inParams)
   local path = nil
   local pathCounter = 0
   while path == nil do
-    local totalTS = [[
-        if(isObject("GymkhanaArena")) {
-            GymkhanaArena.delete();
-        }
-
-        MissionGroup.add(new SimGroup("GymkhanaArena") {
-          position = "]] .. params.rootX .. [[ ]] .. params.rootY .. [[ 0";
-
-        } );
-    ]]
-
     --log('I', logTag, "Arena object created.")
     -- create the baseGraph.
     local nodeCounter = 0
     local baseGraph = {nodes={}}
     while #baseGraph.nodes <  params.rectModeParams.numNodes  do
-      TorqueScript.eval(totalTS)
+      local gymkhanaarena = scenetree.findObject("GymkhanaArena")
+      if gymkhanaarena then
+        gymkhanaarena:delete()
+      end
+
+      gymkhanaarena = createObject("SimGroup")
+      gymkhanaarena:setField("position", 0, ""..params.rootX.." "..params.rootY .." 0")
+      gymkhanaarena:registerObject("GymkhanaArena")
+      scenetree.MissionGroup:add(gymkhanaarena)
+
       if nodeCounter > params.limits.nodeCreationCounter then
         log('E', logTag, "Could not create enough Nodes after "..params.limits.nodeCreationCounter.." Iterations. Maybe Settings are bad? Check params.rectModeParams")
         --log('W', logTag, params.rectModeParams)
@@ -318,42 +316,35 @@ local function makeBaseNodePositions()
         local r2 = graph.nodes[r2i.index]
       --dump(r.name .." :  ".. #r.neighbours)
       --for _,n in ipairs(r.neighbours) do
-        local roadTS = [[
-              GymkhanaArena.add(new DecalRoad() {
-              Material = "line_white_transparent";
-              textureLength = "5";
-              breakAngle = "1";
-              renderPriority = "10";
-              zBias = "-1";
-              startEndFade = "0 0";
-              position = "0 0 0";
-              rotation = "1 0 0 0";
-              scale = "1 1 1";
-              canSave = "1";
-              canSaveDynamicFields = "1";
-              drivability = "-1";
-              improvedSpline = "1";
-              startTangent = "0";
-              endTangent = "0";
-              detail = "0.1";
-              smoothness ="0.001";
-        ]]
 
-        local ret = ""
+        local decalRoad = createObject("DecalRoad")
+        decalRoad:setField("material", 0, "line_white_transparent")
+        decalRoad:setField("textureLength", 0, "5")
+        decalRoad:setField("breakAngle", 0, "1")
+        decalRoad:setField("renderPriority", 0, "10")
+        decalRoad:setField("zBias", 0, "-1")
+        decalRoad:setField("startEndFade", 0, "0 0")
+        decalRoad:setField("position", 0, "0 0 0")
+        decalRoad:setField("rotation", 0, "1 0 0 0")
+        decalRoad.scale = vec3(1,1,1)
+        decalRoad:setField("canSave", 0, "1")
+        decalRoad:setField("canSaveDynamicFields", 0, "1")
+        decalRoad:setField("drivability", 0, "-1")
+        decalRoad:setField("improvedSpline", 0, "1")
+        decalRoad:setField("startTangent", 0, "0")
+        decalRoad:setField("endTangent", 0, "0")
+        decalRoad:setField("detail", 0, "0.1")
+        decalRoad:setField("smoothness", 0, "0.001")
         local p = M.getPosition(r1.x,r1.y,0);
-        ret = ret..'Node="'..p.x..' '..p.y..' 0 1";'
+        decalRoad:setField("Node", 0, ""..p.x.." "..p.y.." 0 1")
         p = M.getPosition(r2.x,r2.y,0);
-        ret = ret..'Node="'..p.x..' '..p.y..' 0 0";'
+        decalRoad:setField("Node", 0, ""..p.x.." "..p.y.." 0 1")
+        decalRoad:registerObject()
 
-
-
-
-        roadTS = roadTS .. ret
-        roadTS = roadTS..'});';
-           --dump(roadTS)
-
-
-        TorqueScript.eval(roadTS)
+        local gymkhanaarena = scenetree.findObject("GymkhanaArena")
+        if gymkhanaarena then
+          gymkhanaarena:add(decalRoad)
+        end
       end
     end
   end
@@ -884,48 +875,42 @@ local function createWindingRoad(nodes)
       end
     end
 
-    local roadTS = [[
-          GymkhanaArena.add(new DecalRoad() {
-          Material = "]]..m..[[";
-          textureLength = "]]..(5*i)..[[";
-          breakAngle = "1";
-          renderPriority = "]]..(5-i)..[[";
-          zBias = "-1";
-          startEndFade = "0 0";
-          position = "0 0 0";
-          rotation = "1 0 0 0";
-          scale = "1 1 1";
-          canSave = "1";
-          canSaveDynamicFields = "1";
-          drivability = "-1";
-          improvedSpline = "1";
-          startTangent = "0";
-          endTangent = "0";
-          detail = "1";
-          smoothness = "0.01";
-      ]]
-
+    local decalRoad = createObject("DecalRoad")
+    decalRoad:setField("material", 0, m)
+    decalRoad:setField("textureLength", 0, ""..(5*i).."")
+    decalRoad:setField("breakAngle", 0, "1")
+    decalRoad:setField("renderPriority", 0, ""..(5-i).."")
+    decalRoad:setField("zBias", 0, "-1")
+    decalRoad:setField("startEndFade", 0, "0 0")
+    decalRoad:setField("position", 0, "0 0 0")
+    decalRoad:setField("rotation", 0, "1 0 0 0")
+    decalRoad.scale = vec3(1,1,1)
+    decalRoad:setField("canSave", 0, "1")
+    decalRoad:setField("canSaveDynamicFields", 0, "1")
+    decalRoad:setField("drivability", 0, "-1")
+    decalRoad:setField("improvedSpline", 0, "1")
+    decalRoad:setField("startTangent", 0, "0")
+    decalRoad:setField("endTangent", 0, "0")
+    decalRoad:setField("detail", 0, "1")
+    decalRoad:setField("smoothness", 0, "0.01")
     if params.path.closed then
-      roadTS = roadTS .. [[
-          looped = "1";
-      ]]
+      decalRoad:setField("looped", 0, "1")
     end
 
-    local ret = ''
     for _,p in ipairs(path) do
       local pos = M.getPosition(p.x,p.y,0)
-        ret = ret..'Node="'..pos.x..' '..pos.y..' ' .. pos.z.. ' '
-        if p.w ~= nil then
-            ret = ret .. p.w
-        else
-            ret = ret .. '3'
+        local w = p.w
+        if w == nil then
+          w = 3
         end
-        ret = ret .. '"; '
+        local data = string.format("%f %f %f %f",pos.x, pos.y, pos.z, w)
+        decalRoad:setField("Node", 0, data)
     end
-    roadTS = roadTS .. ret
-    roadTS = roadTS..'});';
-
-    TorqueScript.eval(roadTS)
+    decalRoad:registerObject()
+    local gymkhanaarena = scenetree.findObject("GymkhanaArena")
+    if gymkhanaarena then
+      gymkhanaarena:add(decalRoad)
+    end
   end
 end
 
@@ -1290,53 +1275,55 @@ local function makePylon(pos, size, rot, skin)
   rot = rot or 0
   skin = skin or ''
   local poss = M.getPosition(pos[1],pos[2],pos[3])
-  TorqueScript.eval([[
-   GymkhanaArena.add(new TSStatic() {
-         shapeName = "levels/driver_training/art/shapes/race/barriersegment]]..skin..[[.dae";
-         meshCulling = "0";
-         originSort = "0";
-         useInstanceRenderData = "0";
-         instanceColor = "White";
-         collisionType = "Collision Mesh";
-         decalType = "Collision Mesh";
-         prebuildCollisionData = "0";
-         renderNormals = "0";
-         forceDetail = "-1";
-         position = "]] .. ( poss.x) .. [[ ]] .. (poss.y) .. [[ ]] .. (poss.z) .. [[";
-         rotation = "0 0 1 ]]..M.getRotationDeg(rot)..[[";
-         scale = "]]..size[1].. " " .. size[2] .. " " .. size[3]..[[";
-         mode = "Ignore";
-         canSaveDynamicFields = "1";
-         allowPlayerStep = "1";
-      });
-
-  ]])
+  local model = createObject("TSStatic")
+  model:setField("shapeName", 0, "levels/driver_training/art/shapes/race/barriersegment"..skin..".dae")
+  model:setField("meshCulling", 0, "0")
+  model:setField("originSort", 0, "0")
+  model:setField("useInstanceRenderData", 0, "0")
+  model:setField("instanceColor", 0, "White")
+  model:setField("collisionType", 0, "Collision Mesh")
+  model:setField("decalType", 0, "Collision Mesh")
+  model:setField("prebuildCollisionData", 0, "0")
+  model:setField("renderNormals", 0, "0")
+  model:setField("forceDetail", 0, "-1")
+  model:setField("position", 0, poss.x.." ".. poss.y.." ".. poss.z)
+  model:setField("rotation", 0, "0 0 1 "..M.getRotationDeg(rot))
+  model.scale = vec3(size[1], size[2], size[3])
+  model:setField("mode", 0, "Ignore")
+  model:setField("canSaveDynamicFields", 0, "1")
+  model:setField("allowPlayerStep", 0, "1")
+  model:registerObject()
+  local gymkhanaarena = scenetree.findObject("GymkhanaArena")
+  if gymkhanaarena then
+    gymkhanaarena:add(model)
+  end
 end
 
 local function makeGate(pos, rot)
   rot = rot or 0
   local poss = M.getPosition(pos[1],pos[2],pos[3])
-  TorqueScript.eval([[
-   GymkhanaArena.add(new TSStatic() {
-         shapeName = "levels/driver_training/art/shapes/race/gate.dae";
-         meshCulling = "0";
-         originSort = "0";
-         useInstanceRenderData = "0";
-         instanceColor = "White";
-         collisionType = "Collision Mesh";
-         decalType = "Collision Mesh";
-         prebuildCollisionData = "0";
-         renderNormals = "0";
-         forceDetail = "-1";
-         position = "]] .. ( poss.x) .. [[ ]] .. (poss.y) .. [[ ]] .. (poss.z) .. [[";
-         rotation = "0 0 1 ]]..M.getRotationDeg(rot)..[[";
-         scale = "1 1 1";
-         mode = "Ignore";
-         canSaveDynamicFields = "1";
-         allowPlayerStep = "1";
-      });
-
-  ]])
+  local model = createObject("TSStatic")
+  model:setField("shapeName", 0, "levels/driver_training/art/shapes/race/gate.dae")
+  model:setField("meshCulling", 0, "0")
+  model:setField("originSort", 0, "0")
+  model:setField("useInstanceRenderData", 0, "0")
+  model:setField("instanceColor", 0, "White")
+  model:setField("collisionType", 0, "Collision Mesh")
+  model:setField("decalType", 0, "Collision Mesh")
+  model:setField("prebuildCollisionData", 0, "0")
+  model:setField("renderNormals", 0, "0")
+  model:setField("forceDetail", 0, "-1")
+  model:setField("position", 0, poss.x.." ".. poss.y.." ".. poss.z)
+  model:setField("rotation", 0, "0 0 1 "..M.getRotationDeg(rot))
+  model.scale = vec3(1, 1, 1)
+  model:setField("mode", 0, "Ignore")
+  model:setField("canSaveDynamicFields", 0, "1")
+  model:setField("allowPlayerStep", 0, "1")
+  model:registerObject()
+  local gymkhanaarena = scenetree.findObject("GymkhanaArena")
+  if gymkhanaarena then
+    gymkhanaarena:add(model)
+  end
 end
 
 local function makeConcreteRing(pos, radius)
@@ -1344,54 +1331,56 @@ local function makeConcreteRing(pos, radius)
   --radius = radius * 0.66
   if radius < 1 then radius = 1 end
   local poss = M.getPosition(pos[1],pos[2],pos[3])
-  TorqueScript.eval([[
-   GymkhanaArena.add(new TSStatic() {
-         shapeName = "levels/driver_training/art/shapes/race/ring_2m.dae";
-         meshCulling = "0";
-         originSort = "0";
-         useInstanceRenderData = "0";
-         instanceColor = "White";
-         collisionType = "Collision Mesh";
-         decalType = "Collision Mesh";
-         prebuildCollisionData = "0";
-         renderNormals = "0";
-         forceDetail = "-1";
-         position = "]] .. ( poss.x) .. [[ ]] .. (poss.y) .. [[ ]] .. (poss.z) .. [[";
-         rotation = "0 0 1 0";
-         scale = "]]..radius .." " .. radius.." "..(0.84+(math.random()+radius)/10 ).. [[";
-         mode = "Ignore";
-         canSaveDynamicFields = "1";
-         allowPlayerStep = "1";
-      });
-
-  ]])
+  local model = createObject("TSStatic")
+  model:setField("shapeName", 0, "levels/driver_training/art/shapes/race/ring_2m.dae")
+  model:setField("meshCulling", 0, "0")
+  model:setField("originSort", 0, "0")
+  model:setField("useInstanceRenderData", 0, "0")
+  model:setField("instanceColor", 0, "White")
+  model:setField("collisionType", 0, "Collision Mesh")
+  model:setField("decalType", 0, "Collision Mesh")
+  model:setField("prebuildCollisionData", 0, "0")
+  model:setField("renderNormals", 0, "0")
+  model:setField("forceDetail", 0, "-1")
+  model:setField("position", 0, poss.x.." ".. poss.y.." ".. poss.z)
+  model:setField("rotation", 0, "0 0 1 0")
+  model.scale = vec3(radius, radius, (0.84+(math.random()+radius)/10 ))
+  model:setField("mode", 0, "Ignore")
+  model:setField("canSaveDynamicFields", 0, "1")
+  model:setField("allowPlayerStep", 0, "1")
+  model:registerObject()
+  local gymkhanaarena = scenetree.findObject("GymkhanaArena")
+  if gymkhanaarena then
+    gymkhanaarena:add(model)
+  end
 end
 
 local function makeBarrel(pos, rot, skin)
- rot = rot or 0
- rot = rot+180
-   local poss = M.getPosition(pos[1],pos[2],pos[3])
-  TorqueScript.eval([[
-   GymkhanaArena.add(new TSStatic() {
-         shapeName = "levels/driver_training/art/shapes/race/barrelmarker_]]..skin..[[.dae";
-         meshCulling = "0";
-         originSort = "0";
-         useInstanceRenderData = "0";
-         instanceColor = "White";
-         collisionType = "Collision Mesh";
-         decalType = "Collision Mesh";
-         prebuildCollisionData = "0";
-         renderNormals = "0";
-         forceDetail = "-1";
-         position = "]] .. ( poss.x) .. [[ ]] .. (poss.y) .. [[ ]] .. (poss.z) .. [[";
-         rotation = "0 0 -1 ]]..M.getRotationDeg(rot)..[[";
-         scale = "1 1 1";
-         mode = "Ignore";
-         canSaveDynamicFields = "1";
-         allowPlayerStep = "1";
-      });
-
-  ]])
+  rot = rot or 0
+  rot = rot+180
+  local poss = M.getPosition(pos[1],pos[2],pos[3])
+  local model = createObject("TSStatic")
+  model:setField("shapeName", 0, "levels/driver_training/art/shapes/race/barrelmarker_"..skin..".dae")
+  model:setField("meshCulling", 0, "0")
+  model:setField("originSort", 0, "0")
+  model:setField("useInstanceRenderData", 0, "0")
+  model:setField("instanceColor", 0, "White")
+  model:setField("collisionType", 0, "Collision Mesh")
+  model:setField("decalType", 0, "Collision Mesh")
+  model:setField("prebuildCollisionData", 0, "0")
+  model:setField("renderNormals", 0, "0")
+  model:setField("forceDetail", 0, "-1")
+  model:setField("position", 0, poss.x.." ".. poss.y.." ".. poss.z)
+  model:setField("rotation", 0, "0 0 1 "..M.getRotationDeg(rot))
+  model.scale = vec3(1, 1, 1)
+  model:setField("mode", 0, "Ignore")
+  model:setField("canSaveDynamicFields", 0, "1")
+  model:setField("allowPlayerStep", 0, "1")
+  model:registerObject()
+  local gymkhanaarena = scenetree.findObject("GymkhanaArena")
+  if gymkhanaarena then
+    gymkhanaarena:add(model)
+  end
 end
 
 -- this function transforms local angle in rad to global angle in deg.

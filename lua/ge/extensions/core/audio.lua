@@ -4,191 +4,13 @@
 
 local M = {}
 
-local forLoad = {}
-local forLoadLevel = {}
-
-local asset_banks = {}
-local meta_banks = {}
-local ambient_banks = {}
-
-local inited = false
-
+local registeredBanks = {}
+local fmodBankFileSize = {}
+local fmod_banks = {}
+local fmodBanksLoadOrder = {}
 local loadedBankCache = {} -- keeps track on what banks are already loaded for faster lua reloading
 local levelProjectsCache = {}
-
-local audioChannels = {}
-
-local function cacheSetEntry(bankFilePath)
- if string.sub(bankFilePath, 1, 1) ~= '/' then
-    bankFilePath = "/"..bankFilePath
-  end
-  bankFilePath = string.lower(bankFilePath)
-  loadedBankCache[bankFilePath] = true
-end
-
-local function cacheClearEntry(bankFilePath)
- if string.sub(bankFilePath, 1, 1) ~= '/' then
-    bankFilePath = "/"..bankFilePath
-  end
-  bankFilePath = string.lower(bankFilePath)
-  loadedBankCache[bankFilePath] = false
-end
-
-local function loadBanksInFolder(folder)
-  local bankFiles = FS:findFiles(folder, '*.bank', 0, true, false)
-
-  local stringFiles = {}
-  local preloadFiles = {}
-  local normalFile = {}
-
-  for _,filepath in ipairs(bankFiles) do
-    if string.sub(filepath, 1, 1) ~= '/' then
-      filepath = "/"..filepath
-    end
-    filepath = string.lower(filepath)
-    if string.find(filepath, 'string') then
-      table.insert(stringFiles, filepath)
-    elseif not string.find(filepath, 'ambient_maps') then
-      if string.find(filepath, 'preload') then
-        table.insert(preloadFiles, filepath)
-      else
-        table.insert(normalFile, filepath)
-      end
-    end
-  end
-
-  table.sort(stringFiles, function(a, b) return a < b end)
-  table.sort(preloadFiles, function(a, b) return a < b end)
-  table.sort(normalFile, function(a, b) return a < b end)
-
-  -- log("I", "onFirstUpdate", 'found bank files'..dumps(bankFiles))
-
-  for _,filepath in ipairs(stringFiles) do
-    if not loadedBankCache[filepath] then
-      loadedBankCache[filepath] = true
-      if SFXFMODProject then SFXFMODProject.loadBaseBank(filepath, true)
-      else log("E", "audio", "SFXFMODProject is nil") end
-    end
-  end
-  for _,filepath in ipairs(preloadFiles) do
-    if not loadedBankCache[filepath] then
-      loadedBankCache[filepath] = true
-      if SFXFMODProject then SFXFMODProject.loadBaseBank(filepath, true)
-      else log("E", "audio", "SFXFMODProject is nil") end
-    end
-  end
-  for _,filepath in ipairs(normalFile) do
-    if not loadedBankCache[filepath] then
-      loadedBankCache[filepath] = true
-      if SFXFMODProject then SFXFMODProject.loadBaseBank(filepath, false)
-      else log("E", "audio", "SFXFMODProject is nil") end
-    end
-  end
-end
-
-local function populateAssetBanks(directory)
-  local bankFiles = FS:findFiles(directory, '*.bank', 0, true, false)
-  bankFiles = tableMerge(bankFiles, FS:findFiles(directory..'/mods', '*.bank', 0, true, false))
-  asset_banks = {}
-
-  for _,filepath in ipairs(bankFiles) do
-    if string.sub(filepath, 1, 1) ~= '/' then
-      filepath = "/"..filepath
-    end
-    filepath = string.lower(filepath)
-    if string.find(filepath, 'assets') or string.find(filepath, 'streams')  then
-      table.insert(asset_banks, filepath)
-    end
-  end
-
-  table.sort(asset_banks, function(a, b) return a < b end)
-
-  -- log("I", "populateAssetBanks", 'Asset banks: '..dumps(asset_banks))
-  return asset_banks
-end
-
-local function populateMetaBanks(directory)
-  local bankFiles = FS:findFiles(directory, '*.bank', 0, true, false)
-  bankFiles = tableMerge(bankFiles, FS:findFiles(directory..'/mods', '*.bank', 0, true, false))
-  local meta_banks = {}
-
-  for _,filepath in ipairs(bankFiles) do
-    if string.sub(filepath, 1, 1) ~= '/' then
-      filepath = "/"..filepath
-    end
-    filepath = string.lower(filepath)
-    if not string.find(filepath, 'assets') and not string.find(filepath, 'streams')  then
-      table.insert(meta_banks, filepath)
-    end
-  end
-
-  table.sort(meta_banks, function(a, b) return a < b end)
-
-  -- log("I", "populateMetaBanks", 'Meta banks: '..dumps(meta_banks))
-  return meta_banks
-end
-
-local function loadBanks(bankFiles)
-  local stringFiles = {}
-  local preloadFiles = {}
-  local normalFile = {}
-
-  for _,filepath in ipairs(bankFiles) do
-    if string.sub(filepath, 1, 1) ~= '/' then
-      filepath = "/"..filepath
-    end
-    filepath = string.lower(filepath)
-    if string.find(filepath, 'string') then
-      table.insert(stringFiles, filepath)
-    elseif string.find(filepath, 'preload') then
-        table.insert(preloadFiles, filepath)
-    else
-        table.insert(normalFile, filepath)
-    end
-  end
-
-  table.sort(stringFiles, function(a, b) return a < b end)
-  table.sort(preloadFiles, function(a, b) return a < b end)
-  table.sort(normalFile, function(a, b) return a < b end)
-
-   for _,filepath in ipairs(stringFiles) do
-    if not loadedBankCache[filepath] then
-      loadedBankCache[filepath] = true
-      if SFXFMODProject then SFXFMODProject.loadBaseBank(filepath, true)
-      else log("E", "audio", "SFXFMODProject is nil") end
-    end
-  end
-  for _,filepath in ipairs(preloadFiles) do
-    if not loadedBankCache[filepath] then
-      loadedBankCache[filepath] = true
-      if SFXFMODProject then SFXFMODProject.loadBaseBank(filepath, true)
-      else log("E", "audio", "SFXFMODProject is nil") end
-    end
-  end
-  for _,filepath in ipairs(normalFile) do
-    if not loadedBankCache[filepath] then
-      loadedBankCache[filepath] = true
-      if SFXFMODProject then SFXFMODProject.loadBaseBank(filepath, false)
-      else log("E", "audio", "SFXFMODProject is nil") end
-    end
-  end
-end
-
-local function loadBaseBanks()
-  loadBanks(asset_banks)
-  loadBanks(meta_banks)
-
-  inited = true
-
-  for i, v in ipairs(forLoad) do
-    if not loadedBankCache[v] then
-      loadedBankCache[v] = true
-      if SFXFMODProject then SFXFMODProject.loadBaseBank(v)
-      else log("E", "audio", "SFXFMODProject is nil") end
-    end
-  end
-  forLoad = {}
-end
+local inited = false
 
 local function registerBaseBank(path)
   local inLevelOrLoadingOrLoading = getMissionFilename() ~= "" or LoadingManager:isLoadingInProgress()
@@ -206,157 +28,180 @@ local function registerBaseBank(path)
       else log("E", "audio", "SFXFMODProject is nil") end
     end
   else
-    table.insert(forLoad, path)
+    table.insert(registeredBanks, path)
   end
 end
 
-local function loadLevelBank(bankFilePath)
-  if string.sub(bankFilePath, 1, 1) ~= '/' then
-    bankFilePath = "/"..bankFilePath
-  end
-  bankFilePath = string.lower(bankFilePath)
-  local inLevelOrLoading = getMissionFilename() ~= "" or LoadingManager:isLoadingInProgress()
-  if not inLevelOrLoading then
-    for _,v in ipairs(forLoadLevel) do
-      if v == bankFilePath then
-        return
+local loadingBankFilenames = {}
+local function loadBankSets()
+  local rootGroup = scenetree.findObject("RootGroup")
+  for _,key in ipairs(fmodBanksLoadOrder) do
+    local v = fmod_banks[key]
+    table.clear(loadingBankFilenames)
+    for _,filepath in pairs(v) do
+      table.insert(loadingBankFilenames, filepath)
+    end
+    -- log('E','','Loading banks '..tostring(key)..' : '..dumps(loadingBankFilenames))
+    if SFXFMODProject then
+      local project = SFXFMODProject()
+      if project then
+        project:registerObject(key)
+        project:loadBankSet(loadingBankFilenames)
+        rootGroup:addObject(project)
+        table.insert(levelProjectsCache, key)
       end
     end
-    table.insert(forLoadLevel, bankFilePath)
-    return
   end
 
-  if loadedBankCache[bankFilePath] then
-    return
-  end
+  -- for i, v in ipairs(registeredBanks) do
+  --   if not loadedBankCache[v] then
+  --     loadedBankCache[v] = true
+  --     if SFXFMODProject then SFXFMODProject.loadBaseBank(v)
+  --     else log("E", "audio", "SFXFMODProject is nil") end
+  --   end
+  -- end
+  -- registeredBanks = {}
 
-  loadedBankCache[bankFilePath] = true
-  if SFXFMODProject then
-    local project = SFXFMODProject()
-    project.fileName = String(bankFilePath)
-    local _, filename, _ = path.split(bankFilePath)
-    local projectName = 'project_'..filename
-    project:registerObject(projectName)
-    scenetree.DataBlockGroup:addObject(project) -- TODO find a way to do it implicitly
-    table.insert(levelProjectsCache, projectName)
-  else log("E", "audio", "SFXFMODProject is nil") end
+  inited = true
 end
 
-local function loadVehicleBank(bankPath)
-  if string.sub(bankPath, 1, 1) ~= '/' then
-    bankPath = "/"..bankPath
-  end
-  bankPath = string.lower(bankPath)
-  if loadedBankCache[bankPath] then
-    return
-  end
-  if SFXFMODProject then SFXFMODProject.loadBaseBank(bankPath, true, false)
-  else log("E", "audio", "SFXFMODProject is nil") end
-  loadedBankCache[bankPath] = true
-end
+local function populateBankSets()
+  local process_bank = function(filepath)
+    if string.sub(filepath, 1, 1) ~= '/' then
+      filepath = "/"..filepath
+    end
+    filepath = string.lower(filepath)
+    local stringParts = {}
+    local filename = string.match(filepath, "^(.-)%.") --(.-) capture is non-greedy, capture as few characters as possible. '%.' means '.' has to exist in the string. Capture upto 1st '.' excluding the period.
+    local key = string.match(filename, "([^/]*)$")
+    local fileStats = FS:stat(filepath)
+    local bankSet = fmod_banks[key] or {}
+    local bankFileSize = fmodBankFileSize[key] or 0
 
-local function loadLevelBanks()
-  for i, v in ipairs(ambient_banks) do
-    loadLevelBank(v)
-  end
-  for i, v in ipairs(forLoadLevel) do
-    loadLevelBank(v)
-  end
-  forLoadLevel = {}
-end
+    -- log("I", "", filepath ..': '..tostring(filename)..' key = '..tostring(key))
 
-local function populateBankTables()
-  local useHeadphones = TorqueScriptLua.getBoolVar('$pref::SFX::enableHeadphonesMode')
-  --dump("useHeadphones = "..tostring(useHeadphones))
+    bankFileSize = bankFileSize + fileStats.filesize
+    if string.find(filepath, 'assets') then
+      bankSet.assets = filepath
+    elseif string.find(filepath, 'strings') then
+      bankSet.strings = filepath
+    elseif string.find(filepath, 'streams') then
+      bankSet.streams = filepath
+    else
+      bankSet.meta = filepath
+    end
 
-  local asset_directory
-  local meta_directory
+    fmod_banks[key] = bankSet
+    fmodBankFileSize[key] = bankFileSize
+  end
+
+  table.clear(fmod_banks)
+  table.clear(fmodBankFileSize)
+
   local platformDir = PlatformSwitches.audioFolderName
+  local asset_directory = '/art/sound/fmod/'..platformDir
+  local bankFiles = FS:findFiles(asset_directory, '*.bank', 0, true, false)
+  bankFiles = tableMerge(bankFiles, FS:findFiles(asset_directory..'/mods', '*.bank', 0, true, false))
+  for _,filepath in ipairs(bankFiles) do
+    process_bank(filepath)
+  end
 
-  asset_directory = '/art/sound/fmod/'..platformDir
-  meta_directory = asset_directory
-
+  local useHeadphones = VariableRegistry.get('$pref::SFX::enableHeadphonesMode')
+  --dump("useHeadphones = "..tostring(useHeadphones))
   if useHeadphones then
-    meta_directory = meta_directory..'_headphones'
-  end
-
-  asset_banks = populateAssetBanks(asset_directory)
-  meta_banks = populateMetaBanks(meta_directory)
-  ambient_banks = {}
-
-  for i,filepath in ipairs(asset_banks) do
-    if string.find(filepath, 'ambient_maps') then
-      table.insert(ambient_banks, filepath)
-      table.remove(asset_banks, i)
+    local headphoneBanks = FS:findFiles(asset_directory..'_headphones', '*.bank', 0, true, false)
+    for _,filepath in ipairs(headphoneBanks) do
+      process_bank(filepath)
     end
   end
 
-  for i,filepath in ipairs(meta_banks) do
-    if string.find(filepath, 'ambient_maps') then
-      table.insert(ambient_banks, filepath)
-      table.remove(meta_banks, i)
-    end
+  table.clear(fmodBanksLoadOrder)
+  for k,_ in pairs(fmod_banks) do
+    table.insert(fmodBanksLoadOrder, k)
   end
 
-  table.sort(ambient_banks, function(a, b) return a < b end)
+  local orderFunction = function(a, b)
+    -- Very important! Load banks sets with 'string' banks firsts, then 'preload' banks, then the rest
+    local aIsPreload = string.find(a, "preload") ~= nil
+    local bIsPreload = string.find(b, "preload") ~= nil
+    local aIsStrings = fmod_banks[a].strings ~= nil
+    local bIsStrings = fmod_banks[b].strings ~= nil
+    local aBankSize = fmodBankFileSize[a] or 0
+    local bBankSize = fmodBankFileSize[b] or 0
 
-  --log("I", "populateAssetBanks", 'Asset banks: '..dumps(asset_banks))
-  --log("I", "populateMetaBanks", 'Meta banks: '..dumps(meta_banks))
-  --log("I", "onFirstUpdate", 'Ambients banks: '..dumps(ambient_banks))
+    if aIsStrings ~= bIsStrings then
+        return aIsStrings
+    end
+    if aIsPreload ~= bIsPreload then
+        return aIsPreload
+    end
+    if aBankSize == bBankSize then
+      return a < b
+    end
+
+    return aBankSize > bBankSize
+  end
+  table.sort(fmodBanksLoadOrder, orderFunction)
+
+  -- log("I", "", 'fmod_banks = '..dumps(fmod_banks))
+  -- log("I", "", 'fmodBankFileSize = '..dumps(fmodBankFileSize))
+  -- log("I", "", 'load order = '..dumps(fmodBanksLoadOrder))
 end
 
 local function onFirstUpdate()
   --log("I", "onFirstUpdate", 'onFirstUpdate called....')
-
   profilerPushEvent('audioLoadBanksFirstFrame')
   if M.hotloadTriggered then
     log("I", "audio", 'Hotloading banks....')
     loadedBankCache = {}
     levelProjectsCache  = {}
-    if SFXFMODProject then SFXFMODProject.hotloadingTriggered()
-    else log("E", "audio", "SFXFMODProject is nil") end
+    if SFXFMODProject then
+      SFXFMODProject.hotloadingTriggered()
+    else
+     log("E", "audio", "SFXFMODProject is nil")
+   end
   end
 
-  populateBankTables()
-  loadBaseBanks()
+  populateBankSets()
+  loadBankSets()
 
   if M.hotloadTriggered then
     -- We need to trigger what would have happened in onClientPreStartMission because we are
     -- already in the level and triggered hotloading
-    loadLevelBanks()
-    if SFXFMODProject then SFXFMODProject.hotloadingCompleted()
-    else log("E", "audio", "SFXFMODProject is nil") end
+    -- loadLevelBanks()
+    if SFXFMODProject then
+      SFXFMODProject.hotloadingCompleted()
+    else
+     log("E", "audio", "SFXFMODProject is nil")
+    end
   end
 
   M.hotloadTriggered = nil
 
-  profilerPopEvent() -- audioLoadBanksFirstFrame
+  profilerPopEvent('audioLoadBanksFirstFrame')
 end
 
 local function onClientPreStartMission(levelPath)
   -- log("I", "loadLevelBank", "Loading default level banks")
   profilerPushEvent('loadAudioBanks')
 
-  loadLevelBanks()
-  profilerPopEvent() -- loadAudioBanks
+  -- loadLevelBanks()
+  profilerPopEvent('loadAudioBanks')
 end
 
 local function onClientEndMission()
-  -- These banks get unloaded on level unload in C++ as the containing SFXFMODProject is destroyed
-  -- so clear their cache entries so they get loaded on next level load
-  for _, v in ipairs(ambient_banks) do
-    cacheClearEntry(v)
-  end
-  levelProjectsCache  = {}
+  -- If we unload banks later when we exit a level, we need to clear the cache so that the banks get loaded again.
 end
 
 local function startProcessForHotloading()
-    for i, projectName in ipairs(levelProjectsCache) do
-      local project = scenetree.findObject(projectName)
-      if project then
-        project:deleteObject()
-      end
+  local rootGroup = scenetree.findObject("RootGroup")
+  for i, projectName in ipairs(levelProjectsCache) do
+    local project = scenetree.findObject(projectName)
+    if project then
+      rootGroup:removeObject(project)
+      project:deleteObject()
     end
+  end
 end
 
 local function triggerBankHotloading()
@@ -364,13 +209,20 @@ local function triggerBankHotloading()
   startProcessForHotloading()
   loadedBankCache = {}
   levelProjectsCache  = {}
-  if SFXFMODProject then SFXFMODProject.hotloadingTriggered()
-  else log("E", "audio", "SFXFMODProject is nil") end
-  populateBankTables()
-  loadBaseBanks()
-  loadLevelBanks()
-  if SFXFMODProject then SFXFMODProject.hotloadingCompleted()
-  else log("E", "audio", "SFXFMODProject is nil") end
+  if SFXFMODProject then
+    SFXFMODProject.hotloadingTriggered()
+  else
+    log("E", "audio", "SFXFMODProject is nil")
+  end
+
+  populateBankSets()
+  loadBankSets()
+
+  if SFXFMODProject then
+    SFXFMODProject.hotloadingCompleted()
+  else
+    log("E", "audio", "SFXFMODProject is nil")
+  end
   log('I', 'audio', 'Banks hotloading finished.')
 end
 
@@ -406,17 +258,12 @@ local function onFilesChanged(files)
 end
 
 local function onSerialize()
-    -- Note(AK) 20/07/2020: Uncomment to reenable hotloading banks on Ctrl + L, and delete the current return statment
-    -- startProcessForHotloading()
-    -- return { hotloadTriggered = true }
-    return {loadedBankCache = loadedBankCache, levelProjectsCache = levelProjectsCache}
+    startProcessForHotloading()
+    return { hotloadTriggered = true }
 end
 
 local function onDeserialized(data)
-  -- Note(AK) 20/07/2020: Uncomment to reenable hotloading banks on Ctrl + L, and delete the current active statments
-  --M.hotloadTriggered = data.hotloadTriggered
-  loadedBankCache = data.loadedBankCache
-  levelProjectsCache = data.levelProjectsCache
+  M.hotloadTriggered = data.hotloadTriggered
 end
 
 local function onPhysicsPaused()
@@ -445,8 +292,6 @@ end
 
 M.onFirstUpdate = onFirstUpdate
 M.registerBaseBank = registerBaseBank
-M.loadLevelBank = loadLevelBank
-M.loadVehicleBank = loadVehicleBank
 M.triggerBankHotloading = triggerBankHotloading
 
 M.onClientPreStartMission = onClientPreStartMission

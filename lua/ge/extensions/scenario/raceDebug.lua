@@ -47,7 +47,7 @@ local function onDrawDebug(focusPos)
   local currentScenario = scenario_scenarios.getScenario()
   if not currentScenario then return end
 
-  local drawDebug = tonumber(getConsoleVariable('$isEditorEnabled')) == 1 and settings.getValue("BeamNGRaceDrawDebug")
+  local drawDebug = tonumber(VariableRegistry.get('$isEditorEnabled', 0)) == 1 and settings.getValue("BeamNGRaceDrawDebug")
 
   if drawDebug and currentScenario.nodes and currentScenario.lapConfig then
     local i = 0

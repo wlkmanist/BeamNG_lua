@@ -23,7 +23,7 @@ function C:processVehicles(params)
   if not params or not next(params) then return end
 
   if mission.setupData._hasStashedVehicles then
-    log("W", "", "Mission manager has stashed vehicles, now using stash params for backwards compatibility")
+    log("I", "", "Mission manager has stashed vehicles, now using stash params for backwards compatibility")
   end
 
   -- here is some compatibility provided that may reactivate the player vehicle and traffic by using the params
@@ -31,7 +31,10 @@ function C:processVehicles(params)
   -- player vehicle
   local playerId = self:getOriginalPlayerId()
   if params.keepPlayer ~= nil and playerId then
-    be:getObjectByID(playerId):setActive(params.keepPlayer and 1 or 0)
+    local playerObj = getObjectByID(playerId)
+    if playerObj then
+      playerObj:setActive(params.keepPlayer and 1 or 0)
+    end
     mission.setupData.stashedVehicles[playerId] = not params.keepPlayer
     if params.keepPlayer then
       log("I", "", "Keeping player vehicle for mission")
@@ -59,11 +62,15 @@ end
 
 function C:prepareVehicle(id)
   id = id or be:getPlayerVehicleID(0)
-  local obj = be:getObjectByID(id)
+  local obj = getObjectByID(id)
   if obj then
-    local tod = core_environment.getTimeOfDay()
-    if tod and tod.time >= 0.225 and tod.time <= 0.775 then
-      obj:queueLuaCommand("electrics.setLightsState(2)")
+    local timeObj = core_environment.getTimeOfDay()
+    if timeObj and timeObj.time then
+      local nightStart, nightEnd = core_solarTimeOfDay.getSolarNightWindow(timeObj)
+      if timeObj.time >= nightStart and timeObj.time <= nightEnd then
+        obj:queueLuaCommand("electrics.setLightsState(2)")
+      end
+      -- TODO: Consider sunrise or sunset
     end
 
     -- more actions can be set here depending on mission environment
@@ -81,7 +88,7 @@ function C:removeStashedPlayerVehicle()
   if not playerId then return end
 
   self.mgr:logEvent("Removing stashed player vehicle", "I", "The stashed player vehicle will no longer be reactivated at the end of the project.")
-  local pv = be:getObjectByID(playerId)
+  local pv = getObjectByID(playerId)
   if pv then
     if editor and editor.onRemoveSceneTreeObjects then
       editor.onRemoveSceneTreeObjects({playerId})
@@ -100,8 +107,9 @@ end
 function C:executionStopped()
   local mission = self.mgr.activity
   if not mission then return end
-
-  gameplay_missions_missionManager.stop(mission)
+  if mission._isOngoing then
+    gameplay_missions_missionManager.stop(mission)
+  end
   extensions.hook("onMissionFinished")
   guihooks.trigger('hotlappingReevaluateControlsEnabled')
 end

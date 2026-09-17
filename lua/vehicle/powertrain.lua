@@ -10,13 +10,13 @@ M.engineData = {}
 M.stabilityCoef = 250
 
 M.currentGravity = obj:getGravity()
-M.invCurrentGravity = 1 / M.currentGravity
+M.invCurrentGravity = 1 / guardZero(M.currentGravity)
 M.currentEnvTemperature = obj:getEnvTemperature()
-M.invCurrentEnvTemperature = 1 / M.currentEnvTemperature
+M.invCurrentEnvTemperature = 1 / guardZero(M.currentEnvTemperature)
 M.currentEnvTemperatureCelsius = M.currentEnvTemperature - 273.15
-M.invCurrentEnvTemperatureCelsius = 1 / M.currentEnvTemperatureCelsius
+M.invCurrentEnvTemperatureCelsius = 1 / guardZero(M.currentEnvTemperatureCelsius)
 M.currentEnvPressure = obj:getEnvPressure()
-M.invCurrentEnvPressure = 1 / M.currentEnvPressure
+M.invCurrentEnvPressure = 1 / guardZero(M.currentEnvPressure)
 
 --we need to initialize this with {0} so that powertrain.torqueReactionCoefs[1] works, 1 in this case is the default torsionReactorID for all wheels/rotators,
 --which we need to use in case that powertrain does not init at all/correctly (trailers, mods with old stuff, etc). The {0} is only used when powertrain does not init!
@@ -62,6 +62,8 @@ local streamData = {devices = deviceStream}
 local outputTorqueStr = {}
 local outputAVStr = {}
 
+local stateData = {}
+
 for i = 0, 10 do
   outputTorqueStr[i] = "outputTorque" .. tostring(i)
   outputAVStr[i] = "outputAV" .. tostring(i)
@@ -69,11 +71,10 @@ end
 
 local wheelPropulsionDevices = {}
 
-local function nop()
-end
-
 local serializeInfoRes = {}
-local data
+local imguiData
+
+--some old code about some imgui thingie, used from GE apparently
 local function serializeDevicesInfo()
   if tableSize(powertrainDevices) < tableSize(serializeInfoRes) then
     table.clear(serializeInfoRes)
@@ -81,48 +82,48 @@ local function serializeDevicesInfo()
   local i = 1
   for _, device in pairs(powertrainDevices) do
     serializeInfoRes[i] = serializeInfoRes[i] or {}
-    data = serializeInfoRes[i]
-    data.name = device.name
-    data.type = device.type
-    data.engineLoad = device.engineLoad
-    data.forcedInductionCoef = device.forcedInductionCoef
-    data.intakeAirDensityCoef = device.intakeAirDensityCoef
-    data.diffAngle = device.diffAngle
-    data.outputAV2 = device.outputAV2
-    data.outputTorque2 = device.outputTorque2
-    data.primaryOutputAVName = device.primaryOutputAVName
-    data.secondaryOutputAVName = device.secondaryOutputAVName
-    data.primaryOutputTorqueName = device.primaryOutputTorqueName
-    data.secondaryOutputTorqueName = device.secondaryOutputTorqueName
-    data.gearDamages = device.gearDamages
-    data.clutchAngle = device.clutchAngle
-    data.torqueDiff = device.torqueDiff
-    data.lockSpring = device.lockSpring
-    data.lockDamp = device.lockDamp
-    data.lockupClutchAngle = device.lockupClutchAngle
-    data.lockupClutchSpring = device.lockupClutchSpring
-    data.lockupClutchDamp = device.lockupClutchDamp
-    data.parkClutchAngle = device.parkClutchAngle
-    data.oneWayTorqueSmoother = device.oneWayTorqueSmoother and device.oneWayTorqueSmoother:value() or nil
-    data.parkLockSpring = device.parkLockSpring
-    data.clutchAngle1 = device.clutchAngle1
-    data.clutchAngle2 = device.clutchAngle2
-    data.lockSpring1 = device.lockSpring1
-    data.lockSpring2 = device.lockSpring2
-    data.lockDamp1 = device.lockDamp1
-    data.lockDamp2 = device.lockDamp2
-    data.gearRatio1 = device.gearRatio1
-    data.gearRatio2 = device.gearRatio2
-    data.inputAV = device.inputAV
-    data.outputAV1 = device.outputAV1
-    data.outputTorque1 = device.outputTorque1
-    data.isBroken = device.isBroken
-    data.mode = device.mode
-    data.virtualMassAV = device.virtualMassAV
-    data.isPhysicallyDisconnected = device.isPhysicallyDisconnected
-    data.gearRatio = device.gearRatio
-    data.cumulativeGearRatio = device.cumulativeGearRatio
-    data.cumulativeInertia = device.cumulativeInertia
+    imguiData = serializeInfoRes[i]
+    imguiData.name = device.name
+    imguiData.type = device.type
+    imguiData.engineLoad = device.engineLoad
+    imguiData.forcedInductionCoef = device.forcedInductionCoef
+    imguiData.intakeAirDensityCoef = device.intakeAirDensityCoef
+    imguiData.diffAngle = device.diffAngle
+    imguiData.outputAV2 = device.outputAV2
+    imguiData.outputTorque2 = device.outputTorque2
+    imguiData.primaryOutputAVName = device.primaryOutputAVName
+    imguiData.secondaryOutputAVName = device.secondaryOutputAVName
+    imguiData.primaryOutputTorqueName = device.primaryOutputTorqueName
+    imguiData.secondaryOutputTorqueName = device.secondaryOutputTorqueName
+    imguiData.gearDamages = device.gearDamages
+    imguiData.clutchAngle = device.clutchAngle
+    imguiData.torqueDiff = device.torqueDiff
+    imguiData.lockSpring = device.lockSpring
+    imguiData.lockDamp = device.lockDamp
+    imguiData.lockupClutchAngle = device.lockupClutchAngle
+    imguiData.lockupClutchSpring = device.lockupClutchSpring
+    imguiData.lockupClutchDamp = device.lockupClutchDamp
+    imguiData.parkClutchAngle = device.parkClutchAngle
+    imguiData.oneWayTorqueSmoother = device.oneWayTorqueSmoother and device.oneWayTorqueSmoother:value() or nil
+    imguiData.parkLockSpring = device.parkLockSpring
+    imguiData.clutchAngle1 = device.clutchAngle1
+    imguiData.clutchAngle2 = device.clutchAngle2
+    imguiData.lockSpring1 = device.lockSpring1
+    imguiData.lockSpring2 = device.lockSpring2
+    imguiData.lockDamp1 = device.lockDamp1
+    imguiData.lockDamp2 = device.lockDamp2
+    imguiData.gearRatio1 = device.gearRatio1
+    imguiData.gearRatio2 = device.gearRatio2
+    imguiData.inputAV = device.inputAV
+    imguiData.outputAV1 = device.outputAV1
+    imguiData.outputTorque1 = device.outputTorque1
+    imguiData.isBroken = device.isBroken
+    imguiData.mode = device.mode
+    imguiData.virtualMassAV = device.virtualMassAV
+    imguiData.isPhysicallyDisconnected = device.isPhysicallyDisconnected
+    imguiData.gearRatio = device.gearRatio
+    imguiData.cumulativeGearRatio = device.cumulativeGearRatio
+    imguiData.cumulativeInertia = device.cumulativeInertia
     i = i + 1
   end
   return serialize(serializeInfoRes)
@@ -174,13 +175,13 @@ end
 
 local function updateGFX(dt)
   M.currentGravity = obj:getGravity()
-  M.invCurrentGravity = 1 / M.currentGravity
+  M.invCurrentGravity = 1 / guardZero(M.currentGravity)
   M.currentEnvTemperature = obj:getEnvTemperature()
-  M.invCurrentEnvTemperature = 1 / M.currentEnvTemperature
+  M.invCurrentEnvTemperature = 1 / guardZero(M.currentEnvTemperature)
   M.currentEnvTemperatureCelsius = M.currentEnvTemperature - 273.15
-  M.invCurrentEnvTemperatureCelsius = 1 / M.currentEnvTemperatureCelsius
+  M.invCurrentEnvTemperatureCelsius = 1 / guardZero(M.currentEnvTemperatureCelsius)
   M.currentEnvPressure = obj:getEnvPressure()
-  M.invCurrentEnvPressure = 1 / M.currentEnvPressure
+  M.invCurrentEnvPressure = 1 / guardZero(M.currentEnvPressure)
 
   for i = 1, deviceCount, 1 do
     local device = orderedDevices[i]
@@ -207,13 +208,13 @@ local function updateGFX(dt)
     if device.updateGFX then
       device:updateGFX(dt)
     end
-    --profilerPopEvent()
+    --profilerPopEvent(orderedDevices[i].name .. ":updateGFX")
 
     --profilerPushEvent(orderedDevices[i].name .. ":updateSounds")
     if device.updateSounds then
       device:updateSounds(dt)
     end
-    --profilerPopEvent()
+    --profilerPopEvent(orderedDevices[i].name .. ":updateSounds")
     if device.electricsName and device.visualShaftAngle then --only take care of devices that are meant to have a public angle
       device.visualShaftAngle = (device.visualShaftAngle + device[device.visualShaftAVName] / device.gearRatio * dt) % twoPi
       electrics.values[device.electricsName] = device.visualShaftAngle * visualShaftAngleCoef
@@ -239,7 +240,7 @@ local function update(dt)
   for i = deviceCount, 1, -1 do
     --profilerPushEvent(orderedDevices[i].name .. ":velocityUpdate")
     orderedDevices[i]:velocityUpdate(dt)
-    --profilerPopEvent()
+    --profilerPopEvent(orderedDevices[i].name .. ":velocityUpdate")
   end
   --performanceLogger.measureAverage("speeds", 10000, false)
 
@@ -247,7 +248,7 @@ local function update(dt)
   for i = 1, deviceCount, 1 do
     --profilerPushEvent(orderedDevices[i].name .. ":torqueUpdate")
     orderedDevices[i]:torqueUpdate(dt)
-    --profilerPopEvent()
+    --profilerPopEvent(orderedDevices[i].name .. ":torqueUpdate")
   end
   --performanceLogger.measureAverage("torques", 10000, false)
 
@@ -286,7 +287,7 @@ local function sendDeviceTree()
         table.insert(device.children, inverseMap[i])
       end
     end
-    device.currentMode = (v.availableModes and #v.availableModes > 1) and v.mode or nil
+    device.currentMode = (d.availableModes and #d.availableModes > 1) and d.mode or nil
     devices[d.name] = device
   end
 
@@ -430,13 +431,13 @@ local function init()
   deviceFactories = {}
 
   M.currentGravity = obj:getGravity()
-  M.invCurrentGravity = 1 / M.currentGravity
+  M.invCurrentGravity = 1 / guardZero(M.currentGravity)
   M.currentEnvTemperature = obj:getEnvTemperature()
-  M.invCurrentEnvTemperature = 1 / M.currentEnvTemperature
+  M.invCurrentEnvTemperature = 1 / guardZero(M.currentEnvTemperature)
   M.currentEnvTemperatureCelsius = M.currentEnvTemperature - 273.15
-  M.invCurrentEnvTemperatureCelsius = 1 / M.currentEnvTemperatureCelsius
+  M.invCurrentEnvTemperatureCelsius = 1 / guardZero(M.currentEnvTemperatureCelsius)
   M.currentEnvPressure = obj:getEnvPressure()
-  M.invCurrentEnvPressure = 1 / M.currentEnvPressure
+  M.invCurrentEnvPressure = 1 / guardZero(M.currentEnvPressure)
 
   if not availableDeviceFactories then
     availableDeviceFactories = {}
@@ -445,6 +446,7 @@ local function init()
     local globalFiles = FS:findFiles(globalDirectory, "*.lua", -1, true, false)
     local vehicleFiles = FS:findFiles(vehicleDirectory, "*.lua", -1, true, false)
     local files = arrayConcat(globalFiles, vehicleFiles)
+
     if files then
       for _, filePath in ipairs(files) do
         local _, file, _ = path.split(filePath)
@@ -458,6 +460,9 @@ local function init()
       log("E", "powertrain.init", "Can't load powertrain device factories, looking for directory: " .. tostring(globalDirectory))
     end
   end
+
+  --TODO FIXME: This is a hack to get the combustionEngineMF working
+  availableDeviceFactories["combustionEngineMF"] = "powertrain/combustionEngineMF/combustionEngineMF"
 
   --dump(availableDeviceFactories)
 
@@ -726,13 +731,13 @@ local function reset()
   end
 
   M.currentGravity = obj:getGravity()
-  M.invCurrentGravity = 1 / M.currentGravity
+  M.invCurrentGravity = 1 / guardZero(M.currentGravity)
   M.currentEnvTemperature = obj:getEnvTemperature()
-  M.invCurrentEnvTemperature = 1 / M.currentEnvTemperature
+  M.invCurrentEnvTemperature = 1 / guardZero(M.currentEnvTemperature)
   M.currentEnvTemperatureCelsius = M.currentEnvTemperature - 273.15
-  M.invCurrentEnvTemperatureCelsius = 1 / M.currentEnvTemperatureCelsius
+  M.invCurrentEnvTemperatureCelsius = 1 / guardZero(M.currentEnvTemperatureCelsius)
   M.currentEnvPressure = obj:getEnvPressure()
-  M.invCurrentEnvPressure = 1 / M.currentEnvPressure
+  M.invCurrentEnvPressure = 1 / guardZero(M.currentEnvPressure)
 
   for _, device in pairs(powertrainDevices) do
     for _, groupData in ipairs(device.deformGroups) do
@@ -819,7 +824,7 @@ local function onCouplerAttached(nodeId, obj2id, obj2nodeId, attachSpeed, attach
   for i = 1, deviceCount, 1 do
     local device = orderedDevices[i]
     if device.onCouplerAttached then
-      device:onCouplerAttached(nodeId, obj2id, obj2nodeId, attachEnergy)
+      device:onCouplerAttached(nodeId, obj2id, obj2nodeId, attachEnergy, attachSpeed) --reversed order of params for backwards compatibility
     end
   end
 end
@@ -934,6 +939,34 @@ local function getPropulsionDeviceForWheel(wheelName)
   return wheelPropulsionDevices[wheelName]
 end
 
+local function getPoweredWheelNames()
+  local poweredWheels = {}
+  for _, wheel in pairs(wheels.wheels) do
+    local propulsionDevice = powertrain.getPropulsionDeviceForWheel(wheel.name)
+    if propulsionDevice then
+      poweredWheels[wheel.name] = propulsionDevice.name
+    end
+  end
+  return poweredWheels
+end
+
+local function getAllWheelPropulsionDevices()
+  local duplicatedPropulsionDevices = {}
+
+  for _, wheel in pairs(wheels.wheels) do
+    local propulsionDevice = powertrain.getPropulsionDeviceForWheel(wheel.name)
+    if propulsionDevice then
+      duplicatedPropulsionDevices[propulsionDevice.name] = wheel.name
+    end
+  end
+  local propulsionDevices = {}
+  for propulsionDevice, _ in pairs(duplicatedPropulsionDevices) do
+    table.insert(propulsionDevices, powertrain.getDevice(propulsionDevice))
+  end
+
+  return propulsionDevices
+end
+
 local function getHydraulicConsumer(consumerName)
   local hydraulicPowerSources = getDevicesByCategory("hydraulicPowerSource")
   for _, powerSource in ipairs(hydraulicPowerSources) do
@@ -960,6 +993,30 @@ local function getPropulsionDeviceForDevice(device)
   end
 
   return nil --didn't find anything...
+end
+
+--returns nil if the devices are not connected
+local function getGearRatioBetweenDevices(topDevice, bottomDevice)
+  if not topDevice or not bottomDevice then
+    return nil
+  end
+
+  local cumulativeGearRatio = 1
+
+  local currentDevice = bottomDevice
+  while currentDevice ~= topDevice do
+    cumulativeGearRatio = cumulativeGearRatio * currentDevice.gearRatio
+    --print("currentDevice: " .. currentDevice.name .. " - gearRatio: " .. currentDevice.gearRatio)
+    --print("cumulativeGearRatio: " .. cumulativeGearRatio)
+    currentDevice = currentDevice.parent
+    if currentDevice == nil then
+      return nil
+    end
+    --print("parentDevice: " .. currentDevice.name)
+  end
+
+  --print("gearRatio: " .. cumulativeGearRatio)
+  return cumulativeGearRatio
 end
 
 local function setVehiclePath(path)
@@ -1026,10 +1083,33 @@ local function isPhysicsStepUsed()
   return hasPowertrain
 end
 
-local stateEvents = {}
+local function getState()
+  local hasData = false
+  table.clear(stateData)
+  for i = 1, deviceCount, 1 do
+    local device = orderedDevices[i]
+    if device.getState then
+      tableMergeRecursive(stateData, device:getState())
+      hasData = true
+    end
+  end
 
-local function getStateEvents()
-  return stateEvents
+  if hasData then
+    return stateData
+  end
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  for i = 1, deviceCount, 1 do
+    local device = orderedDevices[i]
+    if device.setState then
+      device:setState(data)
+    end
+  end
 end
 
 M.init = init
@@ -1060,7 +1140,11 @@ M.getDevice = getDevice
 M.getChildWheels = getChildWheels
 M.getPropulsionDeviceForWheel = getPropulsionDeviceForWheel
 M.getPropulsionDeviceForDevice = getPropulsionDeviceForDevice
+M.getAllWheelPropulsionDevices = getAllWheelPropulsionDevices
 M.getHydraulicConsumer = getHydraulicConsumer
+M.getPoweredWheelNames = getPoweredWheelNames
+
+M.getGearRatioBetweenDevices = getGearRatioBetweenDevices
 
 M.dumpsDeviceData = dumpsDeviceData
 M.serializeDevicesInfo = serializeDevicesInfo
@@ -1074,11 +1158,8 @@ M.getEngineSoundID = getEngineSoundID
 M.getPartCondition = getPartCondition
 M.setPartCondition = setPartCondition
 
-M.getState = nop
-M.setState = nop
-M.publishStateEvent = nop
-M.triggerStateEvent = nop
-M.getStateEvents = getStateEvents
+M.getState = getState
+M.setState = setState
 
 M.isPhysicsStepUsed = isPhysicsStepUsed
 

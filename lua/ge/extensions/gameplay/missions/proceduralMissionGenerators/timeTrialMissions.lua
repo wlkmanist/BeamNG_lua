@@ -72,19 +72,23 @@ local function listWithoutEmptyString(list)
 
 end
 
-local function generate()
+local function generate(levelIdentifier)
   extensions.load('scenario_quickRaceLoader')
-  local data = scenario_quickRaceLoader.getQuickraceList()
+  local levelList = nil
+  if levelIdentifier then
+    levelList = {levelIdentifier}  -- limit search to this level
+  end
+  local data = scenario_quickRaceLoader.getQuickraceList(levelList)
   local missions = {}
 
   local hiddenFiles = {}
-  for _, mission in ipairs(gameplay_missions_missions.getFilesData()) do
+  --for _, mission in ipairs(gameplay_missions_missions.getFilesData()) do
     --if mission.missionType == 'timeTrial' then
     --if mission.missionTypeData.hidesOriginalTimeTrialFile then
     --  hiddenFiles[mission.missionTypeData.hidesOriginalTimeTrialFile] = true
     --end
     --end
-  end
+  --end
   --dump(hiddenFiles)
   local hiddenFileCount = 0
 
@@ -112,7 +116,7 @@ local function generate()
             hiddenFileCount = hiddenFileCount +1
           else
             local mission = getBaseMission()
-            mission.id = "timeTrials/"..string.lower(level.levelName)..'/'..race.trackName.."-procedural"
+            mission.id = string.lower(level.levelName).."/timeTrials/"..race.trackName.."-procedural"
             mission.name = race.name
             mission.description = race.description
             local previewFilenameExt = nil
@@ -136,6 +140,10 @@ local function generate()
             }
 
             local isRaceJson = string.sub(raceFile,#raceFile-9,#raceFile) == '.race.json'
+
+            mission.official = isOfficialContentVPath(raceFile)
+            mission.author = race.author
+            mission.date = race.date
 
             mission.missionTypeData = {
               --hidesOriginalTimeTrialFile = raceFile,

@@ -47,7 +47,7 @@ local varsData = {
 }
 
 -- local function getCOM()
---   local veh = be:getPlayerVehicle(0)
+--   local veh = getPlayerVehicle(0)
 --   local vehData = core_vehicle_manager.getPlayerVehicleData()
 --   local nodes = vehData.vdata.nodes
 --   local com = vec3()
@@ -167,7 +167,7 @@ end
 local function onUpdate()
   if windowOpen[0] ~= true then return end
 
-  local veh = be:getPlayerVehicle(0)
+  local veh = getPlayerVehicle(0)
   if not veh or veh.Jbeam ~= 'adjustable_tech_car' then return end
 
   if im.Begin(wndName, windowOpen) then
@@ -224,7 +224,7 @@ local function onEditorInitialized()
     view.img = imguiUtils.texObj(view.imgPath)
     view.imgSize = im.ImVec2(view.img.size.x * view.imgScale, view.img.size.y * view.imgScale)
   end
-  editor.registerWindow(wndName, im.ImVec2(700,400))
+  editor.registerWindow(wndName, im.ImVec2(700,400), nil, nil, nil, nil, nil, "vehicleEditor")
 end
 
 local function onVehicleResetted(vid)

@@ -44,7 +44,11 @@ end
 local openPopup = false
 
 local function selectTextureFile(filePaths, addToSelection)
+  editor.clearObjectSelection()
+
   if not addToSelection or not editor.selection["dynamicDecalTexture"] then
+    -- just clear other selection types
+    editor.selection = {}
     editor.selection["dynamicDecalTexture"] = {}
   end
 
@@ -167,9 +171,8 @@ local function drawTextureTiles(textureFilePaths, textureFilter, disableVirtualS
       end
 
       if im.BeginDragDropSource(im.DragDropFlags_SourceAllowNullID) then
-        local payload = ffi.new("char[256]")
-        ffi.copy(payload, filePath, ffi.sizeof"char[256]")
-        im.SetDragDropPayload("DynDecalTextureDrapDrop", payload, ffi.sizeof"char[256]")
+        local payload = im.ArrayChar(256, filePath)
+        im.SetDragDropPayload("DynDecalTextureDrapDrop", payload, im.ArraySize(payload))
         im.TextUnformatted(filePath)
         im.Image(editor.getTempTextureObj(filePath).texId, im.ImVec2(64, 64), im.ImVec2Zero, im.ImVec2One)
         im.EndDragDropSource()

@@ -28,6 +28,7 @@ local debugPacket = {sourceType = "motorTorqueControl", wheelGroups = {}, yawCon
 
 local yawControlAVPID
 local yawControlSlipAnglePID
+local yawControlFrontAxleSlipAnglePID
 
 local wheelGroupControlData = {}
 
@@ -74,7 +75,7 @@ end
 
 --returns true if component did act as yaw control
 --called from updateFixedStep
-local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, dt)
+local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, frontSlipAngle, rearSlipAngle, dt)
   M.isActingAsYC = false
   if not controlParameters.yawControl.isEnabled then
     for _, motorName in ipairs(controlledMotors) do
@@ -87,7 +88,8 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
   local bsaControlSign = sign(measuredYaw) * sign(bodySlipAngle) --negative if oversteering
   local correctedBSA = min(abs(bodySlipAngle) * bsaControlSign, 0)
   local slipAngleFactor = 1 - yawControlSlipAnglePID:get(-abs(correctedBSA), -controlParameters.yawControl.slipAngleThreshold, dt)
-  local throttleFactor = max(min(avFactor, slipAngleFactor), controlParameters.yawControl.minimumThrottleLimit)
+  local frontAxleSlipAngleFactor = 1 - yawControlFrontAxleSlipAnglePID:get(-abs(frontSlipAngle), -controlParameters.yawControl.frontAxleSlipAngleThreshold, dt)
+  local throttleFactor = max(min(avFactor, slipAngleFactor, frontAxleSlipAngleFactor), controlParameters.yawControl.minimumThrottleLimit)
 
   for _, motorName in ipairs(controlledMotors) do
     throttleFactors[motorName].yawControl = throttleFactor
@@ -121,6 +123,7 @@ local function updateGFXDebug(dt)
   if controlParameters.yawControl then
     debugPacket.yawControl.yawAVThreshold = controlParameters.yawControl.yawAvThreshold
     debugPacket.yawControl.slipAngleThreshold = controlParameters.yawControl.slipAngleThreshold
+    debugPacket.yawControl.frontAxleSlipAngleThreshold = controlParameters.yawControl.frontAxleSlipAngleThreshold
   end
 
   debugPacket.tractionControl.isActing = M.isActingAsTC
@@ -152,6 +155,16 @@ local function reset()
     for k, _ in pairs(controlParameters.tractionControl.wheelGroupSettings) do
       wheelGroupControlData[k].tractionControlPID:reset()
     end
+  end
+
+  if yawControlAVPID then
+    yawControlAVPID:reset()
+  end
+  if yawControlSlipAnglePID then
+    yawControlSlipAnglePID:reset()
+  end
+  if yawControlFrontAxleSlipAnglePID then
+    yawControlFrontAxleSlipAnglePID:reset()
   end
 end
 
@@ -244,6 +257,15 @@ local function initSecondStage(jbeamData)
         integralOutCoef = setting.integralOutCoef
       }
     end
+    if not controlParameters.yawControl.PIDSettings.yawAV then
+      controlParameters.yawControl.PIDSettings.yawAV = {kP = 0, kI = 0, kD = 0, integralInCoef = 0, integralOutCoef = 0}
+    end
+    if not controlParameters.yawControl.PIDSettings.slipAngle then
+      controlParameters.yawControl.PIDSettings.slipAngle = {kP = 0, kI = 0, kD = 0, integralInCoef = 0, integralOutCoef = 0}
+    end
+    if not controlParameters.yawControl.PIDSettings.frontAxleSlipAngle then
+      controlParameters.yawControl.PIDSettings.frontAxleSlipAngle = {kP = 0, kI = 0, kD = 0, integralInCoef = 0, integralOutCoef = 0}
+    end
 
     local yawControlledMotors = jbeamData.yawControlledMotors or {}
     controlParameters.yawControl.controlledMotorNames = {}
@@ -254,12 +276,15 @@ local function initSecondStage(jbeamData)
     --TODO safeguard against missing settings (only av or slipangle)
     local avSettings = controlParameters.yawControl.PIDSettings.yawAV
     local slipAngleSettings = controlParameters.yawControl.PIDSettings.slipAngle
+    local frontAxleSlipAngleSettings = controlParameters.yawControl.PIDSettings.frontAxleSlipAngle
 
     yawControlAVPID = newPIDParallel(avSettings.kP, avSettings.kI, avSettings.kD, 0, 1, avSettings.integralInCoef, avSettings.integralOutCoef, 0)
     yawControlSlipAnglePID = newPIDParallel(slipAngleSettings.kP, slipAngleSettings.kI, slipAngleSettings.kD, 0, 1, slipAngleSettings.integralInCoef, slipAngleSettings.integralOutCoef, 0)
+    yawControlFrontAxleSlipAnglePID = newPIDParallel(frontAxleSlipAngleSettings.kP, frontAxleSlipAngleSettings.kI, frontAxleSlipAngleSettings.kD, 0, 1, frontAxleSlipAngleSettings.integralInCoef, frontAxleSlipAngleSettings.integralOutCoef, 0)
 
     controlParameters.yawControl.yawAvThreshold = jbeamData.yawControl.yawAVThreshold or 0.4
     controlParameters.yawControl.slipAngleThreshold = jbeamData.yawControl.slipAngleThreshold or 0.1
+    controlParameters.yawControl.frontAxleSlipAngleThreshold = jbeamData.yawControl.frontAxleSlipAngleThreshold or 0.1
     controlParameters.yawControl.minimumThrottleLimit = jbeamData.yawControl.minimumThrottleLimit or 0.0
   end
 

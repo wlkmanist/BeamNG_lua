@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
--- This is an example on how to use the rawLidar interface. The specific examle uses
+-- This is an example on how to use the rawLidar interface. The specific example uses
 -- a shared library for the data, the source code of which is located in `/tech/Raw_LiDAR`.
 -- To run this example, you will need to compile the library and call
 -- `extensions.tech_sensors.createRawLidar(

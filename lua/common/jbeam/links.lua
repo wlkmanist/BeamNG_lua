@@ -10,7 +10,7 @@ local M = {}
 local min, max = math.min, math.max
 local str_byte, str_sub, str_len, str_find = string.byte, string.sub, string.len, string.find
 
-local optionalLinks = {['torqueArm:'] = 1,['torqueArm2:'] = 1, ['torqueCoupling:'] = 1, ['torqueCouple:'] = 1, ['nodeArm:'] = 1, ['nodeCoupling:'] = 1, ['nodeCouple:'] = 1}
+local optionalLinks = {['torqueArm:'] = 1,['torqueArm2:'] = 1, ['torqueCoupling:'] = 1, ['torqueCouple:'] = 1, ['nodeArm:'] = 1, ['nodeCoupling:'] = 1, ['nodeCouple:'] = 1, ['torqueJointNode1:'] = 1, ['torqueJointNode2:'] = 1}
 
 local function prepareLinksDestructive(vehicle, sectionRenames)
   profilerPushEvent('jbeam/links.prepareLinksDestructive')
@@ -54,7 +54,7 @@ local function prepareLinksDestructive(vehicle, sectionRenames)
                     linksidx = linksidx + 3
                   else
                     if not rowValue.optional then
-                      log('W', "jbeam.prepareLinksDestructive", "link target not found: " .. keyEntry .. "/" .. rowKey .. " > ".. sectionName.."/"..tValue .. " id1:" .. tostring(rowValue.id1) .. ", id2:" .. tostring(rowValue.id2) .. ", partOrigin:" .. tostring(rowValue.partOrigin) .. " - DATA DISCARDED".. (rowValue.id1 == nil and rowValue.id2 == nil and rowValue.partOrigin == nil and ": "..dumps(rowValue) or ""))
+                      log('W', "jbeam.prepareLinksDestructive", "link target not found: " .. keyEntry .. "/" .. rowKey .. " > ".. sectionName.."/"..tValue .. " id1:" .. tostring(rowValue.id1) .. ", id2:" .. tostring(rowValue.id2) .. ", partPath:" .. tostring(rowValue.partPath) .. " - DATA DISCARDED".. (rowValue.id1 == nil and rowValue.id2 == nil and rowValue.partPath == nil and ": "..dumps(rowValue) or ""))
                     else
                       --log('D', "jbeam.prepareLinksDestructive", "optional link discarded: " .. keyEntry .. "/" .. rowKey .. " > "..sectionName.."/"..tValue .. ' - OPTIONAL DATA DISCARDED')
                     end
@@ -65,7 +65,7 @@ local function prepareLinksDestructive(vehicle, sectionRenames)
                 entry[parts[1]..'_'..sectionName] = rowValue
                 entry[rowKey] = nil
               else
-                log('W', "jbeam.prepareLinksDestructive", "link target section not existing: " .. tostring(sectionName) .. ", partOrigin:" .. tostring(rowValue.partOrigin) .. " - DATA DISCARDED".. dumps(rowValue))
+                log('W', "jbeam.prepareLinksDestructive", "link target section not existing: " .. tostring(sectionName) .. ", partPath:" .. tostring(rowValue.partPath) .. " - DATA DISCARDED".. dumps(rowValue))
               end
             end
           else
@@ -111,7 +111,7 @@ local function prepareLinksDestructive(vehicle, sectionRenames)
                             linksidx = linksidx + 3
                           else
                             if not rowValue.optional then
-                              log('W', "jbeam.prepareLinksDestructive", "link target not found: " .. keyEntry .. "/" .. rowKey .. " > ".. sectionName.."/"..tValue .. " id1:" .. tostring(rowValue.id1) .. ", id2:" .. tostring(rowValue.id2) .. ", partOrigin: " .. tostring(rowValue.partOrigin) .. " - DATA DISCARDED".. (rowValue.id1 == nil and rowValue.id2 == nil and rowValue.partOrigin == nil and ": "..dumps(rowValue) or ""))
+                              log('W', "jbeam.prepareLinksDestructive", "link target not found: " .. keyEntry .. "/" .. rowKey .. " > ".. sectionName.."/"..tValue .. " id1:" .. tostring(rowValue.id1) .. ", id2:" .. tostring(rowValue.id2) .. ", partPath: " .. tostring(rowValue.partPath) .. " - DATA DISCARDED".. (rowValue.id1 == nil and rowValue.id2 == nil and rowValue.partPath == nil and ": "..dumps(rowValue) or ""))
                             else
                               --log('D', "jbeam.prepareLinksDestructive", "optional link discarded: " .. keyEntry .. "/" .. rowKey .. " > "..sectionName.."/"..tValue .. ' - OPTIONAL DATA DISCARDED')
                             end
@@ -131,7 +131,7 @@ local function prepareLinksDestructive(vehicle, sectionRenames)
                         else
                           if optionalLinks[cellKey] == nil then
                             if not rowValue.optional then
-                              log('W', "jbeam.prepareLinksDestructive", "link target not found: " .. keyEntry .. "/" .. rowKey .. " > ".. sectionName.."/"..cellValue .. " id1:" .. tostring(rowValue.id1) .. ", id2:" .. tostring(rowValue.id2) .. ", partOrigin: " .. tostring(rowValue.partOrigin) .. " - DATA DISCARDED".. (rowValue.id1 == nil and rowValue.id2 == nil and rowValue.partOrigin == nil and ": "..dumps(rowValue) or ""))
+                              log('W', "jbeam.prepareLinksDestructive", "link target not found: " .. keyEntry .. "/" .. rowKey .. " > ".. sectionName.."/"..cellValue .. " id1:" .. tostring(rowValue.id1) .. ", id2:" .. tostring(rowValue.id2) .. ", partPath: " .. tostring(rowValue.partPath) .. " - DATA DISCARDED".. (rowValue.id1 == nil and rowValue.id2 == nil and rowValue.partPath == nil and ": "..dumps(rowValue) or ""))
                             else
                               --log('D', "jbeam.prepareLinksDestructive", "optional link discarded: " .. keyEntry .. "/" .. rowKey .. " > "..sectionName.."/"..cellValue .. ' - OPTIONAL DATA DISCARDED')
                             end
@@ -141,7 +141,7 @@ local function prepareLinksDestructive(vehicle, sectionRenames)
                         end
                       end
                     else
-                      log('W', "jbeam.prepareLinksDestructive", "link target section not existing: " .. tostring(sectionName) .. ", partOrigin:" .. tostring(rowValue.partOrigin) .. " - DATA DISCARDED".. dumps(rowValue))
+                      log('W', "jbeam.prepareLinksDestructive", "link target section not existing: " .. tostring(sectionName) .. ", partPath:" .. tostring(rowValue.partPath) .. " - DATA DISCARDED".. dumps(rowValue))
                     end
                   end
                 end
@@ -152,7 +152,7 @@ local function prepareLinksDestructive(vehicle, sectionRenames)
       end
     end
   end
-  profilerPopEvent() -- jbeam/links.prepareLinksDestructive
+  profilerPopEvent('jbeam/links.prepareLinksDestructive')
   return links
 end
 
@@ -177,7 +177,7 @@ local function resolveLinks(vehicle, links)
       vehicle[sectionName] = newSection
     end
   end
-  profilerPopEvent() -- jbeam/links.resolveLinks
+  profilerPopEvent('jbeam/links.resolveLinks')
   return true
 end
 
@@ -242,7 +242,7 @@ local function resolveGroupLinks(vehicle)
   for _, val in ipairs(journal) do
     val[1][val[2]] = val[3]
   end
-  profilerPopEvent() -- jbeam/links.resolveGroupLinks
+  profilerPopEvent('jbeam/links.resolveGroupLinks')
   return true
 end
 

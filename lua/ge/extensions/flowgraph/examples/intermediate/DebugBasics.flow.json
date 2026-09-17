@@ -1,8 +1,8 @@
 {
   "activeGraphId":139,
-  "authors":"Anonymous",
+  "authors":"BeamNG",
   "currentGraphID":139,
-  "date":1625038647,
+  "date":1741651537,
   "debugEnabled":false,
   "description":"This project gives an overview of different ways to debug your flowgraph.",
   "difficulty":40,
@@ -48,7 +48,7 @@
           false
         ],
         [
-          145,
+          31,
           "flow",
           24,
           "flow",
@@ -97,17 +97,45 @@
           false
         ],
         [
-          145,
+          31,
           "flow",
           30,
           "flow",
           false
         ],
         [
-          145,
+          31,
           "velocity",
           30,
           "value",
+          false
+        ],
+        [
+          184,
+          "flow",
+          31,
+          "flow",
+          false
+        ],
+        [
+          146,
+          "vehId",
+          31,
+          "vehId",
+          false
+        ],
+        [
+          26,
+          "enter",
+          49,
+          "flow",
+          false
+        ],
+        [
+          26,
+          "enter",
+          62,
+          "flow",
           false
         ],
         [
@@ -176,20 +204,6 @@
         [
           17,
           "flow",
-          92,
-          "flow",
-          false
-        ],
-        [
-          22,
-          "pos",
-          92,
-          "pos",
-          false
-        ],
-        [
-          17,
-          "flow",
           138,
           "flow",
           false
@@ -209,34 +223,6 @@
           false
         ],
         [
-          185,
-          "value_1",
-          71,
-          "a",
-          false
-        ],
-        [
-          185,
-          "value_2",
-          71,
-          "b",
-          false
-        ],
-        [
-          185,
-          "value_3",
-          71,
-          "c",
-          false
-        ],
-        [
-          185,
-          "value_4",
-          71,
-          "d",
-          false
-        ],
-        [
           26,
           "flow",
           181,
@@ -251,13 +237,6 @@
           false
         ],
         [
-          2,
-          "flow",
-          67,
-          "flow",
-          false
-        ],
-        [
           138,
           "flow",
           178,
@@ -269,20 +248,6 @@
           "pos",
           178,
           "pos",
-          false
-        ],
-        [
-          26,
-          "enter",
-          66,
-          "flow",
-          false
-        ],
-        [
-          38,
-          "vehId",
-          66,
-          "vehId",
           false
         ],
         [
@@ -321,20 +286,6 @@
           false
         ],
         [
-          184,
-          "flow",
-          145,
-          "flow",
-          false
-        ],
-        [
-          146,
-          "vehId",
-          145,
-          "vehId",
-          false
-        ],
-        [
           16,
           "flow",
           177,
@@ -349,17 +300,66 @@
           false
         ],
         [
-          26,
-          "enter",
-          62,
+          17,
+          "flow",
+          92,
+          "flow",
+          false
+        ],
+        [
+          22,
+          "pos",
+          92,
+          "pos",
+          false
+        ],
+        [
+          185,
+          "value_1",
+          71,
+          "a",
+          false
+        ],
+        [
+          185,
+          "value_2",
+          71,
+          "b",
+          false
+        ],
+        [
+          185,
+          "value_3",
+          71,
+          "c",
+          false
+        ],
+        [
+          185,
+          "value_4",
+          71,
+          "d",
+          false
+        ],
+        [
+          2,
+          "flow",
+          67,
           "flow",
           false
         ],
         [
           26,
           "enter",
-          49,
+          66,
           "flow",
+          false
+        ],
+        [
+          38,
+          "vehId",
+          66,
+          "vehId",
           false
         ],
         [
@@ -429,7 +429,7 @@
             1
           ],
           "commentSize":[
-            964,
+            754,
             589
           ],
           "commentText":"These different nodes are helpful, when trying to visualize certain values in your graph:\\n- \"Display Value\": Displays any type of value\\n- \"Mini Graph\": Displays the value of an input over time in a graph\\n- \"Number Slider\": Gives you an output of a dynamic range of numbers, that can be changed during runtime\\nFeel free to hit play and watch these nodes change while driving.",
@@ -467,9 +467,9 @@
           ],
           "commentSize":[
             754,
-            492
+            466
           ],
-          "commentText":"Graphs can be complicated and it's important to understand, where your flow is actually going.\\nA great way to visualize this are the \"Multi Flow\" and \"Display Flow\" nodes. They each show if flow is being passed.\\nAnother good way to get an overview of the flow in your graph is to switch the Viewmode to \"Heatmap\" which\\nvisualizes the \"pulse\" of the flow through your graph.\\nTurn it on and look at this section of the graph to see how it behaves.",
+          "commentText":"Graphs can be complicated, and it's important to understand where your flow is actually going.\\nA great way to visualize this are the \"Multi Flow\" and \"Display Flow\" nodes. They each show if flow is being passed.\\nAnother good way to get an overview of the flow in your graph is to switch the Viewmode to \"Heatmap\" which\\nvisualizes the \"pulse\" of the flow through your graph.\\nTurn it on and look at this section of the graph to see how it behaves.",
           "commentTitle":"Visualizing Flow",
           "data":{},
           "dynamicMode":"repeat",
@@ -494,7 +494,7 @@
             "color":{
               "type":"color",
               "value":[
-                0.99910426099999982696,
+                0.99910426099999949390,
                 1,
                 0,
                 0.50000000000000000000
@@ -507,10 +507,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "radius":false,
               "color":true,
               "flow":false,
-              "pos":false
+              "pos":false,
+              "radius":true
             },
             "p_out":{
               "flow":false
@@ -555,9 +555,9 @@
           ],
           "commentSize":[
             992,
-            1178
+            1166
           ],
-          "commentText":"When building a level, you often want to have specific things to happen at specific\\npositions in the game world. When running your flowgraph, there is already a preview of all \"Transform\" nodes in the world space,\\nbut only of the ones in the currently viewed graph. You can try it out, by running this graph.\\nFor debugging purposes it may prove useful to be able to display different shapes or text in the game world,\\nso you can see, where certain things are located. For this you can use a variety of debug shapes below.",
+          "commentText":"When building a level, you often want to have specific things to happen at specific positions in the game world. When running \\nyour flowgraph, there is already a preview of all \"Transform\" nodes in the world space, but only of the ones in the currently \\nviewed graph. You can try it out, by running this graph.\\nFor debugging purposes it may prove useful to be able to display different shapes or text in the game world, so you can see \\nwhere certain things are located. For this you can use a variety of debug shapes below.",
           "commentTitle":"Debugging Shapes",
           "data":{},
           "dynamicMode":"repeat",
@@ -593,7 +593,7 @@
             992,
             828
           ],
-          "commentText":"Triggers are one of the most important nodes, when creating a level in flowgraph. They trigger on certain events related to a specific vehicle like entering\\nor exiting the trigger.\\nSince in this case the triggers position, rotation and scale are controlled by a transform, the transform is a visual representation of the trigger. You can activate\\nthe \"Debug\" option of the trigger to have a visual representation of the trigger during runtime.\\nCombine the trigger with some of the different nodes, that we learned about above, and you can see,\\nthat is very easy to place triggers in the world and detect if the player has entered them.",
+          "commentText":"Triggers are a very useful aspect for world interactions in flowgraph. They trigger on certain events related to a specific vehicle, \\nsuch as entering or exiting the trigger bounds.\\nSince in this case the trigger position, rotation and scale are controlled by a transform, the transform is a visual representation \\nof the trigger. You can activate the \"Debug\" option of the trigger to have a visual representation of the trigger during runtime.\\nCombine the trigger with some of the different nodes that we learned about above, and you can see that is very easy to place \\ntriggers in the world and detect if the player has entered them.",
           "commentTitle":"Using Triggers",
           "data":{},
           "dynamicMode":"repeat",
@@ -694,14 +694,15 @@
             }
           },
           "pos":[
-            150,
+            80,
             -227
           ],
           "type":"debug/display"
         },
         "26":{
           "data":{
-            "debug":true
+            "debug":true,
+            "highPrecision":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -772,10 +773,10 @@
         },
         "30":{
           "data":{
-            "stop":false,
             "autoScale":false,
             "scaleMax":50,
-            "scaleMin":0
+            "scaleMin":0,
+            "stop":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -788,10 +789,36 @@
             }
           },
           "pos":[
-            150,
+            80,
             -104
           ],
           "type":"debug/miniGraph"
+        },
+        "31":{
+          "data":{},
+          "dynamicMode":"repeat",
+          "hiddenPins":{
+            "p_in":{
+              "flow":false,
+              "vehId":false
+            },
+            "p_out":{
+              "active":true,
+              "damage":true,
+              "dirVec":true,
+              "dirVecUp":true,
+              "flow":false,
+              "position":true,
+              "rotation":true,
+              "velocity":false,
+              "velocityVector":true
+            }
+          },
+          "pos":[
+            -704,
+            -105
+          ],
+          "type":"vehicle/vehicleMapData"
         },
         "37":{
           "data":{},
@@ -841,6 +868,7 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
@@ -1000,11 +1028,11 @@
           "rotation":[
             0,
             0,
-            0.12619896899999996642,
-            0.99200494999999988543
+            0.12619896899999988316,
+            0.99200494999999955237
           ],
           "scale":[
-            0.60000002400000018721,
+            0.60000002400000052027,
             6.19999981000000044418,
             2.70000004999999987376
           ],
@@ -1026,18 +1054,18 @@
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "flow":false,
               "logTag":true,
-              "logType":true
+              "logType":true,
+              "value":false
             },
             "p_out":{
               "flow":true
             }
           },
           "pos":[
-            374,
-            2738
+            346,
+            2737
           ],
           "type":"debug/log"
         },
@@ -1067,8 +1095,8 @@
             }
           },
           "pos":[
-            374,
-            2570
+            346,
+            2569
           ],
           "type":"ui/message"
         },
@@ -1085,8 +1113,8 @@
             }
           },
           "pos":[
-            374,
-            2892
+            346,
+            2891
           ],
           "type":"vehicle/beamstate/reset"
         },
@@ -1114,10 +1142,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "d":false,
               "a":false,
               "b":false,
-              "c":false
+              "c":false,
+              "d":false
             },
             "p_out":{}
           },
@@ -1137,7 +1165,7 @@
                 0,
                 0,
                 0,
-                0.75000000000000022204
+                0.75000000000000055511
               ]
             },
             "colorText":{
@@ -1239,10 +1267,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "posB":false,
               "color":true,
               "flow":false,
-              "posA":false
+              "posA":false,
+              "posB":false
             },
             "p_out":{
               "flow":false
@@ -1261,7 +1289,7 @@
             "color":{
               "type":"color",
               "value":[
-                0.10356617000000004070,
+                0.10356617000000011009,
                 1,
                 0,
                 0.50000000000000000000
@@ -1290,49 +1318,19 @@
           ],
           "type":"debug/debugCylinder"
         },
-        "145":{
-          "data":{},
-          "dynamicMode":"repeat",
-          "hiddenPins":{
-            "p_in":{
-              "flow":false,
-              "vehId":false
-            },
-            "p_out":{
-              "active":true,
-              "corner_BL":true,
-              "corner_BR":true,
-              "corner_FL":true,
-              "corner_FR":true,
-              "damage":true,
-              "dirVec":true,
-              "dirVecUp":true,
-              "flow":false,
-              "position":true,
-              "rotation":true,
-              "velocity":false,
-              "velocityVector":true,
-              "wheelCenter":true
-            }
-          },
-          "pos":[
-            -662,
-            -104
-          ],
-          "type":"vehicle/vehicleData"
-        },
         "146":{
           "data":{},
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
           "pos":[
-            -942,
-            -76
+            -1047,
+            -77
           ],
           "type":"scene/getPlayerVehicle"
         },
@@ -1346,7 +1344,7 @@
                 0,
                 0,
                 0,
-                0.75000000000000022204
+                0.75000000000000055511
               ]
             },
             "colorText":{
@@ -1391,7 +1389,7 @@
                 0,
                 0,
                 0,
-                0.75000000000000022204
+                0.75000000000000055511
               ]
             },
             "colorText":{
@@ -1436,7 +1434,7 @@
                 0,
                 0,
                 0,
-                0.75000000000000022204
+                0.75000000000000055511
               ]
             },
             "colorText":{
@@ -1481,7 +1479,7 @@
                 0,
                 0,
                 0,
-                0.75000000000000022204
+                0.75000000000000055511
               ]
             },
             "colorText":{
@@ -1489,7 +1487,7 @@
               "value":[
                 1,
                 0.99999874799999999286,
-                0.99999940400000020269,
+                0.99999940400000053575,
                 1
               ]
             },
@@ -1512,7 +1510,7 @@
           },
           "pos":[
             766,
-            1800
+            1785
           ],
           "type":"debug/debugText"
         },
@@ -1526,7 +1524,7 @@
                 0,
                 0,
                 0,
-                0.75000000000000022204
+                0.75000000000000055511
               ]
             },
             "colorText":{
@@ -1556,8 +1554,8 @@
             }
           },
           "pos":[
-            374,
-            2374
+            346,
+            2373
           ],
           "type":"debug/debugText"
         },
@@ -1618,13 +1616,14 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "reset":false,
               "count":false,
               "flow":false,
-              "next":false
+              "next":false,
+              "reset":false
             },
             "p_out":{
               "currentIndex":true,
+              "flow":false,
               "maxIndex":true,
               "totalIndex":true,
               "value_1":false,
@@ -1636,8 +1635,8 @@
           "incMode":"manual",
           "mode":"loop",
           "pos":[
-            -732,
-            456
+            -704,
+            455
           ],
           "type":"logic/sequencer"
         },
@@ -1770,21 +1769,26 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"ResetWait",
-          "type":"bool",
-          "value":false
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "ResetWait"
+        ],
+        "list":[
+          {
+            "fixedType":false,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"ResetWait",
+            "type":"bool",
+            "value":false
+          }
+        ]
+      },
       "viewPos":[
-        -1615.23608398437500000000,
-        -79.12550354003906250000
+        -541.23126220703125000000,
+        -270.74719238281250000000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.50000000000000000000
     },
     "3":{
       "description":"This is the description for graph States",
@@ -1818,12 +1822,13 @@
             "p_out":{}
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             304,
@@ -1859,18 +1864,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             -32,
@@ -1882,15 +1889,18 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -450.19860839843750000000,
-        -239.09619140625000000000
+        -141.86392211914062500000,
+        -292.32095336914062500000
       ],
-      "viewZoom":0.75000000000000000000
+      "viewZoom":1
     },
     "139":{
-      "description":"This graph is a simpel setup for the level.",
+      "description":"This graph is a simple setup for the level.",
       "dirty":false,
       "links":[
         [
@@ -2016,8 +2026,8 @@
           "rotation":[
             0,
             0,
-            0.64545769800000019067,
-            0.76379602000000024198
+            0.64545769800000052374,
+            0.76379602000000068607
           ],
           "scale":[
             1,
@@ -2042,10 +2052,12 @@
           },
           "hiddenPins":{
             "p_in":{
-              "reset":false,
               "flow":false,
+              "gameStateName":true,
+              "keepLayout":false,
               "layout":false,
-              "menu":false
+              "menu":false,
+              "reset":false
             },
             "p_out":{
               "flow":false
@@ -2075,7 +2087,7 @@
             866,
             200
           ],
-          "commentText":"This graph is just a simple setup for the level. Checkout the \"Debug Showcase\" flowgraph for tips on how to debug in flowgraph.",
+          "commentText":"This graph is just a simple setup for the level. Select the \"Debug Showcase\" state graph for tips on how to debug in flowgraph.",
           "commentTitle":"Comment",
           "data":{},
           "dynamicMode":"repeat",
@@ -2151,13 +2163,15 @@
             "p_in":{
               "color":true,
               "config":false,
-              "dontDelete":true,
               "flow":false,
               "keepCamera":true,
+              "keepOnReset":true,
+              "keepVehicle":true,
               "licenseText":true,
               "model":false,
               "name":true,
               "pos":false,
+              "randomColor":true,
               "replacePlayer":true,
               "reset":true,
               "rot":false
@@ -2175,25 +2189,25 @@
           "type":"vehicle/spawnVehicle"
         },
         "153":{
-          "config":"rumbler",
-          "configName":"Dunekicker Rumbler 38",
-          "configPath":"vehicles/trophytruck/rumbler.pc",
+          "config":"d15_4wd_A_facelift",
+          "configName":"\"D-Series D15 V8 4WD (A)\"",
+          "configPath":"vehicles/pickup/d15_4wd_A_facelift.pc",
           "data":{},
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
-              "modelName":true,
               "config":false,
               "configName":true,
-              "model":false
+              "model":false,
+              "modelName":true
             }
           },
-          "model":"trophytruck",
-          "modelName":"Dunekicker",
+          "model":"pickup",
+          "modelName":"\"D-Series\"",
           "pos":[
-            472,
-            162
+            416,
+            161
           ],
           "type":"vehicle/vehicleConfigProvider",
           "vehType":"Truck"
@@ -2224,20 +2238,26 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        193.15374755859375000000,
-        -238.99792480468750000000
+        104.22868347167968750000,
+        -272.62854003906250000000
       ],
       "viewZoom":0.74999994039535522461
     }
   },
   "isScenario":false,
   "macros":{},
-  "name":"DebugBasics",
-  "savedDir":"/flowgraphEditor/",
+  "name":"Debug Basics",
+  "savedDir":"/lua/ge/extensions/flowgraph/examples/intermediate/",
   "savedFilename":"DebugBasics.flow.json",
   "stateGraphId":3,
-  "variables":{},
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
   "version":0.20000000000000001110
 }

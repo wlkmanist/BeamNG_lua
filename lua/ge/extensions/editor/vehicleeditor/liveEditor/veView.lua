@@ -99,7 +99,7 @@ local function createNewSceneView(id, data)
   local wndName = createViewFromData(id or tableSize(sceneViews) + 1, data)
   saveSettings()
 
-  editor.registerWindow(wndName, im.ImVec2(400,600))
+  editor.registerWindow(wndName, im.ImVec2(400, 600), nil, nil, nil, nil, nil, "vehicleEditor")
   editor.showWindow(wndName)
 end
 

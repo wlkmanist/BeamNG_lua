@@ -10,7 +10,7 @@ local M = {}
 
 local function onExtensionLoaded()
   if (v.data.beams == nil or v.data.nodes == nil)
-     or (not v.data.information.showSkeleton)
+     or (v.data.information ~= nil and not v.data.information.showSkeleton)
      or (v.data.flexbodies ~= nil and not tableIsEmpty(v.data.flexbodies)) then
 
     -- unload module

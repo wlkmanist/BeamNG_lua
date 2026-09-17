@@ -5,10 +5,11 @@
 local im  = ui_imgui
 local C = {}
 local route
-C.name = 'Navgraph Distance'
+C.name = 'Route Distance'
 
 C.description = 'Finds the approximate length between positions along the navgraph.'
 C.category = 'repeat_instant'
+C.color = ui_flowgraph_editor.nodeColors.default
 
 C.pinSchema = {
   { dir = 'in', type = 'flow', impulse = true, name = 'setRoute', description = "Sets the route." },
@@ -18,7 +19,7 @@ C.pinSchema = {
   { dir = 'out', type = 'number', name = 'dist', description = "Distance to the end of the route." },
 }
 
-C.color = ui_flowgraph_editor.nodeColors.default
+C.tags = {'route', 'navgraph', 'waypoints', 'distance', 'length'}
 
 function C:init()
   self.waypoint = im.BoolPtr(false)
@@ -44,14 +45,23 @@ function C:drawCustomProperties()
 end
 
 function C:updatePins()
+  -- the static posA/posB pins from pinSchema (or a previous updatePins call)
+  -- may already exist, e.g. when called from _onDeserialized; only create
+  -- what is missing so createPin doesn't log duplicate-pin errors
   if self.waypoint[0] then
     self:removePin(self.pinInLocal["posA"])
     self:removePin(self.pinInLocal["posB"])
-    self:createPin('in', 'table', "waypoints", nil, 'The route.')
+    if not self.pinInLocal["waypoints"] then
+      self:createPin('in', 'table', "waypoints", nil, 'The route.')
+    end
   else
     self:removePin(self.pinInLocal["waypoints"])
-    self:createPin('in', 'vec3', "posA", nil, 'The first endpoint position.')
-    self:createPin('in', 'vec3', "posB", nil, 'The second endpoint position.')
+    if not self.pinInLocal["posA"] then
+      self:createPin('in', 'vec3', "posA", nil, 'The first endpoint position.')
+    end
+    if not self.pinInLocal["posB"] then
+      self:createPin('in', 'vec3', "posB", nil, 'The second endpoint position.')
+    end
   end
 end
 

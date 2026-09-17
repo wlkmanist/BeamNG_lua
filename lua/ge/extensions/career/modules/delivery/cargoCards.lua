@@ -4,7 +4,7 @@
 
 local M = {}
 
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehOfferManager, dParcelMods, dVehicleTasks
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehOfferManager, dParcelMods, dVehicleTasks, dTutorial
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
@@ -14,57 +14,64 @@ M.onCareerActivated = function()
   dVehOfferManager = career_modules_delivery_vehicleOfferManager
   dParcelMods = career_modules_delivery_parcelMods
   dVehicleTasks = career_modules_delivery_vehicleTasks
+  dTutorial = career_modules_delivery_tutorial
 end
 
-local filterTags = {
-  {
-    value = "parcel", label = "Parcel Delivery", icon = "cardboardBox", type="cargo",
-    shortDescription = "Deliver small and large parcels all over the map.",
-    noContent = "This facility does not offer parcel delivery.",
-    cover = "/gameplay/branches/labourer/filterCovers/parcelCover.jpg",
-    howTo = {label="How does parcel delivery work?", pages={"delivery/parcelDeliveryHelp"}},
-    groupings = {"destinations","ungrouped"},
-  }, {
-    value = "vehicle", label = "Car Jockey", icon = "keys1", type="cargo",
-    shortDescription = "Drive vehicles to repair jobs or bring them to private residences.",
-    noContent = "This facility does not offer vehicles for delivery.",
-    cover = "/gameplay/branches/labourer/filterCovers/vehicleCover.jpg",
-    howTo = {label="How does car jockey work?", pages={"delivery/vehicleDeliveryHelp"}},
-    groupings = {"destinations","ungrouped"},
-  }, {
-    value = "trailer", label = "Trailer Delivery", icon = "smallTrailer", type="cargo",
-    shortDescription = "Tow small and large trailers to where they are needed.",
-    noContent = "This facility does not have trailers for delivery.",
-    cover = "/gameplay/branches/labourer/filterCovers/trailerCover.jpg",
-    howTo = {label="How do I deliver trailers?", pages={"delivery/trailerDeliveryHelp"}},
-    groupings = {"destinations","ungrouped"},
-  }, {
-    value = "material", label = "Materials Delivery", icon = "droplet", type="cargo",
-    shortDescription = "Deliver large amounts of fluids and dry bulk as orders or in custom sizes.",
-    noContent = "This facility does not offer materials delivery.",
-    cover = "/gameplay/branches/labourer/filterCovers/materialsCover.jpg",
-    howTo = {label="How do I deliver materials?", pages={"delivery/materialsDeliveryHelp"}},
-    groupings = {"cargoType", "destinations","ungrouped"},
-  }, {
-    value = "all", label = "All Cargo", icon = "infinity", type="cargo",
-    shortDescription = "Showing all cargo this facility has to offer.",
-    cover = "/gameplay/branches/labourer/filterCovers/everythingCover.jpg",
-    hideDetailed = true,
-    groupings = {"destinations","cargoType","ungrouped"},
-  }, {
-    value = "loaner", label = "Loaner Vehicles", icon = "carCoins", type="other",
-    shortDescription = "Loan vehicles from this organization to use for delivering other cargo.",
-    noContent = "This facility does not offer loaner vehicles.",
-    cover = "/gameplay/branches/labourer/filterCovers/loanerCover.jpg",
-    howTo = {label="What are loaner vehicles?", pages={"delivery/loanerHelp"}},
-    groupings = {"loaner", "ungrouped"},
-  },
-}
+local filterTags
+
+local function ensureFilterTags()
+  if filterTags then return end
+  filterTags = {
+    {
+      value = "parcel", label = _tr("ui.career.cargoCards.parcel.label"), icon = "cardboardBox", type="cargo",
+      shortDescription = _tr("ui.career.cargoCards.parcel.shortDescription"),
+      noContent = _tr("ui.career.cargoCards.parcel.noContent"),
+      cover = "/gameplay/branches/labourer/filterCovers/parcelCover.jpg",
+      howTo = {label=_tr("ui.career.cargoCards.parcel.howTo"), pages={"delivery/parcelDeliveryHelp"}},
+      groupings = {"destinations","ungrouped"},
+    }, {
+      value = "vehicle", label = _tr("ui.career.cargoCards.vehicle.label"), icon = "keys1", type="cargo",
+      shortDescription = _tr("ui.career.cargoCards.vehicle.shortDescription"),
+      noContent = _tr("ui.career.cargoCards.vehicle.noContent"),
+      cover = "/gameplay/branches/labourer/filterCovers/vehicleCover.jpg",
+      howTo = {label=_tr("ui.career.cargoCards.vehicle.howTo"), pages={"delivery/vehicleDeliveryHelp"}},
+      groupings = {"destinations","ungrouped"},
+    }, {
+      value = "trailer", label = _tr("ui.career.cargoCards.trailer.label"), icon = "smallTrailer", type="cargo",
+      shortDescription = _tr("ui.career.cargoCards.trailer.shortDescription"),
+      noContent = _tr("ui.career.cargoCards.trailer.noContent"),
+      cover = "/gameplay/branches/labourer/filterCovers/trailerCover.jpg",
+      howTo = {label=_tr("ui.career.cargoCards.trailer.howTo"), pages={"delivery/trailerDeliveryHelp"}},
+      groupings = {"destinations","ungrouped"},
+    }, {
+      value = "material", label = _tr("ui.career.cargoCards.material.label"), icon = "droplet", type="cargo",
+      shortDescription = _tr("ui.career.cargoCards.material.shortDescription"),
+      noContent = _tr("ui.career.cargoCards.material.noContent"),
+      cover = "/gameplay/branches/labourer/filterCovers/materialsCover.jpg",
+      howTo = {label=_tr("ui.career.cargoCards.material.howTo"), pages={"delivery/materialsDeliveryHelp"}},
+      groupings = {"cargoType", "destinations","ungrouped"},
+    }, {
+      value = "all", label = _tr("ui.career.cargoCards.all.label"), icon = "infinity", type="cargo",
+      shortDescription = _tr("ui.career.cargoCards.all.shortDescription"),
+      cover = "/gameplay/branches/labourer/filterCovers/everythingCover.jpg",
+      hideDetailed = true,
+      groupings = {"destinations","cargoType","ungrouped"},
+    }, {
+      value = "loaner", label = _tr("ui.career.cargoCards.loaner.label"), icon = "carCoins", type="other",
+      shortDescription = _tr("ui.career.cargoCards.loaner.shortDescription"),
+      noContent = _tr("ui.career.cargoCards.loaner.noContent"),
+      cover = "/gameplay/branches/labourer/filterCovers/loanerCover.jpg",
+      howTo = {label=_tr("ui.career.cargoCards.loaner.howTo"), pages={"delivery/loanerHelp"}},
+      groupings = {"loaner", "ungrouped"},
+    },
+  }
+end
 local filtersByKey = {}
 local function resetFilterCounters()
+  ensureFilterTags()
   for _, filter in ipairs(filterTags) do
     filter.facilityCards = 0
-    filter.playerCards = 0    
+    filter.playerCards = 0
     filtersByKey[filter.value] = filter
   end
 end
@@ -76,19 +83,19 @@ end
 
 local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoContainers)
   local groupsByKey = {
-    ungrouped = {label="None", meta={type="hidden"}},
+    ungrouped = {label=_tr("ui.career.cargoCards.group.none"), meta={type="hidden"}},
     -- cargo types
-    type_parcel = {label="Parcel"},
-    type_fluid = {label="Fluid"},
-    type_dryBulk = {label="Dry Bulk"},
-    type_vehicle = {label="Vehicle"},
-    type_trailer = {label="Trailer"},
-    type_loaner = {label="Loaner"},
-    type_loaner_vehicle = {label="Loaner Vehicle"},
-    type_loaner_trailer = {label="Loaner Trailer"},
+    type_parcel = {label=_tr("ui.career.cargoCards.group.parcel")},
+    type_fluid = {label=_tr("ui.career.cargoCards.group.fluid")},
+    type_dryBulk = {label=_tr("ui.career.cargoCards.group.dryBulk")},
+    type_vehicle = {label=_tr("ui.career.cargoCards.group.vehicle")},
+    type_trailer = {label=_tr("ui.career.cargoCards.group.trailer")},
+    type_loaner = {label=_tr("ui.career.cargoCards.group.loaner")},
+    type_loaner_vehicle = {label=_tr("ui.career.cargoCards.group.loanerVehicle")},
+    type_loaner_trailer = {label=_tr("ui.career.cargoCards.group.loanerTrailer")},
 
     -- destination (keys built from cards)
-    destination_noDestination = {label = "Unknown Destination?"},
+    destination_noDestination = {label = _tr("ui.career.cargoCards.group.unknownDestination")},
 
     type_totalStorage_parcel = {meta={type="totalStorage", usedCargoSlots = 0, totalCargoSlots = 0, icon="cardboardBox"}},
     type_totalStorage_fluid = {meta={type="totalStorage", usedCargoSlots = 0, totalCargoSlots = 0, icon="droplet"}},
@@ -198,7 +205,7 @@ local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoConta
 
     -- tasklist grouping
     if usePlayerCards and card.isPlayerCard then
-      local taskLabels = {"No Task?"}
+      local taskLabels = {_tr("ui.career.cargoCards.group.noTask")}
       if card.cardType == "parcelGroup" then
         taskLabels = card.taskList
       elseif card.cardType == "vehicleOffer" then
@@ -247,7 +254,7 @@ local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoConta
   local groupSetsByKey = { }
   groupSetsByKey['ungrouped'] = {
     key = "ungrouped",
-    label = "None",
+    label = _tr("ui.career.cargoCards.group.none"),
     hideProps = true,
     hideModsAndTimer = true,
     groups = {
@@ -257,7 +264,7 @@ local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoConta
   }
   groupSetsByKey['cargoType'] = {
     key = "cargoType",
-    label = "Cargo Type",
+    label = _tr("ui.career.cargoCards.groupSet.cargoType"),
     hideProps = true,
     hideModsAndTimer = true,
     focus = "none",
@@ -281,7 +288,7 @@ local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoConta
   table.insert(destinationGroups, groupsByKey['destination_noDestination'])
   groupSetsByKey['destinations'] = {
     key = "destinations",
-    label = "Destinations",
+    label = _tr("ui.career.cargoCards.groupSet.destinations"),
     groups = destinationGroups,
     hideProps = true,
     hideModsAndTimer = true,
@@ -299,7 +306,7 @@ local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoConta
 
     groupSetsByKey['containers'] = {
       key = "containers",
-      label = "Cargo Containers",
+      label = _tr("ui.career.cargoCards.groupSet.cargoContainers"),
       groups = containerGroups,
       hideProps = true,
       hideModsAndTimer = true,
@@ -318,7 +325,7 @@ local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoConta
     table.sort(taskGroups, function(a,b) return a.label < b.label end)
     groupSetsByKey['tasklist'] = {
       key = "tasklist",
-      label = "Tasklist",
+      label = _tr("ui.career.cargoCards.groupSet.tasklist"),
       groups = taskGroups,
       hideProps = true,
       hideModsAndTimer = true,
@@ -328,7 +335,7 @@ local function getCardGroupSetsByKey(cardsById, usePlayerCards, playerCargoConta
 
   groupSetsByKey['loaner'] = {
     key = "loaner",
-    label = "Vehicle Type",
+    label = _tr("ui.career.cargoCards.groupSet.vehicleType"),
     hideProps = true,
     hideModsAndTimer = true,
     groups = {
@@ -368,7 +375,7 @@ local function getCardSortingSetsByKey(cardsById)
   for i, card in ipairs(cards) do
     card.sortValues.cardId = i
   end
-  sortSetsByKey['cardId'] = {label = "Id", key = "cardId"}
+  sortSetsByKey['cardId'] = {label = _tr("ui.career.cargoCards.sort.id"), key = "cardId"}
 
   -- rewardMoney sorting: from high to low
   table.sort(cards, function(a, b)
@@ -386,7 +393,7 @@ local function getCardSortingSetsByKey(cardsById)
   for i, card in ipairs(cards) do
     card.sortValues.rewardMoney = i
   end
-  sortSetsByKey['rewardMoney'] = {label = "Rewards", key = "rewardMoney"}
+  sortSetsByKey['rewardMoney'] = {label = _tr("ui.career.cargoCards.sort.rewards"), key = "rewardMoney"}
 
   -- weight sorting: from high to low
   table.sort(cards, function(a, b)
@@ -404,7 +411,7 @@ local function getCardSortingSetsByKey(cardsById)
   for i, card in ipairs(cards) do
     card.sortValues.weight = i
   end
-  sortSetsByKey['weight'] = {label = "Weight", key = "weight"}
+  sortSetsByKey['weight'] = {label = _tr("ui.career.cargoCards.sort.weight"), key = "weight"}
 
   -- distance sorting from close to far
   table.sort(cards, function(a, b)
@@ -422,13 +429,14 @@ local function getCardSortingSetsByKey(cardsById)
   for i, card in ipairs(cards) do
     card.sortValues.distance = i
   end
-  sortSetsByKey['distance'] = {label = "Distance", key = "distance"}
+  sortSetsByKey['distance'] = {label = _tr("ui.career.cargoCards.sort.distance"), key = "distance"}
 
 
   local disableReasonOrder = {
     limit = 0,
     noSpace = 1,
     locked = 2,
+    tutorial = 3,
     expired = 100
   }
   -- availablilty
@@ -442,12 +450,21 @@ local function getCardSortingSetsByKey(cardsById)
     if not b.enabled and a.enabled then
       return true
     end
+    if not a.disableReason and not b.disableReason then
+      return false
+    end
+    if not a.disableReason then
+      return false
+    end
+    if not b.disableReason then
+      return true
+    end
     return disableReasonOrder[a.disableReason.type] < disableReasonOrder[b.disableReason.type]
   end)
   for i, card in ipairs(cards) do
     card.sortValues.availablilty = i
   end
-  sortSetsByKey['availablilty'] = {label = "Availablilty", key = "availablilty"}
+  sortSetsByKey['availablilty'] = {label = _tr("ui.career.cargoCards.sort.availability"), key = "availablilty"}
 
 
   return sortSetsByKey
@@ -470,6 +487,7 @@ local function addSortingValuesToGroups(cardsById, groupSets)
 end
 
 local function getFilterSets(cardsById)
+  ensureFilterTags()
   local filterSets = { }
   for _, filter in ipairs(filterTags) do
 
@@ -477,14 +495,14 @@ local function getFilterSets(cardsById)
       filter.hasAvailableOffers = true
     end
     filter.lockedInfo = nil
-    local deliveryLevel = career_branches.getBranchLevel("delivery")
+    local deliveryLevel = career_branches.getBranchLevel("logistics-delivery")
     if filter.value == "trailer" then
       if deliveryLevel < 3 then
         filter.lockedInfo = {
           type = "minLevel",
           icon = "boxPickUp03",
-          longLabel = string.format("Requires 'Cargo Delivery' lvl 3", 3),
-          shortLabel = string.format("lvl %d", 3),
+          longLabel = core_locales.contextTranslate("ui.career.cargoCards.locked.requiresCargoDeliveryLevelLong", {branch = _tr("ui.career.logistics.delivery.name"), level = 3}),
+          shortLabel = core_locales.contextTranslate("ui.career.cargoCards.locked.levelShort", {level = 3}),
           minLevel = 3
         }
       end
@@ -494,8 +512,8 @@ local function getFilterSets(cardsById)
         filter.lockedInfo = {
           type = "minLevel",
           icon = "boxPickUp03",
-          longLabel = string.format("Requires 'Cargo Delivery' lvl 3", 5),
-          shortLabel = string.format("lvl %d", 5),
+          longLabel = core_locales.contextTranslate("ui.career.cargoCards.locked.requiresCargoDeliveryLevelLong", {branch = _tr("ui.career.logistics.delivery.name"), level = 5}),
+          shortLabel = core_locales.contextTranslate("ui.career.cargoCards.locked.levelShort", {level = 5}),
           minLevel = 5
         }
       end
@@ -552,6 +570,11 @@ local function getConfirmButtonFromPlayerCards(cardsById)
     itemCount = itemCount,
   }
 
+end
+
+M.onLanguageChanged = function()
+  filterTags = nil
+  table.clear(filtersByKey)
 end
 
 M.resetFilterCounters = resetFilterCounters

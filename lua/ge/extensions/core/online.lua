@@ -22,13 +22,14 @@ local jsonEncodeFull = require('libs/lunajson/lunajson').encode -- slow but conf
 local function onOnlineStateChanged(connected)
   guihooks.trigger('OnlineStateChanged', connected)
   -- send steam data as well if available
-  if Steam and Steam.accountID ~= "" then
+  if OnlineServiceProvider and OnlineServiceProvider.accountID ~= "" then
+    -- TODO: Rename to ProviderInfo or OnlineInfo as it's not Steam specific.
     guihooks.trigger('SteamInfo', {
-      working = Steam.isWorking,
-      playerName = Steam.playerName,
-      branch = Steam.branch,
-      language = Steam.language,
-      loggedin = Steam.accountLoggedIn
+      working = OnlineServiceProvider.isWorking,
+      playerName = OnlineServiceProvider.playerName,
+      branch = OnlineServiceProvider.branch,
+      language = OnlineServiceProvider.language,
+      loggedin = OnlineServiceProvider.accountLoggedIn
     })
   end
 end

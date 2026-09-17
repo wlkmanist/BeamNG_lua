@@ -10,31 +10,28 @@ local safetyDistance = 0.1 -- camera will move this distance closer to the targe
 local nearClipHalfWidth = 0.2
 local nearClipHalfHeight = 0.1
 
-local smoother
 local upVec = vec3(0, 0, 1)
 local fwdVec = vec3(0, 1, 0)
-local lastDistance
-local lastNearClipCenter
-local useRaycast = true
-local collidingCamDist
 
+-- per-instance state (each camera/renderview has its own collision filter), so split-screen
+-- views don't share one distance and yank each other's zoom around
 function C:init()
-  lastDistance = nil
-  lastNearClipCenter = nil
-  useRaycast = true
+  self.lastDistance = nil
+  self.lastNearClipCenter = nil
+  self.useRaycast = true
   self.isFilter = true
   self.hidden = true
-  smoother = nil
-  collidingCamDist = nil
+  self.smoother = nil
+  self.collidingCamDist = nil
 end
 
 local dirTemp = vec3()
-local function isObstacleInFrontOfCam(rayDestinations)
+function C:isObstacleInFrontOfCam(rayDestinations)
   -- Test if we passed through a wall completely in one frame
-  if lastNearClipCenter then
-    dirTemp:setSub2(rayDestinations[1], lastNearClipCenter)
+  if self.lastNearClipCenter then
+    dirTemp:setSub2(rayDestinations[1], self.lastNearClipCenter)
     local rayDist = dirTemp:length()
-    if castRayStatic(lastNearClipCenter, dirTemp, rayDist) < rayDist then
+    if castRayStatic(self.lastNearClipCenter, dirTemp, rayDist) < rayDist then
       return true
     end
   end
@@ -75,13 +72,13 @@ function C:update(data)
   rayDestinations[3]:set(nearClipCenter); rayDestinations[3]:setSub(camUp); rayDestinations[3]:setSub(camRight)
   rayDestinations[4]:set(nearClipCenter); rayDestinations[4]:setAdd(camUp); rayDestinations[4]:setSub(camRight)
 
-  if not useRaycast and isObstacleInFrontOfCam(rayDestinations) then
-    useRaycast = true
+  if not self.useRaycast and self:isObstacleInFrontOfCam(rayDestinations) then
+    self.useRaycast = true
   end
 
   local closestHit = dirLength
   local hitRegistered
-  if useRaycast then
+  if self.useRaycast then
     -- Make 4 parallel raycasts from the targetPos to the camera pos and position the camera based on the closest hit
     for i, cornerPos in ipairs(rayDestinations) do
       rayStart:setSub2(cornerPos, dir)
@@ -95,32 +92,32 @@ function C:update(data)
   end
 
   if not hitRegistered then
-    useRaycast = false
+    self.useRaycast = false
   end
 
-  if not smoother then
-    smoother = newTemporalSmoothingNonLinear(1, 7, 0)
-    smoother:set(closestHit)
+  if not self.smoother or not self.smoother.get then -- nil, or metatable stripped by a GE-reload deserialize
+    self.smoother = newTemporalSmoothingNonLinear(1, 7, 0)
+    self.smoother:set(closestHit)
   end
 
   local smoothedDistance = closestHit
-  if lastDistance then
-    local camDestDiff = (closestHit - lastDistance)
+  if self.lastDistance then
+    local camDestDiff = (closestHit - self.lastDistance)
     if camDestDiff >= 0 then
-      smoothedDistance = smoother:get(closestHit, data.dtReal)
+      smoothedDistance = self.smoother:get(closestHit, data.dtReal)
     else
-      smoother:set(smoothedDistance)
+      self.smoother:set(smoothedDistance)
     end
   end
 
-  lastDistance = smoothedDistance
-  lastNearClipCenter = lastNearClipCenter or vec3()
-  lastNearClipCenter:set(nearClipCenter)
+  self.lastDistance = smoothedDistance
+  self.lastNearClipCenter = self.lastNearClipCenter or vec3()
+  self.lastNearClipCenter:set(nearClipCenter)
   newCamPos:set(push3(data.res.targetPos) + push3(dir):normalized() * (smoothedDistance + assumedNearClipDist))
-  if useRaycast then
-    collidingCamDist = newCamPos:distance(data.res.targetPos)
+  if self.useRaycast then
+    self.collidingCamDist = newCamPos:distance(data.res.targetPos)
   else
-    collidingCamDist = nil
+    self.collidingCamDist = nil
   end
   data.res.pos = newCamPos
 end
@@ -130,7 +127,7 @@ function C:onVehicleSwitched()
 end
 
 function C:collidingCamDistance()
-  return collidingCamDist
+  return self.collidingCamDist
 end
 
 -- DO NOT CHANGE CLASS IMPLEMENTATION BELOW

@@ -1,4 +1,4 @@
-  -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -9,7 +9,7 @@ local whiteColorF = ColorF(1,1,1,1)
 local blackColorI = ColorI(0,0,0,192)
 
 -- main working data
-local toolWindowName = "Drift editors"
+local toolWindowName = "driftDataEditor"
 local currentFileDir = "/gameplay/temp/"
 local currentFileName
 local driftData = nil
@@ -33,6 +33,8 @@ local stuntZonesPresets = {
     hitPole = {absolute = false, presets = {500, 1000, 1500}},
     nearPole = {absolute = false, presets = {500, 1000, 1500}},
 }
+
+local driftSpotsUnsavedChanges = false
 
 local function getNewDriftData()
   return {
@@ -101,10 +103,11 @@ local transformsUtils = {}
 local function selectDriftSpot(id)
   selectedDriftSpotId = id
   transformsUtils = {}
-  for lineName, lineData in pairs(currDriftSpots[selectedDriftSpotId].lines) do
+  for lineName, lineData in pairs(currDriftSpots[selectedDriftSpotId].spatialInfo.lines) do
     transformsUtils[lineName.."driftBox"] = createNewTransform("Sign pos", true, true, true, lineData.pos, quatFromEuler(lineData.rot.x, lineData.rot.y, lineData.rot.z), lineData.scl)
     transformsUtils[lineName.."startDir"] = createNewTransform("Entry dir", true, false, false, lineData.pos + lineData.startDir, nil, nil)
   end
+  transformsUtils["bigMapTp"] = createNewTransform("Big map TP", true, true, false, currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.pos, quat(currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.rot), currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.scl)
 end
 
 local function selectStuntZone(index)
@@ -175,20 +178,30 @@ local function sanitizeDriftSpot(spotData)
   local newDriftSpot = {
     racePath = spotData.racePath,
     bounds = spotData.bounds,
-    lines = {},
+    spatialInfo = {
+      lines = {},
+      bigMapTp = {}
+    },
     id = spotData.id,
-    name = spotData.name
+    name = spotData.name,
+    info = spotData.info -- Add info field to store objectives data
   }
-  for lineName, lineData in pairs(spotData.lines) do
+  for lineName, lineData in pairs(spotData.spatialInfo.lines) do
     local newLineData = {
       pos = vec3(lineData.pos),
       scl = vec3(lineData.scl),
       rot = quat(lineData.rot),
       startDir = vec3(lineData.startDir),
+      markerObjects = lineData.markerObjects
     }
 
-    newDriftSpot.lines[lineName] = newLineData
+    newDriftSpot.spatialInfo.lines[lineName] = newLineData
   end
+  newDriftSpot.spatialInfo.bigMapTp = {
+    pos = vec3(spotData.spatialInfo.bigMapTp.pos),
+    rot = quat(spotData.spatialInfo.bigMapTp.rot),
+    scl = vec3(spotData.spatialInfo.bigMapTp.scl)
+  }
   return newDriftSpot
 end
 
@@ -196,6 +209,17 @@ local function loadDriftSpotsForCurrLevel()
   local tempSpot
   for _, spotData in pairs(gameplay_drift_saveLoad.loadAndSanitizeDriftFreeroamSpotsCurrMap()) do
     tempSpot = sanitizeDriftSpot(spotData)
+    -- Load the info.json file
+    local infoPath = "levels/"..getCurrentLevelIdentifier().."/driftSpots/"..tempSpot.id:match("([^/]+)$").."/info.json"
+    tempSpot.info = jsonReadFile(infoPath) or {
+      name = tempSpot.id:match("([^/]+)$"),
+      objectives = {
+        {id = "bronze", score = 1200, rewards = {money = 1000}},
+        {id = "silver", score = 3100, rewards = {money = 1000}},
+        {id = "gold", score = 7200, rewards = {money = 1000}}
+      },
+      unlock = {}
+    }
     currDriftSpots[tempSpot.id] = tempSpot
   end
 end
@@ -206,36 +230,57 @@ local function deleteDriftSpot(spotId)
     selectDriftSpot(key)
     break
   end
-  FS:remove(gameplay_drift_saveLoad.getDriftSpotFilePath(spotId))
+  FS:remove("levels/"..getCurrentLevelIdentifier().."/driftSpots/"..spotId)
 end
 
 local function saveCurrentDriftSpots()
   for spotId, spotData in pairs(currDriftSpots) do
-    local newSpotData = {}
-    for lineName, lineData in pairs(spotData.lines) do
+    local newSpotData = {
+      spatialInfo = {
+        lines = {},
+        bigMapTp = {}
+      }
+    }
+    -- Extract name from spotId (gets everything after the last '/')
+    local name = spotId:match("([^/]+)$")
+    for lineName, lineData in pairs(spotData.spatialInfo.lines) do
       local newLineData = {
         pos = lineData.pos:toTable(),
         scl = lineData.scl:toTable(),
         rot = lineData.rot:toTable(),
         startDir = lineData.startDir:toTable(),
-        signPos = lineData.signPos:toTable(),
-        signRot = lineData.signRot:toTable(),
-        drawnLine = {lineData.drawnLine[1]:toTable(), lineData.drawnLine[2]:toTable()},
+        markerObjects = lineData.markerObjects
       }
-      newSpotData[lineName] = newLineData
+      newSpotData.spatialInfo.lines[lineName] = newLineData
     end
-    gameplay_drift_saveLoad.saveDriftSpot(newSpotData, spotId)
+    newSpotData.spatialInfo.bigMapTp = {
+      pos = spotData.spatialInfo.bigMapTp.pos:toTable(),
+      rot = spotData.spatialInfo.bigMapTp.rot:toTable(),
+      scl = {1,1,1}
+    }
+    local path = "levels/"..getCurrentLevelIdentifier().."/driftSpots/"..name
+    jsonWriteFile(path.."/".."spot.driftSpot.json", newSpotData, true)
+
+    -- Save the info.json file
+    if spotData.info then
+      jsonWriteFile(path.."/info.json", spotData.info, true)
+    end
   end
+  driftSpotsUnsavedChanges = false
 end
 
 local function createNewDriftSpot(name)
-  name = getCurrentLevelIdentifier().."/"..name
+  local path = "levels/"..getCurrentLevelIdentifier().."/driftSpots/"..name
+
   if currDriftSpots[name] then return end
   local camPos = core_camera.getPosition()
   local spotData = {
-    lines = {},
-    racePath = gameplay_drift_saveLoad.getDriftSpotFilePath(name) .. "/race.race.json",
-    bounds = gameplay_drift_saveLoad.getDriftSpotFilePath(name) .. "/bounds.sites.json"
+    spatialInfo = {
+      lines = {},
+      bigMapTp = {}
+    },
+    racePath = path .. "/race.race.json",
+    bounds = path .. "/bounds.sites.json"
   }
 
   for i = 1, 2, 1 do
@@ -244,18 +289,54 @@ local function createNewDriftSpot(name)
       scl = vec3(1, 1, 1):toTable(),
       rot = quat(0, 0, 0, 1):toTable(),
       startDir = vec3(0,0,0),
+      markerObjects = {}
     }
 
-    spotData.lines[i == 1 and "lineOne" or "lineTwo"] = newLineData
+    spotData.spatialInfo.lines[i == 1 and "lineOne" or "lineTwo"] = newLineData
   end
+  spotData.spatialInfo.bigMapTp = {
+    pos = camPos:toTable(),
+    rot = quat(0, 0, 0, 1):toTable(),
+    scl = vec3(1, 1, 1):toTable()
+  }
+  local defaultInfoJson = {
+    name = name,
+    objectives = {
+      {
+        id = "bronze",
+        score = 1200,
+        rewards = {
+          money = 1000,
+        }
+      },
+      {
+        id = "silver",
+        score = 3100,
+        rewards = {
+          money = 1000,
+        }
+      },
+      {
+        id = "gold",
+        score = 7200,
+        rewards = {
+          money = 1000,
+        }
+      }
+    },
+    unlock = {}
+  }
 
   jsonWriteFile(spotData.racePath, {}, true)
   jsonWriteFile(spotData.bounds, {}, true)
-  gameplay_drift_saveLoad.saveDriftSpot(spotData.lines, name)
+  jsonWriteFile(path .. "/info.json", defaultInfoJson, true)
+  jsonWriteFile(path.."/".."spot.driftSpot.json", spotData.spatialInfo, true)
 
-  currDriftSpots[name] = sanitizeDriftSpot(spotData)
+  local id = getCurrentLevelIdentifier().."/"..name
 
-  selectDriftSpot(name)
+  currDriftSpots[id] = sanitizeDriftSpot(spotData)
+
+  selectDriftSpot(id)
 end
 
 local function driftStuntZonesEditor()
@@ -421,18 +502,19 @@ local function driftSpotsEditor()
     driftSpotsLoaded = true
   end
 
-  if im.BeginMenuBar() then
-    if im.BeginMenu("File") then
-      if im.MenuItem1("Save changes") then
-        saveCurrentDriftSpots()
-      end
-      if im.MenuItem1("Revert changes to last save") then
-        loadDriftSpotsForCurrLevel()
-      end
-      im.EndMenu()
-    end
-    im.EndMenuBar()
+  -- Add save/revert buttons at the top
+  local wasUnsaved = driftSpotsUnsavedChanges
+  if driftSpotsUnsavedChanges then
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 0, 0, 1))
   end
+  if im.Button("Save changes") then
+    saveCurrentDriftSpots()
+  end
+  if wasUnsaved then
+    im.PopStyleColor()
+  end
+
+  im.Separator()
 
   im.Columns(2, "DriftSpotsCurrLevel")
 
@@ -458,12 +540,18 @@ local function driftSpotsEditor()
 
   im.BeginChild1("Drift spots details", im.GetContentRegionAvail(), 1)
   if selectedDriftSpotId then
+    if im.Button("TP player to drift spot") then
+      local player = scenetree.findObjectById(be:getPlayerVehicleID(0))
+      if player then
+        spawn.safeTeleport(player, vec3(currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.pos), quat(currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.rot), nil, nil, nil, nil, false)
+      end
+    end
     im.Checkbox("Raw data", rawData)
     if rawData[0] then
       if im.Begin("Raw drift spot's data") then
         im.Text(dumps(currDriftSpots[selectedDriftSpotId]))
-        im.End()
       end
+      im.End()
     end
     if im.Button("Delete") then
       deleteDriftSpot(selectedDriftSpotId)
@@ -495,7 +583,7 @@ local function driftSpotsEditor()
       end
     end
     im.Separator()
-    for lineName, lineData in pairs(currDriftSpots[selectedDriftSpotId].lines) do
+    for lineName, lineData in pairs(currDriftSpots[selectedDriftSpotId].spatialInfo.lines) do
       im.Text(lineName)
       im.Dummy(im.ImVec2(1, 5))
 
@@ -510,6 +598,7 @@ local function driftSpotsEditor()
         lineData.pos = driftBoxTr.allowTranslate and driftBoxTr.pos or nil
         lineData.rot = driftBoxTr.allowRotate and driftBoxTr.rot or nil
         lineData.scl = driftBoxTr.allowScale and driftBoxTr.scl or nil
+        driftSpotsUnsavedChanges = true
       end
 
       im.Dummy(im.ImVec2(1, 10))
@@ -520,12 +609,84 @@ local function driftSpotsEditor()
       local startDirTr = transformsUtils[lineName.."startDir"]
       if startDirTr and startDirTr:update(mouseInfo) then
         lineData.startDir = startDirTr.allowTranslate and startDirTr.pos - lineData.pos or nil
+        driftSpotsUnsavedChanges = true
+      end
+
+      -- Add marker objects list
+      im.Dummy(im.ImVec2(1, 10))
+      im.Text("Marker Objects")
+      if not lineData.markerObjects then lineData.markerObjects = {} end
+
+      -- Add new marker object button
+      if im.Button("Add Marker Object##" .. lineName) then
+        table.insert(lineData.markerObjects, "")
+        driftSpotsUnsavedChanges = true
+      end
+
+      -- List existing marker objects
+      for i, markerObj in ipairs(lineData.markerObjects) do
+        local imVal = im.ArrayChar(2048, markerObj)
+
+        if im.InputText("##marker"..i..lineName, imVal) then
+          lineData.markerObjects[i] = ffi.string(imVal)
+          driftSpotsUnsavedChanges = true
+        end
+        im.SameLine()
+        if im.Button("Delete##" .. i .. lineName) then
+          table.remove(lineData.markerObjects, i)
+          driftSpotsUnsavedChanges = true
+        end
       end
 
       if lineName == "lineOne" then
         im.Dummy(im.ImVec2(1, 10))
         im.Separator()
         im.Dummy(im.ImVec2(1, 10))
+      end
+    end
+
+    -- Add objectives editor section
+    if currDriftSpots[selectedDriftSpotId].info then
+      im.Separator()
+
+      -- Add name field
+      local info = currDriftSpots[selectedDriftSpotId].info
+      im.Text("Spot Name:")
+      im.SameLine()
+      local namePtr = im.ArrayChar(128, info.name or "")
+      if im.InputText("##name", namePtr) then
+        info.name = ffi.string(namePtr)
+        driftSpotsUnsavedChanges = true
+      end
+
+      im.Text("Big map TP:")
+      local x, y, z = currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.rot * vec3(1,0,0), currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.rot * vec3(0,1,0), currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.rot * vec3(0,0,1)
+      local scl = (x+y+z)/2
+      debugDrawer:drawTextAdvanced(vec3(currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.pos), String("Big map TP"), whiteColorF, true, false, blackColorI)
+      M.drawAxisBox(((-scl*2)+vec3(currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.pos)),x*2,y*2,z*2,color(0,0,255,0.2*255))
+      local bigMapTpTr = transformsUtils["bigMapTp"]
+      if bigMapTpTr and bigMapTpTr:update(mouseInfo) then
+        currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.pos = bigMapTpTr.allowTranslate and bigMapTpTr.pos or nil
+        currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.rot = bigMapTpTr.allowRotate and bigMapTpTr.rot or nil
+        currDriftSpots[selectedDriftSpotId].spatialInfo.bigMapTp.scl = bigMapTpTr.allowScale and bigMapTpTr.scl or nil
+        driftSpotsUnsavedChanges = true
+      end
+
+      im.Separator()
+      im.Text("Objectives")
+
+      for _, objective in ipairs(info.objectives or {}) do
+        im.PushID1(objective.id)
+
+        im.Text(objective.id .. " score:")
+        im.SameLine()
+        local scorePtr = im.IntPtr(objective.score)
+        if im.InputInt("##score", scorePtr) then
+          objective.score = scorePtr[0]
+          driftSpotsUnsavedChanges = true
+        end
+
+        im.PopID()
       end
     end
   end
@@ -554,11 +715,11 @@ local function onEditorGui()
         im.EndTabBar()
       end
     else
-      im.Text("Be in a level to work with the drift editor")
+      im.Text("Please load a level to work with the drift editor")
     end
 
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 
@@ -569,7 +730,7 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(1500,700))
-  editor.addWindowMenuItem("Drift data editor", function() show() end, {groupMenuName="Gameplay"})
+  editor.addWindowMenuItem("Drift Data Editor", function() show() end, {groupMenuName="Gameplay"})
   if driftData == nil then
     driftData = getNewDriftData()
   end

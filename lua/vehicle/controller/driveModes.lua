@@ -5,9 +5,12 @@
 local M = {}
 M.type = "auxiliary"
 
+local defaultIcon = "ESC"
+
 local hasRegisteredQuickAccess = false
 local quickAccessTitle
 local quickAccessIcon
+local radialIcon
 local quickAccessLevel
 
 local defaultSettings = {}
@@ -140,6 +143,9 @@ local function updateGFX(dt)
 end
 
 local function setDriveMode(modeKey)
+  if not modeKey then
+    return
+  end
   local mode = driveModes[modeKey]
   if mode then
     activeDriveMode = mode
@@ -185,15 +191,19 @@ end
 
 local function reset(jbeamData)
   quickAccessTitle = jbeamData.quickAccessTitle or "ui.radialmenu2.ESC"
-  quickAccessIcon = jbeamData.quickAccessIcon or "radial_regular_esc"
+  quickAccessIcon = jbeamData.quickAccessIcon
 end
 
 local function resetLastStage()
-  setDriveMode(activeDriveMode.key)
+  if activeDriveMode then
+    setDriveMode(activeDriveMode.key)
+  end
 end
 
 local function serialize()
-  return {activeDriveModeKey = activeDriveMode.key, activeDriveModeIndex = activeDriveModeIndex}
+  if activeDriveMode then
+    return {activeDriveModeKey = activeDriveMode.key, activeDriveModeIndex = activeDriveModeIndex}
+  end
 end
 
 local function deserialize(data)
@@ -206,23 +216,30 @@ local function deserialize(data)
 end
 
 local function registerQuickAccess()
-  if not hasRegisteredQuickAccess then
+  if not hasRegisteredQuickAccess and #enabledDriveModes > 0 then
     core_quickAccess.addEntry(
       {
-        level = quickAccessLevel,
+        level = "/root/playerVehicle" .. quickAccessLevel,
         generator = function(entries)
-          table.insert(
-            entries,
-            {
-              title = quickAccessTitle,
-              priority = 40,
-              icon = quickAccessIcon,
-              onSelect = function()
-                controller.getControllerSafe(M.name).nextDriveMode()
-                return {"reload"}
-              end
-            }
-          )
+          local currentDriveModeName = activeDriveMode.name
+          local entry = {
+            title = quickAccessTitle,
+            desc = {txt = "ui.radialmenu2.currentValueColon", context = {value = currentDriveModeName}},
+            priority = 40,
+            uniqueID = "driveModeNext" .. quickAccessTitle,
+            onSelect = function()
+              controller.getControllerSafe(M.name).nextDriveMode()
+              return {"reload"}
+            end
+          }
+          if radialIcon then
+            entry.icon = radialIcon
+          elseif quickAccessIcon then
+            entry.icon = quickAccessIcon
+          else
+            entry.icon = defaultIcon
+          end
+          table.insert(entries, entry)
         end
       }
     )
@@ -233,8 +250,9 @@ end
 local function init(jbeamData)
   uiName = jbeamData.uiName
   quickAccessTitle = jbeamData.quickAccessTitle or "ui.radialmenu2.ESC"
-  quickAccessIcon = jbeamData.quickAccessIcon or "radial_regular_esc"
-  quickAccessLevel = jbeamData.quickAccessLevel or "/"
+  quickAccessIcon = jbeamData.quickAccessIcon
+  quickAccessLevel = jbeamData.quickAccessLevel or "/vehicleFeatures/"
+  radialIcon = jbeamData.radialIcon
 
   defaultSettings = {}
   if jbeamData.defaultSettings then
@@ -343,6 +361,7 @@ end
 local function initLastStage(jbeamData)
   local key
   local requestedDefaultMode = jbeamData.defaultMode or ""
+
   if driveModes[requestedDefaultMode] then
     for k, modeName in ipairs(enabledDriveModes) do
       if modeName == requestedDefaultMode then

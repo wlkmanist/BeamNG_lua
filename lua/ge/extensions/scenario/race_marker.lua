@@ -6,10 +6,13 @@ local M = {}
 -- markerNames to list of indices
 local markers = {}
 local idToMarker = {}
-local createMarker = require("scenario/raceMarkers/sideColumnMarker")
+local defaultMarker = "scenario/raceMarkers/sideColumnMarker"
+--local defaultMarker = "scenario/raceMarkers/sideHologramMarker"
+local createMarker = require(defaultMarker)
 local markers_index = 0
 local function getNewMarkerId() markers_index = markers_index+1 return markers_index end
 local markerListName = 'markers'
+local wasPhotoModeOpen = false
 
 local function hide()
   for _, m in pairs(idToMarker) do
@@ -55,10 +58,10 @@ local function setupMarkers(wps, marker)
   if marker then
     createMarker = require("scenario/raceMarkers/"..marker)
   else
-    createMarker = require("scenario/raceMarkers/sideColumnMarker")
+    createMarker = require(defaultMarker)
   end
   if not createMarker then
-    createMarker = require("scenario/raceMarkers/sideColumnMarker")
+    createMarker = require(defaultMarker)
   end
   clearMarkerList(markerListName)
   markers[markerListName] = {}
@@ -71,7 +74,17 @@ local function setupMarkers(wps, marker)
 end
 
 local function render(dt, dtSim)
-   -- blend all markers.
+  if photoModeOpen then
+    hide()
+    wasPhotoModeOpen = true
+    return
+  end
+  if wasPhotoModeOpen then
+    wasPhotoModeOpen = false
+    for _, m in pairs(idToMarker) do
+      m:setMode(m.mode)
+    end
+  end
   for _, m in pairs(idToMarker) do
     m:update(dt, dtSim)
   end
@@ -90,9 +103,20 @@ local function setToCheckpoints(data)
   end
 end
 
+local function drawOnMinimap(td)
+  for _, marker in pairs(markers[markerListName] or {}) do
+    if marker.drawOnMinimap then
+      marker:drawOnMinimap(td)
+    end
+  end
+end
+
+
 local function onClientEndMission()
   -- clear previous markers.
   clearMarkerList(markerListName)
+  -- reset createMarker to default to prevent using stale marker types
+  createMarker = require(defaultMarker)
 end
 
 M.onClientEndMission = onClientEndMission
@@ -105,5 +129,6 @@ M.createRaceMarker = createRaceMarker
 M.setupMarkers = setupMarkers
 M.setModes = setModes
 M.idToMarker = idToMarker
+M.drawOnMinimap = drawOnMinimap
 
 return M

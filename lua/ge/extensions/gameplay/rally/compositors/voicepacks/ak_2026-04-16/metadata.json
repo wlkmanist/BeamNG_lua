@@ -1,0 +1,907 @@
+{
+    "pacenote_100.ogg": {
+        "audioLen": 0.667604,
+        "sha1": "bf5bedda2d73614c05b252bc0b73ccca56f024ec",
+        "audioSha1": "aa8353bcf92ab5859e1857886c4d01b2100bb2b8"
+    },
+    "pacenote_150.ogg": {
+        "audioLen": 0.919729,
+        "sha1": "ca122f9f2644ee115932e9863b2a972c41128bed",
+        "audioSha1": "7874d9fc8e49cba1ee6adb78c50b055d0c5fcdac"
+    },
+    "pacenote_1_km.ogg": {
+        "audioLen": 1.113438,
+        "sha1": "c74604927c4727bb5b0b0b78800b7d5949e43fdd",
+        "audioSha1": "4541251e92d536c83fbd731ebea89f53e8feaead"
+    },
+    "pacenote_1_point_2_5_km.ogg": {
+        "audioLen": 1.919917,
+        "sha1": "d53d89438f189de0a3043622bd38a1b4dc49a3b7",
+        "audioSha1": "8eace253362acecb58759c445a6a9a63f1672471"
+    },
+    "pacenote_1_point_5_km.ogg": {
+        "audioLen": 1.586292,
+        "sha1": "84e8f1b91d8bbb1dcfd8db6660497bea5cde4675",
+        "audioSha1": "9b3eee2dc4ff8ac88ab11e00eec43968e1c8cb9e"
+    },
+    "pacenote_1_point_7_5_km.ogg": {
+        "audioLen": 1.954792,
+        "sha1": "ae34296f348c87ff448082848c1a483612425f26",
+        "audioSha1": "daf33aa611da9e3c619ec660aba318d37651e39f"
+    },
+    "pacenote_200.ogg": {
+        "audioLen": 0.680958,
+        "sha1": "54373a8001f0e01b35ade7c0ec6b8b5cc62938ef",
+        "audioSha1": "f833eb7149f1242f8076dd3c282f805862e79c37"
+    },
+    "pacenote_250.ogg": {
+        "audioLen": 0.892708,
+        "sha1": "1ca9d9d4d6a14a2be9ac2cefb23428b76aa36bb9",
+        "audioSha1": "9239ffd33de2f687bff4f04e88d5df6e25104de0"
+    },
+    "pacenote_2_km.ogg": {
+        "audioLen": 1.012333,
+        "sha1": "05b2a8170fdfb1b99e5c977d0153998d2fcfe007",
+        "audioSha1": "49fee956ca114be143467a1bc8da8545148a1b16"
+    },
+    "pacenote_300.ogg": {
+        "audioLen": 1.116563,
+        "sha1": "67eac7a8971bbc4dc6e0d7b146f60776ed4d606a",
+        "audioSha1": "66db33ce3ed15c66fd3a5ba5e9d279d28dd5f46f"
+    },
+    "pacenote_350.ogg": {
+        "audioLen": 0.975896,
+        "sha1": "c31f4990dba61096af2ab69ab6e9867decac43d8",
+        "audioSha1": "d663a2d8e052cf7b64b8695df08b537954e6fa9d"
+    },
+    "pacenote_40.ogg": {
+        "audioLen": 0.515604,
+        "sha1": "09d21fabcdabf48a2fd7e0c9fde11cce7a6e2f9e",
+        "audioSha1": "ffe0a1c4c59e4fbfc6a52938ae1a964e68bd311c"
+    },
+    "pacenote_400.ogg": {
+        "audioLen": 0.966625,
+        "sha1": "040c79aa1da5e4e9c68371b2d31e21166ec10224",
+        "audioSha1": "2e0a7eb0b5c7a3fe4e0853dfd81c7812b71ad0cc"
+    },
+    "pacenote_450.ogg": {
+        "audioLen": 0.934917,
+        "sha1": "168d94e87ba8eb6e88d0785879a48412707c6868",
+        "audioSha1": "53615d4699a8f48f44ff00fe66388b89a3546558"
+    },
+    "pacenote_50.ogg": {
+        "audioLen": 0.496146,
+        "sha1": "0e8d0729b52d61c7e4b5c962b0175ffb204a0d35",
+        "audioSha1": "41d1c3a0d0f9667e2c840060c6d1d75e4a0d795e"
+    },
+    "pacenote_500.ogg": {
+        "audioLen": 1.040188,
+        "sha1": "4a33e199a3e4806349da99b3233b8f5f53dc854d",
+        "audioSha1": "6807e0e2fe9f89d8d2f1f8fa23681d125cb6f61b"
+    },
+    "pacenote_550.ogg": {
+        "audioLen": 1.019,
+        "sha1": "c6dcfaf1dbb7bef604747c33026147038b3693a2",
+        "audioSha1": "fa1b8add29c4dfbe4d7a8010610de0ff2c7e2cc5"
+    },
+    "pacenote_60.ogg": {
+        "audioLen": 0.594833,
+        "sha1": "d0279e85786447bc15cb72deceb81458800b4043",
+        "audioSha1": "61f3c61ee74d7ac1bf9498995bed2f983dfda4d4"
+    },
+    "pacenote_600.ogg": {
+        "audioLen": 1.312833,
+        "sha1": "2dc7faffeed9d72d03213715094085448b2f65e6",
+        "audioSha1": "a435607f45c9bfc7df7b3bcf2864e391909d68b2"
+    },
+    "pacenote_650.ogg": {
+        "audioLen": 1.229063,
+        "sha1": "e37da6d27b4670ca590aefd5bbdef7c1e277c36b",
+        "audioSha1": "ccde2b53887dd5387b7f7936392356734c9c1d84"
+    },
+    "pacenote_70.ogg": {
+        "audioLen": 0.664458,
+        "sha1": "966d7a7f8ecfa57110e847f1353d2391f4b80e98",
+        "audioSha1": "16f4e99dcf43a90839d071b6fe833c42e2832772"
+    },
+    "pacenote_700.ogg": {
+        "audioLen": 0.984,
+        "sha1": "1d240fbcd2210ba7c133d56d487181e2157c350f",
+        "audioSha1": "df028d1182895c2b89a4f0bbff60b120cf307fb0"
+    },
+    "pacenote_750.ogg": {
+        "audioLen": 1.032771,
+        "sha1": "be438aab70035a6106aad4c97c9093f7a5c942f6",
+        "audioSha1": "c8b2597d8e7ee9a9e72cd75996061484409a1ddf"
+    },
+    "pacenote_80.ogg": {
+        "audioLen": 0.4665,
+        "sha1": "a61cdfd785b739cb76db3fb861989a2a2c3dfd24",
+        "audioSha1": "10d6bd3f205869684ff4fe5793588d9c9dc1067d"
+    },
+    "pacenote_800.ogg": {
+        "audioLen": 0.848958,
+        "sha1": "2514bdd644c69cf566a9552ab1ca319ba20bc238",
+        "audioSha1": "f4425a161838c1af1c5c9a3b10f65a2dfa1a6b61"
+    },
+    "pacenote_850.ogg": {
+        "audioLen": 0.803958,
+        "sha1": "c3d325525c64429ae8afab59ca1629ca11b7aefb",
+        "audioSha1": "ff6b82d3efdd2bf81c721f3c1267def1f787d8da"
+    },
+    "pacenote_90.ogg": {
+        "audioLen": 0.645875,
+        "sha1": "fcd9b73fd5e11b39c10c1632c5bebb60f765c3f9",
+        "audioSha1": "4ba8c75013bbc86689f7eccec51fb6523e32c9e4"
+    },
+    "pacenote_900.ogg": {
+        "audioLen": 0.9225,
+        "sha1": "69a16640dadceb6b78db0ddf915a1cb829d80d4e",
+        "audioSha1": "175a92b86cb0dd468ab46f74d970bcb7907c6435"
+    },
+    "pacenote_950.ogg": {
+        "audioLen": 1.05175,
+        "sha1": "48c3d6bd88158493db2e32b710e014941469a517",
+        "audioSha1": "be99522530251e7ba34e5e8ab575771f88a3e904"
+    },
+    "pacenote_and.ogg": {
+        "audioLen": 0.576167,
+        "sha1": "b0b3f3346a5a6a88de3ca2dc7f2891373a68de0e",
+        "audioSha1": "12da81d2f0efc08250625f56e2228c0880132cdd"
+    },
+    "pacenote_at_junction.ogg": {
+        "audioLen": 0.774667,
+        "sha1": "4bc2ef45e8c842d670fc7e2d42cfdc110ee8adcd",
+        "audioSha1": "3455fadb73e7a6dc6cd97682e6916fedb571e692"
+    },
+    "pacenote_at_rock.ogg": {
+        "audioLen": 0.706021,
+        "sha1": "8aabc15e93962fb9bffe731e8b0dc8c5726a0a12",
+        "audioSha1": "3d9a8b028457fc04320169163a5c8e6d9047ad64"
+    },
+    "pacenote_at_tree.ogg": {
+        "audioLen": 0.675521,
+        "sha1": "69670dea3b1b60cda3cbf4ba313560a0417c9d04",
+        "audioSha1": "9e9761b3acd6fffc11cba63de21b49f2aec3c802"
+    },
+    "pacenote_bad_dip.ogg": {
+        "audioLen": 0.818729,
+        "sha1": "825942a8568f491e52bc80a5090e2fa9b6c5d2a2",
+        "audioSha1": "324e4e69b9d09c0e4d97e9b0c2fedf6b5a3ced4e"
+    },
+    "pacenote_bad_dip_jump.ogg": {
+        "audioLen": 1.027125,
+        "sha1": "8f472ca344733230e9ecb69e675735386f6da1da",
+        "audioSha1": "60ec3427090663912065cfd36c406b9c634843ef"
+    },
+    "pacenote_bad_drop.ogg": {
+        "audioLen": 0.844396,
+        "sha1": "537a7cc0e150dccf2341c8296a1959a3930d16ec",
+        "audioSha1": "bcc3e0892b756d4955f2b63ae3511b4d3f3a12f7"
+    },
+    "pacenote_bad_jump.ogg": {
+        "audioLen": 0.760958,
+        "sha1": "763f611a0b45c2338b54083f42b92de2ebd47c55",
+        "audioSha1": "f878db0bf2ade8713bbe106b09f3dd56c0b1237a"
+    },
+    "pacenote_bad_kick.ogg": {
+        "audioLen": 0.940292,
+        "sha1": "7bc4195027c67534d487e584e0852e2bd9a9c3b5",
+        "audioSha1": "36e6545fe93b0dd27353ffc38187970304ef9b45"
+    },
+    "pacenote_be_brave.ogg": {
+        "audioLen": 0.694042,
+        "sha1": "ec340cdc1e28bc03ab394e7112b6b8996898dbdc",
+        "audioSha1": "8b810f27edbe7f20260e9f604812c1fba3d5f47c"
+    },
+    "pacenote_big_crest.ogg": {
+        "audioLen": 0.724542,
+        "sha1": "60d141bc27ede8518e2ad587ef7888e133cf7369",
+        "audioSha1": "3c549f481f2eb803a12238de41c9b09dfbdf2ca6"
+    },
+    "pacenote_big_cut.ogg": {
+        "audioLen": 0.718021,
+        "sha1": "07a3a0a673a2f9380eb38ec96bbce0dc9649c67c",
+        "audioSha1": "52f2d5dd62994ac3611fde7c50c0ae117fe0d8e3"
+    },
+    "pacenote_big_jump.ogg": {
+        "audioLen": 0.673333,
+        "sha1": "7bc7405bdf036aa1831cc097108397e71410bfed",
+        "audioSha1": "4c7964a4624d98cf3d8b9771e76f64d03f26017a"
+    },
+    "pacenote_brake.ogg": {
+        "audioLen": 0.71525,
+        "sha1": "a89906d6f5a46676f70951daf678a89122b9991e",
+        "audioSha1": "18fffb80c17ddfeb1d97fc889fd7770247aa4e3a"
+    },
+    "pacenote_brake_over_bumps.ogg": {
+        "audioLen": 1.093979,
+        "sha1": "ae346874b26021bdad47740e103357773c6c4f7d",
+        "audioSha1": "d052c930b4ed348b5793e96203a7bf1b8452f309"
+    },
+    "pacenote_brake_over_crest.ogg": {
+        "audioLen": 1.109,
+        "sha1": "f00887ba3bab41646475608a80df9f43770c9906",
+        "audioSha1": "4480d4bddfca77016952cebb1b886b8ceb711985"
+    },
+    "pacenote_braking.ogg": {
+        "audioLen": 0.655938,
+        "sha1": "e2ac1c32bb32509ea838e3a92b80ce2cb337582e",
+        "audioSha1": "df329a3ff64c2d80f8c998042a0f606476e5e02a"
+    },
+    "pacenote_bumpy.ogg": {
+        "audioLen": 0.674438,
+        "sha1": "8ec74bbba0dd7f301832d8264b54e540474b5968",
+        "audioSha1": "faac9228da47851df9f6968b981416eaa9b58973"
+    },
+    "pacenote_care.ogg": {
+        "audioLen": 0.575292,
+        "sha1": "2e33973cbc910ca9268fc872f25d5baa391debda",
+        "audioSha1": "3be6c5a4b667297f12b13c5f61597fea3c5518c8"
+    },
+    "pacenote_caution.ogg": {
+        "audioLen": 0.771396,
+        "sha1": "f66a6ddf4ac6131f4def7ff85c8799173dd7c7b0",
+        "audioSha1": "edc37cb4a42d84e0754c7580a2602f1df96338cd"
+    },
+    "pacenote_chicane_left_entry.ogg": {
+        "audioLen": 1.414229,
+        "sha1": "0aa845c37f0323428c40f449bc79070929cfbd04",
+        "audioSha1": "678176a09985cc91991291b39b51b0a396d505db"
+    },
+    "pacenote_chicane_right_entry.ogg": {
+        "audioLen": 1.57875,
+        "sha1": "b8e168872cc6d61ae084099e53aa3054ff4a05a1",
+        "audioSha1": "ba769c78c758c0fea5924a1090e79d37c5bcd998"
+    },
+    "pacenote_crest.ogg": {
+        "audioLen": 0.579646,
+        "sha1": "95b36adb7ddfd7a2e945d7d616af7f350ef48021",
+        "audioSha1": "031724530d8b6053fe1e6619d69939b4b6a5768f"
+    },
+    "pacenote_cut.ogg": {
+        "audioLen": 0.527729,
+        "sha1": "0dd03fcbf7ac5c2f16d039add3885fb7b235e9fb",
+        "audioSha1": "947264e50951079bf08162efb610021fc1867f4a"
+    },
+    "pacenote_deceptive.ogg": {
+        "audioLen": 1.002396,
+        "sha1": "9097e5f655c07eb55b9286e14d4acfbc135082f3",
+        "audioSha1": "3f41f0251ddac5a3fd7babae9f0220d2f5ab8f14"
+    },
+    "pacenote_dip.ogg": {
+        "audioLen": 0.704958,
+        "sha1": "6e833df60075f9762650614ba8d9b83655f2f810",
+        "audioSha1": "3e189b2f7149d4ee019df5e8682759fccdc3391b"
+    },
+    "pacenote_dont.ogg": {
+        "audioLen": 0.768125,
+        "sha1": "2d245688d7c0c85efc52e29ddd42319e5044e256",
+        "audioSha1": "9299dc50e8f64538356d674182b878c8bb78a38b"
+    },
+    "pacenote_dont_cut.ogg": {
+        "audioLen": 0.786667,
+        "sha1": "54d6c1f6e42eb0ad1698d627bb41c3236ff798fe",
+        "audioSha1": "5b92cd1d344e8f6825db59cf10e6ff439524484a"
+    },
+    "pacenote_dont_cut_late.ogg": {
+        "audioLen": 1.150563,
+        "sha1": "1c960d3e234ae031852222083ad0b0110b93a594",
+        "audioSha1": "c37322028ddd45725cfe6fb30473705aa6e430dd"
+    },
+    "pacenote_dont_go_wide.ogg": {
+        "audioLen": 0.763417,
+        "sha1": "9de34086f691cb11efb063d2e95591a3dec0c9f0",
+        "audioSha1": "8f507133e30f21854a035cc546eccc7127bd071b"
+    },
+    "pacenote_double_caution.ogg": {
+        "audioLen": 0.914125,
+        "sha1": "7fd2c993c1faa39ac981180390634afa846ba4bc",
+        "audioSha1": "54b7d2da0c63237bd8f10a92c37eb9b5a5614c3c"
+    },
+    "pacenote_down.ogg": {
+        "audioLen": 0.695125,
+        "sha1": "237f25604ebe67cba57e894c51663d72a1845fc8",
+        "audioSha1": "7d2e6afe14caac047f4cd788700dc5f6734cf21f"
+    },
+    "pacenote_drop.ogg": {
+        "audioLen": 0.710396,
+        "sha1": "71d79ebcdd9bb650441a7ada01bb156e9e592847",
+        "audioSha1": "bcca0fb4c1a939f312e22401980c5711ec186a99"
+    },
+    "pacenote_early.ogg": {
+        "audioLen": 0.542979,
+        "sha1": "b85ebfca1d35e6a64f9aacb869dc6c8092a2c5f4",
+        "audioSha1": "570d7ed294fa5b3fa81880872bd4bb8dce8751f8"
+    },
+    "pacenote_early_cut.ogg": {
+        "audioLen": 0.838313,
+        "sha1": "f8c95fff3332f8e7b9839dc913666f0f355ae59f",
+        "audioSha1": "f885368a98f114e8629927b2bc45f6145846ad95"
+    },
+    "pacenote_easy_left.ogg": {
+        "audioLen": 0.88025,
+        "sha1": "aedb21aa73cf84cfee0c6a614b9f63b4806450c1",
+        "audioSha1": "7be323c7908fa5ec4196f65394438826fdc707e3"
+    },
+    "pacenote_easy_right.ogg": {
+        "audioLen": 0.641979,
+        "sha1": "e6a95c4ede79784040dad154e8717c46fd5058b2",
+        "audioSha1": "487326ff4286afb1ba6ffbf3c0d0f01fef24f0d2"
+    },
+    "pacenote_extra_long.ogg": {
+        "audioLen": 0.914958,
+        "sha1": "4fe8dcb79d100bd5414794ecfc8a5081a9200b91",
+        "audioSha1": "7c311c3251eb7ff25bce68e7c3698e3f28d74357"
+    },
+    "pacenote_five_left.ogg": {
+        "audioLen": 0.993917,
+        "sha1": "21c2ea6e95946fa7c950b7a68333824d48c65627",
+        "audioSha1": "0ccd01701b8e09f6c481d6361c3e20e1f683f9c4"
+    },
+    "pacenote_five_right.ogg": {
+        "audioLen": 0.637063,
+        "sha1": "edffced365c2163d52eed5e891d2e31edd473535",
+        "audioSha1": "2c69b9667435f522975af6f20a6ede612246b5a3"
+    },
+    "pacenote_flat_left.ogg": {
+        "audioLen": 0.875708,
+        "sha1": "803d9701bc2ecb489680a122a409c7e1dbbabe17",
+        "audioSha1": "63afe0e113d9f6e710f8ada0f9ce6ab631bda9e7"
+    },
+    "pacenote_flat_right.ogg": {
+        "audioLen": 0.706729,
+        "sha1": "9dac566801a881be4940927269667e8470b59d07",
+        "audioSha1": "112155228be35434890e09bbe82d90fbc25f17ca"
+    },
+    "pacenote_four_left.ogg": {
+        "audioLen": 0.9745,
+        "sha1": "b538a039876178befe77e38f5b4900ccf2570d24",
+        "audioSha1": "bafabbf70baa60f08725be09613529cb86f20e74"
+    },
+    "pacenote_four_right.ogg": {
+        "audioLen": 0.76125,
+        "sha1": "d2ee9e4ec56bb9543005ccf785c3e5fc5ce0dc59",
+        "audioSha1": "3f780f325d071def6dbf4b4519c5d0c3d3defed3"
+    },
+    "pacenote_gets_faster_now.ogg": {
+        "audioLen": 0.987,
+        "sha1": "74f3c860e3da234c11608d45fe6dc9b1a77714c1",
+        "audioSha1": "d7a8ceafcdaebd6f587fa6b3fcc3acce4d45b79b"
+    },
+    "pacenote_go_wide.ogg": {
+        "audioLen": 0.62825,
+        "sha1": "c490888d335999ff9844dcd3026229dff2583564",
+        "audioSha1": "98f0e81488c1baa36fd1a36dcb909c72212deba2"
+    },
+    "pacenote_hairpin_left.ogg": {
+        "audioLen": 0.925646,
+        "sha1": "47c0bdec5821ff62a1af657b0c49e3c5803526ce",
+        "audioSha1": "01504e807199196f20e6c58fb34cf3922a0f546b"
+    },
+    "pacenote_hairpin_right.ogg": {
+        "audioLen": 0.765563,
+        "sha1": "3feb51d8a9de0bfbd8f320c42f9c5eb44d8ee666",
+        "audioSha1": "f2abfe81151876711562bbe756b4bfe2af5d0a21"
+    },
+    "pacenote_half_long.ogg": {
+        "audioLen": 0.705313,
+        "sha1": "0729f37c7187524ea7038c005e9802827454b113",
+        "audioSha1": "1db48597a4adb0440f133bbc965071d9738ceae3"
+    },
+    "pacenote_hard_left.ogg": {
+        "audioLen": 1.010313,
+        "sha1": "10f86a50e07ff3560b71c5dc0b2899c839eb21ea",
+        "audioSha1": "411cfbc9dd1d8e7786e2b90e64831d2069b692b2"
+    },
+    "pacenote_hard_right.ogg": {
+        "audioLen": 0.808833,
+        "sha1": "52e8902cf8bdcc11d6adefcb3977c3ee5076ccf6",
+        "audioSha1": "8a5e2bf1e9d61d119a612a1cbb53fcce5bbc1072"
+    },
+    "pacenote_into.ogg": {
+        "audioLen": 0.495979,
+        "sha1": "7575751e344919fa015d3e80bc047e80a99eaf61",
+        "audioSha1": "99c1a9ccaf89ccbdb87aed5538335045371a1a37"
+    },
+    "pacenote_into_bridge.ogg": {
+        "audioLen": 0.866417,
+        "sha1": "08ee771c5bfcad49b8d7667a0b5e7ba5da46ff69",
+        "audioSha1": "32f649ab4c8c9e5d0c15c6541b029a82320951c7"
+    },
+    "pacenote_into_crest.ogg": {
+        "audioLen": 0.904333,
+        "sha1": "d7a376d3c5f62d606b47877e99097066c4cc63bf",
+        "audioSha1": "c035e62dad430541afce814475d7e778e0129285"
+    },
+    "pacenote_into_turn.ogg": {
+        "audioLen": 0.794958,
+        "sha1": "58176f2dd5ef8f537295f40ff1acc4e9a199e549",
+        "audioSha1": "f86487c5b2195fb16cefc84ac95ccee48e27dd1a"
+    },
+    "pacenote_into_water.ogg": {
+        "audioLen": 0.754625,
+        "sha1": "3174dcf4ff850f68e0a1e2e78a09c07594ea7841",
+        "audioSha1": "6a645530a15993ca011ff809fb8a60c813787286"
+    },
+    "pacenote_jump.ogg": {
+        "audioLen": 0.562229,
+        "sha1": "ffc1ba735cbca9300ae70105b4ef9a789faeaa6b",
+        "audioSha1": "4535aeaf83fd0c6403cdabfd7f3771944ec98513"
+    },
+    "pacenote_keep_in.ogg": {
+        "audioLen": 0.579146,
+        "sha1": "401aff26842ee7a589bf935fa78b4f5eb6ce6f2e",
+        "audioSha1": "4abb0f2b201bbc11b94d4bbe94f8631d2bca5549"
+    },
+    "pacenote_keep_left.ogg": {
+        "audioLen": 0.8945,
+        "sha1": "c847e52891ba2b752136eadd2b478819a71dc71e",
+        "audioSha1": "8473704b465085a64197743bff3c0e5dc202293b"
+    },
+    "pacenote_keep_left_over_crest.ogg": {
+        "audioLen": 1.149229,
+        "sha1": "2ddb352373c744438a9cea060b2fddafd467e8d5",
+        "audioSha1": "b377b86a92d1c4f5fa1a437caa47024e5f1b83b3"
+    },
+    "pacenote_keep_middle.ogg": {
+        "audioLen": 0.635229,
+        "sha1": "b675e5a7d62331522a1774408f851b1792bfb979",
+        "audioSha1": "b429f2071e1f77f4b46a7647fad4a96170cfa546"
+    },
+    "pacenote_keep_middle_over_crest.ogg": {
+        "audioLen": 1.193979,
+        "sha1": "3385410682532e158e35369cfd06efc86e2e52f2",
+        "audioSha1": "c89d788cfd2b10b4de0e7e2c5018adeef9b9d4e9"
+    },
+    "pacenote_keep_right.ogg": {
+        "audioLen": 0.743083,
+        "sha1": "92b3fad209dfedde56b441c0e9d052c320e8f02b",
+        "audioSha1": "cf6f8e2f85a4674bfcbc099877cc55c4d1c12420"
+    },
+    "pacenote_keep_right_over_crest.ogg": {
+        "audioLen": 1.072125,
+        "sha1": "58ba944379cc9ea0baa97c5e319ba2c48132aa2a",
+        "audioSha1": "0e2dda7c5286f555e90a9db52fc74007bf3d412c"
+    },
+    "pacenote_kick.ogg": {
+        "audioLen": 0.435813,
+        "sha1": "9431c8b2e40c5305fd5b6dfdbeadcd009090e072",
+        "audioSha1": "5b2c4a1c93b96db019c9190356bd8737bde97f64"
+    },
+    "pacenote_late.ogg": {
+        "audioLen": 0.742938,
+        "sha1": "9cb2ddb05fe38627820c88a479fa58f5937833e5",
+        "audioSha1": "29d0b19c4376ec0a1d98fad9df6ae81a5466e5d8"
+    },
+    "pacenote_late_cut.ogg": {
+        "audioLen": 0.974063,
+        "sha1": "b7eda62430ef9debab360ce53c2d65a372e04d70",
+        "audioSha1": "7c8da6f8bd17e9510392ec7b66fb9699ecf8266b"
+    },
+    "pacenote_left.ogg": {
+        "audioLen": 0.586479,
+        "sha1": "3ea5ed655569df4de2519f5f1c0b0392d4be015c",
+        "audioSha1": "6fbd7fb6bb13ae0f70c36c76872623394ad8b482"
+    },
+    "pacenote_long.ogg": {
+        "audioLen": 0.692792,
+        "sha1": "5e7bcc1121c0dd7f6982132bf05aaf592b153250",
+        "audioSha1": "50cf6fe482497f2519e61e7ac88af6b463f56402"
+    },
+    "pacenote_long_crest.ogg": {
+        "audioLen": 1.206125,
+        "sha1": "999952c43850c14c161f82d49894b2f9fcf8b952",
+        "audioSha1": "43cd5ad8cfa2dbe6052c0cb7a2abe0fe404a534a"
+    },
+    "pacenote_medium_left.ogg": {
+        "audioLen": 0.942396,
+        "sha1": "2d80f1ba88096254d65bb082dc851c3acd185c13",
+        "audioSha1": "547736d69996ae191f8b2f3f99975d9bb6c8166a"
+    },
+    "pacenote_medium_right.ogg": {
+        "audioLen": 0.866083,
+        "sha1": "d8becae12e0c5454dce9787f7f67306788f2b722",
+        "audioSha1": "b8f35b5dbd034a5df3cc2e541d133da8f1455dec"
+    },
+    "pacenote_middle.ogg": {
+        "audioLen": 0.522875,
+        "sha1": "a36abdacefd5d3221c79654a1e7f02d83353057a",
+        "audioSha1": "026d4fe5f42b78f517e11e03870726cc2605370b"
+    },
+    "pacenote_middle_over_crest.ogg": {
+        "audioLen": 1.064563,
+        "sha1": "aaac932caa295c66f52524f458f5ac1fc4434621",
+        "audioSha1": "e1f5660eacb1281246cec75e5f5083369d41da85"
+    },
+    "pacenote_narrow_bridge.ogg": {
+        "audioLen": 1.066479,
+        "sha1": "359672a78178401d37db297e40d65776fe6edf06",
+        "audioSha1": "0ffbc862c50c91fda9040710720e9140222910a6"
+    },
+    "pacenote_narrows.ogg": {
+        "audioLen": 0.801875,
+        "sha1": "fb3f5699115d2f9a08197e24a749fb82cab736aa",
+        "audioSha1": "b3a4dfc80d227befa64a47fbf1b782208b60d63d"
+    },
+    "pacenote_nips.ogg": {
+        "audioLen": 0.642813,
+        "sha1": "46a00712e8f3123e0a89cad558ddb6a6cd24e8a8",
+        "audioSha1": "b8d551390219e1475eb4b6d66a7f451fb0761a8f"
+    },
+    "pacenote_one_left.ogg": {
+        "audioLen": 0.910313,
+        "sha1": "e912a3a2e8ca2e8f2bd050b4fe26b03f4fbe13f4",
+        "audioSha1": "324cafb5d25ec576c0c0985dbf8925bbe56cba63"
+    },
+    "pacenote_one_right.ogg": {
+        "audioLen": 0.817417,
+        "sha1": "e6ce30d90789dda1180a41168b3837ba0ceca682",
+        "audioSha1": "29ce3d0a7615f9b8942f86da1fe3be80e1847693"
+    },
+    "pacenote_onto_gravel.ogg": {
+        "audioLen": 0.848604,
+        "sha1": "8dbce19665eb6ef0cdddb9afc09688b0fcc4fc6e",
+        "audioSha1": "8ec31a01fca52b340f43eddc1663a4d21019d6ba"
+    },
+    "pacenote_onto_ice.ogg": {
+        "audioLen": 0.921458,
+        "sha1": "c45524af0c148caa190c03785a70dff678e9a682",
+        "audioSha1": "8d4d07b6b5fde374a1d13b6c5604310276585a5c"
+    },
+    "pacenote_onto_mud.ogg": {
+        "audioLen": 0.718292,
+        "sha1": "b99422dee651b3437ccbf9c5a3a0465f0a80c4d2",
+        "audioSha1": "5a8c915681dfca0395da7e206f2f08397035ced9"
+    },
+    "pacenote_onto_tarmac.ogg": {
+        "audioLen": 0.933583,
+        "sha1": "ee1523f52bd582c09cd11ead466cf8c332ced97e",
+        "audioSha1": "6cdb1ba8cbfda8a17cc893b264869c7bf26d3292"
+    },
+    "pacenote_open_hairpin_left.ogg": {
+        "audioLen": 1.177646,
+        "sha1": "9f8cfa9ccd1510ed66dd0696c6540dab6bcc880e",
+        "audioSha1": "49fbd296579a94fb392550a8bcdecee59d3da9ef"
+    },
+    "pacenote_open_hairpin_right.ogg": {
+        "audioLen": 0.979208,
+        "sha1": "72575e1a5d7834da1d93a76a1c85dc02cb0acf33",
+        "audioSha1": "595bfd8cbc81f10623f8fa49a9ebbb9559800c45"
+    },
+    "pacenote_opens.ogg": {
+        "audioLen": 0.767875,
+        "sha1": "5f063926ae55687d0b73ad4d9c84ba4b01ef44d7",
+        "audioSha1": "d10efb4276311449bd1c8eac276058b36eea7cff"
+    },
+    "pacenote_opens_and_tightens.ogg": {
+        "audioLen": 1.574458,
+        "sha1": "5865204d9eb1663b128f5ab2e303d52e2bdfd505",
+        "audioSha1": "904c8b910f37ed637f646e730f5feeceb89a280b"
+    },
+    "pacenote_opens_over_crest.ogg": {
+        "audioLen": 1.237125,
+        "sha1": "57c8ec9bf41ad554b8d05b12fd6106ac6aa9762b",
+        "audioSha1": "fe51010a7a881a76cde21645ac5b7bc915410e8a"
+    },
+    "pacenote_over_bridge.ogg": {
+        "audioLen": 0.767042,
+        "sha1": "05798ab364bce66311434f8112da74f48d24eba5",
+        "audioSha1": "edb863d838120bb5c95a9af82f6d6e8656eb2f82"
+    },
+    "pacenote_over_bump.ogg": {
+        "audioLen": 0.684229,
+        "sha1": "b9fee51fe4ccf38019b7b06164400a4e25e5e6ed",
+        "audioSha1": "592b01e4d5f3ebbf00e7ce1b8b249a80eaddaa65"
+    },
+    "pacenote_over_crest_1.ogg": {
+        "audioLen": 0.654813,
+        "sha1": "f5e222e134c490015237418a2f38e83cd3d03205",
+        "audioSha1": "955266356b22774ba86bb1d6684f50296736089c"
+    },
+    "pacenote_over_crest_2.ogg": {
+        "audioLen": 0.886833,
+        "sha1": "c122e5e617d08484b0835dacc16f2773d2094a71",
+        "audioSha1": "9e85f69f4e2f0527819e7fb5cdd41740d91b3609"
+    },
+    "pacenote_over_crest_3.ogg": {
+        "audioLen": 0.901063,
+        "sha1": "15ec93878de99bb3009d48ec659162ef6c54123f",
+        "audioSha1": "d8f07d693199bf46d6194be58687489cccd289af"
+    },
+    "pacenote_over_dip.ogg": {
+        "audioLen": 0.722979,
+        "sha1": "0ea101dcfad2341b05a4f928618c56b0fd81b1f9",
+        "audioSha1": "903bf9f7686d87acb60fb4baf3cb0571a5fd905b"
+    },
+    "pacenote_over_finish.ogg": {
+        "audioLen": 0.934333,
+        "sha1": "0c18cc19ee93e3d068e039275b9b3e70e5664663",
+        "audioSha1": "8eaf87432304b0d4d7c82e3e475cd13b719c9a87"
+    },
+    "pacenote_over_jump.ogg": {
+        "audioLen": 0.81025,
+        "sha1": "732d4b7577acbe4ed0bc08826b75c0c157c273b9",
+        "audioSha1": "8d538c7a4bbb130ae09ea79c9f8e48599a95619d"
+    },
+    "pacenote_past_fence.ogg": {
+        "audioLen": 0.967979,
+        "sha1": "cbf8ae5716fd9c554b4ad1f148a4a4b5ab40c103",
+        "audioSha1": "d9d86297836c2d28216e4a36e3bbb4c1bcbad688"
+    },
+    "pacenote_past_house.ogg": {
+        "audioLen": 0.886542,
+        "sha1": "5878b81bf560f09fd08b5b22e5eb633c759ea796",
+        "audioSha1": "e6fa95a01b90cd76ec5f600785e60b44c9cc9daf"
+    },
+    "pacenote_past_junction.ogg": {
+        "audioLen": 0.886896,
+        "sha1": "407e5524812b0abb590748dcd2f2974f04e309da",
+        "audioSha1": "42c189f8d72f92478d8c7d2dab0ccf9286ee713d"
+    },
+    "pacenote_past_rock.ogg": {
+        "audioLen": 0.752875,
+        "sha1": "bce011574af45d74106ea23bfe15d7ef8966d21c",
+        "audioSha1": "d66604b7ef99ff3045f51d053bd72b9f93159ed7"
+    },
+    "pacenote_past_tree.ogg": {
+        "audioLen": 0.734188,
+        "sha1": "39fe7d66b99bff98454378d2337b87f6af02d02c",
+        "audioSha1": "984af83b96a758b13b973402f090be63a2bc6cd8"
+    },
+    "pacenote_past_wall.ogg": {
+        "audioLen": 0.739813,
+        "sha1": "de5c23d77916b960db38e9df3c0216fb7cd86d67",
+        "audioSha1": "a10df86cf5e9d3e579c33fc64f2ff56d3268e8b4"
+    },
+    "pacenote_right.ogg": {
+        "audioLen": 0.61075,
+        "sha1": "f8bbd3f251c2906264a4629bf5d3420ef07d979f",
+        "audioSha1": "b5fea9df02b8a65b4f64280af56cbc0dd04cbb75"
+    },
+    "pacenote_short.ogg": {
+        "audioLen": 0.580708,
+        "sha1": "baec493de582c4302c4fbc3fb0ecfffdb0c6f883",
+        "audioSha1": "879bdc75a6e25b489d74c950a03fa23977b89bc8"
+    },
+    "pacenote_six_left.ogg": {
+        "audioLen": 0.766958,
+        "sha1": "75387ba7556d66a638e70652b426c43cfb5754fe",
+        "audioSha1": "61e84c4af6ac2abda1df086385ecef01bd409d39"
+    },
+    "pacenote_six_right.ogg": {
+        "audioLen": 0.579438,
+        "sha1": "f0550953ae62212dcd737b20e155f4846b7e98a1",
+        "audioSha1": "f56c27a3455d39210d431e21f0ed6c534ac0dae3"
+    },
+    "pacenote_slippy.ogg": {
+        "audioLen": 0.686708,
+        "sha1": "1557f329bb1928c18adc078f0d939d77a413c247",
+        "audioSha1": "78eb5fb7a4971273afd87e704879394e3d3b9e6d"
+    },
+    "pacenote_slowing.ogg": {
+        "audioLen": 0.885313,
+        "sha1": "8ecc36e321671e77489cccb26158a8719bcc24d4",
+        "audioSha1": "9b6811730a021f939fa2353f16a9d70790fb8263"
+    },
+    "pacenote_small_crest.ogg": {
+        "audioLen": 1.060125,
+        "sha1": "9b6f607c88c53b0716511a15a3ddd1d576f36637",
+        "audioSha1": "6e906b6a9d3793e7cc897c2c803efb59bca8e1ac"
+    },
+    "pacenote_small_cut.ogg": {
+        "audioLen": 0.917396,
+        "sha1": "5d2b582aafa66ea31a4959cefe58ce2e89371d62",
+        "audioSha1": "a9cb19f6ddae02c0bcd2a8a0cd299f24a6fcc5db"
+    },
+    "pacenote_square_left.ogg": {
+        "audioLen": 0.979979,
+        "sha1": "5bc921782f870a9bbdaf24d75728afeb91d6484a",
+        "audioSha1": "3c95a92373beabc5dc273422040c7713bb9b378f"
+    },
+    "pacenote_square_right.ogg": {
+        "audioLen": 0.832896,
+        "sha1": "f4de78d29fd3bb60d018630d88cc21613ef1fe44",
+        "audioSha1": "cee8842084c24041aec66306a8c15fe80d9d3389"
+    },
+    "pacenote_stop.ogg": {
+        "audioLen": 0.764688,
+        "sha1": "d2339358ed6780ea3b4235eb2694977a5e35bd6e",
+        "audioSha1": "d56708a329fa17fbf3854a28518c722c9b1ae596"
+    },
+    "pacenote_sudden.ogg": {
+        "audioLen": 0.507729,
+        "sha1": "93c5a853265f71c9fd7ca76c4c62a911464b5903",
+        "audioSha1": "c9aec5dd59928c6eb921fa5ce7ed6e74f8359611"
+    },
+    "pacenote_system_beltsCheck_1.ogg": {
+        "audioLen": 0.953729,
+        "sha1": "520d60d3002f439af1872e5eda5d8af72481b614",
+        "audioSha1": "049bbf8352ea0cd51ca0fc26d186176039567994"
+    },
+    "pacenote_system_commsCheck_1.ogg": {
+        "audioLen": 0.865208,
+        "sha1": "bf1b025517966c480dc76faa6a0b8ddd736d77fa",
+        "audioSha1": "2b1439b1ab98bed9d10bf88a043ed96586fe81cf"
+    },
+    "pacenote_system_countdown1_1.ogg": {
+        "audioLen": 0.5835,
+        "sha1": "13f8d2c3513bbee6d7075059831f8633f31c959f",
+        "audioSha1": "9381be054bc9395e8929522e52a67e7b34f30f21"
+    },
+    "pacenote_system_countdown2_1.ogg": {
+        "audioLen": 0.650125,
+        "sha1": "e4a40e3d00fd749869618e0328a1cbaa2aafa20b",
+        "audioSha1": "bd045447a9d90d0dced060c5d4e9e5777b8f62d0"
+    },
+    "pacenote_system_countdown3_1.ogg": {
+        "audioLen": 0.558792,
+        "sha1": "441879ee980538ee00699bfef425a4df34e9f44e",
+        "audioSha1": "4e2c3e0c66b29cb2a8e5796709e394d4c5f4ac6e"
+    },
+    "pacenote_system_countdown4_1.ogg": {
+        "audioLen": 0.657958,
+        "sha1": "546295dc5339f774fa628cd4c5b86ccdbfa85107",
+        "audioSha1": "2602a68a709e13349f410426fe643bc68a35ba00"
+    },
+    "pacenote_system_countdown5_1.ogg": {
+        "audioLen": 0.713917,
+        "sha1": "095aae856557c25887d73f968f2b03e17dc2d56f",
+        "audioSha1": "9c53999710afca8ed0c5ae51824e7f5071bbe5f3"
+    },
+    "pacenote_system_countdowngo_1.ogg": {
+        "audioLen": 0.364875,
+        "sha1": "195e19cff4bad537ce35787f5f6dfba500ba9c0d",
+        "audioSha1": "775256ac22e550b649101bd49c3c4e1618643448"
+    },
+    "pacenote_system_falseStart_1.ogg": {
+        "audioLen": 0.916583,
+        "sha1": "e1d1ed8d5821269098990a94d1ee486fcdd5a21e",
+        "audioSha1": "d37e4dfc8bb2b717c6662d86dc8c15ca6056e480"
+    },
+    "pacenote_system_precountdown_1.ogg": {
+        "audioLen": 0.654938,
+        "sha1": "32f56c531cff463b5cf4a48d32e881a8152c7284",
+        "audioSha1": "e9e1cb7fbd5d8f9e95053c301c7ee6f7ef3879fb"
+    },
+    "pacenote_system_precountdown_2.ogg": {
+        "audioLen": 0.738125,
+        "sha1": "dadf5a33160550a2d3bbbbc13857120b9e9ca181",
+        "audioSha1": "4f56fbdcf7e01570b28b786b0117d881fbdff15e"
+    },
+    "pacenote_system_rescheduled_1.ogg": {
+        "audioLen": 3.77425,
+        "sha1": "2157efbd9779de2d38b96cf5ccf6ba5ac2b22134",
+        "audioSha1": "2c20392f661c23610daf0475e0dfd64091a33b9b"
+    },
+    "pacenote_system_warningSeconds10_1.ogg": {
+        "audioLen": 0.370542,
+        "sha1": "6164e954fd262acda15686f6adbf13eee3aa9f09",
+        "audioSha1": "f34de616b4b40dbcff3d9a5553438f54d620ed94"
+    },
+    "pacenote_system_warningSeconds15_1.ogg": {
+        "audioLen": 0.627792,
+        "sha1": "f691803b46874b63c2a6f7bcc15954ae792194a6",
+        "audioSha1": "881d765f95751807ad53cb65c9120f99cdbb0cc8"
+    },
+    "pacenote_system_warningSeconds30_1.ogg": {
+        "audioLen": 0.937021,
+        "sha1": "9ce3203f74c5af08516db1795c4273f0e87d0b9f",
+        "audioSha1": "5e0b771893afbb6dd8f061741b859f747b46e191"
+    },
+    "pacenote_system_warningSeconds60_1.ogg": {
+        "audioLen": 0.439042,
+        "sha1": "3e32d38cbd989008f58ef15936a6eeff14e561a0",
+        "audioSha1": "0d384f03d02b3ad32543fe048ce019bf47267ebc"
+    },
+    "pacenote_three_left.ogg": {
+        "audioLen": 0.816646,
+        "sha1": "adeff1a316cf55094df1645336abfcb6a0d9fb95",
+        "audioSha1": "06e18789e7cab02a274047d6c1de3b8c43065793"
+    },
+    "pacenote_three_right.ogg": {
+        "audioLen": 0.608417,
+        "sha1": "7790445c073f5ea80b58cc4ac79fe59a1abcee36",
+        "audioSha1": "ae374be8c11d07c1939d3132d8858e72f3f1fd70"
+    },
+    "pacenote_through_bridge.ogg": {
+        "audioLen": 0.865104,
+        "sha1": "9b436ec61700a38ab8f2f9fed37bd4dcbe0addab",
+        "audioSha1": "4b71a9b291bb886f1e7152614c5eb42e1bcf617d"
+    },
+    "pacenote_through_dip.ogg": {
+        "audioLen": 1.02825,
+        "sha1": "75cf0511997fefcaddccb913bfa4a08928b1d495",
+        "audioSha1": "acbd339cd63388386728ee9448173f546f7ffa07"
+    },
+    "pacenote_through_gate.ogg": {
+        "audioLen": 0.769229,
+        "sha1": "e422ad898399b03eafb17e7f052fc04071545c45",
+        "audioSha1": "c9dd5af8c8576e1f132322baf1cff7d5cf2f516a"
+    },
+    "pacenote_through_tunnel.ogg": {
+        "audioLen": 0.759417,
+        "sha1": "6f2ec2dab54c198389fb694e925a260b03daed68",
+        "audioSha1": "6ec131858025c3ab07b187630f24504e84864d30"
+    },
+    "pacenote_tight_hairpin_left.ogg": {
+        "audioLen": 1.154146,
+        "sha1": "412ac7c2a95c1a5c11b25d5a06b3a61103f24135",
+        "audioSha1": "4e65074215e913f94048dfb9d57613d4d8419cf7"
+    },
+    "pacenote_tight_hairpin_right.ogg": {
+        "audioLen": 1.137896,
+        "sha1": "0886a40df3a72a9cae1333f36121f5410663ba23",
+        "audioSha1": "ea06c14d5b7692b420cd9767420d6d3833b5b989"
+    },
+    "pacenote_tightens.ogg": {
+        "audioLen": 0.771396,
+        "sha1": "26b9dae8df16a250b7aec80910de50d2890b9f64",
+        "audioSha1": "38aefc04c958337ef30d7cac29216774acbb5e10"
+    },
+    "pacenote_tightens_and_opens.ogg": {
+        "audioLen": 1.4295,
+        "sha1": "dff1904365ff82fc953720f78fc9c2f29c8e5ed5",
+        "audioSha1": "3d837b11934980bef348a5a7f7fbe8d8e69f222f"
+    },
+    "pacenote_tightens_down.ogg": {
+        "audioLen": 1.327063,
+        "sha1": "f8b739fab835c793d673d91995f3c347c6f32a1a",
+        "audioSha1": "5628b3e85c82bcc271c476d08be81ffff33d2101"
+    },
+    "pacenote_tightens_over_crest.ogg": {
+        "audioLen": 1.120063,
+        "sha1": "f9551f32203c89bf254b141131fc2f4ffc842e2b",
+        "audioSha1": "df2f9146e00b4e01ab61c9918e66af7919016e3b"
+    },
+    "pacenote_to_stop.ogg": {
+        "audioLen": 0.779583,
+        "sha1": "762736ae844363985cfe0ad428ab07fde651576d",
+        "audioSha1": "335d54d0c662cae211d948de2f73c77d6d921cc2"
+    },
+    "pacenote_turn.ogg": {
+        "audioLen": 0.513042,
+        "sha1": "ad4f0d654f4be4a69c3ae6dc4043ce3968550982",
+        "audioSha1": "99eb7608b942d2b618927e0325eec0e72158bea8"
+    },
+    "pacenote_twisty.ogg": {
+        "audioLen": 0.567438,
+        "sha1": "e3d8000cde39eb9ed305993d774aba40141b1c11",
+        "audioSha1": "865d644d82eadf088ad03aabf2d4beeeb7da78b5"
+    },
+    "pacenote_two_left.ogg": {
+        "audioLen": 0.767979,
+        "sha1": "3e313c9fe33a37d41e3e5b8c62a8b73db844c7db",
+        "audioSha1": "3df66d612e48e5ccbec38de0c31498991d768732"
+    },
+    "pacenote_two_right.ogg": {
+        "audioLen": 0.520625,
+        "sha1": "f59e1b07e6e6a57db6927b6cf0e8b2336624052c",
+        "audioSha1": "c557141990af33c38a2b7dd180eee0cd477bfd53"
+    },
+    "pacenote_under_bridge.ogg": {
+        "audioLen": 0.812354,
+        "sha1": "c8f9ff9f45802ea1b76516c4fa037f37670d0fc7",
+        "audioSha1": "c2cb65cc78a39a43a9b40fbc28e365afe33abe4c"
+    },
+    "pacenote_up.ogg": {
+        "audioLen": 0.457896,
+        "sha1": "481ab9ae835398398f6d5af315276daf122bdc14",
+        "audioSha1": "2a3bdcd6d075d48b77c6bf0fcd6a14fa51729a72"
+    },
+    "pacenote_water.ogg": {
+        "audioLen": 0.672479,
+        "sha1": "092fc465929d025d4d9f46a26405de47f9ee19d1",
+        "audioSha1": "924a3af1ae3455c907598435f35329ac940052ca"
+    },
+    "pacenote_watersplash.ogg": {
+        "audioLen": 0.965646,
+        "sha1": "388a7d5ca733843941566c9c7a447498d9fbd3cf",
+        "audioSha1": "9c10ee1d562bda98044ef381768e4f9b9c262808"
+    },
+    "pacenote_wide.ogg": {
+        "audioLen": 0.648729,
+        "sha1": "d72cedc608174396a67b2b419ec2527c33fdd4ba",
+        "audioSha1": "124ec2d32227a62c167eb98777d8dff26d56caa2"
+    }
+}

@@ -7,7 +7,7 @@ local im  = ui_imgui
 local C = {}
 
 C.name = 'Play ScriptAI Recording'
-C.description = 'Plays a recording made by the scriptAiManager. vehId can be nil to use player vehicle.'
+C.description = 'Follows a ScriptAI path from a file; vehId can be nil to use player vehicle.'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
 C.category = 'repeat_p_duration' -- technically f_duration, but no callback for complete pins
@@ -44,7 +44,7 @@ end
 function C:getVeh()
   local veh
   if self.pinIn.vehId.value then
-    veh = be:getObjectByID(self.pinIn.vehId.value)
+    veh = getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end
@@ -54,7 +54,7 @@ end
 function C:play()
   self:loadRecording()
   if not self.recording then return end
-  
+
   local veh = self:getVeh()
   if not veh then return end
 
@@ -66,7 +66,7 @@ end
 
 function C:stop()
   self.running = false
-  
+
   local veh = self:getVeh()
   if veh then
     veh:queueLuaCommand('ai.stopFollowing()')

@@ -17,7 +17,7 @@ local tcomDebug = not shipping_build -- when true, errors in BeamNGpy protocol c
 local isRecording = nil
 local recorder = nil
 
-M.protocolVersion = 'v1.22'
+M.protocolVersion = 'v1.26'
 
 local function packUnsignedInt32Network(n)
   headerBuffer[0] = math.floor(n / 0x1000000)

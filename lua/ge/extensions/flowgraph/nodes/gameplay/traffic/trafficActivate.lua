@@ -6,7 +6,7 @@ local im  = ui_imgui
 
 local C = {}
 
-C.name = 'Traffic Activator'
+C.name = 'Activate Traffic'
 C.description = 'Enables traffic mode and sets vehicles to act as traffic.'
 C.color = ui_flowgraph_editor.nodeColors.traffic
 C.icon = ui_flowgraph_editor.nodeIcons.traffic

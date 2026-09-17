@@ -4,7 +4,7 @@
 
 local M = {}
 
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dPages, dProgress
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dPages, dProgress, dTutorial
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
   dCargoScreen = career_modules_delivery_cargoScreen
@@ -12,6 +12,7 @@ M.onCareerActivated = function()
   dGenerator = career_modules_delivery_generator
   dPages = career_modules_delivery_pages
   dProgress = career_modules_delivery_progress
+  dTutorial = career_modules_delivery_tutorial
 end
 
 -- logbook integration

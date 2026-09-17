@@ -71,9 +71,9 @@ local function simStep(dt)
       lastPoint = mass.lines[#mass.lines - 1][2]
     end
     local positionMag = math.max(0.125, mass.position:length() - 0.5)
-    local col = ColorF(mass.color.r * math.min(1, math.pow(positionMag, 1.0)),
-                       mass.color.g * math.min(1, math.pow(positionMag, 1.0)),
-                       mass.color.b * math.min(1, math.pow(positionMag, 1.0)), 1)
+    local col = ColorF(mass.color.r * math.min(1, positionMag),
+                       mass.color.g * math.min(1, positionMag),
+                       mass.color.b * math.min(1, positionMag), 1)
 
     table.insert(mass.lines, {lastPoint, mass.position + origin, col})
     if #mass.lines > history then

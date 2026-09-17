@@ -386,9 +386,9 @@ function C:update(data)
   local carStopped = carVel:length() < 0.5
 
   -- check if we need to reset anything (e.g. user just activated this camera, or vehicle got teleported, etc)
-  if core_camera.objectTeleported(self.camPos, self.lastCamPos, self.lastCamVel, data.dt) then self:camTeleported() end -- cam teleported
+  if objectTeleported(self.camPos, self.lastCamPos, self.lastCamVel, data.dt) then self:camTeleported() end -- cam teleported
   if data.teleported then self:carTeleported() end -- car teleported
-  if core_camera.objectTeleported(carPos, self.lastCarPos, self.lastCarVel, data.dt) then self:carTeleported() end -- car *appears* to have teleported since the last time this camera was used
+  if objectTeleported(carPos, self.lastCarPos, self.lastCarVel, data.dt) then self:carTeleported() end -- car *appears* to have teleported since the last time this camera was used
   self.lastCarPos:set(carPos)
   self.lastCarVel:set(carVel)
 

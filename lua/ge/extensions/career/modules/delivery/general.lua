@@ -5,7 +5,7 @@
 local M = {}
 M.dependencies = {"core_vehicleBridge"}
 local moduleVersion = 42
-local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehicleTasks, dTasklist, dParcelMods, dVehOfferManager
+local dParcelManager, dCargoScreen, dGeneral, dGenerator, dProgress, dVehicleTasks, dTasklist, dParcelMods, dVehOfferManager, dTutorial
 local step
 M.onCareerActivated = function()
   dParcelManager = career_modules_delivery_parcelManager
@@ -17,6 +17,7 @@ M.onCareerActivated = function()
   dTasklist = career_modules_delivery_tasklist
   dParcelMods = career_modules_delivery_parcelMods
   dVehOfferManager = career_modules_delivery_vehicleOfferManager
+  dTutorial = career_modules_delivery_tutorial
   step = util_stepHandler
 end
 
@@ -27,12 +28,14 @@ local deliveryModeActive = false
 local deliveryAbandonPenaltyFactor = 0.1
 M.getDeliveryAbandonPenaltyFactor = function() return deliveryAbandonPenaltyFactor end
 
+
+
 -- Career general systems interaction (save/load, level setup)
 
 local saveFile = "logisticsDatabase.json"
 local loadData = {}
 local function loadSaveData()
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   if not saveSlot then return end
 
   local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
@@ -69,7 +72,7 @@ M.loadSaveData = loadSaveData
 local function saveableCargoFilter(cargo)
   return cargo.offerExpiresAt > M.time() and cargo.location.type == "facilityParkingspot"
 end
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   local filePath = currentSavePath .. "/career/" .. saveFile
   local saveData = {
     general = {},
@@ -146,23 +149,15 @@ local function onSaveCurrentSaveSlot(currentSavePath)
   -- save the data to file
   career_saveSystem.jsonWriteFileSafe(filePath, saveData, true)
 end
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 
-local function onCareerModulesActivated(alreadyInLevel)
-  if alreadyInLevel then
-    loadSaveData()
-    map.assureLoad()
-    dGenerator.setup(loadData)
-  end
-end
-M.onCareerModulesActivated = onCareerModulesActivated
-
-local function onClientStartMission(levelPath)
+local function onCareerActive(active)
+  if not active then return end
   loadSaveData()
   map.assureLoad()
   dGenerator.setup(loadData)
 end
-M.onClientStartMission = onClientStartMission
+M.onCareerActive = onCareerActive
 
 
 local fast = 1
@@ -174,8 +169,8 @@ M.time = function() return deliveryGameTime end
 
 local function getVehicleName(vehId)
   local inventoryId = career_modules_inventory.getInventoryIdFromVehicleId(vehId)
-  local niceVehicleName = inventoryId and career_modules_inventory.getVehicles()[inventoryId].niceName
-  return niceVehicleName and niceVehicleName or ("Vehicle " .. vehId)
+  local niceVehicleName = inventoryId and career_modules_inventory.getVehicleNiceNameTranslated(inventoryId)
+  return niceVehicleName and niceVehicleName or core_locales.contextTranslate("ui.career.delivery.general.vehicleFallback", {id = vehId})
 end
 M.getVehicleName = getVehicleName
 
@@ -279,6 +274,7 @@ local function getNearbyVehicleCargoContainers(callback)
 
 end
 M.getNearbyVehicleCargoContainers = getNearbyVehicleCargoContainers
+M.getMostRecentCargoContainerData = function() return mostRecentCargoContainerData end
 
 
 local function defaultDelayCallback(data)
@@ -303,7 +299,7 @@ local function defaultDelayCallback(data)
     }
     step.startStepSequence(sequence, callback)
     -- add loading progress bar
-    guihooks.trigger("OpenSimpleDelayPopup",{timer=maxDelay, heading="Loading Cargo..."})
+    guihooks.trigger("OpenSimpleDelayPopup",{timer=maxDelay, heading=_tr("ui.career.delivery.general.loadingCargo")})
   else
     -- 1s delay, no freeze
     for vehId, data in pairs(data) do
@@ -421,8 +417,8 @@ M.onUpdate = function(dtReal, dtSim, dtRaw)
       end
     end
     if anyValue then
-      guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo from last save was abandoned. Penalty: %0.2f$", -loadData.penalty.money or 0)})
-      career_modules_playerAttributes.addAttributes(loadData.penalty, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
+      guihooks.trigger("toastrMsg", {type="warning", title=_tr("ui.career.delivery.general.cargoAbandonedTitle"), msg=core_locales.contextTranslate("ui.career.delivery.general.cargoAbandonedFromSave", {penalty = string.format("%0.2f", -loadData.penalty.money or 0)})})
+      career_modules_playerAttributes.addAttributes(loadData.penalty, {tags={"gameplay", "delivery","fine"}, label="ui.career.delivery.general.penaltyAbandonLabel"})
     end
     loadData.penalty = nil
   end
@@ -457,10 +453,13 @@ local function addInteractivePoi(list, id, field, elem)
 end
 local function getInteractivePois()
   local interactiveParkingSpots = {}
+  local targetFacilityIds = {}
   for _, cargo in ipairs(dParcelManager.getAllCargoInVehicles()) do
     if cargo.destination.type == "facilityParkingspot" then
       addInteractivePoi(interactiveParkingSpots, cargo.destination.psPath, "dropOffs", cargo)
-
+      if cargo.destination.facId then
+        targetFacilityIds[cargo.destination.facId] = true
+      end
     elseif cargo.destination.type == "multi" then
       for _, dest in ipairs(cargo.destination.destinations) do
         addInteractivePoi(interactiveParkingSpots, dest.psPath, "dropOffs", cargo)
@@ -475,11 +474,11 @@ local function getInteractivePois()
 
   -- figure out which facilities need to be active in order to drop of vehicles.
   local trailerTargetDestinations = dVehicleTasks.getTargetDestinationsForActiveTasks()
-  local targetFacilityIds = {}
   for _, destination in ipairs(trailerTargetDestinations) do
     targetFacilityIds[destination.facId] = true
     addInteractivePoi(interactiveParkingSpots, destination.psPath, "vehicles", "vehicle")
   end
+
   return interactiveParkingSpots, targetFacilityIds
 end
 -- poi list stuff
@@ -487,10 +486,11 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
 
   --local nearbyVehicles = M.getNearbyVehicleCargoContainers()
   local interactiveParkingSpots, targetFacilityIds = getInteractivePois()
+  local isCargoDeliveryTutorialActive = dTutorial.isCargoDeliveryTutorialActive()
 
   for _, fac in ipairs(freeroam_facilities.getFacilitiesByType("deliveryProvider")) do
     -- only process facilities if the facility is visible
-    local includeFac = dProgress.isFacilityVisible(fac.id) or targetFacilityIds[fac.id]
+    local includeFac = dProgress.isFacilityVisible(fac.id, isCargoDeliveryTutorialActive) or targetFacilityIds[fac.id]
 
     if includeFac then
       local totalCargoCount = 0
@@ -527,19 +527,19 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
         --  dumps(targetFacilityIds[fac.id] and true or false)
         --  ))
         if dCargoScreen.isCargoScreenOpen() then
-          elem.markerInfo.bigmapMarker = {pos = ps.pos, name = "Pickup "..fac.name, icon = icon}
+          elem.markerInfo.bigmapMarker = {pos = ps.pos, name = _tr("ui.career.delivery.general.pickupPrefix") .. _tr(fac.name), icon = icon}
         else
           if interactiveParkingSpots[ps:getPath()] then
 
             local tasks = {}
             if next(interactiveParkingSpots[ps:getPath()].dropOffs) then
-              table.insert(tasks, string.format("Deliver %d cargo items here.", #interactiveParkingSpots[ps:getPath()].dropOffs))
+              table.insert(tasks, core_locales.contextTranslate("ui.career.delivery.general.deliverCargoItemsHere", {count = #interactiveParkingSpots[ps:getPath()].dropOffs}))
             end
             if next(interactiveParkingSpots[ps:getPath()].pickUps) then
-              table.insert(tasks, string.format("Pick up %d cargo items here.", #interactiveParkingSpots[ps:getPath()].pickUps))
+              table.insert(tasks, core_locales.contextTranslate("ui.career.delivery.general.pickUpCargoItemsHere", {count = #interactiveParkingSpots[ps:getPath()].pickUps}))
             end
             if next(interactiveParkingSpots[ps:getPath()].vehicles) then
-              table.insert(tasks, string.format("Deliver %d vehicles here.", #interactiveParkingSpots[ps:getPath()].vehicles))
+              table.insert(tasks, core_locales.contextTranslate("ui.career.delivery.general.deliverVehiclesHere", {count = #interactiveParkingSpots[ps:getPath()].vehicles}))
             end
 
             local desc = table.concat(tasks, '<br/>')
@@ -606,7 +606,7 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
             data = {type = "logisticsOffice", facId = fac.id},
             markerInfo = {
               walkingMarker = next(elems) and elems[1].markerInfo.walkingMarker or nil,
-              bigmapMarker = {pos = pos, name = fac.name, description = string.format("%s\n\n%d Item%s available here.",fac.description, totalCargoCount, totalCargoCount ~= 1 and "s" or ""), icon="poi_delivery_round", previews = {fac.preview}, thumbnail = fac.preview,} or nil
+              bigmapMarker = {pos = pos, name = _tr(fac.name), description = core_locales.contextTranslate(totalCargoCount ~= 1 and "ui.career.delivery.general.facilityItemsAvailablePlural" or "ui.career.delivery.general.facilityItemsAvailableSingular", {description = _tr(fac.description), count = totalCargoCount}), icon="poi_delivery_round", previews = {fac.preview}, thumbnail = fac.preview,} or nil
             }
           }
           table.insert(elements, elem)
@@ -625,19 +625,19 @@ local function onActivityAcceptGatherData(elemData, activityData)
       local data = {
         icon = "poi_delivery_round",
         heading = dGenerator.getFacilityById(elem.facId).name,
-        preheadings = {"Logistics Office"},
+        preheadings = {_tr("ui.career.delivery.general.logisticsOffice")},
         sorting = {
           type = elem.type,
           id = elem.id
         },
         props = {{
           icon = "checkmark",
-          keyLabel = "Cargo Overview"
+          keyLabel = _tr("ui.career.delivery.general.cargoOverview")
         },{
           icon = "checkmark",
-          keyLabel = "No Cargo Pickup"
+          keyLabel = _tr("ui.career.delivery.general.noCargoPickup")
         }},
-        buttonLabel = "Inspect Cargo",
+        buttonLabel = _tr("ui.career.delivery.general.inspectCargo"),
         buttonFun = function() dCargoScreen.enterCargoOverviewScreen(elem.facId) end
       }
       table.insert(activityData, data)
@@ -688,31 +688,33 @@ local function onActivityAcceptGatherData(elemData, activityData)
       if dropOffableCargoByCargoType.parcel > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = string.format("%sParcel%s dropoff", dropOffableCargoByCargoType.parcel > 1 and ((dropOffableCargoByCargoType.parcel).." ") or "", dropOffableCargoByCargoType.parcel > 1 and "s" or "")
+          keyLabel = dropOffableCargoByCargoType.parcel > 1
+            and core_locales.contextTranslate("ui.career.delivery.general.parcelsDropoff", {count = dropOffableCargoByCargoType.parcel})
+            or _tr("ui.career.delivery.general.parcelDropoff")
         })
       end
       if dropOffableCargoByCargoType.fluid > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = string.format("%dL fluid dropoff", dropOffableCargoByCargoType.fluid)
+          keyLabel = core_locales.contextTranslate("ui.career.delivery.general.fluidDropoff", {volume = dropOffableCargoByCargoType.fluid})
         })
       end
       if dropOffableCargoByCargoType.dryBulk > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = string.format("%dL dry bulk dropoff", dropOffableCargoByCargoType.dryBulk)
+          keyLabel = core_locales.contextTranslate("ui.career.delivery.general.dryBulkDropoff", {volume = dropOffableCargoByCargoType.dryBulk})
         })
       end
       if vehsClose > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = "Vehicle dropoff"
+          keyLabel = _tr("ui.career.delivery.general.vehicleDropoff")
         })
       end
       if trailersClose > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = "Trailer dropoff"
+          keyLabel = _tr("ui.career.delivery.general.trailerDropoff")
         })
       end
 
@@ -743,19 +745,21 @@ local function onActivityAcceptGatherData(elemData, activityData)
       if pickUpAbleCargoByCargoType.parcel > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = string.format("%sParcel%s pickup", pickUpAbleCargoByCargoType.parcel > 1 and ((pickUpAbleCargoByCargoType.parcel).." ") or "", pickUpAbleCargoByCargoType.parcel > 1 and "s" or "")
+          keyLabel = pickUpAbleCargoByCargoType.parcel > 1
+            and core_locales.contextTranslate("ui.career.delivery.general.parcelsPickup", {count = pickUpAbleCargoByCargoType.parcel})
+            or _tr("ui.career.delivery.general.parcelPickup")
         })
       end
       if pickUpAbleCargoByCargoType.fluid > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = string.format("%dL fluid pickup", pickUpAbleCargoByCargoType.fluid)
+          keyLabel = core_locales.contextTranslate("ui.career.delivery.general.fluidPickup", {volume = pickUpAbleCargoByCargoType.fluid})
         })
       end
       if pickUpAbleCargoByCargoType.dryBulk > 0 then
         table.insert(poiTemplate.props, {
           icon = "checkmark",
-          keyLabel = string.format("%dL dry bulk pickup", pickUpAbleCargoByCargoType.dryBulk)
+          keyLabel = core_locales.contextTranslate("ui.career.delivery.general.dryBulkPickup", {volume = pickUpAbleCargoByCargoType.dryBulk})
         })
       end
 
@@ -791,19 +795,19 @@ local function onActivityAcceptGatherData(elemData, activityData)
         if availableCargoCountByCargoType.parcel > 0 then
           table.insert(poiTemplate.props, {
             icon = "checkmark",
-            keyLabel = string.format("%d parcel%s available", availableCargoCountByCargoType.parcel, availableCargoCountByCargoType.parcel ~= 1 and "s" or "")
+            keyLabel = core_locales.contextTranslate(availableCargoCountByCargoType.parcel ~= 1 and "ui.career.delivery.general.parcelsAvailable" or "ui.career.delivery.general.parcelAvailable", {count = availableCargoCountByCargoType.parcel})
           })
         end
         if availableCargoCountByCargoType.fluid > 0 then
           table.insert(poiTemplate.props, {
             icon = "checkmark",
-            keyLabel = string.format("%dL of fluid available", availableCargoCountByCargoType.fluid)
+            keyLabel = core_locales.contextTranslate("ui.career.delivery.general.fluidAvailable", {volume = availableCargoCountByCargoType.fluid})
           })
         end
         if availableCargoCountByCargoType.dryBulk > 0 then
           table.insert(poiTemplate.props, {
             icon = "checkmark",
-            keyLabel = string.format("%dL of dry bulk available", availableCargoCountByCargoType.dryBulk)
+            keyLabel = core_locales.contextTranslate("ui.career.delivery.general.dryBulkAvailable", {volume = availableCargoCountByCargoType.dryBulk})
           })
         end
         -- veh and trailer props
@@ -819,13 +823,13 @@ local function onActivityAcceptGatherData(elemData, activityData)
         if #vehOffers > 0 then
           table.insert(poiTemplate.props, {
             icon = "checkmark",
-            keyLabel = string.format("%d vehicle transport%s available", #vehOffers, #vehOffers ~= 1 and "s" or "")
+            keyLabel = core_locales.contextTranslate(#vehOffers ~= 1 and "ui.career.delivery.general.vehicleTransportsAvailable" or "ui.career.delivery.general.vehicleTransportAvailable", {count = #vehOffers})
           })
         end
         if #trailerOffers > 0 then
           table.insert(poiTemplate.props, {
             icon = "checkmark",
-            keyLabel = string.format("%d trailer transport%s available", #trailerOffers, #trailerOffers ~= 1 and "s" or "")
+            keyLabel = core_locales.contextTranslate(#trailerOffers ~= 1 and "ui.career.delivery.general.trailerTransportsAvailable" or "ui.career.delivery.general.trailerTransportAvailable", {count = #trailerOffers})
           })
         end
       end
@@ -834,17 +838,17 @@ local function onActivityAcceptGatherData(elemData, activityData)
 
       if anyCargoDropOffable then
         local dropOffPoi = deepcopy(poiTemplate)
-        dropOffPoi.heading = "Delivery Drop Off"
-        dropOffPoi.buttonLabel = "Drop Off"
-        dropOffPoi.buttonFun = function() guihooks.trigger('ChangeState', {state = 'cargoDropOff', params = {facilityId = elem.facId, parkingSpotPath = elem.psPath}}) end
+        dropOffPoi.heading = _tr("ui.career.delivery.general.deliveryDropOff")
+        dropOffPoi.buttonLabel = _tr("ui.career.delivery.general.dropOff")
+        dropOffPoi.buttonFun = function() guihooks.trigger('ChangeState', {state = 'career.cargoDropOff', params = {facilityId = elem.facId, parkingSpotPath = elem.psPath}}) end
         dropOffPoi.icon = "poi_dropoff_round"
         table.insert(activityData, dropOffPoi)
       end
 
       if anyCargoPickUpAble then
         local pickUpPoi = deepcopy(poiTemplate)
-        pickUpPoi.heading = "Delivery Pick Up"
-        pickUpPoi.buttonLabel = "Pick Up"
+        pickUpPoi.heading = _tr("ui.career.delivery.general.deliveryPickUp")
+        pickUpPoi.buttonLabel = _tr("ui.career.delivery.general.pickUp")
         pickUpPoi.buttonFun = function()
           dParcelManager.applyTransientMoves({type="facilityParkingspot", facId = elem.facId, psPath = elem.psPath})
           M.requestUpdateContainerWeights()
@@ -858,8 +862,8 @@ local function onActivityAcceptGatherData(elemData, activityData)
       end
       if elem.canInspectCargo then
         local inspectPoi = poiTemplate
-        inspectPoi.heading = "Inspect Cargo"
-        inspectPoi.buttonLabel = "Inspect"
+        inspectPoi.heading = _tr("ui.career.delivery.general.inspectCargo")
+        inspectPoi.buttonLabel = _tr("ui.career.delivery.general.inspect")
         inspectPoi.buttonFun = function() dCargoScreen.enterCargoOverviewScreen(elem.facId, elem.psPath) end
         table.insert(activityData, inspectPoi)
       end
@@ -873,7 +877,7 @@ M.onActivityAcceptGatherData = onActivityAcceptGatherData
 
 local deliveryActivity = {
   id = "deliveryMode",
-  name = "Delivery Mode",
+  name = _tr("ui.career.cargoOverview.deliveryMode"),
 
   vehicleModification = "warning",-- Slow and Fast Repairing, Changing and buying parts, tuning, painting
   vehicleSelling = "warning", --selling a vehicle
@@ -893,20 +897,21 @@ local deliveryActivity = {
 
   getLabel = function(tag)
     local penalty = -M.getDeliveryModePenalty().money
+    local penaltyCtx = {penalty = string.format("%0.2f", penalty)}
     if     tag == "vehicleModification" then
-      return string.format("Modifying a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
+      return core_locales.contextTranslate("ui.career.delivery.general.permissionVehicleModification", penaltyCtx)
     elseif tag == "vehicleSelling" then
-      return string.format("Selling a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
+      return core_locales.contextTranslate("ui.career.delivery.general.permissionVehicleSelling", penaltyCtx)
     elseif tag == "vehicleStorage" then
-      return string.format("Storing a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
+      return core_locales.contextTranslate("ui.career.delivery.general.permissionVehicleStorage", penaltyCtx)
     elseif tag == "vehicleRepair" then
-      return string.format("Repairing a vehicle will end Delivery Mode (Penalty: %0.2f$)", penalty)
+      return core_locales.contextTranslate("ui.career.delivery.general.permissionVehicleRepair", penaltyCtx)
     elseif tag == "interactMission" then
-      return string.format("Starting a Mission will end Delivery Mode (Penalty: %0.2f$)", penalty)
+      return core_locales.contextTranslate("ui.career.delivery.general.permissionInteractMission", penaltyCtx)
     elseif tag == "recoveryTowToGarage" then
-      return string.format("Towing to garage will end Delivery Mode (Penalty: %0.2f$)", penalty)
+      return core_locales.contextTranslate("ui.career.delivery.general.permissionRecoveryTowToGarage", penaltyCtx)
     elseif tag == "vehicleShopping" then
-      return "Disabled during Delivery Mode."
+      return _tr("ui.career.delivery.general.permissionVehicleShopping")
     end
   end
 }
@@ -942,9 +947,9 @@ local function exitDeliveryMode()
     end
   end
   if penalty.money < 0 then
-    guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo was thrown away because delivery mode ended. Penalty: %0.2f$", -penalty.money)})
+    guihooks.trigger("toastrMsg", {type="warning", title=_tr("ui.career.delivery.general.cargoAbandonedTitle"), msg=core_locales.contextTranslate("ui.career.delivery.general.cargoAbandonedDeliveryModeEnded", {penalty = string.format("%0.2f", -penalty.money)})})
     log("I","",string.format("Penalty for abandoning cargo: %0.2f$", -penalty.money))
-    career_modules_playerAttributes.addAttributes(penalty, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
+    career_modules_playerAttributes.addAttributes(penalty, {tags={"gameplay", "delivery","fine"}, label="ui.career.delivery.general.penaltyAbandonLabel"})
     Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
   end
 
@@ -1017,6 +1022,7 @@ M.startDeliveryMode = startDeliveryMode
 M.exitDeliveryMode = exitDeliveryMode
 M.checkExitDeliveryMode = checkExitDeliveryMode
 M.isDeliveryModeActive = function() return deliveryModeActive end
+
 M.getDeliveryModePenalty = function(onlyVehIdsAsKeys)
   local cargoInVehicles = dParcelManager.getAllCargoInVehicles(true)
   local penalty = {money = 0}
@@ -1108,9 +1114,9 @@ local function checkEndDeliveryModeForVehicle(vehId)
         dParcelManager.changeCargoLocation(cargo.id, {type="deleted"})
       end
       if penalty.money < 0 then
-        guihooks.trigger("toastrMsg", {type="warning", title="Cargo abandoned", msg=string.format("Cargo was thrown away because vehicle was put into storage. Penalty: %0.2f$", -penalty.money)})
+        guihooks.trigger("toastrMsg", {type="warning", title=_tr("ui.career.delivery.general.cargoAbandonedTitle"), msg=core_locales.contextTranslate("ui.career.delivery.general.cargoAbandonedVehicleStored", {penalty = string.format("%0.2f", -penalty.money)})})
         log("I","",string.format("Penalty for abandoning cargo: %0.2f$", -penalty.money))
-        career_modules_playerAttributes.addAttributes(penalty, {tags={"gameplay", "delivery","fine"}, label="Penalty for abandoning cargo."})
+        career_modules_playerAttributes.addAttributes(penalty, {tags={"gameplay", "delivery","fine"}, label="ui.career.delivery.general.penaltyAbandonLabel"})
         Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
       end
     end
@@ -1118,13 +1124,15 @@ local function checkEndDeliveryModeForVehicle(vehId)
   end
 end
 
-M.onRepairInGarage = function(vehInfo, repairOption)
-  local vehId = career_modules_inventory.getVehicleIdFromInventoryId(vehInfo.id)
+M.onRepairInGarage = function(invVehId)
+  local vehId = career_modules_inventory.getVehicleIdFromInventoryId(invVehId)
   checkEndDeliveryModeForVehicle(vehId)
 end
 
 M.onInventoryPreRemoveVehicleObject = function(inventoryId, vehId)
   checkEndDeliveryModeForVehicle(vehId)
 end
+
+
 
 return M

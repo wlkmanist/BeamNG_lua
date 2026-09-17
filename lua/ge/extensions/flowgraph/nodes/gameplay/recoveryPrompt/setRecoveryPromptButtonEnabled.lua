@@ -10,7 +10,7 @@ C.color = ui_flowgraph_editor.nodeColors.recoveryPrompt
 C.category = 'once_instant'
 
 C.pinSchema = {
-  { dir = 'in', type = 'string', name = 'id', description = 'ID of the button.' },
+  { dir = 'in', type = 'string', name = 'id', description = 'Id of the button.' },
   { dir = 'in', type = 'bool', name = 'enabled', description = 'If the button should be enabled or disabled.' },
 }
 

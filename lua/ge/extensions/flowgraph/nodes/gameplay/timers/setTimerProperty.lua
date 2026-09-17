@@ -35,7 +35,7 @@ function C:work()
       self.mgr.modules.timer:set(id, "duration", self.pinIn.duration.value)
     end
     if self.pinIn.ref.value ~= nil then
-      self.mgr.modules.timer:set(id, "ref", self.pinIn.ref.value)
+      self.mgr.modules.timer:set(id, "mode", self.pinIn.ref.value)
     end
   end
 end

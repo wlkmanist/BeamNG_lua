@@ -7,41 +7,36 @@ local deliveryCounterConfigs = {
   {
     progressKey = "parcel",
     icon = "cardboardBox",
-    label = "Parcel Processor",
-    description = "Deliver %d parcels.",
-    progressLabel = "%d / %d",
+    label = "ui.career.milestones.delivery.parcel.label",
+    description = "ui.career.milestones.delivery.parcel.description",
     targets = {5,25,50,100,150,250}
   },
   {
     progressKey = "vehicle",
-    label = "Car Jockey",
+    label = "ui.career.milestones.delivery.vehicle.label",
     icon = "carStarred",
-    description = "Deliver %d vehicles.",
-    progressLabel = "%d / %d",
+    description = "ui.career.milestones.delivery.vehicle.description",
     targets = {1,4,9,25,35,50},
   },
   {
     progressKey = "trailer",
-    label = "Trained Trailer Transporter",
+    label = "ui.career.milestones.delivery.trailer.label",
     icon = "smallTrailer",
-    description = "Deliver %d trailers.",
-    progressLabel = "%d / %d",
+    description = "ui.career.milestones.delivery.trailer.description",
     targets = {1,4,9,25,35,50},
   },
   {
     progressKey = "fluid",
     icon = "droplet",
-    label = "Go with the Flow",
-    description = "Deliver %dL of fluids.",
-    progressLabel = "%d / %d",
+    label = "ui.career.milestones.delivery.fluid.label",
+    description = "ui.career.milestones.delivery.fluid.description",
     targets = {100,1000,10000,100000}
   },
   {
     progressKey = "dryBulk",
     icon = "rocks",
-    label = "Gravel Travel",
-    description = "Deliver %dL of dry bulk.",
-    progressLabel = "%d / %d",
+    label = "ui.career.milestones.delivery.dryBulk.label",
+    description = "ui.career.milestones.delivery.dryBulk.description",
     targets = {100,1000,10000,100000}
   },
 }
@@ -51,25 +46,22 @@ local parcelModConfigs = {
     modKey = "timed",
     progressKey = "onTimeDeliveries",
     icon = "stopwatchSectionSolidStart",
-    label = "Ahead of the Curve",
-    description = "Deliver %d timed parcels on time.",
-    progressLabel = "%d / %d",
+    label = "ui.career.milestones.delivery.timed.onTime.label",
+    description = "ui.career.milestones.delivery.timed.onTime.description",
     targets = {1,8,20,50}
   }, {
     modKey = "timed",
     progressKey = "delayedDeliveries",
     icon = "stopwatchSectionSolidStart",
-    label = "Detour Dilemma",
-    description = "Deliver %d timed parcels delayed.",
-    progressLabel = "%d / %d",
+    label = "ui.career.milestones.delivery.timed.delayed.label",
+    description = "ui.career.milestones.delivery.timed.delayed.description",
     targets = {1,8,20,50}
   }, {
     modKey = "timed",
     progressKey = "lateDeliveries",
     icon = "stopwatchSectionSolidStart",
-    label = "Lost in Transit",
-    description = "Deliver %d timed parcels late.",
-    progressLabel = "%d / %d",
+    label = "ui.career.milestones.delivery.timed.late.label",
+    description = "ui.career.milestones.delivery.timed.late.description",
     targets = {1,8,20,50}
   }
 }
@@ -89,8 +81,8 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       color = milestones.colorGeneralGray,
       getValue = function() return dProgress.getProgress().cargoDeliveredByType[config.progressKey] or 0 end,
       getLabel = function(step, displayValue, target) return config.label end,
-      getDescription = function(step, displayValue, target) return string.format(config.description, target) end,
-      getProgressLabel = function(step, current, target) return string.format(config.progressLabel, current, target) end,
+      getDescription = function(step, displayValue, target) return {txt=config.description, context={count = target, volume = target}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.progress.count", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or config.targets[step] end,
       getRewards = milestones.minorLinear,
     }
@@ -107,8 +99,8 @@ M.onGeneralMilestonesCollect = function(milestonesList)
       color = milestones.colorGeneralGray,
       getValue = function() return (dParcelMods.getProgress()[config.modKey] or {})[config.progressKey] or 0 end,
       getLabel = function(step, displayValue, target) return config.label end,
-      getDescription = function(step, displayValue, target) return string.format(config.description, target) end,
-      getProgressLabel = function(step, current, target) return string.format(config.progressLabel, current, target) end,
+      getDescription = function(step, displayValue, target) return {txt=config.description, context={count = target}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.progress.count", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or config.targets[step] end,
       getRewards = milestones.minorLinear,
     }
@@ -125,9 +117,9 @@ M.onGeneralMilestonesCollect = function(milestonesList)
     icon = "garage01",
     color=milestones.colorGeneralGray,
     getValue = function() return dProgress.getFacilityCountForCargoCount("deliveredFromHere") end,
-    getLabel = function(step, displayValue, target) return "Facility Finder" end,
-    getDescription = function(step, displayValue, target) return string.format("Deliver any kind of cargo from %d different facilities.", target) end,
-    getProgressLabel = function(step, current, target) return string.format("%d / %d", current, target) end,
+    getLabel = function(step, displayValue, target) return "ui.career.milestones.delivery.facilityFinder.label" end,
+    getDescription = function(step, displayValue, target) return {txt="ui.career.milestones.delivery.facilityFinder.description", context={count = target}} end,
+    getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.progress.count", context={current = current, target = target}} end,
     getTarget = function(step) return step == 0 and 0 or providerSteps[step] end,
     getRewards = milestones.minorLinear,
   }
@@ -141,9 +133,9 @@ M.onGeneralMilestonesCollect = function(milestonesList)
     icon = "garage01",
     color=milestones.colorGeneralGray,
     getValue = function() return dProgress.getFacilityCountForCargoCount("deliveredToHere") end,
-    getLabel = function(step, displayValue, target) return "Facility Satisfier" end,
-    getDescription = function(step, displayValue, target) return string.format("Deliver any kind of cargo to %d different facilities.", target) end,
-    getProgressLabel = function(step, current, target) return string.format("%d / %d", current, target) end,
+    getLabel = function(step, displayValue, target) return "ui.career.milestones.delivery.facilitySatisfier.label" end,
+    getDescription = function(step, displayValue, target) return {txt="ui.career.milestones.delivery.facilitySatisfier.description", context={count = target}} end,
+    getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.progress.count", context={current = current, target = target}} end,
     getTarget = function(step) return step == 0 and 0 or receiverSteps[step] end,
     getRewards = milestones.minorLinear,
   }

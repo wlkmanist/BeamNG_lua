@@ -21,6 +21,7 @@ C.pinSchema = {
   { dir = 'in', type = 'string', name = 'menu', default = 'scenario', description = 'for now, can only be scenario or freeroam.' },
   { dir = 'in', type = 'bool', name = 'keepLayout', description = 'If set, the layout will not reset after stopping the FG.' },
   { dir = 'in', type = 'string', name = 'gameStateName', default = 'scenario', hidden=true, description = 'the name of the gamestate. Keep empty if youre not sure what its for.' },
+  { dir = 'in', type = 'string', name = 'appContainerContext', hidden=true, description = 'topCenter app context to set. Keep empty if youre not sure what its for.' },
 }
 
 C.tags = {}
@@ -46,6 +47,12 @@ function C:postInit()
   end
 
   self.pinInLocal.menu.hardTemplates = menu
+
+  local apps = ui_appContainers and ui_appContainers.getAvailableApps('topCenter') or {}
+  self.pinInLocal.appContainerContext.hardTemplates = {}
+  for _, appId in ipairs(tableKeysSorted(apps)) do
+    table.insert(self.pinInLocal.appContainerContext.hardTemplates, {value = appId})
+  end
 end
 
 
@@ -70,12 +77,20 @@ function C:workOnce()
 
   self.mgr.modules.ui:setGameState(self.pinIn.gameStateName.value or ("temp_fg_"..self.mgr.id.."_"..self.id),self.pinIn.layout.value or nil, menuState)
   self.mgr.modules.ui:keepGameState(self.pinIn.keepLayout.value)
+  -- Updated to use new individual app visibility system
+  if self.pinIn.appContainerContext.value then
+    ui_appContainers.showApp('topCenter', self.pinIn.appContainerContext.value)
+  end
   self.active = true
 end
 
 function C:onClientPostStartMission()
   -- TEMP FIX: the game overrides the state, so we need to set it again :|
   self.mgr.modules.ui:setGameState(self.pinIn.gameStateName.value or ("temp_fg_"..self.mgr.id.."_"..self.id),self.pinIn.layout.value or nil, menuState)
+  -- Updated to use new individual app visibility system
+  if self.pinIn.appContainerContext.value then
+    ui_appContainers.showApp('topCenter', self.pinIn.appContainerContext.value)
+  end
 end
 
 function C:onUiChangedState(cur, prev)

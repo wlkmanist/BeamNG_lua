@@ -108,9 +108,11 @@ end
 -- For a given navigraph node, width and direction, computes the left and right road edge points.
 local function computeRoadEdgePoints(key, dir)
   local coord, n = coords[key], normals[key]
+  if not coord or not n then return coord or vec3(0,0,0), coord or vec3(0,0,0) end
   dir:normalize()
   n:normalize()
-  local lateralVec = dir:cross(n) * widths[key]
+  local w = widths[key] or 0
+  local lateralVec = dir:cross(n) * w
   return coord - lateralVec, coord + lateralVec
 end
 
@@ -140,8 +142,10 @@ local function numOfLanesInDirection(lanes, dir)
 end
 
 local function getEdgeLaneConfig(inNode, outNode)
+  local g = mapmgr.mapData.graph
+  local edge = g[inNode] and g[inNode][outNode]
+  if not edge then return "+" end
   local lanes
-  local edge = mapmgr.mapData.graph[inNode][outNode]
   if edge.lanes then
     lanes = edge.lanes
   else -- make up some lane data in case they don't exist
@@ -189,10 +193,16 @@ local function inCurvature(vec1, vec2)
   return 2 * sqrt((1 - cos8sq) / max(1e-30, vec1:squaredDistance(vec2)))
 end
 
+-- Max steps along the graph to prevent infinite loop (dead end or no forward candidate).
+local getPointAheadMaxSteps = 1000
+
 local function getPointAhead(vpos, vfwd, pl)
   local p_rearKey, p_frontKey, _ = mapmgr.findBestRoad(vpos, vfwd)
-  local p_front = coords[p_frontKey]
-  local p_prev = coords[p_rearKey]
+  local p_front = p_frontKey and coords[p_frontKey]
+  local p_prev = p_rearKey and coords[p_rearKey]
+  if not p_front or not p_prev then
+    return nil, nil, nil
+  end
 
   if vfwd:dot(p_front) < vfwd:dot(p_prev) then
     p_rearKey, p_frontKey = p_frontKey, p_rearKey
@@ -200,29 +210,37 @@ local function getPointAhead(vpos, vfwd, pl)
   end
 
   local distSq = vpos:squaredDistance(p_front)
-  while distSq - pl*pl < 0 do
-    local cands, c2Ctr = {}, 1
-    for k, _ in pairs(graph[p_frontKey]) do
-      cands[c2Ctr] = k
-      c2Ctr = c2Ctr + 1
-    end
+  local steps = 0
+  local p_front_minus_p_prev = p_front - p_prev
+  while distSq - pl * pl < 0 do
+    steps = steps + 1
+    if steps > getPointAheadMaxSteps then break end
+    local g = graph[p_frontKey]
+    if not g then break end
 
-    local len = #cands
     local bestAbsDot = 0.0
     local pbest = p_front
     local pbestKey = p_frontKey
-    for i = 1, len do
-      local p = coords[cands[i]]
-      local Dot = (p_front - p_prev):dot(p - p_front)   --(p - p_front):dot(p_front - p_prev)
+    for nextKey, _ in pairs(g) do
+      local p = coords[nextKey]
+      if not p then goto continue end
+      local p_minus_p_front = p - p_front
+      local Dot = p_front_minus_p_prev:dot(p_minus_p_front)
+      if Dot <= 0 then goto continue end
       local absDot = abs(Dot)
-      if (p - p_prev):squaredLength() > 1e-5 and absDot > bestAbsDot and Dot > 0 then
-        pbest, bestAbsDot, pbestKey = p, absDot, cands[i]
+      if (p - p_prev):squaredLength() <= 1e-5 then goto continue end
+      if absDot > bestAbsDot then
+        pbest, bestAbsDot, pbestKey = p, absDot, nextKey
       end
+      ::continue::
     end
+
+    p_front_minus_p_prev = pbest - p_front
+    local ds = p_front:squaredDistance(pbest)
+    if ds < 1e-10 then break end
     p_prev = p_front
     p_front = pbest
     p_frontKey = pbestKey
-    local ds = p_prev:squaredDistance(p_front)
     distSq = distSq + ds
   end
 
@@ -286,8 +304,10 @@ local function getFourBoundingPoints(p1Key, p2Key)
 end
 
 local function getSensorData()
+  local copy = {}
+  for k, v in pairs(readings) do copy[k] = v end
   return {
-    readings = readings,
+    readings = copy,
     GFXUpdateTime = GFXUpdateTime,
     timeSinceLastPoll = timeSinceLastPoll }
 end
@@ -463,7 +483,7 @@ local function update(dtSim)
   --local pointAhead = rearAxleMidpoint + (lookAheadDistance * fwd)
   --local path = mapmgr.getPointToPointPath(rearAxleMidpoint, pointAhead, nil, 1e-4, nil, nil, nil)
   local pFKey, pRKey, pH = getPointAhead(frontAxleMidpointProjGround, fwd, lookAheadDistance)
-  local path = mapmgr.mapData:getPath(pRKey, pFKey, nil)
+  local path = (pFKey and pRKey) and mapmgr.mapData:getPath(pRKey, pFKey, nil) or {}
   coeffsCL = { uA = 0, uB = 0, uC = 0, uD = 0, vA = 0, vB = 0, vC = 0, vD = 0 }
   coeffsL = { uA = 0, uB = 0, uC = 0, uD = 0, vA = 0, vB = 0, vC = 0, vD = 0 }
   coeffsR = { uA = 0, uB = 0, uC = 0, uD = 0, vA = 0, vB = 0, vC = 0, vD = 0 }
@@ -509,19 +529,12 @@ local function update(dtSim)
 
   -- Extract some useful road metadata.
   drivability, speedLimit, oneWay = NaN, NaN, NaN
-  if p1Key ~= nil then
-    if graph[p1Key][p2Key].drivability ~= nil then
-      drivability = graph[p1Key][p2Key].drivability
-    end
-    if graph[p1Key][p2Key].speedLimit ~= nil then
-      speedLimit = graph[p1Key][p2Key].speedLimit
-    end
-    if graph[p1Key][p2Key].oneWay ~= nil then
-      if graph[p1Key][p2Key].oneWay == true then
-        oneWay = 1.0
-      else
-        oneWay = 0.0
-      end
+  if p1Key ~= nil and p2Key ~= nil then
+    local edge = graph[p1Key] and graph[p1Key][p2Key]
+    if edge then
+      if edge.drivability ~= nil then drivability = edge.drivability end
+      if edge.speedLimit ~= nil then speedLimit = edge.speedLimit end
+      if edge.oneWay ~= nil then oneWay = edge.oneWay == true and 1.0 or 0.0 end
     end
   end
 

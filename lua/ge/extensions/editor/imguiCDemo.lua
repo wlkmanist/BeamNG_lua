@@ -17,7 +17,7 @@ local function onWindowMenuItem()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("ImGui Demo", onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem("ImGui Demo", onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
 M.onEditorGui = onEditorGui

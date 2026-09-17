@@ -37,7 +37,7 @@ local trackFilePath = '/replays/scriptai/tracks/'
 local trackFileExt = '.track.json'
 local tmpSaveFilename
 
-local initialWindowSize = im.ImVec2(800, 200)
+local initialWindowSize = im.ImVec2(640, 200)
 
 local function findActivePlayerID(newID)
   if newID == nil then newID = be:getPlayerVehicleID(0) end
@@ -131,20 +131,16 @@ local function onEditorGui()
   if editor.beginWindow(toolWindowName, "Script AI Manager") then
     be:queueAllObjectLua('obj:queueGameEngineLua("extensions.hook(\\"onVehicleSubmitInfo\\","..tostring(objectId)..","..serialize(ai.scriptState())..")")')
     local objMax = be:getObjectCount()-1
+    local availWidth = im.GetContentRegionAvailWidth()
+    local show = availWidth >= 420 -- full view or compact view
 
     im.Columns(4, "AIMgmtcolumns")
 
-    if not columnsInitialized then
-      local avail = im.GetContentRegionAvail()
-      local colsize_1 = im.CalcTextSize("00000 - thePlayer - vehicleName ----")
-      local colsize_2 = im.CalcTextSize("playing - 100% --")
-
-      im.SetColumnWidth(0, colsize_1.x)
-      im.SetColumnWidth(1, colsize_2.x)
-      im.SetColumnWidth(2, 100)
-      im.SetColumnWidth(3, 1000)
-      columnsInitialized = true
-    end
+    local colsize_1 = im.CalcTextSize("00000 - thePlayer - vehicleName -----")
+    local colsize_2 = im.CalcTextSize("playing - 100% --")
+    im.SetColumnWidth(0, colsize_1.x)
+    im.SetColumnWidth(1, show and colsize_2.x or 0)
+    im.SetColumnWidth(2, show and 100 or 0)
 
     --im.Separator()
 
@@ -311,8 +307,8 @@ local function onEditorGui()
           saveRecording(bo, vehId, filename)
           im.CloseCurrentPopup()
         end
-        im.SetItemDefaultFocus(g)
-        im.SameLine(g)
+        im.SetItemDefaultFocus()
+        im.SameLine()
         if im.Button('Cancel') then im.CloseCurrentPopup() end
 
         im.EndPopup()
@@ -329,7 +325,7 @@ local function onEditorGui()
             im.CloseCurrentPopup()
           end
         end
-        im.SetItemDefaultFocus(g)
+        im.SetItemDefaultFocus()
 
         if im.Button('Cancel') then im.CloseCurrentPopup() end
 
@@ -338,6 +334,8 @@ local function onEditorGui()
 
       if vehState[vehId] == 'idle' then
         if editor.uiIconImageButton(editor.icons.fiber_manual_record, im.ImVec2(24,24), nil, nil, nil, 'record'..vehId) then
+          core_camera.setByName(0, "orbit", false)
+          be:enterVehicle(0, bo)
           startRecording(bo, vehId)
         end
         im.tooltip('Record')
@@ -353,13 +351,13 @@ local function onEditorGui()
           stopRecording(bo, vehId)
         end
         im.tooltip('Stop Recording')
-        im.SameLine(g)
+        im.SameLine()
       elseif vehState[vehId] == 'playing' then
         if editor.uiIconImageButton(editor.icons.replay, im.ImVec2(24,24), nil, nil, nil, 'play'..vehId) then
           playVehicle(bo)
         end
         im.tooltip('Restart Replay')
-        im.SameLine(g)
+        im.SameLine()
         if editor.uiIconImageButton(editor.icons.stop, im.ImVec2(24,24), nil, nil, nil, 'stopPlay'..vehId) then
           stopPlaying(bo, vehId)
         end
@@ -367,7 +365,7 @@ local function onEditorGui()
       end
 
       if recordings[vehId] then
-        im.SameLine(g)
+        im.SameLine()
         if editor.uiIconImageButton(editor.icons.save, im.ImVec2(24,24), nil, nil, nil, 'saverecord'..vehId) then
           if not tmpSaveFilename then
             tmpSaveFilename = im.ArrayChar(128)
@@ -377,17 +375,17 @@ local function onEditorGui()
         end
         im.tooltip('Save Recording')
       end
-      im.SameLine(g)
+      im.SameLine()
       if editor.uiIconImageButton(editor.icons.folder_open, im.ImVec2(24,24), nil, nil, nil, 'loadrecord'..vehId) then
         im.OpenPopup('Load Recording##'..vehId)
       end
       im.tooltip('Load Recording')
 
-      im.SameLine(g)
+      im.SameLine()
       if im.Button('More##'..vehId) then
         im.OpenPopup('controlsPopup##'..vehId)
       end
-      im.SameLine(g)
+      im.SameLine()
 
       if loopRecordingBoolPtr[vehId] == nil then loopRecordingBoolPtr[vehId] = im.BoolPtr(true) end
       if displayDebugBoolPtr[vehId] == nil then displayDebugBoolPtr[vehId] = im.BoolPtr(true) end
@@ -398,7 +396,7 @@ local function onEditorGui()
         im.MenuItem1(vehIdtxt, nil, false, false)
         im.Checkbox('Loop##loop'..vehId, loopRecordingBoolPtr[vehId])
         im.tooltip('Restart when recording reaches the end')
-        im.SameLine(g)
+        im.SameLine()
         im.Checkbox('Debug##debug'..vehId, displayDebugBoolPtr[vehId])
         im.PushItemWidth(60)
         im.DragFloat('Start Offset', timeOffsetFloatPtr[vehId], 0.01)
@@ -580,6 +578,7 @@ M.getCurrentRecordings = function() return recordings end
 -- public interface
 M.onEditorGui = onEditorGui
 M.onEditorInitialized = onEditorInitialized
+M.onWindowMenuItem = onWindowMenuItem
 M.onVehicleSwitched = onVehicleSwitched
 M.onDrawDebug = onDrawDebug
 

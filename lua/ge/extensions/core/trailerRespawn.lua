@@ -8,29 +8,22 @@ local logTag = 'trailerRespawn'
 
 local enabled = true
 local trailerReg = {}
-local couplerOffset = {}
-local couplerTags = {}
 
 local function onSerialize()
   local data = {}
   data.trailerReg = trailerReg
-  data.couplerOffset = couplerOffset
-  data.couplerTags = couplerTags
   data.enabled = enabled
   return data
 end
 
 local function onDeserialized(data)
   trailerReg = data.trailerReg
-  couplerOffset = data.couplerOffset
-  couplerTags = data.couplerTags
   enabled = data.enabled
   M.setEnabled(enabled)
 end
 
 local function resetData()
   trailerReg = {}
-  couplerOffset = {}
   enabled = true
   M.setEnabled(enabled)
 end
@@ -59,6 +52,14 @@ local function getPreviousAttachedVehicleId(vehId)
   end
 end
 
+local function getVehicleTrainHead(vehId)
+  local prevVehId = getPreviousAttachedVehicleId(vehId)
+  if prevVehId then
+    return getVehicleTrainHead(prevVehId)
+  end
+  return vehId
+end
+
 -- returns all vehicles connected to a given vehicle
 local function getVehicleTrain(vehId, res, forward)
   if not res then
@@ -84,10 +85,24 @@ local function getVehicleTrain(vehId, res, forward)
   return res
 end
 
+local function getConfigType(objId)
+  local vehicleData = core_vehicle_manager.getVehicleData(objId)
+  local configInfo
+  if vehicleData.config.partConfigFilename then -- this property is nil if the config was not from a file
+    local _, configName, _ = path.splitWithoutExt(vehicleData.config.partConfigFilename)
+    configInfo = core_vehicles.getConfig(vehicleData.config.model, configName)
+  end
+  if not configInfo then
+    local veh = getObjectByID(objId)
+    local vehModel = core_vehicles.getModel(veh:getField('JBeam','0')).model
+    return vehModel.Type
+  end
+  return next(configInfo.aggregates.Type)
+end
+
 local function getAttachedNonTrailer(vehId)
-  local veh = be:getObjectByID(vehId)
-  local vehModel = core_vehicles.getModel(veh:getField('JBeam','0')).model
-  if vehModel.Type ~= "Trailer" then return vehId end
+  -- Check for trailer and prop, because some trailers might actually be props
+  if getConfigType(vehId) ~= "Trailer" then return vehId end
   local previousAttachedVehicleId = getPreviousAttachedVehicleId(vehId)
   if previousAttachedVehicleId then
     return getAttachedNonTrailer(previousAttachedVehicleId)
@@ -95,14 +110,17 @@ local function getAttachedNonTrailer(vehId)
   return false
 end
 
-local function unregisterVehicle(vehId)
-  if trailerReg[vehId] then
-    log("D", logTag, "Unregistered vehicle "..tostring(vehId).."; trailer was ".. (type(trailerReg[vehId]) == "table" and tostring(trailerReg[vehId].trailerId) or trailerReg[vehId]))
+local function unregisterVehicle(vehId, nodeId)
+  -- check if vehId is on the "non trailer" side of the coupling
+  local coupleInfo = trailerReg[vehId]
+  if coupleInfo and (nodeId == nil or coupleInfo.node == nodeId) then
+    log("D", logTag, "Unregistered vehicle "..tostring(vehId).."; trailer was ".. (type(coupleInfo) == "table" and tostring(coupleInfo.trailerId) or coupleInfo))
     trailerReg[vehId] = nil
   end
 
-  for vId, coupleInfo in pairs(trailerReg) do
-    if coupleInfo and coupleInfo.trailerId == vehId then
+  -- check if vehId is on the "trailer" side of the coupling
+  for vId, currentCoupleInfo in pairs(trailerReg) do
+    if currentCoupleInfo.trailerId == vehId and (nodeId == nil or currentCoupleInfo.trailerNode == nodeId) then
       log("D", logTag, "Unregistered trailer "..tostring(vehId).."; vehicle was "..tostring(vId))
       trailerReg[vId] = nil
     end
@@ -111,9 +129,7 @@ end
 
 local function onCouplerAttached(objId1, objId2, nodeId, obj2nodeId)
   if objId1 == objId2 then return end
-  if couplerOffset[objId1] == nil or couplerOffset[objId1][nodeId] == nil or couplerOffset[objId2] == nil or couplerOffset[objId2][obj2nodeId] == nil then
-    return
-  end
+  if getConfigType(objId1) == "Prop" or getConfigType(objId2) == "Prop" then return end
 
   if getAttachedNonTrailer(objId1) and not checkRedundancy(objId2, objId1) then
     log("D", logTag, tostring(objId1).." registered trailer "..tostring(objId2).."  node = "..tostring(nodeId).."  trailernode = "..tostring(obj2nodeId))
@@ -129,71 +145,65 @@ local function onCouplerAttached(objId1, objId2, nodeId, obj2nodeId)
   extensions.hook("onTrailerAttached", objId1, objId2)
 end
 
-local function onCouplerDetach(objId1, nodeId)
-  unregisterVehicle(objId1)
-end
+local function onCouplerDetached(objId1, objId2, nodeId, obj2nodeId, breakForce)
+  if not breakForce or breakForce > 0 then return end
 
--- coupler tags + a tag for the auto couple function
-local couplerTagsOptions = {
-  tow_hitch = "autoCouple",
-  fifthwheel = "autoCouple",
-  gooseneck_hitch = "autoCouple",
-  pintle = "autoCouple",
-  fifthwheel_v2 = true
-}
-
-local function getCouplerTagsOptions()
-  return couplerTagsOptions
+  -- delay unregister by one frame so that it doesnt prevent trailer reset on non-trailer reset
+  extensions.core_jobsystem.create(function(job)
+    coroutine.yield()
+    unregisterVehicle(objId1, nodeId)
+  end, 1)
 end
 
 local function onVehicleActiveChanged(vehId, active)
   -- sets the vehicle's trailer visibility state to match the owner
   if trailerReg[vehId] then
-    be:getObjectByID(trailerReg[vehId].trailerId):setActive(active and 1 or 0)
+    getObjectByID(trailerReg[vehId].trailerId):setActive(active and 1 or 0)
     log("D", logTag, "Trailer "..tostring(trailerReg[vehId].trailerId).." active state set to "..tostring(active))
 
     if active then
-      local tmp = couplerOffset[trailerReg[vehId].trailerId][trailerReg[vehId].trailerNode]
-      spawn.placeTrailer(vehId, couplerOffset[vehId][trailerReg[vehId].node], trailerReg[vehId].trailerId, tmp, couplerTags[vehId][trailerReg[vehId].node])
+      local vehCouplerOffset = core_vehicles.vehsCouplerOffset[vehId][trailerReg[vehId].node]
+      local trailerCouplerOffset = core_vehicles.vehsCouplerOffset[trailerReg[vehId].trailerId][trailerReg[vehId].trailerNode]
+      local vehCouplerTag = core_vehicles.vehsCouplerTags[vehId][trailerReg[vehId].node]
+      spawn.placeTrailer(vehId, vehCouplerOffset, trailerReg[vehId].trailerId, trailerCouplerOffset, vehCouplerTag)
     end
   end
 end
 
-local function onVehicleSpawned(vehId)
-  if couplerOffset[vehId] then
-    couplerOffset[vehId] = nil
-  end
-
-  unregisterVehicle(vehId)
-
-  local veh = be:getObjectByID(vehId)
-  for tag, _ in pairs(couplerTagsOptions) do
-    core_vehicleBridge.requestValue(veh, function(ret) M.addCouplerOffset(vehId, ret.result) end, 'couplerOffset', tag)
+local function placeTrailer(vehId)
+  if trailerReg[vehId] then
+    local vehCouplerOffset = core_vehicles.vehsCouplerOffset[vehId][trailerReg[vehId].node]
+    local trailerCouplerOffset = core_vehicles.vehsCouplerOffset[trailerReg[vehId].trailerId][trailerReg[vehId].trailerNode]
+    local vehCouplerTag = core_vehicles.vehsCouplerTags[vehId][trailerReg[vehId].node]
+    spawn.placeTrailer(vehId, vehCouplerOffset, trailerReg[vehId].trailerId, trailerCouplerOffset, vehCouplerTag)
   end
 end
 
+local function coupleTrailer(vehId)
+  if not trailerReg[vehId] then return end
+  local veh = getObjectByID(vehId)
+  if not veh then return end
+
+  local couplerTag = core_vehicles.vehsCouplerTags[vehId][trailerReg[vehId].node]
+  if core_vehicles.couplerTagsOptions[couplerTag] == "autoCouple" then
+    veh:queueLuaCommand(string.format('beamstate.activateAutoCoupling("%s")', couplerTag))
+  end
+end
+
+local function onVehicleSpawned(vehId)
+  unregisterVehicle(vehId)
+end
+
+-- TODO: Remove this when trailer respawn is disabled
 local function onVehicleResetted(vehId)
   if trailerReg[vehId] then
-    local tmp = couplerOffset[trailerReg[vehId].trailerId][trailerReg[vehId].trailerNode]
-    spawn.placeTrailer(vehId, couplerOffset[vehId][trailerReg[vehId].node], trailerReg[vehId].trailerId, tmp, couplerTags[vehId][trailerReg[vehId].node])
+    local tmp = core_vehicles.vehsCouplerOffset[trailerReg[vehId].trailerId][trailerReg[vehId].trailerNode]
+    spawn.placeTrailer(vehId, core_vehicles.vehsCouplerOffset[vehId][trailerReg[vehId].node], trailerReg[vehId].trailerId, tmp, core_vehicles.vehsCouplerTags[vehId][trailerReg[vehId].node])
   end
 end
 
 local function onVehicleDestroyed(vehId)
-  if couplerOffset[vehId] then
-    couplerOffset[vehId] = nil
-  end
-
   unregisterVehicle(vehId)
-end
-
-local function addCouplerOffset(vId, data)
-  couplerOffset[vId] = couplerOffset[vId] or {}
-  couplerTags[vId] = couplerTags[vId] or {}
-  for id, off in pairs(data or {}) do
-    couplerOffset[vId][id] = vec3(off)
-    couplerTags[vId][id] = off.couplerTag
-  end
 end
 
 local function debugUpdate(dt, dtSim)
@@ -201,8 +211,8 @@ local function debugUpdate(dt, dtSim)
 
   -- highlight all coupling nodes
 
-  for vID,c in pairs(couplerOffset) do
-    local veh = be:getObjectByID(vID)
+  for vID,c in pairs(core_vehicles.vehsCouplerOffset) do
+    local veh = getObjectByID(vID)
     if veh then
       local pos = veh:getPosition()
       for ci,cpos in pairs(c) do
@@ -216,12 +226,10 @@ end
 local function setEnabled(enabled) -- automatically or manually enables or disables the trailer respawn system
   if enabled then
     M.onCouplerAttached = onCouplerAttached
-    M.onCouplerDetach = onCouplerDetach
-    M.onVehicleResetted = onVehicleResetted
+    M.onCouplerDetached = onCouplerDetached
   else
     M.onCouplerAttached = nop
-    M.onCouplerDetach = nop
-    M.onVehicleResetted = nop
+    M.onCouplerDetached = nop
   end
 end
 
@@ -233,17 +241,21 @@ local function isVehicleCoupledToTrailer(vehId, trailerId)
 end
 
 M.setEnabled = setEnabled
+M.getEnabled = function() return enabled end
 M.getTrailerData = getTrailerData
-M.addCouplerOffset = addCouplerOffset
-M.getCouplerTagsOptions = getCouplerTagsOptions
+M.getPreviousAttachedVehicleId = getPreviousAttachedVehicleId
+M.getVehicleTrainHead = getVehicleTrainHead
 M.getAttachedNonTrailer = getAttachedNonTrailer
 M.isVehicleCoupledToTrailer = isVehicleCoupledToTrailer
 M.getVehicleTrain = getVehicleTrain
+M.placeTrailer = placeTrailer
+M.coupleTrailer = coupleTrailer
+M.getConfigType = getConfigType
 
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
 M.onCouplerAttached = onCouplerAttached
-M.onCouplerDetach = onCouplerDetach
+M.onCouplerDetached = onCouplerDetached
 M.onVehicleActiveChanged = onVehicleActiveChanged
 M.onVehicleSpawned = onVehicleSpawned
 M.onVehicleResetted = onVehicleResetted

@@ -2,9 +2,6 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
-local im  = ui_imgui
-
-
 local C = {}
 
 C.name = 'Start Auto Replay'
@@ -17,7 +14,12 @@ C.pinSchema = {
 C.tags = {}
 
 function C:work()
-  self.mgr.modules.autoReplay:startNewRec()
+  self.mgr.modules.missionReplay:startNewRec()
+  -- Start both AI recording and replay
+  if self.mgr.modules.aiRecording then
+    self.mgr.modules.aiRecording:startAiRecording()
+    self.mgr.modules.aiRecording:startAiReplay()
+  end
 end
 
 

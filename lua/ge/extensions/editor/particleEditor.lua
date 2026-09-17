@@ -297,9 +297,9 @@ local function onEditorInspectorHeaderGui()
   if im.BeginTabBar("particle editor##") then
     local flags = editor.isDataBlockDirty(currentEmitter) and im.TabItemFlags_UnsavedDocument or 0
     if im.BeginTabItem("Emitter", nil, flags) then
-      if im.BeginCombo("##emitter", currentEmitter:getName()) then
+      if im.BeginCombo("##emitter", string.format("%s (%s)", currentEmitter:getName(), currentEmitter:getField("particles", ""))) then
         for _, emitter in ipairs(particleEmitters) do
-          if im.Selectable1(emitter:__tostring()) then
+          if im.Selectable1(string.format("%s (%s)", emitter:getName(), emitter:getField("particles", ""))) then
             selectEmitterFromMenu(Sim.upcast(emitter))
           end
         end

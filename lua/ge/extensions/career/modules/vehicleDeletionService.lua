@@ -18,7 +18,7 @@ local function deleteVehicle(vehId)
   if inventoryId then
     career_modules_inventory.removeVehicleObject(inventoryId)
   else
-    local obj = be:getObjectByID(vehId)
+    local obj = getObjectByID(vehId)
     if obj then
       obj:delete()
     end
@@ -30,7 +30,7 @@ local camPos = vec3()
 local camDir = vec3()
 local function onUpdate()
   for vehId, data in pairs(flaggedVehicles) do
-    local obj = be:getObjectByID(vehId)
+    local obj = getObjectByID(vehId)
     camPos:set(core_camera.getPositionXYZ())
     vehPos:set(obj:getPositionXYZ())
 

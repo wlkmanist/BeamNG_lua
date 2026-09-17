@@ -8,10 +8,10 @@ local im  = ui_imgui
 
 local C = {}
 
-C.name = 'Perlin noise'
+C.name = 'Perlin Noise'
 C.tags = {'random'}
-C.description = "Provides a coherant random number. If new with perlin noise, it's advised to google it, in order to understand the input parameters better."
-C.category = 'provider'
+C.description = "Provides a coherent random number. If new with perlin noise, it's advised to look it up, in order to understand the input parameters better."
+C.category = 'repeat_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = 'The input flow' },
@@ -126,18 +126,17 @@ end
 
 function C:work()
   if self.pinIn.flow.value then
+    local output = self:OctavePerlin(self.randomStartSeed + self.pinIn.value.value, 0, 0, self.pinIn.octaves.value, self.pinIn.amplitude.value, self.pinIn.frequency.value)
 
-  local output = self:OctavePerlin(self.randomStartSeed + self.pinIn.value.value, 0, 0, self.pinIn.octaves.value, self.pinIn.amplitude.value, self.pinIn.frequency.value)
-
-  if self.data.debug then
-    table.insert(self.graphData, output)
-    if #self.graphData >= self.data.graphDataCount then
-      table.remove(self.graphData, 1)
+    if self.data.debug then
+      table.insert(self.graphData, output)
+      if #self.graphData >= self.data.graphDataCount then
+        table.remove(self.graphData, 1)
+      end
     end
-  end
 
-  self.pinOut.value.value = output
-  self.pinOut.flow.value = true
+    self.pinOut.value.value = output
+    self.pinOut.flow.value = true
   else
     self.pinOut.flow.value = false
   end

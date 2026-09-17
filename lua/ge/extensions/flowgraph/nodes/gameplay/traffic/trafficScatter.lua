@@ -18,7 +18,6 @@ C.pinSchema = {
   { dir = 'in', type = 'number', name = 'maxDist', description = '(Optional) Maximum distance away from the player to teleport vehicles.' }
 }
 
-
 function C:workOnce()
   gameplay_traffic.scatterTraffic(nil, self.pinIn.minDist.value, self.pinIn.maxDist.value)
 end

@@ -9,6 +9,7 @@ local organizations
 local function addAdditionalInfoToOrg(organization)
   career_modules_reputation.addReputationToOrg(organization)
   organization.visible = career_career and career_career.hasInteractedWithOrganization(organization.id)
+  organization.attributeKey = organization.id.."Reputation"
 end
 
 local function getOrganizations()
@@ -89,7 +90,7 @@ local function getUIData()
     table.insert(result, getUIDataForOrg(orgId))
   end
   table.sort(result, function(a, b)
-    return a.name < b.name
+    return _tr(a.name) < _tr(b.name)
   end)
   return result
 end

@@ -163,7 +163,7 @@ local function initialiseGoals()
             goal.value= v
           end
           goal.status = {}
-          local fobj = be:getObjectByID(vObjId)
+          local fobj = getObjectByID(vObjId)
           if fobj then
             goal.startPos = fobj:getPosition()
           end

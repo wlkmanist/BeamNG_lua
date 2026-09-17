@@ -12,11 +12,9 @@ M.dependencies = {'scenario_scenarios', 'core_groundMarkers'}
 local helper = require('scenario/scenariohelper')
 local logTag = 'scenario_busdriver'
 
-local finalWaypointName = 'scenario_finish1'
 local playerInstance = 'scenario_player0'
 local running = false
 local playerWon = false
-local wpList = {}
 local busConfig = {}
 local passedWp={}
 local currentLine = {}
@@ -274,7 +272,7 @@ local function onRaceStart()
 
   --log('I', logTag,'get scenar . lapConfig')
   --wpList = scenario_scenarios.getScenario().lapConfig
-  --be:getObjectByID(vehicleId):queueLuaCommand("controller.getController('busNextStopDsp').onDepartedStop( "..dumps({unpack(wpList, 1,#wpList)}).." )")
+  --getObjectByID(vehicleId):queueLuaCommand("controller.getController('busNextStopDsp').onDepartedStop( "..dumps({unpack(wpList, 1,#wpList)}).." )")
 
 
   --scenario_scenarios.trackVehicleMovementAfterDamage(playerInstance, {waitTimerLimit=2})
@@ -302,7 +300,7 @@ local function moveBusMarkers()
   local tpos,pos = vec3(nextStop[3]) + vec3(0,0,3), vec3(0,0,0)
   local tr = quat(nextStop[4])
   local r
-  local zVec,yVec,xVec = tr*vec3(0,0,1), tr*vec3(0,1,0), tr*vec3(1,0,0)
+  local xVec, yVec = tr*vec3(1,0,0), tr*vec3(0,1,0)
 
   local d = nextStop[5][1]*0.5
   local w = nextStop[5][2]*0.5
@@ -478,8 +476,7 @@ local function renderDebugLine()
   for i, stop in ipairs(currentLine.tasklist) do
     local vec3Destination = vec3(stop[3])
     debugDrawer:drawTextAdvanced(vec3Destination, String('['..i..'] '..stop[2] .. ' / ' .. stop[1]), ColorF(0,0,0,1), true, false, ColorI(255, 255, 255, 255))
-    local firstDest, secondDest, distanceDest = map.findClosestRoad(vec3Destination)
-    local trigger = scenetree.findObject(nextStop[1])
+    local firstDest, secondDest, _ = map.findClosestRoad(vec3Destination)
     if not isRightNode(vec3Destination, firstDest, secondDest) then
       local temp = firstDest
       firstDest = secondDest
@@ -605,7 +602,7 @@ local function onPreRender(dt, dtSim)
     debugDrawer:drawLine((vec3Destination+proj), (vec3Destination-proj*2), ColorF(0.5,0.0,0.5,1.0))
   end
   vec3Destination.z = vec3Destination.z-heightCorrection+proj.z
-  local firstDest, secondDest, distanceDest = map.findClosestRoad(vec3Destination)
+  local firstDest, secondDest, _ = map.findClosestRoad(vec3Destination)
 
   local trigger = scenetree.findObject(nextStop[1])
   if not trigger.bidirectional and not isRightNode(vec3Destination, firstDest, secondDest) then
@@ -643,10 +640,9 @@ local function onPreRender(dt, dtSim)
   end
 
   if exitTggBeforeTimer then
-    local vpos = vec3(pv:getPosition())
     -- disabled for now, sometimes make fail the scenario when maneuvering the bus.
     -- 20m is from the center of the trigger, with big trigger can fail after exit 1m from trigger
-    --if vec3Destination:distance(vpos) > 20 then fail("scenarios.busRoutes.exitTggBeforeTimer") end
+    --if vec3Destination:distance(vec3(pv:getPosition())) > 20 then fail("scenarios.busRoutes.exitTggBeforeTimer") end
   end
 
   if monitorMarker then
@@ -799,7 +795,6 @@ local function onScenarioLoaded(scenario)
     local amount = core_settings_settings.getValue('trafficAmount')
     if amount == 0 then amount = getMaxVehicleAmount(12) end
     gameplay_traffic.setupTraffic(amount)
-    gameplay_traffic.setTrafficVars({spawnValue = 1.3, spawnDirBias = 0.3})
   end
 end
 

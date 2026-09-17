@@ -168,12 +168,6 @@ local function loadVehicle(scenario)
   local vehicle = scenario.vehicle
   if not vehicle then return end
 
---  local createVehicle = [[
---    if(isObject(scenario_player0)) {
---      scenario_player0.delete();
---    }]]
-
-  --TorqueScript.eval(createVehicle)
   --jbeam, configString, pos, rot, color, color2, color3, name, cling
   local pos = vec3()
   local rot = quat()
@@ -217,9 +211,9 @@ local function loadVehicle(scenario)
   print("ID:")
   print(veh:getId())
   print("Vehcle by ID")
-  print(be:getObjectByID(veh:getId()))
+  print(getObjectByID(veh:getId()))
   print("Vehcle rotation through ID")
-  print(be:getObjectByID(veh:getId()) and be:getObjectByID(veh:getId()):getRotation())
+  print(getObjectByID(veh:getId()) and getObjectByID(veh:getId()):getRotation())
   print("Vehicle Rotation:")
   print(veh:getRotation())
   print("VS rotation given:")
@@ -377,7 +371,7 @@ local function changeTimeTrialConfig()
   M.timeTrialOpen = not M.timeTrialOpen
   if M.timeTrialOpen then
     guihooks.trigger('MenuItemNavigation', 'toggleMenues')
-    guihooks.trigger('ChangeState', {state = 'menu.quickraceOverview'})
+    guihooks.trigger('ChangeState', {state = 'menu.quickrace'})
     simTimeAuthority.pause(true)
   else
     simTimeAuthority.pause(false)
@@ -385,7 +379,7 @@ local function changeTimeTrialConfig()
 end
 
 local function onUiChangedState (curUIState, prevUIState)
-  if curUIState == 'menu' and prevUIState == 'menu.quickraceOverview' then
+  if curUIState == 'menu' and prevUIState == 'menu.quickrace' then
     if M.timeTrialOpen then
       changeTimeTrialConfig()
     end

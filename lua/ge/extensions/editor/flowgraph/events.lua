@@ -51,7 +51,6 @@ function C:drawContent()
     autoScroll = not autoScroll
     editor.setPreference("flowgraph.general.eventAutoScroll", autoScroll)
   end
-  im.PopItemWidth()
   local avail = im.GetContentRegionAvail()
   im.Columns(3)
   im.SetColumnWidth(0, 86)

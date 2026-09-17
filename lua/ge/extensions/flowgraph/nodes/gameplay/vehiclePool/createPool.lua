@@ -17,7 +17,7 @@ C.pinSchema = {
   { dir = 'out', type = 'table', name = 'vehPool', tableType = 'vehiclePool', description = 'Vehicle pool object.' }
 }
 
-C.dependencies = {'core_vehiclePoolingManager'}
+C.dependencies = {'core_vehicleActivePooling'}
 C.tags = {'traffic', 'budget', 'pooling'}
 
 function C:init()
@@ -44,7 +44,7 @@ end
 
 function C:workOnce()
   if not self.vehPool then
-    self.vehPool = core_vehiclePoolingManager.createPool({name = self.pinIn.name.value})
+    self.vehPool = core_vehicleActivePooling.createPool({name = self.pinIn.name.value})
   end
   self.pinOut.vehPool.value = self.vehPool
 end

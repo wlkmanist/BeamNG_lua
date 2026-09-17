@@ -30,13 +30,21 @@ end
 local function saveWindowLayout(layoutName, toolName)
   local layoutDirectory = "settings/" .. (toolName or "editor") .. "/layouts/" .. layoutName
 
-  editor.saveWindowsState(layoutDirectory .. "/windowsState.json")
+  editor.saveWindowsState(layoutDirectory .. "/windowsState.json", toolName)
   imgui.saveIniSettingsToDisk(imguiIniFile)
 end
 
 local function loadCurrentWindowLayout(toolName)
+  editor.log("Loading current windows state...")
   editor.loadWindowsState("settings/" .. (toolName or "editor") .. "/windowsState.json", toolName)
-  imgui.loadIniSettingsFromDisk(imguiIniFile)
+
+  if editor.needsDefaultImguiIniLoad then
+    editor.log("Loading default imgui ini...")
+    imgui.loadIniSettingsFromDisk(defaultImguiIniFile)
+    editor.needsDefaultImguiIniLoad = nil
+  else
+    imgui.loadIniSettingsFromDisk(imguiIniFile)
+  end
 end
 
 local function saveCurrentWindowLayout(toolName)
@@ -61,8 +69,7 @@ local function resetLayouts(toolName)
     end
   end
 
-  --FS:directoryRemove(layoutDirectory)
-  loadWindowLayout(layoutDirectory .. "/Default")
+  loadWindowLayout(layoutDirectory .. "/Default", toolName)
 end
 
 M.getWindowLayouts = getWindowLayouts

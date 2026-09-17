@@ -40,10 +40,7 @@ local function create(data)
     triangleSpaceUp = decodedData.triangleSpaceUp,
     isVisualised = decodedData.isVisualised,
     isUsingGravity = decodedData.isUsingGravity,
-    accelWindowWidth = decodedData.accelWindowWidth,
-    gyroWindowWidth = decodedData.gyroWindowWidth,
-    accelFrequencyCutoff = decodedData.accelFrequencyCutoff,
-    gyroFrequencyCutoff = decodedData.gyroFrequencyCutoff,
+    smootherStrength = decodedData.smootherStrength,
     isSendImmediately = decodedData.isSendImmediately }
   IMUcontroller = controller.loadControllerExternal('tech/advancedIMU', 'advancedIMU' .. decodedData.sensorId, controllerData)
   advancedIMU = { data = controllerData, controller = IMUcontroller }

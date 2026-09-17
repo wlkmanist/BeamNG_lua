@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Set drift context'
+C.name = 'Set Drift Context'
 
-C.description = 'A drift context sets a certain amount of drift rules/display'
+C.description = 'A drift context sets a certain amount of drift rules/display.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

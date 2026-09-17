@@ -38,8 +38,7 @@ end
 
 -- Module constants (core).
 local im = ui_imgui
-local abs, min, max = math.abs, math.min, math.max
-local sin, cos, atan2 = math.sin, math.cos, math.atan2
+local abs, min, max, sin, cos = math.abs, math.min, math.max, math.sin, math.cos
 
 -- Module constants (UI).
 local simSetNameFilter = im.ImGuiTextFilter()
@@ -86,6 +85,8 @@ local timeSinceLastClick = 1e99                                                 
 local masterWidth = im.FloatPtr(3.5)                                                                -- The master lane width (for UI control in individual road edit section).
 local importCO, importTT2I, importO2T = im.BoolPtr(false), im.BoolPtr(false), im.BoolPtr(false)     -- Checkbox flags used for various importing options.
 local importCustomOffset = im.FloatPtr(0.0)                                                         -- Custom offset used for importing.
+local importPlaceMode = im.IntPtr(0)                                                                -- 0=file, 1=custom XY, 2=camera XY.
+local importPlaceX, importPlaceY = im.FloatPtr(128.0), im.FloatPtr(128.0)                           -- Custom import placement (world XY).
 
 local isDisplayGuidelines = false                                                                   -- Indicates if the road guidelines/measurements are being used, or not.
 
@@ -110,7 +111,7 @@ local win = {
   profilesListWinName = 'ProfilesListWindow', profilesListWinSize = im.ImVec2(350, 370),            -- The lateral road profiles list window (primary window).
   profileEditWinName = 'ProfileEditWindow', profileEditWinSize = im.ImVec2(845, 490),               -- The lateral road profile editor window (secondary window).
   groupsListWinName = 'GroupsListWindow', groupsListWinSize = im.ImVec2(410, 400),                  -- The groups list window (secondary window).
-  importWinName = 'ImportOptionsWindow', importWinSize = im.ImVec2(230, 200) }                      -- The import options window (secondary window).
+  importWinName = 'ImportOptionsWindow', importWinSize = im.ImVec2(280, 340) }                      -- The import options window (secondary window).
 
 local vec24, vec28 = im.ImVec2(24, 24), im.ImVec2(28, 28)                                           -- Some commonly-used Imgui vectors.
 local vec36, vec40 = im.ImVec2(36, 36), im.ImVec2(40, 40)
@@ -844,9 +845,9 @@ local function handleAutoJct(roads, mousePos, isDoubleClick, isMouseDownL, isMou
         util.drawSphereHighlightRed(p2)
         util.drawAutoJctMarkup(p2, ffi.string(r.displayName), 'end')
       end
-    end    
+    end
   end
-  
+
   -- Render the spheres.
   if isAutoJctArmed then
     util.drawHighlightSphereRad(autoJctCen, autoJctRad)
@@ -876,7 +877,7 @@ local function handleAutoJct(roads, mousePos, isDoubleClick, isMouseDownL, isMou
           ctr = ctr + 1
         end
       end
-      terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], allRoadsGroup, true)
+      terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], allRoadsGroup)
     end
   end
   if isMouseClickedR then
@@ -1156,6 +1157,7 @@ local function handleMainToolWindow(roads)
   if editor.beginWindow(win.toolWinName, "Road Architect###8", im.WindowFlags_NoCollapse) then
 
     if mfe.isProfilesListWinOpen or mfe.isGroupsListWinOpen or mfe.isMeshSelectWinOpen then
+      editor.endWindow()
       return
     end
 
@@ -1184,6 +1186,7 @@ local function handleMainToolWindow(roads)
     im.NextColumn()
 
     if isFinalise then
+      editor.endWindow()
       return
     end
 
@@ -1362,7 +1365,7 @@ local function handleMainToolWindow(roads)
             im.NextColumn()
 
             -- 'Remove Selected Road' button.
-            if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeRoad') then
+            if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeRoad' .. i) then
               local roadPre = copyDataState()
               roadMgr.removeRoad(road.name)
               groupMgr.updateGroupsAfterRoadRemove()
@@ -1377,6 +1380,7 @@ local function handleMainToolWindow(roads)
                 mfe.isNodeEditWinOpen = false
               end
               table.clear(roadMgr.multi)
+              editor.endWindow()
               return
             end
             im.tooltip('Remove this road from the session.')
@@ -1385,7 +1389,7 @@ local function handleMainToolWindow(roads)
 
             -- 'Go To Selected Road' button.
             if road.nodes and #road.nodes > 1 then
-              if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, vec24, cols.unlinkCol, nil, nil, 'goToSelectedRoad') then
+              if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, vec24, cols.unlinkCol, nil, nil, 'goToSelectedRoad' .. i) then
                 roadMgr.goToRoad(i)
               end
               im.tooltip('Go to this road.')
@@ -1553,6 +1557,7 @@ local function handleMainToolWindow(roads)
           mfe.isNodeEditWinOpen = false
         end
         mfe.selectedRoadIdx, mfe.selectedNodeIdx = nil, nil
+        editor.endWindow()
         return
       end
       im.tooltip('Reset/clear the road network.')
@@ -1597,7 +1602,7 @@ local function handleMainToolWindow(roads)
               -- 'Remove Selected Node' button.
               -- [This is only displayed if there are more than two nodes].
               if numNodes > 2 then
-                if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeNode') then
+                if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeNode' .. i) then
                   local roadPre = copyDataState()
                   roadMgr.removeNode(mfe.selectedRoadIdx, i)
                   if not mfe.selectedNodeIdx then
@@ -1608,6 +1613,7 @@ local function handleMainToolWindow(roads)
                   local roadPost = copyDataState()
                   editor.history:commitAction("EditRoad", { old = roadPre, new = roadPost }, editRoadUndo, editRoadRedo)
                   table.clear(roadMgr.multi)
+                  editor.endWindow()
                   return
                 end
                 im.tooltip('Remove this node from the road.')
@@ -1620,7 +1626,7 @@ local function handleMainToolWindow(roads)
               -- 'Add New Node' buttons.
               -- [This is not displayed for the very last node].
               if not road.isBridge then
-                if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addNewNodeAboveBtn') then
+                if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addNewNodeAboveBtn' .. i) then
                   local roadPre = copyDataState()
                   roadMgr.addIntermediateNode(mfe.selectedRoadIdx, i, 'above')
                   roadMgr.setDirty(road)
@@ -1632,7 +1638,7 @@ local function handleMainToolWindow(roads)
               im.SameLine()
               im.NextColumn()
               if not road.isBridge then
-                if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addNewNodeBelowBtn') then
+                if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addNewNodeBelowBtn' .. i) then
                   local roadPre = copyDataState()
                   roadMgr.addIntermediateNode(mfe.selectedRoadIdx, i, 'below')
                   roadMgr.setDirty(road)
@@ -1648,7 +1654,7 @@ local function handleMainToolWindow(roads)
               if not road.isOverlay and not road.isBridge then
                 local editNodeCol = cols.unlinkCol
                 if mfe.isNodeEditWinOpen and i == mfe.selectedNodeIdx then editNodeCol = cols.dullWhite end
-                if editor.uiIconImageButton(editor.icons.edit, vec24, editNodeCol, nil, nil, 'editNode') then
+                if editor.uiIconImageButton(editor.icons.edit, vec24, editNodeCol, nil, nil, 'editNode' .. i) then
                   if i == mfe.selectedNodeIdx then
                     if mfe.isNodeEditWinOpen then                                                   -- If this node is already selected, toggle window open/closed.
                       editor.hideWindow(win.nodeEditWinName)
@@ -1670,7 +1676,7 @@ local function handleMainToolWindow(roads)
 
               -- Lock column button.
               if roadNodes[i].isLocked then
-                if editor.uiIconImageButton(editor.icons.lock, vec24, cols.darkLockCol, nil, nil, 'unlockNode') then
+                if editor.uiIconImageButton(editor.icons.lock, vec24, cols.darkLockCol, nil, nil, 'unlockNode' .. i) then
                   local roadPre = copyDataState()
                   roadNodes[i].isLocked = false
                   local roadPost = copyDataState()
@@ -1795,6 +1801,7 @@ local function handleMainToolWindow(roads)
             end
             roadMgr.splitRoad(mfe.selectedRoadIdx, mfe.selectedNodeIdx)
             mfe.selectedRoadIdx = getLastRoadIdx()
+            editor.endWindow()
             return
           end
           im.tooltip('Split road at node, and create a gap (for junctioning).')
@@ -1812,6 +1819,7 @@ local function handleMainToolWindow(roads)
             roadMgr.flipRoad(mfe.selectedRoadIdx)
             local roadPost = copyDataState()
             editor.history:commitAction("EditRoad", { old = roadPre, new = roadPost }, editRoadUndo, editRoadRedo)
+            editor.endWindow()
             return
           end
           im.tooltip('Flip the road direction. Changes reference line position on profile')
@@ -1934,7 +1942,7 @@ local function handleMainToolWindow(roads)
                   ctr = ctr + 1
                 end
               end
-              terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], allRoadsGroup, true)
+              terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], allRoadsGroup)
             end
             im.tooltip('Terraform the terrain to all roads together.')
             im.SameLine()
@@ -2089,7 +2097,7 @@ local function handleMainToolWindow(roads)
 
                   -- 'Increase Render Priority' button.
                   if i ~= 1 then
-                    if editor.uiIconImageButton(editor.icons.arrow_upward, vec24, cols.blueB, nil, nil, 'layerPriorityUpButton') then
+                    if editor.uiIconImageButton(editor.icons.arrow_upward, vec24, cols.blueB, nil, nil, 'layerPriorityUpButton' .. i) then
                       profileMgr.layerChangePriority(profile, i, 'raise')
                       mfe.selectedLayerIdx = max(1, min(numLayers, i - 1))
                     end
@@ -2100,7 +2108,7 @@ local function handleMainToolWindow(roads)
 
                   -- 'Decrease Render Priority' button.
                   if i ~= numLayers then
-                    if editor.uiIconImageButton(editor.icons.arrow_downward, vec24, cols.blueB, nil, nil, 'layerPriorityDownButton') then
+                    if editor.uiIconImageButton(editor.icons.arrow_downward, vec24, cols.blueB, nil, nil, 'layerPriorityDownButton' .. i) then
                       profileMgr.layerChangePriority(profile, i, 'lower')
                       mfe.selectedLayerIdx = max(1, min(numLayers, i + 1))
                     end
@@ -2120,9 +2128,10 @@ local function handleMainToolWindow(roads)
                   im.NextColumn()
 
                   -- 'Remove Selected Layer' button.
-                  if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeLayer') then
+                  if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeLayer' .. i) then
                     profileMgr.removeLayer(profile, i)
                     mfe.selectedLayerIdx = max(1, min(numLayers, i))
+                    editor.endWindow()
                     return
                   end
                   im.tooltip('Remove this layer from the session.')
@@ -2130,9 +2139,10 @@ local function handleMainToolWindow(roads)
                   im.NextColumn()
 
                   -- 'Add New Layer Above' button.
-                  if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addLayerAboveBtn') then
+                  if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addLayerAboveBtn' .. i) then
                     profileMgr.addLayer(profile, i, 'above')
                     mfe.selectedLayerIdx = max(1, min(numLayers, i))
+                    editor.endWindow()
                     return
                   end
                   im.tooltip('Add a new layer above this layer.')
@@ -2140,9 +2150,10 @@ local function handleMainToolWindow(roads)
                   im.NextColumn()
 
                   -- 'Add New Layer Below' button.
-                  if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addLayerBelowBtn') then
+                  if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addLayerBelowBtn' .. i) then
                     profileMgr.addLayer(profile, i, 'below')
                     mfe.selectedLayerIdx = max(1, min(numLayers, i + 1))
+                    editor.endWindow()
                     return
                   end
                   im.tooltip('Add a new layer below this layer.')
@@ -3049,10 +3060,52 @@ local function handleMainToolWindow(roads)
         if im.TreeNode1("Render Options") then
           im.Checkbox('isOverObject Flag', road.isOverObject)
           im.tooltip("All decals created by this road will have the 'isOverObjects' flag set true (checked), or set false (unchecked).")
+          im.TreePop()
         end
       end
 
-      im.EndTabItem()
+      -- Rendering options for this road.
+      if #roads > 0 then
+        im.Separator()
+        if im.TreeNode1("Road Mask Export Options") then
+          if editor.uiIconImageButton(editor.icons.terrain_export, vec36, cols.greenB, nil, nil, 'exportRoadMasks') then
+            extensions.editor_fileDialog.saveFile(
+              function(data)
+
+                local allRoadsGroup = { list = {} }
+                local ctr = 1
+                for i = 1, #roadMgr.roads do
+                  local tR = roadMgr.roads[i]
+                  for j = 1, #tR.nodes do
+                    allRoadsGroup.list[ctr] = { r = tR.name, n = j }
+                    ctr = ctr + 1
+                  end
+                end
+                local roadMask, marginMask = terra.getRoadMasks(150.0, 0.0, allRoadsGroup)
+
+                local width, height = #roadMask, #roadMask[1]
+                local bmp = GBitmap()
+                bmp:init(width, height)
+                bmp:allocateBitmap(width, height, false, "GFXFormatR16")
+                for x = 0, width - 1 do
+                  local xPlusOne = x + 1
+                  for y = 0, height - 1 do
+                    local val = roadMask[xPlusOne][y + 1]
+                    bmp:setTexel(x, y, val, val, val, 255)
+                  end
+                end
+                bmp:saveFile(data.filepath)
+              end,
+              {{"PNG",".png"}},
+              false,
+              "/",
+              "File already exists.\nDo you want to overwrite the file?")
+          end
+          im.tooltip('Export the road masks to a file.')
+          im.TreePop()
+        end
+      end
+
     end
 
     -- 'Junctions' tab.
@@ -3095,11 +3148,12 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Remove Selected Junction' button.
-          if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeJctBtn') then
+          if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeJctBtn' .. i) then
             jctMgr.removeJunction(i)
             mfe.selectedJctIdx = max(1, min(#junctions, i - 1))
             groupMgr.updateGroupsAfterRoadRemove()
             roadMgr.updateMultiAfterRemove()
+            editor.endWindow()
             return
           end
           im.tooltip('Remove this junction from the session (removes all roads).')
@@ -3107,9 +3161,10 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Finalise Junction' button.
-          if editor.uiIconImageButton(editor.icons.lock, vec24, cols.darkLockCol, nil, nil, 'finaliseJunctionBtn') then
+          if editor.uiIconImageButton(editor.icons.lock, vec24, cols.darkLockCol, nil, nil, 'finaliseJunctionBtn' .. i) then
             jctMgr.finaliseJunction(i)
             mfe.selectedJctIdx = max(1, min(#junctions, i - 1))
+            editor.endWindow()
             return
           end
           im.tooltip('Finalize this junction (will export the junction roads to the Roads List, and will become connectable. However, the junction will no longer be editable in the junction designer).')
@@ -3117,7 +3172,7 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Save Junction To Disk' button.
-          if editor.uiIconImageButton(editor.icons.floppyDisk, vec24, nil, nil, nil, 'saveJunctionBtn') then
+          if editor.uiIconImageButton(editor.icons.floppyDisk, vec24, nil, nil, nil, 'saveJunctionBtn' .. i) then
             jctMgr.saveJunction(i)
           end
           im.tooltip('Save this junction to disk.')
@@ -3125,7 +3180,7 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Go To Selected Junction' button.
-          if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, vec24, cols.unlinkCol, nil, nil, 'goToSelectedJctBtn') then
+          if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, vec24, cols.unlinkCol, nil, nil, 'goToSelectedJctBtn' .. i) then
             jctMgr.goToJunction(i)
           end
           im.tooltip('Go to this junction.')
@@ -6386,7 +6441,6 @@ local function handleMainToolWindow(roads)
 
         im.Columns(1)
       end
-      im.EndTabItem()
     end
 
     -- 'Groups' sub-menu.
@@ -6435,10 +6489,11 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Remove Selected Placed Group - Soft' button.
-          if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removePlacedGroupSoft') then
+          if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removePlacedGroupSoft' .. i) then
             groupMgr.removePlacedGroupSoft(i)
             roadMgr.updateRoadsAfterRemovingGroup(placedGroups)
             mfe.selectedPlacedGroupIdx = max(1, min(#placedGroups, i))
+            editor.endWindow()
             return
           end
           im.tooltip('Soft delete - removes this group from the session, but NOT the roads inside the group.')
@@ -6446,12 +6501,13 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Remove Selected Placed Group - Hard' button.
-          if editor.uiIconImageButton(editor.icons.delete_forever, vec24, cols.unlinkCol, nil, nil, 'removePlacedGroupHard') then
+          if editor.uiIconImageButton(editor.icons.delete_forever, vec24, cols.unlinkCol, nil, nil, 'removePlacedGroupHard' .. i) then
             groupMgr.removePlacedGroupHard(i)
             mfe.selectedPlacedGroupIdx = max(1, min(#placedGroups, i))
             roadMgr.updateRoadsAfterRemovingGroup(placedGroups)
             jctMgr.updateJunctionsAfterRoadRemove()
             roadMgr.updateMultiAfterRemove()
+            editor.endWindow()
             return
           end
           im.tooltip('Hard delete - removes this group from the session, AND the roads inside it.')
@@ -6459,7 +6515,7 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Create New Prefab Group From Profile' button.
-          if editor.uiIconImageButton(editor.icons.fg_type_square_2, vec24, cols.dullWhite, nil, nil, 'CreateNewPrefabGroupFromProfileBtn') then
+          if editor.uiIconImageButton(editor.icons.fg_type_square_2, vec24, cols.dullWhite, nil, nil, 'CreateNewPrefabGroupFromProfileBtn' .. i) then
             groupMgr.createPrefabGroup(placedGroup)
           end
           im.tooltip('Create a new template profile from the current profile of this road (will appear in templates list, and can be saved from there).')
@@ -6467,7 +6523,7 @@ local function handleMainToolWindow(roads)
           im.NextColumn()
 
           -- 'Go To Selected Group' button.
-          if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, vec24, cols.unlinkCol, nil, nil, 'goToSelectedPlacedGroup') then
+          if editor.uiIconImageButton(editor.icons.cameraFocusTopDown, vec24, cols.unlinkCol, nil, nil, 'goToSelectedPlacedGroup' .. i) then
             groupMgr.goToPlacedGroup(i)
           end
           im.tooltip('Go to this group.')
@@ -6560,7 +6616,7 @@ local function handleMainToolWindow(roads)
         if im.TreeNode1("Terraform Control [Group]") then
           im.Columns(2, 'TerraGroupRow1', false)
           if editor.uiIconImageButton(editor.icons.terrainToTwoLines, vec36, cols.greenB, nil, nil, 'terraformGroupBtn') then
-            terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], placedGroups[mfe.selectedPlacedGroupIdx], true)
+            terra.terraformMultiRoads(terraParams.domainOfInfluence[0], terraParams.terraMargin[0], placedGroups[mfe.selectedPlacedGroupIdx])
           end
           im.tooltip('Terraform the terrain to the selected group.')
           im.SameLine()
@@ -6589,19 +6645,18 @@ local function handleMainToolWindow(roads)
         end
       end
 
-      im.EndTabItem()
     end
 
     if selectedTab == 4 then
       im.TextColored(cols.greenB, 'Disk Options:')
       im.Checkbox('Load Terrains With Sessions', isLoadTerrain)
       im.tooltip('On loading a session, the saved terrain (.png) file will also be loaded to the map (checked), otherwise only the road network data will be loaded (unchecked).')
-      im.EndTabItem()
     end
 
     im.EndChild()
     im.Separator()
   end
+  editor.endWindow()
 end
 
 -- Handles the node edit sub-window.
@@ -6785,6 +6840,7 @@ local function handleNodeEditSubWindow(roads)
     else
       mfe.isNodeEditWinOpen = false -- handle close sub-window.
     end
+    editor.endWindow()
   end
 end
 
@@ -6835,7 +6891,7 @@ local function handleProfilesListSubWindow(roads)
             im.NextColumn()
 
             -- 'Select Profile' button.
-            if editor.uiIconImageButton(editor.icons.forest_select, vec24, cols.fullWhite, nil, nil, 'selectProfileBtn') then
+            if editor.uiIconImageButton(editor.icons.forest_select, vec24, cols.fullWhite, nil, nil, 'selectProfileBtn' .. i) then
               local roadPre = copyDataState()
               updateRoadToNewProfileFromIdx(i)
               roadMgr.computeRoadRenderDataSingle(mfe.selectedRoadIdx)
@@ -6863,7 +6919,7 @@ local function handleProfilesListSubWindow(roads)
             -- 'Edit Selected Profile' button.
             local editProfileCol = cols.blueB
             if mfe.isProfileEditWinOpen and i == mfe.selectedProfileIdx then editProfileCol = cols.blueD end
-            if editor.uiIconImageButton(editor.icons.edit, vec24, editProfileCol, nil, nil, 'editProfile') then
+            if editor.uiIconImageButton(editor.icons.edit, vec24, editProfileCol, nil, nil, 'editProfile' .. i) then
               if i == mfe.selectedProfileIdx then
                 if mfe.isProfileEditWinOpen then                                                    -- If this profile is already selected, toggle window open/closed.
                   editor.hideWindow(win.profileEditWinName)
@@ -6903,7 +6959,7 @@ local function handleProfilesListSubWindow(roads)
             im.NextColumn()
 
             -- 'Save Road Profile' button.
-            if editor.uiIconImageButton(editor.icons.floppyDisk, vec24, cols.fullWhite, nil, nil, 'SaveRoadProfileBtn') then
+            if editor.uiIconImageButton(editor.icons.floppyDisk, vec24, cols.fullWhite, nil, nil, 'SaveRoadProfileBtn' .. i) then
               profileMgr.save(profile)
             end
             im.tooltip('Save this profile template to disk.')
@@ -6912,11 +6968,12 @@ local function handleProfilesListSubWindow(roads)
 
             -- 'Delete Profile' button.
             if profile.isDeletable then
-              if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'DeleteProfileBtn') then
+              if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'DeleteProfileBtn' .. i) then
                 table.remove(profileMgr.profiles, i)
                 mfe.selectedProfileIdx = 1
                 roadMgr.setAuditionProfileDirty()
                 isEditProfileDirty = true
+                editor.endWindow()
                 return
               end
               im.tooltip('Delete this profile template.')
@@ -6952,6 +7009,7 @@ local function handleProfilesListSubWindow(roads)
         mfe.selectedProfileIdx = 1
         roadMgr.setAuditionProfileDirty()
         isEditProfileDirty = true
+        editor.endWindow()
         return
       end
       im.tooltip('Reset all templates (also removes any loaded templates).')
@@ -6970,6 +7028,7 @@ local function handleProfilesListSubWindow(roads)
       profileMgr.goToOldView()
       roadMgr.removeHiddenRoads()
     end
+    editor.endWindow()
   end
 end
 
@@ -7013,7 +7072,7 @@ local function handleProfileEditSubWindow(roads)
 
               -- 'Remove Selected Lane' button.
               if numLanes > 1 then
-                if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeSelectedLaneLeft') then
+                if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeSelectedLaneLeft' .. i) then
                   profileMgr.removeLane(mfe.selectedProfileIdx, i, 'left')
                   roadMgr.setAuditionProfileDirty()
                   isEditProfileDirty = true
@@ -7026,7 +7085,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Add New Lane Above' button.
-              if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addLaneAboveLeft') then
+              if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addLaneAboveLeft' .. i) then
                 profileMgr.addLane(mfe.selectedProfileIdx, i, 'left', 'above')
                 roadMgr.setAuditionProfileDirty()
                 isEditProfileDirty = true
@@ -7036,7 +7095,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Add New Lane Below' button.
-              if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addLaneBelowLeft') then
+              if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addLaneBelowLeft' .. i) then
                 profileMgr.addLane(mfe.selectedProfileIdx, i, 'left', 'below')
                 roadMgr.setAuditionProfileDirty()
                 isEditProfileDirty = true
@@ -7046,7 +7105,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Select New Lane Type' button.
-              if editor.uiIconImageButton(editor.icons.fg_lt, vec24, cols.blueB, nil, nil, 'selectLaneTypeLeft1Button') then
+              if editor.uiIconImageButton(editor.icons.fg_lt, vec24, cols.blueB, nil, nil, 'selectLaneTypeLeft1Button' .. i) then
                 lane.type = profileMgr.cycleLaneTypeBack(lane.type)
                 roadMgr.setAuditionProfileDirty()
               end
@@ -7061,7 +7120,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Select New Lane Type' button.
-              if editor.uiIconImageButton(editor.icons.fg_gt, vec24, cols.blueB, nil, nil, 'selectLaneTypeLeft2Button') then
+              if editor.uiIconImageButton(editor.icons.fg_gt, vec24, cols.blueB, nil, nil, 'selectLaneTypeLeft2Button' .. i) then
                 lane.type = profileMgr.cycleLaneType(lane.type)
                 roadMgr.setAuditionProfileDirty()
               end
@@ -7153,7 +7212,7 @@ local function handleProfileEditSubWindow(roads)
 
               -- 'Remove Selected Lane' button.
               if numLanes > 1 then
-                if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeSelectedLaneRight') then
+                if editor.uiIconImageButton(editor.icons.trashBin2, vec24, cols.blueB, nil, nil, 'removeSelectedLaneRight' .. i) then
                   profileMgr.removeLane(mfe.selectedProfileIdx, i, 'right')
                   roadMgr.setAuditionProfileDirty()
                   isEditProfileDirty = true
@@ -7166,7 +7225,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Add New Lane Above' button.
-              if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addLaneAboveRight') then
+              if editor.uiIconImageButton(editor.icons.vertical_align_top, vec24, cols.greenB, nil, nil, 'addLaneAboveRight' .. i) then
                 profileMgr.addLane(mfe.selectedProfileIdx, i, 'right', 'above')
                 roadMgr.setAuditionProfileDirty()
                 isEditProfileDirty = true
@@ -7176,7 +7235,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Add New Lane Below' button.
-              if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addLaneBelowRight') then
+              if editor.uiIconImageButton(editor.icons.vertical_align_bottom, vec24, cols.greenB, nil, nil, 'addLaneBelowRight' .. i) then
                 profileMgr.addLane(mfe.selectedProfileIdx, i, 'right', 'below')
                 roadMgr.setAuditionProfileDirty()
                 isEditProfileDirty = true
@@ -7186,7 +7245,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Select New Lane Type' button.
-              if editor.uiIconImageButton(editor.icons.fg_lt, vec24, cols.blueB, nil, nil, 'selectLaneTypeRight1Button') then
+              if editor.uiIconImageButton(editor.icons.fg_lt, vec24, cols.blueB, nil, nil, 'selectLaneTypeRight1Button' .. i) then
                 lane.type = profileMgr.cycleLaneTypeBack(lane.type)
                 roadMgr.setAuditionProfileDirty()
               end
@@ -7201,7 +7260,7 @@ local function handleProfileEditSubWindow(roads)
               im.NextColumn()
 
               -- 'Select New Lane Type' button.
-              if editor.uiIconImageButton(editor.icons.fg_gt, vec24, cols.blueB, nil, nil, 'selectLaneTypeRight2Button') then
+              if editor.uiIconImageButton(editor.icons.fg_gt, vec24, cols.blueB, nil, nil, 'selectLaneTypeRight2Button' .. i) then
                 lane.type = profileMgr.cycleLaneType(lane.type)
                 roadMgr.setAuditionProfileDirty()
               end
@@ -7270,6 +7329,7 @@ local function handleProfileEditSubWindow(roads)
         roadMgr.removeHiddenRoads()
       end
     end
+    editor.endWindow()
   end
 end
 
@@ -7389,6 +7449,7 @@ local function handleMaterialSelectionSubWindow()
       mfe.isMaterialSelectWinOpen = false           -- Handle close sub-window.
       editor.hideWindow(win.materialSelectWinName)
     end
+    editor.endWindow()
   end
 end
 
@@ -7444,6 +7505,7 @@ local function handleMeshSelectionSubWindow()
       mfe.isMeshSelectWinOpen = false           -- Handle close sub-window.
       editor.hideWindow(win.meshSelectWinName)
     end
+    editor.endWindow()
   end
 end
 
@@ -7476,7 +7538,7 @@ local function handleGroupsListSubWindow()
           im.NextColumn()
 
           -- 'Pick Group' button.
-          if editor.uiIconImageButton(editor.icons.add_box, vec24, cols.blueB, nil, nil, 'pickGroupButton') then
+          if editor.uiIconImageButton(editor.icons.add_box, vec24, cols.blueB, nil, nil, 'pickGroupButton' .. i) then
             isGroupPlaceMode = true
             mfe.isGroupsListWinOpen = false
             editor.hideWindow(win.groupsListWinName)
@@ -7491,7 +7553,7 @@ local function handleGroupsListSubWindow()
           im.NextColumn()
 
           -- 'Save Group' button.
-          if editor.uiIconImageButton(editor.icons.floppyDisk, vec24, cols.blueB, nil, nil, 'pickGroupButton') then
+          if editor.uiIconImageButton(editor.icons.floppyDisk, vec24, cols.blueB, nil, nil, 'saveGroupButton' .. i) then
             groupMgr.save(i)
           end
           im.tooltip('Save this group template to disk.')
@@ -7530,6 +7592,7 @@ local function handleGroupsListSubWindow()
       groupMgr.goToOldView()
       roadMgr.removeHiddenRoads()
     end
+    editor.endWindow()
   end
 end
 
@@ -7538,6 +7601,39 @@ local function handleImportSubWindow()
   if mfe.isImportWinOpen then
     if editor.beginWindow(win.importWinName, "Import Options###6215", im.WindowFlags_NoCollapse) then
 
+      im.Text("Placement (XY)")
+      if im.RadioButton2("As in file###importPlaceFile", importPlaceMode, 0) then
+        importPlaceMode[0] = 0
+      end
+      im.tooltip('Keep horizontal position from the OpenDRIVE file.')
+      if im.RadioButton2("Custom (X, Y)###importPlaceCustom", importPlaceMode, 1) then
+        importPlaceMode[0] = 1
+      end
+      im.tooltip('Move the network so the first road start node is at the given world X and Y.')
+      if im.RadioButton2("Camera position###importPlaceCamera", importPlaceMode, 2) then
+        importPlaceMode[0] = 2
+      end
+      im.tooltip('Move the network so the first road start node is at the current free-camera XY when you import.')
+
+      if importPlaceMode[0] == 1 then
+        im.PushItemWidth(-1)
+        im.InputFloat("X###importPlaceX", importPlaceX, 1.0, 10.0)
+        im.InputFloat("Y###importPlaceY", importPlaceY, 1.0, 10.0)
+        im.PopItemWidth()
+        if im.Button("Use camera XY###importPlaceFromCam") then
+          local camPos = core_camera.getPosition()
+          importPlaceX[0], importPlaceY[0] = camPos.x, camPos.y
+        end
+        im.tooltip('Copy the current editor camera X and Y into the fields above.')
+      elseif importPlaceMode[0] == 2 then
+        local camPos = core_camera.getPosition()
+        im.Text(string.format("Camera: %.1f, %.1f", camPos.x, camPos.y))
+      end
+
+      im.Separator()
+
+      im.Text("Offset (Z)")
+
       if im.Checkbox("Offset To Terrain", importO2T) then
         if importO2T[0] then
           importCO = im.BoolPtr(false)
@@ -7545,7 +7641,7 @@ local function handleImportSubWindow()
       end
       im.tooltip('Apply vertical offset to imported road network, to sit on existing terrain.')
 
-      im.Separator()
+      -- im.Separator()
 
       if im.Checkbox("Use Custom Offset", importCO) then
         if importCO[0] then
@@ -7561,7 +7657,7 @@ local function handleImportSubWindow()
         im.PopItemWidth()
       end
 
-      im.Separator()
+      -- im.Separator()
 
       if terrain then
         im.Checkbox("Terraform Terrain To Import", importTT2I)
@@ -7578,6 +7674,8 @@ local function handleImportSubWindow()
         im.PopStyleVar()
         im.PopItemWidth()
       end
+      im.Separator()
+
 
       if editor.uiIconImageButton(editor.icons.ab_asset_jbeam, vec28, nil, nil, nil, 'importFromImportWdw') then
         mfe.isImportWinOpen = false
@@ -7586,12 +7684,13 @@ local function handleImportSubWindow()
         roadMgr.clearAllRoads()
         table.clear(profileMgr.profiles)
         profileMgr.populateProfileTemplates()
-        import.import(importO2T[0], importCO[0], importTT2I[0], importCustomOffset[0], terraParams.domainOfInfluence[0], terraParams.terraMargin[0])
+        import.import(importO2T[0], importCO[0], importTT2I[0], importCustomOffset[0], terraParams.domainOfInfluence[0], terraParams.terraMargin[0], importPlaceMode[0], importPlaceX[0], importPlaceY[0])
       end
       im.tooltip('Import from file.')
     else
       mfe.isImportWinOpen = false -- handle close sub-window.
     end
+    editor.endWindow()
   end
 end
 
@@ -7748,7 +7847,7 @@ local function onEditorGui()
     elseif isGroupPlaceMode then                                                                    -- MODE: [group placement]: The user is placing a selected group.
       handlePlaceGroup(roads, mousePos, isDoubleClick, isMouseDownL, isMouseClickedR, isShiftDown)
     elseif isAutoJctMode then                                                                       -- MODE: [auto junction mode]: The user is creating an auto-junction.
-      handleAutoJct(roads, mousePos, isDoubleClick, isMouseDownL, isMouseClickedR, isShiftDown) 
+      handleAutoJct(roads, mousePos, isDoubleClick, isMouseDownL, isMouseClickedR, isShiftDown)
     else                                                                                            -- MODE: [road]: The user is creating/editing roads.
       handleCreateRoads(
         roads, mousePos,
@@ -7828,6 +7927,23 @@ local function onDeactivate()
   mfe.isProfilesListWinOpen, mfe.isProfileEditWinOpen, mfe.isGroupsListWinOpen = false, false, false
 end
 
+-- Validates the selection for the scenetree right click menu.
+local function validateSceneTreeRightClickMenuSelection(node)
+  if node then
+    local object = scenetree.findObjectById(node.id)
+    if object then
+      return object:getClassName() == "DecalRoad"
+    end
+  end
+end
+
+-- Called on scenetree right click menu, if validated.
+local function processSceneTreeRightClickMenuSelection(node)
+  if node then
+    roadMgr.convertDecalRoads2RoadArchitect()
+  end
+end
+
 -- Called upon world editor initialization.
 local function onEditorInitialized()
   editor.editModes.roadArchitectEditMode = {
@@ -7838,8 +7954,13 @@ local function onEditorInitialized()
     icon = editor.icons.autobahn,
     iconTooltip = "Road Architect",
     auxShortcuts = {},
-    hideObjectIcons = true,
-    sortOrder = 9004 }
+    hideObjectIcons = true }
+
+  -- Set up the scenetree right click menu for importing.
+  editor.addExtendedSceneTreeObjectMenuItem({
+    title = "Convert to Road Architect",
+    extendedSceneTreeObjectMenuItems = processSceneTreeRightClickMenuSelection,
+    validator = validateSceneTreeRightClickMenuSelection })
 
   editor.registerWindow(win.toolWinName, win.toolWinSize)
   editor.registerWindow(win.materialSelectWinName, win.materialSelectWinSize)

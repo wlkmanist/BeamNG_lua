@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -32,7 +31,7 @@ C.legacyPins = {
   }
 }
 
-local markerTypes = {'overhead', 'ringMarker', 'sideColumnMarker', 'sideMarker', 'cylinderMarker', 'attention'}
+local markerTypes = {'overhead', 'ringMarker', 'sideColumnMarker', 'sideMarker', 'cylinderMarker', 'attention', 'sideHologramMarker', 'singleHologramMarker'}
 
 function C:init(mgr, ...)
   self.position = {}
@@ -133,6 +132,12 @@ function C:work()
       self.marker:update(self.mgr.dtReal, self.mgr.dtSim)
       self.pinOut.flow.value = true
     end
+  end
+end
+
+function C:onDrawOnMinimap(td)
+  if self.marker then
+    ui_apps_minimap_utils.simpleCircleWithEdgePointer(sendTable.pos)
   end
 end
 

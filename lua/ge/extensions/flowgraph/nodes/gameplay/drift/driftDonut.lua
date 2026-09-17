@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Drift donut detected'
+C.name = 'Drift Donut Detected'
 
-C.description = "Detect Donuts"
+C.description = "Detects donut zones."
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

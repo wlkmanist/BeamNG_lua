@@ -6,8 +6,8 @@ local im  = ui_imgui
 
 local C = {}
 
-C.name = 'AI Follow Path'
-C.description = 'Follows a ScriptAI path.'
+C.name = 'AI Follow Path from Data'
+C.description = 'Follows a ScriptAI path; use the AI Path from File or Stored AI Path nodes.'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
 C.pinSchema = {
@@ -15,7 +15,7 @@ C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'reset', description = 'Resets this node so the path can be followed anew.', impulse = true },
   { dir = 'in', type = 'table', tableType = 'aiPath', name = 'path', description = 'AI Path to follow.' },
   { dir = 'in', type = 'number', name = 'vehId', description = 'Id of vehicle that should follow path.' },
-  { dir = 'in', type = 'number', name = 'loopCount', hidden = true, description = 'Defines how many loops of the path should be driven.' },
+  { dir = 'in', type = 'number', name = 'loopCount', description = 'Defines how many loops of the path should be driven.' },
   { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' },
 }
 C.legacyPins = {
@@ -60,7 +60,7 @@ end
 function C:getVeh()
   local veh
   if self.pinIn.vehId.value then
-    veh = be:getObjectByID(self.pinIn.vehId.value)
+    veh = getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end
@@ -99,10 +99,10 @@ end
 function C:setupAI()
   self:loadPath()
   if not self.path then return end
-  
+
   local veh = self:getVeh()
   if not veh then return end
-  
+
   local loopCount = self.pinIn.loopCount.value or 0
   local loopType = self.loopMode
   local path = {}

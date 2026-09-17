@@ -3,21 +3,30 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
-M.dependencies = {"gameplay_missions_missions"}
+M.dependencies = {"gameplay_missions_missions", "gameplay_missions_progress"}
 local missionIdToMilestonesList = {}
 local milestoneConfigs = {}
 local milestones
+
+local function getUnlockedStarCounts(mission)
+  local total, default, bonus = gameplay_missions_progress.getUnlockedStarCountsForMissionById(mission.id)
+  return total or 0, default or 0, bonus or 0
+end
+
+local function getMissionStarCount(mission)
+  return mission.careerSetup._activeStarCache.defaultStarCount + mission.careerSetup._activeStarCache.bonusStarCount
+end
 
 M.onGeneralMilestonesCollect = function(milestonesList)
   milestones = career_modules_milestones_milestones
   -- get all career missions.
   local careerMissions = {}
-  local missionsByMissionType = {}
   local missionsByBranch = {}
-  for i, mission in ipairs(gameplay_missions_missions.get()) do
+  for i, mission in ipairs(gameplay_missions_missions.getAllMissions()) do
     if mission.careerSetup.showInCareer then
       table.insert(careerMissions, mission)
-      for branchKey, _ in pairs(mission.unlocks.branchTags or {}) do
+      local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(mission)
+      for branchKey, _ in pairs(forwardInfo.branchTags) do
         missionsByBranch[branchKey] = missionsByBranch[branchKey] or {}
         table.insert(missionsByBranch[branchKey], mission)
       end
@@ -59,13 +68,14 @@ M.makeAllMissionStarMilestones = function(missions, milestonesList)
       getValue = function()
         local count = 0
         for _, m in ipairs(missions) do
-          count = count + tableSize(m.saveData.unlockedStars or {})
+          local totalUnlockedStarCount = getUnlockedStarCounts(m)
+          count = count + totalUnlockedStarCount
         end
         return count
       end,
-      getLabel = function(step, displayValue, target) return string.format("Star Collector") end,
-      getDescription = function(step, displayValue, target) return string.format("Collect %d stars from any challenge.", target) end,
-      getProgressLabel = function(step, current, target) return string.format("%d Stars / %d Stars", current, target) end,
+      getLabel = function(step, displayValue, target) return "ui.career.milestones.missions.starCollector.label" end,
+      getDescription = function(step, displayValue, target) return {txt="ui.career.milestones.missions.starCollector.description", context={count = target}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.missions.starsProgressLabel", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or math.ceil(stepPercent[step]*totalStarCount) end,
       getRewards = milestones.majorLinear,
     }
@@ -90,13 +100,14 @@ M.makeAllMissionStarMilestones = function(missions, milestonesList)
       getValue = function()
         local count = 0
         for _, m in ipairs(missions) do
-          count = count + (m.saveData.unlockedStars.defaultUnlockedStarCount and 1 or 0)
+          local _, defaultUnlockedStarCount = getUnlockedStarCounts(m)
+          count = count + (defaultUnlockedStarCount > 0 and 1 or 0)
         end
         return count
       end,
-      getLabel = function(step, displayValue, target) return string.format("Challenge Passer") end,
-      getDescription = function(step, displayValue, target) return string.format("To pass a challenge, you need to get at least one default star.", target) end,
-      getProgressLabel = function(step, current, target) return string.format("%d Challenges / %d Challenges", current, target) end,
+      getLabel = function(step, displayValue, target) return "ui.career.milestones.missions.challengePasser.label" end,
+      getDescription = function(step, displayValue, target) return "ui.career.milestones.missions.challengePasser.description" end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.missions.challengesProgressLabel", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or math.ceil(stepPercent[step]*missionCount) end,
       getRewards = milestones.minorLinear,
     }
@@ -121,14 +132,15 @@ M.makeAllMissionStarMilestones = function(missions, milestonesList)
       getValue = function()
         local count = 0
         for _, m in ipairs(missions) do
-          count = count +
-          ((m.saveData.unlockedStars.totalUnlockedStarCount == m.careerSetup._activeStarCache.defaultStarCount + m.careerSetup._activeStarCache.bonusStarCount) and 1 or 0)
+          local totalUnlockedStarCount = getUnlockedStarCounts(m)
+          local totalStarCount = getMissionStarCount(m)
+          count = count + (totalStarCount > 0 and totalUnlockedStarCount >= totalStarCount and 1 or 0)
         end
         return count
       end,
-      getLabel = function(step, displayValue, target) return string.format("Challenge Completionist", step) end,
-      getDescription = function(step, displayValue, target) return string.format("To complete a challenge, you need to get at all default and all bonus stars.", target) end,
-      getProgressLabel = function(step, current, target) return string.format("%d Challenges / %d Challenges", current, target) end,
+      getLabel = function(step, displayValue, target) return "ui.career.milestones.missions.challengeCompletionist.label" end,
+      getDescription = function(step, displayValue, target) return "ui.career.milestones.missions.challengeCompletionist.description" end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.missions.challengesProgressLabel", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or math.ceil(stepPercent[step]*missionCount) end,
       getRewards = milestones.minorLinear,
     }
@@ -151,8 +163,9 @@ M.makeBranchMissionStarMilestones = function(missions, branchKey, milestonesList
     missionCount = missionCount + 1
   end
   local totalStarCount = defaultStarCount + bonusStarCount
-  local branchName = career_branches.getBranchById(branchKey).name
-  branchName = translateLanguage(branchName, branchName, true)
+  local branchInfo = career_branches.getBranchById(branchKey)
+  local branchName = branchInfo.name
+  local branchType = branchInfo.isSkill and "ui.career.milestones.missions.branchType.skill" or "ui.career.milestones.missions.branchType.branch"
   -- all stars
   local milestoneConfig = {
       id = "mission_totalStar_branch_"..branchKey,
@@ -165,13 +178,14 @@ M.makeBranchMissionStarMilestones = function(missions, branchKey, milestonesList
       getValue = function()
         local count = 0
         for _, m in ipairs(missions) do
-          count = count + tableSize(m.saveData.unlockedStars or {})
+          local totalUnlockedStarCount = getUnlockedStarCounts(m)
+          count = count + totalUnlockedStarCount
         end
         return count
       end,
-      getLabel = function(step, displayValue, target) return string.format("%s Star Collector", branchName) end,
-      getDescription = function(step, displayValue, target) return string.format("Collect %d stars from challenges in the %s %s.", target, branchName, career_branches.getBranchById(branchKey).isSkill and "Skill" or "Branch" ) end,
-      getProgressLabel = function(step, current, target) return string.format("%d Stars / %d Stars", current, target) end,
+      getLabel = function(step, displayValue, target) return {txt="ui.career.milestones.missions.branchStarCollector.label", context={branchName = branchName}} end,
+      getDescription = function(step, displayValue, target) return {txt="ui.career.milestones.missions.branchStarCollector.description", context={count = target, branchName = branchName, branchType = branchType}} end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.missions.starsProgressLabel", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or math.ceil(stepPercent[step]*totalStarCount) end,
       getRewards = milestones.minorLinear,
     }
@@ -187,7 +201,7 @@ M.makeBranchMissionStarMilestones = function(missions, branchKey, milestonesList
   -- pass all missions
   local passAllMissionMilestone = {
       id = "mission_passMissions_"..branchKey,
-      filter = {mission=true, [''..branchKey] = true},
+      filter = {mission=true, ['branch_'..branchKey] = true},
       type = "mission",
       hooks = {onAnyMissionChanged = true},
       maxStep = #stepPercent,
@@ -196,13 +210,14 @@ M.makeBranchMissionStarMilestones = function(missions, branchKey, milestonesList
       getValue = function()
         local count = 0
         for _, m in ipairs(missions) do
-          count = count + (m.saveData.unlockedStars.defaultUnlockedStarCount and 1 or 0)
+          local _, defaultUnlockedStarCount = getUnlockedStarCounts(m)
+          count = count + (defaultUnlockedStarCount > 0 and 1 or 0)
         end
         return count
       end,
-      getLabel = function(step, displayValue, target) return string.format("%s Challenge Passer", branchName) end,
-      getDescription = function(step, displayValue, target) return string.format("To pass a challenge, you need to get at least one default star.", target) end,
-      getProgressLabel = function(step, current, target) return string.format("%d Challenges / %d Challenges", current, target) end,
+      getLabel = function(step, displayValue, target) return {txt="ui.career.milestones.missions.branchChallengePasser.label", context={branchName = branchName}} end,
+      getDescription = function(step, displayValue, target) return "ui.career.milestones.missions.challengePasser.description" end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.missions.challengesProgressLabel", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or math.ceil(stepPercent[step]*missionCount) end,
       getRewards = milestones.minorLinear,
     }
@@ -218,7 +233,7 @@ M.makeBranchMissionStarMilestones = function(missions, branchKey, milestonesList
     -- completing all missions
   local completeAllMissionsMilestone = {
       id = "mission_completeMissions_"..branchKey,
-      filter = {mission=true, [''..branchKey] = true},
+      filter = {mission=true, ['branch_'..branchKey] = true},
       type = "mission",
       hooks = {onAnyMissionChanged = true},
       maxStep = #stepPercent,
@@ -227,14 +242,15 @@ M.makeBranchMissionStarMilestones = function(missions, branchKey, milestonesList
       getValue = function()
         local count = 0
         for _, m in ipairs(missions) do
-          count = count +
-          ((m.saveData.unlockedStars.totalUnlockedStarCount == m.careerSetup._activeStarCache.defaultStarCount + m.careerSetup._activeStarCache.bonusStarCount) and 1 or 0)
+          local totalUnlockedStarCount = getUnlockedStarCounts(m)
+          local totalStarCount = getMissionStarCount(m)
+          count = count + (totalStarCount > 0 and totalUnlockedStarCount >= totalStarCount and 1 or 0)
         end
         return count
       end,
-      getLabel = function(step, displayValue, target) return string.format("%s Challenge Completionist", branchName) end,
-      getDescription = function(step, displayValue, target) return string.format("To complete a challenge, you need to get at all default and all bonus stars.", target) end,
-      getProgressLabel = function(step, current, target) return string.format("%d Challenges / %d Challenges", current, target) end,
+      getLabel = function(step, displayValue, target) return {txt="ui.career.milestones.missions.branchChallengeCompletionist.label", context={branchName = branchName}} end,
+      getDescription = function(step, displayValue, target) return "ui.career.milestones.missions.challengeCompletionist.description" end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.missions.challengesProgressLabel", context={current = current, target = target}} end,
       getTarget = function(step) return step == 0 and 0 or math.ceil(stepPercent[step]*missionCount) end,
       getRewards = milestones.minorLinear,
     }
@@ -256,9 +272,9 @@ M.makeUnlockMissionsMilestones = function(missions, milestonesList)
       type = "mission",
       hooks = {onMissionUnlocked = true},
       getValue = function() return milestones.saveData.general['mission_unlockMissions'].unlockedCount end,
-      getLabel = function(step, displayValue, target) return string.format("Challenge Unlocker %d", step) end,
-      getDescription = function(step, displayValue, target) return string.format("Unlock new challenges by completing challenges and gaining branch levels.", target) end,
-      getProgressLabel = function(step, current, target) return string.format("%d Challenges / %d Challenges", current, target) end,
+      getLabel = function(step, displayValue, target) return {txt="ui.career.milestones.missions.challengeUnlocker.label", context={step = step}} end,
+      getDescription = function(step, displayValue, target) return "ui.career.milestones.missions.challengeUnlocker.description" end,
+      getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.missions.challengesProgressLabel", context={current = current, target = target}} end,
       getTarget = function(step) return (step+1)*1 end,
       getRewards = milestones.minorLinear,
     }

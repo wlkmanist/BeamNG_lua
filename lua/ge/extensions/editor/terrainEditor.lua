@@ -40,10 +40,12 @@ var.inputWidgetHeight = nil
 
 local terrainPainterWindowSize = {}
 
+local terraformer = require('extensions/editor/terraformTool')
+
 local serializationPath = '/settings/editor/terrainEditor.json'
 local active = false
--- 0: terrain sculpting, 1: terrain painting
-local stateEnum = {sculpting = 0, painting = 1}
+-- 0: terrain sculpting, 1: terrain painting, 2: terraforming
+local stateEnum = { sculpting = 0, painting = 1, terraforming = 2 }
 local state = stateEnum.sculpting
 -- 0: released, 1: mouse down, 2: move mouse
 local mouseStateEnum = {
@@ -80,6 +82,7 @@ local currentAction = nil
 local potentialDragDropPayload = nil
 local dragDropPayload = nil
 local hoveredMatIndex
+local swapMaterialPopupIndex = nil  -- Track which material's swap popup is open
 
 local changeBrushSizeAutoRepeatOn = false
 local changeBrushSizeTimer = 0
@@ -106,12 +109,19 @@ terrainImpExp.transformPos = {
 }
 terrainImpExp.flipYAxis = im.BoolPtr(false)
 
+-- meshes to import alongside terrain (TSStatic objects)
+terrainImpExp.meshes = {
+  -- {path="", name="", position={x,y,z}, rotation={x,y,z}, scale={x,y,z}, useRelativePosition=false, selected=false}
+}
+
 -- export
 terrainImpExp.exportPath = im.ArrayChar(128)
 
 -- terrain import gui
 var.paintMaterialNamesArray = nil
 var.paintMaterialNamesArrayPtr = nil
+var.importMaterialNamesArray = nil  -- materials from library for import dialog
+var.importMaterialNamesArrayPtr = nil
 var.channelComboWidth = 0
 var.maxMaterialNameWidth = 0
 var.materialComboWidth = 0
@@ -119,6 +129,14 @@ var.buttonColor = im.GetStyleColorVec4(im.Col_Button)
 var.transparentColor = im.GetStyleColorVec4(im.Col_WindowBg)
 
 var.lastPath = nil
+
+-- preset tracking
+var.loadedPresetName = nil        -- Name of currently loaded preset (nil if none)
+var.loadedPresetPath = nil        -- Full path of currently loaded preset
+var.configWarnings = {}           -- Warnings about configuration issues (e.g., missing materials)
+var.autoSavePresetCheckbox = nil  -- BoolPtr for auto-save checkbox (initialized from preference)
+var.recentPresets = {}            -- List of recent presets found in level's /import/ folder
+var.recentPresetsNeedRefresh = true  -- Flag to refresh recent presets list
 
 -- brush softness curve window
 var.softSelectFilter = {1.000000, 0.833333, 0.666667, 0.500000, 0.333333, 0.166667, 0.000000}
@@ -195,13 +213,32 @@ local function getTempFloat(value)
 end
 
 local function getMtlIdByName(matName) --terrain layers
-  for k, mat in ipairs(var.paintMaterialNamesArray) do
-    if mat == matName then
-      return k, matName
+  -- First try paint materials (from active terrain)
+  if var.paintMaterialNamesArray and #var.paintMaterialNamesArray > 0 then
+    for k, mat in ipairs(var.paintMaterialNamesArray) do
+      if mat == matName then
+        return k, matName
+      end
     end
   end
-  editor.logWarn("Not able to find paint material with the given name '".. matName .."'. Defaulting to '".. paintMaterialProxies[1].internalName .. "'")
-  return 1, paintMaterialProxies[1].internalName
+
+  -- Fallback to import materials (from library) - used when no terrain exists
+  if var.importMaterialNamesArray and #var.importMaterialNamesArray > 0 then
+    for k, mat in ipairs(var.importMaterialNamesArray) do
+      if mat == matName then
+        return k, matName
+      end
+    end
+  end
+
+  -- Ultimate fallback
+  local fallbackName = "unknown"
+  if var.paintMaterialNamesArray and #var.paintMaterialNamesArray > 0 then
+    fallbackName = var.paintMaterialNamesArray[1]
+  elseif var.importMaterialNamesArray and #var.importMaterialNamesArray > 0 then
+    fallbackName = var.importMaterialNamesArray[1]
+  end
+  return 1, fallbackName
 end
 
 local function getMtlByName(matName) --terrain layers
@@ -210,7 +247,7 @@ local function getMtlByName(matName) --terrain layers
       return mat
     end
   end
-  editor.logWarn("Not able to find paint material with the given name '".. matName .."'. Defaulting to '".. paintMaterialProxies[1].internalName .. "'")
+  -- editor.logWarn("Not able to find paint material with the given name '".. matName .."'. Defaulting to '".. paintMaterialProxies[1].internalName .. "'")
   return paintMaterialProxies[1]
 end
 
@@ -220,7 +257,7 @@ local function getGlobalMtlIdByName(matName) --all terrain material
       return k, matName
     end
   end
-  editor.logWarn("Not able to find paint material with the given name '".. matName .."'. Defaulting to '".. paintMaterialProxies[1].internalName .. "'")
+  -- editor.logWarn("Not able to find paint material with the given name '".. matName .."'. Defaulting to '".. paintMaterialProxies[1].internalName .. "'")
   return 1, paintMaterialProxies[1].internalName
 end
 
@@ -230,26 +267,55 @@ end
 
 local function addTextureMap(path)
   if type(path) ~= 'string' or #path == 0 then
-    log('W', '', 'The given path is either not a string or is empty.')
+    -- log('W', '', 'The given path is either not a string or is empty.')
   end
+
+
 
   for k, map in ipairs(terrainImpExp.textureMaps) do
     if path == map.path then
-      log('W', "", "The path you want to add already exists.")
+      -- log('W', "", "The path you want to add already exists.")
       return
     end
   end
 
-  local mat = string.match(path, "layerMap_%d*_(.*)%.(%w*)$")
+  -- Try multiple regex patterns to be more robust
+  local mat = string.match(path, "layerMap_%d*_(.*)%.(%w*)$") or  -- Original: layerMap_0_grass.png
+              string.match(path, "layerMap_(.*)%.(%w*)$") or      -- Without number: layerMap_grass.png
+              string.match(path, "layer[Mm]ap[_%d]*_(.*)%.%w+$") or -- Case variations
+              string.match(path, "splat_(.*)%.%w+$") or           -- Your format: splat_dirt.png
+              string.match(path, "splatmap_(.*)%.%w+$") or        -- Alternative: splatmap_dirt.png
+              string.match(path, "([^/\\]+)_([^/\\]+)%.%w+$")     -- Generic: anything_material.png
+
   local matId = 0
-  local matName = " "
+  local matName = ""  -- Fixed: was " " (space), now empty string
+
+  -- log('I', 'terrainEditor', '[DEBUG] Regex patterns tried on path: ' .. path)
+  -- log('I', 'terrainEditor', '[DEBUG] Extracted material name from path: "' .. (mat or "nil") .. '"')
 
   if mat ~= nil then
     matId, matName = getMtlIdByName(mat)
-    -- Decrementing matId here not to break anything that depends on getMatIdByName
-    matId = matId - 1
+    -- log('I', 'terrainEditor', '[DEBUG] Material lookup result - ID: ' .. matId .. ', Name: "' .. matName .. '"')
+    -- REMOVED: matId = matId - 1  -- This was causing the first material index issues!
+    -- log('I', 'terrainEditor', '[DEBUG] Final material ID (after removal of decrement): ' .. matId)
+  else
+    -- log('W', 'terrainEditor', '[DEBUG] Could not extract material name from path, using defaults')
   end
-  table.insert(terrainImpExp.textureMaps, {path=path, selected=false, material=matName or "", materialId = im.IntPtr(matId or 0), channel="R", channelId=im.IntPtr(0)})
+
+  local textureMapEntry = {
+    path=path,
+    selected=false,
+    material=matName or "",
+    materialId = im.IntPtr(matId or 0),
+    channel="R",
+    channelId=im.IntPtr(0)
+  }
+
+  -- log('I', 'terrainEditor', '[DEBUG] Creating texture map entry: path="' .. textureMapEntry.path .. '", material="' .. textureMapEntry.material .. '", materialId=' .. textureMapEntry.materialId[0])
+
+  table.insert(terrainImpExp.textureMaps, textureMapEntry)
+  -- log('I', 'terrainEditor', '[DEBUG] Total texture maps now: ' .. #terrainImpExp.textureMaps)
+
   editor_terrainEditor.updatePaintMaterialProxies()
 end
 
@@ -259,6 +325,52 @@ local function removeTextureMap()
       table.remove(terrainImpExp.textureMaps, i)
     end
   end
+end
+
+-- Create a new mesh entry with default values
+local function createMeshEntry(path)
+  return {
+    path = im.ArrayChar(256, path or ""),
+    name = im.ArrayChar(64, ""),
+    position = {
+      x = im.FloatPtr(0),
+      y = im.FloatPtr(0),
+      z = im.FloatPtr(0)
+    },
+    rotation = {
+      x = im.FloatPtr(0),
+      y = im.FloatPtr(0),
+      z = im.FloatPtr(0)
+    },
+    scale = {
+      x = im.FloatPtr(1),
+      y = im.FloatPtr(1),
+      z = im.FloatPtr(1)
+    },
+    useRelativePosition = im.BoolPtr(false),
+    selected = false
+  }
+end
+
+local function addMesh(path)
+  table.insert(terrainImpExp.meshes, createMeshEntry(path))
+end
+
+local function removeMesh()
+  for i = #terrainImpExp.meshes, 1, -1 do
+    if terrainImpExp.meshes[i].selected == true then
+      table.remove(terrainImpExp.meshes, i)
+    end
+  end
+end
+
+local function toggleMeshSelection(mesh, addToSelection)
+  if addToSelection ~= true then
+    for _, m in ipairs(terrainImpExp.meshes) do
+      m.selected = false
+    end
+  end
+  mesh.selected = not mesh.selected
 end
 
 local function updateMap(mtlProxy, map, path)
@@ -281,6 +393,14 @@ local function updateMap(mtlProxy, map, path)
     terrainImpExp.holeMapTexture = im.ArrayChar(128, path)
   elseif map == "textureMap" then
     addTextureMap(path)
+  elseif map == "mesh" then
+    addMesh(path)
+  elseif type(map) == "table" and map.meshIndex then
+    -- Update specific mesh path
+    local mesh = terrainImpExp.meshes[map.meshIndex]
+    if mesh then
+      mesh.path = im.ArrayChar(256, path)
+    end
   end
 end
 
@@ -290,7 +410,7 @@ local function dragDropTarget(mtlProxy, map, cbData)
     local payload = im.AcceptDragDropPayload(dragDropId)
     -- if payload~=nil and editor.dragDropAsset~=nil then
     if payload ~= nil then
-      assert(payload.DataSize == ffi.sizeof"char[2048]")
+      assert(payload.DataSize == 2048)
       local path = ffi.string(payload.Data)
       updateMap(mtlProxy, map, path)
     end
@@ -366,10 +486,13 @@ local function switchAction(action, doSerialization)
 
   if action == paintBrush then
     state = stateEnum.painting
-    if editor.isWindowVisible(terrainBrushSoftnessCurveDialogName) == true then
+    if editor.isWindowVisible(terrainBrushSoftnessCurveDialogName) then
       brushSoftnessCurve_Cancel()
     end
     editor.showWindow(terrainPainterWindowName)
+  elseif action.name == "terraform" then
+    state = stateEnum.terraforming
+    editor.hideWindow(terrainPainterWindowName)
   else
     state = stateEnum.sculpting
     editor.hideWindow(terrainPainterWindowName)
@@ -411,6 +534,11 @@ end
 local function selectPreset(data)
   local preset = jsonReadFile(data.filepath)
   if preset and preset.type and preset.type=="TerrainData" then
+    -- Track loaded preset info
+    var.loadedPresetPath = data.filepath
+    var.loadedPresetName = string.match(data.filepath, "([^/\\]+)$") or "Untitled"
+    var.configWarnings = {}  -- Reset warnings
+    
     if preset.name then
       ffi.copy(terrainImpExp.terrainName, preset.name)
     end
@@ -429,7 +557,52 @@ local function selectPreset(data)
     if preset.opacityMaps then
       clearTextureMaps()
       for k, map in ipairs(preset.opacityMaps) do
-        addTextureMap(map)
+        if type(map) == 'string' then
+          -- Old format: just a path string
+          addTextureMap(map)
+        elseif type(map) == 'table' and map.path then
+          -- New format: table with path, material, channel
+          addTextureMap(map.path)
+          -- Override with preset's material assignment
+          local entry = terrainImpExp.textureMaps[#terrainImpExp.textureMaps]
+          if entry and map.material then
+            entry.material = map.material
+            entry.presetMaterial = map.material  -- Store original preset material for warning display
+            -- Find correct index in importMaterialNamesArray (used by dropdown)
+            local foundIdx = nil
+            local materialFound = false
+            if var.importMaterialNamesArray then
+              for i, name in ipairs(var.importMaterialNamesArray) do
+                if name == map.material then
+                  foundIdx = i - 1  -- Convert to 0-based for ImGui
+                  materialFound = true
+                  break
+                end
+              end
+            end
+            if not materialFound then
+              -- Material not found in library - add warning
+              table.insert(var.configWarnings, {
+                type = "missingMaterial",
+                mapPath = map.path,
+                materialName = map.material
+              })
+              foundIdx = 0  -- Default to first material
+              entry.materialMissing = true
+            end
+            entry.materialId[0] = foundIdx or 0
+          end
+          if map.channel then
+            entry.channel = map.channel
+            local channels = {"R", "G", "B", "A"}
+            for i, ch in ipairs(channels) do
+              if ch == map.channel then
+                entry.channelId[0] = i - 1
+                break
+              end
+            end
+          end
+        end
       end
     end
 
@@ -438,6 +611,36 @@ local function selectPreset(data)
       terrainImpExp.transformPos.x[0] = preset.pos.x
       terrainImpExp.transformPos.y[0] = preset.pos.y
       terrainImpExp.transformPos.z[0] = preset.pos.z
+    end
+
+    -- Load meshes from preset
+    terrainImpExp.meshes = {}
+    if preset.meshes then
+      for k, meshData in ipairs(preset.meshes) do
+        local mesh = createMeshEntry(meshData.path)
+        if meshData.name then
+          ffi.copy(mesh.name, meshData.name)
+        end
+        if meshData.position then
+          mesh.position.x[0] = meshData.position.x or 0
+          mesh.position.y[0] = meshData.position.y or 0
+          mesh.position.z[0] = meshData.position.z or 0
+        end
+        if meshData.rotation then
+          mesh.rotation.x[0] = meshData.rotation.x or 0
+          mesh.rotation.y[0] = meshData.rotation.y or 0
+          mesh.rotation.z[0] = meshData.rotation.z or 0
+        end
+        if meshData.scale then
+          mesh.scale.x[0] = meshData.scale.x or 1
+          mesh.scale.y[0] = meshData.scale.y or 1
+          mesh.scale.z[0] = meshData.scale.z or 1
+        end
+        if meshData.useRelativePosition ~= nil then
+          mesh.useRelativePosition[0] = meshData.useRelativePosition
+        end
+        table.insert(terrainImpExp.meshes, mesh)
+      end
     end
   end
   editor_terrainEditor.updatePaintMaterialProxies()
@@ -496,6 +699,10 @@ end
 local function createMaterialProxy(index, pid, mtlObject, name, dirty, isNew)
   fixGroundmodelName(name, mtlObject, isNew)
 
+  if not pid or pid == "" then
+    pid = mtlObject:getOrCreatePersistentID()
+  end
+
   local mtlProxy = {
     index = index,
     internalName = name or "",
@@ -531,6 +738,14 @@ local function createMaterialProxy(index, pid, mtlObject, name, dirty, isNew)
   return mtlProxy
 end
 
+local function getPersistentIdFromJsonMaterial(uniqueID, jsonMtl)
+  local pid = jsonMtl and jsonMtl.persistentId or nil
+  if not pid or pid == "" then
+    pid = tostring(uniqueID):match("([0-9a-fA-F]+%-[0-9a-fA-F]+%-[0-9a-fA-F]+%-[0-9a-fA-F]+%-[0-9a-fA-F]+)$")
+  end
+  return pid
+end
+
 local function getUniqueMtlName(initialName, counter)
   if not initialName then initialName = "NewMaterial" end
   local name = initialName .. (counter or "")
@@ -551,18 +766,115 @@ local function updateMaterialLibrary()
   if not jsonMaterials then materialsInJson = {} return end
   if not materialsInJson then materialsInJson = {} end
 
+  -- Detect and store TerrainMaterialTextureSet from JSON (for V2 PBR materials)
+  var.detectedTextureSetName = nil
+  for uniqueID, jsonMtl in pairs(jsonMaterials) do
+    if jsonMtl.class == "TerrainMaterialTextureSet" then
+      -- Found a TextureSet definition - store its name for later use
+      var.detectedTextureSetName = jsonMtl.name or uniqueID
+      -- Find or create the TextureSet object
+      local textureSet = scenetree.findObject(var.detectedTextureSetName)
+      if not textureSet then
+        textureSet = createObject('TerrainMaterialTextureSet')
+        textureSet:setField('name', 0, var.detectedTextureSetName)
+        textureSet:setFileName(var.levelPath .. matFilePath)
+        textureSet.canSave = true
+        textureSet:registerObject(var.detectedTextureSetName)
+      end
+    end
+  end
+
   for uniqueID, jsonMtl in pairs(jsonMaterials) do
     if jsonMtl.class ~= "TerrainMaterialTextureSet" then
       local cachedMtlProxy = materialsInJson[uniqueID] or {}
 
+      -- Get or create the material object
+      local terrainMtl
       if not cachedMtlProxy.material then
-       -- get an unique name if there is already one named the same
+        -- Get an unique name if there is already one named the same
         local newName = getUniqueMtlName(jsonMtl.internalName)
-        local terrainMtl = TerrainMaterial.findOrCreate(newName)
+        terrainMtl = TerrainMaterial.findOrCreate(newName)
         terrainMtl:setInternalName(newName)
         cachedMtlProxy.material = terrainMtl
-        cachedMtlProxy.persistentId = jsonMtl.persistentId
+        cachedMtlProxy.persistentId = getPersistentIdFromJsonMaterial(uniqueID, jsonMtl)
+      else
+        terrainMtl = cachedMtlProxy.material
       end
+
+      -- ALWAYS load texture properties from JSON (not just on creation)
+      local fullPath = var.levelPath .. matFilePath
+
+      -- v2 PBR textures (baseColor, normal, roughness, ao, height - Base, Detail, Macro variants)
+      local v2TexProps = {
+        'baseColorBaseTex', 'baseColorDetailTex', 'baseColorMacroTex',
+        'normalBaseTex', 'normalDetailTex', 'normalMacroTex',
+        'roughnessBaseTex', 'roughnessDetailTex', 'roughnessMacroTex',
+        'aoBaseTex', 'aoDetailTex', 'aoMacroTex',
+        'heightBaseTex', 'heightDetailTex', 'heightMacroTex'
+      }
+      for _, prop in ipairs(v2TexProps) do
+        if jsonMtl[prop] then terrainMtl:setField(prop, 0, jsonMtl[prop]) end
+      end
+
+      -- v2 texture sizes
+      local v2SizeProps = {
+        'baseColorBaseTexSize', 'baseColorMacroTexSize',
+        'normalBaseTexSize', 'normalMacroTexSize',
+        'roughnessBaseTexSize', 'roughnessMacroTexSize',
+        'aoBaseTexSize', 'aoMacroTexSize',
+        'heightBaseTexSize', 'heightMacroTexSize'
+      }
+      for _, prop in ipairs(v2SizeProps) do
+        if jsonMtl[prop] then terrainMtl:setField(prop, 0, tostring(jsonMtl[prop])) end
+      end
+
+      -- v2 array properties (strengths, distances, attenuation) - convert to space-separated strings
+      local v2ArrayProps = {
+        'baseColorDetailStrength', 'baseColorMacroStrength',
+        'normalDetailStrength', 'normalMacroStrength',
+        'roughnessDetailStrength', 'roughnessMacroStrength',
+        'detailDistances', 'macroDistances',
+        'detailDistAtten', 'macroDistAtten'
+      }
+      for _, prop in ipairs(v2ArrayProps) do
+        if jsonMtl[prop] and type(jsonMtl[prop]) == 'table' then
+          terrainMtl:setField(prop, 0, table.concat(jsonMtl[prop], ' '))
+        end
+      end
+
+      -- Detect V2 (PBR) vs V1 (legacy) based on presence of V2 texture properties
+      local isV2Material = jsonMtl.baseColorBaseTex ~= nil or jsonMtl.baseColorDetailTex ~= nil
+
+      if isV2Material then
+        -- Clear V1 properties to avoid conflicts (same as "Upgrade Terrain Materials" button)
+        terrainMtl:setDiffuseMap("")
+        terrainMtl:setNormalMap("")
+        terrainMtl:setDetailMap("")
+        terrainMtl:setMacroMap("")
+      else
+        -- v1 legacy textures (fallback for older material formats)
+        if jsonMtl.diffuseMap then terrainMtl:setDiffuseMap(jsonMtl.diffuseMap) end
+        if jsonMtl.normalMap then terrainMtl:setNormalMap(jsonMtl.normalMap) end
+        if jsonMtl.detailMap then terrainMtl:setDetailMap(jsonMtl.detailMap) end
+        if jsonMtl.macroMap then terrainMtl:setMacroMap(jsonMtl.macroMap) end
+        if jsonMtl.diffuseSize then terrainMtl:setDiffuseSize(jsonMtl.diffuseSize) end
+        if jsonMtl.detailSize then terrainMtl:setDetailSize(jsonMtl.detailSize) end
+        if jsonMtl.macroSize then terrainMtl:setMacroSize(jsonMtl.macroSize) end
+        if jsonMtl.detailStrength then terrainMtl:setDetailStrength(jsonMtl.detailStrength) end
+        if jsonMtl.macroStrength then terrainMtl:setMacroStrength(jsonMtl.macroStrength) end
+      end
+
+      -- groundmodel
+      if jsonMtl.groundmodelName then terrainMtl:setGroundmodelName(jsonMtl.groundmodelName) end
+
+      -- annotation
+      if jsonMtl.annotation then terrainMtl:setField('annotation', 0, jsonMtl.annotation) end
+
+      terrainMtl:setFileName(fullPath)
+      if cachedMtlProxy.persistentId and cachedMtlProxy.persistentId ~= "" then
+        terrainMtl:setField("persistentId", 0, cachedMtlProxy.persistentId)
+      end
+      terrainMtl:setField("name", 0, uniqueID)
 
       materialsInJson[uniqueID] = createMaterialProxy(-1, cachedMtlProxy.persistentId, cachedMtlProxy.material, cachedMtlProxy.material.internalName)
       materialsInJson[uniqueID].fileName = var.levelPath .. matFilePath
@@ -575,6 +887,25 @@ local function updateMaterialLibrary()
   if hasConversionsToGroundmodel == true then
     editor.logWarn("Converted terrain material(s) to use groundmodelName, please save level")
     editor_terrainEditor.setMaterialsDirty()
+  end
+end
+
+-- Populate import material list from library (materialsInJson)
+-- This is used for the import dialog dropdown when no terrain exists yet
+local function updateImportMaterialList()
+  var.importMaterialNamesArray = {}
+  if materialsInJson then
+    for id, mat in pairs(materialsInJson) do
+      if mat.internalName then
+        table.insert(var.importMaterialNamesArray, mat.internalName)
+      end
+    end
+  end
+  table.sort(var.importMaterialNamesArray)
+  if #var.importMaterialNamesArray > 0 then
+    var.importMaterialNamesArrayPtr = im.ArrayCharPtrByTbl(var.importMaterialNamesArray)
+  else
+    var.importMaterialNamesArrayPtr = nil
   end
 end
 
@@ -665,6 +996,61 @@ local function removePaintMaterial(index)
   updatePaintMaterialProxies()
 end
 
+-- Swap/replace a terrain material at the given index with a different material from the library
+local function swapPaintMaterial(index, newMaterialName)
+  if not index or not newMaterialName then
+    editor.logError("swapPaintMaterial: missing index or newMaterialName")
+    return
+  end
+  local terrainBlock = terrainBlockId and scenetree.findObjectById(terrainBlockId)
+  if not terrainBlock then return end
+  
+  -- Find the material proxy in the library
+  local newMtlProxy = nil
+  for id, mtl in pairs(materialsInJson) do
+    if mtl.internalName == newMaterialName then
+      newMtlProxy = mtl
+      break
+    end
+  end
+  
+  if not newMtlProxy then
+    editor.logError("swapPaintMaterial: material not found in library: " .. tostring(newMaterialName))
+    return
+  end
+  
+  -- Update the material at the given index
+  terrainBlock:updateMaterial(index - 1, newMaterialName)
+  terrainBlock:updateGridMaterials(vec3(minFloatValue, minFloatValue, 0), vec3(maxFloatValue, maxFloatValue, 0))
+  updatePaintMaterialProxies()
+  setMaterialsDirty()
+  setTerrainDirty()
+  
+  editor.logInfo("Swapped terrain material at index " .. index .. " to: " .. newMaterialName)
+end
+
+-- Check if a material name is already in the terrain's paint materials
+local function hasPaintMaterial(name)
+  for _, mat in ipairs(paintMaterialProxies) do
+    if mat.internalName == name then
+      return true
+    end
+  end
+  return false
+end
+
+-- Get list of library materials that are NOT already in the terrain
+local function getAvailableLibraryMaterials()
+  local available = {}
+  for id, mtl in pairs(materialsInJson) do
+    if mtl.internalName and not hasPaintMaterial(mtl.internalName) then
+      table.insert(available, mtl.internalName)
+    end
+  end
+  table.sort(available)
+  return available
+end
+
 local function removeMap(mtlProxy, mapType)
   --TODO mtlProxy from where?
   updateMap(mtlProxy, mapType, "")
@@ -696,6 +1082,18 @@ end
 -- Terrain Map Importer
 local function openImportTerrainDialog()
   terrainImpExp.terrainName = im.ArrayChar(32, "theTerrain")
+  -- Clear any existing texture maps to prevent state persistence issues
+  terrainImpExp.textureMaps = {}
+  -- Clear any existing meshes
+  terrainImpExp.meshes = {}
+  -- Reset preset tracking
+  var.loadedPresetName = nil
+  var.loadedPresetPath = nil
+  var.configWarnings = {}
+  var.recentPresetsNeedRefresh = true  -- Refresh recent presets list
+  -- Ensure library materials are loaded for the import dropdown
+  updateMaterialLibrary()
+  updateImportMaterialList()
   editor.showWindow(terrainImportDialogName)
 end
 
@@ -728,6 +1126,84 @@ local function updateEditorTerrainBlocks()
   gui3DMouseEvent = Gui3DMouseEvent()
 end
 
+-- Scan level's /import/ folder for preset files
+local function refreshRecentPresets()
+  var.recentPresets = {}
+  if not var.levelPath then return end
+  
+  local importFolder = var.levelPath .. "/import/"
+  if FS:directoryExists(importFolder) then
+    local files = FS:findFiles(importFolder, "*.terrainPreset.json", 0, false, false)
+    for _, filepath in ipairs(files) do
+      local filename = string.match(filepath, "([^/\\]+)$") or filepath
+      table.insert(var.recentPresets, {
+        name = filename,
+        path = filepath
+      })
+    end
+    -- Sort by name (most recent timestamps will be at bottom alphabetically, so reverse)
+    table.sort(var.recentPresets, function(a, b) return a.name > b.name end)
+    -- Limit to 10 most recent
+    while #var.recentPresets > 10 do
+      table.remove(var.recentPresets)
+    end
+  end
+  var.recentPresetsNeedRefresh = false
+end
+
+-- savePreset must be defined before terrainImporter_Accept (uses it for auto-save)
+local function savePreset(fddata)
+  local data = {}
+
+  data.name = ffi.string(terrainImpExp.terrainName)
+  data.type = "TerrainData"
+  data.squareSize = terrainImpExp.metersPerPixel[0]
+  data.heightScale = terrainImpExp.heightScale[0]
+  data.pos = {x = terrainImpExp.transformPos.x[0], y = terrainImpExp.transformPos.y[0], z = terrainImpExp.transformPos.z[0]}
+  data.heightMapPath = ffi.string(terrainImpExp.heightMapTexture)
+  data.holeMapPath = ffi.string(terrainImpExp.holeMapTexture)
+  data.opacityMaps = {}
+
+  -- Save opacity maps with material assignments (new format)
+  for k, map in ipairs(terrainImpExp.textureMaps) do
+    table.insert(data.opacityMaps, {
+      path = map.path,
+      material = map.material,
+      channel = map.channel
+    })
+  end
+
+  -- Save meshes
+  data.meshes = {}
+  for k, mesh in ipairs(terrainImpExp.meshes) do
+    local meshPath = ffi.string(mesh.path)
+    if meshPath and meshPath ~= "" then
+      table.insert(data.meshes, {
+        path = meshPath,
+        name = ffi.string(mesh.name),
+        position = {
+          x = mesh.position.x[0],
+          y = mesh.position.y[0],
+          z = mesh.position.z[0]
+        },
+        rotation = {
+          x = mesh.rotation.x[0],
+          y = mesh.rotation.y[0],
+          z = mesh.rotation.z[0]
+        },
+        scale = {
+          x = mesh.scale.x[0],
+          y = mesh.scale.y[0],
+          z = mesh.scale.z[0]
+        },
+        useRelativePosition = mesh.useRelativePosition[0]
+      })
+    end
+  end
+
+  jsonWriteFile(fddata.filepath, data, true)
+end
+
 local function terrainImporter_Accept()
   updateTerrainBlockProxies()
   local success = false
@@ -748,7 +1224,6 @@ local function terrainImporter_Accept()
   for tbName, tbData in pairs(terrainBlockProxies) do
     if string.lower(tbName) == string.lower(terrBlockName) then
       if debug == true then log('I', '', "Found TerrainBlock with the given name '".. terrBlockName .."'") end
-      -- TODO: a TerrainBlock with the same name has been found: can we overwrite it?
       terrBlock = scenetree.findObjectById(tbData.id)
       createNewTerrainBlock = false
     end
@@ -763,12 +1238,29 @@ local function terrainImporter_Accept()
       terrBlock:setPosition(vec3(terrainImpExp.transformPos.x[0], terrainImpExp.transformPos.y[0], terrainImpExp.transformPos.z[0]))
     end
     terrBlock:setTerrFileLvlFolder("/levels/".. (true and getCurrentLevelIdentifier() or "") )
-    -- TODO: Update 'terrainBlocks' table that contains all existing TerrainBlock objects
   end
 
   local materials = {}
-  for _,map in ipairs(terrainImpExp.textureMaps) do
-    table.insert(materials,map.material)
+  -- Use paint materials if available, otherwise use import materials (from library)
+  local matArray = (var.paintMaterialNamesArray and #var.paintMaterialNamesArray > 0) and var.paintMaterialNamesArray or var.importMaterialNamesArray
+  for i,map in ipairs(terrainImpExp.textureMaps) do
+    -- Validate that materialId matches the actual material name
+    local expectedMaterial = matArray and matArray[map.materialId[0] + 1] or "unknown"
+    if map.material ~= expectedMaterial then
+      -- Fix the sync issue by finding the correct materialId for the current material name
+      local correctedId = 0
+      if matArray then
+        for j, matName in ipairs(matArray) do
+          if matName == map.material then
+            correctedId = j - 1  -- Convert to 0-based index
+            map.materialId[0] = correctedId
+            break
+          end
+        end
+      end
+    end
+
+    table.insert(materials, map.material)
   end
 
   success = terrBlock:importMaps(heightMapTexturePath, terrainImpExp.metersPerPixel[0], terrainImpExp.heightScale[0], ffi.string(terrainImpExp.holeMapTexture), materials, terrainImpExp.textureMaps, terrainImpExp.flipYAxis[0])
@@ -782,10 +1274,133 @@ local function terrainImporter_Accept()
         editor.logDebug("MissionGroup does not exist")
       end
     end
+
+    -- Set materialTextureSet on TerrainBlock if V2 materials were detected
+    if var.detectedTextureSetName then
+      terrBlock:setField('materialTextureSet', 0, var.detectedTextureSetName)
+    end
+
+    -- Import meshes as TSStatic objects
+    local terrainPos = terrBlock:getPosition()
+    for k, mesh in ipairs(terrainImpExp.meshes) do
+      local meshPath = ffi.string(mesh.path)
+      if meshPath and meshPath ~= "" then
+        -- Calculate position (absolute or relative to terrain)
+        local posX = mesh.position.x[0]
+        local posY = mesh.position.y[0]
+        local posZ = mesh.position.z[0]
+        if mesh.useRelativePosition[0] then
+          posX = posX + terrainPos.x
+          posY = posY + terrainPos.y
+          posZ = posZ + terrainPos.z
+        end
+        
+        -- Determine object name
+        local meshName = ffi.string(mesh.name)
+        if meshName == "" then
+          -- Extract filename without extension as default name
+          meshName = string.match(meshPath, "([^/\\]+)%.dae$") or string.match(meshPath, "([^/\\]+)$") or ("Mesh_" .. k)
+        end
+        
+        -- Check if a TSStatic with the same shapeName already exists - update it instead
+        local existingObj = nil
+        local allObjects = scenetree.findClassObjects("TSStatic")
+        if allObjects then
+          for _, objName in ipairs(allObjects) do
+            local obj = scenetree.findObject(objName)
+            if obj then
+              local objShapeName = obj:getField('shapeName', 0)
+              if objShapeName == meshPath then
+                existingObj = obj
+                break
+              end
+            end
+          end
+        end
+        
+        -- Get rotation and scale values
+        local rotX = mesh.rotation.x[0]
+        local rotY = mesh.rotation.y[0]
+        local rotZ = mesh.rotation.z[0]
+        local scaleX = mesh.scale.x[0]
+        local scaleY = mesh.scale.y[0]
+        local scaleZ = mesh.scale.z[0]
+        local hasRotation = rotX ~= 0 or rotY ~= 0 or rotZ ~= 0
+        local hasNonDefaultScale = scaleX ~= 1 or scaleY ~= 1 or scaleZ ~= 1
+        
+        if existingObj then
+          -- Update existing object's transform
+          existingObj:setPosition(vec3(posX, posY, posZ))
+          -- Only set rotation if non-zero (avoids floating point errors from Euler conversion)
+          if hasRotation then
+            local q = quatFromEuler(math.rad(rotZ), math.rad(rotX), math.rad(rotY))
+            existingObj:setField("rotation", 0, string.format("%f %f %f %f", q.x, q.y, q.z, q.w))
+          else
+            -- Reset to identity quaternion
+            existingObj:setField("rotation", 0, "0 0 0 1")
+          end
+          if hasNonDefaultScale then
+            existingObj.scale = vec3(scaleX, scaleY, scaleZ)
+          else
+            existingObj.scale = vec3(1, 1, 1)
+          end
+          editor.logInfo("Updated existing mesh: " .. meshPath)
+        else
+          -- Create new TSStatic object (same as Asset Browser)
+          local obj = createObject('TSStatic')
+          obj:setField('shapeName', 0, meshPath)
+          obj:setPosition(vec3(posX, posY, posZ))
+          -- Only set rotation if non-zero (avoids floating point errors from Euler conversion)
+          if hasRotation then
+            local q = quatFromEuler(math.rad(rotZ), math.rad(rotX), math.rad(rotY))
+            obj:setField("rotation", 0, string.format("%f %f %f %f", q.x, q.y, q.z, q.w))
+          end
+          -- Only set scale if non-default
+          if hasNonDefaultScale then
+            obj.scale = vec3(scaleX, scaleY, scaleZ)
+          else
+            obj.scale = vec3(1, 1, 1)
+          end
+          obj:setField('collisionType', 0, "Collision Mesh")
+          obj:setField('decalType', 0, "Collision Mesh")
+          obj:registerObject(meshName)
+          
+          local missionGroup = scenetree.MissionGroup
+          if missionGroup then
+            missionGroup:addObject(obj)
+          end
+          editor.logInfo("Created mesh: " .. meshPath .. " as " .. meshName)
+        end
+      end
+    end
+
     setTerrainDirty()
     terrainBlockId = terrBlock:getID() --fix issue when map doesn't have terrain before
     updateEditorTerrainBlocks()
     -- notifications["terrainDirty"] = "You have unsaved terrain changes!"
+    
+    -- Auto-save preset if enabled
+    if editor.getPreference("terrainEditor.import.autoSavePreset") then
+      local terrName = ffi.string(terrainImpExp.terrainName)
+      local timestamp = os.date("%Y%m%d_%H%M%S")
+      local presetFilename = terrName .. "_" .. timestamp .. ".terrainPreset.json"
+      local importFolder = var.levelPath .. "/import/"
+      
+      -- Ensure import folder exists
+      if not FS:directoryExists(importFolder) then
+        FS:directoryCreate(importFolder, true)
+      end
+      
+      local presetPath = importFolder .. presetFilename
+      savePreset({filepath = presetPath})
+      editor.showNotification("Auto-saved preset: " .. presetFilename)
+      
+      -- Update loaded preset tracking
+      var.loadedPresetName = presetFilename
+      var.loadedPresetPath = presetPath
+      var.recentPresetsNeedRefresh = true  -- Refresh list to show new preset
+    end
+    
     closeImportTerrainDialog()
   end
 end
@@ -889,15 +1504,6 @@ end
 
 -- ##### GUI WINDOWS #####
 
-local function hasPaintMaterial(name)
-  for _, mat in ipairs(paintMaterialProxies) do
-    if mat.internalName == name then
-      return true
-    end
-  end
-  return false
-end
-
 local function showAddLayerMaterialGui()
   local terrainBlock = terrainBlockId and scenetree.findObjectById(terrainBlockId)
   if not terrainBlock then return end
@@ -937,6 +1543,23 @@ end
 
 local function terrainPainterMaterialWindow()
   if editor.beginWindow(terrainPainterWindowName, "Terrain Painter") then
+    -- Check for stale state: if terrainBlockId points to a deleted terrain, clean up
+    if terrainBlockId and not scenetree.findObjectById(terrainBlockId) then
+      terrainBlockId = nil
+      terrainBlockProxies = {}
+      paintMaterialProxies = {}
+      paintMaterialCount = nil
+      selectedPaintMaterialProxy = nil
+      selectedPaintMaterialProxyIndex = nil
+      var.paintMaterialNamesArray = {}
+      var.paintMaterialNamesArrayPtr = nil
+      brushCenter = nil
+      startDragHeight = nil
+      mouseState = mouseStateEnum.released
+      gui3DMouseEvent = Gui3DMouseEvent()
+      materialsInJson = {}
+    end
+
     if tableIsEmpty(terrainBlockProxies) and not selectedPaintMaterialProxy then
       im.Text("No terrain blocks.\nAdd at least one for the paint terrain tool to be available.")
     else
@@ -1037,12 +1660,42 @@ local function terrainPainterMaterialWindow()
           local btnHeight = math.ceil(im.GetFontSize()) + 2
           local thisFrameHoveredIndex = nil
           for index, matProxy in ipairs(paintMaterialProxies) do
-            if matProxy.inTerrainBlock then
+            if matProxy.inTerrainBlock and terrainBlock then
+              local prev = nil
+              if terrainBlock:getField('materialTextureSet', 0) == "" then
+                prev = matProxy.material:getDetailMap()
+              else
+                prev = matProxy.material:getField(string.format("%sDetailTex", 'baseColor'), 0)
+              end
+              local previewPx = math.max(32 * im.uiscale[0], math.floor(im.GetFontSize()))  -- small but readable
+              local drewPreview = false
+              if prev and prev ~= "" and FS:fileExists(prev) then
+                local texObj = editor.getTempTextureObj(prev)  -- was leftPath (undefined); use prev
+                if texObj and texObj.tex then
+                  im.Image(texObj.tex:getID(), im.ImVec2(previewPx, previewPx), nil, nil, nil, editor.color.white.Value)
+                  drewPreview = true
+                end
+              end
+              if not drewPreview then
+                im.Dummy(im.ImVec2(previewPx, previewPx))
+              end
+              im.SameLine()
+
               if dragDropPayload and dragDropPayload == index then
                 local logColor = im.ImVec4(1,1,1,0.5)
                 im.PushStyleColor2(im.Col_Text, logColor)
               end
-              im.Selectable1(matProxy.internalName .. "##" .. index, selectedPaintMaterialProxyIndex == index or dragDropPayload == index or hoveredMatIndex == index, nil, im.ImVec2(im.GetContentRegionAvailWidth() - (var.style.ItemSpacing.x + btnHeight * im.uiscale[0] + 10), 0))
+
+              -- Account for two buttons: swap and delete
+              local buttonsWidth = 2 * (btnHeight * im.uiscale[0] + var.style.ItemSpacing.x) + 10
+              local remainingW = im.GetContentRegionAvailWidth() - buttonsWidth
+              im.Selectable1(
+                matProxy.internalName .. "##" .. index,
+                selectedPaintMaterialProxyIndex == index or dragDropPayload == index or hoveredMatIndex == index,
+                nil,
+                im.ImVec2(remainingW, previewPx)
+              )
+
               if editor.IsItemClicked() then
                 selectPaintMaterial(matProxy)
               end
@@ -1068,10 +1721,41 @@ local function terrainPainterMaterialWindow()
                 end
               end
               im.SameLine()
-              if editor.uiIconImageButton(editor.icons.delete, im.ImVec2(btnHeight, btnHeight)) then
+              
+              -- Swap material button with dropdown
+              local availableMaterials = getAvailableLibraryMaterials()
+              local hasAvailable = #availableMaterials > 0
+              if not hasAvailable then im.BeginDisabled() end
+              if editor.uiIconImageButton(editor.icons.sync, im.ImVec2(btnHeight, btnHeight), nil, nil, nil, "swapMat" .. index) then
+                swapMaterialPopupIndex = index
+                im.OpenPopup("SwapMaterialPopup##" .. index)
+              end
+              if not hasAvailable then
+                im.EndDisabled()
+                im.tooltip("No other materials available in library")
+              else
+                im.tooltip("Replace with another material from library")
+              end
+              
+              -- Swap material popup/dropdown
+              if im.BeginPopup("SwapMaterialPopup##" .. index) then
+                im.TextUnformatted("Replace with:")
+                im.Separator()
+                for _, matName in ipairs(availableMaterials) do
+                  if im.Selectable1(matName .. "##swap" .. index, false) then
+                    swapPaintMaterial(matProxy.index, matName)
+                    swapMaterialPopupIndex = nil
+                  end
+                end
+                im.EndPopup()
+              end
+              
+              im.SameLine()
+              if editor.uiIconImageButton(editor.icons.delete, im.ImVec2(btnHeight, btnHeight), nil, nil, nil, "deleteMat" .. index) then
                 -- TODO: Add a `remove material`-modal
                 removePaintMaterial(matProxy.index)
               end
+              im.tooltip("Remove material from terrain")
               im.Separator()
             end
           end
@@ -1107,34 +1791,47 @@ local function terrainPainterMaterialWindow()
   end
 end
 
-local function savePreset(fddata)
-  local data = {}
-
-  data.name = ffi.string(terrainImpExp.terrainName)
-  data.type = "TerrainData"
-  data.squareSize = terrainImpExp.metersPerPixel[0]
-  data.heightScale = terrainImpExp.heightScale[0]
-  data.pos = {x = terrainImpExp.transformPos.x[0], y = terrainImpExp.transformPos.y[0], z = terrainImpExp.transformPos.z[0]}
-  data.heightMapPath = ffi.string(terrainImpExp.heightMapTexture)
-  data.holeMapPath = ffi.string(terrainImpExp.holeMapTexture)
-  data.opacityMaps = {}
-
-  local time = os.time()
-  for k, map in ipairs(terrainImpExp.textureMaps) do
-    table.insert(data.opacityMaps, map.path)
-  end
-
-  jsonWriteFile(fddata.filepath, data, true)
-end
-
 local function importTerrainDialogMenu()
   if im.BeginMenuBar() then
-    if im.MenuItem1("Load preset") then
+    -- Recent Presets dropdown
+    if var.recentPresetsNeedRefresh then
+      refreshRecentPresets()
+    end
+    if im.BeginMenu("Recent##RecentPresets", #var.recentPresets > 0) then
+      for _, preset in ipairs(var.recentPresets) do
+        if im.MenuItem1(preset.name) then
+          selectPreset({filepath = preset.path})
+        end
+      end
+      im.Separator()
+      if im.MenuItem1("Refresh List") then
+        var.recentPresetsNeedRefresh = true
+      end
+      im.EndMenu()
+    end
+    if #var.recentPresets == 0 then
+      im.tooltip("No presets found in /import/ folder")
+    end
+    
+    if im.MenuItem1("Load...") then
       editor_fileDialog.openFile(function(data) selectPreset(data) end, {{"Any files", "*"},{"Terrain Data", "terrainPreset.json"}}, false, var.lastPath)
     end
-    if im.MenuItem1("Save Preset") then
+    im.tooltip("Browse for a preset file")
+    
+    if im.MenuItem1("Save") then
       editor_fileDialog.saveFile(function(data) savePreset(data) end, {{"Terrain Data", "terrainPreset.json"}}, false, var.lastPath)
     end
+    im.tooltip("Save current configuration as preset")
+    
+    im.Separator()
+    -- Auto-save checkbox in toolbar
+    if not var.autoSavePresetCheckbox then
+      var.autoSavePresetCheckbox = im.BoolPtr(editor.getPreference("terrainEditor.import.autoSavePreset") or false)
+    end
+    if im.Checkbox("Auto-save", var.autoSavePresetCheckbox) then
+      editor.setPreference("terrainEditor.import.autoSavePreset", var.autoSavePresetCheckbox[0])
+    end
+    im.tooltip("Automatically save preset after import")
     im.EndMenuBar()
   end
 end
@@ -1143,12 +1840,48 @@ local function importTerrainDialog()
   if var.style == nil then return end
   if editor.beginWindow(terrainImportDialogName, "Import Terrain##Dialog", im.WindowFlags_MenuBar) then
     importTerrainDialogMenu()
+    
+    -- Configuration Warnings (only show when there are issues)
+    if var.configWarnings and #var.configWarnings > 0 then
+      im.PushStyleColor2(im.Col_ChildBg, im.ImColorByRGB(80, 50, 20, 255).Value)
+      im.BeginChild1("ConfigWarnings", im.ImVec2(-1, 20 + (#var.configWarnings * 18)), false)
+      editor.uiIconImage(editor.icons.warning, im.ImVec2(16, 16), im.ImVec4(1.0, 0.7, 0.2, 1.0))
+      im.SameLine()
+      im.TextColored(im.ImVec4(1.0, 0.7, 0.2, 1.0), "Preset Issues:")
+      for _, warning in ipairs(var.configWarnings) do
+        if warning.type == "missingMaterial" then
+          im.TextColored(im.ImVec4(1.0, 0.6, 0.4, 1.0), "  - \"" .. warning.materialName .. "\" not in library (using fallback)")
+        end
+      end
+      im.EndChild()
+      im.PopStyleColor()
+      im.Spacing()
+    end
+    
     -- TERRAIN: NAME
     im.TextUnformatted("Terrain Name")
     im.SameLine()
     im.PushItemWidth(im.GetContentRegionAvailWidth())
     im.InputText('##TerrainName', terrainImpExp.terrainName)
     im.PopItemWidth()
+    
+    -- Check if a terrain with this name already exists
+    local currentTerrainName = ffi.string(terrainImpExp.terrainName)
+    local existingTerrainFound = false
+    if currentTerrainName and #currentTerrainName > 0 then
+      for tbName, _ in pairs(terrainBlockProxies) do
+        if string.lower(tbName) == string.lower(currentTerrainName) then
+          existingTerrainFound = true
+          break
+        end
+      end
+    end
+    if existingTerrainFound then
+      editor.uiIconImage(editor.icons.info, im.ImVec2(16, 16), im.ImVec4(0.4, 0.7, 1.0, 1.0))
+      im.SameLine()
+      im.TextColored(im.ImVec4(0.4, 0.7, 1.0, 1.0), "A terrain with this name exists already, it will be overwritten")
+    end
+    
     -- TERRAIN: METERS PER PIXEL
     im.TextUnformatted("Meters per Pixel")
     im.SameLine()
@@ -1187,87 +1920,310 @@ local function importTerrainDialog()
     im.tooltip("Browse...")
 
     if im.CollapsingHeader1("Texture Maps", im.TreeNodeFlags_DefaultOpen) then
-      for k, map in ipairs(terrainImpExp.textureMaps) do
-        -- im.Spacing()
-        local clr = (map.selected == true) and var.buttonColor or var.transparentColor
-        im.PushStyleColor2(im.Col_Button, clr)
-        local btnWidth = im.GetContentRegionAvailWidth() - (var.channelComboWidth + var.materialComboWidth + 2*var.style.ItemSpacing.x)
-        if im.Button(map.path, im.ImVec2(btnWidth, var.inputWidgetHeight)) then
-          if im.GetIO().KeyCtrl == true then
-            toggleTextureMap(map, true)
-          else
-            toggleTextureMap(map)
+      -- Table with resizable columns
+      local tableFlags = bit.bor(
+        im.TableFlags_Resizable,
+        im.TableFlags_BordersInnerV,
+        im.TableFlags_SizingStretchProp,
+        im.TableFlags_NoHostExtendX
+      )
+      
+      if im.BeginTable("TextureMapsTable", 5, tableFlags) then
+        -- Setup columns: Preview, Path, Material, Channel, Delete
+        im.TableSetupColumn("Preview", im.TableColumnFlags_WidthFixed, 48)
+        im.TableSetupColumn("Path", im.TableColumnFlags_WidthStretch, 1.0)
+        im.TableSetupColumn("Material", im.TableColumnFlags_WidthFixed, 120)
+        im.TableSetupColumn("Channel", im.TableColumnFlags_WidthFixed, 50)
+        im.TableSetupColumn("", im.TableColumnFlags_WidthFixed, 24)  -- Delete button column
+        im.TableHeadersRow()
+        
+        local textureMapToRemove = nil
+        for k, map in ipairs(terrainImpExp.textureMaps) do
+          im.TableNextRow()
+          
+          -- Column 1: Preview thumbnail
+          im.TableNextColumn()
+          local colWidth = im.GetColumnWidth()
+          local previewSize = math.max(16, math.min(colWidth - 8, 64))  -- Clamp between 16 and 64
+          
+          local drewPreview = false
+          if map.path and map.path ~= "" and FS:fileExists(map.path) then
+            local texObj = editor.getTempTextureObj(map.path)
+            if texObj and texObj.tex then
+              im.Image(texObj.tex:getID(), im.ImVec2(previewSize, previewSize), nil, nil, nil, im.ImVec4(1, 1, 1, 1))
+              drewPreview = true
+              -- Show larger preview on hover
+              if im.IsItemHovered() then
+                im.BeginTooltip()
+                im.Image(texObj.tex:getID(), im.ImVec2(128, 128), nil, nil, nil, im.ImVec4(1, 1, 1, 1))
+                im.EndTooltip()
+              end
+            end
           end
+          if not drewPreview then
+            -- Placeholder for missing texture
+            editor.uiIconImage(editor.icons.texture or editor.icons.photo, im.ImVec2(previewSize, previewSize), im.ImVec4(0.5, 0.5, 0.5, 1.0))
+          end
+          
+          -- Column 2: Path (clickable for selection)
+          im.TableNextColumn()
+          local clr = (map.selected == true) and var.buttonColor or var.transparentColor
+          im.PushStyleColor2(im.Col_Button, clr)
+          
+          -- Show warning icon for missing materials
+          if map.materialMissing then
+            editor.uiIconImage(editor.icons.warning, im.ImVec2(16, 16), im.ImVec4(1.0, 0.6, 0.0, 1.0))
+            if im.IsItemHovered() then
+              im.BeginTooltip()
+              im.TextUnformatted("Material not found: " .. (map.presetMaterial or "unknown"))
+              im.TextColored(im.ImVec4(0.7, 0.7, 0.7, 1.0), "Using first available material instead")
+              im.EndTooltip()
+            end
+            im.SameLine()
+          end
+          
+          local pathColWidth = im.GetContentRegionAvailWidth()
+          if im.Button(map.path .. "##path" .. k, im.ImVec2(pathColWidth, 0)) then
+            if im.GetIO().KeyCtrl == true then
+              toggleTextureMap(map, true)
+            else
+              toggleTextureMap(map)
+            end
+          end
+          if pathColWidth < im.CalcTextSize(map.path).x + 8 then
+            im.tooltip(map.path)
+          end
+          im.PopStyleColor()
+          
+          -- Column 3: Material dropdown
+          im.TableNextColumn()
+          im.PushItemWidth(-1)
+          local matArrayPtr = var.importMaterialNamesArrayPtr
+          local matArray = var.importMaterialNamesArray
+          if matArrayPtr and im.Combo1("##MaterialCombo_" .. k, map.materialId, matArrayPtr) then
+            map.material = matArray[map.materialId[0] + 1]
+            map.materialMissing = nil  -- Clear missing flag when user changes material
+            map.presetMaterial = nil
+          end
+          im.PopItemWidth()
+          
+          -- Column 4: Channel dropdown
+          im.TableNextColumn()
+          im.PushItemWidth(-1)
+          if im.Combo2("##ChannelCombo_" .. k, map.channelId, "R\0G\0B\0\0") then
+            map.channel = (map.channelId[0] == 0) and 'R' or ((map.channelId[0] == 1) and 'G' or 'B')
+          end
+          im.PopItemWidth()
+          
+          -- Column 5: Delete button
+          im.TableNextColumn()
+          local btnHeight = math.ceil(im.GetFontSize()) + 2
+          if editor.uiIconImageButton(editor.icons.delete, im.ImVec2(btnHeight, btnHeight), nil, nil, nil, "deleteTexMap" .. k) then
+            textureMapToRemove = k
+          end
+          im.tooltip("Remove this texture map")
         end
-        if btnWidth < im.CalcTextSize(map.path).x + 2*var.style.ItemSpacing.x then
-          im.tooltip(map.path)
+        
+        im.EndTable()
+        
+        -- Handle texture map removal after iteration
+        if textureMapToRemove then
+          table.remove(terrainImpExp.textureMaps, textureMapToRemove)
         end
-        im.PopStyleColor()
-
-        im.SameLine()
-        im.SetCursorPosX(im.GetCursorPosX() + im.GetContentRegionAvailWidth() - (var.channelComboWidth + var.materialComboWidth + var.style.ItemSpacing.x))
-        im.PushItemWidth(var.materialComboWidth)
-
-        if im.Combo1("##MaterialCombo_" .. map.path, map.materialId, var.paintMaterialNamesArrayPtr) then
-          map.material = var.paintMaterialNamesArray[map.materialId[0] + 1]
-        end
-        im.PopItemWidth()
-        im.SameLine()
-        im.PushItemWidth(var.channelComboWidth)
-        if im.Combo2("##ChannelCombo_" .. map.path, map.channelId, "R\0G\0B\0\0") then
-          map.channel = (map.channelId[0] == 0) and 'R' or ((map.channelId[0] == 1) and 'G' or 'B')
-        end
-        im.PopItemWidth()
       end
-      -- a dedicated Selectable widget where users can drag and drop maps on to add them to the list of texture maps
+      
+      -- Drag and drop area
       im.PushStyleColor2(im.Col_HeaderHovered, im.ImColorByRGB(0, 0, 0, 0).Value)
       im.PushStyleColor2(im.Col_HeaderActive, im.ImColorByRGB(0, 0, 0, 0).Value)
       im.Selectable1("##DragAndDropField", false)
       im.PopStyleColor(2)
       dragDropTarget(nil, "textureMap")
+      
+      -- Add Texture Map button
       im.Separator()
-      if im.Button("+##AddTextureMap", im.ImVec2(var.inputWidgetHeight, var.inputWidgetHeight)) then
+      if im.Button("Add Texture Map##AddTextureMap") then
         editor_fileDialog.openFile(function(data) addTextureMap(data.filepath) end, {{"Any files", "*"},{"Images",{".png", ".dds", ".jpg"}},{"PNG", ".png"}, {"JPG", ".jpg"}, {"DDS", ".dds"}}, false, var.lastPath, true)
       end
-      im.SameLine()
-      if im.Button("-##RemoveTextureMap", im.ImVec2(var.inputWidgetHeight, var.inputWidgetHeight)) then
-        removeTextureMap()
-      end
+      im.tooltip("Add a new texture map")
     end
 
-    -- TODO: apply to TerrainBlock if values have changed
-    if im.CollapsingHeader1("Additional Data", im.TreeNodeFlags_DefaultOpen) then
-      im.TextUnformatted("Apply Transform")
+    if im.CollapsingHeader1("Other Settings") then
+      -- Transform Position
+      im.Checkbox("Apply Transform", terrainImpExp.applyTransform)
+      im.tooltip("Apply position offset when importing terrain")
+      
+      -- Check if there's an existing terrain to get position from
+      local existingTerrain = nil
+      for tbName, tbData in pairs(terrainBlockProxies) do
+        existingTerrain = scenetree.findObjectById(tbData.id)
+        if existingTerrain then break end
+      end
+      
       im.SameLine()
-      im.Checkbox("##ApplyTransform", terrainImpExp.applyTransform)
-
-      im.TextUnformatted("Position")
-      im.SameLine()
+      im.BeginDisabled(not existingTerrain)
+      if im.Button("Get from terrain##GetTransform") then
+        if existingTerrain then
+          local pos = existingTerrain:getPosition()
+          terrainImpExp.transformPos.x[0] = pos.x
+          terrainImpExp.transformPos.y[0] = pos.y
+          terrainImpExp.transformPos.z[0] = pos.z
+          terrainImpExp.applyTransform[0] = true
+        end
+      end
+      im.EndDisabled()
+      if existingTerrain then
+        im.tooltip("Copy position from existing terrain")
+      else
+        im.tooltip("No terrain in level to copy from")
+      end
+      
+      -- Position inputs
       local inputPosWidth = (im.GetContentRegionAvailWidth() - 2 * var.style.ItemInnerSpacing.x) / 3
       im.PushItemWidth(inputPosWidth)
+      im.TextUnformatted("X")
+      im.SameLine()
       if im.InputFloat("##transformPosX", terrainImpExp.transformPos.x) then
         terrainImpExp.applyTransform[0] = true
       end
+      im.SameLine()
+      im.TextUnformatted("Y")
       im.SameLine()
       if im.InputFloat("##transformPosY", terrainImpExp.transformPos.y) then
         terrainImpExp.applyTransform[0] = true
       end
       im.SameLine()
+      im.TextUnformatted("Z")
+      im.SameLine()
       if im.InputFloat("##transformPosZ", terrainImpExp.transformPos.z) then
         terrainImpExp.applyTransform[0] = true
       end
       im.PopItemWidth()
+      
+      im.Spacing()
+      
+      -- Flip Y Axis
+      im.Checkbox("Flip Y Axis", terrainImpExp.flipYAxis)
+      
+      im.Spacing()
+      im.Separator()
+      im.Spacing()
+      
+      -- Meshes subsection
+      if im.TreeNodeEx1("Meshes", im.TreeNodeFlags_DefaultOpen) then
+        im.TextColored(im.ImVec4(0.7, 0.7, 0.7, 1.0), "Import static meshes alongside terrain")
+        im.Spacing()
+        
+        local meshToRemove = nil
+        local btnHeight = math.ceil(im.GetFontSize()) + 2
+        local lineHeight = im.GetTextLineHeightWithSpacing()
+        -- Calculate card height: header + path + pos + rot + scale + checkbox + padding
+        local cardHeight = lineHeight * 6 + var.style.ItemSpacing.y * 2
+        
+        for k, mesh in ipairs(terrainImpExp.meshes) do
+          local meshPath = ffi.string(mesh.path)
+          local meshDisplayName = meshPath ~= "" and (string.match(meshPath, "([^/\\]+)$") or meshPath) or "New Mesh"
+          
+          im.PushID1("mesh" .. k)
+          
+          -- Card with border, using frame background for consistency
+          im.BeginChild1("meshCard" .. k, im.ImVec2(-1, cardHeight), true)
+          
+          -- Header row: mesh name and delete button
+          im.Text(tostring(k) .. ". " .. meshDisplayName)
+          im.SameLine(im.GetContentRegionAvailWidth() - btnHeight)
+          if editor.uiIconImageButton(editor.icons.delete, im.ImVec2(btnHeight, btnHeight), nil, nil, nil, "deleteMesh") then
+            meshToRemove = k
+          end
+          im.tooltip("Remove this mesh")
+          
+          -- Path field with browse button
+          im.TextUnformatted("Path")
+          im.SameLine(60)
+          im.PushItemWidth(im.GetContentRegionAvailWidth() - btnHeight - var.style.ItemSpacing.x)
+          im.InputText("##meshPath", mesh.path)
+          im.PopItemWidth()
+          dragDropTarget(nil, {meshIndex = k})
+          im.SameLine()
+          if im.Button("...##meshBrowse", im.ImVec2(btnHeight, btnHeight)) then
+            local meshIdx = k
+            editor_fileDialog.openFile(function(data)
+              local m = terrainImpExp.meshes[meshIdx]
+              if m then
+                ffi.copy(m.path, data.filepath)
+              end
+            end, {{"Any files", "*"},{"DAE", ".dae"},{"Mesh",{".dae", ".cdae"}}}, false, var.lastPath, true)
+          end
+          im.tooltip("Browse for mesh file")
+          
+          -- Transform fields in a compact layout
+          local labelWidth = 60
+          local inputWidth3 = (im.GetContentRegionAvailWidth() - labelWidth - 2 * var.style.ItemInnerSpacing.x) / 3
+          
+          -- Position
+          im.TextUnformatted("Position")
+          im.SameLine(labelWidth)
+          im.PushItemWidth(inputWidth3)
+          im.InputFloat("##posX", mesh.position.x, 0, 0, "%.2f")
+          im.SameLine(0, var.style.ItemInnerSpacing.x)
+          im.InputFloat("##posY", mesh.position.y, 0, 0, "%.2f")
+          im.SameLine(0, var.style.ItemInnerSpacing.x)
+          im.InputFloat("##posZ", mesh.position.z, 0, 0, "%.2f")
+          im.PopItemWidth()
+          
+          -- Rotation
+          im.TextUnformatted("Rotation")
+          im.SameLine(labelWidth)
+          im.PushItemWidth(inputWidth3)
+          im.InputFloat("##rotX", mesh.rotation.x, 0, 0, "%.1f")
+          im.SameLine(0, var.style.ItemInnerSpacing.x)
+          im.InputFloat("##rotY", mesh.rotation.y, 0, 0, "%.1f")
+          im.SameLine(0, var.style.ItemInnerSpacing.x)
+          im.InputFloat("##rotZ", mesh.rotation.z, 0, 0, "%.1f")
+          im.PopItemWidth()
+          im.tooltip("Rotation in degrees (Pitch, Roll, Yaw)")
+          
+          -- Scale
+          im.TextUnformatted("Scale")
+          im.SameLine(labelWidth)
+          im.PushItemWidth(inputWidth3)
+          im.InputFloat("##scaleX", mesh.scale.x, 0, 0, "%.2f")
+          im.SameLine(0, var.style.ItemInnerSpacing.x)
+          im.InputFloat("##scaleY", mesh.scale.y, 0, 0, "%.2f")
+          im.SameLine(0, var.style.ItemInnerSpacing.x)
+          im.InputFloat("##scaleZ", mesh.scale.z, 0, 0, "%.2f")
+          im.PopItemWidth()
+          
+          -- Relative checkbox
+          im.Checkbox("Relative to terrain", mesh.useRelativePosition)
+          im.tooltip("If enabled, position is offset from terrain origin")
+          
+          im.EndChild()
+          im.PopID()
+        end
+        
+        -- Handle mesh removal after iteration
+        if meshToRemove then
+          table.remove(terrainImpExp.meshes, meshToRemove)
+        end
+        
+        -- Drag and drop area for new meshes
+        im.PushStyleColor2(im.Col_HeaderHovered, im.ImColorByRGB(0, 0, 0, 0).Value)
+        im.PushStyleColor2(im.Col_HeaderActive, im.ImColorByRGB(0, 0, 0, 0).Value)
+        im.Selectable1("Drag mesh here or click Add##MeshDragDropField", false)
+        im.PopStyleColor(2)
+        dragDropTarget(nil, "mesh")
+        
+        -- Add Mesh button
+        if im.Button("Add Mesh##AddMesh") then
+          editor_fileDialog.openFile(function(data) addMesh(data.filepath) end, {{"Any files", "*"},{"DAE", ".dae"},{"Mesh",{".dae", ".cdae"}}}, false, var.lastPath, true)
+        end
+        im.tooltip("Add a new mesh to import")
+        
+        im.TreePop()
+      end
     end
 
     im.Spacing()
-    im.Separator()
-    im.Spacing()
-
-    im.TextUnformatted("Flip Y Axis? (old exporter)")
-    im.SameLine()
-    im.Checkbox("##FlipYAxis", terrainImpExp.flipYAxis)
-
-    im.Separator()
     if im.Button("Import##ImportTerrainAccept", im.ImVec2(0, var.inputWidgetHeight)) then
       terrainImporter_Accept()
     end
@@ -1440,7 +2396,6 @@ local function setupVars()
 end
 
 local function onEditorGui()
-  profilerPushEvent("terrainEditor onEditorGui")
   importTerrainDialog()
   exportTerrainDialog()
   if active == true then
@@ -1450,9 +2405,10 @@ local function onEditorGui()
       brushSoftnessCurveWindow()
     elseif state == stateEnum.painting then
       terrainPainterMaterialWindow()
+    elseif state == stateEnum.terraforming then
+      terraformer.handleTerraformingPolygon()
     end
   end
-  profilerPopEvent("terrainEditor onEditorGui")
 
   --TODO: nicusor: make a generic input action repeater
   if changeBrushSizeAutoRepeatOn then
@@ -1548,7 +2504,10 @@ local function terrainEditorEditModeToolbarBrushButton(brush)
   if brush.disabled and brush.disabled == true then
     im.BeginDisabled()
   end
-  local bgColor = ((state == stateEnum.sculpting and currentAction == brush) or (state == stateEnum.painting and brush == paintBrush)) and im.GetStyleColorVec4(im.Col_ButtonActive) or nil
+  local isActive = (state == stateEnum.sculpting and currentAction == brush)
+    or (state == stateEnum.painting and brush == paintBrush)
+    or (state == stateEnum.terraforming and brush.name == "terraform")
+  local bgColor = isActive and im.GetStyleColorVec4(im.Col_ButtonActive) or nil
   if editor.uiIconImageButton(brush.icon, nil, nil, nil, bgColor) then
     switchAction(brush, true)
   end
@@ -1678,6 +2637,92 @@ local function brushSettingsSlider_painting()
   end
 end
 
+local function brushSettingsSlider_terraforming()
+  im.SameLine()
+
+  -- Domain of Influence.
+  im.TextUnformatted("Domain of Influence (m)")
+  im.SameLine()
+  local doiPref = editor.getPreference("terrainEditor.terraform.terraformDOI")
+  local doiPtr = im.IntPtr(doiPref)
+  if im.SliderInt("###terraformDOI", doiPtr, 1, 500, "%d") then
+    editor.setPreference("terrainEditor.terraform.terraformDOI", doiPtr[0])
+    terraformer.setDOI(doiPtr[0])
+  end
+  im.tooltip("Set the domain of influence of the terraforming, in meters.")
+
+  -- Margin.
+  im.SameLine()
+  im.TextUnformatted("Margin (m)")
+  im.SameLine()
+  local marginPref = editor.getPreference("terrainEditor.terraform.terraformMargin")
+  local marginPtr = im.FloatPtr(marginPref)
+  if im.SliderFloat("###terraformMargin", marginPtr, 0.0, 20.0, "%.3f") then
+    editor.setPreference("terrainEditor.terraform.terraformMargin", marginPtr[0])
+    terraformer.setMargin(marginPtr[0])
+  end
+  im.tooltip("Set the terraforming margin, in meters.")
+
+  -- Falloff.
+  im.SameLine()
+  im.TextUnformatted("Falloff")
+  im.SameLine()
+  local falloffPref = editor.getPreference("terrainEditor.terraform.terraformFalloff")
+  local falloffPtr = im.FloatPtr(falloffPref)
+  if im.SliderFloat("###terraformFalloff", falloffPtr, 1.0, 5.0, "%.2f") then
+    editor.setPreference("terrainEditor.terraform.terraformFalloff", falloffPtr[0])
+    terraformer.setFalloff(falloffPtr[0])
+  end
+  im.tooltip("Set the falloff exponent of the terraforming.")
+
+  -- Roughness (noise).
+  im.SameLine()
+  im.TextUnformatted("Roughness")
+  im.SameLine()
+  local roughnessPref = editor.getPreference("terrainEditor.terraform.terraformRoughness")
+  local roughnessPtr = im.FloatPtr(roughnessPref)
+  if im.SliderFloat("###terraformRoughness", roughnessPtr, 0.0, 1.0, "%.2f") then
+    editor.setPreference("terrainEditor.terraform.terraformRoughness", roughnessPtr[0])
+    terraformer.setRoughness(roughnessPtr[0])
+  end
+  im.tooltip("Set the noise roughness (set to zero for no noise).")
+
+  -- Scale (noise).
+  im.SameLine()
+  im.TextUnformatted("Scale")
+  im.SameLine()
+  local scalePref = editor.getPreference("terrainEditor.terraform.terraformScale")
+  local scalePtr = im.FloatPtr(scalePref)
+  if im.SliderFloat("###terraformScale", scalePtr, 0.0, 1.0, "%.2f") then
+    editor.setPreference("terrainEditor.terraform.terraformScale", scalePtr[0])
+    terraformer.setScale(scalePtr[0])
+  end
+  im.tooltip("Set the noise scale.")
+
+  -- 'Terraform Selection' button.
+  if editor.selection and editor.selection.object and editor.selection.object[1] then
+    if editor.uiIconImageButton(editor.icons.terrainToTwoLines, nil, nil, nil, nil, 'terraformToSelectionBtn') then
+      terraformer.terraformSelection()
+    end
+    im.tooltip('Terraform the terrain to the supported sources in the current selection.')
+  end
+
+  -- 'Clear Terraforming Polygon' button.
+  if editor.uiIconImageButton(editor.icons.trashBin2, nil, nil, nil, nil, 'clearTerraformPolygonBtn') then
+    terraformer.clearPolygon()
+  end
+  im.tooltip('Clear the current terraforming polygon.')
+  im.SameLine()
+
+  -- 'Terraform Polygon' button.
+  if terraformer.isPolygonExist() then
+    if editor.uiIconImageButton(editor.icons.wallpaper, nil, nil, nil, nil, 'terraformToPolygonBtn') then
+      terraformer.terraformPolygon(terraformer.getPolygon())
+    end
+    im.tooltip('Terraform the terrain to the supported sources within the polygon.')
+  end
+end
+
 local function terrainToolsEditModeToolbar()
   local bgColor = editor.isWindowVisible(terrainImportDialogName) and im.GetStyleColorVec4(im.Col_ButtonActive) or nil
   if editor.uiIconImageButton(editor.icons.terrain_import, nil, nil, nil, bgColor, "ImportTerrainButton") then
@@ -1707,12 +2752,16 @@ local function terrainToolsEditModeToolbar()
 
   im.PushItemWidth(brushSettingSliderWidth)
   im.SetCursorPosY(im.GetCursorPosY()+4)
-  brushSettingsSlider_common()
+  if state ~= stateEnum.terraforming then
+    brushSettingsSlider_common()
+  end
 
   if state == stateEnum.sculpting then
     brushSettingsSlider_sculpting()
   elseif state == stateEnum.painting then
     brushSettingsSlider_painting()
+  elseif state == stateEnum.terraforming then
+    brushSettingsSlider_terraforming()
   end
 
   im.PopItemWidth()
@@ -1852,6 +2901,12 @@ local function initialize()
       tooltip = "Substract Mesh",
       description = "Description",
       icon = editor.icons.terrain_mesh_subtract
+    },
+    {
+      name = "terraform",
+      tooltip = "Terraform",
+      description = "Description",
+      icon = editor.icons.twoLinesToTerrain
     }
   }
 
@@ -1900,6 +2955,27 @@ end
 
 local function terrainToolsEditModeUpdate()
   profilerPushEvent("terrainEditor terrainToolsEditModeUpdate")
+
+  -- Check for stale state: if terrainBlockId points to a deleted terrain, clean up
+  if terrainBlockId and not scenetree.findObjectById(terrainBlockId) then
+    terrainBlockId = nil
+    terrainBlockProxies = {}
+    paintMaterialProxies = {}
+    paintMaterialCount = nil
+    selectedPaintMaterialProxy = nil
+    selectedPaintMaterialProxyIndex = nil
+    var.paintMaterialNamesArray = {}
+    var.paintMaterialNamesArrayPtr = nil
+    brushCenter = nil
+    startDragHeight = nil
+    mouseState = mouseStateEnum.released
+    gui3DMouseEvent = Gui3DMouseEvent()
+    materialsInJson = {}
+    profilerPopEvent("terrainEditor terrainToolsEditModeUpdate")
+    return
+  end
+
+  -- Check if any proxy points to a deleted terrain
   for tbName, tbData in pairs(terrainBlockProxies) do
     local tb = scenetree.findObjectById(tbData.id)
     if not tb then updateEditorTerrainBlocks() break end
@@ -1918,7 +2994,7 @@ local function terrainToolsEditModeUpdate()
           brushCenter = hit and hit.pos or nil
         end
 
-        if brushCenter then
+        if brushCenter and state ~= stateEnum.terraforming then
           local terrainBlock = terrainBlockId and scenetree.findObjectById(terrainBlockId)
           if terrainBlock then
             local color = nil
@@ -1927,7 +3003,6 @@ local function terrainToolsEditModeUpdate()
             else
               color = editor.getPreference("gizmos.brush.deleteBrushColor")
             end
-
             editor.drawBrush(
               var.currentBrushType.name,
               brushCenter,
@@ -1966,10 +3041,9 @@ local function terrainToolsEditModeUpdate()
               terrainEditor:on3DMouseUp(gui3DMouseEvent, true)
               mouseState = mouseStateEnum.released
               setTerrainDirty()
-
               editor.history:commitAction(
                 "TerrainEditor",
-                {},
+                {actionTimestamp = os.time()}, -- add a timestamp so we make every action item different from previous, this way the undo system wont ignore/discard it
                 undo,
                 redo,
                 true
@@ -1981,11 +3055,11 @@ local function terrainToolsEditModeUpdate()
 
       -- Terrain Height picker tool active
       else
-        debugDrawer:drawSphere(hit.pos, 0.1, ColorF(1,0,0,1))
+        if hit then debugDrawer:drawSphere(hit.pos, 0.1, ColorF(1,0,0,1)) end
         if im.IsMouseClicked(0) then
           var.brushHeightPicking = false
           local terrainBlock = terrainBlockId and scenetree.findObjectById(terrainBlockId)
-          if terrainBlock then
+          if terrainBlock and hit then
             local height = terrainBlock:getHeight(vec3(hit.pos.x,hit.pos.y,0)) - terrainBlock:getPosition().z
             editor.setPreference("terrainEditor.general.brushHeight", height)
             setBrushHeight()
@@ -2028,6 +3102,7 @@ local function terrainToolsEditModeActivate()
   end
 
   updateMaterialLibrary()
+  updateImportMaterialList()  -- Ensure import materials are also available
 end
 
 local function terrainToolsEditModeDeactivate()
@@ -2064,6 +3139,7 @@ end
 local function onEditorAfterSaveLevel()
   materialsInJson = {}
   updateMaterialLibrary()
+  updateImportMaterialList()
 end
 
 local function onEditorPreferenceValueChanged(path, value)
@@ -2075,6 +3151,11 @@ local function onEditorPreferenceValueChanged(path, value)
   if path == "terrainEditor.general.brushSlopeMaskMin" then setBrushSlopeMaskMin() end
   if path == "terrainEditor.general.brushSlopeMaskMax" then setBrushSlopeMaskMax() end
   if path == "terrainEditor.general.softSelectFilter" then var.softSelectFilter = deepcopy(value) brushSoftnessCurve_Set(var.softSelectFilter) end
+  if path == "terrainEditor.terraform.terraformDOI" then terraformer.setDOI(value) end
+  if path == "terrainEditor.terraform.terraformMargin" then terraformer.setMargin(value) end
+  if path == "terrainEditor.terraform.terraformFalloff" then terraformer.setFalloff(value) end
+  if path == "terrainEditor.terraform.terraformRoughness" then terraformer.setRoughness(value) end
+  if path == "terrainEditor.terraform.terraformScale" then terraformer.setScale(value) end
 
   local function getFirstBrush()
     local found = false
@@ -2096,10 +3177,17 @@ local function onEditorPreferenceValueChanged(path, value)
     if brushName ~= "" then
       if brushName == "paintMaterial" then
         switchAction(paintBrush)
+      elseif brushName == "terraform" then
+        for _, b in ipairs(terrainBrushes) do
+          if b.name == "terraform" then
+            switchAction(b)
+            return
+          end
+        end
       else
         local brush = getBrushByName(brushName)
         if brush then
-          switchAction(getBrushByName(brushName))
+          switchAction(brush)
         else
           getFirstBrush()
         end
@@ -2146,6 +3234,10 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {brush = {"string", "", "", nil, nil, nil, true}},
     {brushType = {"string", "", "", nil, nil, nil, true}},
   })
+  prefsRegistry:registerSubCategory("terrainEditor", "import", nil,
+  {
+    {autoSavePreset = {"bool", false, "Automatically save a preset after importing terrain", "Auto-save Preset"}},
+  })
   prefsRegistry:registerSubCategory("terrainEditor", "terrainMaterialLibrary", nil,
   {
   {keepSizeForAllMaps = {"bool", true, [[
@@ -2153,6 +3245,13 @@ When modifying a size property the same property will be changed for all maps of
 
 Applies to 'texture size', 'macro texture size' and 'detail texture size'.
 ]]}},
+  })
+  prefsRegistry:registerSubCategory("terrainEditor", "terraform", nil, {
+    {terraformDOI = {"int", 100, "Domain of Influence (m)", nil, 1, 500}},
+    {terraformMargin = {"float", 5.0, "Margin (m)", nil, 0.0, 20.0}},
+    {terraformFalloff = {"float", 2.0, "Falloff", nil, 1.0, 5.0}},
+    {terraformRoughness = {"float", 0.4, "Roughness", nil, 0.0, 1.0}},
+    {terraformScale = {"float", 0.5, "Scale", nil, 0.0, 1.0}},
   })
 end
 
@@ -2195,6 +3294,45 @@ local function onEditorObjectAdded(id)
   end
 end
 
+-- Handle terrain deletion - clean up stale state to prevent crashes
+local function onEditorDeleteSelection()
+  if not editor.selection or not editor.selection.object then return end
+
+  local terrainDeleted = false
+  for _, objId in ipairs(editor.selection.object) do
+    local obj = scenetree.findObjectById(objId)
+    if obj and obj:getClassName() == "TerrainBlock" then
+      terrainDeleted = true
+      break
+    end
+  end
+
+  if terrainDeleted then
+    -- Detach terrains before they are deleted
+    for _, objId in ipairs(editor.selection.object) do
+      local obj = scenetree.findObjectById(objId)
+      if obj and obj:getClassName() == "TerrainBlock" then
+        terrainEditor:detachTerrain(obj)
+      end
+    end
+
+    -- Reset state
+    terrainBlockId = nil
+    terrainBlockProxies = {}
+    paintMaterialProxies = {}
+    paintMaterialCount = nil
+    selectedPaintMaterialProxy = nil
+    selectedPaintMaterialProxyIndex = nil
+    var.paintMaterialNamesArray = {}
+    var.paintMaterialNamesArrayPtr = nil
+    brushCenter = nil
+    startDragHeight = nil
+    mouseState = mouseStateEnum.released
+    gui3DMouseEvent = Gui3DMouseEvent()
+    materialsInJson = {}
+  end
+end
+
 -- public interface
 M.onEditorInitialized = onEditorInitialized
 M.onEditorDeactivated = onEditorDeactivated
@@ -2203,10 +3341,12 @@ M.onEditorBeforeSaveLevel = onEditorBeforeSaveLevel
 M.onEditorRegisterPreferences = onEditorRegisterPreferences
 M.onEditorPreferenceValueChanged = onEditorPreferenceValueChanged
 M.onEditorObjectAdded = onEditorObjectAdded
+M.onEditorDeleteSelection = onEditorDeleteSelection
 M.onClientEndMission = onClientEndMission
 
 M.changeBrushSize = changeBrushSize
 M.updateTerrainBlockProxies = updateTerrainBlockProxies
+M.updateEditorTerrainBlocks = updateEditorTerrainBlocks
 M.updateMaterialLibrary = updateMaterialLibrary
 M.getUniqueMtlName = getUniqueMtlName
 M.createMaterialProxy = createMaterialProxy

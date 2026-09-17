@@ -35,13 +35,14 @@ function C:workOnce()
   local skill = clamp(self.pinIn.racerSkill.value or 1, 0, 1)
 
   for id, state in pairs(self.pinIn.raceData.value.states) do
-    local veh = be:getObjectByID(id)
+    local veh = getObjectByID(id)
     if veh and not veh:isPlayerControlled() then
       local aggression = self.pinIn.aggression.value or 0.9
       aggression = clamp(aggression + (self:getRandomNumber(scale) * 0.05), 0.25, 2)
       veh:queueLuaCommand('ai.setAggression('..aggression..')')
       state.baseAggression = aggression -- saves the aggression value to use later
 
+      -- TODO: test these values; the underlying AI code has changed since this was implemented
       local baseEdgeDist = 1.5 - skill * 1.5 -- distance from margin of road, in metres
       local baseTurnForce = 4 * math.pow(skill, 1.5) -- race line curvature
       local baseAwarenessForce = 0.25 * math.pow(skill, 1.5) -- racer avoidance strength
@@ -53,6 +54,7 @@ function C:workOnce()
       }
 
       veh:queueLuaCommand('ai.setParameters('..serialize(aiParams)..')')
+      veh:queueLuaCommand('ai.setRacing(true)') -- new mode, improves racing AI
 
       if self.pinIn.avoidCollisions.value ~= nil then
         local mode = self.pinIn.avoidCollisions.value and 'on' or 'off'

@@ -7,10 +7,11 @@ local im  = ui_imgui
 local C = {}
 
 C.name = 'Generate Vehicle Group'
-C.description = 'Generates vehicle group data, to be used with the Spawn Vehicle Group node.'
+C.description = 'Generates vehicle group data, to be used with the Spawn Vehicle Group node. Available modes: "Parameters" or "Custom".'
 C.color = ui_flowgraph_editor.nodeColors.traffic
 C.icon = ui_flowgraph_editor.nodeIcons.traffic
 C.category = 'provider'
+C.dependencies = {'gameplay_traffic_trafficUtils'}
 C.tags = {'spawn', 'vehicle', 'group', 'traffic', 'multispawn'}
 
 C.pinSchema = {
@@ -18,58 +19,79 @@ C.pinSchema = {
 }
 
 local modes = {settings = 'Parameters', custom = 'Custom'}
+local paramsModesList = {'standard', 'simpleTraffic', 'simpleParked', 'fromSettings', 'fromWorld'}
 
 function C:init()
   self.mode = 'settings'
   self.count = 0
-  self:resetData()
+  self:resetParams()
 end
 
-function C:resetData()
-  self.params = {auto = true, allMods = false, allConfigs = false, simpleVehs = false}
+function C:resetParams()
+  self.params = {mode = 'standard', useCars = true, useTrucks = false, useLargeTrucks = false, worldPlayer = false, worldTraffic = false}
 end
 
 function C:drawCustomProperties()
   -- mode select
   im.PushItemWidth(im.GetContentRegionAvailWidth())
   if im.BeginCombo('Mode', modes[self.mode]) then
-    if im.Selectable1('Parameters', self.mode == 'settings') then
+    if im.Selectable1('Parameters##vehicleGroupNode', self.mode == 'settings') then
       self.mode = 'settings'
       self:updatePins(self.count, 0)
-      self:resetData()
+      self:resetParams()
     end
-    if im.Selectable1('Custom', self.mode == 'custom') then
+    if im.Selectable1('Custom##vehicleGroupNode', self.mode == 'custom') then
       self.mode = 'custom'
       self:updatePins(self.count, 1)
-      self:resetData()
+      self:resetParams()
     end
     im.EndCombo()
   end
   im.PopItemWidth()
 
   if self.mode == 'settings' then
-    local var = im.BoolPtr(self.params.auto)
-    if im.Checkbox('Use Game Options Only##groupGenerator', var) then
-      self.params.auto = var[0]
+    local val = im.IntPtr(arrayFindValueIndex(paramsModesList, self.params.mode) or 1)
+    if im.RadioButton2('Standard Vehicles##vehicleGroupNode', val, im.Int(1)) then
+      self.params.mode = paramsModesList[1]
+    end
+    if im.RadioButton2('Simple Traffic Cars##vehicleGroupNode', val, im.Int(2)) then
+      self.params.mode = paramsModesList[2]
+    end
+    if im.RadioButton2('Simple Parked Cars##vehicleGroupNode', val, im.Int(3)) then
+      self.params.mode = paramsModesList[3]
+    end
+    if im.RadioButton2('Copy from Main Traffic Settings##vehicleGroupNode', val, im.Int(4)) then
+      self.params.mode = paramsModesList[4]
+    end
+    if im.RadioButton2('Copy from Spawned Vehicles##vehicleGroupNode', val, im.Int(5)) then
+      self.params.mode = paramsModesList[5]
     end
 
-    if self.params.auto then
-      im.BeginDisabled()
-    end
-    var = im.BoolPtr(self.params.allMods)
-    if im.Checkbox('Allow Mods##groupGenerator', var) then
-      self.params.allMods = var[0]
-    end
-    var = im.BoolPtr(self.params.allConfigs)
-    if im.Checkbox('Use All Configs##groupGenerator', var) then
-      self.params.allConfigs = var[0]
-    end
-    var = im.BoolPtr(self.params.simpleVehs)
-    if im.Checkbox('Use Simple Vehicles##groupGenerator', var) then
-      self.params.simpleVehs = var[0]
-    end
-    if self.params.auto then
-      im.EndDisabled()
+    im.Separator()
+
+    if self.params.mode == 'standard' then -- additional filters for standard mode
+      local var = im.BoolPtr(self.params.useCars)
+      if im.Checkbox('Cars##vehicleGroupNode', var) then
+        self.params.useCars = var[0]
+      end
+      var = im.BoolPtr(self.params.useTrucks)
+      if im.Checkbox('Small Trucks##vehicleGroupNode', var) then
+        self.params.useTrucks = var[0]
+      end
+      var = im.BoolPtr(self.params.useLargeTrucks)
+      if im.Checkbox('Large Trucks & Buses##vehicleGroupNode', var) then
+        self.params.useLargeTrucks = var[0]
+      end
+    elseif self.params.mode == 'fromWorld' then
+      local var = im.BoolPtr(self.params.worldPlayer)
+      if im.Checkbox('Include Player Vehicle##vehicleGroupNode', var) then
+        self.params.worldPlayer = var[0]
+      end
+      var = im.BoolPtr(self.params.worldTraffic)
+      if im.Checkbox('Include Traffic##vehicleGroupNode', var) then
+        self.params.worldTraffic = var[0]
+      end
+      im.TextUnformatted("Note: This will use the default vehicle as a fallback.")
     end
   else
     -- select amount of pins
@@ -128,10 +150,42 @@ function C:generateGroup() -- builds vehicle group from settings
   self.group.name = 'Custom Group'
   self.group.type = 'generator'
   self.group.generator = deepcopy(self.params)
-  if self.group.generator.auto then
-    self.group.data = gameplay_traffic.createTrafficGroup(20)
+  self.group.generator.allMods = true -- assuming all mods are allowed
+  self.group.generator.allConfigs = true
+  self.group.generator.minPop = 10
+
+  if self.params.mode == 'fromSettings' then
+    self.group.data = gameplay_traffic_trafficUtils.createTrafficGroup(20)
+  elseif self.params.mode == 'fromWorld' then
+    self.group.data = core_multiSpawn.spawnedVehsToGroup(not self.params.worldPlayer, not self.params.worldTraffic)
+    if not self.group.data[1] then
+      self.group.data = core_multiSpawn.spawnedVehsToGroup(false, not self.params.worldTraffic) -- force fallback to player vehicle
+    end
+    for _, v in ipairs(self.group.data) do -- clear paint data
+      v.paint, v.paint2, v.paint3 = nil, nil, nil
+      v.paintName, v.paintName2, v.paintName3 = nil, nil, nil
+    end
   else
-    self.group.data = gameplay_traffic.createTrafficGroup(20, self.group.generator.allMods, self.group.generator.allConfigs, self.group.generator.simpleVehs)
+    self.group.generator = tableMerge(self.group.generator, gameplay_traffic_trafficUtils.getBaseGroupParams())
+    local filters = self.group.generator.filters
+    if self.params.mode == 'simpleTraffic' then
+      filters.Type = {proptraffic = 1}
+    elseif self.params.mode == 'simpleParked' then
+      filters.Type = {propparked = 1}
+    elseif self.params.mode == 'standard' then
+      filters.Type = {
+        car = self.params.useCars and 1 or 0,
+        truck = (self.params.useTrucks or self.params.useLargeTrucks) and 1 or 0,
+        other = 0
+      }
+      if self.params.useLargeTrucks then
+        filters["Derby Class"] = {["heavy truck"] = 1, other = 0} -- e.g. citybus, us_semi
+      else
+        filters["Derby Class"] = {["heavy truck"] = 0, other = 1}
+      end
+    end
+
+    self.group.data = core_multiSpawn.createGroup(20, self.group.generator)
   end
 end
 
@@ -145,9 +199,10 @@ function C:work()
       if not self.pinIn['model_'..self.count].value then return end -- delay until value is ready, just in case
       self:buildGroup()
     end
+
     if not self.group.data or not self.group.data[1] then -- group data needs to exist for output
-      log('W', 'trafficCustomGroup', 'Invalid vehicle group data, now creating default data')
-      self.group.data = core_multiSpawn.createGroup(20)
+      log('I', 'trafficCustomGroup', 'Empty vehicle group data, now creating default data...')
+      self.group.data = {{model = 'pickup'}}
     end
     self.pinOut.group.value = self.group
     self.done = true
@@ -172,8 +227,9 @@ function C:_onDeserialized(data)
   end
   if self.mode == 'settings' then
     self.params = data.params
-    if not self.params then
-      self:resetData()
+    if not self.params or self.params.auto then
+      log('W', 'trafficCustomGroup', 'Outdated settings found, resetting parameters to default')
+      self:resetParams()
     end
   else
     self:updatePins(self.count, data.count)

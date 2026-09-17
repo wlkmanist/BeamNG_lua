@@ -74,7 +74,7 @@ local function assignCIDs(vehicle)
     end
   end
   --log('D', "jbeam.assignCIDs", "- Vehicle numbering done.")
-  profilerPopEvent() -- jbeam/optimization.assignCIDs
+  profilerPopEvent('jbeam/optimization.assignCIDs')
   return true
 end
 
@@ -94,7 +94,7 @@ local function optimize(vehicle)
 
   --log('D', "jbeam.optimize","- Optimization done.")
 
-  profilerPopEvent() -- jbeam/optimization.optimize
+  profilerPopEvent('jbeam/optimization.optimize')
   return true
 end
 
@@ -231,7 +231,7 @@ local function process(vehicle, debugEnabled)
 
   vehicle.validTables = nil -- not needed anymore
 
-  profilerPopEvent() -- jbeam/optimization.process
+  profilerPopEvent('jbeam/optimization.process')
   return true
 end
 

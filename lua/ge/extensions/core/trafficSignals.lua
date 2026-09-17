@@ -17,17 +17,25 @@ local active = false
 local viewDistSq = 90000
 local vecUp = vec3(0, 0, 1)
 
-local queue = require('graphpath').newMinheap()
+local queue = require('graphpath').newMinheap() -- optimally processes signal updates
 local signalUpdates = {}
 
 local debugColors = {
-  black = ColorF(0, 0, 0, 1),
-  red = ColorF(1, 0, 0, 1),
-  white = ColorF(1, 1, 1, 0.4),
-  green = ColorF(0.25, 1, 0.25, 0.4)
+  main = ColorF(1, 1, 1, 0.4),
+  selected = ColorF(1, 1, 0.25, 0.4),
+  guide = ColorF(0.25, 1, 0.25, 0.4),
+  error = ColorF(1, 0.25, 0.25, 0.4),
+  textMain = ColorF(0, 0, 0, 1),
+  textError = ColorF(1, 0, 0, 1),
+  textLabel = ColorF(1, 1, 1, 1),
+  textBox1 = ColorI(0, 0, 0, 128),
+  textBox2 = ColorI(0, 0, 0, 255)
 }
-local debugPos = vec3()
 
+local debugPos, debugTarget, tempVec = vec3(), vec3(), vec3()
+local _searchCache
+
+M.useDtReal = false
 M.debugLevel = 0
 
 local _uid = 0
@@ -55,18 +63,19 @@ local function setupSignalObjects() -- sets and caches the table of TSStatics th
   end
 end
 
-local function resetControllerDefinitions() -- resets vital controller definitions back to default
+local function resetControllerDefinitions() -- resets main controller definitions back to default
   controllerDefinitions = jsonReadFile('settings/trafficSignals.json')
-  if not controllerDefinitions then
+  if not controllerDefinitions or not controllerDefinitions.states or not controllerDefinitions.types then
     controllerDefinitions = {states = {}, types = {}}
     log('E', logTag, 'Failed to load default signal controller definitions!') -- this should never happen
   end
 
-  controllerDefinitions.signalActions = { -- signal actions enumeration (send index num to vLua) (incomplete)
-    alert = 1,
-    stop = 2,
-    briefStop = 3,
-    slow = 4
+  controllerDefinitions.signalActions = { -- signal actions enumeration (send index num to vLua)
+    alert = 1, -- e.g. yellow light
+    stop = 2, -- e.g. red light
+    briefStop = 3, -- e.g. stop sign
+    yield = 4, -- e.g. yield sign
+    slow = 5 -- e.g. construction zone
   }
   controllerDefinitions.signalColors = { -- mimic colors based on real world, used for debug draws (not actual signal objects, which use their own palettes)
     red = ColorF(1, 0.2, 0, 1),
@@ -89,16 +98,18 @@ local SignalInstance = {}
 SignalInstance.__index = SignalInstance
 
 -- Signal Controller
--- Contains signal type and state data
+-- Contains signal type and state data (types include traffic lights, stop signs, etc.)
 -- This can be used within multiple signal sequences
 local SignalController = {}
 SignalController.__index = SignalController
 
 -- Signal Sequence
--- Makes an array of controllers to run in a sequence; each object manages its own states
--- This can be applied to multiple signal instances
+-- Assigns controllers to phases, which run in a sequence and can simulate an intersection
+-- This can be applied to multiple signal instances (for example, four signal instances at an intersection share the same sequence)
 local SignalSequence = {}
 SignalSequence.__index = SignalSequence
+
+-- Note: Controllers and sequences are reusable; signal instances can share the same controller or sequence
 
 function SignalInstance:new(data)
   local o = {}
@@ -109,21 +120,23 @@ function SignalInstance:new(data)
   o.name = data.name or 'signal'
   o.pos = data.pos or vec3()
   o.dir = data.dir or vec3()
-  o.radius = data.radius or 8 -- usually unused
-  o.group = data.group -- optional intersection group
+  o.group = data.group -- optional group (e.g. intersection)
   o.controllerId = data.controllerId or 0 -- controller is required
   o.sequenceId = data.sequenceId or 0 -- sequence is optional, usually used for dynamic signals (traffic lights)
-  o.useCurrentLane = data.useCurrentLane -- unused at the moment
+  o.useCurrentLane = data.useCurrentLane -- unused at the moment (lane data is unsupported)
   o.startDisabled = data.startDisabled and true or false -- if disabled, signal will not run when system gets activated
 
-  if o.pos:squaredLength() == 0 and core_camera then -- if pos is (0, 0, 0), try to set it to camera position
-    o.pos = vec3(core_camera.getPosition())
+  if not data.pos then -- if no position was given, use the camera position instead
+    o.pos:set(core_camera.getPosition())
+    o.pos.z = be:getSurfaceHeightBelow(o.pos)
   end
 
-  if o.dir:squaredLength() == 0 then -- if dir is (0, 0, 0), try to automatically calculate it based on the closest road
+  if not data.dir then -- if no direction was given, use the road direction instead
     o.road = o:getBestRoad()
     if o.road then
-      o.dir = vec3(o.road.dir)
+      o.dir:set(o.road.dir)
+    else
+      o.dir:set(core_camera.getForward())
     end
   end
 
@@ -147,6 +160,9 @@ end
 
 function SignalInstance:setStrictState(stateIdx) -- manually sets the signal state from the given controller index (overrides auto state)
   -- recommended to use this after disabling the sequence timer; otherwise, the timer will interfere
+  -- alternatively, use mySignal:getSequence():setStrictState(ctrlName, stateIdx)
+  -- or mySignal:getSequence():setPhase(phaseIndex)
+  -- or mySignal:getSequence():setStep(stepIndex)
   local ctrl = self:getController()
   if ctrl then
     self.priorityStateIndex = stateIdx
@@ -306,55 +322,38 @@ function SignalInstance:getBestRoad(pos, dir) -- gets data from the best road ne
 end
 
 function SignalInstance:getVehPlacement(vehId) -- returns vehicle placement data in relation to the signal
-  local veh = be:getObjectByID(vehId)
-  if not veh then return end
+  if not map.objects[vehId] then return end
 
-  local valid = false
-  local vehPos, vehDir = veh:getPosition(), veh:getDirectionVector()
-  -- direction vector check will fail if the vehicle is driving in reverse
-  local dist = vehPos:distance(self.pos)
-  local vehDot = vehDir:dot(self.dir)
-  if dist <= math.max(5, self.radius) and vehDot > 0.707 then -- should also check for current road
-    valid = true
-  end
-  local relDist = vehPos:xnormOnLine(self.pos, self.pos + self.dir) -- negative while before signal point
+  tempVec:setAdd2(self.pos, self.dir)
+  local dist = self.pos:distance(map.objects[vehId].pos)
+  local vehDot = self.dir:dot(map.objects[vehId].dirVec)
+  local relDist = map.objects[vehId].pos:xnormOnLine(self.pos, tempVec) -- negative while before signal point
 
-  return {valid = valid, dot = vehDot, dist = dist, relDist = relDist}
+  return {dot = vehDot, dist = dist, relDist = relDist}
 end
 
-function SignalInstance:isVehAfterSignal(vehId) -- returns true if the vehicle has passed the signal point in a valid way
+function SignalInstance:isVehAfterSignal(vehId, maxDist, minDot) -- returns true if the vehicle has passed the signal point in a valid way
   local data = self:getVehPlacement(vehId)
   if not data then return false end
 
-  local valid = false
-  if data.valid and data.relDist >= 0 then
-    valid = true
-  end
-  return valid, data.relDist
+  maxDist = maxDist or 20
+  minDot = minDot or 0.707
+
+  local valid = (data.dist <= maxDist and data.dot >= minDot and data.relDist >= 0) -- true if all requirements are met
+  return valid, data
 end
 
-function SignalInstance:calcTargetPos() -- calculates the position at the end of the signal vector (and also the navgraph node)
-  if not self.road then
-    self.road = self:getBestRoad()
-    if not self.road then return end
-  end
-
-  self.targetPos = self.targetPos or (self.pos + self.dir * self.radius)
-  local road = self:getBestRoad(self.targetPos)
-  self.road.n3 = road and road.n2 -- n3 = the target node at the end point
-end
-
-function SignalInstance:calcIntersectionPos() -- calculates the intersection midpoint for the signal
+function SignalInstance:calcIntersectionPos() -- calculates the intersection midpoint for the signal (signal system must be active)
   -- this only resolves if the signal system is active, so that other signal instances can be queried
   local vectors = {}
   local count = 0
-  local refPos = self.pos + self.dir * math.max(3, self.radius)
+  local refPos = self.pos + self.dir * 5 -- this is rough; the radius should reach to somewhere near the intersection center
   for _, instance in ipairs(instances) do
     -- intersection requirements here
     if self.sequenceId == instance.sequenceId then
-      if self.pos:squaredDistance(instance.pos) <= 1600 then
-        if instance.dir:dot(refPos - instance.pos) > 0 then
-          vectors[instance.name] = instance.pos + instance.dir * instance.radius
+      if instance.pos:squaredDistance(refPos) <= 1600 then -- within 40 m of the reference position (safe enough?)
+        if instance.dir:dot(refPos - instance.pos) > 0 then -- facing the same direction relative to the reference position
+          vectors[instance.name] = instance.pos
           count = count + 1
         end
       end
@@ -374,17 +373,89 @@ function SignalInstance:calcIntersectionPos() -- calculates the intersection mid
       if mapNodes[road.n1].pos:squaredDistance(self.targetPos) > mapNodes[road.n2].pos:squaredDistance(self.targetPos) then
         road.n1, road.n2 = road.n2, road.n1
       end
-      if self.road then
-        self.road.n3 = road.n1 -- n3 = the target node at the intersection point
-      end
     end
 
     for k, _ in pairs(vectors) do -- sets the same intersection data for all matching instances
       instancesByName[k].targetPos = self.targetPos
       instancesByName[k].intersectionId = self.id -- uses the current instance id as the intersection id
-      if instancesByName[k].road and self.road and self.road.n3 then
-        instancesByName[k].road.n3 = self.road.n3
+    end
+  end
+end
+
+function SignalInstance:drawDebug(isEditMode, isSelected, showText, capColor, cylinderScl, arrowScl) -- debug draws shapes for this instance
+  capColor = capColor or debugColors.error
+  cylinderScl = cylinderScl or 5
+  arrowScl = arrowScl or 2
+
+  debugPos:set(self.pos)
+  debugPos.z = debugPos.z + cylinderScl
+  if cylinderScl > 0 then
+    debugDrawer:drawCylinder(self.pos, debugPos, 0.06, isSelected and debugColors.selected or debugColors.main)
+  end
+
+  if arrowScl > 0 then
+    debugTarget:setScaled2(self.dir, arrowScl)
+    debugTarget:setAdd2(self.pos, debugTarget)
+    debugDrawer:drawSquarePrism(self.pos, debugTarget, Point2F(0.5, arrowScl * 0.3), Point2F(0.5, 0), debugColors.guide)
+  end
+
+  if isEditMode then
+    local str
+    if not isSelected then
+      str = self.name
+    else
+      local ctrl = self:getController() or {}
+      local seq = self:getSequence() or {}
+
+      str = string.format('%s / %s / %s', self.name, ctrl.name or "(Null controller)", seq.name or "(Null Sequence)")
+    end
+
+    if showText then
+      debugDrawer:drawTextAdvanced(self.pos, str, debugColors.textLabel, true, false, isSelected and debugColors.textBox2 or debugColors.textBox1)
+    end
+
+    debugDrawer:drawSphere(debugPos, 0.3, capColor)
+
+    if isSelected then
+      debugDrawer:drawSphere(self.pos, 0.6, debugColors.main)
+
+      local signalObjects = self.linkedObjects
+      if not signalObjects or not signalObjects[1] then
+        signalObjects = self.tempSignalObjects or {} -- tempSignalObjects property may exist while in the editor
       end
+
+      for _, oid in ipairs(signalObjects) do
+        local obj = scenetree.findObjectById(oid)
+        if obj then
+          debugPos:set(obj:getWorldBox():getCenter())
+          debugPos.z = debugPos.z + obj:getWorldBox():getExtents().z * 0.5 + 0.25
+          debugTarget:set(debugPos)
+          debugTarget.z = debugTarget.z + 1
+          debugDrawer:drawSquarePrism(debugPos, debugTarget, Point2F(0, 0), Point2F(0.5, 0.5), debugColors.selected)
+        end
+      end
+    end
+  else
+    local stateName, stateData = self:getState()
+
+    local lightsTbl = stateData.lights or {}
+    debugPos.z = debugPos.z + #lightsTbl * 0.5
+
+    if showText then
+      if self._invalid then
+        debugDrawer:drawText(self.pos, string.format('%s (ERROR)', self.name), debugColors.textError)
+      else
+        debugDrawer:drawText(self.pos, self.name, debugColors.textMain)
+      end
+    end
+
+    for _, light in ipairs(lightsTbl) do
+      debugDrawer:drawSphere(debugPos, 0.25, controllerDefinitions.signalColors[light] or controllerDefinitions.signalColors.white)
+      debugPos.z = debugPos.z - 0.5
+    end
+
+    if showText then
+      debugDrawer:drawText(debugPos, string.format('state: %s', stateName or 'none'), debugColors.textMain)
     end
   end
 end
@@ -397,18 +468,53 @@ function SignalInstance:getSequence()
   return elementsById[self.sequenceId]
 end
 
-function SignalInstance:getState() -- returns the state name and the state data of the signal
+function SignalInstance:getStateAfterTime(seconds, isAbsolute) -- returns the state name and data of the signal after the given time (signal system must be active)
+  -- isAbsolute uses the start of the sequence, ignoring the current time
   local controller = self:getController()
   local sequence = self:getSequence()
   local state = 'none'
   local stateData = controllerDefinitions.states.none
+  seconds = seconds or 0 -- should negative time be supported?
 
   if controller and self.active then
     local stateIdx = 1
     if self.priorityStateIndex then -- priority state index overrides sequence
       stateIdx = self.priorityStateIndex
-    elseif sequence then -- sequence is optional, otherwise the default state will be used
-      stateIdx = sequence.linkedControllers[controller.name] and sequence.linkedControllers[controller.name].stateIdx or 1
+    elseif sequence and sequence.timelineTimes[1] then -- sequence is optional, otherwise the default state will be used
+      local step = sequence.currStep
+      local duration = sequence.stateTime - timer -- delta time until next step
+      if isAbsolute then
+        duration = sequence.timelineTimes[1] - sequence.startTime -- delta time from the start of the sequence
+      end
+
+      local controllerStates = seconds <= duration and sequence.controllerStates or deepcopy(sequence.controllerStates) -- deepcopy if changes are expected
+
+      while seconds > duration do -- loop until the given time is less than the duration
+        seconds = seconds - duration
+
+        step = step + 1
+        if not sequence.timelineTimes[step] then
+          step = 1
+        end
+
+        local t1 = sequence.timelineTimes[step]
+        local t2 = sequence.timelineTimes[step + 1] or sequence.totalDuration
+        duration = t2 - t1
+
+        local stepData = sequence.timeline[sequence.timelineTimes[step]] or {}
+
+        for _, inner in ipairs(stepData) do -- inner table: {controllerName, phaseIndex, stateIndex}
+          local seqCtrl = controllerStates[inner[1]]
+          if seqCtrl then
+            seqCtrl.stateIdx = inner[3] or 1
+          end
+        end
+      end
+
+      local seqCtrl = controllerStates[controller.name]
+      if seqCtrl then
+        stateIdx = seqCtrl.stateIdx
+      end
     end
     if controller.states[stateIdx] then
       state = controller.states[stateIdx].state
@@ -417,6 +523,10 @@ function SignalInstance:getState() -- returns the state name and the state data 
   end
 
   return state, stateData
+end
+
+function SignalInstance:getState() -- returns the state name and data of the signal (signal system must be active)
+  return self:getStateAfterTime()
 end
 
 function SignalInstance:refresh() -- updates running controllers and sequences linked to this instance
@@ -453,9 +563,9 @@ function SignalInstance:setActive(val) -- sets the active state of the signal (b
       else
         local sequence = self:getSequence()
         local controller = self:getController()
-        if sequence.linkedControllers and sequence.linkedControllers[controller.name] then
-          local lc = sequence.linkedControllers[controller.name]
-          signalUpdates[self.name] = lc.controller.states[lc.stateIdx].state
+        if sequence.controllerStates and sequence.controllerStates[controller.name] then
+          local state = sequence.controllerStates[controller.name]
+          signalUpdates[self.name] = state.controller.states[state.stateIdx].state
         else
           valid = false
         end
@@ -468,10 +578,7 @@ function SignalInstance:setActive(val) -- sets the active state of the signal (b
       end
 
       if not self.intersectionId then
-        self:calcIntersectionPos() -- also tries to calculate target pos
-      end
-      if not self.targetPos then
-        self:calcTargetPos()
+        self:calcIntersectionPos()
       end
 
       local stateName, stateData = self:getState()
@@ -494,14 +601,14 @@ function SignalInstance:setAuxiliaryData() -- sets and validates additional data
   self.road = self:getBestRoad()
   if not self.road then
     if not self._invalid then
-      log('E', logTag, 'Map node could not be set for signal instance: '..self.name)
+      log('E', logTag, string.format('Map node could not be set for signal instance: %s', self.name))
     end
     valid = false
   end
 
   if not self:getController() then
     if not self._invalid then
-      log('E', logTag, 'Controller is missing from signal instance: '..self.name)
+      log('E', logTag, string.format('Controller is missing from signal instance: %s', self.name))
     end
     valid = false
   end
@@ -549,7 +656,6 @@ function SignalInstance:onSerialize()
     name = self.name,
     pos = self.pos:toTable(),
     dir = self.dir:toTable(),
-    radius = self.radius,
     group = self.group,
     controllerId = self.controllerId,
     sequenceId = self.sequenceId,
@@ -580,6 +686,7 @@ function SignalController:new(data)
   o.type = data.type or 'none'
   o.isSimple = data.isSimple and true or false
   o.defaultIndex = data.defaultIndex
+  o.totalDuration = 0
   o.states = data.states or {}
 
   return o
@@ -600,12 +707,12 @@ function SignalController:applyDefinition(key) -- copies and sets the controller
         if stateData then
           table.insert(self.states, {state = state, duration = stateData.duration})
         else
-          log('E', logTag, 'Controller definition state not found: '..state)
+          log('E', logTag, string.format('Controller definition state not found: %s', state))
         end
       end
     end
   else
-    log('E', logTag, 'Controller definition type not found: '..key)
+    log('E', logTag, string.format('Controller definition type not found: %s', key))
   end
 end
 
@@ -613,16 +720,33 @@ function SignalController:getStateData(state) -- returns the states table
   return controllerDefinitions.states[state]
 end
 
+function SignalController:calcDuration() -- calculates the total duration of all states
+  self.totalDuration = 0
+
+  if not self.isSimple and self.states[1] then -- checks if state durations are enabled
+    for _, state in ipairs(self.states) do
+      if not state.duration or state.duration < 0 then
+        self.totalDuration = math.huge
+        return self.totalDuration
+      else
+        self.totalDuration = self.totalDuration + state.duration
+      end
+    end
+  end
+
+  return self.totalDuration
+end
+
 function SignalController:autoSetTimings(speedMetresPerSecond, intersectionLength, isPermissive) -- automatically calculate and set basic timings of the signals
   -- currently, these timing values assume the "permissive yellow" rule
   -- http://onlinepubs.trb.org/Onlinepubs/trr/1985/1027/1027-005.pdf
 
-  for _, state in ipairs(self.data.states) do
-    if state.type == 'greenTrafficLight' or state.type == 'greenFlashingTrafficLight' then
-      state.duration = clamp(speedMetresPerSecond * 0.7 + intersectionLength * 0.6, 10, 40) -- approximate values based on speed and intersection size
-    elseif state.name == 'yellowTrafficLight' then
+  for _, state in ipairs(self.states) do
+    if state.state == 'greenTrafficLight' or state.state == 'greenFlashingTrafficLight' then
+      state.duration = clamp(speedMetresPerSecond * 0.7 + intersectionLength * 0.6, 10, 40) -- uses road speed limit and intersection size
+    elseif state.state == 'yellowTrafficLight' then
       state.duration = clamp(1 + (speedMetresPerSecond - 4.167) / 3.27, 3, 7) -- extended kinematic equation (3.27 = 9.81 * 0.333)
-    elseif state.name == 'redTrafficLight' or state.type == 'redYellowTrafficLight' then
+    elseif state.state == 'redTrafficLight' or state.state == 'redYellowTrafficLight' then
       state.duration = 1
     end
   end
@@ -650,6 +774,12 @@ function SignalController:exclude() -- removes the signal controller from the ma
 end
 
 function SignalController:onSerialize()
+  for _, state in pairs(self.states) do
+    if state.duration and state.duration < 0 then
+      state.duration = -1
+    end
+  end
+
   local data = {
     id = self.id,
     name = self.name,
@@ -678,8 +808,11 @@ function SignalSequence:new(data)
   o.id = data.id or getNextId()
   o.name = data.name or 'sequence'
   o.startTime = data.startTime or 0 -- can be negative
+  o.totalDuration = 0
   o.phases = data.phases or {}
-  o.customSequence = data.customSequence
+  o.timeline = {} -- dict with keys as times and values as controller instructions
+  o.timelineTimes = {} -- array of sorted times from timeline
+  o.controllerStates = {} -- current controller states
   o.startDisabled = data.startDisabled and true or false
   o.ignoreTimer = data.ignoreTimer and true or false
 
@@ -688,7 +821,8 @@ end
 
 function SignalSequence:createPhase(phase, idx) -- creates a new phase
   phase = phase or {}
-  phase.controllerData = phase.controllerData or {}
+  phase.controllerIds = phase.controllerIds or {}
+  phase.totalDuration = 0
   if idx then
     table.insert(self.phases, idx, phase)
   else
@@ -703,40 +837,83 @@ function SignalSequence:deletePhase(idx) -- removes a phase
   end
 end
 
+function SignalSequence:calcDuration(controllersRef) -- calculates the duration of the sequence; controllersRef is optional (editor uses it)
+  self.totalDuration = 0
+
+  for _, phase in ipairs(self.phases) do
+    phase.totalDuration = 0
+
+    if phase.controllerData then -- backwards compatibility
+      phase.controllerIds = {}
+      for _, cd in ipairs(phase.controllerData) do
+        table.insert(phase.controllerIds, cd.id)
+      end
+    end
+    phase.controllerData = nil
+
+    for _, cid in ipairs(phase.controllerIds) do
+      local ctrl = controllersRef and controllersRef[cid] or elementsById[cid] -- use controllersRef if provided, otherwise use the existing elementsById
+      if ctrl then
+        ctrl.totalDuration = ctrl.totalDuration or 0
+        if ctrl.totalDuration == 0 then
+          ctrl:calcDuration()
+        end
+
+        if ctrl.totalDuration ~= math.huge then
+          phase.totalDuration = math.max(phase.totalDuration, ctrl.totalDuration) -- takes the longest controller duration
+        else
+          phase.totalDuration = math.huge -- if controller duration is infinite, then the phase duration is also infinite
+        end
+      end
+    end
+
+    if phase.startTime then
+      self.totalDuration = math.max(self.totalDuration, phase.startTime + phase.totalDuration) -- result will be the longest combined phase start time and duration
+    else
+      if phase.totalDuration ~= math.huge then
+        self.totalDuration = self.totalDuration + phase.totalDuration
+      else
+        self.totalDuration = math.huge -- if phase duration is infinite, then the sequence duration is also infinite
+      end
+    end
+  end
+
+  return self.totalDuration
+end
+
 function SignalSequence:resolveUpdates(forceUpdate) -- updates all linked signal states and lights
-  for _, lc in pairs(self.linkedControllers) do
-    if lc._updated or forceUpdate then
-      local stateBase = lc.controller.states[lc.stateIdx]
-      for _, instance in pairs(lc.linkedSignals) do
+  for _, state in pairs(self.controllerStates) do
+    if state._updated or forceUpdate then
+      local stateBase = state.controller.states[state.stateIdx]
+      for _, instance in pairs(state.instances) do
         if instance.active then
           signalUpdates[instance.name] = stateBase.state
           instance.priorityStateIndex = nil
         end
       end
-      lc._updated = nil
+      state._updated = nil
     end
   end
 end
 
 function SignalSequence:onSequenceUpdate() -- used internally whenever the sequence step updates
   -- processes next sequence timing
-  local stepData = self.sequence[self.sequenceTimings[self.currStep]] or {}
+  local stepData = self.timeline[self.timelineTimes[self.currStep]] or {}
 
-  for _, inner in ipairs(stepData) do
+  for _, inner in ipairs(stepData) do -- inner table: {controllerName, phaseIndex, stateIndex}
     self.currPhase = inner[2]
-    local lc = self.linkedControllers[inner[1]]
-    if lc then
-      lc.stateIdx = inner[3]
-      lc._updated = true
+    local state = self.controllerStates[inner[1]]
+    if state then
+      state.stateIdx = inner[3]
+      state._updated = true
 
       if not self.ignoreTimer then
-        local duration = 0
-        local t1 = self.sequenceTimings[self.currStep]
-        local t2 = self.sequenceTimings[self.currStep + 1] or self.sequenceDuration
-        duration = t2 - t1
+        local t1 = self.timelineTimes[self.currStep]
+        local t2 = self.timelineTimes[self.currStep + 1] or self.totalDuration
+        local duration = math.abs(t2 - t1)
 
         if self._deltaTime then
-          duration = duration - self._deltaTime
+          duration = duration - self._deltaTime -- delta time adjustment, for accuracy
         end
 
         local time = timer + duration
@@ -757,36 +934,40 @@ function SignalSequence:resetSequence() -- resets all sequence data
   self.currStep = 0
   self.currPhase = 1
 
-  for k, lc in pairs(self.linkedControllers) do
-    lc.stateIdx = lc.controller.defaultIndex or 1
-    lc._updated = true
+  for _, state in pairs(self.controllerStates) do
+    state.stateIdx = state.controller.defaultIndex or 1
+    state._updated = true
   end
   self:resolveUpdates()
 
   local time = self.startTime + timer
   queue:insert(time, self.name)
   self.stateTime = time
+
+  if self.enableTestTimer then
+    self.testTimer = 0
+  end
 end
 
 function SignalSequence:setStep(index) -- manual setting of sequence step
   -- loops through the sequence until the sequence timing index is reached
   index = index or 1
-  if not self.sequenceTimings[index] then return end
+  if not self.timelineTimes[index] then return end
 
   local currStep = self.currStep
 
   repeat
     self.currStep = self.currStep + 1
-    if not self.sequenceTimings[self.currStep] then
+    if not self.timelineTimes[self.currStep] then
       self.currStep = 1
     end
 
-    local stepData = self.sequence[self.sequenceTimings[self.currStep]]
-    for _, inner in ipairs(stepData) do
-      local lc = self.linkedControllers[inner[1]]
-      if lc then
-        lc.stateIdx = inner[3]
-        lc._updated = true
+    local stepData = self.timeline[self.timelineTimes[self.currStep]]
+    for _, inner in ipairs(stepData) do -- inner table: {controllerName, phaseIndex, stateIndex}
+      local state = self.controllerStates[inner[1]]
+      if state then
+        state.stateIdx = inner[3]
+        state._updated = true
       end
     end
   until (self.currStep == index or self.currStep == currStep)
@@ -807,16 +988,16 @@ function SignalSequence:setPhase(index) -- manual setting of sequence phase
 
   repeat
     self.currStep = self.currStep + 1
-    if not self.sequenceTimings[self.currStep] then
+    if not self.timelineTimes[self.currStep] then
       self.currStep = 1
     end
 
-    local stepData = self.sequence[self.sequenceTimings[self.currStep]]
+    local stepData = self.timeline[self.timelineTimes[self.currStep]]
     for _, inner in ipairs(stepData) do
-      local lc = self.linkedControllers[inner[1]]
-      if lc then
-        lc.stateIdx = inner[3]
-        lc._updated = true
+      local state = self.controllerStates[inner[1]]
+      if state then
+        state.stateIdx = inner[3]
+        state._updated = true
         if currPhase ~= inner[2] then
           currPhase = inner[2]
           self.currPhase = inner[2]
@@ -830,7 +1011,7 @@ end
 
 function SignalSequence:advance() -- advances to next step
   self.currStep = self.currStep + 1
-  if not self.sequenceTimings[self.currStep] then
+  if not self.timelineTimes[self.currStep] then
     self.currStep = 1
   end
 
@@ -841,13 +1022,13 @@ end
 function SignalSequence:setStrictState(ctrlName, stateIdx) -- manually sets a controller state and updates all related signals (overrides auto state)
   -- for best results, use this after disabling the sequence timer; otherwise, the timer will interfere
   -- self:enableTimer(false)
-  local lc = self.linkedControllers[ctrlName]
-  if lc then
-    stateIdx = stateIdx or lc.stateIdx
-    local stateBase = lc.controller.states[stateIdx or 1]
+  local state = self.controllerStates[ctrlName]
+  if state then
+    stateIdx = stateIdx or state.stateIdx
+    local stateBase = state.controller.states[stateIdx or 1]
     if stateBase then
-      local stateRef = lc.controller:getStateData(stateBase.state)
-      for _, instance in pairs(lc.linkedSignals) do
+      local stateRef = state.controller:getStateData(stateBase.state)
+      for _, instance in pairs(state.instances) do
         instance:setLights(stateRef and stateRef.lights)
         signalUpdates[instance.name] = stateBase.state or 'none'
       end
@@ -863,46 +1044,51 @@ function SignalSequence:setActive(val) -- (boolean) sets the active state of the
   self.stateTime = 0
 
   if self.active then
-    table.clear(self.sequence)
-    table.clear(self.linkedControllers)
-    local totalTime = 0
+    table.clear(self.timeline)
+    table.clear(self.timelineTimes)
+    table.clear(self.controllerStates)
 
-    if self.customSequence then -- if custom sequence exists, use it instead of auto sequence
-      self.sequence = self.customSequence
-      self.sequenceTimings = tableKeysSorted(self.sequence)
-      self:resetSequence()
-      return
+    if self.totalDuration == 0 then
+      self:calcDuration()
+      if self.totalDuration == 0 then -- if duration is still zero, then ignore this sequence
+        log('W', logTag, string.format('Sequence has zero duration, now ignoring timeline: %s', self.name))
+        return
+      end
     end
 
+    local totalTime = 0
+
+    -- the following code builds internal timeline and controllerStates tables, which are read and processed during the simulation
     for phaseIdx, phase in ipairs(self.phases) do
       local totalTimeUpdated = false
-      local phaseTime = totalTime
-      for _, cd in ipairs(phase.controllerData) do
-        if elementsById[cd.id] then
-          local controller = elementsById[cd.id]
+      local phaseTime = phase.startTime or totalTime
+      for _, cid in ipairs(phase.controllerIds) do
+        if elementsById[cid] then
+          local controller = elementsById[cid]
           -- build reference table for controllers and signal instances
-          self.linkedControllers[controller.name] = {controller = controller, stateIdx = 1, linkedSignals = {}}
+          self.controllerStates[controller.name] = {controller = controller, stateIdx = 1, instances = {}} -- caches controllers for easy access
 
           for _, instance in ipairs(instances) do
-            if instance.sequenceId == self.id and instance.controllerId == cd.id then
-              self.linkedControllers[controller.name].linkedSignals[instance.name] = instance
+            if instance.sequenceId == self.id and instance.controllerId == cid then
+              self.controllerStates[controller.name].instances[instance.name] = instance -- caches signal instances for easy access
             end
           end
 
           local stateTime = phaseTime
           for stateIdx, state in ipairs(controller.states) do
-            self.sequence[stateTime] = self.sequence[stateTime] or {}
-            table.insert(self.sequence[stateTime], {controller.name, phaseIdx, stateIdx})
+            self.timeline[stateTime] = self.timeline[stateTime] or {}
+            -- build sequence step, using the state change time as the key
+            table.insert(self.timeline[stateTime], {controller.name, phaseIdx, stateIdx})
 
             local duration = state.duration
             if not duration or duration < 0 then
-              duration = 1e6 -- adds a non-infinite duration so that the sequence can still be sorted
+              duration = 1e6 -- adds a large non-infinite duration so that the sequence can still be sorted
+            elseif duration == 0 then
+              duration = 0.001 -- adds a tiny duration so that the sequence can still be sorted (hopefully prevents infinite loop in queue)
             end
             stateTime = stateTime + duration
-            if cd.required then
-              totalTime = math.max(totalTime, stateTime) -- totalTime should be less if requirements are passed
-              totalTimeUpdated = true
-            end
+            totalTime = math.max(totalTime, stateTime)
+            totalTimeUpdated = true
 
             local stateData = controller:getStateData(state.state)
             if stateData and stateData.flashingLights then
@@ -915,31 +1101,24 @@ function SignalSequence:setActive(val) -- (boolean) sets the active state of the
       end
 
       if not totalTimeUpdated then
-        totalTime = totalTime + 1e6 -- non-infinite duration
+        totalTime = totalTime + 1e6 -- adds a large non-infinite duration so that the sequence can still be sorted
       end
     end
 
-    self.sequenceTimings = tableKeysSorted(self.sequence) -- sequence timings table is used to order the sequence (by timestamp)
-    self.sequenceDuration = totalTime
-    --dump(self.sequence)
-    --dump(self.sequenceTimings)
+    self.timelineTimes = tableKeysSorted(self.timeline) -- sequence timings table is used to order the sequence (by timestamp)
 
     self:resetSequence()
-
-    if self.enableTestTimer then
-      self.testTimer = 0
-    end
   else
-    for _, lc in pairs(self.linkedControllers) do
-      for _, instance in pairs(lc.linkedSignals) do
+    for _, state in pairs(self.controllerStates) do
+      for _, instance in pairs(state.instances) do
         signalUpdates[instance.name] = 'none'
       end
     end
 
-    table.clear(self.sequence)
-    table.clear(self.sequenceTimings)
-    table.clear(self.linkedControllers)
-    self.sequenceDuration = 0
+    table.clear(self.timeline)
+    table.clear(self.timelineTimes)
+    table.clear(self.controllerStates)
+    self.totalDuration = 0
   end
 end
 
@@ -979,7 +1158,6 @@ function SignalSequence:onSerialize()
     id = self.id,
     name = self.name,
     phases = self.phases,
-    customSequence = self.customSequence,
     startTime = self.startTime,
     startDisabled = self.startDisabled,
     ignoreTimer = self.ignoreTimer
@@ -1071,18 +1249,61 @@ local function getData(full) -- returns relevant data from this module
   return data
 end
 
-local function resetTimer() -- resets the timer & queue, and activates the sequences
+local function getBestSignal(pos, dirVec, resetCache) -- returns the nearest signal instance; if dirVec is provided, it attempts to find the best upcoming signal
+  if not _searchCache or not pos then return end
+
+  local n1, n2 = map.findBestRoad(pos, dirVec or vec3())
+  if not n1 or not n2 then return end
+
+  if resetCache then table.clear(_searchCache) end
+  if not _searchCache.n1 or not _searchCache.n2 or _searchCache.n1 ~= n1 or _searchCache.n2 ~= n2 then
+    _searchCache.n1 = n1
+    _searchCache.n2 = n2
+
+    local bestDist, bestInstance = math.huge, nil
+    for _, instance in ipairs(instances) do
+      if not instance._invalid then
+        local dot = 1
+        if dirVec then
+          dot = dirVec:dot(instance.dir)
+          tempVec:setSub2(instance.pos, pos)
+          tempVec:normalize()
+          dot = math.min(dot, dirVec:dot(tempVec))
+        end
+        local dist = instance.pos:distance(pos) / math.max(dot, 1e-12)
+        if dist < bestDist then
+          bestDist = dist
+          bestInstance = instance
+        end
+      end
+    end
+
+    _searchCache.bestInstance = bestInstance -- cache the best instance to save performance on runtime calls
+  end
+
+  return _searchCache.bestInstance
+end
+
+local function resetTimer() -- resets the timer & queue, and activates or resets the sequences
   timer = 0
   queue:clear()
 
   for _, sequence in ipairs(sequences) do
-    sequence:setActive(not sequence.startDisabled)
+    if not sequence.active then
+      sequence:setActive(not sequence.startDisabled)
+    else
+      sequence:resetSequence()
+    end
   end
   for _, instance in pairs(instances) do
     if not instance._invalid then
-      instance:setActive(not instance.startDisabled)
+      if not instance.active then
+        instance:setActive(not instance.startDisabled)
+      end
     end
   end
+
+  extensions.hook('onTrafficSignalsReset')
 end
 
 local function setTimer(val) -- directly sets the timer, which can instantly update the signal states
@@ -1097,12 +1318,13 @@ local function buildMapNodeSignals() -- creates a reference dict, linking map no
   for _, instance in ipairs(instances) do
     if not instance._invalid then
       local stateName, stateData = instance:getState()
-      local n1, n2, n3 = instance.road.n1, instance.road.n2, instance.road.n3
+      local n1, n2 = instance.road.n1, instance.road.n2
       mapNodeSignals[n1] = mapNodeSignals[n1] or {}
       mapNodeSignals[n1][n2] = mapNodeSignals[n1][n2] or {}
       -- array containing one or more signal data points
       -- just in case two or more signals exist on the same road segment
-      table.insert(mapNodeSignals[n1][n2], {instance = instance.name, pos = instance.pos, target = n3, useLane = instance.useCurrentLane, state = stateName, action = controllerDefinitions.signalActions[stateData.action or 'none'] or 0})
+      -- unsure how lane based signals will work here...
+      table.insert(mapNodeSignals[n1][n2], {instance = instance.name, pos = instance.pos, useLane = instance.useCurrentLane, state = stateName, action = controllerDefinitions.signalActions[stateData.action or 'none'] or 0})
       instance._innerIdx = #mapNodeSignals[n1][n2]
     end
   end
@@ -1115,10 +1337,12 @@ local function runSignals() -- finishes signal setup and activates main logic
       instance:setAuxiliaryData()
     end
 
+    for _, ctrl in ipairs(controllers) do
+      ctrl:calcDuration()
+    end
+
     for _, sequence in ipairs(sequences) do
-      sequence.sequence = {}
-      sequence.sequenceTimings = {}
-      sequence.linkedControllers = {}
+      sequence:calcDuration()
     end
 
     resetTimer()
@@ -1126,10 +1350,14 @@ local function runSignals() -- finishes signal setup and activates main logic
     table.clear(signalObjectsDict) -- optimizes memory usage by clearing this table, as it is not used during runtime
     loaded = true
     active = true
+    _searchCache = {}
   end
 end
 
 local function setActive(val, autoRun) -- sets the timer active state
+  -- autoRun is false when the level is loaded or the navgraph is reloaded; in this case, runSignals gets called when the navgraph is ready
+  -- this is a problem when loading signals from a file, as runSignals will not get called unless the navgraph is reloaded
+  -- a clean solution here would be appreciated
   if autoRun and not loaded then
     runSignals()
     if not loaded then
@@ -1139,9 +1367,14 @@ local function setActive(val, autoRun) -- sets the timer active state
   end
 
   active = val and true or false
+
+  if not autoRun and active then
+    log('D', logTag, 'Waiting for navgraph to load before finalizing traffic signals system')
+  end
 end
 
 local function setLightsManual(id, stateArray) -- directly sets the visible lights of a traffic signal object (will not affect actual state)
+  -- generally unused; see SignalInstance:setStrictState
   local obj = scenetree.findObjectById(id)
   stateArray = stateArray or {false, false, false}
   if obj then
@@ -1151,7 +1384,7 @@ local function setLightsManual(id, stateArray) -- directly sets the visible ligh
   end
 end
 
-local function setupSignals(data, merge) -- processes and enables the signals system; can merge with existing ones
+local function setupSignals(data, merge, autoRun) -- processes and enables the signals system; can merge with existing ones
   if not be then return end
   loaded = false
   active = false
@@ -1164,7 +1397,7 @@ local function setupSignals(data, merge) -- processes and enables the signals sy
   if data then
     setupSignalObjects()
 
-    if merge then
+    if merge then -- merges existing and new data
       arrayConcat(instances, data.instances or {})
       arrayConcat(controllers, data.controllers or {})
       arrayConcat(sequences, data.sequences or {})
@@ -1211,7 +1444,7 @@ local function setupSignals(data, merge) -- processes and enables the signals sy
       table.remove(sequences, delSequences[i])
     end
 
-    setActive(true)
+    setActive(true, autoRun)
   else
     table.clear(instances)
     table.clear(controllers)
@@ -1240,7 +1473,7 @@ local function loadControllerDefinitions(filePath) -- loads default and custom c
   end
 end
 
-local function loadSignals(filePath) -- loads signals json file from given file path or default file path
+local function loadSignals(filePath, autoRun) -- loads signals json file from given file path or default file path
   if not filePath then -- auto load signals, if they exist
     local levelDir = path.split(getMissionFilename()) or ''
     filePath = levelDir..'signals.json'
@@ -1270,7 +1503,9 @@ local function loadSignals(filePath) -- loads signals json file from given file 
         data.sequences[i] = new
       end
 
-      setupSignals(data)
+      setupSignals(data, false, autoRun) -- if autoRun is true, then run the traffic signals immediately; needs to be false if navgraph is not loaded yet
+      log('I', logTag, string.format('Traffic signals loaded (%d instances, %d controllers, %d sequences)', #data.instances, #data.controllers, #data.sequences))
+
       return true
     end
   end
@@ -1280,6 +1515,8 @@ end
 
 local function onUpdate(dt, dtSim)
   if not loaded then return end
+
+  local dtUsed = M.useDtReal and dt or dtSim
 
   if active then
     for stateName, stateDef in pairs(controllerDefinitions.states) do
@@ -1302,7 +1539,7 @@ local function onUpdate(dt, dtSim)
       if sequence.active and sequence.enableTestTimer and not sequence.ignoreTimer then -- optional self timer for sequences (for debug or inspection purposes)
         sequence.testTimer = sequence.testTimer or 0
         if sequence.currStep > 0 then
-          sequence.testTimer = sequence.testTimer + dtSim
+          sequence.testTimer = sequence.testTimer + dtUsed
         end
       end
     end
@@ -1313,14 +1550,14 @@ local function onUpdate(dt, dtSim)
       local sequence = sequencesByName[seqName]
 
       if sequence then
-        if sequence.stateTime == key then -- key must match, otherwise ignore the signal update
-          sequence._deltaTime = timer - key -- ensures accuracy
+        if sequence.stateTime == key then -- key must match, otherwise ignore the signal update (this can happen if a signal was changed manually)
+          sequence._deltaTime = timer - key -- ensures accuracy between frames
           sequence:advance()
         end
       end
     end
 
-    timer = timer + dtSim
+    timer = timer + dtUsed
   end
 
   if next(signalUpdates) then -- runs whenever signal updates are queued (can be multiple per frame)
@@ -1370,31 +1607,7 @@ local function onUpdate(dt, dtSim)
 
   for _, instance in ipairs(instances) do
     if core_camera.getPosition():squaredDistance(instance.pos) <= viewDistSq then -- checks if camera is close enough to signal
-      if core_camera:getForward():dot(instance.pos - core_camera.getPosition()) > 0 then -- checks if camera is facing signal
-        debugPos:set(instance.pos)
-        debugPos.z = debugPos.z + 4
-
-        local stateName, stateData = instance:getState()
-
-        if M.debugLevel == 2 then
-          if instance._invalid then
-            debugDrawer:drawText(instance.pos, String(instance.name..' (ERROR)'), debugColors.red)
-          else
-            debugDrawer:drawText(instance.pos, String(instance.name), debugColors.black)
-          end
-
-          debugDrawer:drawSquarePrism(instance.pos, instance.pos + instance.dir * instance.radius, Point2F(0.5, instance.radius * 0.25), Point2F(0.5, 0), debugColors.green)
-        end
-
-        for _, light in ipairs(stateData.lights or {}) do
-          debugDrawer:drawSphere(debugPos, 0.25, controllerDefinitions.signalColors[light] or controllerDefinitions.signalColors.white)
-          debugPos.z = debugPos.z - 0.5
-        end
-
-        if M.debugLevel == 2 then
-          debugDrawer:drawText(debugPos, String('state: '..(stateName or 'none')), debugColors.black)
-        end
-      end
+      instance:drawDebug(false, false, M.debugLevel == 2, nil, nil, M.debugLevel == 2 and 2 or 0)
     end
   end
 end
@@ -1402,7 +1615,12 @@ end
 local function onNavgraphReloaded() -- reloads all signals (if system is active)
   -- important: always runs after onClientStartMission and onDeserialized
   if active then
+    log('D', logTag, 'Navgraph loaded successfully, traffic signals are now active')
     runSignals()
+  else
+    if loaded then
+      log('D', logTag, 'Navgraph loaded successfully, but active state is false; if not intended, then this is a bug')
+    end
   end
 end
 
@@ -1426,12 +1644,14 @@ local function onSerialize()
 
   data.active = active
   data.loaded = loaded
+  data.useDtReal = M.useDtReal
   data.debugLevel = M.debugLevel
 
   return data
 end
 
 local function onDeserialized(data)
+  M.useDtReal = data.useDtReal
   M.debugLevel = data.debugLevel or 0
   loadControllerDefinitions()
 
@@ -1451,7 +1671,7 @@ local function onDeserialized(data)
     res:include()
   end
 
-  setActive(data.active)
+  setActive(data.active, false)
 
   -- resolves the highest unique id
   _uid = 0
@@ -1480,6 +1700,7 @@ M.getControllerDefinitions = getControllerDefinitions
 M.getMapNodeSignals = getMapNodeSignals
 M.getTimer = getTimer
 M.getData = getData
+M.getBestSignal = getBestSignal
 M.getSignalsDict = nop
 
 M.setupSignalObjects = setupSignalObjects

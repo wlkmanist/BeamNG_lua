@@ -304,6 +304,46 @@ function temporalSigmoidSmoothing:value()
   return self.state
 end
 
+-- Exponential/Non Linear temporal with minimum movement limit
+local temporalSmoothingHybrid = {}
+temporalSmoothingHybrid.__index = temporalSmoothingHybrid
+
+function newTemporalSmoothingHybrid(inRate, outRate, startingValue, linearRate)
+  local rate = min(inRate or 1, 1e+30)
+  local data = {[false] = rate, [true] = min(outRate or rate, 1e+30), state = startingValue or 0, linearRate = linearRate or 0}
+  return setmetatable(data, temporalSmoothingHybrid)
+end
+
+function temporalSmoothingHybrid:get(sample, dt)
+  local st = self.state
+  local dif = sample - st
+  local ratedt = self[dif * st >= 0] * dt
+  st = st + dif * max(ratedt / (1 + ratedt), min(self.linearRate * dt / abs(dif), 1))
+  self.state = st
+  return st
+end
+
+function temporalSmoothingHybrid:getWithRate(sample, dt, rate, linearRate)
+  local st = self.state
+  local dif = sample - st
+  local ratedt = rate * dt
+  st = st + dif * max(ratedt / (1 + ratedt), min((linearRate or 0) * dt / abs(dif), 1))
+  self.state = st
+  return st
+end
+
+function temporalSmoothingHybrid:set(sample)
+  self.state = sample
+end
+
+function temporalSmoothingHybrid:value()
+  return self.state
+end
+
+function temporalSmoothingHybrid:reset()
+  self.state = 0
+end
+
 -- Exponential/Non Linear temporal
 local temporalSmoothingNonLinear = {}
 temporalSmoothingNonLinear.__index = temporalSmoothingNonLinear
@@ -318,7 +358,7 @@ function temporalSmoothingNonLinear:get(sample, dt)
   local st = self.state
   local dif = sample - st
   local ratedt = self[dif * st >= 0] * dt
-  st = st + dif * ratedt / (1 + ratedt)
+  st = st + dif * (ratedt / (1 + ratedt))
   self.state = st
   return st
 end
@@ -326,7 +366,7 @@ end
 function temporalSmoothingNonLinear:getWithRate(sample, dt, rate)
   local st = self.state
   local ratedt = rate * dt
-  st = st + (sample - st) * ratedt / (1 + ratedt)
+  st = st + (sample - st) * (ratedt / (1 + ratedt))
   self.state = st
   return st
 end
@@ -351,8 +391,7 @@ function newTemporalSmoothing(inRate, outRate, autoCenterRate, startingValue)
   inRate = max(inRate or 1, 1e-307)
   startingValue = startingValue or 0
 
-  local data = {[false] = inRate, [true] = max(outRate or inRate, 1e-307), autoCenterRate = max(autoCenterRate or inRate, 1e-307),
-                _startingValue = startingValue, state = startingValue}
+  local data = {[false] = inRate, [true] = max(outRate or inRate, 1e-307), autoCenterRate = max(autoCenterRate or inRate, 1e-307), _startingValue = startingValue, state = startingValue}
   setmetatable(data, temporalSmoothing)
 
   if data.autoCenterRate ~= inRate then
@@ -443,13 +482,31 @@ function linearSmoothing:reset()
   self.state = 0
 end
 
+-- bypass filter
+local nopSmoothing = {}
+nopSmoothing.__index = nopSmoothing
+
+function newNopSmoothing()
+  return setmetatable({}, nopSmoothing)
+end
+
+function nopSmoothing:get(sample)
+  return sample
+end
+
+function nopSmoothing:set()
+end
+
+function nopSmoothing:reset()
+end
+
 local exponentialSmoothing = {}
 exponentialSmoothing.__index = exponentialSmoothing
 
 function newExponentialSmoothing(window, startingValue, fixedDt)
   local data = {a = 2 / max(window, 2), _startingValue = startingValue or 0, st = startingValue or 0}
   local adt = data.a * (fixedDt or 0.0005)
-  data.a = (2000 + data.a) * adt / (1 + adt)
+  data.a = (2000 + data.a) * (adt / (1 + adt))
   return setmetatable(data, exponentialSmoothing)
 end
 
@@ -535,4 +592,100 @@ end
 
 function exponentialSmoothingT:reset(value)
   self.st, self[true], self[false] = value or self.startingValue, 0, 0
+end
+
+-- exponentialy weighted least squares linear regression
+local lineFitting = {}
+lineFitting.__index = lineFitting
+
+-- Note: window can be sample-based or time-based; use getS or get, respectively.
+-- Note: To improve numerical stability, scale the input variables to be in the range of [0, 1] or [-1, 1].
+function newLineFitting(window, weight, bias, scale, weightMin, weightMax, biasMin, biasMax)
+  if not scale or scale <= 0 then scale = 1000 end
+  weight, weightMin, weightMax = weight or 0, weightMin or -math.huge, weightMax or math.huge
+  bias, biasMin, biasMax = bias or 0, biasMin or -math.huge, biasMax or math.huge
+  local decay = 1 - 2 / (window + 1)
+  local data = {
+    weight = weight, weightStartingValue = weight, weightMin = weightMin, weightMax = weightMax,
+    bias = bias, biasStartingValue = bias, biasMin = biasMin, biasMax = biasMax,
+    decay = decay, decayStartingValue = decay, scale = scale,
+    det = 1,
+    window = window,
+    [1] = 1 / scale, [2] = 0, [3] = 0, [4] = 0, [5] = 0
+  }
+  return setmetatable(data, lineFitting)
+end
+
+-- getS: sample-based get method
+function lineFitting:getS(x, y)
+  local decay = self.decay
+  --Stability check
+  local R12Sq = square(self[2])
+  decay = square(self.det) < 1e-6 * (self[1] * self[1] + R12Sq) * (R12Sq + self[3] * self[3]) and 0.99998 or decay
+  --Update covariance matrix
+  -- R: 2*2 covariance matrix, r: 2*1 cross covariance vector
+  local R11 = decay * self[1] + x * x
+  local R12 = decay * self[2] + x -- R12 and R21 are equal
+  local R22 = decay * self[3] + 1
+  local r1 = decay * self[4] + x * y
+  local r2 = decay * self[5] + y
+  self[1], self[2], self[3], self[4], self[5] = R11, R12, R22, r1, r2
+  -- [w, b]^T = R^-1 * r
+  --Regressor update
+  local det = R11 * R22 - R12 * R12
+  local detInv = max(min(1 / det, 1e300), -1e300) -- R matrix determinant inverse
+  self.det = det
+  self.weight = clamp((r1 - clamp((R11 * r2 - R12 * r1) * detInv, self.biasMin, self.biasMax) * R12) / R11, self.weightMin, self.weightMax)
+  self.bias = clamp((r2 - clamp((R22 * r1 - R12 * r2) * detInv, self.weightMin, self.weightMax) * R12) / R22, self.biasMin, self.biasMax)
+  return self.weight, self.bias
+end
+
+-- get: time-based get method
+function lineFitting:get(x, y, dt)
+  --Decay
+  self.decay = 1 - 2 * dt / (self.window + dt)
+  local decay = self.decay
+  --Stability check
+  local R12Sq = square(self[2])
+  decay = square(self.det) < 1e-6 * (self[1] * self[1] + R12Sq) * (R12Sq + self[3] * self[3]) and 0.99998 or decay
+  --Update covariance matrix
+  -- R: 2*2 covariance matrix, r: 2*1 cross covariance vector
+  local R11 = decay * self[1] + x * x
+  local R12 = decay * self[2] + x -- R12 and R21 are equal
+  local R22 = decay * self[3] + 1
+  local r1 = decay * self[4] + x * y
+  local r2 = decay * self[5] + y
+  self[1], self[2], self[3], self[4], self[5] = R11, R12, R22, r1, r2
+  -- [w, b]^T = R^-1 * r
+  --Regressor update
+  local det = R11 * R22 - R12 * R12
+  local detInv = max(min(1 / det, 1e300), -1e300) -- R matrix determinant inverse
+  self.det = det
+  self.weight = clamp((r1 - clamp((R11 * r2 - R12 * r1) * detInv, self.biasMin, self.biasMax) * R12) / R11, self.weightMin, self.weightMax)
+  self.bias = clamp((r2 - clamp((R22 * r1 - R12 * r2) * detInv, self.weightMin, self.weightMax) * R12) / R22, self.biasMin, self.biasMax)
+  return self.weight, self.bias
+end
+
+function lineFitting:value()
+  return self.weight, self.bias
+end
+
+function lineFitting:getY(x)
+  return self.weight * x + self.bias
+end
+
+function lineFitting:getX(y)
+  return sign2(self.weight) * (y - self.bias) / (abs(self.weight) + 1e-30)
+end
+
+function lineFitting:set(window, weight, bias, weightMin, weightMax, biasMin, biasMax)
+  self.weight, self.weightMin, self.weightMax = weight or self.weight, weightMin or self.weightMin, weightMax or self.weightMax
+  self.bias, self.biasMin, self.biasMax = bias or self.bias, biasMin or self.biasMin, biasMax or self.biasMax
+  if window then self.decay = 1 - 2 / (window + 1) end
+end
+
+function lineFitting:reset()
+  self.weight = self.weightStartingValue
+  self.bias = self.biasStartingValue
+  self[1], self[2], self[3], self[4], self[5] = 1 / self.scale, 0, 0, 0, 0
 end

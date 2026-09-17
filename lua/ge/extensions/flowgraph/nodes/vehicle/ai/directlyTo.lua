@@ -26,6 +26,8 @@ C.legacyPins = {
 }
 C.tags = {'manual', 'driveTo'}
 
+local origin, target = vec3(), vec3()
+
 function C:init()
   self.started = false
   self.complete = false
@@ -48,7 +50,7 @@ end
 function C:getVeh()
   local veh
   if self.pinIn.vehId.value then
-    veh = be:getObjectByID(self.pinIn.vehId.value)
+    veh = getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end
@@ -57,19 +59,19 @@ end
 
 function C:endAI()
   local veh = self:getVeh()
-  if veh then
-    veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
-  end
+  if not veh then return end
+
+  veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
 end
 
 function C:setupAI()
   local veh = self:getVeh()
-  if not veh then return end
+  if not veh or not self.pinIn.target.value then return end
 
-  local origin = vec3(veh:getPosition())
-  local target = vec3(self.pinIn.target.value)
-  local distance = (origin-target):length()
-  local speed = self.pinIn.targetVelocity.value
+  origin:set(veh:getPosition())
+  target:setFromTable(self.pinIn.target.value)
+  local distance = origin:distance(target)
+  local speed = self.pinIn.targetVelocity.value or 1
   target = target - origin
   local steps = math.ceil(distance / self.data.maxStepDistance)
   local path = {}
@@ -91,7 +93,6 @@ function C:setupAI()
   veh:queueLuaCommand('ai.startFollowing(' .. serialize(aiPath) .. ', nil, 0, "neverReset")')
 end
 
-
 function C:work()
   if self.pinIn.reset.value then
     self:reset()
@@ -103,12 +104,12 @@ function C:work()
         self.started = true
       else
         local veh = self:getVeh()
-        if not veh then return end
+        if not veh or not self.pinIn.target.value then return end
 
-        local origin = veh:getPosition()
-        local target = vec3(self.pinIn.target.value)
-        local distance = (origin - target):length()
-        if distance < self.data.minDistance then
+        origin:set(veh:getPosition())
+        target:setFromTable(self.pinIn.target.value)
+        local distance = origin:squaredDistance(target)
+        if distance < square(self.data.minDistance) then
           self:endAI()
           self.complete = true
         end
@@ -119,7 +120,6 @@ function C:work()
     end
   end
 end
-
 
 function C:drawMiddle(builder, style)
   builder:Middle()

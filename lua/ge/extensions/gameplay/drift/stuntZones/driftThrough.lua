@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local C = {}
 
 local decalCount
@@ -30,7 +33,7 @@ function C:accomplish()
     subHookData =
     {
       currDegAngle = driftActiveData and driftActiveData.currDegAngle or 30, -- this safeguard is used in the drift debug imgui menu to test UI
-      zoneData = {points = self.data.zoneData.score}
+      zoneData = {points = gameplay_drift_scoring.getStuntZoneBasePoints("driftThrough")}
     }
   })
 end

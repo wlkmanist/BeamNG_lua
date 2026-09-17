@@ -63,6 +63,28 @@ local function vS2Sensor(dirVS, upVS, veh)
   return vec3(fwd:dot(dirVS), right:dot(dirVS), up:dot(dirVS)), vec3(fwd:dot(upVS), right:dot(upVS), up:dot(upVS))
 end
 
+local function dirWorldSpace2Sensor(dirWS, upWS, veh)
+  local fwd, up = veh:getDirectionVector(), veh:getDirectionVectorUp()
+  fwd:normalize()
+  up:normalize()
+  local right = fwd:cross(up)
+  right:normalize()
+  up = right:cross(fwd)
+
+  local dirS = fwd * dirWS.x + right * dirWS.y + up * dirWS.z
+  local upS = fwd * upWS.x + right * upWS.y + up * upWS.z
+  return dirS, upS
+end
+
+local function coeffsToDirWorldSpace(c, veh)
+  local offset = veh:getInitialNodePosition(veh:getRefNodeId())
+  return vec3(-c.y + offset.y, -c.x + offset.x, c.z - offset.z)
+end
+
+local function dirToDirWorldSpace(c)
+  return vec3(-c.y, -c.x, c.z)
+end
+
 -- Computes the radius at a given y-value, for a sensor beam (ultrasonic and RADAR).
 local function computeBeamShapeRadius(y, rangeRoundness, exponent, limitCoef)
 
@@ -117,8 +139,13 @@ local function renderBeamShape(s, pos, fwd, up, right)
 end
 
 -- Draws a sphere to represent the mouse position.
+-- Radius scales gently with camera distance but is clamped so it stays a small picker even when zoomed far out.
 local function drawMouseSphere(p)
-  dbgDraw.drawSphere(p, 0.05 * sqrt(p:distance(core_camera.getPosition())), sphereColor)
+  local d = p:distance(core_camera.getPosition())
+  local r = 0.02 * sqrt(d)
+  if r < 0.03 then r = 0.03 end
+  if r > 0.12 then r = 0.12 end
+  dbgDraw.drawSphere(p, r, sphereColor)
 end
 
 -- Renders the local frame of a sensor.
@@ -217,12 +244,14 @@ local function renderSensorBoxAndFrame(pos, fwd, up, right)
   dbgDraw.drawTriSolid(c2, e4, e2, sensorTriColor, true)
 end
 
-
 -- Public interface.
 M.posVS2Coeffs =                                          posVS2Coeffs
 M.coeffs2PosVS =                                          coeffs2PosVS
 M.sensor2VS =                                             sensor2VS
 M.vS2Sensor =                                             vS2Sensor
+M.dirWorldSpace2Sensor =                                  dirWorldSpace2Sensor
+M.coeffsToDirWorldSpace =                                 coeffsToDirWorldSpace
+M.dirToDirWorldSpace =                                    dirToDirWorldSpace
 M.computeBeamShapeRadius =                                computeBeamShapeRadius
 M.renderBeamShape =                                       renderBeamShape
 M.drawMouseSphere =                                       drawMouseSphere

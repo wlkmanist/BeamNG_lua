@@ -116,7 +116,7 @@ local function new(itemCount)
   return setmetatable({
     tree = nil,
     nonLeafLimIdx = nil,
-    items = table.new((itemCount or 0)*7, 0),
+    items = table.new(max(0, itemCount or 0)*7, 0),
     itemCount = 0,
     queryArea = table.new(6, 0),
     stack = {},
@@ -192,7 +192,7 @@ end
 function kdTree:build()
   self.itemCount = self.itemCount / 7
   local maxDepth = floor(log10(self.itemCount) / log10(2)) + 1 -- max depth that can accomodate all items while being full (root is depth 1)
-  local treeNodeCount = 2 * ceil(self.itemCount / maxDepth) - 1 -- optimize node count so that tree depth ~ # of items in each node
+  local treeNodeCount = max(1, 2 * ceil(self.itemCount / maxDepth) - 1) -- optimize node count so that tree depth ~ # of items in each node
   self.tree = table.new(4 * treeNodeCount, 0)
   self.nonLeafLimIdx = 4 * floor(treeNodeCount * 0.5)
   self:_build(1, 7, self.itemCount * 7, 4)

@@ -14,6 +14,16 @@ M.virtualSensors = nil
 
 M.warningLightPulse = 0
 
+M.systemStates = {
+  normal = "normal",
+  degraded = "degraded",
+  offline = "offline"
+}
+M.systemState = M.systemStates.normal
+
+--UDP debug hearbeat only active in non-shipping builds or if manually enabled
+local enableDebugHeartbeat = false or not shippingBuild
+
 local warningLightPulseTimer = 0
 local warningLightPulseTime = 0.15
 local isStoppedSmoother = newTemporalSmoothing(100, 1)
@@ -184,7 +194,11 @@ local function updateGFX(dt)
   local yawControl = M.getSupervisor("yawControl")
   local tractionControl = M.getSupervisor("tractionControl")
   local warningPulse = (((yawControl and yawControl.isActing) or (tractionControl and tractionControl.isActing)) and 1 or 0) * M.warningLightPulse
-  electrics.values.dseWarningPulse = warningPulse
+  electrics.values.dseWarningPulse = M.systemState == M.systemStates.normal and warningPulse or 1
+
+  --if M.systemState == M.systemStates.degraded and controlParameters.notifySystemStateDegraded then
+  --guihooks.message("Reduced Vehicle Stability - Drive with care", 1, "vehicle.drivingDynamics." .. M.name)
+  --end
 
   M.updateGFXCalibrationCallback(dt)
 end
@@ -192,11 +206,13 @@ end
 local function updateGFXDebugNotEnabled(dt)
   updateGFX(dt)
 
-  debugHeartbeatTimer = debugHeartbeatTimer + dt
-  if debugHeartbeatTimer >= debugHeartbeatFPS then
-    debugHeartbeatTimer = debugHeartbeatTimer - debugHeartbeatFPS
-    receiveDebugCommands()
-    sendDebugHeartbeat()
+  if enableDebugHeartbeat then
+    debugHeartbeatTimer = debugHeartbeatTimer + dt
+    if debugHeartbeatTimer >= debugHeartbeatFPS then
+      debugHeartbeatTimer = debugHeartbeatTimer - debugHeartbeatFPS
+      receiveDebugCommands()
+      sendDebugHeartbeat()
+    end
   end
 end
 
@@ -227,6 +243,26 @@ local function update(dt)
   M.updateCalibrationCallback(dt)
 end
 
+local function logDebugMessage(source, message)
+  debugPacket({sourceType = "CMU", packetType = "systemDebugMessage", source = source, message = message})
+  --log("D", "CMU.logDebugMessage", string.format("%s: %s", source, message))
+end
+
+local function systemDegradationDetected(reason)
+  M.systemState = M.systemStates.degraded
+  logDebugMessage("CMU", string.format("system state degraded: %s", reason))
+  if not damageTracker.getDamage("drivingDynamics", "systemStateDegraded") and controlParameters.notifySystemStateDegraded then
+  --TODO enable after test
+  --guihooks.message("Reduced Vehicle Stability - Drive with care", 3, "vehicle.drivingDynamics." .. M.name)
+  end
+  damageTracker.setDamage("drivingDynamics", "systemStateDegraded", true)
+end
+
+local function systemDegradationResolved()
+  M.systemState = M.systemStates.normal
+  damageTracker.setDamage("drivingDynamics", "systemStateDegraded", false)
+end
+
 local function shutDownAllSystems()
   subControllers = controller.getControllersFromPath("drivingDynamics/")
 
@@ -235,6 +271,7 @@ local function shutDownAllSystems()
       sub.shutdown()
     end
   end
+  M.systemState = M.systemStates.offline
 end
 
 local function setDebugMode(debugEnabled)
@@ -255,6 +292,8 @@ local function reset(jbeamData)
   electrics.values.dseRollingOver = nil
   isOnRoofSmoother:reset()
   isStoppedSmoother:reset()
+  M.systemState = M.systemStates.normal
+  damageTracker.setDamage("drivingDynamics", "systemStateDegraded", false)
 end
 
 local function init(jbeamData)
@@ -275,7 +314,16 @@ local function init(jbeamData)
   end
 
   local indicateUI = jbeamData.indicateUI == nil and true or false
-  controlParameters = {uiDisplayData = {simplePowertrainApp = {doUpdate = indicateUI, activeColor = "98FB00", offColor = "343434"}}}
+  controlParameters = {
+    uiDisplayData = {
+      simplePowertrainApp = {
+        doUpdate = indicateUI,
+        activeColor = "98FB00",
+        offColor = "343434"
+      }
+    },
+    notifySystemStateDegraded = true
+  }
 
   electrics.values.dseCrashStopped = nil
   electrics.values.dseRollOverStopped = nil
@@ -327,13 +375,15 @@ local function initLastStage()
   end
 
   if not allSystemsActive then
-    log("E", "CMU.initSecondStage", "Not all systems are active, aborting init and shutting down...")
+    log("W", "CMU.initSecondStage", "Not all systems are active, aborting init and shutting down...")
     shutDownAllSystems()
   end
 
   electrics.values.isYCBrakeActive = 0
   electrics.values.isTCBrakeActive = 0
 
+  M.systemState = M.systemStates.normal
+  damageTracker.setDamage("drivingDynamics", "systemStateDegraded", false)
   --Tell the debug app that we spawned a new car
   debugPacket({sourceType = "CMU", packetType = "init"})
 end
@@ -426,6 +476,7 @@ local function setParameters(parameters)
       driveModesController.setSimpleControlButton("dseBackwardsCompat", "DSE", "powertrain_esc", controlParameters.uiDisplayData.simplePowertrainApp.activeColor, controlParameters.uiDisplayData.simplePowertrainApp.offColor, "dseWarningPulse")
     end
   end
+  applyParameter(controlParameters, initialControlParameters, parameters, "notifySystemStateDegraded")
 end
 
 local function setConfig(configTable)
@@ -438,8 +489,9 @@ end
 
 M.init = init
 M.initSecondStage = initSecondStage
-M.reset = reset
 M.initLastStage = initLastStage
+M.reset = reset
+
 M.updateGFX = updateGFX
 M.updateFixedStep = updateFixedStep
 M.update = update
@@ -464,5 +516,10 @@ M.registerCalibrationCallback = registerCalibrationCallback
 M.updateCalibrationCallback = nop
 M.updateFixedStepCalibrationCallback = nop
 M.updateGFXCalibrationCallback = nop
+
+M.systemDegradationDetected = systemDegradationDetected
+M.systemDegradationResolved = systemDegradationResolved
+
+M.logDebugMessage = logDebugMessage
 
 return M

@@ -34,6 +34,7 @@ local wheelGroupControlData = {}
 
 local yawControlAVBrakingPID
 local yawControlSlipAngleBrakingPID
+local yawControlFrontAxleSlipAngleBrakingPID
 
 local wheelCount = 0
 
@@ -100,7 +101,7 @@ end
 
 --returns true if component did act as yaw control
 --called from updateFixedStep
-local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, dt)
+local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlipAngle, frontSlipAngle, rearSlipAngle, dt)
   M.isActingAsYC = false
   local wheelAccess = CMU.vehicleData.wheelAccess
 
@@ -116,8 +117,13 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
   local avBrakeFactor = yawControlAVBrakingPID:get(-abs(yawDifference), -controlParameters.yawControl.yawAvThreshold, dt)
   local slipAngleBrakeFactor = yawControlSlipAngleBrakingPID:get(-abs(bodySlipAngle), -controlParameters.yawControl.slipAngleThreshold, dt)
 
+  -- the more rear slip angle we have, the less we want to brake the fronts to prevent brake-induced spinouts
+  local combinedAxleSlipAngle = max(abs(frontSlipAngle) - abs(rearSlipAngle) * 2, 0) --increase weight of the rear slip angle
+  local frontAxleSlipAngleBrakeFactor = yawControlFrontAxleSlipAngleBrakingPID:get(-abs(combinedAxleSlipAngle), -controlParameters.yawControl.frontAxleSlipAngleThreshold, dt)
+
   local wheelToBrake
-  if avBrakeFactor > slipAngleBrakeFactor then
+  local maxBrakeFactor = max(avBrakeFactor, slipAngleBrakeFactor, frontAxleSlipAngleBrakeFactor)
+  if avBrakeFactor == maxBrakeFactor then
     if yawDifference > 0 then --Oversteer
       if measuredYaw > 0 then
         wheelToBrake = wheelAccess.frontLeft
@@ -131,7 +137,7 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
         wheelToBrake = wheelAccess.rearLeft
       end
     end
-  else
+  elseif slipAngleBrakeFactor == maxBrakeFactor then
     local bsaControlSign = sign(measuredYaw) * sign(bodySlipAngle)
     if bsaControlSign < 0 then --Oversteer
       if measuredYaw < 0 then
@@ -140,17 +146,26 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
         wheelToBrake = wheelAccess.frontLeft
       end
     else
-      --BSA can't correctly detect understeer, so nothing to do here
+      --BSA can't detect understeer, so nothing to do here
       return false
     end
+  elseif frontAxleSlipAngleBrakeFactor == maxBrakeFactor then
+    if frontSlipAngle > 0 then --turning left
+      wheelToBrake = wheelAccess.rearLeft
+    else --turning right
+      wheelToBrake = wheelAccess.rearRight
+    end
+  else
+    --This should never happen
+    print("BrakeControl: actAsYawControl: maxBrakeFactor is not one of the expected values")
+    return false
   end
   local wheelData = wheelControlData[wheelToBrake.name]
 
-  local finalBrakeFactor = max(avBrakeFactor, slipAngleBrakeFactor)
   local antiLockUpFactor = linearScale(abs(wheelToBrake.angularVelocityBrakeCouple), 2, 5, 0, 1)
-  wheelData.brakeFactorYawControl = finalBrakeFactor * antiLockUpFactor
+  wheelData.brakeFactorYawControl = maxBrakeFactor * antiLockUpFactor
 
-  M.isActingAsYC = finalBrakeFactor > 0
+  M.isActingAsYC = maxBrakeFactor > 0
   --this is used for turning the brakelights on when brakes are used by DSE
   isYCBrakeActive = wheelData.brakeFactorYawControl > 0.3 or isYCBrakeActive
 
@@ -211,7 +226,7 @@ local function actAsABSControl(wheelData, brake, vehicleVelocity, dt)
     absData.absTimer = 0
   end
 
-  isABSBrakeActive = false
+  isABSBrakeActive = false --TODO fix whatever this is...
 
   return M.isActingAsABS
 end
@@ -244,6 +259,7 @@ local function updateGFXDebug(dt)
 
   debugPacket.yawControl.yawAVThreshold = controlParameters.yawControl.yawAvThreshold
   debugPacket.yawControl.slipAngleThreshold = controlParameters.yawControl.slipAngleThreshold
+  debugPacket.yawControl.frontAxleSlipAngleThreshold = controlParameters.yawControl.frontAxleSlipAngleThreshold
 
   debugPacket.absControl.wheelData = debugPacket.absControl.wheelData or {}
   for k, v in pairs(absWheelData) do
@@ -287,6 +303,16 @@ local function reset()
   isTCBrakeActive = false
   isABSBrakeActive = false
 
+  if yawControlAVBrakingPID then
+    yawControlAVBrakingPID:reset()
+  end
+  if yawControlSlipAngleBrakingPID then
+    yawControlSlipAngleBrakingPID:reset()
+  end
+  if yawControlFrontAxleSlipAngleBrakingPID then
+    yawControlFrontAxleSlipAngleBrakingPID:reset()
+  end
+
   registerWheelBrakeUpdates()
 end
 
@@ -318,6 +344,10 @@ local function applyControlParameters()
   if yawControlSlipAngleBrakingPID then
     local slipAngleSettings = controlParameters.yawControl.PIDSettings.slipAngle
     yawControlSlipAngleBrakingPID:setConfig(slipAngleSettings.kP, slipAngleSettings.kI, slipAngleSettings.kD, 0, 1, slipAngleSettings.integralInCoef, slipAngleSettings.integralOutCoef, 0)
+  end
+  if yawControlFrontAxleSlipAngleBrakingPID then
+    local frontAxleSlipAngleSettings = controlParameters.yawControl.PIDSettings.frontAxleSlipAngle
+    yawControlFrontAxleSlipAngleBrakingPID:setConfig(frontAxleSlipAngleSettings.kP, frontAxleSlipAngleSettings.kI, frontAxleSlipAngleSettings.kD, 0, 1, frontAxleSlipAngleSettings.integralInCoef, frontAxleSlipAngleSettings.integralOutCoef, 0)
   end
 
   for k, v in pairs(controlParameters.absControl.wheelSettings) do
@@ -401,6 +431,15 @@ local function initSecondStage(jbeamData)
         integralOutCoef = setting.integralOutCoef
       }
     end
+    if not controlParameters.yawControl.PIDSettings.yawAV then
+      controlParameters.yawControl.PIDSettings.yawAV = {kP = 0, kI = 0, kD = 0, integralInCoef = 0, integralOutCoef = 0}
+    end
+    if not controlParameters.yawControl.PIDSettings.slipAngle then
+      controlParameters.yawControl.PIDSettings.slipAngle = {kP = 0, kI = 0, kD = 0, integralInCoef = 0, integralOutCoef = 0}
+    end
+    if not controlParameters.yawControl.PIDSettings.frontAxleSlipAngle then
+      controlParameters.yawControl.PIDSettings.frontAxleSlipAngle = {kP = 0, kI = 0, kD = 0, integralInCoef = 0, integralOutCoef = 0}
+    end
 
     for _, wheel in pairs(CMU.vehicleData.wheelAccess) do
       if not wheelControlData[wheel.name] then
@@ -412,12 +451,15 @@ local function initSecondStage(jbeamData)
 
     local avSettings = controlParameters.yawControl.PIDSettings.yawAV
     local slipAngleSettings = controlParameters.yawControl.PIDSettings.slipAngle
+    local frontAxleSlipAngleSettings = controlParameters.yawControl.PIDSettings.frontAxleSlipAngle
 
     yawControlAVBrakingPID = newPIDParallel(avSettings.kP, avSettings.kI, avSettings.kD, 0, 1, avSettings.integralInCoef, avSettings.integralOutCoef, 0)
     yawControlSlipAngleBrakingPID = newPIDParallel(slipAngleSettings.kP, slipAngleSettings.kI, slipAngleSettings.kD, 0, 1, slipAngleSettings.integralInCoef, slipAngleSettings.integralOutCoef, 0)
+    yawControlFrontAxleSlipAngleBrakingPID = newPIDParallel(frontAxleSlipAngleSettings.kP, frontAxleSlipAngleSettings.kI, frontAxleSlipAngleSettings.kD, 0, 1, frontAxleSlipAngleSettings.integralInCoef, frontAxleSlipAngleSettings.integralOutCoef, 0)
 
     controlParameters.yawControl.yawAvThreshold = jbeamData.yawControl.yawAVThreshold or 0.4
     controlParameters.yawControl.slipAngleThreshold = jbeamData.yawControl.slipAngleThreshold or 0.1
+    controlParameters.yawControl.frontAxleSlipAngleThreshold = jbeamData.yawControl.frontAxleSlipAngleThreshold or 0.2
   end
 
   local absControl = CMU.getSupervisor("absControl")
@@ -512,6 +554,7 @@ local function setParameters(parameters)
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "yawControl.isEnabled")
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "yawControl.slipAngleThreshold")
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "yawControl.yawAvThreshold")
+  CMU.applyParameter(controlParameters, initialControlParameters, parameters, "yawControl.frontAxleSlipAngleThreshold")
 
   --ABS Control
   for k, _ in pairs(absWheelData) do

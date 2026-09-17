@@ -4,7 +4,7 @@
 
 local M = {}
 
-M.dependencies = {"career_career"}
+M.dependencies = {"career_career", "gameplay_achievement"}
 
 local blockedInputActions = core_input_actionFilter.createActionTemplate({"walkingMode", "bigMap"})
 
@@ -57,13 +57,13 @@ end
 
 local function findBaseColors(partConditions)
   local colors
-  for partName, partCondition in pairs(partConditions) do
+  for partPath, partCondition in pairs(partConditions) do
     if not colors then
       if partCondition.visualState and partCondition.visualState.paint and partCondition.visualState.paint.originalPaints then
         colors = partCondition.visualState.paint.originalPaints
       end
     end
-    if string.find(partName, "body") then
+    if string.find(partPath, "body") then
       if partCondition.visualState and partCondition.visualState.paint and partCondition.visualState.paint.originalPaints then
         return partCondition.visualState.paint.originalPaints
       end
@@ -89,7 +89,7 @@ local function startActual(_originComputerId)
   chosenPackage = nil
   originComputerId = _originComputerId
   if originComputerId then
-    guihooks.trigger('ChangeState', {state = 'painting', params = {}})
+    extensions.ui_router.navigate("career.computer.painting")
   end
 
   if gameplay_walk.isWalking() then
@@ -108,7 +108,7 @@ local function start(_inventoryId, _originComputerId)
 
   local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(career_modules_inventory.getVehicles()[inventoryId].partConditions)
   if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
-    career_modules_insurance.startRepair(inventoryId, nil, function() startActual(_originComputerId) end)
+    career_modules_insurance_insurance.startRepair(inventoryId, nil, function() startActual(_originComputerId) end)
   else
     startActual(_originComputerId)
   end
@@ -123,11 +123,10 @@ local function closeMenu()
   end
 end
 
-local closeMenuAfterSaving
-local function close(_closeMenuAfterSaving)
+-- Restores vehicle/camera/input state. Does NOT navigate; the router owns the
+-- transition back to career.computer. Safe to call from the UI on unmount.
+local function cleanup()
   if not paintingActive then return end
-
-  closeMenuAfterSaving = career_career.isAutosaveEnabled() and _closeMenuAfterSaving
 
   career_modules_inventory.spawnVehicle(inventoryId, 2)
 
@@ -148,6 +147,15 @@ local function close(_closeMenuAfterSaving)
   core_input_actionFilter.addAction(0, 'paintingBlockedActions', false)
   scenetree.OnlyGui:setFrustumCameraCenterOffset(Point2F(0, 0))
   paintingActive = nil
+end
+
+local closeMenuAfterSaving
+local function close(_closeMenuAfterSaving)
+  if not paintingActive then return end
+
+  closeMenuAfterSaving = career_career.isAutosaveEnabled() and _closeMenuAfterSaving
+
+  cleanup()
 
   if not closeMenuAfterSaving then
     closeMenu()
@@ -178,20 +186,27 @@ end
 local function apply()
   local price = getTotalPrice(chosenPackage)
   if not career_modules_payment.canPay(price) then return end
-  career_modules_payment.pay(price, {label = string.format("Repainted the vehicle"), tags = {"vehiclePainting", "buying"}})
+  career_modules_payment.pay(price, {label = _tr("ui.career.painting.payment.repaintedVehicle"), tags = {"vehiclePainting", "buying"}})
   Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Buy_01')
 
   if chosenPaints then
     local vehicle = career_modules_inventory.getVehicles()[inventoryId]
-    for partName, partCondition in pairs(vehicle.partConditions) do
+    vehicle.config.paints = deepcopy(chosenPaints)
+    for partPath, partCondition in pairs(vehicle.partConditions) do
       if partCondition.visualState and partCondition.visualState.paint.originalPaints then
         -- TODO this always sets the odometer of all 3 paints back to 0
         partCondition.visualState.paint.odometer = 0
         partCondition.visualState.paint.originalPaints = chosenPaints
+
+        local partId = career_modules_partInventory.getPartPathToPartIdMap()[inventoryId][partPath]
+        if partId then
+          career_modules_partInventory.getInventory()[partId].primered = nil
+        end
       end
     end
   end
 
+  gameplay_achievement.unlockAchievement("VEHICLE_MODIFIED")
   close(true)
   career_modules_inventory.setVehicleDirty(inventoryId)
   career_saveSystem.saveCurrent({inventoryId})
@@ -203,7 +218,8 @@ local function onComputerAddFunctions(menuData, computerFunctions)
   for _, vehicleData in ipairs(menuData.vehiclesInGarage) do
     local computerFunctionData = {
       id = "painting",
-      label = "Painting",
+      routeTarget = "career.computer.painting",
+      label = _tr("ui.career.shared.pathPainting"),
       callback = function() start(vehicleData.inventoryId, menuData.computerFacility.id) end,
       order = 15
     }
@@ -213,9 +229,9 @@ local function onComputerAddFunctions(menuData, computerFunctions)
       computerFunctionData.reason = career_modules_computer.reasons.needsRepair
     end
     -- tutorial active
-    if menuData.tutorialPartShoppingActive or menuData.tutorialTuningActive then
+    if not menuData.hasBoughtStarterVehicle then
       computerFunctionData.disabled = true
-      computerFunctionData.reason = career_modules_computer.reasons.tutorialActive
+      computerFunctionData.reason = career_modules_computer.reasons.hasBoughtStarterVehicle
     end
 
     -- generic gameplay reason
@@ -251,7 +267,11 @@ local function setPaints(paints, paintOptions, partName)
     end
   end
 
-  local vehicleObject = be:getObjectByID(career_modules_inventory.getMapInventoryIdToVehId()[inventoryId])
+  local vehObjId = career_modules_inventory.getMapInventoryIdToVehId()[inventoryId]
+  local vehicleObject = getObjectByID(vehObjId)
+  extensions.core_vehicle_colors.setVehiclePaint(1, chosenPaints[1], vehObjId)
+  extensions.core_vehicle_colors.setVehiclePaint(2, chosenPaints[2], vehObjId)
+  extensions.core_vehicle_colors.setVehiclePaint(3, chosenPaints[3], vehObjId)
   if partName then
     vehicleObject:queueLuaCommand(string.format("partCondition.setPartPaints(%s, %s, 0)", partName, serialize(chosenPaints)))
   else
@@ -265,10 +285,22 @@ local function getFactoryPaint()
   return info.model and info.model.paints or {}
 end
 
+local function sendPaintingDataToUI()
+  if not paintingActive then return end
+  local data = getPaintData()
+  data.factoryPaint = getFactoryPaint()
+  guihooks.trigger("paintingData", data)
+end
+
+-- Router lifecycle: re-emit the painting data once the destination view has mounted.
+local function onRouteMount(context, toRoute, fromRoute, data)
+  sendPaintingDataToUI()
+end
+
 local function onUIOpened()
   -- Enter the vehicle (with one frame delay, because otherwise the UI doesnt show up)
   local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
   core_vehicleBridge.requestValue(veh, function()
     career_modules_inventory.enterVehicle(inventoryId)
     core_vehicleBridge.executeAction(veh,'setFreeze', true)
@@ -289,14 +321,17 @@ end
 M.start = start
 M.apply = apply
 M.close = close
+M.cleanup = cleanup
 M.getPaintData = getPaintData
 M.setPaints = setPaints
 M.getFactoryPaint = getFactoryPaint
+M.sendPaintingDataToUI = sendPaintingDataToUI
 
 M.getPrimerColor = getPrimerColor
 
 M.onComputerAddFunctions = onComputerAddFunctions
 M.onUIOpened = onUIOpened
+M.onRouteMount = onRouteMount
 M.onVehicleSaveFinished = onVehicleSaveFinished
 
 return M

@@ -1,19 +1,20 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 local logTag = "drift"
 local freeroamScoresFileName = "driftSpotsScores.json"
-local spotsDir = "driftSpots/"
-local extName = "driftSpot"
 
 local spotsById = nil
 
 local savePathFreeroam = 'settings/cloud/driftSpots/'
 local savePathCareer = '/career/driftSpots/'
 
-local function loadDriftSpotsScores()
-  return jsonReadFile(freeroamScoresFileName) or {}
+local function onCareerActive()
+  spotsById = nil
 end
 
-local function onCareerActive()
+local function clearCache()
   spotsById = nil
 end
 
@@ -23,7 +24,7 @@ local function saveSpot(spot, dir)
   spot._dirty = false
 end
 
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   for id, spot in pairs(M.getDriftSpotsById()) do
     if spot._dirty then
       saveSpot(spot, currentSavePath .. savePathCareer )
@@ -50,14 +51,14 @@ local function getDriftSpotsById()
   if not spotsById then
     local saveFolder = savePathFreeroam
     if career_career.isActive() then
-      local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+      local saveSlot, savePath = career_saveSystem.getCurrentProfile()
       saveFolder = savePath .. savePathCareer
     end
     local loaded = 0
     spotsById = {}
     local level = getCurrentLevelIdentifier()
     local levelSpotsDir = "/levels/"..level .. "/driftSpots/"
-    dump(levelSpotsDir)
+    --dump(levelSpotsDir)
     for _, file in ipairs(FS:findFiles(levelSpotsDir, "spot.driftSpot.json", -1, false, true)) do
       local dir, _, _ = path.split(file)
       local spotId = level .."/".. string.sub(dir, #levelSpotsDir+1, -2)
@@ -65,7 +66,7 @@ local function getDriftSpotsById()
 
       local spotData = {
         id = spotId,
-        lines = jsonReadFile(file),
+        spatialInfo = jsonReadFile(file).spatialInfo,
         racePath = dir.."race.race.json",
         bounds = dir.."bounds.sites.json",
         level = level,
@@ -74,11 +75,11 @@ local function getDriftSpotsById()
       -- infos for ui etc
       local info = jsonReadFile(dir .. "info.json") or {}
       info.preview = M.getPreviewWithFallback(dir)
-      info.name = info.name or "Unnamed Drift Spot"
+      info.name = info.name or "levels.driftSpots.unnamed"
       spotData.info = info
 
       -- immediately hide the objects found
-      for id, line in pairs(spotData.lines) do
+      for id, line in pairs(spotData.spatialInfo.lines) do
         for _, name in ipairs(line.markerObjects or {}) do
           local obj = scenetree.findObject(name)
           if obj then
@@ -108,7 +109,7 @@ local function getDriftSpotsById()
     if career_career.isActive() then
       extensions.hook("onAfterDriftSpotsLoaded", spotsById)
     end
-    log("I","","Loaded " .. #tableKeys(spotsById) .. " drift spots and " .. loaded .. " drift score files.")
+    --log("I","","Loaded " .. #tableKeys(spotsById) .. " drift spots and " .. loaded .. " drift score files.")
   end
   return spotsById
 end
@@ -159,27 +160,16 @@ local function loadDriftData(fileName)
   gameplay_drift_stuntZones.setStuntZones(json.stuntZones)
 end
 
-local function getDriftSpotFilePath(spotName)
-  return spotsDir ..spotName
-end
-
-
-local function saveDriftSpot(data, spotName)
-  jsonWriteFile(spotsDir..spotName.."/".."spot."..extName..".json", data, true)
-end
-
 M.loadDriftData = loadDriftData
 M.loadAndSanitizeDriftFreeroamSpotsCurrMap = loadAndSanitizeDriftFreeroamSpotsCurrMap
-M.loadDriftSpotsScores = loadDriftSpotsScores
 
 M.saveDriftSpotsScoresForSpotById = saveDriftSpotsScoresForSpotById
-M.saveDriftSpot = saveDriftSpot
 
-M.getDriftSpotFilePath = getDriftSpotFilePath
 M.getDriftSpotById = getDriftSpotById
 M.getDriftSpotsById = getDriftSpotsById
 M.getPreviewWithFallback = getPreviewWithFallback
 
+M.clearCache = clearCache
 M.onCareerActive = onCareerActive
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 return M

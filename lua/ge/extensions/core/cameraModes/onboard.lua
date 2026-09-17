@@ -29,7 +29,18 @@ end
 
 function C:onVehicleCameraConfigChanged()
   self.hidden = self.hidden or self.name == "driver" -- 'driver' camera data is kept, for driver.lua and other cams to use it. but the cam is hidden from the end-user, also accept jbeam config
+  if self.name == "rider" or self.name == "onboard.rider" then
+    self.canUseVehicleTriggerCrosshair = true
+  end
 
+  -- Set icon based on camera name (onboard.driver, onboard.hood, etc.)
+  if self.name == "onboard.driver" then
+    self.icon = "personSolid"
+  elseif self.name == "onboard.hood" then
+    self.icon = "vehicleHood"
+  else
+    self.icon = "info"
+  end
 end
 
 function C:reset()

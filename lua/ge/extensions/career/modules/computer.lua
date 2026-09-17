@@ -6,7 +6,8 @@ local M = {}
 
 M.dependencies = {"career_career"}
 
-local computerTetherRange = 4 --meter
+local computerTetherRangeSphere = 4 --meter
+local computerTetherRangeBox = 1 --meter
 local tether
 
 local computerFunctions
@@ -14,7 +15,7 @@ local computerId
 local computerFacilityName
 local menuData = {}
 
-local function openMenu(computerFacility, resetActiveVehicleIndex)
+local function openMenu(computerFacility, resetActiveVehicleIndex, activityElement)
   computerFunctions = {general = {}, vehicleSpecific = {}}
   computerId = computerFacility.id
   computerFacilityName = computerFacility.name
@@ -25,7 +26,7 @@ local function openMenu(computerFacility, resetActiveVehicleIndex)
   for _, inventoryId in ipairs(inventoryIds) do
     local vehicleData = {}
     vehicleData.inventoryId = inventoryId
-    vehicleData.needsRepair = career_modules_insurance.inventoryVehNeedsRepair(inventoryId) or nil
+    vehicleData.needsRepair = career_modules_insurance_insurance.inventoryVehNeedsRepair(inventoryId) or nil
     local vehicleInfo = career_modules_inventory.getVehicles()[inventoryId]
     vehicleData.vehicleName = vehicleInfo and vehicleInfo.niceName
     vehicleData.dirtyDate = vehicleInfo and vehicleInfo.dirtyDate
@@ -35,18 +36,21 @@ local function openMenu(computerFacility, resetActiveVehicleIndex)
   end
 
   menuData.computerFacility = computerFacility
-  if not career_modules_linearTutorial.getTutorialFlag("partShoppingComplete") then
-    menuData.tutorialPartShoppingActive = true
-  elseif not career_modules_linearTutorial.getTutorialFlag("tuningComplete") then
-    menuData.tutorialTuningActive = true
-  end
+  menuData.hasBoughtStarterVehicle = career_career.hasBoughtStarterVehicle()
 
   extensions.hook("onComputerAddFunctions", menuData, computerFunctions)
 
-  local computerPos = freeroam_facilities.getAverageDoorPositionForFacility(computerFacility)
-  tether = career_modules_tether.startSphereTether(computerPos, computerTetherRange, M.closeMenu)
+  --local computerPos = freeroam_facilities.getAverageDoorPositionForFacility(computerFacility)
+  local door = computerFacility.doors[1]
+  tether = nil
+  if door then
+    tether = career_modules_tether.startDoorTether(door, computerTetherRangeBox, M.closeMenu)
+  end
+  if not tether then
+    tether = career_modules_tether.startSphereTether(computerPos, computerTetherRangeSphere, M.closeMenu)
+  end
 
-  guihooks.trigger('ChangeState', {state = 'computer'})
+  extensions.ui_router.navigate("career.computer")
   extensions.hook("onComputerMenuOpened")
 end
 
@@ -63,6 +67,9 @@ end
 
 local function getComputerUIData()
   local data = {}
+  if not computerFunctions then
+    return data
+  end
   local computerFunctionsForUI = deepcopy(computerFunctions)
   computerFunctionsForUI.vehicleSpecific = {}
 
@@ -81,6 +88,7 @@ local function getComputerUIData()
   data.vehicles = vehiclesForUI
   data.facilityName = computerFacilityName
   data.resetActiveVehicleIndex = menuData.resetActiveVehicleIndex
+  data.computerId = computerId
   return data
 end
 
@@ -92,7 +100,13 @@ local function closeMenu()
   career_career.closeAllMenus()
 end
 
+local function openComputerMenuById(computerId)
+  local computer = freeroam_facilities.getFacility("computer", computerId)
+  career_modules_computer.openMenu(computer)
+end
+
 M.openMenu = openMenu
+M.openComputerMenuById = openComputerMenuById
 M.onMenuClosed = onMenuClosed
 M.closeMenu = closeMenu
 
@@ -103,6 +117,10 @@ M.reasons = {
   tutorialActive = {
     type = "text",
     label = "Disabled during tutorial."
+  },
+  hasBoughtStarterVehicle = {
+    type = "text",
+    label = "You need to buy a starter vehicle first."
   },
   needsRepair = {
     type = "needsRepair",

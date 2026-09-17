@@ -18,9 +18,9 @@ local NORMALTYPE = 0
 local function cleanCameraData(d)
   for k, v in pairs(d) do
     -- delete unneeded data to keep the messages small
-    if k == 'group' or k == 'firstGroup' or k == 'partOrigin' or k == 'childParts'
+    if k == 'group' or k == 'firstGroup' or k == 'partPath' or k == 'childParts'
     or k == 'partName' or k == 'slotType' or k == 'collision' or k == 'selfCollision'
-    or k == 'nodeWeight' or  k == 'beamnDamp' or k == 'beamDeform' or k == 'beamSpring'
+    or k == 'nodeWeight' or  k == 'beamDamp' or k == 'beamDeform' or k == 'beamSpring'
     or k == 'beamDamp' or k == 'cid' or k == 'globalSkin' or k == 'beamStrength'
     or k == 'skinName' or k == 'skinType' then
       d[k] = nil
@@ -96,12 +96,7 @@ local function processOnboard(vehicle)
   if vehicle.cameras ~= nil and vehicle.cameras.onboard ~= nil then
     for icKey, icam in pairs(vehicle.cameras.onboard) do
       if type(icam.x) == 'number' and type(icam.y) == 'number' and type(icam.z) == 'number' then
-        if (not icam.ignoreNodeOffset) and icam.nodeOffset and type(icam.nodeOffset) == 'table' and icam.nodeOffset.x and icam.nodeOffset.y and icam.nodeOffset.z then
-          icam.x, icam.y, icam.z = icam.x + sign(icam.x) * icam.nodeOffset.x, icam.y + icam.nodeOffset.y, icam.z + icam.nodeOffset.z
-        end
-        if icam.nodeMove and type(icam.nodeMove) == 'table' and icam.nodeMove.x and icam.nodeMove.y and icam.nodeMove.z then
-          icam.x, icam.y, icam.z = icam.x + icam.nodeMove.x, icam.y + icam.nodeMove.y, icam.z + icam.nodeMove.z
-        end
+        icam.x, icam.y, icam.z = jbeamUtils.getPosAfterNodeRotateOffsetMove(icam, icam.x, icam.y, icam.z)
 
         local camNodeID = jbeamUtils.addNodeWithOptions(vehicle, vec3(icam.x, icam.y, icam.z), NORMALTYPE, icam)
 
@@ -223,7 +218,7 @@ local function process(objID, vehicle)
     end
   end
   --]]
-  profilerPopEvent() -- jbeam/camera.process
+  profilerPopEvent('jbeam/camera.process')
 end
 
 M.process = process

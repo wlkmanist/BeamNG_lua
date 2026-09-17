@@ -56,6 +56,8 @@ local function clearBuildFuncFields(classname)
 end
 
 local function getCurrentSelectedParent()
+  local focusedGroup = editor.getFocusLockedGroup and editor.getFocusLockedGroup()
+  if focusedGroup then return focusedGroup end
   if editor.selection.object and not tableIsEmpty(editor.selection.object) then
     local obj = scenetree.findObjectById(editor.selection.object[1])
     if obj and (obj:getClassName() == "SimSet" or obj:isSubClassOf("SimSet")) then
@@ -150,10 +152,13 @@ local function createObjectRedo(actionData)
   obj:setName(actionData.name)
   editor.history:updateRedoStackObjectId(actionData.objectID, obj:getId())
   actionData.objectID = obj:getId()
+
   if actionData.transform then
     obj:setTransform(actionData.transform)
   end
+
   editor.selectObjectById(actionData.objectID)
+
   if actionData.parent then
     actionData.parent:addObject(obj)
   end
@@ -169,13 +174,10 @@ local function copyMat(mat)
 end
 
 local function createObjectModeUpdate()
-  local res = getCameraMouseRay()
-
   if not currentClassInstance then return end
   local rayCastInfo = cameraMouseRayCast(true)
 
   if imgui.IsMouseClicked(0)
-      and res
       and editor.isViewportHovered()
       and currentCreateObjectItem then
     lastInstance = currentClassInstance
@@ -290,7 +292,7 @@ local function createCustomClassObject(clsName, parentNode)
       local newName = getNextNumberedName(clsName)
       obj:registerObject(newName)
       local parent = parentNode or getCurrentSelectedParent()
-      if parent then
+      if parent and obj then
         parent:addObject(obj)
       end
     end
@@ -498,7 +500,12 @@ local function createObjectToolbar()
             if currentClassInstance.enableCollision then
               currentClassInstance:enableCollision()
             end
-            editor.history:commitAction("CreateObject", {classname = item.classname, name = currentClassInstance:getName(), objectID = currentClassInstance:getID()}, createObjectUndo, createObjectRedo, true)
+
+            if currentParent then
+              currentParent:addObject(currentClassInstance)
+            end
+
+            editor.history:commitAction("CreateObject", {parent = currentParent, classname = item.classname, name = currentClassInstance:getName(), objectID = currentClassInstance:getID()}, createObjectUndo, createObjectRedo, true)
 
             objectIdToSelect = currentClassInstance:getID()
             currentClassInstance = nil
@@ -723,9 +730,9 @@ local function buildWaterBlock(obj)
   obj:setField("waveSpeed", 2, "1")
   obj:setField("overallWaveMagnitude", 0, "1.0")
 
-  obj:setField("rippleTex", 0, "core/art/water/ripple.dds")
-  obj:setField("depthGradientTex", 0, "core/art/water/depthcolor_ramp.dds")
-  obj:setField("foamTex", 0, "core/art/water/foam.dds")
+  obj:setField("rippleTex", 0, "/core/art/water/ripple_nm.normal.dds")
+  obj:setField("depthGradientTex", 0, "core/art/water/depthcolor_ramp_b.color.png")
+  obj:setField("foamTex", 0, "/core/art/water/foam_b.color.png")
   obj:setField("cubemap", 0, "DefaultSkyCubemap")
 
   clearBuildFuncFields(obj:getClassName())
@@ -756,9 +763,9 @@ local function buildWaterBlock(obj)
   registerBuildFuncField(obj:getClassName(),"waveSpeed", 2, "1")
   registerBuildFuncField(obj:getClassName(),"overallWaveMagnitude", 0, "1.0")
 
-  registerBuildFuncField(obj:getClassName(),"rippleTex", 0, "core/art/water/ripple.dds")
-  registerBuildFuncField(obj:getClassName(),"depthGradientTex", 0, "core/art/water/depthcolor_ramp.dds")
-  registerBuildFuncField(obj:getClassName(),"foamTex", 0, "core/art/water/foam.dds")
+  registerBuildFuncField(obj:getClassName(),"rippleTex", 0, "/core/art/water/ripple_nm.normal.dds")
+  registerBuildFuncField(obj:getClassName(),"depthGradientTex", 0, "core/art/water/depthcolor_ramp_b.color.png")
+  registerBuildFuncField(obj:getClassName(),"foamTex", 0, "/core/art/water/foam_b.color.png")
   registerBuildFuncField(obj:getClassName(),"cubemap", 0, "DefaultSkyCubemap")
 
   obj:reloadTextures()
@@ -792,9 +799,9 @@ local function buildWaterPlane(obj)
   obj:setField("waveSpeed", 2, "1")
   obj:setField("overallWaveMagnitude", 0, "1.0")
 
-  obj:setField("rippleTex", 0, "core/art/water/ripple.dds")
-  obj:setField("depthGradientTex", 0, "core/art/water/depthcolor_ramp.dds")
-  obj:setField("foamTex", 0, "core/art/water/foam.dds")
+  obj:setField("rippleTex", 0, "/core/art/water/ripple_nm.normal.dds")
+  obj:setField("depthGradientTex", 0, "core/art/water/depthcolor_ramp_b.color.png")
+  obj:setField("foamTex", 0, "/core/art/water/foam_b.color.png")
   obj:setField("cubemap", 0, "DefaultSkyCubemap")
 
   clearBuildFuncFields(obj:getClassName())
@@ -825,9 +832,9 @@ local function buildWaterPlane(obj)
   registerBuildFuncField(obj:getClassName(),"waveSpeed", 2, "1")
   registerBuildFuncField(obj:getClassName(),"overallWaveMagnitude", 0, "1.0")
 
-  registerBuildFuncField(obj:getClassName(),"rippleTex", 0, "core/art/water/ripple.dds")
-  registerBuildFuncField(obj:getClassName(),"depthGradientTex", 0, "core/art/water/depthcolor_ramp.dds")
-  registerBuildFuncField(obj:getClassName(),"foamTex", 0, "core/art/water/foam.dds")
+  registerBuildFuncField(obj:getClassName(),"rippleTex", 0, "/core/art/water/ripple_nm.normal.dds")
+  registerBuildFuncField(obj:getClassName(),"depthGradientTex", 0, "core/art/water/depthcolor_ramp_b.color.png")
+  registerBuildFuncField(obj:getClassName(),"foamTex", 0, "/core/art/water/foam_b.color.png")
   registerBuildFuncField(obj:getClassName(),"cubemap", 0, "DefaultSkyCubemap")
 
   obj:reloadTextures()

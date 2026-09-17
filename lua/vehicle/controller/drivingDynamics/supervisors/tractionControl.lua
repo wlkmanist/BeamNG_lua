@@ -122,6 +122,14 @@ local function registerSlipProvider(slipProvider)
 end
 
 local function reset()
+  for _, wheelGroup in pairs(tractionControlledWheelGroups) do
+    wheelGroup.slipRange = 0
+    for _, wheel in pairs(wheelGroup.wheels) do
+      wheel.slip = 0
+      wheel.lastSlip = 0
+      wheel.slipSmoother:reset()
+    end
+  end
 end
 
 local function init(jbeamData)

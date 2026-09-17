@@ -20,7 +20,7 @@ local function addMissionPlayedEntry(missionId, stars)
 end
 
 local function loadDataFromFile()
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   if not saveSlot then return end
 
   local saveInfo = savePath and jsonReadFile(savePath .. "/info.json")
@@ -35,18 +35,18 @@ local function onExtensionLoaded()
 end
 
 local function onCareerActive(active)
+  if not active then return end
   loadDataFromFile()
 end
 
 -- this should only be loaded when the career is active
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   career_saveSystem.jsonWriteFileSafe(currentSavePath .. "/career/"..fileName, playbook, true)
 end
 
 M.onExtensionLoaded = onExtensionLoaded
 M.onCareerActive = onCareerActive
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
-M.onClientStartMission = onClientStartMission
+M.onSaveCurrentProfile = onSaveCurrentProfile
 M.addMissionPlayedEntry = addMissionPlayedEntry
 
 return M

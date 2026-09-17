@@ -12,11 +12,15 @@ C.color = im.ImVec4(0.13, 0.3, 0.64, 0.75)
 C.category = 'once_instant'
 
 C.pinSchema = {
-  {dir = 'in', type = 'number', name = 'vehId', hidden = true, description = '(Optional) Vehicle id.'}
+  {dir = 'in', type = 'number', name = 'vehId', hidden = true, description = '(Optional) Vehicle id.'},
+  {dir = 'in', type = 'table', name = 'vehicleIds', hidden = true, description = '(Optional) Additional vehicle ids.'}
 }
 
 function C:workOnce()
   self.mgr.modules.mission:prepareVehicle(self.pinIn.vehId.value or be:getPlayerVehicleID(0))
+  for _, vehId in pairs(self.pinIn.vehicleIds.value or {}) do
+    self.mgr.modules.mission:prepareVehicle(vehId)
+  end
 end
 
 return _flowgraph_createNode(C)

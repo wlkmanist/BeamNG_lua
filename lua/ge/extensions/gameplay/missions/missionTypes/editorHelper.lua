@@ -330,7 +330,7 @@ local function fileCheckMission(e, mtd, m)
   local file = ffi.string(e.ac)
   local foundFile = file ~= "" and (FS:fileExists(file) or  FS:fileExists(m.missionFolder..'/'..file))
   if not foundFile then
-    return {{label = 'File set for ' .. e.fieldName .. ' does not exist: ' ..dumps(file), severity = 'error'}}
+    return {{label = string.format('File does not exist: %s - fieldName %s does not exist: %s', e.fieldName, dumps(file)), severity = 'error'}}
   end
 end
 
@@ -486,7 +486,7 @@ local function stringDraw(e, mtd)
   if hasTranslate then
     im.SameLine()
     if not e._translated then
-      e._translated = translateLanguage(ffi.string(e.ac), noTranslation)
+      e._translated = _tr(ffi.string(e.ac), noTranslation)
     end
     editor.uiIconImage(editor.icons.translate, imVec24x24 , (e._translated or noTranslation) == noTranslation and imVec4Red or imVec4Green)
     if im.IsItemHovered() then

@@ -13,15 +13,14 @@ C.description = "Once flow reaches this node, it waits the assigned time before 
 C.category = 'logic'
 
 C.pinSchema = {
-  { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node. Need continious flow.' },
+  { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
   { dir = 'in', type = 'flow', name = 'reset', description = 'Resets this node.', impulse = true },
-  { dir = 'in', type = 'number', hardcoded = true, default = 3, name = 'duration', description = 'The time to wait'},
-  { dir = 'in', type = 'bool', default = false, name = 'useDtSim', description = 'Use dtSim instead of dtReal.', hidden = true },
+  { dir = 'in', type = 'number', hardcoded = true, default = 3, name = 'duration', description = 'The time to wait.'},
+  { dir = 'in', type = 'bool', default = false, name = 'useDtSim', description = 'Uses dtSim instead of dtReal.', hidden = true },
 
   { dir = 'out', type = 'flow', name = 'flow', description = 'Puts out flow, when wait is finished.' },
-  { dir = 'out', type = 'flow', name = 'impulse', description = 'Puts out flow once, when wait is finished. ', impulse = true },
+  { dir = 'out', type = 'flow', name = 'impulse', description = 'Puts out flow once, when wait is finished.', impulse = true },
 }
-
 
 C.tags = {}
 
@@ -55,7 +54,7 @@ function C:drawMiddle(builder, style)
   builder:Middle()
   if self.pinIn.duration.value == nil then return end
 
-  im.ProgressBar(self.timer / self.pinIn.duration.value, im.ImVec2(50,0))
+  im.ProgressBar(self.timer / math.max(1e-12, self.pinIn.duration.value), im.ImVec2(50,0))
   if im.SmallButton("Reset") then
     self.timer = 0
     self.running = false
@@ -64,7 +63,11 @@ end
 
 function C:work(args)
   self.pinOut.impulse.value = false
-  if self.pinIn.flow.value and not self.running and self.timer < self.pinIn.duration.value then
+  if self.pinIn.duration.value == nil then return end
+
+  local duration = math.max(1e-12, self.pinIn.duration.value)
+
+  if self.pinIn.flow.value and not self.running and self.timer < duration then
     self.running = true
     self.timer = 0
   end
@@ -74,7 +77,7 @@ function C:work(args)
   end
   self:updateTimer()
 
-  self.pinOut.flow.value = self.timer >= self.pinIn.duration.value and self.pinIn.flow.value
+  self.pinOut.flow.value = self.timer >= duration and self.pinIn.flow.value
 end
 
 return _flowgraph_createNode(C)

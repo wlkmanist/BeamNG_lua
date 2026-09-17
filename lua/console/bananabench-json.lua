@@ -4,6 +4,10 @@
 
 local bench = require("lua/console/bananabench")
 
+-- Line-buffer stdout so the parent process can stream our progress prints live
+-- (a piped stdout is fully buffered by default, so output would only flush at exit).
+pcall(function() io.stdout:setvbuf("line") end)
+
 --dump(args)
 
 local outputFilename = 'bananabench.json'

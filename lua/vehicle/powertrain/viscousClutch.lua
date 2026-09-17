@@ -117,8 +117,11 @@ local function new(jbeamData)
   device.viscousCoef = jbeamData.viscousCoef or 10 --Nm/rad/s
   device.viscousTorque = jbeamData.viscousTorque
 
-  device.cutInAV = (jbeamData.cutInRPM * rpmToAV) or nil
-  device.stallAV = (jbeamData.stallRPM * rpmToAV) or 1
+  if jbeamData.cutInRPM then
+    device.cutInAV = (jbeamData.cutInRPM * rpmToAV)
+  end
+
+  device.stallAV = (jbeamData.stallRPM or 0.1) * rpmToAV
 
   device.breakTriggerBeam = jbeamData.breakTriggerBeam
   if device.breakTriggerBeam and device.breakTriggerBeam == "" then

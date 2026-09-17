@@ -57,7 +57,7 @@ local function processWaypoint(vid)
     return nil
   end
 
-  local bo = be:getObjectByID(vid)
+  local bo = getObjectByID(vid)
 
   if not bo then
     return nil
@@ -158,7 +158,7 @@ local function initialiseVehicleData(vid)
   end
 
   local vehicleWaypointsData = M.state.vehicleWaypointsData
-  local vehicle = be:getObjectByID(vid)
+  local vehicle = getObjectByID(vid)
 
   if vehicle and ((vehicle.playerUsable == true or vehicle.playerUsable == '1') or (scenario and scenario.aiControlledVehiclesById[vid])) then
     if scenario.rollingStart and scenario.startTimerCheckpoint ~= nil then
@@ -209,7 +209,7 @@ local function onScenarioVehicleTrigger(vid, wpData, dtOff)
   if not scenario then
     return
   end
-  local bo = be:getObjectByID(vid)
+  local bo = getObjectByID(vid)
   if not bo then return end
 
   local lapDiff = processWaypoint(vid)
@@ -327,7 +327,7 @@ local function activateWaypointBranch(branchName, vehicleId, dtOff)
   end
   local scenario = scenario_scenarios.getScenario()
   local vehWpData = M.state.vehicleWaypointsData[vehicleId]
-  local vehicle = be:getObjectByID(vehicleId)
+  local vehicle = getObjectByID(vehicleId)
   if not scenario or not vehicle or not vehWpData then
     return
   end
@@ -612,7 +612,7 @@ local function onPreRender(dtReal, dtSim, dtRaw)
   -- see if a vehicle has driven through a target waypoint
   local vehicleWaypointsData = M.state.vehicleWaypointsData or {}
   for vid, vehWpData in pairs(vehicleWaypointsData) do
-    local vehicle = be:getObjectByID(vid)
+    local vehicle = getObjectByID(vid)
     local vehicleData = map.objects[vid]
 
     -- advance corners

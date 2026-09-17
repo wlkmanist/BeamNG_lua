@@ -317,15 +317,12 @@ function C:drawElement(zone)
     editor.drawAxisGizmo()
   end
 
-  local avail = im.GetContentRegionAvail()
-  im.Text("Properties")
-  im.Text("Vertex Count: " .. (#self.current.vertices))
-  im.Text("Area: %0.2fm²", self.current:zoneArea())
-  if im.Button("Select all vertices") then
+  --local avail = im.GetContentRegionAvail()
+  if im.Button("Select All Vertices") then
     self.currentVertices = self.current.vertices
     self:updateTransform()
   end
-  if im.Button("Delete current selection") then
+  if im.Button("Delete Current Vertices") then
     for _, vertex in ipairs(self.currentVertices) do
       self.current:removeVertex(vertex.index)
     end
@@ -353,19 +350,19 @@ function C:drawElement(zone)
   end
   if self.current.top.active then
     im.SameLine()
-    if im.Button("Edit Top plane") then
+    if im.Button("Edit Top Plane") then
       self.currentVertices = {}
       self.currentPlane = self.current.top
       self:updateTransform()
     end
   end
   local botActive = im.BoolPtr(self.current.bot.active)
-  if im.Checkbox("Bot Plane", botActive) then
+  if im.Checkbox("Bottom Plane", botActive) then
     self.current.bot.active = botActive[0]
   end
   if self.current.bot.active then
     im.SameLine()
-    if im.Button("Edit Bot plane") then
+    if im.Button("Edit Bottom Plane") then
       self.currentVertices = {}
       self.currentPlane = self.current.bot
       self:updateTransform()
@@ -383,8 +380,10 @@ function C:drawElement(zone)
   local inside = self.current:containsPoint2D(pos)
   local time = prof:stop()
 
-  im.Text("Inside: " .. dumps(inside))
-  im.Text("Calc Time: " .. (time) .. " ms")
+  im.Text("Vertex Count: " .. (#self.current.vertices))
+  im.Text("Area: %0.2f m²", self.current:zoneArea())
+  im.Text("Calc Time: %0.9f ms", time)
+  im.Text("Is Player Inside: " .. dumps(inside))
 end
 
 function C:findZone(mouseInfo, objects)

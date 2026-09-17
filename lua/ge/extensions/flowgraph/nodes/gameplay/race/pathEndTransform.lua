@@ -13,6 +13,8 @@ C.category = 'repeat_instant'
 C.color = im.ImVec4(1, 1, 0, 0.75)
 C.pinSchema = {
   {dir = 'in', type = 'table', name = 'pathData', tableType = 'pathData', description = 'Data from the path for other nodes to process.'},
+  {dir = 'out', type = 'flow', name = 'endExists', description = 'Outflow if the end node exists.'},
+  {dir = 'out', type = 'flow', name = 'endDoesNotExist', description = 'Outflow if the end node does not exist.'},
   {dir = 'out', type = 'bool', name = 'existing', description = 'True if the transform was found'},
   {dir = 'out', type = 'vec3', name = 'pos', description = 'The position of this transform.'},
   {dir = 'out', type = 'vec3', name = 'dirVec', description = 'The direction vector of this transform.'},
@@ -32,6 +34,8 @@ function C:_executionStopped()
 end
 
 function C:work(args)
+  self.pinOut.endExists.value = false
+  self.pinOut.endDoesNotExist.value = false
   if self.path == nil and self.pinIn.pathData.value then
     self.path = self.pinIn.pathData.value
 
@@ -41,7 +45,7 @@ function C:work(args)
     elseif self.path.config.closed and self.path.startNode and self.path.startNode ~= -1 and self.path.pathnodes.objects[self.path.startNode] then
       endNode = self.path.pathnodes.objects[self.path.startNode]
     elseif self.path.endNode == -1 then
-      log("E","","No end node found! It should be explicitely marked in the race editor." .. dumps(self.id).."!")
+      log("W","","No end node found! It should be explicitely marked in the race editor." .. dumps(self.id).."!")
     end
 
     self.pinOut.existing.value = false
@@ -49,6 +53,8 @@ function C:work(args)
     if not endNode or endNode.missing then return end
 
     self.pinOut.existing.value = true
+    self.pinOut.endExists.value = true
+    self.pinOut.endDoesNotExist.value = false
 
     self.pinOut.pos.value = endNode.pos:toTable()
     self.pinOut.dirVec.value = endNode.hasNormal and endNode.normal:toTable() or {0, 0, 1}

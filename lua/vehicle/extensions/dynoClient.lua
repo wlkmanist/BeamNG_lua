@@ -9,7 +9,7 @@ local textureName = nil
 
 local function sendData(textureName, jsFunc, data, objId)
     local js = jsonEncode(data):gsub('%"', '%\\\'') -- replace " with \'
-    local l = "be:getObjectByID("..objId.."):queueJSUITexture('"..textureName.."', '"..jsFunc.."(" .. js .. ");')"
+    local l = "getObjectByID("..objId.."):queueJSUITexture('"..textureName.."', '"..jsFunc.."(" .. js .. ");')"
     obj:queueGameEngineLua(l)
 end
 

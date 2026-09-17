@@ -28,12 +28,12 @@ end
 -- The default global argument parsing
 local function defaultParseArgs()
   M.args = {}
-  local argumentCount = tonumber(getConsoleVariable("$Game::argc"))
-  -- log('I','parse','$Game::argv = '..getConsoleVariable("$Game::argv")..'     argumentCount: '..tostring(argumentCount))
+  local argumentCount = tonumber(VariableRegistry.get("$Game::argc", 0))
+  -- log('I','parse','$Game::argv = '..VariableRegistry.get("$Game::argv", 0)..'     argumentCount: '..tostring(argumentCount))
   if argumentCount then
     for i = 0, argumentCount - 1 do
-      local arg = getConsoleVariable("$Game::argv".. tostring(i))
-      local nextArg = getConsoleVariable("$Game::argv".. tostring(i + 1))
+      local arg = VariableRegistry.get("$Game::argv".. tostring(i), "")
+      local nextArg = VariableRegistry.get("$Game::argv".. tostring(i + 1), "")
       local hasNextArg = (argumentCount - i) > 1
       -- log('I','parse',"    $Game::argv".. tostring(i).."= "..tostring(arg))
 
@@ -45,13 +45,11 @@ local function defaultParseArgs()
             nextArg = nextArg + 4
           end
           setLogMode(nextArg)
-          setConsoleVariable("$logModeSpecified", true)
+          VariableRegistry.set("$logModeSpecified", true)
           i = i + 1
         else
           log("E", "", "Error: Missing Command Line argument. Usage: -log <Mode: 0,1,2>")
         end
-      elseif arg == "-console" then
-        enableWinConsole(true)
       elseif arg == "-cefdev" then
         enableCEFDevConsole(true)
       elseif arg == "-fullscreen" then
@@ -67,10 +65,17 @@ local function defaultParseArgs()
         end
       elseif arg == "-vehicle" then
         if hasNextArg then
-          setConsoleVariable("$beamngVehicleArgs", nextArg)
+          VariableRegistry.set("$beamngVehicleArgs", nextArg)
           i = i + 1
         else
           log("E", "", "Error: Missing Command Line argument. Usage: -vehicle <vehicle arg>")
+        end
+      elseif arg == "-useDefaultPc" then
+        M.args.useDefaultPc = true
+      elseif arg == "-translationScrambleDebug" then
+        M.args.translationScrambleDebug = true
+        if core_locales then
+          core_locales.setScrambleTranslationDebugEnabled(true)
         end
       elseif arg == "-luafile" then
         if hasNextArg then
@@ -95,13 +100,38 @@ local function defaultParseArgs()
         end
       elseif arg == "-level" then
         if hasNextArg then
-          setConsoleVariable("$levelToLoad", nextArg)
+          VariableRegistry.set("$levelToLoad", nextArg)
           i = i + 1
         else
           log("E", "", "Error: Missing Command Line argument. Usage: -level <level file name (no path), with or without extension>")
         end
       elseif arg == "-worldeditor" then
-        setConsoleVariable("$startWorldEditor", true)
+        log("E", "", "Error: The -worldeditor argument was deprecated. Please use -worldEditor (camel case) instead.")
+      elseif arg == "-tcom" or arg == "-tcom-capture" then
+        local success, err = pcall(function()
+          extensions.load('tech/techCore')
+        end)
+        if not success then
+          log("E", "", string.format("Error: Cannot load techCore extension. Original error: %s", err))
+        elseif arg == "-tcom" then
+          tech_techCore.openServer()
+        end
+      elseif arg == "-levelOffset" then
+        if i + 3 <= argumentCount then
+          local x = tonumber(VariableRegistry.get("$Game::argv".. tostring(i + 1), 0))
+          local y = tonumber(VariableRegistry.get("$Game::argv".. tostring(i + 2), 0))
+          local z = tonumber(VariableRegistry.get("$Game::argv".. tostring(i + 3), 0))
+          if x and y and z then
+            server.setLevelOffset(x, y, z)
+            i = i + 3 -- Skip the consumed arguments
+          else
+            log('E', 'Invalid argument for -levelOffset: expected three numeric values.')
+          end
+        else
+          log('E', 'Not enough arguments for -levelOffset: expected three numeric values.')
+        end
+      elseif arg == "-enableAiRecordingForMissions" then
+        M.args.enableAiRecordingForMissions = true
       end
     end
   end

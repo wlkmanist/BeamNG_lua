@@ -90,7 +90,6 @@ end
 local function init(jbeamData)
   shaft = powertrain.getDevice(jbeamData.shaftName)
   rangeBox = powertrain.getDevice(jbeamData.rangeBoxName)
-
   if shaft then
     electrics.values.mode4WD = shaft.mode == "connected" and 1 or 0
   end
@@ -102,18 +101,19 @@ local function init(jbeamData)
     if shaft then
       core_quickAccess.addEntry(
         {
-          level = "/powertrain/",
+          level = "/root/playerVehicle/vehicleFeatures/",
           generator = function(entries)
             local wdIcon
             if shaft.mode == "disconnected" then
-              wdIcon = "radial_disconnected"
+              wdIcon = "jointUnlocked"
             else
-              wdIcon = "radial_connected"
+              wdIcon = "jointLocked"
             end
 
             local wdEntry = {
               title = "ui.radialmenu2.powertrain.4WD_Mode",
               icon = wdIcon,
+              uniqueID = "4wdMode",
               onSelect = function()
                 if shaft.mode == "disconnected" then
                   controller.getController(M.name).set4WDMode("connected")
@@ -134,13 +134,14 @@ local function init(jbeamData)
     if rangeBox then
       core_quickAccess.addEntry(
         {
-          level = "/powertrain/",
+          level = "/root/playerVehicle/vehicleFeatures/",
+          uniqueID = "rangeboxMode",
           generator = function(entries)
             local rmIcon
             if rangeBox.mode == "low" then
-              rmIcon = "radial_lowrangebox"
+              rmIcon = "rangeboxLo"
             else
-              rmIcon = "radial_highrangebox"
+              rmIcon = "rangeboxHi"
             end
 
             local rmEntry = {

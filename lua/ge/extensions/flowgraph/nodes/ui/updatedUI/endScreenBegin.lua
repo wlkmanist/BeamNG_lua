@@ -8,12 +8,10 @@ local ffi = require('ffi')
 
 local C = {}
 
-C.name = 'End Screen Begin'
+C.name = 'EndScreen Begin'
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
-C.description = "Shows the end screen of a scenario with customizable buttons."
-C.todo = "Showing two of these at the same time will break everything."
-C.behaviour = {singleActive = true}
+C.description = 'Begins building the end screen. Use the "EndScreen" nodes and the "Screen Finish" nodes with this.'
 
 C.pinSchema = {
   --{ dir = 'in', type = 'string', name = 'title', description = 'Title of the menu.' },
@@ -30,11 +28,14 @@ C.pinSchema = {
   { dir = 'out', type = 'flow', name = 'contHere', description = 'When the player pressed "Continue Here". Only available in career if using your own vehicle.'},
 }
 
+C.tags = { 'end', 'finish', 'screen', 'outro', 'ui' }
+
 function C:init()
   self.open = false
   self.oldOptions = {}
   self.options = {}
   self.data.includeRetryButton = true
+  self._autoSkipTimer = 0
 end
 
 function C:postInit()
@@ -47,6 +48,15 @@ function C:_executionStarted()
     p.value = false
   end
   self.open = false
+  self._autoSkipTimer = 0
+end
+
+function C:_executionStopped()
+  self:closeDialogue()
+end
+
+function C:onClientEndMission()
+  self:closeDialogue()
 end
 
 function C:drawCustomProperties()
@@ -148,30 +158,26 @@ function C:_onDeserialized(nodeData)
   self:updateButtons()
 end
 
-function C:_executionStopped()
-end
-
-
 function C:buttonPushed(action)
   for nm, pn in pairs(self.pinOut) do
     if nm == action then
       self.pinOut[nm].value = true
     end
   end
+
+  self:closeDialogue()
 end
-
-
 
 function C:onResetGameplay()
   if self.open and self.data.includeRetryButton then
     log("I","","Closing End Screen because of reset!")
+    guihooks.trigger('ChangeState', 'play')
     self.pinOut.retry.value = true
   end
 end
 
-
-
 function C:openDialogue()
+  extensions.hook("onEndScreenUIOpened")
   self.open = true
 
   -- BUTTONS --
@@ -180,20 +186,57 @@ function C:openDialogue()
 
 
   if self.data.includeRetryButton then
+    local entryFee = {}
+    local canPayFee = true
+    local entryFeeAsList = nil
+    if self.mgr.activity and career_career.isActive() then
+      -- entry fee
+      entryFee = self.mgr.activity:getEntryFee(userSettings) or {}
+      local hasEntryFee = false
+      canPayFee = true
+      for key, value in pairs(entryFee) do
+        hasEntryFee = hasEntryFee or value > 0
+        if career_modules_playerAttributes.getAttributeValue(key) < value then
+          canPayFee = false
+        end
+      end
+      -- as list for the UI
+      entryFeeAsList = {}
+      local attributesSorted = tableKeys(entryFee)
+      table.sort(attributesSorted, career_branches.sortAttributes)
+      for _, key in ipairs(attributesSorted) do
+        if entryFee[key] > 0 then
+          table.insert(entryFeeAsList, {rewardAmount = entryFee[key], icon = career_branches.getBranchIcon(key), attributeKey = key})
+        end
+      end
+      if not next(entryFeeAsList) then
+        entryFeeAsList = nil
+      end
+    end
+
+
     table.insert(defaultBtns, self.mgr.modules.ui:addButton(
-      function() extensions.hook("onResetGameplay") end,
+      function()
+        if next(entryFee) and career_career.isActive() then
+          career_modules_playerAttributes.addAttributes(entryFee, {label = "ui.career.attributeLog.challengeEntryFee"})
+        end
+        extensions.hook("onResetGameplay")
+      end,
       {
+        fee = entryFeeAsList,
+        enabled = canPayFee,
         label = "ui.common.retry",
+        disableReason = (not canPayFee) and "Can't pay entry fee.",
       }))
   end
 
   --only allow cont. here if:
   -- the user uses their own vehicle and career is active.
   -- career is not active
-  --local canContinueHere = (not career_career) or (not career_career.isActive()) or (self.mgr.activity.setupModules.vehicles.usePlayerVehicle and career_career and career_career.isActive())
+  local canContinueHere = (not career_career) or (not career_career.isActive()) or (self.mgr.activity.setupModules.vehicles.usePlayerVehicle and career_career and career_career.isActive())
 
   -- Temp fix: continue here only outside of career
-  local canContinueHere = (not career_career) or (not career_career.isActive())
+  --local canContinueHere = (not career_career) or (not career_career.isActive())
 
   if not self.mgr.startedAsScenario then
     if self.pinIn.contStartActive.value then
@@ -225,7 +268,7 @@ function C:openDialogue()
   end
 
   -- in the tutorial, restrict buttons manually.
-  local isTutorial = career_modules_linearTutorial and (not career_modules_linearTutorial.getTutorialFlag('completedTutorialMission'))
+  local isTutorial = career_career.isActive() and career_modules_tutorial.isActive()
   if isTutorial then
     defaultBtns = {
       self.mgr.modules.ui:addButton(
@@ -260,8 +303,8 @@ function C:openDialogue()
           function()
             gameplay_missions_missionManager.startFromWithinMission(gameplay_missions_missions.getMissionById(mid))
           end, {
-          label = "Start Next Mission '" .. translateLanguage(mission.name, mission.name).."'",
-          disabled = not mission.unlocks.startable
+          label = "Start Next Mission '" .. _tr(mission.name).."'",
+          disabled = not gameplay_missions_unlocks.isMissionStartable(mission)
         }))
       end
     end
@@ -279,10 +322,17 @@ function C:openDialogue()
   self.mgr.modules.ui:addHeader({header = self.graph.mgr.name})
 end
 
+function C:closeDialogue()
+  if self.built then
+    guihooks.trigger('ChangeState', 'play')
+  end
+end
+
 function C:onNodeReset()
   for _,pn in pairs(self.pinOut) do
     pn.value = false
   end
+  self.open = false
   self.built = false
 end
 
@@ -296,6 +346,7 @@ function C:work()
   if self.pinIn.flow.value then
     if not self.built  then
       self.mgr.modules.ui:startUIBuilding('endScreen', self)
+      self._autoSkipTimer = 0
       self:openDialogue()
     end
     self.pinOut.build.value = not self.built
@@ -303,8 +354,21 @@ function C:work()
   else
     self.pinOut.flow.value = false
     self.pinOut.build.value = false
+    self._autoSkipTimer = 0
   end
   self.pinOut.flow.value = false
+
+  if self.mgr.activity and self.mgr.activity.startingOptions and self.mgr.activity.startingOptions.autoSkipEndScreen then
+    self._autoSkipTimer = self._autoSkipTimer + self.mgr.dtRaw
+    if self._autoSkipTimer >= 2 then
+      if not self.autoSkipComplete then
+        gameplay_missions_missionScreen.stopMissionById(nil, true)
+        self.autoSkipComplete = true
+      end
+    else
+      self.autoSkipComplete = false
+    end
+  end
 end
 
 return _flowgraph_createNode(C)

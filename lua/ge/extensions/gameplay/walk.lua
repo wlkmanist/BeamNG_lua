@@ -10,6 +10,7 @@ local atParkingSpeed = true
 local showMessageLastFrame = false
 local togglingEnabled = true
 local vehicleBlacklist = {}
+local unicycleId
 
 local lowerStoppingSpeed = 5.0/3.6
 local higherStoppingSpeed = 6.0/3.6
@@ -19,11 +20,8 @@ local placePlayerOffsetFromBody = 0.7
 
 local active = false
 
-local function getVehicleByID(id)
-  if id then return be:getObjectByID(id) end
-end
-
-local function getPlayerUnicycle(veh)
+-- returns the currently used unicycle, no matter if it's the one saved under "unicycleId" or not
+local function getCurrentUnicycle(veh)
   veh = veh or getPlayerVehicle(0)
   if veh and veh:getJBeamFilename() == "unicycle" then
     return veh
@@ -31,27 +29,23 @@ local function getPlayerUnicycle(veh)
 end
 
 local function isWalking()
-  return getPlayerUnicycle() ~= nil
+  return getCurrentUnicycle() ~= nil
 end
 
 local function getUnicyleAtPosition(pos, visibilityPoint)
-  local unicycle = getPlayerUnicycle()
+  local unicycle = getCurrentUnicycle()
 
-  if not unicycle then
-    for _, veh in ipairs(getAllVehicles()) do
-      if veh:getJBeamFilename() == "unicycle" and not veh:getActive() then
-        unicycle = veh
-        break
-      end
-    end
+  if unicycleId and not unicycle then
+    unicycle = getObjectByID(unicycleId)
   end
   if unicycle then
     unicycle:setActive(1)
     spawn.safeTeleport(unicycle, pos, nil, nil, visibilityPoint, false)
   else
     local config = career_career and career_career.isActive() and "vehicles/unicycle/without_mesh.pc"
-    unicycle = extensions.core_vehicles.spawnNewVehicle("unicycle", {pos = pos, visibilityPoint = visibilityPoint, removeTraffic = false, config = config})
+    unicycle = extensions.core_vehicles.spawnNewVehicle("unicycle", {pos = pos, visibilityPoint = visibilityPoint, removeTraffic = false, config = config, canSpawnAnotherVehicleCheck = false})
   end
+  unicycleId = unicycle and unicycle:getId() or nil
   return unicycle
 end
 
@@ -90,9 +84,10 @@ local function setUnicycleInactive(unicycle)
 end
 
 local function getInVehicle(vehicle)
-  local unicycle = getPlayerUnicycle()
+  local unicycle = getCurrentUnicycle()
   be:enterVehicle(0, vehicle)
   if unicycle then
+    unicycleId = unicycle:getId()
     setUnicycleInactive(unicycle)
   end
 end
@@ -106,25 +101,27 @@ local function getOutOfVehicle(vehicle, pos, rot)
   end
   local unicycle = getUnicyleAtPosition(pos, visibilityPoint)
 
-  local camData = core_camera.getCameraDataById(unicycle:getId())
-  if camData and camData.unicycle then
-    local unicyclePos = unicycle:getPosition()
-    local finalDir
-    if rot then
-      finalDir = rot * forward
-    elseif visibilityPoint then
-      finalDir = (visibilityPoint - unicyclePos)
-    else
-      finalDir = forward
+  if unicycle then
+    local camData = core_camera.getCameraDataById(unicycle:getId())
+    if camData and camData.unicycle then
+      local unicyclePos = unicycle:getPosition()
+      local finalDir
+      if rot then
+        finalDir = rot * forward
+      elseif visibilityPoint then
+        finalDir = (visibilityPoint - unicyclePos)
+      else
+        finalDir = forward
+      end
+      camData.unicycle:setCustomData({pos = unicyclePos, front = finalDir, up = up})
     end
-    camData.unicycle:setCustomData({pos = unicyclePos, front = finalDir, up = up})
+    be:enterVehicle(0, unicycle)
   end
-  be:enterVehicle(0, unicycle)
 end
 
 local function setRot(front, up)
   if not active then return end
-  local unicycle = getPlayerUnicycle()
+  local unicycle = getCurrentUnicycle()
   local camData = core_camera.getCameraDataById(unicycle:getId())
   if camData and camData.unicycle then
     camData.unicycle:setCustomData({front = front, up = up})
@@ -132,12 +129,17 @@ local function setRot(front, up)
 end
 
 -- pos and rot are optional
-local function setWalkingMode(enabled, pos, rot)
-  if (enabled == active) or not atParkingSpeed or not togglingEnabled or (core_replay.getState() == 'playback') then
-    return false, getPlayerUnicycle() and getPlayerUnicycle():getId()
+local function setWalkingMode(enabled, pos, rot, force)
+  if (enabled == active) or ((not atParkingSpeed or not togglingEnabled or (core_replay.getState() == 'playback')) and not force) then
+    return false, getCurrentUnicycle() and getCurrentUnicycle():getId()
   end
   if enabled then
-    if not getPlayerUnicycle() then
+    -- clear camera message when entering walking mode
+    guihooks.trigger('Message', {
+      category = 'cameramode',
+      clear = true
+    })
+    if not getCurrentUnicycle() then
       extensions.hook("onBeforeWalkingModeToggled", enabled)
       getOutOfVehicle(getPlayerVehicle(0), pos, rot)
     end
@@ -147,10 +149,10 @@ local function setWalkingMode(enabled, pos, rot)
       getInVehicle(vehicleInFront)
     else
       extensions.hook("onBeforeWalkingModeToggled", enabled)
-      setUnicycleInactive(getPlayerUnicycle())
+      setUnicycleInactive(getCurrentUnicycle())
     end
   end
-  local playerUnicycle = getPlayerUnicycle()
+  local playerUnicycle = getCurrentUnicycle()
   if enabled then
     return playerUnicycle ~= nil, playerUnicycle and playerUnicycle:getId()
   else
@@ -237,11 +239,11 @@ local vehPos = vec3()
 local function onUpdate(dtReal, dtSim)
   local showMessage = false
 
+  vehicleInFront = nil
   if active then
-    local unicycle = getPlayerUnicycle()
+    local unicycle = getCurrentUnicycle()
     vehPos:set(unicycle:getPositionXYZ())
     local closestHit = 2
-    vehicleInFront = nil
     for _, veh in ipairs(getAllVehicles()) do
       local vehId = veh:getID()
       if not vehicleBlacklist[vehId] and veh.playerUsable ~= false and veh:getActive() and veh:getJBeamFilename() ~= "unicycle" then
@@ -285,9 +287,17 @@ local function onUpdate(dtReal, dtSim)
 
   if showMessage ~= showMessageLastFrame then
     if showMessage then
-      ui_message("ui.inputActions.gameplay.toggleWalkingMode.enterMessage", 10, "walkingmode")
+      guihooks.trigger("Message", {
+        ttl = 60,
+        category = "walkingmode",
+        icon = "seatArrowInLeft",
+        actionItems = fillActionLabelSimple{"toggleWalkingMode"}
+      })
     else
-      ui_message("", 0, "walkingmode")
+      guihooks.trigger("Message", {
+        category = "walkingmode",
+        clear = true
+      })
     end
   end
   showMessageLastFrame = showMessage
@@ -302,19 +312,34 @@ local function isAtParkingSpeed()
 end
 
 local function onSerialize()
-  return {togglingEnabled = togglingEnabled, vehicleBlacklist = vehicleBlacklist}
+  return {togglingEnabled = togglingEnabled, vehicleBlacklist = vehicleBlacklist, unicycleId = unicycleId}
 end
 
 local function onDeserialize(data)
   togglingEnabled = data.togglingEnabled
   vehicleBlacklist = data.vehicleBlacklist
-  active = getPlayerUnicycle() ~= nil
+  active = getCurrentUnicycle() ~= nil
+  unicycleId = data.unicycleId
 end
 
 local function getPosRot()
-  local unicycle = getPlayerUnicycle()
+  local unicycle = getCurrentUnicycle()
   if active and unicycle then
     return unicycle:getPosition(), core_camera.getQuat()
+  end
+end
+
+local function getPosXYZ()
+  local unicycle = getCurrentUnicycle()
+  if active and unicycle then
+    return unicycle:getPositionXYZ()
+  end
+end
+
+local function getRotXYZW()
+  local unicycle = getCurrentUnicycle()
+  if active and unicycle then
+    return core_camera.getQuatXYZW()
   end
 end
 
@@ -351,6 +376,10 @@ local function onClientStartMission(levelPath)
   togglingEnabled = true
 end
 
+local function onClientEndMission(levelPath)
+  unicycleId = nil
+end
+
 local function onVehicleSwitched(oldId, newId, player)
   if player ~= 0 then return end
 
@@ -360,7 +389,23 @@ local function onVehicleSwitched(oldId, newId, player)
     unicycle:setMeshAlpha(1, "", false)
   end
 
-  active = getPlayerUnicycle() ~= nil
+  if oldId == unicycleId then
+    setUnicycleInactive(unicycle)
+  end
+
+  active = getCurrentUnicycle() ~= nil
+end
+
+local function onVehicleReplaced(vehId)
+  if vehId == unicycleId then
+    unicycleId = nil
+  end
+end
+
+local function onVehicleDestroyed(vehId)
+  if vehId == unicycleId then
+    unicycleId = nil
+  end
 end
 
 M.isWalking = isWalking
@@ -373,18 +418,23 @@ M.isTogglingEnabled = isTogglingEnabled
 M.setWalkingMode = setWalkingMode
 M.getInVehicle = getInVehicle
 M.getDoorsidePosRot = getDoorsidePosRot
-M.getPlayerUnicycle = getPlayerUnicycle
+M.getCurrentUnicycle = getCurrentUnicycle
 M.addVehicleToBlacklist = addVehicleToBlacklist
 M.removeVehicleFromBlacklist = removeVehicleFromBlacklist
 M.isVehicleBlacklisted = isVehicleBlacklisted
 M.clearBlacklist = clearBlacklist
 M.getBlacklist = getBlacklist
 M.setRot = setRot
+M.getPosXYZ = getPosXYZ
+M.getRotXYZW = getRotXYZW
 
 M.onUpdate = onUpdate
 M.onSerialize = onSerialize
 M.onDeserialize = onDeserialize
 M.onClientStartMission = onClientStartMission
+M.onClientEndMission = onClientEndMission
 M.onVehicleSwitched = onVehicleSwitched
+M.onVehicleReplaced = onVehicleReplaced
+M.onVehicleDestroyed = onVehicleDestroyed
 
 return M

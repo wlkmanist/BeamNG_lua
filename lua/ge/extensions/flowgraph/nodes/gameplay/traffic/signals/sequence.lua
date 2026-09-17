@@ -16,6 +16,7 @@ C.pinSchema = {
   {dir = 'in', type = 'table', name = 'sequenceData', tableType = 'signalSequenceData', description = 'Signal sequence data.'},
   {dir = 'out', type = 'number', name = 'step', description = 'Current step index.'},
   {dir = 'out', type = 'number', name = 'maxSteps', description = 'Total number of steps in the sequence.'},
+  {dir = 'out', type = 'number', name = 'duration', description = 'Total duration of the sequence (0 if not active).'},
   {dir = 'out', type = 'number', name = 'phase', description = 'Current phase index.'},
   {dir = 'out', type = 'bool', name = 'active', hidden = true, description = 'True while the sequence is active.'},
   {dir = 'out', type = 'bool', name = 'timed', hidden = true, description = 'True while the sequence is using the timer.'}
@@ -27,7 +28,8 @@ function C:work(args)
   local sequence = self.pinIn.sequenceData.value
   if sequence then
     self.pinOut.step.value = sequence.currStep
-    self.pinOut.maxSteps.value = #sequence.sequenceTimings
+    self.pinOut.maxSteps.value = #sequence.timelineTimes
+    self.pinOut.duration.value = sequence.totalDuration
     self.pinOut.phase.value = sequence.currPhase
     self.pinOut.active.value = sequence.active
     self.pinOut.timed.value = not sequence.ignoreTimer

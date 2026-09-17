@@ -16,6 +16,21 @@ local function loadCampaign(campaignfile)
   campaign.sourceFile =  string.gsub(campaignfile, "(.*:)(.*)", "%2")
   campaign.sourcePath = string.gsub(campaignfile, "(.*)/(.*)", "%1")
   campaign.official = isOfficialContentVPath(campaign.sourcePath)
+
+  -- add mod information
+  local mod = extensions.core_modmanager.getModFromPath(campaignfile, true)
+  if mod then
+    campaign.modID = mod.modID
+    campaign.modName = mod.modname
+    if mod.modData and mod.modData.title then
+      campaign.modTitle = mod.modData.title
+    end
+  else
+    campaign.modID = nil
+    campaign.modName = 'BeamNG'
+    campaign.modTitle = 'BeamNG.drive'
+  end
+
   local index = string.find(campaign.sourcePath, "/[^/]*$") + 1
   -- todo: insert all images of the scenarios belong to this as well
   campaign.previews = {
@@ -38,6 +53,7 @@ local function getCampaignFilenames()
     if fileData.header and fileData.header.type == 'campaign' then
       table.insert(campaigns, filename)
     end
+    systemYield()
   end
   return campaigns
 end
@@ -47,12 +63,20 @@ local function getList()
   local campaignInfofiles = getCampaignFilenames()
   -- dump(campaignInfofiles)
   local campaignList = {}
+  if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+    util_asyncBulkLoader.addTotal(#campaignInfofiles)
+  end
   for _,campaignfile in pairs(campaignInfofiles) do
     local entry = loadCampaign(campaignfile)
     if entry then
       table.insert(campaignList, entry)
       --dump(entry)
     end
+    if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+      util_asyncBulkLoader.addCount(1)
+      util_asyncBulkLoader.yield("loadCampaign " .. campaignfile)
+    end
+    systemYield()
   end
   -- dump(campaignList)
   return campaignList
@@ -88,8 +112,10 @@ local function generateCampaignScenariosList()
             table.insert(scenariosList, location.path)
           end
         end
+        systemYield()
       end
     end
+    systemYield()
   end
   return scenariosList
 end
@@ -227,15 +253,14 @@ local function start(newCampaign, endCallback)
   -- Loading the first scenario in the campaign causes the current loaded level to unload which breaks the campaign.
   if scenetree.MissionGroup then
     log('D', logTag, 'Delaying start of campaign until current level is unloaded...')
-    M.triggerDelayedStart = function()
-      log('D', logTag, 'Triggering a delayed start of campaign...')
-      M.triggerDelayedStart = nil
+    local func = function()
       start(newCampaign, endCallback)
     end
-
-    endActiveGameMode(M.triggerDelayedStart)
+    endActiveGameMode(triggerDelayedStartGenerator(logTag, 'campaign', func, true))
   else
-    loadGameModeModules(scenario_scenariosLoader.scenarioModules, scenario_quickRaceLoader.quickRaceModules, M.campaignModules)
+    unloadAutoExtensions()
+    loadPresetExtensions()
+    extensions.load(scenario_scenariosLoader.scenarioModules, scenario_quickRaceLoader.quickRaceModules, M.campaignModules)
 
     local processedCampaign = processCampaignStartInternal(newCampaign, endCallback)
 
@@ -355,6 +380,7 @@ end
 M.getCampaignFilenames  = getCampaignFilenames
 M.getList               = getList
 M.getCampaignScenarios  = getCampaignScenarios
+M.loadCampaign          = loadCampaign
 M.onInit                = onInit
 M.start                 = start
 M.startByFolder         = startByFolder

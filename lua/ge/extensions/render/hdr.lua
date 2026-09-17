@@ -38,6 +38,14 @@ local function onFirstUpdate()
         postEffectBrightPassObj:addObject(postEffectLuminance)
     end
 
+    local postEffectLocalExposure = scenetree.findObject("PostEffectLocalExposureObject")
+    if not postEffectLocalExposure then
+        postEffectLocalExposure = createObject("PostEffectLocalExposure")
+        postEffectLocalExposure:setField("targetScale", 0, "0.25 0.25")
+        postEffectLocalExposure:registerObject("PostEffectLocalExposureObject")
+    end
+    postEffectLocalExposure.exposureBiasEV = tonumber(settings.getValue("GraphicEVCompensation", 0)) or 0
+
     local postEffectCombinePass = scenetree.findObject("PostEffectCombinePassObject")
     if not postEffectCombinePass then
         postEffectCombinePass = createObject("PostEffectCombinePass")

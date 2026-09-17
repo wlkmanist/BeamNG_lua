@@ -7,36 +7,11 @@
 
 -- this file needs to be in sync with imgui_api.h
 
-
-local ffi = require('ffi')
-
--- base requirement for imgui_gen.h
-ffi.cdef([[
-typedef struct ImVector {
-  int Size;
-  int Capacity;
-  const void* Data;
-} ImVector;
-
-typedef struct ImVec2 {
-  float x;
-  float y;
-} ImVec2;
-typedef struct ImVec4 {
-  float x;
-  float y;
-  float z;
-  float w;
-} ImVec4;
-]])
-ffi.cdef(readFile('lua/common/extensions/ui/imgui_gen.h'))
-ffi.cdef(readFile('lua/common/extensions/ui/imgui_custom.h'))
-
 local M = {}
 
 M.ctx = nil -- global lua imgui context
 
-require('/common/extensions/ui/imgui_gen')(M)
-require('/common/extensions/ui/imgui_custom')(M)
+require('/common/extensions/ui/imgui_luaintf')(M)
+require('/common/extensions/ui/imgui_custom_luaintf')(M)
 
 return M

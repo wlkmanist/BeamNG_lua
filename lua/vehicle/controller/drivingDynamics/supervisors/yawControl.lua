@@ -10,6 +10,7 @@ M.isActive = false
 M.isActing = false
 
 local floor = math.floor
+local abs = math.abs
 
 local CMU = nil
 local isDebugEnabled = false
@@ -33,10 +34,14 @@ local isActiveSmoother = newTemporalSmoothing(10, 5)
 local yawDifferenceAdjusted
 local yawDifferenceRaw
 local bodySlipAngleAdjusted
+local frontSlipAngle
+local rearSlipAngle
+local slipAngleSpeed
 
 local function updateFixedStep(dt)
   local cmu = CMU
   local virtualSensors = cmu.virtualSensors
+  local vehicleData = cmu.vehicleData
   local speed = virtualSensors.virtual.speed
   local expectedYaw = 0
   for j = 1, yawProviderCount do
@@ -50,6 +55,17 @@ local function updateFixedStep(dt)
   local measuredYaw = cmu.sensorHub.yawAVSmooth
   local bodySlipAngleTrustCoef = linearScale(virtualSensors.trustWorthiness.bodySlipAngle, 0.5, 0.8, 0, 1)
   local bodySlipAngleRaw = virtualSensors.virtual.bodySlipAngle * bodySlipAngleTrustCoef
+
+  --calculate front and rear axle slip angles based on the body slip angle and the yaw rate
+  slipAngleSpeed = virtualSensors.trustWorthiness.virtualSpeed >= 0.99 and abs(virtualSensors.virtual.speed) or abs(virtualSensors.virtual.wheelSpeed)
+  if slipAngleSpeed > 1 then
+    local yawRatePerSpeed = measuredYaw / slipAngleSpeed
+    frontSlipAngle = -(vehicleData.frontWheelAngle - bodySlipAngleRaw - vehicleData.vehicleStats.distanceCOGFrontAxle * yawRatePerSpeed) * 0.5
+    rearSlipAngle = -(-bodySlipAngleRaw + vehicleData.vehicleStats.distanceCOGRearAxle * yawRatePerSpeed) * 0.5
+  else
+    frontSlipAngle = 0
+    rearSlipAngle = 0
+  end
 
   if measuredYaw * expectedYaw < 0 then --check if we are counter steering while oversteering.
     expectedYaw = -expectedYaw --If we do, we need to adjust our desired yaw rate because its sign is wrong at this point (since we are steering in the "wrong" direction)
@@ -65,7 +81,7 @@ local function updateFixedStep(dt)
   yawControlActive = false
   for i = 1, yawControlComponentCount do
     local component = yawControlComponents[i]
-    local didAct = component.actAsYawControl(measuredYaw, expectedYaw, yawDifferenceAdjusted, bodySlipAngleAdjusted, dt)
+    local didAct = component.actAsYawControl(measuredYaw, expectedYaw, yawDifferenceAdjusted, bodySlipAngleAdjusted, frontSlipAngle, rearSlipAngle, dt)
     yawControlActive = didAct or yawControlActive
   end
 end
@@ -88,6 +104,9 @@ local function updateGFXDebug(dt)
   debugPacket.yawDifferenceRaw = yawDifferenceRaw
   debugPacket.yawDifferenceAdjusted = yawDifferenceAdjusted
   debugPacket.bodySlipAngleAdjusted = bodySlipAngleAdjusted
+  debugPacket.frontSlipAngle = frontSlipAngle --todo: display in debug app and see if useful
+  debugPacket.rearSlipAngle = rearSlipAngle --todo: display in debug app and see if useful
+  debugPacket.slipAngleSpeed = slipAngleSpeed --todo: display in debug app and see if useful
 
   CMU.sendDebugPacket(debugPacket)
 end
@@ -137,7 +156,7 @@ local function initLastStage(jbeamData)
   table.sort(
     yawProviders,
     function(a, b)
-      local ra, rb = a.providerOrder or a.order or 0, b.providerOrder or b.orrder or 0
+      local ra, rb = a.providerOrder or a.order or 0, b.providerOrder or b.order or 0
       return ra < rb
     end
   )

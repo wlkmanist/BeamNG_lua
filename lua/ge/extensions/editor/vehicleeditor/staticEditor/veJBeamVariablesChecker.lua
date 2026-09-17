@@ -1,4 +1,4 @@
--- This Source Code Form is subject to the terms of the bCDDL, var. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -28,6 +28,10 @@ local function parseFile(filename)
 end
 
 local function checkValInRange(vv, val, varDefFilename, valDefFilename, partName)
+  if type(val) ~= 'number' or type(vv.min) ~= 'number' or type(vv.max) ~= 'number' then
+    return
+  end
+
   vv.val = val
   vv.min, vv.max = math.min(vv.min, vv.max), math.max(vv.min, vv.max)
 
@@ -103,6 +107,8 @@ local function onUpdate()
       analyze()
     end
   end
+
+  im.Text("Results get printed to the console.")
 
   ::continue::
   im.End()

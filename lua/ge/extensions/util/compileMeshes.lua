@@ -6,11 +6,13 @@
 -- keep in mind that existing .cdae will be reused. Delete them beforehand if a clean state is required
 
 -- path to compile dae files in. They are loaded separetly in their subfolders
-local compilePaths = {'art/', 'vehicles/', 'levels/', 'content/', "/core/art/"}
+local compilePaths = {'art/', 'assets/', 'vehicles/', 'levels/', 'content/', "/core/art/"}
 
 local ignorePath = {'/DevTools/', '/projects/' }
 
 local M = {}
+
+local validateData = true
 
 local function resetObjects(cleanOnly)
   -- clean the old one before
@@ -47,23 +49,24 @@ local function isPathIgnored(filepath)
 end
 
 local function work(job)
-  TorqueScript.eval("$disableTerrainMaterialCollisionWarning=1;$disableCachedColladaNotification=1;")
+  VariableRegistry.set("$disableTerrainMaterialCollisionWarning", true);
+  VariableRegistry.set("$disableCachedColladaNotification", true);
 
   local allFilesCheckOnly = FS:findFiles('/', '*.dae', -1, true, false) -- do not use for iterating
 
   local fileCount = #allFilesCheckOnly
   local fileCountDone = 0
   local compiledFiles = {}
-  
-  
+
+
   local cacheDir = 'collada_cache' -- set to nil to disable caching logic
-  
+
   local cmdArgs = Engine.getStartingArgs()
   if tableFindKey(cmdArgs, '-compileMeshesNoCache') then
     cacheDir = nil
     log('I', 'work', '*** Disabled collada_cache usage due to -compileMeshesNoCache argument.')
   end
-  
+
   for i, v in ipairs(cmdArgs) do
     if v == '-compileMeshesCustomPaths' then
 	  compilePaths = {}
@@ -73,13 +76,13 @@ local function work(job)
 	  break
     end
   end
-  
+
   log('I', 'work', 'Will process .dae meshes in following dirs: ')
   for k,v in pairs(compilePaths) do
 	log('I', 'work', v )
   end
-  
-  
+
+
   if cacheDir then
     log('I', 'work', '*** Using cache folder: ' .. tostring(cacheDir))
     if not FS:directoryExists(cacheDir) then
@@ -105,12 +108,12 @@ local function work(job)
   -- we need to load the separate folders isolated, as the names of materials and objects will clash otherwise
   for _, baseDir in pairs(compilePaths) do
     local dirs = getDirectories(baseDir)
-	
-	
+
+
     if tableFindKey(cmdArgs, '-compileMeshesScanPathBaseDirs') then
       table.insert(dirs, baseDir)
     end
-  
+
     for _, dir in pairs(dirs) do
       local inited = false
 
@@ -119,7 +122,7 @@ local function work(job)
       if dir == baseDir then
         recursiveLevels = 0
       end
-	  
+
       local files = FS:findFiles( dir, '*.dae', recursiveLevels, true, false)
       -- filter paths to only return filename without extension
       for i = 1, #files do
@@ -145,7 +148,7 @@ local function work(job)
           end
         end
         if not fileok then
-		  
+
 		  if tableFindKey(cmdArgs, '-compileMeshesNoCompileOnlyCheck') then
 			if FS:fileExists(dst) then
 			  compiledFiles[src] = 3
@@ -154,21 +157,22 @@ local function work(job)
 			  compiledFiles[src] = 3
         log('W', 'work', '* '..src .. ' : has zero size, marking its CDAE as found')
       else
-        log('D', 'work', 'will NOT compile due to -compileMeshesNoCompileOnlyCheck: '..src)			
+        log('D', 'work', 'will NOT compile due to -compileMeshesNoCompileOnlyCheck: '..src)
 			end
           else
-		  
+
             if not inited then
               resetObjects()
               loadMaterials(dir1)
               inited = true
-            end		  
-            log('D', 'work', 'compiling: '..src .. ' to ' .. dst)
-			
-            if compileCollada(src, dst, dstData) ~= 0 then
+            end
+            --log('D', 'work', 'compiling: '..src .. ' to ' .. dst)
+
+
+            if compileCollada(src, dst, dstData, validateData) ~= 0 then
               log('E', 'work', 'unable to compile file: '..src)
             else
-              log('D', 'work', '* '..src .. ' : OK')
+              --log('D', 'work', '* '..src .. ' : OK')
               compiledFiles[src] = 1
               if cacheDir then
                 -- cache the file
@@ -185,7 +189,7 @@ local function work(job)
         end
         fileCountDone = fileCountDone + 1
         if log_progress_timer:stop() > 3000 then
-          log('A', 'work', 'progress: file ' .. fileCountDone .. ' / ' .. fileCount .. ' ( ' .. round((fileCountDone/fileCount)*100) .. '% ) - ' .. tostring(cacheMisses) .. ' misses / '.. tostring(cacheHits) .. ' hits')
+          log('A', '', 'progress: file ' .. fileCountDone .. ' / ' .. fileCount .. ' ( ' .. round((fileCountDone/fileCount)*100) .. '% ) - ' .. tostring(cacheMisses) .. ' misses / '.. tostring(cacheHits) .. ' hits')
           log_progress_timer:reset()
         end
       end
@@ -202,11 +206,11 @@ local function work(job)
   -- checking for missed files
   local exitCode = 0
   local missedFiles = 0
-  
-  
+
+
   if tableFindKey(cmdArgs, '-compileMeshesNoCheck') then
     log('I', 'work', '*** Skip checking for missing compile results due to -compileMeshesNoCheck argument.')
-  else  
+  else
     for i, f in pairs(allFilesCheckOnly) do
       if not compiledFiles[f] and not isPathIgnored(f) then
         log('E', 'work', '--- Missed compilation of file: ' .. tostring(f))
@@ -219,7 +223,7 @@ local function work(job)
       end
     end
   end
-  
+
   log('I', 'work', ' *** done: ' .. fileCount .. ' files (' .. tostring(missedFiles) .. ' missed) ' .. tostring(cacheHits) .. ' cache hits (' .. round((cacheHits/(cacheHits + cacheMisses))*100) .. '%) and ' .. tostring(cacheMisses) .. ' cache misses.')
 
   log('D', 'work', 'Script done. Exit code: ' .. tostring(exitCode))

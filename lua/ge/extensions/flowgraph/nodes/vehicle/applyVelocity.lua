@@ -21,11 +21,17 @@ C.pinSchema = {
 
 C.tags = {'boost', 'thrust', 'move'}
 
+local dirVec = vec3()
+
 function C:work()
   local veh = self.pinIn.vehId.value and scenetree.findObjectById(self.pinIn.vehId.value) or getPlayerVehicle(0)
   if not veh then return end
 
-  local dirVec = self.pinIn.dirVec.value and vec3(self.pinIn.dirVec.value) or veh:getDirectionVector()
+  if self.pinIn.dirVec.value then
+    dirVec:setFromTable(self.pinIn.dirVec.value)
+  else
+    dirVec:set(veh:getDirectionVector())
+  end
   dirVec:setScaled(self.pinIn.coefficient.value or 1)
   veh:queueLuaCommand("thrusters.applyVelocity("..serialize(dirVec)..")")
 end

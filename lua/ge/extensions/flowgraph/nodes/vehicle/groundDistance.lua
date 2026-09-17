@@ -19,6 +19,9 @@ C.pinSchema = {
 }
 
 C.tags = {'gameplay', 'utils'}
+
+local point, offset = vec3(), vec3()
+
 function C:init()
   self.data.drawDebug = false
 end
@@ -33,12 +36,14 @@ function C:work()
   local lowest = math.huge
 
   for i = 0, 7 do
-    local point = vec3(oobb:getPoint(i))
-    local hit = be:getSurfaceHeightBelow((point + vec3(0,0,self.pinIn.zOffset.value)))
+    point:set(oobb:getPoint(i))
+    offset:set(point)
+    offset.z = offset.z + (self.pinIn.zOffset.value or 10)
+    local hit = be:getSurfaceHeightBelow(offset)
     if hit then
       lowest = math.min(lowest, (point.z - hit))
       if self.data.drawDebug then
-        debugDrawer:drawTextAdvanced(point, String(string.format("%0.3f",point.z - hit)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
+        debugDrawer:drawTextAdvanced(point, String(string.format("%0.3f", point.z - hit)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
       end
     end
   end

@@ -22,15 +22,14 @@ local facilityTypeToListName = {
 }
 
 local facilityTypeToUiLabelSingular = {
-  garage = "Garage",
-  gasStation = "Gas Station",
-  dealership = "Dealership",
-  computer = "Computer",
-  privateSeller = "Private Seller",
-  deliveryProvider = "Delivery Provider",
-  dragstrip = "Drag Strip"
+  garage = "ui.facilities.type.garage",
+  gasStation = "ui.facilities.type.gasStation",
+  dealership = "ui.facilities.type.dealership",
+  computer = "ui.facilities.type.computer",
+  privateSeller = "ui.facilities.type.privateSeller",
+  deliveryProvider = "ui.facilities.type.deliveryProvider",
+  dragstrip = "ui.facilities.type.dragstrip",
 }
-
 
 -- helper function for checking if files exist
 local function fileExistsDefault(path, fallbackPath)
@@ -153,6 +152,28 @@ local function getAverageDoorPositionForFacility(facility)
     return vec3()
   end
 end
+
+local function getClosestDoorPositionForFacility(facility)
+  local camPos = core_camera.getPosition()
+  local center = getAverageDoorPositionForFacility(facility)
+  local closest = nil
+  local closestDist = math.huge
+
+  for _, pair in ipairs(facility.doors or {}) do
+    local obj = scenetree.findObject(pair[1])
+    if obj then
+      local dist = (obj:getPosition() - camPos):length()
+      if dist < closestDist then
+        closestDist = dist
+        closest = obj:getPosition()
+      end
+    end
+  end
+  return closest
+end
+
+
+
 
 
 local function getParkingSpotsForFacility(facility)
@@ -325,7 +346,7 @@ local facilityPoiDefaults = {
     clusterInPlayMode = false,
     interactableInPlayMode = true,
     quickTravelAvailable = false,
-    clusterType = 'walkingMarker',
+    clusterType = 'vehicleTrigger',
   },
 }
 
@@ -360,7 +381,7 @@ M.walkingMarkerFormatFacility = function(f, elements)
       log("W","","Couldnt not find object " .. pair[1] .. " in scenetree for facilitiy " .. f.id)
     end
   end
-  center = center / count
+  if count > 0 then center = center / count end
 
   local maxDistSqr = 0
   for _, pair in ipairs(f.doors or {}) do
@@ -385,6 +406,41 @@ M.walkingMarkerFormatFacility = function(f, elements)
   end
 end
 
+M.vehicleTriggerFormatFacility = function(f, elements)
+  local center, count = vec3(0,0,0), 0
+  for _, pair in ipairs(f.doors or {}) do
+    local obj = scenetree.findObject(pair[1])
+    if obj then
+      center = center + obj:getPosition()
+      count = count + 1
+    else
+      log("W","","Couldnt not find object " .. pair[1] .. " in scenetree for facilitiy " .. f.id)
+    end
+  end
+  if count > 0 then center = center / count end
+
+  local maxDistSqr = 0
+  for _, pair in ipairs(f.doors or {}) do
+    local obj = scenetree.findObject(pair[1])
+    if obj then
+      maxDistSqr = math.max(maxDistSqr, (obj:getPosition()-center):squaredLength() + square(pair[3] or 6))
+    end
+  end
+
+  if count > 0 then
+    local e = {
+      id = f.id,
+      data = {type = f.type, facility = f},
+      markerInfo = {
+        vehicleTrigger = { doors = deepcopy(f.doors), iconOffsetHeight = f.iconOffsetHeight, iconLift = f.iconLift, icon = f.playModeIconName or f.icon, pos = center, radius = math.sqrt(maxDistSqr), screens = f.screens},
+        bigmapMarker = { pos = center, icon = f.icon or f.playModeIconName, name = f.name, description = f.description, thumbnail = f.preview, previews = {f.preview}}
+      }
+    }
+    table.insert(elements, e)
+  else
+    log("E","","No objects found for facilitiy " .. f.id .. " ! " .. dumps(f.doors))
+  end
+end
 
 local function formatFacilityToRawPoi(f, elements)
   if not f then return end
@@ -406,7 +462,9 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
   local facilities = getFacilities(levelIdentifier)
   if career_career.isActive() then
     for i, dealership in ipairs(facilities.dealerships or {}) do
-      M.walkingMarkerFormatFacility(dealership, elements)
+      if not dealership.remotePurchaseOnly then
+        M.walkingMarkerFormatFacility(dealership, elements)
+      end
     end
     for i, computer in ipairs(facilities.computers or {}) do
       M.walkingMarkerFormatFacility(computer, elements)
@@ -416,10 +474,19 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
     --end
   end
   for i, dragstrip in ipairs(facilities.dragstrips or {}) do
-    M.walkingMarkerFormatFacility(dragstrip, elements)
+    M.vehicleTriggerFormatFacility(dragstrip, elements)
   end
 end
 M.onGetRawPoiListForLevel = onGetRawPoiListForLevel
+
+M.onGetRawPoiListForTutorial = function(elements)
+  local facilities = getFacilities("west_coast_usa")
+  for i, dragstrip in ipairs(facilities.dragstrips or {}) do
+    if dragstrip.isTutorialForDragstrip then
+      M.vehicleTriggerFormatFacility(dragstrip, elements)
+    end
+  end
+end
 
 
 
@@ -442,7 +509,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
       end
       -- gasStations are handled in gasStations.lua now
       if elem.type == "dealership" then
-        data.buttonLabel = "View Inventory"
+        data.buttonLabel = "ui.facilities.activity.viewInventory"
         data.buttonFun = function() career_modules_vehicleShopping.openShop(elem.facility.id) end
         data.props = {}
         for _, prop in ipairs(elem.facility.activityAcceptProps or {}) do
@@ -463,7 +530,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
             valueLabel = prop.valueLabel,
           })
         end
-        data.buttonLabel = "Use Computer"
+        data.buttonLabel = "ui.facilities.activity.useComputer"
         data.buttonFun = function()
           if career_career.isActive() then
             career_modules_computer.openMenu(elem.facility, true)
@@ -480,9 +547,20 @@ local function onActivityAcceptGatherData(elemData, activityData)
            valueLabel = prop.valueLabel,
          })
         end
-        data.buttonLabel = "View History"
-        data.buttonFun = function() gameplay_drag_freeroamDragStrip.openHistoryScreen(elem.facility) end
-
+        local poiType = elem.facility.dragstripPoiType or "history"
+        if poiType == "rules" then
+          data.buttonLabel = "ui.facilities.activity.dragstripRulesSetup"
+          data.buttonFun = function()
+            if gameplay_drag_dragBridge and gameplay_drag_dragBridge.openRulesScreen then
+              gameplay_drag_dragBridge.openRulesScreen(elem.facility)
+            end
+          end
+        else
+          data.buttonLabel = "ui.facilities.activity.viewHistory"
+          data.buttonFun = function()
+            gameplay_drag_dragBridge.openHistoryScreen(elem.facility)
+          end
+        end
         table.insert(activityData, data)
       end
     end
@@ -497,6 +575,7 @@ M.getGarage = getGarage
 M.getGasStation = getGasStation
 M.getDealership = getDealership
 M.getAverageDoorPositionForFacility = getAverageDoorPositionForFacility
+M.getClosestDoorPositionForFacility = getClosestDoorPositionForFacility
 M.getParkingSpotsForFacility = getParkingSpotsForFacility
 M.getZonesForFacility = getZonesForFacility
 M.getGaragePosRot = getGaragePosRot

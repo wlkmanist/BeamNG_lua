@@ -27,7 +27,7 @@ local layerMaskCopyData = nil
 
 -- drag'n'drop
 local layerDragDropType = "DynDecalLayerDragDrop"
-local payloadSize = "char[64]"
+local payloadSize = 256
 
 -- highlight button hovering
 local permLayerHighlight = nil      -- type: layer
@@ -102,7 +102,8 @@ local function layerDragDropTarget(name, layer, guiId, to, toParentUid, id, addi
     if im.BeginDragDropTarget() then
       local payload = im.AcceptDragDropPayload(layerDragDropType)
       if payload~=nil then
-        assert(payload.DataSize == ffi.sizeof(payloadSize))
+        -- assert(payload.DataSize == ffi.sizeof(payloadSize))
+        assert(payload.DataSize == payloadSize)
         local data = jsonDecode(ffi.string(payload.Data))
         local from = data.from
         local fromParentUid = data.fromParentUid
@@ -145,9 +146,8 @@ local function layerElement(k, layer, guiId, parentUid, parentStack, layerLevel)
   im.tooltip("LMB + drag to move layer")
   if im.BeginDragDropSource(im.DragDropFlags_SourceAllowNullID) then
     dragging = true
-    local payload = ffi.new(payloadSize)
-    ffi.copy(payload, jsonEncode({from = k, fromParentUid = parentUid}), ffi.sizeof(payloadSize))
-    im.SetDragDropPayload(layerDragDropType, payload, ffi.sizeof(payloadSize))
+    local data = im.ArrayChar(payloadSize, jsonEncode({from = k, fromParentUid = parentUid}))
+    im.SetDragDropPayload(layerDragDropType, data, im.ArraySize(data), im.Cond_Once)
     im.TextUnformatted(layer.name)
     im.EndDragDropSource()
   end
@@ -768,6 +768,7 @@ local function sectionGui(guiId)
 end
 
 local function layerIconColorPrefGui()
+  helper = helper or extensions.editor_dynamicDecals_helper
   if im.TreeNodeEx1("Layer Icon Colors", im.TreeNodeFlags_DefaultOpen) then
     local data = editor.getPreference("dynamicDecalsTool.layerStack.layerTypeIconColor")
     for name, color in pairs(data) do

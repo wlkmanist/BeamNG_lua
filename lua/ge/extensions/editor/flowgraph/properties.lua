@@ -1252,6 +1252,11 @@ function C:drawGraphProperties(graph)
         self.fgEditor.addHistory("Deleted graph " .. graph.name, parent == nil and true or parent)
       end
       ui_flowgraph_editor.tooltip("Deletes this graph.")
+      if im.Button("Clear Graph") then
+        self.mgr:clearGraph(graph)
+        self.fgEditor.addHistory("Cleared graph " .. graph.name)
+      end
+      ui_flowgraph_editor.tooltip("Clears all nodes and links in this graph.")
       if im.Button("Copy Graph") then
         local created = self.mgr:copyGraph(graph, "Copy of " .. graph.name)
         self.mgr:selectGraph(created)
@@ -1299,10 +1304,11 @@ function C:drawGraphProperties(graph)
       if graph.viewPos ~= nil then
         im.Text("ViewPos:")
         im.NextColumn()
-        im.Text(string.format("%0.1f / 0.1f", graph.viewPos[0].x, graph.viewPos[0].y))
+        local viewPos = im.ImVecPtrDeref(graph.viewPos)
+        im.Text(string.format("%0.1f / 0.1f", viewPos.x, viewPos.y))
         im.NextColumn()
       end
-      if graph.viewZoom then
+      if graph.viewZoom and graph.viewZoom[0] ~= nil then
         im.Text("ViewZoom:")
         im.NextColumn()
         im.Text(string.format("%0.1f", graph.viewZoom[0]))

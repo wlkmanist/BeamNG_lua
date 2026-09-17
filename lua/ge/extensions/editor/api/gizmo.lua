@@ -136,7 +136,7 @@ local function beginGizmoTranslate(objectTransforms, objectBBs, objectHeights, o
       if editor.getPreference("snapping.terrain.indObjects") then
         if editor.getPreference("snapping.terrain.useRayCast") then
           local rayCastStart = vec3(objPos)
-          rayCastStart.z = rayCastStart.z + objectHeights[index]
+          rayCastStart.z = rayCastStart.z + (objectHeights[index] or 0)
           local rayCastRes = castRayDown(rayCastStart, objPos - vec3(0,0,50))
 
           if rayCastRes then
@@ -215,7 +215,7 @@ local function getTransformsGizmoTranslate(objects, objectHeights)
 
       if editor.getPreference("snapping.terrain.useRayCast") then
         local rayCastStart = vec3(newPos)
-        rayCastStart.z = rayCastStart.z + objectHeights[index]
+        rayCastStart.z = rayCastStart.z + (objectHeights[index] or 0)
         local rayCastRes = castRayDown(rayCastStart, newPos - vec3(0,0,50))
 
         if not rayCastRes or
@@ -331,21 +331,9 @@ local function updateAxisGizmo(onStartGizmoDragFunc, onEndGizmoDragFunc, onGizmo
     -- if it's dragging right now
     elseif axisGizmoEventState.mouseDown and imgui.IsMouseDragging(0, 1) then
 
-      local gizmoToCam
-      if editor.keyModifiers.ctrl and editor.getAxisGizmoMode() == editor.AxisGizmoMode_Translate then
-        local gizmoPos = editor.getAxisGizmoTransform():getColumn(3)
-        gizmoToCam = core_camera.getPosition() - gizmoPos
-      end
-
       worldEditorCppApi.onAxisGizmoMouseDragged(mousePos, camMouseRay.pos, camMouseRay.dir)
       axisGizmoEventState.objectSelectionManipulated = true
       if onGizmoDraggingFunc then onGizmoDraggingFunc() end
-
-      if gizmoToCam then
-        local gizmoPos = editor.getAxisGizmoTransform():getColumn(3)
-        local newCamPos = gizmoPos + gizmoToCam
-        core_camera.setPosRot(0, newCamPos.x, newCamPos.y, newCamPos.z)
-      end
     else
       worldEditorCppApi.onAxisGizmoMouseMove(mousePos, camMouseRay.pos, camMouseRay.dir)
     end
@@ -488,6 +476,11 @@ local function toggleDrawObjectText()
   worldEditorCppApi.setDrawObjectsText(editor.getPreference("gizmos.general.drawObjectText"))
 end
 
+--- Toggle selection highlight on the selected meshes
+local function toggleSelectionHighlight()
+  editor.setPreference("gizmos.general.highlightSelectedMeshes", not editor.getPreference("gizmos.general.highlightSelectedMeshes"))
+end
+
 --- Modify the distance of the object icons fading by a delta value
 local function modifyFadeIconsDistance(deltaValue)
   if 0 ~= deltaValue and not editor.disableModifyFadeIconsDistance then
@@ -556,6 +549,7 @@ local function initialize(editorInstance)
   editor.toggleDrawObjectIcons = toggleDrawObjectIcons
   editor.toggleDrawGizmoPlane = toggleDrawGizmoPlane
   editor.toggleDrawObjectText = toggleDrawObjectText
+  editor.toggleSelectionHighlight = toggleSelectionHighlight
   editor.isAxisGizmoHovered = isAxisGizmoHovered
   editor.getAxisGizmoSelectedElement = getAxisGizmoSelectedElement
   editor.setAxisGizmoTranslateSnap = setAxisGizmoTranslateSnap

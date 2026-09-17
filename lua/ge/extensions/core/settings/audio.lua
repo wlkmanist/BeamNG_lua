@@ -10,7 +10,7 @@ local function createAudioProviderDevice()
   local devices = Engine.Audio.getInfo()
   local providerOK = false
 
-  local audioProviderName = TorqueScriptLua.getVar( '$pref::SFX::providerName' )
+  local audioProviderName = VariableRegistry.get( '$pref::SFX::providerName' )
   for n, p in pairs(devices) do
     if n == audioProviderName then
       providerOK = true
@@ -31,14 +31,15 @@ local function createAudioProviderDevice()
 
     audioProviderName = firstProviderName
     if devices[firstProviderName] then
-      TorqueScriptLua.setVar( '$pref::SFX::providerName', audioProviderName )
+      VariableRegistry.set( '$pref::SFX::providerName', audioProviderName )
       log( 'W', 'settings.audio', 'set provider to ' .. tostring(audioProviderName))
     end
   end
 
   local useHardware = Engine.Audio.getCanUseHardware()
-  if TorqueScript.eval( 'sfxCreateDevice($pref::SFX::providerName, '..tostring(useHardware)..', -1);' ) == '0' then
-    audioProviderName = TorqueScriptLua.getVar( '$pref::SFX::providerName' )
+  local providerName = VariableRegistry.get( '$pref::SFX::providerName' )
+  if not sfxCreateDevice(providerName, useHardware, -1) then
+    audioProviderName = VariableRegistry.get( '$pref::SFX::providerName' )
     log( 'E', 'createAudioProviderDevice', 'Unable to create SFX device: '..audioProviderName..' '..useHardware );
   end
 end
@@ -49,9 +50,9 @@ local function buildOptionHelpers()
 
   -- SettingsAudioProvider
   o.AudioProvider = {
-    get = function() return TorqueScriptLua.getVar('$pref::SFX::providerName') end,
+    get = function() return VariableRegistry.get('$pref::SFX::providerName') end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::SFX::providerName', value )
+      VariableRegistry.set( '$pref::SFX::providerName', value )
       createAudioProviderDevice()
     end,
     getModes = function()
@@ -61,7 +62,11 @@ local function buildOptionHelpers()
 
       local deviceList = be:sfxGetAvailableDevices()
       local entries = string.match( deviceList, '(.*)\n')
-      entries = split( entries, '\n' )
+      if entries ~= nil then
+        entries = split( entries, '\n' )
+      else
+        entries = {}
+      end
       for k, v in ipairs(entries) do
         local record = split( v, '\t')
         --dump(record)
@@ -79,7 +84,7 @@ local function buildOptionHelpers()
   -- SettingsAudioMasterVol
   o.AudioMasterVol = {
     get = function()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelMaster'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelMaster')
     end,
     set = function(value)
       value = clamp(value, 0.0, 1.0)
@@ -90,7 +95,7 @@ local function buildOptionHelpers()
   -- SettingsAudioPowerVol
   o.AudioPowerVol = {
     get = function()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelPower'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelPower')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -101,7 +106,7 @@ local function buildOptionHelpers()
   -- SettingsAudioForcedInductionVol
   o.AudioForcedInductionVol = {
     get = function()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelForcedInduction'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelForcedInduction')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -112,7 +117,7 @@ local function buildOptionHelpers()
   -- SettingsAudioTransmissionVol
   o.AudioTransmissionVol = {
     get = function()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelTransmission'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelTransmission')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -123,7 +128,7 @@ local function buildOptionHelpers()
   -- SettingsAudioSuspensionVol
   o.AudioSuspensionVol = {
     get = function()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelSuspension'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelSuspension')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -134,7 +139,7 @@ local function buildOptionHelpers()
   -- AudioSurfaceVol
   o.AudioSurfaceVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelSurface'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelSurface')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -145,7 +150,7 @@ local function buildOptionHelpers()
   -- AudioCollisionVol
   o.AudioCollisionVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelCollision'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelCollision')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -156,7 +161,7 @@ local function buildOptionHelpers()
   -- AudioAeroVol
   o.AudioAeroVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelAero'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelAero')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -167,7 +172,7 @@ local function buildOptionHelpers()
   -- AudioEnvironmentVol
   o.AudioEnvironmentVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelEnvironment'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelEnvironment')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -178,7 +183,7 @@ local function buildOptionHelpers()
   -- AudioMusicVol
   o.AudioMusicVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelMusic'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelMusic')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -189,7 +194,7 @@ local function buildOptionHelpers()
   -- SettingsAudioUiVol
   o.AudioUiVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelUi'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelUi')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -200,7 +205,7 @@ local function buildOptionHelpers()
   -- AudioOtherVol
   o.AudioOtherVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelOther'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelOther')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
@@ -211,11 +216,22 @@ local function buildOptionHelpers()
   -- AudioLfeVol
   o.AudioLfeVol = {
     get = function ()
-      return tonumber(TorqueScriptLua.getVar('$pref::SFX::AudioChannelLfe'))
+      return VariableRegistry.get('$pref::SFX::AudioChannelLfe')
     end,
     set = function ( value )
       value = clamp(value, 0.0, 1.0)
       Engine.Audio.setChannelVolume('AudioChannelLfe', value)
+    end
+  }
+
+  -- AudioIntercomVol
+  o.AudioIntercomVol = {
+    get = function ()
+      return VariableRegistry.get('$pref::SFX::AudioChannelIntercom')
+    end,
+    set = function ( value )
+      value = clamp(value, 0.0, 1.0)
+      Engine.Audio.setChannelVolume('AudioChannelIntercom', value)
     end
   }
 
@@ -227,7 +243,7 @@ local function buildOptionHelpers()
     end,
     set = function( enabled )
       if o.AudioEnableStereoHeadphones.enabled ~= enabled then
-        TorqueScriptLua.setVar('$pref::SFX::enableHeadphonesMode', enabled)
+        VariableRegistry.set('$pref::SFX::enableHeadphonesMode', enabled)
         o.AudioEnableStereoHeadphones.enabled = enabled
         core_audio.triggerBankHotloading()
         if o.AudioMasterVol then o.AudioMasterVol.set(o.AudioMasterVol.get() or 0) end
@@ -257,6 +273,7 @@ local function restoreDefaults()
   audioOptions.AudioUiVol.set(0.8)
   audioOptions.AudioOtherVol.set(0.8)
   audioOptions.AudioLfeVol.set(0.5)
+  audioOptions.AudioIntercomVol.set(0.8)
 
   settings.refreshTSState(true)
   settings.notifyUI()
@@ -284,7 +301,7 @@ local function createAudioDevice(providerName, deviceName)
     end
 
     if providers[providerName] then
-      TorqueScriptLua.setVar('$pref::SFX::providerName', providerName)
+      VariableRegistry.set('$pref::SFX::providerName', providerName)
       log( 'W', 'audio', 'set provider to ' .. tostring(providerName))
     end
   end

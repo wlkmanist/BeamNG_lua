@@ -8,8 +8,6 @@ local upVector = vec3(0,0,1)
 
 local idCounter = 0
 
--- icon renderer
-local iconRendererName = "markerIconRenderer"
 local iconWorldSize = 20
 
 -- default height for columns
@@ -33,8 +31,6 @@ function C:init()
   idCounter = idCounter + 1
 
   -- ids of spawned objects
-  self.iconRendererId = nil
-
   self.bigMapMarkerAlphaSmoother = newTemporalSmoothing()
 
   self.visible = true
@@ -86,8 +82,13 @@ function C:update(data)
   local bigMapActive = self.visible and not data.bigmapTransitionActive
   local smootherVal = self.bigMapMarkerAlphaSmoother:getWithRateUncapped(bigMapActive and 1 or 0, data.dt, markerAlphaRate)
   --print(string.format("%0.2f - %s", smootherVal, self.id))
+  --data.im.Text(string.format("id : %s", self.id))
+  --data.im.Text(string.format("cluster id : %s", self.cluster.id))
+  --data.im.Text(string.format("%0.2f %0.2f, bma %s", smootherVal, data.dt, bigMapActive and "T" or "F"))
+  --simpleDebugText3d(string.format("%0.2f %0.2f, bma %s, id : %s", smootherVal, data.dt, bigMapActive and "T" or "F", self.id  ), self.pos + vec3(0,0,self.id))
   local bigMapMarkerAlpha = clamp(smootherVal,0,1)
   --simpleDebugText3d(string.format("%0.2f %s %s %0.2f %d",bigMapMarkerAlpha, self.visible and "V" or "I", data.bigmapTransitionActive and "T" or "N", data.dt, self.id), self.pos)
+  --simpleDebugText3d(string.format("%d - %d", self.id, self.counterAt), self.pos + vec3(0,0,50))
   bigMapMarkerAlpha = 1-((1-bigMapMarkerAlpha)*(1-bigMapMarkerAlpha))
 
   if bigMapMarkerAlpha > 0 or self.visibleLastFrame then
@@ -101,7 +102,7 @@ function C:update(data)
     camToClusterLeft:normalize()
     local camToUpperPoint = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * 0.05 * core_camera.getFovRad())):__mul(camToCluster)
 
-    local extraHeight = career_modules_linearTutorial and career_modules_linearTutorial.bounceBigmapIcons and bounce((os.clockhp() * 0.9)%1) * 0.05 or 0
+    local extraHeight = (career_modules_tutorial and career_modules_tutorial.isActive()) and bounce((os.clockhp() * 0.9)%1) * 0.05 or 0
     self.selected = self.cluster.containedIdsLookup[freeroam_bigMapMode.selectedPoiId]
     self.hovered = self.cluster.containedIdsLookup[freeroam_bigMapMode.hoveredPoiId]
     self.hoveredListItem = self.cluster.containedIdsLookup[freeroam_bigMapMode.hoveredListItem]
@@ -112,10 +113,15 @@ function C:update(data)
       if iconInfo then
         local iconPos = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * (0.02 + extraHeight) * core_camera.getFovRad())):__mul(camToUpperPoint)
         bigMapModeColorI.alpha = bigMapMarkerAlpha *255
+        --data.im.Text(string.format("icon alpha %0.2f , id : %s", bigMapModeColorI.alpha, self.id))
         iconInfo.color = bigMapModeColorI
         tmpVec:set(data.camPos)
         tmpVec:setAdd(iconPos or vecZero)
-        iconInfo.worldPosition = tmpVec
+        if freeroam_bigMapMode.isUsingOrthoCamera() then
+          iconInfo.worldPosition = self.pos + camUp * resolutionFactor * core_camera.getFovDeg()/60 * columnHeight
+        else
+          iconInfo.worldPosition = tmpVec
+        end
         if self.hovered or self.selected or self.hoveredListItem then
           iconInfo.customSizeFactor = 1.5
         else
@@ -130,7 +136,11 @@ function C:update(data)
         local iconPosColumn = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * -0.03 * core_camera.getFovRad())):__mul(camToUpperPoint * 1.1)
         tmpVec:set(data.camPos)
         tmpVec:setAdd(iconPosColumn or vecZero)
-        iconInfo.worldPosition = tmpVec
+        if freeroam_bigMapMode.isUsingOrthoCamera() then
+          iconInfo.worldPosition = self.pos + camUp * resolutionFactor * core_camera.getFovDeg()/65
+        else
+          iconInfo.worldPosition = tmpVec
+        end
         bigMapModeColorI.alpha = bigMapMarkerAlpha *255
         iconInfo.color = bigMapModeColorI
       end
@@ -147,25 +157,15 @@ function C:setup(cluster)
   self.pos = cluster.pos
   self.cluster = cluster
 
-  iconRendererObj = scenetree.findObject(iconRendererName)
-  if not iconRendererObj then
-    iconRendererObj = createObject("BeamNGWorldIconsRenderer")
-    iconRendererObj:registerObject(iconRendererName);
-    iconRendererObj.maxIconScale = 2
-    iconRendererObj.mConstantSizeIcons = true
-    iconRendererObj.canSave = false
-    iconRendererObj:loadIconAtlas("core/art/gui/images/iconAtlas.png", "core/art/gui/images/iconAtlas.json");
-  end
-  self.iconRendererId = iconRendererObj:getId()
-
   -- setting up the icon
   if cluster.id then
-    iconRendererObj = scenetree.findObjectById(self.iconRendererId)
+    iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
     if iconRendererObj then
       local bigMapIconName = cluster.icon
       self.iconDataById = {}
 
       self.bigMapIconId = iconRendererObj:addIcon(cluster.id .. "bigMap", bigMapIconName or "mission_primary_triangle", self.pos + vec3(0,0,columnHeight))
+      --freeroam_bigMapMarkers.iconCounter = freeroam_bigMapMarkers.iconCounter + 1
       local iconInfo = iconRendererObj:getIconById(self.bigMapIconId)
       iconInfo.color = ColorI(255,255,255,0)
       iconInfo.customSize = iconWorldSize
@@ -173,11 +173,15 @@ function C:setup(cluster)
       self.iconDataById[self.bigMapIconId] = iconInfo
 
       self.bigMapColumnIconId = iconRendererObj:addIcon(cluster.id .. "bigMapColumn", "marker_column", self.pos + vec3(0,0,columnHeight))
+      --freeroam_bigMapMarkers.iconCounter = freeroam_bigMapMarkers.iconCounter + 1
+      --self.counterAt = freeroam_bigMapMarkers.iconCounter
       local iconInfo = iconRendererObj:getIconById(self.bigMapColumnIconId)
       iconInfo.color = ColorI(255,255,255,0)
       iconInfo.customSize = iconWorldSize
       iconInfo.drawIconShadow = false
       self.iconDataById[self.bigMapColumnIconId] = iconInfo
+
+      --freeroam_bigMapMarkers.iconsById[self.cluster.id] = (freeroam_bigMapMarkers.iconsById[self.cluster.id] or 0) + 2
     end
   end
   -- setting up the smoothers
@@ -208,12 +212,12 @@ end
 
 -- destorys/cleans up all objects created by this
 function C:clearObjects()
-  if self.iconRendererId then
-    iconRendererObj = scenetree.findObjectById(self.iconRendererId)
-    if iconRendererObj then
-      for id, _ in pairs(self.iconDataById or {}) do
-        iconRendererObj:removeIconById(id)
-      end
+  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+  if iconRendererObj then
+    for id, _ in pairs(self.iconDataById or {}) do
+      iconRendererObj:removeIconById(id)
+      --freeroam_bigMapMarkers.iconCounter = freeroam_bigMapMarkers.iconCounter - 1
+      --freeroam_bigMapMarkers.iconsById[self.cluster.id] = (freeroam_bigMapMarkers.iconsById[self.cluster.id] or 0) - 1
     end
   end
   self.bigMapIconId = nil

@@ -30,6 +30,7 @@ local function switchMaterial(vehicleObj, msc, matname, matState)
 end
 
 local function process(vehicleObj, vehicle)
+  profilerPushEvent('jbeam/materials.process')
   -- clean material cache
   local mv = {}
 
@@ -46,12 +47,10 @@ local function process(vehicleObj, vehicle)
   local flexmeshMats = {}
   vehicle.flexbodies = vehicle.flexbodies or {}
 
+
+
   for flexKey, flexbody in pairs(vehicle.flexbodies) do
-    local matNamesStr = vehicleObj:getMeshsMaterials(flexbody.mesh)
-    if matNamesStr then
-      --log('D', "material.init", "flexbody mesh '"..flexbody.mesh.."' contains the following materials: " .. matNamesStr)
-      flexmeshMats[flexbody.mesh] = split(trim(matNamesStr), " ")
-    end
+    flexmeshMats[flexbody.mesh] = vehicleObj:getMeshsMaterialsTbl(flexbody.mesh)
   end
 
 
@@ -130,7 +129,7 @@ local function process(vehicleObj, vehicle)
 
   -- debug helper: list all materials on a mesh:
   --for flexKey, flexbody in pairs(vehicle.flexbodies) do
-  --    log('D', "material.init", "flexbody mesh '"..flexbody.mesh.."' contains the following materials: " .. vehicleObj:getMeshsMaterials(flexbody.mesh))
+  --    log('D', "material.init", "flexbody mesh '"..flexbody.mesh.."' contains the following materials: " .. dumps(vehicleObj:getMeshsMaterialsTbl(flexbody.mesh)))
   --end
 
 
@@ -143,7 +142,7 @@ local function process(vehicleObj, vehicle)
       local meshStr = vehicleObj:getMeshesContainingMaterial(flexbody.deformMaterialBase)
 
       --log('I', "material.init", "[deformgroup] meshes containing material " .. flexbody.deformMaterialBase .. ": " .. tostring(meshStr))
-      --log('I', "material.init", "flexbody mesh '"..flexbody.mesh.."' contains the following materials: " .. vehicleObj:getMeshsMaterials(flexbody.mesh))
+      --log('I', "material.init", "flexbody mesh '"..flexbody.mesh.."' contains the following materials: " .. dumps(vehicleObj:getMeshsMaterialsTbl(flexbody.mesh)))
 
       for mati, matName in pairs(flexmeshMats[flexbody.mesh]) do
         if matName == "" then
@@ -243,6 +242,7 @@ local function process(vehicleObj, vehicle)
     matState = matState,
     deformMeshes = deformMeshes,
   }
+  profilerPopEvent('jbeam/materials.process')
 end
 
 -- public interface

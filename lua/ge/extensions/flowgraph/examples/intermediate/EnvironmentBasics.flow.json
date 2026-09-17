@@ -1,8 +1,8 @@
 {
-  "activeGraphId":202,
-  "authors":"Anonymous",
-  "currentGraphID":202,
-  "date":1625047874,
+  "activeGraphId":7,
+  "authors":"BeamNG",
+  "currentGraphID":7,
+  "date":1741652012,
   "debugEnabled":false,
   "description":"This project gives an overview of different ways to modify the  environment of your level through Flowgraph.",
   "difficulty":40,
@@ -292,7 +292,7 @@
           "rotation":[
             0,
             0,
-            -0.64144965200000025884,
+            -0.64144965200000103600,
             0.76716513500000005354
           ],
           "scale":[
@@ -315,16 +315,13 @@
             },
             "time":{
               "type":"number",
-              "value":0.75999999000000018068
+              "value":0.75999999000000073579
             }
           },
           "hiddenPins":{
             "p_in":{
-              "azimuthOverride":true,
               "dayLength":true,
-              "dayScale":true,
               "flow":false,
-              "nightScale":true,
               "play":false,
               "time":false
             },
@@ -345,13 +342,15 @@
             "p_in":{
               "color":true,
               "config":false,
-              "dontDelete":true,
               "flow":false,
               "keepCamera":true,
+              "keepOnReset":true,
+              "keepVehicle":true,
               "licenseText":true,
               "model":false,
               "name":true,
               "pos":false,
+              "randomColor":true,
               "replacePlayer":true,
               "reset":true,
               "rot":false
@@ -370,24 +369,24 @@
         },
         "36":{
           "config":"sport_RS_M",
-          "configName":"Sunburst 2.0 Sport RS AWD (M)",
-          "configPath":"vehicles/sunburst/sport_RS_M.pc",
+          "configName":"\"Sunburst 2.5 Sport RS AWD (M)\"",
+          "configPath":"vehicles/sunburst2/sport_RS_M.pc",
           "data":{},
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
-              "modelName":true,
               "config":false,
               "configName":true,
-              "model":false
+              "model":false,
+              "modelName":true
             }
           },
-          "model":"sunburst",
-          "modelName":"Sunburst",
+          "model":"sunburst2",
+          "modelName":"\"Sunburst\"",
           "pos":[
-            542,
-            120
+            507,
+            119
           ],
           "type":"vehicle/vehicleConfigProvider",
           "vehType":"Car"
@@ -440,7 +439,7 @@
             },
             "density":{
               "type":"number",
-              "value":0.00100000005000000025
+              "value":0.00100000005000000091
             },
             "densityOffset":{
               "type":"number",
@@ -449,10 +448,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "flow":false,
               "atmosphereHeight":false,
               "density":false,
-              "densityOffset":false
+              "densityOffset":false,
+              "flow":false
             },
             "p_out":{
               "flow":true
@@ -544,10 +543,6 @@
           },
           "dynamicMode":"repeat",
           "hardcodedPins":{
-            "skyBrightness":{
-              "type":"number",
-              "value":80
-            },
             "logWeight":{
               "type":"number",
               "value":0.98000001899999999999
@@ -559,6 +554,10 @@
             "shadowSoftness":{
               "type":"number",
               "value":0.20000000300000000952
+            },
+            "skyBrightness":{
+              "type":"number",
+              "value":80
             }
           },
           "hiddenPins":{
@@ -621,10 +620,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "useDtSim":true,
               "duration":false,
               "flow":false,
-              "reset":false
+              "reset":false,
+              "useDtSim":true
             },
             "p_out":{
               "flow":false,
@@ -653,6 +652,7 @@
               "name":true
             },
             "p_out":{
+              "exist":true,
               "objID":false
             }
           },
@@ -668,21 +668,21 @@
           },
           "dynamicMode":"repeat",
           "hardcodedPins":{
-            "windSpeed":{
-              "type":"number",
-              "value":0.50000000000000000000
-            },
             "coverage":{
               "type":"number",
               "value":0
             },
             "exposure":{
               "type":"number",
-              "value":0.64999997600000025688
+              "value":0.64999997600000103404
             },
             "height":{
               "type":"number",
               "value":3.50000000000000000000
+            },
+            "windSpeed":{
+              "type":"number",
+              "value":0.50000000000000000000
             }
           },
           "hiddenPins":{
@@ -719,10 +719,12 @@
           },
           "hiddenPins":{
             "p_in":{
-              "reset":true,
               "flow":false,
+              "gameStateName":true,
+              "keepLayout":false,
               "layout":false,
-              "menu":false
+              "menu":false,
+              "reset":true
             },
             "p_out":{
               "flow":false
@@ -737,12 +739,15 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        251.56701660156250000000,
-        654.12060546875000000000
+        317.59094238281250000000,
+        -260.86093139648437500000
       ],
-      "viewZoom":0.50000000000000000000
+      "viewZoom":1
     },
     "7":{
       "description":"This is the state graph for this project.",
@@ -766,42 +771,6 @@
       ],
       "name":"States",
       "nodes":{
-        "107":{
-          "alpha":0.75000000000000000000,
-          "backgroundColor":[
-            0.50000000000000000000,
-            0.50000000000000000000,
-            0.50000000000000000000,
-            0.50000000000000000000
-          ],
-          "borderColor":[
-            0.80000001192092895508,
-            0.80000001192092895508,
-            0.80000001192092895508,
-            1
-          ],
-          "commentSize":[
-            992,
-            197
-          ],
-          "commentText":"This project gives an overview of different ways to modify the  environment of your level through Flowgraph.\\nExplore the different flowgraphs to see all the possibilites or hit play to see them in action.",
-          "commentTitle":"Environment Basics",
-          "data":{},
-          "dynamicMode":"repeat",
-          "moveMode":"withoutNodes",
-          "pos":[
-            42,
-            -154
-          ],
-          "simple":true,
-          "textColor":[
-            1,
-            1,
-            1,
-            1
-          ],
-          "type":"debug/comment"
-        },
         "8":{
           "data":{},
           "dynamicMode":"repeat",
@@ -829,18 +798,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             234,
@@ -861,18 +832,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             640,
@@ -880,16 +853,55 @@
           ],
           "targetGraphId":12,
           "type":"states/stateNode"
+        },
+        "107":{
+          "alpha":0.75000000000000000000,
+          "backgroundColor":[
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
+          ],
+          "borderColor":[
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            1
+          ],
+          "commentSize":[
+            992,
+            197
+          ],
+          "commentText":"This project gives an overview of different ways to modify the environment of your level through Flowgraph.\\nExplore the different state graphs to see all the possibilites, or hit play to see them in action.",
+          "commentTitle":"Environment Basics",
+          "data":{},
+          "dynamicMode":"repeat",
+          "moveMode":"withoutNodes",
+          "pos":[
+            42,
+            -154
+          ],
+          "simple":true,
+          "textColor":[
+            1,
+            1,
+            1,
+            1
+          ],
+          "type":"debug/comment"
         }
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -224.13064575195312500000,
-        -171.55027770996093750000
+        -227.24836730957031250000,
+        -384.45086669921875000000
       ],
-      "viewZoom":0.50000000000000000000
+      "viewZoom":1
     },
     "12":{
       "description":"This graph contains the main activities for the project.\n",
@@ -968,18 +980,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             234,
@@ -1000,18 +1014,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             682,
@@ -1032,18 +1048,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             1088,
@@ -1064,18 +1082,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             1494,
@@ -1096,18 +1116,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             1886,
@@ -1134,7 +1156,7 @@
             852,
             292
           ],
-          "commentText":"Explore the different flowgraphs to see different ways to modify the environment of your level.\\n",
+          "commentText":"Explore the different state graphs to see different ways to modify the environment of your level.\\n",
           "commentTitle":"Environment Basics",
           "data":{},
           "dynamicMode":"repeat",
@@ -1164,18 +1186,20 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             2320,
@@ -1188,12 +1212,15 @@
       "parentId":7,
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        1187.20141601562500000000,
-        -339.87887573242187500000
+        69.67745971679687500000,
+        -338.79583740234375000000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.50000000000000000000
     },
     "18":{
       "description":"This graph shows you how to use the \"Set Time of Day\" node.",
@@ -1263,7 +1290,7 @@
           false
         ]
       ],
-      "name":"Controlling Time Of Day",
+      "name":"Time of Day",
       "nodes":{
         "21":{
           "data":{},
@@ -1292,11 +1319,8 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "azimuthOverride":true,
               "dayLength":true,
-              "dayScale":true,
               "flow":false,
-              "nightScale":true,
               "play":true,
               "time":false
             },
@@ -1344,22 +1368,22 @@
         },
         "25":{
           "data":{
-            "currentSum":0.75999999000000018068,
-            "resetValue":0.75999999000000018068
+            "currentSum":0.75999999000000073579,
+            "resetValue":0.75999999000000073579
           },
           "dynamicMode":"repeat",
           "hardcodedPins":{
             "value":{
               "type":"number",
-              "value":0.00499999988824129105
+              "value":0.00499999988824129712
             }
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -1417,10 +1441,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -1495,7 +1519,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -1507,8 +1531,8 @@
             474,
             632
           ],
-          "commentText":"The \"Set Time of Day\" node provides different possibilities for controlling\\nthe day and night cycle of the level.\\nYou can set things like:\\n- overall time\\n- should the time continue passing after setting it\\n- length of day and night cycles\\n\\nHere we are changing the value from 0->1 over and over again.\\nThis creates a smooth transition because:\\n- 0 = noon\\n- 0.25 = sundown\\n- 0.5 = midnight\\n- 0.75 = sunrise\\n- 1 = noon",
-          "commentTitle":"\"Set Time of Day\" node",
+          "commentText":"The \"Set Time of Day\" node provides different possibilities for controlling\\nthe day and night cycle of the level.\\nYou can set things like:\\n- Current time\\n- Live time simulation\\n- Length of day and night cycles\\n\\nHere we are changing the value from 0 ->1 over and over again.\\nThis creates a smooth transition because:\\n- 0 = noon\\n- 0.25 = sundown\\n- 0.5 = midnight\\n- 0.75 = sunrise\\n- 1 = noon",
+          "commentTitle":"Set Time of Day Node",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
@@ -1559,12 +1583,15 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -167.77087402343750000000,
-        -301.60638427734375000000
+        528.50592041015625000000,
+        -382.97677612304687500000
       ],
-      "viewZoom":0.50000000000000000000
+      "viewZoom":0.75000000000000000000
     },
     "33":{
       "description":"This graph shows you how to use the \"Set Cloud by ID\" node.",
@@ -2005,7 +2032,7 @@
           false
         ]
       ],
-      "name":"Controlling Clouds",
+      "name":"Clouds",
       "nodes":{
         "24":{
           "data":{},
@@ -2090,6 +2117,7 @@
             },
             "p_out":{
               "currentIndex":true,
+              "flow":false,
               "maxIndex":true,
               "totalIndex":true,
               "value_1":false,
@@ -2146,6 +2174,7 @@
               "name":true
             },
             "p_out":{
+              "exist":true,
               "objID":false
             }
           },
@@ -2413,11 +2442,11 @@
           "hardcodedPins":{
             "value_1":{
               "type":"number",
-              "value":-0.00200000009000000055
+              "value":-0.00200000009000000185
             },
             "value_2":{
               "type":"number",
-              "value":0.00300000003000000081
+              "value":0.00300000003000000298
             }
           },
           "hiddenPins":{
@@ -2658,15 +2687,15 @@
           "hardcodedPins":{
             "value":{
               "type":"number",
-              "value":0.00200000009000000055
+              "value":0.00200000009000000185
             }
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -2686,7 +2715,7 @@
           "hardcodedPins":{
             "B":{
               "type":"number",
-              "value":0.85000002400000007619
+              "value":0.85000002400000040925
             }
           },
           "hiddenPins":{
@@ -2696,10 +2725,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -2793,16 +2822,16 @@
         },
         "278":{
           "data":{
-            "currentSum":0.64999997600000025688,
-            "resetValue":0.64999997600000025688
+            "currentSum":0.64999997600000103404,
+            "resetValue":0.64999997600000103404
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -2822,7 +2851,7 @@
           "hardcodedPins":{
             "B":{
               "type":"number",
-              "value":0.80000001200000014911
+              "value":0.80000001200000070423
             }
           },
           "hiddenPins":{
@@ -2832,10 +2861,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -2861,10 +2890,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"<=",
@@ -2965,15 +2994,15 @@
           "hardcodedPins":{
             "value":{
               "type":"number",
-              "value":0.00499999989000000141
+              "value":0.00499999989000000401
             }
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -3003,10 +3032,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -3060,11 +3089,11 @@
           "hardcodedPins":{
             "value_1":{
               "type":"number",
-              "value":0.01499999970000000238
+              "value":0.01499999970000000758
             },
             "value_2":{
               "type":"number",
-              "value":-0.02199999990000000780
+              "value":-0.02199999990000002861
             }
           },
           "hiddenPins":{
@@ -3151,10 +3180,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -3184,10 +3213,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"<=",
@@ -3213,10 +3242,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -3340,7 +3369,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -3352,7 +3381,7 @@
             362,
             519
           ],
-          "commentText":"You can modify the amount of coverage your cloud has.\\nSimply pass in the id of the cloud you want to modify\\nand a value for the coverage between 0 and 1.\\nHere we are changing the value from 0->0.85.\\n",
+          "commentText":"You can modify the amount of coverage your cloud has.\\nSimply pass in the id of the cloud you want to modify\\nand a value for the coverage between 0 and 1.\\nHere we are changing the value from 0 -> 0.85.\\n",
           "commentTitle":"Cloud Coverage",
           "data":{},
           "dynamicMode":"repeat",
@@ -3376,7 +3405,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -3388,7 +3417,7 @@
             376,
             534
           ],
-          "commentText":"You can modify the amount of exposure your clouds get.\\nThis is acts as a simple brightness scale.\\nHere we are changing the value from 0.65->0->0.8.",
+          "commentText":"You can modify the amount of exposure your clouds get.\\nThis is acts as a simple brightness scale.\\nHere we are changing the value from 0.65 -> 0 -> 0.8.",
           "commentTitle":"Cloud Exposure",
           "data":{},
           "dynamicMode":"repeat",
@@ -3412,7 +3441,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -3424,7 +3453,7 @@
             376,
             534
           ],
-          "commentText":"You can also change the speed at which your clouds move.\\nHere we are changing the value between 0.5->3.5.",
+          "commentText":"You can also change the speed at which your clouds move.\\nHere we are changing the value between 0.5 -> 3.5.",
           "commentTitle":"Wind Speed",
           "data":{},
           "dynamicMode":"repeat",
@@ -3448,7 +3477,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -3481,37 +3510,44 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":2,
-          "mergeStrat":"last",
-          "name":"exposureSwitch",
-          "type":"bool",
-          "value":false
-        },
-        {
-          "fixedType":true,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"sequencerIdx",
-          "type":"number",
-          "value":0
-        },
-        {
-          "fixedType":false,
-          "index":3,
-          "mergeStrat":"last",
-          "name":"heightSwitch",
-          "type":"bool",
-          "value":true
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "sequencerIdx",
+          "exposureSwitch",
+          "heightSwitch"
+        ],
+        "list":[
+          {
+            "fixedType":true,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"sequencerIdx",
+            "type":"number",
+            "value":0
+          },
+          {
+            "fixedType":false,
+            "index":3,
+            "mergeStrat":"last",
+            "name":"heightSwitch",
+            "type":"bool",
+            "value":true
+          },
+          {
+            "fixedType":false,
+            "index":2,
+            "mergeStrat":"last",
+            "name":"exposureSwitch",
+            "type":"bool",
+            "value":false
+          }
+        ]
+      },
       "viewPos":[
-        299.56701660156250000000,
-        747.12060546875000000000
+        517.77221679687500000000,
+        3.37473297119140625000
       ],
-      "viewZoom":0.50000000000000000000
+      "viewZoom":0.25000000000000000000
     },
     "50":{
       "description":"This graph shows you how to use the \"Set ScatterSky\" node.",
@@ -3896,7 +3932,7 @@
           false
         ]
       ],
-      "name":"Controlling ScatterSky",
+      "name":"ScatterSky",
       "nodes":{
         "44":{
           "data":{},
@@ -4075,10 +4111,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "useDtSim":true,
               "duration":false,
               "flow":false,
-              "reset":false
+              "reset":false,
+              "useDtSim":true
             },
             "p_out":{
               "flow":false,
@@ -4307,10 +4343,10 @@
               "reset":false
             },
             "p_out":{
-              "incomplete":false,
               "complete":false,
               "completed":false,
-              "flow":true
+              "flow":true,
+              "incomplete":false
             }
           },
           "mode":"loop",
@@ -4348,6 +4384,7 @@
             },
             "p_out":{
               "currentIndex":true,
+              "flow":false,
               "maxIndex":true,
               "totalIndex":true,
               "value_1":false,
@@ -4383,7 +4420,7 @@
           },
           "hiddenPins":{
             "p_in":{
-              "asDuration":false,
+              "asDuration":true,
               "dt":true,
               "flow":false,
               "input":false,
@@ -4408,10 +4445,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -4441,10 +4478,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"<=",
@@ -4541,10 +4578,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -4648,10 +4685,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -4681,10 +4718,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -4755,7 +4792,7 @@
           "hardcodedPins":{
             "input":{
               "type":"number",
-              "value":0.75000000000000000000
+              "value":0.75000000000000033307
             }
           },
           "hiddenPins":{
@@ -4786,15 +4823,15 @@
           "hardcodedPins":{
             "value":{
               "type":"number",
-              "value":0.05000000070000001212
+              "value":0.05000000070000003988
             }
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -4824,10 +4861,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":false,
               "flow":false,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -4898,7 +4935,7 @@
           "hardcodedPins":{
             "input":{
               "type":"number",
-              "value":0.75000000000000000000
+              "value":0.75000000000000033307
             }
           },
           "hiddenPins":{
@@ -4929,15 +4966,15 @@
           "hardcodedPins":{
             "value":{
               "type":"number",
-              "value":-0.00100000005000000025
+              "value":-0.00100000005000000091
             }
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -4957,7 +4994,7 @@
           "hardcodedPins":{
             "B":{
               "type":"number",
-              "value":0.94999998800000007293
+              "value":0.94999998800000040600
             }
           },
           "hiddenPins":{
@@ -4967,10 +5004,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"<=",
@@ -5159,7 +5196,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -5171,7 +5208,7 @@
             530,
             617
           ],
-          "commentText":"The easiest thing to modify is the brightness of your sky.\\nIt will not only impact the brightness of the sky, but also the shadows in the world.\\nHere we are changing the value from 80->5->125.",
+          "commentText":"The easiest thing to modify is the brightness of your sky.\\nIt will not only impact the brightness of the sky, but also the shadows in the world.\\nHere we are changing the value from 80 -> 5 -> 125.",
           "commentTitle":"Sky Brightness",
           "data":{},
           "dynamicMode":"repeat",
@@ -5195,7 +5232,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -5207,7 +5244,7 @@
             530,
             576
           ],
-          "commentText":"This controls the maximum distance from the camera (not the car)\\nfrom which shadows are rendered.\\nHere we are changing the value from 500->2000.\\nThis causes shadows to pop up, that were not rendered before.",
+          "commentText":"This controls the maximum distance from the camera (not the car)\\nfrom which shadows are rendered.\\nHere we are changing the value from 500 -> 2000.\\nThis causes shadows to pop up, that were not rendered before.",
           "commentTitle":"Shadow Distance",
           "data":{},
           "dynamicMode":"repeat",
@@ -5231,7 +5268,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -5243,7 +5280,7 @@
             530,
             590
           ],
-          "commentText":"You can also modify the softness of your shadows, so they don't have hard edges.\\nHere we are changing the value from 0.2->0.4.\\nIncreasing the softness too high, will make the shadows hard to see.",
+          "commentText":"You can also modify the softness of your shadows, so they don't have hard edges.\\nHere we are changing the value from 0.2 -> 0.4.\\nIncreasing the softness too high, will make the shadows hard to see.",
           "commentTitle":"Shadow Softness",
           "data":{},
           "dynamicMode":"repeat",
@@ -5267,7 +5304,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -5279,7 +5316,7 @@
             516,
             562
           ],
-          "commentText":"One of the more complex things you can modify is the balance of the sharpness\\nbetween far and near shadows.\\nUsually you want a high value for this, because near shadows are the\\nmost important to be visible.\\nHere we are only changing this value from 0.985->0.95 which already has \\nvisible effects on this balance.",
+          "commentText":"One of the more complex things you can modify is the balance of the sharpness\\nbetween far and near shadows.\\nUsually you want a high value for this, because near shadows are the\\nmost important to be visible.\\nHere we are only changing this value from 0.985 -> 0.95 which already has \\nvisible effects on this balance.",
           "commentTitle":"LogWeight",
           "data":{},
           "dynamicMode":"repeat",
@@ -5336,29 +5373,35 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"scatterSkyIdx",
-          "type":"number",
-          "value":3
-        },
-        {
-          "fixedType":false,
-          "index":2,
-          "mergeStrat":"last",
-          "name":"brightnessSwitch",
-          "type":"bool",
-          "value":false
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "scatterSkyIdx",
+          "brightnessSwitch"
+        ],
+        "list":[
+          {
+            "fixedType":false,
+            "index":2,
+            "mergeStrat":"last",
+            "name":"brightnessSwitch",
+            "type":"bool",
+            "value":false
+          },
+          {
+            "fixedType":false,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"scatterSkyIdx",
+            "type":"number",
+            "value":3
+          }
+        ]
+      },
       "viewPos":[
-        -133.59512329101562500000,
-        1.73321533203125000000
+        2038.00891113281250000000,
+        1295.49389648437500000000
       ],
-      "viewZoom":0.20000000298023223877
+      "viewZoom":0.75000000000000000000
     },
     "84":{
       "description":"This graph shows you how to use the \"Set Fog\" node.",
@@ -5568,7 +5611,7 @@
           false
         ]
       ],
-      "name":"Controlling Fog",
+      "name":"Fog",
       "nodes":{
         "67":{
           "data":{
@@ -5577,10 +5620,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "flow":false,
               "atmosphereHeight":true,
               "density":false,
-              "densityOffset":true
+              "densityOffset":true,
+              "flow":false
             },
             "p_out":{
               "flow":true
@@ -5799,22 +5842,22 @@
         },
         "1466":{
           "data":{
-            "currentSum":0.00100000005000000025,
-            "resetValue":0.00100000005000000025
+            "currentSum":0.00100000005000000091,
+            "resetValue":0.00100000005000000091
           },
           "dynamicMode":"repeat",
           "hardcodedPins":{
             "value":{
               "type":"number",
-              "value":0.00999999978000000282
+              "value":0.00999999978000000803
             }
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -5844,10 +5887,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -5899,6 +5942,7 @@
             },
             "p_out":{
               "currentIndex":true,
+              "flow":false,
               "maxIndex":true,
               "totalIndex":true,
               "value_1":false,
@@ -5921,10 +5965,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "flow":false,
               "atmosphereHeight":true,
               "density":true,
-              "densityOffset":false
+              "densityOffset":false,
+              "flow":false
             },
             "p_out":{
               "flow":true
@@ -6004,10 +6048,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -6037,10 +6081,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -6088,10 +6132,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "flow":false,
               "atmosphereHeight":false,
               "density":true,
-              "densityOffset":true
+              "densityOffset":true,
+              "flow":false
             },
             "p_out":{
               "flow":true
@@ -6145,10 +6189,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -6178,10 +6222,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -6305,7 +6349,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -6317,7 +6361,7 @@
             376,
             463
           ],
-          "commentText":"To actually make fog appear in your level, you have to set\\na high enough value for its density.\\nHere we are changing it from 0.001->0.125.",
+          "commentText":"To actually make fog appear in your level, you have to set\\na high enough value for its density.\\nHere we are changing it from 0.001 -> 0.125.",
           "commentTitle":"Fog Density",
           "data":{},
           "dynamicMode":"repeat",
@@ -6341,7 +6385,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -6353,7 +6397,7 @@
             376,
             463
           ],
-          "commentText":"You can also control the distance from your camera\\nat which fog starts to appear.\\nHere we are changing the value from 2->100.\\n",
+          "commentText":"You can also control the distance from your camera\\nat which fog starts to appear.\\nHere we are changing the value from 2 -> 100.\\n",
           "commentTitle":"Density Offset",
           "data":{},
           "dynamicMode":"repeat",
@@ -6377,7 +6421,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -6389,7 +6433,7 @@
             376,
             464
           ],
-          "commentText":"This simply controls to which heights your fog will appear.\\nHere we are changing it from 80->300.",
+          "commentText":"This simply controls to which heights your fog will appear.\\nHere we are changing it from 80 -> 300.",
           "commentTitle":"Atmosphere Height",
           "data":{},
           "dynamicMode":"repeat",
@@ -6446,21 +6490,26 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"FogIdx",
-          "type":"number",
-          "value":0
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "FogIdx"
+        ],
+        "list":[
+          {
+            "fixedType":false,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"FogIdx",
+            "type":"number",
+            "value":0
+          }
+        ]
+      },
       "viewPos":[
-        -174.16479492187500000000,
-        -291.81506347656250000000
+        377.84405517578125000000,
+        -112.71113586425781250000
       ],
-      "viewZoom":0.20000000298023223877
+      "viewZoom":0.33000001311302185059
     },
     "92":{
       "description":"This graph shows you how to control gravity.",
@@ -6468,21 +6517,14 @@
       "links":[
         [
           177,
-          "flow",
-          178,
-          "flow",
-          false
-        ],
-        [
-          178,
-          "flow",
+          "impulse",
           201,
           "flow",
           false
         ],
         [
-          178,
-          "flow",
+          177,
+          "impulse",
           185,
           "flow",
           false
@@ -6502,8 +6544,8 @@
           false
         ],
         [
-          178,
-          "flow",
+          177,
+          "impulse",
           112,
           "flow",
           false
@@ -6530,7 +6572,7 @@
           false
         ]
       ],
-      "name":"Controlling Gravity",
+      "name":"Gravity",
       "nodes":{
         "98":{
           "data":{},
@@ -6604,8 +6646,8 @@
             }
           },
           "pos":[
-            906,
-            820
+            612,
+            636
           ],
           "type":"environment/setGravity"
         },
@@ -6615,6 +6657,7 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
@@ -6661,10 +6704,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "useDtSim":true,
               "duration":false,
               "flow":false,
-              "reset":false
+              "reset":false,
+              "useDtSim":true
             },
             "p_out":{
               "flow":false,
@@ -6672,28 +6715,10 @@
             }
           },
           "pos":[
-            164,
-            554
+            150,
+            357
           ],
           "type":"logic/wait"
-        },
-        "178":{
-          "data":{},
-          "dynamicMode":"repeat",
-          "hiddenPins":{
-            "p_in":{
-              "flow":false,
-              "reset":false
-            },
-            "p_out":{
-              "flow":false
-            }
-          },
-          "pos":[
-            486,
-            554
-          ],
-          "type":"logic/once"
         },
         "185":{
           "data":{
@@ -6716,18 +6741,18 @@
           },
           "hiddenPins":{
             "p_in":{
-              "vehId":false,
               "direction":false,
               "flow":false,
-              "magnitude":false
+              "magnitude":false,
+              "vehId":false
             },
             "p_out":{
               "flow":false
             }
           },
           "pos":[
-            892,
-            554
+            612,
+            385
           ],
           "type":"environment/directionalGravity"
         },
@@ -6748,8 +6773,8 @@
             ]
           ],
           "pos":[
-            906,
-            946
+            612,
+            749
           ],
           "transitionName":"success",
           "type":"states/transition"
@@ -6760,7 +6785,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -6778,8 +6803,8 @@
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            756,
-            378
+            490,
+            252
           ],
           "simple":false,
           "textColor":[
@@ -6796,7 +6821,7 @@
             1,
             0.40000003576278686523,
             0,
-            1
+            0.50196081399917602539
           ],
           "borderColor":[
             0.80000001192092895508,
@@ -6808,13 +6833,13 @@
             432,
             351
           ],
-          "commentText":"Gravity is one of the most intuitive and fun things to change up.\\nThe \"Set Gravity\" node controls the gravity for the whole level.\\nNatural gravity is around -9.81, so if you want to things to float up,\\nyou will need a positive value.\\nConsider that setting a higher value for gravity will mean\\nthat cars will have a harder time gaining traction.",
+          "commentText":"Gravity is one of the most intuitive and fun things to change up.\\nThe \"Set Gravity\" node controls the gravity for the whole level.\\nNatural gravity is around -9.81, so if you want to things to float up,\\nyou will need a positive value.",
           "commentTitle":"Gravity",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            224,
+            252,
             -182
           ],
           "simple":false,
@@ -6829,12 +6854,15 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -434.13003540039062500000,
-        -176.86157226562500000000
+        -192.39770507812500000000,
+        -353.22277832031250000000
       ],
-      "viewZoom":0.50000000000000000000
+      "viewZoom":0.25000000000000000000
     },
     "202":{
       "description":"This graph simply handles the end of the project.",
@@ -7290,10 +7318,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "useDtSim":true,
               "duration":false,
               "flow":false,
-              "reset":false
+              "reset":false,
+              "useDtSim":true
             },
             "p_out":{
               "flow":false,
@@ -7310,10 +7338,6 @@
           "data":{},
           "dynamicMode":"repeat",
           "hardcodedPins":{
-            "message":{
-              "type":"string",
-              "value":"End"
-            },
             "biggerText":{
               "type":"bool",
               "value":true
@@ -7325,6 +7349,10 @@
             "instant":{
               "type":"bool",
               "value":true
+            },
+            "message":{
+              "type":"string",
+              "value":"End"
             }
           },
           "hiddenPins":{
@@ -7473,11 +7501,8 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "azimuthOverride":true,
               "dayLength":true,
-              "dayScale":true,
               "flow":false,
-              "nightScale":true,
               "play":false,
               "time":false
             },
@@ -7525,22 +7550,22 @@
         },
         "8548":{
           "data":{
-            "currentSum":0.75999999000000018068,
-            "resetValue":0.75999999000000018068
+            "currentSum":0.75999999000000073579,
+            "resetValue":0.75999999000000073579
           },
           "dynamicMode":"repeat",
           "hardcodedPins":{
             "value":{
               "type":"number",
-              "value":0.00499999989000000141
+              "value":0.00499999989000000401
             }
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -7652,10 +7677,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -7675,7 +7700,7 @@
           "hardcodedPins":{
             "B":{
               "type":"number",
-              "value":0.85000002400000007619
+              "value":0.85000002400000040925
             }
           },
           "hiddenPins":{
@@ -7685,10 +7710,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -7725,11 +7750,11 @@
           "hardcodedPins":{
             "value_1":{
               "type":"number",
-              "value":0.01499999970000000238
+              "value":0.01499999970000000758
             },
             "value_2":{
               "type":"number",
-              "value":-0.01499999970000000238
+              "value":-0.01499999970000000758
             }
           },
           "hiddenPins":{
@@ -7768,10 +7793,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"<=",
@@ -7797,6 +7822,7 @@
               "name":true
             },
             "p_out":{
+              "exist":true,
               "objID":false
             }
           },
@@ -7859,11 +7885,11 @@
           "hardcodedPins":{
             "value_1":{
               "type":"number",
-              "value":0.02500000040000000326
+              "value":0.02500000040000001367
             },
             "value_2":{
               "type":"number",
-              "value":-0.02500000040000000326
+              "value":-0.02500000040000001367
             }
           },
           "hiddenPins":{
@@ -7950,10 +7976,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "add":false,
               "flow":true,
-              "reset":true
+              "reset":true,
+              "value":false
             },
             "p_out":{
               "changed":false,
@@ -7983,10 +8009,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"<=",
@@ -8012,10 +8038,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":true,
               "flow":true,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":">=",
@@ -8063,7 +8089,7 @@
             },
             "density":{
               "type":"number",
-              "value":0.00200000009000000055
+              "value":0.00200000009000000185
             },
             "densityOffset":{
               "type":"number",
@@ -8072,10 +8098,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "flow":false,
               "atmosphereHeight":false,
               "density":false,
-              "densityOffset":false
+              "densityOffset":false,
+              "flow":false
             },
             "p_out":{
               "flow":false
@@ -8270,37 +8296,46 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"cloudSwitch",
-          "type":"bool",
-          "value":false
-        },
-        {
-          "fixedType":false,
-          "index":2,
-          "mergeStrat":"last",
-          "name":"cloudHeightSwitch",
-          "type":"bool",
-          "value":false
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "cloudSwitch",
+          "cloudHeightSwitch"
+        ],
+        "list":[
+          {
+            "fixedType":false,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"cloudSwitch",
+            "type":"bool",
+            "value":false
+          },
+          {
+            "fixedType":false,
+            "index":2,
+            "mergeStrat":"last",
+            "name":"cloudHeightSwitch",
+            "type":"bool",
+            "value":false
+          }
+        ]
+      },
       "viewPos":[
-        111.38552856445312500000,
-        -320.78332519531250000000
+        -434.80236816406250000000,
+        -257.48883056640625000000
       ],
-      "viewZoom":0.50000000000000000000
+      "viewZoom":0.25000000000000000000
     }
   },
   "isScenario":false,
   "macros":{},
-  "name":"EnvironmentBasics",
-  "savedDir":"/flowgraphEditor/",
+  "name":"Environment Basics",
+  "savedDir":"/lua/ge/extensions/flowgraph/examples/intermediate/",
   "savedFilename":"EnvironmentBasics.flow.json",
   "stateGraphId":7,
-  "variables":{},
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
   "version":0.20000000000000001110
 }

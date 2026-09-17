@@ -43,7 +43,7 @@ end
 
 
 function C:draw()
-  im.HeaderText("Progress - "..translateLanguage(self.mission.name, self.mission.name, true))
+  im.HeaderText("Progress - ".._tr(self.mission.name))
   im.SameLine()
   self.rawCheckbox[0] = self.rawEditPerMission[self.mission.id] or false
   if im.Checkbox("Raw", self.rawCheckbox) then

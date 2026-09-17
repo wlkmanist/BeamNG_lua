@@ -6,7 +6,7 @@ local C = {}
 local basePrefix = "base_marker_"
 local sidesPrefix = "cylinder_marker_"
 local distantPrefix = "distant_marker_"
-local sideShape =  "art/shapes/arrows/s_arrow_floating.dae"
+local sideShape =  "/art/shapes/interface/s_mm_arrow_ribbon_down.dae"
 
 local modeInfos = {
   default = {
@@ -85,22 +85,24 @@ function C:update(dt, dtSim)
 
   local distanceFromMarker = self.pos:distance(playerPosition)
 
-  local t = clamp(self.colorTimer / self.colorLerpDuration,0,1)
+  --local t = clamp(self.colorTimer / self.colorLerpDuration,0,1)
+  local t = 1
   local color = lerpColor(self.modeInfos[self.oldMode or 'default'].color, self.modeInfos[self.mode or 'default'].color, t)
   self.currentColor = ColorF(color[1],color[2],color[3],color[4] or 1)
   self.currentColor.a = self.currentColor.a * (clamp(inverseLerp(self.fadeNear,self.fadeFar,distanceFromMarker),0,1))
 
-  if self.left then
+  if self.arrow then
     local fwd = (playerPosition-self.pos)
-    local rot = (quatFromEuler(math.pi/2,0,0)*quatFromDir(fwd:z0())*quatFromEuler(0,0,math.pi/2)):toTorqueQuat()
-    self.left:setField('rotation', 0, rot.x .. ' ' .. rot.y .. ' ' .. rot.z .. ' ' .. rot.w)
-    self.left.instanceColor = self.currentColor:asLinear4F()
-    self.left.instanceColor1 = ColorF(1,1,1,self.currentColor.a):asLinear4F()
-    self.left:setPosition(vec3(0,0,2.25 + math.sin(os.clock()*1.9)*0.5)+self.pos)
---      self.left:setField('instanceColor', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
---    self.left:setField('instanceColor1', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
-    self.left:updateInstanceRenderData()
-    self.left:setScale(vec3(3,3,3))
+    --local side = fwd:cross(vec3(0,0,1))
+    local rot = quatFromDir(fwd:z0()):toTorqueQuat()
+    self.arrow:setField('rotation', 0, rot.x .. ' ' .. rot.y .. ' ' .. rot.z .. ' ' .. rot.w)
+    self.arrow.instanceColor = self.currentColor:asLinear4F()
+    self.arrow.instanceColor1 = ColorF(1,1,1,self.currentColor.a):asLinear4F()
+    self.arrow:setPosition(vec3(0,0,0.4 + math.sin(os.clock()*1.9)*0.4)+self.pos)
+--      self.arrow:setField('instanceColor', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
+--    self.arrow:setField('instanceColor1', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
+    self.arrow:updateInstanceRenderData()
+    self.arrow:setScale(vec3(2,2,2))
   end
 end
 
@@ -118,9 +120,9 @@ function C:setToCheckpoint(wp)
   self.fadeNear = wp.fadeNear or self.fadeNear
   self.fadeFar = wp.fadeFar or self.fadeFar
 
-  if self.left then
-    self.left:setPosition(vec3(0,0,1.75)+self.pos)
-    self.left:setScale(vec3(1,1,1))
+  if self.arrow then
+    self.arrow:setPosition(vec3(0,0,1.75)+self.pos)
+    self.arrow:setScale(vec3(1,1,1))
   end
 end
 
@@ -142,8 +144,8 @@ end
 function C:setVisibility(v)
   self.visible = v
 
-  if self.left then
-    self.left.hidden = not v
+  if self.arrow then
+    self.arrow.hidden = not v
   end
 
 end
@@ -177,9 +179,9 @@ end
 function C:createMarkers()
   self:clearMarkers()
   self._ids = {}
-  if not self.left then
-    self.left = self:createObject(sideShape,sidesPrefix.."left"..self.id)
-    table.insert(self._ids, self.left:getId())
+  if not self.arrow then
+    self.arrow = self:createObject(sideShape,sidesPrefix.."left"..self.id)
+    table.insert(self._ids, self.arrow:getId())
   end
 end
 
@@ -192,7 +194,7 @@ function C:clearMarkers()
     end
   end
   self._ids = nil
-  self.left = nil
+  self.arrow = nil
 end
 
 return function(...)

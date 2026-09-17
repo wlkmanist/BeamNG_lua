@@ -54,6 +54,11 @@ end
 function C:setup(cluster)
   self.cluster = cluster
   self.pos = cluster.pos
+  self.startDir = cluster.startDir
+  local left = vec3(self.startDir.y, -self.startDir.x, 0)
+  left:normalize()
+  self.left = self.pos + left * cluster.radius*0.7
+  self.right = self.pos - left * cluster.radius*0.7
   self.radius = cluster.radius
   self.lineId = cluster.lineId
   self._inside = nil
@@ -75,10 +80,21 @@ function C:interactWhileMoving(interactData)
   end
 
   if self._inside then
-    local drift = gameplay_drift_freeroam_freeroam
+    local drift = gameplay_drift_freeroam_driftSpots
     drift.detectStart(self.lineId)
   end
 end
+
+-- minimap
+local fillColor = color(72,125,249,255)
+function C:drawOnMinimap(td)
+  if self.startDir then
+    ui_apps_minimap_utils.simpleLine(self.left, self.right, fillColor)
+  else
+    ui_apps_minimap_utils.simpleCircle(self.pos, fillColor)
+  end
+end
+
 
 
 local function create(...)

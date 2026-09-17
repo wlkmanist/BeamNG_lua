@@ -3,9 +3,11 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
+M.dependencies = { "core_versionUpdate" }
 local ready = nil
 
 local persistencyfile = 'mods/db.json'
+local archiveMetadataEnabled = false -- TODO: WIP feature disabled because it's extremely slow, leading to multi-minute game startups and 0.5fps main menu. see also counterpart commit in C++ side
 
 local mods = {}
 local dbHeader = {}
@@ -33,7 +35,6 @@ local modeDef = {
 local checkStartup = false
 local checkingModUpdate = false
 local autoMount = true
-local modDisabledCheckedOnce = false
 local abs = math.abs
 
 local function sendGUIState()
@@ -62,6 +63,7 @@ end
 local function stateChanged()
   -- send new state to gui: as a list
   sendGUIState()
+  extensions.hook('onModManagerStateChanged')
 
   -- and save it to disc (if not in safe mode)
   if not isSafeMode() then
@@ -77,6 +79,87 @@ local function addMountEntryToList(list, filename, mountPoint)
   table.insert(list, entry)
 end
 
+-- Temporary: fetch and extract archive metadata during mod mounting (debug/inspection).
+local function extractArchiveMetadata(p)
+  if not p or not FS:fileExists(p) then
+    return nil
+  end
+
+  local signatureAvailable = type(isSignedJsonCryptoAvailable) == 'function' and isSignedJsonCryptoAvailable()
+  if not signatureAvailable then
+    log('W', 'modmanager.mount', 'signature functions not available, skipping signature')
+    return nil
+  end
+
+  local sha1 = FS:hashFileSHA1(p)
+  local fileSize = FS:fileSize(p)
+  local outPath
+
+  local dir = 'temp/archive_metadata/'
+  outPath = dir .. sha1 .. '.json'
+  if FS:fileExists(outPath) then
+    local cachedJson, cachedErr = readSignedJsonThisVersionTemporary(outPath)
+    if not cachedErr and cachedJson then
+      local cached = jsonDecode(cachedJson, tostring(outPath))
+      if cached then
+        --log('I', 'modmanager.mount', 'CACHED archive metadata: ' .. tostring(p) .. ' -> ' .. dumps(cached))
+        return cached
+      end
+    else
+      --log('E', 'modmanager.mount', 'ERROR reading cached archive metadata: ' .. tostring(outPath) .. ' -> ' .. dumps(cachedErr))
+    end
+  end
+
+  local zip = ZipArchive()
+  if not zip:openArchiveName(p, 'r') then
+    return nil
+  end
+
+  local res = {
+    sha1 = sha1,
+    fileSize = fileSize,
+  }
+
+  for k, v in pairs(zip:getFileList() or {}) do
+    if type(v) == 'string' then
+      local lower = string.lower(v)
+      local modID = string.match(lower, '^/?mod_info/([0-9a-zA-Z]*)/info%.json')
+      if modID then
+        local jsonContent = zip:readFileEntryByIdx(k)
+        if jsonContent then
+          local mi = jsonDecode(jsonContent, tostring(p) .. ' : ' .. tostring(v)) or {}
+          res.modInfo = {
+            resource_id = mi.resource_id,
+            current_version_id = mi.current_version_id,
+            resource_version_id = mi.resource_version_id,
+            version_string = mi.version_string,
+            last_update = mi.last_update,
+            resource_date = mi.resource_date,
+            filename = mi.filename,
+            title = mi.title,
+            user_id = mi.user_id,
+            username = mi.username,
+            tagid = mi.tagid or modID,
+            via = mi.via,
+          }
+        end
+        break
+      end
+    end
+  end
+
+  zip:close()
+
+  local dir = 'temp/archive_metadata/'
+  if not FS:directoryExists(dir) then
+    FS:directoryCreate(dir, true)
+  end
+  writeSignedJsonThisVersionTemporary(jsonEncode(res), outPath, 30) -- expires in 30 days
+
+  --log('I', 'modmanager.mount', 'GENERATED archive metadata: ' .. tostring(p) .. ' -> ' .. dumps(res))
+  return res
+end
+
 local function openEntryInExplorer(filename)
   if not mods[filename] then return end
 
@@ -88,6 +171,9 @@ end
 local function mountEntry(filename, mountPoint)
   extensions.hook('onBeforeMountEntry', filename, mountPoint)
   local mountList = {}
+  if archiveMetadataEnabled and string.endswith(filename, '.zip') then
+    extractArchiveMetadata(filename)
+  end
   addMountEntryToList( mountList, filename, mountPoint )
   if not FS:mountList(mountList) then
     guihooks.trigger('modmanagerError', 'Error mounting mods')
@@ -108,26 +194,12 @@ local function getModNameFromPath(path)
 end
 
 -- this call is really slow, use carefully
-local function getModFromPathSUPERSLOW(vfsPath, calcFingerprint)
-  local realPath = FS:findOverrides(vfsPath) or {}
-  for _, p in ipairs(realPath) do
-    p = string.lower(p:gsub('\\', '/'))
-    local _, filename, ext = path.splitWithoutExt(p)
-    local mod = mods[filename]
-    if mod then
-      local res = mod.modID or mod.modname
-      local hash
-      if calcFingerprint then
-        local hashData = tostring(mod.fullpath)  .. '_' .. tostring(mod.dateAdded)
-        if mod.modData then
-          hashData = hashData .. '_' .. tostring(mod.modData.current_version_id) .. '_' .. tostring(mod.modData.last_update)
-        end
-        hash = hashStringSHA1(hashData)
-      end
-      --dump{'getModFromPath: ', vfsPath, hashData, hash}
-      return res, hash
-    end
-  end
+local function getModFromPath(vfsPath)
+  local originArchivePath = FS:getOriginArchivePathRelative(vfsPath)
+  --log('I', '', 'getModFromPath(' .. tostring(vfsPath) .. ') -> ' .. tostring(originArchivePath))
+  if not originArchivePath then return nil end
+  local _, filename, ext = path.splitWithoutExt(originArchivePath)
+  return mods[filename]
 end
 
 -- checks the type of a mod based on the existing files
@@ -499,31 +571,36 @@ local function checkDuplicatedMods(filelist)
 end
 
 
+local modDisabledCheckedOnce = false
+local modsDisabledForUpdate = false
 local function getModsDisabledAfterUpdate()
-  if not modDisabledCheckedOnce then
-    local updatedFromVersion = nil
-    local cmdArgs = Engine.getStartingArgs()
-    for i, v in ipairs(cmdArgs) do
-      if v == '-versionUpdated' then
-        if #cmdArgs > i then
-          updatedFromVersion = cmdArgs[i + 1]
-        end
-        log('I', 'initDB', "Version update found. Coming from version '" .. tostring(updatedFromVersion) .. "'")
-
-        -- check if mods exist
-        local modData = jsonReadFile(persistencyfile)
-        local modsInstalled = (type(modData) == 'table' and type(modData.mods) == 'table' and not tableIsEmpty(modData.mods))
-        if modsInstalled then
-          -- only disable mods if some were installed in the first place
-          settings.setValue('disableModsAfterUpdate', true)
-        end
-        break
-      end
+  local result = settings.getValue('disableModsAfterUpdate')
+  log("D", "core_modmanager", "getModsDisabledAfterUpdate: checkedOnce=" .. dumps(modDisabledCheckedOnce) .. ", setting=" .. dumps(result))
+  if modDisabledCheckedOnce then
+    if modsDisabledForUpdate and result ~= true then
+      settings.setValue('disableModsAfterUpdate', true)
     end
-    modDisabledCheckedOnce = true
+    return modsDisabledForUpdate or result
   end
-
-  return settings.getValue('disableModsAfterUpdate')
+  modDisabledCheckedOnce = true
+  local updatedFromVersion = core_versionUpdate.updatedFromVersion()
+  log("D", "getModsDisabledAfterUpdate", string.format("Checking if mods should be disabled after update. updatedFromVersion: '%s'", dumps(updatedFromVersion)))
+  if not updatedFromVersion then
+    log('D', 'getModsDisabledAfterUpdate', 'No need to disable mods: no version update detected')
+    return result
+  end
+  log('I', 'getModsDisabledAfterUpdate', string.format("Version update detected: '%s'", dumps(updatedFromVersion)))
+  local modData = jsonReadFile(persistencyfile)
+  local modsInstalled = type(modData) == 'table' and type(modData.mods) == 'table' and not tableIsEmpty(modData.mods)
+  if not modsInstalled then
+    log('D', 'getModsDisabledAfterUpdate', 'No need to disable mods: no mods detected')
+    return result
+  end
+  result = true
+  modsDisabledForUpdate = true
+  settings.setValue('disableModsAfterUpdate', result) -- only disable mods if some were installed in the first place
+  log('I', 'getModsDisabledAfterUpdate', string.format("Mods will be disabled after updating from version: '%s'", dumps(updatedFromVersion)))
+  return result
 end
 
 local initDB = extensions.core_jobsystem.wrap(function(job)
@@ -555,7 +632,6 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
 
   local mountList = {}
   for k,filename in pairs(fileList) do
-    filename = string.lower(filename)
     -- ensure the window is refreshing
 
     -- mount only zip files and unpacked zip folders
@@ -568,6 +644,9 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
 
       if mod and not isSafeMode() and mod.active ~= false then
         log('D', 'initDB', 'mountEntry -- ' .. tostring(filename) .. ': ' .. (mod.modID or '') .. ' : ' .. (mod.modname or ''))
+        if archiveMetadataEnabled and string.endswith(filename, '.zip') then
+          extractArchiveMetadata(filename)
+        end
         addMountEntryToList(mountList, filename, mod.mountPoint)
         if modFiles and #modFiles>0 then
           newMountedFiles = arrayConcat(newMountedFiles,modFiles)
@@ -575,6 +654,7 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
         job.yield()
       end
     end
+    systemYield()
     --Engine.Platform.repaintCanvas() -- This repaint must happen *after* the first yield (rather than before); Otherwise imgui is not properly initialized, which can lead to crashes somewhere else. For instance, it made career imgui UI crash on the first frame after ctrl+L)
   end
 
@@ -616,7 +696,7 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
   -- TODO deprecated: some modScripts are used to load extensions, added backward compatibility
   local old_loadModule = extensions.load
   extensions.load = function(module)
-    log('E', 'initDB.modScript', 'extensions.luaModule(m) is deprecated for this case, please use setExtensionUnloadMode(m, "manual")')
+    log('W', 'initDB.modScript', 'Please make sure to call setExtensionUnloadMode(m, "manual") to have this extension loaded properly.')
     old_loadModule(module)
     setExtensionUnloadMode(module, "manual")
   end
@@ -628,6 +708,7 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
       log('E', 'initDB.modScript', 'Failed to execute ' .. v)
       log('E', 'initDB.modScript', dumps(ret))
     end
+    systemYield()
   end
 
   modScriptFiles = FS:findFiles('/mods_data/', 'modScript.lua', 1, true, false)
@@ -635,6 +716,7 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
     if not pcall(dofile, v) then
       log('E', 'initDB.modScript', 'Failed to execute ' .. v)
     end
+    systemYield()
   end
 
   extensions.load = old_loadModule
@@ -644,6 +726,8 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
     M.checkUpdate()
     checkStartup = false
   end
+
+  extensions.hook('onModManagerModsMounted')
 end)
 
 local function deactivateAllMods()
@@ -670,7 +754,8 @@ local function onUiReady()
 end
 
 local function enableModsAfterUpdate()
-  settings.setValue('disableModsAfterUpdate', false)
+  modsDisabledForUpdate = false
+  settings.setValue('disableModsAfterUpdate', modsDisabledForUpdate)
   onUiReady()
 end
 
@@ -1057,6 +1142,7 @@ local function unpackMod(modname)
   end
   local files = zip:getFileList()
 
+  log('D', 'unpackMod', 'Unpacking : ' .. tostring(filename))
   Engine.Platform.taskbarSetProgress(0.0)
   Engine.Platform.taskbarSetProgressState(2)
   --dump(files)
@@ -1064,6 +1150,7 @@ local function unpackMod(modname)
   for i,v in ipairs(files) do
     --print('extractFile: ' .. tostring(v) .. ' -> ' .. tostring(targetPath) .. v)
     Engine.Platform.taskbarSetProgress(i / #files)
+    log('D', 'unpackMod', 'zip-extractfile: ' .. tostring(v) .. ' > ' .. tostring(targetPath .. v))
     if not zip:extractFile(v, targetPath .. v) then
       extractionRes = false
       guihooks.trigger('modmanagerError', 'Error extracting file: ' .. tostring(v))
@@ -1083,10 +1170,12 @@ local function unpackMod(modname)
 
   if not safeDelete(filename) then
     Engine.Platform.taskbarSetProgressState(4)
-    guihooks.trigger('modmanagerError', 'Error : could not safe delete: ' .. dumps(filename))
     log('E', 'unpackMod', 'Error : could not safe delete: ' .. dumps(filename))
-    messageBox("BeamNG - Modmager",
-    "The zip file could not be deleted properlly.\nThis happens when it's open by another software.\nYou need to close that software and manually delete the file bellow :\n"..dumps(filename), 0, 0)
+    guihooks.trigger("toastrMsg", {
+      type = "error", title = "Couldn't delete file",
+      msg = "Close any software using it. Then delete this file:<br>"..dumps(filename),
+      config = {closeButton = true, timeOut = 0, extendedTimeOut = 0}
+    })
   end
   Engine.Platform.taskbarSetProgressState(0)
 
@@ -1472,7 +1561,8 @@ M.getConflict = getConflict
 M.getModDB = getModDB
 M.modIsUnpacked = modIsUnpacked
 M.check4Update = check4Update
-M.getModFromPathSUPERSLOW = getModFromPathSUPERSLOW
+M.getModFromPath = getModFromPath
+M.getModFromPathSUPERSLOW = getModFromPath -- backward compatibility
 M.getPossiblyBrokenMods = getPossiblyBrokenMods
 M.getMods = getMods
 

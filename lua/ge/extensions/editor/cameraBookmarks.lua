@@ -9,10 +9,77 @@ local imgui = ui_imgui
 local toolWindowName = "cameraBookmarks"
 local newBookmarkName = imgui.ArrayChar(1000)
 
+local function createBookmarkRedo(actionData)
+  local bookmarksGroup = editor.getCameraBookmarks()
+  if not bookmarksGroup then return end
+  local bookmark = worldEditorCppApi.createObject("CameraBookmark")
+  bookmark:setField("datablock", 0, "CameraBookmarkMarker")
+  bookmark:setField("scale", 0, "5 5 5")
+  bookmark:registerObject("")
+  bookmark:setInternalName(actionData.name)
+  bookmark:setTransform(editor.tableToMatrix(actionData.transform))
+  bookmarksGroup:addObject(bookmark)
+  if actionData.objectId then
+    editor.history:updateRedoStackObjectId(actionData.objectId, bookmark:getID())
+  end
+  actionData.objectId = bookmark:getID()
+  editor.setDirty()
+end
+
+local function deleteBookmarkRedo(actionData)
+  local obj = scenetree.findObjectById(actionData.objectId)
+  if obj then obj:deleteObject() end
+  editor.setDirty()
+end
+
+local function setCameraTransformRedo(actionData)
+  core_camera.setPosRot(0,
+    actionData.newTransform.pos.x, actionData.newTransform.pos.y, actionData.newTransform.pos.z,
+    actionData.newTransform.rot.x, actionData.newTransform.rot.y, actionData.newTransform.rot.z, actionData.newTransform.rot.w)
+end
+
+local function setCameraTransformUndo(actionData)
+  core_camera.setPosRot(0,
+    actionData.oldTransform.pos.x, actionData.oldTransform.pos.y, actionData.oldTransform.pos.z,
+    actionData.oldTransform.rot.x, actionData.oldTransform.rot.y, actionData.oldTransform.rot.z, actionData.oldTransform.rot.w)
+end
+
+local function captureCameraTransform()
+  local pos = core_camera.getPosition()
+  local rot = core_camera.getQuat()
+  return { pos = vec3(pos), rot = quat(rot) }
+end
+
+local function addBookmarkWithUndo(name)
+  local id = editor.addCameraBookmark(name)
+  local obj = scenetree.findObjectById(id)
+  if not obj then return end
+  editor.history:commitAction("AddCameraBookmark",
+    { objectId = id, name = name, transform = editor.matrixToTable(obj:getTransform()) },
+    deleteBookmarkRedo, createBookmarkRedo, true)
+end
+
+local function deleteBookmarkWithUndo(objectId)
+  local obj = scenetree.findObjectById(objectId)
+  if not obj then return end
+  editor.history:commitAction("DeleteCameraBookmark",
+    { objectId = objectId, name = obj:getInternalName(), transform = editor.matrixToTable(obj:getTransform()) },
+    createBookmarkRedo, deleteBookmarkRedo)
+end
+
+local function pasteLocationWithUndo()
+  local oldTransform = captureCameraTransform()
+  editor.pasteCameraBookmarkFromClipboard()
+  local newTransform = captureCameraTransform()
+  editor.history:commitAction("PasteCameraLocation",
+    { oldTransform = oldTransform, newTransform = newTransform },
+    setCameraTransformUndo, setCameraTransformRedo, true)
+end
+
 local function onEditorGui()
   if editor.beginWindow(toolWindowName, "Camera Bookmarks") then
     imgui.Text("New bookmark name:")
-    local addMark = imgui.InputText("##newBookmarkName", newBookmarkName, ffi.sizeof(newBookmarkName), imgui.InputTextFlags_EnterReturnsTrue)
+    local addMark = imgui.InputText("##newBookmarkName", newBookmarkName, imgui.ArraySize(newBookmarkName), imgui.InputTextFlags_EnterReturnsTrue)
     imgui.SameLine()
 
     if imgui.Button("Add") then addMark = true end
@@ -20,7 +87,7 @@ local function onEditorGui()
     if addMark then
       local val = ffi.string(newBookmarkName)
       ffi.copy(newBookmarkName, "")
-      editor.addCameraBookmark(val)
+      addBookmarkWithUndo(val)
     end
 
     imgui.TextUnformatted("Clipboard: ")
@@ -30,7 +97,7 @@ local function onEditorGui()
 
     imgui.SameLine()
 
-    if imgui.Button("Paste Location") then editor.pasteCameraBookmarkFromClipboard() end
+    if imgui.Button("Paste Location") then pasteLocationWithUndo() end
 
     imgui.BeginChild1("cameraBookmarksChild", imgui.ImVec2(0, 0), true)
     local bookmarks = editor.getCameraBookmarks()
@@ -49,7 +116,7 @@ local function onEditorGui()
         imgui.TextUnformatted(bookmark:getInternalName())
         imgui.PopID()
       end
-      if deleteId ~= 0 then editor.deleteCameraBookmark(deleteId) end
+      if deleteId ~= 0 then deleteBookmarkWithUndo(deleteId) end
     end
     imgui.EndChild()
   end

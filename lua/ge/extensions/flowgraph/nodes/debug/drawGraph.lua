@@ -14,7 +14,9 @@ C.category = 'repeat_instant'
 
 C.pinSchema = {}
 
-C.tags = {'util', 'draw'}
+C.tags = {'util', 'draw', 'table', 'data'}
+
+local graphSize = im.ImVec2(400, 300)
 
 function C:init()
   self.inputLabels = {}
@@ -48,8 +50,8 @@ function C:resetGraphData()
   self.inputColors = {}
   self.graphData = {}
   local i = 0
-  for _, pin in pairs(self.pinInLocal) do
-    if pin.type == "number" then
+  for l, pin in pairs(self.pinInLocal) do
+    if pin.type == "number" and self.pinIn[l].value then
       table.insert(self.inputLabels, pin.name)
       local c = rainbowColor(self.data.count, i, 255)
       table.insert(self.inputColors, im.ImColorByRGB(c[1], c[2], c[3], 255))
@@ -76,7 +78,7 @@ function C:updatePins(old, new)
   else
     for i = old + 1, new do
       -- direction, type, name, default, description, autoNumber
-      self:createPin('in', 'number', 'value'..i, 'Data value #'..i)
+      self:createPin('in', 'number', 'value'..i, 0, 'Data value #'..i)
     end
   end
 
@@ -111,9 +113,9 @@ function C:drawMiddle(builder, style)
   end
 
   builder:Middle()
-  if self.valueCount > 0 then
-    im.PlotMultiLines("", self.valueCount, self.inputLabels, self.inputColors, self.graphData, self.graphDataCount, "", self.data.scaleMin, self.data.scaleMax, im.ImVec2(400,300))
-    -- im.PlotMultiLines("", self.inputPinCount, self.inputLabels, self.inputColors, self.graphData, self.graphDataCount, "", im.Float(3.402823466E38), im.Float(3.402823466E38), im.ImVec2(600,400))
+  if #self.graphData > 0 then
+    -- TODO: fix invalid C type error
+    im.PlotMultiLines("##plotMultiLines"..self.id, #self.graphData, self.inputLabels, self.inputColors, self.graphData, self.graphDataCount, "", self.data.scaleMin, self.data.scaleMax, graphSize)
   end
 end
 

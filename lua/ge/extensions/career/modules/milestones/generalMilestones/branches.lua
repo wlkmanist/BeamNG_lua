@@ -39,7 +39,7 @@ M.onGeneralMilestonesCollect = function(milestonesList)
         getValue = function() return career_modules_playerAttributes.getAttributeValue(attKey) end,
         getLabel = function(step, displayValue, target) return {txt=isBranch and "ui.career.branchSemicolon" or "ui.career.skillSemicolon", context = {branch = branchInfo.name}} end,
         getDescription = function(step, displayValue, target) return {txt=isBranch and "ui.career.milestones.branches.reachBranchLevel.description" or "ui.career.milestones.branches.reachSkillLevel.description", context={lvl = step+1, name = branchInfo.name}} end,
-        getProgressLabel = function(step, current, target) return string.format("%d xp / %d xp", current, target) end,
+        getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.branches.progressLabel", context={current = current, target = target}} end,
         getTarget = function(step) return branchInfo.levels[step+1].requiredValue end,
         getRewards = isBranch and milestones.majorLinear or milestones.minorLinear,
         maxStep = levelCount

@@ -25,7 +25,11 @@ function C:afterTrigger()
   end
   if self.flags.rebuildNavgraphOnAfterTrigger then
     self.flags.rebuildNavgraphOnAfterTrigger = false
-    map.reset()
+    if not core_gamestate.loading() then
+      map.reset()
+    else
+      log("I", "prefabModule", "Not reloading navgraph in afterTrigger, after spawning a prefab. (gamestate is still loading)")
+    end
   end
 end
 
@@ -135,7 +139,7 @@ end
 function C:spawnPrefab(fileName)
   local pos = vec3(0,0,0)
 
-  local file, succ = self.mgr:getRelativeAbsolutePath({fileName, fileName .. '.prefab.json'})
+  local file, _ = self.mgr:getRelativeAbsolutePath({fileName, fileName .. '.prefab.json'})
   local name = generateObjectNameForClass('Prefab', "prefab_")
   local scenetreeObject = spawnPrefab(name , file, pos.x .. " " .. pos.y .. " " .. pos.z, "0 0 1 0", "1 1 1", false)
   scenetreeObject.canSave = false
@@ -171,7 +175,7 @@ function C:addPrefab(id, moreData)
   table.insert(self.sortedIds, data.id)
 
   if data.containsColliders then
-    if self.mgr.modules.isLoadingLevel then
+    if core_gamestate.loading() then
       if not self.flags.reloadCollisionOnLevelLoading then
         self.mgr.modules.level:delayOrInstantFunction(function()
           log("D","","Reloading Collision from prefabModule because prefabs(s) contained collision.")
@@ -185,7 +189,7 @@ function C:addPrefab(id, moreData)
   end
 
   if data.requiresNavgraphReload then
-    if self.mgr.modules.isLoadingLevel then
+    if core_gamestate.loading() then
       if not self.flags.rebuildNavgraphOnLevelLoading then
         self.mgr.modules.level:delayOrInstantFunction(function()
           log("D","","Reloading map because prefab(s) contained navgraph waypoints/data")
@@ -197,14 +201,36 @@ function C:addPrefab(id, moreData)
       self.flags.rebuildNavgraphOnAfterTrigger = true
     end
   end
+
+  -- override for reloading collision and navgraph (necessary in some cases, e.g. player vehicle spawning on top of prefab statics)
+  -- this is hacky; prefabs spawn with no dynamic fields, so here we try to find a gameplay area inside the prefab and use that instead
+  -- maybe there is a better solution that works for all cases
+  local list = scenetree.findClassObjects("BeamNGGameplayArea")
+  if list[1] then
+    local ref = tableValuesAsLookupDict(obj:getChildrenObjectIds())
+    for _, name in ipairs(list) do
+      local o = scenetree.findObject(name)
+      if ref[o:getID()] then
+        --if o.forceReload then
+        log("D","","Prefab reload collision and navgraph override enabled! id: " .. dumps(id))
+        be:reloadCollision()
+        map.reset()
+        self.flags.reloadCollisionOnLevelLoading = false
+        self.flags.rebuildNavgraphOnLevelLoading = false
+      end
+    end
+  end
 end
 
 function C:restoreVehiclePositions(id)
   local data = self.prefabs[id]
   if data then
     for vid, val in pairs(data.originalVehicleTransforms or {}) do
-      if scenetree.findObjectById(vid) then
+      local veh = scenetree.findObjectById(vid)
+      if veh then
         vehicleSetPositionRotation(vid, val.pos.x, val.pos.y, val.pos.z,  val.rot.x, val.rot.y, val.rot.z, val.rot.w)
+        veh:requestReset(RESET_PHYSICS)
+        veh:resetBrokenFlexMesh()
       end
     end
   end
@@ -277,6 +303,7 @@ end
 
 function C:executionStopped()
   local reloadCollision = false
+  local rebuildNavgraph = false
   for _, id in ipairs(self.sortedIds) do
     local data = self.prefabs[id]
     if not data.dontDelete then
@@ -293,12 +320,16 @@ function C:executionStopped()
         end
       end
       reloadCollision = reloadCollision or data.containsColliders
+      rebuildNavgraph = rebuildNavgraph or data.requiresNavgraphReload
     else
       log("I","","Not deleting prefab, because it was requested: " .. dumps(id))
     end
   end
   if reloadCollision then
     be:reloadCollision()
+  end
+  if rebuildNavgraph then
+    map.reset()
   end
   self:clear()
 end

@@ -40,14 +40,15 @@ local function generateNodes()
   local nodes = {}
   M.nodesByMId = {}
   local id = 0
-   for _, m in ipairs(gameplay_missions_missions.get()) do
+   for _, m in ipairs(gameplay_missions_missions.getAllMissions()) do
     if m.careerSetup.showInCareer then
       id = id+1
+      local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(m)
       local node = {
         id = id,
         name = m.id,
         missionId = m.id,
-        pos = vec3(m.unlocks.depth*300, id*(nodeSize.y+20),0),
+        pos = vec3(forwardInfo.depth*300, id*(nodeSize.y+20),0),
       }
       ui_flowgraph_editor.SetNodePosition(node.id, im.ImVec2(node.pos.x, node.pos.y))
       table.insert(nodes, node)
@@ -69,12 +70,13 @@ local function drawNode(node)
   local mission = gameplay_missions_missions.getMissionById(node.missionId)
   local book = editor_missionPlaybook.book
   local data = book.results[book.page]
-  local unlocks = data.unlocksById[mission.id]
 
   local clr = nodeColors.red
 
-  if unlocks.visible then clr = nodeColors.yellow end
-  if unlocks.startable then clr = nodeColors.green end
+  local startable = gameplay_missions_unlocks.isMissionStartable(mission)
+  local visible = gameplay_missions_unlocks.isMissionVisible(mission)
+  if visible then clr = nodeColors.yellow end
+  if startable then clr = nodeColors.green end
   local str = 0.2
   ui_flowgraph_editor.PushStyleColor(ui_flowgraph_editor.StyleColor_NodeBg, im.ImVec4(clr.x*str, clr.y*str, clr.z*str, 0.95))
   ui_flowgraph_editor.PushStyleColor(ui_flowgraph_editor.StyleColor_NodeBorder, clr)
@@ -105,7 +107,7 @@ local function drawNode(node)
   im.SameLine()
 
   im.BeginGroup()
-  im.Text(translateLanguage(mission.name, mission.name, true))
+  im.Text(_tr(mission.name))
 
   if data and data.unlockedStars then
     for i, key in ipairs(mission.careerSetup._activeStarCache.sortedStars) do
@@ -137,8 +139,8 @@ local function drawNode(node)
 
 
 
-
-  local text = "BL  " .. mission.unlocks.maxBranchlevel
+  local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(mission)
+  local text = "BL  " .. forwardInfo.maxBranchLevel
     local txtSize = im.CalcTextSize(text)
     txtSize.x = txtSize.x + 6
     txtSize.y = txtSize.y + 6
@@ -167,7 +169,8 @@ local linkIds = 0
 local function drawNodeLinks(node)
   local mission = gameplay_missions_missions.getMissionById(node.missionId)
   local ownPinIn, ownPinOut = pinIds(node.id)
-  for _, fId in ipairs(mission.unlocks.forward) do
+  local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(mission)
+  for _, fId in ipairs(forwardInfo.forwardIds) do
     local otherNode = M.nodesByMId[fId]
     local otherPinIn, otherPinOut = pinIds(otherNode.id)
     ui_flowgraph_editor.Link(linkIds, ownPinOut, otherPinIn, im.ImVec4(1,1,1,1), 2 * im.uiscale[0], false, "")
@@ -213,8 +216,8 @@ local function onEditorGui()
       ui_flowgraph_editor.SetCurrentEditor(savedEctx)
 
     end
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 
@@ -231,12 +234,10 @@ end
 local function onPlaybookLogAfterStep(resultData)
   local unlockedStars = {}
   local unlockedThisStep = {}
-  local unlocksById = {}
-  for _, m in ipairs(gameplay_missions_missions.get()) do
+  for _, m in ipairs(gameplay_missions_missions.getAllMissions()) do
     if m.careerSetup.showInCareer then
       unlockedStars[m.id] = deepcopy(m.saveData.unlockedStars)
       unlockedThisStep[m.id] = {}
-      unlocksById[m.id] = deepcopy(m.unlocks)
 
     end
   end
@@ -246,7 +247,6 @@ local function onPlaybookLogAfterStep(resultData)
     unlockedThisStep[resultData.funRet.missionId] = deepcopy(resultData.funRet.unlockedStarsChanged)
   end
   resultData.unlockedThisStep = unlockedThisStep
-  resultData.unlocksById = unlocksById
   dump(resultData.unlockedThisStep)
 
 end

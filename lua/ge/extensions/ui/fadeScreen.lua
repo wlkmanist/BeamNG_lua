@@ -7,14 +7,27 @@ local delayedData = {}
 local cycleArgs = {}
 local delayCounter = 1
 
-M.delayFrames = 1
+M.delayFrames = 3
 
 -- screenData = content {image, title, text} that is displayed during the pause phase
-local function start(fade, screenData, args)
+local function fadeToBlack(fade, screenData, args)
   fade = fade or 1
   args = args or {}
-  local params = {fadeIn = fade, pause = cycleArgs.pause or 1e6, fadeOut = cycleArgs.fadeOut and 1e6 or 0, data = screenData} -- fade to and stop on black
-  guihooks.trigger('ChangeState', {state = 'fadeScreen', params = params})
+  local params = {
+    -- fade to and stop on black
+    fadeIn = fade,
+    -- pause = cycleArgs.pause or 1e6,
+    pause = cycleArgs.pause or -1,
+    -- fadeOut = cycleArgs.fadeOut and 1e6 or 0,
+    fadeOut = cycleArgs.fadeOut or 0,
+    data = screenData
+  }
+  -- guihooks.trigger('ChangeState', {state = 'fadeScreen', params = params})
+  guihooks.trigger("LoadingScreen", { active = true, custom = params })
+
+  if headless_mode then -- in headless mode, skip this as there's no UI
+    extensions.hook("onScreenFadeState", 1)
+  end
 
   if args.useGlobalAudioFade == nil or args.useGlobalAudioFade then
     SFXSystem.setGlobalParameter("g_FadeTimeMS", fade * 1000) -- fade is in seconds, convert to milliseconds
@@ -22,11 +35,16 @@ local function start(fade, screenData, args)
   end
 end
 
-local function stop(fade, args)
+local function fadeFromBlack(fade, args)
   fade = fade or 1
   args = args or {}
-  local params = {fadeIn = 0, pause = 0, fadeOut = fade} -- fade from black
-  guihooks.trigger('ChangeState', {state = 'fadeScreen', params = params})
+  -- local params = {fadeIn = 0, pause = 0, fadeOut = fade} -- fade from black
+  -- guihooks.trigger('ChangeState', {state = 'fadeScreen', params = params})
+  guihooks.trigger("LoadingScreen", { active = false, custom = { fadeOut = fade } })
+
+  if headless_mode then -- in headless mode, skip this as there's no UI
+    extensions.hook("onScreenFadeState", 3)
+  end
 
   if args.useGlobalAudioFade == nil or args.useGlobalAudioFade then
     SFXSystem.setGlobalParameter("g_FadeTimeMS", fade * 1000) -- fade is in seconds, convert to milliseconds
@@ -34,13 +52,12 @@ local function stop(fade, args)
   end
 end
 
-local function cycle(fadeIn, pause, fadeOut, screenData, args) -- fade to black, pause, then fade from black
-  -- this function saves the arguments, then calls function "start", and later "stop"
+local function fadeSequence(fadeIn, pause, fadeOut, screenData, args) -- fade to black, pause, then fade from black
   cycleArgs.fadeIn = fadeIn or 1
   cycleArgs.pause = math.max(0.05, pause or 0) -- TODO: zero value breaks things a little bit
   cycleArgs.fadeOut = fadeOut or fadeIn
-  cycleArgs.args = args
-  start(cycleArgs.fadeIn, screenData, args)
+  cycleArgs.args = args or {}
+  fadeToBlack(cycleArgs.fadeIn, screenData, args)
 end
 
 -- this delay is needed so we can be sure that the screen is completely black before moving on.
@@ -56,7 +73,7 @@ local function onGuiUpdate()
         extensions.hook("onScreenFadeState", state)
 
         if state == 2 and next(cycleArgs) then -- only during full fade cycle
-          stop(cycleArgs.fadeOut, cycleArgs.args)
+          fadeFromBlack(cycleArgs.fadeOut, cycleArgs.args)
           table.clear(cycleArgs)
         end
       end
@@ -67,9 +84,12 @@ local function onGuiUpdate()
 end
 
 -- public interface
-M.start = start
-M.stop = stop
-M.cycle = cycle
+M.fadeToBlack = fadeToBlack
+M.fadeFromBlack = fadeFromBlack
+M.fadeSequence = fadeSequence
+M.start = fadeToBlack
+M.stop = fadeFromBlack
+M.cycle = fadeSequence
 M.onScreenFadeStateDelayed = onScreenFadeStateDelayed
 M.onGuiUpdate = onGuiUpdate
 

@@ -46,31 +46,45 @@ local function includeExternalResource(resourceURI, sheetName, cellRef)
 end
 
 local varWrapper = {}
-local context = {
-  round = round,
-  square = square,
-  clamp = clamp,
-  smoothstep = smoothstep,
-  smootherstep = smootherstep,
-  smoothmin = smoothmin,
-  sign = sign,
-  case = case,
-  vec3 = vec3,
-  quat = quat,
-  concat = table.concat,
-  include = includeExternalResource,
-  print = function(val, label)
-    if label then
-      print(tostring(label) ..' = ' .. tostring(val))
-    else
-      print(tostring(val))
+local function getContext()
+  local c = {
+    round = round,
+    square = square,
+    clamp = clamp,
+    smoothstep = smoothstep,
+    smootherstep = smootherstep,
+    smoothmin = smoothmin,
+    sign = sign,
+    case = case,
+    vec3 = vec3,
+    quat = quat,
+    concat = table.concat,
+    include = includeExternalResource,
+    var_var_ = "$",
+    var_ = function(v)
+      if v == nil then return "$" end
+      local val = varWrapper.vars['$' .. v]
+      return type(val) == "table" and val.val or val
+    end,
+    var = function(v)
+      return "$"..(v or "")
+    end,
+    print = function(val, label)
+      if label then
+        print(tostring(label) ..' = ' .. tostring(val))
+      else
+        print(tostring(val))
+      end
+      return val
     end
-    return val
+  }
+  for k, v in pairs(math) do
+    c[k] = v
   end
-}
-for k, v in pairs(math) do
-  context[k] = v
+  return c
 end
+
+local context = getContext()
 
 setmetatable(context, {
   __index = function(tbl, key)
@@ -117,7 +131,6 @@ end
 local function parse(expr, vars)
   varWrapper.vars = vars
 
-
   --strip leading "$=" from expression and replace all occurences of "$" with "_" (as these are used for lua variable names)
   expr = expr:sub(3):gsub('%$', 'var_')
 
@@ -140,28 +153,7 @@ M.parse = parse
 
 local function compileSafe(expr)
   local varWrapper = {vars = {}}
-  local context = {
-    round = round,
-    square = square,
-    clamp = clamp,
-    smoothstep = smoothstep,
-    smootherstep = smootherstep,
-    smoothmin = smoothmin,
-    sign = sign,
-    case = case,
-    include = includeExternalResource,
-    print = function(val, label)
-      if label then
-        print(tostring(label) ..' = ' .. tostring(val))
-      else
-        print(tostring(val))
-      end
-      return val
-    end
-  }
-  for k, v in pairs(math) do
-    context[k] = v
-  end
+  local context = getContext()
 
   setmetatable(context, {
     __index = function(tbl, key)
@@ -171,7 +163,6 @@ local function compileSafe(expr)
     __newindex = function(tbl, key, value) error(string.format("Attempt to modify read-only table entry: %s = %s", key, value)) end,
     __metatable = false
   })
-
 
   --strip leading "$=" from expression and replace all occurences of "$" with "_" (as these are used for lua variable names)
   expr = expr:sub(3):gsub('%$', 'var_')

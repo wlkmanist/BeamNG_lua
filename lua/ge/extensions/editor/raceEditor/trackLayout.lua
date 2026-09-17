@@ -24,7 +24,7 @@ end
 local function setFieldUndo(data) data.self.path[data.field] = data.old data.self:selected() end
 local function setFieldRedo(data) data.self.path[data.field] = data.new data.self:selected() end
 
-function C:changeField(field,  new)
+function C:changeField(field, new)
   if new ~= self.path[field] then
     editor.history:commitAction("Changed Field " .. field.. " of Path",
     {self = self, old = self.path[field], new = new, field = field},
@@ -34,23 +34,25 @@ end
 
 function C:drawGeneralInfo()
   im.BeginChild1("Layout", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
+  local itemWidth = im.GetContentRegionAvailWidth() * 0.5
 
+  im.PushItemWidth(itemWidth)
   local laps = im.IntPtr(self.path.defaultLaps)
-  if im.InputInt("Lap Count", laps) then
-    self:changeField("defaultLaps",math.max(laps[0], 1))
-  end im.tooltip("How many laps this track has by default. Open tracks can not have more than 1 lap.")
+  if im.InputInt("Lap Count", laps) then self:changeField("defaultLaps",math.max(laps[0], 1)) end
+  im.tooltip("How many laps this track has by default. Open tracks can not have more than 1 lap.")
 
   self:selector("Start Node", self.path.pathnodes, "startNode", ColorI(0,60,0,200), "This node should be placed on the start line for open tracks, and on the start/finish line for closed tracks.")
   self:selector("End Node", self.path.pathnodes, "endNode", ColorI(60,0,0,200), "This node should be placed on the finish line for open tracks. It is not needed for closed tracks.")
 
   self:selector("Default Starting Position", self.path.startPositions, "defaultStartPosition", ColorI(0,0,80,200), "This is where the vehicle will be positioned for regular mode.")
-  self:selector("Reverse Starting Position", self.path.startPositions, "reverseStartPosition", ColorI(30,00,80,200), "This is where the vehicle will be positioned for reverse mode.")
+  self:selector("Reverse Starting Position", self.path.startPositions, "reverseStartPosition", ColorI(30,0,80,200), "This is where the vehicle will be positioned for reverse mode.")
   self:selector("Rolling Starting Position", self.path.startPositions, "rollingStartPosition", ColorI(0,30,80,200), "This is where the vehicle will be positioned for rolling start mode.")
-  self:selector("Reverse Rolling Starting Position", self.path.startPositions, "rollingReverseStartPosition", ColorI(30,30,80,200),"This is where the vehicle will be positioned for reverse rolling start mode.")
-
+  self:selector("Reverse Rolling Starting Position", self.path.startPositions, "rollingReverseStartPosition", ColorI(30,30,80,200), "This is where the vehicle will be positioned for reverse rolling start mode.")
+  im.PopItemWidth()
   im.Separator()
+
   local classification = self.path:classify()
-  im.Text("Classification:") im.tooltip("These fields show you how your track is classified. The values depend on your track layout\nas well as what values you have set for the fields above.")
+  im.Text("Classification") im.tooltip("These fields show you how your track is classified. The values depend on your track layout\nas well as what values you have set for the fields above.")
   self:displayClassification(classification, "Reversible: ", 'reversible', "If the track can be reversed. Possible if both the Default Starting Position\nand Reverse Starting Positions are set, as well as the End Node for open tracks.")
   im.SameLine() im.SetCursorPosX(180)
   self:displayClassification(classification, "Rolling Start: ", 'allowRollingStart', "If the track can be started from from a distance. Possible if Rolling Start Position is set.\nIf the track is reversible, also Reverse Rolling Start has to be set.")
@@ -58,7 +60,19 @@ function C:drawGeneralInfo()
   im.SameLine() im.SetCursorPosX(180)
   self:displayClassification(classification, "Branching: ", 'branching', "Branching tracks will not compare lap times or record final times in Time Trial Mode.")
   im.Separator()
+
+  im.Text("Extra Settings")
+  local var = im.BoolPtr(self.path.simplifyAiPath)
+  if im.Checkbox("Simplify AI Path", var) then
+    self:changeField("simplifyAiPath", var[0])
+  end
+  im.tooltip("Enable this to improve pathfinding performance by virtually snapping pathnodes to the navgraph; may reduce accuracy.")
+
+  im.Separator()
   im.EndChild()
+
+  self:drawStopZone()
+  self:drawSplits()
 end
 
 function C:displayClassification(classification, name, field, tt)
@@ -72,7 +86,36 @@ function C:displayClassification(classification, name, field, tt)
   im.tooltip(tt or "")
 end
 
+function C:drawStopZone()
+  local stopZone = nil
 
+  for _, sp in ipairs(self.path.startPositions.sorted) do
+    if sp.name == "STOP_ZONE" or sp.name == "SS_stop_control" or sp.name == "TC_out" then
+      stopZone = sp
+      break
+    end
+  end
+
+  if stopZone then
+    debugDrawer:drawTextAdvanced(stopZone.pos,
+      String("Stop Control"),
+      ColorF(1,1,1,1),true, false,
+      ColorI(200,80,0,0.7*255))
+  end
+end
+
+function C:drawSplits()
+  local splitCount = 1
+  for i, sp in ipairs(self.path.pathnodes.sorted) do
+    if sp.useAsSplit and i < #self.path.pathnodes.sorted then
+      debugDrawer:drawTextAdvanced(sp.pos,
+        String("Split "..tostring(splitCount)),
+        ColorF(1,1,1,1),true, false,
+        ColorI(200,200,0,0.7*255))
+      splitCount = splitCount + 1
+    end
+  end
+end
 
 function C:selector(name, objects, fieldName, clrI, tt)
   if not objects.objects[self.path[fieldName]].missing then

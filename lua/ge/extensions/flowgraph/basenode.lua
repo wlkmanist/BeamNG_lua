@@ -4,6 +4,8 @@
 
 local im = ui_imgui
 
+local logTag = "Basenode"
+
 local gridSize = 14
 local xOffGrid, yOffGrid = 10, 8
 local behaviourOrder = { 'once', 'duration', 'simple', 'singleActive', 'obsolete' }
@@ -38,7 +40,7 @@ function C:init(mgr, graph, forceId)
   self.id = forceId or self.mgr:getNextFreeGraphNodeId()
   if mgr.__safeIds then
     if mgr:checkDuplicateId(self.id) then
-      log("E","","Duplicate ID error! Node")
+      log("E",logTag,"Duplicate ID error! Node")
       print(debug.tracesimple())
     end
   end
@@ -156,7 +158,7 @@ function C:_postInit()
     -- do we have a pin named reset?
     if self.pinInLocal.reset == nil then
       -- create a reset pin directly under the flow pin, also warning/error
-      log("E", "", "Node is dynamic once, but has no reset pin!")
+      log("E", logTag, "Node is dynamic once, but has no reset pin!")
       self:createResetPin()
     end
   end
@@ -177,10 +179,10 @@ function C:handleNodeCategories()
       -- check if simple
       if ui_flowgraph_editor.isSimpleNode(self.category) then
         if self:hasFlowPins() then
-          log("E", "", "Node " .. self.name .. " is simple, but has flow pins!")
+          log("E", logTag, "Node " .. self.name .. " is simple, but has flow pins!")
         end
         if self.category == 'provider' and self:hasInputPins() then
-          log("E", "", "Node " .. self.name .. " is provider, but has input pins!")
+          log("E", logTag, "Node " .. self.name .. " is provider, but has input pins!")
         end
         self:addBehaviour('simple')
       else
@@ -537,7 +539,7 @@ end
 
 function C:shiftPin(idInList, direction)
   local newIndex = ((idInList + direction-1)% #self.pinList) +1
-  log("D","","Shifting Pin: "..idInList .. " -> " .. newIndex)
+  log("D",logTag,"Shifting Pin: "..idInList .. " -> " .. newIndex)
   local a = self.pinList[idInList]
   local b = self.pinList[newIndex]
   self.pinList[idInList] = b
@@ -812,7 +814,7 @@ function C:overDraw()
     local fgClr = self.customIconColor or self.iconColor
     fgClr = im.ImVec4(fgClr.x, fgClr.y, fgClr.z, fgClr.w * 0.25)
     local bgClr = self.customColor or self.color
-    im.Text("ASDF")
+    im.Text("overDraw")
     bgClr = im.ImVec4(bgClr.x*0.4, bgClr.y*0.4, bgClr.z*0.4, 1)
     im.ImDrawList_AddRectFilled(im.GetWindowDrawList(), self.overDrawSize.top_left(), self.overDrawSize.bottom_right(), im.GetColorU322(bgClr),8)
     editor.uiIconImage(editor.icons[icon], size, fgClr)
@@ -968,7 +970,7 @@ function C:draw(builder, style)
           show = pin:isUsed()
         end
         if show then
-          im.SetCursorPosY(im.GetCursorPosY()+1)
+          --im.SetCursorPosY(im.GetCursorPosY()+1)
           pin:draw(builder, style, nil, self:getPinInConstValue(pin.name), inPinWidth)
           --im.NewLine()
           inCount = inCount +1
@@ -986,7 +988,7 @@ function C:draw(builder, style)
   end
   if inCount == 0 then
     builder:expectOutPinWidth(5)
-    im.SetCursorPosY(im.GetCursorPosY()+1)
+    --im.SetCursorPosY(im.GetCursorPosY()+1)
     --builder:SetStage('input')
     builder:makeAlignmentPin(self.alignmentPin)
     --im.Dummy(im.ImVec2(5,5))
@@ -996,7 +998,7 @@ function C:draw(builder, style)
   --self:drawMiddle(builder, style)
   local status, err, res = xpcall(self._drawMiddle, debug.traceback, self, builder, style, drawType)
   if not status then
-    log('E', 'node.'..tostring('_drawMiddle'), tostring(err))
+    log('E', logTag ..'_drawMiddle', tostring(err))
     self:__setNodeError('work', 'Error while executing node:_drawMiddle(): ' .. tostring(err))
   end
 
@@ -1015,7 +1017,7 @@ function C:draw(builder, style)
           show = pin:isUsed()
         end
         if show then
-          im.SetCursorPosY(im.GetCursorPosY()+1)
+          --im.SetCursorPosY(im.GetCursorPosY()+1)
           pin:draw(builder, style, nil, pin._hardcodedDummyPin, outPinWidth)
         end
       end
@@ -1093,14 +1095,10 @@ end
 
 function C:customContextMenu() end
 function C:showContextMenu(menuPos)
-
-  im.SetWindowFontScale(editor.getPreference("ui.general.scale"))
--- im.BeginChild1("ncm##"..self.id, im.ImVec2(150*editor.getPreference("ui.general.scale"), entries * im.GetTextLineHeightWithSpacing() * editor.getPreference("ui.general.scale")))
-
+  im.SetWindowFontScale(1)
   local y = im.GetCursorPosY()
   self:customContextMenu()
   if y ~= im.GetCursorPosY() then im.Separator() end
-
 
   if self.mgr.allowEditing then
     if im.MenuItem1("Copy") then
@@ -1131,7 +1129,6 @@ function C:showContextMenu(menuPos)
       end
     end
     if im.BeginMenu('Create Subgraph...') then
-      im.SetWindowFontScale(1/editor.getPreference("ui.general.scale"))
       im.PushItemWidth(150 * editor.getPreference("ui.general.scale"))
       local accept = false
       accept = im.InputText('',self.graphName,128, im.InputTextFlags_EnterReturnsTrue)
@@ -1144,7 +1141,6 @@ function C:showContextMenu(menuPos)
         self.graphName = im.ArrayChar(256,"New Subgraph")
       end
       im.PopItemWidth()
-      im.SetWindowFontScale(1)
       im.EndMenu()
     end
     if self:representsGraph() and self.mgr.selectedNodeCount == 1 and self.graph.isStateGraph == self:representsGraph().isStateGraph then
@@ -1153,7 +1149,6 @@ function C:showContextMenu(menuPos)
       end
     end
     if im.BeginMenu('Comment...') then
-      im.SetWindowFontScale(1/editor.getPreference("ui.general.scale"))
       im.PushItemWidth(150 * editor.getPreference("ui.general.scale"))
       local accept = false
       if self._commentInput == nil then self._commentInput = im.ArrayChar(256, "") end
@@ -1207,7 +1202,6 @@ function C:showContextMenu(menuPos)
         self._commentInput = nil
       end
       im.PopItemWidth()
-      im.SetWindowFontScale(1)
       im.EndMenu()
     end
 
@@ -1215,7 +1209,6 @@ function C:showContextMenu(menuPos)
   if editor.getPreference("flowgraph.debug.editorDebug") then
     --im.Separator()
     if im.BeginMenu('Dev tools') then
-      im.SetWindowFontScale(1/editor.getPreference("ui.general.scale"))
       if im.MenuItem1("Open Source File") then
         Engine.Platform.openFile(self.sourcePath)
       end
@@ -1226,16 +1219,13 @@ function C:showContextMenu(menuPos)
         editor_flowgraphEditor.showNodeReferences(self)
       end
       if im.BeginMenu('Dumpz Node') then
-        im.SetWindowFontScale(editor.getPreference("ui.general.scale"))
         for i = 1, 5 do
           if im.MenuItem1("Depth " .. i) then
             dumpz(self, i)
           end
         end
-        im.SetWindowFontScale(1)
         im.EndMenu()
       end
-      im.SetWindowFontScale(1)
       im.EndMenu()
     end
     if not self.mgr.allowEditing then
@@ -1255,9 +1245,7 @@ function C:showContextMenu(menuPos)
     end
     local nSize = ui_flowgraph_editor.GetNodeSize(self.id)
     im.Text(string.format("Size: %d / %d", nSize.x, nSize.y))
-
   end
-  im.SetWindowFontScale(1)
 end
 
 function C:_setHardcodedDummyInputPin(pin, val, forceType)
@@ -1420,7 +1408,7 @@ function C:__onDeserialized(nodeData)
         if not self.data then self.data = {} end
         self.data[k] = v
       else
-        log('D',self.mgr.logTag,string.format("Property %s in Node %s does not exist.", k, self.name))
+        log('D',logTag,string.format("Property %s in Node %s does not exist.", k, self.name))
       end
     end
   end

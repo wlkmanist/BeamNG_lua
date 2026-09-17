@@ -12,23 +12,24 @@ C.description = 'Gives a quaternion that describes the rotation around the z axi
 C.category = 'simple'
 
 C.pinSchema = {
-    { dir = 'in', type = 'number', name = 'deg', description = 'Input angle in degrees.' },
-    { dir = 'out', type = 'quat', name = 'value', description = 'Quaternion describing the rotation.' },
+  { dir = 'in', type = 'number', name = 'deg', description = 'Input angle in degrees.' },
+  { dir = 'out', type = 'quat', name = 'value', description = 'Quaternion describing the rotation.' }
 }
 
 C.tags = {'quat', 'quaternion', 'rotation', 'angle'}
 
+local rot = quat()
+
 function C:init()
-  self.rot = nil
   self.oldIn = nil
 end
 
 function C:work()
   if self.oldIn ~= self.pinIn.deg.value then
     self.oldIn = self.pinIn.deg.value
-    self.rot = quatFromEuler(0,0,(self.oldIn / 180) * math.pi)
+    rot:setFromEuler(0, 0, (self.oldIn / 180) * math.pi)
   end
-  self.pinOut.value.value =  {self.rot.x,self.rot.y,self.rot.z,self.rot.w}
+  self.pinOut.value.value = rot:toTable()
 end
 
 return _flowgraph_createNode(C)

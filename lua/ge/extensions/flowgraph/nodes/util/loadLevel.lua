@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 local logTag = 'LoadLevel'
@@ -15,6 +14,8 @@ C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
   { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' },
   { dir = 'in', type = 'string', name = 'levelPath', description = 'Defines the path to load the level from.' },
+  { dir = 'in', type = 'string', name = 'model', description = 'Spawn with a specific model/config', hidden = true },
+  { dir = 'in', type = 'string', name = 'config', description = 'Spawn with a specific color', hidden = true },
 }
 
 C.tags = {'gameplay', 'utils'}
@@ -48,6 +49,8 @@ function C:postInit()
 end
 
 function C:onLoadingScreenFadeout(missionFile)
+  log('D', logTag, 'onLoadingScreenFadeout: ' .. tostring(missionFile))
+  ui_router.navigate("play")
   if self.state == 4 then return end
   self.state = 3
   self.bufferDelay = self.data.delayBufferFrames
@@ -69,6 +72,7 @@ function C:work()
         self.state = 4
         self.pinOut.flow.value = true
       else
+        self.state = 2
         if self.pinIn.levelPath.value  then
           -- yes, change level, but disable the player autospawning
           log('D', logTag, 'Loading level from Flowgraph: ' .. tostring(levelPath))
@@ -79,20 +83,25 @@ function C:work()
           end
           local editorWasActive = editor.active
           if editor and editor.shutdown then editor.shutdown() end
+          local spawningOptions = nil
+          if self.pinIn.model.value and self.pinIn.model.value ~= "" and self.pinIn.config.value and self.pinIn.config.value ~= "" then
+            log('D', logTag, 'Spawning with model: ' .. self.pinIn.model.value .. ' and config: ' .. self.pinIn.config.value)
+            spawningOptions = sanitizeVehicleSpawnOptions(self.pinIn.model.value, {config = self.pinIn.config.value})
+            spawningOptions = {spawningOptions.model, spawningOptions}
+          end
           if self.data.customLoadingScreen then
-            self.mgr.modules.level:beginLoadingLevel()
+            --self.mgr.modules.level:beginLoadingLevel()
             core_levels.startLevel(levelPath, false, function()
               log('D', logTag, 'Delayed loading screen fadeout. Make sure to use the "Hide Loading Screen" node to hide it manually.')
               self.state = 3
               self.bufferDelay = self.data.delayBufferFrames
-            end)
+            end, spawningOptions)
           else
-            core_levels.startLevel(levelPath, false)
+            core_levels.startLevel(levelPath, false, nil, spawningOptions)
             self.mgr:logEvent("Load Level: " .. levelPath,"", "", {type = "node", node = self})
           end
           if editor and editorWasActive then editor.setEditorActive(true) end
         end
-        self.state = 2
       end
     elseif self.state == 3 then
 

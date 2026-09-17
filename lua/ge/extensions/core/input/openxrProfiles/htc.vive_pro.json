@@ -1,0 +1,5 @@
+[
+  ["/user/head/input/mute_mic/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button0"],
+  ["/user/head/input/volume_down/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button1"],
+  ["/user/head/input/volume_up/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button2"]
+]

@@ -1,8 +1,10 @@
--- This Source Code Form is subject to the terms of the bCDDL, var. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
+
+local utils = require('jbeam/utils')
 local im = ui_imgui
 
 local wndName = "Prop Transformer"
@@ -22,17 +24,21 @@ local q1 = quatFromEuler(0, 0, math.pi * 11/12)
 local q2 = quatFromEuler(0, 0, -math.pi * 11/12)
 local q3 = quatFromEuler(0, math.pi / 2, 0)
 
-local hoveredColor = ColorF(1,0.65,0,1)
 local regularColor = ColorF(0.75,1,0,1)
+local hoveredColor = ColorF(1,0.65,0,1)
+local selectedColor = ColorF(1,0.65,0,0.25)
 
 local blankColor = ColorF(0,0,0,0)
-local redColor = ColorF(1,0,0,1)
-local yellowColor = ColorF(1,1,0,1)
-local greenColor = ColorF(0,1,0,1)
-local blueColor = ColorF(0,0,1,1)
-local whiteColor = ColorF(1,1,1,1)
-local whiteColor255 = ColorI(255,255,255,255)
+local redColor = ColorF(1,0,0,0.25)
+local greenColor = ColorF(0,1,0,0.25)
+local whiteColor = ColorF(1,1,1,0.25)
 
+local lineRedColor = ColorF(1,0,0,1)
+local lineGreenColor = ColorF(0,1,0,1)
+local lineBlueColor = ColorF(0,0,1,1)
+
+local textRedColor = ColorF(1,0,0,1)
+local textWhiteColor = ColorF(1,1,1,1)
 local textBackgroundColor = ColorI(0,0,0,192)
 
 -- Template
@@ -45,7 +51,8 @@ local initStateTemplate = {
   propSelectorCount = 1,
   pickedProp = nil,
   lastPropBaseTranslationGlobal = vec3(),
-  lastPropBaseRotationGlobal = quat(),
+  lastPropBaseRotationGlobal = vec3(),
+  lastPropBaseRotationGlobalQuat = quat(),
   axisGizmo = {
     startPos = vec3()
   }
@@ -89,49 +96,9 @@ local function getClosestObjectToCamera(cameraPos, hitObjects)
   return chosenObjData
 end
 
-local function setBaseTranslationGlobalWithoutOffset(prop, pos)
-  local prevPosNoNodeOffsetMove = prop.baseTranslationGlobalRigid or prop.baseTranslationGlobalElastic or prop.baseTranslationGlobal
-  local prevPos = prop.baseTranslationGlobalRigidWithNodeOffsetMove or prop.baseTranslationGlobalElasticWithNodeOffsetMove or prop.baseTranslationGlobalWithNodeOffsetMove or pos
-  local posNoOffset = vec3(pos)
-
-  if prop.nodeMove and type(prop.nodeMove) == 'table' and prop.nodeMove.x and prop.nodeMove.y and prop.nodeMove.z then
-    posNoOffset.x, posNoOffset.y, posNoOffset.z = posNoOffset.x - prop.nodeMove.x, posNoOffset.y - prop.nodeMove.y, posNoOffset.z - prop.nodeMove.z
-  end
-  if prop.nodeOffset and type(prop.nodeOffset) == 'table' and prop.nodeOffset.x and prop.nodeOffset.y and prop.nodeOffset.z and not prop.ignoreNodeOffset then
-    if prevPosNoNodeOffsetMove then
-      if sign(prevPosNoNodeOffsetMove.x + (pos - prevPos).x) > 0 then
-        posNoOffset.x = posNoOffset.x - prop.nodeOffset.x
-      else
-        posNoOffset.x = posNoOffset.x + prop.nodeOffset.x
-      end
-    else
-      if prop.nodeOffset.x >= 0 then
-        if pos.x >= 0 then
-          posNoOffset.x = posNoOffset.x - prop.nodeOffset.x
-        else
-          posNoOffset.x = posNoOffset.x + prop.nodeOffset.x
-        end
-      else
-        -- For negative nodeOffset.x case, assumes that offset does not make position pass through zero to other side
-        if pos.x >= 0 then
-          posNoOffset.x = posNoOffset.x + prop.nodeOffset.x
-        else
-          posNoOffset.x = posNoOffset.x - prop.nodeOffset.x
-        end
-      end
-    end
-
-    posNoOffset.y = posNoOffset.y - prop.nodeOffset.y
-    posNoOffset.z = posNoOffset.z - prop.nodeOffset.z
-  end
-
-  if prop.baseTranslationGlobalRigid then
-    prop.baseTranslationGlobalRigid = posNoOffset
-  elseif prop.baseTranslationGlobalElastic then
-    prop.baseTranslationGlobalElastic = posNoOffset
-  else
-    prop.baseTranslationGlobal = posNoOffset
-  end
+local function setBaseTranslationGlobalWithoutOffset(prop, pos, rot)
+  local x, y, z, rx, ry, rz = utils.getPosRotBeforeNodeRotateOffsetMove(prop, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z)
+  prop.baseTransformGlobalData = {x = x, y = y, z = z, rx = rx, ry = ry, rz = rz}
 end
 
 local dragging = false
@@ -142,17 +109,17 @@ local function gizmoBeginDrag()
   local propObj = vEditor.vehicle:getProp(prop.pid)
 
   state.lastPropBaseTranslationGlobal:set(propObj:getBaseTranslationGlobal())
-  state.lastPropBaseRotationGlobal:set(propObj:getBaseRotationGlobalQuat())
+  state.lastPropBaseRotationGlobalQuat:set(propObj:getBaseRotationGlobalQuat())
 
-  if prop.baseTranslationGlobalRigidWithNodeOffsetMove then
-    prop.baseTranslationGlobalRigidWithNodeOffsetMove:set(state.lastPropBaseTranslationGlobal)
-  elseif prop.baseTranslationGlobalElasticWithNodeOffsetMove then
-    prop.baseTranslationGlobalElasticWithNodeOffsetMove:set(state.lastPropBaseTranslationGlobal)
+  if prop.baseTranslationGlobalRigidWithNodeTransforms then
+    prop.baseTranslationGlobalRigidWithNodeTransforms:set(state.lastPropBaseTranslationGlobal)
+  elseif prop.baseTranslationGlobalElasticWithNodeTransforms then
+    prop.baseTranslationGlobalElasticWithNodeTransforms:set(state.lastPropBaseTranslationGlobal)
   else
-    if not prop.baseTranslationGlobalWithNodeOffsetMove then
-      prop.baseTranslationGlobalWithNodeOffsetMove = vec3()
+    if not prop.baseTranslationGlobalWithNodeTransforms then
+      prop.baseTranslationGlobalWithNodeTransforms = vec3()
     end
-    prop.baseTranslationGlobalWithNodeOffsetMove:set(state.lastPropBaseTranslationGlobal)
+    prop.baseTranslationGlobalWithNodeTransforms:set(state.lastPropBaseTranslationGlobal)
   end
 
   state.axisGizmo.startPos = editor.getAxisGizmoTransform():inverse():getColumn(3)
@@ -175,23 +142,23 @@ local function gizmoDragging()
 
   local prevBaseTranslationGlobal = propObj:getBaseTranslationGlobal()
 
-  if prop.baseTranslationGlobalRigidWithNodeOffsetMove then
-    prop.baseTranslationGlobalRigidWithNodeOffsetMove:set(prevBaseTranslationGlobal)
-  elseif prop.baseTranslationGlobalElasticWithNodeOffsetMove then
-    prop.baseTranslationGlobalElasticWithNodeOffsetMove:set(prevBaseTranslationGlobal)
+  if prop.baseTranslationGlobalRigidWithNodeTransforms then
+    prop.baseTranslationGlobalRigidWithNodeTransforms:set(prevBaseTranslationGlobal)
+  elseif prop.baseTranslationGlobalElasticWithNodeTransforms then
+    prop.baseTranslationGlobalElasticWithNodeTransforms:set(prevBaseTranslationGlobal)
   else
-    prop.baseTranslationGlobalWithNodeOffsetMove:set(prevBaseTranslationGlobal)
+    prop.baseTranslationGlobalWithNodeTransforms:set(prevBaseTranslationGlobal)
   end
 
   if state.propertyEditing == "baseTranslationGlobal" then
     propObj:setBaseTranslationGlobal(deltaPos + state.lastPropBaseTranslationGlobal)
 
   elseif state.propertyEditing == "baseRotationGlobal" then
-    local newRot = state.lastPropBaseRotationGlobal * deltaRot
+    local newRot = state.lastPropBaseRotationGlobalQuat * deltaRot
     propObj:setBaseRotationGlobalQuat(QuatF(newRot.x, newRot.y, newRot.z, newRot.w))
   end
 
-  setBaseTranslationGlobalWithoutOffset(prop, propObj:getBaseTranslationGlobal())
+  setBaseTranslationGlobalWithoutOffset(prop, propObj:getBaseTranslationGlobal(), propObj:getBaseRotationGlobal())
 end
 
 local function gizmoEndDrag()
@@ -305,10 +272,11 @@ local function pickProp(transforming)
         state.pickedProp = prop
 
         state.lastPropBaseTranslationGlobal:set(propObj:getBaseTranslationGlobal())
-        state.lastPropBaseRotationGlobal:set(propObj:getBaseRotationGlobalQuat())
+        state.lastPropBaseRotationGlobalQuat:set(propObj:getBaseRotationGlobalQuat())
+        state.lastPropBaseRotationGlobal = propObj:getBaseRotationGlobal()
 
-        if not (prop.baseTranslationGlobalRigid or prop.baseTranslationGlobalElastic or prop.baseTranslationGlobal) then
-          setBaseTranslationGlobalWithoutOffset(prop, state.lastPropBaseTranslationGlobal)
+        if not prop.baseTranslationGlobalData then
+          setBaseTranslationGlobalWithoutOffset(prop, state.lastPropBaseTranslationGlobal, state.lastPropBaseRotationGlobal)
         end
 
         inputBaseTranslationGlobal[0] = im.Float(0)
@@ -332,11 +300,11 @@ local function pickProp(transforming)
         return
       end
 
-      local text = string.format("mesh: %s | func: %s | node: %s | partOrigin: %s", prop.mesh, prop.func, node.name or node.cid, prop.partOrigin)
-      local color = state.propSelectorIdx == id and redColor or whiteColor
+      local text = string.format("mesh: %s | func: %s | node: %s | partPath: %s", prop.mesh, prop.func, node.name or node.cid, prop.partPath)
+      local color = state.propSelectorIdx == id and textRedColor or textWhiteColor
 
       debugDrawer:drawSphere(chosenNodePos, nodeHoveredRenderRadius, hoveredColor, false)
-      debugDrawer:drawTextAdvanced(chosenNodePos, text, color, true, false, textBackgroundColor)
+      debugDrawer:drawTextAdvanced(chosenNodePos, text, color, true, false, textBackgroundColor, false, false)
 
       id = id + 1
     end
@@ -378,19 +346,19 @@ local function renderPickedProp()
   local propRefYWorldPos = rot * (propRefYPos - refPos) + vEditor.vehiclePos
   local propRefZWorldPos = rot * (propRefZPos - refPos) + vEditor.vehiclePos
 
-  local text = string.format("mesh: %s | func: %s | node: %s | partOrigin: %s", prop.mesh, prop.func, propRefNode.name or propRefNode.cid, prop.partOrigin)
+  local text = string.format("mesh: %s | func: %s | node: %s | partPath: %s", prop.mesh, prop.func, propRefNode.name or propRefNode.cid, prop.partPath)
 
-  debugDrawer:drawSphere(propRefWorldPos, nodeHoveredRenderRadius, hoveredColor, false)
-  debugDrawer:drawTextAdvanced(propRefWorldPos, text, whiteColor, true, false, ColorI(0,0,0,192))
+  debugDrawer:drawSphere(propRefWorldPos, nodeHoveredRenderRadius, selectedColor, false)
+  debugDrawer:drawTextAdvanced(propRefWorldPos, text, textWhiteColor, true, false, ColorI(0,0,0,192), false, false)
 
   debugDrawer:drawSphere(propRefWorldPos, nodeHoveredRenderRadius, whiteColor, false)
   debugDrawer:drawSphere(propRefXWorldPos, nodeHoveredRenderRadius, redColor, false)
   debugDrawer:drawSphere(propRefYWorldPos, nodeHoveredRenderRadius, greenColor, false)
 
   debugDrawer:drawLine(zeroVec, zeroVec, blankColor) -- workaround for bug
-  debugDrawer:drawLine(propRefWorldPos, propRefXWorldPos, redColor)
-  debugDrawer:drawLine(propRefWorldPos, propRefYWorldPos, greenColor)
-  debugDrawer:drawLine(propRefWorldPos, propRefZWorldPos, blueColor)
+  debugDrawer:drawLine(propRefWorldPos, propRefXWorldPos, lineRedColor)
+  debugDrawer:drawLine(propRefWorldPos, propRefYWorldPos, lineGreenColor)
+  debugDrawer:drawLine(propRefWorldPos, propRefZWorldPos, lineBlueColor)
 
   -- special rendering for lights
 
@@ -507,7 +475,7 @@ local function onUpdate(dt)
 
         local baseTranslation = propObj:getBaseTranslation()
         local baseTranslationGlobal = propObj:getBaseTranslationGlobal()
-        local baseTranslationGlobalNoOffset = prop.baseTranslationGlobalRigid or prop.baseTranslationGlobalElastic or prop.baseTranslationGlobal or vec3()
+        local baseTransformGlobalDataNoNodeTransformData = prop.baseTransformGlobalData
         local baseRotation = propObj:getBaseRotation()
         local baseRotationGlobal = propObj:getBaseRotationGlobal()
 
@@ -542,10 +510,17 @@ local function onUpdate(dt)
           propObj:setBaseRotationGlobal(rot)
         end
 
-        im.Text(string.format("(%0.3f, %0.3f, %0.3f) baseTranslationGlobal W/O nodeOffset/Move", baseTranslationGlobalNoOffset.x, baseTranslationGlobalNoOffset.y, baseTranslationGlobalNoOffset.z))
+        local btgX, btgY, btgZ, btgRx, btgRy, btgRz = baseTransformGlobalDataNoNodeTransformData.x, baseTransformGlobalDataNoNodeTransformData.y, baseTransformGlobalDataNoNodeTransformData.z, baseTransformGlobalDataNoNodeTransformData.rx, baseTransformGlobalDataNoNodeTransformData.ry, baseTransformGlobalDataNoNodeTransformData.rz
+        im.Text(string.format("(%0.3f, %0.3f, %0.3f) baseTranslationGlobal W/O nodeRotate/Offset/Move", btgX, btgY, btgZ))
         im.SameLine()
         if im.Button("Copy to Clipboard") then
-          local copyText = string.format('"x":%0.3f, "y":%0.3f, "z":%0.3f', baseTranslationGlobalNoOffset.x, baseTranslationGlobalNoOffset.y, baseTranslationGlobalNoOffset.z)
+          local copyText = string.format('"x":%0.3f, "y":%0.3f, "z":%0.3f', btgX, btgY, btgZ)
+          im.SetClipboardText(copyText)
+        end
+        im.Text(string.format("(%0.3f, %0.3f, %0.3f) baseRotationGlobal W/O nodeRotate", btgRx * 180.0 / math.pi, btgRy * 180.0 / math.pi, btgRz * 180.0 / math.pi))
+        im.SameLine()
+        if im.Button("Copy to Clipboard") then
+          local copyText = string.format('"x":%0.3f, "y":%0.3f, "z":%0.3f', btgRx * 180.0 / math.pi, btgRy * 180.0 / math.pi, btgRz * 180.0 / math.pi)
           im.SetClipboardText(copyText)
         end
 

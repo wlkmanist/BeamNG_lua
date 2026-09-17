@@ -70,7 +70,7 @@ end
 
 M.annotateParts = function(vID)
   log('I', 'partAnnotations', 'Annotating vehicle: ' .. vID)
-  local veh = be:getObjectByID(vID)
+  local veh = getObjectByID(vID)
   local parts = veh:getMeshNames()
   for idx, part in ipairs(parts) do
     log('I', 'partAnnotations', part)
@@ -79,7 +79,7 @@ M.annotateParts = function(vID)
 end
 
 M.revertAnnotations = function(vID)
-  local veh = be:getObjectByID(vID)
+  local veh = getObjectByID(vID)
   local parts = veh:getMeshNames()
   for idx, part in ipairs(parts) do
     veh:setMeshAnnotationColor(part, defaultAnnotation)
@@ -88,7 +88,7 @@ end
 
 M.getPartAnnotations = function(vID)
   local colors = {}
-  local veh = be:getObjectByID(vID)
+  local veh = getObjectByID(vID)
   local parts = veh:getMeshNames()
   for idx, part in ipairs(parts) do
     local color = M.getPartAnnotation(part)

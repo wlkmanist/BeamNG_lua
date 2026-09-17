@@ -53,7 +53,7 @@ local function sectionGui(guiId)
   for k = tableSize(history.undoStack), 1, -1 do
     local isSel = (k >= undoStackSelectedIndex)
     local action = history.undoStack[k]
-    im.PushID1(tostring(k))
+    im.PushID4(k)
     if im.Selectable1(tostring(k) .. ": " .. action.name, isSel) then undoStackSelectedIndex = k end
     if im.IsItemHovered() then
       im.SetTooltip(getTooltipTextFromAction(action))
@@ -68,7 +68,7 @@ local function sectionGui(guiId)
   for k = tableSize(history.redoStack), 1, -1 do
     local isSel = (k >= redoStackSelectedIndex)
     local action = history.redoStack[k]
-    im.PushID1(tostring(k) .. "redo")
+    im.PushID1("redo_" .. tostring(k))
     if im.Selectable1(tostring(k) .. ": " .. action.name, isSel) then redoStackSelectedIndex = k end
     if im.IsItemHovered() then
       im.SetTooltip(getTooltipTextFromAction(action))

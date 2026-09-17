@@ -60,7 +60,7 @@ local function compareTest(context, inputFile, expectedFile, queryArgs)
     log('W', '', 'Wrote test output for the first time, please check the results: ' .. tostring(fn))
   end
   local expectedData = jsonReadFile(fn)[1]
-  local equal = tablesEqual(data, expectedData), "Sheet data does not match expected data: " .. tostring(expectedFile)
+  local equal = tablesEqual(data, expectedData)
   if not equal then
     local txt = 'tables are not the same:\n'
     txt = txt .. ' === Provided data\n'

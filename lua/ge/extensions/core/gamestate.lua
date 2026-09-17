@@ -16,6 +16,10 @@ local UIInitialised = false
 -- This is espacially helpfull if the campaign contains something similar to a freeroam part
 -- this also will hold specific game relevant ui configurations, like applayout and menu items, those can be emited and will then be filled by defaults
 
+local cmdArgs = Engine.getStartingArgs()
+local noUiMode = tableFindKey(cmdArgs, '-noui') -- or tableFindKey(cmdArgs, '-headless') -headless is working differenly than expected and should not be used
+
+
 local function sendGameState()
   extensions.hook('onGameStateUpdate', M.state)
   guihooks.trigger('GameStateUpdate', M.state)
@@ -30,6 +34,18 @@ local function setGameState(state, appLayout, menuItems, options)
     options = options or M.state.options
   }
   sendGameState()
+end
+
+local function getGameState()
+  return deepcopy(M.state)
+end
+
+local function gameStateDecorator()
+  dump("gameStateDecorator", M.state)
+  if M.state and M.state.state and M.state.state ~= "" then
+    return M.state.state
+  end
+  return nil
 end
 
 -- called when going back to main menu
@@ -72,7 +88,7 @@ local function containsOnly (arr, val)
   return true
 end
 
-local function loading ()
+local function loading()
   return not (containsOnly(loadingScreenRequests, false) or tableIsEmpty(loadingScreenRequests))
 end
 
@@ -82,21 +98,27 @@ end
 
 local function requestEnterLoadingScreen(tagName, func)
   if tagName == nil then return end
+  if noUiMode or headless_mode then
+    log('I', logTag, 'headless mode, skipping loading screen')
+    local func = func or nop
+    func() -- calling the func right away
+    return
+  end
 
   local first = containsOnly(loadingScreenRequests, false)
-  log('D', logTag, 'loading screen request from: ' .. tagName .. '; value before was: ' .. tostring(loadingScreenRequests[tagName]))
+  log('D', logTag, 'loading screen request from: ' .. tagName .. '; value before was: ' .. tostring(loadingScreenRequests[tagName])..'; first = '..tostring(first)..'; loadingActive = '..tostring(loadingActive))
   if loadingScreenRequests[tagName] then log('D', logTag, 'trying to enter state we are already in: ' .. tostring(tagName)) end
   loadingScreenRequests[tagName] = true
   func = func or nop
 
-  if first and not loadingActive then
+  if first then
     log('D', logTag, 'sending show loading screen')
-    guihooks.trigger('ChangeState', 'loading')
-    
-	if GFXDevice.devicePresent() then
-	   waitingForUIChangeToLoading = true
-	end
-	
+    guihooks.trigger("LoadingScreen", { active = true })  -- new loading screen
+
+    if GFXDevice.devicePresent() and not headless_mode then
+      waitingForUIChangeToLoading = true
+    end
+
     SFXSystem.setGlobalParameter("g_GameLoading", 1)
     SFXSystem.setGlobalParameter("g_FadeTimeMS", 1000) -- fade time in milliseconds
   end
@@ -114,29 +136,29 @@ local function requestEnterLoadingScreen(tagName, func)
   end
 end
 
-local function exitLoadingScreen (tagName, ignoreMenuswitch)
+local function requestExitLoadingScreen(tagName, ignoreMenuswitch)
   if tagName == nil then return end
-  --dump(loadingScreenRequests)
-  --print(debug.tracesimple())
-  log('D', logTag, 'exiting : ' .. tagName)
+
   if not loadingScreenRequests[tagName] then log('W', logTag, 'trying to exit state we haven\'t been in before -please check your code') end
   loadingScreenRequests[tagName] = false
 
+  -- log('D', logTag, 'requesting exiting : ' .. tagName..'       loadingScreenRequests contains: '..dumps(loadingScreenRequests))
   if containsOnly(loadingScreenRequests, false)  then
-    SFXSystem.setGlobalParameter("g_GameLoading", 0)
-    SFXSystem.setGlobalParameter("g_FadeTimeMS", 1000) -- fade time in milliseconds
-
-    --if not ignoreMenuswitch then
-      if sendShowMainMenu() then
-        guihooks.trigger('ChangeState', 'menu.mainmenu')
-        log('D', logTag, 'change state to menu.mainmenu')
-        -- this is the only case we aren't in a gamestate everything else should be
-        resetGameState()
-      else
-        log('D', logTag, 'exiting loading screen to menu')
-        guihooks.trigger('ChangeState', 'menu', {'loading'})
+    -- log('D', logTag, '             exit honoured for : ' .. tagName)
+    local showMainMenu = sendShowMainMenu()
+    log('D', logTag, 'sending hide loading screen; showing main menu (' .. tostring(showMainMenu) .. ')')
+    guihooks.trigger("LoadingScreen", {
+      active = false,
+      gotoMainMenu = showMainMenu,
+      gameState = M.state
+    })
+    if showMainMenu then
+      resetGameState()
+      if type(refreshMainMenuMusicRouteState) == "function" then
+        refreshMainMenuMusicRouteState()
       end
-    --end
+    end
+
     listeners = {}
     loadingActive = false
   end
@@ -148,6 +170,13 @@ local function loadingScreenActive ()
   tellListeners()
 end
 
+local function loadingScreenInactive(state)
+  log('I', logTag, 'ui told us loading screen is unloaded: '..tostring(state))
+  SFXSystem.setGlobalParameter("g_GameLoading", 0)
+  SFXSystem.setGlobalParameter("g_FadeTimeMS", 1000) -- fade time in milliseconds
+  LoadingManager:_triggerSignalLoadingScreenInactive()
+end
+
 local function onDeserialized(data)
 end
 
@@ -157,7 +186,10 @@ local function uiReady ()
 
   if waitingForUIToBeInitialised then
     log('D', logTag, 'wait for ui is over')
-    guihooks.trigger('ChangeState', 'loading')
+    if not loadingActive and not containsOnly(loadingScreenRequests, false) then
+      guihooks.trigger("LoadingScreen", { active = true })
+    end
+    waitingForUIToBeInitialised = false
   end
 end
 
@@ -184,6 +216,15 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     loadingScreenActive()
   end
 end
+
+local function onAfterRouteChange(context)
+  local toRoute = context.toRoute
+
+  if type(setMainMenuMusicRouteState) == "function" then
+    setMainMenuMusicRouteState(toRoute and toRoute.name or nil)
+  end
+end
+
 -- -------------------------------------------------
 
 -- interface
@@ -191,18 +232,22 @@ M.onDeserialized = onDeserialized
 
 M.requestGameState = sendGameState
 M.setGameState = setGameState
+M.getGameState = getGameState
+M.gameStateDecorator = gameStateDecorator
 
 M.requestMainMenuState = sendShowMainMenu
 
 M.requestEnterLoadingScreen = requestEnterLoadingScreen
-M.requestExitLoadingScreen = exitLoadingScreen
+M.requestExitLoadingScreen = requestExitLoadingScreen
 M.loading = loading -- do not use this inside the loading process, unless you know what you are doing
 M.getLoadingStatus = getLoadingStatus -- use this instead
 
 M.loadingScreenActive = loadingScreenActive
+M.loadingScreenInactive = loadingScreenInactive
 
 M.onUIInitialised = uiReady
 M.onUpdate = onUpdate
 M.onExtensionLoaded = onExtensionLoaded
+M.onAfterRouteChange = onAfterRouteChange
 
 return M

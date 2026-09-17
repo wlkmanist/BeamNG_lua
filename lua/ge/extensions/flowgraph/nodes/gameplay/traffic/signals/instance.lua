@@ -17,7 +17,6 @@ C.pinSchema = {
   {dir = 'out', type = 'vec3', name = 'pos', description = 'Signal stop position.'},
   {dir = 'out', type = 'vec3', name = 'dirVec', description = 'Signal direction.'},
   {dir = 'out', type = 'vec3', name = 'targetPos', description = 'Signal target position (e.g. intersection).'},
-  {dir = 'out', type = 'number', name = 'radius', hidden = true, description = 'Signal range distance.'},
   {dir = 'out', type = 'string', name = 'stateName', description = 'Signal state name.'},
   {dir = 'out', type = 'string', name = 'stateAction', description = 'Signal state action.'},
   {dir = 'out', type = 'bool', name = 'active', hidden = true, description = 'True while the signal is active.'},
@@ -33,7 +32,6 @@ function C:work(args)
     self.pinOut.pos.value = instance.pos
     self.pinOut.dirVec.value = instance.dirVec
     self.pinOut.targetPos.value = instance.targetPos or instance.pos -- get target pos?
-    self.pinOut.radius.value = instance.radius
 
     local stateName, stateData = instance:getState()
     self.pinOut.stateName.value = stateName

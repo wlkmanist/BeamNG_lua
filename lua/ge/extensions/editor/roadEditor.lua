@@ -61,6 +61,210 @@ local roadNotSelectableErrorWindowName = "roadNotSelectableErrorWindowName"
 local roadNotSelectableErrorWindowTitle = "Road Select Error"
 local shouldShowFuseOption = false
 
+
+-- Simple Road Templates
+local simpleRoadTemplateEditorWindowName = "simpleRoadTemplateEditorWindow"
+local simpleRoadTemplates = {}
+local sRT_directory = "/assets/decal_roads/simple_templates/"
+local sRT_template_filename = "main"
+local sRT_extension = ".simpleRoadTemplate.json"
+local sRT_valueInspectorName = "roadEditorSimpleRoadTemplates"
+
+local valueInspector = require("editor/api/valueInspector")()
+local srtAllowedTemplateFields = {
+  -- `engineFieldName` is used for valueInspector's custom filter lookup (fieldName .. className).
+  {
+    key = "material",
+    engineFieldName = "Material",
+    label = "Material",
+    fieldType = "string",
+    fieldTypeName = "TypeMaterialName",
+    defaultValue = "BlankWhite",
+    description = "Material used for rendering."
+  },
+  {
+    key = "width",
+    label = "Width",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = 10.0,
+    description = "Width of the road. Applied to all nodes.",
+    applyToAllNodes = true
+  }
+}
+
+local function getSimpleRoadTemplateFilename()
+  return sRT_directory .. sRT_template_filename .. sRT_extension
+end
+
+local function loadSimpleRoadTemplates()
+  if FS:fileExists(getSimpleRoadTemplateFilename()) then
+    simpleRoadTemplates = jsonReadFile(getSimpleRoadTemplateFilename())
+  end
+end
+
+local function saveSimpleRoadTemplates()
+  return jsonWriteFile(getSimpleRoadTemplateFilename(), simpleRoadTemplates, true)
+end
+
+local function srtSetTemplateValue(customData, fieldValue)
+  if not customData or not customData.target or not customData.key then return end
+  if customData.valueType == "float" then
+    customData.target[customData.key] = tonumber(fieldValue) or 0
+  else
+    customData.target[customData.key] = tostring(fieldValue or "")
+  end
+end
+
+local function makeUniqueTemplateName(base)
+  base = tostring(base or "template")
+  local name = base
+  local i = 1
+  local taken = {}
+  for _, t in ipairs(simpleRoadTemplates) do
+    if t and t.name then taken[t.name] = true end
+  end
+  while taken[name] do
+    i = i + 1
+    name = base .. tostring(i)
+  end
+  return name
+end
+
+local function myFilterCallback(fieldName, className)
+  return true
+end
+
+local function initializeValueInspector()
+  valueInspector.inspectorName = sRT_valueInspectorName
+  valueInspector.selectionClassName = "DecalRoad"
+  valueInspector.differentValuesFieldFlags = {}
+  valueInspector.selectedIds = nil
+  valueInspector.setValueCallback = function(_fieldName, fieldValue, _arrayIndex, customData, _editEnded)
+    srtSetTemplateValue(customData, fieldValue)
+  end
+end
+
+local function simpleRoadTemplatesEditorGui()
+  local iconSize = im.ImVec2(im.GetFontSize(), im.GetFontSize())
+  if im.Button("Save") then
+    local ok = saveSimpleRoadTemplates()
+    if ok then
+      editor.showNotification("Saved Simple Road Templates")
+    else
+      editor.showNotification("Failed to save Simple Road Templates")
+    end
+  end
+  im.SameLine()
+  if im.Button("Add Template") then
+    table.insert(simpleRoadTemplates, {
+      name = makeUniqueTemplateName("template"),
+      attributes = {}
+    })
+  end
+
+  im.Separator()
+  if im.Button("Dump templates") then
+    dump(simpleRoadTemplates)
+  end
+  im.Separator()
+
+  for k, template in ipairs(simpleRoadTemplates) do
+    local headerName = template.name or ("template" .. tostring(k))
+    if im.CollapsingHeader1(headerName .. "##srt_tpl_" .. tostring(k)) then
+      im.Indent()
+
+      im.Columns(2, sRT_valueInspectorName .. "FieldsColumn")
+      valueInspector:valueEditorGui(
+        "srt_tplName_" .. tostring(k),
+        tostring(template.name or ""),
+        0,
+        "Template Name",
+        "",
+        "string",
+        "TypeString",
+        {target = template, key = "name", valueType = "string"},
+        nil,
+        nil,
+        0
+      )
+      im.Columns(1, sRT_valueInspectorName .. "FieldsColumn")
+
+      im.SeparatorText("Properties")
+      local attrs = template.attributes
+      for _, field in ipairs(srtAllowedTemplateFields) do
+        if attrs[field.key] ~= nil then
+          im.Columns(2, sRT_valueInspectorName .. "FieldsColumn")
+          if editor.uiIconImageButton(editor.icons.delete, iconSize, nil, nil, nil, "Remove " .. field.label .. "##srt_rm_" .. tostring(k) .. "_" .. field.key) then
+            attrs[field.key] = nil
+          end
+          im.SameLine()
+          im.PushID1("srt_attr_" .. tostring(k) .. "_" .. field.key)
+          valueInspector:valueEditorGui(
+            field.engineFieldName or field.key,
+            tostring(attrs[field.key]),
+            0,
+            field.label,
+            "",
+            field.fieldType,
+            field.fieldTypeName,
+            {target = attrs, key = field.key, valueType = field.fieldType},
+            nil,
+            nil,
+            0
+          )
+          im.Columns(1, sRT_valueInspectorName .. "FieldsColumn")
+          im.PopID()
+        end
+      end
+
+      im.SeparatorText("Actions")
+      local missingFields = {}
+      for _, field in ipairs(srtAllowedTemplateFields) do
+        if attrs[field.key] == nil then
+          table.insert(missingFields, field)
+        end
+      end
+
+      if #missingFields > 0 then
+        if im.BeginCombo("##srt_addField_" .. tostring(k), "Add field...") then
+          for _, field in ipairs(missingFields) do
+            if im.Selectable1(field.label .. "##srt_add_" .. tostring(k) .. "_" .. field.key, false) then
+              attrs[field.key] = deepcopy(field.defaultValue)
+            end
+          end
+          im.EndCombo()
+        end
+      else
+        im.BeginDisabled()
+        if im.BeginCombo("##srt_addField_" .. tostring(k), "--- All available fields already added ---") then
+          for _, field in ipairs(missingFields) do
+            if im.Selectable1("--- All available fields already added ---" .. "##srt_add_" .. tostring(k) .. "_" .. field.key, false) then
+
+            end
+          end
+          im.EndCombo()
+        end
+        im.EndDisabled()
+      end
+      im.tooltip("Add field to the template")
+
+      im.Separator()
+      if im.Button("Apply Template to Selected Road") then
+        -- applyTemplateToSelectedRoad(template)
+      end
+
+      if editor.uiButtonRightAlign("Delete Template##srt_del_tpl_" .. tostring(k), nil, true) then
+        table.remove(simpleRoadTemplates, k)
+        break
+      end
+
+      im.Unindent()
+    end
+  end
+
+end
+
 local function showAIModeText()
   local vm = GFXDevice.getVideoMode()
   local w, h = vm.width, vm.height
@@ -533,6 +737,104 @@ local function fuseRoads()
       road1Fields = editor.copyFields(selectedRoadsIds[1]), road2Fields = editor.copyFields(selectedRoadsIds[2])}, fuseRoadsActionUndo, fuseRoadsActionRedo)
 end
 
+local function flipRoadsDirectionActionUndo(actionData)
+  for _, r in ipairs(actionData.roads) do
+    editor.deleteRoad(r.id)
+    SimObject.setForcedId(r.id)
+    editor.createRoad(r.oldNodes, r.fields)
+    editor.selectObjectById(r.id, editor.SelectMode_Add)
+
+    local roadObj = scenetree.findObjectById(r.id)
+    if roadObj then
+      if r.name and r.name ~= "" then
+        if roadObj.setName then
+          roadObj:setName(r.name)
+        else
+          roadObj:setField("name", "", r.name)
+        end
+      end
+      if r.groupId then
+        local grp = scenetree.findObjectById(r.groupId)
+        if grp and grp.addObject then
+          grp:addObject(roadObj)
+        elseif editor.setObjectParent then
+          editor.setObjectParent(r.id, r.groupId)
+        end
+      end
+      editor_roadUtils.updateChildRoads(roadObj)
+      editor_roadUtils.reloadDecorations(roadObj)
+      editor_roadUtils.reloadDecals(roadObj)
+    end
+  end
+end
+
+local function flipRoadsDirectionActionRedo(actionData)
+  for _, r in ipairs(actionData.roads) do
+    editor.deleteRoad(r.id)
+    SimObject.setForcedId(r.id)
+    editor.createRoad(r.newNodes, r.fields)
+    editor.selectObjectById(r.id, editor.SelectMode_Add)
+
+    local roadObj = scenetree.findObjectById(r.id)
+    if roadObj then
+      if r.name and r.name ~= "" then
+        if roadObj.setName then
+          roadObj:setName(r.name)
+        else
+          roadObj:setField("name", "", r.name)
+        end
+      end
+      if r.groupId then
+        local grp = scenetree.findObjectById(r.groupId)
+        if grp and grp.addObject then
+          grp:addObject(roadObj)
+        elseif editor.setObjectParent then
+          editor.setObjectParent(r.id, r.groupId)
+        end
+      end
+      editor_roadUtils.updateChildRoads(roadObj)
+      editor_roadUtils.reloadDecorations(roadObj)
+      editor_roadUtils.reloadDecals(roadObj)
+    end
+  end
+end
+
+local function flipSelectedRoadsDirection()
+  if tableIsEmpty(selectedRoadsIds) then return end
+
+  local roads = {}
+  for _, id in ipairs(selectedRoadsIds) do
+    local road = scenetree.findObjectById(id)
+    if road and not Prefab.getPrefabByChild(road) then
+      local oldNodes = editor.getNodes(road)
+      local name = road:getField("name", "")
+      local grp = road:getGroup()
+      local groupId = grp and grp:getID() or nil
+      local newNodes = {}
+      for i = #oldNodes, 1, -1 do
+        table.insert(newNodes, oldNodes[i])
+      end
+      table.insert(roads, {
+        id = id,
+        fields = editor.copyFields(id),
+        oldNodes = oldNodes,
+        newNodes = newNodes,
+        name = name,
+        groupId = groupId,
+      })
+    end
+  end
+
+  if not tableIsEmpty(roads) then
+    editor.history:commitAction(
+      "FlipRoadDirection",
+      {roads = roads},
+      flipRoadsDirectionActionUndo,
+      flipRoadsDirectionActionRedo
+    )
+  end
+end
+
 local function setAsDefault(decalRoadId)
 end
 
@@ -656,6 +958,21 @@ local function onEditorInspectorHeaderGui(inspectorInfo)
       im.SameLine()
       if im.Checkbox("Use Template", useTemplate) then
         editor.setDynamicFieldValue(selectedRoad:getID(), "useTemplate", tostring(useTemplate[0]))
+      end
+    end
+
+    if editor.beginWindow(simpleRoadTemplateEditorWindowName, "Simple Road Templates") then
+      simpleRoadTemplatesEditorGui()
+    end
+    editor.endWindow()
+
+    if editor.isWindowVisible(simpleRoadTemplateEditorWindowName) then
+      if im.Button("Close Simple Road Template Editor") then
+        editor.hideWindow(simpleRoadTemplateEditorWindowName)
+      end
+    else
+      if im.Button("Open Simple Road Template Editor") then
+        editor.showWindow(simpleRoadTemplateEditorWindowName)
       end
     end
 
@@ -794,11 +1111,16 @@ local function onEditorInspectorHeaderGui(inspectorInfo)
     im.EndChild()
   end
 
-  if shouldShowFuseOption then
+  if not tableIsEmpty(selectedRoadsIds) then
     im.BeginChild1("RoadOps", im.ImVec2(0, 130), true)
     im.Text("Road Operations")
-    if im.Button("Fuse Roads", im.ImVec2(0,0)) then
-      fuseRoads()
+    if im.Button("Flip Direction", im.ImVec2(0,0)) then
+      flipSelectedRoadsDirection()
+    end
+    if shouldShowFuseOption then
+      if im.Button("Fuse Roads", im.ImVec2(0,0)) then
+        fuseRoads()
+      end
     end
     im.EndChild()
   end
@@ -1018,14 +1340,10 @@ local function onUpdate()
           if selRoad and roadTempNodeIndex == -1 and selRoad:containsPoint(focusPointP3F) ~= selectedNode then
             if selectedNode == 0 and selRoad:getNodeCount() > 1 then
               -- Add Node at the beginning
-              local prevNodePos = selRoad:getNodePosition(selectedNode)
-              local diff = focusPoint - addTempNodeStartPos
-              tempNodeIndexes[roadId] = insertNode(selRoad, prevNodePos + diff, selRoad:getNodeWidth(selectedNode), 0)
+              tempNodeIndexes[roadId] = insertNode(selRoad, focusPoint, selRoad:getNodeWidth(selectedNode), 0)
             elseif selectedNode == selRoad:getNodeCount() - 1 then
               -- Add Node at the end
-              local prevNodePos = selRoad:getNodePosition(selectedNode)
-              local diff = focusPoint - addTempNodeStartPos
-              tempNodeIndexes[roadId] = insertNode(selRoad, prevNodePos + diff, selRoad:getNodeWidth(selRoad:getNodeCount()-1), u_32_max_int)
+              tempNodeIndexes[roadId] = insertNode(selRoad, focusPoint, selRoad:getNodeWidth(selRoad:getNodeCount()-1), u_32_max_int)
             end
           end
           ::continue::
@@ -1249,10 +1567,7 @@ local function onUpdate()
         local roadTempNodeIndex = getRoadTempNodeIndex(roadID)
         -- Calculate the pos of temp node by adding diff to the pos of the previous node
         if selectedRoad and roadTempNodeIndex  ~= -1 then
-          local prevNodeIndex = (roadTempNodeIndex == 0) and 1 or roadTempNodeIndex-1
-          local prevNodePos = selectedRoad:getNodePosition(prevNodeIndex)
-          local diff = focusPoint - addTempNodeStartPos
-          setNodePosition(selectedRoad, roadTempNodeIndex, prevNodePos + diff)
+          setNodePosition(selectedRoad, roadTempNodeIndex, focusPoint)
         end
       end
     end
@@ -1363,48 +1678,48 @@ local function onUpdate()
     end
   end
 
-if isRectSelectKeyCombinationActive and im.IsMouseDragging(0) and not isRectSelecting then
-  isRectSelecting = true
-  rectSelectDragMouseStartPos = im.GetMousePos()
-elseif isRectSelecting and (not isRectSelectKeyCombinationActive or im.IsMouseReleased(0)) then
-  isRectSelecting = false
-end
+  if isRectSelectKeyCombinationActive and im.IsMouseDragging(0) and not isRectSelecting then
+    isRectSelecting = true
+    rectSelectDragMouseStartPos = im.GetMousePos()
+  elseif isRectSelecting and (not isRectSelectKeyCombinationActive or im.IsMouseReleased(0)) then
+    isRectSelecting = false
+  end
 
-if isRectSelecting then
-  local delta = im.GetMouseDragDelta(0)
-  local topLeft2I = editor.screenToClient(Point2I(rectSelectDragMouseStartPos.x, rectSelectDragMouseStartPos.y))
-  local topLeft = vec3(topLeft2I.x, topLeft2I.y, 0)
-  local bottomRight = (topLeft + vec3(delta.x, delta.y, 0))
-  local rect = {topLeft = topLeft, bottomRight = bottomRight}
+  if isRectSelecting then
+    local delta = im.GetMouseDragDelta(0)
+    local topLeft2I = editor.screenToClient(Point2I(rectSelectDragMouseStartPos.x, rectSelectDragMouseStartPos.y))
+    local topLeft = vec3(topLeft2I.x, topLeft2I.y, 0)
+    local bottomRight = (topLeft + vec3(delta.x, delta.y, 0))
+    local rect = {topLeft = topLeft, bottomRight = bottomRight}
 
-  local viewportSizeIm = im.GetMainViewport().Size
-  local viewportSize = vec3(viewportSizeIm.x, viewportSizeIm.y, 0)
-  local viewFrustum = Engine.sceneGetCameraFrustum()
-  local rectFrustum = Frustum(
-                      false,
-                      viewFrustum:getNearLeft() * (viewportSize.x/2 - rect.topLeft.x)/(viewportSize.x/2),
-                      viewFrustum:getNearRight() * (rect.bottomRight.x - viewportSize.x/2)/(viewportSize.x/2),
-                      viewFrustum:getNearTop() * (viewportSize.y/2 - rect.topLeft.y)/(viewportSize.y/2),
-                      viewFrustum:getNearBottom() * (rect.bottomRight.y - viewportSize.y/2)/(viewportSize.y/2),
-                      viewFrustum:getNearDist(),
-                      viewFrustum:getFarDist(),
-                      viewFrustum:getCameraCenterOffset(),
-                      viewFrustum:getTransform())
-  drawFrustumRect(rectFrustum)
+    local viewportSizeIm = im.GetMainViewport().Size
+    local viewportSize = vec3(viewportSizeIm.x, viewportSizeIm.y, 0)
+    local viewFrustum = Engine.sceneGetCameraFrustum()
+    local rectFrustum = Frustum(
+                        false,
+                        viewFrustum:getNearLeft() * (viewportSize.x/2 - rect.topLeft.x)/(viewportSize.x/2),
+                        viewFrustum:getNearRight() * (rect.bottomRight.x - viewportSize.x/2)/(viewportSize.x/2),
+                        viewFrustum:getNearTop() * (viewportSize.y/2 - rect.topLeft.y)/(viewportSize.y/2),
+                        viewFrustum:getNearBottom() * (rect.bottomRight.y - viewportSize.y/2)/(viewportSize.y/2),
+                        viewFrustum:getNearDist(),
+                        viewFrustum:getFarDist(),
+                        viewFrustum:getCameraCenterOffset(),
+                        viewFrustum:getTransform())
+    drawFrustumRect(rectFrustum)
 
-  for _, roadID in ipairs(selectedRoadsIds) do
-    local selectedRoad = scenetree.findObjectById(roadID)
-    if selectedRoad then
-      local nodesInRect = selectedRoad:getNodesFrustum(rectFrustum)
-      selectedNodes[roadID] = {}
-      for _, nodeID in ipairs(nodesInRect) do
-        if isRoadSelected(roadID) then
-          selectNode(roadID, nodeID, editor.SelectMode_Add)
+    for _, roadID in ipairs(selectedRoadsIds) do
+      local selectedRoad = scenetree.findObjectById(roadID)
+      if selectedRoad then
+        local nodesInRect = selectedRoad:getNodesFrustum(rectFrustum)
+        selectedNodes[roadID] = {}
+        for _, nodeID in ipairs(nodesInRect) do
+          if isRoadSelected(roadID) then
+            selectNode(roadID, nodeID, editor.SelectMode_Add)
+          end
         end
       end
     end
   end
-end
 
   -- Highlight selected roads
   if not tableIsEmpty(selectedRoadsIds) then
@@ -1553,6 +1868,7 @@ local function onToolbar()
     editor.setPreference("roadEditor.general.overObjects", overObjectsPtr[0])
   end
   im.tooltip("Make roads that go over static objects too")
+  im.SameLine()
 
   if editor.beginModalWindow(roadNotSelectableErrorWindowName, roadNotSelectableErrorWindowTitle, im.WindowFlags_AlwaysAutoResize + im.WindowFlags_NoScrollbar) then
     im.Text("Cannot select Road!")
@@ -1562,6 +1878,12 @@ local function onToolbar()
     end
   end
   editor.endModalWindow()
+end
+
+local function onEditorPreferenceValueChanged(path, value)
+  if worldEditorCppApi.setUpdateDecalRoadsOnStaticMeshTransform and path == "roadEditor.general.updateDecalRoadsOnStaticMeshTransform" then
+    worldEditorCppApi.setUpdateDecalRoadsOnStaticMeshTransform(value)
+  end
 end
 
 local function onEditorRegisterPreferences(prefsRegistry)
@@ -1574,6 +1896,8 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {aiRoadsSelectable = {"bool", true, "Controls whether ai roads should be selectable in the decal road editor"}},
     {nonAiRoadsSelectable = {"bool", true, "Controls whether non-ai roads should be selectable in the decal road editor"}},
     {overObjects = {"bool", false, "Controls whether roads go over static objects too"}},
+    -- this was disabled since when moving objects around, we would need to reload physics, since overObjects is using physics for raycasting its heights
+    --{updateDecalRoadsOnStaticMeshTransform = {"bool", false, "When enabled, decal roads with Over Objects update their geometry when you move static objects in the editor. Disable for better performance when moving many objects."}},
     -- hidden
     {columnSizes = {"table", {29, 53, 300, 145, 97, 280}, "", nil, nil, nil, true}}
   })
@@ -1604,6 +1928,11 @@ local function onDuplicate()
   end
 end
 
+local function onDeselect()
+  selectNode(nil)
+  editor.clearObjectSelection()
+end
+
 local function onEditorObjectSelectionChanged()
   if not editor.editMode or (editor.editMode.displayName ~= editModeName) then
     return
@@ -1630,12 +1959,14 @@ end
 
 local function customDecalRoadMaterialsFilter(materialSet)
   local retSet = {}
+  local wantedTag = string.lower(roadMaterialTagString)
   for i = 0, materialSet:size() - 1 do
     local material = materialSet:at(i)
     for tagId = 0, 2 do
       local tag = material:getField("materialTag", tostring(tagId))
-      if string.lower(tag) == string.lower(roadMaterialTagString) then
+      if string.lower(tag) == wantedTag then
         table.insert(retSet, material)
+        break
       end
     end
   end
@@ -1649,6 +1980,7 @@ local function onEditorInitialized()
     onActivate = onActivate,
     onDeactivate = onDeactivate,
     onDeleteSelection = onDeleteSelection,
+    onDeselect = onDeselect,
     onUpdate = onUpdate,
     onToolbar = onToolbar,
     actionMap = actionMapName,
@@ -1658,6 +1990,7 @@ local function onEditorInitialized()
     onSelectAll = onSelectAll,
     icon = editor.icons.create_road_decal,
     iconTooltip = "Decal Road Editor",
+    editObjectClass = "DecalRoad",
     auxShortcuts = {},
     hideObjectIcons = true
   }
@@ -1671,14 +2004,22 @@ local function onEditorInitialized()
 
   editor.registerCustomFieldInspectorFilter("DecalRoad", "Material", customDecalRoadMaterialsFilter)
   editor.registerModalWindow(roadNotSelectableErrorWindowName, im.ImVec2(600, 400))
-
+  editor.registerWindow(simpleRoadTemplateEditorWindowName, im.ImVec2(600, 400))
   editor_roadUtils.reloadTemplates()
+
+  if worldEditorCppApi.setUpdateDecalRoadsOnStaticMeshTransform then
+    worldEditorCppApi.setUpdateDecalRoadsOnStaticMeshTransform(editor.getPreference("roadEditor.general.updateDecalRoadsOnStaticMeshTransform"))
+  end
+
+  loadSimpleRoadTemplates()
+  initializeValueInspector()
 end
 
 M.onPreRender = onPreRender
 M.onEditorInitialized = onEditorInitialized
 M.onExtensionLoaded = onExtensionLoaded
 M.onEditorInspectorHeaderGui = onEditorInspectorHeaderGui
+M.onEditorPreferenceValueChanged = onEditorPreferenceValueChanged
 M.onEditorRegisterPreferences = onEditorRegisterPreferences
 M.onEditorObjectSelectionChanged = onEditorObjectSelectionChanged
 

@@ -44,7 +44,7 @@ local function process(vehicle)
     end
   end
 
-  profilerPopEvent() -- jbeam/scaling.process
+  profilerPopEvent('jbeam/scaling.process')
 end
 
 M.process = process

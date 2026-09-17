@@ -249,8 +249,8 @@ local function handleMessageReceive()
   end
 
   local gearValue = decodedMessageFromSimulink[5]
-  if gearValue == gearValue then
-    -- TODO: THIS PROPERTY NEEDS TO BE LINKED TO SIMULATOR.
+  if gearValue == gearValue and controller.mainController and controller.mainController.shiftToGearIndex then
+    controller.mainController.shiftToGearIndex(math.floor(gearValue + 0.5))
   end
 
   local wheelFLBrakingTorque = decodedMessageFromSimulink[6]          -- Brake torque FL, in N-m.
@@ -408,7 +408,7 @@ local function init(jbeamData)
     -- as that allows us to stop the coupling on Lua reload
     extensions.load('tech/vehicleSystemsCoupling')
     tech_vehicleSystemsCoupling.startCoupling({skipControllerLoad = true})
-    initialSetup()
+    initialSetup(jbeamData)
   end
 end
 

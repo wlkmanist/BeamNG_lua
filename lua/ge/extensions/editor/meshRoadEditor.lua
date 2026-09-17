@@ -21,6 +21,7 @@ local function onEditorInitialized()
     onActivate = onActivate,
     onUpdate = meshEditor.onUpdate_,
     onToolbar = meshEditor.onToolbar_,
+    onDeselect = meshEditor.onDeselect_,
     actionMap = "MeshRoadEditor",
     onCopy = meshEditor.copySettingsAM,
     onPaste = meshEditor.pasteFieldsAM,
@@ -28,6 +29,7 @@ local function onEditorInitialized()
     onSelectAll = meshEditor.onSelectAll,
     icon = editor.icons.create_road_mesh,
     iconTooltip = "Mesh Road Editor",
+    editObjectClass = meshEditor.type,
     auxShortcuts = {},
     hideObjectIcons = true
   }

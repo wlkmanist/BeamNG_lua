@@ -1,8 +1,8 @@
 {
-  "activeGraphId":130,
-  "authors":"Anonymous",
-  "currentGraphID":130,
-  "date":1625049210,
+  "activeGraphId":3,
+  "authors":"BeamNG",
+  "currentGraphID":3,
+  "date":1741625986,
   "debugEnabled":false,
   "description":"This is a simple tutorial that teaches you the basics of controlling the UI through your flowgraph.",
   "difficulty":40,
@@ -12,6 +12,41 @@
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
+        [
+          8,
+          "flow",
+          30,
+          "flow",
+          false
+        ],
+        [
+          31,
+          "model",
+          30,
+          "model",
+          false
+        ],
+        [
+          31,
+          "config",
+          30,
+          "config",
+          false
+        ],
+        [
+          68,
+          "pos",
+          30,
+          "pos",
+          false
+        ],
+        [
+          68,
+          "rot",
+          30,
+          "rot",
+          false
+        ],
         [
           30,
           "flow",
@@ -38,41 +73,6 @@
           "flow",
           15,
           "flow",
-          false
-        ],
-        [
-          8,
-          "flow",
-          30,
-          "flow",
-          false
-        ],
-        [
-          31,
-          "model",
-          30,
-          "model",
-          false
-        ],
-        [
-          31,
-          "config",
-          30,
-          "config",
-          false
-        ],
-        [
-          68,
-          "pos",
-          30,
-          "pos",
-          false
-        ],
-        [
-          68,
-          "rot",
-          30,
-          "rot",
           false
         ]
       ],
@@ -180,13 +180,15 @@
             "p_in":{
               "color":true,
               "config":false,
-              "dontDelete":true,
               "flow":false,
               "keepCamera":true,
+              "keepOnReset":true,
+              "keepVehicle":true,
               "licenseText":true,
               "model":false,
               "name":true,
               "pos":false,
+              "randomColor":true,
               "replacePlayer":true,
               "reset":true,
               "rot":false
@@ -205,24 +207,24 @@
         },
         "31":{
           "config":"sport_RS_M",
-          "configName":"Sunburst 2.0 Sport RS AWD (M)",
-          "configPath":"vehicles/sunburst/sport_RS_M.pc",
+          "configName":"\"Sunburst 2.5 Sport RS AWD (M)\"",
+          "configPath":"vehicles/sunburst2/sport_RS_M.pc",
           "data":{},
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
-              "modelName":true,
               "config":false,
               "configName":true,
-              "model":false
+              "model":false,
+              "modelName":true
             }
           },
-          "model":"sunburst",
-          "modelName":"Sunburst",
+          "model":"sunburst2",
+          "modelName":"\"Sunburst\"",
           "pos":[
-            94,
-            344
+            59,
+            343
           ],
           "type":"vehicle/vehicleConfigProvider",
           "vehType":"Car"
@@ -258,7 +260,7 @@
           "rotation":[
             0,
             0,
-            -0.66588166600000020523,
+            -0.66588166600000042727,
             0.74605737500000002260
           ],
           "scale":[
@@ -367,12 +369,15 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -288.93292236328125000000,
-        18.32471466064453125000
+        -332.83493041992187500000,
+        -215.64575195312500000000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.50000000000000000000
     },
     "3":{
       "description":"This is a simple tutorial that teaches you the basics of controlling the UI through your flowgraph.",
@@ -422,22 +427,24 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
-            -172,
-            8
+            -186,
+            7
           ],
           "targetGraphId":1,
           "type":"states/stateNode"
@@ -469,22 +476,24 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
-            220,
-            8
+            195,
+            7
           ],
           "targetGraphId":10,
           "type":"states/stateNode"
@@ -501,18 +510,20 @@
             }
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"reset",
-              "5":""
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "reset",
+              null,
+              ""
+            ]
           ],
           "pos":[
             584,
@@ -539,7 +550,7 @@
             1398,
             281
           ],
-          "commentText":"This is a simple tutorial that teaches you the basics of controlling the UI through your flowgraph.\\nSee the different possibilites by exploring the flowgraphs.",
+          "commentText":"This is a simple tutorial that teaches you the basics of controlling the UI through your flowgraph.\\nSee the different possibilites by exploring the state graphs.",
           "commentTitle":"UI Basics",
           "data":{},
           "dynamicMode":"repeat",
@@ -560,31 +571,20 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -529.39428710937500000000,
-        -279.01892089843750000000
+        -449.29098510742187500000,
+        -319.71804809570312500000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.74999982118606567383
     },
     "10":{
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
-        [
-          14,
-          "flow",
-          20,
-          "flow",
-          false
-        ],
-        [
-          14,
-          "enterState",
-          20,
-          "reset",
-          true
-        ],
         [
           89,
           "finished",
@@ -598,6 +598,20 @@
           437,
           "vehId",
           false
+        ],
+        [
+          14,
+          "flow",
+          20,
+          "flow",
+          false
+        ],
+        [
+          14,
+          "enterState",
+          20,
+          "reset",
+          true
         ],
         [
           34,
@@ -686,10 +700,12 @@
           },
           "hiddenPins":{
             "p_in":{
-              "reset":false,
               "flow":false,
+              "gameStateName":true,
+              "keepLayout":false,
               "layout":false,
-              "menu":false
+              "menu":false,
+              "reset":false
             },
             "p_out":{
               "flow":false
@@ -768,12 +784,13 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
           "pos":[
-            556,
-            288
+            570,
+            273
           ],
           "type":"scene/getPlayerVehicle"
         },
@@ -781,10 +798,6 @@
           "data":{},
           "dynamicMode":"repeat",
           "hardcodedPins":{
-            "title":{
-              "type":"string",
-              "value":"This is the title text"
-            },
             "buttonText":{
               "type":"string",
               "value":"ui.scenarios.start.start"
@@ -796,6 +809,10 @@
             "text":{
               "type":"string",
               "value":"This is the description text."
+            },
+            "title":{
+              "type":"string",
+              "value":"This is the title text"
             }
           },
           "hiddenPins":{
@@ -804,7 +821,9 @@
               "flow":false,
               "layout":false,
               "portraitImg":true,
+              "progressKey":true,
               "reset":false,
+              "showProgress":true,
               "text":false,
               "title":false
             },
@@ -820,16 +839,13 @@
         },
         "89":{
           "data":{
+            "bigFinishMsg":true,
             "playSounds":true,
             "useImgui":false,
             "useMessages":false
           },
           "dynamicMode":"repeat",
           "hardcodedPins":{
-            "finishMsgDuration":{
-              "type":"number",
-              "value":1
-            },
             "countdownMsg":{
               "type":"string",
               "value":"%d"
@@ -841,6 +857,10 @@
             "finishMsg":{
               "type":"string",
               "value":"Go!"
+            },
+            "finishMsgDuration":{
+              "type":"number",
+              "value":1
             }
           },
           "hiddenPins":{
@@ -915,12 +935,15 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -95.04640197753906250000,
-        -234.80239868164062500000
+        -46.83493041992187500000,
+        -316.64575195312500000000
       ],
-      "viewZoom":0.33000001311302185059
+      "viewZoom":0.50000000000000000000
     },
     "13":{
       "description":"This graph shows you different ways to display text in the UI.\n",
@@ -935,23 +958,16 @@
           false
         ],
         [
-          17,
-          "flow",
-          24,
-          "flow",
-          false
-        ],
-        [
-          17,
-          "flow",
-          50,
-          "flow",
-          false
-        ],
-        [
           50,
           "reset",
           438,
+          "flow",
+          false
+        ],
+        [
+          17,
+          "flow",
+          50,
           "flow",
           false
         ],
@@ -973,6 +989,13 @@
           46,
           "success",
           131,
+          "flow",
+          false
+        ],
+        [
+          17,
+          "flow",
+          24,
           "flow",
           false
         ]
@@ -1007,24 +1030,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             192,
@@ -1082,24 +1108,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             1130,
@@ -1157,24 +1186,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             1606,
@@ -1195,18 +1227,20 @@
             }
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"reset",
-              "5":""
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "reset",
+              null,
+              ""
+            ]
           ],
           "pos":[
             150,
@@ -1228,24 +1262,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             2082,
@@ -1267,24 +1304,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             640,
@@ -1303,12 +1343,13 @@
             "p_out":{}
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             472,
@@ -1321,12 +1362,15 @@
       "parentId":3,
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        772.61376953125000000000,
-        -221.66746520996093750000
+        28.16506958007812500000,
+        -367.64575195312500000000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.50000000000000000000
     },
     "21":{
       "description":"This graph shows you how to use the \"Message\" node to display text in the UI.",
@@ -1337,34 +1381,6 @@
           "flow",
           29,
           "flow",
-          false
-        ],
-        [
-          27,
-          "flow",
-          153,
-          "flow",
-          false
-        ],
-        [
-          104,
-          "enter",
-          153,
-          "reset",
-          true
-        ],
-        [
-          27,
-          "exitState",
-          153,
-          "reset",
-          true
-        ],
-        [
-          106,
-          "pos",
-          153,
-          "position",
           false
         ],
         [
@@ -1407,6 +1423,34 @@
           "vehId",
           104,
           "vehId",
+          false
+        ],
+        [
+          27,
+          "flow",
+          153,
+          "flow",
+          false
+        ],
+        [
+          104,
+          "enter",
+          153,
+          "reset",
+          true
+        ],
+        [
+          27,
+          "exitState",
+          153,
+          "reset",
+          true
+        ],
+        [
+          106,
+          "pos",
+          153,
+          "position",
           false
         ]
       ],
@@ -1473,7 +1517,7 @@
             684,
             575
           ],
-          "commentText":"Displays a simpel marker with a trigger that passes flow, when entered.",
+          "commentText":"Displays a simple marker with a trigger that passes flow when entered.",
           "commentTitle":"Map Marker",
           "data":{},
           "dynamicMode":"repeat",
@@ -1493,7 +1537,8 @@
         },
         "104":{
           "data":{
-            "debug":false
+            "debug":false,
+            "highPrecision":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -1551,7 +1596,7 @@
           "rotation":[
             0,
             0,
-            0.16848937600000005177,
+            0.16848937600000010728,
             0.98570347000000002602
           ],
           "scale":[
@@ -1603,6 +1648,7 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
@@ -1635,7 +1681,10 @@
           "hiddenPins":{
             "p_in":{
               "color":true,
+              "fadeFarDist":true,
+              "fadeNearDist":true,
               "flow":false,
+              "markerType":true,
               "position":false,
               "radius":false,
               "reset":false
@@ -1668,8 +1717,8 @@
             376,
             337
           ],
-          "commentText":"Displays a simple text in the top left corner of the screen\\nfor a set duration. Great for giving hints \\nor minor information to the player.",
-          "commentTitle":"\"Message\" Node",
+          "commentText":"Displays a simple text in the top left corner of the screen\\nfor a set duration. Great for giving hints or minor \\ninformation to the player.",
+          "commentTitle":"Message Node",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
@@ -1689,12 +1738,15 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -119.89677429199218750000,
-        -519.43395996093750000000
+        -238.83493041992187500000,
+        -578.64575195312500000000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.50000000000000000000
     },
     "25":{
       "description":"This graph shows you how to use the \"RT Message\" node to display text in the UI.",
@@ -1729,15 +1781,15 @@
           false
         ],
         [
-          337,
-          "enter",
+          33,
+          "exitState",
           386,
           "reset",
           true
         ],
         [
-          33,
-          "exitState",
+          337,
+          "enter",
           386,
           "reset",
           true
@@ -1754,41 +1806,6 @@
           "enter",
           44,
           "flow",
-          false
-        ],
-        [
-          65,
-          "False",
-          337,
-          "flow",
-          false
-        ],
-        [
-          339,
-          "pos",
-          337,
-          "position",
-          false
-        ],
-        [
-          339,
-          "rot",
-          337,
-          "rotation",
-          false
-        ],
-        [
-          339,
-          "scl",
-          337,
-          "scale",
-          false
-        ],
-        [
-          362,
-          "vehId",
-          337,
-          "vehId",
           false
         ],
         [
@@ -1813,15 +1830,15 @@
           false
         ],
         [
-          287,
-          "enter",
+          33,
+          "exitState",
           336,
           "reset",
           true
         ],
         [
-          33,
-          "exitState",
+          287,
+          "enter",
           336,
           "reset",
           true
@@ -1880,6 +1897,41 @@
           "isFirstTriggerActive",
           65,
           "condition",
+          false
+        ],
+        [
+          65,
+          "False",
+          337,
+          "flow",
+          false
+        ],
+        [
+          339,
+          "pos",
+          337,
+          "position",
+          false
+        ],
+        [
+          339,
+          "rot",
+          337,
+          "rotation",
+          false
+        ],
+        [
+          339,
+          "scl",
+          337,
+          "scale",
+          false
+        ],
+        [
+          362,
+          "vehId",
+          337,
+          "vehId",
           false
         ]
       ],
@@ -2018,7 +2070,8 @@
         },
         "287":{
           "data":{
-            "debug":false
+            "debug":false,
+            "highPrecision":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -2077,7 +2130,7 @@
             0,
             0,
             0.45864954299999999288,
-            0.88861723900000011422
+            0.88861723900000022525
           ],
           "scale":[
             6.19999981000000044418,
@@ -2093,6 +2146,7 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
@@ -2125,7 +2179,10 @@
           "hiddenPins":{
             "p_in":{
               "color":true,
+              "fadeFarDist":true,
+              "fadeNearDist":true,
               "flow":false,
+              "markerType":true,
               "position":false,
               "radius":false,
               "reset":false
@@ -2142,7 +2199,8 @@
         },
         "337":{
           "data":{
-            "debug":false
+            "debug":false,
+            "highPrecision":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -2201,7 +2259,7 @@
             0,
             0,
             0.45864954299999999288,
-            0.88861723900000011422
+            0.88861723900000022525
           ],
           "scale":[
             6.19999981000000044418,
@@ -2217,6 +2275,7 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
@@ -2249,7 +2308,10 @@
           "hiddenPins":{
             "p_in":{
               "color":true,
+              "fadeFarDist":true,
+              "fadeNearDist":true,
               "flow":false,
+              "markerType":true,
               "position":false,
               "radius":false,
               "reset":false
@@ -2308,7 +2370,7 @@
             1034,
             603
           ],
-          "commentText":"Displays a simpel marker that activates the \"RT Message\" node and disables itself\\nafter its trigger has been entered by the player.",
+          "commentText":"Displays a simple marker that activates the \"RT Message\" node and disables itself\\nafter its trigger has been entered by the player.",
           "commentTitle":"First Map Marker",
           "data":{},
           "dynamicMode":"repeat",
@@ -2344,7 +2406,7 @@
             698,
             687
           ],
-          "commentText":"Displays a simpel marker that deactivates the \"RT Message\" node and transitions out of the state\\nafter its trigger has been entered by the player.",
+          "commentText":"Displays a simple marker that deactivates the \"RT Message\" node and transitions out of the state\\nafter its trigger has been entered by the player.",
           "commentTitle":"Second Map Marker",
           "data":{},
           "dynamicMode":"repeat",
@@ -2416,8 +2478,8 @@
             362,
             268
           ],
-          "commentText":"Shows a text in the center of the screen\\nuntil it is cleared. Great for displaying permanent\\nimportant information that the player should not forget.",
-          "commentTitle":"\"RT Message\" Node",
+          "commentText":"Shows large text in the center of the screen until it is \\ncleared. Great for displaying permanent important \\ninformation that the player should not forget.",
+          "commentTitle":"RT Message Node",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
@@ -2437,21 +2499,26 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"isFirstTriggerActive",
-          "type":"bool",
-          "value":true
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "isFirstTriggerActive"
+        ],
+        "list":[
+          {
+            "fixedType":false,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"isFirstTriggerActive",
+            "type":"bool",
+            "value":true
+          }
+        ]
+      },
       "viewPos":[
-        -94.00458526611328125000,
-        49.22515106201171875000
+        -243.83493041992187500000,
+        -239.64575195312500000000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.50000000000000000000
     },
     "45":{
       "description":"This graph shows you how to use the \"Monologue\" node to display text in the UI.",
@@ -2502,34 +2569,6 @@
         [
           94,
           "False",
-          436,
-          "flow",
-          true
-        ],
-        [
-          387,
-          "enter",
-          436,
-          "reset",
-          true
-        ],
-        [
-          47,
-          "exitState",
-          436,
-          "reset",
-          true
-        ],
-        [
-          389,
-          "pos",
-          436,
-          "position",
-          false
-        ],
-        [
-          94,
-          "False",
           387,
           "flow",
           false
@@ -2560,6 +2599,34 @@
           "vehId",
           387,
           "vehId",
+          false
+        ],
+        [
+          94,
+          "False",
+          436,
+          "flow",
+          true
+        ],
+        [
+          47,
+          "exitState",
+          436,
+          "reset",
+          true
+        ],
+        [
+          387,
+          "enter",
+          436,
+          "reset",
+          true
+        ],
+        [
+          389,
+          "pos",
+          436,
+          "position",
           false
         ]
       ],
@@ -2623,7 +2690,7 @@
           },
           "pos":[
             654,
-            288
+            298
           ],
           "type":"types/setVariable",
           "varName":"WasTriggerHit"
@@ -2700,10 +2767,10 @@
               "reset":false
             },
             "p_out":{
-              "incomplete":false,
               "complete":false,
               "completed":false,
-              "flow":false
+              "flow":false,
+              "incomplete":false
             }
           },
           "mode":"loop",
@@ -2738,7 +2805,8 @@
         },
         "387":{
           "data":{
-            "debug":false
+            "debug":false,
+            "highPrecision":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -2760,7 +2828,7 @@
           },
           "pos":[
             374,
-            288
+            298
           ],
           "triggerType":"Box",
           "type":"events/customizedTriggerBox"
@@ -2786,7 +2854,7 @@
           "mode":"gizmo",
           "pos":[
             66,
-            246
+            256
           ],
           "position":[
             267.83017000000000962245,
@@ -2796,8 +2864,8 @@
           "rotation":[
             0,
             0,
-            0.02704930300000000370,
-            0.99963410099999994163
+            0.02704930300000000717,
+            0.99963410099999983061
           ],
           "scale":[
             6.19999981000000044418,
@@ -2813,12 +2881,13 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
           "pos":[
             -4,
-            400
+            413
           ],
           "type":"scene/getPlayerVehicle"
         },
@@ -2845,7 +2914,10 @@
           "hiddenPins":{
             "p_in":{
               "color":true,
+              "fadeFarDist":true,
+              "fadeNearDist":true,
               "flow":false,
+              "markerType":true,
               "position":false,
               "radius":false,
               "reset":false
@@ -2856,7 +2928,7 @@
           },
           "pos":[
             374,
-            92
+            102
           ],
           "type":"scene/singleMarker"
         },
@@ -2876,9 +2948,9 @@
           ],
           "commentSize":[
             894,
-            464
+            466
           ],
-          "commentText":"Displays a simpel marker that activates the \"RT Message\" node and disables itself\\nafter its trigger has been entered by the player.",
+          "commentText":"Displays a simple marker that activates the \"RT Message\" node and disables itself\\nafter its trigger has been entered by the player.",
           "commentTitle":"First Map Marker",
           "data":{},
           "dynamicMode":"repeat",
@@ -2914,8 +2986,8 @@
             530,
             449
           ],
-          "commentText":"Displays a series of texts in the top left corner of the screen similiar to the\\n\"Message\" node.\\nEach text can have an individual duration\\nand the node needs constant flow to function.",
-          "commentTitle":"\"Monologue\" Node",
+          "commentText":"Displays a series of texts in the top left corner of the screen similiar to the\\n\"Message\" node.\\nEach text can have an individual duration, and the node needs constant \\nflow to function properly.",
+          "commentTitle":"Monologue Node",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
@@ -2935,19 +3007,24 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":[
-        {
-          "fixedType":false,
-          "index":1,
-          "mergeStrat":"last",
-          "name":"WasTriggerHit",
-          "type":"bool",
-          "value":false
-        }
-      ],
+      "variables":{
+        "customVariableOrder":[
+          "WasTriggerHit"
+        ],
+        "list":[
+          {
+            "fixedType":false,
+            "index":1,
+            "mergeStrat":"last",
+            "name":"WasTriggerHit",
+            "type":"bool",
+            "value":false
+          }
+        ]
+      },
       "viewPos":[
-        -202.89056396484375000000,
-        -305.99075317382812500000
+        -232.20532226562500000000,
+        -281.95053100585937500000
       ],
       "viewZoom":0.50000000000000000000
     },
@@ -3038,10 +3115,13 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -438.59326171875000000000,
-        -203.53753662109375000000
+        -707.59326171875000000000,
+        -123.53753662109375000000
       ],
       "viewZoom":1
     },
@@ -3054,20 +3134,6 @@
           "enter",
           53,
           "flow",
-          false
-        ],
-        [
-          53,
-          "flow",
-          49,
-          "flow",
-          false
-        ],
-        [
-          53,
-          "statData",
-          49,
-          "stats",
           false
         ],
         [
@@ -3132,6 +3198,27 @@
           52,
           "flow",
           false
+        ],
+        [
+          474,
+          "vehId",
+          52,
+          "vehId",
+          false
+        ],
+        [
+          53,
+          "flow",
+          49,
+          "flow",
+          false
+        ],
+        [
+          53,
+          "statData",
+          49,
+          "stats",
+          false
         ]
       ],
       "name":"End Screen",
@@ -3151,16 +3238,16 @@
             1
           ],
           "commentSize":[
-            866,
+            754,
             533
           ],
-          "commentText":"You can use the \"End Screen\" node to display\\nan overlay at the end of your level.",
+          "commentText":"You can use the \"End Screen\" node to display a results interface during the simulation.",
           "commentTitle":"End Screen",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            210,
+            238,
             -126
           ],
           "simple":false,
@@ -3177,7 +3264,7 @@
             "includeRetryButton":false,
             "includeScenarioButton":false
           },
-          "dynamicMode":"repeat",
+          "dynamicMode":"once",
           "hardcodedPins":{
             "failString":{
               "type":"string",
@@ -3206,7 +3293,9 @@
           },
           "hiddenPins":{
             "p_in":{
+              "attempt":false,
               "autoPoints":true,
+              "change":false,
               "failString":true,
               "failed":true,
               "flow":false,
@@ -3215,6 +3304,8 @@
               "points":true,
               "portraitFail":true,
               "portraitSuccess":true,
+              "progress":false,
+              "progressKey":false,
               "reset":true,
               "stats":false,
               "successString":true,
@@ -3222,12 +3313,14 @@
               "timeStr":true,
               "title":false
             },
-            "p_out":{}
+            "p_out":{
+              "flow":false
+            }
           },
           "options":{},
           "pos":[
-            892,
-            -20
+            724,
+            -21
           ],
           "type":"ui/endScreen"
         },
@@ -3330,7 +3423,8 @@
         },
         "449":{
           "data":{
-            "debug":false
+            "debug":false,
+            "highPrecision":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -3386,10 +3480,10 @@
             35.41466520000000173241
           ],
           "rotation":[
-            -0.02755398430000001106,
-            0.00156632704000000044,
-            0.53572742600000011759,
-            0.84393983700000019255
+            -0.02755398430000002147,
+            0.00156632704000000088,
+            0.53572742600000022861,
+            0.84393983700000041459
           ],
           "scale":[
             6.19999981000000044418,
@@ -3405,6 +3499,7 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
@@ -3437,7 +3532,10 @@
           "hiddenPins":{
             "p_in":{
               "color":true,
+              "fadeFarDist":true,
+              "fadeNearDist":true,
               "flow":false,
+              "markerType":true,
               "position":false,
               "radius":false,
               "reset":false
@@ -3491,12 +3589,15 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -662.78796386718750000000,
-        -385.35595703125000000000
+        -481.77929687500000000000,
+        -279.97381591796875000000
       ],
-      "viewZoom":0.32999998331069946289
+      "viewZoom":0.50000000000000000000
     },
     "154":{
       "description":"This graph shows you how to use the \"Flash Message\" node to display text in the UI.",
@@ -3658,7 +3759,8 @@
         },
         "237":{
           "data":{
-            "debug":false
+            "debug":false,
+            "highPrecision":false
           },
           "dynamicMode":"repeat",
           "hiddenPins":{
@@ -3714,10 +3816,10 @@
             43.68623730000000193741
           ],
           "rotation":[
-            0.03785567950000000986,
-            -0.00213568203999999970,
-            -0.05628635300000000424,
-            0.99769445900000008898
+            0.03785567950000001680,
+            -0.00213568204000000013,
+            -0.05628635300000001118,
+            0.99769445900000020000
           ],
           "scale":[
             6.19999981000000044418,
@@ -3733,6 +3835,7 @@
           "hiddenPins":{
             "p_in":{},
             "p_out":{
+              "exist":true,
               "vehId":false
             }
           },
@@ -3765,7 +3868,10 @@
           "hiddenPins":{
             "p_in":{
               "color":true,
+              "fadeFarDist":true,
+              "fadeNearDist":true,
               "flow":false,
+              "markerType":true,
               "position":false,
               "radius":false,
               "reset":false
@@ -3798,7 +3904,7 @@
             684,
             575
           ],
-          "commentText":"Displays a simple marker with a trigger that passes flow, when entered.",
+          "commentText":"Displays a simple marker with a trigger that passes flow when entered.",
           "commentTitle":"Map Marker",
           "data":{},
           "dynamicMode":"repeat",
@@ -3834,8 +3940,8 @@
             341,
             281
           ],
-          "commentText":"Shows a text in the center of the screen\\nfor a given duration. Great for passing urgent\\ninformation to the player that should not be missed.",
-          "commentTitle":"\"Flash Message\" Node",
+          "commentText":"Shows large text in the center of the screen for a \\nset duration. Great for passing urgent information \\nto the player that should not be missed.",
+          "commentTitle":"Flash Message Node",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
@@ -3855,7 +3961,10 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
         -327.79086303710937500000,
         -255.71804809570312500000
@@ -3866,9 +3975,12 @@
   "isScenario":false,
   "macros":{},
   "name":"UI Basics",
-  "savedDir":"/flowgraphEditor/",
+  "savedDir":"/lua/ge/extensions/flowgraph/examples/intermediate/",
   "savedFilename":"UIBasics.flow.json",
   "stateGraphId":3,
-  "variables":{},
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
   "version":0.20000000000000001110
 }

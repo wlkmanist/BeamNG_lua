@@ -7,6 +7,7 @@ local ffi = require('ffi')
 local M = {}
 local im = ui_imgui
 local fge = ui_flowgraph_editor
+local missionVarHelper = require('/lua/ge/extensions/editor/flowgraph/missionVariableHelper')
 
 local executionView
 local windows
@@ -347,8 +348,8 @@ local function onEditorGui(dtReal, dtSim, dtRaw)
         im.EndMenuBar()
       end
       welcome:drawContent()
-      im.End()
     end
+    im.End()
     if not opn[0] then
       editor.hideWindow(main.windowName)
     end
@@ -596,6 +597,8 @@ local function smallFgWindow(dtReal, dtSim, dtRaw)
 
     else
       if editor.uiIconImageButton(editor.icons.play_arrow, im.ImVec2(20, 20)) then
+        -- Try to apply mission variables before starting
+        missionVarHelper.applyMissionVariablesToManager(mgr, "flowgraphEditor")
         mgr:setRunning(true)
       end
       im.SameLine()
@@ -902,7 +905,7 @@ local function uiShowSourceShortcut()
     local id, sel = next(mgr.selectedNodes)
     local node = mgr.graph.nodes[id]
     if node then
-      Engine.Platform.openFile(node.sourcePath)
+      Engine.Platform.exploreFolder(node.sourcePath)
     end
   end
 end

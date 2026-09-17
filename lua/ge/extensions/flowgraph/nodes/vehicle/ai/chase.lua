@@ -22,12 +22,12 @@ C.tags = {}
 function C:workOnce()
   local veh
   if self.pinIn.aiVehId.value then
-    veh = be:getObjectByID(self.pinIn.aiVehId.value)
+    veh = getObjectByID(self.pinIn.aiVehId.value)
   else
     veh = getPlayerVehicle(0)
   end
   if not veh then return end
-  
+
   local targetId = self.pinIn.targetId.value or be:getPlayerVehicleID(0)
   veh:queueLuaCommand('ai.setMode("chase")')
   veh:queueLuaCommand('ai.setTargetObjectID('..targetId..')')

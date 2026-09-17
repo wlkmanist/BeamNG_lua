@@ -4,13 +4,11 @@
 
 local im = ui_imgui
 
-local ffi = require('ffi')
-
 local C = {}
 
 C.name = 'Screen Main Header'
 C.color = ui_flowgraph_editor.nodeColors.ui
-C.description = 'Used for a large header, usually the mission name'
+C.description = 'Used for a large header, usually the mission name.'
 C.category = 'repeat_instant'
 
 C.pinSchema = {
@@ -20,7 +18,7 @@ C.pinSchema = {
   { dir = 'out', type = 'flow', name = 'flow', description = '', chainFlow = true },
 }
 
-C.tags = { 'string' }
+C.tags = { 'start', 'screen', 'intro', 'ui' }
 
 function C:work()
   self.pinOut.flow.value = self.pinIn.flow.value

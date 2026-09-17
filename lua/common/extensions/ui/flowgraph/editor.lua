@@ -4,11 +4,8 @@
 
 local M = {}
 local im = ui_imgui
-if not flowGraphEditor_ffi_cdef_loaded then
-  ffi.cdef(readFile('lua/common/extensions/ui/flowgraph/editor_api.h'))
-  flowGraphEditor_ffi_cdef_loaded = true
-end
-require('/common/extensions/ui/flowgraph/editor_api')(M)
+
+require('/common/extensions/ui/flowgraph/editor_api_luaintf')(M)
 
 --print("EDITOR API LOADED")
 M.flowgraphVersion = 0.2
@@ -18,6 +15,7 @@ M.flowgraphVersion = 0.2
 
 
 M.nodeColors = {
+  crash = im.ImVec4(1, 0.2, 0, 0.75),
   ai = im.ImVec4(0.4, 0.9, 1.0, 0.9),
   debug = im.ImVec4(1, 0, 1, 0.75),
   vehicle = im.ImVec4(1, 0.4, 0, 0.75),
@@ -593,11 +591,11 @@ local function vehicleSelector(self, onlyModel)
       end)
       if not onlyModel then
         if self.model and self.model ~= "" then
-          local mdl = core_vehicles.getModel(self.model)
-          if mdl then
-            self.modelName = dumps(mdl.model.Name)
-            self.configs = mdl.configs
-            self.vehType = mdl.Type
+          local modelData = core_vehicles.getModel(self.model)
+          if modelData and modelData.model then
+            self.modelName = dumps(modelData.model.Name)
+            self.configs = modelData.configs
+            self.vehType = modelData.model.Type
             if self.configs[self.config] then
               self.configName = self.configs[self.config].Name or ""
               self.configPath = "vehicles/" .. self.model .. "/" .. self.configs[self.config].key .. ".pc"
@@ -776,12 +774,11 @@ local function vehicleSelector(self, onlyModel)
           self.model = result.info.modelKey
           self.config = result.info.configKey
           if self.model and self.model ~= "" then
-            local mdl = core_vehicles.getModel(self.model)
-            if mdl then
-              self.modelName = dumps(mdl.model.Name)
-              self.configs = mdl.configs
-
-              self.vehType = mdl.model.Type
+            local modelData = core_vehicles.getModel(self.model)
+            if modelData and modelData.model then
+              self.modelName = dumps(modelData.model.Name)
+              self.configs = modelData.configs
+              self.vehType = modelData.model.Type
               if self.configs[self.config] then
                 self.configName = self.configs[self.config].Name or ""
                 self.configPath = "vehicles/" .. self.model .. "/" .. self.configs[self.config].key .. ".pc"

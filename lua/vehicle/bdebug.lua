@@ -32,7 +32,7 @@ local function initBDebugImpl(bdebugImplSavedState)
     M.isEnabled = bdebugImpl.isEnabled
     M.onPlayersChanged = bdebugImpl.onPlayersChanged
     M.reset = bdebugImpl.reset
-    M.recieveViewportSize = bdebugImpl.recieveViewportSize
+    M.receiveViewportSize = bdebugImpl.receiveViewportSize
 
     M.setPartsSelected = bdebugImpl.setPartsSelected
 
@@ -87,9 +87,9 @@ local function sendState()
   bdebugImpl.requestState()
 end
 
-local function setState(state, stateNoReset)
+local function setState(state, stateNoReset, notSendBack)
   initBDebugImpl()
-  bdebugImpl.setState(state, stateNoReset)
+  bdebugImpl.setState(state, stateNoReset, notSendBack)
 end
 
 -- Request/send drawn nodes to GE Lua function
@@ -249,6 +249,8 @@ end
 
 local function init()
 end
+
+M.receiveViewportSize = function() end
 
 -- These interfaces initally nopped. Unnopped when bdebugImpl is initialized.
 M.nodeCollision = nop

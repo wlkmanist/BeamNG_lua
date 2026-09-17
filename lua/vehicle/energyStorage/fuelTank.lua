@@ -65,13 +65,13 @@ end
 local function reset(storage)
   storage.currentLeakRate = 0
   storage.storedEnergy = storage.startingCapacity * storage.fuelLiquidDensity * storage.energyDensity
+  storage.remainingVolume = storage.storedEnergy / (storage.fuelLiquidDensity * storage.energyDensity)
+  storage.remainingRatio = storage.energyCapacity > 0 and storage.storedEnergy / storage.energyCapacity or 0
 
   --apply final weight as soon as possible
   for k, v in pairs(storage.fuelNodes) do
     obj:setNodeMass(k, v + storage.storedEnergy * storage.fuelNodeMassCoef)
   end
-
-  storage.remainingRatio = storage.energyCapacity > 0 and storage.storedEnergy / storage.energyCapacity or 0
 end
 
 local function deserialize(storage, data)

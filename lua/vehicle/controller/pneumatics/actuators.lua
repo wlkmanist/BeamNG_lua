@@ -12,7 +12,6 @@ local max = math.max
 local min = math.min
 local sqrt = math.sqrt
 local clamp = clamp
-local round = round
 
 local psiToPascal = 6894.757293178
 local pascalToPSI = 1 / psiToPascal
@@ -22,6 +21,18 @@ local tinyPressureDiffThreshold = 25
 -- dependent on shape of flow orifice - closer to 1.0 for rounded orifices, decreases with sharpness of edges
 -- we use a constant value of 0.97, which is a decent approximation of a round hole (e.g. a tube connection) without being unrealistically close to 1.0
 local dischargeCoefficient = 0.97
+
+local function getEffectiveFlowArea(primaryArea, secondaryArea)
+  if primaryArea <= 0 then
+    return 0
+  end
+  if not secondaryArea or secondaryArea <= 0 then
+    return primaryArea
+  end
+
+  -- Combine the hose and the valve metering orifice as two restrictions in series.
+  return 1 / sqrt((1 / (primaryArea * primaryArea)) + (1 / (secondaryArea * secondaryArea)))
+end
 
 local airTank = nil
 local beamGroups = nil
@@ -224,6 +235,11 @@ local function getBeamGroupsAverageFlowRate(groupNames)
   return count > 0 and (sum / count) or 0
 end
 
+local function getBeamVolume(beam)
+  local beamLength = max(obj:getBeamLength(beam.cid) - beam.lengthOffset, 0)
+  return beam.surface * beamLength + 1e-30
+end
+
 local function updateFixedStep(dt)
   local invTempCoefficient = 1 / (gasConstant * powertrain.currentEnvTemperature) -- for calculating air mass
   local tankPressure = airTank.currentPressure
@@ -244,15 +260,23 @@ local function updateFixedStep(dt)
         bufferCapacity = defaultVirtualBufferCapacity,
         invBufferCapacity = 1 / defaultVirtualBufferCapacity,
         beamGroupCount = 1,
-        enableDebug = false,
+        enableDebug = false
       }
       crossFlowGroup.bufferStoredEnergy = crossFlowGroup.bufferPressure * crossFlowGroup.bufferCapacity
       crossFlowGroups[g.crossFlowTag] = crossFlowGroup
     end
 
+    local electricsValveState = electrics.values[g.valveStateElectricsName]
+
+    -- if electrics value has changed enough since the last update, we take that instead of the last "requested" state
+    if type(electricsValveState) == "number" and abs(electricsValveState - g.lastElectricsValue) > 1e-20 then
+      g.valveState = electricsValveState
+      g.lastElectricsValue = electricsValveState
+    end
+
     local absValveState = abs(g.valveState)
     local flowRateSum = 0
-    local flowRate = 0
+    local flowRate
     local sourcePressure, flowPressureDiff
     local maxAllowedEnergyTransfer
     local airVolumeMoved, energyTransferred
@@ -269,7 +293,7 @@ local function updateFixedStep(dt)
       -- airflow occurring between air tank and virtual buffer
       sourcePressure = min(tankPressure, g.maxSupplyPressure)
       flowPressureDiff = sourcePressure - crossFlowGroup.bufferPressure
-      flowRate = dischargeCoefficient * absValveState * g.supplyHoseCrossSectionArea * sign(flowPressureDiff) * sqrt(2 * abs(flowPressureDiff) * invAirTankAirDensity)
+      flowRate = dischargeCoefficient * absValveState * g.effectiveSupplyCrossSectionArea * sign(flowPressureDiff) * sqrt(2 * abs(flowPressureDiff) * invAirTankAirDensity)
     else
       -- airflow occurring between virtual buffer and environment
       sourcePressure = powertrain.currentEnvPressure
@@ -288,7 +312,12 @@ local function updateFixedStep(dt)
     if abs(flowPressureDiff) > tinyPressureDiffThreshold then
       maxAllowedEnergyTransfer = abs(flowPressureDiff) * crossFlowGroup.bufferCapacity -- clamp so that we don't "overshoot" the source pressure
       airVolumeMoved = abs(flowRate) * dt
-      energyTransferred = min(maxAllowedEnergyTransfer, crossFlowGroup.bufferPressure * airVolumeMoved) * sign(flowRate)
+      local transferPressure = flowRate > 0 and sourcePressure or crossFlowGroup.bufferPressure
+      energyTransferred = min(maxAllowedEnergyTransfer, transferPressure * airVolumeMoved) * sign(flowRate)
+
+      if g.valveState > 0 and energyTransferred > 0 and not g.disableAirConsumption then
+        energyTransferred = min(energyTransferred, airTank.storedEnergy)
+      end
 
       -- determine new stored energy quantity
       crossFlowGroup.bufferStoredEnergy = crossFlowGroup.bufferStoredEnergy + energyTransferred
@@ -313,8 +342,7 @@ local function updateFixedStep(dt)
     g.averagePressure = 0
 
     for _, v in pairs(g.beams) do
-      local beamLength = max(obj:getBeamLength(v.cid) - v.lengthOffset, 0)
-      local beamVolume = v.surface * beamLength + 1e-30
+      local beamVolume = getBeamVolume(v)
       local invBeamVolume = 1 / beamVolume
 
       -- Flow simulation for individual actuator (between actuator and virtual buffer)
@@ -324,7 +352,7 @@ local function updateFixedStep(dt)
         local flowCoef = enableCrossFlow and 1 or absValveState
         sourcePressure = crossFlowGroup.bufferPressure
         flowPressureDiff = sourcePressure - v.currentPressure
-        flowRate = dischargeCoefficient * flowCoef * v.supplyHoseCrossSectionArea * sign(flowPressureDiff) * sqrt(2 * abs(flowPressureDiff) * invBufferAirDensity)
+        flowRate = dischargeCoefficient * flowCoef * v.effectiveSupplyCrossSectionArea * sign(flowPressureDiff) * sqrt(2 * abs(flowPressureDiff) * invBufferAirDensity)
       else
         flowPressureDiff = 0
         flowRate = 0
@@ -334,7 +362,12 @@ local function updateFixedStep(dt)
         flowRateSum = flowRateSum + flowRate
         maxAllowedEnergyTransfer = abs(flowPressureDiff) * beamVolume -- clamp so that we don't "overshoot" the source pressure
         airVolumeMoved = abs(flowRate) * dt
-        energyTransferred = min(maxAllowedEnergyTransfer, v.currentPressure * airVolumeMoved) * sign(flowRate)
+        local transferPressure = flowRate > 0 and sourcePressure or v.currentPressure
+        energyTransferred = min(maxAllowedEnergyTransfer, transferPressure * airVolumeMoved) * sign(flowRate)
+
+        if flowRate > 0 then
+          energyTransferred = min(energyTransferred, max(0, crossFlowGroup.bufferStoredEnergy))
+        end
 
         -- determine new stored energy quantities
         v.storedEnergy = v.storedEnergy + energyTransferred
@@ -383,15 +416,15 @@ local function updateGFX(dt)
   for _, g in pairs(crossFlowGroups) do
     if g.enableDebug then
       -- streams.drawGraph(g.name .. "_bufferEnergy", { value = g.bufferStoredEnergy, unit = "J" })
-      streams.drawGraph(g.name .. "_bufferPressure", { value = (g.bufferPressure - 101325) * pascalToPSI, unit = "PSI" })
+      streams.drawGraph(g.name .. "_bufferPressure", {value = (g.bufferPressure - 101325) * pascalToPSI, unit = "PSI"})
     end
   end
 
   for _, g in pairs(beamGroups) do
     if g.enableDebug then
       -- streams.drawGraph(g.name .. "_avgPressure", { value = (g.averagePressure - 101325) * pascalToPSI, unit = "PSI" })
-      streams.drawGraph(g.name .. "_avgFlowRate", { value = g.averageFlowRate * 1000, unit = "L/s" })
-      streams.drawGraph(g.name .. "_valveState", { value = g.valveState })
+      streams.drawGraph(g.name .. "_avgFlowRate", {value = g.averageFlowRate * 1000, unit = "L/s"})
+      streams.drawGraph(g.name .. "_valveState", {value = g.valveState})
     end
 
     for _, v in pairs(g.beams) do
@@ -467,8 +500,7 @@ end
 local function reset()
   for _, g in pairs(beamGroups) do
     for _, v in pairs(g.beams) do
-      local beamLength = obj:getBeamLength(v.cid)
-      local beamVolume = v.surface * beamLength
+      local beamVolume = getBeamVolume(v)
 
       v.targetPressure = v.defaultPressure
       v.currentPressure = v.defaultPressure
@@ -504,6 +536,7 @@ local function init(jbeamData)
   end
 
   local supplyHoseRadius = jbeamData.supplyHoseRadius or 0.0075 -- meters
+  local supplyValveRadius = jbeamData.supplyValveRadius or (supplyHoseRadius * 0.2) -- meters; models the valve metering orifice separately from the hose bore
   local maxSupplyPressure = jbeamData.maxSupplyPressure or math.huge
   if type(jbeamData.maxSupplyPressurePSI) == "number" then
     maxSupplyPressure = jbeamData.maxSupplyPressurePSI * psiToPascal + 101325
@@ -552,7 +585,7 @@ local function init(jbeamData)
       bufferCapacity = virtualBufferCapacity,
       invBufferCapacity = 1 / virtualBufferCapacity,
       beamGroupCount = 0,
-      enableDebug = crossFlowData.debug == true,
+      enableDebug = crossFlowData.debug == true
     }
   end
 
@@ -563,7 +596,10 @@ local function init(jbeamData)
 
     local crossFlowTag = pressureData.crossFlowTag or groupName
     local beamSupplyHoseRadius = pressureData.supplyHoseRadius or supplyHoseRadius
+    local beamSupplyValveRadius = pressureData.supplyValveRadius or supplyValveRadius
     local supplyHoseCrossSectionArea = math.pi * beamSupplyHoseRadius ^ 2
+    local supplyValveCrossSectionArea = math.pi * beamSupplyValveRadius ^ 2
+    local effectiveSupplyCrossSectionArea = getEffectiveFlowArea(supplyHoseCrossSectionArea, supplyValveCrossSectionArea)
     local beamMaxSupplyPressure = pressureData.maxSupplyPressure or maxSupplyPressure
     if type(pressureData.maxSupplyPressurePSI) == "number" then
       beamMaxSupplyPressure = pressureData.maxSupplyPressurePSI * psiToPascal + 101325
@@ -580,10 +616,14 @@ local function init(jbeamData)
         isPlayingIncrease = false,
         isPlayingDecrease = false,
         valveState = 0,
+        lastElectricsValue = 0,
         averageFlowRate = 0,
         averagePressure = 0,
+        valveStateElectricsName = pressureData.valveStateElectricsName or (M.name .. "_" .. groupName .. "_valveState"),
         avgPressureElectricsName = M.name .. "_" .. groupName .. "_pressure_avg",
         supplyHoseCrossSectionArea = supplyHoseCrossSectionArea,
+        supplyValveCrossSectionArea = supplyValveCrossSectionArea,
+        effectiveSupplyCrossSectionArea = effectiveSupplyCrossSectionArea,
         crossFlowTag = crossFlowTag,
         bufferFlowRate = 0,
         maxSupplyPressure = beamMaxSupplyPressure,
@@ -604,8 +644,7 @@ local function init(jbeamData)
     if not relevantBeams[name] then
       log("W", "actuators.init", "Can't find beam with name: " .. name)
     else
-      local beamLength = max(obj:getBeamLength(relevantBeams[name].cid) - relevantBeams[name].lengthOffset, 0)
-      local beamVolume = relevantBeams[name].surface * beamLength
+      local beamVolume = getBeamVolume(relevantBeams[name])
 
       local beamData = {
         name = name,
@@ -620,6 +659,8 @@ local function init(jbeamData)
         storedEnergy = relevantBeams[name].defaultPressure * beamVolume,
         energyDeltaThisTick = 0,
         supplyHoseCrossSectionArea = supplyHoseCrossSectionArea,
+        supplyValveCrossSectionArea = supplyValveCrossSectionArea,
+        effectiveSupplyCrossSectionArea = effectiveSupplyCrossSectionArea,
         enableDebug = beamEnableDebug and enableDebug
       }
 

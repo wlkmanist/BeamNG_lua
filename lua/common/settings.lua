@@ -6,10 +6,11 @@ local M = {}
 M.path = '/settings/'
 M.pathDefaults = M.path..'defaults.json'
 M.pathDeprecated = M.path..'deprecated.json'
-M.pathSteamdeck = M.path..'steamdeck.json'
+M.pathInternal = M.path..'not-shipping.internal.json'
 M.pathLocal = M.path..'settings.json'
 M.pathCloud = M.path..'cloud/settings.json'
-M.pathTorquescript = M.path..'game-settings.cs'
+M.pathVariables = M.path..'game-settings.json'
+M.deprecatedPathTorquescript = M.path..'game-settings.cs'
 
 M.defaults = jsonReadFile(M.pathDefaults) or {}
 M.deprecated = jsonReadFile(M.pathDeprecated) or {}
@@ -60,16 +61,34 @@ local function upgradeSettings(settings)
   return result
 end
 
--- enforce some options if we are running on steamdeck
-if runningOnSteamDeck then -- set by C++
-  local steamdeckValues = jsonReadFile(M.pathSteamdeck) or {}
-  steamdeckValues = upgradeSettings(steamdeckValues)
-  for k,v in pairs(steamdeckValues) do
+if not shipping_build then
+   if FS:fileExists(M.pathInternal) then
+    local internalValues = jsonReadFile(M.pathInternal) or {}
+    M.internalValues = upgradeSettings(internalValues)
+    for k,v in pairs(M.internalValues) do
+      local definition = M.defaults[k]
+      if definition then
+        definition[2] = v
+      end
+    end
+  end
+end
+
+-- enforce some options if we are running on a known platform like steamdeck
+local platform = Engine and Engine.Platform and Engine.Platform.getPlatform() or ""
+local pathPlatform = M.path..platform..".json"
+log("D", "", string.format("Checking for existence of platform-specific settings (platform='%s', path='%s')...", platform, pathPlatform))
+if FS:fileExists(pathPlatform) then
+  local platformValues = jsonReadFile(pathPlatform) or {}
+  platformValues = upgradeSettings(platformValues)
+  log("D", "", string.format("Found %i platform-specific settings (platform='%s', path='%s')", tableSize(platformValues), platform, pathPlatform))
+  for k,v in pairs(platformValues) do
     local definition = M.defaults[k]
     if definition then
+      log("D", "", string.format("Applied '%s' platform-specific setting '%s'='%s'", platform, k, dumps(v)))
       definition[2] = v
     else
-      log("E", "", string.format("Unable to apply a steamdeck setting '%s'=%s that is not defined in the defaults file: '%s'", k, dumps(v), M.pathDefaults))
+      log("E", "", string.format("Unable to apply platform-specific (%s) setting '%s'='%s' that is not defined in the defaults file: '%s'", platform, k, dumps(v), M.pathDefaults))
     end
   end
 end

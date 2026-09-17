@@ -122,14 +122,9 @@ local function encodeNumber(v, seridx)
     serTmp[seridx] = v >= 0 and '-9e+999' or '=9e+999'
     return seridx1
   else
-    if v < 0 then
-      serTmp[seridx] = '='
-      serTmp[seridx1] = abs(v)
-      return seridx + 2
-    else
-      serTmp[seridx] = -abs(v)
-      return seridx1
-    end
+    serTmp[seridx] = v < 0 and '=' or '-'
+    serTmp[seridx1] = abs(v)
+    return seridx + 2
   end
 end
 
@@ -212,19 +207,87 @@ local function peekDecBin()
   end
 end
 
-local function decode(is)
+local scratch = {}
+local scratchIdx = 1
+
+local function peekDecBinInto(target)
+  local c = byte(bufDec:get(1))
+
+  if c <= 250 then -- table
+    local res = type(target) == "table" and target or tablenew(c, 2)
+    local startIdx = scratchIdx
+    local arrayidx = 1
+
+    while true do
+      local elem = bufDec:decode()
+      if elem == ludNull then
+        local key = bufDec:decode()
+        if key == nil then
+          -- Flush the scratch into the target table
+          tableclear(res)
+
+          for i = startIdx, scratchIdx - 1, 2 do
+            res[scratch[i]] = scratch[i+1]
+          end
+          scratchIdx = startIdx
+          return res
+        end
+
+        elem = bufDec:decode()
+        if elem == nil then elem = peekDecBinInto(res[key]) end
+
+        scratch[scratchIdx], scratch[scratchIdx + 1] = key, elem
+        scratchIdx = scratchIdx + 2
+      else
+        if elem == nil then elem = peekDecBinInto(res[arrayidx]) end
+
+        scratch[scratchIdx], scratch[scratchIdx + 1] = arrayidx, elem
+        scratchIdx = scratchIdx + 2
+
+        arrayidx = arrayidx + 1
+      end
+    end
+  elseif c == 252 then -- vec3
+    local x, y, z = bufDec:decode(), bufDec:decode(), bufDec:decode()
+    if type(target) == "cdata" then
+      target:set(x, y, z)
+      return target
+    end
+    return vec3(x, y, z)
+
+  elseif c == 251 then -- quat
+    local x, y, z, w = bufDec:decode(), bufDec:decode(), bufDec:decode(), bufDec:decode()
+    if type(target) == "cdata" then
+      target:set(x, y, z, w)
+      return target
+    end
+    return quat(x, y, z, w)
+  end
+end
+
+local function decode(is, target)
   if is == '' or is == nil then return nil end
   local res
   local gcrunning = collectgarbage("isrunning")
   collectgarbage("stop")
   s = is
-  if byte(is, 1) == 98 then -- b
-    bufDec:set(is):get(1)
-    res = bufDec:decode()
-    if res == nil then res = peekDecBin() end
+  if type(is) == "string" then
+    if byte(is, 1) == 98 then -- b
+      bufDec:set(is):get(1)
+      res = bufDec:decode()
+      if res == nil then res = target and peekDecBinInto(target) or peekDecBin() end
+    else
+      res = peekDec[byte(is, 2)](2)
+    end
   else
-    res = peekDec[byte(is, 2)](2)
+    local tmpBufDec = bufDec
+    bufDec = is
+    bufDec:get(1)
+    res = bufDec:decode()
+    if res == nil then res = target and peekDecBinInto(target) or peekDecBin() end
+    bufDec = tmpBufDec
   end
+
   s = nil
   if gcrunning then collectgarbage("restart") end
   return res
@@ -245,11 +308,7 @@ do
     end
     ,
     number = function(v)
-      if v * 0 ~= 0 then -- inf,nan
-        bufTmp:put(v > 0 and '9e999' or '-9e999')
-      else
-        bufTmp:put(v)
-      end
+        bufTmp:put(v * 0 == 0 and v or (v > 0 and '9e999' or '-9e999')) -- inf,nan
     end
     ,
     table = function(v)

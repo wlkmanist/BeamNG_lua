@@ -29,20 +29,6 @@ local function translationWorldToPropAxis(trans, inLocalSpace, refPos, refXPos, 
   return mat:mulP3F(trans)
 end
 
-local function getPropGlobalPosWithNodeOffsetMove(prop, pos)
-  local newPos = vec3(pos)
-  if prop.nodeOffset and type(prop.nodeOffset) == 'table' and prop.nodeOffset.x and prop.nodeOffset.y and prop.nodeOffset.z then
-    local nodeOffsetCoef = prop.ignoreNodeOffset and 0 or 1
-    newPos.x = newPos.x + fsign(newPos.x) * prop.nodeOffset.x * nodeOffsetCoef
-    newPos.y = newPos.y + prop.nodeOffset.y * nodeOffsetCoef
-    newPos.z = newPos.z + prop.nodeOffset.z * nodeOffsetCoef
-  end
-  if prop.nodeMove and type(prop.nodeMove) == 'table' and prop.nodeMove.x and prop.nodeMove.y and prop.nodeMove.z then
-    newPos.x, newPos.y, newPos.z = newPos.x + prop.nodeMove.x, newPos.y + prop.nodeMove.y, newPos.z + prop.nodeMove.z
-  end
-  return newPos
-end
-
 local function parseColor(v)
   if v == nil then
     return ColorF(0,0,0,0)
@@ -57,6 +43,7 @@ end
 
 
 local function processTris(objID, vehicleObj, vehicle)
+  profilerPushEvent('processTris')
   if vehicleObj and vehicle.triangles then
     for _, triangle in pairs(vehicle.triangles) do
       -- skip denormalized tris
@@ -65,6 +52,7 @@ local function processTris(objID, vehicleObj, vehicle)
       end
     end
   end
+  profilerPopEvent('processTris')
 end
 
 local function processProps(objID, vehicleObj, vehicle)
@@ -115,6 +103,10 @@ local function processProps(objID, vehicleObj, vehicle)
         -- Set prop ref nodes first since stuff below is dependent on this
         p:setRefNodes(idRef, idX, idY)
 
+        if prop.translationUseMeters then
+          p:setTranslationUseMeters(true)
+        end
+
         -- Prop translation
         p:setTranslation(vec3(prop.translation))
 
@@ -134,20 +126,26 @@ local function processProps(objID, vehicleObj, vehicle)
         end
         -- Prop baseTranslationGlobal (optional)
         if prop.baseTranslationGlobal then
-          local newPos = getPropGlobalPosWithNodeOffsetMove(prop, prop.baseTranslationGlobal)
-          prop.baseTranslationGlobalWithNodeOffsetMove = newPos
+          local x, y, z = prop.baseTranslationGlobal.x, prop.baseTranslationGlobal.y, prop.baseTranslationGlobal.z
+          local newX, newY, newZ = jbeamUtils.getPosAfterNodeRotateOffsetMove(prop, x, y, z)
+          local newPos = vec3(newX, newY, newZ)
+          prop.baseTranslationGlobalWithNodeTransforms = newPos
           p:setBaseTranslationGlobal(newPos)
         end
         -- Prop baseTranslationGlobalElastic (optional)
         if prop.baseTranslationGlobalElastic then
-          local newPos = getPropGlobalPosWithNodeOffsetMove(prop, prop.baseTranslationGlobalElastic)
-          prop.baseTranslationGlobalElasticWithNodeOffsetMove = newPos
+          local x, y, z = prop.baseTranslationGlobalElastic.x, prop.baseTranslationGlobalElastic.y, prop.baseTranslationGlobalElastic.z
+          local newX, newY, newZ = jbeamUtils.getPosAfterNodeRotateOffsetMove(prop, x, y, z)
+          local newPos = vec3(newX, newY, newZ)
+          prop.baseTranslationGlobalElasticWithNodeTransforms = newPos
           p:setBaseTranslationGlobalElastic(newPos)
         end
         -- Prop baseTranslationGlobalRigid (optional)
         if prop.baseTranslationGlobalRigid then
-          local newPos = getPropGlobalPosWithNodeOffsetMove(prop, prop.baseTranslationGlobalRigid)
-          prop.baseTranslationGlobalRigidWithNodeOffsetMove = newPos
+          local x, y, z = prop.baseTranslationGlobalRigid.x, prop.baseTranslationGlobalRigid.y, prop.baseTranslationGlobalRigid.z
+          local newX, newY, newZ = jbeamUtils.getPosAfterNodeRotateOffsetMove(prop, x, y, z)
+          local newPos = vec3(newX, newY, newZ)
+          prop.baseTranslationGlobalRigidWithNodeTransforms = newPos
           p:setBaseTranslationGlobalRigid(newPos)
         end
 
@@ -198,6 +196,8 @@ local function processProps(objID, vehicleObj, vehicle)
             -- try to set the light options then
             local innerAngle = prop.lightInnerAngle or 40
             local outerAngle = prop.lightOuterAngle or 45
+            if prop.mesh == "SPOTLIGHT" and prop.lightIntensityCd then prop.lightBrightness = (prop.lightIntensityCd / 5000.0)
+            elseif prop.mesh == "POINTLIGHT" and prop.lightIntensityLm then prop.lightBrightness = (prop.lightIntensityLm / 5000.0) / (4.0 * math.pi) end
             local brightness = prop.lightBrightness or 1
             local range = prop.lightRange or 10
             local castShadows = prop.lightCastShadows or false
@@ -236,7 +236,7 @@ local function processProps(objID, vehicleObj, vehicle)
     end
     --log('D', "jbeam.pushToPhysics","- added ".. prop_count .." props")
   end
-  profilerPopEvent()
+  profilerPopEvent('processProps')
 end
 
 local function processFlexbodies(objID, vehicleObj, vehicle)
@@ -317,26 +317,26 @@ local function processFlexbodies(objID, vehicleObj, vehicle)
       ::continue::
     end
   end
-  profilerPopEvent()
+  profilerPopEvent('processFlexbodies')
 end
 
 
 local function process(objID, vehicleObj, vehicle)
   profilerPushEvent('jbeam/meshs.process')
   if vehicle.flexbodies ~= nil then
+    profilerPushEvent('flexmesh_rotate')
     for _, v in pairs(vehicle.flexbodies) do
-      if v.nodeOffset and type(v.nodeOffset) == 'table' and v.nodeOffset.x and v.nodeOffset.y and v.nodeOffset.z then
+      local x, y, z, rx, ry, rz = jbeamUtils.getFlexbodyPosRotAfterNodeRotateOffsetMove(v, v.pos and v.pos.x or 0, v.pos and v.pos.y or 0, v.pos and v.pos.z or 0, v.rot and v.rot.x or 0, v.rot and v.rot.y or 0, v.rot and v.rot.z or 0)
+      if x ~= nil then
         v.pos = v.pos or {x = 0, y = 0, z = 0}
-        local nodeOffsetCoef = v.ignoreNodeOffset and 0 or 1
-        v.pos.x = v.pos.x + sign(v.pos.x) * v.nodeOffset.x * nodeOffsetCoef
-        v.pos.y = v.pos.y + v.nodeOffset.y * nodeOffsetCoef
-        v.pos.z = v.pos.z + v.nodeOffset.z * nodeOffsetCoef
+        v.pos.x, v.pos.y, v.pos.z = x, y, z
       end
-      if v.nodeMove and type(v.nodeMove) == 'table' and v.nodeMove.x and v.nodeMove.y and v.nodeMove.z then
-        v.pos = v.pos or {x = 0, y = 0, z = 0}
-        v.pos.x, v.pos.y, v.pos.z = v.pos.x + v.nodeMove.x, v.pos.y + v.nodeMove.y, v.pos.z + v.nodeMove.z
+      if rx ~= nil then
+        v.rot = v.rot or {x = 0, y = 0, z = 0}
+        v.rot.x, v.rot.y, v.rot.z = rx, ry, rz
       end
     end
+    profilerPopEvent('flexmesh_rotate')
   end
 
   -- request the 3d meshes for faster processing on the c++ side
@@ -348,8 +348,9 @@ local function process(objID, vehicleObj, vehicle)
     end
   end
 
+  profilerPushEvent('meshFinalize')
   local reuseMesh = false
-  if vehicleObj then
+  if vehicleObj and vehicleObj.requestMeshBegin and vehicleObj.requestMeshCommit then
     vehicleObj:requestMeshBegin()
     if vehicle.props ~= nil then
       for _, prop in pairs(vehicle.props) do
@@ -365,15 +366,17 @@ local function process(objID, vehicleObj, vehicle)
     end
     reuseMesh = (vehicleObj:requestMeshCommit() == 1)
   end
-
+  profilerPopEvent('meshFinalize')
   processTris(objID, vehicleObj, vehicle)
   processProps(objID, vehicleObj, vehicle)
   processFlexbodies(objID, vehicleObj, vehicle)
 
+  profilerPushEvent('meshCommit')
   if vehicleObj then
     vehicleObj:meshCommit()
   end
-  profilerPopEvent() -- jbeam/meshs.process
+  profilerPopEvent('meshCommit')
+  profilerPopEvent('jbeam/meshs.process')
 end
 
 M.process = process

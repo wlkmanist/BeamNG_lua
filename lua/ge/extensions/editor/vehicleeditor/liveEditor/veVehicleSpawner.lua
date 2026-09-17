@@ -106,8 +106,8 @@ local function vehicleSelectorGui()
         --table.insert(vehsData, {veh = veh, initPos = vec3(spawnPos), done = false})
       end
     end
-    im.End()
   end
+  im.End()
 end
 
 local function onUpdate()

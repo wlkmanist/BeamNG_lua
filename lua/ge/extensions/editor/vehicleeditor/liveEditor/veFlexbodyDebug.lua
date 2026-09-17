@@ -1,4 +1,4 @@
--- This Source Code Form is subject to the terms of the bCDDL, var. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -695,8 +695,8 @@ local function renderFlexmeshCombobox(pickedFlexbody, pickedFlexbodyObj)
           end
         end
       end
-      im.End()
     end
+    im.End()
   end
 
   if im.Button("Favorite") then
@@ -743,8 +743,8 @@ local function renderSelectNodeByID(flexbody, flexbodyObj)
           end
         end
       end
-      im.End()
     end
+    im.End()
   end
 end
 
@@ -786,8 +786,8 @@ local function renderSelectVertexByID(flexbody, flexbodyObj)
           end
         end
       end
-      im.End()
     end
+    im.End()
   end
 end
 
@@ -1074,6 +1074,7 @@ local function renderVertexOOBCoordsWindow()
         end
       end
     end
+    im.End()
   end
 end
 
@@ -1096,10 +1097,11 @@ local function renderVerticesLackingNodesWindow()
               selectVerticesForLackingNodesMode(verticesData)
             end
           end
-          im.EndChild()
         end
+        im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
       end
     end
+    im.End()
   end
 end
 
@@ -1127,11 +1129,11 @@ local function onUpdate(dt)
       end
       im.EndTabBar()
     end
-
-    renderVertexOOBCoordsWindow()
-    renderVerticesLackingNodesWindow()
   end
   im.End()
+
+  renderVertexOOBCoordsWindow()
+  renderVerticesLackingNodesWindow()
 end
 
 local function onVehicleSwitched(oldVehicle, newVehicle, player)

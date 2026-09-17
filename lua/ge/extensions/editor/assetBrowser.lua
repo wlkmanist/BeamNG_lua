@@ -1,4 +1,4 @@
--- This Source Code Form is subject to the terms of the bCDDL, var. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -11,11 +11,16 @@ local im = ui_imgui
 local imguiUtils = require('ui/imguiUtils')
 local assetBrowserWindowName = "assetBrowser"
 local assetBrowserImageInspectorWindowName = "assetBrowserImageInspector"
+local createCollectionDialogWindowName = "assetBrowser_createCollectionDialog"
+local pasteCollectionDialogWindowName = "assetBrowser_pasteCollectionDialog"
+local renameCollectionDialogWindowName = "assetBrowser_renameCollectionDialog"
 local icons = require("editor/iconOverview")
 local setupWasDone = false
 
 local logTag = 'editor_assetBrowser: '
 local debug = false
+
+local anyWindowHovered = false
 
 -- TODO: Either cache the data we retrieve from the db or not.
 local cacheResults = false
@@ -36,9 +41,9 @@ var.windowFlags = im.flags(im.WindowFlags_MenuBar, im.WindowFlags_NoScrollbar)
 var.windowWasOpen = false
 var.settingsPath = "/settings/editor/assetBrowser_settings.json"
 var.meshPreviewThumbnailPath = "/temp/assetBrowser/thumbnails/"
-var.imageInspector_checkerboardBgPath = "/core/art/gui/images/checkerboard_bg.png"
-var.imageInspector_whiteBgPath = "/core/art/gui/images/white_bg.png"
-var.imageInspector_blackBgPath = "/core/art/gui/images/black_bg.png"
+var.imageInspector_checkerboardBgPath = "/assets/textures/editor/checkerboard_bg.png"
+var.imageInspector_whiteBgPath = "/assets/textures/editor/white_bg.png"
+var.imageInspector_blackBgPath = "/assets/textures/editor/black_bg.png"
 var.imageInspector_bg_state_enum = {
   checkerboard = 0,
   black = 1,
@@ -75,7 +80,6 @@ var.displayedItemsCount = 0
 
 var.skipMainFolder = false
 var.root = nil
-var.otherFolders = nil
 
 var.assetViewFilter = im.ImGuiTextFilter()
 var.assetViewFilterDB = im.ArrayChar(32)
@@ -127,6 +131,10 @@ var.meshPreviewDisplayCollisionMesh = false
 var.meshPreviewCacheThumbnailSize = 128
 var.meshPreviewCacheThumbnailRect = RectI(0,0,var.meshPreviewCacheThumbnailSize,var.meshPreviewCacheThumbnailSize)
 
+var.materialPreviewThumbnailPath = "/temp/assetBrowser/material_thumbnails/"
+var.materialPreviewCacheSize = 128
+var.materialPreviewCacheRect = RectI(0,0,var.materialPreviewCacheSize,var.materialPreviewCacheSize)
+
 var.imageButtonBorderSize = 1
 
 var.iconSize = im.ImVec2(var.minThumbnailSize, var.minThumbnailSize)
@@ -150,6 +158,9 @@ var.newFolderName = im.ArrayChar(32)
 var.newFolderMessages = {}
 var.newFolderParentDir = nil
 
+var.directoriesToLoad_new_name = ""
+var.directoriesToLoad_new_path = ""
+
 var.imageFileTypes = {'jpg', 'png', 'dds', 'tif', 'tiff', 'jpeg'}
 var.fileSizeAbbreviations = {"B", "KB", "MB", "GB", "TB"}
 
@@ -160,7 +171,21 @@ var.confirmationState = var.confirmationState_enum.none
 
 var.options = nil
 
+var.collectionExtension = ".json"
 var.savedSearchesOpen = false
+var.collectionsSectionOpen = false
+var.collections = {}
+var.newCollectionName = "New Collection"
+var.newCollectionFileName = "New_Collection"
+var.collectionsPath = "/settings/editor/assetBrowser/collections/"
+var.createCollectionAssets = nil
+var.createCollectionDirs = nil
+var.createCollectionNameValid = true
+var.createCollectionFilenameValid = true
+var.collectionMap = {}
+
+var.pasteCollectionData = nil
+var.renameCollectionData = nil
 
 var.assetSortingTypes = {
   {
@@ -290,6 +315,7 @@ var.typeColors = {
   ['textureSet'] = {0.913,0.494,0.247},
   ['part configuration'] = {0.223,0.803,0.835},
   ['jbeam'] = {0.301, 0.576, 0.549},
+  ['missingCollectionAsset'] = {1.0, 0.0, 0.0},
 }
 
 var.selectInstantiatedObjectId = 0
@@ -298,14 +324,6 @@ var.selectInstantiatedObjectId = 0
 local function getUniqueId()
   var.uniqueId = var.uniqueId + 1
   return var.uniqueId
-end
-
-local function isWindowHovered()
-  if (var.io.MousePos.x >= var.windowPos.x) and (var.io.MousePos.x <= (var.windowPos.x + var.windowSize.x)) and (var.io.MousePos.y >= var.windowPos.y) and (var.io.MousePos.y <= (var.windowPos.y + var.windowSize.y)) then
-    return true
-  else
-    return false
-  end
 end
 
 local function directoryFilterCheck(dir)
@@ -349,6 +367,9 @@ local function assetSimpleFileTypeCheck(asset)
 end
 
 local function assetFilterCheck(asset)
+  if asset.type == "missingCollectionAsset" then
+    return true
+  end
   if (
     (editor.getPreference("assetBrowser.general.fullPathSearch") and assetPathCheck(asset) or assetFileNameCheck(asset)) or
     assetFileTypeNameCheck(asset)) and
@@ -374,6 +395,9 @@ local function formatFileTime(file)
 end
 
 local function createFileStats(file, forced)
+  if file.type == "missingCollectionAsset" then
+    return
+  end
   if not file.filestats or forced == true then
     file.filestats = FS:stat(file.path)
     if file.filestats.filesize then
@@ -393,13 +417,16 @@ local function createMeshPreviewJob(job)
   if FS:fileExists(job.args[1].inspectorData.cachePath) == false
   or (FS:fileExists(job.args[1].inspectorData.cachePath) == true and job.args[1].filestats.modtime > FS:stat(job.args[1].inspectorData.cachePath).createtime) then
     local shapePrev = ShapePreview()
+
     shapePrev:setRenderState(false,false,false,false,false)
     shapePrev:setCamRotation(0.3, 0)
     shapePrev:setObjectModel(job.args[1].path)
 
     local levelName = string.match(job.args[1].path, "/levels/([%w_]+)")
     local artFilepath = string.match(job.args[1].path, "/art/(.+)")
-    if not levelName and not artFilepath then
+    local assetsFilepath = string.match(job.args[1].path, "/assets/(.+)")
+
+    if not levelName and (not artFilepath and not assetsFilepath) then
       return
     end
 
@@ -415,7 +442,9 @@ local function createMeshPreviewJob(job)
     local bitmap = GBitmap()
     bitmap:init(var.meshPreviewCacheThumbnailSize,var.meshPreviewCacheThumbnailSize)
     shapePrev:copyToBmp(bitmap:getPtr())
-    bitmap:saveFile(job.args[1].inspectorData.cachePath)
+    if not bitmap:saveFile(job.args[1].inspectorData.cachePath) then
+      editor.logError("Could not save asset thumbnail: " .. job.args[1].inspectorData.cachePath)
+    end
   end
   -- Indicates whether cache etc. has been created or not.
   job.args[1].ready = true
@@ -437,7 +466,9 @@ local function createMeshPreview(asset)
 
     local levelName = string.match(asset.path, "/levels/([%w_]+)")
     local artFilepath = string.match(asset.path, "/art/(.+)")
-    if not levelName and not artFilepath then
+    local assetsFilepath = string.match(job.args[1].path, "/assets/(.+)")
+
+    if not levelName and (not artFilepath and not assetsFilepath) then
       return
     end
 
@@ -453,6 +484,100 @@ local function createMeshPreview(asset)
   end
   -- Indicates whether cache and stuff has been created or not.
   asset.ready = true
+end
+
+local function getMaterialThumbPath(mat)
+  FS:directoryCreate(var.materialPreviewThumbnailPath, true)
+  mat.inspectorData = mat.inspectorData or {}
+
+  local srcPath = (mat.sourceFile and mat.sourceFile.path) or mat.path or "unknown_materials_file"
+  local key = srcPath .. "#" .. (mat.name or "noname")
+  return var.materialPreviewThumbnailPath .. key .. ".png"
+end
+
+local function materialThumbIsValid(mat)
+  if not mat then return false end
+  local cachePath = mat.inspectorData and mat.inspectorData.cachePath
+  if not cachePath or not FS:fileExists(cachePath) then return false end
+
+  -- invalidate when source .materials.json is newer than cached png
+  if mat.sourceFile then
+    createFileStats(mat.sourceFile, true)
+    local cacheStat = FS:stat(cachePath)
+    if cacheStat and cacheStat.createtime and mat.sourceFile.filestats and mat.sourceFile.filestats.modtime then
+      if mat.sourceFile.filestats.modtime > cacheStat.createtime then
+        return false
+      end
+    end
+  end
+
+  return true
+end
+
+local function createMaterialPreviewJob(job)
+  local mat = job.args[1]
+  local forced = job.args[2] == true
+
+  mat.ready = false
+  mat.inspectorData = mat.inspectorData or {}
+  mat.inspectorData.cachePath = mat.inspectorData.cachePath or getMaterialThumbPath(mat)
+
+  if not forced and materialThumbIsValid(mat) then
+    mat.ready = true
+    return
+  end
+
+  if not mat.cobj then mat.cobj = scenetree.findObject(mat.name) end
+  if not mat.cobj then
+    mat.ready = true
+    return
+  end
+
+  local shapePrev = ShapePreview()
+  shapePrev:setObjectModel("/art/shapes/material_preview/cube_1m.dae")
+  shapePrev:setInputEnabledEx(true, false, true, false, true)
+  shapePrev:setRenderState(false,false,false,false,false,false)
+  shapePrev:setCamRotation(0.6, 3.9)
+  shapePrev:setSunRotation(135,90)
+  shapePrev:fitToShape()
+  shapePrev:setZoom(1.8)
+  shapePrev.mBgColor = ColorI(128,128,128,255)
+  shapePrev:setMaterial(mat.cobj)
+
+  var.materialPreviewCacheRect.point = Point2I(0,0)
+  var.materialPreviewCacheRect.extent = Point2I(var.materialPreviewCacheSize, var.materialPreviewCacheSize)
+
+  shapePrev:renderWorld(var.materialPreviewCacheRect)
+  coroutine.yield()
+  shapePrev:renderWorld(var.materialPreviewCacheRect)
+  coroutine.yield()
+  shapePrev:renderWorld(var.materialPreviewCacheRect)
+
+  local bmp = GBitmap()
+  bmp:init(var.materialPreviewCacheSize, var.materialPreviewCacheSize)
+  shapePrev:copyToBmp(bmp:getPtr())
+  bmp:saveFile(mat.inspectorData.cachePath)
+
+  mat.ready = true
+end
+
+local function requestMaterialPreview(mat, forced)
+  if not mat then return end
+  mat.inspectorData = mat.inspectorData or {}
+  mat.inspectorData.cachePath = mat.inspectorData.cachePath or getMaterialThumbPath(mat)
+
+  if not forced and materialThumbIsValid(mat) then
+    mat.ready = true
+    return
+  end
+  if mat.inspectorData.previewJobQueued then
+    return
+  end
+  mat.inspectorData.previewJobQueued = true
+  core_jobsystem.create(function(job)
+    createMaterialPreviewJob(job)
+    mat.inspectorData.previewJobQueued = false
+  end, 1, mat, forced == true)
 end
 
 -- Create data for a single file we can display in the inspector based on its type.
@@ -496,6 +621,11 @@ local function createInspectorData(file, forced, noJob)
           mat.type = 'material'
           mat.cobj = scenetree.findObject(matName)
           mat.selected = false
+
+          mat.sourceFile = file
+          mat.dir = file.dir
+          mat.path = file.path
+
           file.inspectorData.materials[matName] = mat
         end
       end
@@ -541,6 +671,17 @@ local function createAssetDataJob(job)
       createFileStats(job.args[1].s)
     end
   elseif job.args[1].type == "material" then
+    local mat = job.args[1]
+    coroutine.yield()
+
+    mat.inspectorData = mat.inspectorData or {}
+    mat.inspectorData.cachePath = mat.inspectorData.cachePath or getMaterialThumbPath(mat)
+    core_jobsystem.create(createMaterialPreviewJob, 1, mat, false)
+
+    if mat.sourceFile then
+      coroutine.yield()
+      createFileStats(mat.sourceFile, true)
+    end
 
   else
     coroutine.yield()
@@ -726,10 +867,8 @@ local function filterDirs()
       end
     end
   elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
-    if var.root.dirs then
-      for k,dir in pairs(var.root.dirs) do
-        checkDirs(dir)
-      end
+    for _,dir in pairs(var.allDirs) do
+      checkDirs(dir)
     end
   end
   table.sort(var.filteredDirs, function(a,b) return string.lower(a.name) < string.lower(b.name) end)
@@ -749,7 +888,9 @@ local function filterAssets()
       end
     end
   elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
-    checkAssets(var.root)
+    for _,dir in pairs(var.allDirs) do
+      checkAssets(dir)
+    end
   end
 
   for _, group in pairs(var.filteredAssetGroups) do
@@ -785,7 +926,9 @@ local function filterAssets()
       end
     end
   elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
-    checkTextureSets(var.root)
+    for _,dir in pairs(var.allDirs) do
+      checkTextureSets(dir)
+    end
   end
 end
 
@@ -797,51 +940,6 @@ local function getAssetTypeColor(asset)
     editor.logWarn(logTag .. "No suitable color for type '" .. asset.type .. "'. Using default color.")
     return im.GetColorU322(im.ImVec4(1,1,1,1))
   end
-end
-
-local function createDBFilesTable(data)
-  var.filteredAssets = {}
-  if not data then return end
-  dump(data)
-  dump(#data)
-  --[[
-  for k, file in ipairs(data) do
-
-    var.filteredAssets[k] = {
-      id = file.file_id,
-      filename = file.aliases_basename,
-      extension = file.aliases_extension,
-      sourcefilename = file.files_sourcefilename,
-      path = file.aliases_directory, --<-- TODO: directory
-      filesize = file.files_filesize,
-      hash = file.files_hash,
-      modtime = file.files_modtime,
-      createtime = file.files_createtime,
-      fullFileName = file.aliases_basename .. '.' .. file.aliases_extension,
-      selected = false
-    }
-    local ext = file.aliases_extension
-    if tableContains(var.imageFileTypes, ext) then
-      var.filteredAssets[k].type = "image"
-    elseif ext == "json" then
-      var.filteredAssets[k].type = "json"
-    elseif ext == "ter" then
-      var.filteredAssets[k].type = "terrain"
-    elseif ext == "prefab" then
-      var.filteredAssets[k].type = "prefab"
-    elseif ext == "cs" then
-      var.filteredAssets[k].type = "datablock"
-    elseif ext == "dae" then
-      var.filteredAssets[k].type = "mesh"
-    elseif ext == "html" then
-      var.filteredAssets[k].type = "html"
-    elseif ext == "lua" then
-      var.filteredAssets[k].type = "lua"
-    else
-      var.filteredAssets[k].type = "asset"
-    end
-  end
-  ]]
 end
 
 local function selectDirectory(dir, toggleOpen, open, addToHistory, createNoAssetData)
@@ -897,6 +995,11 @@ local function selectDirectory(dir, toggleOpen, open, addToHistory, createNoAsse
   end
 end
 
+local function selectCollection(collection)
+  if not collection then return end
+  selectDirectory(collection)
+end
+
 local function pathToRoot(path, dir)
   if dir ~= true then
     table.insert(path, 1, dir)
@@ -914,7 +1017,6 @@ local function newDirectory(path, name, parent, open, selected, addToParent)
     selected = selected or false,
     processed = false -- whether inspector gui data has been created for the files of the dir or not
   }
-  -- TODO: create path to root
   dir.pathToRoot = {}
   pathToRoot(dir.pathToRoot, dir.parent)
 
@@ -1009,6 +1111,8 @@ local function icon(file, size, col)
     editor.uiIconImage(editor.icons.directions_car, size, col)
   elseif file.type == 'jbeam' then
     editor.uiIconImage(editor.icons.directions_car, size, col)
+  elseif file.type == 'missingCollectionAsset' then
+    editor.uiIconImage(editor.icons.warning, size, editor.color.error.Value)
   else
     editor.logWarn(logTag .. "No suitable icon for type '" .. file.type .. "'. Using default icon.")
     editor.uiIconImage(editor.icons.favorite, size, col)
@@ -1032,9 +1136,7 @@ local function disableAllFilterTypes()
 end
 
 local function openSearchFilter(filter)
-  im.TextFilter_SetInputBuf(var.assetViewFilter, filter.filterInput )
-  ffi.copy(var.assetViewFilter.InputBuf, filter.filterInput) --because SetInputBuf doesn't work here
-  -- im.ImGuiTextFilter_Build(var.assetViewFilter)
+  im.TextFilter_SetInputBuf(var.assetViewFilter, filter.filterInput)
   var.options.assetViewFilterType = filter.filterType
   var.options.filter_displayDirs = filter.displayDirs
   var.options.filter_displayAssets = filter.displayAssets
@@ -1125,7 +1227,7 @@ local function instantiateMesh(asset)
   newObj:registerObject('')
 
   editor.setDirty()
-  local grp = scenetree.MissionGroup
+  local grp = editor.resolveAddGroup(scenetree.MissionGroup)
   if grp then
     grp:addObject(newObj)
     if editor.getPreference("assetBrowser.general.selectInstantiatedObject") then
@@ -1171,20 +1273,22 @@ end
 local function onDragEnded(aborted)
   if var.dragDropMesh then
     if aborted == nil or aborted == false then
-      if isWindowHovered() == false then
+      if anyWindowHovered == false then
         editor.setDirty()
-        local grp = scenetree.MissionGroup
+        local grp = editor.resolveAddGroup(scenetree.MissionGroup)
         if grp then
           grp:addObject(var.dragDropMesh)
         else
           editor.logDebug("MissionGroup does not exist")
         end
         -- deselect object
-        editor.selection["asset"].selectedInABView = false
-        editor.selection["asset"].selected = false
+        if editor.selection["asset"] then
+          editor.selection["asset"].selectedInABView = false
+          editor.selection["asset"].selected = false
+        end
         -- enable 'object select' once user has instantiated an object via drag'n'drop feature
-        editor.selectObjects({var.dragDropMesh:getID()})
         editor.selectEditMode(editor.editModes.objectSelect)
+        editor.selectObjects({var.dragDropMesh:getID()})
         editor.history:commitAction("CreateObject", {objectId = var.dragDropMesh:getID()},
                                   createObjectUndo, createObjectRedo, true)
       end
@@ -1206,7 +1310,7 @@ local function onDrag()
     var.dragging = var.dragging_enum.dragging
   end
 
-  -- local rayCastFlags = im.flags(SOTTerrain)
+  if not editor.assetDragDrop.data then return end
   local rayCastFlags = im.flags(SOTTerrain, SOTWater, SOTStaticShape, SOTPlayer, SOTItem, SOTVehicle, SOTForest)
 
   if var.dragDropMesh then var.dragDropMesh:disableCollision() end
@@ -1230,7 +1334,7 @@ local function onDrag()
           var.dragDropMesh = spawnPrefab(Sim.getUniqueName(editor.assetDragDrop.data.fileName), editor.assetDragDrop.data.path, "0 0 0", "1 0 0 0", "1 1 1")
           if var.dragDropMesh then
             var.dragDropMesh.loadMode = 0
-            scenetree.MissionGroup:addObject(var.dragDropMesh.obj)
+            editor.resolveAddGroup(scenetree.MissionGroup):addObject(var.dragDropMesh.obj)
             local camDir = (core_camera.getQuat() * vec3(0,1,0)) * 10
             var.dragDropMesh.obj:setPosition(core_camera.getPosition() + camDir)
           end
@@ -1253,7 +1357,7 @@ local function onDrag()
         end
       end
     else
-      if isWindowHovered() == true then
+      if anyWindowHovered == true then
         var.dragDropMesh.hidden = true
       else
         var.dragDropMesh.hidden = false
@@ -1290,6 +1394,20 @@ local function onDrag()
   -- end
 end
 
+local function directoryDragDropSource(directory)
+  if not directory then return end
+  if var.dragging == var.dragging_enum.dragging then im.SetWindowFocus1() end
+  if var.dragging == var.dragging_enum.drag_ended then return end
+
+  if im.BeginDragDropSource(im.DragDropFlags_SourceAllowNullID) then
+    local data = im.ArrayChar(2048, directory.path)
+    im.SetDragDropPayload("DIRECTORYDRAGDROP", data, im.ArraySize(data), im.Cond_Once)
+    im.TextUnformatted(directory.path)
+    onDrag()
+    im.EndDragDropSource()
+  end
+end
+
 local function dragDropSource(asset, pos)
   if var.dragging == var.dragging_enum.dragging then im.SetWindowFocus1() end
 
@@ -1307,7 +1425,8 @@ local function dragDropSource(asset, pos)
         end
       end
     end
-    im.SetDragDropPayload("ASSETDRAGDROP", editor.assetDragDrop.data.path, ffi.sizeof'char[2048]', im.Cond_Once)
+    local data = im.ArrayChar(2048, editor.assetDragDrop.data.path)
+    im.SetDragDropPayload("ASSETDRAGDROP", data, im.ArraySize(data), im.Cond_Once)
     if (asset.type == 'image' or asset.type == 'mesh') and editor.assetDragDrop.dragImage and editor.assetDragDrop.dragImage.tex then
       local sizex = var.tooltipThumbnailSize.x
       local sizey = var.tooltipThumbnailSize.y
@@ -1325,13 +1444,14 @@ local function dragDropSource(asset, pos)
           end
         end
       end
+      im.TextUnformatted(asset.path)
       im.Image(
         editor.assetDragDrop.dragImage.tex:getID(),
         im.ImVec2(sizex, sizey),
         nil, nil, nil,
         editor.color.white.Value
       )
-  else
+    else
       im.TextUnformatted(asset.path)
     end
     onDrag()
@@ -1343,9 +1463,501 @@ end
 -- ##### GUI: MAIN
 
 -- ##### GUI: CONTEXT MENUS
+local function checkCollectionNameAndFileName()
+  var.createCollectionNameValid = true
+  var.createCollectionFilenameValid = true
+  if var.newCollectionName == "" then
+    var.createCollectionNameValid = false
+  end
+  if var.newCollectionFileName == "" then
+    var.createCollectionFilenameValid = false
+  end
+
+  local path = var.collectionsPath .. var.newCollectionFileName .. var.collectionExtension
+  if FS:fileExists(path) then
+    var.createCollectionFilenameValid = false
+  end
+
+  for _, collection in ipairs(var.collections) do
+    if collection.name == var.newCollectionName then
+      var.createCollectionNameValid = false
+      return
+    end
+  end
+end
+
+local function sanitizeCollectionPathName(name)
+  if not name then return "" end
+  name = name:gsub("[^%w_%-%.]", "_")
+  return name
+end
+
+local function serializeCollection(collection)
+  local collectionJsonData = {
+    name = collection.name,
+    files = {},
+    dirs = {},
+  }
+  for _, asset in ipairs(collection.files) do
+    table.insert(collectionJsonData.files, asset.path)
+  end
+  for _, dir in ipairs(collection.dirs) do
+    table.insert(collectionJsonData.dirs, dir.path)
+  end
+  return collectionJsonData
+end
+
+local function getCollectionByName(collectionName)
+  if not collectionName then return end
+  for _, collection in ipairs(var.collections) do
+    if collection.name == collectionName then
+      return collection
+    end
+  end
+  return nil
+end
+
+local function removeDirFromCollection(collectionName, dir)
+  if not collectionName then return end
+  if not dir then return end
+  local collection = getCollectionByName(collectionName)
+  if not collection then
+    editor.logWarn("Collection not found: " .. collectionName)
+    return
+  end
+  if not tableContains(collection.dirs, dir) then
+    editor.logWarn("Directory not found in collection: " .. collectionName .. " - " .. dir.path)
+    return
+  end
+  for i = #collection.dirs, 1, -1 do
+    if collection.dirs[i] == dir then
+      table.remove(collection.dirs, i)
+      break
+    end
+  end
+  local collectionJsonData = serializeCollection(collection)
+  jsonWriteFile(var.collectionsPath .. collection.filename, collectionJsonData)
+  filterDirs()
+end
+
+local function removeAssetFromCollection(collectionName, asset)
+  if not collectionName then return end
+  if not asset then return end
+  local collection = getCollectionByName(collectionName)
+  if not collection then
+    editor.logWarn("Collection not found: " .. collectionName)
+    return
+  end
+  if not tableContains(collection.files, asset) then
+    editor.logWarn("Asset not found in collection: " .. collectionName .. " - " .. asset.path)
+    return
+  end
+  for i = #collection.files, 1, -1 do
+    if collection.files[i] == asset then
+      table.remove(collection.files, i)
+      break
+    end
+  end
+  local collectionJsonData = serializeCollection(collection)
+  jsonWriteFile(var.collectionsPath .. collection.filename, collectionJsonData)
+  filterAssets()
+end
+
+local function addDirToCollection(collection, dir)
+  if not collection then return end
+  if not dir then return end
+  if tableContains(collection.dirs, dir) then
+    editor.logInfo("Dir already in collection")
+    return
+  end
+
+  table.insert(collection.dirs, dir)
+
+  local collectionJsonData = serializeCollection(collection)
+  jsonWriteFile(var.collectionsPath .. collection.filename, collectionJsonData)
+end
+
+local function addAssetToCollection(collection, asset)
+  if not collection then return end
+  if not asset then return end
+  if tableContains(collection.files, asset) then
+    editor.logInfo("Asset already in collection")
+    return
+  end
+
+  -- Add asset to collection
+  table.insert(collection.files, asset)
+
+  -- JSON data
+  local collectionJsonData = serializeCollection(collection)
+  jsonWriteFile(var.collectionsPath .. collection.filename, collectionJsonData)
+end
+
+-- Opens a directory in the current selected directory based on a given name.
+local function openDirByName(name, createNoAssetData)
+  if var.selectedDirectory and var.selectedDirectory.dirs then
+    for _,dir in ipairs(var.selectedDirectory.dirs) do
+      if name == dir.name then
+        selectDirectory(dir, nil, true, nil, createNoAssetData)
+        var.setTreeViewScroll = true
+        return
+      end
+    end
+  end
+end
+
+local function getDirByName(name, dir)
+  local selDir = dir or var.selectedDirectory
+  if selDir and selDir.dirs then
+    for _,dir in ipairs(selDir.dirs) do
+      if string.lower(name) == string.lower(dir.name) then
+        return dir
+      end
+    end
+  end
+end
+
+local function selectFileByName(filename, dir)
+  if dir and dir.files then
+    for k, file in ipairs(dir.files) do
+      if filename == file.fileName or filename == file.fullFileName then
+        selectAsset(file)
+        return
+      end
+    end
+    editor.logWarn(logTag .. "No asset found with the given name '" .. filename .. "'")
+  end
+end
+
+local function getDirByPath(path, dirToSearchIn, isLevelDir)
+  local selDir = dirToSearchIn
+
+  local dirNames = {}
+  for dirName in string.gmatch(path, "[%w_]+") do
+    if not isLevelDir or dirName ~= var.levelName then
+      table.insert(dirNames, dirName)
+    end
+  end
+
+  for _, dirName in ipairs(dirNames) do
+    selDir = getDirByName(dirName, selDir)
+  end
+
+  return selDir
+end
+
+local function selectFileByPath(path)
+  local rootFolder = string.match(path, "[%w_]+")
+  local root = (rootFolder == "levels" and var.root or nil)
+  if not root then
+    for _, dir in ipairs(var.allDirs) do
+      if dir.name == rootFolder then
+        root = dir
+        break
+      end
+    end
+  end
+
+  if not root then
+    return
+  end
+
+  local rootPath = string.gsub(root.path, "//", "/")
+  local filepath = string.match(path, rootPath .."(.+)")
+  local filename = string.match(filepath, "[^/]*$")
+  local fileDir = string.sub(filepath, 1, #filepath - #filename)
+  local dir = getDirByPath(fileDir, root, true)
+  selectDirectory(dir, nil, true, true)
+
+  selectFileByName(filename, dir)
+end
+
+-- without filename e.g. "/gridmap/art/shapes/"
+local function openDirByPath(path)
+  local rootFolder = string.match(path, "[%w_]+")
+  local root = (rootFolder == "levels" and var.root or (rootFolder == "art" and var.commonArt or (rootFolder == "vehicles" and var.vehicles or nil)))
+
+  if not root then
+    -- editor.logWarn(logTag .. path .. " cannot be found.")
+    return
+  end
+
+  selectDirectory(root, nil, true, false, true)
+
+  local dirNames = {}
+  for dirName in string.gmatch(path, "[%w_]+") do
+    if dirName ~= var.levelName then
+      table.insert(dirNames, dirName)
+    end
+  end
+
+  local dirNamesCount = table.getn(dirNames)
+  for k, dirName in ipairs(dirNames) do
+    local createNoCache = true
+    if k == dirNamesCount then
+      createNoCache = false
+    end
+    openDirByName(dirName, createNoCache)
+  end
+end
+
+local function splitPath(path)
+  local parts = {}
+  for part in tostring(path):gmatch("[^/]+") do
+    table.insert(parts, part)
+  end
+  return parts
+end
+
+local function getAssetByPath(path)
+  local pathParts = splitPath(path)
+  local root = nil
+  if pathParts[1] == "levels" and pathParts[2] == var.levelName then
+    root = var.root
+  end
+
+  if not root then
+    for _, dir in ipairs(var.allDirs) do
+      if dir.name == pathParts[1] then
+        root = dir
+        break
+      end
+    end
+  end
+
+  if not root then
+    return nil
+  end
+
+  local rootPath = string.gsub(root.path, "//", "/")
+  local filepath = string.match(path, rootPath .."(.+)")
+  local filename = string.match(filepath, "[^/]*$")
+  local fileDir = string.sub(filepath, 1, #filepath - #filename)
+  local dir = getDirByPath(fileDir, root, true)
+
+  if not dir then
+    return nil
+  end
+
+  for _, file in ipairs(dir.files) do
+    if string.lower(file.fullFileName) == string.lower(filename) then
+      return file
+    end
+  end
+
+  return nil
+end
+
+local function renameCollection(collection, newName)
+  collection.name = newName
+  local collectionJsonData = serializeCollection(collection)
+  jsonWriteFile(collection.path, collectionJsonData)
+end
+
+local function createCollection(assets, dirs)
+  local filename = var.newCollectionFileName .. var.collectionExtension
+  local filepath = var.collectionsPath .. filename
+  -- Collection data
+  -- TODO: Check if collection already exists or name is empty or invalid
+  local collection = {
+    name = var.newCollectionName,
+    path = filepath,
+    filename = filename,
+    files = assets or {},
+    parent = true,
+    dirCount = 0,
+    dirs = dirs or {},
+    -- open = false,
+    selected = false,
+    -- processed = false,
+    type = "collection",
+  }
+  table.insert(var.collections, collection)
+
+  -- JSON data
+  local collectionJsonData = serializeCollection(collection)
+  jsonWriteFile(filepath, collectionJsonData)
+
+  -- Reset input fields
+  var.newCollectionName = "New Collection"
+  var.newCollectionFileName = "New_Collection"
+
+  var.createCollectionAssets = nil
+  var.createCollectionDirs = nil
+end
+
+local dirByNameInDir = function(name, dir)
+  if dir and dir.dirs then
+    for _, d in ipairs(dir.dirs) do
+      if d.name == name then
+        return d
+      end
+    end
+  end
+  return nil
+end
+
+local function getDirFromAllDirsByPath(path)
+  local dirNames = {}
+  for dirName in string.gmatch(path, "[%w_]+") do
+    table.insert(dirNames, dirName)
+  end
+  if dirNames[1] == "levels" then
+    table.remove(dirNames, 1)
+  end
+
+  local root = nil
+  local rootName = table.remove(dirNames, 1)
+  for _, dir in ipairs(var.allDirs) do
+    if dir.name == rootName then
+      root = dir
+      break
+    end
+  end
+
+  if not root then return nil end
+
+  local selDir = root
+  while #dirNames > 0 do
+    local dirName = table.remove(dirNames, 1)
+    selDir = dirByNameInDir(dirName, selDir)
+    if selDir == nil then
+      return nil
+    end
+  end
+
+  return selDir
+end
+
+local function deserializeCollection(collectionJsonData, filepath)
+  local _, filename, _ = path.split(filepath)
+  local collection = {
+    name = collectionJsonData.name,
+    path = filepath,
+    filename = filename,
+    files = {},
+    dirs = {},
+    parent = true,
+    dirCount = 0,
+    dirs = {},
+    -- open = false,
+    selected = false,
+    -- processed = false
+    type = "collection",
+  }
+  for _, path in ipairs(collectionJsonData.files) do
+    local asset = getAssetByPath(path)
+    if asset then
+      table.insert(collection.files, asset)
+    else
+      editor.logWarn("Asset not loaded or missing. Collection: '" .. collection.name .. "' Asset: '" .. path .. "'")
+      local fullFileName = string.match(path, "[^/]*$")
+      local fileName = string.match(fullFileName, "[^.]*")
+      local simpleFiletype = string.match(fullFileName, "[^.]*$")
+      table.insert(collection.files, {
+        path = path,
+        type = "missingCollectionAsset",
+        fileName = fileName,
+        fullFileName = fullFileName,
+        simpleFiletype = simpleFiletype,
+        selected = false
+      })
+    end
+  end
+
+  if collectionJsonData.dirs then
+    for _, path in ipairs(collectionJsonData.dirs) do
+      local dir = getDirFromAllDirsByPath(path)
+      if dir then
+        table.insert(collection.dirs, dir)
+      else
+        editor.logWarn("Directory not loaded or missing. Collection: '" .. collection.name .. "' Directory: '" .. path .. "'")
+        table.insert(collection.dirs, {
+          path = path,
+          name = string.match(path, "([^/]+)/$"),
+          selected = false,
+          missing = true,
+          id = getUniqueId(),
+          filestats = {
+            filesize = 0,
+            filesizeString = "---",
+          }
+        })
+      end
+    end
+  end
+
+  return collection
+end
+
+local function createCollectionMap()
+  var.collectionMap = {}
+  for _, collection in ipairs(var.collections) do
+    for _, asset in ipairs(collection.files) do
+      if not var.collectionMap[asset.path] then
+        var.collectionMap[asset.path] = {}
+      end
+      table.insert(var.collectionMap[asset.path], collection.name)
+    end
+    for _, dir in ipairs(collection.dirs) do
+      if not var.collectionMap[dir.path] then
+        var.collectionMap[dir.path] = {}
+      end
+      table.insert(var.collectionMap[dir.path], collection.name)
+    end
+  end
+end
+
+local function getCollectionsFromFiles()
+  var.collections = {}
+  local collectionFiles = FS:findFiles(var.collectionsPath, "*.json", -1, false, false)
+  for _, filepath in ipairs(collectionFiles) do
+    local collectionJsonData = jsonReadFile(filepath)
+    local collection = deserializeCollection(collectionJsonData, filepath)
+
+    table.insert(var.collections, collection)
+  end
+
+  createCollectionMap()
+end
+
 local function directoryContextMenu(dir)
   if dir then
     if im.BeginPopup("Popup_" .. dir.path) then
+
+      if im.BeginMenu("Add to collection##directoryContextMenu", true) then
+        if tableSize(var.collections) <= 0 then
+          im.BeginDisabled()
+            im.TextUnformatted("-- No collections --")
+          im.EndDisabled()
+        end
+        for _, collection in ipairs(var.collections) do
+          if im.MenuItem1(collection.name, nil, false, true) then
+            addDirToCollection(collection, dir)
+          end
+        end
+        im.Separator()
+
+        if im.Button("New collection##directoryContextMenu") then
+          var.createCollectionDirs = {dir}
+          editor.openModalWindow(createCollectionDialogWindowName)
+        end
+
+        im.EndMenu()
+      end
+
+      if var.collectionMap[dir.path] then
+        if im.BeginMenu("Remove from collection##directoryContextMenu", true) then
+          for _, collectionName in ipairs(var.collectionMap[dir.path]) do
+            if im.MenuItem1(collectionName, nil, false, true) then
+              removeDirFromCollection(collectionName, dir)
+            end
+          end
+
+          im.EndMenu()
+        end
+      end
+
       for _, entry in ipairs(var.directoryContextMenuEntries) do
         if entry.filterFn then
           if entry.filterFn() then
@@ -1366,8 +1978,129 @@ local function directoryContextMenu(dir)
   end
 end
 
+local meshAnnotationNames = nil
+local function getMeshAnnotationNames()
+  if meshAnnotationNames then return meshAnnotationNames end
+  meshAnnotationNames = {}
+  if AnnotationManager then
+    local tbl = AnnotationManager:getAnnotations()
+    if tbl then
+      for name, _ in pairs(tbl) do
+        if name ~= "" then
+          table.insert(meshAnnotationNames, name)
+        end
+      end
+      table.sort(meshAnnotationNames)
+    end
+  end
+  return meshAnnotationNames
+end
+
+local meshAnnotationColorArr = im.ArrayFloat(3)
+local meshAnnotationEditEnded = im.BoolPtr(false)
+
+local function getMeshAnnotation(asset)
+  local data = jsonReadFile(asset.path .. ".asset.json")
+  if not data then return {} end
+  return {
+    label = type(data.annotation) == "string" and data.annotation or nil,
+    color = type(data.annotationColor) == "table" and data.annotationColor or nil,
+  }
+end
+
+local function writeMeshAnnotation(asset, label, color)
+  local metaPath = asset.path .. ".asset.json"
+  local data = jsonReadFile(metaPath) or {}
+  data.annotation = label
+  data.annotationColor = color
+  if jsonWriteFile(metaPath, data, true) then
+    editor.logInfo(logTag .. "Updated annotation for " .. asset.path .. " (reload the level to apply)")
+  else
+    editor.logError(logTag .. "Failed to write annotation metadata: " .. metaPath)
+  end
+end
+
+local function meshAnnotationContextMenu(asset)
+  local current = getMeshAnnotation(asset)
+  if im.BeginMenu("Set annotation##assetContextMenu", true) then
+    local hasNone = (current.label == nil and current.color == nil)
+    if im.MenuItem1("(none)", nil, hasNone, true) then
+      writeMeshAnnotation(asset, nil, nil)
+      im.CloseCurrentPopup()
+    end
+
+    im.Separator()
+    im.TextUnformatted("Custom color")
+    if im.IsWindowAppearing() then
+      meshAnnotationColorArr[0] = current.color and (current.color[1] / 255) or 1
+      meshAnnotationColorArr[1] = current.color and (current.color[2] / 255) or 1
+      meshAnnotationColorArr[2] = current.color and (current.color[3] / 255) or 1
+    end
+    meshAnnotationEditEnded[0] = false
+    im.PushItemWidth(180)
+    editor.uiColorEdit3("##meshAnnotationColor", meshAnnotationColorArr, nil, meshAnnotationEditEnded)
+    im.PopItemWidth()
+    if meshAnnotationEditEnded[0] == true then
+      writeMeshAnnotation(asset, nil, {
+        math.floor(meshAnnotationColorArr[0] * 255 + 0.5),
+        math.floor(meshAnnotationColorArr[1] * 255 + 0.5),
+        math.floor(meshAnnotationColorArr[2] * 255 + 0.5),
+      })
+    end
+
+    im.Separator()
+    im.TextUnformatted("Annotation type")
+    for _, name in ipairs(getMeshAnnotationNames()) do
+      if im.MenuItem1(name, nil, current.label == name, true) then
+        writeMeshAnnotation(asset, name, nil)
+        im.CloseCurrentPopup()
+      end
+    end
+    im.EndMenu()
+  end
+end
+
 local function assetContextMenu(asset)
   if im.BeginPopup("Popup_" .. asset.path .. "_" .. asset.fullFileName) then
+
+    if asset.type == "mesh" then
+      meshAnnotationContextMenu(asset)
+    end
+
+
+    if im.BeginMenu("Add to collection##assetContextMenu", true) then
+      if tableSize(var.collections) <= 0 then
+        im.BeginDisabled()
+          im.TextUnformatted("-- No collections --")
+        im.EndDisabled()
+      end
+      for _, collection in ipairs(var.collections) do
+        if im.MenuItem1(collection.name, nil, false, true) then
+          addAssetToCollection(collection, asset)
+        end
+      end
+      im.Separator()
+
+      if im.Button("New collection##assetContextMenu") then
+        var.createCollectionAssets = {asset}
+        editor.openModalWindow(createCollectionDialogWindowName)
+      end
+
+      im.EndMenu()
+    end
+
+    if var.collectionMap[asset.path] then
+      if im.BeginMenu("Remove from collection##assetContextMenu", true) then
+        for _, collectionName in ipairs(var.collectionMap[asset.path]) do
+          if im.MenuItem1(collectionName, nil, false, true) then
+            removeAssetFromCollection(collectionName, asset)
+          end
+        end
+
+        im.EndMenu()
+      end
+    end
+
     for _, entry in ipairs(var.assetContextMenuEntries) do
       if entry.filterFn then
         if entry.filterFn(asset) then
@@ -1383,6 +2116,7 @@ local function assetContextMenu(asset)
         end
       end
     end
+
     im.EndPopup()
   end
 end
@@ -1484,7 +2218,7 @@ local function showSavedSearches()
   im.SetCursorPosX(cPosX + var.iconSize.x)
   editor.uiIconImage(editor.icons.star_border, var.iconSize, editor.color.gold.Value)
   im.SameLine()
-  if im.SmallButton("Saved Filter") then
+  if im.SmallButton("Saved Filters") then
     var.savedSearchesOpen = not var.savedSearchesOpen
   end
   im.PopStyleColor()
@@ -1496,6 +2230,176 @@ local function showSavedSearches()
     end
     for index, item in pairs(var.options.savedFilter) do
       savedFilterItem(index, item, true)
+    end
+    im.Unindent(var.iconSize.x + var.style.ItemSpacing.x)
+  end
+  im.Separator()
+end
+
+local function showCollectionInTreeView(k, collection)
+  if not collection then return end
+  if im.BeginPopup("collectionInTreeViewPopup_" .. tostring(k)) then
+    if im.Button("Rename##collectionInTreeView" .. tostring(k)) then
+      var.renameCollectionData = collection
+      var.newCollectionName = collection.name
+      checkCollectionNameAndFileName()
+      editor.openModalWindow(renameCollectionDialogWindowName)
+    end
+    if im.Button("Copy to clipboard##collectionInTreeView" .. tostring(k)) then
+      local collectionJsonData = serializeCollection(collection)
+      local collectionJsonDataString = jsonEncode(collectionJsonData)
+      setClipboard(collectionJsonDataString)
+      im.CloseCurrentPopup()
+    end
+    if im.Button("Dump to console##collectionInTreeView" .. tostring(k)) then
+      dumpz(collection, 4)
+      im.CloseCurrentPopup()
+    end
+    im.EndPopup()
+  end
+  editor.uiIconImage(editor.icons.fastTravel, var.iconSize, editor.color.gold.Value)
+  im.SameLine()
+  im.PushStyleColor2(im.Col_Button, editor.color.transparent.Value) -- set SmallButton's background color to transparent
+  if collection.selected == true then
+    im.PushStyleColor2(im.Col_Text, im.GetStyleColorVec4(im.Col_ButtonActive))
+  else
+    im.PushStyleColor2(im.Col_Text, editor.color.white.Value)
+  end
+  if im.SmallButton(collection.name) then
+    selectCollection(collection)
+  end
+  im.PopStyleColor(2)
+  if im.IsItemClicked(1) then
+    im.OpenPopup("collectionInTreeViewPopup_" .. tostring(k))
+  end
+  if im.BeginDragDropTarget() then
+    local payload = im.AcceptDragDropPayload("ASSETDRAGDROP")
+    if payload~=nil then
+      assert(payload.DataSize == 2048)
+      local path = ffi.string(payload.Data)
+      local asset = getAssetByPath(path)
+      if asset then
+        addAssetToCollection(collection, asset)
+      end
+    end
+    im.EndDragDropTarget()
+  end
+  if im.BeginDragDropTarget() then
+    local payload = im.AcceptDragDropPayload("DIRECTORYDRAGDROP")
+    if payload~=nil then
+      assert(payload.DataSize == 2048)
+      local path = ffi.string(payload.Data)
+      local dir = getDirFromAllDirsByPath(path)
+      if dir then
+        addDirToCollection(collection, dir)
+      end
+    end
+    im.EndDragDropTarget()
+  end
+  im.tooltip(collection.filename)
+
+  im.SameLine()
+  local cPosX = im.GetCursorPosX()
+  im.SetCursorPosX(cPosX + im.GetContentRegionAvailWidth() - 2*var.iconSize.x - 1*var.style.ItemSpacing.x)
+
+  if editor.uiIconImageButton(editor.icons.edit, var.iconSize, nil, nil, nil, "Rename collection##collectionInTreeViewButton") then
+    var.renameCollectionData = collection
+    var.newCollectionName = collection.name
+    checkCollectionNameAndFileName()
+    editor.openModalWindow(renameCollectionDialogWindowName)
+  end
+  im.tooltip("Rename collection")
+
+  im.SameLine()
+  if editor.uiIconImageButton(editor.icons.content_copy, var.iconSize, nil, nil, nil, "Copy collection to clipboard##collectionInTreeViewButton") then
+    local collectionJsonData = serializeCollection(collection)
+    local collectionJsonDataString = jsonEncode(collectionJsonData)
+    setClipboard(collectionJsonDataString)
+  end
+  im.tooltip("Copy collection to clipboard")
+end
+
+local function refreshClipboardData()
+  var.pasteCollectionData = jsonDecode(getClipboard())
+  if var.pasteCollectionData and var.pasteCollectionData.name and var.pasteCollectionData.files then
+    var.newCollectionName = var.pasteCollectionData.name
+    var.newCollectionFileName = sanitizeCollectionPathName(var.newCollectionName)
+    checkCollectionNameAndFileName()
+  end
+end
+
+local function openPasteCollectionDialog()
+  refreshClipboardData()
+  var.pasteCollectionData = jsonDecode(getClipboard())
+  editor.openModalWindow(pasteCollectionDialogWindowName)
+end
+
+local function showCollectionsSection()
+  if im.BeginPopup("collections_context_popup") then
+    if im.Button("Paste from clipboard") then
+      openPasteCollectionDialog()
+    end
+    if im.Button("Dump") then
+      dumpz(var.collections, 3)
+      im.CloseCurrentPopup()
+    end
+    im.EndPopup()
+  end
+
+  local subFolderArrowIcon = var.collectionsSectionOpen and editor.icons.keyboard_arrow_down or editor.icons.keyboard_arrow_right
+  local cPosX = im.GetCursorPosX()
+  im.PushStyleColor2(im.Col_Button, im.ImVec4(0, 0, 0, 0))
+  if editor.uiIconImageButton(subFolderArrowIcon, var.iconSize, im.ImVec4(1, 1, 1, 1), nil) then
+    var.collectionsSectionOpen = not var.collectionsSectionOpen
+  end
+  im.SameLine()
+  im.SetCursorPosX(cPosX + var.iconSize.x)
+  editor.uiIconImage(editor.icons.favorite_border, var.iconSize, editor.color.gold.Value)
+  im.SameLine()
+  if im.SmallButton("Collections") then
+    var.collectionsSectionOpen = not var.collectionsSectionOpen
+  end
+  if im.IsItemClicked(1) then
+    im.OpenPopup("collections_context_popup")
+  end
+  im.PopStyleColor()
+  im.ShowHelpMarker(string.format("Right-click to open context menu\nRight-click on collection to open a context menu\nCollections are stored at %s", var.collectionsPath), true)
+
+  im.SameLine()
+  local cPosX = im.GetCursorPosX()
+  im.SetCursorPosX(cPosX + im.GetContentRegionAvailWidth() - 3*var.iconSize.x - 2*var.style.ItemSpacing.x - 2)
+
+  if editor.uiIconImageButton(editor.icons.folder_open, var.iconSize, nil, nil, nil, "Open collections directory") then
+    if FS:directoryExists(var.collectionsPath) then
+      Engine.Platform.exploreFolder(var.collectionsPath)
+    else
+      log('E', '', "directory: '" .. tostring(var.collectionsPath) .. "' does not exist")
+    end
+  end
+  im.tooltip("Open collections directory")
+  im.SameLine()
+  if editor.uiIconImageButton(editor.icons.content_paste, var.iconSize, nil, nil, nil, "Paste collection from clipboard") then
+    openPasteCollectionDialog()
+  end
+  im.tooltip("Past collection from clipboard")
+  im.SameLine()
+  if editor.uiIconImageButton(editor.icons.refresh, var.iconSize, nil, nil, nil, "Reload collections") then
+    var.collections = {}
+    getCollectionsFromFiles()
+  end
+  im.tooltip("Reload collections")
+  if var.collectionsSectionOpen == true then
+    im.Indent(var.iconSize.x + var.style.ItemSpacing.x)
+    if tableSize(var.collections) <= 0 then
+      im.BeginDisabled()
+        im.TextUnformatted("-- No collections found --")
+      im.EndDisabled()
+    end
+    for k, collection in pairs(var.collections) do
+      showCollectionInTreeView(k, collection)
+    end
+    if im.Button("New collection", im.ImVec2(im.GetContentRegionAvail().x, 0)) then
+      editor.openModalWindow(createCollectionDialogWindowName)
     end
     im.Unindent(var.iconSize.x + var.style.ItemSpacing.x)
   end
@@ -1557,6 +2461,7 @@ local function showDirectoryInTreeView(dir)
     var.arrowNavValueChanged = true
     itemDoubleClicked = true;
   end
+  directoryDragDropSource(dir)
 
   if (var.listIndexCounter == var.currentListIndex and var.arrowNavValueChanged) then
     var.arrowNavValueChanged = false
@@ -1631,11 +2536,10 @@ local function treeViewMainPanel()
     if var.state == var.state_enum.loading_done then
       var.listIndexCounter = 0
       showSavedSearches()
-      showDirectoryInTreeView(var.root)
-      showDirectoryInTreeView(var.commonArt)
-      showDirectoryInTreeView(var.gameplay)
-      showDirectoryInTreeView(var.vehicles)
-      showDirectoryInTreeView(var.allData)
+      showCollectionsSection()
+      for _,dir in pairs(var.allDirs) do
+        showDirectoryInTreeView(dir)
+      end
       var.maxListIndexVal = var.listIndexCounter
 
       newFolderPopup()
@@ -1664,36 +2568,56 @@ local function setScrollBarValue()
 end
 
 -- ##### GUI: ASSET VIEW
-local function displayDirectoryInAssetView(dir, childSize, parentDir, newLine)
+local function displayDirectoryInAssetView(dir, childSize, parentDir, newLine, inCollection)
   directoryContextMenu(dir)
   if childSize == -1 then
-    editor.uiIconImage(editor.icons.folder, var.iconSize)
-    im.SameLine()
-    im.PushStyleColor2(im.Col_Button, editor.color.transparent.Value) -- set SmallButton's background color to transparent
-    -- [debug]
-    -- im.SmallButton((parentDir == true) and ("[...]##parentDir" .. dir.path) or (tostring(im.GetCursorPosY()) .. " " .. dir.name .. "##" .. dir.path))
-    if dir.selectedInABView == true then im.PushStyleColor2(im.Col_Text, im.GetStyleColorVec4(im.Col_ButtonActive)) end -- set SmallButton's font color to if the asset is selected
-    im.SmallButton((parentDir == true) and ("[...]##parentDir" .. dir.id) or (dir.name .. "##" .. dir.id))
-    im.PopStyleColor((dir.selectedInABView == true) and 2 or 1)
-    if im.IsItemClicked(0) then
-      selectAsset(dir)
-    elseif im.IsItemClicked(1) then
-      selectAsset(dir)
-      var.newFolderParentDir = dir
-      im.OpenPopup("Popup_" .. dir.path)
-    end
-    if im.IsItemHovered() == true then
-      var.assetHovered = true
-      if var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
+    if dir.missing then
+      editor.uiIconImage(editor.icons.folder, var.iconSize, editor.color.error.Value)
+      im.SameLine()
+      im.PushStyleColor2(im.Col_Button, editor.color.transparent.Value)
+      im.PushStyleColor2(im.Col_Text, editor.color.error.Value)
+      im.SmallButton(dir.name)
+      if im.IsItemHovered() then
+        if im.IsMouseReleased(1) then
+          im.OpenPopup("Popup_" .. dir.path)
+        end
         im.BeginTooltip()
+          im.TextColored(editor.color.warning.Value, "Directory not loaded or missing")
           im.TextUnformatted(dir.path)
         im.EndTooltip()
       end
-      if im.IsMouseDoubleClicked(0) then
-        var.currentListIndex = dir.listIndex
-        selectDirectory(dir, nil, true, true)
+      im.PopStyleColor(2)
+    else
+      editor.uiIconImage(editor.icons.folder, var.iconSize)
+      im.SameLine()
+      im.PushStyleColor2(im.Col_Button, editor.color.transparent.Value) -- set SmallButton's background color to transparent
+      -- [debug]
+      -- im.SmallButton((parentDir == true) and ("[...]##parentDir" .. dir.path) or (tostring(im.GetCursorPosY()) .. " " .. dir.name .. "##" .. dir.path))
+      if dir.selectedInABView == true then im.PushStyleColor2(im.Col_Text, im.GetStyleColorVec4(im.Col_ButtonActive)) end -- set SmallButton's font color to if the asset is selected
+      im.SmallButton((parentDir == true) and ("[...]##parentDir" .. dir.id) or (dir.name .. "##" .. dir.id))
+      im.PopStyleColor((dir.selectedInABView == true) and 2 or 1)
+      if im.IsItemHovered() == true then
+        if im.IsMouseReleased(0) then
+          selectAsset(dir)
+        elseif im.IsMouseReleased(1) then
+          selectAsset(dir)
+          var.newFolderParentDir = dir
+          im.OpenPopup("Popup_" .. dir.path)
+        end
+
+        var.assetHovered = true
+        if var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files or inCollection then
+          im.BeginTooltip()
+            im.TextUnformatted(dir.path)
+          im.EndTooltip()
+        end
+        if im.IsMouseDoubleClicked(0) then
+          var.currentListIndex = dir.listIndex
+          selectDirectory(dir, nil, true, true)
+        end
       end
     end
+    directoryDragDropSource(dir)
   else
     if im.BeginChild1("Child_" .. dir.path .. "_" .. dir.name, childSize, true, im.flags(im.WindowFlags_NoScrollWithMouse)) then
       -- icon size should depend on child size and is the minimum between
@@ -1704,28 +2628,39 @@ local function displayDirectoryInAssetView(dir, childSize, parentDir, newLine)
         (childSize.x - 2 * var.style.WindowPadding.x) / uiScaling,
         (childSize.y - 2 * var.style.WindowPadding.y - var.style.ItemSpacing.x - var.fontSize - 5) / uiScaling
       )
-      editor.uiIconImage(editor.icons.folder, im.ImVec2(thumbSize, thumbSize))
-      local dirName = (parentDir == true) and "[...]" or dir.name
-      if dir.selectedInABView then
-        im.TextColored(im.GetStyleColorVec4(im.Col_ButtonActive), dirName)
+      if dir.missing then
+        editor.uiIconImage(editor.icons.folder, im.ImVec2(thumbSize, thumbSize), editor.color.error.Value)
+        im.TextColored(editor.color.error.Value, dir.name)
       else
-        im.TextUnformatted(dirName)
+        editor.uiIconImage(editor.icons.folder, im.ImVec2(thumbSize, thumbSize))
+        directoryDragDropSource(dir)
+        local dirName = (parentDir == true) and "[...]" or dir.name
+        if dir.selectedInABView then
+          im.TextColored(im.GetStyleColorVec4(im.Col_ButtonActive), dirName)
+        else
+          im.TextUnformatted(dirName)
+        end
       end
     end
     im.EndChild()
     if im.IsItemHovered() then
       setScrollBarValue()
+
+      if im.IsMouseReleased(0) then
+        selectAsset(dir)
+      elseif im.IsMouseReleased(1) then
+        im.OpenPopup("Popup_" .. dir.path)
+      end
+      if im.IsMouseDoubleClicked(0) == true then
+        var.currentListIndex = dir.listIndex
+        selectDirectory(dir, nil, true, true)
+      end
     end
-    if im.IsItemClicked(0) then
-      selectAsset(dir)
-    elseif im.IsItemClicked(1) then
-      im.OpenPopup("Popup_" .. dir.path)
+    if inCollection then
+      im.tooltip(dir.path)
+    else
+      im.tooltip(dir.name)
     end
-    if im.IsItemHovered() == true and im.IsMouseDoubleClicked(0) == true then
-      var.currentListIndex = dir.listIndex
-      selectDirectory(dir, nil, true, true)
-    end
-    im.tooltip(dir.name)
 
     im.SameLine()
     if im.GetContentRegionAvailWidth() < childSize.x or (newLine and newLine == true) then
@@ -1781,6 +2716,18 @@ local function textureSetTooltip(set)
   im.EndTooltip()
 end
 
+local function materialTooltip(material)
+  if not material or not material.inspectorData or not material.inspectorData.cachePath then return end
+  if not FS:fileExists(material.inspectorData.cachePath) then return end
+
+  local tex = editor.getTempTextureObj(material.inspectorData.cachePath)
+  if not tex or not tex.tex then return end
+
+  im.BeginTooltip()
+    im.Image(tex.tex:getID(), var.tooltipThumbnailSize, nil, nil, nil, editor.color.white.Value)
+  im.EndTooltip()
+end
+
 local function displayTextureSetInAssetView(set, childSize, newLine)
   textureSetContextMenu(set)
 
@@ -1812,7 +2759,7 @@ local function displayTextureSetInAssetView(set, childSize, newLine)
     end
   else
     if im.BeginChild1("AssetViewTextureSetChild_" .. set.name .. "_" .. set.path, childSize, true, im.flags(im.WindowFlags_NoScrollWithMouse, im.WindowFlags_NoScrollbar)) then
-      -- dragDropSource(file, var.windowPos)
+      -- dragDropSource(file)
       local cursorPos = im.GetCursorPos()
       local uiScaling = editor.getPreference("ui.general.scale") or defaultUiScale;
       local imgSize = im.ImVec2(var.options.thumbnailSize * uiScaling - 5, var.options.thumbnailSize * uiScaling - 5)
@@ -1856,6 +2803,9 @@ end
 local function displayMaterialInAssetView(material, childSize, newLine)
   materialContextMenu(material)
 
+  -- request thumbnail only when the material is actually being drawn (visible due to virtual scroll)
+  requestMaterialPreview(material, false)
+
   if childSize == -1 then
     icon(material, var.iconSize, (material.selectedInABView == true and im.GetStyleColorVec4(im.Col_ButtonActive) or im.GetStyleColorVec4(im.Col_Text)))
     im.SameLine()
@@ -1868,6 +2818,17 @@ local function displayMaterialInAssetView(material, childSize, newLine)
       selectAsset(material)
     end
     im.PopStyleColor(2)
+    if im.IsItemHovered() then
+      var.assetHovered = true
+
+      if not (material.inspectorData and material.inspectorData.cachePath and FS:fileExists(material.inspectorData.cachePath)) then
+        requestMaterialPreview(material, false)
+      end
+
+      if var.options.showThumbnailWhenHoveringAsset == true then
+        materialTooltip(material)
+      end
+    end
   else
     im.SameLine()
     if im.GetContentRegionAvailWidth() < childSize.x then
@@ -1875,20 +2836,48 @@ local function displayMaterialInAssetView(material, childSize, newLine)
     end
 
     if im.BeginChild1("AssetViewChild_" .. material.name .. "_" .. material.id, childSize, true, im.flags(im.WindowFlags_NoScrollWithMouse, im.WindowFlags_NoScrollbar)) then
-      icon(material, im.ImVec2(var.options.thumbnailSize, var.options.thumbnailSize), nil)
+
+      local uiScaling = editor.getPreference("ui.general.scale") or defaultUiScale
+      local imgSize = im.ImVec2(var.options.thumbnailSize * uiScaling - 5, var.options.thumbnailSize * uiScaling - 5)
+
+      local drew = false
+      if material.inspectorData and material.inspectorData.cachePath and FS:fileExists(material.inspectorData.cachePath) then
+        local tex = editor.getTempTextureObj(material.inspectorData.cachePath)
+        if tex and tex.tex then
+          im.Image(tex.tex:getID(), imgSize, nil, nil, nil, editor.color.white.Value)
+          drew = true
+        end
+      end
+
+      if not drew then
+        -- fallback icon while thumbnail is generating
+        icon(material, im.ImVec2(var.options.thumbnailSize, var.options.thumbnailSize), nil)
+      end
     end
+
     if material.selectedInABView then im.TextColored(im.GetStyleColorVec4(im.Col_ButtonActive), material.name) else im.TextUnformatted(material.name) end
     im.EndChild()
 
     if im.IsItemHovered() then
       setScrollBarValue()
+      var.assetHovered = true
       im.tooltip(material.name)
+
+      if not (material.inspectorData and material.inspectorData.cachePath and FS:fileExists(material.inspectorData.cachePath)) then
+        requestMaterialPreview(material, false)
+      end
+
+      if var.options.showThumbnailWhenHoveringAsset == true then
+        materialTooltip(material)
+      end
     end
 
-    if im.IsItemClicked(0) then
-      selectAsset(material)
-    elseif im.IsItemClicked(1) then
-      im.OpenPopup("ContextMenu_Material_" .. tostring(material.id))
+    if im.IsItemHovered() then
+      if im.IsMouseReleased(0) then
+        selectAsset(material)
+      elseif im.IsMouseReleased(1) then
+        im.OpenPopup("ContextMenu_Material_" .. tostring(material.id))
+      end
     end
 
     im.SameLine()
@@ -1900,7 +2889,7 @@ local function displayMaterialInAssetView(material, childSize, newLine)
   var.displayedItemsCount = var.displayedItemsCount + 1
 end
 
-local function displayAssetInAssetView(file, childSize, newLine)
+local function displayAssetInAssetView(file, childSize, newLine, inCollection)
   assetContextMenu(file)
 
   -- Display assets in a list view.
@@ -1911,7 +2900,6 @@ local function displayAssetInAssetView(file, childSize, newLine)
       icon(file, var.iconSize, im.GetStyleColorVec4(im.Col_Text))
     end
     im.SameLine()
-
     if file.type == "materials" then
       local startCursorPos = im.GetCursorPos()
       im.PushStyleColor2(im.Col_Button, editor.color.transparent.Value)
@@ -1927,9 +2915,11 @@ local function displayAssetInAssetView(file, childSize, newLine)
       end
       im.SetCursorPos(im.ImVec2(startCursorPos.x + var.minThumbnailSize, startCursorPos.y))
       local buttonWidth = im.CalcTextSize(file.fullFileName).x + 2 * var.style.FramePadding.x
-      if im.Button("##" .. tostring(file.id), im.ImVec2(buttonWidth,var.fontSize)) then
+      im.Button("##" .. tostring(file.id), im.ImVec2(buttonWidth,var.fontSize))
+      if im.IsItemHovered() and im.IsMouseReleased(0) then
         selectAsset(file)
       end
+
       im.PopStyleColor()
       im.SetCursorPos(im.ImVec2(startCursorPos.x + var.minThumbnailSize + var.style.FramePadding.x, startCursorPos.y))
       if file.selectedInABView == true then im.PushStyleColor2(im.Col_Text, im.GetStyleColorVec4(im.Col_ButtonActive)) end
@@ -1948,6 +2938,11 @@ local function displayAssetInAssetView(file, childSize, newLine)
           im.Unindent()
         end
       end
+    elseif file.type == "missingCollectionAsset" then
+      im.PushStyleColor2(im.Col_Button, editor.color.transparent.Value)
+      im.PushStyleColor2(im.Col_Text, editor.color.error.Value)
+      im.SmallButton(file.fullFileName)
+      im.PopStyleColor(2)
     else
       -- Set SmallButton's font color if the asset is selected.
       if file.selectedInABView == true then im.PushStyleColor2(im.Col_Text, im.GetStyleColorVec4(im.Col_ButtonActive)) end
@@ -1964,7 +2959,7 @@ local function displayAssetInAssetView(file, childSize, newLine)
       if im.IsMouseDoubleClicked(0) then
         doubleClickAsset(file)
       -- LMB
-      elseif im.IsMouseClicked(0) then
+      elseif im.IsMouseReleased(0) then
         selectAsset(file)
       -- RMB
       elseif im.IsMouseClicked(1) then
@@ -1992,39 +2987,57 @@ local function displayAssetInAssetView(file, childSize, newLine)
         end
       end
 
-      if var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files then
+      if file.type == "missingCollectionAsset" then
+        im.BeginTooltip()
+        im.TextColored(editor.color.warning.Value, "Asset not loaded or missing")
+        im.TextUnformatted(file.path)
+        im.EndTooltip()
+      elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files then
         if (file.type == "image" or file.type == "mesh") and var.options.showThumbnailWhenHoveringAsset == true then
           if file.type == "image" then
             im.BeginTooltip()
+              if inCollection then
+                im.TextUnformatted(file.path)
+              end
               imgTooltip(file.path)
             im.EndTooltip()
-          end
-          if file.type == "mesh" and file.inspectorData and file.inspectorData.cachePath then
+          elseif file.type == "mesh" and file.inspectorData and file.inspectorData.cachePath then
             im.BeginTooltip()
+              if inCollection then
+                im.TextUnformatted(file.path)
+              end
               imgTooltip(file.inspectorData.cachePath)
             im.EndTooltip()
           end
+        elseif inCollection then
+          im.BeginTooltip()
+            im.TextUnformatted(file.path)
+          im.EndTooltip()
         end
       elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
         im.BeginTooltip()
-          im.TextUnformatted(file.path)
           if file.type == 'image' and var.options.showThumbnailWhenHoveringAsset == true then
+            if inCollection then
+              im.TextUnformatted(file.path)
+            end
             imgTooltip(file.path)
           end
         im.EndTooltip()
       end
     end
 
-    if im.IsItemClicked(0) then
-      selectAsset(file)
-    elseif im.IsItemClicked(1) then
-      im.OpenPopup("Popup_" .. file.path .. "_" .. file.fullFileName)
+    if im.IsItemHovered() then
+      if im.IsMouseReleased(0) then
+        selectAsset(file)
+      elseif im.IsMouseReleased(1) then
+        im.OpenPopup("Popup_" .. file.path .. "_" .. file.fullFileName)
+      end
     end
 
   -- Display assets with thumbnails side by side.
   else
     if im.BeginChild1("AssetViewChild_" .. file.path .. "_" .. file.fullFileName, childSize, true, im.flags(im.WindowFlags_NoScrollWithMouse, im.WindowFlags_NoScrollbar)) then
-      dragDropSource(file, var.windowPos)
+      dragDropSource(file)
       local uiScaling = editor.getPreference("ui.general.scale") or defaultUiScale
       local colorCodePos = im.GetCursorPos()
       if file.type == "image" then
@@ -2067,6 +3080,8 @@ local function displayAssetInAssetView(file, childSize, newLine)
         end
         im.PopStyleColor()
         im.SetCursorPos(oldPos)
+      elseif file.type == "missingCollectionAsset" then
+        icon(file, im.ImVec2(var.options.thumbnailSize, var.options.thumbnailSize), editor.color.error.Value)
       else
         icon(file, im.ImVec2(var.options.thumbnailSize, var.options.thumbnailSize), (file.selectedInABView == true and im.GetStyleColorVec4(im.Col_ButtonActive) or im.GetStyleColorVec4(im.Col_Text)))
       end
@@ -2081,8 +3096,9 @@ local function displayAssetInAssetView(file, childSize, newLine)
 
         im.ImDrawList_AddLine(im.GetWindowDrawList(), colorCodePosA, colorCodePosB, getAssetTypeColor(file), var.assetColorCodeHeight)
       end
-
-      if file.selectedInABView then
+      if file.type == "missingCollectionAsset" then
+        im.TextColored(editor.color.error.Value, file.fullFileName)
+      elseif file.selectedInABView then
         im.TextColored(im.GetStyleColorVec4(im.Col_ButtonActive),file.fullFileName)
       else
         im.TextUnformatted(file.fullFileName)
@@ -2093,8 +3109,17 @@ local function displayAssetInAssetView(file, childSize, newLine)
     if im.IsItemHovered() then
       setScrollBarValue()
       var.assetHovered = true
-      if var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files then
-        im.tooltip(file.fullFileName)
+      if file.type == "missingCollectionAsset" then
+        im.BeginTooltip()
+        im.TextColored(editor.color.warning.Value, "Asset not laoded or missing")
+        im.TextUnformatted(file.path)
+        im.EndTooltip()
+      elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.current_folder_files then
+        if inCollection then
+          im.tooltip(file.path)
+        else
+          im.tooltip(file.fullFileName)
+        end
       elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
         im.tooltip(file.path)
       end
@@ -2103,10 +3128,10 @@ local function displayAssetInAssetView(file, childSize, newLine)
       if im.IsMouseDoubleClicked(0) then
         doubleClickAsset(file)
       -- LMB
-      elseif im.IsMouseClicked(0) then
+      elseif im.IsMouseReleased(0) then
         selectAsset(file)
       -- RMB
-      elseif im.IsMouseClicked(1) then
+      elseif im.IsMouseReleased(1) then
         im.OpenPopup("Popup_" .. file.path .. "_" .. file.fullFileName)
       end
     end
@@ -2158,11 +3183,11 @@ local function isAssetVisible(childSize)
   end
 end
 
-local function displayDirectories(directories, childSize)
+local function displayDirectories(directories, childSize, inCollection)
   for k, dir in ipairs(directories) do
     -- Display assets in case it's in the visible area of the view panel.
     if isAssetVisible(childSize) == true then
-      displayDirectoryInAssetView(dir, childSize, nil, (k == #directories and var.options.assetGroupingType ~= var.assetGroupingTypes_enum.none) and true or nil)
+      displayDirectoryInAssetView(dir, childSize, nil, (k == #directories and var.options.assetGroupingType ~= var.assetGroupingTypes_enum.none) and true or nil, inCollection)
     end
     var.itemPos = var.itemPos + 1
   end
@@ -2178,11 +3203,11 @@ local function displayTextureSets(textureSets, childSize)
   end
 end
 
-local function displayAssets(assets, childSize)
+local function displayAssets(assets, childSize, inCollection)
   for k, asset in ipairs(assets) do
     -- Display assets in case it's in the visible area of the view panel.
     if isAssetVisible(childSize) == true then
-      displayAssetInAssetView(asset, childSize, (k == #assets and var.options.assetGroupingType ~= var.assetGroupingTypes_enum.none) and true or nil)
+      displayAssetInAssetView(asset, childSize, (k == #assets and var.options.assetGroupingType ~= var.assetGroupingTypes_enum.none) and true or nil, inCollection)
     end
     var.itemPos = var.itemPos + 1
   end
@@ -2276,7 +3301,7 @@ local function getAssetViewMainPanelHeight(childSize)
   return height
 end
 
---  Get a list of displayed of displayed filtered items in selected directory
+--  Get a list of displayed filtered items in selected directory
 --  @returns table
 local function getDisplayedSelectedDirectoryFilteredList()
   local filteredList = {}
@@ -2298,7 +3323,6 @@ local function getDisplayedSelectedDirectoryFilteredList()
 end
 
 local function assetViewMainPanel()
-  if var.selectedDirectory then directoryContextMenu(var.selectedDirectory) end
   var.assetHovered = false
   var.assetViewMainPanelHeight = var.windowSize.y - (2*var.menuBarHeight - 6 + 3*var.style.WindowPadding.y + 1*var.style.FramePadding.y +2*var.style.ChildBorderSize + var.inputFieldSize)
   if im.BeginChild1("Assets##AssetMainPanel", im.ImVec2(0, var.assetViewMainPanelHeight), true, im.WindowFlags_NoScrollWithMouse) then
@@ -2353,6 +3377,7 @@ local function assetViewMainPanel()
       var.maxAssetViewPanelHeight = getAssetViewMainPanelHeight(childSize)
 
       if var.selectedDirectory ~= nil then
+        local inCollection = var.selectedDirectory.type == "collection"
         if var.selectedDirectory.processing then
           im.TextUnformatted("Refreshing ...")
         else
@@ -2367,7 +3392,7 @@ local function assetViewMainPanel()
               end
 
               -- Disaplay all other directories within the current one.
-              displayDirectories(var.filteredDirs, childSize)
+              displayDirectories(var.filteredDirs, childSize, inCollection)
             end
 
             -- texture sets
@@ -2377,7 +3402,7 @@ local function assetViewMainPanel()
 
             -- assets
             if var.filteredAssets and var.options.filter_displayAssets == true then
-              displayAssets(var.filteredAssets, childSize)
+              displayAssets(var.filteredAssets, childSize, inCollection)
             end
 
           -- A asset grouping option is selected. We either group the asset by filetype or asset type.
@@ -2388,14 +3413,14 @@ local function assetViewMainPanel()
                 if group.identifier == "folders" then
                   if var.options.filter_displayDirs == true and #var.filteredAssetGroups.folders > 0 then
                     if groupCollapsingHeader(group) == true then
-                      displayDirectories(var.filteredAssetGroups.folders, childSize)
+                      displayDirectories(var.filteredAssetGroups.folders, childSize, inCollection)
                     end
                   end
                 -- Display assets.
                 else
                   if var.options.filter_displayAssets == true then
                     if groupCollapsingHeader(group) == true then
-                      displayAssets(var.filteredAssetGroups[group.identifier], childSize)
+                      displayAssets(var.filteredAssetGroups[group.identifier], childSize, inCollection)
                     end
                   end
                 end
@@ -2439,6 +3464,9 @@ local function assetViewMainPanel()
           end
         end
         im.SetCursorPosY(var.maxAssetViewPanelHeight)
+        -- Submit a zero-sized item so ImGui can grow the parent boundaries
+        -- (required by ImGui to suppress the "SetCursorPos extends boundaries" assert).
+        im.Dummy(im.ImVec2(0, 0))
       else
         im.TextUnformatted("Loading assets (" .. tostring(var.assetsProcessed) .. "/" .. tostring(var.numberOfAllAssetsAndDirs) ..")")
         im.TextUnformatted(string.format("%0.2f",(var.assetsProcessed/var.numberOfAllAssetsAndDirs)*100) .. '%')
@@ -2489,14 +3517,16 @@ local function pathBreadcrumb()
   end
 
   -- Add buttons per directory.
-  for k, dir in ipairs(var.selectedDirectory.pathToRoot) do
-    if im.Button(dir.name .. "##breadcrump" .. tostring(dir.id)) then
-      selectDirectory(dir, nil, nil, true)
+  if var.selectedDirectory.pathToRoot then
+    for k, dir in ipairs(var.selectedDirectory.pathToRoot) do
+      if im.Button(dir.name .. "##breadcrump" .. tostring(dir.id)) then
+        selectDirectory(dir, nil, nil, true)
+      end
+      im.SameLine()
+      local cursorPos = im.GetCursorPos()
+      chilrenDirectoryPopupButton(dir, im.ImVec2(var.windowPos.x + cursorPos.x, var.windowPos.y + cursorPos.y))
+      im.SameLine()
     end
-    im.SameLine()
-    local cursorPos = im.GetCursorPos()
-    chilrenDirectoryPopupButton(dir, im.ImVec2(var.windowPos.x + cursorPos.x, var.windowPos.y + cursorPos.y))
-    im.SameLine()
   end
 
   -- Add button for the current selected directory.
@@ -2566,13 +3596,13 @@ local function historyButtons()
   im.BeginDisabled(var.historyIndex == 1 and true or false)
   if editor.uiIconImageButton(editor.icons.arrow_back, im.ImVec2(var.inputFieldSize / uiScaling, var.inputFieldSize / uiScaling), nil, nil, nil, "historyBack") then
     if var.historyIndex > 1 then
-      selectDirectory(var.history[(var.historyIndex -1)], false, false)
+      selectDirectory(var.history[(var.historyIndex - 1)], false, false)
       if var.historyIndex == 1 then usedHistoryBack = true end
       var.historyIndex = var.historyIndex - 1
     end
   end
   if var.historyIndex > 1 then
-    im.tooltip("back to " .. var.history[(var.historyIndex -1)].path)
+    im.tooltip("back to " .. var.history[(var.historyIndex - 1)].path)
   end
   im.EndDisabled()
   im.SameLine()
@@ -3033,7 +4063,7 @@ local function assetBrowserMenuBar()
         editor.setPreference("assetBrowser.general.filter_displayTextureSets", var.options.filter_displayTextureSets)
 
         im.TextFilter_SetInputBuf(var.assetViewFilter, "")
-        ffi.copy(var.assetViewFilter.InputBuf,"") --because SetInputBuf doesn't work here
+        --ffi.copy(var.assetViewFilter.InputBuf,"") --because SetInputBuf doesn't work here
         im.ImGuiTextFilter_Clear(var.assetViewFilter)
         enableAllFilterTypes()
         filterDirs()
@@ -3104,6 +4134,7 @@ local function imageInspectorWindow()
 
   if var.imageInspectorWindowData then
     if editor.beginWindow(assetBrowserImageInspectorWindowName, "Image Inspector", im.flags(im.WindowFlags_NoScrollbar, im.WindowFlags_NoDocking)) then
+
         local windowSize = im.GetWindowSize()
         if var.imageInspectorImageSize then
           var.imageInspectorImageSize.x = windowSize.x - 2 * var.style.WindowPadding.x - 2 * var.style.WindowBorderSize
@@ -3164,31 +4195,37 @@ local function imageInspectorWindow()
           local lastTileWidthInRow = offsetInRow ~= 0 and offsetInRow or texToDraw.size.x
           local lastTileHeightInCol = offsetInCol ~= 0 and offsetInCol or texToDraw.size.y - var.minThumbnailSize
           local isLastTileInRow, isLastTileInCol = false, false
-          -- Draw Image Background Pattern
-          for rowIndex = 1, var.imageInspectorImageSize.y/texToDraw.size.y + 1, 1 do
-            if offsetInCol == 0 and rowIndex >= var.imageInspectorImageSize.y/texToDraw.size.y +1 then break end
-            for colIndex = 1, var.imageInspectorImageSize.x/texToDraw.size.x + 1, 1 do
-              cursorPos = im.GetCursorPos()
-              isLastTileInRow = colIndex >= var.imageInspectorImageSize.x/texToDraw.size.x
-              isLastTileInCol = rowIndex >= var.imageInspectorImageSize.y/texToDraw.size.y
-              uv1.x = isLastTileInRow and (lastTileWidthInRow/texToDraw.size.x) or 1
-              uv1.y = isLastTileInCol and (lastTileHeightInCol/texToDraw.size.y) or 1
-              local texSize = im.ImVec2(texToDraw.size.x * uv1.x, texToDraw.size.y * uv1.y)
-              im.Image(texToDraw.tex:getID(), texSize, nil, uv1, nil, nil)
-              im.SetCursorPos(im.ImVec2(cursorPos.x + texSize.x, cursorPos.y))
-            end
-            im.SetCursorPos(im.ImVec2(initialCursorPos.x, initialCursorPos.y + rowIndex * texToDraw.size.y))
-          end
-          im.SetCursorPos(initialCursorPos)
 
-          im.Image(
-            var.imageInspectorImage.tex:getID(), var.imageInspectorImageSize, nil, nil, nil, editor.color.white.Value
-          )
-          if im.SmallButton("Actual image size") then
-            openImageInspectorWindow(editor.selection["asset"])
+          if texToDraw.size.x == 0 then
+            im.SameLine()
+            im.TextColored(editor.color.warning.Value, "Background image not found: " .. (isCheckerBoardEnabled and var.imageInspector_checkerboardBgPath or (isWhiteBgEnabled and var.imageInspector_whiteBgPath or var.imageInspector_blackBgPath)))
+          else
+            -- Draw Image Background Pattern
+            for rowIndex = 1, var.imageInspectorImageSize.y/(texToDraw.size.y) + 1, 1 do
+              if offsetInCol == 0 and rowIndex >= var.imageInspectorImageSize.y/texToDraw.size.y +1 then break end
+              for colIndex = 1, var.imageInspectorImageSize.x/texToDraw.size.x + 1, 1 do
+                cursorPos = im.GetCursorPos()
+                isLastTileInRow = colIndex >= var.imageInspectorImageSize.x/texToDraw.size.x
+                isLastTileInCol = rowIndex >= var.imageInspectorImageSize.y/texToDraw.size.y
+                uv1.x = isLastTileInRow and (lastTileWidthInRow/texToDraw.size.x) or 1
+                uv1.y = isLastTileInCol and (lastTileHeightInCol/texToDraw.size.y) or 1
+                local texSize = im.ImVec2(texToDraw.size.x * uv1.x, texToDraw.size.y * uv1.y)
+                im.Image(texToDraw.tex:getID(), texSize, nil, uv1, nil, nil)
+                im.SetCursorPos(im.ImVec2(cursorPos.x + texSize.x, cursorPos.y))
+              end
+              im.SetCursorPos(im.ImVec2(initialCursorPos.x, initialCursorPos.y + rowIndex * texToDraw.size.y))
+            end
+            im.SetCursorPos(initialCursorPos)
           end
-          im.SameLine()
-          if var.imageInspectorImageSize then im.TextUnformatted("Image preview size x: " .. tostring(var.imageInspectorImageSize.x) .. " y: " .. tostring(var.imageInspectorImageSize.y)) end
+
+            im.Image(
+              var.imageInspectorImage.tex:getID(), var.imageInspectorImageSize, nil, nil, nil, editor.color.white.Value
+            )
+            if im.SmallButton("Actual image size") then
+              openImageInspectorWindow(editor.selection["asset"])
+            end
+            im.SameLine()
+            if var.imageInspectorImageSize then im.TextUnformatted("Image preview size x: " .. tostring(var.imageInspectorImageSize.x) .. " y: " .. tostring(var.imageInspectorImageSize.y)) end
         end
     end
     editor.endWindow()
@@ -3394,8 +4431,8 @@ local function assetInspectorGui_Mesh(asset)
     im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0,0))
     if im.BeginChild1("MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
       var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
-      im.EndChild()
     end
+    im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
     im.PopStyleVar()
     if im.Checkbox("Show collision mesh", editor.getTempBool_BoolBool(var.meshPreviewDisplayCollisionMesh)) then
       var.meshPreviewDisplayCollisionMesh = editor.getTempBool_BoolBool()
@@ -3412,6 +4449,9 @@ local function assetInspectorGui(inspectorInfo)
 
     if inspector_selectedAsset.type == "material" then
       assetInspectorGui_Material(inspector_selectedAsset)
+    elseif inspector_selectedAsset.type == "missingCollectionAsset" then
+      im.TextColored(editor.color.warning.Value, "Asset not loaded or missing")
+      im.TextUnformatted(inspector_selectedAsset.path)
     elseif inspector_selectedAsset.type == "textureSet" then
       im.Columns(2)
       -- Asset Name
@@ -3695,6 +4735,7 @@ local function getTextureSets(dir)
   end
 end
 
+
 local function getDirsAndFiles(parent, notRecursive)
   parent.dirs = {}
   parent.files = {}
@@ -3734,19 +4775,18 @@ local function getDirsAndFiles(parent, notRecursive)
         end
       end
     end
+    if var.assetsProcessed % 1000 == 0 then
+      coroutine.yield()
+    end
   end
 
-  coroutine.yield()
   getTextureSets(parent)
 
   for _, dir in ipairs(parent.dirs) do
-    coroutine.yield()
     getDirsAndFiles(dir)
   end
 
   parent.processing = nil
-
-  coroutine.yield()
 end
 
 local function getLevelPathAndName()
@@ -3975,7 +5015,7 @@ local function setupVars()
         local prefab = spawnPrefab(Sim.getUniqueName(asset.fileName),asset.path,"0 0 0","1 0 0 0","1 1 1")
         if prefab then
           prefab.loadMode = 0
-          scenetree.MissionGroup:addObject(prefab.obj)
+          editor.resolveAddGroup(scenetree.MissionGroup):addObject(prefab.obj)
           local camDir = (core_camera.getQuat() * vec3(0,1,0)) * 10
           prefab.obj:setPosition(core_camera.getPosition() + camDir)
         end
@@ -3994,7 +5034,7 @@ local function setupVars()
         local prefab = spawnPrefab(Sim.getUniqueName(asset.fileName),asset.path,"0 0 0","1 0 0 0","1 1 1")
         if prefab then
           prefab.loadMode = 0
-          scenetree.MissionGroup:addObject(prefab.obj)
+          editor.resolveAddGroup(scenetree.MissionGroup):addObject(prefab.obj)
           editor.selectObjectById(prefab.obj:getId())
         end
       end,
@@ -4051,106 +5091,6 @@ local function loadSavedFiletypeFilter()
     end
   end
 end
-
--- Opens a directory in the current selected directory based on a given name.
-local function openDirByName(name, createNoAssetData)
-  if var.selectedDirectory and var.selectedDirectory.dirs then
-    for _,dir in ipairs(var.selectedDirectory.dirs) do
-      if name == dir.name then
-        selectDirectory(dir, nil, true, nil, createNoAssetData)
-        var.setTreeViewScroll = true
-        return
-      end
-    end
-  end
-end
-
-local function getDirByName(name, dir)
-  local selDir = dir or var.selectedDirectory
-  if selDir and selDir.dirs then
-    for _,dir in ipairs(selDir.dirs) do
-      if string.lower(name) == string.lower(dir.name) then
-        return dir
-      end
-    end
-  end
-end
-
-local function selectFileByName(filename, dir)
-  if dir and dir.files then
-    for k, file in ipairs(dir.files) do
-      if filename == file.fileName or filename == file.fullFileName then
-        selectAsset(file)
-        return
-      end
-    end
-    editor.logWarn(logTag .. "No asset found with the given name '" .. filename .. "'")
-  end
-end
-
-local function getDirByPath(path, dirToSearchIn, isLevelDir)
-  local selDir = dirToSearchIn
-
-  local dirNames = {}
-  for dirName in string.gmatch(path, "[%w_]+") do
-    if not isLevelDir or dirName ~= var.levelName then
-      table.insert(dirNames, dirName)
-    end
-  end
-
-  for _, dirName in ipairs(dirNames) do
-    selDir = getDirByName(dirName, selDir)
-  end
-
-  return selDir
-end
-
-local function selectFileByPath(path)
-  local rootFolder = string.match(path, "[%w_]+")
-  local root = (rootFolder == "levels" and var.root or (rootFolder == "art" and var.commonArt or (rootFolder == "vehicles" and var.vehicles or nil)))
-
-  if not root then
-    return
-  end
-
-  local rootPath = string.gsub(root.path, "//", "/")
-  local filepath = string.match(string.lower(path), string.lower(rootPath) .."(.+)")
-  local filename = string.match(filepath, "[^/]*$")
-  local fileDir = string.sub(filepath, 1, #filepath - #filename)
-  local dir = getDirByPath(fileDir, root, true)
-  selectDirectory(dir, nil, true, true)
-
-  selectFileByName(filename, dir)
-end
-
--- without filename e.g. "/gridmap/art/shapes/"
-local function openDirByPath(path)
-  local rootFolder = string.match(path, "[%w_]+")
-  local root = (rootFolder == "levels" and var.root or (rootFolder == "art" and var.commonArt or (rootFolder == "vehicles" and var.vehicles or nil)))
-
-  if not root then
-    -- editor.logWarn(logTag .. path .. " cannot be found.")
-    return
-  end
-
-  selectDirectory(root, nil, true, false, true)
-
-  local dirNames = {}
-  for dirName in string.gmatch(path, "[%w_]+") do
-    if dirName ~= var.levelName then
-      table.insert(dirNames, dirName)
-    end
-  end
-
-  local dirNamesCount = table.getn(dirNames)
-  for k, dirName in ipairs(dirNames) do
-    local createNoCache = true
-    if k == dirNamesCount then
-      createNoCache = false
-    end
-    openDirByName(dirName, createNoCache)
-  end
-end
 ---
 
 local function setupMaterialPreview()
@@ -4165,41 +5105,26 @@ end
 -- Function which will be used in a coroutine to get the directories and files of a folder and its
 -- folders and files recursively.
 local function setupJob()
+
+  local timer = hptimer()
   setupVars()
 
   -- Init material preview.
   setupMaterialPreview()
 
   var.levelPath, var.levelName = getLevelPathAndName()
-
   var.numberOfAllAssetsAndDirs = #FS:findFiles(var.levelPath, "*", -1, false, true)
-  var.numberOfAllAssetsAndDirs = var.numberOfAllAssetsAndDirs + #FS:findFiles("/art/", "*", -1, false, true)
 
-  if editor.getPreference("assetBrowser.general.loadVehicleAssets")== true then
-    var.numberOfAllAssetsAndDirs = var.numberOfAllAssetsAndDirs + #FS:findFiles("/vehicles/", "*", -1, false, true)
-  end
-
-  if editor.getPreference("assetBrowser.general.loadGameplayAssets") == true then
-    var.numberOfAllAssetsAndDirs = var.numberOfAllAssetsAndDirs + #FS:findFiles("/gameplay/", "*", -1, false, true)
-  end
-
-  if editor.getPreference("assetBrowser.general.showAllDataFolders") == true then
-    var.numberOfAllAssetsAndDirs = var.numberOfAllAssetsAndDirs + #FS:findFiles("/", "*", -1, false, true)
-  end
-
+  var.allDirs = {}
   var.root = newDirectory(var.levelPath, var.levelName, true, true, false)
-  var.commonArt = newDirectory("/art/", "art", true, true, false)
+  table.insert(var.allDirs, var.root)
 
-  if editor.getPreference("assetBrowser.general.loadVehicleAssets")== true then
-    var.vehicles = newDirectory("/vehicles/", "vehicles", true, true, false)
-  end
+  local directoriesToLoad = editor.getPreference("assetBrowser.general.directoriesToLoad")
 
-  if editor.getPreference("assetBrowser.general.loadGameplayAssets") == true then
-    var.gameplay = newDirectory("/gameplay/", "gameplay", true, true, false)
-  end
-
-  if editor.getPreference("assetBrowser.general.showAllDataFolders") == true then
-    var.allData = newDirectory("/", "all", true, true, false)
+  for _, folder in ipairs(directoriesToLoad) do
+    local newDir = newDirectory(folder.path, folder.name, true, true, false)
+    table.insert(var.allDirs, newDir)
+    var.numberOfAllAssetsAndDirs = var.numberOfAllAssetsAndDirs + #FS:findFiles(folder.path, "*", -1, false, true)
   end
 
   var.fileCount = 0
@@ -4213,23 +5138,12 @@ local function setupJob()
   var.selectedFile = nil
 
   -- get all directories and files of the current level and put them into a tree struct
-  getDirsAndFiles(var.root)
-  getDirsAndFiles(var.commonArt)
+  for _,dir in pairs(var.allDirs) do
+    getDirsAndFiles(dir)
+  end
 
   -- Create/get thumbnails for the current selected directory.
   core_jobsystem.create(createAssetDataOfWholeDirJob, 1, var.selectedDirectory)
-
-  if editor.getPreference("assetBrowser.general.loadVehicleAssets")== true then
-    getDirsAndFiles(var.vehicles)
-  end
-
-  if editor.getPreference("assetBrowser.general.loadGameplayAssets") == true then
-    getDirsAndFiles(var.gameplay)
-  end
-
-  if editor.getPreference("assetBrowser.general.showAllDataFolders") == true then
-    getDirsAndFiles(var.allData)
-  end
 
   if var.currentLevelDirectories[var.levelName] then
     openDirByPath(var.currentLevelDirectories[var.levelName])
@@ -4243,12 +5157,15 @@ local function setupJob()
   loadSavedFiletypeFilter()
 
   var.state = var.state_enum.loading_done
-  editor.logInfo(logTag .. "Files have been received and processed.")
+  local timePassed = timer:stopAndReset()
+  editor.logInfo(string.format("%s%d directories and %d assets have been processed in %.2f seconds", logTag, var.dirCount, var.fileCount, timePassed/1000))
 
   var.history = {var.root}
 
   filterDirs()
   filterAssets()
+
+  getCollectionsFromFiles()
 end
 -- ##### SETUP FILES - END
 
@@ -4292,8 +5209,11 @@ end
 
 local function onEditorInitialized()
   editor.registerInspectorTypeHandler("asset", assetInspectorGui)
-  editor.registerWindow(assetBrowserWindowName, im.ImVec2(800, 500))
+  editor.registerWindow(assetBrowserWindowName, im.ImVec2(900, 520))
   editor.registerWindow(assetBrowserImageInspectorWindowName)
+  editor.registerModalWindow(createCollectionDialogWindowName, im.ImVec2(440, 240))
+  editor.registerModalWindow(pasteCollectionDialogWindowName, im.ImVec2(440, 240))
+  editor.registerModalWindow(renameCollectionDialogWindowName, im.ImVec2(440, 240))
   editor.editModes.assetBrowserEditMode = {
     onActivate = assetBrowserEditModeActivate,
     onDeactivate = assetBrowserEditModeDeactivate,
@@ -4433,13 +5353,56 @@ local function reset()
   var.numberOfAllAssetsAndDirs = 0
   var.root = nil
   var.commonArt = nil
-  var.allData = nil
   var.gameplay = nil
   var.vehicles = nil
   core_jobsystem.create(setupJob, 1)
 end
 
+local function collectioNameUI()
+  im.TextUnformatted("Name:")
+  im.SameLine()
+  im.PushItemWidth(160)
+  if im.InputText("##NewCollectionName", editor.getTempCharPtr(var.newCollectionName)) then
+    var.newCollectionName = editor.getTempCharPtr()
+    var.newCollectionFileName = sanitizeCollectionPathName(var.newCollectionName)
+    checkCollectionNameAndFileName()
+  end
+end
+
+local function newCollectionUI()
+  collectioNameUI()
+  im.TextUnformatted("Filename:")
+  im.SameLine()
+  im.PushItemWidth(160)
+  if im.InputText("##NewCollectionFileName", editor.getTempCharPtr(var.newCollectionFileName)) then
+    var.newCollectionFileName = editor.getTempCharPtr()
+    checkCollectionNameAndFileName()
+  end
+  im.PopItemWidth()
+  im.SameLine()
+  im.TextUnformatted(var.collectionExtension)
+
+  if var.newCollectionName == "" and var.newCollectionFileName == "" then
+    im.TextColored(editor.color.warning.Value, "Collection name and filename must not be empty.")
+  elseif var.newCollectionName == "" then
+    im.TextColored(editor.color.warning.Value, "Collection name must not be empty.")
+  elseif var.newCollectionFileName == "" then
+    im.TextColored(editor.color.warning.Value, "Collection filename must not be empty.")
+  end
+  if var.newCollectionName ~= "" and not var.createCollectionNameValid  then
+    im.TextColored(editor.color.warning.Value, "Collection name is already in use.")
+  end
+  if var.newCollectionFileName ~= "" and not var.createCollectionFilenameValid then
+    im.TextColored(editor.color.warning.Value, "Filename is already in use.")
+  end
+  local notValid = not var.createCollectionNameValid or not var.createCollectionFilenameValid
+  if notValid then
+    im.BeginDisabled()
+  end
+end
+
 local function onEditorGui()
+  anyWindowHovered = im.IsWindowHovered(im.flags(im.HoveredFlags_AnyWindow, im.HoveredFlags_AllowWhenBlockedByActiveItem))
   var.windowFlags = (var.dragging == var.dragging_enum.dragging or var.dragging == var.dragging_enum.drag_ended) and
   im.flags(im.WindowFlags_MenuBar, im.WindowFlags_NoScrollbar, im.WindowFlags_NoMove) or
   im.flags(im.WindowFlags_MenuBar, im.WindowFlags_NoScrollbar)
@@ -4448,7 +5411,6 @@ local function onEditorGui()
   var.io = im.GetIO()
 
   if editor.beginWindow(assetBrowserWindowName, "Asset Browser", var.windowFlags) then
-
     -- we do the setupJob here, otherwise it would lock down the filesystem too much and will load slower if in onEditorActivated
     if not setupWasDone then
       -- subscribe our setup function to the jobsystem
@@ -4496,6 +5458,133 @@ local function onEditorGui()
   end
   editor.endWindow()
 
+  local notValid = not var.createCollectionNameValid or not var.createCollectionFilenameValid
+
+  if editor.beginModalWindow(createCollectionDialogWindowName, "Create Collection") then
+    newCollectionUI()
+
+    if notValid then
+      im.EndDisabled()
+    end
+    if var.createCollectionDirs then
+      if im.TreeNode1("Dirs##NewCollection") then
+        for _, dir in ipairs(var.createCollectionDirs) do
+          im.TextUnformatted(dir.path)
+        end
+        im.TreePop()
+      end
+    end
+    if var.createCollectionAssets then
+      if im.TreeNode1("Files##NewCollection") then
+        for _, file in ipairs(var.createCollectionAssets) do
+          im.TextUnformatted(file.path)
+        end
+        im.TreePop()
+      end
+    end
+    if notValid then
+      im.BeginDisabled()
+    end
+
+    if im.Button("Create##NewCollection", im.ImVec2(im.GetContentRegionAvail().x, 0)) then
+      createCollection(var.createCollectionAssets, var.createCollectionDirs)
+      editor.closeModalWindow(createCollectionDialogWindowName)
+    end
+    if notValid then
+      im.EndDisabled()
+    end
+    im.tooltip("Create a new collection and add the asset to it.")
+
+    if im.Button("Cancel##NewCollection", im.ImVec2(im.GetContentRegionAvail().x, 0)) then
+      editor.closeModalWindow(createCollectionDialogWindowName)
+      var.newCollectionName = "New Collection"
+      var.newCollectionFileName = "New_Collection"
+      var.createCollectionAssets = nil
+      var.createCollectionDirs = nil
+    end
+  end
+  editor.endModalWindow()
+
+  if editor.beginModalWindow(pasteCollectionDialogWindowName, "Paste Collection") then
+    if im.Button("Get clipboard data") then
+      refreshClipboardData()
+    end
+    im.tooltip("Refresh the clipboard data")
+    if not var.pasteCollectionData then
+      im.TextUnformatted("Data in clipboarb is not valid")
+    else
+      if not var.pasteCollectionData.name or not var.pasteCollectionData.files then
+        im.TextUnformatted("Data in clipboard is not valid")
+      else
+        newCollectionUI()
+
+        if notValid then
+          im.EndDisabled()
+        end
+        if im.TreeNode1("Files##NewCollectionFromClipboard") then
+          if im.BeginChild1("##NewCollectionFromClipboardFilesChild", im.ImVec2(0, 120)) then
+            for _, file in ipairs(var.pasteCollectionData.files) do
+              im.TextUnformatted(file)
+            end
+          end
+          im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
+          im.TreePop()
+        end
+        if notValid then
+          im.BeginDisabled()
+        end
+
+        if im.Button("Create##NewCollectionFromClipboard", im.ImVec2(im.GetContentRegionAvail().x, 0)) then
+          local collection = deserializeCollection(var.pasteCollectionData, var.collectionsPath .. var.newCollectionFileName .. var.collectionExtension)
+          createCollection(collection.files, collection.dirs)
+          editor.closeModalWindow(pasteCollectionDialogWindowName)
+        end
+        if notValid then
+          im.EndDisabled()
+        end
+        im.tooltip("Create a new collection from the clipboard data and add the asset to it.")
+      end
+    end
+    if im.Button("Cancel##NewCollectionFromClipboard", im.ImVec2(im.GetContentRegionAvail().x, 0)) then
+      editor.closeModalWindow(pasteCollectionDialogWindowName)
+      var.newCollectionName = "New Collection"
+      var.newCollectionFileName = "New_Collection"
+    end
+  end
+  editor.endModalWindow()
+
+  if editor.beginModalWindow(renameCollectionDialogWindowName, "Rename Collection") then
+    collectioNameUI()
+
+    if var.newCollectionName == "" then
+      im.TextColored(editor.color.warning.Value, "Collection name must not be empty.")
+    end
+    if var.newCollectionName ~= "" and not var.createCollectionNameValid  then
+      im.TextColored(editor.color.warning.Value, "Collection name is already in use.")
+    end
+
+    if var.createCollectionNameValid == false then
+      im.BeginDisabled()
+    end
+    if im.Button("Rename##RenameCollection", im.ImVec2(im.GetContentRegionAvail().x, 0)) then
+      renameCollection(var.renameCollectionData, var.newCollectionName)
+      createCollectionMap()
+      var.newCollectionName = "New Collection"
+      var.newCollectionFileName = "New_Collection"
+      editor.closeModalWindow(renameCollectionDialogWindowName)
+    end
+    if var.createCollectionNameValid == false then
+      im.EndDisabled()
+    end
+
+    if im.Button("Cancel##RenameCollection", im.ImVec2(im.GetContentRegionAvail().x, 0)) then
+      editor.closeModalWindow(renameCollectionDialogWindowName)
+      var.newCollectionName = "New Collection"
+      var.newCollectionFileName = "New_Collection"
+    end
+  end
+  editor.endModalWindow()
+
   imageInspectorWindow()
 end
 -- ##### GUI: MAIN - END
@@ -4511,32 +5600,6 @@ local function onEditorPreferenceValueChanged(path, value)
   if path == "assetBrowser.general.assetGroupingType" then var.options.assetGroupingType = value end
   if path == "assetBrowser.general.currentLevelDirectories" then var.currentLevelDirectories = value end
   if path == "assetBrowser.general.treeView" then var.options.treeView = value end
-
-  if path == "assetBrowser.general.loadGameplayAssets" then
-    if value == true then
-      if var.state == var.state_enum.loading_done then reset() end
-    else
-      var.gameplay = nil
-    end
-  end
-  if path == "assetBrowser.general.loadVehicleAssets" then
-    if value == true then
-      if var.state == var.state_enum.loading_done then reset() end
-      var.vehicles = newDirectory("/vehicles/", "vehicles", true, true, false)
-      var.numberOfAllAssetsAndDirs = var.numberOfAllAssetsAndDirs + #FS:findFiles("/vehicles/", "*", -1, false, true)
-    else
-      var.vehicles = nil
-      var.numberOfAllAssetsAndDirs = var.numberOfAllAssetsAndDirs - #FS:findFiles("/vehicles/", "*", -1, false, true)
-    end
-  end
-  if path == "assetBrowser.general.showAllDataFolders" then
-    if value == true then
-      if var.state == var.state_enum.loading_done then reset() end
-    else
-      var.allData = nil
-    end
-  end
-
   if path == "assetBrowser.general.skipMainFolder" then var.options.skipMainFolder = value end
   if path == "assetBrowser.general.skipImposters" then var.options.skipImposters = value end
   if path == "assetBrowser.general.showThumbnailWhenHoveringAsset" then var.options.showThumbnailWhenHoveringAsset = value end
@@ -4566,7 +5629,7 @@ local function onWindowLostFocus(windowName)
 end
 
 local prefTempBoolPtr = im.BoolPtr(true)
-local tempFloatArr3 = ffi.new("float[3]", {0, 0, 0})
+local tempFloatArr3 = im.ArrayFloat(3)
 
 local function getTempFloatArray3(value)
   if value then
@@ -4585,9 +5648,6 @@ local function onEditorRegisterPreferences(prefsRegistry)
   prefsRegistry:registerSubCategory("assetBrowser", "general", nil,
   {
     -- {name = {type, default value, desc, label (nil for auto Sentence Case), min, max, hidden, advanced, customUiFunc, enumLabels}}
-    {loadVehicleAssets = {"bool", false, "Load the vehicle assets in the asset browser, this will increase the time loading the asset browser.\nChanging the setting will reload all assets."}},
-    {loadGameplayAssets = {"bool", false, "Load the gameplay folder assets.\nChanging the setting will reload all assets."}},
-    {showAllDataFolders = {"bool", false, "Show all game data folders in the asset browser, this will increase the time loading the asset browser.\nChanging the setting will reload all assets."}},
     {skipMainFolder = {"bool", false, "Skip loading the main (level objects) folder"}},
     {skipImposters = {"bool", true, "Skip the imposter files when loading the file tree"}},
     {fullPathSearch = {"bool", true, "Check full filepath when searching for assets rather than just checking the filename", nil, nil, nil, nil, nil, function()
@@ -4610,6 +5670,104 @@ local function onEditorRegisterPreferences(prefsRegistry)
 
     {selectInstantiatedObject = {"bool", true, "Auto-select the object that is instantiated through the asset browser."}},
     {displayAssetColorCode = {"bool", true, "If true the asset browser will display a color coded bar at the bottom of the asset thumbnails."}},
+    {directoriesToLoad = {"table", {
+      {path = "/art", name = "art"},
+      {path = "/assets", name = "assets"},
+      }, "Directories being loaded by the asset browser", nil, nil, nil, nil, nil, function()
+      local directoriesToLoadRef = editor.getPreference("assetBrowser.general.directoriesToLoad")
+
+      im.BeginChild1("abPrefs_directoriesToLoadChild", im.ImVec2(0, 250))
+
+      im.TextColored(editor.color.warning.Value, "Changes take effect after a game restart or Lua reload!")
+
+      im.Columns(3, "DirectoriesToLoadColumns")
+      im.TextUnformatted("Name")
+      im.NextColumn()
+      im.TextUnformatted("Path")
+      im.NextColumn()
+      im.NextColumn()
+      im.Separator()
+      im.Separator()
+
+      im.BeginDisabled()
+      im.TextUnformatted("%level_name%")
+      im.NextColumn()
+      im.TextUnformatted("%level_path%")
+      im.NextColumn()
+      im.Button("Delete")
+      im.NextColumn()
+      im.EndDisabled()
+
+      for k, directory in ipairs(directoriesToLoadRef) do
+        if im.InputText("##DirName" .. tostring(k), editor.getTempCharPtr(directory.name)) then
+          directoriesToLoadRef[k].name = editor.getTempCharPtr()
+          editor.setPreference("assetBrowser.general.directoriesToLoad", directoriesToLoadRef)
+        end
+        im.NextColumn()
+        if im.InputText("##DirPath" .. tostring(k), editor.getTempCharPtr(directory.path)) then
+          directoriesToLoadRef[k].path = editor.getTempCharPtr()
+          editor.setPreference("assetBrowser.general.directoriesToLoad", directoriesToLoadRef)
+        end
+        im.NextColumn()
+        if im.Button("Delete##directoryToLoad" .. tostring(k)) then
+          local newDirectoriesToLoad = deepcopy(directoriesToLoadRef)
+          table.remove(newDirectoriesToLoad, k)
+          editor.setPreference("assetBrowser.general.directoriesToLoad", newDirectoriesToLoad)
+        end
+        im.NextColumn()
+      end
+
+      im.Separator()
+      im.Separator()
+      if im.InputText("##DirNameNew", editor.getTempCharPtr(var.directoriesToLoad_new_name)) then
+        var.directoriesToLoad_new_name = editor.getTempCharPtr()
+      end
+      im.NextColumn()
+      if im.InputText("##DirPathNew", editor.getTempCharPtr(var.directoriesToLoad_new_path)) then
+        var.directoriesToLoad_new_path = editor.getTempCharPtr()
+      end
+      im.NextColumn()
+      if im.Button("Add##directoryToLoad") then
+        if var.directoriesToLoad_new_name == "" or var.directoriesToLoad_new_path == "" then
+          editor.logWarn("Directory name and path must not be empty.")
+          return
+        end
+        for _, directory in ipairs(directoriesToLoadRef) do
+          if directory.name == var.directoriesToLoad_new_name or directory.path == var.directoriesToLoad_new_path then
+            editor.logWarn("Directory already exists.")
+            return
+          end
+        end
+        local newDirectoriesToLoad = deepcopy(directoriesToLoadRef)
+        table.insert(newDirectoriesToLoad, {name = var.directoriesToLoad_new_name, path = var.directoriesToLoad_new_path})
+        editor.setPreference("assetBrowser.general.directoriesToLoad", newDirectoriesToLoad)
+        var.directoriesToLoad_new_name = ""
+        var.directoriesToLoad_new_path = ""
+      end
+      im.NextColumn()
+
+      im.Columns(1)
+      if var.directoriesToLoad_new_name == "" or var.directoriesToLoad_new_path == "" then
+        im.TextColored(editor.color.warning.Value, "Directory name and path must not be empty.")
+      end
+
+      local commonDirs = {"art", "assets", "vehicles", "gameplay"}
+      for _, cDirName in ipairs(commonDirs) do
+        if im.Button("Add " .. cDirName .. " assets directory") then
+          for _, directory in ipairs(directoriesToLoadRef) do
+            if directory.name == cDirName or directory.path == "/" .. cDirName then
+              editor.logWarn(cDirName .. " assets directory already exists.")
+              return
+            end
+          end
+          local newDirectoriesToLoad = deepcopy(directoriesToLoadRef)
+          table.insert(newDirectoriesToLoad, {name = cDirName, path = "/" .. cDirName})
+          editor.setPreference("assetBrowser.general.directoriesToLoad", newDirectoriesToLoad)
+        end
+      end
+
+      im.EndChild()
+    end}},
     {typeColors = {"table", {}, "", nil, nil, nil, nil, nil, function()
       if var.typeColors then
         local sortedTbl = tableKeys(var.typeColors)
@@ -4637,7 +5795,6 @@ local function onEditorRegisterPreferences(prefsRegistry)
         im.EndChild()
       end
     end}},
-
     -- hidden prefs
     {treeView = {"bool", true, "If the tree view is visible", nil, nil, nil, true}},
     {simpleFileTypes = {"table", {}, "", nil, nil, nil, true}},
@@ -4649,7 +5806,6 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {savedFilter = {"table", {}, "", nil, nil, nil, true}},
     {assetSortingType = {"int", 1, "", nil, nil, nil, true}},
     {assetGroupingType = {"int", 1, "", nil, nil, nil, true}},
-    {otherFolders = {"table", {}, "", nil, nil, nil, true}},
   })
 end
 
@@ -4668,6 +5824,7 @@ end
 
 -- public interface
 M.selectFileByPath = selectFileByPath
+M.getAssetByPath = getAssetByPath
 
 M.onEditorActivated = onEditorActivated
 M.onEditorGui = onEditorGui

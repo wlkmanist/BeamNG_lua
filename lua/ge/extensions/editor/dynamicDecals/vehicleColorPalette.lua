@@ -343,49 +343,49 @@ local function registerEditorPreferences(prefsRegistry)
       {values={{0.29019609093666,0.36862745881081,0.26666668057442},{0.37254902720451,0.53725492954254,0.19607844948769},{0.87843143939972,0.2039215862751,0.19607844948769}},name="Watermelon"},
     }, "Vehicle Color Palettes", nil, nil, nil, nil, nil,
     function(cat, subCat, item)
-      local guiId = "editorPrefs"
-      local palettes = editor.getPreference("dynamicDecalsTool.vehicleColorPalette.palettes")
-      local vehicleObj = getPlayerVehicle(0)
-      if not vehicleObj then
-        im.TextUnformatted("No vehicle")
-        return
-      end
-      for k, palette in ipairs(palettes) do
-        if editor.getPreference("dynamicDecalsTool.general.debug") then
-          if im.Button(string.format("Dump##LoadVehicleColorPalette_dumpButton_%d%s", k, guiId)) then
-            print(dumps(palette))
-          end
-          im.SameLine()
-        end
-        if im.Button(string.format("Load##VehicleColorPalette_LoadButton_%d%s", k, guiId)) then
-          vehicleObj.color = Point4F(palette.values[1][1], palette.values[1][2], palette.values[1][3], vehicleObj.color.w)
-          vehicleObj.colorPalette0 = Point4F(palette.values[2][1], palette.values[2][2], palette.values[2][3], vehicleObj.colorPalette0.w)
-          vehicleObj.colorPalette1 = Point4F(palette.values[3][1], palette.values[3][2], palette.values[3][3], vehicleObj.colorPalette1.w)
-          im.CloseCurrentPopup()
-        end
-        im.SameLine()
-        if editor.uiIconImageButton(editor.icons.delete, tool.getIconSizeVec2(), nil, nil, nil, string.format("##vehicleColorPalette_Load_deleteButton_%d%s", k, guiId)) then
-          table.remove(palettes, k)
-          editor.setPreference("dynamicDecalsTool.vehicleColorPalette.palettes", palettes)
-        end
-        im.tooltip("Remove color palette")
-        im.SameLine()
-        im.ColorButton(string.format("LoadVehicleColorPalette_color1_%d%s", k, guiId), editor.getTempImVec4_TableTable({palette.values[1][1], palette.values[1][2], palette.values[1][3], 1.0}))
-        im.SameLine()
-        im.ColorButton(string.format("LoadVehicleColorPalette_color2_%d%s", k, guiId), editor.getTempImVec4_TableTable({palette.values[2][1], palette.values[2][2], palette.values[2][3], 1.0}))
-        im.SameLine()
-        im.ColorButton(string.format("LoadVehicleColorPalette_color3_%d%s", k, guiId), editor.getTempImVec4_TableTable({palette.values[3][1], palette.values[3][2], palette.values[3][3], 1.0}))
-        im.SameLine()
-        im.PushItemWidth(im.GetContentRegionAvailWidth())
-        if editor.uiInputText(string.format("##LoadVehicleColorPalette_paletteName_InputWidget_%d%s", k, guiId), editor.getTempCharPtr(palette.name), nil, im.InputTextFlags_AutoSelectAll, nil, nil, editor.getTempBool_BoolBool(false)) then
-          palette.name = editor.getTempCharPtr()
-        end
-        if editor.getTempBool_BoolBool() == true then
-          table.sort(palettes, function(a,b) return string.lower(a.name) < string.lower(b.name) end)
-          editor.setPreference("dynamicDecalsTool.vehicleColorPalette.palettes", palettes)
-        end
-        im.PopItemWidth()
-      end
+      -- local guiId = "editorPrefs"
+      -- local palettes = editor.getPreference("dynamicDecalsTool.vehicleColorPalette.palettes")
+      -- local vehicleObj = getPlayerVehicle(0)
+      -- if not vehicleObj then
+      --   im.TextUnformatted("No vehicle")
+      --   return
+      -- end
+      -- for k, palette in ipairs(palettes) do
+      --   if editor.getPreference("dynamicDecalsTool.general.debug") then
+      --     if im.Button(string.format("Dump##LoadVehicleColorPalette_dumpButton_%d%s", k, guiId)) then
+      --       print(dumps(palette))
+      --     end
+      --     im.SameLine()
+      --   end
+      --   if im.Button(string.format("Load##VehicleColorPalette_LoadButton_%d%s", k, guiId)) then
+      --     vehicleObj.color = Point4F(palette.values[1][1], palette.values[1][2], palette.values[1][3], vehicleObj.color.w)
+      --     vehicleObj.colorPalette0 = Point4F(palette.values[2][1], palette.values[2][2], palette.values[2][3], vehicleObj.colorPalette0.w)
+      --     vehicleObj.colorPalette1 = Point4F(palette.values[3][1], palette.values[3][2], palette.values[3][3], vehicleObj.colorPalette1.w)
+      --     im.CloseCurrentPopup()
+      --   end
+      --   im.SameLine()
+      --   if editor.uiIconImageButton(editor.icons.delete, tool.getIconSizeVec2(), nil, nil, nil, string.format("##vehicleColorPalette_Load_deleteButton_%d%s", k, guiId)) then
+      --     table.remove(palettes, k)
+      --     editor.setPreference("dynamicDecalsTool.vehicleColorPalette.palettes", palettes)
+      --   end
+      --   im.tooltip("Remove color palette")
+      --   im.SameLine()
+      --   im.ColorButton(string.format("LoadVehicleColorPalette_color1_%d%s", k, guiId), editor.getTempImVec4_TableTable({palette.values[1][1], palette.values[1][2], palette.values[1][3], 1.0}))
+      --   im.SameLine()
+      --   im.ColorButton(string.format("LoadVehicleColorPalette_color2_%d%s", k, guiId), editor.getTempImVec4_TableTable({palette.values[2][1], palette.values[2][2], palette.values[2][3], 1.0}))
+      --   im.SameLine()
+      --   im.ColorButton(string.format("LoadVehicleColorPalette_color3_%d%s", k, guiId), editor.getTempImVec4_TableTable({palette.values[3][1], palette.values[3][2], palette.values[3][3], 1.0}))
+      --   im.SameLine()
+      --   im.PushItemWidth(im.GetContentRegionAvailWidth())
+      --   if editor.uiInputText(string.format("##LoadVehicleColorPalette_paletteName_InputWidget_%d%s", k, guiId), editor.getTempCharPtr(palette.name), nil, im.InputTextFlags_AutoSelectAll, nil, nil, editor.getTempBool_BoolBool(false)) then
+      --     palette.name = editor.getTempCharPtr()
+      --   end
+      --   if editor.getTempBool_BoolBool() == true then
+      --     table.sort(palettes, function(a,b) return string.lower(a.name) < string.lower(b.name) end)
+      --     editor.setPreference("dynamicDecalsTool.vehicleColorPalette.palettes", palettes)
+      --   end
+      --   im.PopItemWidth()
+      -- end
     end
   }},
   })

@@ -291,7 +291,7 @@ local function displayOverview(enableSlowmo, enableResults)
     commands.setFreeCameraTransformJson(camTransforms[level])
     core_camera.setFOV(0, 12)
   end
-  guihooks.trigger('ChangeState', {state = "menu.dragRaceOverview", params = {results = results, cinematicEnabled = (level ~= 'gridmap_v2')}})
+  extensions.ui_router.navigate("menu.dragRaceOverview", {results = results, cinematicEnabled = (level ~= 'gridmap_v2')})
   core_camera.setByName(0, "external", true)
 end
 
@@ -642,7 +642,7 @@ local function onBeamNGTrigger(data)
     if started == true then
       for i,v in pairs(vehicles) do
         if v.lane == "right" and v.id == data.subjectID then
-          local rightVehicle = be:getObjectByID(v.id)
+          local rightVehicle = getObjectByID(v.id)
           -- Updating right display
           updateDisplay("r", time, rightVehicle:getVelocity():len() * speedUnit)
           local currentVehicle = core_vehicles.getCurrentVehicleDetails()
@@ -657,7 +657,7 @@ local function onBeamNGTrigger(data)
         end
 
         if v.lane == "left" and v.id == data.subjectID then
-          local leftVehicle = be:getObjectByID(data.subjectID)
+          local leftVehicle = getObjectByID(data.subjectID)
           -- Updating left display
           updateDisplay("l", time, leftVehicle:getVelocity():len() * speedUnit)
           table.insert(results, {time = time, speed = leftVehicle:getVelocity():len() * speedUnit, vehicle = opponentVehicleName .. ' (opponent)'})
@@ -708,7 +708,7 @@ local function onBeamNGTrigger(data)
 
   if data.triggerName == "dragTrigger" then
     if data.event == "enter" and not playerVehicle then
-      playerVehicle = be:getObjectByID(data.subjectID)
+      playerVehicle = getObjectByID(data.subjectID)
       playerVehicleInsideTrigger = true
     end
   end
@@ -719,7 +719,7 @@ local function restartRace()
   opponentVehicle:reset()
   stopOpponent()
   playerVehicle:reset()
-  guihooks.trigger('ChangeState', 'menu')
+  extensions.ui_router.navigate("menu")
   guihooks.trigger('MenuHide', true)
   simTimeAuthority.set(1)
   core_camera.setByName(0, "orbit", true)
@@ -790,7 +790,7 @@ end
 
 local function onVehicleResetted(vid)
 
-  local vehicle = be:getObjectByID(vid)
+  local vehicle = getObjectByID(vid)
   if not vehicle then return end
   if playerVehicleInsideTrigger and playerVehicle and playerVehicle:getID() == vid then
     ui_missionInfo.closeDialogue()

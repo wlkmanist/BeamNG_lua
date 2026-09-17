@@ -1,4 +1,4 @@
--- This Source Code Form is subject to the terms of the bCDDL, var. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -39,6 +39,7 @@ local modifiersDefaultValues = {
     baseTranslationGlobal = {[""] = true, [false] = true},
     baseTranslationGlobalElastic = {[""] = true, [false] = true},
     baseTranslationGlobalRigid = {[""] = true, [false] = true},
+    translationUseMeters = {[""] = true, [false] = true, [true] = true},
     baseRotation = {[""] = true, [false] = true},
     baseRotationGlobal = {[""] = true, [false] = true},
     min = {[0] = true, [""] = true},
@@ -408,18 +409,18 @@ local function replaceSpecialValues(val)
 end
 
 -- Get all parts as a list and store output in 'parts' var
-local function getPartsRec(ioCtx, part, jbeamFilename, parts)
-  tableInsert(parts, {part = part, jbeamFilename = jbeamFilename})
-  local slots = part.slots2 or part.slots
-  if slots ~= nil then
-    for _, slot in ipairs(slots) do
-      local slotId = slot.name or slot.type
-
-      local childPartName = vEditor.vehData.chosenParts[slotId]
-      if childPartName ~= '' then
-        local childPart, childJBeamFilename = jbeamIO.getPart(ioCtx, childPartName)
-        if childPart and childJBeamFilename then
-          getPartsRec(ioCtx, childPart, childJBeamFilename, parts)
+local function getPartsRec(ioCtx, partTreeNode, parts)
+  if not partTreeNode.children then return end
+  local part, jbeamFilename = jbeamIO.getPart(ioCtx, partTreeNode.chosenPartName)
+  if part then
+    tableInsert(parts, {part = part, jbeamFilename = jbeamFilename})
+    local slots = part.slots2 or part.slots
+    if slots ~= nil then
+      for _, slot in ipairs(slots) do
+        local slotId = slot.name or slot.type
+        local childPartTreeNode = partTreeNode.children[slotId]
+        if childPartTreeNode then
+          getPartsRec(ioCtx, childPartTreeNode, parts)
         end
       end
     end
@@ -429,10 +430,7 @@ end
 local function getParts()
   local parts = {}
   local ioCtx = vEditor.vehData.ioCtx
-  --local partsList = jbeamIO.getAvailableParts(ioCtx)
-  --local activeParts = vEditor.vehData.vdata.activeParts
-  local mainPart, jbeamFilename = jbeamIO.getPart(ioCtx, vEditor.vehData.mainPartName)
-  getPartsRec(ioCtx, mainPart, jbeamFilename, parts)
+  getPartsRec(ioCtx, vEditor.vehData.config.partsTree, parts)
   return parts
 end
 
@@ -505,13 +503,13 @@ local function initAnalyzeModifiersLeaking(partsWithASTData, outSectionsAllModNa
           end
         end
       elseif sectionName:match('^scale') and type(section) == "number" then
-        modsScalers[sectionName:sub(6, #sectionName)] = {modVal = section, partOrigin = partName}
+        modsScalers[sectionName:sub(6, #sectionName)] = {modVal = section, partPath = partName}
       end
     end
   end
   for mod, modData in pairs(modsScalers) do
-    partsModsScalers[modData.partOrigin] = partsModsScalers[modData.partOrigin] or {}
-    partsModsScalers[modData.partOrigin][mod] = modData.modVal
+    partsModsScalers[modData.partPath] = partsModsScalers[modData.partPath] or {}
+    partsModsScalers[modData.partPath][mod] = modData.modVal
   end
 end
 
@@ -700,10 +698,10 @@ local function analyzeModifiersLeaking(partsWithASTData)
                     newModVal = newModVal * modsScalers[mod].modVal
                     isScaled = true
                   end
-                  sectionMods[mod] = sectionMods[mod] or {modVal = nil, isScaled = false, partOrigin = nil}
+                  sectionMods[mod] = sectionMods[mod] or {modVal = nil, isScaled = false, partPath = nil}
                   sectionMods[mod].modVal = newModVal
                   sectionMods[mod].isScaled = isScaled
-                  sectionMods[mod].partOrigin = partName
+                  sectionMods[mod].partPath = partName
 
                   outModsSection[partName] = outModsSection[partName] or {}
                   outModsSection[partName][mod] = outModsSection[partName][mod] or {modVal = nil, isScaled = false, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
@@ -733,10 +731,10 @@ local function analyzeModifiersLeaking(partsWithASTData)
                         newModVal = newModVal * modsScalers[mod].modVal
                         isScaled = true
                       end
-                      sectionModsCopy[mod] = sectionModsCopy[mod] or {modVal = nil, partOrigin = nil}
+                      sectionModsCopy[mod] = sectionModsCopy[mod] or {modVal = nil, partPath = nil}
                       sectionModsCopy[mod].modVal = newModVal
                       sectionModsCopy[mod].isScaled = isScaled
-                      sectionModsCopy[mod].partOrigin = partName
+                      sectionModsCopy[mod].partPath = partName
                     end
                   end
                 end
@@ -747,20 +745,20 @@ local function analyzeModifiersLeaking(partsWithASTData)
                 if modsScalers[mod] then
                   local scaleMod = 'scale'..mod
                   local outModsSectionPart = outModsSection[partName]
-                  local partOrigin = modsScalers[mod].partOrigin
+                  local partPath = modsScalers[mod].partPath
 
                   outModsSectionPart[scaleMod] = outModsSectionPart[scaleMod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
-                  outModsSectionPart[scaleMod].leakedFromPart = partOrigin
+                  outModsSectionPart[scaleMod].leakedFromPart = partPath
 
                   if not leakingToPartsEntries[scaleMod] then
-                    outModsSection[partOrigin] = outModsSection[partOrigin] or {}
-                    outModsSection[partOrigin][scaleMod] = outModsSection[partOrigin][scaleMod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
-                    tableInsert(outModsSection[partOrigin][scaleMod].leakingToParts, partName)
+                    outModsSection[partPath] = outModsSection[partPath] or {}
+                    outModsSection[partPath][scaleMod] = outModsSection[partPath][scaleMod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+                    tableInsert(outModsSection[partPath][scaleMod].leakingToParts, partName)
                     leakingToPartsEntries[scaleMod] = true
                   end
                 end
 
-                if modData.partOrigin ~= partName and
+                if modData.partPath ~= partName and
                 (
                   not useDefaultValuesForLeaking[0] or
                   (
@@ -775,14 +773,14 @@ local function analyzeModifiersLeaking(partsWithASTData)
                   local outModsSectionPart = outModsSection[partName]
 
                   if not leakingToPartsEntries[mod] then
-                    outModsSection[modData.partOrigin] = outModsSection[modData.partOrigin] or {}
-                    outModsSection[modData.partOrigin][mod] = outModsSection[modData.partOrigin][mod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
-                    tableInsert(outModsSection[modData.partOrigin][mod].leakingToParts, partName)
+                    outModsSection[modData.partPath] = outModsSection[modData.partPath] or {}
+                    outModsSection[modData.partPath][mod] = outModsSection[modData.partPath][mod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
+                    tableInsert(outModsSection[modData.partPath][mod].leakingToParts, partName)
                     leakingToPartsEntries[mod] = true
                   end
 
                   outModsSectionPart[mod] = outModsSectionPart[mod] or {modVal = nil, leakingToParts = {}, leakedFromPart = nil, astNodeData = {}}
-                  outModsSectionPart[mod].leakedFromPart = modData.partOrigin
+                  outModsSectionPart[mod].leakedFromPart = modData.partPath
 
                   outModsSectionPart[mod].astNodeData.affectedRowsASTNodeIdxs = outModsSectionPart[mod].astNodeData.affectedRowsASTNodeIdxs or {}
                   tableInsert(outModsSectionPart[mod].astNodeData.affectedRowsASTNodeIdxs, astNodeIdxs)
@@ -944,8 +942,8 @@ local function onUpdate()
           im.SameLine()
         end
       end
-      im.EndChild()
     end
+    im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
 
     local sectionName = sectionNamesSorted[sectionViewing]
     if not sectionName then goto continue end

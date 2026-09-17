@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
-local unknownSystemName = "?" -- if you modify this, you need to modify openxrHelper.cpp 'unknownSystemName' too
+local unknownSystemName = "?"
 
 local im = ui_imgui
 local debugWindowOpen = im.BoolPtr(false)
@@ -17,23 +17,23 @@ local buttonOkLua     = "extensions.render_openxr.closeWelcome(true)"
 local buttonNoVulkanLua="extensions.render_openxr.closeWelcome(false)"
 local buttonCancelLua = "extensions.render_openxr.closeWelcome(false)"
 
-local framesUntilCenter = nil
-
 local M = {}
+M.dependencies = { "core_camera" } -- ensure execution order against camera VR corrections, to avoid a one-frame pose latency
 M.stateString = "disabled" -- can also be "enabled" and "welcome"
 M.cefDialogOpen = nil
 M.state = {}
 M.state.systemName = unknownSystemName
 
+local pointerSettings = {
+  { key = "openXRuiEnabled", field = "openXRuiEnabled", ctor = im.BoolPtr },
+  { key = "openXRuiMode", field = "openXRuiMode", ctor = im.IntPtr },
+  { key = "openXRwindowViewMode", field = "openXRwindowViewMode", ctor = im.IntPtr },
+  { key = "openXRdebugEnabled", field = "openXRdebugEnabled", ctor = im.BoolPtr },
+  { key = "openXRquadCompositionEnabled", field = "openXRquadCompositionEnabled", ctor = im.BoolPtr, default = false },
+}
+
 local variableOnUpdate = nop
-local function constOnUpdate(...)
-  if framesUntilCenter then
-    framesUntilCenter = framesUntilCenter - 1
-    if framesUntilCenter < 0 then
-      framesUntilCenter = nil
-      M.center(0) -- end centering
-    end
-  end
+local function onPreRender(...)
   variableOnUpdate(...)
 end
 
@@ -41,7 +41,43 @@ local function logState()
     log("D", "", "Current OpenXR state: "..dumps(M.state))
 end
 
-local fieldsTriggeringGuiHook = { "enabled", "sessionRunning", "headsetActive", "controller0Active", "controller1Active", "controller0poseValid", "controller1poseValid", "systemName", "lastError", "targetRefreshRate", "renderedWidth", "renderedHeight", "recommendedWidth", "recommendedHeight" }
+--[[ TODO
+local inputSourceStateCache = nil
+local sourcePoseCache = {}
+local function getInputSourceStates()
+  local sources = inputSourceStateCache
+  if sources then
+    return sources
+  end
+
+  sources = OpenXR.getInputSourceStates()
+  inputSourceStateCache = sources
+  return sources
+end
+
+local function getSourcePoseStates(sourcePath)
+  local poses = sourcePoseCache[sourcePath]
+  if poses or not sourcePath or sourcePath == "" then
+    return poses or {}
+  end
+
+  poses = {}
+  for path, rawPose in pairs(OpenXR.getSourcePoseStates(sourcePath)) do
+    local pose = { pos = vec3(), rot = quat() }
+    pose.id = rawPose.id
+    pose.active = rawPose.active
+    pose.poseValid = rawPose.poseValid
+    if pose.poseValid then
+      pose.pos:set(rawPose.pos.x, rawPose.pos.y, rawPose.pos.z)
+      pose.rot:set(rawPose.rot.x, rawPose.rot.y, rawPose.rot.z, rawPose.rot.w)
+    end
+    poses[path] = pose
+  end
+  sourcePoseCache[sourcePath] = poses
+  return poses
+end
+--]]
+local fieldsTriggeringGuiHook = { "enabled", "sessionRunning", "headsetActive", "systemName", "targetRefreshRate", "renderedWidth", "renderedHeight", "recommendedWidth", "recommendedHeight", "sourceCount", "activeSourceCount", "poseValidSourceCount", "inputSourcesKey" }
 local lastKnownUIState = {}
 local function updateUI(forced)
   local changed = forced
@@ -59,63 +95,58 @@ local function updateUI(forced)
   guihooks.trigger('OpenXRStateChanged', M.state)
 end
 
-local function stateChanged(enabled, sessionRunning, headsetActive, controller0Active, controller1Active, controller0poseValid, controller1poseValid, systemName, lastError, currentRefreshRate, renderedWidth, renderedHeight, recommendedWidth, recommendedHeight, supportedWidth, supportedHeight, supportedLayers, sessionState, ipd, handSeparation, fov0hz, fov0vt, fov1hz, fov1vt)
-  currentRefreshRate = currentRefreshRate > 1e10 and 0 or currentRefreshRate -- sanitize value: skip infinite refresh rates, due to (1/period) when period is unknown (zero)
-  M.state.enabled         = enabled
-  M.state.sessionRunning  = sessionRunning
-  M.state.systemName      = (systemName == unknownSystemName) and "ui.options.graphics.openXRsystemName.unknown" or systemName
-  M.state.lastError       = lastError
-  M.state.currentRefreshRate = currentRefreshRate
-  M.state.targetRefreshRate = math.max(M.state.targetRefreshRate or 0, M.state.currentRefreshRate) -- grab the highest number we've seen (in case reprojection had temporarily downgraded to half refresh rate, and we're now back to true refresh rate)
-  M.state.renderedWidth   = renderedWidth
-  M.state.renderedHeight  = renderedHeight
-  M.state.recommendedWidth= recommendedWidth
-  M.state.recommendedHeight=recommendedHeight
-  M.state.supportedWidth  = supportedWidth
-  M.state.supportedHeight = supportedHeight
-  M.state.supportedLayers = supportedLayers
-  M.state.sessionState    = sessionState
-  M.state.ipd             = ipd
-  M.state.handSeparation  = handSeparation
-  M.state.headsetActive   = headsetActive
-  M.state.controller0Active=controller0Active
-  M.state.controller1Active=controller1Active
-  M.state.controller0poseValid = controller0poseValid
-  M.state.controller1poseValid = controller1poseValid
-  M.state.fov0hz          = fov0hz
-  M.state.fov0vt          = fov0vt
-  M.state.fov1hz          = fov1hz
-  M.state.fov1vt          = fov1vt
+local function stateChanged(state)
+  --TODO inputSourceStateCache = nil
+  --TODO sourcePoseCache = {}
+  state.currentRefreshRate = state.currentRefreshRate > 1e10 and 0 or state.currentRefreshRate -- skip infinite refresh rates, due to (1/period) when period is unknown (zero)
+  state.targetRefreshRate = math.max(M.state.targetRefreshRate or 0, state.currentRefreshRate)
 
+  --[[ TODO
+  local activeSourceCount = 0
+  local poseValidSourceCount = 0
+  local inputSourcesKey = {}
+  for _, source in ipairs(state.inputSources) do
+    if source.active then activeSourceCount = activeSourceCount + 1 end
+    if source.poseValid then poseValidSourceCount = poseValidSourceCount + 1 end
+    inputSourcesKey[#inputSourcesKey + 1] = string.format("%s|%s|%d|%d", source.path, source.interactionProfile, source.active and 1 or 0, source.poseValid and 1 or 0)
+  end
+  state.sourceCount = #state.inputSources
+  state.activeSourceCount = activeSourceCount
+  state.poseValidSourceCount = poseValidSourceCount
+  state.inputSourcesKey = table.concat(inputSourcesKey, "\n")
+  inputSourceStateCache = state.inputSources
+  --]]
+
+  M.state = state
   if M.state.enabled and M.stateString ~= "enabled" then M.setStateUI("enabled") end
   if not M.state.enabled and M.stateString == "enabled" then M.setStateUI("disabled") end
-  debugWindowOpen[0] = enabled
+  debugWindowOpen[0] = M.state.enabled
   updateUI()
 end
 
 local function saveSettings()
-  settings.setValue("openXRuiEnabled"     , M.openXRuiEnabled[0])
-  settings.setValue("openXRuiMode"        , M.openXRuiMode[0])
-  settings.setValue("openXRwindowViewMode", M.openXRwindowViewMode[0])
-  settings.setValue("openXRdebugEnabled"  , M.openXRdebugEnabled[0])
+  for _, setting in ipairs(pointerSettings) do
+    settings.setValue(setting.key, M[setting.field][0])
+  end
+end
+
+local function loadPointerSettings()
+  for _, setting in ipairs(pointerSettings) do
+    local value = settings.getValue(setting.key)
+    if value == nil then
+      value = setting.default
+    end
+    M[setting.field] = setting.ctor(value)
+  end
 end
 
 local function onSettingsChanged()
-  local prev = {}
-  prev.openXRdebugEnabled  = M.openXRdebugEnabled and M.openXRdebugEnabled[0]
+  local previousDebugEnabled = M.openXRdebugEnabled and M.openXRdebugEnabled[0]
 
-  M.openXRimguiEnabled   = settings.getValue("openXRimguiEnabled")
-  M.openXRuiEnabled      = im.BoolPtr(settings.getValue("openXRuiEnabled"))
-  M.openXRuiMode         = im.IntPtr(settings.getValue("openXRuiMode"))
-  M.openXRwindowViewMode = im.IntPtr(settings.getValue("openXRwindowViewMode"))
-  M.openXRdebugEnabled   = im.BoolPtr(settings.getValue("openXRdebugEnabled"))
+  M.openXRimguiEnabled = settings.getValue("openXRimguiEnabled")
+  loadPointerSettings()
 
-  local curr = {}
-  curr.openXRdebugEnabled  = M.openXRdebugEnabled[0]
-
-  local restartNeeded = false
-  restartNeeded = restartNeeded or (curr.openXRdebugEnabled ~= prev.openXRdebugEnabled)
-  if restartNeeded and M.isSessionRunning() then
+  if previousDebugEnabled ~= M.openXRdebugEnabled[0] and M.state and M.state.sessionRunning then
     M.restart()
   end
   if OpenXR.getEnable() then
@@ -133,6 +164,50 @@ local function closeWelcome(enable)
   M.setStateUI(enable and "enabled" or "disabled")
 end
 
+--[[ TODO
+-- Small example of how to access controller data
+local solidTmp = ColorF(0, 0, 0, 1)
+local function solid(c, alpha) solidTmp.r = c.r solidTmp.g = c.g solidTmp.b = c.b solidTmp.a = alpha or 1 return solidTmp end
+local tmp = vec3()
+local fwd, up = vec3(0, 1, 0), vec3(0, 0, 1)
+local colorWhiteI = ColorI(255, 255, 255, 255)
+local colorGrayF = ColorF(0.45, 0.45, 0.45, 1)
+local colorOrangeF = ColorF(1, 0.5, 0, 1)
+local colorBlackF = ColorF(0, 0, 0, 1)
+local posePathPriority = { "/input/aim/pose", "/input/grip/pose", "/input/palm_ext/pose" }
+local defaultExamplePose = { pos = vec3(), rot = quat(), active = false, poseValid = false }
+local function getExamplePoseState(sourcePath)
+  local poses = M.getSourcePoseStates(sourcePath)
+  for _, path in ipairs(posePathPriority) do
+    local pose = poses[path]
+    if pose and pose.poseValid then
+      return path, pose
+    end
+  end
+  for path, pose in pairs(poses) do
+    if pose.poseValid then
+      return path, pose
+    end
+  end
+  for path, pose in pairs(poses) do
+    return path, pose
+  end
+  return nil, defaultExamplePose
+end
+
+local function sourceExample()
+  for _, source in ipairs(M.getInputSourceStates()) do
+    local posePath, v = getExamplePoseState(source.path)
+    local c = v.active and colorOrangeF or colorGrayF
+    debugDrawer:drawSphere(v.pos, 0.03, solid(c, v.poseValid and 0.85 or 0.05))
+    tmp:setRotate(v.rot, fwd) tmp:setAddScaled(v.pos, tmp, 0.25) debugDrawer:drawCylinder(v.pos, tmp, 0.01, solid(colorBlackF, v.poseValid and 0.25 or 0.05))
+    tmp:setRotate(v.rot, up) tmp:setAddScaled(v.pos, tmp, 0.04) debugDrawer:drawCylinder(v.pos, tmp, 0.02, solid(colorBlackF, v.poseValid and 0.25 or 0.05))
+    tmp:setAddScaled(v.pos, up, 0.08)
+    local label = string.format("%s %s %s", source.path, posePath or "no_pose", not v.active and "inactive" or not v.poseValid and "no pose" or "ready")
+    debugDrawer:drawTextAdvanced(tmp, label, c, true, false, colorWhiteI, true, false, colorBlackF)
+  end
+end
+--]]
 local logStatePending = false
 local function onUpdate(dtReal, dtSim, dtRaw)
   if logStatePending then
@@ -140,8 +215,11 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     logState()
   end
 
-  if not M.openXRimguiEnabled then return end
   if not M.state.sessionRunning then return end
+  --TODO inputSourceStateCache = nil
+  --TODO sourcePoseCache = {}
+  --TODO sourceExample() -- simplistic example for modders on how to access source state -- not yet implemented, not enough hours in the day to finalize a future-proof API design/implementation/optimization yet :(
+  if not M.openXRimguiEnabled then return end
 
   im.SetNextWindowSize(debugWindowSize --[[, im.Cond_FirstUseEver--]] )
   im.Begin("OpenXR debug tools##openXRwindow", debugWindowOpen)
@@ -165,7 +243,10 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     im.Text("   ") im.SameLine()
     --changed = im.Combo2("Anchor##openXRuiMode", M.openXRuiMode, "Room\0Head\0Vehicle (NI)\0Level (NI)\0") or changed -- hide not implemented modes for now
     changed = im.Combo2("Anchor##openXRuiMode", M.openXRuiMode, "Room\0Head") or changed
-
+    if im.Checkbox("UseQuadComposition", M.openXRquadCompositionEnabled) then
+      changed = true
+      OpenXR.setUseQuadComposition(M.openXRquadCompositionEnabled[0])
+    end
     local restartNeeded = false
     restartNeeded = im.Checkbox("Enable debug mode (reduced framerate, will restart OpenXR)", M.openXRdebugEnabled) or restartNeeded
     changed = changed or restartNeeded
@@ -179,11 +260,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     im.Text("   XrSessionState = \"%s\"", M.state.sessionState)
     im.Text("FOV: left %.3fx%.2f, right %.3fx%.2f (rendered)", M.state.fov0hz, M.state.fov0vt, M.state.fov1hz, M.state.fov1vt)
     im.Text("IPD: %.3f mm", M.state.ipd * 1000)
-    im.Text("Hand separation: %.3f m", M.state.handSeparation)
-
-    if im.Button("Reference setIdentity") then
-      OpenXR.setLocalReference(true)
-    end
+    --TODO im.Text("Input sources: %d total, %d active, %d pose-valid", M.state.sourceCount or 0, M.state.activeSourceCount or 0, M.state.poseValidSourceCount or 0)
 
     if changed then
       saveSettings()
@@ -201,6 +278,14 @@ local function restart()
   M.setStateUI("enabled")
 end
 
+local function closeWelcomeDialog()
+  if not M.cefDialogOpen then
+    return
+  end
+  M.cefDialogOpen = nil
+  guihooks.trigger('ConfirmationDialogClose', welcomeTitle)
+end
+
 M.setStateUI = function(stateString)
   M.stateString = stateString
   variableOnUpdate = nop
@@ -212,31 +297,21 @@ M.setStateUI = function(stateString)
       guihooks.trigger('ConfirmationDialogOpen', welcomeTitle, welcomeBody, nil, nil, buttonNoVulkanText, buttonNoVulkanLua)
     end
   elseif stateString == "enabled" then
-    if M.cefDialogOpen then
-      M.cefDialogOpen = nil
-      guihooks.trigger('ConfirmationDialogClose', welcomeTitle)
-    end
-    if not OpenXR.getEnable() then
-      OpenXR.toggle()
-      logStatePending = true
-    end
+    closeWelcomeDialog()
+    OpenXR.setEnable(true)
     if OpenXR.getEnable() then
+      logStatePending = true
       variableOnUpdate = onUpdate
     else
       log("D", "", "Unable to enable OpenXR") -- all error details should have been logged already by C++ side, no need to throw more Error level logs here, leave as Debug
       M.setStateUI("disabled")
     end
   elseif stateString == "disabled" then
-    if M.cefDialogOpen then
-      M.cefDialogOpen = nil
-      guihooks.trigger('ConfirmationDialogClose', welcomeTitle)
-    end
-    if OpenXR.getEnable() then
-      OpenXR.toggle()
-    end
+    closeWelcomeDialog()
+    OpenXR.setEnable(false)
     extensions.unload(M)
   else
-    log("E", "", "Unknown requested stateString: "..dumps(stateString)". Disabling...")
+    log("E", "", "Unknown requested stateString: "..dumps(stateString)..". Disabling...")
     M.setStateUI("disabled")
   end
 end
@@ -248,36 +323,46 @@ local function toggle()
   end
 end
 
-local lastCenterRequest = false
 local function center(value)
-  if not value then
-    -- this is a one-time center request (rather than a long continuous hold-and-release center request)
-    center(1) -- begin centering
-    framesUntilCenter = 1 -- stop centering after one frame (otherwise C++ simply cancels the centering request)
+  if value == nil then
+    OpenXR.centerNow()
     return
   end
-  local request = value > 0.2 and true or false
-  OpenXR.center(request)
-  if request == false and request ~= lastCenterRequest then
-    log("D", "", "Headset centered, current OpenXR state:\n"..dumps(M.state))
-  end
-  lastCenterRequest = request
+  OpenXR.centerContinuous(value > 0.2)
 end
 
 local function isSessionRunning()
   return M.state and M.state.sessionRunning or false
 end
 
-M.onUpdate = constOnUpdate
+local function errorDetected(err)
+  log("E", "", "An OpenXR error was detected with error ID: "..dumps(err))
+  local translationId
+  if not err then
+    translationId = "unkown"
+    log("E", "", "An OpenXR error was detected, but no error ID was provided")
+  end
+  if type(err) ~= "string" then
+    translationId = "unkownType"
+    log("E", "", string.format("An OpenXR error was detected, but a wrong error type was passed: %s ('%s')", type(err), dumps(err)))
+  end
+  translationId = "ui.openXR.errors."..(translationId or err)
+  log("E", "", "openXR error detected: ".._tr(translationId, ""))
+  guihooks.trigger("toastrMsg", {type = "error", title = "ui.openXR.errorsTitle", msg = translationId, config = { closeButton = true, timeOut = 0, extendedTimeOut = 0 } })
+end
+
+M.onPreRender = onPreRender -- can't run with onUpdate, that's too eary and will use previous frame's camera positions (core_camera runs at preRender so we must too)
 M.onInit = onInit
 M.onSettingsChanged = onSettingsChanged
 M.stateChanged = stateChanged
 M.toggle = toggle
 M.center = center
 M.isSessionRunning = isSessionRunning
-M.restart = restart
-M.closeWelcome = closeWelcome
+--TODO M.getInputSourceStates = getInputSourceStates
+--TODO M.getSourcePoseStates = getSourcePoseStates
 M.updateUI = updateUI
+M.closeWelcome = closeWelcome
+M.errorDetected = errorDetected
 
 return M
 

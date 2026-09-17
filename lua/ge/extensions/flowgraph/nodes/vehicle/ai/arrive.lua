@@ -56,7 +56,7 @@ end
 function C:getVeh()
   local veh
   if self.pinIn.aiVehId.value then
-    veh = be:getObjectByID(self.pinIn.aiVehId.value)
+    veh = getObjectByID(self.pinIn.aiVehId.value)
   else
     veh = getPlayerVehicle(0)
   end
@@ -75,11 +75,11 @@ function C:work()
       end
 
       local veh = self:getVeh()
-      if not veh then 
+      if not veh then
         self:__setNodeError("work", "No vehicle found!")
         return
       end
-      
+
       local radius = self.pinIn.checkDistance.value
       if not radius or radius == 0 then
         radius = node.radius

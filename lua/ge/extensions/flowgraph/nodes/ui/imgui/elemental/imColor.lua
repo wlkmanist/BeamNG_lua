@@ -25,12 +25,12 @@ function C:_executionStarted()
     p.value = false
   end
 
-  self.imColor = im.ArrayFloatByTbl({1, 1, 1, 1})
+  self.imColor = im.ArrayFloatByTbl(self.pinIn.colorIn.value or {1, 1, 1, 1})
 end
 
 function C:work()
   im.ColorEdit4((self.pinIn.text.value or "Color")..'##colorPickerFG'..self.id, self.imColor, im.flags(im.ColorEditFlags_NoInputs, im.ColorEditFlags_AlphaBar))
-  self.pinOut.colorOut.value = {self.imColor[0],self.imColor[1],self.imColor[2],self.imColor[3],self.imColor[4]}
+  self.pinOut.colorOut.value = {self.imColor[0], self.imColor[1], self.imColor[2], self.imColor[3]}
 end
 
 return _flowgraph_createNode(C)

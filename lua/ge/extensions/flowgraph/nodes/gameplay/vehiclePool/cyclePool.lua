@@ -14,13 +14,13 @@ C.category = 'once_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'table', name = 'vehPool', tableType = 'vehiclePool', description = 'Vehicle pool object; use the Create Pool node.' },
-  { dir = 'in', type = 'number', name = 'vehId1', description = '(Optional) Vehicle Id of a currently active vehicle.' },
-  { dir = 'in', type = 'number', name = 'vehId2', description = '(Optional) Vehicle Id of a currently inactive vehicle.' },
-  { dir = 'out', type = 'number', name = 'inactiveId', description = 'Newly inactivate vehicle ID' },
-  { dir = 'out', type = 'number', name = 'activeId', description = 'Newly activate vehicle ID' }
+  { dir = 'in', type = 'number', name = 'vehId1', hidden = true,description = '(Optional) Vehicle id of a currently active vehicle.' },
+  { dir = 'in', type = 'number', name = 'vehId2', hidden = true, description = '(Optional) Vehicle id of a currently inactive vehicle.' },
+  { dir = 'out', type = 'number', name = 'inactiveId', description = 'Newly inactivate vehicle id.' },
+  { dir = 'out', type = 'number', name = 'activeId', description = 'Newly activate vehicle id.' }
 }
 
-C.dependencies = {'core_vehiclePoolingManager'}
+C.dependencies = {'core_vehicleActivePooling'}
 C.tags = {'traffic', 'budget', 'pooling'}
 
 function C:workOnce()

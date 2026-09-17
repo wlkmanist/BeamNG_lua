@@ -538,7 +538,10 @@ local function computeRoadRenderData(road)
     for i = 1, #road.nodes do
       local p = road.nodes[i].p
       tmp1:set(p.x, p.y, 0)
-      p.z = core_terrain.getTerrainHeight(tmp1)
+      local h = core_terrain.getTerrainHeight(tmp1)
+      if h then
+        p.z = h
+      end
     end
   end
 

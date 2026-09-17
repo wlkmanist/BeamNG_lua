@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>{{reportTitle}}</title>
+    <style>
+      :root {
+        --bg: #ffffff; --fg: #1f2937; --panel: #f7f7f9; --border: #cfd8dc;
+        --grid: #e5e7eb; --gridMajor: #cbd5e1; --rowEven: #fafafa; --tooltipBg: rgba(34,34,34,0.95);
+        --miniBarBg: #e5e7eb; --miniBarFill: #9ca3af; --barBorder:#7a7a7a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg:#0f1115; --fg:#e5e9f0; --panel:#151821; --border:#2b303b; --grid:#2f3542; --gridMajor:#3c4454; --rowEven:#141821; --tooltipBg: rgba(27,31,39,0.98); --miniBarBg:#2b303b; --miniBarFill:#6b7280; --barBorder:#444; }
+      }
+      html, body { height: 100%; }
+      body { font-family: monospace; margin: 8px; padding: 0; background: var(--bg); color: var(--fg); overflow: hidden; }
+      .header-info { margin-bottom: 8px; }
+      .header-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; }
+      .header-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+      .header-info .title { font-weight: 700; font-size: 13px; margin-right: 6px; }
+      .header-info .stat { font-size: 12px; }
+      .header-info label.stat { display: inline-flex; gap: 6px; align-items: center; }
+      .pill { display: inline-block; padding: 1px 6px; border-radius: 10px; border: 1px solid #ccc; background: #fafafa; color: #444; font-size: 12px; }
+      .pill.ok { background: #e8f5e9; border-color: #2e7d32; color: #2e7d32; }
+      .pill.bad { background: #ffebee; border-color: #c62828; color: #b71c1c; }
+      .flame-outer { user-select: none; position: relative; width: 100%; overflow: hidden; border: 1px solid #ccc; height: 400px; }
+      #timeline { position: absolute; top: 0; left: 0; height: 20px; background: var(--panel); width: 100%; border-bottom: 1px solid var(--border); }
+      #timeline .timeline-mark { position: absolute; top: 0; width:1px; height: 20px; background: var(--gridMajor); }
+      #timeline .time-label { position: absolute; top: 3px; font-size: 10px; color: var(--fg); }
+      #visibleRangeLabel { margin-top: 6px; font-size: 11px; background: var(--panel); color: var(--fg); padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; display: inline-block; }
+      #flameContainer { position: absolute; left: 0; top: 18px; width: 800px; height: 400px; }
+      /* Grid overlay */
+      #gridLines { position: absolute; left: 0; top: 0; width: 800px; height: 100%; pointer-events: none; z-index: 0; }
+      .grid-line { position: absolute; top: 0; width: 1px; height: 100%; background: var(--grid); }
+      .grid-line.major { background: var(--gridMajor); }
+      /* Grey-out regions outside actual data range */
+      #rangeMask { position:absolute; left:0; top:0; width:800px; height:100%; pointer-events:none; z-index: 5; }
+      .disabled-mask { position:absolute; top:0; height:100%; background: rgba(120,120,120,0.18); }
+      .flame-bar {
+        position: absolute;
+        box-sizing: border-box;
+        height: 18px; line-height:16px;
+        font-family: monospace; font-size: 11px; color: #fff;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        border: 1px solid var(--barBorder);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+        cursor: pointer;
+        z-index: 1;
+      }
+      .flame-bar:hover { border-color: #444; box-shadow: 0 0 4px rgba(0,0,0,0.5); z-index: 99; }
+      .flame-bar.glow { box-shadow: 0 0 8px 2px rgba(255, 255, 100, 0.9); border-color: #fff; z-index: 100; }
+      .highlight, .highlight-permanent {
+        background-color: #ffeb3b !important;
+        color: #000 !important;
+        transition: background-color 0.5s ease;
+      }
+      table { margin-top: 20px; border-collapse: collapse; width: 100%; font-family: monospace; color: var(--fg); }
+      th, td { border: 1px solid var(--border); padding: 4px 6px; font-size: 12px; }
+      th { text-align: left; background: var(--panel); position: sticky; top: 0; z-index: 1; }
+      tbody tr:nth-child(even) { background: var(--rowEven); }
+      td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+      td.pct { border-left-width: 3px; }
+      .pill-chip { display: inline-block; padding: 0 6px; border-radius: 10px; background: #eee; font-size: 11px; }
+      .color-swatch { display: inline-block; width: 10px; height: 10px; border: 1px solid var(--border); margin-right: 6px; vertical-align: middle; }
+      .merge-badge { display:inline-block; margin-left:6px; padding:0 5px; border-radius:8px; background: var(--panel); border:1px solid var(--border); color: var(--fg); font-size:10px; }
+      .tooltip {
+        position: absolute;
+        background: var(--tooltipBg);
+        color: #eaeaea;
+        padding: 10px 12px;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.08);
+        font-size: 12px;
+        z-index: 100;
+        pointer-events: none;
+        max-width: 360px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+        display: none;
+      }
+      .tooltip-row {
+        display: flex;
+        margin-bottom: 4px;
+      }
+      .tooltip-label {
+        font-weight: 600;
+        margin-right: 10px;
+        min-width: 92px;
+      }
+      .tt-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+      .tt-swatch { width:12px; height:12px; border:1px solid #0003; border-radius:2px; display:inline-block; }
+      .tt-title { font-weight:700; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .tt-chip { display:inline-block; padding:1px 6px; border-radius:10px; background:#2b2b2b; border:1px solid #0003; font-size:11px; margin-left:6px; }
+      .tt-bar { height:6px; background:#333; border-radius:3px; overflow:hidden; margin-top:2px; }
+      .tt-bar > span { display:block; height:100%; background:linear-gradient(90deg, #ff6b6b, #ffd166, #06d6a0); }
+      .hidden { display: none; }
+      /* Distinct indicator for merged segments */
+      .flame-bar.merged {
+        /* distinct cross-hatch pattern overlay; base color is set via background-color in JS */
+        background-image:
+          repeating-linear-gradient(45deg, rgb(255, 255, 255, 0.4) 0 2px, rgba(255,255,255,0) 2px 6px),
+          repeating-linear-gradient(-45deg, rgba(0,0,0,0.15) 0 2px, rgba(87, 41, 255, 0) 2px 6px);
+        background-blend-mode: overlay;
+        border: 0; /* avoid thin grey borders dominating */
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header-info header-toolbar">
+      <div class="header-left header-row">
+        <span class="title">Vehicle Profiler</span>
+        <span class="stat">Date: {{date}}</span>
+        <span class="stat">Vehicle: {{vehicleName}}</span>
+        <span class="pill" id="jbeamPill">JBeam cache</span>
+        <span class="pill" id="meshPill">Mesh cache</span>
+      </div>
+      <div class="header-right header-row">
+        <span class="stat" id="callsStat">Events: <span id="totalEvents"></span></span>
+        <span class="stat">Range: <span id="totalTime"></span> s</span>
+        <span class="stat">Rate: <span id="eventsPerSecond"></span> events/s</span>
+        <span class="stat">Start: <span id="startTimeHeader"></span> s</span>
+        <span class="stat">End: <span id="endTimeHeader"></span> s</span>
+
+      </div>
+    </div>
+
+    <div id="flameOuter" class="flame-outer">
+      <div id="timeline"></div>
+      <div id="flameContainer"></div>
+    </div>
+
+    <div id="visibleRangeLabel">Visible Range: -</div>
+
+    <small>Usage: double-click a flame bar to jump to the row, drag to pan, wheel to zoom</small>
+
+    <div id="tableContainer" class="table-container" style="margin-top:12px; border:1px solid var(--border); border-radius:4px; overflow:auto; background:var(--bg);">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th class="num">Start</th>
+          <th class="num">Duration</th>
+          <th class="num">% of Parent</th>
+          <th class="num">% of Total</th>
+        </tr>
+      </thead>
+      <tbody id="profiler-table-body"></tbody>
+    </table>
+    </div>
+
+    <script id="profilerData" type="application/json">
+      {{{ profilerJSON }}}
+    </script>
+
+    <script>
+    (function() {
+      // ------------------------------
+      // Bootstrap + helpers
+      // ------------------------------
+      let profilerData;
+      try {
+        const raw = document.getElementById('profilerData');
+        profilerData = raw ? JSON.parse(raw.textContent || '{}') : {};
+      } catch (e) {
+        console.error('[simpleProfiler] Failed to parse profiler JSON', e);
+        profilerData = {};
+      }
+      const DEBUG = true; //!!(profilerData && profilerData.meta && profilerData.meta.debugUI);
+      function dlog(...args) { if (DEBUG) console.log('[simpleProfiler]', ...args); }
+      // Logical pixel width of the full content at scaleX = 1
+      const baseWidth = 800;
+      const totalRange = (profilerData.stats && profilerData.stats.duration) || profilerData.duration || 1;
+      const flameOuter = document.getElementById("flameOuter");
+      const flameContainer = document.getElementById("flameContainer");
+      const timeline = document.getElementById('timeline');
+      // grid container for vertical time lines
+      const gridLines = document.createElement('div');
+      gridLines.id = 'gridLines';
+      flameContainer.appendChild(gridLines);
+      // Mask for disabled (no-data) areas
+      const rangeMask = document.createElement('div');
+      rangeMask.id = 'rangeMask';
+      flameContainer.appendChild(rangeMask);
+      const maskLeft = document.createElement('div'); maskLeft.className = 'disabled-mask'; rangeMask.appendChild(maskLeft);
+      const maskRight = document.createElement('div'); maskRight.className = 'disabled-mask'; rangeMask.appendChild(maskRight);
+
+      // LOD overlay container for merged items when zoomed out
+      const lodContainer = document.createElement('div');
+      lodContainer.id = 'lodContainer';
+      lodContainer.style.position = 'absolute';
+      lodContainer.style.left = '0px';
+      lodContainer.style.top = '0px';
+      lodContainer.style.height = '400px';
+      lodContainer.style.pointerEvents = 'none';
+      flameContainer.appendChild(lodContainer);
+      const tableBody = document.getElementById("profiler-table-body");
+      const tableContainer = document.getElementById('tableContainer');
+      // Map table row id -> array of bar elements (kept in sync each render)
+      const rowIdToBars = new Map();
+      const pendingRows = [];
+      const renderedRowIds = new Set();
+      const TABLE_INIT_LIMIT = 150; // render only top N rows initially
+      const MAX_TABLE_ROWS = 150; // render only top N rows initially
+      const buildBaseBars = false; // skip building thousands of base bars at load (LOD handles bars)
+      const visibleRangeLabel = document.getElementById("visibleRangeLabel");
+      const statsStart = (profilerData.stats && typeof profilerData.stats.startTime === 'number') ? profilerData.stats.startTime : 0;
+      const statsEnd = (profilerData.stats && typeof profilerData.stats.endTime === 'number') ? profilerData.stats.endTime : totalRange;
+
+      // Use a key derived from the page title for localStorage
+      const lsKeyBase = 'simpleProfiler_' + encodeURIComponent(document.title);
+      const lsKeyScale = lsKeyBase + '_scaleX';
+      const lsKeyOffset = lsKeyBase + '_offsetX';
+
+      // Default zoom and offset
+      let scaleX = 1.0;
+      let offsetX = 0;
+
+      // Attempt to restore saved zoom/position from localStorage
+      const savedScale = localStorage.getItem(lsKeyScale);
+      if (savedScale !== null) {
+        scaleX = parseFloat(savedScale);
+        if (isNaN(scaleX) || scaleX <= 0) {
+          scaleX = 1.0;
+        }
+      }
+      const savedOffset = localStorage.getItem(lsKeyOffset);
+      if (savedOffset !== null) {
+        offsetX = parseFloat(savedOffset);
+        if (isNaN(offsetX)) {
+          offsetX = 0;
+        }
+      }
+
+      // Helper: current visible time window for table calculations and throttled redraws
+      function getCurrentTimeWindow() {
+        const scaledWidth = baseWidth * scaleX;
+        const viewPx = flameOuter.clientWidth;
+        const leftVisX = Math.max(-offsetX, 0);
+        const rightVisX = Math.min(leftVisX + viewPx, scaledWidth);
+        const fracStart = scaledWidth > 0 ? (leftVisX / scaledWidth) : 0;
+        const fracEnd = scaledWidth > 0 ? (rightVisX / scaledWidth) : 1;
+        const timeStart = fracStart * totalRange;
+        const timeEnd = fracEnd * totalRange;
+        const visDuration = Math.max(1e-9, timeEnd - timeStart);
+        return { timeStart, timeEnd, visDuration: Math.max(1e-9, timeEnd - timeStart) };
+      }
+
+      let isPanning = false;
+      let lastMouseX = 0;
+      let rafScheduled = false;
+
+      // createBar: builds a base bar (used only when base bars are enabled)
+      function createBar(node, depth, parentDur = 1, parentStart = 0) {
+        const startTime = node.startTime || 0;
+        const duration = node.duration || 0;
+        const callCount = node.callCount || 1;
+        node.name = node.name || 'unknown';
+        const pctOfParent = parentDur > 0 ? (duration / parentDur) * 100 : 0;
+
+        // Normalize children into an array for computations and recursion
+        let childNodes = [];
+        if (Array.isArray(node.children)) {
+          childNodes = node.children;
+        } else if (typeof node.children === "object" && node.children !== null) {
+          childNodes = Object.values(node.children);
+        }
+
+        // New fields from engine: selfDuration, percentTotal, selfPercentTotal
+        // Provide safe fallbacks if absent
+        const childrenDurSum = childNodes.reduce((s, c) => s + (c && typeof c.duration === 'number' ? c.duration : 0), 0);
+        const selfDuration = (typeof node.selfDuration === 'number') ? node.selfDuration : Math.max(0, duration - childrenDurSum);
+        const percentTotal = (typeof node.percentTotal === 'number') ? node.percentTotal : (totalRange > 0 ? (duration / totalRange) : 0);
+        const selfPercentTotal = (typeof node.selfPercentTotal === 'number') ? node.selfPercentTotal : (totalRange > 0 ? (selfDuration / totalRange) : 0);
+
+        let barEl = document.createElement("div");
+        barEl.className = "flame-bar";
+        barEl.style.background = getColorFromName(node.name);
+        const widthPxInit = Math.max((duration / totalRange) * baseWidth, 1);
+        if (widthPxInit <= 0) return; // avoid creating empty (0px) bars
+        barEl.style.left = `${(startTime / totalRange) * baseWidth}px`;
+        barEl.style.width = `${widthPxInit}px`;
+        barEl.style.top = `${depth * 20}px`;
+        barEl.textContent = node.name;
+        barEl.dataset.uniqueId = node.name.replace(/\s+/g, '_');
+        barEl.dataset.start = startTime;
+        barEl.dataset.dur = duration;
+        barEl.dataset.depth = depth;
+        barEl.dataset.count = callCount;
+        barEl.dataset.pct = pctOfParent.toFixed(2);
+        barEl.dataset.name = node.name;
+        barEl.dataset.self = selfDuration;
+        barEl.dataset.ptotal = (percentTotal * 100).toFixed(2);
+        barEl.dataset.sptotal = (selfPercentTotal * 100).toFixed(2);
+
+        barEl.addEventListener("dblclick", function() {
+          highlightRow(node.name);
+        });
+
+        // Add mouseover and mouseout events for tooltip
+        barEl.addEventListener("mouseover", showTooltip);
+        barEl.addEventListener("mouseout", hideTooltip);
+        barEl.addEventListener("mousemove", moveTooltip);
+
+        flameContainer.appendChild(barEl);
+
+        pendingRows.push({
+          id: `row_${node.name.replace(/\s+/g, '_')}`,
+          name: node.name,
+          depth: depth,
+          startTime: startTime,
+          duration: duration,
+          selfDuration: selfDuration,
+          callCount: callCount,
+          pctOfParent: pctOfParent,
+          percentTotal: percentTotal * 100,
+          selfPercentTotal: selfPercentTotal * 100,
+        });
+
+        childNodes.forEach(child => createBar(child, depth + 1, duration, startTime));
+      }
+
+      // highlightRow: highlights a table row by node name
+      function highlightRow(uniqueId) {
+        ensureRowRendered(uniqueId);
+        document.querySelectorAll(".highlight").forEach(el => el.classList.remove("highlight"));
+        let row = document.getElementById(`row_${uniqueId.replace(/\s+/g, '_')}`);
+        if (row) {
+          row.classList.add("highlight");
+          row.scrollIntoView({ behavior: "smooth", block: "center" });
+          setTimeout(() => row.classList.remove("highlight"), 3000);
+        }
+      }
+
+      // highlightRowById: highlights a table row by row id
+      function highlightRowById(rowId) {
+        // Clear any existing highlights (temporary or permanent)
+        document.querySelectorAll(".highlight, .highlight-permanent").forEach(el => {
+          el.classList.remove("highlight");
+          el.classList.remove("highlight-permanent");
+        });
+        const row = document.getElementById(rowId);
+        if (row) {
+          row.classList.add("highlight-permanent");
+          row.scrollIntoView({ behavior: "smooth", block: "center" });
+          setTimeout(() => row.classList.remove("highlight-permanent"), 3000);
+        }
+      }
+
+      // ensureRowRendered: lazily materializes a single table row if needed
+      function ensureRowRendered(uniqueName) {
+        const rowId = `row_${uniqueName.replace(/\s+/g, '_')}`;
+        if (renderedRowIds.has(rowId)) return;
+        const r = pendingRows.find(x => x.id === rowId);
+        if (!r) return;
+        const tr = document.createElement('tr');
+        tr.id = r.id;
+        tr.innerHTML = `
+          <td>${"&nbsp;".repeat(r.depth * 2)}${r.name}</td>
+          <td>${r.startTime.toFixed(3)}</td>
+          <td>${r.duration.toFixed(3)}</td>
+          <td>${r.selfDuration.toFixed(3)}</td>
+          <td>${r.callCount}</td>
+          <td>${r.pctOfParent.toFixed(2)}%</td>
+          <td>${r.percentTotal.toFixed(2)}%</td>
+          <td>${r.selfPercentTotal.toFixed(2)}%</td>
+        `;
+        tableBody.appendChild(tr);
+        renderedRowIds.add(r.id);
+      }
+
+      // renderInitialTable: shows an initial top-N view for fast page load
+      function renderInitialTable() {
+        // If pendingRows is unexpectedly empty (e.g., early LOD-only path), build a quick flat list from profilerData
+        if (pendingRows.length === 0 && profilerData && profilerData.children) {
+          const stack = [];
+          const pushChild = (n, d) => {
+            const st = n.startTime || 0;
+            const dur = n.duration || 0;
+            const selfDur = typeof n.selfDuration === 'number' ? n.selfDuration : dur;
+            const callCount = n.callCount || 1;
+            const name = n.name || 'unknown';
+            pendingRows.push({
+              id: `row_${String(name).replace(/\s+/g, '_')}`,
+              name, depth: d, startTime: st, duration: dur, selfDuration: selfDur,
+              callCount, pctOfParent: 0, percentTotal: (dur/totalRange)*100, selfPercentTotal: (selfDur/totalRange)*100
+            });
+            // enqueue children
+            if (Array.isArray(n.children)) n.children.forEach(c => stack.push({ n: c, d: d+1 }));
+            else if (n.children && typeof n.children === 'object') Object.values(n.children).forEach(c => stack.push({ n: c, d: d+1 }));
+          };
+          if (Array.isArray(profilerData.children)) profilerData.children.forEach(c => stack.push({ n: c, d: 0 }));
+          else if (typeof profilerData.children === 'object') Object.values(profilerData.children).forEach(c => stack.push({ n: c, d: 0 }));
+          while (stack.length) { const { n, d } = stack.pop(); pushChild(n, d); }
+        }
+
+        // sort by duration desc and render top N rows
+        const rows = pendingRows.slice().sort((a,b)=> b.duration - a.duration).slice(0, TABLE_INIT_LIMIT);
+        const frag = document.createDocumentFragment();
+        for (const r of rows) {
+          if (renderedRowIds.has(r.id)) continue;
+          const tr = document.createElement('tr');
+          tr.id = r.id;
+          tr.innerHTML = `
+            <td>${"&nbsp;".repeat(r.depth * 2)}${r.name}</td>
+            <td>${r.startTime.toFixed(3)}</td>
+            <td>${r.duration.toFixed(3)}</td>
+            <td>${r.selfDuration.toFixed(3)}</td>
+            <td>${r.callCount}</td>
+            <td>${r.pctOfParent.toFixed(2)}%</td>
+            <td>${r.percentTotal.toFixed(2)}%</td>
+            <td>${r.selfPercentTotal.toFixed(2)}%</td>
+          `;
+          frag.appendChild(tr);
+          renderedRowIds.add(r.id);
+        }
+        tableBody.appendChild(frag);
+      }
+
+      // renderTableFromVisible: (re)builds table based on currently visible merged segments
+      function hueForPercent(p) {
+        // 0% -> red(0), 50% -> yellow(60), 100% -> green(120)
+        const clamped = Math.max(0, Math.min(100, p));
+        const hue = (clamped * 1.2); // 0..120
+        return `hsl(${hue.toFixed(0)}, 75%, 45%)`;
+      }
+
+      // Formats seconds using ms when < 1s, otherwise seconds with 3 decimals
+      function fmtTime(secs) {
+        const s = Number(secs);
+        if (!isFinite(s)) return '-';
+        if (s < 1) return `${(s * 1000).toFixed(1)} ms`;
+        return `${s.toFixed(3)} s`;
+      }
+
+      // Pick a readable label color for a given name's bar color
+      function getLabelColorFromName(name) {
+        // Reuse same hash as getColorFromName and compute HSL used
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) { hash = ((hash << 5) - hash) + name.charCodeAt(i); hash = hash & hash; }
+        const hue = Math.abs(hash % 360);
+        const saturation = 65 + Math.abs((hash >> 8) % 20);
+        const lightness = 45 + Math.abs((hash >> 16) % 15);
+        // YIQ-like approximation for luminance on HSL -> pick readable text
+        const luma = (lightness / 100) * (2 - (saturation / 100));
+        return luma > 0.6 ? '#111' : '#fff';
+      }
+
+      function renderTableFromVisible(rows, visibleDuration) {
+        tableBody.innerHTML = '';
+        // Stable order: by start then depth
+        rows.sort((a,b) => (a.start - b.start) || (a.depth - b.depth));
+        const frag = document.createDocumentFragment();
+        for (const r of rows) {
+          const tr = document.createElement('tr');
+          tr.id = r.id;
+          const pctParent = visibleDuration > 0 ? (r.dur / visibleDuration) * 100 : 0;
+          const pctTotal = (r.dur / totalRange) * 100;
+          const pctColor = hueForPercent(pctParent);
+          const pctTotalColor = hueForPercent(pctTotal);
+          const color = r.color || getColorFromName(r.name);
+          const startBar = `<div style="height:6px;background:var(--miniBarBg);position:relative;border-radius:3px"><div style="position:absolute;left:${(r.start/totalRange*100).toFixed(2)}%;width:${(r.dur/totalRange*100).toFixed(2)}%;height:100%;background:var(--miniBarFill)"></div></div>`;
+          const durBar = `<div style=\"height:6px;background:var(--miniBarBg);position:relative;border-radius:3px\"><div style=\"width:${(r.dur/visibleDuration*100).toFixed(2)}%;height:100%;background:var(--miniBarFill)\"></div></div>`;
+          const mergeBadge = r.merged ? '<span class="merge-badge">+M</span>' : '';
+          tr.innerHTML = `
+            <td class="hover-area"><span class="color-swatch" style="background:${color}"></span>${"&nbsp;".repeat(r.depth * 2)}${r.name}${mergeBadge}</td>
+            <td class="num">${r.start.toFixed(3)}${startBar}</td>
+            <td class="num">${r.dur.toFixed(3)}${durBar}</td>
+            <td class="num pct" style="background: linear-gradient(to right, ${pctColor} 0 ${pctParent.toFixed(2)}%, transparent ${pctParent.toFixed(2)}% 100%);">${pctParent.toFixed(2)}%</td>
+            <td class="num pct" style="background: linear-gradient(to right, ${pctTotalColor} 0 ${pctTotal.toFixed(2)}%, transparent ${pctTotal.toFixed(2)}% 100%);">${pctTotal.toFixed(2)}%</td>
+          `;
+          // Hover glow on the matching canvas bar(s) - entire row and primary cell
+          const hoverTargets = [tr, tr.querySelector('.hover-area')].filter(Boolean);
+          hoverTargets.forEach(ht => {
+            ht.addEventListener('mouseenter', () => {
+              const bars = rowIdToBars.get(r.id);
+              dlog('table hover -> glow', r.id, 'bars?', bars && bars.length);
+              if (bars && bars.length) bars.forEach(el => el.classList.add('glow'));
+            });
+            ht.addEventListener('mouseleave', () => {
+              const bars = rowIdToBars.get(r.id);
+              if (bars && bars.length) bars.forEach(el => el.classList.remove('glow'));
+            });
+          });
+          frag.appendChild(tr);
+        }
+        tableBody.appendChild(frag);
+      }
+
+      // getColorFromName: deterministic HSL color based on string hash
+      function getColorFromName(name) {
+        // Simple hash function to generate a number from a string
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+          hash = ((hash << 5) - hash) + name.charCodeAt(i);
+          hash = hash & hash; // Convert to 32bit integer
+        }
+
+        // Use the hash to generate HSL color with good saturation and lightness
+        // This ensures readable and visually distinct colors
+        const hue = Math.abs(hash % 360);
+        const saturation = 65 + Math.abs((hash >> 8) % 20); // 65-85%
+        const lightness = 45 + Math.abs((hash >> 16) % 15); // 45-60%
+
+        return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+      }
+
+      function updateDisabledMaskPositions(scaledWidth) {
+        // compute left and right mask widths based on statsStart/statsEnd within [0,totalRange]
+        const clampedStart = Math.max(0, Math.min(totalRange, statsStart || 0));
+        const clampedEnd = Math.max(0, Math.min(totalRange, statsEnd || totalRange));
+        const leftW = (clampedStart / totalRange) * scaledWidth;
+        const rightX = (clampedEnd / totalRange) * scaledWidth;
+        const rightW = Math.max(0, scaledWidth - rightX);
+        maskLeft.style.left = '0px';
+        maskLeft.style.width = `${Math.max(0,leftW)}px`;
+        maskRight.style.left = `${Math.max(0,rightX)}px`;
+        maskRight.style.width = `${Math.max(0,rightW)}px`;
+      }
+
+      // recalcPositions: recompute sizes/positions after zoom or end of pan
+      function recalcPositions() {
+        // Save to localStorage so it persists
+        localStorage.setItem(lsKeyScale, scaleX);
+        localStorage.setItem(lsKeyOffset, offsetX);
+
+        // Re-set container width and alignment: flameContainer shifts; children align locally
+        const scaledWidth = baseWidth * scaleX;
+        flameContainer.style.width = `${scaledWidth}px`;
+        flameContainer.style.left = `${offsetX}px`;
+        // Keep timeline aligned with content; gridLines remain at local left 0
+        timeline.style.width = `${scaledWidth}px`;
+        timeline.style.left = `${offsetX}px`;
+        gridLines.style.width = `${scaledWidth}px`;
+        gridLines.style.left = `0px`;
+        rangeMask.style.width = `${scaledWidth}px`;
+        updateDisabledMaskPositions(scaledWidth);
+
+        // Update all flame bars
+        document.querySelectorAll(".flame-bar").forEach(bar => {
+          const start = parseFloat(bar.dataset.start);
+          const dur = parseFloat(bar.dataset.dur);
+          const depth = parseInt(bar.dataset.depth, 10);
+
+          let leftPx = (start / totalRange) * baseWidth * scaleX;
+          let widthPx = (dur / totalRange) * baseWidth * scaleX;
+          if (widthPx < 1) widthPx = 1;
+
+          bar.style.left = `${leftPx}px`;
+          bar.style.top = `${depth * 20}px`;
+          bar.style.width = `${widthPx}px`;
+        });
+
+        renderGridAndTimeline();
+        updateVisibleRange();
+        updateLODAndVisibility();
+        updateVisibleElementsCount();
+        // Resize table container so it stays in view and scrolls internally
+        try {
+          const header = document.querySelector('.header-info');
+          const headerH = header ? header.getBoundingClientRect().height : 0;
+          const usage = document.querySelector('#visibleRangeLabel');
+          const usageH = usage ? usage.getBoundingClientRect().height + 12 : 0;
+          const canvasH = flameOuter.getBoundingClientRect().height;
+          const vh = window.innerHeight || document.documentElement.clientHeight;
+          const maxH = Math.max(180, vh - headerH - usageH - canvasH - 24);
+          if (tableContainer) tableContainer.style.maxHeight = `${maxH}px`;
+        } catch(e) {}
+      }
+
+      // Create tooltip element
+      const tooltip = document.createElement('div');
+      tooltip.className = 'tooltip';
+      document.body.appendChild(tooltip);
+
+      // (Global stats per level were removed to simplify the UI.)
+
+      function showTooltip(event) {
+        const bar = event.currentTarget;
+        const name = bar.dataset.name;
+        const depth = parseInt(bar.dataset.depth, 10);
+        const start = parseFloat(bar.dataset.start) || 0;
+        const duration = parseFloat(bar.dataset.dur) || 0;
+        const pct = bar.dataset.pct;
+        const pctTotal = bar.dataset.ptotal;
+        const selfPctTotal = bar.dataset.sptotal;
+        const mergedInfo = bar.dataset.merged === '1' ? ` (merged ${bar.dataset.mergeCount}, distinct: ${bar.dataset.distinct})` : '';
+        const topNames = bar.dataset.topnames ? `<div class="tooltip-row"><div class="tooltip-label">Top:</div> <div>${bar.dataset.topnames}</div></div>` : '';
+
+        const color = getColorFromName(name);
+        const pctNum = parseFloat(pct) || 0;
+        const pctTotNum = parseFloat(pctTotal) || 0;
+        tooltip.innerHTML = `
+          <div class="tt-header">
+            <span class="tt-swatch" style="background:${color}"></span>
+            <div class="tt-title">${name}${mergedInfo}</div>
+          </div>
+          <div class="tooltip-row"><div class="tooltip-label">Start</div> <div>${fmtTime(start)}</div></div>
+          <div class="tooltip-row"><div class="tooltip-label">Duration</div> <div>${fmtTime(duration)}</div></div>
+          <div class="tooltip-row"><div class="tooltip-label">% Parent</div> <div style="min-width:120px">
+            <div class="tt-bar"><span style="width:${pctNum}%"></span></div>
+            ${pctNum.toFixed(2)}%
+          </div></div>
+          <div class="tooltip-row"><div class="tooltip-label">% Total</div> <div style="min-width:120px">
+            <div class="tt-bar"><span style="width:${pctTotNum}%"></span></div>
+            ${pctTotNum.toFixed(2)}%
+          </div></div>
+          ${topNames}
+        `;
+
+        tooltip.style.display = 'block';
+        moveTooltip(event);
+      }
+
+      function hideTooltip() {
+        tooltip.style.display = 'none';
+      }
+
+      function moveTooltip(event) {
+        // Position tooltip near the cursor but not directly under it
+        const padding = 15;
+        tooltip.style.left = (event.pageX + padding) + 'px';
+
+        // Check if tooltip would go off the bottom of the screen
+        const tooltipHeight = tooltip.offsetHeight;
+        const viewportHeight = window.innerHeight;
+
+        if (event.pageY + tooltipHeight + padding > viewportHeight) {
+          // Position above cursor if it would go off bottom
+          tooltip.style.top = (event.pageY - tooltipHeight - padding) + 'px';
+        } else {
+          // Otherwise position below cursor
+          tooltip.style.top = (event.pageY + padding) + 'px';
+        }
+      }
+
+      // Draw vertical grid lines and timeline ticks/labels based on visible window and zoom
+      // renderGridAndTimeline: draws vertical grid lines and timeline labels
+      function renderGridAndTimeline() {
+        const scaledWidth = baseWidth * scaleX;
+        const viewPx = flameOuter.clientWidth;
+
+        // Compute visible time window
+        const leftVisX = Math.max(-offsetX, 0);
+        const rightVisX = Math.min(leftVisX + viewPx, scaledWidth);
+        const fracStart = scaledWidth > 0 ? (leftVisX / scaledWidth) : 0;
+        const fracEnd = scaledWidth > 0 ? (rightVisX / scaledWidth) : 1;
+        const timeStart = fracStart * totalRange;
+        const timeEnd = fracEnd * totalRange;
+        const visDuration = Math.max(1e-9, timeEnd - timeStart);
+
+        // Target ~60px between majors, ensure multiple ticks
+        const minPxMajor = 60;
+        const targetMajors = Math.max(4, Math.floor(viewPx / minPxMajor));
+        const rawStep = visDuration / targetMajors;
+
+        // Pick a nice step: 1, 2, 5 * 10^n
+        function niceStep(val) {
+          if (!isFinite(val) || val <= 0) return 1;
+          const pow10 = Math.pow(10, Math.floor(Math.log10(val)));
+          const candidates = [1, 2, 5, 10].map(m => m * pow10);
+          for (let i = 0; i < candidates.length; i++) {
+            if (candidates[i] >= val) return candidates[i];
+          }
+          return candidates[candidates.length - 1];
+        }
+        let majorStep = niceStep(rawStep);
+        // enforce minimum vertical guide resolution of 20ms
+        if (majorStep < 0.02) majorStep = 0.02;
+        const pxPerSecond = scaledWidth / totalRange;
+        const majorPx = pxPerSecond * majorStep;
+        let minorStep = 0;
+        if (majorPx >= 120) minorStep = Math.max(majorStep / 5, 0.02);
+        else if (majorPx >= 80) minorStep = Math.max(majorStep / 2, 0.02);
+        if (minorStep < 0.02) minorStep = 0; // don't draw minor lines finer than 20ms
+
+        // Clear existing
+        gridLines.innerHTML = '';
+        timeline.innerHTML = '';
+
+        const decimals = majorStep >= 1 ? 0 : Math.max(0, Math.ceil(-Math.log10(majorStep)));
+
+        const addTick = (t, isMajor) => {
+          const x = (t / totalRange) * scaledWidth;
+          const gl = document.createElement('div');
+          gl.className = 'grid-line' + (isMajor ? ' major' : '');
+          gl.style.left = `${x}px`;
+          gridLines.appendChild(gl);
+          if (isMajor) {
+            const mark = document.createElement('div');
+            mark.className = 'timeline-mark';
+            mark.style.left = `${x}px`;
+            timeline.appendChild(mark);
+            const label = document.createElement('div');
+            label.className = 'time-label';
+            label.style.left = `${x + 2}px`;
+            label.textContent = `${t.toFixed(decimals)}s`;
+            timeline.appendChild(label);
+          }
+        };
+
+        // Start from an aligned major tick before/at timeStart
+        const startTick = Math.floor(timeStart / majorStep) * majorStep;
+        for (let t = startTick; t <= timeEnd + 1e-9; t += majorStep) {
+          const tt = Math.max(0, Math.min(totalRange, +t.toFixed(10)));
+          addTick(tt, true);
+          if (minorStep > 0) {
+            for (let mt = tt + minorStep; mt < tt + majorStep - 1e-9 && mt <= totalRange; mt += minorStep) {
+              addTick(+mt.toFixed(10), false);
+            }
+          }
+        }
+      }
+
+      // updateVisibleRange: updates helper label showing current visible time window
+      function updateVisibleRange() {
+        const flameOuterWidth = flameOuter.clientWidth;
+        const scaledWidth = baseWidth * scaleX;
+
+        const leftVisX = -offsetX;
+        const rightVisX = leftVisX + flameOuterWidth;
+
+        const clampedLeft = Math.max(leftVisX, 0);
+        const clampedRight = Math.min(rightVisX, scaledWidth);
+
+        const fracStart = (clampedLeft / scaledWidth);
+        const fracEnd = (clampedRight / scaledWidth);
+
+        const timeStart = fracStart * totalRange;
+        const timeEnd = fracEnd * totalRange;
+        visibleRangeLabel.textContent =
+          `Visible Range: ${timeStart.toFixed(4)} - ${timeEnd.toFixed(4)} (Duration: ${(timeEnd-timeStart).toFixed(4)})`;
+      }
+
+      // Zoom on wheel with improved focus on mouse cursor
+      flameOuter.addEventListener("wheel", function(evt) {
+        evt.preventDefault();
+
+        // Use a stronger zoom factor for more responsive zooming
+        const zoomFactor = 1.75;
+
+        // Get mouse position relative to the chart container
+        const mouseX = evt.clientX - flameOuter.getBoundingClientRect().left;
+        const chartX = mouseX - offsetX;
+
+        // Store the old scale for ratio calculation
+        const oldScale = scaleX;
+
+        // Apply zoom based on wheel direction
+        if (evt.deltaY < 0) {
+          scaleX *= zoomFactor; // Zoom in
+        } else {
+          scaleX /= zoomFactor; // Zoom out
+          if (scaleX < 0.1) scaleX = 0.1; // Prevent extreme zoom out
+        }
+
+        // Calculate new chart position to keep mouse point fixed
+        const newChartX = chartX * (scaleX / oldScale);
+        offsetX = mouseX - newChartX;
+
+        recalcPositions();
+      }, { passive: false });
+
+      // Improved panning implementation
+      flameOuter.addEventListener("mousedown", function(evt) {
+        // Only start panning with left mouse button
+        if (evt.button !== 0) return;
+        isPanning = true;
+        lastMouseX = evt.clientX;
+        flameOuter.style.cursor = "grabbing";
+      });
+
+      flameOuter.addEventListener("mousemove", function(evt) {
+        if (!isPanning) return;
+
+        // Direct 1:1 pixel movement for accurate panning
+        const dx = evt.clientX - lastMouseX;
+        lastMouseX = evt.clientX;
+        offsetX += dx;
+
+        // Update position immediately for responsive feel
+        flameContainer.style.left = `${offsetX}px`;
+        // Keep timeline visually in sync while panning. Grid lines live inside
+        // the same moving container, so keep their local left at 0.
+        timeline.style.left = `${offsetX}px`;
+        gridLines.style.left = `0px`;
+
+        // Throttle label updates to animation frame; avoid rebuilding grid on every mousemove
+        if (!rafScheduled) {
+          rafScheduled = true;
+          requestAnimationFrame(() => {
+            updateVisibleRange();
+            rafScheduled = false;
+          });
+        }
+      });
+
+      flameOuter.addEventListener("mouseup", function() {
+        if (isPanning) {
+          isPanning = false;
+          flameOuter.style.cursor = "default";
+          recalcPositions(); // Full recalculation after drag ends
+        }
+      });
+
+      flameOuter.addEventListener("mouseleave", function() {
+        if (isPanning) {
+          isPanning = false;
+          flameOuter.style.cursor = "default";
+          recalcPositions();
+        }
+      });
+
+      // Optionally build base bars (disabled for performance; we render via LOD)
+      if (buildBaseBars) {
+        if (profilerData.children && profilerData.children.length > 0) {
+          profilerData.children.forEach((child) => {
+            const rootDur = (profilerData.stats && profilerData.stats.duration) || profilerData.duration || 1;
+            createBar(child, 0, rootDur, profilerData.startTime);
+          });
+        } else if (typeof profilerData.children === "object" && profilerData.children !== null) {
+          Object.values(profilerData.children).forEach((child) => {
+            const rootDur = (profilerData.stats && profilerData.stats.duration) || profilerData.duration || 1;
+            createBar(child, 0, rootDur, profilerData.startTime);
+          });
+        }
+      }
+
+      document.getElementById("totalEvents").textContent = profilerData.stats.eventCount;
+      document.getElementById("totalTime").textContent = profilerData.stats.duration.toFixed(4);
+      // Human-readable rate, e.g. 30558.48 -> 30.6k
+      (function(){
+        const rate = Number(profilerData.stats.eventsPerSec) || 0;
+        let pretty = '';
+        if (rate >= 1e6) pretty = (rate/1e6).toFixed(1) + 'M';
+        else if (rate >= 1e3) pretty = (rate/1e3).toFixed(1) + 'k';
+        else pretty = rate.toFixed(0);
+        document.getElementById("eventsPerSecond").textContent = pretty;
+      })();
+
+      // Populate additional stats from C++ (if available)
+      (function(){
+        const stats = profilerData.stats || {};
+        const startTimeVal = (typeof stats.startTime === 'number') ? stats.startTime : 0;
+        const endTimeVal = (typeof stats.endTime === 'number') ? stats.endTime : (typeof stats.duration === 'number' ? stats.duration : totalRange);
+        const filteredVal = (typeof stats.filteredCount === 'number') ? stats.filteredCount : 0;
+
+        const el = (id) => document.getElementById(id);
+        if (el('startTimeHeader')) el('startTimeHeader').textContent = startTimeVal.toFixed(4);
+        if (el('endTimeHeader')) el('endTimeHeader').textContent = endTimeVal.toFixed(4);
+        if (el('filteredEvents')) el('filteredEvents').textContent = filteredVal;
+        // duration filter used when capturing (if provided in meta)
+        const meta = profilerData.meta || {};
+        const durFilter = (typeof meta.durationFilterSec === 'number') ? meta.durationFilterSec : 0;
+        // Attach tooltip to Calls stat showing filtered and rendered
+        const callsEl = document.getElementById('callsStat');
+        const renderTooltip = () => {
+          const vc = document.createElement('div');
+          vc.className = 'tooltip';
+          vc.style.display = 'block';
+          vc.style.position = 'fixed';
+          vc.style.zIndex = 101;
+          vc.innerHTML = `<div class="tooltip-row"><div class="tooltip-label">Filtered:</div> <div>${filteredVal}</div></div>` +
+                          `<div class="tooltip-row"><div class="tooltip-label">Rendered:</div> <div id="renderedCountTT">0</div></div>`;
+          document.body.appendChild(vc);
+          const move = (e) => { vc.style.left = (e.pageX + 12) + 'px'; vc.style.top = (e.pageY + 12) + 'px'; };
+          const leave = () => { callsEl.removeEventListener('mousemove', move); callsEl.removeEventListener('mouseleave', leave); vc.remove(); };
+          callsEl.addEventListener('mousemove', move);
+          callsEl.addEventListener('mouseleave', leave);
+          // initial position
+          document.addEventListener('mousemove', move, { once: true });
+          // update rendered count from current visible elements function
+          setTimeout(() => {
+            const bars = document.querySelectorAll('#lodContainer .flame-bar');
+            const rendered = bars.length;
+            const elR = document.getElementById('renderedCountTT');
+            if (elR) elR.textContent = rendered;
+          }, 0);
+        };
+        if (callsEl) {
+          callsEl.addEventListener('mouseenter', renderTooltip);
+        }
+      })();
+
+      // Render cache pills (green = working cache, red = no cache) and use mesh cache rebuild summary if available
+      (function(){
+        const meta = profilerData.meta || {};
+        const jp = document.getElementById('jbeamPill');
+        const mp = document.getElementById('meshPill');
+        if (!jp || !mp) return;
+        jp.classList.remove('ok','bad');
+        mp.classList.remove('ok','bad');
+        // JBeam cache (unchanged)
+        if (meta.jbeamCached === true) { jp.classList.add('ok'); jp.title = 'Using JBeam cache'; }
+        else { jp.classList.add('bad'); jp.title = 'JBeam cache not used'; }
+
+        // Mesh cache summary coming from C++ API getMeshCacheRebuildSummary
+        const sum = meta.meshCacheSummary || meta.meshCacheRebuildSummary;
+        if (sum && typeof sum === 'object' && (typeof sum.totalFiles === 'number' || typeof sum.totalMeshes === 'number')) {
+          const totalFiles = Number(sum.totalFiles) || 0;
+          const loadedFiles = Number(sum.loadedFiles) || 0;
+          const alreadyInCache = Number(sum.filesAlreadyInCache) || 0;
+          const totalMeshes = Number(sum.totalMeshes) || 0;
+          const loadedMeshes = Number(sum.loadedMeshes) || 0;
+          const percentLoaded = Number(sum.percentLoaded) || (totalFiles > 0 ? (loadedFiles / totalFiles) * 100 : 0);
+
+          // Heuristic: if a meaningful portion was already in cache, mark OK; otherwise BAD
+          const usingCache = alreadyInCache > 0 || percentLoaded >= 50;
+          mp.classList.add(usingCache ? 'ok' : 'bad');
+          mp.title = `Mesh cache summary\nFiles: ${loadedFiles}/${totalFiles} (in cache: ${alreadyInCache})\nMeshes: ${loadedMeshes}/${totalMeshes}\nLoaded: ${percentLoaded.toFixed(1)}%`;
+        } else {
+          // Fallback to legacy flag if provided
+          if (meta.meshCached === true) { mp.classList.add('ok'); mp.title = 'Using mesh cache'; }
+          else { mp.classList.add('bad'); mp.title = 'Mesh cache info unavailable'; }
+        }
+      })();
+
+      // ---------------- LOD (Level-of-Detail) rendering for merged items ----------------
+      // Pre-flatten nodes per depth for quick LOD merges
+      const depthToNodes = new Map();
+      (function buildDepthIndex() {
+        function pushDepth(node, depth) {
+          const arr = depthToNodes.get(depth) || [];
+          const start = node.startTime || 0;
+          const dur = node.duration || 0;
+          arr.push({
+            name: node.name || 'unknown',
+            start: start,
+            end: start + dur,
+            duration: dur,
+            callCount: node.callCount || 1,
+            depth: depth
+          });
+          depthToNodes.set(depth, arr);
+        }
+        function walk(node, depth) {
+          pushDepth(node, depth);
+          let children = [];
+          if (Array.isArray(node.children)) children = node.children;
+          else if (typeof node.children === 'object' && node.children !== null) children = Object.values(node.children);
+          children.forEach(child => walk(child, depth + 1));
+        }
+        // flatten all children of the root
+        if (Array.isArray(profilerData.children)) profilerData.children.forEach(child => walk(child, 0));
+        else if (typeof profilerData.children === 'object' && profilerData.children !== null) Object.values(profilerData.children).forEach(child => walk(child, 0));
+        // sort each depth by start time
+        depthToNodes.forEach(arr => arr.sort((a,b) => a.start - b.start));
+        // Compute max depth and resize canvas to fit rows (20px per row)
+        let maxDepth = 0;
+        depthToNodes.forEach((_, d) => { if (d > maxDepth) maxDepth = d; });
+        const rows = maxDepth + 2;
+        const contentHeight = Math.max(80, rows * 20); // bars area (excludes timeline)
+        // timeline = 20px at top
+        flameOuter.style.height = `${contentHeight + 20}px`;
+        flameContainer.style.height = `${contentHeight}px`;
+        lodContainer.style.height = `${contentHeight}px`;
+        gridLines.style.height = '100%';
+        rangeMask.style.height = `${contentHeight}px`;
+        dlog('computed maxDepth', maxDepth, 'rows', rows, 'contentHeight', contentHeight);
+      })();
+
+      // Initial layout
+      // Render only top table rows initially
+      renderInitialTable();
+      recalcPositions();
+
+      // computeLODLevel: returns level 0..3 based on pixels-per-second (zoom)
+      function computeLODLevel() {
+        // Decide LOD level based on pixels per second
+        const pxPerSecond = (baseWidth * scaleX) / totalRange;
+        if (pxPerSecond >= 400) return 0;   // full detail
+        if (pxPerSecond >= 150) return 1;   // light merge
+        if (pxPerSecond >= 60)  return 2;   // medium merge
+        return 3;                            // heavy merge
+      }
+
+      // updateLODAndVisibility: main entry to (re)render current view
+      function updateLODAndVisibility() {
+        const lodLevel = computeLODLevel();
+        // Always hide base bars; we'll redraw based on LOD using a single pass for performance
+        document.querySelectorAll('.flame-bar').forEach(el => el.remove());
+        lodContainer.classList.remove('hidden');
+        lodContainer.innerHTML = '';
+        // Quick pass while panning fast
+        renderCanvasByLOD(lodLevel, true);
+        // Full pass shortly after to refine details
+        if (!rafScheduled) {
+          rafScheduled = true;
+          requestAnimationFrame(() => {
+            lodContainer.innerHTML = '';
+            renderCanvasByLOD(lodLevel, false);
+            rafScheduled = false;
+          });
+        }
+      }
+
+      // renderCanvasByLOD: renders visible bars with merging based on current zoom
+      function renderCanvasByLOD(lodLevel) {
+        const scaledWidth = baseWidth * scaleX;
+        const pxPerSecond = scaledWidth / totalRange;
+        // Dynamic bin size derived from zoom level
+        // More zoom (higher pxPerSecond) -> smaller target pixel bin (less merging)
+        const targetPx = Math.max(3, Math.min(32, 800 / Math.max(pxPerSecond, 1e-9)));
+        const LABEL_MIN_PX = 30;
+
+        // Align overlay with content
+        lodContainer.style.width = `${scaledWidth}px`;
+        // lodContainer lives inside flameContainer which already shifts by offsetX – keep this at 0 to align
+        lodContainer.style.left = `0px`;
+        lodContainer.innerHTML = '';
+        // Enable pointer interactions so tooltips work on merged bars
+        lodContainer.style.pointerEvents = 'auto';
+        // Update disabled mask for this scaled width
+        rangeMask.style.width = `${scaledWidth}px`;
+        updateDisabledMaskPositions(scaledWidth);
+
+        // Compute visible window
+        const viewPx = flameOuter.clientWidth;
+        const leftVisX = Math.max(-offsetX, 0);
+        const rightVisX = Math.min(leftVisX + viewPx, scaledWidth);
+        const fracStart = scaledWidth > 0 ? (leftVisX / scaledWidth) : 0;
+        const fracEnd = scaledWidth > 0 ? (rightVisX / scaledWidth) : 1;
+        const timeStart = fracStart * totalRange;
+        const timeEnd = fracEnd * totalRange;
+        const visDuration = Math.max(1e-9, timeEnd - timeStart);
+
+        // Reset mapping and collect table rows corresponding to visible merged bars
+        rowIdToBars.clear();
+        const tableVisibleRows = [];
+
+        depthToNodes.forEach((nodes, depth) => {
+          const bins = new Map(); // idx -> {startPx,endPx,count,namesDur}
+          const wideSegs = []; // segments that must never be merged (wide enough)
+          const noMergePx = Math.max(20, targetPx * 3);
+          let i = 0;
+          // advance to first overlapping node
+          while (i < nodes.length && nodes[i].end <= timeStart) i++;
+          while (i < nodes.length && nodes[i].start < timeEnd) {
+            const n = nodes[i++];
+            const ns = Math.max(n.start, timeStart);
+            const ne = Math.min(n.end, timeEnd);
+            const ndur = Math.max(0, ne - ns);
+            if (ndur <= 0) continue;
+            const leftPx = (ns / totalRange) * scaledWidth;
+            const rightPx = (ne / totalRange) * scaledWidth;
+            // If the node is already wide enough on screen, don't merge it – render as-is later
+            const widthPx = Math.max(rightPx - leftPx, 0);
+            if (widthPx >= noMergePx) {
+              wideSegs.push({ startPx: leftPx, endPx: rightPx, dur: ndur, name: n.name, count: n.callCount || 1 });
+              continue;
+            }
+            const idx = Math.floor(leftPx / targetPx);
+            let seg = bins.get(idx);
+            if (!seg) {
+              seg = { startPx: leftPx, endPx: rightPx, count: 1, namesDur: new Map([[n.name, ndur]]) };
+              bins.set(idx, seg);
+            } else {
+              seg.startPx = Math.min(seg.startPx, leftPx);
+              seg.endPx = Math.max(seg.endPx, rightPx);
+              seg.count += 1;
+              seg.namesDur.set(n.name, (seg.namesDur.get(n.name) || 0) + ndur);
+            }
+          }
+
+          // Coalesce consecutive bins into a single segment so we render ONE block per contiguous area
+          const sortedIdx = Array.from(bins.keys()).sort((a,b)=>a-b);
+          let run = null; // {startPx,endPx,count,namesDur}
+          let lastIdx = null;
+          function flushRun(){
+            if (!run) return;
+            const widthPx = Math.max(run.endPx - run.startPx, 2);
+            const barEl = document.createElement('div');
+            // dominant color by duration
+            let dominantName = 'merged';
+            let maxDur = -1;
+            run.namesDur.forEach((dur, name) => { if (dur > maxDur) { maxDur = dur; dominantName = name; } });
+            const isMerged = (run.count > 1) || (run.namesDur.size > 1);
+            barEl.className = 'flame-bar' + (isMerged ? ' merged' : '');
+            // Use backgroundColor so we don't wipe out the CSS background-image pattern on merged bars
+            const barColor = getColorFromName(dominantName);
+            barEl.style.backgroundColor = barColor;
+            barEl.style.left = `${run.startPx}px`;
+            barEl.style.width = `${widthPx}px`;
+            barEl.style.top = `${depth * 20}px`;
+            if (widthPx >= LABEL_MIN_PX) {
+              barEl.textContent = (!isMerged) ? dominantName : `${dominantName} (+${run.count - 1})`;
+              barEl.style.color = getLabelColorFromName(dominantName);
+            }
+            const segStart = (run.startPx / scaledWidth) * totalRange;
+            const segDur = (widthPx / scaledWidth) * totalRange;
+            barEl.dataset.start = segStart;
+            barEl.dataset.dur = segDur;
+            barEl.dataset.depth = depth;
+            barEl.dataset.count = run.count;
+            barEl.dataset.pct = ((segDur / visDuration) * 100).toFixed(2);
+            barEl.dataset.name = dominantName;
+            // Provide fields used by tooltip
+            barEl.dataset.self = segDur;
+            barEl.dataset.ptotal = ((segDur / totalRange) * 100).toFixed(2);
+            barEl.dataset.sptotal = barEl.dataset.ptotal;
+            if (isMerged) {
+              barEl.dataset.merged = '1';
+              barEl.dataset.mergeCount = run.count;
+              barEl.dataset.distinct = run.namesDur.size;
+              // Precompute top 3 names
+              const entries = Array.from(run.namesDur.entries()).sort((a,b)=>b[1]-a[1]);
+              const top = entries.slice(0,3).map(([n,d])=>`${n}:${((d/(segDur||1)) * 100).toFixed(1)}%`).join(', ');
+              barEl.dataset.topnames = top;
+            }
+            // Tooltip handlers
+            barEl.addEventListener('mouseover', showTooltip);
+            barEl.addEventListener('mouseout', hideTooltip);
+            barEl.addEventListener('mousemove', moveTooltip);
+            // Highlight row on bar hover
+            barEl.addEventListener('mouseenter', (e) => {
+              const row = document.getElementById(e.currentTarget.dataset.tableRowId);
+              if (row) row.classList.add('highlight');
+            });
+            barEl.addEventListener('mouseleave', (e) => {
+              const row = document.getElementById(e.currentTarget.dataset.tableRowId);
+              if (row) row.classList.remove('highlight');
+            });
+            // Link this visual block to its table row id for accurate jumping
+            const tableRowId = `row_${dominantName.replace(/\s+/g,'_')}_${depth}_${Math.round(segStart*1000)}`;
+            barEl.dataset.tableRowId = tableRowId;
+            barEl.addEventListener('dblclick', function(evt){
+              evt.stopPropagation();
+              evt.preventDefault();
+              dlog('dblclick bar -> table row', tableRowId);
+              highlightRowById(tableRowId);
+            });
+            lodContainer.appendChild(barEl);
+            run = null;
+            // Track bars by row id for hover highlighting from table
+            const list = rowIdToBars.get(tableRowId) || [];
+            list.push(barEl);
+            rowIdToBars.set(tableRowId, list);
+
+            // For the table: push a row consistent with this merged visual segment
+            tableVisibleRows.push({
+              id: tableRowId,
+              name: dominantName,
+              depth: depth,
+              start: segStart,
+              dur: segDur,
+              selfDur: segDur,
+              color: getColorFromName(dominantName),
+              merged: isMerged,
+            });
+          }
+          sortedIdx.forEach(idx => {
+            const b = bins.get(idx);
+            if (!run) {
+              run = { startPx: b.startPx, endPx: b.endPx, count: b.count, namesDur: b.namesDur };
+              lastIdx = idx;
+            } else if (lastIdx !== null && idx <= lastIdx + 1) {
+              // contiguous bin; extend
+              run.endPx = Math.max(run.endPx, b.endPx);
+              run.count += b.count;
+              b.namesDur.forEach((dur, name)=> run.namesDur.set(name, (run.namesDur.get(name)||0) + dur));
+              lastIdx = idx;
+            } else {
+              flushRun();
+              run = { startPx: b.startPx, endPx: b.endPx, count: b.count, namesDur: b.namesDur };
+              lastIdx = idx;
+            }
+          });
+          flushRun();
+
+          // Render non-merged wide segments on top so they remain visible even when bins exist nearby
+          wideSegs.forEach(ws => {
+            const widthPx = Math.max(ws.endPx - ws.startPx, 1);
+            const barEl = document.createElement('div');
+            barEl.className = 'flame-bar';
+            const barColor2 = getColorFromName(ws.name);
+            barEl.style.backgroundColor = barColor2;
+            barEl.style.left = `${ws.startPx}px`;
+            barEl.style.width = `${widthPx}px`;
+            barEl.style.top = `${depth * 20}px`;
+            barEl.style.zIndex = '2';
+            if (widthPx >= LABEL_MIN_PX) { barEl.textContent = ws.name; barEl.style.color = getLabelColorFromName(ws.name); }
+            const segStart = (ws.startPx / scaledWidth) * totalRange;
+            const segDur = (widthPx / scaledWidth) * totalRange;
+            barEl.dataset.start = segStart;
+            barEl.dataset.dur = segDur;
+            barEl.dataset.depth = depth;
+            barEl.dataset.count = ws.count;
+            barEl.dataset.pct = ((segDur / visDuration) * 100).toFixed(2);
+            barEl.dataset.name = ws.name;
+            barEl.dataset.self = segDur;
+            barEl.dataset.ptotal = ((segDur / totalRange) * 100).toFixed(2);
+            barEl.dataset.sptotal = barEl.dataset.ptotal;
+            barEl.addEventListener('mouseover', showTooltip);
+            barEl.addEventListener('mouseout', hideTooltip);
+            barEl.addEventListener('mousemove', moveTooltip);
+            // Highlight row on bar hover
+            barEl.addEventListener('mouseenter', (e) => {
+              const row = document.getElementById(e.currentTarget.dataset.tableRowId);
+              if (row) row.classList.add('highlight');
+            });
+            barEl.addEventListener('mouseleave', (e) => {
+              const row = document.getElementById(e.currentTarget.dataset.tableRowId);
+              if (row) row.classList.remove('highlight');
+            });
+            const tableRowId2 = `row_${ws.name.replace(/\s+/g,'_')}_${depth}_${Math.round(segStart*1000)}`;
+            barEl.dataset.tableRowId = tableRowId2;
+            barEl.addEventListener('dblclick', function(evt){
+              evt.stopPropagation();
+              evt.preventDefault();
+              dlog('dblclick wide bar -> table row', tableRowId2);
+              highlightRowById(tableRowId2);
+            });
+            lodContainer.appendChild(barEl);
+            const list2 = rowIdToBars.get(tableRowId2) || [];
+            list2.push(barEl);
+            rowIdToBars.set(tableRowId2, list2);
+
+            tableVisibleRows.push({
+              id: tableRowId2,
+              name: ws.name,
+              depth: depth,
+              start: segStart,
+              dur: segDur,
+              selfDur: segDur,
+              color: getColorFromName(ws.name),
+              merged: false,
+            });
+          });
+        });
+
+        // Render table to reflect what is visible right now using the same merged view
+        const win = getCurrentTimeWindow();
+        renderTableFromVisible(tableVisibleRows, win.visDuration);
+      }
+
+      function updateVisibleElementsCount() {
+        const scaledWidth = baseWidth * scaleX;
+        const viewPx = flameOuter.clientWidth;
+        const leftVisX = Math.max(-offsetX, 0);
+        const rightVisX = Math.min(leftVisX + viewPx, scaledWidth);
+        // We always redraw using the LOD canvas now; count bars from lodContainer only
+        const bars = lodContainer.querySelectorAll('.flame-bar');
+        let visible = 0;
+        bars.forEach(bar => {
+          const left = parseFloat(bar.style.left) || 0;
+          const width = parseFloat(bar.style.width) || 0;
+          const right = left + width;
+          if (right > leftVisX && left < rightVisX) visible++;
+        });
+        const stats = profilerData.stats || {};
+        const filteredVal = (typeof stats.filteredCount === 'number') ? stats.filteredCount : 0;
+        // If calls tooltip is open, update its rendered count live
+        const elR = document.getElementById('renderedCountTT');
+        if (elR) elR.textContent = visible;
+      }
+    })();
+    </script>
+  </body>
+</html>

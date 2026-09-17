@@ -27,6 +27,7 @@ function C:reset()
 end
 
 function C:setSmoothedCam(smoothed)
+  self.smoothed = smoothed and true or false
   if smoothed then
     self.angularForce = 150
     self.angularDrag = 2.5
@@ -45,8 +46,10 @@ end
 
 function C:init()
   self.isGlobal = true
+  self.group = "world" -- member of the world camera group (cycled with the camera key, entered with the group toggle)
+  self.groupOrder = 10
   self.hidden = true
-
+  self.canUseVehicleTriggerCrosshair = true
   self:setSmoothedCam(false)
 
   self.pos = vec3(0,0,0)
@@ -72,12 +75,54 @@ function C:setNewtonTranslation(enabled)
   self.newtonTranslation = enabled
 end
 
+-- Tunables for the camera-control / video-stream UI. Fly speed is context state (shared
+-- with the vehicle cams' zoom rate) so it routes through core_camera; the rest are this
+-- camera's own.
+function C:listParams(ctxId)
+  return {
+    { key = 'speed', icon = 'fa-gauge-high', title = 'Fly speed', kind = 'range', type = 'int', value = core_camera.getSpeed(ctxId) or 30, default = 30, min = 2, max = 100, step = 1, unit = 'm/s' },
+    { key = 'smooth', icon = 'fa-wand-magic-sparkles', title = 'Smoothing', kind = 'bool', type = 'bool', value = self.smoothed == true },
+    { key = 'newtonRot', icon = 'fa-arrows-spin', kind = 'bool', value = self.newtonRotation == true },
+    { key = 'newtonTrans', icon = 'fa-up-down-left-right', kind = 'bool', value = self.newtonTranslation == true },
+    { key = 'fov', icon = 'fa-expand', title = 'Field of view', kind = 'range', type = 'int', value = self.manualzoom and self.manualzoom.fov or 60, default = 60, min = 10, max = 140, step = 1, unit = '°' },
+  }
+end
+
+function C:setParam(key, value, ctxId)
+  if key == 'speed' then core_camera.setSpeed(clamp(tonumber(value) or 30, 2, 100), ctxId)
+  elseif key == 'smooth' then self:setSmoothedCam(value and true or false)
+  elseif key == 'fov' then self:setFOV(tonumber(value) or 60)
+  elseif key == 'newtonRot' then self:setNewtonRotation(value and true or false)
+  elseif key == 'newtonTrans' then self:setNewtonTranslation(value and true or false) end
+end
+
 function C:setRotation(rotation)
   local eulerYXZ = rotation:toEulerYXZ()
   eulerYXZ.y = -eulerYXZ.y
   self.rot:set(eulerYXZ)
 end
 
+function C:onCameraChanged(focused)
+  if not focused then return end
+  self:reset()
+end
+
+--[[
+function C:onCameraChanged(focused)
+  if focused then
+    -- Create actionmap if it doesn't exist
+    local am = scenetree.findObject("FreecamActionMap")
+    if not am then
+      am = ActionMap("FreecamActionMap")
+    end
+    -- Push the actionmap to take priority over vehicle controls
+    pushActionMap("Freecam")
+  else
+    -- Pop the actionmap when camera is deactivated
+    popActionMap("Freecam")
+  end
+end
+--]]
 local inputVec, acc, forceVec, tempVec = vec3(), vec3(), vec3(), vec3()
 local qdir, qdirLook = quat(), quat()
 function C:update(data)

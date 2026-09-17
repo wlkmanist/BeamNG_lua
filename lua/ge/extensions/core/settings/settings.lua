@@ -4,6 +4,12 @@
 
 local M = {}
 M.impl = require("settings")
+
+-- Headless/batch workers (many game instances at once) must not bind the companion
+-- dev servers: their fixed ports (workbench LAN socket 8088, MCP 29292) collide across
+-- instances and spam bind-retry logs. -nowebservers keeps both off for such runs.
+local suppressWebServers = tableFindKey(Engine.getStartingArgs(), '-nowebservers') ~= nil
+
 local options = {
   uiUnitLength = {modes={keys={'metric','imperial'}, values={'ui.unit.metric', 'ui.unit.imperial'}}},
   uiUnitTemperature = {modes={keys={'c', 'f', 'k'}, values={'ui.unit.c', 'ui.unit.f', 'ui.unit.k'}}},
@@ -16,24 +22,36 @@ local options = {
   uiUnitVolume = {modes={keys={'l', 'gal'}, values={'ui.unit.l', 'ui.unit.gal'}}},
   uiUnitPressure = {modes={keys={'inHg', 'bar', 'psi', 'kPa'}, values={'ui.unit.inHg', 'ui.unit.bar', 'ui.unit.psi', 'ui.unit.kPa'}}},
 
-  uiUpscaling = {modes={keys={'disabled', '720', '1080', '1440'}, values={'Disabled', '1280 x 720', '1920 x 1080', '2560 x 1440'}}},
+  uiUpscaling = {modes={keys={0, 720, 1080, 1440}, values={'ui.common.disabled', '1280 x 720', '1920 x 1080', '2560 x 1440'}}},
   onlineFeatures = {modes={keys={'enable', 'disable'}, values={'ui.common.enable', 'ui.common.disable'}}},
   telemetry = {modes={keys={'enable', 'disable'}, values={'ui.common.enable', 'ui.common.disable'}}},
   defaultGearboxBehavior = {modes={keys={'arcade', 'realistic'}, values={'ui.common.arcade', 'ui.common.realistic'}}},
   absBehavior = {modes={keys={'realistic', 'off', 'arcade'}, values={'ui.common.ABSrealistic', 'ui.common.ABSoff', 'ui.common.ABSarcade'}}},
   escBehavior = {modes={keys={'arcade', 'realistic', 'off'}, values={'ui.common.arcade', 'ui.common.realistic', 'ui.common.off'}}},
   spawnVehicleIgnitionLevel = {modes={keys={0, 1, 2, 3}, values={'ui.common.vehicleOff', 'ui.common.vehicleAccessoryOn', 'ui.common.vehicleOn', 'ui.common.vehicleRunning'}}},
-  trafficSetup = {modes={keys={'smart', 'smartConfigs', 'random', 'randomConfigs', 'simple'}, values={'ui.common.smart', 'ui.common.smartConfigs', 'ui.common.random', 'ui.common.randomConfigs', 'ui.common.simpleVehicles'}}},
   communityTranslations = {modes={keys={'enable', 'disable'}, values={'ui.common.enable', 'ui.common.disable'}}},
   showMissionMarkers = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
   enableDragRaceInFreeroam = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
+  enableDriftInFreeroam = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
+  enableDriftFreeroamCruising = {},
+  enableCrawlInFreeroam = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
   enableGasStationsInFreeroam = {set = function(s) extensions.hook("showMissionMarkersToggled", s) end},
+  enableTaxiInFreeroam = {set = function(s) extensions.hook("taxiSettingChanged", s) end},
+  enableVehicleTriggerCrosshairInternalCameras = {},
+  enableVehicleTriggerCrosshairWalkingMode = {},
   enableMissionReplay = {modes = {keys={'count', 'maxSize'}, values = {'ui.common.replayCount', 'ui.common.size'}}},
-  AudioMaxVoices = { modes={keys={512, 384, 256, 128}, values={'ui.options.audio.Ultra', 'ui.options.audio.High', 'ui.options.audio.Normal', 'ui.options.audio.Low'}} },
+
+  minimapMode = {modes={keys={'circle', 'rect'}, values={'ui.options.minimap.mode.circle', 'ui.options.minimap.mode.rect'}}, set = function(s) extensions.hook("onMinimapSettingsChanged", s) end},
+  minimapOrientation = {modes={keys={'rotateWithCamera', 'alwaysPointNorth'}, values={'ui.options.minimap.orientation.rotateWithCamera', 'ui.options.minimap.orientation.alwaysPointNorth'}}, set = function(s) extensions.hook("onMinimapSettingsChanged", s) end},
+  minimapDrawGrid = {modes={keys={'automatic', 'always', 'never'}, values={'ui.options.minimap.drawGrid.automatic', 'ui.options.minimap.drawGrid.always', 'ui.options.minimap.drawGrid.never'}}, set = function(s) extensions.hook("onMinimapSettingsChanged", s) end},
+  minimapLookahead = {modes={keys={'disabled', 'low', 'medium', 'high'}, values={'ui.options.minimap.lookahead.disabled', 'ui.options.minimap.lookahead.low', 'ui.options.minimap.lookahead.medium', 'ui.options.minimap.lookahead.high'}}, set = function(s) extensions.hook("onMinimapSettingsChanged", s) end},
+  poiListDisplayMode = {modes={keys={'hidden', 'tree', 'simple'}, values={'ui.options.bigmap.poiListDisplayMode.hidden', 'ui.options.bigmap.poiListDisplayMode.tree', 'ui.options.bigmap.poiListDisplayMode.simple'}}},
 }
+
 
 local values = deepcopy(M.impl.defaultValues)
 local lastSavedTime = 0
+local initFinalized = false
 
 local function notifyUI()
   guihooks.trigger('SettingsChanged', {values = values, options = options})
@@ -41,6 +59,7 @@ end
 
 local alreadySaving = false
 local function save()
+  if not initFinalized then return end -- too early to save, settings are not loaded yet
   if M.loadingSettingsInProgress then
     --log("W", "", "This call to save() settings is being ignored, because it is flagged as a recursive call via 'M.loadingSettingsInProgress'. This should not happen, please review callstack below:")
     --print(debug.tracesimple())
@@ -76,10 +95,11 @@ local function save()
   FS:directoryCreate(M.impl.path)
   jsonWriteFile(M.impl.pathLocal, localValues, true)
   jsonWriteFile(M.impl.pathCloud, cloudValues, true)
+  if not shipping_build and M.impl.internalValues then
+    jsonWriteFile(M.impl.pathInternal, M.impl.internalValues, true)
+  end
 
-  removeConsoleVariable("$pref::Video::canvasSize") -- deprecated flag
-  removeConsoleVariable("$pref::Video::mode") -- deprecated flag
-  TorqueScript.eval(string.format('export("$pref::*", "%s" , False);', settings.impl.pathTorquescript))
+  VariableRegistry.exportToFile("$pref:*", settings.impl.pathVariables)
 
   -- let UI and Lua know
   notifyUI()
@@ -104,13 +124,14 @@ local function refreshTSState(withValue)
   end
 end
 
+local appliedUserLanguage = nil
 local appliedLanguage = ""
 local function refreshLanguages()
   -- 0) ask c++ what language is active right now, so we can see if it changed later
   local oldLanguage = Lua:getSelectedLanguage()
 
-  if (appliedLanguage ~= "" and oldLanguage ~= "" and appliedLanguage == oldLanguage) then
-    if (values.userLanguage == appliedLanguage) then
+  if not M.newTranslationsAvailable and (appliedLanguage ~= "" and oldLanguage ~= "" and appliedLanguage == oldLanguage) then
+    if (values.userLanguage == appliedUserLanguage) then
       -- log('D','','       no language change requried.')
       return
     end
@@ -136,13 +157,14 @@ local function refreshLanguages()
   -- list available languages
   options.userLanguagesAvailable = {}
   table.insert(options.userLanguagesAvailable, {key="", name="Automatic", isOfficial=true}) -- the empty ('') language will be auto - it'll use the OS/steam lang
-  local locales = FS:findFiles('/locales/', '*.json', -1, true, false)
+  local availableLanguages = core_locales.getAvailableLanguages()
 
-  for _, l in pairs(locales) do
-    local key = string.match(l, 'locales/(.*).json')
-    if key ~= "not-shipping.internal" then
-      table.insert(options.userLanguagesAvailable, {key=key, name = languageMap.resolve(key), isOfficial=isOfficialContentVPath(l)})
-    end
+  for _, languageInfo in ipairs(availableLanguages) do
+    table.insert(options.userLanguagesAvailable, {
+      key = languageInfo.key,
+      name = languageMap.resolve(languageInfo.key),
+      isOfficial = isOfficialContentVPath(languageInfo.path)
+    })
   end
   --print(' * languagesAvailable: ' .. dumps(options.userLanguagesAvailable))
 
@@ -151,7 +173,7 @@ local function refreshLanguages()
   values.languageOSLong = languageMap.resolve(values.languageOS)
   --print(' * languageOS: ' .. tostring(values.languageOS) .. ' [' .. tostring(values.languageOSLong) .. ']')
   values.languageProvider = Lua:getSteamLanguage()
-  values.languageProviderLong = Steam and Steam.language or ""
+  values.languageProviderLong = OnlineServiceProvider and OnlineServiceProvider.language or ""
   --print(' * languageProvider: ' .. tostring(values.languageProvider) .. ' [' .. tostring(values.languageProviderLong) .. ']')
 
   -- was the language changed?
@@ -162,10 +184,12 @@ local function refreshLanguages()
     values.userLanguage = ''
   end
   appliedLanguage = Lua:getSelectedLanguage()
+  appliedUserLanguage = values.userLanguage
   --print(' - languageChanged >> ' .. tostring(languageChanged) .. ' | "' .. tostring(Lua:getSelectedLanguage()) .. '" ~= ' .. tostring(oldLanguage))
 
   -- send the new state to the UI
   if languageChanged or M.newTranslationsAvailable then
+    M.newTranslationsAvailable = nil
     notifyUI()
     if ui_imgui and ui_imgui.ctx ~= nil then
       local imguiFonts = jsonReadFile('settings/imguiFonts.json') or {}
@@ -184,13 +208,17 @@ end
 local function setState(newState, ignoreCache)
   if newState == nil then return end
   local isChanged = false
+  local prevWorkbenchMobile = values.workbenchMobile
+  local prevWorkbenchInsecure = values.workbenchInsecure
 
   -- Graphics quality groups that have preset values for groups of graphic settings
-  local graphicQualityGroups = {'GraphicOverallQuality', 'GraphicMeshQuality', 'GraphicTextureQuality', 'GraphicLightingQuality', 'GraphicShadowsQuality', 'GraphicShaderQuality'}
+  local graphicQualityGroups = {'GraphicOverallQuality', 'GraphicMeshQuality', 'GraphicTextureQuality', 'GraphicLightingQuality', 'GraphicCloudsQuality', 'GraphicShadowsQuality', 'GraphicClusteredQuality'}
 
   local sortedKeys = {}
   for k,_ in pairs(newState) do
-    if not tableContains(graphicQualityGroups, k) then
+    if type(k) ~= "string" then
+      log("W", "", "Ignoring setting with invalid non-string key: " .. dumps(k))
+    elseif not tableContains(graphicQualityGroups, k) then
       table.insert(sortedKeys, k)
     end
   end
@@ -234,6 +262,37 @@ local function setState(newState, ignoreCache)
     extensions.unload('ui_extApp')
   end
 
+  local wantMcp = values.enableMcp and not suppressWebServers
+  local mcpLoaded = extensions.isExtensionLoaded('mcp_server')
+  if wantMcp and not mcpLoaded then
+    if Engine.setMcpPort then Engine.setMcpPort(0) end -- 0 = loading until the server binds and publishes its real port
+    extensions.load('mcp_server')
+  elseif not wantMcp then
+    if Engine.setMcpPort then Engine.setMcpPort(-1) end -- -1 = disabled, reported in "?info" so the supervisor shows "disabled"
+    if mcpLoaded then extensions.unload('mcp_server') end
+  end
+
+  -- Workbench "Mobile (QR code)" + HTTPS: keep the LAN server in sync with its
+  -- settings. activate() always binds 0.0.0.0 and rebinds when the workbenchInsecure
+  -- TLS choice changed; it is idempotent otherwise, so reconciling on every apply is
+  -- what makes a persisted "on" bind LAN at boot (startup applies saved settings here).
+  -- An explicit mobile turn-off stops the server; otherwise a running server (mobile
+  -- on, or started by the desktop app) just follows the insecure toggle.
+  if not FS:fileExists("/lua/ge/extensions/workbench/webSocketHandler.lua") then
+    -- skip workbench system entirely
+  else
+  if values.workbenchMobile and not suppressWebServers then
+    extensions.load('workbench_webSocketHandler')
+    workbench_webSocketHandler.activate()
+  elseif extensions.isExtensionLoaded('workbench_webSocketHandler') then
+    if values.workbenchMobile ~= prevWorkbenchMobile then
+      workbench_webSocketHandler.deactivate()
+    elseif values.workbenchInsecure ~= prevWorkbenchInsecure and workbench_webSocketHandler.getServer() then
+      workbench_webSocketHandler.activate()
+    end
+  end
+  end
+
   refreshLanguages()
 end
 
@@ -266,22 +325,26 @@ local function setValue(key, value, ignoreCache)
   -- log('I','settings','setValue called  key = '..tostring(key)..'  value = '..tostring(value))
   -- apply to memory right now
   local stateDirty = false
-  if ignoreCache or values[key] == nil or (tostring(s) ~= tostring(values[key])) then
+  if ignoreCache or values[key] == nil or (tostring(value) ~= tostring(values[key])) then
     stateDirty = true
     values[key] = value
     if options[key] and type(options[key].set) == 'function' then
       options[key].set(value)
     end
   end
-
   settingInProgress[key] = false
 
   -- delay writing to disk
   if stateDirty and not M.loadingSettingsInProgress then
-   M.requestSave()
+    M.requestSave()
   end
-
   return stateDirty
+end
+
+local function resetSettingToDefault(key)
+  if M.impl.defaultValues[key] ~= nil then
+    setValue(key, M.impl.defaultValues[key])
+  end
 end
 
 local function getValue(key, defaultValue)
@@ -355,9 +418,10 @@ local function initSettings(reason)
   end
 
   -- build option helpers
-  extensions.load({"core_settings_graphic","core_settings_audio"})
+  extensions.load({"core_settings_graphic","core_settings_audio", "core_settings_multiplayer"})
   tableMerge(options, core_settings_graphic.buildOptionHelpers())
   tableMerge(options, core_settings_audio.buildOptionHelpers())
+  tableMerge(options, core_settings_multiplayer.buildOptionHelpers())
   -- add C++ propagation wherever possible
   for k,v in pairs(M.impl.defaults) do
     if CppSettings[k] ~= nil then -- check if C++ side cares about this setting
@@ -390,7 +454,7 @@ local function loadPlatformSettings(platformSettingsPath)
     log('D', '', 'Loading platform-specific setings from: ' .. platformSettingsPath)
     local platformSettings = jsonReadFile(platformSettingsPath)
     if not platformSettings then
-      log('E', '', 'Could not load custom settings JSON from: ' .. testSettingsPath)
+      log('E', '', 'Could not load custom settings JSON from: ' .. platformSettingsPath)
     else
       setState(platformSettings)
     end
@@ -410,10 +474,9 @@ local function finalizeInit()
   --Could be more optimal to call earlier?
   loadPlatformSettings(PlatformSwitches.settingsJsonPath)
 
-  if not techLicense and values.onlineFeatures == 'enable' and values.telemetry == 'enable' then
-    extensions.load('telemetry/gameTelemetry')
-    telemetry_gameTelemetry.startTelemetry()
-  end
+  initFinalized = true
+  -- the telemetry extension decides internally if it should be active or not
+  extensions.load('telemetry_core')
 end
 
 local function onFilesChanged(files)
@@ -433,8 +496,27 @@ local function onFilesChanged(files)
   end
 end
 
+local function getValuesCopy()
+  return deepcopy(values)
+end
+
 local function exit()
   save()
+end
+
+local function stringToVersion(s)
+  local a, b = s:match("^(%d+)%.(%d+)")
+  return tonumber(a), tonumber(b)
+end
+
+local function onFirstUpdate()
+  if getValue("communityTranslations") ~= "enable" then return end
+  local updatedFromVersion = extensions.core_versionUpdate.updatedFromVersion()
+  if not updatedFromVersion then return end
+  local oldMajor, oldMinor = stringToVersion(updatedFromVersion)
+  if oldMajor == 0 and oldMinor < 39 then
+    updateTranslations()
+  end
 end
 
 M.finalizeInit = finalizeInit
@@ -446,11 +528,15 @@ M.requestSave = requestSave
 M.setState = setState
 M.setValue = setValue
 M.getValue = getValue
+M.getValuesCopy = getValuesCopy
 M.save = requestSave
 M.load = load
 M.initSettings = initSettings
 M.settingsTick = nop
 M.loadPlatformSettings = loadPlatformSettings
 M.exit = exit
+M.resetSettingToDefault = resetSettingToDefault
+
+M.onFirstUpdate = onFirstUpdate
 
 return M

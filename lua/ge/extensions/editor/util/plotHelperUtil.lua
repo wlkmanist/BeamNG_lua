@@ -36,7 +36,8 @@ function C:init(params)
     scale = {xMin = -5, xMax = 5, yMin = -5, yMax = 5},
     autoScale = false,
     showCatmullRomCurve = true,
-    catmullDataPoints = 10
+    catmullDataPoints = 10,
+    allowZoom = true,
   }
   self._cmT = {}
   self._cmY0, self._cmY1, self._cmY2, self._cmY3 = {}, {}, {}, {}
@@ -56,9 +57,17 @@ function C:init(params)
     self:setScale(-5, 5, -5, 5)
   end
 
+  self.allowZoom = params.allowZoom or true
+  if params.allowZoom == false then
+    self.allowZoom = false
+  end
   self.autoScale = params.autoScale or false
   self.showCatmullRomCurve = params.showCatmullRomCurve or false
   self.catmullromCurveLines = params.catmullromCurveLines or 10
+  self.pointSize = params.pointSize or 4
+  self.pointThickness = params.pointThickness or 2
+  self.formatX = params.formatX or "%0.3f"
+  self.formatY = params.formatY or "%0.3f"
 
   if params.initData then
     self:setData(params.initData)
@@ -98,7 +107,7 @@ function C:setSeriesNames(names)
   local format = self.seriesFormat or {}
   for i, name in ipairs(names) do
     format[i] = format[i] or {}
-    format[i].name = name
+    format[i].name = name or tostring(i)
   end
   self:setSeriesFormat(format)
 end
@@ -108,7 +117,7 @@ function C:setSeriesColors(colors)
   local format = self.seriesFormat or {}
   for i, color in ipairs(colors) do
     format[i] = format[i] or {}
-    format[i].color = color
+    format[i].color = color or {1, 1, 1, 1}
     format[i].uColor = im.GetColorU322(im.ImVec4(color[1], color[2], color[3], color[4]))
   end
   self:setSeriesFormat(format)
@@ -165,7 +174,7 @@ function C:setScale(xMin, xMax, yMin, yMax)
   if yMax then
     self.scale.yMax = yMax
   end
-  self.centerPos = {(xMax - xMin) / 2.0, (yMax - yMin) / 2.0}
+  self.centerPos = {(self.scale.xMax - self.scale.xMin) / 2.0, (self.scale.yMax - self.scale.yMin) / 2.0}
 end
 
 -- Moves graph when dragging mouse with left mouse button
@@ -201,6 +210,7 @@ end
 
 -- Zooms graph with mouse scroll wheel and based on mouse position
 function C:zoomGraph(dt)
+  if not self.allowZoom then return end
   if not self.mouseInGraph then return end
 
   local mZoom = -self.mouseWheel * 20
@@ -290,6 +300,7 @@ function C:draw(width, height, dt)
       end
     end
     im.SetCursorPos(endPos)
+    im.Dummy(im.ImVec2(0, 0))
   end
 
   if p then p:finish(true) end
@@ -306,6 +317,7 @@ function C:overlayTextLines(lines)
     im.Text(line)
   end
   im.SetCursorPos(endPos)
+  im.Dummy(im.ImVec2(0, 0))
 end
 
 -- From lua/vehicle/ve_utils.lua and modified to allow multiple y values
@@ -511,7 +523,8 @@ function C:drawData()
       if ptOnGraph then
         -- Draw point
         --ImDrawList_ctx, ImVec2_center, float_radius, ImU32_col, int_num_segments, float_thickness
-        im.ImDrawList_AddCircle(self.dl, ptOnGraph, 4, circleColor, 8, 2)
+
+        im.ImDrawList_AddCircle(self.dl, ptOnGraph, self.pointSize, circleColor, 8, self.pointThickness)
 
         -- Draw Tooltip
         local ptOnGraphWS = self:graphPtToImWS(ptX, ptY)
@@ -519,8 +532,8 @@ function C:drawData()
         ptOnGraphWS.x = ptOnGraphWS.x - btnWidth / 2
         ptOnGraphWS.y = ptOnGraphWS.y - btnWidth / 2
 
-        local strX = string.format("%0.3f", ptX)
-        local strY = string.format("%0.3f", ptY)
+        local strX = string.format(self.formatX, ptX)
+        local strY = string.format(self.formatY, ptY)
 
         im.SetCursorPos(ptOnGraphWS)
         im.InvisibleButton('##pointTooltipButton'..r.."/"..i, btnSize)

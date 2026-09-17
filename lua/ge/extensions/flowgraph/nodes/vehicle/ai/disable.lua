@@ -26,12 +26,12 @@ end
 function C:work()
   local veh
   if self.pinIn.aiVehId.value then
-    veh = be:getObjectByID(self.pinIn.aiVehId.value)
+    veh = getObjectByID(self.pinIn.aiVehId.value)
   else
     veh = getPlayerVehicle(0)
   end
   if not veh then return end
-  
+
   if self.data.useScriptStop then
     veh:queueLuaCommand('ai:scriptStop('..tostring(self.data.handBrakeWhenFinished)..','..tostring(self.data.straightenWheelsWhenFinished)..')')
   else

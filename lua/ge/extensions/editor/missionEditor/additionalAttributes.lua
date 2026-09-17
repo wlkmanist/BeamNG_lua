@@ -21,6 +21,11 @@ local noneVal = {
   label = "(None)"
 }
 
+local function getAttributeValueLabel(value)
+  if not value then return noneVal.label end
+  return value.label or (value.translationKey and _tr(value.translationKey)) or value.key or noneVal.label
+end
+
 function C:setMission(mission)
   self.mission = mission
   self.missionInstance = gameplay_missions_missions.getMissionById(mission.id)
@@ -41,7 +46,7 @@ function C:getMissionIssues(m)
   if not m.additionalAttributes.difficulty then
     table.insert(issues, {label = 'No difficulty set!', severity='error'})
   end
-  if self.mission.grouping.label ~= "" and translateLanguage(self.mission.grouping.label, self.mission.grouping.label, true) == self.mission.grouping.label then
+  if self.mission.grouping.label ~= "" and _tr(self.mission.grouping.label) == self.mission.grouping.label then
     table.insert(issues, {label = 'Grouping Label has no translation!', severity='minor'})
   end
   if self.mission.author == nil or self.mission.author == "" then
@@ -128,12 +133,12 @@ function C:draw()
   for _, attKey in ipairs(self.sortedAttKeys) do
     local attribute = self.attributes[attKey]
     local val = attribute.valuesByKey[self.mission.additionalAttributes[attKey]] or noneVal
-    im.Text(attribute.label)
+    im.Text(_tr(attribute.translationKey))
     im.NextColumn()
     local isAuto = eh and eh.autoAdditionalAttributes[attKey]
     im.PushItemWidth(im.GetContentRegionAvailWidth())
     if isAuto then im.BeginDisabled() end
-    if im.BeginCombo('##'..attKey.."AdditionalData", isAuto and "(Automatic)" or val.label) then
+    if im.BeginCombo('##'..attKey.."AdditionalData", isAuto and "(Automatic)" or getAttributeValueLabel(val)) then
 
       if im.Selectable1(noneVal.label, val.key == nil) then
         self.mission.additionalAttributes[attKey] = nil
@@ -141,7 +146,7 @@ function C:draw()
       end
       im.Separator()
       for _, v in ipairs(attribute.valuesSorted) do
-        if im.Selectable1(v.label, val.key == v.key) then
+        if im.Selectable1(getAttributeValueLabel(v), val.key == v.key) then
           self.mission.additionalAttributes[attKey] = v.key
           self.mission._dirty = true
         end
@@ -180,7 +185,7 @@ function C:draw()
   end
   im.SameLine()
   if not self._groupLabelTranslated then
-    self._groupLabelTranslated = translateLanguage(self.mission.grouping.label, noTranslation, true)
+    self._groupLabelTranslated = _tr(self.mission.grouping.label, noTranslation)
   end
   editor.uiIconImage(editor.icons.translate, imVec24x24 , (self._groupLabelTranslated or noTranslation) == noTranslation and imVec4Red or imVec4Green)
   if im.IsItemHovered() then
@@ -196,7 +201,7 @@ end
 
 local function getMissionIdsAfter(time)
   local ret = {}
-  for _, m in ipairs(gameplay_missions_missions.get()) do
+  for _, m in ipairs(gameplay_missions_missions.getAllMissions()) do
     if m.date and m.date >= time then
       table.insert(ret, m.id)
     end
@@ -255,7 +260,7 @@ function C:timeUpdaterPopup()
     local remIdx = -1
     for i, mId in ipairs(self._timeUpdaterData.missionIds) do
       local m = listById[mId]
-      im.Text(string.format("%s - %s - %s",os.date('%Y-%m-%d %H:%M:%S', m.date), translateLanguage(m.name, m.name, true), m.id) )
+      im.Text(string.format("%s - %s - %s",os.date('%Y-%m-%d %H:%M:%S', m.date), _tr(m.name), m.id) )
       im.tooltip("Click to remove")
       if im.IsItemClicked() then remIdx = i end
     end

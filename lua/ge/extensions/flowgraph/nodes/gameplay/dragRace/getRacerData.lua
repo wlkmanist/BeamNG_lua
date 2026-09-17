@@ -7,7 +7,7 @@ local C = {}
 
 C.name = 'Get Drag Racer Data'
 
-C.description = 'get all the data for this vehId'
+C.description = '[LEGACY] Convenience node combining status and spawn data. Consider using "Get Drag Racer Status" and "Get Drag Racer Spawn Point" separately for better organization.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'
@@ -19,8 +19,6 @@ C.pinSchema = {
   { dir = 'out', type = 'bool', name = 'isDesqualified', description = ""},
   { dir = 'out', type = 'string', name = 'desqualifiedReason', description = ""},
   { dir = 'out', type = 'bool', name = 'isFinished', description = ""},
-  { dir = 'out', type = 'vec3', name = 'spawnPos', description = ""},
-  { dir = 'out', type = 'quat', name = 'spawnRot', description = ""},
 }
 
 C.tags = {'gameplay', 'utils'}
@@ -32,8 +30,40 @@ function C:_executionStarted()
 end
 
 function C:work()
-  self.data = gameplay_drag_general.getRacerData(self.pinIn.vehId.value)
-  self.dragData = gameplay_drag_general.getData()
+  local vehId = self.pinIn.vehId.value
+
+  -- Check if vehicle ID is provided
+  if not vehId or vehId == 0 then
+    return
+  end
+
+  self.dragData = gameplay_drag_dragBridge.getData() or {}
+  self.data = self.dragData and gameplay_drag_dragBridge.getRacerData(vehId) or {}
+
+  -- Check if we have drag data
+  -- During retry, data may be temporarily unavailable - don't spam errors
+  if not self.dragData or not next(self.dragData) then
+    if not self._dataWaiting then
+      self._dataWaiting = true
+    end
+    return
+  end
+
+  -- Clear waiting flag since we have data now
+  self._dataWaiting = false
+
+  -- Check if we have racer data for this vehicle
+  -- During retry, racer data may be temporarily unavailable after clearing racers
+  if not self.data or not next(self.data) then
+    if not self._racerWaiting then
+      self._racerWaiting = true
+    end
+    return
+  end
+
+  -- Clear waiting flags and errors if data is available
+  self._racerWaiting = false
+  self:__setNodeError(nil, nil)
 
   if self.pinOut.isPlayable:isUsed() then
     self.pinOut.isPlayable.value = self.data.isPlayable
@@ -50,15 +80,6 @@ function C:work()
   if self.pinOut.isFinished:isUsed() then
     self.pinOut.isFinished.value = self.data.isFinished
   end
-
-  if self.pinOut.spawnPos:isUsed() then
-    self.pinOut.spawnPos.value = self.dragData.strip.lanes[self.data.lane].waypoints.spawn.transform.pos:toTable()
-  end
-
-  if self.pinOut.spawnRot:isUsed() then
-    self.pinOut.spawnRot.value = self.dragData.strip.lanes[self.data.lane].waypoints.spawn.transform.rot:toTable()
-  end
-
 end
 
 return _flowgraph_createNode(C)

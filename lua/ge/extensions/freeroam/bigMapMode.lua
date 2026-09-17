@@ -4,14 +4,19 @@
 
 local M = {}
 
-M.dependencies = {'gameplay_rawPois', 'core_groundMarkers','core_camera','core_terrain', 'freeroam_bigMapMarkers'}
-local logTag = 'bigMapMode'
-local clusterMergeRadius = nil
-local imgui = ui_imgui
+local useVueBigMap = true -- uncomment this to use the vue big map
+local useOrthoCamera = false
 local debugWindow = false
 
-local missionColor = ColorI(255,255,255,255)
-local selectedColor = ColorI(255,255,255,255)
+local cameraModeName = useOrthoCamera and "bigMapOrtho" or "bigMap"
+
+M.dependencies = {'gameplay_rawPois', 'core_groundMarkers','core_camera','core_terrain', 'freeroam_bigMapMarkers', 'ui_pause_camera'}
+if useOrthoCamera then
+  table.insert(M.dependencies, 'core_orthoCamera')
+end
+local logTag = 'bigMapMode'
+local imgui = ui_imgui
+
 local xVector = vec3(1,0,0)
 local yVector = vec3(0,1,0)
 local zVector = vec3(0,0,1)
@@ -21,28 +26,23 @@ local upVector = vec3(0,0,1)
 
 local groundMarkerAlphaSmoother = newTemporalSmoothing()
 local fogDensitySmoother = newTemporalSmoothing()
-local shadowLogWeightSmoother = newTemporalSmoothing()
-local shadowDistanceSmoother = newTemporalSmoothing()
+local cloudCoverSmoother = newTemporalSmoothing()
 local routeAnimCounter = 1
-local missionRouteAnimCounter
 local poiSelectCallback
 local horizontalOffsetFactor = 1
 local verticalOffsetFactor = 1
 
-local shadowDist = 5000
 local verticalResolution = 1080
 local minZoomFactor = 20000 -- smaller number means you can zoom in further
 local navPathSimplificationFactor = 200 -- smaller number means more simplification
-local routeAnimSpeedFactor = 60000 -- smaller number means faster route animation
+local routeAnimSpeedFactor = 3 -- bigger number means faster route animation
 
 local bigMap = false
 
-local previousShadowLogWeight
-local previousShadowDistance
+local previousCloudCover
 local previousCamMode
 local previousFogDensity
 local previousTod
-local previouslyPaused
 local previousVisibleDistance
 local previousUiVisibility
 local previousDOF
@@ -61,17 +61,19 @@ local bigMapCamRotation
 local bigMapInitialCamPos
 local mapBoundaries
 local mouseMoved = false
-local uiPopupOpen = false -- TODO If we keep the non modal window, this can be removed
-local uiHasFocus = false
+local lastMouseOverMap = false
+local uiHasFocus = true
 local camHeightAboveTerrain = 0
-local airSoundId
+local airSoundId = nil
 local mapBoundsFogPool
 local simplifiedPath
+local simplifiedPathDistance
 local showNavigationMarker
 local routePreview
 local transitionSoundId
 local currentlyVisibleIds = {}
 local missionToOpenOnStart
+local pendingAutoSelectPoiId
 
 local cameraAdditionalHeightFactor = 0
 local navigationBoundariesFactor = 1
@@ -80,15 +82,39 @@ local navigationBoundariesFactor = 1
 local bigMapTod
 local showLevelBorders
 
-local iconRendererId
-
-local blockedInputActions = core_input_actionFilter.createActionTemplate({"gameCam", "vehicleTeleporting", "funStuff", "freeCam", "physicsControls", "vehicleSwitching", "walkingMode", "vehicleMenues", "aiControls", "photoMode", "couplers", "radialMenu", "pause", "missionPopup", "resetPhysics", "appedit", "miniMap"})
+local blockedInputActions = core_input_actionFilter.createActionTemplate({"gameCam", "vehicleTeleporting", "funStuff", "freeCam", "physicsControls", "vehicleSwitching", "walkingMode", "vehicleMenues", "aiControls", "photoMode", "couplers", "pause", "missionPopup", "resetPhysics", "appedit", "miniMap"})
+local areBigMapActionsBlocked = false
+local areUiActionsBlocked = false
 
 local uiActions = {"menu_item_select"}
 
 local function blockUiActions(block)
   core_input_actionFilter.setGroup('bigmapUiActions', uiActions)
   core_input_actionFilter.addAction(0, 'bigmapUiActions', block)
+  areUiActionsBlocked = block == true
+end
+
+local function drawDebugStatus(text, isGood)
+  local color = isGood and imgui.ImVec4(0.35, 1, 0.35, 1) or imgui.ImVec4(1, 0.4, 0.4, 1)
+  imgui.TextColored(color, text)
+end
+
+local function getVisibleIdsInfo(limit)
+  local visibleIds = {}
+  local visibleCount = 0
+  for _, id in pairs(currentlyVisibleIds or {}) do
+    visibleCount = visibleCount + 1
+    if #visibleIds < limit then
+      table.insert(visibleIds, tostring(id))
+    end
+  end
+
+  table.sort(visibleIds)
+  local visibleLabel = #visibleIds > 0 and table.concat(visibleIds, ", ") or "-"
+  if visibleCount > #visibleIds then
+    visibleLabel = visibleLabel .. ", ..."
+  end
+  return visibleCount, visibleLabel
 end
 
 local function resetCamMovement()
@@ -111,9 +137,13 @@ end
 
 local function setLevelProperties()
   if scenetree.theLevelInfo then
-    bigMapTod = scenetree.theLevelInfo.bigMapTimeOfDay
+    bigMapTod = tonumber(scenetree.theLevelInfo.bigMapTimeOfDay) or previousTod
     showLevelBorders = scenetree.theLevelInfo.bigMapLevelBorderVisible
   end
+end
+
+local function getTransitionSmoothingRate(from, to, transitionDuration)
+  return math.max(math.abs((to or 0) - (from or 0)) / math.max(transitionDuration, 1e-6), 1e-6)
 end
 
 local function createLevelBounds()
@@ -173,14 +203,15 @@ local function createLevelBounds()
   mapBoundsFogPool[4]:setScale(vec3(camHeightAboveTerrain * 0.001, extents.y/1000 * 6, 1))
 end
 
+local fovMax = 42
 local function frameObject(bbox, pitch, yaw, useCamYaw)
-  local camMode = core_camera.getGlobalCameras().bigMap
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
   pitch = pitch or camMode.angle
   yaw = yaw or camMode.rotAngle
   local upperEdgePoint = vec3((bbox.maxExtents.x + bbox.minExtents.x) / 2, bbox.maxExtents.y, bbox.maxExtents.z)
   local lowerEdgePoint = vec3((bbox.maxExtents.x + bbox.minExtents.x) / 2, bbox.minExtents.y, bbox.minExtents.z)
-  local lowerCamFovAngle = pitch + (camMode.fovMax - (camMode.fovMax * cameraAdditionalHeightFactor))/2
-  local upperCamFovAngle = pitch - (camMode.fovMax - (camMode.fovMax * cameraAdditionalHeightFactor))/2
+  local lowerCamFovAngle = pitch + (fovMax - (fovMax * cameraAdditionalHeightFactor))/2
+  local upperCamFovAngle = pitch - (fovMax - (fovMax * cameraAdditionalHeightFactor))/2
   local lowerCamFovDir = quatFromAxisAngle(xVector, (lowerCamFovAngle) / 180 * math.pi):__mul(yVector)
   local upperCamFovDir = quatFromAxisAngle(xVector, (upperCamFovAngle) / 180 * math.pi):__mul(yVector)
   local planeNormal = upperCamFovDir:cross(xVector)
@@ -216,7 +247,7 @@ local function includeClustersInBbox(bbox)
 end
 
 local function calculateCamPos()
-  local camMode = core_camera.getGlobalCameras().bigMap
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
   bigMapCamRotation = quatFromDir(vec3(0,0,-1), yVector)
   bigMapCamRotation = quatFromAxisAngle(xVector, -(90 - camMode.angle) / 180 * math.pi):__mul(bigMapCamRotation)
   bigMapCamRotation = bigMapCamRotation:__mul(quatFromAxisAngle(zVector, camMode.rotAngle / 180 * math.pi))
@@ -254,7 +285,6 @@ local function calculateCamPos()
   camPos = camPos + camLeft * (camHeightAboveTerrain / 10) * horizontalOffsetFactor
   camPos = camPos + camDir:z0() * (camHeightAboveTerrain / 10) * verticalOffsetFactor
 
-  shadowDist = camHeightAboveTerrain * 2.5
   bigMapInitialCamPos = camPos
   mapBoundaries = bbox
 
@@ -266,7 +296,7 @@ local function calculateCamPos()
 end
 
 local function buildTransitionPath(endMarkerData)
-  local camMode = core_camera.getGlobalCameras().bigMap
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
   local previousNearClip = 0.1
   if scenetree.theLevelInfo then
     previousNearClip = scenetree.theLevelInfo.nearClip
@@ -321,6 +351,7 @@ end
 
 local function setOnlyIdsVisible(list)
   currentlyVisibleIds = list or {}
+  M.updateMergeRadius(1)
   freeroam_bigMapMarkers.setupFilter(currentlyVisibleIds, M.clusterMergeRadius)
 end
 M.setOnlyIdsVisible = setOnlyIdsVisible
@@ -350,6 +381,7 @@ local function resetRoute()
   simplifiedPath = nil
   if core_groundMarkers.currentlyHasTarget() then
     simplifiedPath = simplifyRoute(core_groundMarkers.routePlanner.path)
+    simplifiedPathDistance = core_groundMarkers.routePlanner:calcDistance()
   else
     showNavigationMarker = false
   end
@@ -362,7 +394,7 @@ local function setNavFocus(pos)
     pos = nil
   end
   navDestinationForLuaReloads = pos
-  core_groundMarkers.setPath(pos)
+  core_groundMarkers.setPath(pos, {clearPathOnReachingTarget = true})
   resetRoute()
 end
 
@@ -370,44 +402,6 @@ local function onReachedTargetPos()
   setNavFocus(nil)
 end
 
-local function addMissionIdsToList(cluster, missionIdsSorted)
-  for i=1, #cluster.containedIds do
-    if cluster.elemData[i].type == "mission" then
-      local mission = gameplay_missions_missions.getMissionById(cluster.elemData[i].missionId)
-      table.insert(missionIdsSorted, {id = cluster.elemData[i].missionId, unlocks = mission.unlocks})
-    else
-      table.insert(missionIdsSorted, {id = cluster.elemData[i].id})
-    end
-  end
-end
-local function depthIdSort(a,b)
-  if not a.unlocks or not b.unlocks or a.unlocks.depth == b.unlocks.depth then
-    return a.id < b.id
-  else
-    return a.unlocks.depth < b.unlocks.depth
-  end
-end
-
---[[ -- TODO: no longer used, remove?
-local function getPoiIds(cluster)
-  local missionIdsSorted = {}
-
-  if cluster then
-    addMissionIdsToList(cluster, missionIdsSorted)
-  else
-    for _, cluster in ipairs(gameplay_rawPois.getAllClusters()) do
-      addMissionIdsToList(cluster, missionIdsSorted)
-    end
-  end
-
-  table.sort(missionIdsSorted, depthIdSort)
-  local missionIds = {}
-  for i, mission in ipairs(missionIdsSorted) do
-    missionIds[i] = mission.id
-  end
-  return missionIds
-end
-]]
 local mouseDragging
 local lastMousePos
 
@@ -422,48 +416,119 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     end
   end
 
-  local camMode = core_camera.getGlobalCameras().bigMap
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
   if debugWindow then
     if imgui.Begin("Big Map") then
-      local maxFovPtr = imgui.FloatPtr(camMode.fovMax)
-      if imgui.SliderFloat("Max FOV", maxFovPtr, 5.0, 90.0, "%.0f") then
-        camMode.fovMax = maxFovPtr[0]
-        camMode.manualzoom:init(camMode.fovMax, camMode.fovMin, camMode.fovMax)
-        camMode:onCameraChanged(true)
+      if imgui.TreeNode1("Current Camera Debug") then
+        local maxFovPtr = imgui.FloatPtr(camMode.fovMax)
+        if imgui.SliderFloat("Max FOV", maxFovPtr, 5.0, 90.0, "%.0f") then
+          camMode.fovMax = maxFovPtr[0]
+          camMode.manualzoom:init(camMode.fovMax, camMode.fovMin, camMode.fovMax)
+          camMode:onCameraChanged(true)
+        end
+        local minFovPtr = imgui.FloatPtr(camMode.fovMin)
+        if imgui.SliderFloat("Min FOV", minFovPtr, 5.0, 90.0, "%.0f") then
+          camMode.fovMin = minFovPtr[0]
+          camMode.manualzoom:init(camMode.fovMax, camMode.fovMin, camMode.fovMax)
+          camMode:onCameraChanged(true)
+        end
+        local anglePtr = imgui.FloatPtr(camMode.angle)
+        if imgui.SliderFloat("Angle", anglePtr, 5.0, 90.0, "%.0f") then
+          camMode.angle = anglePtr[0]
+          camMode:onCameraChanged(true)
+        end
+        local rotAnglePtr = imgui.FloatPtr(camMode.rotAngle)
+        if imgui.SliderFloat("Rotation", rotAnglePtr, 0.0, 360.0, "%.0f") then
+          camMode.rotAngle = rotAnglePtr[0]
+        end
+        local posTransitionTimePtr = imgui.FloatPtr(camMode.posTransitionTime)
+        if imgui.SliderFloat("position transition time", posTransitionTimePtr, 0.0, 10.0, "%.1f") then
+          camMode.posTransitionTime = posTransitionTimePtr[0]
+        end
+        local transitionActivePtr = imgui.BoolPtr(camMode.transitionActive)
+        if imgui.Checkbox("Activate camera transition", transitionActivePtr) then
+          camMode.transitionActive = transitionActivePtr[0]
+        end
+        local movementSpeedPtr = imgui.FloatPtr(camMode.movementSpeed)
+        if imgui.SliderFloat("movement speed", movementSpeedPtr, 0.0, 100.0, "%.0f") then
+          camMode.movementSpeed = movementSpeedPtr[0]
+        end
+        imgui.TreePop()
       end
-      local minFovPtr = imgui.FloatPtr(camMode.fovMin)
-      if imgui.SliderFloat("Min FOV", minFovPtr, 5.0, 90.0, "%.0f") then
-        camMode.fovMin = minFovPtr[0]
-        camMode.manualzoom:init(camMode.fovMax, camMode.fovMin, camMode.fovMax)
-        camMode:onCameraChanged(true)
-      end
-      local anglePtr = imgui.FloatPtr(camMode.angle)
-      if imgui.SliderFloat("Angle", anglePtr, 5.0, 90.0, "%.0f") then
-        camMode.angle = anglePtr[0]
-        camMode:onCameraChanged(true)
-      end
-      local rotAnglePtr = imgui.FloatPtr(camMode.rotAngle)
-      if imgui.SliderFloat("Rotation", rotAnglePtr, 0.0, 360.0, "%.0f") then
-        camMode.rotAngle = rotAnglePtr[0]
-      end
-      local posTransitionTimePtr = imgui.FloatPtr(camMode.posTransitionTime)
-      if imgui.SliderFloat("position transition time", posTransitionTimePtr, 0.0, 10.0, "%.1f") then
-        camMode.posTransitionTime = posTransitionTimePtr[0]
-      end
-      local transitionActivePtr = imgui.BoolPtr(camMode.transitionActive)
-      if imgui.Checkbox("Activate camera transition", transitionActivePtr) then
-        camMode.transitionActive = transitionActivePtr[0]
-      end
-      local movementSpeedPtr = imgui.FloatPtr(camMode.movementSpeed)
-      if imgui.SliderFloat("movement speed", movementSpeedPtr, 0.0, 100.0, "%.0f") then
-        camMode.movementSpeed = movementSpeedPtr[0]
+
+      if imgui.TreeNode1("UI / Selection Debug") then
+        local visibleCount, visibleIdsLabel = getVisibleIdsInfo(10)
+        imgui.Columns(3, "BigMapDebugColumns", false)
+
+        imgui.Text("Field")
+        imgui.NextColumn()
+        imgui.Text("Value")
+        imgui.NextColumn()
+        imgui.Text("Status")
+        imgui.NextColumn()
+        imgui.Separator()
+
+        imgui.Text("Selected element")
+        imgui.NextColumn()
+        imgui.Text(tostring(M.selectedPoiId))
+        imgui.tooltip(tostring(M.selectedPoiId))
+        imgui.NextColumn()
+        drawDebugStatus(M.selectedPoiId and "Selected" or "None", M.selectedPoiId ~= nil)
+        imgui.NextColumn()
+
+        imgui.Text("Hovered element")
+        imgui.NextColumn()
+        imgui.Text(tostring(M.hoveredPoiId))
+        imgui.tooltip(tostring(M.hoveredPoiId))
+        imgui.NextColumn()
+        drawDebugStatus(M.hoveredPoiId and "Hovered" or "None", M.hoveredPoiId ~= nil)
+        imgui.NextColumn()
+
+        imgui.Text("Hovered list element")
+        imgui.NextColumn()
+        imgui.Text(tostring(M.hoveredListItem))
+        imgui.tooltip(tostring(M.hoveredListItem))
+        imgui.NextColumn()
+        drawDebugStatus(M.hoveredListItem and "Hovered" or "None", M.hoveredListItem ~= nil)
+        imgui.NextColumn()
+
+        imgui.Text("UI has focus")
+        imgui.NextColumn()
+        imgui.Text(tostring(uiHasFocus))
+        imgui.NextColumn()
+        drawDebugStatus(uiHasFocus and "Focused" or "Unfocused", uiHasFocus)
+        imgui.NextColumn()
+
+        imgui.Text("Visible IDs")
+        imgui.NextColumn()
+        imgui.Text(string.format("%d (%s)", visibleCount, visibleIdsLabel))
+        imgui.NextColumn()
+        drawDebugStatus(visibleCount > 0 and "Filtered" or "All", visibleCount > 0)
+        imgui.NextColumn()
+
+        imgui.Text("Bigmap actions blocked")
+        imgui.NextColumn()
+        imgui.Text(tostring(areBigMapActionsBlocked))
+        imgui.NextColumn()
+        drawDebugStatus(areBigMapActionsBlocked and "Blocked" or "Unblocked", areBigMapActionsBlocked)
+        imgui.NextColumn()
+
+        imgui.Text("UI actions blocked")
+        imgui.NextColumn()
+        imgui.Text(tostring(areUiActionsBlocked))
+        imgui.NextColumn()
+        drawDebugStatus(areUiActionsBlocked and "Blocked" or "Unblocked", not areUiActionsBlocked)
+        imgui.NextColumn()
+
+        imgui.Columns(1)
+        imgui.TreePop()
       end
       imgui.End()
     end
   end
 
   if not transitionActive then
-    local iconRenderer = scenetree.findObjectById(iconRendererId)
+    local iconRenderer = gameplay_playmodeMarkers.getBigmapRendererObj()
     local playerVehicle = getPlayerVehicle(0)
     if iconRenderer and playerVehicle then
       local iconInfo = iconRenderer:getIconByName("playerVehicle")
@@ -484,11 +549,21 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
     -- check which markers are hovered
     local lastHover = M.hoveredPoiId
-    if not getCEFFocusMouse() then
-      local hover = freeroam_bigMapMarkers.handleMouse(camMode, uiPopupOpen, mouseMoved, M.selectedPoiId)
+    local mouseOverMap = not getCEFFocusMouse()
+    if mouseOverMap ~= lastMouseOverMap then
+      lastMouseOverMap = mouseOverMap
+      if mouseOverMap then
+        -- edge-triggered: notify the UI as soon as the cursor starts hovering the native
+        -- map (not just when a specific POI marker is hovered), so it can switch out of
+        -- list-focus navigation into map-exploration hints/behavior
+        guihooks.trigger("BigmapMouseOverMap")
+      end
+    end
+    if mouseOverMap then
+      local hover = freeroam_bigMapMarkers.handleMouse(camMode, mouseMoved, M.selectedPoiId)
       -- a marker is hovered
       if hover then
-        if hover ~= M.hoveredPoiId then
+        if hover ~= M.hoveredPoiId and hover ~= M.selectedPoiId then
           -- A new marker has been hovered
           Engine.Audio.playOnce('AudioGui','event:>UI>Bigmap>Hover_Icon')
         end
@@ -503,40 +578,38 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     end
     if lastHover ~= M.hoveredPoiId then
       extensions.hook("onBigmapHoveredPoiIdChanged",M.hoveredPoiId)
+      guihooks.trigger("BigmapHoveredPoiChanged", M.hoveredPoiId)
     end
   else
     -- Interpolate stuff during the transition
     transitionTime = transitionTime + dtReal
-    transitionProgress = transitionTime / camMode.posTransitionTime
+    local transitionDuration = math.max(camMode.posTransitionTime, 1e-6)
+    transitionProgress = transitionTime / transitionDuration
 
     local fogDensityGoal
-    local shadowLogWeightGoal
-    local shadowDistanceGoal
+    local cloudCoverGoal
     local todGoal
     local levelBoundAlpha = 0
     if transitionActive == 1 then
-      fogDensityGoal = (transitionProgress > 0.33) and 0 or previousFogDensity
-      shadowLogWeightGoal = (transitionProgress > 0.5) and 0 or previousShadowLogWeight
-      shadowDistanceGoal = shadowDist
-      todGoal = (transitionProgress > 0.33) and bigMapTod or previousTod
-      levelBoundAlpha = (transitionProgress > 0.33) and 1 or 0
+      fogDensityGoal = 0
+      cloudCoverGoal = 0
+      todGoal = bigMapTod
+      levelBoundAlpha = clamp(transitionProgress, 0, 1)
     elseif transitionActive == 2 then
-      -- TODO this creates the weird shadows
-      fogDensityGoal = (transitionProgress > 0.66) and previousFogDensity or 0
-      shadowLogWeightGoal = previousShadowLogWeight
-      shadowDistanceGoal = previousShadowDistance
+      -- Shadows are now handled by screen space shadows
+      fogDensityGoal = previousFogDensity
+      cloudCoverGoal = previousCloudCover
       todGoal = previousTod
-      levelBoundAlpha = (transitionProgress > 0.66) and 0 or 1
+      levelBoundAlpha = 1 - clamp(transitionProgress, 0, 1)
     else
       fogDensityGoal = 0
     end
-    local fogDensity = fogDensitySmoother:getWithRateUncapped(fogDensityGoal, dtReal, 0.01)
+    local fogDensityRate = getTransitionSmoothingRate(previousFogDensity, 0, transitionDuration)
+    local fogDensity = fogDensitySmoother:getWithRateUncapped(fogDensityGoal, dtReal, fogDensityRate)
     core_environment.setFogDensity(fogDensity)
-    if previousShadowLogWeight then
-      core_environment.setShadowLogWeight(shadowLogWeightSmoother:getWithRateUncapped(shadowLogWeightGoal, dtReal, 1))
-    end
-    if previousShadowDistance then
-      core_environment.setShadowDistance(shadowDistanceSmoother:getWithRateUncapped(shadowDistanceGoal, dtReal, (shadowDist - previousShadowDistance) * 0.8))
+    if previousCloudCover then
+      local cloudCoverRate = getTransitionSmoothingRate(previousCloudCover, 0, transitionDuration)
+      core_environment.setCloudCover(cloudCoverSmoother:getWithRateUncapped(cloudCoverGoal, dtReal, cloudCoverRate))
     end
 
     if mapBoundsFogPool then
@@ -547,12 +620,12 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     end
 
     local currentTod = core_environment.getTimeOfDay()
-    if currentTod then
+    if currentTod and todGoal then
       local currentTime = currentTod.time
 
       if currentTime ~= todGoal then
         local difference = math.abs(todGoal - currentTime)
-        local interpolationSpeed = (dtReal / camMode.posTransitionTime)* 0.5 / (2/3) -- transition speed is enough so that it can change by 0.5 in two thirds of the transition time
+        local interpolationSpeed = (dtReal / transitionDuration)* 0.5 / (2/3) -- transition speed is enough so that it can change by 0.5 in two thirds of the transition time
         if currentTime < todGoal then
           if difference <= 0.5 then
             currentTod.time = math.min(todGoal, currentTod.time + interpolationSpeed)
@@ -595,7 +668,7 @@ local function setActive(active)
 end
 
 local function activateBigMapCallback()
-  local iconRenderer = scenetree.findObjectById(iconRendererId)
+  local iconRenderer = gameplay_playmodeMarkers.getBigmapRendererObj()
   if not iconRenderer then return end
   iconRenderer:loadIconAtlas("core/art/gui/images/iconAtlas.png", "core/art/gui/images/iconAtlas.json");
   local playerVehicle = getPlayerVehicle(0)
@@ -615,13 +688,11 @@ local function activateBigMapCallback()
   transitionActive = false
 
   core_environment.setFogDensity(0)
-  core_environment.setShadowLogWeight(0)
-  core_environment.setShadowDistance(shadowDist)
+  core_environment.setCloudCover(0)
   setTime(bigMapTod)
 
   fogDensitySmoother:set(0)
-  shadowLogWeightSmoother:set(0)
-  shadowDistanceSmoother:set(shadowDist)
+  cloudCoverSmoother:set(0)
   setActive(true)
   M.updateMergeRadius(1)
 
@@ -633,15 +704,27 @@ local function activateBigMapCallback()
   end
 
   extensions.hook("onActivateBigMapCallback")
+  guihooks.trigger('bigmapTransitionFinished')
 end
 
-local function deactivateBigMapCallback(closeEscMenu)
-  if not previouslyPaused then
-    simTimeAuthority.pause(false)
+local function enableBigMapControls(enable)
+  if enable then
+    pushActionMap("BigMap")
+  else
+    popActionMap("BigMap")
   end
-  core_environment.setShadowLogWeight(previousShadowLogWeight)
-  core_environment.setShadowDistance(previousShadowDistance)
+  core_input_actionFilter.setGroup('bigmapBlockedActions', blockedInputActions)
+  core_input_actionFilter.addAction(0, 'bigmapBlockedActions', enable)
+  areBigMapActionsBlocked = enable == true
+  blockUiActions(enable)
+end
+
+M.enableBigMapControls = enableBigMapControls
+
+local function deactivateBigMapCallback(closeEscMenu)
+  simTimeAuthority.popPauseRequest("bigMap")
   core_environment.setFogDensity(previousFogDensity)
+  core_environment.setCloudCover(previousCloudCover)
   ui_visibility.set(previousUiVisibility)
   setTime(previousTod)
   if previousVisibleDistance then
@@ -656,9 +739,7 @@ local function deactivateBigMapCallback(closeEscMenu)
   setActive(false)
 
   -- unblock input action
-  core_input_actionFilter.setGroup('bigmapBlockedActions', blockedInputActions)
-  core_input_actionFilter.addAction(0, 'bigmapBlockedActions', false)
-  blockUiActions(false)
+  enableBigMapControls(false)
   transitionActive = false
 
   if mapBoundsFogPool then
@@ -669,10 +750,12 @@ local function deactivateBigMapCallback(closeEscMenu)
   freeroam_bigMapPoiProvider.requestMissionLocationsForMinimap()
 
   if closeEscMenu then
-    guihooks.trigger('MenuHide')
+    -- guihooks.trigger('MenuHide')
+    extensions.ui_router.navigate("play")
   end
   gameplay_markerInteraction.skipNextIconFading()
   --gameplay_markerInteraction.setForceReevaluateOpenPrompt()
+  gameplay_rawPois.clear()
   freeroam_bigMapMarkers.clearMarkers()
   M.deselect()
   extensions.hook("onDeactivateBigMapCallback")
@@ -680,7 +763,7 @@ local function deactivateBigMapCallback(closeEscMenu)
 end
 
 local function endTransition(activateBigMap, closeEscMenu, stopTransitionSound)
-  core_camera.setByName(0, not activateBigMap and previousCamMode or "bigMap", false, activateBigMap and {initialCamData = {pos = bigMapInitialCamPos, rot = bigMapCamRotation}})
+  core_camera.setByName(0, not activateBigMap and previousCamMode or cameraModeName, false, activateBigMap and {initialCamData = {pos = bigMapInitialCamPos, rot = bigMapCamRotation}})
   ui_visibility.set(previousUiVisibility)
 
   if stopTransitionSound and transitionSoundId then
@@ -725,7 +808,9 @@ local function startTransition(endMarkerData, closeEscMenu)
   end
 end
 
-local function enterBigMapActual(instant)
+
+
+local function enterBigMapActual(instant, ignoreUiStateChange, ignoreActionMaps, routeTarget, routeParams)
   if bigMap then return end
   extensions.hook("onBeforeBigMapActivated")
   --freeroam_bigMapMarkers.buildPoiList() -- removed(testing)
@@ -736,31 +821,18 @@ local function enterBigMapActual(instant)
   if canvas then
     verticalResolution = GFXDevice.getVideoMode().height
   end
-  if not (iconRendererId and scenetree.objectExistsById(iconRendererId)) then
-    local iconRenderer = createObject("BeamNGWorldIconsRenderer")
-    iconRenderer:registerObject("");
-    iconRenderer.maxIconScale = 1
-    iconRenderer.mConstantSizeIcons = true
-    iconRenderer.canSave = false
-    iconRendererId = iconRenderer:getId()
-  end
-
+  gameplay_playmodeMarkers.getBigmapRendererId()
   gameplay_rawPois.clear()
   freeroam_bigMapMarkers.clearMarkers()
 
+  resetRoute()
 
-  if core_groundMarkers.currentlyHasTarget() then
-    resetRoute()
-  end
-
-  pushActionMap("BigMap")
 
   -- make the action map let through inputs, so the throttle cant get stuck on the vehicle
   local am = scenetree.findObject("BigMapActionMap")
   if am then am.trapHandledEvents = false end
 
-  previousShadowLogWeight = core_environment.getShadowLogWeight()
-  previousShadowDistance = core_environment.getShadowDistance()
+  previousCloudCover = core_environment.getCloudCover()
   if commands.isFreeCamera() then
     previousFreeCamData = {pos = core_camera.getPosition(), rot = core_camera.getQuat(), fov = core_camera.getFovDeg()}
   else
@@ -770,7 +842,6 @@ local function enterBigMapActual(instant)
   if previousCamMode == "path" then previousCamMode = "orbit" end
   previousFogDensity = core_environment.getFogDensity()
   previousTod = core_environment.getTimeOfDay() and core_environment.getTimeOfDay().time
-  previouslyPaused = simTimeAuthority.getPause()
   previousUiVisibility = ui_visibility.get()
 
   local DOFPostEffect = scenetree.findObject("DOFPostEffect")
@@ -779,9 +850,9 @@ local function enterBigMapActual(instant)
     DOFPostEffect:disable()
   end
 
-  simTimeAuthority.pause(true, false)
+  simTimeAuthority.pushPauseRequest("bigMap")
 
-  local camMode = core_camera.getGlobalCameras().bigMap
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
   setLevelProperties()
   calculateCamPos()
   if showLevelBorders then
@@ -798,14 +869,17 @@ local function enterBigMapActual(instant)
   end
 
   camMode.fovMin = clamp(minZoomFactor / camHeightAboveTerrain, 10, camMode.fovMax)
-  if commands.isFreeCamera() or not getPlayerVehicle(0) or instant then
-    -- In freecam, skip the path transition
+  if useOrthoCamera then
+    camMode.fovMin = 50
+  end
+  local openedInstant = commands.isFreeCamera() or not getPlayerVehicle(0) or instant
+  if openedInstant then
+    -- In freecam, skip the path transition but keep the same finalization path as transition flow.
     commands.setGameCamera()
-    core_camera.setByName(0, 'bigMap', false, {initialCamData = {pos = bigMapInitialCamPos, rot = bigMapCamRotation}})
-    activateBigMapCallback()
+    endTransition(true)
   else
     core_camera.getGlobalCameras().transition:start(false, {callback = startTransition})
-    core_camera.setByName(0, 'bigMap', false, {initialCamData = {pos = bigMapInitialCamPos, rot = bigMapCamRotation}})
+    core_camera.setByName(0, cameraModeName, false, {initialCamData = {pos = bigMapInitialCamPos, rot = bigMapCamRotation}})
   end
 
   local sound = scenetree.findObjectById(airSoundId)
@@ -817,34 +891,57 @@ local function enterBigMapActual(instant)
 
   groundMarkerAlphaSmoother:set(0)
   fogDensitySmoother:set(previousFogDensity)
-  if previousShadowLogWeight then
-    shadowLogWeightSmoother:set(previousShadowLogWeight)
-  end
-  if previousShadowDistance then
-    shadowDistanceSmoother:set(previousShadowDistance or 0)
+  if previousCloudCover then
+    cloudCoverSmoother:set(previousCloudCover)
   end
   transitionTime = 0
   transitionProgress = 0
 
-  if not poiSelectCallback then
-    guihooks.trigger('MenuOpenModule', {state = "menu.bigmap", params = {missionId = missionToOpenOnStart}})
+  if not poiSelectCallback and not ignoreUiStateChange then
+    if not useVueBigMap then
+      guihooks.trigger('MenuOpenModule', {state = "menu.bigmap", params = {missionId = missionToOpenOnStart}})
+    else
+      -- guihooks.trigger('MenuOpenModule', {state = "bigmap", params = {instant = openedInstant}})
+      if not routeTarget then
+        routeTarget = "bigmap"
+      end
+      local params = type(routeParams) == "table" and deepcopy(routeParams) or {}
+      params.instant = openedInstant
+      ui_router.navigate(routeTarget, params)
+    end
   end
   missionToOpenOnStart = nil
 
   -- block some actions
-  core_input_actionFilter.setGroup('bigmapBlockedActions', blockedInputActions)
-  core_input_actionFilter.addAction(0, 'bigmapBlockedActions', true)
-  blockUiActions(true)
+  if not ignoreActionMaps then
+    enableBigMapControls(true)
+  end
 
   extensions.hook("onBigMapActivated")
 end
 
 local function enterBigMap(options)
-  if bigMap or (core_camera.getActiveCamName() == "bigMap" and not commands.isFreeCamera()) or not getCurrentLevelIdentifier() then return end
+  -- dont allow opening the bigmap if a mission is starting/stopping
+  if gameplay_missions_missionManager.getCurrentTaskdataTypeOrNil() then
+    return
+  end
+
+
+  if ui_pause_camera and ui_pause_camera.stop then
+    local stopped = ui_pause_camera.stop()
+    if stopped then
+      options.instant = true
+      log("I",logTag, "Opening Bigmap instantly, because the pause camera was active")
+    end
+  end
+
+  if bigMap or (core_camera.getActiveCamName() == cameraModeName and not commands.isFreeCamera()) or not getCurrentLevelIdentifier() then return end
   options = options or {}
   if options.missionId then
     missionToOpenOnStart = options.missionId
   end
+  -- consumed once by the Vue bigmap after it has mounted and is ready to select (see getAndClearPendingAutoSelectPoiId)
+  pendingAutoSelectPoiId = options.autoSelectPoiId
   if options.cameraAdditionalHeightFactor then
     cameraAdditionalHeightFactor = options.cameraAdditionalHeightFactor
   else
@@ -869,7 +966,17 @@ local function enterBigMap(options)
     navigationBoundariesFactor = 1
   end
 
-  enterBigMapActual(options.instant or (render_openxr and render_openxr.isSessionRunning()))
+  if useOrthoCamera then
+    options.instant = true
+  end
+
+  local routeParams = options.routeParams
+  if options.mode then
+    routeParams = routeParams or {}
+    routeParams.mode = options.mode
+  end
+
+  enterBigMapActual(options.instant or (render_openxr and render_openxr.isSessionRunning()), options.ignoreUiStateChange, options.ignoreActionMaps, options.routeTarget, routeParams)
 end
 
 local function exitBigMap(instant, closeEscMenu, forceGameCam)
@@ -881,7 +988,7 @@ local function exitBigMap(instant, closeEscMenu, forceGameCam)
     previousCamMode = "orbit"
   end
 
-  instant = instant or previousFreeCamData or (render_openxr and render_openxr.isSessionRunning())
+  instant = instant or useOrthoCamera or previousFreeCamData or (render_openxr and render_openxr.isSessionRunning())
   if instant then
     freeroam_bigMapMarkers.clearMarkers()
   else
@@ -914,15 +1021,12 @@ local function exitBigMap(instant, closeEscMenu, forceGameCam)
 
   groundMarkerAlphaSmoother:set(1)
   fogDensitySmoother:set(0)
-  shadowLogWeightSmoother:set(0)
-  shadowDistanceSmoother:set(shadowDist)
-  uiPopupOpen = false
+  cloudCoverSmoother:set(0)
 
-  local iconRenderer = scenetree.findObjectById(iconRendererId)
+  local iconRenderer = gameplay_playmodeMarkers.getBigmapRendererObj()
   if iconRenderer then
     iconRenderer:removeAllIcons()
   end
-  popActionMap("BigMap")
   currentlyVisibleIds = {}
 end
 
@@ -933,6 +1037,8 @@ end
 local function isTransitionActive()
   return transitionActive
 end
+
+local canOpenBigMapFromRoute = { play = true, pause = true }
 
 local function toggleBigMap()
   if transitionActive then
@@ -952,17 +1058,28 @@ local function toggleBigMap()
         exitBigMap(false, true)
       end
     else
-      if career_career.isActive() and career_modules_delivery_general.isDeliveryModeActive() then
+      local currentRoute = ui_router.getCurrent()
+      if currentRoute and currentRoute.resolved and not canOpenBigMapFromRoute[currentRoute.resolved.name] then
+        log("I", logTag, "Cannot open bigmap from route: " .. currentRoute.resolved.name)
+        return
+      end
+      if gameplay_missions_missionManager.isCurrentlyProcessingStep() then
+        log("I", logTag, "Cannot open bigmap, mission is processing step")
+        return
+      end
+      if gameplay_taxi and gameplay_taxi.isTaxiRideActive() then
+        gameplay_taxi.onChangeDestinationCalled()
+      elseif career_career.isActive() and career_modules_delivery_general.isDeliveryModeActive() then
         career_modules_delivery_cargoScreen.enterMyCargo()
       else
-        enterBigMap()
+        enterBigMap({ignoreUiStateChange = false})
       end
     end
   end
 end
 
 local function zoom(value)
-  local camMode = core_camera.getGlobalCameras().bigMap
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
   if camMode then
     camMode:zoom(value)
   end
@@ -991,7 +1108,7 @@ local function onCameraPreRender(camData)
   if not bigMapActive() then return end
   profilerPushEvent("bigmap onCameraPreRender")
   if not transitionActive then
-    local iconRenderer = scenetree.findObjectById(iconRendererId)
+    local iconRenderer = gameplay_playmodeMarkers.getBigmapRendererObj()
     if iconRenderer then
       local iconInfo = iconRenderer:getIconByName("controllerCrosshair")
       if iconInfo then
@@ -1014,7 +1131,11 @@ local function onCameraPreRender(camData)
           local camToClusterLeft = camUp:cross(camToCluster):normalized()
           local camToUpperPoint = quatFromAxisAngle(camToClusterLeft, (resolutionFactor * 0.015 * core_camera.getFovRad())):__mul(camToCluster)
 
-          iconInfo.worldPosition = camData.res.pos + camToUpperPoint
+          if useOrthoCamera then
+            iconInfo.worldPosition = core_groundMarkers.endWP[1] + camData.res.rot * zVector * resolutionFactor * camData.res.fov/65
+          else
+            iconInfo.worldPosition = camData.res.pos + camToUpperPoint
+          end
           iconInfo.color = pureWhite
         else
           iconInfo.color = invisibleColor
@@ -1064,9 +1185,23 @@ local function onCameraPreRender(camData)
       local b = camData.res.pos * 0.8
       local newPos1 = pos1 * 0.2; newPos1:setAdd(b)
       local newPos2 = pos2 * 0.2; newPos2:setAdd(b)
-      debugDrawer:drawCylinder(newPos1, newPos2, lineWidth/2, color)
+      if useOrthoCamera then
+        pos1 = pos1 + camData.res.rot * -yVector * 100
+        pos2 = pos2 + camData.res.rot * -yVector * 100
+        debugDrawer:drawCylinder(pos1, pos2, camData.res.fov / 200, color)
+      else
+        debugDrawer:drawCylinder(newPos1, newPos2, lineWidth/2, color)
+      end
     end
-    routeAnimCounter = math.min(simplifiedPathLength - 1, routeAnimCounter + (camHeightAboveTerrain/camData.dtReal) / routeAnimSpeedFactor)
+
+    -- speed up the animation for short paths
+    local routeLengthMultiplier = 1
+    if simplifiedPathDistance < 500 then
+      routeLengthMultiplier = 2
+    end
+
+    local animCounterStep = (camData.dtReal) * simplifiedPathLength * routeLengthMultiplier * routeAnimSpeedFactor
+    routeAnimCounter = math.min(simplifiedPathLength - 1, routeAnimCounter + animCounterStep)
   end
 
   -- display mission route preview
@@ -1082,7 +1217,13 @@ local function onCameraPreRender(camData)
       local b = camData.res.pos * 0.85
       local newPos1 = pos1 * 0.15; newPos1:setAdd(b)
       local newPos2 = pos2 * 0.15; newPos2:setAdd(b)
-      debugDrawer:drawCylinder(newPos1, newPos2, lineWidth/6, color)
+      if useOrthoCamera then
+        pos1 = pos1 + camData.res.rot * -yVector * 100
+        pos2 = pos2 + camData.res.rot * -yVector * 100
+        debugDrawer:drawCylinder(pos1, pos2, camData.res.fov / 200, color)
+      else
+        debugDrawer:drawCylinder(newPos1, newPos2, lineWidth/6, color)
+      end
     end
   end
 
@@ -1102,7 +1243,6 @@ end
 local function clearRoutePreview() routePreview = nil end
 M.clearRoutePreview = clearRoutePreview
 local function setRoutePreview(unsimplifiedRoute)
-  missionRouteAnimCounter = 1
   if not unsimplifiedRoute then
     routePreview = nil
   else
@@ -1120,10 +1260,17 @@ end
 M.setRoutePreviewSimple = setRoutePreviewSimple
 
 local function showMissionWorldPreview(missionId)
+  local poi = gameplay_rawPois.getRawPoiListByLevel(getCurrentLevelIdentifier())
+  for _, p in ipairs(poi) do
+    if p.id == missionId then
+      if not p.data.type or p.data.type ~= "mission" then
+        return
+      end
+    end
+  end
   local mission = getMissionById(missionId)
   if not mission then return end
 
-  missionRouteAnimCounter = 1
   if mission.getWorldPreviewRoute then
     routePreview = simplifyRoute(mission:getWorldPreviewRoute())
     return missionId
@@ -1174,14 +1321,20 @@ local function navigateToMission(poiId)
       cluster.focus = true
       setNavFocus(marker.pos)
       showNavigationMarker = false
-      extensions.hook("onNavigateToMission", poiId)
+      extensions.hook("onNavigateToMission", cluster.id)
       return marker
     end
   end
   -- if none has been found, use the bigmapMarkers instead
   for i, poi in ipairs(gameplay_rawPois.getRawPoiListByLevel(getCurrentLevelIdentifier())) do
     if poi.id ==  poiId and poi.markerInfo.bigmapMarker then
-      setNavFocus(poi.markerInfo.bigmapMarker.pos)
+      local pos = poi.markerInfo.bigmapMarker.pos
+      if poi.customNavigationFunction then
+        pos = poi.customNavigationFunction(poi)
+        resetRoute()
+      else
+        setNavFocus(pos)
+      end
       showNavigationMarker = false
       extensions.hook("onNavigateToMission", poiId)
       return marker
@@ -1192,15 +1345,60 @@ local function navigateToMission(poiId)
   setNavFocus(nil)
 end
 
-local function onMenuItemNavigation()
-  if bigMapActive() then
-    blockUiActions(false)
-    uiHasFocus = true
+-- smoothly pan the bigmap camera so that the given poi is centered, without changing navigation/selection
+local function panToPoi(poiId)
+  if not poiId or poiId == "" or poiId == "null" or poiId == "undefined" then return end
+
+  local targetPos
+  for i, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
+    if cluster.containedIdsLookup and cluster.containedIdsLookup[poiId] then
+      local marker = gameplay_playmodeMarkers.getMarkerForCluster(cluster)
+      targetPos = marker and marker.pos
+      break
+    end
   end
+  if not targetPos then
+    for i, poi in ipairs(gameplay_rawPois.getRawPoiListByLevel(getCurrentLevelIdentifier())) do
+      if poi.id == poiId and poi.markerInfo.bigmapMarker then
+        targetPos = poi.markerInfo.bigmapMarker.pos
+        break
+      end
+    end
+  end
+  if not targetPos then return end
+
+  local cam = core_camera.getGlobalCameras()[cameraModeName]
+  if cam and cam.panToWorldPos then
+    cam:panToWorldPos(targetPos)
+  end
+end
+
+local function setUiNavigationActive(active)
+  if not bigMapActive() then
+    return
+  end
+
+  uiHasFocus = active == true
+  blockUiActions(not uiHasFocus)
+end
+
+local function onMenuItemNavigation()
+  setUiNavigationActive(true)
+end
+
+-- returns and clears the poiId requested via enterBigMap({autoSelectPoiId = ...}), so the Vue
+-- bigmap can select it once it has actually mounted (selecting eagerly here races the UI mount)
+local function getAndClearPendingAutoSelectPoiId()
+  local poiId = pendingAutoSelectPoiId
+  pendingAutoSelectPoiId = nil
+  return poiId
 end
 
 -- called from the UI
 local function selectPoi(poiIdInCluster)
+  if not poiIdInCluster or poiIdInCluster == "" or poiIdInCluster == "null" or poiIdInCluster == "undefined" then
+    return M.deselect()
+  end
   M.selectedPoiId = poiIdInCluster
   selectedPreviewMissionId = showMissionWorldPreview(poiIdInCluster)
   onMenuItemNavigation()
@@ -1227,6 +1425,15 @@ local function teleportFromBigmapToTarget(veh, pos, rot)
 end
 
 local function teleportToPoi(poiId)
+  -- set target for markerInteraction
+  for i, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
+    if cluster.containedIdsLookup and cluster.containedIdsLookup[poiId] then
+      cluster.focus = true
+      extensions.hook("onNavigateToMission", cluster.id)
+      gameplay_markerInteraction.reachedTargetPos = cluster.pos
+    end
+  end
+
   for _, poi in ipairs(gameplay_rawPois.getRawPoiListByLevel(getCurrentLevelIdentifier())) do
     if poiId == poi.id then
       local veh = getPlayerVehicle(0)
@@ -1241,33 +1448,24 @@ local function teleportToPoi(poiId)
 end
 
 local function camMoveController(upDown, value)
-  if core_camera and not uiPopupOpen then
+  if core_camera then
     if upDown then
       core_camera.moveForwardBackward(sign(value) * value^2)
     else
       core_camera.moveLeftRight(sign(value) * value^2)
     end
-    if uiHasFocus then
-      blockUiActions(true)
+    if uiHasFocus and math.abs(value or 0) > 0.01 then
+      guihooks.trigger("BigmapCameraMove", {upDown = upDown, value = value})
       uiHasFocus = false
     end
+    -- if uiHasFocus then
+    --   blockUiActions(true)
+    --   uiHasFocus = false
+    -- end
   end
   mouseMoved = false
 end
 
-local function closePopupCallback()
-  blockUiActions(true)
-  uiPopupOpen = false
-end
-
-local function openPopupCallback()
-  if not mouseMoved then
-    camMoveController(true, 0)
-    camMoveController(false, 0)
-  end
-  blockUiActions(false)
-  uiPopupOpen = true -- TODO turn to false to test non-modal window
-end
 
 local function camMoveKey(value, direction)
   if core_camera then
@@ -1285,7 +1483,6 @@ end
 
 -- called when the user clicks the mouse
 local function clickOnMap()
-
   -- deselecting the current marker
   --log("I", "", string.format("Sel: %s Hov: %s HasTgt: %s", M.selectedPoiId, M.hoveredPoiId, dumps(core_groundMarkers.currentlyHasTarget())))
   if M.selectedPoiId and (not M.hoveredPoiId or M.selectedPoiId == M.hoveredPoiId) then
@@ -1306,7 +1503,7 @@ local function clickOnMap()
     if hitDist < 50000 then
       setNavFocus(ray.pos + ray.dir * hitDist)
       showNavigationMarker = true
-      Engine.Audio.playOnce('AudioGui','event:>UI>Bigmap>Route')
+      Engine.Audio.playOnce('AudioGui','event:>UI>Main>Click_Tonal_01')
     end
     return
   end
@@ -1328,14 +1525,13 @@ local function clickOnMap()
       guihooks.trigger("onReducedPoiList", {missionIds = missionIdsById, selectOrder = missionIds, defaultHighlight = mouseMoved ~= true})
       selectPoi(M.hoveredPoiId)
     end
-    Engine.Audio.playOnce('AudioGui','event:>UI>Bigmap>Select_Icon')
+    Engine.Audio.playOnce('AudioGui','event:>UI>Main>select')
     return
   end
 end
 
 local function onMouseButton(buttonDown)
-  local camMode = core_camera.getGlobalCameras().bigMap
-  local clickedOnMap = true
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
   if not buttonDown and not mouseDragging then
     clickOnMap()
   end
@@ -1353,10 +1549,14 @@ local function onControllerSelect()
 end
 
 local function updateMergeRadius(factor)
-  local camMode = core_camera.getGlobalCameras().bigMap
-  local maxMergeRadius = (camHeightAboveTerrain * camMode.fovMax) / 1000
-  local minMergeRadius = (camHeightAboveTerrain * camMode.fovMin) / 1000
-  M.clusterMergeRadius = lerp(minMergeRadius, maxMergeRadius, factor)
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
+  if useOrthoCamera then
+    M.clusterMergeRadius = lerp(camMode.fovMin / 20, camMode.fovMax / 20, factor )
+  else
+    local maxMergeRadius = (camHeightAboveTerrain * camMode.fovMax) / 1000
+    local minMergeRadius = (camHeightAboveTerrain * camMode.fovMin) / 1000
+    M.clusterMergeRadius = lerp(minMergeRadius, maxMergeRadius, factor)
+  end
   freeroam_bigMapMarkers.setupFilter(currentlyVisibleIds, M.clusterMergeRadius)
   --updateOnlyIdsVisible(true)
 end
@@ -1410,13 +1610,27 @@ end
 
 local function onClientStartMission(levelPath)
   setActive(false)
-  airSoundId = Engine.Audio.createSource('AudioGui', 'event:>UI>Bigmap>Ambience')
+  if not airSoundId then
+    airSoundId = Engine.Audio.createSource('AudioGui', 'event:>UI>Bigmap>Ambience')
+  else
+    local sound = scenetree.findObjectById(airSoundId)
+    if not sound then
+      airSoundId = Engine.Audio.createSource('AudioGui', 'event:>UI>Bigmap>Ambience')
+    end
+  end
 end
 
 local function onClientEndMission(levelPath)
   clearCylinderCache()
   deselect()
-  setNavFocus(nil)
+
+  if airSoundId then
+    local sound = scenetree.findObjectById(airSoundId)
+    if sound then
+      sound:delete()
+    end
+  end
+
 end
 
 local function onNavgraphReloaded()
@@ -1438,14 +1652,18 @@ local function onChangeUiFilter(value, dir)
   end
 end
 
-local function isUIPopupOpen()
-  return uiPopupOpen
-end
 
 local function enterBigMapWithCustomPOIs(poiIds, callback, options)
   poiSelectCallback = callback
+  if options and options.suppressUI then
+    poiSelectCallback = nop
+  end
   enterBigMap(options)
   setOnlyIdsVisible(poiIds)
+end
+
+local function isUsingOrthoCamera()
+  return useOrthoCamera
 end
 
 -- testing for UI
@@ -1464,19 +1682,19 @@ M.zoom = zoom
 M.zoomInOut = zoomInOut
 M.controllerZoom = controllerZoom
 M.navigateToMission = navigateToMission
+M.panToPoi = panToPoi
 M.selectPoi = selectPoi
+M.getAndClearPendingAutoSelectPoiId = getAndClearPendingAutoSelectPoiId
 M.teleportToPoi = teleportToPoi
-M.closePopupCallback = closePopupCallback
-M.openPopupCallback = openPopupCallback
 M.clusterMergeRadius = 10 -- TODO adjust this merge radius
 M.updateMergeRadius = updateMergeRadius
 M.deselect = deselect
 M.setNavFocus = setNavFocus
 M.getVerticalResolution = getVerticalResolution
 M.poiHovered = poiHovered
-M.isUIPopupOpen = isUIPopupOpen
 M.enterBigMapWithCustomPOIs = enterBigMapWithCustomPOIs
 M.resetRoute = resetRoute
+M.isUsingOrthoCamera = isUsingOrthoCamera
 
 M.onClientStartMission    = onClientStartMission
 M.onClientEndMission      = onClientEndMission
@@ -1488,6 +1706,7 @@ M.onCameraPreRender = onCameraPreRender
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
 M.onMenuItemNavigation = onMenuItemNavigation
+M.setUiNavigationActive = setUiNavigationActive
 M.onNavgraphReloaded = onNavgraphReloaded
 M.onChangeUiFilter = onChangeUiFilter
 M.onReachedTargetPos = onReachedTargetPos

@@ -159,7 +159,7 @@ function C:beginSearchableSimpleCombo(im, string_label, string_preview_value, el
       self.searchChanged = false
     end
 
-    im.BeginChild1("##"..string_label.."childCombo", im.ImVec2(im.GetContentRegionAvailWidth(), 140 * editor.getPreference("ui.general.scale")) )
+    im.BeginChild1("##"..string_label.."childCombo", im.ImVec2(im.GetContentRegionAvailWidth(), 140 * (editor and editor.getPreference and editor.getPreference("ui.general.scale") or 1)) )
     for _, result in ipairs(self.filtered) do
       if self.matchString ~= '' then
         im.HighlightSelectable(result.id, self.matchString)

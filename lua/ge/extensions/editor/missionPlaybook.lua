@@ -34,7 +34,7 @@ M.book = newBook()
 local function drawMissionSelector(e)
   if not careerMissionIds then
     careerMissionIds = {}
-    for _, m in ipairs(gameplay_missions_missions.get()) do
+    for _, m in ipairs(gameplay_missions_missions.getAllMissions()) do
       if m.careerSetup.showInCareer then
         table.insert(careerMissionIds, m.id)
       end
@@ -52,7 +52,7 @@ end
 local function drawMissionAttempt(e)
   local mission = gameplay_missions_missions.getMissionById(e.missionId)
   if not condensed then
-    im.Text("Playing Mission: \"" ..translateLanguage(mission.name, mission.name, true).."\"")
+    im.Text("Playing Mission: \"" .._tr(mission.name).."\"")
     im.SameLine()
     im.PushItemWidth(100)
     drawMissionSelector(e)
@@ -67,7 +67,7 @@ local function drawMissionAttempt(e)
           toggle = true
         end
         im.SameLine()
-        im.TextColored(grayColor, translateLanguage(mission.starLabels[key],mission.starLabels[key], true))
+        im.TextColored(grayColor, _tr(mission.starLabels[key]))
         toggle = im.IsItemClicked() or toggle
         if toggle then
           e.stars[key] = not (e.stars[key] or false)
@@ -76,7 +76,7 @@ local function drawMissionAttempt(e)
       end
     end
   else
-    local txt = "Mission: \"" ..translateLanguage(mission.name, mission.name, true).."\" "
+    local txt = "Mission: \"" .._tr(mission.name).."\" "
     local sortedStars = mission.careerSetup._activeStarCache.sortedStars
     for sIdx, key in ipairs(sortedStars) do
       if e.stars[key] then
@@ -134,22 +134,24 @@ local function getAllRemainingStarCombos(params)
   params = params or {}
   -- find all missions that still have open stars
   local choiceBook = {}
-  for _, m in ipairs(gameplay_missions_missions.get()) do
-    if m.careerSetup.showInCareer and m.unlocks.startable then
+  for _, m in ipairs(gameplay_missions_missions.getAllMissions()) do
+    if m.careerSetup.showInCareer and gameplay_missions_unlocks.isMissionStartable(m) then
       local useMission = true
 
       if params.onlyBranch then
         local isBranch = false
+        local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(m)
         for key, active in pairs(params.onlyBranch) do
-          isBranch = isBranch or (active and m.unlocks.branchTags[key])
+          isBranch = isBranch or (active and forwardInfo.branchTags[key])
         end
         useMission = useMission and isBranch
       end
 
       if params.onlyTier then
         local isTier = false
+        local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(m)
         for tier, active in pairs(params.onlyTier) do
-          isTier = isTier or (active and m.unlocks.maxBranchlevel == tier)
+          isTier = isTier or (active and forwardInfo.maxBranchLevel == tier)
         end
         dump(m.id .. " -> " .. dumps(isTier))
         useMission = useMission and isTier
@@ -267,7 +269,7 @@ local function onEditorGui()
       if im.BeginMenu("Util...") then
         if im.MenuItem1("Clear Testing Slot") then
           career_career.deactivateCareer()
-          career_saveSystem.removeSaveSlot(testingSlotName)
+          career_saveSystem.removeProfile(testingSlotName)
           career_career.createOrLoadCareerAndStart(testingSlotName)
         end
         im.tooltip("Switches to a clean career slot.")
@@ -280,7 +282,7 @@ local function onEditorGui()
         im.tooltip("Runs all the elements with the current career slot.")
         if im.MenuItem1("Play with Empty Slot") then
           career_career.deactivateCareer()
-          career_saveSystem.removeSaveSlot(testingSlotName)
+          career_saveSystem.removeProfile(testingSlotName)
           career_career.createOrLoadCareerAndStart(testingSlotName)
           play()
         end
@@ -393,8 +395,8 @@ local function onEditorGui()
       M.book.instructions[downIdx] = tmp
     end
 
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 
@@ -424,13 +426,13 @@ end
 
 
 
-  local pagePtr = im.IntPtr(1)
+local pagePtr = im.IntPtr(1)
 local function drawBookViewer()
 
   --if #M.book.results == 0 then return end
   im.PushItemWidth(im.GetContentRegionAvailWidth()-150)
   pagePtr[0] = M.book.page
-  if im.SliderInt("##SliderIntlaskjdl",pagePtr, 1, #M.book.results) then
+  if im.SliderInt("##BookPage", pagePtr, 1, #M.book.results) then
     M.book.page = pagePtr[0]
   end
   im.SameLine()

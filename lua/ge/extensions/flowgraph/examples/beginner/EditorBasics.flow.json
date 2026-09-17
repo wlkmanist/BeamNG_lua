@@ -1,12 +1,14 @@
 {
   "activeGraphId":1,
+  "authors":"BeamNG",
   "currentGraphID":1,
+  "date":1741624091,
   "debugEnabled":false,
   "description":"Discover some of the basic editor functions.",
+  "difficulty":40,
   "frecency":{},
   "graphs":{
     "1":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -70,8 +72,8 @@
       "name":"New State",
       "nodes":{
         "2":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -86,11 +88,12 @@
           "pos":[
             -157,
             -117
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "8":{
-          "type":"logic/bundle",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -102,11 +105,12 @@
           "pos":[
             416,
             -87
-          ]
+          ],
+          "type":"logic/bundle"
         },
         "9":{
-          "type":"debug/displayFlow",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "value":false
@@ -116,20 +120,21 @@
           "pos":[
             738,
             -87
-          ]
+          ],
+          "type":"debug/displayFlow"
         },
         "10":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -139,6 +144,7 @@
           "commentText":"Connect pins by click-dragging from one pin to another.\\nSelect links and press \"delete\" or \"x\" to delete them.\\n\\nYou can also select both nodes and press \"c\" to automatically connect similar pins.\\nLikewise, you can select one node and press \"x\" to un-connect it from all links.\\nIf you select multiple nodes and press \"x\", it will unconnect that group. Pressing \"x\" again\\nwill remove connections inside the group.",
           "commentTitle":"Links",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             224,
@@ -159,6 +165,7 @@
             "int":123,
             "str":"Some String"
           },
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "fixNum":{
               "type":"number",
@@ -206,6 +213,7 @@
             "int":123,
             "str":"Some String"
           },
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "fixNum":{
               "type":"number",
@@ -248,8 +256,8 @@
           "type":"util/template"
         },
         "13":{
-          "type":"logic/bundle",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -261,20 +269,21 @@
           "pos":[
             318,
             725
-          ]
+          ],
+          "type":"logic/bundle"
         },
         "14":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -284,10 +293,11 @@
           "commentText":"You can create new nodes in multiple ways:\\n - Drag/Drop from the \"Node Library\" window.\\n - Right-Click in the \"Graph\" window and select a node.\\n - Click-Drag a pin into an empty space, then select a node. It will be automatically connected.\\n\\nYou can search for nodes in each of these windows. Try adding a \"Log\" node. If it has a flow connection,\\nit will print a message into the event log. Connect a \"String\" node to the \"Log\" node's free input pin to\\nchange the message. You can then change the properties of the \"String\" node to display a custom message!",
           "commentTitle":"Creating Nodes",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             224,
-            406
+            378
           ],
           "simple":false,
           "textColor":[
@@ -304,6 +314,7 @@
             "int":123,
             "str":"Some String"
           },
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "fixNum":{
               "type":"number",
@@ -351,6 +362,7 @@
             "int":123,
             "str":"Some String"
           },
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "fixNum":{
               "type":"number",
@@ -393,26 +405,27 @@
           "type":"util/template"
         },
         "28":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
             787,
-            565
+            606
           ],
           "commentText":"Links can be hidden. You can do this by doing one of the following:\\n - Right-Click the links and select \"Hide Link\".\\n - Press the \"h\" button while one or multiple links are selected.\\n - Press the \"h\" button while one or multiple nodes are selected. This will hide all links connected to the nodes.\\n\\nThere are multiple ways to un-hide links:\\n - If you just hid the link, press \"h\" again.\\n - Select a node and click on the \"ghost\" of the link. It will select the link and un-hide it.\\n - Press \"ctrl+h\" while one or multiple nodes are selected. This will un-hide all connected links.\\n",
           "commentTitle":"Hiding and Unhiding Links",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             224,
@@ -430,15 +443,17 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        64.1281281,
-        990.381836
+        -331.82144165039062500000,
+        -142.40280151367187500000
       ],
-      "viewZoom":1.24999988
+      "viewZoom":0.50000000000000000000
     },
     "3":{
-      "children":{},
       "description":"This is the description for graph States",
       "dirty":false,
       "isStateGraph":true,
@@ -455,6 +470,7 @@
       "nodes":{
         "4":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -465,24 +481,27 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"out",
-              "2":"state",
-              "3":"fail",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "out",
+              "state",
+              "fail",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             0,
@@ -492,8 +511,8 @@
           "type":"states/stateNode"
         },
         "5":{
-          "type":"states/stateEntry",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -503,10 +522,12 @@
           "pos":[
             -400,
             0
-          ]
+          ],
+          "type":"states/stateEntry"
         },
         "6":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -514,12 +535,13 @@
             "p_out":{}
           },
           "pins":[
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
             400,
@@ -531,7 +553,10 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
         -200,
         -200
@@ -539,11 +564,15 @@
       "viewZoom":1
     }
   },
+  "isScenario":false,
   "macros":{},
   "name":"Editor Basics",
   "savedDir":"/lua/ge/extensions/flowgraph/examples/beginner/",
   "savedFilename":"EditorBasics.flow.json",
   "stateGraphId":3,
-  "variables":{},
-  "version":0.1
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
+  "version":0.20000000000000001110
 }

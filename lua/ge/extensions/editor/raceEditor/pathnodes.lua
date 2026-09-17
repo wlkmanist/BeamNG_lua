@@ -19,6 +19,7 @@ function C:init(raceEditor)
   self.raceEditor = raceEditor
   self.index = nil
   self.mouseInfo = {}
+  self.customFieldsUtil = require('/lua/ge/extensions/editor/util/customFieldsUtil')('Pathnodes')
 end
 
 function C:setPath(path)
@@ -33,17 +34,14 @@ function C:selected()
   end
   editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Shift] = "Add New"
   self.map = map.getMap()
-  self.fields = {}
-  self.addFieldText = im.ArrayChar(256, "")
 end
+
 function C:unselect()
   --self:selectPathnode(nil)
   for _, n in pairs(self.path.pathnodes.objects) do
     n._drawMode = 'faded'
   end
   editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Shift] = nil
-  self.fields = {}
-  self.addFieldText = im.ArrayChar(256, "")
 end
 
 function C:selectPathnode(id)
@@ -55,9 +53,8 @@ function C:selectPathnode(id)
     local node = self.path.pathnodes.objects[id]
     nameText = im.ArrayChar(1024, node.name)
     self:updateTransform(id)
+    self.customFieldsUtil:setFields(node.customFields)
   end
-  self.fields = {}
-  self.addFieldText = im.ArrayChar(256, "")
 end
 
 function C:updateTransform(index)
@@ -166,6 +163,96 @@ function C:endDragging()
     end)
 end
 
+function C:selectedPathnode()
+  if not self.index then return nil end
+  local node = self.path.pathnodes.objects[self.index]
+  if not node or node.missing then return nil end
+  return node
+end
+
+function C:handleMouseDown(hovered)
+  self.canDrag = false
+  local currentSelection = self:selectedPathnode()
+  if hovered and currentSelection and hovered.id == currentSelection.id and not editor.isAxisGizmoHovered() then
+    self.canDrag = true
+    self.simpleDragMouseOffset = self.mouseInfo._downPos - hovered.pos
+    self.beginDragNodeData = hovered:onSerialize()
+    if hovered.normal then
+      self.beginDragRotation = deepcopy(quatFromDir(hovered.normal, vec3(0,0,1)))
+    end
+    self.beginDragRadius = hovered.radius
+    if hovered.mode == 'navgraph' then
+      self.beginDragRadius = hovered.navRadiusScale
+    end
+  elseif hovered and currentSelection and hovered.id ~= currentSelection.id then
+    self:selectPathnode(hovered.id)
+  elseif hovered and not currentSelection then
+    self:selectPathnode(hovered.id)
+  else
+    if not editor.isAxisGizmoHovered() then
+      self:selectPathnode(nil)
+    end
+  end
+end
+
+-- might want to use this.
+-- local function offsetMousePosWithTerrainZSnap(pos, offset)
+--   local newPos = pos - offset
+--   local rv = core_terrain.getTerrainHeight(pos)
+--   if rv then
+--     newPos.z = core_terrain.getTerrainHeight(pos)
+--   end
+--   return newPos
+-- end
+
+local downVec = vec3(0,0,-1)
+local function offsetMousePosWithRaycastZSnap(pos)
+  -- Offset the starting position upward to avoid starting inside the object
+  local offset = 20
+  local rayDir = downVec
+  local rayStart = pos + vec3(0,0,offset)
+  if core_forest.getForestObject() then core_forest.getForestObject():disableCollision() end
+  local dist = castRayStatic(rayStart, rayDir, 1000, true)
+  if core_forest.getForestObject() then core_forest.getForestObject():enableCollision() end
+  if dist then
+    local hitPos = rayStart + rayDir * dist
+    return hitPos
+  end
+  return pos
+end
+
+function C:handleMouseHold()
+  if not self.canDrag then return end
+  --local mousePos = self.mouseInfo._holdPos
+  local selected = self:selectedPathnode()
+  if not selected then return end
+  self.mouseHoldPos = offsetMousePosWithRaycastZSnap(self.mouseInfo.rayCast.pos - self.simpleDragMouseOffset)
+  debugDrawer:drawSphere(self.mouseHoldPos, selected.radius, ColorF(1,1,1,0.5))
+  debugDrawer:drawTextAdvanced(self.mouseHoldPos, String("Moving " .. selected.name), ColorF(0,0,0,1), true, false, ColorI(255,255,255,255))
+end
+
+function C:handleMouseUp()
+  if not self.canDrag then return end
+  local selected = self:selectedPathnode()
+  if not selected then return end
+  local newData = selected:onSerialize()
+  newData.pos = self.mouseHoldPos
+  editor.history:commitAction("Manipulated Node via Simple Drag",
+    {old = self.beginDragNodeData,
+     new = newData,
+     index = self.index, self = self},
+    function(data) -- undo
+      local node = self.path.pathnodes.objects[data.index]
+      node:onDeserialized(data.old)
+      data.self:selectPathnode(data.index)
+    end,
+    function(data) --redo
+      local node = self.path.pathnodes.objects[data.index]
+      node:onDeserialized(data.new)
+      data.self:selectPathnode(data.index)
+    end)
+end
+
 function C:onEditModeActivate()
   if self.node then
     self:selectPathnode(self.node.id)
@@ -221,6 +308,7 @@ function C:createManualPathnode()
           data.self.path.segments:remove(data.segId)
         end
         data.self:selectPathnode(data.index)
+        editor_raceEditor.calculateAiRoute()
       end,
       function(data) --redo
         local node = data.self.path.pathnodes:create(nil, data.nodeId or nil)
@@ -234,6 +322,7 @@ function C:createManualPathnode()
           data.segId = seg.id
         end
         data.self:selectPathnode(node.id)
+        editor_raceEditor.calculateAiRoute()
       end)
     end
   end
@@ -285,6 +374,7 @@ function C:selectNavgraphNode()
           data.self.path.segments:remove(data.segId)
         end
         data.self:selectPathnode(data.index)
+        editor_raceEditor.calculateAiRoute()
       end,
       function(data) --redo
         local node = data.self.path.pathnodes:create(nil, data.nodeId or nil)
@@ -300,6 +390,7 @@ function C:selectNavgraphNode()
           data.segId = seg.id
         end
         data.self:selectPathnode(node.id)
+        editor_raceEditor.calculateAiRoute()
       end)
     end
   end
@@ -330,11 +421,29 @@ function C:input()
     self:createManualPathnode()
   else
     local selected = self:mouseOverPathnodes()
-    if self.mouseInfo.down and not editor.isAxisGizmoHovered() then
-      if selected then
-        self:selectPathnode(selected.id)
-      else
-        self:selectPathnode(nil)
+    if selected and not self:selectedPathnode() then
+      debugDrawer:drawSphere(selected.pos, selected.radius, ColorF(1,1,1,0.9))
+    end
+    if editor.getPreference("raceEditor.general.useSimpleDrag") then
+      local noMouseInteraction = not self.mouseInfo.down and not self.mouseInfo.hold and not self.mouseInfo.up
+      if not editor.isAxisGizmoHovered() and noMouseInteraction and self:selectedPathnode() and selected and selected.id == self:selectedPathnode().id then
+        debugDrawer:drawTextAdvanced(self.mouseInfo.rayCast.pos, String("Drag to move"), ColorF(0,0,0,1), true, false, ColorI(255,255,255,255))
+      end
+      if self.mouseInfo.down then
+        self:handleMouseDown(selected)
+      elseif self.mouseInfo.hold then
+        self:handleMouseHold()
+      elseif self.mouseInfo.up then
+        self:handleMouseUp()
+      end
+    else
+      -- the original non-simple drag behavior
+      if self.mouseInfo.down and not editor.isAxisGizmoHovered() then
+        if selected then
+          self:selectPathnode(selected.id)
+        else
+          self:selectPathnode(nil)
+        end
       end
     end
   end
@@ -350,20 +459,23 @@ local function setNormalUndo(data) data.self.path.pathnodes.objects[data.index]:
 local function setNormalRedo(data) data.self.path.pathnodes.objects[data.index]:setNormal(data.new) data.self:updateTransform(data.index) end
 
 function C:drawPathnodeList()
-  local avail = im.GetContentRegionAvail()
   im.BeginChild1("keynodes", im.ImVec2(125 * im.uiscale[0], 0 ), im.WindowFlags_ChildWindow)
   for i, node in ipairs(self.path.pathnodes.sorted) do
-    if im.Selectable1(node.name, node.id == self.index) then
+    local name = node.name
+    if node.useAsSplit then
+      name = "*"..name
+    end
+    if not node.visible then
+      name = "("..name..")"
+    end
+    if im.Selectable1(name, node.id == self.index) then
       editor.history:commitAction("Select Pathnode",
         {old = self.index, new = node.id, self = self},
         selectPathnodeUndo, selectPathnodeRedo)
     end
   end
   im.Separator()
-  if im.Selectable1('New...', self.index == nil) then
-    self:selectPathnode(nil)
-  end
-  im.tooltip("Shift-Drag in the world to create a new pathnode.")
+  im.TextWrapped("Shift-Drag in the world to create a manual pathnode.\nAlt-click a navgraph node to add it.")
   im.EndChild()
 
   im.SameLine()
@@ -382,10 +494,12 @@ function C:drawPathnodeList()
           local node = self.path.pathnodes:create(nil, data.nodeData.oldId)
           node:onDeserialized(data.nodeData)
           self:selectPathnode(data.index)
+          editor_raceEditor.calculateAiRoute()
         end,function(data) --redo
           data.nodeData = self.path.pathnodes.objects[data.index]:onSerialize()
           self.path.pathnodes:remove(data.index)
           self:selectPathnode(nil)
+          editor_raceEditor.calculateAiRoute()
         end)
       end
       im.SameLine()
@@ -401,7 +515,7 @@ function C:drawPathnodeList()
           movePathnodeUndo, movePathnodeRedo)
       end
 
-      im.BeginChild1("self.indexInner", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
+      im.BeginChild1("currentPathnodeDetails", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
       local editEnded = im.BoolPtr(false)
       editor.uiInputText("Name", nameText, nil, nil, nil, nil, editEnded)
       if editEnded[0] then
@@ -500,7 +614,7 @@ function C:drawPathnodeList()
         pathnodePosition[1] = node.pos.y
         pathnodePosition[2] = node.pos.z
         if im.InputFloat3("Position", pathnodePosition, "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f", im.InputTextFlags_EnterReturnsTrue) then
-          editor.history:commitAction("Change node Position",
+          editor.history:commitAction("Change Node Position",
             {index = self.index, old = node.pos, new = vec3(pathnodePosition[0], pathnodePosition[1], pathnodePosition[2]), field = 'pos', self = self},
             setFieldUndo, setFieldRedo)
         end
@@ -524,13 +638,14 @@ function C:drawPathnodeList()
       if im.Checkbox("Use Normal", useNormal) then
         local new = nil
         if useNormal[0] then
-          new = core_camera.getQuat()*vec3(0,1,0)
-          local tip = node.pos + new*node.radius
-          new = vec3(tip.x, tip.y, core_terrain.getTerrainHeight(tip))-node.pos
+          new = vec3(core_camera.getForward())
+          new:setAdd2(node.pos, new * node.radius)
+          new.z = core_terrain.getTerrainHeight(new)
+          new:setSub(node.pos)
         end
         editor.history:commitAction("Change Normal",
-          {index = self.index, old = node.normal, new = new ,self = self},
-          setNormalUndo, setNormalRedo)
+        {index = self.index, old = node.normal, new = new, self = self},
+        setNormalUndo, setNormalRedo)
       end
       if node.hasNormal then
         pathnodeNormal[0] = node.normal.x
@@ -561,14 +676,24 @@ function C:drawPathnodeList()
 
       local visible = im.BoolPtr(node.visible)
       if im.Checkbox("Visible Marker", visible) then
-        editor.history:commitAction("Changed Node Visibility",
+        editor.history:commitAction("Change Node Visibility",
           {index = self.index, self = self, old = node.visible, new = visible[0], field = 'visible'},
           setFieldUndo, setFieldRedo)
       end
+      im.tooltip("(Time Trial Only) If checked, this pathnode will have checkpoint markers.\n\nIf unchecked, Pathnode name will be shown in parentheses.")
 
-      self:selector("Forward Recovery Position", "recovery", ColorI(30,30,80,200),"This is where the vehicle will be positioned for reverse rolling start mode.")
-      self:selector("Reverse Recovery Position", "reverseRecovery", ColorI(80,30,30,200),"This is where the vehicle will be positioned for reverse rolling start mode.")
+      local useAsSplit = im.BoolPtr(node.useAsSplit or false)
+      if im.Checkbox("Use as Split", useAsSplit) then
+        editor.history:commitAction("Change Node Split Status",
+          {index = self.index, self = self, old = node.useAsSplit, new = useAsSplit[0], field = 'useAsSplit'},
+          setFieldUndo, setFieldRedo)
+      end
+      im.tooltip("If checked, this pathnode will be used as a split marker. Pathnode name will be shown with an asterisk.")
 
+      self:selector("Forward Recovery Position", "recovery", ColorI(30,30,80,200), "Forward recovery start position.")
+      self:selector("Reverse Recovery Position", "reverseRecovery", ColorI(80,30,30,200), "Reverse recovery start position.")
+
+      im.Separator()
 
       self:drawCustomFields(node.customFields)
 
@@ -577,66 +702,9 @@ function C:drawPathnodeList()
   im.EndChild()
 end
 
-
 function C:drawCustomFields(fields)
-  im.Text("Custom Fields")
+  self.customFieldsUtil:widget()
 
-  local remove
-  for i, name in ipairs(fields.names) do
-    if fields.types[name] == 'string' then
-      if not self.fields[name] then self.fields[name] = im.ArrayChar(4096, fields.values[name]) end
-      local editEnded = im.BoolPtr(false)
-      editor.uiInputText(name, self.fields[name], nil, nil, nil, nil, editEnded)
-      if editEnded[0] then
-        fields.values[name] = ffi.string(self.fields[name])
-      end
-    elseif fields.types[name] == 'number' then
-      if not self.fields[name] then self.fields[name] = im.FloatPtr(fields.values[name]) end
-      local editEnded = im.BoolPtr(false)
-      editor.uiInputFloat(name, self.fields[name], nil, nil, nil, nil, editEnded)
-      if editEnded[0] then
-        fields.values[name] = (self.fields[name])[0]
-      end
-    elseif fields.types[name] == 'vec3' then
-      debugDrawer:drawTextAdvanced((fields.values[name]),
-      String(name),
-      ColorF(1,1,1,1),true, false,
-      ColorI(0,0,0,1*255))
-      debugDrawer:drawSphere((fields.values[name]), 1, ColorF(1,0,0,0.5))
-      if not self.fields[name] then
-        self.fields[name] = im.ArrayFloat(3)
-        self.fields[name][0] = fields.values[name].x
-        self.fields[name][1] = fields.values[name].y
-        self.fields[name][2] = fields.values[name].z
-      end
-      local editEnded = im.BoolPtr(false)
-      editor.uiInputFloat3(name, self.fields[name], nil, nil, editEnded)
-      if editEnded[0] then
-        local tbl = {self.fields[name][0],self.fields[name][1],self.fields[name][2]}
-        fields.values[name] = vec3(tbl)
-      end
-    end
-    im.SameLine()
-    if im.SmallButton("X##"..i) then
-      remove = name
-      self.fields[name] = nil
-    end
-  end
-  if remove then
-    fields:remove(remove)
-  end
-
-  editor.uiInputText("##new", self.addFieldText)
-  if im.Button("New String") then
-    fields:add(ffi.string(self.addFieldText),'string',"value")
-    self.addFieldText = im.ArrayChar(256,"")
-  end
-  im.SameLine()
-  if im.Button("New Number") then
-    fields:add(ffi.string(self.addFieldText),'number',0)
-    self.addFieldText = im.ArrayChar(256,"")
-  end
-  im.Separator()
   if im.Button("Copy Fields") then
     self.cfData = fields:onSerialize()
   end
@@ -654,7 +722,6 @@ function C:drawCustomFields(fields)
   im.tooltip("Pastes the stored custom fields into this object.")
 end
 
-
 function C:autoRecoverPos(reverse)
   local node = self.path.pathnodes.objects[self.index]
   editor.history:commitAction("Auto-Create recovery position",
@@ -669,6 +736,7 @@ function C:autoRecoverPos(reverse)
       local sp = data.self.path.startPositions:create(nil, data.spid or nil)
       sp:set(data.pos, quatFromDir(data.normal):normalized())
       sp.name = node.name .. " Recovery " .. (reverse and "Reverse" or "Forward")
+      sp.group = 'recovery'
       data.spid = sp.id
       data.self.path.pathnodes.objects[data.index][data.field] = sp.id
     end)

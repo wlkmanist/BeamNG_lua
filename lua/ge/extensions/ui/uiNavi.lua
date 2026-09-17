@@ -410,6 +410,8 @@ end
 
 local function requestVehicleDashboardMap(dashboard, initmap, vehId)
   if not dashboard then return end
+  if headless_mode then return end
+  if getCurrentLevelIdentifier() == nil then return end
   local targetVeh = vehId and scenetree.findObjectById(vehId) or  getPlayerVehicle(0)
   if targetVeh then
     local nodes = getNodes()

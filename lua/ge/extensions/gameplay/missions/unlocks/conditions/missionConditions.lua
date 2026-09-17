@@ -12,7 +12,7 @@ F.checkAggregateWithKey = function(id, progressKey, field)
   if pKeys == 'default' or pKeys == nil or progressKey == '' then
     pKeys = {mission.defaultProgressKey}
   elseif pKeys == 'any' then
-    pKeys = tableKeysSorted(missions.saveData.progress)
+    pKeys = tableKeysSorted(mission.saveData.progress)
   else
     pKeys = {pKeys}
   end

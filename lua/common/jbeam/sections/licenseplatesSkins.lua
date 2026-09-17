@@ -8,7 +8,7 @@ This module contains a set of functions which manipulate behaviours of vehicles.
 local M = {}
 
 
-local function process(objID, vehicleObj, config, activeParts)
+local function process(objID, vehicleObj, config, activePartsData)
   profilerPushEvent('jbeam/licenseplatesSkins.process')
 
   -- set license plate
@@ -16,7 +16,7 @@ local function process(objID, vehicleObj, config, activeParts)
   local licenseplatePath = ''
   local licensePlateUsedFormats = {}
 
-  for partName, part in pairs(activeParts) do
+  for partName, part in pairs(activePartsData or {}) do
     if part.slotType then
 
       local isLicenseplate = false
@@ -67,7 +67,7 @@ local function process(objID, vehicleObj, config, activeParts)
     extensions.core_vehicles.setPlateText((config and config.licenseName) or false, objID, licenseplatePath, licensePlateUsedFormats)
   end
 
-  profilerPopEvent() -- jbeam/licenseplatesSkins.process
+  profilerPopEvent('jbeam/licenseplatesSkins.process')
 end
 
 M.process = process

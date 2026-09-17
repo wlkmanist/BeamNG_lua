@@ -1186,7 +1186,7 @@ local function textureImageButtonWidget(value, property, guiId, editEnded, widge
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload("DynDecalTextureDrapDrop")
     if payload~=nil then
-      assert(payload.DataSize == ffi.sizeof"char[256]")
+      assert(payload.DataSize == 256)
       local path = ffi.string(payload.Data)
       property.value = path
       changed = true

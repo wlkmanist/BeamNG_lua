@@ -12,9 +12,9 @@ local imgui = ui_imgui
 -- @param callback callback function.
 local function dragDropSource(dragDropId, data, callback)
   if imgui.BeginDragDropSource(imgui.DragDropFlags_SourceAllowNullID) then
-    if not dragDropAsset.data then dragDropAsset.data = ffi.new('char[2048]', data) end
+    if not dragDropAsset.data then dragDropAsset.data = im.ArrayChar(2048, data) end
     if callback and not dragDropAsset.callback then dragDropAsset.callback = callback end
-    imgui.SetDragDropPayload(dragDropId, dragDropAsset.data, ffi.sizeof'char[2048]', imgui.Cond_Once);
+    imgui.SetDragDropPayload(dragDropId, dragDropAsset.data, im.ArraySize(dragDropAsset.data), imgui.Cond_Once);
     imgui.Text(data)
     imgui.EndDragDropSource()
   end
@@ -26,7 +26,7 @@ local function dragDropTarget(dragDropId)
   if imgui.BeginDragDropTarget() then
     local payload = imgui.AcceptDragDropPayload(dragDropId)
     if payload~=nil then
-      assert(payload.DataSize == ffi.sizeof"char[2048]")
+      assert(payload.DataSize == 2048)
       local str = ffi.string(payload.Data)
       if dragDropAsset.callback then dragDropAsset.callback(str) end
       dragDropAsset = {}

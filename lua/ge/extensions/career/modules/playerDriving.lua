@@ -6,11 +6,10 @@ local M = {}
 
 M.dependencies = {'career_career'}
 
-local playerData = {trafficActive = 0} -- traffic data, parking data, etc.
-local testTrafficAmounts = {traffic = 1, police = 0, parkedCars = 1, active = 1} -- amounts to use if restrict mode is true
+local playerData = {maxTrafficAmount = 0, maxParkingAmount = 0, defaultTrafficAmount = 1} -- traffic data, parking data, etc.
+local tutorialTrafficRestoreActive = nil
+local tutorialParkingRestoreActive = nil
 
-M.ensureTraffic = false
-M.preStart = true
 M.debugMode = not shipping_build
 
 local function getPlayerData()
@@ -28,63 +27,79 @@ local function setPlayerData(newId, oldId)
     gameplay_parking.enableTracking(newId)
   end
 
+  if not gameplay_traffic.getTrafficData()[newId] then
+    gameplay_traffic.insertTraffic(newId, true)
+  end
+
   playerData.traffic = gameplay_traffic.getTrafficData()[newId]
   playerData.parking = gameplay_parking.getTrackingData()[newId]
 end
 
 local function setTrafficVars()
-  -- temporary police adjustment
-  gameplay_traffic.setTrafficVars({enableRandomEvents = false})
-  gameplay_police.setPursuitVars({arrestRadius = 15, evadeLimit = 30})
+  local spawnValue = clamp(6 / math.max(6, gameplay_traffic.getTrafficAmount(true)), 0.1, 1) -- adjust traffic density if amount is high
+  gameplay_traffic.setTrafficVars({enableRandomEvents = false, spawnValue = spawnValue})
+  gameplay_police.setPursuitVars({arrestRadius = 15, evadeTime = 30})
   gameplay_parking.setParkingVars({precision = 0.2}) -- allows for relaxed parking detection
 end
 
+local function getFallbackTrafficAmounts()
+  -- NOTE: very low or very high values from gameplay settings can negatively impact career gameplay and performance
+  local trafficAmount = settings.getValue('trafficAmount')
+  if not M.debugMode then
+    trafficAmount = clamp(trafficAmount, 2, 50)
+  end
+
+  local parkingAmount = settings.getValue('trafficParkedAmount')
+  if not M.debugMode then
+    parkingAmount = clamp(parkingAmount, 2, 50)
+  end
+
+  return trafficAmount, parkingAmount
+end
+
 local function setupTraffic(forceSetup)
-  if forceSetup or (gameplay_traffic.getState() == "off" and not gameplay_traffic.getTrafficList(true)[1] and playerData.trafficActive == 0) then
-    log("I", "career", "Now spawning traffic for career mode")
-    local restrict = settings.getValue('trafficRestrictForCareer')
-    if shipping_build then restrict = false end -- this line may be temporary
+  if not forceSetup and playerData.maxTrafficAmount > 0 then return end
 
-    -- traffic amount
-    local amount = settings.getValue('trafficAmount')
-    if amount == 0 then -- auto amount
-      amount = gameplay_traffic.getIdealSpawnAmount()
-    end
-    if not getAllVehiclesByType()[1] then -- if player vehicle does not exist yet
-      amount = amount - 1
-    end
-    if not M.debugMode then
-      amount = clamp(amount, 2, 50) -- at least 2 vehicles should get spawned
-    end
+  log("I", "career", "Now spawning traffic for career mode")
+  if core_gamestate.loading() then core_gamestate.requestEnterLoadingScreen('careerVehicles') end
 
-    -- parked cars amount
-    local parkedAmount = settings.getValue('trafficParkedAmount')
-    if parkedAmount == 0 then -- auto amount
-      parkedAmount = clamp(gameplay_traffic.getIdealSpawnAmount(nil, true), 4, 20)
-    end
-    if not M.debugMode then
-      parkedAmount = clamp(parkedAmount, 2, 50) -- at least 2 vehicles should get spawned
-    end
+  local restrict = settings.getValue('trafficRestrictForCareer')
+  if shipping_build then restrict = false end -- this line may be temporary
 
-    -- police amount and vehicle pooling
-    local policeAmount = M.debugMode and testTrafficAmounts.police or 0 -- temporarily disabled by default
-    local extraAmount = policeAmount -- enables traffic pooling
-    playerData.trafficActive = restrict and testTrafficAmounts.active or amount -- store the amount here for future usage
-    if playerData.trafficActive == 0 then playerData.trafficActive = math.huge end
+  local trafficAmount, parkingAmount = getFallbackTrafficAmounts()
+  if restrict then
+    trafficAmount, parkingAmount = playerData.defaultTrafficAmount, playerData.defaultTrafficAmount
+  end
 
-    -- this will spawn vehicles near the center of the map (player vehicle not ready yet)
-    -- if this would wait until player vehicle active, then the loading screen would fade out early...
-    gameplay_parking.setupVehicles(restrict and testTrafficAmounts.parkedCars or parkedAmount)
-    gameplay_traffic.setupTraffic(restrict and testTrafficAmounts.traffic + extraAmount or amount + extraAmount, 0, {policeAmount = policeAmount, simpleVehs = true, autoLoadFromFile = true})
-    setTrafficVars()
+  -- traffic extra amount (vehicle pooling) is disabled by default (TODO: reason?)
 
-    M.ensureTraffic = false
-  else
-    if playerData.trafficActive == 0 then
-      playerData.trafficActive = gameplay_traffic.getTrafficVars().activeAmount
-    end
-    if not career_career.tutorialEnabled then
-      setPlayerData(be:getPlayerVehicleID(0))
+  -- police amount and vehicle pooling
+  --local policeAmount = 0 -- temporarily disabled by default
+  --local extraAmount = policeAmount -- enables traffic pooling
+  --playerData.maxTrafficAmount = trafficAmount -- store the amount here for future usage
+  --if playerData.maxTrafficAmount == 0 then playerData.maxTrafficAmount = math.huge end
+
+  local trafficOptions = {simpleVehs = true, autoLoadFromFile = true}
+
+  gameplay_traffic.setupTrafficHelper(trafficAmount, trafficOptions, parkingAmount, nil)
+  --gameplay_parking.setupVehicles(restrict and playerData.defaultTrafficAmount or parkingAmount)
+  --gameplay_traffic.setupTraffic(restrict and playerData.defaultTrafficAmount + extraAmount or trafficAmount + extraAmount, 0, trafficOptions)
+
+  -- enforce active amounts by setting them here and now
+  gameplay_traffic.setActiveAmount(trafficAmount)
+  gameplay_parking.setActiveAmount(parkingAmount)
+end
+
+local function setPoliceProbability(value)
+  for id, tData in pairs(gameplay_traffic.getTrafficData()) do
+    if tData.role.name == "police" then
+      tData.activeProbability = value
+      if value == 0 then -- immediately hide this police vehicle
+        local veh = getObjectByID(id)
+        if veh then
+          veh:setActive(0)
+        end
+      end
     end
   end
 end
@@ -95,9 +110,48 @@ end
 
 local function resetPlayerState()
   setPlayerData(be:getPlayerVehicleID(0))
-  if playerData.traffic then playerData.traffic:resetAll() end
-
   setTrafficVars()
+  if playerData.traffic then playerData.traffic:resetAll() end
+end
+
+local function setTrafficForTutorial()
+  gameplay_parking.scatterParkedCars()
+  gameplay_parking.setActiveAmount(0)
+  gameplay_traffic.scatterTraffic()
+  gameplay_traffic.setActiveAmount(playerData.maxTrafficAmount)
+  setPoliceProbability(0)
+end
+
+local function setTrafficAfterTutorial()
+  gameplay_parking.scatterParkedCars()
+  gameplay_traffic.scatterTraffic()
+  resetPlayerState()
+  setPoliceProbability(0.15)
+end
+
+local function cacheTutorialTrafficRestoreAmounts()
+  if tutorialTrafficRestoreActive == nil then
+    tutorialTrafficRestoreActive = gameplay_traffic.getTrafficVars().activeAmount
+  end
+  if tutorialParkingRestoreActive == nil then
+    tutorialParkingRestoreActive = gameplay_parking.getParkingVars().activeAmount
+  end
+end
+
+local function restoreTrafficAfterTutorialPhase()
+  local trafficAmount, parkedAmount = tutorialTrafficRestoreActive, tutorialParkingRestoreActive
+  local fallbackTraffic, fallbackParked = getFallbackTrafficAmounts()
+  if not trafficAmount or trafficAmount <= 0 then trafficAmount = fallbackTraffic end
+  if not parkedAmount or parkedAmount <= 0 then parkedAmount = fallbackParked end
+
+  if gameplay_traffic.getState() == "off" then
+    gameplay_traffic.toggle(true)
+  end
+
+  gameplay_traffic.setActiveAmount(trafficAmount)
+  gameplay_parking.setActiveAmount(parkedAmount)
+
+  setTrafficAfterTutorial()
 end
 
 local function retrieveFavoriteVehicle()
@@ -110,14 +164,14 @@ local function retrieveFavoriteVehicle()
   local vehId = inventory.getVehicleIdFromInventoryId(favoriteVehicleInventoryId)
   if vehId then
     local playerVehObj = getPlayerVehicle(0)
-    spawn.safeTeleport(be:getObjectByID(vehId), playerVehObj:getPosition(), quatFromDir(playerVehObj:getDirectionVector()), nil, nil, nil, nil, false)
-    core_vehicleBridge.executeAction(be:getObjectByID(vehId),'setIgnitionLevel', 0)
-  elseif not vehInfo.timeToAccess and not career_modules_insurance.inventoryVehNeedsRepair(favoriteVehicleInventoryId) then
+    spawn.safeTeleport(getObjectByID(vehId), playerVehObj:getPosition(), quatFromDir(playerVehObj:getDirectionVector()), nil, nil, nil, nil, false)
+    core_vehicleBridge.executeAction(getObjectByID(vehId),'setIgnitionLevel', 0)
+  elseif not vehInfo.timeToAccess and not career_modules_insurance_insurance.inventoryVehNeedsRepair(favoriteVehicleInventoryId) then
     inventory.spawnVehicle(favoriteVehicleInventoryId, nil,
     function()
       local playerVehObj = getPlayerVehicle(0)
       local vehId = inventory.getVehicleIdFromInventoryId(favoriteVehicleInventoryId)
-      spawn.safeTeleport(be:getObjectByID(vehId), playerVehObj:getPosition(), quatFromDir(playerVehObj:getDirectionVector()), nil, nil, nil, nil, false)
+      spawn.safeTeleport(getObjectByID(vehId), playerVehObj:getPosition(), quatFromDir(playerVehObj:getDirectionVector()), nil, nil, nil, nil, false)
     end)
   end
 end
@@ -127,7 +181,7 @@ local function deleteTrailers(veh)
   local trailerDataThisVeh = trailerData[veh:getId()]
 
   if trailerDataThisVeh then
-    local trailer = be:getObjectByID(trailerDataThisVeh.trailerId)
+    local trailer = getObjectByID(trailerDataThisVeh.trailerId)
     deleteTrailers(trailer)
     career_modules_inventory.removeVehicleObject(career_modules_inventory.getInventoryIdFromVehicleId(trailerDataThisVeh.trailerId))
   end
@@ -135,8 +189,8 @@ end
 
 local teleportTrailerJob = function(job)
   local args = job.args[1]
-  local vehicle = be:getObjectByID(args.vehicleId)
-  local trailer = be:getObjectByID(args.trailerId)
+  local vehicle = getObjectByID(args.vehicleId)
+  local trailer = getObjectByID(args.trailerId)
   local vehRot = quat(0,0,1,0) * quat(vehicle:getRefNodeRotation())
   local vehBB = vehicle:getSpawnWorldOOBB()
   local vehBBCenter = vehBB:getCenter()
@@ -166,7 +220,7 @@ local function teleportToGarage(garageId, veh, resetVeh)
 
     career_modules_inventory.updatePartConditionsOfSpawnedVehicles(
       function()
-        local trailer = be:getObjectByID(primaryTrailerData.trailerId)
+        local trailer = getObjectByID(primaryTrailerData.trailerId)
         deleteTrailers(trailer)
         career_modules_fuel.minimumRefuelingCheck(veh:getId())
       end
@@ -177,7 +231,7 @@ local function teleportToGarage(garageId, veh, resetVeh)
 end
 
 local function onVehicleParkingStatus(vehId, data)
-  if not gameplay_missions_missionManager.getForegroundMissionId() and not career_modules_linearTutorial.isLinearTutorialActive() and vehId == be:getPlayerVehicleID(0) then
+  if not gameplay_missions_missionManager.getForegroundMissionId() and not career_modules_tutorial.isActive() and vehId == be:getPlayerVehicleID(0) then
     if data.event == "valid" then -- this refers to fully stopping while aligned in a parking spot
       if not playerData.isParked then
         playerData.isParked = true
@@ -189,50 +243,61 @@ local function onVehicleParkingStatus(vehId, data)
 end
 
 local function onTrafficStarted()
+  local updateAmount = playerData.maxTrafficAmount == 0
   if not career_career.tutorialEnabled and not gameplay_missions_missionManager.getForegroundMissionId() then
-    gameplay_traffic.insertTraffic(be:getPlayerVehicleID(0), true) -- assumes that player vehicle is ready
-    setPlayerData(be:getPlayerVehicleID(0))
-    gameplay_traffic.setActiveAmount(playerData.trafficActive)
-
-    for k, v in pairs(gameplay_traffic.getTrafficData()) do
-      if v.role.name == "police" then
-        v.activeProbability = 0.15 -- this should be based on career progression as well as zones
-      end
-    end
+    updateAmount = true
+    resetPlayerState()
+    setPoliceProbability(0.15)
+  end
+  if updateAmount then
+    playerData.maxTrafficAmount = gameplay_traffic.getTrafficAmount(true)
+    playerData.maxParkingAmount = gameplay_parking.getParkingAmount(true)
   end
 end
 
 local function onTrafficStopped()
   if playerData.traffic then table.clear(playerData.traffic) end
-
-  if M.ensureTraffic then -- temp solution to reset traffic
-    setupTraffic(true)
-  end
 end
 
-local function onPursuitAction(vehId, data)
+local function onPursuitAction(vehId, action, data)
   if not gameplay_missions_missionManager.getForegroundMissionId() and vehId == be:getPlayerVehicleID(0) then
-    if data.type == "start" then -- pursuit started
+    if action == "start" then -- pursuit started
       gameplay_parking.disableTracking(vehId)
       --core_recoveryPrompt.deactivateAllButtons()
       log("I", "career", "Police pursuing player, now deactivating recovery prompt buttons")
-    elseif data.type == "reset" or data.type == "evade" then -- pursuit ended, return to normal
+    elseif action == "reset" or action == "evade" then -- pursuit ended, return to normal
       if not gameplay_walk.isWalking() then
         gameplay_parking.enableTracking(vehId)
       end
       --core_recoveryPrompt.setDefaultsForCareer()
       log("I", "career", "Pursuit ended, now activating recovery prompt buttons")
-    elseif data.type == "arrest" then -- pursuit arrest, make the player pay a fine
+    elseif action == "arrest" then -- pursuit arrest, make the player pay a fine
       local fine = data.mode * data.uniqueOffensesCount * 100 -- fine value is WIP
       --fine = math.min(fine, career_modules_playerAttributes.getAttributeValue("money"))
-      career_modules_payment.pay({money = {amount = fine}}, {label = "Fine for being arrested by the police"})
-      ui_message(translateLanguage("ui.traffic.policeFine", "You got fined by the police: ")..fine, 5, "careerPursuit")
+      career_modules_payment.pay({money = {amount = fine}}, {label = "Fine for being arrested by the police", tags={"gameplay", "police", "fine"}})
+      ui_message(_tr("ui.traffic.policeFine", "You got fined by the police: ")..fine, 5, "careerPursuit")
     end
   end
 end
 
-local function onPlayerCameraReady()
-  setupTraffic() -- spawns traffic while the loading screen did not fade out yet
+local function onTrafficOrParkingReady()
+  if core_gamestate.getLoadingStatus('careerVehicles') then
+    log("I", "career", "Traffic is now ready for career mode")
+    core_gamestate.requestExitLoadingScreen('careerVehicles')
+    if freeroam_specialTriggers then
+      for k, v in pairs(freeroam_specialTriggers.getTriggers()) do
+        freeroam_specialTriggers.setTriggerActive(k, false, true) -- deactivate all triggers
+      end
+    end
+  end
+  if career_modules_tutorial.isActive() then -- scatter and hide traffic and parked vehicles
+    log("I", "career", "Stashing traffic and parked vehicles for tutorial")
+    cacheTutorialTrafficRestoreAmounts()
+    gameplay_traffic.scatterTraffic()
+    gameplay_traffic.setActiveAmount(0)
+    gameplay_parking.scatterParkedCars()
+    gameplay_parking.setActiveAmount(0)
+  end
 end
 
 local function onVehicleSwitched(oldId, newId)
@@ -242,22 +307,6 @@ local function onVehicleSwitched(oldId, newId)
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
-  if M.preStart and freeroam_specialTriggers and playerData.traffic then -- this cycles all lights triggers, to eliminate lag spikes (move this code later)
-    if not playerData.preStartTicks then playerData.preStartTicks = 6 end
-    playerData.preStartTicks = playerData.preStartTicks - 1
-    for k, v in pairs(freeroam_specialTriggers.getTriggers()) do
-      if not v.vehIds[be:getPlayerVehicleID(0)] then
-        if playerData.preStartTicks == 3 then
-          freeroam_specialTriggers.setTriggerActive(k, true, true)
-        elseif playerData.preStartTicks == 0 then
-          freeroam_specialTriggers.setTriggerActive(k, false, true)
-          M.preStart = false
-        end
-      end
-    end
-    if playerData.preStartTicks == 0 then playerData.preStartTicks = nil end
-  end
-
   if not playerPursuitActive() then return end
 
   -- for now, prevent pursuit softlock by making the police give up
@@ -265,7 +314,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   if (playerData.traffic.speed < 3 and playerData.traffic.pursuit.timers.arrest == 0 and playerData.traffic.pursuit.timers.evade == 0) then
     playerData.pursuitStuckTimer = playerData.pursuitStuckTimer + dtSim
     if playerData.pursuitStuckTimer >= 10 then
-      log("I", "career", "Ending pursuit early due to conflict")
+      log("I", "career", "Ending pursuit early due to stalemate")
       gameplay_police.evadeVehicle(be:getPlayerVehicleID(0), true)
       playerData.pursuitStuckTimer = 0
     end
@@ -274,18 +323,19 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   end
 end
 
-local function onCareerModulesActivated(alreadyInLevel)
-  if alreadyInLevel then
+local function onCareerActive(active)
+  if active and playerData.maxTrafficAmount == 0 then
     setupTraffic()
+  end
+  if core_gamestate.loading() and freeroam_specialTriggers then
+    for k, v in pairs(freeroam_specialTriggers.getTriggers()) do
+      freeroam_specialTriggers.setTriggerActive(k, true, true) -- activate all garage lights, to precalculate lighting
+    end
   end
 end
 
-local function onClientStartMission()
-  setupTraffic()
-end
-
 local function buildCamPath(targetPos, endDir)
-  local camMode = core_camera.getGlobalCameras().bigMap
+  --local camMode = core_camera.getGlobalCameras().bigMap
 
   local path = { looped = false, manualFov = false}
   local startPos = core_camera.getPosition() + vec3(0,0,30)
@@ -322,17 +372,19 @@ M.getPlayerData = getPlayerData
 M.retrieveFavoriteVehicle = retrieveFavoriteVehicle
 M.playerPursuitActive = playerPursuitActive
 M.resetPlayerState = resetPlayerState
+M.setTrafficForTutorial = setTrafficForTutorial
+M.setTrafficAfterTutorial = setTrafficAfterTutorial
+M.restoreTrafficAfterTutorialPhase = restoreTrafficAfterTutorialPhase
 M.teleportToGarage = teleportToGarage
 M.showPosition = showPosition
 
-M.onPlayerCameraReady = onPlayerCameraReady
+M.onTrafficOrParkingReady = onTrafficOrParkingReady
 M.onTrafficStarted = onTrafficStarted
 M.onTrafficStopped = onTrafficStopped
 M.onPursuitAction = onPursuitAction
 M.onVehicleParkingStatus = onVehicleParkingStatus
 M.onVehicleSwitched = onVehicleSwitched
-M.onCareerModulesActivated = onCareerModulesActivated
-M.onClientStartMission = onClientStartMission
+M.onCareerActive = onCareerActive
 M.onUpdate = onUpdate
 
 return M

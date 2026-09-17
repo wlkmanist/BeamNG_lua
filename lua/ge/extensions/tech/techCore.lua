@@ -4,18 +4,17 @@
 
 local logTag = 'TechGE'
 local M = {}
-M.dependencies = {"ui_imgui"}
-
-local im = ui_imgui
+M.dependencies = {'tech_sensors', 'scenario/scenariosLoader', 'util/trackBuilder/proceduralPrimitives'}
 
 local tcom = require('tech/techCommunication')
-local scenariosLoader = require('scenario/scenariosLoader')
-local procPrimitives = require('util/trackBuilder/proceduralPrimitives')
+local scenariosLoader = scenario_scenariosLoader
+local procPrimitives = util_trackBuilder_proceduralPrimitives
 local jbeamIO = require('jbeam/io')
 local techUtils = require('tech/techUtils')
+local jbeamLoader = require("jbeam/loader")
 
 local tcomParams = {
-  ip = '*',
+  ip = '127.0.0.1',
   port = 25252,
   debug = nil
 }
@@ -32,20 +31,24 @@ local blocking = {
 
 local frameDelayFuncQueue = {}
 
-local sensors = {}
+local sensorHandlers = {}
+
+local stype = extensions.tech_sensors.stype
 
 -- Containers for each sensor type, where the keys are the unique sensor name (given in beamNGpy), and the values are the unique sensor Id
 -- in the simulator. Any interaction with the sensors in the simulator must be done through this unique sensor Id number.
-local cameras = {}
-local lidars = {}
-local ultrasonics = {}
-local radars = {}
-local advancedIMUs = {}
-local GPSs = {}
-local powertrains = {}
-local meshes = {}
-local idealRADARs = {}
-local roadsSensors = {}
+local sensors = {
+  [stype.tCamera] = {},
+  [stype.tLiDAR] = {},
+  [stype.tUltrasonic] = {},
+  [stype.tRADAR] = {},
+  [stype.tIMU] = {},
+  [stype.tGPS] = {},
+  [stype.tPowertrain] = {},
+  [stype.tMesh] = {},
+  [stype.tIdealRADAR] = {},
+  [stype.tRoads] = {},
+}
 local vehicleFeeders = {}
 
 local objectCount = 1
@@ -74,14 +77,11 @@ local debugObjectCounter = {sphereNum = 0,
                             prismNum = 0
                           }
 
-local scenarios = nil
+local scenariosCache = nil
 local currentMissionState = nil
-
-local showServerGUI = false
-local openServerGuiData = {
-  ip = im.ArrayChar(40, '127.0.0.1'),
-  allInterfaces = im.BoolPtr(false),
-  port = im.IntPtr(tcomParams.port),
+local config = {
+  ['scenarioRestrictions'] = true,
+  ['prevGameState'] = nil
 }
 
 -- Helper functions
@@ -170,6 +170,10 @@ end
 
 local function translateNested(name)
   if name == nil then return nil end
+  if type(name) == 'table' then
+    name = name.txt
+    if name == nil then return nil end
+  end
   name = translateLanguage(name, name, true)
   local result = name
   for match, translationString in name:gmatch('(%{%{\'(.+)\' | translate%}%})') do
@@ -186,9 +190,9 @@ local function missionPathFromId(missionId)
   return missionsDir .. missionId .. '/' .. missionInfoFile
 end
 
-local function refreshScenarioList()
-  scenarios = {}
-  local scenarioList = scenariosLoader.getList(nil, true)
+local function refreshScenarioList(skipMissions)
+  scenariosCache = {}
+  local scenarioList = scenariosLoader.getList(nil, true, skipMissions)
   for _, v in ipairs(scenarioList) do
     local scenarioPath = nil
     if v.sourceFile then
@@ -203,16 +207,26 @@ local function refreshScenarioList()
     if v.levelName == nil then
       _, v.levelName = v.map:gmatch('([^%.]+)')
     end
-    scenarios[scenarioPath:lower()] = v
+    scenariosCache[scenarioPath:lower()] = v
   end
 end
 
 local function reportMissingLicenseFeature(request)
-  request:sendBNGValueError('This feature requires a BeamNG.tech license.')
+  local msg = 'This feature requires a BeamNG.tech license.'
+  log('E', logTag, msg)
+  request:sendBNGValueError(msg)
+end
+
+local function reportRendererNotAvailableFeature(request)
+  local msg = 'This feature requires a rendering backend to be available. Please ensure you are not running with the \'-gfx null\' argument.'
+  log('E', logTag, msg)
+  request:sendBNGValueError(msg)
 end
 
 local function reportMissingLinuxFeature(request)
-  request:sendBNGValueError('This feature is not yet supported on Linux hosts.')
+  local msg = 'This feature is not yet supported on Linux hosts.'
+  log('E', logTag, msg)
+  request:sendBNGValueError(msg)
 end
 
 local function setup()
@@ -234,7 +248,7 @@ end
 local function getSensorData(request, callback)
   local response, sensor_type, handler
   sensor_type = request['type']
-  handler = sensors[sensor_type]
+  handler = sensorHandlers[sensor_type]
   if handler ~= nil then
     handler(request, callback)
   else
@@ -266,7 +280,7 @@ local function getNextSensorData(requests, response, callback)
   getSensorData(request, cb)
 end
 
-local function placeObject(name, mesh, pos, rot)
+local function placeObject(name, mesh, pos, rot, annotation)
   if name == nil then
     name = 'procObj' .. tostring(objectCount)
     objectCount = objectCount + 1
@@ -285,6 +299,9 @@ local function placeObject(name, mesh, pos, rot)
   -- proc:setPosition(pos:toPoint3F())
   proc:setField('rotation', 0, rot.x .. ' ' .. rot.y .. ' ' .. rot.z .. ' ' .. rot.w)
   proc.scale = vec3(1, 1, 1)
+  if annotation ~= nil then
+    proc.annotation = annotation
+  end
   -- proc.scale = Point3F(1, 1, 1)
 
   be:reloadCollision()
@@ -301,9 +318,26 @@ local function tableToVec3(point, cling, offset)
   return point
 end
 
+local function setScenarioRestrictions(enabled)
+  config.scenarioRestrictions = enabled
+  if enabled then
+    -- todo action filters
+    local prevState = config.prevState
+    if prevState ~= nil then
+      core_gamestate.setGameState(prevState.state, prevState.appLayout, prevState.menuItems, prevState.options)
+      config.prevState = nil
+    end
+  else
+    config.prevGameState = deepcopy(core_gamestate.state)
+    core_input_actionFilter.clear(0)
+    core_gamestate.setGameState('exploration', nil, 'freeroam', 'freeroam')
+  end
+  core_gamestate.requestGameState()
+end
+
 -- Sensors
 
-sensors.Timer = function(req, callback)
+sensorHandlers.Timer = function(req, callback)
   local time
   if scenario_scenarios then
     time = scenario_scenarios.getScenario().timer
@@ -371,8 +405,31 @@ M.onDrawDebug = function(dtReal, lastFocus)
   end
 end
 
-M.onFilesChanged = function()
-  refreshScenarioList()
+M.onSerialize = function()
+  local data = {}
+  data.tcomParams = tcomParams
+  data.quitRequested = quitRequested
+  data.sensors = sensors
+  data.vehicleFeeders = vehicleFeeders
+  data.config = config
+
+  if server ~= nil then
+    local _, serverSocket = next(server)
+    _, data.runningPort = serverSocket:getsockname()
+  end
+  return data
+end
+
+M.onDeserialized = function(data)
+  tcomParams = data.tcomParams
+  quitRequested = data.quitRequested
+  sensors = data.sensors
+  vehicleFeeders = data.vehicleFeeders
+  config = data.config
+
+  if data.runningPort ~= nil then
+    M.openServer(data.runningPort)
+  end
 end
 
 M.isServerRunning = function()
@@ -442,9 +499,15 @@ M.onInit = function()
 
   local cmdArgs = Engine.getStartingArgs()
   local legacyInit = false -- new versions of beamngpy use custom command to open the server, but we need to keep compatibility
+  local captureFilename = nil
   for i, v in ipairs(cmdArgs) do
     if v == '-rport' then
-      legacyInit = true -- new version of beamngpy do not send this command-line option, the port is set in the openServer function
+      -- new version of beamngpy does not send this command-line option
+      -- the port is set in the openServer function or in the -tport option
+      legacyInit = true
+      tcomParams.port = tonumber(cmdArgs[i + 1]) or tcomParams.port
+    elseif v == '-tport' then
+      legacyInit = false
       tcomParams.port = tonumber(cmdArgs[i + 1]) or tcomParams.port
     elseif v == '-tcom-debug' then
       tcomParams.debug = true
@@ -452,6 +515,8 @@ M.onInit = function()
       tcomParams.debug = false
     elseif v == '-tcom-listen-ip' then
       tcomParams.ip = cmdArgs[i + 1]
+    elseif v == '-tcom-capture' then
+      captureFilename = cmdArgs[i + 1]
     end
   end
 
@@ -459,7 +524,11 @@ M.onInit = function()
   if legacyInit then
     M.openServer()
   end
-  refreshScenarioList()
+  refreshScenarioList(true) -- skip missions for performance reasons
+
+  if captureFilename ~= nil then
+    extensions.tech_capturePlayer.playCapture(captureFilename, 'tcomOutput', -1, true)
+  end
 end
 
 M.onLoadingScreenFadeout = function()
@@ -477,54 +546,7 @@ M.onRequestMissionScreenData = function(mode)
   currentMissionState = mode
 end
 
-M.openServerGUI = function()
-  showServerGUI = true
-end
-
-local function drawOpenServerGUI()
-  if M.isServerRunning() then
-    ffi.copy(openServerGuiData.ip, tcomParams.ip)
-    openServerGuiData.port[0] = tcomParams.port
-    openServerGuiData.allInterfaces[0] = false
-  end
-
-  im.SetNextWindowSizeConstraints(im.ImVec2(500, 150), im.ImVec2(500, 150))
-  im.Begin('Launch BeamNGpy Server', nil, im.WindowFlags_Move)
-  if M.isServerRunning() then im.BeginDisabled() end
-  if not openServerGuiData.allInterfaces[0] then
-    im.InputText("Listen IP address", openServerGuiData.ip)
-  end
-  im.Checkbox('Listen on all interfaces', openServerGuiData.allInterfaces)
-  im.InputInt('Port', openServerGuiData.port)
-  if M.isServerRunning() then
-    im.EndDisabled()
-    if im.Button('Stop server') then
-      M.closeServer()
-    end
-  else
-    if im.Button('Start server') then
-      if openServerGuiData.allInterfaces[0] then
-        tcomParams.ip = '*'
-      else
-        tcomParams.ip = ffi.string(openServerGuiData.ip)
-      end
-      tcomParams.port = openServerGuiData.port[0]
-      M.openServer(tcomParams.port)
-    end
-  end
-
-  im.SameLine()
-  if im.Button('Exit') then
-    showServerGUI = false
-  end
-  im.End()
-end
-
 M.onPreRender = function(dt)
-  if showServerGUI then
-    drawOpenServerGUI()
-  end
-
   if quitRequested then
     shutdown(0)
   end
@@ -612,10 +634,7 @@ M.onScenarioRestarted = function(scenario)
     guihooks.trigger('ScenarioPlay')
 
     local restrictActions = blocking.data
-    if not restrictActions then -- allow freeroam-like controls of the scenario
-      core_input_actionFilter.clear(0)
-      core_gamestate.setGameState('exploration', nil, 'freeroam', 'freeroam')
-    end
+    setScenarioRestrictions(restrictActions) -- allow freeroam-like controls of the scenario
 
     local waiting = stopBlocking()
     waiting:sendACK('ScenarioRestarted')
@@ -667,6 +686,10 @@ end
 -- Handlers
 
 M.handleHello = function(request)
+  if request.protocolVersion ~= tcom.protocolVersion then
+    log('E', logTag, string.format([[Mismatching BeamNGpy protocol versions. Please ensure both BeamNG.tech and BeamNGpy are using the desired versions. BeamNGpy's is: %s, BeamNG.tech's is: %s]],
+      tostring(request.protocolVersion), tostring(tcom.protocolVersion)))
+  end
   local resp = {type = 'Hello', protocolVersion = tcom.protocolVersion}
   request:sendResponse(resp)
 end
@@ -704,10 +727,10 @@ M.handleLoadScenario = function(request)
   if request['precompileShaders'] then
     Engine.Render.setAsyncShaderCompilation(false) -- to avoid problems with the camera sensor
   end
-  FS:updateDirectoryWatchers() -- late prefab file notification could cause a bug, update explicitly
 
   log('I', logTag, 'Loading scenario: ' .. scenarioPath)
-  local sc = scenarios[scenarioPath:lower()]
+  local sc = scenariosCache[scenarioPath:lower()]
+  if not sc then refreshScenarioList() end
   if not sc then
     -- try to load it anyways, it may not be in one of the default folders
     sc = scenario_scenariosLoader.loadScenario(scenarioPath:lower())
@@ -716,12 +739,13 @@ M.handleLoadScenario = function(request)
       request:sendBNGValueError('Scenario not found: "' .. scenarioPath .. '"')
       return false
     end
+    scenariosCache[scenarioPath:lower()] = sc
   end
 
-  if sc.mission then
-    local infoPath = tostring(sc.mission) .. '/info.json'
+  if sc.levelName then
+    local infoPath = '/levels/' .. tostring(sc.levelName) .. '/info.json'
     if not FS:fileExists(infoPath) then
-      local msg = 'Level not found: "' .. tostring(sc.mission) .. '"'
+      local msg = 'Level not found: "' .. tostring(sc.levelName) .. '"'
       log('E', logTag, msg)
       request:sendBNGValueError(msg)
       return false
@@ -751,6 +775,7 @@ M.handleStartScenario = function(request)
   end
 
   if scenario then -- 'normal' scenario loading (not flowgraph)
+    scenario_scenarios.changeState('pre-running')
     scenario_scenarios.changeState('running')
   end
 
@@ -763,10 +788,7 @@ M.handleStartScenario = function(request)
     end
   end
 
-  if not request['restrict_actions'] then -- allow freeroam-like controls of the scenario
-    core_input_actionFilter.clear(0)
-    core_gamestate.setGameState('exploration', nil, 'freeroam', 'freeroam')
-  end
+  setScenarioRestrictions(request.restrict_actions) -- allow freeroam-like controls of the scenario
   request:sendACK('ScenarioStarted')
   return true
 end
@@ -811,7 +833,11 @@ M.handleShowHUD = function(request)
 end
 
 M.handleSetPhysicsDeterministic = function(request)
-  be:setPhysicsSpeedFactor(-1)
+  if request.speedFactor then
+    be:setPhysicsSpeedFactor(request.speedFactor)
+  else
+    be:setPhysicsSpeedFactor(-1)
+  end
   request:sendACK('SetPhysicsDeterministic')
 end
 
@@ -821,14 +847,14 @@ M.handleSetPhysicsNonDeterministic = function(request)
 end
 
 M.handleFPSLimit = function(request)
-  Engine.setFPSLimiter(request['fps'])
-  Engine.setFPSLimiterEnabled(true)
-  Engine.setSleepInBackground(false)
+  settings.setValue('fpsLimit', request['fps'])
+  settings.setValue('fpsLimitEnabled', true)
+  settings.setValue('fpsLimitBackgroundEnabled', false)
   request:sendACK('SetFPSLimit')
 end
 
 M.handleRemoveFPSLimit = function(request)
-  Engine.setFPSLimiterEnabled(false)
+  settings.setValue('fpsLimitEnabled', false)
   request:sendACK('RemovedFPSLimit')
 end
 
@@ -862,21 +888,30 @@ M.handleTeleport = function(request)
 
   local reset = request['reset'] == nil or request['reset']
 
+  local safeSpawn = request['safe_spawn']
+  -- cling is an alias for safe_spawn (backward compatibility)
+  if safeSpawn == nil then safeSpawn = request['cling'] end
+
+  local pos = vec3(request['pos'][1], request['pos'][2], request['pos'][3])
   local rot = nil
   if request['rot'] ~= nil then
     rot = quat(request['rot'][1], request['rot'][2], request['rot'][3], request['rot'][4])
   end
-  if reset and rot ~= nil then
-    veh:setPositionRotation(request['pos'][1], request['pos'][2], request['pos'][3], rot.x, rot.y, rot.z, rot.w)
+
+  if safeSpawn then
+    -- Use the full safe-spawn procedure: places vehicle on the ground and avoids obstacles
+    spawn.safeTeleport(veh, pos, rot, nil, nil, nil, false, reset, nil, true)
+  elseif reset and rot ~= nil then
+    veh:setPositionRotation(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
   elseif reset and rot == nil then
     local vehRot = quat(veh:getClusterRotationSlow(veh:getRefNodeId()))
-    veh:setPositionRotation(request['pos'][1], request['pos'][2], request['pos'][3], vehRot.x, vehRot.y, vehRot.z, vehRot.w)
+    veh:setPositionRotation(pos.x, pos.y, pos.z, vehRot.x, vehRot.y, vehRot.z, vehRot.w)
   elseif not reset and rot ~= nil then
     local vehRot = quat(veh:getClusterRotationSlow(veh:getRefNodeId()))
     local diffRot = vehRot:inversed() * rot
-    veh:setClusterPosRelRot(veh:getRefNodeId(), request['pos'][1], request['pos'][2], request['pos'][3], diffRot.x, diffRot.y, diffRot.z, diffRot.w)
+    veh:setClusterPosRelRot(veh:getRefNodeId(), pos.x, pos.y, pos.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
   else -- not reset and rot == nil
-    veh:setClusterPosRelRot(veh:getRefNodeId(), request['pos'][1], request['pos'][2], request['pos'][3], 0, 0, 0, 1)
+    veh:setClusterPosRelRot(veh:getRefNodeId(), pos.x, pos.y, pos.z, 0, 0, 0, 1)
   end
   resp.success = true
   request:sendResponse(resp)
@@ -884,12 +919,12 @@ end
 
 M.handleTeleportScenarioObject = function(request)
   local sobj = scenetree.findObject(request['id'])
+  local pos = tableToVec3(request['pos'], request['cling'], request['offset'] or 0)
   if request['rot'] ~= nil then
-    local quat = quat(request['rot'][1], request['rot'][2], request['rot'][3], request['rot'][4])
-    sobj:setPosRot(request['pos'][1], request['pos'][2], request['pos'][3], quat.x, quat.y, quat.z, quat.w)
+    local rot = quat(request['rot'][1], request['rot'][2], request['rot'][3], request['rot'][4])
+    sobj:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
   else
-    sobj:setPosition(vec3(request['pos'][1], request['pos'][2], request['pos'][3]))
-    -- sobj:setPosition(Point3F(request['pos'][1], request['pos'][2], request['pos'][3]))
+    sobj:setPosition(pos)
   end
   request:sendACK('ScenarioObjectTeleported')
 end
@@ -927,6 +962,11 @@ M.handleStartVehicleConnection = function(request)
   return true
 end
 
+M.handleWaitForVehicleReconnect = function(request)
+  if not block('vehicleConnection', request) then return false end
+  return true
+end
+
 M.handleWaitForSpawn = function(request)
   local name = request['name']
   return block('spawnVehicle', request, name)
@@ -946,7 +986,7 @@ M.handleSpawnVehicle = function(request)
   local model = request['model']
   local pos = request['pos']
   local rot = request['rot']
-  local cling = request['cling']
+  local safeSpawn = request['safe_spawn']
 
   if not core_vehicles.getModel(model).model then
     request:sendBNGError('Model not found: ' .. tostring(model))
@@ -965,12 +1005,14 @@ M.handleSpawnVehicle = function(request)
   options.config = partConfig
   options.pos = pos
   options.rot = rot
-  options.cling = cling
+  -- options.cling = cling -- deprecated, use safeSpawn instead
+  options.safeSpawn = safeSpawn
   options.vehicleName = name
   options.color = request['color']
   options.color2 = request['color2']
   options.color3 = request['color3']
   options.licenseText = request['licenseText']
+  options.unlimitedSafeSpawnRange = true
 
   if not block('spawnVehicle', request, name) then return false end
 
@@ -1036,17 +1078,54 @@ M.handleGetDecalRoadVertices = function(request)
   request:sendResponse(response)
 end
 
+-- TODO: DEPRECATED, USE handleGetRoadNetwork
 M.handleGetDecalRoadData = function(request)
   local resp = {type = 'DecalRoadData'}
   local data = {}
   local roads = scenetree.findClassObjects('DecalRoad')
-  for idx, roadID in ipairs(roads) do
-    local road = scenetree.findObject(roadID)
+  for idx, roadName in ipairs(roads) do
+    local road = scenetree.findObject(roadName)
+    local roadID = road:getID()
     local roadData = {}
     for fieldName, _ in pairs(road:getFields()) do
       roadData[fieldName] = road:getField(fieldName, '')
     end
     data[roadID] = roadData
+  end
+  resp['data'] = data
+  request:sendResponse(resp)
+end
+
+M.handleGetRoadNetwork = function(request)
+  local resp = {type = 'RoadNetwork'}
+  local data = {}
+  local drivableOnly = request.drivableOnly
+  local includeEdges = request.includeEdges
+
+  local roads = scenetree.findClassObjects('DecalRoad')
+  for idx, roadName in ipairs(roads) do
+    local road = scenetree.findObject(roadName)
+    local roadID = road:getID()
+    local roadData = {}
+    for fieldName, _ in pairs(road:getFields()) do
+      roadData[fieldName] = road:getField(fieldName, '')
+    end
+    if drivableOnly and roadData.drivability == '-1' then
+      goto continue
+    end
+    if includeEdges then
+      roadData.edges = {}
+      for i, e in ipairs(road:getEdgesTable()) do
+        local edge = {
+          left = { e[1].x, e[1].y, e[1].z },
+          middle = { e[2].x, e[2].y, e[2].z },
+          right = { e[3].x, e[3].y, e[3].z }
+        }
+        table.insert(roadData.edges, edge)
+      end
+    end
+    data[roadID] = roadData
+    ::continue::
   end
   resp['data'] = data
   request:sendResponse(resp)
@@ -1097,17 +1176,8 @@ M.handleTimeOfDayChange = function(request)
   if request['play'] ~= nil then
     timeOfDay['play'] = request['play']
   end
-  if request['dayScale'] ~= nil then
-    timeOfDay['dayScale'] = request['dayScale']
-  end
-  if request['nightScale'] ~= nil then
-    timeOfDay['nightScale'] = request['nightScale']
-  end
   if request['dayLength'] ~= nil then
     timeOfDay['dayLength'] = request['dayLength']
-  end
-  if request['azimuthOverride'] ~= nil then
-    timeOfDay['azimuthOverride'] = request['azimuthOverride']
   end
 
   core_environment.setTimeOfDay(timeOfDay)
@@ -1119,37 +1189,37 @@ M.handleTimeOfDayChange = function(request)
 end
 
 M.handleGetAdvancedImuId = function(request)
-  local sensorId = advancedIMUs[request['name']]
+  local sensorId = sensors[stype.tIMU][request['name']]
   local resp = {type = 'getAdvancedImuId', data = sensorId}
   request:sendResponse(resp)
 end
 
 M.handleGetGPSId = function(request)
-  local sensorId = GPSs[request['name']]
+  local sensorId = sensors[stype.tGPS][request['name']]
   local resp = {type = 'getGPSId', data = sensorId}
   request:sendResponse(resp)
 end
 
 M.handleGetPowertrainId = function(request)
-  local sensorId = powertrains[request['name']]
+  local sensorId = sensors[stype.tPowertrain][request['name']]
   local resp = {type = 'getPowertrainId', data = sensorId}
   request:sendResponse(resp)
 end
 
 M.handleGetMeshId = function(request)
-  local sensorId = meshes[request['name']]
+  local sensorId = sensors[stype.tMesh][request['name']]
   local resp = {type = 'getMeshId', data = sensorId}
   request:sendResponse(resp)
 end
 
 M.handleGetIdealRADARId = function(request)
-  local sensorId = idealRADARs[request['name']]
+  local sensorId = sensors[stype.tIdealRADAR][request['name']]
   local resp = {type = 'getIdealRADARId', data = sensorId}
   request:sendResponse(resp)
 end
 
 M.handleGetRoadsSensorId = function(request)
-  local sensorId = roadsSensors[request['name']]
+  local sensorId = sensors[stype.tRoads][request['name']]
   local resp = {type = 'getRoadsSensorId', data = sensorId}
   request:sendResponse(resp)
 end
@@ -1159,8 +1229,13 @@ M.handleOpenCamera = function(request)
     reportMissingLicenseFeature(request)
     return false
   end
+  if not Engine.Render.isAvailable() then
+    reportRendererNotAvailableFeature(request)
+    return false
+  end
 
   local args = {}
+  args.name = request['name']
   args.requestedUpdateTime = request['updateTime']
   args.updatePriority = request['priority']
   args.size = request['size']
@@ -1178,6 +1253,7 @@ M.handleOpenCamera = function(request)
   args.renderColours = request['renderColours']
   args.renderAnnotations = request['renderAnnotations']
   args.renderDepth = request['renderDepth']
+  args.renderTranslucentAsOpaqueDepth = request['renderTranslucentAsOpaqueDepth']
   args.renderInstance = request['renderInstance']
   args.isVisualised = request['isVisualised']
   args.isStreaming = request['isStreaming']
@@ -1185,11 +1261,12 @@ M.handleOpenCamera = function(request)
   args.isSnappingDesired = request['isSnappingDesired']
   args.isForceInsideTriangle = request['isForceInsideTriangle']
   args.isDirWorldSpace = request['isDirWorldSpace']
+  args.integerDepth = request['integerDepth']
 
   -- If annotations are required, we need to enable this in the engine.
   if request['renderAnnotations'] == true then
     Engine.Annotation.enable(true)
-    log('I', logTag, 'Camera sensor - annotaton rendering enabled')
+    log('I', logTag, 'Camera sensor - annotation rendering enabled')
   end
 
   local name = request['name']
@@ -1198,10 +1275,10 @@ M.handleOpenCamera = function(request)
     vid = scenetree.findObject(request['vid']):getID();
   end
   if request['useSharedMemory'] == true then
-    cameras[name] = extensions.tech_sensors.createCameraWithSharedMemory(vid, args)
+    sensors[stype.tCamera][name] = extensions.tech_sensors.createCameraWithSharedMemory(vid, args)
     log('I', logTag, 'Opened camera sensor (with shared memory)')
   else
-    cameras[name] = extensions.tech_sensors.createCamera(vid, args)
+    sensors[stype.tCamera][name] = extensions.tech_sensors.createCamera(vid, args)
     log('I', logTag, 'Opened camera sensor (without shared memory)')
   end
 
@@ -1210,10 +1287,10 @@ end
 
 M.handleCloseCamera = function(request)
   local name = request['name']
-  local sensorId = cameras[name]
+  local sensorId = sensors[stype.tCamera][name]
   if sensorId ~= nil then
     extensions.tech_sensors.removeSensor(sensorId)
-    cameras[name] = nil
+    sensors[stype.tCamera][name] = nil
     log('I', logTag, 'Closed camera sensor')
   end
 
@@ -1224,7 +1301,7 @@ M.handlePollCamera = function(request)
   local name = request['name']
   local isUsingSharedMemory = request['isUsingSharedMemory']
 
-  local sensorId = cameras[name]
+  local sensorId = sensors[stype.tCamera][name]
   if sensorId ~= nil then
     if isUsingSharedMemory then
       -- Shared memory is being used, so the memory sizes are the response.
@@ -1249,7 +1326,7 @@ M.handlePollCamera = function(request)
 end
 
 M.handleSendAdHocRequestCamera = function(request)
-  local requestId = extensions.tech_sensors.sendCameraRequest(cameras[request['name']])
+  local requestId = extensions.tech_sensors.sendCameraRequest(sensors[stype.tCamera][request['name']])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -1268,7 +1345,7 @@ end
 
 -- TODO Should be replaced when GE-2170 is complete.
 M.handleGetFullCameraRequest = function(request)
-  local camera = cameras[request['name']]
+  local camera = sensors[stype.tCamera][request['name']]
   if camera == nil then
     -- The sensor was not found, so send an empty response.
     local resp = {type = 'FullCameraRequest', data = nil}
@@ -1289,69 +1366,74 @@ end
 
 M.handleCameraWorldPointToPixel = function(request)
   local point = vec3(request['pointX'], request['pointY'], request['pointZ'])
-  local pixel = extensions.tech_sensors.convertWorldPointToPixel(cameras[request['name']], point)
+  local pixel = extensions.tech_sensors.convertWorldPointToPixel(sensors[stype.tCamera][request['name']], point)
   local resp = {type = 'CameraWorldPointToPixel', data = { x = pixel.x, y = pixel.y }}
   request:sendResponse(resp)
 end
 
 M.handleGetCameraSensorPosition = function(request)
-  local pos = extensions.tech_sensors.getCameraSensorPosition(cameras[request['name']])
+  local pos = extensions.tech_sensors.getCameraSensorPosition(sensors[stype.tCamera][request['name']])
   local resp = {type = 'GetCameraSensorPosition', data = { x = pos.x, y = pos.y, z = pos.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetCameraSensorDirection = function(request)
-  local dir = extensions.tech_sensors.getCameraSensorDirection(cameras[request['name']])
+  local dir = extensions.tech_sensors.getCameraSensorDirection(sensors[stype.tCamera][request['name']])
   local resp = {type = 'dir', data = { x = dir.x, y = dir.y, z = dir.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetCameraSensorUp = function(request)
-  local up = extensions.tech_sensors.getCameraSensorUp(cameras[request['name']])
+  local up = extensions.tech_sensors.getCameraSensorUp(sensors[stype.tCamera][request['name']])
   local resp = {type = 'up', data = { x = up.x, y = up.y, z = up.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetCameraMaxPendingGpuRequests = function(request)
-  local maxRequests = extensions.tech_sensors.getCameraMaxPendingGpuRequests(cameras[request['name']])
+  local maxRequests = extensions.tech_sensors.getCameraMaxPendingGpuRequests(sensors[stype.tCamera][request['name']])
   local resp = {type = 'maxPendingGpuRequests', data = maxRequests}
   request:sendResponse(resp)
 end
 
 M.handleGetCameraRequestedUpdateTime = function(request)
-  local updateTime = extensions.tech_sensors.getCameraRequestedUpdateTime(cameras[request['name']])
+  local updateTime = extensions.tech_sensors.getCameraRequestedUpdateTime(sensors[stype.tCamera][request['name']])
   local resp = {type = 'updateTime', data = updateTime}
   request:sendResponse(resp)
 end
 
 M.handleGetCameraUpdatePriority = function(request)
-  local priority = extensions.tech_sensors.getCameraUpdatePriority(cameras[request['name']])
+  local priority = extensions.tech_sensors.getCameraUpdatePriority(sensors[stype.tCamera][request['name']])
   local resp = {type = 'updatePriority', data = priority}
   request:sendResponse(resp)
 end
 
 M.handleSetCameraSensorPosition = function(request)
-  extensions.tech_sensors.setCameraSensorPosition(cameras[request['name']], vec3(request['posX'], request['posY'], request['posZ']))
+  extensions.tech_sensors.setCameraSensorPosition(sensors[stype.tCamera][request['name']], vec3(request['posX'], request['posY'], request['posZ']))
   request:sendACK('CompletedSetCameraSensorPosition')
 end
 
 M.handleSetCameraSensorDirection = function(request)
-  extensions.tech_sensors.setCameraSensorDirection(cameras[request['name']], vec3(request['dirX'], request['dirY'], request['dirZ']))
+  extensions.tech_sensors.setCameraSensorDirection(sensors[stype.tCamera][request['name']], vec3(request['dirX'], request['dirY'], request['dirZ']))
   request:sendACK('CompletedSetCameraSensorDirection')
 end
 
+M.handleSetCameraSensorUp = function(request)
+  extensions.tech_sensors.setCameraSensorUp(sensors[stype.tCamera][request['name']], vec3(request['upX'], request['upY'], request['upZ']))
+  request:sendACK('CompletedSetCameraSensorUp')
+end
+
 M.handleSetCameraMaxPendingGpuRequests = function(request)
-  extensions.tech_sensors.setCameraMaxPendingGpuRequests(cameras[request['name']], request['maxPendingGpuRequests'])
+  extensions.tech_sensors.setCameraMaxPendingGpuRequests(sensors[stype.tCamera][request['name']], request['maxPendingGpuRequests'])
   request:sendACK('CompletedSetCameraMaxPendingGpuRequests')
 end
 
 M.handleSetCameraRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setCameraRequestedUpdateTime(cameras[request['name']], request['updateTime'])
+  extensions.tech_sensors.setCameraRequestedUpdateTime(sensors[stype.tCamera][request['name']], request['updateTime'])
   request:sendACK('CompletedSetCameraRequestedUpdateTime')
 end
 
 M.handleSetCameraUpdatePriority = function(request)
-  extensions.tech_sensors.setCameraUpdatePriority(cameras[request['name']], request['updatePriority'])
+  extensions.tech_sensors.setCameraUpdatePriority(sensors[stype.tCamera][request['name']], request['updatePriority'])
   request:sendACK('CompletedSetCameraUpdatePriority')
 end
 
@@ -1360,13 +1442,18 @@ M.handleOpenLidar = function(request)
     reportMissingLicenseFeature(request)
     return false
   end
+  if not Engine.Render.isAvailable() then
+    reportRendererNotAvailableFeature(request)
+    return false
+  end
 
   local args = {}
+  args.name = request['name']
   args.pointCloudShmemName = request['pointCloudShmemHandle']
   args.pointCloudShmemSize = request['pointCloudShmemSize']
   args.colourShmemName = request['colourShmemHandle']
   args.colourShmemSize = request['colourShmemSize']
-  args.requestedUpdateTime = request['updateTime']
+  args.requestedUpdateTime = request['requestedUpdateTime']
   args.updatePriority = request['priority']
   args.pos = vec3(request['pos'][1], request['pos'][2], request['pos'][3])
   args.dir = vec3(request['dir'][1], request['dir'][2], request['dir'][3])
@@ -1376,6 +1463,7 @@ M.handleOpenLidar = function(request)
   args.frequency = request['hz']
   args.horizontalAngle = request['hAngle']
   args.maxDistance = request['maxDist']
+  args.density = request['density']
   args.isRotate = request['isRotate']
   args.is360 = request['is360']
   args.isVisualised = request['isVisualised']
@@ -1392,10 +1480,10 @@ M.handleOpenLidar = function(request)
     vid = scenetree.findObject(request['vid']):getID();
   end
   if request['useSharedMemory'] == true then
-    lidars[name] = extensions.tech_sensors.createLidarWithSharedMemory(vid, args)
+    sensors[stype.tLiDAR][name] = extensions.tech_sensors.createLidarWithSharedMemory(vid, args)
     log('I', logTag, 'Opened LiDAR sensor (with shared memory)')
   else
-    lidars[name] = extensions.tech_sensors.createLidar(vid, args)
+    sensors[stype.tLiDAR][name] = extensions.tech_sensors.createLidar(vid, args)
     log('I', logTag, 'Opened LiDAR sensor (without shared memory)')
   end
   request:sendACK('OpenedLidar')
@@ -1403,10 +1491,10 @@ end
 
 M.handleCloseLidar = function(request)
   local name = request['name']
-  local sensorId = lidars[name]
+  local sensorId = sensors[stype.tLiDAR][name]
   if sensorId ~= nil then
     extensions.tech_sensors.removeSensor(sensorId)
-    lidars[name] = nil
+    sensors[stype.tLiDAR][name] = nil
     log('I', logTag, 'Closed LiDAR sensor')
   end
   request:sendACK('ClosedLidar')
@@ -1415,7 +1503,7 @@ end
 M.handlePollLidar = function(request)
   local name = request['name']
   local isUsingSharedMemory = request['isUsingSharedMemory']
-  local sensorId = lidars[name]
+  local sensorId = sensors[stype.tLiDAR][name]
   if sensorId ~= nil then
     if isUsingSharedMemory then
       -- Shared memory is being used, so the memory sizes goes in the response.
@@ -1439,7 +1527,7 @@ M.handlePollLidar = function(request)
 end
 
 M.handleSendAdHocRequestLidar = function(request)
-  local requestId = extensions.tech_sensors.sendLidarRequest(lidars[request['name']])
+  local requestId = extensions.tech_sensors.sendLidarRequest(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -1457,102 +1545,102 @@ M.handleCollectAdHocPollRequestLidar = function(request)
 end
 
 M.handleGetLidarSensorPosition = function(request)
-  local pos = extensions.tech_sensors.getLidarSensorPosition(lidars[request['name']])
+  local pos = extensions.tech_sensors.getLidarSensorPosition(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'pos', data = { x = pos.x, y = pos.y, z = pos.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarSensorDirection = function(request)
-  local dir = extensions.tech_sensors.getLidarSensorDirection(lidars[request['name']])
+  local dir = extensions.tech_sensors.getLidarSensorDirection(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'dir', data = { x = dir.x, y = dir.y, z = dir.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarMaxPendingGpuRequests = function(request)
-  local maxRequests = extensions.tech_sensors.getLidarMaxPendingGpuRequests(lidars[request['name']])
+  local maxRequests = extensions.tech_sensors.getLidarMaxPendingGpuRequests(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'maxPendingGpuRequests', data = maxRequests}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarRequestedUpdateTime = function(request)
-  local updateTime = extensions.tech_sensors.getLidarRequestedUpdateTime(lidars[request['name']])
+  local updateTime = extensions.tech_sensors.getLidarRequestedUpdateTime(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'updateTime', data = updateTime}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarUpdatePriority = function(request)
-  local priority = extensions.tech_sensors.getLidarUpdatePriority(lidars[request['name']])
+  local priority = extensions.tech_sensors.getLidarUpdatePriority(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'updatePriority', data = priority}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarVerticalResolution = function(request)
-  local vRes = extensions.tech_sensors.getLidarVerticalResolution(lidars[request['name']])
+  local vRes = extensions.tech_sensors.getLidarVerticalResolution(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'verticalResolution', data = vRes}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarFrequency = function(request)
-  local freq = extensions.tech_sensors.getLidarFrequency(lidars[request['name']])
+  local freq = extensions.tech_sensors.getLidarFrequency(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'frequency', data = freq}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarMaxDistance = function(request)
-  local maxDist = extensions.tech_sensors.getLidarMaxDistance(lidars[request['name']])
+  local maxDist = extensions.tech_sensors.getLidarMaxDistance(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'maxDistance', data = maxDist}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarIsVisualised = function(request)
-  local isVisualised = extensions.tech_sensors.getLidarIsVisualised(lidars[request['name']])
+  local isVisualised = extensions.tech_sensors.getLidarIsVisualised(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'isVisualised', data = isVisualised}
   request:sendResponse(resp)
 end
 
 M.handleGetLidarIsAnnotated = function(request)
-  local isAnnotated = extensions.tech_sensors.getLidarIsAnnotated(lidars[request['name']])
+  local isAnnotated = extensions.tech_sensors.getLidarIsAnnotated(sensors[stype.tLiDAR][request['name']])
   local resp = {type = 'isAnnotated', data = isAnnotated}
   request:sendResponse(resp)
 end
 
 M.handleSetLidarVerticalResolution = function(request)
-  extensions.tech_sensors.setLidarVerticalResolution(lidars[request['name']], request['verticalResolution'])
+  extensions.tech_sensors.setLidarVerticalResolution(sensors[stype.tLiDAR][request['name']], request['verticalResolution'])
   request:sendACK('CompletedSetLidarVerticalResolution')
 end
 
 M.handleSetLidarFrequency = function(request)
-  extensions.tech_sensors.setLidarFrequency(lidars[request['name']], request['frequency'])
+  extensions.tech_sensors.setLidarFrequency(sensors[stype.tLiDAR][request['name']], request['frequency'])
   request:sendACK('CompletedSetLidarFrequency')
 end
 
 M.handleSetLidarMaxDistance = function(request)
-  extensions.tech_sensors.setLidarMaxDistance(lidars[request['name']], request['maxDistance'])
+  extensions.tech_sensors.setLidarMaxDistance(sensors[stype.tLiDAR][request['name']], request['maxDistance'])
   request:sendACK('CompletedSetLidarMaxDistance')
 end
 
 M.handleSetLidarIsVisualised = function(request)
-  extensions.tech_sensors.setLidarIsVisualised(lidars[request['name']], request['isVisualised'])
+  extensions.tech_sensors.setLidarIsVisualised(sensors[stype.tLiDAR][request['name']], request['isVisualised'])
   request:sendACK('CompletedSetLidarIsVisualised')
 end
 
 M.handleSetLidarIsAnnotated = function(request)
-  extensions.tech_sensors.setLidarIsAnnotated(lidars[request['name']], request['isAnnotated'])
+  extensions.tech_sensors.setLidarIsAnnotated(sensors[stype.tLiDAR][request['name']], request['isAnnotated'])
   request:sendACK('CompletedSetLidarIsAnnotated')
 end
 
 M.handleSetLidarMaxPendingGpuRequests = function(request)
-  extensions.tech_sensors.setLidarMaxPendingGpuRequests(lidars[request['name']], request['maxPendingGpuRequests'])
+  extensions.tech_sensors.setLidarMaxPendingGpuRequests(sensors[stype.tLiDAR][request['name']], request['maxPendingGpuRequests'])
   request:sendACK('CompletedSetLidarMaxPendingGpuRequests')
 end
 
 M.handleSetLidarRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setLidarRequestedUpdateTime(lidars[request['name']], request['updateTime'])
+  extensions.tech_sensors.setLidarRequestedUpdateTime(sensors[stype.tLiDAR][request['name']], request['updateTime'])
   request:sendACK('CompletedSetLidarRequestedUpdateTime')
 end
 
 M.handleSetLidarUpdatePriority = function(request)
-  extensions.tech_sensors.setLidarUpdatePriority(lidars[request['name']], request['updatePriority'])
+  extensions.tech_sensors.setLidarUpdatePriority(sensors[stype.tLiDAR][request['name']], request['updatePriority'])
   request:sendACK('CompletedSetLidarUpdatePriority')
 end
 
@@ -1561,8 +1649,13 @@ M.handleOpenUltrasonic = function(request)
     reportMissingLicenseFeature(request)
     return false
   end
+  if not Engine.Render.isAvailable() then
+    reportRendererNotAvailableFeature(request)
+    return false
+  end
 
   local args = {}
+  args.name = request['name']
   args.shmemName = request['shmemHandle']
   args.shmemSize = request['shmemSize']
   args.requestedUpdateTime = request['updateTime']
@@ -1593,17 +1686,17 @@ M.handleOpenUltrasonic = function(request)
   if request['vid'] ~= 0 then
     vid = scenetree.findObject(request['vid']):getID();
   end
-  ultrasonics[name] = extensions.tech_sensors.createUltrasonic(vid, args)
+  sensors[stype.tUltrasonic][name] = extensions.tech_sensors.createUltrasonic(vid, args)
   log('I', logTag, 'Opened ultrasonic sensor')
   request:sendACK('OpenedUltrasonic')
 end
 
 M.handleCloseUltrasonic = function(request)
   local name = request['name']
-  local sensorId = ultrasonics[name]
+  local sensorId = sensors[stype.tUltrasonic][name]
   if sensorId ~= nil then
     extensions.tech_sensors.removeSensor(sensorId)
-    ultrasonics[name] = nil
+    sensors[stype.tUltrasonic][name] = nil
     log('I', logTag, 'Closed ultrasonic sensor')
   end
 
@@ -1612,7 +1705,7 @@ end
 
 M.handlePollUltrasonic = function(request)
   local name = request['name']
-  local sensorId = ultrasonics[name]
+  local sensorId = sensors[stype.tUltrasonic][name]
   if sensorId ~= nil then
     local readings = Research.Ultrasonic.getLastReadings(sensorId)
     local resp = {type = 'PollUltrasonic', data = readings}
@@ -1626,7 +1719,7 @@ M.handlePollUltrasonic = function(request)
 end
 
 M.handleSendAdHocRequestUltrasonic = function(request)
-  local requestId = extensions.tech_sensors.sendUltrasonicRequest(ultrasonics[request['name']])
+  local requestId = extensions.tech_sensors.sendUltrasonicRequest(sensors[stype.tUltrasonic][request['name']])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -1644,58 +1737,58 @@ M.handleCollectAdHocPollRequestUltrasonic = function(request)
 end
 
 M.handleGetUltrasonicSensorPosition = function(request)
-  local pos = extensions.tech_sensors.getUltrasonicSensorPosition(ultrasonics[request['name']])
+  local pos = extensions.tech_sensors.getUltrasonicSensorPosition(sensors[stype.tUltrasonic][request['name']])
   local resp = {type = 'pos', data = { x = pos.x, y = pos.y, z = pos.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetUltrasonicSensorDirection = function(request)
-  local dir = extensions.tech_sensors.getUltrasonicSensorDirection(ultrasonics[request['name']])
+  local dir = extensions.tech_sensors.getUltrasonicSensorDirection(sensors[stype.tUltrasonic][request['name']])
   local resp = {type = 'dir', data = { x = dir.x, y = dir.y, z = dir.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetUltrasonicMaxPendingGpuRequests = function(request)
-  local maxRequests = extensions.tech_sensors.getUltrasonicMaxPendingGpuRequests(ultrasonics[request['name']])
+  local maxRequests = extensions.tech_sensors.getUltrasonicMaxPendingGpuRequests(sensors[stype.tUltrasonic][request['name']])
   local resp = {type = 'maxPendingGpuRequests', data = maxRequests}
   request:sendResponse(resp)
 end
 
 M.handleGetUltrasonicRequestedUpdateTime = function(request)
-  local updateTime = extensions.tech_sensors.getUltrasonicRequestedUpdateTime(ultrasonics[request['name']])
+  local updateTime = extensions.tech_sensors.getUltrasonicRequestedUpdateTime(sensors[stype.tUltrasonic][request['name']])
   local resp = {type = 'updateTime', data = updateTime}
   request:sendResponse(resp)
 end
 
 M.handleGetUltrasonicUpdatePriority = function(request)
-  local priority = extensions.tech_sensors.getUltrasonicUpdatePriority(ultrasonics[request['name']])
+  local priority = extensions.tech_sensors.getUltrasonicUpdatePriority(sensors[stype.tUltrasonic][request['name']])
   local resp = {type = 'updatePriority', data = priority}
   request:sendResponse(resp)
 end
 
 M.handleGetUltrasonicIsVisualised = function(request)
-  local isVisualised = extensions.tech_sensors.getUltrasonicIsVisualised(ultrasonics[request['name']])
+  local isVisualised = extensions.tech_sensors.getUltrasonicIsVisualised(sensors[stype.tUltrasonic][request['name']])
   local resp = {type = 'isVisualised', data = isVisualised}
   request:sendResponse(resp)
 end
 
 M.handleSetUltrasonicMaxPendingGpuRequests = function(request)
-  extensions.tech_sensors.setUltrasonicMaxPendingGpuRequests(ultrasonics[request['name']], request['maxPendingGpuRequests'])
+  extensions.tech_sensors.setUltrasonicMaxPendingGpuRequests(sensors[stype.tUltrasonic][request['name']], request['maxPendingGpuRequests'])
   request:sendACK('CompletedSetUltrasonicMaxPendingGpuRequests')
 end
 
 M.handleSetUltrasonicRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setUltrasonicRequestedUpdateTime(ultrasonics[request['name']], request['updateTime'])
+  extensions.tech_sensors.setUltrasonicRequestedUpdateTime(sensors[stype.tUltrasonic][request['name']], request['updateTime'])
   request:sendACK('CompletedSetUltrasonicRequestedUpdateTime')
 end
 
 M.handleSetUltrasonicUpdatePriority = function(request)
-  extensions.tech_sensors.setUltrasonicUpdatePriority(ultrasonics[request['name']], request['updatePriority'])
+  extensions.tech_sensors.setUltrasonicUpdatePriority(sensors[stype.tUltrasonic][request['name']], request['updatePriority'])
   request:sendACK('CompletedSetUltrasonicUpdatePriority')
 end
 
 M.handleSetUltrasonicIsVisualised = function(request)
-  extensions.tech_sensors.setUltrasonicIsVisualised(ultrasonics[request['name']], request['isVisualised'])
+  extensions.tech_sensors.setUltrasonicIsVisualised(sensors[stype.tUltrasonic][request['name']], request['isVisualised'])
   request:sendACK('CompletedSetUltrasonicIsVisualised')
 end
 
@@ -1704,8 +1797,13 @@ M.handleOpenRadar = function(request)
     reportMissingLicenseFeature(request)
     return false
   end
+  if not Engine.Render.isAvailable() then
+    reportRendererNotAvailableFeature(request)
+    return false
+  end
 
   local args = {}
+  args.name = request['name']
   args.shmemName = request['shmemHandle']
   args.shmemName2 = request['shmemHandle2']
   args.shmemSize = request['shmemSize']
@@ -1743,17 +1841,17 @@ M.handleOpenRadar = function(request)
   if request['vid'] ~= 0 then
     vid = scenetree.findObject(request['vid']):getID();
   end
-  radars[name] = extensions.tech_sensors.createRadar(vid, args)
+  sensors[stype.tRADAR][name] = extensions.tech_sensors.createRadar(vid, args)
   log('I', logTag, 'Opened Radar sensor')
   request:sendACK('OpenedRadar')
 end
 
 M.handleCloseRadar = function(request)
   local name = request['name']
-  local sensorId = radars[name]
+  local sensorId = sensors[stype.tRADAR][name]
   if sensorId ~= nil then
     extensions.tech_sensors.removeSensor(sensorId)
-    radars[name] = nil
+    sensors[stype.tRADAR][name] = nil
     log('I', logTag, 'Closed Radar sensor')
   end
 
@@ -1762,7 +1860,7 @@ end
 
 M.handlePollRadar = function(request)
   local name = request['name']
-  local sensorId = radars[name]
+  local sensorId = sensors[stype.tRADAR][name]
   if sensorId ~= nil then
     local readings = extensions.tech_sensors.getRadarReadings(sensorId)
     local resp = {type = 'PollRadar', data = readings}
@@ -1777,7 +1875,7 @@ end
 
 M.handleGetPPIRadar = function(request)
   local name = request['name']
-  local sensorId = radars[name]
+  local sensorId = sensors[stype.tRADAR][name]
   if sensorId ~= nil then
     local dataSize = extensions.tech_sensors.getRadarPPIData(sensorId)
     local resp = {type = 'GetPPIRadar', data = dataSize}
@@ -1792,7 +1890,7 @@ end
 
 M.handleGetRangeDopplerRadar = function(request)
   local name = request['name']
-  local sensorId = radars[name]
+  local sensorId = sensors[stype.tRADAR][name]
   if sensorId ~= nil then
     local dataSize = extensions.tech_sensors.getRadarRangeDopplerData(sensorId)
     local resp = {type = 'GetRangeDopplerRadar', data = dataSize}
@@ -1806,7 +1904,7 @@ M.handleGetRangeDopplerRadar = function(request)
 end
 
 M.handleSendAdHocRequestRadar = function(request)
-  local requestId = extensions.tech_sensors.sendRadarRequest(radars[request['name']])
+  local requestId = extensions.tech_sensors.sendRadarRequest(sensors[stype.tRADAR][request['name']])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -1824,47 +1922,47 @@ M.handleCollectAdHocPollRequestRadar = function(request)
 end
 
 M.handleGetRadarSensorPosition = function(request)
-  local pos = extensions.tech_sensors.getRadarSensorPosition(radars[request['name']])
+  local pos = extensions.tech_sensors.getRadarSensorPosition(sensors[stype.tRADAR][request['name']])
   local resp = {type = 'pos', data = { x = pos.x, y = pos.y, z = pos.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetRadarSensorDirection = function(request)
-  local dir = extensions.tech_sensors.getRadarSensorDirection(radars[request['name']])
+  local dir = extensions.tech_sensors.getRadarSensorDirection(sensors[stype.tRADAR][request['name']])
   local resp = {type = 'dir', data = { x = dir.x, y = dir.y, z = dir.z}}
   request:sendResponse(resp)
 end
 
 M.handleGetRadarMaxPendingGpuRequests = function(request)
-  local maxRequests = extensions.tech_sensors.getRadarMaxPendingGpuRequests(radars[request['name']])
+  local maxRequests = extensions.tech_sensors.getRadarMaxPendingGpuRequests(sensors[stype.tRADAR][request['name']])
   local resp = {type = 'maxPendingGpuRequests', data = maxRequests}
   request:sendResponse(resp)
 end
 
 M.handleGetRadarRequestedUpdateTime = function(request)
-  local updateTime = extensions.tech_sensors.getRadarRequestedUpdateTime(radars[request['name']])
+  local updateTime = extensions.tech_sensors.getRadarRequestedUpdateTime(sensors[stype.tRADAR][request['name']])
   local resp = {type = 'updateTime', data = updateTime}
   request:sendResponse(resp)
 end
 
 M.handleGetRadarUpdatePriority = function(request)
-  local priority = extensions.tech_sensors.getRadarUpdatePriority(radars[request['name']])
+  local priority = extensions.tech_sensors.getRadarUpdatePriority(sensors[stype.tRADAR][request['name']])
   local resp = {type = 'updatePriority', data = priority}
   request:sendResponse(resp)
 end
 
 M.handleSetRadarMaxPendingGpuRequests = function(request)
-  extensions.tech_sensors.setRadarMaxPendingGpuRequests(radars[request['name']], request['maxPendingGpuRequests'])
+  extensions.tech_sensors.setRadarMaxPendingGpuRequests(sensors[stype.tRADAR][request['name']], request['maxPendingGpuRequests'])
   request:sendACK('CompletedSetRadarMaxPendingGpuRequests')
 end
 
 M.handleSetRadarRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setRadarRequestedUpdateTime(radars[request['name']], request['updateTime'])
+  extensions.tech_sensors.setRadarRequestedUpdateTime(sensors[stype.tRADAR][request['name']], request['updateTime'])
   request:sendACK('CompletedSetRadarRequestedUpdateTime')
 end
 
 M.handleSetRadarUpdatePriority = function(request)
-  extensions.tech_sensors.setRadarUpdatePriority(radars[request['name']], request['updatePriority'])
+  extensions.tech_sensors.setRadarUpdatePriority(sensors[stype.tRADAR][request['name']], request['updatePriority'])
   request:sendACK('CompletedSetRadarUpdatePriority')
 end
 
@@ -1875,26 +1973,30 @@ M.handleOpenAdvancedIMU = function(request)
   end
 
   local args = {}
+  args.name = request['name']
   args.GFXUpdateTime = request['GFXUpdateTime']
   args.physicsUpdateTime = request['physicsUpdateTime']
   args.pos = vec3(request['pos'][1], request['pos'][2], request['pos'][3])
   args.dir = vec3(request['dir'][1], request['dir'][2], request['dir'][3])
   args.up = vec3(request['up'][1], request['up'][2], request['up'][3])
-  args.accelWindowWidth = request['accelWindowWidth']
-  args.accelFrequencyCutoff = request['accelFrequencyCutoff']
-  args.gyroWindowWidth = request['gyroWindowWidth']
-  args.gyroFrequencyCutoff = request['gyroFrequencyCutoff']
+  args.smootherStrength = request["smootherStrength"]
   args.isSendImmediately = request['isSendImmediately']
   args.isVisualised = request['isVisualised']
   args.isUsingGravity= request['isUsingGravity']
   args.isSnappingDesired = request['isSnappingDesired']
   args.isForceInsideTriangle = request['isForceInsideTriangle']
   args.isDirWorldSpace = request['isDirWorldSpace']
+  args.isAllowWheelNodes = request['isAllowWheelNodes']
 
   local name = request['name']
-  local vid = scenetree.findObject(request['vid']):getID();
+  local vid = scenetree.findObject(request['vid']):getID()
 
-  advancedIMUs[name] = extensions.tech_sensors.createAdvancedIMU(vid, args)
+  local sensorId = extensions.tech_sensors.createAdvancedIMU(vid, args)
+  if sensorId == nil or sensorId < 0 then
+    request:sendBNGValueError('Failed to create Advanced IMU sensor')
+    return false
+  end
+  sensors[stype.tIMU][name] = sensorId
   log('I', logTag, 'Opened AdvancedIMU sensor')
 
   request:sendACK('OpenedAdvancedIMU')
@@ -1903,9 +2005,9 @@ end
 M.handleCloseAdvancedIMU = function(request)
   local name = request['name']
   local vid = request['vid']
-  local sensorId = advancedIMUs[name]
+  local sensorId = sensors[stype.tIMU][name]
   if sensorId ~= nil then
-    advancedIMUs[name] = nil                                    -- remove from ge lua
+    sensors[stype.tIMU][name] = nil                             -- remove from ge lua
     extensions.tech_sensors.removeAdvancedIMU(vid, sensorId)    -- remove from vlua.
     log('I', logTag, 'Closed Advanced IMU sensor')
   end
@@ -1915,8 +2017,8 @@ end
 
 M.handlePollAdvancedImuGE = function(request)
   local name = request['name']
-  local sensorId = advancedIMUs[name]
-  if sensorId ~= nil then
+  local sensorId = sensors[stype.tIMU][name]
+  if sensorId ~= nil and sensorId >= 0 then
     local readings = extensions.tech_sensors.getAdvancedIMUReadings(sensorId)
     if readings ~= nil then
       local resp = { type = 'PollAdvancedImuGE', data = readings }
@@ -1932,7 +2034,7 @@ M.handlePollAdvancedImuGE = function(request)
 end
 
 M.handleSendAdHocRequestAdvancedIMU = function(request)
-  local requestId = extensions.tech_sensors.sendAdvancedIMURequest(advancedIMUs[request['name']], request['vid'])
+  local requestId = extensions.tech_sensors.sendAdvancedIMURequest(sensors[stype.tIMU][request['name']], request['vid'])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -1950,17 +2052,17 @@ M.handleCollectAdHocPollRequestAdvancedIMU = function(request)
 end
 
 M.handleSetAdvancedIMURequestedUpdateTime = function(request)
-  extensions.tech_sensors.setAdvancedIMUUpdateTime(advancedIMUs[request['name']], request['vid'], request['updateTime'])
+  extensions.tech_sensors.setAdvancedIMUUpdateTime(sensors[stype.tIMU][request['name']], request['vid'], request['updateTime'])
   request:sendACK('CompletedSetAdvancedIMURequestedUpdateTime')
 end
 
 M.handleSetAdvancedIMUIsUsingGravity = function(request)
-  extensions.tech_sensors.setAdvancedIMUIsUsingGravity(advancedIMUs[request['name']], request['vid'], request['isUsingGravity'])
+  extensions.tech_sensors.setAdvancedIMUIsUsingGravity(sensors[stype.tIMU][request['name']], request['vid'], request['isUsingGravity'])
   request:sendACK('CompletedSetAdvancedIMUIsUsingGravity')
 end
 
 M.handleSetAdvancedIMUIsVisualised = function(request)
-  extensions.tech_sensors.setAdvancedIMUIsVisualised(advancedIMUs[request['name']], request['vid'], request['isVisualised'])
+  extensions.tech_sensors.setAdvancedIMUIsVisualised(sensors[stype.tIMU][request['name']], request['vid'], request['isVisualised'])
   request:sendACK('CompletedSetAdvancedIMUIsVisualised')
 end
 
@@ -1971,6 +2073,7 @@ M.handleOpenGPS = function(request)
   end
 
   local args = {}
+  args.name = request['name']
   args.GFXUpdateTime = request['GFXUpdateTime']
   args.physicsUpdateTime = request['physicsUpdateTime']
   args.pos = vec3(request['pos'][1], request['pos'][2], request['pos'][3])
@@ -1983,9 +2086,9 @@ M.handleOpenGPS = function(request)
   args.isDirWorldSpace = request['isDirWorldSpace']
 
   local name = request['name']
-  local vid = scenetree.findObject(request['vid']):getID();
+  local vid = scenetree.findObject(request['vid']):getID()
 
-  GPSs[name] = extensions.tech_sensors.createGPS(vid, args)
+  sensors[stype.tGPS][name] = extensions.tech_sensors.createGPS(vid, args)
   log('I', logTag, 'Opened GPS sensor')
 
   request:sendACK('OpenedGPS')
@@ -1994,9 +2097,9 @@ end
 M.handleCloseGPS = function(request)
   local name = request['name']
   local vid = request['vid']
-  local sensorId = GPSs[name]
+  local sensorId = sensors[stype.tGPS][name]
   if sensorId ~= nil then
-    GPSs[name] = nil                                    -- remove from ge lua
+    sensors[stype.tGPS][name] = nil                                    -- remove from ge lua
     extensions.tech_sensors.removeGPS(vid, sensorId)    -- remove from vlua.
     log('I', logTag, 'Closed GPS sensor')
   end
@@ -2006,7 +2109,7 @@ end
 
 M.handlePollGPSGE = function(request)
   local name = request['name']
-  local sensorId = GPSs[name]
+  local sensorId = sensors[stype.tGPS][name]
   if sensorId ~= nil then
     local readings = extensions.tech_sensors.getGPSReadings(sensorId)
     if readings ~= nil then
@@ -2023,7 +2126,7 @@ M.handlePollGPSGE = function(request)
 end
 
 M.handleSendAdHocRequestGPS = function(request)
-  local requestId = extensions.tech_sensors.sendGPSRequest(GPSs[request['name']], request['vid'])
+  local requestId = extensions.tech_sensors.sendGPSRequest(sensors[stype.tGPS][request['name']], request['vid'])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -2041,12 +2144,12 @@ M.handleCollectAdHocPollRequestGPS = function(request)
 end
 
 M.handleSetGPSRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setGPSUpdateTime(GPSs[request['name']], request['vid'], request['updateTime'])
+  extensions.tech_sensors.setGPSUpdateTime(sensors[stype.tGPS][request['name']], request['vid'], request['updateTime'])
   request:sendACK('CompletedSetGPSRequestedUpdateTime')
 end
 
 M.handleSetGPSIsVisualised = function(request)
-  extensions.tech_sensors.setGPSIsVisualised(GPSs[request['name']], request['vid'], request['isVisualised'])
+  extensions.tech_sensors.setGPSIsVisualised(sensors[stype.tGPS][request['name']], request['vid'], request['isVisualised'])
   request:sendACK('CompletedSetGPSIsVisualised')
 end
 
@@ -2057,14 +2160,15 @@ M.handleOpenPowertrain = function(request)
   end
 
   local args = {}
+  args.name = request['name']
   args.GFXUpdateTime = request['GFXUpdateTime']
   args.physicsUpdateTime = request['physicsUpdateTime']
   args.isSendImmediately = request['isSendImmediately']
 
   local name = request['name']
-  local vid = scenetree.findObject(request['vid']):getID();
+  local vid = scenetree.findObject(request['vid']):getID()
 
-  powertrains[name] = extensions.tech_sensors.createPowertrainSensor(vid, args)
+  sensors[stype.tPowertrain][name] = extensions.tech_sensors.createPowertrainSensor(vid, args)
   log('I', logTag, 'Opened Powertrain sensor')
 
   request:sendACK('OpenedPowertrain')
@@ -2073,9 +2177,9 @@ end
 M.handleClosePowertrain = function(request)
   local name = request['name']
   local vid = request['vid']
-  local sensorId = powertrains[name]
+  local sensorId = sensors[stype.tPowertrain][name]
   if sensorId ~= nil then
-    powertrains[name] = nil                                    -- remove from ge lua
+    sensors[stype.tPowertrain][name] = nil                                    -- remove from ge lua
     extensions.tech_sensors.removePowertrainSensor(vid, sensorId)    -- remove from vlua.
     log('I', logTag, 'Closed Powertrain sensor')
   end
@@ -2085,7 +2189,7 @@ end
 
 M.handlePollPowertrainGE = function(request)
   local name = request['name']
-  local sensorId = powertrains[name]
+  local sensorId = sensors[stype.tPowertrain][name]
   if sensorId ~= nil then
     local readings = extensions.tech_sensors.getPowertrainReadings(sensorId)
     if readings ~= nil then
@@ -2102,7 +2206,7 @@ M.handlePollPowertrainGE = function(request)
 end
 
 M.handleSendAdHocRequestPowertrain = function(request)
-  local requestId = extensions.tech_sensors.sendPowertrainRequest(powertrains[request['name']], request['vid'])
+  local requestId = extensions.tech_sensors.sendPowertrainRequest(sensors[stype.tPowertrain][request['name']], request['vid'])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -2120,7 +2224,7 @@ M.handleCollectAdHocPollRequestPowertrain = function(request)
 end
 
 M.handleSetPowertrainRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setPowertrainUpdateTime(powertrains[request['name']], request['vid'], request['updateTime'])
+  extensions.tech_sensors.setPowertrainUpdateTime(sensors[stype.tPowertrain][request['name']], request['vid'], request['updateTime'])
   request:sendACK('CompletedSetPowertrainRequestedUpdateTime')
 end
 
@@ -2131,13 +2235,14 @@ M.handleOpenMesh = function(request)
   end
 
   local args = {}
+  args.name = request['name']
   args.GFXUpdateTime = request['GFXUpdateTime']
   args.physicsUpdateTime = request['physicsUpdateTime']
 
   local name = request['name']
-  local vid = scenetree.findObject(request['vid']):getID();
+  local vid = scenetree.findObject(request['vid']):getID()
 
-  meshes[name] = extensions.tech_sensors.createMeshSensor(vid, args)
+  sensors[stype.tMesh][name] = extensions.tech_sensors.createMeshSensor(vid, args)
   log('I', logTag, 'Opened Mesh sensor')
 
   request:sendACK('OpenedMesh')
@@ -2146,9 +2251,9 @@ end
 M.handleCloseMesh = function(request)
   local name = request['name']
   local vid = request['vid']
-  local sensorId = meshes[name]
+  local sensorId = sensors[stype.tMesh][name]
   if sensorId ~= nil then
-    meshes[name] = nil                                                -- remove from ge lua
+    sensors[stype.tMesh][name] = nil                                  -- remove from ge lua
     extensions.tech_sensors.removeMeshSensor(vid, sensorId)           -- remove from vlua.
     log('I', logTag, 'Closed Mesh sensor')
   end
@@ -2157,7 +2262,7 @@ M.handleCloseMesh = function(request)
 end
 
 M.handleSendAdHocRequestMesh = function(request)
-  local requestId = extensions.tech_sensors.sendMeshRequest(meshes[request['name']], request['vid'])
+  local requestId = extensions.tech_sensors.sendMeshRequest(sensors[stype.tMesh][request['name']], request['vid'])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -2175,7 +2280,7 @@ M.handleCollectAdHocPollRequestMesh = function(request)
 end
 
 M.handleSetMeshRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setMeshUpdateTime(powertrains[request['name']], request['vid'], request['updateTime'])
+  extensions.tech_sensors.setMeshUpdateTime(sensors[stype.tPowertrain][request['name']], request['vid'], request['updateTime'])
   request:sendACK('CompletedSetMeshRequestedUpdateTime')
 end
 
@@ -2186,13 +2291,14 @@ M.handleOpenIdealRADAR = function(request)
   end
 
   local args = {}
+  args.name = request['name']
   args.GFXUpdateTime = request['GFXUpdateTime']
   args.physicsUpdateTime = request['physicsUpdateTime']
 
   local name = request['name']
-  local vid = scenetree.findObject(request['vid']):getID();
+  local vid = scenetree.findObject(request['vid']):getID()
 
-  idealRADARs[name] = extensions.tech_sensors.createIdealRADARSensor(vid, args)
+  sensors[stype.tIdealRADAR][name] = extensions.tech_sensors.createIdealRADARSensor(vid, args)
   log('I', 'Opened Ideal RADAR sensor')
 
   request:sendACK('OpenedIdealRADAR')
@@ -2201,9 +2307,9 @@ end
 M.handleCloseIdealRADAR = function(request)
   local name = request['name']
   local vid = request['vid']
-  local sensorId = idealRADARs[name]
+  local sensorId = sensors[stype.tIdealRADAR][name]
   if sensorId ~= nil then
-    idealRADARs[name] = nil                                                -- remove from ge lua
+    sensors[stype.tIdealRADAR][name] = nil                                                -- remove from ge lua
     extensions.tech_sensors.removeIdealRADARSensor(vid, sensorId)           -- remove from vlua.
     log('I', 'Closed Ideal RADAR sensor')
   end
@@ -2213,7 +2319,7 @@ end
 
 M.handlePollIdealRADARGE = function(request)
   local name = request['name']
-  local sensorId = idealRADARs[name]
+  local sensorId = sensors[stype.tIdealRADAR][name]
   if sensorId ~= nil then
     local readings = extensions.tech_sensors.getIdealRADARReadings(sensorId)
     if readings ~= nil then
@@ -2230,7 +2336,7 @@ M.handlePollIdealRADARGE = function(request)
 end
 
 M.handleSendAdHocRequestIdealRADAR = function(request)
-  local requestId = extensions.tech_sensors.sendIdealRADARRequest(idealRADARs[request['name']], request['vid'])
+  local requestId = extensions.tech_sensors.sendIdealRADARRequest(sensors[stype.tIdealRADAR][request['name']], request['vid'])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -2248,7 +2354,7 @@ M.handleCollectAdHocPollRequestIdealRADAR = function(request)
 end
 
 M.handleSetIdealRADARRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setIdealRADARUpdateTime(idealRADARs[request['name']], request['vid'], request['updateTime'])
+  extensions.tech_sensors.setIdealRADARUpdateTime(sensors[stype.tIdealRADAR][request['name']], request['vid'], request['updateTime'])
   request:sendACK('CompletedSetIdealRADARRequestedUpdateTime')
 end
 
@@ -2259,14 +2365,15 @@ M.handleOpenRoadsSensor = function(request)
   end
 
   local args = {}
+  args.name = request['name']
   args.GFXUpdateTime = request['GFXUpdateTime']
   args.physicsUpdateTime = request['physicsUpdateTime']
   args.isSendImmediately = request['isSendImmediately']
 
   local name = request['name']
-  local vid = scenetree.findObject(request['vid']):getID();
+  local vid = scenetree.findObject(request['vid']):getID()
 
-  roadsSensors[name] = extensions.tech_sensors.createRoadsSensor(vid, args)
+  sensors[stype.tRoads][name] = extensions.tech_sensors.createRoadsSensor(vid, args)
   log('I', logTag, 'Opened Roads sensor')
 
   request:sendACK('OpenedRoadsSensor')
@@ -2275,9 +2382,9 @@ end
 M.handleCloseRoadsSensor = function(request)
   local name = request['name']
   local vid = request['vid']
-  local sensorId = roadsSensors[name]
+  local sensorId = sensors[stype.tRoads][name]
   if sensorId ~= nil then
-    roadsSensors[name] = nil                                    -- remove from ge lua
+    sensors[stype.tRoads][name] = nil                           -- remove from ge lua
     extensions.tech_sensors.removeRoadsSensor(vid, sensorId)    -- remove from vlua.
     log('I', logTag, 'Closed Roads sensor')
   end
@@ -2287,7 +2394,7 @@ end
 
 M.handlePollRoadsSensorGE = function(request)
   local name = request['name']
-  local sensorId = roadsSensors[name]
+  local sensorId = sensors[stype.tRoads][name]
   if sensorId ~= nil then
     local readings = extensions.tech_sensors.getRoadsSensorReadings(sensorId)
     if readings ~= nil then
@@ -2304,7 +2411,7 @@ M.handlePollRoadsSensorGE = function(request)
 end
 
 M.handleSendAdHocRequestRoadsSensor = function(request)
-  local requestId = extensions.tech_sensors.sendRoadsSensorRequest(roadsSensors[request['name']], request['vid'])
+  local requestId = extensions.tech_sensors.sendRoadsSensorRequest(sensors[stype.tRoads][request['name']], request['vid'])
   local resp = {type = 'requestId', data = requestId}
   request:sendResponse(resp)
 end
@@ -2322,7 +2429,7 @@ M.handleCollectAdHocPollRequestRoadsSensor = function(request)
 end
 
 M.handleSetRoadsSensorRequestedUpdateTime = function(request)
-  extensions.tech_sensors.setRoadsSensorUpdateTime(roadsSensors[request['name']], request['vid'], request['updateTime'])
+  extensions.tech_sensors.setRoadsSensorUpdateTime(sensors[stype.tRoads][request['name']], request['vid'], request['updateTime'])
   request:sendACK('CompletedSetRoadsSensorRequestedUpdateTime')
 end
 
@@ -2366,6 +2473,27 @@ M.handleGetRoadGraph = function(request)
   local resp = {type = 'GetRoadGraph', data = reading}
   request:sendResponse(resp)
 end
+
+M.handleExportOpenDrive = function(request)
+  local filename = request['filename']
+  local reading = extensions.tech_openDriveExporter.export(filename)
+  local resp = {type = 'ExportOpenDrive', data = nil}
+  request:sendResponse(resp)
+end
+
+M.handleExportOpenStreetMap = function(request)
+  local filename = request['filename']
+  local reading = extensions.tech_openStreetMapExporter.export(filename)
+  local resp = {type = 'ExportOpenStreetMap', data = nil}
+  request:sendResponse(resp)
+end
+M.handleExportSumo = function(request)
+  local filename = request['filename']
+  local reading = extensions.tech_sumoExporter.export(filename)
+  local resp = {type = 'ExportSumo', data = nil}
+  request:sendResponse(resp)
+end
+
 
 M.handleResetNavgraph = function(request)
   extensions.tech_sensors.resetNavgraph()
@@ -2538,9 +2666,10 @@ M.handleCreateCylinder = function(request)
   local material = request['material']
   local pos = request['pos']
   local rot = request['rot']
+  local annotation = request['annotation']
 
   local cylinder = procPrimitives.createCylinder(radius, height, material)
-  placeObject(name, cylinder, pos, rot)
+  placeObject(name, cylinder, pos, rot, annotation)
 
   request:sendACK('CreatedCylinder')
 end
@@ -2555,9 +2684,10 @@ M.handleCreateBump = function(request)
   local material = request['material']
   local pos = request['pos']
   local rot = request['rot']
+  local annotation = request['annotation']
 
   local bump = procPrimitives.createBump(length, width, height, upperLength, upperWidth, material)
-  placeObject(name, bump, pos, rot)
+  placeObject(name, bump, pos, rot, annotation)
 
   request:sendACK('CreatedBump')
 end
@@ -2569,9 +2699,10 @@ M.handleCreateCone = function(request)
   local material = request['material']
   local pos = request['pos']
   local rot = request['rot']
+  local annotation = request['annotation']
 
   local cone = procPrimitives.createCone(radius, height, material)
-  placeObject(name, cone, pos, rot)
+  placeObject(name, cone, pos, rot, annotation)
 
   request:sendACK('CreatedCone')
 end
@@ -2582,9 +2713,10 @@ M.handleCreateCube = function(request)
   local material = request['material']
   local pos = request['pos']
   local rot = request['rot']
+  local annotation = request['annotation']
 
   local cube = procPrimitives.createCube(size, material)
-  placeObject(name, cube, pos, rot)
+  placeObject(name, cube, pos, rot, annotation)
 
   request:sendACK('CreatedCube')
 end
@@ -2596,9 +2728,10 @@ M.handleCreateRing = function(request)
   local material = request['material']
   local pos = request['pos']
   local rot = request['rot']
+  local annotation = request['annotation']
 
   local ring = procPrimitives.createRing(radius, thickness, material)
-  placeObject(name, ring, pos, rot)
+  placeObject(name, ring, pos, rot, annotation)
 
   request:sendACK('CreatedRing')
 end
@@ -2651,6 +2784,7 @@ M.handleGetAvailableVehicles = function(request)
       name = modelData.Name,
       type = modelData.Type,
       key = modelData.key,
+      default_configuration = modelData.default_pc,
     }
     data.configurations = {}
     for key, config in pairs(configs) do
@@ -2660,7 +2794,8 @@ M.handleGetAvailableVehicles = function(request)
           model_key = config.model_key,
           key = config.key,
           name = config.Name,
-          type = config.Type
+          type = config.Type,
+          pc_file_path = config.pcFilename,
         }
       end
     end
@@ -2672,12 +2807,11 @@ end
 
 M.handleSpawnTraffic = function(request)
   local maxAmount = request['max_amount']
-  local policeRatio = request['police_ratio']
   local extraAmount = request['extra_amount']
   local parkedAmount = request['parked_amount']
 
   gameplay_parking.setupVehicles(parkedAmount)
-  gameplay_traffic.setupTraffic(maxAmount, policeRatio)
+  gameplay_traffic.setupTraffic(maxAmount, {police = (request['police_ratio'] or 0) > 0})
   request:sendACK('TrafficSpawned')
 end
 
@@ -2708,6 +2842,109 @@ M.handleStopTraffic = function(request)
   local stop = request.stop
   gameplay_traffic.deactivate(stop)
   request:sendACK('TrafficStopped')
+end
+
+M.handleListTrafficSignalInstances = function(request)
+  local instances, err = extensions.tech_trafficSignalsFunctions.listInstances()
+  if not instances then
+    request:sendBNGValueError(err)
+    return
+  end
+  request:sendResponse({type = 'TrafficSignalInstances', data = instances})
+end
+
+M.handleGetTrafficSignalMapNodes = function(request)
+  local mapNodes, err = extensions.tech_trafficSignalsFunctions.getMapNodeSignals()
+  if not mapNodes then
+    request:sendBNGValueError(err)
+    return
+  end
+  request:sendResponse({type = 'TrafficSignalMapNodes', data = mapNodes})
+end
+
+M.handleGetTrafficSignalInstanceState = function(request)
+  local name = request.instance_name
+  if not name then
+    request:sendBNGValueError('instance_name is required')
+    return
+  end
+  local row, err = extensions.tech_trafficSignalsFunctions.getInstanceState(name)
+  if not row then
+    request:sendBNGValueError(err)
+    return
+  end
+  request:sendResponse({type = 'TrafficSignalInstanceState', data = row})
+end
+
+M.handleGetTrafficSignalEditorData = function(request)
+  local data, err = extensions.tech_trafficSignalsFunctions.getEditorSignals(request.instance_name)
+  if not data then
+    request:sendBNGValueError(err)
+    return
+  end
+  request:sendResponse({type = 'TrafficSignalEditorData', data = data})
+end
+
+M.handleGetTrafficSignalTimingSnapshot = function(request)
+  local data, err = extensions.tech_trafficSignalsFunctions.getTimingSnapshot()
+  if not data then
+    request:sendBNGValueError(err)
+    return
+  end
+  request:sendResponse({type = 'TrafficSignalTimingSnapshot', data = data})
+end
+
+M.handleSetTrafficSignalStrictState = function(request)
+  local name = request.instance_name
+  if not name then
+    request:sendBNGValueError('instance_name is required')
+    return
+  end
+  local stateIndex = request.state_index
+  if stateIndex ~= nil and (type(stateIndex) ~= 'number' or stateIndex <= 0) then
+    request:sendBNGValueError('state_index must be a positive int or nil')
+    return
+  end
+  local report, err = extensions.tech_trafficSignalsFunctions.setInstanceStrictState(name, stateIndex)
+  if not report then
+    request:sendBNGValueError(err)
+    return
+  end
+  request:sendResponse({type = 'TrafficSignalStrictState', data = report})
+end
+
+M.handleSetTrafficSignalControllerDuration = function(request)
+  local controllerName = request.controller_name
+  local stateIndex = request.state_index
+  local durationSec = request.duration_sec
+  if not controllerName then
+    request:sendBNGValueError('controller_name is required')
+    return
+  end
+  if type(stateIndex) ~= 'number' or stateIndex < 1 then
+    request:sendBNGValueError('state_index must be a positive int (1-based)')
+    return
+  end
+  if type(durationSec) ~= 'number' or durationSec < -1 then
+    request:sendBNGValueError('duration_sec must be >= -1 (-1 = infinite in editor)')
+    return
+  end
+  local before, after = extensions.tech_trafficSignalsFunctions.setControllerStateDuration(
+    controllerName, stateIndex, durationSec)
+  if not before then
+    request:sendBNGValueError(after)
+    return
+  end
+  request:sendResponse({
+    type = 'TrafficSignalControllerDuration',
+    data = {
+      controller_name = controllerName,
+      state_index = stateIndex,
+      duration_sec = durationSec,
+      before = before,
+      after = after,
+    },
+  })
 end
 
 M.handleChangeSetting = function(request)
@@ -2783,10 +3020,18 @@ M.handleAddDebugPolyline = function(request)
 end
 
 M.handleAddDebugCylinder = function(request)
-  local circleAPos = tableToVec3(request.circlePositions[1], false, 0)
-  local circleBPos = tableToVec3(request.circlePositions[2], false, 0)
+  local pA = vec3(request.circlePositions[1][1], request.circlePositions[1][2], request.circlePositions[1][3])
+  local pB = vec3(request.circlePositions[2][1], request.circlePositions[2][2], request.circlePositions[2][3])
+  if request.cling then
+    -- Cling the midpoint of the cylinder axis to the ground, preserving orientation and length.
+    local midpoint = (pA + pB) / 2
+    local groundZ = techUtils.getSurfaceHeight(midpoint) + request.offset
+    local zDelta = groundZ - midpoint.z
+    pA = vec3(pA.x, pA.y, pA.z + zDelta)
+    pB = vec3(pB.x, pB.y, pB.z + zDelta)
+  end
   local color = ColorF(request.color[1], request.color[2], request.color[3], request.color[4])
-  local cylinder = {circleAPos=circleAPos, circleBPos=circleBPos, radius=request.radius, color=color}
+  local cylinder = {circleAPos=pA, circleBPos=pB, radius=request.radius, color=color}
   debugObjectCounter.cylinderNum = debugObjectCounter.cylinderNum + 1
   table.insert(debugObjects.cylinders, debugObjectCounter.cylinderNum, cylinder)
   local resp = {type='DebugCylinderAdded', cylinderID=debugObjectCounter.cylinderNum}
@@ -2794,11 +3039,21 @@ M.handleAddDebugCylinder = function(request)
 end
 
 M.handleAddDebugTriangle = function(request)
-  local color = ColorF(request.color[1], request.color[2], request.color[3], request.color[4])
-  local pointA = tableToVec3(request.vertices[1], request.cling, request.offset)
-  local pointB = tableToVec3(request.vertices[2], request.cling, request.offset)
-  local pointC = tableToVec3(request.vertices[3], request.cling, request.offset)
-  local triangle = {a=pointA, b=pointB, c=pointC, color=color}
+  local packedColor = color(request.color[1]*255, request.color[2]*255, request.color[3]*255, request.color[4]*255)
+  local vA = vec3(request.vertices[1][1], request.vertices[1][2], request.vertices[1][3])
+  local vB = vec3(request.vertices[2][1], request.vertices[2][2], request.vertices[2][3])
+  local vC = vec3(request.vertices[3][1], request.vertices[3][2], request.vertices[3][3])
+  if request.cling then
+    -- Cling the centroid to the ground, then shift all vertices by the same
+    -- Z delta so orientation and size are preserved.
+    local centroid = (vA + vB + vC) / 3
+    local groundZ = techUtils.getSurfaceHeight(centroid) + request.offset
+    local zDelta = groundZ - centroid.z
+    vA = vec3(vA.x, vA.y, vA.z + zDelta)
+    vB = vec3(vB.x, vB.y, vB.z + zDelta)
+    vC = vec3(vC.x, vC.y, vC.z + zDelta)
+  end
+  local triangle = {a=vA, b=vB, c=vC, color=packedColor}
   debugObjectCounter.triangleNum = debugObjectCounter.triangleNum + 1
   table.insert(debugObjects.triangles, debugObjectCounter.triangleNum, triangle)
   local resp = {type ='DebugTriangleAdded', triangleID = debugObjectCounter.triangleNum}
@@ -2807,11 +3062,21 @@ end
 
 M.handleAddDebugRectangle = function(request)
   local color = ColorF(request.color[1], request.color[2], request.color[3], request.color[4])
-  local pointA = tableToVec3(request.vertices[1], request.cling, request.offset)
-  local pointB = tableToVec3(request.vertices[2], request.cling, request.offset)
-  local pointC = tableToVec3(request.vertices[3], request.cling, request.offset)
-  local pointD = tableToVec3(request.vertices[4], request.cling, request.offset)
-  local rectangle = {a=pointA, b=pointB, c=pointC, d=pointD, color=color}
+  local vA = vec3(request.vertices[1][1], request.vertices[1][2], request.vertices[1][3])
+  local vB = vec3(request.vertices[2][1], request.vertices[2][2], request.vertices[2][3])
+  local vC = vec3(request.vertices[3][1], request.vertices[3][2], request.vertices[3][3])
+  local vD = vec3(request.vertices[4][1], request.vertices[4][2], request.vertices[4][3])
+  if request.cling then
+    -- Cling the centroid to the ground, preserving orientation and size.
+    local centroid = (vA + vB + vC + vD) / 4
+    local groundZ = techUtils.getSurfaceHeight(centroid) + request.offset
+    local zDelta = groundZ - centroid.z
+    vA = vec3(vA.x, vA.y, vA.z + zDelta)
+    vB = vec3(vB.x, vB.y, vB.z + zDelta)
+    vC = vec3(vC.x, vC.y, vC.z + zDelta)
+    vD = vec3(vD.x, vD.y, vD.z + zDelta)
+  end
+  local rectangle = {a=vA, b=vB, c=vC, d=vD, color=color}
   debugObjectCounter.rectangleNum = debugObjectCounter.rectangleNum + 1
   table.insert(debugObjects.rectangles, debugObjectCounter.rectangleNum, rectangle)
   local resp = {type ='DebugRectangleAdded', rectangleID = debugObjectCounter.rectangleNum}
@@ -2831,12 +3096,19 @@ end
 
 M.handleAddDebugSquarePrism = function(request)
   local color = ColorF(request.color[1], request.color[2], request.color[3], request.color[4])
-  local az, bz = request.endPoints[1][3], request.endPoints[2][3]
-  local sideA = tableToVec3(request.endPoints[1], false, 0)
-  local sideB = tableToVec3(request.endPoints[2], false, 0)
+  local sideA = vec3(request.endPoints[1][1], request.endPoints[1][2], request.endPoints[1][3])
+  local sideB = vec3(request.endPoints[2][1], request.endPoints[2][2], request.endPoints[2][3])
+  if request.cling then
+    -- Cling the midpoint of the prism axis to the ground, preserving orientation and length.
+    local midpoint = (sideA + sideB) / 2
+    local groundZ = techUtils.getSurfaceHeight(midpoint) + request.offset
+    local zDelta = groundZ - midpoint.z
+    sideA = vec3(sideA.x, sideA.y, sideA.z + zDelta)
+    sideB = vec3(sideB.x, sideB.y, sideB.z + zDelta)
+  end
   local sideADims = Point2F(request.dims[1][1], request.dims[1][2])
   local sideBDims = Point2F(request.dims[2][1], request.dims[2][2])
-  local prism = {sideA=sideA, sideB=sideB, sideADims=sideADims, sideBDims=sideBDims, color = color}
+  local prism = {sideA=sideA, sideB=sideB, sideADims=sideADims, sideBDims=sideBDims, color=color}
   debugObjectCounter.prismNum = debugObjectCounter.prismNum + 1
   table.insert(debugObjects.squarePrisms, debugObjectCounter.prismNum, prism)
   local resp = {type ='DebugSquarePrismAdded', prismID = debugObjectCounter.prismNum}
@@ -2872,11 +3144,12 @@ M.handleGetLevels = function(request)
 end
 
 M.handleGetScenarios = function(request)
+  refreshScenarioList()
   local levels = request['levels']
 
   local response
   if levels == nil then
-    response = scenarios
+    response = scenariosCache
   elseif next(levels) == nil then
     request:sendBNGValueError('The levels field cannot be empty!')
     return false
@@ -2886,7 +3159,7 @@ M.handleGetScenarios = function(request)
       levelSet[level] = true
     end
     response = {}
-    for i, scenario in pairs(scenarios) do
+    for i, scenario in pairs(scenariosCache) do
       if levelSet[scenario.levelName] then
         response[i] = scenario
       end
@@ -2903,22 +3176,41 @@ M.handleGetCurrentScenario = function(request)
     return false
   end
 
-  local sourceFile
+  local sourceFile = nil
   local missionId = gameplay_missions_missionManager.getForegroundMissionId()
   if missionId ~= nil then
     sourceFile = missionPathFromId(missionId)
   elseif scenario_scenarios then
-    sourceFile = scenario_scenarios.getScenario().sourceFile
-  else
+    local scenario = scenario_scenarios.getScenario()
+    if scenario ~= nil then
+      sourceFile = scenario.sourceFile
+    end
+  end
+  if sourceFile == nil then
     local fgMgr = getRunningFlowgraphManager()
-    local name = string.gsub(fgMgr.savedFilename, "(.*)%.flow.json", "%1")
-    sourceFile = fgMgr.savedDir .. name .. '.json'
-    if string.sub(sourceFile, 1, 1) ~= '/' then
-      sourceFile = '/' .. sourceFile
+    if fgMgr ~= nil then
+      local name = string.gsub(fgMgr.savedFilename, "(.*)%.flow.json", "%1")
+      sourceFile = fgMgr.savedDir .. name .. '.json'
+      if string.sub(sourceFile, 1, 1) ~= '/' then
+        sourceFile = '/' .. sourceFile
+      end
     end
   end
 
-  local scenario = scenarios[sourceFile:lower()]
+  if sourceFile == nil then
+    request:sendBNGValueError('No scenario loaded.')
+    return false
+  end
+
+  local scenario = scenariosCache[sourceFile:lower()]
+  if scenario == nil then
+    refreshScenarioList()
+    scenario = scenariosCache[sourceFile:lower()]
+  end
+  if scenario == nil then
+    request:sendBNGValueError(string.format('Scenario \'%s\' not found.', sourceFile))
+    return false
+  end
   local level = core_levels.getLevelByName(scenario.levelName)
   scenario.level = level
 
@@ -2948,8 +3240,9 @@ M.handleCreateScenario = function(request)
     return false
   end
 
-  local path = '/levels/' .. level .. '/scenarios/'
+  local path = '/levels/' .. level .. '/scenarios/' .. name .. '/'
   local infoPath = path .. name .. '.json'
+  local prefabHackNeeded = request['noAutoReload'] ~= true
 
   local writePrefab = true
   if prefab ~= nil then
@@ -2963,15 +3256,17 @@ M.handleCreateScenario = function(request)
     end
 
     local prefabPath = path .. name .. extension
-    local existingFile = io.open(prefabPath, 'r')
-    if existingFile then
-      local content = existingFile:read('a')
-      -- when a prefab file is rewritten, the game reloads the vehicles in it, causing a bug
-      -- this check is to limit this buggy behaviour until it is fixed in the game engine
-      if content == prefab then
-        writePrefab = false
+    if prefabHackNeeded then
+      local existingFile = io.open(prefabPath, 'r')
+      if existingFile then
+        local content = existingFile:read('a')
+        -- when a prefab file is rewritten, the game reloads the vehicles in it, causing a bug
+        -- this check is to limit this buggy behaviour until it is fixed in the game engine
+        if content == prefab then
+          writePrefab = false
+        end
+        existingFile:close()
       end
-      existingFile:close()
     end
 
     if writePrefab then
@@ -2985,7 +3280,7 @@ M.handleCreateScenario = function(request)
       outFile:close()
 
       local scenario = scenario_scenarios and scenario_scenarios.getScenario()
-      if scenario and scenario.sourceFile == infoPath then
+      if prefabHackNeeded and scenario and scenario.sourceFile == infoPath then
         log('W', logTag, 'Overwritten currently loaded scenario\'s prefab file. The scenario has to be stopped.')
         block('returnMainMenuCreateScenario', request)
         returnToMainMenu()
@@ -3002,9 +3297,12 @@ M.handleCreateScenario = function(request)
   outFile:flush()
   outFile:close()
 
-  scenarios[infoPath:lower()] = scenariosLoader.loadScenario(infoPath)
+  if scenariosCache == nil then scenariosCache = {} end
+  scenariosCache[infoPath:lower()] = scenariosLoader.loadScenario(infoPath)
 
-  FS:updateDirectoryWatchers() -- late prefab file notification could cause a bug, update explicitly
+  if prefabHackNeeded then
+    FS:updateDirectoryWatchers() -- late prefab file notification could cause a bug, update explicitly
+  end
   local resp = {type = 'CreateScenario', result = infoPath}
 
   if isBlocking('returnMainMenuCreateScenario') then
@@ -3024,6 +3322,11 @@ M.handleDeleteScenario = function(request)
 
   FS:removeFile(infoPath)
   FS:removeFile(prefabPath)
+  local remFiles = FS:findFiles(scenarioDir, "*", 1, false, true)
+  if #remFiles == 0 then
+    FS:remove(scenarioDir)
+  end
+  if scenariosCache then scenariosCache[infoPath:lower()] = nil end
 
   request:sendACK('DeleteScenario')
 end
@@ -3109,6 +3412,7 @@ M.handleGetCurrentVehicles = function(request)
   end
 end
 
+-- TODO: DEPRECATED, USE getSceneTreeNodeFull
 local function getSceneTreeNode(obj)
   local node = {}
   node.class = obj:getClassName()
@@ -3125,6 +3429,7 @@ local function getSceneTreeNode(obj)
   return node
 end
 
+-- TODO: DEPRECATED, USE handleSyncScene
 M.handleGetSceneTree = function(request)
   local rootGrp = Sim.upcast(Sim.findObject('MissionGroup'))
   local tree = getSceneTreeNode(rootGrp)
@@ -3281,18 +3586,52 @@ objectSerializers['DecalRoad'] = function(obj)
   return ret
 end
 
+local function getSerializedObject(obj)
+  obj = Sim.upcast(obj)
+  local class = obj:getClassName()
+  local serializer = objectSerializers[class]
+  if serializer ~= nil then
+    obj = serializer(obj)
+  else
+    obj = serializeGenericObject(obj)
+  end
+  return obj
+end
+
+local function getSceneTreeNodeFull(root)
+  local unpack = unpack or table.unpack
+  local rootNode = getSerializedObject(root)
+  local objects = {{rootNode, root}}
+
+  while #objects > 0 do
+    local node, obj = unpack(table.remove(objects))
+
+    if obj.getObject ~= nil and obj.getCount ~= nil then
+      node.children = {}
+      local count = obj:getCount()
+      for i = 0, count - 1 do
+        local childObj = Sim.upcast(obj:getObject(i))
+        local childNode = getSerializedObject(childObj)
+        table.insert(node.children, childNode)
+        table.insert(objects, {childNode, childObj})
+      end
+    end
+  end
+  return rootNode
+end
+
+M.handleSyncScene = function(request)
+  local rootGrp = Sim.upcast(Sim.findObject('MissionGroup'))
+  local tree = getSceneTreeNodeFull(rootGrp)
+  local resp = {type = 'SyncScene', result = tree}
+  request:sendResponse(resp)
+end
+
 M.handleGetObject = function(request)
   local id = request['id']
   local obj = Sim.findObjectById(id)
   if obj ~= nil then
-    obj = Sim.upcast(obj)
-    local class = obj:getClassName()
-    local serializer = objectSerializers[class]
-    if serializer ~= nil then
-      obj = serializer(obj)
-    else
-      obj = serializeGenericObject(obj)
-    end
+    obj = getSerializedObject(obj)
     local resp = {type = 'GetObject', result = obj}
     request:sendResponse(resp)
   else
@@ -3303,30 +3642,48 @@ end
 M.handleGetPartConfig = function(request)
   local vid = request['vid']
   local veh = scenetree.findObject(vid)
-  local cur = getPlayerVehicle(0)
-  if cur ~= nil then
-    cur = cur:getID()
+  if not veh then
+    request:sendBNGValueError('No such vehicle: ' .. tostring(vid))
+    return false
   end
-
-  be:enterVehicle(0, veh)
-  local cfg = core_vehicle_partmgmt.getConfig()
+  local vehicleId = veh:getID()
+  local cfg = core_vehicle_partmgmt.getConfigOfVehicle(vehicleId)
   local resp = {type = 'PartConfig', config = cfg}
-
-  if cur ~= nil then
-    veh = scenetree.findObjectById(cur)
-    be:enterVehicle(0, veh)
-  end
-
   request:sendResponse(resp)
 end
 
+M.handleGetPartConfigForConfig = function(request)
+  -- Get vehicle part config assuming a hypothetical part config was selected.
+  -- Useful to get available part options for a config that is currently not applied or spawend.
+  -- request['config'] can be either a config dictionary, a path to a .pc file, or nil (default config)
+  local model = request['model']
+  local inputPartConfig = request['config']
+  local vehicleDir = "/vehicles/" .. model .. "/"
+  if type(inputPartConfig) == "string" then
+    -- path to .pc file
+    local pcFilePath = inputPartConfig
+    inputPartConfig, isChosenConfigReturned = core_vehicle_partmgmt.buildConfigFromString(vehicleDir, pcFilePath)
+    if not isChosenConfigReturned then
+      request:sendBNGValueError('Error loading .pc file: ' .. pcFilePath)
+      return false
+    end
+  end
+  local vehicleDirectories = {vehicleDir, '/vehicles/common/'}
+  local config = jbeamLoader.loadJbeamOnlyConfig(vehicleDirectories, inputPartConfig)
+  local resp = {type = 'PartConfigForConfig', config = config}
+  request:sendResponse(resp)
+end
+
+-- TODO: DEPRECATED, USE GetPartConfig
 M.handleGetPartOptions = function(request)
   local vid = request['vid']
   local veh = scenetree.findObject(vid)
   local cur = getPlayerVehicle(0):getID()
   be:enterVehicle(0, veh)
   local data = core_vehicle_manager.getPlayerVehicleData()
-  local slotMap = jbeamIO.getAvailableSlotMap(data.ioCtx)
+  --local cfg = core_vehicle_partmgmt.getConfig()
+  --jbeamIO.getCompatiblePartNamesForSlot(data.ioCtx, slotDef)
+  local slotMap = jbeamIO.getAvailableSlotNameMap(data.ioCtx)
   local resp = {type = 'PartOptions', options = slotMap}
   veh = scenetree.findObjectById(cur)
   be:enterVehicle(0, veh)
@@ -3336,12 +3693,9 @@ end
 M.handleSetPartConfig = function(request)
   local vid = request['vid']
   local veh = scenetree.findObject(vid)
-  local cur = getPlayerVehicle(0):getID()
-  be:enterVehicle(0, veh)
   local cfg = request['config']
-  core_vehicle_partmgmt.setConfig(cfg)
-  veh = scenetree.findObjectById(cur)
-  be:enterVehicle(0, veh)
+  veh.autoEnterVehicle = "false"  -- without this, respawn() changes focus to the vehicle (see function spawnCCallback)
+  core_vehicle_partmgmt.setConfigOfVehicle(veh, cfg)
 end
 
 M.handleSetPlayerCameraMode = function(request)
@@ -3517,7 +3871,9 @@ M.handleUnpackVehicleSensorConfiguration = function(request)
     request:sendBNGError('File ' .. filepath .. ' not found.')
     return false
   end
-  local sData = lpack.decode(loadedJson.data).sensors
+  local sData = loadedJson.data and lpack.decode(loadedJson.data) or techUtils.tableToVec3Recursive(loadedJson)
+  sData = techUtils.migrateOldKeysRecursive(sData)
+  sData = sData.sensors
   local numSensors = #sData
   for i = 1, numSensors do
     if sData[i].pos then
@@ -3535,8 +3891,152 @@ M.handleUnpackMapSensorConfiguration = function(request)
     request:sendBNGError('File ' .. filepath .. ' not found.')
     return false
   end
-  local sData = lpack.decode(loadedJson.data)
+  local sData = loadedJson.data and lpack.decode(loadedJson.data) or techUtils.tableToVec3Recursive(loadedJson)
+  sData = techUtils.migrateOldKeysRecursive(sData)
   request:sendResponse({ type = 'UnpackMapSensorConfiguration', data = sData })
+end
+
+M.handleGetEnvironmentPaths = function(request)
+  request:sendResponse({
+    type = 'GetEnvironmentPaths',
+    home = FS:getGamePath(),
+    user = FS:getUserPath()
+  })
+end
+
+--platoon handler
+M.handleCreatePlatoon = function(request)
+  log('I', 'techCore', 'Received CreatePlatoon request')
+  local platoonId = extensions.tech_platooning.create(
+    scenetree.findObject(request.leaderID):getID(),
+    scenetree.findObject(request.followerID):getID()
+  )
+  if not platoonId then
+    request:sendBNGError('Failed to create platoon.')
+    return false
+  end
+  request:sendResponse({type = 'CreatePlatoon', platoonId = platoonId})
+end
+
+M.handleJoinPlatoon = function(request)
+  log('I', 'techCore', 'Received JoinPlatoon request')
+  local platoonId = tonumber(request.platoonId)
+  if platoonId then
+    extensions.tech_platooning.join(
+      platoonId,
+      scenetree.findObject(request.followerID):getID(),
+      request.index
+    )
+  end
+  request:sendACK('JoinPlatoon')
+end
+
+M.handleSplitPlatoon = function(request)
+  log('I', 'techCore', 'Received SplitPlatoon request')
+  local platoonId = tonumber(request.platoonId)
+  local secondPlatoonId = platoonId and extensions.tech_platooning.split(
+    platoonId,
+    request.index
+  )
+  if not secondPlatoonId then
+    request:sendBNGError('Failed to split platoon.')
+    return false
+  end
+  request:sendResponse({type = 'SplitPlatoon', platoonId = secondPlatoonId})
+end
+
+M.handleLaunch = function(request)
+  log('I', 'techCore', 'Received Launch request')
+  local platoonId = tonumber(request.platoonId)
+  if platoonId then
+    extensions.tech_platooning.launch(platoonId, request.leaderMode, request.speed)
+  end
+  request:sendACK('Launch')
+end
+
+M.handleChangePlatoonSpeed = function(request)
+  log('I', 'techCore', 'Received ChangePlatoonSpeed request')
+  local platoonId = tonumber(request.platoonId)
+  if platoonId then
+    extensions.tech_platooning.changeSpeed(platoonId, request.speed)
+  end
+  request:sendACK('ChangePlatoonSpeed')
+end
+
+M.handleLeavePlatoon = function(request)
+  log('I', 'techCore', 'Received LeavePlatoon request')
+  local platoonId = tonumber(request.platoonId)
+  if platoonId then
+    extensions.tech_platooning.leave(platoonId, scenetree.findObject(request.vehicleID):getID())
+  end
+  request:sendACK('LeavePlatoon')
+end
+
+M.handleDisbandPlatoon = function(request)
+  log('I', 'techCore', 'Received DisbandPlatoon request')
+  local platoonId = tonumber(request.platoonId)
+  if platoonId then
+    extensions.tech_platooning.disband(platoonId)
+  end
+  request:sendACK('DisbandPlatoon')
+end
+
+-- ultrasonic adas handler
+M.handleLoadUltrasonicADAS = function(request)
+  local args = {}
+  args.parkAssist = request['parkAssist']
+  args.blindSpot = request['blindSpot']
+  args.hasCrawl = request['crawl']
+  args.isVisualised = request['is_visualised']
+
+  local vid = 0
+  if request['vid'] ~= 0 then
+    vid = scenetree.findObject(request['vid']):getID();
+  end
+
+  extensions.tech_adasUltrasonic.load(vid, args)
+  request:sendACK('UltrasonicADASloaded')
+end
+
+M.handleUnloadUltrasonicADAS = function(request)
+  extensions.tech_adasUltrasonic.unload()
+  request:sendACK('UltrasonicADASunloaded')
+end
+
+M.onSensorCreated = function(sensorType, sensorId)
+  local sensorName = extensions.tech_sensors.getSensorName(sensorType, sensorId)
+  if sensorName then
+    sensors[sensorType][sensorName] = sensorId
+    log('D', logTag, string.format('Created sensor %d of type \'%s\' with name \'%s\'', sensorId, sensorType, sensorName))
+  end
+end
+
+M.onSensorRemoved = function(sensorType, sensorId)
+  local sensorsOfType = sensors[sensorType]
+  for name, id in pairs(sensorsOfType) do
+    if id == sensorId then
+      sensorsOfType[name] = nil
+      log('D', logTag, string.format('Removed sensor %d of type \'%s\' with name \'%s\'', sensorId, sensorType, name))
+      return
+    end
+  end
+end
+
+M.setTcomParams = function(ip, port)
+  if ip ~= nil then
+    tcomParams.ip = ip
+  end
+  if port ~= nil then
+    tcomParams.port = port
+  end
+end
+
+M.getTcomParams = function()
+  return tcomParams
+end
+
+M.isScenarioUnrestricted = function()
+  return config.scenarioRestrictions == false
 end
 
 return M

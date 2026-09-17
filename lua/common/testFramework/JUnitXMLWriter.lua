@@ -1,3 +1,7 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
+
 --[[
   JUnit XML Writer for test results
   This module provides functionality to write test results to a JUnit-compatible XML file using slaxdom.
@@ -6,7 +10,7 @@
     - Call JUnitXMLWriter.write(results, outputFile) to write the results to a file.
 ]]
 
-local SLAXML = require('libs/slaxml/slaxml')
+local SLAXML = require('libs/slaxml/slaxdom')
 
 local JUnitXMLWriter = {}
 
@@ -16,10 +20,11 @@ local JUnitXMLWriter = {}
   @param results A table containing the test results.
   @param outputFile The file path to output the test results.
 ]]
-function JUnitXMLWriter.write(results, outputFile)
+function JUnitXMLWriter.write(results, outputFile, suiteName)
   local testResults = results.testResults or {}
   local testFailCount = results.testFailCount or 0
   local totalDuration = results.totalDuration or 0
+  suiteName = suiteName or results.suiteName or "LuaUnitTests"
 
   -- Create the root element
   local doc = { type = "document", name = "#doc", kids = {} }
@@ -41,7 +46,7 @@ function JUnitXMLWriter.write(results, outputFile)
     type = "element",
     name = "testsuite",
     attr = {
-      { type = "attribute", name = "name", value = "LuaUnitTests" },
+      { type = "attribute", name = "name", value = suiteName },
       { type = "attribute", name = "tests", value = tostring(#testResults) },
       { type = "attribute", name = "failures", value = tostring(testFailCount) },
       { type = "attribute", name = "time", value = tostring(totalDuration) },

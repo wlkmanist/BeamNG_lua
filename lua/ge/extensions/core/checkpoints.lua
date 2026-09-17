@@ -23,7 +23,7 @@ local function removeCheckpoint(vehicleId)
 end
 
 local function saveCheckpoint(vehicleId, vehicleName, cpData)
-  local vehicle = be:getObjectByID(vehicleId)
+  local vehicle = getObjectByID(vehicleId)
   if not vehicle then
     log('I', logTag,'saveCheckpoint could not find vehicle: '..vehicleName)
     return
@@ -78,7 +78,7 @@ local function ResetToSavedCheckpoint(vehicle, vehicleName)
   vehicle:resetBrokenFlexMesh()
   vehicle:setPositionRotation(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
   -- Queued for round trip to allow setpositionrotation to take effect
-  local callbackCommand = string.format('obj:queueGameEngineLua("if be:getObjectByID('..vehId..') then be:getObjectByID('..vehId..'):autoplace(false); core_checkpoints.completeReset(%u,%s) end")', vehId, "'"..vehicleName.."'")
+  local callbackCommand = string.format('obj:queueGameEngineLua("if getObjectByID('..vehId..') then getObjectByID('..vehId..'):autoplace(false); core_checkpoints.completeReset(%u,%s) end")', vehId, "'"..vehicleName.."'")
   vehicle:queueLuaCommand(callbackCommand)
   local command = string.format("recovery.clear()")
   vehicle:queueLuaCommand(command)
@@ -95,7 +95,7 @@ local function saveAIPath(vehicleName, arg)
 end
 
 local function initialiseCheckpointData(vehicleId)
-  local vehicle = be:getObjectByID(vehicleId)
+  local vehicle = getObjectByID(vehicleId)
   local scenario = scenario_scenarios and scenario_scenarios.getScenario()
 
   if vehicle and ((vehicle.playerUsable == true or vehicle.playerUsable == '1') or (scenario and scenario.aiControlledVehiclesById[vehicleId])) then
@@ -177,7 +177,7 @@ local function onPreRender(dt)
     data.checkTimer = data.checkTimer + dt
     if data.checkTimer >= 4 then
       data.checkTimer = data.checkTimer - 4
-      local vehicle = be:getObjectByID(vid)
+      local vehicle = getObjectByID(vid)
       if vehicle and not vehicle.playerUsable then
         local vehPos = vehicle:getPosition()
         if (vehPos - data.initialPos):squaredLength() > 1 then
@@ -222,7 +222,7 @@ local function onDeserialized(data)
 end
 
 local function onVehicleSpawned(vehId)
-  -- local vehicle = be:getObjectByID(vehId)
+  -- local vehicle = getObjectByID(vehId)
   -- local msg = 'onVehicleSpawned called... vehId: '..tostring(vehId)
   -- if vehicle then
   --   local vehName = vehicle:getField('name', '')
@@ -242,7 +242,7 @@ local function onVehicleSpawned(vehId)
 end
 
 local function onVehicleDestroyed(vid)
-  -- local vehicle = be:getObjectByID(vid)
+  -- local vehicle = getObjectByID(vid)
   -- local msg = 'onVehicleDestroyed called... vid: '..tostring(vid)
   -- if vehicle then
   --   local vehName = vehicle:getField('name', '')

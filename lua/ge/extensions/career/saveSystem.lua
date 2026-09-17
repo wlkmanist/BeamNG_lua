@@ -4,18 +4,18 @@
 
 local M = {}
 local saveRoot = 'settings/cloud/saves/'
-local infoFile = 'info.json'
-local saveSystemVersion = 44
+local saveSystemVersion = 64
 local backwardsCompVersion = 36
-local numberOfAutosaves = 3
-local creationDateOfCurrentSaveSlot
+local numberOfAutosaves = 2
+local creationDateOfCurrentProfile
 
-local currentSaveSlot
+local currentProfile
 local currentSavePath
+local currentDisplayName
 
-local function getAllAutosaves(slotName)
+local function getAllSaveFolders(profile)
   local res = {}
-  local folders = FS:directoryList(saveRoot .. slotName, false, true)
+  local folders = FS:directoryList(saveRoot .. profile, false, true)
   for i = 1, tableSize(folders) do
     local dir, filename, ext = path.split(folders[i])
     local data = jsonReadFile(dir .. filename .. "/info.json")
@@ -29,85 +29,152 @@ local function getAllAutosaves(slotName)
   return res
 end
 
--- TODO return nil instead of ""
-local function getAutosave(path, oldest)
+-- Picks the oldest or newest save folder out of the given list, based on the date in info.json.
+local function pickSaveByDate(folders, oldest)
   local resultDate = oldest and "A" or "0"
   local resultSave = ""
-  local folders = FS:directoryList(path, false, true)
-  -- TODO use getAllAutosaves to get the newest or oldest save
-  if (tableSize(folders) < numberOfAutosaves) and oldest then
-    -- Check the autosave folders that are already there to find a name that isnt used yet
-    for i = 1, numberOfAutosaves do
-      local possiblePath = "/" .. path .. "/autosave" .. i
-      if not tableContains(folders, possiblePath) then
-        resultSave = possiblePath
-        resultDate = "0"
-        break
+  for i = 1, tableSize(folders) do
+    local folder = folders[i]
+    local data = jsonReadFile(folder .. "/info.json")
+    if oldest then
+      if not data or not data.date or data.date < resultDate or data.corrupted then
+        resultSave = folder
+        resultDate = (data and not data.corrupted) and data.date or "0"
       end
-    end
-  else
-    for i = 1, tableSize(folders) do
-      local data = jsonReadFile(folders[i] .. "/info.json")
-      if oldest then
-        if not data or not data.date or data.date < resultDate or data.corrupted then
-          resultSave = folders[i]
-          resultDate = (data and not data.corrupted) and data.date or "0"
-        end
-      else
-        if data and data.date and data.date > resultDate and not data.corrupted then
-          resultSave = folders[i]
-          resultDate = data.date
-        end
+    else
+      if data and data.date and data.date > resultDate and not data.corrupted then
+        resultSave = folder
+        resultDate = data.date
       end
     end
   end
-  return resultSave, resultDate
+  return resultSave
+end
+
+local function getOldestAutosave(path)
+  local folders = FS:directoryList(path, false, true)
+
+  -- Get the autosave folders
+  local existingAutosaves = {}
+  for i = 1, tableSize(folders) do
+    local name = string.match(folders[i], "([^/\\]+)$")
+    if name and string.match(name, "^autosave%d+$") then
+      existingAutosaves[name] = folders[i]
+    end
+  end
+
+  -- Find an autosave slot name that isnt used yet to create a new autosave
+  for i = 1, numberOfAutosaves do
+    if not existingAutosaves["autosave" .. i] then
+      return "/" .. path .. "/autosave" .. i
+    end
+  end
+
+  -- All slots are used, so return the oldest existing autosave
+  local autosaveFolders = {}
+  for i = 1, numberOfAutosaves do
+    if existingAutosaves["autosave" .. i] then
+      table.insert(autosaveFolders, existingAutosaves["autosave" .. i])
+    end
+  end
+  return pickSaveByDate(autosaveFolders, true)
+end
+
+-- Finds the newest save folder for a profile
+local function getNewestSave(path)
+  local folders = FS:directoryList(path, false, true)
+  return pickSaveByDate(folders, false)
 end
 
 local function isLegalDirectoryName(name)
   return not string.match(name, '[<>:"/\\|?*]')
 end
 
-local function setSaveSlot(slotName, specificAutosave)
-  extensions.hook("onBeforeSetSaveSlot")
-  if not slotName then
+local function getUsedProfileNames()
+  local usedNames = {}
+  local folders = FS:directoryList(saveRoot, false, true)
+  for i = 1, tableSize(folders) do
+    local dir, filename, ext = path.split(folders[i])
+    usedNames[string.lower(filename)] = true
+  end
+  return usedNames
+end
+
+local function getSanitizedProfileName(profileName)
+  local usedNames = getUsedProfileNames()
+  local sanitizedName = string.lower(profileName or '')
+  sanitizedName = string.gsub(sanitizedName, '[^a-z0-9]', '')
+  if sanitizedName == '' then
+    sanitizedName = 'profile'
+  end
+
+  local candidate = sanitizedName
+  local counter = 1
+  while usedNames[string.lower(candidate)] do
+    candidate = sanitizedName .. counter
+    counter = counter + 1
+  end
+  return candidate
+end
+
+local function setProfile(profile, specificSaveFolder)
+  extensions.hook("onBeforeSetProfile")
+  if not profile then
     currentSavePath = nil
-    currentSaveSlot = nil
-    creationDateOfCurrentSaveSlot = nil
-    extensions.hook("onSetSaveSlot", nil, nil)
+    currentProfile = nil
+    currentDisplayName = nil
+    creationDateOfCurrentProfile = nil
+    extensions.hook("onSetProfile", nil, nil)
     return false
   end
-  if not isLegalDirectoryName(slotName) then
-    return false
-  end
-  local savePath = specificAutosave and (saveRoot .. slotName .. "/" .. specificAutosave) or getAutosave(saveRoot .. slotName, false) -- get newest autosave
+  local savePath = specificSaveFolder and (saveRoot .. profile .. "/" .. specificSaveFolder) or getNewestSave(saveRoot .. profile) -- get newest save
 
   local data = jsonReadFile(savePath .. "/info.json")
   if data then
     if not data.version or M.getBackwardsCompVersion() > data.version then
       return false
     end
-    creationDateOfCurrentSaveSlot = data.creationDate
+    creationDateOfCurrentProfile = data.creationDate
+    currentDisplayName = data.displayName or profile
   else
-    creationDateOfCurrentSaveSlot = nil
+    currentDisplayName = profile
+    profile = getSanitizedProfileName(profile)
+    savePath = specificSaveFolder and (saveRoot .. profile .. "/" .. specificSaveFolder) or getNewestSave(saveRoot .. profile)
+    creationDateOfCurrentProfile = nil
   end
 
   currentSavePath = savePath
-  currentSaveSlot = slotName
+  currentProfile = profile
 
-  extensions.hook("onSetSaveSlot", currentSavePath, slotName)
+  extensions.hook("onSetProfile", currentSavePath, profile)
   return true
 end
 
-local function removeSaveSlot(slotName)
-  if currentSaveSlot == slotName then
+local function removeProfile(profile)
+  if currentProfile == profile then
     if not career_career.isActive() then
-      setSaveSlot(nil)
-      FS:directoryRemove(saveRoot .. slotName)
+      setProfile(nil)
+      FS:directoryRemove(saveRoot .. profile)
     end
   else
-    FS:directoryRemove(saveRoot .. slotName)
+    FS:directoryRemove(saveRoot .. profile)
   end
+end
+
+local function removeSaveFolder(profile, saveFolderName)
+  if not profile or not saveFolderName or saveFolderName == "" then return false end
+  if not isLegalDirectoryName(saveFolderName) then return false end
+
+  local folderPath = saveRoot .. profile .. "/" .. saveFolderName
+  if not FS:directoryExists(folderPath) then return false end
+
+  if currentProfile == profile and currentSavePath then
+    local currentFolderName = string.match(currentSavePath, "([^/\\]+)$")
+    if currentFolderName == saveFolderName then return false end
+  end
+
+  FS:directoryRemove(folderPath)
+  return true
 end
 
 local function renameFolderRec(oldName, newName, oldNameLength)
@@ -138,31 +205,36 @@ local function renameFolder(oldName, newName)
   end
 end
 
-local function renameSaveSlot(slotName, newName)
-  if not isLegalDirectoryName(slotName) or not FS:directoryExists(saveRoot .. slotName)
+local function renameProfile(profile, newName)
+  if not isLegalDirectoryName(profile) or not FS:directoryExists(saveRoot .. profile)
   or FS:directoryExists(saveRoot .. newName) then
     return false
   end
 
-  if currentSaveSlot == slotName then
+  if currentProfile == profile then
     if not career_career.isActive() then
-      setSaveSlot(nil)
-      return renameFolder(saveRoot .. slotName, saveRoot .. newName)
+      setProfile(nil)
+      return renameFolder(saveRoot .. profile, saveRoot .. newName)
     end
   else
-    return renameFolder(saveRoot .. slotName, saveRoot .. newName)
+    return renameFolder(saveRoot .. profile, saveRoot .. newName)
   end
 end
 
-local function getCurrentSaveSlot()
-  return currentSaveSlot, currentSavePath
+local function getCurrentProfile()
+  return currentProfile, currentSavePath
+end
+
+local function getCurrentDisplayName()
+  return currentDisplayName
 end
 
 local syncSaveExtensionsDone
 local asyncSaveExtensions = {}
 local infoData
 local saveDate
-local oldestSave, oldSaveDate
+local oldestSave
+local pendingSaveSuccessSound = false
 
 local function saveFailed()
   infoData = nil
@@ -184,19 +256,24 @@ local function jsonWriteFileSafe(filename, obj, pretty, numberPrecision, tempFil
 end
 
 local function saveCompleted()
+  local playSuccessSound = pendingSaveSuccessSound
+  pendingSaveSuccessSound = false
   if infoData then
     infoData.corrupted = nil
     infoData.date = saveDate
     if jsonWriteFileSafe(oldestSave .. "/info.json", infoData, true) then
-      guihooks.trigger("toastrMsg", {type="success", title="Game Saved", msg=""})
+      guihooks.trigger("toastrMsg", {type="success", title=_tr("ui.career.save.toast.success.title"), msg=""})
       log("I", "Saved to " .. oldestSave)
       currentSavePath = oldestSave -- update the currentSavePath
+      if playSuccessSound then
+        Engine.Audio.playOnce('AudioGui', 'event:>UI>Career>Drift_Combo_5x')
+      end
       extensions.hook("onSaveFinished")
       return
     end
   end
 
-  guihooks.trigger("toastrMsg", {type="error", title="Game Save failed", msg= "Saving failed!"})
+  guihooks.trigger("toastrMsg", {type="error", title=_tr("ui.career.save.toast.failed.title"), msg=_tr("ui.career.save.toast.failed.msg")})
   log("E", "Saving to " .. oldestSave ..  " failed!")
 end
 
@@ -211,16 +288,23 @@ local function asyncSaveExtensionFinished(extName)
   end
 end
 
-local function saveCurrent(vehiclesThumbnailUpdate)
-  if not currentSaveSlot or career_modules_linearTutorial.isLinearTutorialActive() then return end
-  oldestSave, oldSaveDate = getAutosave(saveRoot .. currentSaveSlot, true) -- get oldest autosave to overwrite
-  saveDate = os.date("!%Y-%m-%dT%XZ") -- UTC time
+local function saveCurrent(vehiclesThumbnailUpdate, playSuccessSound, saveName)
+  if not currentProfile then return end
+  pendingSaveSuccessSound = playSuccessSound and true or false
+  if saveName then
+    -- save into a specific named folder instead of rotating autosave folders
+    oldestSave = saveRoot .. currentProfile .. "/" .. saveName
+  else
+    oldestSave = getOldestAutosave(saveRoot .. currentProfile) -- get oldest autosave to overwrite
+  end
+  saveDate = os.date("!%Y-%m-%dT%H:%M:%SZ") -- UTC time
 
   infoData = {}
   infoData.version = saveSystemVersion
   infoData.date = "0"
-  creationDateOfCurrentSaveSlot = creationDateOfCurrentSaveSlot or saveDate
-  infoData.creationDate = creationDateOfCurrentSaveSlot
+  creationDateOfCurrentProfile = creationDateOfCurrentProfile or saveDate
+  infoData.creationDate = creationDateOfCurrentProfile
+  infoData.displayName = currentDisplayName
   infoData.corrupted = true
 
   if not jsonWriteFileSafe(oldestSave .. "/info.json", infoData, true) then
@@ -230,15 +314,15 @@ local function saveCurrent(vehiclesThumbnailUpdate)
   end
 
   syncSaveExtensionsDone = false
-  extensions.hook("onSaveCurrentSaveSlotAsyncStart")
-  extensions.hook("onSaveCurrentSaveSlot", oldestSave, oldSaveDate, vehiclesThumbnailUpdate)
+  extensions.hook("onSaveCurrentProfileAsyncStart")
+  extensions.hook("onSaveCurrentProfile", oldestSave, vehiclesThumbnailUpdate)
   syncSaveExtensionsDone = true
   if tableIsEmpty(asyncSaveExtensions) then
     saveCompleted()
   end
 end
 
-local function getAllSaveSlots()
+local function getAllProfiles()
   local res = {}
   local folders = FS:directoryList(saveRoot, false, true)
   for i = 1, tableSize(folders) do
@@ -257,16 +341,18 @@ end
 
 local function onSerialize()
   local data = {}
-  data.currentSaveSlot = currentSaveSlot
+  data.currentProfile = currentProfile
   data.currentSavePath = currentSavePath
-  data.creationDateOfCurrentSaveSlot = creationDateOfCurrentSaveSlot
+  data.currentDisplayName = currentDisplayName
+  data.creationDateOfCurrentProfile = creationDateOfCurrentProfile
   return data
 end
 
 local function onDeserialized(v)
-  currentSaveSlot = v.currentSaveSlot
+  currentProfile = v.currentProfile
   currentSavePath = v.currentSavePath
-  creationDateOfCurrentSaveSlot = v.creationDateOfCurrentSaveSlot
+  currentDisplayName = v.currentDisplayName
+  creationDateOfCurrentProfile = v.creationDateOfCurrentProfile
 end
 
 local function getSaveSystemVersion()
@@ -277,15 +363,17 @@ local function getBackwardsCompVersion()
   return backwardsCompVersion
 end
 
-M.setSaveSlot = setSaveSlot
-M.removeSaveSlot = removeSaveSlot
-M.renameSaveSlot = renameSaveSlot
-M.getCurrentSaveSlot = getCurrentSaveSlot
+M.setProfile = setProfile
+M.removeProfile = removeProfile
+M.removeSaveFolder = removeSaveFolder
+M.renameProfile = renameProfile
+M.getCurrentProfile = getCurrentProfile
+M.getCurrentDisplayName = getCurrentDisplayName
 M.saveCurrent = saveCurrent
-M.getAllSaveSlots = getAllSaveSlots
+M.getAllProfiles = getAllProfiles
 M.getSaveRootDirectory = getSaveRootDirectory
-M.getAutosave = getAutosave
-M.getAllAutosaves = getAllAutosaves
+M.getNewestSave = getNewestSave
+M.getAllSaveFolders = getAllSaveFolders
 M.getSaveSystemVersion = getSaveSystemVersion
 M.getBackwardsCompVersion = getBackwardsCompVersion
 M.saveFailed = saveFailed

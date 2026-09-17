@@ -31,6 +31,7 @@ end
 local function getGameCamera() return scenetree.findObject("gameCamera") end
 local function setGameCamera()
   core_camera.setGlobalCameraByName(nil)
+  extensions.hook("onCameraToggled", {cameraType='GameCam'})
 end
 
 -- function used by C++ side, if you rename or move, you need to edit C++ side too
@@ -39,6 +40,7 @@ local function setFreeCamera()
   core_camera.setPosition(0, core_camera.getPosition())
   core_camera.setRotation(0, core_camera.getQuat())
   core_camera.resetCamera(0)
+  extensions.hook("onCameraToggled", {cameraType='FreeCam'})
 end
 
 -- camera modifier for faster speed (typically shift key)
@@ -53,6 +55,7 @@ end
 
 local wasFreeCamera
 local function onNodegrabStart(usingPlayerVehicle)
+  extensions.hook("onNodegrab", true)
   wasFreeCamera = isFreeCamera()
   if usingPlayerVehicle then return end
   if not wasFreeCamera then
@@ -60,22 +63,23 @@ local function onNodegrabStart(usingPlayerVehicle)
   end
 end
 local function onNodegrabStop(usingPlayerVehicle)
-  if not wasFreeCamera then
+  extensions.hook("onNodegrab", false)
+  if not wasFreeCamera and isFreeCamera() then
     setGameCamera()
   end
 end
 
-local function dropCameraAtPlayer()
-  local playerVehicle = getPlayerVehicle(0)
+local function dropCameraAtPlayer(player)
+  local playerVehicle = getPlayerVehicle(player)
   if not playerVehicle then return end
   setFreeCamera()
-  core_camera.setPosition(0, playerVehicle:getPosition())
-  core_camera.setRotation(0, quat(playerVehicle:getRotation()))
-  core_camera.resetCamera(0)
+  core_camera.setPosition(player, playerVehicle:getPosition())
+  core_camera.setRotation(player, quat(playerVehicle:getRotation()))
+  core_camera.resetCamera(player)
 end
 
-local function dropPlayerAtCamera()
-  local playerVehicle = getPlayerVehicle(0)
+local function dropPlayerAtCamera(player)
+  local playerVehicle = getPlayerVehicle(player)
   if not playerVehicle then return end
   local pos = core_camera.getPosition()
   local camDir = core_camera.getForward()
@@ -84,14 +88,14 @@ local function dropPlayerAtCamera()
   local rot =  quat(0, 0, 1, 0) * camRot -- vehicles' forward is inverted
   playerVehicle:setPositionRotation(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
   setGameCamera()
-  if core_camera.getActiveCamName(0) == "bigMap" then
-    core_camera.setByName(0, "orbit", false)
+  if core_camera.getActiveCamName(player) == "bigMap" then
+    core_camera.setByName(player, "orbit", false)
   end
-  core_camera.resetCamera(0)
+  core_camera.resetCamera(player)
 end
 
-local function dropPlayerAtCameraNoReset()
-  local playerVehicle = getPlayerVehicle(0)
+local function dropPlayerAtCameraNoReset(player)
+  local playerVehicle = getPlayerVehicle(player)
   if not playerVehicle then return end
   local pos = core_camera.getPosition()
   local camDir = core_camera.getForward()
@@ -103,25 +107,26 @@ local function dropPlayerAtCameraNoReset()
   local diffRot = vehRot:inversed() * camRot
   playerVehicle:setClusterPosRelRot(playerVehicle:getRefNodeId(), pos.x, pos.y, pos.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
   playerVehicle:applyClusterVelocityScaleAdd(playerVehicle:getRefNodeId(), 0, 0, 0, 0)
+  -- if core_intapi then
+  --   core_intapi.debug_setClusterPosRelRot(player, playerVehicle:getID(), playerVehicle:getRefNodeId(), pos.x, pos.y, pos.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
+  -- else
+  --   playerVehicle:setClusterPosRelRot(playerVehicle:getRefNodeId(), pos.x, pos.y, pos.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
+  --   playerVehicle:applyClusterVelocityScaleAdd(playerVehicle:getRefNodeId(), 0, 0, 0, 0)
+  -- end
   setGameCamera()
-  if core_camera.getActiveCamName(0) == "bigMap" then
-    core_camera.setByName(0, "orbit", false)
+  if core_camera.getActiveCamName(player) == "bigMap" then
+    core_camera.setByName(player, "orbit", false)
   end
-  core_camera.resetCamera(0)
+  core_camera.resetCamera(player)
   playerVehicle:setOriginalTransform(pos.x, pos.y, pos.z, camRot.x, camRot.y, camRot.z, camRot.w)
 end
 
 local function toggleCamera(player)
-  player = 0 -- forcibly have multiseat users switch main camera instead of their own
-  if isFreeCamera() then
-    setGameCamera()
-    extensions.core_camera.displayCameraNameUI(player)
-    extensions.hook("onCameraToggled", {cameraType='GameCam'})
-  else
-    setFreeCamera()
-    ui_message("ui.camera.freecam",  10, "cameramode")
-    extensions.hook("onCameraToggled", {cameraType='FreeCam'})
-  end
+  -- split-screen players toggle in their own view; everyone else toggles the main view.
+  -- SHIFT+C steps to the next camera group (core_camera owns the per-context state and
+  -- the onCameraToggled hook).
+  if render_splitScreen and render_splitScreen.toggleFreeCam(player or 0) then return end
+  if core_camera then core_camera.cycleCameraGroup(player or 0) end
 end
 
 local function getCameraTransformJson()

@@ -45,6 +45,7 @@ local active = false
 local hiddenGroups = {}
 local objectsAutohide = true
 local useCurrentLocation
+local navigateToPlayOnFadeout = false
 
 local function setVehicleDirty(vehicleDirty, switchedToNewVehicle)
   if not career_career.isActive() then return end
@@ -140,6 +141,69 @@ local function getCurrentVehicle()
     result = { model, {config=config} }
   end
   return result
+end
+
+local function onGarageEnter(context, toRoute, fromRoute, data)
+  local routeName = toRoute and toRoute.name or "garage"
+  data.layoutMenu = {
+    topbar = {
+      show = true,
+      tabs = {
+        { routeName = "garage", label = "Garage", visible = true, enabled = true },
+        { routeName = "garage.vehicle.tuning", label = "Tuning", visible = true, enabled = true },
+      },
+      selectedTab = routeName == "garage.vehicle.tuning" and 1 or 0,
+      hints = {
+        tabLeft = "Previous Tab",
+        tabRight = "Next Tab",
+      },
+      rightWidget = "garageInfo",
+    },
+    header = {
+      heading = routeName == "garage.vehicle.tuning" and "Garage Tuning" or "Garage",
+      breadcrumbs = routeName == "garage.vehicle.tuning" and {
+        { label = "Garage", routeName = "garage" },
+        { label = "Tuning", routeName = "garage.vehicle.tuning" },
+      } or {},
+    },
+    rails = {
+      left = {},
+      right = {},
+      bottom = {},
+    },
+    content = {
+      main = {},
+      side = {},
+      panels = {},
+      rawRouteData = {},
+    },
+    nav = {
+      scopeId = "garage-root",
+      autoFocus = true,
+    },
+  }
+  data.garage = {
+    routeName = routeName,
+    context = context or {},
+  }
+end
+
+local function vehicleByIdOrActive(vehicleId)
+  local modelKey = vehicleId
+  if not modelKey then
+    local vehicle = getPlayerVehicle(0)
+    if not vehicle then
+      return nil
+    end
+    modelKey = vehicle:getJBeamFilename()
+  end
+
+  local info = core_vehicles.getModel(modelKey)
+  if info and info.model then
+    local brand = info.model.Brand
+    local name = info.model.Name
+    return string.format("%s %s", brand, name)
+  end
 end
 
 local zoomDirectionLastFrame = 0
@@ -289,7 +353,7 @@ local function activateGarageMode()
   vehicleSpawnedOrGarageModeStarted(be:getPlayerVehicleID(0))
 end
 
-local garageInitModules = {"gameplay_garageMode", "career_modules_inventory", "career_modules_linearTutorial"}
+local garageInitModules = {"gameplay_garageMode", "career_modules_inventory"}
 local garageInitCurrentStep = 1
 local function callNextInitStep()
   extensions[garageInitModules[garageInitCurrentStep]].garageModeStartStep()
@@ -341,10 +405,13 @@ local function start(_useCurrentLocation, skipInventoryStep)
       garageInitCurrentStep = 1
       callNextInitStep()
     end
+    if not career_career.isActive() then
+      extensions.ui_router.navigate("garage")
+    end
   else
     -- load the level
-    core_levels.startLevel(garageLevelPath, true, nil, getCurrentVehicle())
     activateGarageModeOnLevelLoad = true
+    core_levels.startLevel(garageLevelPath, true, nil, getCurrentVehicle())
   end
 end
 
@@ -397,6 +464,9 @@ local function onClientPreStartMission(levelPath)
     loadPresetExtensions()
     activateGarageMode()
     activateGarageModeOnLevelLoad = nil
+    if not career_career.isActive() then
+      extensions.ui_router.navigate("garage")
+    end
   elseif active then
     endGarageMode()
   end
@@ -456,10 +526,11 @@ local function startTestWorkitem(job)
   job.sleep(2)
 
   -- fade to black
-  ui_fadeScreen.start(1)
+  guihooks.trigger("FadeScreen", {active = true})
   job.sleep(1.5)
 
   -- load the test level
+  navigateToPlayOnFadeout = true
   freeroam_freeroam.startFreeroam(testLevelPath, nil, nil, getCurrentVehicle())
 end
 
@@ -469,6 +540,13 @@ end
 
 local function getLastOwnedVehicleId()
   return lastOwnedVehicleId
+end
+
+local function onLoadingScreenFadeout()
+  if navigateToPlayOnFadeout then
+    navigateToPlayOnFadeout = false
+    extensions.ui_router.navigate("play")
+  end
 end
 
 M.start = start
@@ -485,6 +563,8 @@ M.setGarageMenuState = setGarageMenuState
 M.getGarageMenuState = getGarageMenuState
 M.setVehicleDirty = setVehicleDirty
 M.getLastOwnedVehicleId = getLastOwnedVehicleId
+M.vehicleByIdOrActive = vehicleByIdOrActive
+M.onGarageEnter = onGarageEnter
 M.initStepFinished = initStepFinished
 M.garageModeStartStep = garageModeStartStep
 
@@ -497,5 +577,6 @@ M.onSerialize = onSerialize
 M.onThumbnailTriggered = onThumbnailTriggered
 M.onEnterVehicleFinished = onEnterVehicleFinished
 M.onVehicleSaveFinished = onVehicleSaveFinished
+M.onLoadingScreenFadeout = onLoadingScreenFadeout
 
 return M

@@ -1,4 +1,3 @@
----@diagnostic disable: undefined-global
 -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
@@ -14,7 +13,7 @@ C.category = 'repeat_instant'
 C.pinSchema = {
   {dir = 'in', type = 'flow', name = 'flow', description = "Inflow for this node."},
   {dir = 'in', type = 'flow', name = 'reset', description = 'Reset this node.', impulse = true},
-  {dir = 'in', type = 'bool', name = 'proTree', description = 'TODO', default = true},
+  {dir = 'in', type = 'bool', name = 'proTree', description = 'If true, uses the Pro Tree lights configuration.', default = true},
   {dir = 'in', type = 'number', name = 'velocity', description = 'Velocity of the players vehicle'},
   {dir = 'out', type = 'flow', name = 'flow', description = "Outflow for this node."},
   {dir = 'out', type = 'flow', name = 'disqualified', description = "Outflow if the player has been desqualified."},

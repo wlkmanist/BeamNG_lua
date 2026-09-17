@@ -68,6 +68,11 @@ local neutralRejectTime = 0.75
 
 local ignitionCutTime = 0.15
 
+--shift LEDs are in use if we are in manual control over the gear selection
+local function areShiftLEDsInUse()
+  return M.gearboxHandling.behavior ~= "arcade"
+end
+
 local function getGearName()
   return gearbox.gearIndex
 end
@@ -261,7 +266,7 @@ local function updateInGearArcade(dt)
       clutchHandling.clutchLaunchIFactor = min(clutchHandling.clutchLaunchIFactor + dt * 0.5, 1)
       M.clutchRatio = min(max(ratio * ratio, 0), 1)
     end
-  else
+  elseif gearIndex ~= 0 then
     if M.smoothedValues.avgAV * gearbox.gearRatio * engine.outputAV1 >= 0 then
       M.clutchRatio = 1
     elseif abs(gearbox.gearIndex) > 1 then
@@ -327,16 +332,17 @@ local function updateInGear(dt)
 
   -- Control clutch to buildup engine RPM
   if M.gearboxHandling.autoClutch then
-    if abs(gearbox.gearIndex) == 1 then
+    local gearIndex = gearbox.gearIndex
+    if abs(gearIndex) == 1 then
       if M.throttle > 0 then
         local ratio = max((engine.outputAV1 - clutchHandling.clutchLaunchStartAV * (1 + M.throttle)) / (clutchHandling.clutchLaunchTargetAV * (1 + clutchHandling.clutchLaunchIFactor)), 0)
         clutchHandling.clutchLaunchIFactor = min(clutchHandling.clutchLaunchIFactor + dt * 0.5, 1)
         M.clutchRatio = min(max(ratio * ratio, 0), 1)
       end
-    else
+    elseif gearIndex ~= 0 then
       if gearbox.outputAV1 * gearbox.gearRatio * engine.outputAV1 >= 0 then
         M.clutchRatio = 1
-      elseif abs(gearbox.gearIndex) > 1 then
+      elseif abs(gearIndex) > 1 then
         local ratio = max((engine.outputAV1 - clutchHandling.clutchLaunchStartAV * (1 + M.throttle)) / (clutchHandling.clutchLaunchTargetAV * (1 + clutchHandling.clutchLaunchIFactor)), 0)
         clutchHandling.clutchLaunchIFactor = min(clutchHandling.clutchLaunchIFactor + dt * 0.5, 1)
         M.clutchRatio = min(max(ratio * ratio, 0), 1)
@@ -357,7 +363,7 @@ local function updateInGear(dt)
       M.clutchRatio = 0
     end
 
-    if M.clutchRatio < 1 and abs(gearbox.gearIndex) == 1 then
+    if M.clutchRatio < 1 and abs(gearIndex) == 1 then
       M.timer.gearChangeDelayTimer = M.timerConstants.gearChangeDelay
     end
 
@@ -414,9 +420,32 @@ local function init(jbeamData, sharedFunctionTable)
   newDesiredGearIndex = 0
 
   M.currentGearIndex = 0
+  M.maxGearIndex = 0
+  M.minGearIndex = 0
   M.throttle = 0
   M.brake = 0
   M.clutchRatio = 0
+  M.shiftingAggression = 1
+  M.isArcadeSwitched = false
+  M.isSportModeActive = false
+
+  M.smoothedAvgAVInput = 0
+  M.rpm = 0
+  M.idleRPM = 0
+  M.maxRPM = 0
+
+  M.engineThrottle = 0
+  M.engineLoad = 0
+  M.engineTorque = 0
+  M.flywheelTorque = 0
+  M.gearboxTorque = 0
+
+  M.ignition = true
+  M.isEngineRunning = 0
+
+  M.oilTemp = 0
+  M.waterTemp = 0
+  M.checkEngine = false
 
   ignitionCutTime = jbeamData.ignitionCutTime or 0.15
 
@@ -471,6 +500,8 @@ M.updateGearboxGFX = nop
 M.getGearName = getGearName
 M.getGearPosition = getGearPosition
 M.sendTorqueData = sendTorqueData
+
+M.areShiftLEDsInUse = areShiftLEDsInUse
 
 M.getState = getState
 M.setState = setState

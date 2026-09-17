@@ -64,7 +64,7 @@ local isDebugEnabled = false
 
 local lastYawAV = 0
 
-local debugPacket = { sourceType = "sensorHub" }
+local debugPacket = {sourceType = "sensorHub"}
 
 local function update(dt)
   M.rollAV, M.pitchAV, M.yawAV = obj:getRollPitchYawAngularVelocity()
@@ -76,8 +76,10 @@ local function update(dt)
   local dYawAV = M.yawAV - lastYawAV
   M.yawAcceleration = dYawAV / dt
   M.steeringInput = electrics.values.steering_input
+  M.throttleInput = electrics.values.throttle
+  M.brakeInput = electrics.values.brake
 
-  M.roll, M.pitch = obj:getRollPitchYaw()
+  M.roll, M.pitch = obj:getRollPitchYawRad()
 
   local ffisensors = sensors.ffiSensors
   M.accelerationX = ffisensors.sensorX

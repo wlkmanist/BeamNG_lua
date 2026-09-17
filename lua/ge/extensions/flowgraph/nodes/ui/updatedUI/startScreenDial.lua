@@ -4,13 +4,11 @@
 
 local im = ui_imgui
 
-local ffi = require('ffi')
-
 local C = {}
 
 C.name = 'StartScreen Drag Dial'
 C.color = ui_flowgraph_editor.nodeColors.ui
-C.description = 'Attempts to create a string out of the input.'
+C.description = 'Drag race dial setup.'
 C.category = 'repeat_instant'
 
 C.pinSchema = {
@@ -19,21 +17,24 @@ C.pinSchema = {
   { dir = 'out', type = 'table', name = 'dials', description = ''},
 }
 
-C.tags = { 'string' }
+C.tags = { 'start', 'screen', 'intro', 'ui' }
 
 function C:init()
   self.panel = {
     type = "dragDial",
     header = "Dial Setup",
     text = "Set up your dial. Racer who finishes closest to their dial without overshooting wins.",
-    dials = {}
+    dials = {},
+    pages = {
+      main = true,
+    }
   }
 end
 
 function C:work()
   self.pinOut.flow.value = self.pinIn.flow.value
   -- add it to the layout
-  local dragData = gameplay_drag_general.getData()
+  local dragData = gameplay_drag_dragBridge.getData()
   self.panel.dials = {}
   --dump(dragData)
   if not dragData then
@@ -45,7 +46,7 @@ function C:work()
     {
       label = racerData.isPlayable and "Player's Dial: Lane " .. racerData.lane or "Opponent's Dial: Lane " .. racerData.lane,
       key = racerData.isPlayable and "player" or "opponent",
-      value = racerData.timers.dial.value or 10,
+      value = racerData.timers.dial.value or 12,
       disabled = not racerData.isPlayable,
       racerId = racerId
     })

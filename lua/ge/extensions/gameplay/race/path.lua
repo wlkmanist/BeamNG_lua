@@ -46,6 +46,7 @@ function C:init(name)
   self.defaultLaps = 1
   self.config = {}
 
+  self.simplifyAiPath = false
   self.hideMission = false
 end
 
@@ -62,11 +63,11 @@ function C:autoConfig()
   end
 
   config.startNode = startNode.id
-  -- use the first segment that starts with startNode as start.
+  -- use the first segment that starts with startNode as start
   config.startSegments = self:findSegments(startNode.id, nil)
   config.finalSegments = {}
 
-  -- for every segment, find it's natual successors and predecessors
+  -- for every segment, find its natural successors and predecessors
   config.graph = {}
   config.branching = false
   config.closed = false
@@ -103,7 +104,7 @@ function C:autoConfig()
     local tn = self.pathnodes.objects[elem.targetNode]
     if tn.visible then
       -- flag for if we crossed the finish line (needed for final lap / overnext markers)
-      local crossedFinishLine = false
+      -- local crossedFinishLine = false
       -- color this segment itself
       table.insert(elem.nextVisibleSegments, elem.id)
       -- gather all predecessors into working list
@@ -150,24 +151,23 @@ function C:autoConfig()
   end
 
   -- if we are not branching, get the "linear" track
-  config.linearSegments = {}
+  config.linearPathnodes = {}
   if not config.branching then
     local done = false
     local last = config.startSegments[1]
     -- index for linear path
     local CPIndex = 1
-    table.insert(config.linearSegments, startNode.id)
+    table.insert(config.linearPathnodes, startNode.id)
     if last then
-      table.insert(config.linearSegments, config.graph[last].targetNode )
+      table.insert(config.linearPathnodes, config.graph[last].targetNode)
       while not done do
         config.graph[last].linearCPIndex = CPIndex
         CPIndex = CPIndex +1
         local nextId = config.graph[last].overNextVisibleSegments[1]
-        if not nextId then
+        if not nextId or nextId == config.startSegments[1] then
           done = true
         else
-          table.insert(config.linearSegments, config.graph[nextId].targetNode)
-          if nextId == config.startSegments[1] then done = true end
+          table.insert(config.linearPathnodes, config.graph[nextId].targetNode)
           last = nextId
         end
       end
@@ -212,19 +212,17 @@ end
 
 ---- Debug and Serialization
 
-function C:drawDebug()
-  self.pathnodes:drawDebug()
+function C:drawDebug(drawMode)
+  self.pathnodes:drawDebug(drawMode)
   self.segments:drawDebug()
   self.startPositions:drawDebug()
   self.pacenotes:drawDebug()
 end
 
 function C:drawAiRouteDebug()
-  self:autoConfig()
-  if not self.config or not self.config.graph or not self.config.startSegments or not next(self.config.startSegments) then
+  if not self.aiDetailedPath or not next(self.aiDetailedPath) then
     return
   end
-  self:getAiPath()
 
   for i, e in ipairs(self.aiDetailedPath) do
     local clr = rainbowColor(#self.aiDetailedPath, i, 1)
@@ -244,41 +242,53 @@ function C:drawAiRouteDebug()
 end
 
 local route = require('/lua/ge/extensions/gameplay/route/route')()
-function C:getAiPath(verbose)
+function C:getAiPath() -- returns the base AI path (waypoints) and the detailed path (node graph)
+  if not self.config or not self.config.graph or not self.config.startSegments or not next(self.config.startSegments) then
+    return {}, {}
+  end
+
   self.aiPath = {}
   self.aiDetailedPath = {}
+  self.aiPathDistance = 0
   local nodePositions
+  local mapNodes
+  local valid = true
   local currentSegment = self.config.graph[self.config.startSegments[1]]
   while currentSegment ~= nil do
-    local valid = true
     if not nodePositions then
       nodePositions = {vec3(self.pathnodes.objects[self.startNode].pos)}
     end
 
     if #currentSegment.successors > 1 then -- no AI path for branches
-      if verbose then log('W', 'race', 'Branched paths can not be used for AI path!') end
-      valid = false
+      -- TODO: handle branched paths, calculate the shortest path
+      if self._verbose then log('W', 'race', 'Branched paths can not be used for AI path!') end
+      break
     end
 
     local nodePos = vec3(self.pathnodes.objects[currentSegment.targetNode].pos)
-    local name_a, name_b, distance = map.findClosestRoad(nodePos)
-    if not name_a then -- no AI path due to no navgraph node
-      if verbose then log('W', 'race', 'Unable to find road node for AI path!') end
-      valid = false
+    if valid then
+      local name_a, name_b, _ = map.findClosestRoad(nodePos, math.max(40, self.pathnodes.objects[currentSegment.targetNode].radius))
+      if not name_a then -- no AI path due to no navgraph node
+        if self._verbose then log('W', 'race', 'Unable to find road node for AI path!') end
+        table.clear(self.aiPath)
+        valid = false
+      else
+        mapNodes = mapNodes or map.getMap().nodes
+        local a, b = mapNodes[name_a], mapNodes[name_b]
+        local xnorm = clamp(nodePos:xnormOnLine(a.pos, b.pos), 0, 1)
+        if xnorm > 0.5 then -- if we are closer to point b, swap it around
+          name_a, name_b = name_b, name_a
+          xnorm = 1 - xnorm
+        end
+
+        table.insert(self.aiPath, name_a)
+
+        if self.simplifyAiPath then
+          nodePos:setLerp(a.pos, b.pos, xnorm) -- snaps to navgraph segment point
+        end
+      end
     end
 
-    if not valid then
-      self.aiPath = {}
-      self.aiDetailedPath = {}
-      return self.aiPath, self.aiDetailedPath
-    end
-
-    local a, b = map.getMap().nodes[name_a], map.getMap().nodes[name_b]
-    if clamp(nodePos:xnormOnLine(a.pos, b.pos), 0, 1) > 0.5 then -- if we are closer to point b, swap it around
-      name_a, name_b = name_b, name_a
-    end
-
-    table.insert(self.aiPath, name_a)
     table.insert(nodePositions, nodePos)
     if currentSegment.lastInLap then break end
     currentSegment = self.config.graph[currentSegment.successors[1]]
@@ -292,6 +302,7 @@ function C:getAiPath(verbose)
       end
     end
     self.aiDetailedPath = route.path
+    self.aiPathDistance = route.distance
   end
 
   return self.aiPath, self.aiDetailedPath
@@ -324,6 +335,7 @@ function C:onSerialize()
     prefabs = self.prefabs,
     forwardPrefabs = self.forwardPrefabs,
     reversePrefabs = self.reversePrefabs,
+    simplifyAiPath = self.simplifyAiPath,
     hideMission = self.hideMission
   }
 
@@ -358,6 +370,9 @@ function C:onDeserialized(data)
   end
   for _, p in ipairs(prefabFields) do
     self[p] = data[p] or {}
+  end
+  if data.simplifyAiPath ~= nil then
+    self.simplifyAiPath = data.simplifyAiPath
   end
   if data.hideMission ~= nil then
     self.hideMission = data.hideMission
@@ -420,7 +435,6 @@ function C:fromCheckpointList(list, closed)
       local name = cp:getName()
       if name == "" or name == nil then name = cp:getInternalName() end
       local pn = path.pathnodes:create(name)
-      local rot = nil
       if cp:getField('directionalWaypoint',0) == '1' then
         pn:setNormal(quat(cp:getRotation())*vec3(1,0,0))
       else
@@ -571,8 +585,8 @@ function C:fromTrack(trackInfo, usePrefabs)
     local spawnObj = scenetree.findObject(trackInfo.spawnSpheres[spInfo[1]])
     if spawnObj ~= nil then
       local rot = quat(spawnObj:getRotation())* quat(0,0,1,0)
-      local x, y, z = rot * vec3(1,0,0), rot * vec3(0,1,0), rot * vec3(0,0,1)
-      local pos = vec3(vec3(spawnObj:getPosition()) + y*1)
+      local rotY = rot * vec3(0,1,0)
+      local pos = vec3(vec3(spawnObj:getPosition()) + rotY*1)
       pos:set(pos.x, pos.y, pos.z)
       local sp = path.startPositions:create(spInfo[2])
       sp.pos = pos
@@ -591,7 +605,7 @@ end
 
 function C:classify()
   self:autoConfig()
-  local issues = {}
+  --local issues = {}
   local reversible = not self.startPositions.objects[self.reverseStartPosition].missing
   local allowRollingStart = not self.startPositions.objects[self.rollingStartPosition].missing
   if reversible then
@@ -610,6 +624,19 @@ function C:classify()
     branching = branching
   }
 
+end
+
+function C:recalculateSegments()
+  self.segments:clear()
+  for i = 1, #self.pathnodes.sorted-1 do
+    local seg = self.segments:create("Segment " .. i.."->"..(i+1))
+    seg:setFrom(self.pathnodes.sorted[i].id)
+    seg:setTo(self.pathnodes.sorted[i+1].id)
+  end
+end
+
+function C:getLastPathnode()
+  return self.pathnodes.sorted[#self.pathnodes.sorted]
 end
 
 return function(...)

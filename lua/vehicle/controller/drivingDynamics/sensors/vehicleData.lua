@@ -164,7 +164,9 @@ end
 
 local function calculateCharacteristicSpeed()
   local eg = (M.vehicleStats.mass * (M.vehicleStats.skewStiffnessRear * M.vehicleStats.distanceCOGRearAxle - M.vehicleStats.skewStiffnessFront * M.vehicleStats.distanceCOGFrontAxle)) / (M.vehicleStats.skewStiffnessFront * M.vehicleStats.skewStiffnessRear * M.vehicleStats.wheelBase)
-  M.vehicleStats.characteristicSpeed = sqrt(M.vehicleStats.wheelBase / abs(eg + 1e-30)) --guard against infinity
+  local characteristicSpeed = sqrt(M.vehicleStats.wheelBase / abs(eg + 1e-30)) --guard against infinity
+  M.vehicleStats.characteristicSpeed = characteristicSpeed
+  M.vehicleStats.invSquaredCharacteristicSpeed = 1 / (characteristicSpeed * characteristicSpeed)
   if isDebugEnabled then
     log("D", "vehicleData.calculateCharacteristicSpeed", string.format("Calculated EG: %.6f", eg))
     log("D", "vehicleData.calculateCharacteristicSpeed", string.format("Calculated characteristic speed: %.2f m/s", M.vehicleStats.characteristicSpeed))
@@ -178,6 +180,7 @@ local function calculateAxleDistances()
   M.vehicleStats.wheelBase = obj:nodeLength(M.wheelAccess.frontRight.node1, M.wheelAccess.rearRight.node1) --calculate wheelbase from the distance of the front and rear wheels
   M.vehicleStats.invWheelBase = 1 / M.vehicleStats.wheelBase
   M.vehicleStats.cogWithoutWheels = obj:calcCenterOfGravityRel(true)
+  M.vehicleStats.cogWithWheels = obj:calcCenterOfGravityRel(false)
 
   local frontAxlePos = 0
   local rearAxlePos = 0
@@ -198,6 +201,7 @@ local function calculateAxleDistances()
       twLeft = n.pos.x
     end
   end
+  M.vehicleStats.refNodePos = vec3(v.data.nodes[v.data.refNodes[0].ref].pos)
   M.vehicleStats.mass = totalMass
 
   M.vehicleStats.distanceCOGFrontAxle = abs(M.vehicleStats.cogWithoutWheels.y - frontAxlePos)
@@ -229,6 +233,7 @@ local function calculateInertiaZ()
 end
 
 local function reset()
+  smoothers.turningCircleAcc:reset()
 end
 
 local function init(jbeamData)
@@ -263,6 +268,7 @@ local function initSecondStage(jbeamData)
     cornerWheels[wheelName] = true
   end
 
+  local cornerWheelCount = 0
   local avgWheelPos = vec3(0, 0, 0)
 
   --calculate avg wheel position for later being able to determine where a given wheel is
@@ -270,16 +276,20 @@ local function initSecondStage(jbeamData)
     if cornerWheels[wheel.name] then
       local wheelNodePos = v.data.nodes[wheel.node1].pos
       avgWheelPos = avgWheelPos + wheelNodePos
+      cornerWheelCount = cornerWheelCount + 1
     end
   end
 
-  avgWheelPos = avgWheelPos / #wheels.wheels --make the average of all positions
+  if cornerWheelCount > 0 then
+    avgWheelPos = avgWheelPos / cornerWheelCount --make the average of all positions
+  end
 
   local refNodes = v.data.refNodes[0]
   local vectorForward = vec3(v.data.nodes[refNodes.ref].pos) - vec3(v.data.nodes[refNodes.back].pos)
   local vectorUp = vec3(v.data.nodes[refNodes.up].pos) - vec3(v.data.nodes[refNodes.ref].pos)
   local vectorRight = vectorForward:cross(vectorUp)
 
+  wheelCount = 0
   local foundWheelsCount = 0
 
   for _, wheel in pairs(wheels.wheels) do

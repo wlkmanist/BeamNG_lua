@@ -12,6 +12,8 @@ local function getRecommendedAttributesList()
   return recommendedAttributes
 end
 
+local missionsDir = "/gameplay/missions/"
+
 local additionalAttributesSortedKeys = { "vehicle", "difficulty" }
 
 local additionalAttributes = {
@@ -19,53 +21,53 @@ local additionalAttributes = {
     valuesSorted = {
       {
         key = "own",
-        label = "Own Vehicle"
+        translationKey = "ui.missions.additionalAttributes.vehicle.own"
       }, {
         key = "provided",
-        label = "Provided Vehicle"
+        translationKey = "ui.missions.additionalAttributes.vehicle.provided"
       },{
         key = "choice",
-        label = "Own or Provided Vehicle"
+        translationKey = "ui.missions.additionalAttributes.vehicle.choice"
       }, {
         key = "multi",
-        label = "Multiple Vehicles"
+        translationKey = "ui.missions.additionalAttributes.vehicle.multi"
       }, {
         key = "none",
-        label = "No Vehicle"
+        translationKey = "ui.missions.additionalAttributes.vehicle.none"
       }
     },
     icon = "directions_car",
     label = "Vehicle Used",
-    translationKey = "Vehicle Used"
+    translationKey = "ui.common.property.vehicleUsed"
   },
   difficulty = {
     valuesSorted = {
       {
         key = "veryLow",
-        label = "Very Low "
+        translationKey = "ui.missions.additionalAttributes.difficulty.veryLow"
       }, {
         key = "low",
-        label = "Low"
+        translationKey = "ui.missions.additionalAttributes.difficulty.low"
       }, {
         key = "medium",
-        label = "Medium"
+        translationKey = "ui.missions.additionalAttributes.difficulty.medium"
       }, {
         key = "high",
-        label = "High"
+        translationKey = "ui.missions.additionalAttributes.difficulty.high"
       }, {
         key = "veryHigh",
-        label = "Very High"
+        translationKey = "ui.missions.additionalAttributes.difficulty.veryHigh"
       }
     },
     icon = "flag",
     label = "Difficulty",
-    translationKey = "Difficulty",
+    translationKey = "ui.common.property.difficulty",
   }
 }
 for _, att in pairs(additionalAttributes) do
   att.valuesByKey = {}
   for _, val in ipairs(att.valuesSorted) do
-    val.translationKey = val.translationKey or val.label
+    val.translationKey = val.translationKey or "Missing Label"
     att.valuesByKey[val.key] = val
   end
 end
@@ -268,6 +270,23 @@ end
 
 local defaultMissionTips = {"missions.missions.tips.restart", "missions.missions.tips.bonusStars", "missions.missions.tips.settings", "missions.missions.tips.ratings", "missions.missions.tips.difficulty"}
 local function sanitizeMissionAfterCreation(mission)
+  mission.official = mission.official or isOfficialContentVPath(mission.missionFolder)
+  mission.date = tonumber(mission.date) or 0
+
+  -- add mod information
+  local mod = extensions.core_modmanager.getModFromPath(mission.missionFolder .. "/info.json", true)
+  if mod then
+    mission.modID = mod.modID
+    mission.modName = mod.modname
+    if mod.modData and mod.modData.title then
+      mission.modTitle = mod.modData.title
+    end
+  else
+    mission.modID = nil
+    mission.modName = 'BeamNG'
+    mission.modTitle = 'BeamNG.drive'
+  end
+
   mission.bigMapIcon = mission.bigMapIcon or {}
   mission.bigMapIcon.icon = mission.bigMapIcon.icon or "mission_primary_triangle"
   mission.careerSetup._activeStarCache = {}
@@ -285,6 +304,10 @@ local function sanitizeMissionAfterCreation(mission)
   mission.careerSetup._activeStarCache.bonusStarCount = #bonusKeysSorted
   for key, list in pairs(mission.careerSetup.starRewards) do
     for _, reward in ipairs(list) do
+      if not reward.rewardAmount then
+        log("E", "", "Found nil rewardAmount in starRewards for mission " .. mission.id .. " and key " .. key .. " and reward " .. dumps(reward.attributeKey))
+        reward.rewardAmount = 0
+      end
       reward._originalRewardAmount = reward.rewardAmount
     end
   end
@@ -308,6 +331,7 @@ local function sanitizeMissionAfterCreation(mission)
   mission.stateChanged = mission.stateChanged or nop
   mission.onFlowgraphStateStarted = mission.onFlowgraphStateStarted or nop
   mission.onFlowgraphStateStopped = mission.onFlowgraphStateStopped or nop
+  mission.onMissionScreenReady = mission.onMissionScreenReady or nop
   mission.getCommonSettingsData = mission.getCommonSettingsData or nop
   mission.getUserSettingsData = mission.getUserSettingsData or nop
   mission.processCommonSettings = mission.processCommonSettings or nop
@@ -321,10 +345,21 @@ M.sanitizeMissionAfterCreation = sanitizeMissionAfterCreation
 
 
 local function recursiveRemoveNestedFromCondition(mId, cond)
+  -- Handle branch level condition sanitization
+  if cond.type == 'branchLevel' and cond.branchId then
+    -- Map the old branchId to the new path format
+    local newBranchId = career_branches.oldAttributeNamesToNewNames[cond.branchId]
+
+    if newBranchId then
+      cond.branchId = newBranchId
+    end
+  end
+
+  -- Handle nested conditions
   if cond.nested then
-    if cond.type == 'multiAnd' or cond.type =='multiOr' then
+    if cond.type == 'multiAnd' or cond.type == 'multiOr' then
       for _, n in ipairs(cond.nested) do
-        M.recursiveRemoveNestedFromCondition(mId, cond.nested)
+        recursiveRemoveNestedFromCondition(mId, n)
       end
     else
       cond.nested = nil
@@ -346,6 +381,11 @@ local function sanitizeMission(missionData, filepath)
   if missionData.name == "" or string.find(missionData.name, ".json") then
     log("E", "", "Incorrect 'name' field, please clean it up (no filepaths, no underscores, etc): "..dumps(missionData.name).." at: "..filepath)
     missionData.name = "INCORRECT NAME, CHECK LOGS ("..(missionData.name or "")..")"
+  end
+  if type(missionData.description) == "string" then
+    while string.endswith(missionData.description, "\n") do
+      missionData.description = string.sub(missionData.description, 1, -2)
+    end
   end
 
   -- sanitize description
@@ -389,13 +429,35 @@ local function sanitizeMission(missionData, filepath)
     starRewards = {},
     starOutroTexts = {}
   }
-  missionData.careerSetup.branch = missionData.careerSetup.branch or "(none)"
   missionData.careerSetup.skill = missionData.careerSetup.skill or "(none)"
+  -- backwards compatibility for old skill names
+  if career_branches.oldAttributeNamesToNewNames[missionData.careerSetup.skill] then
+    local newName = career_branches.oldAttributeNamesToNewNames[missionData.careerSetup.skill]
+    --log('D', '', 'Mapped old skill name "'..missionData.careerSetup.skill..'" to "'..newName..'" in mission')
+    missionData.careerSetup.skill = newName
+  end
+  missionData.careerSetup.branch = nil
+  missionData.careerSetup.domain = nil
+  --missionData.careerSetup.skill = missionData.careerSetup.skill or "(none)"
+  -- backwards compatibility for old branch names
+  --missionData.careerSetup.domain = missionData.careerSetup.domain or (missionData.careerSetup.branch == "labourer" and "independent" or "apm")
   missionData.careerSetup.starsActive = missionData.careerSetup.starsActive or {}
   missionData.careerSetup.defaultStarKeys = missionData.careerSetup.defaultStarKeys or {}
   missionData.careerSetup.starRewards = missionData.careerSetup.starRewards or {}
   missionData.careerSetup.starOutroTexts = missionData.careerSetup.starOutroTexts or {}
   missionData.careerSetup._activeStarCache = {}
+
+  -- update starRewards attributeKey for backwards compatibility
+  for _, list in pairs(missionData.careerSetup.starRewards) do
+    for _, reward in ipairs(list) do
+      local oldName = reward.attributeKey
+      local newName = career_branches.oldAttributeNamesToNewNames[oldName]
+      if newName then
+        --log('D', '', 'Mapped old attribute name "'..oldName..'" to "'..newName..'" in mission star rewards')
+        reward.attributeKey = newName
+      end
+    end
+  end
 
   -- sort starReward entries by attributeKey
   for _, list in pairs(missionData.careerSetup.starRewards) do
@@ -415,6 +477,25 @@ local function sanitizeMission(missionData, filepath)
     end
   end
 
+
+  -- sanitize defaultStarKeys
+  local defaultStarKeys = {}
+  local isNonNumeric = false
+  for idx, key in pairs(missionData.careerSetup.defaultStarKeys) do
+    if type(idx) ~= "number" then
+      isNonNumeric = true
+    end
+    table.insert(defaultStarKeys, {tonumber(idx), key})
+  end
+  if isNonNumeric then
+    log("W", "", "defaultStarKeys contains non-numeric keys, re-saving mission to fix: " ..dumps(missionData.id))
+    table.sort(defaultStarKeys, function(a,b) return a[1] < b[1] end)
+    missionData.careerSetup.defaultStarKeys = {}
+    for _, elem in ipairs(defaultStarKeys) do
+      missionData.careerSetup.defaultStarKeys[elem[1]] = elem[2]
+    end
+  end
+
   missionData.starLabels = missionData.starLabels or {}
   missionData.defaultStarOutroTexts = missionData.defaultStarOutroTexts or {}
   missionData.devMission = missionData.devMission or false
@@ -425,6 +506,51 @@ local function sanitizeMission(missionData, filepath)
     missionData.setupModules[modName] = missionData.setupModules[modName] or {enabled = false}
   end
 
+  local folderDir, typeDir = missionData.missionFolder.."/", missionTypesDir.."/"..missionData.missionType.."/"
+  local hasFolderDir, hasTypeDir = false, false
+  local validLayers = {}
+  local checkedPaths = {}
+  for _, layer in ipairs(missionData.layers or {}) do
+    if layer.isMissionFolderDir then
+      layer.dir = folderDir
+    end
+    if layer.isMissionTypeDir then
+      layer.dir = typeDir
+    end
+    layer.isMissionFolderDir = false
+    layer.isMissionTypeDir = false
+    layer.fixed = false
+    if layer.dir == folderDir then
+      layer.fixed = true
+      layer.isMissionFolderDir = true
+      hasFolderDir = true
+    end
+    if layer.dir == typeDir   then
+      layer.fixed = true
+      layer.isMissionTypeDir = true
+      hasTypeDir = true
+    end
+    if not checkedPaths[layer.dir] then
+      table.insert(validLayers, layer)
+    end
+    checkedPaths[layer.dir] = true
+  end
+  if not hasFolderDir then
+    table.insert(validLayers, {
+      dir = missionData.missionFolder.."/",
+      fixed = true,
+      isMissionFolderDir = true
+    })
+  end
+  if not hasTypeDir then
+    table.insert(validLayers, {
+      dir = missionTypesDir.."/"..missionData.missionType.."/",
+      fixed = true,
+      isMissionTypeDir = true
+
+    })
+  end
+  missionData.layers = validLayers
 
 
   --[[
@@ -442,10 +568,14 @@ local function sanitizeMission(missionData, filepath)
   ]]
 end
 
+local function getMissionIdFromPath(missionDir)
+  local _, missionId, _ = path.split(missionDir)
+  missionId = string.sub(missionDir, #missionsDir+1)
+  return missionId
+end
 
 -- loads a single mission from file (no cache)
 local infoFile = "info.json"
-local missionsDir = "/gameplay/missions/"
 local function loadMission(missionDir)
   if not string.startswith(missionDir, missionsDir) then
     log("E", "", "Unable to load mission, not placed in "..missionsDir..": "..dumps(missionDir))
@@ -465,10 +595,11 @@ local function loadMission(missionDir)
     log("E", "", "Unable to load mission data, couldn't parse file: "..dumps(infoPath))
     return nil
   end
-  local _, missionId, _ = path.split(missionDir)
-  --dump(missionId)
-  missionId = string.sub(missionDir, #missionsDir+1)
-  missionData.id = missionId
+  if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+    util_asyncBulkLoader.yield("loadMission " .. missionDir)
+  end
+
+  missionData.id = getMissionIdFromPath(missionDir)
   missionData.missionFolder = missionDir
   sanitizeMission(missionData, infoPath)
 
@@ -513,6 +644,8 @@ local function saveMission(missionData, newFolder)
     careerSetup = careerSetup,
     setupModules = missionData.setupModules,
     devMission = missionData.devMission,
+    layers = missionData.layers,
+    official = nil,
   }
 
   if data.careerSetup.starRewards then
@@ -522,7 +655,7 @@ local function saveMission(missionData, newFolder)
           reward.rewardAmount = reward._originalRewardAmount
           reward._originalRewardAmount = nil
         else
-          log("W","Reward had no _originalRewardAmount? " .. dumps(missionData.id))
+          log("W","Reward had no _originalRewardAmount? " .. dumps(missionData.id) .. " - "..dumps(key) .. " : " .. dumps(reward.attributeKey))
         end
       end
     end
@@ -533,39 +666,166 @@ local function saveMission(missionData, newFolder)
   log("I","","Wrote mission successfully to " .. targetFolder)
 end
 
+local availableLevels = nil
+local function getAllAvailableLevels()
+  -- return map of lowercase level name to level name
+  if not availableLevels then
+    availableLevels = {}
+    for _, level in ipairs(core_levels.getList()) do
+      local lowercaseLevelName = string.lower(level.levelName)
+      availableLevels[lowercaseLevelName] = level.levelName
+      systemYield()
+    end
+  end
+  return availableLevels
+end
+
+local function getLevelFromMissionId(missionId)
+  local availableLevels = getAllAvailableLevels()
+  local levelNameFromMissionId = string.match(missionId, "^[^/]+") or ""  -- part until first slash
+  local level = availableLevels[string.lower(levelNameFromMissionId)]
+  if not level then
+    local msg = (
+      "Mission '"..missionId.."' has level '"..levelNameFromMissionId.."', which is not a known level. " ..
+      "Make sure that the part of the mission ID before the first slash (/) is a valid level, by placing the " ..
+      "mission in the directory /gameplay/missions/<level>. This mission will be ignored."
+    )
+    log("W", "", msg)
+  end
+  return level
+end
+
+local function getMissionTypeFromMissionId(missionId)
+  return string.match(missionId, "^[^/]+/([^/]+)") or ""
+end
+
+-- get directories of file-based missions
+local fileBasedMissionDirCache = nil  -- maps mission id to directory
+local function getFileBasedMissionDirs()
+  if not fileBasedMissionDirCache then
+    fileBasedMissionDirCache = {}
+    local count = 0
+    local missionInfos
+    if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
+      missionInfos = core_jobsystem.findFilesAsync(missionsDir, 'info.json', util_asyncBulkLoader.yield)
+    else
+      missionInfos = FS:findFiles(missionsDir, 'info.json', -1, false, true)
+    end
+    for _, missionInfo in ipairs(missionInfos) do
+      local missionDir, _, _ = path.split(missionInfo)
+      missionDir = string.sub(missionDir,0,-2)
+      local missionId = getMissionIdFromPath(missionDir)
+      local level = getLevelFromMissionId(missionId)
+      if level then
+        fileBasedMissionDirCache[missionId] = {dir = missionDir, level = level, procedural = false}
+        count = count + 1
+      end
+      systemYield()
+    end
+    log("D","","Found " .. count .. " file-based missions.")
+  end
+  return fileBasedMissionDirCache
+end
+
+-- get procedural missions by level
+local proceduralMissionsByLevelCache = {}
+local function getProceduralMissionsByLevel(levelIdentifier)
+  local c = proceduralMissionsByLevelCache[levelIdentifier]
+  if not c then
+    proceduralMissionsByLevelCache[levelIdentifier] = {}
+    local count = 0
+    for _, generator in ipairs(proceduralMissionGenerators) do
+      local genData = generator.generate(levelIdentifier) or {}
+      for _, missionData in ipairs(genData) do
+        local level = getLevelFromMissionId(missionData.id)
+        if level == levelIdentifier or string.lower(level) == string.lower(levelIdentifier) then
+          local d = {data = missionData, level = level, procedural = true}
+          proceduralMissionsByLevelCache[levelIdentifier][missionData.id] = d
+          count = count + 1
+        end
+      end
+      systemYield()
+    end
+    c = proceduralMissionsByLevelCache[levelIdentifier]
+    log("D","","Found " .. count .. " procedural missions for level " .. levelIdentifier .. ".")
+  end
+  return c
+end
+
+-- get file paths of all mission files (without reading files) and procedural mission data for all levels
+-- returns infoMap which maps mission id to
+-- {dir: string, level: string, procedural: false} for file based missions and
+-- {data: table, level: string, procedural: true} for procedural missions
+local function getMissionInfoList()
+  local infoMap = {}
+  -- file based missions
+  for missionId, data in pairs(getFileBasedMissionDirs()) do
+    infoMap[missionId] = data
+  end
+  -- procedural missions
+  for _, level in pairs(getAllAvailableLevels()) do
+    local m = getProceduralMissionsByLevel(level)
+    for missionId, data in pairs(m) do
+      infoMap[missionId] = data
+    end
+    systemYield()
+  end
+  return infoMap
+end
+
+-- get file paths of all mission files (without reading files) and procedural mission data for a single level
+local function getMissionInfoListOfLevel(levelIdentifier)
+  local infoMap = {}
+  -- file based missions
+  for missionId, data in pairs(getFileBasedMissionDirs()) do
+    if data.level == levelIdentifier or string.lower(data.level) == string.lower(levelIdentifier) then
+      infoMap[missionId] = data
+    end
+  end
+  -- procedural missions
+  local m = getProceduralMissionsByLevel(levelIdentifier)
+  for missionId, data in pairs(m) do
+    infoMap[missionId] = data
+  end
+  return infoMap
+end
+
+-- return content of info.json for given mission id or nil if mission does not exist
+local filesDataById = {}
+local function getMissionFileData(id, infoData)
+  local missionData = filesDataById[id]
+  if not missionData then
+    if not infoData then
+      local level = getLevelFromMissionId(id)
+      if not level then return nil end
+      infoData = getMissionInfoListOfLevel(level)[id]
+    end
+    if not infoData then return nil end
+    if infoData.procedural then
+      missionData = deepcopy(infoData.data)
+      sanitizeMission(missionData, "proceduralMission")
+      missionData.procedural = true
+      filesDataById[id] = missionData
+    else  -- file-based mission
+      missionData = loadMission(infoData.dir)
+    end
+    filesDataById[id] = missionData
+  end
+  return missionData
+end
+
 -- returns all missions data from info.json files
 local filesData
 local function getFilesData()
   if not filesData then
     filesData = {}
-    local fromFilesCount, genCount = 0, 0
-    -- load filebased missions
-    for _,missionInfo in ipairs(FS:findFiles(missionsDir, 'info.json', -1, false, true)) do
-      --dump(missionInfo)
-      local missionDir, _, _ = path.split(missionInfo)
-      missionDir = string.sub(missionDir,0,-2)
-      local missionData = loadMission(missionDir)
-      if not missionData then
-        goto continue
-      end
-      fromFilesCount = fromFilesCount + 1
-      table.insert(filesData, missionData)
-      ::continue::
-    end
-    -- load procedural missions.
-    for _, generator in ipairs(proceduralMissionGenerators) do
-
-      local genData = generator.generate() or {}
-      for _, missionData in ipairs(genData) do
-        sanitizeMission(missionData, "proceduralMission")
-        missionData.procedural = true
-        genCount = genCount + 1
+    for id, infoData in pairs(getMissionInfoList()) do
+      local missionData = getMissionFileData(id, infoData)
+      if missionData then
         table.insert(filesData, missionData)
       end
     end
-
     table.sort(filesData, function(a,b) return a.id<b.id end)
-    log("D","","Loaded " .. #filesData .. " total missions: " .. fromFilesCount .. " from files, " .. genCount .. " from generators.")
   end
   return filesData
 end
@@ -584,125 +844,198 @@ local function createMission(id, data)
   saveMission(data, missionsDir.."/"..id)
   local loaded = loadMission(missionsDir.."/"..id)
   table.insert(loaded, data)
+  local level = getLevelFromMissionId(id)
+  if level then
+    if not fileBasedMissionDirCache then
+      getFileBasedMissionDirs()
+    end
+    fileBasedMissionDirCache[id] = {dir = missionsDir.."/"..id, level = level, procedural = false}
+  end
   table.insert(filesData, loaded)
+  filesDataById[id] = loaded
   return loaded
 end
 
+local function constructMissionFromFileData(missionData)
+  -- prepare mission information from mission file data
 
--- return all missions
-local missions, missionsById
-local function get()
-  if not missions then
-    missions = {}
-    missionsById = {}
-    for _, missionData in ipairs(getFilesData()) do
-
-      -- load constructor
-      local missionTypeConstructor = getMissionTypeConstructor(missionData.missionType)
-      local infoPath = missionDir .. "/" .. infoFile
-      if not missionTypeConstructor then
-        log("E", "", "Mission "..dumps(infoPath).." did not specify a valid missionType: "..dumps(missionData.missionType))
-        goto continue
-      end
-
-
-      -- actually construct the mission
-      local result, mission, add = xpcall(function()
-          return missionTypeConstructor(deepcopy(missionData))
-        end
-        , debug.traceback)
-      if add == true or not mission then
-        log("E", "", "Unable to construct mission "..dumps(missionData.id).." of type "..dumps(missionData.missionType)..", its constructor returned "..dumps(add))
-        goto continue
-      end
-      if type(mission) == 'string' then
-        log("E", "", "Unable to construct mission "..dumps(missionData.id).." of type "..dumps(missionData.missionType)..", something went wrong:")
-        log("E", "", mission)
-        goto continue
-      end
-
-      local customPath = mission.missionFolder.."/constructor" -- constructor specific to this mission
-      if FS:fileExists(customPath..".lua") then
-        local result, err = xpcall(function()
-          local missionConstructor = require(customPath)() -- gets it as if it was a module, then merges all non-init pairs
-          for k, v in pairs(missionConstructor) do
-            if k ~= "init" then
-              mission[k] = v
-            end
-          end
-        end
-        , debug.traceback)
-
-        if err then
-          log("E", "", "Mission specific constructor of mission "..dumps(missionData.id).." failed to resolve, something went wrong:")
-          log("E", "", err)
-        end
-      end
-
-      -- sanitize after creation
-      M.sanitizeMissionAfterCreation(mission)
-
-      -- load progress
-      mission.defaultProgressKey = mission.defaultProgressKey or 'default'
-      mission.currentProgressKey = mission.currentProgressKey or mission.defaultProgressKey or 'default'
-      mission.autoAggregates = mission.autoAggregates or missionData.autoAggregates or {}
-
-      if not mission.defaultUserSettings then
-        mission.defaultUserSettings = {}
-        if mission.getUserSettingsData then
-          for _, d in ipairs(mission:getUserSettingsData() or {}) do
-            mission.defaultUserSettings[d.key] = d.value
-          end
-        end
-      end
-
-      -- mission.saveData = gameplay_missions_progress.loadMissionSaveData(mission)
-      mission.unlocks = {}
-
-      if not mission.startTrigger then
-        log("E", "", "Unable to load mission due to missing startTrigger information: "..dumps(missionData.id))
-        goto continue
-      end
-
-      table.insert(missions, mission)
-      missionsById[mission.id] = mission
-      ::continue::
-    end
-
-     -- arbitrary but explicit ordering, for determinism when we add mission dependencies (and coincidentally for UI purposes too)
-    table.sort(missions, function(a, b) return a.id < b.id end)
-
-    for _,mission in ipairs(missions) do
-      mission.saveData = gameplay_missions_progress.loadMissionSaveData(mission)
-      gameplay_missions_progress.reduceCareerRewardsForDefaultStars(mission)
-    end
-
-    -- check if career wants to do anything with mission after loading...
-    extensions.hook("onMissionsLoadedFromFiles", missionsById)
-
-    gameplay_missions_unlocks.setUnlockForwardBackward(missions)
-    gameplay_missions_unlocks.updateUnlockStatus(missions)
+  -- load constructor
+  local missionTypeConstructor = getMissionTypeConstructor(missionData.missionType)
+  local infoPath = missionDir .. "/" .. infoFile
+  if not missionTypeConstructor then
+    log("E", "", "Mission "..dumps(infoPath).." did not specify a valid missionType: "..dumps(missionData.missionType))
+    return nil
   end
 
+  -- actually construct the mission
+  local result, mission, add = xpcall(function()
+      return missionTypeConstructor(deepcopy(missionData))
+    end
+    , debug.traceback)
+  if add == true or not mission then
+    log("E", "", "Unable to construct mission "..dumps(missionData.id).." of type "..dumps(missionData.missionType)..", its constructor returned "..dumps(add))
+    return nil
+  end
+  if type(mission) == 'string' then
+    log("E", "", "Unable to construct mission "..dumps(missionData.id).." of type "..dumps(missionData.missionType)..", something went wrong:")
+    log("E", "", mission)
+    return nil
+  end
+  mission.missionTypeDir = missionTypesDir.."/"..missionData.missionType .."/"
 
+  local customPath = mission.missionFolder.."/constructor" -- constructor specific to this mission
+  if FS:fileExists(customPath..".lua") then
+    local result, err = xpcall(function()
+      local missionConstructor = require(customPath)() -- gets it as if it was a module, then merges all non-init pairs
+      for k, v in pairs(missionConstructor) do
+        if k ~= "init" then
+          mission[k] = v
+        end
+      end
+    end
+    , debug.traceback)
+
+    if err then
+      log("E", "", "Mission specific constructor of mission "..dumps(missionData.id).." failed to resolve, something went wrong:")
+      log("E", "", err)
+    end
+  end
+
+  -- sanitize after creation
+  M.sanitizeMissionAfterCreation(mission)
+
+  -- load progress
+  mission.defaultProgressKey = mission.defaultProgressKey or 'default'
+  mission.currentProgressKey = mission.currentProgressKey or mission.defaultProgressKey or 'default'
+  mission.autoAggregates = mission.autoAggregates or missionData.autoAggregates or {}
+
+  if not mission.defaultUserSettings then
+    mission.defaultUserSettings = {}
+    if mission.getUserSettingsData then
+      for _, d in ipairs(mission:getUserSettingsData() or {}) do
+        mission.defaultUserSettings[d.key] = d.defaultValue ~= nil and deepcopy(d.defaultValue) or d.value
+      end
+    end
+  end
+
+  if not mission.startTrigger then
+    log("E", "", "Unable to load mission due to missing startTrigger information: "..dumps(missionData.id))
+    return nil
+  end
+
+  local saveData, updated = gameplay_missions_progress.loadMissionSaveData(mission)
+  mission.saveData = saveData
+  if updated then
+    log("I", "", "Updated mission save data for mission " .. mission.id)
+  end
+  gameplay_missions_progress.reduceCareerRewardsForDefaultStars(mission)
+
+  -- in career mode, check mission setup for leagues
+  if career_modules_branches_leagues then
+    career_modules_branches_leagues.checkMission(mission)
+  end
+
+  return mission
+end
+
+-- return mission by id or nil if mission does not exist
+local missionsById = {}
+local function getMissionById(id)
+  local mission = missionsById[id]
+  if not mission then
+    local missionData = getMissionFileData(id)
+    if not missionData then return nil end
+    mission = constructMissionFromFileData(missionData)
+    missionsById[id] = mission
+  end
+  return mission
+end
+
+-- return all missions of a given level
+local missionsByLevel = {}
+local function getMissionsOfLevel(levelIdentifier)
+  local missionsOfLevel = missionsByLevel[levelIdentifier]
+  if not missionsOfLevel then
+    missionsByLevel[levelIdentifier] = {}
+    local infoDataList = getMissionInfoListOfLevel(levelIdentifier)
+    for id, _ in pairs(infoDataList) do
+      local mission = getMissionById(id)
+      if mission then
+        table.insert(missionsByLevel[levelIdentifier], mission)
+      end
+    end
+    missionsOfLevel = missionsByLevel[levelIdentifier]
+    table.sort(missionsOfLevel, function(a, b) return a.id < b.id end)
+  end
+  return missionsOfLevel
+end
+
+-- return all missions (of all levels)
+local missions = nil
+local function getAllMissions()
+  if not missions then
+    missions = {}
+    missionsByLevel = {}
+    local infoDataList = getMissionInfoList()
+    if util_asyncBulkLoader then
+      util_asyncBulkLoader.addTotal(tableSize(infoDataList))
+    end
+    for id, _ in pairs(infoDataList) do
+      local mission = getMissionById(id)
+      if util_asyncBulkLoader then
+        util_asyncBulkLoader.addCount(1)
+      end
+      if mission then
+        table.insert(missions, mission)
+        local level = getLevelFromMissionId(id)
+        if not missionsByLevel[level] then missionsByLevel[level] = {} end
+        table.insert(missionsByLevel[level], mission)
+      end
+    end
+    table.sort(missions, function(a, b) return a.id < b.id end)
+  end
   return missions
 end
 
-local function getAllIds()
-  get()
-  return tableKeysSorted(missionsById)
+local function areAllMissionsLoaded()
+  return missions ~= nil
 end
 
-local function getMissionById(id)
-  get()
-  return missionsById[id]
+local function getAllIds()
+  return tableKeysSorted(getMissionInfoList())
+end
+
+local function getAllIdsOfLevel(levelIdentifier)
+  return tableKeysSorted(getMissionInfoListOfLevel(levelIdentifier))
 end
 
 local function getMissionsByMissionType(type)
-  get()
   local ret = {}
-  for _, mission in pairs(missionsById) do
+  for _, mission in ipairs(getAllMissions()) do
     if mission.missionType == type then
+      table.insert(ret, mission)
+    end
+  end
+  return ret
+end
+
+local function getMissionsByFilter(filters)
+  filters = filters or {}
+  local ret = {}
+  for _, mission in ipairs(getAllMissions()) do
+    local passed = true
+
+    -- filter by level
+    if filters.level and mission.startTrigger and mission.startTrigger.level ~= filters.level then
+      passed = false
+    end
+
+    -- filter by missionType
+    if filters.missionType and mission.missionType ~= filters.missionType then
+      passed = false
+    end
+
+    if passed then
       table.insert(ret, mission)
     end
   end
@@ -754,8 +1087,7 @@ local function getMissionPosRot(poi, veh)
   return nil, nil
 end
 local function formatMissionToRawPoi(m, elements, levelIdentifier)
-  levelIdentifier = levelIdentifier or getCurrentLevelIdentifier()
-  if m.unlocks.startable and m.unlocks.visible then
+  if gameplay_missions_unlocks.isMissionStartable(m) and gameplay_missions_unlocks.isMissionVisible(m) then
     local locs = gameplay_missions_missions.getLocations(m)
     for i, l in ipairs(locs) do
       if l.type == 'coordinates' then
@@ -763,10 +1095,10 @@ local function formatMissionToRawPoi(m, elements, levelIdentifier)
           table.insert(elements,  {
             id = m.id..(#locs > 1 and ("-"..i) or ''),
 
-            data = { type = "mission", missionId = m.id},
+            data = { type = "mission", missionId = m.id, date = m.date or 0},
             markerInfo = {
               missionMarker = {pos = l.pos, rot = l.rot, radius = l.radius, icon = m.bigMapIcon.icon},
-              bigmapMarker = {pos = l.pos, icon = m.bigMapIcon.icon, quickTravelPosRotFunction = getMissionPosRot}
+              bigmapMarker = {pos = l.pos, icon = m.bigMapIcon.icon, quickTravelPosRotFunction = getMissionPosRot},
             }
           })
         end
@@ -774,20 +1106,13 @@ local function formatMissionToRawPoi(m, elements, levelIdentifier)
     end
   end
 end
+
 local function onGetRawPoiListForLevel(levelIdentifier, elements)
-    -- first add all missions of the current level
-  local missions = gameplay_missions_missions.get() or {}
+  -- first add all missions of the current level
+  levelIdentifier = levelIdentifier or getCurrentLevelIdentifier()
+  local missions = gameplay_missions_missions.getMissionsOfLevel(levelIdentifier) or {}
   for _, m in ipairs(missions) do
-    if m.id == 'west_coast_usa/arrive/005-ArriveTutorial' then
-      if  career_modules_linearTutorial and career_modules_linearTutorial.isLinearTutorialActive() then
-        -- only include this mission durign tutorial
-        M.formatMissionToRawPoi(m, elements, levelIdentifier)
-      else
-      -- skip
-      end
-    else
-      M.formatMissionToRawPoi(m, elements, levelIdentifier)
-    end
+    formatMissionToRawPoi(m, elements, levelIdentifier)
   end
 end
 M.onGetRawPoiListForLevel = onGetRawPoiListForLevel
@@ -795,6 +1120,7 @@ M.formatMissionToRawPoi = formatMissionToRawPoi
 
 local function onActivityAcceptGatherData(elemData, activityData)
   local missionElems = {}
+  local careerActive = career_career.isActive()
   for _, elem in ipairs(elemData) do
     if elem.type == "mission" then
       local m = gameplay_missions_missions.getMissionById(elem.missionId)
@@ -816,8 +1142,8 @@ local function onActivityAcceptGatherData(elemData, activityData)
         if m.additionalAttributes[additionalAttributeKey] then
           table.insert(props, {
             icon = additionalAttributes[additionalAttributeKey].icon,
-            keyLabel = additionalAttributes[additionalAttributeKey].label,
-            valueLabel = additionalAttributes[additionalAttributeKey].valuesByKey[m.additionalAttributes[additionalAttributeKey]].label
+            keyLabel = additionalAttributes[additionalAttributeKey].translationKey,
+            valueLabel = additionalAttributes[additionalAttributeKey].valuesByKey[m.additionalAttributes[additionalAttributeKey]].translationKey
           })
         end
       end
@@ -832,17 +1158,24 @@ local function onActivityAcceptGatherData(elemData, activityData)
         m:getActivityAcceptProps(props)
       end
 
+      -- TODO: do not rely on forwardInfo for sorting
+      local forwardInfo = nil
+      if careerActive then
+        forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(m)
+      end
+      --local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(m)
       local data = {
         icon = m.bigMapIcon.icon,
         heading = heading,
         preheadings = preheadings,
         props = props,
         buttonLabel = "missions.missions.general.accept.viewDetails",
-        buttonFun = function()  gameplay_missions_missionScreen.setPreselectedMissionId(m.id) guihooks.trigger('MenuOpenModule','mission-details') end,
+        buttonFun = function()  gameplay_missions_missionScreen.setPreselectedMissionId(m.id) guihooks.trigger('MenuOpenModule','mission.details') end,
         sorting = {
           type = "mission",
           id = m.id,
-          order = m.unlocks.depth,
+          --order = careerActive and forwardInfo.depth or -(m.date or 0),
+          order = careerActive and forwardInfo.depth or -(m.date or 0),
         }
       }
       table.insert(activityData, data)
@@ -851,7 +1184,45 @@ local function onActivityAcceptGatherData(elemData, activityData)
 end
 M.onActivityAcceptGatherData = onActivityAcceptGatherData
 
-
+local severityPriority = {unknown = -1, minor=1, warning = 10, error = 50, critical = 100}
+local severityToLog = {unknown = 'I', minor = 'I', warning = 'W', error = 'E', critical = 'E'}
+local function logMissionIssues(mission)
+  if not mission._issueList then
+    log("I", "", "Calculating issues for mission " .. mission.id.."...")
+    local issues = {}
+    gameplay_missions_missions.getMissionEditorForType(mission.missionType):setContainer(mission)
+    local cIssues = gameplay_missions_missions.getMissionEditorForType(mission.missionType):checkContainer(mission)
+    for _, i in ipairs(cIssues) do
+      table.insert(issues, i)
+    end
+    if gameplay_missions_missions.getMissionEditorForType(mission.missionType).calculateMissionIssues then
+      local success, customIssues = pcall(gameplay_missions_missions.getMissionEditorForType(mission.missionType).calculateMissionIssues, mission)
+      if success then
+        for _, i in ipairs(customIssues) do
+          table.insert(issues, i)
+        end
+      end
+    end
+    mission._issueList = {
+      list = issues,
+      importantCount = 0,
+      highestSeverity = 'unknown'
+    }
+    for _, i in ipairs(issues) do
+      if i.severity == 'warning' or i.severity == 'error' then
+        mission._issueList.importantCount = mission._issueList.importantCount + 1
+      end
+      if severityPriority[mission._issueList.highestSeverity] < severityPriority[i.severity] then
+        mission._issueList.highestSeverity = i.severity
+      end
+    end
+  end
+  log(severityToLog[mission._issueList.highestSeverity] or 'I', "", string.format("Mission %s has %d issues:", mission.id, #(mission._issueList.list or {})))
+  for _, i in ipairs(mission._issueList.list or {}) do
+    log(severityToLog[i.severity] or 'I', "", i.label)
+  end
+end
+M.logMissionIssues = logMissionIssues
 
 M.getLocations = getLocations
 M.getFilesData = getFilesData
@@ -861,10 +1232,14 @@ M.getAdditionalAttributes = getAdditionalAttributes
 M.getMissionTypeConstructor = getMissionTypeConstructor
 M.getMissionStaticData = getMissionStaticData
 M.getMissionProgressSetupData = getMissionProgressSetupData
-M.get = get
+M.getAllMissions = getAllMissions
+M.areAllMissionsLoaded = areAllMissionsLoaded
 M.getAllIds = getAllIds
 M.getMissionById = getMissionById
+M.getMissionsOfLevel = getMissionsOfLevel
 M.getMissionsByMissionType = getMissionsByMissionType
+M.getMissionTypeFromMissionId = getMissionTypeFromMissionId
+M.getMissionsByFilter = getMissionsByFilter
 M.loadMission = loadMission
 M.saveMission = saveMission
 M.createMission = createMission
@@ -880,14 +1255,33 @@ M.reloadCompleteMissionSystem = function()
   if gameplay_markerInteraction then
     gameplay_markerInteraction.clearCache()
   end
+  log("I","","Clearing Unlocks...")
+  gameplay_missions_unlocks.clearCache()
   log("I","","Clearing Missions...")
   gameplay_missions_missions.clearCache()
   log("I","","Clearing Complete!")
 end
 
+local function existsMission(id)
+  -- checks if a mission exists by id without the need to load the mission
+  local level = getLevelFromMissionId(id)
+  if not level then return false end
+  local info = getMissionInfoListOfLevel(level)
+  return info[id] ~= nil
+end
+M.existsMission = existsMission
 
-
-M.clearCache = function() filesData = nil locationsCache = {} missions = nil end
+M.clearCache = function()
+  fileBasedMissionDirCache = nil
+  proceduralMissionsByLevelCache = {}
+  filesData = nil
+  filesDataById = {}
+  locationsCache = {}
+  missions = nil
+  missionsById = {}
+  missionsByLevel = {}
+  availableLevels = nil
+end
 M.onModManagerReady = M.clearCache
 M.baseMission  = function(C, ...) return require('/lua/ge/extensions/gameplay/missions/missionTypes/baseMission')(C, ...) end
 M.flowMission  = function(C, ...) return require('/lua/ge/extensions/gameplay/missions/missionTypes/flowMission')(C, ...) end

@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -39,12 +38,16 @@ function C:workOnce()
     local progressKey = self.pinIn.progressKey.value or self.mgr.activity.currentProgressKey or self.mgr.activity.defaultProgressKey
     local totalChange = gameplay_missions_progress.aggregateAttempt(self.mgr.activity.id, attempt, progressKey)
     local aggregateChange = totalChange.aggregateChange
-    local unlockChange = totalChange.unlockChange
-    local nextMissionsUnlock = totalChange.nextMissionsUnlock
     if not (career_career and career_career.isActive()) then
       gameplay_missions_progress.saveMissionSaveData(self.mgr.activity.id)
     end
 
+    -- Stop AI recording
+    if self.mgr.modules.aiRecording then
+      self.mgr.modules.aiRecording:stopAiRecording(attempt, totalChange)
+    end
+
+    -- Assign outro text (may need revision)
     local highestDefaultStarOutroText = self.mgr.activity.careerSetup.starOutroTexts['noStarUnlocked'] or ""
     if highestDefaultStarOutroText == "" then
       highestDefaultStarOutroText = self.mgr.activity.defaultStarOutroTexts['noStarUnlocked'] or ""
@@ -53,22 +56,33 @@ function C:workOnce()
     if not self.mgr.activity.careerSetup._activeStarCache.defaultStarKeysSorted[1] then
       highestDefaultStarOutroText = self.mgr.activity.defaultStarOutroTexts['noStarExists'] or highestDefaultStarOutroText
     else
-      for _, starKey in ipairs(self.mgr.activity.careerSetup._activeStarCache.defaultStarKeysSorted) do
-        if attempt.unlockedStars[starKey] then
-          local txt = self.mgr.activity.careerSetup.starOutroTexts[starKey] or ""
-          if txt == "" then
-            txt = self.mgr.activity.defaultStarOutroTexts[starKey] or ""
-          end
-          highestDefaultStarOutroText = txt
+      local hasDefaultUnlockedStar = false
+      for starKey, _ in pairs(attempt.unlockedStars) do
+        if self.mgr.activity.careerSetup._activeStarCache.defaultStarKeysByKey[starKey] then
+          hasDefaultUnlockedStar = true -- at least one default unlocked star exists
+          break
         end
+      end
+
+      if hasDefaultUnlockedStar then
+        for _, starKey in ipairs(self.mgr.activity.careerSetup._activeStarCache.defaultStarKeysSorted) do
+          if attempt.unlockedStars[starKey] then
+            local txt = self.mgr.activity.careerSetup.starOutroTexts[starKey] or ""
+            if txt == "" then
+              txt = self.mgr.activity.defaultStarOutroTexts[starKey] or ""
+            end
+            highestDefaultStarOutroText = txt
+          end
+        end
+      else
+        highestDefaultStarOutroText = self.mgr.activity.defaultStarOutroTexts['noStarExists'] or highestDefaultStarOutroText
       end
     end
 
-    if highestDefaultStarOutroText == "" then
-     highestDefaultStarOutroText =  "(No Text!)"
-    end
     self.pinOut.outroText.value = highestDefaultStarOutroText
-    self.pinOut.outroTranslation.value =  { txt = highestDefaultStarOutroText, context = deepcopy(attempt.data) }
+    if highestDefaultStarOutroText then
+      self.pinOut.outroTranslation.value =  { txt = highestDefaultStarOutroText, context = deepcopy(attempt.data) }
+    end
 
     self.pinOut.change.value = totalChange or {}
     for key, val in pairs(aggregateChange) do

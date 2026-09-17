@@ -3,12 +3,16 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
+local isStartable = gameplay_missions_unlocks.isMissionStartable
+local isVisible = gameplay_missions_unlocks.isMissionVisible
 
 local function sortByStartable(m1, m2)
-  if m1.unlocks.maxBranchlevel ~= m2.unlocks.maxBranchlevel then
-    return m1.unlocks.maxBranchlevel < m2.unlocks.maxBranchlevel
+  local f1 = gameplay_missions_unlocks.getForwardMissionInfo(m1)
+  local f2 = gameplay_missions_unlocks.getForwardMissionInfo(m2)
+  if f1.maxBranchLevel ~= f2.maxBranchLevel then
+    return f1.maxBranchLevel < f2.maxBranchLevel
   end
-  return m1.unlocks.startable and not m2.unlocks.startable
+  return isStartable(m1) and not isStartable(m2)
 end
 
 local function sortByFacId(f1, f2)
@@ -35,15 +39,80 @@ local function getRewardIcons(rewards)
   return newRet
 end
 
+
+
 local comingSoonCard = {heading="(Not Implemented)", type="unlockCard", icon="roadblockL"}
+local function calculateUnlockInfo(skill, value, level)
+  local unlockInfo = {}
+  local unlocks = skill.levels
+  local hasUnlocks = false
+
+  if unlocks then
+    local prevTarget = 0
+    for i = 1, #unlocks do
+      local prevLvlInfo = skill.levels[i-1]
+      local curLvlInfo = skill.levels[i]
+      local nextLvlInfo = skill.levels[i+1]
+      local requiredRelative = (curLvlInfo and curLvlInfo.requiredValue or -1) - prevTarget
+
+
+
+      prevTarget = (curLvlInfo and curLvlInfo.requiredValue or -1)
+      unlockInfo[i] = {
+        index = i,
+        currentValue = prevLvlInfo and value - prevLvlInfo.requiredValue or -1,
+        requiredValue = curLvlInfo and requiredRelative or -1,
+        xpCurrent = value,
+        xpRequired = curLvlInfo and curLvlInfo.requiredValue or -1,
+        isInDevelopment = unlocks[i].isInDevelopment,
+        isMaxLevel = unlocks[i].isMaxLevel,
+        isBase = i == 1,
+        unlocked = i >= level,
+        description = unlocks[i].description,
+      }
+      if (unlocks[i].unlocks and #unlocks[i].unlocks > 0) or unlocks[i].description then
+        hasUnlocks = true
+      end
+      local list = {}
+      for _, unlock in ipairs(unlocks[i].unlocks or {}) do
+        if unlock.type == "tasklist" then
+          local tasklistData = {}
+          extensions.hook("onCareerProgressPageGetTasklistData", tasklistData, unlock.tasklistId)
+          if tasklistData and next(tasklistData) then
+            unlock.tasklistData = tasklistData
+          end
+          table.insert(list, unlock)
+          unlock.type = "tasklist"
+        else
+          table.insert(list, unlock)
+          unlock.type = "unlockCard"
+        end
+      end
+      unlockInfo[i].list = list
+
+    end
+  end
+
+  local maxRequiredValue = 0
+  for _, value in ipairs(unlockInfo) do
+    maxRequiredValue = maxRequiredValue + value.requiredValue
+  end
+
+  return unlockInfo, maxRequiredValue, hasUnlocks
+end
+
 local function getSkillsProgressForUi(branchId)
   local ret = {}
+  --dump("getting skills for " .. branchId)
   for _, skill in pairs(career_branches.getSortedBranches()) do
-    if skill.isSkill and skill.parentBranch == branchId then
+    --dump(branchId .. " is a skill of " .. skill.id.." / "..dumps( skill.parentId))
+    if skill.parentId == branchId then
       local attKey = skill.attributeKey
       local value = career_modules_playerAttributes.getAttributeValue(attKey)
       local level, _, _, min, max = career_branches.calcBranchLevelFromValue(value, skill.id)
       local skData = {
+        icon = skill.icon,
+        isSkill = skill.isSkill,
         id = skill.attributeKey,
         name = skill.name,
         description = skill.description,
@@ -57,6 +126,8 @@ local function getSkillsProgressForUi(branchId)
         order = skill.order,
         isInDevelopment = skill.isInDevelopment,
         hasLevels = skill.hasLevels,
+        color = skill.color,
+        accentColor = skill.accentColor,
       }
 
       if skill.showProgressAsStars then
@@ -66,37 +137,11 @@ local function getSkillsProgressForUi(branchId)
         skData.showProgressAsStars = true
       end
 
-      local unlocks = skill.levels
-
-
-      if unlocks then
-        local prevTarget = 0
-        for i = 1, #unlocks do
-          local prevLvlInfo = skill.levels[i-1]
-          local curLvlInfo = skill.levels[i]
-          local nextLvlInfo = skill.levels[i+1]
-          local requiredRelative = (curLvlInfo and curLvlInfo.requiredValue or -1) - prevTarget
-
-          prevTarget = (curLvlInfo and curLvlInfo.requiredValue or -1)
-          skData.unlockInfo[i] = {
-            list = unlocks[i].unlocks ,
-            index = i,
-            currentValue = prevLvlInfo and value - prevLvlInfo.requiredValue or -1,
-            requiredValue = curLvlInfo and requiredRelative or -1,
-            isInDevelopment = unlocks[i].isInDevelopment,
-            isMaxLevel = unlocks[i].isMaxLevel,
-            isBase = i == 1,
-            unlocked = i >= level,
-            description = unlocks[i].description,
-          }
-        end
+      if skill.levels then
+        skData.unlockInfo, skData.maxRequiredValue, skData.hasUnlocks = calculateUnlockInfo(skill, value, level)
       end
       --dumpz(skData.unlockInfo,2)
 
-      skData.maxRequiredValue = 0
-      for _, value in ipairs(skData.unlockInfo) do
-        skData.maxRequiredValue = skData.maxRequiredValue + value.requiredValue
-      end
       table.insert(ret, skData)
     end
   end
@@ -158,13 +203,13 @@ local function getFacilityProgress(fac)
 end
 
 local deliverySystemToSkill = {
-  vehicleDelivery = "vehicleDelivery",
-  parcelDelivery = "delivery",
-  trailerDelivery = "delivery",
-  smallDryBulkDelivery = "delivery",
-  largeDryBulkDelivery = "delivery",
-  smallFluidDelivery = "delivery",
-  largeFluidDelivery = "delivery",
+  vehicleDelivery = "logistics-vehicleDelivery",
+  parcelDelivery = "logistics-delivery",
+  trailerDelivery = "logistics-delivery",
+  smallDryBulkDelivery = "logistics-delivery",
+  largeDryBulkDelivery = "logistics-delivery",
+  smallFluidDelivery = "logistics-delivery",
+  largeFluidDelivery = "logistics-delivery",
 }
 local function getSkillsForFacility(facility)
   local ret = {}
@@ -195,7 +240,7 @@ end
 local function getFacilityAvailableOrders(fac)
   local ret = {}
   -- parcels
-  local amounts = {[1]=0, [2]=0, [3]=0, [4]=0, [5]=0, total = 0}
+  local amounts = {available = 0, locked = 0}
   for _, item in ipairs(career_modules_delivery_parcelManager.getAllCargoForFacilityUnexpiredUndelivered(fac.id)) do
     career_modules_delivery_generator.finalizeParcelItemDistanceAndRewards(item)
     local modifierKeys = {}
@@ -203,28 +248,34 @@ local function getFacilityAvailableOrders(fac)
       modifierKeys[mod.type] = true
     end
     local lockedBecauseOfMods, minTier = career_modules_delivery_parcelMods.lockedBecauseOfMods(modifierKeys)
-    amounts[minTier] = amounts[minTier] + 1
-    amounts.total = amounts.total + 1
+    if lockedBecauseOfMods then
+      amounts.locked = amounts.locked + 1
+    else
+      amounts.available = amounts.available + 1
+    end
   end
 
   table.insert(ret, {
     icon = "cardboardBox",
     label = "Available Parcels",
     amounts = amounts,
-    level = career_branches.getBranchLevel("delivery"),
+    level = career_branches.getBranchLevel("logistics-delivery"),
   })
 
   -- trailers + vehicles
   for _, t in ipairs({
-    {key="trailer", icon="smallTrailer", label="Available Trailers", skill="delivery"},
-    {key="vehicle", icon="keys1",        label="Available Vehicles", skill="vehicleDelivery"}
+    {key="trailer", icon="smallTrailer", label="Available Trailers", skill="logistics-delivery"},
+    {key="vehicle", icon="keys1",        label="Available Vehicles", skill="logistics-vehicleDelivery"}
   }) do
-    local amounts = {[1]=0, [2]=0, [3]=0, [4]=0, [5]=0, total = 0}
+    local amounts = {available = 0, locked = 0}
     for _, item in ipairs(career_modules_delivery_vehicleOfferManager.getAllOfferAtFacilityUnexpired(fac.id)) do
       if item.data.type == t.key then
         local enabled, reason = career_modules_delivery_vehicleOfferManager.isVehicleTagUnlocked(item.vehicle.unlockTag)
-        amounts[reason.level] = amounts[reason.level] + 1
-        amounts.total = amounts.total + 1
+        if enabled then
+          amounts.available = amounts.available + 1
+        else
+          amounts.locked = amounts.locked + 1
+        end
       end
     end
     table.insert(ret, {
@@ -264,7 +315,7 @@ local function getFacilitiesData(color)
     }
     data.hasOrders = false
     for _, orders in ipairs(data.availableOrders) do
-      if orders.amounts.total > 0 then
+      if orders.amounts.available > 0 or orders.amounts.locked > 0 then
         data.hasOrders = true
       end
     end
@@ -287,158 +338,98 @@ local function getFiltersForSkills(skills)
   return ret
 end
 
-local function getBranchPageData(branchId)
-  local branch = {}
-  local branchData = career_branches.getBranchById(branchId)
-  --Setup branch
-  if not branchData.isSkill then
-    local attKey = branchData.attributeKey
-    local value = career_modules_playerAttributes.getAttributeValue(attKey)
-    local level, _, _, min, max = career_branches.calcBranchLevelFromValue(value, branchData.id)
-    branch.skillInfo = {
-      name = branchData.name,
-      icon = branchData.icon,
-      glyphIcon = branchData.icon,
-      color = branchData.color,
-      id = attKey,
-      levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
-      min = min,
-      value = value,
-      max = max,
-    }
-    --branchData.milestones = career_modules_milestones_milestones.getMilestones({branchData.attributeKey})
-    branchData.skills = getSkillsProgressForUi(branchId)
-    branch.details = branchData
-  end
-
-  branch.leagues = career_modules_branches_leagues.getLeaguesForProgressBranchPage(branchId)
-
-  --get the missions by branch and type
-
-  local i = 1
-  for _, skill in ipairs(career_branches.getSortedBranches()) do
-    if skill.isSkill and skill.parentBranch == branchId then
-      local missions = {}
-      for i,m in ipairs(gameplay_missions_missions.get()) do
-        if m.careerSetup.showInCareer and m.careerSetup.skill == skill.id and not career_modules_branches_leagues.startConditionIncludesLeague(m.startCondition) and not m.devMission then
-          table.insert(missions, m)
-          --dump(m.id, m.unlocks.maxBranchlevel)
-        end
-      end
-      -- local driftSpots = {}
-      -- if skill.id == "drift" then
-      --   for i,ds in pairs(gameplay_drift_saveLoad.getDriftSpotsById()) do
-      --     if not ds._isInLeague then
-      --       table.insert(driftSpots, ds)
-      --     end
-      --   end
-      -- end
-
-       if next(missions) then
-         table.sort(missions, sortByStartable)
-         local noLeague = career_modules_branches_leagues.getNoLeague(skill, missions, driftSpots)
-         noLeague.skillId = skill.id
-         table.insert(branch.leagues, i, noLeague)
-         i = i+1
-       end
-    end
-  end
-
-
-  --Sort the misison tables and add them to the main table that will be send to the UI
-  for _, league in ipairs(branch.leagues) do
-    for i, mId in ipairs(league.missions) do
-      local m = gameplay_missions_missions.getMissionById(mId)
-      league.missions[i] = M.formatMission(m)
-    end
-
-    for i, dsId in ipairs(league.driftSpots or {}) do
-      local spot = gameplay_drift_saveLoad.getDriftSpotById(dsId)
-      league.driftSpots[i] = M.formatDriftSpot(spot)
-    end
-
-  end
-
---[[
-  local driftLeague = {
-    id = "driftSpotLeague",
-    name = "Drift Spots",
-    icon = "drift02",
-    description = "Drift spots around the map.",
-    skillId = "drift",
-    missions = {},
-    _unlocked = true,
-    totalStarsAvailable = 0,
-    totalStarsObtained = 0,
-  }
-  local driftSpots = {}
-  for id, ds in pairs(gameplay_drift_saveLoad.getDriftSpotsById()) do
-    table.insert(driftSpots, ds)
-  end
-  table.sort(driftSpots, function(a,b) return a.id<b.id end)
-  local driftSpotsFormatted = {}
-  for _, ds in ipairs(driftSpots) do
-    driftLeague.totalStarsAvailable = driftLeague.totalStarsAvailable + #ds.info.objectives
-    local formatted = M.formatDriftSpot(ds)
-    if formatted.formattedProgress then
-      driftLeague.totalStarsObtained = driftLeague.totalStarsObtained + formatted.formattedProgress.unlockedStars.defaultCount
-    end
-    table.insert(driftLeague.missions, formatted)
-  end
-  table.insert(branch.leagues, 1, driftLeague)
-]]
-
-
-  if branch.details.attributeKey == "labourer" then
-    branch.facilities = getFacilitiesData(branchData.color)
-    table.sort(branch.facilities, sortByFacId)
-  end
-
-  branch.filters = getFiltersForSkills(branch.details.skills)
-  branch.isBranch = true
-  return branch
-end
-
 
 local function getBranchSkillCardData(branchId)
-
--- first get all branches. then get all skills
+  -- first get all branches. then get all skills
+  career_branches.checkUnlocks()
   local br = career_branches.getBranchById(branchId)
   local attKey = br.attributeKey
   local value = career_modules_playerAttributes.getAttributeValue(attKey)
   local level, _, _, min, max = career_branches.calcBranchLevelFromValue(value, br.id)
   local branchInfo = {
     name = br.name,
+    description = br.description,
+    shortDescription = br.shortDescription,
     id = br.id,
-    levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
+    levelLabel = career_branches.getLevelLabel(br.id, level),
+    isMaxLevel = level >= #br.levels,
     unlocked = br.unlocked,
     cover = br.progressCover,
     icon = br.icon,
     glyphIcon = br.icon,
     color = br.color,
+    accentColor = br.accentColor,
     min = min,
     value = value,
     max = max,
-    skills = {}
+    skills = {},
+    isDomain = br.isDomain,
+    isSkill = br.isSkill,
+    showProgressAsStars = br.showProgressAsStars,
+    level = level,
+    certifications = {},
+    lockedReason = br.lockedReason,
+    unlockInfos = br.unlockInfos,
+    isInDevelopment = br.isInDevelopment,
   }
 
-  for _, skill in pairs(career_branches.getSortedBranches()) do
-    if skill.isSkill and skill.parentBranch == branchId then
-      local attKey = skill.attributeKey
+  if br.showProgressAsStars then
+    local total, unlocked = career_modules_branches_leagues.getStarsForSkill(br.id)
+    branchInfo.levelLabel = nil
+    branchInfo.min, branchInfo.value, branchInfo.max = 0, unlocked, total
+    branchInfo.showProgressAsStars = true
+  end
+
+
+  -- certifications
+  for _, certification in ipairs(br.certifications or {}) do
+    local unlocked = career_modules_unlockFlags.getFlag(certification.unlockFlag)
+    local flagDefinition = career_modules_unlockFlags.getFlagDefinition(certification.unlockFlag)
+    local status =  "locked"
+    local certificationMission = gameplay_missions_missions.getMissionById(certification.requiredMissionsToPass)
+    if certificationMission and isStartable(certificationMission) then
+      status = "available"
+    end
+    if unlocked then
+      status = "completed"
+    end
+    if br.name == "Commercial" then
+      status = "available"
+    end
+    table.insert(branchInfo.certifications, {
+      status = status,
+      name = "ui.career.certification.name",
+      statusLabel = 'ui.career.certification.status.' .. status,
+      icon = "badgeRoundStar",
+    })
+  end
+
+  for _, subBranch in pairs(career_branches.getSortedBranches()) do
+    if subBranch.parentId == branchId then
+      local attKey = subBranch.attributeKey
       local value = career_modules_playerAttributes.getAttributeValue(attKey)
-      local level, _, _, min, max = career_branches.calcBranchLevelFromValue(value, skill.id)
+      local level, _, _, min, max = career_branches.calcBranchLevelFromValue(value, subBranch.id)
       local skillInfo = {
-        name = skill.name,
-        levelLabel = {txt='ui.career.lvlLabel', context={lvl=level}},
-        unlocked = skill.unlocked,
+        id = subBranch.id,
+        name = subBranch.name,
+        levelLabel = career_branches.getLevelLabel(subBranch.id, level),
+        isMaxLevel = level >= #subBranch.levels,
+        unlocked = subBranch.unlocked,
         min = min,
         value = value,
         max = max,
-        isInDevelopment = skill.isInDevelopment,
-        hasLevels = skill.hasLevels,
+        isInDevelopment = subBranch.isInDevelopment,
+        hasLevels = subBranch.hasLevels,
+        icon = subBranch.icon,
+        level = level,
+        color = subBranch.color,
+        accentColor = subBranch.accentColor,
+        showProgressAsStars = subBranch.showProgressAsStars,
+        isBranch = subBranch.isBranch,
+        isSkill = subBranch.isSkill,
       }
-      if skill.showProgressAsStars then
-        local total, unlocked = career_modules_branches_leagues.getStarsForSkill(skill.id)
+      if subBranch.showProgressAsStars then
+        local total, unlocked = career_modules_branches_leagues.getStarsForSkill(subBranch.id)
         skillInfo.levelLabel = nil
         skillInfo.min, skillInfo.value, skillInfo.max = 0, unlocked, total
         skillInfo.showProgressAsStars = true
@@ -450,23 +441,39 @@ local function getBranchSkillCardData(branchId)
 end
 
 local function openBigMapWithMissionSelected(missionId)
-  freeroam_bigMapMode.enterBigMap({instant = true, missionId = missionId})
+  freeroam_bigMapMode.enterBigMap({
+    instant = true,
+    missionId = missionId,
+    routeTarget = "career.branchPage.bigmap",
+    routeParams = {
+      autoSelectPoiId = missionId,
+    },
+  })
 end
 
-M.getBranchPageData = getBranchPageData
 M.getBranchSkillCardData = getBranchSkillCardData
 M.openBigMapWithMissionSelected = openBigMapWithMissionSelected
 
 local formatMission = function(m)
+  local previewFile = m.previewFile
+  if previewFile and previewFile:sub(1, 1) == "/" then
+    previewFile = previewFile:sub(2)
+  end
   return {
     skill = {m.careerSetup.skill},
     id = m.id,
-    icon = m.bigMapIcon.icon,
+    icon = m.iconFontIcon,
     label = m.name,
+    description = m.description,
+    missionTypeLabel = m.missionTypeLabel or m.missionType,
+    devMission = m.devMission,
     formattedProgress =  gameplay_missions_progress.formatSaveDataForUi(m.id),
-    startable = m.unlocks.startable,
-    preview = m.previewFile,
-    locked = not m.unlocks.visible,
+    startable = isStartable(m),
+    preview = previewFile,
+    previews = previewFile and {previewFile} or {},
+    thumbnail = m.thumbnailFile,
+    locked = not isVisible(m),
+    canStartFromProgressScreen = m.startTrigger.level ~= nil and m.startTrigger.type == "league",
   }
 end
 M.formatMission = formatMission
@@ -500,4 +507,250 @@ local formatDriftSpot = function(ds)
   return ret
 end
 M.formatDriftSpot = formatDriftSpot
+
+local function getMissionStarCounts(formattedProgress)
+  local stars = formattedProgress and formattedProgress.unlockedStars or {}
+  local defaultTotal = stars.totalDefaultStarCount or 0
+  local bonusTotal = stars.totalBonusStarCount or 0
+  local defaultCount = stars.defaultUnlockedStarCount or stars.defaultCount or 0
+  local bonusCount = stars.bonusUnlockedStarCount or stars.bonusCount or 0
+  if type(stars.defaults) == "table" then
+    defaultCount = 0
+    for _, unlocked in pairs(stars.defaults) do
+      if unlocked then defaultCount = defaultCount + 1 end
+    end
+  end
+  if type(stars.bonus) == "table" then
+    bonusCount = 0
+    for _, unlocked in pairs(stars.bonus) do
+      if unlocked then bonusCount = bonusCount + 1 end
+    end
+  end
+  return defaultCount + bonusCount, defaultTotal + bonusTotal
+end
+
+local function addSuggestedMission(candidates, missionId)
+  local mission = gameplay_missions_missions.getMissionById(missionId)
+  if not mission then return end
+
+  local formattedMission = formatMission(mission)
+  local achievedStars, totalStars = getMissionStarCounts(formattedMission.formattedProgress)
+  if totalStars <= 0 then return end
+
+  if achievedStars == 0 then
+    table.insert(candidates.none, formattedMission)
+  elseif achievedStars < totalStars then
+    table.insert(candidates.partial, formattedMission)
+  end
+end
+
+local function collectSuggestedMissions(branchId, candidates)
+  local childBranches = {}
+  local childSkills = {}
+  for _, branch in ipairs(career_branches.getSortedBranches()) do
+    if branch.parentId == branchId then
+      if branch.isBranch then
+        table.insert(childBranches, branch)
+      elseif branch.isSkill then
+        table.insert(childSkills, branch)
+      end
+    end
+  end
+
+  for _, branch in ipairs(childBranches) do
+    if not branch.isInDevelopment then
+      collectSuggestedMissions(branch.id, candidates)
+    end
+  end
+
+  for _, skill in ipairs(childSkills) do
+    if not skill.isInDevelopment then
+      local leagues = career_modules_branches_leagues.getLeaguesForProgressBranchPage(skill.id, true)
+      for _, league in ipairs(leagues) do
+        for _, missionId in ipairs(league.missions or {}) do
+          addSuggestedMission(candidates, missionId)
+        end
+      end
+    end
+  end
+end
+
+local function getSuggestedMissionsForDomain(domainId)
+  local candidates = {none = {}, partial = {}}
+  collectSuggestedMissions(domainId or "apm", candidates)
+
+  local suggested = {}
+  if candidates.none[1] then table.insert(suggested, candidates.none[1]) end
+  if candidates.partial[1] then
+    table.insert(suggested, candidates.partial[1])
+  elseif candidates.none[2] then
+    table.insert(suggested, candidates.none[2])
+  end
+
+  return suggested
+end
+M.getSuggestedMissionsForDomain = getSuggestedMissionsForDomain
+
+local function resolveBranchTitle(pathId)
+  local branch = pathId and career_branches.getBranchById(pathId) or nil
+  if branch and not branch.missing then
+    return core_locales.translateWithOrWithoutContext(branch.branchHeading or branch.name)
+  end
+  return _tr("ui.career.landingPage.name")
+end
+M.resolveBranchTitle = resolveBranchTitle
+
+local function getLandingPageData(pathId)
+  local data = {
+    heading = "ui.career.landingPage.name",
+    description = "ui.career.landingPage.description",
+    branches = {},
+    breadcrumbs = {{label = _tr("ui.environment.pause"), routeName = "pause"}}
+  }
+  table.insert(data.breadcrumbs, {label = _tr("ui.career.landingPage.name"), routeName = "career.domainSelection"})
+
+  local branches = career_branches.getSortedBranches()
+
+  if not pathId or pathId == "" or pathId == "undefined" then
+    --data.showMilestones = true
+    -- Find all domains and determine their target type
+    for _, branch in ipairs(branches) do
+      if branch.isDomain then
+        local hasBranches = false
+        -- Check children of this domain
+        for _, childBranch in ipairs(branches) do
+          if childBranch.parentId == branch.id and childBranch.isBranch then
+            hasBranches = true
+            break
+          end
+        end
+        table.insert(data.branches, {
+          id = branch.id,
+          target = hasBranches and "landing" or "skillPage",
+          isSkill = branch.isSkill,
+          description = branch.description,
+        })
+      end
+    end
+  else
+    -- Find branches for this domain
+    for _, branch in ipairs(branches) do
+      if branch.parentId == pathId then
+        table.insert(data.branches, {
+          id = branch.id,
+          target = "skillPage",
+          isSkill = branch.isSkill,
+          description = branch.description,
+        })
+      end
+    end
+
+    -- Set heading/description based on domain
+    local domainBranch = career_branches.getBranchById(pathId)
+    if domainBranch then
+
+      local rewardMultiplier = career_branches.getLevelRewardMultiplier(domainBranch.id)
+      local rewardMultiplierSourceIcon = rewardMultiplier and domainBranch.icon
+
+      local parentBreadcrumbs = {}
+      local parentBranch = career_branches.getBranchById(domainBranch.parentId)
+      table.insert(parentBreadcrumbs, {label = core_locales.translateWithOrWithoutContext(domainBranch.name), routeName = "career.branchPage", params = {pathId = domainBranch.id}})
+      while parentBranch and not parentBranch.missing do
+        rewardMultiplier = rewardMultiplier or career_branches.getLevelRewardMultiplier(parentBranch.id)
+        rewardMultiplierSourceIcon = rewardMultiplierSourceIcon or (rewardMultiplier and parentBranch.icon)
+        table.insert(parentBreadcrumbs, {label = core_locales.translateWithOrWithoutContext(parentBranch.name), routeName = "career.branchPage", params = {pathId = parentBranch.id}})
+        parentBranch = career_branches.getBranchById(parentBranch.parentId)
+      end
+      arrayReverse(parentBreadcrumbs)
+      for _, breadcrumb in ipairs(parentBreadcrumbs) do
+        table.insert(data.breadcrumbs, breadcrumb)
+      end
+
+      data.heading = domainBranch.name
+      data.description = domainBranch.description
+      data.branchHeading = domainBranch.branchHeading
+      local attKey = domainBranch.attributeKey
+      local value = career_modules_playerAttributes.getAttributeValue(attKey)
+      local level, _, _, min, max = career_branches.calcBranchLevelFromValue(value, domainBranch.id)
+      data.skillInfo = {
+        name = domainBranch.name,
+        icon = domainBranch.icon,
+        glyphIcon = domainBranch.icon,
+        color = domainBranch.color,
+        accentColor = domainBranch.accentColor,
+        unlocked = domainBranch.unlocked,
+        levelLabel = career_branches.getLevelLabel(domainBranch.id, level),
+        isMaxLevel = level >= #domainBranch.levels,
+        isInDevelopment = domainBranch.isInDevelopment,
+        min = min,
+        value = value,
+        max = max,
+        level = level,
+        hasLevels = domainBranch.hasLevels,
+        rewardMultiplier = rewardMultiplier,
+        rewardMultiplierSourceIcon = rewardMultiplierSourceIcon,
+      }
+
+      if domainBranch.showProgressAsStars then
+        local total, unlocked = career_modules_branches_leagues.getStarsForSkill(domainBranch.id)
+        data.skillInfo.min, data.skillInfo.value, data.skillInfo.max = 0, unlocked, total
+        data.skillInfo.showProgressAsStars = true
+      end
+
+      if domainBranch.isBranch or domainBranch.isSkill then
+        if domainBranch.levels then
+          data.skillInfo.unlockInfo, data.skillInfo.maxRequiredValue, data.skillInfo.hasUnlocks = calculateUnlockInfo(domainBranch, value, level)
+        end
+        data.skillInfo.hasUnlocks = data.skillInfo.hasUnlocks or false
+
+        data.skills = getSkillsProgressForUi(domainBranch.id)
+
+        data.leagues = career_modules_branches_leagues.getLeaguesForProgressBranchPage(domainBranch.id, true  )
+
+
+        --Sort the misison tables and add them to the main table that will be send to the UI
+        for _, league in ipairs(data.leagues) do
+          for i, mId in ipairs(league.missions) do
+            local m = gameplay_missions_missions.getMissionById(mId)
+            league.missions[i] = M.formatMission(m)
+            if league.isCertification then
+              league.missions[i].icon = "badgeRoundStar"
+            end
+          end
+        end
+
+--[[
+        if domainBranch.attributeKey == "logistics" then
+          data.facilities = getFacilitiesData(data.color)
+          table.sort(data.facilities, sortByFacId)
+        end
+]]
+        data.isBranch = true
+      end
+    end
+
+  end
+  return data
+end
+
+M.getLandingPageData = getLandingPageData
+
+
+M.onComputerAddFunctions = function(menuData, computerFunctions)
+  if menuData.computerFacility.functions["apmLandingPage"] then
+    local computerFunctionData = {
+      id = "apmLandingPage",
+      routeTarget = "career.branchPage",
+      label = _tr("ui.career.APM.name") ..' ' .. _tr("ui.career.landingPage.name"),
+      icon = "garage01",
+      callback = function()
+        guihooks.trigger('ChangeState', {state = 'career.branchPage', params = {pathId = "apm", returnRoute = "career.computer"}})
+      end,
+      disabled = not menuData.hasBoughtStarterVehicle,
+      reason = (not menuData.hasBoughtStarterVehicle) and career_modules_computer.reasons.hasBoughtStarterVehicle or nil,
+    }
+    computerFunctions.general[computerFunctionData.id] = computerFunctionData
+  end
+end
+
 return M

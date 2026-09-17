@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
 local api = extensions.editor_api_dynamicDecals
@@ -7,10 +10,10 @@ local utils = extensions.ui_liveryEditor_utils
 local uiCamera = extensions.ui_liveryEditor_camera
 
 local MEASUREMENTS = {
-  TRANSLATE_STEP_UNIT = 0.01,
-  ROTATE_STEP_UNIT = 0.1,
-  SCALE_STEP_UNIT = 0.1,
-  SKEW_STEP_UNIT = 0.1
+  TRANSLATE_STEP_UNIT = 0.001,
+  ROTATE_STEP_UNIT = 0.01,
+  SCALE_STEP_UNIT = 0.01,
+  SKEW_STEP_UNIT = 0.01
 }
 
 local useCursorForTransform = true
@@ -63,10 +66,12 @@ M.editExistingLayer = function(layerUid, replaceOnSave)
     M.editState.layerType = layer.type
 
     -- hide layer and show cursor
-    M.setCursorProperties(layer)
-    layer.enabled = false
-    api.setLayer(layer, true)
-    showCursor(true)
+    if replaceOnSave then
+      M.setCursorProperties(layer)
+      layer.enabled = false
+      api.setLayer(layer, true)
+      showCursor(true)
+    end
 
     pushActionMap("LiveryEditorTransform")
   else
@@ -131,6 +136,10 @@ M.scaleLayer = function(steps_x, steps_y)
   local calculateScale = function(scaleVec, stepsX, stepsY)
     local scaleX = scaleVec.x + steps_x * MEASUREMENTS.SCALE_STEP_UNIT
     local scaleY = scaleVec.z + steps_y * MEASUREMENTS.SCALE_STEP_UNIT
+    -- prevent negative scale
+    if scaleX < 0 or scaleY < 0 then
+      return scaleVec
+    end
     return vec3(scaleX, scaleVec.y, scaleY)
   end
 
@@ -237,37 +246,40 @@ end
 M.setLayerMaterials = function(properties)
   local layer = api.getLayerByUid(M.editState.layerUid)
 
-  -- use the cursor when editing a new decal because
   if properties.metallicIntensity then
     -- ui value ranges from 0 - 100
     local metallicIntensity = properties.metallicIntensity / 100
-    if useCursorForTransform then
+    if M.editState.replaceOnSave then
       api.setMetallicIntensity(metallicIntensity)
+    else
+      layer.metallicIntensity = metallicIntensity
     end
-    layer.metallicIntensity = metallicIntensity
   end
 
   if properties.roughnessIntensity then
     -- ui value ranges from 0 - 100
     local roughnessIntensity = properties.roughnessIntensity / 100
-    if useCursorForTransform then
+    if M.editState.replaceOnSave then
       api.setRoughnessIntensity(roughnessIntensity)
+    else
+      layer.roughnessIntensity = roughnessIntensity
     end
-    layer.roughnessIntensity = roughnessIntensity
   end
 
   if properties.color then
     local r, g, b = unpack(properties.color)
     local color = Point4F(r, g, b, 1)
 
-    if useCursorForTransform then
+    if M.editState.replaceOnSave then
       api.setDecalColor(color)
+    else
+      layer.color = color
     end
-
-    layer.color = color
   end
 
-  api.setLayer(layer, true)
+  if not M.editState.replaceOnSave then
+    api.setLayer(layer, true)
+  end
 end
 
 M.stampDecal = function()
@@ -305,20 +317,23 @@ M.requestLayerMaterials = function()
 end
 
 M.cancelChanges = function()
-  if useCursorForTransform then
+  if M.editState.replaceOnSave then
     local layer = api.getLayerByUid(M.editState.layerUid)
     layer.enabled = true
     api.setLayer(layer, true)
+    showCursor(false)
+  else
+    -- restore original layer properties
+    api.setLayer(M.editState.layer, true)
   end
   -- api.setLayer(M.editState.layer, true)
   M.resetEditState()
-  showCursor(false)
   -- uiCamera.setOrthographicView("default")
   uiCamera.switchToOrbit()
 end
 
 M.saveChanges = function()
-  if useCursorForTransform then
+  if M.editState.replaceOnSave then
     if M.isPositionChanged then
       local lastIndex = uiLayers.getChildrenCount()
       local referenceDecal = api.addDecal()
@@ -326,17 +341,21 @@ M.saveChanges = function()
       layer.uid = M.editState.layerUid
       layer.name = M.editState.layer.name
       layer.enabled = true
+
+      -- set color alpha to 1
+      layer.color = Point4F(layer.color.x, layer.color.y, layer.color.z, 1)
+
       api.setLayer(layer, true)
       api.removeLayer(lastIndex + 1)
+      showCursor(false)
     else
-      local layer = api.getLayerByUid(M.editState.layerUid)
-      layer.enabled = true
-      api.setLayer(layer, true)
+      -- local layer = api.getLayerByUid(M.editState.layerUid)
+      -- layer.enabled = true
+      -- api.setLayer(layer, true)
     end
   end
 
   M.resetEditState()
-  showCursor(false)
 
   -- uiCamera.setOrthographicView("default")
   uiCamera.switchToOrbit()
@@ -432,7 +451,6 @@ M.endTransform = function()
 end
 
 M.showCursorOrLayer = function(show)
-  dump("showCursorOrLayer", show)
   if not M.editState.isAdd or (M.editState.isAdd and M.editState.layerUid) then
     return
   end
@@ -458,23 +476,6 @@ M.showCursorOrLayer = function(show)
       api.setLayer(layer, true)
     end
   end
-end
-
-M.isHoldRotateLeft = false
-M.isHoldRotateRight = false
-
-M.holdRotateLeft = function(value)
-  if M.isHoldRotateRight then
-    M.isHoldRotateRight = false
-  end
-  M.isHoldRotateLeft = value == 1
-end
-
-M.holdRotateRight = function(value)
-  if M.isHoldRotateLeft then
-    M.isHoldRotateLeft = false
-  end
-  M.isHoldRotateRight = value == 1
 end
 
 M.requestInitialLayerData = function()
@@ -548,10 +549,6 @@ M.isRotationPrecise = false
 M.isPositionChanged = false
 M.showCursor = showCursor
 
-M.getRotationStep = function()
-  return M.isRotationPrecise and 1 or 10
-end
-
 M.setIsRotationPrecise = function(value)
   M.isRotationPrecise = value
 end
@@ -560,19 +557,186 @@ M.setAllowRotationAction = function(value)
   M.allowRotationAction = value
 end
 
-M.onUpdate = function()
+-- controller translate actions
+M.holdAction = nil
+M.holdValue = nil
+M.holdAxis = nil
+M.precise = false
+M.holdTime = 0
+
+local resetHoldState = function()
+  M.holdTime = 0
+  M.holdAction = nil
+  M.holdAxis = nil
+  M.holdValue = nil
+end
+
+local startHold = function(action)
+  M.holdAction = action
+  M.holdTime = 0
+end
+
+M.holdPrecise = function(enable)
+  M.precise = enable
+end
+
+M.holdRotate = function(direction, value)
+  if (M.holdAction and M.holdAction ~= "rotate") or (M.holdValue and M.holdValue ~= direction) then
+    return
+  end
+
+  if value == 1 then
+    M.holdValue = direction
+    startHold("rotate")
+  else
+    resetHoldState()
+  end
+end
+
+-- axis: x or y, value: -1, 0, 1
+M.holdTranslate = function(axis, value)
+  if (M.holdAction and M.holdAction ~= "translate") or (M.holdAxis and M.holdAxis ~= axis) then
+    return
+  end
+
+  -- reset hold if value is 0
+  if value == 0 then
+    resetHoldState()
+  else
+    M.holdAxis = axis
+    M.holdValue = value
+    startHold("translate")
+  end
+end
+
+M.holdTranslateScalar = function(axis, value)
+  local threshold = 0.5
+
+  if (M.holdAction and M.holdAction ~= "translate_scalar") or (M.holdAxis and M.holdAxis ~= axis) then
+    return
+  end
+
+  if math.abs(value) < threshold or (M.holdValue and (value < M.holdValue * 0.9 or value > M.holdValue * 1.1)) then
+    resetHoldState()
+  else
+    M.holdAxis = axis
+    M.holdValue = value < 0 and -1 or 1
+    startHold("translate_scalar")
+  end
+end
+
+M.holdScale = function(axis, value)
+  local threshold = 0.5
+
+  if (M.holdAction and M.holdAction ~= "scale") or (M.holdAxis and M.holdAxis ~= axis) then
+    return
+  end
+
+  if math.abs(value) < threshold or (M.holdValue and value < M.holdValue * 0.9) then
+    resetHoldState()
+  else
+    M.holdAxis = axis
+    M.holdValue = value < 0 and -1 or 1
+    startHold("scale")
+  end
+end
+
+M.holdSkew = function(axis, value)
+  local threshold = 0.5
+
+  if (M.holdAction and M.holdAction ~= "skew") or (M.holdAxis and M.holdAxis ~= axis) then
+    return
+  end
+
+  if math.abs(value) < threshold or (M.holdValue and value < M.holdValue * 0.9) then
+    resetHoldState()
+  else
+    M.holdAxis = axis
+    M.holdValue = value < 0 and -1 or 1
+    startHold("skew")
+  end
+end
+
+M.holdTranslateAction = function()
+  local x = 0
+  local y = 0
+  local multiplier = M.precise and 0.1 or 1
+
+  if M.holdAxis == "x" then
+    x = M.holdValue * multiplier
+  elseif M.holdAxis == "y" then
+    y = M.holdValue * multiplier
+  end
+
+  local res = M.translateLayer(x, y)
+  notifyListeners("positionChanged", res)
+end
+-- end controller translate actions
+
+M.holdRotateAction = function()
   if not M.allowRotationAction then
     return
   end
-  if M.isHoldRotateLeft then
-    local rotation = M.rotateLayer(M.getRotationStep(), true)
-    notifyListeners("rotationChanged", rotation)
-    -- M.requestInitialLayerData()
-  elseif M.isHoldRotateRight then
-    local rotation = M.rotateLayer(M.getRotationStep(), false)
-    notifyListeners("rotationChanged", rotation)
-    -- M.requestInitialLayerData()
+
+  local multiplier = M.precise and 1 or 10
+  local counterClockwise = M.holdValue == -1
+  local rotation = M.rotateLayer(multiplier, counterClockwise)
+  notifyListeners("rotationChanged", rotation)
+end
+
+M.holdScaleAction = function()
+  local x = 0
+  local y = 0
+  local multiplier = M.precise and 0.1 or 1
+
+  if M.holdAxis == "x" then
+    x = M.holdValue * multiplier
+  elseif M.holdAxis == "y" then
+    y = M.holdValue * multiplier
   end
+
+  local res = M.scaleLayer(x, y)
+  notifyListeners("scaleChanged", res)
+end
+
+M.holdSkewAction = function()
+  local x = 0
+  local y = 0
+  local multiplier = M.precise and 0.1 or 1
+
+  if M.holdAxis == "x" then
+    x = M.holdValue * multiplier
+  elseif M.holdAxis == "y" then
+    y = M.holdValue * multiplier
+  end
+
+  local res = M.skewLayer(x, y)
+  notifyListeners("skewChanged", res)
+end
+
+local actionFns = function()
+  if M.holdAction == "translate" or M.holdAction == "translate_scalar" then
+    M.holdTranslateAction()
+  elseif M.holdAction == "scale" then
+    M.holdScaleAction()
+  elseif M.holdAction == "skew" then
+    M.holdSkewAction()
+  else
+    -- needs catch all since rotate is not being triggered by UI, but by actionmap instead
+    M.holdRotateAction()
+  end
+end
+
+M.onUpdate = function(dtReal, dtSim, dtRaw)
+  if not M.holdAction then
+    return
+  end
+
+  if M.holdTime == 0 or M.holdTime > 0.5 then
+    actionFns()
+  end
+
+  M.holdTime = M.holdTime + dtSim
 end
 
 return M

@@ -22,7 +22,7 @@ C.pinSchema = {
   { dir = 'out', type = 'bool', name = 'value', hidden = true, description = "The boolean result of the comparison." },
 }
 
-C.tags = {"greater", "less", "equals", "if"}
+C.tags = {"greater", "less", "equals", "if", "equal"}
 
 local comparisonOps = getComparisonOps()
 

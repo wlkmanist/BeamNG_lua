@@ -1,0 +1,62 @@
+{
+    "pacenote_easy_left.ogg": {
+        "audioLen": 0.328375,
+        "sha1": "b8eb8e60f2d63452851afc654f70d4e621d79809",
+        "audioSha1": "01fd334e2f49ccf02177d7c1d56d03f756447a61"
+    },
+    "pacenote_easy_right.ogg": {
+        "audioLen": 0.648458,
+        "sha1": "e99b8dfb7dc821789f5018e3c684ff37a6ae2c8e",
+        "audioSha1": "4d8edb6ff8734141ed6567213b586d431d43eecf"
+    },
+    "pacenote_flat_left.ogg": {
+        "audioLen": 0.328375,
+        "sha1": "b8eb8e60f2d63452851afc654f70d4e621d79809",
+        "audioSha1": "01fd334e2f49ccf02177d7c1d56d03f756447a61"
+    },
+    "pacenote_flat_right.ogg": {
+        "audioLen": 0.648458,
+        "sha1": "e99b8dfb7dc821789f5018e3c684ff37a6ae2c8e",
+        "audioSha1": "4d8edb6ff8734141ed6567213b586d431d43eecf"
+    },
+    "pacenote_hairpin_left.ogg": {
+        "audioLen": 1.139833,
+        "sha1": "c7ff281a7f5fa90c14d079175ef897b53c465064",
+        "audioSha1": "88bb3c51a7d4fbf2ee7797b7197d263f31ea2985"
+    },
+    "pacenote_hairpin_right.ogg": {
+        "audioLen": 1.139833,
+        "sha1": "c7ff281a7f5fa90c14d079175ef897b53c465064",
+        "audioSha1": "88bb3c51a7d4fbf2ee7797b7197d263f31ea2985"
+    },
+    "pacenote_hard_left.ogg": {
+        "audioLen": 1.139833,
+        "sha1": "c7ff281a7f5fa90c14d079175ef897b53c465064",
+        "audioSha1": "88bb3c51a7d4fbf2ee7797b7197d263f31ea2985"
+    },
+    "pacenote_hard_right.ogg": {
+        "audioLen": 0.655104,
+        "sha1": "7289b62dc57dd5741ce4b0692ca194978a888a93",
+        "audioSha1": "fb631ffe9d69f3c3480bea1da46157c0d85fdea6"
+    },
+    "pacenote_medium_left.ogg": {
+        "audioLen": 0.655104,
+        "sha1": "7289b62dc57dd5741ce4b0692ca194978a888a93",
+        "audioSha1": "fb631ffe9d69f3c3480bea1da46157c0d85fdea6"
+    },
+    "pacenote_medium_right.ogg": {
+        "audioLen": 0.648458,
+        "sha1": "e99b8dfb7dc821789f5018e3c684ff37a6ae2c8e",
+        "audioSha1": "4d8edb6ff8734141ed6567213b586d431d43eecf"
+    },
+    "pacenote_square_left.ogg": {
+        "audioLen": 0.655104,
+        "sha1": "7289b62dc57dd5741ce4b0692ca194978a888a93",
+        "audioSha1": "fb631ffe9d69f3c3480bea1da46157c0d85fdea6"
+    },
+    "pacenote_square_right.ogg": {
+        "audioLen": 0.648458,
+        "sha1": "e99b8dfb7dc821789f5018e3c684ff37a6ae2c8e",
+        "audioSha1": "4d8edb6ff8734141ed6567213b586d431d43eecf"
+    }
+}

@@ -16,7 +16,7 @@ C.tags = {'traffic', 'parking', 'parameters'}
 C.pinSchema = {
   { dir = 'in', type = 'number', name = 'precision', description = 'Precision required to validate a vehicle in a parking spot (from 0 to 1).' },
   { dir = 'in', type = 'number', name = 'neatness', description = 'Parking neatness of other parked vehicles used by the parking system (from 0 to 1).' },
-  { dir = 'in', type = 'number', name = 'parkingDelay', description = 'Delay, in seconds, until a stopped vehicle is considered parked in a parking spot.' },
+  { dir = 'in', type = 'number', name = 'radiusCoef', description = 'Active radius multiplier, for keeping parked cars active within the focus area.' },
   { dir = 'in', type = 'number', name = 'respawnProbability', description = 'Base probability to use for finding and moving to parking spots.' },
   { dir = 'in', type = 'number', name = 'poolActiveAmount', hidden = true, description = 'Amount of active and visible vehicles in the vehicle pooling system.' },
   { dir = 'in', type = 'number', name = 'debugLevel', hidden = true, description = 'Debug mode level to use (from 0 to 3).' }
@@ -36,8 +36,8 @@ function C:workOnce()
   if self.pinIn.neatness.value ~= nil then
     self.vars.neatness = clamp(self.pinIn.neatness.value, 0, 1)
   end
-  if self.pinIn.parkingDelay.value ~= nil then
-    self.vars.parkingDelay = self.pinIn.parkingDelay.value
+  if self.pinIn.radiusCoef.value ~= nil then
+    self.vars.radiusCoef = self.pinIn.radiusCoef.value
   end
   if self.pinIn.respawnProbability.value ~= nil then
     self.vars.baseProbability = self.pinIn.respawnProbability.value

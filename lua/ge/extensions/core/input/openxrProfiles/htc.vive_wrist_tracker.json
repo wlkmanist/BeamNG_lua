@@ -1,0 +1,8 @@
+[
+  ["/user/wrist_htc/left/input/entity_htc/pose", "XR_ACTION_TYPE_POSE_INPUT", "entityHtcPose"],
+  ["/user/wrist_htc/left/input/menu/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button0"],
+  ["/user/wrist_htc/left/input/x/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button1"],
+  ["/user/wrist_htc/right/input/a/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button2"],
+  ["/user/wrist_htc/right/input/entity_htc/pose", "XR_ACTION_TYPE_POSE_INPUT", "entityHtcPose"],
+  ["/user/wrist_htc/right/input/system/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button3"]
+]

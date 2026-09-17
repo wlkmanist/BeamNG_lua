@@ -149,7 +149,7 @@ function C:variablesHelperPopup()
         end
       end
       --im.pushtree
-      if im.TreeNodeV1("missingVars","Missing Variables: " .. #self._sortedVars.missing ) then
+      if im.TreeNode1("missingVars##Missing Variables: " .. #self._sortedVars.missing) then
       --if im.TreeNode1("missing00") then
         im.TextWrapped("These Variables are not present in the Flowgraph but in the Mission Editor.")
         im.Columns(3)
@@ -171,7 +171,7 @@ function C:variablesHelperPopup()
         im.Columns(1)
         im.TreePop()
       end
-      if im.TreeNodeV1("mismatchVars","Type Mismatch Variables: " .. #self._sortedVars.mismatch) then
+      if im.TreeNode1("mismatchVars##Type Mismatch Variables: " .. #self._sortedVars.mismatch) then
         im.TextWrapped("These Variables are present in the Flowgraph, but have not the same type as in the Mission Editor.")
         im.Columns(3)
         im.SetColumnWidth(0,50)
@@ -196,7 +196,7 @@ function C:variablesHelperPopup()
         im.Columns(1)
         im.TreePop()
       end
-      if im.TreeNodeV1("correctVars","Correct Variables: " .. #self._sortedVars.found) then
+      if im.TreeNode1("correctVars##Correct Variables: " .. #self._sortedVars.found) then
         im.TextWrapped("These Variables are the same in the Flowgraph and in the Mission Editor.")
         im.Columns(2)
         --im.SetColumnWidth(0,50)
@@ -212,7 +212,7 @@ function C:variablesHelperPopup()
         im.Columns(1)
         im.TreePop()
       end
-      if im.TreeNodeV1("othrVars","Other Variables: " .. #self._sortedVars.other) then
+      if im.TreeNode1("othrVars##Other Variables: " .. #self._sortedVars.other) then
         im.TextWrapped("These Variables are only present in the Flowgraph, but not in the mission Editor.")
         --im.SetColumnWidth(0,50)
         for i, elem in ipairs(self._sortedVars.other) do

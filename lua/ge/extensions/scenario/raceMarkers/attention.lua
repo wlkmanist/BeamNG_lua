@@ -6,7 +6,7 @@ local C = {}
 local basePrefix = "base_marker_"
 local sidesPrefix = "cylinder_marker_"
 local distantPrefix = "distant_marker_"
-local sideShape =  "art/shapes/arrows/s_arrow_floating.dae"
+local sideShape =  "/art/shapes/interface/s_mm_arrow_ribbon_down.dae"
 
 -- used to offset the height of the marker's position when the player, in walking mode, gets close to the marker
 local markerPosHeightOffset = 0
@@ -24,6 +24,7 @@ local function lerpColor(a,b,t)
   return {lerp(a[1],b[1],t),lerp(a[2],b[2],t),lerp(a[3],b[3],t)}
 end
 
+local arrow = nil
 -- called when this object is created. initialize variables here (but dont spawn objects)
 function C:init(id)
   self.id = id
@@ -38,6 +39,7 @@ function C:init(id)
   self.sides = nil
   self.distant = nil
   self.normal = nil
+  self.arrowId = nil
 
   self.mode = 'hidden'
   self.oldMode = 'hidden'
@@ -79,17 +81,18 @@ function C:update(dt, dtSim)
   self.currentColor = ColorF(color[1],color[2],color[3],color[4] or 1)
   self.currentColor.a = 1
 
-  if self.left then
+  arrow = self.arrowId and scenetree.findObjectById(self.arrowId)
+  if arrow then
     local fwd = (playerPosition-self.pos)
-    local rot = (quatFromEuler(math.pi/2,0,0)*quatFromDir(fwd:z0())*quatFromEuler(0,0,math.pi/2)):toTorqueQuat()
-    self.left:setField('rotation', 0, rot.x .. ' ' .. rot.y .. ' ' .. rot.z .. ' ' .. rot.w)
-    self.left.instanceColor = self.currentColor:asLinear4F()
-    self.left.instanceColor1 = ColorF(0,0,0,self.currentColor.a):asLinear4F()
-    self.left:setPosition( vec3(0,0,self.scale.x/1.5 + math.sin(os.clock()*4)*(0.2*self.scale.x/1.5))+self.pos+tmpVec)
---      self.left:setField('instanceColor', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
---    self.left:setField('instanceColor1', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
-    self.left:updateInstanceRenderData()
-    self.left:setScale(self.scale)
+    local rot = (quatFromDir(fwd:z0())):toTorqueQuat()
+    arrow:setField('rotation', 0, rot.x .. ' ' .. rot.y .. ' ' .. rot.z .. ' ' .. rot.w)
+    arrow.instanceColor = self.currentColor:asLinear4F()
+    arrow.instanceColor1 = ColorF(0,0,0,self.currentColor.a):asLinear4F()
+    arrow:setPosition( vec3(0,0,math.sin(os.clock()*3)*(0.2*self.scale.x/1.5))+self.pos+tmpVec)
+--      arrow:setField('instanceColor', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
+--    arrow:setField('instanceColor1', 1, ""..self.currentColor.r.." "..self.currentColor.g.." "..self.currentColor.b.." "..self.currentColor.a)
+    arrow:updateInstanceRenderData()
+    arrow:setScale(self.scale)
   end
 end
 
@@ -103,9 +106,10 @@ end
 function C:setToCheckpoint(wp)
   self.pos = vec3(wp.pos)
   self.scale = vec3(1,1,1) * (wp.radius or 1.5)
-  if self.left then
-    self.left:setPosition(vec3(0,0,1.75)+self.pos)
-    self.left:setScale(vec3(1,1,1))
+  arrow = self.arrowId and scenetree.findObjectById(self.arrowId)
+  if arrow then
+    arrow:setPosition(vec3(0,0,1.75)+self.pos)
+    arrow:setScale(vec3(1,1,1))
   end
 end
 
@@ -127,8 +131,9 @@ end
 function C:setVisibility(v)
   self.visible = v
 
-  if self.left then
-    self.left.hidden = not v
+  arrow = self.arrowId and scenetree.findObjectById(self.arrowId)
+  if arrow then
+    arrow.hidden = not v
   end
 end
 
@@ -161,9 +166,10 @@ end
 function C:createMarkers()
   self:clearMarkers()
   self._ids = {}
-  if not self.left then
-    self.left = self:createObject(sideShape,sidesPrefix.."left"..self.id)
-    table.insert(self._ids, self.left:getId())
+  if not self.arrowId then
+    local arrow = self:createObject(sideShape,sidesPrefix.."left"..self.id)
+    self.arrowId = arrow:getId()
+    table.insert(self._ids, self.arrowId)
   end
 end
 
@@ -176,7 +182,7 @@ function C:clearMarkers()
     end
   end
   self._ids = nil
-  self.left = nil
+  self.arrowId = nil
 end
 
 return function(...)

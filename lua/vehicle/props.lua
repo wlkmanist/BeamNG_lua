@@ -7,7 +7,7 @@ local props = {}
 local propEnd = -1
 local breakGroupMap = {}
 local deformGroupMap = {}
-local min, max = math.min, math.max
+local min, max, abs = math.min, math.max, math.abs
 
 local function updateProp(val, prop)
   if not prop.pid then
@@ -19,10 +19,12 @@ local function updateProp(val, prop)
   local pr = prop.rotation
   obj:propUpdate(prop.pid, pt.x, pt.y, pt.z, pr.x, pr.y, pr.z, not prop.hidden, val, min(max(val * prop.multiplier, prop.min), prop.max) + prop.offset)
   if prop.scaleLight and prop.lightBrightness and prop.flareScale and prop.lightColor then
-    local lightBrightness = linearScale(val, prop.scaleLightBrightnessMinInput, prop.scaleLightBrightnessMaxInput, 0, prop.lightBrightness)
-    local flareScale = linearScale(val, prop.scaleLightFlareScaleMinInput, prop.scaleLightFlareScaleMaxInput, 0, prop.flareScale)
-    local lightColor = color(linearScale(val, 1, 0, prop.lightColor.r, prop.lightColor.r - prop.scaleLightColorOffsetRed), linearScale(val, 1, 0, prop.lightColor.g, prop.lightColor.g - prop.scaleLightColorOffsetGreen), linearScale(val, 1, 0, prop.lightColor.b, prop.lightColor.b - prop.scaleLightColorOffsetBlue), prop.lightColor.a)
-    obj:setPropLight(prop.pid, lightBrightness, flareScale, lightColor)
+    local lastVal = prop.lastVal or math.huge
+    if abs(val - lastVal) < 0.0005 and (val ~= 0 or lastVal == 0) then
+      return
+    end
+    prop.lastVal = val
+    obj:setPropLight(prop.pid, clamp(linearScale(val, prop.scaleLightBrightnessMinInput, prop.scaleLightBrightnessMaxInput, 0, prop.lightBrightness), 0, prop.lightBrightness), clamp(linearScale(val, prop.scaleLightFlareScaleMinInput, prop.scaleLightFlareScaleMaxInput, 0, prop.flareScale), 0, prop.flareScale), color(linearScale(val, 1, 0, prop.lightColor.r, prop.lightColor.r - prop.scaleLightColorOffsetRed), linearScale(val, 1, 0, prop.lightColor.g, prop.lightColor.g - prop.scaleLightColorOffsetGreen), linearScale(val, 1, 0, prop.lightColor.b, prop.lightColor.b - prop.scaleLightColorOffsetBlue), prop.lightColor.a))
   end
 end
 
@@ -84,6 +86,7 @@ local function reset()
 
     prop.disabled = false
     prop.hidden = false
+    prop.lastVal = math.huge
 
     if prop.breakGroup ~= nil then
       local breakGroups = type(prop.breakGroup) == "table" and prop.breakGroup or {prop.breakGroup}
@@ -110,25 +113,15 @@ local function reset()
     end
 
     if prop.lightScaling then
-      if type(prop.lightScaling) ~= "table" then
-        prop.lightScaling = {
-          brightnessMinInput = 0,
-          brightnessMaxInput = 1,
-          flareScaleMinInput = 0.6,
-          flareScaleMaxInput = 1,
-          lightColorOffsetRed = 0,
-          lightColorOffsetGreen = 60,
-          lightColorOffsetBlue = 80
-        }
-      end
       prop.scaleLight = true
+      prop.lightScaling = type(prop.lightScaling) == "table" and prop.lightScaling or {}
       prop.scaleLightBrightnessMinInput = prop.lightScaling.brightnessMinInput or 0
       prop.scaleLightBrightnessMaxInput = prop.lightScaling.brightnessMaxInput or 1
       prop.scaleLightFlareScaleMinInput = prop.lightScaling.flareScaleMinInput or 0.6
       prop.scaleLightFlareScaleMaxInput = prop.lightScaling.flareScaleMaxInput or 1
-      prop.scaleLightColorOffsetRed = prop.lightColorOffsetRed or 0
-      prop.scaleLightColorOffsetGreen = prop.lightColorOffsetGreen or 60
-      prop.scaleLightColorOffsetBlue = prop.lightColorOffsetBlue or 80
+      prop.scaleLightColorOffsetRed = prop.lightScaling.lightColorOffsetRed or 0
+      prop.scaleLightColorOffsetGreen = prop.lightScaling.lightColorOffsetGreen or 60
+      prop.scaleLightColorOffsetBlue = prop.lightScaling.lightColorOffsetBlue or 80
 
       prop.lightScaling = nil
     end

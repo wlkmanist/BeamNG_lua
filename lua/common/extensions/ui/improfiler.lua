@@ -307,8 +307,8 @@ local outStringCache = ''
 function M.onUpdate(dtReal, dtSim, dtRaw)
   if im.Begin("LuaJIT Profiler", windowOpen) then
     im.TextUnformatted(outStringCache)
-    im.End()
   end
+  im.End()
 
 
   t = t + dtReal

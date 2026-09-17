@@ -9,12 +9,15 @@ local sqrt = math.sqrt
 local max = math.max
 local min = math.min
 
-local rpmToAV = 0.10471971768
-local avToRPM = 9.5493
-local invPascalToPSI = 0.00014503773773
-local psiToPascal = 6894.757293178
+local constants = {
+  rpmToAV = 0.10471971768,
+  avToRPM = 9.5493,
+  invPascalToPSI = 0.00014503773773,
+  psiToPascal = 6894.757293178
+}
 
 M.isExisting = true
+M.turboAV = nil
 
 local assignedEngine = nil
 local forcedInductionInfoStream = {
@@ -50,6 +53,13 @@ local turboHissVolumePerPascal = 0
 local wearFrictionCoef = 1
 local damageFrictionCoef = 1
 local damageExhaustPowerCoef = 1
+local damageScaleCoef = 1
+local antilagMaxPower = 0
+local antilagCoef = 0
+
+local exhaustPower
+local friction
+local backPressure
 
 -- Wastegate
 local wastegateStart
@@ -83,6 +93,7 @@ local bovTimer = 0
 local ignitionCutSmoother
 local needsBov = false
 local bovSound
+local antilagCoefSmoother = newTemporalSmoothing(10, 1000)
 
 local flutterSoundVolumeCoef = 1
 local flutterSound
@@ -102,8 +113,8 @@ local electricsSpinValue
 local turboDamageThresholdTemperature = 0
 
 local function applyDeformGroupDamage(damageAmount)
-  damageFrictionCoef = damageFrictionCoef + linearScale(damageAmount, 0, 0.01, 0, 1)
-  damageExhaustPowerCoef = max(damageExhaustPowerCoef - linearScale(damageAmount, 0, 0.01, 0, 0.1), 0)
+  damageFrictionCoef = damageFrictionCoef + linearScale(damageAmount, 0, 0.01, 0, 1*damageScaleCoef)
+  damageExhaustPowerCoef = max(damageExhaustPowerCoef - linearScale(damageAmount, 0, 0.01, 0, 0.1*damageScaleCoef), 0)
   damageTracker.setDamage("engine", "inductionSystemDamaged", true, true)
 end
 
@@ -142,26 +153,16 @@ local function updateSounds(dt)
     local hissVolume = max(turboPressure * turboHissVolumePerPascal, 0)
     obj:setVolumePitch(turboHissLoop, hissVolume, 1)
     obj:setVolumePitch(turboWhineLoop, spindleVolume, spindlePitch)
-  
-    -- Audio Debug
-    -- streams.drawGraph('hiss volum', {value = hissVolume, max = 1})
-    -- streams.drawGraph('spin volum', {value = spindleVolume, max = 1})
-    -- streams.drawGraph('spin pitch', {value = spindlePitch, max = 1})
-    -- if spindlePitch > 0 then print(string.format(" hiss volum = %0.2f / spin volum %.2f / spin pitch %.3f)", hissVolume, spindleVolume, spindlePitch)); end
+
+  -- Audio Debug
+  -- streams.drawGraph('hiss volum', {value = hissVolume, max = 1})
+  -- streams.drawGraph('spin volum', {value = spindleVolume, max = 1})
+  -- streams.drawGraph('spin pitch', {value = spindlePitch, max = 1})
+  -- if spindlePitch > 0 then print(string.format(" hiss volum = %0.2f / spin volum %.2f / spin pitch %.3f)", hissVolume, spindleVolume, spindlePitch)); end
   end
 end
 
 local function updateFixedStep(dt)
-  if assignedEngine.engineDisabled then
-    M.updateGFX = nop
-    M.updateFixedStep = nop
-    electrics.values.turboRpmRatio = 0
-    electrics.values.turboBoost = 0
-    turboPressure = 0
-    turboPressureRaw = 0
-    curTurboAV = 0
-    return
-  end
   --calculate wastegate factor
   local boostError = turboPressureRaw - wastegateTargetBoost
   wastegateIntegral = clamp(wastegateIntegral + boostError * dt, -50, 500)
@@ -173,18 +174,20 @@ local function updateFixedStep(dt)
   local engineRPM = floor(max(assignedEngine.outputRPM or 0, 0))
 
   --Torque on the turbo's axis
-  local throttle = assignedEngine.requestedThrottle
-  local exhaustPower = (0.1 + assignedEngine.exhaustFlowCoef * 0.8) * throttle * throttle * engAvRatio * (turbo.turboExhaustCurve[engineRPM] or 0) * maxExhaustPower * damageExhaustPowerCoef * dt
-  local friction = frictionCoef * wearFrictionCoef * damageFrictionCoef * dt --simulate some friction and stuff there
+  local throttle = clamp(assignedEngine.requestedThrottle, 0, 1)
+  exhaustPower = (0.1 + assignedEngine.exhaustFlowCoef * 0.8) * throttle * throttle * engAvRatio * (turbo.turboExhaustCurve[engineRPM] or 0) * maxExhaustPower * damageExhaustPowerCoef * dt
+  friction = frictionCoef * wearFrictionCoef * damageFrictionCoef * dt --simulate some friction and stuff there
   local bovBackPressureCoef = bovRequested and (bovEnabled and 0.4 or 2) or 1 --while bov logic is active, use a small backpressure coef for cars with bov and a large one without a bov
-  local backPressure = curTurboAV * curTurboAV * backPressureCoef * bovBackPressureCoef * dt --back pressure from compressing the air
-  local turboTorque = ((exhaustPower * wastegateFactor) - backPressure - friction)
+  backPressure = curTurboAV * curTurboAV * backPressureCoef * bovBackPressureCoef * dt --back pressure from compressing the air
+  local antilagPower = antilagCoef * antilagMaxPower *damageExhaustPowerCoef * dt
+  local turboTorque = (((exhaustPower + antilagPower) * wastegateFactor) - backPressure - friction)
 
   --calculate angular velocity
   curTurboAV = clamp((curTurboAV + dt * turboTorque * invTurboInertia), 0, maxTurboAV)
+  M.turboAV = curTurboAV
 
-  local turboRPM = curTurboAV * avToRPM
-  turboPressureRaw = assignedEngine.isStalled and 0 or ((turbo.turboPressureCurve[floor(turboRPM)] * psiToPascal) or turboPressure)
+  local turboRPM = curTurboAV * constants.avToRPM
+  turboPressureRaw = assignedEngine.isStalled and 0 or ((turbo.turboPressureCurve[floor(turboRPM)] * constants.psiToPascal) or turboPressure)
   turboPressure = pressureSmoother:getUncapped(turboPressureRaw, dt)
 
   -- 1 psi = 6% more power
@@ -193,18 +196,6 @@ local function updateFixedStep(dt)
 end
 
 local function updateGFX(dt)
-  --Some verification stuff
-  if assignedEngine.engineDisabled then
-    M.updateGFX = nop
-    M.updateFixedStep = nop
-    electrics.values.turboRpmRatio = 0
-    electrics.values.turboBoost = 0
-    turboPressure = 0
-    turboPressureRaw = 0
-    curTurboAV = 0
-    return
-  end
-
   --calculate an arbitary "turbo temp" that reflects the effects of oil and coolant cooling on the actual temps inside the turbo
   local turboTemp = assignedEngine.thermals.exhaustTemperature + (assignedEngine.thermals.coolantTemperature or 0) + assignedEngine.thermals.oilTemperature
   --calculate turbo damage using our turbo temp
@@ -215,9 +206,13 @@ local function updateGFX(dt)
     damageTracker.setDamage("engine", "turbochargerHot", false)
   end
 
+  --smooth the antilagCoef to not trigger BOV when switching from antilag to full throttle
+  local smoothedAntilagCoef = antilagCoefSmoother:get(antilagCoef, dt)
+  --engine load needs to take antilag coef into account for correct BOV operation
+  local engineLoad = max(assignedEngine.instantEngineLoad, smoothedAntilagCoef)
   --open the BOV if we have very little load or if the engine load drops significantly
-  local loadLow = assignedEngine.instantEngineLoad < bovOpenThreshold or assignedEngine.requestedThrottle <= 0
-  local highLoadDrop = (lastEngineLoad - assignedEngine.instantEngineLoad) > bovOpenChangeThreshold
+  local loadLow = (engineLoad < bovOpenThreshold or (max(assignedEngine.requestedThrottle, smoothedAntilagCoef) <= 0))
+  local highLoadDrop = (lastEngineLoad - engineLoad) > bovOpenChangeThreshold
   local notInRevLimiter = assignedEngine.revLimiterWasActiveTimer > 0.1
   local ignitionNotCut = ignitionCutSmoother:getUncapped(assignedEngine.ignitionCutTime > 0 and 1 or 0, dt) <= 0
   bovRequested = needsBov and (loadLow or highLoadDrop) and notInRevLimiter and ignitionNotCut
@@ -263,34 +258,37 @@ local function updateGFX(dt)
     end
   end
 
-  local turboRPM = curTurboAV * avToRPM
+  local turboRPM = curTurboAV * constants.avToRPM
   electrics.values[electricsRPMName] = turboRPM
   electricsSpinValue = electricsSpinValue + turboRPM * dt
   electrics.values[electricsSpinName] = (electricsSpinValue * electricsSpinCoef) % 360
   -- Update sounds
   electrics.values.turboRpmRatio = curTurboAV * invMaxTurboAV * 580
-  electrics.values.turboBoost = turboPressure * invPascalToPSI
+  electrics.values.turboBoost = turboPressure * constants.invPascalToPSI
 
   lastEngineLoad = assignedEngine.instantEngineLoad
   lastBOVValue = bovRequested
 
   -- Update streams
   if streams.willSend("forcedInductionInfo") then
-    forcedInductionInfoStream.rpm = curTurboAV * avToRPM
+    forcedInductionInfoStream.rpm = curTurboAV * constants.avToRPM
     forcedInductionInfoStream.coef = assignedEngine.forcedInductionCoef
-    forcedInductionInfoStream.boost = electrics.values.boost * psiToPascal * 0.001
-    forcedInductionInfoStream.maxBoost = electrics.values.boostMax * psiToPascal * 0.001
-    --forcedInductionInfoStream.exhaustPower = exhaustPower / dt
-    --forcedInductionInfoStream.backpressure = backPressure / dt
-    forcedInductionInfoStream.bovEngaged = (bovEngaged and 1 or 0) * 10
-    forcedInductionInfoStream.wastegateFactor = wastegateFactor * 10
+    forcedInductionInfoStream.boost = electrics.values.boost * constants.psiToPascal * 0.001
+    forcedInductionInfoStream.maxBoost = electrics.values.boostMax * constants.psiToPascal * 0.001
+    forcedInductionInfoStream.exhaustPower = exhaustPower / dt
+    forcedInductionInfoStream.backpressure = backPressure / dt
+    forcedInductionInfoStream.friction = friction / dt
+    forcedInductionInfoStream.bovEngaged = (bovEngaged and 1 or 0)
+    forcedInductionInfoStream.wastegateFactor = wastegateFactor
     forcedInductionInfoStream.turboTemp = turboTemp
+    forcedInductionInfoStream.antilagCoef = antilagCoef
 
     gui.send("forcedInductionInfo", forcedInductionInfoStream)
   end
 end
 
 local function reset(jbeamData)
+  M.turboAV = 0
   curTurboAV = 0
   turboPressure = 0
   turboPressureRaw = 0
@@ -305,6 +303,10 @@ local function reset(jbeamData)
   wastegateStartPerGear = 0
   wastegateRangePerGear = 0
   electricsSpinValue = 0
+  antilagCoef = 0
+  exhaustPower = 0
+  backPressure = 0
+  friction = 0
 
   wearFrictionCoef = 1
   damageFrictionCoef = 1
@@ -313,6 +315,7 @@ local function reset(jbeamData)
   pressureSmoother:reset()
   wastegateSmoother:reset()
   ignitionCutSmoother:reset()
+  antilagCoefSmoother:reset()
 
   damageTracker.setDamage("engine", "turbochargerHot", false)
   damageTracker.setDamage("engine", "turbochargerDamaged", false)
@@ -329,6 +332,7 @@ local function init(device, jbeamData)
 
   --log("D", "Turbo", "Initializing turbo subsystem")
 
+  M.turboAV = 0
   curTurboAV = 0
   turboPressure = 0
   turboPressureRaw = 0
@@ -342,6 +346,7 @@ local function init(device, jbeamData)
   wastegateTargetBoost = 0
   wastegateStartPerGear = 0
   wastegateRangePerGear = 0
+  antilagCoef = 0
 
   maxTurboAV = 1
   local maxPossiblePressure = 0
@@ -355,8 +360,8 @@ local function init(device, jbeamData)
       local point = turbo.pressurePSI[i]
       tpoints[i] = {point[1], point[2]}
       --Get max turbine rpm
-      maxTurboAV = max(point[1] * rpmToAV, maxTurboAV)
-      maxPossiblePressure = max(maxPossiblePressure, point[2] * psiToPascal)
+      maxTurboAV = max(point[1] * constants.rpmToAV, maxTurboAV)
+      maxPossiblePressure = max(maxPossiblePressure, point[2] * constants.psiToPascal)
     end
   else
     log("E", "Turbo", "No turbocharger.pressurePSI table found!")
@@ -393,26 +398,26 @@ local function init(device, jbeamData)
   maxWastegateLimit = 1
   if type(turbo.wastegateStart) == "table" then
     for k, v in pairs(turbo.wastegateStart) do
-      wastegateStart[k] = v * psiToPascal
+      wastegateStart[k] = v * constants.psiToPascal
       maxWastegateStart = wastegateStart[k]
     end
   else
-    wastegateStart[1] = (turbo.wastegateStart or 0) * psiToPascal
+    wastegateStart[1] = (turbo.wastegateStart or 0) * constants.psiToPascal
     maxWastegateStart = wastegateStart[1]
   end
 
   wastegateLimit = {}
   if type(turbo.wastegateLimit) == "table" then
     for k, v in pairs(turbo.wastegateLimit) do
-      wastegateLimit[k] = v * psiToPascal
+      wastegateLimit[k] = v * constants.psiToPascal
       maxWastegateLimit = wastegateLimit[k]
     end
   elseif type(turbo.wastegateLimit) == "number" then
-    wastegateLimit[1] = (turbo.wastegateLimit or 0) * psiToPascal
+    wastegateLimit[1] = (turbo.wastegateLimit or 0) * constants.psiToPascal
     maxWastegateLimit = wastegateLimit[1]
   else
     for k, v in pairs(wastegateStart) do
-      wastegateLimit[k] = v + 0.01 * psiToPascal
+      wastegateLimit[k] = v + 0.01 * constants.psiToPascal
       maxWastegateLimit = wastegateLimit[k]
     end
   end
@@ -431,6 +436,8 @@ local function init(device, jbeamData)
   backPressureCoef = turbo.backPressureCoef or 0.0005
   frictionCoef = turbo.frictionCoef or 0.01
 
+  antilagMaxPower = turbo.maxAntilagPower or 0
+
   turboDamageThresholdTemperature = turbo.damageThresholdTemperature or 1000
 
   wastegatePCoef = turbo.wastegatePCoef or 0.0001
@@ -444,24 +451,25 @@ local function init(device, jbeamData)
 
   --optimizations:
   invMaxTurboAV = 1 / maxTurboAV
-  invEngMaxAV = 1 / ((assignedEngine.maxRPM or 8000) * rpmToAV)
+  invEngMaxAV = 1 / ((assignedEngine.maxRPM or 8000) * constants.rpmToAV)
   invTurboInertia = 1 / (0.000003 * turboInertiaFactor * 2.5)
-  pressureSmoother = newTemporalSmoothing(200 * psiToPascal, (turbo.pressureRatePSI or 30) * psiToPascal)
+  pressureSmoother = newTemporalSmoothing(200 * constants.psiToPascal, (turbo.pressureRatePSI or 30) * constants.psiToPascal)
   wastegateSmoother = newTemporalSmoothing(50, 50)
   ignitionCutSmoother = newTemporalSmoothing(1, 10)
   bovEnabled = (turbo.bovEnabled == nil or turbo.bovEnabled)
   bovOpenThreshold = turbo.bovOpenThreshold or 0.05
   bovOpenChangeThreshold = turbo.bovOpenChangeThreshold or 0.3
   needsBov = assignedEngine.requiredEnergyType ~= "diesel"
-  maxTurboPressure = min(maxWastegateStart * invPascalToPSI * (1 + (maxWastegateRange * invPascalToPSI) * 0.01) * psiToPascal, maxPossiblePressure) --limit this to what the current turbo can actually deliver
+  maxTurboPressure = min(maxWastegateStart * constants.invPascalToPSI * (1 + (maxWastegateRange * constants.invPascalToPSI) * 0.01) * constants.psiToPascal, maxPossiblePressure) --limit this to what the current turbo can actually deliver
 
   forcedInductionInfoStream.friction = frictionCoef
   --forcedInductionInfoStream.maxBoost = maxWastegateLimit * 0.001
-  electrics.values.turboBoostMax = maxWastegateLimit * invPascalToPSI
+  electrics.values.turboBoostMax = maxWastegateLimit * constants.invPascalToPSI
 
   wearFrictionCoef = 1
   damageFrictionCoef = 1
   damageExhaustPowerCoef = 1
+  damageScaleCoef = turbo.deformGroupDamageScaleCoef or 1
 
   damageTracker.setDamage("engine", "turbochargerHot", false)
   damageTracker.setDamage("engine", "turbochargerDamaged", false)
@@ -480,14 +488,14 @@ local function initSounds(jbeamData)
   assignedEngine:setSoundLocation("turbochargerwhine", "Turbo Hiss: " .. turboHissLoopFilename, {assignedEngine.engineNodeID})
   assignedEngine:setSoundLocation("turbochargerhiss", "Turbo Whine: " .. turboWhineLoopFilename, {assignedEngine.engineNodeID})
 
-  turboWhinePitchPerAV = (turbo.whinePitchPer10kRPM or 0.05) * 0.01 * rpmToAV
-  turboWhineVolumePerAV = (turbo.whineVolumePer10kRPM or 0.04) * 0.01 * rpmToAV
-  turboHissVolumePerPascal = (turbo.hissVolumePerPSI or 0.04) * invPascalToPSI
+  turboWhinePitchPerAV = (turbo.whinePitchPer10kRPM or 0.05) * 0.01 * constants.rpmToAV
+  turboWhineVolumePerAV = (turbo.whineVolumePer10kRPM or 0.04) * 0.01 * constants.rpmToAV
+  turboHissVolumePerPascal = (turbo.hissVolumePerPSI or 0.04) * constants.invPascalToPSI
 
   turboSizeCoef = turbo.turboSizeCoef or 1
   bovSoundVolumeCoef = turbo.bovSoundVolumeCoef or 0.3
   flutterSoundVolumeCoef = turbo.flutterSoundVolumeCoef or 0.3
-  
+
   -- Audio Debug
   -- print (string.format("Turbo Hiss and Whine", turbo.hissLoopEvent).." : "..turbo.hissLoopEvent.." : "..turbo.whineLoopEvent)
   -- print (string.format("turbo.hissVolumePerPSI = %.3f : turbo.whineVolumePer10kRPM = %.3f : turbo.whinePitchPer10kRPM = %.3f", turbo.hissVolumePerPSI, turbo.whineVolumePer10kRPM, turbo.whinePitchPer10kRPM))
@@ -501,17 +509,17 @@ local function getTorqueCoefs()
   --we can't know the actual wastegate limit for sure since it's a feedback loop with the pressure, so we just estimate it.
   --lower wastegate ranges lead to more accurate results.
   --local estimatedWastegateLimit = maxWastegateStart * invPascalToPSI * (1 + (maxWastegateRange * invPascalToPSI) * 0.03)
-  local estimatedWastegateLimit = (maxWastegateStart + maxWastegateRange * 0.5) * invPascalToPSI
+  local estimatedWastegateLimit = (maxWastegateStart + maxWastegateRange * 0.5) * constants.invPascalToPSI
 
   for k, _ in pairs(assignedEngine.torqueCurve) do
     if type(k) == "number" and k < assignedEngine.maxRPM then
       local rpm = floor(k)
-      local turboAV = sqrt(max((0.9 * rpm * rpmToAV * invEngMaxAV * (turbo.turboExhaustCurve[rpm] or 1) * maxExhaustPower * damageExhaustPowerCoef - frictionCoef * wearFrictionCoef * damageFrictionCoef), 0) / backPressureCoef)
+      local turboAV = sqrt(max((0.9 * rpm * constants.rpmToAV * invEngMaxAV * (turbo.turboExhaustCurve[rpm] or 1) * maxExhaustPower * damageExhaustPowerCoef - frictionCoef * wearFrictionCoef * damageFrictionCoef), 0) / backPressureCoef)
       turboAV = min(turboAV, maxTurboAV)
-      local turboRPM = floor(turboAV * avToRPM)
+      local turboRPM = floor(turboAV * constants.avToRPM)
       local pressure = turbo.turboPressureCurve[turboRPM] or 0 --pressure without respecting the wastegate
       local actualPressure = min(pressure, estimatedWastegateLimit) --limit the pressure to what the wastegate allows
-      coefs[k + 1] = (1 + 0.0000087 * actualPressure * psiToPascal * (turbo.turboEfficiencyCurve[rpm] or 0))
+      coefs[k + 1] = (1 + 0.0000087 * actualPressure * constants.psiToPascal * (turbo.turboEfficiencyCurve[rpm] or 0))
     end
   end
 
@@ -519,7 +527,11 @@ local function getTorqueCoefs()
 end
 
 local function setWastegateOffset(offset)
-  wastegateOffset = offset * psiToPascal
+  wastegateOffset = offset * constants.psiToPascal
+end
+
+local function setAntilagCoef(coef)
+  antilagCoef = coef
 end
 
 -- public interface
@@ -532,6 +544,7 @@ M.updateGFX = nop
 M.updateFixedStep = nop
 M.getTorqueCoefs = getTorqueCoefs
 M.setWastegateOffset = setWastegateOffset
+M.setAntilagCoef = setAntilagCoef
 
 M.applyDeformGroupDamage = applyDeformGroupDamage
 M.setPartCondition = setPartCondition

@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
--- utilities that are only neded in vehicle lua
+-- utilities that are only needed in vehicle lua
 
 -- useful local shortcuts
 local abs, floor, min, max, stringformat, tableconcat = math.abs, math.floor, math.min, math.max, string.format, table.concat
@@ -12,7 +12,7 @@ local _HighPerfTimer = {}
 _HighPerfTimer.__index = _HighPerfTimer
 
 function HighPerfTimer()
-  return setmetatable({0}, _HighPerfTimer)
+  return setmetatable({os.clockhp()}, _HighPerfTimer)
 end
 
 function _HighPerfTimer:reset()
@@ -24,8 +24,9 @@ function _HighPerfTimer:stop()
 end
 
 function _HighPerfTimer:stopAndReset()
-  local t = (os.clockhp() - self[1]) * 1000
-  self[1] = os.clockhp()
+  local now = os.clockhp()
+  local t = (now - self[1]) * 1000
+  self[1] = now
   return t
 end
 
@@ -127,9 +128,9 @@ function saveCompiledJBeamRecursive(f, data, level)
   --f:write(level..indent
   f:write(indent)
 
-  if type(data) == "table" and type(data["partOrigin"]) == "string" and data["partOrigin"] ~= "" then
+  if type(data) == "table" and type(data["partPath"]) == "string" and data["partPath"] ~= "" then
     f:write("\n" .. indent .. "/*" .. string.rep("*", 50) .. "\n")
-    f:write(indent .. " * part " .. tostring(data["partOrigin"]) .. "\n")
+    f:write(indent .. " * part " .. tostring(data["partPath"]) .. "\n")
     f:write(indent .. " *" .. string.rep("*", 49) .. "*/\n")
     f:write("\n" .. indent)
   end
@@ -240,7 +241,7 @@ local function CatMullRomSpline(points, returnArray)
   if returnArray and ffi then
     res = ffi.new("float[?]", points[#points][1] + 1)
   else
-    res = table.new(points[#points][1] + 1, 0)
+    res = table.new(max(0, points[#points][1] + 1), 0)
   end
 
   local pointSize = #points
@@ -270,7 +271,7 @@ function createCurve(points, returnArray)
     if returnArray and ffi then
       res = ffi.new("float[?]", points[#points][1] + 1)
     else
-      res = table.new(points[#points][1] + 1, 0)
+      res = table.new(max(0, points[#points][1] + 1), 0)
     end
     local p1, p2 = points[1], points[2]
     local p2p1 = p2[2] - p1[2]

@@ -87,8 +87,8 @@ M.onGeneralMilestonesCollect = function(milestonesList)
     maxStep = #speeds,
     color = milestones.colorGeneralGray,
     getValue = function() return milestones.saveData.general[milestoneId].maxVelocityReachedByPlayer or 0 end,
-    getLabel = function(step, current, target) return 'Speeding Menace' end,
-    getDescription = function(step, current, target) return "Trigger any speed trap and get a high speed." end,
+    getLabel = function(step, current, target) return "ui.career.milestones.speedTrapVelocity.label" end,
+    getDescription = function(step, current, target) return "ui.career.milestones.speedTrapVelocity.description" end,
     getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.speedTrapVelocity.progressLabel", context={current = current, target = target}} end,
     getTarget = function(step) return speeds[step] end, -- so it starts at speedlimit for first step
     getRewards = milestones.minorLinear,
@@ -109,9 +109,9 @@ M.onGeneralMilestonesCollect = function(milestonesList)
     color = milestones.colorGeneralGray,
     maxStep = 10,
     getValue = function() return milestones.saveData.general[triggerCounterMilestoneId].triggerCount or 0 end,
-    getLabel = function(step, current, target) return string.format("Serial Speeder", step) end,
-    getDescription = function(step, current, target) return string.format("Trigger speed traps a certain amount of times.") end,
-    getProgressLabel = function(step, current, target) return string.format("%d / %d", current, target) end,
+    getLabel = function(step, current, target) return "ui.career.milestones.speedTrapTriggerCounter.label" end,
+    getDescription = function(step, current, target) return "ui.career.milestones.speedTrapTriggerCounter.description" end,
+    getProgressLabel = function(step, current, target) return {txt="ui.career.milestones.progress.count", context={current = current, target = target}} end,
     getTarget = function(step) return (step) * 15 end,
     getRewards = milestones.minorLinear,
   }

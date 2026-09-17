@@ -11,10 +11,13 @@ function C:init()
   self.recoveryStates = {}
   self.time = 0
   self.lapCount = 1
+  self.finishCount = 0
   self.started = false
-  self.useHotlappingApp = true
+  self.useHotlappingApp = false
+  self.useLapTimesApp = true
   self.useDebugDraw = false
   self.useWaypointAudio = true
+  self.alwaysAdvanceTime = false
   self.sortPlacements = function (a, b)
     -- sorts by descending lap, then descending index, then ascending distance to next waypoint
     if a.lap == b.lap then
@@ -42,7 +45,7 @@ function C:setPathFile(file)
 end
 
 function C:calcAIPath()
-  self.aiPath, self.aiDetailedPath = self.path:getAiPath(true)
+  self.aiPath, self.aiDetailedPath = self.path:getAiPath()
 end
 
 function C:setPath(path)
@@ -87,86 +90,95 @@ function C:getDistOnNav(pointA, pointB, inNextAiPathIdx, inPrevAiPathIdx, outNex
   return distanceAlongPath, distanceCut
 end
 
-local penaltyData = {
-  falsePositive = 1, -- if player goes off track just a little, its fine
-  totalPenaltyThresh = 5, -- giving the player some slack
-  delayToApplyPenalty = 4, -- don't apply penalty right away
+local offTrackData = {
+  offTrackPath = {}, -- record the player's pos when he is off track to better determine a penalty
+  lastFrameIsOnRoad = nil, -- flag to trigger on/off track calculations
+  offPos = vec3(), -- remember where we drove off the track
+  onPos = vec3(), -- remember where we drove back on the track
 
-  currDelayToApplyPenalty = 0,
-  currTotalPenaltyToApply = 0,
-  currTotalPenalty = 0,
-
-  offTrackPath = {} -- record the player's pos when he is off track to better determine a penalty
+  debugStuff = {
+    maxCutDepthPos = vec3(),
+    maxCutDepth = 0,
+    totalDistDrivenOffTrack = 0,
+    distCutAlongPath = 0,
+    distOnOffTrack = 0,
+  }
 }
 
-function C:calcCutTrackTimePenalty(distCutAlongPath, distCut, offPos, onPos, maxCutTrack)
-  -- punish people that have cut the track more than people that have gone offtrack along the track
-  local diff = distCutAlongPath - distCut
-  return tonumber(string.format("%.1f", (distCutAlongPath / 200) * math.max(diff, 0.5)))
-end
-
-function C:applyPenalty(timePenalty)
-  dump(string.format("Time penalty : %f seconds", timePenalty))
+local isDebug = true
+function C:debugDraw(data)
+  for _, pos in ipairs(data.offTrackData.offTrackPath) do
+    debugDrawer:drawSphere(pos, 0.05, ColorF(1,1,1,0.5))
+  end
+  debugDrawer:drawSphere(data.offTrackData.offPos, 0.1, ColorF(1,0,0,1))
+  debugDrawer:drawSphere(data.offTrackData.onPos, 0.1, ColorF(0,1,0,1))
+  debugDrawer:drawSphere(data.offTrackData.debugStuff.maxCutDepthPos, 0.1, ColorF(0,0,1,1))
 end
 
 function C:detectOffTrack(data, dt)
-  if not data.penaltyData then
-    data.penaltyData = deepcopy(penaltyData)
+  if not data.offTrackData then
+    data.offTrackData = deepcopy(offTrackData)
   end
 
-  if data.lastFrameIsOnRoad ~= nil then
-    if not data.isOnRoad then
-      data.penaltyData.currDelayToApplyPenalty = 0
-    end
-
+  if data.offTrackData.lastFrameIsOnRoad ~= nil then
     -- just drove off the track
-    if data.lastFrameIsOnRoad and not data.isOnRoad then
+    if data.offTrackData.lastFrameIsOnRoad and not data.isOnRoad then
       -- remember where we drove off
-      data.offPos = vec3(data.frontPos)
+      data.offTrackData.offPos:set(data.frontPos)
       data.inPrevAiPathIdx = data.aiPathIdx
       data.inNextAiPathIdx = data.aiPathIdx + 1
 
-      data.penaltyData.offTrackPath = {}
+      data.offTrackData.offTrackPath = {}
     end
 
     -- while off the track, we record the player's path, to then later determine how deep he has cut the track
     if not data.isOnRoad then
-      table.insert(data.penaltyData.offTrackPath, vec3(data.frontPos.x, data.frontPos.y, data.frontPos.z))
+      table.insert(data.offTrackData.offTrackPath, vec3(data.frontPos.x, data.frontPos.y, data.frontPos.z))
     end
 
     -- drove back on the track
-    if not data.lastFrameIsOnRoad and data.isOnRoad then
+    if not data.offTrackData.lastFrameIsOnRoad and data.isOnRoad then
+      data.offTrackData.onPos:set(data.frontPos)
+
       local maxCutDepth = 0
-      for _, pos in ipairs(data.penaltyData.offTrackPath) do
-        local cutDepth = pos:distanceToLineSegment(data.offPos, data.frontPos)
-        if cutDepth > maxCutDepth then maxCutDepth = cutDepth end
-      end
-      local distCutAlongPath, distCut = self:getDistOnNav(data.offPos, data.frontPos, data.inNextAiPathIdx, data.inPrevAiPathIdx, data.aiPathIdx + 1, data.aiPathIdx)
-      if distCutAlongPath > data.penaltyData.falsePositive then
-        data.penaltyData.currTotalPenalty = data.penaltyData.currTotalPenalty + distCutAlongPath
+      local totalDistDrivenOffTrack = 0
+      -- go through the off track path and calculate :
+      -- 1. the total distance driven off track
+      -- 2. how deep the player has gone off track
+      local prevPos = vec3(data.offTrackData.offPos)
+      for _, pos in ipairs(data.offTrackData.offTrackPath) do
+        local cutDepth = pos:distanceToLineSegment(data.offTrackData.offPos, data.frontPos)
+        if cutDepth > maxCutDepth then
+          maxCutDepth = cutDepth
+          data.offTrackData.debugStuff.maxCutDepthPos:set(pos)
+        end
+        totalDistDrivenOffTrack = totalDistDrivenOffTrack + pos:distance(prevPos)
+        prevPos:set(pos)
       end
 
-      if data.penaltyData.currTotalPenalty > data.penaltyData.totalPenaltyThresh then
-        local timePenalty = self:calcCutTrackTimePenalty(distCutAlongPath, distCut, data.offPos, data.frontPos, maxCutDepth)
-        data.penaltyData.currTotalPenaltyToApply = data.penaltyData.currTotalPenaltyToApply + timePenalty
-      end
-    end
+      local distCutAlongPath, onOffDist = self:getDistOnNav(data.offTrackData.offPos, data.frontPos, data.inNextAiPathIdx, data.inPrevAiPathIdx, data.aiPathIdx + 1, data.aiPathIdx)
 
-    -- if we have penalties pending, start delay, so we can apply them all at once
-    if data.penaltyData.currTotalPenaltyToApply > 0 then
-      data.penaltyData.currDelayToApplyPenalty = data.penaltyData.currDelayToApplyPenalty + dt
-      if data.penaltyData.currDelayToApplyPenalty > data.penaltyData.delayToApplyPenalty then
-        self:applyPenalty(data.penaltyData.currTotalPenaltyToApply)
-        data.penaltyData.currTotalPenaltyToApply = 0
-        data.penaltyData.currDelayToApplyPenalty = 0
+      data.offTrackData.debugStuff.distCutAlongPath = distCutAlongPath
+      data.offTrackData.debugStuff.distOnOffTrack = onOffDist
+      data.offTrackData.debugStuff.maxCutDepth = maxCutDepth
+      data.offTrackData.debugStuff.totalDistDrivenOffTrack = totalDistDrivenOffTrack
+      if isDebug then
+        dump(data.offTrackData.debugStuff)
       end
     end
   end
 
-  data.lastFrameIsOnRoad = data.isOnRoad
+  if isDebug then
+    self:debugDraw(data)
+  end
+  data.offTrackData.lastFrameIsOnRoad = data.isOnRoad
 end
 
 local sorted = {}
+local vehVel = vec3()
+local vehDir = vec3()
+local vehBBCenter = vec3()
+local vehBBHalfExtents = vec3()
 function C:getTrackedData(dt)
   local completedCount = 0
   local sortedNextIndex = 1
@@ -181,11 +193,17 @@ function C:getTrackedData(dt)
       local wpIdx = math.huge
       local sqDist = 0
 
-      local veh = be:getObjectByID(id)
+      local veh = getObjectByID(id)
       if veh then
-        local vehBB = veh:getSpawnWorldOOBB()
-        local dir = sign2(veh:getDirectionVector():dot(veh:getVelocity())) -- negative if driving in reverse
-        data.frontPos:set(vehBB:getCenter() + veh:getDirectionVector() * vehBB:getHalfExtents().y * dir)
+        vehBBCenter:set(be:getObjectOOBBCenterXYZ(id))
+        vehBBHalfExtents:set(be:getObjectOOBBHalfExtentsXYZ(id))
+        vehVel:set(veh:getVelocityXYZ())
+        vehDir:set(veh:getDirectionVectorXYZ())
+        local dir = sign2(vehDir:dot(vehVel)) -- negative if driving in reverse
+
+        vehDir:setScaled(vehBBHalfExtents.y * dir)
+        data.frontPos:set(vehBBCenter)
+        data.frontPos:setAdd(vehDir)
 
         if segName then
           wpIdx = self.path.config.graph[segName].linearCPIndex
@@ -251,6 +269,7 @@ function C:getTrackedData(dt)
 
   table.sort(sorted, self.sortPlacements)
 
+
   for i, v in ipairs(sorted) do
     self.states[v.id].placement = i + completedCount
   end
@@ -274,7 +293,10 @@ function C:onUpdate(dt)
       if self.useDebugDraw then
         self:drawDebug(id)
       end
-      self:digestEvents(id)
+      self:digestEvents(id, dt)
+
+      --self:inDrawTimes(id, ui_imgui, true)
+      --self:inDrawEventlog(id, ui_imgui)
 
     end
   end
@@ -282,7 +304,26 @@ function C:onUpdate(dt)
     if not self.path.branching and next(self.states) then
       self:getTrackedData(dt)
     end
-    self.time = self.time + dt
+
+    -- Update lapTimes app before advancing time, so the displayed clock
+    -- matches the current frame's state (starts at 0 on the first frame).
+    if self.useLapTimesApp and core_lapTimes then
+      local pid = be:getPlayerVehicleID(0)
+      if self.states[pid] then
+        core_lapTimes.updateFastFromRace(self, pid)
+      end
+    end
+
+    if self.alwaysAdvanceTime then
+      self.time = self.time + dt
+    else
+      local pid = be:getPlayerVehicleID(0)
+      local playerComplete = self.states[pid] and self.states[pid].complete or false
+      if not playerComplete or self.states[pid].events.raceComplete then
+        self.time = self.time + dt
+      end
+    end
+
   end
 end
 
@@ -293,6 +334,14 @@ function C:doSuspend(sus)
       guihooks.trigger('HotlappingTimerPause')
     else
       guihooks.trigger('HotlappingTimerUnpause')
+    end
+  end
+
+  if self.useLapTimesApp and core_lapTimes then
+    if sus then
+      core_lapTimes.pauseTiming()
+    else
+      core_lapTimes.resumeTiming()
     end
   end
 end
@@ -322,7 +371,7 @@ function C:changeRaceVehicle(lastId, newId)
   self.states[newId] = self.states[lastId]
   self.states[lastId] = nil
 
-  local vehicle = be:getObjectByID(newId)
+  local vehicle = getObjectByID(newId)
   self.states[newId].wheelOffsets = {}
   self.states[newId].currentCorners = {}
   self.states[newId].previousCorners = {}
@@ -363,7 +412,7 @@ function C:startAiVehicle(id, aggression)
       if n1 and n2 then
         finalDir = (map.getMap().nodes[n1].pos - map.getMap().nodes[n2].pos):normalized()
       else
-        finalDir = be:getObjectByID(id):getDirectionVector() -- last resort, this shouldn't happen
+        finalDir = getObjectByID(id):getDirectionVector() -- last resort, this shouldn't happen
       end
     end
     local extPath = map.getGraphpath():getRandomPathG(finalWp, finalDir, 250, nil, nil, false) -- extended path beyond the finish line
@@ -379,14 +428,34 @@ function C:startAiVehicle(id, aggression)
       aggression = self.states[id].baseAggression
     end
   end
-  aggression = aggression or 0.9
+  if not aggression then
+    local classData = gameplay_vehiclePerformance.getClassFromVehId(id) -- estimates aggression from vehicle performance
+    if classData then
+      local class = classData.class.name
+      if class == "S" then
+        aggression = 1
+      elseif class == "A" then
+        aggression = 0.9
+      elseif class == "B" then
+        aggression = 0.8
+      elseif class == "C" then
+        aggression = 0.7
+      elseif class == "D" then
+        aggression = 0.6
+      else
+        aggression = 0.85
+      end
+    else
+      aggression = 0.85
+    end
+  end
 
   local str = '{wpTargetList = '..serialize(aiPath)
   str = str..', noOfLaps = '..lapCount
   str = str..', aggression = '..aggression..'}'
 
-  be:getObjectByID(id):queueLuaCommand('controller.setFreeze(false)')
-  be:getObjectByID(id):queueLuaCommand('ai.driveUsingPath('..str..')')
+  getObjectByID(id):queueLuaCommand('controller.setFreeze(false)')
+  getObjectByID(id):queueLuaCommand('ai.driveUsingPath('..str..')') -- this should ignore one-way roads
 end
 
 function C:stopAiVehicle(id)
@@ -394,14 +463,53 @@ function C:stopAiVehicle(id)
     self.states[id].isAiVeh = false
   end
 
-  be:getObjectByID(id):queueLuaCommand('ai.setMode("stop")')
+  getObjectByID(id):queueLuaCommand('ai.setMode("stop")')
 end
 
 function C:startRace()
+
+  if self.useHotlappingApp then
+    -- load hotlapping for the hotlapping app.
+    if not core_hotlapping then
+      extensions.load({'core_hotlapping'})
+      guihooks.trigger('setQuickRaceMode')
+      guihooks.trigger("HotlappingResetApp")
+    end
+  end
+
+  if self.useLapTimesApp then
+    -- load lapTimes for the lap times app.
+    if not core_lapTimes then
+      extensions.load({'core_lapTimes'})
+    end
+    if core_lapTimes and core_lapTimes.onRaceStart then
+      local segments = 0
+      if self.path and self.path.pathnodes and self.path.pathnodes.sorted then
+        segments = #self.path.pathnodes.sorted
+      end
+      core_lapTimes.onRaceStart({
+        totalLaps = self.lapCount or 0,
+        totalSegments = segments,
+        pathConfig = {
+          isClosed = self.path and self.path.config and self.path.config.closed or false,
+          lapCount = self.lapCount or 1,
+          totalSegments = segments
+        }
+      })
+      -- Update static stream on race start
+      core_lapTimes.updateStaticFromRace(self, be:getPlayerVehicleID(0))
+    end
+  end
+
   self.started = true
   self.time = 0
+  self.finishCount = 0
+
+  -- Initialize shared checkpoint times table
+  self.checkpointTimes = {} -- indexed by "lap_segment" key
+
   for _, id in ipairs(self.vehIds) do
-    local veh = be:getObjectByID(id)
+    local veh = getObjectByID(id)
     if veh then
       self.recoveryStates[id] = {}
       self.states[id] = {
@@ -461,23 +569,26 @@ function C:startRace()
 
       --self.states[id].insideSegments = self.path.config.startSegments
       self:findNextPathnodes(id)
+
+      -- Initialize vehicle in lapTimes if enabled
+      if self.useLapTimesApp and core_lapTimes then
+        --core_lapTimes.initializeVehicle(id)
+        --core_lapTimes.setVehicleActive(id, true)
+      end
     end
   end
 
-  if self.useHotlappingApp then
-    -- load hotlapping for the hotlapping app.
-    if not core_hotlapping then
-      extensions.load({'core_hotlapping'})
-      guihooks.trigger('setQuickRaceMode')
-      guihooks.trigger("HotlappingResetApp")
-    end
-  end
+
 end
 
 function C:stopRace()
   self.started = false
   if self.useHotlappingApp and core_hotlapping then
     core_hotlapping.newRaceStop()
+  end
+
+  if self.useLapTimesApp and core_lapTimes and core_lapTimes.onRaceStop then
+    core_lapTimes.onRaceStop()
   end
 
   for _, id in ipairs(self.vehIds) do
@@ -569,44 +680,54 @@ function C:completeLap(id, endTime)
 
   state.currentTimes = {}
   state.currentHistory = {}
-  state.currentLap = state.currentLap+1
   state.aiPathIdx = 1
-  if state.currentLap < self.lapCount then
+
+  -- Check if this was the final lap
+  -- currentLap is 0-indexed, so lap 1 completion means currentLap goes from 0->1
+  if state.currentLap + 1 < self.lapCount then
+    state.currentLap = state.currentLap + 1
     state.currentSegments = self.path.config.startSegments
     state.events.lapComplete = true
     state.completedPacenotes = {}
   else
+    -- This was the final lap - race complete
+    -- Don't increment currentLap - the UI handles 0-based to 1-based conversion
+    self.finishCount = self.finishCount + 1 -- tracks how many vehicles have finished the race
     state.currentSegments = {}
     state.complete = true
     state.active = false
+    state.placement = self.finishCount -- accurate finish placement
     state.events.raceComplete = true
     state.endTime = endTime
-    local veh = be:getObjectByID(id)
-    local simpleInfo = {
-      totalTime = state.endTime,
-      totalTimeFormatted = self:raceTime(state.endTime),
-      finalPlacement = state.placement or 1,
-      vehConfig = veh and veh.partConfig or "(None)",
-      vehModel = veh and veh.JBeam or "(None)",
-      lapTimes = {},
-      lapTimesFormatted = {},
-    }
-    for _, l in ipairs(state.historicTimes) do
-      table.insert(simpleInfo.lapTimes, l.duration)
-      table.insert(simpleInfo.lapTimesFormatted, self:raceTime(l.duration))
-    end
 
+    local veh = getObjectByID(id)
     if veh and self.states[id].isAiVeh then -- lower aggression past the finish line
       veh:queueLuaCommand('ai.setAggression(0.5)')
     end
 
-    --do
-    --  local fullpath = "raceRecord/"..os.date("!%Y-%m-%d--%H-%M-%S")..(self.saveFileSuffix and ("-"..self.saveFileSuffix) or "").."/"
-    --  jsonWriteFile(fullpath.."path.path.json",self.path:onSerialize(), true)
-    --  jsonWriteFile(fullpath.."times.json",state.historicTimes, true)
-    --  jsonWriteFile(fullpath.."simpleInfo.json",simpleInfo, true)
-    --  log("I","","Written complete race history to "..fullpath)
-    --end
+    if veh and self.logRaceInfo then -- optional logging of race info
+      local simpleInfo = {
+        totalTime = state.endTime,
+        totalTimeFormatted = self:raceTime(state.endTime),
+        finalPlacement = state.placement,
+        vehConfig = veh.partConfig,
+        vehModel = veh.JBeam,
+        lapTimes = {},
+        lapTimesFormatted = {},
+      }
+      for _, l in ipairs(state.historicTimes) do
+        table.insert(simpleInfo.lapTimes, l.duration)
+        table.insert(simpleInfo.lapTimesFormatted, self:raceTime(l.duration))
+      end
+
+      do
+        local fullpath = "raceRecord/"..os.date("!%Y-%m-%d--%H-%M-%S")..(self.saveFileSuffix and ("-"..self.saveFileSuffix) or "").."/"
+        jsonWriteFile(fullpath.."path.path.json",self.path:onSerialize(), true)
+        jsonWriteFile(fullpath.."times.json",state.historicTimes, true)
+        jsonWriteFile(fullpath.."simpleInfo.json",simpleInfo, true)
+        log("I","","Written complete race history to "..fullpath)
+      end
+    end
   end
 end
 
@@ -724,17 +845,24 @@ function C:detectRollingStart(id, dt)
   end
 end
 
+local vehPos = vec3()
+local vehDir = vec3()
+local vehDirUp = vec3()
+local vehRot = quat()
 function C:updateVehicle(id, dt)
   local state = self.states[id]
   if state.complete then return end
-  local vehicle = be:getObjectByID(id)
+  local vehicle = getObjectByID(id)
   if not vehicle then return end
     -- advance corners
-  local vPos = vehicle:getPosition()
-  local vRot = quatFromDir(vehicle:getDirectionVector(), vehicle:getDirectionVectorUp())
+  vehPos:set(vehicle:getPositionXYZ())
+  vehDir:set(vehicle:getDirectionVectorXYZ())
+  vehDirUp:set(vehicle:getDirectionVectorUpXYZ())
+  vehRot:setFromDir(vehDir, vehDirUp)
   for i, corner in ipairs(state.wheelOffsets) do
     state.previousCorners[i]:set(state.currentCorners[i])
-    state.currentCorners[i]:set(vPos + vRot*corner)
+    state.currentCorners[i]:setRotate(vehRot, corner)
+    state.currentCorners[i]:setAdd(vehPos)
     --debugDrawer:drawLine(vec3(state.previousCorners[i]), vec3(state.currentCorners[i]),  ColorF(1,0,0,1))
     --debugDrawer:drawSphere(vec3(state.currentCorners[i]), 0.025, ColorF(1,0,0,0.25))
   end
@@ -745,12 +873,11 @@ function C:updateVehicle(id, dt)
   end
   self:handlePacenotes(id)
   -- figure out if we entered any next segments
-  local pos = self:getVehiclePosition(id)
   --debugDrawer:drawSphere(pos, 0.125, ColorF(1,0,0,0.25))
   -- id of the segment we have completed (and then advance to its successors)
   local finishedSegmentId = -1
   local finishedSegmentT = 1
-  -- if we have lapped in reaching a pathnode.
+  -- if we have lapped in reaching a pathnode
   local lapped = false
 
   -- if lap was skipped, cancel the timer and set the lap point as the next pathnode
@@ -774,17 +901,19 @@ function C:updateVehicle(id, dt)
 
     if currentSegment.lastInLap then
       -- is this element the last in lap?
-      -- if we do, we can stop here.
+      -- if we do, we can stop here
       local segment = self.path.segments.objects[currentId]
-      if segment:finished(pos, state) then
+      local hit, t = segment:finished(vehPos, state)
+      if hit then
         finishedSegmentId = currentId
+        finishedSegmentT = t
         lapped = true
       end
     else
-      -- if we have at least one successor, we continue.
+      -- if we have at least one successor, we continue
       for _, segId in ipairs(self.path.config.graph[currentId].successors) do
         local segment = self.path.segments.objects[segId]
-        local hit, t = segment:contains(pos, state)
+        local hit, t = segment:contains(vehPos, state)
 
         if hit then
           finishedSegmentId = currentId
@@ -793,13 +922,13 @@ function C:updateVehicle(id, dt)
       end
     end
   end
-  -- if no segment is finished, we are done here.
+  -- if no segment is finished, we are done here
   if finishedSegmentId == -1 then
     return
   end
-  -- otherwise, record the advancement and set up next segments.
+  -- otherwise, record the advancement and set up next segments
 
-  -- add the segments we were in into the history.
+  -- add the segments we were in into the history
   table.insert(state.currentHistory, state.currentSegments)
   local graphElem = self.path.config.graph[finishedSegmentId]
   local timeInfo = nil
@@ -810,12 +939,13 @@ function C:updateVehicle(id, dt)
     state.events.pathnodeReached = true
     state.events.pathnodeReachedId = self.path.segments.objects[finishedSegmentId]:getTo().id
 
-    -- record time.
+    -- record time
     timeInfo = {
       segment = finishedSegmentId,
       endTime = self.time + finishedSegmentT * dt
     }
-    -- get correct startTime for this segment.
+    print(string.format("T: %0.6f", finishedSegmentT))
+    -- get correct startTime for this segment
     if #state.currentTimes > 0 then
       timeInfo.beginTime = state.currentTimes[#state.currentTimes].endTime
     elseif #state.historicTimes > 0 then
@@ -825,17 +955,31 @@ function C:updateVehicle(id, dt)
     end
     timeInfo.duration = timeInfo.endTime - timeInfo.beginTime
     table.insert(state.currentTimes, timeInfo)
+
+    -- Record checkpoint time in shared table (only if not already recorded)
+    local checkpointKey = state.currentLap .. "_" .. finishedSegmentId
+    if not self.checkpointTimes[checkpointKey] then
+      self.checkpointTimes[checkpointKey] = timeInfo.endTime
+      self.states[id].timeDifferenceToFirst = 0
+    else
+      self.states[id].timeDifferenceToFirst = (self.time - self.checkpointTimes[checkpointKey]) * 1000
+    end
+  else
+    extensions.hook("onRacePathnodeReached", { race = self, pathnode = pathnode })
   end
 
   -- if AI racer, check if custom aggression value exists
   if self.states[id].isAiVeh then
     local val, valType, valid = pathnode.customFields:get("aiAggression")
-    if valid then
+    if valid and valType == "number" then
+      local aggr = self.states[id].baseAggression or 0.9
+      if pathnode.customFields.tags['aiCoef'] then -- value will be treated as a coefficient to the base aggression
+        val = val * aggr
+      end
       if val >= 0 then
         vehicle:queueLuaCommand('ai.setAggression('..val..')')
       else
-        local aggr = self.states[id].baseAggression or 0.9
-        vehicle:queueLuaCommand('ai.setAggression('..aggr..')')
+        vehicle:queueLuaCommand('ai.setAggression('..aggr..')') -- base aggression
       end
     end
   end
@@ -881,7 +1025,7 @@ function C:handlePacenotes(id)
 
 end
 
-function C:digestEvents(id)
+function C:digestEvents(id, dt)
   local state = self.states[id]
   local events = state.events
   --digest hotlapping event exclusively
@@ -907,31 +1051,101 @@ function C:digestEvents(id)
     end
   end
 
+  --digest lapTimes event exclusively
+  if self.useLapTimesApp and core_lapTimes and id == be:getPlayerVehicleID(0) then -- assumes that the UI should only trigger for the player vehicle
+    if events.raceStarted  then
+      if state.waitingForRollingStart then
+        -- Wait for rolling start
+      else
+        if core_lapTimes.onRaceStart then
+          local segments = 0
+          if self.path and self.path.pathnodes and self.path.pathnodes.sorted then
+            segments = #self.path.pathnodes.sorted
+          end
+          core_lapTimes.onRaceStart({
+            totalLaps = self.lapCount or 0,
+            totalSegments = segments,
+            pathConfig = {
+              isClosed = self.path and self.path.config and self.path.config.closed or false,
+              lapCount = self.lapCount or 1,
+              totalSegments = segments
+            }
+          })
+        end
+        if core_lapTimes.updateSlowFromRace then
+          core_lapTimes.updateSlowFromRace(self, id)
+        end
+        if core_lapTimes.updateStaticFromRace then
+          core_lapTimes.updateStaticFromRace(self, id)
+        end
+      end
+    elseif events.rollingStarted then
+      if core_lapTimes.onRaceStart then
+        local segments = 0
+        if self.path and self.path.pathnodes and self.path.pathnodes.sorted then
+          segments = #self.path.pathnodes.sorted
+        end
+        core_lapTimes.onRaceStart({
+          totalLaps = self.lapCount or 0,
+          totalSegments = segments,
+          pathConfig = {
+            isClosed = self.path and self.path.config and self.path.config.closed or false,
+            lapCount = self.lapCount or 1,
+            totalSegments = segments
+          }
+        })
+      end
+      if core_lapTimes.updateSlowFromRace then
+        core_lapTimes.updateSlowFromRace(self, id)
+      end
+      if core_lapTimes.updateStaticFromRace then
+        core_lapTimes.updateStaticFromRace(self, id)
+      end
+    elseif events.lapComplete or events.pathnodeReached or events.lapSkipped then
+      if core_lapTimes.updateSlowFromRace then
+        core_lapTimes.updateSlowFromRace(self, id)
+      end
+    elseif events.raceComplete then
+      if core_lapTimes.updateSlowFromRace then
+        core_lapTimes.updateSlowFromRace(self, id)
+      end
+      if core_lapTimes.onRaceStop then core_lapTimes.onRaceStop() end
+    end
+  end
+
   if events.raceStarted then
-    table.insert(state.eventLog, {name = "Race Started.", time = self.time})
+    table.insert(state.eventLog, {name = "Race Started.", time = self.time, dt = dt})
+    extensions.hook("onRaceStarted", { race = self, time = self.time })
   end
   if events.pathnodeReached then
-    table.insert(state.eventLog, {name = "Reached " .. self.path.pathnodes.objects[events.pathnodeReachedId].name ..".", time = self.time})
+    local pathnode = self.path.pathnodes.objects[events.pathnodeReachedId]
+    table.insert(state.eventLog, { name = "Reached " .. pathnode.name ..".", time = self.time, dt = dt})
+    extensions.hook("onRacePathnodeReached", { race = self, time = self.time, pathnode = pathnode })
   end
   if events.lapComplete then
-    table.insert(state.eventLog, {name = "Lap " .. state.currentLap.." Complete.", time = self.time})
+    table.insert(state.eventLog, {name = "Lap " .. state.currentLap.." Complete.", time = self.time, dt = dt})
     state.invalidLap = nil
     state.skippedLap = nil
   end
   if events.lapSkipped then
-    table.insert(state.eventLog, {name = "Lap " .. state.currentLap.." Skipped.", time = self.time})
+    table.insert(state.eventLog, {name = "Lap " .. state.currentLap.." Skipped.", time = self.time, dt = dt})
   end
   if events.raceComplete then
-    table.insert(state.eventLog, {name = "Race Complete!", time = self.time})
+    table.insert(state.eventLog, {name = "Race Complete!", time = self.time, dt = dt})
+    extensions.hook("onRaceComplete", { race = self, time = self.time })
+    -- i commented these out. - @abird
+    -- dump(self.states[id])
+    -- dumpz(self, 1)
   end
   if events.raceAborted then
-    table.insert(state.eventLog, {name = "Race Aborted.", time = self.time})
+    table.insert(state.eventLog, {name = "Race Aborted.", time = self.time, dt = dt})
+    extensions.hook("onRaceAborted", { race = self, time = self.time })
   end
   if events.rollingStarted then
-    table.insert(state.eventLog, {name = "Rolling Started.", time = self.time})
+    table.insert(state.eventLog, {name = "Rolling Started.", time = self.time, dt = dt})
   end
   if events.recovered then
-    table.insert(state.eventLog, {name = 'Recovered', time = self.time})
+    table.insert(state.eventLog, {name = 'Recovered', time = self.time, dt = dt})
     self.recoveryStates[id][events.recovered] = deepcopy(self.states[id])
     state.recoveriesUsed = state.recoveriesUsed + 1
     state.requestRecover = false
@@ -945,7 +1159,7 @@ function C:digestEvents(id)
   end
 
   if events.pacenoteReached then
-    table.insert(state.eventLog, {name = "Pacenote reached: " .. dumps(self.path.pacenotes.objects[events.pacenoteIdReached].note), time = self.time})
+    table.insert(state.eventLog, {name = "Pacenote reached: " .. dumps(self.path.pacenotes.objects[events.pacenoteIdReached].note), time = self.time, dt = dt})
   end
 end
 
@@ -1097,6 +1311,36 @@ function C:raceTime(time)
   local millis = (time - minutes*60 - seconds)*1000
   return string.format("%02d:%02d.%03d",minutes, seconds, millis)
 end
+
+function C:formatTimeDifference(timeDiff)
+  if not timeDiff then return "N/A" end
+
+  local sign = timeDiff >= 0 and "+" or "-"
+  local absTime = math.abs(timeDiff)
+  local minutes = math.floor(absTime/60)
+  local seconds = math.floor(absTime - minutes*60)
+  local millis = (absTime - minutes*60 - seconds)*1000
+
+  return sign .. string.format("%02d:%02d.%03d", minutes, seconds, millis)
+end
+
+function C:getTimeDifferencesToFirst()
+  local timeDiffs = {}
+
+  for id, state in pairs(self.states) do
+    if state.timeDifferenceToFirst ~= nil then
+      timeDiffs[id] = {
+        timeDifference = state.timeDifferenceToFirst,
+        timeDifferenceFormatted = self:formatTimeDifference(state.timeDifferenceToFirst),
+        placement = state.placement or 0
+      }
+    end
+  end
+
+  return timeDiffs
+end
+
+-- buildLapTimesSnapshot function removed - lapTimes now accesses race data directly
 
 return function(...)
   local o = {}

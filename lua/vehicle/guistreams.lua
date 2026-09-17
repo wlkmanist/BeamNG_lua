@@ -8,6 +8,7 @@ local lsensors = {position = {}}
 local envsensors = {}
 local wheelInfo = {}
 local wheelCache = {}
+local wheelStaticPos = {} -- [i] = {x,y,z,offset}
 
 local streamsHandlers = {}
 
@@ -19,6 +20,7 @@ end
 
 local function reset()
   streamControl = {}
+  wheelStaticPos = {}
 end
 
 streamsHandlers.wheelInfo = function()
@@ -35,6 +37,49 @@ streamsHandlers.wheelInfo = function()
     w[8] = wd.downForce
     w[9] = wd.brakingTorque
     w[10] = wd.brakeTorque
+    -- Append wheel center position (cached) and effective offset along axis (cached)
+    local sp = wheelStaticPos[i]
+    if not sp then
+      local nodes = wd.nodes
+      local n1 = wd.node1 and v and v.data and v.data.nodes and v.data.nodes[wd.node1]
+      local n2 = wd.node2 and v and v.data and v.data.nodes and v.data.nodes[wd.node2]
+      if nodes and #nodes > 0 and n1 and n1.pos and n2 and n2.pos then
+        local cx, cy, cz = 0, 0, 0
+        local cnt = 0
+        for _, nid in pairs(nodes) do
+          local nn = v.data.nodes[nid]
+          if nn and nn.pos then
+            cx = cx + nn.pos.x
+            cy = cy + nn.pos.y
+            cz = cz + nn.pos.z
+            cnt = cnt + 1
+          end
+        end
+        if cnt > 0 then
+          cx, cy, cz = cx / cnt, cy / cnt, cz / cnt
+          local ax = n2.pos.x - n1.pos.x
+          local ay = n2.pos.y - n1.pos.y
+          local az = n2.pos.z - n1.pos.z
+          local alen = math.sqrt(ax * ax + ay * ay + az * az) + 1e-12
+          ax, ay, az = ax / alen, ay / alen, az / alen
+          local mx = 0.5 * (n1.pos.x + n2.pos.x)
+          local my = 0.5 * (n1.pos.y + n2.pos.y)
+          local mz = 0.5 * (n1.pos.z + n2.pos.z)
+          local dx, dy, dz = cx - mx, cy - my, cz - mz
+          local offset = dx * ax + dy * ay + dz * az
+          sp = {x = cx, y = cy, z = cz, off = offset}
+          wheelStaticPos[i] = sp
+        end
+      end
+    end
+    if sp then
+      w[11], w[12], w[13] = sp.x, sp.y, sp.z
+      w[14] = sp.off
+    else
+      w[11], w[12], w[13], w[14] = nil, nil, nil, nil
+    end
+    w[15] = wd.rotatorType or "wheel"
+    w[16] = wd.parkingTorque or 0
     wheelCache[i] = w
     wheelInfo[i] = w
   end

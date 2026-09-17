@@ -217,13 +217,13 @@ local function displayCampaignSummary()
   local summaryHeading = campaign.meta.summaryHeading
   if not summaryHeading then
     log('E', logTag, 'Campaign - '.. campaign.meta.title ..'- is missing summray heading field')
-    summaryHeading = '...Summary Heading...'
+    summaryHeading = ''
   end
 
   local summaryMessage = campaign.meta.summaryMessage
   if not summaryMessage then
     log('E', logTag, 'Campaign - '.. campaign.meta.title ..'- is missing summray message field')
-    summaryMessage = '...Summary Message...'
+    summaryMessage = ''
   end
 
   local stats, playerPoints, maxPoints = statistics_statistics.getSummaryStats(campaign.state.scenarioExecutionOrder)
@@ -234,7 +234,9 @@ local function displayCampaignSummary()
                 achievments = {'Not [br] Implemented'},
                 summaryHeading = summaryHeading,
                 summaryMessage = summaryMessage,
-                buttons = {{label = 'Menu', cmd = 'openMenu'}, {label = 'Campaigns', cmd = 'openCampaigns'}},
+                customSuccess = summaryHeading,
+                text = summaryMessage,
+                buttons = {{label = 'ui.common.menu', cmd = 'returnToMainMenu()', active = true, showLoadingScreen = true}},
                 overall =
                 {
                   community = 20,
@@ -246,9 +248,9 @@ local function displayCampaignSummary()
                   stats = stats
                 }
   if campaign.meta.endCampaignCallback then
-    data.buttons = {{label = 'Continue', cmd = 'campaign_campaigns.execEndCallback()'}}
+    data.buttons = {{label = 'ui.common.continue', cmd = 'campaign_campaigns.execEndCallback()'}}
   end
-  guihooks.trigger('ChangeState', {state = 'chapter-end', params = {stats = data}})
+  extensions.ui_router.navigate("scenario.chapter.end", {stats = data})
 end
 
 local function processCancelScenario()
@@ -452,7 +454,7 @@ local function processCampaignAchievements(player, scenarioResult, scenarioData)
     if v.key and type(v.key) == 'string' then
       if achievementRequirementMet(v) then
         -- log('D', logTag, 'Unlocking achievement: '..v.key)
-        Steam.unlockAchievement(v.key)
+        OnlineServiceProvider.unlockAchievement(v.key)
       else
         -- log('D', logTag, 'Rquirements not met: '..tostring(v.key))
       end
@@ -531,10 +533,12 @@ local function uiEventCancel()
 end
 
 local function uiEventNext()
-  log('D', logTag, 'uiEventNext Triggered: '..campaign.state.scenarioKey)
-  guihooks.trigger('MenuHide')
-  guihooks.trigger('ChangeState', 'menu')
+  if not campaign then
+    log('W', logTag, 'uiEventNext ignored because no campaign is active')
+    return
+  end
 
+  log('D', logTag, 'uiEventNext Triggered: '..campaign.state.scenarioKey)
   processNextScenario()
 end
 

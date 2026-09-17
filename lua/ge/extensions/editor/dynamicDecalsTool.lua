@@ -537,7 +537,7 @@ local function onEditorInitialized()
   api.setLayerNameBuildString(editor.getPreference("dynamicDecalsTool.general.layerNameBuildString"))
   api.setup()
 
-  editor.addWindowMenuItem("Vehicle Livery Creator", onWindowMenuItem)
+  editor.addWindowMenuItem("Vehicle Livery Creator", onWindowMenuItem, {groupMenuName = "Vehicles"})
   editor.registerWindow(toolWindowName, im.ImVec2(400, 400))
   -- registerWindow(windowName, defaultSize, defaultPos, defaultVisibleBoolean, modal, centered
   editor.registerWindow(openToolWindowPopupName, im.ImVec2(240, 120), nil, nil, false, true)
@@ -865,6 +865,8 @@ M.onDeserialized = function(data)
 end
 
 -- editor interface
+--[[
+DISABLED, SPAMS LOG, DEPENDENCIES NOT FOUND
 M.onEditorGui = onEditorGui
 M.onEditorInitialized = onEditorInitialized
 M.onEditorActivated = onEditorActivated
@@ -875,6 +877,7 @@ M.onEditorRegisterPreferences = onEditorRegisterPreferences
 M.onEditorPreferenceValueChanged = onEditorPreferenceValueChanged
 M.onEditorSaveState = onEditorSaveState
 M.onEditorLoadState = onEditorLoadState
+]]
 
 -- public interface for dynamic decals tool
 M.applyDecal = function(value)

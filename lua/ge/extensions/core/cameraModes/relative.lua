@@ -7,7 +7,10 @@ local manualzoom = require('core/cameraModes/manualzoom')
 local C = {}
 C.__index = C
 
-local factorSmoother, dxSmoother, dySmoother, dzSmoother
+local relativeCameraLightLowIntensityLm = 500
+local relativeCameraLightMediumIntensityLm = 2500
+local relativeCameraLightHighIntensityLm = 5000
+local relativeCameraLightRadius = 20
 
 local function rotateEuler(x, y, z, q)
   q = q or quat()
@@ -20,10 +23,10 @@ end
 function C:init()
   self.resetCameraOnVehicleReset = false
   self.disabledByDefault = true
-
-  self.lightBrightness = 0 -- disable light by default
+  self.canUseVehicleTriggerCrosshair = true
+  self.lightIntensity = 0
   self.camMaxDist = math.huge
-  self.mustResetCam = 0
+  self.mustResetCam = -1
 
   self.slots = {} -- stored position/rotations
   self.slotNameIndexMap = {}
@@ -42,50 +45,49 @@ function C:onVehicleCameraConfigChanged()
   self.vehicleCameraConfigJustChanged = true
 end
 
-function C:_updateLight(brightness)
-  if brightness ~= nil then
-    self.lightBrightness = brightness
+function C:_updateLight(intensity)
+  if intensity ~= nil then
+    self.lightIntensity = intensity
   end
-  self.lightBrigtness = math.max(0, self.lightBrightness)
+  self.lightIntensity = math.max(0, self.lightIntensity)
   if not scenetree.relativecameralight then
     local l = createObject('PointLight')
     l.canSave  = false
-    l.radius = 20
+    l.radius = relativeCameraLightRadius
     l:registerObject('relativecameralight')
   end
-  scenetree.relativecameralight.isEnabled = self.lightBrightness > 0
-  scenetree.relativecameralight.brightness = self.lightBrightness
+  scenetree.relativecameralight.isEnabled = self.lightIntensity > 0
+  scenetree.relativecameralight.intensity = self.lightIntensity
   scenetree.relativecameralight:postApply()
 end
 
 function C:sendMenus()
-  -- add menus?
-  extensions.core_quickAccess.addEntry({ level = '/', uniqueID = 'relativeCameraMenu', generator = function(entries)
-    if not self.focused then return {} end
-    table.insert(entries, { title = 'RelCam', icon = 'radial_relative_camera', priority = 10, ["goto"] = '/camera_relative_mode/'})
-  end})
+  core_quickAccess.addEntry({level = '/root/sandbox/', uniqueID = "camera", icon = "camera", ignoreAsRecentAction = true, ["goto"] = '/root/sandbox/camera/', title = "Relative Camera"})
 
-  core_quickAccess.addEntry({ level = '/camera_relative_mode/', uniqueID = 'index', generator = function(entries)
+  core_quickAccess.addEntry({ level = '/root/sandbox/camera/',
+    originalActionInfo = {level = "/root/sandbox/", uniqueID = "camera"},
+    generator = function(entries)
     if not self.focused then return {} end
-    local tmp = { title = 'Light', icon = 'radial_electrics', priority = 10, onSelect = function()
-      if self.lightBrightness >= 0 and  self.lightBrightness < 0.1 then
-        self.lightBrightness = 0.1
-      elseif self.lightBrightness >= 0.1 and self.lightBrightness < 0.5 then
-        self.lightBrightness = 0.5
-      elseif self.lightBrightness >= 0.5 and self.lightBrightness < 1 then
-        self.lightBrightness = 1
-      elseif self.lightBrightness >= 1 then
-        self.lightBrightness = 0
+    local tmp = { title = 'Light', icon = 'lightGarageG11', priority = 10, onSelect = function()
+      if self.lightIntensity <= 0 then
+        self.lightIntensity = relativeCameraLightLowIntensityLm
+      elseif self.lightIntensity < relativeCameraLightMediumIntensityLm then
+        self.lightIntensity = relativeCameraLightMediumIntensityLm
+      elseif self.lightIntensity < relativeCameraLightHighIntensityLm then
+        self.lightIntensity = relativeCameraLightHighIntensityLm
+      else
+        self.lightIntensity = 0
       end
-      --print("new light brightness mode: " .. tostring(self.lightBrightness))
       self:_updateLight()
-      ui_message('Light intensity: ' .. math.ceil(self.lightBrightness * 100) .. ' %' , 10, 'cameramode')
+      ui_message('Light intensity: ' .. math.ceil(self.lightIntensity) .. ' lm' , 10, 'cameramode')
       return {'reload'}
     end}
-    if self.lightBrightness > 0 then tmp.color = '#ff6600' end
+    if self.lightIntensity > 0 then tmp.color = '#ff6600' end
     table.insert(entries, tmp)
     local nearClipLabel = self.nearClip and (self.nearClip.." m") or "level defined"
-    table.insert(entries, { title = 'Near Clip: ' .. nearClipLabel, icon = 'radial_near_clip_value', priority = 10, onSelect = function()
+    table.insert(entries, { title = 'Near Clip: ' .. nearClipLabel, icon = 'radial_near_clip_value', priority = 10,
+      originalActionInfo = {level = "/root/sandbox/", uniqueID = "camera"},
+      onSelect = function()
       if self.nearClip == nil then
         self.nearClip = 0.0005
       elseif self.nearClip >= 0 and self.nearClip < 0.01 then
@@ -98,18 +100,20 @@ function C:sendMenus()
       ui_message('Near clip: '..nearClipLabel, 10, 'cameramode')
       return {'reload'}
     end})
-    tmp = { title = 'Slots', icon = 'radial_slots', priority = 50, ["goto"] = '/camera_relative_mode/slots/' }
+    tmp = { title = 'Slots', iconName = 'radial_slots', priority = 50, ["goto"] = '/sandbox/camera/slots/', originalActionInfo = {level = "/root/sandbox/", uniqueID = "camera"}, }
     if self.slots[1] then
       tmp.color = '#ff6600'
     end
     table.insert(entries, tmp)
   end})
 
-  core_quickAccess.addEntry({ level = '/camera_relative_mode/slots/', uniqueID = 'slots', generator = function(entries)
+  core_quickAccess.addEntry({ level = '/root/sandbox/camera/slots/', uniqueID = 'slots',
+    originalActionInfo = {level = "/root/sandbox/", uniqueID = "camera"},
+    generator = function(entries)
     if not self.focused then return {} end
 
     for i = 1, 10 do
-      local tmp = { title = tostring(i), icon = 'radial_relative_camera', priority = i, onSelect = function()
+      local tmp = { title = tostring(i), iconName = 'movieCamera', priority = i, onSelect = function()
         if self.slots[i] == nil then
           self:saveSlot(i)
         else
@@ -136,10 +140,9 @@ function C:sendMenus()
 end
 
 function C:restoreLightInfo()
-  -- restore light brightness info
-  if self.storedLightBrightness ~= nil then
-    self:_updateLight(self.storedLightBrightness)
-    self.storedLightBrightness = nil
+  if self.storedLightIntensity ~= nil then
+    self:_updateLight(self.storedLightIntensity)
+    self.storedLightIntensity = nil
   end
 end
 
@@ -183,6 +186,52 @@ function C:setOffset(pos)
   self.pos = pos
 end
 
+-- Persist/restore this camera's own state for the video-stream views (see core_camera
+-- get/setContextCameraState): the free offset on the car, look rotation, zoom and light.
+function C:serialize()
+  return {
+    pos = self.pos and { x = self.pos.x, y = self.pos.y, z = self.pos.z } or nil,
+    rot = self.rot and { x = self.rot.x, y = self.rot.y, z = self.rot.z } or nil,
+    fov = self.manualzoom and self.manualzoom.fov or nil,
+    light = self.lightIntensity,
+    nearClip = self.nearClip,
+  }
+end
+
+function C:deserialize(s)
+  if type(s) ~= 'table' then return end
+  if s.pos then self.pos = vec3(s.pos.x, s.pos.y, s.pos.z); self.resetPos = vec3(s.pos.x, s.pos.y, s.pos.z) end
+  if s.rot then self.rot = vec3(s.rot.x, s.rot.y, s.rot.z); self.resetRot = vec3(s.rot.x, s.rot.y, s.rot.z) end
+  if s.fov and self.manualzoom then self.manualzoom:init(s.fov) end
+  if s.nearClip ~= nil then self.nearClip = s.nearClip end
+  if s.light and s.light > 0 then self:_updateLight(s.light) elseif s.light ~= nil then self.lightIntensity = s.light end
+  self.mustResetCam = -1 -- keep the restored pose instead of recomputing the default on the next update
+end
+
+-- Tunables for the camera-control / video-stream UI: light intensity, near-clip preset,
+-- the 10 position slots and FOV.
+function C:listParams()
+  local slots = {}
+  for i = 1, 10 do slots[i] = self.slots[i] ~= nil end
+  return {
+    { key = 'light', icon = 'fa-lightbulb', kind = 'range', value = self.lightIntensity, min = 0, max = relativeCameraLightHighIntensityLm, step = 500, unit = 'lm' },
+    { key = 'nearClip', icon = 'fa-scissors', kind = 'choice', value = self.nearClip or 'auto', options = {
+      { value = 'auto', label = 'Auto' }, { value = 0.0005, label = '0.5mm' }, { value = 0.01, label = '1cm' }, { value = 0.1, label = '10cm' } } },
+    { key = 'slots', icon = 'fa-bookmark', kind = 'slots', value = slots },
+    { key = 'fov', icon = 'fa-expand', title = 'Field of view', kind = 'range', type = 'int', value = self.manualzoom and self.manualzoom.fov or 60, default = 60, min = 10, max = 140, step = 1, unit = '°' },
+  }
+end
+
+function C:setParam(key, value)
+  if key == 'light' then self:_updateLight(tonumber(value) or 0)
+  elseif key == 'nearClip' then self.nearClip = (value == 'auto' or value == nil) and nil or tonumber(value)
+  elseif key == 'fov' then self:setFOV(tonumber(value) or (self.manualzoom and self.manualzoom.fov) or 60)
+  elseif key == 'slots' then
+    local i = tonumber(value)
+    if i then if self.slots[i] then self:loadSlot(i) else self:saveSlot(i) end end
+  end
+end
+
 function C:hotkey(hotkey, modifier)
   if not self.focused then return end
   if modifier == 0 then
@@ -193,8 +242,7 @@ function C:hotkey(hotkey, modifier)
 end
 
 function C:storeLightInfo()
-  -- store light brightness info
-  self.storedLightBrightness = self.lightBrightness
+  self.storedLightIntensity = self.lightIntensity
   self:_updateLight(0)
 end
 
@@ -211,10 +259,10 @@ function C:reset()
   self.pos = self.resetPos
   self.rot = self.resetRot
   self.manualzoom:reset()
-  factorSmoother = newTemporalSmoothing(50,50)
-  dxSmoother = newTemporalSmoothing(10,7)
-  dySmoother = newTemporalSmoothing(10,7)
-  dzSmoother = newTemporalSmoothing(10,7)
+  self.factorSmoother = newTemporalSmoothing(50,50)
+  self.dxSmoother = newTemporalSmoothing(10,7)
+  self.dySmoother = newTemporalSmoothing(10,7)
+  self.dzSmoother = newTemporalSmoothing(10,7)
 end
 
 function C:setMaxDistance(d)
@@ -230,7 +278,7 @@ function C:update(data)
   if self.vehicleCameraConfigJustChanged then
     self.vehicleCameraConfigJustChanged = false
     local vehicleName = data.veh:getField('JBeam','0')
-    if self.lastVehicleName ~= vehicleName then
+    if self.lastVehicleName ~= nil and self.lastVehicleName ~= vehicleName then
       self.mustResetCam = 1 -- spawnWorldOOBBRearPoint is not valid after a vehicle change until 1 frame later
     end
     self.lastVehicleName = vehicleName
@@ -275,15 +323,25 @@ function C:update(data)
   end
 
   -- update input
-  local dx = dxSmoother:getCapped(MoveManager.right   - MoveManager.left,     data.dt)
-  local dy = dySmoother:getCapped(MoveManager.forward - MoveManager.backward, data.dt)
-  local dz = dzSmoother:getCapped(MoveManager.up      - MoveManager.down,     data.dt)
-  local adjustedSpeed = data.fastSpeedModifier and data.speed * 3 or data.speed
-  local dtPosFactor = factorSmoother:getUncapped(adjustedSpeed / 80, data.dt)
+  local dx = self.dxSmoother:getCapped(MoveManager.right   - MoveManager.left,     data.dt)
+  local dy = self.dySmoother:getCapped(MoveManager.forward - MoveManager.backward, data.dt)
+  local dz = self.dzSmoother:getCapped(MoveManager.up      - MoveManager.down,     data.dt)
+  local modifiedSpeed = data.fastSpeedModifier and data.speed * 3 or data.speed
+
+  -- Distance-based speed multiplier
+  local distanceFromRef = self.pos:length()
+  local speedMultiplier = 1.0
+  if distanceFromRef > 2.0 then
+    local t = math.min((distanceFromRef - 2.0) / (5.0 - 2.0), 1.0)
+    speedMultiplier = 1.0 + t * (5.0 - 1.0)
+  end
+
+  local adjustedSpeed = modifiedSpeed * speedMultiplier
+  local dtPosFactor = self.factorSmoother:getUncapped(adjustedSpeed / 80, data.dt)
   local pd = dtPosFactor * data.dt * vec3(dx, dy, dz)
 
   local rdx = MoveManager.yawRelative   + 10*data.dt*(MoveManager.yawRight - MoveManager.yawLeft  )
-  local rdy = MoveManager.pitchRelative + 10*data.dt*(MoveManager.pitchUp  - MoveManager.pitchDown)
+  local rdy = MoveManager.pitchRelative + 10*data.dt*(MoveManager.pitchUp - MoveManager.pitchDown)
   local rdz = MoveManager.rollRelative + 10*data.dt*(MoveManager.rollLeft - MoveManager.rollRight)
   self.rot = self.rot + 7*vec3(rdx, rdy, rdz)
 
@@ -319,7 +377,7 @@ function C:update(data)
   data.res.rot = qdir
   if self.nearClip then data.res.nearClip = self.nearClip end
 
-  if self.lightBrightness > 0 then
+  if self.lightIntensity > 0 then
     local lightPos = pos -- + qdirLook * vec3(0.01, 0.01, -0.02)
     scenetree.relativecameralight:setPosRot(lightPos.x, lightPos.y, lightPos.z, data.res.rot.x, data.res.rot.y, data.res.rot.z, data.res.rot.w)
   end

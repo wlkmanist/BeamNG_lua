@@ -162,6 +162,7 @@ local function resetSounds(jbeamData)
   if movementSound then
     obj:stopSFX(movementSound)
   end
+  isPlaying = false
   initEndstops()
 end
 

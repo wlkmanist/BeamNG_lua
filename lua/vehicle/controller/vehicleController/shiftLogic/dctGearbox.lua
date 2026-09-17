@@ -37,6 +37,7 @@ M.clutchRatio = 0
 M.shiftingAggression = 0
 M.isArcadeSwitched = false
 M.isSportModeActive = false
+M.isManualModeActive = false
 
 M.smoothedAvgAVInput = 0
 M.rpm = 0
@@ -90,6 +91,11 @@ local dct = {
   secondaryAccess = nil,
   clutchTime = 0
 }
+
+--shift LEDs are in use if we are in manual control over the gear selection
+local function areShiftLEDsInUse()
+  return M.gearboxHandling.behavior ~= "arcade" and M.isManualModeActive
+end
 
 local function getGearName()
   local modePrefix = ""
@@ -183,6 +189,7 @@ local function applyGearboxMode()
   end
 
   M.isSportModeActive = automaticHandling.mode == "S"
+  M.isManualModeActive = string.sub(automaticHandling.mode, 1, 1) == "M"
 end
 
 local function setDefaultForwardMode(mode)
@@ -746,9 +753,33 @@ local function init(jbeamData, sharedFunctionTable)
   previousGearIndex = 0
 
   M.currentGearIndex = 0
+  M.maxGearIndex = 0
+  M.minGearIndex = 0
   M.throttle = 0
   M.brake = 0
   M.clutchRatio = 0
+  M.shiftingAggression = 0
+  M.isArcadeSwitched = false
+  M.isSportModeActive = false
+  M.isManualModeActive = false
+
+  M.smoothedAvgAVInput = 0
+  M.rpm = 0
+  M.idleRPM = 0
+  M.maxRPM = 0
+
+  M.engineThrottle = 0
+  M.engineLoad = 0
+  M.engineTorque = 0
+  M.flywheelTorque = 0
+  M.gearboxTorque = 0
+
+  M.ignition = true
+  M.isEngineRunning = 0
+
+  M.oilTemp = 0
+  M.waterTemp = 0
+  M.checkEngine = false
 
   gearboxAvailableLogic = {
     arcade = {
@@ -856,6 +887,8 @@ M.getGearName = getGearName
 M.getGearPosition = getGearPosition
 M.setDefaultForwardMode = setDefaultForwardMode
 M.sendTorqueData = sendTorqueData
+
+M.areShiftLEDsInUse = areShiftLEDsInUse
 
 M.getState = getState
 M.setState = setState

@@ -258,7 +258,7 @@ local function process(vehicle, processSlotsTable, omitWarnings)
     -- verify element name
     if string.match(keyEntry, "^([a-zA-Z_]+[a-zA-Z0-9_]*)$") == nil then
       log('E', "","*** Invalid attribute name '"..keyEntry.."'")
-      profilerPopEvent() -- jbeam/tableSchema.process
+      profilerPopEvent('jbeam/tableSchema.process')
       return false
     end
 
@@ -288,7 +288,7 @@ local function process(vehicle, processSlotsTable, omitWarnings)
       end
     end
   end
-  profilerPopEvent() -- jbeam/tableSchema.process
+  profilerPopEvent('jbeam/tableSchema.process')
   return true
 end
 

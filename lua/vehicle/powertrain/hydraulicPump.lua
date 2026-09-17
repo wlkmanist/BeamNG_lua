@@ -14,16 +14,17 @@ local sqrt = math.sqrt
 local twoPi = math.pi * 2
 local invTwoPi = 1 / twoPi
 local avToRPM = 9.549296596425384
+local rpmToAV = 0.104719755
 
 local function updateVelocity(device, dt)
   ---------------- PUMP TYPES ------------------------
   if device.pumpType == "variableDisplacement" then
     --pump type: variable displacement
     --investigate if we need this here or if we can move to the actual hydraulic control logic
-    local stallProtection = 1 - clamp((50 - device.inputAV) * 0.02, 0, 1) --0.02 == 1 / 50
+    local stallProtection = linearScale(device.inputAV, device.stallProtectionAV * 0.75, device.stallProtectionAV, 0, 1)
     --baseline pressure for dynamic displacement scale
     local baselinePressure = device.pumpWorkingPressure - device.pumpRegulationRange
-    device.currentDisplacement = device.pumpMaxDisplacement * device.pumpSmoother:get(linearScale(device.accumulatorPressure, baselinePressure, device.pumpWorkingPressure, 1, 0)) * stallProtection
+    device.currentDisplacement = device.pumpMaxDisplacement * device.pumpSmoother:get(linearScale(device.accumulatorPressure, baselinePressure, device.pumpWorkingPressure, 1, 0.1)) * stallProtection
   elseif device.pumpType == "fixedDisplacement" then
     --pump type: fixed displacement
     device.currentDisplacement = device.pumpMaxDisplacement
@@ -33,10 +34,11 @@ local function updateVelocity(device, dt)
   device.inputAV = device.parent.outputAV1 * device.gearRatio * device.isConnectedCoef
 
   ------------- Accumulator input -----------------------------
+  --calculate flow rate into acc, dt is applied later
   device.pumpFlowRate = max(0, device.inputAV * invTwoPi * device.currentDisplacement)
   --------------------------------------------------------------
 
-  device.accumulatorOilVolume = clamp(device.accumulatorOilVolume + (device.pumpFlowRate - device.accumulatorOutFlow) * dt, 0, device.accumulatorMaxVolume * 2)
+  device.accumulatorOilVolume = clamp(device.accumulatorOilVolume + (device.pumpFlowRate - device.accumulatorOutFlow - device.reliefFlow - device.unloadFlow) * dt, 0, device.accumulatorMaxVolume * 2)
 end
 
 local function updateTorque(device, dt)
@@ -46,10 +48,14 @@ local function updateTorque(device, dt)
   device.torqueDiff = device.inputAV > 0 and (device.accumulatorPressure * device.currentDisplacement * invTwoPi * device.invGearRatio) or 0
   device.accumulatorOutFlow = 0
 
+  local cummulativeConsumerInput = 0
   for _, consumer in ipairs(device.connectedConsumers) do
     local consumerFlow, tankFlow = consumer:update(device.accumulatorPressure, dt)
     device.accumulatorOutFlow = device.accumulatorOutFlow + consumerFlow + tankFlow
+    cummulativeConsumerInput = max(cummulativeConsumerInput + abs(consumer.valvePosition), 0)
   end
+
+  device.unloadFlow = linearScale(cummulativeConsumerInput, 0, 0.05, device.unloadValveFlowMax, 0)
 
   device.reliefFullyOpenPressure = device.reliefOpeningPressure + device.reliefPressureRange --pre-compute TODO
 
@@ -59,6 +65,9 @@ local function updateTorque(device, dt)
 end
 
 local function updateGFX(device, dt)
+  for _, consumer in ipairs(device.connectedConsumers) do
+    consumer:updateGFX(dt)
+  end
   ---supply side---
   --send our own consumer pressure to further potential consumers of our own down the line
   --don't send more than our own supply pressure so that if a tank loses supply, this will propagate to the next consumer
@@ -70,27 +79,45 @@ local function updateGFX(device, dt)
   ------
 
   if device.showDebugGraph then
-    guihooks.graph({"Pressure", device.accumulatorPressure, 25000000, ""}, {"Pump Flow", device.pumpFlowRate, 0.005}, {"RPM", device.inputAV * avToRPM, 200}, {"Relief Flow", device.reliefFlow, 0.01}, {"PTO Flow Out", ptoFlowOut, 0.005})
+    guihooks.graph({"Pressure", device.accumulatorPressure, 25000000, ""}, {"Pump Flow Rate", device.pumpFlowRate, 0.005}, {"RPM", device.inputAV * avToRPM, 200}, {"Relief Flow", device.reliefFlow, 0.01}, {"PTO Flow Out", ptoFlowOut, 0.005})
   end
 end
 
 local function updateSounds(device, dt)
-  local volumeFlowCoef = linearScale(abs(device.pumpFlowRate), device.pumpLoopVolumeFlowCoefMinFlow, device.pumpLoopVolumeFlowCoefMaxFlow, 0, 1)
-  local volumeRaw = linearScale(device.accumulatorPressure, device.pumpLoopVolumeMinPressure, device.pumpLoopVolumeMaxPressure, device.pumpLoopVolumeMin, device.pumpLoopVolumeMax) * volumeFlowCoef
-  local volume = device.volumeSmoothing:get(volumeRaw, dt)
-  local pitchRaw = linearScale(device.pumpFlowRate, device.pumpLoopPitchMinFlow, device.pumpLoopPitchMaxFlow, 0, 1)
-  local pitch = device.pitchSmoothing:get(pitchRaw, dt)
-  local normalizedPressure = linearScale(device.accumulatorPressure, 0, device.pumpWorkingPressure, 0, 1)
-  device.pumpLoopStartStopEnabled = device.pumpLoopStartStopEnabled or device.pumpFlowRate >= 0.000005
-  local isLowFlow = device.pumpFlowRate < 0.000005
-  obj:setVolumePitchCT(device.pumpSound, volume, pitch, normalizedPressure, device.pumpLoopStartStopEnabled and (isLowFlow and 0 or 1) or 0.5)
+  --calculate max expected hydraulic power
+  local maxHydraulicPower = device.pumpWorkingPressure * device.pumpSoundMaxFlowRate
+  --calculate current hydraulic power
+  local currentHydraulicPower = device.accumulatorPressure * device.pumpFlowRate
+
+  --volume: fixed value from jbeam
+  --pitch: based on pump rpm, normalized to [0-1]
+  --colour: based on current hydraulic power, normalized to [0-1]
+  --texture: unused for now
+
+  local volume = device.pumpSoundVolume
+  local pitch = linearScale(device.inputAV, device.pumpSoundMinAV, device.pumpSoundMaxAV, device.pumpSoundMinPitch, device.pumpSoundMaxPitch)
+  local colour = linearScale(currentHydraulicPower, 0, maxHydraulicPower, 0, 1)
+  local texture = 0
+
+  obj:setVolumePitchCT(device.pumpSound, volume, pitch, colour, texture)
 
   for _, consumer in ipairs(device.connectedConsumers) do
     consumer:updateSounds(dt)
   end
 
   if device.showDebugGraphSound then
-    guihooks.graph({"Pressure", device.accumulatorPressure, 55000000, ""}, {"Flow", device.pumpFlowRate, 0.005, ""}, {"Volume Coef", volumeFlowCoef, 1, ""}, {"Volume", volume, 1, ""}, {"Volume Raw", volumeRaw, 1, ""}, {"Pitch", pitch, 1, ""}, {"Pitch Raw", pitchRaw, 1, ""}, {"Input AV", device.inputAV, 400, ""})
+    guihooks.graph(
+      --
+      {"Pressure", device.accumulatorPressure, device.pumpWorkingPressure * 1.1, "Pa"},
+      {"Flow Rate", device.pumpFlowRate, device.pumpSoundMaxFlowRate, "m³/s"},
+      {"Pump AV", device.inputAV, device.pumpSoundMaxAV, "rad/s"},
+      {"Current Displacement", device.currentDisplacement, device.pumpMaxDisplacement, "m³/rev"},
+      {"Volume", volume, 1, ""},
+      {"Pitch", pitch, 1, ""},
+      {"Texture", texture, 1, ""},
+      {"Colour", colour, 1, ""},
+      {"Hydraulic Power", currentHydraulicPower * 0.001, 400, "kW"}
+    )
   end
 end
 
@@ -174,36 +201,65 @@ local function calculateInertia(device)
   device.maxCumulativeGearRatio = maxCumulativeGearRatio * device.gearRatio
 end
 
+local function getState(device)
+  table.clear(device.stateData)
+  --pump stuff
+
+  --consumer stuff
+  for _, consumer in ipairs(device.connectedConsumers) do
+    if consumer.getState then
+      tableMergeRecursive(device.stateData, consumer:getState())
+    end
+  end
+
+  return tableIsEmpty(device.stateData) and nil or device.stateData
+end
+
+local function setState(device, data)
+  if not data then
+    return
+  end
+  --pump stuff
+
+  --consumer stuff
+  for _, consumer in ipairs(device.connectedConsumers) do
+    if consumer.setState then
+      consumer:setState(data)
+    end
+  end
+end
+
 local function initSounds(device, jbeamData)
   local pumpLoopEvent = jbeamData.pumpLoopEvent or "event:>Vehicle>Hydraulics>Pump_Big"
   local pumpLoopNode = jbeamData.pumpLoopNode and beamstate.nodeNameMap[jbeamData.pumpLoopNode]
   local pumpLoopNodeId = pumpLoopNode or device.parent.engineNodeID or 0
   device.pumpSound = obj:createSFXSource2(pumpLoopEvent, "AudioDefaultLoop3D", "pumpSound", pumpLoopNodeId, 1)
+
   obj:setVolumePitchCT(device.pumpSound, 0, 0, 0, 0)
   obj:playSFX(device.pumpSound)
-  device.pumpLoopStartStopEnabled = false
 
-  device.pumpLoopVolumeFlowCoefMinFlow = jbeamData.pumpLoopVolumeFlowCoefMinFlow or 0.00001
-  device.pumpLoopVolumeFlowCoefMaxFlow = jbeamData.pumpLoopVolumeFlowCoefMaxFlow or 0.002
-  device.pumpLoopVolumeMinPressure = jbeamData.pumpLoopVolumeMinPressure or 1000
-  device.pumpLoopVolumeMaxPressure = jbeamData.pumpLoopVolumeMaxPressure or 20000000
-  device.pumpLoopVolumeMin = jbeamData.pumpLoopVolumeMin or 0.5
-  device.pumpLoopVolumeMax = jbeamData.pumpLoopVolumeMax or 1
-  device.pumpLoopPitchMinFlow = jbeamData.pumpLoopPitchMinFlow or 0
-  device.pumpLoopPitchMaxFlow = jbeamData.pumpLoopPitchMaxFlow or 0.00008
+  --auto calculate max pump av and max flow rate based on connected motor/engine
+  local pumpPropulsionDevice = powertrain.getPropulsionDeviceForDevice(device)
+  local pumpSpecificGearRatio = powertrain.getGearRatioBetweenDevices(pumpPropulsionDevice, device)
+  if pumpSpecificGearRatio and pumpPropulsionDevice then
+    device.pumpSoundMaxAV = (pumpPropulsionDevice.maxAV or 0) * pumpSpecificGearRatio
+    --compute max flow rate based on max AV (rad/s) and max displacement (m³/revolution)
+    device.pumpSoundMaxFlowRate = device.pumpMaxDisplacement * device.pumpSoundMaxAV * invTwoPi
+  end
 
-  local volumeSmoothingInRate = jbeamData.pumpLoopVolumeSmoothingInRate or 5
-  local volumeSmoothingStartAccel = jbeamData.pumpLoopVolumeSmoothingStartAccel or 2
-  local volumeSmoothingStopAccel = jbeamData.pumpLoopVolumeSmoothingStopAccel or 2
-  local volumeSmoothingOutRate = jbeamData.pumpLoopVolumeSmoothingOutRate or 5
+  device.pumpSoundVolume = jbeamData.pumpSoundVolume or 0.5
 
-  local pitchSmoothingInRate = jbeamData.pumpLoopPitchSmoothingInRate or 5
-  local pitchSmoothingStartAccel = jbeamData.pumpLoopPitchSmoothingStartAccel or 2
-  local pitchSmoothingStopAccel = jbeamData.pumpLoopPitchSmoothingStopAccel or 2
-  local pitchSmoothingOutRate = jbeamData.pumpLoopPitchSmoothingOutRate or 5
-
-  device.volumeSmoothing = newTemporalSigmoidSmoothing(volumeSmoothingInRate, volumeSmoothingStartAccel, volumeSmoothingStopAccel, volumeSmoothingOutRate)
-  device.pitchSmoothing = newTemporalSigmoidSmoothing(pitchSmoothingInRate, pitchSmoothingStartAccel, pitchSmoothingStopAccel, pitchSmoothingOutRate)
+  device.pumpSoundMaxFlowRate = jbeamData.pumpSoundMaxFlowRate or device.pumpSoundMaxFlowRate or 0.005
+  device.pumpSoundMinAV = (jbeamData.pumpSoundMinRPM or 0) * rpmToAV
+  --if we have a dedicated max rpm, use it, even if we auto-calculated it before
+  if jbeamData.pumpSoundMaxRPM then
+    device.pumpSoundMaxAV = jbeamData.pumpSoundMaxRPM * rpmToAV
+    device.pumpSoundMaxFlowRate = device.pumpMaxDisplacement * device.pumpSoundMaxAV * invTwoPi --update max flow based on our max AV
+  end
+  --if we don't have a dedicated max rpm and no auto calc worked, use some default
+  device.pumpSoundMaxAV = device.pumpSoundMaxAV or 350
+  device.pumpSoundMinPitch = jbeamData.pumpSoundMinPitch or 0
+  device.pumpSoundMaxPitch = jbeamData.pumpSoundMaxPitch or 1
 
   for _, consumer in ipairs(device.connectedConsumers) do
     if consumer.initSounds then
@@ -215,10 +271,6 @@ local function initSounds(device, jbeamData)
 end
 
 local function resetSounds(device, jbeamData)
-  device.volumeSmoothing:reset()
-  device.pitchSmoothing:reset()
-  device.pumpLoopStartStopEnabled = false
-
   for _, consumer in ipairs(device.connectedConsumers) do
     if consumer.resetSounds then
       consumer:resetSounds(device.consumerJbeamData[consumer.name])
@@ -246,6 +298,8 @@ local function reset(device, jbeamData)
 
   device.pumpFlowRate = 0
   device.accumulatorOutFlow = 0
+  device.reliefFlow = 0
+  device.unloadFlow = 0
 
   device[device.outputTorqueName] = 0
   device[device.outputAVName] = 0
@@ -253,6 +307,8 @@ local function reset(device, jbeamData)
 
   device.pumpSmoother:reset()
   device.currentDisplacement = 0
+
+  table.clear(device.stateData)
 
   electrics.values[device.hydraulicPTOConsumerPressureElectricsName] = 0
   electrics.values[device.hydraulicPTOConsumerFlowElectricsName] = 0
@@ -296,8 +352,10 @@ local function new(jbeamData)
     virtualMassAV = 0,
     isBroken = false,
     nodeCid = jbeamData.node,
+    stallProtectionAV = (jbeamData.stallProtectionPumpRPM or 500) * rpmToAV,
     showDebugGraph = jbeamData.showDebugGraph or false,
     showDebugGraphSound = jbeamData.showDebugGraphSound or false,
+    stateData = {},
     reset = reset,
     onBreak = onBreak,
     validate = validate,
@@ -311,14 +369,15 @@ local function new(jbeamData)
     setConnected = setConnected,
     onCouplerAttached = onCouplerAttached,
     onCouplerDetached = onCouplerDetached,
+    getState = getState,
+    setState = setState,
     torqueDiff = 0
   }
-
   device.invGearRatio = 1 / device.gearRatio
 
   device.connectedConsumers = {}
 
-  device.pumpMaxDisplacement = jbeamData.pumpMaxDisplacement or 0.0002
+  device.pumpMaxDisplacement = jbeamData.pumpMaxDisplacement or 0.0002 --m³/revolution
   device.pumpType = jbeamData.pumpType or "variableDisplacement" -- "fixedDisplacement"
   device.pumpRegulationRange = jbeamData.pumpRegulationRange or 10000000
   device.pumpWorkingPressure = jbeamData.pumpWorkingPressure or 25000000
@@ -338,6 +397,10 @@ local function new(jbeamData)
   device.accumulatorOilVolume = device.initialAccumulatorOilVolume
   device.pumpFlowRate = 0
   device.accumulatorOutFlow = 0
+  device.reliefFlow = 0
+  device.unloadFlow = 0
+
+  device.unloadValveFlowMax = jbeamData.unloadValveMaxFlow or 0
 
   device.hydraulicPTOPressureElectricsName = jbeamData.hydraulicPTOPressureElectricsName or "hydraulicPTOPressure"
   device.hydraulicPTOMaxFlowRateElectricsName = jbeamData.hydraulicPTOMaxFlowRateElectricsName or "hydraulicPTOMaxFlowRate"

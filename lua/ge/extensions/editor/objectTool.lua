@@ -7,14 +7,18 @@ local logTag = 'editor_object_tool'
 local imgui = ui_imgui
 local objectHistoryActions = require("editor/api/objectHistoryActions")()
 local copyObjectsArray = {}
-local colorBlinkTimer = 0
 
 local raycastMode = false
 local clickedHoveredObject = false
+local doingRectSelection = false
+local mouseDown = false
 
 local mouseDragStartPos = nil
 local objectsInRect = {}
 local duplicationDrag
+
+local bboxColor = ColorF(0.9, 0.5, 0, 1)
+local bboxColorLocked = ColorF(0.9, 0, 0, 1)
 
 local cubePoints =
 {
@@ -77,13 +81,13 @@ local function drawSelectedObjectBBox(obj, color)
     local scl = 1
     if not editor.getPreference("gizmos.general.fixedRefnodeVisualization") then
       local distance = (core_camera.getPosition() - pos):length()
-      scl = clamp(distance/15, 0.0, 1.75) + 0.125
+      scl = clamp(distance / 15, 0.0, 1.75) + 0.125
     end
     local alpha = 0.5
-    debugDrawer:drawSphere(pos, 0.3*scl, ColorF(1,0,1,1*alpha))
-    debugDrawer:drawCylinder(pos, pos + (rot * vec3(0, -2*scl, 0)), 0.1*scl, ColorF(1,0,0,1*alpha))
-    debugDrawer:drawCylinder(pos, pos + (rot * vec3(0, 0, 2*scl)), 0.1*scl, ColorF(0,0,1,1*alpha))
-    debugDrawer:drawCylinder(pos, pos + (rot * vec3(2*scl, 0, 0)), 0.1*scl, ColorF(0,1,0,1*alpha))
+    debugDrawer:drawSphere(pos, 0.3 * scl, ColorF(1, 0, 1, 1 * alpha))
+    debugDrawer:drawCylinder(pos, pos + (rot * vec3(0, -2 * scl, 0)), 0.1 * scl, ColorF(1, 0, 0, 1 * alpha))
+    debugDrawer:drawCylinder(pos, pos + (rot * vec3(0, 0, 2 * scl)), 0.1 * scl, ColorF(0, 0, 1, 1 * alpha))
+    debugDrawer:drawCylinder(pos, pos + (rot * vec3(2 * scl, 0, 0)), 0.1 * scl, ColorF(0, 1, 0, 1 * alpha))
     return
   end
 
@@ -135,7 +139,7 @@ local function getMementoFromSelection()
   for _, id in ipairs(editor.selection.object) do
     local obj = scenetree.findObjectById(id)
     if obj then
-      editor.logDebug("Copy id " .. tostring(obj:getId()));
+      --editor.logDebug("Copy id " .. tostring(obj:getId()));
       local memento = editor.saveSimObjectMemento(obj)
       table.insert(mementos, memento)
     end
@@ -188,7 +192,7 @@ local function pasteObjects(objectMementos, objectIDs, parentIds)
       if obj then
         local newGroup = nil
         if parentIds and parentIds[i] then newGroup = scenetree.findObjectById(tonumber(parentIds[i])) end
-        local grp = newGroup or missionGroup
+        local grp = editor.resolveAddGroup(newGroup or missionGroup)
         grp:addObject(obj)
         table.insert(newObjectIDs, obj:getId())
         if obj:isSubClassOf("DecalRoad") then -- regenerate, so the BB is correct immediately
@@ -429,6 +433,23 @@ local function gizmoEndDrag()
     editor.history:endTransaction()
   end
   editor.setDirty()
+
+  local gizmoMode = worldEditorCppApi.getAxisGizmoMode()
+  if gizmoMode == editor.AxisGizmoMode_Translate or gizmoMode == editor.AxisGizmoMode_Rotate or gizmoMode == editor.AxisGizmoMode_Scale then
+    local newTransforms = editor.getTransformsGizmoTranslate(axisGizmoEventState.objects, axisGizmoEventState.objectHeights)
+    for index, transform in ipairs(newTransforms) do
+      local obj = axisGizmoEventState.objects[index]
+      if obj then
+        local objId = obj:getId()
+        local prefabInstance = Engine.Prefab.findContainingPrefabInstance(obj)
+        if prefabInstance then
+          prefabInstance = Sim.upcast(prefabInstance)
+          prefabInstance:updateChildOffsetTransform(objId)
+        end
+      end
+    end
+  end
+
   -- reset variables
   axisGizmoEventState.oldTransforms = {}
   axisGizmoEventState.oldScales = {}
@@ -438,11 +459,6 @@ end
 local function drawObjectSelectionGizmos()
   --debugDrawer:currentRenderViewMaskSet(1)
   if editor.selection.object and not tableIsEmpty(editor.selection.object) then
-    local colorX = math.abs(math.sin(colorBlinkTimer))
-    local c1 = ColorF(0.3, 0.1, 0, 1)
-    local c2 = ColorF(0.9, 0.5, 0, 1)
-    local blinkColor = ColorF(c1.r + colorX * (c2.r - c1.r), c1.g + colorX * (c2.g - c1.g), c1.b + colorX * (c2.b - c1.b), 1)
-    local blinkColorLocked = ColorF(1,colorX, colorX, 1)
     local boxColor
     -- draw a box for each object
     local drawGizmo = not raycastMode
@@ -450,8 +466,10 @@ local function drawObjectSelectionGizmos()
       local obj = scenetree.findObjectById(editor.selection.object[i])
       if obj then
         if obj.getTransform then
-          if obj:isLocked() then boxColor = blinkColorLocked else boxColor = blinkColor end
-          drawSelectedObjectBBox(obj, boxColor)
+          if editor.getPreference("gizmos.general.drawSelectionBoundingBox") then
+            if obj:isLocked() then boxColor = bboxColorLocked else boxColor = bboxColor end
+            drawSelectedObjectBBox(obj, boxColor)
+          end
         else
           drawGizmo = false
         end
@@ -470,28 +488,31 @@ local function drawObjectSelectionGizmos()
 
     if drawGizmo then
       -- draw big selection box
-      if tableSize(editor.selection.object) > 1 then
-        local mtx = MatrixF(true)
-        mtx:setPosition(editor.objectSelectionBBox:getCenter())
-        local scl = editor.objectSelectionBBox:getExtents()
-        mtx:scale(scl)
-        drawSelectionBBox(mtx, blinkColor)
+      if editor.getPreference("gizmos.general.drawSelectionBoundingBox") then
+        if tableSize(editor.selection.object) > 1 then
+          local mtx = MatrixF(true)
+          mtx:setPosition(editor.objectSelectionBBox:getCenter())
+          local scl = editor.objectSelectionBBox:getExtents()
+          mtx:scale(scl)
+          drawSelectionBBox(mtx, bboxColor)
+        end
       end
 
       editor.updateAxisGizmo(gizmoBeginDrag, gizmoEndDrag, gizmoDragging)
       editor.drawAxisGizmo()
     end
-    colorBlinkTimer = colorBlinkTimer + editor.getDeltaTime() * 3.0
   end
   --debugDrawer:currentRenderViewMaskClear()
 end
 
-local function objectSelectActivate()
+local function objectToolActivate()
+  editor.clearObjectSelection()
   updateObjectSelectionAxisGizmo()
   worldEditorCppApi.setAxisGizmoSelectedElement(-1)
 end
 
-local function objectSelectDeactivate()
+local function objectToolDeactivate()
+  editor.clearObjectSelection()
 end
 
 local function drawFrustumRect(frustum)
@@ -516,9 +537,12 @@ local function filterObjects(objects)
   local filteredIndices = {}
   for index, object in ipairs(objects) do
     local className = object:getClassName()
+    local name = object:getName()
+
     if className == "TerrainBlock"
       or className == "WaterPlane"
       or className == "Forest"
+      or name == "gameCamera"
       or not editor.isObjectSelectable(object) then
       table.insert(filteredIndices, index)
     end
@@ -532,148 +556,407 @@ end
 local currentObjectToAlign
 local angleAroundUpValue = 0
 local draggingObjectToAlign = false
-local alignToSurfaceInitialTransform
+-- per-object align: {obj, id, initialTransform, scale, offsetFromPivot}; pivot follows mouse, each object aligns to normal at its position
+local alignToSurfaceObjects = {}
+local alignToSurfaceInitialPivot = nil -- vec3, selection pivot at drag start
 
-local function objectSelectUpdate()
+-- raycast down through a world position to get surface hit (pt, norm)
+local function raycastDownAtPosition(pos, rayLen)
+  rayLen = rayLen or 500
+  local origin = vec3(pos) + vec3(0, 0, rayLen)
+  local target = vec3(pos) - vec3(0, 0, rayLen)
+  local res = Engine.castRay(origin, target, true, true)
+  if not res then return nil end
+  return { pt = vec3(res.pt), norm = vec3(res.norm) }
+end
+
+-- find the edit mode that declares it edits the given SimObject class (via editObjectClass)
+local function getEditModeForObjectClass(className)
+  if not className then return nil end
+  for _, mode in pairs(editor.editModes) do
+    if mode ~= editor.editModes.objectSelect and mode.editObjectClass == className then
+      return mode
+    end
+  end
+  return nil
+end
+
+local function objectToolUpdate()
   local res = getCameraMouseRay()
   local objectIdByIconClick = editor.objectIconHitId
   local hoveredObjectID = 0
-  if not editor.isAxisGizmoHovered() then
-    hoveredObjectID = editor.objectIconHoverId or 0
+  local rayCastInfo = nil
+  local defaultFlags = bit.bor(SOTTerrain, SOTWater, SOTStaticShape, SOTStaticObject, SOTPlayer, SOTItem, SOTVehicle, SOTForest)
+
+  if not worldEditorCppApi.getClassIsSelectable("TSStatic") then
+    defaultFlags = bit.band(defaultFlags, bit.bnot(SOTStaticShape))
+  end
+
+  if editor.getPreference("gizmos.general.objectHoverHighlight") then
+    rayCastInfo = cameraMouseRayCast(true, defaultFlags)
+    if not rayCastInfo then
+      rayCastInfo = cameraMouseRayCast(false, defaultFlags)
+    end
+  end
+
+  if not editor.isAxisGizmoHovered()
+    and not imgui.GetIO().WantCaptureMouse
+    and not imgui.IsAnyItemActive() then
+    local hID = 0
+
+    if rayCastInfo and rayCastInfo.object then
+      hID = rayCastInfo.object:getID()
+    end
+
+    hoveredObjectID = hID or editor.objectIconHoverId
   end
 
   worldEditorCppApi.setHoveredObjectId(hoveredObjectID)
 
   local ctrlDown = editor.keyModifiers.ctrl
+  local shiftDown = editor.keyModifiers.shift
   local altDown = editor.keyModifiers.alt
+  local selectMode = editor.SelectMode_New
 
+  if ctrlDown then selectMode = editor.SelectMode_Toggle end
+  if altDown then selectMode = editor.SelectMode_Remove end
+  if shiftDown then selectMode = editor.SelectMode_Add end
+
+  -- double-click an object with a dedicated edit mode -> switch to that edit mode
+  if imgui.IsMouseDoubleClicked(0)
+      and not ctrlDown and not altDown and not shiftDown
+      and editor.isViewportHovered()
+      and not editor.isAxisGizmoHovered()
+      and not imgui.GetIO().WantCaptureMouse
+      and not imgui.IsAnyItemActive() then
+    if core_forest.getForestObject() and not worldEditorCppApi.getClassIsSelectable("Forest") then core_forest.getForestObject():disableCollision() end
+    local dblCastInfo = cameraMouseRayCast(true, defaultFlags)
+    if not dblCastInfo then
+      dblCastInfo = cameraMouseRayCast(false, defaultFlags)
+    end
+    if core_forest.getForestObject() then core_forest.getForestObject():enableCollision() end
+
+    if dblCastInfo and dblCastInfo.object then
+      local dblObject = dblCastInfo.object
+      -- resolve owning prefab so double-clicking a prefab child doesn't misfire
+      local prefab = getOwningPrefab(dblObject)
+      if prefab then
+        dblObject = prefab
+      else
+        prefab = getOwningPrefabInstance(dblObject)
+        if prefab and prefab:getClassName() == "PrefabInstance" and not editor.isObjectSelected(prefab:getID()) then
+          dblObject = prefab
+        end
+      end
+
+      local editMode = getEditModeForObjectClass(dblObject:getClassName())
+      if editMode and editor.isObjectSelectable(dblObject) and not editor.editingObjectName then
+        mouseDown = false
+        clickedHoveredObject = false
+        local id = dblObject:getID()
+        -- switch modes first: leaving objectSelect clears the selection (objectToolDeactivate),
+        -- so select the object afterwards so the target mode reads the fresh selection
+        editor.selectEditMode(editMode)
+        editor.selectObjectById(id, editor.SelectMode_New)
+        return
+      end
+    end
+
+    -- Decal roads have no collision and are not returned by the raycast above, so pick them
+    -- by testing the clicked terrain position against each road's footprint (containsPoint
+    -- returns a node index, or -1 when the position is not on the road).
+    if dblCastInfo and dblCastInfo.pos and not editor.editingObjectName then
+      local roadEditMode = getEditModeForObjectClass("DecalRoad")
+      if roadEditMode then
+        local hitPos = vec3(dblCastInfo.pos)
+        for _, roadName in ipairs(scenetree.findClassObjects("DecalRoad") or {}) do
+          local road = scenetree.findObject(roadName)
+          if road and road.containsPoint and editor.isObjectSelectable(road)
+              and not getOwningPrefab(road)
+              and road:containsPoint(hitPos) ~= -1 then
+            mouseDown = false
+            clickedHoveredObject = false
+            local id = road:getID()
+            editor.selectEditMode(roadEditMode)
+            editor.selectObjectById(id, editor.SelectMode_New)
+            return
+          end
+        end
+      end
+    end
+
+    -- Rivers and mesh roads are mesh-based and are not reliably returned by the
+    -- flagged raycast above (their editors pick them with a flags-less cast), so
+    -- do a flags-less cast to catch any class that declares a dedicated edit mode.
+    if not editor.editingObjectName then
+      local meshCastInfo = cameraMouseRayCast(false)
+      if meshCastInfo and meshCastInfo.object then
+        local meshObject = meshCastInfo.object
+        local meshEditMode = getEditModeForObjectClass(meshObject:getClassName())
+        if meshEditMode and editor.isObjectSelectable(meshObject) and not getOwningPrefab(meshObject) then
+          mouseDown = false
+          clickedHoveredObject = false
+          local id = meshObject:getID()
+          editor.selectEditMode(meshEditMode)
+          editor.selectObjectById(id, editor.SelectMode_New)
+          return
+        end
+      end
+    end
+  end
+
+  if imgui.IsMouseDown(0) and not mouseDown then
+    mouseDown = true
+  end
+
+  -- when not in Ctrl+Alt align mode, clear zoom block so camera wheel works normally
+  local inAlignToSurfaceMode = editor.selection.object and altDown and ctrlDown and #editor.selection.object > 0
+  if not inAlignToSurfaceMode and not draggingObjectToAlign then
+    editor.disableCameraZoom = false
+  end
+
+  -- align selection to surface: pivot follows mouse drag; each object aligns to normal at its position (Ctrl+Alt+drag)
   if imgui.IsMouseClicked(0) or imgui.IsMouseDown(0) or draggingObjectToAlign then
     if editor.selection.object and altDown and ctrlDown and #editor.selection.object then
-      local rayCastInfo = cameraMouseRayCast(true, defaultFlags)
+      -- block camera zoom as soon as Ctrl+Alt+selection is active so wheel is used for angle, not zoom
+      editor.disableCameraZoom = true
       if core_forest.getForestObject() then core_forest.getForestObject():enableCollision() end
 
-      if rayCastInfo and editor.selection.object[1] then
-        --TODO: align all objects as a group in the selection
-        local objId = editor.selection.object[1]
-        local obj = scenetree.findObjectById(objId)
-
-        if obj:getClassName() == "TerrainBlock" then return end
-
-        if not currentObjectToAlign then
-          currentObjectToAlign = obj
-          editor.disableCameraZoom = true
-          draggingObjectToAlign = true
-          currentObjectToAlign:disableCollision()
-          alignToSurfaceInitialTransform = obj:getTransform()
+      -- build list of objects to align (manipulable, with transform, skip TerrainBlock)
+      local objectsToAlign = {}
+      for i = 1, tableSize(editor.selection.object) do
+        local id = editor.selection.object[i]
+        local o = scenetree.findObjectById(id)
+        if o and o.getTransform and o.getScale and o:getClassName() ~= "TerrainBlock" and editor.canManipulateObject(o) then
+          table.insert(objectsToAlign, { obj = o, id = id })
         end
-
-        local scl = obj:getScale()
-        local rot = quatFromDir(rayCastInfo.normal)
-        local mtx = MatrixF(0)
-        local mtxCorrection = MatrixF(0)
-        local mtxAngleAroundUp = MatrixF(0)
-        -- I need to add this 90deg x axis correction, dont know why quatFromDir doesnt properly create the rotation at default up (0,0,1)
-        mtxCorrection:setFromEuler(vec3((90 * math.pi) / 180.0, 0, 0))
-        angleAroundUpValue = angleAroundUpValue + imgui.GetIO().MouseWheel * 5 -- TODO: add this to prefs
-        mtxAngleAroundUp:setFromEuler(vec3(0, 0, (angleAroundUpValue * math.pi) / 180.0))
-        mtx:setFromQuatF(QuatF(rot.x, rot.y, rot.z, rot.w))
-        mtx = mtx:mul(mtxCorrection)
-        mtx = mtx:mul(mtxAngleAroundUp)
-        mtx:setPosition(rayCastInfo.pos)
-
-        if not imgui.IsMouseDown(0) and draggingObjectToAlign then
-          draggingObjectToAlign = false
-          currentObjectToAlign:enableCollision()
-          currentObjectToAlign = nil
-          angleAroundUpValue = 0
-          editor.disableCameraZoom = false
-          editor.history:beginTransaction("AlignObjectToSurface")
-          editor.history:commitAction("SetObjectTransform", {objectId = objId, newTransform = editor.matrixToTable(mtx), oldTransform = editor.matrixToTable(alignToSurfaceInitialTransform)}, objectHistoryActions.setObjectTransformUndo, objectHistoryActions.setObjectTransformRedo, true)
-          editor.history:commitAction("SetObjectScale", {objectId = objId, newScale = scl, oldScale = scl}, objectHistoryActions.setObjectScaleUndo, objectHistoryActions.setObjectScaleRedo, true)
-          editor.history:endTransaction()
-        else
-          obj:setTransform(mtx)
-          obj:setScaleXYZ(scl.x, scl.y, scl.z)
-        end
-        updateObjectSelectionAxisGizmo()
       end
+      if tableIsEmpty(objectsToAlign) then return end
+
+      if not currentObjectToAlign then
+        currentObjectToAlign = true
+        draggingObjectToAlign = true
+        alignToSurfaceObjects = {}
+        local pivotPos = (tableSize(objectsToAlign) == 1) and vec3(objectsToAlign[1].obj:getPosition()) or vec3(editor.objectSelectionBBox:getCenter())
+        alignToSurfaceInitialPivot = pivotPos
+        for _, entry in ipairs(objectsToAlign) do
+          local o, id = entry.obj, entry.id
+          o:disableCollision()
+          local pos = vec3(o:getPosition())
+          local initMtx = o:getTransform()
+          -- store initial XY heading (yaw) so we preserve direction while aligning to surface normal
+          local forward = vec3(initMtx:getColumn(1))
+          local initialYaw = math.atan2(forward.y, forward.x)
+          table.insert(alignToSurfaceObjects, {
+            obj = o, id = id,
+            initialTransform = initMtx,
+            scale = o:getScale(),
+            offsetFromPivot = pos - pivotPos,
+            initialYaw = initialYaw
+          })
+        end
+      end
+
+      -- mouse raycast: pivot follows cursor so selection drags with the mouse
+      local mouseHit = cameraMouseRayCast(true, defaultFlags)
+      if not mouseHit then mouseHit = cameraMouseRayCast(false, defaultFlags) end
+      local pivotPos = (mouseHit and mouseHit.pos) and vec3(mouseHit.pos) or alignToSurfaceInitialPivot
+
+      -- shared rotation around normal (mouse wheel)
+      angleAroundUpValue = angleAroundUpValue + imgui.GetIO().MouseWheel * 5 -- TODO: add to prefs
+      local mtxCorrection = MatrixF(0)
+      local mtxAngleAroundUp = MatrixF(0)
+      mtxCorrection:setFromEuler(vec3((90 * math.pi) / 180.0, 0, 0))
+      mtxAngleAroundUp:setFromEuler(vec3(0, 0, (angleAroundUpValue * math.pi) / 180.0))
+
+      if not imgui.IsMouseDown(0) and draggingObjectToAlign then
+        draggingObjectToAlign = false
+        currentObjectToAlign = nil
+        angleAroundUpValue = 0
+        editor.disableCameraZoom = false
+        alignToSurfaceInitialPivot = nil
+        editor.history:beginTransaction("AlignObjectToSurface")
+        for _, entry in ipairs(alignToSurfaceObjects) do
+          entry.obj:enableCollision()
+          local newTransform = entry.obj:getTransform()
+          editor.history:commitAction("SetObjectTransform", { objectId = entry.id, newTransform = editor.matrixToTable(newTransform), oldTransform = editor.matrixToTable(entry.initialTransform) }, objectHistoryActions.setObjectTransformUndo, objectHistoryActions.setObjectTransformRedo, true)
+          editor.history:commitAction("SetObjectScale", { objectId = entry.id, newScale = entry.scale, oldScale = entry.scale }, objectHistoryActions.setObjectScaleUndo, objectHistoryActions.setObjectScaleRedo, true)
+        end
+        editor.history:endTransaction()
+        alignToSurfaceObjects = {}
+      else
+        -- align to surface normal, preserving initial XY heading: build forward in tangent plane with that exact XY angle
+        for _, entry in ipairs(alignToSurfaceObjects) do
+          local desiredPos = pivotPos + entry.offsetFromPivot
+          local hit = raycastDownAtPosition(desiredPos)
+          if hit then
+            local n = hit.norm
+            -- forward in tangent plane such that atan2(fwd.y, fwd.x) = initialYaw (project (cos,sin,0) onto tangent plane)
+            local cx = math.cos(entry.initialYaw)
+            local cy = math.sin(entry.initialYaw)
+            local ndot = n.x * cx + n.y * cy
+            local fz = (math.abs(n.z) >= 1e-6) and (-ndot / n.z) or 0
+            local fwd = vec3(cx, cy, fz)
+            local flen = math.sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z)
+            if flen >= 1e-6 then
+              fwd.x, fwd.y, fwd.z = fwd.x / flen, fwd.y / flen, fwd.z / flen
+            else
+              fwd = vec3(cx, cy, 0)
+              local l2 = math.sqrt(cx * cx + cy * cy)
+              if l2 >= 1e-6 then fwd.x, fwd.y = cx / l2, cy / l2 end
+            end
+            -- right = fwd x n (negate n x fwd to avoid X mirror); columns 0,1,2 = right, forward, up
+            local rx = fwd.y * n.z - fwd.z * n.y
+            local ry = fwd.z * n.x - fwd.x * n.z
+            local rz = fwd.x * n.y - fwd.y * n.x
+            local rlen = math.sqrt(rx * rx + ry * ry + rz * rz)
+            if rlen >= 1e-6 then
+              rx, ry, rz = rx / rlen, ry / rlen, rz / rlen
+            else
+              rx, ry, rz = 1, 0, 0
+            end
+            local mtx = MatrixF(0)
+            mtx:setColumn(0, vec3(rx, ry, rz))
+            mtx:setColumn(1, fwd)
+            mtx:setColumn(2, vec3(n.x, n.y, n.z))
+            mtx:setPosition(hit.pt)
+            mtx = mtx:mul(mtxAngleAroundUp)
+            mtx:setPosition(hit.pt)
+            entry.obj:setTransform(mtx)
+            entry.obj:setScaleXYZ(entry.scale.x, entry.scale.y, entry.scale.z)
+          end
+        end
+      end
+      updateObjectSelectionAxisGizmo()
       return
     end
   end
 
-  if imgui.IsMouseClicked(0)
+  -- selecting objects (skip while file dialog is open, or for a short time after it closed)
+  local fileDialogJustClosed = (editor.fileDialogVisibleAtFrameStart == true) and not editor.isWindowVisible("fileDialog")
+  local fileDialogSkipTimeAfterClose = 0.5
+  local now = os.clock()
+  local fileDialogClosedRecently = editor.fileDialogClosedTime and (now - editor.fileDialogClosedTime < fileDialogSkipTimeAfterClose)
+  if editor.fileDialogClosedTime and now - editor.fileDialogClosedTime >= fileDialogSkipTimeAfterClose then
+    editor.fileDialogClosedTime = nil
+  end
+  if imgui.IsMouseReleased(0)
+      and mouseDown
+      and not fileDialogJustClosed
+      and not fileDialogClosedRecently
       and (res or objectIdByIconClick)
       and not editor.isAxisGizmoHovered()
       and editor.isViewportHovered()
-      and not imgui.GetIO().WantCaptureMouse then
-
-    local ctrlDown = editor.keyModifiers.ctrl
-    local shiftDown = editor.keyModifiers.shift
-    local altDown = editor.keyModifiers.alt
-    local selectMode = editor.SelectMode_New
-
-    if ctrlDown then selectMode = editor.SelectMode_Toggle end
-    if altDown then selectMode = editor.SelectMode_Remove end
-    if shiftDown then selectMode = editor.SelectMode_Add end
-
+      and not imgui.GetIO().WantCaptureMouse
+      and not imgui.IsAnyItemActive()
+      and not editor.isWindowVisible("fileDialog") then
+    mouseDown = false
     if objectIdByIconClick and objectIdByIconClick ~= 0 then
       local object = scenetree.findObjectById(objectIdByIconClick)
       if worldEditorCppApi.getClassIsSelectable(object:getClassName())
          and editor.isObjectSelectable(object) then
         if not editor.editingObjectName then
+          local oldSelection = deepcopy(editor.selection.object)
           editor.selectObjectById(objectIdByIconClick, selectMode)
+          objectHistoryActions.selectObjectsWithUndo(editor.selection.object, oldSelection)
         else
           editor.postNameChangeSelectObjectId = objectIdByIconClick
         end
       end
     else
       local hoveredObject = nil
-      if not imgui.GetIO().WantCaptureMouse and editor.isViewportHovered() and not editor.isAxisGizmoHovered() then
+
+      if not doingRectSelection
+          and imgui.IsMouseReleased(0)
+          and not fileDialogJustClosed
+          and not fileDialogClosedRecently
+          and not imgui.GetIO().WantCaptureMouse
+          and editor.isViewportHovered()
+          and not editor.isAxisGizmoHovered()
+          and not editor.isWindowVisible("fileDialog") then
         if core_forest.getForestObject() and not worldEditorCppApi.getClassIsSelectable("Forest") then core_forest.getForestObject():disableCollision() end
-        local defaultFlags = bit.bor(SOTTerrain, SOTWater, SOTStaticShape, SOTStaticObject, SOTPlayer, SOTItem, SOTVehicle, SOTForest)
-        if not worldEditorCppApi.getClassIsSelectable("TSStatic") then
-          defaultFlags = bit.band(defaultFlags, bit.bnot(SOTStaticShape))
+
+        rayCastInfo = cameraMouseRayCast(true, defaultFlags)
+        if not rayCastInfo then
+          rayCastInfo = cameraMouseRayCast(false, defaultFlags)
         end
-        local rayCastInfo = cameraMouseRayCast(true, defaultFlags)
+
         if core_forest.getForestObject() then core_forest.getForestObject():enableCollision() end
 
         if rayCastInfo then
           hoveredObject = rayCastInfo.object
 
-          -- Get the top level prefab as the hovered object
-          local prefab
-          repeat
-            prefab = Engine.Prefab.findPrefabForChild(hoveredObject)
-            if prefab then
-              hoveredObject = prefab
+          -- Get the top level prefab as the hovered object - We have 2 forms old Prefab (V1) and new PrefabInstance (Prefab V2)
+          -- Prefab V1
+          local prefab = getOwningPrefab(hoveredObject)
+          if prefab then
+            hoveredObject = prefab
+          else
+            -- check if it belongs to prefab v2 prefabInstance
+            prefab = getOwningPrefabInstance(hoveredObject)
+            -- hoveredObject is the actual object in the scene.
+            -- If the prefab instance is already selected, then leaving hoveredObject alone will allow the user to select a child of the prefab
+            if prefab and prefab:getClassName() == "PrefabInstance" then
+              local prefabIsSelected = editor.isObjectSelected(prefab:getID())
+              if not prefabIsSelected then
+                hoveredObject = prefab
+              end
             end
-          until not prefab
+          end
+
+          -- Validate that the object has valid bounds before selecting
+          if hoveredObject and hoveredObject.getWorldBox then
+            local wb = hoveredObject:getWorldBox()
+            if wb and (wb.minExtents.x == -math.huge or wb.maxExtents.x == math.huge or
+                       wb.minExtents.y == -math.huge or wb.maxExtents.y == math.huge or
+                       wb.minExtents.z == -math.huge or wb.maxExtents.z == math.huge) then
+              -- Invalid bounds, try to get bounds from objBox instead
+              if hoveredObject.getObjBox then
+                local objBox = hoveredObject:getObjBox()
+                if objBox and objBox.minExtents and objBox.maxExtents then
+                  -- Object has valid objBox, it should work
+                else
+                  -- No valid bounds, skip selection
+                  hoveredObject = nil
+                end
+              else
+                -- No getObjBox method, skip selection
+                hoveredObject = nil
+              end
+            end
+          end
         end
       end
       if hoveredObject and editor.isObjectSelectable(hoveredObject) then
         if not editor.editingObjectName then
+          local oldSelection = deepcopy(editor.selection.object)
           editor.selectObjectById(hoveredObject:getID(), selectMode)
+          objectHistoryActions.selectObjectsWithUndo(editor.selection.object, oldSelection)
         else
           editor.postNameChangeSelectObjectId = hoveredObject:getID()
         end
         clickedHoveredObject = true
       else
-        editor.clearObjectSelection()
+        if not doingRectSelection then
+          -- just clear selection if we want a new one
+          if selectMode == editor.SelectMode_New then
+            local oldSelection = deepcopy(editor.selection.object)
+            editor.clearObjectSelection()
+            objectHistoryActions.selectObjectsWithUndo({}, oldSelection)
+          end
+        end
       end
     end
     updateObjectSelectionAxisGizmo()
   end
 
   if clickedHoveredObject and imgui.IsMouseReleased(0) then
+    mouseDown = false
     clickedHoveredObject = false
   end
 
   if clickedHoveredObject and raycastMode and imgui.IsMouseDragging(0, 1) then
     if core_forest.getForestObject() and not worldEditorCppApi.getClassIsSelectable("Forest") then core_forest.getForestObject():disableCollision() end
-    local defaultFlags = bit.bor(SOTTerrain, SOTWater, SOTStaticShape, SOTStaticObject, SOTPlayer, SOTItem, SOTVehicle, SOTForest)
-    if not worldEditorCppApi.getClassIsSelectable("TSStatic") then
-      defaultFlags = bit.band(defaultFlags, bit.bnot(SOTStaticShape))
-    end
     local selectedObjects = {}
     for i = 1, tableSize(editor.selection.object) do
       local obj = scenetree.findObjectById(editor.selection.object[i])
@@ -681,6 +964,9 @@ local function objectSelectUpdate()
       obj:disableCollision()
     end
     local rayCastInfo = cameraMouseRayCast(true, defaultFlags)
+    if not rayCastInfo then
+      rayCastInfo = cameraMouseRayCast(false, defaultFlags)
+    end
     if core_forest.getForestObject() then core_forest.getForestObject():enableCollision() end
     for _, obj in ipairs(selectedObjects) do
       obj:enableCollision()
@@ -694,6 +980,7 @@ local function objectSelectUpdate()
     drawObjectSelectionGizmos()
   end
 
+  -- set the mouse start pos for rect selection (if the gizmo is not hovered)
   if imgui.IsMouseClicked(0)
       and editor.isViewportHovered()
       and not imgui.GetIO().WantCaptureMouse
@@ -701,9 +988,9 @@ local function objectSelectUpdate()
     mouseDragStartPos = imgui.GetMousePos()
   end
 
+  -- select by rect
   if not (clickedHoveredObject and raycastMode) and imgui.IsMouseDragging(0) and mouseDragStartPos then
-    local colorX = math.abs(math.sin(colorBlinkTimer))
-
+    doingRectSelection = true
     local delta = imgui.GetMouseDragDelta(0)
     local topLeft2I = editor.screenToClient(Point2I(mouseDragStartPos.x, mouseDragStartPos.y))
     local topLeft = vec3(topLeft2I.x, topLeft2I.y, 0)
@@ -715,15 +1002,34 @@ local function objectSelectUpdate()
     drawFrustumRect(frustum)
     filterObjects(objectsInRect)
 
+    local color
+
+    if selectMode == editor.SelectMode_New then color = ColorF(1, 1, 0.3, 1)
+    elseif selectMode == editor.SelectMode_Add then color = ColorF(0.3, 1, 0.3, 1)
+    elseif selectMode == editor.SelectMode_Remove then color = ColorF(1, 0.3, 0.3, 1)
+    elseif selectMode == editor.SelectMode_Toggle then color = ColorF(0, 1, 1, 1) end
+
     for _, object in ipairs(objectsInRect) do
-      drawSelectedObjectBBox(object, ColorF(colorX, colorX, colorX, 1))
+      drawSelectedObjectBBox(object, color)
     end
   end
 
+  if mouseDragStartPos
+    and doingRectSelection
+    and imgui.IsMouseReleased(0)
+    and not imgui.GetIO().WantCaptureMouse then
+      mouseDown = false
+      mouseDragStartPos = nil
+      doingRectSelection = false
+      local oldSelection = deepcopy(editor.selection.object)
+      editor.selectObjectsByRef(objectsInRect, selectMode)
+      objectHistoryActions.selectObjectsWithUndo(editor.selection.object, oldSelection)
+      objectsInRect = {}
+  end
+
+  -- just nil the mouse drag start position if we released the mouse (and not started to rect select)
   if mouseDragStartPos and imgui.IsMouseReleased(0) then
     mouseDragStartPos = nil
-    editor.selectObjectsByRef(objectsInRect)
-    objectsInRect = {}
   end
 end
 
@@ -875,6 +1181,18 @@ local function onEditorPreferenceValueChanged(path, value)
   if path == "gizmos.objectIcons.iconShadowOffset" then worldEditorCppApi.setIconShadowOffset(value) end
   if path == "gizmos.general.fineMoveScalar" then worldEditorCppApi.setFineMoveScalar(value) end
   if path == "gizmos.general.lineThicknessScale" then worldEditorCppApi.setGizmoLineThicknessScale(value) end
+  if path == "gizmos.general.objectHoverHighlight" then worldEditorCppApi.setHoveredObjectId(0) end
+  if path == "gizmos.general.highlightSelectedMeshes" then
+    worldEditorCppApi.setAxisGizmoHighlightSelectedMeshes(value)
+    if editor.selection and editor.selection.object then
+      for _, objId in ipairs(editor.selection.object) do
+        local obj = scenetree.findObjectById(objId)
+        if obj and obj.updateInstanceRenderData then
+          obj:updateInstanceRenderData()
+        end
+      end
+    end
+  end
   if path == "gizmos.general.drawGizmoPlane" then
     worldEditorCppApi.setAxisGizmoRenderPlane(value)
     worldEditorCppApi.setAxisGizmoRenderPlaneHashes(value)
@@ -918,6 +1236,12 @@ local function onEditorRegisterPreferences(prefsRegistry)
   prefsRegistry:registerSubCategory("snapping", "terrain")
   prefsRegistry:registerSubCategory("snapping", "grid")
 
+  local highlightShortcut = core_input_bindings and core_input_bindings.getControlForAction("editorToggleSelectionHighlight")
+  local highlightSelectedMeshesDesc = "Highlight the selected meshes"
+  if highlightShortcut then
+    highlightSelectedMeshesDesc = highlightSelectedMeshesDesc .. " (toggle shortcut: " .. highlightShortcut .. ")"
+  end
+
   prefsRegistry:registerPreferences("gizmos", "general",
   {
     -- {name = {type, default value, desc, label (nil for auto Sentence Case), min, max, hidden, advanced, customUiFunc, enumLabels}}
@@ -934,6 +1258,9 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {localCoordinatesModeDefault = {"bool", false, "Set local coordinates mode as default"}},
     {fixedRefnodeVisualization = {"bool", false, "Refnode Visualization having a fixed size."}},
     {lineThicknessScale = {"float", 1, "The scale factor for the lines used in the gizmos"}},
+    {drawSelectionBoundingBox = {"bool", true, "Draw the selection's bounding box also (aside object highlighting)"}},
+    {objectHoverHighlight = {"bool", false, "Highlight the currently hovered object (expensive)", "Object Hover Highlight (expensive)"}},
+    {highlightSelectedMeshes = {"bool", true, highlightSelectedMeshesDesc}},
   })
 
   prefsRegistry:registerPreferences("gizmos", "brush",
@@ -1003,9 +1330,9 @@ local function onEditorInitialized()
   editor.editModes.objectSelect =
   {
     displayName = "Manipulate Object(s)",
-    onActivate = objectSelectActivate,
-    onDeactivate = objectSelectDeactivate,
-    onUpdate = objectSelectUpdate,
+    onActivate = objectToolActivate,
+    onDeactivate = objectToolDeactivate,
+    onUpdate = objectToolUpdate,
     onToolbar = nil,
     actionMap = "ObjectTool",
     onCut = onCut,
@@ -1027,6 +1354,7 @@ local function onEditorInitialized()
   editor.editModes.objectSelect.auxShortcuts[bit.bor(editor.AuxControl_Shift, editor.AuxControl_Duplicate)] = "Duplicate at cam pos"
   editor.editModes.objectSelect.auxShortcuts["Shift + Drag Gizmo"] = "Duplicate objects"
   editor.editModes.objectSelect.auxShortcuts[bit.bor(editor.AuxControl_Ctrl, editor.AuxControl_Alt)] = "Align object to surfaces on LMB down + Wheel (rotates around up axis)"
+  editor.editModes.objectSelect.auxShortcuts[bit.bor(editor.AuxControl_Ctrl)] = "Fine Rotation/Scale"
   registerApi()
 
   if editor.getPreference("gizmos.general.localCoordinatesModeDefault") then
@@ -1041,7 +1369,6 @@ local function onEditorInitialized()
     title = "Align Objects Individually To The Grid",
     extendedSceneTreeObjectMenuItems = function()
       for _, id in ipairs(editor.selection.object or {}) do
-        print(id)
         local xform = MatrixF(true)
         local obj = scenetree.findObjectById(id)
         if editor.getAxisGizmoAlignment() == editor.AxisGizmoAlignment_Local then

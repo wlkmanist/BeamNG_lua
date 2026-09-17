@@ -10,11 +10,14 @@ stepper.startStepSequence(
   })
 ]]
 
-
-
-
 local M = {}
 local showDebugWindow = false
+
+local getStepOrigin = function()
+  local origin = split(debug.tracesimple(), "\n")
+  return origin[4]
+end
+
 local taskData = {
   steps = {},
   data = {},
@@ -50,6 +53,7 @@ local function makeStepFadeToBlack(duration)
     direction = "start",
     timeout = 10,
     duration = duration,
+    origin = getStepOrigin()
   }
 end
 local function makeStepFadeFromBlack(duration)
@@ -59,6 +63,7 @@ local function makeStepFadeFromBlack(duration)
     direction = "stop",
     timeout = 10,
     duration = duration,
+    origin = getStepOrigin()
   }
 end
 M.makeStepFadeToBlack = makeStepFadeToBlack
@@ -66,7 +71,7 @@ M.makeStepFadeFromBlack = makeStepFadeFromBlack
 
 -- timing helper
 local function taskWaitStep(step)
-  if os.time() - step._startingTime > step.duration then
+  if os.clockhp() - step._startingTime > step.duration then
     step.complete = true
   end
 end
@@ -75,14 +80,33 @@ local function makeStepWait(seconds)
     name = "waitStep",
     processTask = taskWaitStep,
     duration = seconds,
-    timeout = seconds + 1
+    timeout = seconds + 1,
+    origin = getStepOrigin()
   }
 end
 M.makeStepWait = makeStepWait
 
+-- frame-counting helper: completes after a fixed number of update frames,
+-- independent of how long each frame takes
+local function taskWaitFramesStep(step)
+  step._frameCount = (step._frameCount or 0) + 1
+  if step._frameCount >= step.frames then
+    step.complete = true
+  end
+end
+local function makeStepWaitFrames(frames)
+  return {
+    name = "waitFramesStep",
+    processTask = taskWaitFramesStep,
+    frames = frames,
+    origin = getStepOrigin()
+  }
+end
+M.makeStepWaitFrames = makeStepWaitFrames
+
 -- custom function helper
-local function taskCustomReturnTrueFunctionStep(step)
-  if step.fun(step) then
+local function taskCustomReturnTrueFunctionStep(step, dtTable)
+  if step.fun(step, dtTable) then
     step.complete = true
   end
 end
@@ -92,6 +116,7 @@ local function makeStepReturnTrueFunction(fun)
     name = "customReturnTrueStep",
     processTask = taskCustomReturnTrueFunctionStep,
     fun = fun,
+    origin = getStepOrigin()
   }
 end
 M.makeStepReturnTrueFunction = makeStepReturnTrueFunction
@@ -101,10 +126,15 @@ local function makeStepReturnTrueFunction(fun)
     name = "customReturnTrueStep",
     processTask = taskCustomReturnTrueFunctionStep,
     fun = fun,
+    origin = getStepOrigin()
   }
 end
 M.makeUiMessageStep = function(message)
-  return makeStepReturnTrueFunction(function() ui_message(message) return true end)
+  return makeStepReturnTrueFunction(function()
+    ui_message(message)
+    log("I", "test", message)
+    return true
+  end)
 end
 
 -- vehicle spawning helper
@@ -132,7 +162,8 @@ local function makeStepSpawnVehicle(spawningOptions, callback)
     name = "spawnVehicleStep",
     processTask = taskVehicleSpawnStep,
     callback = callback,
-    options = spawningOptions
+    options = spawningOptions,
+    origin = getStepOrigin()
   }
 end
 local function makeStepSpawnVehicleSimple(model, config, callback)
@@ -175,7 +206,8 @@ local function makeStepSpawnTrafficSimple(amount, active, generator)
     name = "spawnTrafficStep",
     processTask = taskSpawnTrafficStep,
     options = {amount = amount, active = active, generator = generator},
-    state = 0
+    state = 0,
+    origin = getStepOrigin()
   }
 end
 M.taskSpawnTrafficStep = taskSpawnTrafficStep
@@ -185,14 +217,20 @@ M.makeStepSpawnTrafficSimple = makeStepSpawnTrafficSimple
 
 local function taskLoadLevelStep(step)
   if not step.waitForClientStartMission then
+    local foundLevel = false
     for i, v in ipairs(core_levels.getList()) do
-      if v.levelName == step.level then
+      if v.levelName:lower() == step.level:lower() then
         if string.find(v.fullfilename, '.mis') then
           core_levels.startLevel(v.fullfilename)
+          foundLevel = true
         else
           core_levels.startLevel(path.getPathLevelMain(v.levelName))
+          foundLevel = true
         end
       end
+    end
+    if not foundLevel then
+      log("E","","Could not find level: " .. step.level)
     end
     step.waitForClientStartMission = true
   end
@@ -209,7 +247,9 @@ local function makeLoadLevelStep(level)
   return {
     name = "loadLevel",
     processTask = taskLoadLevelStep,
-    level = level
+    level = level,
+    timeout = 600,
+    origin = getStepOrigin()
   }
 end
 
@@ -232,10 +272,15 @@ local function startStepSequence(steps, callbackWhenFinished)
 end
 M.startStepSequence = startStepSequence
 
+local function skipToLastStepOrCallback()
+  taskData.steps[taskData.currentStep].complete = true
+  taskData.currentStep = #taskData.steps - 1
+end
+M.skipToLastStepOrCallback = skipToLastStepOrCallback
 
-local lastUpdateTimer = updateTime
+local dtTable = {}
 local function onUpdate(dtReal, dtSim, dtRaw)
- if showDebugWindow then
+  if showDebugWindow then
     local im = ui_imgui
     im.Begin("Step Handler Debug")
     im.Text("Steps")
@@ -258,14 +303,25 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   if taskData.active then
     local stepToHandle = taskData.steps[taskData.currentStep]
     while stepToHandle do
-      if not stepToHandle._startingTime then stepToHandle._startingTime = os.time() end
-      stepToHandle.processTask(stepToHandle, taskData)
-      if os.time() - stepToHandle._startingTime > (stepToHandle.timeout or 120) then
-        log("E","","This step timed out ("..(stepToHandle.timeout or 120).."s). Step will be set to complete.")
+      if not stepToHandle._startingTime then stepToHandle._startingTime = os.clockhp() end
+      dtTable.dtReal = dtReal
+      dtTable.dtSim = dtSim
+      dtTable.dtRaw = dtRaw
+      stepToHandle.processTask(stepToHandle, dtTable)
+      -- Only flag a timeout if the step did not just complete this frame. A long
+      -- frame (e.g. a cold-cache hitch) can push elapsed past the timeout on the
+      -- same onUpdate where processTask already finished the step; without this
+      -- guard that emits a spurious "step timed out" error that downstream log
+      -- analysis counts as a mission-start failure.
+      if not stepToHandle.complete and os.clockhp() - stepToHandle._startingTime > (stepToHandle.timeout or 120) then
+        local descriptor = string.format("%s: %s", stepToHandle.name or "Unknown Step", stepToHandle.origin or "Unknown Step")
+        log("E","","This step timed out ("..(stepToHandle.timeout or 120).."s). Step will be set to complete. Origin: "..dumps(descriptor))
+        dump(stepToHandle)
         stepToHandle.complete = true
       end
       if stepToHandle.complete then
-        log("I", logTag, string.format("Completed Step: %s", stepToHandle.name or "Unnamed Task"))
+        local descriptor = string.format("%s: %s", stepToHandle.name or "Unknown Step", stepToHandle.origin or "Unknown Step")
+        log("I", logTag, string.format("Completed Step %0.2f: %s ", os.clockhp(), descriptor))
         taskData.currentStep = taskData.currentStep + 1
         stepToHandle = taskData.steps[taskData.currentStep]
         if not stepToHandle then

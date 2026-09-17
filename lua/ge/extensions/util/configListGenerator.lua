@@ -5,6 +5,7 @@
 local M = {}
 
 local defaultNumberOfVehicles = 10
+local dictFilters = tableValuesAsLookupDict(core_vehicles.getAttributesConvertToDict())
 
 local function listFiltered(list, filterFunction)
   local filtered = {}
@@ -18,11 +19,28 @@ end
 
 local function doesVehiclePassFiltersList(vehicleInfo, filters)
   for filterName, parameters in pairs(filters) do
-    if filterName == "Years" then
+
+    if dictFilters[filterName] then
+      local vehicleValueDict = vehicleInfo.aggregates[filterName]
+      if vehicleValueDict then
+        local passed = false
+        for _, value in ipairs(parameters) do
+          if type(vehicleValueDict) == 'table' then
+            if vehicleValueDict[value] then
+              passed = true
+              break
+            end
+          end
+        end
+        if not passed then return false end
+      end
+
+    elseif filterName == "Years" then
       -- years, which have a min and max
       local vehicleYears = vehicleInfo.Years or vehicleInfo.aggregates.Years
       if not vehicleYears then return false end
-      if parameters.min and (vehicleYears.min < parameters.min) or parameters.max and (vehicleYears.min > parameters.max) then
+      if parameters.min and (vehicleYears.max < parameters.min) or
+         parameters.max and (vehicleYears.min > parameters.max) then
         return false
       end
     elseif filterName ~= "Mileage" then
@@ -39,6 +57,7 @@ local function doesVehiclePassFiltersList(vehicleInfo, filters)
         for _, value in ipairs(parameters) do
           if vehicleInfo[filterName] == value or (vehicleInfo.aggregates[filterName] and vehicleInfo.aggregates[filterName][value]) then
             passed = true
+            break
           end
         end
         if not passed then return false end
@@ -84,9 +103,9 @@ local function chooseRandomModel(configs, popAttribute)
   local modelPops = {}
   for index, config in ipairs(configs) do
     if not modelPops[config.model_key] then
-      modelPops[config.model_key] = (config[popAttribute] or 1)
+      modelPops[config.model_key] = 1
     else
-      modelPops[config.model_key] = math.max(modelPops[config.model_key], (config[popAttribute] or 1))
+      modelPops[config.model_key] = 1
     end
   end
 
@@ -165,7 +184,7 @@ local function getEligibleVehicles(allowAuxiliaryVehicles, allowLoadedTrailers)
     and (allowLoadedTrailers or not vehicleInfo.hasLoad)
     and vehicleInfo.Value
     and (allowAuxiliaryVehicles or not vehicleInfo.isAuxiliary) then
-      vehicleInfo.Brand = vehicleInfo.aggregates.Brand and next(vehicleInfo.aggregates.Brand) or ""
+      vehicleInfo.Brand = vehicleInfo.aggregates.Brand and core_locales.translateWithPrefixFallback(next(vehicleInfo.aggregates.Brand), "ui.vehicleconfig.brand.") or ""
       table.insert(eligibleVehicles, vehicleInfo)
     end
   end
@@ -208,5 +227,6 @@ end
 
 M.getEligibleVehicles = getEligibleVehicles
 M.getRandomVehicleInfos = getRandomVehicleInfos
+M.doesVehiclePassFilter = doesVehiclePassFilter
 
 return M

@@ -47,7 +47,7 @@ function __luaBindIndexStatic(t, k)
   if res ~= nil then return res end
 
   local origgetters = rawget(mt, 1) -- 1 = getters
-  local getFunc = rawget(origgetters, k)
+  local getFunc = rawget(origgetters or {}, k)
   if getFunc ~= nil then
     -- log('E', '', '   getter hit: ' .. tostring(k) .. ' = ' .. tostring(res))
     if type(getFunc) == 'function' then

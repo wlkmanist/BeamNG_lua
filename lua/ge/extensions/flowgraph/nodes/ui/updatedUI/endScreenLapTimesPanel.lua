@@ -4,24 +4,22 @@
 
 local im = ui_imgui
 
-local ffi = require('ffi')
-
 local C = {}
 
-C.name = 'Lap Times Panel'
+C.name = 'EndScreen Lap Times'
 C.color = ui_flowgraph_editor.nodeColors.ui
-C.description = 'Attempts to create a string out of the input.'
+C.description = 'Displays the vehicle lap times in the end screen.'
 C.category = 'repeat_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = '', chainFlow = true },
   { dir = 'out', type = 'flow', name = 'flow', description = '', chainFlow = true },
 
-  { dir = 'in', type = 'table', name = 'race', description = 'Race Data'},
-  { dir = 'in', type = 'number', name = 'vehId', description = 'ID of the vehicle to display'},
+  { dir = 'in', type = 'table', name = 'race', description = 'Race Data.'},
+  { dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle id to use.'},
 }
 
-C.tags = { 'string' }
+C.tags = { 'end', 'finish', 'screen', 'outro', 'ui' }
 
 function C:work()
   self.pinOut.flow.value = self.pinIn.flow.value
@@ -35,7 +33,6 @@ function C:work()
     local state = self.pinIn.race.value.states[veh:getID()]
     self.mgr.modules.ui:addLaptimesForVehicle(state)
   end
-
 end
 
 return _flowgraph_createNode(C)

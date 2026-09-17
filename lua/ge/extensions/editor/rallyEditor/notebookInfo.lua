@@ -2,46 +2,41 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+local cc = require('/lua/ge/extensions/gameplay/rally/util/colors')
+local rallyUtil = require('/lua/ge/extensions/gameplay/rally/util')
+local RallyEnums = require('/lua/ge/extensions/gameplay/rally/enums')
+
 local im  = ui_imgui
-local logTag = 'aipacenotes'
+
+local logTag = ''
+
+local calibrationMetadataFields = {
+  { key = "cornerIntensity", label = "corner intensity", source = "active style corner intensity IDs" },
+  { key = "cornerDescriptor", label = "corner descriptor", source = "active style corner descriptor labels" },
+  { key = "direction", label = "direction", source = "active style left/right direction labels" },
+  { key = "cornerLength", label = "corner length", source = "active style corner length labels" },
+  { key = "shape", label = "shape", source = "active style corner shape labels" },
+}
 
 -- notebook form fields
 local notebookNameText = im.ArrayChar(1024, "")
 local notebookAuthorsText = im.ArrayChar(1024, "")
 local notebookDescText = im.ArrayChar(2048, "")
 
--- codriver form fields
-local codriverNameText = im.ArrayChar(1024, "")
-local codriverLanguageText = im.ArrayChar(1024, "")
--- local codriverVoiceText = im.ArrayChar(1024, "")
-
-local voiceNamesSorted = {}
-
 local C = {}
 C.windowDescription = 'Notebook'
 
-local function selectCodriverUndo(data)
-  data.self:selectCodriver(data.old)
-end
-local function selectCodriverRedo(data)
-  data.self:selectCodriver(data.new)
-end
-function C:selectCodriver(id)
-  self.codriver_index = id
-  local codriver = self:selectedCodriver()
-
-  if codriver then
-    codriverNameText = im.ArrayChar(1024, codriver.name)
-    -- codriverVoiceText = im.ArrayChar(1024, codriver.voice)
-    codriverLanguageText = im.ArrayChar(1024, codriver.language)
-  end
-end
-
 function C:init(rallyEditor)
   self.rallyEditor = rallyEditor
-  self.codriver_index = nil
-  -- self.mouseInfo = {}
   self.valid = true
+end
+
+function C:clearState()
+  self.path = nil
+  self.valid = true
+  notebookNameText = im.ArrayChar(1024, "")
+  notebookAuthorsText = im.ArrayChar(1024, "")
+  notebookDescText = im.ArrayChar(2048, "")
 end
 
 function C:isValid()
@@ -61,31 +56,14 @@ function C:setPath(path)
   self.path = path
 end
 
-function C:selectedCodriver()
-  if not self.path then return nil end
-
-  if self.codriver_index then
-    return self.path.codrivers.objects[self.codriver_index]
-  else
-    return nil
-  end
-end
-
 -- called by RallyEditor when this tab is selected.
 function C:selected()
-
   if not self.path then return end
-
-  self:loadVoices()
 
   notebookNameText = im.ArrayChar(1024, self.path.name)
   notebookAuthorsText = im.ArrayChar(1024, self.path.authors)
   notebookDescText = im.ArrayChar(1024, self.path.description)
 
-  self:selectCodriver(self.path:selectedCodriver().id)
-
-  -- editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Shift] = "Add new waypoint for current pacenote"
-  -- editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Ctrl] = "Add new waypoint for new pacenote"
   -- force redraw of shortcutLegend window
   extensions.hook("onEditorEditModeChanged", nil, nil)
 end
@@ -93,22 +71,11 @@ end
 -- called by RallyEditor when this tab is unselected.
 function C:unselect()
   if not self.path then return end
-  -- editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Shift] = nil
-  -- editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Ctrl] = nil
   -- force redraw of shortcutLegend window
   extensions.hook("onEditorEditModeChanged", nil, nil)
 end
 
--- function C:onEditModeActivate()
--- end
-
 function C:draw(mouseInfo)
-  -- self.mouseInfo = mouseInfo
-  -- if self.rallyEditor.allowGizmo() then
-    -- editor.updateAxisGizmo(function() self:beginDrag() end, function() self:endDragging() end, function() self:dragging() end)
-    -- self:input()
-  -- end
-  -- self:drawNotebookList()
   self:drawNotebook()
 end
 
@@ -118,11 +85,81 @@ end
 local function setNotebookFieldRedo(data)
   data.self.path[data.field] = data.new
 end
-local function setCodriverFieldUndo(data)
-  data.self.path.codrivers.objects[data.index][data.field] = data.old
+
+local function ghostNotebookDisplayName(fname)
+  if not fname then return '(none)' end
+  local base = tostring(fname):match("([^/\\]+)$") or tostring(fname)
+  local display = base:gsub('%.notebook%.json$', '')
+  return display
 end
-local function setCodriverFieldRedo(data)
-  data.self.path.codrivers.objects[data.index][data.field] = data.new
+
+function C:drawGhostNotebook()
+  im.HeaderText("Ghost Notebook")
+
+  local selectedFname = self.rallyEditor.getGhostNotebookSelectedFname and self.rallyEditor.getGhostNotebookSelectedFname()
+  local selectedLabel = self.rallyEditor.getGhostNotebookSelectedLabel and self.rallyEditor.getGhostNotebookSelectedLabel()
+    or ghostNotebookDisplayName(selectedFname)
+  local choices = self.rallyEditor.listGhostNotebookChoices and self.rallyEditor.listGhostNotebookChoices() or {}
+
+  im.SetNextItemWidth(280)
+  if im.BeginCombo("##ghostNotebookPicker", selectedLabel) then
+    if im.Selectable1("(none)", selectedFname == nil) then
+      if self.rallyEditor.clearGhostNotebook then
+        self.rallyEditor.clearGhostNotebook()
+      end
+    end
+
+    if #choices == 0 then
+      im.BeginDisabled()
+      im.Selectable1("(no notebooks in this mission)", false)
+      im.EndDisabled()
+    else
+      for _, choice in ipairs(choices) do
+        local fname = choice.fname
+        local label = choice.label or ghostNotebookDisplayName(fname)
+        local isSelected = selectedFname == fname
+        if im.Selectable1(label, isSelected) and not isSelected then
+          self.rallyEditor.selectGhostNotebook(fname)
+        end
+      end
+    end
+
+    im.EndCombo()
+  end
+  im.tooltip("Render the selected notebook as a passive grey overlay in the Pacenotes tab.")
+
+  local err = self.rallyEditor.getGhostNotebookError and self.rallyEditor.getGhostNotebookError()
+  if err then
+    im.TextColored(cc.clr_error, err)
+  end
+end
+
+local function ensureCalibrationMetadataFields(path)
+  path.metadata = path.metadata or {}
+  path.metadata.calibrationFields = deepcopy(calibrationMetadataFields)
+end
+
+function C:drawCalibrationMetadataFields()
+  im.HeaderText("Calibration Metadata Fields")
+
+  local fields = self.path.metadata and self.path.metadata.calibrationFields
+  if not fields then
+    im.TextWrapped("No notebook-level calibration field definition has been saved yet.")
+    if im.Button("Initialize Calibration Fields") then
+      ensureCalibrationMetadataFields(self.path)
+    end
+    im.tooltip("Defines the per-pacenote metadata.calibration fields used by the calibration experiment.")
+    return
+  end
+
+  for _, field in ipairs(fields) do
+    im.Text(string.format("%s (%s)", field.key, field.label or ""))
+    if field.source then
+      im.SameLine()
+      im.TextColored(im.ImVec4(0, 1, 1, 1), "(?)")
+      im.tooltip(field.source)
+    end
+  end
 end
 
 function C:drawNotebook()
@@ -138,11 +175,13 @@ function C:drawNotebook()
     for _, issue in ipairs(self.path.validation_issues) do
       issues = issues..'- '..issue..'\n'
     end
-    im.Text(issues)
+    im.TextColored(cc.clr_error, issues)
     im.Separator()
   end
 
   im.Text("Current Notebook: #" .. self.path.id)
+  im.Text("File: " .. tostring(self.path.fname))
+  im.tooltip(tostring(self.path.fname))
 
   for _ = 1,5 do im.Spacing() end
 
@@ -170,125 +209,27 @@ function C:drawNotebook()
       setNotebookFieldUndo, setNotebookFieldRedo)
   end
 
-  if im.Checkbox("Force Manual Audio Triggers##forceManualATs", im.BoolPtr(self.path.forceManualATs)) then
-    self.path.forceManualATs = not self.path.forceManualATs
-  end
-
-  -- im.BeginChild1("codrivers-wrapper", im.ImVec2(0, 0), im.WindowFlags_ChildWindow and im.ImGuiWindowFlags_NoBorder)
-  self:drawCodriversList()
-  -- im.EndChild()
-end
-
-function C:drawCodriversList()
-  im.HeaderText("Co-Drivers")
-
-  local tabContentsHeight = 0
-  im.BeginChild1("codrivers", im.ImVec2(125 * im.uiscale[0], tabContentsHeight), im.WindowFlags_ChildWindow)
-  for i, codriver in ipairs(self.path.codrivers.sorted) do
-    if im.Selectable1(codriver.name, codriver.id == self.codriver_index) then
-      editor.history:commitAction("Select Codriver",
-        {old = self.codriver_index, new = codriver.id, self = self},
-        selectCodriverUndo, selectCodriverRedo)
-    end
-  end
-  im.Separator()
-  if im.Selectable1('New...', self.codriver_index == nil) then
-    local codriver = self.path.codrivers:create(nil, nil)
-    self:selectCodriver(codriver.id)
-  end
-  im.EndChild() -- codrivers list child window
-
-  im.SameLine()
-  im.BeginChild1("currentCodriver", im.ImVec2(0,tabContentsHeight), im.WindowFlags_ChildWindow)
-
-  self:drawCodriverForm(self:selectedCodriver())
-
-  im.EndChild() -- codriver form child window
-end
-
-function C:drawCodriverForm(codriver)
-  if not codriver then return end
-
-  if im.Button("Delete") then
-    self:deleteCodriver(codriver.id)
-  end
-
-  local editEnded = im.BoolPtr(false)
-  editor.uiInputText("Name", codriverNameText, nil, nil, nil, nil, editEnded)
-  if editEnded[0] then
-    editor.history:commitAction("Change Name of Codriver",
-      {self = self, index = self.codriver_index, old = codriver.name, new = ffi.string(codriverNameText), field = 'name'},
-      setCodriverFieldUndo, setCodriverFieldRedo)
-  end
-
-  editEnded = im.BoolPtr(false)
-  editor.uiInputText("Language", codriverLanguageText, nil, nil, nil, nil, editEnded)
-  if editEnded[0] then
-    editor.history:commitAction("Change Language of Codriver",
-      {self = self, index = self.codriver_index, old = codriver.language, new = ffi.string(codriverLanguageText), field = 'language'},
-      setCodriverFieldUndo, setCodriverFieldRedo)
-  end
-
-  self:voicesSelector(codriver)
-end
-
-function C:voicesSelector(codriver)
-  local name = 'Voice'
-  local fieldName = 'voice'
-  local tt = 'Set the text-to-speech voice'
-
-  if im.BeginCombo(name..'##'..fieldName, codriver[fieldName]) then
-
-    for i, voice in ipairs(voiceNamesSorted) do
-      if im.Selectable1(voice, codriver[fieldName] == voice) then
-        editor.history:commitAction("Changed "..fieldName.." for Codriver",
-          {index = self.codriver_index, self = self, old = codriver[fieldName], new = voice, field = fieldName},
-          setCodriverFieldUndo, setCodriverFieldRedo)
+  im.SetNextItemWidth(150)
+  local currentMode = self.path:getAudioMode()
+  local notebookAudioModeDisplay = RallyEnums.pacenoteAudioModeDisplayNames[currentMode]
+  if im.BeginCombo("Audio Mode##notebookAudioMode", notebookAudioModeDisplay) then
+    for _, mode in ipairs(RallyEnums.pacenoteAudioModeNames) do
+      if mode ~= "auto" and not RallyEnums.pacenoteAudioModeHidden[mode] then
+        local enumVal = RallyEnums.pacenoteAudioMode[mode]
+        local displayName = RallyEnums.pacenoteAudioModeDisplayNames[enumVal]
+        if im.Selectable1(displayName, enumVal == currentMode) then
+          self.path:setAudioMode(enumVal)
+        end
       end
     end
-
     im.EndCombo()
   end
 
-  im.tooltip(tt)
-end
-
-function C:loadVoices()
-  local defaultVoices = self:loadVoiceFile("/settings/aipacenotes/default.voices.json")
-  local userVoices = self:loadVoiceFile("/settings/aipacenotes/user.voices.json")
-  local combinedVoices = {}
-
-  for k, v in pairs(defaultVoices) do
-    combinedVoices[k] = v
-  end
-  for k, v in pairs(userVoices) do
-    combinedVoices[k] = v
-  end
-
-  voiceNamesSorted = {}
-
-  for voiceName, _ in pairs(combinedVoices) do
-    table.insert(voiceNamesSorted, voiceName)
-  end
-
-  table.sort(voiceNamesSorted)
-end
-
-function C:loadVoiceFile(voiceFname)
-  local voices = jsonReadFile(voiceFname)
-
-  if not voices then
-    log('W', logTag, 'unable to load voices file from '..voiceFname)
-    return {}
-  end
-
-  log('I', logTag, 'reloaded voices from '..voiceFname)
-  return voices
-end
-
-function C:deleteCodriver(codriver_id)
-  self.path.codrivers:remove(codriver_id)
-  self:selectCodriver(nil)
+  for _ = 1,3 do im.Spacing() end
+  im.Separator()
+  self:drawCalibrationMetadataFields()
+  im.Separator()
+  self:drawGhostNotebook()
 end
 
 return function(...)

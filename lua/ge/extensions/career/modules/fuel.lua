@@ -15,6 +15,7 @@ local fuelingActive = {}
 local energyTypeFuelingActive = {}
 local energyTypes = {}
 local defaultEnergyType
+local selectedTankIndex = 1
 
 local startingFuelData
 local fuelingData = {}
@@ -28,6 +29,8 @@ local isSoundPlaying = {}
 local showUI
 
 local gasStation -- The gasstation where the refueling was started
+local fuelDiscountData = {} -- Store discount data for the current transaction
+local debugIgnoreStationFuelTypeRestriction = false
 
 local factorMJToReadable = {
   gasoline = 31.125,
@@ -44,6 +47,8 @@ local readableUnit = {
   n2o = "kg",
   electricEnergy = "kWh"
 }
+
+local isCurrentlyFueling
 
 local function setDefaultEnergyType(energyType)
   defaultEnergyType = energyType
@@ -77,7 +82,27 @@ local function initializeDefaultEnergyType()
 end
 
 local function getPricePerUnit(energyType)
-  return freeroam_facilities_fuelPrice.getFuelPrice(gasStation.facility.id, energyType) or 1
+  local basePrice = freeroam_facilities_fuelPrice.getFuelPrice(gasStation.facility.id, energyType) or 1
+  if fuelDiscountData.hasFuelDiscount then
+    return basePrice * (1 - fuelDiscountData.fuelDiscount) -- apply insurance discount
+  end
+  return basePrice
+end
+
+local function gasStationOffersFuelType(energyType)
+  return debugIgnoreStationFuelTypeRestriction or freeroam_facilities_fuelPrice.getFuelPrice(gasStation.facility.id, energyType) ~= nil
+end
+
+local function getCurrentVehicleData()
+  local currentVehicleId = career_modules_inventory.getCurrentVehicle()
+  return currentVehicleId and career_modules_inventory.getVehicles()[currentVehicleId]
+end
+
+local function canPayPrice()
+  if overallPrice <= 0 then return false end
+  local currentVehicle = getCurrentVehicleData()
+  if currentVehicle and currentVehicle.loanType == "work" then return true end
+  return overallPrice <= career_modules_playerAttributes.getAttributeValue("money")
 end
 
 local function sendInitialDataToUI()
@@ -87,9 +112,20 @@ local function sendInitialDataToUI()
     localUnits = levelInfoData.localUnits or {}
   end
 
+  -- check for fuel discount via the current insurance
+  fuelDiscountData = {}
+  if career_career.isActive() then
+    local currentVehicleId = career_modules_inventory.getCurrentVehicle()
+    if currentVehicleId then
+      fuelDiscountData = career_modules_insurance_insurance.getInvVehFuelDiscountData(currentVehicleId)
+    end
+  end
+
+
   local uiUpdateData = {}
   uiUpdateData.energyTypesToLocalUnits = localUnits
   uiUpdateData.energyTypes = energyTypes
+  uiUpdateData.selectedTankIndex = selectedTankIndex
   uiUpdateData.gasStationName = gasStation.facility.name
   uiUpdateData.fuelData = {}
   for i, tank in ipairs(fuelData) do
@@ -101,6 +137,10 @@ local function sendInitialDataToUI()
     uiUpdateData.fuelData[i] = tankData
   end
 
+  if fuelDiscountData.hasFuelDiscount then
+    uiUpdateData.fuelDiscountData = fuelDiscountData
+  end
+
   guihooks.trigger('initialFuelingData', uiUpdateData)
 end
 
@@ -108,6 +148,7 @@ local function sendUpdateDataToUI()
   local uiUpdateData = {}
   uiUpdateData.fuelData = {}
   uiUpdateData.overallPrice = overallPrice
+  uiUpdateData.canPay = canPayPrice()
   for i, tank in ipairs(fuelData) do
     local tankData = {}
     tankData.currentEnergy = jouleToReadableUnit(tank.currentEnergy, tank.energyType)
@@ -124,12 +165,14 @@ end
 local function saveEnergyStorageData(data)
   fuelData = {}
   for _, tank in ipairs(data[1]) do
-    -- only add the tank to the fuelData if it has a valid fuel type
-    if factorMJToReadable[tank.energyType] then
+    -- only add tanks that this station can actually fill
+    if factorMJToReadable[tank.energyType] and gasStationOffersFuelType(tank.energyType) then
       table.insert(fuelData, tank)
     end
   end
   showUI = true
+  selectedTankIndex = 1
+  defaultEnergyType = fuelData[selectedTankIndex] and fuelData[selectedTankIndex].energyType or nil
   for i, data in ipairs(fuelData) do
     table.insert(fuelingData, {price = 0, fueledEnergy = 0})
   end
@@ -149,7 +192,7 @@ local function requestEnergyStorageData()
 end
 
 local function startAngularUI()
-  guihooks.trigger('ChangeState', {state = 'refueling', params = {}})
+  extensions.ui_router.navigate("career.refueling")
 end
 
 local function requestRefuelingTransactionData()
@@ -179,6 +222,14 @@ local function applyFuelData(data, veh)
   end
 end
 
+local function restoreFuelData(data, veh)
+  veh = veh or getPlayerVehicle(0)
+  for index, tankData in ipairs(data or {}) do
+    fuelData[index].currentEnergy = tankData.currentEnergy
+    core_vehicleBridge.executeAction(veh, 'setEnergyStorageEnergy', tankData.name, tankData.currentEnergy)
+  end
+end
+
 local function activateSound(soundId, active)
   local sound = scenetree.findObjectById(soundId)
   if sound then
@@ -192,7 +243,7 @@ local function activateSound(soundId, active)
   end
 end
 
-local function getRelativeFuelLevel()
+local function getGasFuelLevelInfo()
   local maxVolume = 0
   local currentVolume = 0
   for index, data in ipairs(fuelData) do
@@ -201,7 +252,12 @@ local function getRelativeFuelLevel()
       maxVolume = maxVolume + data.maxEnergy
     end
   end
-  return currentVolume / maxVolume
+  return currentVolume, maxVolume, maxVolume > 0 and currentVolume / maxVolume or nil
+end
+
+local function getRelativeFuelLevel()
+  local _, _, relativeFuelLevel = getGasFuelLevelInfo()
+  return relativeFuelLevel or 0
 end
 
 local function updateFuelSoundParameters()
@@ -284,26 +340,33 @@ local function stopFuelingType(energyType)
   applyFuelData()
 end
 
-local function onChangeFlowRate(factor)
+local function getValidTankIndex(index)
+  if not fuelData or not next(fuelData) then return nil end
+  index = clamp(tonumber(index) or selectedTankIndex or 1, 1, #fuelData)
+  return fuelData[index] and index or nil
+end
+
+local function onChangeFlowRate(factor, tankIndex)
   if not gasStation then return end
-  if not defaultEnergyType then
-    initializeDefaultEnergyType()
-    if not defaultEnergyType then
-      return
-    end
+  local validIndex = getValidTankIndex(tankIndex or selectedTankIndex)
+  if not validIndex then
+    return
   end
+  selectedTankIndex = validIndex
+  defaultEnergyType = fuelData[selectedTankIndex].energyType
+
   factor = clamp(factor, 0, 1)
   if factor <= 0 then
-    stopFuelingType()
+    stopFuelingTank(selectedTankIndex)
     fuelFlowRate = maxFuelFlowRate
     return
   end
-  if not energyTypeFuelingActive[defaultEnergyType] then
-    if getRelativeFuelLevel() < 1 then
-      startFuelingType(defaultEnergyType)
-    end
-  end
   fuelFlowRate = maxFuelFlowRate * factor
+  if not fuelingActive[selectedTankIndex] and fuelData[selectedTankIndex].currentEnergy < fuelData[selectedTankIndex].maxEnergy then
+    startFuelingTank(selectedTankIndex)
+    updateFuelingFlags()
+    sendUpdateDataToUI()
+  end
 end
 
 local function getFuelingData()
@@ -321,7 +384,9 @@ local function endTransaction()
   startingFuelData = nil
   fuelData = nil
   defaultEnergyType = nil
+  selectedTankIndex = 1
   fuelFlowRate = maxFuelFlowRate
+  fuelDiscountData = {}
   activateSound(gasSoundId, false)
   activateSound(electricSoundId, false)
   if career_career.isAutosaveEnabled() then
@@ -335,20 +400,37 @@ local function endTransaction()
 end
 
 local function payPrice()
+  if not canPayPrice() then return end
   if overallPrice > 0 then
     Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
   end
   stopFuelingType()
 
-  if career_modules_inventory.getVehicles()[career_modules_inventory.getCurrentVehicle()].loanType == "work" then
+  local currentVehicle = getCurrentVehicleData()
+  if currentVehicle and currentVehicle.loanType == "work" then
     ui_message(string.format("Fuel paid for by the company"), 6, "refueling")
   else
-    career_modules_playerAttributes.addAttributes({money=-overallPrice}, {tags={"fuel","buying"},label = "Refuelled at "..(translateLanguage(gasStation.facility.name, gasStation.facility.name, true))})
+    career_modules_playerAttributes.addAttributes({money=-overallPrice}, {
+      tags = {"fuel", "buying"},
+      label = {
+        txt = "ui.career.attributeLog.refuelledAt",
+        context = { facilityName = gasStation.facility.name },
+      },
+    })
     gameplay_statistic.metricAdd("career/fuel/paidPrice.money", overallPrice)
   end
 
   endTransaction()
   extensions.hook("onPaidRefuelling", overallPrice)
+  gameplay_achievement.unlockAchievement("VEHICLE_REFUELLED")
+end
+
+local function uiSetSelectedTankIndex(index)
+  if isCurrentlyFueling() then return end
+  local validIndex = getValidTankIndex(index)
+  if not validIndex then return end
+  selectedTankIndex = validIndex
+  defaultEnergyType = fuelData[selectedTankIndex].energyType
 end
 
 local function uiButtonStartFueling(energyType)
@@ -359,13 +441,35 @@ local function uiButtonStopFueling(energyType)
   stopFuelingType(energyType)
 end
 
-local function uiCancelTransaction()
-  if fuelData then
-    payPrice()
+local function uiButtonStartFuelingTank(index)
+  uiSetSelectedTankIndex(index)
+  local validIndex = getValidTankIndex(selectedTankIndex)
+  if validIndex then
+    startFuelingTank(validIndex)
+    updateFuelingFlags()
+    sendUpdateDataToUI()
   end
 end
 
-local function isCurrentlyFueling()
+local function uiButtonStopFuelingTank(index)
+  local validIndex = getValidTankIndex(index)
+  if validIndex then
+    stopFuelingTank(validIndex, false)
+    updateFuelingFlags()
+    applyFuelData()
+  end
+end
+
+local function uiCancelTransaction()
+  if fuelData then
+    if startingFuelData then
+      restoreFuelData(startingFuelData)
+    end
+    endTransaction()
+  end
+end
+
+function isCurrentlyFueling()
   if fuelData then
     for index, data in ipairs(fuelData) do
       if fuelingActive[index] then
@@ -383,6 +487,10 @@ local function updateOverallPrice()
   end
 end
 
+local function getFuelingEnergyRate(energyType)
+  return energyType == "electricEnergy" and fuelFlowRate / 3 or fuelFlowRate
+end
+
 local uiFuelDataDeltaCounter = 0
 local function onUpdate(dtReal, dtSim)
   if showUI then
@@ -398,7 +506,7 @@ local function onUpdate(dtReal, dtSim)
     local applyAndSendToUI = false
     for index, data in ipairs(fuelData) do
       if fuelingActive[index] then
-        data.currentEnergy = data.currentEnergy + dtSim * fuelFlowRate
+        data.currentEnergy = data.currentEnergy + dtSim * getFuelingEnergyRate(data.energyType)
         fuelingData[index].fueledEnergy = data.currentEnergy - startingFuelData[index].currentEnergy
 
         local price = getPricePerUnit(data.energyType) * jouleToReadableUnit(fuelingData[index].fueledEnergy, data.energyType)
@@ -429,21 +537,44 @@ local function onUpdate(dtReal, dtSim)
   end
 
   if showUI and not shipping_build then
-    imgui.SetNextWindowSize(imgui.ImVec2(200, 200), imgui.Cond_FirstUseEver)
+    imgui.SetNextWindowSize(imgui.ImVec2(360, 520), imgui.Cond_FirstUseEver)
     imgui.Begin("Fueling")
 
     for index, tankData in ipairs(fuelData) do
-      if imgui.BeginChild1("Tank " .. index, imgui.ImVec2(0, 150), true) then
+      if imgui.BeginChild1("Tank " .. index, imgui.ImVec2(0, 175), true) then
         imgui.Text("Tank " .. index)
         imgui.Text(string.format("Fuel Type: %s", tankData.energyType))
         local unit = readableUnit[tankData.energyType]
         imgui.Text(string.format("Energy: %.2f %s / %.2f %s", jouleToReadableUnit(tankData.currentEnergy, tankData.energyType), unit, jouleToReadableUnit(tankData.maxEnergy, tankData.energyType), unit))
         imgui.Text(string.format("Fueled Energy: %.2f %s", jouleToReadableUnit(fuelingData[index].fueledEnergy, tankData.energyType) or 0, unit))
+        imgui.Text(string.format("Fueling Active: %s", tostring(fuelingActive[index] == true)))
+        imgui.Text(string.format("Fueling Speed: %.2f %s/s", fuelingActive[index] and jouleToReadableUnit(getFuelingEnergyRate(tankData.energyType), tankData.energyType) or 0, unit))
 
         imgui.Text("Price " .. fuelingData[index].price or 0)
       end
       imgui.EndChild()
     end
+
+    local fuelFlowFactor = maxFuelFlowRate > 0 and fuelFlowRate / maxFuelFlowRate or 0
+    imgui.Text(string.format("Fuel Flow Rate: %.0f J/s (%.2f)", fuelFlowRate, fuelFlowFactor))
+    imgui.Text(string.format("Currently Fueling: %s", tostring(isCurrentlyFueling())))
+    imgui.Text(string.format("Default Energy Type: %s", tostring(defaultEnergyType)))
+
+    local _, _, relativeFuelLevel = getGasFuelLevelInfo()
+    local gasSound = gasSoundId and scenetree.findObjectById(gasSoundId) or nil
+    local electricSound = electricSoundId and scenetree.findObjectById(electricSoundId) or nil
+    imgui.Separator()
+    imgui.Text("Refueling Sound")
+    imgui.Text(string.format("Gas active: %s", tostring(energyTypeFuelingActive["gasoline"] or energyTypeFuelingActive["diesel"] or energyTypeFuelingActive["kerosine"] or false)))
+    imgui.Text(string.format("Gas sound id: %s", tostring(gasSoundId)))
+    imgui.Text(string.format("Gas sound object: %s", gasSound and "found" or "missing"))
+    imgui.Text(string.format("Gas playing flag: %s", tostring(isSoundPlaying[gasSoundId] == true)))
+    imgui.Text(string.format("Gas volume param: %s", relativeFuelLevel and string.format("%.2f", relativeFuelLevel) or "n/a"))
+    imgui.Text(string.format("Gas pitch param: %.2f", fuelFlowFactor))
+    imgui.Text(string.format("Electric active: %s", tostring(energyTypeFuelingActive["electricEnergy"] or false)))
+    imgui.Text(string.format("Electric sound id: %s", tostring(electricSoundId)))
+    imgui.Text(string.format("Electric sound object: %s", electricSound and "found" or "missing"))
+    imgui.Text(string.format("Electric playing flag: %s", tostring(isSoundPlaying[electricSoundId] == true)))
 
     for i, energyType in ipairs(energyTypes) do
       if imgui.Button(string.format("Start Fueling %s ##%d", energyType, i)) then
@@ -485,7 +616,7 @@ end
 local function minimumRefuelingCheck(vehId)
   vehId = vehId or career_modules_inventory.getCurrentVehicleId()
   if vehId then
-    local veh = be:getObjectByID(vehId)
+    local veh = getObjectByID(vehId)
     if veh then
       core_vehicleBridge.requestValue(veh, function(data) setMinimumFuel(data, veh) end, 'energyStorage')
     end
@@ -497,13 +628,8 @@ local function setupSounds()
   electricSoundId = electricSoundId or Engine.Audio.createSource('AudioGui', 'event:>UI>Career>Fueling_Electric')
 end
 
-local function onCareerModulesActivated(alreadyInLevel)
-  if alreadyInLevel then
-    setupSounds()
-  end
-end
-
-local function onClientStartMission(levelPath)
+local function onCareerActive(active)
+  if not active then return end
   setupSounds()
 end
 
@@ -522,13 +648,15 @@ M.onChangeFlowRate = onChangeFlowRate
 -- Called by UI
 M.uiButtonStartFueling = uiButtonStartFueling
 M.uiButtonStopFueling = uiButtonStopFueling
+M.uiButtonStartFuelingTank = uiButtonStartFuelingTank
+M.uiButtonStopFuelingTank = uiButtonStopFuelingTank
+M.uiSetSelectedTankIndex = uiSetSelectedTankIndex
 M.requestRefuelingTransactionData = requestRefuelingTransactionData
 M.uiCancelTransaction = uiCancelTransaction
 M.sendUpdateDataToUI = sendUpdateDataToUI
 
 M.onUpdate = onUpdate
-M.onCareerModulesActivated = onCareerModulesActivated
-M.onClientStartMission = onClientStartMission
+M.onCareerActive = onCareerActive
 M.onClientEndMission = onClientEndMission
 M.minimumRefuelingCheck = minimumRefuelingCheck
 

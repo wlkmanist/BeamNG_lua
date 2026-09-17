@@ -1,15 +1,13 @@
 --[[
-Copyright (c) 2012 Hello!Game, 2015 BeamNG GmbH
+Copyright (c) BeamNG GmbH
+All Rights Reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of newinst software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is furnished
-to do so, subject to the following conditions:
-
-The above copyright notice and newinst permission notice shall be included in all
-copies or substantial portions of the Software.
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
 INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
@@ -36,9 +34,10 @@ gp:edge("e", "f", 9)
 print( table.concat( gp:getPath("a","e"), "->") )
 ]]
 
-local bit = require("bit")
-
-local tableInsert, min, max, random, rshift = table.insert, math.min, math.max, math.random, bit.rshift
+local rshift, bxor = require("bit").rshift, require("bit").bxor
+local tableInsert, tableRemove, tableConcat = table.insert, table.remove, table.concat
+local min, max, random, sqrt = math.min, math.max, math.random, math.sqrt
+local square = square
 
 local M = {}
 
@@ -121,35 +120,52 @@ end
 local Graphpath = {}
 Graphpath.__index = Graphpath
 
-local function newGraphpath()
-  return setmetatable({graph = {}, positions = {}, radius = {}}, Graphpath)
+local function newGraphpath(nodeCount, edgeCount)
+  nodeCount, edgeCount = max(0, nodeCount or 0), edgeCount or 0
+  return setmetatable({
+    graph = table.new(0, nodeCount),
+    positions = table.new(0, nodeCount),
+    radius = table.new(0, nodeCount),
+    edgeListCount = 1
+  }, Graphpath)
 end
 
 function Graphpath:export(edgeCount)
-  local i, edgeData = 0, table.new((edgeCount or 0) * 3, 0)
+  local nodeCount, i, edgeData = 0, 0, table.new(max(0, edgeCount or 0), 0)
   for node1, links in pairs(self.graph) do
+    nodeCount = nodeCount + 1
     for node2, linkData in pairs(links) do
       if node1 > node2 then
-        i = i + 3
-        edgeData[i-2], edgeData[i-1], edgeData[i] = node1, node2, linkData
+        i = i + 1
+        edgeData[i] = linkData
       end
     end
   end
-  return {edges = edgeData, positions = self.positions, radius = self.radius}
+  return {edgeData = edgeData, positions = self.positions, radius = self.radius, edgeDataCount = i, nodeCount = nodeCount}
 end
 
 function Graphpath:import(graphData)
   local graph = self.graph
-  local edges = graphData.edges
+  local edgeData = graphData.edgeData
+  self.edgeListCount = 2 * graphData.edgeDataCount + 1
+  local edgeList = table.new(max(0, self.edgeListCount), 0)
+  edgeList[1] = '\0'
 
-  for i = 1, #edges, 3 do
-    if graph[edges[i]] == nil then graph[edges[i]] = {} end
-    graph[edges[i]][edges[i+1]] = edges[i+2]
+  for i = 1, graphData.edgeDataCount do
+    local data = edgeData[i]
+    local inNode, outNode = data.inNode, data.outNode
 
-    if graph[edges[i+1]] == nil then graph[edges[i+1]] = {} end
-    graph[edges[i+1]][edges[i]] = edges[i+2]
+    if not graph[inNode] then graph[inNode] = {} end
+    graph[inNode][outNode] = data
+
+    if not graph[outNode] then graph[outNode] = {} end
+    graph[outNode][inNode] = data
+
+    edgeList[data.eId] = inNode
+    edgeList[data.eId+1] = outNode
   end
 
+  self.edgeList = edgeList
   self.positions = graphData.positions
   self.radius = graphData.radius
 end
@@ -163,7 +179,7 @@ function Graphpath:edge(sp, ep, dist)
     self.graph[sp] = {}
   end
 
-  self.graph[sp][ep] = {dist or 1}
+  self.graph[sp][ep] = {len = dist or 1}
 
   if self.graph[ep] == nil then
     self.graph[ep] = {}
@@ -217,7 +233,8 @@ function Graphpath:bidiEdge(inNode, outNode, dist, drivability, speedLimit, lane
     inPos = inPos,
     inRadius = inRad,
     outPos = outPos,
-    outRadius = outRad} -- sp is the inNode of the edge
+    outRadius = outRad,
+    eId = self.edgeListCount + 1}
 
   self.graph[inNode][outNode] = data
 
@@ -226,6 +243,29 @@ function Graphpath:bidiEdge(inNode, outNode, dist, drivability, speedLimit, lane
   end
 
   self.graph[outNode][inNode] = data
+
+  self.edgeListCount = self.edgeListCount + 2
+end
+
+function Graphpath:generateEdgeIndex()
+  self.edgeList = table.new(max(0, self.edgeListCount), 0)
+  self.edgeList[1] = '\0' -- intentionaly blank
+  for node1 in pairs(self.graph) do
+    for node2, data in pairs(self.graph[node1]) do
+      if node1 == data.inNode then
+        self.edgeList[data.eId] = node1
+        self.edgeList[data.eId+1] = node2
+      end
+    end
+  end
+end
+
+function Graphpath:getEdgeIdFromNodes(fromNode, toNode)
+  return self.graph[fromNode][toNode].eId + (self.graph[fromNode][toNode].inNode == fromNode and 0 or 1)
+end
+
+function Graphpath:getNodesFromEdgeId(eId)
+  return self.edgeList[eId], self.edgeList[bxor(eId, 1)]
 end
 
 function Graphpath:getEdgePositions(n1id, n2id)
@@ -331,71 +371,99 @@ do
 end
 
 function Graphpath:graphMinor()
-  --[[ https://mathworld.wolfram.com/GraphMinor.html
-    Performs vertex contraction of vertices which have exactly 2 neighbours (degree 2)
-    The result is a "simplified" in which each node has degree 1 ("dead end") or is a junction (degree > 2).
-    Every node in the output graph is also a node in the input graph.
-    Every edge in the output graph gives the set (a table) of input graph nodes that connect the output graph edge nodes (end nodes includes)
-    ex. a = {b = {a, x, y, z, b}} -> node a is conected with node b through nodes x, y, z
-    for more see edge/vertex contraction and Contraction hierarchies
-  ]]
-  local minorG = {} -- output graph
-  local seen = {}
-  local road = {}
-  local stack = {}
-  local sourcesExplored = {}
+  -- https://mathworld.wolfram.com/GraphMinor.html
+  -- Performs vertex contraction of vertices which have exactly 2 neighbours (degree 2)
+  -- The result is a "simplified" graph in which each node has degree 1 ("dead end") or is a junction (degree > 2).
+  -- Every node in the output graph is also a node in the input graph.
+  -- Every edge in the output graph stores the set (array) of input graph nodes that connect the output graph edge nodes (end nodes included)
+  -- ex. edge a <-> b i.e. minorGraph[a][b] = {a, x, y, z, b} -> node a is conected to node b through nodes x, y, z
+  -- the graph is bidirectional i.e. minorGraph[b][a] = {a, x, y, z, b} also exists.
+  -- for more see edge/vertex contraction and Contraction hierarchies
 
-  for k1, v1 in pairs(self.graph) do
-    if tableSize(self.graph[k1]) ~= 2 then
-      local sourceNode = k1
-      seen[sourceNode] = true
-      if not minorG[sourceNode] then minorG[sourceNode] = {} end
-      local node = sourceNode
-      local prevNode = false
-      repeat -- explores the roads coming out of a sourceNode. a road terminates when another sourceNode has been reached
-        road[node] = prevNode
-        prevNode = node
-        local pathTerminated = false
-        for k, v in pairs(self.graph[node]) do
-          if road[node] ~= k then
-            local nodeDegree = tableSize(self.graph[k])
-            if nodeDegree == 2 then
-              if not seen[k] then
-                table.insert(stack, k)
-                seen[k] = true
-              end
-            else
-              seen[k] = true
-              if not sourcesExplored[k] then
-                local path = {k}
-                local e, goal = 1, node
-                while goal do -- unroll path from goal to source
-                  e = e + 1
-                  path[e] = goal
-                  goal = road[goal]
-                end
+  local graph = self.graph
 
-                if not minorG[sourceNode][k] then minorG[sourceNode][k] = {} end
-                table.insert(minorG[sourceNode][k], path)
-                if not minorG[k] then minorG[k] = {} end
-                minorG[k][sourceNode] = minorG[sourceNode][k]
-                pathTerminated = true
-              end
-            end
-          end
-        end
-        if pathTerminated then
-          table.clear(road)
-          prevNode = sourceNode
-        end
-        node = table.remove(stack)
-      until not node
-      sourcesExplored[sourceNode] = true
+  -- identify junction nodes
+  local isJunctionNode = {}
+  for nid, n in pairs(graph) do
+    if tableSize(n) ~= 2 then
+      isJunctionNode[nid] = true
     end
   end
 
-  return minorG
+  local graphMinor, visited = {}, {}
+  for nid in pairs(graph) do
+    if isJunctionNode[nid] then
+      -- explore the edges of this junction/end node
+      -- if there exist an edge to another junction/end node, add it to the minor graph
+      for n2id in pairs(graph[nid]) do
+        -- check if both n1id and n2id are junction nodes and also avoid including an edge twice
+        if nid < n2id and isJunctionNode[n2id] then
+          -- Create the edges between the end nodes of the path if they don't already exist and store the path
+          if not graphMinor[nid] then
+            graphMinor[nid] = {}
+          end
+          graphMinor[nid][n2id] = {nid, n2id}
+
+          if not graphMinor[n2id] then
+            graphMinor[n2id] = {}
+          end
+          graphMinor[n2id][nid] = graphMinor[nid][n2id]
+        end
+      end
+    elseif not visited[nid] then
+      local pathCount = 1
+      local path = {nid}
+      visited[nid] = true
+
+      -- explore the path nid belongs to
+      while true do
+        -- get a neighbour of nid that is not already in the path
+        local next_nid = next(graph[path[pathCount]], path[pathCount-1]) or next(graph[path[pathCount]])
+
+        pathCount = pathCount + 1
+        path[pathCount] = next_nid
+        visited[next_nid] = true
+
+        -- check if path has reached an end/junction
+        if isJunctionNode[next_nid] then
+          -- check if the first node in the path is also an end/junction
+          if isJunctionNode[path[1]] then
+            -- both ends of the path are junctions/ends i.e. the path has reached its boundaries
+            -- terminate this path exploration
+            break
+          else
+            -- reverse the already explored part of the path (nid will become the last node in the path)
+            -- and continue exploring the other side of nid
+            local n = pathCount
+            for i = 1, n * 0.5 do
+              path[i], path[n] = path[n], path[i]
+              n = n - 1
+            end
+          end
+        elseif next_nid == path[1] then
+          -- the path has looped back on itself without encountering a junction node (it is an isolated self loop)
+          -- the entire path has been discovered so terminate this path exploration
+          break
+        end
+      end
+
+      -- Create the edges between the end nodes of the path if they don't already exist and store the path
+      if not graphMinor[path[1]] then
+        graphMinor[path[1]] = {}
+      end
+      graphMinor[path[1]][path[pathCount]] = path
+
+      if not graphMinor[path[pathCount]] then
+        graphMinor[path[pathCount]] = {}
+      end
+      graphMinor[path[pathCount]][path[1]] = path
+    end
+  end
+
+  return graphMinor
 end
+
+local que = newMinheap()
 
 function Graphpath:getPath(start, goal, dirMult)
   local graph = self.graph
@@ -405,36 +473,30 @@ function Graphpath:getPath(start, goal, dirMult)
 
   local cost, node = 0, start
   local minParent = {[node] = false}
-  local queued = {}
+  local minCost = {}
   local road = {} -- predecessor subgraph
 
-  local q = newMinheap()
+  que:clear()
   repeat
     if road[node] == nil then
       road[node] = minParent[node]
       if node == goal then break end
       for child, data in pairs(graph[node]) do
         if road[child] == nil then -- if the shortest path to child has not already been found
-          local currentChildCost = queued[child] -- lowest value with which child has entered the que
-          local newChildCost = cost + data.len * dirCoeff[data.oneWay and data.inNode == child]
+          local currentChildCost = minCost[child] -- lowest value with which child has entered the que
+          local newChildCost = cost + data.len * dirCoeff[(data.oneWay and data.inNode == child) or false] -- For graph that misses data.oneWay in edge data
           if not currentChildCost or newChildCost < currentChildCost then
-            q:insert(newChildCost, child)
+            que:insert(newChildCost, child)
             minParent[child] = node
-            queued[child] = newChildCost
+            minCost[child] = newChildCost
           end
         end
       end
     end
-    cost, node = q:pop()
+    cost, node = que:pop()
   until not cost
 
   return invertPath(goal, road)
-end
-
-local function splitID(id, delim)
-  delim = delim or '\0'
-  local i = string.find(id, delim)
-  return string.sub(id, 1, i-1), string.sub(id, i+1, #id)
 end
 
 local function numOfLanesInDirection(lanes, dir)
@@ -458,76 +520,84 @@ function Graphpath:edgeLanesInDirection(fromNode, toNode)
   end
 end
 
-function Graphpath:getEdgePath(startEdge, goal, dirMult)
+function Graphpath:getEdgePath(bNode, fNode, goal, dirMult)
+  --[[
+    TO TRY:
+      * Make turn penalties incident lane number dependent
+    TODO:
+      * make left hand traffic compatible
+      * adjust edge weights based on road/lane width
+  --]]
+
   local graph = self.graph
-  local bNode, fNode = splitID(startEdge)
-  if not graph[bNode][fNode] or not graph[goal] then return end
+  if not (graph[bNode] and graph[bNode][fNode] and graph[goal]) then return end
 
-  local dirCoeff = {[true] = dirMult or 1, [false] = 1}
+  -- penalty multiplier for traversing a one-way edge in the opposite direction
+  local dirCoeff = {[true] = max(1, dirMult or 1), [false] = 1}
 
-  local cost, edge = 0, startEdge
-  local minParent = {[startEdge] = false}
-  local queued = {}
-  local road = {} -- predecessor subgraph
-  local goalEdge
-  local edgeId = {'','\0',''}
+  local inverseStartEdge = self:getEdgeIdFromNodes(fNode, bNode)
+  local cost, edge = 0, self:getEdgeIdFromNodes(bNode, fNode)
+  local minParent, minCost, road = {[edge] = false}, {}, {}
 
-  local q = newMinheap()
+  que:clear()
+
   repeat
     if road[edge] == nil then
       road[edge] = minParent[edge]
-      bNode, fNode = splitID(edge)
-      if fNode == goal then
-        goalEdge = edge
-        break
-      end
-      edgeId[1] = fNode
+      bNode, fNode = self:getNodesFromEdgeId(edge)
+      if fNode == goal then break end
+      local bNodePos, fNodePos = self:getEdgePositions(bNode, fNode)
+      -- in edge vector projected on the x-y plane
+      local inEdgeDirX, inEdgeDirY = fNodePos.x - bNodePos.x, fNodePos.y - bNodePos.y
+      -- in edge vector squared length
+      local inEdgeDirSqLen = inEdgeDirX * inEdgeDirX + inEdgeDirY * inEdgeDirY
+      local isJunction = sign2(tableSize(graph[fNode]) - 3)
       for child, data in pairs(graph[fNode]) do
-        if child ~= bNode then
-          edgeId[3] = child
-          local childEdge = table.concat(edgeId)
-          if road[childEdge] == nil then -- if the shortest path to child has not already been found
-            local currentChildCost = queued[childEdge] -- lowest value with which child has entered the que
-            local newChildCost = cost + data.len * dirCoeff[self:edgeLanesInDirection(fNode, child) == 0]
-            if not currentChildCost or newChildCost < currentChildCost then
-              q:insert(newChildCost, childEdge)
-              minParent[childEdge] = edge
-              queued[childEdge] = newChildCost
-              dump('push que', childEdge, newChildCost, edge)
-            end
+        local childEdge = self:getEdgeIdFromNodes(fNode, child)
+        if road[childEdge] == nil then -- if the shortest path to child has not already been found
+          local turnCost
+          if child ~= bNode then
+            local fNodePos, childNodePos = self:getEdgePositions(fNode, child)
+            -- ( [0, 0, 1] cross inEdgeDir ) dot ( child Node Position relative to bNode position ). Left is positive.
+            local turnSide = sign2((childNodePos.y - bNodePos.y) * inEdgeDirX - (childNodePos.x - bNodePos.x) * inEdgeDirY)
+            -- out edge vector, projected on the x-y plane
+            local outEdgeDirX, outEdgeDirY = childNodePos.x - fNodePos.x, childNodePos.y - fNodePos.y
+            -- cosine angle approximation between projected in edge vector and out edge vector. Value range [0..1]. 0 for angle < 15deg, 1 for angle > 165deg (90 deg -> 0.5)
+            local cx = 0.5 * (1 - clamp(1.035 * (outEdgeDirX * inEdgeDirX + outEdgeDirY * inEdgeDirY) / sqrt((outEdgeDirX * outEdgeDirX + outEdgeDirY * outEdgeDirY) * inEdgeDirSqLen), -1, 1))
+            -- left turn cost + right turn cost. Only one of the two terms will be non zero
+            turnCost = max(0, isJunction) * (max(0, 2000 * turnSide * cx * cx * cx) + max(0, -700 * turnSide * cx * cx * cx * cx)) + max(0, -isJunction) * max(0, 100 * cx * cx * cx)
+          else -- same edge u-turn
+            local fNodeRad = self:getEdgeRadii(fNode, child)
+            -- penalty is calculated as a function of the width of a road.
+            -- A u-turn gets a smaller penalty if the road is wider since a succesfull u-turn on a wider road is easier.
+            turnCost = 3e4 / max(1, 2 * fNodeRad)
           end
-        end
-      end
-      edgeId[1] = bNode
-      for child, data in pairs(graph[bNode]) do
-        if child ~= fNode then
-          edgeId[3] = child
-          local childEdge = table.concat(edgeId)
-          if road[childEdge] == nil then -- if the shortest path to child has not already been found
-            local currentChildCost = queued[childEdge] -- lowest value with which child has entered the que
-            local newChildCost = cost + data.len * dirCoeff[self:edgeLanesInDirection(bNode, child) == 0] + 1000
-            if not currentChildCost or newChildCost < currentChildCost then
-              q:insert(newChildCost, childEdge)
-              minParent[childEdge] = edge
-              queued[childEdge] = newChildCost
-              dump('push que', childEdge, newChildCost, edge)
-            end
+          local newChildCost = cost + data.len * dirCoeff[self:edgeLanesInDirection(fNode, child) == 0] + turnCost
+          if not minCost[childEdge] or newChildCost < minCost[childEdge] then
+            que:insert(newChildCost, childEdge)
+            minParent[childEdge] = edge
+            minCost[childEdge] = newChildCost
           end
         end
       end
     end
-    cost, edge = q:pop()
-    dump('pop que', cost, edge)
+    cost, edge = que:pop()
   until not cost
 
-  local edgePath = invertPath(goalEdge, road)
+  local path = invertPath(edge, road) -- at this point the path is a sequence of edge ids
 
-  local path, _ = {}
-  for i = 1, #edgePath do
-    _, path[i] = splitID(edgePath[i])
+  local startIdx = path[2] == inverseStartEdge and 2 or 1 -- skip the first path node (the start edge) if it is a three way turn
+  local j, _ = 1, nil
+  for i = startIdx, #path do
+    _, path[j] = self:getNodesFromEdgeId(path[i])
+    j = j + 1
   end
 
-  return path, edgePath, road
+  if startIdx == 2 then
+    tableRemove(path)
+  end
+
+  return path
 end
 
 function Graphpath:getPointNodePath(start, target, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
@@ -541,11 +611,13 @@ function Graphpath:getPointNodePath(start, target, cutOffDrivability, dirMult, p
   -- wZ: number. When higher than 1 distance minimization is biased to minimizing z diamension more so than x, y.
 
   local graph = self.graph
+
   local invert
-  if start.x then
+  if type(start) == 'cdata' then
     start, target = target, start
     invert = true
   end
+
   if graph[start] == nil or target == nil then return {} end
 
   wZ = wZ or 4
@@ -556,80 +628,70 @@ function Graphpath:getPointNodePath(start, target, cutOffDrivability, dirMult, p
   local dirCoeff = {[true] = dirMult or 1, [false] = 1}
   local drivCoeff = {[true] = penaltyAboveCutoff, [false] = penaltyBelowCutoff}
 
-  local positions = self.positions
   local cost, node = 0, start
   local minParent = {[node] = false}
-  local minCost = {[node] = cost}
-  local road = {}
+  local minCost = {} -- no need to add starting node here. it will never be queried.
+  local road = {} -- predecessor subgraph
+  local positions = self.positions
+  local targetMinCost, targetMinCostLink = math.huge, nil
 
-  local targetMinCost = math.huge
-  local targetMinCostLink
-  local tmpVec = vec3()
-  local nodeToTargetVec = vec3()
-
-  local q = newMinheap()
+  que:clear()
   repeat
     if road[node] == nil then
-      road[node] = minParent[node] -- t[2] is the predecessor of node in the shortest path to node
+      road[node] = minParent[node]
       if node == target then break end
-
-      local p1 = positions[node]
-      nodeToTargetVec:setSub2(target, p1)
-      local pathCost = cost + square(square(nodeToTargetVec.x) + square(nodeToTargetVec.y) + square(wZ * nodeToTargetVec.z))
-      if pathCost < targetMinCost then
-        q:insert(pathCost, target)
-        targetMinCost = pathCost
-        minParent[target] = node
-        targetMinCostLink = nil
-      end
-
-      local parent = road[node]
+      local nodePos = positions[node]
       for child, data in pairs(graph[node]) do
-        local edgeCost
-        local outNode = invert and node or child
         if road[child] == nil then -- if the shortest path to child has not already been found
-          edgeCost = data.len * dirCoeff[data.oneWay and data.inNode == outNode] * drivCoeff[data.drivability > cutOffDrivability]
-          pathCost = cost + edgeCost
-          local childMinCost = minCost[child]
-          if not childMinCost or pathCost < childMinCost then
-            q:insert(pathCost, child)
-            minCost[child] = pathCost
+          local outNode = invert and node or child
+          local currentChildCost = minCost[child] -- lowest value with which child has entered the que
+          local newChildCost = cost + data.len * dirCoeff[data.oneWay and data.inNode == outNode] * drivCoeff[data.drivability > cutOffDrivability] -- For graph that misses data.oneWay in edge data
+          if not currentChildCost or newChildCost < currentChildCost then
+            que:insert(newChildCost, child)
             minParent[child] = node
+            minCost[child] = newChildCost
           end
-        end
-        if cost < targetMinCost and child ~= parent then
-          tmpVec:setSub2(positions[child], p1) -- edgeVec
-          local xnorm = min(1, max(0, tmpVec:dot(nodeToTargetVec) / (tmpVec:squaredLength() + 1e-30)))
+
+          local xnorm = target:xnormOnLine(nodePos, positions[child])
           if xnorm > 0 and xnorm < 1 then
-            tmpVec:setScaled(-xnorm)
-            tmpVec:setAdd(nodeToTargetVec) -- distToEdgeVec
-            pathCost = cost + (edgeCost or data.len * dirCoeff[data.oneWay and data.inNode == outNode] * drivCoeff[data.drivability > cutOffDrivability]) * xnorm +
-                      square(square(tmpVec.x) + square(tmpVec.y) + square(wZ * tmpVec.z))
-            if pathCost < targetMinCost then
-              q:insert(pathCost, target)
-              targetMinCost = pathCost
+            local childPos = positions[child]
+            local px, py, pz = nodePos.x + (childPos.x - nodePos.x) * xnorm, nodePos.y + (childPos.y - nodePos.y) * xnorm, nodePos.z + (childPos.z - nodePos.z) * xnorm
+            local offRoadDist = max(0, sqrt(square(px - target.x) + square(py - target.y) + square(wZ * (pz - target.z))) - (self.radius[node] + (self.radius[child] - self.radius[node]) * xnorm))
+            local newTargetCost = cost + data.len * dirCoeff[data.oneWay and data.inNode == outNode] * drivCoeff[data.drivability > cutOffDrivability] * xnorm + 0.25 * square(square(offRoadDist))
+            if newTargetCost < targetMinCost then
+              que:insert(newTargetCost, target)
               minParent[target] = node
+              targetMinCost = newTargetCost
               targetMinCostLink = child
             end
           end
         end
       end
+      do -- adds to que the virtual edge between node and target position
+        local newTargetCost = cost + 0.25 * square(square(nodePos.x - target.x) + square(nodePos.y - target.y) + square(wZ * (nodePos.z - target.z)))
+        if newTargetCost < targetMinCost then
+          que:insert(newTargetCost, target)
+          minParent[target] = node
+          targetMinCost = newTargetCost
+          targetMinCostLink = nil
+        end
+      end
     end
-
-    cost, node = q:pop()
+    cost, node = que:pop()
   until not cost
 
-  local path = {targetMinCostLink} -- last path node has to be added ad hoc
+  local path = {targetMinCostLink}
   local e = #path
-  target = road[node] -- if all is well, node here should be the targetPos
+  target = road[node] -- node is the start or target position, unroll the path starting from its parent
   while target do
     e = e + 1
     path[e] = target
     target = road[target]
   end
 
+  -- reverse order to get source to target
   if not invert then
-    for i = 1, e * 0.5 do -- reverse order to get source to target
+    for i = 1, e * 0.5 do
       path[i], path[e] = path[e], path[i]
       e = e - 1
     end
@@ -638,7 +700,8 @@ function Graphpath:getPointNodePath(start, target, cutOffDrivability, dirMult, p
   return path
 end
 
-function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
+-- yieldFn: optional; called once per main search iteration (e.g. core_jobsystem job.yield)
+function Graphpath:_getPointToPointPathImpl(sourcePos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ, yieldFn)
   -- sourcePos: path source position
   -- startPosLinks: graph nodes closest (by some measure) to sourcePos to be used as links to it
   -- targetPos: target position (vec3)
@@ -683,9 +746,9 @@ function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivabi
   local tmpEdge1Data = table.new(0, 4)
   local tmpEdge2Data = table.new(0, 4)
 
-  local q = newMinheap() -- initialize que
-
+  que:clear()
   repeat
+    profilerPushEvent("Graphpath:getPointToPointPathImpl")
     if road[node] == nil then -- if the shortest path to this node has not already been found
       road[node] = minParent[node] -- set predessesor of node in shortest path to node
       if node == targetPos then break end
@@ -723,7 +786,7 @@ function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivabi
       local pathCost = cost + square(square(nodeToTargetVec.x) + square(nodeToTargetVec.y) + square(wZ * nodeToTargetVec.z))
       -- if pathCost is lower than the current upper bound estimate insert the targetPos in que with this cost
       if pathCost < targetMinCost then
-        q:insert(pathCost, targetPos)
+        que:insert(pathCost, targetPos)
         targetMinCost = pathCost -- update upper bound estimate
         minParent[targetPos] = node -- set node as the tentative predessesor of targetPos
         targetMinCostLink = nil
@@ -736,7 +799,7 @@ function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivabi
           edgeCost = edgeData.len * dirCoeff[edgeData.oneWay and edgeData.inNode == child] * drivCoeff[edgeData.drivability > cutOffDrivability]
           local pathToChildCost = cost + edgeCost
           if pathToChildCost < (minCost[child] or math.huge) then
-            q:insert(pathToChildCost, child)
+            que:insert(pathToChildCost, child)
             minCost[child] = pathToChildCost
             minParent[child] = node
           end
@@ -753,7 +816,7 @@ function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivabi
                       (edgeCost or edgeData.len * dirCoeff[edgeData.oneWay and edgeData.inNode == child] * drivCoeff[edgeData.drivability > cutOffDrivability]) * xnorm +
                       square(square(tmpVec.x) + square(tmpVec.y) + square(wZ * tmpVec.z))
             if pathCost < targetMinCost then
-              q:insert(pathCost, targetPos)
+              que:insert(pathCost, targetPos)
               targetMinCost = pathCost
               minParent[targetPos] = node
               targetMinCostLink = child
@@ -767,8 +830,8 @@ function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivabi
       sourceNode, sourceCost, sourceXnorm = iter()
     end
 
-    if (q:peekKey() or math.huge) <= (sourceCost or math.huge) then
-      cost, node = q:pop()
+    if (que:peekKey() or math.huge) <= (sourceCost or math.huge) then
+      cost, node = que:pop()
     else
       minCost[sourceNode] = sourceCost
       xnorms[sourceNode] = sourceXnorm
@@ -776,6 +839,9 @@ function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivabi
       node, cost = sourceNode, sourceCost
       sourceNode, sourceCost, sourceXnorm = nil, nil, nil
     end
+
+    if yieldFn then yieldFn() end
+    profilerPopEvent("Graphpath:getPointToPointPathImpl")
   until not node
 
   local path = {targetMinCostLink} -- last path node has to be added ad hoc
@@ -810,6 +876,23 @@ function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivabi
   end
 
   return path
+end
+
+function Graphpath:getPointToPointPath(sourcePos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
+  return self:_getPointToPointPathImpl(sourcePos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ, nil)
+end
+
+local yieldInterval = 350
+-- job: table from extensions.core_jobsystem.create (provides .yield)
+function Graphpath:getPointToPointPathJob(job, sourcePos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ)
+  local yieldCounter = 0
+  local yieldFn = job and function()
+    yieldCounter = yieldCounter + 1
+    if yieldCounter % (global_yieldInterval or yieldInterval) == 0 then
+      job.yield()
+    end
+  end
+  return self:_getPointToPointPathImpl(sourcePos, iter, targetPos, cutOffDrivability, dirMult, penaltyAboveCutoff, penaltyBelowCutoff, wZ, yieldFn)
 end
 
 local function numOfLanesFromRadius(rad1, rad2)
@@ -850,7 +933,7 @@ function Graphpath:getPathT(start, mePos, pathLenLim, illegalDirPenalty, initDir
   local positions = self.positions
   local cost, node = -1, start
   local minParent = {[node] = false}
-  local queued = {}
+  local minCost = {}
   local road = {} -- predessesor of node in the shortest path to node
   local curSegDir = vec3(initDir.x, initDir.y, 0)
   local inFwdFlow, inBackFlow, inDrivability, inGated = radius[start], 0, 1, false
@@ -859,7 +942,7 @@ function Graphpath:getPathT(start, mePos, pathLenLim, illegalDirPenalty, initDir
 
   local nextSegDir = vec3()
 
-  local q = newMinheap()
+  que:clear()
   repeat
     if road[node] == nil then
       local parent = minParent[node]
@@ -899,10 +982,10 @@ function Graphpath:getPathT(start, mePos, pathLenLim, illegalDirPenalty, initDir
             newChildCost = cost
           end
 
-          if (queued[child] or 0) > newChildCost then
-            q:insert(newChildCost, child)
+          if (minCost[child] or 0) > newChildCost then
+            que:insert(newChildCost, child)
             minParent[child] = node
-            queued[child] = newChildCost
+            minCost[child] = newChildCost
           end
         end
       end
@@ -910,16 +993,16 @@ function Graphpath:getPathT(start, mePos, pathLenLim, illegalDirPenalty, initDir
     end
 
     local newNode
-    cost, newNode = q:pop()
+    cost, newNode = que:pop()
     node = newNode or node -- just in case newNode is nil
   until not cost -- que is empty
 
   if candidates[1] then
     local i, res = 1, math.random() * sum
-    sum = queued[candidates[i]]
+    sum = minCost[candidates[i]]
     while sum > res do
       i = i + 1
-      sum = sum + queued[candidates[i]]
+      sum = sum + minCost[candidates[i]]
     end
     node = candidates[i]
   end
@@ -927,10 +1010,10 @@ function Graphpath:getPathT(start, mePos, pathLenLim, illegalDirPenalty, initDir
   -- Data for Visual debug (also uncomment return value)
   -- sum = 0
   -- local candidatePaths = {winner = node}
-  -- for i = 1, #candidates do sum = sum + queued[candidates[i]] end
+  -- for i = 1, #candidates do sum = sum + minCost[candidates[i]] end
   -- for i = 1, #candidates do
   --   table.insert(candidatePaths, invertPath(candidates[i], road))
-  --   candidatePaths[i].score = queued[candidates[i]] / sum
+  --   candidatePaths[i].score = minCost[candidates[i]] / sum
   -- end
 
   local path = invertPath(node, road)
@@ -938,7 +1021,7 @@ function Graphpath:getPathT(start, mePos, pathLenLim, illegalDirPenalty, initDir
   return path--, candidatePaths
 end
 
-local function getUnexploredNeighboors(graph, node, road, road1, tab)
+local function getUnexploredNeighbours(graph, node, road, road1, tab)
   -- gets all neighboors of node that have not been explored
   if not tab then tab = {} end
   table.clear(tab)
@@ -957,6 +1040,7 @@ function Graphpath:getFlows(inNode, outNode)
   return fwdFlow, backFlow
 end
 
+local que1 = newMinheap()
 function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
   -- start: node id
   -- mePos: position from which the path terminating distance condition is measured (ex. position of vehicle or of the start node)
@@ -978,7 +1062,7 @@ function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
   local distLim, startMinParent, startNodeScore, prevPathInitDir, prevPath, initDir
   local minParent1, queued1, road1, prevPathSet = {}, {}, {}, {} -- only road1 needs to be initialized here
   local curSegDir, nextSegDir = vec3(), vec3()
-  local q1 = newMinheap()
+  que1:clear()
   if not state or type(state) == 'cdata' then -- state is an initial direction vector
     initDir = state or curSegDir -- state is not mandatory
     startMinParent = false
@@ -989,7 +1073,7 @@ function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
     prevPathInitDir = positions[prevPath[2]] - positions[prevPath[1]]
     distLim = positions[start]:squaredDistance(positions[prevPath[1]])
 
-    q1:insert(-1, prevPath[1])
+    que1:insert(-1, prevPath[1])
     minParent1[prevPath[1]] = false -- needs to be false because of the parent check
     queued1[prevPath[1]] = -1
     prevPathSet[prevPath[1]] = true
@@ -1025,7 +1109,7 @@ function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
 
       nodeLinkCount = tableSize(graph[child])
       if nodeLinkCount > 2 or i == prevPathCount then -- child node is a junction (has more than two links) or is the start node of the next path
-        q1:insert(newChildCost, child)
+        que1:insert(newChildCost, child)
       else -- does not need to be explored
         road1[child] = node
       end
@@ -1038,17 +1122,17 @@ function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
     startNodeScore = queued1[start]
   end
 
-  local q = newMinheap()
-  q:insert(startNodeScore, start)
-  local queued = {[start] = startNodeScore}
+  que:clear()
+  que:insert(startNodeScore, start)
+  local minCost = {[start] = startNodeScore}
   local minParent = {[start] = false}
   local road = {} -- predessesor of node in the shortest path to node
-  local childNodeTab = getUnexploredNeighboors(graph, start, road, road1)
+  local childNodeTab = getUnexploredNeighbours(graph, start, road, road1)
   local cN, sum, candidates = 0, 0, table.new(6, 0)
 
   repeat
-    if q1.length == 0 or not next(childNodeTab) then -- q1 is empty or neighboors of top node in q has been explored by prev path
-      local cost, node = q:pop()
+    if que1.length == 0 or not next(childNodeTab) then -- que1 is empty or neighbours of top node in que has been explored by prev path
+      local cost, node = que:pop()
       if road[node] == nil then -- this is possible not needed because of the que cleanup at the end of this branch
         local parent = minParent[node]
         road[node] = parent
@@ -1097,19 +1181,19 @@ function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
               newChildCost = newChildCost * 0.1
             end
 
-            if (queued[child] or 0) > newChildCost then
-              q:insert(newChildCost, child)
+            if (minCost[child] or 0) > newChildCost then
+              que:insert(newChildCost, child)
               minParent[child] = node
-              queued[child] = newChildCost
+              minCost[child] = newChildCost
             end
           end
         end
         ::continue::
       end
-      while q.length > 0 and road[q.vals[1]] ~= nil do q:pop() end
-      getUnexploredNeighboors(graph, q.vals[1], road, road1, childNodeTab) -- populate child node table with children of new top node
+      while que.length > 0 and road[que.vals[1]] ~= nil do que:pop() end
+      getUnexploredNeighbours(graph, que.vals[1], road, road1, childNodeTab) -- populate child node table with children of new top node
     else
-      local cost, node = q1:pop()
+      local cost, node = que1:pop()
       childNodeTab[node] = nil -- remove node from childNodeTab if it is there
       if road1[node] == nil and road[node] == nil then
         local parent = minParent1[node]
@@ -1147,7 +1231,7 @@ function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
             end
 
             if (queued1[child] or 0) > newChildCost then
-              q1:insert(newChildCost, child)
+              que1:insert(newChildCost, child)
               minParent1[child] = node
               queued1[child] = newChildCost
             end
@@ -1156,23 +1240,23 @@ function Graphpath:getPathTWithState(start, mePos, pathLenLim, state)
         ::continue::
       end
     end
-  until q.length <= 0
+  until que.length <= 0
 
   local i, res = 1, math.random() * sum
-  sum = queued[candidates[1]]
+  sum = minCost[candidates[1]]
   if sum == nil then return {} end
   while sum > res do
     i = i + 1
-    sum = sum + queued[candidates[i]]
+    sum = sum + minCost[candidates[i]]
   end
 
   -- Data for Visual debug
   -- sum = 0
   -- local candidatePaths = {winner = candidates[i]}
-  -- for i = 1, #candidates do sum = sum + queued[candidates[i]] end
+  -- for i = 1, #candidates do sum = sum + minCost[candidates[i]] end
   -- for i = 1, #candidates do
   --   table.insert(candidatePaths, invertPath(candidates[i], road))
-  --   candidatePaths[i].score = queued[candidates[i]] / sum
+  --   candidatePaths[i].score = minCost[candidates[i]] / sum
   -- end
 
   return invertPath(candidates[i], road) --, candidatePaths
@@ -1192,26 +1276,26 @@ function Graphpath:getFilteredPath(start, goal, cutOffDrivability, dirMult, pena
   local cost, node = 0, start
   local minParent = {[node] = false}
   local road = {} -- predecessor subgraph
-  local queued = {}
+  local minCost = {}
 
-  local q = newMinheap()
+  que:clear()
   repeat
     if road[node] == nil then
       road[node] = minParent[node]
       if node == goal then break end
       for child, data in pairs(graph[node]) do
         if road[child] == nil then
-          local currentChildCost = queued[child]
+          local currentChildCost = minCost[child]
           local newChildCost = cost + data.len * dirCoeff[data.oneWay and data.inNode == child] * drivCoeff[data.drivability > cutOffDrivability]
           if currentChildCost == nil or currentChildCost > newChildCost then
-            q:insert(newChildCost, child)
+            que:insert(newChildCost, child)
             minParent[child] = node
-            queued[child] = newChildCost
+            minCost[child] = newChildCost
           end
         end
       end
     end
-    cost, node = q:pop()
+    cost, node = que:pop()
   until not cost
 
   return invertPath(goal, road)
@@ -1224,10 +1308,10 @@ function Graphpath:spanMap(source, nodeBehind, target, edgeDict, dirMult)
   dirMult = dirMult or 1
   local dirCoeff = {[true] = dirMult, [false] = 1}
 
-  local q = newMinheap()
+  que:clear()
   local cost, t = 0, {source, false}
   local road = {} -- predecessor subgraph
-  local queued = {}
+  local minCost = {}
 
   repeat
     local node = t[1]
@@ -1236,16 +1320,16 @@ function Graphpath:spanMap(source, nodeBehind, target, edgeDict, dirMult)
       if node == target then break end
       for child, data in pairs(graph[node]) do
         if road[child] == nil then
-          local currentChildCost = queued[child]
+          local currentChildCost = minCost[child]
           local newChildCost = cost + data.len * dirCoeff[data.oneWay and data.inNode == child] * (edgeDict[node..'\0'..child] or 1e20) * ((node == source and child == nodeBehind and 300) or 1)
           if currentChildCost == nil or currentChildCost > newChildCost then
-            q:insert(newChildCost, {child, node})
-            queued[child] = newChildCost
+            que:insert(newChildCost, {child, node})
+            minCost[child] = newChildCost
           end
         end
       end
     end
-    cost, t = q:pop()
+    cost, t = que:pop()
   until not cost
 
   return invertPath(target, road)
@@ -1259,10 +1343,10 @@ function Graphpath:getPathAwayFrom(start, goal, mePos, stayAwayPos, dirMult)
   local dirCoeff = {[true] = dirMult, [false] = 1}
 
   local positions = self.positions
-  local q = newMinheap()
+  que:clear()
   local cost, t = 0, {start, false}
   local road = {} -- predecessor subgraph
-  local queued = {}
+  local minCost = {}
 
   repeat
     local node = t[1]
@@ -1271,17 +1355,17 @@ function Graphpath:getPathAwayFrom(start, goal, mePos, stayAwayPos, dirMult)
       if node == goal then break end
       for child, data in pairs(graph[node]) do
         if road[child] == nil then
-          local currentChildCost = queued[child]
+          local currentChildCost = minCost[child]
           local childPos = positions[child]
           local newChildCost = cost + data.len * dirCoeff[data.oneWay and data.inNode == child] * mePos:squaredDistance(childPos) / (stayAwayPos:squaredDistance(childPos) + 1e-30)
           if currentChildCost == nil or currentChildCost > newChildCost then
-            q:insert(newChildCost, {child, node})
-            queued[child] = newChildCost
+            que:insert(newChildCost, {child, node})
+            minCost[child] = newChildCost
           end
         end
       end
     end
-    cost, t = q:pop()
+    cost, t = que:pop()
   until not cost
 
   return invertPath(goal, road)
@@ -1372,13 +1456,15 @@ function Graphpath:getChasePath(nodeBehind, nodeAhead, targetNodeBehind, targetN
   local graphpos = self.positions
 
   local wp1pos, wp2pos = graphpos[nodeBehind], graphpos[nodeAhead]
-  local twp1pos, twp2pos = graphpos[targetNodeBehind] - targetVel, graphpos[targetNodeAhead] + targetVel -- positions with extra velocity based distance
   -- the extra distance is used to determine if the target has crossed into a parallel segment
   local meToTarget = (targetPos + targetVel:normalized()) - mePos -- target point is slightly ahead of original pos
   local meDotTarget = meToTarget:dot(targetVel)
-  local wpAhead = meToTarget:dot(wp1pos - mePos) > meToTarget:dot(wp2pos - mePos) and nodeBehind or nodeAhead -- best wp that goes to target wp
-  local twpAhead = wpAhead == targetNodeBehind and targetNodeBehind or targetNodeAhead -- check if best wp matches target wp
-  if meDotTarget > 0 and targetNodeAhead == nodeBehind then targetNodeAhead = nodeAhead end
+  --local wpAhead = meToTarget:dot(wp1pos - mePos) > meToTarget:dot(wp2pos - mePos) and nodeBehind or nodeAhead -- best wp that goes to target wp
+  local wpAhead, wpBehind = nodeAhead, nodeBehind
+  if meToTarget:dot(wp1pos - mePos) > meToTarget:dot(wp2pos - mePos) then
+    wpAhead, wpBehind = nodeBehind, nodeAhead
+  end
+  local twpAhead = (wpAhead == targetNodeBehind and wpBehind == targetNodeAhead) and targetNodeBehind or targetNodeAhead -- check if best wp matches target wp
 
   local path = self:getPath(wpAhead, twpAhead, dirMult)
 
@@ -1535,10 +1621,10 @@ function Graphpath:getRandomPath(nodeAhead, nodeBehind, dirMult)
 
   local positions = self.positions
 
-  local q = newMinheap()
+  que:clear()
   local cost, t = 0, {nodeAhead, false}
   local road = {} -- predecessor subgraph
-  local queued = {}
+  local minCost = {}
   local node
   local choiceSet = {}
   local costSum = 0
@@ -1555,12 +1641,12 @@ function Graphpath:getRandomPath(nodeAhead, nodeBehind, dirMult)
         local edgeDirVec = (positions[parent] - nodePos):normalized()
         for child, data in pairs(graph[node]) do
           if road[child] == nil then
-            local childCurrCost = queued[child]
+            local childCurrCost = minCost[child]
             local penalty = 1 + 10 * square(max(0, edgeDirVec:dot((positions[child] - nodePos):normalized()) - 0.2))
             local childNewCost = cost + penalty * data.len * dirCoeff[data.oneWay and data.inNode == child] * ((node == nodeAhead and child == nodeBehind) and 1e4 or 1)
             if childCurrCost == nil or childCurrCost > childNewCost then
-              queued[child] = childNewCost
-              q:insert(childNewCost, {child, node})
+              minCost[child] = childNewCost
+              que:insert(childNewCost, {child, node})
             end
           end
         end
@@ -1572,7 +1658,7 @@ function Graphpath:getRandomPath(nodeAhead, nodeBehind, dirMult)
         end
       end
     end
-    cost, t = q:pop()
+    cost, t = que:pop()
   until not cost
 
   local randNum = costSum * math.random()

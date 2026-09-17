@@ -7,7 +7,7 @@ local transformHelper = require('/lua/ge/extensions/editor/util/transformUtil')(
 transformHelper:setOneDimensionalScale(true)
 local C = {}
 -- this will come from activity manager once refactored
-
+--[[
 local function automaticTrigger(self)
   im.Text("Automatic Trigger Set by Mission.")
 end
@@ -35,6 +35,31 @@ local function levelTrigger(self)
     end
     im.EndCombo()
   end
+end
+]]
+
+local function leagueTrigger(self)
+  im.Text("Startable only from the Progress Screen in Career while in this level:")
+  if not self.fields.levelName then self.fields.levelName = im.ArrayChar(1024, self.mission.startTrigger.level) end
+  local editEnded = im.BoolPtr(false)
+  editor.uiInputText("##Level", self.fields.levelName, 1024, nil, nil, nil, editEnded)
+  if editEnded[0] then
+    self.mission.startTrigger.level = ffi.string(self.fields.levelName)
+    self.mission._dirty = true
+  end
+  im.SameLine()
+  im.PushItemWidth(20)
+  if im.BeginCombo("##levelCombo", "...") then
+    for _, lvl in ipairs(self.sortedLevels) do
+      if im.Selectable1(lvl.value, lvl.value == self.mission.startTrigger.level) then
+        self.fields.levelName = nil
+        self.mission.startTrigger.level = lvl.value
+        self.mission._dirty = true
+      end
+    end
+    im.EndCombo()
+  end
+  im.PopItemWidth()
 end
 
 local function coordinatesTrigger(self)
@@ -79,6 +104,7 @@ local function coordinatesTrigger(self)
   else
     transformHelper.showGizmo = false
   end
+  extensions.editor_missionEditor.getMissionTypeWindow():getCurrentEditorHelper():updateMouseInfo(self.mission)
   if transformHelper:update(extensions.editor_missionEditor.getMissionTypeWindow():getCurrentEditorHelper().mouseInfo) then
     self.mission.startTrigger.pos = transformHelper.pos:toTable()
     self.mission.startTrigger.rot = transformHelper.rot:toTable()
@@ -89,10 +115,9 @@ end
 
 
 local startTriggerTypes = {
-  automatic = automaticTrigger,
-  world = worldTrigger,
-  level = levelTrigger,
-  coordinates = coordinatesTrigger
+  coordinates = coordinatesTrigger,
+  league = leagueTrigger,
+  none = nop,
 }
 local oldValues = {}
 local startTriggersSorted = {}
@@ -104,6 +129,8 @@ local newStartTrigger = {
   world = {},
   level = {level = 'gridmap'},
   coordinates = {level = 'gridmap', pos = {0,0,0}, radius = 3, rot={0,0,0,1}},
+  league = {level = 'gridmap'},
+  none = {},
 }
 
 function C:init(missionEditor)
@@ -138,7 +165,7 @@ function C:draw()
     self:setMission(self.mission)
     self.mission._clearStartTriggerFields = false
   end
-  --[[
+
   im.PushItemWidth(200)
   if im.BeginCombo('##startTrigger', self.mission.startTrigger.type) then
     for _, stType in ipairs(startTriggersSorted) do
@@ -148,9 +175,13 @@ function C:draw()
         if hasOld then
           self.mission.startTrigger = deepcopy(oldValues[stType])
         else
+          local prev = self.mission.startTrigger
           self.mission.startTrigger = deepcopy(newStartTrigger[stType])
           if stType == 'coordinates' then
             transformHelper:set(vec3(self.mission.startTrigger.pos), nil, self.mission.startTrigger.radius)
+          end
+          if prev.level then
+            self.mission.startTrigger.level = prev.level
           end
         end
         self.mission.startTrigger.type = stType
@@ -161,7 +192,6 @@ function C:draw()
     im.EndCombo()
   end
   im.PopItemWidth()
-  ]]
   if startTriggerTypes[self.mission.startTrigger.type] then
     startTriggerTypes[self.mission.startTrigger.type](self)
   end

@@ -47,10 +47,15 @@ local function getMainControllerData(params)
   end
   local dataKey = params[1]
   if dataKey == "gearboxMode" then
-    return {result = electrics.values.gearboxMode}
+    local mainController = controller.mainController
+    if mainController then
+      return {result = mainController.gearboxBehavior}
+    end
+    return {failReason = "Main controller not found"}
   elseif dataKey == "freezeState" then
     return {result = electrics.values.freezeState}
   end
+  return {failReason = "Invalid data key"}
 end
 
 local function requestRegistration(gi)

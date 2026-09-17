@@ -9,6 +9,8 @@ local M = {}
 local startTriggerRequiredFields = {
   level = {'level'},
   coordinates = {'level','pos','radius'},
+  league = {'level'},
+  none = {},
 }
 
 local function defaultLocationCheck(location, level, playerPosition, mission)
@@ -42,18 +44,6 @@ M.defaultLocationDisplayMarker = defaultLocationDisplayMarker
 
 
 
-
-  -- mission will always be active when you are in any of the specified levels.
-local function levelTriggerList(trigger,locations)
-  if type(trigger.level) == 'string' then
-    table.insert(locations, {level=trigger.level, pos=nil, radius=nil, check=defaultLocationCheck, displayMarker=defaultLocationDisplayMarker})
-  elseif type(trigger.level) == 'table' then
-    for _, lvl in ipairs(trigger.level) do
-      table.insert(locations, {level=lvl, pos=nil, radius=nil, check=defaultLocationCheck, displayMarker=defaultLocationDisplayMarker})
-    end
-  end
-end
-
   -- mission can be accepted when you are at a specific point within one level.
 local function coordinatesTriggerList(trigger,locations)
   table.insert(locations, {type='coordinates', level=trigger.level, pos=vec3(trigger.pos), rot=quat(trigger.rot or {0,0,0,1}), radius=trigger.radius, check=defaultLocationCheck, displayMarker=defaultLocationDisplayMarker})
@@ -63,8 +53,9 @@ end
 
 -- the available start trigger types, with functions which will put locations for that mission into a the cache.
 local startTriggerTypes = {
-  level = levelTriggerList,
   coordinates = coordinatesTriggerList,
+  league = nop,
+  none = nop,
 }
 
 -- creates a list of locations from a start trigger.
@@ -137,7 +128,7 @@ local function getMissionClusters(mergeRadius)
 
   if not missionClusterCacheByRadius[mergeRadius or -1] then
     -- first get all mission locations, sorted in buckets by level
-    local missions = gameplay_missions_missions.get()
+    local missions = gameplay_missions_missions.getAllMissions()
     local locationsByLevel = {}
     for _, m in ipairs(missions) do
       local isVisible = true -- gameplay_missions_missionManager.isVisible(m)

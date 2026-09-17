@@ -3,6 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local manualzoom = require('core/cameraModes/manualzoom')
+local bigMapPan = require('core/cameraUtils/bigMapPan')
 local stopZooming = 0
 
 local previousVehicleRenderDist
@@ -23,7 +24,6 @@ function C:init()
   self.transitionActive = true
   self.movementSpeed = 20
   self.nearClipValue = 100
-  self.tod = 0.13 -- Around 15:00
   self.drawIcons = true
   self.initialCamData = nil
   self.mapBoundaries = nil
@@ -106,6 +106,11 @@ function C:getZoomStage(fov)
   return 1
 end
 
+-- smoothly pan the camera so that the given world (ground) position is centered
+function C:panToWorldPos(worldPos)
+  bigMapPan.setTarget(self, worldPos, camToLookAtPoint)
+end
+
 function C:update(data)
   if self.initialCamData and self.firstUpdate then
     data.res.pos = self.initialCamData.pos
@@ -145,7 +150,7 @@ function C:update(data)
 
   if MoveManager.forward ~= 0 or MoveManager.backward ~= 0 or MoveManager.left ~= 0 or MoveManager.right ~= 0 then
     local zoomBasedMovementSpeedFactor = 0
-    if freeroam_bigMapMode and not freeroam_bigMapMode.isUIPopupOpen() then
+    if freeroam_bigMapMode then
       local mapExtents = self.mapBoundaries:getExtents()
       local avgSideLength = (mapExtents.x + mapExtents.y) / 2
       zoomBasedMovementSpeedFactor = (avgSideLength / 4096) * (data.res.fov / self.fovMax)
@@ -168,6 +173,10 @@ function C:update(data)
   end
 
   data.res.nearClip = self.nearClipValue
+
+  -- smoothly ease toward the pan target, cancel if the user moves the camera
+  local userMoving = mouseDragStartPos ~= nil or MoveManager.forward ~= 0 or MoveManager.backward ~= 0 or MoveManager.left ~= 0 or MoveManager.right ~= 0
+  bigMapPan.update(self, data.dtReal, userMoving)
 
   -- Keep the camera in the bounds of the map
   if camToLookAtPoint then

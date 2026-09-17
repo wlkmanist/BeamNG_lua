@@ -21,6 +21,8 @@ C.pinSchema = {
 
 C.tags = {}
 
+C.dependencies = {'gameplay_drag_dragBridge'}
+
 function C:init()
   self.selectedOpponents = {}
   self.playerId = -1
@@ -35,89 +37,181 @@ function C:drawMiddle(builder, style)
   builder:Middle()
 end
 
-function C:selectVehicle()
-  local randomVehicles = {}
-  local configs = core_vehicles.getConfigList()
-  local dial = self.pinIn.playerDial.value or -1
+-- Get list of available paint names for a vehicle model
+local function getAvailablePaints(modelKey)
+  local modelData = core_vehicles.getModel(modelKey)
+  if modelData and modelData.model and modelData.model.paints then
+    return tableKeys(tableValuesAsLookupDict(modelData.model.paints))
+  end
+  return {}
+end
 
-  --Get the possible vehicle configurations
+-- Filter vehicle configs to only include valid cars/trucks
+function C:filterValidVehicleConfigs()
   local vehConfigs = {}
-  for i,v in pairs(configs.configs) do
-    local model = core_vehicles.getModel(v.model_key).model
+  local configs = core_vehicles.getConfigList()
 
-    local passType = true
-    passType = passType and (model.Type == 'Car' or model.Type == 'Truck') and model['isAuxiliary'] ~= true -- always only use cars or trucks
-    if passType and not string.match(i, 'simple_traffic') then
-      table.insert(vehConfigs, v)
+  for i, v in pairs(configs.configs) do
+    local modelData = core_vehicles.getModel(v.model_key)
+    if modelData and modelData.model then
+      local model = modelData.model
+      local isValid = (model.Type == 'Car' or model.Type == 'Truck') and model['isAuxiliary'] ~= true
+      if isValid and not string.match(i, 'simple_traffic') then
+        table.insert(vehConfigs, v)
+      end
     end
   end
 
-  if gameplay_drag_general.getData().dragType == "bracketRace" then
-    for i = 1, self.pinIn.numberOfOpponents.value do
-      local selectedConfig = vehConfigs[math.random(#vehConfigs)]
-      local m = selectedConfig.model_key
-      local c = selectedConfig.key
-      local p = tableKeys(tableValuesAsLookupDict(core_vehicles.getModel(selectedConfig.model_key).model.paints or {}))
-      local n = selectedConfig.Name
-      table.insert(randomVehicles, {
-            model = m,
-            config = c,
-            paint = p[math.random(#p)],
-            dial = selectedConfig["Drag Times"].time_1_4 - 0.5
-          })
-    end
+  return vehConfigs
+end
+
+-- Create a vehicle entry from a config
+function C:createVehicleEntry(config)
+  local paints = getAvailablePaints(config.model_key)
+  local paint = (#paints > 0) and paints[math.random(#paints)] or nil
+
+  local dial = 12
+  if config["Drag Times"] then
+    dial = config["Drag Times"].time_1_4
+  end
+
+  return {
+    model = config.model_key,
+    config = config.key,
+    paint = paint,
+    dial = dial
+  }
+end
+
+-- Generate opponents using player vehicle with different colors
+function C:getPlayerVehicleAsFallback(count)
+  local randomVehicles = {}
+  local currentVeh = core_vehicles.getCurrentVehicleDetails()
+
+  if not currentVeh or not currentVeh.model or not currentVeh.model.model or not currentVeh.configs then
     return randomVehicles
   end
 
-  local currentVeh = core_vehicles.getCurrentVehicleDetails()
-  if dial < 0 then
-    --Get the data from the savefile just to know the timesTable
-    local configTimes = gameplay_drag_general.getDialTimes()
+  local modelKey = currentVeh.model.model
+  local configKey = currentVeh.configs.Name or "base"
+  local paints = getAvailablePaints(modelKey)
+  local playerDial = currentVeh.configs["Drag Times"] and currentVeh.configs["Drag Times"].time_1_4 or 12
 
-    local currentConfig = gameplay_drag_general.generateHashFromFile()
-
-    if configTimes[currentConfig] then
-      dial = configTimes[currentConfig].time_1_4
-    else
-      if currentVeh.configs then
-        dial = currentVeh.configs["Drag Times"] and  currentVeh.configs["Drag Times"].time_1_4 or 12
-      end
-    end
-    log("I","","Player dial time: " .. dial)
-  end
-
-  local similarVehicles = {}
-  local similarVehicleCount = 0
-
-
-  for i,v in pairs(vehConfigs) do
-    if (v["Drag Times"])then
-      if v["Drag Times"].time_1_4 >= dial - 0.5 and v["Drag Times"].time_1_4 < dial + 0.1 then
-        table.insert(similarVehicles, v)
-        similarVehicleCount = similarVehicleCount + 1
-      end
-    end
-  end
-
-  if similarVehicleCount == 0 then
-    table.insert(similarVehicles, currentVeh.configs)
-    similarVehicleCount = similarVehicleCount + 1
-  end
-
-  --Add a random selection of vehicles
-  for i = 1, self.pinIn.numberOfOpponents.value do
-    local selectedConfig = similarVehicles[math.random(similarVehicleCount)]
-    local m = selectedConfig.model_key
-    local c = selectedConfig.key
-    local p = tableKeys(tableValuesAsLookupDict(core_vehicles.getModel(selectedConfig.model_key).model.paints or {}))
-    local n = selectedConfig.Name
+  for i = 1, count do
+    local paint = (#paints > 0) and paints[math.random(#paints)] or nil
     table.insert(randomVehicles, {
-          model = m,
-          config = c,
-          paint = p[math.random(#p)],
-          dial = selectedConfig["Drag Times"].time_1_4
-        })
+      model = modelKey,
+      config = configKey,
+      paint = paint,
+      dial = playerDial
+    })
   end
+
+  return randomVehicles
+end
+
+-- Get player dial time from various sources
+function C:getPlayerDial(currentVeh)
+  local dial = self.pinIn.playerDial.value or -1
+
+  if dial >= 0 then
+    return dial
+  end
+
+  -- Try to get from save file
+  if gameplay_drag_dragBridge then
+    local configTimes = gameplay_drag_dragBridge.getDialTimes()
+    if configTimes then
+      local currentConfig = gameplay_drag_dragBridge.generateHashFromFile()
+      if configTimes[currentConfig] then
+        return configTimes[currentConfig].time_1_4
+      end
+    end
+  end
+
+  -- Fallback to vehicle config
+  if currentVeh and currentVeh.configs and currentVeh.configs["Drag Times"] then
+    return currentVeh.configs["Drag Times"].time_1_4
+  end
+
+  return 12
+end
+
+-- Generate opponents for bracket race mode
+function C:generateBracketRaceOpponents(vehConfigs, count)
+  local randomVehicles = {}
+
+  if #vehConfigs == 0 then
+    return randomVehicles
+  end
+
+  for i = 1, count do
+    math.randomseed(os.time())
+    local selectedConfig = vehConfigs[math.random(#vehConfigs)]
+    local entry = self:createVehicleEntry(selectedConfig)
+    entry.dial = (entry.dial - 0.5) -- Adjust dial for bracket race
+    table.insert(randomVehicles, entry)
+  end
+
+  return randomVehicles
+end
+
+-- Generate opponents with similar dial times
+function C:generateSimilarOpponents(vehConfigs, dial, count, currentVeh)
+  local randomVehicles = {}
+  local similarVehicles = {}
+
+  -- Find vehicles with similar dial times
+  for _, v in pairs(vehConfigs) do
+    if v["Drag Times"] then
+      local time = v["Drag Times"].time_1_4
+      if time >= (dial - 0.5) and time < (dial + 0.1) then
+        table.insert(similarVehicles, v)
+      end
+    end
+  end
+
+  -- Fallback to current vehicle config if no similar vehicles found
+  if #similarVehicles == 0 and currentVeh and currentVeh.configs then
+    table.insert(similarVehicles, currentVeh.configs)
+  end
+
+  if #similarVehicles == 0 then
+    log("E", "", "No similar vehicles found")
+    return randomVehicles
+  end
+
+  -- Generate random selection
+  for i = 1, count do
+    local selectedConfig = similarVehicles[math.random(#similarVehicles)]
+    table.insert(randomVehicles, self:createVehicleEntry(selectedConfig))
+  end
+
+  return randomVehicles
+end
+
+function C:selectVehicle()
+  local vehConfigs = self:filterValidVehicleConfigs()
+  local dragData = gameplay_drag_dragBridge and gameplay_drag_dragBridge.getData() or nil
+  local numberOfOpponents = self.pinIn.numberOfOpponents.value
+  local randomVehicles = {}
+
+  -- Handle bracket race mode
+  if dragData and dragData.dragType == "bracketRace" then
+    randomVehicles = self:generateBracketRaceOpponents(vehConfigs, numberOfOpponents)
+  else
+    -- Regular race mode - find similar vehicles
+    local currentVeh = core_vehicles.getCurrentVehicleDetails()
+    local dial = self:getPlayerDial(currentVeh)
+
+    randomVehicles = self:generateSimilarOpponents(vehConfigs, dial, numberOfOpponents, currentVeh)
+  end
+
+  -- Fallback: use player vehicle with different colors if no vehicles generated
+  if #randomVehicles == 0 then
+    randomVehicles = self:getPlayerVehicleAsFallback(numberOfOpponents)
+  end
+
   return randomVehicles
 end
 

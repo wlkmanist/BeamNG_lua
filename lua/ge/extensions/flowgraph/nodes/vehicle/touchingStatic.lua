@@ -57,14 +57,14 @@ function C:reset()
 end
 
 function C:work()
-  if not self.pinIn.vehId.value or not be:getObjectByID(self.pinIn.vehId.value) then
+  if not self.pinIn.vehId.value or not getObjectByID(self.pinIn.vehId.value) then
     self:reset()
     return
   end
 
   self.active = true
 
-  local veh = be:getObjectByID(self.pinIn.vehId.value)
+  local veh = getObjectByID(self.pinIn.vehId.value)
   local oobb = veh:getSpawnWorldOOBB()
 
   self.xOffset:set(veh:getDirectionVector():cross(veh:getDirectionVectorUp()) * (self.pinIn.widthOffset.value or 0))

@@ -13,6 +13,9 @@ local imVec4Green = im.ImVec4(0,1,0,1)
 local imVec4TransparentWhite = im.ImVec4(1,1,1,0.25)
 local hoveredElement
 local columnWidth = 150
+local undoWidth = 30
+
+local configListGenerator = require('/lua/ge/extensions/util/configListGenerator')
 
 
 
@@ -181,9 +184,47 @@ function C:addDropdown(label, fieldName, values, defaultValue, valueTooltips)
   return self:addElement(elem)
 end
 
+function C:addVehicleFilter(label, fieldName, displayOptions)
+  local elem = {type = 'vehicleFilter', label = label, fieldName = fieldName, displayOptions = displayOptions}
+  elem.defaultValue = {}
+  elem.filterByProp = {} -- Available filter properties and their ranges/values
+  elem.filterUiData = {} -- UI metadata for filters
+  elem.initialized = false
+  elem.manualAdditions = {} -- List of manually added configs
+  elem.manualRemovals = {} -- Set of manually removed configs
+  elem.cachedVehicleOptions = nil -- Cached filtered vehicle options
+  elem._cachedVehicleList = nil -- Cached vehicle list from core_vehicles
+  elem._cachedVehicleByModelKey = nil -- Cached lookup table for vehicles by model key
+  elem._cachedFinalConfigs = nil -- Cached final configs list
+  elem._cachedRemovalsNested = nil -- Cached nested removals structure
+  elem._cachedRemovalsCount = 0 -- Track removals count for cache invalidation
+  elem._cachedAdditionsCount = 0 -- Track additions count for cache invalidation
+  elem.baseFilter = {} -- Base filter that all probability settings inherit from (like dealership filter)
+  elem.probabilitySettings = {} -- Array of probability settings
+  elem.maxVehicles = 0 -- Max vehicles to select (0 = all matching)
+  elem.popAttribute = "Population" -- Attribute to use for weighting
+  elem.allowAuxiliaryVehicles = false -- Allow auxiliary vehicles
+  elem.allowLoadedTrailers = false -- Allow vehicles with loads
+  elem.vehicleFilter = require('/lua/ge/extensions/editor/util/vehicleFilterUtil')(elem)
+  return self:addElement(elem)
+end
+
 function C:addContainerId(label, fieldName, idType, defaultValue, displayOptions)
   defaultValue = defaultValue or "(none)"
   return self:addElement({type = "elementId", label = label, fieldName = fieldName, value = defaultValue, defaultValue = defaultValue , displayOptions = displayOptions})
+end
+
+function C:addZoneSelector(label, fieldName, globalInfoFolderFieldName, displayOptions)
+  local elem = {type = 'zoneSelector', label = label, fieldName = fieldName, displayOptions = displayOptions}
+  elem.globalInfoFolderFieldName = globalInfoFolderFieldName -- Field name that contains the globalInfoFolder path
+  elem.defaultValue = {}
+  elem.initialZones = {} -- Array of selected initial zone names
+  elem.destinationZones = {} -- Array of selected destination zone names
+  elem.loadedZones = {} -- Cached list of available zones
+  elem.sitesFile = nil -- Cached sites file path
+  elem.zonesLoaded = false -- Flag to track if zones have been loaded
+  elem.zoneSelector = require('/lua/ge/extensions/editor/util/zoneSelectorUtil')(elem)
+  return self:addElement(elem)
 end
 
 -- decorators
@@ -196,6 +237,7 @@ local defaultColors = {
   white = im.ImVec4(1,1,1,0.75),
   black = im.ImVec4(0,0,0,0.75),
 }
+function C:addBigDecoHeader(text, color) return self:addElement({type = 'bigDecoHeader', text = text or "", color = defaultColors[color or 'default'] or defaultColors['default']}) end
 function C:addDecoHeader(text, color) return self:addElement({type = 'decoHeader', text = text or "", color = defaultColors[color or 'default'] or defaultColors['default']}) end
 function C:addDecoText(text, tooltip) return self:addElement({type = 'decoText', text = text or "", tooltip = tooltip}) end
 function C:addDecoSeparator() return self:addElement({type = 'decoSeparator'}) end
@@ -243,6 +285,27 @@ local function leaderboardGetNewData(e) return {
   {fieldName = e.fieldNameMedium, value = e.defaultMedium},
   {fieldName = e.fieldNameWorst, value = e.defaultWorst}
 } end
+local function vehicleFilterGetNewData(e)
+  -- Return filter settings structure - filter settings are saved in vehicleFilters
+  return {
+    {fieldName = e.fieldName, value = {
+      baseFilter = {},
+      probabilitySettings = {},
+      manualAdditions = {},
+      manualRemovals = {},
+      maxVehicles = 0,
+      popAttribute = "Population",
+      allowAuxiliaryVehicles = false,
+      allowLoadedTrailers = false
+    }}
+  }
+end
+local function zoneSelectorGetNewData(e)
+  return {
+    {fieldName = e.fieldName .. "_initialZones", value = {}},
+    {fieldName = e.fieldName .. "_destinationZones", value = {}}
+  }
+end
 local newDataFunctions = {
   custom = customGetNewData,
   numeric = defaultValueGetNewData,
@@ -258,6 +321,8 @@ local newDataFunctions = {
   dropdown = defaultValueGetNewData,
   simpleLapConfig = defaultValue,
   elementId = defaultValueGetNewData,
+  vehicleFilter = vehicleFilterGetNewData,
+  zoneSelector = zoneSelectorGetNewData,
 }
 function C:getNewData()
   local ret = {}
@@ -273,6 +338,7 @@ end
 
 
 ------------ set container functions ----------------
+
 local function customSetContainer(e, ctd) e.setContainerFunction(e, ctd) end
 local function numericSetContainer(e, ctd) e.ptr[0] = ctd[e.fieldName] or e.defaultValue end
 local function stringSetContainer(e, ctd) e.ac = im.ArrayChar(e.len, ctd[e.fieldName] or e.defaultValue) e._translated = nil end
@@ -284,6 +350,14 @@ local function fixedFileSetContainer(e, ctd) e.foundFile= nil end
 local function leaderboardSetContainer(e, ctd) e.best[0] = ctd[e.fieldNameBest] or e.defaultBest e.medium[0] = ctd[e.fieldNameMedium] or e.defaultMedium e.worst[0] = ctd[e.fieldNameWorst] or e.defaultWorst e.count[0] = ctd[e.fieldNameCount] or e.defaultCount end
 local function simpleLapConfigSetContainer(e, ctd) e.lapConfig:set(ctd[e.fieldName] or deepcopy(e.defaultPos)) end
 local function elementIdSetContainer(e, ctd) e.value = ctd.value or e.defaultValue end
+local function vehicleFilterSetContainer(e, ctd, mission)
+  e.vehicleFilter:setContainer(ctd, mission)
+end
+
+local function zoneSelectorSetContainer(e, ctd)
+  e.zoneSelector:setContainer(ctd)
+end
+
 local setContainerFunctions = {
   custom = customSetContainer,
   numeric = numericSetContainer,
@@ -299,12 +373,15 @@ local setContainerFunctions = {
   reward = numericSetContainer,
   simpleLapConfig = simpleLapConfigSetContainer,
   elementId = elementIdSetContainer,
+  vehicleFilter = vehicleFilterSetContainer,
+  zoneSelector = zoneSelectorSetContainer,
 }
 
 function C:setContainer(c)
   self.container = c
   for _, element in ipairs(self.elements) do
-    (setContainerFunctions[element.type] or nop)(element, c[self.typeDataFieldName])
+    -- Pass both missionTypeData and the full mission container for editor-only storage
+    (setContainerFunctions[element.type] or nop)(element, c[self.typeDataFieldName], c)
     if element.valueChangedCallback then element:valueChangedCallback(self.container[self.typeDataFieldName]) end
   end
 end
@@ -376,6 +453,36 @@ local function missionIdCheckContainer(e, ctd, c)
   return
 end
 
+-- Check for old vehicleFilters format (array of vehicle configs) that should be cleaned up
+local function vehicleFilterCheckContainer(e, ctd, c)
+  local issues = {}
+
+  -- Check if old vehicleFilters format exists (array of vehicle configs, not filter settings object)
+  if ctd[e.fieldName] and type(ctd[e.fieldName]) == "table" and #ctd[e.fieldName] > 0 then
+    -- Check if it's the old format (array with model/config) or new format (object with baseFilter)
+    local first = ctd[e.fieldName][1]
+    if first and (first.model or first.config) and not first.baseFilter then
+      -- Old format detected - should be cleaned up (convert to filter settings structure)
+      table.insert(issues, {
+        label = 'Old vehicleFilters format detected (array with ' .. #ctd[e.fieldName] .. ' vehicle configs). This should be converted to filter settings format.',
+        data = {fieldName = e.fieldName, value = {
+          baseFilter = {},
+          probabilitySettings = {},
+          manualAdditions = {},
+          manualRemovals = {},
+          maxVehicles = 0,
+          popAttribute = "Population",
+          allowAuxiliaryVehicles = false,
+          allowLoadedTrailers = false
+        }},
+        fixable = true,
+        severity = 'warning'
+      })
+    end
+  end
+
+  return issues
+end
 
 local checkContainerFunctions = {
   modelconfig = modelConfigCheckContainer,
@@ -384,6 +491,7 @@ local checkContainerFunctions = {
   race = fileCheckContainer,
   sites = fileCheckContainer,
   elementId = elementIdSetContainer,
+  vehicleFilter = vehicleFilterCheckContainer,
 }
 function C:checkContainer(c, fix, tags)
   self.container = c
@@ -395,8 +503,10 @@ function C:checkContainer(c, fix, tags)
       if ctd[val.fieldName] == nil and val.value ~= nil then
         table.insert(issues, {label = 'Missing '.. self.typeDataFieldName .. ' Value: ' .. val.fieldName, data = val, fixable = true, severity='error'})
       end
-      if ctd[val.fieldName] ~= nil and element.defaultValue ~= nil and (type(ctd[val.fieldName]) ~= type(element.defaultValue)) then
-        table.insert(issues, {label = 'Mismatched '.. self.typeDataFieldName .. ' Value: ' .. val.fieldName .. string.format(" (%s, should be %s)", type(ctd[val.fieldName]), type(element.defaultValue)), data=val, severity='error', fixable=true})
+      -- Compare against val.value (from getNewData) which represents the actual type being saved
+      -- This is correct for vehicleFilter/zoneSelector which save strings, not tables
+      if ctd[val.fieldName] ~= nil and val.value ~= nil and (type(ctd[val.fieldName]) ~= type(val.value)) then
+        table.insert(issues, {label = 'Mismatched '.. self.typeDataFieldName .. ' Value: ' .. val.fieldName .. string.format(" (%s, should be %s)", type(ctd[val.fieldName]), type(val.value)), data=val, severity='error', fixable=true})
       end
       fieldsChecked[val.fieldName] = true
     end
@@ -438,7 +548,11 @@ local whiteColorF = ColorF(1,1,1,1)
 local blackColorI = ColorI(0,0,0,192)
 local blackColor = color(0,0,0,192)
 local function label(e)
-  im.Columns(2) im.SetColumnWidth(0,columnWidth)
+  local width = im.GetContentRegionAvailWidth()
+  im.Columns(3, "editorElementColumns" .. tostring(e._id), true)
+  im.SetColumnWidth(0,columnWidth)
+  im.SetColumnWidth(1,width - columnWidth - undoWidth - 10)
+  im.SetColumnWidth(2,undoWidth)
   im.TextWrapped(e.label)
   if e.displayOptions.tooltip then
     im.tooltip(e.displayOptions.tooltip)
@@ -457,33 +571,50 @@ local function customDraw(e, ctd, container) return e.drawFunction(e, ctd, conta
 local function numericDraw(e, ctd)
   label(e)
   im.PushItemWidth(im.GetContentRegionAvailWidth())
-  editEnded[0] = im.InputFloat('##'..e.fieldName, e.ptr, 1, 5, nil, im.InputTextFlags_EnterReturnsTrue)
+  -- Handle displayOptions as either a table or a string (tooltip)
+  local displayOpts = type(e.displayOptions) == 'table' and e.displayOptions or {}
+  editEnded[0] = im.InputFloat('##'..e.fieldName, e.ptr, displayOpts.stepSmall or 1, displayOpts.stepLarge or 5, displayOpts.format or nil, im.InputTextFlags_EnterReturnsTrue)
   if editEnded[0] then
-    if e.displayOptions.min and e.ptr[0] < e.displayOptions.min then
-      e.ptr[0] = e.displayOptions.min
+    if displayOpts.min and e.ptr[0] < displayOpts.min then
+      e.ptr[0] = displayOpts.min
     end
-    if e.displayOptions.max and e.ptr[0] > e.displayOptions.max then
-      e.ptr[0] = e.displayOptions.max
+    if displayOpts.max and e.ptr[0] > displayOpts.max then
+      e.ptr[0] = displayOpts.max
     end
     ctd[e.fieldName] = e.ptr[0]
   end
-  if e.displayOptions.unit == 'velocity' then
+  if displayOpts.unit == 'velocity' then
     im.BeginDisabled()
     im.Text(string.format("%0.2f m/s = %0.2f %s",e.ptr[0],translateVelocity(e.ptr[0], true)))
     im.EndDisabled()
   end
-  if e.displayOptions.unit == 'distance' then
+  if displayOpts.unit == 'distance' then
     im.BeginDisabled()
     im.Text(string.format("%0.2f m = %0.2f %s",e.ptr[0],translateDistance(e.ptr[0], true)))
     im.EndDisabled()
   end
-  if e.displayOptions.unit == 'time' then
+  if displayOpts.unit == 'time' then
     im.BeginDisabled()
     local t = e.ptr[0]
     im.Text(string.format("%0.2f s = %d:%02d.%02d mm:ss.mmm",t,(t-(t%60))/60, math.floor(t%60), 100*(t%1)))
     im.EndDisabled()
   end
+  -- Show tooltip if displayOptions is a string or has a tooltip property
+  if type(e.displayOptions) == 'string' then
+    im.tooltip(e.displayOptions)
+  elseif displayOpts.tooltip then
+    im.tooltip(displayOpts.tooltip)
+  end
   im.PopItemWidth()
+  im.NextColumn()
+  local isDefault = math.abs(e.ptr[0] - e.defaultValue) < 10e-6
+  if isDefault then im.BeginDisabled() end
+  if editor.uiIconImageButton(editor.icons.undo, imVec24x24) then
+    e.ptr[0] = e.defaultValue
+    ctd[e.fieldName] = e.ptr[0]
+    editEnded[0] = true
+  end
+  if isDefault then im.EndDisabled() end
   im.Columns(1)
   return editEnded[0]
 end
@@ -501,7 +632,7 @@ local function stringDraw(e, ctd)
   if hasTranslate then
     im.SameLine()
     if not e._translated then
-      e._translated = translateLanguage(ffi.string(e.ac), noTranslation)
+      e._translated = _tr(ffi.string(e.ac), noTranslation)
     end
     editor.uiIconImage(editor.icons.translate, imVec24x24 , (e._translated or noTranslation) == noTranslation and imVec4Red or imVec4Green)
     if im.IsItemHovered() then
@@ -527,6 +658,16 @@ local function stringDraw(e, ctd)
     im.PopItemWidth()
   end
   im.PopItemWidth()
+
+  im.NextColumn()
+  local isDefault = ctd[e.fieldName] == e.defaultValue
+  if isDefault then im.BeginDisabled() end
+  if editor.uiIconImageButton(editor.icons.undo, imVec24x24) then
+    e.ac = im.ArrayChar(e.len, e.defaultValue)
+    editEnded[0] = true
+  end
+  if isDefault then im.EndDisabled() end
+
   im.Columns(1)
   if editEnded[0] then e._translated = nil ctd[e.fieldName] = ffi.string(e.ac) return true end
   return false
@@ -536,6 +677,17 @@ local function boolDraw(e, ctd)
   local ret = false
   local boxText = e.displayOptions.boxText or ""
   if im.Checkbox(boxText..'##'..e.fieldName, e.ptr) then ctd[e.fieldName] = e.ptr[0] ret=true end
+
+  im.NextColumn()
+  local isDefault = e.ptr[0] == e.defaultValue
+  if isDefault then im.BeginDisabled() end
+  if editor.uiIconImageButton(editor.icons.undo, imVec24x24) then
+    e.ptr[0] = e.defaultValue
+    ctd[e.fieldName] = e.defaultValue
+    editEnded[0] = true
+  end
+  if isDefault then im.EndDisabled() end
+
   im.Columns(1)
   return ret
 end
@@ -568,23 +720,46 @@ local function transformDraw(e, ctd, m, mouseInfo)
     local scl = (x+y+z)
     C:drawAxisBox((-scl+e.transform.pos),x*2,y*2,z*2,color(e.drawColor[1]*255, e.drawColor[2]*255, e.drawColor[3]*255, e.drawColor[4]*255))
   end
+
+  im.NextColumn()
+  if editor.uiIconImageButton(editor.icons.undo, imVec24x24) then
+    e.transform:set(vec3(e.defaultPos), quat(e.defaultRot), e.oneDimScale and (e.defaultScl) or (vec3(e.defaultScl)))
+    ctd[e.fieldNamePos] = e.hasPos and (e.transform.pos:toTable())
+    ctd[e.fieldNameRot] = e.hasRot and (e.transform.rot:toTable())
+    ctd[e.fieldNameScl] = e.hasScl and (e.oneDimScale and e.transform.scl or e.transform.scl:toTable())
+    ret = true
+  end
+  im.tooltip("Doesnt check if this value is already the default.")
+
   im.Columns(1)
   return ret
 end
 
 local function modelConfigDraw(e, ctd)
   label(e)
-
+  local ret = false
   if ui_flowgraph_editor.vehicleSelector(e.mc) then
     ctd[e.fieldNameModel] = e.mc.model
     ctd[e.fieldNameConfig] = e.mc.config
     ctd[e.fieldNameConfigPath] = e.mc.configPath
-    im.Columns(1)
-    return true
+    ret = true
   end
 
+  im.NextColumn()
+  local isDefault = ctd[e.fieldNameModel] == e.defaultModel
+    and ctd[e.fieldNameConfig] == e.defaultConfig
+    and ctd[e.fieldNameConfigPath] == e.defaultConfigPath
+  if isDefault then im.BeginDisabled() end
+  if editor.uiIconImageButton(editor.icons.undo, imVec24x24) then
+    e.mc.model = e.defaultModel
+    e.mc.config = e.defaultConfig
+    e.mc.configPath = e.defaultConfigPath
+    ret = true
+  end
+  if isDefault then im.EndDisabled() end
+
   im.Columns(1)
-  return false
+  return ret
 end
 
 local function fileDraw(e, ctd, container)
@@ -620,15 +795,48 @@ end
 --------------------------------------------
 --What to do with this for the quest system?
 --------------------------------------------
+
+local function findFile(f, layers)
+  local success = false
+  local files = {}
+  for _, path in ipairs(paths) do
+    if path ~= "" then
+      table.insert(files, path)
+      if self.savedDir then
+        table.insert(files, self.savedDir .. path)
+      end
+      if self.activity and self.activity.missionFolder then
+        table.insert(files, self.activity.missionFolder .. "/" .. path)
+      end
+      if self.activity and self.activity.layers and type(self.activity.layers) == "table" then
+        for _, layer in ipairs(self.activity.layers) do
+          table.insert(files, layer.dir .. path)
+        end
+      end
+    end
+  end
+  for _, path in ipairs(files) do
+    if FS:fileExists(path) then
+      return path, true
+    end
+  end
+end
+
 local function fixedFileDraw(e, ctd, container)
   label(e)
   if e.foundFile == nil then
-    for _, file in ipairs(e.filepathsInfolder) do
-      if FS:fileExists(container.missionFolder .. file) then
-        e.foundFile = container.missionFolder .. file
+    local searchFiles = {}
+    for _, layer in ipairs(container.layers or {{dir = container.missionFolder}}) do
+      for _, file in ipairs(e.filepathsInfolder) do
+        table.insert(searchFiles, layer.dir .. file)
+      end
+    end
+    for _, file in ipairs(searchFiles) do
+      if FS:fileExists(file) then
+        e.foundFile = file
       end
       if not e.foundFile then
-        local fp, fn, ext = path.split(container.missionFolder .. file, true)
+        local fp, fn, ext = path.split(file, true)
         local files = FS:findFiles(fp, fn, -1, true, false)
         e.foundFile = files[1]
       end
@@ -638,8 +846,10 @@ local function fixedFileDraw(e, ctd, container)
     im.OpenPopup("Editor Helper File Context Menu " .. e._id)
   end
   if im.BeginPopup("Editor Helper File Context Menu " .. e._id) then
-    if im.Selectable1("Show in Explorer...") then
-      Engine.Platform.exploreFolder(container.missionFolder.."/")
+    for _, layer in ipairs(container.layers or {{dir = container.missionFolder}}) do
+      if im.Selectable1("Show layer in Explorer: "..layer.dir) then
+        Engine.Platform.exploreFolder(layer.dir)
+      end
     end
     if not e.foundFile and im.Selectable1("Check for File again") then
       e.foundFile = nil
@@ -722,7 +932,6 @@ local function fixedFileDraw(e, ctd, container)
           prefab.loadMode = 0
           scenetree.MissionGroup:addObject(prefab.obj)
           editor.selectObjectById(prefab.obj:getId())
-          editor.setDirty()
         end
       end
       if not e.foundFile then im.EndDisabled() end
@@ -865,8 +1074,8 @@ local function leaderboardDraw(e, ctd)
     editEnded[0] = im.InputInt(e.label.." Entry Count", e.count) or editEnded[0]
     e.count[0] = math.max(1,e.count[0])
   end
-  im.BeginChild1("LB",im.ImVec2(im.GetContentRegionAvailWidth()*0.66, 62), true)
-  im.Columns(3)
+  im.BeginChild1("LB##" .. tostring(e._id),im.ImVec2(im.GetContentRegionAvailWidth()*0.66, 62), true)
+  im.Columns(3, "editorElementLeaderboardColumns" .. tostring(e._id))
   im.Text("Best Result") im.NextColumn()
   im.Text("Medium Result") im.NextColumn()
   im.Text("Worst Result") im.NextColumn()
@@ -918,6 +1127,17 @@ local function dropdownDraw(e, ctd, container)
     end
     im.EndCombo()
   end
+
+  im.NextColumn()
+  local isDefault = ctd[e.fieldName] == e.defaultValue
+  if isDefault then im.BeginDisabled() end
+  if editor.uiIconImageButton(editor.icons.undo, imVec24x24) then
+    ctd[e.fieldName] = e.defaultValue
+    ret = true
+  end
+  if isDefault then im.EndDisabled() end
+
+
   im.Columns(1)
   return ret
 end
@@ -938,12 +1158,22 @@ local function elementIdDraw(e, ctd, container)
   return ret ~= nil
 end
 
+local function vehicleFilterDraw(e, ctd, container)
+  return e.vehicleFilter:draw(ctd, container, label)
+end
+
+local function bigDecoHeaderDraw(e, ctd) im.PushFont3("cairo_semibold_large") im.TextColored(e.color, e.text) im.PopFont() end
 local function decoHeaderDraw(e, ctd) im.PushFont3("cairo_regular_medium") im.TextColored(e.color, e.text) im.PopFont() end
-local function decoTextDraw(e, ctd) im.Columns(2) im.SetColumnWidth(0,columnWidth) im.Dummy(im.ImVec2(1,1)) im.NextColumn() im.TextWrapped(e.text) if e.tooltip then im.tooltip(e.tooltip) end im.Columns(1) end
+local function decoTextDraw(e, ctd) im.Columns(2, "editorElementDecoTextColumns" .. tostring(e._id)) im.SetColumnWidth(0,columnWidth) im.Dummy(im.ImVec2(1,1)) im.NextColumn() im.TextWrapped(e.text) if e.tooltip then im.tooltip(e.tooltip) end im.Columns(1) end
 local separatorColor = im.GetColorU322(im.ImVec4(1,1,1,0.5))
 local separatorDummySize = im.ImVec2(0,5)
 local function decoSeparatorDraw(e, ctd) im.Dummy(separatorDummySize) im.ImDrawList_AddLine(im.GetWindowDrawList(), im.GetCursorScreenPos(), im.ImVec2(im.GetCursorScreenPos().x+im.GetContentRegionAvailWidth(), im.GetCursorScreenPos().y), separatorColor, 1) im.Dummy(separatorDummySize) end
 local function decoDummyDraw(e, ctd) im.Dummy(im.ImVec2(0,e.height)) end
+
+local function zoneSelectorDraw(e, ctd, container)
+  return e.zoneSelector:draw(ctd, container, label)
+end
+
 local drawFunctions = {
   custom = customDraw,
   numeric = numericDraw,
@@ -959,11 +1189,14 @@ local drawFunctions = {
   reward = rewardDraw,
   dropdown = dropdownDraw,
   decoHeader = decoHeaderDraw,
+  bigDecoHeader = bigDecoHeaderDraw,
   decoText = decoTextDraw,
   decoSeparator = decoSeparatorDraw,
   decoDummy = decoDummyDraw,
   simpleLapConfig = simpleLapConfigDraw,
   elementId = elementIdDraw,
+  vehicleFilter = vehicleFilterDraw,
+  zoneSelector = zoneSelectorDraw,
 }
 
 
@@ -1077,9 +1310,13 @@ function C:draw(filterOptions)
 
     if show then
       editEnded[0] = false
-      if not element.hidden and (drawFunctions[element.type] or nop)(element, self.container[self.typeDataFieldName], self.container, self.mouseInfo) then
-        if element.valueChangedCallback then element:valueChangedCallback(self.container[self.typeDataFieldName]) end
-        self.container._dirty = true
+      if not element.hidden then
+        im.PushID1("editorElement" .. tostring(element._id))
+        if (drawFunctions[element.type] or nop)(element, self.container[self.typeDataFieldName], self.container, self.mouseInfo) then
+          if element.valueChangedCallback then element:valueChangedCallback(self.container[self.typeDataFieldName]) end
+          self.container._dirty = true
+        end
+        im.PopID()
       end
     end
   end
@@ -1297,6 +1534,7 @@ function C:setAutoAdditionalAttributes(key, auto)
   self.autoAdditionalAttributes[key] = auto
 end
 
+
 return function(derivedClass, mode, ...)
   local o = {}
   setmetatable(o, C)
@@ -1319,3 +1557,6 @@ return function(derivedClass, mode, ...)
   end
   return o
 end
+
+
+

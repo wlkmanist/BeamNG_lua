@@ -4,6 +4,7 @@
 
 local M = {}
 local crashCamEnabled = true
+local forcedEnabled = false
 local crashCamActive
 local crashCamTimer -- counts the duration of an action cam
 local crashCamSimTimer
@@ -34,6 +35,10 @@ local modeAttributes = {
   {prob = 45}, -- mode 2
   {prob = 10, cooldown = 5}, -- mode 3
 }
+
+-- 1 : checks collisions between the player vehicle -> traffic vehicles and static objects
+-- 2 : checks collisions between the player vehicle -> traffic vehicles, non-traffic vehicles and static objects
+local trackingMode = 1
 
 local startedPathCam = false
 local startPathTimer -- timing offset for starting the path cam
@@ -202,7 +207,7 @@ local function toggleActionCam(active)
     deltaSinceLastCheckpoint = 0
 
     if wasCrashCamActive then
-      simTimeAuthority.pauseSmooth(false)
+      simTimeAuthority.pause(false)
       if previousSimSpeed and simTimeAuthority.get() ~= previousSimSpeed then
         simTimeAuthority.set(previousSimSpeed)
       end
@@ -211,6 +216,7 @@ local function toggleActionCam(active)
       end
       if previousCamMode ~= nil then
         core_camera.setByName(0, previousCamMode)
+        extensions.hook("onCrashCamEnded")
       end
     end
   end
@@ -245,6 +251,7 @@ local function startPathCam(dtReal)
   core_paths.playPath(path, 0, initData)
 end
 
+
 local playerBBCenter = vec3()
 
 local playerPos = vec3()
@@ -261,7 +268,68 @@ local otherVehPos = vec3()
 local otherVel = vec3()
 local otherBBHalfAxis0, otherBBHalfAxis1, otherBBHalfAxis2 = vec3(), vec3(), vec3()
 local futureOtherBBCenter = vec3()
-local otherVehicleIds = {}
+local trafficVehicleIds = {}
+
+local function willCollideWithJbeam(vehId1, otherId)
+  if not be:getObjectActive(otherId) then return false end
+
+  otherVehPos:set(be:getObjectPositionXYZ(otherId))
+  if otherVehPos:distance(futurePlayerBBCenter) > 30 then return false end
+
+  otherVel:set(be:getObjectVelocityXYZ(otherId))
+  if otherVel:length() > 300 then return false end -- dont check any traffic vehicle going over 300 m/s because that is probably a teleport
+  if playerVel:distance(otherVel) < crashSpeedCutoff then return false end -- Only slowmo when velocity diff is great enough
+
+  futureOtherBBCenter:set(push3(be:getObjectOOBBCenterXYZ(otherId)) + push3(otherVel) * lookAheadTime)
+
+  otherBBHalfAxis0:set(be:getObjectOOBBHalfAxisXYZ(otherId, 0))
+  otherBBHalfAxis0:setScaled(bbSizeFactor)
+  otherBBHalfAxis1:set(be:getObjectOOBBHalfAxisXYZ(otherId, 1))
+  otherBBHalfAxis1:setScaled(bbSizeFactor)
+  otherBBHalfAxis2:set(be:getObjectOOBBHalfAxisXYZ(otherId, 2))
+  otherBBHalfAxis2:setScaled(bbSizeFactor)
+
+  if overlapsOBB_OBB(futurePlayerBBCenter, playerBBHalfAxis0, playerBBHalfAxis1, playerBBHalfAxis2, futureOtherBBCenter, otherBBHalfAxis0, otherBBHalfAxis1, otherBBHalfAxis2) then
+    -- set the data and toggle the action cam
+
+    -- TODO i think we can refactor this to not need the vehicle BB reference anymore
+    local obj = getObjectByID(otherId)
+    if not obj then return false end
+    local otherBB = obj:getSpawnWorldOOBB()
+    local otherTrans = otherBB:getBoxTransform().matrix
+    otherTrans:setColumn(3, futureOtherBBCenter)
+    local futureOtherBB = OrientedBox3F()
+    futureOtherBB:set2(otherTrans, otherBB:getHalfExtents() * 2)
+
+    crashCamData.futureBB1Center = futurePlayerBBCenter
+    crashCamData.futureBB2 = futureOtherBB
+    crashCamData.velocity = playerVel
+    crashCamData.hitPoint, crashCamData.camOffset = predictCrashPoint()
+    crashCamData.id1 = be:getPlayerVehicleID(0)
+    crashCamData.id2 = otherId
+    toggleActionCam(true)
+    return
+  end
+end
+
+local function updatePlayerData()
+  local playerVehId = be:getPlayerVehicleID(0)
+
+  playerVelNormalized:set(push3(playerVel):normalized())
+  playerBBCenter:set(be:getObjectOOBBCenterXYZ(playerVehId))
+  playerAxis0:set(be:getObjectOOBBAxisNormalizedXYZ(playerVehId, 0))
+  playerAxis1:set(be:getObjectOOBBAxisNormalizedXYZ(playerVehId, 1))
+  playerAxis2:set(be:getObjectOOBBAxisNormalizedXYZ(playerVehId, 2))
+
+  futurePlayerBBCenter:set(push3(playerBBCenter) + push3(playerVel) * lookAheadTime)
+
+  playerBBHalfAxis0:set(be:getObjectOOBBHalfAxisXYZ(playerVehId, 0))
+  playerBBHalfAxis0:setScaled(bbSizeFactor)
+  playerBBHalfAxis1:set(be:getObjectOOBBHalfAxisXYZ(playerVehId, 1))
+  playerBBHalfAxis1:setScaled(bbSizeFactor)
+  playerBBHalfAxis2:set(be:getObjectOOBBHalfAxisXYZ(playerVehId, 2))
+  playerBBHalfAxis2:setScaled(bbSizeFactor)
+end
 
 local function willCollideWithTraffic()
   if not gameplay_traffic then return end
@@ -270,63 +338,29 @@ local function willCollideWithTraffic()
   local parkedList = gameplay_parking.getParkedCarsList()
   if tableIsEmpty(trafficList) and tableIsEmpty(parkedList) then return end
 
-  table.clear(otherVehicleIds)
-  arrayConcat(otherVehicleIds, trafficList)
-  arrayConcat(otherVehicleIds, parkedList)
-
-  futurePlayerBBCenter:set(push3(playerBBCenter) + push3(playerVel) * lookAheadTime)
+  table.clear(trafficVehicleIds)
+  arrayConcat(trafficVehicleIds, trafficList)
+  arrayConcat(trafficVehicleIds, parkedList)
 
   local playerVehId = be:getPlayerVehicleID(0)
-  playerBBHalfAxis0:set(be:getObjectOOBBHalfAxisXYZ(playerVehId, 0))
-  playerBBHalfAxis0:setScaled(bbSizeFactor)
-  playerBBHalfAxis1:set(be:getObjectOOBBHalfAxisXYZ(playerVehId, 1))
-  playerBBHalfAxis1:setScaled(bbSizeFactor)
-  playerBBHalfAxis2:set(be:getObjectOOBBHalfAxisXYZ(playerVehId, 2))
-  playerBBHalfAxis2:setScaled(bbSizeFactor)
 
-  for _, otherId in ipairs(otherVehicleIds) do
-    if not be:getObjectActive(otherId) then goto continue end
-
-    otherVehPos:set(be:getObjectPositionXYZ(otherId))
-    if otherVehPos:distance(futurePlayerBBCenter) > 30 then goto continue end
-
-    otherVel:set(be:getObjectVelocityXYZ(otherId))
-    if otherVel:length() > 300 then goto continue end -- dont check any traffic vehicle going over 300 m/s because that is probably a teleport
-    if playerVel:distance(otherVel) < crashSpeedCutoff then goto continue end -- Only slowmo when velocity diff is great enough
-
-    futureOtherBBCenter:set(push3(be:getObjectOOBBCenterXYZ(otherId)) + push3(otherVel) * lookAheadTime)
-
-    otherBBHalfAxis0:set(be:getObjectOOBBHalfAxisXYZ(otherId, 0))
-    otherBBHalfAxis0:setScaled(bbSizeFactor)
-    otherBBHalfAxis1:set(be:getObjectOOBBHalfAxisXYZ(otherId, 1))
-    otherBBHalfAxis1:setScaled(bbSizeFactor)
-    otherBBHalfAxis2:set(be:getObjectOOBBHalfAxisXYZ(otherId, 2))
-    otherBBHalfAxis2:setScaled(bbSizeFactor)
-
-    if overlapsOBB_OBB(futurePlayerBBCenter, playerBBHalfAxis0, playerBBHalfAxis1, playerBBHalfAxis2, futureOtherBBCenter, otherBBHalfAxis0, otherBBHalfAxis1, otherBBHalfAxis2) then
-      -- set the data and toggle the action cam
-
-      -- TODO i think we can refactor this to not need the vehicle BB reference anymore
-      local obj = be:getObjectByID(otherId)
-      if not obj then goto continue end
-      local otherBB = obj:getSpawnWorldOOBB()
-      local otherTrans = otherBB:getBoxTransform().matrix
-      otherTrans:setColumn(3, futureOtherBBCenter)
-      local futureOtherBB = OrientedBox3F()
-      futureOtherBB:set2(otherTrans, otherBB:getHalfExtents() * 2)
-
-      crashCamData.futureBB1Center = futurePlayerBBCenter
-      crashCamData.futureBB2 = futureOtherBB
-      crashCamData.velocity = playerVel
-      crashCamData.hitPoint, crashCamData.camOffset = predictCrashPoint()
-      crashCamData.id1 = playerVehId
-      crashCamData.id2 = otherId
-      toggleActionCam(true)
-      return
+  for _, otherId in ipairs(trafficVehicleIds) do
+    if willCollideWithJbeam(playerVehId, otherId) then
+      return -- no need to check other vehicles
     end
-    ::continue::
   end
 end
+
+local function willCollideWithActiveVehicles()
+  local playerVehId = be:getPlayerVehicleID(0)
+
+  for vid, _ in activeVehiclesIterator() do
+    if willCollideWithJbeam(playerVehId, vid) then
+      return -- no need to check other vehicles
+    end
+  end
+end
+
 
 local function findCamPos(startPos, recDepth)
   recDepth = recDepth and recDepth + 1 or 1
@@ -499,8 +533,8 @@ local function getNumberOfPointsInCamFrustum(playerVeh)
 end
 
 local function onUpdate(dtReal, dtSim)
-  if not crashCamEnabled then return end
-  if not isStateFreeroam() then
+  if not crashCamEnabled and not forcedEnabled then return end
+  if not isStateFreeroam() and not forcedEnabled then
     crashCamEnabled = false
     return
   end
@@ -510,7 +544,7 @@ local function onUpdate(dtReal, dtSim)
   playerPos:set(be:getObjectPositionXYZ(playerVehId))
   playerVel:set(be:getObjectVelocityXYZ(playerVehId))
 
-  local hasTeleported = core_camera.objectTeleported(playerPos, playerPosLast, playerVelLast, dtReal)
+  local hasTeleported = objectTeleported(playerPos, playerPosLast, playerVelLast, dtReal)
   if not crashCamActive then
     -- crash cam is not active
     if timeSinceLastCrashCam > crashCamCooldown
@@ -519,23 +553,24 @@ local function onUpdate(dtReal, dtSim)
       and simTimeAuthority.get() == 1
       and not hasTeleported
     then
-      playerVelNormalized:set(push3(playerVel):normalized())
-      playerBBCenter:set(be:getObjectOOBBCenterXYZ(playerVehId))
-      playerAxis0:set(be:getObjectOOBBAxisNormalizedXYZ(playerVehId, 0))
-      playerAxis1:set(be:getObjectOOBBAxisNormalizedXYZ(playerVehId, 1))
-      playerAxis2:set(be:getObjectOOBBAxisNormalizedXYZ(playerVehId, 2))
+      updatePlayerData()
 
-      willCollideWithTraffic()
-      willCollideWithWall()
-      crashCheckBasedOnVelocity(dtSim)
-      --rolloverCheck()
+      if trackingMode == 1 then
+        willCollideWithTraffic()
+        willCollideWithWall()
+        crashCheckBasedOnVelocity(dtSim)
+        --rolloverCheck()
+      elseif trackingMode == 2 then
+        willCollideWithActiveVehicles()
+        willCollideWithWall()
+      end
     end
     timeSinceLastCrashCam = timeSinceLastCrashCam + dtSim
   else
     -- crash cam is active
     crashCamTimer = crashCamTimer + dtReal
     crashCamSimTimer = crashCamSimTimer + dtSim
-    local playerVeh = be:getObjectByID(playerVehId)
+    local playerVeh = getObjectByID(playerVehId)
 
     if crashCamData.id2 then
       -- crash with other vehicle
@@ -640,6 +675,12 @@ local function onTogglePause()
   end
 end
 
+local function onBeforeMenuOpened()
+  if crashCamActive then
+    toggleActionCam(false)
+  end
+end
+
 local function onVehicleSwitched(oldVehId)
   if crashCamActive then
     core_camera.setVehicleCameraByNameWithId(oldVehId, previousCamMode, false)
@@ -659,6 +700,18 @@ local function trackVehReset()
   toggleActionCam(false)
 end
 
+local function setTrackingMode(mode)
+  trackingMode = mode
+end
+
+local function getTrackingMode()
+  return trackingMode
+end
+
+local function setForcedEnabled(enabled)
+  forcedEnabled = enabled
+end
+
 M.onUpdate = onUpdate
 M.onVehicleResetted = onVehicleResetted
 M.onReplayStateChanged = onReplayStateChanged
@@ -667,12 +720,14 @@ M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
-M.onSettingsChanged = onSettingsChanged
 M.trackCamMode = trackCamMode
 M.onVehicleSwitched = onVehicleSwitched
 M.onAnyMissionChanged = onAnyMissionChanged
 M.onBeforeBigMapActivated = onBeforeBigMapActivated
 M.onTogglePause = onTogglePause
+M.onBeforeMenuOpened = onBeforeMenuOpened
 M.trackVehReset = trackVehReset
-
+M.setTrackingMode = setTrackingMode
+M.setForcedEnabled = setForcedEnabled
+M.getTrackingMode = getTrackingMode
 return M

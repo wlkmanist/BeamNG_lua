@@ -27,7 +27,7 @@ local function onPhysicsStep(dt)
       tmpVectorSum:set(0, 0, 0)
       for _, rBeam in ipairs(data.rimBeamsNode1) do
         local beamStress = obj:getBeamStress(rBeam)
-        local beamVector = obj:getBeamVectorFromNode(rBeam, data.axleNode1)
+        local beamVector = obj:getBeamVectorFromNode(rBeam, data.axleNode1):normalized()
         local forceVector = beamVector * beamStress
         tmpVectorSum = tmpVectorSum + forceVector
       end
@@ -40,7 +40,7 @@ local function onPhysicsStep(dt)
       tmpVectorSum:set(0, 0, 0)
       for _, rBeam in ipairs(data.rimBeamsNode2) do
         local beamStress = obj:getBeamStress(rBeam)
-        local beamVector = obj:getBeamVectorFromNode(rBeam, data.axleNode2)
+        local beamVector = obj:getBeamVectorFromNode(rBeam, data.axleNode2):normalized()
         local forceVector = beamVector * beamStress
         tmpVectorSum = tmpVectorSum + forceVector
       end
@@ -55,7 +55,7 @@ local function onPhysicsStep(dt)
       tmpVectorSum:set(0, 0, 0)
       for _, sBeamData in ipairs(data.sidewallBeamsNode1) do
         local beamStress = obj:getBeamStress(sBeamData.beamId)
-        local beamVector = obj:getBeamVectorFromNode(sBeamData.beamId, sBeamData.rimNodeId)
+        local beamVector = obj:getBeamVectorFromNode(sBeamData.beamId, sBeamData.rimNodeId):normalized()
         local forceVector = beamVector * beamStress
         tmpVectorSum = tmpVectorSum + forceVector
       end
@@ -68,7 +68,7 @@ local function onPhysicsStep(dt)
       tmpVectorSum:set(0, 0, 0)
       for _, sBeamData in ipairs(data.sidewallBeamsNode2) do
         local beamStress = obj:getBeamStress(sBeamData.beamId)
-        local beamVector = obj:getBeamVectorFromNode(sBeamData.beamId, sBeamData.rimNodeId)
+        local beamVector = obj:getBeamVectorFromNode(sBeamData.beamId, sBeamData.rimNodeId):normalized()
         local forceVector = beamVector * beamStress
         tmpVectorSum = tmpVectorSum + forceVector
       end
@@ -83,7 +83,7 @@ local function onPhysicsStep(dt)
       tmpVectorSum:set(0, 0, 0)
       for _, sBeam in ipairs(data.suspensionBeamsNode1) do
         local beamStress = obj:getBeamStress(sBeam)
-        local beamVector = obj:getBeamVectorFromNode(sBeam, data.axleNode1)
+        local beamVector = obj:getBeamVectorFromNode(sBeam, data.axleNode1):normalized()
         local forceVector = beamVector * beamStress
         tmpVectorSum = tmpVectorSum + forceVector
       end
@@ -93,10 +93,11 @@ local function onPhysicsStep(dt)
       smoothZ = data.suspensionBeamsNode1SmootherZ:get(tmpVectorSum.z, dt)
       data.suspensionBeamsNode1VectorSum:set(smoothX, smoothY, smoothZ)
 
+
       tmpVectorSum:set(0, 0, 0)
       for _, sBeam in ipairs(data.suspensionBeamsNode2) do
         local beamStress = obj:getBeamStress(sBeam)
-        local beamVector = obj:getBeamVectorFromNode(sBeam, data.axleNode2)
+        local beamVector = obj:getBeamVectorFromNode(sBeam, data.axleNode2):normalized()
         local forceVector = beamVector * beamStress
         tmpVectorSum = tmpVectorSum + forceVector
       end
@@ -105,12 +106,13 @@ local function onPhysicsStep(dt)
       smoothY = data.suspensionBeamsNode2SmootherY:get(tmpVectorSum.y, dt)
       smoothZ = data.suspensionBeamsNode2SmootherZ:get(tmpVectorSum.z, dt)
       data.suspensionBeamsNode2VectorSum:set(smoothX, smoothY, smoothZ)
+
     end
 
     if drawTreadNodeForces then
       tmpVectorSum:set(0, 0, 0)
       for _, tNode in ipairs(data.treadNodes) do
-        local forceVector = obj:getNodeForceVector(tNode)
+        local forceVector = obj:getNodeForceVector(tNode):normalized()
         tmpVectorSum = tmpVectorSum + forceVector
       end
       tmpVectorSum = tmpVectorSum * 0.001
@@ -154,7 +156,6 @@ local function onDebugDraw(focusPos)
       local p2x = p1 + vectorSum:dot(wheelLeftVector) * wheelLeftVector
       local p2y = p1 + vectorSum:dot(wheelForwardVector) * wheelForwardVector
       local p2z = p1 + vectorSum:dot(upVector) * upVector
-
       obj.debugDrawProxy:drawCylinder(p1, p2x, 0.05, color(0, 255, 0, 255))
       obj.debugDrawProxy:drawCylinder(p1, p2y, 0.05, color(255, 0, 0, 255))
       obj.debugDrawProxy:drawCylinder(p1, p2z, 0.05, color(0, 0, 255, 255))
@@ -178,9 +179,9 @@ local function onDebugDraw(focusPos)
       local p2y = p1 + vectorSum:dot(wheelForwardVector) * wheelForwardVector
       local p2z = p1 + vectorSum:dot(upVector) * upVector
 
-      obj.debugDrawProxy:drawCylinder(p1, p2x, 0.05, color(255, 0, 0, 255))
-      obj.debugDrawProxy:drawCylinder(p1, p2y, 0.05, color(0, 0, 255, 255))
-      obj.debugDrawProxy:drawCylinder(p1, p2z, 0.05, color(0, 255, 0, 255))
+      obj.debugDrawProxy:drawCylinder(p1, p2x, 0.05, color(0, 255, 0, 255))
+      obj.debugDrawProxy:drawCylinder(p1, p2y, 0.05, color(255, 0, 0, 255))
+      obj.debugDrawProxy:drawCylinder(p1, p2z, 0.05, color(0, 0, 255, 255))
 
       for _, beamData in ipairs(data.sidewallBeamsNode1) do
         p1 = vehiclePos + obj:getNodePosition(v.data.beams[beamData.beamId].id1)
@@ -195,7 +196,7 @@ local function onDebugDraw(focusPos)
     end
 
     if drawSuspensionBeamForces then
-      local vectorSum = data.suspensionBeamsNode1VectorSum + data.suspensionBeamsNode2VectorSum
+      local vectorSum = - data.suspensionBeamsNode1VectorSum - data.suspensionBeamsNode2VectorSum
 
       local p2x = p1 + vectorSum:dot(wheelLeftVector) * wheelLeftVector
       local p2y = p1 + vectorSum:dot(wheelForwardVector) * wheelForwardVector
@@ -213,7 +214,7 @@ local function onDebugDraw(focusPos)
       for _, beamId in ipairs(data.suspensionBeamsNode2) do
         p1 = vehiclePos + obj:getNodePosition(v.data.beams[beamId].id1)
         p2 = vehiclePos + obj:getNodePosition(v.data.beams[beamId].id2)
-        obj.debugDrawProxy:drawCylinder(p1, p2, 0.01, color(128, 255, 128, 128))
+        obj.debugDrawProxy:drawCylinder(p1, p2, 0.01, color(255, 255, 0, 128))
       end
     end
 
@@ -344,10 +345,11 @@ local function onExtensionLoaded()
         print("sidewall reinf beam not attached to any rim beam")
       end
     end
-
+--dump(v.data.beams)
     for beamId, beam in pairs(v.data.beams) do
       --we only care for non-rim beams
       if not rimBeamLookup[beamId] then
+        if (beam.id1 == node1 and beam.id2 == node2) or (beam.id2 == node1 and beam.id1 == node2) then break end
         if beam.id1 == node1 or beam.id2 == node1 then --if this beam connects to axle node 1 of the current wheel
           table.insert(data.suspensionBeamsNode1, beamId)
         elseif beam.id1 == node2 or beam.id2 == node2 then --if this beam connects to axle node 2 of the current wheel

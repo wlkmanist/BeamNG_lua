@@ -77,7 +77,7 @@ end
 function C:onVehicleGroupSpawned(vehIds, groupId)
   if self.state == 1 and self.groupId == groupId then
     for _, v in ipairs(vehIds) do
-      self.mgr.modules.vehicle:addVehicle(be:getObjectByID(v), {dontDelete = self.dontDelete})
+      self.mgr.modules.vehicle:addVehicle(getObjectByID(v), {dontDelete = self.dontDelete})
     end
     self.vehicleIds = deepcopy(vehIds)
     self.pinIn.flow.value = true
@@ -96,12 +96,7 @@ function C:work()
 
   if self.pinIn.flow.value then
     if self.state == 0 then
-      local group = self.pinIn.group.value and deepcopy(self.pinIn.group.value) or {data = gameplay_traffic.createTrafficGroup()} -- if no given group, create a default traffic group
-      if self.pinIn.randomColors.value then
-        for _, v in ipairs(group.data) do
-          v.paintName = '(Random)'
-        end
-      end
+      local group = self.pinIn.group.value and deepcopy(self.pinIn.group.value) or {data = gameplay_traffic_trafficUtils.createTrafficGroup()} -- if no given group, create a default traffic group
 
       local quantity = self.pinIn.quantity.value
       if not quantity or quantity < 0 then
@@ -116,8 +111,11 @@ function C:work()
         local shuffle = self.pinIn.shuffle.value and true or false
         local pos = self.pinIn.startPos.value and vec3(self.pinIn.startPos.value)
         local rot = self.pinIn.startRot.value and quat(self.pinIn.startRot.value)
+        local mode = self.pinIn.spawnMode.value
+        local gap = self.pinIn.spawnGap.value
+        local options = {name = group.name, shuffle = shuffle, mode = mode, gap = gap, pos = pos, rot = rot, randomPaints = self.pinIn.randomColors.value}
 
-        self.groupId = core_multiSpawn.spawnGroup(group.data, quantity, {name = group.name, shuffle = shuffle, mode = self.pinIn.spawnMode.value, gap = self.pinIn.spawnGap.value, pos = pos, rot = rot})
+        self.groupId = core_multiSpawn.spawnGroup(group.data, quantity, options)
         self.state = 1
       end
     end

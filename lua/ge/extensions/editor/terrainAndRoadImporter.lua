@@ -743,6 +743,7 @@ local function onEditorGui()
     im.PopStyleVar()
     im.tooltip('Set the terraforming margin (around roads).')
   end
+  editor.endWindow()
 end
 
 -- Called when the 'Terrain And Roads Importer' feature icon is pressed.
@@ -769,8 +770,7 @@ local function onEditorInitialized()
       icon = editor.icons.terrainToLine,
       iconTooltip = "Terrain And Road Importer",
       auxShortcuts = {},
-      hideObjectIcons = true,
-      sortOrder = 9005 }
+      hideObjectIcons = true }
 
     editor.registerWindow(toolWinName, toolWinSize)
   end

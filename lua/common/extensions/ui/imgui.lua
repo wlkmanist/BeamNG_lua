@@ -14,7 +14,7 @@ end
 local function initContext()
   if vmType == 'game' then
     -- get the 1st, initial c++ context that is managed by the game engine
-    M.ctx = C.imgui_GetMainContext()
+    M.ctx = Engine.imgui.GetMainContext()
   end
 end
 

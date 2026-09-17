@@ -21,7 +21,7 @@ function C:init(missionEditor)
   self.missionEditor = missionEditor
   self.rawEditPerMission = {}
   self.careerSetup = {}
-  self.tabName = "Career"
+  self.tabName = "Objectives"
   self.rawCheckbox = im.BoolPtr(false)
 
   self.showInCareerCheckbox = im.BoolPtr(false)
@@ -29,85 +29,21 @@ function C:init(missionEditor)
 
 
 
-  self.copiedStars = {}
-  self.attributeOptions = {'money','beamXP','vouchers'}
-  self.branchOptions = {"(none)"}
+  self.attributeOptions = {'money','vouchers'}
   self.skillOptions = {"(none)"}
+
   extensions.load('career_branches')
   for _, branch in ipairs(career_branches.getSortedBranches()) do
     table.insert(self.attributeOptions, branch.attributeKey)
-    if branch.isSkill then
-      table.insert(self.skillOptions, branch.id)
-    else
-      table.insert(self.branchOptions, branch.id)
-    end
+    table.insert(self.skillOptions, branch.id)
   end
+
+  table.sort(self.skillOptions)
 end
 
 function C:getMissionIssues(m)
   self:setMission(m)
   local issues = {}
-  -- check for no stars set
-  local starSet = false
-  if next(self.missionInstance.sortedStarKeys or {}) then
-    for key, act in pairs(m.careerSetup.starsActive) do
-      starSet = starSet or act
-      local slot = tableFindKey(self.mission.careerSetup.defaultStarKeys, key)
-      if act and slot then
-        local hasDefault = self.missionInstance.defaultStarOutroTexts[key]
-        local hasText = (self.mission.careerSetup.starOutroTexts[key] or "") ~= ""
-        local usingDefault = hasDefault and not hasText
-
-        if not hasText then
-          if hasDefault then
-            table.insert(issues,  {label = "Star " .. key .. " using default translations.", severity = "minor"})
-          else
-            table.insert(issues,  {label = "Star " .. key .. " has no text and no default.", severity = "error"})
-          end
-        else
-          local txt = self.mission.careerSetup.starOutroTexts[key]
-          if translateLanguage(txt, txt, true) == txt then
-            table.insert(issues,  {label = "Star " .. key .. " is not translated.", severity = "error"})
-          end
-        end
-      end
-    end
-    local key = 'noStarUnlocked'
-    local hasDefault = self.missionInstance.defaultStarOutroTexts[key]
-    local hasText = (self.mission.careerSetup.starOutroTexts[key] or "") ~= ""
-    local usingDefault = hasDefault and not hasText
-
-    if not hasText then
-      if hasDefault then
-        table.insert(issues,  {label = "Star " .. key .. " using default translations.", severity = "minor"})
-      else
-        table.insert(issues,  {label = "Star " .. key .. " has no text and no default.", severity = "error"})
-      end
-    else
-      local txt = self.mission.careerSetup.starOutroTexts[key]
-      if translateLanguage(txt, txt, true) == txt then
-        table.insert(issues,  {label = "Star " .. key .. " is not translated.", severity = "error"})
-      end
-    end
-
-    if not starSet then
-      table.insert(issues, {label = 'No Stars set at all!', severity=m.careerSetup.showInCareer and 'error' or 'warning'})
-    end
-
-    if m.careerSetup.showInCareer then
-      -- check rewards being 0
-      for key, rewards in pairs(m.careerSetup.starRewards) do
-        for _, re in ipairs(rewards) do
-          if re.rewardAmount == 0 then
-            table.insert(issues, {label = key .. " Reward for " .. re.attributeKey .. " is 0!", severity='error'})
-          end
-        end
-      end
-    end
-  end
-
-
-
   return issues
 end
 
@@ -131,33 +67,11 @@ function C:setMission(mission)
   self._translatedTexts = {}
 end
 
-function C:drawDefaultStar(defaultIndex)
-  if im.BeginCombo("Default Star " .. defaultIndex, self.mission.careerSetup.defaultStarKeys[defaultIndex] or "None!") then
-    if im.Selectable1("None", not self.mission.careerSetup.defaultStarKeys[defaultIndex]) then
-      self.mission.careerSetup.defaultStarKeys[defaultIndex] = nil
-      self.mission._dirty = true
-    end
-    im.Separator()
-    for i, key in ipairs(self.starKeysSorted) do
-      if not self.mission.careerSetup.starsActive[key] then im.BeginDisabled() end
-      if im.Selectable1(key, self.mission.careerSetup.defaultStarKeys[defaultIndex] == key) then
-        self.mission.careerSetup.defaultStarKeys[defaultIndex] = key
-        self.mission._dirty = true
-      end
-      im.tooltip(translateLanguage(self.missionInstance.starLabels[key],self.missionInstance.starLabels[key], true))
-      if not self.mission.careerSetup.starsActive[key] then im.EndDisabled() end
-    end
-    im.EndCombo()
-  end
-  if self.mission.careerSetup.defaultStarKeys[defaultIndex] then
-    im.tooltip(translateLanguage(self.missionInstance.starLabels[self.mission.careerSetup.defaultStarKeys[defaultIndex]],self.missionInstance.starLabels[self.mission.careerSetup.defaultStarKeys[defaultIndex]], true))
-  end
-end
 
 function C:attributeDropdown()
   im.PushItemWidth(20)
   local ret
-  if im.BeginCombo('','...') then
+  if im.BeginCombo('##attributeDropdown','...') then
     for _, key in ipairs(self.attributeOptions) do
       if im.Selectable1(key,false) then
         ret = key
@@ -197,11 +111,12 @@ function C:drawRewardAmount(re, idx, key)
   if im.InputInt("##RA",raInput) then
     self.mission._dirty = true
     re.rewardAmount = raInput[0]
+    re._originalRewardAmount = re.rewardAmount
   end
   im.PopItemWidth()
 end
 
-function C:drawAddReward(key)
+function C:drawAddReward(key, rewards)
 
   editEnded[0] = false
   im.PushItemWidth(200)
@@ -210,22 +125,25 @@ function C:drawAddReward(key)
   im.SameLine()
   local att = self:attributeDropdown()
   im.SameLine()
+  local changed = false
+
   if (editor.uiIconImageButton(editor.icons.add, im.ImVec2(22, 22)) or att or  editEnded[0]) then
     local addKey = att or ffi.string(getBuffer("addReward--"..key, ""))
     if addKey ~= "" then
       self.mission._dirty = true
-      self.mission.careerSetup.starRewards[key] = self.mission.careerSetup.starRewards[key] or {}
-      table.insert(self.mission.careerSetup.starRewards[key], {
+      rewards = rewards or {}
+      table.insert(rewards, {
         attributeKey = addKey,
         rewardAmount = 0,
       })
       inputBuffers["addReward--"..key] = nil
+      changed = true
     end
   end
 
   im.SameLine()
   if editor.uiIconImageButton(editor.icons.content_copy, im.ImVec2(22, 22)) then
-    self.copiedRewards = deepcopy(self.mission.careerSetup.starRewards[key] or {})
+    self.copiedRewards = deepcopy(rewards or {})
   end
   im.tooltip("Copy Rewards")
   im.SameLine()
@@ -233,20 +151,26 @@ function C:drawAddReward(key)
     im.BeginDisabled()
   end
   if editor.uiIconImageButton(editor.icons.content_paste, im.ImVec2(22, 22)) then
-     self.mission.careerSetup.starRewards[key] = deepcopy(self.copiedRewards)
+     rewards = deepcopy(self.copiedRewards)
      self.mission._dirty = true
+     changed = true
   end
   im.tooltip("Paste Rewards: " ..dumps(self.copiedRewards))
   if not self.copiedRewards then
     im.EndDisabled()
   end
+
+  if changed then
+    return rewards
+  end
 end
 
-function C:drawStarRewards(key)
+function C:drawEntryFee()
+  local key = "entryFee--"
   im.PushID1(key.."starReward")
-  local rewards = self.mission.careerSetup.starRewards[key] or {}
-  local remIdx = -1
-  for i, re in ipairs(rewards) do
+  local fee = self.mission.careerSetup.entryFee or {}
+  local remIdx = nil
+  for i, re in ipairs(fee) do
     im.PushID1("Reward"..i)
     self:drawAttributeInput(re, i, key)
     im.SameLine()
@@ -258,107 +182,39 @@ function C:drawStarRewards(key)
     im.PopID()
   end
   if remIdx then
-    table.remove(rewards, remIdx)
-  end
-  self:drawAddReward(key)
-  im.PopID()
-end
-
-
-function C:starSlotSelector(key)
-  local currentSlot = 'Bonus Star'
-  local idx = tableFindKey(self.mission.careerSetup.defaultStarKeys, key)
-  if idx then
-    currentSlot = "Default Star " .. idx
-  end
-  im.PushItemWidth(im.GetContentRegionAvailWidth())
-  if im.BeginCombo("##sss"..key, currentSlot) then
-    if im.Selectable1("Bonus Star", currentSlot == "Bonus Star") then
-      if idx then
-        self.mission.careerSetup.defaultStarKeys[idx] = nil
-      end
-      self.mission._dirty = true
-    end
-    for i = 1, #tableKeys(self.mission.careerSetup.starsActive) do
-      if im.Selectable1("Default Star " .. i, currentSlot == "Default Star " .. i) then
-        if idx then
-          self.mission.careerSetup.defaultStarKeys[idx] = nil
-        end
-        self.mission.careerSetup.defaultStarKeys[i] = key
-        self.mission._dirty = true
-      end
-    end
-    im.EndCombo()
-  end
-  im.PopItemWidth()
-end
-
-function C:drawOutroText(key)
-  im.Text("Outro Text")
-  im.NextColumn()
-  im.PushID1(key.."starReward")
-
-  local hasDefault = self.missionInstance.defaultStarOutroTexts[key]
-  local usingDefault = hasDefault and (self.mission.careerSetup.starOutroTexts[key] or "") == ""
-  if not hasDefault then
-    editor.uiIconImage(editor.icons.font_download, im.ImVec2(22, 22), grayColor)
-    im.tooltip("No Default Text found.")
-  else
-    editor.uiIconImage(editor.icons.font_download, im.ImVec2(22, 22), usingDefault and greenColor or yellowColor)
-    if usingDefault then
-      im.tooltip("Using Default Translation: " ..self.missionInstance.defaultStarOutroTexts[key].." : " ..translateLanguage(self.missionInstance.defaultStarOutroTexts[key], self.missionInstance.defaultStarOutroTexts[key], true))
-    else
-      im.tooltip("Available Default Translation: " ..self.missionInstance.defaultStarOutroTexts[key].." : " ..translateLanguage(self.missionInstance.defaultStarOutroTexts[key], self.missionInstance.defaultStarOutroTexts[key], true))
-    end
-  end
-  local buf = getBuffer(key.."--OutroText", self.mission.careerSetup.starOutroTexts[key] or "")
-  editEnded[0] = false
-
-  im.SameLine()
-  im.PushItemWidth(im.GetContentRegionAvailWidth() -35)
-  editor.uiInputText("##outroText", buf, 2048, nil, nil, nil, editEnded)
-  if editEnded[0] then
+    table.remove(fee, remIdx)
     self.mission._dirty = true
-    self.mission.careerSetup.starOutroTexts[key] = ffi.string(buf)
-    self._translatedTexts[key] = nil
   end
-  im.PopItemWidth()
-
-  im.SameLine()
-  if not self._translatedTexts[key] then
-    self._translatedTexts[key] = translateLanguage(self.mission.careerSetup.starOutroTexts[key] or "", noTranslation, true)
-  end
-  editor.uiIconImage(editor.icons.translate, imVec24x24 , (self._translatedTexts[key] or noTranslation) == noTranslation and (usingDefault and yellowColor or imVec4Red) or imVec4Green)
-  if im.IsItemHovered() then
-    im.tooltip(self._translatedTexts[key])
+  local added = self:drawAddReward(key, fee)
+  if added then
+    self.mission._dirty = true
+    self.mission.careerSetup.entryFee = added
   end
   im.PopID()
 end
 
 
 function C:drawCareerSetup()
-  if im.Checkbox("Show In Career", self.showInCareerCheckbox) then
-    self.mission.careerSetup.showInCareer = self.showInCareerCheckbox[0]
-    self.mission._dirty = true
-  end
+  im.Columns(2)
+  im.SetColumnWidth(0,150)
 
-  if im.Checkbox("Show In Freeroam", self.showInFreeroamCheckbox) then
+  im.Text("Gamemode")
+  im.NextColumn()
+  if im.Checkbox("Freeroam##ShowInFreeroam", self.showInFreeroamCheckbox) then
     self.mission.careerSetup.showInFreeroam = self.showInFreeroamCheckbox[0]
     self.mission._dirty = true
   end
-
-
-  im.PushItemWidth(200)
-  if im.BeginCombo("Branch", self.mission.careerSetup.branch or "(none)") then
-    for _, branch in ipairs(self.branchOptions) do
-      if im.Selectable1(branch, branch == self.mission.careerSetup.branch) then
-        self.mission.careerSetup.branch = branch
-        self.mission._dirty = true
-      end
-    end
-    im.EndCombo()
+  im.SameLine()
+  if im.Checkbox("Career##ShowInCareer", self.showInCareerCheckbox) then
+    self.mission.careerSetup.showInCareer = self.showInCareerCheckbox[0]
+    self.mission._dirty = true
   end
-  if im.BeginCombo("Skill", self.mission.careerSetup.skill or "(none)") then
+  im.NextColumn()
+
+  im.Text("Skill")
+  im.NextColumn()
+  im.PushItemWidth(im.GetContentRegionAvailWidth())
+  if im.BeginCombo("##Skill", self.mission.careerSetup.skill or "(none)") then
     for _, skill in ipairs(self.skillOptions) do
       if im.Selectable1(skill, skill == self.mission.careerSetup.skill) then
         self.mission.careerSetup.skill = skill
@@ -368,220 +224,21 @@ function C:drawCareerSetup()
     im.EndCombo()
   end
   im.PopItemWidth()
-
-
-
-
-  im.Separator()
-  im.HeaderText("Stars")
-
-
-
-
-  for i, key in ipairs(self.starKeysSorted) do
-    im.PushID1(key.."child")
-    local toggle = false
-    if im.Checkbox(key.."##StarKey"..i, im.BoolPtr(self.mission.careerSetup.starsActive[key] or false)) then
-      toggle = true
-    end
-    im.SameLine()
-
-    im.TextColored(grayColor, translateLanguage(self.missionInstance.starLabels[key],self.missionInstance.starLabels[key], true))
-    toggle = im.IsItemClicked() or toggle
-
-    if toggle then
-      self.mission.careerSetup.starsActive[key] = not(self.mission.careerSetup.starsActive[key] or false)
-      self.mission._dirty = true
-      if self.mission.careerSetup.starsActive[key] then
-        for i = 1, 3 do
-          if self.mission.careerSetup.defaultStarKeys[i] == nil then
-            self.mission.careerSetup.defaultStarKeys[i] = key
-            break
-          end
-        end
-      else
-        for i = 1, 3 do
-          if self.mission.careerSetup.defaultStarKeys[i] == key then
-            self.mission.careerSetup.defaultStarKeys[i] = nil
-
-          end
-        end
-      end
-    end
-    if self.mission.careerSetup.starsActive[key] then
-      im.Columns(2)
-      im.SetColumnWidth(0,150)
-      im.Text("Slot")
-      im.NextColumn()
-      self:starSlotSelector(key)
-      im.Columns(1)
-
-      if self.missionTypeEditor then
-        self.missionTypeEditor:draw({onlyStar = key})
-      end
-      im.Columns(2)
-      im.SetColumnWidth(0,150)
-      im.Separator()
-      im.Text("Rewards")
-      im.NextColumn()
-      self:drawStarRewards(key)
-      im.NextColumn()
-      im.Separator()
-      self:drawOutroText(key)
-
-
-
-      im.Columns(1)
-    end
-    im.PopID()
-    if i ~= #self.starKeysSorted  then
-      im.Separator()
-    end
-  end
-  im.Columns(2)
-  im.SetColumnWidth(0,150)
-  im.Text("No Star Unlocked") im.NextColumn()im.NextColumn()
-  self:drawOutroText("noStarUnlocked")
-  im.Columns()
-  im.HeaderText("Summary")
-  im.Columns(2)
-  im.SetColumnWidth(0,150)
-  im.Text("Default Stars")
-  im.NextColumn()
-  im.Text(
-    (self.mission.careerSetup.defaultStarKeys[1] or "None!") .. ", " ..
-    (self.mission.careerSetup.defaultStarKeys[2] or "None!") .. ", " ..
-    (self.mission.careerSetup.defaultStarKeys[3] or "None!")
-    )
   im.NextColumn()
 
-  im.Text("Bonus Stars")
-  local bonusStars = {}
-  for idx, key in ipairs(self.starKeysSorted) do
-    if self.mission.careerSetup.starsActive[key] and not tableFindKey(self.mission.careerSetup.defaultStarKeys, key) then
-      table.insert(bonusStars,key)
-    end
-  end
+  im.Text("Entry Fee")
   im.NextColumn()
-  im.Text(next(bonusStars) and table.concat(bonusStars,", ") or "None!")
-  im.NextColumn()
-  local sums = {all = {}, defaultOnly = {}, bonusOnly = {}}
-  for key, rewards in pairs(self.mission.careerSetup.starRewards) do
-    for _, re in ipairs(rewards) do
-      sums.all[re.attributeKey] = (sums.all[re.attributeKey] or 0) + re.rewardAmount
-      if tableFindKey(self.mission.careerSetup.defaultStarKeys, key) then
-        sums.defaultOnly[re.attributeKey] = (sums.defaultOnly[re.attributeKey] or 0) + re.rewardAmount
-      end
-      if tableFindKey(bonusStars, key) then
-        sums.bonusOnly[re.attributeKey] = (sums.bonusOnly[re.attributeKey] or 0) + re.rewardAmount
-      end
-    end
-  end
-  im.Text("Total Rewards")
-  im.NextColumn()
-  for _, key in ipairs(tableKeysSorted(sums.all)) do
-    im.Text(key .." -> ".. sums.all[key])
-  end
-  im.Dummy(im.ImVec2(2,2))
-  im.NextColumn()
-  im.Text("Default Star Rewards")
-  im.NextColumn()
-  for _, key in ipairs(tableKeysSorted(sums.defaultOnly)) do
-    im.Text(key .." -> ".. sums.defaultOnly[key])
-  end
-  im.Dummy(im.ImVec2(2,2))
-  im.NextColumn()
-  im.Text("Bonus Star Rewards")
-  im.NextColumn()
-  for _, key in ipairs(tableKeysSorted(sums.bonusOnly)) do
-    im.Text(key .." -> ".. sums.bonusOnly[key])
-  end
-  im.Dummy(im.ImVec2(2,2))
+  self:drawEntryFee()
   im.NextColumn()
 
   im.Columns(1)
-  im.Separator()
 
-  if self.mission.allowCustomStars then
-
-  end
 
 end
 
 
 function C:draw()
-  im.HeaderText("Career Setup")
-  im.SameLine()
-  self.rawCheckbox[0] = self.rawEditPerMission[self.mission.id] or false
-  if im.Checkbox("Raw", self.rawCheckbox) then
-    self.rawEditPerMission[self.mission.id] = self.rawCheckbox[0]
-  end
-
-  im.SameLine()
-  if editor.uiIconImageButton(editor.icons.content_copy, im.ImVec2(22, 22)) then
-    self.copiedStars[self.mission.missionType] = deepcopy(self.mission.careerSetup or {})
-  end
-  im.tooltip("Copy Career Setup and Rewards")
-  im.SameLine()
-  if not self.copiedStars[self.mission.missionType] then
-    im.BeginDisabled()
-  end
-  if editor.uiIconImageButton(editor.icons.content_paste, im.ImVec2(22, 22)) then
-    self.mission.careerSetup = deepcopy(self.copiedStars[self.mission.missionType])
-    self.mission._dirty = true
-  end
-  im.tooltip("Paste Career Setup and Rewards: " ..dumps(self.copiedStars[self.mission.missionType]))
-  if not self.copiedStars[self.mission.missionType] then
-    im.EndDisabled()
-  end
-
-  im.Separator()
-
-  -- draw type editor if exists
-  if not self.rawEditPerMission[self.mission.id] then
-    self:drawCareerSetup()
-  else
-    -- otherwise draw generic json editor
-    if not self._editing then
-      if im.Button("Edit") then
-        self._editing = true
-        local serializedSaveData = jsonEncodePretty(self.mission.careerSetup or "{}")
-        local arraySize = 8*(2+math.max(128, 4*serializedSaveData:len()))
-        local arrayChar = im.ArrayChar(arraySize)
-        ffi.copy(arrayChar, serializedSaveData)
-        self._text = {arrayChar, arraySize}
-      end
-      im.Text(dumps(self.mission.careerSetup or {}))
-    else
-      if im.Button("Finish Editing") then
-        local progressString = ffi.string(self._text[1])
-        local state, newSaveData = xpcall(function() return jsonDecode(progressString) end, debug.traceback)
-        if newSaveData == nil or state == false then
-          self._text[3] = "Cannot save. Check log for details (probably a JSON syntax error)"
-        else
-          self.mission.careerSetup = newSaveData
-          self._editing = false
-          self._text = nil
-          self.mission._dirty = true
-        end
-      end
-      im.SameLine()
-      if im.Button("Cancel") then
-        self._editing = false
-        self._text = nil
-      end
-      if self._text and self._text[3] then
-        pushStyle("red")
-        im.Text(self._text[3])
-        popStyle()
-      end
-      if self._editing then
-        im.InputTextMultiline("##facEditor", self._text[1], im.GetLengthArrayCharPtr(self._text[1]), im.ImVec2(-1,-1))
-        -- display char limit
-        im.Text("(char limit: "..dumps(self._text[2]/8-2)..")")
-      end
-    end
-  end
+  self:drawCareerSetup()
 end
 
 return function(...)

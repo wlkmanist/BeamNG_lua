@@ -8,6 +8,7 @@ local M = {}
 local tcom = require('tech/techCommunication')
 local scriptai = require('scriptai')
 local techUtils = require('tech/techUtils')
+local techVehicleUtils = require('tech/techVehicleUtils')
 
 local sensorHandlers = {}
 
@@ -16,7 +17,11 @@ local clients = nil
 
 local port = nil
 
-local conSleep = 60
+local checkForClientsSteps = 0  -- was 60 but this lead to unnecessary delay when connecting/reconnecting
+local conSleep = checkForClientsSteps
+
+local nodeCache = nil
+local recorders = nil
 
 -- Helper functions
 
@@ -73,7 +78,11 @@ end
 local function submitInput(inputs, key)
   local val = inputs[key]
   if val ~= nil then
-    input.event(key, val, 1)
+    if inputs['is_adas'] then
+      extensions.tech_adasInput.apply(val, key, "safe")
+    else
+      input.event(key, val, 1)
+    end
   end
 end
 
@@ -153,6 +162,18 @@ M.requestVehicleInfo = function()
   obj:queueGameEngineLua(cmd)
 end
 
+local function startConnectionReload(ip, port)
+  server = tcom.openServer(port, ip)
+  local _
+  _, port = server:getsockname()
+  local set = tcom.newSet()
+  set:insert(server)
+  server = set
+  clients = tcom.newSet()
+  local cmd = 'extensions.hook("onVehicleConnectionReady", ' .. tostring(obj:getID()) .. ', ' .. tostring(port) .. ')'
+  obj:queueGameEngineLua(cmd)
+end
+
 M.startConnection = function(ip, skipServer)
   if skipServer then
     port = -1
@@ -174,7 +195,7 @@ end
 M.onDebugDraw = function()
   if server ~= nil then
     if conSleep <= 0 then
-      conSleep = 60
+      conSleep = checkForClientsSteps
       local newClients = tcom.checkForClients(server)
       for i = 1, #newClients do
         clients:insert(newClients[i])
@@ -189,6 +210,22 @@ M.onDebugDraw = function()
   end
 
   while tcom.checkMessages(M, clients) do end
+end
+
+M.onSerialize = function()
+  local data = {}
+  if server ~= nil then
+    local _, serverSocket = next(server)
+    data.runningIP, data.runningPort = serverSocket:getsockname()
+  end
+
+  return data
+end
+
+M.onDeserialized = function(data)
+  if data.runningIP ~= nil then
+    startConnectionReload(data.runningIP, data.runningPort)
+  end
 end
 
 -- Handlers
@@ -218,6 +255,33 @@ M.handleSetShiftMode = function(request)
   request:sendACK('ShiftModeSet')
 end
 
+M.handleCycleESCMode = function(request)
+  if controller.getController("driveModes") then
+    controller.getController("driveModes").nextDriveMode()
+  else
+    controller.getControllerSafe("esc").nextESCMode()
+  end
+  request:sendACK("ESCModeCycled")
+end
+
+M.handleSetESCMode = function(request)
+  if controller.getController("driveModes") then
+    controller.getController("driveModes").setDriveMode(request["mode"])
+  end
+  request:sendACK("ESCModeSet")
+end
+
+M.handleGetESCMode = function(request)
+  local data
+  if controller.getController("driveModes") then
+    data = controller.getController("driveModes").getCurrentDriveModeKey()
+  else
+    data = "none"
+  end
+  local response = {type = "ESCMode", data = data}
+  request:sendResponse(response)
+end
+
 M.handleSensorRequest = function(request)
   local sensorRequest, sensorData, data
   sensorData = {}
@@ -236,7 +300,7 @@ end
 
 M.handleSetColor = function(request)
   local cmd = 'Point4F(' .. request['r'] .. ', ' .. request['g'] .. ', ' .. request['b'] .. ', ' .. request['a'] .. ')'
-  cmd = 'be:getObjectByID(' .. obj:getID() .. '):setColor(' .. cmd .. ')'
+  cmd = 'getObjectByID(' .. obj:getID() .. '):setColor(' .. cmd .. ')'
   obj:queueGameEngineLua(cmd)
   request:sendACK('ColorSet')
 end
@@ -343,6 +407,27 @@ M.handleSetAiWaypoint = function(request)
   request:sendACK('AiWaypointSet')
 end
 
+M.handleDriveUsingPath = function(request)
+  local args = {}
+  args.path = request['path']
+  args.wpTargetList = request['wpTargetList']
+  args.script = request['script']
+  if args.path == nil and args.wpTargetList == nil and args.script == nil then
+    request:sendBNGValueError('One of the required arguments {path, wpTargetList, script} has to be provided.')
+    return false
+  end
+
+  args.wpSpeeds = request['wpSpeeds']
+  args.noOfLaps = request['noOfLaps']
+  args.routeSpeed = request['routeSpeed']
+  args.routeSpeedMode = request['routeSpeedMode']
+  args.driveInLane = request['driveInLane'] == true and 'on' or 'off'
+  args.aggression = request['aggression']
+  args.avoidCars = request['avoidCars'] == true and 'on' or 'off'
+  ai.driveUsingPath(args)
+  request:sendACK('DriveUsingPath')
+end
+
 M.handleSetAiSpan = function(request)
   if request['span'] then
     ai.spanMap(0)
@@ -358,6 +443,12 @@ M.handleSetAiAggression = function(request)
   ai.setAggression(aggr)
   ai.stateChanged()
   request:sendACK('AiAggressionSet')
+end
+
+M.handleSetAiAvoidCars = function(request)
+  local avoidCars = request['avoidCars'] == true and 'on' or 'off'
+  ai.setAvoidCars(avoidCars)
+  request:sendACK('AiAvoidCarsSet')
 end
 
 M.handleStartRecording = function(request)
@@ -501,23 +592,89 @@ M.handleRemoveIMU = function(request)
 end
 
 M.handleApplyVSLSettingsFromJSON = function(request)
-  extensions.vehicleStatsLogger.applySettingsFromJSON(request['fileName'])
-  request:sendACK('AppliedVSLSettings')
+  request:sendBNGValueError(
+    'ApplyVSLSettingsFromJSON is not available for the Vehicle Signal Logger. Use StartVSLLogging with signals or signalNames from BeamNGpy.'
+  )
 end
 
 M.handleWriteVSLSettingsToJSON = function(request)
-  extensions.vehicleStatsLogger.writeSettingsToJSON(request['fileName'])
-  request:sendACK('WroteVSLSettingsToJSON')
+  request:sendBNGValueError(
+    'WriteVSLSettingsToJSON is not available for the Vehicle Signal Logger. Use the in-simulation Vehicle Signal Logger editor to export CSV configs if needed.'
+  )
 end
 
+
 M.handleStartVSLLogging = function(request)
-  extensions.vehicleStatsLogger.settings.outputDir = request['outputDir']
-  extensions.vehicleStatsLogger.startLogging()
+  local lpack = require('lpack')
+  local filepath = request['filepath']
+  if filepath == nil or filepath == '' then
+    filepath = request['outputDir']
+  end
+  if type(filepath) ~= 'string' or filepath == '' then
+    request:sendBNGValueError('filepath must be a non-empty string (legacy outputDir is accepted as filepath).')
+    return
+  end
+
+  local signals = request['signals']
+  local signalNames = request['signalNames']
+  if (type(signals) ~= 'table' or #signals == 0) and type(signalNames) == 'table' and #signalNames > 0 then
+    local resolver = require('tech/signalResolver')
+    local expanded, err = resolver.signalsFromSignalNames(signalNames)
+    if not expanded then
+      request:sendBNGValueError(err or 'Failed to expand signalNames')
+      return
+    end
+    signals = expanded
+  end
+
+  if type(signals) ~= 'table' or #signals == 0 then
+    request:sendBNGValueError(
+      'Provide a non-empty signals array, or signalNames (array of strings) for name-only mode.'
+    )
+    return
+  end
+
+  for i = 1, #signals do
+    local s = signals[i]
+    if type(s) ~= 'table' or type(s.name) ~= 'string' or s.name == '' or type(s.groupName) ~= 'string' or s.groupName == '' then
+      request:sendBNGValueError('each signal needs non-empty string name and groupName (index ' .. tostring(i) .. ').')
+      return
+    end
+  end
+
+  local frequencySteps = tonumber(request['frequencySteps']) or 1
+  if frequencySteps < 1 then
+    frequencySteps = 1
+  end
+
+  local staticData = request['staticData'] or request['cData']
+
+  local c = controller.getController('vslSignalLogger')
+  if c ~= nil then
+    pcall(function()
+      c.stopLogging()
+    end)
+    controller.unloadControllerExternal('vslSignalLogger')
+  end
+
+  local payload = {
+    signals = signals,
+    filepath = filepath,
+    frequencySteps = frequencySteps,
+    staticData = staticData,
+  }
+  controller.loadControllerExternal('tech/vslSignalLogger', 'vslSignalLogger', lpack.encode({payload}))
   request:sendACK('StartedVSLLogging')
 end
 
 M.handleStopVSLLogging = function(request)
-  extensions.vehicleStatsLogger.stopLogging()
+  local c = controller.getController('vslSignalLogger')
+  if c ~= nil then
+    pcall(function()
+      c.stopLogging()
+    end)
+    controller.unloadControllerExternal('vslSignalLogger')
+  end
   request:sendACK('StoppedVSLLogging')
 end
 
@@ -644,19 +801,24 @@ M.handleGetCenterOfGravity = function(request)
 end
 
 M.handleDeflateTire = function(request)
-  beamstate.deflateTires(request['wheelId'])
+  beamstate.deflateTire(request['wheelId'])
   request:sendACK('CompletedDeflateTire')
 end
 
 --- ACC handler
 M.handleLoadACC = function(request)
-  extensions.tech_ACC.loadACC()
+  extensions.tech_ACC.load(request.speed, request.debug)
   request:sendACK('ACCloaded')
 end
 
 M.handleUnloadACC = function(request)
-  extensions.tech_ACC.unloadACC()
+  extensions.tech_ACC.unload()
   request:sendACK('ACCunloaded')
+end
+
+M.handleChangeACCSpeed = function(request)
+  extensions.tech_ACC.changeSpeed(request.speed)
+  request:sendACK('ACCSpeedChanged')
 end
 
 M.handleStartCosimulation = function(request)
@@ -667,6 +829,8 @@ M.handleStartCosimulation = function(request)
     udpSendPort = request.udpSendPort, udpReceivePort = request.udpReceivePort,
     udpSendIP = request.udpSendIP, udpReceiveIP = request.udpReceiveIP
   }}
+  local c = controller.getController('cosimulationCoupling')
+  if c then c.stop(); controller.unloadControllerExternal('cosimulationCoupling') end
   controller.loadControllerExternal('tech/cosimulationCoupling', 'cosimulationCoupling', lpack.encode(cData))
 
   request:sendACK('CosimulationStarted')
@@ -688,6 +852,66 @@ end
 
 M.handleToggleCouplers = function(request)
   beamstate.toggleCouplers(request.tag, request.forceLocked, request.forceWelded, request.forceAutoCoupling)
+end
+
+M.handleGetMassProperties = function(request)
+  local withoutWheels = request['withoutWheels'] or false
+  local properties = techVehicleUtils.computeMassProperties(withoutWheels)
+  local response = { type = 'GetMassProperties', data = properties }
+  request:sendResponse(response)
+end
+
+M.handleGetRefNodes = function(request)
+  local refNodes = techVehicleUtils.getRefNodes()
+  local response = { type = 'GetRefNodes', data = refNodes }
+  request:sendResponse(response)
+end
+
+M.handleGetNodeInfo = function(request)
+  if not nodeCache then
+    nodeCache = techVehicleUtils.getNodeCache()
+  end
+  local success, nodes = techVehicleUtils.getNodeInfo(nodeCache, request['nodes'])
+  if success then
+    local response = { type = 'GetNodeInfo', data = nodes }
+    request:sendResponse(response)
+  else
+    request:sendBNGValueError('Node ' .. tostring(nodes) .. ' does not exist.')
+  end
+end
+
+M.handleStartRecording = function(request)
+  -- Experimental feature
+  if not recorders then
+    local initData = nil
+    recorders = controller.loadControllerExternal('tech/recorders', 'recorders', initData)
+  end
+  local steps = request['steps']
+  local quantities = request['quantities']
+  recorders.startRecording(quantities, steps)
+  request:sendACK('StartRecording')
+end
+
+M.handleFetchRecordedData = function(request)
+  -- Experimental feature
+  if not recorders or not recorders.isRecording() then
+    request:sendBNGValueError('Cannot fetch data because recording was not started.')
+    return
+  end
+  local data = recorders.fetchRecordedData()
+  local response = { type = 'FetchRecordedData', data = data }
+  request:sendResponse(response)
+end
+
+M.handleStopRecording = function(request)
+  -- Experimental feature
+  if not recorders or not recorders.isRecording() then
+    request:sendBNGValueError('Cannot stop recording because recording was not started.')
+    return
+  end
+  local data = recorders.stopRecording()
+  local response = { type = 'StopRecording', data = data }
+  request:sendResponse(response)
 end
 
 return M

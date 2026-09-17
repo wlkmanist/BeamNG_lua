@@ -71,6 +71,7 @@ function C:work()
     self.val = self.pinIn.setVal.value
   end
   if self.val == nil then return end
+
   local ret = nil
   local label = tostring(self.pinIn.text.value or "Number")  ..'##'.. tostring(self.id)
   local step = self.pinIn.step.value
@@ -86,13 +87,13 @@ function C:work()
     ret = im.InputFloat(label, imVal, step, nil, format)
   elseif  self.mode == 'SliderInt' then
     imVal = im.IntPtr(self.val)
-    ret = im.SliderInt(label, imVal, min, max, format)
+    ret = im.SliderInt(label, imVal, min, max)
   elseif  self.mode == 'SliderFloat' then
     imVal = im.FloatPtr(self.val)
     ret = im.SliderFloat(label, imVal, min, max, format, self.pinIn.power.value or 1)
   elseif  self.mode == 'DragInt' then
     imVal = im.IntPtr(self.val)
-    ret = im.DragInt(label, imVal, step, min, max, format)
+    ret = im.DragInt(label, imVal, step, min, max)
   elseif  self.mode == 'DragFloat' then
     imVal = im.FloatPtr(self.val)
     ret = im.DragFloat(label, imVal, step, min, max, format, self.pinIn.power.value or 1)

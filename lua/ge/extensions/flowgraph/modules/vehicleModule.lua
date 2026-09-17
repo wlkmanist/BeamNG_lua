@@ -3,8 +3,8 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local C = {}
 C.moduleOrder = -150 -- low first, high later
-C.dependencies = {'gameplay_walk'}
-C.hooks = {'onCouplerAttached', 'onCouplerDetached','onBusUpdate'}
+C.dependencies = {'gameplay_walk', 'core_vehicleBridge'}
+C.hooks = {'onCouplerAttached', 'onCouplerDetached','onBusUpdate', 'onVehicleResetted'}
 function C:init()
   self.vehicles = {}
   self.sortedIds = {}
@@ -40,6 +40,7 @@ function C:addVehicle(veh, moreData)
     ready = veh:isReady(),
     internalName = veh:getInternalName() or '',
     couplerOffset = {},
+    couplerTags = {},
 
   }
   veh.canSave = false
@@ -134,9 +135,9 @@ end
 function C:addCouplerOffset(id, off, tag)
   local data = self.vehicles[id]
   if data then
-
     for _,d in pairs(off) do
       table.insert(data.couplerOffset, {v = vec3(d), n = _, tag = tag})
+      data.couplerTags[tag] = true
     end
     table.sort(data.couplerOffset, function(a,b) if a.tag == b.tag then return a.n < b.n else return couplerTags[a.tag] < couplerTags[b.tag] end end)
 
@@ -148,6 +149,7 @@ end
 
 function C:executionStarted()
   self._storedWalkBlacklist = gameplay_walk.getBlacklist()
+  self._storedTrailerRespawnEnabled = core_trailerRespawn and core_trailerRespawn.getEnabled()
 end
 
 function C:storeFuelAmount(id)
@@ -156,7 +158,7 @@ function C:storeFuelAmount(id)
     if self.vehicles[id] then
       self.vehicles[id].storedEnergyStorage = ret[1]
     else
-      log("W","","Vehicle with id " .. id .." is not managed by vehicle moduel. call addForeignVehicle first.")
+      log("W","","Vehicle with id " .. id .." is not managed by vehicle module; call addForeignVehicle first.")
     end
   end
   local veh = scenetree.findObjectById(id)
@@ -220,6 +222,12 @@ function C:executionStopped()
     end
     self._storedWalkBlacklist = nil
   end
+  if self._storedTrailerRespawnEnabled then
+    if core_trailerRespawn then
+      core_trailerRespawn.setEnabled(self._storedTrailerRespawnEnabled)
+    end
+    self._storedTrailerRespawnEnabled = nil
+  end
   self:clear()
 end
 
@@ -276,6 +284,12 @@ function C:isBus(id)
   local vDetails = core_vehicles.getVehicleDetails(id)
   if not vDetails or not vDetails.model then return false end
   return vDetails.model['Body Style'] == 'Bus'
+end
+
+function C:onVehicleResetted(id)
+  if self.mgr.activity and self.mgr.activity.onVehicleReset then
+    self.mgr.activity:onVehicleReset(id)
+  end
 end
 
 return _flowgraph_createModule(C)

@@ -8,7 +8,7 @@ local ffi = require('ffi')
 
 local C = {}
 
-C.name = 'End Screen Whole'
+C.name = 'EndScreen Whole'
 C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
 C.description = "Shows the end screen of a scenario with customizable buttons."
@@ -31,12 +31,16 @@ C.pinSchema = {
   { dir = 'out', type = 'flow', name = 'contHere', description = 'When the player pressed "Continue Here". Only available in career if using your own vehicle.'},
 }
 
+C.tags = { 'end', 'finish', 'screen', 'outro', 'ui' }
+
 function C:init()
   self.open = false
   self.oldOptions = {}
   self.options = {}
   self.data.includeRetryButton = true
   self.data.autoBuild = true
+  self._autoSkipTimer = 0
+  self.autoSkipComplete = false
 end
 
 function C:postInit()
@@ -49,6 +53,8 @@ function C:_executionStarted()
     p.value = false
   end
   self.open = false
+  self._autoSkipTimer = 0
+  self.autoSkipComplete = false
 end
 
 function C:drawCustomProperties()
@@ -154,6 +160,10 @@ function C:_executionStopped()
   self:closeDialogue()
 end
 
+function C:onClientEndMission()
+  self:closeDialogue()
+end
+
 function C:_afterTrigger()
   --if self.pinIn.flow.value == false and self.open then
   --  self:closeDialogue()
@@ -177,29 +187,22 @@ end
 function C:onResetGameplay()
   if self.open and self.data.includeRetryButton then
     log("I","","Closing End Screen because of reset!")
-    self.pinOut.retry.value = true
     self:closeDialogue()
+    self.pinOut.retry.value = true
   end
 end
 
 function C:closeDialogue()
-  if self.open then
+  if self.built then
     --core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
     --guihooks.trigger('MenuHide')
     --guihooks.trigger('ChangeState', 'menu')
-    self.open = false
+    guihooks.trigger('ChangeState', 'play')
   end
-end
-
-function C:onClientEndMission()
-  self:closeDialogue()
 end
 
 function C:openDialogue()
   self.open = true
-
-
-
 
   -- BUTTONS --
   local customBtns, defaultBtns = {},{}
@@ -212,28 +215,65 @@ function C:openDialogue()
           function()
             gameplay_missions_missionManager.startFromWithinMission(gameplay_missions_missions.getMissionById(mid))
           end, {
-          label = "Start Next Mission '" .. translateLanguage(mission.name, mission.name).."'",
-          disabled = not mission.unlocks.startable
+          label = "Start Next Mission '" .. _tr(mission.name).."'",
+          disabled = not gameplay_missions_unlocks.isMissionStartable(mission)
         }))
       end
     end
   end
 
   if self.data.includeRetryButton then
+    local entryFee = {}
+    local canPayFee = true
+    local entryFeeAsList = nil
+    if self.mgr.activity and career_career.isActive() then
+      -- entry fee
+      entryFee = self.mgr.activity:getEntryFee(userSettings) or {}
+      local hasEntryFee = false
+      canPayFee = true
+      for key, value in pairs(entryFee) do
+        hasEntryFee = hasEntryFee or value > 0
+        if career_modules_playerAttributes.getAttributeValue(key) < value then
+          canPayFee = false
+        end
+      end
+      -- as list for the UI
+      entryFeeAsList = {}
+      local attributesSorted = tableKeys(entryFee)
+      table.sort(attributesSorted, career_branches.sortAttributes)
+      for _, key in ipairs(attributesSorted) do
+        if entryFee[key] > 0 then
+          table.insert(entryFeeAsList, {rewardAmount = entryFee[key], icon = career_branches.getBranchIcon(key), attributeKey = key})
+        end
+      end
+      if not next(entryFeeAsList) then
+        entryFeeAsList = nil
+      end
+    end
+
+
     table.insert(defaultBtns, self.mgr.modules.ui:addButton(
-      function() extensions.hook("onResetGameplay") end,
+      function()
+        if next(entryFee) and career_career.isActive() then
+          career_modules_playerAttributes.addAttributes(entryFee, {label = "ui.career.attributeLog.challengeEntryFee"})
+        end
+        extensions.hook("onResetGameplay")
+      end,
       {
+        fee = entryFeeAsList,
+        enabled = canPayFee,
         label = "ui.common.retry",
+        disableReason = (not canPayFee) and "Can't pay entry fee.",
       }))
   end
 
   --only allow cont. here if:
   -- the user uses their own vehicle and career is active.
   -- career is not active
-  --local canContinueHere = (not career_career) or (not career_career.isActive()) or (self.mgr.activity.setupModules.vehicles.usePlayerVehicle and career_career and career_career.isActive())
+  local canContinueHere = (not career_career) or (not career_career.isActive()) or (self.mgr.activity.setupModules.vehicles.usePlayerVehicle and career_career and career_career.isActive())
 
   -- Temp fix: continue here only outside of career
-  local canContinueHere = (not career_career) or (not career_career.isActive())
+  --local canContinueHere = (not career_career) or (not career_career.isActive())
 
   if not self.mgr.startedAsScenario then
     table.insert(defaultBtns, self.mgr.modules.ui:addButton(
@@ -261,7 +301,7 @@ function C:openDialogue()
   end
 
   -- in the tutorial, restrict buttons manually.
-  local isTutorial = career_modules_linearTutorial and (not career_modules_linearTutorial.getTutorialFlag('completedTutorialMission'))
+  local isTutorial = career_career.isActive() and career_modules_tutorial.isActive()
   if isTutorial then
     defaultBtns = {
       self.mgr.modules.ui:addButton(
@@ -303,20 +343,26 @@ function C:openDialogue()
   self.mgr.modules.ui.uiLayout.buttons = buttonsTable
 
   if self.data.autoBuild then
+    local attemptChange = self.pinIn.change.value or {}
     self.mgr.modules.ui:addHeader({header = self.graph.mgr.name})
-    self.mgr.modules.ui:addUIElement({type = 'textPanel', header = "Results", text = self.pinIn.text.value, attempt = self.pinIn.change.value.formattedAttempt})
-    self.mgr.modules.ui:addObjectives(self.pinIn.change.value)
-    self.mgr.modules.ui:addRatings(self.pinIn.change.value)
+    self.mgr.modules.ui:addUIElement({type = 'textPanel', header = "Results", text = self.pinIn.text.value, attempt = attemptChange.formattedAttempt, pages = {
+      main = true,
+    }})
+    if self.pinIn.change.value then
+      self.mgr.modules.ui:addObjectives(self.pinIn.change.value)
+      self.mgr.modules.ui:addRatings(self.pinIn.change.value)
+    end
     self.mgr.modules.ui:finishUIBuilding()
   end
 end
 
 function C:onNodeReset()
-  self:closeDialogue()
   for _,pn in pairs(self.pinOut) do
     pn.value = false
   end
+  self.open = false
   self.built = false
+  self.autoSkipComplete = false
 end
 
 function C:work()
@@ -327,6 +373,7 @@ function C:work()
     if not self.built then
       if self.data.autoBuild then
         self.mgr.modules.ui:startUIBuilding('endScreen', self)
+        self._autoSkipTimer = 0
       end
       self:openDialogue()
     end
@@ -335,8 +382,19 @@ function C:work()
   else
     self.pinOut.flow.value = false
     self.pinOut.build.value = false
+    self._autoSkipTimer = 0
   end
   self.pinOut.flow.value = false
+
+  if self.mgr.activity and self.mgr.activity.startingOptions and self.mgr.activity.startingOptions.autoSkipStartScreen then
+    self._autoSkipTimer = self._autoSkipTimer + self.mgr.dtRaw
+    if self._autoSkipTimer >= 2 then
+      if not self.autoSkipComplete then
+        self.autoSkipComplete = true
+        gameplay_missions_missionScreen.stopMissionById(nil, true)
+      end
+    end
+  end
 
 end
 

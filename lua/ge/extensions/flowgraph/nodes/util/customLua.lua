@@ -189,15 +189,22 @@ function C:buildBaseEnv()
     env.io = io
     env.os = os
     env.spawn = spawn
+    env.translateLanguage = function(key, fallback, silent)
+      return _tr(key, fallback)
+    end
+    env._tr = _tr
+
     env.scenetree = scenetree
     env.Engine = Engine
     env.guihooks = guihooks
+    env.settings = settings
     env.debugDrawer = debugDrawer
     env.String = String
     env.ColorF = ColorF
     env.ColorI = ColorI
     env.QuatF = QuatF
     env.Point3F = vec3
+    env.extensions = extensions
     env.vec3 = vec3
     env.createObject = createObject
     env.worldEditorCppApi = worldEditorCppApi
@@ -207,6 +214,7 @@ function C:buildBaseEnv()
     env.RenderViewManagerInstance = RenderViewManagerInstance
     env.Frustum = Frustum
     env.newTemporalSmoothingNonLinear = newTemporalSmoothingNonLinear
+    env.getObjectByID = getObjectByID
 
     -- env.extension = extensions
     -- add all non-virtual extensions from the global table to the env

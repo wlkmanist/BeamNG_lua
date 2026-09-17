@@ -13,7 +13,6 @@ C.category = 'provider'
 
 C.pinSchema = {
   { dir = 'out', type = 'number', name = 'density', description = "The current fog density." },
-  { dir = 'out', type = 'number', name = 'densityOffset', description = "Distance from the camera at which the fog will start to appear." },
   { dir = 'out', type = 'number', name = 'atmosphereHeight', description = "Atmospheric fog height." },
 }
 
@@ -28,11 +27,9 @@ C.tags = {'environment', 'tod'}
 
 function C:work()
   local fogDensity = core_environment.getFogDensity()
-  local fogDensityOffset = core_environment.getFogDensityOffset()
   local fogAtmosphereHeight = core_environment.getFogAtmosphereHeight()
 
   self.pinOut.density.value = fogDensity
-  self.pinOut.densityOffset.value = fogDensityOffset
   self.pinOut.atmosphereHeight.value = fogAtmosphereHeight
 end
 

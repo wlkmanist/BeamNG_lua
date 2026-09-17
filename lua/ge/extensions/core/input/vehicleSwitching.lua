@@ -31,6 +31,7 @@ local function switchCycleVehicle(player, dir)
         if be then
           be:enterVehicle(player, scenetree.findObjectById(nextId))
           extensions.hook('trackNewVeh')
+          extensions.hook("onVehicleSwitchPerformendByUser")
         end
         return
       else
@@ -47,6 +48,7 @@ local function switchCycleVehicle(player, dir)
   if be then
     be:enterNextVehicle(player, dir)
     extensions.hook('trackNewVeh')
+    extensions.hook("onVehicleSwitchPerformendByUser")
   end
 end
 M.switchCycleVehicle = switchCycleVehicle

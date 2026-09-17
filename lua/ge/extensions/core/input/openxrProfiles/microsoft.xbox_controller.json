@@ -1,0 +1,20 @@
+[
+  ["/user/gamepad/input/a/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button0"],
+  ["/user/gamepad/input/b/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button1"],
+  ["/user/gamepad/input/dpad_down/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button2"],
+  ["/user/gamepad/input/dpad_left/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button3"],
+  ["/user/gamepad/input/dpad_right/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button4"],
+  ["/user/gamepad/input/dpad_up/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button5"],
+  ["/user/gamepad/input/menu/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button6"],
+  ["/user/gamepad/input/shoulder_left/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button7"],
+  ["/user/gamepad/input/shoulder_right/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button8"],
+  ["/user/gamepad/input/thumbstick_left", "XR_ACTION_TYPE_VECTOR2F_INPUT", "axis0", "axis1"],
+  ["/user/gamepad/input/thumbstick_left/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button9"],
+  ["/user/gamepad/input/thumbstick_right", "XR_ACTION_TYPE_VECTOR2F_INPUT", "axis2", "axis3"],
+  ["/user/gamepad/input/thumbstick_right/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button10"],
+  ["/user/gamepad/input/trigger_left/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis4"],
+  ["/user/gamepad/input/trigger_right/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis5"],
+  ["/user/gamepad/input/view/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button11"],
+  ["/user/gamepad/input/x/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button12"],
+  ["/user/gamepad/input/y/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button13"]
+]

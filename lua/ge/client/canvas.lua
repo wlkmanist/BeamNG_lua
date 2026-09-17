@@ -5,34 +5,10 @@
 local M = {}
 M.canvasCreated = false
 
-M.checkDeviceIsNonINTEL = function(newDevice)
-  -- log("I", "", "checkDeviceIsNonINTEL called.....")
-  if newDevice == M.checkedLastDevice then
-    return
-  end
-
-  M.checkedLastDevice = newDevice;
-
-  if string.find(string.upper(newDevice), "INTEL") == nil then
-    return
-  end
-
-  local adapters = GFXInit.getAdapters()
-  for _,adapter in ipairs(adapters) do
-    dump(adapter.fullDesc)
-    if string.find(string.upper(newDevice), "INTEL") ~= nil then
-      TorqueScriptLua.call( 'MessageBoxOK', 'Performance Warning', 'You are using an Intel GPU, please choose a different one to improve performance' )
-      return
-    end
-  end
-end
-
 M.createCanvas = function(windowPlacement)
-  if getConsoleVariable("$forceFullscreen") then
-    setConsoleVariable("$pref::Video::displayOutputDevice", "")
+  if VariableRegistry.get("$forceFullscreen") then
+    VariableRegistry.set("$pref::Video::displayOutputDevice", "")
   end
-
-  M.checkDeviceIsNonINTEL(getDisplayDeviceInformation())
 
   local canvas = scenetree.findObject("Canvas")
   if not canvas then
@@ -42,7 +18,7 @@ M.createCanvas = function(windowPlacement)
     canvas:registerObject("Canvas")
   end
 
-  if getConsoleVariable("$pref::Video::autoDetect") then
+  if VariableRegistry.get("$pref::Video::autoDetect", false) then
     core_settings_graphic.autoDetectApplyGraphicsQuality()
   end
 

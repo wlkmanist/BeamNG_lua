@@ -1,0 +1,16 @@
+{
+  "language": "ui.options.rally.languages.english.name",
+  "dialect": "ui.options.rally.dialects.en-US.name",
+  "persona":"ui.options.rally.personas.dirtwheel.name",
+  "compositorStyle":"english/enthusiast",
+  "notebooks": ["enthusiast", "structured"],
+  "styleLabel":"ui.options.rally.styles.enthusiast.name",
+  "styleDetailLevel":50,
+  "enableSpeedScaling": true,
+  "codriverTimingOffsetSeconds": 0.0,
+  "scriptHash": "1b10ba8d6a8578ae55ae0a1c64a61b3082213ab4",
+  "linkWordGapMs": -80,
+  "cornerGapMs": -80,
+  "phraseGapMs": -80,
+  "pacenoteGapMs": 80
+}

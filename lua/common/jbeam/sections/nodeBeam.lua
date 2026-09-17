@@ -16,18 +16,10 @@ local BEAM_HYDRO = 6
 
 local function processNodes(vehicle)
   if not vehicle.nodes then return end
+
   for k, v in pairs(vehicle.nodes) do
-    if v.nodeOffset and type(v.nodeOffset) == 'table' and v.nodeOffset.x and v.nodeOffset.y and v.nodeOffset.z then
-      v.posX = v.posX + sign(v.posX) * v.nodeOffset.x
-      v.posY = v.posY + v.nodeOffset.y
-      v.posZ = v.posZ + v.nodeOffset.z
-    end
-    if v.nodeMove and type(v.nodeMove) == 'table' and v.nodeMove.x and v.nodeMove.y and v.nodeMove.z then
-      v.posX = v.posX + v.nodeMove.x
-      v.posY = v.posY + v.nodeMove.y
-      v.posZ = v.posZ + v.nodeMove.z
-    end
-    vehicle.nodes[k]['pos'] = vec3(v.posX, v.posY, v.posZ)
+    local x, y, z = jbeamUtils.getPosAfterNodeRotateOffsetMove(v, v.posX, v.posY, v.posZ)
+    vehicle.nodes[k]['pos'] = vec3(x, y, z)
 
     -- TODO: REMOVE AGAIN
     v.posX=nil
@@ -165,11 +157,11 @@ local function process(vehicle)
     vehicle.refNodes = {}
   end
   if vehicle.refNodes[0] == nil then
-    log('E', "jbeam.pushToPhysics", "Reference nodes missing. Please add them")
+    log('E', "jbeam.pushToPhysics", "Reference nodes missing. Please add them. Installed dummy ref nodes.")
     vehicle.refNodes[0] = {ref = 0, back = 1, left = 2, up = 0}
   end
 
-  profilerPopEvent() -- jbeam/nodeBeam.process
+  profilerPopEvent('jbeam/nodeBeam.process')
 end
 
 M.process = process

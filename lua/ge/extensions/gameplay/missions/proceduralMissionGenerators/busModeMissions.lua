@@ -30,8 +30,12 @@ local function getBaseMission()
   }
 end
 
-local function generate()
-  local data = scenario_scenariosLoader.getLevels('bus')
+local function generate(levelIdentifier)
+  local levelList = nil
+  if levelIdentifier then
+    levelList = {levelIdentifier}  -- limit search to this level
+  end
+  local data = scenario_scenariosLoader.getLevels('bus', levelList)
   local missions = {}
   for _, level in ipairs(data) do
     -- read all busline files for the route and navhelper data.
@@ -50,7 +54,7 @@ local function generate()
     if hasData then
       for _, scenario in ipairs(level.scenarios) do
         local mission = getBaseMission()
-        local id = string.lower(level.levelName)..'-'..scenario.busdriver.routeID.."-"..scenario.busdriver.variance.."-procedural"
+        local id = string.lower(level.levelName)..'/'..scenario.busdriver.routeID.."-"..scenario.busdriver.variance.."-procedural"
         local routeId = scenario.busdriver.routeID .. scenario.busdriver.variance
         local reVariance = scenario.busdriver.variance == "a" and "b" or "a"
         --local reversedRouteId = scenario.busdriver.routeID .. reVariance
@@ -62,7 +66,11 @@ local function generate()
         mission.description = {txt = "missions.missions.busMode.description", context = {busStops = #route.tasklist}}
         mission.missionFolder = string.lower(level.levelName)..'-'..scenario.name
         mission.previewFile = type(scenario.previews) == 'table' and scenario.previews[1] or scenario.previews or scenario.preview
-        mission.thumbnailFile = mission.previewFile
+        mission.thumbnailFile = "/gameplay/missionTypes/busMode/thumbnail.jpg"
+
+        mission.official = scenario.official
+        mission.author = scenario.authors
+        mission.date = scenario.date
 
         mission.missionTypeData = {
           routeId = route.routeID,
@@ -77,7 +85,7 @@ local function generate()
           rtasklist = rRoute.tasklist,
           rnavhelp = rRoute.navhelp,
           rdirection = rRoute.direction,
-          useGroundmarkers = true
+          useGroundmarkers = true,
         }
 
         mission.careerSetup = {
@@ -94,7 +102,14 @@ local function generate()
         mission.startTrigger.pos = vec3(route.spawnLocation.pos.x, route.spawnLocation.pos.y, route.spawnLocation.pos.z)
         local rot = route.spawnLocation.rotAngAxisF or route.spawnLocation.rot
         mission.startTrigger.rot = route.spawnLocation.rotAngAxisF and quat(AngAxisF(rot.x, rot.y, rot.z, (rot.w * 3.1459) / 180.0 ):toQuatF()) or quat(rot)
-        -- disabled until we have the mission type
+
+        mission.missionTypeData.spawnPos = mission.startTrigger.pos:toTable()
+        mission.missionTypeData.spawnRot = mission.startTrigger.rot:toTable()
+
+
+        if route.missionStartTriggerPos then
+          mission.startTrigger.pos = vec3(route.missionStartTriggerPos.x, route.missionStartTriggerPos.y, route.missionStartTriggerPos.z)
+        end
         table.insert(missions, mission)
       end
     end

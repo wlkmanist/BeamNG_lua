@@ -1,9 +1,12 @@
 -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
+
 local im  = ui_imgui
 local spPosition = im.ArrayFloat(3)
-local nameText
+local nameInput, groupInput
+local baseGroups = {'start', 'rollingStart', 'recovery', 'other'}
+
 local C = {}
 C.windowDescription = 'Start Positions'
 
@@ -15,6 +18,7 @@ end
 function C:setPath(path)
   self.path = path
 end
+
 function C:selected()
   self.index = nil
   if not self.path then return end
@@ -23,6 +27,7 @@ function C:selected()
   end
   editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Shift] = "Add New"
 end
+
 function C:unselect()
   --self:selectStartPosition(nil)
   for _, sp in pairs(self.path.startPositions.objects) do
@@ -30,6 +35,7 @@ function C:unselect()
   end
   editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_Shift] = nil
 end
+
 function C:selectStartPosition(id)
   self.index = id
   for _, sp in pairs(self.path.startPositions.objects) do
@@ -37,7 +43,8 @@ function C:selectStartPosition(id)
   end
   if id then
     local sp = self.path.startPositions.objects[id]
-    nameText = im.ArrayChar(1024, sp.name)
+    nameInput = im.ArrayChar(256, sp.name)
+    groupInput = im.ArrayChar(256, sp.group)
     self:updateTransform(id)
   end
 end
@@ -127,11 +134,13 @@ local function serializedUndo(data)
   sp:onDeserialized(data.old)
   data.self:selectStartPosition(data.index)
 end
+
 local function serializedRedo(data)
   local sp = data.self.path.startPositions.objects[data.index]
   sp:onDeserialized(data.new)
   data.self:selectStartPosition(data.index)
 end
+
 function C:addHistory(name, old)
   editor.history:commitAction(name,
     {old = old, new = self.path.startPositions.objects[self.index]:onSerialize(),
@@ -198,6 +207,7 @@ function C:onEditModeActivate()
     self:selectStartPosition(self.index)
   end
 end
+
 function C:draw(mouseInfo)
   self.mouseInfo = mouseInfo
   if self.raceEditor.allowGizmo() then
@@ -206,86 +216,86 @@ function C:draw(mouseInfo)
   end
   self:drawStartPositions()
 end
+
 local function moveSPUndo(data) data.self.path.startPositions:move(data.index, -data.dir) end
 local function moveSPRedo(data) data.self.path.startPositions:move(data.index,  data.dir) end
 
 function C:drawStartPositions()
-  local avail = im.GetContentRegionAvail()
-  --dumpz(self.path,2)
-  im.BeginChild1("sp", im.ImVec2(125 * im.uiscale[0], 0 ), im.WindowFlags_ChildWindow)
+  im.BeginChild1("sp", im.ImVec2(220 * im.uiscale[0], 0 ), im.WindowFlags_ChildWindow)
   for i, sp in ipairs(self.path.startPositions.sorted) do
     if im.Selectable1(sp.name, sp.id == self.index) then
       self:selectStartPosition(sp.id)
     end
   end
   im.Separator()
-  if im.Selectable1('New...', self.index == nil) then
-    self:selectStartPosition(nil)
-  end
-  im.tooltip("Shift-Drag in the world to create a new starting position.")
+  im.TextWrapped("Shift-Drag in the world to create a new start position.")
   im.EndChild()
 
   im.SameLine()
-  im.BeginChild1("currentSP", im.ImVec2(0, 0 ), im.WindowFlags_ChildWindow)
-    if self.index then
-      local sp = self.path.startPositions.objects[self.index]
-      if self.raceEditor.allowGizmo() then
-        editor.drawAxisGizmo()
-      end
-      im.Text("Current Start Position: #" .. self.index)
-      im.SameLine()
-      if im.Button("Delete") then
-        editor.history:commitAction("Delete Start Position",
-          {self = self, index = self.index},
-          function(data)
-            local sp = data.self.path.startPositions:create(nil, data.old.oldId or nil)
-            sp:onDeserialized(data.old)
-            data.self:selectStartPosition(data.index)
-          end,
-          function(data)
-            data.old = data.self.path.startPositions.objects[data.index]:onSerialize()
-            data.self.path.startPositions:remove(data.index)
-            data.self:selectStartPosition(nil)
-          end)
-      end
-      im.SameLine()
-      if im.Button("Move Up") then
-        editor.history:commitAction("Move Start Position in List",
-          {index = self.index, self = self, dir = -1},
-          moveSPUndo, moveSPRedo)
-      end
-      im.SameLine()
-      if im.Button("Move Down") then
-        editor.history:commitAction("Move Start Position in List",
-          {index = self.index, self = self, dir = 1},
-          moveSPUndo, moveSPRedo)
-      end
+  im.BeginChild1("currentSP", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
 
-      im.BeginChild1("self.indexInner", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
-      local editEnded = im.BoolPtr(false)
-      editor.uiInputText("Name", nameText, nil, nil, nil, nil, editEnded)
-      if editEnded[0] then
-        local old = sp:onSerialize()
-        sp.name = ffi.string(nameText)
-        self:addHistory("Renamed Start Position", old)
-      end
+  local width = im.GetContentRegionAvailWidth()
+  if self.index then
+    local sp = self.path.startPositions.objects[self.index]
+    if self.raceEditor.allowGizmo() then
+      editor.drawAxisGizmo()
+    end
+    im.Text("Current Start Position: #" .. self.index)
+    im.SameLine()
+    if im.Button("Delete") then
+      editor.history:commitAction("Delete Start Position",
+        {self = self, index = self.index},
+        function(data)
+          local sp = data.self.path.startPositions:create(nil, data.old.oldId or nil)
+          sp:onDeserialized(data.old)
+          data.self:selectStartPosition(data.index)
+        end,
+        function(data)
+          data.old = data.self.path.startPositions.objects[data.index]:onSerialize()
+          data.self.path.startPositions:remove(data.index)
+          data.self:selectStartPosition(nil)
+        end)
+    end
+    im.SameLine()
+    if im.Button("Move Up") then
+      editor.history:commitAction("Move Start Position in List",
+        {index = self.index, self = self, dir = -1},
+        moveSPUndo, moveSPRedo)
+    end
+    im.SameLine()
+    if im.Button("Move Down") then
+      editor.history:commitAction("Move Start Position in List",
+        {index = self.index, self = self, dir = 1},
+        moveSPUndo, moveSPRedo)
+    end
 
-      spPosition[0] = sp.pos.x
-      spPosition[1] = sp.pos.y
-      spPosition[2] = sp.pos.z
-      if im.InputFloat3("Position", spPosition, "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f", im.InputTextFlags_EnterReturnsTrue) then
-        local old = sp:onSerialize()
-        sp.pos = vec3(spPosition[0], spPosition[1], spPosition[2])
-        self:updateTransform(self.index)
-        self:addHistory("Moved Start Position", old)
-      end
-      if scenetree.findClassObjects("TerrainBlock") and im.Button("Down to Terrain") then
+    im.BeginChild1("currentStartPosition", im.ImVec2(0, 0), im.WindowFlags_ChildWindow)
+    local editEnded = im.BoolPtr(false)
+    editor.uiInputText("Name", nameInput, nil, nil, nil, nil, editEnded)
+    if editEnded[0] then
+      local old = sp:onSerialize()
+      sp.name = ffi.string(nameInput)
+      self:addHistory("Renamed Start Position", old)
+    end
+
+    spPosition[0] = sp.pos.x
+    spPosition[1] = sp.pos.y
+    spPosition[2] = sp.pos.z
+    if im.InputFloat3("Position", spPosition, "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f", im.InputTextFlags_EnterReturnsTrue) then
+      local old = sp:onSerialize()
+      sp.pos = vec3(spPosition[0], spPosition[1], spPosition[2])
+      self:updateTransform(self.index)
+      self:addHistory("Moved Start Position", old)
+    end
+    if scenetree.findClassObjects("TerrainBlock") then
+      if im.Button("Down to Terrain") then
         local old = sp:onSerialize()
         sp.pos = vec3(spPosition[0], spPosition[1], core_terrain.getTerrainHeight(sp.pos))
         self:updateTransform(self.index)
         self:addHistory("Dropped Start Position to Terrain", old)
       end
-      if scenetree.findClassObjects("TerrainBlock") and im.Button("Align with Terrain") then
+      im.SameLine()
+      if im.Button("Align with Terrain") then
         local old = sp:onSerialize()
         local normalTip = sp.pos + sp.rot*vec3(0,-4.5, 0)
         normalTip = vec3(normalTip.x, normalTip.y, core_terrain.getTerrainHeight(normalTip))
@@ -293,18 +303,46 @@ function C:drawStartPositions()
         self:updateTransform(self.index)
         self:addHistory("Aligned Start Position with Terrain", old)
       end
-      if im.Button("Move Veh To") then
-        sp:moveResetVehicleTo(be:getPlayerVehicleID(0))
-      end
-      if im.Button("Set to Current Vehicle") then
-        sp:setToVehicle(be:getPlayerVehicleID(0))
-      end
-      im.EndChild()
     end
+    if im.Button("Move Vehicle Here") then
+      sp:moveResetVehicleTo(be:getPlayerVehicleID(0))
+    end
+    im.SameLine()
+    if im.Button("Set to Current Vehicle") then
+      sp:setToVehicle(be:getPlayerVehicleID(0))
+    end
+
+    im.PushItemWidth(width * 0.5)
+    editEnded = im.BoolPtr(false)
+    editor.uiInputText("##Group", groupInput, nil, nil, nil, nil, editEnded)
+    im.PopItemWidth()
+    im.SameLine()
+
+    im.PushItemWidth(width * 0.25)
+    if im.BeginCombo("##groupSelect", "...") then
+      for _, group in ipairs(baseGroups) do
+        if im.Selectable1(group) then
+          groupInput = im.ArrayChar(256, group)
+          editEnded[0] = true
+        end
+      end
+      im.EndCombo()
+    end
+    im.PopItemWidth()
+
+    im.SameLine()
+    im.Text("Group")
+
+    if editEnded[0] then
+      local old = sp:onSerialize()
+      sp.group = ffi.string(groupInput)
+      self:addHistory("Set Group of Start Position", old)
+    end
+
+    im.EndChild()
+  end
   im.EndChild()
 end
-
-
 
 return function(...)
   local o = {}

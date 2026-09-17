@@ -61,12 +61,12 @@ function C:work()
   self.vehData = gameplay_parking.getTrackingData()[self.pinIn.vehId.value]
 
   if self.vehData then
-    if not self.inside and self.vehData.isParked then
+    if not self.inside and self.vehData.parked then
       self.pinOut.enter.value = true
       self.pinOut.inside.value = true
       self.pinOut.outside.value = false
       self.inside = true
-    elseif self.inside and not self.vehData.isParked then
+    elseif self.inside and not self.vehData.parked then
       self.pinOut.exit.value = true
       self.pinOut.inside.value = false
       self.pinOut.outside.value = true

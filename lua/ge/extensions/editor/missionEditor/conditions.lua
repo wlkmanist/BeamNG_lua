@@ -98,6 +98,7 @@ local function displayNestedCondition(self, condition)
   condition.nested = condition.nested or {}
   local count = #(condition.nested)
   depth = depth +1
+  im.PushID1(depth.."depth")
   local rem = nil
   for i, con in ipairs(condition.nested) do
     if conditionFunctions.displayCondition(self, con) then
@@ -105,7 +106,7 @@ local function displayNestedCondition(self, condition)
     end
   end
   if rem then
-    table.remove(condition.nested, i)
+    table.remove(condition.nested, rem)
     self.mission._dirty = true
   end
   im.Dummy(im.ImVec2(depth * padPerDepth, 1)) im.SameLine()
@@ -114,6 +115,7 @@ local function displayNestedCondition(self, condition)
     self.mission._dirty = true
   end
   depth = depth -1
+  im.PopID()
 
 end
 
@@ -128,11 +130,11 @@ local function displayCondition(self, condition)
 
   im.Dummy(im.ImVec2(depth * padPerDepth, 1)) im.SameLine()
   if condition.transient then
-    editor.uiIconImageButton(editor.icons.visibility_off, im.ImVec2(24, 24), nil, nil, nil,'##rem'..condition.type..index)
+    editor.uiIconImageButton(editor.icons.visibility_off, im.ImVec2(24, 24), nil, nil, nil,'##rem'..condition.type..index.."-"..depth)
     im.tooltip("This Condition is transient (generated at runtime) and can't be edited.")
     im.BeginDisabled()
   else
-    if editor.uiIconImageButton(editor.icons.delete_forever, im.ImVec2(24, 24), nil, nil, nil,'##rem'..condition.type..index) then
+    if editor.uiIconImageButton(editor.icons.delete_forever, im.ImVec2(24, 24), nil, nil, nil,'##rem'..condition.type..index.."-"..depth) then
       rem = true
     end
   end

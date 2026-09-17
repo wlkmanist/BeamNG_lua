@@ -122,22 +122,10 @@ local function updateSounds(dt)
 end
 
 local function updateFixedStep(dt)
-  if assignedEngine.engineDisabled then
-    M.updateGFX = nop
-    M.updateFixedStep = nop
-    return
-  end
   assignedEngine.forcedInductionCoef = assignedEngine.forcedInductionCoef * max(1 + (0.0000087 * blowerPressure) - lostTorqueCoef, 0) --convert pressure to "added" torque and remove some of it again due to losses
 end
 
 local function updateGFX(dt)
-  -- Some verification stuff
-  if assignedEngine.engineDisabled then
-    M.updateGFX = nop
-    M.updateFixedStep = nop
-    return
-  end
-
   local engAV = max(assignedEngine.outputAV1, 0)
   local currentThrottle = electrics.values.throttle
   dtSum = dtSum + dt
@@ -229,7 +217,7 @@ local function init(device, jbeamData)
   wearPressureCoef = 1
 
   blowerRatio = jbeamData.gearRatio or 1
-  local maxBlowerRPM = jbeamData.maxRPM or math.ceil(assignedEngine.maxRPM * blowerRatio) --give it a 50% headroom for engines that can exceed their max physical RPM
+  local maxBlowerRPM = max(0, jbeamData.maxRPM or math.ceil(assignedEngine.maxRPM * blowerRatio)) --give it a 50% headroom for engines that can exceed their max physical RPM
 
   crankLossPerRPM = (jbeamData.crankLossPer1kRPM or 5) * 0.001
 
@@ -320,7 +308,7 @@ local function init(device, jbeamData)
     local disengage = min(max(-(i * avToRPM - clutchDisengageRPM) * invClutchDisengageRange + 1, 0), 1)
     local clutchRatio = min(engage, disengage)
     local tempBlowerAV = i * blowerRatio * clutchRatio
-    blowerMaxAV = max(tempBlowerAV, blowerAV)
+    blowerMaxAV = max(tempBlowerAV, blowerMaxAV)
   end
 
   damageTracker.setDamage("engine", "superchargerDamaged", false)

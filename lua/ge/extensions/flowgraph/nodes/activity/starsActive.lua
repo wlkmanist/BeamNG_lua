@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local im  = ui_imgui
-local ime = ui_flowgraph_editor
 
 local C = {}
 
@@ -26,11 +25,29 @@ function C:init()
   self.allowCustomOutPins = true
 end
 
+function C:_executionStarted()
+  self.hasRetrievedActiveStars = false
+  self.activeStars = nil
+end
+
 function C:work()
-  if self.pinIn.flow.value and self.mgr.activity and self.mgr.activity.careerSetup.starsActive then
+  if self.pinIn.flow.value then
+
+    -- only get the active stars once because its expensive
+    if not self.activeStars then
+      local mission = self.mgr.activity
+      if not mission then return end
+      local unflattenedSettings = {}
+      for k, v in pairs(mission.lastUserSettings) do
+        table.insert(unflattenedSettings, {key = k, value = v})
+      end
+
+      self.activeStars = gameplay_missions_missionScreen.getActiveStarsForUserSettings(mission.id, unflattenedSettings).starInfo
+    end
+
     for _, pin in pairs(self.pinOut) do
       if pin.type == 'flow' then
-        pin.value = self.mgr.activity.careerSetup.starsActive[pin.name] or false
+        pin.value = self.activeStars[pin.name] and self.activeStars[pin.name].enabled or false
       end
     end
   else

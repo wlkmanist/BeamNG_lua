@@ -12,8 +12,6 @@ C.color = ui_flowgraph_editor.nodeColors.ui
 C.icon = ui_flowgraph_editor.nodeIcons.ui
 C.category = 'once_f_duration'
 
-
-
 C.pinSchema = {
   { dir = 'in', type = 'number', name = 'duration', description = 'Duration of fade transition to black screen.', default = 0.75, hardcoded = true },
 }
@@ -21,7 +19,7 @@ C.pinSchema = {
 C.legacyPins = {
   out = {
     done = 'complete'
-  },
+  }
 }
 
 C.dependencies = { 'ui_fadeScreen', 'gameplay_missions_missionManager' }
@@ -33,13 +31,14 @@ end
 
 function C:postInit()
   self.pinInLocal.duration.hardTemplates = {
-    {label = "Default Mission Fade Duration", value =  0.75},
+    {label = "Default Mission Fade Duration", value = 0.75},
   }
 end
 
 function C:_executionStopped()
   --ui_fadeScreen.stop(0)
   self:setDurationState('inactive')
+  self.mgr.modules.ui.isFadeScreenActive = false
 end
 
 function C:onNodeReset()
@@ -48,7 +47,11 @@ end
 
 function C:workOnce()
   self:setDurationState('started')
-  ui_fadeScreen.start(self.pinIn.duration.value)
+  ui_fadeScreen.fadeToBlack(self.pinIn.duration.value)
+  if self.mgr.modules.ui.isFadeScreenActive then -- if already active, skip to finish state
+    self:setDurationState('finished')
+  end
+  self.mgr.modules.ui.isFadeScreenActive = true
 end
 
 function C:onScreenFadeState(state)

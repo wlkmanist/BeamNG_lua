@@ -244,10 +244,10 @@ local materialSettings = {
   base = nil,
   center = nil,
   border = nil,
-  centerBaseColor = ffi.new("float[4]", {1.0, 1.0, 1.0, 1.0}),
-  borderBaseColor = ffi.new("float[4]", {1.0, 1.0, 1.0, 1.0}),
-  centerGlowColor = ffi.new("float[4]", {1.0, 1.0, 1.0, 1.0}),
-  borderGlowColor = ffi.new("float[4]", {1.0, 1.0, 1.0, 1.0}),
+  centerBaseColor = im.ArrayFloatByTbl({1.0, 1.0, 1.0, 1.0}),
+  borderBaseColor = im.ArrayFloatByTbl({1.0, 1.0, 1.0, 1.0}),
+  centerGlowColor = im.ArrayFloatByTbl({1.0, 1.0, 1.0, 1.0}),
+  borderGlowColor = im.ArrayFloatByTbl({1.0, 1.0, 1.0, 1.0}),
   centerGlow = im.BoolPtr(true),
   borderGlow = im.BoolPtr(true),
   groundModel = im.IntPtr(0),
@@ -333,25 +333,25 @@ local function navigationRow()
   local piecePositions = partitionWidth(im.GetWindowWidth(), 46, 5)
   im.SetCursorPosX(piecePositions[1]+10)
   if im.Button("|<",style.thinButtonSize) then tbFunctions.navigate('first') end
-  im.tooltip(translateLanguage("ui.trackBuilder.selection.first", "Select First Piece"))
+  im.tooltip(_tr("ui.trackBuilder.selection.first", "Select First Piece"))
   im.SameLine()
   im.SetCursorPosX(piecePositions[2]+10)
   if im.Button("<",style.thinButtonSize) then tbFunctions.navigate(-1) end
-  im.tooltip(translateLanguage("ui.trackBuilder.selection.previous", "Select Previous Piece"))
+  im.tooltip(_tr("ui.trackBuilder.selection.previous", "Select Previous Piece"))
   im.SameLine()
   im.SetCursorPosX(piecePositions[3] + 10)
   if editor.uiIconImageButton(editor.icons.videocam, im.ImVec2(22,22), style.buttonColorBase) then
     tb.focusCameraOn(currentIndex,nil, true)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.camera.focus", 'Focus camera on selected piece'))
+  im.tooltip(_tr("ui.trackBuilder.camera.focus", 'Focus camera on selected piece'))
   im.SameLine()
   im.SetCursorPosX(piecePositions[4]-10)
   if im.Button(">",style.thinButtonSize) then tbFunctions.navigate(1) end
-  im.tooltip(translateLanguage("ui.trackBuilder.selection.next", "Select Next Piece"))
+  im.tooltip(_tr("ui.trackBuilder.selection.next", "Select Next Piece"))
   im.SameLine()
   im.SetCursorPosX(piecePositions[5]-10)
   if im.Button(">|",style.thinButtonSize) then tbFunctions.navigate('last') end
-  im.tooltip(translateLanguage("ui.trackBuilder.selection.last", "Select Last Piece"))
+  im.tooltip(_tr("ui.trackBuilder.selection.last", "Select Last Piece"))
 end
 
 -- creates a row of modifier buttons (modify, delete, reset)
@@ -360,27 +360,27 @@ local function modifierButtons(name, resetValue, hasInterpolation, size)
   if editor.uiIconImageButton(editor.icons.adjust, size or im.ImVec2(20,20), style.colorYellow) then
     tbFunctions.modifierChange(name)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.tooltip.modify", "Modify"))
+  im.tooltip(_tr("ui.trackBuilder.tooltip.modify", "Modify"))
   im.SameLine()
   --if im.SmallButton("x##"..name) then
   if editor.uiIconImageButton(editor.icons.delete, size or im.ImVec2(20,20), style.colorRed) then
     tbFunctions.modifierRemove(name)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.tooltip.remove", "Remove"))
+  im.tooltip(_tr("ui.trackBuilder.tooltip.remove", "Remove"))
   im.SameLine()
   --if im.SmallButton("r##"..name) then
   if editor.uiIconImageButton(editor.icons.undo, size or im.ImVec2(20,20), style.colorGreen) then
     modifierValues[name].value[0] = resetValue
     tbFunctions.modifierChange(name)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.tooltip.reset", "Reset"))
+  im.tooltip(_tr("ui.trackBuilder.tooltip.reset", "Reset"))
   if hasInterpolation then
     if im.Combo1("##"..name, modifierValues[name].interpolation, interpolations) then
       tbFunctions.modifierChange(name)
     end
 
     im.SameLine()
-    if im.Checkbox(translateLanguage("ui.trackBuilder.modifier.inverted", "Inverted") .. "##"..name, modifierValues[name].inverted) then
+    if im.Checkbox(_tr("ui.trackBuilder.modifier.inverted", "Inverted") .. "##"..name, modifierValues[name].inverted) then
       tbFunctions.modifierChange(name)
     end
   end
@@ -455,20 +455,20 @@ local function colorToFloatArray(color)
   end
 
   if #t == 4 then
-    res = ffi.new("float[4]", {t[1], t[2], t[3], t[4]})
+    res = im.ArrayFloatByTbl({t[1], t[2], t[3], t[4]})
   elseif #res == 0 then
     --if debug then log('I', logTag, "Get stock color of " .. color) end
     local col = getStockColor(color)
     if col ~= nil then
       col[4] = 1.0
-      res = ffi.new("float[4]", col)
+      res = im.ArrayFloatByTbl(col)
     else
       log('E', logTag, "Cannot find stock color " .. color .. "! Fallback to white.")
-      res = ffi.new("float[4]", {1.0, 1.0, 1.0, 1.0})
+      res = im.ArrayFloatByTbl({1.0, 1.0, 1.0, 1.0})
     end
   else
     log('E', logTag, "Wrong color value! Fallback to white.")
-    res = ffi.new("float[4]", {1.0, 1.0, 1.0, 1.0})
+    res = im.ArrayFloatByTbl({1.0, 1.0, 1.0, 1.0})
   end
 
   return res
@@ -630,9 +630,9 @@ end
 local function dragDropSource(texture)
   if im.BeginDragDropSource() then
     onDrag()
-    if not materialSettings.dragDropData then materialSettings.dragDropData = ffi.new('char[64]', texture.path) end
+    if not materialSettings.dragDropData then materialSettings.dragDropData = im.ArrayChar(64, texture.path) end
     if not materialSettings.dragDropImage then materialSettings.dragDropImage = editor.texObj(texture.path) end
-    im.SetDragDropPayload("TrackBuilderMaterialPayload", materialSettings.dragDropData, ffi.sizeof'char[64]', im.Cond_Once );
+    im.SetDragDropPayload("TrackBuilderMaterialPayload", materialSettings.dragDropData, im.ArraySize(materialSettings.dragDropData), im.Cond_Once );
     im.Image(materialSettings.dragDropImage.texId, im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
     im.EndDragDropSource()
   end
@@ -642,20 +642,20 @@ local function dragDropTarget(map)
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload("TrackBuilderMaterialPayload")
     if payload~=nil then
-      assert(payload.DataSize == ffi.sizeof"char[64]");
+      assert(payload.DataSize == 64)
       local texture = ffi.string(payload.Data)
       setTexture(map, texture)
     end
-    im.EndDragDropTarget();
+    im.EndDragDropTarget()
   end
 end
 
 local function dragDropSourceTextureSet(name, set)
   if im.BeginDragDropSource() then
     onDrag()
-    if not materialSettings.dragDropData then materialSettings.dragDropData = ffi.new('char[64]', name) end
+    if not materialSettings.dragDropData then materialSettings.dragDropData = im.ArrayChar(64, name) end
     if not materialSettings.dragDropImage then materialSettings.dragDropImage = set.tex end
-    im.SetDragDropPayload("TrackBuilderTextureSetPayload", materialSettings.dragDropData, ffi.sizeof'char[64]', im.Cond_Once );
+    im.SetDragDropPayload("TrackBuilderTextureSetPayload", materialSettings.dragDropData, im.ArraySize(materialSettings.dragDropData), im.Cond_Once );
     im.Image(materialSettings.dragDropImage.texId, im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
     im.EndDragDropSource()
   end
@@ -665,7 +665,7 @@ local function dragDropTargetTextureSet()
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload("TrackBuilderTextureSetPayload")
     if payload~=nil then
-      assert(payload.DataSize == ffi.sizeof"char[64]");
+      assert(payload.DataSize == 64)
       local textureSet = ffi.string(payload.Data)
       applyTextureSet(materialSettings.textureSets[textureSet])
     end
@@ -676,9 +676,9 @@ end
 local function dragDropSourceGlowMap(name, glowMap)
   if im.BeginDragDropSource() then
     onDrag()
-    if not materialSettings.dragDropData then materialSettings.dragDropData = ffi.new('char[64]', name) end
+    if not materialSettings.dragDropData then materialSettings.dragDropData = im.ArrayChar(64, name) end
     if not materialSettings.dragDropImage then materialSettings.dragDropImage = glowMap.tex end
-    im.SetDragDropPayload("TrackBuilderGlowMapPayload", materialSettings.dragDropData, ffi.sizeof'char[64]', im.Cond_Once );
+    im.SetDragDropPayload("TrackBuilderGlowMapPayload", materialSettings.dragDropData, im.ArraySize(materialSettings.dragDropData), im.Cond_Once );
     im.Image(materialSettings.dragDropImage.texId, im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
     im.EndDragDropSource()
   end
@@ -688,12 +688,11 @@ local function dragDropTargetGlowMap(map)
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload("TrackBuilderGlowMapPayload")
     if payload~=nil then
-      dump(payload.DataSize)
-      assert(payload.DataSize == ffi.sizeof"char[64]");
+      assert(payload.DataSize == 64)
       local glowMap = ffi.string(payload.Data)
       setTexture(map, materialSettings.glowMaps[glowMap].file)
     end
-    im.EndDragDropTarget();
+    im.EndDragDropTarget()
   end
 end
 
@@ -721,8 +720,8 @@ local function materialEditor()
   im.SetColumnWidth(1, 85)
   im.SetColumnWidth(2, 85)
 
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.matEditor.texture", 'Texture'))
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.matEditor.base", 'Base'))
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.texture", 'Texture'))
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.base", 'Base'))
   if im.ImageButton("##imageButton1", materialSettings.base.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
   dragDropTarget('base')
   dragDropTargetTextureSet()
@@ -735,8 +734,8 @@ local function materialEditor()
   end
   im.NextColumn()
 
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.matEditor.decal", "Decal"))
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.matEditor.center", "Center"))
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.decal", "Decal"))
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.center", "Center"))
   if im.ImageButton("##imageButton2", materialSettings.center.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
   dragDropTarget('center')
   dragDropTargetGlowMap('center')
@@ -750,7 +749,7 @@ local function materialEditor()
   im.NextColumn()
 
   im.TextColored(style.textColor,"")
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.matEditor.border", "Border"))
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.border", "Border"))
   if im.ImageButton("##imageButton3", materialSettings.border.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
   dragDropTarget('border')
   dragDropTargetGlowMap('border')
@@ -771,19 +770,19 @@ local function materialEditor()
   im.PopItemWidth()
   if materialSettings.groundModelHasChanged then im.TextColored(im.ImVec4(1.0, 0.0, 0.0, 1.0), "Groundmodel has been modified.\nHit DRIVE to apply changes to the track.") end
 
-  if im.TreeNode1(translateLanguage("ui.trackBuilder.matEditor.paint", 'Paint')) then
+  if im.TreeNode1(_tr("ui.trackBuilder.matEditor.paint", 'Paint')) then
     local changed = false
-    if im.SmallButton(translateLanguage("ui.trackBuilder.matEditor.selectAll", "Select All")) then setAllPaintModes(true) changed = true end
+    if im.SmallButton(_tr("ui.trackBuilder.matEditor.selectAll", "Select All")) then setAllPaintModes(true) changed = true end
     im.SameLine()
-    if im.SmallButton(translateLanguage("ui.trackBuilder.matEditor.deselectAll", "Deselect All")) then setAllPaintModes(false) changed = true end
+    if im.SmallButton(_tr("ui.trackBuilder.matEditor.deselectAll", "Deselect All")) then setAllPaintModes(false) changed = true end
 
-    if im.Checkbox(translateLanguage("ui.trackBuilder.matEditor.drawLeftBorder", "Draw Left Border"), materials.materialInfo.leftMesh.paint) then changed = true end
-    if im.Checkbox(translateLanguage("ui.trackBuilder.matEditor.drawCenter", "Draw Center"), materials.materialInfo.centerMesh.paint) then changed = true end
-    if im.Checkbox(translateLanguage("ui.trackBuilder.matEditor.drawRightBorder", "Draw Right Border"), materials.materialInfo.rightMesh.paint) then changed = true end
+    if im.Checkbox(_tr("ui.trackBuilder.matEditor.drawLeftBorder", "Draw Left Border"), materials.materialInfo.leftMesh.paint) then changed = true end
+    if im.Checkbox(_tr("ui.trackBuilder.matEditor.drawCenter", "Draw Center"), materials.materialInfo.centerMesh.paint) then changed = true end
+    if im.Checkbox(_tr("ui.trackBuilder.matEditor.drawRightBorder", "Draw Right Border"), materials.materialInfo.rightMesh.paint) then changed = true end
 
-    if im.Checkbox(translateLanguage("ui.trackBuilder.matEditor.drawLeftWall", "Draw Left Wall"), materials.materialInfo.leftWall.paint) then changed = true end
-    if im.Checkbox(translateLanguage("ui.trackBuilder.matEditor.drawCeiling", "Draw Ceiling"), materials.materialInfo.ceilingMesh.paint) then changed = true end
-    if im.Checkbox(translateLanguage("ui.trackBuilder.matEditor.drawRightWall", "Draw Right Wall"), materials.materialInfo.rightWall.paint) then changed = true end
+    if im.Checkbox(_tr("ui.trackBuilder.matEditor.drawLeftWall", "Draw Left Wall"), materials.materialInfo.leftWall.paint) then changed = true end
+    if im.Checkbox(_tr("ui.trackBuilder.matEditor.drawCeiling", "Draw Ceiling"), materials.materialInfo.ceilingMesh.paint) then changed = true end
+    if im.Checkbox(_tr("ui.trackBuilder.matEditor.drawRightWall", "Draw Right Wall"), materials.materialInfo.rightWall.paint) then changed = true end
     if changed then
       local any = false
       any = any or materials.materialInfo.leftMesh.paint[0]
@@ -802,7 +801,7 @@ local function materialEditor()
     im.TreePop()
   end
 
-  if im.TreeNode1(translateLanguage("ui.trackBuilder.matEditor.baseTextures", "Base Textures")) then
+  if im.TreeNode1(_tr("ui.trackBuilder.matEditor.baseTextures", "Base Textures")) then
     im.BeginChild1("baseTextureChild", im.ImVec2(-1,160))
     local i = 1
     for name, set in pairs(materialSettings.textureSets) do
@@ -816,7 +815,7 @@ local function materialEditor()
     im.TreePop()
   end
 
-  if im.TreeNode1(translateLanguage("ui.trackBuilder.matEditor.decalTextures", "Decal Textures")) then
+  if im.TreeNode1(_tr("ui.trackBuilder.matEditor.decalTextures", "Decal Textures")) then
     im.BeginChild1("decalTextureChild",im.ImVec2(-1,160))
     local i = 1
     for name, glowMap in pairs(materialSettings.glowMaps) do
@@ -863,9 +862,9 @@ end
 
 -- creates the borders (and centers) window
 local function bordersAndCenters()
-  borderDrawSelector(translateLanguage("ui.trackBuilder.borders.leftBorderShape", 'Left Border Shape'),'leftMesh',borders, bordersTbl, 130)
+  borderDrawSelector(_tr("ui.trackBuilder.borders.leftBorderShape", 'Left Border Shape'),'leftMesh',borders, bordersTbl, 130)
   im.Separator()
-  borderDrawSelector(translateLanguage("ui.trackBuilder.borders.rightBorderShape", 'Right Border Shape'),'rightMesh',borders, bordersTbl, 130)
+  borderDrawSelector(_tr("ui.trackBuilder.borders.rightBorderShape", 'Right Border Shape'),'rightMesh',borders, bordersTbl, 130)
   im.Separator()
   borderDrawSelector("center", 'centerMesh',centers, centersTbl, 130)
 end
@@ -885,12 +884,12 @@ end
 -- creates the walls and ceiling window
 local function wallsAndCeiling()
   im.PushItemWidth(120)
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.wallsCeiling.leftWall", "Left Wall"))
-  if im.Checkbox(translateLanguage("ui.trackBuilder.wallsCeiling.active", "Active") .. "##leftWall", modifierValues.leftWall.active) then
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.wallsCeiling.leftWall", "Left Wall"))
+  if im.Checkbox(_tr("ui.trackBuilder.wallsCeiling.active", "Active") .. "##leftWall", modifierValues.leftWall.active) then
       tbFunctions.modifierChange("leftWall")
   end
   local x = im.GetCursorPosX()
-  if im.DragFloat(translateLanguage("ui.trackBuilder.wallsCeiling.height", "Height") .. "##left", modifierValues.leftWall.value,0.1) then
+  if im.DragFloat(_tr("ui.trackBuilder.wallsCeiling.height", "Height") .. "##left", modifierValues.leftWall.value,0.1) then
     if modifierValues.leftWall.value[0] > 50 then
       modifierValues.leftWall.value[0] = 50
     elseif modifierValues.leftWall.value[0] < 0 then
@@ -903,13 +902,13 @@ local function wallsAndCeiling()
   modifierButtons('leftWall',0,true)
 
   im.Separator()
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.wallsCeiling.rightWall", "Right Wall"))
-  if im.Checkbox(translateLanguage("ui.trackBuilder.wallsCeiling.active", "Active") .. "##rightWall", modifierValues.rightWall.active) then
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.wallsCeiling.rightWall", "Right Wall"))
+  if im.Checkbox(_tr("ui.trackBuilder.wallsCeiling.active", "Active") .. "##rightWall", modifierValues.rightWall.active) then
     tbFunctions.modifierChange("rightWall")
   end
 
   x = im.GetCursorPosX()
-  if im.DragFloat(translateLanguage("ui.trackBuilder.wallsCeiling.height", "Height") .. "##right", modifierValues.rightWall.value,0.1) then
+  if im.DragFloat(_tr("ui.trackBuilder.wallsCeiling.height", "Height") .. "##right", modifierValues.rightWall.value,0.1) then
     if modifierValues.rightWall.value[0] > 50 then
       modifierValues.rightWall.value[0] = 50
     elseif modifierValues.rightWall.value[0] < 0 then
@@ -922,13 +921,13 @@ local function wallsAndCeiling()
   modifierButtons('rightWall',0,true)
 
   im.Separator()
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.wallsCeiling.ceiling", "Ceiling"))
-  if im.Checkbox(translateLanguage("ui.trackBuilder.wallsCeiling.active", "Active") .. "##ceilingMesh", modifierValues.ceilingMesh.active) then
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.wallsCeiling.ceiling", "Ceiling"))
+  if im.Checkbox(_tr("ui.trackBuilder.wallsCeiling.active", "Active") .. "##ceilingMesh", modifierValues.ceilingMesh.active) then
     tbFunctions.modifierChange("ceilingMesh")
   end
 
   x = im.GetCursorPosX()
-  if im.DragFloat(translateLanguage("ui.trackBuilder.wallsCeiling.height", "Height") .. "##ceil", modifierValues.ceilingMesh.value,0.1) then
+  if im.DragFloat(_tr("ui.trackBuilder.wallsCeiling.height", "Height") .. "##ceil", modifierValues.ceilingMesh.value,0.1) then
     if modifierValues.ceilingMesh.value[0] > 50 then
       modifierValues.ceilingMesh.value[0] = 50
     elseif modifierValues.ceilingMesh.value[0] < 0 then
@@ -981,7 +980,7 @@ local function advancedModifiers()
   navigationRow()
   im.Separator()
 
-  im.TextColored(style.textColor,string.format(translateLanguage("ui.trackBuilder.base.banking", "Banking") .. ": %.1f°", modifierValues.bank.value[0]))
+  im.TextColored(style.textColor,string.format(_tr("ui.trackBuilder.base.banking", "Banking") .. ": %.1f°", modifierValues.bank.value[0]))
 
   smallSetButtons("bank",{-75,-45,-15,15,45,75},im.ImVec2(40,0))
   im.NewLine()
@@ -1011,7 +1010,7 @@ local function advancedModifiers()
 
   im.Separator()
 
-  im.TextColored(style.textColor,string.format(translateLanguage("ui.trackBuilder.base.height", "Height") .. ": %.1fm", modifierValues.height.value[0]))
+  im.TextColored(style.textColor,string.format(_tr("ui.trackBuilder.base.height", "Height") .. ": %.1fm", modifierValues.height.value[0]))
 
   smallSetButtons("height",{-25,-10,-5,5,10,25},im.ImVec2(35,0), true, {'-25','-10','-5','+5','+10','+25'})
   im.NewLine()
@@ -1042,7 +1041,7 @@ local function advancedModifiers()
   end
 
   im.SameLine()
-  if im.Checkbox(translateLanguage("ui.trackBuilder.modifier.inverted", "Inverted") .. "##"..'height', modifierValues['height'].inverted) then
+  if im.Checkbox(_tr("ui.trackBuilder.modifier.inverted", "Inverted") .. "##"..'height', modifierValues['height'].inverted) then
     tbFunctions.modifierChange('height')
   end
 
@@ -1054,7 +1053,7 @@ local function advancedModifiers()
 
   im.Separator()
 
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.base.width", "Width") .. ": " .. modifierValues.width.value[0]..'m')
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.base.width", "Width") .. ": " .. modifierValues.width.value[0]..'m')
   smallSetButtons("width",{0,1,2,5,10,15,20},im.ImVec2(30,0))
   im.NewLine()
 
@@ -1084,7 +1083,7 @@ end
 
 -- general settings
 
--- creates the time, fog and azimuth settings.
+-- creates the time and fog settings.
 local function timeSettings()
   local tod = core_environment.getTimeOfDay()
   core_environment.setTimeOfDay(tod)
@@ -1092,10 +1091,10 @@ local function timeSettings()
   local fog = core_environment.getFogDensity()
   core_environment.setFogDensity(fog)
   saveSettings.fogValue[0] = fog
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.trackSettings.environmentSettings", "Environment settings"))
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.trackSettings.environmentSettings", "Environment settings"))
 
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.trackSettings.time", 'Time'))
-  if im.SliderFloat(translateLanguage("ui.trackBuilder.trackSettings.time", "Time"),saveSettings.timeOfDay , 00, 1, "%.2f") then
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.trackSettings.time", 'Time'))
+  if im.SliderFloat(_tr("ui.trackBuilder.trackSettings.time", "Time"),saveSettings.timeOfDay , 00, 1, "%.2f") then
     tod.time = saveSettings.timeOfDay[0]
     core_environment.setTimeOfDay(tod)
   end
@@ -1105,7 +1104,7 @@ local function timeSettings()
     tod.time = saveSettings.timeOfDay[0]
     core_environment.setTimeOfDay(tod)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.tooltip.morning", "Morning"))
+  im.tooltip(_tr("ui.trackBuilder.tooltip.morning", "Morning"))
 
   im.SameLine()
   if editor.uiIconImageButton(editor.icons.access_time or editor.icons.stop,im.ImVec2(30,30),style.buttonColorBase) then
@@ -1113,7 +1112,7 @@ local function timeSettings()
     tod.time = saveSettings.timeOfDay[0]
     core_environment.setTimeOfDay(tod)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.tooltip.noon", "Noon"))
+  im.tooltip(_tr("ui.trackBuilder.tooltip.noon", "Noon"))
 
   im.SameLine()
   if editor.uiIconImageButton(editor.icons.brightness_3,im.ImVec2(30,30),style.buttonColorBase) then
@@ -1121,19 +1120,10 @@ local function timeSettings()
     tod.time = saveSettings.timeOfDay[0]
     core_environment.setTimeOfDay(tod)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.tooltip.night", "Night"))
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.trackSettings.azimuth", 'Azimuth'))
-  if im.SliderFloat(translateLanguage("ui.trackBuilder.trackSettings.azimuth", 'Azimuth'),saveSettings.azimuthValue,0,2*math.pi,"%.2f") then
-    if saveSettings.azimuthValue[0] ~=0  then
-      -- local sky = scenetree.findObject("sunsky")
-    --  local azi= sky:getAzimuth()
-      tod.azimuthOverride = saveSettings.azimuthValue[0]
-      core_environment.setTimeOfDay(tod)
-    end
-  end
+  im.tooltip(_tr("ui.trackBuilder.tooltip.night", "Night"))
 
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.trackSettings.fog", 'Fog'))
-  if im.SliderFloat(translateLanguage("ui.trackBuilder.trackSettings.fog", 'Fog'),saveSettings.fogValue, 0, 0.5, "%.8f",6) then
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.trackSettings.fog", 'Fog'))
+  if im.SliderFloat(_tr("ui.trackBuilder.trackSettings.fog", 'Fog'),saveSettings.fogValue, 0, 0.5, "%.8f",6) then
     core_environment.setFogDensity(saveSettings.fogValue[0])
   end
 
@@ -1141,11 +1131,11 @@ end
 
 -- creates the race settings (lapCount and reversible)
 local function raceSettings()
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.trackSettings.raceSettings", 'Race Settings'))
-  if im.Checkbox(translateLanguage("ui.trackBuilder.trackSettings.reversible", "Reversible"),saveSettings.allowReverse) then
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.trackSettings.raceSettings", 'Race Settings'))
+  if im.Checkbox(_tr("ui.trackBuilder.trackSettings.reversible", "Reversible"),saveSettings.allowReverse) then
     tb.setReversible(saveSettings.allowReverse[0])
   end
-  if im.InputInt(translateLanguage("ui.trackBuilder.trackSettings.defaultLaps", "Default Laps"),saveSettings.lapCount) then
+  if im.InputInt(_tr("ui.trackBuilder.trackSettings.defaultLaps", "Default Laps"),saveSettings.lapCount) then
     if saveSettings.lapCount[0] < 1 then saveSettings.lapCount[0] = 1 end
     tb.setDefaultLaps(saveSettings.lapCount[0])
   end
@@ -1153,40 +1143,40 @@ end
 
 -- creates the track position settings, including the buttons to position the track.
 local function trackPositionSettings()
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.trackSettings.trackTransform", "Track Transform"))
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.trackSettings.trackTransform", "Track Transform"))
 
-  if im.DragFloat3(translateLanguage("ui.trackBuilder.trackSettings.position", "Position"),trackPositionValues.position,0.1) then
+  if im.DragFloat3(_tr("ui.trackBuilder.trackSettings.position", "Position"),trackPositionValues.position,0.1) then
     tb.setTrackPosition(trackPositionValues.position[0],trackPositionValues.position[1],trackPositionValues.position[2],trackPositionValues.rotation[0])
     tb.makeTrack()
     tb.focusMarkerOn(currentIndex)
   end
-  if im.DragFloat(translateLanguage("ui.trackBuilder.trackSettings.rotation", "Rotation"),trackPositionValues.rotation) then
+  if im.DragFloat(_tr("ui.trackBuilder.trackSettings.rotation", "Rotation"),trackPositionValues.rotation) then
     tb.setTrackPosition(trackPositionValues.position[0],trackPositionValues.position[1],trackPositionValues.position[2],trackPositionValues.rotation[0])
     tb.makeTrack()
     tb.focusMarkerOn(currentIndex)
   end
   im.Separator()
   local size = im.ImVec2(im.GetWindowWidth()-2,24)
-  if im.Button(translateLanguage("ui.trackBuilder.trackSettings.alignTrackToCam", "Align Track to Camera"),size) then
+  if im.Button(_tr("ui.trackBuilder.trackSettings.alignTrackToCam", "Align Track to Camera"),size) then
     tb.rotateTrackToCamera()
     tb.makeTrack()
     tbFunctions.refreshTrackPositionRotation()
     --tb.focusMarkerOn(currentIndex)
   end
-  if im.Button(translateLanguage("ui.trackBuilder.trackSettings.positionTrackBeforeCam", "Position Track before Camera"),size) then
+  if im.Button(_tr("ui.trackBuilder.trackSettings.positionTrackBeforeCam", "Position Track before Camera"),size) then
     tb.positionTrackBeforeCamera()
     tb.makeTrack()
     --tb.focusMarkerOn(currentIndex)
     tbFunctions.refreshTrackPositionRotation()
   end
   im.Separator()
-  if im.Button(translateLanguage("ui.trackBuilder.trackSettings.alignTrackToVehicle", "Align Track to Vehicle"),size) then
+  if im.Button(_tr("ui.trackBuilder.trackSettings.alignTrackToVehicle", "Align Track to Vehicle"),size) then
     tb.rotateTrackToTrackVehicle()
     tb.makeTrack()
     --tb.focusMarkerOn(currentIndex)
     tbFunctions.refreshTrackPositionRotation()
   end
-  if im.Button(translateLanguage("ui.trackBuilder.trackSettings.positionTrackAboveVehicle", "Position Track above Vehicle"),size) then
+  if im.Button(_tr("ui.trackBuilder.trackSettings.positionTrackAboveVehicle", "Position Track above Vehicle"),size) then
     tb.positionTrackAboveVehicle()
     tb.makeTrack()
     --tb.focusMarkerOn(currentIndex)
@@ -1211,22 +1201,22 @@ end
 
 -- creates the file name input, the save, preview and packToMod buttons.
 local function saveInputButtons()
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.saveLoad.saveTrack", "Save Track"))
-  im.InputText(translateLanguage("ui.trackBuilder.saveLoad.filename", "Filename"),saveSettings.saveStr)
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.saveLoad.saveTrack", "Save Track"))
+  im.InputText(_tr("ui.trackBuilder.saveLoad.filename", "Filename"),saveSettings.saveStr)
 
-  local text = translateLanguage("ui.trackBuilder.saveLoad.save", "Save Track")
-  local previewText = translateLanguage("ui.trackBuilder.saveLoad.createPreview", "Create Preview")
+  local text = _tr("ui.trackBuilder.saveLoad.save", "Save Track")
+  local previewText = _tr("ui.trackBuilder.saveLoad.createPreview", "Create Preview")
   local name = ffi.string(saveSettings.saveStr)
   local allowScreenshot = false
   local allowPacking = false
   -- check wether track exists, or we can save preview/pack to mod
   for _,file in ipairs(saveSettings.trackNames) do
     if file == name then
-      text = translateLanguage("ui.trackBuilder.saveLoad.overwrite", "Overwrite Track")
+      text = _tr("ui.trackBuilder.saveLoad.overwrite", "Overwrite Track")
       allowScreenshot = true
       for _,preview in ipairs(saveSettings.previewNames) do
         if preview == name then
-          previewText = translateLanguage("ui.trackBuilder.saveLoad.overwritePreview", "Overwrite Preview")
+          previewText = _tr("ui.trackBuilder.saveLoad.overwritePreview", "Overwrite Preview")
           allowPacking = true
         end
       end
@@ -1246,7 +1236,7 @@ local function saveInputButtons()
     ffi.copy(saveSettings.saveStr, filename)
     saveSettings.trackNames = tb.getCustomTracks()
     saveSettings.previewNames = tb.getPreviewNames()
-    saveSettings.infoText = translateLanguage("ui.trackBuilder.saveLoad.trackWrittenTo", "Successfully saved track to ") .."'/trackEditor/"..ffi.string(saveSettings.saveStr)..".json'!"
+    saveSettings.infoText = _tr("ui.trackBuilder.saveLoad.trackWrittenTo", "Successfully saved track to ") .."'/trackEditor/"..ffi.string(saveSettings.saveStr)..".json'!"
   end
   -- screenshot button, if track is saved
   if allowScreenshot then
@@ -1257,12 +1247,12 @@ local function saveInputButtons()
       tb.unselectAll()
       tb.makeTrack()
       screenshotTaken = false
-      saveSettings.infoText = translateLanguage("ui.trackBuilder.saveLoad.previewCreated", "Successfully created preview ") .."'/trackEditor/".. ffi.string(saveSettings.saveStr)..".jpg'!"
+      saveSettings.infoText = _tr("ui.trackBuilder.saveLoad.previewCreated", "Successfully created preview ") .."'/trackEditor/".. ffi.string(saveSettings.saveStr)..".jpg'!"
     end
   end
   -- pack to mod button, if has preview
   if allowPacking then
-    if im.Button(translateLanguage("ui.trackBuilder.saveLoad.packToMod", "Pack to Mod"), im.ImVec2(264,20)) then
+    if im.Button(_tr("ui.trackBuilder.saveLoad.packToMod", "Pack to Mod"), im.ImVec2(264,20)) then
       local modName = "mods/TrackBuilder_" .. ffi.string(saveSettings.saveStr)..".zip"
       local zip = ZipArchive()
       zip:openArchiveName(modName, 'w')
@@ -1271,30 +1261,30 @@ local function saveInputButtons()
       zip:addFile( 'trackEditor/'..ffi.string(saveSettings.saveStr)..'.json' )
       zip:addFile( 'trackEditor/'..ffi.string(saveSettings.saveStr)..'.jpg' )
       zip:close()
-      saveSettings.infoText = translateLanguage("ui.trackBuilder.saveLoad.modSaved", "Successfully packed track and preview to mod file  ") .."'/"..modName.."'!"
+      saveSettings.infoText = _tr("ui.trackBuilder.saveLoad.modSaved", "Successfully packed track and preview to mod file  ") .."'/"..modName.."'!"
     end
   end
 end
 
 -- creates the description, saveOnMap and saveTimeSettings inputs.
 local function additionalSaveSettings()
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.saveLoad.description", "Description"))
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.saveLoad.description", "Description"))
   im.InputTextMultiline("##description", saveSettings.description, im.GetLengthArrayCharPtr(saveSettings.description), im.ImVec2(-1.0, im.GetTextLineHeight() * 3))
-  im.Combo1(translateLanguage("ui.trackBuilder.saveLoad.difficulty", 'Difficulty'), saveSettings.difficulty, difficulty)
+  im.Combo1(_tr("ui.trackBuilder.saveLoad.difficulty", 'Difficulty'), saveSettings.difficulty, difficulty)
 
   if not isOnGlowCity then
-    im.Checkbox(translateLanguage("ui.trackBuilder.saveLoad.saveTimeSettings", 'Save time settings'),saveSettings.saveEnvironment)
+    im.Checkbox(_tr("ui.trackBuilder.saveLoad.saveTimeSettings", 'Save time settings'),saveSettings.saveEnvironment)
   end
 
-  im.Checkbox(translateLanguage("ui.trackBuilder.saveLoad.saveOnThisMap", "Save on this map"),saveSettings.saveOnMap)
+  im.Checkbox(_tr("ui.trackBuilder.saveLoad.saveOnThisMap", "Save on this map"),saveSettings.saveOnMap)
 end
 
 -- creates the track loading list and handles loading.
 local function loadTrackList()
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.saveLoad.loadTrack", "Load Track"))
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.saveLoad.loadTrack", "Load Track"))
   if im.Button('X ') then im.ImGuiTextFilter_Clear(loadFilesFilter) end
   im.SameLine()
-  im.ImGuiTextFilter_Draw(loadFilesFilter, translateLanguage("ui.trackBuilder.saveLoad.search", "Search"), 120)
+  im.ImGuiTextFilter_Draw(loadFilesFilter, _tr("ui.trackBuilder.saveLoad.search", "Search"), 120)
   im.BeginChild1("LoadBox")
   for _,file in ipairs(saveSettings.trackNames) do
     if im.ImGuiTextFilter_PassFilter(loadFilesFilter, file) then
@@ -1315,7 +1305,7 @@ local function loadTrackList()
         local tp = tb.getTrackPosition()
         tbFunctions.refreshTrackPositionRotation()
         ffi.copy(saveSettings.saveStr, file)
-        saveSettings.infoText = translateLanguage("ui.trackBuilder.saveLoad.trackLoaded", "Loaded track ") .."'"..ffi.string(saveSettings.saveStr).."'!"
+        saveSettings.infoText = _tr("ui.trackBuilder.saveLoad.trackLoaded", "Loaded track ") .."'"..ffi.string(saveSettings.saveStr).."'!"
       end
     end
   end
@@ -1393,7 +1383,7 @@ local function addObstacles()
           o.position[2] = 0
           tbFunctions.modifierChange('obstacles')
         end
-        im.tooltip(translateLanguage("ui.trackBuilder.tooltip.reset", "Reset"))
+        im.tooltip(_tr("ui.trackBuilder.tooltip.reset", "Reset"))
         dimensions = obstacleInfo[name].dimensions or 3
         if dimensions == 1 then
           if im.DragFloat("Scale   ##o"..i,o.scale,0.01, nil, nil, "%.2f") then tbFunctions.modifierChange('obstacles') end
@@ -1423,7 +1413,7 @@ local function addObstacles()
           o.extra[2] = obstacleInfo[name].scale[6] or 1
           tbFunctions.modifierChange('obstacles')
         end
-        im.tooltip(translateLanguage("ui.trackBuilder.tooltip.reset", "Reset"))
+        im.tooltip(_tr("ui.trackBuilder.tooltip.reset", "Reset"))
 
 
         if im.DragFloat3("Rotation ##o"..i,o.rotation, 1, nil, nil, "%.2f") then tbFunctions.modifierChange('obstacles') end
@@ -1435,19 +1425,19 @@ local function addObstacles()
           o.rotation[2] = 0
           tbFunctions.modifierChange('obstacles')
         end
-        im.tooltip(translateLanguage("ui.trackBuilder.tooltip.reset", "Reset"))
+        im.tooltip(_tr("ui.trackBuilder.tooltip.reset", "Reset"))
 
         if im.Combo1("Material ##o"..i, o.material, obstacleMatDisplayNames) then
           tbFunctions.modifierChange('obstacles')
         end
 
-        if im.Button(translateLanguage("ui.trackBuilder.obstacles.remove", "Remove") .. "##o"..i) then
+        if im.Button(_tr("ui.trackBuilder.obstacles.remove", "Remove") .. "##o"..i) then
           o.active = false
           tbFunctions.modifierChange('obstacles')
           tbFunctions.refreshPieceInfo()
         end
         im.SameLine()
-        if im.Button(translateLanguage("ui.trackBuilder.obstacles.copy", "Copy") .. "##o"..i) then
+        if im.Button(_tr("ui.trackBuilder.obstacles.copy", "Copy") .. "##o"..i) then
           copy = o
         end
         im.Separator()
@@ -1488,7 +1478,7 @@ local function addObstacles()
       modifierValues.obstacles.list[activeCount+1].active = true
       tbFunctions.modifierChange('obstacles')
     end
-    im.tooltip(translateLanguage("ui.trackBuilder.tooltip.addObstacle", "Add obstacle"))
+    im.tooltip(_tr("ui.trackBuilder.tooltip.addObstacle", "Add obstacle"))
   end
 end
 
@@ -1579,7 +1569,7 @@ end
 
 -- creates the checkpoints window.
 local function checkPoints()
-  if im.Checkbox(translateLanguage("ui.trackBuilder.checkpoints.active", "Active") .. "##cp",modifierValues.checkpoint.active) then
+  if im.Checkbox(_tr("ui.trackBuilder.checkpoints.active", "Active") .. "##cp",modifierValues.checkpoint.active) then
     if modifierValues.checkpoint.active[0] then
       local currentPiece = tb.getSelectedTrackInfo()
       modifierValues.checkpoint.size[0] = currentPiece.markerInfo.width
@@ -1593,7 +1583,7 @@ local function checkPoints()
   end
 
   if #currentCheckpointList == 0 then
-    im.TextWrapped(translateLanguage("ui.trackBuilder.checkpoints.info", "If you don't add any checkpoints, they will be automatically created when playing this track through the Time Trials game mode."))
+    im.TextWrapped(_tr("ui.trackBuilder.checkpoints.info", "If you don't add any checkpoints, they will be automatically created when playing this track through the Time Trials game mode."))
   else
     checkPointUIList()
   end
@@ -1646,10 +1636,10 @@ local function curveParameters(includeSplit)
   local side = p.direction[0] == -1 and "left" or "right"
 
   im.SetCursorPosX(xPositions[1])
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.base.radius", "Radius") .. ": " .. (p.radius[0]*4)..'m')
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.base.radius", "Radius") .. ": " .. (p.radius[0]*4)..'m')
   im.SameLine()
   im.SetCursorPosX(xPositions[3])
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.base.length", "Length") .. ": " .. p.length[0]..'°')
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.base.length", "Length") .. ": " .. p.length[0]..'°')
 
   im.SetCursorPosX(xPositions[1])
   if editor.uiIconImageButton(editor.icons['tb_'..side..'_curve_thinner'] or editor.icons.stop,style.buttonSize,style.buttonColorBase) then
@@ -1680,7 +1670,7 @@ local function curveParameters(includeSplit)
     if editor.uiIconImageButton(editor.icons.content_cut,style.buttonSize,style.buttonColorBase) then
       splitPiece()
     end
-    im.tooltip(translateLanguage("ui.trackBuilder.advanced.splitPiece", "Split Piece"))
+    im.tooltip(_tr("ui.trackBuilder.advanced.splitPiece", "Split Piece"))
   end
 end
 
@@ -1690,7 +1680,7 @@ local function straightParameters(includeSplit)
   local p = pieceInfo.free.forward
 
   im.SetCursorPosX(xPositions[1])
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.base.length", "Length") .. ": " .. (p.length[0]*4)..'m')
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.base.length", "Length") .. ": " .. (p.length[0]*4)..'m')
 
   im.SetCursorPosX(xPositions[1])
   if editor.uiIconImageButton(editor.icons['tb_forward_shorter'] or editor.icons.stop,style.buttonSize,style.buttonColorBase) then
@@ -1709,7 +1699,7 @@ local function straightParameters(includeSplit)
     if editor.uiIconImageButton(editor.icons.content_cut,style.buttonSize,style.buttonColorBase) then
       splitPiece()
     end
-    im.tooltip(translateLanguage("ui.trackBuilder.advanced.splitPiece", "Split Piece"))
+    im.tooltip(_tr("ui.trackBuilder.advanced.splitPiece", "Split Piece"))
     im.tooltip("Split Piece")
   end
 end
@@ -1721,10 +1711,10 @@ local function spiralParameters()
   local side = p.direction[0] == -1 and "left" or "right"
 
   im.SetCursorPosX(xPositions[1])
-  im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.base.radius", "Radius") .. ": " .. (p.size[0]*4)..'m')
+  im.TextColored(style.textColor, _tr("ui.trackBuilder.base.radius", "Radius") .. ": " .. (p.size[0]*4)..'m')
   im.SameLine()
   im.SetCursorPosX(xPositions[3])
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.base.length", "Length") .. ": " .. p.angle[0]..'°')
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.base.length", "Length") .. ": " .. p.angle[0]..'°')
 
   im.SetCursorPosX(xPositions[1])
   if editor.uiIconImageButton(editor.icons['tb_'..side..'_curve_thinner'] or editor.icons.stop,style.buttonSize,style.buttonColorBase) then
@@ -1815,7 +1805,7 @@ local function loopParameters()
   local p = pieceInfo.free.loop
   local xPositions = partitionWidth(im.GetWindowWidth(),48,4)
   im.SetCursorPosX(xPositions[1])
-  im.TextColored(style.textColor,translateLanguage("ui.trackBuilder.base.radius", "Radius") .. ": " .. (p.radius[0]*4)..'m')
+  im.TextColored(style.textColor,_tr("ui.trackBuilder.base.radius", "Radius") .. ": " .. (p.radius[0]*4)..'m')
   im.SameLine()
   im.SetCursorPosX(xPositions[3])
   im.TextColored(style.textColor,"xOffset: " .. (p.xOffset[0]*4)..'m')
@@ -2060,7 +2050,7 @@ local function deleteButton()
   if editor.uiIconImageButton(editor.icons.delete,style.buttonSize,style.buttonColorBase) then
     tbFunctions.pieceDeleted()
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.base.delete", "Delete Current Segment"))
+  im.tooltip(_tr("ui.trackBuilder.base.delete", "Delete Current Segment"))
 end
 
 local function closeTrackButton()
@@ -2071,7 +2061,7 @@ local function closeTrackButton()
     tb.focusMarkerOn(currentIndex)
     tbFunctions.refreshPieceInfo()
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.base.closeTrack", "Close Track"))
+  im.tooltip(_tr("ui.trackBuilder.base.closeTrack", "Close Track"))
 end
 
 
@@ -2402,7 +2392,7 @@ end
 local function toolbar()
   im.SetNextWindowSize(im.ImVec2(style.toolbarWidth, 72))
  -- im.SetNextWindowPos(im.ImVec2(style.displaySize.x/2 - style.fullToolbarsWidth/2,0))
-  im.Begin( translateLanguage("ui.trackBuilder.toolbar.title", "Toolbar"), nil, im.flags(im.WindowFlags_NoScrollbar, im.WindowFlags_NoResize, im.WindowFlags_NoCollapse, im.WindowFlags_NoDocking))
+  im.Begin( _tr("ui.trackBuilder.toolbar.title", "Toolbar"), nil, im.flags(im.WindowFlags_NoScrollbar, im.WindowFlags_NoResize, im.WindowFlags_NoCollapse, im.WindowFlags_NoDocking))
   if driving then
     --im.SetCursorPosX(style.toolbarWidth/2 - 100)
     if im.Button("Stop Driving", im.ImVec2(-1,-1)) then
@@ -2444,14 +2434,14 @@ end
 local function mainModifiers(name,leftIcon,rightIcon,step,small,big,min,max)
 
   if im.Button("<##"..name,style.slimButtonSize) then tbFunctions.modifierShift(name,-1) end
-    im.tooltip(translateLanguage("ui.trackBuilder.tooltip.shiftBack", "Shift Modifier Back"))
+    im.tooltip(_tr("ui.trackBuilder.tooltip.shiftBack", "Shift Modifier Back"))
     im.SameLine()
     if editor.uiIconImageButton(editor.icons[leftIcon] or editor.icons.stop,style.buttonSize,style.buttonColorBase) then modifierValues[name].value[0] = CtrlShiftButton(modifierValues[name].value[0],step,small,big,min,max,-1) tbFunctions.modifierChange(name) end
     im.SameLine()
     if editor.uiIconImageButton(editor.icons[rightIcon] or editor.icons.stop,style.buttonSize,style.buttonColorBase) then modifierValues[name].value[0] = CtrlShiftButton(modifierValues[name].value[0],step,small,big,min,max,1) tbFunctions.modifierChange(name) end
     im.SameLine()
     if im.Button(">##"..name,style.slimButtonSize) then tbFunctions.modifierShift(name,1) end
-    im.tooltip(translateLanguage("ui.trackBuilder.tooltip.shiftForward", "Shift Modifier Forward"))
+    im.tooltip(_tr("ui.trackBuilder.tooltip.shiftForward", "Shift Modifier Forward"))
     im.SameLine()
     im.SetCursorPosY(im.GetCursorPosY() + 8)
     modifierButtons(name,0, false,im.ImVec2(29,29))
@@ -2486,7 +2476,7 @@ local function mainWindow()
     else
       im.Spacing()
       im.SetCursorPosX(im.GetWindowWidth()/2 - 100)
-      if im.Button(translateLanguage("ui.trackbuilder.menus.openAdvancedPieces","Open Advanced Pieces"),im.ImVec2(200,50)) then
+      if im.Button(_tr("ui.trackbuilder.menus.openAdvancedPieces", "Open Advanced Pieces"),im.ImVec2(200,50)) then
         menuItems.advancedPieces.isOpen[0] = true
       end
     end
@@ -2496,15 +2486,15 @@ local function mainWindow()
 
   if not menuItems.advancedModifiers.isOpen[0] or not menuSettings.hideModifiers.value[0] then
     im.Spacing()
-    im.TextColored(style.textColor,string.format(translateLanguage("ui.trackbuilder.base.banking", "Banking") .. ": %.1f°", modifierValues.bank.value[0]))
+    im.TextColored(style.textColor,string.format(_tr("ui.trackbuilder.base.banking", "Banking") .. ": %.1f°", modifierValues.bank.value[0]))
     mainModifiers('bank','tb_bank_left','tb_bank_right',15,1,60,-720,720)
     im.Spacing()
 
-    im.TextColored(style.textColor,string.format(translateLanguage("ui.trackBuilder.base.height", "Height") .. ": %.1fm", modifierValues.height.value[0]))
+    im.TextColored(style.textColor,string.format(_tr("ui.trackBuilder.base.height", "Height") .. ": %.1fm", modifierValues.height.value[0]))
     mainModifiers('height','tb_height_lower','tb_height_higher',1,5,25,-50000,50000)
     im.Spacing()
 
-    im.TextColored(style.textColor, translateLanguage("ui.trackBuilder.base.width", "Width") .. ": " .. modifierValues.width.value[0]..'m')
+    im.TextColored(style.textColor, _tr("ui.trackBuilder.base.width", "Width") .. ": " .. modifierValues.width.value[0]..'m')
     mainModifiers('width','tb_width_slimmer','tb_width_wider',1,5,10,0,50)
     im.Spacing()
     im.Separator()
@@ -2513,22 +2503,22 @@ local function mainWindow()
 
   local selectorPositions = partitionWidth(im.GetWindowWidth(), 100, 2)
   im.SetCursorPosX(selectorPositions[1])
-  if im.Button(translateLanguage("ui.trackBuilder.base.drive","Drive"),im.ImVec2(100,24)) then
+  if im.Button(_tr("ui.trackBuilder.base.drive", "Drive"),im.ImVec2(100,24)) then
     tbFunctions.drive()
   end
   im.SameLine()
   im.SetCursorPosX(selectorPositions[2])
-  if im.Button(translateLanguage("ui.trackBuilder.base.test","Test"),im.ImVec2(100,24)) then
+  if im.Button(_tr("ui.trackBuilder.base.test", "Test"),im.ImVec2(100,24)) then
     tbFunctions.drive(currentIndex-1)
   end
-  im.tooltip(translateLanguage("ui.trackBuilder.base.testDrive",'Starts from the selected Piece'))
+  im.tooltip(_tr("ui.trackBuilder.base.testDrive", 'Starts from the selected Piece'))
 
 end
 
 -- creates the menu bar for the main window.
 local function menuBar()
   if im.BeginMenuBar() then
-    if im.BeginMenu(translateLanguage("ui.trackbuilder.menus.windows","Windows")) then
+    if im.BeginMenu(_tr("ui.trackbuilder.menus.windows", "Windows")) then
       for k,v in pairs(menuItemsSorted) do
         if im.MenuItem2(menuItems[v].name, "", menuItems[v].isOpen) then
           if menuItems[v].isOpen[0] and menuItems[v].onOpenFunction ~= nil then
@@ -2546,12 +2536,12 @@ local function menuBar()
       --im.MenuItem2("Help",nil,helpOpen)
       im.EndMenu()
     end
-    if im.BeginMenu(translateLanguage("ui.trackbuilder.menus.editorSettings", "Editor Settings")) then
-      if im.MenuItem1(translateLanguage("ui.trackbuilder.menus.removeTrack","Remove Track")) then
+    if im.BeginMenu(_tr("ui.trackbuilder.menus.editorSettings", "Editor Settings")) then
+      if im.MenuItem1(_tr("ui.trackbuilder.menus.removeTrack", "Remove Track")) then
         toggleTrackBuilder()
         tb.removeTrack()
       end
-      if im.MenuItem1(translateLanguage("ui.trackbuilder.menus.resetTrack", "Reset Track")) then
+      if im.MenuItem1(_tr("ui.trackbuilder.menus.resetTrack", "Reset Track")) then
         tb.removeTrack()
         currentIndex = 2
         tb.initTrack()
@@ -2561,13 +2551,13 @@ local function menuBar()
         tbFunctions.refreshPieceInfo()
       end
       im.Separator()
-      if im.MenuItem2(translateLanguage("ui.trackbuilder.menus.onlyOnePiecesWindow","Only one Pieces Window"),"",menuSettings.hidePieces.value) then serializeSettings() end
-      if im.MenuItem2(translateLanguage("ui.trackbuilder.menus.onlyOneModifierWindow", "Only one Modifier Window"),"",menuSettings.hideModifiers.value) then serializeSettings() end
-      if im.MenuItem2(translateLanguage("ui.trackBuilder.settings.cameraFollow", "Automatic camera follow"),"",menuSettings.camActivated.value) then
+      if im.MenuItem2(_tr("ui.trackbuilder.menus.onlyOnePiecesWindow", "Only one Pieces Window"),"",menuSettings.hidePieces.value) then serializeSettings() end
+      if im.MenuItem2(_tr("ui.trackbuilder.menus.onlyOneModifierWindow", "Only one Modifier Window"),"",menuSettings.hideModifiers.value) then serializeSettings() end
+      if im.MenuItem2(_tr("ui.trackBuilder.settings.cameraFollow", "Automatic camera follow"),"",menuSettings.camActivated.value) then
         tb.camActivated = menuSettings.camActivated.value[0]
         serializeSettings()
       end
-      if editor.uiSliderFloat(translateLanguage("ui.trackBuilder.settings.cameraFollowDistance", "Follow Distance"),menuSettings.camDistance.value, 10, 200, "%.1f", nil, camDistanceChanged) then tb.camDistance = menuSettings.camDistance.value[0] end
+      if editor.uiSliderFloat(_tr("ui.trackBuilder.settings.cameraFollowDistance", "Follow Distance"),menuSettings.camDistance.value, 10, 200, "%.1f", nil, camDistanceChanged) then tb.camDistance = menuSettings.camDistance.value[0] end
       if camDistanceChanged[0] == true then serializeSettings() end
       im.EndMenu()
     end
@@ -2646,7 +2636,7 @@ local function drawTrackBuilderUI()
     open = im.BoolPtr(true)
   end
 
-  if im.Begin(translateLanguage("ui.trackbuilder.menus.trackBuilder", "Track Builder"), open, flags) then
+  if im.Begin(_tr("ui.trackbuilder.menus.trackBuilder", "Track Builder"), open, flags) then
     style.toolbarWidth = (#menuItemsSorted + #additionalMenuItemsSorted) * 44 + 16 + (#menuItemsSorted + #additionalMenuItemsSorted - 1) * 8 +  (#paintModesSorted) * 44 + 16 + (#paintModesSorted - 1) * 8 - 4
     style.paintToolbarWidth = (#paintModesSorted) * 32 + 16 + (#paintModesSorted - 1) * 8
     style.fullToolbarsWidth = (style.toolbarWidth + style.toolbarSpacing + style.paintToolbarWidth)
@@ -2656,20 +2646,20 @@ local function drawTrackBuilderUI()
     end
     --paintModeToolbar()
     if not trackSpawned then
-      if im.Button(translateLanguage("ui.trackbuilder.menus.startTrackBuilder", "Start Track Builder Here"), im.ImVec2(-1,0)) then
+      if im.Button(_tr("ui.trackbuilder.menus.startTrackBuilder", "Start Track Builder Here"), im.ImVec2(-1,0)) then
         trackSpawned = true
         -- spawn actual track
         setupTrack()
       end
-      if im.Button(translateLanguage("ui.trackbuilder.menus.startTrackBuilderOnGlowCity", "Switch to Glow City"), im.ImVec2(-1,0)) then
+      if im.Button(_tr("ui.trackbuilder.menus.startTrackBuilderOnGlowCity", "Switch to Glow City"), im.ImVec2(-1,0)) then
         freeroam_freeroam.startTrackBuilder('glow_city',true)
       end
     elseif trackSpawned then
       menuBar()
       mainWindow()
     end
-    im.End()
   end
+  im.End()
   if trackSpawned then
     toolbar()
     showSubWindows()
@@ -3348,10 +3338,6 @@ local function setupUIStyle()
 
     Engine.imgui.enableBeamNGStyle()
   end
-  local stle = ffi.new("ImGuiStyle[1]")
-  im.GetStyle(stle)
-  stle[0].FrameBorderSize = im.Float(1.0)
-  --im.SetStyle(stle)
 end
 
 local function onWindowResized(size)
@@ -3374,15 +3360,14 @@ local function initialize()
     description = im.ArrayChar(256*16),
     difficulty = im.IntPtr(1),
     timeOfDay = im.FloatPtr(0),
-    fogValue = im.FloatPtr(0),
-    azimuthValue = im.FloatPtr(0)
+    fogValue = im.FloatPtr(0)
   }
 
   paintModes = {
-    Select = {tooltip=translateLanguage("ui.trackBuilder.toolbar.select", "Select segment"), active=im.BoolPtr(true), icon=editor.icons.near_me},
-    Paint = {tooltip=translateLanguage("ui.trackBuilder.toolbar.paint", "Paint material"), active=im.BoolPtr(false), icon=editor.icons.brush},
-    ChangeMesh = {tooltip=translateLanguage("ui.trackBuilder.toolbar.changeShape", "Change track shapes"), active=im.BoolPtr(false), icon=editor.icons['tb_shapes'] or editor.icons.stop},
-    Merge = {tooltip=translateLanguage("ui.trackBuilder.toolbar.merge", "Merge"), active=im.BoolPtr(false), icon=editor.icons.extension},
+    Select = {tooltip=_tr("ui.trackBuilder.toolbar.select", "Select segment"), active=im.BoolPtr(true), icon=editor.icons.near_me},
+    Paint = {tooltip=_tr("ui.trackBuilder.toolbar.paint", "Paint material"), active=im.BoolPtr(false), icon=editor.icons.brush},
+    ChangeMesh = {tooltip=_tr("ui.trackBuilder.toolbar.changeShape", "Change track shapes"), active=im.BoolPtr(false), icon=editor.icons['tb_shapes'] or editor.icons.stop},
+    Merge = {tooltip=_tr("ui.trackBuilder.toolbar.merge", "Merge"), active=im.BoolPtr(false), icon=editor.icons.extension},
   }
 
   --TODO: this must be done everytime level changed? since scenetree will be different
@@ -3401,28 +3386,28 @@ local function initialize()
   materialSettings.nullMat = editor.texObj("")
   menuItems = {
     advancedModifiers = {
-      name = translateLanguage("ui.trackBuilder.menus.advancedModifiers", "Advanced Modifiers"),
+      name = _tr("ui.trackBuilder.menus.advancedModifiers", "Advanced Modifiers"),
       isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons.adjust
     },
     advancedPieces = {
-      name = translateLanguage("ui.trackBuilder.menus.advancedPieces", "Advanced Pieces"),
+      name = _tr("ui.trackBuilder.menus.advancedPieces", "Advanced Pieces"),
       isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons['tb_loop'] or editor.icons.stop
     },
     borders = {
-      name = translateLanguage("ui.trackBuilder.menus.trackShape", "Track Shape"),
+      name = _tr("ui.trackBuilder.menus.trackShape", "Track Shape"),
       isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons['tb_shapes'] or editor.icons.stop,
       onOpenFunction = onBordersAndCentersOpened, onCloseFunction = onBordersAndCentersClosed
     },
     sidewalls = {
-      name =translateLanguage("ui.trackBuilder.menus.wallsCeiling", "Walls and Ceiling"),
+      name =_tr("ui.trackBuilder.menus.wallsCeiling", "Walls and Ceiling"),
       isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons['tb_tunnel'] or editor.icons.stop
     },
     obstacles = {
-      name = translateLanguage("ui.trackBuilder.menus.obstacles", "Obstacles"),
+      name = _tr("ui.trackBuilder.menus.obstacles", "Obstacles"),
       isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,504), icon = editor.icons.remove_circle_outline
     },
     materialEditor = {
-      name = translateLanguage("ui.trackBuilder.menus.materialEditor", "Material Editor"),
+      name = _tr("ui.trackBuilder.menus.materialEditor", "Material Editor"),
       isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons.brush,
       onOpenFunction = onMaterialEditorOpened, onCloseFunction = onMaterialEditorClosed
     },
@@ -3435,9 +3420,9 @@ local function initialize()
 
   }
   additionalMenuItems = {
-    checkpoints = {name = translateLanguage("ui.trackBuilder.menus.checkpoints", "CheckPoints"), isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons.flag},
-    postionrotation = {name = translateLanguage("ui.trackBuilder.menus.trackSettings", "Track Settings"),  isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons.settings},
-    saveload = {name= translateLanguage("ui.trackBuilder.menus.saveLoad", "Save and Load"),isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,420), icon = editor.icons.save},
+    checkpoints = {name = _tr("ui.trackBuilder.menus.checkpoints", "CheckPoints"), isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons.flag},
+    postionrotation = {name = _tr("ui.trackBuilder.menus.trackSettings", "Track Settings"),  isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,0), icon = editor.icons.settings},
+    saveload = {name= _tr("ui.trackBuilder.menus.saveLoad", "Save and Load"),isOpen = im.BoolPtr(false), wasOpen = false, size = im.ImVec2(280,420), icon = editor.icons.save},
     --debug = {name = 'debug', value = im.BoolPtr(false), icon = editor.icons.bug_report}
   }
 
@@ -3487,8 +3472,6 @@ local function initialize()
   -- local imguiUtils = require('ui/imguiUtils')
   -- imguiUtils.changeUIScale(1)
   -- imguiUtils = nil
-  local style = ffi.new('ImGuiStyle[1]')
-  im.GetStyle(style)
 end
 
 local function showTrackBuilderWindow(show)
@@ -3552,9 +3535,9 @@ local function toggleTrackBuilder()
   local active = open[0]
   showTrackBuilderWindow(not active)
   if active then
-    extensions.hook("stopTracking", {Name = "TrackBuilder"})
+    extensions.telemetry_core.endActivity("trackBuilder")
   else
-    extensions.hook("startTracking", {Name = "TrackBuilder"})
+    extensions.telemetry_core.startActivity("trackBuilder")
   end
 end
 

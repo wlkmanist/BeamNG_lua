@@ -26,37 +26,41 @@ local function validateRawPoiElement(element)
   return valid
 end
 
+local whiteListIds = {}
+
 local function getRawPoiListByLevel(levelIdentifier)
+  if not levelIdentifier then
+    return {}, rawPoiGeneration
+  end
   -- when in the tutorial, only add the desired elements
   if career_career.isActive()  and levelIdentifier == "west_coast_usa" then
-    -- show tutorial step specific pois
-    if not career_modules_linearTutorial.getTutorialFlag("arrivedAtFuelstation") then
-      local gasStation = freeroam_facilities.getGasStation("apex")
-      local elements = {
-        freeroam_gasStations.formatGasStationPoi(gasStation)
-      }
-      return elements, rawPoiGeneration
-    elseif  not career_modules_linearTutorial.getTutorialFlag("completedTutorialMission") then
+
+
+    if career_modules_tutorial.isActive() then
       local elements = {}
-      gameplay_missions_missions.formatMissionToRawPoi(gameplay_missions_missions.getMissionById("west_coast_usa/arrive/005-ArriveTutorial"), elements, levelIdentifier)
-      return elements, rawPoiGeneration
-    elseif  not career_modules_linearTutorial.getTutorialFlag("purchasedFirstCar") then
-      local elements = {}
-      local dealer = freeroam_facilities.getDealership("quarrysideAutoSales")
-      freeroam_facilities.walkingMarkerFormatFacility(dealer, elements)
-      return elements, rawPoiGeneration
-    elseif  not career_modules_linearTutorial.getTutorialFlag("modifiedFirstCar") then
-      local elements = {}
-      local garage = freeroam_facilities.getFacility("computer", "servicestationGarageComputer")
-      freeroam_facilities.formatFacilityToRawPoi(garage, elements)
-      return elements, rawPoiGeneration
+      extensions.hook("onGetRawPoiListForTutorial", elements)
+      rawPoiListByLevel[levelIdentifier] = elements
+      return rawPoiListByLevel[levelIdentifier], rawPoiGeneration
     end
 
     -- only show dealership when car not bought
     if not career_career.hasBoughtStarterVehicle() then
-      local elements = {}
-      local dealer = freeroam_facilities.getDealership("quarrysideAutoSales")
-      freeroam_facilities.walkingMarkerFormatFacility(dealer, elements)
+      local elementsUnchecked, elements = {}, {}
+      -- call all extensions to add their POIs
+      extensions.hook("onGetRawPoiListForLevel",levelIdentifier, elementsUnchecked)
+
+      -- filter only the POIS that are dealerships, inspect vehicle or computers
+      local allowedDataTypes = {
+        dealership = true,
+        inspectVehicle = true,
+        computer = true,
+      }
+      for _, e in ipairs(elementsUnchecked) do
+        if e.data and allowedDataTypes[e.data.type] then
+          table.insert(elements, e)
+        end
+      end
+
       return elements, rawPoiGeneration
     end
   end
@@ -66,6 +70,25 @@ local function getRawPoiListByLevel(levelIdentifier)
     local elementsUnchecked, elements = {}, {}
     -- call all extensions to add their POIs
     extensions.hook("onGetRawPoiListForLevel",levelIdentifier, elementsUnchecked)
+
+    local testDriveActive = career_modules_testDrive and career_modules_testDrive.isActive()
+    local deliveryActive = gameplay_freeformDelivery_freeformDelivery and gameplay_freeformDelivery_freeformDelivery.isLoaded()
+    local allowedDataTypes = {}
+    if testDriveActive then
+      allowedDataTypes.testDriveEnd = true
+    end
+    if deliveryActive then
+      allowedDataTypes.deliveryTargetArea = true
+      allowedDataTypes.deliveryVehicle = true
+    end
+    table.clear(whiteListIds)
+    if gameplay_discover_freeroamTutorial_tutorial then
+      allowedDataTypes.tutorialLesson = true
+      if gameplay_discover_freeroamTutorial_tutorial.getActivePhase() == 'missions' then
+        whiteListIds['industrial/timeTrial/008-Sprint'] = true
+      end
+    end
+    if not next(allowedDataTypes) then allowedDataTypes = nil end
     for _, e in ipairs(elementsUnchecked) do
       -- sanity check
 
@@ -74,7 +97,9 @@ local function getRawPoiListByLevel(levelIdentifier)
         e.markerInfo.bigmapMarker.cluster = true
       end
 
-      if (not career_modules_testDrive or not career_modules_testDrive.isActive() or (e.data and e.data.type == "testDriveEnd")) then
+      -- Only include POIs if a test drive is not active, or if this POI is the testDriveEnd type
+      local dataType = e.data and e.data.type
+      if not allowedDataTypes or (allowedDataTypes and allowedDataTypes[dataType]) or (whiteListIds and whiteListIds[e.id]) then
         table.insert(elements, e)
       end
     end

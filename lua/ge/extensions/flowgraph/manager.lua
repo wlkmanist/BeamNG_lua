@@ -175,7 +175,7 @@ function C:init(parent)
   self.customNodeLookup = nil
 
   self.modules = { }
-  for _, m in ipairs({'autoReplay', 'drift', 'vehicle', 'level', 'prefab', 'timer', 'button', 'action', 'camera', 'file', 'traffic', 'mission', 'foreach', 'thread', 'ui'}) do
+  for _, m in ipairs({'missionReplay', 'drift', 'vehicle', 'level', 'prefab', 'timer', 'button', 'action', 'camera', 'file', 'traffic', 'mission', 'foreach', 'thread', 'ui', 'aiRecording'}) do
     self.modules[m] = require('/lua/ge/extensions/flowgraph/modules/' .. m .. 'Module').create(self)
   end
   self.moduleOrder = {}
@@ -844,10 +844,10 @@ function C:setupCreationWorkflow()
   if self._creationWorkflowInfo then
     return
   end
-  local pinId = ffi.new('fge_PinId[1]', 0)
+  local pinId = ui_flowgraph_editor.PinIdPtr()
   local originPin = nil
   if ui_flowgraph_editor.QueryNewNode1(pinId) then
-    originPin = self.graph:findPin(tonumber(pinId[0]))
+    originPin = self.graph:findPin(ui_flowgraph_editor.PtrToId(pinId))
   end
   if not originPin then
     return
@@ -892,13 +892,13 @@ function C:creationWorkflow()
   local mp = im.GetMousePos()
   if ui_flowgraph_editor.BeginCreate(im.ImVec4(1, 1, 1, 1), 2) then
     self:setupCreationWorkflow()
-    local startPinId = ffi.new('fge_PinId[1]', 0)
-    local endPinId = ffi.new('fge_PinId[1]', 0)
+    local startPinId = ui_flowgraph_editor.PinIdPtr()
+    local endPinId = ui_flowgraph_editor.PinIdPtr()
 
     -- create a new link?
     if ui_flowgraph_editor.QueryNewLink1(startPinId, endPinId) then
-      local startPin = self.graph:findPin(tonumber(startPinId[0]))
-      local endPin = self.graph:findPin(tonumber(endPinId[0]))
+      local startPin = self.graph:findPin(ui_flowgraph_editor.PtrToId(startPinId))
+      local endPin = self.graph:findPin(ui_flowgraph_editor.PtrToId(endPinId))
 
       if startPin then
         self.newLinkPin = startPin
@@ -946,8 +946,8 @@ function C:creationWorkflow()
           ui_flowgraph_editor.RejectNewItem2(im.ImVec4(1, 0.5, 0.5, 1), 2)
 
         elseif startPin.chainFlow == true then
-          local p1 = self.graph:findPin(tonumber(startPinId[0]))
-          local p2 = self.graph:findPin(tonumber(endPinId[0]))
+          local p1 = self.graph:findPin(ui_flowgraph_editor.PtrToId(startPinId))
+          local p2 = self.graph:findPin(ui_flowgraph_editor.PtrToId(endPinId))
           local replacedLinks = false
 
           if ui_flowgraph_editor.AcceptNewItem2(im.ImVec4(0.5, 1, 0.5, 1), 4) then
@@ -977,8 +977,8 @@ function C:creationWorkflow()
         elseif self.graph:hasLink(endPin) then
           fg_utils.showLabel("Replace link")
           if ui_flowgraph_editor.AcceptNewItem2(im.ImVec4(0.5, 1, 0.5, 1), 4) then
-            local p1 = self.graph:findPin(tonumber(startPinId[0]))
-            local p2 = self.graph:findPin(tonumber(endPinId[0]))
+            local p1 = self.graph:findPin(ui_flowgraph_editor.PtrToId(startPinId))
+            local p2 = self.graph:findPin(ui_flowgraph_editor.PtrToId(endPinId))
             for k, v in pairs(self.graph.links) do
               if v.targetPin.id == p2.id then
                 self.graph:deleteLink(v)
@@ -990,8 +990,8 @@ function C:creationWorkflow()
         else
           fg_utils.showLabel("+ Create Link", im.ImVec4(0.125, 0.176, 0.125, 0.706))
           if ui_flowgraph_editor.AcceptNewItem2(im.ImVec4(0.5, 1, 0.5, 1), 4) then
-            local p1 = self.graph:findPin(tonumber(startPinId[0]))
-            local p2 = self.graph:findPin(tonumber(endPinId[0]))
+            local p1 = self.graph:findPin(ui_flowgraph_editor.PtrToId(startPinId))
+            local p2 = self.graph:findPin(ui_flowgraph_editor.PtrToId(endPinId))
             self.graph:createLink(p1, p2)
             self.fgEditor.addHistory("Linked " .. p1.name .. " and " .. p2.name)
           end
@@ -1000,16 +1000,16 @@ function C:creationWorkflow()
     end
 
     -- create new node?
-    local pinId = ffi.new('fge_PinId[1]', 0)
+    local pinId = ui_flowgraph_editor.PinIdPtr()
     if ui_flowgraph_editor.QueryNewNode1(pinId) then
-      self.newLinkPin = self.graph:findPin(tonumber(pinId[0]))
+      self.newLinkPin = self.graph:findPin(ui_flowgraph_editor.PtrToId(pinId))
       if self.newLinkPin then
         fg_utils.showLabel("+ Create Node", im.ImVec4(0.125, 0.176, 0.125, 0.706))
       end
 
       if ui_flowgraph_editor.AcceptNewItem1() then
         self.createNewNode = true
-        self.newNodeLinkPin = self.graph:findPin(tonumber(pinId[0]))
+        self.newNodeLinkPin = self.graph:findPin(ui_flowgraph_editor.PtrToId(pinId))
         self.fgEditor.nodelib:setNewNodeLinkPin(self.newNodeLinkPin)
         self.newLinkPin = nil
         self.openPopupPosition = mp
@@ -1052,6 +1052,7 @@ function C:DrawTypeIcon(dataType, connected, alpha, typeIconSize, innercolor)
   editor.uiIconImage(editor.icons[iconType .. "_" .. (connected and 1 or 2)], im.ImVec2(typeIconSize * uiscale, typeIconSize * uiscale), color)
   im.SetCursorPosY(im.GetCursorPosY() + 3 * uiscale)
   im.SetCursorPosX(im.GetCursorPosX() + 3 * uiscale)
+  im.Dummy(im.ImVec2(0, 0))
   im.EndGroup()
 
   im.PopStyleVar(2)
@@ -1067,13 +1068,13 @@ function C:deletionWorkflow()
       ui_flowgraph_editor.DeleteNode(nId)
     end
 
-    local linkId = ffi.new('fge_LinkId[1]', 0)
+    local linkId = ui_flowgraph_editor.LinkIdPtr()
     while ui_flowgraph_editor.QueryDeletedLink(linkId, nil, nil) do
       if ui_flowgraph_editor.AcceptDeletedItem() then
       end
     end
 
-    local nodeId = ffi.new('fge_NodeId[1]', 0)
+    local nodeId = ui_flowgraph_editor.NodeIdPtr()
     while ui_flowgraph_editor.QueryDeletedNode(nodeId) do
       if ui_flowgraph_editor.AcceptDeletedItem() then
       end
@@ -1103,23 +1104,23 @@ function C:updateEditorSelections()
   local selectCountMax = ui_flowgraph_editor.GetSelectedObjectCount()
 
   -- nodes
-  local selectNodeIdArray = ffi.new('fge_NodeId[' .. tostring(selectCountMax) .. ']')
-  self.selectedNodeCount = ui_flowgraph_editor.GetSelectedNodes(selectNodeIdArray, selectCountMax)
+  local selectNodeIdArray = ui_flowgraph_editor.GetSelectedNodeIds()
+  self.selectedNodeCount = #selectNodeIdArray
   self.selectedNodes = {}
   for i = 1, self.selectedNodeCount do
-    self.selectedNodes[tonumber(selectNodeIdArray[i - 1])] = 1
+    self.selectedNodes[tonumber(selectNodeIdArray[i])] = 1
   end
   for id, node in pairs(self.graph.nodes) do
     node._isSelected = self.selectedNodes[node.id]
   end
 
   -- links
-  local selectLinkIdArray = ffi.new('fge_LinkId[' .. tostring(selectCountMax) .. ']')
-  self.selectedLinkCount = ui_flowgraph_editor.GetSelectedLinks(selectLinkIdArray, selectCountMax)
+  local selectLinkIdArray = ui_flowgraph_editor.GetSelectedLinkIds()
+  self.selectedLinkCount = #selectLinkIdArray
   self.selectedLinks = {}
   for i = 1, self.selectedLinkCount do
-    self.selectedLinks[tonumber(selectLinkIdArray[i - 1])] = 1
-    local isHidden = self:findLinkIdFromHiddenLinkId(tonumber(selectLinkIdArray[i - 1]))
+    self.selectedLinks[tonumber(selectLinkIdArray[i])] = 1
+    local isHidden = self:findLinkIdFromHiddenLinkId(tonumber(selectLinkIdArray[i]))
     if isHidden then
       self.graph.links[isHidden].hidden = false
       ui_flowgraph_editor.SelectLink(isHidden, true)
@@ -1158,7 +1159,7 @@ function C:dragDropTarget(payloadType)
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload(payloadType)
     if payload ~= nil then
-      assert(payload.DataSize == ffi.sizeof "char[64]");
+      assert(payload.DataSize == 64)
       local path = ffi.string(payload.Data)
     end
     im.EndDragDropTarget()
@@ -1178,9 +1179,9 @@ function C:dragDropSource(payloadType, data)
       self.dragDropData.node = data
     end
     if not self.dragDropData.name then
-      self.dragDropData.name = ffi.new('char[64]', data.path)
+      self.dragDropData.name = im.ArrayChar(64, data.path)
     end
-    im.SetDragDropPayload(payloadType, self.dragDropData.name, ffi.sizeof 'char[64]', im.Cond_Once)
+    im.SetDragDropPayload(payloadType, self.dragDropData.name, im.ArraySize(self.dragDropData.name), im.Cond_Once)
 
     if data.text then
       --  im.Text(data.text)
@@ -2034,8 +2035,7 @@ function C:setRunning(running, stopInstant)
     table.clear(self.events)
     table.clear(self.eventDuplicateCheck)
     self.startTime = Engine.Platform.getRuntime()
-    extensions.load('core_trailerRespawn')
-    core_trailerRespawn.setEnabled(false)
+
     self:logEvent("Project Started", nil, "The Project has been started.")
     self.groupedEvents = {}
     self.gcprobe_enabled = false
@@ -2082,9 +2082,6 @@ function C:setRunning(running, stopInstant)
       else
         -- queueing reset so it is reset at the END of the frame
         self.queueReset = true
-      end
-      if core_trailerRespawn then
-        core_trailerRespawn.setEnabled(true)
       end
       self:logEvent("Project Stopped", nil, "The Project has been stopped.")
     end
@@ -2294,14 +2291,25 @@ function C:getRelativeAbsolutePath(p, disableLogEntryOnFail)
   end
   local success = false
   local files = {}
-  for _, path in ipairs(paths) do
-    if path ~= "" then
-      table.insert(files, path)
-      if self.savedDir then
-        table.insert(files, self.savedDir .. path)
-      end
-      if self.activity and self.activity.missionFolder then
-        table.insert(files, self.activity.missionFolder .. "/" .. path)
+  local folders = {''}
+  if self.activity and self.activity.layers and type(self.activity.layers) == "table" then
+    for _, layer in ipairs(self.activity.layers) do
+      table.insert(folders, layer.dir)
+    end
+  else
+    if self.savedDir then
+      table.insert(folders, self.savedDir)
+    end
+    if self.activity and self.activity.missionFolder then
+      table.insert(folders, self.activity.missionFolder .. "/")
+    end
+  end
+
+  for _, folder in ipairs(folders) do
+    for _, path in ipairs(paths) do
+      local file = folder..path
+      if path ~= "" then
+        table.insert(files, folder .. path)
       end
     end
   end

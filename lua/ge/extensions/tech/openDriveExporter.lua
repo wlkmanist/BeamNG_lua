@@ -82,52 +82,62 @@ local function sortDescending(a, b)
   return a > b
 end
 
-local function computePathSegments()
 
+local function computePathSegments()
   -- Trace all the path segments from the road network graph.
   pathSegments = {}
   local ctr = 1
   for headKey, v1 in pairs(graph) do
     local firstChildren = getChildren(graph[headKey])
     local successors = firstChildren['children']
-    if firstChildren['count'] ~= 2 then
-      for childKey, v2 in pairs(successors) do
-        local currentPath = {}
-        currentPath[1] = headKey
-        local ctr2 = 2
-        local nextKey = childKey
-        while true do
-          currentPath[ctr2] = nextKey
-          ctr2 = ctr2 + 1
-          local nextChildren = getChildren(graph[nextKey])
-          local nextSuccessors = nextChildren['children']
-          if nextChildren['count'] ~= 2 then
-            if doesCollectionContainSegment(pathSegments, currentPath) == false then
-              pathSegments[ctr] = currentPath
-              ctr = ctr + 1
-            end
+    -- Remove condition that filtered out nodes with 2 children
+    for childKey, v2 in pairs(successors) do
+      local currentPath = {}
+      currentPath[1] = headKey
+      local ctr2 = 2
+      local nextKey = childKey
+      while true do
+        currentPath[ctr2] = nextKey
+        ctr2 = ctr2 + 1
+        local nextChildren = getChildren(graph[nextKey])
+        local nextSuccessors = nextChildren['children']
+        -- Check if we've reached a junction or if all possible next nodes have been visited
+        local allSuccessorsVisited = true
+        for nextSuccessorKey, _ in pairs(nextSuccessors) do
+          if not doesSegmentContainKey(currentPath, nextSuccessorKey) then
+            allSuccessorsVisited = false
             break
           end
-          local didFind = false
-          for nextSuccessorKey, v3 in pairs(nextSuccessors) do
-            if doesSegmentContainKey(currentPath, nextSuccessorKey) == false then
-              nextKey = nextSuccessorKey
-              didFind = true
-              break
-            end
+        end
+
+        if nextChildren['count'] ~= 2 or allSuccessorsVisited then
+          if doesCollectionContainSegment(pathSegments, currentPath) == false then
+            pathSegments[ctr] = currentPath
+            ctr = ctr + 1
           end
-          if didFind == false then
-            if doesCollectionContainSegment(pathSegments, currentPath) == false then
-              pathSegments[ctr] = currentPath
-              ctr = ctr + 1
-            end
+          break
+        end
+
+        local didFind = false
+        for nextSuccessorKey, v3 in pairs(nextSuccessors) do
+          if doesSegmentContainKey(currentPath, nextSuccessorKey) == false then
+            nextKey = nextSuccessorKey
+            didFind = true
             break
           end
+        end
+        if didFind == false then
+          if doesCollectionContainSegment(pathSegments, currentPath) == false then
+            pathSegments[ctr] = currentPath
+            ctr = ctr + 1
+          end
+          break
         end
       end
     end
   end
 
+  -- ... rest of the function remains unchanged ...
   -- Compute the average widths for each path segment.
   local avgWidths = {}
   for k, seg in pairs(pathSegments) do

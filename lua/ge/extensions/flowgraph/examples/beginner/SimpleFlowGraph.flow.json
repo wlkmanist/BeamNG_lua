@@ -1,8 +1,8 @@
 {
   "activeGraphId":1,
-  "authors":"Anonymous",
+  "authors":"BeamNG",
   "currentGraphID":1,
-  "date":1699989951,
+  "date":1741623800,
   "debugEnabled":false,
   "description":"Learn about the very basics of Flowgraph.",
   "difficulty":40,
@@ -58,8 +58,8 @@
             }
           },
           "pos":[
-            25,
-            23
+            24,
+            7
           ],
           "type":"events/onUpdate"
         },
@@ -78,17 +78,17 @@
             1
           ],
           "commentSize":[
-            1062,
-            210
+            894,
+            226
           ],
-          "commentText":"This is a very simple Flowgraph.\\n\\nFlow will propagate through the graph. The flow starts at the leftmost node, \"on Update\", and will flow through the white links and nodes to the right.\\nWhen flow enters into a node through one of its white flow-pins, it will be active. This means it will do something, have an effect on the world, other nodes, or itself.\\nA node that is active may or may not give the flow to the right, out of a flow-pin. Most nodes do that, signalling that they are done with whatever they were meant to do,\\nor that they are now \"ready\" for the nodes further down the graph to do their things.\\n\\nThis Example will wait for 3 seconds, then print out a message and finally stop the project. Start the project, by clicking the, \"Play\" button above.\\nWatch the message appear in the Event Log (Windows/Event Log).\\n\\n\\n",
+          "commentText":"This is a very simple Flowgraph.\\n\\nFlow will propagate through the graph. The flow starts at the leftmost node, \"on Update\", and will flow through the white links and nodes \\nto the right. When flow enters into a node through one of its white flow-pins, it will be active. This means it will do something, have an \\neffect on the world, other nodes, or itself.\\n\\nA node that is active may or may not give the flow to the right, out of a flow-pin. Most nodes do that, signalling that they are done with \\nwhatever they were meant to do, or that they are now \"ready\" for the nodes further down the graph to do their things.\\n\\nThis Example will wait for 3 seconds, then print out a message and finally stop the project. Start the project, by clicking the, \"Play\" button \\nabove. Watch the message appear in the Event Log (Windows/Event Log).",
           "commentTitle":"Simple Flowgraph",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            -28,
-            -266
+            28,
+            -294
           ],
           "simple":false,
           "textColor":[
@@ -110,10 +110,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "useDtSim":true,
               "duration":false,
               "flow":false,
-              "reset":true
+              "reset":true,
+              "useDtSim":true
             },
             "p_out":{
               "flow":false,
@@ -121,8 +121,8 @@
             }
           },
           "pos":[
-            272,
-            22
+            234,
+            7
           ],
           "type":"logic/wait"
         },
@@ -137,7 +137,7 @@
           },
           "pos":[
             864,
-            22
+            8
           ],
           "type":"debug/stopManager"
         },
@@ -152,18 +152,18 @@
           },
           "hiddenPins":{
             "p_in":{
-              "value":false,
               "flow":false,
               "logTag":true,
-              "logType":true
+              "logType":true,
+              "value":false
             },
             "p_out":{
               "flow":false
             }
           },
           "pos":[
-            552,
-            22
+            570,
+            7
           ],
           "type":"debug/log"
         },
@@ -178,8 +178,8 @@
           },
           "multiLine":false,
           "pos":[
-            291,
-            135
+            318,
+            133
           ],
           "string":"This is a message.",
           "type":"types/string"
@@ -199,16 +199,16 @@
             1
           ],
           "commentSize":[
-            1132,
+            894,
             310
           ],
-          "commentText":"You can also see that there are other-colored pins and links. They come in different types, color-coded.\\nSome of them are:\\n - Flow: White, manages the flow through the project. \\n - String: Purple, can contain a text.\\n - Number: Green, can contain any number.\\n - Boolean: Red, can be true or false.\\n - Vec3: Yellow, can contain a 3-Dimensional Vector (Position, Direction etc)\\nOnly one link can go into each of the in-pins on the left side of a node, unless the link type is Flow, where it can be any number.\\n\\nThis link above connects the message stored in the \"String\" Node to the input-pin of the \"Log\" node. \\n\\nWhen nodes are activated, they can read the values from the links connected to the in-pins on its left, and write values into the links connected to the out-pins on its right side.\\n\\nWhen the flow activates the \"Log\" node, it will read the value from the link and output it to the Event Log.\\n\\n",
+          "commentText":"You can also see that there are various colored pins and links. They come in different types, color-coded.\\nSome of them are:\\n - Flow: White, manages the flow through the project. \\n - String: Purple, can contain any text.\\n - Number: Green, can contain any number.\\n - Boolean: Red, can be true or false.\\n - Vec3: Yellow, can contain a 3-Dimensional Vector (Position, Direction, etc.)\\nOnly one link can go into each of the in-pins on the left side of a node, unless the link type is Flow, which is unlimited.\\n\\nThis link above connects the message stored in the \"String\" Node to the input-pin of the \"Log\" node. \\n\\nWhen nodes are activated, they can read the values from the links connected to the in-pins on its left, and write values into the links \\nconnected to the out-pins on its right side.\\n\\nWhen the flow activates the \"Log\" node, it will read the value from the link and output it to the Event Log.\\n\\n",
           "commentTitle":"Simple Flowgraph",
           "data":{},
           "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            -28,
+            28,
             238
           ],
           "simple":false,
@@ -228,10 +228,10 @@
         "list":{}
       },
       "viewPos":[
-        -236.56227111816406250000,
-        -220.94970703125000000000
+        -248.21356201171875000000,
+        -250.29370117187500000000
       ],
-      "viewZoom":0.74999994039535522461
+      "viewZoom":0.75000000000000000000
     },
     "3":{
       "description":"This is the description for graph States",

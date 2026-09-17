@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Drift race path'
+C.name = 'Drift Race Path'
 
-C.description = 'Uses a race path to set checkpoints, destination, starting pos ..'
+C.description = 'Uses a race path to set checkpoints, destination, starting pos ...'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

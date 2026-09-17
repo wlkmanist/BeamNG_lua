@@ -11,7 +11,7 @@ local im = ui_imgui
 local _vEditor = M
 rawset(_G, 'vEditor', _vEditor)
 
-local imgui_true, imgui_false = ffi.new("bool", true), ffi.new("bool", false)
+local imgui_true, imgui_false = im.BoolTrue(), im.BoolFalse()
 local fpsSmoother = newExponentialSmoothing(50, 1)
 
 local externalStaticApps = {}
@@ -29,7 +29,7 @@ vEditor.EDITOR_MODE_LIVE = 2
 
 vEditor.EDITOR_NAMES = {"vehicleEditorStatic", "vehicleEditorLive"}
 
-vEditor.editorMode = vEditor.EDITOR_MODE_STATIC
+vEditor.editorMode = vEditor.EDITOR_MODE_LIVE
 
 vEditor.staticMenuItems = {items = {}}
 vEditor.liveMenuItems = {items = {}}
@@ -220,6 +220,11 @@ local function setupEditor()
     popActionMap("VehicleEditor")
   end
 
+  -- ensure toolbar is visible when entering vehicle editor
+  if editor.isWindowRegistered("veToolbar") then
+    editor.showWindow("veToolbar")
+  end
+
   core_vehicle_manager.setDebug(true)
 end
 
@@ -236,7 +241,7 @@ local function initVehicleData(id)
     end
   end
 
-  vEditor.vehicle = be:getObjectByID(id)
+  vEditor.vehicle = getObjectByID(id)
   if vEditor.vehicle then
     vEditor.vehiclePos = vec3()
   end
@@ -303,7 +308,7 @@ local function toggleActive()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("Vehicle Editor", activateEditor, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem("Vehicle Editor", activateEditor, {groupMenuName = 'Vehicles'})
 end
 
 local function onVehicleSwitched(oldVehicle, newVehicle, player)
@@ -373,13 +378,24 @@ local function sceneMetric()
   else
     im.TextColored(im.ImVec4(1, 0.3, 0.3, 1), "GpuWait: %3.1f", metrics["FramePresent"])
   end
-  im.Text("Poly: "..getConsoleVariable("$GFXDeviceStatistics::polyCount"))
+  im.Text("Poly: "..VariableRegistry.get("$GFXDeviceStatistics::polyCount", 0))
 end
 
 local function fileMenu()
   if im.BeginMenu("File", imgui_true) then
     if im.MenuItem1("Exit Vehicle Editor...", nil, imgui_false, imgui_true) then
       deactivateEditor(true)
+    end
+    im.EndMenu()
+  end
+end
+
+local function viewMenu()
+  if im.BeginMenu("View", imgui_true) then
+    if im.MenuItem1("Reset Layout", nil, imgui_false, imgui_true) then
+      editor_layoutManager.resetLayouts("vehicleEditor")
+      editor_layoutManager.resetLayouts("vehicleEditorStatic")
+      editor_layoutManager.resetLayouts("vehicleEditorLive")
     end
     im.EndMenu()
   end
@@ -392,7 +408,7 @@ local function onEditorHeadlessMainMenuBar()
   -- show our custom menu for the editor
   if im.BeginMainMenuBar() then
     fileMenu()
-
+    viewMenu()
     sceneMetric()
     im.EndMainMenuBar()
   end

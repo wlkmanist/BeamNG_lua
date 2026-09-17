@@ -8,6 +8,8 @@ local M = {}
 
 local port = 8084
 local protocolName = 'bng-ext-app-v1'
+-- https/wss so the phone's motion sensor (DeviceMotion needs a secure context) works
+local useTLS = true
 
 local wsUtils = require('utils/wsUtils')
 local sm = getStreamManager()
@@ -17,13 +19,13 @@ local server
 local chosenAddress
 
 local function updateUIData()
-  local url = 'http://' .. chosenAddress .. ':'.. tostring(port)
+  local url = (useTLS and 'https://' or 'http://') .. chosenAddress .. ':'.. tostring(port)
   guihooks.trigger('externalUIURL', url)
 end
 
 local function onExtensionLoaded()
-  server, chosenAddress = wsUtils.createOrGetWS('any', port, './', protocolName, '/ui/entrypoints/main/index.html')
-  print('ext app webserver running at: http://' .. chosenAddress .. ':' .. tostring(port) .. ' (listening on all addresses)')
+  server, chosenAddress = wsUtils.createOrGetWS('any', port, './', protocolName, '/ui/entrypoints/main/index.html', true, useTLS)
+  print('ext app webserver running at: ' .. (useTLS and 'https://' or 'http://') .. chosenAddress .. ':' .. tostring(port) .. ' (listening on all addresses)')
   updateUIData()
 end
 

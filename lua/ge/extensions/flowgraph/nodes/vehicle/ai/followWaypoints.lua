@@ -47,7 +47,7 @@ end
 function C:getVeh()
   local veh
   if self.pinIn.vehId.value then
-    veh = be:getObjectByID(self.pinIn.vehId.value)
+    veh = getObjectByID(self.pinIn.vehId.value)
   else
     veh = getPlayerVehicle(0)
   end
@@ -86,7 +86,7 @@ function C:work()
   if self.durationState == 'started' then
     local veh = self:getVeh()
     if not veh then return end
-  
+
     local mapNodes = map.getMap().nodes
     local vehPos = veh:getPosition()
     if not self.lapFlag and vehPos:squaredDistance(mapNodes[self.pinOut.finalWp.value].pos) < square(mapNodes[self.pinOut.finalWp.value].radius) then

@@ -5,6 +5,7 @@
 local im  = ui_imgui
 local ime = ui_flowgraph_editor
 local fg_utils = require('/lua/ge/extensions/flowgraph/utils')
+local missionVarHelper = require('/lua/ge/extensions/editor/flowgraph/missionVariableHelper')
 
 local C = {}
 C.windowName = 'fg_execution'
@@ -34,6 +35,39 @@ function C:drawManager(mgr)
     ui_flowgraph_editor.tooltip("This project is transient. It cannot be saved.")
     im.SameLine()
   end
+
+  -- Show mission indicator
+  if editor_missionEditor then
+    local selectedMission = editor_missionEditor.getSelectedMissionId()
+
+    -- Use shared helper to check match
+    local matchType, normalizedMgrPath, normalizedMissionPath = missionVarHelper.checkMissionMatch(mgr, selectedMission)
+
+    -- Always show icon, with different colors and tooltips based on match type
+    local color, tooltipText
+    if matchType == "exact" then
+      color = im.ImVec4(0.5, 1, 0.8, 1)  -- Green - exact match
+      tooltipText = "Mission selected in Mission Editor:\n" .. selectedMission.id .. "\n\nThis is the mission instance's custom flowgraph.\nVariables will be applied when started."
+    elseif matchType == "missionTypeMain" then
+      color = im.ImVec4(0.5, 1, 0.8, 1)  -- Green - mission type main
+      tooltipText = "Mission selected in Mission Editor:\n" .. selectedMission.id .. "\n\nThis is the mission type's main flowgraph (" .. selectedMission.missionType .. ")\nwhere mission variables are defined.\nVariables will be applied when started."
+    elseif matchType == "sameMissionType" then
+      color = im.ImVec4(1, 0.9, 0.5, 1)  -- Yellow - same mission type
+      tooltipText = "Mission selected in Mission Editor:\n" .. selectedMission.id .. "\n\nThis flowgraph is in the same mission type folder (" .. selectedMission.missionType .. ")\nbut is NOT the mission's main flowgraph.\n\nMission variables will still be applied."
+    elseif matchType == "differentMissionType" then
+      color = im.ImVec4(1, 0.6, 0.3, 1)  -- Orange - different mission type
+      tooltipText = "Mission selected in Mission Editor:\n" .. selectedMission.id .. "\n\nThis flowgraph is from a DIFFERENT mission type:\n  This flowgraph: " .. normalizedMgrPath .. "\n  Mission flowgraph: " .. normalizedMissionPath .. "\n\nMission variables will still be applied."
+    else  -- noMission
+      color = im.ImVec4(0.5, 0.5, 0.5, 0.5)  -- Grey - no mission selected
+      tooltipText = "No mission selected in Mission Editor.\n\nSelect a mission to apply mission variables when flowgraph is started."
+    end
+
+    editor.uiIconImage(editor.icons.assignment, im.ImVec2(20, 20), color)
+    -- ui_flowgraph_editor.tooltip(tooltipText)
+    im.tooltip(tooltipText)
+    im.SameLine()
+  end
+
   if mgr == self.mgr then
     im.TextColored(im.ImVec4(0.8,0.8,1,1), ">"..mgr.name)
   else
@@ -56,6 +90,8 @@ function C:drawManager(mgr)
     ui_flowgraph_editor.tooltip("Stop Project Execution")
   else
     if editor.uiIconImageButton(editor.icons.play_arrow, im.ImVec2(20, 20)) then
+      -- Try to apply mission variables before starting
+      missionVarHelper.applyMissionVariablesToManager(mgr, "execution")
       mgr:setRunning(true)
     end
     ui_flowgraph_editor.tooltip("Start Project Execution")
@@ -106,10 +142,11 @@ function C:ExecutionView()
   im.NextColumn()
   if editor.uiIconImageButton(editor.icons.play_arrow, im.ImVec2(20, 20)) then
     for _, m in ipairs(self.fgMgr.getAllManagers()) do
+      missionVarHelper.applyMissionVariablesToManager(m, "execution")
       m:setRunning(true)
     end
   end
-  ui_flowgraph_editor.tooltip("Start All Projects")
+  ui_flowgraph_editor.tooltip("Start All Projects\n(Will apply mission variables if mission selected in Mission Editor)")
   im.SameLine()
 
   if editor.uiIconImageButton(editor.icons.stop, im.ImVec2(20, 20)) then

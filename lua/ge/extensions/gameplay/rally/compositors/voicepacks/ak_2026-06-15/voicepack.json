@@ -1,0 +1,19 @@
+{
+  "persona": "ui.options.rally.personas.ak.name",
+  "language": "ui.options.rally.languages.english.name",
+  "dialect": "ui.options.rally.dialects.en-US.name",
+  "compositorStyle": "english/casual",
+  "notebooks": ["casual", "structured"],
+  "styleLabel": "ui.options.rally.styles.casual.name",
+  "styleDetailLevel": 10,
+  "enableSpeedScaling": true,
+  "codriverTimingOffsetSeconds": 0.0,
+  "scriptHash": "8dcb6b248ff7c6c5afcae9e12b1376dfbc18650e",
+  "reuseAudioFrom": [
+    "ak_2026-04-16"
+  ],
+  "linkWordGapMs": 0,
+  "cornerGapMs": 0,
+  "phraseGapMs": 70,
+  "pacenoteGapMs": 200
+}

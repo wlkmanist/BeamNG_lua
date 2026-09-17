@@ -1,12 +1,14 @@
 {
-  "activeGraphId":30,
-  "currentGraphID":30,
+  "activeGraphId":3,
+  "authors":"BeamNG",
+  "currentGraphID":3,
+  "date":1741626737,
   "debugEnabled":false,
   "description":"Here you can learn how to get values from one state to another.",
+  "difficulty":40,
   "frecency":{},
   "graphs":{
     "1":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -70,8 +72,8 @@
       "name":"Input",
       "nodes":{
         "2":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -86,10 +88,12 @@
           "pos":[
             80,
             204
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "22":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "anchor":{
               "type":"string",
@@ -139,6 +143,7 @@
         },
         "23":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "format":{
               "type":"string",
@@ -196,6 +201,7 @@
         },
         "24":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "text":{
               "type":"string",
@@ -208,10 +214,10 @@
               "text":false
             },
             "p_out":{
-              "up":true,
               "down":false,
               "flow":false,
-              "hold":true
+              "hold":true,
+              "up":true
             }
           },
           "pos":[
@@ -221,8 +227,8 @@
           "type":"ui/imgui/elemental/imButton"
         },
         "25":{
-          "type":"ui/imgui/elemental/imEnd",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -234,10 +240,12 @@
           "pos":[
             1368,
             232
-          ]
+          ],
+          "type":"ui/imgui/elemental/imEnd"
         },
         "26":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -251,12 +259,13 @@
               "flow",
               "flow"
             ],
-            {
-              "1":"in",
-              "2":"number",
-              "3":"myNumber",
-              "5":""
-            }
+            [
+              "in",
+              "number",
+              "myNumber",
+              null,
+              ""
+            ]
           ],
           "pos":[
             1102,
@@ -267,6 +276,7 @@
         },
         "27":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "text":{
               "type":"string",
@@ -279,10 +289,10 @@
               "text":false
             },
             "p_out":{
-              "up":true,
               "down":false,
               "flow":false,
-              "hold":true
+              "hold":true,
+              "up":true
             }
           },
           "pos":[
@@ -293,6 +303,7 @@
         },
         "28":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -314,17 +325,17 @@
           "type":"states/transition"
         },
         "29":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -334,9 +345,10 @@
           "commentText":"This graph creates a simple window where you can input a number.\\nYou can then choose to transition to the next state in two ways:\\n\\n - Transition with adding the number to the transition stack.\\n - Transition without adding the number.",
           "commentTitle":"Input",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            546,
+            280,
             -14
           ],
           "simple":false,
@@ -349,30 +361,31 @@
           "type":"debug/comment"
         },
         "44":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
-            474,
+            552,
             142
           ],
-          "commentText":"This \"Transition\" node has an additional pin: myNumber.\\nThat means that the values received by this node will be added\\nto the transition stack when the transition happens.\\nThe transition stack is passed around with any subsequent\\ntransition. If a value already exists, it will be overwritten.",
+          "commentText":"This \"Transition\" node has an additional pin: myNumber. Pins can be defined in the \\nProperties window. The values received by this node will be added to the transition \\nstack when the transition happens.\\n\\nThe transition stack is passed around with any subsequent transition. If a value already \\nexists, it will be overwritten.",
           "commentTitle":"Transition Stack",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             1022,
-            504
+            518
           ],
           "simple":false,
           "textColor":[
@@ -386,15 +399,17 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        974.104614,
-        294.001526
+        359.24401855468750000000,
+        -91.30080413818359375000
       ],
-      "viewZoom":1.24999988
+      "viewZoom":0.75000000000000000000
     },
     "3":{
-      "children":{},
       "description":"This is the description for graph States",
       "dirty":false,
       "isStateGraph":true,
@@ -425,6 +440,7 @@
       "nodes":{
         "4":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -434,29 +450,31 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
-            262,
-            -20
+            292,
+            -18
           ],
           "targetGraphId":1,
           "type":"states/stateNode"
         },
         "5":{
-          "type":"states/stateEntry",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -466,10 +484,12 @@
           "pos":[
             -4,
             -20
-          ]
+          ],
+          "type":"states/stateEntry"
         },
         "31":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -479,38 +499,78 @@
             }
           },
           "pins":[
-            {
-              "1":"out",
-              "2":"state",
-              "3":"success",
-              "5":"This is a flow pin."
-            },
-            {
-              "1":"in",
-              "2":"state",
-              "3":"flow",
-              "5":"This is a flow pin."
-            }
+            [
+              "out",
+              "state",
+              "success",
+              null,
+              "This is a flow pin."
+            ],
+            [
+              "in",
+              "state",
+              "flow",
+              null,
+              "This is a flow pin."
+            ]
           ],
           "pos":[
-            262,
-            148
+            292,
+            152
           ],
           "targetGraphId":30,
           "type":"states/stateNode"
+        },
+        "45":{
+          "alpha":0.75000000000000000000,
+          "backgroundColor":[
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
+          ],
+          "borderColor":[
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            1
+          ],
+          "commentSize":[
+            390,
+            353
+          ],
+          "commentText":"Take a look at these state graphs to learn how to pass \\nvalues from one state to another, without using the main \\nVariables feature.",
+          "commentTitle":"State Transition Variables",
+          "data":{},
+          "dynamicMode":"repeat",
+          "moveMode":"withoutNodes",
+          "pos":[
+            196,
+            -140
+          ],
+          "simple":false,
+          "textColor":[
+            1,
+            1,
+            1,
+            1
+          ],
+          "type":"debug/comment"
         }
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -37.7855835,
-        -129.876022
+        -141.86392211914062500000,
+        -292.32095336914062500000
       ],
-      "viewZoom":1.49999988
+      "viewZoom":1
     },
     "30":{
-      "children":{},
       "description":"This is the description for graph New State",
       "dirty":false,
       "links":[
@@ -609,8 +669,8 @@
       "name":"Display",
       "nodes":{
         "32":{
-          "type":"events/onUpdate",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{},
             "p_out":{
@@ -625,10 +685,12 @@
           "pos":[
             80,
             120
-          ]
+          ],
+          "type":"events/onUpdate"
         },
         "33":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "anchor":{
               "type":"string",
@@ -678,6 +740,7 @@
         },
         "34":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -698,12 +761,13 @@
               "flow",
               "flow"
             ],
-            {
-              "1":"out",
-              "2":"number",
-              "3":"myNumber",
-              "5":""
-            }
+            [
+              "out",
+              "number",
+              "myNumber",
+              null,
+              ""
+            ]
           ],
           "pos":[
             374,
@@ -716,6 +780,7 @@
           "data":{
             "pattern":"Number is: %0.1f!"
           },
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -734,6 +799,7 @@
         },
         "36":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "A":false,
@@ -741,10 +807,10 @@
               "flow":false
             },
             "p_out":{
-              "value":true,
               "false":false,
               "flow":false,
-              "true":false
+              "true":false,
+              "value":true
             }
           },
           "opSymbol":"==",
@@ -756,6 +822,7 @@
         },
         "37":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "text":{
               "type":"string",
@@ -778,8 +845,8 @@
           "type":"ui/imgui/elemental/imText"
         },
         "38":{
-          "type":"ui/imgui/elemental/imText",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false,
@@ -790,12 +857,14 @@
             }
           },
           "pos":[
-            1536,
-            232
-          ]
+            1600,
+            231
+          ],
+          "type":"ui/imgui/elemental/imText"
         },
         "39":{
           "data":{},
+          "dynamicMode":"repeat",
           "hardcodedPins":{
             "text":{
               "type":"string",
@@ -808,21 +877,21 @@
               "text":false
             },
             "p_out":{
-              "up":true,
               "down":false,
               "flow":false,
-              "hold":true
+              "hold":true,
+              "up":true
             }
           },
           "pos":[
-            1760,
-            134
+            1788,
+            133
           ],
           "type":"ui/imgui/elemental/imButton"
         },
         "40":{
-          "type":"ui/imgui/elemental/imEnd",
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -832,12 +901,14 @@
             }
           },
           "pos":[
-            1998,
-            134
-          ]
+            2026,
+            133
+          ],
+          "type":"ui/imgui/elemental/imEnd"
         },
         "41":{
           "data":{},
+          "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
               "flow":false
@@ -852,24 +923,24 @@
             ]
           ],
           "pos":[
-            1998,
-            218
+            2026,
+            217
           ],
           "transitionName":"success",
           "type":"states/transition"
         },
         "42":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
@@ -879,10 +950,11 @@
           "commentText":"This graph displays the value received from the \"Transition Variables\" node.\\nIt also checks if that values is nil (has not been set), to display that case as well.",
           "commentTitle":"Display",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
             784,
-            -126
+            -112
           ],
           "simple":false,
           "textColor":[
@@ -894,30 +966,31 @@
           "type":"debug/comment"
         },
         "43":{
-          "alpha":0.75,
+          "alpha":0.75000000000000000000,
           "backgroundColor":[
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000,
+            0.50000000000000000000
           ],
           "borderColor":[
-            0.800000012,
-            0.800000012,
-            0.800000012,
+            0.80000001192092895508,
+            0.80000001192092895508,
+            0.80000001192092895508,
             1
           ],
           "commentSize":[
             390,
             393
           ],
-          "commentText":"This is the \"Transition Variables\" node.\\nYou have to add pins manually if you want to\\nget the values from the transition stack.\\nVariables are indexed by their name. You can also\\nadd pins from the template list. This will be generated\\nfrom all other pins you have created for \"Transition\" nodes\\nor for \"Transition Stack\" nodes.",
+          "commentText":"This is the \"Transition Variables\" node.\\nAdd pins manually via the Properties window if you want to\\nget the values from the transition stack.\\n\\nVariables are indexed by their name. You can also add pins \\nfrom the template list in the Properties window. This will be \\ngenerated from all other pins you have created for \\n\"Transition\" or \"Transition Stack\" nodes.",
           "commentTitle":"Transition Variables",
           "data":{},
+          "dynamicMode":"repeat",
           "moveMode":"withoutNodes",
           "pos":[
-            280,
-            -126
+            294,
+            -112
           ],
           "simple":false,
           "textColor":[
@@ -931,19 +1004,26 @@
       },
       "showTab":true,
       "type":"graph",
-      "variables":{},
+      "variables":{
+        "customVariableOrder":{},
+        "list":{}
+      },
       "viewPos":[
-        -354.095032,
-        -188.855896
+        21.49383354187011718750,
+        -236.55090332031250000000
       ],
-      "viewZoom":0.329999983
+      "viewZoom":0.74999994039535522461
     }
   },
+  "isScenario":false,
   "macros":{},
   "name":"State Transition Variables",
   "savedDir":"/lua/ge/extensions/flowgraph/examples/intermediate/",
   "savedFilename":"StateTransitionVariables.flow.json",
   "stateGraphId":3,
-  "variables":{},
-  "version":0.1
+  "variables":{
+    "customVariableOrder":{},
+    "list":{}
+  },
+  "version":0.20000000000000001110
 }

@@ -33,15 +33,20 @@ local raceTimeData = {}
 function C:work()
   if self.pinIn.useGenericMissionDataApp.value then
     if self.pinIn.value.value then
-      guihooks.trigger('SetGenericMissionData',{
+      local data = {
         title = "missions.missions.general.time",
         txt = self.pinIn.value.value,
         category = "cornerTimer_virtual",
         style = "time",
         order = 100,
-      })
+      }
+      data.txt = string.format("%02d:%02d", math.floor(self.pinIn.value.value / 60), math.floor(self.pinIn.value.value % 60))
+      data.minutes = string.format("%02d", math.floor(self.pinIn.value.value / 60))
+      data.seconds = string.format("%02d", math.floor(self.pinIn.value.value % 60))
+      data.style = "text"
+      ui_apps_genericMissionData.setData(data)
     else
-      guihooks.trigger('SetGenericMissionData', {category = "cornerTimer_virtual", clear = true})
+      ui_apps_genericMissionData.setData({category = "cornerTimer_virtual", clear = true})
     end
     self.mgr.modules.ui.genericMissionDataChanged = true
   else

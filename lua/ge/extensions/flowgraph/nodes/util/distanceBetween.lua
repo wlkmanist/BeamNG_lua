@@ -35,7 +35,7 @@ end
 local pos = vec3()
 function C:getPosition(pinInput)
   if type(pinInput) == 'number' then
-    local veh = be:getObjectByID(pinInput)
+    local veh = getObjectByID(pinInput)
 
     if veh then
       return veh:getPosition()

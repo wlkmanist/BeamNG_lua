@@ -2,18 +2,16 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
-local im  = ui_imgui
-
 local C = {}
 
 C.name = 'Get Recovery Prompt Button Limit and Count'
-C.description = 'Activates or deactivates a button the recovery prompt. If a button is active, it will be clickable. Otherwise it will be grayed out and not clickable, but still visible.'
+C.description = 'Gets the limit and counter for a button in the recovery prompt.'
 C.color = ui_flowgraph_editor.nodeColors.recoveryPrompt
 C.icon = ui_flowgraph_editor.nodeIcons.recoveryPrompt
 C.category = 'once_instant'
 
 C.pinSchema = {
-  {dir = 'in', type = 'string', name = 'id', description = "ID for the button"},
+  {dir = 'in', type = 'string', name = 'id', description = "Id for the button"},
   {dir = 'out', type = 'number', name = 'limit', description = "Limit for this button"},
   {dir = 'out', type = 'number', name = 'count', description = "Count for this button"},
 }
@@ -27,6 +25,7 @@ function C:postInit()
     {value = 'restartMission'},
   }
 end
+
 function C:workOnce(args)
   local data = core_recoveryPrompt.getButtonLimitsAndCounts()
   self.pinOut.limit.value = nil

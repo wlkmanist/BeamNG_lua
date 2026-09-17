@@ -15,7 +15,7 @@ local function vehicleCommand(id,cmd,arg)
   -- log("E", logTag, "vehicleCommand id='"..tostring(id).."' cmd='"..tostring(cmd).."' arg='"..dumps(arg).."'")
   if arg ==nil then arg =""end
   if id then
-    local veh = be:getObjectByID(id)
+    local veh = getObjectByID(id)
     if veh then
       veh:queueLuaCommand("controller.onGameplayEvent('"..cmd.."',"..serialize(arg)..")")
     else

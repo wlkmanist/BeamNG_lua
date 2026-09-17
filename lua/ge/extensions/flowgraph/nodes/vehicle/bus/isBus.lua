@@ -21,9 +21,10 @@ C.pinSchema = {
 }
 
 function C:work(args)
-  self.pinOut['isBus'].value = self.mgr.modules.vehicle:isBus(self.pinIn.vehId.value)
-  self.pinOut['isNotBus'].value = not self.pinOut['isBus'].value
-  self.pinOut['isBusBool'].value = self.pinOut['isBus'].value
+  local isBus = self.mgr.modules.vehicle:isBus(self.pinIn.vehId.value)
+  self.pinOut['isBus'].value = isBus
+  self.pinOut['isNotBus'].value = not isBus
+  self.pinOut['isBusBool'].value = isBus
 end
 
 return _flowgraph_createNode(C)

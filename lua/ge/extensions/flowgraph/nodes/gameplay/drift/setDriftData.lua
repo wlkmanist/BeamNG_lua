@@ -5,9 +5,9 @@
 local im  = ui_imgui
 local C = {}
 
-C.name = 'Set drift data'
+C.name = 'Set Drift Data'
 
-C.description = 'Set the drift data such as stunt zones'
+C.description = 'Set the drift data such as stunt zones.'
 C.color = ui_flowgraph_editor.nodeColors.vehicle
 C.icon = ui_flowgraph_editor.nodeIcons.vehicle
 C.category = 'repeat_instant'

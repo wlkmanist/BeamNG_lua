@@ -55,7 +55,7 @@
 "toggle4WDStatus"               :{"cat":"vehicle",       "order": 30.2, "ctx": "vlua", "onDown"  :"for _,v in pairs(controller.getControllersByType('4wd')) do v.toggle4WD() end", "title": "ui.inputActions.vehicle.toggle4WDStatus.title", "desc": "ui.inputActions.vehicle.toggle4WDStatus.description" },
 "toggleRangeStatus"             :{"cat":"vehicle",       "order": 30.3, "ctx": "vlua", "onDown"  :"for _,v in pairs(controller.getControllersByType('4wd')) do v.toggleRange() end", "title": "ui.inputActions.vehicle.toggleRangeStatus.title", "desc": "ui.inputActions.vehicle.toggleRangeStatus.description" },
 
-"toggleTransbrake"              :{"cat":"vehicle",       "order": 31, "ctx": "vlua", "onDown"  :"for _,v in pairs(controller.getControllersByType('transbrake')) do v.toggleTransbrake() end", "title": "ui.inputActions.vehicle.toggleTransbrake.title", "desc": "ui.inputActions.vehicle.toggleTransbrake.description" },
+"toggleTransbrake"              :{"cat":"vehicle",       "order": 31, "ctx": "vlua", "onDown"  :"for _,v in pairs(controller.getControllersByType('braking/transbrake')) do v.toggleTransbrake() end", "title": "ui.inputActions.vehicle.toggleTransbrake.title", "desc": "ui.inputActions.vehicle.toggleTransbrake.description" },
 "toggleLineLock"                :{"cat":"vehicle",       "order": 32, "ctx": "vlua", "onDown"  :"for _,v in pairs(controller.getControllersByType('lineLock')) do v.toggleLineLock() end", "title": "ui.inputActions.vehicle.toggleLineLock.title", "desc": "ui.inputActions.vehicle.toggleLineLock.description" },
 
 "overrideNitrousOxide"          :{"cat":"vehicle",       "order": 33, "ctx": "vlua", "onDown"  :"for _,v in pairs(controller.getControllersByType('nitrousOxideInjection')) do v.setOverride(true) end", "onUp"  :"for _,v in pairs(controller.getControllersByType('nitrousOxideInjection')) do v.setOverride(false) end", "title": "ui.inputActions.vehicle.overrideNitrousOxide.title", "desc": "ui.inputActions.vehicle.overrideNitrousOxide.description" },
@@ -81,5 +81,3 @@
 "ffbSmoothingInc"               :{"cat":"vehicle",       "order": 62, "ctx": "vlua", "onDown"  :"local c = hydros.getFFBConfig(); c.smoothing = c.smoothing + 10; hydros.setFFBConfig(c) ui_message('Testing FFB smoothing at '..dumps(c.smoothing))", "title": "ui.inputActions.vehicle.ffbSmoothingInc.title", "desc": "" },
 "ffbSmoothingDec"               :{"cat":"vehicle",       "order": 63, "ctx": "vlua", "onDown"  :"local c = hydros.getFFBConfig(); c.smoothing = c.smoothing - 10; hydros.setFFBConfig(c) ui_message('Testing FFB smoothing at '..dumps(c.smoothing))", "title": "ui.inputActions.vehicle.ffbSmoothingDec.title", "desc": "" },
 }
-
-

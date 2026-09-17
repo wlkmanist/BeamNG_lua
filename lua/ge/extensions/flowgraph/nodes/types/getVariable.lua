@@ -42,7 +42,7 @@ function C:drawCustomProperties()
 end
 
 function C:setGlobal(global)
-  self.global = global
+  self.global = global and true or false
   if global then
     self.color = self.globalColor
     self.target = self.graph.mgr.variables
@@ -58,7 +58,10 @@ end
 
 function C:setVar(name)
   local var = self.target:getFull(name)
-  if not var then return end
+  if not var then
+    log("I","GetVariable", string.format("Variable %s not found. own id, graph id: %s, %s", name, self.id, self.graph.id))
+    return
+  end
   local links = {}
   for _,lnk in pairs(self.graph.links) do
     if lnk.sourcePin == self.pinOut[self.varName] then

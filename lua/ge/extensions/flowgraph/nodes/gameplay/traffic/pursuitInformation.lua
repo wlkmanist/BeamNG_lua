@@ -13,7 +13,6 @@ C.icon = ui_flowgraph_editor.nodeIcons.traffic
 C.category = 'repeat_instant'
 C.tags = {'police', 'cops', 'pursuit', 'chase', 'info', 'traffic', 'ai'}
 
-
 C.pinSchema = {
   {dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle id to get information from; if none given, uses the player vehicle.'},
 
@@ -57,7 +56,7 @@ function C:work()
   if not pursuit then return end
 
   self.pinOut.active.value = pursuit.mode > 0
-  if not self.evadeFlag then -- if vehicle evaded, keep the pursuit info for one more frame
+  if not self.arrestFlag and not self.evadeFlag then -- these flags keep the pursuit info for one more frame
     self.pinOut.mode.value = pursuit.mode
     self.pinOut.score.value = pursuit.score
     self.pinOut.sightValue.value = pursuit.sightValue
@@ -77,11 +76,11 @@ function C:work()
   self.arrestFlag, self.evadeFlag = false, false
 end
 
-function C:onPursuitAction(id, data)
+function C:onPursuitAction(id, action, data)
   if id == self.vehId then
-    if data.type == 'arrest' then
+    if action == 'arrest' then
       self.arrestFlag = true
-    elseif data.type == 'evade' then
+    elseif action == 'evade' then
       self.evadeFlag = true
     end
   end

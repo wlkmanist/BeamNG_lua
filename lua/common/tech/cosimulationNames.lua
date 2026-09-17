@@ -86,6 +86,7 @@ local names = {
   parkingBrakeInput = 'parkingBrakeInput',
   steeringWheelPosition = 'steeringWheelPosition',
   steeringWheelPositionInput = 'steeringWheelPositionInput',
+  gearIndex = 'gearIndex',
 
   wheelSpeed = 'wheelSpeed',                                                                        -- Wheels.
   angularVelocity = 'angularVelocity',
@@ -191,6 +192,7 @@ local names = {
   idealRADARVehicle4RelativeVelocityY = 'idealRADARVehicle4RelativeVelocityY',
   idealRADARVehicle4RelativeAccelerationX = 'idealRADARVehicle4RelativeAccelerationX',
   idealRADARVehicle4RelativeAccelerationY = 'idealRADARVehicle4RelativeAccelerationY',
+  idealRADARReadingTimestamp = 'idealRADARReadingTimestamp',
 
   roadsRoadHalfWidth = 'roadsRoadHalfWidth',                                                        -- Roads sensor.
   roadsRoadRadius = 'roadsRoadRadius',

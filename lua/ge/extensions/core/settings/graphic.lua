@@ -9,17 +9,224 @@ local logTag = "settings_graphic"
 -- local/default variables for settings
 local CEF_UI_maxSizeHeight = "1080"
 
-local GraphicsQualityGroup  = require('core/settings/graphicsQualityGroup')
-local lightingQualityGroup  = GraphicsQualityGroup('core/settings/lightingQuality', 'Lighting Quality')
-local shadowsQualityGroup   = GraphicsQualityGroup('core/settings/shadowsQuality', 'Shadows Quality')
-local shaderQualityGroup    = GraphicsQualityGroup('core/settings/shaderQuality', 'Shader Quality')
-local textureQualityGroup   = GraphicsQualityGroup('core/settings/textureQuality', 'Texture Quality')
-local meshQualityGroup      = GraphicsQualityGroup('core/settings/meshQuality', 'Mesh Quality')
+local GraphicsQualityGroup       = require('core/settings/graphicsQualityGroup')
+local lightingQualityGroup       = GraphicsQualityGroup('core/settings/lightingQuality', 'Lighting Quality')
+local shadowsQuality             = require('core/settings/shadowsQuality')
+local shadowsQualityGroup        = GraphicsQualityGroup('core/settings/shadowsQuality', 'Shadows Quality')
+local textureQualityGroup        = GraphicsQualityGroup('core/settings/textureQuality', 'Texture Quality')
+local meshQualityGroup           = GraphicsQualityGroup('core/settings/meshQuality', 'Mesh Quality')
+local terrainQualityGroup        = GraphicsQualityGroup('core/settings/terrainQuality', 'Terrain Quality')
+local clusteredQuality           = require('core/settings/clusteredQuality')
 
-local overallQualityPresets = jsonReadFile("lua/ge/extensions/core/settings/settingsPresets.json")
+local platform = Engine and Engine.Platform and Engine.Platform.getPlatform() or ""
+
+local overallQualityPresets = jsonReadFile("lua/ge/extensions/core/settings/settingsPresets.json") or {}
+
+local internalPresetOrder = {}
+local platformPresetOrder = {}
+local usingPlatformPresets = false
+
+local platformPresetIgnoreForCustomDetection = {
+  PostFXDOFGeneralEnabled = true,
+  PostFXMotionBlurEnabled = true,
+  PostFXMotionBlurStrength = true,
+  PostFXMotionBlurPlayerVehicle = true,
+  fpsLimitEnabled = true,
+}
+
+local allowedPresetKeys = {}
+for _, group in pairs(overallQualityPresets) do
+  if type(group) == "table" then
+    for k,_ in pairs(group) do
+      allowedPresetKeys[k] = true
+    end
+  end
+end
+
+local function normalizePresetFilePath(file)
+  if type(file) ~= "string" then return nil end
+  if file:sub(1, 1) == "/" then
+    file = file:sub(2)
+  end
+  return file
+end
+
+local function addPresetFromEntry(entry, orderTable, filterToDefaultGraphicKeys)
+  local name = entry and entry.name
+  local file = normalizePresetFilePath(entry and entry.file)
+
+  if type(name) ~= "string" or type(file) ~= "string" then
+    return false
+  end
+
+  local raw = jsonReadFile(file)
+  if type(raw) ~= "table" then
+    log("W", logTag, "Unable to load graphics preset file: " .. tostring(file))
+    return false
+  end
+
+  if filterToDefaultGraphicKeys then
+    local filtered = {}
+    for k, v in pairs(raw) do
+      if allowedPresetKeys[k] then
+        filtered[k] = v
+      end
+    end
+    overallQualityPresets[name] = filtered
+  else
+    overallQualityPresets[name] = raw
+  end
+
+  table.insert(orderTable, name)
+  return true
+end
+
+
+local platformPresetTable = jsonReadFile("lua/ge/extensions/core/settings/settingsPresets-platform.json") or {}
+local platformPresetEntries = nil
+
+if platform ~= "" and type(platformPresetTable) == "table" then
+  platformPresetEntries = platformPresetTable[platform]
+end
+
+if type(platformPresetEntries) == "table" then
+  overallQualityPresets = {}
+  usingPlatformPresets = true
+
+  for _, entry in ipairs(platformPresetEntries) do
+    addPresetFromEntry(entry, platformPresetOrder, false)
+  end
+elseif not shipping_build then
+  local extraList = jsonReadFile("lua/ge/extensions/core/settings/settingsPresets-internal.json") or {}
+
+  for _, entry in ipairs(extraList) do
+    addPresetFromEntry(entry, internalPresetOrder, true)
+  end
+end
 
 local graphicsOptions = nil
 local graphicInformation = nil
+
+local function setScreenSpaceShadowsEnabled(value)
+  VariableRegistry.set('$AL::UseSSSmask', value)
+  local sss = scenetree.findObject("ScreenSpaceShadowsPostFx")
+  if not sss then return end
+  if value then
+    sss:enable()
+  else
+    sss:disable()
+  end
+end
+
+local function hdrSupported()
+  return GFXHdr and GFXHdr.getSupported() or false
+end
+
+local hdrOutputModeUpdateTimer = 0
+
+local function getHdrOutputModeName()
+  if not hdrSupported() then return "LDR" end
+  if not GFXHdr or type(GFXHdr.getOutputModeName) ~= "function" then return "" end
+  return GFXHdr.getOutputModeName()
+end
+
+local function updateHdrOutputModeSetting()
+  settings.setValue("GraphicHDROutputModeName", getHdrOutputModeName())
+  settings.notifyUI()
+end
+
+local function delayedHdrOutputMode()
+  hdrOutputModeUpdateTimer = 2
+end
+
+local function applyExposureCompensation(value)
+  local localExposure = scenetree.findObject("PostEffectLocalExposureObject")
+  if localExposure then
+    localExposure.exposureBiasEV = value
+  end
+end
+
+local function setBloomEnabledForLightingQuality(lightingQuality)
+  local postFX = scenetree.findObject("PostEffectBloomObject")
+  if not postFX then return end
+
+  if lightingQuality == "Lowest" then
+    postFX:disable()
+  else
+    postFX:enable()
+  end
+  postFX.threshHold = 8
+end
+
+local function applyGraphicsState()
+  if M.triggered_manual_save then
+    log('E','graphic','Detected Saving in progress....ignoring redundant call')
+    return
+  end
+
+  M.triggered_manual_save = true
+
+  -- save the changes
+  settings.requestSave()
+
+  -- set canvas mode
+  local canvas = scenetree.findObject("Canvas")
+
+  if not canvas then
+    return
+  end
+
+  local resolutionWidth, resolutionHeight = graphicsOptions.GraphicDisplayResolutions.getWidthHeight()
+  local refreshRate = graphicsOptions.GraphicDisplayRefreshRates.get()
+
+  local displayDriver = graphicsOptions.GraphicDisplayDriver.get()
+  displayDriver = displayDriver:gsub("/","\\")
+  GFXDevice.setDisplayDevice(displayDriver)
+
+  log('D','graphic','Applying graphic settings: '..tostring(displayDriver)..', '..graphicsOptions.GraphicDisplayModes.get()..', '..tostring(resolutionWidth)..' x '..tostring(resolutionHeight)..' '..tostring(refreshRate)..' Hz')
+
+  local videoMode = {}
+  videoMode.width = resolutionWidth
+  videoMode.height = resolutionHeight
+  videoMode.refreshRate = refreshRate
+  videoMode.displayMode = graphicsOptions.GraphicDisplayModes.get()
+  GFXDevice.setVideoMode( videoMode )
+  if graphicsOptions.GraphicHDREnabled and type(graphicsOptions.GraphicHDREnabled.apply) == "function" then
+    graphicsOptions.GraphicHDREnabled.apply()
+  end
+
+  delayedHdrOutputMode()
+
+  local skipWindowPlacementRestore = M.skipWindowPlacementRestore
+  M.skipWindowPlacementRestore = nil
+
+  if graphicsOptions.GraphicDisplayModes.isWindow() then
+    if skipWindowPlacementRestore then
+      if graphicsOptions.WindowPlacement and type(graphicsOptions.WindowPlacement.set) == 'function' then
+        graphicsOptions.WindowPlacement.set(canvas:getPlacement())
+        settings.refreshTSState(true)
+        settings.requestSave()
+      end
+    else
+      local desiredwindowPlacement = graphicsOptions.WindowPlacement.get()
+      canvas:restorePlacement(desiredwindowPlacement)
+    end
+  end
+
+  if settings.getValue('GraphicTripleMonitorEnabled') then
+    local borderFovDeg = settings.getValue('GraphicTripleMonitorBordersFovDeg')
+    local centerFovDeg = settings.getValue('GraphicTripleMonitorCenterFovDeg')
+    local leftFovDeg = settings.getValue('GraphicTripleMonitorLeftFovDeg')
+    local rightFovDeg = settings.getValue('GraphicTripleMonitorRightFovDeg')
+    Engine.setRenderMode(((leftFovDeg > 0) or (rightFovDeg > 0)) and "MultiMonitor" or "SingleMonitor", math.rad(centerFovDeg), math.rad(leftFovDeg), math.rad(rightFovDeg), math.rad(borderFovDeg))
+  else
+    Engine.setRenderMode("SingleMonitor", 0, 0, 0, 0)
+  end
+
+  M.triggered_manual_save = false
+  M.appliedChanges = true
+end
+
 
 local function videoModeFromString( videoModeStr )
   local canvas = scenetree.findObject("Canvas")
@@ -46,7 +253,7 @@ end
 
 local function getDefault()
   local data = {}
-  local vm = videoModeFromString(TorqueScriptLua.call('getDesktopVideoMode'))
+  local vm = videoModeFromString(getDesktopVideoMode())
   data.GraphicDisplayResolutions = vm.width .. ' ' .. vm.height
   data.GraphicDisplayRefreshRates = vm.refreshRate
   return data
@@ -56,32 +263,73 @@ local restartDialogShowed = {}
 local function openNeedRestartDialog(reason)
   if not restartDialogShowed[reason] then
     restartDialogShowed[reason] = true
-    TorqueScriptLua.call( 'MessageBoxOK', 'This change requires that the game be restarted', 'This change requires that the game be restarted' )
+    local result = messageBox(_tr("ui.options.graphics.gpu.change.title"), _tr("ui.options.graphics.gpu.change.description"), 4, 2)
   end
 end
 
-local function getAspectRatio( w, h )
-  if tonumber(w) and tonumber(h) then
-    local aspects = {{w=3,h=2}, {w=4,h=3}, {w=5,h=4}, {w=16,h=9}, {w=16,h=10}, {w=21,h=9}}
-    local smallest
-    local smallestDiff = math.huge
-    local ratio = w /h
-    for i=1,#aspects do
-      local data = aspects[i]
-      local diff = math.abs(ratio - (data.w / data.h))
-      if diff < smallestDiff then
-        smallestDiff = diff
-        smallest = data
-      end
-    end
-    return '('..smallest.w..':'..smallest.h..')'
+local function gcd(a, b)
+  a = math.abs(a)
+  b = math.abs(b)
+
+  while b ~= 0 do
+    a, b = b, a % b
   end
 
-  return ''
+  return a
+end
+
+local preferredRatios = {
+  {16, 9},
+  {16, 10},
+  {4, 3},
+  {5, 4},
+  {21, 9},
+  {32, 9},
+  {3, 2},
+}
+
+local function getAspectRatio(w, h)
+  w = tonumber(w)
+  h = tonumber(h)
+
+  if not w or not h or w <= 0 or h <= 0 then
+    return ''
+  end
+
+  w = math.floor(w + 0.5)
+  h = math.floor(h + 0.5)
+
+  local actual = w / h
+
+  local tolerance = 0.005
+
+  for _, ratio in ipairs(preferredRatios) do
+    local rw, rh = ratio[1], ratio[2]
+    local target = rw / rh
+
+    if math.abs(actual - target) / target <= tolerance then
+      return '(' .. rw .. ':' .. rh .. ')'
+    end
+  end
+
+  local divisor = gcd(w, h)
+  if divisor <= 0 then
+    return ''
+  end
+
+  local rw = w / divisor
+  local rh = h / divisor
+
+  -- Prefer 16:10 over reduced 8:5
+  if rw == 8 and rh == 5 then
+    rw, rh = 16, 10
+  end
+
+  return '(' .. tostring(rw) .. ':' .. tostring(rh) .. ')'
 end
 
 local function getGPU()
-  local gpu = TorqueScriptLua.getVar( '$pref::Video::gpu' )
+  local gpu = VariableRegistry.get( '$pref::Video::gpu' )
   local adapters = GFXInit.getAdapters()
   for _,adapter in ipairs(adapters) do
     if gpu ~= '' and adapter.gpu == gpu then return gpu end
@@ -89,12 +337,12 @@ local function getGPU()
   end
 
   gpu = adapters[1] and adapters[1].gpu or ""
-  TorqueScriptLua.setVar( '$pref::Video::gpu', gpu )
+  VariableRegistry.set( '$pref::Video::gpu', gpu )
   return gpu
 end
 
 local function getGFX()
-  local gfx = TorqueScriptLua.getVar( '$pref::Video::displayDevice' )
+  local gfx = VariableRegistry.get( '$pref::Video::displayDevice' )
   local adapters = GFXInit.getAdapters()
   for _,adapter in ipairs(adapters) do
     if gfx ~= '' and adapter.gfx == gfx then return gfx end
@@ -102,7 +350,7 @@ local function getGFX()
   end
 
   gfx = adapters[1] and adapters[1].gfx or ""
-  TorqueScriptLua.setVar( '$pref::Video::displayDevice', gfx )
+  VariableRegistry.set( '$pref::Video::displayDevice', gfx )
   return gfx
 end
 
@@ -274,7 +522,7 @@ local function buildOptionHelpers()
           end
         end
         if not found then
-          local desktopRes = getDesktopVideoMode()
+          local desktopRes = videoModeFromString(getDesktopVideoMode())
           o.GraphicDisplayRefreshRates.hertz = refreshRates.keys[1] or desktopRes.refreshRate or 60
         end
       end
@@ -381,7 +629,7 @@ local function buildOptionHelpers()
     end,
     set = function ( value )
       local currentGPU = getGPU()
-      TorqueScriptLua.setVar( '$pref::Video::gpu', value )
+      VariableRegistry.set( '$pref::Video::gpu', value )
       local newGPU = getGPU()
 
       if currentGPU ~= newGPU then
@@ -437,12 +685,12 @@ local function buildOptionHelpers()
 
     set = function(value)
       CEF_UI_maxSizeHeight = value
-      if value ~= TorqueScriptLua.getVar('$CEF_UI::maxSizeHeight') then
-        TorqueScriptLua.setVar('$CEF_UI::maxSizeHeight', value)
+      if value ~= VariableRegistry.get('$CEF_UI::maxSizeHeight') then
+        VariableRegistry.set('$CEF_UI::maxSizeHeight', tonumber(value))
       end
     end,
     getModes = function()
-      return {keys={'1440', '1080', '720', '0'}, values={'2560 x 1440', '1920 x 1080', '1280 x 720', 'Disabled'}}
+      return {keys={720, 1080, 1440, 0}, values={'1280 x 720', '1920 x 1080', '2560 x 1440', 'ui.options.graphics.uimaxresUnlimited'}}
     end
   }
 
@@ -454,40 +702,153 @@ local function buildOptionHelpers()
       Engine.setVulkanEnabled(value)
     end
   }
-  o.FPSLimiter = {
-    get = function ()
-      return Engine.getFPSLimiter()
-    end,
-    set = function ( value )
-      Engine.setFPSLimiter(value)
+
+  -- SettingsGraphicHDR
+  o.GraphicHDRSupported = {
+    get = function()
+      return hdrSupported()
     end
   }
-  o.FPSLimiterEnabled = {
-    get = function ()
-      return Engine.getFPSLimiterEnabled()
+
+  o.GraphicHDREnabled = {
+    get = function()
+      return settings.getValue("GraphicHDREnabled", false)
     end,
-    set = function ( value )
-      Engine.setFPSLimiterEnabled(value)
+
+    set = function(value)
+      local requested = value == true
+      local active = requested and hdrSupported()
+
+      settings.setValue("GraphicHDREnabled", requested)
+
+      if requested and not active then
+        log("D", "graphic", "HDR requested but current display does not support HDR. Keeping HDR preference enabled.")
+      end
+
+      if GFXHdr then
+        if type(GFXHdr.setRequested) == "function" then
+          GFXHdr.setRequested(active)
+        end
+
+        if type(GFXHdr.applyRequested) == "function" then
+          GFXHdr.applyRequested()
+        end
+
+        if active then
+          if type(GFXHdr.setPaperWhiteNits) == "function" then
+            GFXHdr.setPaperWhiteNits(tonumber(settings.getValue("GraphicHDRPaperWhiteNits", 250)) or 250)
+          end
+
+          if type(GFXHdr.setPeakWhiteNits) == "function" then
+            GFXHdr.setPeakWhiteNits(tonumber(settings.getValue("GraphicHDRPeakWhiteNits", 1200)) or 1200)
+          end
+
+          if type(GFXHdr.setUiMultiplier) == "function" then
+            GFXHdr.setUiMultiplier(tonumber(settings.getValue("GraphicHDRUiMultiplier", 1.5)) or 1.5)
+          end
+        end
+      end
+
+      delayedHdrOutputMode()
+    end,
+
+    init = function(value)
+      o.GraphicHDREnabled.set(value)
+    end,
+
+    apply = function()
+      o.GraphicHDREnabled.set(settings.getValue("GraphicHDREnabled", false))
     end
   }
-  o.SleepInBackground = {
-    get = function ()
-      return Engine.getSleepInBackground()
+
+  o.GraphicHDRPaperWhiteNits = {
+    get = function()
+      return tonumber(settings.getValue("GraphicHDRPaperWhiteNits", 250)) or 250
     end,
-    set = function ( value )
-      Engine.setSleepInBackground(value)
+
+    set = function(value)
+      value = tonumber(value) or 250
+      settings.setValue("GraphicHDRPaperWhiteNits", value)
+
+      if hdrSupported() and GFXHdr and type(GFXHdr.setPaperWhiteNits) == "function" then
+        GFXHdr.setPaperWhiteNits(value)
+      end
+    end,
+
+    init = function(value)
+      settings.setValue("GraphicHDRPaperWhiteNits", tonumber(value) or 250)
+    end
+  }
+
+  o.GraphicHDRPeakWhiteNits = {
+    get = function()
+      return tonumber(settings.getValue("GraphicHDRPeakWhiteNits", 1200)) or 1200
+    end,
+
+    set = function(value)
+      value = tonumber(value) or 1200
+      settings.setValue("GraphicHDRPeakWhiteNits", value)
+
+      if hdrSupported() and GFXHdr and type(GFXHdr.setPeakWhiteNits) == "function" then
+        GFXHdr.setPeakWhiteNits(value)
+      end
+    end,
+
+    init = function(value)
+      settings.setValue("GraphicHDRPeakWhiteNits", tonumber(value) or 1200)
+    end
+  }
+
+  o.GraphicHDRUiMultiplier = {
+    get = function()
+      return tonumber(settings.getValue("GraphicHDRUiMultiplier", 1.5)) or 1.5
+    end,
+
+    set = function(value)
+      value = tonumber(value) or 1.5
+      settings.setValue("GraphicHDRUiMultiplier", value)
+
+      if hdrSupported() and GFXHdr and type(GFXHdr.setUiMultiplier) == "function" then
+        GFXHdr.setUiMultiplier(value)
+      end
+    end,
+
+    init = function(value)
+      settings.setValue("GraphicHDRUiMultiplier", tonumber(value) or 1.5)
+    end
+  }
+
+  o.GraphicHDROutputModeName = {
+    get = function()
+      return settings.getValue("GraphicHDROutputModeName", getHdrOutputModeName())
+    end
+  }
+
+  o.GraphicEVCompensation = {
+    get = function()
+      return tonumber(settings.getValue("GraphicEVCompensation", 0)) or 0
+    end,
+
+    set = function(value)
+      value = math.max(-3, math.min(3, tonumber(value) or 0))
+      settings.setValue("GraphicEVCompensation", value)
+      applyExposureCompensation(value)
+    end,
+
+    init = function(value)
+      o.GraphicEVCompensation.set(value)
     end
   }
 
   -- SettingsGraphicSync
   o.vsync = {
     get = function ()
-      local v = tonumber( TorqueScriptLua.getVar('$video::vsync') )
-      return v == true or (type(v)=="number" and v > 0)
+      local v = VariableRegistry.get('$video::vsync')
+      return v
     end,
     set = function ( value )
       local boolValue = value == true or (type(value)=="number" and value > 0)
-      TorqueScriptLua.setVar( '$video::vsync', boolValue )
+      VariableRegistry.set( '$video::vsync', boolValue )
     end,
     getModes = function()
       return {keys={false, true}, values={'Off', 'On'}}
@@ -516,7 +877,7 @@ local function buildOptionHelpers()
       settings.setValue('GraphicAntialiasType', value)
     end,
     getModes = function ()
-      return {keys={'smaa', 'fxaa'}, values={'SMAA', 'FXAA'}}
+      return {keys={'fxaa', 'smaa'}, values={'FXAA', 'SMAA'}}
     end
   }
 
@@ -551,13 +912,13 @@ local function buildOptionHelpers()
   -- SettingsGraphicAnisotropic
   o.GraphicAnisotropic = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::Video::defaultAnisotropy' ) )
+      return tonumber(VariableRegistry.get('$pref::Video::defaultAnisotropy'))
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::Video::defaultAnisotropy', value )
+      VariableRegistry.set( '$pref::Video::defaultAnisotropy', value )
     end,
     getModes = function()
-      return {keys={"0", "4", "8", "16"}, values={"Off", "x4", "x8", "x16"}}
+      return {keys={"0", "2","4", "8", "16"}, values={"Off", "x2", "x4", "x8", "x16"}}
     end
   }
 
@@ -570,63 +931,144 @@ local function buildOptionHelpers()
     end,
     set = function (value)
       -- log('I','graphic',' setting GraphicOverallQuality = '..tostring(value))
+
       if type(value) == 'string' and tonumber(value) then
         value = tonumber(value)
       end
+
       if type(value) == 'number' then
-        local upgrade_old_id_to_name = {'Custom', 'Lowest', 'Low', 'Normal', 'High', 'Ultra'}
-        value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
+        if usingPlatformPresets then
+          value = platformPresetOrder[clamp(value + 1, 1, #platformPresetOrder)]
+        else
+          local upgrade_old_id_to_name = {'Custom', 'Lowest', 'Low', 'Normal', 'High', 'Ultra'}
+          value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
+        end
+      end
+
+      local levelData = overallQualityPresets[value]
+      if type(levelData) ~= "table" then
+        log("W", logTag, "Tried to apply unknown graphics preset: " .. tostring(value))
+        return
       end
 
       o.GraphicOverallQuality.qualityLevel = tostring(value)
-      local levelData = overallQualityPresets[value]
-      -- log('I','','Overall quality to be applied is '..value..' : '..dumps(levelData))
-      for k,v in pairs(levelData) do
-        o[k].set(v)
+      for k, v in pairs(levelData) do
+        if o[k] and type(o[k].set) == "function" then
+          o[k].set(v)
+        else
+          settings.setValue(k, v)
+        end
+      end
+      setBloomEnabledForLightingQuality(o.GraphicLightingQuality.get())
+      if usingPlatformPresets then
+        settings.refreshTSState(true)
+
+        -- applyGraphicsState needs Canvas/GFX to exist. Avoid calling it too early.
+        if scenetree.findObject("Canvas") and applyGraphicsState then
+          applyGraphicsState()
+        else
+          settings.requestSave()
+        end
+
+        settings.notifyUI()
       end
     end,
     getModes = function()
-      return {keys={'Custom', 'Lowest', 'Low', 'SteamDeck', 'Normal', 'High', 'Ultra'}, values={'ui.options.graphics.Custom', 'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.SteamDeck', 'ui.options.graphics.Normal', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}}
+      if usingPlatformPresets then
+        local keys = {}
+        local values = {}
+
+        for _, name in ipairs(platformPresetOrder) do
+          table.insert(keys, name)
+          table.insert(values, name)
+        end
+
+        return {keys = keys, values = values}
+      end
+
+      local keys = {'Custom', 'Lowest', 'Low', 'SteamDeck', 'Normal', 'High', 'Ultra'}
+      local values = {
+        'ui.options.graphics.Custom',
+        'ui.options.graphics.Lowest',
+        'ui.options.graphics.Low',
+        'ui.options.graphics.SteamDeck',
+        'ui.options.graphics.Normal',
+        'ui.options.graphics.High',
+        'ui.options.graphics.Ultra'
+      }
+
+      for _, name in ipairs(internalPresetOrder) do
+        table.insert(keys, name)
+        table.insert(values, name)
+      end
+
+      return {keys = keys, values = values}
     end,
     init = function ()
       local temp = {}
-      for index, group in pairs(overallQualityPresets) do
-        for key, presetValue in pairs(group) do
-          temp[key] = true
+
+      for _, group in pairs(overallQualityPresets) do
+        if type(group) == "table" then
+          for key, _ in pairs(group) do
+            if not (usingPlatformPresets and platformPresetIgnoreForCustomDetection[key]) then
+              temp[key] = true
+            end
+          end
         end
       end
-      presetKeys = {}
-      for k,v in pairs(temp) do
-        table.insert(presetKeys, k)
+
+      o.GraphicOverallQuality.presetKeys = {}
+
+      for k, _ in pairs(temp) do
+        table.insert(o.GraphicOverallQuality.presetKeys, k)
       end
-      -- log('I','','building preset keys: '..dumps(presetKeys))
+
+      -- log('I','','building preset keys: '..dumps(o.GraphicOverallQuality.presetKeys))
     end,
     onSettingsChanged = function ()
       -- log('I','','onSettingsChanged called.....')
+
       local matchedGroupIndex = nil
+      local presetKeys = o.GraphicOverallQuality.presetKeys or {}
+
       for index, group in pairs(overallQualityPresets) do
-        -- log('I','','  Checking group: '..tostring(index))
-        local matchFound = true
-        for _, presetKey in ipairs(presetKeys) do
-          local current = o[presetKey].get()
-          local presetValue = group[presetKey]
-          -- log('I','','      Key: '..presetKey..':  preset = '..tostring(presetValue)..'  current = '..tostring(current))
-          if tostring(presetValue) ~= tostring(current) then
-            matchFound = false
+        if type(group) == "table" then
+          local matchFound = true
+
+          for _, presetKey in ipairs(presetKeys) do
+            local current
+
+            if o[presetKey] and type(o[presetKey].get) == "function" then
+              current = o[presetKey].get()
+            else
+              current = settings.getValue(presetKey)
+            end
+
+            local presetValue = group[presetKey]
+
+            if tostring(presetValue) ~= tostring(current) then
+              matchFound = false
+              break
+            end
+          end
+
+          if matchFound then
+            matchedGroupIndex = index
             break
           end
         end
-        if matchFound then
-          matchedGroupIndex = index
-        end
-        -- log('I','','  ---------------- End of: '..index..' match found = '..tostring(matchFound)..'---------------------------')
       end
-      -- log('I','','Matched Group Index: '..tostring(matchedGroupIndex))
+
       if matchedGroupIndex == nil then
-        -- log('I','','                              Setting quality to Custom')
-        o.GraphicOverallQuality.set(0) -- custom
+        if usingPlatformPresets then
+          return
+        end
+
+        o.GraphicOverallQuality.set(0) -- Custom
         return
       end
+
+      o.GraphicOverallQuality.qualityLevel = tostring(matchedGroupIndex)
     end
   }
 
@@ -652,7 +1094,33 @@ local function buildOptionHelpers()
     end,
 
     getModes = function()
-      return {keys={'Ultra', 'High', 'Normal', 'Low', 'Lowest'}, values={'ui.options.graphics.Ultra', 'ui.options.graphics.High', 'ui.options.graphics.Normal', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
+      return {keys={'Lowest', 'Low', 'Normal', 'High', 'Ultra'}, values={'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.Normal', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}}
+    end
+  }
+
+  -- SettingsGraphicTerrainQuality
+  o.GraphicTerrainQuality = {
+    qualityLevel = "Normal",
+
+    get = function ()
+      return o.GraphicTerrainQuality.qualityLevel
+    end,
+
+    set = function ( value )
+      if type(value) == 'string' and tonumber(value) then
+        value = tonumber(value)
+      end
+      if type(value) == 'number' then
+        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High'}
+        value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
+      end
+
+      terrainQualityGroup:applyLevel(value)
+      o.GraphicTerrainQuality.qualityLevel = value
+    end,
+
+    getModes = function()
+      return {keys={'Lowest', 'Low', 'Normal', 'High'}, values={'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.Normal', 'ui.options.graphics.High'}}
     end
   }
 
@@ -669,8 +1137,12 @@ local function buildOptionHelpers()
         value = tonumber(value)
       end
       if type(value) == 'number' then
-        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High'}
+        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal'}
         value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
+      end
+
+      if value == "High" then
+        value = "Normal"
       end
 
       textureQualityGroup:applyLevel(value)
@@ -678,7 +1150,7 @@ local function buildOptionHelpers()
     end,
 
     getModes = function()
-      return {keys={'High', 'Normal', 'Low', 'Lowest'}, values={'ui.options.graphics.High', 'ui.options.graphics.Normal', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
+      return {keys={'Lowest', 'Low', 'Normal'}, values={'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.Normal'}}
     end
   }
 
@@ -699,12 +1171,21 @@ local function buildOptionHelpers()
         value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
       end
 
+      if value == "Normal" then
+        value = "High"
+      end
+
       lightingQualityGroup:applyLevel(value)
       o.GraphicLightingQuality.qualityLevel = value
+      setBloomEnabledForLightingQuality(value)
+
+      if PSSMLightShadowMap then
+        PSSMLightShadowMap.penumbraEnabled = value == "Ultra"
+      end
     end,
 
     getModes = function()
-      return {keys={'Ultra', 'High', 'Low', 'Lowest'}, values={'ui.options.graphics.Ultra', 'ui.options.graphics.High', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
+      return {keys={'Lowest', 'Low', 'High', 'Ultra'}, values={'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}}
     end
   }
 
@@ -721,135 +1202,147 @@ local function buildOptionHelpers()
         value = tonumber(value)
       end
       if type(value) == 'number' then
-        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High'}
+        local upgrade_old_id_to_name = {'Disabled', 'Lowest', 'Low', 'Normal', 'High', 'Ultra'}
         value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
       end
 
       shadowsQualityGroup:applyLevel(value)
+      if PSSMLightShadowMap and shadowsQuality.vehicleTexSizes[value] then
+        PSSMLightShadowMap.vehicleTexSize = shadowsQuality.vehicleTexSizes[value]
+      end
       o.GraphicShadowsQuality.qualityLevel = value
+      if value == "Disabled" then
+        setScreenSpaceShadowsEnabled(false)
+      end
     end,
 
     getModes = function()
-      return {keys={'High', 'Normal', 'Low', 'Lowest'}, values={'ui.options.graphics.High', 'ui.options.graphics.Normal', 'ui.options.graphics.Low', 'ui.options.graphics.Lowest'}}
-    end
-  }
-
-  -- SettingsGraphicShaderQuality
-  o.GraphicShaderQuality = {
-    qualityLevel = "High",
-
-    get = function ()
-      return o.GraphicShaderQuality.qualityLevel
-    end,
-
-    set = function ( value )
-      if type(value) == 'string' and tonumber(value) then
-        value = tonumber(value)
-      end
-      if type(value) == 'number' then
-        local upgrade_old_id_to_name = {'Low', 'High'}
-        value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
-      end
-      shaderQualityGroup:applyLevel(value)
-      o.GraphicShaderQuality.qualityLevel = value
-    end,
-
-    getModes = function()
-      return {keys={'High', 'Low'}, values={'ui.options.graphics.High', 'ui.options.graphics.Low'}}
+      return {keys={'Disabled', 'Lowest', 'Low', 'Normal', 'High', 'Ultra'}, values={'ui.options.graphics.shadows.none', 'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.Normal', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}}
     end
   }
 
   -- GraphicDynReflectionEnabled
   o.GraphicDynReflectionEnabled = {
     get = function ()
-      return TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicReflection::enabled' ) ~= "0"
+      return VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::enabled' ) ~= false
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicReflection::enabled', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::enabled', value )
     end
   }
 
   -- GraphicDynReflectionFacesPerupdate
   o.GraphicDynReflectionFacesPerupdate = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate' ) )
+      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate' ) )
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate', value )
     end
   }
 
   -- GraphicDynReflectionDetail
   o.GraphicDynReflectionDetail = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicReflection::detail' ) )
+      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::detail' ) )
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicReflection::detail', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::detail', value )
     end
   }
 
   -- GraphicDynReflectionDistance
   o.GraphicDynReflectionDistance = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicReflection::distance' ) )
+      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::distance' ) )
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicReflection::distance', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::distance', value )
     end
   }
 
   -- GraphicDynReflectionTexsize
   o.GraphicDynReflectionTexsize = {
     get = function ()
-      local value = math.log(tonumber( TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicReflection::textureSize' ) ) )/math.log( 2 )
+      local value = math.log(tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::textureSize' ) ) )/math.log( 2 )
       return value - 7
     end,
     set = function ( value )
       value = math.pow(2, value + 7)
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicReflection::textureSize', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::textureSize', value )
     end
   }
 
   -- GraphicDynMirrorsEnabled
   o.GraphicDynMirrorsEnabled = {
     get = function ()
-      return TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicMirrors::enabled' ) ~= "0"
+      return VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::enabled' ) ~= false
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicMirrors::enabled', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::enabled', value )
     end
   }
 
   -- GraphicDynMirrorsDetail
   o.GraphicDynMirrorsDetail = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicMirrors::detail' ) )
+      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::detail' ) )
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicMirrors::detail', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::detail', value )
     end
   }
 
   -- GraphicDynMirrorsDistance
   o.GraphicDynMirrorsDistance = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicMirrors::distance' ) )
+      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::distance' ) )
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicMirrors::distance', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::distance', value )
     end
   }
 
   -- GraphicDynMirrorsTexsize
   o.GraphicDynMirrorsTexsize = {
     get = function ()
-      local value = math.log(tonumber( TorqueScriptLua.getVar( '$pref::BeamNGVehicle::dynamicMirrors::textureSize' ) ) )/math.log( 2 )
+      local value = math.log(tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::textureSize' ) ) )/math.log( 2 )
       return value - 7
     end,
     set = function ( value )
       value = math.pow(2, value + 7)
-      TorqueScriptLua.setVar( '$pref::BeamNGVehicle::dynamicMirrors::textureSize', value )
+      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::textureSize', value )
+    end
+  }
+
+  -- SettingsGraphicCloudsQuality
+  o.GraphicCloudsQuality = {
+    get = function ()
+      local value = settings.getValue('GraphicCloudsQuality')
+      return value
+    end,
+    set = function ( value )
+      local cloudLayer = CloudLayer
+      if not cloudLayer then return end
+      if value == "Disabled" then
+        cloudLayer.volumetricEnabled = false
+      elseif value == "High" then
+        cloudLayer.volumetricEnabled = true
+        cloudLayer.vrtDownsampleFactor = 4
+        cloudLayer.shadowLutUpdateGroupSize = 2
+      elseif value == "Normal" then
+        cloudLayer.volumetricEnabled = true
+        cloudLayer.vrtDownsampleFactor = 6
+        cloudLayer.shadowLutUpdateGroupSize = 4
+      elseif value == "Low" then
+        cloudLayer.volumetricEnabled = true
+        cloudLayer.vrtDownsampleFactor = 8
+        cloudLayer.shadowLutUpdateGroupSize = 8
+      end
+      settings.setValue('GraphicCloudsQuality', value)
+    end,
+    getModes = function ()
+      return {keys={'Disabled', 'Low', 'Normal', 'High'}, values={'ui.options.graphics.shadows.none', 'ui.options.graphics.Low', 'ui.options.graphics.Normal', 'ui.options.graphics.High'}}
     end
   }
 
@@ -861,50 +1354,13 @@ local function buildOptionHelpers()
       return DOFPostEffect:isEnabled() ~= false
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$DOFPostFx::Enable', value )
+      VariableRegistry.set( '$DOFPostFx::Enable', value )
       local DOFPostEffect = scenetree.findObject("DOFPostEffect")
       if not DOFPostEffect then return end
       if value then
         DOFPostEffect:enable()
       else
         DOFPostEffect:disable()
-      end
-    end
-  }
-
-  -- SettingsPostFXBloomGeneralEnabled
-  o.PostFXBloomGeneralEnabled = {
-    get = function ()
-      return settings.getValue("PostFXBloomGeneralEnabled")
-    end,
-    set = function ( value )
-      settings.setValue("PostFXBloomGeneralEnabled", value)
-      local postFX = scenetree.findObject("PostEffectBloomObject")
-      if not postFX then return end
-      if value then
-        postFX:enable()
-      else
-        postFX:disable()
-      end
-    end
-  }
-
-  -- SettingsPostFXLightRaysEnabled
-  o.PostFXLightRaysEnabled = {
-    get = function ()
-      local LightRayPostFX = scenetree.findObject("LightRayPostFX")
-      if not LightRayPostFX then return end
-      return LightRayPostFX:isEnabled() ~= false
-    end,
-    set = function ( value )
-      --print("*************LightRayPostFX 2 set")
-      local LightRayPostFX = scenetree.findObject("LightRayPostFX")
-      if not LightRayPostFX then return end
-      TorqueScriptLua.setVar( '$LightRayPostFX::Enable', value )
-      if value then
-        LightRayPostFX:enable()
-      else
-        LightRayPostFX:disable()
       end
     end
   }
@@ -959,7 +1415,7 @@ local function buildOptionHelpers()
     end,
     set = function ( value )
       --print("********PostFXSSAOGeneralEnabled 2 set") --not tested
-      TorqueScriptLua.setVar( '$SSAOPostFx::Enable', value )
+      VariableRegistry.set( '$SSAOPostFx::Enable', value )
       local SSAOPostFx = scenetree.findObject("SSAOPostFx")
       if not SSAOPostFx then return end
       if value then
@@ -990,45 +1446,103 @@ local function buildOptionHelpers()
       settings.setValue('PostFXSSAOGeneralQuality', value)
     end,
     getModes = function ()
-      return {keys={'High', 'Normal'}, values={'ui.options.graphics.High', 'ui.options.graphics.Normal'}}
+      return {keys={'Normal', 'High'}, values={'ui.options.graphics.Normal', 'ui.options.graphics.High'}}
+    end
+  }
+
+  o.PostFXScreenSpaceShadowsAvailable = {
+    get = function ()
+      return scenetree.findObject("ScreenSpaceShadowsPostFx") ~= nil
+    end
+  }
+
+  -- SettingsPostFXScreenSpaceShadowsEnabled
+  o.PostFXScreenSpaceShadowsEnabled = {
+    get = function ()
+      local sss = scenetree.findObject("ScreenSpaceShadowsPostFx")
+      if not sss then return end
+      return sss:isEnabled() ~= false
+    end,
+    set = function ( value )
+      if o.GraphicShadowsQuality.get() == "Disabled" then
+        value = false
+      end
+      setScreenSpaceShadowsEnabled(value)
     end
   }
 
   -- SettingsGraphicGrassDensity
   o.GraphicGrassDensity = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::GroundCover::densityScale' ))
+      return tonumber( VariableRegistry.get( '$pref::GroundCover::densityScale' ))
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::GroundCover::densityScale', value )
+      VariableRegistry.set( '$pref::GroundCover::densityScale', value )
     end
   }
 
   -- SettingsGraphicMaxDecalCount
   o.GraphicMaxDecalCount = {
     get = function ()
-      return tonumber( TorqueScriptLua.getVar( '$pref::TS::maxDecalCount' ))
+      return tonumber( VariableRegistry.get( '$pref::TS::maxDecalCount' ))
     end,
     set = function ( value )
-      TorqueScriptLua.setVar( '$pref::TS::maxDecalCount', value )
+      VariableRegistry.set( '$pref::TS::maxDecalCount', value )
     end
   }
 
-  -- SettingsGraphicDisableShadows
-  o.GraphicDisableShadows = {
+  -- SettingsLastSplitCastersEnabled
+  o.lastSplitCastersEnabled = {
     get = function ()
-      local levelStr = getConsoleVariable( '$pref::Shadows::disable' )
-      if levelStr == "" then
-        levelStr = "0"
-      end
-      return (levelStr)
+      return PSSMLightShadowMap and PSSMLightShadowMap.lastSplitCastersEnabled
     end,
     set = function ( value )
-      value = tostring(value)
-      setConsoleVariable( '$pref::Shadows::disable', value)
+      if PSSMLightShadowMap then
+        PSSMLightShadowMap.lastSplitCastersEnabled = value
+      end
+    end
+  }
+
+  -- SettingsVehicleShadowEnabled
+  o.vehicleShadowEnabled = {
+    get = function ()
+      return PSSMLightShadowMap and PSSMLightShadowMap.vehicleShadowEnabled
     end,
+    set = function ( value )
+      if PSSMLightShadowMap then
+        PSSMLightShadowMap.vehicleShadowEnabled = value
+      end
+    end
+  }
+
+  -- SettingsGraphicClusteredQuality
+  o.GraphicClusteredQuality = {
+    qualityLevel = "Normal",
+
+    get = function ()
+      return settings.getValue('GraphicClusteredQuality') or o.GraphicClusteredQuality.qualityLevel
+    end,
+
+    set = function ( value )
+      if type(value) == 'string' and tonumber(value) then
+        value = tonumber(value)
+      end
+      if type(value) == 'number' then
+        local upgrade_old_id_to_name = {'Lowest', 'Low', 'Normal', 'High', 'Ultra'}
+        value = upgrade_old_id_to_name[clamp(value + 1, 1, #upgrade_old_id_to_name)]
+      end
+
+      if not clusteredQuality.qualityLevels[value] then
+        value = "Normal"
+      end
+
+      clusteredQuality.applyLevel(value)
+      o.GraphicClusteredQuality.qualityLevel = value
+      settings.setValue('GraphicClusteredQuality', value)
+    end,
+
     getModes = function()
-      return {keys={'2', '1', '0'}, values={'ui.options.graphics.shadows.none', 'ui.options.graphics.shadows.partial', 'ui.options.graphics.shadows.all'}}
+      return {keys={'Lowest', 'Low', 'Normal', 'High', 'Ultra'}, values={'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.Normal', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}}
     end
   }
 
@@ -1065,7 +1579,7 @@ local function onFirstUpdateSettings()
   local canvas = scenetree.findObject("Canvas")
   if not canvas then return end
 
-  if TorqueScriptLua.getVar( '$forceFullscreen' ) == "1" then
+  if VariableRegistry.get( '$forceFullscreen' ) == true then
     local data = getDefault()
     data.GraphicFullscreen = true
     for k, v in pairs(data) do
@@ -1078,59 +1592,6 @@ local function onFirstUpdateSettings()
   canvas:showWindow()
 
   gatherDisplayInformation()
-end
-
-local function applyGraphicsState()
-  if M.triggered_manual_save then
-    log('E','graphic','Detected Saving in progress....ignoring redundant call')
-    return
-  end
-
-  M.triggered_manual_save = true
-
-  -- save the changes
-  settings.requestSave()
-
-  -- set canvas mode
-  local canvas = scenetree.findObject("Canvas")
-
-  if not canvas then
-    return
-  end
-
-  local resolutionWidth, resolutionHeight = graphicsOptions.GraphicDisplayResolutions.getWidthHeight()
-  local refreshRate = graphicsOptions.GraphicDisplayRefreshRates.get()
-
-  local displayDriver = graphicsOptions.GraphicDisplayDriver.get()
-  displayDriver = displayDriver:gsub("/","\\")
-  GFXDevice.setDisplayDevice(displayDriver)
-
-  log('D','graphic','Applying graphic settings: '..tostring(displayDriver)..', '..graphicsOptions.GraphicDisplayModes.get()..', '..tostring(resolutionWidth)..' x '..tostring(resolutionHeight)..' '..tostring(refreshRate)..' Hz')
-
-  local videoMode = {}
-  videoMode.width = resolutionWidth
-  videoMode.height = resolutionHeight
-  videoMode.refreshRate = refreshRate
-  videoMode.displayMode = graphicsOptions.GraphicDisplayModes.get()
-  GFXDevice.setVideoMode( videoMode )
-
-  if graphicsOptions.GraphicDisplayModes.isWindow() then
-    local desiredwindowPlacement = graphicsOptions.WindowPlacement.get()
-    canvas:restorePlacement(desiredwindowPlacement)
-  end
-
-  if settings.getValue('GraphicTripleMonitorEnabled') then
-    local borderFovDeg = settings.getValue('GraphicTripleMonitorBordersFovDeg')
-    local centerFovDeg = settings.getValue('GraphicTripleMonitorCenterFovDeg')
-    local leftFovDeg = settings.getValue('GraphicTripleMonitorLeftFovDeg')
-    local rightFovDeg = settings.getValue('GraphicTripleMonitorRightFovDeg')
-    Engine.setRenderMode(((leftFovDeg > 0) or (rightFovDeg > 0)) and "MultiMonitor" or "SingleMonitor", math.rad(centerFovDeg), math.rad(leftFovDeg), math.rad(rightFovDeg), math.rad(borderFovDeg))
-  else
-    Engine.setRenderMode("SingleMonitor", 0, 0, 0, 0)
-  end
-
-  M.triggered_manual_save = false
-  M.appliedChanges = true
 end
 
 local function refreshGraphicsState(newState)
@@ -1178,6 +1639,9 @@ local function refreshGraphicsState(newState)
     -- dump(tostring(M.selected_resolution) .. '  is now  '.. newState.GraphicDisplayResolutions)
     if graphicsOptions.GraphicDisplayResolutions and type(graphicsOptions.GraphicDisplayResolutions.set) == 'function' then
       graphicsOptions.GraphicDisplayResolutions.set(newState.GraphicDisplayResolutions)
+      if graphicsOptions.GraphicDisplayModes and graphicsOptions.GraphicDisplayModes.isWindow() then
+        M.skipWindowPlacementRestore = true
+      end
       shouldLogSanitizeMessage = true
     end
   end
@@ -1221,6 +1685,7 @@ local function onUiChangedState(toState, fromState)
   elseif fromState == 'menu.options.graphics' then
     if not M.appliedChanges then
       refreshGraphicsState({GraphicDisplayModes = M.selected_displayMode, GraphicDisplayResolutions = M.selected_resolution, GraphicDisplayRefreshRates = M.selected_refreshRate})
+      M.skipWindowPlacementRestore = nil
     end
 
     M.appliedChanges = false
@@ -1235,6 +1700,16 @@ end
 local function openMonitorConfiguration()
 end
 
+local function openCoconutWindow()
+  if shipping_build then
+    return
+  end
+
+  if Engine and Engine.Render and Engine.Render.setCoconutWindowOpen then
+    Engine.Render.setCoconutWindowOpen(true)
+  end
+end
+
 local function autoDetectApplyGraphicsQuality()
   --
   -- TODO(AK) 15/08/2021: RE-Enable after Porting TS startup to LUA
@@ -1246,7 +1721,7 @@ local function autoDetectApplyGraphicsQuality()
   --                      RE-Enable after Porting TS startup to LUA
   --
 
-  -- TorqueScriptLua.setVar('$pref::Video::autoDetect', false)
+  -- VariableRegistry.set('$pref::Video::autoDetect', false)
   -- local intel = string.find(string.upper(getDisplayDeviceInformation()), "INTEL") ~= nil
   -- local videoMem = GFXDevice.getVideoMemoryMB()
 
@@ -1286,6 +1761,17 @@ local function autoDetectApplyGraphicsQuality()
   -- end
 end
 
+local function onUpdate(dtReal)
+  if hdrOutputModeUpdateTimer <= 0 then return end
+
+  hdrOutputModeUpdateTimer = hdrOutputModeUpdateTimer - (dtReal or 0)
+
+  if hdrOutputModeUpdateTimer <= 0 then
+    hdrOutputModeUpdateTimer = 0
+    updateHdrOutputModeSetting()
+  end
+end
+
 local function toggleFullscreen()
   local canvas = scenetree.findObject("Canvas")
 
@@ -1313,7 +1799,9 @@ M.refreshGraphicsState = refreshGraphicsState
 M.applyGraphicsState = applyGraphicsState
 M.onUiChangedState = onUiChangedState
 M.openMonitorConfiguration = openMonitorConfiguration
+M.openCoconutWindow = openCoconutWindow
 M.autoDetectApplyGraphicsQuality = autoDetectApplyGraphicsQuality
+M.onUpdate = onUpdate
 M.toggleFullscreen = toggleFullscreen
 M.getOverallQualityPresets = function() return overallQualityPresets end
 return M

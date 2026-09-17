@@ -44,7 +44,7 @@ function C:work(args)
     end
   end
 
-  self.pinOut.isRepaired.value = not career_modules_insurance.inventoryVehNeedsRepair(career_modules_inventory.getInventoryIdFromVehicleId(be:getPlayerVehicleID(0)))
+  self.pinOut.isRepaired.value = not career_modules_insurance_insurance.inventoryVehNeedsRepair(career_modules_inventory.getInventoryIdFromVehicleId(be:getPlayerVehicleID(0)))
 
 end
 

@@ -5,14 +5,15 @@
 local M = {}
 
 local leaguesById = nil
+local leagueIdByMissionId = nil
 M.getLeagueById = function(id) return leaguesById[id] end
+M.getLeagueOfMission = function(mId) return leaguesById[leagueIdByMissionId[mId]] end
 
 
 -- career utility
-local missionsBySkill = {}
 local starsBySkillCache = {}
 M.clearLeagueUnlockCache = function()
-  for _, league in pairs(leaguesById) do league._unlocked = nil end
+  for _, league in pairs(leaguesById or {}) do league._unlocked = nil end
   starsBySkillCache = {}
 end
 M.getSimpleUnlockedStatus = function()
@@ -27,7 +28,7 @@ end
 local function isLeagueUnlocked(id)
   local league = M.getLeagueById(id)
   if not league then return false end
-  if league._unlocked ~= nil then return league._unlocked end
+  if league._unlocked ~= nil then return league._unlocked, league.unlockLabels end
   -- no condition = unlocked by default
   if not league.unlock or not next(league.unlock) then
     league._unlocked = true
@@ -35,6 +36,7 @@ local function isLeagueUnlocked(id)
   end
 
   local allConditionsMet = true
+  local unlockLabels = {}
   for _, condition in ipairs(league.unlock) do
     if condition.type == "leagueStars" then
       local count = 0
@@ -60,9 +62,9 @@ local function isLeagueUnlocked(id)
         max = condition.stars,
         cur = count,
         label = string.format("%d Stars / %d Stars", count, condition.stars)
-
       }
-      condition.label = string.format("Get %d stars from '%s'", condition.stars, translateLanguage(otherLeague.name, otherLeague.name, true))
+      condition.label = {txt = "missions.missions.unlock.leagueStars", context = {stars = condition.stars, name = otherLeague.name}}
+      table.insert(unlockLabels, condition.label)
 
     elseif condition.type == "branchLevel" then
       local level = career_branches.getBranchLevel(condition.skillId)
@@ -76,23 +78,50 @@ local function isLeagueUnlocked(id)
         label = string.format("%d XP / %d XP", xp, neededForLevel)
       }
       local branch = career_branches.getBranchById(condition.skillId)
-      condition.label = string.format("Reach level %d of '%s'", condition.level,  translateLanguage(branch.name, branch.name, true))
+      condition.label = {txt = "missions.missions.unlock.attributeLevel.atLeast", context = {branchName = branch.name, level = condition.level}}
+      table.insert(unlockLabels, condition.label)
     elseif condition.type == "skillStars" then
       if not starsBySkillCache[condition.skillId] then
         starsBySkillCache[condition.skillId] = {}
-        starsBySkillCache[condition.skillId].total, starsBySkillCache[condition.skillId].unlocked = M.getStarsForSkill(condition.skillId)
+        starsBySkillCache[condition.skillId].total, starsBySkillCache[condition.skillId].unlocked = M.getStarsForSkills({[condition.skillId] = true})
       end
       condition.met = starsBySkillCache[condition.skillId].unlocked >= condition.stars
       condition.progress = {
         min = 0, max = condition.stars, cur = starsBySkillCache[condition.skillId].unlocked, label = string.format("%d / %d", starsBySkillCache[condition.skillId].unlocked, condition.stars)
       }
       local branch = career_branches.getBranchById(condition.skillId)
-      condition.label = string.format("Get %d stars in '%s'", condition.stars,  translateLanguage(branch.name, branch.name, true))
+      condition.label = {txt = "missions.missions.unlock.starsIn", context = {stars = condition.stars, name = branch.name}}
+      table.insert(unlockLabels, condition.label)
+    elseif condition.type == "branchStars" then
+      if not starsBySkillCache[condition.branchId] then
+        starsBySkillCache[condition.branchId] = {}
+
+        local validSkills = {}
+        for _, skill in pairs(career_branches.getBranches()) do
+          if skill.parentBranch == condition.branchId then
+            validSkills[skill.id] = true
+          end
+        end
+        starsBySkillCache[condition.branchId].total, starsBySkillCache[condition.branchId].unlocked = M.getStarsForSkills(validSkills)
+      end
+      condition.met = starsBySkillCache[condition.branchId].unlocked >= condition.stars
+      condition.progress = {
+        min = 0, max = condition.stars, cur = starsBySkillCache[condition.branchId].unlocked, label = string.format("%d / %d", starsBySkillCache[condition.branchId].unlocked, condition.stars)
+      }
+      local branch = career_branches.getBranchById(condition.branchId)
+      condition.label = {txt = "missions.missions.unlock.starsIn", context = {stars = condition.stars, name = branch.name}}
+      table.insert(unlockLabels, condition.label)
+    elseif condition.type == "inDevelopment" then
+      condition.met = false
+      condition.hidden = true
+      --condition.label = _tr("ui.career.inDevelopment")
+      --condition.progress = {}
     end
     allConditionsMet = allConditionsMet and condition.met
   end
   league._unlocked = allConditionsMet
-  return allConditionsMet
+  league.unlockLabels = unlockLabels
+  return allConditionsMet, unlockLabels
 end
 M.isLeagueUnlocked = isLeagueUnlocked
 
@@ -125,21 +154,27 @@ local function formatLeague(l)
   local skill = career_branches.getBranchById(league.skillId)
   if skill then
     league.icon = skill.icon
+    league.accentColor = skill.accentColor
+  end
+  if league.isCertification then
+    league.icon = "badgeRoundStar"
   end
   --league.milestones = career_modules_milestones_milestones.getMilestones({"branch_apexRacing"}).list
   return league
 end
+M.formatLeague = formatLeague
 
-local function getLeaguesForProgressBranchPage(branchId)
+local function getLeaguesForProgressBranchPage(branchId, ignoreSubSkills)
   M.clearLeagueUnlockCache()
   local ret = {}
   for id, l in pairs(leaguesById) do
     local league = formatLeague(l)
     local skill = career_branches.getBranchById(league.skillId)
-    if not branchId or branchId == skill.id or skill.parentBranch == branchId then
+    if not branchId or branchId == skill.id or (skill.parentId == branchId and not ignoreSubSkills) then
       table.insert(ret, league)
     end
   end
+  M.addLeagueSortOrder()
   table.sort(ret, function(a,b) return a._order < b._order end)
   return ret
 end
@@ -153,31 +188,18 @@ local function getLeaguesForUnlockChange(before, after)
       table.insert(ret, league)
     end
   end
-  table.sort(ret, function(a,b) return a._order < b._order end)
+  if next(ret) then
+    M.addLeagueSortOrder()
+    table.sort(ret, function(a,b) return a._order < b._order end)
+    gameplay_achievement.unlockAchievement("NEW_TERRITORY")
+  end
   return ret
 end
 M.getLeaguesForUnlockChange = getLeaguesForUnlockChange
 
-local noLeague = {
-  id = "noLeague",
-  name = "Other Missions",
-  description = "",
-  missions = {},
-  driftSpots = {},
-  _unlocked = true,
-}
 local function getNoLeague(skill, missions, driftSpots)
-  local league = deepcopy(noLeague)
-  local branch = career_branches.getBranchById(skill.id)
-  league.name = string.format("%s Challenges", translateLanguage(branch.name, branch.name, true))
-  league.skillId = skill.id
-  for _, m in ipairs(missions or {}) do
-    table.insert(league.missions, m.id)
-  end
-  for _, ds in ipairs(driftSpots or {}) do
-    table.insert(league.driftSpots, ds.id)
-  end
-  return formatLeague(league)
+  log("E","","Deprecated")
+  -- todo: remove
 end
 M.getNoLeague = getNoLeague
 
@@ -190,6 +212,7 @@ local function getLeaguesForMission(missionId)
       table.insert(ret, league)
     end
   end
+  M.addLeagueSortOrder()
   table.sort(ret, function(a,b) return a._order < b._order end)
   return ret
 end
@@ -197,12 +220,89 @@ M.getLeaguesForMission = getLeaguesForMission
 
 -- save/load
 
+local function addLeagueSortOrder()
+  -- Group leagues by skill
+  local leaguesBySkill = {}
+  for id, league in pairs(leaguesById) do
+    if not leaguesBySkill[league.skillId] then
+      leaguesBySkill[league.skillId] = {}
+    end
+    table.insert(leaguesBySkill[league.skillId], id)
+  end
 
+  -- Sort leagues within each skill group
+  for skillId, skillLeagues in pairs(leaguesBySkill) do
+    -- First sort by skill stars and file order
+    table.sort(skillLeagues, function(a, b)
+      local leagueA = leaguesById[a]
+      local leagueB = leaguesById[b]
+      if leagueA._skillStars ~= leagueB._skillStars then
+        return leagueA._skillStars < leagueB._skillStars
+      end
+      return leagueA._orderByFile < leagueB._orderByFile
+    end)
+
+    -- Move highlighted and unlocked leagues to front
+    local highlighted = {}
+    local regular = {}
+    for _, id in ipairs(skillLeagues) do
+      local league = leaguesById[id]
+      if league.highlightIfUnlocked and isLeagueUnlocked(id) then
+        table.insert(highlighted, id)
+        --log("I", "", "Highlighted league: " .. league.id)
+      else
+        table.insert(regular, id)
+      end
+    end
+
+    -- Combine highlighted and regular leagues
+    leaguesBySkill[skillId] = {}
+    for _, id in ipairs(highlighted) do
+      table.insert(leaguesBySkill[skillId], id)
+    end
+    for _, id in ipairs(regular) do
+      table.insert(leaguesBySkill[skillId], id)
+    end
+  end
+
+  -- Assign final order based on skill order and position within skill group
+  local orderIndex = 1
+  local skillIds = tableKeys(leaguesBySkill)
+  table.sort(skillIds, function(a, b)
+    return career_branches.getOrder(a) < career_branches.getOrder(b)
+  end)
+
+  for _, skillId in ipairs(skillIds) do
+    for _, leagueId in ipairs(leaguesBySkill[skillId]) do
+      leaguesById[leagueId]._order = orderIndex
+      orderIndex = orderIndex + 1
+    end
+  end
+end
+
+local function checkMissionsInSingleLeague(leaguesById)
+  -- check if each mission is only used at most in a single league
+  local missionsUsedInLeagues = {}
+  for id, league in pairs(leaguesById) do
+    for _, mId in ipairs(league.missions) do
+      if not missionsUsedInLeagues[mId] then
+        missionsUsedInLeagues[mId] = id
+      else
+        local msg = (
+          "Mission is used in more than one league: " .. dumps(mId) ..
+          " in league " .. dumps(missionsUsedInLeagues[mId]) .. " and " .. dumps(id)
+        )
+        log("E","", msg)
+      end
+    end
+  end
+end
 
 local function loadLeagues()
   -- todo: load from file
   if not leaguesById then
     leaguesById = {}
+    leagueIdByMissionId = {}
     local files = FS:findFiles("/gameplay/", "*.leagues.json", -1, true, false)
     table.sort(files)
     local i = 1
@@ -223,11 +323,35 @@ local function loadLeagues()
               end
             end
             league.missions = league.missions or {}
+            league._missionOrderByMissionId = {}
+            for i, id in ipairs(league.missions) do
+              league._missionOrderByMissionId[id] = i
+            end
             league.driftSpots = league.driftSpots or {}
 
-            local skill = career_branches.getBranchById(league.skillId)
+            league.skillPathId = career_branches.extractBranchPathIdFromFilePath(file)
+            local skill = career_branches.getBranchById(league.skillPathId)
+            league.skillId = skill.pathId
             if skill then
-              league.branchId = skill.parentBranch
+              league.branchId = skill.parentId
+              if skill.isInDevelopment then
+                league.isInDevelopment = true
+              end
+            end
+            if league.isInDevelopment then
+              league.unlock = {{type = "inDevelopment"}}
+              league.comingSoon = {{icon = "roadblockL", label = "ui.career.inDevelopment"}}
+              log("W","","League " .. league.id .. " is in development: Using empty missions list for this league.")
+              league.missions = {}
+            end
+            if not league.branchId then
+              log("E","","League " .. league.id .. " has no branchId but has parentBranch " .. league.skillId)
+            end
+            for _, mId in ipairs(league.missions) do
+              if not gameplay_missions_missions.existsMission(mId) then
+                log("E","","Mission " .. mId .. " in league " .. league.id .. " does not exist.")
+              end
+              leagueIdByMissionId[mId] = league.id
             end
 
             leaguesById[league.id] = league
@@ -235,71 +359,34 @@ local function loadLeagues()
         end
       end
     end
-
-    local leagueIds = tableKeys(leaguesById)
-
-    local function sortLeagues(a, b)
-      local leagueA, leagueB = leaguesById[a], leaguesById[b]
-      if leagueA.skillId ~= leagueB.skillId then
-        return career_branches.getOrder(leagueA.skillId) < career_branches.getOrder(leagueB.skillId)
-      end
-      if leagueA._skillStars ~= leagueB._skillStars then
-        return leagueA._skillStars < leagueB._skillStars
-      end
-      return leagueA._orderByFile < leagueB._orderByFile
-    end
-    table.sort(leagueIds, sortLeagues)
-    for i, key in ipairs(leagueIds) do
-      leaguesById[key]._order = i
-    end
+    checkMissionsInSingleLeague(leaguesById)
+    addLeagueSortOrder()
   end
-
 end
 
-local function onCareerModulesActivated()
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+local function onCareerActive(active)
+  if not active then return end
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
 
   -- load leagues
   loadLeagues()
 end
-M.onCareerModulesActivated = onCareerModulesActivated
+M.onCareerActive = onCareerActive
 
-local function getStarsForSkill(skillId)
+local function getStarsForSkills(skillIds)
   local total, unlocked = 0, 0
-  
-  for _, m in ipairs(gameplay_missions_missions.get()) do
-    if m.careerSetup and m.careerSetup.skill == skillId then
+
+  for _, m in ipairs(gameplay_missions_missions.getAllMissions()) do
+    if m.careerSetup and skillIds[m.careerSetup.skill] then
       total = total + m.careerSetup._activeStarCache.defaultStarCount
       local _, def, _ = gameplay_missions_progress.getUnlockedStarCountsForMissionById(m.id)
       unlocked = unlocked + def
     end
   end
-  --[[
-  if skillId == "drift" then
-    for _, ds in pairs(gameplay_drift_saveLoad.getDriftSpotsById()) do
-      for _, obj in ipairs(ds.info.objectives) do
-        unlocked = unlocked + (ds.saveData.objectivesCompleted[obj.id] and 1 or 0)
-        total = total + 1
-      end
-    end
-  end
-  ]]
   return total, unlocked
 end
-M.getStarsForSkill = getStarsForSkill
-
-local function startConditionIncludesLeague(cond, leagueId)
-  if cond.type == "league" and (cond.leagueId == leagueId or not leagueId) then
-    return true
-  else
-    for _, n in ipairs(cond.nested or {}) do
-      if M.startConditionIncludesLeague(n, leagueId) then
-        return true
-      end
-    end
-  end
-end
-M.startConditionIncludesLeague = startConditionIncludesLeague
+M.getStarsForSkills = getStarsForSkills
+M.getStarsForSkill = function(skillId) return getStarsForSkills({[skillId] = true}) end
 
 local function getStartConditionLeagueId(cond, map)
   if cond.type == "league" then
@@ -312,65 +399,67 @@ local function getStartConditionLeagueId(cond, map)
 end
 M.getStartConditionLeagueId = getStartConditionLeagueId
 
-local function onMissionsLoadedFromFiles(missionsById)
-  loadLeagues()
-  missionsBySkill = {}
-  local missionIdsBySkill = {}
-  local dirty = 0
-
-  for id, league in pairs(leaguesById) do
-    local validMissionIds = {}
-    for _, mId in ipairs(league.missions) do
-      local m = gameplay_missions_missions.getMissionById(mId)
-      if not m then
-        log("E","","Mission does not exist: " .. dumps(mId) .. " in league " .. dumps(id)..". Removed from league.")
-      end
-
-      if m and m.careerSetup.showInCareer then
-        table.insert(validMissionIds, mId)
-        if not M.startConditionIncludesLeague(m.startCondition, id) then
-          m.startCondition = {type = "league", leagueId = id}
-          m._dirty = true
-          dirty = dirty + 1
-        end
-      end
-    end
-    leaguesById[id].missions = validMissionIds
+local function checkStartConditionLeague(mission, leagueId)
+  -- check if mission's startCondition contains only the given leagueId
+  -- if leagueId is nil, the mission is supposed to be in no league
+  -- calling this function requires that leagues have been loaded
+  local mId = mission.id
+  local lMap = {}
+  getStartConditionLeagueId(mission.startCondition, lMap)
+  if table.getn(lMap) > 1 then
+    log("E","","Mission " .. mId .. " has more than one league in startCondition.")
   end
-  for mId, m in pairs(missionsById) do
-    local lMap = {}
-    M.getStartConditionLeagueId(m.startCondition, lMap)
-    if table.getn(lMap) > 1 then
-      log("W","","Mission has more than one league in starting condition... " .. mId)
+  local lId = next(lMap)
+  if leagueId then
+    if not lId then
+      log("E","","Mission " .. mId .. " is in league " .. leagueId .. " but has no league in startCondition.")
+    elseif lId ~= leagueId then
+      log("E","","Mission " .. mId .. " is in league " .. leagueId .. " but has league " .. lId .. " in startCondition.")
     end
-    local lId = next(lMap)
+  else
     if lId then
       local league = M.getLeagueById(lId)
-      if not league then
-        log("E","","League doesnt exist! " .. lId .. " in " .. mId)
+      if league then
+        log("E","","Mission " .. mId .. " has league " .. lId .. " in startCondition, but is not mentioned in this league's missions list.")
       else
-        if m.careerSetup.skill ~= league.skill then
-          m._dirty = true
-          dirty = dirty + 1
-        end
-        m.careerSetup.skill = league.skillId
-
-        missionIdsBySkill[m.careerSetup.skill] = missionIdsBySkill[m.careerSetup.skill] or {}
-        missionsBySkill[m.careerSetup.skill] = missionsBySkill[m.careerSetup.skill] or {}
-        if not missionIdsBySkill[m.careerSetup.skill][mId] then
-          table.insert(missionsBySkill[m.careerSetup.skill], m)
-        end
-        missionIdsBySkill[m.careerSetup.skill][mId] = true
+        log("E","","Mission " .. mId .. " has league " .. lId .. " in startCondition, but this league does not exist.")
       end
     end
   end
+end
 
-  if dirty > 0  then
-    log("W","","Some ("..tostring(dirty)..") missions were not set up properly for leagues.")
+local function checkLeagueSkill(mission, leagueId)
+  -- if mission is in a league, then careerSetup.skill must match the skill of the league
+  if leagueId then
+    local league = M.getLeagueById(leagueId)
+    if mission.careerSetup.skill ~= league.skillId then
+      log("E","","Mission " .. mission.id .. " has careerSetup.skill " .. mission.careerSetup.skill .. " but should have league's skill " .. league.skillId .. ".")
+    end
   end
 end
-M.onMissionsLoadedFromFiles = onMissionsLoadedFromFiles
 
+local function checkShowInCareer(mission, leagueId)
+  -- if mission is in a league, showInCareer must be true
+  if leagueId and not mission.careerSetup.showInCareer then
+    log("E","","Mission " .. mission.id .. " in league " .. leagueId .. " has showInCareer set to false, but it should be true. Set it to true to avoid unexpected behavior.")
+  end
+end
+
+local function checkMissionLeagueSetup(mission, leagueId)
+  -- check if the mission is setup correctly for leagues
+  checkStartConditionLeague(mission, leagueId)
+  checkLeagueSkill(mission, leagueId)
+  checkShowInCareer(mission, leagueId)
+end
+
+local function checkMission(mission)
+  loadLeagues()
+  local leagueId = leagueIdByMissionId[mission.id]
+  checkMissionLeagueSetup(mission, leagueId)
+end
+M.checkMission = checkMission
+
+M.addLeagueSortOrder = addLeagueSortOrder
 --[[
 M.onAfterDriftSpotsLoaded = function(spotsById)
   loadLeagues()

@@ -14,14 +14,16 @@ local M = {}
 
 local logTag = 'multiSpawn'
 
-local vecUp = vec3(0, 0, 1)
-local vecY = vec3(0, 1, 0)
-
 local groupId = 0
 local spawningBusy = false
 local queue = {}
 local defaultOptions = {model = 'pickup'}
 local defaultFilters = {Type = {car = 1, truck = 1}}
+
+local tempPosA, tempPosB, tempDirVec = vec3(), vec3(), vec3()
+
+local vecUp = vec3(0, 0, 1)
+local vecY = vec3(0, 1, 0)
 
 M.startEngines = true -- this system will always spawn vehicles with their engines on by default
 M.useFullData = false -- if true, inserts population values and other data into the group table
@@ -38,6 +40,7 @@ local function shuffleIntegers(num, total) -- creates and shuffles list of integ
     local idx = i <= num and i or (mod > 0 and mod or num) -- looping index
     table.insert(list, array[idx])
   end
+
   return list
 end
 
@@ -57,6 +60,7 @@ local function binarySearchRange(tbl, key, target) -- returns the index of the t
       return m
     end
   end
+
   return m
 end
 
@@ -65,9 +69,9 @@ local function getNewId() -- returns the unique id of the current group spawn jo
   return groupId
 end
 
-local function getIndexRandomPop(data) -- returns the index by using a random population value and finding the corresponding data value
-  local randNum = random() * data.popTotal
-  for i, v in ipairs(data) do
+local function getIndexRandomPop(vehData) -- returns the index by using a random population value and finding the corresponding data value
+  local randNum = random() * vehData.popTotal
+  for i, v in ipairs(vehData) do
     if randNum < v.pop then
       return i
     else
@@ -100,32 +104,44 @@ local function getPopulationFactor(config, params) -- returns the weighted facto
     end
   end
 
-  for k, v in pairs(params.filters) do -- each inner table pair should have a coefficient: {Type = {car = 1, truck = 0.4}}
-    local configKey = config[k] or 'default' -- unsure about this actually
-    if type(configKey) == 'string' then configKey = string.lower(configKey) end
+  for k, filter in pairs(params.filters) do -- each inner table pair should have a coefficient: {Type = {car = 1, truck = 0.4}}
+    if type(filter) == 'table' then
+      local configValue = config[k] or 'default' -- unsure about this actually
+      if type(configValue) == 'string' then configValue = string.lower(configValue) end
 
-    if type(v[configKey]) == 'number' then -- filter value
-      factor = factor * v[configKey]
-    else
-      factor = type(v.other) == 'number' and factor * v.other or 0 -- if 'other' exists, use it; otherwise, factor becomes 0
+      if type(configValue) == 'table' then
+        local filterKeyFound = false
+        for k, v in pairs(configValue) do
+          if type(filter[k]) == 'number' then -- filter value
+            factor = factor * filter[k]
+            filterKeyFound = true
+          end
+        end
+        if not filterKeyFound then
+          factor = type(filter.other) == 'number' and factor * filter.other or 0 -- if 'other' exists, use it; otherwise, factor becomes 0
+        end
+      else
+        if type(filter[configValue]) == 'number' then -- filter value
+          factor = factor * filter[configValue]
+        else
+          factor = type(filter.other) == 'number' and factor * filter.other or 0 -- if 'other' exists, use it; otherwise, factor becomes 0
+        end
+      end
     end
-
     if factor <= 0 then return 0 end
   end
   return factor
 end
 
-local function isOfficialSource(data) -- checks if vehicle model or config is official
-  return (data and data.aggregates and data.aggregates.Source and data.aggregates.Source['BeamNG - Official'])
+local function isOfficialSource(vehData) -- checks if vehicle model or config is official
+  return (vehData and vehData.aggregates and vehData.aggregates.Source and vehData.aggregates.Source['BeamNG - Official'])
 end
 
 local function getInstalledVehicleData(params) -- gets all vehicles and creates the initial data
   params = params or {allMods = false, allConfigs = true}
   params.filters = params.filters or deepcopy(defaultFilters)
   local minPop = params.minPop or 0
-  local data = {countryRatios = {}}
-  local configData = {}
-  local countryEntries = 0
+  local vehData, configData = {}, {}
 
   for _, model in pairs(core_vehicles.getModelList().models) do
     local officialModel = isOfficialSource(model)
@@ -136,8 +152,8 @@ local function getInstalledVehicleData(params) -- gets all vehicles and creates 
 
       local country = model.Country and string.lower(model.Country) or 'default'
       if country ~= 'default' then
-        countryEntries = countryEntries + 1
-        data.countryRatios[country] = (data.countryRatios[country] or 0) + 1 -- counts up country of origin entries
+        if not vehData.countryCounts then vehData.countryCounts = {} end
+        vehData.countryCounts[country] = (vehData.countryCounts[country] or 0) + 1 -- counts each country of origin entry (ratios will affect probability of selection)
       end
 
       for _, config in pairs(core_vehicles.getModel(model.key).configs) do
@@ -180,7 +196,7 @@ local function getInstalledVehicleData(params) -- gets all vehicles and creates 
       end
 
       if configData[1] then
-        table.insert(data, {
+        table.insert(vehData, {
           model = model.key,
           country = country,
           popBase = defaultPop,
@@ -191,61 +207,55 @@ local function getInstalledVehicleData(params) -- gets all vehicles and creates 
     end
   end
 
-  for k, v in pairs(data.countryRatios) do
-    data.countryRatios[k] = v / max(1, countryEntries) -- this value is used to improve probability bias of vehicles with a rarer country of origin
-  end
-  return data
+  return vehData
 end
 
-local function setPopulationData(data, country, popPower) -- sets the relative population value for each vehicle
+local function setPopulationData(vehData, country, popPower) -- sets the relative population value for each vehicle
   if not popPower or popPower <= 0 then
     popPower = 1
   else
-    popPower = min(1.5, popPower)
+    popPower = min(2, popPower)
   end
-  data.popTotal = 0
+  vehData.popTotal = 0
 
-  for _, v in ipairs(data) do
-    local countryCoef = 1
-    if country then
-      if data.countryRatios and data.countryRatios[country] and v.country == country then
-        local power = 2 - math.log(v.popBase, 10) / 5 -- population based modification to apply to countryCoef
-        countryCoef = max(1, (1 / pow(data.countryRatios[country], power)) * v.popFactor) -- this increases the probability weight of vehicles from the given country
-      end
+  for _, v in ipairs(vehData) do
+    local countryFactor = 1
+    if country and vehData.countryCounts and vehData.countryCounts[v.country] and v.country ~= country then
+      countryFactor = 0.25 / max(1, vehData.countryCounts[v.country]) -- this decreases the probability weight of vehicles from other countries
     end
 
     if v.popBase * v.popFactor > 0 then
-      v.pop = round(pow(v.popBase * v.popFactor, popPower) * countryCoef) -- popPower modifies the probability weight of each vehicle to improve the randomness of selections
-      data.popTotal = data.popTotal + v.pop
+      v.pop = round(pow(v.popBase * v.popFactor, popPower) * countryFactor) -- popPower modifies the probability weight of each vehicle to improve the randomness of selections
+      vehData.popTotal = vehData.popTotal + v.pop
     else
       v.pop = 0
     end
   end
 
-  return data
+  return vehData
 end
 
-local function buildGroup(data, amount, modelPopPower, configPopPower, popDecreaseFactor) -- randomly builds the vehicle group from the installed vehicle data
-  local newGroup, list = {}, {}
+local function buildGroup(vehData, amount, modelPopPower, configPopPower, popDecreaseFactor) -- randomly builds the vehicle group from the installed vehicle data
+  local newGroup, shuffledList = {}, {}
   local modelIdx, configIdx
   popDecreaseFactor = popDecreaseFactor or 0.05 -- whenever a vehicle is inserted, multiply its population values by this amount to reduce probability
 
   -- if not population power value, use simple randomization; else, use range-based randomization
   if not modelPopPower or modelPopPower <= 0 then
-    list = shuffleIntegers(#data, amount)
+    shuffledList = shuffleIntegers(#vehData, amount)
   else
-    table.sort(data, function(a, b) return a.pop > b.pop end) -- for optimized index searching
+    table.sort(vehData, function(a, b) return a.pop > b.pop end) -- for optimized index searching
   end
 
   for i = 1, amount do
     if not modelPopPower then -- first, randomly pick model
-      modelIdx = list[i] or 1
+      modelIdx = shuffledList[i] or 1
     else
-      modelIdx = getIndexRandomPop(data)
+      modelIdx = getIndexRandomPop(vehData)
       -- modelIdx = binarySearchRange(data, 'range', data[#data]['range'][2] * random())
     end
 
-    local model = data[modelIdx]
+    local model = vehData[modelIdx]
     if model and model.configData then
       if not configPopPower or configPopPower <= 0 then -- then, randomly pick config
         configIdx = random(#model.configData)
@@ -265,7 +275,7 @@ local function buildGroup(data, amount, modelPopPower, configPopPower, popDecrea
         table.insert(newGroup, entry)
 
         local newPop = max(1, ceil(model.pop * popDecreaseFactor))
-        data.popTotal = data.popTotal - (model.pop - newPop)
+        vehData.popTotal = vehData.popTotal - (model.pop - newPop)
         model.pop = newPop
 
         newPop = max(1, ceil(config.pop * popDecreaseFactor))
@@ -278,7 +288,7 @@ local function buildGroup(data, amount, modelPopPower, configPopPower, popDecrea
   return newGroup
 end
 
-local function createGroup(amount, params) -- creates a new spawn group from a table of parameters
+local function createGroup(amount, params) -- creates a group array from a table of parameters
   -- params = {allMods, allConfigs, filters, country, modelPopPower, configPopPower}
   params = params or {}
   amount = amount or 10 -- default group size
@@ -287,23 +297,23 @@ local function createGroup(amount, params) -- creates a new spawn group from a t
   -- special filters: maxYear = latest year to allow for selection
 
   if params.country then params.country = string.lower(params.country) end
-  local vehicleData = getInstalledVehicleData(params)
+  local vehData = getInstalledVehicleData(params)
 
-  if not vehicleData[1] then
-    log('W', logTag, 'No vehicle data found from filters!')
+  if not vehData[1] then
+    log('I', logTag, 'No vehicle data found from filters, now returning empty group')
     return {}
   end
 
   -- set population data for models, then for its configs
-  vehicleData = setPopulationData(vehicleData, params.country, params.modelPopPower)
-  for _, v in ipairs(vehicleData) do
+  vehData = setPopulationData(vehData, params.country, params.modelPopPower)
+  for _, v in ipairs(vehData) do
     v.configData = setPopulationData(v.configData, nil, params.configPopPower)
   end
 
-  return buildGroup(vehicleData, amount, params.modelPopPower, params.configPopPower, params.popDecreaseFactor)
+  return buildGroup(vehData, amount, params.modelPopPower, params.configPopPower, params.popDecreaseFactor)
 end
 
-local function vehIdsToGroup(vehIds) -- converts a list of vehicle ids to the vehicle group format
+local function vehIdsToGroup(vehIds) -- converts a list of vehicle ids to a group array of vehicle data
   local res = {}
   if not vehIds then return res end
 
@@ -317,7 +327,7 @@ local function vehIdsToGroup(vehIds) -- converts a list of vehicle ids to the ve
       if data.model then
         data.config = string.match(config.partConfigFilename, '/*([%w_%-]+).pc')
         data.paint, data.paint2, data.paint3 = config.paints[1], config.paints[2], config.paints[3]
-        data.paintName, data.paintName2, data.paintName3 = 'custom', 'custom', 'custom' -- assumes custom paints (?)
+        data.paintName, data.paintName2, data.paintName3 = '(Custom)', '(Custom)', '(Custom)' -- assumes custom paints (can't assert paint names)
         table.insert(res, data)
       end
     end
@@ -326,113 +336,150 @@ local function vehIdsToGroup(vehIds) -- converts a list of vehicle ids to the ve
   return res
 end
 
-local function spawnedVehsToGroup(ignorePlayer) -- converts all currently spawned vehicles to the vehicle group format
+local function spawnedVehsToGroup(ignorePlayer, ignoreTraffic) -- converts all currently spawned vehicles to a group array of vehicle data
   local vehIds = {}
 
   for _, v in ipairs(getAllVehiclesByType()) do
     if not (ignorePlayer and v:getID() == be:getPlayerVehicleID(0)) then
-      table.insert(vehIds, v:getID())
+      if not (ignoreTraffic and (v.isTraffic or v.isParked)) then
+        table.insert(vehIds, v:getID())
+      end
     end
   end
 
   return vehIdsToGroup(vehIds)
 end
 
-local function getLinePoint(pos, rot, ignoreSnap) -- returns a spawn point on any terrain
-  if ignoreSnap then return pos, rot end
+local function getLineTransform(pos, lineDir, lineDist, vehDir, ignoreSnap) -- returns a spawn point on any terrain
+  local newPos, newDir = vec3(pos), vec3(lineDir)
+  vehDir = vehDir or vec3(newDir) -- uses line direction by default
 
-  local z = be:getSurfaceHeightBelow((pos + vecUp * 4))
+  newDir:setScaled(lineDist)
+  newPos:setAdd(newDir)
+  if ignoreSnap then return newPos, vehDir end
+
+  newPos.z = newPos.z + 4 -- up vector offset
+  local z = be:getSurfaceHeightBelow(newPos)
 
   if z >= -1e6 then
-    pos.z = z
+    newPos.z = z
   elseif core_terrain.getTerrain() then
-    pos.z = core_terrain.getTerrainHeight(pos)
+    newPos.z = core_terrain.getTerrainHeight(newPos)
+  else
+    newPos.z = pos.z - 4
   end
-  return pos, rot
+
+  return newPos, vehDir
 end
 
-local function getRoadPoint(path, dist, side, legalSide, dir) -- returns a spawn point on a road
-  local pos, rot
+local function getRoadTransform(route, startDist, routeDist, side, legalSide, forward) -- returns a spawn point on a road
+  if not route then return end
 
-  if not (path.pos1 and path.pos2) then
-    legalSide = legalSide or 1
-    local mapNodes = map.getMap().nodes
+  local newPos, newDir = vec3(), vec3()
+  legalSide = legalSide or 1
+  local mapNodes = map.getMap().nodes
 
-    local n1, n2, xnorm = map.getNodesFromPathDist(path, dist)
-    local p1, p2 = mapNodes[n1].pos, mapNodes[n2].pos
-    local radius = lerp(mapNodes[n1].radius, mapNodes[n2].radius, xnorm)
+  local n1, n2, xnorm = map.getNodesFromPathDist(route, startDist + routeDist)
+  tempPosA:set(mapNodes[n1].pos)
+  tempPosB:set(mapNodes[n2].pos)
+  local radius = lerp(mapNodes[n1].radius, mapNodes[n2].radius, xnorm)
 
-    local baseRot = (p2 - p1):normalized()
-    rot = vec3(baseRot)
+  -- segment direction vector
+  tempDirVec:setSub2(tempPosB, tempPosA)
+  tempDirVec:normalize()
+  newDir:set(tempDirVec)
 
-    if dir then
-      rot:setScaled(dir)
-    else -- smart direction
-      local link = mapNodes[n1].links[n2] or mapNodes[n2].links[n1]
-      if link.oneWay then
-        rot:setScaled(link.inNode == n1 and 1 or -1)
-      else
-        rot:setScaled(sign2(side * legalSide))
-      end
+  if forward then
+    newDir:setScaled(forward)
+  else -- smart direction based on current road
+    local link = mapNodes[n1].links[n2] or mapNodes[n2].links[n1]
+    if link.oneWay then
+      newDir:setScaled(link.inNode == n1 and 1 or -1)
+    else
+      newDir:setScaled(sign2(side * legalSide))
     end
-
-    pos = linePointFromXnorm(p1, p2, xnorm) + baseRot:z0():normalized():cross(vecUp) * (radius * side)
-  else
-    rot = (path.pos2 - path.pos1):normalized()
-    pos, rot = getLinePoint(path.pos1 + rot * dist + rot:cross(vecUp) * (2 * sign2(side) - 2), rot)
   end
 
-  return pos, rot
+  -- forwards offset
+  newPos:setLerp(tempPosA, tempPosB, xnorm)
+
+  -- side offset
+  tempDirVec.z = 0
+  tempDirVec:normalize()
+  tempDirVec:setCross(tempDirVec, vecUp)
+  tempDirVec:setScaled(radius * side)
+
+  newPos:setAdd(tempDirVec)
+
+  return newPos, newDir
 end
 
 local spawnModes = {
   roadAhead = function (data) -- road ahead, facing away from start
-    return getRoadPoint(data.path, data.dist + data.idx * data.gap, data.legalSide * 0.5, 1, 1)
+    return getRoadTransform(data.route, data.startDist, data.step * data.gap, data.legalSide * 0.5, 1, 1)
   end,
   roadBehind = function (data) -- road behind, facing towards start
-    return getRoadPoint(data.path, data.dist + data.idx * data.gap, data.legalSide * -0.5, 1, -1)
+    return getRoadTransform(data.route, data.startDist, data.step * data.gap, data.legalSide * -0.5, 1, -1)
   end,
   roadAheadAlt = function (data) -- road ahead, facing towards start
-    return getRoadPoint(data.path, data.dist + data.idx * data.gap, data.legalSide * -0.5, 1, -1)
+    return getRoadTransform(data.route, data.startDist, data.step * data.gap, data.legalSide * -0.5, 1, -1)
   end,
   roadBehindAlt = function (data) -- road ahead, facing away from start
-    return getRoadPoint(data.path, data.dist + data.idx * data.gap, data.legalSide * 0.5, 1, 1)
+    return getRoadTransform(data.route, data.startDist, data.step * data.gap, data.legalSide * 0.5, 1, 1)
   end,
   traffic = function (data) -- smart traffic formation
-    return getRoadPoint(data.path, data.dist + data.idx * data.gap, data.laneSide * 0.5, data.legalSide)
+    return getRoadTransform(data.route, data.startDist, data.step * data.gap, data.laneSide * 0.5, data.legalSide)
   end,
   raceGrid = function (data) -- race grid formation
-    return getRoadPoint(data.path, data.dist + floor(data.idx / 2) * data.gap, data.laneSide * 0.5, 1, 1)
+    local laneSide = data.step % 2 == 0 and data.laneSide or -data.laneSide
+    return getRoadTransform(data.route, data.startDist, floor(data.step / 2) * data.gap, laneSide * 0.5, 1, 1)
   end,
   raceGridAlt = function (data) -- race grid formation, shifted so that the next point is diagonal
-    return getRoadPoint(data.path, data.dist + data.idx * data.gap, data.laneSide * 0.5, 1, 1)
+    local laneSide = data.step % 2 == 0 and data.laneSide or -data.laneSide
+    return getRoadTransform(data.route, data.startDist, data.step * data.gap, laneSide * 0.5, 1, 1)
   end,
   lineLeft = function (data)
-    return getLinePoint(data.pos - data.rot:z0():cross(vecUp) * (data.idx * data.gap), data.rot)
+    tempDirVec:setScaled2(data.dir, -1)
+    tempDirVec.z = 0
+    tempDirVec:setCross(tempDirVec, vecUp)
+    return getLineTransform(data.pos, tempDirVec, data.step * data.gap, data.dir)
   end,
   lineRight = function (data)
-    return getLinePoint(data.pos + data.rot:z0():cross(vecUp) * (data.idx * data.gap), data.rot)
+    tempDirVec:set(data.dir)
+    tempDirVec.z = 0
+    tempDirVec:setCross(tempDirVec, vecUp)
+    return getLineTransform(data.pos, tempDirVec, data.step * data.gap, data.dir)
   end,
   lineBehind = function (data)
-    return getLinePoint(data.pos - data.rot * (data.idx * data.gap), data.rot)
-  end,
-  lineAbove = function (data)
-    return getLinePoint(data.pos + vecUp * (data.idx * data.gap), data.rot, true)
+    tempDirVec:setScaled2(data.dir, -1)
+    return getLineTransform(data.pos, tempDirVec, data.step * data.gap, data.dir)
   end,
   lineAhead = function (data)
-    return getLinePoint(data.pos + data.rot * (data.idx * data.gap), data.rot)
+    return getLineTransform(data.pos, data.dir, data.step * data.gap, data.dir)
+  end,
+  lineAbove = function (data)
+    return getLineTransform(data.pos, vecUp, data.step * data.gap, data.dir, true)
   end
 }
 
 local function workSpawnVehicles(job, spawnData, spawnOptions) -- processes vehicles to be spawned
   local vehIds = {}
   for i, data in ipairs(spawnData) do
-    log('I', logTag, 'Vehicle group spawning in progress ('..i..' / '..#spawnData..')')
+    if i > 1 and spawnOptions.canSpawnAnotherVehicleCheck ~= false and not canSpawnAnotherVehicle() then
+      -- always allow the 1st vehicle to spawn, guaranteeing at least one vehicle to exist, avoiding an entire category of issues from external code logic (which often assumes a non-empty list)
+      log("W", logTag, string.format("Vehicle group spawning aborted after %d / %d vehicles due to risk of running out of memory: '%s'", i - 1, #spawnData, dumps(spawnOptions.name)))
+      break
+    end
+
+    log('I', logTag, string.format('Vehicle group spawning in progress (%d / %d)', i, #spawnData))
     local veh = spawn.spawnVehicle(data.model, data.config, data.pos, data.rot, data)
 
     if veh then
       table.insert(vehIds, veh:getId())
       veh:setDynDataFieldbyName('vehicleGroup', 0, tostring(spawnOptions.name))
+      if data.spawnMeta then -- generic caller-defined classification, forwarded onto the vehicle (domain-agnostic)
+        veh:setDynDataFieldbyName('spawnMeta', 0, tostring(data.spawnMeta))
+      end
     else
       log('W', logTag, 'Vehicle failed to load; skipping this group entry')
     end
@@ -448,7 +495,7 @@ local function workSpawnVehicles(job, spawnData, spawnOptions) -- processes vehi
   end
 
   spawningBusy = false
-  log('I', logTag, 'Vehicle group spawning completed: '..tostring(spawnOptions.name))
+  log('I', logTag, string.format('Vehicle group spawning completed: %s', spawnOptions.name or ''))
   extensions.hook('onVehicleGroupSpawned', vehIds, groupId, spawnOptions.name)
 
   if queue[1] then -- next vehicle group to instantly spawn
@@ -465,88 +512,100 @@ local function createSpawnPositions(amount, options) -- creates a list of smart 
 
   local mode = options.mode or 'roadAhead'
   local gap = options.gap or 15
-  if options.func or mode == 'road' then mode = 'roadAhead' end
+  if options.func or mode == 'road' then mode = 'roadAhead' end -- default mode
 
-  local rot, pos
+  local pos, dir = vec3(), vec3()
   local mapNodes = map.getMap().nodes
-  local playerVeh = getPlayerVehicle(0)
-  local playerFocus = playerVeh and playerVeh:getSpawnWorldOOBB():getCenter():distance(core_camera.getPosition()) <= 15 -- player vehicle is considered as focused if camera is near
+  local playerVehId = be:getPlayerVehicleID(0)
+  local playerFocus = playerVehId ~= -1 and not commands.isFreeCamera()
 
   local start
   if options.pos then
-    pos = options.pos
+    pos:set(options.pos)
     if options.dir then
-      rot = options.dir
-    else
-      rot = options.rot or core_camera.getQuat() -- quaternion
-      rot = vecY:rotated(rot)
+      dir:set(options.dir)
+    elseif options.rot then -- quat to dir
+      dir:set(vecY:rotated(options.rot))
     end
     start = 0
   else
     if playerFocus then
-      pos = playerVeh:getPosition() + playerVeh:getInitialNodePosition(playerVeh:getRefNodeId()) -- centered
-      rot = playerVeh:getDirectionVector()
-      start = 1 -- avoids spawning conflict at player position
+      pos:set(be:getObjectOOBBCenterXYZ(playerVehId))
+      dir:set(getObjectByID(playerVehId):getDirectionVectorXYZ())
+      start = 1 -- slot 0 is reserved for player vehicle
     else
-      pos = core_camera.getPosition()
-      rot = core_camera.getForward()
+      pos:set(core_camera.getPositionXYZ())
+      dir:set(core_camera.getForwardXYZ())
       start = 0
     end
   end
 
+  if mode == 'traffic' and not options.pos and gameplay_traffic_trafficUtils then
+    -- if traffic mode is active, find a safe spawn point near the camera
+    log('I', logTag, 'Multispawn mode is traffic, now finding an ideal spawn point...')
+    local spawnData = gameplay_traffic_trafficUtils.findSafeSpawnPoint(nil, nil, 0, 500, 0)
+    pos:set(spawnData.pos)
+    dir:set(spawnData.dir)
+  end
+
   start = options.startIndex or start -- custom start index
 
-  local path, origin
+  local route
   local maxLength = 200 + gap * amount
   local dist = 0
   local lane = 1
   local n1, n2 = map.findClosestRoad(pos)
   local legalSide = map.getRoadRules().rightHandDrive and -1 or 1
 
-  if mode == 'roadBehind' or mode == 'roadBehindAlt' then
-    rot = -rot
+  if mode == 'roadBehind' or mode == 'roadBehindAlt' then -- TODO: uhh, avoid this hardcode
+    dir:setScaled(-1)
   end
 
   if n1 then
-    local p1, p2 = mapNodes[n1].pos, mapNodes[n2].pos
-    if (p2 - p1):dot(rot) < 0 then
+    tempPosA:set(mapNodes[n1].pos)
+    tempPosB:set(mapNodes[n2].pos)
+    tempDirVec:setSub2(tempPosB, tempPosA)
+    if tempDirVec:dot(dir) < 0 then -- flip nodes if reverse direction
       n1, n2 = n2, n1
-      p1, p2 = p2, p1
+      tempPosA:set(mapNodes[n2].pos)
+      tempPosB:set(mapNodes[n1].pos)
     end
 
-    path = map.getGraphpath():getRandomPathG(n1, rot, maxLength, nil, nil, false)
-    if path then
-      p1, p2 = mapNodes[path[1]].pos, mapNodes[path[2]].pos
-      origin = linePointFromXnorm(p1, p2, clamp(pos:xnormOnLine(p1, p2), 0, 1))
-      dist = origin:distance(p1)
-      lane = rot:z0():cross(vecUp):dot((pos - origin):z0()) >= 0 and 1 or -1
-    else
-      path = {pos1 = pos, pos2 = pos + rot}
-    end
-  else
-    path = {pos1 = pos, pos2 = pos + rot}
-  end
+    route = map.getGraphpath():getRandomPathG(n1, dir, maxLength, nil, nil, false) -- generally produces a straight path ahead
+    if route then
+      tempPosA:set(mapNodes[route[1]].pos)
+      tempPosB:set(mapNodes[route[2]].pos)
+      tempPosB:setLerp(tempPosA, tempPosB, clamp(pos:xnormOnLine(tempPosA, tempPosB), 0, 1))
+      dist = tempPosB:distance(tempPosA) -- distance from start node to origin point
 
-  if (mode == 'raceGrid' or mode == 'raceGridAlt') and path[1] and mapNodes[path[1]].radius + mapNodes[path[2]].radius < 4.8 then -- road is presumably too narrow for the modes
-    log('W', logTag, 'Road too narrow, switching to default road spawn method')
-    mode = 'roadAhead'
+      tempDirVec:set(dir)
+      tempDirVec.z = 0
+      tempDirVec:setCross(tempDirVec, vecUp)
+      lane = tempDirVec:dot((pos - tempPosB):z0()) >= 0 and 1 or -1 -- positive if on right side of road
+    end
   end
 
   for i = 1, amount do
-    local newPos, newRot
-    local idx = i + start - 1 -- idx starts at zero if group starts spawning exactly at given pos
-    local laneSide = idx % 2 == 0 and lane or -lane
-    local funcData = {idx = idx, path = path, dist = dist, gap = gap, laneSide = laneSide, legalSide = legalSide, pos = pos, rot = rot}
+    local newPos, newDir
+    local newRot = quat()
+    local step = i + start - 1
+    local funcData = {step = step, route = route, startDist = dist, gap = gap, laneSide = lane, legalSide = legalSide, pos = pos, dir = dir}
 
     if options.func then -- custom spawn function
-      newPos, newRot = options.func(funcData)
+      newPos, newDir = options.func(funcData)
     elseif spawnModes[mode] then -- predefined spawn function
-      newPos, newRot = spawnModes[mode](funcData)
+      newPos, newDir = spawnModes[mode](funcData)
     else -- default line method
-      newPos, newRot = getLinePoint(pos + rot * (idx * gap), rot)
+      newPos, newDir = spawnModes.lineAhead(funcData)
     end
 
-    newRot = quatFromDir(vecY:rotated(quatFromDir(newRot:z0(), vecUp)), vecUp)
+    if not newPos or not newDir then -- fallback method, this result should never fail
+      newPos, newDir = spawnModes.lineAhead(funcData)
+    end
+
+    newDir.z = 0
+    newRot:setFromDir(newDir, vecUp)
+    newRot:setFromDir(vecY:rotated(newRot), vecUp)
 
     transformData[i] = {pos = newPos, rot = newRot}
   end
@@ -586,21 +645,16 @@ local function spawnProcessedGroup(spawnData, spawnOptions) -- sets the spawn po
     spawnData[i].centeredPosition = not spawnOptions.ignoreAdjust and true or false
   end
 
-  groupId = getNewId()
+  -- create a job that spawns one vehicle per frame
+  extensions.core_jobsystem.create(workSpawnVehicles, 0.5, spawnData, spawnOptions)
 
-  -- NOTE: if ignoring the job system, the vehicles will spawn before the group id is able to be returned from this function!
-  if not spawnOptions.instant then
-    extensions.core_jobsystem.create(workSpawnVehicles, 0.5, spawnData, spawnOptions)
-  else
-    workSpawnVehicles(nil, spawnData, spawnOptions)
-  end
-  return groupId
+  return getNewId()
 end
 
 local function workPlaceVehicles(job, vehIds, transformData, options) -- processes vehicles to be teleported
   options = options or {}
   for i, v in ipairs(vehIds) do
-    local obj = be:getObjectByID(v)
+    local obj = getObjectByID(v)
     if obj then
       local pos = transformData[i].pos
       local rot = transformData[i].rot
@@ -618,7 +672,7 @@ local function workPlaceVehicles(job, vehIds, transformData, options) -- process
       end
 
       if job then
-        job.sleep(0.05) -- what value should be used here? The goal is to reduce lag spikes from respawning vehicles, but also be fast
+        job.sleep(0.02)
       end
     end
   end
@@ -639,7 +693,7 @@ local function placeGroup(vehIds, options) -- teleports a group of active vehicl
   end
 
   if not instant then
-    extensions.core_jobsystem.create(workPlaceVehicles, 1, vehIds, transformData, options)
+    extensions.core_jobsystem.create(workPlaceVehicles, 1, vehIds, transformData, options) -- create a job that teleports one vehicle per frame
   else
     workPlaceVehicles(nil, vehIds, transformData, options)
   end
@@ -681,7 +735,7 @@ local function setVehicleSpawnData(group, amount) -- parses and sets the vehicle
 
   for i, options in ipairs(groupCopy) do
     if options[1] then -- old array format
-      options = {model = options[1], config = options[2], color1 = options[3], color2 = options[4], color3 = options[5]}
+      options = {model = options[1], config = options[2], paint = options[3], paint2 = options[4], paint3 = options[5]}
     end
 
     local modelData = core_vehicles.getModel(options.model)
@@ -691,36 +745,47 @@ local function setVehicleSpawnData(group, amount) -- parses and sets the vehicle
       end
 
       local paints = modelData.model.paints or {}
-      local paintNames = tableKeys(paints)
-      local paintCount = tableSize(paintNames)
-      local paintLayerKeys = {'paint', 'paint2', 'paint3'}
+      local paintKeys = {'paint', 'paint2', 'paint3'}
+      local paintNameKeys = {'paintName', 'paintName2', 'paintName3'}
 
-      for j, color in ipairs({'color1', 'color2', 'color3'}) do -- convert old colors to paints
-        if options[color] then
-          local values = stringToTable(options[color])
-          if values[4] then
-            options[paintLayerKeys[j]] = createVehiclePaint({x = values[1], y = values[2], z = values[3], w = values[4]})
-          end
+      local str = "(Random)"
+      if options.paintName == str then
+        options.randomPaints = true
+        if options.paintName2 == str and options.paintName3 == str then -- all are random, so assume multiPaintSetup
+          options.randomMultiPaints = true
         end
-        options[color] = nil
       end
 
-      for j, pName in ipairs({'paintName', 'paintName2', 'paintName3'}) do
-        local pKey = paintLayerKeys[j]
-        if options[pName] then
-          if (options[pName] == 'random' or options[pName] == '(Random)') then -- randomly select a paint from the list
-            options[pKey] = paints[paintNames[random(paintCount)]]
-          end
+      if options.randomPaints or options.randomMultiPaints then
+        local randomPaints
+        if options.randomMultiPaints then
+          randomPaints = core_vehiclePaints.createRandomMultiPaintSetup(options.model, options.config, true)
+        else
+          randomPaints = core_vehiclePaints.getRandomPaints(options.model, options.config)
+        end
+        if randomPaints and randomPaints.paintName1 then
+          --log('I', logTag, string.format('Applying random paints for this vehicle: %s', options.model or ''))
+          options.paintName = randomPaints.paintName1
+          options.paintName2 = randomPaints.paintName2
+          options.paintName3 = randomPaints.paintName3
+        else
+          log('W', logTag, string.format('Failed to get random paints for vehicle: %s (config: %s), using default paints', options.model or '', options.config or ''))
+          options.paintName = modelData.model.defaultPaintName1 or 'White'
+          options.paintName2 = modelData.model.defaultPaintName2 or modelData.model.defaultPaintName1 or 'White'
+          options.paintName3 = modelData.model.defaultPaintName3 or modelData.model.defaultPaintName1 or 'White'
+        end
+      end
 
-          if not options[pKey] then -- get the paint data by name
-            options[pKey] = paints[options[pName]]
-          end
+      for j, pName in ipairs(paintNameKeys) do
+        local pKey = paintKeys[j]
+        if options[pName] and not options[pKey] then
+          options[pKey] = paints[options[pName]] -- gets actual paint data from the paint name
         end
       end
 
       spawnData[i] = options
     else
-      log('E', logTag, 'Vehicle model not found: '..options.model)
+      log('E', logTag, string.format('Vehicle model not found: %s', options.model or ''))
       spawnData[i] = deepcopy(defaultOptions)
     end
   end
@@ -729,7 +794,7 @@ end
 
 local function spawnGroup(group, amount, options) -- spawns a given vehicle group
   if not amount or amount <= 0 then
-    log('W', logTag, 'Spawn amount is zero!')
+    log('I', logTag, 'Spawn amount is zero, now returning nothing')
     return
   end
 
@@ -740,7 +805,7 @@ local function spawnGroup(group, amount, options) -- spawns a given vehicle grou
   end
 
   if not group or not group[1] then
-    log('W', logTag, 'Could not parse vehicle group data, now creating default group...')
+    log('I', logTag, 'Received empty group data, now creating default group...')
     group = createGroup()
   end
 
@@ -749,12 +814,27 @@ local function spawnGroup(group, amount, options) -- spawns a given vehicle grou
   options.mode = options.mode or 'roadAhead' -- vehicle spawning method
   options.gap = options.gap or 15 -- spacing between spawn positions
 
+  if options.randomPaints then
+    for _, v in ipairs(group) do
+      local modelData = core_vehicles.getModel(v.model or '')
+      local configData = modelData.configs and modelData.configs[v.config or '']
+      if configData then
+        local configType = configData['Config Type']
+        if not configType or configType == 'Factory' then -- only use random paints for factory or unknown configs
+          v.randomPaints = true
+        end
+      else
+        v.randomPaints = true
+      end
+    end
+  end
+
   if options.shuffle then -- randomize group order
     group = arrayShuffle(deepcopy(group))
   end
 
   spawningBusy = true
-  log('I', logTag, 'Spawning vehicle group with '..amount..' vehicles: '..tostring(options.name))
+  log('I', logTag, string.format('Spawning vehicle group with %d vehicles: %s', amount, options.name or ''))
   return spawnProcessedGroup(setVehicleSpawnData(group, amount), options) -- returns unique group id
 end
 
@@ -763,21 +843,24 @@ local function setupVehicles(amount, shuffle, spawnMode, spawnGap) -- DEPRECATED
   return spawnGroup(createGroup(), amount, {shuffle = shuffle, mode = spawnMode, gap = spawnGap})
 end
 
-local function deleteVehicles(amount, onlyCars, deletePlayer) -- deletes other vehicles
+local function deleteVehicles(amount, groupName) -- deletes vehicles that were spawned via this system
   -- the traffic UI app uses this function
-  local others = onlyCars and getAllVehiclesByType() or getAllVehicles()
+  local vehicles = getAllVehicles()
   local count = 0
-  for i = 1, #others do
-    if not deletePlayer and others[i]:getId() ~= be:getPlayerVehicleID(0) then
-      others[i]:delete()
-      count = count + 1
-    end
+  for i = #vehicles, 1, -1 do
     if amount and count >= amount then break end
+
+    if vehicles[i].vehicleGroup then
+      if not groupName or vehicles[i].vehicleGroup == groupName then -- matches vehicle group name, otherwise doesn't care what it is
+        vehicles[i]:delete()
+        count = count + 1
+      end
+    end
   end
 end
 
 local function onSpawnCCallback(id)
-  if spawningBusy then -- TODO: improve this, temp solution for now ._.
+  if spawningBusy then -- assumes that multispawn is currently spawning vehicles with no interruptions
     core_vehicle_manager.queueAdditionalVehicleData({spawnWithEngineRunning = M.startEngines}, id) -- start with engines running by default
   end
 end

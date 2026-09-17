@@ -5,6 +5,7 @@
 local M = {}
 
 local nameVidMap = {}
+local enabled = false
 
 local function executeCommand(context, cmd)
   extensions.hook('onConsoleExecuteCommand', context, cmd)
@@ -16,11 +17,21 @@ local function executeCommand(context, cmd)
   elseif context == 'CEF/UI - JS' then
     be:queueJS(cmd)
   else if nameVidMap[context] then
-    local veh = be:getObjectByID(nameVidMap[context])
+    local veh = getObjectByID(nameVidMap[context])
     if veh then
       veh:queueLuaCommand(cmd)
     end
   end
+  end
+end
+
+local function tryRunCommand(cmd)
+  local f = loadstring(cmd)
+  if not f then f = loadstring('return ' .. cmd) end
+  if f then
+    dumpNotNil(f())
+  else
+    log('E', 'console', 'syntax error')
   end
 end
 
@@ -34,6 +45,7 @@ local function getNameForVid(vid)
 end
 
 local function refreshCombo()
+  if not enabled then return end
   consoleClearAvailableContexts()
   consoleAddAvailableContext('GE-Lua')
   local vehCount = be:getObjectCount()
@@ -67,11 +79,13 @@ local function onExtensionLoaded()
     -- sorry, not available on your platform :(
     return false
   end
+  enabled = true
 end
 
 M.onExtensionLoaded = onExtensionLoaded
 M.configure = refreshCombo -- callback used by C++ when the console window is activated
 M.executeCommand = executeCommand -- callback used by C++
+M.tryRunCommand = tryRunCommand -- callback used by C++
 
 M.onVehicleDestroyed = refreshCombo
 M.onVehicleSwitched = refreshCombo

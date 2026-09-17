@@ -10,6 +10,7 @@ extensions.addModulePath("lua/ge/extensions/")
 extensions.addModulePath("lua/common/extensions/")
 
 require('luaCore')
+require('common/cdefs')
 require('utils')
 require('mathlib')
 

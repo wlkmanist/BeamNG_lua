@@ -11,7 +11,6 @@ local vup = vec3(0,0,0)
 local vright = vec3(0,0,0)
 local velocity = vec3(0,0,0)
 -- local vpos = vec3(0,0,0) --debug
-local upWorldVector = vec3(0,0,1)
 local lastRoof = 0
 local lastUpright = 0
 local abs = math.abs
@@ -38,7 +37,7 @@ local function watchRollover( v , vid , dtSim)
   vright:setCross(vdir, vup)
   vright:normalize()
 
-  if upWorldVector:dot(vup) > THRESHOLD then
+  if vup.z > THRESHOLD then
     if triggered then
       if lastRoof + TIMEOUT > simTime and lastUpright + TIMEOUT*2 > simTime then
         -- log("I","","rolllllllll")
@@ -52,12 +51,12 @@ local function watchRollover( v , vid , dtSim)
       lastUpright = simTime
     end
   end
-  if upWorldVector:dot(vup) < -THRESHOLD and abs(vdir:dot(velocity))<abs(vright:dot(velocity)) and simTime > lastRoof+REFRESH then
+  if vup.z < -THRESHOLD and abs(vdir:dot(velocity))<abs(vright:dot(velocity)) and simTime > lastRoof+REFRESH then
     -- log("I","","roof")
     triggered = true
     lastRoof = simTime
   end
-  -- print( dumps(upWorldVector:dot(vup)).."\t"..dumps(vdir:dot(velocity)) .."\ttr="..dumps(triggered) )
+  -- print( dumps(vup.z).."\t"..dumps(vdir:dot(velocity)) .."\ttr="..dumps(triggered) )
 end
 
 local function onVehicleResetted(vid)

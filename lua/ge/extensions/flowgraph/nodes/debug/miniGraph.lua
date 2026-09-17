@@ -16,7 +16,9 @@ C.pinSchema = {
   {dir = 'in', type = 'number', name = 'value', description = 'Value to be logged into the graph'},
 }
 
-C.tags = {'util'}
+C.tags = {'util', 'draw', 'table', 'data'}
+
+local graphSize = im.ImVec2(200, 60)
 
 function C:init()
   self.inputLabels = {}
@@ -46,7 +48,7 @@ end
 function C:drawMiddle(builder, style)
   builder:Middle()
   if #self.graphData > 0 then
-    im.PlotMultiLines("", 1, {"val"}, {im.ImColorByRGB(255,255,255,255)}, {self.graphData}, self.graphDataCount-1, "", self.data.scaleMin, self.data.scaleMax, im.ImVec2(200,60))
+    im.PlotMultiLines("##plotMultiLines"..self.id, 1, {"val"}, {im.ImColorByRGB(255,255,255,255)}, {self.graphData}, self.graphDataCount-1, "", self.data.scaleMin, self.data.scaleMax, graphSize)
   end
 end
 

@@ -15,6 +15,9 @@ local clusterSettingsById = {}
 local currentClusterSettingsId = nil
 local markersByClusterId = {}
 
+-- Track old markers for gradual cleanup
+local oldMarkersByClusterId = {}
+
 local radiusStep = 5
 local clusterSettingsById = {}
 local function setupFilter(validIds, radius)
@@ -26,6 +29,7 @@ local function setupFilter(validIds, radius)
     radius = 20
   end
 
+
   local settingsId = radius.."#-"
   local validIdsLookup = {}
   table.sort(validIds)
@@ -34,43 +38,102 @@ local function setupFilter(validIds, radius)
     validIdsLookup[e] = true
   end
   clusterSettingsCounter = clusterSettingsCounter + 1
-  local clusterSettings = {radius = radius, id = settingsId, validIdsLookup = validIdsLookup, markerPrefix = clusterSettingsCounter}
+  local clusterSettings = {radius = radius, id = settingsId, validIdsLookup = validIdsLookup, markerPrefix = radius.."#-"}
   clusterSettingsById[clusterSettings.id] = clusterSettings
   currentClusterSettingsId = clusterSettings.id
+
+  local newOldMarkers = {}
+  for clusterId, marker in pairs(oldMarkersByClusterId) do
+    if not marker.visible then
+      --print("Discard old marker: " .. clusterId .. " - " .. marker.id)
+      marker:clearObjects()
+    else
+      --print("Keep old marker: " .. clusterId .. " - " .. marker.id)
+      newOldMarkers[clusterId] = marker
+    end
+  end
+  oldMarkersByClusterId = newOldMarkers
+
+  -- Move current markers to old markers list for gradual cleanup
+  for clusterId, marker in pairs(markersByClusterId) do
+    --print("Move current marker to old and hide it: " .. clusterId .. " - " .. marker.id)
+    marker:hide()
+    oldMarkersByClusterId[clusterId] = marker
+  end
+  markersByClusterId = {}
 end
 
+M.iconCounter = 0
+M.iconsById = {}
+M.printNext = false
+
 local nextMarkerFullAlpha = false
+local clusterSettingsIdsSorted = {}
 local function displayBigMapMarkers(dtReal)
   profilerPopEvent("BigMapMarkers parkingSpeedFactor")
   -- put reference for icon manager in
   updateData.dt = dtReal
   updateData.bigmapTransitionActive = freeroam_bigMapMode.isTransitionActive()
   updateData.camPos = core_camera.getPosition()
-
-  local clusterSettingsIdsSorted = tableKeysSorted(clusterSettingsById)
+  table.clear(clusterSettingsIdsSorted)
+  table.insert(clusterSettingsIdsSorted, currentClusterSettingsId)
+  for csId, _ in pairs(clusterSettingsById) do
+    if csId ~= currentClusterSettingsId then
+      table.insert(clusterSettingsIdsSorted, csId)
+    end
+  end
+  --if M.printNext then dump(clusterSettingsIdsSorted) end
   --print("Begin Update")
+  --local im = ui_imgui
+  --im.Begin("BigMapMarkers Update")
+  --updateData.im = im
+  local updatedIds = {}
   for _, csId in ipairs(clusterSettingsIdsSorted) do
+    --im.Separator()
+    --im.Text(string.format("Loop: csId : %s", csId))
     --print(csId)
     local isActiveSettings = csId == currentClusterSettingsId
     local clusters = M.getAllClustersBySettings(csId)
     for _, cluster in ipairs(clusters) do
+      --im.Text(string.format("Loop: cluster id : %s", cluster.id))
+      --if M.printNext then print("Get cluster marker: " .. cluster.id) end
       local marker = M.getClusterMarker(cluster)
       if marker then
-        -- Check if the marker should be visible
-        if isActiveSettings then
-          if nextMarkerFullAlpha then
-            marker:setFullAlphaInstant()
+        if not updatedIds[marker.id] then
+          -- Check if the marker should be visible
+          if isActiveSettings then
+            if nextMarkerFullAlpha then
+              marker:setFullAlphaInstant()
+            end
+            marker:show()
+          else
+            marker:hide()
           end
-          marker:show()
-        else
-          marker:hide()
+          --print("updating: " .. marker.id .. " ("..marker.cluster.id..")")
+          marker:update(updateData)
         end
-        --print("updating: " .. marker.id .. " ("..marker.cluster.id..")")
-        marker:update(updateData)
+        updatedIds[marker.id] = true
       end
     end
   end
+  --im.Separator()
+  -- Update old markers and clean up when they're no longer visible
+  --local markersToRemove = {}
+  for clusterId, marker in pairs(oldMarkersByClusterId) do
+    if not updatedIds[marker.id] then
+      marker:update(updateData)
+    end
+  end
+
+  --im.End()
+  --dump(markersByClusterSettingsId)
+
+  --log("I","","BigMapMarkers: " .. M.iconCounter)
+  --dump(M.iconsById)
   nextMarkerFullAlpha = false
+  --M.debugUi()
+  --if M.printNext then print("End Update") end
+  --M.printNext = false
 end
 
 
@@ -79,7 +142,7 @@ local function pointRayDistance(point, rayPos, rayDir)
   return (point - rayPos):cross(rayDir):length() / rayDir:length()
 end
 
-local function handleMouse(camMode, uiPopupOpen, mouseMoved, poiIsSelected)
+local function handleMouse(camMode, mouseMoved, poiIsSelected)
 
   -- disable hovering when in "controller mode" and there is already a POI selected
   if not mouseMoved and poiIsSelected then return end
@@ -98,8 +161,13 @@ local function handleMouse(camMode, uiPopupOpen, mouseMoved, poiIsSelected)
 
     if iconInfo then
       local iconPos = iconInfo.worldPosition
-      local sphereRadius = iconPos:distance(core_camera.getPosition()) * 0.0006 * camMode.manualzoom.fov
-      if not uiPopupOpen and pointRayDistance(iconPos, ray.pos, ray.dir) <= sphereRadius then
+      local sphereRadius
+      if freeroam_bigMapMode.isUsingOrthoCamera() then
+        sphereRadius = 0.03 * camMode.manualzoom.fov
+      else
+        sphereRadius = iconPos:distance(core_camera.getPosition()) * 0.0006 * camMode.manualzoom.fov
+      end
+      if pointRayDistance(iconPos, ray.pos, ray.dir) <= sphereRadius then
         return cluster.containedIds[1]
         --local marker = M.getClusterMarker(cluster)
         --if marker.visibleInBigmap then
@@ -122,9 +190,13 @@ end
 local bigmapMarkerFactory = require('lua/ge/extensions/gameplay/markers/bigmapMarker')
 local function getClusterMarker(cluster)
   if not markersByClusterId[cluster.id] then
+    if oldMarkersByClusterId[cluster.id] then
+      return oldMarkersByClusterId[cluster.id]
+    end
     local marker = bigmapMarkerFactory.createMarker()
     marker:setup(cluster)
     markersByClusterId[cluster.id] = marker
+    --print("Create cluster marker: " .. cluster.id .. " - " .. marker.id)
   end
   return markersByClusterId[cluster.id]
 end
@@ -143,13 +215,25 @@ local function hideMarkers()
   for _, marker in pairs(markersByClusterId) do
     marker:hide()
   end
+
+  -- Also hide old markers
+  for _, marker in pairs(oldMarkersByClusterId) do
+    marker:hide()
+  end
 end
 M.hideMarkers = hideMarkers
 local function clearMarkers()
   for _, marker in pairs(markersByClusterId) do
     marker:clearObjects()
+    --print("Clear cluster marker: " .. marker.cluster.id)
   end
   table.clear(markersByClusterId)
+
+  -- Also clear old markers
+  for _, marker in pairs(oldMarkersByClusterId) do
+    marker:clearObjects()
+  end
+  table.clear(oldMarkersByClusterId)
 end
 M.clearMarkers = clearMarkers
 
@@ -158,6 +242,8 @@ local function idSort(a,b) return a.id < b.id end
 local function clusterBySettings(elements, settingsId)
   clustersBySettings[settingsId] = {}
   local settings = clusterSettingsById[settingsId]
+
+  --print("clusterBySettings: " .. settingsId)
 
   -- filter all pois that have a bigmapMarker representation and are in validIds
   local filteredPois = {}
@@ -228,7 +314,6 @@ local clusterGeneration = -1
 local function getAllClustersBySettings(settingsId)
   local elements, rawPoiGeneration = gameplay_rawPois.getRawPoiListByLevel(getCurrentLevelIdentifier())
   if clusterGeneration < rawPoiGeneration then
-
     clustersBySettings = {}
     clusterGeneration = rawPoiGeneration
     log("D","","Bigmap markers cleared. New Generation: " .. clusterGeneration)

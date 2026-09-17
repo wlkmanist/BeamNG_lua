@@ -27,7 +27,7 @@ local function process(vehicle)
     vehicle.soundscape = newTable
   end
 
-  profilerPopEvent() -- jbeam/assorted.process
+  profilerPopEvent('jbeam/assorted.process')
 end
 
 M.process = process

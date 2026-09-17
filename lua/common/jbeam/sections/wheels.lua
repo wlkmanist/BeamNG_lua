@@ -1302,6 +1302,7 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   -- Stabilizer
   wheel.nodeStabilizer = wheel.nodeStabilizer or wheel.nodeS
   wheel.treadCoef = wheel.treadCoef or 1
+  wheel.hubNodeWeight = wheel.hubNodeWeight or 25
   wheel.nodeS = nil
   local nodeStabilizerExists = false
   local wheelAngleRad = math.rad(wheel.wheelAngle or 0)
@@ -1352,16 +1353,41 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   local axis = node2_pos - node1_pos
   axis:normalize()
 
+  wheel.hubWidth = wheel.hubWidth or axis:length()
+
   local midpoint = (node2_pos + node1_pos) * 0.5
+
+  if type(wheel.offsetFromNode) == "number" then
+    local halfHwidth = 0.5 * wheel.hubWidth * axis
+    if wheel.offsetFromNode == 1 then
+      midpoint = node1_pos + halfHwidth
+    elseif wheel.offsetFromNode == 2 then
+      midpoint = node2_pos - halfHwidth
+    end
+  end
+
   if wheel.wheelOffset ~= nil then
     local offset = wheel.wheelOffset
     midpoint = midpoint + axis * offset
   end
 
   if wheel.tireWidth ~= nil then
-    local halfWidth = 0.5 * wheel.tireWidth
-    node1_pos = midpoint - axis * halfWidth
-    node2_pos = midpoint + axis * halfWidth
+    local halfTWidth = 0.5 * wheel.tireWidth * axis
+    node1_pos = midpoint - halfTWidth
+    node2_pos = midpoint + halfTWidth
+  end
+
+  if type(wheel.hubWeight) == "number" then
+    wheel.hubNodeWeight = wheel.hubWeight / (2 *wheel.numRays)
+  end
+
+  if type(wheel.tireWeight) == "number" then
+    wheel.nodeWeight = wheel.tireWeight / (2 * wheel.numRays)
+  end
+
+  if type(wheel.hubWeightGainRatio) == "number" and wheel.hubWeightGainRatio >= 0 and wheel.hubWeightGainRatio < 1 then
+    wheel.nodeWeight = wheel.nodeWeight * (1-wheel.hubWeightGainRatio)
+    wheel.hubNodeWeight = wheel.hubNodeWeight + wheel.nodeWeight * wheel.hubWeightGainRatio
   end
 
   local cleanwheel = deepcopy(wheel)
@@ -1408,7 +1434,10 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
 
   local wheelNodes = cleanupWheelOptions(deepcopy(cleanwheel))
 
+  local conicityFactor = wheel.conicityFactor and clamp(wheel.conicityFactor, 0.5, 1.5) or 1
+
   local rayRot = quatFromAxisAngle(axis, 2 * math.pi / (wheel.numRays* 2))
+
   local rayVec
   local treadNodes = {}
   if tireExists then
@@ -1416,10 +1445,14 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
     rayVec = quatFromAxisAngle(axis, -wheelAngleRad) * rayVec
     local hasEvenRayCount = wheel.numRays % 2 == 0
     -- add nodes first
+    local rayRot2 = quatFromAxisAngle(axis, 2 * math.pi / (wheel.numRays))
+    local conicityVec = rayRot * (rayVec * conicityFactor)
+    local conicityVec2 = rayVec * (2 - conicityFactor)
+
     for i = 0, wheel.numRays - 1, 1 do
       -- outer
-      local rayPoint = node1_pos + rayVec
-      rayVec = rayRot * rayVec
+      local rayPoint = node1_pos + conicityVec2
+      conicityVec2 = rayRot2 * conicityVec2
       local n = jbeamUtils.addNodeWithOptions(vehicle, rayPoint, NORMALTYPE, wheelNodes)
       table.insert(treadNodes, vehicle.nodes[n])
       if hasEvenRayCount then
@@ -1428,8 +1461,8 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
       end
 
       -- inner
-      rayPoint = node2_pos + rayVec
-      rayVec = rayRot * rayVec
+      rayPoint = node2_pos + conicityVec
+      conicityVec = rayRot2 * conicityVec
       n = jbeamUtils.addNodeWithOptions(vehicle, rayPoint, NORMALTYPE, wheelNodes)
       table.insert(treadNodes, vehicle.nodes[n])
       if hasEvenRayCount then
@@ -1442,7 +1475,6 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   -- add Hub nodes
   local hubNodes = {}
   local hubnodebase = vehicle.maxIDs.nodes
-
   local hubOptions = deepcopy(cleanwheel)
   hubOptions.beamSpring = hubOptions.hubBeamSpring or hubOptions.beamSpring
   hubOptions.beamDamp = hubOptions.hubBeamDamp or hubOptions.beamDamp
@@ -1456,30 +1488,85 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   hubOptions.group = hubOptions.hubGroup or hubOptions.group
   hubOptions.disableMeshBreaking = hubOptions.disableHubMeshBreaking or hubOptions.disableMeshBreaking
 
+  local minAxleNodeWeightRay = math.min(node1.nodeWeight, node2.nodeWeight) / wheel.numRays
+  local frontSpacing = (node1_pos-midpoint):length()
+  local backSpacing = (node2_pos-midpoint):length()
+  local hubNodeWeightCoef = math.max(0.85 * wheel.hubNodeWeight - 0.33 * (wheel.nodeWeight or 0), 0.01)
+  local sMinWeight = minAxleNodeWeightRay * hubNodeWeightCoef / (minAxleNodeWeightRay + hubNodeWeightCoef)
+
   local hubSideOptions = deepcopy(hubOptions)
-  hubSideOptions.beamSpring = hubSideOptions.hubSideBeamSpring or hubSideOptions.beamSpring
-  hubSideOptions.beamDamp = hubSideOptions.hubSideBeamDamp or hubSideOptions.beamDamp
+  if type(hubSideOptions.hubSideBeamSpring) == "number" and hubSideOptions.hubSideBeamSpring < 0 then
+    --highest side beam spring is priority to keep expansion at a minimum, so its currently based only on the node weights, and the other beams get reduced if needed
+    hubSideOptions.beamSpring = 9500000 * sMinWeight * hubSideOptions.hubSideBeamSpring * -1
+  else
+    hubSideOptions.beamSpring = hubSideOptions.hubSideBeamSpring or hubSideOptions.beamSpring
+  end
+
+  if type(hubSideOptions.hubSideBeamDamp) == "number" and hubSideOptions.hubSideBeamDamp < 0 then
+    hubSideOptions.beamDamp = 0.012 * math.sqrt(sMinWeight * hubSideOptions.beamSpring) * hubSideOptions.hubSideBeamDamp * -1
+  else
+    hubSideOptions.beamDamp = hubSideOptions.hubSideBeamDamp or hubSideOptions.beamDamp
+  end
+
   hubSideOptions.beamDeform = hubSideOptions.hubSideBeamDeform or hubSideOptions.beamDeform
   hubSideOptions.beamStrength = hubSideOptions.hubSideBeamStrength or hubSideOptions.beamStrength
   hubSideOptions.dampCutoffHz = hubSideOptions.hubSideBeamDampCutoffHz or hubOptions.dampCutoffHz
 
   local hubReinfOptions = deepcopy(hubSideOptions)
-  hubReinfOptions.beamSpring = hubReinfOptions.hubReinfBeamSpring or hubReinfOptions.beamSpring
-  hubReinfOptions.beamDamp = hubReinfOptions.hubReinfBeamDamp or hubReinfOptions.beamDamp
+  --additional check needed because wheels in the past had hubReinf undefined and defaulting to hubSide values
+  if type(hubReinfOptions.hubReinfBeamSpring) == "number" and hubReinfOptions.hubReinfBeamSpring < 0 then
+    --calculate the angle of the hub reinf beams (cross section of wheel hub), choose the minimum angle between front and back spacing
+    local hubReinfAngle = math.atan((math.min(frontSpacing, backSpacing) + wheel.hubWidth * 0.5) / wheel.hubRadius)
+    local hubReinfAngleCoef = math.cos(3 * hubReinfAngle - math.pi * 0.666) * 0.25 + 0.75
+    hubReinfOptions.beamSpring = 8500000 * sMinWeight * hubReinfAngleCoef * hubReinfOptions.hubReinfBeamSpring * -1
+  else
+    hubReinfOptions.beamSpring = hubReinfOptions.hubReinfBeamSpring or hubReinfOptions.beamSpring
+  end
+  --additional check needed because wheels in the past had hubReinf undefined and defaulting to hubSide values
+  if type(hubReinfOptions.hubReinfBeamDamp) == "number" and hubReinfOptions.hubReinfBeamDamp < 0 then
+    hubReinfOptions.beamDamp = 0.012 * math.sqrt(sMinWeight * hubReinfOptions.beamSpring) * hubReinfOptions.hubReinfBeamDamp * -1
+  else
+    hubReinfOptions.beamDamp = hubReinfOptions.hubReinfBeamDamp or hubReinfOptions.beamDamp
+  end
+
   hubReinfOptions.beamDeform = hubReinfOptions.hubReinfBeamDeform or hubReinfOptions.beamDeform
   hubReinfOptions.beamStrength = hubReinfOptions.hubReinfBeamStrength or hubReinfOptions.beamStrength
   hubReinfOptions.dampCutoffHz = hubReinfOptions.hubReinfBeamDampCutoffHz or hubOptions.dampCutoffHz
 
+  local hubTreadAngle = 2 * math.atan(math.pi * wheel.hubRadius / (wheel.numRays * wheel.hubWidth))
+
   local hubTreadOptions = deepcopy(hubOptions)
-  hubTreadOptions.beamSpring = hubTreadOptions.hubTreadBeamSpring or hubTreadOptions.beamSpring
-  hubTreadOptions.beamDamp = hubTreadOptions.hubTreadBeamDamp or hubTreadOptions.beamDamp
+  if type(hubTreadOptions.hubTreadBeamSpring) == "number" and hubTreadOptions.hubTreadBeamSpring < 0 then
+    --for wide wheels, decrease the tread beam spring
+    local hubTreadAngleCoef = math.cos(2 * (hubTreadAngle)) * 0.2 + 0.8
+    hubTreadOptions.beamSpring = 3000000 * wheel.hubNodeWeight * hubTreadAngleCoef * hubTreadOptions.hubTreadBeamSpring * -1
+  else
+    hubTreadOptions.beamSpring = hubTreadOptions.hubTreadBeamSpring or hubTreadOptions.beamSpring
+  end
+  if type(hubTreadOptions.hubTreadBeamDamp) == "number" and hubTreadOptions.hubTreadBeamDamp < 0 then
+    hubTreadOptions.beamDamp = 0.012 * math.sqrt(wheel.hubNodeWeight * hubTreadOptions.beamSpring) * hubTreadOptions.hubTreadBeamDamp * -1
+  else
+    hubTreadOptions.beamDamp = hubTreadOptions.hubTreadBeamDamp or hubTreadOptions.beamDamp
+  end
+
   hubTreadOptions.beamDeform = hubTreadOptions.hubTreadBeamDeform or hubTreadOptions.beamDeform
   hubTreadOptions.beamStrength = hubTreadOptions.hubTreadBeamStrength or hubTreadOptions.beamStrength
   hubTreadOptions.dampCutoffHz = hubTreadOptions.hubTreadBeamDampCutoffHz or hubOptions.dampCutoffHz
 
   local hubPeripheryOptions = deepcopy(hubOptions)
-  hubPeripheryOptions.beamSpring = hubPeripheryOptions.hubPeripheryBeamSpring or hubPeripheryOptions.beamSpring
-  hubPeripheryOptions.beamDamp = hubPeripheryOptions.hubPeripheryBeamDamp or hubPeripheryOptions.beamDamp
+  if type(hubPeripheryOptions.hubPeripheryBeamSpring) == "number" and hubPeripheryOptions.hubPeripheryBeamSpring < 0 then
+    --for narrow wheels, decrease the periphery beam spring
+    local hubPeripheryAngleCoef = math.cos(hubTreadAngle * 0.5) * 0.2 + 0.8
+    hubPeripheryOptions.beamSpring = 3000000 * wheel.hubNodeWeight * hubPeripheryAngleCoef * hubPeripheryOptions.hubPeripheryBeamSpring * -1
+  else
+    hubPeripheryOptions.beamSpring = hubPeripheryOptions.hubPeripheryBeamSpring or hubPeripheryOptions.beamSpring
+  end
+  if type(hubPeripheryOptions.hubPeripheryBeamDamp) == "number" and hubPeripheryOptions.hubPeripheryBeamDamp < 0 then
+    hubPeripheryOptions.beamDamp = 0.012 * math.sqrt(wheel.hubNodeWeight * hubPeripheryOptions.beamSpring) * hubPeripheryOptions.hubPeripheryBeamDamp * -1
+  else
+    hubPeripheryOptions.beamDamp = hubPeripheryOptions.hubPeripheryBeamDamp or hubPeripheryOptions.beamDamp
+  end
+
   hubPeripheryOptions.beamDeform = hubPeripheryOptions.hubPeripheryBeamDeform or hubPeripheryOptions.beamDeform
   hubPeripheryOptions.beamStrength = hubPeripheryOptions.hubPeripheryBeamStrength or hubPeripheryOptions.beamStrength
   hubPeripheryOptions.dampCutoffHz = hubPeripheryOptions.hubPeripheryBeamDampCutoffHz or hubOptions.dampCutoffHz
@@ -1490,6 +1577,11 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   hubStabilizerOptions.beamDeform = hubStabilizerOptions.hubStabilizerBeamDeform or hubStabilizerOptions.beamDeform
   hubStabilizerOptions.beamStrength = hubStabilizerOptions.hubStabilizerBeamStrength or hubStabilizerOptions.beamStrength
   hubStabilizerOptions.dampCutoffHz = hubStabilizerOptions.hubStabilizerBeamDampCutoffHz or hubOptions.dampCutoffHz
+
+  --print(hubSideOptions.beamSpring .. "," .. hubSideOptions.beamDamp)
+  --print(hubReinfOptions.beamSpring .. "," .. hubReinfOptions.beamDamp)
+  --print(hubTreadOptions.beamSpring .. "," .. hubTreadOptions.beamDamp)
+  --print(hubPeripheryOptions.beamSpring .. "," .. hubPeripheryOptions.beamDamp)
 
   cleanupWheelOptions(hubOptions) -- used for nodes
   cleanupBeamOptions(cleanupWheelOptions(hubSideOptions))
@@ -1613,7 +1705,7 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   local reinfOptions = deepcopy(cleanwheel)
   reinfOptions.beamSpring = reinfOptions.wheelReinfBeamSpring or 0
   reinfOptions.beamDamp = reinfOptions.wheelReinfBeamDamp or 0
-  reinfOptions.springExpansion = reinfOptions.wheelReinfBeamSpringExpansion
+  reinfOptions.springExpansion = reinfOptions.wheelReinfBeamSpringExpansion--stage2 will use beamSpring, beamDamp
   reinfOptions.dampExpansion = reinfOptions.wheelReinfBeamDampExpansion
   reinfOptions.beamDeform = reinfOptions.wheelReinfBeamDeform or reinfOptions.beamDeform
   reinfOptions.beamStrength = reinfOptions.wheelReinfBeamStrength or reinfOptions.beamStrength
@@ -1654,6 +1746,14 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
   peripheryReinfOptions.beamStrength = peripheryReinfOptions.wheelPeripheryReinfBeamStrength or peripheryOptions.beamStrength
   peripheryReinfOptions.beamPrecompression = peripheryReinfOptions.wheelPeripheryReinfBeamPrecompression or 1
   peripheryReinfOptions.dampCutoffHz = peripheryOptions.wheelPeripheryReinfBeamDampCutoffHz or nil
+
+  local tireSupportOptions = deepcopy(cleanwheel)
+  tireSupportOptions.beamSpring = tireSupportOptions.tireSupportBeamSpring or tireSupportOptions.beamSpring
+  tireSupportOptions.beamDamp = tireSupportOptions.tireSupportBeamDamp or tireSupportOptions.beamDamp
+  tireSupportOptions.beamDeform = tireSupportOptions.tireSupportBeamDeform or tireSupportOptions.beamDeform
+  tireSupportOptions.beamStrength = tireSupportOptions.tireSupportBeamStrength or tireSupportOptions.beamStrength
+  tireSupportOptions.precompressionRange = (wheel.hubRadius - wheel.radius) * (tireSupportOptions.tireSupportBeamSidewallRatio or 0.9)
+  tireSupportOptions.beamLongExtent = tireSupportOptions.tireSupportBeamLongExtent or (wheel.radius - wheel.hubRadius) * 2 * (tireSupportOptions.tireSupportBeamSidewallRatio or 0.9)
 
   cleanupBeamOptions(cleanupWheelOptions(hubcapAttachOptions))
   cleanupBeamOptions(cleanupWheelOptions(sideOptions))
@@ -1778,11 +1878,11 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
     end
 
     if hubSide1TriangleCollision then
-      addTri(vTris, nextouthubnode, outhubnode, outaxisnode, wheelDragCoef * 0.5, NORMALTYPE)
+      addTri(vTris, nextouthubnode, outhubnode, outaxisnode, 0, NORMALTYPE)
     end
 
     if hubSide2TriangleCollision then
-      addTri(vTris, inhubnode, nextinhubnode, inaxisnode, wheelDragCoef * 0.5, NORMALTYPE)
+      addTri(vTris, inhubnode, nextinhubnode, inaxisnode, 0, NORMALTYPE)
     end
 
     if tireExists then
@@ -1848,8 +1948,16 @@ local function addPressureWheel(vehicle, wheelKey, wheel)
       end
 
       if wheel.enableTirePeripheryReinfBeams then
-          jbeamUtils.addBeamWithOptions(vehicle, intirenode, nextnextintirenode, NORMALTYPE, peripheryReinfOptions)
-          jbeamUtils.addBeamWithOptions(vehicle, outtirenode, nextnextouttirenode, NORMALTYPE, peripheryReinfOptions)
+      -- Periphery beams
+        table.insert(peripheryBeams,
+          jbeamUtils.addBeamWithOptions(vehicle, intirenode, nextnextintirenode,  NORMALTYPE, peripheryReinfOptions) )
+        table.insert(peripheryBeams,
+          jbeamUtils.addBeamWithOptions(vehicle, outtirenode, nextnextouttirenode, NORMALTYPE, peripheryReinfOptions) )
+      end
+
+      if wheel.enableTireSupportBeams then
+        jbeamUtils.addBeamWithOptions(vehicle, inaxisnode, intirenode, BEAM_SUPPORT, tireSupportOptions)
+        jbeamUtils.addBeamWithOptions(vehicle, outaxisnode, outtirenode, BEAM_SUPPORT, tireSupportOptions)
       end
 
       -- hub pressure tris
@@ -1906,22 +2014,67 @@ local function processWheel(vehicle, wheelSection, wheelCreationFunction)
   end
 end
 
-local function processWheels(vehicle)
-  profilerPushEvent('jbeam/wheels.processWheels')
-  if vehicle.wheels ~= nil  then
-    vehicle.maxIDs.wheels = nil
+local addStrapsToEverything = false
+local function addWheelAttachments(vehicle)
+  if vehicle.flexbodies == nil then return end
+
+  if addStrapsToEverything then
+    -- Collect attachments separately to avoid mutating during iteration.
+    local toAdd = {}
+    for _, flexbody in pairs(vehicle.flexbodies) do
+      local mesh = flexbody.mesh
+      local groups = flexbody["[group]:"]
+      -- Only wrap tire meshes and skip any strap/attachment entries.
+      if type(mesh) == "string" and string.find(mesh, "tire_", 1, true) and not string.find(mesh, "strap", 1, true) and not flexbody._isAttachment then
+        --log('I', "jbeam.addWheelAttachments", "candidate tire flexbody: " .. mesh)
+        local hasWheelGroup = false
+        if type(groups) == "string" then
+          hasWheelGroup = groups:sub(1, 6) == "wheel_"
+        elseif type(groups) == "table" then
+          for _, group in ipairs(groups) do
+            if type(group) == "string" and group:sub(1, 6) == "wheel_" then
+              hasWheelGroup = true
+              break
+            end
+          end
+        end
+
+        if hasWheelGroup then
+          -- Clone the tire flexbody and swap the mesh to the strap.
+          local attachment = deepcopy(flexbody)
+          attachment.mesh = "tire_02c_22x10_39strap"
+          attachment._isAttachment = true
+          table.insert(toAdd, attachment)
+          --log('I', "jbeam.addWheelAttachments", "added strap flexbody for: " .. mesh)
+        end
+      end
+    end
+
+    -- Append generated strap flexbodies.
+    for _, attachment in ipairs(toAdd) do
+      table.insert(vehicle.flexbodies, attachment)
+    end
   end
-  vehicle.wheels = {}
+end
 
-  processWheel(vehicle, "wheels", addWheel)
-  processWheel(vehicle, "monoHubWheels", addMonoHubWheel)
-  processWheel(vehicle, "hubWheelsTSV", addHubWheelTSV)
-  processWheel(vehicle, "hubWheelsTSI", addHubWheelTSI)
-  processWheel(vehicle, "hubWheels", addHubWheel)
-  processWheel(vehicle, "pressureWheels", addPressureWheel)
+local function processWheels(vehicle)
+    profilerPushEvent('jbeam/wheels.processWheels')
+    if vehicle.wheels ~= nil  then
+        vehicle.maxIDs.wheels = nil
+    end
+    vehicle.wheels = {}
 
-  profilerPopEvent() -- jbeam/wheels.processWheels
-  return true
+    processWheel(vehicle, "wheels", addWheel)
+    processWheel(vehicle, "monoHubWheels", addMonoHubWheel)
+    processWheel(vehicle, "hubWheelsTSV", addHubWheelTSV)
+    processWheel(vehicle, "hubWheelsTSI", addHubWheelTSI)
+    processWheel(vehicle, "hubWheels", addHubWheel)
+    processWheel(vehicle, "pressureWheels", addPressureWheel)
+
+    addWheelAttachments(vehicle)
+
+    profilerPopEvent('jbeam/wheels.processWheels')
+    return true
 end
 
 local function processRotators(vehicle)

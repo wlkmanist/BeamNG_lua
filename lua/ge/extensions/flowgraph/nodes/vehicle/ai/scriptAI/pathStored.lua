@@ -31,23 +31,15 @@ local lastPt = vec3()
 local dbgPrimA = Point2F(0.4, 0.7)
 local dbgPrimB = Point2F(0.4, 0.7)
 function C:drawDebugPath()
-
   local focusPos = vec3(Lua.lastDebugFocusPos)
-  local campos = core_camera.getPosition()
-  local camDist = (campos - focusPos):length()
+  local camPos = core_camera.getPosition()
+  local cutoffPointSq = square(clamp(focusPos:distance(camPos), 100, 200))
 
-  local objMax = be:getObjectCount() - 1
-
-  --print("camDist = " .. tostring(camDist))
-  local cutoffPointSq = math.min(200, math.max(100, camDist))
-  --print("cutoffPoint = " .. tostring(cutoffPointSq))
-  cutoffPointSq = cutoffPointSq * cutoffPointSq
-
-  local clr = ColorF(1,0,1, 0.2)
-  for k, p in pairs(self.aiPath) do
-    dbgPt:set(p)
-    if (dbgPt - campos):squaredLength() < cutoffPointSq then -- 100 x 100 m
-      if k > 1 then
+  local clr = ColorF(1, 0, 1, 0.2)
+  for i, p in ipairs(self.aiPath) do
+    dbgPt:set(p.x, p.y, p.z)
+    if dbgPt:squaredDistance(camPos) < cutoffPointSq then -- 100 x 100 m
+      if i > 1 then
         debugDrawer:drawSquarePrism(lastPt, dbgPt, dbgPrimA, dbgPrimB, clr)
       end
     end
@@ -61,7 +53,7 @@ function C:drawCustomProperties()
   im.Separator()
   if im.Button("Open ScriptAIManager") then
     if editor_scriptAIManager then
-      editor_scriptAIManager.open()
+      editor_scriptAIManager.onWindowMenuItem()
     end
   end
   if editor_scriptAIManager then
@@ -89,7 +81,6 @@ end
 function C:work()
   self.pinOut.path.value = {path = self.aiPath}
 end
-
 
 function C:drawMiddle(builder, style)
   builder:Middle()

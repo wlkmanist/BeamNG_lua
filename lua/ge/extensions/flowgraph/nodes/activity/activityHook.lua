@@ -9,6 +9,7 @@ local C = {}
 C.name = 'Activity Hook Trigger'
 C.color = im.ImVec4(0.03,0.41,0.64,0.75)
 C.description = "Triggers a hook with the given event name for an activity, for advanced usage."
+C.todo = "This node is generally unused."
 C.category = 'once_instant'
 
 C.pinSchema = {}

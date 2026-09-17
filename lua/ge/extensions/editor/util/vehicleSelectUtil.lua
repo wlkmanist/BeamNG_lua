@@ -44,7 +44,7 @@ function C:setModel(model) -- directly sets the model data, by key
 
   self.model = model
   local modelData = core_vehicles.getModel(self.model)
-  if modelData then
+  if modelData and modelData.model then
     self.vehType = modelData.model.Type
     self.modelName = modelData.model.Name
   else
@@ -57,7 +57,7 @@ function C:setConfig(config) -- directly sets the config data, by key (self.mode
 
   self.config = config
   local modelData = core_vehicles.getModel(self.model)
-  if modelData then
+  if modelData and modelData.model then
     local configData = modelData.configs[self.config]
     if configData then
       self.configName = configData.Name
@@ -172,7 +172,7 @@ function C:fetchData() -- retrieves model, config, and paint data, whenever requ
 
   if self.enableConfigs and self.model and not self.configs then -- refresh configs list, using the current model
     local modelData = core_vehicles.getModel(self.model)
-    if modelData then
+    if modelData and modelData.model then
       self.modelName = dumps(modelData.model.Name)
 
       self.configs = {}
@@ -196,7 +196,7 @@ function C:fetchData() -- retrieves model, config, and paint data, whenever requ
 
   if self.enablePaints and self.model and not self.paints then -- refreshes paints list, using the current model
     local modelData = core_vehicles.getModel(self.model)
-    if modelData then
+    if modelData and modelData.model then
       self.paints = modelData.model.paints
       self.paintKeys = self.paints and tableKeysSorted(self.paints) or {}
     end
@@ -228,7 +228,7 @@ function C:widget() -- displays the interface
 
   im.BeginChild1("##vehicleSelector"..dumps(self.id), im.ImVec2(im.GetContentRegionAvailWidth(), elemCount * elemHeight + elemPadding))
 
-  im.Columns(2)
+  im.Columns(2, "##vehicleSelectorA"..dumps(self.id))
   im.SetColumnWidth(0, columnWidth)
 
   im.Text("Type")
@@ -268,10 +268,10 @@ function C:widget() -- displays the interface
   im.PushItemWidth(im.GetContentRegionAvailWidth())
 
   local imDisabled = false
-  if self.models and not self.models[2] then
+  if self.models and not self.models[2] then -- only one model exists
     if not self.model then
       local modelData = self.models[1]
-      if modelData then
+      if modelData and modelData.key then
         self.model = modelData.key
         self.modelName = modelData.Name
         updateReason = "model"
@@ -305,10 +305,10 @@ function C:widget() -- displays the interface
     if not self.configs or self.customConfigPath then
       im.BeginDisabled()
       imDisabled = true
-    elseif self.configs and not self.configs[2] then
+    elseif self.configs and not self.configs[2] then -- only one config exists
       if not self.config then
         local configData = self.configs[1]
-        if configData then
+        if configData and configData.key then
           self.config = configData.key
           self.configName = configData.Name
           self.configPath = "vehicles/"..self.model.."/"..self.config..".pc"
@@ -327,8 +327,8 @@ function C:widget() -- displays the interface
     im.PushItemWidth(im.GetContentRegionAvailWidth())
     if im.BeginCombo("##vehicleSelectorConfigs"..dumps(self.id), label) then
       if self.configs then
-        local modelData = core_vehicles.getModel(self.model)
-        local modelConfigs = modelData and modelData.configs or {}
+        --local modelData = core_vehicles.getModel(self.model)
+        --local modelConfigs = modelData and modelData.configs or {}
 
         if im.Selectable1("(Default)##vehicleSelectorConfigNames"..dumps(self.id), self.config == nil) then
           self.config = nil
@@ -358,7 +358,7 @@ function C:widget() -- displays the interface
   if self.enablePaints then
     im.Columns(1)
     im.Dummy(imDummy)
-    im.Columns(2)
+    im.Columns(2, "##vehicleSelectorB"..dumps(self.id))
     im.SetColumnWidth(0, columnWidth)
 
     local isHovered = false
@@ -431,7 +431,7 @@ function C:widget() -- displays the interface
   if self.enableCustomConfig then
     im.Columns(1)
     im.Dummy(imDummy)
-    im.Columns(2)
+    im.Columns(2, "##vehicleSelectorC"..dumps(self.id))
     im.SetColumnWidth(0, columnWidth)
 
     im.TextWrapped("Custom Config (Optional)")

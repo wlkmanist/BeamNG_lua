@@ -6,7 +6,7 @@ local im  = ui_imgui
 
 local C = {}
 
-C.name = 'Get Active'
+C.name = 'Get Vehicle Active'
 C.color = ui_flowgraph_editor.nodeColors.ai
 C.icon = ui_flowgraph_editor.nodeIcons.ai
 C.description = 'Gets the active state of a vehicle (visible / invisible).'
@@ -22,7 +22,7 @@ C.pinSchema = {
 function C:work()
   local obj
   if self.pinIn.vehId.value then
-    obj = be:getObjectByID(self.pinIn.vehId.value)
+    obj = getObjectByID(self.pinIn.vehId.value)
   else
     obj = getPlayerVehicle(0)
   end

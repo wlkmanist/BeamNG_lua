@@ -121,7 +121,7 @@ local function processSimObject(n, sourceFile)
   elseif n.class == "ForestBrush" then
     add(entity.deps, 'simobject', n.forestItemData)
 
-  elseif n.class == "TSForestItemData" then
+  elseif n.class == "ForestItemData" then
     add(entity.deps, 'shape', n.shapeFile)
 
   elseif n.class == "Material" then

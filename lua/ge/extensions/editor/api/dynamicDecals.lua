@@ -1366,12 +1366,14 @@ end
 
 local function findPartMaterials()
   local data = core_vehicle_manager.getPlayerVehicleData()
-  if data and data.chosenParts and data.chosenParts.paint_design then
-    local id = data.chosenParts.paint_design
-    local part = id and data.vdata.activeParts[id]
-    if part and part.dynDecalMaterials then
-      return part.dynDecalMaterials
-    end
+  if not data then return nil end
+  local paintDesignSlot = data.config.partsTree.children["paint_design"]
+  if not paintDesignSlot then return nil end
+
+  local id = paintDesignSlot.chosenPartName
+  local part = id and data.vdata.activePartsData[id]
+  if part and part.dynDecalMaterials then
+    return part.dynDecalMaterials
   end
   return nil
 end
@@ -1498,7 +1500,8 @@ M.setup = function()
         app:setTextureSet("@DynamicTexture", app.textureSet)
         decalProjection:setShape(veh:getDecalProjectionShape())
         decalProjection:setWorldTransform(veh:getRefNodeMatrix())
-        decalProjection:setRenderTransform(veh:getRefNodeMatrix():copy():setPosition(vec3(0, 0, 0)):inverse())
+        -- setting vehicle transform
+        decalProjection:setTransform(veh:getRefNodeMatrix():copy():setPosition(vec3(0, 0, 0)):inverse())
         decalProjection:setMirrorOffset(veh:getSpawnLocalAABB():getCenter().x + mirrorPlaneOffset)
       end
     end
@@ -2144,11 +2147,11 @@ M.setEnabled = function(enabled)
   end
 end
 
-M.onEditorDeactivated = function()
+--[[M.onEditorDeactivated = function()
   decalProjection:flushDynamicTextures()
   decalProjection:combineTextures(app.textureSet)
 end
-
+]]
 M.toggleEnabled = function()
   decalProjection:setEnabled(not decalProjection:getEnabled())
   if decalProjection:getEnabled() == false then
@@ -2926,16 +2929,16 @@ M.onUpdate_ = function()
   if app then
     profilerPushEvent('dynamicDecals/app:onUpdate_()')
     app:onUpdate()
-    profilerPopEvent()
+    profilerPopEvent('dynamicDecals/app:onUpdate_()')
     if app.textureSet then
       if M.projectDynamicDecals == true then
         profilerPushEvent('dynamicDecals/decalProjection:projectDynamicDecals()')
         decalProjection:projectDynamicDecals(app:getCameraM(), app:getProjM())
-        profilerPopEvent()
+        profilerPopEvent('dynamicDecals/decalProjection:projectDynamicDecals()')
       end
       profilerPushEvent('dynamicDecals/decalProjection:combineTextures()')
       decalProjection:combineTextures(app.textureSet)
-      profilerPopEvent()
+      profilerPopEvent('dynamicDecals/decalProjection:combineTextures()')
     end
   end
 end
@@ -2952,12 +2955,19 @@ M.redo = function()
   history:redo()
 end
 
+--[[M.onExtensionLoaded = function()
+  if DecalProjection == nil then
+    log('E', logTag, 'DecalProjection C++ binding not available — dynamic decals editor disabled. Rebuild the engine with decalProjection.cpp included.')
+    return false
+  end
+end
+
 M.onExtensionUnloaded = function()
   decalProjection = nil
   app = nil
   M.ready = false
 end
-
+]]
 M.onVehicleSwitched  = function()
   -- force to refresh the new vehicle shape
   if(app) then app.onUpdate() end

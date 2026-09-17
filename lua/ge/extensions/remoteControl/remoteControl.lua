@@ -65,10 +65,31 @@ local function onExtensionUnloaded()
   end
 end
 
+-- Define your tests in a table
+local tests = {}
+
+-- Test functions should start with "test"
+function tests.testExampleSuccess(context)
+  -- Your test code here
+  local result = 42  -- Replace with actual test logic
+  local expectedValue = 42
+  if result == expectedValue then
+    context:success("Result matches expected value")
+  else
+    context:fail("Result does not match expected value")
+  end
+end
+
+function tests.testExampleFailure_shouldFail(context)
+  -- This test is expected to fail
+  context:fail("Intentional failure")
+end
+
 -- public interface
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onExtensionLoaded = onExtensionLoaded
 M.onFirstUpdate = onFirstUpdate
 M.onUpdate = onUpdate
+M._unittests = tests
 
 return M

@@ -15,7 +15,8 @@ local function updateVelocity(device, dt)
 end
 
 local function updateTorque(device)
-  device[device.outputTorqueName] = (device.parent[device.parentOutputTorqueName] - (device.friction * clamp(device.inputAV, -1, 1) + device.dynamicFriction * device.inputAV) * device.wearFrictionCoef * device.damageFrictionCoef) * device.gearRatio
+  local inputTorque = device.parent[device.parentOutputTorqueName]
+  device[device.outputTorqueName] = (inputTorque - (device.friction * clamp(device.inputAV, -1, 1) + device.dynamicFriction * device.inputAV + device.torqueLossCoef * inputTorque) * device.wearFrictionCoef * device.damageFrictionCoef) * device.gearRatio
 end
 
 local function disconnectedUpdateVelocity(device, dt)
@@ -38,10 +39,11 @@ local function wheelShaftUpdateVelocity(device, dt)
 end
 
 local function wheelShaftUpdateTorque(device)
-  local outputTorque = device.parent[device.parentOutputTorqueName] * device.gearRatio
+  local inputTorque = device.parent[device.parentOutputTorqueName]
+  local outputTorque = inputTorque * device.gearRatio
   local wheel = device.wheel
   wheel.propulsionTorque = outputTorque * device.wheelDirection
-  wheel.frictionTorque = (device.friction + device.dynamicFriction * device.inputAV) * device.wearFrictionCoef * device.damageFrictionCoef
+  wheel.frictionTorque = (device.friction + device.dynamicFriction * device.inputAV + device.torqueLossCoef * inputTorque) * device.wearFrictionCoef * device.damageFrictionCoef
   device[device.outputTorqueName] = outputTorque
   local trIdx = wheel.torsionReactorIdx
   powertrain.torqueReactionCoefs[trIdx] = powertrain.torqueReactionCoefs[trIdx] + abs(outputTorque)
@@ -259,6 +261,7 @@ local function new(jbeamData)
     gearRatio = jbeamData.gearRatio or 1,
     friction = jbeamData.friction or 0,
     dynamicFriction = jbeamData.dynamicFriction or 0,
+    torqueLossCoef = jbeamData.torqueLossCoef or 0,
     wearFrictionCoef = 1,
     damageFrictionCoef = 1,
     cumulativeInertia = 1,

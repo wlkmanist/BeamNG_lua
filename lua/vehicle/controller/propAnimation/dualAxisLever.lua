@@ -126,7 +126,7 @@ local function updateTargetQueue(dt)
   end
   local desiredMode = getDesiredModeFunction(dt)
   -- ignore any non string values here (like from a manual transmission)
-  if not desiredMode or type(desiredMode) ~= "string" then
+  if not desiredMode or type(desiredMode) ~= "string" or desiredMode == "" then
     return
   end
   if currentMode == desiredMode and movementState ~= movementStates.moving then
@@ -148,7 +148,7 @@ local function updateTargetQueue(dt)
   end
   lastHandledDesiredMode = desiredMode
 
-  if not currentMode then
+  if not currentMode or not adjustedDesiredMode or not modeCoordinates[currentMode] or not modeCoordinates[adjustedDesiredMode] then
     return
   end
 

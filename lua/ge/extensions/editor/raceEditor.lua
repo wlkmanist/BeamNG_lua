@@ -1,16 +1,14 @@
-  -- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-local u_32_max_int = 4294967295
+
 local logTag = 'race_editor_test'
 local toolWindowName = "raceEditorTool"
 local editModeName = "Edit Races"
 local im = ui_imgui
 local ffi = require('ffi')
-local roadRiverGui = extensions.editor_roadRiverGui
-local currentMode = 'Pathnodes'
 local previousFilepath = "/gameplay/races/"
 local previousFilename = "NewRace.race.json"
 local windows = {}
@@ -19,13 +17,18 @@ local testingWindow
 local currentPath = require('/lua/ge/extensions/gameplay/race/path')("New Race")
 currentPath._fnWithoutExt = 'NewRace'
 currentPath._dir = previousFilepath
+currentPath._verbose = true
 local allFiles = {}
 
 local spWindow, pnWindow, segWindow, tlWindow, toolsWindow
 
 local raceTestWindowOpen = im.BoolPtr(false)
 local mouseInfo = {}
-local nameText = im.ArrayChar(1024, "")
+
+local function calculateAiRoute()
+  currentPath:autoConfig()
+  currentPath:getAiPath()
+end
 
 local function setRaceRedo(data)
   data.previous = currentPath
@@ -36,8 +39,11 @@ local function setRaceRedo(data)
   previousFilepath = data.fp
   currentPath = data.path
   currentPath._dir = previousFilepath
-  local dir, filename, ext = path.splitWithoutExt(previousFilename, true)
+  local _, filename, _ = path.splitWithoutExt(previousFilename, true)
   currentPath._fnWithoutExt = filename
+  currentPath._verbose = true
+  calculateAiRoute()
+
   for _, window in ipairs(windows) do
     currentWindow:setPath(currentPath)
     currentWindow:unselect()
@@ -62,11 +68,11 @@ local function saveRace(race, savePath)
   if not race then race = currentPath end
   local json = race:onSerialize()
   jsonWriteFile(savePath, json, true)
-  local dir, filename, ext = path.split(savePath)
+  local dir, filename, _ = path.split(savePath)
   previousFilepath = dir
   previousFilename = filename
   race._dir = dir
-  local a, fn2, b = path.splitWithoutExt(previousFilename, true)
+  local _, fn2, _ = path.splitWithoutExt(previousFilename, true)
   race._fnWithoutExt = fn2
 end
 
@@ -79,14 +85,16 @@ local function loadRace(filename)
     log('E', logTag, 'unable to find race file: ' .. tostring(filename))
     return
   end
-  local dir, filename, ext = path.split(filename)
+  local dir, filename, _ = path.split(filename)
   previousFilepath = dir
   previousFilename = filename
   local p = require('/lua/ge/extensions/gameplay/race/path')("New Race")
   p:onDeserialized(json)
   p._dir = dir
-  local a, fn2, b = path.splitWithoutExt(previousFilename, true)
+  local _, fn2, _ = path.splitWithoutExt(previousFilename, true)
   p._fnWithoutExt = fn2
+  p._verbose = true
+  calculateAiRoute()
 
   editor.history:commitAction("Set path to " .. p.name,
   {path = p, fp = dir, fn = filename},
@@ -208,6 +216,40 @@ local function copyFromTimeTrials()
     setRaceUndo, setRaceRedo)
 end
 
+local function organizePathnodeAndSegmentNames()
+  local newPath = require('/lua/ge/extensions/gameplay/race/path')("New Race")
+  newPath:onDeserialized(currentPath:onSerialize())
+
+  for i, pn in ipairs(newPath.pathnodes.sorted) do
+    if string.match(pn.name, "^Pathnode ") then
+      pn.name = string.format("Pathnode %d", i)
+    end
+  end
+  for i, seg in ipairs(newPath.segments.sorted) do
+    if string.match(seg.name, "^Segment ") then
+      local pn1 = newPath.pathnodes.objects[seg.from]
+      local pn2 = newPath.pathnodes.objects[seg.to]
+      if pn1 and pn2 then
+        local pn1ShortName = string.match(pn1.name, "(%d+)$")
+        local pn2ShortName = string.match(pn2.name, "(%d+)$")
+        seg.name = string.format("Segment %s->%s", pn1ShortName or pn1.name, pn2ShortName or pn2.name)
+      else
+        seg.name = string.format("Segment %d", i)
+      end
+    end
+  end
+  editor.history:commitAction("Organized Pathnode and Segment Names",{
+    path = newPath, fp = previousFilepath, fn = previousFilename
+  }, setRaceUndo, setRaceRedo)
+end
+
+local function recalculateSegments()
+  currentPath:recalculateSegments()
+end
+
+local function raceDistanceString()
+  return string.format("Distance: %.2fkm", (currentPath.aiPathDistance or 0) / 1000)
+end
 
 local function onEditorGui()
   if editor.beginWindow(toolWindowName, "Race Tool", im.WindowFlags_MenuBar) then
@@ -218,7 +260,6 @@ local function onEditorGui()
         if im.MenuItem1("Load...") then
           editor_fileDialog.openFile(function(data) loadRace(data.filepath) end, {{"Race files",".race.json"}}, false, previousFilepath)
         end
-        local canSave = currentPath and previousFilepath
         if im.MenuItem1("Save") then
           saveRace(currentPath, previousFilepath .. previousFilename)
         end
@@ -249,7 +290,7 @@ local function onEditorGui()
           if im.SmallButton("Refresh (!)") then
             table.clear(allFiles)
             for _, f in ipairs(FS:findFiles("/", '*.race.json', -1, true,true)) do
-              local dir, filename, ext = path.split(f)
+              local _, filename, _ = path.split(f)
               table.insert(allFiles,{
                 name = string.sub(filename,1,-11),
                 file = f
@@ -273,23 +314,49 @@ local function onEditorGui()
         if im.Checkbox('Directional Nodes', ptr) then
           editor.setPreference("raceEditor.general.directionalNodes", ptr[0])
         end
-        im.tooltip("Created pathnodes have a direction or not.")
-        local ptr2 = im.BoolPtr(editor.getPreference("raceEditor.general.showAiRoute") or false)
-        if im.Checkbox('Show AI Route', ptr2) then
-          editor.setPreference("raceEditor.general.showAiRoute", ptr2[0])
+        im.tooltip("Enables direction for created pathnodes; strongly recommended for best-quality races.")
+
+        ptr = im.BoolPtr(editor.getPreference("raceEditor.general.showAiRoute") or false)
+        if im.Checkbox('Show AI Route', ptr) then
+          editor.setPreference("raceEditor.general.showAiRoute", ptr[0])
+          calculateAiRoute()
         end
         im.tooltip("Previews the AI Route for this racepath.")
+
+        ptr = im.BoolPtr(editor.getPreference("raceEditor.general.showCustomFields") or false)
+        if im.Checkbox('Show Custom Fields', ptr) then
+          editor.setPreference("raceEditor.general.showCustomFields", ptr[0])
+        end
+        im.tooltip("Displays custom field values next to the node name in the world.")
+
+        ptr = im.BoolPtr(editor.getPreference("raceEditor.general.useSimpleDrag") or false)
+        if im.Checkbox('Use Simple Drag', ptr) then
+          editor.setPreference("raceEditor.general.useSimpleDrag", ptr[0])
+        end
+        im.tooltip("Enables the experimental simple drag mode for moving pathnodes.")
         im.EndMenu()
       end
 
-      if im.BeginMenu("Tools") then
+      if im.BeginMenu("Actions") then
         local add = nil
         if im.MenuItem1("Add Missing Recovery Positions") then
           add = 'newOnly'
         end
-        if im.MenuItem1("Re-Add All Recovery Positions") then
+        if im.MenuItem1("Replace All Recovery Positions") then
           add = 'all'
         end
+        if im.MenuItem1("Recalculate AI Route Distance") then
+          calculateAiRoute()
+        end
+        if im.MenuItem1("Recalculate Segments") then
+          recalculateSegments()
+        end
+        im.tooltip("Recalculates the segments based on the current order of pathnodes.\nDoes NOT take branching into account.")
+        if im.MenuItem1("Organize Pathnode and Segment Names") then
+          organizePathnodeAndSegmentNames()
+        end
+        im.tooltip("Renames pathnodes and segments to nicely reflect their order.")
+
         if add then
           local newPath = require('/lua/ge/extensions/gameplay/race/path')("New Race")
           newPath:onDeserialized(currentPath:onSerialize())
@@ -302,22 +369,23 @@ local function onEditorGui()
               local sp = newPath.startPositions:create()
               sp:set(pn.pos, quatFromDir(pn.normal):normalized())
               sp.name = pn.name .. " Recovery Forward"
+              sp.group = 'recovery'
               pn.recovery = sp.id
 
               local spr = newPath.startPositions:create()
               spr:set(pn.pos, quatFromDir(pn.normal*-1):normalized())
               spr.name = pn.name .. " Recovery Reverse"
+              spr.group = 'recovery'
               pn.reverseRecovery = spr.id
             end
           end
 
           editor.history:commitAction("Add Missing Recovery Positions",{
-            path = newPath, fp =previousFilepath, fn = previousFilename
+            path = newPath, fp = previousFilepath, fn = previousFilename
           }, setRaceUndo, setRaceRedo)
         end
         im.EndMenu()
       end
-
 
       local issues = findIssues()
       if #issues == 0 then
@@ -325,15 +393,17 @@ local function onEditorGui()
         if im.BeginMenu("No Issues!") then im.EndMenu() end
         im.EndDisabled()
       else
-        if im.BeginMenu(#issues..' Issues') then
+        if im.BeginMenu('Issues ('..#issues..')') then
           for i, issue in ipairs(issues) do
-            if im.MenuItem1(issue[1]) then
-              --issue[2]()
-            end
+            im.MenuItem1(issue[1])
           end
           im.EndMenu()
         end
       end
+
+      im.BeginDisabled()
+      if im.BeginMenu(raceDistanceString()) then im.EndMenu() end
+      im.EndDisabled()
       im.EndMenuBar()
     end
     if not editor.editMode or editor.editMode.displayName ~= editModeName then
@@ -412,16 +482,16 @@ local function onEditorInitialized()
   editor.editModes.raceEditMode.auxShortcuts[editor.AuxControl_LMB] = "Select"
   editor.registerWindow(toolWindowName, im.ImVec2(500, 500))
   editor.addWindowMenuItem("Race/Path Editor", function() show() end,{groupMenuName="Gameplay"})
-  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/pathnodes')(M))
-  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/segments')(M))
-  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/startPositions')(M))
-  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/pacenotes')(M))
-  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/trackLayout')(M))
-  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/timeTrials')(M))
-  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/tools')(M))
+  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/pathnodes')(M)) -- 1
+  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/segments')(M)) -- 2
+  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/startPositions')(M)) -- 3
+  -- table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/pacenotes')(M))
+  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/trackLayout')(M)) -- 4
+  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/timeTrials')(M)) -- 5
+  table.insert(windows, require('/lua/ge/extensions/editor/raceEditor/tools')(M)) -- 6
   testingWindow =  require('/lua/ge/extensions/editor/raceEditor/testing')(M)
   currentWindow = windows[1]
-  pnWindow, segWindow, spWindow, tlWindow, toolsWindow = windows[1], windows[2], windows[3], windows[5], windows[7]
+  pnWindow, segWindow, spWindow, tlWindow, toolsWindow = windows[1], windows[2], windows[3], windows[4], windows[6]
   currentWindow:setPath(currentPath)
   currentWindow:selected()
 end
@@ -455,9 +525,10 @@ local function onDeserialized(data)
     previousFilename = data.previousFilename  or "NewRace.race.json"
     previousFilepath = data.previousFilepath or "/gameplay/races/"
     currentPath._dir = previousFilepath
-    local dir, filename, ext = path.splitWithoutExt(previousFilename, true)
+    local _, filename, _ = path.splitWithoutExt(previousFilename, true)
     currentPath._fnWithoutExt = filename
-
+    currentPath._verbose = true
+    calculateAiRoute()
   end
 end
 
@@ -466,8 +537,10 @@ local function onEditorRegisterPreferences(prefsRegistry)
   prefsRegistry:registerSubCategory("raceEditor", "general", nil,
   {
     -- {name = {type, default value, desc, label (nil for auto Sentence Case), min, max, hidden, advanced, customUiFunc, enumLabels}}
-    {directionalNodes = {"bool", true, "Enable directional nodes for best-quality races"}},
+    {directionalNodes = {"bool", true, "Enables directional nodes for best-quality races"}},
     {showAiRoute = {"bool", false, "Previews the AI Route for a loaded racepath"}},
+    {showCustomFields = {"bool", false, "Displays custom field values next to the node name in the world."}},
+    {useSimpleDrag = {"bool", false, "Uses simple drag mode for modifying pathnodes in the race editor."}},
   })
 end
 
@@ -480,6 +553,7 @@ M.getCurrentFilename = function() return previousFilepath..previousFilename end
 M.getCurrentPath = function() return currentPath end
 M.isVisible = function() return editor.isWindowVisible(toolWindowName) end
 M.changedFromExternal = function() currentWindow:setPath(currentPath) end
+M.calculateAiRoute = calculateAiRoute
 M.setupRace = setupRace
 M.show = show
 M.loadRace = loadRace
@@ -491,4 +565,5 @@ M.onWindowGotFocus = onWindowGotFocus
 M.onUpdate = raceTest
 M.onEditorInitialized = onEditorInitialized
 M.getToolsWindow = function() return toolsWindow end
+
 return M

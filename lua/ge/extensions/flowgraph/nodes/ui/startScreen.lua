@@ -124,7 +124,7 @@ function C:openDialogue()
   --if core_input_bindings.isMenuActive then guihooks.trigger('', 'toggleMenues') end
   self._storedData = data
   self._active = true
-  guihooks.trigger('ChangeState', {state = 'scenario-start', params = {data = data}})
+  extensions.ui_router.navigate("scenario.start", {data = data})
 end
 
 function C:onScenarioUIReady(state)

@@ -65,7 +65,7 @@ if not screenBlurFX then
   screenBlurFX:setField("stateBlock", 0, "AL_FormatTokenState")
   screenBlurFX:setField("texture", 0, "$backBuffer")
   screenBlurFX:setField("target", 0, "$outTex")
-  screenBlurFX:setField("targetScale", 0, "0.25 0.25")
+  screenBlurFX:setField("targetScale", 0, "0.4 0.4") -- 0.4 = 40% of the screen
   screenBlurFX:registerObject("ScreenBlurFX")
 
   local screenBlurFX_YShader = createObject("PostEffect")

@@ -76,6 +76,8 @@ local limitMultiplier = nil
 local limitM = nil
 local limitB = nil
 -- slower autocenter at low speed
+local steeringAutocenterEnabled = nil
+M.lowspeedCoef = nil
 local autocenterEnabled = false
 local autocenterM = nil
 local autocenterN = nil
@@ -144,12 +146,26 @@ local function initSecondStage()
 
   if hydros then
     for _, h in pairs(hydros.hydros) do
-      --check if it's a steering hydro
-      if h.inputSource == "steering_input" then
+      if h.inputSource == "steering_input" then --check if it's a steering hydro
         foundSteeringHydro = true
-        --if the value is present, scale the values
         if h.steeringWheelLock then
           vehicleSteeringWheelLock = abs(h.steeringWheelLock)
+          break
+        end
+      end
+    end
+    for _, h in pairs(hydros.hydros) do
+      if h.inputSource == "steering_input" then
+        if type(h.steeringAutocenterEnabled) == "boolean" then
+          steeringAutocenterEnabled = h.steeringAutocenterEnabled
+          break
+        end
+      end
+    end
+    for _, h in pairs(hydros.hydros) do
+      if h.inputSource == "steering_input" then
+        if type(h.lowspeedCoefFFB) == "boolean" then
+          M.lowspeedCoefFFB = h.lowspeedCoefFFB
           break
         end
       end
@@ -473,11 +489,11 @@ local function inputStabilization(st, dt, filter)
   understeerInRateMult = 1
   understeerOutRateMult = 1
   local direct = filter == FILTER_DIRECT
-  local useStabilization = stabilizationEnabled and (stabilizationEnabledDirect or not direct)
+  local oversteerReduction = (steeringAutocenterEnabled == nil or steeringAutocenterEnabled == true) and stabilizationEnabled and (stabilizationEnabledDirect or not direct)
   local useUndersteerReduction = understeerReductionEnabled and (understeerReductionEnabledDirect or not direct)
   local useSlowdown = slowdownEnabled and (slowdownEnabledDirect or not direct)
   local useLimit = limitEnabled and (limitEnabledDirect or not direct)
-  if not (useLimit or useSlowdown or useStabilization or useUndersteerReduction) then
+  if not (useLimit or useSlowdown or oversteerReduction or useUndersteerReduction) then
     return st
   end
 
@@ -489,7 +505,8 @@ local function inputStabilization(st, dt, filter)
   local lowSpeedCoef = min(abs(wheelSpeed), velSqLen, 10) * 0.1
   local velLen = sqrt(velSqLen)
   local speedThreshold = 13
-  local oversteer = lowSpeedCoef * min(velLen / speedThreshold, 1) * velVec:dot(rightVec) / (velLen + 1e-10)
+  local velRightCos = velVec:dot(rightVec) / (velLen + 1e-10)
+  local oversteer = lowSpeedCoef * min(velLen / speedThreshold, 1) * velRightCos
 
   -- slower steering at high speed
   if useSlowdown then
@@ -507,8 +524,8 @@ local function inputStabilization(st, dt, filter)
   end
 
   -- oversteer reduction
-  if useStabilization then
-    local oversteerMult = lowSpeedCoef * min(velLen / (stabilizationEndSpeed + 1e-10), 1) * velVec:dot(rightVec) / (velLen + 1e-10)
+  if oversteerReduction then
+    local oversteerMult = lowSpeedCoef * min(velLen / (stabilizationEndSpeed + 1e-10), 1) * velRightCos
     local countersteer = oversteerMult * stabilizationMultiplier
     st = st + sign(countersteer) * max(0, 1 - square(st)) * min(1, abs(countersteer))
   end
@@ -573,7 +590,7 @@ local function updateGFX(dt)
     if filter == FILTER_DIRECT then
       if k == "steering" then
         -- use angle-matching for steering inputs
-        local lockType = (angle <= 0) and 0 or e.lockType
+        local lockType = (angle <= 0) and 0 or e.lockType -- quick reference, copypasted from en-US.json: 0 Disabled, 1 Normal, 2 Faster if needed, 3 Disabled if needed
         local vehicleAngle = vehicleSteeringWheelLock * 2 -- convert from jbeam scale (half range) to input scale (full range)
         local relation = angle / vehicleAngle
         -- 1:1 matching angle behaviour (in-game versus real life steering wheel angle):
@@ -634,7 +651,7 @@ local function updateGFX(dt)
     if k == "steering" then
       if playerInfo.anyPlayerSeated and not ai.isDriving() then
         if filter ~= M.lastFilterType then
-          obj:queueGameEngineLua(string.format('extensions.hook("startTracking", {Name = "ControlsUsed", Method = "%s"})', FILTER_NAME[filter]))
+          obj:queueGameEngineLua(string.format('extensions.telemetry_core.startActivity("controlsUsed", {method = "%s"})', FILTER_NAME[filter]))
           M.lastFilterType = filter
         end
       end
@@ -784,7 +801,12 @@ local function settingsChanged()
   limitB = 1 - limitM * limitStartSpeed
 
   -- slower autocenter at low speed
-  autocenterEnabled = settings.getValue("steeringAutocenterEnabled", false)
+  if type(steeringAutocenterEnabled) == "boolean" then
+    autocenterEnabled = steeringAutocenterEnabled
+  else
+    autocenterEnabled = settings.getValue("steeringAutocenterEnabled", false)
+  end
+
   local autocenterStartSpeed = 0.1
   local autocenterEndSpeed = 1.0
   autocenterM = 1 / (1e-30 + autocenterEndSpeed - autocenterStartSpeed)

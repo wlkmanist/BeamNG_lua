@@ -5,13 +5,21 @@
 require("utils")
 local json = require("json")
 local M = {}
-M.dependencies = { "core_input_actions", "core_input_categories", "core_multiseat", "tech_license" }
+M.dependencies = { "core_input_actions", "core_input_categories", "core_multiseat", "tech_license", "core_versionUpdate" }
 M.isMenuActive = false
+M.autoAssignPlayersToDevices = true
 M.devices = {}
 M.bindings = {}
 M.assignedPlayers = {}
 local actionToControl = nil
 local usedBindingFiles = nil -- nil = not tracking
+local recentDevices
+
+local function trDeviceMessage(key, productName)
+  return core_locales.contextTranslate(key, {
+    productName = core_locales.translate(productName, productName),
+  })
+end
 
 -- when bindings go through the UI, javascript side is introducing bugs in their fields; we attempt to clean that up here
 local function fixBuggyBindingFromUISide(binding)
@@ -19,6 +27,13 @@ local function fixBuggyBindingFromUISide(binding)
   binding.icon = nil
   binding.desc = nil
   binding.title = nil
+
+  binding.conflicts = nil
+  binding.actionName = nil
+  binding.isCentered = nil
+  binding.isAxis = nil
+  binding.inverted = nil
+  binding.devname = nil
 
   -- delete ffb fields that should only happen for bindings with force feedback
   if binding.action ~= "steering" then
@@ -64,6 +79,10 @@ local function fillNormalizeBindingDefaults(binding)
   if binding.ffb.forceCoef == nil then binding.ffb.forceCoef = 200 end
   if binding.ffb.smoothing == nil then binding.ffb.smoothing = 150 end
   if binding.ffb.updateType== nil then binding.ffb.updateType = 0 end
+  if binding.ffb.isVibrationEnabled == nil then binding.ffb.isVibrationEnabled = false end
+  if binding.ffb.enableThrottleForceFeedback == nil then binding.ffb.enableThrottleForceFeedback = true end
+  if binding.ffb.enableBrakeForceFeedback == nil then binding.ffb.enableBrakeForceFeedback = true end
+  if binding.ffb.deviceLightingMode == nil then binding.ffb.deviceLightingMode = "default" end
   if binding.ffbUpdateType ~= nil then binding.ffb.updateType = binding.ffbUpdateType end
   binding.ffbUpdateType = nil -- remove deprecated field (moved inside 'binding.ffb' by now)
   binding.ffb.smoothingHF = nil -- remove deprecated field
@@ -85,7 +104,7 @@ local function fillNormalizeBindingDefaults(binding)
   binding.ffb.forceCoefLowSpeed = nil -- remove deprecated field
   if binding.filterType    == nil then binding.filterType = -1 end
   if binding.angle       == nil then binding.angle = 0 end
-  if binding.lockType    == nil then binding.lockType = 1 end
+  if binding.lockType    == nil then binding.lockType = 3 end
   return binding
 end
 
@@ -131,16 +150,17 @@ local function dumpbinding(binding)
   return dumps(cleanBindingDefaults(deepcopy(binding))):gsub("\n", " "):gsub(" +", " ")
 end
 
-local menuActionMapNames = {}
-
 local function sendBindingsToGE(devname, bindings, player)
-  -- upload the provided bindings data into torque3d, associated with an specific device name
+  -- upload the provided bindings data into torque3d, associated with a specific device name
   if bindings == nil then
     log('E', 'bindings', "Error parsing bindings for device "..devname..": bindings is nil")
     return false
   end
   local count = 0
   for i,binding in pairs(bindings) do
+    if binding.unused then
+      goto continue
+    end
     local b = deepcopy(binding)
     b.action = core_input_actions.upgradeAction(b.action)
     if not b.action then
@@ -148,8 +168,7 @@ local function sendBindingsToGE(devname, bindings, player)
       goto continue
     end
 
-    local success, actionMap, actsOnChange, onChange, actsOnDown, onDown, actsOnUp, onUp, isRelative, ctx, isCentered
-    success, actionMap, actsOnChange, onChange, actsOnDown, onDown, actsOnUp, onUp, isRelative, ctx, isCentered = core_input_actions.actionToCommands(b["action"])
+    local success, actionMap, actsOnChange, onChange, actsOnDown, onDown, actsOnUp, onUp, isRelative, ctx, isCentered = core_input_actions.actionToCommands(b["action"])
     if not success then
       log('E', 'bindings', "Couldn't load action "..b["action"])
       goto continue
@@ -158,14 +177,7 @@ local function sendBindingsToGE(devname, bindings, player)
     b = fillNormalizeBindingDefaults(b)
 
     actionMap = actionMap.."ActionMap"
-    local isMenuAction = string.startswith(actionMap, core_input_actions.menuIndependentPrefix)
-    if isMenuAction then menuActionMapNames[actionMap] = true end
     local am = scenetree.findObject(actionMap)
-    if not am then
-      am = ActionMap(actionMap)
-      if isMenuAction then am:push() end
-      --log('D', 'bindings', "Registered new action map: "..actionMap)
-    end
     am:bind(devname, b.action, b.control, isCentered, b.deadzoneResting, b.deadzoneEnd, b.linearity, b.angle, b.lockType, b.isInverted, b.isForceEnabled, b.isForceInverted, b.useLogitechSDK, b.logitechVibrotactileCoef, b.logitechVibrotactileFreqMax, b.ffb.updateType, jsonEncode(b.ffb), actsOnChange, onChange, actsOnDown, onDown, actsOnUp, onUp, b.filterType, isRelative, player, ctx)
     count = count + 1
     ::continue::
@@ -375,14 +387,14 @@ local function applyInputmapDiff(base, diff)
   -- upgrade old diff format that had no support for duplicate bindings
   local allowDuplicates = version >= 1
   if not allowDuplicates then
-      for k,v in pairs(dictDiffReplaced) do
-        for kk,vv in pairs(dictBase) do
-          if vv.control == v.control then
-            log("I", "bindings", "Upgrading inputmap from old v0 format - Removing duplicate binding: "..dumps(v.control).." : "..dumps(v.action))
-            dictDiffRemoved[kk] = vv
-          end
+    for k,v in pairs(dictDiffReplaced) do
+      for kk,vv in pairs(dictBase) do
+        if vv.control == v.control then
+          log("I", "bindings", "Upgrading inputmap from old v0 format - Removing duplicate binding: "..dumps(v.control).." : "..dumps(v.action))
+          dictDiffRemoved[kk] = vv
         end
       end
+    end
   end
 
   -- merge removed bindings
@@ -427,10 +439,11 @@ local function getWritingPath(vehicleName, devicetype, pidvid)
 end
 
 local function getDeviceInfo(device)
-  local guid = WinInput.getProductGUID(device)
-  local productName = WinInput.getProductName(device)
-  local pidvid = WinInput.getVendorIDProductID(device)
-  return guid, productName, pidvid
+  local guid = Input.getProductGUID(device)
+  local productName = Input.getProductName(device)
+  local pidvid = Input.getVendorIDProductID(device)
+  local playerNumber = Input.getPlayerNumber and Input.getPlayerNumber(device) or 0
+  return guid, productName, pidvid, playerNumber
 end
 
 -- locate all existing inputmap files for the specific device & vehicle
@@ -449,7 +462,13 @@ local function getInputmapPaths(devname, guid, productName, pidvid, vehicleName,
     recursion = 0 -- used to be -1 during interaction refactor
   end
   local devicetype = string.split(devname, "%D+")[1] -- strip trailing number, if it exists (xinput0 -> xinput)
-  local prefixes = { pidvid:lower(), devicetype:lower() }
+  if not devicetype then
+    devicetype = devname or ""
+  end
+  local prefixes = { pidvid:lower() }
+  if devicetype ~= "openxr" then
+    table.insert(prefixes, devicetype:lower())
+  end
 
   local result = {}
   for _,dir in ipairs(dirs) do
@@ -474,16 +493,16 @@ local function ListToSet(list)
 end
 local function updateDevicesList(oldDevices)
   -- refreshes the list of plugged input devices, notifying UI of new/removed devices
-  local newDevicesList = WinInput.getRegisteredDevices()
+  local newDevicesList = Input.getRegisteredDevices()
   local newDevicesSet = ListToSet(newDevicesList)
   local newDevices = {}
   -- first check for new or modified devices (using devname as the id)
   for _,device in ipairs(newDevicesList) do
-    local guid, productName, pidvid = getDeviceInfo(device)
-    newDevices[device] = {guid, productName, pidvid}
+    local guid, productName, pidvid, playerNumber = getDeviceInfo(device)
+    newDevices[device] = {guid, productName, pidvid, playerNumber}
     if oldDevices[device] == nil then
       -- a new devname was found: user just plugged it
-      local msg = "Controller connected: "..productName
+      local msg = trDeviceMessage("ui.controls.device.connected", productName)
       local isCommonDevice = device == 'mouse0' or device == 'keyboard0'
 
       if not isCommonDevice then
@@ -494,14 +513,14 @@ local function updateDevicesList(oldDevices)
         local event = {controller = n, connected = true}
         guihooks.trigger('XInputControllerUpdated', event)
       elseif not isCommonDevice then
-        ui_message(msg)
+        ui_message(msg, 5, "input", "gamepad")
       end
     else
       if oldDevices[device][3] ~= pidvid then
         -- the pidvid of a devname has changed! new drivers have been loaded by Windows, or user has replaced a device veeery quickly
-        local msg = "Controller changed: "..productName
+        local msg = trDeviceMessage("ui.controls.device.changed", productName)
         log("I", "bindings", msg.." ("..device.."/0x"..pidvid..")")
-        ui_message(msg)
+        ui_message(msg, 5, "input", "gamepad")
       end
     end
   end
@@ -511,14 +530,14 @@ local function updateDevicesList(oldDevices)
       -- local guid = oldDevices[device][1]
       local productName = oldDevices[device][2]
       local pidvid = oldDevices[device][3]
-      local msg =  "Controller unplugged: "..productName
+      local msg = trDeviceMessage("ui.controls.device.unplugged", productName)
       log("I", "bindings", msg.." ("..device.."/0x"..pidvid..")")
       if string.startswith(device, "xinput") then
         local n = string.sub(device, -1, -1) -- get controller number (xinput3 -> 3)
         local event = {controller = n, connected = false}
         guihooks.trigger('XInputControllerUpdated', event)
       else
-        ui_message(msg)
+        ui_message(msg, 5, "input", "gamepad")
       end
     end
   end
@@ -574,7 +593,9 @@ local function getBindings(devname, guid, productName, pidvid, vehicleName, defa
           if not enabledActionsMap[actionClean] then
             b.unused = true
           end
-          vd.vdata.inputActions[actionClean].bound = true
+          if vd.vdata.inputActions[actionClean] then
+            vd.vdata.inputActions[actionClean].bound = true
+          end
         end
       end
 
@@ -583,6 +604,29 @@ local function getBindings(devname, guid, productName, pidvid, vehicleName, defa
   end
 
   return result
+end
+
+-- actions flagged "requiresActionEnabled" are only usable when the player's vehicle declares them in its "actionsEnabled" jbeam table
+local function markGlobalVehicleBindings(bindings, vehicle)
+  local activeActions = core_input_actions.getActiveActions()
+
+  local enabledSet
+  if vehicle then
+    local vd = extensions.core_vehicle_manager.getVehicleData(vehicle:getID())
+    if vd and vd.vdata and vd.vdata.actionsEnabled then
+      enabledSet = {}
+      for _, entry in pairs(vd.vdata.actionsEnabled) do
+        if entry.name then enabledSet[entry.name] = true end
+      end
+    end
+  end
+
+  for _, b in ipairs(bindings) do
+    local action = b.action and activeActions[b.action]
+    if action and action.requiresActionEnabled and not (enabledSet and enabledSet[b.action]) then
+      b.unused = true
+    end
+  end
 end
 
 local function getAllBindings(devices, assignedPlayers, vehicleId)
@@ -616,6 +660,8 @@ local function getAllBindings(devices, assignedPlayers, vehicleId)
       end
     end
 
+    markGlobalVehicleBindings(contents.bindings, vehicle)
+
     for _,b in ipairs(contents.bindings) do b.player = player end
     table.insert(result, {devname = devname, contents = contents})
   end
@@ -637,22 +683,8 @@ local function getControlForAction(actionName)
   return actionToControl[actionName]
 end
 
--- send current state of ffb checks to the UI side
-local FFBSafetyData -- stores information about the last known state of ffb safetiness
-local function FFBSafetyDataNotifyUI()
-  guihooks.trigger('onFFBSafetyData', FFBSafetyData)
-end
-
--- will re-check the safety of ffb update rate from scratch
-local function FFBSafetyDataRequest()
-  FFBSafetyData = nil
-  be:queueAllObjectLua("hydros.FFBSafetyDataNotifyUI()")
-  FFBSafetyDataNotifyUI()
-end
-
 local function notifyUI(reason)
-  FFBSafetyDataRequest()
-  guihooks.triggerRawJS('ControllersChanged', WinInput.getControllersInfoJson())
+  guihooks.triggerRawJS('ControllersChanged', Input.getControllersInfoJson())
   guihooks.trigger('AssignedPlayersChanged', M.assignedPlayers)
 
   -- strip actions from vehicles other than currently focused one (since those will show up with no bindings)
@@ -706,8 +738,6 @@ local function notifyGE(reason)
     end
   end
 
-
-  table.clear(menuActionMapNames)
   for _,data in pairs(M.bindings) do
     sendBindingsToGE(data.devname, data.contents.bindings, M.assignedPlayers[data.devname])
   end
@@ -751,7 +781,7 @@ local function getFFBConfig(veh)
   end
 --trigger ffb start
   action = "accelerate"
-  ffbConfig, FFBID = getFFBConfigForAction(veh, "accelerate")
+  ffbConfig, FFBID = getFFBConfigForAction(veh, action)
   if ffbConfig then
     result[action] = ffbConfig
     result[action]["FFBID"] = FFBID
@@ -771,6 +801,7 @@ local function notifyFFB(reason)
   for _,veh in ipairs(getAllVehicles()) do
     veh:queueLuaCommand("hydros.onFFBConfigChanged("..serialize(getFFBConfig(veh))..")")
   end
+  extensions.hook('onFFBConfigChanged')
 end
 
 local function notifyExtensions(reason)
@@ -812,6 +843,11 @@ local function saveBindingsFileToDisk(data, vehicleName)
   -- compute diff from default to desired data
   resetDeviceBindings(data.devicetype, data.guid, data.name, data.vidpid, vehicleName) -- revert to defaults (so we can read them and use as reference for diff)
   local defaultData = getBindings(data.devicetype, data.guid, data.name, data.vidpid, vehicleName, true)
+
+  -- remove the "unused" flag from the bindings for comparing and writing to disk
+  for k,v in pairs(defaultData.bindings) do v.unused = nil end
+  for k,v in pairs(data.bindings) do v.unused = nil end
+
   local diffData = createBindingsDiff(defaultData, data)
 
   -- write the diff to disk
@@ -890,28 +926,105 @@ local function resetBindings(desiredDevName)
   forceRefresh()
 end
 
+local function setPlayerToDevice(devname, player)
+  assignPlayerToDevice(devname, player)
+  M.assignedPlayers[devname] = player
+  M.bindings = getAllBindings(M.devices, M.assignedPlayers)
+  notifyAll("player #"..player.." assigned to device "..devname)
+end
+
 -- is called whenever player switches to a new vehicle, or to an existing vehicle, or exits a vehicle is not driving anymore
 -- new vehicle may have been added to the level, or it may be replacing an existing vehicle (which gets removed)
 -- that's why we simply re-read all vehicles' actions, instead of keeping track of which vehicle went away and which didn't
 local function onVehicleSwitched(oldId, newId, player)
   -- always reload as with the new triggers, trucks can be vastly different depending on the configuration
-  M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true)
+  if M.autoAssignPlayersToDevices then
+    M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true)
+  end
   M.bindings = getAllBindings(M.devices, M.assignedPlayers, newId)
 
-  local oldVehicle = be:getObjectByID(oldId)
-  local newVehicle = be:getObjectByID(newId)
+  local oldVehicle = getObjectByID(oldId)
+  local newVehicle = getObjectByID(newId)
   local oldName = oldVehicle and oldVehicle:getJBeamFilename() or "<none>"
   local newName = newVehicle and newVehicle:getJBeamFilename() or "<none>"
   notifyAll("player #"..player.." switched from "..oldName.." to "..newName)
 end
 
 local function onVehicleSpawned(vehId, veh)
-  M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true)
+  if M.autoAssignPlayersToDevices then
+    M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true)
+  end
   M.bindings = getAllBindings(M.devices, M.assignedPlayers, newId)
 end
 
+-- Enable the commented out part below to get a imgui window of the live status of menu-related action maps. This is useful for debugging.
+--[[
+local trackedActionMaps = {
+  MenuActionMap = true,
+  MenuIndependent_cui_gameplay_interactActionMap = true,
+  MenuIndependent_menu_item_upActionMap = true
+}
+local trackedActionMapRequestedState = {}
+
+M.onUpdate = function()
+  local im = ui_imgui
+  if not im then return end
+  local flags = im.WindowFlags_AlwaysAutoResize + im.WindowFlags_NoCollapse
+  if im.Begin("Tracked ActionMaps##inputBindingsDebug", nil, flags) then
+    local tableFlags = bit.bor(im.TableFlags_RowBg, im.TableFlags_Borders, im.TableFlags_SizingFixedFit)
+    if im.BeginTable("TrackedActionMapsTable##inputBindingsDebug", 3, tableFlags) then
+      im.TableSetupColumn("ActionMap", nil, 420)
+      im.TableSetupColumn("Requested", nil, 80)
+      im.TableSetupColumn("Live", nil, 80)
+      im.TableNextColumn()
+      im.Text("ActionMap")
+      im.TableNextColumn()
+      im.Text("Requested")
+      im.TableNextColumn()
+      im.Text("Live")
+      im.TableNextColumn()
+
+      for _, actionMapName in ipairs(tableKeysSorted(trackedActionMaps)) do
+        local requestedState = trackedActionMapRequestedState[actionMapName]
+        local actionMap = scenetree[actionMapName]
+        local liveStateText = "missing"
+        if actionMap then
+          local ok, isEnabled = true, actionMap.enabled
+          if ok then
+            liveStateText = isEnabled and "enabled" or "disabled"
+          else
+            liveStateText = "unknown"
+          end
+        end
+
+        local liveColor = im.ImVec4(1, 1, 0.35, 1)
+        if liveStateText == "enabled" then
+          liveColor = im.ImVec4(0.35, 1, 0.35, 1)
+        elseif liveStateText == "disabled" then
+          liveColor = im.ImVec4(1, 0.4, 0.4, 1)
+        elseif liveStateText == "unknown" then
+          liveColor = im.ImVec4(1, 0.7, 0.35, 1)
+        end
+
+        local requestedStateText = requestedState == nil and "n/a" or tostring(requestedState)
+        im.Text(actionMapName)
+        im.TableNextColumn()
+        im.Text(requestedStateText)
+        im.TableNextColumn()
+        im.TextColored(liveColor, liveStateText)
+        im.TableNextColumn()
+      end
+      im.EndTable()
+    end
+  end
+  im.End()
+end
+--]]
+
+
+
 -- you can call either: setMenuActionEnabled(true, "menu_item_up")
--- or:                  setMenuActionEnabled(true, "MenuIndependent_menu_item_upActionMap")
+-- or:                  setMenuActionEnabled(true, nil, "MenuIndependent_menu_item_upActionMap")
 local function setMenuActionEnabled(enabled, actionName, actionMapName)
   local prefix = core_input_actions.menuIndependentPrefix
   actionMapName = actionMapName or prefix..actionName.."ActionMap"
@@ -921,7 +1034,7 @@ local function setMenuActionEnabled(enabled, actionName, actionMapName)
     log("E", "", string.format("Failed to run setMenuActionEnabled(%q, %q, %q): the action map name '%q' isn't related to menus", enabled, actionName, actionMapName, actionMapName, prefix))
     return
   end
-  local isMenuIndependentValid = not isMenuIndependent or (isMenuIndependent and (menuActionMapNames[actionMapName] ~= nil))
+  local isMenuIndependentValid = not isMenuIndependent or (isMenuIndependent and (core_input_actions.menuActionMapNames[actionMapName] ~= nil))
   if not isMenuIndependentValid then
     log("E", "", string.format("Failed to run setMenuActionEnabled(%q, %q, %q): the %q action map name '%q' isn't recognized", enabled, actionName, actionMapName, prefix, actionMapName))
     return
@@ -931,18 +1044,86 @@ local function setMenuActionEnabled(enabled, actionName, actionMapName)
     log("E", "", string.format("Failed to run setMenuActionEnabled(%q, %q, %q): the action map '%q' does not exist", enabled, actionName, actionMapName, actionMapName))
     return
   end
+  --[[
+  if trackedActionMaps[actionMapName] then
+    print(string.format("setMenuActionEnabled(%q, %q, %q)", enabled, actionName, actionMapName))
+    trackedActionMapRequestedState[actionMapName] = enabled
+    print(debug.tracesimple())
+  end
+  ]]
   am:setEnabled(enabled)
+  return am.enabled
 end
 
+
+
+local isPopupOpen = false
+local currentRouteName = nil
+
 local function setMenuActionMapEnabled(enabled)
-  if M.isMenuActive == enabled then return end
   setMenuActionEnabled(enabled, nil, "MenuActionMap")
-  for menuActionMapName,_ in pairs(menuActionMapNames) do
-    setMenuActionEnabled(enabled, nil, menuActionMapName)
+  if enabled then
+    if M.isMenuActive ~= enabled then
+      M.isMenuActive = enabled
+      guihooks.trigger("MenuActionMapEnabled", enabled)
+    end
+    return
   end
-  M.isMenuActive = enabled
-  guihooks.trigger('MenuActionMapEnabled', enabled)
+  local changed = false
+  for actionMapName,_ in pairs(core_input_actions.menuActionMapNames) do
+    local am = scenetree[actionMapName]
+    local wasEnabled = am and am.enabled
+    if wasEnabled ~= enabled then
+      local nowEnabled = setMenuActionEnabled(enabled, nil, actionMapName)
+      if wasEnabled ~= nowEnabled then changed = true end
+    end
+  end
+  -- if changed then
+    M.isMenuActive = enabled
+    guihooks.trigger("MenuActionMapEnabled", enabled)
+  -- end
 end
+
+local function getMenuActionMapEnabled()
+  return M.isMenuActive
+end
+
+local function hasPopupInStateStack(stateStack)
+  if type(stateStack) ~= "table" then return false end
+  for _, stateName in ipairs(stateStack) do
+    if type(stateName) == "string" and string.startswith(stateName, "/popup/") then
+      return true
+    end
+  end
+  return false
+end
+
+local function updateMenuActionMapState()
+  local shouldEnable = isPopupOpen or (currentRouteName ~= nil and currentRouteName ~= "play")
+  setMenuActionMapEnabled(shouldEnable)
+end
+
+local function onAfterRouteChange(context)
+  local toRoute = context.toRoute
+  currentRouteName = toRoute and toRoute.name or nil
+
+  updateMenuActionMapState()
+end
+
+local function onUIStateTriggered(stateName, opened, stateStack)
+  local wasPopupOpen = isPopupOpen
+
+  if hasPopupInStateStack(stateStack) then
+    isPopupOpen = true
+  elseif type(stateName) == "string" and string.startswith(stateName, "/popup/") then
+    isPopupOpen = opened == true
+  end
+
+  if isPopupOpen ~= wasPopupOpen then
+    updateMenuActionMapState()
+  end
+end
+
 
 local function getAssignedPlayers()
   return M.assignedPlayers
@@ -974,7 +1155,9 @@ local function onFileChanged(filename, t)
 end
 local function onDeviceChanged()
   M.devices = updateDevicesList(M.devices)
-  M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true, true)
+  if M.autoAssignPlayersToDevices then
+    M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true, true)
+  end
   M.bindings = getAllBindings(M.devices, M.assignedPlayers)
   notifyAll("a device changed")
 end
@@ -984,7 +1167,9 @@ local function onSettingsChanged()
   local newMultiseatEnabled = settings.getValue("multiseat")
   if newMultiseatEnabled == multiseatEnabled then return end
   multiseatEnabled = newMultiseatEnabled
-  M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true, true)
+  if M.autoAssignPlayersToDevices then
+    M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true, true)
+  end
   M.bindings = getAllBindings(M.devices, M.assignedPlayers)
   notifyAll("multiseat changed")
 end
@@ -997,20 +1182,11 @@ end
 
 local function onFirstUpdate()
   M.devices = updateDevicesList(M.devices)
-  M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true)
+  if M.autoAssignPlayersToDevices then
+    M.assignedPlayers = core_multiseat.getAssignedPlayers(M.devices, true)
+  end
   M.bindings = getAllBindings(M.devices, M.assignedPlayers)
   notifyAll("input_bindings.lua init")
-end
-
--- used by vlua side to notify gelua about state of ffb safety
-local function setFFBSafetyData(data)
-  if not FFBSafetyData -- if this is the first info we receive...
-      or (data and not data.isSafeUpdateRate) -- or if it's not the first but the ffb rate is unsafe...
-      or (data and not data.isSafeUpdateType) -- or if it's not the first but the ffb type is unsafe...
-  then
-    FFBSafetyData = data -- then note it down
-  end
-  FFBSafetyDataNotifyUI()
 end
 
 local function getUsedBindingsFiles()
@@ -1019,14 +1195,117 @@ local function getUsedBindingsFiles()
   return usedBindingFiles
 end
 
+local function enableCustomModifier(player, enabled, modifier)
+  ActionMap.enableCustomModifier(player, enabled, modifier)
+end
+
+local function stringToVersion(s)
+  local a, b = s:match("^(%d+)%.(%d+)")
+  return tonumber(a), tonumber(b)
+end
+
+local controlTranslations = {
+  button6 = "rxaxis",
+  button7 = "ryaxis",
+}
+
+-- migrate the old direct input sce_pad diff files to the new one
+local function migrateScePadDiffFiles()
+  local baseDir = getWritingDir(nil)
+  -- get all subdirectories (recursive), plus the base directory itself
+  local allEntries = FS:findFiles(baseDir, "*", -1, false, true) or {}
+  table.insert(allEntries, 1, baseDir)
+  for _, entry in ipairs(allEntries) do
+    local stat = FS:stat(entry)
+    if stat and stat.filetype == "dir" then
+      local dir = entry
+      local targetPath = dir.."/sce_pad_standard.diff"
+      if not FS:fileExists(targetPath) then
+        -- build candidate paths from settings/scePadGuids.json
+        local sourcePath
+        local candidatePaths = {}
+        local settingsFile = "/settings/scePadGuids.json"
+        local guids = jsonReadFile(settingsFile)
+        for _, info in ipairs(guids) do
+          if not info.skipMigration and type(info.id) == "string" then
+            table.insert(candidatePaths, dir.."/"..string.lower(info.id)..".diff")
+          end
+        end
+        for _, p in ipairs(candidatePaths) do
+          if FS:fileExists(p) then
+            sourcePath = p
+            break
+          end
+        end
+        if sourcePath then
+          local data = jsonReadFile(sourcePath)
+          if data then
+
+            -- translate the two trigger buttons that we removed from the controller
+            for _, binding in ipairs(data.bindings) do
+              if controlTranslations[binding.control] then
+                binding.control = controlTranslations[binding.control]
+              end
+            end
+            -- overwrite only the requested identification fields
+            data.devicetype = "gamepad"
+            data.guid = "{0CE6054C-0000-0000-0000-504944564944}"
+            data.imagePack = "ps5"
+            data.vendorName = "Sony"
+            data.version = 1
+            data.vidpid = "sce_pad_standard"
+
+            if jsonWriteFile(targetPath, data, true) then
+              log('I', 'bindings', "Migrated Playstation inputmap: "..sourcePath.." -> "..targetPath)
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+local function migrationChecks()
+  -- set the setting to show the input layout popup
+  local updatedFromVersion = core_versionUpdate.updatedFromVersion()
+  if not updatedFromVersion then return end
+  local oldMajor, oldMinor = stringToVersion(updatedFromVersion)
+  if settings.getValue('showedInputLayoutPopupV37') == nil then
+    if oldMajor == 0 and oldMinor < 37 then
+      settings.setValue('showedInputLayoutPopupV37', false)
+    end
+  end
+
+  -- migrate sce_pad input map diffs to combined "sce_pad_standard.diff"
+  if oldMajor == 0 and oldMinor < 38 then
+    migrateScePadDiffFiles()
+  end
+end
+
+local function onExtensionLoaded()
+  migrationChecks()
+end
+
+local function getRecentDevices()
+  recentDevices = recentDevices or getDevicesByRecentActivity()
+  return recentDevices
+end
+
+local function onRecentDevicesChanged(_recentDevices)
+  recentDevices = _recentDevices
+  guihooks.trigger('RecentDevicesChanged', recentDevices)
+end
+
 M.onFirstUpdate = onFirstUpdate
 M.resetBindings = resetBindings
 M.saveBindingsToDisk = saveBindingsToDisk
 M.notifyUI = notifyUI
 M.menuActive = deprecatedMenuActive
 M.setMenuActionMapEnabled = setMenuActionMapEnabled
+M.getMenuActionMapEnabled = getMenuActionMapEnabled
 M.setMenuActionEnabled = setMenuActionEnabled
 M.getAssignedPlayers= getAssignedPlayers
+M.setPlayerToDevice = setPlayerToDevice
 M.onFileChanged = onFileChanged
 M.onDeviceChanged = onDeviceChanged
 M.onSettingsChanged = onSettingsChanged
@@ -1034,8 +1313,14 @@ M.onVehicleSwitched = onVehicleSwitched
 M.onVehicleSpawned = onVehicleSpawned
 M.updateGFX = updateGFX
 M.getControlForAction = getControlForAction
-M.setFFBSafetyData = setFFBSafetyData
-M.FFBSafetyDataRequest = FFBSafetyDataRequest
 M.getUsedBindingsFiles = getUsedBindingsFiles
+M.enableCustomModifier = enableCustomModifier
+M.getRecentDevices = getRecentDevices
+M.getFFBConfigForAction = getFFBConfigForAction
+
+M.onAfterRouteChange = onAfterRouteChange
+M.onUIStateTriggered = onUIStateTriggered
+M.onExtensionLoaded = onExtensionLoaded
+M.onRecentDevicesChanged = onRecentDevicesChanged
 
 return M

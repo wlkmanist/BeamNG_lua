@@ -40,7 +40,7 @@ local string_sub = string.sub
 local table_concat = table.concat
 
 local _M = {
-  max_tb_output_len = 70,    -- controls the maximum length of the 'stringified' table before cutting with ' (more...)'
+  max_tb_output_len = 700,    -- controls the maximum length of the 'stringified' table before cutting with ' (more...)'
   max_string_output_len = 700, -- controls how long the strings can be. -1 to deactivate
 }
 
@@ -391,6 +391,9 @@ function _M.stacktraceSimple(thread, message, level, level_limit, dump_locals)
       local function_name = m_user_known_functions[info.func] or m_known_functions[info.func] or info.name
       if source:sub(2, 7) == "string" then
         source = source:sub(9)
+        if source:sub(1, 1) == "\"" and source:sub(-2) == "\"]" then
+          source = source:sub(2, -3)
+        end
       end
       local was_guessed = false
       if not function_name or function_name == "?" then
@@ -405,7 +408,7 @@ function _M.stacktraceSimple(thread, message, level, level_limit, dump_locals)
       elseif info.source and info.source:sub(1,1) == '#' then
         dumper:add_f("\n(%d) Lua %s '%s' at template '%s:%d'%s", level_to_show, function_type, function_name, info.source:sub(2), info.currentline, was_guessed and " (best guess)" or "")
       else
-        dumper:add_f("\n(%d) %s:%d: %s", level_to_show, source:sub(2, -3), info.currentline, function_name)
+        dumper:add_f("\n(%d) %s:%d: %s", level_to_show, source, info.currentline, function_name)
       end
     else
       dumper:add_f("\n(%d) unknown frame %s", level_to_show, info.what)

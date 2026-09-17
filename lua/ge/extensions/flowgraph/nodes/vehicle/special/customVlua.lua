@@ -26,7 +26,7 @@ C.legacyPins = {
     vehicleId = 'vehId'
   }
 }
-C.tags = {'vlua','custom vehicle command', 'vehicle code'}
+C.tags = {'lua', 'vlua', 'command', 'code'}
 
 function C:work()
   local veh

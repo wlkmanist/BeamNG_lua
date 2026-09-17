@@ -86,6 +86,10 @@ local function updateForestItem(forestData, key, keyPos, newData, newTrans, newS
   return forestData:updateItem(key, keyPos, newData, newTrans, newScale, newUid)
 end
 
+local function setForestItemSelected(forestData, key, selected)
+  return forestData:setItemSelected(key, selected)
+end
+
 local function initialize(editorInstance)
   editor = editorInstance
   editor.rotateForestSelection = rotateForestSelection
@@ -93,6 +97,7 @@ local function initialize(editorInstance)
   editor.createForestItem = createForestItem
   editor.removeForestItem = removeForestItem
   editor.updateForestItem = updateForestItem
+  editor.setForestItemSelected = setForestItemSelected
 end
 
 local M = {}

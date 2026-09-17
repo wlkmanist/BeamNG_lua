@@ -165,7 +165,7 @@ local function addGroupToRoadsPlace(gIdx, isConformGroupToTerrain)
   for i = 1, numGroupRoads do
     local r = groupRoads[i]
     local rCopy = roadMgr.copyRoad(r)
-    local idNew = worldEditorCppApi.generateUUID()
+    local idNew = Engine.generateUUID()
     rCopy.name, rCopy.isHidden = idNew, false
     rCopy.isConformRoadToTerrain = im.BoolPtr(isConformGroupToTerrain)
     roads[ctr] = rCopy
@@ -253,7 +253,7 @@ local function createPrefabGroup(g)
     local r = roadMgr.roads[roadMgr.map[gR.r]]
     if not roads[r.name] then
       roads[r.name] = roadMgr.copyRoad(r)
-      local newName = worldEditorCppApi.generateUUID()
+      local newName = Engine.generateUUID()
       roads[r.name].name = newName
     end
   end
@@ -280,7 +280,7 @@ local function importGroup(roads, name)
   for i = 1, numRoads do
     local r = roads[i]
     gRoads[i] = roadMgr.copyRoad(r)
-    local newRId = worldEditorCppApi.generateUUID()
+    local newRId = Engine.generateUUID()
     gRoads[i].name, gRoads[i].isHidden = newRId, true
     roadMgr.setDirty(gRoads[i])
   end

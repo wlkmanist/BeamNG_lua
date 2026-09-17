@@ -1,3 +1,7 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
+
 local M = {}
 
 local api = extensions.editor_api_dynamicDecals
@@ -22,10 +26,11 @@ local startNewLivery = function()
   local vehicleObj = getPlayerVehicle(0)
 
   api.clearLayerStack()
-  local fillLayer = uiFillLayer.addLayer({
-    color = vehicleObj.color
-  })
-  uiFillLayer.setLayer(fillLayer.uid)
+  uiFillLayer.addLayer()
+  -- local fillLayer = uiFillLayer.addLayer({
+  --   color = vehicleObj.color
+  -- })
+  -- uiFillLayer.setLayer(fillLayer.uid)
 end
 
 local openSavedLivery = function(liveryPath)
@@ -67,8 +72,10 @@ M.setDecalTexture = function(texturePath)
 end
 
 M.save = function(filename)
-  local playerVehicle = extensions.core_vehicles.getCurrentVehicleDetails()
-  api.exportSkin(playerVehicle.current.key, filename)
+  -- local playerVehicle = extensions.core_vehicles.getCurrentVehicleDetails()
+  -- api.exportSkin(playerVehicle.current.key, filename)
+  local vehicleObj = getPlayerVehicle(0)
+  api.exportSkin(vehicleObj.jbeam, filename)
   uiUserDataApi.createSaveFile(filename)
   M.saveName = filename
 end

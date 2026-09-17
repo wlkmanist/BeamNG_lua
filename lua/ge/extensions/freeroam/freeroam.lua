@@ -2,14 +2,38 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+
 local M = {state={}}
+M.dependencies = {"core_environment"}
 
 local logTag = 'freeroam'
 
 local inputActionFilter = extensions.core_input_actionFilter
 
-local function startFreeroamHelper (level, startPointName, spawnVehicle)
-  core_gamestate.requestEnterLoadingScreen(logTag .. '.startFreeroamHelper')
+M.spawningOptionsHelper = {
+  -- traffic options
+  trafficMode = "fromSetting", -- options: "fromSetting", "disabled", "enabled"
+  trafficAmount = -1, -- options: -1 (auto), 0 (disabled), 1+ (amount)
+  trafficPolice = "disabled", -- options: "disabled", "enabled"
+  trafficParked = "disabled", -- options: "disabled", "enabled"
+  trafficParkedAmount = -1, -- options: -1 (auto), 0 (disabled), 1+ (amount)
+
+  -- environment options
+  timeOfDay = "default", -- options: "default", "current", "currentUtc", any of the keys from level's time of day options, or a number between 0 and 1
+  date = nil, -- unix epoch seconds, used to set the environment year/month/day
+  timePlay = "disabled", -- options: "disabled", "slow", "normal", "fast" - time progression speed
+
+  -- meta options
+  resetOptionsAfterStartingFreeroam = true, -- options: true, false
+}
+local defaultSpawningOptions = deepcopy(M.spawningOptionsHelper)
+
+M.resetSpawningOptions = function()
+  M.spawningOptionsHelper = deepcopy(defaultSpawningOptions)
+end
+
+
+local function startFreeroamHelper (level, startPointName, spawnVehicle, customLoadingFunction)
   unloadAutoExtensions()
   loadPresetExtensions()
   M.state = {}
@@ -23,13 +47,22 @@ local function startFreeroamHelper (level, startPointName, spawnVehicle)
 
   inputActionFilter.clear(0)
 
-  core_levels.startLevel(levelPath, nil, nil, spawnVehicle)
-  core_gamestate.requestExitLoadingScreen(logTag .. '.startFreeroamHelper')
+  if spawnVehicle == false then
+    -- clear the previous vehicle data so we don't spawn a vehicle
+    VariableRegistry.set('$beamngVehicle', '')
+    VariableRegistry.set('$beamngVehicleConfig', '')
+    VariableRegistry.set('$beamngVehicleColor', '')
+    VariableRegistry.set('$beamngVehicleMetallicPaintData', '')
+    VariableRegistry.set('$beamngVehicleLicenseName', '')
+    VariableRegistry.set('$beamngVehicleArgs', '')
+  end
+  core_levels.startLevel(levelPath, nil, customLoadingFunction, spawnVehicle)
 end
 
-local function startAssociatedFlowgraph(level)
--- load flowgraphs associated with this level.
-  if level.flowgraphs then
+local function startAssociatedFlowgraph(levelName)
+  local level = core_levels.getLevelByName(levelName)
+  -- load flowgraphs associated with this level.
+  if level and level.flowgraphs then
     for _, absolutePath in ipairs(level.flowgraphs or {}) do
       local relativePath = level.misFilePath..absolutePath
       local path = FS:fileExists(absolutePath) and absolutePath or (FS:fileExists(relativePath) and (relativePath) or nil)
@@ -47,7 +80,7 @@ local function startAssociatedFlowgraph(level)
   end
 end
 
-local function startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
+local function startFreeroam(level, startPointName, wasDelayed, spawnVehicle, customLoadingFunction)
   core_gamestate.requestEnterLoadingScreen(logTag)
   -- if this was a delayed start, load the FGs now.
   --if wasDelayed then
@@ -56,48 +89,103 @@ local function startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
 
   -- this is to prevent bug where freeroam is started while a different level is still loaded.
   -- Loading the new freeroam causes the current loaded freeroam to unload which breaks the new freeroam
-  local delaying = false
+  --local delaying = false
   if scenetree.MissionGroup then
     log('D', logTag, 'Delaying start of freeroam until current level is unloaded...')
-    M.triggerDelayedStart = function()
-      log('D', logTag, 'Triggering a delayed start of freeroam...')
-      M.triggerDelayedStart = nil
-      startFreeroam(level, startPointName, true, spawnVehicle)
+    local func = function()
+      startFreeroam(level, startPointName, true, spawnVehicle, customLoadingFunction)
     end
-    endActiveGameMode(M.triggerDelayedStart)
-    delaying = true
+    endActiveGameMode(triggerDelayedStartGenerator(logTag, 'freeroam', func, true))
+    --delaying = true
   elseif not core_gamestate.getLoadingStatus(logTag .. '.startFreeroamHelper') then -- remove again at some point
-    startFreeroamHelper(level, startPointName, spawnVehicle)
+    startFreeroamHelper(level, startPointName, spawnVehicle, customLoadingFunction)
     core_gamestate.requestExitLoadingScreen(logTag)
   end
   -- if there was no delaying and the function call itself didnt
   -- come from a delayed start, load the FGs (starting from main menu)
-  if not delaying then
-    startAssociatedFlowgraph(level)
-  end
+
 end
 
-local function startFreeroamByName(levelName, startPointName, wasDelayed, spawnVehicle)
+local function startFreeroamByName(levelName, startPointName, wasDelayed, spawnVehicle, customLoadingFunction)
   local level = core_levels.getLevelByName(levelName)
   if level then
-    startFreeroam(level, startPointName, wasDelayed, spawnVehicle)
+    startFreeroam(level, startPointName, wasDelayed, spawnVehicle, customLoadingFunction)
     return true
   end
   return false
 end
 
 local function onPlayerCameraReady()
-  if M.state.freeroamActive and gameplay_traffic.getState() == 'off' and settings.getValue('trafficLoadForFreeroam') then
-    log('I', logTag, 'Now spawning traffic for freeroam mode')
-    if settings.getValue('trafficParkedVehicles') then
-      gameplay_parking.setupVehicles()
-    end
-    gameplay_traffic.setupTraffic()
+  -- set up traffic, parking, and maybe other systems
+  -- figure out traffic loading and override if set in spawningOptionsHelper
+  local loadTraffic = false
+  if M.spawningOptionsHelper.trafficMode == "disabled" then
+    loadTraffic = false
+  elseif M.spawningOptionsHelper.trafficMode == "enabled" then
+    loadTraffic = true
+  end
+
+  local loadParking = false
+  if M.spawningOptionsHelper.trafficParked == "disabled" then
+    loadParking = false
+  elseif M.spawningOptionsHelper.trafficParked == "enabled" then
+    loadParking = true
+  end
+
+  local trafficAmount, parkingAmount = -1, -1
+  if M.spawningOptionsHelper.trafficAmount ~= -1 then
+    trafficAmount = M.spawningOptionsHelper.trafficAmount
+  end
+  if M.spawningOptionsHelper.trafficParkedAmount ~= -1 then
+    parkingAmount = M.spawningOptionsHelper.trafficParkedAmount
+  end
+
+  if not loadTraffic then
+    trafficAmount = 0
+  end
+  if not loadParking then
+    parkingAmount = 0
+  end
+
+  local levelName = getCurrentLevelIdentifier()
+  local level = core_levels.getLevelByName(levelName)
+  local supportsTraffic = true
+  if level then
+    supportsTraffic = level.supportsTraffic
+  end
+
+  if not supportsTraffic then
+    loadTraffic = false
+    loadParking = false
+  end
+
+  if loadTraffic and loadParking and not settings.getValue('trafficParkedVehicles') then -- use setting to disable parking in this case
+    loadParking = false
+    parkingAmount = 0
+  end
+
+  if not M.state.freeroamActive or (not loadTraffic and not loadParking) then -- return now, as nothing is needed for traffic systems
+    return
+  end
+
+  core_gamestate.requestEnterLoadingScreen('traffic')
+
+  local usePolice = M.spawningOptionsHelper.trafficPolice == "enabled"
+  local trafficOptions = {police = usePolice}
+  local parkingOptions = {}
+
+  log('I', logTag, string.format('Now spawning traffic for freeroam mode (%s parked vehicles, %s police vehicles)', loadParking and 'with' or 'without', usePolice and 'with' or 'without'))
+  gameplay_traffic.setupTrafficHelper(trafficAmount, trafficOptions, parkingAmount, parkingOptions)
+end
+
+local function onTrafficOrParkingReady()
+  if M.state.freeroamActive and core_gamestate.getLoadingStatus('traffic') then
+    core_gamestate.requestExitLoadingScreen('traffic')
   end
 end
 
 local function onClientPreStartMission(levelPath)
-  local path, file, ext = path.splitWithoutExt(levelPath)
+  local path, file, _ = path.splitWithoutExt(levelPath)
   file = path .. 'mainLevel'
   if not FS:fileExists(file..'.lua') then return end
   extensions.loadAtRoot(file,"")
@@ -107,8 +195,8 @@ local function onClientPreStartMission(levelPath)
 end
 
 local function onClientStartMission(levelPath)
-  local path, file, ext = path.splitWithoutExt(levelPath)
-  file = path .. 'mainLevel'
+  --local path, file, ext = path.splitWithoutExt(levelPath)
+  --file = path .. 'mainLevel'
 
   if M.state.freeroamActive then
     extensions.hook('onFreeroamLoaded', levelPath)
@@ -116,6 +204,98 @@ local function onClientStartMission(levelPath)
     local am = scenetree.findObject("ExplorationCheckpointsActionMap")
     if am then am:push() end
   end
+end
+
+local function dateFromEpoch(epoch)
+  epoch = tonumber(epoch)
+  if not epoch then return nil end
+
+  local ok, date = pcall(os.date, "*t", epoch)
+  if not ok or type(date) ~= "table" then return nil end
+
+  local year = tonumber(date.year)
+  local month = tonumber(date.month)
+  local day = tonumber(date.day)
+  if not year or not month or not day then return nil end
+
+  return {year = year, month = month, day = day}
+end
+
+local function onClientPostStartMission(levelPath)
+  -- set environment date if set in spawningOptionsHelper
+  if M.spawningOptionsHelper.date then
+    local date = dateFromEpoch(M.spawningOptionsHelper.date)
+    if date then
+      log('I', logTag, string.format('Setting environment date to: %04d-%02d-%02d', date.year, date.month, date.day))
+      core_environment.setTimeOfDay(date)
+    else
+      log('W', logTag, 'Environment date is invalid: ' .. tostring(M.spawningOptionsHelper.date))
+    end
+  end
+
+  -- set time of day if set in spawningOptionsHelper
+  if M.spawningOptionsHelper.timeOfDay ~= "default" then
+    log('I', logTag, 'Setting time of day to: ' .. tostring(M.spawningOptionsHelper.timeOfDay))
+    local time = M.spawningOptionsHelper.timeOfDay
+    if time == "current" then
+      core_environment.syncTimeToRealClock()
+      time = nil
+    elseif time == "currentUtc" then
+      core_environment.syncTimeToRealClockUtc()
+      time = nil
+    elseif type(time) == 'string' then
+      -- Get time of day options for the current level
+      local levelName = getCurrentLevelIdentifier()
+      local timeOfDayOptions = core_environment.getTimeOfDayOptions(levelName)
+      local timeValue = nil
+
+      -- Find the time value for the given key
+      for _, option in ipairs(timeOfDayOptions) do
+        if option.key == time then
+          timeValue = option.value
+          break
+        end
+      end
+
+      if timeValue then
+        log('I', logTag, 'Time of day found: ' .. tostring(timeValue))
+        time = timeValue
+      else
+        log('W', logTag, 'Time of day key not found: ' .. tostring(time))
+        time = nil
+      end
+    end
+    if type(time) == 'number' then
+      log('I', logTag, 'Setting time of day to: ' .. tostring(time))
+      core_environment.setTimeOfDay({time = time})
+    end
+  end
+
+   -- set time play if set in spawningOptionsHelper
+   if M.spawningOptionsHelper.timePlay and M.spawningOptionsHelper.timePlay ~= "disabled" then
+     log('I', logTag, 'Setting time progression to: ' .. tostring(M.spawningOptionsHelper.timePlay))
+
+     local dayLength = 1800 -- normal: a full day in 30 min
+     if M.spawningOptionsHelper.timePlay == "slow" then
+       dayLength = 7200
+     elseif M.spawningOptionsHelper.timePlay == "fast" then
+       dayLength = 900
+     elseif M.spawningOptionsHelper.timePlay == "realtime" then
+       dayLength = 24 * 60 * 60
+     end
+     local time = core_environment.getTimeOfDay()
+     core_environment.setTimeOfDay({play = true, dayLength = dayLength, time = time.time})
+   end
+
+   -- reset environment options to default
+   M.spawningOptionsHelper.timeOfDay = "default"
+   M.spawningOptionsHelper.date = nil
+   M.spawningOptionsHelper.timePlay = "disabled"
+
+   -- start flowgraph (except for scenarios)
+   if scenario_scenarios == nil or scenario_scenarios.getScenario() == nil then
+     startAssociatedFlowgraph(getCurrentLevelIdentifier())
+   end
 end
 
 local function onClientEndMission(levelPath)
@@ -126,7 +306,7 @@ local function onClientEndMission(levelPath)
   end
 
   if not mainLevel then return end
-  local path, file, ext = path.splitWithoutExt(levelPath)
+  local path, _, _ = path.splitWithoutExt(levelPath)
   extensions.unload(path .. 'mainLevel')
 end
 
@@ -150,7 +330,13 @@ local function onResetGameplay(playerID)
   for _, mgr in ipairs(core_flowgraphManager.getAllManagers()) do
     if mgr:blocksOnResetGameplay() then return end
   end
+
   be:resetVehicle(playerID)
+  -- if core_intapi then
+  --   core_intapi.debug_resetVehicle(playerID)
+  -- else
+  --   be:resetVehicle(playerID)
+  -- end
 end
 
 local function startTrackBuilder(levelName, forceLoad)
@@ -232,6 +418,7 @@ end
 M.startFreeroam = startFreeroam
 M.startFreeroamByName = startFreeroamByName
 M.onPlayerCameraReady = onPlayerCameraReady
+M.onTrafficOrParkingReady = onTrafficOrParkingReady
 M.onClientPreStartMission = onClientPreStartMission
 M.onClientPostStartMission = onClientPostStartMission
 M.onClientStartMission = onClientStartMission

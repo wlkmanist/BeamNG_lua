@@ -34,7 +34,7 @@ function C:work()
   if self.pinIn.colorBG.value then
     clrBG = ColorI(self.pinIn.colorBG.value[1]*255,self.pinIn.colorBG.value[2]*255,self.pinIn.colorBG.value[3]*255,self.pinIn.colorBG.value[4]*255)
   end
-  debugDrawer:drawTextAdvanced(pos, String(tostring(self.pinIn.text.value)), clr, true, false, clrBG)
+  debugDrawer:drawTextAdvanced(pos, String(tostring(self.pinIn.text.value)), clr, true, false, clrBG, false, false)
 end
 
 return _flowgraph_createNode(C)

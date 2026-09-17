@@ -14,8 +14,8 @@ C.category = 'once_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'table', name = 'vehPool', tableType = 'vehiclePool', description = 'Vehicle pool object; use the Create Pool node.' },
-  { dir = 'in', type = 'number', name = 'maxActive', description = 'Maximum amount of active vehicles in the pool; set to -1 to activate all.' },
-  { dir = 'in', type = 'number', name = 'idealActive', hidden = true, description = 'Maximum amount of active vehicles in the entire scene.' },
+  { dir = 'in', type = 'number', name = 'maxActive', description = 'Maximum amount of active vehicles in the pool; set to -1 to use max amount. Tip: Use the Activate All Vehicles node with this.' },
+  { dir = 'in', type = 'bool', name = 'globalPoolingMode', description = 'If true, the pool will limit the amount of active vehicles in the entire scene.' },
 
   { dir = 'out', type = 'table', name = 'vehicleIds', tableType = 'vehicleIds', description = 'Table of vehicle ids.' },
   { dir = 'out', type = 'table', name = 'activeVehIds', tableType = 'vehicleIds', hidden = true, description = 'Table of active vehicle ids.' },
@@ -24,7 +24,7 @@ C.pinSchema = {
   { dir = 'out', type = 'number', name = 'inactiveAmount', description = 'Amount of inactive vehicles in this pool.' }
 }
 
-C.dependencies = {'core_vehiclePoolingManager'}
+C.dependencies = {'core_vehicleActivePooling'}
 C.tags = {'traffic', 'budget', 'pooling'}
 
 function C:workOnce()
@@ -32,11 +32,11 @@ function C:workOnce()
 
   if pool then
     local amount = self.pinIn.maxActive.value
-    local idealAmount = self.pinIn.idealAmount.value
+    pool.useSceneVehiclesCap = self.pinIn.globalPoolingMode.value and true or false
     if amount and amount >= 0 then
-      pool:setMaxActiveAmount(amount, idealAmount)
+      pool:setMaxActiveAmount(amount)
     else
-      pool:setMaxActiveAmount(math.huge, idealAmount)
+      pool:setMaxActiveAmount(math.huge)
     end
 
     self.pinOut.vehicleIds.value = pool:getVehs()

@@ -68,11 +68,12 @@ end
 
 
 function C:findNodes(match)
+  local displayIds = editor.getPreference("flowgraph.debug.displayIds")
   for node in self.mgr:allNodes() do
     local grLoc = node.graph:getLocation()
     self.search:queryElement({
         id = node.id,
-        name = node.customName or node.name,
+        name = (node.customName or node.name or "")..(displayIds and " ["..node.id.."]" or ""),
         type = 'node',
         node = node,
         location = grLoc,
@@ -82,7 +83,7 @@ function C:findNodes(match)
     for _, pin in ipairs(node.pinList) do
       self.search:queryElement({
         id = pin.id,
-        name = pin.name,
+        name = pin.name..(displayIds and " ["..pin.id.."]" or ""),
         type = 'pin',
         pin = pin,
         location = node.name.."/"..grLoc,
@@ -94,11 +95,12 @@ function C:findNodes(match)
 end
 
 function C:findGraphs(match)
+  local displayIds = editor.getPreference("flowgraph.debug.displayIds")
   for _, graph in pairs(self.mgr.graphs) do
     if graph.type == 'graph' then
       self.search:queryElement( {
           id = graph.id,
-          name = graph.name,
+          name = graph.name..(displayIds and " ["..graph.id.."]" or ""),
           type = 'graph',
           graph = graph,
           frecencyId = "graph_"..graph.id,

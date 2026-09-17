@@ -137,11 +137,9 @@ local function onEditorInitialized()
     onDeactivate = editModeDeactivate,
     onUpdate = editModeUpdate,
     actionMap = "RayCastTest",
-    auxShortcuts = {}
   }
-  editor.editModes.checkTerrainCastRay.auxShortcuts["esc"] = "Exit check"
   editor.registerWindow(toolWindowName, imgui.ImVec2(200,100))
-  editor.addWindowMenuItem("Raycast Test", onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem("Raycast Test", onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
 local function onEditorToolWindowHide(wndName)

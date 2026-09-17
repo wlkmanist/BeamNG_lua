@@ -103,7 +103,7 @@ function DynamicProps:spawnProps()
     spawningOptions.autoEnterVehicle = false
     local vehId = core_vehicles.spawnNewVehicle(spawningOptions.model, spawningOptions):getId()
 
-    be:getObjectByID(vehId):setActive(0)
+    getObjectByID(vehId):setActive(0)
     self.props[vehId] = false
   end
 end
@@ -152,7 +152,7 @@ function DynamicProps:spawnProp(locationInfo, propId)
 
   forestItem:setPosition(underTheMap)
   forest:getData():updateItem(forestItem:getKey(), underTheMap, forestItem:getData(), forestItem:getTransform(), forestItem:getScale(), forestItem:getUid())
-  be:getObjectByID(propId):setActive(1)
+  getObjectByID(propId):setActive(1)
   --spawn.safeTeleport(scenetree.findObjectById(propId), (locationInfo.originPos + self.spawnOffset), quat(0, 0, 0, 0))
   local spawnPos = locationInfo.originPos + self.spawnOffset
   vehicleSetPositionRotation(propId, spawnPos.x, spawnPos.y, spawnPos.z, itemRot.x, itemRot.y, itemRot.z, itemRot.w)
@@ -186,7 +186,7 @@ function DynamicProps:onUpdate()
     center.x + self.spawnInViewRange, center.y + self.spawnInViewRange) do
 
     --check fov, actual distance etc
-    --local actualPosToCheck = locationInfo.switched and be:getObjectByID(locationInfo.linkedPropId):getPosition() or locationInfo.originPos
+    --local actualPosToCheck = locationInfo.switched and getObjectByID(locationInfo.linkedPropId):getPosition() or locationInfo.originPos
     --if checkVisibility(actualPosToCheck) then
       locationInfo.distance = locationInfo.originPos:distance(center)
       table.insert(locationsInSight, locationInfo)

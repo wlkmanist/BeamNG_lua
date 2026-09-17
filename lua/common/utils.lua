@@ -23,21 +23,18 @@ local min, max, abs, fmod, floor, random = math.min, math.max, math.abs, math.fm
 local stringformat, tableconcat = string.format, table.concat
 local str_find, str_len, str_sub, byte = string.find, string.len, string.sub, string.byte
 
-local bufTmp = buffer.new()
+local bufTmp, cBufTmp, fBufTmp = buffer.new(), buffer.new(), buffer.new()
 
 --MARK: color things
 
 function RGBtoHSV(r, g, b)
-  local cMax, cMin = max(r,g,b), min(r,g,b)
-  local cDelta = cMax - cMin
+  local cMax = max(r,g,b)
+  local cDelta = cMax - min(r,g,b)
 
   local h
-  if r == cMax then
-    h = (g-b)/(cDelta + 1e-10) % 6
-  elseif g == cMax then
-    h = (b-r)/(cDelta + 1e-10) + 2
-  else
-    h = (r-g)/(cDelta + 1e-10) + 4
+  if r == cMax then h = (g-b)/(cDelta + 1e-10) % 6
+  elseif g == cMax then h = 2 + (b-r)/(cDelta + 1e-10)
+  else h = 4 + (r-g)/(cDelta + 1e-10)
   end
 
   return h / 6, cDelta/(cMax + 1e-10), cMax
@@ -59,6 +56,7 @@ function rainbowColor(numOfSteps, step, format)
   end
 end
 
+-- r,g,b,a in [0..255]
 function color(r, g, b, a)
   return max(0, min(255, floor(r))) * 16777216 + max(0, min(255, floor(g))) * 65536 + max(0, min(255, floor(b))) * 256 + max(0, min(255, floor(a or 255)))
 end
@@ -181,21 +179,19 @@ end
 -- Compatibility: Lua-5.0
 function split(str, delim, nMax)
   local aRecord = {}
-
   if str_len(str) > 0 then
-     nMax = nMax or -1
-     local nField, nStart = 1, 1
-     local nFirst,nLast = str_find(str, delim, nStart, true)
-     while nFirst and nMax ~= 0 do
-        aRecord[nField] = str_sub(str, nStart, nFirst-1)
-        nField = nField+1
-        nStart = nLast+1
-        nFirst,nLast = str_find(str, delim, nStart, true)
-        nMax = nMax-1
-     end
-     aRecord[nField] = str_sub(str, nStart)
+    nMax = nMax or -1
+    local nField, nStart = 1, 1
+    local nFirst,nLast = str_find(str, delim, nStart, true)
+    while nFirst and nMax ~= 0 do
+      aRecord[nField] = str_sub(str, nStart, nFirst-1)
+      nField = nField+1
+      nStart = nLast+1
+      nFirst,nLast = str_find(str, delim, nStart, true)
+      nMax = nMax-1
+    end
+    aRecord[nField] = str_sub(str, nStart)
   end
-
   return aRecord
 end
 
@@ -251,15 +247,15 @@ end
 
 -- converts a byte count to a human readable string
 function bytes_to_string(bytes)
-    if bytes >= 1000 * 1000 * 1000 then
-      return ("%.2f GB"):format(bytes / (1000 * 1000 * 1000))
-    elseif bytes >= 1000 * 1000 then
-      return ("%.2f MB"):format(bytes / (1000 * 1000))
-    elseif bytes >= 1000 then
-      return ("%.2f KB"):format(bytes / 1000)
-    end
-    return ("%.2f B"):format(bytes)
+  if bytes >= 1000 * 1000 * 1000 then
+    return ("%.2f GB"):format(bytes / (1000 * 1000 * 1000))
+  elseif bytes >= 1000 * 1000 then
+    return ("%.2f MB"):format(bytes / (1000 * 1000))
+  elseif bytes >= 1000 then
+    return ("%.2f KB"):format(bytes / 1000)
   end
+  return ("%.2f B"):format(bytes)
+end
 
 -- time string format
 function formatTimeStringNow(res)
@@ -302,11 +298,7 @@ local function jsonEncode_rec(v)
   if vtype == 'string' then
     bufTmp:put('"', escapeString(v), '"')
   elseif vtype == 'number' then
-    if v * 0 ~= 0 then -- inf,nan
-      bufTmp:put(v > 0 and '-9e999' or '-9e999')
-    else
-      bufTmp:put(v)
-    end
+    bufTmp:put(v * 0 == 0 and v or (v > 0 and '9e999' or '-9e999')) -- inf,nan
   elseif vtype == 'table' then  --tables
     local kk1, vv1 = next(v)
     if kk1 == 1 and next(v, #v) == nil then
@@ -324,7 +316,7 @@ local function jsonEncode_rec(v)
       if kk1 ~= nil then
         local prefix = '{"'
         for kk, vv in pairs(v) do
-          bufTmp:put(prefix, type(kk) == 'string' and (kk) or kk, '":')
+          bufTmp:put(prefix, type(kk) == 'string' and escapeString(kk) or kk, '":')
           jsonEncode_rec(vv)
           prefix = ',"'
         end
@@ -375,7 +367,7 @@ function jsonEncodePretty(v, lvl, numberPrecision)
       return v > 0 and '9e999' or '-9e999'
     else
       if numberPrecision == nil then
-        return stringformat('%.10g', v)  -- .10g is needed for time
+        return tostring(v)
       else
         if v ~= floor(v) then
           return stringformat('%' .. numberPrecision .. '.' .. numberPrecision .. 'f', v)
@@ -482,12 +474,11 @@ function jsonWriteFile(filename, obj, pretty, numberPrecision, atomicWrite)
 end
 
 function jsonReadFile(filename)
-  local content = readFile(filename)
-  if content == nil then
+  if not io.readFileToBuffer(filename, bufTmp) then
     -- parent needs to deal with error reporting
     return nil
   end
-  return jsonDecode(content, filename)
+  return jsonDecode(bufTmp, filename)
 end
 
 function readDictJSONTable(filename)
@@ -496,11 +487,10 @@ function readDictJSONTable(filename)
   for k,v in pairs(data) do
     for k2,v2 in pairs(v) do
       if k2 > 1 then
-        -- re-add headers
-        for i=1,#v[1],1 do
-
-          v[k2][v[1][i]] = v[k2][i]
-          v[k2][i] = nil
+        local h, r = v[1], v[k2]
+        for i, hv in ipairs(v[1]) do -- headers
+          r[hv] = r[i]
+          r[i] = nil
         end
       end
     end
@@ -549,6 +539,36 @@ function setDifference(dst, src)
   return dst
 end
 
+function concatWorkBuffer(...)
+  cBufTmp:reset()
+  for i = 1, select('#', ...) do
+    local v = select(i, ...)
+    local vtype = type(v)
+    if vtype == 'number' then
+      cBufTmp:put(v * 0 == 0 and v or (v > 0 and '9e999' or '-9e999')) -- inf,nan
+    elseif vtype == 'table' then  --tables
+      for k, v1 in ipairs(v) do
+        local vtype1 = type(v1)
+        if vtype1 == 'number' then
+          cBufTmp:put(v1 * 0 == 0 and v1 or (v1 > 0 and '9e999' or '-9e999')) -- inf,nan
+        else
+          cBufTmp:put(vtype == 'boolean' and tostring(v) or v)
+        end
+      end
+    elseif vtype == 'nil' then
+      return cBufTmp
+    else
+      cBufTmp:put(vtype == 'boolean' and tostring(v) or v)
+    end
+  end
+  return cBufTmp
+end
+
+function stringFormatWorkBuffer(...)
+  fBufTmp:reset()
+  return fBufTmp:putf(...)
+end
+
 -- checks if the table is a dictionary by checking if key 1 exists
 function tableIsDict(tbl)
   if type(tbl) ~= "table" then
@@ -559,10 +579,15 @@ end
 
 function tableIsArraySlow(tbl)
   local tblSize = #tbl
+  local kInRange = 0
   for k, _ in pairs(tbl) do
-    if type(k) ~= 'number' or k < 1 or k > tblSize then return false end
+    if type(k) ~= 'number' or k < 1 or k > tblSize then
+      return false
+    else
+      kInRange = kInRange + 1
+    end
   end
-  return true
+  return kInRange == tblSize
 end
 
 function tableIsEmpty(tbl)
@@ -740,7 +765,7 @@ end
 function arrayFindValueIndex(t, val)
   for i = 1, #t do
     if t[i] == val then
-        return i
+      return i
     end
   end
   return false
@@ -865,12 +890,15 @@ end
 
 -- reads the content of a file
 function readFile(filename)
+  profilerPushEvent("readFile")
   local f = io.open(filename, "r")
   if f == nil then
+    profilerPopEvent("readFile")
     return nil
   end
   local content = f:read("*all")
   f:close()
+  profilerPopEvent("readFile")
   return content
 end
 
@@ -889,7 +917,27 @@ end
 --== User interface ==--
 
 function ui_message(msg, ttl, category, icon)
-  guihooks.message(msg, (ttl or 5), (category or ''), icon)
+  guihooks.message(msg, (ttl or 5), (category or ''), icon or "info")
+end
+
+function fillActionLabelSimple(actionSimple)
+  local actionItems = {}
+  for _, action in ipairs(actionSimple) do
+    table.insert(actionItems, { action = action })
+  end
+  return fillActionLabels(actionItems)
+end
+
+function fillActionLabels(actionItems)
+  local activeActions = core_input_actions and core_input_actions.getActiveActions and core_input_actions.getActiveActions() or {}
+  for _, actionItem in ipairs(actionItems) do
+    local actionInfo = activeActions[actionItem.action]
+    actionItem.missing = actionInfo == nil
+    if actionItem.label == nil then
+      actionItem.label = (actionInfo and actionInfo.title) or actionItem.action
+    end
+  end
+  return actionItems
 end
 
 --MARK: Extensions
@@ -915,19 +963,26 @@ local function tableMergeExceptFunc(dst, src)
   return dst
 end
 
+local function _unsafeSerializePackage(k, v, reason)
+  if type(v['onSerialize']) == 'function' then
+    return v['onSerialize'](reason) -- this is calling M.onSerialize()
+  elseif v['state'] then
+    return v.state -- this is M.state
+  else
+    return v -- this is M
+  end
+end
+
 function serializePackages(reason)
-  --log("I", 'lua.extensions', "serializePackages called.....")
   if reason == nil then reason = 'reload' end
   local tmp = {}
-  for k,v in pairs(package.loaded) do
+  for k, v in pairs(package.loaded) do
     if isPackage(k, v) and type(v) == 'table' and (v['onDeserialized'] ~= nil or v['onSerialize'] ~= nil) then
-      -- log("I", "serialize", "Package: "..k)
-      if type(v['onSerialize']) == 'function' then
-        tmp[k] = v['onSerialize'](reason)
-      elseif v['state']  then
-        tmp[k] = v.state
+      local success, result = xpcall(_unsafeSerializePackage, debug.traceback, k, v, reason)
+      if success then
+        tmp[k] = result
       else
-        tmp[k] = v
+        log('E', 'serializePackages', 'Error serializing package '..k..': '..tostring(result))
       end
     end
   end
@@ -936,25 +991,28 @@ function serializePackages(reason)
   return tmp
 end
 
+local function _unsafeDeserializePackage(k, v, data)
+  if type(v['onDeserialize']) == 'function' then
+    v['onDeserialize'](data[k])
+  elseif type(v['state']) == 'table' then
+    tableMergeExceptFunc(v['state'], data[k])
+  else
+    tableMergeExceptFunc(v, data[k])
+  end
+  if type(v['onDeserialized']) == 'function' then
+    v['onDeserialized'](data[k])
+  end
+end
+
 function deserializePackages(data, filter)
   if data == nil then return end
-  -- log("I", 'lua.extensions', "deserializePackages called.....")
-  -- Process extensions first so that calls to extensions.belongsToExtensions work with newly loaded modules
   extensions.deserialize(data)
 
   for k,v in pairs(package.loaded) do
-    --print("k="..tostring(k) .. " = " .. tostring(v))
     if isPackage(k, v) and (filter == nil or k == filter) and type(v) == 'table' and (v['onDeserialized'] ~= nil or v['onDeserialize'] ~= nil) and data[k] ~= nil then
-      --log("I", "deserialize", "Package: "..k)
-      if type(v['onDeserialize']) == 'function' then
-        v['onDeserialize'](data[k])
-      elseif type(v['state']) == 'table' then
-        tableMergeExceptFunc(v['state'], data[k])
-      else
-        tableMergeExceptFunc(v, data[k])
-      end
-      if type(v['onDeserialized']) == 'function' then
-        v['onDeserialized'](data[k])
+      local success, err = xpcall(_unsafeDeserializePackage, debug.traceback, k, v, data)
+      if not success then
+        log('E', 'deserializePackages', 'Error deserializing package '..k..': '..tostring(err))
       end
     end
   end
@@ -1022,7 +1080,7 @@ end
 
 -- returns level name and rest of path
 path.levelFromPath = function(filepath)
-  return string.match(filepath, "levels/([%w_]+)(.+)")
+  return string.match(filepath, "levels/([%w_]+)(.*)")
 end
 
 function getCurrentLevelIdentifier(raw)
@@ -1161,6 +1219,7 @@ local function serialize_rec(v)
     if v.___type == __typeQuatF then
       bufTmp:putf("QuatF(%.10g,%.10g,%.10g,%.10g)", v.x, v.y, v.z, v.w)
     else
+      bufTmp:put('nil')
       log("E", "serialize", "Unrecognized data ___type: "..dumps(v.___type))
     end
   elseif vtype == 'cdata' then
@@ -1172,10 +1231,14 @@ local function serialize_rec(v)
   end
 end
 
-function serialize(v)
+function serializeWorkBuffer(v)
   bufTmp:reset()
   serialize_rec(v)
-  return tostring(bufTmp)
+  return bufTmp
+end
+
+function serialize(v)
+  return tostring(serializeWorkBuffer(v))
 end
 
 function _kv(kv)
@@ -1240,24 +1303,17 @@ end
 
 -- timeprobe that is always first
 function timeprobeStart()
-  if not __hp__ then
-    rawset(_G, '__hp__', be and hptimer() or HighPerfTimer())
-  end
-  rawset(_G, '__prevtime__', __hp__:stopAndReset())
+  rawset(_G, '__prevtime__', os.clockhp())
 end
 
 -- prints duration in ms
 function timeprobe(omitPrint)
-  if not __hp__ then
-    rawset(_G, '__hp__', be and hptimer() or HighPerfTimer())
-  end
   if not __prevtime__ then
-    rawset(_G, '__prevtime__', __hp__:stopAndReset())
+    rawset(_G, '__prevtime__', os.clockhp())
   else
-    local t = __hp__:stopAndReset()
+    local t = os.clockhp() - __prevtime__
     if not omitPrint then
-      print(t)
-      t = be and t*0.001 or t
+      print(t * 1000)
     end
     __prevtime__ = false
     return t
@@ -1386,6 +1442,38 @@ function hex_dump(str)
     asc = asc .. ((ord >= 32 and ord <= 126) and string.char(ord) or ".")
   end
   print(hex .. string.rep("   ", 8 - len % 8 ) .. asc)
+end
+
+-- figure out if an object has teleported, by analyzing its position and speed
+-- e.g. a car that has moved 2 meters in a single frame via the insert-recovery key has been teleported
+--      but a space rocket hurtling through the solar system, that has moved 5kms in the last frame, is not a teleport
+-- IMPORTANT NOTE TO DEVELOPERS: if you modify this function, run the unit tests with: extensions.test_objectTeleported_main.test()
+local curVeltmp
+function objectTeleported(curPos, prevPos, prevVel, dt)
+  -- if we have no previous data, assume this was a teleport event
+  -- e.g. the object just got spawned from nowhere into existence, we interpret that as a teleport
+  if not curPos or not prevPos then return true end
+
+  -- if the object barely moved, assume it was not a teleport event
+  -- e.g. when changing vehicle parts, the car will respawn "in-place"; normally a few cms or dms away. we interpret that as NOT a teleporting event
+  -- e.g. we use insert-key recovery. the vehicle gets smartly placed 0.5m away to avoid spawning through a tree. this is also NOT a teleport. but if Smart recovery moves it 5 meters, then that's a teleport event
+  -- e.g. a plane travelling mach 1 gets 'recovered' in place (insert key), this is also not a teleporting event
+  -- if the object travels slow enough, assume it was not a teleport event
+  -- e.g. if the object didn't even reaching mach 1, assume it's unlikely to have been a teleport
+  -- more complex example: during a teleport, velocities might look like [10, 10, 10, 50000, 0, 0, 0]. there are two clear spikes in acceleration - two potential teleport events. however, the second potential teleport will get ignored with this check
+  local posThresholdSq = 2.25 -- assume no teleport if moved less than 1.5 meters, no matter the speed
+  local velThresholdSq = square(277 * dt) -- assume no teleport when below 1000 kmh
+  local posDeltaSq = prevPos:squaredDistance(curPos)
+  if posDeltaSq < max(posThresholdSq, velThresholdSq) then return false end
+
+  -- if the object velocity is consistent (such as, consistently extreme), assume this was not a teleport
+  -- e.g. a concorde is flying at mach 2 speed. every frame might look like a teleport, but that's just a normal day of 90s transatlantic travel for bill gates
+  curVeltmp = curVeltmp or curPos:copy()
+  curVeltmp:setSub2(curPos, prevPos) curVeltmp:setScaled(1 / dt)
+  local velDeltaSq = curVeltmp:squaredDistance(prevVel)
+  local accThresholdSq = square(350 * dt) -- absolute floor: ignore apparent accelerations below 35 Gs (space rocket mods)
+  local relThresholdSq = 2500 * prevVel:squaredLength() -- relative: a teleport changes velocity by far more (>50x) than the object's own speed, unlike a crash or recovery
+  return velDeltaSq > accThresholdSq and velDeltaSq > relThresholdSq
 end
 
 function simpleDebugText3d(text, pos, radius, sphereColor, dir)

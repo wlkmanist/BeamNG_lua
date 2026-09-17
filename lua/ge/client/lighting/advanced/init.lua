@@ -32,7 +32,7 @@ if advanceLighting then
   advancedLightingCallbacks.onActivate = function()
     -- log('I','ALM','Advanced Lighting onActivate called...')
     -- Don't allow the offscreen target on OSX.
-    local platform = getConsoleVariable("$platform")
+    local platform = VariableRegistry.get("$platform", "")
     if platform == "macos" then return end
 
     -- Enable the offscreen target so that AL will work

@@ -75,10 +75,10 @@ M.formatMission = function(m)
     additionalAttributes = {},
     progress = m.saveData.progress,
     currentProgressKey = m.currentProgressKey or m.defaultProgressKey,
-    unlocks = m.unlocks,
+    unlocks = gameplay_missions_unlocks.constructUnlocksField(m),
     hasUserSettingsUnlocked = gameplay_missions_progress.missionHasUserSettingsUnlocked(m.id),
     devMission = m.devMission,
-    tutorialActive = (career_modules_linearTutorial and career_modules_linearTutorial.isLinearTutorialActive()) or nil,
+    tutorialActive = (career_career.isActive() and career_modules_tutorial.isActive()) or nil,
   }
 
   info.hasUserSettings = #info.userSettings > 0
@@ -112,7 +112,7 @@ M.formatMission = function(m)
   return info
 end
 M.formatDataForUi = function()
-  if not M.isStateFreeroam() then return nil end
+  if not M.isStateWithPlaymodeMarkers() then return nil end
   local dataToSend = {}
   if not currentInteractableElements then return end
   for _, m in ipairs(currentInteractableElements or {}) do
@@ -126,34 +126,18 @@ M.formatDataForUi = function()
 end
 
 M.startMissionById = function(id, userSettings, startingOptions)
-  local m = gameplay_missions_missions.getMissionById(id)
-  if m then
-    if m.unlocks.startable then
-      gameplay_missions_missionManager.startWithFade(m, userSettings, startingOptions or {})
-      return
-    else
-      log("E","","Trying to start mission that is not startable due to unlocks: " .. dumps(id))
-    end
-  else
-    log("E","","Trying to start mission with invalid id: " .. dumps(id))
-  end
-
+log("E","","Deprecated startMissionById")
+  print(debug.tracesimple())
 end
 
 M.stopMissionById = function(id, force)
-  for _, m in ipairs(gameplay_missions_missions.get()) do
-    if m.id == id then
-      gameplay_missions_missionManager.attemptAbandonMissionWithFade(m, force)
-      return
-    end
-  end
+  log("E","","Deprecated stopMissionById")
+  print(debug.tracesimple())
 end
 
 M.changeUserSettings = function(id, settings)
-  local mission = gameplay_missions_missions.getMissionById(id)
-  if not mission then return end
-  mission:processUserSettings(settings)
-  guihooks.trigger('missionProgressKeyChanged', id, mission.currentProgressKey)
+  log("E","","Deprecated changeUserSettings")
+  print(debug.tracesimple())
 end
 
 local preselectedMissionId = nil
@@ -163,71 +147,7 @@ end
 
 
 local function getGameContext(fromMissionMenu)
-  if gameplay_missions_missionManager.getForegroundMissionId() ~= nil then
-    local activeMission = nil
-    for _, m in ipairs(gameplay_missions_missions.get()) do
-      if m.id == gameplay_missions_missionManager.getForegroundMissionId() then
-        activeMission = m
-      end
-    end
-    if fromMissionMenu then
-      preselectedMissionId = nil
-    end
-    return {context = 'ongoingMission', mission = M.formatMission(activeMission)}
-  else
-
-    local missions = M.formatDataForUi()
-    if M.isStateFreeroam() and missions and next(missions) then
-      if fromMissionMenu then
-        extensions.hook("onAvailableMissionsSentToUi", context)
-      end
-      local ret = {
-        context = 'availableMissions',
-        missions = missions,
-        isWalking = gameplay_walk.isWalking(),
-        isCareerActive = career_career.isActive(),
-        preselectedMissionId = fromMissionMenu and preselectedMissionId or nil,
-      }
-      if career_modules_permissions then
-        local reason = career_modules_permissions.getStatusForTag("interactMission")
-        if reason.label then
-          ret.startWarning = {label = reason.label, title ="Delivery in progress!" }
-        end
-      end
-      --ret.startWarning = {label = "Test Warning some long text", title="Warning"}
-      if career_modules_playerAttributes then
-        ret.repairOptions = {
-          {
-            type = "noRepair",
-            label = "No",
-            available = false,
-            notEnoughDisplay = "Repaired vehicle needed"
-          },
-          {
-            type = "voucherRepair",
-            label = "For 1 voucher",
-            available = career_modules_playerAttributes.getAttributeValue('voucher') >= 1,
-            notEnoughDisplay = "Not enough vouchers for repair"
-          },
-          {
-            type = "moneyRepair",
-            label = "For 1000 money",
-            available = career_modules_playerAttributes.getAttributeValue('money') >= 1000,
-            notEnoughDisplay = "Not enough money for repair"
-          }
-        }
-      end
-      if fromMissionMenu then
-        preselectedMissionId = nil
-      end
-      return ret
-    else
-      if fromMissionMenu then
-        preselectedMissionId = nil
-      end
-      return {context = 'empty' }
-    end
-  end
+  return gameplay_missions_missionScreen.getMissionScreenData()
 end
 M.getGameContext = getGameContext
 
@@ -346,6 +266,7 @@ local function displayMissionMarkers(level, dtSim, dtReal)
     globalAlpha = 0
   end
   veh = getPlayerVehicle(0)
+
   if veh then
     updateData.veh = veh
     updateData.vehPos = updateData.vehPos or vec3()
@@ -369,6 +290,8 @@ local function displayMissionMarkers(level, dtSim, dtReal)
     updateData.bbPoints = getBBPoints(updateData.bbCenter, updateData.bbHalfAxis0, updateData.bbHalfAxis1, updateData.bbHalfAxis2)
 
     updateData.highestBBPointZ = math.max(updateData.bbPoints[2].z, math.max(updateData.bbPoints[3].z, math.max(updateData.bbPoints[6].z, updateData.bbPoints[7].z)))
+  else
+    updateData.veh = nil
   end
 
   updateData.playerPosition = veh and updateData.vehPos or updateData.camPos or vec3()
@@ -433,21 +356,22 @@ local function displayMissionMarkers(level, dtSim, dtReal)
   --if not isAtParkingSpeed then
     --table.clear(currentInteractableElements)
   --end
-  
+
   table.clear(decals)
 
   local decalCount = 0
   local careerActive = (career_career and career_career.isActive())
+  local tutorialActive = gameplay_discover_freeroamTutorial_tutorial ~= nil
   table.clear(interactableElements)
   local showMissionMarkers = markersVisibleTemporary
-  markerVisibilityBySetting.showMissionMarkers = (careerActive or settings.getValue("showMissionMarkers"))
+  markerVisibilityBySetting.showMissionMarkers = (careerActive or tutorialActive or settings.getValue("showMissionMarkers"))
   --markerVisibilityBySetting.enableDragRaceInFreeroam = (careerActive or settings.getValue("enableDragRaceInFreeroam"))
   --markerVisibilityBySetting.enableDriftInFreeroam = (careerActive or settings.getValue("enableDriftInFreeroam"))
   --markerVisibilityBySetting.enableGasStationsInFreeroam = (careerActive or settings.getValue("enableGasStationsInFreeroam"))
   -- draw/show all visible markers.
   --[[
   if not timeSincePlayerTeleport then
-    timeSincePlayerTeleport = core_camera.objectTeleported(updateData.camPos, lastCamPos, playerVelLast, dtReal) and 0.5
+    timeSincePlayerTeleport = objectTeleported(updateData.camPos, lastCamPos, playerVelLast, dtReal) and 0.5
   end
   if timeSincePlayerTeleport then
     timeSincePlayerTeleport = timeSincePlayerTeleport - dtReal
@@ -459,11 +383,14 @@ local function displayMissionMarkers(level, dtSim, dtReal)
     local marker = gameplay_playmodeMarkers.getMarkerForCluster(cluster)
     if nearbyIds[cluster.id] or marker.focus then
       -- Check if the marker should be visible
-
+      cluster.focus = cluster.focus or cluster.id == M.navigationPoiId
       local showMarker = not photoModeOpen
-                         and not (editor and editor.active)
-                         and (showMissionMarkers or cluster.focus)
-      showMarker = showMarker and (not cluster.visibleBySetting or markerVisibilityBySetting[cluster.visibleBySetting])
+      and not (editor and editor.active)
+      and (showMissionMarkers or cluster.focus)
+      showMarker = showMarker and (not cluster.visibleBySetting or markerVisibilityBySetting[cluster.visibleBySetting] or cluster.focus)
+      --dump(string.format("cluster %s, is nearby: %s, marker focus: %s, cluster focus: %s", cluster.id, nearbyIds[cluster.id], marker.focus, cluster.focus))
+      --dump(string.format("cluster %s, is showMarker: %s", cluster.id, showMarker))
+      --simpleDebugText3d(string.format("marker %s, is showMarker: %s", cluster.id, showMarker), cluster.pos)
       if showMarker then
         -- debug drawing for testing
         --debugDrawer:drawTextAdvanced(marker.pos, String(tostring(cluster.id)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
@@ -485,11 +412,11 @@ local function displayMissionMarkers(level, dtSim, dtReal)
           end
         end
 
-        if not freeroam_bigMapMode.bigMapActive() and not activeMission and not core_recoveryPrompt.isOpen() and not
-          (gameplay_drift_freeroam_freeroam and gameplay_drift_freeroam_freeroam.getIsInFreeroamChallenge()) then
-          if marker.interactInPlayMode then
+        if veh then
+          if not freeroam_bigMapMode.bigMapActive() and not activeMission and not
+            (gameplay_drift_freeroam_driftSpots and gameplay_drift_freeroam_driftSpots.getIsInFreeroamChallenge()) then
+            if marker.interactInPlayMode then
             -- todo: optimize this
-            if veh then
               local canInteract = isAtParkingSpeed and (forceReevaluateOpenPrompt or parkingSpeedChanged)
               if updateData.isWalking then
                 canInteract = marker.isInAreaChanged or forceReevaluateOpenPrompt
@@ -504,9 +431,9 @@ local function displayMissionMarkers(level, dtSim, dtReal)
               end
               --simpleDebugText3d(dumps(marker.cluster.clusterId), marker.cluster.pos, 0.25)
             end
-          end
-          if marker.interactWhileMoving then
-            marker:interactWhileMoving(updateData)
+            if marker.interactWhileMoving then
+              marker:interactWhileMoving(updateData)
+            end
           end
         end
       else
@@ -551,7 +478,7 @@ local function drawDistanceColumn(targetPos)
   local dist = camPos:distance(targetPos)
   local radius = math.max(dist/400, 0.1)
   local targetPos2 = targetPos + pos2Offset
-  local alpha = clamp((dist-50)/200, 0, 0.6)
+  local alpha = clamp((dist-50)/200, 0.1, 0.6)
   columnColor.alpha = alpha
   debugDrawer:drawCylinder(targetPos, targetPos2, radius, columnColor)
 end
@@ -559,7 +486,7 @@ end
 local function resetForceVisible()
   -- Set all markers forceVisible to false
   for i, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
-    if cluster.type == "missionMarker" then
+    if string.startswith(cluster.id, "missionMarker") then
       cluster.focus = false
     end
   end
@@ -575,11 +502,12 @@ local function reachedTarget()
   end
   M.reachedTargetPos = core_groundMarkers.endWP[1]
   extensions.hook("onReachedTargetPos")
+  ui_message("bigmap.info.reachedTarget", nil, "bigmapTarget", "checkmark")
 end
 
--- gets called only while career mode is enabled
+
 local function onPreRender(dtReal, dtSim)
-  if not M.isStateFreeroam() then
+  if not gameplay_playmodeMarkers.isStateWithPlaymodeMarkers() then
     gameplay_playmodeMarkers.clear()
     return
   end
@@ -587,13 +515,14 @@ local function onPreRender(dtReal, dtSim)
   profilerPushEvent("MissionEnter groundMarkers")
   -- Disable navigation when player is close to the goal
   if gameplay_missions_missionManager then
-    if gameplay_missions_missionManager.getForegroundMissionId() == nil and core_groundMarkers.currentlyHasTarget() then
+    if gameplay_missions_missionManager.getForegroundMissionId() == nil and core_groundMarkers.currentlyHasTarget() and core_groundMarkers.clearPathOnReachingTarget then
       if freeroam_bigMapMode and not freeroam_bigMapMode.bigMapActive() and type(core_groundMarkers.endWP[1]) == "cdata" then -- is vec3
         local nextFixedWP = core_groundMarkers.routePlanner:getNextFixedWP()
         if nextFixedWP then
           drawDistanceColumn(nextFixedWP)
         end
-        if core_groundMarkers.getPathLength() < 10 then
+        --simpleDebugText3d(core_groundMarkers.getPathLength(),core_groundMarkers.getTargetPos(), 0.25)
+        if core_groundMarkers.getPathLength() < 7 then
           reachedTarget()
         end
       end
@@ -602,7 +531,7 @@ local function onPreRender(dtReal, dtSim)
       local veh = getPlayerVehicle(0)
       if veh then
         local vehPos = veh:getPosition()
-        if vehPos:distance(M.reachedTargetPos) > 50 then
+        if vehPos:distance(M.reachedTargetPos) > 20 then
           resetForceVisible()
         end
       end
@@ -653,12 +582,7 @@ local function onNavigateToMission(poiId)
   M.navigationPoiId = poiId
 end
 
-M.isStateFreeroam = function()
-  if core_gamestate.state and (core_gamestate.state.state == "freeroam" or core_gamestate.state.state == 'career') then
-    return true
-  end
-  return false
-end
+
 
 local function onClientEndMission(levelPath)
   M.navigationPoiId = nil

@@ -24,12 +24,16 @@ local function parseMapPath(a)
   end
 end
 
+local function mapTargetExists(mapName)
+  return FS:directoryExists(mapName) or FS:fileExists(mapName)
+end
+
 local function changeMap()
   if not args or not args.mapName then
     errorMsg("changeMap","map is undefined")
     return
   end
-  if not FS:directoryExists(args.mapName) and not FS:fileExists(args.mapName)  then
+  if not mapTargetExists(args.mapName) then
     errorMsg("changeMap","map not found, you may need to add a mod")
     return
   end
@@ -46,6 +50,17 @@ local function changeMap()
   args.mapName = nil
 end
 
+local function changeMapWhenModManagerReady(source)
+  if not args or not args.mapName then
+    return
+  end
+  local targetExists = mapTargetExists(args.mapName)
+  if not targetExists and not core_modmanager.isReady() then
+    return
+  end
+  changeMap()
+end
+
 local function set(data, startCmd)
   if not data then return end
   -- log("I", "set", "map ="..tostring(mname).."   a="..dumps(a))
@@ -58,9 +73,7 @@ local function set(data, startCmd)
   args = data
   args.mapName = parseMapPath(args.level)
 
-  if core_modmanager.isReady() then
-    changeMap()
-  end
+  changeMapWhenModManagerReady("set")
 end
 
 local function onExtensionLoaded()
@@ -70,25 +83,38 @@ local function onExtensionUnloaded()
 end
 
 local function onModManagerReady()
-  if args and args.mapName then
-    changeMap()
-  end
+  changeMapWhenModManagerReady("hook")
 end
 
 local function onClientPostStartMission()
 
 end
 
+local function onUpdate(dtReal, dtSim, dtRaw)
+  changeMapWhenModManagerReady("update")
+end
+
 local function onWorldReadyState(state)
   if state == 2 then
-    if args and args.camPos and args.camRot then
-      -- commands.setFreeCameraTransformJson(args.camTransform)
-
-      commands.setFreeCamera()
-      core_camera.setPosRot(0, args.camPos[1], args.camPos[2], args.camPos[3], args.camRot[1], args.camRot[2], args.camRot[3], args.camRot[4])
-      args.camPos = nil
-
-      guihooks.trigger("toastrMsg", {type="info", title="Jumped to position", msg="Successfully jumped to position"})
+    if args then
+      local didJump = false
+      if args.camPos and args.camPos[1] and args.camPos[2] and args.camPos[3] then
+        -- commands.setFreeCameraTransformJson(args.camTransform)
+        commands.setFreeCamera()
+        core_camera.setPosRot(0, args.camPos[1], args.camPos[2], args.camPos[3], args.camRot and args.camRot[1], args.camRot and args.camRot[2], args.camRot and args.camRot[3], args.camRot and args.camRot[4])
+        didJump = true
+      end
+      local fov = tonumber(args.fov)
+      if fov and fov > 0 then
+        core_camera.setFOV(0, fov)
+      end
+      local tod = tonumber(args.timeOfDay)
+      if tod then
+        core_environment.setTimeOfDay({time = tod})
+      end
+      if didJump then
+        guihooks.trigger("toastrMsg", {type="info", title="Jumped to position", msg="Successfully jumped to position"})
+      end
 
       if args.track then
         local tb = extensions['util/trackBuilder/splineTrack']
@@ -114,6 +140,7 @@ M.onSerialize         = onSerialize
 M.onDeserialized      = onDeserialized
 M.set = set
 M.onModManagerReady = onModManagerReady
+M.onUpdate = onUpdate
 M.onClientPostStartMission = onClientPostStartMission
 M.onWorldReadyState = onWorldReadyState
 

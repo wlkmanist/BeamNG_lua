@@ -411,7 +411,7 @@ local function onEditorInitialized()
     end
     deserializedData = nil
   end
-  editor.addWindowMenuItem('Add scene view', onWindowMenuItem)
+  editor.addWindowMenuItem('Add Scene View', onWindowMenuItem)
 end
 
 local function onSerialize()

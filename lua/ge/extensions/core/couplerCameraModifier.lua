@@ -4,6 +4,8 @@
 
 local M = {}
 
+M.dependencies = {"core_trailerRespawn"}
+
 local obj1OriginalDistance = 5
 local obj2OriginalDistance = 5
 
@@ -20,6 +22,7 @@ local function checkForTrailer(objId1_, objId2_)
   if playerId ~= objId1_ and playerId ~= objId2_ then return false end
 
   if objId1_ == objId2_ then return false end
+  if core_trailerRespawn.getConfigType(objId1_) ~= "Trailer" and core_trailerRespawn.getConfigType(objId2_) ~= "Trailer" then return false end
 
   local obj1 = scenetree.findObjectById(objId1_)
   local obj2 = scenetree.findObjectById(objId2_)

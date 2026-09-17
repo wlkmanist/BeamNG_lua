@@ -184,7 +184,7 @@ end
 
 local function onEditorInitialized()
   -- editor.registerInspectorTypeHandler("ticket", ticketInspectorGui)
-  editor.addWindowMenuItem("Viz Helper", onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem("Viz Helper", onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
 local function onExtensionLoaded()

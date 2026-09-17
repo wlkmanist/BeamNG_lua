@@ -7,14 +7,22 @@ local M = {}
 M.branchLevel = {
   info = 'The user has to have a certain level in a career branch.',
   editorFunction = "displayBranchLevel",
-  getLabel = function(self) return {txt = "missions.missions.unlock.attributeLevel.atLeast", context = {branchName = career_career and career_branches.getBranchById(self.branchId).name or self.branchId, level = self.level}} end,
-  conditionMet = function(self) return ((not career_career) or (not career_career.isActive()) or (not career_branches)) or career_branches.getBranchLevel(self.branchId) >= self.level end
+  getLabel = function(self) return {txt = "missions.missions.unlock.attributeLevel.atLeast", context = {branchName = career_career and career_branches.getBranchByPath(self.branchId).name or self.branchId, level = self.level}} end,
+  conditionMet = function(self) return ((not career_career) or (not career_career.isActive()) or (not career_branches)) or career_branches.getBranchLevelByPath(self.branchId) >= self.level end
 }
 
 M.league = {
   info = "The user has to have a league unlocked.",
   editorFunction = "displayLeague",
-  getLabel  = function(self) return "League" end,
+  getLabel  = function(self)
+    if not career_career.isActive() or not career_modules_branches_leagues then return "" end
+    local _, unlockLabels = career_modules_branches_leagues.isLeagueUnlocked(self.leagueId)
+    local parts = {}
+    for _, label in ipairs(unlockLabels or {}) do
+      table.insert(parts, core_locales.translateWithOrWithoutContext(label))
+    end
+    return table.concat(parts, ", ")
+  end,
   conditionMet = function(self)
     if not career_career.isActive() or not career_modules_branches_leagues then return false end
     local leagueUnlocked = career_modules_branches_leagues.isLeagueUnlocked(self.leagueId)

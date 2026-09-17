@@ -195,6 +195,7 @@ function C:closeDialogue()
     --core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
     --guihooks.trigger('MenuHide')
     --guihooks.trigger('ChangeState', 'menu')
+    guihooks.trigger('ChangeState', 'play')
     self.open = false
   end
 end
@@ -225,7 +226,14 @@ function C:openDialogue()
     for _, mid in ipairs(self.mgr.activity.nextMissions or {}) do
       local mission = gameplay_missions_missions.getMissionById(mid)
       if mission then
-        table.insert(buttonsTable,{label="Start Next Mission '" .. translateLanguage(mission.name, mission.name).."'" , cmd='gameplay_missions_missionManager.startFromWithinMission(gameplay_missions_missions.getMissionById("'..mid..'"))', disabled = not mission.unlocks.startable})
+        table.insert(
+          buttonsTable,
+          {
+            label="Start Next Mission '" .. _tr(mission.name).."'" ,
+            cmd='gameplay_missions_missionManager.startFromWithinMission(gameplay_missions_missions.getMissionById("'..mid..'"))',
+            disabled = not gameplay_missions_unlocks.isMissionStartable(mission)
+          }
+        )
       end
     end
   end
@@ -309,7 +317,7 @@ function C:openDialogue()
   end]]
 
   --{{label='ui.common.retry', cmd='scenario_scenarios.uiEventRetry()', active = scenario.result.failed}, {label='ui.scenarios.end.freeroam', cmd='scenario_scenarios.uiEventFreeRoam()'}, {label='ui.common.menu', cmd='openMenu'}, {label='ui.quickrace.changeConfig', cmd='openLightRunner'}}
-  guihooks.trigger('ChangeState', {state = 'scenario-end', params = {missionData = missionData, stats = statsData, portrait = portrait}})
+  extensions.ui_router.navigate("scenario.end", {missionData = missionData, stats = statsData, portrait = portrait})
 end
 
 function C:onNodeReset()

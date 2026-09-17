@@ -186,17 +186,16 @@ function C:closeDialogue()
     --core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
     --guihooks.trigger('MenuHide')
     --guihooks.trigger('ChangeState', 'menu')
+    guihooks.trigger('ChangeState', 'play')
     self.open = false
   end
 end
+
 function C:onClientEndMission()
   self.open = false
 end
 
 local function getConfigKey(rolling, reverse, laps, race)
-
-
-
   if rolling == nil then rolling = race.path.config.rollingStart end
   if reverse == nil then reverse = race.path.isReversed end
   if laps == nil then laps = race.lapCount end
@@ -301,7 +300,7 @@ function C:openDialogue()
 
   --dumpz(self.pinIn.stats.value, 2)
 
-  guihooks.trigger('ChangeState', {state = 'quickrace-end', params = {stats = statsData, mockScenario = scenario}});
+  extensions.ui_router.navigate("scenario.quickrace.end", {stats = statsData, mockScenario = scenario})
 end
 
 function C:closed()

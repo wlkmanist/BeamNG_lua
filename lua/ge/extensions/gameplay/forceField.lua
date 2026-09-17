@@ -13,19 +13,23 @@ local planetRadius = 5
 local mass = -60000000000000
 local forceMultiplier = 1
 
+
 local function activate()
   if active then return end
-  ui_message("ui.radialmenu2.funstuff.ForceField.activated", nil, "forceField")
+  local status = forceMultiplier > 0 and "ui.radialmenu2.funstuff.ForceField.repulsion" or "ui.radialmenu2.funstuff.ForceField.attraction"
+  ui_message({txt = "ui.radialmenu2.funstuff.ForceField.activated", context = {status = status}}, nil, "forceField")
   active = true
 end
 
-local function deactivate()
+local function deactivate(silent)
   if not active then return end
   for i = 0, be:getObjectCount()-1 do
     local veh = be:getObject(i)
     veh:queueLuaCommand("obj:setPlanets({})")
   end
-  ui_message("ui.radialmenu2.funstuff.ForceField.deactivated", nil, "forceField")
+  if not silent then
+    ui_message({txt = "ui.radialmenu2.funstuff.ForceField.deactivated", context = {status = "ui.radialmenu2.funstuff.ForceField.inactive"}}, nil, "forceField")
+  end
   active = false
 end
 

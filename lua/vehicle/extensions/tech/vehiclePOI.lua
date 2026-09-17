@@ -4,11 +4,10 @@
 
 local M = {}
 
-
 local min = math.min
 
 -- Collects all the relevant vehicle Point-Of-Interest data, for use with the sensor configuration editor.
-local function collectVehiclePOIData()
+local function collectVehiclePOIData(callback)
 
   -- Fetch the center of gravity positions (with and without wheels included).
   -- [Note: these are in world-space].
@@ -39,7 +38,7 @@ local function collectVehiclePOIData()
     frontAxleMidpoint = frontAxleMidpoint - pos,
     rearAxleMidpoint = rearAxleMidpoint - pos,
     numWheels = ctr - 1 }
-  obj:queueGameEngineLua(string.format("editor_sensorConfigurationEditor.updateCollectedVehiclePOIData(%q)", lpack.encode(cData)))
+  obj:queueGameEngineLua(string.format("%s(%q)", callback, lpack.encode(cData)))
 end
 
 

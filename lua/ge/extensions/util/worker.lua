@@ -12,6 +12,7 @@ local frame = 0
 local jobfile = '/work.json'
 local workItems = nil
 local queued = false
+local validateData = true
 
 -- -lua extensions.load('util_worker') -console -nouserpath
 
@@ -37,7 +38,7 @@ local function compileDae(daePath)
   local dst = dir .. filename:sub(1, -4) .. 'cdae'
   local dstData = dir .. filename:sub(1, -4) .. 'meshes.json'
 
-  if compileCollada(src, dst, dstData) == 0 then
+  if compileCollada(src, dst, dstData, validateData) == 0 then
     log('I', 'util_worker.compileDae', ' compiled: ' .. tostring(src) .. ' > ' .. tostring(dst))
   else
     log('E', 'util_worker.compileDae', 'unable to compile file: ' .. tostring(src))
@@ -102,7 +103,8 @@ end
 
 local function loadWork()
   --log('I', 'util_worker', 'working: ' .. tostring(jobfile))
-  --TorqueScript.eval("$disableTerrainMaterialCollisionWarning=1;$disableCachedColladaNotification=1;")
+  -- VariableRegistry.set("$disableTerrainMaterialCollisionWarning", true);
+  -- VariableRegistry.set("$disableCachedColladaNotification", true);
   workItems = jsonReadFile(jobfile)
   if not workItems then
     log('E', 'worker', 'unable to read work items from file: ' .. tostring(jobfile))

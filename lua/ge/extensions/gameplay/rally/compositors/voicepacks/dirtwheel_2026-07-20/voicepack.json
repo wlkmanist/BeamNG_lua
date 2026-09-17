@@ -1,0 +1,19 @@
+{
+  "persona": "ui.options.rally.personas.dirtwheel.name",
+  "language": "ui.options.rally.languages.english.name",
+  "dialect": "ui.options.rally.dialects.en-US.name",
+  "compositorStyle": "english/casual",
+  "notebooks": ["casual", "structured"],
+  "styleLabel": "ui.options.rally.styles.casual.name",
+  "styleDetailLevel": 10,
+  "enableSpeedScaling": true,
+  "codriverTimingOffsetSeconds": 0.0,
+  "scriptHash": "1b10ba8d6a8578ae55ae0a1c64a61b3082213ab4",
+  "reuseAudioFrom": [
+    "dirtwheel_2026-07-19"
+  ],
+  "linkWordGapMs": 0,
+  "cornerGapMs": 0,
+  "phraseGapMs": 0,
+  "pacenoteGapMs": 0
+}

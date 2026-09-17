@@ -6,8 +6,8 @@ local im = ui_imgui
 
 local C = {}
 
-C.name = 'Player Moves Start'
-C.description = 'Used to start a mission when the player moves instead of a countdown'
+C.name = 'Detect Acceleration At Start'
+C.description = 'Used to start a mission when the player moves instead of a countdown.'
 C.color = im.ImVec4(1, 1, 0, 0.75)
 C.icon = "timer"
 C.category = 'repeat_instant'
@@ -16,6 +16,19 @@ C.pinSchema = {
   { dir = 'in', type = 'number', name = 'vehId', description = "The veh id to track"},
   { dir = 'out', type = 'flow', name = 'success', description = "When the player moves" },
 }
+
+function C:init()
+  self.initialPos = nil
+  self.msgSent = true
+  self.data = {
+    useScenarioRealtimeDisplay = true
+  }
+end
+
+function C:_executionStarted()
+  self.initialPos = nil
+  self.msgSent = true
+end
 
 function C:work(args)
   if self.pinIn.reset.value then
@@ -35,19 +48,21 @@ function C:work(args)
 
     if not self.initialPos then
       self.initialPos = vec3(vehData.pos)
-      self.firstTimeFlag = true
+      self.msgSent = true
     end
 
     local hasMoved = vehData.pos:distance(self.initialPos) > 0.1
 
     -- display start message
-    if self.firstTimeFlag and not hasMoved then
-      guihooks.trigger('ScenarioRealtimeDisplay', {msg = "Accelerate to begin!", context = "drift"})
-    end
+    if self.data.useScenarioRealtimeDisplay then
+      if self.msgSent and not hasMoved then
+        guihooks.trigger('ScenarioRealtimeDisplay', {msg = _tr("missions.general.moveToStart"), context = "accelerateToBegin"})
+      end
 
-    if hasMoved and self.firstTimeFlag then
-      self.firstTimeFlag = false
-      guihooks.trigger('ScenarioRealtimeDisplay', {msg = "", context = "drift"})
+      if hasMoved and self.msgSent then
+        self.initialPosIsSet = false
+        guihooks.trigger('ScenarioRealtimeDisplay', {msg = "", context = "accelerateToBegin"})
+      end
     end
 
     if hasMoved then

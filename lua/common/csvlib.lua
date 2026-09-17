@@ -140,7 +140,7 @@ local function decode(s, sep)
           break
         end
       end
-      lineLen = max(lineLen, li)
+      lineLen = max(0, lineLen, li)
       line = tablenew(lineLen, 0)
       li = 1
       if c == 13 or c == 10 then

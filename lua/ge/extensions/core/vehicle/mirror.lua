@@ -217,7 +217,7 @@ local function vehicleEvent( evtType, vid, mirror_name )
     mouseData.startPos = vec3(mousePos.x,mousePos.y,1)
     mouseData.name = mirror_name
     mouseData.vid = vid
-    local mdata = getAnglesOffset(vid, be:getObjectByID(vid))
+    local mdata = getAnglesOffset(vid, getObjectByID(vid))
     if mdata[mirror_name] then
       mouseData.clampX = mdata[mirror_name].clampX
       mouseData.clampZ = mdata[mirror_name].clampZ

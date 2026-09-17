@@ -7,6 +7,19 @@ local ufe = ui_flowgraph_editor
 
 local C = {}
 
+function C:drawTransitionPin(pin, kind, pos, size)
+  im.SetCursorPos(pos)
+  ufe.PushStyleVar2(ufe.StyleVar_PivotSize, size)
+  ufe.BeginPin(pin.id, kind)
+  local a = im.GetCursorScreenPos()
+  local b = im.ImVec2(a.x + size.x, a.y + size.y)
+  ufe.PinRect(a, b)
+  ufe.PinPivotRect(a, b)
+  pin.imPos = im.GetCursorPos()
+  ufe.EndPin()
+  ufe.PopStyleVar(1)
+end
+
 function C:init(mgr)
   -- make our own custom pins for the borders
   local _createPin = require('/lua/ge/extensions/flowgraph/pin')
@@ -32,61 +45,20 @@ function C:customDrawEnd(builder)
   ufe.PushStyleVar1(ufe.StyleVar_PinArrowSize,20)
   ufe.PushStyleVar1(ufe.StyleVar_PinArrowWidth,20)
   --make each pin individually.
-  im.SetCursorPos(im.ImVec2(nodeRect.x, nodeRect.y))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(nodeRect.w/3,pivotSize))
-  ufe.BeginPin(self.transitionPins._in.N.id, ufe.PinKind_Input)
-  self.transitionPins._in.N.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
-
-  im.SetCursorPos(im.ImVec2(nodeRect.x, nodeRect.y+nodeRect.h*2/3))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(pivotSize,nodeRect.h/3))
-  ufe.BeginPin(self.transitionPins._in.W.id, ufe.PinKind_Input)
-  self.transitionPins._in.W.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
-
-  im.SetCursorPos(im.ImVec2(nodeRect.x+nodeRect.w*2/3, nodeRect.y+nodeRect.h))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(nodeRect.w/3,pivotSize))
-  ufe.BeginPin(self.transitionPins._in.S.id, ufe.PinKind_Input)
-  self.transitionPins._in.S.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
-
-  im.SetCursorPos(im.ImVec2(nodeRect.x+nodeRect.w, nodeRect.y))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(pivotSize,nodeRect.h/3))
-  ufe.BeginPin(self.transitionPins._in.E.id, ufe.PinKind_Input)
-  self.transitionPins._in.E.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
+  self:drawTransitionPin(self.transitionPins._in.N, ufe.PinKind_Input, im.ImVec2(nodeRect.x, nodeRect.y), im.ImVec2(nodeRect.w/3, pivotSize))
+  self:drawTransitionPin(self.transitionPins._in.W, ufe.PinKind_Input, im.ImVec2(nodeRect.x, nodeRect.y+nodeRect.h*2/3), im.ImVec2(pivotSize, nodeRect.h/3))
+  self:drawTransitionPin(self.transitionPins._in.S, ufe.PinKind_Input, im.ImVec2(nodeRect.x+nodeRect.w*2/3, nodeRect.y+nodeRect.h), im.ImVec2(nodeRect.w/3, pivotSize))
+  self:drawTransitionPin(self.transitionPins._in.E, ufe.PinKind_Input, im.ImVec2(nodeRect.x+nodeRect.w, nodeRect.y), im.ImVec2(pivotSize, nodeRect.h/3))
 
   ufe.PopStyleVar(2)
 
-
   -- out pins have no arrows and are cw side
-  im.SetCursorPos(im.ImVec2(nodeRect.x+nodeRect.w*2/3, nodeRect.y))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(nodeRect.w/3,pivotSize))
-  ufe.BeginPin(self.transitionPins._out.N.id, ufe.PinKind_Output)
-  self.transitionPins._out.N.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
-
-  im.SetCursorPos(im.ImVec2(nodeRect.x, nodeRect.y))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(pivotSize,nodeRect.h/3))
-  ufe.BeginPin(self.transitionPins._out.W.id, ufe.PinKind_Output)
-  self.transitionPins._out.W.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
-
-  im.SetCursorPos(im.ImVec2(nodeRect.x, nodeRect.y+nodeRect.h))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(nodeRect.w/3,pivotSize))
-  ufe.BeginPin(self.transitionPins._out.S.id, ufe.PinKind_Output)
-  self.transitionPins._out.S.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
-
-  im.SetCursorPos(im.ImVec2(nodeRect.x+nodeRect.w, nodeRect.y+nodeRect.h*2/3))
-  ufe.PushStyleVar2(ufe.StyleVar_PivotSize,im.ImVec2(pivotSize,nodeRect.h/3))
-  ufe.BeginPin(self.transitionPins._out.E.id, ufe.PinKind_Output)
-  self.transitionPins._out.E.imPos = im.GetCursorPos()
-  ufe.EndPin() ufe.PopStyleVar(1)
+  self:drawTransitionPin(self.transitionPins._out.N, ufe.PinKind_Output, im.ImVec2(nodeRect.x+nodeRect.w*2/3, nodeRect.y), im.ImVec2(nodeRect.w/3, pivotSize))
+  self:drawTransitionPin(self.transitionPins._out.W, ufe.PinKind_Output, im.ImVec2(nodeRect.x, nodeRect.y), im.ImVec2(pivotSize, nodeRect.h/3))
+  self:drawTransitionPin(self.transitionPins._out.S, ufe.PinKind_Output, im.ImVec2(nodeRect.x, nodeRect.y+nodeRect.h), im.ImVec2(nodeRect.w/3, pivotSize))
+  self:drawTransitionPin(self.transitionPins._out.E, ufe.PinKind_Output, im.ImVec2(nodeRect.x+nodeRect.w, nodeRect.y+nodeRect.h*2/3), im.ImVec2(pivotSize, nodeRect.h/3))
 
   ufe.PopStyleVar(1)
-
-
 end
 
 

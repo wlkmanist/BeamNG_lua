@@ -25,6 +25,7 @@ local function processEvents(objID, vehicleObj, vehicle)
     --extensions.core_input_actions.updateVehiclesActions()
     --log('D', "jbeam.events","- found ".. #vehicle.events .." Events")
   end
+  profilerPopEvent('processEvents')
 end
 
 local function processTriggers(objID, vehicleObj, vehicle)
@@ -89,7 +90,7 @@ local function processTriggers(objID, vehicleObj, vehicle)
             abo:setSphereSize(ab.size)
         end
 
-        abo.visibleDistance = 0.3
+        abo.visibleDistance = 0.15
 
         abo:update(ab.translation, ab.rotation, true, 0)
 
@@ -112,7 +113,87 @@ local function processTriggers(objID, vehicleObj, vehicle)
     end
   end
 
-  profilerPopEvent()
+  profilerPopEvent('processTriggers')
+end
+
+-- Legacy triggerEventLinks (v1) point at vehicle.events; triggerEventLinks2 uses inputActions + link metadata.
+-- Normalize v1 links at load time so execute/hover/debug paths match v2. Existing entries from *.interaction.json win.
+local function findTriggerRow(vehicle, triggerId)
+  if triggerId == nil or vehicle.triggers == nil then return nil end
+  local row = vehicle.triggers[triggerId]
+  if row == nil then
+    for _, ab in pairs(vehicle.triggers) do
+      if ab.id == triggerId or ab.name == triggerId or tostring(ab.cid) == tostring(triggerId) then
+        row = ab
+        break
+      end
+    end
+  end
+  return row
+end
+
+local function getNonEmptyTriggerLabel(vehicle, triggerId)
+  local row = findTriggerRow(vehicle, triggerId)
+  if not row or type(row.label) ~= 'string' then return nil end
+  local s = row.label:match('^%s*(.-)%s*$')
+  if s == nil or s == '' then return nil end
+  return s
+end
+
+local function ensureVehicleInputActionFromV1TargetEvent(vehicle, eventId, evt, triggerLabel, triggerId)
+  if eventId == nil or evt == nil then return end
+  vehicle.inputActions = vehicle.inputActions or {}
+  if vehicle.inputActions[eventId] ~= nil then return end
+  local title = evt.title or evt.name
+  local tl = triggerLabel and triggerLabel:match('^%s*(.-)%s*$')
+  local usedTriggerLabel = tl ~= nil and tl ~= ''
+  if usedTriggerLabel then
+    title = tl
+  end
+  vehicle.inputActions[eventId] = {
+    title = title,
+    desc = evt.desc,
+    onDown = evt.onDown,
+    onUp = evt.onUp,
+    onChange = evt.onChange,
+    ctx = evt.ctx or 'vlua',
+    cat = evt.cat or 'vehicle_specific',
+    order = evt.order,
+    icon = evt.icon,
+  }
+  if usedTriggerLabel and triggerId ~= nil then
+    local row = findTriggerRow(vehicle, triggerId)
+    if row then
+      row.label = ''
+    end
+  end
+end
+
+local function upgradeLegacyTriggerEventLinksToV2(vehicle)
+  local dict = vehicle.triggerEventLinksDict
+  if type(dict) ~= 'table' then return end
+
+  for _, actionMap in pairs(dict) do
+    if type(actionMap) == 'table' then
+      for _, linkList in pairs(actionMap) do
+        if type(linkList) == 'table' then
+          for _, lnk in ipairs(linkList) do
+            if type(lnk) == 'table' and lnk.targetEvent and lnk.version ~= 2 then
+              local eventId = lnk.targetEventId
+              local evt = lnk.targetEvent
+              if eventId and evt then
+                ensureVehicleInputActionFromV1TargetEvent(vehicle, eventId, evt, getNonEmptyTriggerLabel(vehicle, lnk.triggerId), lnk.triggerId)
+                lnk.version = 2
+                lnk.triggerInput = lnk.triggerInput or lnk.action
+                lnk.inputAction = eventId
+                lnk.namespace = 'vehicle'
+              end
+            end
+          end
+        end
+      end
+    end
+  end
 end
 
 local function processTriggerEventLinks(objID, vehicleObj, vehicle)
@@ -120,6 +201,15 @@ local function processTriggerEventLinks(objID, vehicleObj, vehicle)
 
   -- support for old triggerEventLinks sections
   if vehicle.triggerEventLinks ~= nil then
+    log(
+      'W',
+      'jbeam.events',
+      string.format(
+        'Legacy vehicle triggerEventLinks (v1) present; prefer triggerEventLinks2 with *.interaction.json inputActions. model=%s dir=%s',
+        tostring(vehicle.model),
+        tostring(vehicle.vehicleDirectory)
+      )
+    )
     vehicle.triggerEventLinksDict = {}
 
     for _, lnk in pairs(vehicle.triggerEventLinks) do
@@ -190,8 +280,9 @@ local function processTriggerEventLinks(objID, vehicleObj, vehicle)
       ::continue3::
     end
   end
+  upgradeLegacyTriggerEventLinksToV2(vehicle)
 
-  profilerPopEvent()
+  profilerPopEvent('processTriggerEventLinks')
 end
 
 
@@ -202,7 +293,7 @@ local function process(objID, vehicleObj, vehicle)
   processTriggers(objID, vehicleObj, vehicle)
   processTriggerEventLinks(objID, vehicleObj, vehicle)
 
-  profilerPopEvent() -- jbeam/meshs.process
+  profilerPopEvent('jbeam/events.process')
 end
 
 M.process = process

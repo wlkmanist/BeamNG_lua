@@ -3,6 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
+M.dependencies = {"core_forest"}
 local logTag = 'editor_levelValidator'
 local im = ui_imgui
 local toolWindowName = "levelValidator"
@@ -30,6 +31,8 @@ local filteredLogs
 
 local removedForestItems = {}
 local logsToRemove = {}
+local ignoredObjects = {}
+local showIgnored = false
 
 local sortingFunctions = {}
 
@@ -79,6 +82,60 @@ end
 
 local sortingParam
 local sortBackwards = false
+
+-- Helper functions for ignored objects
+local function getIgnoreKey(logItem)
+  if logItem.forestItem then
+    return "forest_" .. logItem.forestItem:getKey()
+  elseif logItem.objectId then
+    return "object_" .. logItem.objectId
+  end
+  return nil
+end
+
+local function isLogItemIgnored(logItem)
+  local key = getIgnoreKey(logItem)
+  return key and ignoredObjects[key] or false
+end
+
+local function setLogItemIgnored(logItem, ignored)
+  local key = getIgnoreKey(logItem)
+  if key then
+    if ignored then
+      ignoredObjects[key] = true
+      -- Set canFloatAboveGround field on the object
+      if logItem.objectId then
+        local object = scenetree.findObjectById(logItem.objectId)
+        if object then
+          object:setField("canFloatAboveGround", 0, "true")
+          editor.setDirty()
+        end
+      end
+    else
+      ignoredObjects[key] = nil
+      -- Remove canFloatAboveGround field when un-ignoring
+      if logItem.objectId then
+        local object = scenetree.findObjectById(logItem.objectId)
+        if object then
+          object:setField("canFloatAboveGround", 0, "false")
+          editor.setDirty()
+        end
+      end
+    end
+  end
+end
+
+local function clearAllIgnored()
+  ignoredObjects = {}
+end
+
+local function getIgnoredCount()
+  local count = 0
+  for _ in pairs(ignoredObjects) do
+    count = count + 1
+  end
+  return count
+end
 
 local function reverse(list)
   local i, j = 1, #list
@@ -173,7 +230,7 @@ local function buildNodes(job)
   local objects = findAllObjects(SOTStaticShape)
 
   for _, obj in ipairs(objects) do
-    if obj:isSubClassOf("TSStatic") then
+    if obj:isSubClassOf("TSStatic") and obj.canSave then
       local bb = obj:getWorldBox()
       if not isBoxTooBig(bb) then
         local minDiff = getBBMinDiff(bb)
@@ -335,8 +392,14 @@ local function testObjects(job)
       local prefab = Prefab.getPrefabByChild(object)
       if prefab then
         table.insert(objectLogs, {logLevel = "W", type = "floating", objectId = prefab:getID(), prefabChildId = id, message = "An object inside this prefab is floating: " .. prefab:getID(), onCheck = true})
+        if object and object:canFloatAboveGround() then
+          table.insert(objectLogs, {logLevel = "W", type = "floating", objectId = prefab:getID(), prefabChildId = id, message = "An object inside this prefab is floating: " .. prefab:getID(), onCheck = true})
+        end
       else
         table.insert(objectLogs, {logLevel = "W", type = "floating", objectId = id, message = "This object is floating: " .. id, onCheck = true})
+        if object and object:canFloatAboveGround() then
+          setLogItemIgnored({logLevel = "W", type = "floating", objectId = id, message = "This object is floating: " .. id, onCheck = true}, true)
+        end
       end
       job.yield()
     end
@@ -356,7 +419,14 @@ local function testObjects(job)
     local object = scenetree.findObject(name)
     if object then
       local class = object:getClassName()
-      if object:isSubClassOf("SceneObject") and object:getClassName() ~= "ProceduralMesh" then -- Skip procedural meshes for now as they will always produce false positives
+      if object:isSubClassOf("SceneObject") and object:getClassName() ~= "ProceduralMesh" and object.canSave then -- Skip procedural meshes for now as they will always produce false positives
+        local scale = object:getScale()
+        local scaleEps = 1e-10
+        if class ~= "PointLight" and (math.abs(scale.x) < scaleEps or math.abs(scale.y) < scaleEps or math.abs(scale.z) < scaleEps) then
+          table.insert(objectLogs, {logLevel = "E", type = "scale", objectId = object:getID(), message = string.format("This %s has zero or near-zero scale on an axis (%.6g, %.6g, %.6g): %s", class, scale.x, scale.y, scale.z, object:getID()), onCheck = true})
+          job.yield()
+        end
+
         -- Check decal roads, mesh roads, rivers for not enough nodes
         if (class == "DecalRoad" or class == "MeshRoad" or class == "River") and object:getNodeCount() < 2 then
           table.insert(objectLogs, {logLevel = "E", type = "spline", objectId = object:getID(), message = "This " ..  object:getClassName() .. " has less than 2 nodes: " .. object:getID(), onCheck = true})
@@ -458,6 +528,7 @@ local function checkLevel(job)
   checkFinished = 2
   numberOfIssues = #levelLogs
   editor.log("Found " .. numberOfIssues .. " issues.")
+  extensions.hook("onLevelValidationFinished", levelLogs)
 end
 
 local function filterButton(logLevel, name)
@@ -494,7 +565,7 @@ local function rowHeader(title, functionName)
 end
 
 local function startLevelValidation()
-  local showAdditionalLogs = editor.getPreference("levelValidator.general.extendedLogs")
+  local showAdditionalLogs = editor and editor.getPreference and editor.getPreference("levelValidator.general.extendedLogs") or false
   if showAdditionalLogs then
     levelLogs = getLevelLogs()
   else
@@ -517,21 +588,28 @@ local function onEditorGui()
       if checkFinished == 1 then
         im.TextColored(im.ImVec4(1, 1, 0, 1.0), "Searching for issues...")
       elseif checkFinished == 2 then
-        im.TextColored(im.ImVec4(0, 1, 0, 1.0), "Check finished. Found " .. numberOfIssues .. " issues.")
+        local foundText = "Check finished. Found " .. numberOfIssues-getIgnoredCount() .. " issues"
+        if getIgnoredCount() > 0 then
+          foundText = foundText .. " (" .. getIgnoredCount() .. " ignored)"
+        end
+        im.TextColored(im.ImVec4(0, 1, 0, 1.0), foundText)
         im.SameLine()
-        if im.Button("Delete all duplicates") then
-          editor.history:beginTransaction("DeleteDuplicates")
+        if im.Button("Delete all duplicates (WARNING: This cannot be undone with ctrl+z)") then
           for i, logItem in ipairs(levelLogs) do
             if logItem.onCheck and logItem.type == "duplicate" and not logItem.prefabChildId then
               if logItem.forestItem then
-                editor.history:commitAction("DeleteForestItem", {forestItem = logItem.forestItem, logItem = logItem, logIndex = i}, deleteForestItemUndo, deleteForestItemRedo)
+                editor.removeForestItem(forestData, logItem.forestItem)
                 editor.forestDirty = true
+                logsToRemove[i] = true
               elseif logItem.objectId then
-                editor.history:commitAction("DeleteObject", {objectId = logItem.objectId, logItem = logItem, logIndex = i}, deleteObjectUndo, deleteObjectRedo)
+                local obj = Sim.findObjectById(logItem.objectId)
+                if obj then
+                  obj:deleteObject()
+                end
+                logsToRemove[i] = true
               end
             end
           end
-          editor.history:endTransaction()
           editor.setDirty()
         end
         im.Spacing()
@@ -546,12 +624,50 @@ local function onEditorGui()
         im.SameLine()
         filterButton('D', "Debug")
 
+        -- Show Ignored filter button
+        if getIgnoredCount() > 0 then
+          im.SameLine()
+          im.Text("|")
+          im.SameLine()
+          local buttonActive = false
+          if showIgnored then
+            im.PushStyleColor2(im.Col_Button, im.GetStyleColorVec4(im.Col_ButtonActive))
+            buttonActive = true
+          end
+          if im.Button("Show Ignored (" .. getIgnoredCount() .. ")") then
+            showIgnored = not showIgnored
+          end
+          if buttonActive then
+            im.PopStyleColor()
+          end
+          im.tooltip("Toggle visibility of ignored objects")
+        end
+
+        -- First, process ignored items (keep as Warning level)
+        local processedLogs = {}
+        for _, logItem in ipairs(levelLogs) do
+          local isIgnored = isLogItemIgnored(logItem)
+          if isIgnored then
+            if showIgnored then
+              -- Create a shallow copy and keep as Warning level
+              local modifiedItem = shallowcopy(logItem)
+              modifiedItem._originalLogLevel = logItem.logLevel
+              table.insert(processedLogs, modifiedItem)
+            end
+            -- If not showing ignored, skip this item
+          else
+            table.insert(processedLogs, logItem)
+          end
+        end
+
+        -- Then apply log level filters
         local filterFunctions = {}
         for logLevel, _ in pairs(logLevelFilters) do
           table.insert(filterFunctions, filterLogLevel(logLevel))
         end
 
-        filteredLogs = tableFilter(levelLogs, filterFunctions)
+        filteredLogs = tableFilter(processedLogs, filterFunctions)
+
         if sortingParam then
           table.sort(filteredLogs, sortingFunctions[sortingParam])
           if sortBackwards then
@@ -606,6 +722,7 @@ local function onEditorGui()
         for i, logItem in ipairs(filteredLogs) do
           local object
           if logItem.objectId then object = scenetree.findObjectById(logItem.objectId) end
+          local isIgnored = logItem._originalLogLevel ~= nil
           local logColor = logColors[(logItem.logLevel or "")] or im.ImVec4(1,1,1,1)
           im.PushStyleColor2(im.Col_Text, logColor)
           local textSize = im.CalcTextSize(logItem.message:sub(1, 1000) or "", nil, nil, im.GetColumnWidth(2) - im.GetStyle().ItemSpacing.x)
@@ -644,7 +761,12 @@ local function onEditorGui()
           im.NextColumn()
 
           im.PushTextWrapPos(im.GetCursorPosX() + im.GetColumnWidth() - im.GetStyle().ItemSpacing.x)
-          im.TextWrapped(logItem.message:sub(1, 1000) or "") -- TODO
+          -- Add [IGNORED] prefix for ignored items
+          local displayMessage = logItem.message:sub(1, 1000) or ""
+          if isIgnored then
+            displayMessage = "[IGNORED] " .. displayMessage
+          end
+          im.TextWrapped(displayMessage)
           im.PopTextWrapPos()
 
           im.SameLine()
@@ -656,9 +778,46 @@ local function onEditorGui()
                 editor.history:commitAction("DeleteForestItem", {forestItem = logItem.forestItem, logItem = logItem, logIndex = i}, deleteForestItemUndo, deleteForestItemRedo)
                 editor.forestDirty = true
                 editor.setDirty()
+                logItem.forestItem = nil
               elseif logItem.objectId then
                 editor.history:commitAction("DeleteObject", {objectId = logItem.objectId, logItem = logItem, logIndex = i}, deleteObjectUndo, deleteObjectRedo)
                 editor.setDirty()
+                object = nil
+              end
+            end
+
+            -- Show Ignore or Un-ignore button only for floating objects
+            if logItem.type == "floating" and logItem.objectId then
+              im.SameLine()
+              if isIgnored then
+                if im.Button("Un-ignore##" .. i) then
+                end
+                if editor.IsItemClicked() then
+                  setLogItemIgnored(logItem, false)
+                end
+              else
+                if im.Button("Ignore Object##" .. i) then
+                end
+                if editor.IsItemClicked() then
+                  setLogItemIgnored(logItem, true)
+                end
+              end
+            end
+
+          end
+          if logItem.prefabChildId and object then
+            im.SameLine()
+            if isIgnored then
+              if im.Button("Un-ignore##" .. i) then
+              end
+              if editor.IsItemClicked() then
+                setLogItemIgnored(logItem, false)
+              end
+            else
+              if im.Button("Ignore Object##" .. i) then
+              end
+              if editor.IsItemClicked() then
+                setLogItemIgnored(logItem, true)
               end
             end
           end
@@ -732,7 +891,97 @@ local function onEditorPreferenceValueChanged(path, value)
     checkFinished = nil
   end
 end
+local function getLevelLogs()
+  return levelLogs
+end
+local function getLevelLogsAggregated()
 
+  local adjustedLevelLogs = {}
+
+  for _, l in ipairs(levelLogs) do
+    local log = deepcopy(l)
+    if log.objectId or log.prefabChildId then
+      local object = scenetree.findObjectById(l.objectId)
+      if log.prefabChildId then
+        object = scenetree.findObjectById(log.prefabChildId)
+      end
+      if object then
+        log.objectName = object.getName and object:getName() or ""
+        if not log.objectName or log.objectName == "" then
+          log.objectName = object.getInternalName and object:getInternalName() or "No Name!"
+        end
+        log.objectPos = object:getPosition()
+      end
+    elseif l.forestItem then
+      log.objectName = l.forestItem:getData():getName()
+      log.objectPos = l.forestItem:getPosition()
+      log.forestShape = l.forestItem:getData():getShapeFile()
+    end
+
+    if log.objectPos then
+      local rot = core_camera.getQuat()
+      local center = log.objectPos
+      local pos = center + rot * vec3(0, -15, 0)
+      local rot = quatFromDir(center - pos)
+      if pos.x ~= 0 or pos.y ~=0 or pos.z ~= 0 then
+        log.cameraPos = {pos.x, pos.y, pos.z}
+        log.cameraRot = {rot.x, rot.y, rot.z, rot.w}
+      end
+    end
+
+    if log.type == "duplicate" then
+      log.type = "Duplicated Object"
+      if log.forestItem then
+        log.type = "Duplicated Forest Item"
+      end
+    elseif log.type == "floating" then
+      log.type = "Floating Object"
+      if log.forestItem then
+        log.type = "Floating Forest Item"
+      end
+    elseif log.type == "spline" then
+      log.type = "Spline Misconfigured"
+    elseif log.type == "scale" then
+      log.type = "Zero or Near-Zero Scale"
+    end
+
+    table.insert(adjustedLevelLogs, log)
+  end
+
+
+
+
+  local types = {
+    ["Duplicated Object"] = 1,
+    ["Floating Object"] = 2,
+    ["Spline Misconfigured"] = 3,
+    ["Duplicated Forest Item"] = 4,
+    ["Floating Forest Item"] = 5,
+  }
+  local aggregatedElements = {
+    elementsByType = {},
+  }
+  for type, idx in pairs(types) do
+    aggregatedElements.elementsByType[idx] = { elements = {}, count = 0, type = type }
+  end
+
+
+  for _, log in ipairs(adjustedLevelLogs) do
+    if not types[log.type] then
+      types[log.type] = #tableKeys(types) + 1
+    end
+    if not aggregatedElements.elementsByType[types[log.type]] then
+      aggregatedElements.elementsByType[types[log.type]] = { elements = {}, count = 0, type = log.type }
+    end
+    table.insert(aggregatedElements.elementsByType[types[log.type]].elements, log)
+    aggregatedElements.elementsByType[types[log.type]].count = aggregatedElements.elementsByType[types[log.type]].count + 1
+  end
+  return aggregatedElements
+end
+
+M.startLevelValidation = startLevelValidation
+M.getLevelLogs = getLevelLogs
+M.getLevelLogsAggregated = getLevelLogsAggregated
 M.onClientStartMission = onClientStartMission
 M.onEditorGui = onEditorGui
 M.onEditorInitialized = onEditorInitialized

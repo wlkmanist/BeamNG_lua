@@ -16,7 +16,7 @@ local jbeamIO = require('jbeam/io')
 LUA 5.1 compatible
 
 Ordered Table
-keys added will be also be stored in a metatable to recall the insertion oder
+keys added will be also be stored in a metatable to recall the insertion order
 metakeys can be seen with for i,k in ( <this>:ipairs()  or ipairs( <this>._korder ) ) do
 ipairs( ) is a bit faster
 
@@ -88,7 +88,7 @@ local function unifyParts(target, source_raw, level, slotOptions, partPath)
       if type(section) == "table" and not tableIsDict(section) then
         local localSlotOptions = deepcopy(slotOptions) or {}
         localSlotOptions.partOrigin = source.partName
-        --localSlotOptions.partPath = partPath
+        localSlotOptions.partPath = partPath
         --localSlotOptions.partLevel = level
         table.insert(target[sectionKey], 2, localSlotOptions)
         -- now we need to negate the slotoptions out again
@@ -111,7 +111,7 @@ local function unifyParts(target, source_raw, level, slotOptions, partPath)
           else
             localSlotOptions = deepcopy(slotOptions) or {}
             localSlotOptions.partOrigin = source.partName
-            --localSlotOptions.partPath = partPath
+            localSlotOptions.partPath = partPath
             --localSlotOptions.partLevel = level
             --localSlotOptions.partOrigin = sectionKey .. '/' .. source.partName
             table.insert(target[sectionKey], localSlotOptions)
@@ -119,6 +119,8 @@ local function unifyParts(target, source_raw, level, slotOptions, partPath)
         else
           --it's a key value pair, check how to proceed with merging potentially existing values
           -- check if magic $ appears in the KEY, if new value is a number (for example "$+MyFoo": 42)
+          -- Note: This is NOT variable substitution (which happens earlier in variables.lua).
+          -- This is for MERGING strategies (add, multiply, min, max) for numeric values.
           if type(v3) == "number" and str_byte(k3, 1) == 36 then
             local actualK3 = k3:sub(3) --remove the magic chars at the beginning to get the actual KEY, this can potentially lead to issues if k3 omits the second magic char
             local existingValue = target[sectionKey][actualK3]
@@ -181,20 +183,21 @@ local function partFitsSlot(part, slot)
   -- slot version 1 support
   if slot.type then
     if type(part.slotType) == 'string' and part.slotType == slot.type then
-      return true
+      return true, nil
     elseif type(part.slotType) == 'table' and not tableContains(part.slotType, slot.type) then
-      return true
+      return true, nil
     end
+    return false, "Part type does not match slot type"
 
   -- slot version 2
   elseif slot.allowTypes then
     -- case 1: the slotType on the part side is a string only
     if type(part.slotType) == 'string' then
-      return tableContains(slot.allowTypes, part.slotType)
+      local fits = tableContains(slot.allowTypes, part.slotType)
+      return fits, fits and nil or "Part type not in allowed types"
 
     -- case 2: the slottype on the part is a table
     elseif type(part.slotType) == 'table' then
-
       local allowListed = false
       for _, slottype in ipairs(part.slotType) do
         if tableContains(slot.allowTypes, slottype) then
@@ -211,153 +214,289 @@ local function partFitsSlot(part, slot)
         end
       end
 
-      return allowListed and not denyListed
+      if not allowListed then
+        return false, "No matching allowed types found"
+      end
+      if denyListed then
+        return false, "Part type is in deny list"
+      end
+      return true, nil
     end
   end
-  return false
+  return false, "Invalid slot configuration"
 end
 
-local function fillSlots_rec(ioCtx, userPartConfig, currentPart, level, _slotOptions, chosenParts, activePartsOrig, path, unifyJournal, unifyJournalC)
+local function fillSlots_rec(
+  ioCtx,
+  slotMap,
+  vehicleConfig,
+  userPartNode,
+  currentPart,
+  level,
+  _slotOptions,
+  chosenPartsTree,
+  slotPartMap,
+  activePartsData,
+  activeParts,
+  path,
+  unifyJournal,
+  unifyJournalC
+)
+  local originalPath = path
+  profilerPushEvent(originalPath)
   if level > 50 then
-    log('E', "jbeam.fillSlots", "* ERROR: over 50 levels of parts, check if parts are self referential")
+    log("E", "jbeam.fillSlots", "ERROR: more than 50 recursion levels; check for cycles")
     return
   end
 
-  local slots = currentPart.slots2 or currentPart.slots
-
-  if slots ~= nil then
-    --log('D', "jbeam.fillSlots",string.rep(" ", level).."* found "..(#part.slots-1).." slot(s):")
-    for _, slot in ipairs(slots) do
-      local slotOptions = deepcopy(_slotOptions) or {}
-      -- the options are only valid for this hierarchy.
-      -- if we do not clone/deepcopy it, the childs will leak options to the parents
-
-      local slotId = slot.name or slot.type
-
-      slotOptions = tableMerge(slotOptions, deepcopy(slot))
-      -- remove the slot table from the options
-      slotOptions.name = nil
-      slotOptions.type = nil
-      -- slotOptions.slotType = nil -- not sure if we can clean this up?
-      slotOptions.allowTypes = nil
-      slotOptions.denyTypes = nil
-      slotOptions.default = nil
-      slotOptions.description = nil
-
-      local userPartName = userPartConfig[slotId]
-      -- the UI uses 'none' for empty slots, we use ''
-      if userPartName == 'none' then userPartName = '' end
-      if slot.default == 'none' then slot.default = '' end
-
-      local newPath
-      if path ~= '/' then
-        newPath = path .. '/' .. (slot.type or slot.name)
-      else
-        newPath = path .. (slot.type or slot.name)
-      end
-
-      -- user wishes this to be empty, do not try to be overly smart and add defaults, etc
-      if userPartName == '' then
-        chosenParts[slotId] = ''
-        goto continue
-      end
-
-      local chosenPart
-      local chosenPartName
-      if userPartName then
-        chosenPartName = userPartName
-        chosenPart = jbeamIO.getPart(ioCtx, chosenPartName)
-        if not chosenPart then
-          log('E', "jbeam.fillSlots", 'slot "' .. tostring(slot.type) .. '" reset to default part "' .. tostring(slot.default) .. '" as the wished part "' .. tostring(chosenPartName) .. '" was not found')
-        else
-          if not partFitsSlot(chosenPart, slot) then
-            log('E', 'slotSystem', 'Chosen part has wrong slot type. Required is ' .. tostring(slot.type) .. ' provided by part ' .. tostring(chosenPartName) .. ' is ' .. dumps(chosenPart.slotType) .. '. Resetting to default')
-            chosenPart = nil
-          end
-        end
-      end
-
-      if slot.default and not chosenPart then
-        if slot.default == '' then
-          -- default is to be empty
-          chosenParts[slotId] = ''
-          goto continue
-        else
-          chosenPartName = slot.default
-          chosenPart = jbeamIO.getPart(ioCtx, slot.default)
-        end
-      end
-
-      if chosenPart then
-        if not partFitsSlot(chosenPart, slot) then
-          log('E', 'slotSystem', 'Chosen part has wrong slot type. Required is ' .. tostring(slot.type) .. ' provided by part ' .. tostring(chosenPartName) .. ' is ' .. dumps(chosenPart.slotType) .. '. Emptying slot.')
-          goto continue
-        end
-
-        newPath = newPath .. '[' .. chosenPart.partName .. ']'
-
-        if slotOptions.coreSlot == true then
-          slotOptions.coreSlot = nil
-        end
-        slotOptions.variables = nil
-
-        --chosenParts[newPath] = chosenPart.partName -- TODO: use full path in the future
-
-        --if chosenParts[slot.type] then
-        --  -- TODO: unique slot type name
-        --end
-        chosenParts[slotId] = chosenPart.partName
-
-        activePartsOrig[chosenPart.partName or slotId] = deepcopy(chosenPart) -- deepcopy is required as chosePart is modified/unified with all sub parts below
-
-        chosenPart = deepcopy(chosenPart) -- make it unique
-
-        local uj = {currentPart, chosenPart, level, slotOptions, newPath, slot}
-
-        table.insert(unifyJournalC, uj)
-
-        fillSlots_rec(ioCtx, userPartConfig, chosenPart, level + 1, slotOptions, chosenParts, activePartsOrig, newPath, unifyJournal, unifyJournalC)
-
-        table.insert(unifyJournal, uj)
-
-      else
-        if selectedPartName and selectedPartName ~= '' then
-          log('E', "jbeam.fillSlots", 'slot "' .. tostring(slot.type) .. '" left empty as part "' .. tostring(selectedPartName) .. '" was not found')
-        else
-          --log('D', "jbeam.fillSlots", "no suitable part found for type: " .. tostring(slot.type))
-        end
-      end
-      ::continue::
+  local function getChildNodeForSlotId(parentNode, slotId)
+    if parentNode and parentNode.children then
+      return parentNode.children[slotId]
     end
-  else
-    --('D', "jbeam.fillSlots",string.rep(" ", level+1).."* no slots")
+    return nil
   end
-end
 
+  local slots = currentPart.slots2 or currentPart.slots
+  for _, slotDef in ipairs(slots) do
+    local slotOptions = deepcopy(_slotOptions) or {}
+    slotOptions = tableMerge(slotOptions, deepcopy(slotDef))
+
+    local slotId = slotDef.name or slotDef.type
+    local newPath = path .. slotId .. '/'
+
+    -- Remove unneeded properties
+    slotOptions.name = nil
+    slotOptions.type = nil
+    slotOptions.allowTypes = nil
+    slotOptions.denyTypes = nil
+    slotOptions.default = nil
+    slotOptions.description = nil
+
+    -- Prepare a node for chosenPartsTree
+    local slotTreeEntry = {
+      id                    = slotId,
+      path                  = newPath,
+      --suitablePartNames   = {},
+      --unsuitablePartNames = {},
+      chosenPartName        = nil,
+      partPath              = nil,
+      children              = nil,
+    }
+
+    -- We'll figure out userPartName below
+    local userPartName
+
+    -- If we have vehicleConfig.parts, it's an old flat map
+    if vehicleConfig.parts then
+      local desiredPartName = vehicleConfig.parts[slotTreeEntry.id]
+      if desiredPartName == "none" then
+        userPartName = ""
+      else
+        userPartName = desiredPartName
+      end
+      -- it might be stored with the path as well, so lets try that
+      if not userPartName then
+        userPartName = vehicleConfig.parts[slotTreeEntry.path]
+      end
+
+    -- Otherwise, if we have vehicleConfig.partsTree, it's the new dictionary
+    elseif vehicleConfig.partsTree then
+      local parentNode = userPartNode or vehicleConfig.partsTree
+      local childNode = getChildNodeForSlotId(parentNode, slotId)
+      if childNode then
+        if childNode.chosenPartName == "none" then
+          userPartName = ""
+        else
+          userPartName = childNode.chosenPartName
+        end
+      end
+    end
+
+    -- 1) Gather available parts for the slot
+    profilerPushEvent('getCompatiblePartNamesForSlot')
+    slotTreeEntry.suitablePartNames, slotTreeEntry.unsuitablePartNames = jbeamIO.getCompatiblePartNamesForSlot(ioCtx, slotDef, slotMap)
+    profilerPopEvent('getCompatiblePartNamesForSlot')
+
+    -- user explicitly wants this slot empty; do not try to fill with defaults
+    if userPartName == '' then
+      slotTreeEntry.chosenPartName = ''
+      slotTreeEntry.decisionMethod = 'user-empty'
+      chosenPartsTree[slotId] = slotTreeEntry
+      slotPartMap[newPath] = ''
+      goto continue
+    end
+
+    -- 2) Attempt to load userPartName
+    local chosenPart, chosenPartName
+    if userPartName then
+      chosenPart = jbeamIO.getPart(ioCtx, userPartName)
+      if chosenPart then
+        chosenPartName = chosenPart.partName
+        if not partFitsSlot(chosenPart, slotDef) then
+          log('E', 'slotSystem', 'Chosen part has wrong slot type. Required is ' .. tostring(slotDef.type) .. ' provided by part ' .. tostring(userPartName) .. ' is ' .. dumps(chosenPart.slotType) .. '. Resetting to default')
+          chosenPart, chosenPartName = nil, nil
+        end
+        slotTreeEntry.decisionMethod = 'user'
+      else
+        log('E', "jbeam.fillSlots", 'slot "' .. tostring(slotId) .. '" reset to default part "' .. tostring(slotDef.default) .. '" as the wished part "' .. tostring(userPartName) .. '" was not found')
+      end
+    end
+
+    -- 3) Fallback to slotDef.default if user didn't choose anything
+    if slotDef.default and not chosenPart then
+      if slotDef.default == '' then
+        slotTreeEntry.chosenPartName = ''
+        slotTreeEntry.decisionMethod = 'default-empty'
+        chosenPartsTree[slotId] = slotTreeEntry
+        slotPartMap[newPath] = ''
+        goto continue
+      else
+        chosenPartName = slotDef.default
+        slotTreeEntry.decisionMethod = 'default'
+        chosenPart = jbeamIO.getPart(ioCtx, slotDef.default)
+      end
+    end
+
+    chosenPartsTree[slotId] = slotTreeEntry
+
+    if chosenPart then
+      -- if userPartName ~= chosenPartName then
+      --   dump{"wished for part:" .. tostring(userPartName) .. " found part:" .. tostring(chosenPartName) .. " reason:" .. tostring(slotTreeEntry.decisionMethod)}
+      -- end
+      local partPath = newPath .. chosenPartName
+
+      if slotOptions.coreSlot == true then
+        slotOptions.coreSlot = nil
+      end
+      slotOptions.variables = nil
+
+      slotTreeEntry.partPath = partPath
+      slotTreeEntry.chosenPartName = chosenPartName
+      slotPartMap[newPath] = chosenPartName
+      activePartsData[chosenPartName] = deepcopy(chosenPart)
+      activeParts[partPath] = chosenPartName
+
+      chosenPart = deepcopy(chosenPart)
+
+      -- If using the new dictionary format, find the child's node for recursion
+      local nextUserPartNode
+      if vehicleConfig.partsTree then
+        local parentNode = userPartNode or vehicleConfig.partsTree
+        nextUserPartNode = getChildNodeForSlotId(parentNode, slotId)
+      end
+
+      -- Recurse into the chosenPart's subslots
+      -- Add to unifyJournal for later merging
+      local uj = {currentPart, chosenPart, level, slotOptions, partPath, slotDef}
+      table.insert(unifyJournalC, uj)
+
+      local chosenPartSlots = chosenPart.slots2 or chosenPart.slots
+      if chosenPartSlots then
+        slotTreeEntry.children = {}
+
+        -- recurse
+        fillSlots_rec(
+          ioCtx,
+          slotMap,
+          vehicleConfig,
+          nextUserPartNode,
+          chosenPart,
+          level + 1,
+          slotOptions,
+          slotTreeEntry.children,
+          slotPartMap,
+          activePartsData,
+          activeParts,
+          newPath,
+          unifyJournal,
+          unifyJournalC
+        )
+      end
+
+      table.insert(unifyJournal, uj)
+    else
+      slotTreeEntry.chosenPartName = ''
+      slotPartMap[newPath] = ''
+      if userPartName and userPartName ~= '' then
+        log('E', "jbeam.fillSlots", 'slot "' .. tostring(slotId) .. '" left empty as part "' .. tostring(userPartName) .. '" was not found')
+      else
+        --log('D', "jbeam.fillSlots", "no suitable part found for type: " .. tostring(slot.type))
+      end
+    end
+    ::continue::
+  end
+  profilerPopEvent(originalPath)
+end
 
 local function findParts(ioCtx, vehicleConfig)
   profilerPushEvent('jbeam/slotsystem.findParts')
 
-  local chosenParts = {}
-  local activePartsOrig = {} -- key = partname, value = part deep-copied in the original state
+  local chosenPartsTree = {}      -- new hierarchical structure
+  local slotPartMap     = {}      -- key = slot path, value = part name
+  local activePartsData = {}      -- key = part name, value = deep copy of fitted part
+  local activeParts     = {}      -- key = part path, value = part name
 
   local rootPart = jbeamIO.getPart(ioCtx, vehicleConfig.mainPartName)
   if not rootPart then
     log('E', "jbeam.loadVehicle", "main slot not found, unable to spawn")
-    profilerPopEvent() -- jbeam/slotsystem.process
+    profilerPopEvent('jbeam/slotsystem.findParts')
     return
   end
 
-  -- add main part to the part lists
-  chosenParts['main'] = vehicleConfig.mainPartName
-  activePartsOrig[vehicleConfig.mainPartName] = deepcopy(rootPart)  -- make a copy of the original part
+  local slotMap = jbeamIO.getAvailableSlotNameMap(ioCtx)
+  if not slotMap then
+    log('E', "jbeam.loadVehicle", "unable to get slot map, unable to spawn")
+    profilerPopEvent('jbeam/slotsystem.findParts')
+    return
+  end
+
+  local mainPartName = vehicleConfig.mainPartName
+  local mainPartPath = vehicleConfig.mainPartPath
+
+  -- For the hierarchy, we represent the main part as the top-level node
+  local mainPartNode = {
+    id                  = rootPart.slotType,
+    path                = '/',
+    suitablePartNames   = {mainPartName},
+    unsuitablePartNames = {},
+    chosenPartName      = mainPartName,
+    partPath            = mainPartPath,
+    children            = nil,
+  }
+  chosenPartsTree = mainPartNode
+
+  activePartsData[mainPartName] = deepcopy(rootPart)
+  activeParts[mainPartPath] = mainPartName
 
   local unifyJournal = {}
   local unifyJournalC = {}
-  fillSlots_rec(ioCtx, vehicleConfig.parts or {}, rootPart, 1, nil, chosenParts, activePartsOrig, '/', unifyJournal, unifyJournalC)
 
-  profilerPopEvent() -- jbeam/slotsystem.process
-  return rootPart, unifyJournal, unifyJournalC, chosenParts, activePartsOrig
+  local slots = rootPart.slots2 or rootPart.slots
+  if slots then
+    mainPartNode.children = {}
+    -- Recursively fill both structures
+    fillSlots_rec(
+      ioCtx,
+      slotMap,
+      vehicleConfig or {},
+      nil,
+      rootPart,
+      1,
+      nil,
+      mainPartNode.children,
+      slotPartMap,
+      activePartsData,
+      activeParts,
+      '/',
+      unifyJournal,
+      unifyJournalC
+    )
+  end
+
+  profilerPopEvent('jbeam/slotsystem.findParts')
+
+  -- Return both flat and tree forms
+  return rootPart, unifyJournal, unifyJournalC, chosenPartsTree, slotPartMap, activePartsData, activeParts
 end
 
 local function unifyPartJournal(ioCtx, unifyJournal)
@@ -365,10 +504,9 @@ local function unifyPartJournal(ioCtx, unifyJournal)
   for i, j in ipairs(unifyJournal) do
     unifyParts(unpack(j))
   end
-  profilerPopEvent() -- jbeam/slotsystem.unifyParts
+  profilerPopEvent('jbeam/slotsystem.unifyParts')
   return true
 end
-
 
 M.partFitsSlot = partFitsSlot
 M.findParts = findParts

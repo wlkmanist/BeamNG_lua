@@ -1,3 +1,6 @@
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
+-- If a copy of the bCDDL was not distributed with this
+-- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
 M.dependencies = {"gameplay_drift_general"}
@@ -90,7 +93,7 @@ local result
 local pos = vec3()
 
 local function imguiDebug()
-  if gameplay_drift_general.getChallengeMode() == "Gymkhana" and gameplay_drift_general.getExtensionDebug("gameplay_drift_stuntZones") then
+  if gameplay_drift_general.getExtensionDebug("gameplay_drift_stuntZones") then
     if im.Begin("Drift stunt zones") then
       im.Separator()
       im.Text("Gymkhana options")
@@ -155,8 +158,9 @@ local function imguiDebug()
           end
         end
       end
-      im.End()
+      im.EndChild()
     end
+    im.End()
   end
 end
 

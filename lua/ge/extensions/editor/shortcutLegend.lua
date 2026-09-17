@@ -15,6 +15,10 @@ local prettyNames = {
 
 local modifierNames = {}
 
+local function resolveTitle(title)
+  return _tr(title)
+end
+
 local function onEditorGui()
   if editor.beginWindow(toolWindowName, "Shortcut Legend", im.WindowFlags_NoTitleBar) then
     if updateActionList then
@@ -42,7 +46,7 @@ local function onEditorGui()
             end
           end
           if control then
-            table.insert(compoundedActionInfos, {control = control, title = title})
+            table.insert(compoundedActionInfos, {control = control, title = resolveTitle(title)})
           end
         end
       else
@@ -53,7 +57,7 @@ local function onEditorGui()
               for _, binding in ipairs(device.contents.bindings) do
                 local actionmap = extensions.core_input_actions.getActiveActions()[binding.action].actionMap
                 if actionmap and actionmap == editor.editMode.actionMap then
-                  table.insert(actionInfos, {control = binding.control, title = extensions.core_input_actions.getActiveActions()[binding.action].title})
+                  table.insert(actionInfos, {control = binding.control, title = resolveTitle(extensions.core_input_actions.getActiveActions()[binding.action].title)})
                 end
               end
             end
@@ -79,7 +83,7 @@ local function onEditorGui()
               end
             end
             if control then
-              table.insert(compoundedActionInfos, {control = control, title = title})
+              table.insert(compoundedActionInfos, {control = control, title = resolveTitle(title)})
             end
           end
         end

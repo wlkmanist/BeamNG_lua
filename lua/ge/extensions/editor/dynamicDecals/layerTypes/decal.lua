@@ -393,8 +393,8 @@ local function inspectLayerGui(layer, guiId)
         end
         i = i + 1
       end
-      im.EndChild()
     end
+    im.EndChild()
 
     im.TreePop()
   end
@@ -689,7 +689,7 @@ local function decalTextureWidget(type, name, removeTextureOverridePath)
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload("DynDecalTextureDrapDrop")
     if payload~=nil then
-      assert(payload.DataSize == ffi.sizeof"char[256]")
+      assert(payload.DataSize == 256)
       local path = ffi.string(payload.Data)
       api.setDecalTexturePath(type, path)
       return true

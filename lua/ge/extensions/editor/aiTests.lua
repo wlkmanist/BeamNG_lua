@@ -5,7 +5,7 @@
 local M = {}
 
 local im = ui_imgui
-local toolWindowName = "AI Path/Plan Tests"
+local toolWindowName = "Vehicle AI Path/Plan Debug"
 local route = require("/lua/ge/extensions/gameplay/route/route")()
 local routeMarkers = {}
 local vehicles = {}
@@ -44,7 +44,7 @@ local function getNextUniqueIdentifier()
 end
 
 local function insertVehicle(id) -- adds an AI vehicle to use for the tests
-  local obj = be:getObjectByID(id or 0)
+  local obj = getObjectByID(id or 0)
   if not obj then return end
 
   vehicles[id] = {
@@ -217,7 +217,7 @@ local function tabParams() -- debug AI parameters
 
   local _del
   for _, id in ipairs(vehicleIds) do -- vehicle validator loop
-    local obj = be:getObjectByID(id)
+    local obj = getObjectByID(id)
     if not obj then
       _del = _del or {}
       table.insert(_del, id)
@@ -297,11 +297,11 @@ local function tabParams() -- debug AI parameters
     im.SameLine()
     if options.dynamicCollisions[0] or not vehicleIds[2] then im.BeginDisabled() end
     if im.Button("Merge Positions##aiParams") then
-      local firstVeh = be:getObjectByID(vehicleIds[1])
+      local firstVeh = getObjectByID(vehicleIds[1])
       if firstVeh then
         local pos, rot = firstVeh:getPosition(), firstVeh:getRotation()
         for k, v in pairs(vehicles) do
-          be:getObjectByID(k):setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
+          getObjectByID(k):setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
         end
       end
     end
@@ -319,7 +319,7 @@ local function tabParams() -- debug AI parameters
             end
           end
         else
-          local obj = be:getObjectByID(currId)
+          local obj = getObjectByID(currId)
           local pos = obj:getPosition()
           local dirVec = obj:getDirectionVector()
           local nodes = map.getMap().nodes
@@ -332,7 +332,7 @@ local function tabParams() -- debug AI parameters
         end
 
         for k, v in pairs(vehicles) do
-          local obj = be:getObjectByID(k)
+          local obj = getObjectByID(k)
           v.pos:set(obj:getPosition())
           v.rot:set(quatFromDir(obj:getDirectionVector(), obj:getDirectionVectorUp()) * quat(0, 0, 1, 0))
 
@@ -357,7 +357,7 @@ local function tabParams() -- debug AI parameters
     else
       if im.Button("Stop##aiParams") then
         for k, v in pairs(vehicles) do
-          be:getObjectByID(k):queueLuaCommand("ai.setMode('stop')")
+          getObjectByID(k):queueLuaCommand("ai.setMode('stop')")
         end
         aiTracking = false
       end
@@ -365,14 +365,14 @@ local function tabParams() -- debug AI parameters
     end
     if im.Button("Reset##aiParams") then
       for k, v in pairs(vehicles) do
-        be:getObjectByID(k):setPosRot(v.pos.x, v.pos.y, v.pos.z, v.rot.x, v.rot.y, v.rot.z, v.rot.w)
+        getObjectByID(k):setPosRot(v.pos.x, v.pos.y, v.pos.z, v.rot.x, v.rot.y, v.rot.z, v.rot.w)
       end
       aiTracking = false
     end
     im.SameLine()
     if im.Button("Reload##aiParams") then
       for k, v in pairs(vehicles) do
-        be:getObjectByID(k):reload()
+        getObjectByID(k):reload()
       end
       aiTracking = false
     end
@@ -395,8 +395,8 @@ local function onEditorGui()
       im.EndTabBar()
     end
 
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 local function onWindowMenuItem() editor.showWindow(toolWindowName) end
@@ -409,7 +409,7 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(520, 420))
-  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem(toolWindowName, onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
 M.onEditorInitialized = onEditorInitialized

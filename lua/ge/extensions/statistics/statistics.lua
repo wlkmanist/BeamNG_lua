@@ -51,7 +51,7 @@ local function enableStatisticTracking(vehicleID, statisticName)
     if instance.source then
       vehicle = scenetree.findObject(instance.source)
     else
-      vehicle = be:getObjectByID(vehicleID)
+      vehicle = getObjectByID(vehicleID)
     end
 
     if key == getStatKey('altitude') then
@@ -743,7 +743,7 @@ local function onUpdate()
         if instance.source then
           vehicle = scenetree.findObject(instance.source)
         else
-          vehicle = be:getObjectByID(vehicleID)
+          vehicle = getObjectByID(vehicleID)
         end
         if vehicle then
           tempPos:set(vehicle:getPositionXYZ())
@@ -760,7 +760,7 @@ local function onUpdate()
         if instance.source then
           vehicle = scenetree.findObject(instance.source)
         else
-          vehicle = be:getObjectByID(vehicleID)
+          vehicle = getObjectByID(vehicleID)
         end
 
         if vehicle then
@@ -803,7 +803,7 @@ local function onRaceInit()
         if instance.source then
           vehicle = scenetree.findObject(instance.source)
         else
-          vehicle = be:getObjectByID(vehicleID)
+          vehicle = getObjectByID(vehicleID)
         end
         if vehicle then
           local pos = vehicle:getPosition()
@@ -819,7 +819,7 @@ local function onRaceInit()
         if instance.source then
           vehicle = scenetree.findObject(instance.source)
         else
-          vehicle = be:getObjectByID(vehicleID)
+          vehicle = getObjectByID(vehicleID)
         end
         if vehicle then
           local pos = vehicle:getPosition()

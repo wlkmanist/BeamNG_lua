@@ -39,7 +39,7 @@ local function setVehicleColor(index, colorString, objID)
   local objID = objID or be:getPlayerVehicleID(0)
   if not objID then return end
 
-  local veh = be:getObjectByID(objID)
+  local veh = getObjectByID(objID)
   local paint, allPaints = updateVehicleDataPaint(index, colorString, objID)
   extensions.core_vehicle_manager.liveUpdateVehicleColors(objID, veh, index, paint)
 
@@ -49,32 +49,55 @@ local function setVehicleColor(index, colorString, objID)
   end
 end
 
+local function setVehiclePaint(index, paint, objID)
+  -- 1 based index
+  local objID = objID or be:getPlayerVehicleID(0)
+  if not objID then return end
+
+  local veh = getObjectByID(objID)
+  local vd = extensions.core_vehicle_manager.getVehicleData(objID)
+
+  if not vd or not vd.config then
+    log('I','setVehicleColor','Cannot set vehicle color. Vehicle config does not exit')
+    return
+  end
+  vd.config.paints = vd.config.paints or {}
+  vd.config.paints[index] = paint
+  extensions.core_vehicle_manager.liveUpdateVehicleColors(objID, veh, index, paint)
+
+  -- Save paint to config
+  extensions.core_vehicle_partmgmt.setConfigPaints(vd.config.paints, false)
+end
+
 local function onVehicleSpawned(vehId)
   -- We set the paint data in vehicleData to the correct thing because otherwise vehicleData will be wrong when loading into the garage
   local vd = extensions.core_vehicle_manager.getVehicleData(vehId)
+  if not vd or not vd.config then return end
   vd.config.paints = vd.config.paints or {}
 
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
   local metallicPaintData = veh:getMetallicPaintData()
   vd.config.paints[1] = createVehiclePaint(veh.color, metallicPaintData[1])
   vd.config.paints[2] = createVehiclePaint(veh.colorPalette0, metallicPaintData[2])
   vd.config.paints[3] = createVehiclePaint(veh.colorPalette1, metallicPaintData[3])
 
   -- round the values. same as we do in colorTableToRoundedColorString
+  local precision = 10000
   for i, paint in ipairs(vd.config.paints) do
     for attribute, value in pairs(paint) do
       if type(value) == "table" then
         for j, value2 in ipairs(value) do
-          value[j] = round(value2*100)/100
+          value[j] = round(value2*precision)/precision
         end
       else
-        paint[attribute] = round(value*100)/100
+        paint[attribute] = round(value*precision)/precision
       end
     end
   end
 end
 
 M.setVehicleColor = setVehicleColor
+M.setVehiclePaint = setVehiclePaint
 M.colorStringToColorTable = colorStringToColorTable
 
 M.onVehicleSpawned = onVehicleSpawned

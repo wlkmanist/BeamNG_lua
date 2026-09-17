@@ -14,6 +14,7 @@ local M = {}
 
 local scenario = nil
 local logTag = 'scenarios'
+local scenarioDebugWindowName = "Scenario Runtime Debug"
 
 local allowUnassigned = false -- allows specific devices to NOT be assigned to any vehicle. cannot be enabled until input system supports it
 
@@ -26,6 +27,49 @@ local endUIDisplayed = false
 local pathCameraData = {pathsCompleted = 0}
 
 local inputActionFilter = extensions.core_input_actionFilter
+local replayBlocksGameplayActive = false
+
+local function countEntries(tbl)
+  if type(tbl) ~= "table" then return 0 end
+  local n = 0
+  for _ in pairs(tbl) do
+    n = n + 1
+  end
+  return n
+end
+
+local function debugBoolColor(im, value)
+  if value == nil then
+    return im.ImVec4(0.75, 0.75, 0.75, 1)
+  end
+  return value and im.ImVec4(0.2, 1, 0.2, 1) or im.ImVec4(1, 0.35, 0.35, 1)
+end
+
+local function drawDebugRow(im, label, value, color)
+  im.TableNextRow()
+  im.TableNextColumn()
+  im.TextUnformatted(label)
+  im.TableNextColumn()
+  im.PushStyleColor2(im.Col_Text, color or im.ImVec4(0.9, 0.9, 0.9, 1))
+  im.TextUnformatted(tostring(value))
+  im.PopStyleColor()
+end
+
+local function drawDebugSection(im, title, rows, tableId)
+  local tableFlags = bit.bor(im.TableFlags_BordersV, im.TableFlags_BordersOuterH, im.TableFlags_RowBg, im.TableFlags_Resizable)
+  im.PushStyleColor2(im.Col_Text, im.ImVec4(0.55, 0.85, 1, 1))
+  im.TextUnformatted(title)
+  im.PopStyleColor()
+  if im.BeginTable(tableId, 2, tableFlags) then
+    im.TableSetupColumn("Key")
+    im.TableSetupColumn("Value")
+    for _, row in ipairs(rows) do
+      drawDebugRow(im, row[1], row[2], row[3])
+    end
+    im.EndTable()
+  end
+  im.Spacing()
+end
 
 local camera_blacklist = inputActionFilter.createActionTemplate({"freeCam"})
 inputActionFilter.setGroup('camera_blacklist', camera_blacklist)
@@ -34,6 +78,24 @@ local default_blacklist_scenario = core_input_actionFilter.createActionTemplate(
 inputActionFilter.setGroup('default_blacklist_scenario', default_blacklist_scenario)
 inputActionFilter.setGroup('default_whitelist_scenario', {} )
 inputActionFilter.setGroup('default_whitelist_campaign', {} )
+
+local function applyScenarioActionFilter()
+  inputActionFilter.clear(0)
+
+  if type(scenario.blackListActions) == 'table' then
+    for _, action in ipairs(scenario.blackListActions) do
+      inputActionFilter.addAction(0, action, true)
+    end
+  end
+
+  inputActionFilter.addAction(0, 'camera_blacklist', true)
+
+  if type(scenario.whiteListActions) == 'table' then
+    for _, action in ipairs(scenario.whiteListActions) do
+      inputActionFilter.addAction(0, action, false)
+    end
+  end
+end
 
 local helper = require('scenario/scenariohelper')
 local raceMarker = require("scenario/race_marker")
@@ -62,7 +124,7 @@ local function freezeAll(state)
 
   if scenario.vehicleNameToId then
     for k, vid in pairs(scenario.vehicleNameToId) do
-      local bo = be:getObjectByID(vid)
+      local bo = getObjectByID(vid)
       if bo then
         bo:queueLuaCommand('controller.setFreeze('..tostring(state) ..')')
       end
@@ -672,8 +734,8 @@ local function setupPathCamera()
         -- Count how many times we have seen the Full Camera intro path.
         this.pathsCompleted = this.pathsCompleted + 1
 
-        -- if the intro path has completed once (its made of multiple paths hence why we check for > 2),  allow the user to skip watching the entire thing.
-        if this.pathsCompleted > 2 then
+        -- if the intro path has completed once, allow the user to skip watching the entire thing.
+        if this.pathsCompleted > 0 then
           guihooks.trigger("scenarioStart:showStartButton", true)
         end
       end
@@ -724,7 +786,7 @@ local function processObjectsStartingTransform()
   if not scenario then return end
   scenario.startingTransforms = {}
   for vecName, vid in pairs(scenario.vehicleNameToId) do
-    local vehicle = be:getObjectByID(vid)
+    local vehicle = getObjectByID(vid)
     scenario.startingTransforms[vecName] = {pos = vehicle:getPosition(), rot = vehicle:getRotation()}
   end
 end
@@ -875,21 +937,14 @@ local function completeStartUp()
   core_trailerRespawn.setEnabled(scenario.useTrailerRespawn and true or false)
 
   -- load blackListed actions: essentially disabling hotkeys for the user
-  inputActionFilter.clear(0)
-  if type(scenario.blackListActions) == 'table' then
-    for i, action in ipairs( scenario.blackListActions ) do
-      --log('D', logTag, 'add action to blackList: ' .. tostring(action))
-      inputActionFilter.addAction(0, action, true)
-    end
-  end
+  applyScenarioActionFilter()
 
-  inputActionFilter.addAction(0, 'camera_blacklist', true)
-
-  if type(scenario.whiteListActions) == 'table' then
-    for i, action in ipairs( scenario.whiteListActions ) do
-      --log('D', logTag, 'add action to whiteList: ' .. tostring(action))
-      inputActionFilter.addAction(0, action, false)
-    end
+  -- If replay playback is active and gameplay is not allowed, don't keep scenario input restrictions enabled.
+  if core_replay and not core_replay.isGameplayAllowed() then
+    replayBlocksGameplayActive = true
+    inputActionFilter.clear(0)
+  else
+    replayBlocksGameplayActive = false
   end
 
   if scenario.camera and scenario.camera.name then
@@ -915,6 +970,11 @@ local function completeStartUp()
   -- Tell others the scenario is fully loaded
   extensions.hook('onScenarioLoaded', scenario)
 
+  -- No UI on headless mode, therefore we give the callback now
+  if headless_mode then
+    extensions.hook("onScenarioUIReady", "start")
+  end
+
   -- Validate lapconfig to make sure it contains valid types - BeamNGTriggers and/or BeamNGWaypoints
   if not shipping_build then
     local error_found = false
@@ -938,10 +998,6 @@ end
 
 -- this function is called when the level that the scenario needs loaded successfully
 local function onClientStartMission(levelPath)
-
-  core_environment.reset_init()
-  inputActionFilter.clear(0)
-
   -- cleanup any remaining scenario objects by deleting the whole group
   -- cleanup needs to happen here not on endmission as they are not called in the correct order
   --log('D', logTag, 'executing TS: ' .. ts)
@@ -951,7 +1007,13 @@ local function onClientStartMission(levelPath)
     --log('D', logTag, 'no scenario loaded')
     return
   end
-  log('D', logTag, 'Starting scenario : '..tostring(translateLanguage(scenario.name, scenario.name)))
+
+
+  core_environment.reset_init()
+  inputActionFilter.clear(0)
+
+
+  log('D', logTag, 'Starting scenario : '..tostring(_tr(scenario.name)))
   log('D', logTag, 'Scenario path : '..tostring(scenario.sourceFile))
 
   -- create the special simgroup where we put all objects of the scenario in
@@ -1097,6 +1159,8 @@ local function restartScenario()
 
   scenario = tmp
   scenario.restartStage = 0
+  scenario.timer = 0
+  raceTickTimer = 0
   changeState('restart')
 end
 
@@ -1105,7 +1169,7 @@ end
 local function onDrawDebug(focusPos)
   if not scenario then return end
 
-  local drawDebug = tonumber(getConsoleVariable('$isEditorEnabled')) == 1 and settings.getValue("BeamNGRaceDrawDebug")
+  local drawDebug = tonumber(VariableRegistry.get('$isEditorEnabled', 0)) == 1 and settings.getValue("BeamNGRaceDrawDebug")
 
   if drawDebug and scenario.nodes then
     for nid, n in pairs(scenario.nodes) do
@@ -1184,14 +1248,19 @@ local function updatePlayersUI()
   if not isMultiseatScenario() then return end
 
   local state = getMultiseatConfigState()
-  local data = { vehicles = {}, players = state.players, playerValid = state.errorMessage == nil, inv = state.invalidVehicles, invalidMsg = state.errorMessage, devices = extensions.core_input_bindings.devices }
+  local data = { vehicles = {}, players = state.players, playerValid = state.errorMessage == nil, inv = state.invalidVehicles, invalidMsg = state.errorMessage, devices = extensions.core_input_bindings.devices, assignedPlayers = extensions.core_input_bindings.getAssignedPlayers() }
 
   data.vehicles[0] = allowUnassigned and 'Unassigned' or "" -- empty string tells UI to hide that column
   for index, vehicleName in ipairs(scenario.playerUsableVehicles) do
-    data.vehicles[index] = vehicleName
-    local vehicleObj = scenetree.findObject(vehicleName)
-    if vehicleObj and vehicleObj.internalName and vehicleObj.internalName ~= "" then
-      data.vehicles[index] = vehicleObj.internalName
+    local vehicleConf = scenario.vehicles and scenario.vehicles[vehicleName]
+    if vehicleConf and vehicleConf.displayName then
+      data.vehicles[index] = vehicleConf.displayName
+    else
+      data.vehicles[index] = vehicleName
+      local vehicleObj = scenetree.findObject(vehicleName)
+      if vehicleObj and vehicleObj.internalName and vehicleObj.internalName ~= "" then
+        data.vehicles[index] = vehicleObj.internalName
+      end
     end
   end
 
@@ -1221,6 +1290,66 @@ local function initMultiseatPlayers()
   end
 
   updatePlayersUI()
+end
+
+local function reconcileMultiseatPlayers()
+  -- log("I", logTag, "reconcileMultiseatPlayers called....")
+  if not isMultiseatScenario() then return false end
+  if not scenario.multiseatInput then return false end
+  if scenario.state ~= 'pre-start' and scenario.state ~= 'pre-running' then return false end
+
+  local assignedPlayers = extensions.core_input_bindings.getAssignedPlayers()
+
+  -- gather currently connected non-mouse devices
+  local connectedDevices = {}
+  for devName, _ in pairs(assignedPlayers) do
+    local devicetype = string.split(devName, "%D+")[1] -- strip trailing number, if it exists (xinput0 -> xinput)
+    if devicetype ~= "mouse" then
+      connectedDevices[devName] = true
+    end
+  end
+
+  local changed = false
+
+  -- free slots for devices that have been disconnected
+  for _, assignment in ipairs(scenario.multiseatInput) do
+    if assignment.device ~= "" and not connectedDevices[assignment.device] then
+      assignment.device = ""
+      changed = true
+    end
+  end
+
+  -- fill empty slots for newly connected devices
+  for devName, _ in pairs(connectedDevices) do
+    local alreadyAssigned = false
+    for _, assignment in ipairs(scenario.multiseatInput) do
+      if assignment.device == devName then
+        alreadyAssigned = true
+        break
+      end
+    end
+
+    if not alreadyAssigned then
+      for _, assignment in ipairs(scenario.multiseatInput) do
+        if assignment.device == "" then
+          assignment.device = devName
+          assignment.lastInputMS = 0
+          changed = true
+          break
+        end
+      end
+    end
+  end
+
+  if changed then
+    updatePlayersUI()
+  end
+
+  return changed
+end
+
+local function onInputBindingsChanged(assignedPlayers)
+  reconcileMultiseatPlayers()
 end
 
 local function onFilteredInputChanged( devName, action, value )
@@ -1287,8 +1416,8 @@ local function onScenarioUIReady(state)
     -- init camera paths
     delayCameraPath = 10
 
-    local democam = scenetree.findObject('democam')
-    if democam and democam.className == 'SimPath' then
+    local introCamera = scenetree.findObject('democam_intro')
+    if introCamera and introCamera.className == 'SimPath' then
       guihooks.trigger("scenarioStart:showStartButton", false)
     end
 
@@ -1335,7 +1464,7 @@ local function TransitionToFreeroam()
   end
 
   for vehicleID,_ in pairs(scenario.aiControlledVehiclesById) do
-    local vehicle = be:getObjectByID(vehicleID)
+    local vehicle = getObjectByID(vehicleID)
     if vehicle then
       vehicle:delete()
     end
@@ -1354,8 +1483,8 @@ local function uiEventFreeRoam()
   initialLevelState = nil -- dont reset level state
   TransitionToFreeroam()
   core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
-  guihooks.trigger('MenuHide')
-  guihooks.trigger('ChangeState', 'menu')
+  -- guihooks.trigger('MenuHide')
+  -- guihooks.trigger('ChangeState', 'menu')
 end
 
 local function getVehicleName(vehicleID)
@@ -1388,7 +1517,7 @@ local function trackVehicleMovementAfterDamage(vehicleName, trackingOptions)
 end
 
 local function displayStartUI()
-  guihooks.trigger('ChangeState', 'scenario-start')
+  extensions.ui_router.navigate("scenario.start")
   scenario.displayStartUIRefs = nil
 end
 
@@ -1808,14 +1937,14 @@ local function tickFinished(dt, dtSim)
     scenario.endScreenController = function()
       if simTimeAuthority.get() > 1/8 then simTimeAuthority.set(1/8) end -- use slowmotion during end screen
       -- This must be the last thing triggered, allows all other systems to process scenario state POST
-      guihooks.trigger('ChangeState', {state = 'quickrace-end', params = {stats = loadStats(scenario.stats)}});
+      extensions.ui_router.navigate("scenario.quickrace.end", {stats = loadStats(scenario.stats)})
     end
   else
     scenario.endScreenController = function()
       if simTimeAuthority.get() > 1/8 then simTimeAuthority.set(1/8) end -- use slowmotion during end screen
       -- This must be the last thing triggered, allows all other systems to process scenario state POST
       local scenarioStats = loadStats(scenario.stats)
-      guihooks.trigger('ChangeState', {state = 'scenario-end', params = {stats = scenarioStats, rewards = scenario.scenarioRewards}});
+      extensions.ui_router.navigate("scenario.end", {stats = scenarioStats, rewards = scenario.scenarioRewards})
     end
   end
 
@@ -1855,6 +1984,7 @@ local function tickPost(dt, dtSim)
 end
 
 local function onVehicleSelected(vehicleData)
+  if not scenario then return end
   -- log('I', logTag, 'onVehicleSelected called: '..dumps(vehicleData))
   if vehicleData.model and vehicleData.config then
     scenario.userSpawningData = createPlayerSpawningData(vehicleData.model, vehicleData.config, vehicleData.color, vehicleData.licenseText)
@@ -1989,6 +2119,9 @@ end
 
 local function onPreRender(dt, dtSim)
   if not scenario then return end
+  if core_replay and not core_replay.isGameplayAllowed() then
+    return
+  end
 
   if scenario.state == 'pre-start' then
     tickPreStart(dt, dtSim)
@@ -2005,6 +2138,102 @@ local function onPreRender(dt, dtSim)
   end
   if raceMarker then
     raceMarker.render(dt, dtSim)
+  end
+end
+
+local function onUpdate(dtReal, dtSim, dtRaw)
+  local im = ui_imgui
+  if not im then return end
+
+  im.SetNextWindowSize(im.ImVec2(560, 520), im.Cond_FirstUseEver)
+  if not im.Begin(scenarioDebugWindowName) then
+    im.End()
+    return
+  end
+
+  if not scenario then
+    im.PushStyleColor2(im.Col_Text, im.ImVec4(1, 0.6, 0.3, 1))
+    im.TextUnformatted("No scenario loaded")
+    im.PopStyleColor()
+    drawDebugSection(im, "Runtime", {
+      {"replayBlocksGameplayActive", replayBlocksGameplayActive, debugBoolColor(im, replayBlocksGameplayActive)},
+      {"scenarioStateAtPauseEvent", scenarioStateAtPauseEvent or "nil", im.ImVec4(0.9, 0.9, 0.75, 1)},
+      {"delayCameraPath", delayCameraPath and "set" or "nil", delayCameraPath and im.ImVec4(0.2, 1, 0.2, 1) or im.ImVec4(0.75, 0.75, 0.75, 1)}
+    }, "ScenarioDebugRuntime##noScenario")
+    im.End()
+    return
+  end
+
+  local playerVehId = be and be:getPlayerVehicleID(0) or -1
+  local vehicleNameToIdCount = countEntries(scenario.vehicleNameToId)
+  local aiControlledCount = countEntries(scenario.aiControlledVehiclesById)
+  local trackedVehiclesCount = countEntries(scenario.vehicleTrackingTable)
+  local hasRollingStart = scenario.rollingStart == true
+  local hasPathCameraData = pathCameraData and countEntries(pathCameraData) > 0
+  local attemptsActive = scenario.attemptsInfo ~= nil
+
+  drawDebugSection(im, "Scenario", {
+    {"name", scenario.name or "nil", im.ImVec4(0.7, 0.9, 1, 1)},
+    {"scenarioName", scenario.scenarioName or "nil", im.ImVec4(0.7, 0.9, 1, 1)},
+    {"scenarioKey", scenario.scenarioKey or "nil", im.ImVec4(0.7, 0.9, 1, 1)},
+    {"sourceFile", scenario.sourceFile or "nil", im.ImVec4(0.8, 0.9, 1, 1)},
+    {"state", scenario.state or "nil", im.ImVec4(1, 0.95, 0.5, 1)},
+    {"raceState", scenario.raceState or "nil", im.ImVec4(1, 0.95, 0.5, 1)},
+    {"levelName", scenario.levelName or "nil", im.ImVec4(0.8, 0.9, 1, 1)}
+  }, "ScenarioDebugScenario##state")
+
+  drawDebugSection(im, "Race / Timing", {
+    {"timerActive", scenario.timerActive, debugBoolColor(im, scenario.timerActive)},
+    {"timer", string.format("%.3f", tonumber(scenario.timer or 0)), im.ImVec4(0.7, 0.95, 1, 1)},
+    {"finalTime", string.format("%.3f", tonumber(finalTime or 0)), im.ImVec4(0.7, 0.95, 1, 1)},
+    {"raceTickTimer", string.format("%.3f", tonumber(raceTickTimer or 0)), im.ImVec4(0.7, 0.95, 1, 1)},
+    {"countDownTime", scenario.countDownTime or "nil", im.ImVec4(0.7, 0.95, 1, 1)},
+    {"currentLap", scenario.currentLap or "nil", im.ImVec4(0.7, 0.95, 1, 1)},
+    {"rollingStart", hasRollingStart, debugBoolColor(im, hasRollingStart)},
+    {"rollingStartTriggered", scenario.rollingStartTriggered, debugBoolColor(im, scenario.rollingStartTriggered)},
+    {"endRaceCountdown", endRaceCountdown, im.ImVec4(0.9, 0.85, 1, 1)}
+  }, "ScenarioDebugRace##timing")
+
+  drawDebugSection(im, "Vehicles / Flow", {
+    {"playerVehicleId", playerVehId, im.ImVec4(0.7, 0.95, 1, 1)},
+    {"vehicleNameToId count", vehicleNameToIdCount, im.ImVec4(0.7, 0.95, 1, 1)},
+    {"aiControlledVehicles count", aiControlledCount, im.ImVec4(0.7, 0.95, 1, 1)},
+    {"vehicleTrackingTable count", trackedVehiclesCount, im.ImVec4(0.7, 0.95, 1, 1)},
+    {"needFreezeVehicles", needFreezeVehicles, debugBoolColor(im, needFreezeVehicles)},
+    {"checkExtensions", checkExtensions, debugBoolColor(im, checkExtensions)},
+    {"playerIsDamaged", scenario.playerIsDamaged, debugBoolColor(im, scenario.playerIsDamaged)},
+    {"playerHasStopped", scenario.playerHasStopped, debugBoolColor(im, scenario.playerHasStopped)},
+    {"trackPlayerVehicle", scenario.trackPlayerVehicle, debugBoolColor(im, scenario.trackPlayerVehicle)},
+    {"pathCameraData present", hasPathCameraData, debugBoolColor(im, hasPathCameraData)}
+  }, "ScenarioDebugFlow##vehicles")
+
+  drawDebugSection(im, "UI / Runtime Flags", {
+    {"displayEndUITimer", string.format("%.3f", tonumber(displayEndUITimer or 0)), im.ImVec4(0.9, 0.85, 1, 1)},
+    {"endUIDisplayed", endUIDisplayed, debugBoolColor(im, endUIDisplayed)},
+    {"attemptsInfo active", attemptsActive, debugBoolColor(im, attemptsActive)},
+    {"failureTimerActive", scenario.failureTimerActive, debugBoolColor(im, scenario.failureTimerActive)},
+    {"restartStage", scenario.restartStage or "nil", im.ImVec4(0.9, 0.85, 1, 1)},
+    {"preStartStage", scenario.preStartStage or "nil", im.ImVec4(0.9, 0.85, 1, 1)},
+    {"scenarioStateAtPauseEvent", scenarioStateAtPauseEvent or "nil", im.ImVec4(0.9, 0.9, 0.75, 1)},
+    {"replayBlocksGameplayActive", replayBlocksGameplayActive, debugBoolColor(im, replayBlocksGameplayActive)}
+  }, "ScenarioDebugRuntime##flags")
+
+  im.End()
+end
+
+local function onReplayCoreEvent(data)
+  if not scenario then return end
+
+  local replayBlocksGameplay = not core_replay.isGameplayAllowed()
+  if replayBlocksGameplay == replayBlocksGameplayActive then return end
+
+  replayBlocksGameplayActive = replayBlocksGameplay
+  if replayBlocksGameplay then
+    -- during replay playback (and gameplay not allowed), scenarios should not block inputs or apply logic
+    inputActionFilter.clear(0)
+  else
+    -- leaving playback: restore scenario restrictions if scenario is still active
+    applyScenarioActionFilter()
   end
 end
 
@@ -2026,9 +2255,10 @@ local function onResetGameplay(playerID)
 end
 
 local function onPhysicsUnpaused()
-  --log('A', logTag, 'onPhysicsUnpaused called....')
+ log('I', logTag, 'onPhysicsUnpaused called....')
   if scenario and not editor.active and scenarioStateAtPauseEvent then
     if scenario.state ~= 'restart' then
+      log('I', logTag, 'onPhysicsUnpaused called.... changing state to: ' .. scenarioStateAtPauseEvent)
       changeState(scenarioStateAtPauseEvent)
     end
     scenarioStateAtPauseEvent = nil
@@ -2036,12 +2266,24 @@ local function onPhysicsUnpaused()
 end
 
 local function onPhysicsPaused()
- --log('A', logTag, 'onPhysicsPaused called....')
+ log('I', logTag, 'onPhysicsPaused called....')
  if scenario and not editor.active and scenario.state then
+  log('I', logTag, 'onPhysicsPaused called.... scenario.state: ' .. scenario.state)
     scenarioStateAtPauseEvent = scenario.state
     changeState('physicsPaused')
   end
 end
+
+local function getScenarioStateAtPauseEvent()
+  return scenarioStateAtPauseEvent
+end
+
+local function setScenarioStateAtPauseEvent(state)
+  scenarioStateAtPauseEvent = state
+end
+
+M.getScenarioStateAtPauseEvent = getScenarioStateAtPauseEvent
+M.setScenarioStateAtPauseEvent = setScenarioStateAtPauseEvent
 
 local function onSerialize()
   -- log('D', logTag, 'onSerialize called...')
@@ -2157,6 +2399,9 @@ local function onBeamNGTrigger(data)
   if not scenario then
     return
   end
+  if core_replay and not core_replay.isGameplayAllowed() then
+    return
+  end
 
   local playerVehId = be:getPlayerVehicleID(0)
   local validCheck = data.event == 'enter' and data.subjectID == playerVehId
@@ -2206,11 +2451,14 @@ M.onCameraModeChanged             = onCameraModeChanged
 M.getVehicleName                  = getVehicleName
 M.trackVehicleMovementAfterDamage = trackVehicleMovementAfterDamage
 M.onPreRender                     = onPreRender
+M.onReplayCoreEvent               = onReplayCoreEvent
+--M.onUpdate                        = onUpdate
 M.onVehicleStoppedMoving          = onVehicleStoppedMoving
 M.restartScenario                 = restartScenario
 M.onPhysicsUnpaused               = onPhysicsUnpaused
 M.onPhysicsPaused                 = onPhysicsPaused
 M.onFilteredInputChanged          = onFilteredInputChanged
+M.onInputBindingsChanged          = onInputBindingsChanged
 M.onSerialize                     = onSerialize
 M.onDeserialized                  = onDeserialized
 M.onExtensionUnloaded             = onExtensionUnloaded

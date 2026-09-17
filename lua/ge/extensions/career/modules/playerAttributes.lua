@@ -11,6 +11,37 @@ local attributes
 local attributeLog
 local baseAttribute = {value = 0, gains = {}, losses = {}}
 
+local function getBranchForAttributeKey(attributeKey)
+  for _, branch in ipairs(career_branches.getSortedBranches()) do
+    if branch.attributeKey == attributeKey then
+      return branch
+    end
+  end
+end
+
+local function getRewardDisplayName(attributeKey)
+  if attributeKey == "money" then return "ui.pause.career.historyRewardMoney" end
+  if attributeKey == "beamXP" then return "ui.pause.career.historyRewardBeamXp" end
+  if attributeKey == "vouchers" then return "ui.pause.career.historyRewardVouchers" end
+  if attributeKey == "reputation" then return "ui.pause.career.historyRewardReputation" end
+
+  local branch = getBranchForAttributeKey(attributeKey)
+  if branch then
+    return {
+      txt = "ui.pause.career.historyRewardBranchXp",
+      context = {branchName = branch.branchHeading or branch.name},
+    }
+  end
+
+  return attributeKey
+end
+
+local function formatReward(reward)
+  if not reward then return nil end
+  reward.displayName = reward.displayName or getRewardDisplayName(reward.attributeKey)
+  return reward
+end
+
 local function init()
   attributeLog = {}
   attributes = {}
@@ -21,11 +52,14 @@ local function init()
     attributes[branch.attributeKey] = deepcopy(baseAttribute)
     attributes[branch.attributeKey].value = branch.defaultValue or baseAttribute.value
   end
-  local startingCapital = 10000
-  if not career_career.tutorialEnabled then
-    startingCapital = startingCapital + 3500
+  local modeData = career_career.getCurrentStartingModeData and career_career.getCurrentStartingModeData()
+  local initPlayerAttributesFn = modeData and (modeData.initPlayerAttributes or modeData.initiPlayerAttributes)
+  if type(initPlayerAttributesFn) == "function" then
+    initPlayerAttributesFn(M)
+  else
+    -- Fallback for undefined/invalid start mode modules.
+    M.setAttributes({money = 10000}, {label = "ui.career.attributeLog.startingCapital"})
   end
-  M.setAttributes({money=startingCapital}, {label="Starting Capital"})
 end
 
 -- reason should be table with label, list of tags
@@ -34,7 +68,7 @@ local function addAttributes(change, reason)
   -- make sure a reason exists!
   if not reason then
     reason = {
-      label = "Unknown Reason",
+      label = "ui.career.attributeLog.unknownReason",
       origin = debug.tracesimple()
     }
     log("W","",string.format("Changed attributes '%s' without giving a reason!", table.concat( tableKeysSorted(change), ", ")))
@@ -77,11 +111,26 @@ local function addAttributes(change, reason)
     time = os.time()
   })
 
-  -- always use the internal log system
-  career_modules_log.addLog(reason.label, "playerAttributes")
+  -- Always use the internal log system. The attribute log keeps the original
+  -- label key/object so UI history can translate it when displayed.
+  local logLabel = reason.label
+  if type(logLabel) == "table" then
+    logLabel = core_locales.translateWithOrWithoutContext(logLabel)
+  elseif type(logLabel) == "string" then
+    logLabel = _tr(logLabel)
+  end
+  career_modules_log.addLog(logLabel, "playerAttributes")
 
   -- notify other systems
   extensions.hook("onPlayerAttributesChanged",change, reason)
+
+  if reason.tags.gameplay and change.money and gameplay_achievement and not career_modules_tutorial.isActive() then
+    gameplay_achievement.unlockAchievement("FIRST_ASSIGNMENT")
+  end
+
+  if reason.tags.fine and change.money and gameplay_achievement then
+    gameplay_achievement.unlockAchievement("PAID_THE_PRICE")
+  end
 end
 
 local function setAttributes(newValues, reason)
@@ -104,6 +153,76 @@ local function getAllAttributes()
   return attributes
 end
 
+local function buildGameplayRewards(attributeChange)
+  local rewards = {}
+  for _, key in ipairs(career_branches.orderAttributeKeysByBranchOrder(tableKeys(attributeChange or {}))) do
+    if key:endswith("Reputation") then
+      table.insert(rewards, formatReward({attributeKey = "reputation", rewardAmount = attributeChange[key], icon="peopleOutline"}))
+    else
+      table.insert(rewards, formatReward({attributeKey = key, rewardAmount = attributeChange[key], icon = career_branches.getBranchIcon(key)}))
+    end
+  end
+  return rewards
+end
+
+local function getCareerHistoryChanges(historyType, limit)
+  local maxEntries = tonumber(limit)
+  local rows = {}
+  if not attributeLog then return rows end
+
+  for _, change in ipairs(arrayReverse(deepcopy(attributeLog))) do
+    local attributeChange = change.attributeChange or {}
+    local reason = change.reason or {}
+    local rewards
+    if historyType == "financial" and attributeChange.money then
+      rewards = {
+        formatReward({
+          attributeKey = "money",
+          rewardAmount = attributeChange.money,
+        })
+      }
+    elseif historyType == "gameplay" and reason.tags and reason.tags.gameplay then
+      rewards = buildGameplayRewards(attributeChange)
+    end
+
+    if rewards and #rewards > 0 then
+      table.insert(rows, {
+        reason = reason.label or "Unknown Reason",
+        time = change.time,
+        rewards = rewards,
+      })
+      if maxEntries and #rows >= maxEntries then
+        break
+      end
+    end
+  end
+
+  return rows
+end
+
+local function getRecentFinancialChanges(limit)
+  return getCareerHistoryChanges("financial", limit or 5)
+end
+
+local function getFinancialHistory(limit)
+  return getCareerHistoryChanges("financial", limit)
+end
+
+local function getGameplayHistory(limit)
+  return getCareerHistoryChanges("gameplay", limit)
+end
+
+local function getCareerHistoryInfo(historyType)
+  if historyType == "gameplay" then
+    return {
+      title = "ui.pause.career.gameplayHistory",
+    }
+  end
+  return {
+    title = "ui.pause.career.financialHistory",
+  }
+end
+
 local function onExtensionLoaded()
   if not career_career.isActive() then return false end
   if not attributes then
@@ -111,7 +230,7 @@ local function onExtensionLoaded()
   end
 
   -- load from saveslot
-  local saveSlot, savePath = career_saveSystem.getCurrentSaveSlot()
+  local saveSlot, savePath = career_saveSystem.getCurrentProfile()
   if not saveSlot then return end
   local jsonData = (savePath and jsonReadFile(savePath .. "/career/playerAttributes.json")) or {}
 
@@ -122,24 +241,58 @@ local function onExtensionLoaded()
     jsonData.bonusStars = nil
   end
 
+  -- backwards compatibility for old branch names
+  local oldAttributeNamesToNewNames = career_branches.oldAttributeNamesToNewNames
+  local updatedNames = {}
+
   for name, data in pairs(jsonData) do
-    attributes[name] = attributes[name] or deepcopy(baseAttribute)
+    local mappedName = oldAttributeNamesToNewNames[name] or name
+    if oldAttributeNamesToNewNames[name] then
+      updatedNames[name] = mappedName
+    end
+    attributes[mappedName] = attributes[mappedName] or deepcopy(baseAttribute)
     for k,v in pairs(data) do
-      attributes[name][k] = v
+      attributes[mappedName][k] = v
     end
   end
 
   attributeLog = (savePath and jsonReadFile(savePath .. "/career/attributeLog.json")) or attributeLog
+
+  -- Update old attribute names in the log to new names for backwards compatibility
+  for _, change in ipairs(attributeLog) do
+    if change.attributeChange then
+      local updatedChanges = {}
+      for oldName, value in pairs(change.attributeChange) do
+        local newName = oldAttributeNamesToNewNames[oldName] or oldName
+        if oldAttributeNamesToNewNames[oldName] then
+          updatedNames[oldName] = newName
+        end
+        updatedChanges[newName] = value
+      end
+      change.attributeChange = updatedChanges
+    end
+  end
+
+  -- Log all name updates at once
+  if next(updatedNames) then
+    local msg = "Updated attribute names:"
+    for oldName, newName in pairs(updatedNames) do
+      msg = msg .. string.format("\n  %s -> %s", oldName, newName)
+    end
+    log('I', '', msg)
+  end
+
 end
 
 -- this should only be loaded when the career is active
-local function onSaveCurrentSaveSlot(currentSavePath)
+local function onSaveCurrentProfile(currentSavePath)
   career_saveSystem.jsonWriteFileSafe(currentSavePath .. "/career/playerAttributes.json", attributes, true)
   career_saveSystem.jsonWriteFileSafe(currentSavePath .. "/career/attributeLog.json", attributeLog, true)
 end
 
 
-local function onCareerModulesActivated()
+local function onCareerActive(active)
+  if not active then return end
   for orgId, organization in pairs(freeroam_organizations.getOrganizations()) do
     if not attributes[orgId .. "Reputation"] then
       local attribute = deepcopy(baseAttribute)
@@ -151,72 +304,7 @@ local function onCareerModulesActivated()
 end
 
 -- logbook integration
-local function onLogbookGetEntries(list)
-
-  local financialsText = '<span>Below is an overview of how you spent and earned money.<ul><li><b>Earn money</b> by playing Challenges and completing new Objectives, or by selling Vehicles and Parts.</li><li><b>Spend your Money</b> on new Vehicles and Parts, Insurances and Repairs, or by taking a Taxi.</li></ul><span><i>Disclaimer: Financial values are not balanced yet across the whole of career mode. So you might end up with too much or too little money in the long run.</i></span></span>'
-  local financialsTable = {
-    headers = {'Reason','Change','Time'},
-    rows = {}
-  }
-  for _, change in ipairs(arrayReverse(deepcopy(attributeLog))) do
-    if change.attributeChange.money then
-      --local changeText = ""
-      --local key = "money"
-      --changeText = changeText .. string.format('<span><b>%s</b>: %s%0.2f</span>', key, change.attributeChange[key] > 0 and "+" or "", change.attributeChange[key])
-
-      table.insert(financialsTable.rows,
-        {change.reason.label, {type="rewards", rewards = {{attributeKey ="money", rewardAmount=change.attributeChange.money}}}, os.date("%c",change.time)}
-      )
-    end
-  end
-
-  local formattedFinancials = {
-    entryId = "playerAttributeFinancials",
-    type = "progress",
-    cardTypeLabel = "ui.career.poiCard.generic",
-    title = "Financial History",
-    text = financialsText,
-    time = os.time(),
-    hideInRecent = true,
-    tables = {financialsTable}
-  }
-  table.insert(list, formattedFinancials)
-
-  local gameplayText = '<span style="margin-bottom:0.5em">Below is an overview of rewards you earned from Challenges, Milestones and Deliveries.<ul><li><b>Money</b> can be used to make purchases.</li><li><b>Beam XP</b> is a measure of your overall general progress, but has no use in game currently.</li><li><b>Branch XP</b> for the four branches will let you reach the next tier of that branch, unlocking new missions.</li><li><b>Bonus Stars</b> can currently only be used for fast repairs.</li></ul></span>'
-  local gameplayTable = {
-    headers = {'Reason','Change','Time'},
-    rows = {}
-  }
-  for _, change in ipairs(arrayReverse(deepcopy(attributeLog))) do
-    if change.reason.tags.gameplay then
-      --local changeText = ""
-      local rewards = {}
-      for _, key in ipairs(career_branches.orderAttributeKeysByBranchOrder(tableKeys(change.attributeChange))) do
-        if key:endswith("Reputation") then
-          table.insert(rewards, {attributeKey = "reputation", rewardAmount = change.attributeChange[key], icon="peopleOutline"})
-        else
-          table.insert(rewards, {attributeKey = key, rewardAmount = change.attributeChange[key], icon = career_branches.getBranchIcon(key)})
-        end
-      --  changeText = changeText .. string.format('<span><b>%s</b>: %s%0.2f</span><br>', key, change.attributeChange[key] > 0 and "+" or "", change.attributeChange[key])
-      end
-      table.insert(gameplayTable.rows,
-        {change.reason.label, {type="rewards", rewards = rewards}, os.date("%c",change.time)}
-      )
-    end
-  end
-
-  local formattedGameplay = {
-    entryId = "playerAttributeGameplay",
-    type = "progress",
-    cardTypeLabel = "ui.career.poiCard.generic",
-    title = "Rewards History",
-    text = gameplayText,
-    time = os.time()-1,
-    hideInRecent = true,
-    tables = {gameplayTable}
-  }
-  table.insert(list, formattedGameplay)
-
+local function onLogbookGetEntries(_)
 end
 
 M.addAttributes = addAttributes
@@ -224,11 +312,16 @@ M.setAttributes = setAttributes
 M.getAttribute = getAttribute
 M.getAttributeValue = getAttributeValue
 M.getAllAttributes = getAllAttributes
+M.getRecentFinancialChanges = getRecentFinancialChanges
+M.getFinancialHistory = getFinancialHistory
+M.getGameplayHistory = getGameplayHistory
+M.getCareerHistoryInfo = getCareerHistoryInfo
 M.getAttributeLog = function() return attributeLog end
 
 M.logAttributeChange = logAttributeChange
 M.onLogbookGetEntries = onLogbookGetEntries
-M.onSaveCurrentSaveSlot = onSaveCurrentSaveSlot
+M.onSaveCurrentProfile = onSaveCurrentProfile
 M.onExtensionLoaded = onExtensionLoaded
-M.onCareerModulesActivated = onCareerModulesActivated
+M.onCareerActive = onCareerActive
+
 return M

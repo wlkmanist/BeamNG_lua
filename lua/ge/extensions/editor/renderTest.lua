@@ -110,8 +110,8 @@ local function onEditorGui()
 
     local texObj = imUtils.texObj('#editorRenderTest')
     im.Image(texObj.texId, availSize)
-    editor.endWindow()
   end
+  editor.endWindow()
   im.PopStyleVar()
   im.PopStyleVar()
 end
@@ -122,10 +122,11 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(400,600))
-  editor.addWindowMenuItem('Render test', onWindowMenuItem, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem('Render Test', onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
-M.onEditorInitialized = onEditorInitialized
-M.onEditorGui = onEditorGui
+-- TODO: Disabled for the time being. 'renderCameraToTexture' does not exist
+-- M.onEditorInitialized = onEditorInitialized
+-- M.onEditorGui = onEditorGui
 
 return M

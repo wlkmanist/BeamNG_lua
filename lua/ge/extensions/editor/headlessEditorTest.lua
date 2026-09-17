@@ -49,7 +49,7 @@ end
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, imgui.ImVec2(200, 200))
   editor.registerWindow(toolbarWindowName, imgui.ImVec2(500, 200))
-  editor.addWindowMenuItem("Headless Editor Test", onWindowMenuItem, {groupMenuName="Experimental"})
+  editor.addWindowMenuItem("Headless Editor Test", onWindowMenuItem, {groupMenuName="Debug"})
 end
 
 local function onEditorActivated()

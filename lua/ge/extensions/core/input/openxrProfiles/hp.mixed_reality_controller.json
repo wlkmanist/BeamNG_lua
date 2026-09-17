@@ -1,0 +1,20 @@
+[
+  ["/user/hand/left/input/aim/pose", "XR_ACTION_TYPE_POSE_INPUT", "aimPose"],
+  ["/user/hand/left/input/grip/pose", "XR_ACTION_TYPE_POSE_INPUT", "gripPose"],
+  ["/user/hand/left/input/menu/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button0"],
+  ["/user/hand/left/input/squeeze/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis0"],
+  ["/user/hand/left/input/thumbstick", "XR_ACTION_TYPE_VECTOR2F_INPUT", "axis1", "axis2"],
+  ["/user/hand/left/input/thumbstick/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button1"],
+  ["/user/hand/left/input/trigger/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis3"],
+  ["/user/hand/left/input/x/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button2"],
+  ["/user/hand/left/input/y/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button3"],
+  ["/user/hand/right/input/a/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button4"],
+  ["/user/hand/right/input/aim/pose", "XR_ACTION_TYPE_POSE_INPUT", "aimPose"],
+  ["/user/hand/right/input/b/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button5"],
+  ["/user/hand/right/input/grip/pose", "XR_ACTION_TYPE_POSE_INPUT", "gripPose"],
+  ["/user/hand/right/input/menu/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button6"],
+  ["/user/hand/right/input/squeeze/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis4"],
+  ["/user/hand/right/input/thumbstick", "XR_ACTION_TYPE_VECTOR2F_INPUT", "axis5", "axis6"],
+  ["/user/hand/right/input/thumbstick/click", "XR_ACTION_TYPE_BOOLEAN_INPUT", "button7"],
+  ["/user/hand/right/input/trigger/value", "XR_ACTION_TYPE_FLOAT_INPUT", "axis7"]
+]

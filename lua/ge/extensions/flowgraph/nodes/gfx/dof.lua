@@ -36,19 +36,19 @@ function C:reset()
 
   -- reset to stored values
   if self.savedBlurMin then
-    TorqueScriptLua.setVar('$DOFPostFx::BlurMin', self.savedBlurMin)
+    VariableRegistry.set('$DOFPostFx::BlurMin', self.savedBlurMin)
   end
 
   if self.savedBlurMax then
-    TorqueScriptLua.setVar('$DOFPostFx::BlurMax', self.savedBlurMax)
+    VariableRegistry.set('$DOFPostFx::BlurMax', self.savedBlurMax)
   end
 
   if self.savedFocusRangeMax then
-    TorqueScriptLua.setVar('$DOFPostFx::FocusRangeMax', self.savedFocusRangeMax)
+    VariableRegistry.set('$DOFPostFx::FocusRangeMax', self.savedFocusRangeMax)
   end
 
   if self.savedBlurCurveFar then
-    TorqueScriptLua.setVar('$DOFPostFx::BlurCurveFar', self.savedBlurCurveFar)
+    VariableRegistry.set('$DOFPostFx::BlurCurveFar', self.savedBlurCurveFar)
   end
 
   self:updateSettings()
@@ -76,12 +76,12 @@ function C:work()
       self:reset()
       self.mode = cmode
 
-      self.savedBlurMin = TorqueScriptLua.getVar('$DOFPostFx::BlurMin')
-      self.savedBlurMax = TorqueScriptLua.getVar('$DOFPostFx::BlurMax')
-      self.savedFocusRangeMax = TorqueScriptLua.getVar('$DOFPostFx::FocusRangeMax')
-      self.savedBlurCurveFar = TorqueScriptLua.getVar('$DOFPostFx::BlurCurveFar')
+      self.savedBlurMin = VariableRegistry.get('$DOFPostFx::BlurMin')
+      self.savedBlurMax = VariableRegistry.get('$DOFPostFx::BlurMax')
+      self.savedFocusRangeMax = VariableRegistry.get('$DOFPostFx::FocusRangeMax')
+      self.savedBlurCurveFar = VariableRegistry.get('$DOFPostFx::BlurCurveFar')
       self.targetBlur = 430
-      TorqueScriptLua.setVar('$DOFPostFx::FocusRangeMax', 3)
+      VariableRegistry.set('$DOFPostFx::FocusRangeMax', 3)
 
       self:updateSettings()
     end
@@ -101,9 +101,9 @@ function C:work()
     elseif self.mode == 'in' then
       newVal = 1 - (fadeTime - self.timer)
     end
-    TorqueScriptLua.setVar('$DOFPostFx::BlurMin', newVal)
-    TorqueScriptLua.setVar('$DOFPostFx::BlurMax', newVal)
-    TorqueScriptLua.setVar('$DOFPostFx::BlurCurveFar', newVal * self.targetBlur)
+    VariableRegistry.set('$DOFPostFx::BlurMin', newVal)
+    VariableRegistry.set('$DOFPostFx::BlurMax', newVal)
+    VariableRegistry.set('$DOFPostFx::BlurCurveFar', newVal * self.targetBlur)
 
     self:updateSettings()
 

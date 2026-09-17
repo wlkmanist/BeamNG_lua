@@ -89,7 +89,7 @@ visitors.visitPointLight = nop
 visitors.visitSpotLight = nop
 
 visitors.visitTSStatic = setShapeNameAnnotation
-visitors.visitTSForestItemData = visitors.visitTSStatic
+visitors.visitForestItemData = visitors.visitTSStatic
 
 visitors.visitForest = function(parent, node)
   node = Sim.upcast(node)

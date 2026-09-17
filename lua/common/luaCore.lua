@@ -4,18 +4,6 @@
 
 -- this file adds core language features we use everywhere
 
--- tiny compatibility layer depending on if it is run
--- in plain Lua 5.1 - 5.3 or LuaJIT
-
-loadstring = loadstring or load
-unpack = unpack or table.unpack
-
--- notes for developers:
--- string.gfind = string.gmatch
--- table.getn = #
-
---== lua language core features below ==--
-
 -- this function can load an optional module
 function require_optional(module)
   local ok, m = pcall(require, module)

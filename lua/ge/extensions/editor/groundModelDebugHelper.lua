@@ -9,7 +9,7 @@ local function onWindowMenuItem()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("GroundModel Debug", onWindowMenuItem)
+  editor.addWindowMenuItem("GroundModel Debug", onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
 M.onEditorInitialized = onEditorInitialized

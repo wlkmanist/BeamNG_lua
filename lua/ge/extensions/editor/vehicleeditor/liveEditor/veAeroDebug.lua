@@ -148,7 +148,7 @@ end
 
 -- Disable aeroDebug on old vehicle
 local function onVehicleSwitched(oldVehicle, newVehicle, player)
-  local oldVeh = be:getObjectByID(oldVehicle)
+  local oldVeh = getObjectByID(oldVehicle)
   if oldVeh then
     oldVeh:queueLuaCommand('extensions.aeroDebug.disable()')
   end

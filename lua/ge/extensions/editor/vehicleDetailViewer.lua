@@ -335,9 +335,13 @@ local function renderPopup(view)
 
   if im.Selectable1('save as PNG##save'..tostring(view.name)) then
     local filename = view.name .. '-' .. tostring(loadedLayoutBaseFilename) .. '.png'
-    view.runtime.rv:saveToDisk(filename)
-    log('I', 'thumbnail', 'saved to disk: ' .. tostring(filename))
-    view.statusMessage = 'image saved: ' .. tostring(filename)
+    if view.runtime.rv:saveToDisk(filename) then
+      log('I', 'thumbnail', 'saved to disk: ' .. tostring(filename))
+      view.statusMessage = 'image saved: ' .. tostring(filename)
+    else
+      log('E', 'thumbnail', 'failed to save image: ' .. tostring(filename))
+      view.statusMessage = 'failed to save image'
+    end
   end
 
   if not view.debugBoolPtr then view.debugBoolPtr = im.BoolPtr(view.debug or false) end
@@ -460,7 +464,10 @@ end
 local function renderOverlay(view)
   local bottomY = im.GetCursorPosY()
   im.SetCursorPosX(5)
-  im.SetCursorPosY(bottomY - 40)
+  im.SetCursorPosY(35)
+  im.TextUnformatted('[Right click for context menu]')
+  im.SetCursorPosX(5)
+  im.SetCursorPosY(55)
   im.TextUnformatted(view.typeName)
   im.SetCursorPosX(5)
   im.TextUnformatted('Nearclip: ' .. tostring(customRound(view.nearClip, 6)))
@@ -468,7 +475,7 @@ local function renderOverlay(view)
 
   if view.statusMessage then
     im.SetCursorPosX(5)
-    im.SetCursorPosY(bottomY - 60)
+    im.SetCursorPosY(75)
     im.PushStyleColor2(im.Col_Text, im.ImVec4(0, 1, 0, 1))
     im.TextUnformatted(view.statusMessage)
     if im.IsItemClicked(0) then
@@ -482,7 +489,7 @@ local function onPreRender(dtReal, dtSim, dtRaw)
   if not editor.beginWindow or not detailViewerActive then return end -- for some frames, the editor is not ready yet
 
   local vehId = be:getPlayerVehicleID(0)
-  local veh = be:getObjectByID(vehId)
+  local veh = getObjectByID(vehId)
   if not veh then return end
 
   timer = timer + dtReal
@@ -550,6 +557,7 @@ local function onPreRender(dtReal, dtSim, dtRaw)
         view.windowSize = im.GetWindowSize()
         view.windowViewport = im.GetWindowViewport()
       end
+      im.PopID() 
     else
       -- clean up any remaining things
       if view.runtime and view.runtime.rv then
@@ -604,7 +612,7 @@ local function onExtensionUnloaded()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem(toolWindowName, function() detailViewerActive = true end, {groupMenuName = 'Experimental'})
+  editor.addWindowMenuItem(toolWindowName, function() detailViewerActive = true end, {groupMenuName = 'Vehicles'})
 end
 
 M.onEditorInitialized = onEditorInitialized

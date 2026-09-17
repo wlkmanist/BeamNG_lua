@@ -98,11 +98,20 @@ end
 
 -- updates all coroutines
 local toRemove = {}
-local function onUpdate()
+local dtTable = {dtReal = 0, dtSim = 0, dtRaw = 0}
+local function onUpdate(dtReal, dtSim, dtRaw)
+  dtTable.dtReal = dtReal
+  dtTable.dtSim = dtSim
+  dtTable.dtRaw = dtRaw
   table.clear(toRemove)
   for i = 1, #coroutines do
     local co = coroutines[i]
-    local errorfree, value = coroutine.resume(co.t, co, unpack(co.args))
+    local errorfree, value
+    if co.args and next(co.args) then
+      errorfree, value = coroutine.resume(co.t, co, unpack(co.args))
+    else
+      errorfree, value = coroutine.resume(co.t, co, dtTable)
+    end
     if not errorfree then
       log('E', 'jobsystem', "job error: " .. tostring(value) .. ' / ' .. debug.traceback(co.t))
     end
@@ -132,10 +141,63 @@ local function getRunningJobCount()
   return #coroutines
 end
 
+-- Remove a job created by create() so it is never resumed again. Does not run exitcbl.
+-- Use when superseding a job; the coroutine is dropped (orphaned).
+local function cancelJob(jobHandle)
+  if not jobHandle then return false end
+  for i = #coroutines, 1, -1 do
+    if coroutines[i] == jobHandle then
+      runningFct[jobHandle.fct] = nil
+      jobHandle.running = false
+      table.remove(coroutines, i)
+      return true
+    end
+  end
+  return false
+end
+
+-- Async-friendly helper: scan root level in Lua, then switch to native recursive
+-- findFiles for each first-level directory. Yields after each first-level dir.
+local function findFilesAsync(rootPath, pattern, yieldFn)
+  yieldFn = yieldFn or nop
+  --print("findFilesAsync started for: " .. rootPath .. " with pattern: " .. pattern .. " with yieldEvery: " .. yieldEvery .. " (fixed first-level native split)")
+  local h = hptimer()
+  local results = {}
+  local visitedDirs = 0
+
+  local fsFindFiles = FS.findFiles
+  local fsDirectoryExists = FS.directoryExists
+
+  -- Match files directly under root only.
+  local rootMatches = fsFindFiles(FS, rootPath, pattern, 0, true, false)
+  for i = 1, #rootMatches do
+    results[#results + 1] = rootMatches[i]
+  end
+
+  -- Discover first-level directories, then recurse natively inside each.
+  local rootEntries = fsFindFiles(FS, rootPath, "*", 0, false, true)
+  for i = 1, #rootEntries do
+    local entry = rootEntries[i]
+    if fsDirectoryExists(FS, entry) then
+      local subtreeMatches = fsFindFiles(FS, entry, pattern, -1, true, false)
+      for j = 1, #subtreeMatches do
+        results[#results + 1] = subtreeMatches[j]
+      end
+      yieldFn("findFilesAsync " .. entry)
+    end
+  end
+
+  --print("findFilesAsync took: " .. h:stop() .. " ms")
+  return results
+end
+
 -- public interface
 M.onUpdate = onUpdate
 M.create = create
 M.wrap = wrap
 M.getRunningJobCount = getRunningJobCount
+M.cancelJob = cancelJob
 
+-- helper functions
+M.findFilesAsync = findFilesAsync
 return M

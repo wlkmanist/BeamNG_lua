@@ -22,18 +22,43 @@ C.tags = {'gameplay', 'utils'}
 
 function C:_executionStarted()
   self.data = {}
+  self.result = nil
 end
 
 function C:work()
-  self.data = gameplay_drag_general.getWinnersData()
+  self.result = gameplay_drag_dragBridge.getPlayerRaceResult and gameplay_drag_dragBridge.getPlayerRaceResult() or nil
+  self.data = self.result and self.result.winners or gameplay_drag_dragBridge.getWinnersData()
+
+  if not self.data then
+    local errorMsg = "Winners data not available. Drag race may not be completed or initialized."
+    self:__setNodeError('winnersData', errorMsg)
+    return
+  end
+
+  if not self.data[1] then
+    local errorMsg = "No winners found in results. Race may not be completed yet."
+    self:__setNodeError('winnersData', errorMsg)
+    return
+  end
+
+  -- Clear error if data is available
+  self:__setNodeError(nil, nil)
   if self.pinOut.playerWin:isUsed() then
-    self.pinOut.playerWin.value =  self.data[1].isPlayable
+    if self.result then
+      self.pinOut.playerWin.value = self.result.playerWin or false
+    else
+      self.pinOut.playerWin.value = self.data[1].isPlayable
+    end
   end
   if self.pinOut.playerPos:isUsed() then
-    for k, v in pairs(self.data) do
-      if v.isPlayable then
-        self.pinOut.playerPos.value = k
-        break
+    if self.result then
+      self.pinOut.playerPos.value = self.result.playerPos
+    else
+      for k, v in ipairs(self.data) do
+        if v.isPlayable then
+          self.pinOut.playerPos.value = k
+          break
+        end
       end
     end
   end

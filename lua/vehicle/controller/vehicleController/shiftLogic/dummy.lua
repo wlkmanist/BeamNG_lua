@@ -49,6 +49,11 @@ M.checkEngine = false
 
 M.energyStorages = {}
 
+--no shift LEDs for the dummy
+local function areShiftLEDsInUse()
+  return false
+end
+
 local function getGearName()
   return ""
 end
@@ -90,9 +95,32 @@ local function init(jbeamData, sharedFunctionTable)
   gearbox = powertrain.getDevice("gearbox")
 
   M.currentGearIndex = 0
+  M.maxGearIndex = 0
+  M.minGearIndex = 0
   M.throttle = 0
   M.brake = 0
   M.clutchRatio = 0
+  M.shiftingAggression = 0
+  M.isArcadeSwitched = false
+  M.isSportModeActive = false
+
+  M.smoothedAvgAVInput = 0
+  M.rpm = 0
+  M.idleRPM = 0
+  M.maxRPM = 0
+
+  M.engineThrottle = 0
+  M.engineLoad = 0
+  M.engineTorque = 0
+  M.flywheelTorque = 0
+  M.gearboxTorque = 0
+
+  M.ignition = true
+  M.isEngineRunning = 0
+
+  M.oilTemp = 0
+  M.waterTemp = 0
+  M.checkEngine = false
 
   M.maxRPM = engine and engine.maxRPM or 0
   M.idleRPM = engine and engine.idleRPM or 0
@@ -111,5 +139,7 @@ M.updateGearboxGFX = updateGearboxGFX
 M.getGearName = getGearName
 M.getGearPosition = getGearPosition
 M.sendTorqueData = sendTorqueData
+
+M.areShiftLEDsInUse = areShiftLEDsInUse
 
 return M

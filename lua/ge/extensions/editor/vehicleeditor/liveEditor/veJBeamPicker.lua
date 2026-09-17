@@ -1,4 +1,4 @@
--- This Source Code Form is subject to the terms of the bCDDL, var. 1.1.
+-- This Source Code Form is subject to the terms of the bCDDL, v. 1.1.
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
@@ -113,10 +113,6 @@ local function getBeamDisplayText(beam)
   return dispText
 end
 
-local function setLinePointFromXnorm(outVec, p0, p1, xnorm)
-  outVec:set(p0.x + (p1.x-p0.x) * xnorm, p0.y + (p1.y-p0.y) * xnorm, p0.z + (p1.z-p0.z) * xnorm)
-end
-
 local tempVec = vec3()
 
 local function getBeamLength(beamID)
@@ -150,18 +146,18 @@ local function getVELuaBeamData(id, varName, luaFunction)
 end
 
 local nodeDataRendering = {
-  {name = "Displacement",     enabled = im.BoolPtr(false),    units = "m",      digitsBeforeDP = 0,   color = rainbowColor(8, 2, 1),   data = function(id) return vEditor.vehicle:getNodePosition(id):length() end, plotData = {}},
-  {name = "Speed",            enabled = im.BoolPtr(true),     units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 3, 1),   data = function(id) return vEditor.vehicle:getNodeVelocity(id):length() end, plotData = {}},
-  {name = "Relative Speed",   enabled = im.BoolPtr(false),    units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 4, 1),   data = function(id) return (vEditor.vehicle:getVelocity() - vEditor.vehicle:getNodeVelocity(id)):length() end, plotData = {}},
-  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 5, 1),   data = function(id) getVELuaNodeData(id, "force", "obj:getNodeForceVector(" .. id .. "):length()") return M.nodeDataFromVELua[id].force end, plotData = {}}
+  {name = "Displacement",     enabled = im.BoolPtr(false),    units = "m",      color = rainbowColor(8, 2, 1),   data = function(id) return vEditor.vehicle:getNodePosition(id):length() end, plotData = {}},
+  {name = "Speed",            enabled = im.BoolPtr(true),     units = "m/s",    color = rainbowColor(8, 3, 1),   data = function(id) return vEditor.vehicle:getNodeVelocity(id):length() end, plotData = {}},
+  {name = "Relative Speed",   enabled = im.BoolPtr(false),    units = "m/s",    color = rainbowColor(8, 4, 1),   data = function(id) return (vEditor.vehicle:getVelocity() - vEditor.vehicle:getNodeVelocity(id)):length() end, plotData = {}},
+  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      color = rainbowColor(8, 5, 1),   data = function(id) getVELuaNodeData(id, "force", "obj:getNodeForceVector(" .. id .. "):length()") return M.nodeDataFromVELua[id].force end, plotData = {}}
 }
 
 local beamDataRendering = {
-  {name = "Length",           enabled = im.BoolPtr(true),     units = "m",      digitsBeforeDP = 0,   color = rainbowColor(8, 2, 1),   data = function(id) return getBeamLength(id) end, plotData = {}},
-  {name = "Speed",            enabled = im.BoolPtr(false),    units = "m/s",    digitsBeforeDP = 0,   color = rainbowColor(8, 3, 1),   data = function(id) getVELuaBeamData(id, "speed", "obj:getBeamVelocity(" .. id .. ")") return M.beamDataFromVELua[id].speed end, plotData = {}},
-  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 4, 1),   data = function(id) getVELuaBeamData(id, "force", "obj:getBeamForce(" .. id .. ")") return M.beamDataFromVELua[id].force end, plotData = {}},
-  {name = "Stress",           enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 5, 1),   data = function(id) getVELuaBeamData(id, "stress", "(select(1,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].stress end, plotData = {}},
-  {name = "Damping",          enabled = im.BoolPtr(false),    units = "N",      digitsBeforeDP = 0,   color = rainbowColor(8, 6, 1),   data = function(id) getVELuaBeamData(id, "damping", "(select(2,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].damping end, plotData = {}},
+  {name = "Length",           enabled = im.BoolPtr(true),     units = "m",      color = rainbowColor(8, 2, 1),   data = function(id) return getBeamLength(id) end, plotData = {}},
+  {name = "Speed",            enabled = im.BoolPtr(false),    units = "m/s",    color = rainbowColor(8, 3, 1),   data = function(id) getVELuaBeamData(id, "speed", "obj:getBeamVelocity(" .. id .. ")") return M.beamDataFromVELua[id].speed end, plotData = {}},
+  {name = "Force",            enabled = im.BoolPtr(false),    units = "N",      color = rainbowColor(8, 4, 1),   data = function(id) getVELuaBeamData(id, "force", "obj:getBeamForce(" .. id .. ")") return M.beamDataFromVELua[id].force end, plotData = {}},
+  {name = "Stress",           enabled = im.BoolPtr(false),    units = "N",      color = rainbowColor(8, 5, 1),   data = function(id) getVELuaBeamData(id, "stress", "(select(1,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].stress end, plotData = {}},
+  {name = "Damping",          enabled = im.BoolPtr(false),    units = "N",      color = rainbowColor(8, 6, 1),   data = function(id) getVELuaBeamData(id, "damping", "(select(2,obj:getBeamStressDamp(" .. id .. ")))") return M.beamDataFromVELua[id].damping end, plotData = {}},
 }
 
 local beamTypesRendering = {}
@@ -314,8 +310,8 @@ local function pickBeam()
       if imguiNotHovered then
         local xnorm1, xnorm2 = closestLinePoints(rayStartPos, rayEndPos, beamPos1, beamPos2)
         if xnorm2 >= 0 and xnorm2 <= 1 then
-          setLinePointFromXnorm(tempLinePoint1, rayStartPos, rayEndPos, xnorm1)
-          setLinePointFromXnorm(tempLinePoint2, beamPos1, beamPos2, clamp(xnorm2, 0, 1))
+          tempLinePoint1:setLerp(rayStartPos, rayEndPos, xnorm1)
+          tempLinePoint2:setLerp(beamPos1, beamPos2, clamp(xnorm2, 0, 1))
 
           local minSqPointDis = tempLinePoint1:squaredDistance(tempLinePoint2)
 
@@ -511,8 +507,8 @@ local function renderNodeSelectionUI()
           end
         end
       end
-      im.End()
     end
+    im.End()
   end
 end
 
@@ -577,8 +573,8 @@ local function renderBeamSelectionUI()
           end
         end
       end
-      im.End()
     end
+    im.End()
   end
 end
 
@@ -602,6 +598,7 @@ local function renderPickedNodesTree()
       end
 
       if im.TreeNodeEx1("Live Data##" .. nodeID .. "_pickedNodesData") then
+        im.Text("Average over last " .. plotLen .. " frames")
         for _, v in ipairs(nodeDataRendering) do
           if v.enabled[0] then
             local name = v.name
@@ -609,14 +606,13 @@ local function renderPickedNodesTree()
             local units = v.units
 
             if not v.plotData[nodeID] then
-              v.plotData[nodeID] = ffi.new("float[" .. plotLen .. "]", 0)
+              v.plotData[nodeID] = im.ArrayFloat(plotLen)
             end
 
             v.plotData[nodeID][plotOffset] = val
 
             local absVal = math.abs(val)
-            local strVal = string.format("%0" .. v.digitsBeforeDP .. ".2f", absVal)
-            v.digitsBeforeDP = tostring(#strVal)
+            local strVal = string.format("%.4f", absVal)
             strVal = (val < 0 and " -" or "+") .. strVal
 
             local avgVal = 0
@@ -628,13 +624,13 @@ local function renderPickedNodesTree()
             avgVal = avgVal / plotLen
 
             local absAvgVal = math.abs(avgVal)
-            local strAvgVal = string.format("%0" .. v.digitsBeforeDP .. ".2f", absAvgVal)
+            local strAvgVal = string.format("%.4f", absAvgVal)
             strAvgVal = (val < 0 and " -" or "+") .. strAvgVal
 
             im.TextColored(im.ImVec4(v.color[1],v.color[2],v.color[3],v.color[4]), string.format("%s (live / avg) = %s / %s %s", name, strVal, strAvgVal, units))
             --im.Text(string.format("%s = %.2f %s", name, val, units))
             if showGraphs[0] then
-              im.PlotLines1(units, v.plotData[nodeID], plotLen, plotOffset + 1 >= plotLen and 0 or plotOffset + 1, name, FLT_MAX, FLT_MAX, im.ImVec2(300, 100))
+              im.PlotLines1(units, v.plotData[nodeID], plotLen, plotOffset, name, FLT_MAX, FLT_MAX, im.ImVec2(300, 100))
             end
           end
         end
@@ -670,6 +666,7 @@ local function renderPickedBeamsTree()
       end
 
       if im.TreeNodeEx1("Live Data##" .. beamID .. "_pickedBeamsData") then
+        im.Text("Average over last " .. plotLen .. " frames")
         for _, v in ipairs(beamDataRendering) do
           if v.enabled[0] then
             local name = v.name
@@ -677,14 +674,13 @@ local function renderPickedBeamsTree()
             local units = v.units
 
             if not v.plotData[beamID] then
-              v.plotData[beamID] = ffi.new("float[" .. plotLen .. "]", 0)
+              v.plotData[beamID] = im.ArrayFloat(plotLen)
             end
 
             v.plotData[beamID][plotOffset] = val
 
             local absVal = math.abs(val)
-            local strVal = string.format("%0" .. v.digitsBeforeDP .. ".2f", absVal)
-            v.digitsBeforeDP = tostring(#strVal)
+            local strVal = string.format("%.4f", absVal)
             strVal = (val < 0 and " -" or "+") .. strVal
 
             local avgVal = 0
@@ -696,13 +692,13 @@ local function renderPickedBeamsTree()
             avgVal = avgVal / plotLen
 
             local absAvgVal = math.abs(avgVal)
-            local strAvgVal = string.format("%0" .. v.digitsBeforeDP .. ".2f", absAvgVal)
+            local strAvgVal = string.format("%.4f", absAvgVal)
             strAvgVal = (val < 0 and " -" or "+") .. strAvgVal
 
             im.TextColored(im.ImVec4(v.color[1],v.color[2],v.color[3],v.color[4]), string.format("%s (live / avg) = %s / %s %s", name, strVal, strAvgVal, units))
             --im.Text(string.format("%s = %.2f %s", name, val, units))
             if showGraphs[0] then
-              im.PlotLines1(units, v.plotData[beamID], plotLen, plotOffset + 1 >= plotLen and 0 or plotOffset + 1, name, FLT_MAX, FLT_MAX, im.ImVec2(300, 100))
+              im.PlotLines1(units, v.plotData[beamID], plotLen, plotOffset, name, FLT_MAX, FLT_MAX, im.ImVec2(300, 100))
             end
           end
         end
@@ -766,7 +762,7 @@ local function onUpdate(dt)
 
     -- Increment plot offset
     if be:getEnabled() then
-      plotOffset = plotOffset + 1 >= plotLen and 0 or plotOffset + 1
+      plotOffset = (plotOffset + 1) % plotLen
     end
   end
 

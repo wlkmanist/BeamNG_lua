@@ -4,29 +4,57 @@
 
 local im = ui_imgui
 
-local ffi = require('ffi')
-
 local C = {}
 
 C.name = 'StartScreen Text Panel'
 C.color = ui_flowgraph_editor.nodeColors.ui
-C.description = 'Attempts to create a string out of the input.'
+C.description = 'Assigns header and content text to the start screen.'
 C.category = 'repeat_instant'
 
 C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = '', chainFlow = true },
-  { dir = 'in', type = 'string', name = 'header', description = 'Header of the panel', default="Header", default="missions.missions.general.rules" },
-  { dir = 'in', type = {'string', 'table'}, name = 'text', description = 'Contents of the panel', default="Text" },
-  { dir = 'in', type = 'bool', name = 'experimental', description = 'If this panel should have "experimental" visuals', hidden=true},
+  { dir = 'in', type = {'string', 'table'}, name = 'header', description = 'Header of the panel.', default="missions.missions.general.rules" },
+  { dir = 'in', type = {'string', 'table'}, name = 'text', description = 'Contents of the panel.', default="Text" },
+  { dir = 'in', type = 'bool', name = 'experimental', description = 'If this panel should have "experimental" visuals. Deprecated - use experimental flavour instead', hidden=true},
+  { dir = 'in', type = 'string', name = 'flavour', description = 'Controls how the text is displayed.', hidden=true},
   { dir = 'out', type = 'flow', name = 'flow', description = '', chainFlow = true },
 }
 
-C.tags = { 'string' }
+C.tags = { 'start', 'screen', 'intro', 'ui' }
 
+function C:postInit()
+  self.pinInLocal.flavour.hardTemplates = {
+    {label = "default", value = "default"},
+    {label = "experimental", value = "experimental"},
+    {label = "info", value = "info"},
+  }
+end
 function C:work()
   self.pinOut.flow.value = self.pinIn.flow.value
-  self.mgr.modules.ui:addUIElement({type = 'textPanel', header = self.pinIn.header.value, text = self.pinIn.text.value, experimental = self.pinIn.experimental.value})
-
+  local text = self.pinIn.text.value
+  if (type(text) == 'table' and text.txt == '') or text == '' then
+    text = nil
+  end
+  if text then
+    local pages = {
+      main = true,
+    }
+    if self.pinIn.header.value == 'missions.missions.general.rules' or self.pinIn.header.value == 'Rules' then
+      pages.main = false
+      pages.rules = true
+    end
+    local flavour = self.pinIn.flavour.value or "default"
+    if self.pinIn.experimental.value then
+      flavour = "experimental"
+    end
+    self.mgr.modules.ui:addUIElement({
+      type = 'textPanel',
+      header = self.pinIn.header.value,
+      text = text,
+      flavour = flavour,
+      pages = pages,
+    })
+  end
 end
 
 return _flowgraph_createNode(C)

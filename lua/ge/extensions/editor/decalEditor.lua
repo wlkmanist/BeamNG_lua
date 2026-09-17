@@ -7,7 +7,6 @@ local logTag = 'editor_decalEditor'
 local actionMapName = "DecalEditor"
 local editModeName = "Edit Decal"
 local toolWindowName = "decalEditor"
-local PI = 3.14159265358979323846
 local roadRiverGui = extensions.editor_roadRiverGui
 local im = ui_imgui
 local minFloatValue = -1000000000
@@ -17,6 +16,7 @@ local currentSelectionDuplicated = false
 
 local selectedInstances = {}
 local selectedTemplate
+local activeTab = "Templates"
 
 local originalSizes
 local originalNormals
@@ -25,6 +25,198 @@ local originalPositions
 local originalGizmoPos
 
 local hiddenTemplates = {"DummyDecal", "tireTrackDecal"}
+
+local function isSelected(instance)
+  return instance and selectedInstances[instance.id] == true
+end
+
+local debugDrawDistance = 250.0
+local debugTextDistance = 50.0
+local sphereAlpha = 0.25
+
+local hoveredSphereId = nil
+
+-- cache base colors per id (store rgb only, alpha applied at draw)
+local colorCacheRGB = {}
+local function baseRGBForId(id)
+  local rgb = colorCacheRGB[id]
+  if not rgb then
+    local r = math.abs(math.sin(id * 12.9898)) % 1
+    local g = math.abs(math.sin(id * 78.233 )) % 1
+    local b = math.abs(math.sin(id * 45.164 )) % 1
+    rgb = {r, g, b}
+    colorCacheRGB[id] = rgb
+  end
+  return rgb[1], rgb[2], rgb[3]
+end
+
+local function dist2(ax, ay, az, bx, by, bz)
+  local dx = ax - bx; local dy = ay - by; local dz = az - bz
+  return dx*dx + dy*dy + dz*dz
+end
+
+local function vdot(a, b) return a.x*b.x + a.y*b.y + a.z*b.z end
+local function vlen(v) return math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) end
+local function vnorm(v)
+  local l = vlen(v)
+  if l > 0 then return vec3(v.x / l, v.y / l, v.z / l) end
+  return vec3(0,0,1)
+end
+
+local function rayIntersectsSphere(rayOrigin, rayDir, center, radius)
+  local oc = vec3(rayOrigin.x - center.x, rayOrigin.y - center.y, rayOrigin.z - center.z)
+  local b = vdot(oc, rayDir)
+  local c = vdot(oc, oc) - radius*radius
+  local disc = b*b - c
+  if disc < 0 then return nil end
+  local s = math.sqrt(disc)
+  local t = -b - s
+  if t < 0 then t = -b + s end
+  if t < 0 then return nil end
+  return t
+end
+
+-- Spatial grid
+local grid = {}
+local gridCellSize = 50.0
+local gridDirty = true
+local lastDecalCount = -1
+
+local function cellKey(ix, iy, iz)
+  return tostring(ix) .. "|" .. tostring(iy) .. "|" .. tostring(iz)
+end
+
+local function gridInsert(inst)
+  local s = gridCellSize
+  local ix = math.floor(inst.position.x / s)
+  local iy = math.floor(inst.position.y / s)
+  local iz = math.floor(inst.position.z / s)
+  local key = cellKey(ix, iy, iz)
+  local bucket = grid[key]
+  if not bucket then
+    bucket = {}
+    grid[key] = bucket
+  end
+  bucket[#bucket + 1] = inst
+end
+
+local function rebuildGrid()
+  grid = {}
+  local N = editor.getDecalInstanceVecSize()
+  for i = 0, N - 1 do
+    local inst = editor.getDecalInstance(i)
+    if inst then
+      gridInsert(inst)
+    end
+  end
+  gridDirty = false
+  lastDecalCount = N
+end
+
+local function forCellsInSphere(campos, radius, fn)
+  local s = gridCellSize
+  local minx = math.floor((campos.x - radius) / s)
+  local maxx = math.floor((campos.x + radius) / s)
+  local miny = math.floor((campos.y - radius) / s)
+  local maxy = math.floor((campos.y + radius) / s)
+  local minz = math.floor((campos.z - radius) / s)
+  local maxz = math.floor((campos.z + radius) / s)
+  for ix = minx, maxx do
+    for iy = miny, maxy do
+      for iz = minz, maxz do
+        local bucket = grid[cellKey(ix, iy, iz)]
+        if bucket then fn(bucket) end
+      end
+    end
+  end
+end
+
+-- Per-frame visible list (from grid)
+local debugVisibleIds = {}
+local debugVisibleDist2 = {}
+local debugVisibleCount = 0
+
+local function buildVisibleListFromGrid(campos)
+  debugVisibleCount = 0
+  local radius = debugDrawDistance
+  local dd2 = radius * radius
+  forCellsInSphere(campos, radius, function(bucket)
+    for j = 1, #bucket do
+      local inst = bucket[j]
+      local ok = true
+      local id
+      ok, id = pcall(function() return inst.id end)
+      if ok and id then
+        local live = editor.getDecalInstance(id)
+        if live then
+          local d2 = dist2(campos.x, campos.y, campos.z, live.position.x, live.position.y, live.position.z)
+          if d2 <= dd2 then
+            debugVisibleCount = debugVisibleCount + 1
+            debugVisibleIds[debugVisibleCount] = id
+            debugVisibleDist2[debugVisibleCount] = d2
+          end
+        else
+          gridDirty = true
+        end
+      else
+        gridDirty = true
+      end
+    end
+  end)
+end
+
+local function pickSphereUnderMouse(hit, campos)
+  hoveredSphereId = nil
+  if not hit or not hit.pos then return end
+  local rayOrigin = campos
+  local rayDir = vnorm(vec3(hit.pos.x - rayOrigin.x, hit.pos.y - rayOrigin.y, hit.pos.z - rayOrigin.z))
+  local bestT = math.huge
+  for i = 1, debugVisibleCount do
+    local id = debugVisibleIds[i]
+    local inst = id and editor.getDecalInstance(id) or nil
+    if inst then
+      local r = inst.size * 0.5
+      local t = rayIntersectsSphere(rayOrigin, rayDir, inst.position, r)
+      if t and t < bestT then
+        bestT = t
+        hoveredSphereId = id
+      end
+    else
+      gridDirty = true
+    end
+  end
+end
+
+local function drawDebugSpheres(campos)
+  if sphereAlpha <= 0.0 then return end -- hide spheres and text if alpha is 0
+  local tdist2 = debugTextDistance * debugTextDistance
+  for i = 1, debugVisibleCount do
+    local id = debugVisibleIds[i]
+    local d2 = debugVisibleDist2[i]
+    local inst = id and editor.getDecalInstance(id) or nil
+    if inst then
+      local r = inst.size * 0.5
+      -- color with current alpha
+      local rr, gg, bb = baseRGBForId(inst.id)
+      local col = ColorF(rr, gg, bb, sphereAlpha)
+      if hoveredSphereId and hoveredSphereId == inst.id then
+        col = ColorF(1.0, 1.0, 0.25, sphereAlpha)
+      elseif selectedInstances[inst.id] == true then
+        col = ColorF(0.15, 0.85, 0.2, sphereAlpha)
+      end
+      debugDrawer:drawSphere(inst.position, r, col)
+      if d2 <= tdist2 then
+        local dist = math.sqrt(d2)
+        debugDrawer:drawTextAdvanced(inst.position, String('Name: ' .. inst.template:getName()), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
+        debugDrawer:drawTextAdvanced(inst.position, String('ID: ' .. tostring(inst.id)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
+        debugDrawer:drawTextAdvanced(inst.position, String('Dist: ' .. string.format("%0.1f", dist) .. ' m'), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
+      end
+    else
+      gridDirty = true
+    end
+  end
+end
+-- END DEBUG SPHERES
 
 local function displayMaterialPreview(material)
   local fileName = material:getField('diffuseMap', 0) -- This sometimes contains the path and sometimes not, so we have to check
@@ -60,18 +252,23 @@ local cubePoints =
 }
 
 local function updateGizmoPos()
+  if tableIsEmpty(selectedInstances) then return end
   local firstInstance
   local averagePos = vec3(0,0,0)
-
-  for index, instance in pairs(selectedInstances) do
-    if not firstInstance then firstInstance = instance end
-    averagePos = averagePos + instance.position
+  local count = 0
+  for id, _ in pairs(selectedInstances) do
+    local inst = editor.getDecalInstance(id)
+    if inst then
+      if not firstInstance then firstInstance = inst end
+      averagePos = averagePos + inst.position
+      count = count + 1
+    else
+      selectedInstances[id] = nil
+    end
   end
-  averagePos.x = averagePos.x / tableSize(selectedInstances)
-  averagePos.y = averagePos.y / tableSize(selectedInstances)
-  averagePos.z = averagePos.z / tableSize(selectedInstances)
-
-  if editor.getAxisGizmoAlignment() == editor.AxisGizmoAlignment_Local and tableSize(selectedInstances) == 1 then
+  if count == 0 then return end
+  averagePos = averagePos / count
+  if editor.getAxisGizmoAlignment() == editor.AxisGizmoAlignment_Local and count == 1 then
     editor.setAxisGizmoTransform(firstInstance:getWorldMatrix())
   else
     -- Set gizmo to instance position
@@ -130,32 +327,28 @@ local function getTemplateById(id)
     end
   end
 end
-
-local function isSelected(instance)
-  if not instance then
-    return false
-  end
-  return selectedInstances[instance.id]
-end
+-- isSelected defined earlier (to be used by debug functions)
 
 local function selectSingleInstance(instance)
   selectedInstances = {}
   if instance then
-    selectedInstances[instance.id] = instance
+    selectedInstances[instance.id] = true
   end
   updateGizmoPos()
 end
 
 local function addToSelection(instance)
   if instance then
-    selectedInstances[instance.id] = instance
+    selectedInstances[instance.id] = true
     updateGizmoPos()
   end
 end
 
 local function removeFromSelection(instance)
-  selectedInstances[instance.id] = nil
-  updateGizmoPos()
+  if instance then
+    selectedInstances[instance.id] = nil
+    updateGizmoPos()
+  end
 end
 
 local function clearTemplateSelection()
@@ -198,6 +391,7 @@ local function deleteTemplateActionUndo(actionData)
     local instance = editor.addDecalInstanceWithTanForceId(instanceData.position, instanceData.normal,
                           instanceData.tangent, template, instanceData.size, instanceData.textureRectIdx, 3, 1, instanceData.id)
   end
+  gridDirty = true
 end
 
 local function deleteTemplateActionRedo(actionData)
@@ -207,6 +401,7 @@ local function deleteTemplateActionRedo(actionData)
     clearTemplateSelection()
   end
   editor.deleteDecalTemplate(template)
+  gridDirty = true
 end
 
 -- Clear selection
@@ -255,6 +450,7 @@ local function positionInstancesActionUndo(actionData)
     editor.notifyDecalModified(instance)
   end
   updateGizmoPos()
+  gridDirty = true
 end
 
 local function positionInstancesActionRedo(actionData)
@@ -264,6 +460,7 @@ local function positionInstancesActionRedo(actionData)
     editor.notifyDecalModified(instance)
   end
   updateGizmoPos()
+  gridDirty = true
 end
 
 -- Rotate instance
@@ -276,6 +473,7 @@ local function rotateInstancesActionUndo(actionData)
     editor.notifyDecalModified(instance)
   end
   updateGizmoPos()
+  gridDirty = true
 end
 
 local function rotateInstancesActionRedo(actionData)
@@ -287,6 +485,7 @@ local function rotateInstancesActionRedo(actionData)
     editor.notifyDecalModified(instance)
   end
   updateGizmoPos()
+  gridDirty = true
 end
 
 -- Change instance size
@@ -299,6 +498,7 @@ local function changeInstancesSizeActionUndo(actionData)
     end
     editor.notifyDecalModified(instance)
   end
+  gridDirty = true
 end
 
 local function changeInstancesSizeActionRedo(actionData)
@@ -310,6 +510,93 @@ local function changeInstancesSizeActionRedo(actionData)
     end
     editor.notifyDecalModified(instance)
   end
+  gridDirty = true
+end
+
+-- Change instance tiling
+local function changeInstancesTilingActionUndo(actionData)
+  for id, tiling in pairs(actionData.oldTilings) do
+    local instance = editor.getDecalInstance(id)
+    if instance then
+      instance.tiling = Point2F(tiling.x, tiling.y)
+      editor.notifyDecalModified(instance)
+    end
+  end
+  gridDirty = true
+end
+
+local function changeInstancesTilingActionRedo(actionData)
+  for id, tiling in pairs(actionData.newTilings) do
+    local instance = editor.getDecalInstance(id)
+    if instance then
+      instance.tiling = Point2F(tiling.x, tiling.y)
+      editor.notifyDecalModified(instance)
+    end
+  end
+  gridDirty = true
+end
+
+-- Replace instance template (swap datablock by deleting and recreating the instance,
+-- so the old datablock's baked geometry is freed cleanly)
+local function recreateInstanceWithTemplate(data, templateId, textureRectIdx)
+  local template = templateId and Sim.upcast(scenetree.findObjectById(templateId))
+  if not template then return nil end
+  local inst = editor.getDecalInstance(data.id)
+  if inst then
+    editor.deleteDecalInstance(inst)
+  end
+  local newInst = editor.addDecalInstanceWithTanForceId(data.position, data.normal, data.tangent,
+                          template, 1, textureRectIdx, 3, 1, data.id)
+  if newInst then
+    newInst.size = data.size
+    newInst.tiling = Point2F(data.tiling.x, data.tiling.y)
+    editor.notifyDecalModified(newInst)
+  end
+  return newInst
+end
+
+local function replaceInstancesTemplateActionUndo(actionData)
+  selectedInstances = {}
+  for _, data in ipairs(actionData.instances) do
+    local newInst = recreateInstanceWithTemplate(data, data.oldTemplateId, data.textureRectIdx)
+    if newInst then selectedInstances[newInst.id] = true end
+  end
+  updateGizmoPos()
+  gridDirty = true
+end
+
+local function replaceInstancesTemplateActionRedo(actionData)
+  selectedInstances = {}
+  for _, data in ipairs(actionData.instances) do
+    local newInst = recreateInstanceWithTemplate(data, actionData.newTemplateId, 0)
+    if newInst then selectedInstances[newInst.id] = true end
+  end
+  updateGizmoPos()
+  gridDirty = true
+end
+
+local function replaceSelectedInstancesWithTemplate()
+  if not selectedTemplate then return end
+  local instances = {}
+  for id, _ in pairs(selectedInstances) do
+    local inst = editor.getDecalInstance(id)
+    if inst then
+      table.insert(instances, {
+        id = id,
+        position = inst.position,
+        normal = inst.normal,
+        tangent = inst.tangent,
+        size = inst.size,
+        tiling = {x = inst.tiling.x, y = inst.tiling.y},
+        textureRectIdx = inst.textureRectIdx,
+        oldTemplateId = inst.template:getID()
+      })
+    end
+  end
+  if tableIsEmpty(instances) then return end
+  editor.history:commitAction("ReplaceDecalInstancesTemplate",
+              {instances = instances, newTemplateId = selectedTemplate:getID()},
+              replaceInstancesTemplateActionUndo, replaceInstancesTemplateActionRedo)
 end
 
 -- Delete instance
@@ -317,9 +604,10 @@ local function deleteInstanceActionUndo(actionData)
   selectedInstances = {}
   for _,instanceData in ipairs(actionData.instancesData) do
     local instance = editor.addDecalInstanceWithTanForceId(instanceData.position, instanceData.normal, instanceData.tangent, instanceData.template, instanceData.size, instanceData.textureRectIdx, 3, 1, instanceData.id)
-    selectedInstances[instance.id] = instance
+    selectedInstances[instance.id] = true
   end
   updateGizmoPos()
+  gridDirty = true
 end
 
 local function deleteInstanceActionRedo(actionData)
@@ -329,6 +617,7 @@ local function deleteInstanceActionRedo(actionData)
   end
   selectSingleInstance()
   updateGizmoPos()
+  gridDirty = true
 end
 
 -- Create instance
@@ -339,6 +628,7 @@ local function createInstanceActionUndo(actionData)
   end
   editor.deleteDecalInstance(instance)
   updateGizmoPos()
+  gridDirty = true
 end
 
 local function createInstanceActionRedo(actionData)
@@ -357,6 +647,7 @@ local function createInstanceActionRedo(actionData)
   actionData.instanceData.textureRectIdx = instance.textureRectIdx
   selectSingleInstance(instance)
   updateGizmoPos()
+  gridDirty = true
 end
 
 -- Duplicate instances
@@ -365,14 +656,16 @@ local function duplicateInstancesActionUndo(actionData)
     local instance = editor.getDecalInstance(id)
     editor.deleteDecalInstance(instance)
   end
+  gridDirty = true
 end
 
 local function duplicateInstancesActionRedo(actionData)
   selectedInstances = {}
   for id, instanceData in pairs(actionData.instancesData) do
     local instance = editor.addDecalInstanceWithTanForceId(instanceData.position, instanceData.normal, instanceData.tangent, instanceData.template, instanceData.size, instanceData.textureRectIdx, 3, 1, instanceData.id)
-    selectedInstances[instance.id] = instance
+    selectedInstances[instance.id] = true
   end
+  gridDirty = true
 end
 
 local templateSelectionIndex = im.IntPtr(0)
@@ -473,24 +766,35 @@ local function clickedOnInstance(instance)
   end
 end
 
-local function degToRad(d)
-  return (d * PI) / 180.0
-end
-
-local function radToDeg(r)
-  return (r * 180.0) / PI;
-end
-
 local function onDeleteSelection()
   local instancesData = {}
-  for id, selectedInstance in pairs(selectedInstances) do
-    local instance = {position = selectedInstance.position, normal = selectedInstance.normal, tangent = selectedInstance.tangent,
-                      template = deepcopy(selectedInstance.template), size = selectedInstance.size / selectedInstance.template.size,
-                      textureRectIdx = selectedInstance.textureRectIdx, id = id}
-    table.insert(instancesData, instance)
+  for id, _ in pairs(selectedInstances) do
+    local selectedInstance = editor.getDecalInstance(id)
+    if selectedInstance then
+      local instance = {
+        position = selectedInstance.position,
+        normal = selectedInstance.normal,
+        tangent = selectedInstance.tangent,
+        template = deepcopy(selectedInstance.template),
+        size = selectedInstance.size / selectedInstance.template.size,
+        textureRectIdx = selectedInstance.textureRectIdx,
+        id = id
+      }
+      table.insert(instancesData, instance)
+    else
+      selectedInstances[id] = nil
+    end
   end
-
   editor.history:commitAction("DeleteDecalInstance", {instancesData = instancesData}, deleteInstanceActionUndo, deleteInstanceActionRedo)
+end
+
+local function focusCameraOnInstance(instance)
+  if not instance then return end
+  local targetPos = vec3(instance.position)
+  local dist = math.max(instance.size, 1.0) * 2.5
+  local camPos = targetPos + vec3(instance.normal) * dist
+  local rot = quatFromDir(targetPos - camPos)
+  core_camera.setPosRot(0, camPos.x, camPos.y, camPos.z, rot.x, rot.y, rot.z, rot.w)
 end
 
 local setWidth = true
@@ -499,6 +803,9 @@ local position = im.ArrayFloat(3)
 local size = im.FloatPtr(0)
 local originalPosition
 local input4FloatValue = im.ArrayFloat(4)
+local settingTiling = false
+local tiling = im.ArrayFloat(2)
+local originalTilingValue
 
 local function displayInstances()
   local instances = {}
@@ -537,6 +844,9 @@ local function displayInstances()
         if im.IsItemClicked() then
           clickedOnInstance(instance)
         end
+        if im.IsItemHovered() and im.IsMouseDoubleClicked(0) then
+          focusCameraOnInstance(instance)
+        end
       end
       im.TreePop()
     end
@@ -544,19 +854,38 @@ local function displayInstances()
   im.EndChild()
 
   if tableSize(selectedInstances) == 1 then
-    local selectedInstance
-    for id, instance in pairs(selectedInstances) do
-      selectedInstance = instance
+    local selectedId
+    for id, _ in pairs(selectedInstances) do
+      selectedId = id
       break
     end
+
+    local selectedInstance = editor.getDecalInstance(selectedId)
+    if not selectedInstance then
+      selectedInstances[selectedId] = nil
+      return
+    end
+
     im.BeginChild1("Instance Properties", im.ImVec2(0,0), true)
     im.Text("Instance Properties")
 
-    local label = selectedInstance.template:__tostring()
-    local material = scenetree.findObject(selectedInstance.template.material)
-
+    local tmpl = selectedInstance.template
+    local label = tmpl:__tostring()
+    local material = tmpl.material and scenetree.findObject(tmpl.material) or nil
     if material then
       displayMaterialPreview(material)
+    end
+
+    local canReplace = selectedTemplate ~= nil
+    if not canReplace then im.BeginDisabled() end
+    if im.Button("Replace With Current Template") then
+      replaceSelectedInstancesWithTemplate()
+    end
+    if not canReplace then im.EndDisabled() end
+    if selectedTemplate then
+      im.tooltip("Swap this decal's datablock to the selected template: " .. selectedTemplate:__tostring())
+    else
+      im.tooltip("Select a template in the Templates tab first")
     end
 
     im.Columns(2)
@@ -616,14 +945,14 @@ local function displayInstances()
     local worldQuat = selectedInstance:getWorldMatrix():toQuatF()
     local euler = worldQuat:toEuler()
 
-    input4FloatValue[0] = radToDeg(euler.x)
-    input4FloatValue[1] = radToDeg(euler.y)
-    input4FloatValue[2] = radToDeg(euler.z)
+    input4FloatValue[0] = math.deg(euler.x)
+    input4FloatValue[1] = math.deg(euler.y)
+    input4FloatValue[2] = math.deg(euler.z)
 
     im.NextColumn()
     im.PushItemWidth(im.GetContentRegionAvailWidth())
     if editor.uiInputFloat3(string.format("##rot_%d_%s", selectedInstance.id, label), input4FloatValue, "%.1f", im.InputTextFlags_EnterReturnsTrue, nil) then
-      local decalRot = quatFromEuler(degToRad(input4FloatValue[0]), degToRad(input4FloatValue[1]), degToRad(input4FloatValue[2]))
+      local decalRot = quatFromEuler(math.rad(input4FloatValue[0]), math.rad(input4FloatValue[1]), math.rad(input4FloatValue[2]))
       selectedInstance.normal = decalRot:__mul(vec3(0,0,1))
       selectedInstance.tangent = decalRot:__mul(vec3(1,0,0))
       editor.notifyDecalModified(selectedInstance)
@@ -646,6 +975,39 @@ local function displayInstances()
       editor.history:commitAction("ChangeDecalInstancesSize", {oldSizes = oldSizes, newSizes = newSizes}, changeInstancesSizeActionUndo, changeInstancesSizeActionRedo)
     end
     im.PopItemWidth()
+
+    im.NextColumn()
+    im.Text("Tiling")
+    im.NextColumn()
+
+    if not settingTiling then
+      tiling[0] = selectedInstance.tiling.x
+      tiling[1] = selectedInstance.tiling.y
+    end
+
+    local tilingEditEnded = im.BoolPtr(false)
+    im.PushItemWidth(im.GetContentRegionAvailWidth())
+    if editor.uiDragFloat2(string.format("##tiling_%d_%s", selectedInstance.id, label), tiling, 0.05, 0.0, maxFloatValue,
+                          "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f", 1, tilingEditEnded) then
+      settingTiling = true
+      if not originalTilingValue then
+        originalTilingValue = {x = selectedInstance.tiling.x, y = selectedInstance.tiling.y}
+      end
+      selectedInstance.tiling = Point2F(tiling[0], tiling[1])
+      editor.notifyDecalModified(selectedInstance)
+    end
+    im.PopItemWidth()
+    im.tooltip("Per-instance UV tile count. Set to 0 to inherit the template's tiling.")
+
+    if tilingEditEnded[0] then
+      local oldTilings = {}
+      local newTilings = {}
+      oldTilings[selectedInstance.id] = originalTilingValue or {x = tiling[0], y = tiling[1]}
+      newTilings[selectedInstance.id] = {x = tiling[0], y = tiling[1]}
+      editor.history:commitAction("ChangeDecalInstancesTiling", {oldTilings = oldTilings, newTilings = newTilings}, changeInstancesTilingActionUndo, changeInstancesTilingActionRedo)
+      originalTilingValue = nil
+      settingTiling = false
+    end
 
     im.EndChild()
   end
@@ -695,10 +1057,17 @@ local function gizmoBeginDrag()
 
   if editor.keyModifiers.shift then
     local copiedInstances = {}
-    for id, instance in pairs(selectedInstances) do
-      local copiedInstance = editor.addDecalInstanceWithTan(instance.position, instance.normal, instance.tangent, instance.template, 1, instance.textureRectIdx, 3, 1)
-      copiedInstance.size = instance.size
-      copiedInstances[copiedInstance.id] = copiedInstance
+    for id, _ in pairs(selectedInstances) do
+      local inst = editor.getDecalInstance(id)
+      if inst then
+        local copiedInstance = editor.addDecalInstanceWithTan(
+          inst.position, inst.normal, inst.tangent, inst.template, 1, inst.textureRectIdx, 3, 1
+        )
+        copiedInstance.size = inst.size
+        copiedInstances[copiedInstance.id] = true
+      else
+        selectedInstances[id] = nil
+      end
     end
     selectedInstances = copiedInstances
     currentSelectionDuplicated = true
@@ -708,11 +1077,16 @@ local function gizmoBeginDrag()
   originalNormals = {}
   originalTangents = {}
   originalPositions = {}
-  for id, instance in pairs(selectedInstances) do
-    originalSizes[id] = instance.size
-    originalNormals[id] = instance.normal
-    originalTangents[id] = instance.tangent
-    originalPositions[id] = instance.position
+  for id, _ in pairs(selectedInstances) do
+    local inst = editor.getDecalInstance(id)
+    if inst then
+      originalSizes[id] = inst.size
+      originalNormals[id] = inst.normal
+      originalTangents[id] = inst.tangent
+      originalPositions[id] = inst.position
+    else
+      selectedInstances[id] = nil
+    end
   end
 end
 
@@ -724,38 +1098,80 @@ local function gizmoEndDrag()
 
   if currentSelectionDuplicated then
     local instancesData = {}
-    for id, selectedInstance in pairs(selectedInstances) do
-      local instance = {position = selectedInstance.position, normal = selectedInstance.normal, tangent = selectedInstance.tangent,
-                        template = deepcopy(selectedInstance.template), size = selectedInstance.size / selectedInstance.template.size,
-                        textureRectIdx = selectedInstance.textureRectIdx, id = id}
-      instancesData[id] = instance
-      editor.deleteDecalInstance(selectedInstance)
+    for id, _ in pairs(selectedInstances) do
+      local inst = editor.getDecalInstance(id)
+      if inst then
+        local data = {
+          position = inst.position,
+          normal = inst.normal,
+          tangent = inst.tangent,
+          template = deepcopy(inst.template),
+          size = inst.size / inst.template.size,
+          textureRectIdx = inst.textureRectIdx,
+          id = id
+        }
+        instancesData[id] = data
+        editor.deleteDecalInstance(inst)
+      else
+        selectedInstances[id] = nil
+      end
     end
-    editor.history:commitAction("DuplicateDecalInstances",
-                    {instancesData = instancesData}, duplicateInstancesActionUndo, duplicateInstancesActionRedo)
+    editor.history:commitAction(
+      "DuplicateDecalInstances",
+      { instancesData = instancesData },
+      duplicateInstancesActionUndo,
+      duplicateInstancesActionRedo
+    )
     currentSelectionDuplicated = false
   else
-    for id, instance in pairs(selectedInstances) do
-      newPositions[id] = instance.position
-      newTangents[id] = instance.tangent
-      newNormals[id] = instance.normal
-      newSizes[id] = instance.size
+    for id, _ in pairs(selectedInstances) do
+      local inst = editor.getDecalInstance(id)
+      if inst then
+        newPositions[id] = inst.position
+        newTangents[id]  = inst.tangent
+        newNormals[id]   = inst.normal
+        newSizes[id]     = inst.size
+      else
+        selectedInstances[id] = nil
+      end
     end
+
     if editor.getAxisGizmoMode() == editor.AxisGizmoMode_Translate then
-      editor.history:commitAction("PositionDecalInstances",
-                    {oldPositions = originalPositions, newPositions = newPositions},
-                    positionInstancesActionUndo, positionInstancesActionRedo, true)
-
+      editor.history:commitAction(
+        "PositionDecalInstances",
+        { oldPositions = originalPositions, newPositions = newPositions },
+        positionInstancesActionUndo,
+        positionInstancesActionRedo,
+        true
+      )
     elseif editor.getAxisGizmoMode() == editor.AxisGizmoMode_Rotate then
-      editor.history:commitAction("RotateDecalInstances",
-                    {oldNormals = originalNormals, oldTangents = originalTangents, oldPositions = originalPositions, newNormals = newNormals,
-                    newTangents = newTangents, newPositions = newPositions},
-                    rotateInstancesActionUndo, rotateInstancesActionRedo, true)
-
+      editor.history:commitAction(
+        "RotateDecalInstances",
+        {
+          oldNormals = originalNormals,
+          oldTangents = originalTangents,
+          oldPositions = originalPositions,
+          newNormals = newNormals,
+          newTangents = newTangents,
+          newPositions = newPositions
+        },
+        rotateInstancesActionUndo,
+        rotateInstancesActionRedo,
+        true
+      )
     elseif editor.getAxisGizmoMode() == editor.AxisGizmoMode_Scale then
-      editor.history:commitAction("ChangeDecalInstancesSize",
-                    {oldSizes = originalSizes, oldPositions = originalPositions, newSizes = newSizes, newPositions = newPositions},
-                    changeInstancesSizeActionUndo, changeInstancesSizeActionRedo, true)
+      editor.history:commitAction(
+        "ChangeDecalInstancesSize",
+        {
+          oldSizes = originalSizes,
+          oldPositions = originalPositions,
+          newSizes = newSizes,
+          newPositions = newPositions
+        },
+        changeInstancesSizeActionUndo,
+        changeInstancesSizeActionRedo,
+        true
+      )
     end
   end
 
@@ -765,6 +1181,7 @@ local function gizmoEndDrag()
   originalPositions = nil
   originalGizmoPos = nil
   updateGizmoPos()
+  gridDirty = true
 end
 
 local function scalePoint(point, scale)
@@ -782,24 +1199,43 @@ end
 
 local function gizmoDragging()
   if editor.getAxisGizmoMode() == editor.AxisGizmoMode_Translate then
-    for id, instance in pairs(selectedInstances) do
-      instance.position = originalPositions[id] + (editor.getAxisGizmoTransform():getColumn(3) - originalGizmoPos)
-      editor.notifyDecalModified(instance)
+    local delta = editor.getAxisGizmoTransform():getColumn(3) - originalGizmoPos
+    for id, _ in pairs(selectedInstances) do
+      local inst = editor.getDecalInstance(id)
+      if inst then
+        inst.position = originalPositions[id] + delta
+        editor.notifyDecalModified(inst)
+      else
+        selectedInstances[id] = nil
+      end
     end
 
   elseif editor.getAxisGizmoMode() == editor.AxisGizmoMode_Rotate then
     local euler = editor.getAxisGizmoTransform():toQuatF():toEuler()
-    for id, instance in pairs(selectedInstances) do
-      rotateAround(instance, euler, editor.getAxisGizmoTransform():getColumn(3))
+    local rotPoint = editor.getAxisGizmoTransform():getColumn(3)
+
+    for id, _ in pairs(selectedInstances) do
+      local inst = editor.getDecalInstance(id)
+      if inst then
+        rotateAround(inst, euler, rotPoint)
+      else
+        selectedInstances[id] = nil
+      end
     end
 
   elseif editor.getAxisGizmoMode() == editor.AxisGizmoMode_Scale then
     local scale = editor.getAxisGizmoScale()
-    for id, instance in pairs(selectedInstances) do
-      local avgScale = (scale.x + scale.y) * 0.5
-      instance.size = (originalSizes[id] * avgScale)
-      instance.position = originalGizmoPos + scalePoint((originalPositions[id] - originalGizmoPos), avgScale)
-      editor.notifyDecalModified(instance)
+    local avgScale = (scale.x + scale.y) * 0.5
+
+    for id, _ in pairs(selectedInstances) do
+      local inst = editor.getDecalInstance(id)
+      if inst then
+        inst.size = (originalSizes[id] * avgScale)
+        inst.position = originalGizmoPos + scalePoint((originalPositions[id] - originalGizmoPos), avgScale)
+        editor.notifyDecalModified(inst)
+      else
+        selectedInstances[id] = nil
+      end
     end
   end
 end
@@ -808,36 +1244,54 @@ local time = 0
 
 local function onUpdate()
   local res = cameraMouseRayCast()
-  if res and res.pos and not (im.IsAnyItemHovered() or im.IsWindowHovered(im.HoveredFlags_AnyWindow)) then
-    local closestDecal = editor.getClosestDecal(res.pos)
-    if closestDecal and not isSelected(closestDecal) then
-      drawSelectedInstanceBBox(closestDecal, roadRiverGui.highlightColors.hover)
-    end
+  local campos = core_camera.getPosition()
 
+  -- Ensure grid up-to-date if decal count changed or flagged dirty
+  local N = editor.getDecalInstanceVecSize()
+  if gridDirty or N ~= lastDecalCount then
+    rebuildGrid()
+  end
+
+  -- Build visible list from grid
+  buildVisibleListFromGrid(campos)
+
+  -- Hover/pick via spheres
+  if res and res.pos and not (im.IsAnyItemHovered() or im.IsWindowHovered(im.HoveredFlags_AnyWindow)) then
+    pickSphereUnderMouse(res, campos)
     if im.IsMouseClicked(0) then
       if not editor.isAxisGizmoHovered() then
-        if closestDecal then
-          clickedOnInstance(closestDecal)
+        if hoveredSphereId then
+          local hoveredInst = editor.getDecalInstance(hoveredSphereId)
+          if hoveredInst then
+            clickedOnInstance(hoveredInst)
+          else
+            hoveredSphereId = nil
+            gridDirty = true
+          end
         else
-          if selectedTemplate then
-            local instanceData = {position = res.pos, normal = res.normal, tangent = 0, template = deepcopy(selectedTemplate)}
-            editor.history:commitAction("CreateDecalInstance", {instanceData = instanceData}, createInstanceActionUndo, createInstanceActionRedo)
+          if selectedTemplate and activeTab == "Templates" then
+            local instanceData = {
+              position = res.pos,
+              normal   = res.normal,
+              tangent  = 0,
+              template = deepcopy(selectedTemplate)
+            }
+            editor.history:commitAction(
+              "CreateDecalInstance",
+              { instanceData = instanceData },
+              createInstanceActionUndo,
+              createInstanceActionRedo
+            )
           end
         end
       end
     end
   end
 
+  -- Draw spheres for all visible decals
+  drawDebugSpheres(campos)
+
   if not tableIsEmpty(selectedInstances) then
-    time = time + editor.getDeltaTime()
-    local factor = math.sin(time * 10) * 0.5 + 0.5
-    local pulseColor = ColorF(roadRiverGui.highlightColors.selected.r * factor,
-                              roadRiverGui.highlightColors.selected.g * factor,
-                              roadRiverGui.highlightColors.selected.b * factor, 1)
-    for _, instance in pairs(selectedInstances) do
-      drawSelectedInstanceBBox(instance, pulseColor)
-      drawProjectionArrow(instance)
-    end
     editor.updateAxisGizmo(gizmoBeginDrag, gizmoEndDrag, gizmoDragging)
     editor.drawAxisGizmo()
   end
@@ -907,23 +1361,28 @@ local function onEditorGui()
   end
 
   if editor.beginWindow(toolWindowName, "Decal Editor", nil, true) then
+
+    local saPtr = im.FloatPtr(sphereAlpha)
+    if im.SliderFloat("Gizmo sphere alpha", saPtr, 0.0, 1.0, "%.2f") then
+      sphereAlpha = saPtr[0]
+    end
+
     if im.BeginTabBar("decal editor##") then
       if im.BeginTabItem("Templates") then
+        activeTab = "Templates"
         displayTemplates()
         im.EndTabItem()
       end
       if im.BeginTabItem("Instances") then
+        activeTab = "Instances"
         displayInstances()
         im.EndTabItem()
-      end
-      if im.IsItemClicked() then
-        clearTemplateSelection()
       end
       im.EndTabBar()
     end
 
-    editor.endWindow()
   end
+  editor.endWindow()
 end
 
 M.onEditorInitialized = onEditorInitialized

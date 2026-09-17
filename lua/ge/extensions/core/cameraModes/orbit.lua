@@ -11,6 +11,10 @@ local vecY = vec3(0,1,0)
 local vecZ = vec3(0,0,1)
 local lookBackVec = vec3(0,-0.3,0)
 
+local upperSpeedThreshold = 10
+local lowerSpeedThreshold = 1
+local pitchTransitionDelay = 1.5
+
 local function getRot(base, vf, vz)
   local nyn = vf:normalized()
   local nxn = nyn:cross(vz):projectToOriginPlane(vecZ):normalized()
@@ -31,19 +35,57 @@ function C:init()
   self.lockCamera = false
   self.orbitOffset = vec3()
   self.preResetPos = vec3(1e+300, 0, 0)
-  self.smoothedVelocity = newTemporalSmoothing(24, 24, 24)
-
+  self.smoothedPitchOffset = newTemporalSigmoidSmoothing(2, 2, 2, 2)
+  self.dynamicPitchQuat = quat()
   self.targetCenter = vec3(0, 0, 0)
   self.targetLeft = vec3(0, 0, 0)
   self.targetBack = vec3(0, 0, 0)
   self.configChanged = false
-
+  self.icon = "aperture"
   self.collision = collision()
   self.collision:init()
 
   self:onVehicleCameraConfigChanged()
   self:onSettingsChanged()
   self:reset()
+end
+
+function C:calculateDynamicPitchLimit(data, targetPos)
+  if not self.dynamicPitchLimit then
+    local vehId = data.veh:getID()
+    local veh = getObjectByID(vehId)
+    local bottomRear = vec3()
+    local bbHalfExtents = vec3()
+    local bbCenter = vec3()
+
+    bbHalfExtents:set(be:getObjectOOBBHalfExtentsXYZ(vehId))
+    bottomRear:setAdd(vec3(0,-bbHalfExtents.y,0))
+    bottomRear:setAdd(vec3(0,0,-bbHalfExtents.z))
+    bbCenter:set(be:getObjectOOBBCenterXYZ(vehId))
+
+    -- rotate targetPos around bbCenter by the inverse of the vehicle rotation
+    local vehRot = quat(0,0,1,0) * quat(veh:getClusterRotationSlow(veh:getRefNodeId()))
+    local localTargetPos = vehRot:inversed() * (targetPos - bbCenter)
+
+    -- convert bottomRear to target pos coordinate system
+    bottomRear:setSub(localTargetPos)
+
+    -- defaultCamPos is relative to targetPos
+    local defaultCamPos = vec3()
+
+    defaultCamPos:set(
+    math.sin(math.rad(self.defaultRotation.x)) * math.cos(math.rad(self.defaultRotation.y))
+    , -math.cos(math.rad(self.defaultRotation.x)) * math.cos(math.rad(self.defaultRotation.y))
+    , -math.sin(math.rad(self.defaultRotation.y)))
+    defaultCamPos = defaultCamPos * self.defaultDistance
+
+    local bottomRearDir = bottomRear - defaultCamPos
+    local targetDir = -defaultCamPos
+    local angleCamTargetCamBottomRear = math.acos(bottomRearDir:cosAngle(targetDir))
+
+    self.dynamicPitchLimit = math.max(math.rad(self.fov/2) - angleCamTargetCamBottomRear, 0)
+  end
+  return self.dynamicPitchLimit
 end
 
 function C:onVehicleCameraConfigChanged()
@@ -62,7 +104,11 @@ function C:onVehicleCameraConfigChanged()
   self.defaultDistance = self.distance or 5
   self.mode = self.mode or 'ref'
   self.skipFovModifier = self.skipFovModifier or false
-  self.smoothedVelocity:set(0)
+  self.smoothedPitchOffset:set(0)
+  self.dynamicPitchQuat:setFromEuler(0, 0, 0)
+  self.aboveCamPitchThreshold = false
+  self.dynamicPitchLimit = nil
+  self.fov = self.fov or 65
 end
 
 function C:onSettingsChanged()
@@ -70,7 +116,7 @@ function C:onSettingsChanged()
   self.fovModifier = settings.getValue('cameraOrbitFovModifier')
   self.relaxation = settings.getValue('cameraOrbitRelaxation') or 3
   self.maxDynamicFov = settings.getValue('cameraOrbitMaxDynamicFov') or 35
-  self.maxDynamicPitch = math.rad(settings.getValue('cameraOrbitMaxDynamicPitch') or 0)
+  self.maxDynamicPitch = math.rad(settings.getValue('cameraOrbitMaxDrivingPitch') or 0)
   self.maxDynamicOffset = settings.getValue('cameraOrbitMaxDynamicOffset') or 0
   self.smoothingEnabled = settings.getValue('cameraOrbitSmoothing', true)
 end
@@ -91,8 +137,44 @@ function C:setRotation(rot)
   self.camRot = vec3(rot)
 end
 
+-- Persist/restore this camera's own state for the video-stream views (see core_camera
+-- get/setContextCameraState): the orbit rotation, distance and zoom.
+function C:serialize()
+  return {
+    rot = self.camRot and { x = self.camRot.x, y = self.camRot.y, z = self.camRot.z } or nil,
+    dist = self.camDist,
+    fov = self.fov,
+  }
+end
+
+function C:deserialize(s)
+  if type(s) ~= 'table' then return end
+  if s.rot then
+    self:setRotation(vec3(s.rot.x, s.rot.y, s.rot.z))
+    if self.camLastRot then self.camLastRot:set(math.rad(s.rot.x), math.rad(s.rot.y), 0) end
+  end
+  if s.dist then self.camDist = s.dist; self.camLastDist = s.dist end
+  if s.fov then self.fov = s.fov end
+  self.cameraResetted = 0 -- keep the restored rotation/distance instead of snapping to the default next frame
+end
+
 function C:setFOV(fov)
   self.fov = fov
+end
+
+-- tunables for the camera-control / video-stream UI: distance, smoothing and FOV
+function C:listParams()
+  return {
+    { key = 'dist', icon = 'fa-ruler-horizontal', title = 'Distance', kind = 'range', type = 'float', value = self.camDist, default = self.defaultDistance, min = self.camMinDist or 1, max = self.camMaxDist or 50, step = 0.5, unit = 'm' },
+    { key = 'smooth', icon = 'fa-wand-magic-sparkles', title = 'Smoothing', kind = 'bool', type = 'bool', value = self.smoothingEnabled == true },
+    { key = 'fov', icon = 'fa-expand', title = 'Field of view', kind = 'range', type = 'int', value = self.fov, default = 65, min = 10, max = 140, step = 1, unit = '°' },
+  }
+end
+
+function C:setParam(key, value)
+  if key == 'dist' then self:setDistance(tonumber(value) or self.camDist)
+  elseif key == 'smooth' then self.smoothingEnabled = value and true or false
+  elseif key == 'fov' then self:setFOV(tonumber(value) or self.fov) end
 end
 
 function C:setOffset(v)
@@ -142,6 +224,10 @@ function C:setSkipFovModifier(skip)
   self.skipFovModifier = skip
 end
 
+local function isManualRotation()
+  return MoveManager.yawRelative ~= 0 or MoveManager.pitchRelative ~= 0 or MoveManager.yawRight > 0.01 or MoveManager.yawLeft > 0.01 or MoveManager.pitchDown > 0.01 or MoveManager.pitchUp > 0.01
+end
+
 local ref, left, back, dirxy = vec3(), vec3(), vec3(), vec3()
 
 local nx, ny, nz = vec3(), vec3(), vec3()
@@ -152,7 +238,7 @@ local lastCamPointVec, lastCamLastPerp, moveDir = vec3(), vec3(), vec3()
 
 local rot, calculatedCamPos, camPos, updir, rear = vec3(), vec3(), vec3(), vec3(), vec3()
 
-local resultPos, resultRot, dynamicPitchQuat, tempQuatB = vec3(), quat(), quat(), quat()
+local resultPos, resultRot, tempQuatB = vec3(), quat(), quat()
 
 local bbCenter, bbHalfAxis1 = vec3(), vec3()
 
@@ -177,6 +263,7 @@ function C:update(data)
       self.camRot = vec3(self.defaultRotation)
       self.camDist = self.defaultDistance
       self.lockCamera = false
+      self.accumManualYaw = 0
       core_camera.clearInputs()
     else
       self.cameraResetted = 0
@@ -184,7 +271,8 @@ function C:update(data)
     self.configChanged = false
   end
   if data.teleported then
-    self.smoothedVelocity:set(data.vel:length())
+    self.smoothedPitchOffset:set(0)
+    self.dynamicPitchQuat:setFromEuler(0, 0, 0)
   end
 
   -- calculate the camera offset: rotate with the vehicle
@@ -262,7 +350,9 @@ function C:update(data)
   local mouseYaw = sign(MoveManager.yawRelative) * math.min(math.abs(MoveManager.yawRelative * 10), maxRot * data.dt) + yawDif * dtfactor
   local mousePitch = sign(-MoveManager.pitchRelative) * math.min(math.abs(MoveManager.pitchRelative * 10), maxRot * data.dt) + pitchDif * dtfactor
   if mouseYaw ~= 0 or mousePitch ~= 0 then
-    if self.cameraResetted == 0 then
+    -- only lock the camera once enough horizontal movement has accumulated
+    self.accumManualYaw = (self.accumManualYaw or 0) + mouseYaw
+    if self.cameraResetted == 0 and math.abs(self.accumManualYaw) > 10 then
       self.lockCamera = true
     end
     self.camRot.x = self.camRot.x - mouseYaw
@@ -404,23 +494,61 @@ function C:update(data)
   self.camLastDist = dist
   self.cameraResetted = math.max(self.cameraResetted - 1, 0)
 
-  local velocity = math.min(data.vel:length(), 70)
-  -- This is a hack. When the DT is exactly one, expect weird things to happen to velocity. This typically happens during the first frame of vehicle spawn
-  if data.dt == 1 then
-    velocity = 0
+  if isManualRotation() then
+    self.timeSinceManualRotation = 0
+  else
+    self.timeSinceManualRotation = self.timeSinceManualRotation and self.timeSinceManualRotation + data.dt or 0
   end
-  local smoothedVelocity = math.max(self.smoothedVelocity:get(velocity, data.dt) * 0.05 - 0.2, 0.0)
-  local lengthValue = math.min((1.4 * smoothedVelocity) / (smoothedVelocity + 4.1), 1)
-  local dynamicPitch = -self.maxDynamicPitch * lengthValue
-  dynamicPitchQuat:setFromEuler(dynamicPitch, 0, 0)
 
-  -- application
+  if self.timeSinceManualRotation > 1 then
+    -- Handle camera pitch threshold logic
+    if self.aboveCamPitchThreshold then
+      if data.vel:length() < lowerSpeedThreshold then
+        -- Set initial timer value based on pitch offset
+        local startTime = self.smoothedPitchOffset:value() == 1 and pitchTransitionDelay or 0
+        self.belowThresholdTimer = (self.belowThresholdTimer or startTime) - data.dt
+        -- Reset pitch threshold when timer expires
+        if self.belowThresholdTimer <= 0 then
+          self.aboveCamPitchThreshold = false
+          self.belowThresholdTimer = nil
+        end
+      else
+        -- Reset timer if speed increases
+        self.belowThresholdTimer = nil
+      end
+    else
+      self.aboveCamPitchThreshold = data.vel:length() > upperSpeedThreshold
+    end
+
+    -- dynamic pitch calculation
+    local targetLerpValue = self.aboveCamPitchThreshold and 1 or 0
+    self:calculateDynamicPitchLimit(data, targetPos)
+
+    local normalizedPitchOffset
+    if targetLerpValue == 1 then
+      normalizedPitchOffset = self.smoothedPitchOffset:getWithRateAccel(targetLerpValue, data.dt, 0.3, 0.3, 0.3)
+    else
+      normalizedPitchOffset = self.smoothedPitchOffset:getWithRateAccel(targetLerpValue, data.dt, 0.5, 0.5, 0.5)
+    end
+
+    local maxDynamicPitch = settings.getValue("multiseat") and 0 or self.maxDynamicPitch
+    local dynamicPitch = -math.min(maxDynamicPitch, self.dynamicPitchLimit) * normalizedPitchOffset
+    self.dynamicPitchQuat:setFromEuler(dynamicPitch, 0, 0)
+  else
+    self.smoothedPitchOffset:get(self.smoothedPitchOffset:value(), data.dt)
+  end
+
+  -- height offset calculation
+  local velocity = math.min(data.vel:length(), 70)
+  local smoothedVelocity = math.max(velocity * 0.05 - 0.2, 0.0)
+  local lengthValue = math.min((1.4 * smoothedVelocity) / (smoothedVelocity + 4.1), 1)
+
   resultPos:set(0, 0, lengthValue)
   resultPos:setScaled(self.maxDynamicOffset)
   resultPos:setAdd(camPos)
 
   resultRot:setFromDir(push3(targetPos) - camPos)
-  resultRot:setMul2(dynamicPitchQuat, resultRot)
+  resultRot:setMul2(self.dynamicPitchQuat, resultRot)
   data.res.pos:set(resultPos)
   data.res.rot:set(resultRot)
   data.res.fov = fov

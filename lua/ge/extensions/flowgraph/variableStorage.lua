@@ -56,7 +56,11 @@ end
 -- second return value is false if the variable is nonexistent, otherwise true
 function C:get(name)
   if self.variables[name] == nil then
-    log("E", "VariableStorage", "Tried getting value of " .. dumps(name) .. " " .. self:getName())
+    if not name or name == "" then
+      log("E", "VariableStorage", "Empty or missing variable name!")
+    else
+      log("E", "VariableStorage", "Failed to get value of " .. dumps(name) .. " " .. self:getName())
+    end
     return nil, false
   end
   return self.variables[name].value, true
@@ -65,8 +69,11 @@ end
 -- second return value is false if the variable is nonexistent, otherwise true
 function C:getFull(name)
   if self.variables[name] == nil then
-    log("E", "VariableStorage", "Tried getting full value of " .. dumps(name) .. " " .. self:getName())
-    print(debug.tracesimple())
+    if not name or name == "" then
+      log("E", "VariableStorage", "Empty or missing variable name!")
+    else
+      log("E", "VariableStorage", "Failed to get full value of " .. dumps(name) .. " " .. self:getName())
+    end
     return nil, false
   end
   return self.variables[name], true
@@ -82,7 +89,7 @@ function C:refreshSortedVariableNames()
   self.sortedVariableNames = {}
   local list = {}
   for name, elem in pairs(self.variables) do
-      table.insert(list, {name = name, index = elem.index})
+    table.insert(list, {name = name, index = elem.index})
   end
   table.sort(list, function(a,b) return a.index < b.index end)
   for i, elem in ipairs(list) do
@@ -111,7 +118,7 @@ end
 -- returns false if variable already exists, otherwise true
 function C:addVariable(name, value, type, mergeStrat, fixedType, undeletable)
   if self.variables[name] ~= nil then
-    log("E", "VariableStorage", "Tried adding variable: " .. dumps(name) .. " / " ..  dumps(value) .. " to " .. self:getName())
+    log("E", "VariableStorage", "Failed to add variable: " .. dumps(name) .. " / " ..  dumps(value) .. " to " .. self:getName())
     return false
   end
   self.variables[name] = {
@@ -132,7 +139,7 @@ end
 -- returns false if variable nonexistent, otherwise true
 function C:setMergeStrat(name, strat)
   if not self.variables[name] then
-    log("E", "VariableStorage", "Tried setting MergeStart value nonexistent variable " .. dumps(name) .. " " .. self:getName())
+    log("E", "VariableStorage", "Tried setting MergeStart value of nonexistent variable " .. dumps(name) .. " " .. self:getName())
     return false
   end
   self.variables[name].mergeStrat = strat
@@ -263,14 +270,14 @@ function C:renameVariable(name, newName)
   -- insert new name on the previous index of the order table
   table.insert(self.customVariableOrder, customOrderIndex, newName)
   self:refreshSortedVariableNames()
-  
+
   -- update nodes
   local all = {}
   for _, gr in pairs(self.mgr.graphs) do if gr.type ~= "instance" then table.insert(all, gr) end end
   for _, gr in pairs(self.mgr.macros) do if gr.type ~= "instance" then table.insert(all, gr) end end
   local vNodes = {}
   for _, graph in pairs(all) do
-    for _, node in pairs(graph.nodes) do	  
+    for _, node in pairs(graph.nodes) do
       if node.nodeType == 'types/getVariable' or node.nodeType == 'types/setVariable' then
         node:renameVariable(self, name, newName)
       end
@@ -283,11 +290,11 @@ end
 -- returns false if variable nonexistent or type mismatch, otherwise true
 function C:changeBase(name, value)
   if not self.variables[name] then
-    log("E", "VariableStorage", "Tried chaning base value of nonexistent variable " .. dumps(name) .. " " .. self:getName())
+    log("E", "VariableStorage", "Tried changing base value of nonexistent variable " .. dumps(name) .. " " .. self:getName())
     return false
   end
   if not fg_utils.isVariableCompatible(value, self.variables[name].type) then
-    log("E", "VariableStorage", "Tried chaning base value variable, but type mismatch (old:"..self.variables[name].type..", new:"..fg_utils.getVariableType(value)..") for variable " .. dumps(name) .. " " .. self:getName())
+    log("E", "VariableStorage", "Tried changing base value variable, but type mismatch (old:"..self.variables[name].type..", new:"..fg_utils.getVariableType(value)..") for variable " .. dumps(name) .. " " .. self:getName())
     return false
   end
   self.variables[name].baseValue = value
@@ -389,7 +396,6 @@ function C:_onDeserialized(data)
   end
   self:refreshSortedVariableNames()
   self.customVariableOrder = self.customVariableOrder or data.customVariableOrder
-
 end
 
 return function(...)

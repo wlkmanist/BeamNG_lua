@@ -10,6 +10,7 @@ local normalActionsCache = {}                     -- normal actions, [true] for 
 local M = {}
 M.dependencies = { "core_input_categories", "core_input_deprecatedActions", "tech_license" }
 M.menuIndependentPrefix = "MenuIndependent_"
+M.menuActionMapNames = {}
 
 -- mangle the action name, needed to prevent collisions with other vehicles' action names
 local function nameToUniqueName(actionName, vehicleName)
@@ -57,7 +58,7 @@ local function readFromActionsFile(vehicleName, active)
       if vehicleActions == nil then
         log("E", "input_actions", 'unable to read json file: ' .. tostring(path))
       end
-      for k,action in pairs(vehicleActions) do
+      for k,action in pairs(vehicleActions or {}) do
         action.source = path
       end
       tableMerge(result, actionsToUniqueActions(vehicleActions or {}, vehicleName))
@@ -81,20 +82,80 @@ local function readActionsFromDisk(active)
     -- add actions from vehicle action files
     for uniqueActionName,action in pairs(readFromActionsFile(vehicleName, active)) do
       if result[uniqueActionName] and result[uniqueActionName].source ~= action.source then log("E", "", "Detected duplication of action: "..dumps(uniqueActionName)..", vid: "..dumps(vid)..", source A: "..dumps(result[uniqueActionName].source)..", source B: "..dumps(action.source)) end
-      result[uniqueActionName] = action
+      if action.namespace ~= 'common' then
+        result[uniqueActionName] = action
+      end
     end
 
     -- add actions from vehicle jbeam files (interaction support)
     local vd = extensions.core_vehicle_manager.getVehicleData(vehicle:getID())
     for uniqueActionName,action in pairs(actionsToUniqueActions(vd and vd.vdata and vd.vdata.inputActions or {}, vehicleName)) do
       if result[uniqueActionName] and result[uniqueActionName].source ~= action.source then log("E", "", "Detected duplication of action: "..dumps(uniqueActionName)..", vid: "..dumps(vid)..", source A: "..dumps(result[uniqueActionName].source)..", source B: "..dumps(action.source)) end
-      result[uniqueActionName] = action
+      if action.namespace ~= 'common' then
+        result[uniqueActionName] = action
+      end
     end
   end
+
+  local playerVehicleId = be:getPlayerVehicleID(0)
+  if playerVehicleId then
+    local playerVehicle = getObjectByID(playerVehicleId)
+    if playerVehicle then
+      local playerVehicleName = playerVehicle:getJBeamFilename()
+      local vd = extensions.core_vehicle_manager.getVehicleData(playerVehicleId)
+      if vd and vd.vdata and vd.vdata.actionsEnabled then
+        for _, action in pairs(vd.vdata.actionsEnabled or {}) do
+          for resultActionName, resultAction in pairs(result) do
+            if resultAction.vehicle and resultActionName == playerVehicleName .. "__" .. action.name then
+              resultAction.usable = true
+            end
+          end
+        end
+      else
+        -- If the vehicle has no actionsEnabled table, mark all vehicle-specific actions as usable
+        for resultActionName, resultAction in pairs(result) do
+          resultAction.usable = true
+        end
+      end
+    end
+  end
+
+  for resultActionName, resultAction in pairs(result) do
+    if resultAction.usable then
+      resultAction.cat = "vehicle_specific"
+    else
+      resultAction.cat = "vehicle_specific_unusable"
+    end
+    resultAction.usable = nil
+  end
+
   -- add actions from normal action files
   for uniqueActionName,action in pairs(getNormalActions(active)) do
-      if result[uniqueActionName] and result[uniqueActionName].source ~= action.source then log("E", "", "Detected duplication of action: "..dumps(uniqueActionName)..", vid: "..dumps(vid)..", source A: "..dumps(result[uniqueActionName].source)..", source B: "..dumps(action.source)) end
+    if result[uniqueActionName] and result[uniqueActionName].source ~= action.source then log("E", "", "Detected duplication of action: "..dumps(uniqueActionName)..", vid: "..dumps(vid)..", source A: "..dumps(result[uniqueActionName].source)..", source B: "..dumps(action.source)) end
     result[uniqueActionName] = action
+  end
+
+  -- build the list of active actionmaps that are related to the menu actionmap system
+  if active then
+    table.clear(M.menuActionMapNames)
+    for actionName, action in pairs(result) do
+      local success, actionMap = M.actionToCommands(actionName, action)
+      if not success then goto continue end
+      actionMap = actionMap.."ActionMap"
+
+      -- catalog menu vs non-menu actionmaps
+      local isMenuAction = string.startswith(actionMap, M.menuIndependentPrefix)
+      if isMenuAction then M.menuActionMapNames[actionMap] = true end
+
+      -- create any new/missing actionmaps in c++ side
+      local am = scenetree.findObject(actionMap)
+      if not am then
+        am = ActionMap(actionMap)
+        if isMenuAction then am:push() end
+        --log('D', '', "Registered new action map: "..actionMap)
+      end
+      ::continue::
+    end
   end
   return result
 end
@@ -136,7 +197,9 @@ local function upgradeAction(action)
   return action
 end
 
-local function actionToCommands(action)
+-- TLDR: actionCache only needs to be used when the caller is inside getActions
+-- NTLDR: actionCache allows to avoid an infinite recursion loop when the caller is getActions (while the cache is being generated, before it's been made public, but we have this particular action's cache internally computed already)
+local function actionToCommands(actionName, actionCache)
   -- retrieve the code/parameters that will be used by GameEngine when a binding triggers this action
   local actionMap       = "Normal"
   local actsOnChange    = false
@@ -152,11 +215,11 @@ local function actionToCommands(action)
 
   local ctxStr = 'tlua'
 
-  local c = getActions(true)[action]
+  local c = actionCache or getActions(true)[actionName]
   if c["cat"]      =='menu' then actionMap = "Menu" end
   if c["ctx"]      =='vlua' then actionMap = "VehicleCommon" end
   if c["actionMap"]  ~= nil then actionMap = c["actionMap"]; end
-  if actionMap  == "MenuIndependent" then actionMap = M.menuIndependentPrefix..action end
+  if actionMap  == "MenuIndependent" then actionMap = M.menuIndependentPrefix..actionName end
   if c["vehicle"]    ~= nil then actionMap = "VehicleSpecific" end
   if c["onChange"]   ~= nil then onChange = c["onChange"]; actsOnChange = true; end
   if c["onRelative"] ~= nil then onChange = c["onRelative"]; actsOnChange = true; isRelative = true; end
@@ -166,17 +229,17 @@ local function actionToCommands(action)
   if c["ctx"]        ~= nil then ctxStr = c["ctx"]; end
 
   if core_input_categories[c.cat] == nil then
-    log('W', 'bindings', 'Invalid category '..dumps(c.cat)..' defined for '..dumps(action).."' action. Suggested fix: modify the 'cat' action field to a valid category, or add the category to categories.lua")
+    log('W', 'bindings', 'Invalid category '..dumps(c.cat)..' defined for '..dumps(actionName).."' action. Suggested fix: modify the 'cat' action field to a valid category, or add the category to categories.lua")
   end
   if ctxStr == 'slua' then
     ctxStr = 'elua'
-    log('E', 'bindings', 'Replacing deprecated "slua" context with "elua", for action: '..dumps(action))
+    log('E', 'bindings', 'Replacing deprecated "slua" context with "elua", for action: '..dumps(actionName))
   end
   if     ctxStr == 'ts'    then
-    log("E", "", "The 'ts' context is deprecated. please use tlua. Action: "..dumps(action))
+    log("E", "", "The 'ts' context is deprecated. please use tlua. Action: "..dumps(actionName))
     ctx.type = COMMAND_CONTEXT_TS
   elseif ctxStr == 'ui'    then
-    log("E", "", "The ui context is deprecated. please use tlua and guihooks. Action: "..dumps(action))
+    log("E", "", "The ui context is deprecated. please use tlua and guihooks. Action: "..dumps(actionName))
   elseif ctxStr == 'vlua'  then ctx.type = COMMAND_CONTEXT_VLUA
   elseif ctxStr == 'elua'  then ctx.type = COMMAND_CONTEXT_ELUA
   elseif ctxStr == 'tlua'  then ctx.type = COMMAND_CONTEXT_TLUA
@@ -184,7 +247,7 @@ local function actionToCommands(action)
   end
 
   if actsOnUp and not actsOnDown then
-    log("W", "", "Action "..dumps(action).." uses 'onUp' instead of 'onDown', which adds input lag. If you're the author of this action, please double check and see if you can switch to 'onDown' instead.")
+    log("W", "", "Action "..dumps(actionName).." uses 'onUp' instead of 'onDown', which adds input lag. If you're the author of this action, please double check and see if you can switch to 'onDown' instead.")
   end
 
   return true, actionMap, actsOnChange, onChange, actsOnDown, onDown, actsOnUp, onUp, isRelative, ctx, isCentered
@@ -195,13 +258,7 @@ local function onFirstUpdate()
 end
 
 local function onVehicleSwitched(oldId, newId, player)
-  local oldVehicle = be:getObjectByID(oldId)
-  local newVehicle = be:getObjectByID(newId)
-  local oldName = oldVehicle and oldVehicle:getJBeamFilename() or "<none>"
-  local newName = newVehicle and newVehicle:getJBeamFilename() or "<none>"
-  if oldName ~= newName then
-    table.clear(actionsCache)
-  end
+  table.clear(actionsCache)
 end
 
 local function onFileChanged(filename)
@@ -223,16 +280,88 @@ local function triggerDownUp(actionName)
   triggerUp(actionName)
 end
 
+local function queueCmd(vehId, cmd)
+  local vehObj = scenetree.findObject(vehId)
+  if vehObj then
+    vehObj:queueLuaCommand(cmd)
+    if debugUIEnabled then
+      log('I', 'triggers', 'Executing trigger code: ' .. tostring(cmd))
+    end
+  end
+end
+
+local function _replaceCmd(cmd, actionValue, vehicleId)
+  cmd = cmd:gsub("VALUE", tostring(actionValue))
+  cmd = cmd:gsub("VEHICLEID", tostring(vehicleId))
+  -- TODO: improve hardcoded filter, etc
+  cmd = cmd:gsub("FILTERTYPE", '-1')
+  cmd = cmd:gsub("PLAYER", '0')
+  cmd = cmd:gsub("ANGLE", '900')
+  cmd = cmd:gsub("LOCKTYPE", '0')
+  return cmd
+end
+
+-- returns the executed action count
+local function executeCommand(evt, actionValue, vehicleId)
+  if evt.ctx == nil or evt.ctx == 'vlua' then
+    -- send to vehicle
+    if evt.onDown and actionValue == 1 then
+      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId)
+      return queueCmd(vehicleId, cmdStr)
+    elseif evt.onUp and actionValue == 0 then
+      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId)
+      return queueCmd(vehicleId, cmdStr)
+    elseif evt.onChange then
+      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId)
+      return queueCmd(vehicleId, cmdStr)
+    end
+  elseif evt.ctx == 'elua' or evt.ctx == 'tlua' then
+    -- GE
+    if evt.onDown and actionValue == 1 then
+      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId)
+      Lua:queueLuaCommand(cmdStr)
+      return 1
+    elseif evt.onUp and actionValue == 0 then
+      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId)
+      Lua:queueLuaCommand(cmdStr)
+      return 1
+    elseif evt.onChange then
+      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId)
+      Lua:queueLuaCommand(cmdStr)
+      return 1
+    end
+
+  elseif evt.ctx == 'bvlua' then
+    -- to all objects
+    if evt.onDown and actionValue == 1 then
+      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId)
+      be:queueAllObjectLua(cmdStr)
+      return 1
+    elseif evt.onUp and actionValue == 0 then
+      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId)
+      be:queueAllObjectLua(cmdStr)
+      return 1
+    elseif evt.onChange then
+      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId)
+      be:queueAllObjectLua(cmdStr)
+      return 1
+    end
+  end
+  return 0
+end
+
 
 M.onFirstUpdate = onFirstUpdate
 M.onVehicleSwitched = onVehicleSwitched
 M.onFileChanged = onFileChanged
 
 M.getActiveActions = function() return getActions(true) end
+M.getInactiveActions = function() return getActions(false) end
 M.upgradeAction = upgradeAction
 M.actionToCommands = actionToCommands
 M.uniqueNameToName = uniqueNameToName
 M.nameToUniqueName = nameToUniqueName
+M.executeCommand = executeCommand
 
 -- API typically used by command handler (such as 'beamng:' URL protocol)
 M.triggerDown   = triggerDown

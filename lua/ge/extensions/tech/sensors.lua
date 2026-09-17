@@ -43,6 +43,23 @@ local usParameters = {
   animationSpeed = 6.0                          -- The animation wave speed (in m/s). Used for the ultrasonic sensor visualisation.
 }
 
+M.stype = { -- String identifiers for each sensor
+  tCamera='camera', tLiDAR='LiDAR', tUltrasonic='ultrasonic', tRADAR='RADAR',
+  tIMU='IMU', tGPS='GPS', tIdealRADAR='idealRADAR', tRoads='roads',
+  tPowertrain='powertrain', tMesh='mesh'
+}
+
+local luaSensorConfigurations = {}
+
+M.updateLuaSensorConfiguration = function(sensorType, sensorId, conf, vid)
+  if luaSensorConfigurations[sensorType] == nil then
+    luaSensorConfigurations[sensorType] = {}
+  end
+  local copy = deepcopy(conf)
+  copy.vid = vid
+  luaSensorConfigurations[sensorType][sensorId] = copy
+end
+
 local function unpack_float(b4, b3, b2, b1)
   local sign = b1 > 0x7F and -1 or 1
   local expo = (b1 % 0x80) * 0x2 + math.floor(b2 / 0x80)
@@ -82,11 +99,17 @@ local function removeSensor(sensorId)
   if rawLidarData[sensorId] then
     rawLidarData[sensorId].fileRef.onRemove()                                                       -- If a RAW LiDAR sensor, call the users remove function, if implemented.
   end
-  Research.SensorManager.removeSensor(sensorId)
+  local sensorType = Research.SensorManager.removeSensor(sensorId)
+  if sensorType ~= "" then
+    extensions.hook('onSensorRemoved', sensorType, sensorId)
+  end
 end
 
 local function removeAllSensorsFromVehicle(vid)
-  Research.SensorManager.removeSensorByVid(vid)
+  local removedSensors = Research.SensorManager.removeSensorByVid(vid)
+  for sensorId, sensorType in pairs(removedSensors) do
+    extensions.hook('onSensorRemoved', sensorType, sensorId)
+  end
 end
 
 local function getAverageUpdateTime(sensorId)
@@ -303,11 +326,15 @@ local function getClosestTriangle(vid, point, includeWheelNodes)
 end
 
 local function createCamera(vid, args)
-  return Research.SensorManager.createCameraSensorWithoutSharedMemory(vid, args)
+  local sensorId = Research.SensorManager.createCameraSensorWithoutSharedMemory(vid, args)
+  extensions.hook('onSensorCreated', M.stype.tCamera, sensorId)
+  return sensorId
 end
 
 local function createCameraWithSharedMemory(vid, args)
-  return Research.SensorManager.createCameraSensorWithSharedMemory(vid, args)
+  local sensorId = Research.SensorManager.createCameraSensorWithSharedMemory(vid, args)
+  extensions.hook('onSensorCreated', M.stype.tCamera, sensorId)
+  return sensorId
 end
 
 local function getCameraImage(sensorId)
@@ -341,19 +368,23 @@ end
 
 local function processCameraData(sensorId)
   local binary = getCameraData(sensorId)
-  local colourData, cData = {}, binary.colour
+  local colourData, cData = {}, tostring(binary.colour)
   for i = 1, #cData do
     table.insert(colourData, cData:byte(i))
   end
-  local annotationData, aData = {}, binary.annotation
+  local annotationData, aData = {}, tostring(binary.annotation)
   for i = 1, #aData do
     table.insert(annotationData, aData:byte(i))
   end
-  local depthData, dData = {}, binary.depth
+  local depthData, dData = {}, tostring(binary.depth)
   for i = 1, #dData, 4 do
     table.insert(depthData, unpack_float(dData:byte(i), dData:byte(i + 1), dData:byte(i + 2), dData:byte(i + 3)))
   end
   return { colour = colourData, annotation = annotationData, depth = depthData}
+end
+
+local function getCameraSensorName(sensorId)
+  return Research.Camera.getSensorName(sensorId)
 end
 
 local function getCameraSensorPosition(sensorId)
@@ -376,6 +407,14 @@ local function getCameraUpdatePriority(sensorId)
   return Research.Camera.getUpdatePriority(sensorId)
 end
 
+local function getCameraSize(sensorId)
+  return Research.Camera.getSize(sensorId)
+end
+
+local function getActiveCameraSensors()
+  return Research.Camera.getActiveCameraSensors()
+end
+
 -- Functions to set the fustrum properties of an existing camera sensor.
 local function setCameraSensorPosition(sensorId, pos) Research.Camera.setSensorPosition(sensorId, pos) end
 local function setCameraSensorDirection(sensorId, dir) Research.Camera.setSensorDirection(sensorId, dir) end
@@ -395,6 +434,11 @@ end
 local function setCameraUpdatePriority(sensorId, priority)
   Research.Camera.setUpdatePriority(sensorId, priority)
 end
+
+-- local function getCameraUseManualEV(sensorId) return Research.Camera.getUseManualEV(sensorId) end
+-- local function getCameraManualEV(sensorId) return Research.Camera.getManualEV(sensorId) end
+-- local function setCameraManualEV(sensorId, ev) Research.Camera.setManualEV(sensorId, ev) end
+-- local function clearCameraManualEV(sensorId) Research.Camera.clearManualEV(sensorId) end
 
 local function convertWorldPointToPixel(sensorId, point)
   return Research.Camera.convertWorldPointToPixel(sensorId, point)
@@ -423,7 +467,7 @@ local function createRawLidar(vid, filename, args)
   args.size = { initData.resX, initData.resY }
   args.fovY = initData.fovY
   args.nearFarPlanes = { initData.pNear, initData.pFar }
-  args.updateTime = -1.0                                                                            -- We will only use ad-hoc polling with this sensor type.
+  args.requestedUpdateTime = -1.0                                                                   -- We will only use ad-hoc polling with this sensor type.
   args.renderColours = true
   args.renderAnnotations = true
   args.renderInstance = false
@@ -454,15 +498,24 @@ local function createRawLidar(vid, filename, args)
     pos = args.pos, dir = dir, up = args.up, resX = args.size.x, resY = args.size.y, fovY = args.fovY, pNear = args.nearFarPlanes[1], pFar = args.nearFarPlanes[2],
     requests1 = {}, requests2 = {}, requests3 = {}, requests4 = {} }
 
+  extensions.hook('onSensorCreated', M.stype.tCamera, sensorId1)
+  extensions.hook('onSensorCreated', M.stype.tCamera, sensorId2)
+  extensions.hook('onSensorCreated', M.stype.tCamera, sensorId3)
+  extensions.hook('onSensorCreated', M.stype.tCamera, sensorId4)
+
   return { sensorId1, sensorId2, sensorId3, sensorId4 }
 end
 
 local function createLidar(vid, args)
-  return Research.SensorManager.createLidarSensorWithoutSharedMemory(vid, args)
+  local result = Research.SensorManager.createLidarSensorWithoutSharedMemory(vid, args)
+  extensions.hook('onSensorCreated', M.stype.tLiDAR, result)
+  return result
 end
 
 local function createLidarWithSharedMemory(vid, args)
-  return Research.SensorManager.createLidarSensorWithSharedMemory(vid, args)
+  local result = Research.SensorManager.createLidarSensorWithSharedMemory(vid, args)
+  extensions.hook('onSensorCreated', M.stype.tLiDAR, result)
+  return result
 end
 
 local function getLidarPointCloud(sensorId)
@@ -478,7 +531,7 @@ local function getLidarColourData(sensorId)
 end
 
 local function getLidarDataPositions(sensorId)
-  local pts = getLidarPointCloud(sensorId)
+  local pts = tostring(getLidarPointCloud(sensorId))
   local pointsData = {}
   local numPts = #pts
   for i = 1, numPts, 12 do
@@ -487,7 +540,7 @@ local function getLidarDataPositions(sensorId)
     local z = unpack_float(pts:byte(i + 8), pts:byte(i + 9), pts:byte(i + 10), pts:byte(i + 11))
     table.insert(pointsData, vec3(x, y, z))
   end
-  local colourBinary = getLidarColourData(sensorId)
+  local colourBinary = tostring(getLidarColourData(sensorId))
   local colourData = {}
   local numColour = #colourBinary
   for i = 1, numColour do
@@ -506,6 +559,10 @@ end
 
 local function getActiveLidarSensors()
   return Research.Lidar.getActiveLidarSensors()
+end
+
+local function getLidarSensorName(sensorId)
+  return Research.Lidar.getSensorName(sensorId)
 end
 
 local function getLidarSensorPosition(sensorId)
@@ -585,6 +642,7 @@ local function createUltrasonic(vid, args)
   if args.isVisualised or args.isVisualised == nil  then
     visualisedUltrasonicSensors[sensorId] = { animationTime = 0.0 }
   end
+  extensions.hook('onSensorCreated', M.stype.tUltrasonic, sensorId)
   return sensorId
 end
 
@@ -618,6 +676,10 @@ local function setUltrasonicIsVisualised(sensorId, isVisualised)
   else
     visualisedUltrasonicSensors[sensorId] = nil
   end
+end
+
+local function getUltrasonicSensorName(sensorId)
+  return Research.Ultrasonic.getSensorName(sensorId)
 end
 
 local function getUltrasonicSensorPosition(sensorId)
@@ -729,13 +791,19 @@ local function visualiseUltrasonicSensor(sensorId, dtSim)
 end
 
 local function createRadar(vid, args)
-  return Research.SensorManager.createRadarSensor(vid, args)
+  local sensorId = Research.SensorManager.createRadarSensor(vid, args)
+  extensions.hook('onSensorCreated', M.stype.tRADAR, sensorId)
+  return sensorId
 end
 
-local function getRadarReadings(sensorId)
-  radarBufferPoints[sensorId] = radarBufferPoints[sensorId] or buffer.new()
-  Research.Radar.getLastReadingsBuffer(sensorId,  radarBufferPoints[sensorId])
-  return radarBufferPoints[sensorId]
+local function getRadarReadings(sensorId, optionalBuf)
+  local radarBuffer = optionalBuf
+  if not radarBuffer then
+    radarBufferPoints[sensorId] = radarBufferPoints[sensorId] or buffer.new()
+    radarBuffer = radarBufferPoints[sensorId]
+  end
+  Research.Radar.getLastReadingsBuffer(sensorId, radarBuffer)
+  return radarBuffer
 end
 
 local function getRadarPPIData(sensorId)
@@ -766,6 +834,10 @@ local function getRadarUpdatePriority(sensorId)
   return Research.Radar.getUpdatePriority(sensorId)
 end
 
+local function getRadarSensorName(sensorId)
+  return Research.Radar.getSensorName(sensorId)
+end
+
 local function getRadarSensorPosition(sensorId)
   return Research.Radar.getSensorPosition(sensorId)
 end
@@ -787,6 +859,12 @@ local function setRadarUpdatePriority(sensorId, updatePriority)
 end
 
 local function createAdvancedIMU(vid, args)
+  local sensorId = Research.SensorManager.getNewSensorId()
+  if sensorId == nil or sensorId < 0 then
+    return sensorId or -1
+  end
+  advancedIMULastRawReadings[sensorId] = {}
+  M.updateLuaSensorConfiguration(M.stype.tIMU, sensorId, args, vid)
 
   -- Set optional parameters to defaults if they are not provided by the user.
   if args.pos == nil then args.pos = vec3(0, 0, 3) end
@@ -802,11 +880,9 @@ local function createAdvancedIMU(vid, args)
   if args.physicsUpdateTime == nil then args.physicsUpdateTime = 0.015 end
 
   -- The user should provide either a window width or a cutoff frequency for the filtering.
-  if args.accelWindowWidth == nil and args.accelFrequencyCutoff == nil then args.accelWindowWidth = 50 end
-  if args.gyroWindowWidth == nil and args.gyroFrequencyCutoff == nil then args.gyroWindowWidth = 50 end
+  if args.smootherStrength == nil then args.smootherStrength = 1.0 end
 
   -- Attach the sensor to the vehicle.
-  local sensorId = Research.SensorManager.getNewSensorId()
   Research.SensorMatrixManager.attachSensor(sensorId, args.pos, args.dir, args.up, vid, false, args.isSnappingDesired,
     args.isForceInsideTriangle, args.isAllowWheelNodes, args.isDirWorldSpace)
   local attachData = Research.SensorMatrixManager.getAttachData(sensorId)
@@ -827,15 +903,12 @@ local function createAdvancedIMU(vid, args)
     triangleSpaceForward = attachData['triangleSpaceForward'],
     triangleSpaceUp = attachData['triangleSpaceUp'],
     isVisualised = args.isVisualised,
-    accelWindowWidth = args.accelWindowWidth,
-    gyroWindowWidth = args.gyroWindowWidth,
-    frequencyCutoff = args.frequencyCutoff
+    smootherStrength = args.smootherStrength
   }
   local serializedData = string.format("extensions.tech_advancedIMU.create(%q)", lpack.encode(data))
   be:queueObjectLua(vid, serializedData)
 
-  advancedIMULastRawReadings[sensorId] = {}
-
+  extensions.hook('onSensorCreated', M.stype.tIMU, sensorId)
   return sensorId
 end
 
@@ -843,11 +916,16 @@ local function removeAdvancedIMU(vid, sensorId)
   local vehicleId = scenetree.findObject(vid):getID()
   be:queueObjectLua(vehicleId, "extensions.tech_advancedIMU.remove(" .. sensorId .. ")")
   advancedIMULastRawReadings[sensorId] = nil
+  extensions.hook('onSensorRemoved', M.stype.tIMU, sensorId)
 end
 
 local function getAdvancedIMUReadings(sensorId)
+  local rawReadings = advancedIMULastRawReadings[sensorId]
+  if rawReadings == nil then
+    return nil
+  end
   local outData = {}
-  for k, v in pairs(advancedIMULastRawReadings[sensorId]) do
+  for k, v in pairs(rawReadings) do
     outData[k] = v
   end
   advancedIMULastRawReadings[sensorId] = {}
@@ -856,13 +934,13 @@ end
 
 local function updateAdvancedIMULastReadings(data)
   local newReadings = lpack.decode(data)
-  if advancedIMULastRawReadings[newReadings.sensorId] == nil then
-    return
+  local rawReadings = advancedIMULastRawReadings[newReadings.sensorId]
+  if rawReadings == nil then
+    rawReadings = {}
+    advancedIMULastRawReadings[newReadings.sensorId] = rawReadings
   end
-  local ctr = #advancedIMULastRawReadings[newReadings.sensorId]
-  for k, v in pairs(newReadings.reading) do
-    advancedIMULastRawReadings[newReadings.sensorId][ctr] = v
-    ctr = ctr + 1
+  for _, v in pairs(newReadings.reading) do
+    rawReadings[#rawReadings + 1] = v
   end
 end
 
@@ -889,6 +967,11 @@ local function setAdvancedIMUIsVisualised(sensorId, vid, isVisualised)
 end
 
 local function createGPS(vid, args)
+  local sensorId = Research.SensorManager.getNewSensorId()
+  if sensorId == nil or sensorId < 0 then
+    return sensorId or -1
+  end
+  M.updateLuaSensorConfiguration(M.stype.tGPS, sensorId, args, vid)
 
   -- Set optional parameters to defaults if they are not provided by the user.
   if args.pos == nil then args.pos = vec3(0, 0, 3) end
@@ -905,7 +988,6 @@ local function createGPS(vid, args)
   if args.refLat == nil then args.refLat = 0.0 end
 
   -- Attach the sensor to the vehicle.
-  local sensorId = Research.SensorManager.getNewSensorId()
   Research.SensorMatrixManager.attachSensor(sensorId, args.pos, args.dir, args.up, vid, false, args.isSnappingDesired,
     args.isForceInsideTriangle, args.isAllowWheelNodes, args.isDirWorldSpace)
   local attachData = Research.SensorMatrixManager.getAttachData(sensorId)
@@ -930,6 +1012,7 @@ local function createGPS(vid, args)
   be:queueObjectLua(vid, serializedData)
 
   GPSLastRawReadings[sensorId] = {}
+  extensions.hook('onSensorCreated', M.stype.tGPS, sensorId)
 
   return sensorId
 end
@@ -938,6 +1021,7 @@ local function removeGPS(vid, sensorId)
   local vehicleId = scenetree.findObject(vid):getID()
   be:queueObjectLua(vehicleId, "extensions.tech_GPS.remove(" .. sensorId .. ")")
   GPSLastRawReadings[sensorId] = nil
+  extensions.hook('onSensorRemoved', M.stype.tGPS, sensorId)
 end
 
 local function getGPSReadings(sensorId)
@@ -978,13 +1062,13 @@ local function setGPSIsVisualised(sensorId, vid, isVisualised)
 end
 
 local function createPowertrainSensor(vid, args)
+  -- Get a unique sensor Id for this Powertrain sensor.
+  local sensorId = Research.SensorManager.getNewSensorId()
+  M.updateLuaSensorConfiguration(M.stype.tPowertrain, sensorId, args, vid)
 
   -- Set optional parameters to defaults if they are not provided by the user.
   if args.GFXUpdateTime == nil then args.GFXUpdateTime = 0.1 end
   if args.physicsUpdateTime == nil then args.physicsUpdateTime = 0.015 end
-
-  -- Get a unique sensor Id for this Powertrain sensor.
-  local sensorId = Research.SensorManager.getNewSensorId()
 
   -- Create the Powertrain in vlua.
   local data = { sensorId = sensorId, GFXUpdateTime = args.GFXUpdateTime, physicsUpdateTime = args.physicsUpdateTime }
@@ -992,6 +1076,7 @@ local function createPowertrainSensor(vid, args)
   be:queueObjectLua(vid, serializedData)
 
   powertrainLastRawReadings[sensorId] = {}
+  extensions.hook('onSensorCreated', M.stype.tPowertrain, sensorId)
 
   return sensorId
 end
@@ -1000,6 +1085,7 @@ local function removePowertrainSensor(vid, sensorId)
   local vehicleId = scenetree.findObject(vid):getID()
   be:queueObjectLua(vehicleId, "extensions.tech_powertrainSensor.remove(" .. sensorId .. ")")
   powertrainLastRawReadings[sensorId] = nil
+  extensions.hook('onSensorRemoved', M.stype.tPowertrain, sensorId)
 end
 
 local function getPowertrainReadings(sensorId)
@@ -1034,13 +1120,13 @@ local function setPowertrainUpdateTime(sensorId, vid, updateTime)
 end
 
 local function createIdealRADARSensor(vid, args)
+  -- Get a unique sensor Id for this ideal RADAR sensor.
+  local sensorId = Research.SensorManager.getNewSensorId()
+  M.updateLuaSensorConfiguration(M.stype.tIdealRADAR, sensorId, args, vid)
 
   -- Set optional parameters to defaults if they are not provided by the user.
   if args.GFXUpdateTime == nil then args.GFXUpdateTime = 0.1 end
   if args.physicsUpdateTime == nil then args.physicsUpdateTime = 0.015 end
-
-  -- Get a unique sensor Id for this ideal RADAR sensor.
-  local sensorId = Research.SensorManager.getNewSensorId()
 
   -- Create the ideal RADAR in vlua.
   local data = { sensorId = sensorId, GFXUpdateTime = args.GFXUpdateTime, physicsUpdateTime = args.physicsUpdateTime }
@@ -1048,6 +1134,7 @@ local function createIdealRADARSensor(vid, args)
   be:queueObjectLua(vid, serializedData)
 
   idealRADARLastRawReadings[sensorId] = {}
+  extensions.hook('onSensorCreated', M.stype.tIdealRADAR, sensorId)
 
   return sensorId
 end
@@ -1056,6 +1143,7 @@ local function removeIdealRADARSensor(vid, sensorId)
   local vehicleId = scenetree.findObject(vid):getID()
   be:queueObjectLua(vehicleId, "extensions.tech_idealRADARSensor.remove(" .. sensorId .. ")")
   idealRADARLastRawReadings[sensorId] = nil
+  extensions.hook('onSensorRemoved', M.stype.tIdealRADAR, sensorId)
 end
 
 local function getIdealRADARReadings(sensorId)
@@ -1090,13 +1178,13 @@ local function setIdealRADARUpdateTime(sensorId, vid, updateTime)
 end
 
 local function createRoadsSensor(vid, args)
+  -- Get a unique sensor Id for this roads sensor.
+  local sensorId = Research.SensorManager.getNewSensorId()
+  M.updateLuaSensorConfiguration(M.stype.tRoads, sensorId, args, vid)
 
   -- Set optional parameters to defaults if they are not provided by the user.
   if args.GFXUpdateTime == nil then args.GFXUpdateTime = 0.1 end
   if args.physicsUpdateTime == nil then args.physicsUpdateTime = 0.015 end
-
-  -- Get a unique sensor Id for this roads sensor.
-  local sensorId = Research.SensorManager.getNewSensorId()
 
   -- Create the roads sensor in vlua.
   local data = { sensorId = sensorId, GFXUpdateTime = args.GFXUpdateTime, physicsUpdateTime = args.physicsUpdateTime }
@@ -1104,6 +1192,7 @@ local function createRoadsSensor(vid, args)
   be:queueObjectLua(vid, serializedData)
 
   roadsSensorLastRawReadings[sensorId] = {}
+  extensions.hook('onSensorCreated', M.stype.tRoads, sensorId)
 
   return sensorId
 end
@@ -1112,6 +1201,7 @@ local function removeRoadsSensor(vid, sensorId)
   local vehicleId = scenetree.findObject(vid):getID()
   be:queueObjectLua(vehicleId, "extensions.tech_roadsSensor.remove(" .. sensorId .. ")")
   roadsSensorLastRawReadings[sensorId] = nil
+  extensions.hook('onSensorRemoved', M.stype.tRoads, sensorId)
 end
 
 local function getRoadsSensorReadings(sensorId)
@@ -1146,18 +1236,18 @@ local function setRoadsSensorUpdateTime(sensorId, vid, updateTime)
 end
 
 local function createMeshSensor(vid, args)
+  local sensorId = Research.SensorManager.getNewSensorId()
+  M.updateLuaSensorConfiguration(M.stype.tMesh, sensorId, args, vid)
 
   -- Set optional parameters to defaults if they are not provided by the user.
   if args.GFXUpdateTime == nil then args.GFXUpdateTime = 0.1 end
   if args.physicsUpdateTime == nil then args.physicsUpdateTime = 0.015 end
 
-  -- Get a unique sensor Id for this Powertrain sensor.
-  local sensorId = Research.SensorManager.getNewSensorId()
-
   -- Create the Mesh sensor in vlua.
   local data = { sensorId = sensorId, GFXUpdateTime = args.GFXUpdateTime }
   local serializedData = string.format("extensions.tech_mesh.create(%q)", lpack.encode(data))
   be:queueObjectLua(vid, serializedData)
+  extensions.hook('onSensorCreated', M.stype.tMesh, sensorId)
 
   return sensorId
 end
@@ -1165,6 +1255,7 @@ end
 local function removeMeshSensor(vid, sensorId)
   local vehicleId = scenetree.findObject(vid):getID()
   be:queueObjectLua(vehicleId, "extensions.tech_mesh.remove(" .. sensorId .. ")")
+  extensions.hook('onSensorRemoved', M.stype.tMesh, sensorId)
 end
 
 local function updateMeshAdHocRequest(data)
@@ -1212,8 +1303,7 @@ local function createValidation(vid, testId)
   args.isForceInsideTriangle = false
   args.isAllowWheelNodes = false
   args.physicsUpdateTime = 0.00001
-  args.accelWindowWidth = 10.0
-  args.gyroWindowWidth = 2.0
+  args.smootherStrength = 1.0
 
   -- Attach the sensor to the vehicle.
   local sensorId = Research.SensorManager.getNewSensorId()
@@ -1238,10 +1328,7 @@ local function createValidation(vid, testId)
     triangleSpaceForward = attachData['triangleSpaceForward'],
     triangleSpaceUp = attachData['triangleSpaceUp'],
     isVisualised = args.isVisualised,
-    accelWindowWidth = args.accelWindowWidth,
-    gyroWindowWidth = args.gyroWindowWidth,
-    accelFrequencyCutoff = args.accelFrequencyCutoff,
-    gyroFrequencyCutoff = args.gyroFrequencyCutoff
+    smootherStrength = args.smootherStrength
   }
   local serializedData = string.format("extensions.tech_validation.create(%q)", lpack.encode(data))
   be:queueObjectLua(vid, serializedData)
@@ -1261,7 +1348,7 @@ local function markVehicleFeedingComplete()
   dump('Test complete!')
 end
 
-local function createTyreBarrierTest(vid, IMUPos, IMUDir, IMUUp, accelWindow, gyroWindow, initialVel, startPos)
+local function createTyreBarrierTest(vid, IMUPos, IMUDir, IMUUp, smootherStrength, initialVel, startPos)
   local args = {}
   args.pos = IMUPos or vec3(0, 0, 0)
   args.dir = IMUDir or vec3(0, -1, 0)
@@ -1273,8 +1360,7 @@ local function createTyreBarrierTest(vid, IMUPos, IMUDir, IMUUp, accelWindow, gy
   args.isForceInsideTriangle = false
   args.isAllowWheelNodes = false
   args.physicsUpdateTime = 0.00001
-  args.accelWindowWidth = accelWindow or 10.0
-  args.gyroWindowWidth = gyroWindow or 2.0
+  args.smootherStrength = smootherStrength or 1.0
   args.initialVel = initialVel
   args.startPos = startPos or vec3(0, 0, 0)
 
@@ -1297,8 +1383,7 @@ local function createTyreBarrierTest(vid, IMUPos, IMUDir, IMUUp, accelWindow, gy
     triangleSpaceForward = attachData.triangleSpaceForward,
     triangleSpaceUp = attachData.triangleSpaceUp,
     isVisualised = args.isVisualised,
-    accelWindowWidth = args.accelWindowWidth, gyroWindowWidth = args.gyroWindowWidth,
-    accelFrequencyCutoff = args.accelFrequencyCutoff, gyroFrequencyCutoff = args.gyroFrequencyCutoff,
+    smootherStrength = args.smootherStrength,
     initVel = args.initialVel,
     posX = args.startPos.x, posY = args.startPos.y, posZ = args.startPos.z
   }
@@ -1309,6 +1394,81 @@ end
 local function removeTyreBarrierTest(vid, sensorId)
   local vehicleId = scenetree.findObject(vid):getID()
   be:queueObjectLua(vehicleId, "extensions.tech_tyreBarrier.remove(" .. sensorId .. ")")
+end
+
+local function getLuaSensorName(sensorType, sensorId)
+  local configsOfType = luaSensorConfigurations[sensorType]
+  if configsOfType == nil then return nil end
+  local conf = configsOfType[sensorId]
+  if conf == nil then return nil end
+  return conf.name
+end
+
+M.getSensorName = function(sensorType, sensorId)
+  local getters = {
+    [M.stype.tCamera] = Research.Camera.getSensorName,
+    [M.stype.tLiDAR] = Research.Lidar.getSensorName,
+    [M.stype.tUltrasonic] = Research.Ultrasonic.getSensorName,
+    [M.stype.tRADAR] = Research.Radar.getSensorName
+  }
+  local func = getters[sensorType]
+  if func then
+    return func(sensorId)
+  end
+  return getLuaSensorName(sensorType, sensorId)
+end
+
+local function getLuaSensorConfiguration(sensorType, sensorId)
+  local configsOfType = luaSensorConfigurations[sensorType]
+  if configsOfType == nil then return nil end
+  local conf = configsOfType[sensorId]
+  if conf == nil then return nil end
+  if conf.isDirWorldSpace then -- we need to get current world space direction out of the sim
+    local matrix = Research.SensorMatrixManager.getSensorMatrix(sensorId)
+    conf.dir = matrix:getForward()
+    conf.up = matrix:getUp()
+  end
+  return conf
+end
+
+M.getSensorConfiguration = function(sensorType, sensorId)
+  local getters = {
+    [M.stype.tCamera] = Research.Camera.getConfiguration,
+    [M.stype.tLiDAR] = Research.Lidar.getConfiguration,
+    [M.stype.tUltrasonic] = Research.Ultrasonic.getConfiguration,
+    [M.stype.tRADAR] = Research.Radar.getConfiguration
+  }
+  local func = getters[sensorType]
+  if func then
+    return func(sensorId)
+  end
+  return getLuaSensorConfiguration(sensorType, sensorId)
+end
+
+M.getActiveSensors = function()
+  local activeSensors = {}
+  local cameras = getActiveCameraSensors()
+  for i = 1, #cameras do
+    activeSensors[#activeSensors + 1] = {M.stype.tCamera, cameras[i]}
+  end
+  local lidars = getActiveLidarSensors()
+  for i = 1, #lidars do
+    activeSensors[#activeSensors + 1] = {M.stype.tLiDAR, lidars[i]}
+  end
+  local radars = getActiveRadarSensors()
+  for i = 1, #radars do
+    activeSensors[#activeSensors + 1] = {M.stype.tRADAR, radars[i]}
+  end
+  local ultrasonics = getActiveUltrasonicSensors()
+  for i = 1, #ultrasonics do
+    activeSensors[#activeSensors + 1] = {M.stype.tUltrasonic, ultrasonics[i]}
+  end
+  for sensorType, configs in pairs(luaSensorConfigurations) do
+    for sensorId, _ in pairs(configs) do
+      activeSensors[#activeSensors + 1] = {sensorType, sensorId}
+    end
+  end
+  return activeSensors
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
@@ -1365,9 +1525,15 @@ local function onDeserialized(data)
 end
 
 local function onVehicleDestroyed(vid)
-  removeAllSensorsFromVehicle(vid)                                            -- Removes any sensors attached to the destroyed vehicle.
+  if Research then
+    removeAllSensorsFromVehicle(vid)                                            -- Removes any sensors attached to the destroyed vehicle.
+  end
 end
 
+M.onSensorRemoved = function(sensorType, sensorId)
+  if luaSensorConfigurations[sensorType] == nil then return end
+  luaSensorConfigurations[sensorType][sensorId] = nil
+end
 
 -- Public interface:
 
@@ -1431,11 +1597,14 @@ M.getCameraDepth                            = getCameraDepth
 M.getCameraData                             = getCameraData                                         -- returns a binary string.
 M.getCameraDataShmem                        = getCameraDataShmem
 M.processCameraData                         = processCameraData                                     -- returns processed data.
+M.getCameraSensorName                       = getCameraSensorName
 M.getCameraSensorPosition                   = getCameraSensorPosition
 M.getCameraSensorDirection                  = getCameraSensorDirection
 M.getCameraMaxPendingGpuRequests            = getCameraMaxPendingGpuRequests
 M.getCameraRequestedUpdateTime              = getCameraRequestedUpdateTime
 M.getCameraUpdatePriority                   = getCameraUpdatePriority
+M.getCameraSize                             = getCameraSize
+M.getActiveCameraSensors                    = getActiveCameraSensors
 M.setCameraSensorPosition                   = setCameraSensorPosition                               -- Camera property setters (for existing camera sensors).
 M.setCameraSensorDirection                  = setCameraSensorDirection
 M.setCameraSensorUp                         = setCameraSensorUp
@@ -1445,6 +1614,10 @@ M.setCameraSensorNearFarPlanes              = setCameraSensorNearFarPlanes
 M.setCameraMaxPendingGpuRequests            = setCameraMaxPendingGpuRequests
 M.setCameraRequestedUpdateTime              = setCameraRequestedUpdateTime
 M.setCameraUpdatePriority                   = setCameraUpdatePriority
+-- M.getCameraUseManualEV                      = getCameraUseManualEV
+-- M.getCameraManualEV                         = getCameraManualEV
+-- M.setCameraManualEV                         = setCameraManualEV
+-- M.clearCameraManualEV                       = clearCameraManualEV
 M.convertWorldPointToPixel                  = convertWorldPointToPixel
 
 -- Raw LiDAR-specific sensor functions.
@@ -1459,6 +1632,7 @@ M.getLidarPointCloudShmem                   = getLidarPointCloudShmem
 M.getLidarColourDataShmem                   = getLidarColourDataShmem
 M.getLidarDataPositions                     = getLidarDataPositions                                 -- returns the LiDAR point cloud positions (processed data).
 M.getActiveLidarSensors                     = getActiveLidarSensors
+M.getLidarSensorName                        = getLidarSensorName
 M.getLidarSensorPosition                    = getLidarSensorPosition
 M.getLidarSensorDirection                   = getLidarSensorDirection
 M.getLidarVerticalResolution                = getLidarVerticalResolution
@@ -1487,6 +1661,7 @@ M.getUltrasonicMaxPendingGpuRequests        = getUltrasonicMaxPendingGpuRequests
 M.getUltrasonicRequestedUpdateTime          = getUltrasonicRequestedUpdateTime
 M.getUltrasonicUpdatePriority               = getUltrasonicUpdatePriority
 M.setUltrasonicIsVisualised                 = setUltrasonicIsVisualised
+M.getUltrasonicSensorName                   = getUltrasonicSensorName
 M.getUltrasonicSensorPosition               = getUltrasonicSensorPosition
 M.getUltrasonicSensorDirection              = getUltrasonicSensorDirection
 M.getUltrasonicSensorRadius                 = getUltrasonicSensorRadius
@@ -1503,6 +1678,7 @@ M.getActiveRadarSensors                     = getActiveRadarSensors
 M.getRadarMaxPendingGpuRequests             = getRadarMaxPendingGpuRequests
 M.getRadarRequestedUpdateTime               = getRadarRequestedUpdateTime
 M.getRadarUpdatePriority                    = getRadarUpdatePriority
+M.getRadarSensorName                        = getRadarSensorName
 M.getRadarSensorPosition                    = getRadarSensorPosition
 M.getRadarSensorDirection                   = getRadarSensorDirection
 M.setRadarMaxPendingGpuRequests             = setRadarMaxPendingGpuRequests
@@ -1512,6 +1688,7 @@ M.setRadarUpdatePriority                    = setRadarUpdatePriority
 -- Advanced IMU-specific sensor functions.
 M.createAdvancedIMU                         = createAdvancedIMU
 M.removeAdvancedIMU                         = removeAdvancedIMU
+M.getActiveAdvancedIMUs                     = getActiveAdvancedIMUs
 M.getAdvancedIMUReadings                    = getAdvancedIMUReadings
 M.updateAdvancedIMULastReadings             = updateAdvancedIMULastReadings
 M.updateAdvancedIMUAdHocRequest             = updateAdvancedIMUAdHocRequest
@@ -1558,6 +1735,13 @@ M.removeMeshSensor                          = removeMeshSensor
 M.updateMeshAdHocRequest                    = updateMeshAdHocRequest
 M.setMeshUpdateTime                         = setMeshUpdateTime
 
+-- Universal sensor functions.
+-- These are exposed above already, list here is for API documentation reason.
+-- M.updateLuaSensorConfiguration              = updateLuaSensorConfiguration
+-- M.getSensorName                             = getSensorName
+-- M.getSensorConfiguration                    = getSensorConfiguration
+-- M.getActiveSensors                          = getActiveSensors
+
 -- Road-related functions.
 M.getRoadGraph                              = getRoadGraph
 M.resetNavgraph                             = resetNavgraph
@@ -1574,5 +1758,6 @@ M.removeTyreBarrierTest                     = removeTyreBarrierTest
 M.onUpdate                                  = onUpdate
 M.onDeserialized                            = onDeserialized
 M.onVehicleDestroyed                        = onVehicleDestroyed
+-- M.onSensorRemoved                           = onSensorRemoved
 
 return M

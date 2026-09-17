@@ -151,7 +151,7 @@ function createGlobalSnapshot(filename)
   for k, v in pairs(_G) do
     if (type(v) == 'table' and (rawget(v, '___type') or rawget(v, '___getters'))) or type(v) == 'function' or k == '_G' or k == 'extensions' or k == 'package' then goto continue end
     if type(v) == 'table' and k ~= 'math' and k ~= 'ffi' and k ~= 'jit' and k ~= 'mime' and k ~= 'socket' then
-      if rawget(v, '__extensionName__') and v.__extensionName__ == 'core_performance' then goto continue end
+      if rawget(v, '__extensionName__') then goto continue end
       local locals = getModuleLocals(v)
       local used = false
       local t = {}

@@ -25,11 +25,15 @@ LuaVec3.__index = LuaVec3
 local _, ffi = pcall(require, 'ffi')
 if ffi then
   -- FFI available, so use it
-  ffi.cdef [[
-    struct __luaVec3_t {double x, y, z;};
-    struct __luaQuat_t {double x, y, z, w;};
-  ]]
-  newLuaVec3xyz = ffi.typeof("struct __luaVec3_t")
+  local ok
+  ok, newLuaVec3xyz = pcall(ffi.typeof, "struct __luaVec3_t")
+  if not ok then
+    ffi.cdef [[
+      struct __luaVec3_t {double x, y, z;};
+      struct __luaQuat_t {double x, y, z, w;};
+    ]]
+    newLuaVec3xyz = ffi.typeof("struct __luaVec3_t")
+  end
   ffi.metatype("struct __luaVec3_t", LuaVec3)
 else
   -- no FFI available, compatibility mode
@@ -40,7 +44,7 @@ else
 end
 
 --MARK: vec3
-local tmpv1, tmpv2 = newLuaVec3xyz(0, 0, 0), newLuaVec3xyz(0, 0, 0)
+local tmpv1, tmpv2, tmpv3 = newLuaVec3xyz(0, 0, 0), newLuaVec3xyz(0, 0, 0), newLuaVec3xyz(0, 0, 0)
 
 function vec3(x, y, z)
   if rawequal(y, nil) then
@@ -70,6 +74,10 @@ function LuaVec3:xyz()
   return self.x, self.y, self.z
 end
 
+function LuaVec3:xy()
+  return self.x, self.y
+end
+
 function LuaVec3:copy()
   return newLuaVec3xyz(self.x, self.y, self.z)
 end
@@ -80,8 +88,12 @@ function LuaVec3:fromString(s)
   return self
 end
 
+local function numSer(v)
+  return v * 0 ~= 0 and (v > 0 and '9e999' or '-9e999') or string.format('%.10g', v)
+end
+
 function LuaVec3:__tostring()
-  return string.format('vec3(%.10g,%.10g,%.10g)', self.x, self.y, self.z)
+  return string.format('vec3(%s,%s,%s)', numSer(self.x), numSer(self.y), numSer(self.z))
 end
 
 vec3toString = LuaVec3.__tostring -- back compat
@@ -155,9 +167,9 @@ function LuaVec3:z0()
 end
 
 function LuaVec3:perpendicular()
-  local k = abs(self.x) + 0.5
-  k = k - floor(k)
-  return newLuaVec3xyz(-self.y, self.x - k * self.z, k * self.y)
+  local r = newLuaVec3xyz(self.x, self.y, self.z)
+  r:setPerpendicular()
+  return r
 end
 
 function LuaVec3:perpendicularN()
@@ -187,6 +199,14 @@ end
 function LuaVec3:resize(a)
   local r = a / (self:length() + 1e-30)
   self.x, self.y, self.z = self.x * r, self.y * r, self.z * r
+end
+
+-- p = p + vel * dt; if p:ropeRock(x) < x then stationary end
+function LuaVec3:ropeRock(cutOff)
+  local selfLen = self:length()
+  local r = min(selfLen, cutOff) / (selfLen + 1e-30)
+  self.x, self.y, self.z = self.x * r, self.y * r, self.z * r
+  return selfLen
 end
 
 function LuaVec3:normalized()
@@ -250,9 +270,17 @@ function LuaVec3:xnormDistanceToLineSegment(a, b)
   return xnorm, sqrt(sqdist)
 end
 
+function LuaVec3:xnormOnLinePointVec(p, v)
+  local vx, vy, vz = v:xyz()
+  local px, py, pz = p:xyz()
+  return (vx*(self.x - px) + vy*(self.y - py) + vz*(self.z - pz)) / (vx*vx + vy*vy + vz*vz + 1e-30) -- (b-a):dot(self-a) / (b-a):squaredLength()
+end
+
 function LuaVec3:xnormOnLine(a, b)
-  local bax, bay, baz = b.x-a.x, b.y-a.y, b.z-a.z
-  return (bax*(self.x-a.x) + bay*(self.y-a.y) + baz*(self.z-a.z)) / (bax*bax + bay*bay + baz*baz + 1e-30) -- (b-a):dot(self-a) / (b-a):squaredLength()
+  local bx, by, bz = b:xyz()
+  local ax, ay, az = a:xyz()
+  local vx, vy, vz = bx - ax, by - ay, bz - az
+  return (vx*(self.x - ax) + vy*(self.y - ay) + vz*(self.z - az)) / (vx*vx + vy*vy + vz*vz + 1e-30)
 end
 
 -- returns u, v, normal : u*a + v*b + (1-u-v)*c
@@ -264,39 +292,73 @@ function LuaVec3:triangleBarycentricNorm(a, b, c)
   return bc:dot(pacnorm) / normsqlen, ca:dot(pacnorm) / normsqlen, norm / sqrt(normsqlen)
 end
 
--- Embree: SPDX-License-Identifier: Apache-2.0
+function LuaVec3:setTrianglePointFromUV(a, b, c, u, v)
+  local w = 1 - u - v
+  self.x, self.y, self.z = a.x * u + b.x * v + c.x * w, a.y * u + b.y * v + c.y * w, a.z * u + b.z * v + c.z * w
+end
+
+-- returns u, v satisfying p(u,v) = lerp( lerp(a1, a2, u), lerp(b1, b2, u), v ) in 2D
+-- https://www.reedbeta.com/blog/quadrilateral-interpolation-part-2
+function LuaVec3:invBilinear2D(a1, a2, b1, b2)
+  local ex, ey = a2.x - a1.x, a2.y - a1.y
+  local fx, fy = b1.x - a1.x, b1.y - a1.y
+  local gx, gy = b2.x - b1.x - ex, b2.y - b1.y - ey
+  local hx, hy = self.x - a1.x, self.y - a1.y
+
+  local A = gx*fy - gy*fx
+  local B = ex*fy - ey*fx + hx*gy - hy*gx
+  local C = hx*ey - hy*ex
+
+  local v = abs(A) > 0.001 and 0.5 * (sqrt(max(B*B - 4*A*C, 0)) - B) / A or -C/B
+  local Dx, Dy = ex + v * gx, ey + v * gy
+  return abs(Dx) > abs(Dy) and (hx - fx * v) / Dx or (hy - fy * v) / Dy, v
+end
+
+-- returns u, v : u*a + v*b + (1-u-v)*c
+function LuaVec3:triangleClosestPointUV(a, b, c)
+  tmpv1:setSub2(b, a)
+  tmpv2:setSub2(c, a)
+
+  tmpv3:setSub2(self, a)
+  local d1, d2 = tmpv1:dot(tmpv3), tmpv2:dot(tmpv3)
+  if max(d1, d2) <= 0 then return 1, 0 end
+
+  tmpv3:setSub2(self, b)
+  local d3, d4 = tmpv1:dot(tmpv3), tmpv2:dot(tmpv3)
+  if max(d4, 0) <= d3 then return 0, 1 end
+
+  tmpv3:setSub2(self, c)
+  local d5, d6 = tmpv1:dot(tmpv3), tmpv2:dot(tmpv3)
+  if max(d5, 0) <= d6 then return 0, 0 end
+
+  local vc1, vc2 = d1 * d4, d3 * d2 -- (a.c)(b.d)– (a.d)(b.c) = (axb).(cxd)
+  if vc1 <= vc2 and d1 >= 0 and d3 <= 0 then
+    local t = min(max(d1 / (d1 - d3), 0), 1)
+    return 1 - t, t
+  end
+
+  local vb1, vb2 = d5 * d2, d1 * d6
+  if vb1 <= vb2 and d6 <= 0 then
+    return min(max(d6 / (d6 - d2), 0), 1), 0
+  end
+
+  local va1, va2 = d3 * d6, d5 * d4
+  if va1 <= va2 then
+    d5 = d5 - d6
+    return 0, min(max(d5 / (d5 + d4 - d3), 0), 1)
+  end
+
+  local va, vb = va1 - va2, vb1 - vb2
+  local d = va + vb + vc1 - vc2
+  return va / d, vb / d
+end
+
+-- returns point, u, v : u*a + v*b + (1-u-v)*c
 function LuaVec3:triangleClosestPoint(a, b, c)
-  local ab, ac, ap = b - a, c - a, self - a
-
-  local d1, d2 = ab:dot(ap), ac:dot(ap)
-  if d1 <= 0 and d2 <= 0 then return a end
-
-  local bp = self - b
-  local d3, d4 = ab:dot(bp), ac:dot(bp)
-  if d3 >= 0 and d4 <= d3 then return b end
-
-  local cp = self - c
-  local d5, d6 = ab:dot(cp), ac:dot(cp)
-  if d6 >= 0 and d5 <= d6 then return c end
-
-  local vc = d1 * d4 - d3 * d2
-  if vc <= 0 and d1 >= 0 and d3 <= 0 then
-    return a + (d1 / (d1 - d3)) * ab
-  end
-
-  local vb = d5 * d2 - d1 * d6
-  if vb <= 0 and d2 >= 0 and d6 <= 0 then
-    return a + (d2 / (d2 - d6)) * ac
-  end
-
-  local va = d3 * d6 - d5 * d4
-  if va <= 0 and d4 >= d3 and d5 >= d6 then
-    d4 = d4 - d3
-    return b + (d4 / (d4 + d5 - d6)) * (c - b)
-  end
-
-  local denom = va + vb + vc
-  return a + (vb / denom) * ab + (vc / denom) * ac
+  local u, v = self:triangleClosestPointUV(a, b, c)
+  local t = newLuaVec3xyz(self.x, self.y, self.z)
+  t:setTrianglePointFromUV(a, b, c, u, v)
+  return t, u, v
 end
 
 -- https://love2d.org/wiki/PointWithinShape
@@ -318,12 +380,13 @@ function LuaVec3:inPolygon(...)
   return inside
 end
 
+-- pnorm is plane's normal
 function LuaVec3:projectToOriginPlane(pnorm)
   local t = self.x*pnorm.x + self.y*pnorm.y + self.z*pnorm.z
   return newLuaVec3xyz(self.x - t*pnorm.x, self.y - t*pnorm.y, self.z - t*pnorm.z)
 end
 
--- self is a plane' point
+-- self is a plane' point, pnorm is plane's normal
 function LuaVec3:xnormPlaneWithLine(pnorm, a, b)
   return (pnorm.x*(self.x-a.x) + pnorm.y*(self.y-a.y) + pnorm.z*(self.z-a.z)) *
           max(min(1 / (pnorm.x*(b.x-a.x) + pnorm.y*(b.y-a.y) + pnorm.z*(b.z-a.z)), 1e300), -1e300) -- pnorm:dot(self-a)/pnorm:dot(b-a)
@@ -390,9 +453,15 @@ function LuaVec3:setAdd(a)
 end
 
 function LuaVec3:setAdd2(a, b)
-  local x, y, z = a:xyz()
   local bx, by, bz = b:xyz()
+  local x, y, z = a:xyz()
   self.x, self.y, self.z = x + bx, y + by, z + bz
+end
+
+function LuaVec3:setAddScaled(a, b, c)
+  local bx, by, bz = b:xyz()
+  local x, y, z = a:xyz()
+  self.x, self.y, self.z = x + bx * c, y + by * c, z + bz * c
 end
 
 function LuaVec3:setSub(a)
@@ -401,9 +470,13 @@ function LuaVec3:setSub(a)
 end
 
 function LuaVec3:setSub2(a, b)
-  local x, y, z = a:xyz()
   local bx, by, bz = b:xyz()
+  local x, y, z = a:xyz()
   self.x, self.y, self.z = x - bx, y - by, z - bz
+end
+
+function LuaVec3:setNeg()
+  self.x, self.y, self.z = -self.x, -self.y, -self.z
 end
 
 function LuaVec3:setScaled(b)
@@ -421,21 +494,20 @@ function LuaVec3:setComponentMul(a)
 end
 
 function LuaVec3:setLerp(from, to, t)
-  local x, y, z = from:xyz()
   local bx, by, bz = to:xyz()
+  local x, y, z = from:xyz()
   local t1 = 1 - t
   self.x, self.y, self.z = x*t1 + bx*t, y*t1 + by*t, z*t1 + bz*t  -- preserves from and to, non monotonic
 end
 
 function LuaVec3:setCross(a, b)
-  local x, y, z = a:xyz()
   local bx, by, bz = b:xyz()
+  local x, y, z = a:xyz()
   self.x, self.y, self.z = y*bz - z*by, z*bx - x*bz, x*by - y*bx
 end
 
 function LuaVec3:setRotate(q, a)
-  a = a or self
-  local x, y, z = a:xyz()
+  local x, y, z = (a or self):xyz()
   local tx,ty,tz = (push3(q):cross(push3(x,y,z)) * 2):xyz()
   self:set(push3(x,y,z) - push3(tx,ty,tz) * q.w + push3(q):cross(push3(tx,ty,tz)))
 end
@@ -448,26 +520,28 @@ function LuaVec3:setEulerYXZ(q)
 end
 
 function LuaVec3:setProjectToOriginPlane(pnorm, a)
-  a = a or self
-  local x,y,z = a:xyz()
+  local x,y,z = (a or self):xyz()
   local px,py,pz = pnorm:xyz()
   local t = x*px + y*py + z*pz
   self.x, self.y, self.z = x - t*px, y - t*py, z - t*pz
 end
 
--- Returns quat (-w) from self->v. Both vecs should be normalized
-function LuaVec3:getRotationTo(v)
-  local w = 1 + self:dot(v)
-  local qv
+function LuaVec3:setPerpendicular(a)
+  local x,y,z = (a or self):xyz()
+  local k = abs(x) + 0.5
+  k = k - floor(k)
+  self.x, self.y, self.z = -y, x - k*z, k*y
+end
 
-  if (w < 1e-6) then
-    w, qv = 0, v:perpendicular()
-  else
-    qv = self:cross(v)
-  end
-  local q = newLuaQuatxyzw(qv.x, qv.y, qv.z, -w)
-  q:normalize()
-  return q
+function LuaVec3:setLinePointFromXnorm(p0, p1, xnorm)
+  self.x, self.y, self.z = p0.x + (p1.x-p0.x) * xnorm, p0.y + (p1.y-p0.y) * xnorm, p0.z + (p1.z-p0.z) * xnorm
+end
+
+-- Returns quat (-w) from self->v. Both vecs should be normalized
+function LuaVec3:getRotationTo(toV)
+  local r = newLuaQuatxyzw(0, 0, 0, 0)
+  r:setRotationFromTo(self, toV)
+  return r
 end
 
 -- Rotates by quaternion q (-w)
@@ -598,11 +672,11 @@ function randomState(v)
 end
 
 -- returns xnormals for the two lines: http://geomalgorithms.com/a07-_distance.html
-function closestLinePoints(l1p1, l1p2, l2p1, l2p2)
-  local ux, uy, uz, vx, vy, vz = l1p2.x - l1p1.x, l1p2.y - l1p1.y, l1p2.z - l1p1.z, l2p2.x - l2p1.x, l2p2.y - l2p1.y, l2p2.z - l2p1.z
+function closestLinePointsPointVec(l1p, l1Vec, l2p, l2Vec)
+  local ux, uy, uz, vx, vy, vz = l1Vec.x, l1Vec.y, l1Vec.z, l2Vec.x, l2Vec.y, l2Vec.z
   local uu, vv, uv = ux*ux + uy*uy + uz*uz, vx*vx + vy*vy + vz*vz, ux*vx + uy*vy + uz*vz
   local D = uu*vv - uv*uv
-  local rx, ry, rz = l1p1.x - l2p1.x, l1p1.y - l2p1.y, l1p1.z - l2p1.z
+  local rx, ry, rz = l1p.x - l2p.x, l1p.y - l2p.y, l1p.z - l2p.z
   local ru, rv = rx*ux + ry*uy + rz*uz, rx*vx + ry*vy + rz*vz
 
   if D < 1e-20 then
@@ -615,6 +689,12 @@ function closestLinePoints(l1p1, l1p2, l2p1, l2p2)
   else
     return (uv*rv - vv*ru) / D, (uu*rv - uv*ru) / D
   end
+end
+
+function closestLinePoints(l1p1, l1p2, l2p1, l2p2)
+  tmpv1.x, tmpv1.y, tmpv1.z = l1p2.x - l1p1.x, l1p2.y - l1p1.y, l1p2.z - l1p1.z
+  tmpv2.x, tmpv2.y, tmpv2.z = l2p2.x - l2p1.x, l2p2.y - l2p1.y, l2p2.z - l2p1.z
+  return closestLinePointsPointVec(l1p1, tmpv1, l2p1, tmpv2)
 end
 
 -- returns normalized line-local coordinates (xnorms) at which the distance between the two line segments is minimum
@@ -635,6 +715,23 @@ end
 
 function linePointFromXnorm(p0, p1, xnorm)
   return newLuaVec3xyz(p0.x + (p1.x-p0.x) * xnorm, p0.y + (p1.y-p0.y) * xnorm, p0.z + (p1.z-p0.z) * xnorm)
+end
+
+--MARK: tmpVec3
+
+-- create a table t at module level to store the tmpVec3's, do NOT use inside loops, do not call anything that contains a resetTmpVec3
+function getTmpVec3(t)
+  local i = t[0] + 1
+  local v = t[i] or newLuaVec3xyz(0,0,0)
+  t[0], t[i] = i, v
+  return v
+end
+
+-- put it at the top of your updateGFX/etc
+function resetTmpVec3(t)
+  local s = t[0]
+  t[0] = 0
+  return s
 end
 
 --MARK: push3
@@ -661,10 +758,16 @@ function StackVec3:xyz()
   return s.x, s.y, s.z
 end
 
+function StackVec3:copy()
+  stacki = stacki - 1
+  local s = stackv3[stacki]
+  return newLuaVec3xyz(s.x, s.y, s.z)
+end
+
 function StackVec3:__tostring()
   stacki = stacki - 1
   local s = stackv3[stacki]
-  return string.format('push3(%.10g,%.10g,%.10g)', s.x, s.y, s.z)
+  return string.format('push3(%.10g,%.10g,%.10g)', numSer(s.x), numSer(s.y), numSer(s.z))
 end
 
 function StackVec3.__add(a, b)
@@ -755,7 +858,7 @@ function StackVec3:distance(a)
   local ax, ay, az = a:xyz()
   stacki = stacki - 1
   local s = stackv3[stacki]
-  ax, ay, ax = ax - s.x, ay - s.y, az - s.z
+  ax, ay, az = ax - s.x, ay - s.y, az - s.z
   return sqrt(ax*ax + ay*ay + az*az)
 end
 
@@ -763,7 +866,7 @@ function StackVec3:squaredDistance(a)
   local ax, ay, az = a:xyz()
   stacki = stacki - 1
   local s = stackv3[stacki]
-  ax, ay, ax = ax - s.x, ay - s.y, az - s.z
+  ax, ay, az = ax - s.x, ay - s.y, az - s.z
   return ax*ax + ay*ay + az*az
 end
 
@@ -805,7 +908,7 @@ function LuaQuat:xyzw()
 end
 
 function LuaQuat:__tostring()
-  return string.format('quat(%.10g,%.10g,%.10g,%.10g)', self.x, self.y, self.z, self.w)
+  return string.format('quat(%.10g,%.10g,%.10g,%.10g)', numSer(self.x), numSer(self.y), numSer(self.z), numSer(self.w))
 end
 
 function LuaQuat:toTable()
@@ -926,6 +1029,25 @@ function LuaQuat:scale(a)
   return self
 end
 
+function LuaQuat:setFromAxisAngle(axle, angleRad)
+  angleRad = angleRad * 0.5
+  local fsin = math.sin(angleRad)
+  self.x, self.y, self.z, self.w = fsin * axle.x, fsin * axle.y, fsin * axle.z, math.cos(angleRad)
+end
+
+function LuaQuat:setRotationFromTo(fromV, toV)
+  local w = 1 + fromV:dot(toV)
+
+  if w < 1e-6 then
+    w = 0
+    tmpv1:setPerpendicular(toV)
+  else
+    tmpv1:setCross(fromV, toV)
+  end
+  self.x, self.y, self.z, self.w = tmpv1.x, tmpv1.y, tmpv1.z, -w
+  self:normalize()
+end
+
 function LuaQuat:setFromEuler(x, y, z) -- in radians
   x, y, z = x * 0.5, y * 0.5, z * 0.5
   local sx, cx, sy, cy, sz, cz  = math.sin(x), math.cos(x), math.sin(y), math.cos(y), math.sin(z), math.cos(z)
@@ -1036,9 +1158,9 @@ function quatFromDir(dir, up)
 end
 
 function quatFromAxisAngle(axle, angleRad)
-  angleRad = angleRad * 0.5
-  local fsin = math.sin(angleRad)
-  return newLuaQuatxyzw(fsin * axle.x, fsin * axle.y, fsin * axle.z, math.cos(angleRad))
+  local r = newLuaQuatxyzw(0,0,0,0)
+  r:setFromAxisAngle(axle, angleRad)
+  return r
 end
 
 function quatFromEuler(x, y, z) -- in radians
@@ -1153,6 +1275,8 @@ function biasFun(x, k)
 end
 
 -- https://arxiv.org/pdf/2010.09714.pdf
+-- D: \left\{0<x<t:t*x/(x+s*(t-x)+0.001), t<x<1:1-(1-t)*(1-x)/((1-x)-s*(t-x)+0.001)\right\}
+-- https://www.desmos.com/calculator/zbje40jqu6
 function biasGainFun(x, t, s)
   t, s = t or 0.5, s or 0.25
   if x < t then
@@ -1174,16 +1298,38 @@ function bumpFun(x, peakLeftX, peakRightX, leftSlope, rightSlope, leftY, peakY, 
     ((rightY or 0)-peakY)*(1+sigmoid1(roundness*(x-peakRightX), (rightSlope or 1))))
 end
 
+function median3(a,b,c)
+  return max(min(a,b),min(max(a,b),c))
+end
+
+function median4(a,b,c,d)
+  return ((a+b+c+d)-max(a,b,c,d)-min(a,b,c,d))*0.5
+end
+
+function median5(a,b,c,d,e)
+  return median3(e, max(min(a,b),min(c,d)), min(max(a,b),max(c,d)))
+end
+
+function pointBB2d(x, y, radius)
+  return x - radius, y - radius, x + radius, y + radius
+end
+
+function lineBB2d(x1, y1, x2, y2, radius)
+  local enlarge = radius or 0
+  return min(x1, x2) - enlarge, min(y1, y2) - enlarge, max(x1, x2) + enlarge, max(y1, y2) + enlarge
+end
+
 --MARK: curves
 
 function cardinalSpline(p0, p1, p2, p3, t, s, d1, d2, d3)
   d1, d2, d3 = max(d1 or 1, 1e-30), d2 or 1, max(d3 or 1, 1e-30)
   s = (s or 0.5) * 2
   local sd2, tt, t_1 = s*d2, t*t, t-1
-  local t_1sq = t_1 * t_1
-  local m1 = (p1 - p0) / d1 + (p0 - p2) / (d1 + d2)
-  local m2 = (p1 - p3) / (d2 + d3) + (p3 - p2) / d3
-  return t*t_1sq*sd2 * m1 + tt*t_1*sd2 * m2 + t_1sq*(2*t+1) * p1 - tt*(2*t-3) * p2 + s*t_1*(t*t_1 + tt) * (p2 - p1)
+  local t_1sq, c21 = t_1 * t_1, s*t_1*(t*t_1 + tt)
+  local m1c, m2c = t*t_1sq*sd2, tt*t_1*sd2
+  return (p1 - p0) * (m1c/d1) + (p0 - p2) * (m1c/(d1 + d2))
+    + (p1 - p3) * (m2c/(d2 + d3)) + (p3 - p2) * (m2c/d3)
+    + (t_1sq*(2*t+1)-c21) * p1 + (c21-tt*(2*t-3)) * p2
 end
 
 -- x, y, z independent from each other (no distance needed)
@@ -1200,6 +1346,7 @@ function catmullRomCentripetal(p0, p1, p2, p3, t, s)
   return cardinalSpline(p0, p1, p2, p3, t, s or 0.5, sqrt(p0:distance(p1)), sqrt(p1:distance(p2)), sqrt(p2:distance(p3)))
 end
 
+-- 2d, monotonic
 function monotonicSteffen(y0, y1, y2, y3, x0, x1, x2, x3, x)
   local x1x0, x2x1, x3x2 = x1-x0, x2-x1, x3-x2
   local delta0, delta1, delta2 = (y1-y0) / (x1x0 + 1e-30), (y2-y1) / (x2x1 + 1e-30), (y3-y2) / (x3x2 + 1e-30)
@@ -1224,9 +1371,9 @@ function conicBezier(p1, p2, p3, t, w)
   return t1t1*d*p1 + wtt12*d*p2 + tt*d*p3
 end
 
--- does not pass through points, smooths out the signal
+-- does not pass through points, smooths the signal
 function biQuadratic(p0, p1, p2, p3, t)
-  local p12 =  p1 + (p2 - p1) * (t * 0.5 + 0.25)
+  local p12 =  p1 + (p2 - p1) * (t * 0.5 + 0.75)
   if t <= 0.5 then
     local p01 = p0 + (p1 - p0) * (t * 0.5 + 0.75)
     return p01 + (p12 - p01) * (t + 0.5)
@@ -1241,6 +1388,7 @@ local function axisCheck(v1, v2, b1e1, b1e2, b2e1, b2e2)
   tmpv2:setCross(v1, v2) -- axis
   return abs(tmpv1:dot(tmpv2))-abs(b2e1:dot(tmpv2))-abs(b2e2:dot(tmpv2))<=abs(b1e1:dot(tmpv2))+abs(b1e2:dot(tmpv2))
 end
+
 function overlapsOBB_OBB(c1, x1, y1, z1, c2, x2, y2, z2)
   tmpv1:setSub2(c1, c2)
   local d11,d12,d13=abs(x1:dot(x2)),abs(x1:dot(y2)),abs(x1:dot(z2))
@@ -1309,7 +1457,7 @@ end
 
 function constainsCylinder_Point(cposa, cposb, cR, p)
   local xnorm, r2 = p:xnormSquaredDistanceToLineSegment(cposa, cposb)
-  return xnorm >=0 and xnorm <= 1 and r2 <= cR*cR
+  return xnorm >= 0 and xnorm <= 1 and r2 <= cR*cR
 end
 
 function altitudeOBB_Plane(c1, x1, y1, z1, plpos, pln)
@@ -1372,6 +1520,24 @@ function intersectsRay_Cylinder(rpos, rdir, cposa, cposb, cR)
   local plhita, plhitb = intersectsRay_Plane(rpos, rdir, cposa, cpnorm), intersectsRay_Plane(rpos, rdir, cposb, cpnorm)
   minhit, maxhit = max(minhit, min(plhita, plhitb)), min(maxhit, max(plhita, plhitb))
   return (minhit <= maxhit and minhit or math.huge), maxhit
+end
+
+-- https://iquilezles.org/articles/intersectors , returns first hit, untested
+function intersectsRay_Capsule(rpos, rdir, cposa, cposb, cR )
+  local ba, oa = cposb - cposa, rpos - cposa
+  local baba, bard, baoa = ba:squaredLength(), ba:dot(rdir), ba:dot(oa)
+  local a, b = baba - bard*bard, rdir:dot(oa) * baba - baoa*bard
+  local h = b*b - a*((oa:squaredLength()-cR*cR) * baba - baoa*baoa)
+  if h >= 0 then
+    local t = (-b-sqrt(h))/a
+    local y = baoa + t*bard
+    if y > 0 and y < baba then return t end -- body
+    oa:set(y <= 0 and oa or rpos - cposb) -- caps
+    b = rdir:dot(oa)
+    h = b*b - oa:squaredLength() - cR*cR
+    if h > 0 then return -b-sqrt(h) end
+  end
+  return math.huge
 end
 
 -- returns hit distance, barycentric x, y

@@ -253,6 +253,10 @@ local function registerCMU(cmu)
 end
 
 local function setParameters(parameters)
+  if not CMU then
+    return
+  end
+
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "avDiffThreshold")
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "avThreshold")
   CMU.applyParameter(controlParameters, initialControlParameters, parameters, "isEnabled")

@@ -5,6 +5,7 @@
 local im  = ui_imgui
 
 local fg_utils = require('/lua/ge/extensions/flowgraph/utils')
+local missionVarHelper = require('/lua/ge/extensions/editor/flowgraph/missionVariableHelper')
 
 local createBuilder = require('/lua/ge/extensions/flowgraph/builder')
 
@@ -40,9 +41,9 @@ function C:init()
   self.fpsSmoother = newExponentialSmoothing(50, 1)
   self.restoreView = nil
   self.fgMgr = extensions['core_flowgraphManager']
-  self.contextNodeId = ffi.new('fge_NodeId[1]', 0)
-  self.contextPinId  = ffi.new('fge_PinId[1]', 0)
-  self.contextLinkId = ffi.new('fge_LinkId[1]', 0)
+  self.contextNodeId = ui_flowgraph_editor.NodeIdPtr()
+  self.contextPinId  = ui_flowgraph_editor.PinIdPtr()
+  self.contextLinkId = ui_flowgraph_editor.LinkIdPtr()
 
   self.editorid = 'FlowGraphEditor_main_'
 
@@ -192,10 +193,6 @@ function C:drawMenu()
     if im.BeginMenu("Windows") then
       self.fgEditor.windowsMenu()
       im.EndMenu()
-    end
-
-    if im.MenuItem1("Clear") then
-      self.mgr:clearGraph()
     end
 
     local io = im.GetIO()
@@ -502,6 +499,8 @@ function C:drawSelf()
             if self.mgr.runningState == "stopped" then
 
               if editor.uiIconImageButton(editor.icons.play_arrow, im.ImVec2(20, 20)) then
+                -- Try to apply mission variables before starting
+                missionVarHelper.applyMissionVariablesToManager(self.mgr, "flowgraphEditor")
                 self.mgr:setRunning(true)
                 if editor.getPreference("flowgraph.general.minimizeFlowgraphWhenRunning") then
                   self.fgEditor.switchToSmallWindow = true
@@ -510,6 +509,8 @@ function C:drawSelf()
               ui_flowgraph_editor.tooltip("Start Execution")
               im.SameLine()
               if editor.uiIconImageButton(editor.icons.skip_next, im.ImVec2(20, 20)) then
+                -- Try to apply mission variables before starting
+                missionVarHelper.applyMissionVariablesToManager(self.mgr, "flowgraphEditor")
                 self.mgr:setRunning(true)
                 self.mgr:setPaused(true)
               end
@@ -672,7 +673,6 @@ function C:drawSelf()
             im.Columns(1)
             im.Separator()
             im.SetCursorPosY(im.GetCursorPosY()+1)
-
           end
 
           local clr = nil
@@ -682,8 +682,7 @@ function C:drawSelf()
           end
           ]]
 
-            clr = self.borderColors[self.mgr.runningState]
-
+          clr = self.borderColors[self.mgr.runningState]
 
           im.PushStyleColor2(im.Col_Border, clr)
           --im.BeginChild1("Borders",nil, 1)
@@ -708,16 +707,18 @@ function C:drawSelf()
           local builder = createBuilder()
           builder.drawDebug = ui_flowgraph_editor.getDebugEnabled()
           if self.mgr.transient then
-            local vp, vz = im.ImVec2Ptr(0,0), im.FloatPtr(0)
-            ui_flowgraph_editor.getViewState(vp, vz)
-            local oldCp = im.GetCursorPos()
-            im.SetCursorPos(im.ImVec2(50/vz[0]-im.GetWindowPos().x+vp[0].x / vz[0], 5/vz[0]-im.GetWindowPos().y+vp[0].y / vz[0]))
+            local vpPtr, vz = im.ImVec2Ptr(0,0), im.FloatPtr(0)
+            ui_flowgraph_editor.getViewState(vpPtr, vz)
+            --local oldCp = im.GetCursorPos()
+            local vp = im.ImVecPtrDeref(vpPtr)
+
+            im.SetCursorPos(im.ImVec2(50/vz[0]-im.GetWindowPos().x+vp.x / vz[0], 5/vz[0]-im.GetWindowPos().y+vp.y / vz[0]))
             --editor.uiIconImage(editor.icons.goat, im.ImVec2(300/vz[0],300/vz[0]), im.ImVec4(math.sin(os.clock()*3)*0.25+0.75,0.25,0.25,1))
             --im.SetCursorPos(oldCp)
           end
 
           local style = im.GetStyle()
-          -- DBEUG: draw all graphs:
+          -- DEBUG: draw all graphs:
           --for _, g in pairs(self.mgr.graphs) do self:drawGraph(g, builder, style) end
           -- draw current graph only:
 
@@ -751,7 +752,6 @@ function C:drawSelf()
            if graph then self:drawGraph(graph, builder, style) end
           end
           im.SetCursorScreenPos(cursorTopLeft)
-
 
           im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(6, 6))
           self:doContextMenus()
@@ -815,9 +815,7 @@ end
 local orangeColor, whiteColor, whiteStrong = im.ImVec4(1,0.5,0,1), im.ImVec4(1,1,1,0.25), im.ImVec4(1,1,1,0.9)
 local qaWidth = 200
 function C:showQuickAccessSubmenu(menuPos, pin)
-
   if im.BeginMenu("Quick Connect") then
-    im.SetWindowFontScale(1/editor.getPreference("ui.general.scale"))
     -- find targets and sorted names
     if self.quickConnectPins == nil then
       self.quickConnectPins = {}
@@ -978,7 +976,6 @@ function C:showQuickAccessSubmenu(menuPos, pin)
     else
       im.Text("No compatible pins found!")
     end
-    im.SetWindowFontScale(1)
     im.EndMenu()
   else
     self.quickAccessError = nil
@@ -1053,7 +1050,7 @@ function C:doContextMenus()
 
 
   if ui_flowgraph_editor.ShowNodeContextMenu(self.contextNodeId) then
-    if not self.mgr.selectedNodes[tonumber(self.contextNodeId[0])] then
+    if not self.mgr.selectedNodes[ui_flowgraph_editor.PtrToId(self.contextNodeId)] then
       ui_flowgraph_editor.ClearSelection()
       ui_flowgraph_editor.SelectNode(self.contextNodeId[0], true)
     end
@@ -1063,7 +1060,7 @@ function C:doContextMenus()
     im.OpenPopup("Pin Context Menu")
     self.mgr.openPopupPosition = mousePos
   elseif ui_flowgraph_editor.ShowLinkContextMenu(self.contextLinkId) then
-    if not self.mgr.selectedLinks[tonumber(self.contextLinkId[0])] then
+    if not self.mgr.selectedLinks[ui_flowgraph_editor.PtrToId(self.contextLinkId)] then
       ui_flowgraph_editor.ClearSelection()
       ui_flowgraph_editor.SelectLink(self.contextLinkId[0], true)
     end
@@ -1076,21 +1073,17 @@ function C:doContextMenus()
     self.mgr.newNodeLinkPin = nil
     self.fgEditor.nodelib:setNewNodeLinkPin(nil)
   end
-  local oldUiScale = im.uiscale[0]
-  im.uiscale[0] = editor.getPreference("ui.general.scale")
   --im.SetNextWindowPos(im.GetCursorScreenPos())
   if im.BeginPopup("Node Context Menu") then
-    --im.Begin('asd##contextMenuWrapper')
-    local node = self.mgr.graph.nodes[tonumber(self.contextNodeId[0])]
+    local node = self.mgr.graph.nodes[ui_flowgraph_editor.PtrToId(self.contextNodeId)]
     if node then
       node:showContextMenu(self.mgr.openPopupPosition)
     end
     im.EndPopup()
   end
-  --im.End()
 
   if im.BeginPopup("Pin Context Menu") then
-    local pin = self.mgr.graph:findPin(tonumber(self.contextPinId[0]))
+    local pin = self.mgr.graph:findPin(ui_flowgraph_editor.PtrToId(self.contextPinId))
     if pin then
       pin:showContextMenu(self.mgr.openPopupPosition, self)
     end
@@ -1098,7 +1091,7 @@ function C:doContextMenus()
   end
 
   if im.BeginPopup("Link Context Menu") then
-    local link = self.mgr.graph.links[tonumber(self.contextLinkId[0])]
+    local link = self.mgr.graph.links[ui_flowgraph_editor.PtrToId(self.contextLinkId)]
     if link then
       link:showContextMenu(self.mgr.openPopupPosition)
     end
@@ -1121,7 +1114,6 @@ function C:doContextMenus()
   end
   im.PopStyleColor()
   im.PopStyleVar()
-  im.uiscale[0] = oldUiScale
   ui_flowgraph_editor.Resume()
 end
 

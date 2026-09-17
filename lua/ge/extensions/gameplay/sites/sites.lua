@@ -185,6 +185,26 @@ function C:getZonesForPosition(pos)
   return zones
 end
 
+local function _zonesForPositionIterator(ctx)
+  if not ctx._iter then return end
+  while true do
+    local id = ctx._iter(ctx.tree)
+    if not id then return end
+    local zone = ctx.self.zones.objects[id]
+    if zone and zone:containsPoint2D(ctx.pos) then
+      return id, zone
+    end
+  end
+end
+
+function C:zonesForPositionIterator(pos, ctx)
+  ctx = ctx or {}
+  ctx.pos = pos
+  ctx.self = self
+  ctx._iter, ctx.tree = self.quadtreeZones:queryNotNested(pos.x, pos.y, pos.x, pos.y)
+  return _zonesForPositionIterator, ctx
+end
+
 function C:getTagsForZonesAtPosition(pos)
   local tags = {}
   local sortedTags = {}

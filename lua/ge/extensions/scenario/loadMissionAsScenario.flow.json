@@ -2,7 +2,7 @@
   "activeGraphId":1,
   "authors":"Anonymous",
   "currentGraphID":1,
-  "date":1679417077,
+  "date":1747325237,
   "debugEnabled":false,
   "description":"Instantly loads a mission.",
   "difficulty":40,
@@ -24,6 +24,20 @@
           "level",
           8,
           "levelPath",
+          false
+        ],
+        [
+          14,
+          "model",
+          8,
+          "model",
+          false
+        ],
+        [
+          16,
+          "config",
+          8,
+          "config",
           false
         ],
         [
@@ -103,8 +117,10 @@
           "dynamicMode":"repeat",
           "hiddenPins":{
             "p_in":{
+              "config":false,
               "flow":false,
-              "levelPath":false
+              "levelPath":false,
+              "model":false
             },
             "p_out":{
               "flow":false
@@ -127,18 +143,18 @@
             }
           },
           "pos":[
-            122,
-            148
+            45,
+            119
           ],
           "type":"types/getVariable",
           "varName":"level"
         },
         "10":{
           "code":{
-            "work":"loadExtension('gameplay_missions_missionManager') gameplay_missions_missionManager.startAsScenario(gameplay_missions_missions.getMissionById(self.pinIn.missionId.value))",
             "_executionStarted":"",
             "_executionStopped":"",
-            "onPreRender":""
+            "onPreRender":"",
+            "work":"loadExtension('gameplay_missions_missionManager') gameplay_missions_missionManager.startAsScenario(gameplay_missions_missions.getMissionById(self.pinIn.missionId.value))"
           },
           "data":{},
           "dynamicMode":"repeat",
@@ -209,10 +225,10 @@
           },
           "hiddenPins":{
             "p_in":{
-              "useDtSim":true,
               "duration":false,
               "flow":false,
-              "reset":false
+              "reset":false,
+              "useDtSim":true
             },
             "p_out":{
               "flow":false,
@@ -242,6 +258,23 @@
           "type":"types/getVariable",
           "varName":"missionId"
         },
+        "14":{
+          "data":{},
+          "dynamicMode":"repeat",
+          "global":true,
+          "hiddenPins":{
+            "p_in":{},
+            "p_out":{
+              "model":false
+            }
+          },
+          "pos":[
+            38,
+            217
+          ],
+          "type":"types/getVariable",
+          "varName":"model"
+        },
         "15":{
           "data":{},
           "dynamicMode":"once",
@@ -258,10 +291,10 @@
               "reset":false
             },
             "p_out":{
-              "incomplete":false,
               "complete":false,
               "completed":false,
-              "flow":false
+              "flow":false,
+              "incomplete":false
             }
           },
           "pos":[
@@ -269,6 +302,23 @@
             22
           ],
           "type":"ui/fadeToBlack"
+        },
+        "16":{
+          "data":{},
+          "dynamicMode":"repeat",
+          "global":true,
+          "hiddenPins":{
+            "p_in":{},
+            "p_out":{
+              "config":false
+            }
+          },
+          "pos":[
+            45,
+            287
+          ],
+          "type":"types/getVariable",
+          "varName":"config"
         }
       },
       "showTab":true,
@@ -278,10 +328,10 @@
         "list":{}
       },
       "viewPos":[
-        -563.70013427734375000000,
-        -166.59996032714843750000
+        -34.70026397705078125000,
+        95.40007019042968750000
       ],
-      "viewZoom":1.50000000000000000000
+      "viewZoom":1.49999988079071044922
     },
     "3":{
       "description":"This is the description for graph States",
@@ -403,7 +453,9 @@
   "variables":{
     "customVariableOrder":[
       "level",
-      "missionId"
+      "missionId",
+      "model",
+      "config"
     ],
     "list":[
       {
@@ -411,14 +463,28 @@
         "mergeStrat":"last",
         "name":"level",
         "type":"string",
-        "value":"italy"
+        "value":"hirochi_raceway"
+      },
+      {
+        "index":4,
+        "mergeStrat":"last",
+        "name":"config",
+        "type":"string",
+        "value":""
+      },
+      {
+        "index":3,
+        "mergeStrat":"last",
+        "name":"model",
+        "type":"string",
+        "value":""
       },
       {
         "index":2,
         "mergeStrat":"last",
         "name":"missionId",
         "type":"string",
-        "value":""
+        "value":"hirochi_raceway/dragStripRace/001-hirochiDrag_500"
       }
     ]
   },

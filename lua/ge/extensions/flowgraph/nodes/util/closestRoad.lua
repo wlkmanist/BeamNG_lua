@@ -7,8 +7,9 @@ local C = {}
 
 C.name = 'Closest Road'
 
-C.description = 'Finds closest road of the navgraph for a position.'
+C.description = 'Finds the closest road of the navgraph from a position.'
 C.category = 'repeat_instant'
+C.color = ui_flowgraph_editor.nodeColors.default
 
 C.pinSchema = {
   { dir = 'in', type = 'vec3', name = 'pos', description = "The position that should be checked." },
@@ -23,11 +24,12 @@ C.pinSchema = {
   { dir = 'out', type = 'number', name = 'dist', description = "Distance to the road." },
   { dir = 'out', type = 'bool', name = 'exists', hidden = true, description = "True if a road was found." },
   { dir = 'out', type = 'number', name = 'width', hidden = true, description = "Width of the road at the closest point." },
-  { dir = 'out', type = 'number', name = 'speedLimit', hidden = true, description = "Speed limit of the road, in m/s ." },
   { dir = 'out', type = 'vec3', name = 'projectedPoint', hidden = true, description = "The position projected onto the road segment." }
 }
 
-C.color = ui_flowgraph_editor.nodeColors.default
+C.tags = {'road', 'map', 'navgraph', 'distance'}
+
+local pos, projPos = vec3(), vec3()
 
 function C:init(mgr)
 end
@@ -66,7 +68,8 @@ function C:work()
 
   if not self.oldPos or self.oldPos ~= self.pinIn.pos.value then
     self.oldPos = self.pinIn.pos.value
-    local name_a, name_b, distance = map.findClosestRoad(vec3(self.oldPos))
+    pos:setFromTable(self.oldPos)
+    local name_a, name_b, distance = map.findClosestRoad(pos)
 
     if not name_a or not name_b or not distance then
       self.pinOut.exists.value = false
@@ -77,7 +80,7 @@ function C:work()
     local a = map.getMap().nodes[name_a]
     local b = map.getMap().nodes[name_b]
 
-    local xnorm = clamp(vec3(self.oldPos):xnormOnLine(a.pos, b.pos), 0, 1)
+    local xnorm = clamp(pos:xnormOnLine(a.pos, b.pos), 0, 1)
     -- if we are closer to point b, swap it around
     if xnorm > 0.5 then
       name_a, name_b = name_b, name_a
@@ -85,9 +88,6 @@ function C:work()
       b = map.getMap().nodes[name_b]
       xnorm = 1-xnorm
     end
-
-    -- this gets the link between the two or nothing
-    local link = a.links[name_b] or b.links[name_a] or {}
 
     self.pinOut.name_a.value = name_a
     self.pinOut.name_b.value = name_b
@@ -103,11 +103,11 @@ function C:work()
     self.pinOut.roadId_b.value = bId
     self.pinOut.roadIdx_b.value = bIdx
 
-    self.pinOut.dist.value = (vec3(self.oldPos)-vec3(lerp(a.pos,b.pos, xnorm))):length()
-    self.pinOut.speedLimit.value = link.speedLimit or 0
+    projPos:setLerp(a.pos, b.pos, xnorm)
 
-    self.pinOut.projectedPoint.value = lerp(a.pos,b.pos, xnorm):toTable()
-    self.pinOut.width.value = lerp(a.radius,b.radius,xnorm) * 2
+    self.pinOut.dist.value = pos:distance(projPos)
+    self.pinOut.projectedPoint.value = projPos:toTable()
+    self.pinOut.width.value = lerp(a.radius, b.radius, xnorm) * 2
   end
 end
 

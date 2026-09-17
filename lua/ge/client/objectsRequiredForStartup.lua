@@ -3,7 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 -- from core/scripts/gui/cursors.cs
-local platform = getConsoleVariable("$platform")
+local platform = VariableRegistry.get("$platform","")
 local cursor = createObject("GuiCursor")
 cursor.renderOffset = Point2F(0, 0)
 if platform == "macos" then

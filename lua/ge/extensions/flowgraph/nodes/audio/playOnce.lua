@@ -21,7 +21,7 @@ C.pinSchema = {
   { dir = 'in', type = 'number', name = 'pitch', hidden = true, default = 1, hardcoded = true, description = 'Pitch to play sound in.' },
   { dir = 'in', type = 'number', name = 'fadeInTime', hidden = true, default = -1, hardcoded = true, description = 'Fade in time for sound.' },
   { dir = 'in', type = 'number', name = 'fadeOutTime', hidden = true, default = -1, hardcoded = true, description = 'Fade out time for sound.' },
-  { dir = 'in', type = 'bool', name = 'unique', hidden = true, default = false, hardcoded = true, description = 'TODO' },
+  { dir = 'in', type = 'bool', name = 'unique', hidden = true, default = false, hardcoded = true, description = 'Prevents multiple instances of this sound.' },
 }
 
 C.legacyPins = {

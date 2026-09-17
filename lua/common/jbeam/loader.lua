@@ -23,6 +23,7 @@ local jbeamNodeBeam = require('jbeam/sections/nodeBeam')
 local jbeamLicensePlatesSkins = require('jbeam/sections/licenseplatesSkins')
 local jbeamAssorted = require('jbeam/sections/assorted')
 local jbeamMeshs = require('jbeam/sections/meshs')
+local jbeamVisualRopes = require('jbeam/sections/vropes')
 local jbeamEvents = require('jbeam/sections/events')
 local jbeamColors = require('jbeam/sections/colors')
 local jbeamPaints = require('jbeam/sections/paints')
@@ -30,10 +31,24 @@ local jbeamMirrors = require('jbeam/sections/mirror')
 local jbeamPartColors =  require_optional('jbeam/sections/partColors') or { process=nop }
 local jbeamCondition = require_optional('jbeam/sections/condition') or { process=nop }
 local jbeamMaterials = require('jbeam/materials')
-local jbeamWriter = require('jbeamWriter')
-
+local jbeamUtils = require('jbeam/utils')
 
 local M = {}
+
+-- these are defined in C, do not change the values
+local NORMALTYPE = 0
+local BEAM_ANISOTROPIC = 1
+local BEAM_BOUNDED = 2
+local BEAM_PRESSURED = 3
+local BEAM_LBEAM = 4
+local BEAM_BROKEN = 5
+local BEAM_HYDRO = 6
+local BEAM_SUPPORT = 7
+
+local debugVehicleLoading = false
+if Engine.getStartingArgs then
+  debugVehicleLoading = tableFindKey(Engine.getStartingArgs(), '-debugVehicleLoading') ~= nil
+end
 
 -- this is intentionally here for the doc sync system
 M.defaultBeamSpring = 4300000
@@ -45,64 +60,103 @@ M.defaultBeamStrength = math.huge
 M.data = {}
 M.materials, M.materialsMap = particles.getMaterialsParticlesTable()
 
---local cache = {}
+-- this will inject frame renders during loading
+-- if you want to just profile the loading time, you can disable it
+local refreshScreenWhileLoading = true
 
--- load all the jbeam and construct the thing in memory
-local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConfig, debugMgrContext)
-  if loadingProgress then loadingProgress:update(0.1, 'Reading files...') end
-  local ioCtx = jbeamIO.startLoading(vehicleDirectories)
+local cache = {}
 
+-- helper function to preprocess vehicle configuration
+local function prepareVehicleConfig(ioCtx, vehicleDirectories, vehicleConfig)
   -- figure out the model name based on the directory given
   local modelName = vehicleDirectories[1]:match('/vehicles/([^/]+)')
 
   if vehicleConfig == nil then vehicleConfig = {} end
-  local debugEnabled = nil
-  if vehicleConfig.additionalVehicleData then
-    debugEnabled = vehicleConfig.additionalVehicleData.debugEnabled
-  end
+
+  vehicleConfig.model = modelName
 
   if not vehicleConfig.paints and vehicleConfig.colors then
     vehicleConfig.paints = convertVehicleColorsToPaints(vehicleConfig.colors)
     vehicleConfig.colors = nil
-    vehicleConfig.model = modelName
   end
   if not vehicleConfig.mainPartName then
     vehicleConfig.mainPartName = jbeamIO.getMainPartName(ioCtx)
   end
-  --log('D', 'loadVehicle', 'spawn config: ' .. dumps(vehicleConfig))
+  if vehicleConfig.mainPartName then
+    vehicleConfig.mainPartPath = '/' .. vehicleConfig.mainPartName
+  end
 
-  if loadingProgress then loadingProgress:update(0.2, 'Finding parts...') end
-  local vehicle, unifyJournal, unifyJournalC, chosenParts, activePartsOrig = jbeamSlotSystem.findParts(ioCtx, vehicleConfig)
+  --log('D', 'loadVehicle', 'spawn config: ' .. dumps(vehicleConfig))
+  return modelName, vehicleConfig
+end
+
+-- same as loadJbeam, but only returns the vehicle config and skips irrelevant parts of the loading process
+local function loadJbeamOnlyConfig(vehicleDirectories, vehicleConfig)
+  local ioCtx = jbeamIO.startLoading(vehicleDirectories)
+  local modelName, vehicleConfig = prepareVehicleConfig(ioCtx, vehicleDirectories, vehicleConfig)
+  local vehicle, unifyJournal, unifyJournalC, chosenPartsTree, slotPartMap, activePartsData, activeParts = jbeamSlotSystem.findParts(ioCtx, vehicleConfig)
+  if not vehicle then return end
+  vehicleConfig.parts = nil -- obsolete info, replaced with partsTree
+  vehicleConfig.partsTree = chosenPartsTree
+  jbeamIO.finishLoading() -- clears some caches
+  return vehicleConfig
+end
+
+-- load all the jbeam and construct the thing in memory
+local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConfig)
+  profilerPushEvent('jbeam/loader')
+  if loadingProgress then loadingProgress:update(0.1, _tr("ui.jbeam.loader.readingFiles")) end
+  local ioCtx = jbeamIO.startLoading(vehicleDirectories)
+  local modelName, vehicleConfig = prepareVehicleConfig(ioCtx, vehicleDirectories, vehicleConfig)
+
+  local debugEnabled = nil
+  local additionalVehicleData = vehicleConfig.additionalVehicleData
+  if additionalVehicleData then
+    debugEnabled = additionalVehicleData.debugEnabled
+  end
+
+  if loadingProgress then loadingProgress:update(0.2, _tr("ui.jbeam.loader.findingParts")) end
+  local vehicle, unifyJournal, unifyJournalC, chosenPartsTree, slotPartMap, activePartsData, activeParts = jbeamSlotSystem.findParts(ioCtx, vehicleConfig)
   if not vehicle then return end
 
+  vehicle.partOrigin = vehicle.partName
+  vehicle.partPath = '/' .. vehicle.partName
+
+  -- this converts all the variable tables into objects.
   local vars = jbeamVariables.getAllVariables(vehicle, unifyJournal, vehicleConfig)
 
   -- we process all components before processing variables so the variables can use them
   jbeamVariables.processComponents(vehicle, unifyJournalC, vehicleConfig, vars)
 
-  if loadingProgress then loadingProgress:update(0.21, 'Applying variables...') end
+  if loadingProgress then loadingProgress:update(0.21, _tr("ui.jbeam.loader.applyingVariables")) end
   local allVariables = jbeamVariables.processParts(vehicle, unifyJournal, vehicleConfig, vars)
 
-  if loadingProgress then loadingProgress:update(0.22, 'Unifying parts...') end
+  if loadingProgress then loadingProgress:update(0.22, _tr("ui.jbeam.loader.unifyingParts")) end
   if not jbeamSlotSystem.unifyPartJournal(ioCtx, unifyJournal) then return end
 
   jbeamVariables.postProcessVariables(vehicle, allVariables)
 
   -- cleanup everything that should not be send over to the other side that is not serializeable
-  jbeamVariables.componentsCleanup(vehicle)
+  jbeamVariables.cleanup(vehicle)
 
-  if debugMgrContext and debugMgrContext.dumpDebug[0] then
-    table.insert(debugMgrContext.debugTexts, 'vehicleDebug_preTable.json')
-    jbeamWriter.writeFile('vehicleDebug_preTable.json', vehicle)
+  if debugVehicleLoading then
+    local fn = vehicleDirectories[1] .. '/vehicleDebug_preTable.json'
+    require('jbeamWriter').writeFile(fn, vehicle)
+    log('I', 'vehicleloader.debug', 'wrote file: ' .. fn)
   end
-  --dump({'chosenParts = ', chosenParts})
-  --jsonWriteFile('chosenParts.json', chosenParts, true)
-  --jsonWriteFile('vehicle.json', vehicle, true)
-  --jsonWriteFile('activePartsOrig.json', activePartsOrig, true)
+  --dump({'chosenPartsTree = ', chosenPartsTree})
 
-  if loadingProgress then loadingProgress:update(0.3, 'Assembling tables ...') end
+  vehicleConfig.parts = nil -- obsolete info, replaced with partsTree
+  vehicleConfig.partsTree = chosenPartsTree
+
+  --jsonWriteFile('chosenPartsTree.json', chosenPartsTree, true)
+  --jsonWriteFile('vehicle.json', vehicle, true)
+  --jsonWriteFile('activePartsData.json', activePartsData, true)
+
+  if loadingProgress then loadingProgress:update(0.3, _tr("ui.jbeam.loader.assemblingTables")) end
   if not jbeamTableSchema.process(vehicle) then
     log('W', "jbeam.compile", "*** preparation error")
+    profilerPopEvent('jbeam/loader')
     return nil
   end
 
@@ -110,14 +164,16 @@ local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConf
   local sectionRenames = {}
   if not sectionMerger.process(vehicle, sectionRenames) then
     log('W', "jbeam.compile", "*** sectionMerger error")
+    profilerPopEvent('jbeam/loader')
     return nil
   end
 
-  if loadingProgress then loadingProgress:update(0.4, 'Linking things together ...') end
+  if loadingProgress then loadingProgress:update(0.4, _tr("ui.jbeam.loader.linkingThings")) end
   -- a) this creates a list of things to be linked AND deletes unlinkable things
   local linksToResolve = jbeamLinks.prepareLinksDestructive(vehicle, sectionRenames)
   if linksToResolve == nil then
     log('W', "jbeam.compile", "*** link preparation error")
+    profilerPopEvent('jbeam/loader')
     return nil
   end
 
@@ -125,26 +181,31 @@ local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConf
   --    Items cannot be added or deleted afterwards
   if not jbeamOptimization.assignCIDs(vehicle) then
     log('W', "jbeam.compile", "*** numbering error")
+    profilerPopEvent('jbeam/loader')
     return nil
   end
 
   -- c) This resolves the links with the cids assigned now
   if not jbeamLinks.resolveLinks(vehicle, linksToResolve) then
     log('W', "jbeam.compile", "*** link resolving error")
+    profilerPopEvent('jbeam/loader')
     return nil
   end
 
-  if loadingProgress then loadingProgress:update(0.5, 'Inspecting variables ...') end
+  if loadingProgress then loadingProgress:update(0.5, _tr("ui.jbeam.loader.inspectingVariables")) end
   jbeamNodeBeam.process(vehicle)
   if vmType == 'game' then
     jbeamCamera.process(objID, vehicle)
   end
 
-  if loadingProgress then loadingProgress:update(0.6, 'Adding wheels ...') end
+  extensions.hook('onJbeamLoadingPhase1', loadingProgress, objID, vehicle, unifyJournal, vehicleConfig, vars)
+
+  if loadingProgress then loadingProgress:update(0.6, _tr("ui.jbeam.loader.addingWheels")) end
   jbeamWheels.processWheels(vehicle)
 
   if not jbeamLinks.resolveGroupLinks(vehicle) then
     log('W', "jbeam.postProcess","*** group link resolving error")
+    profilerPopEvent('jbeam/loader')
     return nil
   end
 
@@ -163,13 +224,17 @@ local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConf
 
   vehicle.vehicleDirectory = vehicleDirectories[1]
   vehicle.directoriesLoaded = vehicleDirectories
-  vehicle.activeParts = activePartsOrig
+  vehicle.activePartsData = activePartsData
+  vehicle.activeParts = activeParts
+  vehicle.slotPartMap = slotPartMap
   vehicle.model = modelName
 
+  extensions.hook('onJbeamLoadingPhase2', loadingProgress, objID, vehicle, unifyJournal, vehicleConfig, vars)
 
-  if loadingProgress then loadingProgress:update(0.9, 'Optimizing result') end
+  if loadingProgress then loadingProgress:update(0.9, _tr("ui.jbeam.loader.optimizingResult")) end
   if not jbeamOptimization.process(vehicle, debugEnabled) then
     log('W', "jbeam.compile", "*** optimization error")
+    profilerPopEvent('jbeam/loader')
     return nil
   end
 
@@ -178,18 +243,90 @@ local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConf
   -- for the UI, after all the jbeam loading is done
   jbeamInteraction.process(vehicle)
 
+  -- TODO: REMOVE TEST CODE
+  if additionalVehicleData then
+    if additionalVehicleData.indestructible then
+      local beamToTorbar = {}
+      if vehicle.torsionbars then
+        for i = 0, #vehicle.torsionbars do
+          local torbar = vehicle.torsionbars[i]
+          local a, b = math.min(torbar.id1, torbar.id2), math.max(torbar.id1, torbar.id2)
+          beamToTorbar[a..':'..b] = i
+          a, b = math.min(torbar.id2, torbar.id3), math.max(torbar.id2, torbar.id3)
+          beamToTorbar[a..':'..b] = i
+          a, b = math.min(torbar.id3, torbar.id4), math.max(torbar.id3, torbar.id4)
+          beamToTorbar[a..':'..b] = i
+        end
+      end
+
+      local beamToRail = {}
+      if vehicle.rails then
+        for k, v in pairs(vehicle.rails) do
+          local links = v['links:']
+
+          for i = 1, #links - 1 do
+            local id1, id2 = links[i], links[i + 1]
+            local a, b = math.min(id1, id2), math.max(id1, id2)
+            beamToRail[a..':'..b] = k
+          end
+        end
+      end
+
+      -- Make all beams indestructible, disable break groups
+      if vehicle.beams then
+        for i = 0, #vehicle.beams do
+          local beam = vehicle.beams[i]
+          local a, b = math.min(beam.id1, beam.id2), math.max(beam.id1, beam.id2)
+          -- check if the beam is not part of a wheel, a torsionbar, or a rail
+          if not beam.wheelID
+          and not beamToTorbar[a..':'..b]
+          and not beamToRail[a..':'..b]
+          then
+            beam.beamStrength = math.huge
+          end
+          --beam.breakGroup = nil
+
+          -- Make beams with such beam types "beamLongBound" infinite to prevent them from breaking
+          if beam.beamType == BEAM_ANISOTROPIC or beam.beamType == BEAM_SUPPORT then
+            beam.beamLongBound = math.huge
+          end
+        end
+      end
+
+      -- Disable trigger boxes
+      vehicle.triggers = nil
+
+      -- Disable all actions
+      vehicle.actionsEnabled = {}
+
+      -- Disable advanced couplers
+      -- for section, sectionData in pairs(vehicle) do
+      --   if section == 'controller' then
+      --     for i = #sectionData, 0, -1 do
+      --       local controllerData = sectionData[i]
+      --       if controllerData.fileName == 'advancedCouplerControl' then
+      --         table.remove(sectionData, i)
+      --       end
+      --     end
+      --   end
+      -- end
+    end
+  end
+
+  profilerPopEvent('jbeam/loader')
   return {
     id               = objID,
     vehicleDirectory = vehicle.vehicleDirectory,
+    directoriesLoaded = vehicle.directoriesLoaded,
     vdata            = vehicle,
     config           = vehicleConfig,
     mainPartName     = vehicleConfig.mainPartName,
-    chosenParts      = chosenParts,
     ioCtx            = ioCtx,
   }
 end
 
 local function loadBundle(objID, vehicleBundle, loadingProgress)
+  profilerPushEvent('loadBundle')
   if not vehicleBundle then return end
 
   local vehicleObj
@@ -207,8 +344,8 @@ local function loadBundle(objID, vehicleBundle, loadingProgress)
     if loadingProgress then loadingProgress:update(0.8, 'Loading input events...') end
     jbeamEvents.process(objID, vehicleObj, vehicleBundle.vdata)
 
-    if loadingProgress then loadingProgress:update(0.8, 'Adding the 3D meshes ...') end
-    jbeamLicensePlatesSkins.process(objID, vehicleObj, vehicleBundle.config, vehicleBundle.vdata.activeParts)
+    if loadingProgress then loadingProgress:update(0.8, _tr("ui.jbeam.loader.addingMeshes")) end
+    jbeamLicensePlatesSkins.process(objID, vehicleObj, vehicleBundle.config, vehicleBundle.vdata.activePartsData)
     jbeamColors.process(vehicleObj, vehicleBundle.config, vehicleBundle.vdata)
     jbeamPaints.process(vehicleObj, vehicleBundle.config, vehicleBundle.vdata)
     jbeamPartColors.process(vehicleObj, vehicleBundle.config, vehicleBundle.vdata)
@@ -233,31 +370,49 @@ local function loadBundle(objID, vehicleBundle, loadingProgress)
     vehicleObj:setRefNodes(refNodes.ref or 0, refNodes.back or 0, refNodes.left or 0, refNodes.up or 0)
 
     jbeamMeshs.process(objID, vehicleObj, vehicleBundle.vdata)
+    jbeamVisualRopes.process(objID, vehicleObj, vehicleBundle.vdata)
     jbeamMaterials.process(vehicleObj, vehicleBundle.vdata)
     jbeamMirrors.process(objID, vehicleObj, vehicleBundle.vdata)
 
-    vehicleBundle.config.paints = deserialize(vehicleObj.paints or '{}')
+    --some configs hardcode their colors in the info json rather than referencing a color name from the main json
+    --only look for that if we don't have any other color information already, otherwise things go wrong
+    if not vehicleBundle.config.paints then
+      vehicleBundle.config.paints = deserialize(vehicleObj.paints or '{}')
+    end
 
     if vehicleBundle.vdata.animation then
       vehicleObj:queueLuaCommand('extensions.load("test_animationViz")')
+    end
+
+    -- parts can request ge extensions to load themselves via a `gameEngineExtensions` section, so a
+    -- feature part (e.g. the lawn mower) works just by being installed - no manual extensions.load.
+    -- entry is `name = true` to just load, or `name = {..args..}` to also pass args + this vehicle id
+    -- to the extension's optional onVehicleExtensionLoaded(vehId, args) callback.
+    if vehicleBundle.vdata.gameEngineExtensions then
+      for k, val in pairs(vehicleBundle.vdata.gameEngineExtensions) do
+        local extName = type(val) == 'string' and val or (type(k) == 'string' and k or nil)
+        if extName then
+          local ext = extensions.use(extName) -- loads on demand, returns the module
+          if type(val) == 'table' and ext and ext.onVehicleExtensionLoaded then
+            ext.onVehicleExtensionLoaded(objID, val)
+          end
+        end
+      end
     end
 
   else
     vehicleBundle.vdata.props = {}
     vehicleBundle.vdata.flexbodies = {}
   end
+  profilerPopEvent('loadBundle')
 end
 
 -- be aware this code runs on vehicle and ge lua
-local function loadVehicleStage1(objID, vehicleDir, vehicleConfig, debugMgrContext)
+local function loadVehicleStage1(objID, vehicleDir, vehicleConfig)
   profilerPushEvent('loadVehicleStage1')
   local loadingProgress
 
-  if debugMgrContext and debugMgrContext.dumpDebug[0] then
-    debugMgrContext.debugTexts = {'Creating debug output:'}
-  end
-
-  if vmType == 'game' then
+  if refreshScreenWhileLoading and vmType == 'game' then
     loadingProgress = LoadingManager:push('beamng')
   end
 
@@ -270,53 +425,72 @@ local function loadVehicleStage1(objID, vehicleDir, vehicleConfig, debugMgrConte
   end
 
   local vehicleDirectories = {vehicleDir, '/vehicles/common/'}
-  --local spawnHash = nil
-  --if hashStringSHA256 then
-  --  spawnHash = hashStringSHA256(dumps(vehicleDirectories) .. '#' .. jsonEncode(vehicleConfig))
-  --end
+  local spawnHash = nil
+  if hashStringSHA256 then
+    spawnHash = hashStringSHA256(dumps(vehicleDirectories) .. '#' .. jsonEncode(vehicleConfig))
+  end
   --print(">>> spawnHash = " .. tostring(spawnHash))
 
-  local vehicleBundle = nil -- cache[spawnHash]
+  local vehicleBundle = cache[spawnHash]
 
   if not vehicleBundle then
-    vehicleBundle = loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConfig, debugMgrContext)
-    --if spawnHash then cache[spawnHash] = vehicleBundle end
+    vehicleBundle = loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConfig)
+    if spawnHash then cache[spawnHash] = jbeamUtils.stringBufferEncode(vehicleBundle) end
+  else
+    profilerPushEvent('jbeam/loader.cached')
+    vehicleBundle = jbeamUtils.stringBufferDecode(vehicleBundle)
+    vehicleBundle.id = objID
+    profilerPopEvent('jbeam/loader.cached')
   end
 
   --log('D', 'loader', 'jbeam LOADING TOOK: ' .. tostring(t:stopAndReset()) .. ' ms')
 
   --- for debug purposes:
-  if vehicleBundle and debugMgrContext and debugMgrContext.dumpDebug[0] then
-    local activeParts = vehicleBundle.vdata.activeParts
-    vehicleBundle.vdata.activeParts = nil
-    jsonWriteFile('vehicleDebug_data.json', vehicleBundle.vdata, true)
-    table.insert(debugMgrContext.debugTexts, 'vehicleDebug_data.json')
-    jsonWriteFile('vehicleDebug_activeParts.json', activeParts, true)
-    vehicleBundle.vdata.activeParts = activeParts
-    table.insert(debugMgrContext.debugTexts, 'vehicleDebug_activeParts.json')
-    jsonWriteFile('vehicleDebug_config.json', vehicleBundle.config, true)
-    table.insert(debugMgrContext.debugTexts, 'vehicleDebug_config.json')
-    jsonWriteFile('vehicleDebug_chosenParts.json', vehicleBundle.chosenParts, true)
-    table.insert(debugMgrContext.debugTexts, 'vehicleDebug_chosenParts.json')
+  if vehicleBundle and debugVehicleLoading then
+    local fn = vehicleDirectories[1] .. '/vehicleDebug_data.json'
+    log('I', 'vehicleloader.debug', 'wrote file: ' .. fn)
+    jsonWriteFile(fn, vehicleBundle.vdata, true)
+
+    fn = vehicleDirectories[1] .. '/vehicleDebug_activeParts.json'
+    log('I', 'vehicleloader.debug', 'wrote file: ' .. fn)
+    jsonWriteFile(fn, vehicleBundle.vdata.activePartsData, true)
+
+    fn = vehicleDirectories[1] .. '/vehicleDebug_config.json'
+    log('I', 'vehicleloader.debug', 'wrote file: ' .. fn)
+    jsonWriteFile(fn, vehicleBundle.config, true)
+
+    fn = vehicleDirectories[1] .. '/vehicleDebug_Tree.json'
+    log('I', 'vehicleloader.debug', 'wrote file: ' .. fn)
+    jsonWriteFile(fn, vehicleBundle.config.partsTree, true)
   end
+
+
+  --jsonWriteFile('vehicleBundle.json', vehicleBundle, true)
 
   loadBundle(objID, vehicleBundle, loadingProgress)
 
   --log('D', 'loader', '3D LOADING TOOK: ' .. tostring(t:stopAndReset()) .. ' ms')
 
-  profilerPopEvent() -- loadVehicleStage1
+  profilerPopEvent('loadVehicleStage1')
 
   if loadingProgress then
-    loadingProgress:update(1, 'Vehicle loading done')
+    loadingProgress:update(1, _tr("ui.jbeam.loader.vehicleLoadingDone"))
     LoadingManager:pop(loadingProgress)
   end
 
   return vehicleBundle
 end
 
+local function onFileChanged(filename, type)
+  cache = {}
+end
+
 -- public interface
 M._noSerialize = true
 M.loadVehicleStage1 = loadVehicleStage1
 M.loadBundle = loadBundle
+M.loadJbeam = loadJbeam
+M.loadJbeamOnlyConfig = loadJbeamOnlyConfig
+M.onFileChanged = onFileChanged
 
 return M

@@ -15,7 +15,7 @@ C.tags = {'traffic', 'ai', 'mode', 'settings', 'parameters'}
 
 
 C.pinSchema = {
-  { dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle Id.' },
+  { dir = 'in', type = 'number', name = 'vehId', description = 'Vehicle id.' },
 
   { dir = 'out', type = 'string', name = 'role', description = 'Class or role of the vehicle (standard, police, service, etc.).' },
   { dir = 'out', type = 'string', name = 'state', description = 'Traffic state of the vehicle.' },

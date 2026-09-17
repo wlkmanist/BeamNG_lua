@@ -39,8 +39,8 @@ local function createCommonMaterials()
   local blankWhite = scenetree.findObject("BlankWhite")
   if not blankWhite then
     blankWhite = createObject("Material")
-    blankWhite:setField("diffuseMap", 0, "core/art/white")
-    blankWhite:setField("mapTo", 0, "white")
+    blankWhite:setField("diffuseMap", 0, "core/art/white.color.png")
+    blankWhite:setField("mapTo", 0, "BlankWhite")
     blankWhite:setField("materialTag0", 0, "Miscellaneous") -- not sure if this should be just materialTag, and the zero is array index?
     blankWhite:registerObject("BlankWhite")
   end
@@ -56,8 +56,8 @@ local function createCommonMaterials()
     coronaMat = createObject("Material")
     coronaMat.emissive = true
     coronaMat.translucent = true
-    coronaMat:setField("mapTo", 0, "corona.png")
-    coronaMat:setField("diffuseMap", 0, "core/art/special/corona.png")
+    coronaMat:setField("mapTo", 0, "corona.color.png")
+    coronaMat:setField("diffuseMap", 0, "core/art/special/corona.color.png")
     coronaMat:setField("materialTag0", 0, "FX")
     coronaMat:registerObject("Corona_Mat")
   end
@@ -65,12 +65,12 @@ local function createCommonMaterials()
   local blackSkyCubemap = scenetree.findObject("BlackSkyCubemap")
   if not blackSkyCubemap then
     blackSkyCubemap = createObject("CubemapData")
-    blackSkyCubemap:setField("cubeFace", 0, "core/art/skies/blank/solidsky_black.jpg")
-    blackSkyCubemap:setField("cubeFace", 1, "core/art/skies/blank/solidsky_black.jpg")
-    blackSkyCubemap:setField("cubeFace", 2, "core/art/skies/blank/solidsky_black.jpg")
-    blackSkyCubemap:setField("cubeFace", 3, "core/art/skies/blank/solidsky_black.jpg")
-    blackSkyCubemap:setField("cubeFace", 4, "core/art/skies/blank/solidsky_black.jpg")
-    blackSkyCubemap:setField("cubeFace", 5, "core/art/skies/blank/solidsky_black.jpg")
+    blackSkyCubemap:setField("cubeFace", 0, "core/art/skies/blank/solidsky_black.color.png")
+    blackSkyCubemap:setField("cubeFace", 1, "core/art/skies/blank/solidsky_black.color.png")
+    blackSkyCubemap:setField("cubeFace", 2, "core/art/skies/blank/solidsky_black.color.png")
+    blackSkyCubemap:setField("cubeFace", 3, "core/art/skies/blank/solidsky_black.color.png")
+    blackSkyCubemap:setField("cubeFace", 4, "core/art/skies/blank/solidsky_black.color.png")
+    blackSkyCubemap:setField("cubeFace", 5, "core/art/skies/blank/solidsky_black.color.png")
     blackSkyCubemap:registerObject("BlackSkyCubemap")
   end
 
@@ -85,12 +85,12 @@ local function createCommonMaterials()
   local blueSkyCubemap = scenetree.findObject("BlueSkyCubemap")
   if not blueSkyCubemap then
     blueSkyCubemap = createObject("CubemapData")
-    blueSkyCubemap:setField("cubeFace", 0, "core/art/skies/blank/solidsky_blue.jpg")
-    blueSkyCubemap:setField("cubeFace", 1, "core/art/skies/blank/solidsky_blue.jpg")
-    blueSkyCubemap:setField("cubeFace", 2, "core/art/skies/blank/solidsky_blue.jpg")
-    blueSkyCubemap:setField("cubeFace", 3, "core/art/skies/blank/solidsky_blue.jpg")
-    blueSkyCubemap:setField("cubeFace", 4, "core/art/skies/blank/solidsky_blue.jpg")
-    blueSkyCubemap:setField("cubeFace", 5, "core/art/skies/blank/solidsky_blue.jpg")
+    blueSkyCubemap:setField("cubeFace", 0, "core/art/skies/blank/solidsky_blue.color.png")
+    blueSkyCubemap:setField("cubeFace", 1, "core/art/skies/blank/solidsky_blue.color.png")
+    blueSkyCubemap:setField("cubeFace", 2, "core/art/skies/blank/solidsky_blue.color.png")
+    blueSkyCubemap:setField("cubeFace", 3, "core/art/skies/blank/solidsky_blue.color.png")
+    blueSkyCubemap:setField("cubeFace", 4, "core/art/skies/blank/solidsky_blue.color.png")
+    blueSkyCubemap:setField("cubeFace", 5, "core/art/skies/blank/solidsky_blue.color.png")
     blueSkyCubemap:registerObject("BlueSkyCubemap")
   end
 
@@ -105,12 +105,12 @@ local function createCommonMaterials()
   local greySkyCubemap = scenetree.findObject("GreySkyCubemap")
   if not greySkyCubemap then
     greySkyCubemap = createObject("CubemapData")
-    greySkyCubemap:setField("cubeFace", 0, "core/art/skies/blank/solidsky_grey.jpg")
-    greySkyCubemap:setField("cubeFace", 1, "core/art/skies/blank/solidsky_grey.jpg")
-    greySkyCubemap:setField("cubeFace", 2, "core/art/skies/blank/solidsky_grey.jpg")
-    greySkyCubemap:setField("cubeFace", 3, "core/art/skies/blank/solidsky_grey.jpg")
-    greySkyCubemap:setField("cubeFace", 4, "core/art/skies/blank/solidsky_grey.jpg")
-    greySkyCubemap:setField("cubeFace", 5, "core/art/skies/blank/solidsky_grey.jpg")
+    greySkyCubemap:setField("cubeFace", 0, "core/art/skies/blank/solidsky_grey.color.png")
+    greySkyCubemap:setField("cubeFace", 1, "core/art/skies/blank/solidsky_grey.color.png")
+    greySkyCubemap:setField("cubeFace", 2, "core/art/skies/blank/solidsky_grey.color.png")
+    greySkyCubemap:setField("cubeFace", 3, "core/art/skies/blank/solidsky_grey.color.png")
+    greySkyCubemap:setField("cubeFace", 4, "core/art/skies/blank/solidsky_grey.color.png")
+    greySkyCubemap:setField("cubeFace", 5, "core/art/skies/blank/solidsky_grey.color.png")
     greySkyCubemap:registerObject("GreySkyCubemap")
   end
 
@@ -249,7 +249,7 @@ local function createCommonMaterials()
     spawnArrow = createObject("Material")
     spawnArrow:setField("mapTo", 0, "spawn_arrow")
     spawnArrow:setField("diffuseColor", 0, "1 0.455 0 0.85")
-    spawnArrow:setField("colorMap", 0, "/core/art/white.jpg")
+    spawnArrow:setField("colorMap", 0, "/core/art/white.color.png")
     spawnArrow:setField("emissive", 0, "1")
     spawnArrow.translucent = true
     spawnArrow:registerObject("spawn_arrow")
@@ -732,11 +732,11 @@ M.loadCoreMaterials = function ()
 end
 
 local function createCommonMaterialData()
-  TorqueScriptLua.setVar("$scroll", "1")
-  TorqueScriptLua.setVar("$rotate", "2")
-  TorqueScriptLua.setVar("$wave", "4")
-  TorqueScriptLua.setVar("$scale", "8")
-  TorqueScriptLua.setVar("$sequence", "16")
+  VariableRegistry.set("$scroll", "1")
+  VariableRegistry.set("$rotate", "2")
+  VariableRegistry.set("$wave", "4")
+  VariableRegistry.set("$scale", "8")
+  VariableRegistry.set("$sequence", "16")
 
   local samplerClampLinear = createObject("GFXSamplerStateData")
   samplerClampLinear:setField("textureColorOp", 0, "GFXTOPModulate")
@@ -868,6 +868,7 @@ local function createWaterShaderData()
   waterStateBlock:setField("samplerStates", 5, "SamplerClampLinear")
   waterStateBlock:setField("samplerStates", 6, "SamplerClampLinear")
   waterStateBlock:setField("samplerStates", 7, "SamplerClampPoint")
+  waterStateBlock:setField("samplerStates", 9, "SamplerClampLinear") -- skyCameraVolume (aerial perspective)
   waterStateBlock:registerObject("WaterStateBlock")
 
   local underWaterStateBlock = createObject("GFXStateBlockData")
@@ -927,7 +928,7 @@ local function createWaterShaderData()
   waterBasicStateBlock:registerObject("WaterBasicStateBlock")
 
   local underWaterBasicStateBlock = createObject("GFXStateBlockData")
-  underWaterStateBlock:inheritParentFields(waterBasicStateBlock)
+  underWaterBasicStateBlock:inheritParentFields(waterBasicStateBlock)
   underWaterBasicStateBlock:setField("cullMode", 0, "GFXCullCW")
   underWaterBasicStateBlock:registerObject("UnderWaterBasicStateBlock")
 
@@ -966,7 +967,7 @@ local function createScatterSkyData()
   scatterSkySBData.zEnable = true
   scatterSkySBData.zWriteEnable = false
   scatterSkySBData.vertexColorEnable = true
-  if TorqueScriptLua.getBoolVar("$Scene::useReversedDepthBuffer") then
+  if VariableRegistry.get("$Scene::useReversedDepthBuffer") then
     scatterSkySBData:setField("zFunc", 0, "GFXCmpGreaterEqual")
   else
     scatterSkySBData:setField("zFunc", 0, "GFXCmpLessEqual")
@@ -976,11 +977,124 @@ local function createScatterSkyData()
   scatterSkySBData:setField("cullMode", 0, "GFXCullNone")
   scatterSkySBData:registerObject("ScatterSkySBData")
 
+  local skyLutSkySBData = createObject("GFXStateBlockData")
+  skyLutSkySBData:inheritParentFields(scatterSkySBData)
+  skyLutSkySBData.samplersDefined = true
+  skyLutSkySBData:setField("samplerStates", 0, "SamplerClampLinear")
+  skyLutSkySBData:setField("samplerStates", 1, "SamplerClampLinear")
+  skyLutSkySBData:setField("samplerStates", 2, "SamplerClampLinear")
+  skyLutSkySBData:setField("samplerStates", 3, "SamplerClampLinear")
+  skyLutSkySBData:registerObject("SkyLutSkySBData")
+
   local scatterSkyShaderData = createObject("ShaderData")
   scatterSkyShaderData.DXVertexShaderFile = "shaders/common/scatterSkyV.hlsl"
   scatterSkyShaderData.DXPixelShaderFile  = "shaders/common/scatterSkyP.hlsl"
   scatterSkyShaderData.pixVersion = 5.0;
   scatterSkyShaderData:registerObject("ScatterSkyShaderData")
+
+  local skyLutSkyShaderData = createObject("ShaderData")
+  skyLutSkyShaderData.DXVertexShaderFile = "shaders/common/sky/skyLutSkyV.hlsl"
+  skyLutSkyShaderData.DXPixelShaderFile  = "shaders/common/sky/skyLutSkyP.hlsl"
+  skyLutSkyShaderData.pixVersion = 5.0;
+  skyLutSkyShaderData:registerObject("SkyLutSkyShaderData")
+
+  -- Real-time star field (ScatterSky renders the catalog additively over the sky).
+  local starFieldSBData = createObject("GFXStateBlockData")
+  starFieldSBData.blendDefined = true
+  starFieldSBData.blendEnable = true
+  starFieldSBData:setField("blendSrc", 0, "GFXBlendOne")
+  starFieldSBData:setField("blendDest", 0, "GFXBlendOne")
+  starFieldSBData.zDefined = true
+  starFieldSBData.zEnable = true
+  starFieldSBData.zWriteEnable = false
+  if VariableRegistry.get("$Scene::useReversedDepthBuffer") then
+    starFieldSBData:setField("zFunc", 0, "GFXCmpGreaterEqual")
+  else
+    starFieldSBData:setField("zFunc", 0, "GFXCmpLessEqual")
+  end
+  starFieldSBData.cullDefined = true
+  starFieldSBData:setField("cullMode", 0, "GFXCullNone")
+  starFieldSBData:registerObject("StarFieldSBData")
+
+  local starFieldShaderData = createObject("ShaderData")
+  starFieldShaderData.DXVertexShaderFile = "shaders/common/sky/starFieldV.hlsl"
+  starFieldShaderData.DXPixelShaderFile  = "shaders/common/sky/starFieldP.hlsl"
+  starFieldShaderData.pixVersion = 5.0;
+  starFieldShaderData:registerObject("StarFieldShaderData")
+
+  -- Constellation stick-figure lines (additive line list, reuses StarFieldSBData).
+  local constLineShaderData = createObject("ShaderData")
+  constLineShaderData.DXVertexShaderFile = "shaders/common/sky/constLinesV.hlsl"
+  constLineShaderData.DXPixelShaderFile  = "shaders/common/sky/constLinesP.hlsl"
+  constLineShaderData.pixVersion = 5.0;
+  constLineShaderData:registerObject("ConstLineShaderData")
+
+  -- Constellation name labels (premultiplied-alpha billboards sampling a runtime-baked Skia atlas).
+  local constNamesSBData = createObject("GFXStateBlockData")
+  constNamesSBData.blendDefined = true
+  constNamesSBData.blendEnable = true
+  constNamesSBData:setField("blendSrc", 0, "GFXBlendOne")
+  constNamesSBData:setField("blendDest", 0, "GFXBlendInvSrcAlpha")
+  constNamesSBData.zDefined = true
+  constNamesSBData.zEnable = true
+  constNamesSBData.zWriteEnable = false
+  if VariableRegistry.get("$Scene::useReversedDepthBuffer") then
+    constNamesSBData:setField("zFunc", 0, "GFXCmpGreaterEqual")
+  else
+    constNamesSBData:setField("zFunc", 0, "GFXCmpLessEqual")
+  end
+  constNamesSBData.cullDefined = true
+  constNamesSBData:setField("cullMode", 0, "GFXCullNone")
+  constNamesSBData.samplersDefined = true
+  constNamesSBData:setField("samplerStates", 0, "SamplerClampLinear")
+  constNamesSBData:registerObject("ConstNamesSBData")
+
+  local constNamesShaderData = createObject("ShaderData")
+  constNamesShaderData.DXVertexShaderFile = "shaders/common/sky/constNamesV.hlsl"
+  constNamesShaderData.DXPixelShaderFile  = "shaders/common/sky/constNamesP.hlsl"
+  constNamesShaderData.pixVersion = 5.0;
+  constNamesShaderData:registerObject("ConstNamesShaderData")
+
+  -- Shaded moon (billboard lit as a sphere; real phase terminator + earthshine, premultiplied alpha:
+  -- the opaque disc occludes while the soft aureole adds light without darkening the sky/stars behind it).
+  local moonSBData = createObject("GFXStateBlockData")
+  moonSBData.blendDefined = true
+  moonSBData.blendEnable = true
+  moonSBData:setField("blendSrc", 0, "GFXBlendOne")
+  moonSBData:setField("blendDest", 0, "GFXBlendInvSrcAlpha")
+  moonSBData.zDefined = true
+  moonSBData.zEnable = true
+  moonSBData.zWriteEnable = false
+  if VariableRegistry.get("$Scene::useReversedDepthBuffer") then
+    moonSBData:setField("zFunc", 0, "GFXCmpGreaterEqual")
+  else
+    moonSBData:setField("zFunc", 0, "GFXCmpLessEqual")
+  end
+  moonSBData.cullDefined = true
+  moonSBData:setField("cullMode", 0, "GFXCullNone")
+  moonSBData.samplersDefined = true
+  moonSBData:setField("samplerStates", 0, "SamplerClampLinear")
+  moonSBData:registerObject("MoonSBData")
+
+  local moonShaderData = createObject("ShaderData")
+  moonShaderData.DXVertexShaderFile = "shaders/common/sky/moonV.hlsl"
+  moonShaderData.DXPixelShaderFile  = "shaders/common/sky/moonP.hlsl"
+  moonShaderData.pixVersion = 5.0;
+  moonShaderData:registerObject("MoonShaderData")
+
+  -- Procedural Milky Way (full-sky additive pass, reuses StarFieldSBData).
+  local milkyWayShaderData = createObject("ShaderData")
+  milkyWayShaderData.DXVertexShaderFile = "shaders/common/sky/milkyWayV.hlsl"
+  milkyWayShaderData.DXPixelShaderFile  = "shaders/common/sky/milkyWayP.hlsl"
+  milkyWayShaderData.pixVersion = 5.0;
+  milkyWayShaderData:registerObject("MilkyWayShaderData")
+
+  -- Procedural meteors / shooting stars (full-sky additive pass, reuses StarFieldSBData).
+  local meteorShaderData = createObject("ShaderData")
+  meteorShaderData.DXVertexShaderFile = "shaders/common/sky/meteorsV.hlsl"
+  meteorShaderData.DXPixelShaderFile  = "shaders/common/sky/meteorsP.hlsl"
+  meteorShaderData.pixVersion = 5.0;
+  meteorShaderData:registerObject("MeteorShaderData")
 end
 
 local function createCloudsData()
@@ -1020,7 +1134,7 @@ local function createVehicleData()
     stateBlock.zDefined = true
     stateBlock.zEnable = true
     stateBlock.zWriteEnable = false
-    if TorqueScriptLua.getBoolVar("$Scene::useReversedDepthBuffer") then
+    if VariableRegistry.get("$Scene::useReversedDepthBuffer") then
       stateBlock.zBias = 1
       stateBlock.zSlopeBias = 1
     else

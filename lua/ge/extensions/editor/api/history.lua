@@ -5,6 +5,29 @@
 local C = {}
 local defaultMaxUndoLevels = 1000
 
+local function tableDeepEqual(t1, t2, seen)
+  if type(t1) == type(t2) and t1 == t2 then return true end -- type pre-check prevents errors in a few cases (e.g. vec3)
+  if type(t1) ~= "table" or type(t2) ~= "table" then return false end
+
+  seen = seen or {}
+  if seen[t1] and seen[t1] == t2 then return true end
+  seen[t1] = t2
+
+  local t1Len = 0
+  for k, v in pairs(t1) do
+    t1Len = t1Len + 1
+    if not tableDeepEqual(v, t2[k], seen) then return false end
+  end
+
+  local t2Len = 0
+  for k in pairs(t2) do
+    t2Len = t2Len + 1
+  end
+
+  return t1Len == t2Len
+end
+
+
 function C:init()
   self.maxUndoLevels = defaultMaxUndoLevels
   self.undoStack = {}
@@ -94,6 +117,7 @@ end
 -- @param data the data used by both undo and redo functions, where you keep new and old information about the action done
 -- @param undoFunc the undo function, which has the format: local function myCreateWhateverUndo(actionData)
 -- @param redoFunc the redo function, which has the format: local function myCreateWhateverRedo(actionData)
+-- @param dontCallRedoNow wont call the redo function as part of the normal operation, you will need to do the operation separated from the redo code
 -- @return the action table that was pushed to the stack
 function C:commitAction(name, data, undoFunc, redoFunc, dontCallRedoNow)
   if not redoFunc or not undoFunc then return false end
@@ -108,6 +132,25 @@ function C:commitAction(name, data, undoFunc, redoFunc, dontCallRedoNow)
     singleActionTransaction.actions = {}
     singleActionTransaction.name = name
     table.insert(singleActionTransaction.actions, action)
+
+    -- check to see if there is an identical transaction on undo stack
+    if #self.undoStack > 0 then
+      local topTrans = deepcopy(self.undoStack[#self.undoStack])
+      local crtTrans = deepcopy(singleActionTransaction)
+
+      -- clear timestamps, these always change
+      for _, act in ipairs(topTrans.actions) do
+        act.timestamp = nil
+      end
+      for _, act in ipairs(crtTrans.actions) do
+        act.timestamp = nil
+      end
+
+      if tableDeepEqual(topTrans, crtTrans) then
+        -- return, there is the same transaction with the same params, no need for duplicates
+        return nil
+      end
+    end
 
     if #self.undoStack == self.maxUndoLevels then
       -- from this point, every time we add a new transaction, delete the first one so we keep the max undo levels size

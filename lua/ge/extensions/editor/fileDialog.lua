@@ -252,6 +252,8 @@ local function execCB(data)
   if not isok then
     log("E", "", "Callback failed : "..dumps(msg))
   end
+  editor.ignoreNextMouseUp = true
+  editor.fileDialogClosedTime = os.clock()
   editor.hideWindow(toolWindowName)
 end
 
@@ -289,6 +291,8 @@ local columns = {
         end
 
         if editor.IsItemDoubleClicked(0) then
+          editor.ignoreNextMouseUp = true
+          editor.fileDialogClosedTime = os.clock()
           if not options.select_folder then
             if action == "Save" then
               local fname = file.name
@@ -507,10 +511,14 @@ local function onEditorGui()
           local dirName = ffi.string(textinputNewFolder)
           if #dirName <= 0 then
             editor.logWarn("Directory name must not be empty.")
+            im.EndPopup()
+            im.End()
             return
           end
           if FS:directoryExists(currentPath .. dirName) then
             editor.logWarn("Directory does exist already.")
+            im.EndPopup()
+            im.End()
             return
           end
           FS:directoryCreate(currentPath .. dirName, true)
@@ -542,7 +550,11 @@ local function onEditorGui()
         if im.Button("Create") or createNow then
           local crtPath = ffi.string(pathPointer)
           local newPath = crtPath .. ffi.string(textinputNewFolder)
-
+          if string.match(ffi.string(textinputNewFolder), "^%s*$") then
+            im.OpenPopup("Error##FileDialog_ErrorPopup")
+            im.End()
+            return
+          end
           if ffi.string(textinputNewFolder) == "" then
             editor.logWarn("Input a valid name for the new folder in the File Dialog")
           else
@@ -552,6 +564,18 @@ local function onEditorGui()
             end
             ffi.copy(textinputNewFolder, "")
           end
+        end
+        local buttonPos = im.GetItemRectMin()
+        local buttonSize = im.GetItemRectSize()
+        im.SetNextWindowPos(im.ImVec2(buttonPos.x, buttonPos.y + buttonSize.y), im.Cond_FirstUseEver)
+        if im.BeginPopupModal("Error##FileDialog_ErrorPopup", nil, im.WindowFlags_AlwaysAutoResize) then
+          im.Text("Please provide a valid name for the new folder!")
+          im.Separator()
+          if im.Button("OK") then
+            editor.hideWindow("Error##FileDialog_ErrorPopup")
+            im.CloseCurrentPopup()
+          end
+          im.EndPopup()
         end
       end
 
@@ -752,7 +776,9 @@ local function onEditorGui()
       end
 
       im.SameLine()
-      if im.Button('Cancel') then
+      if im.Button("Cancel") then
+        editor.ignoreNextMouseUp = true
+        editor.fileDialogClosedTime = os.clock()
         editor.hideWindow(toolWindowName)
       end
     end

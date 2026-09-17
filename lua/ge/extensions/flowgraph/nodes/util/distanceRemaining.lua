@@ -4,31 +4,31 @@
 
 local im  = ui_imgui
 local C = {}
-local route
-C.name = 'Waypoints distance'
+
+C.name = 'Waypoints Distance'
 
 C.description = "Finds the remaining distance from waypoints along with if the player is going the right way."
 C.category = 'repeat_instant'
 
 C.pinSchema = {
   { dir = "in", hidden = true, type = "flow", name = "alwaysUpdate", description = ""},
-  { dir = 'in', type = 'number', name = 'vehId', description = "The tracked veh" },
-  { dir = 'in', type = 'table', name = 'waypoints', description = "The Position that should be checked." },
+  { dir = 'in', type = 'number', name = 'vehId', description = "The tracked vehicle." },
+  { dir = 'in', type = 'table', name = 'waypoints', description = "Table of positions to use." },
   { dir = 'out', type = 'number', name = 'distLeft', description = "Distance to the road." },
-  { dir = "out", type = "bool", name = "rightWay", description = "Whether the vehicle is going the wrong way"},
-  { dir = "out", type = "flow", name = "goingRigthWay", description = ""},
+  { dir = "out", type = "bool", name = "rightWay", description = "Whether the vehicle is going the wrong way."},
+  { dir = "out", type = "flow", name = "goingRightWay", description = ""},
   { dir = "out", type = "flow", name = "goingWrongWay", description = ""},
 }
 
 C.color = ui_flowgraph_editor.nodeColors.default
 
-local nextWaypointPos, previousWaypointPos
 local vehData
 local vel
 local threshold = 0.50
 local index
-local xnorm
 local lastDistLeft = -1
+local prevPos, nextPos, dirVec = vec3(), vec3(), vec3()
+
 function C:work()
   if not self.pinIn.waypoints.value then return end
 
@@ -40,25 +40,25 @@ function C:work()
     local dist = vehData.pos:distanceToLineSegment(self.pinIn.waypoints.value[i], self.pinIn.waypoints.value[i + 1])
     if dist < min then
       min = dist
-      previousWaypointPos = self.pinIn.waypoints.value[i]
-      nextWaypointPos = self.pinIn.waypoints.value[i + 1]
+      prevPos:set(self.pinIn.waypoints.value[i])
+      nextPos:set(self.pinIn.waypoints.value[i + 1])
       index = i
     end
   end
 
   local distLeft = 0
 
-  local xnorm = vehData.pos:xnormOnLine(previousWaypointPos, nextWaypointPos)
-  distLeft = distLeft + lerp(previousWaypointPos, nextWaypointPos, xnorm):distance(nextWaypointPos)
+  local xnorm = vehData.pos:xnormOnLine(prevPos, nextPos)
+  distLeft = distLeft + lerp(prevPos, nextPos, xnorm):distance(nextPos)
   if index < #self.pinIn.waypoints.value then
     for i = index, #self.pinIn.waypoints.value - 1 do
-      distLeft = distLeft + vec3(self.pinIn.waypoints.value[i]):distance(self.pinIn.waypoints.value[i + 1])
+      distLeft = distLeft + self.pinIn.waypoints.value[i]:distance(self.pinIn.waypoints.value[i + 1])
     end
   end
 
   vel = vehData.vel:length()
-  local desiredDirection = nextWaypointPos - previousWaypointPos
-  local goingTheRightDirection = vel <= threshold or (desiredDirection:dot(vehData.vel) > 0 and vel > threshold)
+  dirVec:setSub2(nextPos, prevPos)
+  local goingTheRightDirection = vel <= threshold or (dirVec:dot(vehData.vel) > 0 and vel > threshold)
 
   self.pinOut.rightWay.value = goingTheRightDirection
   self.pinOut.goingRigthWay.value = goingTheRightDirection
