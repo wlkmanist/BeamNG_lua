@@ -92,11 +92,15 @@ local function createRoad(spec)
     roadMgr.roads[#roadMgr.roads + 1] = road
     roadMgr.map[road.name] = #roadMgr.roads
     roadMgr.setDirty(road)
+    road.isDirty = false                                                                            -- renderData already computed; avoid a full recompute in Render Mode.
 end
 
+-- placeMode: 0 = as in file, 1 = custom (placeX, placeY), 2 = camera XY, 3 = player vehicle XY.
+-- placeZ shifts the whole network vertically so the first imported road start node sits at that height.
 local function applyPlacement(firstRoadIndex, options)
     local placeMode = options.placeMode or 0
-    if placeMode == 0 or firstRoadIndex > #roadMgr.roads then
+    local placeZ = options.placeZ
+    if (placeMode == 0 and placeZ == nil) or firstRoadIndex > #roadMgr.roads then
         return
     end
 
@@ -105,15 +109,28 @@ local function applyPlacement(firstRoadIndex, options)
         return
     end
 
-    local targetX, targetY = options.placeX or 0.0, options.placeY or 0.0
-    if placeMode == 2 then
-        local cameraPosition = core_camera.getPosition()
-        targetX, targetY = cameraPosition.x, cameraPosition.y
+    local dx, dy = 0.0, 0.0
+    if placeMode ~= 0 then
+        local targetX, targetY = options.placeX or 0.0, options.placeY or 0.0
+        if placeMode == 2 then
+            local cameraPosition = core_camera.getPosition()
+            targetX, targetY = cameraPosition.x, cameraPosition.y
+        elseif placeMode == 3 then
+            -- Headless/API counterpart of the camera anchor: the caller cannot see the
+            -- free camera, so the current player vehicle is the meaningful anchor.
+            local vehicle = be:getPlayerVehicle(0)
+            if not vehicle then
+                error('placeMode 3 requires a current player vehicle; none found')
+            end
+            local position = vec3(vehicle:getPosition())
+            targetX, targetY = position.x, position.y
+        end
+        dx = targetX - firstNode.p.x
+        dy = targetY - firstNode.p.y
     end
 
-    local dx = targetX - firstNode.p.x
-    local dy = targetY - firstNode.p.y
-    if math.abs(dx) < 1e-9 and math.abs(dy) < 1e-9 then
+    local dz = placeZ ~= nil and (placeZ - firstNode.p.z) or 0.0
+    if math.abs(dx) < 1e-9 and math.abs(dy) < 1e-9 and math.abs(dz) < 1e-9 then
         return
     end
 
@@ -122,6 +139,8 @@ local function applyPlacement(firstRoadIndex, options)
         for _, node in ipairs(road.nodes) do
             node.p.x = node.p.x + dx
             node.p.y = node.p.y + dy
+            node.p.z = node.p.z + dz
+            node.height[0] = node.p.z
         end
         roadMgr.setDirty(road)
     end

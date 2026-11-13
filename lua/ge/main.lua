@@ -845,8 +845,15 @@ function clientEndMission(levelPath)
   extensions.hookNotify('onClientEndMission', levelPath)
 end
 
-function returnToMainMenu()
-  endActiveGameMode(core_gamestate.requestGameState)
+function returnToMainMenu(callback)
+  -- callback is called once the level is unloaded and a new level can be loaded
+  local onFinished = type(callback) == 'function' and triggerDelayedStartGenerator('returnToMainMenu', 'returnToMainMenu callback', callback, true)
+  endActiveGameMode(function()
+    core_gamestate.requestGameState()
+    if onFinished then
+      onFinished()
+    end
+  end)
 end
 
 function runMimalloc_test()

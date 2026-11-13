@@ -162,6 +162,19 @@ end
 local function writeXodr(geometry)
   extensions.editor_fileDialog.saveFile(
     function(data)
+
+      -- No Road Architect session roads: fall back to exporting the road network of the loaded map.
+      if #geometry == 0 then
+        local filename = data.filepath:sub(1, -(#".xodr" + 1))
+        local ok, err = pcall(function()
+          extensions.tech_openDriveExporter.export(filename)
+        end)
+        if not ok then
+          log('E', 'roadArchitect.openDriveExport', 'Map road network export failed: ' .. tostring(err))
+        end
+        return
+      end
+
       local f = io.open(data.filepath, "w")
 
       -- Write the .xodr preamble.

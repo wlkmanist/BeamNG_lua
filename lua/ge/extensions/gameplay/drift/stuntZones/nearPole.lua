@@ -49,6 +49,8 @@ function C:reset()
     veh = self.activeData.veh
     self.activeData.veh:requestReset(RESET_PHYSICS)
     self.activeData.veh:resetBrokenFlexMesh()
+    -- Flex rebuild clears mesh alpha, so re-check for hidden occupants
+    if gameplay_seatOccupants then gameplay_seatOccupants.refreshOccupantMeshes(veh:getId()) end
   end
   self:resetData()
 

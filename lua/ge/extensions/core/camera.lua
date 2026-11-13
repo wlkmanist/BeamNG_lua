@@ -1970,6 +1970,11 @@ local function activeCamOf(ctx)
   return vdata and vdata.cameras[vdata.focusedCamName]
 end
 
+local function isWorldCamera(player)
+  local cam = activeCamOf(ctxForPlayer(player))
+  return cam ~= nil and cam.group == "world"
+end
+
 -- Light, JSON-safe snapshot of a context's camera, enough to put it back where it was
 -- (video-stream views persist this across reloads). nil id = the main view. pos/rot/fov is
 -- the world transform (restores a free/global cam, and seeds a fresh free view where this one
@@ -2100,6 +2105,7 @@ M.getDriverDataById = getDriverDataById
 M.getDriverCameraNameById = getDriverCameraNameById
 M.getActiveCamName = getActiveCamName
 M.getActiveCamNameByVehId = getActiveCamNameByVehId
+M.isWorldCamera = isWorldCamera
 M.getConfigurationReadOnly = getConfigurationReadOnly
 M.getFreeCameraConfigurationReadOnly = getFreeCameraConfigurationReadOnly
 M.displayCameraNameUI = displayCameraNameUI

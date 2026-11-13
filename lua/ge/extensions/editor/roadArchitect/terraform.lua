@@ -21,10 +21,32 @@ local util = require('editor/roadArchitect/utilities')                          
 -- Private constants.
 local min, max, floor, ceil, sqrt, abs = math.min, math.max, math.floor, math.ceil, math.sqrt, math.abs
 
+-- The Terrain Editor module only selects an active terrain block (and creates its converter)
+-- when the editor tool is opened. Headless/api imports never open it, so fall back to the
+-- level's own TerrainBlock and a directly created converter there.
+local fallbackTerrainEditor = nil
+
+local function getTerrainBlockAndEditor()
+  local terrainEditorApi = extensions.editor_terrainEditor
+  local tb = terrainEditorApi and terrainEditorApi.getTerrainBlock and terrainEditorApi.getTerrainBlock()
+  local te = terrainEditorApi and terrainEditorApi.getTerrainEditor and terrainEditorApi.getTerrainEditor()
+  if not te then
+    te = fallbackTerrainEditor or TerrainEditor()
+    fallbackTerrainEditor = te
+  end
+  if not tb then
+    local blocks = scenetree.findClassObjects('TerrainBlock')
+    if blocks and blocks[1] then
+      tb = scenetree.findObject(blocks[1])
+    end
+  end
+  return tb, te
+end
+
 
 -- Undo callback for terraforming operations.
 local function terraformUndo(data)
-  local tb = extensions.editor_terrainEditor.getTerrainBlock()
+  local tb = getTerrainBlockAndEditor()
   if not tb then
     return
   end
@@ -43,7 +65,7 @@ end
 
 -- Redo callback for terraforming operations.
 local function terraformRedo(data)
-  local tb = extensions.editor_terrainEditor.getTerrainBlock()
+  local tb = getTerrainBlockAndEditor()
   if not tb then return end
 
   -- Recover the heightmap.
@@ -281,8 +303,7 @@ end
 local function conformTerrainToRoad(rIdx, DOI, margin)
 
   -- If there is no terrain block (eg smallgrid) then leave immediately.
-  local tb = extensions.editor_terrainEditor.getTerrainBlock()
-  local te = extensions.editor_terrainEditor.getTerrainEditor()
+  local tb, te = getTerrainBlockAndEditor()
   if not tb or not te then
     return
   end
@@ -432,8 +453,7 @@ local function terraformMultiRoads(DOI, margin, group)
   roadMgr.computeAllRoadRenderData()
 
   -- If there is no terrain block (eg smallgrid) then leave immediately.
-  local tb = extensions.editor_terrainEditor.getTerrainBlock()
-  local te = extensions.editor_terrainEditor.getTerrainEditor()
+  local tb, te = getTerrainBlockAndEditor()
   if not tb or not te then
     return
   end

@@ -846,6 +846,7 @@ removeTraffic = function(id, stopAi) -- remove a vehicle from the traffic table
     if obj then
       traffic[id].role:resetAction()
       obj:setMeshAlpha(1, '')
+      if gameplay_seatOccupants and obj:isPlayerControlled() then gameplay_seatOccupants.refreshOccupantMeshes(id) end -- keep empty seat occupants hidden
       obj.playerUsable = true
       obj.uiState = 1
 
@@ -873,6 +874,7 @@ local function checkPlayer(id) -- checks if the player data needs to be inserted
       if traffic[id] then
         if traffic[id].alpha ~= 1 then -- if vehicle was invisible, show it
           obj:setMeshAlpha(1, '')
+          if gameplay_seatOccupants then gameplay_seatOccupants.refreshOccupantMeshes(id) end -- keep empty seat occupants hidden
           traffic[id].alpha = 1
         end
       else

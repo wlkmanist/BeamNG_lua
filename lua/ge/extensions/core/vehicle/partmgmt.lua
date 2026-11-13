@@ -925,8 +925,8 @@ local function mergeConfigOfVehicle(veh, inData, respawn)
     if extensions.core_vehicle_configTarget.getTargetVehicleId() == vehId then
       -- the respawn re-seats autoEnterVehiclePlayer (player 0 by default): keep the configuring player
       -- in their vehicle, without pulling player 0 into someone else's
-      local targetPlayer = extensions.core_vehicle_configTarget.getTargetPlayerId()
-      if targetPlayer and be:getPlayerVehicleID(targetPlayer) == vehId then
+      local targetPlayer = extensions.core_vehicle_configTarget.getTargetPlayerId() or 0
+      if be:getPlayerVehicleID(targetPlayer) == vehId then
         veh.autoEnterVehiclePlayer = tostring(targetPlayer)
       else
         veh.autoEnterVehicle = "false"

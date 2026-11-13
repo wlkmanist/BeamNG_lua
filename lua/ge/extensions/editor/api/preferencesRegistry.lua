@@ -6,6 +6,7 @@ local C = {}
 
 local DefaultPreferencesPath = "settings/editor/preferences.json"
 local PreferencesFileFormatVersion = 2
+local LoggedMissingItemPaths = {}
 
 function C:itemValueFromString(item, itemVal)
   if item.type == "float"
@@ -262,7 +263,15 @@ function C:set(itemPath, value)
   if not self.preferences[prefCat][prefSubCat] then self.preferences[prefCat][prefSubCat] = {} end
 
   local item = self:findItem(itemPath)
-  if not item then return editor.logError("No registered preference: " .. itemPath) end
+  if not item then
+    -- headless editor usage (e.g. tech tool imports) runs with no preferences registered at all,
+    -- log the error once per item path instead of on every set call
+    if not LoggedMissingItemPaths[itemPath] then
+      LoggedMissingItemPaths[itemPath] = true
+      return editor.logError("No registered preference: " .. itemPath)
+    end
+    return nil
+  end
   if item and type(value) == "number" then
     value = clamp(value, item.minValue or -math.huge, item.maxValue or math.huge)
   end

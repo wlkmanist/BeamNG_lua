@@ -32,6 +32,7 @@ function C:init(id, role)
   end
 
   getObjectByID(id):setMeshAlpha(1, '') -- force vehicle to be visible
+  if gameplay_seatOccupants and obj:isPlayerControlled() then gameplay_seatOccupants.refreshOccupantMeshes(id) end -- keep empty seat occupants hidden
 
   self.collisions = {} -- keys: vehicle id, values: collision data
   self.queuedFuncs = {} -- keys: name id, values: timer, func, args, vLua (vLua string overrides func and args)

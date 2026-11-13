@@ -1303,7 +1303,7 @@ local function updateGFX(dtRaw)
       filechangeTimeout = nil
     end
   end
-  local isWalking = core_vehicle_manager and core_vehicle_manager.getPlayerVehicleData() and core_vehicle_manager.getPlayerVehicleData().mainPartName == "unicycle" and commands.isFreeCamera()
+  local isWalking = core_vehicle_manager and core_vehicle_manager.getPlayerVehicleData() and core_vehicle_manager.getPlayerVehicleData().mainPartName == "unicycle" and core_camera and core_camera.isWorldCamera()
   local splitScreenActive = render_splitScreen and render_splitScreen.getCurrentConfiguration() == true
   local blockVehicleSpecific = not splitScreenActive and isWalking == true
   if blockVehicleSpecific ~= wasVehicleSpecificBlocked then

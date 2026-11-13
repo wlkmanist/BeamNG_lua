@@ -547,6 +547,12 @@ local function convertRoad(data)
 
       local road = roadMgr.createRoadFromProfile(newProfile)
       road.nodes = rEPoly
+      -- Match OSM/SUMO imports: keep edit debug draw off for large networks.
+      road.isDisplayRoadOutline = im.BoolPtr(false)
+      road.isDisplayRoadSurface = im.BoolPtr(false)
+      road.isDisplayNodeSpheres = im.BoolPtr(false)
+      road.isDisplayLaneInfo = im.BoolPtr(false)
+      road.isDisplayRefLine = im.BoolPtr(false)
 
       geom.computeRoadRenderData(road, roadMgr.roads, roadMgr.map)
 
@@ -554,14 +560,16 @@ local function convertRoad(data)
       roadMgr.roads[rIdx] = road
       roadMgr.map[road.name] = rIdx
       roadMgr.setDirty(road)
+      road.isDirty = false                                                                          -- renderData already computed; avoid a full recompute in Render Mode.
       end
     end
   end
 end
 
--- placeMode: 0 = as in file, 1 = custom (placeX, placeY), 2 = current camera XY.
-local function applyImportPlacement(roadsBefore, placeMode, placeX, placeY)
-  if placeMode == 0 then
+-- placeMode: 0 = as in file, 1 = custom (placeX, placeY), 2 = current camera XY, 3 = player vehicle XY.
+-- placeZ shifts the whole network vertically so the first imported road start node sits at that height.
+local function applyImportPlacement(roadsBefore, placeMode, placeX, placeY, placeZ)
+  if placeMode == 0 and placeZ == nil then
     return
   end
 
@@ -577,15 +585,28 @@ local function applyImportPlacement(roadsBefore, placeMode, placeX, placeY)
     return
   end
 
-  local ax, ay = nodes[1].p.x, nodes[1].p.y
-  local tx, ty = placeX, placeY
-  if placeMode == 2 then
-    local camPos = core_camera.getPosition()
-    tx, ty = camPos.x, camPos.y
+  local dx, dy = 0.0, 0.0
+  if placeMode ~= 0 then
+    local ax, ay = nodes[1].p.x, nodes[1].p.y
+    local tx, ty = placeX, placeY
+    if placeMode == 2 then
+      local camPos = core_camera.getPosition()
+      tx, ty = camPos.x, camPos.y
+    elseif placeMode == 3 then
+      -- Headless/API counterpart of the camera anchor: the caller cannot see the
+      -- free camera, so the current player vehicle is the meaningful anchor.
+      local vehicle = be:getPlayerVehicle(0)
+      if not vehicle then
+        error('placeMode 3 requires a current player vehicle; none found')
+      end
+      local position = vec3(vehicle:getPosition())
+      tx, ty = position.x, position.y
+    end
+    dx, dy = tx - ax, ty - ay
   end
 
-  local dx, dy = tx - ax, ty - ay
-  if abs(dx) < 1e-9 and abs(dy) < 1e-9 then
+  local dz = (placeZ ~= nil) and (placeZ - nodes[1].p.z) or 0.0
+  if abs(dx) < 1e-9 and abs(dy) < 1e-9 and abs(dz) < 1e-9 then
     return
   end
 
@@ -596,7 +617,7 @@ local function applyImportPlacement(roadsBefore, placeMode, placeX, placeY)
       local numNodes = #rNodes
       for i = 1, numNodes do
         local p = rNodes[i].p
-        p.x, p.y = p.x + dx, p.y + dy
+        p.x, p.y, p.z = p.x + dx, p.y + dy, p.z + dz
       end
       roadMgr.setDirty(road)
     end
@@ -630,18 +651,6 @@ end
 -- Imports an .xodr file from disk (or inline fileContent from the tech bridge).
 local function importFromFile(filePath, options, fileContent)
   options = options or {}
-  -- #region agent log
-  if importFile.agentLog then
-    importFile.agentLog('H1', 'import.lua:importFromFile', 'entry', {
-      filePath = tostring(filePath),
-      filePathType = type(filePath),
-      hasInline = tostring(type(fileContent) == 'string' and fileContent ~= ''),
-      inlineLen = (type(fileContent) == 'string') and tostring(#fileContent) or '0',
-      hasEditor = tostring(editor ~= nil),
-      hasHistory = tostring(editor ~= nil and editor.history ~= nil),
-    })
-  end
-  -- #endregion
   importFile.ensureEditorHistory()
   local importO2T = options.offsetToTerrain == true
   local importCO = options.verticalOffset ~= nil
@@ -652,6 +661,7 @@ local function importFromFile(filePath, options, fileContent)
   local placeMode = options.placeMode or 0
   local placeX = options.placeX or 0.0
   local placeY = options.placeY or 0.0
+  local placeZ = options.placeZ
   -- Prefer caller-supplied bytes: sandboxed readFile cannot see host-native paths.
   local fileData = (type(fileContent) == 'string' and fileContent ~= '') and fileContent or nil
   if not fileData then
@@ -831,7 +841,7 @@ local function importFromFile(filePath, options, fileContent)
           end
         end
 
-        applyImportPlacement(roadsBefore, placeMode, placeX, placeY)
+        applyImportPlacement(roadsBefore, placeMode, placeX, placeY, placeZ)
 
         -- Perform any request post-processing on the import.
         if importO2T then

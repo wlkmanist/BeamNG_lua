@@ -350,7 +350,7 @@ local function new(jbeamData)
     maxCumulativeGearRatio = 1,
     isPhysicallyDisconnected = true,
     defaultVirtualInertia = jbeamData.defaultVirtualInertia or nil, --meant to be nil if not specified manually
-    speedLimitCoef = (jbeamData.speedLimitCoef or 1) * 0.0000002,
+    speedLimitCoef = (jbeamData.speedLimitCoef or 1) * 0.00000035,
     outputAV1 = 0,
     outputAV2 = 0,
     inputAV = 0,

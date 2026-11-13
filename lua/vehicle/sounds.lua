@@ -389,7 +389,7 @@ local function updateGFX(dt)
   for wi, wd in pairs(wheels.wheels) do
     local wheelSound = wheelsSounds[wi]
 
-    local rigidSurfaceType = 0 -- textureRTPC - asphalt=0.05, cobble=15, metal=0.25, wood=0.45
+    local rigidSurfaceType = 0 -- textureRTPC - asphalt=0.025, asphaltHeavy=0.075, asphaltWet=0.125, cobble=0.175, ice=0.225, metal=0.275, rumblestrip=0.325, wood=0.375
     local rigidRollVolume = 0
     local rigidRollPitch = 0
     local rigidRollColor = 0 -- unused
@@ -397,7 +397,7 @@ local function updateGFX(dt)
     local rigidSkidPitch = 0
     local rigidSkidSlip = 0 -- colorRTPC
 
-    local looseSurfaceType = 0 -- textureRTPC - dirt=0.05, grass=0.15, gravel=0.25
+    local looseSurfaceType = 0 -- textureRTPC - dirt=0.025, dirtDusty=0.075 grass=0.125, gravel=0.175, mud=0.225, rock=0.275, sand=0.325, snow=0.375
     local looseRollVolume = 0
     local looseRollPitch = 0
     local looseRollDepth = 0
@@ -784,6 +784,34 @@ local function updateGFX(dt)
       end
     end
 
+    -- LOOSE snow
+    local snowContactSmooth = wheelSound.snowContactSmoother:getUncapped(boolToNum[mat == 22 and isRubberTire], dt)
+    if snowContactSmooth > maxContact then
+      -- if wd.name == "RL" and wd.contactDepth > 0 then print (string.format(" SNOW depth=%.2f", wd.contactDepth).." "..wd.name);end
+      maxContact = snowContactSmooth
+      looseSurfaceType = 0.375
+      looseRollVolume = min(1, absWheelSpeed * 0.015) * snowContactSmooth
+      looseRollPitch = tirePressure
+      looseRollDepth = wd.contactDepth * 1
+      looseSkidVolume = slip * wheelSound.tirePropertiesSlip * 0.03 * snowContactSmooth
+      looseSkidPitch = tirePressure
+      looseSkidDepth = wd.contactDepth
+      -- if looseRollVolume > 0.001 then print (string.format("  SNOW ROLL Vol=%.2f : Pitch=%.2f : Depth=%.2f : Texture=%.2f", looseRollVolume, looseRollPitch, looseRollDepth, looseSurfaceType).." "..wd.name); end
+      -- if looseSkidVolume > 0.001 then print (string.format("  SNOW SKID Vol=%.2f : Pitch=%.2f : Depth=%.2f : Texture=%.2f", looseSkidVolume, looseSkidPitch, looseSkidDepth, looseSurfaceType).." "..wd.name); end
+      -- if wd.name == "FL" then streams.drawGraph(wd.name.." looseSkidVolume", {value = looseSkidVolume}); end
+      -- streams.drawGraph(wd.name.." snow looseRollDepth", {value = looseRollDepth, min = 0, max = 0.5})
+
+      local wheelPeripherySpeedKickup = max(slip * wheelSound.tirePropertiesKickup * 20, absWheelSpeed * wheelSound.tirePropertiesKickup * 4)
+      wheelSound.looseSurfaceKickupLimit = wheelSound.looseSurfaceKickupLimit - dt * wheelPeripherySpeedKickup
+      if wheelSound.looseSurfaceKickupLimit <= 0 and wheelPeripherySpeedKickup > 2 and wd.tireSoundVolumeCoef > 0 then
+        local kickupVolume = min(1, wheelPeripherySpeedKickup * 0.0010 * wheelSound.tirePropertiesKickup)
+        playSoundOnceAtNode("event:>Surfaces>kickup_snow", wd.node1, kickupVolume * wd.tireSoundVolumeCoef, wheelSound.tirePropertiesVolRoll, wheelSound.tirePropertiesPitch, 1)
+        wheelSound.looseSurfaceKickupLimit = randomGauss3() * 4 / wheelSound.tirePropertiesKickup
+      -- print (string.format("KICKUP SNOW Vol=%.2f : Pitch=%.2f : Color=%.2f : tirePropertiesKickup=%.2f", kickupVolume, wheelSound.tirePropertiesVolRoll, wheelSound.tirePropertiesPitch, wheelSound.tirePropertiesKickup).." "..wd.name)
+      -- streams.drawGraph(wd.name.." kickupVolume", {value = kickupVolume, min = 0, max = 1})
+      end
+    end
+
     looseSurfaceType = wheelSound.loosenessSmoother:getUncapped(looseSurfaceType, dt)
 
     -- streams.drawGraph(wd.name.." looseRollVolume", {value = looseRollVolume, min = 0, max = 1})
@@ -870,6 +898,7 @@ local function addWheelSounds(wheelID, wd)
     iceContactSmoother = newTemporalSmoothing(4, 4),
     rockContactSmoother = newTemporalSmoothing(2, 4),
     sandContactSmoother = newTemporalSmoothing(2, 4),
+    snowContactSmoother = newTemporalSmoothing(2, 4),
     woodContactSmoother = newTemporalSmoothing(4, 4),
     loosenessSmoother = newTemporalSmoothing(5, 5),
     rumbleStripContactSmoother = newTemporalSmoothing(3, 10000),
@@ -1039,6 +1068,7 @@ end
 
 local function updateCabinFilter()
   obj:queueGameEngineLua(string.format("core_sounds.setCabinFilterStrength(%d, %f)", obj:getID(), clamp(cabinFilterCoef, 0, 1)))
+  -- Audio Debug - cabin filter coef
   -- print(string.format("%d: Setting Cabin Filter -> %f", objectId, clamp(cabinFilterCoef, 0, 1)))
 end
 

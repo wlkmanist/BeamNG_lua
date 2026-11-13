@@ -73,9 +73,11 @@ local loadingScreenRequests = {}
 local listeners = {}
 
 local function tellListeners ()
-  for k,v in ipairs(listeners) do
+  -- listeners can re-enter the loading screen API, so detach the queue before running them
+  local pending = listeners
+  listeners = {}
+  for _, v in ipairs(pending) do
     v()
-    listeners[k] = nop
   end
 end
 

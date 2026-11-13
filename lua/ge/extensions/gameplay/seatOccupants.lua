@@ -642,6 +642,12 @@ local function syncOccupantMeshes(veh)
   end
 end
 
+-- Re-assert occupant mesh visibility after a path modified it without using the sync hooks
+local function refreshOccupantMeshes(vehId)
+  local veh = vehId and scenetree.findObjectById(vehId)
+  if veh then syncOccupantMeshes(veh) end
+end
+
 local function volumesEqual(a, b)
   if a == b then return true end
   if not a or not b then return false end
@@ -1998,6 +2004,7 @@ M.clearDummyOccupants = clearDummyOccupants
 M.cheeseburger = cheeseburger
 M.salad = salad
 M.setVehicleOccupantsEnabledOverride = setVehicleOccupantsEnabledOverride
+M.refreshOccupantMeshes = refreshOccupantMeshes
 M.canEnterVehicle = canEnterVehicle
 M.showVehicleFullMessage = showVehicleFullMessage
 M.getSeatExitData = getSeatExitData
