@@ -151,6 +151,10 @@ local function normalizeHighlightOptions(options)
   }
 end
 
+function M.hasHighlightedTriggers()
+  return hasAnyHighlightedTriggers()
+end
+
 function M.isHighlightedTrigger(vehId, triggerId)
   if vehId == nil or triggerId == nil then return false end
   local set = highlightedTriggersByVehicle[tostring(vehId)]

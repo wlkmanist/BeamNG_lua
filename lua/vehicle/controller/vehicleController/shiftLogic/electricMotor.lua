@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Coordinates electric motor direction, regenerative braking, and one-pedal driving
+
 local M = {}
 
 local max = math.max

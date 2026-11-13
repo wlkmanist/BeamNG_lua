@@ -120,13 +120,18 @@ function M.cleanup()
   M.vehicleSetupComplete = false
   M.loadingScreenFadeoutComplete = false
   M.outOfBoundsSystemActive = false
+  local removedPrefabs = false
   for _, prefab in pairs(spawnedPrefabs) do
     if prefab then
       if editor and editor.onRemoveSceneTreeObjects then
         editor.onRemoveSceneTreeObjects({ prefab:getID() })
       end
       prefab:delete()
+      removedPrefabs = true
     end
+  end
+  if removedPrefabs then
+    be:reloadCollision()
   end
 
   spawnedPrefabs = {}

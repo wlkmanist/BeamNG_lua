@@ -125,7 +125,7 @@ local function getShoppingData()
     data.disableShopping = true
   end
   if reason.permission ~= "allowed" then
-    data.disableShoppingReason = reason.label or "not allowed (TODO)"
+    data.disableShoppingReason = reason.label or _tr("ui.career.vehicleShopping.disableReason.notAllowed")
   end
 
   return data
@@ -304,10 +304,14 @@ local function updateVehicleList(fromScratch)
       vehicleWatchlist[vehicleInfo.shopId] = nil
       table.remove(vehiclesInShop, i)
     else
+      vehicleInfo.generationTime = math.min(vehicleInfo.generationTime, currentTime) -- guard against OS clock adjusted back in time
       local offerTime = currentTime - vehicleInfo.generationTime
       if vehicleInfo.shopId ~= protectedShopId and offerTime > vehicleInfo.offerTTL and not vehicleInfo.staticOffer then -- vehicle offer has expired
         if vehicleWatchlist[vehicleInfo.shopId] then
-          if type(vehicleWatchlist[vehicleInfo.shopId]) ~= "number" then
+          local removalTime = vehicleWatchlist[vehicleInfo.shopId]
+          if type(removalTime) ~= "number"
+            or removalTime > currentTime + timeToRemoveSoldVehicle -- guard against OS clock adjusted back in time
+          then
             vehicleWatchlist[vehicleInfo.shopId] = currentTime + timeToRemoveSoldVehicle -- time to remove the vehicle from the watchlist
             if not vehicleInfo.soldFor then
               vehicleInfo.soldFor = generateSoldVehicleValue(vehicleInfo.shopId)
@@ -338,6 +342,7 @@ local function updateVehicleList(fromScratch)
     if fromScratch then
       sellersInfos[seller.id].lastGenerationTime = 0
     end
+    sellersInfos[seller.id].lastGenerationTime = math.min(sellersInfos[seller.id].lastGenerationTime, currentTime) -- guard against OS clock adjusted back in time
 
     local randomVehicleInfos = {}
     if seller.staticInventory then
@@ -515,6 +520,13 @@ local function spawnVehicle(vehicleInfo, dealershipToMoveTo)
   spawnOptions.config = vehicleInfo.key
   spawnOptions.autoEnterVehicle = false
   local newVeh = core_vehicles.spawnNewVehicle(vehicleInfo.model_key, spawnOptions)
+  if not newVeh then
+    guihooks.trigger("toastrMsg", {
+      type = "error",
+      title = _tr("ui.career.inspectVehicle.message.purchaseFailed")
+    })
+    return nil
+  end
   if dealershipToMoveTo then moveVehicleToDealership(newVeh, dealershipToMoveTo) end
   core_vehicleBridge.executeAction(newVeh,'setIgnitionLevel', 0)
 
@@ -524,6 +536,10 @@ end
 
 local function onVehicleSpawnFinished(vehId)
   local inventoryId = career_modules_inventory.addVehicle(vehId, nil, {finalPrice = purchaseData.prices.finalPrice})
+  if inventoryId and be:getPlayerVehicleID(0) == vehId then
+    -- this should only trigger for the first vehicle you buy and it just tells career that you are in this vehicle now
+    career_modules_inventory.enterVehicle(inventoryId, 1)
+  end
 
   if spawnFollowUpActions then
     if spawnFollowUpActions.delayAccess then
@@ -577,13 +593,17 @@ local function buyVehicleAndSendToGarage(options)
   if career_modules_playerAttributes.getAttributeValue("money") < purchaseData.prices.finalPrice then
     return
   end
-  payForVehicle()
 
   local closestGarage = career_modules_inventory.getClosestGarage()
   local garagePos, _ = freeroam_facilities.getGaragePosRot(closestGarage)
   local delay = purchaseData.vehicleInfo.pos and getDeliveryDelay(purchaseData.vehicleInfo.pos:distance(garagePos)) or 0
   spawnFollowUpActions = {delayAccess = delay, licensePlateText = options.licensePlateText}
   local veh = spawnVehicle(purchaseData.vehicleInfo)
+  if not veh then
+    spawnFollowUpActions = nil
+    return
+  end
+  payForVehicle()
   if career_career.hasBoughtStarterVehicle() then
     deleteAddedVehicle = true
   else
@@ -591,24 +611,55 @@ local function buyVehicleAndSendToGarage(options)
     gameplay_walk.getInVehicle(veh)
     commands.setGameCamera()
   end
+  return true
 end
 
 local function buyVehicleAndSpawnInParkingSpot(options)
   if career_modules_playerAttributes.getAttributeValue("money") < purchaseData.prices.finalPrice then
     return
   end
-  payForVehicle()
+
   spawnFollowUpActions = {licensePlateText = options.licensePlateText}
-  local newVehObj = spawnVehicle(purchaseData.vehicleInfo, purchaseData.vehicleInfo.sellerId)
-  if gameplay_walk.isWalking() then
-    gameplay_walk.setRot(newVehObj:getPosition() - getPlayerVehicle(0):getPosition())
+  local veh = spawnVehicle(purchaseData.vehicleInfo, purchaseData.vehicleInfo.sellerId)
+  if not veh then
+    spawnFollowUpActions = nil
+    return
   end
+  payForVehicle()
+  if gameplay_walk.isWalking() then
+    gameplay_walk.setRot(veh:getPosition() - getPlayerVehicle(0):getPosition())
+  end
+  return true
 end
 
 local function navigateToPos(pos)
   -- TODO this should better take vec3s directly
   core_groundMarkers.setPath(vec3(pos.x, pos.y, pos.z))
   extensions.ui_router.navigate("play")
+end
+
+-- Build the params payload used when navigating to the vehicle list so the
+-- selected seller travels with the route. This lets the route carry the sellerId
+-- (in request/resolved params and the fromRoute identity), which the UI uses to
+-- restore focus onto the originating seller card, and lets onRouteEnter restore
+-- selectedSellerId on reload/deep-link.
+local function vehicleListParams(sellerId)
+  sellerId = sellerId or selectedSellerId
+  if type(sellerId) ~= "string" or sellerId == "" then
+    return nil
+  end
+  return { sellerId = sellerId }
+end
+
+-- Router lifecycle: restore the selected seller from the route params before the
+-- view mounts, so a reload or parameterized deep-link into the vehicle list
+-- resolves the correct seller instead of falling back to the seller grid.
+local function onRouteEnter(context, toRoute, fromRoute, data)
+  local params = toRoute and toRoute.params or nil
+  local sellerId = params and params.sellerId or nil
+  if type(sellerId) == "string" and sellerId ~= "" then
+    selectedSellerId = sellerId
+  end
 end
 
 local originComputerId
@@ -662,7 +713,7 @@ local function openShop(seller, _originComputerId, screenTag)
   -- seller grid first (VehicleShoppingMain only renders the grid; the list lives
   -- on the .vehicles child route).
   if currentSeller then
-    extensions.ui_router.navigate("career.computer.vehicleShopping.vehicles")
+    extensions.ui_router.navigate("career.computer.vehicleShopping.vehicles", vehicleListParams(currentSeller))
   else
     extensions.ui_router.navigate("career.computer.vehicleShopping")
   end
@@ -701,13 +752,12 @@ local function selectSeller(sellerId)
   selectedSellerId = sellerId
   extensions.hook("onVehicleShoppingSelectedSellerIdChanged", sellerId)
   sendShoppingDataToUI()
-  extensions.ui_router.navigate("career.computer.vehicleShopping.vehicles")
+  extensions.ui_router.navigate("career.computer.vehicleShopping.vehicles", vehicleListParams(sellerId))
 end
 
 local function clearSelectedSeller()
   selectedSellerId = nil
   extensions.hook("onVehicleShoppingSelectedSellerIdChanged", nil)
-  sendShoppingDataToUI()
 end
 
 local function requestVehicleListExit()
@@ -738,15 +788,6 @@ local function getVehiclesInShop()
   return vehiclesInShop
 end
 
-local removeNonUsedPlayerVehicles
-local function removeUnusedPlayerVehicles()
-  for inventoryId, vehId in pairs(career_modules_inventory.getMapInventoryIdToVehId()) do
-    if inventoryId ~= career_modules_inventory.getCurrentVehicle() then
-      career_modules_inventory.removeVehicleObject(inventoryId)
-    end
-  end
-end
-
 local function buySpawnedVehicle(buyVehicleOptions)
   if career_modules_playerAttributes.getAttributeValue("money") >= purchaseData.prices.finalPrice then
     local vehObj = getObjectByID(purchaseData.vehId)
@@ -755,7 +796,6 @@ local function buySpawnedVehicle(buyVehicleOptions)
     if buyVehicleOptions.licensePlateText then
       career_modules_inventory.setLicensePlateText(newInventoryId, buyVehicleOptions.licensePlateText)
     end
-    removeNonUsedPlayerVehicles = true
     if be:getPlayerVehicleID(0) == vehObj:getID() then
       career_modules_inventory.enterVehicle(newInventoryId)
     end
@@ -807,6 +847,12 @@ local function sendPurchaseDataToUi()
     purchaseData.insuranceOptions.priceMoney = career_modules_insurance_insurance.calculateAddVehiclePrice(purchaseData.insuranceId, purchaseData.vehicleInfo.Value)
   end
 
+  -- check if the test drive vehicle was damaged
+  local testDriveDamageFee = 0
+  if career_modules_inspectVehicle.getDidTestDrive() and career_modules_inspectVehicle.isTestDriveDamageDetected() then
+    testDriveDamageFee = career_modules_insurance_insurance.getTestDriveClaimPrice()
+  end
+
   local data = {
     vehicleInfo = purchaseData.vehicleInfo,
     playerMoney = career_modules_playerAttributes.getAttributeValue("money"),
@@ -817,6 +863,7 @@ local function sendPurchaseDataToUi()
     prices = purchaseData.prices,
     alreadyDidTestDrive = career_modules_inspectVehicle.getDidTestDrive(),
     insuranceOptions = purchaseData.insuranceOptions,
+    testDriveDamageFee = testDriveDamageFee,
   }
 
   local atDealership = (purchaseData.purchaseType == "instant" and currentSeller) or (purchaseData.purchaseType == "inspect" and vehicleShopInfo.sellerId ~= "private")
@@ -888,18 +935,19 @@ local function onAddedVehiclePartsToInventory(inventoryId, newParts)
   end
 end
 
-local function onEnterVehicleFinished()
-  if removeNonUsedPlayerVehicles then
-   --removeUnusedPlayerVehicles()
-   removeNonUsedPlayerVehicles = nil
-  end
-end
-
 local function startInspectionWorkitem(job, vehicleInfo, teleportToVehicle)
   ui_fadeScreen.start(0.5)
   job.sleep(1.0)
   extensions.ui_router.navigate("play")
-  career_modules_inspectVehicle.startInspection(vehicleInfo, teleportToVehicle)
+  local success = career_modules_inspectVehicle.startInspection(vehicleInfo, teleportToVehicle, job)
+  if not success then
+    ui_fadeScreen.stop(0.5)
+    guihooks.trigger("toastrMsg", {
+      type = "error",
+      title = _tr("ui.career.inspectVehicle.message.spawnFailed")
+    })
+    return
+  end
   job.sleep(0.5)
   ui_fadeScreen.stop(0.5)
   job.sleep(1.0)
@@ -933,10 +981,6 @@ local function updateInsuranceSelection(insuranceId)
 end
 
 local function buyFromPurchaseMenu(purchaseType, options)
-  if purchaseData.tradeInVehicleInfo then
-    career_modules_inventory.removeVehicle(purchaseData.tradeInVehicleInfo.id)
-  end
-
   local buyVehicleOptions = {licensePlateText = options.licensePlateText}
   if purchaseType == "inspect" then
     if options.makeDelivery then
@@ -944,12 +988,20 @@ local function buyFromPurchaseMenu(purchaseType, options)
     end
     career_modules_inspectVehicle.buySpawnedVehicle(buyVehicleOptions)
   elseif purchaseType == "instant" then
-    career_modules_inspectVehicle.showVehicle(nil)
     if options.makeDelivery then
-      buyVehicleAndSendToGarage(buyVehicleOptions)
+      if not buyVehicleAndSendToGarage(buyVehicleOptions) then
+        endShopping()
+        return
+      end
     else
-      buyVehicleAndSpawnInParkingSpot(buyVehicleOptions)
+      if not buyVehicleAndSpawnInParkingSpot(buyVehicleOptions) then
+        endShopping()
+        return
+      end
     end
+  end
+  if purchaseData.tradeInVehicleInfo then
+    career_modules_inventory.removeVehicle(purchaseData.tradeInVehicleInfo.id)
   end
   if buyVehicleOptions.licensePlateText then
     career_modules_playerAttributes.addAttributes({money=-purchaseData.prices.customLicensePlate}, {tags={"buying"}, label="ui.career.vehicleShopping.boughtCustomLicensePlate"})
@@ -983,7 +1035,7 @@ local function requestPurchaseExit()
     career_career.closeAllMenus()
     return
   end
-  extensions.ui_router.navigate("career.computer.vehicleShopping.vehicles")
+  extensions.ui_router.navigate("career.computer.vehicleShopping.vehicles", vehicleListParams())
 end
 
 local function removeTradeInVehicle()
@@ -997,7 +1049,7 @@ local function openInventoryMenuForTradeIn()
       callback = function(inventoryId)
         local vehicle = career_modules_inventory.getVehicles()[inventoryId]
         if vehicle then
-          purchaseData.tradeInVehicleInfo = {id = inventoryId, niceName = vehicle.niceName, Value = career_modules_valueCalculator.getInventoryVehicleValue(inventoryId), takesNoInventorySpace = vehicle.takesNoInventorySpace}
+          purchaseData.tradeInVehicleInfo = {id = inventoryId, niceName = career_modules_inventory.getVehicleNiceNameTranslated(inventoryId), Value = career_modules_valueCalculator.getInventoryVehicleValue(inventoryId), takesNoInventorySpace = vehicle.takesNoInventorySpace}
           guihooks.trigger('UINavigation', 'back', 1)
         end
       end,
@@ -1124,6 +1176,7 @@ M.quickTravelToVehicle = quickTravelToVehicle
 M.updateVehicleList = updateVehicleList
 M.getShoppingData = getShoppingData
 M.sendShoppingDataToUI = sendShoppingDataToUI
+M.onRouteEnter = onRouteEnter
 M.onRouteMount = onRouteMount
 M.selectSeller = selectSeller
 M.getSelectedSellerBreadcrumbTitle = getSelectedSellerBreadcrumbTitle
@@ -1149,7 +1202,6 @@ M.getVehiclesInShop = getVehiclesInShop
 
 M.onVehicleSpawnFinished = onVehicleSpawnFinished
 M.onAddedVehiclePartsToInventory = onAddedVehiclePartsToInventory
-M.onEnterVehicleFinished = onEnterVehicleFinished
 M.onExtensionLoaded = onExtensionLoaded
 M.onSaveCurrentProfile = onSaveCurrentProfile
 M.onShoppingMenuClosed = onShoppingMenuClosed

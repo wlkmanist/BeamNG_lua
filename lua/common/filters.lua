@@ -605,13 +605,14 @@ function newLineFitting(window, weight, bias, scale, weightMin, weightMax, biasM
   weight, weightMin, weightMax = weight or 0, weightMin or -math.huge, weightMax or math.huge
   bias, biasMin, biasMax = bias or 0, biasMin or -math.huge, biasMax or math.huge
   local decay = 1 - 2 / (window + 1)
+  local invScale = 1 / scale
   local data = {
     weight = weight, weightStartingValue = weight, weightMin = weightMin, weightMax = weightMax,
     bias = bias, biasStartingValue = bias, biasMin = biasMin, biasMax = biasMax,
     decay = decay, decayStartingValue = decay, scale = scale,
     det = 1,
     window = window,
-    [1] = 1 / scale, [2] = 0, [3] = 0, [4] = 0, [5] = 0
+    [1] = invScale, [2] = 0, [3] = invScale, [4] = weight * invScale, [5] = bias * invScale
   }
   return setmetatable(data, lineFitting)
 end
@@ -635,7 +636,7 @@ function lineFitting:getS(x, y)
   local det = R11 * R22 - R12 * R12
   local detInv = max(min(1 / det, 1e300), -1e300) -- R matrix determinant inverse
   self.det = det
-  self.weight = clamp((r1 - clamp((R11 * r2 - R12 * r1) * detInv, self.biasMin, self.biasMax) * R12) / R11, self.weightMin, self.weightMax)
+  self.weight = clamp((r1 - clamp((R11 * r2 - R12 * r1) * detInv, self.biasMin, self.biasMax) * R12) / (R11 + 1e-30), self.weightMin, self.weightMax)
   self.bias = clamp((r2 - clamp((R22 * r1 - R12 * r2) * detInv, self.weightMin, self.weightMax) * R12) / R22, self.biasMin, self.biasMax)
   return self.weight, self.bias
 end
@@ -661,7 +662,7 @@ function lineFitting:get(x, y, dt)
   local det = R11 * R22 - R12 * R12
   local detInv = max(min(1 / det, 1e300), -1e300) -- R matrix determinant inverse
   self.det = det
-  self.weight = clamp((r1 - clamp((R11 * r2 - R12 * r1) * detInv, self.biasMin, self.biasMax) * R12) / R11, self.weightMin, self.weightMax)
+  self.weight = clamp((r1 - clamp((R11 * r2 - R12 * r1) * detInv, self.biasMin, self.biasMax) * R12) / (R11 + 1e-30), self.weightMin, self.weightMax)
   self.bias = clamp((r2 - clamp((R22 * r1 - R12 * r2) * detInv, self.weightMin, self.weightMax) * R12) / R22, self.biasMin, self.biasMax)
   return self.weight, self.bias
 end
@@ -687,5 +688,6 @@ end
 function lineFitting:reset()
   self.weight = self.weightStartingValue
   self.bias = self.biasStartingValue
-  self[1], self[2], self[3], self[4], self[5] = 1 / self.scale, 0, 0, 0, 0
+  local invScale = 1 / self.scale
+  self[1], self[2], self[3], self[4], self[5] = invScale, 0, invScale, invScale * self.weight, invScale * self.bias
 end

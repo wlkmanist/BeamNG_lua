@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Keeps a turbocharger spooled during throttle lift or braking for faster boost recovery
+
 local M = {}
 M.type = "auxiliary"
 
@@ -11,6 +13,8 @@ local rpmToAV = 0.10471971768
 
 local states = {off = "off", idle = "idle", armed = "armed", manualOverride = "manualOverride", timeout = "timeout"}
 local state
+
+local modes = {off = "off", automatic = "automatic", manualOverride = "manualOverride"}
 
 local controlledEngine
 local controlledTurbocharger
@@ -36,6 +40,9 @@ local autoDisarmTime
 local autoDisarmTimer
 
 local turboAVPIDController
+
+local stateData
+local stateDataNameMode
 
 local function setAntilagState(newState)
   state = newState
@@ -125,6 +132,9 @@ local function reset(jbeamData)
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameMode = M.name .. "_mode"
+
   local engineName = jbeamData.controlledEngine or "mainEngine"
   controlledEngine = powertrain.getDevice(engineName)
   if not controlledEngine then
@@ -172,11 +182,49 @@ local function init(jbeamData)
   state = states.idle
 end
 
+local function getRemoteAntilagMode()
+  if state == states.off then
+    return modes.off
+  elseif state == states.manualOverride then
+    return modes.manualOverride
+  end
+  return modes.automatic
+end
+
+local function setRemoteAntilagMode(mode)
+  if mode == modes.off then
+    setAntilagState(states.off)
+  elseif mode == modes.manualOverride then
+    setAntilagState(states.manualOverride)
+  elseif mode == modes.automatic and getRemoteAntilagMode() ~= modes.automatic then
+    setAntilagState(states.idle)
+  end
+end
+
+local function getState()
+  stateData[stateDataNameMode] = getRemoteAntilagMode()
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newMode = data[stateDataNameMode]
+  if modes[newMode] and newMode ~= getRemoteAntilagMode() then
+    setRemoteAntilagMode(newMode)
+  end
+end
+
 M.init = init
 M.reset = reset
 
 M.updateGFX = updateGFX
 
 M.setAntilagState = setAntilagState
+
+M.getState = getState
+M.setState = setState
 
 return M

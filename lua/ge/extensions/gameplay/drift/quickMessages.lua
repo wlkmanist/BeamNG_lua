@@ -20,10 +20,16 @@ local driftDebugInfo = {
   canBeChanged = true
 }
 
-local driftActiveDataCopy
-local driftChainActiveDataCopy
 local closeCallsInCurrentDriftChain = 0
-local scoreCopy
+local currentVehId
+local primaryDriftData = {
+  driftActiveData = nil,
+  driftChainActiveData = nil,
+  currentSpeed = nil,
+  score = nil,
+  currentDriftDuration = 0
+}
+local confirmArgsTable = {dt = 0}
 
 local firstOnUpdate = true
 
@@ -32,8 +38,12 @@ local individualDriftStoppedThisFrame = false
 
 local options = {
   displayTime = 1, -- sec
-  noCrashTime = 1
+  noCrashTime = 1,
+  idleDelay = 2 -- sec after not drifting before skipping checks
 }
+
+local isIdle = false
+local notDriftingTimer = 0
 
 local tempData = {}
 
@@ -69,15 +79,15 @@ local primaryConditions = {
 
 local resetConditions = {
   onDriftEnd = function()
-    return {reset = individualDriftStoppedThisFrame}
+    return individualDriftStoppedThisFrame
   end,
   onChainEnd = function()
-    return {reset = driftChainStoppedThisFrame}
+    return driftChainStoppedThisFrame
   end,
   afterTime = function(conditionData, data)
     if not data.tempData.timer then data.tempData.timer = conditionData.time end
     data.tempData.timer = data.tempData.timer - data.dt
-    return {reset = data.tempData.timer <= 0, tempData = data.tempData}
+    return data.tempData.timer <= 0
   end
 }
 
@@ -86,7 +96,7 @@ local confirmConditions = {
   noCrash = function(conditionData, data)
     if not conditionData.timeToNoCrash then conditionData.timeToNoCrash = options.noCrashTime end
     conditionData.timeToNoCrash = conditionData.timeToNoCrash - data.dt
-    if gameplay_drift_drift.getIsCrashing() then
+    if gameplay_drift_drift.getIsCrashing(currentVehId) then
       return "failed"
     end
     return conditionData.timeToNoCrash <= 0
@@ -210,14 +220,7 @@ local function checkPrimaryConditions()
     if not quickMessagesProcessed[messageId] then
       local conditionsMet = true
       for primaryCondition, conditionData in pairs(data.primaryConditions) do
-        if not primaryConditions[primaryCondition](conditionData,
-        {
-          driftActiveData = driftActiveDataCopy,
-          driftChainActiveData = driftChainActiveDataCopy,
-          currentSpeed = gameplay_drift_drift.getAirSpeed(),
-          score = scoreCopy,
-          currentDriftDuration = gameplay_drift_drift.getCurrentDriftDuration()
-        }) then
+        if not primaryConditions[primaryCondition](conditionData, primaryDriftData) then
           conditionsMet = false
           break
         end
@@ -241,10 +244,12 @@ end
 
 -- Update checkConfirmConditions to use showQuickMessage
 local function checkConfirmConditions(dt)
+  if not next(checkConfirmConditionsQueue) then return end
+  confirmArgsTable.dt = dt
   for quickMessageId, confirmConditions_ in pairs(checkConfirmConditionsQueue) do
     local conditionsMet = true
     for confirmConditionName, confirmConditionData in pairs(confirmConditions_) do
-      local result = confirmConditions[confirmConditionName](confirmConditionData, {dt = dt})
+      local result = confirmConditions[confirmConditionName](confirmConditionData, confirmArgsTable)
       if result == "failed" then
         checkConfirmConditionsQueue[quickMessageId] = nil
         conditionsMet = false
@@ -264,21 +269,16 @@ end
 local tempArgsTable = {dt = 0, tempData = {}}
 
 local function checkResetConditions(dt)
+  if not next(quickMessagesProcessed) then return end
   for messageId, messageData in pairs(quickMessages) do
-    if messageData.reset.conditions then
+    if quickMessagesProcessed[messageId] and messageData.reset.conditions then
+      if not tempData[messageId] then tempData[messageId] = {} end
+      tempArgsTable.dt = dt
+      tempArgsTable.tempData = tempData[messageId]
       for conditionName, conditionData in pairs(messageData.reset.conditions) do
-        -- Reuse the args table for GC
-        tempArgsTable.dt = dt
-        tempArgsTable.tempData = tempData[messageId] or tempArgsTable.tempData
-
-        local result = resetConditions[conditionName](conditionData, tempArgsTable)
-        if result.tempData then
-          tempData[messageId] = result.tempData
-        end
-        if result.reset then
+        if resetConditions[conditionName](conditionData, tempArgsTable) then
           quickMessagesProcessed[messageId] = nil
           tempData[messageId] = nil
-          -- Call the reset function if it exists
           if messageData.reset.funcWhenReset then
             messageData.reset.funcWhenReset()
           end
@@ -332,6 +332,16 @@ local function translateQuickMessages()
   end
 end
 
+local function finishUpdate()
+  if gameplay_drift_general.getGeneralDebug() then
+    profiler:add("Drift quick messages")
+    gc = profiler.sections[1].garbage
+    profiler:finish(false)
+  end
+  individualDriftStoppedThisFrame = false
+  driftChainStoppedThisFrame = false
+end
+
 local function onUpdate(dt)
   if firstOnUpdate then
     translateQuickMessages()
@@ -342,23 +352,42 @@ local function onUpdate(dt)
   imguiDebug()
   if gameplay_drift_general.getGeneralDebug() then profiler:start() end
 
-  driftActiveDataCopy = gameplay_drift_drift.getDriftActiveData()
-  driftChainActiveDataCopy = gameplay_drift_drift.getDriftChainActiveData()
-  scoreCopy = gameplay_drift_scoring.getScore()
+  currentVehId = gameplay_drift_drift.getVehId()
+  local driftActiveData = gameplay_drift_drift.getDriftActiveData(currentVehId)
+
+  if isIdle then
+    if not driftActiveData then
+      finishUpdate()
+      return
+    end
+    isIdle = false
+    notDriftingTimer = 0
+  end
+
+  primaryDriftData.driftActiveData = driftActiveData
+  primaryDriftData.driftChainActiveData = gameplay_drift_drift.getDriftChainActiveData(currentVehId)
+  primaryDriftData.currentSpeed = gameplay_drift_drift.getAirSpeed(currentVehId)
+  primaryDriftData.score = gameplay_drift_scoring.getScore(currentVehId)
+  primaryDriftData.currentDriftDuration = gameplay_drift_drift.getCurrentDriftDuration(currentVehId)
 
   if not gameplay_drift_general.getFrozen() then
     checkPrimaryConditions()
     checkConfirmConditions(dt)
     checkResetConditions(dt)
   end
-  if gameplay_drift_general.getGeneralDebug() then
-    profiler:add("Drift quick messages")
-    gc = profiler.sections[1].garbage
-    profiler:finish(false)
+
+  if driftActiveData then
+    notDriftingTimer = 0
+  else
+    notDriftingTimer = notDriftingTimer + dt
+    if notDriftingTimer >= options.idleDelay
+        and not primaryDriftData.driftChainActiveData
+        and not next(checkConfirmConditionsQueue) then
+      isIdle = true
+    end
   end
 
-  individualDriftStoppedThisFrame = false
-  driftChainStoppedThisFrame = false
+  finishUpdate()
 end
 
 local function reset()
@@ -366,6 +395,8 @@ local function reset()
   quickMessagesProcessed = {}
   closeCallsInCurrentDriftChain = 0
   tempData = {}
+  isIdle = false
+  notDriftingTimer = 0
 end
 
 local function onDriftActiveDataFinished()

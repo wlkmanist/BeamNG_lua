@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Controls map-based CVT ratio selection with optional stepped sport behavior
+
 local M = {}
 
 local max = math.max
@@ -552,7 +554,7 @@ local function init(jbeamData, sharedFunctionTable)
   M.minGearIndex = abs(automaticHandling.minGearIndex)
   M.energyStorages = sharedFunctions.getEnergyStorages({engine})
 
-  local interpolatedMap = rerequire("interpolatedMap")
+  local interpolatedMap = require("interpolatedMap")
   cvtHandling.targetRpmMap = interpolatedMap.new()
   cvtHandling.targetRpmMap.clampToDataRange = true
   cvtHandling.targetRpmMap:loadData(jbeamData.cvtTargetRPMMap)

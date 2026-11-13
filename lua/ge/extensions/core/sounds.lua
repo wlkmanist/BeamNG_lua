@@ -74,8 +74,8 @@ local function onPreRender(dtReal, dtSim, dtRaw)
         end
       else
         local isCameraInside = (core_camera and core_camera.isCameraInside(0, camPos)) or 0
-        globalParams:setParameterValue("g_CamOnboard", square(square(insideModifier)) * isCameraInside) -- cockpit flag, used e.g. for driver camera
-        globalParams:setParameterValue("c_CabinFilterReverbStrength", clamp(M.cabinFilterStrength, 0, 1)) -- cockpit flag, used e.g. for driver camera
+        globalParams:setParameterValue("g_CamOnboard", square(square(insideModifier)) * isCameraInside) -- cockpit flag for interior occupant cameras
+        globalParams:setParameterValue("c_CabinFilterReverbStrength", clamp(M.cabinFilterStrength, 0, 1)) -- cabin reverb strength for interior occupant cameras
         local camObj = getCamera()
         camObj = (camObj and Sim.upcast(camObj)) or camObj
         globalParams:setParameterValue("g_CamFree", commands.isFreeCamera() and 1 or 0)

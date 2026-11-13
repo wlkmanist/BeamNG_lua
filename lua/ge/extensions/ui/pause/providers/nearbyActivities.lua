@@ -8,6 +8,9 @@ local buttonModule = require("ge/extensions/ui/gridSelectorUtils/buttonModule")
 local buttonInstance = buttonModule.create()
 local actionButtonsByPoiId = {}
 
+-- zoom in the bigmap when viewing a nearby activity: 0..1. current value chosen empirically
+local NEARBY_ACTIVITY_MAP_ZOOM_FACTOR = 0.75
+
 local function canSetRoute()
   if career_modules_testDrive and career_modules_testDrive.isActive() then
     return false
@@ -43,7 +46,12 @@ local function getOrCreateViewButton(poiId)
     log("I", "NearbyActivities", "View nearby activity " .. tostring(poiId))
     if not (freeroam_bigMapMode and freeroam_bigMapMode.enterBigMap) then return false end
     -- autoSelectPoiId is picked up by the Vue bigmap once it has mounted, see getAndClearPendingAutoSelectPoiId
-    freeroam_bigMapMode.enterBigMap({instant = true, routeTarget = "pause.bigmap", autoSelectPoiId = poiId})
+    freeroam_bigMapMode.enterBigMap({
+      instant = true,
+      routeTarget = "pause.bigmap",
+      autoSelectPoiId = poiId,
+      autoSelectZoomFactor = NEARBY_ACTIVITY_MAP_ZOOM_FACTOR
+    })
     return true
   end, {
     label = _tr("ui.pause.nearbyActivities.action.view"),

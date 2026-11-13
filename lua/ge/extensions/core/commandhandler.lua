@@ -20,6 +20,15 @@ local unescape = function(url)
   return url:gsub("%%(%x%x)", hex_to_char)
 end
 
+-- Percent-encode everything outside the unreserved set, so a value with spaces
+-- survives a command line as a single token. Used for the workbench deep link;
+-- see the openWorkbench branch below.
+local urlEncode = function(s)
+  return (s:gsub("[^%w%-%._~]", function(c)
+    return string.format("%%%02X", string.byte(c))
+  end))
+end
+
 -- Surface a runRepro failure (rejection, missing bat, ...) in a console window
 -- that stays open so the user can read what went wrong. The reason and command
 -- are untrusted, so they are written to a file with writeFile (no shell) and
@@ -158,30 +167,65 @@ local function onSchemeCommand(scheme, isStartingArg)
       log('I', 'debugger', 'Debugger detaching ...')
     end
     return
-  elseif cmd == "openTestViewer" and version == "v1" then
-    -- Open the local microviewer (game/test-viewer.html) in the default browser.
-    -- NOTE: openWebBrowser() is blocked by CEF's URL domain filter for file://
-    -- URLs ("unable to open webpage due to domain filter"), so we shell-open the
-    -- file via `start` instead. This makes openTestViewer dev-only, like runRepro
-    -- (executeShell is #if !defined(BNG_SHIPPING)) — acceptable since shipping
-    -- builds have no test-viewer.html.
-    local realPath = FS:getFileRealPath("test-viewer.html")
-    if realPath == "" then
-      log('E', logTag, 'openTestViewer: test-viewer.html not found at game root')
+  elseif cmd == "openWorkbench" and version == "v1" then
+    -- `data` is OPTIONAL. Empty opens the testing panel with nothing selected;
+    -- otherwise it is a full repro command line, which the workbench resolves
+    -- against its own test catalog.
+    --
+    -- It is ALREADY URL-decoded (onSchemeCommand ran unescape before the split
+    -- above), so do NOT unescape again -- same trap runRepro documents.
+    --
+    -- The payload lands inside a cmd.exe command line, so it goes through the
+    -- same guard runRepro uses. The guard splits on shell operators before
+    -- matching, which is what stops an appended `& something` from running.
+    local command = data
+    if command and command ~= '' then
+      extensions.load("core_reproGuard")
+      local allowed, reason = core_reproGuard.isCommandAllowed(command)
+      if not allowed then
+        log('E', logTag, 'openWorkbench rejected (' .. tostring(reason) .. '): ' .. tostring(command))
+        notifyReproFailure(reason, command)
+        if isStartingArg then shutdown(0) end
+        return
+      end
+    end
+    -- Resolved through the VFS, like runRepro's run_repro.bat: io.open is
+    -- VFS-backed here, so an absolute path built from getGamePath() never
+    -- opens. The game root is mounted whole, so Bin64 is reachable.
+    local vfsExe = '/workbench/Bin64/Workbench.exe'
+    local exe = FS:fileExists(vfsExe) and FS:getFileRealPath(vfsExe) or ''
+    if exe == '' then
+      log('E', logTag, 'openWorkbench: Workbench.exe not found at ' .. vfsExe)
+      notifyReproFailure('Workbench.exe not found at ' .. vfsExe, command or '')
+      if isStartingArg then shutdown(0) end
       return
     end
-    log('I', logTag, 'openTestViewer: ' .. realPath)
-    -- `start "" "<path>"` opens the file with its default handler (browser) and
-    -- returns immediately, so executeShell's blocking wait resolves at once.
-    local ok = pcall(function() executeShell("cmd.exe", '/c start "" "' .. realPath .. '"') end)
+    -- `start "Workbench"` consumes the title token so a space in the path is
+    -- safe. Detached + visible so the game thread never blocks on
+    -- executeShell's hidden, INFINITE-wait behavior.
+    -- `--flag=value`, not `--flag value`: a relaunch onto an already-running
+    -- workbench gets its argv reordered (switches first), which splits the pair
+    -- and hands the reader the wrong token.
+    local shellArgs = '/c start "Workbench" "' .. exe .. '" --panel=com.beamng.testingSetup'
+    if command and command ~= '' then
+      -- PERCENT-ENCODED, and it has to be: the command is full of spaces, and a
+      -- bare value gets split by the shell into separate argv entries, so the
+      -- workbench would only ever see "python". One space-free token survives
+      -- intact. It also needs no quoting, which removes the last place a quote
+      -- in the payload could do anything at all.
+      shellArgs = shellArgs .. ' --repro=' .. urlEncode(command)
+    end
+    -- executeShell is #if !defined(BNG_SHIPPING); on shipping the global is
+    -- absent and pcall fails cleanly.
+    local ok = pcall(function() executeShell("cmd.exe", shellArgs) end)
     if not ok then
-      log('W', logTag, 'openTestViewer unsupported on this build (executeShell unavailable)')
+      log('W', logTag, 'openWorkbench unsupported on this build (executeShell unavailable)')
+      if isStartingArg then shutdown(0) end
       return
     end
-    -- If the game was booted solely to service this scheme command (fresh launch
-    -- with no prior instance), quit now so we don't leave an idle game running.
-    -- When an instance was already running (pipe path), isStartingArg is false and
-    -- we leave the user's session untouched.
+    log('I', logTag, 'openWorkbench launched: ' .. tostring(command))
+    -- Fresh-launch instance has done its job; quit so we do not leave an idle
+    -- game behind. A pre-existing instance (pipe path) keeps running.
     if isStartingArg then shutdown(0) end
     return
   elseif cmd == "runRepro" and version == "v1" then

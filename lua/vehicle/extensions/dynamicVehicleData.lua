@@ -266,13 +266,47 @@ local function getMotorType()
   local hasElectricMotor = false
   local hasOther = false
   local motors = powertrain.getDevicesByCategory("engine")
-  for _, v in pairs(motors) do
+  local roadWheelMotors = {}
+  local anyWheelMotors = {}
+  for _, motor in pairs(motors) do
+    local childWheels = powertrain.getChildWheels(motor)
+    local drivesRoadWheel = false
+    for _, wheel in ipairs(childWheels) do
+      if wheel.rotatorType == "wheel" then
+        drivesRoadWheel = true
+        break
+      end
+    end
+    if drivesRoadWheel then
+      table.insert(roadWheelMotors, motor)
+    elseif #childWheels > 0 then
+      table.insert(anyWheelMotors, motor)
+    end
+  end
+
+  local propulsionMotors = motors
+  if #roadWheelMotors > 0 then
+    propulsionMotors = roadWheelMotors
+  elseif #anyWheelMotors > 0 then
+    propulsionMotors = anyWheelMotors
+  end
+
+  for _, v in pairs(propulsionMotors) do
     if v.type == "combustionEngine" then
       hasICE = true
     elseif v.type == "electricMotor" or v.type == "seriesElectricMotor" or v.type == "electricMotorPMDC" then
       hasElectricMotor = true
     else
       hasOther = true
+    end
+  end
+
+  if hasElectricMotor and not hasICE then
+    for _, v in pairs(motors) do
+      if v.type == "combustionEngine" then
+        hasICE = true
+        break
+      end
     end
   end
 

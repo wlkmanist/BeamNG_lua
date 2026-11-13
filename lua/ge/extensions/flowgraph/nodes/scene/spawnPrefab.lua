@@ -12,6 +12,7 @@ C.author = 'BeamNG'
 C.behaviour = { once = true }
 C.pinSchema = {
   { dir = 'in', type = 'flow', name = 'flow', description = 'Inflow for this node.' },
+  { dir = 'in', type = 'flow', name = 'reset', description = 'Forgets the spawned prefab, so the next inflow spawns it again.', impulse = true },
   { dir = 'in', type = 'flow', name = 'resetVeh', description = 'Resets the vehicles inside this prefab.', impulse = true },
   { dir = 'in', type = 'string', name = 'path', description = 'Path to load prefab from.' },
   { dir = 'in', type = 'string', name = 'name', hidden=true, description = 'Prefab object name' },

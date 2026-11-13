@@ -154,6 +154,54 @@ local function reloadTextureFiles()
   dumpTags()
 end
 
+-- yielding twin of reloadTextureFiles(), for callers running inside a jobsystem job so the
+-- scan spreads over several frames instead of blocking one. callbacks:
+--   yield(section)    -- called during discovery and after every processed texture file
+--   onTotal(total)    -- number of texture files that were found
+--   onProgress(count) -- texture files processed since the last call
+local function reloadTextureFilesAsync(callbacks)
+  local yield = callbacks.yield or nop
+  local onProgress = callbacks.onProgress
+
+  textureFiles = core_jobsystem.findFilesAsync(texturesDirectoryPath, "*.jpg\t*.png", yield)
+  tags = {}
+  tagsWithRefs = {}
+  missingSidecarFiles = {}
+
+  if callbacks.onTotal then callbacks.onTotal(#textureFiles) end
+
+  for _, filepath in ipairs(textureFiles) do
+    local dirName, fileName, extension = path.split(filepath)
+    local textureFilePath = dirName .. fileName
+    if sidecarFileExists(textureFilePath) then
+      local data = readSidecarFile(textureFilePath)
+
+      -- do sidecar file version migration here
+      if data.version < sidecarFileVersion then
+        sidecarFileMigration.migrate(data)
+        updateSidecarFile(textureFilePath, data)
+      end
+
+      if data.tags then
+        for _, tag in ipairs(data.tags) do
+          if not tagsWithRefs[tag] then
+            tagsWithRefs[tag] = {}
+            table.insert(tags, tag)
+          end
+          table.insert(tagsWithRefs[tag], filepath)
+        end
+      end
+    else
+      table.insert(missingSidecarFiles, filepath)
+      local data = shallowcopy(sidecarTemplate)
+      updateSidecarFile(textureFilePath, data)
+    end
+
+    if onProgress then onProgress(1) end
+    yield("reloadTextureFilesAsync " .. filepath)
+  end
+end
+
 local function textureExists(filepath)
   for k, path in ipairs(textureFiles) do
     if path == filepath then
@@ -182,6 +230,14 @@ local function setup()
   sidecarFileMigration = extensions.editor_api_dynamicDecals_sidecarFileMigration
 
   reloadTextureFiles()
+  FS:directoryCreate(texturesDirectoryPath)
+end
+
+-- yielding twin of setup(), callbacks are forwarded to reloadTextureFilesAsync()
+local function setupAsync(callbacks)
+  sidecarFileMigration = extensions.editor_api_dynamicDecals_sidecarFileMigration
+
+  reloadTextureFilesAsync(callbacks)
   FS:directoryCreate(texturesDirectoryPath)
 end
 
@@ -218,7 +274,9 @@ end
 
 -- public interface
 M.setup = setup
+M.setupAsync = setupAsync
 M.reloadTextureFiles = reloadTextureFiles
+M.reloadTextureFilesAsync = reloadTextureFilesAsync
 M.getTextureFiles = function() return textureFiles end
 M.getSidecarTemplate = function() return sidecarTemplate end
 M.getAndFlushMissingSidecarFiles = function()

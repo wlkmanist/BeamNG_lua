@@ -7,12 +7,10 @@
 local M = {}
 
 local im = ui_imgui
-local postfxUtils = require('client/postFx/utils')
-local okGraphicSettings, graphicSettingsModule = pcall(require, 'core/settings/graphic')
-local graphicSettings = okGraphicSettings and graphicSettingsModule or nil
+local graphicSettings = require('core/settings/graphic')
+local ssaoModule = require('client/postFx/ssao')
 local toolWindowName = "rendererComponents"
 local logTag = "editor_renderer_components"
-local defaultPostFxPreset = "lua/ge/client/postFx/presets/defaultpostfxpreset.postfx"
 local cloudWeatherSeedMax = 2147483647
 
 local graphicOptionDefaults = {
@@ -174,25 +172,20 @@ end
 local function getGraphicOption(optionName)
   local module = core_settings_graphic or graphicSettings
   if module and type(module.getOptions) == "function" then
-    local ok, option = pcall(module.getOptions, optionName)
-    if ok then return option end
+    return module.getOptions(optionName)
   end
 end
 
 local function getOptionValue(option)
   if option and type(option.get) == "function" then
-    local ok, value = pcall(option.get)
-    if ok then return value end
+    return option.get()
   end
 end
 
 local function setOptionValue(option, value)
   if option and type(option.set) == "function" then
-    local ok, err = pcall(option.set, value)
-    if not ok then
-      log("E", logTag, "Unable to set graphics option: " .. tostring(err))
-    end
-    return ok
+    option.set(value)
+    return true
   end
   return false
 end
@@ -229,12 +222,7 @@ local function drawOptionCombo(label, optionName)
     return false
   end
 
-  local okModes, modes = pcall(option.getModes)
-  if not okModes then
-    im.TextUnformatted(label .. ": modes unavailable.")
-    return false
-  end
-
+  local modes = option.getModes()
   local keys = modes and modes.keys or {}
   local labels = modes and modes.values or {}
   local currentValue = getOptionValue(option)
@@ -271,26 +259,13 @@ local function resetGraphicOption(optionName)
   setOptionValue(getGraphicOption(optionName), value)
 end
 
-local function loadDefaultPostFxPreset()
-  if not postFxModule or type(postFxModule.loadPresetFile) ~= "function" then
+local function applyDefaultPostFx()
+  if not postFxModule or type(postFxModule.applyDefaults) ~= "function" then
+    log("E", logTag, "postFxModule.applyDefaults is unavailable")
     return false
   end
 
-  local ok = postFxModule.loadPresetFile(defaultPostFxPreset)
-  if not ok then
-    log("E", logTag, "Unable to load default postfx preset: " .. defaultPostFxPreset)
-  end
-  return ok
-end
-
-local function applyDefaultPostFxPreset(applyFunctionName)
-  if not loadDefaultPostFxPreset() then return false end
-
-  if applyFunctionName and type(postFxModule[applyFunctionName]) == "function" then
-    postFxModule[applyFunctionName]()
-  elseif type(postFxModule.settingsApplyFromPreset) == "function" then
-    postFxModule.settingsApplyFromPreset()
-  end
+  postFxModule.applyDefaults()
   return true
 end
 
@@ -368,7 +343,7 @@ local function initialiseSettings()
 end
 
 local function resetDepthOfFieldTab()
-  if applyDefaultPostFxPreset("applyDOFPreset") then
+  if applyDefaultPostFx() then
     initialiseSettings()
   end
 end
@@ -376,19 +351,18 @@ end
 local function resetHDRCombinePassObject()
   local obj = findPostFx(HDRsettings.objectName)
   if obj and type(obj.setField) == "function" then
-    pcall(obj.setField, obj, "enabled", 0, "1")
-    pcall(obj.setField, obj, "colorCorrectionRampPath", 0, "lua/ge/client/postFx/default_color_ramp.png")
-    pcall(obj.setField, obj, "colorCorrectionStrength", 0, "1")
+    obj:setField("enabled", 0, "1")
+    obj:setField("colorCorrectionRampPath", 0, "lua/ge/client/postFx/default_color_ramp.png")
+    obj:setField("colorCorrectionStrength", 0, "1")
   end
 end
 
 local function resetHDRLightingTab()
-  applyDefaultPostFxPreset("applyHDRPreset")
   resetHDRCombinePassObject()
 end
 
 local function resetSSAOTab()
-  applyDefaultPostFxPreset("applySSAOPreset")
+  applyDefaultPostFx()
   resetGraphicOption("PostFXSSAOGeneralQuality")
 end
 
@@ -424,14 +398,12 @@ local function captureScreenSpaceShadowsDefaults()
 
   local quality
   if type(sss.getQuality) == "function" then
-    local ok, value = pcall(function() return tonumber(sss:getQuality()) end)
-    if ok then quality = value end
+    quality = tonumber(sss:getQuality())
   end
 
   local enabled = true
   if type(sss.isEnabled) == "function" then
-    local ok, value = pcall(sss.isEnabled, sss)
-    if ok then enabled = value ~= false end
+    enabled = sss:isEnabled() ~= false
   end
 
   screenSpaceShadowsDefaults = {
@@ -460,7 +432,7 @@ local function resetScreenSpaceShadowsTab()
 
   if not sss then return end
   if defaults and type(sss.setQuality) == "function" and defaults.quality ~= nil then
-    pcall(sss.setQuality, sss, defaults.quality)
+    sss:setQuality(defaults.quality)
   end
   if defaults then
     sss.surface_thickness = defaults.surface_thickness
@@ -586,39 +558,22 @@ local function renderHDRLightingTab()
   drawTabResetButton("HDR", resetHDRLightingTab)
 end
 
-local function readPostFxNumber(obj, getterName, fieldNames, fallback)
-  if obj and getterName and type(obj[getterName]) == "function" then
-    local ok, value = pcall(obj[getterName], obj)
-    if ok and tonumber(value) then return tonumber(value) end
-  end
-
-  for _, fieldName in ipairs(fieldNames or {}) do
-    local value = obj and obj[fieldName]
-    if tonumber(value) then return tonumber(value) end
-  end
-
-  return fallback
-end
-
 local function renderSSAOTab()
-  drawOptionCheckbox("Enable##SSAO", "PostFXSSAOGeneralEnabled", true, false)
   drawOptionCombo("Quality##SSAO", "PostFXSSAOGeneralQuality")
 
   local ssao = findPostFx("SSAOPostFx")
 
   if type(ssao.setContrast) == "function" then
-    tempFloatPtr[0] = readPostFxNumber(ssao, "getContrast", {"contrast", "overallStrength"}, 2)
+    tempFloatPtr[0] = ssaoModule.getContrast()
     if im.SliderFloat("Contrast##SSAO", tempFloatPtr, 0, 10, "%.2f") then
-      local ok, err = pcall(ssao.setContrast, ssao, tempFloatPtr[0])
-      if not ok then log("E", logTag, "SSAOPostFx:setContrast failed: " .. tostring(err)) end
+      ssaoModule.setContrast(tempFloatPtr[0])
     end
   end
 
   if type(ssao.setRadius) == "function" then
-    tempFloatPtr[0] = readPostFxNumber(ssao, "getRadius", {"radius"}, 1.5)
+    tempFloatPtr[0] = ssaoModule.getRadius()
     if im.SliderFloat("Radius##SSAO", tempFloatPtr, 0, 5, "%.2f") then
-      local ok, err = pcall(ssao.setRadius, ssao, tempFloatPtr[0])
-      if not ok then log("E", logTag, "SSAOPostFx:setRadius failed: " .. tostring(err)) end
+      ssaoModule.setRadius(tempFloatPtr[0])
     end
   end
 
@@ -627,7 +582,6 @@ local function renderSSAOTab()
 end
 
 local function renderAntiAliasingTab()
-  drawOptionCheckbox("Enable##AA", "GraphicAntialias", "1", "0")
   drawOptionCombo("Type##AA", "GraphicAntialiasType")
 
   local smaa = findPostFx("SMAA_PostEffect")
@@ -705,8 +659,8 @@ local function renderScreenSpaceShadowsTab()
 
   if type(sss.getQuality) == "function" and type(sss.setQuality) == "function" then
     local qualityNames = {"Low", "Normal", "High"}
-    local ok, curQuality = pcall(function() return tonumber(sss:getQuality()) end)
-    if ok and curQuality then
+    local curQuality = tonumber(sss:getQuality())
+    if curQuality then
       if im.BeginCombo("Quality##SSS", qualityNames[curQuality + 1] or tostring(curQuality)) then
         for i = 0, 2 do
           if im.Selectable1(qualityNames[i + 1], i == curQuality) then
@@ -770,35 +724,32 @@ end
 
 local function renderCoconutTab()
   if im.Button("Open Coconut") then
-    local ok, err = pcall(Engine.Render.setCoconutWindowOpen, true)
-    if not ok then log("E", logTag, "Unable to open Coconut: " .. tostring(err)) end
+    Engine.Render.setCoconutWindowOpen(true)
   end
 end
 
-local function renderClusteredShadingTab()
-  if im.Button("Open Clustered Shading") then
-    local ok, err = pcall(ClusterShading)
-    if not ok then log("E", logTag, "ClusterShading() failed: " .. tostring(err)) end
+local function renderClusterShadingTab()
+  im.TextWrapped("Heatmap: blue is few lights, red is over budget. Window > Cluster Shading, or Visualize > Cluster Shading: Light Heatmap.")
+  im.Dummy(im.ImVec2(0, 5))
+  if im.Button("Open Cluster Shading") then
+    cluster_shading()
   end
 end
 
 local function renderShadowsTab()
   if im.Button("Open Shadows") then
-    local ok, err = pcall(Shadows)
-    if not ok then log("E", logTag, "Shadows() failed: " .. tostring(err)) end
+    Shadows()
   end
 end
 
 local function getCloudLayerInt(fieldName)
   if not CloudLayer then return end
-  local ok, value = pcall(function() return tonumber(CloudLayer[fieldName]) end)
-  if ok then return value end
+  return tonumber(CloudLayer[fieldName])
 end
 
 local function setCloudLayerInt(fieldName, value)
   if not CloudLayer then return end
-  local ok, err = pcall(function() CloudLayer[fieldName] = math.max(1, math.floor(value)) end)
-  if not ok then log("E", logTag, "Unable to set CloudLayer." .. tostring(fieldName) .. ": " .. tostring(err)) end
+  CloudLayer[fieldName] = math.max(1, math.floor(value))
 end
 
 local function drawCloudLayerInt(label, fieldName, minValue, maxValue)
@@ -824,13 +775,7 @@ local function regenerateCloudLayerWeather(seed)
   normalizedSeed = math.max(0, math.min(cloudWeatherSeedMax, normalizedSeed))
   cloudWeatherSeedPtr[0] = normalizedSeed
 
-  local ok, err = pcall(CloudLayer.regenerateWeatherMap, normalizedSeed)
-  if not ok then
-    cloudWeatherStatus = "Regenerate failed: " .. tostring(err)
-    log("E", logTag, "Unable to regenerate CloudLayer weather map: " .. tostring(err))
-    return false
-  end
-
+  CloudLayer.regenerateWeatherMap(normalizedSeed)
   cloudWeatherStatus = "Regenerated weather map with seed " .. tostring(normalizedSeed) .. "."
   return true
 end
@@ -843,15 +788,14 @@ local function resetCloudLayerTab()
   end
 
   if CloudLayer and type(CloudLayer.setWeatherOffsetKm) == "function" and type(Point3F) == "function" then
-    local ok, err = pcall(CloudLayer.setWeatherOffsetKm, Point3F(0, 0, 0))
-    if not ok then log("E", logTag, "Unable to reset CloudLayer weather offset: " .. tostring(err)) end
+    CloudLayer.setWeatherOffsetKm(Point3F(0, 0, 0))
   end
   cloudWeatherSeedPtr[0] = 0
   cloudWeatherStatus = nil
 end
 
 local function resetAllTabs()
-  if applyDefaultPostFxPreset() then
+  if applyDefaultPostFx() then
     initialiseSettings()
   end
 
@@ -883,14 +827,13 @@ local function renderCloudLayerTab()
   im.Dummy(im.ImVec2(0, 5))
 
   if type(CloudLayer.getWeatherOffsetKm) == "function" and type(CloudLayer.setWeatherOffsetKm) == "function" and type(Point3F) == "function" then
-    local ok, offset = pcall(CloudLayer.getWeatherOffsetKm)
-    if ok and offset then
+    local offset = CloudLayer.getWeatherOffsetKm()
+    if offset then
       tempFloatArr3[0] = tonumber(offset.x) or 0
       tempFloatArr3[1] = tonumber(offset.y) or 0
       tempFloatArr3[2] = tonumber(offset.z) or 0
       if im.InputFloat3("Weather Offset (km)##CloudLayer", tempFloatArr3, "%.3f", im.InputTextFlags_EnterReturnsTrue) then
-        local setOk, err = pcall(CloudLayer.setWeatherOffsetKm, Point3F(tempFloatArr3[0], tempFloatArr3[1], tempFloatArr3[2]))
-        if not setOk then log("E", logTag, "Unable to set CloudLayer weather offset: " .. tostring(err)) end
+        CloudLayer.setWeatherOffsetKm(Point3F(tempFloatArr3[0], tempFloatArr3[1], tempFloatArr3[2]))
       end
     else
       im.TextUnformatted("Weather offset is not available.")
@@ -923,15 +866,6 @@ end
 local function onEditorGui()
   if editor.beginWindow(toolWindowName, "Renderer Components", im.WindowFlags_MenuBar) then
     if im.BeginMenuBar() then
-      if im.BeginMenu("File", imgui_true) then
-        if im.MenuItem1("Load Preset...",nil,imgui_false,imgui_true) then
-           postfxUtils.loadPresets()
-        end
-        if im.MenuItem1("Save Preset...",nil,imgui_false,imgui_true) then
-          postfxUtils.savePresets()
-        end
-        im.EndMenu()
-      end
       if im.MenuItem1("Reset All", nil, imgui_true) then
         resetAllTabs()
       end
@@ -986,8 +920,8 @@ local function onEditorGui()
         im.EndTabItem()
       end
 
-      if not shipping_build and type(ClusterShading) == "function" and im.BeginTabItem("Clustered Shading", nil, im.TabItemFlags_None) then
-        renderClusteredShadingTab()
+      if not shipping_build and type(cluster_shading) == "function" and im.BeginTabItem("Cluster Shading", nil, im.TabItemFlags_None) then
+        renderClusterShadingTab()
         im.EndTabItem()
       end
 
@@ -1008,12 +942,12 @@ local function onWindowMenuItem()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("Renderer Components", onWindowMenuItem)
+  editor.addWindowMenuItem("Renderer Components", onWindowMenuItem, {groupMenuName = 'Debug'})
+  if not shipping_build and type(cluster_shading) == "function" then
+    editor.addWindowMenuItem("Cluster Shading", cluster_shading, {groupMenuName = 'Debug'})
+  end
 
   editor.registerWindow(toolWindowName, im.ImVec2(300, 500))
-  if postFxModule then
-    postFxModule.backupCurrentSettings()
-  end
   initialiseSettings()
   captureScreenSpaceShadowsDefaults()
 end

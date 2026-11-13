@@ -37,6 +37,7 @@ local logTag = 'decalSpline'
 
 -- External modules.
 local buffer = require('string.buffer')
+local session = require('editor/toolUtilities/session') -- Shared Save/Load Session helper (itemToTable + vec3 rehydrate).
 local pop = require('editor/decalSpline/populate')
 local geom = require('editor/toolUtilities/geom')
 local util = require('editor/toolUtilities/util')
@@ -531,18 +532,45 @@ local function serializeDecalSpline(spline)
   return copy
 end
 
--- Deserialises a decal spline from a table.
+-- Serialises a decal spline to a portable plain table for a session file (see toolUtilities/session): derived geometry emptied
+-- (rebuilt by the dirty pass), runtime scene handle dropped, live spline never mutated.
+local function serializeDecalSplineToTable(spline)
+  return session.itemToTable(spline,
+    { 'divPoints', 'divWidths', 'tangents', 'binormals', 'normals', 'discMap', 'ribPoints' },
+    { 'sceneTreeFolderId' })
+end
+
+-- Deserialises a decal spline. `data` is either the editor's buffer-encoded blob (string) or a plain table straight from a JSON
+-- session file. On the JSON path the derived scratch tables are empty and node positions arrive as plain {x,y,z}, so guarantee
+-- the tables exist and rehydrate them to vec3 before the first build.
 local function deserializeDecalSpline(data, isCreateObject)
-  local spline = buffer.decode(data)
+  local spline = type(data) == 'table' and data or buffer.decode(data)
   spline.isDirty = true
+
+  spline.nodes = spline.nodes or {}
+  spline.widths = spline.widths or {}
+  spline.nmls = spline.nmls or {}
+  spline.divPoints = spline.divPoints or {}
+  spline.divWidths = spline.divWidths or {}
+  spline.tangents = spline.tangents or {}
+  spline.binormals = spline.binormals or {}
+  spline.normals = spline.normals or {}
+  spline.discMap = spline.discMap or {}
+  session.rehydrateVec3Array(spline.nodes)
+  session.rehydrateVec3Array(spline.nmls)
   return spline
 end
 
+-- Recompute the spline id -> index map (called by the shared session helper after a load appends the loaded splines).
+local function recomputeIdMap() util.computeIdToIdxMap(decalSplines, splineMap) end
+
 -- Updates the geometry and templates/instances of any dirty decal splines.
 local function updateDirtyDecalSplines()
+  local rebuiltAny = false -- did any spline actually rebuild this pass? (-> the document has an unsaved edit).
   for i = 1, #decalSplines do
     local spline = decalSplines[i]
     if spline.isDirty then
+      rebuiltAny = true
       -- Check if spline has enough nodes to be valid (minimum 2).
       if #spline.nodes < 2 then
         -- Remove all decals and clear secondary geometry when insufficient nodes.
@@ -560,9 +588,12 @@ local function updateDirtyDecalSplines()
           util.vertRaycast(nodes[j])
         end
         geom.catmullRomRaycast(spline, minSplineDivisions)
-        randomseed(spline.randomSeed)
-        pop.tryRemove(spline)
-        pop.populateDecalSpline(spline, decalSplines)
+        -- A locked spline whose decals exist is not rebuilt: the tool does not move them.
+        if spline.isEnabled or not pop.hasAny(spline) then
+          randomseed(spline.randomSeed)
+          pop.tryRemove(spline)
+          pop.populateDecalSpline(spline, decalSplines)
+        end
 
         spline.roadLength = util.getPolyLength(spline.nodes) -- Update the spline length.
       end
@@ -570,6 +601,7 @@ local function updateDirtyDecalSplines()
       spline.isDirty = false
     end
   end
+  if rebuiltAny then session.markEdited('decalSpline') end -- fold this pass's edits into the Save/Save As dirty state (load guard swallows a fresh load's rebuild).
 end
 
 -- Converts the given paths (traced from a bitmap) to decal splines.
@@ -709,6 +741,8 @@ M.convertPathsToDecalSplines =                          convertPathsToDecalSplin
 
 M.serializeDecalSpline =                                serializeDecalSpline
 M.deserializeDecalSpline =                              deserializeDecalSpline
+M.serializeDecalSplineToTable =                         serializeDecalSplineToTable
+M.recomputeIdMap =                                      recomputeIdMap
 M.deepCopyDecalSplineState =                            deepCopyDecalSplineState
 
 M.getCurrentDecalSplineList =                           getCurrentDecalSplineList

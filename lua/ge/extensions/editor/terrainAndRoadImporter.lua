@@ -114,6 +114,7 @@ local function conformTerrainToPeaks(filepath)
 
   -- Update the terrain block.
   tb:updateGrid(vec3(0, 0), vec3(xSize, ySize))
+  extensions.editor_terrainEditor.setTerrainDirty()
 end
 
 -- Creates a decal road.
@@ -442,6 +443,7 @@ local function conformTerrainToRoad(DOI, tris, trisBloated, box)
 
   -- Update the terrain block.
   tb:updateGrid(vec3(bXMin, bYMin), vec3(bXMax, bYMax))
+  extensions.editor_terrainEditor.setTerrainDirty()
 end
 
 -- Triangulates a decal road.  The height is chosen along the road centerline.
@@ -572,6 +574,7 @@ local function importTerrain(terrPath, zMax)
 
   -- Update the terrain block.
   tb:updateGrid(vec3(gMin.x, gMin.y), vec3(gMax.x, gMax.y))
+  extensions.editor_terrainEditor.setTerrainDirty()
 
   -- Now that the meshes exist in the scene, re-compute the collision mesh to take them into account.
   be:reloadCollision()
@@ -660,6 +663,7 @@ local function reset()
 
   -- Update the terrain block.
   tb:updateGrid(vec3(gMin.x, gMin.y), vec3(gMax.x, gMax.y))
+  extensions.editor_terrainEditor.setTerrainDirty()
 end
 
 -- Opens/closes the world editor.
@@ -761,7 +765,7 @@ end
 
 -- Called upon world editor initialization.
 local function onEditorInitialized()
-  if tech_license.isValid() then
+  if license.isValid() then
     editor.editModes.terrainAndRoadImporterEditMode = {
       displayName = "Terrain And Road Importer",
       onUpdate = nop,

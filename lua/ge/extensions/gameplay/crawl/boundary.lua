@@ -23,6 +23,10 @@ local visibleLookupScratch = {}
 
 local crawlerExitPoints = {}
 local crawlerDNFApplied = {}
+local visibilityPositionsScratch = {}
+local fallbackPos = vec3()
+local animScaleScratch = vec3()
+local animColorScratch = ColorF(1,1,1,1):asLinear4F()
 
 local function buildBoundaryQuadtree()
   if not boundaryObjects or not next(boundaryObjects) then
@@ -56,35 +60,44 @@ local function buildBoundaryQuadtree()
     #boundaryObjects, maxX - minX, maxY - minY))
 end
 
-local function updateBoundaryAnimations(dtSim)
+local function updateBoundaryAnimations(dtSim, crawlStates)
   if not boundaryObjects then
     return
   end
 
-  local playerPos = nil
-  if gameplay_crawl_utils and gameplay_crawl_utils.getPlayerPosition then
-    playerPos = gameplay_crawl_utils.getPlayerPosition()
-  else
-    playerPos = core_camera.getPosition()
+  table.clear(visibilityPositionsScratch)
+  if crawlStates then
+    for _, state in pairs(crawlStates) do
+      if state and state.active and state.crawlerData and state.crawlerData.dynamicData then
+        local pos = state.crawlerData.dynamicData.vehPos
+        if pos then
+          visibilityPositionsScratch[#visibilityPositionsScratch + 1] = pos
+        end
+      end
+    end
   end
-
-  if not playerPos then
-    return
+  if #visibilityPositionsScratch == 0 then
+    fallbackPos:set(core_camera.getPositionXYZ())
+    visibilityPositionsScratch[1] = fallbackPos
   end
 
   if boundaryQuadtree then
-    local queryX, queryY = playerPos.x, playerPos.y
     local queryRadius = visibilityRadius
+    local queryRadiusSq = queryRadius * queryRadius
 
-    -- Reuse a persistent set instead of allocating two tables every frame.
+    -- Union of objects near any active crawler. Reuse a persistent set instead of allocating every frame.
     table.clear(visibleLookupScratch)
-    for objectId in boundaryQuadtree:queryNotNested(
-      queryX - queryRadius, queryY - queryRadius,
-      queryX + queryRadius, queryY + queryRadius
-    ) do
-      local objectInfo = boundaryObjects[objectId]
-      if objectInfo and playerPos:distance(objectInfo.finalPosition) <= queryRadius then
-        visibleLookupScratch[objectId] = true
+    for i = 1, #visibilityPositionsScratch do
+      local playerPos = visibilityPositionsScratch[i]
+      local queryX, queryY = playerPos.x, playerPos.y
+      for objectId in boundaryQuadtree:queryNotNested(
+        queryX - queryRadius, queryY - queryRadius,
+        queryX + queryRadius, queryY + queryRadius
+      ) do
+        local objectInfo = boundaryObjects[objectId]
+        if objectInfo and not visibleLookupScratch[objectId] and playerPos:squaredDistance(objectInfo.finalPosition) <= queryRadiusSq then
+          visibleLookupScratch[objectId] = true
+        end
       end
     end
 
@@ -94,8 +107,9 @@ local function updateBoundaryAnimations(dtSim)
       local animState = objectInfo.animationState
       local isAnimating = animState == "appearing" or animState == "disappearing"
 
-      -- Skip idle, off-screen objects entirely: avoids a findObjectById call per object per frame.
-      if isCurrentlyVisible or wasVisible or isAnimating then
+      -- Skip idle, off-screen, and steady-visible objects: avoids a findObjectById call per object per frame.
+      if not (isCurrentlyVisible and wasVisible and animState == "visible" and objectInfo.steadyApplied)
+          and (isCurrentlyVisible or wasVisible or isAnimating) then
         local obj = scenetree.findObjectById(objectId)
         if obj then
           if isCurrentlyVisible and not wasVisible then
@@ -115,8 +129,11 @@ local function updateBoundaryAnimations(dtSim)
             if objectInfo.animationTimer >= animationDuration then
               objectInfo.animationState = "visible"
               objectInfo.animationTimer = 0
-              obj:setScale(vec3(maxScale, maxScale, maxScale))
-              obj:setField('instanceColor', 0, '1 1 1 1')
+              animScaleScratch:set(maxScale, maxScale, maxScale)
+              obj:setScale(animScaleScratch)
+              animColorScratch.w = 1
+              obj.instanceColor = animColorScratch
+              obj:updateInstanceRenderData()
               objectInfo.steadyApplied = true
             else
               local scaleT = math.min(objectInfo.animationTimer / scaleUpDuration, 1.0)
@@ -125,8 +142,11 @@ local function updateBoundaryAnimations(dtSim)
               local currentScale = lerp(minScale, maxScale, smootherstep(scaleT))
               local currentAlpha = lerp(0.0, 1.0, smootherstep(alphaT))
 
-              obj:setScale(vec3(currentScale, currentScale, currentScale))
-              obj:setField('instanceColor', 0, string.format('1 1 1 %.2f', currentAlpha))
+              animScaleScratch:set(currentScale, currentScale, currentScale)
+              obj:setScale(animScaleScratch)
+              animColorScratch.w = currentAlpha
+              obj.instanceColor = animColorScratch
+              obj:updateInstanceRenderData()
             end
 
           elseif objectInfo.animationState == "disappearing" then
@@ -140,14 +160,19 @@ local function updateBoundaryAnimations(dtSim)
               local alphaT = 1.0 - (objectInfo.animationTimer / fadeOutDuration)
               local currentAlpha = lerp(0.0, 1.0, smootherstep(alphaT))
 
-              obj:setField('instanceColor', 0, string.format('1 1 1 %.2f', currentAlpha))
+              animColorScratch.w = currentAlpha
+              obj.instanceColor = animColorScratch
+              obj:updateInstanceRenderData()
             end
 
           elseif objectInfo.animationState == "visible" then
             -- Only push scale/color once on entering the steady visible state.
             if not objectInfo.steadyApplied then
-              obj:setScale(vec3(maxScale, maxScale, maxScale))
-              obj:setField('instanceColor', 0, '1 1 1 1')
+              animScaleScratch:set(maxScale, maxScale, maxScale)
+              obj:setScale(animScaleScratch)
+              animColorScratch.w = 1
+              obj.instanceColor = animColorScratch
+              obj:updateInstanceRenderData()
               objectInfo.steadyApplied = true
             end
           end

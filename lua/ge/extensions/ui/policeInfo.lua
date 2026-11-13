@@ -63,12 +63,14 @@ end
 
 local function onPursuitOffense(vehId, name, data)
   if M.enabled then
-    local alert = {
-      icon = 'listSmall',
-      text = {txt = 'ui.apps.police.offenseAlert', context = {value = _tr('ui.traffic.infractions.'..name, name)}},
-      duration = 3
-    }
-    guihooks.trigger('PoliceAlertPush', alert)
+    if vehId == M.targetId or vehId == be:getPlayerVehicleID(0) then
+      local alert = {
+        icon = 'listSmall',
+        text = {txt = 'ui.apps.police.offenseAlert', context = {value = _tr('ui.traffic.infractions.'..name, name)}},
+        duration = 3
+      }
+      guihooks.trigger('PoliceAlertPush', alert)
+    end
   end
 end
 
@@ -92,24 +94,24 @@ local function onPursuitAction(vehId, action, data)
 
         local alerts = {}
         if M.showFinalStats then
-          table.insert(alerts, {
+          table.insert(alerts, { -- pursuit score
             icon = 'listSmall',
             text = {txt = 'ui.apps.police.score', context = {value = math.floor(pursuit.score)}},
             duration = 3
           })
-          table.insert(alerts, {
+          table.insert(alerts, { -- offenses count
             icon = 'listSmall',
             text = {txt = 'ui.apps.police.offensesCount', context = {value = pursuit.offensesCount}},
             duration = 3
           })
           if pursuit.roadblocks > 0 then
-            table.insert(alerts, {
+            table.insert(alerts, { -- roadblocks (if any)
               icon = 'listSmall',
               text = {txt = 'ui.apps.police.roadblocks', context = {value = pursuit.roadblocks}},
               duration = 3
             })
           else
-            table.insert(alerts, {
+            table.insert(alerts, { -- police unit count
               icon = 'listSmall',
               text = {txt = 'ui.apps.police.policeCount', context = {value = pursuit.policeCount}},
               duration = 3

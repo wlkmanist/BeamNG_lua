@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
---Purpose: Used to simulate a brake system that is fed by a hydraulic pump rather than a master cylinder
+--Purpose: Provides engine-driven hydraulic braking behavior for heavy machinery
 
 local M = {}
 M.type = "auxiliary"
@@ -23,6 +23,10 @@ local rearDamageBeamIds
 local rearDamageBeamBrokenCoef
 
 local didAutoApplyParkingBrake = false
+
+local stateData
+local stateDataNameHillAssistCoef
+local stateDataNameFrontLockOutEnabled
 
 local function updateGFX(dt)
   --the engine technically runs the hydraulic pump for the brakes, so no spinning engine means no brake pressure
@@ -87,35 +91,39 @@ local function beamBroken(id, energy)
   end
 end
 
-local function setHillAssistCoef(coef)
+local function setHillAssistCoef(coef, silent)
   hillAssistCoef = clamp(coef, 0, 1)
   if hillAssistCoef <= 0.01 then
     hillAssistCoef = 0
   end
-  guihooks.message(
-    {
-      txt = "vehicle.hydraulicPumpBrake.hillAssist",
-      context = {coef = (roundNear(hillAssistCoef, 0.01) * 100) .. "%"}
-    },
-    2,
-    "vehicle.hydraulicPumpBrake.hillAssist"
-  )
+  if not silent then
+    guihooks.message(
+      {
+        txt = "vehicle.hydraulicPumpBrake.hillAssist",
+        context = {coef = (roundNear(hillAssistCoef, 0.01) * 100) .. "%"}
+      },
+      2,
+      "vehicle.hydraulicPumpBrake.hillAssist"
+    )
+  end
 end
 
 local function changeHillAssistCoef(change)
   setHillAssistCoef(hillAssistCoef + change)
 end
 
-local function setFrontLockOutEnabled(enabled)
+local function setFrontLockOutEnabled(enabled, silent)
   frontLockOutEnabled = enabled
-  guihooks.message(
-    {
-      txt = "vehicle.hydraulicPumpBrake.frontBrakeLockOut",
-      context = {enabled = enabled}
-    },
-    2,
-    "vehicle.hydraulicPumpBrake.frontBrakeLockOut"
-  )
+  if not silent then
+    guihooks.message(
+      {
+        txt = "vehicle.hydraulicPumpBrake.frontBrakeLockOut",
+        context = {enabled = enabled}
+      },
+      2,
+      "vehicle.hydraulicPumpBrake.frontBrakeLockOut"
+    )
+  end
 end
 
 local function toggleFrontLockOutEnabled()
@@ -130,6 +138,10 @@ local function reset(jbeamData)
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameHillAssistCoef = M.name .. "_hillAssistCoef"
+  stateDataNameFrontLockOutEnabled = M.name .. "_frontLockOutEnabled"
+
   local relevantEngineName = jbeamData.relevantEngineName or "mainEngine"
   relevantEngine = powertrain.getDevice(relevantEngineName)
   engineRunningThresholdAV = 10
@@ -144,6 +156,28 @@ local function init(jbeamData)
   rearDamageBeamIds = beamstate.tagBeamMap[rearDamageBeamTag] or {}
 end
 
+local function getState()
+  stateData[stateDataNameHillAssistCoef] = hillAssistCoef
+  stateData[stateDataNameFrontLockOutEnabled] = frontLockOutEnabled
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newHillAssistCoef = data[stateDataNameHillAssistCoef]
+  if type(newHillAssistCoef) == "number" and newHillAssistCoef == newHillAssistCoef and newHillAssistCoef ~= hillAssistCoef then
+    setHillAssistCoef(newHillAssistCoef, true)
+  end
+
+  local newFrontLockOutEnabled = data[stateDataNameFrontLockOutEnabled]
+  if type(newFrontLockOutEnabled) == "boolean" and newFrontLockOutEnabled ~= frontLockOutEnabled then
+    setFrontLockOutEnabled(newFrontLockOutEnabled, true)
+  end
+end
+
 M.init = init
 M.reset = reset
 
@@ -155,5 +189,8 @@ M.setFrontLockOutEnabled = setFrontLockOutEnabled
 M.toggleFrontLockOutEnabled = toggleFrontLockOutEnabled
 
 M.beamBroken = beamBroken
+
+M.getState = getState
+M.setState = setState
 
 return M

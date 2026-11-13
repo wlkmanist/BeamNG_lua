@@ -4,6 +4,9 @@
 
 local C = {}
 
+-- kept per cluster id so markers recreated on POI regeneration don't fire onEnter for players already inside
+local insideByCluster = {}
+
 -- called when this object is created. initialize variables here (but dont spawn objects)
 function C:init() end
 
@@ -19,9 +22,11 @@ end
 -- Interactivity
 function C:interactInPlayMode(interactData, interactableElements) end
 function C:interactWhileMoving(interactData)
+  local playerIndex = interactData.playerIndex or 0
+  local wasInside = self._insideByPlayer[playerIndex] == true
   if interactData.isWalking then return end
   if interactData.vehPos:squaredDistance(self.pos) <= self.radius*self.radius then
-    if not self._inside then
+    if not wasInside then
       if self.onEnter then
         self.onEnter(interactData)
       end
@@ -29,14 +34,14 @@ function C:interactWhileMoving(interactData)
     if self.onInside then
       self.onInside(interactData)
     end
-    self._inside = true
+    self._insideByPlayer[playerIndex] = true
   else
-    if self._inside then
+    if wasInside then
       if self.onExit then
         self.onExit(interactData)
       end
     end
-    self._inside = false
+    self._insideByPlayer[playerIndex] = nil
   end
 end
 
@@ -46,6 +51,9 @@ function C:setup(cluster)
   self.radius = cluster.radius
   self.onEnter = cluster.onEnter
   self.onInside = cluster.onInside
+  self.onExit = cluster.onExit
+  insideByCluster[cluster.id] = insideByCluster[cluster.id] or {}
+  self._insideByPlayer = insideByCluster[cluster.id]
 end
 
 -- creates neccesary objects
@@ -53,7 +61,7 @@ function C:createObjects() end
 function C:setHidden(value) end
 function C:show() end
 function C:hide()
-  self._inside = false
+  table.clear(self._insideByPlayer)
 end
 
 -- destorys/cleans up all objects created by this
@@ -79,9 +87,11 @@ local function cluster(pois, allClusters)
       radius = poi.markerInfo.invisibleTrigger.radius,
       onEnter = poi.markerInfo.invisibleTrigger.onEnter,
       onInside = poi.markerInfo.invisibleTrigger.onInside,
+      onExit = poi.markerInfo.invisibleTrigger.onExit,
 
       visibilityPos = poi.markerInfo.invisibleTrigger.pos,
       visibilityRadius = 0,
+      showOnMinimap = false,
       create = create,
     }
     table.insert(allClusters, cluster)

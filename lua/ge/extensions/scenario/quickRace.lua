@@ -371,7 +371,7 @@ local function changeTimeTrialConfig()
   M.timeTrialOpen = not M.timeTrialOpen
   if M.timeTrialOpen then
     guihooks.trigger('MenuItemNavigation', 'toggleMenues')
-    guihooks.trigger('ChangeState', {state = 'menu.quickrace'})
+    extensions.ui_router.navigate('menu.quickrace')
     simTimeAuthority.pause(true)
   else
     simTimeAuthority.pause(false)

@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Provides the fallback main controller for vehicles without one
+
 local M = {}
 --Mandatory controller parameters
 M.type = "main"

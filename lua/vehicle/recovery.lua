@@ -5,19 +5,29 @@ local dequeue = require('dequeue')
 
 local M = {}
 M.recoveryPoints = dequeue.new() -- historic log of positions
+-- When enabled, recovery input emits recovery hooks without changing the vehicle.
+-- This is used in the First Drive tutorial to preview the recovery process without changing the vehicle.
+M.recoveryHooksOnly = false
 
 local recoveryPointTimedelta = 0.2 -- secs
 local recoveredPointSeparation = 2
 local recoveredPointSeparationSq = recoveredPointSeparation * recoveredPointSeparation
+local initialRecoverySpeed = 3 -- m/s
+local slowRecoverySpeed = 20 -- m/s
+local fastRecoverySpeed = 50 -- m/s
+local slowRecoveryRampTime = 2.5 -- secs
+local fastRecoveryRampTime = 10 -- secs
 local logSize = 700
 local rollLimit = 45
 local pitchLimit = 80
-local rewindPositionDelay = 0.7
+local rewindPositionDelay = 0.5
 local debugColor = color(255, 102, 0, 255)
 
 local countDown = 0 -- simDt
-local blendTime = 0
-local snapshotTimeSmoother = newTemporalSmoothing(0.5)
+local rewindDistance = 0
+local recoverySpeedTimer = 0
+local pendingRecoveryPointAhead = false
+local snapshotTimeSmoother = newTemporalSmoothing(0.0815)
 local useSmartSpawn = true
 local upVector = vec3(0,0,1)
 local recoverTimer
@@ -26,6 +36,13 @@ local beamsCount = 0
 
 local relativeNodePositions = {}
 
+local lastRecoveryPoint = {
+  pos = vec3(),
+  dirFront = vec3(),
+  dirUp = vec3(),
+  set = false,
+}
+
 local objPos = vec3()
 
 M.updateGFX = nop
@@ -33,6 +50,7 @@ M.updateGFX = nop
 local function clear()
   M.recoveryPoints = dequeue.new()
   M.homePoint = nil
+  lastRecoveryPoint.set = false
 end
 
 local function onDeserialized(v)
@@ -53,12 +71,29 @@ local function newRecoveryPoint(objPosition)
   }
 end
 
-local function blendPoints(a, b, t)
-  return {
-    pos = vec3(a.pos) + (vec3(b.pos) - vec3(a.pos)) * t,
-    dirFront = (vec3(a.dirFront) + (vec3(b.dirFront) - vec3(a.dirFront)) * t):normalized(),
-    dirUp = (vec3(a.dirUp) + (vec3(b.dirUp) - vec3(a.dirUp)) * t):normalized()
-  }
+local function copyRecoveryPoint(src)
+  lastRecoveryPoint.pos:set(src.pos)
+  lastRecoveryPoint.dirFront:set(src.dirFront)
+  lastRecoveryPoint.dirUp:set(src.dirUp)
+  lastRecoveryPoint.set = true
+end
+
+local function blendRecoveryPoints(a, b, t)
+  lastRecoveryPoint.pos:setSub2(b.pos, a.pos)
+  lastRecoveryPoint.pos:setScaled(t)
+  lastRecoveryPoint.pos:setAdd(a.pos)
+
+  lastRecoveryPoint.dirFront:setSub2(b.dirFront, a.dirFront)
+  lastRecoveryPoint.dirFront:setScaled(t)
+  lastRecoveryPoint.dirFront:setAdd(a.dirFront)
+  lastRecoveryPoint.dirFront:normalize()
+
+  lastRecoveryPoint.dirUp:setSub2(b.dirUp, a.dirUp)
+  lastRecoveryPoint.dirUp:setScaled(t)
+  lastRecoveryPoint.dirUp:setAdd(a.dirUp)
+  lastRecoveryPoint.dirUp:normalize()
+
+  lastRecoveryPoint.set = true
 end
 
 local function getRollPitch(dirFront, dirUp)
@@ -100,33 +135,88 @@ local function constructAABB()
     }
 end
 
-local lastRecoveryPoint
+local mpRecoveringRequestId = nil
+local recoveringBeginPending = false
+local stopRequested = false
+local stopRequestedPlayer = nil
 local camPos = vec3()
 local camRot = quat()
-local function setRecoveryPoint(recPoint, resetVehicle, moveTraffic, player)
-  lastRecoveryPoint = recPoint
+
+local function recoveryRotation(dirFront, dirUp)
   -- if the angle limits (in degrees) are surpassed, car is reset to upright position, maintaining the recpoint heading
-  local dirFront = vec3(recPoint.dirFront)
-  local dirUp = vec3(recPoint.dirUp)
+  local roll, pitch = getRollPitch(dirFront, dirUp)
+  if pitchLimit ~= nil and (math.abs(pitch) > pitchLimit or math.abs(roll) > rollLimit) then
+    return quatFromDir(-dirFront, upVector)
+  end
+  return quatFromDir(-dirFront, dirUp)
+end
+
+local function applyRecoveryPoint(recPoint, useSmartSpawnParam, player, moveTraffic)
+  local pos = recPoint.pos
+  local dirFront = recPoint.dirFront
+  local dirUp = recPoint.dirUp
+  local smart = useSmartSpawnParam
+  if smart == nil then smart = useSmartSpawn end
+
+  if smart then
+    local rot = quatFromDir(dirFront, dirUp)
+    obj:queueGameEngineLua(string.format(
+      "spawn.safeTeleport(getObjectByID(%d), vec3(%f,%f,%f), quat(%f,%f,%f,%f), nil, nil, %s, nil, true, %s)",
+      obj:getId(),
+      pos.x, pos.y, pos.z,
+      rot.x, rot.y, rot.z, rot.w,
+      tostring(moveTraffic), tostring(player)))
+    return
+  end
+
+  local rot = recoveryRotation(dirFront, dirUp)
+  obj:queueGameEngineLua(string.format(
+    "vehicleSetPositionRotation(%d, %f, %f, %f, %f, %f, %f, %f)",
+    obj:getId(),
+    pos.x, pos.y, pos.z,
+    rot.x, rot.y, rot.z, rot.w))
+end
+
+local function mpApplyRecoveryPoint(requestId, action, px, py, pz, fx, fy, fz, ux, uy, uz, useSmartSpawnParam, player, moveTraffic)
+  local pos = vec3(px, py, pz)
+  local dirFront = vec3(fx, fy, fz)
+  local dirUp = vec3(ux, uy, uz)
+  local smart = useSmartSpawnParam
+  if smart == nil then smart = useSmartSpawn end
+  local vid = obj:getId()
+  local finishCmd
+  if smart then
+    finishCmd = string.format(
+      "if multiplayer_vehicleSync then multiplayer_vehicleSync.onVehicleRecoveryApplied(%d, %q, %d, true) end",
+      requestId, action, vid)
+    local rot = quatFromDir(dirFront, dirUp)
+    obj:queueGameEngineLua(string.format(
+      "spawn.safeTeleport(getObjectByID(%d), vec3(%f,%f,%f), quat(%f,%f,%f,%f), nil, nil, %s, nil, true, %s); %s",
+      vid,
+      pos.x, pos.y, pos.z,
+      rot.x, rot.y, rot.z, rot.w,
+      tostring(moveTraffic), tostring(player),
+      finishCmd))
+    return
+  end
+
+  local rot = recoveryRotation(dirFront, dirUp)
+  finishCmd = string.format(
+    "if multiplayer_vehicleSync then multiplayer_vehicleSync.onVehicleRecoveryApplied(%d, %q, %d, false, %f, %f, %f, %f, %f, %f, %f) end",
+    requestId, action, vid, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
+  obj:queueGameEngineLua(string.format(
+    "vehicleSetPositionRotation(%d, %f, %f, %f, %f, %f, %f, %f); %s",
+    vid,
+    pos.x, pos.y, pos.z,
+    rot.x, rot.y, rot.z, rot.w,
+    finishCmd))
+end
+
+local function setRecoveryPoint(recPoint, resetVehicle, moveTraffic, player)
+  copyRecoveryPoint(recPoint)
 
   if resetVehicle then
-    if useSmartSpawn then
-      local rot = quatFromDir(dirFront, dirUp)
-      obj:queueGameEngineLua("spawn.safeTeleport(getObjectByID("..obj:getId().."), vec3("..recPoint.pos.x..","..recPoint.pos.y..","..recPoint.pos.z.."), quat("..rot.x..","..rot.y..","..rot.z..","..rot.w.."), nil, nil, " .. tostring(moveTraffic) ..  ",nil,nil," .. tostring(player) .. ")")
-    else
-      -- Dont use autoplace when not using smart spawn
-      -- if the angle limits (in degrees) are surpassed, car is reset to upright position, maintaining the recpoint heading
-      local rot
-      local dirFront = vec3(recPoint.dirFront)
-      local dirUp = vec3(recPoint.dirUp)
-      local roll, pitch = getRollPitch(dirFront, dirUp)
-      if pitchLimit ~= nil and (math.abs(pitch) > pitchLimit or math.abs(roll) > rollLimit) then
-        rot = quatFromDir(-dirFront, upVector)
-      else
-        rot = quatFromDir(-dirFront, dirUp)
-      end
-      obj:queueGameEngineLua("vehicleSetPositionRotation("..obj:getId()..","..recPoint.pos.x..","..recPoint.pos.y..","..recPoint.pos.z..","..rot.x..","..rot.y..","..rot.z..","..rot.w.."," .. tostring(player) .. ")")
-    end
+    applyRecoveryPoint(lastRecoveryPoint, useSmartSpawn, player, moveTraffic)
   end
 end
 
@@ -137,15 +227,12 @@ local function saveHome(point)
   end
 end
 
-local function loadHome(moveTraffic)
-  if M.homePoint == nil then return end
-  obj:requestReset(RESET_PHYSICS)     -- fix vehicle + reset velocity
-  obj:queueGameEngineLua('getObjectByID('..tostring(obj:getId())..'):resetBrokenFlexMesh()')
-  setRecoveryPoint(M.homePoint, true, moveTraffic)
-  guihooks.message("vehicle.recovery.loadHome", 5, "recovery")
-end
-
 local function updateGFXRecord(dtSim)
+  if stopRequested and not recoveringBeginPending then
+    stopRequested = false
+    stopRequestedPlayer = nil
+  end
+
   countDown = countDown - dtSim
   if countDown <= 0 then
     countDown = countDown + recoveryPointTimedelta
@@ -170,15 +257,33 @@ local function updateGFXRecord(dtSim)
   end
 end
 
-local function stopRecovering(player)
-  material.forceReset() --here on purpurse, it get called a second type on key up and then it fixed what ever material was stuck
+local function cancelRecoveringPreview()
+  mpRecoveringRequestId = nil
+  recoveringBeginPending = false
+  stopRequested = false
+  stopRequestedPlayer = nil
   if M.updateGFX == updateGFXRecord then return end
+  material.forceReset()
   M.updateGFX = updateGFXRecord
-  --obj:setMeshNameAlpha(1, "", true) -- show everything again
+  obj:queueGameEngineLua(string.format("if core_recoveryCamera then core_recoveryCamera.endRecoveryCamera(%d) end", obj:getId()))
+  rewindPosition = false
+  pendingRecoveryPointAhead = false
+  lastRecoveryPoint.set = false
+end
+
+local function stopRecovering(player)
+  if M.recoveryHooksOnly then
+    obj:queueGameEngineLua('extensions.hook("onStopRecovering", 0)')
+    return
+  end
+  stopRequested = true
+  stopRequestedPlayer = player
+end
+
+local function afterStopRecovering(timer)
+  timer = tonumber(timer) or recoverTimer or 0
   obj:queueGameEngineLua('getObjectByID('..tostring(obj:getId())..'):resetBrokenFlexMesh()')
   obj:queueGameEngineLua('be.nodeGrabber:clearVehicleFixedNodes('..tostring(obj:getId())..')')
-  setRecoveryPoint(lastRecoveryPoint, true, nil, player)
-  lastRecoveryPoint = nil
   if M.recoveryPoints:is_empty() then
     guihooks.message("vehicle.recovery.end", 5, "recovery", "tow")
   else
@@ -189,61 +294,155 @@ local function stopRecovering(player)
     end
   end
   obj:queueGameEngineLua(string.format("if core_recoveryCamera then core_recoveryCamera.endRecoveryCamera(%d) end", obj:getId()))
-  obj:queueGameEngineLua("extensions.hook(\"onStopRecovering\", " .. recoverTimer .. ")")
+  obj:queueGameEngineLua("extensions.hook(\"onStopRecovering\", " .. timer .. ")")
+end
+
+local function finishStopRecovering()
+  material.forceReset() --here on purpurse, it get called a second type on key up and then it fixed what ever material was stuck
+  stopRequested = false
+  local player = stopRequestedPlayer
+  stopRequestedPlayer = nil
+
+  if pendingRecoveryPointAhead and not M.recoveryPoints:is_empty() then
+    M.recoveryPoints:pop_right()
+  end
+  pendingRecoveryPointAhead = false
+
+  if mpRecoveringRequestId then
+    if not lastRecoveryPoint.set then
+      cancelRecoveringPreview()
+      return
+    end
+    M.updateGFX = updateGFXRecord
+    rewindPosition = false
+
+    obj:queueGameEngineLua(string.format(
+      "if multiplayer_vehicleSync then multiplayer_vehicleSync.requestRecoveringCommit(%d, %d, vec3(%f,%f,%f), vec3(%f,%f,%f), vec3(%f,%f,%f), %s, %s, %s) end",
+      obj:getId(), mpRecoveringRequestId,
+      lastRecoveryPoint.pos.x, lastRecoveryPoint.pos.y, lastRecoveryPoint.pos.z,
+      lastRecoveryPoint.dirFront.x, lastRecoveryPoint.dirFront.y, lastRecoveryPoint.dirFront.z,
+      lastRecoveryPoint.dirUp.x, lastRecoveryPoint.dirUp.y, lastRecoveryPoint.dirUp.z,
+      tostring(useSmartSpawn), tostring(player), tostring(recoverTimer or 0)))
+
+    mpRecoveringRequestId = nil
+    lastRecoveryPoint.set = false
+    return
+  end
+
+  M.updateGFX = updateGFXRecord
   rewindPosition = false
+  if lastRecoveryPoint.set then
+    applyRecoveryPoint(lastRecoveryPoint, useSmartSpawn, nil, player)
+  end
+  lastRecoveryPoint.set = false
+  afterStopRecovering(recoverTimer)
 end
 
 local aabb
-local camOffsetVec = vec3(0,0,0.1)
 local p1, p2, t1, t2, backVec, tempVec = vec3(), vec3(), vec3(), vec3(), vec3(), vec3()
 local oobb = {vec3(), vec3(), vec3(), vec3()}
 local rot = quat()
+local recoveryCameraOffset = vec3()
+local recoveryCameraRot = quat()
+local recoveryCameraBasisRot = quat()
+local recoveryCameraInitialized = false
 local nodeRenderPositions = {}
 local nodeRenderPositionsUpToDate = {}
+
+local function initRecoveryCamera()
+  backVec:set(lastRecoveryPoint.dirFront)
+  backVec.z = 0
+  if backVec:squaredLength() < 1e-8 then
+    backVec:set(0, 1, 0)
+  else
+    backVec:normalize()
+  end
+
+  tempVec:setScaled2(backVec, -1)
+  recoveryCameraBasisRot:setFromDir(tempVec, upVector)
+  for i, point in ipairs(aabb) do
+    oobb[i]:setRotate(recoveryCameraBasisRot, point)
+  end
+
+  recoveryCameraOffset:set((push3(oobb[1])+oobb[4])/2 + push3(upVector) * (oobb[2].z-oobb[1].z) * 1.3 + (push3(oobb[3])-oobb[1]) * 1.5 + push3(tempVec))
+  tempVec:setScaled2(recoveryCameraOffset, -1)
+  recoveryCameraRot:setFromDir(tempVec, upVector)
+  recoveryCameraInitialized = true
+end
+
 local function updateGFXRecovery(dtSim)
+  if stopRequested then
+    finishStopRecovering()
+    return
+  end
+
   local dtReal = obj:getRealdt()
 
   recoverTimer = recoverTimer + dtReal
 
   if not rewindPosition and recoverTimer > rewindPositionDelay then
+    applyRecoveryPoint(lastRecoveryPoint, useSmartSpawn)
     aabb = constructAABB()
     rewindPosition = true
     obj:queueGameEngineLua(string.format("if core_recoveryCamera then core_recoveryCamera.beginRecoveryCamera(%d) end", obj:getId()))
-    snapshotTimeSmoother:set(1)
-    blendTime = 0
+    snapshotTimeSmoother:set(0.2)
+    rewindDistance = 0
+    recoverySpeedTimer = 0
+    recoveryCameraInitialized = false
     guihooks.message("vehicle.recovery.recovering", 5, "recovery", "tow")
   end
   if not rewindPosition then return end
 
-  blendTime = blendTime + dtReal
-  local snapshotTime = snapshotTimeSmoother:getUncapped(0.08, dtReal)
-  while blendTime > snapshotTime do
-    if M.recoveryPoints:is_empty() then break end
+  hydros.resetFFBSmoother()
+  local currentRecoverySpeed
+  if recoverySpeedTimer < slowRecoveryRampTime then
+    local rampProgress = recoverySpeedTimer / slowRecoveryRampTime
+    currentRecoverySpeed = initialRecoverySpeed + (slowRecoverySpeed - initialRecoverySpeed) * rampProgress
+  elseif recoverySpeedTimer < slowRecoveryRampTime + fastRecoveryRampTime then
+    local rampProgress = (recoverySpeedTimer - slowRecoveryRampTime) / fastRecoveryRampTime
+    currentRecoverySpeed = slowRecoverySpeed + (fastRecoverySpeed - slowRecoverySpeed) * rampProgress
+  else
+    currentRecoverySpeed = fastRecoverySpeed
+  end
+  recoverySpeedTimer = recoverySpeedTimer + dtReal
+  --print("Recovery speed: " .. tostring(currentRecoverySpeed) .. " m/s")
+  rewindDistance = rewindDistance + currentRecoverySpeed * dtReal
+  pendingRecoveryPointAhead = false
+  while not M.recoveryPoints:is_empty() do
     local lastRecoveredPoint = M.recoveryPoints:pop_right()  -- pop
 
     if M.recoveryPoints:is_empty() then
-      setRecoveryPoint(lastRecoveredPoint)
+      copyRecoveryPoint(lastRecoveredPoint)
+      break
     end
-    blendTime = math.max(blendTime - snapshotTime, 0)
+
+    local nextRecoveryPoint = M.recoveryPoints:peek_right()
+    local segmentDistanceSq = lastRecoveredPoint.pos:squaredDistance(nextRecoveryPoint.pos)
+    if segmentDistanceSq >= 400 then
+      copyRecoveryPoint(nextRecoveryPoint)
+      rewindDistance = 0
+      break
+    end
+
+    local segmentDistance = math.sqrt(segmentDistanceSq)
+    if segmentDistance <= 1e-4 then
+      copyRecoveryPoint(nextRecoveryPoint)
+    elseif rewindDistance >= segmentDistance then
+      rewindDistance = rewindDistance - segmentDistance
+      copyRecoveryPoint(nextRecoveryPoint)
+    else
+      M.recoveryPoints:push_right(lastRecoveredPoint)
+      blendRecoveryPoints(lastRecoveredPoint, nextRecoveryPoint, rewindDistance / segmentDistance)
+      pendingRecoveryPointAhead = rewindDistance > 1e-4
+      break
+    end
   end
   if M.recoveryPoints:is_empty() then
     stopRecovering()
+    finishStopRecovering()
     return
   end
-  local lastRecoveredPoint = M.recoveryPoints:pop_right()
-  local nextRecoveryPoint = M.recoveryPoints:peek_right()
-  M.recoveryPoints:push_right(lastRecoveredPoint)
-
-  if lastRecoveredPoint and nextRecoveryPoint then
-    if lastRecoveredPoint.pos:distance(nextRecoveryPoint.pos) < 20 then
-      local p = blendTime / snapshotTime
-      local bp = blendPoints(lastRecoveredPoint, nextRecoveryPoint, p)
-      setRecoveryPoint(bp)
-    else
-      setRecoveryPoint(nextRecoveryPoint)
-    end
-  end
-  if lastRecoveryPoint and aabb then
+  if lastRecoveryPoint.set and aabb then
     local dirFront = lastRecoveryPoint.dirFront
     local dirUp = lastRecoveryPoint.dirUp
 
@@ -279,25 +478,78 @@ local function updateGFXRecovery(dtSim)
       obj.debugDrawProxy:drawLine(nodeRenderPositions[beam.id1], nodeRenderPositions[beam.id2], debugColor)
     end
 
-    camPos:set((push3(oobb[1])+oobb[4])/2 + push3(upVector) * (oobb[2].z-oobb[1].z) * 1.3 + (push3(oobb[3])-oobb[1]) * 1.5 + push3(backVec))
-    tempVec:setSub2(dirFront, camOffsetVec)
-    camRot:setFromDir(tempVec, upVector)
+    if not recoveryCameraInitialized then
+      initRecoveryCamera()
+    end
+    camPos:setAdd2(lastRecoveryPoint.pos, recoveryCameraOffset)
+    camRot:set(recoveryCameraRot)
     obj:queueGameEngineLua(string.format("if core_recoveryCamera then core_recoveryCamera.setRecoveryCameraPosRot(%d, %.9g, %.9g, %.9g, %.9g, %.9g, %.9g, %.9g) end", obj:getId(), camPos.x, camPos.y, camPos.z, camRot.x, camRot.y, camRot.z, camRot.w))
   end
   --obj:setMeshNameAlpha(0.6, "", true) -- fade it away... need to be set here becouse sync issues with reset broken props
 end
 
-local function startRecovering(useAltMode)
+local function beginRecoveringPreview(useAltMode)
+  recoveringBeginPending = false
   if useAltMode == nil then useAltMode = false end
   if M.updateGFX == updateGFXRecovery then return end
   M.updateGFX = updateGFXRecovery
   recoverTimer = 0
+  recoveryCameraInitialized = false
+  pendingRecoveryPointAhead = false
   useSmartSpawn = useAltMode ~= settings.getValue('enableSmartRecovery', true)
 
-  local newRecoveryPoint = newRecoveryPoint()
-  setRecoveryPoint(newRecoveryPoint, false)
-  M.recoveryPoints:push_right(newRecoveryPoint)
+  local newPoint = newRecoveryPoint()
+  setRecoveryPoint(newPoint, false)
+  M.recoveryPoints:push_right(newPoint)
   obj:queueGameEngineLua("extensions.hook(\"onStartRecovering\")")
+end
+
+local function loadHome(moveTraffic)
+  if M.homePoint == nil then return end
+  local useSmart = settings.getValue('enableSmartRecovery', true)
+  obj:queueGameEngineLua(string.format(
+    "if multiplayer_vehicleSync then multiplayer_vehicleSync.requestLoadHome(%d, vec3(%f,%f,%f), vec3(%f,%f,%f), vec3(%f,%f,%f), %s, 0, %s) else be:queueObjectLua(%d, 'recovery.loadHomeLocal(%s)') end",
+    obj:getId(),
+    M.homePoint.pos.x, M.homePoint.pos.y, M.homePoint.pos.z,
+    M.homePoint.dirFront.x, M.homePoint.dirFront.y, M.homePoint.dirFront.z,
+    M.homePoint.dirUp.x, M.homePoint.dirUp.y, M.homePoint.dirUp.z,
+    tostring(useSmart),
+    tostring(moveTraffic),
+    obj:getId(), tostring(moveTraffic)))
+end
+
+local function loadHomeLocal(moveTraffic)
+  if M.homePoint == nil then return end
+  setRecoveryPoint(M.homePoint, true, moveTraffic)
+  guihooks.message("vehicle.recovery.loadHome", 5, "recovery")
+end
+
+local function startRecovering(useAltMode)
+  if M.recoveryHooksOnly then
+    obj:queueGameEngineLua('extensions.hook("onStartRecovering")')
+    return
+  end
+  if useAltMode == nil then useAltMode = false end
+  if M.updateGFX == updateGFXRecovery or recoveringBeginPending then return end
+  if not multiplayer then
+    beginRecoveringPreview(useAltMode)
+    return
+  end
+  recoveringBeginPending = true
+  stopRequested = false
+  stopRequestedPlayer = nil
+  obj:queueGameEngineLua(string.format(
+    "if multiplayer_vehicleSync then multiplayer_vehicleSync.requestRecoveringBegin(%d, %s) else be:queueObjectLua(%d, 'recovery.beginRecoveringPreview(%s)') end",
+    obj:getId(), tostring(useAltMode), obj:getId(), tostring(useAltMode)))
+end
+
+local function onRecoveringBeginAllowed(requestId, useAltMode)
+  mpRecoveringRequestId = requestId
+  beginRecoveringPreview(useAltMode == true or useAltMode == 'true')
+end
+
+local function onRecoveringBeginDenied()
+  recoveringBeginPending = false
 end
 
 local function recoverInPlace()
@@ -320,8 +572,15 @@ end
 M.init = init
 M.startRecovering = startRecovering
 M.stopRecovering = stopRecovering
+M.beginRecoveringPreview = beginRecoveringPreview
+M.onRecoveringBeginAllowed = onRecoveringBeginAllowed
+M.onRecoveringBeginDenied = onRecoveringBeginDenied
+M.cancelRecoveringPreview = cancelRecoveringPreview
 M.saveHome = saveHome
 M.loadHome = loadHome
+M.loadHomeLocal = loadHomeLocal
+M.mpApplyRecoveryPoint = mpApplyRecoveryPoint
+M.afterStopRecovering = afterStopRecovering
 M.onDeserialized = onDeserialized
 M.clear = clear
 M.recoverInPlace = recoverInPlace

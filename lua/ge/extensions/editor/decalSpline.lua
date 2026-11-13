@@ -22,13 +22,16 @@ local splineMgr = require('editor/decalSpline/splineMgr')
 local pop = require('editor/decalSpline/populate')
 local materialSelectionMgr = require('editor/toolUtilities/materialSelectionMgr')
 local input = require('editor/toolUtilities/splineInput')
-local render = require('editor/toolUtilities/render')
+local panCamera = require('editor/toolUtilities/panCamera')
+local rSpline = require('editor/toolUtilities/render/spline')
 local skeleton = require('editor/toolUtilities/skeleton')
 local rdp = require('editor/toolUtilities/rdp')
 local maskExport = require('editor/toolUtilities/splineMaskExport')
 local util = require('editor/toolUtilities/util')
 local geom = require('editor/toolUtilities/geom')
 local style = require('editor/toolUtilities/style')
+local session = require('editor/toolUtilities/session')
+local bake = require('editor/toolUtilities/bake')
 
 -- Register this tool with the shared spline input utilities.
 input.registerSplineTool(
@@ -56,6 +59,24 @@ local selectedComponentTab = 1
 local isGizmoActive = false
 local selectedSplineIdx, selectedNodeIdx = 1, 1
 local sliderPreEditState = nil
+
+-- Save/Load Session spec handed to the shared helper (toolUtilities/session): only these tool-specific hooks stay here.
+local sessionSpec = {
+  toolId = 'decalSpline',
+  displayName = 'Decal Spline',
+  itemNoun = 'decal splines',
+  getItems = splineMgr.getDecalSplines,
+  serializeItem = splineMgr.serializeDecalSplineToTable,
+  deserializeItem = function(t) return splineMgr.deserializeDecalSpline(t, true) end,
+  clearAll = function() splineMgr.removeAllDecalSplines(true) end,
+  deepCopyAll = splineMgr.deepCopyDecalSplineState,
+  transUndo = splineMgr.transSplineEditUndo,
+  transRedo = splineMgr.transSplineEditRedo,
+  refreshIdMap = splineMgr.recomputeIdMap,
+  onLoaded = function() selectedSplineIdx = 1 end,
+  iconColor = cols.blueB,
+  iconSize = iconsBig,
+}
 local out = {
   spline = selectedSplineIdx,
   node = selectedNodeIdx,
@@ -70,6 +91,19 @@ local function setSelectedSplineIdx(idx) selectedSplineIdx = idx end
 -- Sets the selected node index (for cross-tool selection).
 local function setSelectedNodeIdx(idx) selectedNodeIdx = idx end
 
+-- Locks/unlocks the decal spline with this id and rebuilds it now (also used by the Master Spline for linked children). Its
+-- decals save through the decal persistence manager either way, so the lock only makes the spline uneditable.
+local function setLockedById(id, isLocked)
+  local spline = splineMgr.getDecalSplines()[splineMgr.getSplineMap()[id]]
+  if not spline then return end
+  if isLocked and spline.isDirty then splineMgr.updateDirtyDecalSplines() end -- lock what the spline shows, not a stale build.
+  spline.isEnabled = not isLocked
+  spline.isDirty = true
+  splineMgr.updateDirtyDecalSplines()
+end
+
+local bakeSpec = { toolId = 'decalSpline', displayName = 'Decal Spline', setLockedById = setLockedById }
+
 -- Serialise callback.
 local function onSerialize()
   local decalSplines = splineMgr.getDecalSplines()
@@ -79,10 +113,13 @@ local function onSerialize()
   local decalSplinesSer = {}
   for i = 1, #decalSplines do
     local spline = decalSplines[i]
+    -- A locked spline's decals (and any hand edits) stay in the scene; it carries their uids across and takes them back.
+    if not spline.isEnabled then spline.keptObjects = pop.release(spline) end
     local data = splineMgr.serializeDecalSpline(spline)
+    spline.keptObjects = nil
     decalSplinesSer[#decalSplinesSer + 1] = data
   end
-  splineMgr.removeAllDecalSplines()
+  splineMgr.removeAllDecalSplines(true)
   return decalSplinesSer
 end
 
@@ -93,6 +130,10 @@ local function onDeserialized(data)
     table.clear(decalSplines)
     for i = 1, #data do
       local spline = splineMgr.deserializeDecalSpline(data[i], true)
+      if spline.keptObjects then
+        pop.adopt(spline, spline.keptObjects)
+        spline.keptObjects = nil
+      end
       decalSplines[#decalSplines + 1] = spline
     end
     selectedSplineIdx = max(1, min(#decalSplines, selectedSplineIdx))
@@ -104,19 +145,12 @@ end
 
 -- Handles the main tool window.
 local function handleMainToolWindowUI()
-  if editor.beginWindow(toolWinName, "Decal Spline###1144", im.WindowFlags_NoCollapse) then
+  if editor.beginWindow(toolWinName, session.windowTitle(sessionSpec.toolId, "Decal Spline", "1144"), im.WindowFlags_NoCollapse) then
     local icons = editor.icons
     local decalSplines = splineMgr.getDecalSplines()
     selectedSplineIdx = max(1, min(#decalSplines, selectedSplineIdx)) -- Ensure the selected spline index is within bounds.
 
-    -- Top buttons row.
-    im.Columns(6, "topMasterButtonsRow", false)
-    im.SetColumnWidth(0, 39)
-    im.SetColumnWidth(1, 39)
-    im.SetColumnWidth(2, 39)
-    im.SetColumnWidth(3, 39)
-    im.SetColumnWidth(4, 39)
-    im.SetColumnWidth(5, 39)
+    -- Top buttons row (inline: plain im.SameLine sequence, Dummy holds slots for unavailable buttons).
     im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(2, 2))
     im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
 
@@ -129,7 +163,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip('Add a new decal spline.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Import From Bitmap Mask' button.
     if editor.uiIconImageButton(icons.floppyDiskPlus, iconsBig, cols.blueB, nil, nil, 'importFromBitmapMaskBtn') then
@@ -150,7 +183,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip('Import decal splines from a bitmap mask.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Remove All Decal Splines' button.
     if #decalSplines > 0 then
@@ -165,7 +197,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Lock Shape' toggle button.
     local selSpline = decalSplines[selectedSplineIdx]
@@ -179,7 +210,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Export Spline Mask' button.
     if #decalSplines > 0 then
@@ -199,7 +229,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- Save Decal State button.
     if #decalSplines > 0 then
@@ -210,7 +239,17 @@ local function handleMainToolWindowUI()
     else
       im.Dummy(iconsBig)
     end
-    im.NextColumn()
+    im.SameLine()
+
+    -- Pan camera toggle (top-down RMB-drag pan + wheel zoom, shared across the spline tools).
+    if editor.uiIconImageButton(icons.videocam, iconsBig, panCamera.isOn() and cols.blueB or cols.blueD, nil, nil, 'panCamBtn') then
+      panCamera.toggle()
+    end
+    im.tooltip(panCamera.isOn() and 'Pan camera ON: top-down, RMB-drag to move, wheel to zoom. Click for the free camera.' or 'Pan camera: top-down view, RMB-drag pan + wheel zoom.')
+    im.SameLine()
+
+    -- 'Save Session' / 'Load Session' (+ Replace/Merge modal) via the shared helper -- end of the row.
+    session.renderButtons(sessionSpec)
 
     im.PopStyleVar(2)
     im.Columns(1)
@@ -290,13 +329,10 @@ local function handleMainToolWindowUI()
             local btnCol = spline.isEnabled and cols.blueB or cols.blueD
             local btnIcon = spline.isEnabled and icons.lock or icons.lock_open
             if editor.uiIconImageButton(btnIcon, iconsSmall, btnCol, nil, nil, 'lockUnlockDecalSplineToggleBtn' .. i) then
-              local statePre = splineMgr.deepCopyDecalSpline(spline)
-              spline.isEnabled = not spline.isEnabled
-              spline.isDirty = true
+              bake.setLocked(bakeSpec, spline, spline.isEnabled)
               selectedSplineIdx = i
-              editor.history:commitAction("Toggle Decal Spline Lock", { old = statePre, new = splineMgr.deepCopyDecalSpline(spline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
             end
-            im.tooltip((spline.isEnabled and 'Disable' or 'Enable') .. ' this decal spline.')
+            im.tooltip(spline.isEnabled and 'Lock this decal spline (its decals stay as they are and are uneditable).' or 'Unlock this decal spline: its decals become editable again (hand edits are reset).')
           else
             im.Dummy(iconsSmall)
           end
@@ -322,7 +358,7 @@ local function handleMainToolWindowUI()
       -- 'Go To Selected Spline' button.
       if selSpline.nodes and #selSpline.nodes > 1 then
         if editor.uiIconImageButton(icons.cameraFocusTopDown, iconsBig, cols.blueB, nil, nil, 'goToSelectedSplineBtn') then
-          util.goToSpline(selSpline.divPoints)
+          if not panCamera.gotoPoints(selSpline.divPoints) then util.goToSpline(selSpline.divPoints) end
         end
         im.tooltip('Go to this decal spline (move camera).')
       else
@@ -523,8 +559,8 @@ local function handleMainToolWindowUI()
           absPath = (string.find(absPath, "/") ~= nil and absPath or (mat:getPath() .. absPath))
         end
         local texObj = materialSelectionMgr.getTexObj(absPath)
-        if texObj and texObj.texId then
-          im.Image(texObj.texId, iconsSmall)
+        if texObj and texObj.tex then
+          im.Image(texObj.tex:getID(), iconsSmall)
         else
           im.Dummy(iconsSmall)
         end
@@ -573,8 +609,8 @@ local function handleMainToolWindowUI()
           absPath = (string.find(absPath, "/") ~= nil and absPath or (mat:getPath() .. absPath))
         end
         local texObj = materialSelectionMgr.getTexObj(absPath)
-        if texObj and texObj.texId then
-          im.Image(texObj.texId, iconsSmall)
+        if texObj and texObj.tex then
+          im.Image(texObj.tex:getID(), iconsSmall)
         else
           im.Dummy(iconsSmall)
         end
@@ -623,8 +659,8 @@ local function handleMainToolWindowUI()
           absPath = (string.find(absPath, "/") ~= nil and absPath or (mat:getPath() .. absPath))
         end
         local texObj = materialSelectionMgr.getTexObj(absPath)
-        if texObj and texObj.texId then
-          im.Image(texObj.texId, iconsSmall)
+        if texObj and texObj.tex then
+          im.Image(texObj.tex:getID(), iconsSmall)
         else
           im.Dummy(iconsSmall)
         end
@@ -673,8 +709,8 @@ local function handleMainToolWindowUI()
           absPath = (string.find(absPath, "/") ~= nil and absPath or (mat:getPath() .. absPath))
         end
         local texObj = materialSelectionMgr.getTexObj(absPath)
-        if texObj and texObj.texId then
-          im.Image(texObj.texId, iconsSmall)
+        if texObj and texObj.tex then
+          im.Image(texObj.tex:getID(), iconsSmall)
         else
           im.Dummy(iconsSmall)
         end
@@ -1632,12 +1668,15 @@ local function onEditorGui()
 
   -- If this tool is not active, render the shells of the splines but do nothing further.
   if not isDecalSplineActive then
-    render.renderShells(splineMgr.getDecalSplines())
+    rSpline.renderShells(splineMgr.getDecalSplines())
     return
   end
 
   -- Handle the main tool window UI.
   handleMainToolWindowUI()
+
+  -- Drive the pan camera when it's on (blocked during node / gizmo drag so they don't fight).
+  if panCamera.isOn() then panCamera.drive(input.isDragging()) end
 
   -- Handle the material selection UI.
   local splines = splineMgr.getDecalSplines()
@@ -1665,8 +1704,8 @@ local function onEditorGui()
   -- Render the decal splines (only if not linked to master spline).
   local selSpline = splines[out.spline]
   if selSpline then
-    render.handleSplineRendering(splines, out.spline, out.node, isGizmoActive, false, isLockShape, false, false, elevScale)
-    render.renderSplinePolylines(splines, out.spline)
+    rSpline.handleSplineRendering(splines, out.spline, out.node, isGizmoActive, false, isLockShape, false, false, elevScale)
+    rSpline.renderSplinePolylines(splines, out.spline)
   end
 end
 
@@ -1675,11 +1714,16 @@ local function onActivate()
   editor.clearObjectSelection()
   editor.showWindow(toolWinName)
   isDecalSplineActive = true
+  panCamera.configure({ focusProvider = function()
+    local s = splineMgr.getDecalSplines()[selectedSplineIdx]
+    return s and s.divPoints
+  end })
 end
 
 -- Called when the tool is exited.
 local function onDeactivate()
   editor.hideWindow(toolWinName)
+  panCamera.close()
   isDecalSplineActive = false
 end
 
@@ -1703,9 +1747,11 @@ local function onClientEndMission()
 end
 
 
+
 -- Public interface.
 M.setSelectedSplineIdx =                                  setSelectedSplineIdx
 M.setSelectedNodeIdx =                                    setSelectedNodeIdx
+M.setLockedById =                                         setLockedById
 
 M.onSerialize =                                           onSerialize
 M.onDeserialized =                                        onDeserialized

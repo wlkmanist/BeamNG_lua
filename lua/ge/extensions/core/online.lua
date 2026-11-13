@@ -225,7 +225,7 @@ local function callbackSecureCommCppProgress(id, dltotal, dlnow, ultotal, ulnow,
 end
 
 -- example usage:
--- core_online.apiCall('s1/v1/getMods?query=&order_by=&order=&page=1', function(...) dump(...) end)
+-- core_online.apiCall('s1/v4/getMods?query=&order_by=&order=&page=1', function(...) dump(...) end)
 
 
 -- this enables the online features to be dynamically enabled/disabled

@@ -3,7 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = {"ui_imgui"}
+M.dependencies = {"ui_imgui", "core_vehicle_configTarget"}
 local im = ui_imgui
 local mrad = math.rad
 
@@ -20,6 +20,14 @@ local windowOpen = im.BoolPtr(false)
 local initialWindowSize = im.ImVec2(300, 100)
 local imguiSliderData = {}
 local imguiMirrordata
+
+local function resolveVehicle(vehicle)
+  return vehicle or extensions.core_vehicle_configTarget.resolveVehicle()
+end
+
+local function resolvePlayer()
+  return extensions.core_vehicle_configTarget.getTargetPlayerId() or 0
+end
 
 local function settingsSave()
   jsonWriteFile("/settings/mirrorOffsets.json", offsetData, true)
@@ -63,7 +71,8 @@ end
 
 
 local function getAnglesOffset(vid, v)
-  local veh = v or getPlayerVehicle(0)
+  local veh = resolveVehicle(v)
+  if not veh then return {} end
   if vid == nil then vid= veh:getId() end
   local vdata = extensions.core_vehicle_manager.getVehicleData(vid)
   if not vdata or not vdata.vdata or not vdata.vdata.mirrors then return {} end
@@ -108,7 +117,8 @@ local function getAnglesOffset(vid, v)
 end
 
 local function setAngleOffset(mirrorName, x, z, v, save)
-  local veh = v or getPlayerVehicle(0)
+  local veh = resolveVehicle(v)
+  if not veh then return end
   local vid = veh:getId()
   local vdata = extensions.core_vehicle_manager.getVehicleData(vid)
   if not vdata or not vdata.vdata or not vdata.vdata.mirrors then log("E","setO","no veh data"); return end
@@ -238,21 +248,25 @@ local function vehicleEvent( evtType, vid, mirror_name )
 end
 
 local function focusOnMirror(mirror_name)
-  local veh = v or getPlayerVehicle(0)
+  local veh = resolveVehicle()
+  if not veh then return end
+  local player = resolvePlayer()
   local vid = veh:getId()
   local vdata = extensions.core_vehicle_manager.getVehicleData(vid)
   local camData = core_camera.getCameraDataById(vid)
-  if not camData or not camData.driver then
+  local cameraName = core_camera.getDriverCameraNameById(vid) or "driver"
+  local camera = camData and camData[cameraName]
+  if not camera then
     log("E","focus", "invalid camera data")
     return
   end
 
-  if core_camera.getActiveCamName() ~= "driver" then
-    core_camera.setByName(0, "driver", false)
+  if core_camera.getActiveCamName(player) ~= cameraName then
+    core_camera.setByName(player, cameraName, false)
   end
   if not mirror_name then
-    camData.driver.relativeYaw = yawBeforeFocus or 0
-    camData.driver.relativePitch = pitchBeforeFocus or 0
+    camera.relativeYaw = yawBeforeFocus or 0
+    camera.relativePitch = pitchBeforeFocus or 0
     yawBeforeFocus = nil
   end
   if not vdata or not vdata.vdata or not vdata.vdata.mirrors then log("E","setO","no veh data"); return end
@@ -260,14 +274,9 @@ local function focusOnMirror(mirror_name)
   local viewFrustum = Engine.sceneGetCameraFrustum()
   for i in pairs(vdata.vdata.mirrors) do
     if vdata.vdata.mirrors[i].mesh == mirror_name then
-      local camData = core_camera.getCameraDataById(vid)
-      if not camData or not camData.driver then
-        log("E","focus", "invalid camera data")
-        return
-      end
       if not yawBeforeFocus then
-        yawBeforeFocus = camData.driver.relativeYaw
-        pitchBeforeFocus = camData.driver.relativePitch
+        yawBeforeFocus = camera.relativeYaw
+        pitchBeforeFocus = camera.relativePitch
       end
 
       local mpos = veh:getInitialNodePosition(vdata.vdata.mirrors[i].idRef)
@@ -277,8 +286,8 @@ local function focusOnMirror(mirror_name)
         local rot = quatFromDir( (camPos-mpos) , vec3(0,0,1) )
         local eu = rot:toEulerYXZ()
 
-        camData.driver.relativeYaw = eu.x/math.pi
-        camData.driver.relativePitch = -eu.y
+        camera.relativeYaw = eu.x/math.pi
+        camera.relativePitch = -eu.y
       end
       break
     end

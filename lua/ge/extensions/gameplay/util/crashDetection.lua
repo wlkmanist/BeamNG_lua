@@ -641,11 +641,14 @@ local function addTrackedVehicleById(vehId_, crashSettings, owner)
     --log('W', 'crashDetection', "Didn't find vehicle with id " .. vehId_)
     return
   end
+
+  local vehObj = scenetree.findObjectById(vehId_)
+  if not vehObj then return end
   -- can make the crash detection more sensitive by tweaking these values
   local crashSettings = crashSettings or {}
-  crashSettings.minAccel = 0
+  crashSettings.minAccel = crashSettings.minAccel or 0
   crashSettings.maxAccel = crashSettings.maxAccel or 100
-  crashSettings.minDamage = 150
+  crashSettings.minDamage = crashSettings.minDamage or 150
   crashSettings.maxDamage = crashSettings.maxDamage or 5000
   crashSettings.verticallyUnweighted = crashSettings.verticallyUnweighted or false
   crashSettings.minVelocity = crashSettings.minVelocity or 1
@@ -689,7 +692,7 @@ local function addTrackedVehicleById(vehId_, crashSettings, owner)
     owner = owner or "unknown",
     crashSettings = crashSettings,
     lastFrameDamage = vehMapObject.damage or 0,
-    lastFrameDamageSum = scenetree.findObjectById(vehId_):getSectionDamageSum() or 0,
+    lastFrameDamageSum = vehObj:getSectionDamageSum() or 0,
     totalPreImpactDamage = 0,
     totalCurrentImpactDamage = 0,
     mightBeCrashing = false,

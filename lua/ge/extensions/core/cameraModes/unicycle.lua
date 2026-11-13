@@ -151,6 +151,7 @@ local function getRotVecFromFrontUp(front, up)
 end
 
 function C:setCustomData(customData)
+  if not customData then return end
   --TODO teleport vehicle to new position
   if customData.pos then
     self.pos = getEyePosition(customData.pos)
@@ -172,7 +173,7 @@ end
 function C:update(data)
   local dt = data.dtSim
   if not self.rotVec then
-    local veh = getPlayerVehicle(0)
+    local veh = data.veh
     self:setCustomData({pos=data.pos, front=veh:getDirectionVector(), up=veh:getDirectionVectorUp()})
   end
   --if self.pos == nil then
@@ -236,21 +237,18 @@ function C:update(data)
   end
 
   local rot = rotateEuler(-math.rad(self.rotVec.x), -math.rad(self.rotVec.y), math.rad(self.rotVec.z))
-  local rotHorizontal = rotateEuler(-math.rad(self.rotVec.x), -math.rad(180), math.rad(self.rotVec.z))
 
-  local camNodeID = core_camera.getDriverData(data.veh)
+  local ctxId = core_camera.getContextIdForPlayer(data.player)
+  local camNodeID = core_camera.getDriverData(data.veh, ctxId)
   local nodePos = vec3(data.veh:getNodePosition(camNodeID or 0))
   local carPos = data.pos
   self.pos = carPos + nodePos
 
-
-
-  -- application
   data.res.pos = self.pos
   data.res.rot = rot
 
   -- unicycle guiding
-  data.veh:queueLuaCommand("controller.getControllerSafe('playerController').setCameraControlData("..serialize({cameraRotation = rotHorizontal})..")")
+  data.veh:queueLuaCommand("controller.getControllerSafe('playerController').setCameraControlData("..serialize({cameraRotation = rot})..")")
   return true
 end
 

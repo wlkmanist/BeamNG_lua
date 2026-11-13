@@ -162,7 +162,16 @@ local function updateSimpleControlButtons(device)
     else
       modeIconLookup = {connected = "powertrain_shaft_connected", disconnected = "powertrain_shaft_disconnected"}
     end
-    extensions.ui_simplePowertrainControl.setButton("powertrain_device_mode_shortcut_" .. device.name, device.uiName, modeIconLookup[device.mode], nil, nil, string.format("powertrain.toggleDeviceMode(%q)", device.name))
+    extensions.ui_simplePowertrainControl.setButton(
+      "powertrain_device_mode_shortcut_" .. device.name,
+      device.uiName,
+      modeIconLookup[device.mode],
+      nil,
+      nil,
+      string.format("powertrain.toggleDeviceMode(%q)", device.name),
+      nil,
+      device.mode ~= device.defaultMode
+    )
   end
 end
 
@@ -183,6 +192,22 @@ local function setMode(device, mode)
   end
   selectUpdates(device)
   device:updateSimpleControlButtons()
+end
+
+local function getState(device)
+  device.stateData[device.stateDataNameMode] = device.mode
+  return device.stateData
+end
+
+local function setState(device, data)
+  if not data then
+    return
+  end
+
+  local newMode = data[device.stateDataNameMode]
+  if type(newMode) == "string" and newMode ~= device.mode then
+    device:setMode(newMode)
+  end
 end
 
 local function onBreak(device)
@@ -321,6 +346,14 @@ local function new(jbeamData)
   else
     device.availableModes = {"connected"}
     device.mode = "connected"
+  end
+  device.defaultMode = device.mode
+
+  if #device.availableModes > 1 then
+    device.stateData = {}
+    device.stateDataNameMode = device.name .. "Mode"
+    device.getState = getState
+    device.setState = setState
   end
 
   device.breakTriggerBeam = jbeamData.breakTriggerBeam

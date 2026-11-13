@@ -4,7 +4,11 @@
 
 local M = {}
 
-M.dependencies = {"core_vehicle_manager"}
+M.dependencies = {
+  "core_vehicle_manager",
+  "core_vehicle_configTarget",
+  "util_screenshotCreator_currentConfigThumbnail"
+}
 
 local TEMP_THUMBNAIL_DIR = "/screenshots/vehicleConfigTemp"
 local PREVIEW_READY_HOOK = "VehicleConfigThumbnailPreviewReady"
@@ -52,7 +56,7 @@ local function normalizePath(path)
 end
 
 local function getCurrentConfigName()
-  local playerVehicle = getPlayerVehicle(0)
+  local playerVehicle = extensions.core_vehicle_configTarget.resolveVehicle()
   if not playerVehicle then
     return nil
   end
@@ -79,23 +83,28 @@ local function generateThumbnail(configName, outputPath, doneHook, completionCal
     return false
   end
 
-  local workOptions = {
-    selection = normalizedConfigName,
-    configName = normalizedConfigName,
-  }
-  if type(outputPath) == "string" and outputPath ~= "" then
-    workOptions.outputPath = outputPath
+  local vehicle = extensions.core_vehicle_configTarget.resolveVehicle()
+  if not vehicle then return false end
+  local targetPath = outputPath
+  if type(targetPath) ~= "string" or targetPath == "" then
+    targetPath = string.format("vehicles/%s/%s.jpg", vehicle.jbeam or vehicle.JBeam, normalizedConfigName)
   end
-  if type(doneHook) == "string" and doneHook ~= "" then
-    workOptions.onDoneHook = doneHook
-  end
-  if type(completionCallback) == "function" then
-    workOptions.internalCompletionCallback = completionCallback
-    workOptions.completionToken = completionToken
-  end
-
-  local started = extensions.util_screenshotCreator.startWork(workOptions)
-  return started == nil and true or started
+  ensureDirectory(getDirectory(targetPath))
+  local started = util_screenshotCreator_currentConfigThumbnail.start(
+    vehicle,
+    normalizedConfigName,
+    targetPath,
+    function(success, capturedPath, token)
+      if type(doneHook) == "string" and doneHook ~= "" then
+        guihooks.trigger(doneHook, success == true, capturedPath)
+      end
+      if type(completionCallback) == "function" then
+        completionCallback(success == true, capturedPath, token)
+      end
+    end,
+    completionToken
+  )
+  return started == true
 end
 
 local function generateConfigThumbnail(configName)

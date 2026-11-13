@@ -44,6 +44,22 @@ local loopToolbox = nil
 
 local rallyLoopManager = nil
 local streamData = nil
+local suppressedCountdownStreamData = {}
+
+local function getUiStreamData(data)
+  if not data or data.activeState ~= RallyUtil.activeState_countdown then return data end
+  local countdownDisplay = settings.getValue('rallyStartCountdownDisplay')
+  if countdownDisplay == '2d' then return data end
+  if countdownDisplay == '3d' and not (gameplay_rallyStartClock and gameplay_rallyStartClock.isRenderViewAvailable and gameplay_rallyStartClock.isRenderViewAvailable()) then return data end
+
+  table.clear(suppressedCountdownStreamData)
+  for key, value in pairs(data) do
+    suppressedCountdownStreamData[key] = value
+  end
+  suppressedCountdownStreamData.activeState = RallyUtil.activeState_inactive
+  suppressedCountdownStreamData.countdownData = nil
+  return suppressedCountdownStreamData
+end
 
 local function setup(missionId, missionDir)
   rallyLoopManager = RallyLoopManager(missionId, missionDir)
@@ -91,12 +107,12 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     -- Send stream data to UI
     streamData = rallyLoopManager:getStreamData()
     if streamData then
-      guihooks.queueStream("rallyLoop", streamData)
+      guihooks.queueStream("rallyLoop", getUiStreamData(streamData))
     end
   else
     StandaloneFallbackStream.updateClock(dtSim or 0)
     streamData = StandaloneFallbackStream.getStreamData()
-    guihooks.queueStream("rallyLoop", streamData)
+    guihooks.queueStream("rallyLoop", getUiStreamData(streamData))
   end
 
   -- gcprobe()

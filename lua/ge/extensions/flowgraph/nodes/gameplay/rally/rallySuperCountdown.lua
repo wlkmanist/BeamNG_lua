@@ -752,6 +752,14 @@ function C:monitorCountdown()
   end
 end
 
+function C:finishCountdownImmediately()
+  self:enableRallyManagerPacenoteProcessing()
+  self:unfreezeVehicle()
+  self.state = STATE_FINISHED
+  self.flags.finished = true
+  self.pinOut.flow.value = true
+end
+
 function C:isOriginalSchedule()
   return self.rescheduleCount == 0
 end
@@ -862,7 +870,7 @@ function C:updateCountdownStateMachine()
     end
 
     local old = math.floor(self.timer)
-    self.timer = self.timer - self.mgr.dtSim
+    self.timer = self.scheduledEventTime - currentEpochTime
 
     if self.timer <= 0 then
       -- Countdown finished normally - transition to STATE_LAUNCHED
@@ -1128,7 +1136,11 @@ function C:work(args)
     self:startTimer()
   end
 
-  self:updateCountdownStateMachine()
+  if core_flowgraphManager.skipCountdowns and self.startTimerAttempted and not self:isFlowActive() then
+    self:finishCountdownImmediately()
+  else
+    self:updateCountdownStateMachine()
+  end
   self:drawDebugVisualization()
 
   -- Cache skip availability (used multiple times below)
@@ -1164,30 +1176,33 @@ function C:work(args)
     -- Determine active state based on countdown state
     local currentActiveState = rallyUtil.activeState_vehicleProximity
     local countdownData = nil
+    local timeUntilLaunch
+
+    if self.state == STATE_LAUNCHED then
+      timeUntilLaunch = 0
+    elseif self.state == STATE_COUNTDOWN_RUNNING then
+      timeUntilLaunch = self.timer
+    else
+      timeUntilLaunch = self.scheduledEventTime - (self:getCurrentEpochTime() or 0)
+    end
+    timeUntilLaunch = math.max(0, timeUntilLaunch)
+
+    local startClockCountdownData = {
+      countdown = math.ceil(timeUntilLaunch),
+      timeUntilLaunch = timeUntilLaunch,
+      state = self.state
+    }
 
     if self.state == STATE_COUNTDOWN_ARMED or self.state == STATE_COUNTDOWN_RUNNING or self.state == STATE_LAUNCHED then
       currentActiveState = rallyUtil.activeState_countdown
-
-      -- Prepare countdown data (just the countdown value - clock data is in rallyClock)
-      local countdownValue
-      if self.state == STATE_LAUNCHED then
-        countdownValue = 0  -- Send 0 to trigger green GO in UI
-      elseif self.state == STATE_COUNTDOWN_RUNNING then
-        countdownValue = math.ceil(self.timer)
-      else
-        countdownValue = math.ceil(self.scheduledEventTime - (self:getCurrentEpochTime() or 0))
-      end
-
-      countdownData = {
-        countdown = countdownValue,
-        state = self.state
-      }
+      countdownData = startClockCountdownData
     end
 
     -- Send to Lua extensions
     local updateData = {
       activeState = currentActiveState,
-      vehicleProximity = proximityData
+      vehicleProximity = proximityData,
+      startClockCountdownData = startClockCountdownData
     }
 
     if countdownData then

@@ -3,15 +3,28 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
+M.dependencies = {"ui_imguiUtils"}
 local logTag = 'groundmodel_debug'
 
 local im = ui_imgui
 
 local windowOpen = im.BoolPtr(false)
+local minWindowSize = im.ImVec2(0, 0)
+local maxWindowSize = im.ImVec2(math.huge, math.huge)
+local spawnFrames = 0 -- min size is only enforced for the first frames, long enough to outlast imgui's initial auto-fit
 
 local groundModels = {}
+local altTheme = im.BoolPtr(false)
+local listAll = im.BoolPtr(false)
+local allVisible = im.IntPtr(0) -- CheckboxFlags value: 0 none, 1 mixed, 3 all
+local seen = {} -- groundmodels that had tris since the window was closed or static was unticked
+local grayText = im.ImVec4(0.5, 0.5, 0.5, 1)
+local iconAtlasInfo, iconAtlasTex -- editor icon atlas, loaded on demand so it works without the world editor
+local iconP1, iconP2, iconUv1, iconUv2 = im.ImVec2(0, 0), im.ImVec2(0, 0), im.ImVec2(0, 0), im.ImVec2(0, 0)
+local sectionFlags = bit.bor(im.TreeNodeFlags_DefaultOpen, im.TreeNodeFlags_NoTreePushOnOpen)
 local groundDebug = im.BoolPtr(false)
 local staticDebug = im.BoolPtr(false)
+local staticColPosShrink = im.FloatPtr(0)
 local debugtype = -1
 
 -- Collision density related variables
@@ -32,7 +45,7 @@ local groundModelPath = "/art/groundmodels.json"
 local settingsPath = "settings/editor/groundModelDebug_settings.json"
 
 local gms
-local vgmk -- visible ground model keys
+local envGroundModels
 
 local collisiontype = im.IntPtr(0)
 
@@ -55,13 +68,16 @@ local function serializeSettings()
   tbl.options.colDensityTileCount = colDensityTileCount[0]
   tbl.options.colDensityTileSize = colDensityTileSize[0]
   tbl.options.colDensityShowText = colDensityShowText[0]
+  tbl.options.altTheme = altTheme[0]
+  tbl.options.listAll = listAll[0]
+  tbl.options.staticColPosShrink = staticColPosShrink[0]
   jsonWriteFile(settingsPath, tbl, true)
 end
 
 local function deserializeSettings()
   local tbl = jsonReadFile(settingsPath)
   if tbl then
-    for name, color in pairs(tbl.colors) do
+    for name, color in pairs(tbl.colors or {}) do
       if groundModels[name] then
         groundModels[name].color = im.ArrayFloatByTbl(color)
       end
@@ -75,11 +91,32 @@ local function deserializeSettings()
       colDensityTileCount[0] = tbl.options.colDensityTileCount or 50
       colDensityTileSize[0] = tbl.options.colDensityTileSize or 5
       colDensityShowText[0] = tbl.options.colDensityShowText ~= false
+      altTheme[0] = tbl.options.altTheme == true
+      listAll[0] = tbl.options.listAll == true
+      staticColPosShrink[0] = tbl.options.staticColPosShrink or 0
+      Engine.setStaticColDebugPosShrink(staticColPosShrink[0])
     end
   end
 end
 
+local function themeColor(count, i)
+  if altTheme[0] then
+    local r, g, b = HSVtoRGB(indexedBlueNoise(i), 1, 1)
+    return {r, g, b, 1}
+  end
+  return rainbowColor(count, i, 1)
+end
+
+local function applyTheme()
+  for i, k in ipairs(gms) do
+    groundModels[k].color = im.ArrayFloatByTbl(themeColor(#gms, i))
+  end
+end
+
 local function setup()
+  envGroundModels = core_environment.groundModels -- core_environment replaces this table whenever it reloads groundmodels (e.g. on level load)
+  table.clear(groundModels)
+  table.clear(seen)
   local i = 1
   local groundModelSize = tableSize(core_environment.groundModels)
 
@@ -88,7 +125,7 @@ local function setup()
 
   for _, k in ipairs(gms) do
     local v = core_environment.groundModels[k]
-    groundModels[k] = {data = v.cdata, isAlias = v.isAlias, parent = v.parent, aliases = {}, active = im.BoolPtr(true), color = im.ArrayFloatByTbl(rainbowColor(groundModelSize, i, 1))}
+    groundModels[k] = {data = v.cdata, isAlias = v.isAlias, parent = v.parent, aliases = {}, active = im.BoolPtr(true), color = im.ArrayFloatByTbl(themeColor(groundModelSize, i))}
     groundModels[k].cdata = {}
     groundModels[k].cdata.collisiontype = im.IntPtr(v.cdata.collisiontype)
     groundModels[k].cdata.defaultDepth = im.FloatPtr(v.cdata.defaultDepth)
@@ -131,30 +168,39 @@ local function setValue(name, gm, type, val)
 end
 
 local function saveGroundmodels()
+  local materials = require("particles").getMaterialsParticlesTable()
   local data = {}
   for k,v in pairs(groundModels) do
-    data[k] = {}
-    for propertyName, propertyVal in pairs(v.cdata) do
-      data[k][propertyName] = propertyVal[0]
+    if not v.isAlias then
+      data[k] = {}
+      for propertyName, propertyVal in pairs(v.cdata) do
+        data[k][propertyName] = propertyVal[0]
+      end
+      local material = materials[data[k].collisiontype]
+      data[k].collisiontype = material and material.name or nil
+      if #v.aliases > 0 then data[k].aliases = v.aliases end
     end
   end
   dump(data)
   jsonWriteFile(groundModelPath, data, true)
 end
 
-local function drawGroundModel(visibleGroundModels, debugtype, focusPos, gmName, gm)
+local function drawGroundModel(visibleGroundModels, debugtype, focusPos, gmName, gm, countOnly)
   local col = ColorF(gm.color[0], gm.color[1], gm.color[2], 1)
   local drawn = 0
   if debugtype >= 0 then
-    drawn = drawn + debugDrawer:renderGroundModelDebug(debugtype, gmName, col, distance[0], tileSize[0], focusPos, depthScale[0])
+    drawn = drawn + debugDrawer:renderGroundModelDebug(debugtype, gmName, col, distance[0], tileSize[0], focusPos, depthScale[0], countOnly)
   end
   if staticDebug[0] then
-    drawn = drawn + debugDrawer:renderStaticColDebug(debugtype, gmName, col, distance[0], tileSize[0], focusPos, depthScale[0])
+    drawn = drawn + debugDrawer:renderStaticColDebug(debugtype, gmName, col, distance[0], tileSize[0], focusPos, depthScale[0], countOnly)
   end
   if drawn > 0 then
     if groundModels[gmName].isAlias == true then gmName = groundModels[gmName].parent end
-    if not visibleGroundModels[gmName] then visibleGroundModels[gmName] = 0 end
-    visibleGroundModels[gmName] = visibleGroundModels[gmName] + drawn
+    seen[gmName] = true
+    if not countOnly then
+      if not visibleGroundModels[gmName] then visibleGroundModels[gmName] = 0 end
+      visibleGroundModels[gmName] = visibleGroundModels[gmName] + drawn
+    end
   end
 end
 
@@ -162,10 +208,30 @@ local function openWindow()
   windowOpen[0] = true
 end
 
+-- the imgui fonts have no emoji glyphs, so draw an editor atlas icon into the padded start of the button
+local function iconButton(iconName, label)
+  if not iconAtlasInfo then
+    iconAtlasInfo = jsonReadFile("/core/art/gui/images/iconAtlas.json")
+    iconAtlasTex = ui_imguiUtils.texObj("/core/art/gui/images/iconAtlas.png").tex
+  end
+  local size = im.GetTextLineHeight()
+  local padding = string.rep(" ", math.ceil(size / im.CalcTextSize(" ").x) + 1)
+  local pressed = im.SmallButton(padding .. label)
+  local icon = iconAtlasInfo.icons[iconName]
+  local pos = im.GetItemRectMin()
+  iconP1.x, iconP1.y = pos.x + im.GetStyle().FramePadding.x, pos.y
+  iconP2.x, iconP2.y = iconP1.x + size, iconP1.y + size
+  iconUv1.x, iconUv1.y = icon.x / iconAtlasInfo.atlasWidth, icon.y / iconAtlasInfo.atlasHeight
+  iconUv2.x, iconUv2.y = (icon.x + 48) / iconAtlasInfo.atlasWidth, (icon.y + 48) / iconAtlasInfo.atlasHeight
+  im.ImDrawList_AddImage(im.GetWindowDrawList(), iconAtlasTex:getID(), iconP1, iconP2, iconUv1, iconUv2, im.GetColorU321(im.Col_Text))
+  return pressed
+end
+
 local timeToNextDrawCount = 0
 local axisToDraw = false -- x axis, vs y axis
 local function onUpdate(dt)
   if windowOpen[0] ~= true then return end
+  if core_environment.groundModels ~= envGroundModels then setup() end
 
   -- mouse
   local focusPos = vec3(Lua.lastDebugFocusPos)
@@ -184,113 +250,146 @@ local function onUpdate(dt)
 
   local visibleGroundModels = {}
 
-  im.Begin("GroundModel Debug Window", windowOpen, im.WindowFlags_MenuBar)
-    if im.BeginMenuBar() then
-      if im.BeginMenu("Menu") then
-        if im.MenuItem1("Save groundmodels") then saveGroundmodels() end
-        if im.MenuItem1("Restore default") then core_environment.reloadGroundModels() setup() end
-        im.EndMenu()
-      end
-      im.EndMenuBar()
-    end
+  if spawnFrames < 3 then
+    minWindowSize.x, minWindowSize.y = 310 * im.uiscale[0], 590 * im.uiscale[0]
+    im.SetNextWindowSizeConstraints(minWindowSize, maxWindowSize)
+    spawnFrames = spawnFrames + 1
+  end
+  im.Begin("GroundModel Debug Window", windowOpen)
     if groundDebug[0] and depthDebug[0] then debugtype = 2
     elseif groundDebug[0] and not depthDebug[0] then debugtype = 0
     elseif not groundDebug[0] and depthDebug[0] then debugtype = 1
     else debugtype = -1 end
 
-    im.Checkbox("Ground", groundDebug) im.SameLine()
-    im.Checkbox("Depth", depthDebug) im.SameLine()
-    if im.Checkbox("Static", staticDebug) then
-      Engine.setStaticColDebugEnabled(staticDebug[0] or colDensityEnabled[0])
+    im.PushItemWidth(120 * im.uiscale[0])
+    local areaDisabled = not (groundDebug[0] or depthDebug[0] or staticDebug[0])
+    if areaDisabled then im.BeginDisabled(true) end
+    if im.Checkbox("Follow mouse", mouseFocus) then serializeSettings() end
+    im.SameLine()
+    if im.SliderFloat("Area", distance, 0, 60, "%.1f", nil) then
+      serializeSettings()
+    end
+    if im.IsItemDeactivatedAfterEdit() then
+      distance[0] = clamp(distance[0], 0, 60)
+    end
+    if areaDisabled then im.EndDisabled() end
+
+    local heightmapOpen = im.TreeNodeEx1("Ground heightmap:", sectionFlags)
+    if heightmapOpen then
+      im.Checkbox("Show heightmap", groundDebug)
+      im.Checkbox("Show heightmap depth", depthDebug)
+      if depthDebug[0] then
+        if im.SliderFloat("Depth scale", depthScale, 0.1, 10, "%.2f", nil) then
+          serializeSettings()
+        end
+        if im.IsItemDeactivatedAfterEdit() then
+          depthScale[0] = clamp(depthScale[0], 0.1, 10)
+        end
+      end
+      if groundDebug[0] or depthDebug[0] then
+        if im.SliderFloat("Tile Size##heightmap", tileSize, 0.5, 1, "%.2f", nil) then
+          serializeSettings()
+        end
+        if im.IsItemDeactivatedAfterEdit() then
+          tileSize[0] = clamp(tileSize[0], 0.5, 1)
+        end
+      end
     end
 
-    if im.TreeNode1("Options") then
-      im.SameLine()
-      im.Dummy(im.ImVec2(30,0)) im.SameLine()
-      if im.Checkbox("Mouse Focus", mouseFocus) then serializeSettings() end
-      im.PushItemWidth(60)
-      if im.SliderFloat("Distance", distance, 0, 60, "%.1f", nil) then
-        serializeSettings()
+    local staticOpen = im.TreeNodeEx1("Static triangles:", sectionFlags)
+    if staticOpen then
+      if im.Checkbox("Show triangles", staticDebug) then
+        Engine.setStaticColDebugEnabled(staticDebug[0] or colDensityEnabled[0])
+        if not staticDebug[0] then table.clear(seen) end
       end
-      if im.IsItemDeactivatedAfterEdit() then
-        distance[0] = clamp(distance[0], 0, 60)
+      if staticDebug[0] then
+        if im.SliderFloat("Padding", staticColPosShrink, 0, 0.12, "%.2f m") then
+          staticColPosShrink[0] = math.floor(staticColPosShrink[0] * 100 + 0.5) * 0.01
+          Engine.setStaticColDebugPosShrink(staticColPosShrink[0])
+          serializeSettings()
+        end
       end
-      im.SameLine()
-      if im.SliderFloat("Tile Size", tileSize, 0.5, 1, "%.2f", nil) then
-        serializeSettings()
+      if im.Checkbox("Show triangles density (freezes on click)", colDensityEnabled) then
+        Engine.setStaticColDebugEnabled(staticDebug[0] or colDensityEnabled[0])
       end
-      if im.IsItemDeactivatedAfterEdit() then
-        tileSize[0] = clamp(tileSize[0], 0.5, 1)
+      if colDensityEnabled[0] then
+        if im.SliderInt("Area##density", colDensityTileCount, 3, 100, string.format("%d x %d (%d tiles)", colDensityTileCount[0], colDensityTileCount[0], colDensityTileCount[0]*colDensityTileCount[0])) then
+          serializeSettings()
+        end
+        if im.SliderFloat("Tile Size (freezes on click)", colDensityTileSize, 5, 30, "%.1f") then
+          serializeSettings()
+        end
+        if im.Checkbox("Highlight Labels", colDensityShowText) then
+          serializeSettings()
+        end
+        if im.SliderFloat("Highlight threshold", colDensityThreshold, 1, 100, "%.0f coltris/m²") then
+          serializeSettings()
+        end
       end
-      im.SameLine()
-      if im.SliderFloat("Depth Scale", depthScale, 0.1, 10, "%.2f", nil) then
-        serializeSettings()
-      end
-      if im.IsItemDeactivatedAfterEdit() then
-        depthScale[0] = clamp(depthScale[0], 0.1, 10)
-      end
-      im.PopItemWidth()
-      im.TreePop()
     end
+    im.PopItemWidth()
 
-    if im.Checkbox("Coltris/m² (freezes on click to build cache)", colDensityEnabled) then
-      Engine.setStaticColDebugEnabled(staticDebug[0] or colDensityEnabled[0])
+    -- debug draw
+    for _,k in pairs(gms) do
+      local gm = groundModels[k]
+      local drawGm = gm.isAlias == true and groundModels[gm.parent] or gm
+      if gm.active[0] then
+        drawGroundModel(visibleGroundModels, debugtype, focusPos, k, drawGm)
+      elseif not listAll[0] then
+        drawGroundModel(visibleGroundModels, debugtype, focusPos, k, drawGm, true)
+      end
     end
-
-    -- Add density threshold slider when static counters are enabled
     if colDensityEnabled[0] then
-      im.PushItemWidth(120)
-      if im.SliderInt("Render area", colDensityTileCount, 3, 100, string.format("%d x %d (%d tiles)", colDensityTileCount[0], colDensityTileCount[0], colDensityTileCount[0]*colDensityTileCount[0])) then
-        serializeSettings()
-      end
-      if im.SliderFloat("Tile size (freezes on click to build cache)", colDensityTileSize, 5, 30, "%.1f") then
-        serializeSettings()
-      end
-      im.SliderFloat("Color threshold", colDensityThreshold, 1, 100, "%.0f coltris/m²")
-      if im.Checkbox("Render labels", colDensityShowText) then
-        serializeSettings()
-      end
-      im.PopItemWidth()
+      debugDrawer:renderStaticColCounter(focusPos, colDensityTileSize[0], colDensityTileCount[0], colDensityThreshold[0], colDensityShowText[0])
     end
 
-    im.Dummy(im.ImVec2(0,10))
-    im.Separator()
-
-    -- TODO: use ImGuiListClipper
-    if im.TreeNode1("Groundmodels") then
-      if im.SmallButton("Enable All") then
-        for _,k in pairs(gms) do
-          groundModels[k].active[0] = true
-        end
-      end
+    local groundModelsOpen = im.TreeNodeEx1("Groundmodels:", sectionFlags)
+    if groundModelsOpen then
+      if im.Checkbox("List All", listAll) then serializeSettings() end
       im.SameLine()
-      if im.SmallButton("Disable All") then
-        for _,k in pairs(gms) do
-          groundModels[k].active[0] = false
-        end
+      if im.Checkbox("Alt Theme", altTheme) then
+        applyTheme()
+        serializeSettings()
       end
       im.BeginChild1("GroundModelScroll")
-      im.Columns(3, "GroundModelColumnsBegin") -- im.ColumnsFlags_NoResize)
+      im.Columns(4, "GroundModelColumnsBegin") -- im.ColumnsFlags_NoResize)
 
-      im.SetColumnWidth(0, 60)
-      im.SetColumnWidth(1, 45)
-      im.SetColumnWidth(2, 1000)
+      local iconColumnWidth = im.GetFrameHeight() + 2 * im.GetStyle().ItemSpacing.x
+      im.SetColumnWidth(0, iconColumnWidth)
+      im.SetColumnWidth(1, iconColumnWidth)
+      im.SetColumnWidth(2, 50 * im.uiscale[0])
+      im.SetColumnWidth(3, 1000 * im.uiscale[0])
 
       -- table header
+      local shownCount = 0
+      for _,k in pairs(gms) do
+        if groundModels[k].active[0] then shownCount = shownCount + 1 end
+      end
+      allVisible[0] = shownCount == #gms and 3 or (shownCount > 0 and 1 or 0)
       im.Separator()
-      im.Text("Visible")
+      if im.CheckboxFlags1("##allVisible", allVisible, 3) then
+        for _,k in pairs(gms) do
+          groundModels[k].active[0] = allVisible[0] == 3
+        end
+      end
       im.NextColumn()
-      im.Text("Color")
       im.NextColumn()
-      im.Text("GroundModel")
+      im.Text("Tris")
+      im.NextColumn()
+      im.Text("Name")
+      im.SameLine()
+      if iconButton("save", "Save") then saveGroundmodels() end
+      im.SameLine()
+      if iconButton("settings_backup_restore", "Default") then core_environment.reloadGroundModels() setup() end
       im.NextColumn()
       im.Separator()
 
+      -- TODO: use ImGuiListClipper
       for _,k in pairs(gms) do
         local v = groundModels[k]
-        if v.isAlias == false then
+        local tris = visibleGroundModels[k] or 0
+        if v.isAlias == false and (listAll[0] or seen[k]) then
           im.PushID1(k..'_active')
-          im.SetCursorPosX(15)
           if im.Checkbox('', groundModels[k].active) then
             if #v.aliases > 0 then
               for _, name in pairs(v.aliases) do
@@ -300,19 +399,26 @@ local function onUpdate(dt)
           end
           im.NextColumn()
           im.PopID()
-          im.SameLine()
           im.PushID1(k..'_color')
-          im.SetCursorPosX(65)
           if im.ColorEdit3("", groundModels[k].color, im.ColorEditFlags_NoInputs) then
             serializeSettings()
           end
           im.PopID()
           im.NextColumn()
+          if v.active[0] then im.Text(tostring(tris)) end
+          im.NextColumn()
 
           -- im.SetCursorPosX(55)
-          if im.TreeNode1(k) then
-            im.PushItemWidth(100)
-            if im.SliderInt("collisiontype", v.cdata.collisiontype, 0, 30) then
+          local grayed = tris == 0
+          if grayed then im.PushStyleColor2(im.Col_Text, grayText) end
+          local nodeOpen = im.TreeNode1(k)
+          if grayed then im.PopStyleColor() end
+          if nodeOpen then
+            im.PushItemWidth(100 * im.uiscale[0])
+            local materials = require("particles").getMaterialsParticlesTable()
+            local material = materials[v.cdata.collisiontype[0]]
+            local materialName = material and material.name:gsub("%%", "%%%%") or "none" -- used as imgui format string
+            if im.SliderInt("collisiontype", v.cdata.collisiontype, 0, table.maxn(materials), materialName) then
               setValue(k, v, 'collisiontype', v.cdata.collisiontype[0])
             end
             if im.SliderFloat("defaultDepth", v.cdata.defaultDepth, 0.0, 5) then
@@ -370,79 +476,9 @@ local function onUpdate(dt)
           end
           im.NextColumn()
         end
-
-        -- debug draw
-        if v.active[0] then
-          -- drawGroundModel(visibleGroundModels, debugtype, focusPos, gmName, gm)
-          if v.isAlias == true then
-            drawGroundModel(visibleGroundModels, debugtype, focusPos, k, groundModels[v.parent])
-          else
-            drawGroundModel(visibleGroundModels, debugtype, focusPos, k, v)
-          end
-        end
       end
       im.Columns(1)
       im.EndChild()
-      im.TreePop()
-    else
-      -- no groundtype filtering: draw them all!
-      for _,k in pairs(gms) do
-        local gm = groundModels[k]
-        if gm.isAlias == true then
-          drawGroundModel(visibleGroundModels, debugtype, focusPos, k, groundModels[gm.parent])
-        else
-          drawGroundModel(visibleGroundModels, debugtype, focusPos, k, gm)
-        end
-      end
-    end
-    if colDensityEnabled[0] then
-      debugDrawer:renderStaticColCounter(focusPos, colDensityTileSize[0], colDensityTileCount[0], colDensityThreshold[0], colDensityShowText[0])
-    end
-
-    local textLineHeight = im.GetTextLineHeight()
-
-    if im.TreeNode1("visible Groundmodels") then
-      im.BeginChild1("GroundModelVisScroll")
-      im.Columns(3, "GroundModelColumnsBegin") -- im.ColumnsFlags_NoResize)
-
-      im.SetColumnWidth(0, 50)
-      im.SetColumnWidth(1, 50)
-      im.SetColumnWidth(2, 1000)
-
-      -- table header
-      im.Separator()
-      im.Text("Color")
-      im.NextColumn()
-      im.Text("Tris")
-      im.NextColumn()
-      im.Text("GroundModel")
-      im.NextColumn()
-      im.Separator()
-
-      vgmk = tableKeys(visibleGroundModels)
-      table.sort(vgmk, function(a, b) return visibleGroundModels[a] > visibleGroundModels[b] end)
-
-
-      for _, k in ipairs(vgmk) do
-        local v = visibleGroundModels[k]
-        local p1 = im.GetCursorScreenPos() --return struct116 /shrug
-        p1 = im.ImVec2(p1.x,p1.y)
-        local p2 = im.ImVec2(p1.x + 20, p1.y + textLineHeight)
-        local cf = groundModels[k].color
-        local col = im.GetColorU322(im.ImVec4(cf[0], cf[1], cf[2], 1))
-        im.ImDrawList_AddRectFilled(im.GetWindowDrawList(), p1, p2, col)
-        im.NextColumn()
-
-        im.Text(tostring(v))
-
-        im.NextColumn()
-        im.Text(tostring(k))
-        im.NextColumn()
-      end
-      im.Columns(1)
-      im.EndChild()
-
-      im.TreePop()
     end
 
     -- ## commented out following stuff for the time being cause it caused a huuuge framedrop and made the tool unuseable ##
@@ -503,6 +539,13 @@ local function onUpdate(dt)
       -- end
     -- end
   im.End()
+  if not windowOpen[0] then
+    table.clear(seen)
+    spawnFrames = 0
+    staticDebug[0] = false
+    colDensityEnabled[0] = false
+    Engine.setStaticColDebugEnabled(false)
+  end
 end
 
 local function onExtensionLoaded()

@@ -17,24 +17,18 @@ local tempFilepath = 'temp/roadArchitect.json'                                  
 local M = {}
 local logTag = 'RoadArchitect'
 
--- Check for a Tech license.
-local isTechLicense = tech_license.isValid()
-
 -- External modules used.
-local roadMgr = require('editor/tech/roadArchitect/roads')                                          -- A module for managing roads.
-local profileMgr = require('editor/tech/roadArchitect/profiles')                                    -- A module for managing road profiles.
-local groupMgr = require('editor/tech/roadArchitect/groups')                                        -- A module for managing groups.
-local jctMgr = require('editor/tech/roadArchitect/junctions')                                       -- A module for managing junctions.
-local linkUtil = require('editor/tech/roadArchitect/link')                                          -- A utility class for linking roads and junctions.
-local render = require('editor/tech/roadArchitect/render')                                          -- A module for managing the rendering the road architect edit visualisations.
-local terra = require('editor/tech/roadArchitect/terraform')                                        -- A module containing functions for performing terraforming operations.
-local staticMgr = require('editor/tech/roadArchitect/staticMeshMgr')                                -- A module for managing static mesh selection and audition.
-local util = require('editor/tech/roadArchitect/utilities')                                         -- A module containing miscellaneous utility functions.
-local import, export = nil, nil
-if isTechLicense then
-  import = require('editor/tech/roadArchitect/import')                                              -- A module containing functions for importing road networks.
-  export = require('editor/tech/roadArchitect/export')                                              -- A module containing functions for exporting road networks.
-end
+local roadMgr = require('editor/roadArchitect/roads')                                          -- A module for managing roads.
+local profileMgr = require('editor/roadArchitect/profiles')                                    -- A module for managing road profiles.
+local groupMgr = require('editor/roadArchitect/groups')                                        -- A module for managing groups.
+local jctMgr = require('editor/roadArchitect/junctions')                                       -- A module for managing junctions.
+local linkUtil = require('editor/roadArchitect/link')                                          -- A utility class for linking roads and junctions.
+local render = require('editor/roadArchitect/render')                                          -- A module for managing the rendering the road architect edit visualisations.
+local terra = require('editor/roadArchitect/terraform')                                        -- A module containing functions for performing terraforming operations.
+local staticMgr = require('editor/roadArchitect/staticMeshMgr')                                -- A module for managing static mesh selection and audition.
+local util = require('editor/roadArchitect/utilities')                                         -- A module containing miscellaneous utility functions.
+local import = require('editor/roadArchitect/openDriveImport')                                 -- OpenDRIVE (.xodr) → Road Architect session.
+local export = require('editor/roadArchitect/openDriveExport')                                 -- Road Architect session → OpenDRIVE (.xodr).
 
 -- Module constants (core).
 local im = ui_imgui
@@ -1155,7 +1149,6 @@ end
 -- Handles the main tool window.
 local function handleMainToolWindow(roads)
   if editor.beginWindow(win.toolWinName, "Road Architect###8", im.WindowFlags_NoCollapse) then
-
     if mfe.isProfilesListWinOpen or mfe.isGroupsListWinOpen or mfe.isMeshSelectWinOpen then
       editor.endWindow()
       return
@@ -1186,6 +1179,7 @@ local function handleMainToolWindow(roads)
     im.NextColumn()
 
     if isFinalise then
+      im.EndChild()
       editor.endWindow()
       return
     end
@@ -1239,7 +1233,7 @@ local function handleMainToolWindow(roads)
     im.NextColumn()
 
     -- 'Import Road Network' button.
-    if isTechLicense and not isFinalise then
+    if not isFinalise then
       if editor.uiIconImageButton(editor.icons.terrain_import, vec40, cols.fullWhite, nil, nil, 'importOpenDRIVEBtn') then
         mfe.isImportWinOpen = not mfe.isImportWinOpen
         if mfe.isImportWinOpen then
@@ -1256,7 +1250,7 @@ local function handleMainToolWindow(roads)
     im.NextColumn()
 
     -- 'Export Road Network' button.
-    if isTechLicense and not isFinalise then
+    if not isFinalise then
       if editor.uiIconImageButton(editor.icons.terrain_export, vec40, cols.fullWhite, nil, nil, 'exportOpenDRIVEBtn') then
         export.export()
       end
@@ -7378,10 +7372,10 @@ local function handleMaterialSelectionSubWindow()
             end
             local texture = getTexObj(absPath)
             if texture then
-              if not (texture.texId == nil) then
+              if not (texture.tex == nil) then
                 if im.ImageButton(
                   "##DisplayMaterialButton",
-                  texture.texId,
+                  texture.tex:getID(),
                   im.ImVec2(32, 32),
                   im.ImVec2Zero,
                   im.ImVec2One,
@@ -7680,11 +7674,16 @@ local function handleImportSubWindow()
       if editor.uiIconImageButton(editor.icons.ab_asset_jbeam, vec28, nil, nil, nil, 'importFromImportWdw') then
         mfe.isImportWinOpen = false
         editor.hideWindow(win.importWinName)
-        jctMgr.clearAllJunctions()
-        roadMgr.clearAllRoads()
-        table.clear(profileMgr.profiles)
-        profileMgr.populateProfileTemplates()
-        import.import(importO2T[0], importCO[0], importTT2I[0], importCustomOffset[0], terraParams.domainOfInfluence[0], terraParams.terraMargin[0], importPlaceMode[0], importPlaceX[0], importPlaceY[0])
+        import.import({
+          offsetToTerrain = importO2T[0],
+          verticalOffset = importCO[0] and importCustomOffset[0] or nil,
+          terraform = importTT2I[0],
+          domainOfInfluence = terraParams.domainOfInfluence[0],
+          margin = terraParams.terraMargin[0],
+          placeMode = importPlaceMode[0],
+          placeX = importPlaceX[0],
+          placeY = importPlaceY[0]
+        })
       end
       im.tooltip('Import from file.')
     else

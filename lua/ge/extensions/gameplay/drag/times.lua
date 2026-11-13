@@ -6,6 +6,8 @@ local M = {}
 
 M.dependencies = {'gameplay_drag_core', 'gameplay_achievement'}
 
+local lastDtSim = 0
+
 -- Resets all non-dial timers for every racer.
 local function reset()
   local dragData = gameplay_drag_core.getData()
@@ -38,10 +40,10 @@ local function rebuildVehIdToPlayerIdMap(race)
   local map = {}
   local players = race and race.players or nil
   if players then
-    for playerId, playerData in pairs(players) do
+    for mpPlayerId, playerData in pairs(players) do
       local vehId = playerData and playerData.vehicleId
       if vehId and vehId ~= -1 then
-        map[vehId] = playerId
+        map[vehId] = mpPlayerId
       end
     end
   end
@@ -61,10 +63,10 @@ function M.getNetworkTimersForRacer(racer)
     rebuildVehIdToPlayerIdMap(race)
   end
 
-  local playerId = networkTimerCache.vehIdToPlayerId[racer.vehId]
-  local playerData = playerId and race.players[playerId] or nil
+  local mpPlayerId = networkTimerCache.vehIdToPlayerId[racer.vehId]
+  local playerData = mpPlayerId and race.players[mpPlayerId] or nil
   if playerData and playerData.vehicleId == racer.vehId then
-    return race.timerValues[playerId]
+    return race.timerValues[mpPlayerId]
   end
 
   -- Player data may mutate in-place without replacing race.players; recover lazily on miss.
@@ -188,6 +190,8 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         timers.timer.value = timerValue
       end
 
+      -- Distances were sampled last frame; stamp crossings at that sample time.
+      local sampleTime = timerValue - dtSim
       local reactionTimeJustSet = false
       local reactionTimeValue = 0
 
@@ -196,7 +200,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
           local t = inverseLerp(prevDistance, distanceFromOrigin, timer.distance)
 
           if timer.type == "distanceTimer" then
-            timer.value = timerValue - (1 - t) * dtSim
+            timer.value = sampleTime - (1 - t) * lastDtSim
             timer.isSet = true
             if isMP then syncTimerValue(drag, racer.vehId, timerName, timer.value) end
             if timerName == "time_1_4" and timer.value <= 8.20 and gameplay_achievement and gameplay_achievement.unlockAchievement then
@@ -213,11 +217,10 @@ local function onUpdate(dtReal, dtSim, dtRaw)
               else
                 reactionTimeJustSet = true
                 reactionTimeValue = timer.value
-                -- A reaction time that rounds to 0.000s is not humanly/AI-possible and indicates an exploit.
-                if timer.value < 0.0005 then
+                if timer.value < 0 then
                   local isDisqualified = racer.isDisqualified ~= nil and racer.isDisqualified or racer.isDesqualified
                   if not isDisqualified then
-                    gameplay_drag_phaseHandlers.disqualifyRacer(racer, "missions.dragRace.gameplay.disqualified.reactionTime")
+                    gameplay_drag_phaseHandlers.disqualifyRacer(racer, gameplay_drag_phaseHandlers.redLightReason)
                   end
                 end
               end
@@ -231,7 +234,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         end
 
         if timer.type == "timeToVelocity" and not timer.isSet and racer.vehSpeed > timer.velocity then
-          timer.value = timerValue
+          timer.value = sampleTime
           timer.isSet = true
           if isMP then syncTimerValue(drag, racer.vehId, timerName, timer.value) end
         end
@@ -254,12 +257,12 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       if reactionTimeJustSet then
         timers.timer.value = timers.timer.value - reactionTimeValue
       end
-
-      racer.previousDistanceFromOrigin = distanceFromOrigin
     end
 
     ::continue::
   end
+
+  lastDtSim = dtSim
 end
 
 --- Marks a racer's timers as started (called when green light fires).

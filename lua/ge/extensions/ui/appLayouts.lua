@@ -18,6 +18,15 @@ local editing = false
 local typeLayoutMap = nil
 local findOriginalLayoutByType
 
+-- official apps deleted from the game, filtered out of every layout including custom ones
+local removedOfficialApps = {
+  engineDebug = true,
+  gravityApp = true,
+  radioTest = true,
+  simpleRpmDebug = true,
+  replayAppV2 = true,
+}
+
 local function getAppIndexByName(layout, appName)
   if layout and layout.apps then
     for i, app in ipairs(layout.apps) do
@@ -75,6 +84,7 @@ local function readOriginalLayoutForUserLayout(filename, layout)
 end
 
 local function removeDeprecatedAppsFromOutputLayout(layout, origLayout)
+  removeDeprecatedAppsFromLayout(layout, removedOfficialApps)
   if origLayout and origLayout.removedApps then
     removeDeprecatedAppsFromLayout(layout, origLayout.removedApps)
   end
@@ -83,6 +93,7 @@ end
 
 local function isDeprecatedAppForLayout(layout, appName)
   if type(appName) ~= "string" or appName == "" then return false end
+  if removedOfficialApps[appName] then return true end
   local origLayout = readOriginalLayoutForUserLayout(layout and layout.filename, layout)
   return origLayout and origLayout.removedApps and origLayout.removedApps[appName] ~= nil
 end
@@ -624,6 +635,33 @@ local function isEditing()
   return editing
 end
 
+local function getPlayerCameraMode(player, camName)
+  if gameplay_walk and gameplay_walk.isWalking and gameplay_walk.isWalking(player) then return "unicycle" end
+  return camName or (core_camera and core_camera.getActiveCamName and core_camera.getActiveCamName(player)) or ""
+end
+
+local function getPlayerCameraModes()
+  local players = core_multiseat and core_multiseat.getPlayers and core_multiseat.getPlayers() or {0}
+  if #players == 0 then players = {0} end
+
+  local modes = {}
+  for _, player in ipairs(players) do
+    modes[#modes + 1] = {
+      player = player,
+      name = getPlayerCameraMode(player),
+    }
+  end
+  return modes
+end
+
+local function onCameraChanged(player, camName)
+  player = player or 0
+  guihooks.trigger("PlayerCameraModeChanged", {
+    player = player,
+    name = getPlayerCameraMode(player, camName),
+  })
+end
+
 local function setLayoutForType(layoutType, filename)
   if type(layoutType) ~= "string" or layoutType == "" then return false end
   if type(filename) ~= "string" or filename == "" then return false end
@@ -672,9 +710,11 @@ M.applyPlacementPatch   = applyPlacementPatch
 M.applySettingsPatch    = applySettingsPatch
 M.setEditing            = setEditing
 M.isEditing             = isEditing
+M.getPlayerCameraModes  = getPlayerCameraModes
 M.setLayoutForType      = setLayoutForType
 M.clearLayoutForType    = clearLayoutForType
 M.getLayoutForType      = getLayoutForType
 M.getTypeLayoutMap      = getTypeLayoutMap
+M.onCameraChanged       = onCameraChanged
 
 return M

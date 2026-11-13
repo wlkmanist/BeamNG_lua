@@ -22,7 +22,7 @@ M.infoBasename  = 'voicepack.json'
 M.audioSubdir   = 'audio'
 M.globalDir     = '/lua/ge/extensions/gameplay/rally/compositors/voicepacks/'
 M.missionSubdir = 'rally/voicepacks'
-M.defaultVoicepackId = 'mission:pro'
+M.defaultVoicepackId = 'global:ak_2026-04-16'
 M.mruLimit = 10
 
 local settingsKeys = {
@@ -408,7 +408,6 @@ local function readInfoEntry(infoFname, vpDir, scope, dirname, missionId, missio
     enableAnimalCodrivers = info.enableAnimalCodrivers,
     enableSpeedScaling = enableSpeedScaling,
     codriverTimingOffsetSeconds = codriverTimingOffsetSeconds,
-    personaTr    = _tr(info.persona, info.persona),
     languageTr   = _tr(info.language, info.language),
     dialectTr    = (info.dialect and info.dialect ~= '') and _tr(info.dialect, info.dialect) or nil,
     styleLabelTr = _tr(styleLabelRaw, styleLabelRaw),
@@ -703,7 +702,7 @@ end
 -- Format: "<persona> [(<dialect>)] - <style>[ <suffix>]". Falls back to dirname/style basename
 -- when fields are missing.
 function M.labelForEntry(entry, dirname, suffix)
-  local persona = entry.personaTr or dirname
+  local persona = entry.persona or dirname
   local style   = entry.styleLabelTr or (entry.compositorStyle or '?')
   local label   = entry.dialectTr
     and (persona..' ('..entry.dialectTr..') - '..style)
@@ -894,7 +893,7 @@ end
 
 local function optionShortLabel(entry)
   if not entry then return nil end
-  local persona = entry.personaTr or entry.persona or entry.dirname
+  local persona = entry.persona or entry.dirname
   local style = entry.styleLabelTr or entry.compositorStyle or entry.dirname
   return persona..' - '..style
 end
@@ -1073,6 +1072,18 @@ function M.addLoopMissionSettingToMRU(missionTypeData, value)
       return
     end
   end
+end
+
+function M.resolveLoopMissionSettingEntry(missionTypeData, value)
+  local pick = M.pickFromSettingValue(value)
+  if pick.type == 'voicepack' then return M.resolveEntry(nil, pick) end
+  if pick.type ~= 'loopVoicepack' then return nil end
+
+  for _, mission in ipairs(getLoopStageMissions(missionTypeData)) do
+    local entry = findMissionEntryByLoopFamily(mission.missionFolder, mission.id, pick.familyKey)
+    if entry then return entry end
+  end
+  return nil
 end
 
 local function loopEntryMatchesMRU(loopEntry, normalizedMRU)

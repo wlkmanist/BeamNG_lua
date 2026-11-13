@@ -12,6 +12,29 @@ M.crawlersData = {}
 
 local crawlersData = M.crawlersData
 
+local function isMultiseatActive()
+  return core_multiseat
+    and core_multiseat.isMultiseatActive
+    and core_multiseat.isMultiseatActive()
+    or false
+end
+
+local function isMultiseatGamemodeActive()
+  return gameplay_multiseat_gamemodeManager
+    and gameplay_multiseat_gamemodeManager.isActive
+    and gameplay_multiseat_gamemodeManager.isActive()
+    or false
+end
+
+local function removeCrawlerData(vehId)
+  if not vehId then return end
+  for i = #crawlersData, 1, -1 do
+    if crawlersData[i] and crawlersData[i].id == vehId then
+      table.remove(crawlersData, i)
+    end
+  end
+end
+
 local function clear(force)
   if M.activeTrail then
     gameplay_crawl_utils.unloadPrefabs()
@@ -55,7 +78,7 @@ local function setupCrawl(trail, veh, isFromMission)
   if trail.pathReversed then
     M.activeTrail.path.nodes = arrayReverse(M.activeTrail.path.nodes)
 
-    local reverseRot180 = quatFromAxisAngle(vec3(0, 1, 0), math.pi)
+    local reverseRot180 = quatFromAxisAngle(vec3(0, 0, 1), math.pi)
     for _, node in ipairs(M.activeTrail.path.nodes) do
       if node.rotation then
         node.rotation = reverseRot180 * node.rotation
@@ -93,9 +116,28 @@ local function setupCrawl(trail, veh, isFromMission)
   return true
 end
 
+local function addCrawlerToActiveTrail(veh)
+  if not M.activeTrail or not veh then return false end
+  local crawlerData = gameplay_crawl_utils.setupCrawlerData(veh)
+  if not crawlerData then return false end
+  table.insert(crawlersData, crawlerData)
+  if gameplay_crawl_utils.startCrawl(veh:getID(), M.activeTrail.trail, crawlerData, false) then
+    extensions.hook('onCrawlStarted', {trail = M.activeTrail.trail})
+    return true
+  end
+  return false
+end
+
 local function startCrawlFreeroam(trail, veh)
   if not trail or not veh then
     log('E', logTag, 'Cannot start crawl: no valid trail data')
+    return
+  end
+
+  if M.activeTrail and isMultiseatActive()
+    and M.activeTrail.trail and M.activeTrail.trail._filePath == trail._filePath
+    and not gameplay_crawl_utils.getCrawlState(veh:getID()) then
+    addCrawlerToActiveTrail(veh)
     return
   end
 
@@ -187,7 +229,7 @@ end
 local function onGetRawPoiListForLevel(levelIdentifier, elements)
   local crawlPath = levelIdentifier and ('/levels/' .. levelIdentifier .. '/crawls/')
   local trails = gameplay_crawl_saveSystem.getAllTrails(crawlPath)
-  if trails and not M.activeTrail and (career_career.isActive() or settings.getValue("enableCrawlInFreeroam")) then
+  if trails and (career_career.isActive() or settings.getValue("enableCrawlInFreeroam")) then
     for _, trail in ipairs(trails) do
       local startingPosition = nil
       if trail.startingPositionId then
@@ -203,32 +245,52 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
           id = string.format("crawl##%s", trail._fileName or "trail"),
           data = { type = "crawl", trailId = trail._filePath },
           markerInfo = {
-            crawlMarker = {
+            invisibleTrigger = {
+              multiseat = true,
               pos = pos,
-              rot = rotation,
               radius = radius,
-              iconPos = startingPosition.iconPosition,
-              onInside = function(interactData)
+              onEnter = function(interactData)
+                if not isMultiseatActive() then return end
+                -- Gamemodes own crawl start themselves; freeroam POI auto-start would pick
+                -- overlapping sibling trails (e.g. northeast_1a vs 1b) before the Start button.
+                if isMultiseatGamemodeActive() then return end
+                if not interactData or interactData.isWalking or not interactData.veh then return end
+                if gameplay_crawl_utils.getCrawlState(interactData.veh:getID()) then return end
+                if M.activeTrail and M.activeTrail.trail._filePath ~= trail._filePath then return end
+                startCrawlFreeroam(trail, interactData.veh)
               end,
             }
           }
         }
-        poi.markerInfo.bigmapMarker = {
-          pos = pos,
-          icon = "mission_rockcrawling01_triangle",
-          name = trail.name or _tr("ui.crawl.trailName"),
-          description = _tr("ui.crawl.trailDescription"),
-          thumbnail = trail.thumbnail,
-          previews = {trail.thumbnail},
-          quickTravelPosRotFunction = getBigMapTpPosRot
-        }
 
-        local trailStats = gameplay_crawl_saveSystem.getPlayerTrailStats(trail._filePath)
-        if trailStats and trailStats.bestPenaltyPoints < math.huge then
-          poi.markerInfo.bigmapMarker.description = poi.markerInfo.bigmapMarker.description .. "\n" .. core_locales.contextTranslate("ui.crawl.bestPenaltyPointsValue", {points = trailStats.bestPenaltyPoints})
-        end
-        if trailStats then
-          poi.markerInfo.bigmapMarker.aggregatePrimary = {label = 'bigMap.progressLabels.bestPoints', value = trailStats.bestPenaltyPoints < math.huge and trailStats.bestPenaltyPoints or "-"}
+        -- Freeroam start marker / big-map POI stay hidden while a crawl is running,
+        -- same as before; the invisible trigger stays so extra split-screen players can join.
+        if not M.activeTrail then
+          poi.markerInfo.crawlMarker = {
+            pos = pos,
+            rot = rotation,
+            radius = radius,
+            iconPos = startingPosition.iconPosition,
+            onInside = function(interactData)
+            end,
+          }
+          poi.markerInfo.bigmapMarker = {
+            pos = pos,
+            icon = "mission_rockcrawling01_triangle",
+            name = trail.name or _tr("ui.crawl.trailName"),
+            description = _tr("ui.crawl.trailDescription"),
+            thumbnail = trail.thumbnail,
+            previews = {trail.thumbnail},
+            quickTravelPosRotFunction = getBigMapTpPosRot
+          }
+
+          local trailStats = gameplay_crawl_saveSystem.getPlayerTrailStats(trail._filePath)
+          if trailStats and trailStats.bestPenaltyPoints < math.huge then
+            poi.markerInfo.bigmapMarker.description = poi.markerInfo.bigmapMarker.description .. "\n" .. core_locales.contextTranslate("ui.crawl.bestPenaltyPointsValue", {points = trailStats.bestPenaltyPoints})
+          end
+          if trailStats then
+            poi.markerInfo.bigmapMarker.aggregatePrimary = {label = 'bigMap.progressLabels.bestPoints', value = trailStats.bestPenaltyPoints < math.huge and trailStats.bestPenaltyPoints or "-"}
+          end
         end
         table.insert(elements, poi)
       end
@@ -377,14 +439,24 @@ local function onSerialize()
   clear(true)
 end
 
-local function onVehicleSwitched(oldId, newId)
-  if M.activeTrail and not (M.activeTrail.isFromMission) then
+local function onVehicleSwitched(oldId, newId, player)
+  if not M.activeTrail or M.activeTrail.isFromMission then return end
+  if not gameplay_crawl_utils.getCrawlState(oldId) then return end
+  gameplay_crawl_display.clearPointsMessage(oldId)
+  gameplay_crawl_utils.clearCrawler(oldId)
+  removeCrawlerData(oldId)
+  if not next(gameplay_crawl_utils.getAllCrawlStates()) then
     clear(true)
   end
 end
 
 local function onVehicleDestroyed(vehId)
-  if M.activeTrail and not (M.activeTrail.isFromMission) then
+  if not M.activeTrail or M.activeTrail.isFromMission then return end
+  if not gameplay_crawl_utils.getCrawlState(vehId) then return end
+  gameplay_crawl_display.clearPointsMessage(vehId)
+  gameplay_crawl_utils.clearCrawler(vehId)
+  removeCrawlerData(vehId)
+  if not next(gameplay_crawl_utils.getAllCrawlStates()) then
     clear(true)
   end
 end

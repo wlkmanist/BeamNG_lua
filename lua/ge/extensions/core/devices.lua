@@ -7,11 +7,13 @@ local beamOrange = vec3(255,102,0)
 
 local vehicleRPMledState = {}
 local playerColors = {}
+local deviceAssignments = nil
+local litDevices = {}
 
 local function getPlayerDeviceNames()
   local playerDeviceNames = {}
-  for deviceName, playerNumber in pairs(core_input_bindings.assignedPlayers or {}) do
-    if playerNumber ~= nil then
+  for deviceName, playerNumber in pairs(deviceAssignments or core_input_bindings.assignedPlayers or {}) do
+    if playerNumber ~= nil and playerNumber >= 0 then
       playerDeviceNames[playerNumber] = playerDeviceNames[playerNumber] or {}
       table.insert(playerDeviceNames[playerNumber], deviceName)
     end
@@ -23,6 +25,7 @@ end
 local function updateLightStatesForDevices()
   if not Device then return end
   local playerDeviceNames = getPlayerDeviceNames()
+  local newLitDevices = {}
 
   for playerNumber, deviceNames in pairs(playerDeviceNames) do
     local playerVehId = be:getPlayerVehicleID(playerNumber)
@@ -32,6 +35,7 @@ local function updateLightStatesForDevices()
     local playerColor = playerColors[playerNumber]
     for _, deviceName in ipairs(deviceNames) do
       local color = playerColor and playerColor or beamOrange
+      newLitDevices[deviceName] = true
       if lightingMode == "default" then
         if vehicleRPMledState[playerVehId] then
           Device.resetRGB(deviceName)
@@ -43,13 +47,21 @@ local function updateLightStatesForDevices()
       end
     end
   end
+
+  -- devices that lost their player keep their old colour otherwise
+  for deviceName in pairs(litDevices) do
+    if not newLitDevices[deviceName] then Device.setRGB(deviceName, beamOrange.x, beamOrange.y, beamOrange.z) end
+  end
+  litDevices = newLitDevices
 end
 
 local function isPlayerVehicleId(vehicleId)
   for deviceName, playerNumber in pairs(core_input_bindings.assignedPlayers or {}) do
-    local playerVehId = be:getPlayerVehicleID(playerNumber)
-    if playerVehId >= 0 and playerVehId == vehicleId then
-      return true
+    if playerNumber ~= nil and playerNumber >= 0 then
+      local playerVehId = be:getPlayerVehicleID(playerNumber)
+      if playerVehId >= 0 and playerVehId == vehicleId then
+        return true
+      end
     end
   end
   return false
@@ -75,8 +87,10 @@ local function onFFBConfigChanged()
   updateLightStatesForDevices()
 end
 
-local function setPlayerColors(colors)
+-- assignments optionally replaces the live device/player mapping, e.g. to show assignments that are not applied yet
+local function setPlayerColors(colors, assignments)
   playerColors = colors or {}
+  deviceAssignments = assignments
   updateLightStatesForDevices()
 end
 

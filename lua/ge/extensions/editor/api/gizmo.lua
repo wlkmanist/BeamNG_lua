@@ -346,6 +346,20 @@ local function updateAxisGizmo(onStartGizmoDragFunc, onEndGizmoDragFunc, onGizmo
   end
 end
 
+local function cancelAxisGizmoInteraction()
+  if axisGizmoEventState.mouseDown then
+    local camMouseRay = getCameraMouseRay()
+    if camMouseRay then
+      local mousePos = Point2I(imgui.GetMousePos().x, imgui.GetMousePos().y)
+      worldEditorCppApi.onAxisGizmoMouseUp(mousePos, camMouseRay.pos, camMouseRay.dir)
+    end
+    simTimeAuthority.pause(axisGizmoEventState.bulletTimePaused)
+  end
+  axisGizmoEventState.mouseDown = false
+  axisGizmoEventState.objectSelectionManipulated = false
+  worldEditorCppApi.setAxisGizmoSelectedElement(-1)
+end
+
 --- Draw the axis gizmo with its current transform and mode.
 local function drawAxisGizmo()
   if editor.getCamera() then
@@ -540,6 +554,7 @@ local function initialize(editorInstance)
   editor.getAxisGizmoTransform = getAxisGizmoTransform
   editor.getAxisGizmoScale = getAxisGizmoScale
   editor.updateAxisGizmo = updateAxisGizmo
+  editor.cancelAxisGizmoInteraction = cancelAxisGizmoInteraction
   editor.drawAxisGizmo = drawAxisGizmo
   editor.setAxisGizmoMode = setAxisGizmoMode
   editor.setAxisGizmoAlignment = setAxisGizmoAlignment

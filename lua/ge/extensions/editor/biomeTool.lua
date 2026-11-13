@@ -182,6 +182,9 @@ var.forestBrushGroup = {}
 var.buttonColor_active = imgui.GetStyleColorVec4(imgui.Col_ButtonActive)
 var.buttonColor_inactive = imgui.GetStyleColorVec4(imgui.Col_Button)
 var.forestBrushTool = nil
+var.biomeGenerateQueue = {}
+var.biomeGenerateQueueIndex = 0
+var.openBiomeProgressPopup = false
 var.itemsToDelete = {}
 var.enum_lassoDrawType = {inclusionZone = 0, exclusionZone = 1}
 var.lassoDrawInfo = {type = var.enum_lassoDrawType.inclusionZone, areaID = nil, layerID = nil}
@@ -1742,6 +1745,158 @@ local function biomeProcFunc(isDeletingLayer, layer, lassoAreaID, isResizingLass
   end
 end
 
+local function canGenerateLayer(layer)
+  if not layer then
+    return false
+  end
+  local layerType = layer.layerType
+  local layerID = layer.layerID
+  local isAddBlending = (getBlendingMethod(layerType, layerID) == blending_enum.add)
+  local brushCentral = getForestBrushSelection(layerType, layerID, enum_forestBrushItemZone.central)
+  local brushBorder = getForestBrushSelection(layerType, layerID, enum_forestBrushItemZone.falloff)
+  local bothBrushesEmpty = tableIsEmpty(brushCentral) and tableIsEmpty(brushBorder)
+  if isAddBlending and bothBrushesEmpty then
+    return false
+  end
+  if layerType == layerType_enum.area and tableIsEmpty(getLassoAreas(layerID)) then
+    return false
+  end
+  return true
+end
+
+local function applyCompletedBiomeProc(layer)
+  if not layer then
+    var.forestBrushTool:resetBiomeProcState()
+    return
+  end
+  local layerType = layer.layerType
+  local layerID = layer.layerID
+  var.forestBrushTool:insertBiomeItems()
+  editor.forestDirty = true
+  local itemsTbl = var.forestBrushTool:getBiomeItems()
+  local itemsToAdd = itemsTbl["items"]
+  local itemsToDel = itemsTbl["itemsToDel"]
+  local blendingMethod = getBlendingMethod(layerType, layerID)
+  if blendingMethod == blending_enum.replace then
+    if not tableIsEmpty(itemsToAdd) or not tableIsEmpty(itemsToDel) then
+      local delItems = {}
+      for _, item in pairs(itemsToDel) do
+        table.insert(delItems, item)
+      end
+      editor.history:commitAction("ReplaceBiomeItems", {oldItems = delItems, newItems = itemsToAdd}, replaceItemsActionUndo, replaceItemsActionRedo, true)
+    end
+  elseif blendingMethod == blending_enum.add then
+    if not tableIsEmpty(itemsToAdd) then
+      local itemUIDs = {}
+      local itemKeys = {}
+      for _, key in ipairs(itemsToAdd) do
+        table.insert(itemKeys, key)
+      end
+
+      ---local forestData = forest:getData()
+      ---for _, item in pairs(itemsToAdd) do
+        --local uids = forestData:generateAndSetItemUid(itemKeys)
+        --table.insert(itemUIDs, uid)
+      ---end
+      addForestItemUIDToLayerTable(layerType, layerID, itemUIDs)
+      editor.history:commitAction("AddBiomeItems", {items = itemsToAdd}, addItemsActionUndo, addItemsActionRedo, true)
+    end
+  elseif blendingMethod == blending_enum.delete then
+    if not tableIsEmpty(itemsToDel) then
+      local delItems = {}
+      for _, item in pairs(itemsToDel) do
+        table.insert(delItems, item)
+      end
+      editor.history:commitAction("RemoveBiomeItems", {items = delItems}, removeItemsActionUndo, removeItemsActionRedo, true)
+    end
+  end
+  var.forestBrushTool:resetBiomeProcState()
+end
+
+local function clearBiomeGenerateQueue()
+  var.biomeGenerateQueue = {}
+  var.biomeGenerateQueueIndex = 0
+end
+
+local function startBiomeGenerateQueue(layers)
+  if var.forestBrushTool:isBiomeProcRunning() then
+    return
+  end
+  local queue = {}
+  for _, layer in ipairs(layers) do
+    if canGenerateLayer(layer) then
+      table.insert(queue, layer)
+    end
+  end
+  if tableIsEmpty(queue) then
+    return
+  end
+  var.biomeGenerateQueue = queue
+  var.biomeGenerateQueueIndex = 1
+  biomeProcFunc(false, queue[1])
+  var.openBiomeProgressPopup = true
+end
+
+local function drawBiomeWorkProgressPopup()
+  if var.openBiomeProgressPopup then
+    imgui.OpenPopup("Biome Work Progress")
+    var.openBiomeProgressPopup = false
+  end
+
+  imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowPos().x + imgui.GetWindowSize().x * 0.5 - 150, imgui.GetWindowPos().y + imgui.GetWindowSize().y * 0.5))
+  imgui.SetNextWindowSize(imgui.ImVec2(300, 120), imgui.Cond_FirstUseEver)
+  if imgui.BeginPopupModal("Biome Work Progress") then
+    local errCode = var.forestBrushTool:getBiomeError()
+    if errCode == 0 and not var.forestBrushTool:isBiomeProcCompleted() then
+      var.forestBrushTool:runBiomeProcess()
+    end
+    errCode = var.forestBrushTool:getBiomeError()
+
+    local queue = var.biomeGenerateQueue
+    local queueIndex = var.biomeGenerateQueueIndex or 0
+    local queueCount = tableSize(queue)
+    local currentLayer = queue[queueIndex]
+
+    if queueCount > 1 and currentLayer then
+      imgui.TextUnformatted(string.format("Layer %d/%d: %s", queueIndex, queueCount, currentLayer.layerName or ""))
+    end
+
+    local progressStr = var.forestBrushTool:getBiomeWorkName()
+    local progressPercent = var.forestBrushTool:getBiomeWorkProgress()
+    local buttonText = "Cancel"
+    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then
+      progressStr = "Error: " ..var.forestBrushTool:getBiomeErrorStr()
+      imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
+      buttonText = "Ok"
+    end
+    imgui.TextUnformatted(progressStr)
+    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then
+      imgui.PopStyleColor()
+    end
+
+    if errCode == 0 then
+      imgui.ProgressBar(progressPercent, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), 0), string.format("%d%%", progressPercent * 100))
+    end
+
+    if imgui.Button(buttonText) then
+      var.forestBrushTool:quitBiomeProcess()
+      clearBiomeGenerateQueue()
+      imgui.CloseCurrentPopup()
+    end
+    if var.forestBrushTool:isBiomeProcCompleted() and errCode == 0 then
+      applyCompletedBiomeProc(currentLayer)
+      var.biomeGenerateQueueIndex = queueIndex + 1
+      if var.biomeGenerateQueueIndex <= queueCount then
+        biomeProcFunc(false, queue[var.biomeGenerateQueueIndex])
+      else
+        clearBiomeGenerateQueue()
+        imgui.CloseCurrentPopup()
+      end
+    end
+    imgui.EndPopup()
+  end
+end
+
 local function drawLayerProperties(layer)
   imgui.Text(layer.layerName)
   local layerType = layer.layerType
@@ -1752,51 +1907,6 @@ local function drawLayerProperties(layer)
   imgui.BeginChild1("MainPanel#"..layer.layerType..layer.layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, imgui.GetContentRegionAvail().y-(imgui.GetStyle().FramePadding.y)), true)
   imgui.BeginChild1("LayerActionsPanel"..layer.layerType..layer.layerID, imgui.ImVec2(imgui.GetContentRegionAvail().x, 40 * imgui.uiscale[0]), nil)
   imgui.SameLine()
-
-  local errCode = var.forestBrushTool:getBiomeError()
-  if var.forestBrushTool:isBiomeProcCompleted() and errCode == 0 then
-    var.forestBrushTool:insertBiomeItems()
-    local itemsTbl = var.forestBrushTool:getBiomeItems()
-    local itemsToAdd = {}
-    local itemsToDel = {}
-    itemsToAdd = itemsTbl["items"]
-    itemsToDel = itemsTbl["itemsToDel"]
-    local blendingMethod = getBlendingMethod(areaID, layerID)
-    if blendingMethod == blending_enum.replace then
-      if not tableIsEmpty(itemsToAdd) or not tableIsEmpty(itemsToDel) then
-        local delItems = {}
-        for _, item in pairs(itemsToDel) do
-          table.insert(delItems, item)
-        end
-        editor.history:commitAction("ReplaceBiomeItems", {oldItems = delItems, newItems = itemsToAdd}, replaceItemsActionUndo, replaceItemsActionRedo, true)
-      end
-    elseif blendingMethod == blending_enum.add then
-      if not tableIsEmpty(itemsToAdd) then
-        local itemUIDs = {}
-        local itemKeys = {}
-        for _, key in ipairs(itemsToAdd) do
-          table.insert(itemKeys, key)
-        end
-
-        ---local forestData = forest:getData()
-        ---for _, item in pairs(itemsToAdd) do
-          --local uids = forestData:generateAndSetItemUid(itemKeys)
-          --table.insert(itemUIDs, uid)
-        ---end
-        addForestItemUIDToLayerTable(layerType, layerID, itemUIDs)
-        editor.history:commitAction("AddBiomeItems", {items = itemsToAdd}, addItemsActionUndo, addItemsActionRedo, true)
-      end
-    elseif blendingMethod == blending_enum.delete then
-      if not tableIsEmpty(itemsToDel) then
-        local delItems = {}
-        for _, item in pairs(itemsToDel) do
-          table.insert(delItems, item)
-        end
-        editor.history:commitAction("RemoveBiomeItems", {items = delItems}, removeItemsActionUndo, removeItemsActionRedo, true)
-      end
-    end
-    var.forestBrushTool:resetBiomeProcState()
-  end
 
   imgui.SetNextWindowSize(imgui.ImVec2(300, 100), imgui.Cond_FirstUseEver)
   if imgui.BeginPopupModal("No Forest Item Selected") then
@@ -1878,46 +1988,10 @@ local function drawLayerProperties(layer)
     end
   end
 
-  --imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowViewport().Size.x * 0.5, imgui.GetWindowViewport().Size.y * 0.5))
-  imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowPos().x + imgui.GetWindowSize().x * 0.5 - 150, imgui.GetWindowPos().y + imgui.GetWindowSize().y * 0.5))
-  local framePadding =  imgui.ImVec2(3, 3) --imgui.GetStyle().FramePadding
-  imgui.SetNextWindowSize(imgui.ImVec2(300, 100), imgui.Cond_FirstUseEver)
-  if imgui.BeginPopupModal("Biome Work Progress") then
-    if errCode == 0 then
-      var.forestBrushTool:runBiomeProcess()
-    end
-    local progressStr = var.forestBrushTool:getBiomeWorkName()
-    local progressPercent = var.forestBrushTool:getBiomeWorkProgress()
-    local buttonText = "Cancel"
-    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then
-      progressStr = "Error: " ..var.forestBrushTool:getBiomeErrorStr()
-      imgui.PushStyleColor2(imgui.Col_Text, imgui.ImVec4(1, 0, 0, 1))
-      buttonText = "Ok"
-    end
-    imgui.TextUnformatted(progressStr)
-    if var.forestBrushTool:isBiomeProcCompleted() and errCode ~= 0 then
-      imgui.PopStyleColor()
-    end
-
-    if errCode == 0 then
-      imgui.ProgressBar(progressPercent, imgui.ImVec2(imgui.GetContentRegionAvailWidth(), 0), string.format("%d%%", progressPercent * 100))
-    end
-
-    if imgui.Button(buttonText) then
-      var.forestBrushTool:quitBiomeProcess()
-      imgui.CloseCurrentPopup()
-    end
-    if var.forestBrushTool:isBiomeProcCompleted() then
-      if errCode == 0 then
-        imgui.CloseCurrentPopup()
-      end
-    end
-    imgui.EndPopup()
-  end
-
   imgui.SetNextWindowPos(imgui.ImVec2(imgui.GetWindowPos().x + imgui.GetWindowSize().x * 0.5 - 150, imgui.GetWindowPos().y + imgui.GetWindowSize().y * 0.5))
   local framePadding =  imgui.ImVec2(3, 3)
   imgui.SetNextWindowSize(imgui.ImVec2(300, 100), imgui.Cond_FirstUseEver)
+  local errCode = var.forestBrushTool:getBiomeError()
   if imgui.BeginPopupModal("Biome Edge Placement Progress") then
     if errCode == 0 then
       local edgeElements = getForestBrushElementsFromSelection(layer.layerType, layer.layerID, enum_forestBrushItemZone.edge)
@@ -1946,6 +2020,7 @@ local function drawLayerProperties(layer)
     end
     if var.forestBrushTool:isBiomeProcCompleted() then
       var.forestBrushTool:insertBiomeItems()
+      editor.forestDirty = true
       local itemsTbl = var.forestBrushTool:getBiomeItems()
       local itemsToAdd = {}
       local itemsToDel = {}
@@ -2010,9 +2085,7 @@ local function drawLayerProperties(layer)
     elseif noLasso and layerType == layerType_enum.area then
       imgui.OpenPopup("No Lasso Areas!")
     else
-      local isDeletingLayer = false
-      biomeProcFunc(isDeletingLayer, layer)
-      imgui.OpenPopup("Biome Work Progress")
+      startBiomeGenerateQueue({layer})
     end
   end
   if var.forestBrushTool:isBiomeProcRunning() then
@@ -2926,6 +2999,7 @@ local function drawLassoAreasList(layer)
 
           var.forestBrushTool:runBiomeProcess()
           var.forestBrushTool:insertBiomeItems()
+          editor.forestDirty = true
           local itemsTbl = var.forestBrushTool:getBiomeItems()
           local itemsToAdd = {}
           local itemsToDel = {}
@@ -3042,6 +3116,7 @@ local function drawLayersListWithType(layerType)
 
           var.forestBrushTool:runBiomeProcess()
           var.forestBrushTool:insertBiomeItems()
+          editor.forestDirty = true
           local itemsTbl = var.forestBrushTool:getBiomeItems()
           local itemsToAdd = {}
           local itemsToDel = {}
@@ -3098,7 +3173,7 @@ local function drawLayersListWithType(layerType)
         imgui.SameLine()
         imgui.SetNextItemWidth(150)
         imgui.BeginDisabled()
-        editor.uiInputText("##inputTextDensity##"..layer.layerType..layer.layerID, editor.getTempCharPtr(tostring(getLassoAreaCount(layer.layerType, layer.layerID))))
+        editor.uiInputText("##inputTextAreaCount##"..layer.layerType..layer.layerID, editor.getTempCharPtr(tostring(getLassoAreaCount(layer.layerType, layer.layerID))))
         imgui.EndDisabled()
       end
 
@@ -3121,41 +3196,19 @@ local function drawLayersListWithType(layerType)
   imgui.EndChild()
 end
 
-local function regenerateAllLayers()
+local function regenerateAllLayers(layerType)
+  startBiomeGenerateQueue(getLayersWithType(layerType))
+end
+
+local function drawGenerateAllLayersButton(layerType, buttonSize)
   if var.forestBrushTool:isBiomeProcRunning() then
-    return
+    imgui.BeginDisabled()
   end
-
-  local allLayers = {}
-
-  -- Get all terrain layers
-  local terrainLayers = getLayersWithType(layerType_enum.terrain)
-  for _, layer in ipairs(terrainLayers) do
-    table.insert(allLayers, layer)
+  if imgui.Button("Generate All Layers", buttonSize) then
+    regenerateAllLayers(layerType)
   end
-
-  -- Get all area layers
-  local areaLayers = getLayersWithType(layerType_enum.area)
-  for _, layer in ipairs(areaLayers) do
-    table.insert(allLayers, layer)
-  end
-
-  if tableIsEmpty(allLayers) then
-    return
-  end
-
-  -- Set all layers to Replace blending method to ensure changed inputs get updated
-  -- This will replace existing items with new ones that reflect updated inputs (e.g., terrain materials)
-  for _, layer in ipairs(allLayers) do
-    setBlendingMethod(layer.layerType, layer.layerID, blending_enum.replace)
-  end
-
-  -- Regenerate each layer
-  -- Note: The blending method is read when the process completes, so setting it to Replace
-  -- ensures that changed inputs will be reflected in the regenerated items
-  for _, layer in ipairs(allLayers) do
-    local isDeletingLayer = false
-    biomeProcFunc(isDeletingLayer, layer)
+  if var.forestBrushTool:isBiomeProcRunning() then
+    imgui.EndDisabled()
   end
 end
 
@@ -3166,8 +3219,7 @@ local function drawLevelBiomeToolbar()
     imgui.BeginDisabled()
   end
   if imgui.Button("(Re)generate all layers", buttonSize) then
-    regenerateAllLayers()
-    imgui.OpenPopup("Biome Work Progress")
+    regenerateAllLayers(layerType_enum.terrain)
   end
   if var.forestBrushTool:isBiomeProcRunning() then
     imgui.EndDisabled()
@@ -3212,7 +3264,7 @@ local function drawLevelBiomeLayersList()
   end
   imgui.EndChild()
 
-  imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - buttonSize.x/2)
+  imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - buttonSize.x - imgui.GetStyle().ItemSpacing.x/2)
   imgui.SetCursorPosY(imgui.GetCursorPosY()+imgui.GetStyle().FramePadding.y*2)
 
   if imgui.Button("New Terrain Layer", buttonSize) then
@@ -3220,6 +3272,8 @@ local function drawLevelBiomeLayersList()
     selectLayer(layer)
     shouldUpdateAreasScroll = true
   end
+  imgui.SameLine()
+  drawGenerateAllLayersButton(layerType_enum.terrain, buttonSize)
   imgui.EndChild()
 
   local separatorPos = imgui.GetCursorPos()
@@ -3270,6 +3324,7 @@ local function drawBiomeAreasToolbar()
   local buttonSize = imgui.ImVec2(150, 30)
   imgui.BeginChild1("MainToolbar", imgui.ImVec2((imgui.GetContentRegionAvail().x - 2), biomeAreasToolbarHeight), true)
   if imgui.Button("(Re)generate all layers", buttonSize) then
+    regenerateAllLayers(layerType_enum.area)
   end
   imgui.SameLine()
   if imgui.Button("Undo", buttonSize) then
@@ -3312,7 +3367,7 @@ local function drawBiomeAreasLayersList()
   end
   imgui.EndChild()
 
-  imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - buttonSize.x/2)
+  imgui.SetCursorPosX(imgui.GetContentRegionAvail().x/2 - buttonSize.x - imgui.GetStyle().ItemSpacing.x/2)
   imgui.SetCursorPosY(imgui.GetCursorPosY()+imgui.GetStyle().FramePadding.y*2)
 
   if imgui.Button("New Area Layer", buttonSize) then
@@ -3320,6 +3375,8 @@ local function drawBiomeAreasLayersList()
     shouldUpdateAreasScroll = true
     selectLayer(layer)
   end
+  imgui.SameLine()
+  drawGenerateAllLayersButton(layerType_enum.area, buttonSize)
   imgui.EndChild()
 
   local separatorPos = imgui.GetCursorPos()
@@ -3422,9 +3479,30 @@ local function drawMainPanel()
   imgui.PopStyleVar()
 end
 
+local function applyPendingBiomeProcIfNeeded()
+  if not tableIsEmpty(var.biomeGenerateQueue) then
+    return
+  end
+  if not var.forestBrushTool or not var.forestBrushTool:isBiomeProcCompleted() then
+    return
+  end
+  if var.forestBrushTool:getBiomeError() ~= 0 then
+    return
+  end
+  local layer
+  if var.selectedTab == enum_tabType.BiomeAreas then
+    layer = getSelectedLayer(layerType_enum.area)
+  else
+    layer = getSelectedLayer(layerType_enum.terrain)
+  end
+  applyCompletedBiomeProc(layer)
+end
+
 local function drawWindow()
   if editor.beginWindow(toolWindowName, "Biome Tool") then
     drawMainPanel()
+    drawBiomeWorkProgressPopup()
+    applyPendingBiomeProcIfNeeded()
   end
   editor.endWindow()
 end
@@ -3894,10 +3972,6 @@ local function onEditorAfterSaveLevel()
 
   if layerAvailable then
     jsonWriteFile(biomeDataPath, var.layers, true)
-  end
-  local forest = core_forest.getForestObject()
-  if forest then
-    forest:saveForest()
   end
 end
 

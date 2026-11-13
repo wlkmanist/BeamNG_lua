@@ -9,19 +9,17 @@
 
 local M = { dependencies = { 'mcp_tools' } }
 
--- Default 29292; the supervisor launches extra instances with -mcpport <n> so several
--- games can each expose their own MCP at once.
-local function resolveMcpPort()
-  local args = Engine.getStartingArgs()
-  local idx = args and tableFindKey(args, '-mcpport')
-  return (idx and tonumber(args[idx + 1])) or 29292
-end
-
-local BASE_PORT = resolveMcpPort()  -- requested port; we bind the next free one if it's taken
+local args = Engine.getStartingArgs() or {}
+local portArg = tableFindKey(args, '-mcpport')
+local BASE_PORT = (portArg and tonumber(args[portArg + 1])) or 29292
+local HOST = tableFindKey(args, '-mcpremote') and "any" or "127.0.0.1"
 local PORT_TRIES = 20               -- consecutive ports to cycle through before wrapping
 local PORT  = BASE_PORT
 local ROUTE = "/mcp"
-local PROTOCOL_VERSION = "2024-11-05"
+local PROTOCOL_VERSION = "2025-11-25"
+-- Revisions we can serve; all of them define the Streamable HTTP transport this uses.
+-- initialize must answer one of these, never the version the client asked for.
+local SUPPORTED_VERSIONS = { ["2025-03-26"] = true, ["2025-06-18"] = true, ["2025-11-25"] = true }
 
 local server = nil
 local publishedPort = nil     -- last port we told C++ we're actually listening on
@@ -34,7 +32,10 @@ local function publishPort(p)
   if publishedPort == p then return end
   publishedPort = p
   if Engine.setMcpPort then Engine.setMcpPort(p) end
-  if p ~= 0 then log("I", "mcp_server", "MCP listening on http://127.0.0.1:" .. tostring(p) .. ROUTE) end
+  if p == 0 then return end
+  local adapters = HOST == "any" and BNGWebWSServer.getNetworkAdapterAddresses()
+  local address = adapters and adapters[1] and adapters[1].ipv4Addr or HOST
+  log("I", "mcp_server", "MCP listening on http://" .. address .. ":" .. tostring(p) .. ROUTE)
 end
 
 -- Tools live in the mcp_tools extension; this server is just protocol plumbing.
@@ -61,8 +62,9 @@ local function rpcError(id, code, msg) return { jsonrpc = "2.0", id = id, error 
 local function dispatch(rpc)
   local m = rpc.method
   if m == "initialize" then
+    local want = rpc.params and rpc.params.protocolVersion
     return result(rpc.id, {
-      protocolVersion = (rpc.params and rpc.params.protocolVersion) or PROTOCOL_VERSION,
+      protocolVersion = (want and SUPPORTED_VERSIONS[want]) and want or PROTOCOL_VERSION,
       capabilities = { tools = { listChanged = false } },
       serverInfo = { name = "beamng-game", version = "1.0.0" },
     })
@@ -74,6 +76,7 @@ local function dispatch(rpc)
     if type(fn) ~= "function" then return rpcError(rpc.id, -32602, "unknown tool: " .. tostring(p.name)) end
     local ok, res, isErr = pcall(fn, p.arguments)
     if not ok then res, isErr = "tool crashed: " .. tostring(res), true end
+    extensions.hook("onMcpToolCalled", p.name, isErr == true)
     -- a tool may return an image as { data = <base64>, mimeType = "image/jpeg" }; otherwise text
     local content
     if type(res) == "table" and res.data and res.mimeType then
@@ -109,13 +112,17 @@ end
 local function startServer()
   watchdogTimer = 0  -- give a fresh server a full interval before the watchdog judges it
   if server then return end
-  server = BNGWebWSServer.getOrCreate("127.0.0.1", PORT, "", "", "", false, false)
+  server = BNGWebWSServer.getOrCreate(HOST, PORT, "", "", "", false, false)
   if not server then log("E", "mcp_server", "failed to create MCP server on port " .. tostring(PORT)); return end
   server:enableHttpHandler(ROUTE)
-  log("I", "mcp_server", "MCP server binding on http://127.0.0.1:" .. tostring(PORT) .. ROUTE)
+  log("I", "mcp_server", "MCP server binding on http://" .. HOST .. ":" .. tostring(PORT) .. ROUTE)
 end
 
 local function onUpdate(dtReal)
+  if server and publishedPort ~= PORT and server:isListening() then
+    publishPort(PORT)
+  end
+
   -- Watchdog: recreate the listener if it ever stops accepting connections (worker
   -- thread exit, or a failed bind when the game restarts while the old port is still
   -- held). Without it a single hiccup means ERR_CONNECTION_REFUSED until the extension
@@ -161,11 +168,16 @@ end
 local function onSerialize() return { active = server ~= nil } end
 local function onDeserialize(data) if data and data.active then startServer() end end
 
+local function isReady()
+  return publishedPort == PORT and server ~= nil and server:isListening()
+end
+
 M.onInit              = onInit
 M.onExtensionLoaded   = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onUpdate            = onUpdate
 M.onSerialize         = onSerialize
 M.onDeserialize       = onDeserialize
+M.isReady             = isReady
 
 return M

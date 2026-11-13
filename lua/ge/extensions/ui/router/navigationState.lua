@@ -39,6 +39,12 @@ M.setPendingEntry = function(entry)
   pendingEntry = entry
 end
 
+-- Drop an uncommitted pending entry. Used on timeout, rejection, explicit cancellation,
+-- and preemption so a superseded/aborted navigation never leaves stale pending state behind.
+M.clearPendingEntry = function()
+  pendingEntry = nil
+end
+
 M.promotePendingEntry = function()
   previousEntry = currentEntry
   currentEntry = pendingEntry

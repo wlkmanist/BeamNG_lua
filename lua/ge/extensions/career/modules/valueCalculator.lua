@@ -199,6 +199,7 @@ end
 
 local function getNumberOfBrokenParts(partConditions)
   local counter = 0
+  if type(partConditions) ~= "table" then return counter end
   for partPath, info in pairs(partConditions) do
     if info.integrityValue and info.integrityValue == 0 then
       counter = counter + 1

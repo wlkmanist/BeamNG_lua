@@ -65,7 +65,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   -- display the texture in imgui
   im.Begin("Render view test", windowOpen)
   local texObj = imUtils.texObj('#' .. renderViewName)
-  im.Image(texObj.texId, imageRes)
+  im.Image(texObj.tex:getID(), imageRes)
   im.End()
 end
 

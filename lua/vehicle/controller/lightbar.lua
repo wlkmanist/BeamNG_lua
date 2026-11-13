@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Runs selectable flash patterns for emergency and utility lights
+
 local M = {}
 M.type = "auxiliary"
 
@@ -16,6 +18,9 @@ local currentModeIndex = 1
 
 local resetTriggerElectricNames = nil
 local resetTriggerElectricLastValues = nil
+
+local stateData
+local stateDataNameModeIndex
 
 -- Updates electrical values that are static (non-animated) for the current mode
 -- These are values that stay constant and don't change with pattern timing
@@ -110,6 +115,16 @@ local function setModeIndex(index)
   guihooks.message("Lightbar Mode: " .. currentMode.name, 5, "vehicle.lightbar.mode")
 end
 
+local function applyRemoteModeIndex(index)
+  currentModeIndex = index
+  currentMode = modes[currentModeIndex]
+
+  for _, pattern in pairs(currentMode.electrics) do
+    pattern.timer = 0
+    pattern.stateIndex = 1
+  end
+end
+
 -- Cycles to the next available lightbar mode
 local function toggleMode()
   currentModeIndex = currentModeIndex + 1
@@ -126,6 +141,9 @@ local function reset(jbeamData)
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameModeIndex = M.name .. "_modeIndex"
+
   -- Load the electric value name from jbeam data, default to "lightbar" for backwards compatibility
   lightbarElectric = jbeamData.lightbarElectricsName or "lightbar"
 
@@ -210,10 +228,29 @@ local function init(jbeamData)
   end
 end
 
+local function getState()
+  stateData[stateDataNameModeIndex] = currentModeIndex
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newModeIndex = data[stateDataNameModeIndex]
+  if type(newModeIndex) == "number" and modes[newModeIndex] and newModeIndex ~= currentModeIndex then
+    applyRemoteModeIndex(newModeIndex)
+  end
+end
+
 M.init = init
 M.reset = reset
 M.updateGFX = updateGFX
 M.toggleMode = toggleMode
 M.setModeIndex = setModeIndex
+
+M.getState = getState
+M.setState = setState
 
 return M

@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Provides pressure-dependent service and fail-safe spring braking for air-braked vehicles
+
 local M = {}
 M.type = "auxiliary"
 

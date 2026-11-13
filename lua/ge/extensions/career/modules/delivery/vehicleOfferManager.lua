@@ -21,24 +21,24 @@ end
 local function makeTaskLabel(task)
   if task.type == "vehicleDropOff" then
     if task.lookupType == "vehNeedsRepair" or task.lookupType == "vehLargeTruckNeedsRepair" then
-      return string.format("Bring to %s for repairs.",dParcelManager.getLocationLabelShort(task.destination))
+      return core_locales.contextTranslate("ui.career.delivery.vehicleTasks.bringToRepairs", {destination = dParcelManager.getLocationLabelShort(task.destination)})
     end
     if task.lookupType == "vehForPrivate" then
-      return string.format("Bring to private home near %s.",dParcelManager.getLocationLabelShort(task.destination))
+      return core_locales.contextTranslate("ui.career.delivery.vehicleTasks.bringToPrivateHome", {destination = dParcelManager.getLocationLabelShort(task.destination)})
     end
     if task.lookupType == "vehRepairFinished" then
-      return string.format("Repair complete, bring back to %s.",dParcelManager.getLocationLabelShort(task.destination))
+      return core_locales.contextTranslate("ui.career.delivery.vehicleTasks.returnAfterRepair", {destination = dParcelManager.getLocationLabelShort(task.destination)})
     end
     if task.lookupType == "vehLargeTruck" then
-      return string.format("Bring to %s.",dParcelManager.getLocationLabelShort(task.destination))
+      return core_locales.contextTranslate("ui.career.delivery.vehicleTasks.bringTo", {destination = dParcelManager.getLocationLabelShort(task.destination)})
     end
-    return string.format("Bring to %s.",dParcelManager.getLocationLabelShort(task.destination))
+    return core_locales.contextTranslate("ui.career.delivery.vehicleTasks.bringTo", {destination = dParcelManager.getLocationLabelShort(task.destination)})
   elseif task.type == "trailerDropOff" then
-    return string.format("Tow to %s.", dParcelManager.getLocationLabelShort(task.destination))
+    return core_locales.contextTranslate("ui.career.delivery.vehicleTasks.towTo", {destination = dParcelManager.getLocationLabelShort(task.destination)})
   elseif task.destination then
-    return string.format("Drop Off at %s.", dParcelManager.getLocationLabelShort(task.destination))
+    return core_locales.contextTranslate("ui.career.delivery.vehicleTasks.dropOffAt", {destination = dParcelManager.getLocationLabelShort(task.destination)})
   else
-    return "Unknow Task"
+    return _tr("ui.career.delivery.vehicleTasks.unknown")
   end
 end
 M.makeTaskLabel = makeTaskLabel
@@ -46,60 +46,60 @@ M.makeTaskLabel = makeTaskLabel
 local vehicleTags = {
   junkerVeh = {
     unlockFlag = "junkerVeh",
-    labelPlural = "Junker Cars",
-    labelSingular = "Junker Car",
+    labelPlural = "ui.career.delivery.vehicleTags.junkerVeh.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.junkerVeh.singular",
   },
   smallVeh = {
     unlockFlag = "smallVeh",
-    labelPlural = "Small Vehicles",
-    labelSingular = "Small Vehicle",
+    labelPlural = "ui.career.delivery.vehicleTags.smallVeh.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.smallVeh.singular",
   },
   largeVeh = {
     unlockFlag = "largeVeh",
-    labelPlural = "Large Vehicles",
-    labelSingular = "Large Vehicle",
+    labelPlural = "ui.career.delivery.vehicleTags.largeVeh.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.largeVeh.singular",
   },
   fleetVeh = {
     unlockFlag = "fleetVeh",
-    labelPlural = "Fleet Cars",
-    labelSingular = "Fleet Car",
+    labelPlural = "ui.career.delivery.vehicleTags.fleetVeh.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.fleetVeh.singular",
   },
   exoticVeh = {
     unlockFlag = "exoticVeh",
-    labelPlural = "Exotic Cars",
-    labelSingular = "Exotic Car",
+    labelPlural = "ui.career.delivery.vehicleTags.exoticVeh.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.exoticVeh.singular",
   },
 
 
   emptySmallTrailers = {
     unlockFlag = "smallTrailersDelivery",
-    labelPlural = "Small Empty Trailers",
-    labelSingular = "Small Empty Trailer",
+    labelPlural = "ui.career.delivery.vehicleTags.emptySmallTrailers.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.emptySmallTrailers.singular",
   },
   loadedSmallTrailers = {
     unlockFlag = "smallTrailersDelivery",
-    labelPlural = "Small Loaded Trailers",
-    labelSingular = "Small Loaded Trailer",
+    labelPlural = "ui.career.delivery.vehicleTags.loadedSmallTrailers.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.loadedSmallTrailers.singular",
   },
   emptyMediumTrailers = {
     unlockFlag = "smallTrailersDelivery",
-    labelPlural = "Medium Empty Trailers",
-    labelSingular = "Medium Empty Trailer",
+    labelPlural = "ui.career.delivery.vehicleTags.emptyMediumTrailers.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.emptyMediumTrailers.singular",
   },
   loadedMediumTrailers = {
     unlockFlag = "smallTrailersDelivery",
-    labelPlural = "Medium Loaded Trailers",
-    labelSingular = "Medium Loaded Trailer",
+    labelPlural = "ui.career.delivery.vehicleTags.loadedMediumTrailers.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.loadedMediumTrailers.singular",
   },
   emptyLargeTrailer = {
     unlockFlag = "largeTrailersDelivery",
-    labelPlural = "Large Empty Trailers",
-    labelSingular = "Large Empty Trailer",
+    labelPlural = "ui.career.delivery.vehicleTags.emptyLargeTrailer.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.emptyLargeTrailer.singular",
   },
   loadedLargeTrailers = {
     unlockFlag = "largeTrailersDelivery",
-    labelPlural = "Large Loaded Trailers",
-    labelSingular = "Large Loaded Trailer",
+    labelPlural = "ui.career.delivery.vehicleTags.loadedLargeTrailers.plural",
+    labelSingular = "ui.career.delivery.vehicleTags.loadedLargeTrailers.singular",
   }
 }
 
@@ -128,20 +128,20 @@ end
 M.getVehicleTagUnlockedSimple = getVehicleTagUnlockedSimple
 
 local function getVehicleTagLabelSingular(tag)
-  if not vehicleTags[tag] then return "No Category" end
-  return vehicleTags[tag].labelSingular
+  if not vehicleTags[tag] then return _tr("ui.career.delivery.vehicleTags.noCategory") end
+  return _tr(vehicleTags[tag].labelSingular)
 end
 M.getVehicleTagLabelSingular = getVehicleTagLabelSingular
 local function getVehicleTagLabelPlural(tag)
-  if not vehicleTags[tag] then return "No Category" end
-  return vehicleTags[tag].labelPlural
+  if not vehicleTags[tag] then return _tr("ui.career.delivery.vehicleTags.noCategory") end
+  return _tr(vehicleTags[tag].labelPlural)
 end
 M.getVehicleTagLabelPlural = getVehicleTagLabelPlural
 
 local function getDefaultVehicleModifiersForUI()
   return {
-    {type = "route", icon = "routeSimple", active = true, label = "Responsible", description = "Bonus rewards if you stay on route and dont waste time.", important = true},
-    {type = "damage", icon = "cogsDamaged", active = true, label = "Careful", description = "Large penalty if vehicle is damaged.", important = true}
+    {type = "route", icon = "routeSimple", active = true, label = _tr("ui.career.delivery.vehicleModifiers.route.label"), description = _tr("ui.career.delivery.vehicleModifiers.route.description"), important = true},
+    {type = "damage", icon = "cogsDamaged", active = true, label = _tr("ui.career.delivery.vehicleModifiers.damage.label"), description = _tr("ui.career.delivery.vehicleModifiers.damage.description"), important = true}
   }
 end
 M.getDefaultVehicleModifiersForUI = getDefaultVehicleModifiersForUI

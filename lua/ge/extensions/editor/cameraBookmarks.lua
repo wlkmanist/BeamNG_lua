@@ -132,7 +132,7 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, imgui.ImVec2(500,500))
-  editor.addWindowMenuItem("Camera Bookmarks", onWindowMenuItem)
+  editor.addWindowMenuItem("Camera Bookmarks", onWindowMenuItem, {groupMenuName = 'Camera'})
 end
 
 M.onEditorInitialized = onEditorInitialized

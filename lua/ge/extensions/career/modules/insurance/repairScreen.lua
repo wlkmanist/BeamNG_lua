@@ -189,14 +189,25 @@ local function onMenuClosed()
   if tether then tether.remove = true tether = nil end
 end
 
+-- an instant repair saves a new vehicle thumbnail, which hides the UI;
+-- navigating back before that save finishes leaves the computer without UINav
+local closeMenuAfterSaving
+
 local function closeMenu()
+  if closeMenuAfterSaving then return end
   closeRepairMenu()
 end
 
 local function startRepairInGarage(invVehId, repairOptionData)
-  local result = career_modules_insurance_insurance.startRepairInGarage(invVehId, repairOptionData)
+  if closeMenuAfterSaving then return end
+  closeMenuAfterSaving = true
+  return career_modules_insurance_insurance.startRepairInGarage(invVehId, repairOptionData)
+end
+
+local function onVehicleSaveFinished()
+  if not closeMenuAfterSaving then return end
+  closeMenuAfterSaving = nil
   closeRepairMenu()
-  return result
 end
 
 M.getRepairData = getRepairData
@@ -207,5 +218,6 @@ M.startRepairInGarage = startRepairInGarage
 
 M.onComputerAddFunctions = onComputerAddFunctions
 M.onMenuClosed = onMenuClosed
+M.onVehicleSaveFinished = onVehicleSaveFinished
 
 return M

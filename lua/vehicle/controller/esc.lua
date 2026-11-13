@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Helps prevent skids and wheelspin through stability and traction control
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 50
@@ -55,6 +57,9 @@ local escConfigurations = {}
 local currentESCConfiguration = nil
 local currentESCConfigurationKey = 1
 local lastESCConfigurationKey = -1
+
+local stateData
+local stateDataNameConfigKey
 
 local wheelBase = 0 --m
 local invWheelBase = 0
@@ -140,6 +145,9 @@ local function updateSimpleButton(forceUpdate)
 end
 
 local function updateSimpleControlButtons()
+  if not currentESCConfiguration then
+    return
+  end
   updateSimpleButton(true)
 end
 
@@ -673,7 +681,7 @@ local function preCalculate()
   invSquaredCharacteristicSpeed = 1 / (currentESCConfiguration.characteristicSpeed * currentESCConfiguration.characteristicSpeed)
 end
 
-local function setESCMode(key)
+local function setESCMode(key, silent)
   if currentESCConfiguration == nil then --if we don't have any current config, the vehicle does not have esc at all, abort here
     return
   end
@@ -693,7 +701,9 @@ local function setESCMode(key)
 
   lastESCConfigurationKey = currentESCConfigurationKey
 
-  guihooks.message("ui.radialmenu2.ESC." .. currentESCConfiguration.name:gsub(" ", "_"), 5, "vehicle.esc.mode")
+  if not silent then
+    guihooks.message("ui.radialmenu2.ESC." .. currentESCConfiguration.name:gsub(" ", "_"), 5, "vehicle.esc.mode")
+  end
 end
 
 local function toggleESCMode()
@@ -808,6 +818,9 @@ local function calculateAxleDistances()
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameConfigKey = M.name .. "ConfigKey"
+
   configData = jbeamData
   lastLedColor = nil
 end
@@ -1052,6 +1065,24 @@ local function deserialize(data)
   end
 end
 
+local function getState()
+  if currentESCConfiguration then
+    stateData[stateDataNameConfigKey] = currentESCConfigurationKey
+  end
+  return stateData
+end
+
+local function setState(data)
+  if not data or not currentESCConfiguration then
+    return
+  end
+
+  local newConfigKey = data[stateDataNameConfigKey]
+  if type(newConfigKey) == "number" and newConfigKey == newConfigKey and newConfigKey % 1 == 0 and newConfigKey >= 1 and newConfigKey <= #escConfigurations and newConfigKey ~= currentESCConfigurationKey then
+    setESCMode(newConfigKey, true)
+  end
+end
+
 -- public interface
 M.init = init
 M.initSecondStage = initSecondStage
@@ -1067,6 +1098,8 @@ M.startESCCalibration = startESCCalibration
 M.stopESCCalibration = stopESCCalibration
 M.serialize = serialize
 M.deserialize = deserialize
+M.getState = getState
+M.setState = setState
 M.updateSimpleControlButtons = updateSimpleControlButtons
 
 return M

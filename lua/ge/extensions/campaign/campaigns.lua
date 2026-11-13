@@ -98,8 +98,6 @@ local function startScenarioFromKey(key, processedScenario)
   campaign.state.activeSubsection = ownerSubsection.key
   --dump(location)
 
-  campaign_exploration.endSubsectionExploration()
-
   campaign.meta.scenarioName = processedScenario.name
   campaign.meta.scenarioDirectory = processedScenario.directory
   table.insert(campaign.state.scenarioExecutionOrder, processedScenario.name)
@@ -116,10 +114,6 @@ local function stop()
   -- log('I', logTag, 'stop called....')
   if not campaign then
     return
-  end
-
-  if campaign_exploration then
-    campaign_exploration.stop()
   end
 
   campaign = nil
@@ -259,10 +253,6 @@ local function processCancelScenario()
   if scenario then
     scenario_scenarios.stop()
   end
-
-  local vehicleData = extractVehicleData(vid)
-  local spawningData = createPlayerSpawningData(vehicleData.model, vehicleData.config, vehicleData.color, vehicleData.licenseText)
-  campaign_exploration.startSubsectionExploration(campaign.state.activeSubsection, nil, spawningData)
 end
 
 local function processNextScenario()
@@ -285,22 +275,9 @@ local function processNextScenario()
   end
 
   local nextKey = getKeyForNextScenario(ownerSubsection, scenario)
-
-  if campaign_exploration.isValidSubsection(campaign, nextKey) then
-    local vid = be:getPlayerVehicleID(0)
-    local vehicleData = extractVehicleData(vid)
-    local spawningData = createPlayerSpawningData(vehicleData.model, vehicleData.config, vehicleData.color, vehicleData.licenseText)
-    local subsection = campaign.meta.subsections[nextKey]
-    local locationMarker = subsection.locations[campaign.state.scenarioKey] and subsection.locations[campaign.state.scenarioKey].exitLocation
-
-    campaign.state.scenarioKey = nil
-
-    campaign_exploration.startSubsectionExploration(nextKey, locationMarker, spawningData)
-  else
-    campaign.state.scenarioKey = nextKey
-    if campaign.state.scenarioKey then
-      startScenarioFromKey(campaign.state.scenarioKey)
-    end
+  campaign.state.scenarioKey = nextKey
+  if campaign.state.scenarioKey then
+    startScenarioFromKey(campaign.state.scenarioKey)
   end
 end
 
@@ -527,7 +504,7 @@ end
 local function uiEventCancel()
   log('D', logTag, 'uiEventCancel Triggered: '..campaign.state.scenarioKey)
   guihooks.trigger('MenuHide')
-  guihooks.trigger('ChangeState', 'menu')
+  extensions.ui_router.navigate('menu')
 
   processCancelScenario()
 end
@@ -700,14 +677,7 @@ local function startExecution()
       entryTarget = locationData.entryMarker
     end
 
-    if not entryTarget or isSubsectionMarker(subsectionKey, entryTarget) then
-      campaign_exploration.startSubsectionExploration(subsectionKey, entryTarget, spawningData)
-    elseif isSiteLocation(subsectionKey, entryTarget) then
-      local locationData = getLocationData(subsectionKey, entryTarget)
-      campaign_exploration.startSubsectionExploration(subsectionKey, locationData.entryMarker, spawningData)
-    else
-      startScenarioFromKey(entryTarget)
-    end
+    startScenarioFromKey(entryTarget)
   else
       log('E', logTag, 'Starting location format wrong. Correct format is startingLocation = <subsection name> OR <subsection name>.<location name> OR <subsection name>.<entry marker name>')
   end
@@ -761,9 +731,6 @@ end
 
 local function onResetGameplay(playerID)
   if not getCampaignActive() then return end
-  if campaign_exploration.getExplorationActive() then
-    be:resetVehicle(playerID)
-  end
 end
 
 -- public interface

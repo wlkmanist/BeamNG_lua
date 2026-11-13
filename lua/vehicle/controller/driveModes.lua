@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Switches coordinated vehicle settings as driver-selectable drive modes
+
 local M = {}
 M.type = "auxiliary"
 
@@ -20,9 +22,13 @@ local enabledDriveModes = {}
 
 local activeDriveMode = nil
 local activeDriveModeIndex = nil
+local defaultDriveModeKey = nil
 local uiName
 
 local simpleControlButtons = {}
+
+local stateData
+local stateDataNameActiveMode
 
 local function setExhaustGainMufflingOffset(engineName, mufflingOffset, gainOffset)
   local engine = powertrain.getDevice(engineName)
@@ -58,7 +64,12 @@ local function setGearboxMode(mode)
 end
 
 local function updateSimpleControlButton(buttonData)
-  extensions.ui_simplePowertrainControl.setButton(buttonData.id, buttonData.uiName, buttonData.icon, buttonData.currentColor, nil, buttonData.onClick)
+  -- treat any non-default mode as engaged
+  local active = nil
+  if not buttonData.color then
+    active = activeDriveMode ~= nil and activeDriveMode.key ~= defaultDriveModeKey
+  end
+  extensions.ui_simplePowertrainControl.setButton(buttonData.id, buttonData.uiName, buttonData.icon, buttonData.currentColor, nil, buttonData.onClick, nil, active)
 end
 
 local function setSimpleControlButton(id, buttonUIName, icon, color, offColor, offColorElectric, onClick, remove)
@@ -84,6 +95,14 @@ local function updateSimpleControlButtons()
   for _, buttonData in pairs(simpleControlButtons) do
     updateSimpleControlButton(buttonData)
   end
+end
+
+local function modeLabel(name)
+  return { txt = name, prefix = "ui.vehicleconfig.modes." }
+end
+
+local function modeValue(name)
+  return { txt = name, prefix = "ui.vehicleconfig.modeValues." }
 end
 
 local function applyDriveMode(mode)
@@ -142,19 +161,28 @@ local function updateGFX(dt)
   end
 end
 
-local function setDriveMode(modeKey)
+local function setDriveMode(modeKey, silent)
   if not modeKey then
     return
   end
   local mode = driveModes[modeKey]
   if mode then
+    for index, enabledModeKey in ipairs(enabledDriveModes) do
+      if enabledModeKey == modeKey then
+        activeDriveModeIndex = index
+        break
+      end
+    end
+
     activeDriveMode = mode
     applyDriveMode(mode)
 
-    if uiName then
-      guihooks.message(uiName .. ": " .. mode.name, 5, "vehicle.driveModes." .. uiName)
-    else
-      guihooks.message("Drivemode: " .. mode.name .. " ([action=toggleESCMode] to change)", 5, "vehicle.driveModes")
+    if not silent then
+      if uiName then
+        guihooks.message({txt = "vehicle.driveModes.namedMode", context = {uiName = modeLabel(uiName), mode = modeValue(mode.name)}}, 5, "vehicle.driveModes." .. uiName)
+      else
+        guihooks.message({txt = "vehicle.driveModes.defaultMode", context = {mode = modeValue(mode.name)}}, 5, "vehicle.driveModes")
+      end
     end
   end
 end
@@ -215,16 +243,33 @@ local function deserialize(data)
   end
 end
 
+local function getState()
+  if activeDriveMode then
+    stateData[stateDataNameActiveMode] = activeDriveMode.key
+  end
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newActiveMode = data[stateDataNameActiveMode]
+  if type(newActiveMode) == "string" and driveModes[newActiveMode] and (not activeDriveMode or newActiveMode ~= activeDriveMode.key) then
+    setDriveMode(newActiveMode, true)
+  end
+end
+
 local function registerQuickAccess()
   if not hasRegisteredQuickAccess and #enabledDriveModes > 0 then
     core_quickAccess.addEntry(
       {
         level = "/root/playerVehicle" .. quickAccessLevel,
         generator = function(entries)
-          local currentDriveModeName = activeDriveMode.name
           local entry = {
-            title = quickAccessTitle,
-            desc = {txt = "ui.radialmenu2.currentValueColon", context = {value = currentDriveModeName}},
+            title = modeLabel(quickAccessTitle),
+            desc = {txt = "ui.radialmenu2.currentValueColon", context = {value = modeValue(activeDriveMode.name)}},
             priority = 40,
             uniqueID = "driveModeNext" .. quickAccessTitle,
             onSelect = function()
@@ -248,6 +293,9 @@ local function registerQuickAccess()
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameActiveMode = M.name .. "ActiveMode"
+
   uiName = jbeamData.uiName
   quickAccessTitle = jbeamData.quickAccessTitle or "ui.radialmenu2.ESC"
   quickAccessIcon = jbeamData.quickAccessIcon
@@ -374,6 +422,7 @@ local function initLastStage(jbeamData)
   if not key then
     activeDriveModeIndex, key = next(enabledDriveModes)
   end
+  defaultDriveModeKey = key
   setDriveMode(key)
 end
 
@@ -384,6 +433,9 @@ M.initLastStage = initLastStage
 M.updateGFX = updateGFX
 M.serialize = serialize
 M.deserialize = deserialize
+
+M.getState = getState
+M.setState = setState
 
 M.nextDriveMode = nextDriveMode
 M.previousDriveMode = previousDriveMode

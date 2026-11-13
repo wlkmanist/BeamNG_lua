@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Supervisor coordinating stability interventions to keep yaw near the expected cornering response
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 60
@@ -173,6 +175,7 @@ local function shutdown()
   M.isActive = false
   M.updateGFX = nil
   M.update = nil
+  M.updateFixedStep = nil
 end
 
 local function updateIsEnabled(isEnabled)

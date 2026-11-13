@@ -39,6 +39,17 @@ local lodBrokenMesh = false
 local comboSeqCurrentItem = im.IntPtr(0)
 local comboSeqCtxTxt = ""
 local orbitNeedsInit = true
+local seqPos = im.FloatPtr(0)
+local seqTimeScale = im.FloatPtr(1)
+local seqPingPong = im.BoolPtr(false)
+local hasImposter = false
+local impSize = im.IntPtr(2)
+local impEquatorSteps = im.IntPtr(4)
+local impPolarSteps = im.IntPtr(0)
+local impDetailLevel = im.IntPtr(0)
+local impDimension = im.IntPtr(64)
+local impIncludePoles = im.BoolPtr(false)
+local impPolarAngle = im.FloatPtr(0)
 
 local function clamp(x, a, b)
   if x < a then return a end
@@ -59,7 +70,7 @@ local function onEditorInitialized()
   end
   -- meshFile = "/levels/GridMap/art/shapes/buildings/busstop_grid.dae"
   -- shapePrev:setObjectModel(meshFile)
-  editor.addWindowMenuItem(windowTitle, onWindowMenuItem)
+  editor.addWindowMenuItem(windowTitle, onWindowMenuItem, {groupMenuName = 'Assets'})
   shapePrev:setRenderState(renderFlags[1][0],renderFlags[2][0],renderFlags[3][0],renderFlags[4][0],renderFlags[5][0])
   editor.registerWindow(toolWindowName, initialWindowSize)
 end
@@ -90,6 +101,12 @@ local function _getShapeInfo()
         comboSeqCtxTxt = comboSeqCtxTxt..dumps(v.name).."\0"
       end
       comboSeqCtxTxt = comboSeqCtxTxt.."\0"
+      comboSeqCurrentItem[0] = 0
+      -- preload the first sequence, paused, so the seek bar has something to scrub
+      shapePrev:setActiveThreadSequence(shapeInfo.sequences[1].name, 0, 0, true)
+      shapePrev:setThreadPlaying(false)
+      seqTimeScale[0] = shapePrev:getTimeScale()
+      seqPingPong[0] = shapePrev:getThreadPingPong()
     else
       comboSeqCtxTxt = "\0\0"
       comboSeqCurrentItem[0] = -1
@@ -162,6 +179,57 @@ singleton TSShapeConstructor(%s)
     f:close()
   end
 
+end
+
+local function _imposterMetaFile()
+  if not meshFile then return nil end
+  return meshFile .. ".asset.json"
+end
+
+local function _readImposterSettings()
+  hasImposter = false
+  local file = _imposterMetaFile()
+  if not file then return end
+  local data = jsonReadFile(file)
+  local imp = data and data.imposters and data.imposters[1]
+  if not imp then return end
+  hasImposter = true
+  impSize[0] = imp.size or 2
+  impEquatorSteps[0] = imp.equatorSteps or 4
+  impPolarSteps[0] = imp.polarSteps or 0
+  impDetailLevel[0] = imp.detailLevel or 0
+  impDimension[0] = imp.dimension or 64
+  impIncludePoles[0] = imp.includePoles and true or false
+  impPolarAngle[0] = imp.polarAngle or 0
+end
+
+local function _writeImposterSettings(remove)
+  local file = _imposterMetaFile()
+  if not file then return end
+  local data = jsonReadFile(file) or {}
+  if remove then
+    data.imposters = nil
+  else
+    data.imposters = {{
+      size = tonumber(impSize[0]),
+      equatorSteps = tonumber(impEquatorSteps[0]),
+      polarSteps = tonumber(impPolarSteps[0]),
+      detailLevel = tonumber(impDetailLevel[0]),
+      dimension = tonumber(impDimension[0]),
+      includePoles = impIncludePoles[0] and true or false,
+      polarAngle = tonumber(impPolarAngle[0]),
+    }}
+  end
+  if next(data) == nil then
+    FS:removeFile(file)
+  elseif not jsonWriteFile(file, data, true) then
+    log("E", "_writeImposterSettings", "failed to write " .. dumps(file))
+    return
+  end
+  shapePrev:reloadModel()
+  _getShapeInfo()
+  _readImposterSettings()
+  dirtyRdr = true
 end
 
 local function _getMaterialObj(matName)
@@ -561,14 +629,55 @@ local function onEditorGui()
         displayTree(nodes)
         im.EndTabItem()
       end
-      if beamng_buildtype=="INTERNAL" and im.BeginTabItem("Sequence") then
-        if shapeInfo.sequences then
+      if im.BeginTabItem("Sequence") then
+        local seq = shapeInfo.sequences and shapeInfo.sequences[comboSeqCurrentItem[0]+1]
+        if seq then
           if im.Combo2("animation", comboSeqCurrentItem, comboSeqCtxTxt) then
             -- log( "E", "seq", dumps(comboSeqCurrentItem[0])  )
             -- log( "E", "seq", dumps(shapeInfo.sequences[comboSeqCurrentItem[0]+1] ) )
-            shapePrev:setActiveThreadSequence(shapeInfo.sequences[comboSeqCurrentItem[0]+1].name, 0,0, true)
+            seq = shapeInfo.sequences[comboSeqCurrentItem[0]+1]
+            shapePrev:setActiveThreadSequence(seq.name, 0,0, true)
+            shapePrev:setThreadPlaying(false)
+            dirtyRdr = true
           end
-          dirtyRdr = true
+
+          local playing = shapePrev:isThreadPlaying()
+          local duration = shapePrev:getThreadDuration()
+
+          if editor.uiIconImageButton(playing and editor.icons.pause or editor.icons.play_arrow, im.ImVec2(24, 24)) then
+            shapePrev:setThreadPlaying(not playing)
+            dirtyRdr = true
+          end
+          im.tooltip(playing and "Pause" or "Play")
+          im.SameLine()
+          if editor.uiIconImageButton(editor.icons.skip_previous, im.ImVec2(24, 24)) then
+            shapePrev:setThreadPos(0)
+            dirtyRdr = true
+          end
+          im.tooltip("Rewind to the start of the sequence")
+          im.SameLine()
+
+          seqPos[0] = shapePrev:getThreadPos()
+          im.PushItemWidth(im.GetContentRegionAvailWidth())
+          if im.SliderFloat("##seqPos", seqPos, 0, 1, string.format("%.3f / %.3f s", seqPos[0]*duration, duration)) then
+            shapePrev:setThreadPlaying(false)
+            shapePrev:setThreadPos(seqPos[0])
+            dirtyRdr = true
+          end
+          im.PopItemWidth()
+          im.tooltip("Drag to scrub through the animation")
+
+          if im.SliderFloat("speed", seqTimeScale, 0.01, 4, "%.2f x") then
+            shapePrev:setTimeScale(seqTimeScale[0])
+            dirtyRdr = true
+          end
+          if im.Checkbox("ping pong", seqPingPong) then
+            shapePrev:setThreadPingPong(seqPingPong[0])
+            dirtyRdr = true
+          end
+
+          im.TextUnformatted("Keyframes = "..tostring(seq.numKeyframes))
+          im.TextUnformatted(string.format("Duration = %.3f s", seq.duration))
         else
           im.TextUnformatted("No sequences found")
         end
@@ -591,6 +700,72 @@ local function onEditorGui()
           end
         end
         _updateSelectedMaterial(matHover)
+        im.EndTabItem()
+      end
+      if im.BeginTabItem("Imposter") then
+        im.TextWrapped("Imposters are auto-generated billboards used as the last detail level. The settings are stored next to the mesh, in its .asset.json file.")
+        im.Separator()
+        if hasImposter then
+          im.TextUnformatted("This shape has an imposter detail level.")
+        else
+          im.TextColored(im.ImVec4(1,0.8,0.1,1), "This shape has no imposter detail level.")
+        end
+
+        editor.uiInputInt("Detail size", impSize, 1, 10, nil, nil)
+        im.tooltip("Size of the imposter detail level. It must be smaller than every other detail size of the shape.")
+        editor.uiInputInt("Equator steps", impEquatorSteps, 1, 4, nil, nil)
+        im.tooltip("Number of snapshots taken around the equator, while rotating the shape around its vertical axis.")
+        editor.uiInputInt("Polar steps", impPolarSteps, 1, 4, nil, nil)
+        im.tooltip("Number of snapshots taken between the poles, at each equator step.")
+        -- the imposter detail itself has no meshes, picking it would capture an empty image
+        local renderDetailCount = 0
+        if shapeInfo.details then
+          for _, v in ipairs(shapeInfo.details) do
+            if v.subShapeNum >= 0 and v.size >= 0 then
+              renderDetailCount = renderDetailCount + 1
+            end
+          end
+        end
+        if renderDetailCount > 0 then
+          if impDetailLevel[0] > renderDetailCount-1 then
+            impDetailLevel[0] = renderDetailCount-1
+          end
+          im.SliderInt("Source detail level", impDetailLevel, 0, renderDetailCount-1)
+        else
+          editor.uiInputInt("Source detail level", impDetailLevel, 1, 1, nil, nil)
+        end
+        im.tooltip("Index of the detail level used to render the snapshots.")
+        editor.uiInputInt("Image dimension", impDimension, 16, 64, nil, nil)
+        im.tooltip("Size in pixels of each imposter image.")
+        im.Checkbox("Include poles", impIncludePoles)
+        im.tooltip("Also render the views from the top and the bottom of the shape.")
+        if not impIncludePoles[0] then
+          im.BeginDisabled()
+        end
+        editor.uiInputFloat("Polar angle", impPolarAngle, 1, 5, "%.1f", nil)
+        im.tooltip("Camera angle in degrees within which the pole snapshots are displayed.")
+        if not impIncludePoles[0] then
+          im.EndDisabled()
+        end
+
+        if im.Button(hasImposter and "Update imposter" or "Add imposter") then
+          _writeImposterSettings(false)
+        end
+        im.SameLine()
+        if not hasImposter then
+          im.BeginDisabled()
+        end
+        if im.Button("Remove imposter") then
+          _writeImposterSettings(true)
+        end
+        if not hasImposter then
+          im.EndDisabled()
+        end
+        im.SameLine()
+        if im.Button("Bake images") then
+          Engine.Render.requestImposterUpdate()
+        end
+        im.tooltip("Force a re-render of the cached imposter images.")
         im.EndTabItem()
       end
       if shapePrev.createMeshLOD and im.BeginTabItem("LOD WIP") then
@@ -696,6 +871,9 @@ local function onEditorGui()
       im.EndTabBar()
     end
     im.EndChild()
+    if shapePrev:isThreadPlaying() then
+      dirtyRdr = true
+    end
     shapePrev:setInputEnabledEx(true, true, true, false, true)
   end
   editor.endWindow()
@@ -736,6 +914,7 @@ local function showShapeEditorLoadFile(filename)
   onWindowMenuItem()
   _getShapeInfo()
   _readMeshConstructor()
+  _readImposterSettings()
 end
 
 local function onSerialize()

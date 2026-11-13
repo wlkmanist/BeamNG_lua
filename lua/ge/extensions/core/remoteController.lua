@@ -173,7 +173,7 @@ local function onInputBindingsChanged(players)
   for device, player in pairs(players) do
     for _, dev in pairs(virtualDevices) do
       if "vinput"..dev.deviceInst == device then
-        assignedPlayers[dev.deviceInst] = player
+        assignedPlayers[dev.deviceInst] = player >= 0 and player or nil
       end
     end
   end

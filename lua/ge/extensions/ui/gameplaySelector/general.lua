@@ -11,7 +11,6 @@ local customRootPath = {}
 -- Load the modules
 local displayDataModule = require("ge/extensions/ui/gridSelectorUtils/displayDataModule")
 local filterModule = require("ge/extensions/ui/gridSelectorUtils/filterModule")
--- Backend name for this selector
 
 local propName = function(key) return _tr("ui.menu.gameplaySelector.propName." .. key, key) end
 local propValue = function(propName, key) return core_locales.translateWithPrefixFallback(key, "ui.menu.gameplaySelector.propValue." .. propName .. ".") end
@@ -19,6 +18,8 @@ local othersText = nil
 local defaultDisplayDataOptions, displayDataInstance, filterInstance
 local activeRouteName = nil
 local RALLY_SELECTOR_ROUTE_NAME = "menu.rallySelector"
+local EXPERIENCES_SELECTOR_ROUTE_NAME = "menu.experiencesSelector"
+local EXPERIENCES_SELECTOR_CLUSTER_ROUTE_NAME = "menu.experiencesSelector.type"
 
 local function isRallySelectorContext(routeName)
   if routeName ~= nil then
@@ -38,6 +39,11 @@ local function isRallySelectorContext(routeName)
   return currentName == RALLY_SELECTOR_ROUTE_NAME
 end
 
+local function isExperiencesSelectorContext(routeName)
+  local name = routeName or activeRouteName
+  return name == EXPERIENCES_SELECTOR_ROUTE_NAME or name == EXPERIENCES_SELECTOR_CLUSTER_ROUTE_NAME
+end
+
 local function copyDisplayData(source)
   local result = {}
   if type(source) == "table" then
@@ -50,22 +56,30 @@ end
 
 local function getEffectiveDisplayData(routeName)
   local source = displayDataInstance.getDisplayData()
-  if not isRallySelectorContext(routeName) then
+  local isRallySelector = isRallySelectorContext(routeName)
+  local isExperiencesSelector = isExperiencesSelectorContext(routeName)
+  if not isRallySelector and not isExperiencesSelector then
     return source
   end
 
   local result = copyDisplayData(source)
-  result.groupMode = source.groupModeRally or "type"
-  result.clusterMode = source.clusterModeRally or "none"
+  if isRallySelector then
+    result.groupMode = source.groupModeRally or "type"
+    result.clusterMode = source.clusterModeRally or "none"
+  else
+    result.groupMode = "system"
+    result.clusterMode = "automatic"
+  end
   return result
 end
 
 local function getContextDisplayDataOptions(routeName)
   local isRallySelector = isRallySelectorContext(routeName)
+  local isExperiencesSelector = isExperiencesSelectorContext(routeName)
   local result = {}
   for _, option in ipairs(displayDataInstance.getDisplayDataOptions()) do
     local key = option.key
-    local shouldHide = (isRallySelector and (key == "groupMode" or key == "clusterMode"))
+    local shouldHide = ((isRallySelector or isExperiencesSelector) and (key == "groupMode" or key == "clusterMode"))
       or (not isRallySelector and (key == "groupModeRally" or key == "clusterModeRally"))
     if not shouldHide then
       table.insert(result, option)
@@ -258,11 +272,14 @@ local setupInstances = function()
 
   local commonFilters = {
     --{"system", "Freeroam"},
+    {propName("system"), propValue("system", "quickStartExperiences")},
     {propName("system"), propValue("system", "challenges")},
     {propName("system"), propValue("system", "scenarios")},
     {propName("system"), propValue("system", "scenariosMultiplayer")},
-    {propName("system"), propValue("system", "campaigns")},
   }
+  if not Engine.UI.isSimpleMenu() then
+    table.insert(commonFilters, {propName("system"), propValue("system", "campaigns")})
+  end
 
   -- Gameplay-specific filterInstance creation function
   local function createGameplayFilters(gameplayList)
@@ -571,7 +588,9 @@ function M.navigateToCluster(input)
     title = clusterTitle,
   }
   dump("pendingClusterSelection", pendingClusterSelection)
-  return extensions.ui_router.navigate("menu.gameplay.type")
+  local clusterRouteName = activeRouteName == EXPERIENCES_SELECTOR_ROUTE_NAME
+    and EXPERIENCES_SELECTOR_CLUSTER_ROUTE_NAME or "menu.gameplay.type"
+  return extensions.ui_router.navigate(clusterRouteName)
 end
 
 function M.requestDetails(item, requestId)
@@ -776,6 +795,10 @@ function M.getScreenHeaderTitleAndPath(path)
     end
 
     table.insert(pathSegments, {label = title, gotoPath = path.keys})
+  elseif pathType == "discoverPage" then
+    local pathKeys = path.keys or {}
+    title = pathKeys[3] or _tr("ui.playmodes.quickStartExperiences")
+    table.insert(pathSegments, {label = title, gotoPath = path.keys})
   else
     title = _tr("ui.menu.gameplaySelector.title")
   end
@@ -849,6 +872,12 @@ end
 local DEFAULT_ROUTE_PATH = { keys = { "allGameplay" } }
 
 local GAMEPLAY_ROUTE_PRESETS = {
+  [EXPERIENCES_SELECTOR_ROUTE_NAME] = {
+    systemFilterKey = "quickStartExperiences",
+  },
+  [EXPERIENCES_SELECTOR_CLUSTER_ROUTE_NAME] = {
+    systemFilterKey = "quickStartExperiences",
+  },
   ["menu.rallySelector"] = {
     -- Rally tiles store item.type as the translated missionTypeLabel. Use the
     -- translation keys so applyPresetFilterEntry resolves them to the active
@@ -1150,6 +1179,10 @@ end
 
 function M.openRallySelector()
   openSelectorRoute("menu.rallySelector")
+end
+
+function M.openExperiencesSelector()
+  openSelectorRoute(EXPERIENCES_SELECTOR_ROUTE_NAME)
 end
 
 return M

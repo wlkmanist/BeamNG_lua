@@ -3,8 +3,14 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 -- Tile generators will be loaded dynamically
-M.dependencies = {}
-local systemName = function(system) return _tr("ui.menu.gameplaySelector.propValue.system." .. system, system) end
+M.dependencies = {'core_locales'}
+
+local function groupValueLabel(groupMode, value)
+  if type(value) ~= "string" or value == "" then
+    return _tr("ui.menu.gridSelector.other")
+  end
+  return core_locales.translateWithPrefixFallback(value, "ui.menu.gameplaySelector.propValue." .. groupMode .. ".")
+end
 
 local generatorFiles = FS:findFiles('lua/ge/extensions/ui/gameplaySelector/tileGenerators/', '*.lua', 1, true, false)
 for _, filePath in ipairs(generatorFiles) do
@@ -27,6 +33,7 @@ local backend = nil
 local tileClustering = require('/lua/ge/extensions/ui/gameplaySelector/tileClustering')
 local tileSorting = require('/lua/ge/extensions/ui/gameplaySelector/tileSorting')
 
+local QUICK_START_SYSTEM = "quickStartExperiences"
 -- Backend name
 local backendName = "gameplaySelector"
 
@@ -130,7 +137,7 @@ local function handleAllGameplayPath(path, data, items)
       -- groupValue is the raw filter value used for matching in detail path handling.
       -- groupLabel is the translated/display-facing string shown in the UI.
       local groupValue = item[groupMode] or "Other..."
-      local groupLabel = item[groupMode] and systemName(item[groupMode]) or _tr("ui.menu.gridSelector.other")
+      local groupLabel = groupValueLabel(groupMode, item[groupMode])
       table.insert(groupsForItem, {groupName = groupLabel, groupOrder = 0, groupKey = groupValue})
 
       -- Add special groups for favourites and recent items
@@ -204,9 +211,10 @@ local function handleAllGameplayPath(path, data, items)
       -- Skip clustering for special groups in unclustered mode
       local skipClustering = (group.isRecentGroup and displayData.showRecentMode == 'unclustered') or
                              (group.isFavouriteGroup and displayData.showFavouritesMode == 'unclustered')
+      local isDiscoverPagesGroup = group.key == QUICK_START_SYSTEM
 
       -- Apply clustering if specified and not "None"
-      if clusterMode and clusterMode ~= "none" and not skipClustering then
+      if clusterMode and clusterMode ~= "none" and not skipClustering and not isDiscoverPagesGroup then
         local clusteredItems = tileClustering.clusterItems(tiles, clusterMode)
         tiles = {}
 
@@ -526,6 +534,15 @@ local function handleSpawnPointsForLevelPath(path, data, items)
   return handleDetailGameplayPath(detailPath, data, items)
 end
 
+local function handleDiscoverPagePath(path)
+  local pathKeys = path.keys or {}
+  local pageKey = pathKeys[2]
+  if not pageKey or pageKey == "" then
+    return {}
+  end
+  return ui_gameplaySelector_tileGenerators_discoverTiles.getPageGroups(pageKey)
+end
+
 -- Get tiles for a specific path
 
 function M.getTiles(path, _backend, routeName)
@@ -565,6 +582,8 @@ function M.getTiles(path, _backend, routeName)
     return handleDetailGameplayPath(path, data, items)
   elseif pathType == "spawnPointsForLevel" then
     return handleSpawnPointsForLevelPath(path, data, items)
+  elseif pathType == "discoverPage" then
+    return handleDiscoverPagePath(path)
   else
     -- Default to allGameplay for unknown paths
     return handleAllGameplayPath(path, data, items)

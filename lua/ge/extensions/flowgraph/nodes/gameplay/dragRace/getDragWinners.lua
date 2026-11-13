@@ -15,6 +15,8 @@ C.category = 'repeat_instant'
 C.pinSchema = {
   { dir = 'out', type = 'bool', name = 'playerWin', description = ""},
   { dir = 'out', type = 'number', name = 'playerPos', description = ""},
+  { dir = 'out', type = 'number', name = 'dialDiff', description = "Player (ET + RT) minus the player's dial."},
+  { dir = 'out', type = 'number', name = 'threshold', description = "Best opponent (ET + RT) minus player (ET + RT). Positive when the player crossed the line first."},
 }
 
 C.tags = {'gameplay', 'utils'}
@@ -61,6 +63,10 @@ function C:work()
         end
       end
     end
+  end
+  if self.result then
+    self.pinOut.dialDiff.value = self.result.dialDiff
+    self.pinOut.threshold.value = self.result.threshold
   end
 end
 

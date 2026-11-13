@@ -187,7 +187,7 @@ local function getCareerHistoryChanges(historyType, limit)
 
     if rewards and #rewards > 0 then
       table.insert(rows, {
-        reason = reason.label or "Unknown Reason",
+        reason = reason.label or "ui.career.attributeLog.unknownReason",
         time = change.time,
         rewards = rewards,
       })
@@ -312,6 +312,7 @@ M.setAttributes = setAttributes
 M.getAttribute = getAttribute
 M.getAttributeValue = getAttributeValue
 M.getAllAttributes = getAllAttributes
+M.getRewardDisplayName = getRewardDisplayName
 M.getRecentFinancialChanges = getRecentFinancialChanges
 M.getFinancialHistory = getFinancialHistory
 M.getGameplayHistory = getGameplayHistory

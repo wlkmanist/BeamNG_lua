@@ -30,7 +30,7 @@ local instanceCounters = {} -- list of instance counters for each decal template
 local finalPosns, finalTans, finalNormals = {}, {}, {}
 local components, cycle = {}, {}
 local jitterQuat, rot = quat(), quat()
-local tmpTan = vec3()
+local tmpTan, tmpPos = vec3(), vec3()
 
 
 -- Sample a decal based on normalised probabilities.
@@ -156,8 +156,9 @@ local function tryRemove(spline)
   end
 end
 
--- Removes the folder for the shared templates.
+-- Removes the folder for the shared templates (not while decals a locked spline kept across a Lua reload still use them).
 local function removeFolder()
+  for _, n in pairs(instanceCounters) do if n > 0 then return end end
   if templateFolderId then
     local folder = scenetree.findObjectById(templateFolderId)
     if folder then
@@ -211,6 +212,12 @@ local function populateDecalSpline(spline, splines)
     tmpTan:normalize()
     local normal = finalNormals[i]
 
+    -- Seat the decal at the cell midpoint. Decals are centre-pivoted quads of length decalLength, so centring each one
+    -- in its (decalLength + spacing) cell makes them abut seam-to-seam regardless of sampling; placing at an endpoint
+    -- would offset every decal by half a cell.
+    tmpPos:setAdd2(p1, p2)
+    tmpPos:setScaled2(tmpPos, 0.5)
+
     -- Compute jittered rotation (Z-only jitter).
     geom.computeRandomJitterQuat_ZOnly(jitter, normal, jitterQuat)
 
@@ -244,7 +251,7 @@ local function populateDecalSpline(spline, splines)
     -- Create the decal instance and store it in the decal instances table.
     local template = scenetree.findObjectById(templateIds[componentPath])
     if template then
-      local decal = editor.addDecalInstanceWithTan(p2, finalUp, finalTgt, template, mapData.scale, mapData.frame, 3, 1)
+      local decal = editor.addDecalInstanceWithTan(tmpPos, finalUp, finalTgt, template, mapData.scale, mapData.frame, 3, 1)
       decalInstances[splineId] = decalInstances[splineId] or {} -- Ensure we have a table for this spline.
       decalInstances[splineId][componentPath] = decalInstances[splineId][componentPath] or {} -- Ensure we have a table (in the spline table) for this material.
       table.insert(decalInstances[splineId][componentPath], decal)
@@ -252,6 +259,54 @@ local function populateDecalSpline(spline, splines)
       instanceCounters[componentPath] = instanceCounters[componentPath] + 1 -- Increment the instance counter for the material.
     end
   end
+end
+
+-- True if the tool holds any decals for the spline.
+local function hasAny(spline)
+  for _, list in pairs(decalInstances[spline.id] or {}) do
+    if #list > 0 then return true end
+  end
+  return false
+end
+
+-- Lua reload: the tool lets go of a locked spline's decals without deleting them (they are the level's) and returns their
+-- uids per material, with the templates they use, for adopt() to pick up again. Their templates stay counted, so removing the
+-- other splines leaves them (and the template folder) in place.
+local function release(spline)
+  local kept = { folderId = templateFolderId, uids = {}, templates = {} }
+  for material, list in pairs(decalInstances[spline.id] or {}) do
+    local uids = {}
+    for i = 1, #list do
+      local ok, uid = pcall(function() return list[i].uid end)
+      if ok and uid then uids[#uids + 1] = uid end
+    end
+    kept.uids[material] = uids
+    kept.templates[material] = templateIds[material]
+  end
+  decalInstances[spline.id] = nil
+  return kept
+end
+
+-- Takes back the decals release() let go of (those still in the scene), as they are, with their templates and folder.
+local function adopt(spline, kept)
+  local byUid = {}
+  local decalMgr = Engine.Render.DecalMgr -- not editor.*: this runs from onDeserialized, before the editor API is set up.
+  for i = 0, decalMgr.getDecalInstanceVecSize() - 1 do
+    local inst = decalMgr.getDecalInstance(i)
+    local ok, uid = pcall(function() return inst.uid end)
+    if ok and uid then byUid[uid] = inst end
+  end
+  if kept.folderId and scenetree.findObjectById(kept.folderId) then templateFolderId = kept.folderId end
+  local bySpline = {}
+  for material, uids in pairs(kept.uids or {}) do
+    local list = {}
+    for i = 1, #uids do list[#list + 1] = byUid[uids[i]] end
+    bySpline[material] = list
+    local tid = kept.templates[material]
+    if tid and scenetree.findObjectById(tid) then templateIds[material] = tid end
+    instanceCounters[material] = (instanceCounters[material] or 0) + #list
+  end
+  decalInstances[spline.id] = bySpline
 end
 
 -- On a change of num rows/num cols, we need to update the same properties in the other components.
@@ -311,13 +366,14 @@ local function propagateRowsCols(spline, componentIdx)
   end
 end
 
-
 -- Public interface.
 M.populateDecalSpline =                                 populateDecalSpline
 
 M.tryRemove =                                           tryRemove
-
 M.removeFolder =                                        removeFolder
+M.hasAny =                                              hasAny
+M.release =                                             release
+M.adopt =                                               adopt
 M.propagateRowsCols =                                   propagateRowsCols
 
 return M

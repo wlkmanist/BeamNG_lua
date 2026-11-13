@@ -28,7 +28,7 @@ local M = {}
 local logtag = "assemblySpline.molecule"
 
 -- Module constants.
-local abs = math.abs
+local abs, max = math.abs, math.max
 local anchorPrefixStrWithDot = anchorPrefixStr .. '.'
 
 -- Module state.
@@ -737,6 +737,15 @@ local function buildMolecule(assemblyKit, spline)
     end
   end
 
+  -- Molecule lateral (cross-run) footprint. Meshes run along local X (see moveAttachmentToBoundary, which trims to the X bounds),
+  -- so the width across the run is the Y extent. Cached once per rebuild so terraforming can carve to the molecule's REAL footprint
+  -- instead of the placeholder node width (assembly never exposes width rib handles, so its node width is a dead 10m default).
+  local crossW = 0.0
+  for j = 1, numRigids do
+    local bb = getMeshBoundingBox(rigids[j].mesh.meshPath)
+    if bb and bb.extents then crossW = max(crossW, bb.extents.y) end
+  end
+
   -- Build the molecule structure.
   local molecule = {
     rigids = rigids, -- The list of rigid meshes in the molecule.
@@ -745,6 +754,7 @@ local function buildMolecule(assemblyKit, spline)
     bridges = expandedBridges, -- The list of bridge meshes which span between consecutive pairs of molecules.
     bridgeAttachments = bridgeAttachments, -- The attachment data for each bridge.
     isSagEnabled = isSagEnabled, -- Whether any bridges in this molecule support sag
+    crossW = crossW, -- Lateral (cross-run) footprint width, in metres; used to terraform to the real shape (see getSourcesSingle).
   }
 
   -- Post-process bridge attachment points to move them to mesh boundaries.

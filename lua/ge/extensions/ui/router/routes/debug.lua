@@ -28,6 +28,7 @@ M.Children = {
   },
   ["ui-apps-test"] = {},
   ["asyncBulkLoader"] = {},
+  ["tutorialHighlight"] = {},
 }
 
 return M

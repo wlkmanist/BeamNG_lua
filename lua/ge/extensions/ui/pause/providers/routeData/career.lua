@@ -28,6 +28,7 @@ local function isCareerProgressAvailable()
   if tutorialActive then return false end
   return career_career and career_career.hasBoughtStarterVehicle and career_career.hasBoughtStarterVehicle()
 end
+M.isCareerProgressAvailable = isCareerProgressAvailable
 
 local function getHistoryChanges(historyType, limit)
   if not career_modules_playerAttributes then

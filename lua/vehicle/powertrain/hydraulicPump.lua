@@ -31,7 +31,7 @@ local function updateVelocity(device, dt)
   end
   ----------------------------------------------------
 
-  device.inputAV = device.parent.outputAV1 * device.gearRatio * device.isConnectedCoef
+  device.inputAV = device.parent[device.parentOutputAVName] * device.invGearRatio * device.isConnectedCoef
 
   ------------- Accumulator input -----------------------------
   --calculate flow rate into acc, dt is applied later
@@ -39,6 +39,13 @@ local function updateVelocity(device, dt)
   --------------------------------------------------------------
 
   device.accumulatorOilVolume = clamp(device.accumulatorOilVolume + (device.pumpFlowRate - device.accumulatorOutFlow - device.reliefFlow - device.unloadFlow) * dt, 0, device.accumulatorMaxVolume * 2)
+end
+
+local function updateVelocityBroken(device, dt)
+  device.inputAV = 0
+  device.currentDisplacement = 0
+  device.pumpFlowRate = 0
+  device.accumulatorOilVolume = clamp(device.accumulatorOilVolume - (device.accumulatorOutFlow + device.reliefFlow + device.unloadFlow) * dt, 0, device.accumulatorMaxVolume * 2)
 end
 
 local function updateTorque(device, dt)
@@ -74,7 +81,10 @@ local function updateGFX(device, dt)
   -- for the initial supply with a compressor, current and supply are the same, so it doesn't matter there
   electrics.values[device.hydraulicPTOConsumerPressureElectricsName] = device.accumulatorPressure
   electrics.values[device.hydraulicPTOConsumerMaxFlowRateElectricsName] = device.pumpFlowRate
-  local ptoFlowOut = electrics.values[device.hydraulicPTOConsumerFlowElectricsName] or 0 --TODO this only supports a single remote acc
+  local ptoFlowOut = 0
+  for _, flowElectricsName in pairs(device.hydraulicPTOConsumerFlowElectricsNames) do
+    ptoFlowOut = ptoFlowOut + (electrics.values[flowElectricsName] or 0)
+  end
   device.accumulatorOilVolume = clamp(device.accumulatorOilVolume - ptoFlowOut * dt, 0, device.accumulatorMaxVolume * 2)
   ------
 
@@ -127,17 +137,22 @@ local function onCouplerAttached(device, nodeId, obj2id, obj2nodeId, attachForce
     --print("we are supply")
     --initialize the reported pressure and flow to 0, flow is then constantly updated from the consumer via the coupler and pressure by us
     electrics.values[device.hydraulicPTOConsumerPressureElectricsName] = 0
-    electrics.values[device.hydraulicPTOConsumerFlowElectricsName] = 0
     electrics.values[device.hydraulicPTOConsumerMaxFlowRateElectricsName] = 0
-    beamstate.sendExportCouplerData(obj2id, obj2nodeId, {electrics = {device.hydraulicPTOConsumerFlowElectricsName}})
+    local flowElectricsName = device.hydraulicPTOFlowBaseElectricsName .. "_" .. objectId .. "_" .. obj2id
+    device.hydraulicPTOConsumerFlowElectricsNames[obj2id] = flowElectricsName
+    electrics.values[flowElectricsName] = 0
+    beamstate.sendExportCouplerData(obj2id, obj2nodeId, {electrics = {flowElectricsName}})
   end
 end
 
 local function onCouplerDetached(device, nodeId, obj2id, obj2nodeId, breakForce)
   --if we just lost our own consumer
   if device.hydraulicPTOConsumerCouplerNodeLookup[nodeId] then
-    --kill the flow value from it in our system
-    electrics.values[device.hydraulicPTOConsumerFlowElectricsName] = nil
+    local flowElectricsName = device.hydraulicPTOConsumerFlowElectricsNames[obj2id]
+    if flowElectricsName then
+      electrics.values[flowElectricsName] = nil
+      device.hydraulicPTOConsumerFlowElectricsNames[obj2id] = nil
+    end
   end
 end
 
@@ -151,7 +166,7 @@ local function selectUpdates(device)
   device.updateGFX = updateGFX
 
   if device.isBroken then
-  --TODO
+    device.velocityUpdate = updateVelocityBroken
   end
 end
 
@@ -203,7 +218,7 @@ end
 
 local function getState(device)
   table.clear(device.stateData)
-  --pump stuff
+  device.stateData[device.stateDataNameAccumulatorOilVolume] = device.accumulatorOilVolume
 
   --consumer stuff
   for _, consumer in ipairs(device.connectedConsumers) do
@@ -212,14 +227,19 @@ local function getState(device)
     end
   end
 
-  return tableIsEmpty(device.stateData) and nil or device.stateData
+  return device.stateData
 end
 
 local function setState(device, data)
   if not data then
     return
   end
-  --pump stuff
+
+  local newAccumulatorOilVolume = data[device.stateDataNameAccumulatorOilVolume]
+  if type(newAccumulatorOilVolume) == "number" and newAccumulatorOilVolume == newAccumulatorOilVolume and newAccumulatorOilVolume ~= math.huge and newAccumulatorOilVolume ~= -math.huge then
+    device.accumulatorOilVolume = clamp(newAccumulatorOilVolume, 0, device.accumulatorMaxVolume * 2)
+    device.accumulatorPressure = device.pumpWorkingPressure * device.accumulatorOilVolume * device.invAccumulatorMaxVolume
+  end
 
   --consumer stuff
   for _, consumer in ipairs(device.connectedConsumers) do
@@ -242,7 +262,7 @@ local function initSounds(device, jbeamData)
   local pumpPropulsionDevice = powertrain.getPropulsionDeviceForDevice(device)
   local pumpSpecificGearRatio = powertrain.getGearRatioBetweenDevices(pumpPropulsionDevice, device)
   if pumpSpecificGearRatio and pumpPropulsionDevice then
-    device.pumpSoundMaxAV = (pumpPropulsionDevice.maxAV or 0) * pumpSpecificGearRatio
+    device.pumpSoundMaxAV = (pumpPropulsionDevice.maxAV or 0) / pumpSpecificGearRatio
     --compute max flow rate based on max AV (rad/s) and max displacement (m³/revolution)
     device.pumpSoundMaxFlowRate = device.pumpMaxDisplacement * device.pumpSoundMaxAV * invTwoPi
   end
@@ -303,6 +323,7 @@ local function reset(device, jbeamData)
 
   device[device.outputTorqueName] = 0
   device[device.outputAVName] = 0
+  device.accumulatorPressure = device.initialAccumulatorPressure
   device.accumulatorOilVolume = device.initialAccumulatorOilVolume
 
   device.pumpSmoother:reset()
@@ -311,8 +332,10 @@ local function reset(device, jbeamData)
   table.clear(device.stateData)
 
   electrics.values[device.hydraulicPTOConsumerPressureElectricsName] = 0
-  electrics.values[device.hydraulicPTOConsumerFlowElectricsName] = 0
   electrics.values[device.hydraulicPTOConsumerMaxFlowRateElectricsName] = 0
+  for _, flowElectricsName in pairs(device.hydraulicPTOConsumerFlowElectricsNames) do
+    electrics.values[flowElectricsName] = 0
+  end
 
   selectUpdates(device)
 
@@ -376,6 +399,7 @@ local function new(jbeamData)
   device.invGearRatio = 1 / device.gearRatio
 
   device.connectedConsumers = {}
+  device.stateDataNameAccumulatorOilVolume = device.name .. "_accumulatorOilVolume"
 
   device.pumpMaxDisplacement = jbeamData.pumpMaxDisplacement or 0.0002 --m³/revolution
   device.pumpType = jbeamData.pumpType or "variableDisplacement" -- "fixedDisplacement"
@@ -385,8 +409,22 @@ local function new(jbeamData)
 
   device.accumulatorMaxVolume = jbeamData.accumulatorMaxVolume or 0.001
   device.invAccumulatorMaxVolume = 1 / device.accumulatorMaxVolume
-  device.initialAccumulatorOilVolume = jbeamData.initialAccumulatorOilVolume or device.accumulatorMaxVolume * 0.9
-  device.initialAccumulatorPressure = jbeamData.initialAccumulatorPressure or device.pumpWorkingPressure * 0.9
+
+  local configuredInitialPressure = jbeamData.initialAccumulatorPressure
+  local configuredInitialOilVolume = jbeamData.initialAccumulatorOilVolume
+  if type(configuredInitialPressure) == "number" then
+    device.initialAccumulatorPressure = clamp(configuredInitialPressure, 0, device.pumpWorkingPressure * 2)
+    device.initialAccumulatorOilVolume = device.initialAccumulatorPressure * device.accumulatorMaxVolume / device.pumpWorkingPressure
+    if type(configuredInitialOilVolume) == "number" and abs(configuredInitialOilVolume - device.initialAccumulatorOilVolume) > max(device.accumulatorMaxVolume * 1e-6, 1e-12) then
+      log("W", "hydraulicPump.new", "initialAccumulatorPressure: " .. tostring(configuredInitialPressure) .. ", initialAccumulatorOilVolume: " .. tostring(configuredInitialOilVolume) .. ", derivedAccumulatorOilVolume: " .. tostring(device.initialAccumulatorOilVolume))
+    end
+  elseif type(configuredInitialOilVolume) == "number" then
+    device.initialAccumulatorOilVolume = clamp(configuredInitialOilVolume, 0, device.accumulatorMaxVolume * 2)
+    device.initialAccumulatorPressure = device.pumpWorkingPressure * device.initialAccumulatorOilVolume * device.invAccumulatorMaxVolume
+  else
+    device.initialAccumulatorOilVolume = device.accumulatorMaxVolume * 0.9
+    device.initialAccumulatorPressure = device.pumpWorkingPressure * 0.9
+  end
 
   device.reliefOpeningPressure = jbeamData.reliefOpeningPressure or device.pumpWorkingPressure * 1.05
   device.reliefPressureRange = jbeamData.reliefPressureRange or 2000000
@@ -415,12 +453,20 @@ local function new(jbeamData)
     if ph.connectedPump == device.name then
       local consumerJbeamData = deepcopy(tableMerge(ph, v.data[ph.name] or {}))
 
-      local consumerType = consumerJbeamData.type
-      local factory = hydraulicConsumerFactories[consumerType]
-      local consumer = factory.new(consumerJbeamData, device)
-
-      table.insert(device.connectedConsumers, consumer)
-      device.consumerJbeamData[consumerJbeamData.name] = consumerJbeamData
+      local consumerName = consumerJbeamData.name
+      if device.consumerJbeamData[consumerName] then
+        log("E", "hydraulicPump.new", "duplicateConsumerName: " .. tostring(consumerName) .. ", pumpName: " .. device.name)
+      else
+        local consumerType = consumerJbeamData.type
+        local factory = hydraulicConsumerFactories[consumerType]
+        if factory and type(factory.new) == "function" then
+          local consumer = factory.new(consumerJbeamData, device)
+          table.insert(device.connectedConsumers, consumer)
+          device.consumerJbeamData[consumerName] = consumerJbeamData
+        else
+          log("E", "hydraulicPump.new", "consumerType: " .. tostring(consumerType) .. ", consumerName: " .. tostring(consumerName))
+        end
+      end
     end
   end
 
@@ -443,13 +489,11 @@ local function new(jbeamData)
   device.hydraulicPTOFlowBaseElectricsName = jbeamData.hydraulicPTOFlowBaseSyncName or "hydraulicPTOFlow"
   device.hydraulicPTOMaxFlowRateBaseElectricsName = jbeamData.hydraulicPTOMaxFlowRateBaseSyncName or "hydraulicPTOMaxFlowRate"
   --these are the electrics names for communication with our CONSUMER
-  --TODO this only supports a single consumer, to fix this, the electrics name needs to consist of both our id and the consumer id...
   device.hydraulicPTOConsumerPressureElectricsName = device.hydraulicPTOPressureBaseElectricsName .. "_" .. objectId
-  device.hydraulicPTOConsumerFlowElectricsName = device.hydraulicPTOFlowBaseElectricsName .. "_" .. objectId
   device.hydraulicPTOConsumerMaxFlowRateElectricsName = device.hydraulicPTOMaxFlowRateBaseElectricsName .. "_" .. objectId
+  device.hydraulicPTOConsumerFlowElectricsNames = {}
 
   electrics.values[device.hydraulicPTOConsumerPressureElectricsName] = 0
-  electrics.values[device.hydraulicPTOConsumerFlowElectricsName] = 0
   electrics.values[device.hydraulicPTOConsumerMaxFlowRateElectricsName] = 0
 
   --used for looking up if a given coupler belongs to us

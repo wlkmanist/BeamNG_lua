@@ -240,7 +240,8 @@ local function fillSlots_rec(
   activeParts,
   path,
   unifyJournal,
-  unifyJournalC
+  unifyJournalC,
+  slotRecursion
 )
   local originalPath = path
   profilerPushEvent(originalPath)
@@ -262,6 +263,10 @@ local function fillSlots_rec(
     slotOptions = tableMerge(slotOptions, deepcopy(slotDef))
 
     local slotId = slotDef.name or slotDef.type
+    local slotRecursionLevel = (slotRecursion[slotId] or 0) + 1
+    if type(slotDef.maxRecursion) == "number" and slotRecursionLevel > slotDef.maxRecursion then
+      goto continue
+    end
     local newPath = path .. slotId .. '/'
 
     -- Remove unneeded properties
@@ -271,6 +276,7 @@ local function fillSlots_rec(
     slotOptions.denyTypes = nil
     slotOptions.default = nil
     slotOptions.description = nil
+    slotOptions.maxRecursion = nil
 
     -- Prepare a node for chosenPartsTree
     local slotTreeEntry = {
@@ -395,6 +401,8 @@ local function fillSlots_rec(
         slotTreeEntry.children = {}
 
         -- recurse
+        local previousRecursionLevel = slotRecursion[slotId]
+        slotRecursion[slotId] = slotRecursionLevel
         fillSlots_rec(
           ioCtx,
           slotMap,
@@ -409,8 +417,10 @@ local function fillSlots_rec(
           activeParts,
           newPath,
           unifyJournal,
-          unifyJournalC
+          unifyJournalC,
+          slotRecursion
         )
+        slotRecursion[slotId] = previousRecursionLevel
       end
 
       table.insert(unifyJournal, uj)
@@ -489,7 +499,8 @@ local function findParts(ioCtx, vehicleConfig)
       activeParts,
       '/',
       unifyJournal,
-      unifyJournalC
+      unifyJournalC,
+      {}
     )
   end
 

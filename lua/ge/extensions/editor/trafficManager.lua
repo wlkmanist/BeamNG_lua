@@ -1960,7 +1960,7 @@ local function windowTrafficSigns() -- place traffic signs
     end
     if im.BeginCombo("Road Signs##trafficManagerSigns", label or "(None)") then
       for _, m in ipairs(signSelector.models) do
-        for _, c in ipairs(tableKeysSorted(core_vehicles.getModel(signSelector.model).configs)) do
+        for _, c in ipairs(tableKeysSorted(core_vehicles.getModel(m).configs)) do
           label = core_vehicles.getModel(m).configs[c].Configuration.." ["..c.."]"
           if im.Selectable1(label.."##trafficManagerSignConfig", signSelector.model == m and signSelector.config == c) then
             signSelector.model = m

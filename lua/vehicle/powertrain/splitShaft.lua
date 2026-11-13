@@ -104,8 +104,37 @@ local function getPartCondition(device)
 end
 
 local function setMode(device, mode)
+  local isValidMode = false
+  for _, availableMode in ipairs(device.availableModes) do
+    if mode == availableMode then
+      isValidMode = true
+    end
+  end
+  if not isValidMode then
+    return
+  end
+
   device.mode = mode
+  if device.isPhysicallyDisconnected then
+    device.mode = "disconnected"
+  end
   selectUpdates(device)
+end
+
+local function getState(device)
+  device.stateData[device.stateDataNameMode] = device.mode
+  return device.stateData
+end
+
+local function setState(device, data)
+  if not data then
+    return
+  end
+
+  local newMode = data[device.stateDataNameMode]
+  if type(newMode) == "string" and newMode ~= device.mode then
+    device:setMode(newMode)
+  end
 end
 
 local function validate(device)
@@ -249,6 +278,13 @@ local function new(jbeamData)
   else
     device.availableModes = {"connected"}
     device.mode = "connected"
+  end
+
+  if #device.availableModes > 1 then
+    device.stateData = {}
+    device.stateDataNameMode = device.name .. "Mode"
+    device.getState = getState
+    device.setState = setState
   end
 
   --locked specific

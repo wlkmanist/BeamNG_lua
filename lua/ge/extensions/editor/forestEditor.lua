@@ -17,26 +17,12 @@ local colorRed =  ColorF(1,0,0,0.5)
 local colorYellow =  ColorF(1,1,0,0.5)
 local colorOrange =  ColorF(1,0.6,0,0.5)
 
-local parallaxMappingTextureSetEditor_WindowId = "Forest Editor - Paralax Mapping TextureSet Editor"
-local pM_textureSetsFilePath = nil
-local pM_textureSets = nil
-local pM_textureSetDirty = false
-local pM_selectedTextureSetId = -1 -- -1 = none selected (set ids are 0-based)
--- local pM_selectedTextureSetData = nil
-local pM_lastTexturePath = "/"
-local pM_textureSetCopy = nil
-local pM_selectedTextureSetName = ""
-local pM_depth = 1.0
-local pM_intermediaryLayerDepth = 0.5
-local pM_intensity = 1.0
-local pM_emissiveWeight = 1.0
-local pM_wrapTextures = false
-local pM_splitFrontTexture = false
-local pM_enableIntermediaryLayer = false
-
 
 local valueInspector = require("editor/api/valueInspector")()
 local objectHistoryActions = require("editor/api/objectHistoryActions")()
+local forestItemTools = require("editor/api/forestItemTools")
+-- The Forest Editor never touches the parallax window items; those are the Parallax Interior Editor's.
+local function keepNonParallax(item) return not forestItemTools.isParallaxItem(item) end
 local roadRiverGui = extensions.editor_roadRiverGui
 local yellow = im.ImVec4(1, 1, 0, 1)
 local copyItemsArray = {}
@@ -176,30 +162,6 @@ local forestBrushElemSortByNameFunc = function(a, b)
   return string.lower(aObj.internalName) < string.lower(bObj.internalName)
 end
 
-local function readOrIntializeParallaxMappingTextureSets()
-  if FS:fileExists(pM_textureSetsFilePath) then
-    pM_textureSets = jsonReadFile(pM_textureSetsFilePath)
-    if pM_textureSets.header.version < 3 then
-      pM_textureSets = {
-        header = {
-          version = 3,
-          info = "1=top; 2=left; 3=back; 4=right; 5=bottom; 6=front; 7=intermediary"
-        },
-        data = {}
-      }
-      jsonWriteFile(pM_textureSetsFilePath, pM_textureSets, true)
-    end
-  else
-    pM_textureSets = {
-      header = {
-        version = 3,
-        info = "1=top; 2=left; 3=back; 4=right; 5=bottom; 6=front; 7=intermediary"
-      },
-      data = {}
-    }
-  end
-end
-
 local function updateAutoRepeatChangeBrushSize()
   changeBrushSizeTimer = changeBrushSizeTimer + editor.getDeltaTime()
   if changeBrushSizeTimer >= editor.getPreference("forestEditor.general.brushSizeChangeIntervalWithKeys") then
@@ -240,8 +202,11 @@ local function updateCentroid()
   selectionCentroid.z = selectionCentroid.z / numObjects;
 end
 
+-- Drop the forest item selection, highlight included: the viewport glow is an instance flag fed by each
+-- item's own selected state, so it only goes away by clearing that state and pushing the instance data
+-- again. Nothing to do (and no rebuild to pay for) when nothing is selected.
 local function clearForestItemsSelection()
-  if editor.selection and editor.selection.forestItem then
+  if editor.selection and editor.selection.forestItem and editor.selection.forestItem[1] then
     for _, item in ipairs(editor.selection.forestItem) do
       editor.setForestItemSelected(var.forestData, item:getKey(), false)
     end
@@ -252,6 +217,9 @@ local function clearForestItemsSelection()
 end
 
 local function selectForestItems(forestItems, addToSelection)
+  if forestItems then
+    forestItems = forestItemTools.filterItems(forestItems, keepNonParallax)
+  end
   if not addToSelection and editor.selection and editor.selection.forestItem then
     for _, item in ipairs(editor.selection.forestItem) do
       editor.setForestItemSelected(var.forestData, item:getKey(), false)
@@ -419,6 +387,7 @@ local function toggleForestBrushTreeNode(forestBrush)
 end
 
 local function selectForestBrush(item, addToSelection)
+  clearForestItemsSelection() -- same stuck highlight as in selectForestItemData
   editor.selection = {}
   if addToSelection then
     item.selected = not item.selected
@@ -519,6 +488,10 @@ local function selectForestBrushRange(targetItem)
 end
 
 local function selectForestItemData(item, addToSelection)
+  -- The selection becomes this datablock, so let go of any selected forest items first. Replacing
+  -- editor.selection below is not enough: their highlight lives on the items themselves, and once they
+  -- are out of editor.selection.forestItem nothing can find them to switch it off again.
+  clearForestItemsSelection()
   editor.selection = {}
   if addToSelection then
     item.selected = not item.selected
@@ -939,18 +912,65 @@ local function radToDeg(r)
   return (r * 180.0) / PI;
 end
 
-local enableParallaxMapping = false
-local parallaxMappingTextureSetId = -1
+-- Checkbox with an ImGui-style "mixed" state for multi-selection: when the selected items disagree it
+-- renders greyed with a "(mixed)" note, and a click resolves everyone to a single value (checked).
+-- Returns (changed, newValue).
+local function mixedCheckbox(id, value, mixed)
+  if mixed then
+    value = false
+    im.PushStyleColor2(im.Col_FrameBg, im.ImVec4(0.35, 0.35, 0.35, 1.0))
+    im.PushStyleColor2(im.Col_CheckMark, im.ImVec4(0.6, 0.6, 0.6, 1.0))
+  end
+  local changed = im.Checkbox(id, editor.getTempBool_BoolBool(value))
+  local newValue = editor.getTempBool_BoolBool()
+  if mixed then
+    im.PopStyleColor(2)
+    im.SameLine()
+    im.TextDisabled("(mixed)")
+  end
+  return changed, newValue
+end
+
+-- Inspector label for a per-item transform field. With more than one item selected these fields only
+-- edit the primary item, so `multi` adds an info icon that says so and points at the gizmo, and `mixed`
+-- flags a transform whose value differs across the selection.
+local function inspectorTransformLabel(title, multi, mixed)
+  im.TextUnformatted(title)
+  if multi then
+    im.SameLine()
+    local fontSize = math.ceil(im.GetFontSize())
+    editor.uiIconImage(editor.icons.info_outline, im.ImVec2(fontSize, fontSize))
+    im.tooltip("Multiple items selected - this field only edits the first one. Use the viewport gizmo to move / rotate / scale the whole selection.")
+  end
+  if mixed then
+    im.SameLine()
+    im.TextDisabled("(mixed)")
+  end
+end
 
 local function assetInspectorGuiForestItem(inspectorInfo)
-  if editor.selection.forestItem[1] then
-    local item = editor.selection.forestItem[1]
-    im.TextUnformatted("ForestItem")
+  local selection = editor.selection.forestItem
+  if selection[1] then
+    local item = selection[1]
+    local selCount = #selection
+    -- Do all selected items share one datablock? The mesh preview, the "Select ForestItemData" button
+    -- and the Shape field only make sense then; the parallax properties below multi-edit regardless.
+    local sameData = true
+    local primaryDataId = item:getData():getID()
+    for i = 2, selCount do
+      if selection[i]:getData():getID() ~= primaryDataId then sameData = false break end
+    end
+    if selCount > 1 then
+      im.TextUnformatted(string.format("%d ForestItems selected", selCount))
+    else
+      im.TextUnformatted("ForestItem")
+    end
     im.Columns(2, "assetInspectorGuiForestItem_columns")
     inspectorField_String("Key", tostring(item:getKey()))
     -- im.Columns(1)
     if item:getKey() == 0 then
       im.TextColored(im.ImVec4(1.0, 0.0, 0.0, 1.0), 'Invalid item!')
+      im.Columns(1, "assetInspectorGuiForestItem_columns")
       return
     end
     if 0 ~= item:getUid() then
@@ -963,7 +983,22 @@ local function assetInspectorGuiForestItem(inspectorInfo)
       end
       im.NextColumn()
     end
-    im.TextUnformatted("Position")
+    -- Transforms are per-item; with a multi-selection the fields below only edit the primary item, so
+    -- flag which ones differ across the selection (their labels also point at the gizmo instead).
+    local posMixed, rotMixed, scaleMixed = false, false, false
+    if selCount > 1 then
+      local p0, s0 = item:getPosition(), item:getScale()
+      local e0 = item:getTransform():toEuler()
+      for i = 2, selCount do
+        local p = selection[i]:getPosition()
+        if p.x ~= p0.x or p.y ~= p0.y or p.z ~= p0.z then posMixed = true end
+        local e = selection[i]:getTransform():toEuler()
+        if e.x ~= e0.x or e.y ~= e0.y or e.z ~= e0.z then rotMixed = true end
+        if selection[i]:getScale() ~= s0 then scaleMixed = true end
+      end
+    end
+
+    inspectorTransformLabel("Position", selCount > 1, posMixed)
     im.NextColumn()
     local posItem = item:getPosition()
     fItemPos[0] = posItem.x
@@ -985,7 +1020,7 @@ local function assetInspectorGuiForestItem(inspectorInfo)
             setItemTransformUndo, setItemTransformRedo)
     end
     im.NextColumn()
-    im.TextUnformatted("Rotation")
+    inspectorTransformLabel("Rotation", selCount > 1, rotMixed)
     im.NextColumn()
     local eulerRotation = item:getTransform():toEuler()
     fItemRot[0] = radToDeg(eulerRotation.x)
@@ -1006,7 +1041,7 @@ local function assetInspectorGuiForestItem(inspectorInfo)
     end
     im.NextColumn()
     -- im.TextUnformatted("Pos : "..tostring (item:getPosition()))
-    im.TextUnformatted("Scale")
+    inspectorTransformLabel("Scale", selCount > 1, scaleMixed)
     im.NextColumn()
     im.PushItemWidth(im.GetContentRegionAvailWidth())
     local editEnded = im.BoolPtr(false)
@@ -1021,63 +1056,295 @@ local function assetInspectorGuiForestItem(inspectorInfo)
     im.NextColumn()
     --inspectorField_String("Scale", tostring(item:getScale()))
 
+    -- The datablock these items were placed from, with the jump to wherever it is edited: the Forest
+    -- Editor's mesh list for ordinary items, the Parallax Interior Meshes window for parallax windows
+    -- (they are deliberately kept out of the forest palette, so that list would never find them).
+    im.TextUnformatted("ForestItemData")
+    im.NextColumn()
+    if sameData then
+      local dataObj = scenetree.findObjectById(primaryDataId)
+      local isParallax = forestItemTools.isParallaxDataObject(dataObj)
+      im.AlignTextToFramePadding()
+      im.TextUnformatted(dataObj and tostring(dataObj.name or dataObj.internalName or primaryDataId) or tostring(primaryDataId))
+      im.SameLine()
+      im.SetCursorPosX(im.GetCursorPosX() + im.GetContentRegionAvailWidth() - im.CalcTextSize("Select").x - im.GetStyle().FramePadding.x * 2)
+      if im.Button("Select##selectForestItemData") then
+        if isParallax then
+          if editor_parallaxInteriorEditor then editor_parallaxInteriorEditor.showMesh(primaryDataId) end
+        else
+          -- the list is only filled once the Forest Editor has run its init, and any tool can be the one
+          -- showing this inspector
+          for _, forestItemData in ipairs(var.forestItemData or {}) do
+            if primaryDataId == forestItemData.id then
+              selectForestItemData(forestItemData)
+              break
+            end
+          end
+        end
+      end
+      im.tooltipWrapped(isParallax
+        and "Select this datablock in the Parallax Interior Meshes window (opens it if it is closed)."
+        or "Select this datablock in the Forest Editor's mesh list, to edit its properties.")
+    else
+      im.TextDisabled("(multiple)")
+    end
+    im.NextColumn()
+
     -- im.TextUnformatted("Tr : "..tostring (item:getTransform()))
     -- el = item:getTransform():toEuler()
     -- im.TextUnformatted("Tr el: "..tostring (el))
-    inspectorField_String("Shape", tostring(item:getData():getShapeFile()))
+    -- Split the shape path into directory + file: the full path rarely fits the field and the file
+    -- name is the part that matters at a glance.
+    if sameData then
+      local shapeFile = tostring(item:getData():getShapeFile())
+      local dir, filename = path.split(shapeFile)
+      inspectorField_String("Directory", dir or "")
+      inspectorField_String("File", filename or shapeFile)
+    else
+      inspectorField_String("Shape", "(multiple meshes)")
+    end
 
     im.Columns(1, "assetInspectorGuiForestItem_columns")
-    im.SeparatorText("Parallax Mapping Properties")
-    im.Columns(2, "assetInspectorGuiForestItem_parallaxProperties_columns")
-    im.TextUnformatted("Parallax Mapping")
-    im.NextColumn()
-    if im.Checkbox("##enableParallaxMapping_checkbox", editor.getTempBool_BoolBool(enableParallaxMapping)) then
-      enableParallaxMapping = editor.getTempBool_BoolBool()
-      if enableParallaxMapping == true then
-        parallaxMappingTextureSetId = 0
-      else
-        parallaxMappingTextureSetId = -1
-      end
-    end
-    im.NextColumn()
 
-    im.TextUnformatted("TextureSet Id")
-    im.NextColumn()
-    if enableParallaxMapping == false then im.BeginDisabled() end
-    if im.InputInt("##parallaxMappingTextureSetId_input", editor.getTempInt_NumberNumber(parallaxMappingTextureSetId), 1, 2) then
-      local newValue = editor.getTempInt_NumberNumber()
-      newValue = newValue < -1 and -1 or newValue
-      parallaxMappingTextureSetId = newValue
+    -- Parallax state rides on the forest item's generic customData i32 (the engine has no parallax
+    -- concept). Engine.ParallaxInterior packs / unpacks it into a texture set id (-1 == no set, the
+    -- item default, not serialized) plus a mask of instance flags (Engine.ParallaxInterior.flag*) -
+    -- the same packing the shader reads back. Every field here
+    -- multi-edits: it aggregates the whole selection (showing a shared value or a "mixed" state) and
+    -- applies each change to all selected items.
+    local parallax = Engine and Engine.ParallaxInterior
+    -- The Parallax Interior Editor can be the active tool without the Forest Editor ever having run its
+    -- init/update (which is what sets var.forestData), so fall back to the live forest object here.
+    local forestData = var.forestData
+    if not forestData then
+      local f = core_forest and core_forest.getForestObject()
+      forestData = f and f:getData() or nil
     end
-    if enableParallaxMapping == false then im.EndDisabled() end
-    im.NextColumn()
-
-    im.Columns(1, "assetInspectorGuiForestItem_parallaxProperties_columns")
-    if im.Button("Open TextureSet editor##ForestItemInspector", im.ImVec2(im.GetContentRegionAvailWidth(), 0)) then
-      editor.showWindow(parallaxMappingTextureSetEditor_WindowId)
+    -- Only the parallax_ window datablocks get this section: a tree has no fake interior behind it, and
+    -- an edit here would write parallax data onto it. A mixed selection hides it too, so one multi-edit
+    -- can never leak onto the trees in it.
+    local allParallaxItems = selCount > 0
+    for i = 1, selCount do
+      if not forestItemTools.isParallaxItem(selection[i]) then allParallaxItems = false break end
     end
+    local hasParallaxApi = parallax
+      and allParallaxItems
+      and type(item.getCustomData) == "function"
+      and forestData
+      and type(forestData.setItemCustomData) == "function"
+    if hasParallaxApi then
+      im.SeparatorText("Parallax Mapping Properties")
+      im.Columns(2, "assetInspectorGuiForestItem_parallaxProperties_columns")
 
-    im.SeparatorText("Mesh Preview")
-    local size = im.GetContentRegionAvailWidth()
-    var.meshPreviewDimRdr.point = Point2I(0, 0)
-    var.meshPreviewDimRdr.extent = Point2I(size,size)
-    var.meshPreviewRenderSize[1] = size
-    var.meshPreviewRenderSize[2] = size
-    var.meshPreview:renderWorld(var.meshPreviewDimRdr)
-    im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0,0))
-    if im.BeginChild1("MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
-      var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
-    end
-    im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
-    im.PopStyleVar()
+      -- One row per instance flag, in inspector order. Each is a single bit of the item's flag mask and
+      -- carries its own aggregated display / mixed state. The two jitters are stable per window (hashed
+      -- off its world position), so they only spread a row of identical rooms apart - nothing animates
+      -- or changes per frame. The per-room layer variation lives on the texture set, not here.
+      local parallaxFlagRows = {
+        {flag = "flagEmissive", label = "Emissive", id = "Emissive",
+         tip = "Turn this window's lights on, so the room glows at night.\nOff, the room is only lit by the scene - and the two jitters below have nothing to vary.\nOverrides 'Auto Emissive': the room stays lit around the clock instead of coming on at dusk."},
+        {flag = "flagAutoEmissive", label = "Auto Emissive", id = "AutoEmissive",
+         tip = "Let this window's rooms turn their own lights on once it gets dark, instead of being lit around the clock.\nIgnored while 'Emissive' is on - that room is always lit.\nHow many of its rooms take part is the texture set's Auto Emissive Chance; when they come on is the level's Auto Emissive Level."},
+        {flag = "flagJitterEmissiveColor", label = "Emissive Color Jitter", id = "JitterEmissiveColor",
+         tip = "Let this window's light sit warmer or cooler than its texture set's colour, so identical rooms don't all glow the same.\nOnly visible while the lights are on.\nAmount is the level's Emissive Kelvin Jitter."},
+        {flag = "flagJitterEmissiveNits", label = "Emissive Nits Jitter", id = "JitterEmissiveNits",
+         tip = "Let this window be a bit brighter or dimmer than its texture set, so lit rooms aren't all equally bright.\nOnly visible while the lights are on.\nAmount is the level's Emissive Nits Jitter."},
+      }
+      -- A window enabled from scratch gets auto emissive and both jitters, matching the placement options.
+      local parallaxDefaultFlags = bit.bor(parallax.flagAutoEmissive, parallax.flagJitterEmissiveColor,
+        parallax.flagJitterEmissiveNits)
 
-    if im.Button("Select ForestItemData", im.ImVec2(im.GetContentRegionAvailWidth(), 0)) then
-      for _, forestItemData in ipairs(var.forestItemData) do
-        local forestItemDataId = item:getData():getID()
-        if forestItemDataId == forestItemData.id then
-          selectForestItemData(forestItemData)
-          return
+      local anyEnabled, allEnabled, dispSetId, mixedSetId
+      local function aggregate()
+        anyEnabled, allEnabled, mixedSetId, dispSetId = false, true, false, nil
+        for _, row in ipairs(parallaxFlagRows) do
+          row.disp, row.mixed = nil, false
         end
+        for i = 1, selCount do
+          local sid, flags = parallax.unpackItemData(selection[i]:getCustomData())
+          -- Two separate things: whether the window has a set at all, and whether its parallax switch
+          -- is on. Switching off only clears the Enabled flag, so an off window still carries its set
+          -- id and flags and still feeds the rows below - its set stays readable while it is off.
+          local hasSet = sid >= 0
+          local en = hasSet and bit.band(flags, parallax.flagEnabled) ~= 0
+          anyEnabled = anyEnabled or en
+          allEnabled = allEnabled and en
+          if hasSet then
+            if dispSetId == nil then dispSetId = sid elseif dispSetId ~= sid then mixedSetId = true end
+            for _, row in ipairs(parallaxFlagRows) do
+              local on = bit.band(flags, parallax[row.flag]) ~= 0
+              if row.disp == nil then row.disp = on elseif row.disp ~= on then row.mixed = true end
+            end
+          end
+        end
+        dispSetId = dispSetId or 0
+        for _, row in ipairs(parallaxFlagRows) do
+          if row.disp == nil then row.disp = false end
+        end
+      end
+      -- Apply an edit to every selected item. mapFn(setId, flags) returns those same two values.
+      -- setItemCustomData rebuilds the stored item, so the returned handle replaces the selection copy.
+      local function applyAll(mapFn)
+        for i = 1, selCount do
+          local sid, flags = parallax.unpackItemData(selection[i]:getCustomData())
+          selection[i] = forestData:setItemCustomData(selection[i]:getKey(),
+            parallax.packItemData(mapFn(sid, flags)))
+        end
+        item = selection[1]
+        aggregate()
+      end
+      aggregate()
+
+      im.TextUnformatted("Parallax Mapping")
+      im.NextColumn()
+      local enableChanged, enableVal = mixedCheckbox("##enableParallaxMapping_checkbox", allEnabled, anyEnabled and not allEnabled)
+      if enableChanged then
+        -- Switching off clears the Enabled flag and changes nothing else, so the window keeps its set
+        -- id and its other flags and switching back on returns it to the same room. Only a window that
+        -- never had a set starts from scratch: set 0 with every per-room variation on, the default for
+        -- a new window.
+        applyAll(function(sid, flags)
+          if not enableVal then
+            if sid < 0 then return sid, flags end
+            return sid, bit.band(flags, bit.bnot(parallax.flagEnabled))
+          end
+          flags = bit.bor(flags, parallax.flagEnabled)
+          if sid >= 0 then return sid, flags end
+          return 0, bit.bor(flags, parallaxDefaultFlags)
+        end)
+      end
+      im.tooltipWrapped("Draw a fake interior behind this item's glass instead of rendering it normally.\nOff, the item is just its plain mesh - it keeps its texture set, so switching it back on returns the same room.")
+      im.NextColumn()
+
+      im.TextUnformatted("TextureSet Id")
+      im.NextColumn()
+      if not anyEnabled then im.BeginDisabled() end
+      -- Leave room on the same row for the jump button, and for the mixed marker when it is showing,
+      -- otherwise the dropdown takes the whole column and they get clipped off the edge.
+      local goToLabel = "Go to##parallaxMappingTextureSetGoTo"
+      local trailingWidth = im.CalcTextSize("Go to").x + im.GetStyle().FramePadding.x * 2 + im.GetStyle().ItemSpacing.x
+      if mixedSetId then trailingWidth = trailingWidth + im.CalcTextSize("(mixed)").x + im.GetStyle().ItemSpacing.x end
+      im.PushItemWidth(math.max(60 * im.uiscale[0], im.GetContentRegionAvailWidth() - trailingWidth))
+      -- Ids and names come from the Parallax Interior Editor's working copy, so a set renamed or created
+      -- but not yet saved already reads right here. The engine registry is the fallback for the case
+      -- where that editor never ran and its copy is empty.
+      local parallaxSets = editor_parallaxInteriorEditor and editor_parallaxInteriorEditor.getTextureSets()
+        or parallax.getSets()
+      -- Sets carry no name until someone types one, so both empty cases get a stand-in rather than a
+      -- bare trailing dash.
+      local function parallaxSetLabel(id)
+        local set = parallaxSets[id]
+        if not set then return string.format("%d - (no set)", id) end
+        local name = set.name
+        return string.format("%d - %s", id, (name and name ~= "") and name or "(unnamed)")
+      end
+      -- An id with no set behind it is a real state: a gap in the ids, or content that outlived its set.
+      -- The window then draws the plain fallback, so say so in warning colour on the closed dropdown -
+      -- pushed around BeginCombo only, which paints the preview text without tinting the list below.
+      local setMissing = anyEnabled and parallaxSets[dispSetId] == nil
+      if setMissing then im.PushStyleColor2(im.Col_Text, editor.color.warning.Value) end
+      -- HeightLarge: a level can define up to 256 sets, so the default 8-row popup scrolls too much.
+      local comboOpen = im.BeginCombo("##parallaxMappingTextureSetId_combo", parallaxSetLabel(dispSetId),
+        im.ComboFlags_HeightLarge)
+      if setMissing then im.PopStyleColor() end
+      if comboOpen then
+        -- Sparse and 0-based, hence the sorted id list rather than a straight loop.
+        local setIds = {}
+        for id in pairs(parallaxSets) do table.insert(setIds, id) end
+        -- The current id joins the list even with no set behind it, so the dropdown always contains what
+        -- the window is on and picking it is simply a no-op. Not on a mixed selection, where the shown
+        -- id is only the first one.
+        if setMissing and not mixedSetId then table.insert(setIds, dispSetId) end
+        table.sort(setIds)
+        -- Nothing to pick from at all: point at where sets are made (the Go to button next to this opens
+        -- exactly that window, even on an id that has no set).
+        if next(parallaxSets) == nil then
+          im.TextDisabled("No texture sets yet - create one in the Parallax Interior Editor")
+        end
+        for _, id in ipairs(setIds) do
+          local isCurrent = id == dispSetId and not mixedSetId
+          if im.Selectable1(parallaxSetLabel(id), isCurrent) then
+            -- Retarget every window that has a set, switched-off ones included: they keep their off
+            -- flag, so this is simply the set they come back on. Ones with no set stay without one.
+            applyAll(function(sid, flags)
+              if sid >= 0 then return id, flags end
+              return sid, flags
+            end)
+          end
+          if isCurrent then im.SetItemDefaultFocus() end
+        end
+        im.EndCombo()
+      end
+      im.PopItemWidth()
+      im.tooltipWrapped("Which texture set this window's room is built from - its wall images, depth and light.\nSets are authored in the Parallax Interior Editor, and the list is whatever exists there now.")
+      im.SameLine()
+      if im.Button(goToLabel) then
+        -- Jump to the set this window uses in the texture set editor, so its look can be checked or
+        -- tweaked without hunting for the id in the list.
+        if editor_parallaxInteriorEditor then editor_parallaxInteriorEditor.showTextureSet(dispSetId) end
+      end
+      im.tooltipWrapped("Open this texture set in the Parallax Interior texture set editor.")
+      if mixedSetId then im.SameLine(); im.TextDisabled("(mixed)") end
+      if not anyEnabled then im.EndDisabled() end
+      im.NextColumn()
+
+      for _, row in ipairs(parallaxFlagRows) do
+        im.TextUnformatted(row.label)
+        im.NextColumn()
+        if not anyEnabled then im.BeginDisabled() end
+        local changed, val = mixedCheckbox("##parallaxMapping" .. row.id .. "_checkbox", row.disp, anyEnabled and row.mixed)
+        if changed then
+          local flagBit = parallax[row.flag]
+          applyAll(function(sid, flags)
+            if sid < 0 then return sid, flags end
+            return sid, val and bit.bor(flags, flagBit) or bit.band(flags, bit.bnot(flagBit))
+          end)
+        end
+        if not anyEnabled then im.EndDisabled() end
+        im.tooltipWrapped(row.tip)
+        im.NextColumn()
+      end
+
+      im.Columns(1, "assetInspectorGuiForestItem_parallaxProperties_columns")
+    end
+
+    -- Parallax windows get no preview: their mesh is a flat pane that shows nothing worth looking at,
+    -- and previewing it costs a lot. ShapePreview draws a single non-instanced mesh, so it builds a
+    -- variant of the parallax shader that the forest itself never renders - three permutations nothing
+    -- else in the game asks for, compiled synchronously on the main thread. That is a ~1.4s freeze on
+    -- the first parallax window selected per session (and after every shader cache reset).
+    if allParallaxItems then
+      var.meshPreviewInspSig = nil
+    else
+      im.SeparatorText("Mesh Preview")
+      -- The preview only makes sense for a single shared mesh. Any tool can drive the selection (Forest
+      -- Editor or Parallax Interior Editor), so the model is (re)set here from the inspected item whenever
+      -- the selection signature changes - otherwise it keeps whatever the previous tool last set (e.g. a
+      -- tree lingering after switching to the parallax editor).
+      if sameData then
+        local shape = tostring(item:getData():getShapeFile())
+        local sig = tostring(item:getKey()) .. "|" .. shape
+        if var.meshPreviewInspSig ~= sig then
+          var.meshPreview:setObjectModel(shape)
+          var.meshPreview:fitToShape()
+          var.meshPreview:setRenderState(false,false,false,false,false,true)
+          var.meshPreviewInspSig = sig
+        end
+        local size = im.GetContentRegionAvailWidth()
+        var.meshPreviewDimRdr.point = Point2I(0, 0)
+        var.meshPreviewDimRdr.extent = Point2I(size,size)
+        var.meshPreviewRenderSize[1] = size
+        var.meshPreviewRenderSize[2] = size
+        var.meshPreview:renderWorld(var.meshPreviewDimRdr)
+        im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(0,0))
+        if im.BeginChild1("MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
+          var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
+        end
+        im.EndChild()
+        im.PopStyleVar()
+      else
+        var.meshPreviewInspSig = nil
+        im.TextWrapped("Multiple different meshes selected - the preview is only available when all selected items use the same mesh.")
       end
     end
   end
@@ -1195,7 +1462,8 @@ local function refreshForestItemDataList()
   local forestItemDataNames = scenetree.findClassObjects("ForestItemData") or {}
   for k, forestItemDataId in ipairs(forestItemDataNames) do
     local cobj = scenetree.findObject(forestItemDataId)
-    if cobj then
+    -- Parallax window datablocks belong to the Parallax Interior Editor; keep them out of the palette.
+    if cobj and not forestItemTools.isParallaxDataObject(cobj) then
       local item = {
         pos = k,
         id = cobj:getId(),
@@ -1245,7 +1513,8 @@ local function initializeForestBrushes()
   var.forestItemData = {}
   for k, forestItemDataId in ipairs(forestItemDataNames) do
     local cobj = scenetree.findObject(forestItemDataId)
-    if cobj then
+    -- Parallax window datablocks belong to the Parallax Interior Editor; keep them out of the palette.
+    if cobj and not forestItemTools.isParallaxDataObject(cobj) then
       local item = {
         pos = k,
         id = cobj:getId(),
@@ -1544,17 +1813,6 @@ local function forestToolsEditModeToolbar()
     toolbarToolIcon(brush)
   end
 
-  editor.uiVertSeparator(32)
-  local bgColor = editor.isWindowVisible(parallaxMappingTextureSetEditor_WindowId) and im.GetStyleColorVec4(im.Col_ButtonActive) or nil
-  if editor.uiIconImageButton(editor.icons.format_list_bulleted, nil, nil, nil, bgColor, "openParallaxMappingTextureSetEditor") then
-    if editor.isWindowVisible(parallaxMappingTextureSetEditor_WindowId) then
-      editor.hideWindow(parallaxMappingTextureSetEditor_WindowId)
-    else
-      editor.showWindow(parallaxMappingTextureSetEditor_WindowId)
-    end
-  end
-  im.tooltip("Open Parallax Mapping TextureSet Editor")
-
   if not forest then
     editor.uiVertSeparator(32)
     if editor.uiIconImageButton(editor.icons.forest_add_brushgroup, nil, nil, nil, nil, "Create Forest Object") then
@@ -1768,321 +2026,16 @@ local function forestItemDataTreeNode(item)
   im.TextUnformatted(obj.name)
 end
 
-local function textureSetImageButton(imgSize, id, tooltip)
-  local selectedTextureSetIdStr = tostring(pM_selectedTextureSetId)
-  local imgPath = ""
-
-  local popupId = string.format("%d##textureSet_Preview_Popup", id)
-  if im.BeginPopup(popupId) then
-    if not pM_textureSets.data[selectedTextureSetIdStr] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] or pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] == "" then
-      im.BeginDisabled()
-    end
-    if im.Button(string.format("Remove texture##%d", id)) then
-      pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] = ""
-
-      local empty = true
-      for i = 1, 6 do
-        if pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] ~= "" then
-          empty = false
-        end
-      end
-      if empty then
-        pM_textureSets.data[selectedTextureSetIdStr]["textures"] = nil
-      end
-      pM_textureSetDirty = true
-
-      im.CloseCurrentPopup()
-    end
-    if not pM_textureSets.data[selectedTextureSetIdStr] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"] or not pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] or pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] == "" then
-      im.EndDisabled()
-    end
-    im.EndPopup()
+local function tabItemInfo(text)
+  if im.IsItemHovered(im.HoveredFlags_AllowWhenOverlapped) then
+    im.BeginTooltip()
+    im.PushTextWrapPos(im.GetFontSize() * 28)
+    im.TextUnformatted(text)
+    im.PopTextWrapPos()
+    im.EndTooltip()
   end
-
-  if pM_textureSets.data[selectedTextureSetIdStr] and pM_textureSets.data[selectedTextureSetIdStr]["textures"] and pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] then
-    imgPath = pM_textureSets.data[selectedTextureSetIdStr]["textures"][id]
-  end
-  local img = editor.getTempTextureObj(imgPath)
-  if im.ImageButton(string.format("TextureSetImageButton_%d", id), img.texId, im.ImVec2(imgSize, imgSize)) then
-    editor_fileDialog.openFile(
-    function(data)
-      if not pM_textureSets.data[selectedTextureSetIdStr] then
-        pM_textureSets.data[selectedTextureSetIdStr] = {}
-      end
-      if not pM_textureSets.data[selectedTextureSetIdStr]["textures"] then
-        pM_textureSets.data[selectedTextureSetIdStr]["textures"] = {}
-      end
-      for i = 1, 6 do
-        if not pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] then
-          pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] = ""
-        end
-      end
-
-      pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] = data.filepath
-      pM_lastTexturePath = data.path
-      pM_textureSetDirty = true
-
-    end,
-    {{"Any files", "*"},{"Images",{".png", ".dds", ".jpg"}},{"DDS",".dds"},{"PNG",".png"},{"Color maps",".color.png"}, {"Normal maps",".normal.png"}, {"Data maps",".data.png"}},
-    false,
-    pM_lastTexturePath,
-    true
-  )
-  end
-
-  if im.BeginDragDropTarget() then
-    local payload = im.AcceptDragDropPayload("ASSETDRAGDROP")
-    if payload~=nil then
-      assert(payload.DataSize == 2048)
-      local data = ffi.string(payload.Data)
-      local path, filepath, extension = path.split(data)
-      if extension == "png" or extension == "jpg" then
-        if not pM_textureSets.data[selectedTextureSetIdStr] then
-          pM_textureSets.data[selectedTextureSetIdStr] = {}
-        end
-        if not pM_textureSets.data[selectedTextureSetIdStr]["textures"] then
-          pM_textureSets.data[selectedTextureSetIdStr]["textures"] = {}
-        end
-        for i = 1, 6 do
-          if not pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] then
-            pM_textureSets.data[selectedTextureSetIdStr]["textures"][i] = ""
-          end
-        end
-
-        pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] = path .. filepath
-        pM_lastTexturePath = path
-        pM_textureSetDirty = true
-      else
-        log('W', logTag, "Texture needs to be either of type 'jpg' or 'png'")
-      end
-    end
-    im.EndDragDropTarget()
-  end
-
-  if im.IsItemClicked(1) then
-    im.OpenPopup(popupId)
-  end
-  im.tooltip(string.format("%s\n%s\nLMB: Select texture\nRMB: Open context menu", tooltip, (pM_textureSets.data[selectedTextureSetIdStr] and pM_textureSets.data[selectedTextureSetIdStr]["textures"] and pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] ~= "") and pM_textureSets.data[selectedTextureSetIdStr]["textures"][id] or "-none-"))
 end
 
-local function parallaxMappingTextureSetEditorGui()
-  im.Columns(3, "parallaxMappingTextureSetEditorColumns")
-  im.BeginChild1("parallaxMappingTextureSetEditor_textureSet_List_Child", nil, true)
-
-  local windowDrawList = im.GetWindowDrawList()
-  local windowPos = im.GetWindowPos()
-  local style = im.GetStyle()
-  local scrollY = im.GetScrollY()
-  local fontSize = im.GetFontSize()
-  local cPos
-
-  for i = 0, 127 do
-    if pM_textureSets.data[tostring(i)] then
-      local cPos = im.GetCursorPos()
-      im.ImDrawList_AddRectFilled(
-        im.GetWindowDrawList(),
-        im.ImVec2(windowPos.x + cPos.x - style.ItemSpacing.x/2, windowPos.y + cPos.y - math.floor(style.ItemSpacing.y/2) - scrollY),
-        im.ImVec2(
-          windowPos.x + cPos.x - style.ItemSpacing.x/2 + (style.ScrollbarSize - style.ItemSpacing.x/2),
-          windowPos.y + cPos.y + math.ceil(fontSize + style.ItemSpacing.y/2) - scrollY
-        ),
-        im.GetColorU321(im.Col_TitleBgActive)
-      )
-    end
-    im.Indent()
-    local selectableName = string.format("%d##pMTextureSetList", i)
-    if pM_textureSets.data[tostring(i)] then
-      selectableName = string.format("%d - %s##pMTextureSetList", i, pM_textureSets.data[tostring(i)].name or "")
-    end
-    if im.Selectable1(selectableName, i == pM_selectedTextureSetId and true or false) then
-      if pM_selectedTextureSetId ~= i then
-        pM_selectedTextureSetId = i
-        local i_str = tostring(i)
-        if pM_textureSets.data[i_str] then
-          pM_selectedTextureSetName = pM_textureSets.data[i_str].name or ""
-          pM_depth = pM_textureSets.data[i_str].depth or 1.0
-          pM_intermediaryLayerDepth = pM_textureSets.data[i_str].intermediaryLayerDepth or 0.5
-          pM_intensity = pM_textureSets.data[i_str].intensity or 1.0
-          pM_emissiveWeight = pM_textureSets.data[i_str].emissiveWeight or 1.0
-          pM_wrapTextures = pM_textureSets.data[i_str].wrapTextures or false
-          pM_splitFrontTexture = pM_textureSets.data[i_str].splitFrontTexture or false
-          pM_enableIntermediaryLayer = pM_textureSets.data[i_str].enableIntermediaryLayer or false
-        end
-        pM_textureSetDirty = false
-      end
-    end
-    im.Unindent()
-  end
-  im.EndChild()
-  im.NextColumn()
-
-  local pM_selectedTextureSetData = pM_textureSets.data[tostring(pM_selectedTextureSetId)]
-
-  --
-  if pM_selectedTextureSetId >= 0 then
-    im.TextUnformatted(string.format("Selected texture set: %d", pM_selectedTextureSetId))
-    im.SameLine()
-  end
-  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.BeginDisabled() end
-  if im.Button("Copy##TextureSet") then
-    pM_textureSetCopy = deepcopy(pM_textureSets.data[tostring(pM_selectedTextureSetId)])
-  end
-  im.tooltip("Copy texture set properties")
-  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.EndDisabled() end
-
-  im.SameLine()
-  if pM_selectedTextureSetId < 0 or pM_textureSetCopy == nil then im.BeginDisabled() end
-  if im.Button("Paste##TextureSet") then
-    pM_textureSets.data[tostring(pM_selectedTextureSetId)] = deepcopy(pM_textureSetCopy)
-    pM_textureSetDirty = true
-  end
-  im.tooltip("Paste texture set properties")
-  if pM_selectedTextureSetId < 0 or pM_textureSetCopy == nil then im.EndDisabled() end
-
-  im.SameLine()
-  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.BeginDisabled() end
-  if im.Button("Clear##TextureSet") then
-    pM_textureSets.data[tostring(pM_selectedTextureSetId)] = nil
-    pM_textureSetDirty = true
-  end
-  im.tooltip("Clear texture set properties")
-  if pM_selectedTextureSetId < 0 or pM_selectedTextureSetData == nil then im.EndDisabled() end
-
-  im.BeginChild1("parallaxMappingTextureSetEditor_textureSet_TexturePreview_Child", im.ImVec2(0, im.GetContentRegionAvail().y - (math.ceil(im.GetFontSize() + im.GetStyle().ItemSpacing.y * 2))), true)
-
-  if pM_selectedTextureSetId >= 0 then
-    local imgSize = (im.GetContentRegionAvailWidth() - (im.GetStyle().WindowPadding.x + 8 * im.GetStyle().ItemSpacing.x + 8 * im.GetStyle().FramePadding.x)) / 4
-    im.SetCursorPosX(imgSize + im.GetStyle().ItemSpacing.x + im.GetStyle().WindowPadding.x + 2 * im.GetStyle().FramePadding.x)
-    textureSetImageButton(imgSize, 1, "Top")
-
-    textureSetImageButton(imgSize, 2, "Left")
-    im.SameLine()
-
-    textureSetImageButton(imgSize, 3, "Back")
-    im.SameLine()
-
-    textureSetImageButton(imgSize, 4, "Right")
-    im.SameLine()
-
-    im.SetCursorPosX(im.GetCursorPosX() + 5 * im.GetStyle().ItemSpacing.x)
-    local cPosX_intermediary = im.GetCursorPosX()
-    textureSetImageButton(imgSize, 6, "Front Layer")
-
-    im.SetCursorPosX(imgSize + im.GetStyle().ItemSpacing.x + im.GetStyle().WindowPadding.x + 2 * im.GetStyle().FramePadding.x)
-    textureSetImageButton(imgSize, 5, "Bottom")
-
-    im.SameLine()
-    im.SetCursorPosX(cPosX_intermediary)
-    textureSetImageButton(imgSize, 7, "Intermediary Layer")
-  end
-
-  im.EndChild()
-  -- editor.(label, buf, buf_size, flags, callback, user_data, editEnded)
-  if pM_selectedTextureSetId >= 0 then
-    im.PushItemWidth(120)
-    if editor.uiInputText("##Texture Set Name", editor.getTempCharPtr(pM_selectedTextureSetName), nil, nil, nil, nil, editor.getTempBool_BoolBool(false)) then
-      pM_selectedTextureSetName = editor.getTempCharPtr()
-    end
-    im.PopItemWidth()
-    im.tooltip("Texture Set Name")
-    if editor.getTempBool_BoolBool() == true then
-      pM_selectedTextureSetName = editor.getTempCharPtr()
-      pM_textureSetDirty = true
-    end
-    im.SameLine(160)
-    if im.Button("Save##SaveCurrentTextureSetButton") then
-      if not pM_selectedTextureSetData then
-        pM_selectedTextureSetData = {
-          name = ""
-        }
-      end
-      pM_selectedTextureSetData.name = pM_selectedTextureSetName
-      pM_selectedTextureSetData.depth = pM_depth
-      pM_selectedTextureSetData.intermediaryLayerDepth = pM_intermediaryLayerDepth
-      pM_selectedTextureSetData.intensity = pM_intensity
-      pM_selectedTextureSetData.emissiveWeight = pM_emissiveWeight
-      pM_selectedTextureSetData.wrapTextures = pM_wrapTextures
-      pM_selectedTextureSetData.splitFrontTexture = pM_splitFrontTexture
-      pM_selectedTextureSetData.enableIntermediaryLayer = pM_enableIntermediaryLayer
-      pM_textureSets.data[tostring(pM_selectedTextureSetId)] = pM_selectedTextureSetData
-      jsonWriteFile(pM_textureSetsFilePath, pM_textureSets, true)
-      pM_textureSetDirty = false
-    end
-    im.tooltip("Save current texture set")
-  end
-
-  if pM_textureSetDirty then
-    im.SameLine(nil, im.GetStyle().ItemSpacing.x * 4)
-    if im.Button("Revert changes##TextureSetEditor") then
-      readOrIntializeParallaxMappingTextureSets()
-      pM_selectedTextureSetName = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].name or ""
-      pM_depth = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].depth or 1.0
-      pM_intermediaryLayerDepth = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].intermediaryLayerDepth or 0.5
-      pM_intensity = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].intensity or 1.0
-      pM_emissiveWeight = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].emissiveWeight or 1.0
-      pM_wrapTextures = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].wrapTextures or false
-      pM_splitFrontTexture = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].splitFrontTexture or false
-      pM_enableIntermediaryLayer = pM_textureSets.data[tostring(pM_selectedTextureSetId)] and pM_textureSets.data[tostring(pM_selectedTextureSetId)].enableIntermediaryLayer or false
-      pM_textureSetDirty = false
-
-    end
-    im.tooltip("Revert changes")
-    im.SameLine()
-    im.TextColored(editor.color.warning.Value, "TextureSet has been modified. Hit the save button to write the changes to disk.")
-  end
-
-  im.NextColumn()
-  im.SetCursorPosY(im.GetCursorPosY() + (math.ceil(im.GetFontSize() + im.GetStyle().ItemSpacing.y * 2)))
-  im.BeginChild1("parallaxMappingTextureSetEditor_textureSet_Properties_Child", im.ImVec2(0, im.GetContentRegionAvail().y - (math.ceil(im.GetFontSize() + im.GetStyle().ItemSpacing.y * 2))), true)
-
-  if pM_selectedTextureSetData then
-    im.TextUnformatted("Properties")
-    im.TextUnformatted("Depth")
-    if im.SliderFloat("##pM_depth", editor.getTempFloat_NumberNumber(pM_depth), 0.0, 1.0, "%.2f") then
-      pM_depth = editor.getTempFloat_NumberNumber()
-      pM_textureSetDirty = true
-    end
-
-    im.TextUnformatted("Intensity")
-    if im.SliderFloat("##pM_intensity", editor.getTempFloat_NumberNumber(pM_intensity), 0.0, 1.0, "%.2f") then
-      pM_intensity = editor.getTempFloat_NumberNumber()
-      pM_textureSetDirty = true
-    end
-
-    im.TextUnformatted("Emissive Weight")
-    if im.SliderFloat("##pM_emissiveWeight", editor.getTempFloat_NumberNumber(pM_emissiveWeight), 0.0, 1.0, "%.2f") then
-      pM_emissiveWeight = editor.getTempFloat_NumberNumber()
-      pM_textureSetDirty = true
-    end
-
-    im.TextUnformatted("Wrap Textures")
-    if im.Checkbox("##pM_wrapTextures", editor.getTempBool_BoolBool(pM_wrapTextures)) then
-      pM_wrapTextures = editor.getTempBool_BoolBool()
-      pM_textureSetDirty = true
-    end
-
-    im.TextUnformatted("Split Front Texture")
-    if im.Checkbox("##pM_splitFrontTexture", editor.getTempBool_BoolBool(pM_splitFrontTexture)) then
-      pM_splitFrontTexture = editor.getTempBool_BoolBool()
-      pM_textureSetDirty = true
-    end
-
-    im.TextUnformatted("Enable Intermediary Layer")
-    if im.Checkbox("##pM_enableIntermediaryLayer", editor.getTempBool_BoolBool(pM_enableIntermediaryLayer)) then
-      pM_enableIntermediaryLayer = editor.getTempBool_BoolBool()
-      pM_textureSetDirty = true
-    end
-
-    im.TextUnformatted("Intermediary Layer Depth")
-    if im.SliderFloat("##pM_intermediaryLayerDepth", editor.getTempFloat_NumberNumber(pM_intermediaryLayerDepth), 0.05, 1.0, "%.2f") then
-      pM_intermediaryLayerDepth = editor.getTempFloat_NumberNumber()
-      pM_textureSetDirty = true
-    end
-  end
-  im.EndChild()
-
-  im.Columns(1, "parallaxMappingTextureSetEditorColumns")
-end
 
 local function onEditorGui()
   if not editor.editMode or (editor.editMode.displayName ~= editModeName) then
@@ -2124,8 +2077,9 @@ local function onEditorGui()
     local tabIconSize = im.ImVec2(tabIconWidth, tabIconWidth)
 
     if im.BeginTabBar("ForestEditorTabBar") then
-      if im.BeginTabItem("Brushes##Tab") then
-        im.tooltip("The forest item brushes that can be used to paint foliage on terrain.\nThey contain groups of meshes that spawn under certain rules.")
+      local brushesOpen = im.BeginTabItem("Brushes##Tab")
+      tabItemInfo("Brushes group meshes with spawn rules (size, slope, density).\nUse a brush to paint mixed foliage in one stroke.")
+      if brushesOpen then
         if var.selectedTab == var.enum_tabType.meshes then
           var.selectedTab = var.enum_tabType.brushes
           if #var.selectedForestBrushes == 1 then
@@ -2142,8 +2096,9 @@ local function onEditorGui()
         im.EndChild()
         im.EndTabItem()
       end
-      if im.BeginTabItem("Meshes##Tab") then
-        im.tooltip("The forest item individual meshes that can be used to paint foliage on terrain.")
+      local meshesOpen = im.BeginTabItem("Meshes##Tab")
+      tabItemInfo("Meshes are individual foliage models.\nUse a mesh to paint only that one model.")
+      if meshesOpen then
         if var.selectedTab == var.enum_tabType.brushes then
           var.selectedTab = var.enum_tabType.meshes
           if #var.selectedForestItemDatas == 1 then
@@ -2206,11 +2161,6 @@ local function onEditorGui()
       im.PopStyleVar()
       im.EndTabBar()
     end
-  end
-  editor.endWindow()
-
-  if editor.beginWindow(parallaxMappingTextureSetEditor_WindowId, "Parallax Mapping - TextureSet Editor") then
-    parallaxMappingTextureSetEditorGui()
   end
   editor.endWindow()
 
@@ -2812,6 +2762,10 @@ local function forestToolsEditModeUpdate()
         var.gui3DMouseEvent.vec = cam.dir
 
         local forestItem = forest:castRayRendered(cam.pos, cam.pos + cam.dir * rayRange).forestItem
+        -- Parallax windows belong to the Parallax Interior Editor: don't highlight or pick them here.
+        if forestItem and forestItemTools.isParallaxItem(forestItem) then
+          forestItem = nil
+        end
 
         if forestItem and not mouseDragStartPos then
           worldEditorCppApi.renderForestBBs({forestItem}, colorWhite)
@@ -2839,6 +2793,7 @@ local function forestToolsEditModeUpdate()
 
           local frustum
           itemsInRect, frustum = editor.getObjectsByRectangle({topLeft = topLeft, bottomRight = bottomRight}, var.forestData)
+          itemsInRect = forestItemTools.filterItems(itemsInRect, keepNonParallax)
           drawFrustumRect(frustum)
           worldEditorCppApi.renderForestBBs(itemsInRect, colorOrange)
         end
@@ -3025,7 +2980,7 @@ local function forestItemShapeFileCustomFieldEditor(objectIds, fieldValue, field
   if im.BeginChild1(fieldName .. "MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
     var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
   end
-  im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
+  im.EndChild()
   im.PopStyleVar()
 end
 
@@ -3105,7 +3060,7 @@ local function brushElementForestItemDataCustomFieldEditor(objectIds, fieldValue
   if im.BeginChild1(fieldName .. "MeshPreviewChild", im.ImVec2(size,size), true, im.WindowFlags_NoScrollWithMouse) then
     var.meshPreview:ImGui_Image(var.meshPreviewRenderSize[1],var.meshPreviewRenderSize[2])
   end
-  im.EndChild() -- Must always be called for BeginChild1, regardless of return value.
+  im.EndChild()
   im.PopStyleVar()
 
   if brushElementForestItemDataChanged then
@@ -3117,7 +3072,6 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(220,320), nil, true)
-  editor.registerWindow(parallaxMappingTextureSetEditor_WindowId, im.ImVec2(600,480), nil, true)
   editor.registerModalWindow("noForestMsgDlg")
   editor.registerModalWindow("noForestBrushGroupMsgDlg")
   editor.registerInspectorTypeHandler("forestItem", assetInspectorGuiForestItem)
@@ -3152,9 +3106,6 @@ local function onEditorInitialized()
   setForceAlignToTerrain()
   setSnapAnyForestItemType()
   initializeDataBlockTables()
-
-  pM_textureSetsFilePath = string.format("%sart/parallaxMappingTextureSets.json", path.split(getMissionFilename()))
-  readOrIntializeParallaxMappingTextureSets()
 end
 
 local function onEditorAfterSaveLevel()

@@ -86,19 +86,20 @@ local function onFreeroamConfiguratorGetOptions(level, options)
       type = "date",
     })
 
-    -- Play option
+    -- Play option. Choices are built in DayCycleLengthSelect from the shared presets.
     local playOption = {
       label = _tr("ui.environment.timeOfDayPlay"),
       value = "disabled", -- Default value, will be overridden by current configuration
       key = "environment_timePlay",
       icon = "weather",
       type = "select",
+      levelSeconds = core_environment.getAuthoredDayLength(level.dir),
       options = {
         { label = _tr("ui.common.disabled"), value = "disabled" },
         { label = _tr("ui.environment.realtime") .. " (24h)", value = "realtime", style="active" },
-        { label = _tr("editor.camera.speedSlow") .. " (2h)", value = "slow", style="active" },
-        { label = _tr("editor.camera.speedNormal") .. " (30m)", value = "normal", style="active" },
-        { label = _tr("editor.camera.speedFast") .. " (5m)", value = "fast", style="active" },
+        { label = _tr("ui.menu.freeroamSelector.options.dayNightCycle.slow"), value = "slow", style="active" },
+        { label = _tr("ui.menu.freeroamSelector.options.dayNightCycle.moderate"), value = "normal", style="active" },
+        { label = _tr("ui.menu.freeroamSelector.options.dayNightCycle.fast"), value = "fast", style="active" },
       },
     }
 

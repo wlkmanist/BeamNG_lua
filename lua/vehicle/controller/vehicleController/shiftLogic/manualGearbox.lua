@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Controls clutch and gear selection behavior for manual transmissions
+
 local M = {}
 
 local max = math.max
@@ -121,7 +123,7 @@ local function shiftUpOnDown()
   gearIndex = min(max(gearIndex, gearbox.minGearIndex), gearbox.maxGearIndex)
 
   if M.gearboxHandling.gearboxSafety then
-    local gearRatio = gearbox.gearRatios[newDesiredGearIndex]
+    local gearRatio = gearbox.gearRatios[gearIndex]
     if gearbox.outputAV1 * gearRatio > engine.maxAV then
       gearIndex = prevGearIndex
     end
@@ -207,6 +209,7 @@ local function shiftToGearIndex(index)
 
   if gearIndex == 0 and clutchHandling.shiftState == "gearGrind" then
     gearbox:setGearIndex(0)
+    newDesiredGearIndex = 0
     clutchHandling.shiftState = "clutchOut"
   end
 end
@@ -568,6 +571,7 @@ local function updateWhileShifting(dt)
       M.clutchRatio = min(1 - M.inputValues.clutch, 1)
     end
     if not gearbox.isGrindingShift then
+      newDesiredGearIndex = 0
       clutchHandling.shiftState = "clutchOut"
     end
   end

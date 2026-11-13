@@ -509,26 +509,31 @@ M.checkUnlocks = checkUnlocks
 local function onGetUnlockFlagDefinitions(flagDefinitions)
 
   for id, branch in pairs(getBranches()) do
+    local branchId = id
+    local branchName = branch.name
+    local branchIcon = branch.icon
+
     -- for levels
     for lvl, lvlData in pairs(branch.levels or {}) do
+      local level = lvl
       local unlockFlags = lvlData.unlockFlags or {}
-      table.insert(unlockFlags, branch.id.."-level-"..lvl)
+      table.insert(unlockFlags, branch.id.."-level-"..level)
       for _, flag in ipairs(unlockFlags) do
         flagDefinitions[flag] = {
-          label = { txt = "ui.career.branchLevel", context = {branch = branch.name, lvl = lvl}},
-          level = lvl,
+          label = { txt = "ui.career.branchLevel", context = {branch = branchName, lvl = level}},
+          level = level,
           unlockedFunction = function()
-            local hasLevel =  getBranchLevel(id) >= lvl
-            local isUnlocked = getBranchById(id).unlocked
+            local hasLevel = getBranchLevel(branchId) >= level
+            local isUnlocked = getBranchById(branchId).unlocked
             return hasLevel and isUnlocked
           end,
           unlockInfo = {
-            type = "minLevel", icon = branch.icon,
-            longLabel = { txt = "ui.career.requiresBranchLevel", context = {branch = branch.name, lvl = lvl}},
-            shortLabel = { txt = "ui.career.lvlShort", context = {lvl = lvl}},
+            type = "minLevel", icon = branchIcon,
+            longLabel = { txt = "ui.career.requiresBranchLevel", context = {branch = branchName, lvl = level}},
+            shortLabel = { txt = "ui.career.lvlShort", context = {lvl = level}},
           },
           lockedReason = {
-            type = "locked", icon = branch.icon, level = lvl, label = { txt = "ui.career.requiresBranchLevel", context = {branch = branch.name, lvl = lvl}}
+            type = "locked", icon = branchIcon, level = level, label = { txt = "ui.career.requiresBranchLevel", context = {branch = branchName, lvl = level}}
           }
         }
       end

@@ -270,6 +270,12 @@ local function requestMods(query, order_by, order, page, categories)
         return
       end
       local modList = request.responseData.data
+      if type(modList) ~= "table" then
+        logOnline("requestMods", request)
+        request.responseData.data = {}
+        request.responseData.count = 0
+        modList = request.responseData.data
+      end
       request.responseData.metered = not Engine.Platform.isNetworkUnrestricted()
       request.responseData.updatingRepo = updatingRepo
       request.responseData.repoMsg = repoMsg
@@ -353,6 +359,12 @@ local function requestMyMods(query,order_by,order,page,categories)
       return
     end
     local modList = request.responseData.data
+    if type(modList) ~= "table" then
+      logOnline("requestMyMods", request)
+      request.responseData.data = {}
+      request.responseData.count = 0
+      modList = request.responseData.data
+    end
     request.responseData.updatingRepo = updatingRepo
     request.responseData.metered = not Engine.Platform.isNetworkUnrestricted()
     request.responseData.repoMsg = repoMsg
@@ -587,7 +599,7 @@ end
 
 local function uiShowRepo()
   guihooks.trigger('MenuHide', false);
-  guihooks.trigger('ChangeState', {state = "menu.mods.local", params = {}})
+  extensions.ui_router.navigate("menu.mods.local")
 end
 
 local function uiShowMod(modId)

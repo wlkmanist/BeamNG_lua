@@ -207,11 +207,11 @@ function C:drawContent()
   --]]
   --im.Dummy(im.ImVec2(self.headerImageSize.x,1))
   im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(0, 0))
-  im.Image(self.headerImage.texId, self.headerImageSize, im.ImVec2(0, 0), im.ImVec2(1, 1), col)
+  im.Image(self.headerImage.tex:getID(), self.headerImageSize, im.ImVec2(0, 0), im.ImVec2(1, 1), col)
   --im.ImDrawList_AddRect(im.GetWindowDrawList(), im.GetItemRectMin(), im.GetItemRectMax(), im.GetColorU322(im.ImVec4(1, 0, 0, 1)))
 
   if im.GetContentRegionAvailWidth() > 500 then
-    im.Image(self.sideImage.texId, self.sideImageSize, im.ImVec2(0, 0), im.ImVec2(1, 1), col)
+    im.Image(self.sideImage.tex:getID(), self.sideImageSize, im.ImVec2(0, 0), im.ImVec2(1, 1), col)
     im.SameLine()
   end
   --im.ImDrawList_AddRect(im.GetWindowDrawList(), im.GetItemRectMin(), im.GetItemRectMax(), im.GetColorU322(im.ImVec4(1, 0, 1, 1)))

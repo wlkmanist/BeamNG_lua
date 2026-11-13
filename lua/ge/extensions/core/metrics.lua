@@ -70,7 +70,20 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     local rnd = settings.getValue("fpsLimitEnabled") and settings.getValue("FPSLimiterRandomness") or 0
     -- minimum stats
     if M.currentMode == 1 then
-      lineText = string.format("FPS: %5.1f [Avg %5.1f | Min %5.1f | Max %5.1f%s] | %s", getConsoleNumber("fps::instantaneous"), getConsoleNumber("fps::avg"), getConsoleNumber("fps::min"), getConsoleNumber("fps::max"), rnd == 0 and "" or ", randomness "..rnd.."%", frameTimeText())
+      local fps = getConsoleNumber("fps::instantaneous")
+      local gpuTime = getConsoleNumber("fps::gpuTime")
+      local gpuText = gpuTime >= 0 and string.format("%.2f ms", gpuTime) or "N/A"
+      local frameMs = (fps > 0) and (1000 / fps) or 0
+      lineText = string.format(
+        "FPS: %.1f (%.1f avg, %.1f min, %.1f max%s), Frame: %.2f ms (CPU: %.2f ms, GPU: %s)",
+        fps,
+        getConsoleNumber("fps::avg"),
+        getConsoleNumber("fps::min"),
+        getConsoleNumber("fps::max"),
+        rnd == 0 and "" or ", randomness "..rnd.."%",
+        frameMs,
+        getConsoleNumber("fps::cpuTime"),
+        gpuText)
       im.TextUnformatted(lineText)
       if not imguiVisible then table.insert(lines, lineText) end
     end

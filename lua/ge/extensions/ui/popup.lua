@@ -27,8 +27,9 @@ local function readPopupEntryById(id, options)
 
   if FS:fileExists(jsonPath) then
     local data = jsonReadFile(jsonPath) or {}
-    if data.title ~= nil then entry.title = _tr(data.title) end
-    if data.text ~= nil then entry.text = _tr(data.text) end
+    local tr = options.context and function(key) return core_locales.contextTranslate(key, options.context) end or _tr
+    if data.title ~= nil then entry.title = tr(data.title) end
+    if data.text ~= nil then entry.text = tr(data.text) end
     if data.image ~= nil then entry.image = resolveAssetPath(basePath, data.image) end
     if data.aspectRatio ~= nil then entry.aspectRatio = tostring(data.aspectRatio) end
     if data.vueComponent ~= nil then entry.vueComponent = tostring(data.vueComponent) end
@@ -152,7 +153,7 @@ M.openDrivingAssistsPopup = function(options)
   --guihooks.trigger("OpenTutorialDrivingAssistants", options)
   local entry = {
     id = "drivingAssists",
-    title = "Shifting Style Selection",
+    title = _tr("ui.career.tutorial.popup.drivingAssists.title"),
     vueComponent = "GearboxSelect",
   }
   return openPopupEntries({ entry }, options)
@@ -161,7 +162,7 @@ end
 M.openOptionalChallengeSelectionPopup = function(options)
   local entry = {
     id = "optionalChallengeSelection",
-    title = "Optional Challenge Selection",
+    title = _tr("ui.career.tutorial.popup.optionalChallengeSelection.title"),
     vueComponent = "OptionalChallengeSelect",
   }
   return openPopupEntries({ entry }, options)
@@ -193,12 +194,12 @@ M.openContractSignPopup = function(options, additionalIds)
   options = options or {}
   local entry = {
     id = options.id or "contractSign",
-    title = options.title or "Join the APM Team",
-    text = options.text or "Welcome to APM HQ. This is where you will manage your vehicles, take on assignments, and grow your career. Sign up now and get your 10k starting bonus today.",
+    title = options.title or _tr("ui.career.tutorial.popup.contractSign.title"),
+    text = options.text or _tr("ui.career.tutorial.popup.contractSign.text"),
     vueComponent = "ContractSign",
-    contractTitle = options.contractTitle or "APM - Test Driver Agreement",
-    contractText = options.contractText or "By signing this agreement, the undersigned accepts the terms of test-driving employment with APM and confirms acceptance of the starting bonus.",
-    userName = options.userName or "Unnamed Player",
+    contractTitle = options.contractTitle or _tr("ui.career.tutorial.popup.contractSign.contractTitle"),
+    contractText = options.contractText or _tr("ui.career.tutorial.popup.contractSign.contractText"),
+    userName = options.userName or _tr("ui.career.tutorial.popup.contractSign.unnamedPlayer"),
     money = options.money or 10000,
     image = resolveAssetPath(options.root or "/gameplay/tutorials/pages/v2/", options.image or "hqIntroductionAndContractSign/v2_hqIntroductionAndContractSign_image.jpg"),
   }

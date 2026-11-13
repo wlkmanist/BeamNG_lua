@@ -6,6 +6,7 @@ local M = {}
 local actionGroups = {}
 local blockedActionGroups = {}
 local blockedActions = {}
+local actionMapPlayerMasks = {}
 
 local actionTemplates = {}
 
@@ -32,11 +33,11 @@ end
 
 actionTemplates.vehicleTeleporting = {"dropPlayerAtCamera", "dropPlayerAtCameraNoReset", "recover_vehicle", "recover_vehicle_alt", "recover_to_last_road", "reload_vehicle", "reload_all_vehicles", "loadHome", "saveHome", "reset_all_physics" } -- no "reset_physics" as this is often used as a normal reset in scenarios
 actionTemplates.vehicleMenues = {"vehicle_selector", "parts_selector", "vehicledebugMenu"}
-actionTemplates.nodegrabber = {"nodegrabberAction", "nodegrabberGrab", "nodegrabberRender", "nodegrabberStrength", "nodegrabberPadGrab", "nodegrabberPadMode"}
+actionTemplates.nodegrabber = {"nodegrabberAction", "nodegrabberGrab", "nodegrabberRender", "nodegrabberStrength", "nodegrabberPadMode"}
 actionTemplates.physicsControls = {"slower_motion", "faster_motion", "toggle_slow_motion"}
 arrayConcat(actionTemplates.physicsControls, actionTemplates.nodegrabber)
 actionTemplates.aiControls = {"toggleTraffic", "toggleAITraffic"}
-actionTemplates.vehicleSwitching = {"switch_next_vehicle", "switch_previous_vehicle", "switch_next_vehicle_multiseat"}
+actionTemplates.vehicleSwitching = {"switch_next_vehicle", "switch_previous_vehicle"}
 actionTemplates.editor = {"editorToggle", "objectEditorToggle", "editorSafeModeToggle"}
 actionTemplates.freeCam = {"toggleCamera", "dropCameraAtPlayer"}
 --if shipping_build then
@@ -119,16 +120,93 @@ local function isActionBlocked(actionName)
   end
 end
 
+local function normalizeActionMapName(mapName)
+  if type(mapName) ~= "string" then return nil end
+  return mapName:sub(-9) == "ActionMap" and mapName or (mapName .. "ActionMap")
+end
+
+local function applyActionMapPlayerMask(mapName)
+  local effectiveMask = -1
+  for _, playerMask in pairs(actionMapPlayerMasks[mapName] or {}) do
+    effectiveMask = bit.band(effectiveMask, playerMask)
+  end
+  local actionMap = scenetree.findObject(mapName)
+  if actionMap then actionMap.playerMask = effectiveMask end
+end
+
+local function setActionMapPlayerMask(owner, mapName, playerMask)
+  mapName = normalizeActionMapName(mapName)
+  if type(owner) ~= "string" or not mapName or type(playerMask) ~= "number" then return false end
+  actionMapPlayerMasks[mapName] = actionMapPlayerMasks[mapName] or {}
+  actionMapPlayerMasks[mapName][owner] = playerMask
+  applyActionMapPlayerMask(mapName)
+  return true
+end
+
+local function clearActionMapPlayerMask(owner, mapName)
+  mapName = normalizeActionMapName(mapName)
+  local ownerMasks = mapName and actionMapPlayerMasks[mapName]
+  if not ownerMasks then return end
+  ownerMasks[owner] = nil
+  if not next(ownerMasks) then actionMapPlayerMasks[mapName] = nil end
+  applyActionMapPlayerMask(mapName)
+end
+
+local function clearActionMapPlayerMasks(owner)
+  local mapNames = {}
+  for mapName in pairs(actionMapPlayerMasks) do
+    mapNames[#mapNames + 1] = mapName
+  end
+  for _, mapName in ipairs(mapNames) do
+    local ownerMasks = actionMapPlayerMasks[mapName]
+    ownerMasks[owner] = nil
+    if not next(ownerMasks) then actionMapPlayerMasks[mapName] = nil end
+    applyActionMapPlayerMask(mapName)
+  end
+end
+
+local function setActionMapPlayerBlocked(owner, mapName, player, blocked)
+  mapName = normalizeActionMapName(mapName)
+  if not mapName or type(player) ~= "number" then return false end
+  local ownerMasks = actionMapPlayerMasks[mapName]
+  local playerMask = ownerMasks and ownerMasks[owner] or -1
+  local playerBit = bit.lshift(1, player)
+  if blocked then
+    playerMask = bit.band(playerMask, bit.bnot(playerBit))
+  else
+    playerMask = bit.bor(playerMask, playerBit)
+  end
+  return setActionMapPlayerMask(owner, mapName, playerMask)
+end
+
 local function onSerialize()
   local data = {}
   data.actionGroups = actionGroups
   data.blockedActionGroups = blockedActionGroups
+  data.actionMapPlayerMasks = actionMapPlayerMasks
   return data
 end
 
 local function onDeserialized(v)
   actionGroups = v.actionGroups
   blockedActionGroups = v.blockedActionGroups
+  actionMapPlayerMasks = v.actionMapPlayerMasks or {}
+  for mapName in pairs(actionMapPlayerMasks) do
+    applyActionMapPlayerMask(mapName)
+  end
+end
+
+local function onInputBindingsChanged()
+  for mapName in pairs(actionMapPlayerMasks) do
+    applyActionMapPlayerMask(mapName)
+  end
+end
+
+local function onExtensionUnloaded()
+  for mapName in pairs(actionMapPlayerMasks) do
+    local actionMap = scenetree.findObject(mapName)
+    if actionMap then actionMap.playerMask = -1 end
+  end
 end
 
 local function getActionTemplates()
@@ -144,11 +222,17 @@ M.clear = clear
 M.setGroup = setGroup
 M.getGroup = getGroup
 M.isActionBlocked = isActionBlocked
+M.setActionMapPlayerMask = setActionMapPlayerMask
+M.clearActionMapPlayerMask = clearActionMapPlayerMask
+M.clearActionMapPlayerMasks = clearActionMapPlayerMasks
+M.setActionMapPlayerBlocked = setActionMapPlayerBlocked
 M.createActionTemplate = createActionTemplate
 M.getActionTemplates = getActionTemplates
 
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
+M.onInputBindingsChanged = onInputBindingsChanged
+M.onExtensionUnloaded = onExtensionUnloaded
 
 -- debug
 M.getBlockedActions = getBlockedActions

@@ -6,32 +6,25 @@ local M = {}
 
 M.dependencies = {"core_trailerRespawn"}
 
-local obj1OriginalDistance = 5
-local obj2OriginalDistance = 5
-
-local playerId
-
 local objId1
 local objId2
 
 local detached = true
 
+local function getConfiguredOrbitDistance(vehId)
+  local camData = vehId and core_camera and core_camera.getCameraDataById(vehId)
+  return camData and camData.orbit and camData.orbit.distance or 5
+end
+
 local function checkForTrailer(objId1_, objId2_)
-  local playerId = be:getPlayerVehicleID(0)
-
-  if playerId ~= objId1_ and playerId ~= objId2_ then return false end
-
   if objId1_ == objId2_ then return false end
   if core_trailerRespawn.getConfigType(objId1_) ~= "Trailer" and core_trailerRespawn.getConfigType(objId2_) ~= "Trailer" then return false end
 
   local obj1 = scenetree.findObjectById(objId1_)
   local obj2 = scenetree.findObjectById(objId2_)
 
-  local pos1
-  local pos2
-
-  pos1 = obj1:getPosition()
-  pos2 = obj2:getPosition()
+  local pos1 = obj1:getPosition()
+  local pos2 = obj2:getPosition()
 
   if obj1 ~= nil and obj2 ~= nil then
     local dist = (pos1 - pos2):len()
@@ -41,22 +34,10 @@ local function checkForTrailer(objId1_, objId2_)
 end
 
 local function initCameraModifier()
-  local dist1 = 5
-  local dist2 = 5
+  local dist1 = getConfiguredOrbitDistance(objId1)
+  local dist2 = getConfiguredOrbitDistance(objId2)
 
   if core_camera ~= nil then
-    local obj1 = core_camera.getCameraDataById(objId1)
-    local obj2 = core_camera.getCameraDataById(objId2)
-
-    if obj1 ~= nil then
-      dist1 = obj1.orbit.distance
-      obj1OriginalDistance = dist1
-    end
-    if obj2 ~= nil then
-      dist2 = obj2.orbit.distance
-      obj2OriginalDistance = dist2
-    end
-
     core_camera.getCameraDataById(objId1).orbit.lockCamera = true
     core_camera.setDefaultDistance({vehId = objId1, camName = "orbit"}, (dist1+dist2)/1.5+1)
     core_camera.setDistance({vehId = objId1, camName = "orbit"}, (dist1+dist2)/1.5+1)
@@ -75,50 +56,81 @@ local function restoreOriginalCamera()
     if objId2 then obj2 = scenetree.findObjectById(objId2) end
 
     if obj1 then
-      if obj1OriginalDistance ~= nil then
-        core_camera.setTargetMode({vehId = objId1, camName = "orbit"}, 'ref', nil)
-        core_camera.setRef({vehId = objId1, camName = "orbit"}, nil, nil, nil)
-        core_camera.setDefaultDistance({vehId = objId1, camName = "orbit"}, obj1OriginalDistance)
-        core_camera.setDistance({vehId = objId1, camName = "orbit"}, obj1OriginalDistance)
-      end
+      local dist1 = getConfiguredOrbitDistance(objId1)
+      core_camera.setTargetMode({vehId = objId1, camName = "orbit"}, 'ref', nil)
+      core_camera.setRef({vehId = objId1, camName = "orbit"}, nil, nil, nil)
+      core_camera.setDefaultDistance({vehId = objId1, camName = "orbit"}, dist1)
+      core_camera.setDistance({vehId = objId1, camName = "orbit"}, dist1)
     end
 
     if obj2 then
-      if obj2OriginalDistance ~= nil then
-        core_camera.setTargetMode({vehId = objId2, camName = "orbit"}, 'ref', nil)
-        core_camera.setRef({vehId = objId2, camName = "orbit"}, nil, nil, nil)
-        core_camera.setDefaultDistance({vehId = objId2, camName = "orbit"}, obj2OriginalDistance)
-        core_camera.setDistance({vehId = objId2, camName = "orbit"}, obj2OriginalDistance)
-      end
+      local dist2 = getConfiguredOrbitDistance(objId2)
+      core_camera.setTargetMode({vehId = objId2, camName = "orbit"}, 'ref', nil)
+      core_camera.setRef({vehId = objId2, camName = "orbit"}, nil, nil, nil)
+      core_camera.setDefaultDistance({vehId = objId2, camName = "orbit"}, dist2)
+      core_camera.setDistance({vehId = objId2, camName = "orbit"}, dist2)
     end
   end
   detached = true
 end
 
-local function onCouplerAttached(objId1_, objId2_)
-  if checkForTrailer(objId1_, objId2_) == true then
-    restoreOriginalCamera()
-    objId1 = objId1_
-    objId2 = objId2_
-    playerId = be:getPlayerVehicleID(0)
-    initCameraModifier()
-  end
-end
-
-local function onCouplerDetached(objId1_, objId2_)
+local function stopTracking()
   restoreOriginalCamera()
   objId1 = nil
   objId2 = nil
 end
 
+-- picks up a coupling the player vehicle is already part of
+local function trackVehicleIfCoupled(vehId)
+  if vehId == nil or vehId == -1 then return end
+  if vehId == objId1 or vehId == objId2 then return end -- already tracking this pair
+
+  local couplings = core_vehicles and core_vehicles.vehsCouplings[vehId]
+  if not couplings then return end
+
+  for otherId in pairs(couplings) do
+    if checkForTrailer(vehId, otherId) then
+      restoreOriginalCamera()
+      objId1 = vehId
+      objId2 = otherId
+      initCameraModifier()
+      return
+    end
+  end
+end
+
+local function onExtensionLoaded()
+  if not settings.getValue("couplerCameraModifier", false) then return false end
+  trackVehicleIfCoupled(be:getPlayerVehicleID(0))
+end
+
+local function onCouplerAttached(objId1_, objId2_)
+  local playerVehId = be:getPlayerVehicleID(0)
+  if playerVehId ~= objId1_ and playerVehId ~= objId2_ then return end
+  if checkForTrailer(objId1_, objId2_) then
+    restoreOriginalCamera()
+    objId1 = objId1_
+    objId2 = objId2_
+    initCameraModifier()
+  end
+end
+
+local function onCouplerDetached(objId1_, objId2_)
+  if objId1 == nil then return end
+  -- fires for every coupling in the world, so only react to the pair we are tracking
+  if objId1_ ~= objId1 and objId1_ ~= objId2 and objId2_ ~= objId1 and objId2_ ~= objId2 then return end
+  stopTracking()
+end
+
 local function onUpdate()
+  if objId1 == nil or objId2 == nil then return end
   local vehicleId = be:getPlayerVehicleID(0)
-  if objId1 == nil or objId2 == nil or (vehicleId ~= objId2 and vehicleId ~= objId1) then return end
+  if vehicleId ~= objId1 and vehicleId ~= objId2 then return end
 
   local obj1 = scenetree.findObjectById(objId1)
   local obj2 = scenetree.findObjectById(objId2)
 
-  if obj2 == nil or obj1 == nil then onCouplerDetached() return end
+  if obj2 == nil or obj1 == nil then stopTracking() return end
 
   local vehicle = getPlayerVehicle(0)
   local playerVehiclePos = vehicle:getPosition()
@@ -162,7 +174,7 @@ local function onUpdate()
 
   local obj2Pos = ref + obj2:getPosition() + camOffset2
 
-  if (obj1Pos - obj2Pos):length() > (obj1OriginalDistance + obj2OriginalDistance) then
+  if (obj1Pos - obj2Pos):length() > (getConfiguredOrbitDistance(objId1) + getConfiguredOrbitDistance(objId2)) then
     restoreOriginalCamera()
   elseif detached then
     detached = false
@@ -182,9 +194,13 @@ local function onUpdate()
   end
 end
 
+local function onVehicleSwitched(oldId, newId, player)
+  trackVehicleIfCoupled(newId)
+end
+
 local function onVehicleSpawned(vehId)
   if vehId == objId1 or vehId == objId2 then -- This means that one of the coupled vehicles got replaced
-    onCouplerDetached()
+    stopTracking()
   end
 end
 
@@ -192,10 +208,7 @@ local function onSerialize()
   return {
     objId1 = objId1,
     objId2 = objId2,
-    playerId = playerId,
-    detached = detached,
-    obj1OriginalDistance = obj1OriginalDistance,
-    obj2OriginalDistance = obj2OriginalDistance
+    detached = detached
   }
 end
 
@@ -203,16 +216,16 @@ local function onDeserialized(data)
   if data then
     objId1 = data.objId1
     objId2 = data.objId2
-    playerId = data.playerId
     detached = data.detached
-    obj1OriginalDistance = data.obj1OriginalDistance
-    obj2OriginalDistance = data.obj2OriginalDistance
   end
 end
 
 M.checkForTrailer = checkForTrailer
+M.onExtensionLoaded = onExtensionLoaded
+M.onExtensionUnloaded = restoreOriginalCamera
 M.onCouplerAttached = onCouplerAttached
 M.onCouplerDetached = onCouplerDetached
+M.onVehicleSwitched = onVehicleSwitched
 M.onVehicleSpawned = onVehicleSpawned
 M.onUpdate = onUpdate
 M.onSerialize = onSerialize

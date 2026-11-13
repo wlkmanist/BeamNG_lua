@@ -36,6 +36,8 @@ local verticalResolution = 1080
 local minZoomFactor = 20000 -- smaller number means you can zoom in further
 local navPathSimplificationFactor = 200 -- smaller number means more simplification
 local routeAnimSpeedFactor = 3 -- bigger number means faster route animation
+local routeFitPadding = 1.35 -- XY margin so the fitted route is not flush with the screen
+local routeFitMinExtent = 100 -- meters; keeps a point-like route from collapsing the fit
 
 local bigMap = false
 
@@ -63,6 +65,7 @@ local mapBoundaries
 local mouseMoved = false
 local lastMouseOverMap = false
 local uiHasFocus = true
+local uiOwnsFocus = false -- the UI keeps focus for the whole session; panning never hands controller select to the map
 local camHeightAboveTerrain = 0
 local airSoundId = nil
 local mapBoundsFogPool
@@ -74,6 +77,8 @@ local transitionSoundId
 local currentlyVisibleIds = {}
 local missionToOpenOnStart
 local pendingAutoSelectPoiId
+local pendingAutoSelectZoomFactor
+local autoSelectFramesCamera
 
 local cameraAdditionalHeightFactor = 0
 local navigationBoundariesFactor = 1
@@ -388,14 +393,21 @@ local function resetRoute()
 end
 
 local navDestinationForLuaReloads
-local function setNavFocus(pos)
+local function setNavFocus(pos, options)
   extensions.hook("onSetBigmapNavFocus", pos)
   if not getPlayerVehicle(0) then
     pos = nil
   end
   navDestinationForLuaReloads = pos
-  core_groundMarkers.setPath(pos, {clearPathOnReachingTarget = true})
-  resetRoute()
+  local async = pos and options and options.async
+  core_groundMarkers.setPath(pos, {
+    clearPathOnReachingTarget = true,
+    async = async,
+    onComplete = async and resetRoute or nil,
+  })
+  if not async then
+    resetRoute()
+  end
 end
 
 local function onReachedTargetPos()
@@ -667,6 +679,165 @@ local function setActive(active)
   extensions.hookUpdate("onUpdate")
 end
 
+local function resolveRoutePoint(wp)
+  if not wp then return nil end
+  if type(wp) == "string" then
+    local mapData = map.getMap()
+    local node = mapData and mapData.nodes and mapData.nodes[wp]
+    return node and node.pos and vec3(node.pos.x, node.pos.y, node.pos.z)
+  end
+  if type(wp) == "table" and wp[1] and wp[2] and wp[3] and not wp.x then
+    return vec3(wp[1], wp[2], wp[3])
+  end
+  if wp.x and wp.y and wp.z then
+    return vec3(wp.x, wp.y, wp.z)
+  end
+  return nil
+end
+
+local function appendRoutePoint(points, wp)
+  local pos = resolveRoutePoint(wp)
+  if pos then
+    table.insert(points, pos)
+  end
+end
+
+-- Path points when the planner has a route; otherwise the setup pair or player position plus destination.
+local function collectRouteFitPoints()
+  local points = {}
+  local path = core_groundMarkers.routePlanner and core_groundMarkers.routePlanner.path
+  if path and #path >= 2 then
+    for _, node in ipairs(path) do
+      appendRoutePoint(points, node.pos)
+    end
+  end
+  if #points < 2 then
+    points = {}
+    local tmp = core_groundMarkers.routePathTmp
+    if tmp then
+      for _, wp in ipairs(tmp) do
+        appendRoutePoint(points, wp)
+      end
+    end
+  end
+  if #points < 2 then
+    points = {}
+    local veh = getPlayerVehicle(0)
+    if veh then
+      appendRoutePoint(points, veh:getPosition())
+    end
+    appendRoutePoint(points, core_groundMarkers.getTargetPos())
+  else
+    local veh = getPlayerVehicle(0)
+    if veh then
+      appendRoutePoint(points, veh:getPosition())
+    end
+  end
+  if #points < 2 then return nil end
+  return points
+end
+
+local function screenAspect()
+  local vm = GFXDevice and GFXDevice.getVideoMode and GFXDevice.getVideoMode()
+  local width = vm and tonumber(vm.width) or nil
+  local height = vm and tonumber(vm.height) or nil
+  if not width or not height or height <= 0 then return 16 / 9 end
+  return width / height
+end
+
+-- Oriented center, and the ground length frameObject must cover so both view axes fit at fovMax.
+-- sidebarFraction / infobarFraction are the left POI list and bottom infobar, as fractions of the screen.
+local function routeFitCenterAndLength(points, sidebarFraction, infobarFraction)
+  if not bigMapCamRotation then return nil end
+  local camDir = bigMapCamRotation * yVector
+  local forward = vec3(camDir.x, camDir.y, 0)
+  if forward:length() < 1e-4 then return nil end
+  forward:normalize()
+  local right = vec3(forward.y, -forward.x, 0)
+  sidebarFraction = clamp(tonumber(sidebarFraction) or 0, 0, 0.45)
+  infobarFraction = clamp(tonumber(infobarFraction) or 0, 0, 0.45)
+
+  local minF, maxF = math.huge, -math.huge
+  local minR, maxR = math.huge, -math.huge
+  local minZ, maxZ = math.huge, -math.huge
+  for _, p in ipairs(points) do
+    local f = p.x * forward.x + p.y * forward.y
+    local r = p.x * right.x + p.y * right.y
+    minF = math.min(minF, f)
+    maxF = math.max(maxF, f)
+    minR = math.min(minR, r)
+    maxR = math.max(maxR, r)
+    minZ = math.min(minZ, p.z)
+    maxZ = math.max(maxZ, p.z)
+  end
+
+  local midF = (minF + maxF) * 0.5
+  local midR = (minR + maxR) * 0.5
+  local center = vec3(forward.x * midF + right.x * midR, forward.y * midF + right.y * midR, (minZ + maxZ) * 0.5)
+  local depth = maxF - minF
+  local width = maxR - minR
+  local aspect = screenAspect()
+  local visibleWidth = math.max(1 - sidebarFraction, 0.4)
+  local visibleHeight = math.max(1 - infobarFraction, 0.5)
+  local fitLength = math.max(depth / visibleHeight, width / (aspect * visibleWidth))
+  fitLength = math.max(fitLength, routeFitMinExtent) * routeFitPadding
+  -- Look left and toward the camera, so the route sits right of the list and above the infobar.
+  local shiftRight = sidebarFraction * 0.5 * fitLength * aspect
+  local shiftUp = infobarFraction * 0.5 * fitLength
+  center.x = center.x - right.x * shiftRight - forward.x * shiftUp
+  center.y = center.y - right.y * shiftRight - forward.y * shiftUp
+  return center, fitLength, math.max(maxZ - minZ, 1)
+end
+
+-- factor 0 = fovMax (overview), 1 = fovMin. Height ratio versus frameObject at fovMax.
+local function zoomFactorToFitBBox(bbox)
+  local camMode = core_camera.getGlobalCameras()[cameraModeName]
+  if not camMode or not bigMapInitialCamPos then return 0 end
+  local framed = frameObject(bbox)
+  if not framed then return 0 end
+  local center = bbox:getCenter()
+  local offsetZ = framed.z - center.z
+  local height = bigMapInitialCamPos.z - center.z
+  if offsetZ < 1 or height < 1 then return 0 end
+  local s = height / offsetZ
+  if s <= 1 then return 0 end
+  local effectiveFov = fovMax - (fovMax * (cameraAdditionalHeightFactor or 0))
+  local fov = math.deg(2 * math.atan(math.tan(math.rad(effectiveFov) * 0.5) / s))
+  fov = clamp(fov, camMode.fovMin, camMode.fovMax)
+  local fovSpan = camMode.fovMax - camMode.fovMin
+  if fovSpan <= 0 then return 0 end
+  return (camMode.fovMax - fov) / fovSpan
+end
+
+local function frameActiveRoute(sidebarFraction, infobarFraction)
+  if useOrthoCamera or not bigMap then return end
+  local cam = core_camera.getGlobalCameras()[cameraModeName]
+  if not cam or not cam.panToWorldPos or not cam.zoomToFactor then return end
+  -- Nearby-activity view owns the camera. If Vue has not panned yet, drop a stale ease from the previous open.
+  if pendingAutoSelectPoiId then
+    cam.panTarget = nil
+    cam.zoomTarget = nil
+    return
+  end
+  if autoSelectFramesCamera then return end
+  cam.panTarget = nil
+  cam.zoomTarget = nil
+  if not core_groundMarkers.currentlyHasTarget() then return end
+
+  local points = collectRouteFitPoints()
+  if not points then return end
+  local center, fitLength, zExtent = routeFitCenterAndLength(points, sidebarFraction, infobarFraction)
+  if not center then return end
+
+  local bbox = Box3F()
+  bbox:setExtents(vec3(fitLength, fitLength, zExtent))
+  bbox:setCenter(center)
+  local factor = zoomFactorToFitBBox(bbox)
+  cam:panToWorldPos(center)
+  cam:zoomToFactor(factor)
+  log("I", logTag, string.format("Framing bigmap to route, zoom factor %.2f", factor))
+end
+
 local function activateBigMapCallback()
   local iconRenderer = gameplay_playmodeMarkers.getBigmapRendererObj()
   if not iconRenderer then return end
@@ -700,6 +871,14 @@ local function activateBigMapCallback()
     local color = spaceSeparated4Values(0,0,0,1)
     for _, fog in ipairs(mapBoundsFogPool) do
       fog:setField('instanceColor', 0, color)
+    end
+  end
+
+  if not pendingAutoSelectPoiId and not autoSelectFramesCamera then
+    local cam = core_camera.getGlobalCameras()[cameraModeName]
+    if cam then
+      cam.panTarget = nil
+      cam.zoomTarget = nil
     end
   end
 
@@ -907,7 +1086,7 @@ local function enterBigMapActual(instant, ignoreUiStateChange, ignoreActionMaps,
       end
       local params = type(routeParams) == "table" and deepcopy(routeParams) or {}
       params.instant = openedInstant
-      ui_router.navigate(routeTarget, params)
+      ui_router.navigate(routeTarget, params, { cancellable = false })
     end
   end
   missionToOpenOnStart = nil
@@ -942,6 +1121,10 @@ local function enterBigMap(options)
   end
   -- consumed once by the Vue bigmap after it has mounted and is ready to select (see getAndClearPendingAutoSelectPoiId)
   pendingAutoSelectPoiId = options.autoSelectPoiId
+  -- stays set for this open even after Vue consumes the poi id, so route framing does not fight that pan
+  autoSelectFramesCamera = options.autoSelectPoiId and options.autoSelectPoiId ~= "" or false
+  -- consumed once by panToPoi, when it eases the camera to the auto-selected poi
+  pendingAutoSelectZoomFactor = options.autoSelectZoomFactor
   if options.cameraAdditionalHeightFactor then
     cameraAdditionalHeightFactor = options.cameraAdditionalHeightFactor
   else
@@ -964,6 +1147,13 @@ local function enterBigMap(options)
     navigationBoundariesFactor = options.navigationBoundariesFactor
   else
     navigationBoundariesFactor = 1
+  end
+
+  uiOwnsFocus = options.uiOwnsFocus == true
+
+  -- A set route eases in from the wide map, same as nearby activities, instead of the scene zoom-out.
+  if not autoSelectFramesCamera and core_groundMarkers.currentlyHasTarget() then
+    options.instant = true
   end
 
   if useOrthoCamera then
@@ -1048,6 +1238,10 @@ local function toggleBigMap()
       endTransition(false, true, true)
     end
   else
+    if ui_router.isNavigationProtected() then
+      log("I", logTag, "Cannot toggle bigmap, a protected ui navigation is still in progress")
+      return
+    end
     if bigMap then
       if career_career.isActive()
         and career_modules_delivery_general.isDeliveryModeActive()
@@ -1370,6 +1564,10 @@ local function panToPoi(poiId)
   local cam = core_camera.getGlobalCameras()[cameraModeName]
   if cam and cam.panToWorldPos then
     cam:panToWorldPos(targetPos)
+    if pendingAutoSelectZoomFactor then
+      cam:zoomToFactor(pendingAutoSelectZoomFactor)
+      pendingAutoSelectZoomFactor = nil
+    end
   end
 end
 
@@ -1454,7 +1652,7 @@ local function camMoveController(upDown, value)
     else
       core_camera.moveLeftRight(sign(value) * value^2)
     end
-    if uiHasFocus and math.abs(value or 0) > 0.01 then
+    if uiHasFocus and not uiOwnsFocus and math.abs(value or 0) > 0.01 then
       guihooks.trigger("BigmapCameraMove", {upDown = upDown, value = value})
       uiHasFocus = false
     end
@@ -1563,7 +1761,6 @@ end
 
 local function onSerialize()
   local data = {}
-  data.airSoundId = airSoundId
   data.bigMap = bigMap
   data.navDestinationForLuaReloads = navDestinationForLuaReloads
   data.showNavigationMarker = showNavigationMarker
@@ -1579,7 +1776,6 @@ local function onSerialize()
 end
 
 local function onDeserialized(v)
-  airSoundId = v.airSoundId
   showNavigationMarker = v.showNavigationMarker
   if v.bigMap then
     extensions.core_jobsystem.create(
@@ -1610,27 +1806,29 @@ end
 
 local function onClientStartMission(levelPath)
   setActive(false)
-  if not airSoundId then
+  if not airSoundId or not scenetree.findObjectById(airSoundId) then
     airSoundId = Engine.Audio.createSource('AudioGui', 'event:>UI>Bigmap>Ambience')
-  else
+  end
+end
+
+local function deleteAirSound()
+  if airSoundId then
     local sound = scenetree.findObjectById(airSoundId)
-    if not sound then
-      airSoundId = Engine.Audio.createSource('AudioGui', 'event:>UI>Bigmap>Ambience')
+    if sound then
+      sound:delete()
     end
+    airSoundId = nil
   end
 end
 
 local function onClientEndMission(levelPath)
   clearCylinderCache()
   deselect()
+  deleteAirSound()
+end
 
-  if airSoundId then
-    local sound = scenetree.findObjectById(airSoundId)
-    if sound then
-      sound:delete()
-    end
-  end
-
+local function onExtensionUnloaded()
+  deleteAirSound()
 end
 
 local function onNavgraphReloaded()
@@ -1683,6 +1881,7 @@ M.zoomInOut = zoomInOut
 M.controllerZoom = controllerZoom
 M.navigateToMission = navigateToMission
 M.panToPoi = panToPoi
+M.frameActiveRoute = frameActiveRoute
 M.selectPoi = selectPoi
 M.getAndClearPendingAutoSelectPoiId = getAndClearPendingAutoSelectPoiId
 M.teleportToPoi = teleportToPoi
@@ -1698,6 +1897,7 @@ M.isUsingOrthoCamera = isUsingOrthoCamera
 
 M.onClientStartMission    = onClientStartMission
 M.onClientEndMission      = onClientEndMission
+M.onExtensionUnloaded     = onExtensionUnloaded
 M.onMouseButton = onMouseButton
 M.onControllerSelect = onControllerSelect
 M.camMoveController = camMoveController

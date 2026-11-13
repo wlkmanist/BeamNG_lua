@@ -110,8 +110,8 @@ local function handleMaterialSelectionSubWindow(isDecal, onSelectMaterialFunct)
           local texture = getTexObj(absPath)
           local clickedImage = false
 
-          if texture and texture.texId then
-            if im.ImageButton("##Preview_" .. objId, texture.texId, vec32) then
+          if texture and texture.tex then
+            if im.ImageButton("##Preview_" .. objId, texture.tex:getID(), vec32) then
               clickedImage = true
             end
             im.SameLine()

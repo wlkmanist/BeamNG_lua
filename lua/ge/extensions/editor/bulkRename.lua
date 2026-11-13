@@ -255,7 +255,7 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, imgui.ImVec2(600, 600))
-  editor.addWindowMenuItem("Bulk Rename", onWindowMenuItem)
+  editor.addWindowMenuItem("Bulk Rename", onWindowMenuItem, {groupMenuName = 'Assets'})
 end
 
 local function onExtensionLoaded()

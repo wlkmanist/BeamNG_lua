@@ -466,10 +466,19 @@ local function handleConfigsForBrandSubModelOrModelPath(path, data, context)
     tiles = {}
   }
   local subGroups = {}
-
+  local subGroupOrderByKey = deepcopy(model.model.vehicleSelectorSubGroupOrder or {})
 
   -- VEHICLE-SPECIFIC: Iterate through vehicle configurations
   for _, config in pairs(model.configs) do
+    -- always include the subGroupOrder of configs, regardless of whether its included or not
+    for key, order in pairs(config.vehicleSelectorSubGroupOrder or {}) do
+      if subGroupOrderByKey[key] then
+        log("W", string.format("Sub group order key %s already exists for model %s (found in config %s)", key, modelKey, config.key))
+      else
+        subGroupOrderByKey[key] = order
+      end
+    end
+
     -- VEHICLE-SPECIFIC: Filter by vehicle submodel
     local clusterKey = config.vehicleSelectorSubCluster or model.model.vehicleSelectorSubCluster
     if modelSubKey and modelSubKey ~= "" then
@@ -493,6 +502,7 @@ local function handleConfigsForBrandSubModelOrModelPath(path, data, context)
     if subKey and subKey ~= "" and not subGroups[subKey] then
       subGroups[subKey] = {
         key = "configsForBrandSubModelOrModel_" .. subKey,
+        orderKey = subKey,
         label = subKey,
         tiles = {}
       }
@@ -524,16 +534,37 @@ local function handleConfigsForBrandSubModelOrModelPath(path, data, context)
     context.profiler:add("configToTile")
     ::continue::
   end
+
+
+  -- put groups into buckets by order index, sort buckets, then add buckets to groupList
+  local translatedSubGroupOrderByKey = {}
+  for key, order in pairs(subGroupOrderByKey) do
+    translatedSubGroupOrderByKey[_tr(key) or key] = order
+  end
+
+
+  local groupsByOrderIndex = {}
   local groupList = {}
   for _, subGroup in pairs(subGroups) do
     if next(subGroup.tiles) then
-      table.insert(groupList, subGroup)
+      local orderIndex = translatedSubGroupOrderByKey[subGroup.orderKey] or 0
+      groupsByOrderIndex[orderIndex] = groupsByOrderIndex[orderIndex] or {}
+      table.insert(groupsByOrderIndex[orderIndex], subGroup)
     end
   end
 
-  table.sort(groupList, function(a, b)
-    return a.label < b.label
-  end)
+  -- sort buckets by label
+  for orderIndex, groups in pairs(groupsByOrderIndex) do
+    table.sort(groups, function(a, b)
+      return a.label < b.label
+    end)
+  end
+
+  for _, index in ipairs(tableKeysSorted(groupsByOrderIndex)) do
+    for _, group in pairs(groupsByOrderIndex[index]) do
+      table.insert(groupList, group)
+    end
+  end
 
   -- default group is always first
   if next(defaultGroup.tiles) then
@@ -641,6 +672,9 @@ local function getTiles(path, pathChanged)
   -- enable for testing
   --extensions.load('gameplay_discover_freeroamTutorial_vehicleSelectorRestriction')
 
+  if gameplay_discover_firstDrive_vehicleSelectorRestriction then
+    result = gameplay_discover_firstDrive_vehicleSelectorRestriction.applyRestriction(pathType, result)
+  end
   if gameplay_discover_freeroamTutorial_vehicleSelectorRestriction then
     result = gameplay_discover_freeroamTutorial_vehicleSelectorRestriction.applyRestriction(pathType, result)
   end

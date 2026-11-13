@@ -27,6 +27,9 @@ local boughtStarterVehicle = false
 local organizationInteraction = {}
 local pendingInitAfterLevelLoad = nil
 
+-- readiness-gated deferred navigation to "play" after career activation
+local playNavigationPendingAfterActivation = false
+
 local devActions = {"dropPlayerAtCameraNoReset"}
 arrayConcat(devActions, core_input_actionFilter.createActionTemplate({"editor", "uiReloading"}))
 
@@ -241,11 +244,22 @@ local function onClientPostStartMission()
   initAfterLevelLoad(newSave)
 end
 
+-- Navigate to "play" exactly once, when the loading screen fades out after this activation.
+-- The router keeps resending the route change until the UI reports navigation started, so we
+-- only gate on the loading screen fade-out here.
+local function onLoadingScreenFadeout()
+  if not playNavigationPendingAfterActivation then return end
+  playNavigationPendingAfterActivation = false
+  extensions.ui_router.navigate("play")
+end
+
+
 local function activateCareer(removeVehicles)
   if careerActive then return end
   -- load career
   local profile, savePath = career_saveSystem.getCurrentProfile()
   if not profile then return end
+  recordPlayerAction("enter career mode")
   core_gamestate.requestEnterLoadingScreen('careerActivate')
   extensions.hook("onBeforeCareerActivate")
   if removeVehicles == nil then
@@ -264,6 +278,7 @@ local function activateCareer(removeVehicles)
     M.startingOptions = deepcopy(savedStartingOptions)
   end
   M.tutorialEnabled = M.startingOptions.startMode == "apmOnboarding" and not careerData.boughtStarterVehicle
+  M.setAutosaveEnabled(true)
   if M.tutorialEnabled then
     log("I","","Tutorial for career enabled.")
     M.setAutosaveEnabled(false)
@@ -280,7 +295,7 @@ local function activateCareer(removeVehicles)
     freeroam_freeroam.spawningOptionsHelper.trafficMode = "disabled" -- career_playerDriving will manage traffic setup
     freeroam_freeroam.startFreeroam(path.getPathLevelMain(levelToLoad), nil, false, nil, function()
       toggleCareerModules(true)
-      M.closeAllMenus()
+      playNavigationPendingAfterActivation = true
       core_gamestate.requestExitLoadingScreen('careerActivate')
       pendingInitAfterLevelLoad = { newSave = newSave }
       server.fadeoutLoadingScreen()
@@ -292,15 +307,19 @@ local function activateCareer(removeVehicles)
       removeNonTrafficVehicles()
     end
     toggleCareerModules(true)
-    M.closeAllMenus()
     initAfterLevelLoad(newSave)
     core_gamestate.requestExitLoadingScreen('careerActivate')
+    -- no level load on this path, so onLoadingScreenFadeout will not fire
+    extensions.ui_router.navigate("play")
   end
 end
 
 local function deactivateCareer(saveCareer)
   if not careerActive then return end
+  recordPlayerAction("leave career mode")
   M.onUpdate = nil
+  -- a pending activation navigation can no longer belong to an in-progress load
+  playNavigationPendingAfterActivation = false
   careerActive = false
   toggleCareerModules(false)
   blockInputActions(false)
@@ -710,19 +729,19 @@ local function getAdditionalMenuButtons()
   local ret = {}
   --table.insert(ret, {label = "Test", luaFun = "print('Test!')"})
   if career_modules_delivery_general.isDeliveryModeActive() then
-    table.insert(ret, {label = "Map (My Cargo)", luaFun = "career_modules_delivery_cargoScreen.enterMyCargo()"})
+    table.insert(ret, {label = _tr("ui.career.pause.mapMyCargo"), luaFun = "career_modules_delivery_cargoScreen.enterMyCargo()"})
   else
-    table.insert(ret, {label = "Map", luaFun = "freeroam_bigMapMode.enterBigMap({instant=true})"})
+    table.insert(ret, {label = _tr("ui.career.pause.map"), luaFun = "freeroam_bigMapMode.enterBigMap({instant=true})"})
   end
   if not career_modules_tutorial.isActive() and M.hasBoughtStarterVehicle() then
-    table.insert(ret, {label = "Progress", luaFun = "guihooks.trigger('ChangeState', {state = 'career.domainSelection'})", showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0})
+    table.insert(ret, {label = _tr("ui.career.progress"), luaFun = "extensions.ui_router.navigate('career.domainSelection')", showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0})
   end
   if career_modules_vehiclePerformance.isTestInProgress() then
-    table.insert(ret, {label = "Cancel Certification", luaFun = "career_modules_vehiclePerformance.cancelTest()", showIndicator = true})
+    table.insert(ret, {label = _tr("ui.career.pause.cancelCertification"), luaFun = "career_modules_vehiclePerformance.cancelTest()", showIndicator = true})
   end
 
   if career_modules_testDrive.isActive() then
-    table.insert(ret, {label = "Cancel Test Drive", luaFun = "career_modules_testDrive.stop()", showIndicator = true})
+    table.insert(ret, {label = _tr("ui.career.pause.cancelTestDrive"), luaFun = "career_modules_testDrive.stop()", showIndicator = true})
   end
   return ret
 end
@@ -757,6 +776,7 @@ M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
 M.onClientEndMission = onClientEndMission
 M.onClientPostStartMission = onClientPostStartMission
+M.onLoadingScreenFadeout = onLoadingScreenFadeout
 M.onAnyMissionChanged = onAnyMissionChanged
 M.onVehicleAddedToInventory = onVehicleAddedToInventory
 M.onCameraModeChanged = onCameraModeChanged

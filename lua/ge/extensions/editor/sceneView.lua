@@ -368,7 +368,7 @@ local function onEditorGui()
       --Imgui_ThreeDView('#' .. sceneViewName)
       -- display the texture in imgui
       --local texObj = imUtils.texObj('#' .. sceneViewName)
-      --im.Image(texObj.texId, availSize)
+      --im.Image(texObj.tex:getID(), availSize)
 
       view.mouseDragging0 = false
       view.isHovered = im.IsItemHovered()

@@ -77,11 +77,7 @@ local function upgradeCamera(vehicle, oldName, newName)
             v.rightHandDoor = v.rightHandCamera -- by default, the vehicle is entered/exited from the same side as the camera is located (used for e.g. walking mode)
           end
           if v.idLeft then
-            vehicle.cameraRefNodes.driver = {
-              left = v.idLeft,
-              back = v.idBack,
-              ref  = v.idRef
-            }
+            vehicle.cameraRefNodes.driver = { left = v.idLeft, back = v.idBack, ref  = v.idRef }
           end
         end
       end
@@ -112,10 +108,58 @@ local function processOnboard(vehicle)
       else
         icam.camNodeID = icam.idCam or icam.idRef
       end
-
-      -- record the camera node id that was created
+      if icam.name == "driver" then -- backwards compat: convert legacy 'driver' into an occupant
+      vehicle.cameras.driver = { seatId = "driver", camNodeID = icam.camNodeID, seatSide = icam.rightHandCamera and "right" or "left" }
+      end
     end
     --log('D', "jbeam.postProcess"," - processed "..tableSize(vehicle.cameras.onboard).." cameras.onboard")
+  end
+end
+
+local function processOccupantCameras(vehicle)
+  local slots = vehicle.occupantSlotsById
+  local onboard = vehicle.cameras and vehicle.cameras.onboard
+  if not slots or not onboard then return end
+
+  vehicle.cameras.occupant = vehicle.cameras.occupant or {}
+  local sourceKeys = {}
+  for seatId, slot in pairs(slots) do
+    local sourceName = "occupant." .. seatId
+    local source
+    local sourceKey
+    for key, onboardCamera in pairs(onboard) do
+      if onboardCamera.occupantSlotId == seatId then
+        source = onboardCamera
+        sourceKey = key
+        break
+      end
+    end
+    if source then
+      local camera = deepcopy(source)
+      camera.name = seatId
+      camera.seatId = seatId
+      camera.seatSide = slot.seatSide
+      camera.defaultPermissionMode = slot.defaultPermissionMode
+      camera.displayName = slot.displayName
+      tableMergeRecursive(camera, slot.camera or {})
+      vehicle.cameras.occupant[seatId] = camera
+      local defaultRefNodes = vehicle.refNodes and vehicle.refNodes[0] or {}
+      vehicle.cameraRefNodes["occupant." .. seatId] = {
+        ref = source.idRef or defaultRefNodes.ref,
+        left = source.idLeft or defaultRefNodes.left,
+        back = source.idBack or defaultRefNodes.back,
+      }
+      sourceKeys[#sourceKeys + 1] = sourceKey
+    else
+      log("W", "jbeam.camera", string.format(
+        "No onboard camera anchor %q found for occupant slot %q",
+        sourceName,
+        seatId
+      ))
+    end
+  end
+  for _, key in ipairs(sourceKeys) do
+    onboard[key] = nil
   end
 end
 
@@ -182,6 +226,10 @@ local function processOnboard2(vehicle)
         counter = counter + 1
       end
       if v.fov == nil then v.fov = 75 end
+      if v.isInside == nil and (v.name == "driver" or v.name == "rider") then
+        log("I", "", string.format("Backwards compatibility: setting isInside=true for camera '%s'", v.name))
+        v.isInside = true
+      end
 
       -- check for duplicates:
       if foundCameras[v.name] then
@@ -204,6 +252,7 @@ local function process(objID, vehicle)
   upgradeCamera(vehicle, "cameraChase",     "chase")
 
   processOnboard(vehicle)
+  processOccupantCameras(vehicle)
   processRelative(vehicle)
   processOnboard2(vehicle)
 

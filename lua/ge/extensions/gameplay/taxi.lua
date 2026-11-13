@@ -45,8 +45,15 @@ end
 -- to manage walking away from the taxi
 local wiggleRoom = 6
 
--- to manage pulling over at the destination
-local pullOverDistToDestination = 35
+-- Pulling over at the destination is phased
+local arrivingApproachDist = 70 -- shed speed dist
+local arrivalApproachSpeed = 8
+local approachCapResendStep = 0.5
+local arrivalMinStopDist = 10
+local arrivalMaxCommitDist = 20 -- ceiling on the commit estimate, which grows with speed squared
+local arrivalAggression = 0.85
+local arrivalStopTolerance = 4 -- stop mode
+local pickupSightArrivalDist = 25 -- a sighted player only counts as arrival this close
 
 local delayToOpenBigMap = 0.4
 
@@ -75,7 +82,14 @@ local distanceToTarget = 150
 local accelerationTime = 1 -- seconds
 
 local hurryUpLevels = {
-  { apply = function(veh) local tv = gameplay_traffic.getTrafficData()[veh:getID()] if tv then tv:setAiParameters() end end },
+  -- Only set aggression + speed; do NOT call setAiParameters() which sends setAvoidCars("auto")
+  { apply = function(veh)
+    local tv = gameplay_traffic.getTrafficData()[veh:getID()]
+    local vars = tv and tv.getTrafficVars and tv.getTrafficVars()
+    local aggression = vars and vars.baseAggression or 0.35
+    veh:queueLuaCommand(string.format('ai.setAggression(%.3f)', aggression))
+    veh:queueLuaCommand('ai.setSpeedMode("legal")')
+  end },
   { apply = function(veh) veh:queueLuaCommand('ai.setAggression(0.6)') veh:queueLuaCommand('ai.setSpeedMode("off")') end },
   { apply = function(veh) veh:queueLuaCommand('ai.setAggression(0.9)') veh:queueLuaCommand('ai.setSpeedMode("off")') end },
   { apply = function(veh) veh:queueLuaCommand('ai.setAggression(1.0)') veh:queueLuaCommand('ai.setSpeedMode("off")') end },
@@ -159,6 +173,11 @@ local player = {
   taxiViewActive = false,
   uiUpdateTimer = 0,
   persistentMessage = nil,
+  arrivalApproachActive = false,
+  arrivalApproachSpeed0 = nil,
+  arrivalApproachDist0 = nil,
+  arrivalSpeedCap = nil,
+  arrivalCommitted = false,
   disabledSwitchVehicles = nil, -- vehicles we temporarily made non-usable while riding, restored on exit
   dropoffKickTimer = 0,
   routePlanner = require('/lua/ge/extensions/gameplay/route/route')(),
@@ -169,11 +188,13 @@ local player = {
   fare = 0,
   fareCalculator = nil,
   fareData = nil,
+  triggerMessingStrikes = 0,
 }
 
 local callTaxiSpawnMinDist = 120
 local callTaxiSpawnMaxDist = 250
-local callTaxiMaxRoadDist = 50 -- player must be within this distance of a road to call
+-- player must be within this distance of a road to call
+local callTaxiMaxRoadDist = 30
 local pickupWaitTime = 30 -- seconds a called taxi waits at the pickup before giving up
 local pickupAbandonRadius = 12 -- after the wait, the taxi leaves if the player isn't within this many meters
 local stuckTimeThreshold = 10
@@ -211,6 +232,12 @@ local taxiConfigs = {
   {model = 'legran',   config = 'taxi', fare = {initial = 1.8, perKm = 1.2, nightSurcharge = 0.5}},
 }
 
+local simpleTaxiConfigs = {
+  {model = 'simple_traffic', config = 'fullsize_taxi',     fare = {initial = 1.5, perKm = 1.0, nightSurcharge = 0.5}},
+  {model = 'simple_traffic', config = 'bastion_taxi',      fare = {initial = 2.0, perKm = 1.5, nightSurcharge = 0.5}},
+  {model = 'simple_traffic', config = 'lansdale_pre_taxi', fare = {initial = 1.8, perKm = 1.2, nightSurcharge = 0.5}},
+}
+
 local function getShouldSystemBeEnabled()
   if gameplay_discover_freeroamTutorial_tutorial then return false end
   if multiplayer_sessionManager and multiplayer_sessionManager.getCurrentSession() then return false end
@@ -228,9 +255,11 @@ local function onTrafficSpecialVehiclesProviders()
     guaranteed = 1,
     reserved = 1,
     buildGroup = function(count, options)
+      local useSimple = settings.getValue('trafficSimpleVehicles') or options.simpleVehs
+      local configs = useSimple and simpleTaxiConfigs or taxiConfigs
       local group = {}
       for i = 1, count do
-        table.insert(group, taxiConfigs[math.random(#taxiConfigs)])
+        table.insert(group, configs[math.random(#configs)])
       end
       return group
     end,
@@ -255,11 +284,17 @@ local function resetPlayerData()
   player.taxiViewActive = false
   player.uiUpdateTimer = 0
   player.persistentMessage = nil
+  player.arrivalApproachActive = false
+  player.arrivalApproachSpeed0 = nil
+  player.arrivalApproachDist0 = nil
+  player.arrivalSpeedCap = nil
+  player.arrivalCommitted = false
   player.routePlanner:clear()
   table.clear(player.pickupTaxis)
   player.fare = 0
   player.fareCalculator = nil
   player.fareData = nil
+  player.triggerMessingStrikes = 0
 end
 
 -- remaining route distance from vehPos: straight-line to the first path node plus that node's
@@ -274,6 +309,43 @@ local function getDistanceLeft()
   local veh = player.currentTaxiId and getObjectByID(player.currentTaxiId)
   if not veh then return 0 end
   return routeDistanceLeft(player.routePlanner, veh:getPosition()) or 0
+end
+
+local function hookRideEnded(reason)
+  if not player.currentTaxiId then return end
+  extensions.hook("onTaxiRideEnded", {
+    reason = reason,
+    phase = player.currentPhase,
+    routeDistance = player.totalRouteDistance,
+    distanceLeft = getDistanceLeft(),
+    skipped = player.hasSkipped == true,
+    fare = player.fareData and player.fare or nil, -- career only
+  })
+end
+
+-- capped: uncapped this overtakes arrivingApproachDist at speed, committing before any speed is shed
+local function getCommitStopDist(veh)
+  local speed = veh:getVelocity():len()
+  return clamp(speed * speed / (2 * 9.81 * arrivalAggression), arrivalMinStopDist, arrivalMaxCommitDist)
+end
+
+-- Speed ceiling partway through the approach, easing from the speed the taxi was doing when the
+-- approach began down to arrivalApproachSpeed at the commit point
+local function getApproachSpeedCap(speed0, dist0, distLeft)
+  local span = (dist0 or 0) - arrivalMinStopDist
+  if span <= 0 then return arrivalApproachSpeed end
+  local t = clamp((distLeft - arrivalMinStopDist) / span, 0, 1)
+  local v0 = math.max(speed0 or 0, arrivalApproachSpeed)
+  local vSettleSq = arrivalApproachSpeed * arrivalApproachSpeed
+  return math.sqrt(vSettleSq + (v0 * v0 - vSettleSq) * t)
+end
+
+local function applyApproachSpeedCap(veh, cap)
+  veh:queueLuaCommand(string.format('ai.setSpeed(%.2f) ai.setSpeedMode("limit")', cap))
+end
+
+local function clearApproachSpeedCap(veh)
+  veh:queueLuaCommand('ai.setSpeedMode("off")')
 end
 
 local function isTaxiCrashed(vehId)
@@ -295,7 +367,7 @@ local function getTaxiViewData()
     hurryUpMax = #hurryUpLevels - 1,
     canSkip = isDriving and player.skipPosition ~= nil and not player.hasSkipped and not isTaxiCrashed(player.currentTaxiId),
     canChangeDestination = isDriving or isChoosing or isArriving,
-    canStop = isDriving,
+    canStop = isDriving or (isArriving and taxis[player.currentTaxiId] == "pullingOverForDropoff"),
     distanceLeft = distLeft,
     totalDistance = player.totalRouteDistance,
     message = player.persistentMessage,
@@ -429,7 +501,7 @@ end
 
 -- registers a taxi that is coming to / waiting at the pickup. called = summoned via phone (vs hailed). target pos can be nil for hailed taxis that pull over in place.
 local function addPickupTaxi(vehId, called, targetPos)
-  player.pickupTaxis[vehId] = { called = called, targetPos = targetPos, waitTimer = 0, maxDist = math.huge }
+  player.pickupTaxis[vehId] = { called = called, targetPos = targetPos, waitTimer = 0, maxDist = math.huge, approachActive = false }
   if player.currentPhase == playerRidePhases.none then
     player.currentPhase = playerRidePhases.awaitingPickup
   end
@@ -443,6 +515,7 @@ local function dismissPickupTaxi(vehId, message)
   local veh = getObjectByID(vehId)
   if veh then
     veh:queueLuaCommand('ai.setPullOver(false)')
+    clearApproachSpeedCap(veh)
     veh:queueLuaCommand('ai.setState({mode = "traffic"})')
     veh.playerUsable = false
   end
@@ -539,9 +612,17 @@ local function updateTaxiPullOver()
   -- active ride taxi: dropoff pull over
   if player.currentTaxiId and taxis[player.currentTaxiId] == "pullingOverForDropoff" then
     local veh = getObjectByID(player.currentTaxiId)
-    if veh and veh:getVelocity():len() * 3.6 < maxPullOverSpeed then
-      setTaxiState(player.currentTaxiId, "waitingForDropoff")
-      pushTaxiUIUpdate(_tr("ui.taxi.canClimbOut"))
+    if veh then
+      -- only a destination arrival may steer toward destinationPos; on a "stop here" the destination
+      -- is still far away and the taxi must stop wherever it is
+      local distLeft = player.arrivalCommitted and player.destinationPos and routeDistanceLeft(player.routePlanner, veh:getPosition()) or nil
+
+      if veh:getVelocity():len() * 3.6 < maxPullOverSpeed or (distLeft and distLeft <= arrivalStopTolerance) then
+        setTaxiState(player.currentTaxiId, "waitingForDropoff")
+        pushTaxiUIUpdate(_tr("ui.taxi.canClimbOut"))
+      elseif distLeft then
+        veh:queueLuaCommand(string.format('ai.setStopPoint(nil, %.2f)', math.max(0, distLeft)))
+      end
     end
   end
 end
@@ -671,11 +752,11 @@ local function getCurrentRoute(veh)
   player.skipRotation = nil
   local aiPath = getAiPath(rp.path, veh)
   -- always anchor on the destination's road segment so the list is non-empty on short routes
-  -- and the AI drives through the stop point (the actual stop is handled by proximity pull-over)
+  -- and the AI drives through the stop point (the actual stop is set by updateTaxiPullOver)
   appendTargetApproach(aiPath, rp, veh, player.destinationPos)
 
   local str = '{wpTargetList = '..serialize(aiPath)
-  str = str..', noOfLaps = 1, aggression = 0.3, avoidCars = "on", driveInLane = "on", speedMode = "limit"}'
+  str = str..', noOfLaps = 1, avoidCars = "on", driveInLane = "on"}'
   return str
 end
 
@@ -711,8 +792,16 @@ local function startTaxiWithCurrentRoute(skipWait)
       job.sleep(2)
     end
 
+    -- driveUsingPath resets the AI's speed mode, so the approach cap only needs clearing here
+    player.arrivalApproachActive = false
+    player.arrivalApproachSpeed0 = nil
+    player.arrivalApproachDist0 = nil
+    player.arrivalSpeedCap = nil
+    player.arrivalCommitted = false
+
     plVeh:queueLuaCommand('ai.setPullOver(false)') -- in case we're resuming from a pulled-over dropoff
     plVeh:queueLuaCommand('ai.driveUsingPath('..routeStr..')')
+    hurryUpLevels[player.hurryUpLevel].apply(plVeh)
 
     setPlayerPhase(playerRidePhases.driving)
     -- signal merging back into traffic as the taxi pulls away from the curb
@@ -775,6 +864,7 @@ local function onTrafficVehicleRemoved(id)
 end
 
 local function onTrafficStopped()
+  hookRideEnded("trafficStopped")
   table.clear(taxis)
   clearTaxiBillboards()
   if player.idleCameraActive then setIdleCamera(false) end
@@ -949,9 +1039,9 @@ local function driveTaxiToPlayerRoad(vehId)
   end
   log("I", "taxi", string.format("driveTaxiToPlayerRoad: issuing ai.driveUsingPath with %d waypoints to veh %d", #aiPath, vehId))
 
-  local routeStr = '{wpTargetList = ' .. serialize(aiPath)
-    .. ', noOfLaps = 1, aggression = 0.3, avoidCars = "on", driveInLane = "on", speedMode = "limit"}'
+  local routeStr = '{wpTargetList = ' .. serialize(aiPath) .. ', noOfLaps = 1, avoidCars = "on", driveInLane = "on"}'
   veh:queueLuaCommand('ai.driveUsingPath(' .. routeStr .. ')')
+  hurryUpLevels[1].apply(veh)
   return roadPos
 end
 
@@ -1078,6 +1168,7 @@ local function callForTaxi()
   local roadPos = getPlayerRoadPos()
   if not roadPos then
     showMessage(_tr("ui.taxi.tooFarFromRoad"), false, 4)
+    extensions.hook("onTaxiCalled", "tooFarFromRoad")
     return
   end
 
@@ -1091,6 +1182,7 @@ local function callForTaxi()
     if targetPos then
       addPickupTaxi(nearbyId, true, targetPos)
       showMessage(_tr("ui.taxi.onTheWay"), false, 4)
+      extensions.hook("onTaxiCalled", "dispatched")
       return
     end
     -- this taxi couldn't be routed; release it and try the next nearest
@@ -1099,12 +1191,30 @@ local function callForTaxi()
   end
 
   -- no active taxi could reach the player; fall back to a reserved one
-  if not dispatchReservedTaxi(playerPos) then
+  local dispatched = dispatchReservedTaxi(playerPos)
+  if not dispatched then
     showMessage(_tr("ui.taxi.noTaxiAvailable"), false, 4)
   end
+  extensions.hook("onTaxiCalled", dispatched and "dispatched" or "noTaxiAvailable")
+end
+
+local function kickPlayerOut(message)
+  showMessage(message or _tr("ui.taxi.kickedOut"), false, 4)
+  gameplay_walk.setWalkingMode(true, nil, nil, true)
+end
+
+local function closeDoorsOf(vehId)
+  core_jobsystem.create(function(job)
+    job.sleep(1.5)
+    local v = getObjectByID(vehId)
+    if v then
+      v:queueLuaCommand('for _, c in pairs(controller.getControllersByType("advancedCouplerControl")) do c.tryAttachGroupImpulse() end')
+    end
+  end, 1)
 end
 
 local function leaveTaxi(message)
+  hookRideEnded("exited")
   -- charge the fare (career only)
   if player.fare and player.fare > 0 and career_career and career_career.isActive() and career_modules_payment then
     local label = _tr("ui.taxi.fareLabel")
@@ -1115,7 +1225,9 @@ local function leaveTaxi(message)
   restoreVehicleSwitching() -- always restore, even if the taxi vehicle is already gone, so the player isn't locked out of their car
   local veh = getObjectByID(player.currentTaxiId)
   if not veh then return end
+  closeDoorsOf(player.currentTaxiId)
   veh:queueLuaCommand('ai.setPullOver(false)')
+  clearApproachSpeedCap(veh)
   hurryUpLevels[1].apply(veh)
   veh:queueLuaCommand('ai.setState({mode = "traffic"})')
   setTaxiState(player.currentTaxiId, "unavailable")
@@ -1186,19 +1298,51 @@ local function updatePickupWait(dtReal)
   end
 end
 
-local function makeTaxiPullOverWhileDriving(message)
+-- atDestination distinguishes reaching the chosen destination and player asking to stop right here
+local function makeTaxiPullOverWhileDriving(message, atDestination)
   if not player.currentTaxiId then return end
   local veh = getObjectByID(player.currentTaxiId)
   if not veh then return end
   local trafficVeh = gameplay_traffic.getTrafficData()[player.currentTaxiId]
   if trafficVeh and trafficVeh.role then
-    veh:queueLuaCommand('ai.setPullOver(false)')
-    veh:queueLuaCommand('ai.setState({mode = "traffic"})')
+    player.arrivalCommitted = atDestination or false
+    -- at the destination stay on the route: traffic mode picks its own branches, which can drift away
+    -- from the planner's route and never reach the stop point
+    if not atDestination then
+      veh:queueLuaCommand('ai.setPullOver(false)')
+      veh:queueLuaCommand('ai.setState({mode = "traffic"})')
+    end
     setPlayerPhase(playerRidePhases.arriving)
 
     if message then
       showMessage(message, false)
     end
+  end
+end
+
+-- phase 1 sheds speed, phase 2 commits the pull-over at the distance the AI actually needs to stop
+local function updateArrivalApproach(veh)
+  if not (veh and player.destinationPos) then return end
+  local distLeft = routeDistanceLeft(player.routePlanner, veh:getPosition())
+  if not distLeft then return end
+
+  if not player.arrivalApproachActive and distLeft <= arrivingApproachDist then
+    player.arrivalApproachActive = true
+    player.arrivalApproachSpeed0 = veh:getVelocity():len()
+    player.arrivalApproachDist0 = distLeft
+    player.arrivalSpeedCap = nil
+  end
+
+  if player.arrivalApproachActive then
+    local cap = getApproachSpeedCap(player.arrivalApproachSpeed0, player.arrivalApproachDist0, distLeft)
+    if not player.arrivalSpeedCap or math.abs(player.arrivalSpeedCap - cap) >= approachCapResendStep then
+      player.arrivalSpeedCap = cap
+      applyApproachSpeedCap(veh, cap)
+    end
+  end
+
+  if distLeft <= getCommitStopDist(veh) then
+    makeTaxiPullOverWhileDriving(_tr("ui.taxi.arrived"), true)
   end
 end
 
@@ -1214,6 +1358,10 @@ end
 local function updatePickupArrivals()
   if not next(player.pickupTaxis) then return end
 
+  local playerVehId = be:getPlayerVehicleID(0)
+  local playerVeh = be:getPlayerVehicle(0)
+  local playerPos = playerVeh and playerVeh:getPosition()
+
   local arrived, lost = nil, nil
   for vehId, entry in pairs(player.pickupTaxis) do
     local taxiVeh = getObjectByID(vehId)
@@ -1222,10 +1370,28 @@ local function updatePickupArrivals()
       lost[#lost + 1] = vehId
     elseif entry.targetPos then -- en route to the pickup
       -- mimic a real cab: if the driver spots the player along the way, pull over early; otherwise
-      -- carry on to the agreed road spot and wait there
-      local playerVehId = be:getPlayerVehicleID(0)
-      local sawPlayer = playerVehId and gameplay_util_vehicleSighting.canVehicleSeeVehicle(vehId, playerVehId, getTaxiSightParams(vehId))
-      if sawPlayer or taxiVeh:getPosition():distance(entry.targetPos) < pullOverDistToDestination then
+      -- carry on to the agreed road spot and wait there.
+      local sawPlayer = playerVehId and playerPos
+        and gameplay_util_vehicleSighting.canVehicleSeeVehicle(vehId, playerVehId, getTaxiSightParams(vehId))
+        and taxiVeh:getPosition():distance(playerPos) <= pickupSightArrivalDist
+      local dist = taxiVeh:getPosition():distance(entry.targetPos)
+
+      if not entry.approachActive and dist <= arrivingApproachDist then
+        entry.approachActive = true
+        entry.approachSpeed0 = taxiVeh:getVelocity():len()
+        entry.approachDist0 = dist
+        entry.speedCap = nil
+      end
+
+      if entry.approachActive then
+        local cap = getApproachSpeedCap(entry.approachSpeed0, entry.approachDist0, dist)
+        if not entry.speedCap or math.abs(entry.speedCap - cap) >= approachCapResendStep then
+          entry.speedCap = cap
+          applyApproachSpeedCap(taxiVeh, cap)
+        end
+      end
+
+      if sawPlayer or dist <= getCommitStopDist(taxiVeh) then
         arrived = arrived or {}
         arrived[#arrived + 1] = vehId
       end
@@ -1290,13 +1456,13 @@ local function updatePickupStuck(dtReal)
   end
 end
 
-local function updateFare(veh, dtReal)
+local function updateFare(veh, dtSim)
   if not (veh and player.fareData and player.fareCalculator) then return end
   local speed = veh:getVelocity():len()
-  player.fareData.distanceTraveled = player.fareData.distanceTraveled + speed * dtReal
-  player.fareData.elapsedTime = player.fareData.elapsedTime + dtReal
+  player.fareData.distanceTraveled = player.fareData.distanceTraveled + speed * dtSim
+  player.fareData.elapsedTime = player.fareData.elapsedTime + dtSim
   if speed < 0.5 then
-    player.fareData.stationaryTime = player.fareData.stationaryTime + dtReal
+    player.fareData.stationaryTime = player.fareData.stationaryTime + dtSim
   end
   player.fare = player.fareCalculator(player.fareData)
 end
@@ -1325,21 +1491,18 @@ local function onUpdate(dtReal, dtSim, dtRaw)
 
     if player.currentPhase == playerRidePhases.driving then
       checkIdleCamera(dtSim)
-      if veh and player.destinationPos and veh:getPosition():distance(player.destinationPos) < pullOverDistToDestination then
-        makeTaxiPullOverWhileDriving(_tr("ui.taxi.arrived"))
-      end
+      updateArrivalApproach(veh)
     end
 
     if player.currentPhase == playerRidePhases.arriving or player.currentPhase == playerRidePhases.choosingDestination or player.currentPhase == playerRidePhases.driving then
-      updateFare(veh, dtReal)
+      updateFare(veh, dtSim)
     end
 
     if player.currentPhase == playerRidePhases.arriving and taxis[player.currentTaxiId] == "waitingForDropoff" then
       player.dropoffKickTimer = player.dropoffKickTimer + dtReal
       if player.dropoffKickTimer >= dropoffKickDelay then
         player.dropoffKickTimer = 0
-        showMessage(_tr("ui.taxi.kickedOut"), false, 4)
-        gameplay_walk.setWalkingMode(true, nil, nil, true)
+        kickPlayerOut()
       end
     else
       player.dropoffKickTimer = 0
@@ -1356,15 +1519,20 @@ end
 local function onVehicleSwitched(oldId, newId)
   -- player entered one of the pickup taxis: it becomes the active ride; dismiss all the others
   if player.pickupTaxis[newId] then
+    extensions.hook("onTaxiRideStarted", player.pickupTaxis[newId].called == true)
     player.pickupTaxis[newId] = nil
     dismissAllPickupTaxis(newId)
     player.currentTaxiId = newId
+    if gameplay_seatOccupants and gameplay_seatOccupants.requestUnseatedPresence then
+      gameplay_seatOccupants.requestUnseatedPresence(0, newId, "passenger")
+    end
     gameplay_traffic.protectNonReservedVehicle(newId, 'taxi')
     local trafficVeh = gameplay_traffic.getTrafficData()[newId]
     if trafficVeh then trafficVeh.ignoreForceTeleport = true end
 
     player.hurryUpLevel = 1
     player.hasSkipped = false
+    player.triggerMessingStrikes = 0
 
     -- resolve fare calculator for this taxi (career only)
     if career_career and career_career.isActive() then
@@ -1393,6 +1561,11 @@ local function onVehicleSwitched(oldId, newId)
       player.cameraBeforeTaxi = core_camera.getActiveCamName()
       core_camera.setByName(0, taxiCameraMode)
     end
+
+    -- close all doors/latches after the player climbs in
+    local boardedId = newId
+    closeDoorsOf(boardedId)
+
     -- initial destination choice: nothing to resume if the map is closed without picking
     player.chooseResumeMode = nil
     core_jobsystem.create(function(job)
@@ -1503,8 +1676,14 @@ end
 
 local function onStopTaxiCalled()
   resetIdleCameraTimer()
-  if player.currentPhase ~= playerRidePhases.driving then return end
   if not player.currentTaxiId then return end
+  -- escape hatch if the dropoff pull over never completes
+  if player.currentPhase == playerRidePhases.arriving and taxis[player.currentTaxiId] == "pullingOverForDropoff" then
+    setTaxiState(player.currentTaxiId, "waitingForDropoff")
+    pushTaxiUIUpdate(_tr("ui.taxi.canClimbOut"))
+    return
+  end
+  if player.currentPhase ~= playerRidePhases.driving then return end
   local veh = getObjectByID(player.currentTaxiId)
   if not veh then return end
 
@@ -1528,6 +1707,35 @@ local function onGameplayInteract()
     onStopTaxiCalled()
   elseif isTaxiAvailable() then
     callAndStopTaxi()
+  end
+end
+
+local function onVehicleTriggersExecuteLink(lnk, actionValue, vehicleId)
+  if actionValue ~= 1 then return end -- only react to press, not release
+  if vehicleId ~= player.currentTaxiId then return end
+  if player.currentPhase ~= playerRidePhases.driving then return end
+
+  player.triggerMessingStrikes = player.triggerMessingStrikes + 1
+
+  if player.triggerMessingStrikes == 1 then
+    showMessage(_tr("ui.taxi.stopMessing"), false, 3)
+  elseif player.triggerMessingStrikes == 2 then
+    showMessage(_tr("ui.taxi.kickWarning"), false, 4)
+  elseif player.triggerMessingStrikes >= 3 then
+    player.triggerMessingStrikes = 0
+    onStopTaxiCalled()
+    core_jobsystem.create(function(job)
+      -- wait for the taxi to stop, then boot the player
+      local taxiId = player.currentTaxiId
+      while taxiId and taxis[taxiId] ~= "waitingForDropoff" do
+        if player.currentTaxiId ~= taxiId then return end
+        job.sleep(0.25)
+      end
+      job.sleep(0.5)
+      if player.currentTaxiId == taxiId then
+        kickPlayerOut()
+      end
+    end, 1)
   end
 end
 
@@ -1691,6 +1899,7 @@ M.onTrafficVehicleCrashed = onTrafficVehicleCrashed
 M.onVehicleResetted = onVehicleResetted
 M.onVehicleSwitched = onVehicleSwitched
 M.onGameplayInteract = onGameplayInteract
+M.onVehicleTriggersExecuteLink = onVehicleTriggersExecuteLink
 M.onUpdate = onUpdate
 M.onRegisterQuickAccessMenus = onRegisterQuickAccessMenus
 M.callForTaxi = callForTaxi

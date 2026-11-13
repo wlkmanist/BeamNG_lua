@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Enables walking-mode movement for the unicycle-based player
+
 local M = {}
 --Mandatory controller parameters
 M.type = "main"
@@ -21,18 +23,16 @@ local atan2 = math.atan2
 local pi = math.pi
 local twoPi = pi * 2
 
-local stabilizationMaxForce = 8000
-local yawMaxForce = 200
-
-local movementSpeedNormal = 1.8
-local movementSpeedSprint = 5
-
-local maxAllowedBallAVNormal = 4.5 --14
-local maxAllowedBallAVSprint = 13 --14
-local maxBallTorque = 500
-
-local ballPressureNormal = 1.0
-local ballPressureCrouch = 0.5
+local stabilizationMaxForce
+local yawMaxForce
+local movementSpeedNormal
+local movementSpeedSprint
+local maxBallTorque
+local ballPressureNormal
+local ballPressureCrouch
+local jumpForce
+local jumpForceTime
+local slipUsageCoef
 
 local stabilizationNodes = {
   topCenter = 0,
@@ -60,17 +60,16 @@ local stabilizationBeams = {
 }
 
 local ballCenterNode = -1
+local ballRadiusNode = -1
 
 local ballNodes = {}
 local ballGroundContactNodesNew = {}
 local ballGroundContactNodesPast = {}
 local ballCenterVelocity = vec3(0, 0, 0)
 local ballBasedPlayerVelocity = vec3(0, 0, 0)
-local ballTorqueSmoother = newTemporalSmoothing(10, 1)
+local ballTorqueSmoother = newTemporalSmoothing(10, 5)
 
-local jumpForce = 50000
 local jumpForceTimer = 0
-local jumpForceTime = 0.01
 
 local lockBeams = {}
 local isBallLocked = false
@@ -108,6 +107,7 @@ local isFrozen = false
 local debugVectors = {}
 local cameraRotation = quat(0, 0, 0, 0)
 local cameraRotationStandardVector = vec3(0, 1, 0)
+local cameraRotationRightVector = vec3(1, 0, 0)
 local walkVector = vec3(0, 0, 0)
 local movementSpeedCoef = 0
 
@@ -145,8 +145,6 @@ local function debugDraw(focusPos)
     obj.debugDrawProxy:drawNodeVector3d(v.thickness or 0.05, v.cid, v.vector, v.color)
   end
 end
-
-local slipUsageCoef = 1 --coef for testing different amounts of node slip compensation, we might want to not automatically compensate for slip (gameplay decision)
 
 local function nodeCollision(p)
   --take a look at physics particles and use the node and slip velocities to estimate a ball center velocity that is local to the unicycle
@@ -288,20 +286,30 @@ local function updateFixedStep(dt)
     guardedWalkVector:normalize()
   end
 
-  local desiredMovementVector = cameraRotation * guardedWalkVector * desiredMovementSpeed
-
+  -- yaw-only look axes so pitch does not scale walk speed by cos(pitch)
+  local cameraDirection = (cameraRotation * cameraRotationStandardVector):z0()
+  if cameraDirection:length() > 1e-5 then
+    cameraDirection:normalize()
+  else
+    cameraDirection = vec3(0, 1, 0)
+  end
+  local cameraRight = (cameraRotation * cameraRotationRightVector):z0()
+  if cameraRight:length() > 1e-5 then
+    cameraRight:normalize()
+  else
+    cameraRight = vec3(1, 0, 0)
+  end
+  local desiredMovementVector = (cameraRight * guardedWalkVector.x + cameraDirection * guardedWalkVector.y) * desiredMovementSpeed
   local actualMovementVector = ballBasedPlayerVelocity:z0()
-  local movementVectorDifference = desiredMovementVector - actualMovementVector
-  local actualSpeed = actualMovementVector:length()
-  local speedError = max(desiredMovementSpeed - actualSpeed, 0)
-  speedError = ballTorqueSmoother:getUncapped(speedError, dt)
+  local velocityError = desiredMovementVector - actualMovementVector
+  local velocityErrorLength = ballTorqueSmoother:getUncapped(velocityError:length(), dt)
 
   if guardedWalkVector:length() > 0 then
-    ballTorqueAxis = (desiredMovementVector + movementVectorDifference):z0():cross(vectorUp)
-    ballDesiredTorque = speedError * maxBallTorque * guardedWalkVector:length()
+    ballTorqueAxis = velocityError:cross(vectorUp)
+    ballDesiredTorque = velocityErrorLength * maxBallTorque
     setBallLock(false)
   else
-    ballTorqueAxis = (cameraRotation * cameraRotationStandardVector):z0():cross(vectorUp)
+    ballTorqueAxis = cameraDirection:cross(vectorUp)
     ballDesiredTorque = 0
     setBallLock(true)
   end
@@ -314,12 +322,12 @@ local function updateFixedStep(dt)
     ballAV = ballAVSmoother:get(ballAV)
   end
 
-  local maxBallAVAdjusted = linearScale(movementSpeedCoef, 0, 1, maxAllowedBallAVNormal, maxAllowedBallAVSprint)
-  local ballAVTorqueCoef = linearScale(abs(ballAV), maxBallAVAdjusted, maxBallAVAdjusted + 1, 1, 0)
+  local ballRadius = obj:getNodesVector(ballCenterNode, ballRadiusNode):length()
+  local maxBallAVAdjusted = desiredMovementSpeed / max(ballRadius, 0.01)
+  local ballAVTorqueCoef = linearScale(ballAV, maxBallAVAdjusted, maxBallAVAdjusted + 1, 1, 0)
   ballDesiredTorque = ballDesiredTorque * ballAVTorqueCoef
 
   --yaw
-  local cameraDirection = (cameraRotation * cameraRotationStandardVector):z0():normalized()
   local meshDirection = obj:getBeamVectorFromNode(stabilizationBeams.centerFront, stabilizationNodes.topCenter):z0():normalized()
   --calculate angle between the two vectors
   local angleError = atan2(cameraDirection.y, cameraDirection.x) - atan2(meshDirection.y, meshDirection.x)
@@ -336,6 +344,10 @@ local function updateFixedStep(dt)
   local yawForceMultiplier = yawMaxForce * enableStabilizationCoef
   yawLeftForce = (yawLeftForceCoef + linearScale(yawRightForceCoef, 0, 0.01, 0.1, 0)) * yawForceMultiplier
   yawRightForce = (yawRightForceCoef + linearScale(yawLeftForceCoef, 0, 0.01, 0.1, 0)) * yawForceMultiplier
+
+  local cameraLook = cameraRotation * cameraRotationStandardVector
+  electrics.values.head_rotation = angleError
+  electrics.values.head_tilt = cameraLook:dot(vectorUp)
 
   updateBallLock(dt)
 
@@ -440,7 +452,29 @@ local function setFreeze(mode)
   isFrozen = mode == 1
 end
 
-local function settingsChanged()
+local function reset()
+  isFrozen = false
+  isBallLocked = false
+  ballLockState = ballLockStates.unlocked
+  previousBallLockState = ballLockStates.unlocked
+  ballLockRampTimer = 0
+  isTouchingGround = false
+  isTouchingWater = false
+  isCrouching = false
+  isUnCrouching = false
+  jumpCooldown = 0
+
+  forceVectorFront = vec3()
+  forceVectorLeft = vec3()
+
+  yawLeftForce = 0
+  yawRightForce = 0
+
+  walkVector = vec3(0, 0, 0)
+  ballTorqueAxis = vec3(0, 0, 0)
+  stabilizationPIDs.frontRear:reset()
+  stabilizationPIDs.leftRight:reset()
+  stabilizationPIDs.yawPosition:reset()
 end
 
 local function init(jbeamData)
@@ -449,6 +483,17 @@ local function init(jbeamData)
 
   yawLeftForce = 0
   yawRightForce = 0
+
+  movementSpeedNormal = jbeamData.movementSpeedNormal or 5
+  movementSpeedSprint = jbeamData.movementSpeedSprint or 11
+  maxBallTorque = jbeamData.maxBallTorque or 700
+  stabilizationMaxForce = jbeamData.stabilizationMaxForce or 8000
+  yawMaxForce = jbeamData.yawMaxForce or 200
+  ballPressureNormal = jbeamData.ballPressureNormal or 1.0
+  ballPressureCrouch = jbeamData.ballPressureCrouch or 0.5
+  jumpForce = jbeamData.jumpForce or 50000
+  jumpForceTime = jbeamData.jumpForceTime or 0.01
+  slipUsageCoef = jbeamData.slipUsageCoef or 1
 
   stabilizationNodes.topCenter = jbeamData.stabilizationTopCenter
   stabilizationNodes.topFront = jbeamData.stabilizationTopFront
@@ -491,6 +536,7 @@ local function init(jbeamData)
   for _, node in pairs(v.data.nodes) do
     if node.tag == "ball" then
       ballNodes[node.cid] = true
+      ballRadiusNode = node.cid
     end
     if node.name == "ib7" then
       ballTorqueNodes[0] = node.cid
@@ -507,60 +553,15 @@ local function init(jbeamData)
   obj:setSleepingEnabled(false)
 end
 
-local function initLastStage()
-end
-
-local function reset()
-  isFrozen = false
-  isBallLocked = false
-  ballLockState = ballLockStates.unlocked
-  previousBallLockState = ballLockStates.unlocked
-  ballLockRampTimer = 0
-  isTouchingGround = false
-  isTouchingWater = false
-  isCrouching = false
-  isUnCrouching = false
-  jumpCooldown = 0
-
-  forceVectorFront = vec3()
-  forceVectorLeft = vec3()
-
-  yawLeftForce = 0
-  yawRightForce = 0
-
-  walkVector = vec3(0, 0, 0)
-  ballTorqueAxis = vec3(0, 0, 0)
-  stabilizationPIDs.frontRear:reset()
-  stabilizationPIDs.leftRight:reset()
-  stabilizationPIDs.yawPosition:reset()
-end
-
-local function vehicleActivated()
-  if not playerInfo.firstPlayerSeated then
-    return
-  end
-end
-
-local function onDeserialize(data)
-end
-
-local function onSerialize()
-end
-
 local function setCameraControlData(controlData)
   cameraRotation = controlData.cameraRotation
 end
 
 M.init = init
-M.initLastStage = initLastStage
 M.reset = reset
 M.updateFixedStep = updateFixedStep
 M.updateGFX = updateGFX
 M.update = update
-M.settingsChanged = settingsChanged
-
-M.onDeserialize = onDeserialize
-M.onSerialize = onSerialize
 
 M.setAggressionOverride = nop
 M.setDefaultForwardMode = nop
@@ -578,7 +579,7 @@ M.setStarter = nop
 M.setEngineIgnition = nop
 M.setFreeze = setFreeze
 M.sendTorqueData = nop
-M.vehicleActivated = vehicleActivated
+M.vehicleActivated = nop
 -------------------------------
 
 M.debugDraw = debugDraw

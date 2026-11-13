@@ -8,6 +8,7 @@
 -- MoveManager is the global input state core_camera repoints to the current view each frame.
 
 local M = {}
+local cameraControllers = require("core/cameraControllerRegistry")
 
 local moveFor, getFovDeg -- injected by core/camera.lua
 
@@ -20,15 +21,15 @@ end
 local lastFilter = FILTER_KBD
 function M.getLastFilter() return lastFilter end
 
-local lastRotatedTime = 0
+local lastRotatedTime = {} -- per player, every player rotates his own view
 local lastCameraMovementType = "none" -- absolute or relative
-local function rotatedCamera(mode)
-  lastRotatedTime = Engine.Platform.getSystemTimeMS()
+local function rotatedCamera(mode, player)
+  lastRotatedTime[player or 0] = Engine.Platform.getSystemTimeMS()
   lastCameraMovementType = mode or lastCameraMovementType
 end
 
-function M.timeSinceLastRotation()
-  return Engine.Platform.getSystemTimeMS() - lastRotatedTime
+function M.timeSinceLastRotation(player)
+  return Engine.Platform.getSystemTimeMS() - (lastRotatedTime[player or 0] or 0)
 end
 
 function M.getLastCameraMovementType()
@@ -38,13 +39,13 @@ end
 function M.rotate_yaw_left(val, filter, player)
   moveFor(player).yawLeft = val
   lastFilter = filter
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.rotate_yaw_right(val, filter, player)
   moveFor(player).yawRight = val
   lastFilter = filter
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.rotate_yaw(val, filter, player)
@@ -57,19 +58,19 @@ function M.rotate_yaw(val, filter, player)
     mm.yawLeft = -val
     mm.yawRight = 0
   end
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.rotate_pitch_up(val, filter, player)
   moveFor(player).pitchUp = val
   lastFilter = filter
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.rotate_pitch_down(val, filter, player)
   moveFor(player).pitchDown = val
   lastFilter = filter
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.rotate_pitch(val, filter, player)
@@ -82,19 +83,19 @@ function M.rotate_pitch(val, filter, player)
     mm.pitchDown = -val
     mm.pitchUp = 0
   end
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.rotate_roll_right(val, filter, player)
   moveFor(player).rollRight = val
   lastFilter = filter
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.rotate_roll_left(val, filter, player)
   moveFor(player).rollLeft = val
   lastFilter = filter
-  rotatedCamera("absolute")
+  rotatedCamera("absolute", player)
 end
 
 function M.moveForwardBackward(val, player)
@@ -130,20 +131,21 @@ function M.cameraZoom(val, player)
   end
 end
 
--- rmb mouse camera
 function M.rotate_yaw_relative(val, player)
+  if cameraControllers.dispatch("onRelativeInput", "yaw", val, player) then return end
   local mm = moveFor(player)
   mm.yawRelative = mm.yawRelative + getFovDeg() * val / 4500
   if val ~= 0 then
-    rotatedCamera("relative")
+    rotatedCamera("relative", player)
   end
 end
 
 function M.rotate_pitch_relative(val, player)
+  if cameraControllers.dispatch("onRelativeInput", "pitch", val, player) then return end
   local mm = moveFor(player)
   mm.pitchRelative = mm.pitchRelative + getFovDeg() * val / 4500
   if val ~= 0 then
-    rotatedCamera("relative")
+    rotatedCamera("relative", player)
   end
 end
 
@@ -175,6 +177,7 @@ function M.zAxisAbs(val) MoveManager.absZAxis = (zAxisAbsTemp - val) * absTransl
 local absTranslateTimer = nil
 function M.yAxisMoveStep(val)
   if editor and editor.disableCameraZoom then return end
+  if cameraControllers.dispatch("onEditorMouseWheel", val / 20) then return end
   absTranslateTimer = 0
   M.yAxisAbs(val)
 end

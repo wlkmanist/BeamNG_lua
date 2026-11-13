@@ -20,7 +20,7 @@ C.pinSchema = {
   { dir = 'in', type = 'string', name = 'buttonText', hardcoded = true, hidden = true, default = 'ui.scenarios.start.start', description = 'Text to display on the button.' },
   { dir = 'out', type = 'flow', name = 'flow', description = 'Outflow for this node.' },
 }
-C.dependencies = {'core_input_bindings'}
+C.dependencies = {'core_input_bindings', 'ui_popup'}
 
 function C:init()
   self.open = false
@@ -60,17 +60,14 @@ function C:reset()
   self._active = false
 end
 
-function C:buttonPushed(action)
-  for nm, pn in pairs(self.pinOut) do
-    self.pinOut[nm].value = nm == action
-  end
-end
-
-function C:getCmd(action)
-  return 'local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:buttonPushed("'..action..'") end'
+function C:getPopupId()
+  return string.format("flowgraphMissionPopup_%s_%s_%s", tostring(self.mgr.id), tostring(self.graph.id), tostring(self.id))
 end
 
 function C:closeDialogue()
+  if self.open then
+    extensions.ui_popup.closeTutorialPopup()
+  end
   self.open = false
   self._active = false
 end
@@ -78,38 +75,29 @@ end
 function C:openDialogue()
   self.open = true
   -- dump("opening dialogue!")
-  local data = {}
-
-  data.title = self.pinIn.title.value or ""
-  data.text = self.pinIn.text.value
-  data.buttons = {
-    {
-      default = true,
-      class = "main",
-      label = self.pinIn.buttonText.value or "ui.scenarios.start.start",
-      clickLua = 'local n = core_flowgraphManager.getManagerGraphNode('..self.mgr.id..', '..self.graph.id..', '..self.id..') if n then n:started() end'
-    }
+  local entry = {
+    id = self:getPopupId(),
+    type = "info",
+    isPopup = true,
+    title = core_locales.translateWithOrWithoutContext(self.pinIn.title.value) or "",
+    text = core_locales.translateWithOrWithoutContext(self.pinIn.text.value) or "",
+    buttonLabel = self.pinIn.buttonText.value or "ui.scenarios.start.start",
   }
 
   self._active = true
-  guihooks.trigger('introPopupMission', data)
+  extensions.ui_popup.openPopupEntries({entry})
 end
 
-
-function C:closed()
-  self.done = true
+function C:onIntroPopupCareerClosed(id)
+  if not self.open or id ~= self:getPopupId() then return end
+  self.open = false
   self._active = false
+  self.done = true
+  self.pinOut.flow.value = true
 end
 
 function C:onFilteredInputChanged(devName, action, value)
 
-end
-
-function C:started()
-  self:closeDialogue()
-  self.pinOut.flow.value = true
-  self.done = true
-  self._active = false
 end
 
 function C:onClientEndMission()

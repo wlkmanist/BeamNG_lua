@@ -20,7 +20,9 @@ local M = {}
 
 -- Module dependencies.
 local geom = require('editor/toolUtilities/geom')
-local render = require('editor/toolUtilities/render')
+local rSpheres = require('editor/toolUtilities/render/spheres')
+local rLines = require('editor/toolUtilities/render/lines')
+local rMarkup = require('editor/toolUtilities/render/markup')
 local gizmo = require('editor/toolUtilities/gizmo')
 local util = require('editor/toolUtilities/util')
 
@@ -103,9 +105,9 @@ local function handleDepthDragging(ribbon, mouseRawY, isShiftDown, isLockShape, 
 
   updateDepthBarPoints(ribbon)
   if ribbon.barPoints and ribbon.barPoints[dragBarIdx] then
-    render.drawSphereHighlight(ribbon.barPoints[dragBarIdx])
-    render.markupAdjustDepth(ribbon.barPoints[dragBarIdx])
-    render.markupDepthDisplay(ribbon.barPoints[dragBarIdx], dNew)
+    rSpheres.drawSphereHighlight(ribbon.barPoints[dragBarIdx])
+    rMarkup.markupAdjustDepth(ribbon.barPoints[dragBarIdx])
+    rMarkup.markupDepthDisplay(ribbon.barPoints[dragBarIdx], dNew)
   end
   updateRibbonDataFn(ribbon)
 end
@@ -298,7 +300,7 @@ local function handleRibbonEvents(ribbons, out, useGizmo, isRigidTranslation, ma
   end
 
   -- Draw the mouse cursor.
-  render.drawSphereCursor(mousePos)
+  rSpheres.drawSphereCursor(mousePos)
   local mouseRawY = im.GetMousePos().y
 
   -- Update the cursor position.
@@ -311,14 +313,14 @@ local function handleRibbonEvents(ribbons, out, useGizmo, isRigidTranslation, ma
   local nodes = ribbon.nodes
   local numNodes = #nodes
   if isLeftNodePlaced then
-    render.drawSphereNode(placedLeftNode)
-    render.drawSphereHighlight(placedLeftNode)
+    rSpheres.drawSphereNode(placedLeftNode)
+    rSpheres.drawSphereHighlight(placedLeftNode)
     if numNodes ~= 2 then
-      render.markupPairFirstNode(placedLeftNode)
+      rMarkup.markupPairFirstNode(placedLeftNode)
     end
-    render.drawRibLine(placedLeftNode, mousePos)
+    rLines.drawRibLine(placedLeftNode, mousePos)
     if mousePos:squaredDistance(placedLeftNode) > pairNode2MarkupTolSq then
-      render.markupPairSecondNode(mousePos)
+      rMarkup.markupPairSecondNode(mousePos)
     end
   end
 
@@ -326,17 +328,17 @@ local function handleRibbonEvents(ribbons, out, useGizmo, isRigidTranslation, ma
   if numNodes < 3 then
     if numNodes > 1 then
       local p1, p2 = nodes[1], nodes[2]
-      render.drawSplineLine(p1, p2) -- A first pair already exists, so draw a solid between them.
-      render.markupNode1(p1)
-      render.markupNode2(p2)
+      rLines.drawSplineLine(p1, p2) -- A first pair already exists, so draw a solid between them.
+      rMarkup.markupNode1(p1)
+      rMarkup.markupNode2(p2)
       if isLeftNodePlaced then
-        render.drawSphereNode(placedLeftNode)
-        render.drawSplineLineDull(p1, placedLeftNode) -- User is placing the fourth node, so draw the proposed quadrilateral.
-        render.drawSplineLineDull(p2, mousePos)
-        render.drawSplineLineDull(placedLeftNode, mousePos)
-        render.markupNode3(placedLeftNode)
+        rSpheres.drawSphereNode(placedLeftNode)
+        rLines.drawSplineLineDull(p1, placedLeftNode) -- User is placing the fourth node, so draw the proposed quadrilateral.
+        rLines.drawSplineLineDull(p2, mousePos)
+        rLines.drawSplineLineDull(placedLeftNode, mousePos)
+        rMarkup.markupNode3(placedLeftNode)
       else
-        render.drawSplineLineDull(p1, mousePos) -- User is placing the third node, so draw a line from the first node to the mouse position.
+        rLines.drawSplineLineDull(p1, mousePos) -- User is placing the third node, so draw a line from the first node to the mouse position.
       end
     end
   end
@@ -354,9 +356,9 @@ local function handleRibbonEvents(ribbons, out, useGizmo, isRigidTranslation, ma
       local isOverBar, rIdx, barIdx = geom.isMouseOverBar(ribbons)
       if isOverBar and rIdx == activeIdx and ribbon.barPoints and ribbon.barPoints[barIdx] then
         if not isDepthDrag then
-          render.drawSphereBarHover(ribbon.barPoints[barIdx])
-          render.markupAdjustDepth(ribbon.barPoints[barIdx])
-          render.markupDepthDisplay(ribbon.barPoints[barIdx], ribbon.depths[barIdx] or 0.0)
+          rSpheres.drawSphereBarHover(ribbon.barPoints[barIdx])
+          rMarkup.markupAdjustDepth(ribbon.barPoints[barIdx])
+          rMarkup.markupDepthDisplay(ribbon.barPoints[barIdx], ribbon.depths[barIdx] or 0.0)
           if im.IsMouseDown(0) then
             out.nodeIdx = barIdx
             isDepthDrag, dragBarIdx, dragDepthStatePre = true, barIdx, deepCopyFn()
@@ -382,7 +384,7 @@ local function handleRibbonEvents(ribbons, out, useGizmo, isRigidTranslation, ma
     local isOverNode, rIdx, nodeIdx = geom.isMouseOverNode(ribbons)
     if isOverNode then
       if not isNodeDrag then
-        render.drawSphereHighlight(ribbons[rIdx].nodes[nodeIdx]) -- User is over a node, so highlight that.
+        rSpheres.drawSphereHighlight(ribbons[rIdx].nodes[nodeIdx]) -- User is over a node, so highlight that.
         if im.IsMouseDown(0) then
           out.ribbonIdx, out.prismIdx, out.nodeIdx = rIdx, rIdx, nodeIdx -- User is starting to drag a node.
           activeIdx = rIdx
@@ -392,13 +394,13 @@ local function handleRibbonEvents(ribbons, out, useGizmo, isRigidTranslation, ma
           return bestCursorSeg, isNodeDrag -- Leave early to prevent the case when selected ribbon has changed - the old selected ribbon must remain intact.
         else
           if not isNodeDrag and not im.IsMouseDown(0) and markupTime < 0.0 then
-            render.markupDrag(ribbons[rIdx].nodes[nodeIdx]) -- Draw a special markup when the mouse is over a node.
+            rMarkup.markupDrag(ribbons[rIdx].nodes[nodeIdx]) -- Draw a special markup when the mouse is over a node.
           end
         end
       end
     else
       if not isNodeDrag and not isLeftNodePlaced and restTime < 0.0 then
-        render.markupAddPairLeft(mousePos) -- Draw a special markup when the mouse is over free space.
+        rMarkup.markupAddPairLeft(mousePos) -- Draw a special markup when the mouse is over free space.
       end
       if im.IsMouseClicked(0) and not im.IsKeyDown(altKeyIdx) then
         if not isLeftNodePlaced then

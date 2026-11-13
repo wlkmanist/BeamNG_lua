@@ -37,8 +37,8 @@ function C:init()
 end
 
 function C:update(data)
-  if data.openxrSessionRunning then return end -- disable potentially conflicting head-tracking systems (like some VR injectors, etc) working on top of the normal VR tracking
   if not self.working then return end
+  if data.openxrSessionRunning then return end -- disable potentially conflicting head-tracking systems (like some VR injectors, etc) working on top of the normal VR tracking
   local t = {}
   if TrackIR and TrackIR.getData(t) then
 

@@ -8,7 +8,7 @@ local scoreboardHandle = nil
 
 local function onCrawlStarted(trail)
   ui_appContainers.showApp('topLeft', 'scoreboard')
-  scoreboardHandle = multiplayer_gameplayScoreboard.startNewScoreboard(
+  scoreboardHandle = multiplayer_multiplayerScoreboard.startNewScoreboard(
     {entries = {{key = "penaltyScore", name = _tr("missions.crawl.progressLabels.pointsAchieved"), order = 1, type = "points"}}, orderBy = {key="penaltyScore", direction="asc"}},
     trail.id
   )

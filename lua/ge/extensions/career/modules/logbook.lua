@@ -122,7 +122,7 @@ local function deliveryFacilityUnlocked(id)
   if not id or not fac then return end
   addNewLogbookEntry({
     type = "progress",
-    cardTypeLabel = "Delivery Facility Unlocked",
+    cardTypeLabel = "ui.career.poiCard.deliveryFacilityUnlocked",
     --missionId = id, -- ID needs to be for poi not mission...
     title = fac.name,
     text = {txt = 'ui.career.logbook.deliveryFacilityUnlockedNamed', context = {facilityName = fac.name}},

@@ -381,25 +381,26 @@ local function loadTopoMap()
   return true
 end
 
-local p1, p2 = vec3(), vec3()
+local contourColors = {}
 M.drawContours = function(td, width, height, scale, camPos, worldToMapXYZ)
   local contourSegments = ui_apps_sdfTopomap.getContourSegments()
   local contourQt = ui_apps_sdfTopomap.getContourQuadtree()
   local radius = 200 * scale
   local count = 0
+  local worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset = ui_apps_minimap_utils.getWorldToMapTransform()
+  local tdlineRoundEndTransformed = td.lineRoundEndTransformed
+  local layerBG = layers.BACKGROUND
   for i in contourQt:queryNotNested(camPos.x-radius, camPos.y-radius, camPos.x+radius, camPos.y+radius) do
-    --local p1, p2 = vec3(), vec3()
-  --for i = 1, #contourSegments do
     local segment = contourSegments[i]
     local level = segment[1]
-    p1:set(segment[2], segment[3], 0)
-    p2:set(segment[4], segment[5], 0)
-    worldToMapXYZ(p1, p1)
-    worldToMapXYZ(p2, p2)
     -- level goes from 0 to 100
-    local clr = color(128 + level*1.25, 128 + level*1.25, 128 + level*1.25, 255)
+    local clr = contourColors[level]
+    if not clr then
+      clr = color(128 + level*1.25, 128 + level*1.25, 128 + level*1.25, 255)
+      contourColors[level] = clr
+    end
     local thickness = 1 + (level%10 == 0 and 0.5 or 0)
-    td:lineRoundEnd(p1.x, p1.y, p2.x, p2.y, thickness, thickness, 0, clr, clr, clr, clr, 0, layers.BACKGROUND)
+    tdlineRoundEndTransformed(td, segment[2], segment[3], segment[4], segment[5], thickness, 0, clr, clr, worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset, layerBG)
     count = count + 1
     if count > 5000 then break end
   end

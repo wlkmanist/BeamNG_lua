@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Lets wheel loaders reduce drive torque and apply braking with the rim-pull pedal
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 40

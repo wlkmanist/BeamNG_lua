@@ -13,7 +13,7 @@ local gc = 0
 local driftDuration = 1.5
 local longDriftDuration = 3.2
 local minDriftChain = 3
-local timeToDisableUI = 2.3
+local timeToDisableUI = 3
 local driftDistThreshold = 25 --m
 local disableUITimer = 0
 

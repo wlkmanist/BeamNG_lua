@@ -31,9 +31,12 @@ M.reloadLightingSystems = function ()
   -- log('I', 'lightManager', 'Finished with system files')
 
   -- Try the perfered one first.
-  local succeeded = setLightManager(VariableRegistry.get('$pref::lightManager',""))
+  local preferredLightManager = VariableRegistry.get('$pref::lightManager', "")
+  local succeeded = preferredLightManager ~= "" and setLightManager(preferredLightManager)
   if not succeeded then
-    log('E', 'lightManager', 'Failed to init default system:'..VariableRegistry.get('$pref::lightManager',""))
+    if preferredLightManager ~= "" then
+      log('E', 'lightManager', 'Failed to init default system:'..preferredLightManager)
+    end
 
     -- The perfered one fell thru... so go thru the default
     -- light managers until we find one that works.
@@ -82,9 +85,12 @@ M.initLightingSystems = function ()
   -- log('I', 'lightManager', 'Finished with system files')
 
   -- Try the perfered one first.
-  local succeeded = setLightManager(VariableRegistry.get('$pref::lightManager',""))
+  local preferredLightManager = VariableRegistry.get('$pref::lightManager', "")
+  local succeeded = preferredLightManager ~= "" and setLightManager(preferredLightManager)
   if not succeeded then
-    log('E', 'lightManager', 'Failed to init default system:'..VariableRegistry.get('$pref::lightManager',""))
+    if preferredLightManager ~= "" then
+      log('E', 'lightManager', 'Failed to init default system:'..preferredLightManager)
+    end
 
     -- The perfered one fell thru... so go thru the default
     -- light managers until we find one that works.

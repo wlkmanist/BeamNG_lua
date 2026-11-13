@@ -382,7 +382,10 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     mainEmitterActive = false
     local invPitch = pitchDensityInvOverride or pitchDensityInvAuto
     local pitch = min(sumPD * invPitch, 1.0)
-    setGlobalForestHeight(lPosition.z - terrainBlock:getHeight(lPosition))
+    local terrainHeight = core_terrain.getTerrainHeight(lPosition)
+    if terrainHeight then
+      setGlobalForestHeight(lPosition.z - terrainHeight)
+    end
     em:setVolumePitchCT(0.0, pitch, 0.0, 0.0)
     emitterNodeId[1] = 0
   end

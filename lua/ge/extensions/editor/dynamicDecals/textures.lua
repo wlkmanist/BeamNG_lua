@@ -125,13 +125,13 @@ local function drawTextureTiles(textureFilePaths, textureFilter, disableVirtualS
         else
 
           if im.ImTextureHandlerIsCached(filePath) then
-            if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).texId, im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
+            if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).tex:getID(), im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
               handleTextureImageTileClicked(filePath, textureFilePaths)
             end
           else
             if loadImagesCount > 0 then
               im.PushID1("Texture_" .. tostring(k))
-              if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).texId, im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
+              if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).tex:getID(), im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
                 handleTextureImageTileClicked(filePath, textureFilePaths)
               end
               im.PopID()
@@ -143,13 +143,13 @@ local function drawTextureTiles(textureFilePaths, textureFilter, disableVirtualS
         end
       else
         if im.ImTextureHandlerIsCached(filePath) then
-          if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).texId, im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
+          if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).tex:getID(), im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
             handleTextureImageTileClicked(filePath, textureFilePaths)
           end
         else
           if loadImagesCount > 0 then
             im.PushID1("Texture_" .. tostring(k))
-            if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).texId, im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
+            if im.ImageButton(string.format("##textures_imageButton_%s", filePath), editor.getTempTextureObj(filePath).tex:getID(), im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, (sel and tableContains(sel, filePath)) and selectedTextureCol.Value or nil) then
               handleTextureImageTileClicked(filePath, textureFilePaths)
             end
             im.PopID()
@@ -174,7 +174,7 @@ local function drawTextureTiles(textureFilePaths, textureFilter, disableVirtualS
         local payload = im.ArrayChar(256, filePath)
         im.SetDragDropPayload("DynDecalTextureDrapDrop", payload, im.ArraySize(payload))
         im.TextUnformatted(filePath)
-        im.Image(editor.getTempTextureObj(filePath).texId, im.ImVec2(64, 64), im.ImVec2Zero, im.ImVec2One)
+        im.Image(editor.getTempTextureObj(filePath).tex:getID(), im.ImVec2(64, 64), im.ImVec2Zero, im.ImVec2One)
         im.EndDragDropSource()
       end
       im.tooltip(string.format("%s\nDouble-click to set texture as color texture\nLMB to select texture\nCtrl+LMB Add texture to selection\nRMB to open context menu", fileName))
@@ -359,7 +359,7 @@ local function inspectorGui(inspectorInfo)
         local maxWidth = im.GetContentRegionAvailWidth()
         local cpos = im.GetCursorPos()
         local ratio = img.size.y / img.size.x
-        im.Image(img.texId, im.ImVec2(maxWidth, maxWidth * ratio), im.ImVec2Zero, im.ImVec2One, nil, editor.color.beamng.Value)
+        im.Image(img.tex:getID(), im.ImVec2(maxWidth, maxWidth * ratio), im.ImVec2Zero, im.ImVec2One, nil, editor.color.beamng.Value)
         im.SetCursorPos(cpos)
         im.NextColumn()
 

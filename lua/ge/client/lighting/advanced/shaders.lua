@@ -19,7 +19,7 @@ if not al_VectorLightState then
   al_VectorLightState:setField("samplerStates", 1, "SamplerClampPoint") -- G-buffer
   al_VectorLightState:setField("samplerStates", 2, "SamplerClampPoint") -- Shadow Map (Do not change this to linear, as all cards can not filter equally.)
   al_VectorLightState:setField("samplerStates", 3, "SamplerClampLinear") -- SSAO Mask
-  al_VectorLightState:setField("samplerStates", 4, "SamplerWrapPoint") -- Random Direction Map
+  al_VectorLightState:setField("samplerStates", 4, "SamplerClampPoint") -- sss mask
   al_VectorLightState:setField("samplerStates", 5, "SamplerClampPoint") -- G-buffer
   al_VectorLightState:setField("samplerStates", 6, "SamplerClampPoint") -- G-buffer
   al_VectorLightState:setField("samplerStates", 12, "SamplerClampLinear") -- Cloud transmittance cookie
@@ -34,6 +34,9 @@ if not al_VectorLightState then
   al_VectorLightState:setField("stencilFunc", 0, "GFXCmpLess")
   al_VectorLightState.stencilRef = 4
   al_VectorLightState:registerObject("AL_VectorLightState")
+end
+if al_VectorLightState then
+  al_VectorLightState:setField("samplerStates", 4, "SamplerClampPoint")
 end
 
 -- Vector Light Material

@@ -25,6 +25,7 @@ end
 local allVehiclesWithCargo = {}
 
 local transientMoves = {}
+local uncommittedTransientMoves = false
 
 
 local function norm(value, min, max)
@@ -88,9 +89,10 @@ local function addTransientMoveCargo(cargoId, targetLocation)
   end
   cargo._transientMove = move
   table.insert(transientMoves, move)
-
+  uncommittedTransientMoves = true
 end
 M.addTransientMoveCargo = addTransientMoveCargo
+M.hasUncommittedTransientMoves = function() return uncommittedTransientMoves end
 
 local function getTransientMoveCargo()
   local ret = {}
@@ -125,6 +127,7 @@ local function clearAllTransientMoves()
   for _, cargo in ipairs(allCargo) do
     cargo._transientMove = nil
   end
+  uncommittedTransientMoves = false
 end
 M.clearAllTransientMoves = clearAllTransientMoves
 
@@ -163,6 +166,7 @@ local function applyTransientMoves(currentLocation)
     end
   end
   transientMoves = newMoves
+  uncommittedTransientMoves = false
   cargoLocationsChangedThisFrame = true
 
   if hasMergeableCargo then
@@ -441,15 +445,15 @@ local function getRewardsWithBreakdown(cargo)
       local expiredTime = dGeneral.time() - cargo.loadedAtTimeStamp
 
       if expiredTime <= mod.timeUntilDelayed then
-        timedStatus = "On Time"
+        timedStatus = _tr("ui.career.delivery.breakdown.onTime")
         timedMultiplier = 1
         gameplay_achievement.unlockAchievement("ON_SCHEDULE")
       elseif expiredTime <= mod.timeUntilLate then
-        timedStatus = "Delayed"
+        timedStatus = _tr("ui.career.delivery.breakdown.delayed")
         timedMultiplier = (0.2 + ((expiredTime-mod.timeUntilDelayed) / (mod.timeUntilLate-mod.timeUntilDelayed)) *0.6)
       else
         timedMultiplier = 0.2
-        timedStatus = "Late"
+        timedStatus = _tr("ui.career.delivery.breakdown.late")
       end
 
       local timedElement = {
@@ -481,7 +485,7 @@ local function getRewardsWithBreakdown(cargo)
     local organizationCut = (organization.reputationLevels[level+2].loanerCut and organization.reputationLevels[level+2].loanerCut.value or 0.5)
 
     local organizationElement = {
-      label = string.format("Loaner Organization (%d%% cut)", round(organizationCut * 100)),
+      label = core_locales.contextTranslate("ui.career.delivery.breakdown.loanerOrganization", {cut = round(organizationCut * 100)}),
       rewards = {money = -organizationCut * originalRewards.money},
       simpleBreakdownType = "loaner",
     }
@@ -495,7 +499,7 @@ local function getRewardsWithBreakdown(cargo)
   if branchMultiplier > 1 then
     local level = career_branches.getBranchLevel("logistics")
     table.insert(breakdown, {
-      label = "Level " .. level .. " Multiplier",
+      label = core_locales.contextTranslate("ui.career.delivery.breakdown.levelMultiplier", {level = level}),
       rewards = {money = originalRewards.money * branchMultiplier - originalRewards.money},
       simpleBreakdownType = "branch",
     })
@@ -519,7 +523,9 @@ local function getRewardsWithBreakdown(cargo)
 
       -- Add precision parking breakdown entry
       local precisionBreakdown = {
-        label = "Precision Parking (" .. precisionBonus.precisionLevel:gsub("^%l", string.upper) .. ")",
+        label = core_locales.contextTranslate("ui.career.delivery.breakdown.precisionParking", {
+          precisionLevel = _tr("ui.career.delivery.precisionLevel." .. precisionBonus.precisionLevel)
+        }),
         rewards = {},
         simpleBreakdownType = (precisionBonus.moneyFlat >= 0 and precisionBonus.logisticsFlat >= 0) and "bonus" or "penalty",
         precisionData = precisionData
@@ -616,10 +622,16 @@ local function updateModifiers(dtSim)
           local expiredTime = dGeneral.time() - cargo.loadedAtTimeStamp
 
           if not mod.delayedMessageFlag and expiredTime > mod.timeUntilDelayed then
-            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("Delivery of %s to %s is now delayed.",_tr(cargo.name), M.getLocationLabelShort(cargo.destination)), category = "delivery", icon = "warning"})
+            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = core_locales.contextTranslate("ui.career.delivery.notification.delayed", {
+              cargoName = _tr(cargo.name),
+              destination = M.getLocationLabelShort(cargo.destination)
+            }), category = "delivery", icon = "warning"})
             mod.delayedMessageFlag = true
           elseif not mod.lateMessageFlag and expiredTime > mod.timeUntilLate then
-            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = string.format("Delivery of %s to %s is now late.",_tr(cargo.name), M.getLocationLabelShort(cargo.destination)), category = "delivery", icon = "warning"})
+            guihooks.trigger('Message',{clear = nil, ttl = 10, msg = core_locales.contextTranslate("ui.career.delivery.notification.late", {
+              cargoName = _tr(cargo.name),
+              destination = M.getLocationLabelShort(cargo.destination)
+            }), category = "delivery", icon = "warning"})
             mod.lateMessageFlag = true
           end
         end

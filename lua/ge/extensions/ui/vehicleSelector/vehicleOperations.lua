@@ -1,8 +1,5 @@
 local M = {}
 
-local fadeScreenDuration = 0.33
-
-
 -- Load button module
 local buttonModule = require("ge/extensions/ui/gridSelectorUtils/buttonModule")
 
@@ -10,6 +7,31 @@ local buttonModule = require("ge/extensions/ui/gridSelectorUtils/buttonModule")
 local buttonInstance = buttonModule.create()
 
 M.managementButtonsEnabled = true
+
+local function customConfigurationsAllowed()
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  return not capabilities
+    or not capabilities.areCustomConfigurationsAllowed
+    or capabilities.areCustomConfigurationsAllowed()
+end
+
+local function selectionAllowed(modelKey, configKey)
+  local restriction = gameplay_discover_firstDrive_vehicleSelectorRestriction
+  return not restriction
+    or not restriction.isSelectionAllowed
+    or restriction.isSelectionAllowed(modelKey, configKey)
+end
+
+local function confirmSpawn(spawnFn)
+  if gameplay_lowPerformance then return gameplay_lowPerformance.confirmSpawn(spawnFn) end
+  return spawnFn()
+end
+
+local function resetFiltersOnSpawn()
+  if ui_vehicleSelector_general.getDisplayData().filterResetOnSpawn then
+    ui_vehicleSelector_general.clearAllFilters()
+  end
+end
 
 -- Fade screen callback
 local callbackAfterFade
@@ -19,9 +41,7 @@ local function executeButton(buttonId, additionalData)
   local buttonInfo = buttonInstance.getButtonInfo(buttonId)
   if buttonInfo then
     local data = buttonInstance.executeButton(buttonId, additionalData)
-    if buttonInfo.meta.canClearFilters and ui_vehicleSelector_general.getDisplayData().filterResetOnSpawn then
-      ui_vehicleSelector_general.clearAllFilters()
-    end
+    if buttonInfo.meta.canClearFilters then resetFiltersOnSpawn() end
     return data
   else
     log("E", "", "Button function not found for ID: " .. tostring(buttonId))
@@ -44,8 +64,65 @@ local function onUiWaitingState(state)
 end
 M.onUiWaitingState = onUiWaitingState
 
+local function canModifyVehicle(playerId, vehicleId, permission)
+  if not multiplayer_permissions then return true end
+  local mpPlayerId = multiplayer_multiplayer.getLocalMPPlayerId(playerId)
+  local mid = multiplayer_vehicleSync.vIdToMId(vehicleId)
+  local allowed = multiplayer_permissions.checkPlayerPermission(mpPlayerId, permission, mid)
+  return allowed
+end
+
+local function canModifyCurrentVehicle(playerId, permission)
+  local vehicle = getPlayerVehicle(playerId)
+  return vehicle ~= nil and canModifyVehicle(playerId, vehicle:getId(), permission)
+end
+
+local function hasModifiableVehicle(playerId, exceptVid, permission)
+  for i = 0, be:getObjectCount() - 1 do
+    local veh = be:getObject(i)
+    if veh then
+      local vid = veh:getId()
+      if (exceptVid == nil or vid ~= exceptVid) and canModifyVehicle(playerId, vid, permission) then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+local function resetModifiableVehicles(playerId)
+  extensions.hook('trackVehReset')
+  if not multiplayer_permissions then
+    resetGameplay(-1)
+    return
+  end
+  for i = 0, be:getObjectCount() - 1 do
+    local veh = be:getObject(i)
+    if veh and canModifyVehicle(playerId, veh:getId(), 'resetVehicle') then
+      veh:requestReset(RESET_PHYSICS)
+      veh:resetBrokenFlexMesh()
+    end
+  end
+end
+
+local function removeModifiableVehicles(playerId, exceptVid)
+  local deletedAny = false
+  for i = be:getObjectCount() - 1, 0, -1 do
+    local veh = be:getObject(i)
+    if veh then
+      local vid = veh:getId()
+      if (exceptVid == nil or vid ~= exceptVid) and canModifyVehicle(playerId, vid, 'removeVehicle') then
+        veh:delete()
+        deletedAny = true
+      end
+    end
+  end
+  return deletedAny
+end
+
 -- Spawn vehicle after fade screen
 local function spawnVehicleAfterFade(modelKey, configKey, additionalData)
+  if not selectionAllowed(modelKey, configKey) then return false end
   --ui_fadeScreen.start(fadeScreenDuration)
   extensions.hook("onVehicleSelectorSpawnNewRequested")
   guihooks.trigger("app:waiting", true)
@@ -87,7 +164,9 @@ end
 
 -- Replace vehicle after fade screen
 local function replaceVehicleAfterFade(modelKey, configKey, additionalData)
+  if not selectionAllowed(modelKey, configKey) then return false end
   --ui_fadeScreen.start(fadeScreenDuration)
+  extensions.hook("onVehicleSelectorReplaceCurrentRequested")
   guihooks.trigger("app:waiting", true)
   callbackAfterFade = function()
     -- Create spawn options for replacement
@@ -145,46 +224,44 @@ end
 
 local function makeSpawningButtons(configDetails, spawnOnly)
   local buttons = {}
+  local playerId = 0
 
   -- Spawn vehicle button
   if configDetails then
+    local configSelectionAllowed = selectionAllowed(configDetails.model_key, configDetails.key)
+    local spawningTutorialActive = gameplay_discover_freeroamTutorial_tutorial
+      and gameplay_discover_freeroamTutorial_tutorial.getActivePhase() == "vehicleManagementSpawn"
+    local lesson = gameplay_discover_firstDrive_learningFlow
+      and gameplay_discover_firstDrive_learningFlow.isLessonActive("vehicleManagement")
+      and gameplay_discover_firstDrive_lessons_vehicleManagement_vehicleManagement
+    local spawnLocked = lesson and not lesson.isSpawnAllowed()
+    local replaceLocked = spawningTutorialActive or lesson and not lesson.isReplaceAllowed()
 
-    --[[
-    -- maybe in the future
-    if configDetails.Source == "Custom" then
-      table.insert(buttons, buttonInstance.addButton(nop, {
-        label = "Edit Metadata",
-        icon = "edit",
-        openVehicleEditorPopup = true,
-        data = {
-          model = configDetails.model_key,
-          config = configDetails.key,
-        }
-      }))
-    end
-    ]]
+    table.insert(buttons, buttonInstance.addButton(function(additionalData)
+      if not configSelectionAllowed or spawnLocked then return false end
+      confirmSpawn(function()
+        extensions.ui_router.navigate("play")
+        -- Callback for spawning a new vehicle
+        local modelKey = configDetails.model_key
+        local configKey = configDetails.key
 
-    local spawningTutorialActive = gameplay_discover_freeroamTutorial_tutorial and gameplay_discover_freeroamTutorial_tutorial.getActivePhase() == "vehicleManagementSpawn"
-
-    table.insert(buttons, buttonInstance.addButton(function(...)
-      extensions.ui_router.navigate("play")
-      -- Callback for spawning a new vehicle
-      local modelKey = configDetails.model_key
-      local configKey = configDetails.key
-
-      spawnVehicleAfterFade(modelKey, configKey, ...)
-      ui_vehicleSelector_general.trackRecentVehicle(modelKey, configKey)
+        spawnVehicleAfterFade(modelKey, configKey, additionalData)
+        ui_vehicleSelector_general.trackRecentVehicle(modelKey, configKey)
+        resetFiltersOnSpawn()
+      end)
     end, {
       label = _tr("ui.debug.vehicle.spawnNew"),
       icon = "carPlus",
-      canClearFilters = true,
-      autofocus = spawningTutorialActive,
+      autofocus = (spawningTutorialActive or lesson) and not spawnLocked,
+      disabled = not configSelectionAllowed or spawnLocked,
       uiEvent = "action_2",
+      tutorialHighlightId = "gridSelector.action.spawnVehicleNew",
     }))
 
 
     if not spawnOnly then
       table.insert(buttons, buttonInstance.addButton(function(...)
+        if not configSelectionAllowed or replaceLocked then return false end
         extensions.ui_router.navigate("play")
         -- Callback for replacing current vehicle
         local modelKey = configDetails.model_key
@@ -196,10 +273,11 @@ local function makeSpawningButtons(configDetails, spawnOnly)
         label = _tr("ui.debug.vehicle.replaceCurrent"),
         icon = "carsChange",
         primary = true,
-        isDoubleClickAction = not spawningTutorialActive,
+        isDoubleClickAction = not replaceLocked,
         canClearFilters = true,
-        disabled = spawningTutorialActive,
+        disabled = not configSelectionAllowed or replaceLocked or not canModifyCurrentVehicle(playerId, 'removeVehicle'),
         uiEvent = "ok",
+        tutorialHighlightId = "gridSelector.action.replaceVehicle",
       }))
     end
   end
@@ -252,13 +330,14 @@ end
 
 -- Get management details for vehicle operations
 local function getManagementDetails()
-  buttonInstance.clearButtonFunctions()
-
   local buttons = {}
+  local playerId = 0
 
   -- Only show management buttons if they are enabled
   if M.managementButtonsEnabled then
-    if ui_vehicleSelector_general.getDisplayData().includeDevInfo then
+    buttonInstance.clearButtonFunctions()
+    local showCustomConfigurationButtons = customConfigurationsAllowed()
+    if showCustomConfigurationButtons and ui_vehicleSelector_general.getDisplayData().includeDevInfo then
       -- Set as default button
       table.insert(buttons, buttonInstance.addButton(function()
         extensions.core_vehicle_partmgmt.savedefault()
@@ -285,82 +364,91 @@ local function getManagementDetails()
       }))
     end
 
-    table.insert(buttons, buttonInstance.addButton(function()
-      extensions.ui_router.navigate("pause.vehicle.configurationcombined.save")
-    end, {
-      label = _tr("ui.menu.vehicleSelector.saveCurrentConfig"),
-      icon = "floppyDisk",
-      disabled = be:getObjectCount() == 0 or getPlayerVehicle(0) == nil or gameplay_walk.isWalking(),
-      --openVehicleEditorPopup = true,
-      data = {
-        useCurrentVehicle = true,
-      }
-    }))
+    if showCustomConfigurationButtons then
+      table.insert(buttons, buttonInstance.addButton(function()
+        extensions.ui_router.navigate("pause.vehicle.configurationcombined.save")
+      end, {
+        label = _tr("ui.menu.vehicleSelector.saveCurrentConfig"),
+        icon = "floppyDisk",
+        disabled = not canModifyCurrentVehicle(playerId, 'resetVehicle') or gameplay_walk.isWalking(),
+        data = {
+          useCurrentVehicle = true,
+        }
+      }))
+    end
 
     -- Clone current button
     table.insert(buttons, buttonInstance.addButton(function()
-      extensions.ui_router.navigate("play")
-      cloneVehicleAfterFade()
-      extensions.hook("onVehicleSelectorCloneCurrent")
+      confirmSpawn(function()
+        extensions.ui_router.navigate("play")
+        cloneVehicleAfterFade()
+        extensions.hook("onVehicleSelectorCloneCurrent")
+      end)
     end, {
       label = _tr("ui.debug.vehicle.cloneCurrent"),
       icon = "copy",
-      disabled = be:getObjectCount() == 0 or getPlayerVehicle(0) == nil or gameplay_walk.isWalking(),
+      disabled = not canModifyCurrentVehicle(playerId, 'spawnVehicle') or gameplay_walk.isWalking(),
     }))
 
     -- Select Random
-    table.insert(buttons, buttonInstance.addButton(function()
-      extensions.hook("onVehicleSelectorSelectRandom")
+    if showCustomConfigurationButtons then
+      table.insert(buttons, buttonInstance.addButton(function()
+        extensions.hook("onVehicleSelectorSelectRandom")
 
 
-      -- get a random config that passes the filters
-      local data = ui_vehicleSelector_general.getUiData()
+        -- get a random config that passes the filters
+        local data = ui_vehicleSelector_general.getUiData()
 
-      local validConfigs = {}
-      for _, config in pairs(data.configs) do
-        if not ui_vehicleSelector_general.passesFilters({model = config.model_key, config = config.key}) then
-          goto continue
+        local validConfigs = {}
+        for _, config in pairs(data.configs) do
+          if not ui_vehicleSelector_general.passesFilters({model = config.model_key, config = config.key}) then
+            goto continue
+          end
+          table.insert(validConfigs, config)
+          ::continue::
         end
-        table.insert(validConfigs, config)
-        ::continue::
-      end
 
-      local randomConfig = validConfigs[math.random(1, #validConfigs)]
-      local model = core_vehicles.getModel(randomConfig.model_key)
+        local randomConfig = validConfigs[math.random(1, #validConfigs)]
+        local model = core_vehicles.getModel(randomConfig.model_key)
 
-      local type = randomConfig.Type or model.model.Type
+        local type = randomConfig.Type or model.model.Type
 
-      local path = {keys = {'configsForBrandSubModelOrModel', randomConfig.model_key, randomConfig.subModel or "", randomConfig.brand or "", "Type", ui_vehicleSelector_tiles.groupModeFunctions["Type"](type)}}
-      -- force select the random config next time the tiles are loaded
-      ui_vehicleSelector_tiles.overrideDefaultSelectedTile(randomConfig)
-      return {gotoPath = path}
-    end, {
-      label = _tr("ui.menu.vehicleSelector.selectRandom"),
-      icon = "arrowsShuffle",
-      focusKey = "selectRandom"
-    }))
+        local path = {keys = {'configsForBrandSubModelOrModel', randomConfig.model_key, randomConfig.subModel or "", randomConfig.brand or "", "Type", ui_vehicleSelector_tiles.groupModeFunctions["Type"](type)}}
+        -- force select the random config next time the tiles are loaded
+        ui_vehicleSelector_tiles.overrideDefaultSelectedTile(randomConfig)
+        return {gotoPath = path}
+      end, {
+        label = _tr("ui.menu.vehicleSelector.selectRandom"),
+        icon = "arrowsShuffle",
+        focusKey = "selectRandom"
+      }))
+    end
 
     -- Reset all button
     table.insert(buttons, buttonInstance.addButton(function()
-      resetGameplay(-1)
+      resetModifiableVehicles(playerId)
       extensions.ui_router.navigate("play")
       extensions.hook("onVehicleSelectorResetAll")
     end, {
       label = _tr("ui.menu.vehicleSelector.resetAll"),
       icon = "carsWrench",
-      accent = "main"
+      accent = "main",
+      disabled = not hasModifiableVehicle(playerId, nil, 'resetVehicle'),
     }))
 
     -- Remove all button
     table.insert(buttons, buttonInstance.addButton(function()
-      core_vehicles.removeAll();
-      extensions.hook("trackNewVeh")
+      if removeModifiableVehicles(playerId, nil) then
+        core_vehicles.enterFreecamIfNoVehicles()
+        extensions.hook("trackNewVeh")
+      end
       extensions.ui_router.navigate("play")
       extensions.hook("onVehicleSelectorRemoveAll")
     end, {
       label = _tr("ui.debug.vehicle.removeAll"),
       icon = "trashBin2",
-      accent = "attention"
+      accent = "attention",
+      disabled = not hasModifiableVehicle(playerId, nil, 'removeVehicle'),
     }))
 
     -- Remove current button
@@ -372,19 +460,23 @@ local function getManagementDetails()
     end, {
       label = _tr("ui.debug.vehicle.removeCurrent"),
       icon = "trashBin1",
-      accent = "attention"
+      accent = "attention",
+      disabled = not canModifyCurrentVehicle(playerId, 'removeVehicle'),
     }))
 
     -- Remove others button
     table.insert(buttons, buttonInstance.addButton(function()
-      core_vehicles.removeAllExceptCurrent();
-      extensions.hook("trackNewVeh")
+      local currentVid = be:getPlayerVehicleID(playerId)
+      if removeModifiableVehicles(playerId, currentVid) then
+        extensions.hook("trackNewVeh")
+      end
       extensions.ui_router.navigate("play")
       extensions.hook("onVehicleSelectorRemoveOthers")
     end, {
       label = _tr("ui.debug.vehicle.removeOthers"),
       icon = "broom",
-      accent = "attention"
+      accent = "attention",
+      disabled = not hasModifiableVehicle(playerId, be:getPlayerVehicleID(playerId), 'removeVehicle'),
     }))
 
   end

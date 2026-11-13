@@ -18,14 +18,14 @@ if not pfxCausticsStateBlock then
   pfxCausticsStateBlock:setField("samplerStates", 1, "SamplerClampLinear")
   pfxCausticsStateBlock:setField("samplerStates", 2, "SamplerWrapLinear")
   pfxCausticsStateBlock:setField("samplerStates", 3, "SamplerWrapLinear")
+  pfxCausticsStateBlock:setField("samplerStates", 4, "SamplerClampPoint")
   pfxCausticsStateBlock:registerObject("PFX_CausticsStateBlock")
 end
 
 local pfxCausticsShader = scenetree.findObject("PFX_CausticsShader")
 if not pfxCausticsShader then
   pfxCausticsShader = createObject("ShaderData")
-  pfxCausticsShader.DXVertexShaderFile    = "shaders/common/postFx/caustics/causticsP.hlsl"
-  pfxCausticsShader.DXPixelShaderFile     = "shaders/common/postFx/caustics/causticsP.hlsl"
+  pfxCausticsShader.DXComputShaderName    = "shaders/common/postFx/caustics/caustics.cs.hlsl"
   pfxCausticsShader.pixVersion = 5.0
   pfxCausticsShader:registerObject("PFX_CausticsShader")
 end
@@ -43,6 +43,7 @@ if not causticsPFX then
   causticsPFX:setField("texture", 1, "#prepass[Depth]")
   causticsPFX:setField("texture", 2, "lua/ge/client/postFx/textures/caustics_1.png")
   causticsPFX:setField("texture", 3, "lua/ge/client/postFx/textures/caustics_2.png")
+  causticsPFX:setField("texture", 4, "$backBuffer")
   causticsPFX:setField("target", 0, "$backBuffer")
   causticsPFX:registerObject("CausticsPFX")
 end

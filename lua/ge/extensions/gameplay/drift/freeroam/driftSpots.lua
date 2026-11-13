@@ -198,7 +198,8 @@ local function properEnd()
 
 
     if gameplay_drift_scoring.wrapUpWithText() then
-      job.sleep(1.7)
+      -- let the confirmed-score animation play out before the spot result takes over the display
+      job.sleep(gameplay_drift_display and gameplay_drift_display.getScorePresentationDuration() or 0)
     end
 
     local scoreGained = gameplay_drift_scoring.getScore().score
@@ -241,7 +242,7 @@ end
 
 -- "Proper" end means going through the finish line, not out of bounds or wrong way
 local function detectStart(lineId)
-  if isSuppressedByGamemode then return end
+  if isSuppressedByGamemode or core_multiseat.isMultiseatActive() then return end
   local line = lines[lineId]
   if not line then
     log("E","","Could not find drift line with id " .. dumps(lineId))
@@ -406,7 +407,7 @@ local function getBigMapTpPosRot(poi, veh)
 end
 
 local function onGetRawPoiListForLevel(levelIdentifier, elements)
-  if isSuppressedByGamemode then return end
+  if isSuppressedByGamemode or core_multiseat.isMultiseatActive() then return end
   loadAndSanitizeData()
   -- todo: (optional) load data only when its requested by this function
   -- todo. filter lines so only the current level lines are added
@@ -425,7 +426,6 @@ local function onGetRawPoiListForLevel(levelIdentifier, elements)
             startDir = line.startDir,
             markerObjects = line.markerObjects or {}
           },
-          -- TODO: optional: add bigmap markers (if we want that)
         }
       }
 

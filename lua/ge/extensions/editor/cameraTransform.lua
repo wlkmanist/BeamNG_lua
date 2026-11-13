@@ -52,7 +52,7 @@ local function onEditorDeactivated()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("Camera Transform", onWindowMenuItem)
+  editor.addWindowMenuItem("Camera Transform", onWindowMenuItem, {groupMenuName = 'Camera'})
   editor.registerWindow(toolWindowName, im.ImVec2(600, 200))
 end
 

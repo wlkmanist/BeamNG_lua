@@ -4,7 +4,9 @@
 
 local util = require('editor/toolUtilities/util')
 local rdp = require('editor/toolUtilities/rdp')
-local render = require('editor/toolUtilities/render')
+local rSpline = require('editor/toolUtilities/render/spline')
+local rSpheres = require('editor/toolUtilities/render/spheres')
+local rMarkup = require('editor/toolUtilities/render/markup')
 local zSnap = require('/lua/ge/extensions/editor/rallyEditor/zSnap')
 local SnaproadNormals = require('/lua/ge/extensions/gameplay/rally/snaproad/normals')
 local DrivelineUtil = require('/lua/ge/extensions/gameplay/rally/driveline/util')
@@ -616,7 +618,7 @@ function C:renderSpline(selectedNodeIdx)
   -- Render full spline if we have enough nodes
   if #self.spline.nodes >= 2 then
     -- Render the spline using the render utility (nodes only)
-    render.handleSplineRendering(
+    rSpline.handleSplineRendering(
       {self.spline},           -- splines array
       1,                       -- selectedSplineIdx
       selectedNodeIdx,         -- selectedNodeIdx (passed as parameter)
@@ -629,19 +631,19 @@ function C:renderSpline(selectedNodeIdx)
     )
 
     -- Render start and end markers
-    render.markupStart(self.spline.nodes[1])
+    rMarkup.markupStart(self.spline.nodes[1])
     if not self.spline.isLoop then
-      render.markupEnd(self.spline.nodes[#self.spline.nodes])
+      rMarkup.markupEnd(self.spline.nodes[#self.spline.nodes])
     end
   else
     -- For single node, just render it directly
     local node = self.spline.nodes[1]
     if selectedNodeIdx == 1 then
-      render.drawSphereHighlightSelected(node)
+      rSpheres.drawSphereHighlightSelected(node)
     else
-      render.drawSphereNode(node)
+      rSpheres.drawSphereNode(node)
     end
-    render.markupStart(node)
+    rMarkup.markupStart(node)
   end
 end
 

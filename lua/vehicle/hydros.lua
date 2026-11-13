@@ -10,7 +10,7 @@ local FFmax = 10
 M.enableFFB = true -- will skip the actual FFB requests to the connected hardware
 M.enableVibration = false
 M.enableFFBflood = false -- will skip the timing checks and run at 2KHz no matter what. intended only for debugging and testing purposes, as this will flood the drivers and cripple pretty much all steering wheels
-M.wheelFFBForceCoef = 200 -- regular force coef (at speed)
+M.wheelFFBForceCoef = 100 -- regular force coef (at speed)
 M.wheelFFBForceCoefLowSpeed = M.wheelFFBForceCoef -- force coef used at parking speeds
 M.wheelFFBForceCoefCurrent = M.wheelFFBForceCoefLowSpeed -- updated over time depending on speed (start at parking speed) and AI driver
 M.wheelPowerSteeringCoef = 1
@@ -20,8 +20,9 @@ M.wheelFFBForceCompressionCoef = 0.9 -- FFB compression % from 0..1
 local wheelFFBDampLimit = math.huge
 local wheelFFBDampCoefLimit = 5 --math.huge
 
-local wheelFFBSmoothing, wheelFFBSmoothing2 = 50, 50000
-local wheelFFBSmoothing2automatic = true
+local function getFFBSmoothing2(wheelFFBSmoothing) return max(5000, (500 - wheelFFBSmoothing) * 100 + 5000) end
+local wheelFFBSmoothing = 50
+local wheelFFBSmoothing2 = getFFBSmoothing2(wheelFFBSmoothing)
 M.GforceCoef = 0
 M.enableThrottleForceFeedback = true -- enable force feedback for the throttle in gamepad vibration mode
 M.enableBrakeForceFeedback = true -- enable force feedback for the brake in gamepad vibration mode
@@ -199,6 +200,11 @@ local function getDriverForce(force)
   return signApply(force, normResult * FFmax)
 end
 
+local function resetFFBSmoother()
+  FFBsmooth:set(0)
+  curForceLimitSmoother:set(0)
+end
+
 local ffbDuringCurFrame = false
 local ffbDuringPrevFrame = false
 
@@ -207,10 +213,7 @@ local function FFBcalc(wheelDispl, wheelPos, simWheelPos)
     local forceAtWheel = M.wheelFFBForceCoefCurrent * (vehicleFFBForceCoef * wheelDispl * M.wheelPowerSteeringCoef + externalForce)
 
     ffbDuringCurFrame = true
-    if not ffbDuringPrevFrame then
-      FFBsmooth:set(0)
-      curForceLimitSmoother:set(0)
-    end
+    if not ffbDuringPrevFrame then resetFFBSmoother() end
     -- compute the force that should be output by (and measured at) the steering wheel hardware
 
     -- filter 'huge' spikes from going into the smoother; otherwise, it'll take a while to come back from that far away (in later calls to FFBsmooth:get)
@@ -284,10 +287,7 @@ end
 
 local function debugDraw()
   local dtReal = obj:getRealdt()
-  if dtReal > 1/10 or dtReal < 0.0001 then -- disable ffb when at less than 10fps, and after pauses. this avoids sudden spikes from accumulated time (e.g. after loading screens, etc)
-    FFBsmooth:set(0)
-    curForceLimitSmoother:set(0)
-  end
+  if dtReal > 1/10 or dtReal < 0.0001 then resetFFBSmoother() end -- less than 10fps and after pausing (avoids spikes from accumulated time, e.g. after loading screens, etc)
 end
 
 local function updateGFX(dt) -- dt in seconds
@@ -395,8 +395,11 @@ local function updateGFX(dt) -- dt in seconds
 
     if ai.isDriving() then
       M.wheelFFBForceCoefCurrent = 0 -- free up the wheel while AI is driving
-      FFBsmooth:set(0)
-      curForceLimitSmoother:set(0)
+      resetFFBSmoother()
+    end
+
+    if FFBhcount == 0 then
+      M.curForceLimit = 0 -- no intact steering hydro left (e.g. steering ripped off): free up the wheel
     end
   end
 
@@ -487,8 +490,6 @@ local function getFFBConfig()
     forceCoef = M.wheelFFBForceCoef,
     softlockForce = softlockForceCoef,
     smoothing = wheelFFBSmoothing / 0.7,
-    smoothing2 = (wheelFFBSmoothing2-500)/109, -- IMPORTANT: these equations exist in 3 places in hydros.lua, 2 places in options.js, and 1 place in bindings.lua
-    smoothing2automatic = wheelFFBSmoothing2automatic ~= false,
     gforceCoef = M.GforceCoef,
     wheelFFBDampLimit = wheelFFBDampLimit,
   }
@@ -504,13 +505,7 @@ local function setFFBConfig(ffbParams)
   if ffbParams.deviceLightingMode ~= nil then M.deviceLightingMode = ffbParams.deviceLightingMode end
 
   wheelFFBDampLimit = ffbParams.wheelFFBDampLimit or wheelFFBDampLimit
-  wheelFFBSmoothing2automatic = ffbParams.smoothing2automatic ~= false
-  -- IMPORTANT: these equations exist in 3 places in hydros.lua, 2 places in options.js, and 1 place in bindings.lua
-  if wheelFFBSmoothing2automatic then
-    wheelFFBSmoothing2 = max(5000, (500 - wheelFFBSmoothing)*100+5000)
-  else
-    wheelFFBSmoothing2 = ffbParams.smoothing2 * 109 + 500
-  end
+  wheelFFBSmoothing2 = getFFBSmoothing2(wheelFFBSmoothing)
 
   turnOffFFBInterfaces()
 end
@@ -525,8 +520,7 @@ local function onFFBConfigChanged(newFFBConfig)
     y1 = 0
 
     FFBHydrosExist = true
-    FFBsmooth:set(0)
-    curForceLimitSmoother:set(0)
+    resetFFBSmoother()
 
     local ffbConfig = newFFBConfig.steering
     local ffbConfig_accelerate = newFFBConfig.accelerate
@@ -568,13 +562,7 @@ local function onFFBConfigChanged(newFFBConfig)
         end
 
         wheelFFBDampLimit = ffbParams.wheelFFBDampLimit or wheelFFBDampLimit
-        wheelFFBSmoothing2automatic = ffbParams.smoothing2automatic ~= false
-        -- IMPORTANT: these equations exist in 3 places in hydros.lua, 2 places in options.js, and 1 place in bindings.lua
-        if wheelFFBSmoothing2automatic then
-          wheelFFBSmoothing2 = max(5000, (500 - wheelFFBSmoothing)*100+5000)
-        else
-          wheelFFBSmoothing2 = ffbParams.smoothing2 * 109 + 500
-        end
+        wheelFFBSmoothing2 = getFFBSmoothing2(wheelFFBSmoothing)
 
         local automaticRate = frequency == 0
         if not ffbConfig.ffbSendms then
@@ -727,9 +715,8 @@ local function reset()
     h._outrate = h.outRate * physicsDt
   end
 
-  FFBsmooth:set(0)
+  resetFFBSmoother()
   DFsmooth:set(5)
-  curForceLimitSmoother:set(0)
 
   turnOffFFBInterfaces()
   if FFBID >= 0 then
@@ -792,6 +779,7 @@ M.sendRPMLeds = sendRPMLeds
 M.setExternalForce = setExternalForce
 M.destroy = destroy
 M.debugDraw = debugDraw
+M.resetFFBSmoother = resetFFBSmoother
 M.isPhysicsStepUsed = isPhysicsStepUsed
 M.enableVirtualWheel = enableVirtualWheel
 M.getForceFeedbackFunction = getForceFeedbackFunction

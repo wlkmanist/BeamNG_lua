@@ -21,7 +21,7 @@ local interpGran = 10 -- The granularity of the final interpolated path nodes an
 local M = {}
 
 -- Module dependencies.
-local render = require('editor/toolUtilities/render')
+local rSpline = require('editor/toolUtilities/render/spline')
 local geom = require('editor/toolUtilities/geom')
 local rdp = require('editor/toolUtilities/rdp')
 
@@ -378,7 +378,7 @@ local function handlePreview(spline)
   end
 
   -- Draw the preview.
-  render.renderPreviewRibbon(pathNodes, pathWidths)
+  rSpline.renderPreviewRibbon(pathNodes, pathWidths)
 end
 
 

@@ -64,22 +64,22 @@ local function getCareerPauseContextButtons()
 
   if career_modules_delivery_general.isDeliveryModeActive() then
     table.insert(data.buttons, {
-      label = "Map (My Cargo)",
+      label = "ui.career.pause.mapMyCargo",
       icon = "map",
       fun = function() career_modules_delivery_cargoScreen.enterMyCargo() end
     })
   else
     table.insert(data.buttons, {
-      label = "Map",
+      label = "ui.career.pause.map",
       icon = "map",
       fun = function() freeroam_bigMapMode.enterBigMap({instant=true}) end
     })
   end
 
   table.insert(data.buttons, {
-    label = "Logbook",
+    label = "ui.career.logbook.subHeading",
     icon = "book",
-    fun = function() guihooks.trigger('ChangeState', {state = 'career.logbook'}) end
+    fun = function() extensions.ui_router.navigate('career.logbook') end
   })
 
   local tutorialActive = career_modules_tutorial and career_modules_tutorial.isActive()
@@ -87,14 +87,14 @@ local function getCareerPauseContextButtons()
     table.insert(data.buttons, {
       label = "ui.career.landingPage.name",
       icon = "progress",
-      fun = function() guihooks.trigger('ChangeState', {state = 'career.domainSelection'}) end,
+      fun = function() extensions.ui_router.navigate('career.domainSelection') end,
       showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0
     })
 
     table.insert(data.buttons, {
-      label = "Milestones",
+      label = "ui.career.milestones.title",
       icon = "trophy",
-      fun = function() guihooks.trigger('ChangeState', {state = 'career.milestones'}) end,
+      fun = function() extensions.ui_router.navigate('career.milestones') end,
       showIndicator = career_modules_milestones_milestones.unclaimedMilestonesCount() > 0
     })
 
@@ -102,7 +102,7 @@ local function getCareerPauseContextButtons()
 
   if career_modules_vehiclePerformance.isTestInProgress() then
     table.insert(data.buttons, {
-      label = "Cancel Certification",
+      label = "ui.career.pause.cancelCertification",
       icon = "cancel",
       fun = function() career_modules_vehiclePerformance.cancelTest() end,
       showIndicator = true
@@ -111,7 +111,7 @@ local function getCareerPauseContextButtons()
 
   if career_modules_testDrive.isActive() then
     table.insert(data.buttons, {
-      label = "Cancel Test Drive",
+      label = "ui.career.pause.cancelTestDrive",
       icon = "cancel",
       fun = function() career_modules_testDrive.stop() end,
       showIndicator = true

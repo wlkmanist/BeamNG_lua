@@ -16,6 +16,7 @@ local M = {}
 -- Module dependencies.
 local distrib = require('editor/assemblySpline/distribution')
 local geom = require('editor/toolUtilities/geom')
+local splineLock = require('editor/toolUtilities/splineLock')
 local util = require('editor/toolUtilities/util')
 
 -- Module constants.
@@ -28,6 +29,7 @@ local preRotQuats = geom.getPreRotQuats()
 -- Module state.
 local staticMeshes = {}
 local meshPools = {}
+local lockApplied = {} -- spline id -> the lock state last applied to its meshes (see splineLock.sync).
 local finalPosns, finalTans, finalNormals = {}, {}, {}
 local translationArray, rotationArray = {}, {}
 local neededMeshes, existingMeshesByPath, counters = {}, {}, {}
@@ -48,8 +50,33 @@ local targetNailProj, bridgeTargetNailProj = vec3(), vec3()
 local tmpVec1, tmpVec2, tmpVec3, tmpVec4 = vec3(), vec3(), vec3(), vec3()
 
 
+-- Calls fn(mesh, true) for every mesh the tool holds for the spline (the splineLock `each`).
+local function eachObject(spline, fn)
+  for _, pathPool in pairs(meshPools[spline.id] or {}) do
+    for i = 1, #pathPool do fn(pathPool[i], true) end
+  end
+end
+
+-- Brings the spline's existing meshes in line with its lock state. On unlock, any mesh whose shape was swapped by hand
+-- while locked gets its own shape back; the placement pass then resets pose and scale.
+local function syncLockState(spline)
+  if spline.isEnabled and lockApplied[spline.id] then
+    for meshPath, pathPool in pairs(meshPools[spline.id] or {}) do
+      for i = 1, #pathPool do
+        local mesh = pathPool[i]
+        if mesh and simObjectExists(mesh) and mesh:getField('shapeName', 0) ~= meshPath then
+          mesh:setField('shapeName', 0, meshPath)
+          mesh:postApply()
+        end
+      end
+    end
+  end
+  splineLock.sync(lockApplied, spline, toolPrefixStr, function(fn) eachObject(spline, fn) end)
+end
+
 -- Manages mesh pools based on the distribution maps.
 local function manageMeshPools(spline, rigidMaps, bridgeMaps)
+  syncLockState(spline)
   local splineId = spline.id
   local folder = scenetree.findObjectById(spline.sceneTreeFolderId)
 
@@ -83,6 +110,8 @@ local function manageMeshPools(spline, rigidMaps, bridgeMaps)
 
   -- Process each needed mesh path - add/remove only what's needed.
   meshPools[splineId] = meshPools[splineId] or {}
+  for _, pathPool in pairs(meshPools[splineId]) do splineLock.dropDeleted(pathPool) end -- meshes deleted by hand get recreated below.
+  local isLocked = not spline.isEnabled
   for meshPath, neededCount in pairs(neededMeshes) do
     meshPools[splineId][meshPath] = meshPools[splineId][meshPath] or {}
     local pathPool = meshPools[splineId][meshPath]
@@ -92,8 +121,10 @@ local function manageMeshPools(spline, rigidMaps, bridgeMaps)
     for i = existingCount + 1, neededCount do
       local obj = createObject('TSStatic')
       obj:setField('shapeName', 0, meshPath)
+      splineLock.applyObject(obj, isLocked, true) -- solid only once locked: a live preview would leave stale hulls behind it
       local id = Engine.generateUUID()
       obj:registerObject(string.format('Mesh_%s', id))
+      splineLock.tag(obj, toolPrefixStr, spline)
       folder:addObject(obj.obj)
       pathPool[i] = obj
     end
@@ -135,6 +166,7 @@ local function ensureFolderExists(spline, splineIdx)
     local uniqueName = util.generateUniqueName(toolPrefixStr .. " " .. splineIdx, toolPrefixStr)
     folder = createObject("SimGroup")
     folder:registerObject(uniqueName .. " - " .. spline.id)
+    folder.cansave = not spline.isEnabled -- Transient while editing; saves with the level while the spline is locked.
     scenetree.MissionGroup:addObject(folder)
     spline.sceneTreeFolderId = folder:getId()
     staticMeshes[spline.id] = nil
@@ -153,7 +185,7 @@ local function getNextMeshFromPool(path, splineId)
 end
 
 -- Populate the given assembly spline with molecules spanned by bridges.
-local function populateAssemblySpline(spline, splineIdx, molecule)
+local function placeAssemblySpline(spline, splineIdx, molecule)
   if #spline.divPoints < 2 or not molecule or not molecule.rigids then
     return -- Early return for invalid spline or molecule.
   end
@@ -451,11 +483,56 @@ local function tryRemove(spline)
     end
     meshPools[splineId] = nil
   end
+  lockApplied[splineId] = nil
+end
+
+-- A locked spline whose meshes exist only has its lock state applied: the tool does not move them. Otherwise it is placed.
+local function populateAssemblySpline(spline, splineIdx, molecule)
+  if not spline.isEnabled and splineLock.hasAny(function(fn) eachObject(spline, fn) end) then
+    syncLockState(spline)
+    return
+  end
+  placeAssemblySpline(spline, splineIdx, molecule)
+end
+
+-- Lua reload: the tool lets go of a locked spline's meshes without deleting them (they are the level's) and returns their ids
+-- per mesh path, for adopt() to pick up again.
+local function release(spline)
+  local ids = {}
+  for meshPath, pathPool in pairs(meshPools[spline.id] or {}) do
+    local l = {}
+    for i = 1, #pathPool do
+      if pathPool[i] and simObjectExists(pathPool[i]) then l[#l + 1] = pathPool[i]:getId() end
+    end
+    ids[meshPath] = l
+  end
+  meshPools[spline.id] = nil
+  staticMeshes[spline.id] = nil
+  lockApplied[spline.id] = nil
+  return ids
+end
+
+-- Takes back the meshes release() let go of (those still in the scene), as they are.
+local function adopt(spline, ids)
+  local pools = {}
+  for meshPath, l in pairs(ids) do
+    local pathPool = {}
+    for i = 1, #l do
+      local mesh = scenetree.findObjectById(l[i])
+      if mesh then pathPool[#pathPool + 1] = mesh end
+    end
+    pools[meshPath] = pathPool
+  end
+  meshPools[spline.id] = pools
+  lockApplied[spline.id] = not spline.isEnabled
 end
 
 
 -- Public interface.
 M.populateAssemblySpline =                              populateAssemblySpline
 M.tryRemove =                                           tryRemove
+M.eachObject =                                          eachObject
+M.release =                                             release
+M.adopt =                                               adopt
 
 return M

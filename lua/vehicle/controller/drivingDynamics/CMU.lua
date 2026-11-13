@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Coordinates the sensors, supervisors, and actuators used for vehicle dynamics control
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 50
@@ -22,7 +24,7 @@ M.systemStates = {
 M.systemState = M.systemStates.normal
 
 --UDP debug hearbeat only active in non-shipping builds or if manually enabled
-local enableDebugHeartbeat = false or not shippingBuild
+local enableDebugHeartbeat = true or not shippingBuild
 
 local warningLightPulseTimer = 0
 local warningLightPulseTime = 0.15

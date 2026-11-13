@@ -26,6 +26,10 @@ C.pinSchema = {
 }
 C.tags = {'string','util'}
 
+function C:init()
+  self.uiData = {}
+end
+
 function C:postInit()
   self.pinInLocal.style.hardTemplates = {
     {label = "Text", value = "text"},
@@ -39,42 +43,40 @@ function C:postInit()
   end
 end
 
-
 function C:work()
   if (self.pinIn.title.value == nil and self.pinIn.txt.value == nil) or self.pinIn.clear.value then
+    table.clear(self.uiData)
     if self.pinIn.category.value == nil then
       ui_apps_genericMissionData.clearData()
     else
       ui_apps_genericMissionData.setData({category = self.pinIn.category.value or self.pinIn.title.value, clear = true})
     end
   else
-    local data = {
-      title = self.pinIn.title.value,
-      txt = self.pinIn.txt.value,
-      category = self.pinIn.category.value or self.pinIn.title.value,
-      style = self.pinIn.style.value,
-      order = self.pinIn.order.value,
-      icon = self.pinIn.icon.value,
-    }
+    local uiData = self.uiData
+    uiData.title = self.pinIn.title.value
+    uiData.txt = self.pinIn.txt.value
+    uiData.category = self.pinIn.category.value or self.pinIn.title.value
+    uiData.style = self.pinIn.style.value
+    uiData.order = self.pinIn.order.value
+    uiData.icon = self.pinIn.icon.value
 
     if self.pinIn.style.value == "time" then
-      data.txt = string.format("%02d:%02d", math.floor(self.pinIn.txt.value / 60), math.floor(self.pinIn.txt.value % 60))
-      data.minutes = string.format("%02d", math.floor(self.pinIn.txt.value / 60))
-      data.seconds = string.format("%02d", math.floor(self.pinIn.txt.value % 60))
-      data.style = "text"
+      uiData.txt = string.format("%02d:%02d", math.floor(self.pinIn.txt.value / 60), math.floor(self.pinIn.txt.value % 60))
+      uiData.minutes = string.format("%02d", math.floor(self.pinIn.txt.value / 60))
+      uiData.seconds = string.format("%02d", math.floor(self.pinIn.txt.value % 60))
+      uiData.style = "text"
     elseif self.pinIn.style.value == "timemillis" then
-      data.txt = string.format("%02d:%02d.%03d", math.floor(self.pinIn.txt.value / 60), math.floor(self.pinIn.txt.value % 60), math.floor((self.pinIn.txt.value % 1) * 1000))
-      data.minutes = string.format("%02d", math.floor(self.pinIn.txt.value / 60))
-      data.seconds = string.format("%02d", math.floor(self.pinIn.txt.value % 60))
-      data.milliseconds = string.format("%03d", math.floor((self.pinIn.txt.value % 1) * 1000))
-      data.style = "text"
+      uiData.txt = string.format("%02d:%02d.%03d", math.floor(self.pinIn.txt.value / 60), math.floor(self.pinIn.txt.value % 60), math.floor((self.pinIn.txt.value % 1) * 1000))
+      uiData.minutes = string.format("%02d", math.floor(self.pinIn.txt.value / 60))
+      uiData.seconds = string.format("%02d", math.floor(self.pinIn.txt.value % 60))
+      uiData.milliseconds = string.format("%03d", math.floor((self.pinIn.txt.value % 1) * 1000))
+      uiData.style = "text"
     elseif self.pinIn.style.value == "text" then
-      data.txt = self.pinIn.txt.value
+      uiData.txt = self.pinIn.txt.value
     end
-    ui_apps_genericMissionData.setData(data)
+    ui_apps_genericMissionData.setData(uiData)
   end
   self.mgr.modules.ui.genericMissionDataChanged = true
 end
-
 
 return _flowgraph_createNode(C)

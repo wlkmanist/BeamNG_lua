@@ -10,8 +10,8 @@ local function getMajorVersion(version)
 end
 
 local function onExtensionLoaded()
-  local newInstall = settings.getValue('onlineFeatures') == "ask"
   local lastVersion = settings.getValue('lastVersion')
+  local newInstall = not lastVersion and settings.getValue('onlineFeatures') == "ask"
   local folderCleanupRequested = settings.getValue('folderCleanupRequested')
   if folderCleanupRequested then
     log("D", "", "Manual folder cleanup requested")

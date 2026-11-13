@@ -569,8 +569,9 @@ end
 
 --- Select objects by a rectangle in the current camera viewport, screen space.
 -- @param rect the 2D screen viewport rectangle object
--- @param selectMode the selection mode, see editor.selectObjects
-local function getObjectsByRectangle(rect, forestData)
+-- @param forestData optional forest data source
+-- @param objectFlags optional scene object type mask
+local function getObjectsByRectangle(rect, forestData, objectFlags)
   local viewportSizeIm = im.GetMainViewport().Size
   local viewportSize = vec3(viewportSizeIm.x, viewportSizeIm.y, 0)
 
@@ -589,7 +590,7 @@ local function getObjectsByRectangle(rect, forestData)
   if forestData then
     return forestData:getItemsFrustum(rectFrustum, true), rectFrustum
   else
-    local defaultFlags = bit.bor(SOTTerrain, SOTWater, SOTStaticShape, SOTPlayer, SOTItem, SOTVehicle, SOTLight)
+    local defaultFlags = objectFlags or bit.bor(SOTTerrain, SOTWater, SOTStaticShape, SOTPlayer, SOTItem, SOTVehicle, SOTLight)
     return findObjectListFrustum(rectFrustum, defaultFlags), rectFrustum
   end
 end

@@ -2,259 +2,237 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
---https://x-engineer.org/bilinear-interpolation/
+local function rememberResult(self, x, y, result)
+  self.lastInputX = x
+  self.lastInputY = y
+  self.lastResult = result
+  return result
+end
 
-local clamp = clamp
-
--- Performs bilinear interpolation to find a value at point (x,y) in a 2D data map
--- Uses the formula from: https://x-engineer.org/bilinear-interpolation/
--- @param self: The interpolation map object containing the data and indices
--- @param x: The x-coordinate to interpolate at
--- @param y: The y-coordinate to interpolate at
--- @return: The interpolated value, or nil if coordinates are out of range and not clamping
 local function getBiLinear(self, x, y)
-  -- Check if x is within bounds, clamp if enabled
-  if x < self.xMin or x > self.xMax then
-    if self.clampToDataRange then
-      --print("clamping x to range")
-      x = clamp(x,self.xMin, self.xMax)
-    else
-      --print("x outside of range")
-      return nil
-    end
+  if x == self.lastInputX and y == self.lastInputY then
+    return self.lastResult
+  end
+  local inputX, inputY = x, y
+
+  local xMin, xMax = self.xMin, self.xMax
+  local yMin, yMax = self.yMin, self.yMax
+  if x < xMin then
+    if not self.clampToDataRange then return rememberResult(self, inputX, inputY, nil) end
+    x = xMin
+  elseif x > xMax then
+    if not self.clampToDataRange then return rememberResult(self, inputX, inputY, nil) end
+    x = xMax
+  end
+  if y < yMin then
+    if not self.clampToDataRange then return rememberResult(self, inputX, inputY, nil) end
+    y = yMin
+  elseif y > yMax then
+    if not self.clampToDataRange then return rememberResult(self, inputX, inputY, nil) end
+    y = yMax
   end
 
-  -- Check if y is within bounds, clamp if enabled
-  if y < self.yMin or y > self.yMax then
-    if self.clampToDataRange then
-      --print("clamping y to range")
-      y = clamp(y,self.yMin, self.yMax)
-    else
-      --print("y outside of range")
-      return nil
-    end
+  local xIndices = self.xIndices
+  local xIndex = self.xLastIndex
+  local xInvSpan = self.xLastInvSpan
+  if x < xIndices[xIndex] then
+    repeat
+      xIndex = xIndex - 1
+    until x >= xIndices[xIndex]
+    xInvSpan = 1 / (xIndices[xIndex + 1] - xIndices[xIndex])
+    self.xLastIndex = xIndex
+    self.xLastInvSpan = xInvSpan
+  elseif x > xIndices[xIndex + 1] then
+    repeat
+      xIndex = xIndex + 1
+    until x <= xIndices[xIndex + 1]
+    xInvSpan = 1 / (xIndices[xIndex + 1] - xIndices[xIndex])
+    self.xLastIndex = xIndex
+    self.xLastInvSpan = xInvSpan
   end
 
-  -- Find the x indices for interpolation
-  local x1Index
-  local x2Index
-
-  if x == self.xMax then
-    --print("x is xMax")
-    x1Index = self.xMaxIndex - 1
-    x2Index = self.xMaxIndex
-  else
-    for xIndex, xValue in ipairs(self.xIndices) do
-      if x >= xValue and x < self.xIndices[xIndex + 1] then
-        x1Index = xIndex
-        x2Index = xIndex + 1
-        break
-      end
-    end
+  local yIndices = self.yIndices
+  local yIndex = self.yLastIndex
+  local yInvSpan = self.yLastInvSpan
+  if y < yIndices[yIndex] then
+    repeat
+      yIndex = yIndex - 1
+    until y >= yIndices[yIndex]
+    yInvSpan = 1 / (yIndices[yIndex + 1] - yIndices[yIndex])
+    self.yLastIndex = yIndex
+    self.yLastInvSpan = yInvSpan
+  elseif y > yIndices[yIndex + 1] then
+    repeat
+      yIndex = yIndex + 1
+    until y <= yIndices[yIndex + 1]
+    yInvSpan = 1 / (yIndices[yIndex + 1] - yIndices[yIndex])
+    self.yLastIndex = yIndex
+    self.yLastInvSpan = yInvSpan
   end
 
-  -- Return nil if we couldn't find valid x indices
-  if not x1Index or not x2Index then
-    --print("Could not find valid x indices")
-    return nil
-  end
-
-  -- print("x1: "..x1Index)
-  -- print("x2: "..x2Index)
-
-  local y1Index
-  local y2Index
-
--- Find the y indices for interpolation
-  if y == self.yMax then
-    --print("y is yMax")
-    y1Index = self.yMaxIndex - 1
-    y2Index = self.yMaxIndex
-  else
-    for yIndex, yValue in ipairs(self.yIndices) do
-      if y >= yValue and y < self.yIndices[yIndex + 1] then
-        y1Index = yIndex
-        y2Index = yIndex + 1
-        break
-      end
-    end
-  end
-
-  -- Return nil if we couldn't find valid y indices
-  if not y1Index or not y2Index then
-    -- print("Could not find valid y indices")
-    return nil
-  end
-
-  -- print("y1: "..y1Index)
-  -- print("y2: "..y2Index)
-
-  -- Get the corner values for interpolation
-  local q11 = self.data[y1Index][x1Index]  -- Value at (x1,y1)
-  local q12 = self.data[y1Index][x2Index]  -- Value at (x2,y1)
-  local q21 = self.data[y2Index][x1Index]  -- Value at (x1,y2)
-  local q22 = self.data[y2Index][x2Index]  -- Value at (x2,y2)
-
-  -- print("q11: "..q11)
-  -- print("q12: "..q12)
-  -- print("q21: "..q21)
-  -- print("q22: "..q22)
-
-  -- Get the actual coordinate values for interpolation
-  local x1Value = self.xIndices[x1Index]
-  local x2Value = self.xIndices[x2Index]
-  local y1Value = self.yIndices[y1Index]
-  local y2Value = self.yIndices[y2Index]
-
-  -- print("x1Value: "..x1Value)
-  -- print("x2Value: "..x2Value)
-  -- print("y1Value: "..y1Value)
-  -- print("y2Value: "..y2Value)
-
-  -- Perform bilinear interpolation
-  -- First interpolate along x direction for both y values
-  local r1 = q11 * (y2Value - y) / (y2Value - y1Value) + q21 * (y - y1Value) / (y2Value - y1Value)
-  local r2 = q12 * (y2Value - y) / (y2Value - y1Value) + q22 * (y - y1Value) / (y2Value - y1Value)
-  -- Then interpolate between those results along y direction
-  local p = r1 * (x2Value - x) / (x2Value - x1Value) + r2 * (x - x1Value) / (x2Value - x1Value)
-
-  -- print("r1: "..r1)
-  -- print("r2: "..r2)
-  -- print("p: "..p)
-
-  return p
+  local tx = (x - xIndices[xIndex]) * xInvSpan
+  local ty = (y - yIndices[yIndex]) * yInvSpan
+  local data = self.data
+  local row1, row2 = data[yIndex], data[yIndex + 1]
+  local q11, q12 = row1[xIndex], row1[xIndex + 1]
+  local q21, q22 = row2[xIndex], row2[xIndex + 1]
+  local r1 = q11 + (q12 - q11) * tx
+  local r2 = q21 + (q22 - q21) * tx
+  return rememberResult(self, inputX, inputY, r1 + (r2 - r1) * ty)
 end
 
---todo implement linear interpolation
 local function getLinear(self, x)
-  -- Check if x is within bounds, clamp if enabled
-  if x < self.xMin or x > self.xMax then
-    if self.clampToDataRange then
-      x = clamp(x, self.xMin, self.xMax)
-    else
+  if x == self.lastInputX and self.lastInputY == nil then
+    return self.lastResult
+  end
+  local inputX = x
+
+  local xMin, xMax = self.xMin, self.xMax
+  if x < xMin then
+    if not self.clampToDataRange then return rememberResult(self, inputX, nil, nil) end
+    x = xMin
+  elseif x > xMax then
+    if not self.clampToDataRange then return rememberResult(self, inputX, nil, nil) end
+    x = xMax
+  end
+
+  local xIndices = self.xIndices
+  local xIndex = self.xLastIndex
+  local invSpan = self.xLastInvSpan
+  if x < xIndices[xIndex] then
+    repeat
+      xIndex = xIndex - 1
+    until x >= xIndices[xIndex]
+    invSpan = 1 / (xIndices[xIndex + 1] - xIndices[xIndex])
+    self.xLastIndex = xIndex
+    self.xLastInvSpan = invSpan
+  elseif x > xIndices[xIndex + 1] then
+    repeat
+      xIndex = xIndex + 1
+    until x <= xIndices[xIndex + 1]
+    invSpan = 1 / (xIndices[xIndex + 1] - xIndices[xIndex])
+    self.xLastIndex = xIndex
+    self.xLastInvSpan = invSpan
+  end
+
+  local y1Value = self.data[xIndex] or 0
+  local y2Value = self.data[xIndex + 1] or y1Value
+  return rememberResult(self, inputX, nil, y1Value + (y2Value - y1Value) * ((x - xIndices[xIndex]) * invSpan))
+end
+
+local function get(self, x, y)
+end
+
+-- Accepts [x, z] pairs with an optional header. Bare numeric two-row tables,
+-- including 2x2 tables, are reserved for the native {xValues, zValues} format.
+local function tryTransposePairs(inputData, xScale, zScale)
+  if type(inputData) ~= "table" or type(inputData[1]) ~= "table" then
+    return nil
+  end
+
+  local hasHeader = type(inputData[1][1]) == "string"
+  if not hasHeader and #inputData == 2 then
+    return nil
+  end
+  local firstDataRow = hasHeader and 2 or 1
+  local pointCount = #inputData - (firstDataRow - 1)
+  if pointCount < 2 then
+    return nil
+  end
+
+  for i = firstDataRow, #inputData do
+    local row = inputData[i]
+    if type(row) ~= "table" or #row ~= 2
+       or type(row[1]) ~= "number" or type(row[2]) ~= "number" then
       return nil
     end
   end
 
-  local x1Index
-  local x2Index
-
-  if x == self.xMax then
-    x1Index = self.xMaxIndex - 1
-    x2Index = self.xMaxIndex
-  else
-    for xIndex, xValue in ipairs(self.xIndices) do
-      if x >= xValue and x < self.xIndices[xIndex + 1] then
-        x1Index = xIndex
-        x2Index = xIndex + 1
-        break
-      end
-    end
+  local xs, zs = {}, {}
+  for i = firstDataRow, #inputData do
+    local row = inputData[i]
+    xs[#xs + 1] = row[1] * xScale
+    zs[#zs + 1] = row[2] * zScale
   end
-
-  if not x1Index or not x2Index then
-    return nil
-  end
-
-  local x1Value = self.xIndices[x1Index]
-  local x2Value = self.xIndices[x2Index]
-  local y1Value = self.data[x1Index] or 0
-  local y2Value = self.data[x2Index] or y1Value
-
-  if x2Value == x1Value then
-    return y1Value
-  end
-
-  local t = (x - x1Value) / (x2Value - x1Value)
-  return y1Value + (y2Value - y1Value) * t
+  return xs, zs
 end
 
--- Gets an interpolated value from the map at coordinates (x,y)
--- Uses linear interpolation when the data is 1D
--- @param x: The x-coordinate to look up
--- @param y: The y-coordinate to look up
--- @return: The interpolated value at (x,y), or nil if outside data range and not clamping
-local get = function(self, x, y)
-
-end
-
-local loadData = function(self, inputData)
-  --[[
-  example data from jbeam:
-  first line is _just_ the x axis header
-  every following row then has the y axis header value as the first entry
-  and then the x axis values
-        "gearRatioMap":[
-            [0, 0.5, 1]
-            [0, 0.5, 1, 1],
-            [7, 0.4, 0.9, 1],
-            [14, 0.3, 0.8, 1],
-            [21, 0.2, 0.7, 1],
-            [28, 0.1, 0.6, 1],
-            [35, 0, 0.5, 1],
-            [42, 0, 0.4, 0.9],
-            [49, 0, 0.3, 0.8],
-            [56, 0, 0.2, 0.7],
-            [63, 0, 0.1, 0.6],
-            [70, 0, 0, 0.5]
-        ]
-  ]]
-  local data = deepcopy(inputData)
+local function loadData(self, inputData, opts)
+  local xScale = (opts and opts.xScale) or 1
+  local yScale = (opts and opts.yScale) or 1
+  local zScale = (opts and opts.zScale) or 1
+  self.lastInputX = nil
+  self.lastInputY = nil
+  self.lastResult = nil
   self.is1D = false
   self.is2D = false
-  --check if the data is 1D
-  if data[1] and data[2] and #data == 2 and type(data[1][1]) == "number" and type(data[2][1]) == "number" then
+
+  local pairsX, pairsY = tryTransposePairs(inputData, xScale, zScale)
+  if pairsX then
     self.is1D = true
-    self.xIndices = data[1]
-    self.data = data[2]
+    self.xIndices = pairsX
+    self.data = pairsY
     self.xMin = self.xIndices[1]
     self.xMax = self.xIndices[#self.xIndices]
-    self.xMaxIndex = #self.xIndices
     self.yIndices = {}
     self.yMin = 0
     self.yMax = 0
-    self.yMaxIndex = 0
-
+    self.xLastIndex = 1
+    self.xLastInvSpan = 1 / (self.xIndices[2] - self.xIndices[1])
     self.get = getLinear
     return
   end
 
-  --if that data is not 1D, then it is 2D
-
-  --we expect the first row to be the header and that it has one less entry than the second row,
-  --if that is not the case (for example because it contains a label in the very first cell), fix it
-  if #data[1] == #data[2] then
-    table.remove(data[1], 1)
+  if inputData[1] and inputData[2] and #inputData == 2 and type(inputData[1][1]) == "number" and type(inputData[2][1]) == "number" then
+    self.is1D = true
+    self.xIndices = {}
+    self.data = {}
+    for i = 1, #inputData[1] do self.xIndices[i] = inputData[1][i] * xScale end
+    for i = 1, #inputData[2] do self.data[i] = inputData[2][i] * zScale end
+    self.xMin = self.xIndices[1]
+    self.xMax = self.xIndices[#self.xIndices]
+    self.yIndices = {}
+    self.yMin = 0
+    self.yMax = 0
+    self.xLastIndex = 1
+    self.xLastInvSpan = 1 / (self.xIndices[2] - self.xIndices[1])
+    self.get = getLinear
+    return
   end
-  self.xIndices = data[1]
 
+  local xInput = inputData[1]
+  local hasEmptyCorner = xInput[1] == nil
+  local firstXIndex = (hasEmptyCorner or #xInput == #inputData[2]) and 2 or 1
+  local lastXIndex = hasEmptyCorner and #inputData[2] or #xInput
+  self.xIndices = {}
+  for i = firstXIndex, lastXIndex do
+    self.xIndices[#self.xIndices + 1] = xInput[i] * xScale
+  end
   self.yIndices = {}
   self.data = {}
-  for yIndex, rowData in ipairs(data) do
-    if yIndex > 1 then
-      table.insert(self.yIndices, rowData[1])
-      local row = {}
-      for xIndex, value in ipairs(rowData) do
-        if xIndex > 1 then
-          table.insert(row, value)
-        end
-      end
-      table.insert(self.data, row)
+  for yIndex = 2, #inputData do
+    local inputRow = inputData[yIndex]
+    self.yIndices[#self.yIndices + 1] = inputRow[1] * yScale
+    local outputRow = {}
+    for xIndex = 2, #inputRow do
+      outputRow[#outputRow + 1] = inputRow[xIndex] * zScale
     end
+    self.data[#self.data + 1] = outputRow
   end
 
   self.xMin = self.xIndices[1]
   self.xMax = self.xIndices[#self.xIndices]
-  self.xMaxIndex = #self.xIndices
   self.yMin = self.yIndices[1]
   self.yMax = self.yIndices[#self.yIndices]
-  self.yMaxIndex = #self.yIndices
+  self.xLastIndex = 1
+  self.xLastInvSpan = 1 / (self.xIndices[2] - self.xIndices[1])
+  self.yLastIndex = 1
+  self.yLastInvSpan = 1 / (self.yIndices[2] - self.yIndices[1])
   self.is2D = true
   self.get = getBiLinear
 end
 
 local function reset(self)
-  --TODO
 end
 
 local methods = {
@@ -262,27 +240,25 @@ local methods = {
   loadData = loadData,
   reset = reset
 }
+methods.__index = methods
 
-local new = function(interpolationMethod) --TODO useCache, cachePrecisionX, cachePrecisionY, preFillCache)
-  local r = {
+local function new()
+  local result = {
     data = {},
     xIndices = {},
     yIndices = {},
     xMin = 0,
     xMax = 0,
-    xMaxIndex = 0,
     yMin = 0,
     yMax = 0,
-    yMaxIndex = 0,
-    clampToDataRange = false,
-    --useCache = useCache, --TODO
-    --cachePrecisionX = cachePrecisionX, --TODO
-    --cachePrecisionY = cachePrecisionY, --TODO
-    --preFillCache = preFillCache, --TODO
-    --cacheData = {} --TODO
+    xLastIndex = 1,
+    xLastInvSpan = 0,
+    yLastIndex = 1,
+    yLastInvSpan = 0,
+    clampToDataRange = false
   }
 
-  return setmetatable(r, {__index = methods})
+  return setmetatable(result, methods)
 end
 
 return {

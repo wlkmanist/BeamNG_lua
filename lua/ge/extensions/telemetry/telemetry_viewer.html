@@ -1,0 +1,1072 @@
+<!doctype html>
+<!--
+  BeamNG Telemetry JSONL Viewer
+
+  What this is
+  - A self‑contained, read‑only viewer for BeamNG telemetry exported as JSON Lines (.jsonl).
+  - No build step, no external deps; runs in a browser with local persistence.
+
+  Major features
+  - File handling: drag & drop or file picker (single file). Filename + human‑readable size shown in header.
+  - Persistence: last file contents stored in IndexedDB (key: single_file_key); view state in localStorage
+    (version 2) including: filter text, row limit, selected event names, collapsed row ids, and chart view.
+  - Summary: total events, distinct event types, time span, and a status indicator (✔/⚠/❌) with counts
+    shown in the left sidebar’s bottom‑left.
+  - Timeline: flame‑like stacked spans with pan/zoom, grid ticks, tooltips, and hover linking between chart
+    bars and table rows.
+  - Event list (left): counts per event name, selectable; always kept in sync with table and chart filters.
+  - Events table:
+      • Non‑wrapping headers and key narrow columns; vertical separators; fixed layout to avoid overlap.
+      • Name column shows a color cube and indent based on computed nesting depth.
+      • Expand/Collapse per row when it has children (▼/▶). Collapsing hides the entire subtree including
+        its matching end row. Collapsed state persists across reloads.
+      • Data column hides empty objects, hides internal fields (keys starting with "_"), and presents
+        small payloads inline using syntax highlighting. Larger payloads use a single‑line ellipsized
+        summary with an expandable pretty‑printed, highlighted block.
+      • Heuristic warnings: unmatched "start" without a corresponding "end" → assumes 0.1s duration,
+        marks the row with ⚠ in the err column, and counts it as a warning.
+  - Reset button: fixed top‑right; clears persisted state and file cache.
+
+  Implementation notes
+  - Depth/indentation is computed after chronological sorting by tracking a stack of open "start" rows.
+  - Row IDs (_i) are assigned post‑sort and used for stable hover linking, collapse persistence, and lookups.
+  - Internal fields (_i, _depth, _error) are not shown in data output and are used only for UI behavior.
+  - Security: strict CSP; no remote resources; JSON parsing is guarded; UI state is versioned for upgrades.
+
+  Formatting & style
+  - KISS: minimal code, 2‑space indentation, no external frameworks, small helpers with comments.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BeamNG Telemetry JSONL Viewer</title>
+  <style>
+    :root { --bg:#0f1115; --panel:#161a22; --muted:#9aa4b2; --text:#e6edf3; --accent:#4aa3ff; --grid:#232838; }
+    html, body { height: 100%; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color: var(--text); background: var(--bg); overflow-x: hidden; }
+    header { padding: 16px 20px; border-bottom: 1px solid var(--grid); position: relative; }
+    header h1 { margin: 0; font-size: 18px; font-weight: 600; display:flex; gap:8px; align-items:center; }
+    header .fileTitle { color: var(--muted); font-weight: 500; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wrap { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 12px; height: calc(100% - 62px); padding: 12px; box-sizing: border-box; }
+    .left, .right { background: var(--panel); border: 1px solid var(--grid); border-radius: 8px; min-height: 0; }
+    .left { display: flex; flex-direction: column; position: relative; }
+    .right { display: flex; flex-direction: column; min-height: 0; }
+    .section { padding: 12px; border-bottom: 1px solid var(--grid); }
+    .section:last-child { border-bottom: 0; }
+    .muted { color: var(--muted); }
+    .dropzone { border: 2px dashed var(--grid); border-radius: 8px; padding: 18px; text-align: center; cursor: pointer; background: #141825; transition: border-color .15s ease; }
+    .dropzone.dragover { border-color: var(--accent); background:#101525; }
+    .files { max-height: 120px; overflow: auto; margin-top: 10px; }
+    .file { font-size: 12px; padding: 6px 8px; border-radius: 6px; display: grid; grid-template-columns: 1fr auto; gap:6px; align-items: start; border: 1px solid var(--grid); margin-bottom: 6px; background:#121722; }
+    .file small { color: var(--muted); }
+    .sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .card { border: 1px solid var(--grid); border-radius: 8px; padding: 10px; background:#121722; }
+    .card h3 { margin: 0 0 6px 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+    .card .num { font-size: 18px; font-weight: 700; }
+    .controls { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+    input[type="text"] { background:#0e1320; color:var(--text); border:1px solid var(--grid); border-radius:6px; padding:8px 10px; width:220px; }
+    select { background:#0e1320; color:var(--text); border:1px solid var(--grid); border-radius:6px; padding:8px 10px; }
+    button { background: var(--accent); color:#04121e; border:0; border-radius:6px; padding:8px 10px; font-weight:600; cursor:pointer; }
+    #resetBtn { position: fixed; top: 12px; right: 16px; z-index: 100; }
+    canvas { width: 100%; height: 180px; display: block; background:#0e1320; border-radius:8px; border:1px solid var(--grid); }
+    .grid { display:grid; grid-template-columns: 120px 1fr; gap:6px; }
+    .eventNames { max-height: 220px; overflow:auto; border:1px solid var(--grid); border-radius:8px; padding:6px; background:#121722; }
+    .eventNames .row { display:flex; justify-content:space-between; padding:4px 6px; border-radius:6px; cursor:pointer; }
+    .eventNames .row:hover { background:#0e1320; }
+    .eventNames .row.active { background:#0e1320; outline:1px solid var(--accent); }
+    table { width:100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+    th, td { padding:6px; border-bottom:1px solid var(--grid); vertical-align: top; }
+    thead th { white-space: nowrap; }
+    thead th + th, tbody td + td { border-left: 1px solid var(--grid); }
+    th { text-align:left; color: var(--muted); position: sticky; top: 0; background: #121722; }
+    .section.grow { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .tableWrap { flex: 1; min-height: 200px; overflow:auto; border:1px solid var(--grid); border-radius:8px; }
+    .json { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; max-width: 100%; overflow: auto; background:#0e1320; color:#b9dbff; border:1px solid var(--grid); border-radius:6px; padding:6px; font-size:11px; line-height:1.25; }
+    .json.inline { display:inline; background:transparent; border:0; padding:0; white-space:normal; overflow:visible; }
+    .json-inline { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; color:#b9dbff; white-space: normal; word-break: break-word; overflow-wrap: anywhere; font-size: 11px; }
+    .json .json-key, .json-inline .json-key { color:#79c0ff; }
+    .json .json-string, .json-inline .json-string { color:#c3e88d; }
+    .json .json-number, .json-inline .json-number { color:#f78c6b; }
+    .json .json-boolean, .json-inline .json-boolean { color:#ffcb6b; }
+    .json .json-null, .json-inline .json-null { color:#c792ea; }
+    .nowrap { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    tbody td:nth-child(1), tbody td:nth-child(3), tbody td:nth-child(4) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    td:nth-child(3) { width: 90px; max-width: 90px; }
+    .err { color:#ff6b6b; white-space: nowrap; font-weight:700; }
+    details { max-width: 100%; }
+    td:nth-child(3) { max-width: 1px; }
+    .tag { font-size: 11px; color:#0d1b2a; background:#7dc1ff; border-radius:4px; padding:2px 6px; font-weight:700; }
+    .rowmeta { display:flex; gap:6px; align-items:center; }
+    .footer { font-size:12px; color:var(--muted); text-align:center; padding-top:8px; }
+    .hl { background:#0e1320 !important; }
+    canvas { cursor: grab; }
+    body.pan-active { user-select: none; }
+    .tooltip { position: fixed; pointer-events: none; background:#121722; color:var(--text); border:1px solid var(--grid); border-radius:6px; padding:6px 8px; font-size:12px; z-index:10; box-shadow: 0 4px 12px rgba(0,0,0,0.35); max-width: 320px; word-wrap: break-word; }
+    .status { position:absolute; left:12px; bottom:12px; font-size:16px; font-weight:800; display:flex; align-items:center; gap:8px; }
+    .status.ok { color:#95e06c; }
+    .status.warn { color:#ffd166; }
+    .status.err { color:#ff6b6b; }
+    .ellipsis { display:block; max-width:100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    @media (max-width: 900px) {
+      .wrap { grid-template-columns: 1fr; }
+    }
+  </style>
+  <meta name="color-scheme" content="dark light" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline' 'self'; script-src 'self' 'unsafe-inline'; base-uri 'none'; object-src 'none'">
+</head>
+<body>
+  <header>
+    <h1>BeamNG Telemetry JSONL Viewer <span id="fileTitle" class="fileTitle"></span></h1>
+  </header>
+  <div class="wrap">
+    <aside class="left">
+      <div class="section">
+        <div id="dropzone" class="dropzone">
+          <div><strong>Drag & drop</strong> .jsonl files here<br><span class="muted">or click to pick files</span></div>
+          <input id="fileInput" type="file" accept=".jsonl,.json" style="display:none" />
+        </div>
+        <div class="files" id="files"></div>
+      </div>
+      <div class="section">
+        <div class="controls">
+          <input id="filterInput" type="text" placeholder="Filter by event name..." />
+          <select id="limitSelect">
+            <option value="200">Show 200</option>
+            <option value="500" selected>Show 500</option>
+            <option value="1000">Show 1000</option>
+            <option value="5000">Show 5000</option>
+          </select>
+          <button id="resetBtn" title="Clear loaded data">Reset</button>
+        </div>
+      </div>
+      <div id="status" class="status"></div>
+      <div class="section">
+        <div class="grid">
+          <div class="muted">Event types</div>
+          <div class="muted" style="text-align:right">Count</div>
+        </div>
+        <div id="eventNames" class="eventNames"></div>
+      </div>
+    </aside>
+    <main class="right">
+      <div class="section">
+        <div class="sum">
+          <div class="card"><h3>Total events</h3><div class="num" id="sumEvents">0</div></div>
+          <div class="card"><h3>Event types</h3><div class="num" id="sumTypes">0</div></div>
+          <div class="card"><h3>Time span (s)</h3><div class="num" id="sumSpan">0</div></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="rowmeta" style="justify-content:space-between">
+          <div class="rowmeta">
+            <span class="tag">Timeline</span>
+            <span class="muted">stacked spans (flamegraph)</span>
+          </div>
+          <div class="muted" id="chartLegend"></div>
+        </div>
+        <canvas id="chart" aria-label="Flame-like stacked events over time"></canvas>
+      </div>
+      <div class="section grow">
+        <div class="rowmeta" style="justify-content:space-between; margin-bottom:6px">
+          <div class="rowmeta"><span class="tag">Events</span><span class="muted">first N events (filtered)</span></div>
+          <div class="muted" id="tableInfo"></div>
+        </div>
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:90px">t (s)</th>
+                <th style="width:220px">name</th>
+                <th style="width:90px">dur (s)</th>
+                <th style="width:70px">err</th>
+                <th>data</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div class="footer" id="parseErrors"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // State
+    const state = {
+      files: [], // { name, size, text }
+      events: [], // merged: { t, name, file, ...rest }
+      perName: new Map(), // name -> {count, color}
+      minT: Infinity,
+      maxT: -Infinity,
+      filter: '',
+      selectedNames: new Set(),
+      parseErrors: 0,
+      limit: 500,
+      storageKey: 'telemetryViewerState_v1',
+      view: null, // { t0, t1 }
+      timeOffsetSec: null, // absolute = t + offset, when we can infer
+      firstIsoSec: null,
+      firstIsoStr: '',
+      hoverName: null,
+        hoverId: null,
+        collapsed: new Set(), // _i of rows collapsed (hides deeper rows until depth decreases)
+    };
+
+    // Utils
+    const fmt = n => n.toLocaleString();
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const pickColor = (i) => {
+      // pleasant palette
+      const palette = [
+        '#7dc1ff','#ffd166','#95e06c','#f78c6b','#c792ea','#82aaff','#ffcb6b','#89ddff','#f2a2e8','#8bd5ca',
+      ];
+      return palette[i % palette.length];
+    };
+    function truncate(obj, maxLen = 240) {
+      const s = typeof obj === 'string' ? obj : JSON.stringify(obj);
+      if (s.length <= maxLen) return s;
+      return s.slice(0, maxLen) + '…';
+    }
+    // Build a sanitized copy of an event for UI display (no engine metadata)
+    function prepareDisplayData(ev) {
+      const out = {};
+      for (const k in ev) {
+        if (k === 't' || k === 'name' || k === 'file' || k === 'duration' || k === 'endT') continue;
+        if (k[0] === '_') continue; // hide any internal fields like _i, _error, _depth
+        out[k] = ev[k];
+      }
+      return out;
+    }
+    // Return true if the given event has any children (next rows with greater depth)
+    function hasChildrenFor(filtered, ev) {
+      const curDepth = ev._depth || 0;
+      const pos = filtered.findIndex(x => x._i === ev._i);
+      if (pos < 0) return false;
+      for (let k = pos + 1; k < filtered.length; k++) {
+        const d = filtered[k]._depth || 0;
+        if (d > curDepth) return true;
+        if (d <= curDepth) return false;
+      }
+      return false;
+    }
+    // Compute visible rows given the collapsed set (collapses hide subtree including matching end)
+    function buildVisibleList(filtered) {
+      const visible = [];
+      const collapsedStack = [];
+      for (const ev of filtered) {
+        const depth = ev._depth || 0;
+        // Exit collapsed regions when reaching shallower depth or any non-end row at same depth
+        while (collapsedStack.length) {
+          const top = collapsedStack[collapsedStack.length - 1];
+          if (depth < top.depth || (depth === top.depth && ev.type !== 'end')) { collapsedStack.pop(); continue; }
+          break;
+        }
+        const top = collapsedStack[collapsedStack.length - 1];
+        const isHidden = !!top && (depth > top.depth || (depth === top.depth && ev.type === 'end'));
+        if (!isHidden) visible.push(ev);
+        if (state.collapsed.has(ev._i)) collapsedStack.push({ depth, id: ev._i });
+      }
+      return visible;
+    }
+    function formatBytes(bytes) {
+      if (!isFinite(bytes)) return '';
+      const units = ['B','KB','MB','GB','TB'];
+      let i = 0, v = bytes;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+      return (i === 0 ? v : v.toFixed(1)) + ' ' + units[i];
+    }
+    function safeParse(line) {
+      try { return JSON.parse(line); } catch (e) {
+        return null;
+      }
+    }
+    function parseIsoTimeToSeconds(iso) {
+      const ms = Date.parse(iso);
+      return isFinite(ms) ? (ms / 1000) : undefined;
+    }
+    function extractTime(obj) {
+      if (typeof obj.t === 'number' && isFinite(obj.t)) return obj.t;
+      if (typeof obj.time === 'number' && isFinite(obj.time)) return obj.time;
+      if (typeof obj.Time === 'string') return parseIsoTimeToSeconds(obj.Time);
+      if (typeof obj.startTime === 'string') return parseIsoTimeToSeconds(obj.startTime);
+      return undefined;
+    }
+    function maybeCaptureAbsoluteMapping(obj, tNumeric) {
+      const isoStr = obj.startTime || obj.Time;
+      if (!isoStr) return;
+      const isoSec = parseIsoTimeToSeconds(isoStr);
+      if (!isFinite(isoSec)) return;
+      if (state.firstIsoSec == null || isoSec < state.firstIsoSec) {
+        state.firstIsoSec = isoSec;
+        state.firstIsoStr = new Date(isoSec * 1000).toISOString();
+      }
+      if (isFinite(tNumeric) && state.timeOffsetSec == null) {
+        const candidate = isoSec - tNumeric;
+        const baseT = isFinite(state.minT) ? state.minT : tNumeric;
+        const absStart = baseT + candidate;
+        const year2005 = Date.parse('2005-01-01T00:00:00Z') / 1000;
+        const nowPlus = Date.now() / 1000 + 86400; // allow slight future skew
+        if (absStart > year2005 && absStart < nowPlus) {
+          state.timeOffsetSec = candidate;
+        }
+      }
+    }
+    function formatHMS(sec) {
+      const d = new Date(sec * 1000);
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      const ss = String(d.getSeconds()).padStart(2,'0');
+      return `${hh}:${mm}:${ss}`;
+    }
+    function formatDate(sec) {
+      const d = new Date(sec * 1000);
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${day}`;
+    }
+    function byNameFilter(ev) {
+      // Always reflect both text filter and explicit selected names
+      const matchesText = state.filter ? ev.name.toLowerCase().includes(state.filter) : true;
+      const matchesSelection = state.selectedNames.size === 0 || state.selectedNames.has(ev.name);
+      return matchesText && matchesSelection;
+    }
+
+    // Persistence (IndexedDB for files, localStorage for view)
+    let idbPromise = null;
+    function openDB() {
+      if (idbPromise) return idbPromise;
+      idbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open('telemetryViewerDB', 1);
+        req.onupgradeneeded = (e) => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'key' });
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      return idbPromise;
+    }
+    async function idbPutFiles(files) {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('files', 'readwrite');
+        const store = tx.objectStore('files');
+        for (const f of files) store.put(f);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+    async function idbGetFiles(keys) {
+      const db = await openDB();
+      return Promise.all(keys.map(key => new Promise((resolve, reject) => {
+        const tx = db.transaction('files', 'readonly');
+        const store = tx.objectStore('files');
+        const req = store.get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      })));
+    }
+    async function idbClearFiles() {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('files', 'readwrite');
+        const store = tx.objectStore('files');
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    function makeKeyForFile(f) {
+      // single-file mode; stable key per content hash surrogate
+      return 'single_file_key';
+    }
+    let saveTimer = null;
+    function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveViewState, 250); }
+    async function saveViewState() {
+      try {
+        // Ensure files have keys and are stored in IDB
+        const filesToPersist = [];
+        const f = state.files[0];
+        if (f) {
+          if (!f.key) f.key = makeKeyForFile(f);
+          filesToPersist.push({ key: f.key, name: f.name, size: f.size, text: f.text });
+          await idbPutFiles(filesToPersist);
+        }
+
+        // Save lightweight view config
+        const cfg = {
+          version: 2,
+          filter: state.filter,
+          limit: state.limit,
+          selectedNames: Array.from(state.selectedNames),
+          collapsed: Array.from(state.collapsed || []),
+          fileKeys: filesToPersist.map(f => f.key),
+          view: state.view
+        };
+        localStorage.setItem(state.storageKey, JSON.stringify(cfg));
+      } catch (e) {
+        console.warn('Failed saving view state', e);
+      }
+    }
+    async function restoreViewState() {
+      try {
+        const raw = localStorage.getItem(state.storageKey);
+        if (!raw) return;
+        const cfg = JSON.parse(raw);
+        // Restore files from IDB
+        if (Array.isArray(cfg.fileKeys) && cfg.fileKeys.length) {
+          const files = (await idbGetFiles([cfg.fileKeys[0]])).filter(Boolean);
+          if (files.length) {
+            state.files = [{ name: files[0].name, size: files[0].size, text: files[0].text, key: files[0].key }];
+            renderFiles();
+            // reset & parse single file
+            state.events = []; state.perName = new Map(); state.minT = Infinity; state.maxT = -Infinity; state.parseErrors = 0;
+            parseFiles(state.files);
+          }
+        }
+        // Restore view controls
+        if (typeof cfg.filter === 'string') {
+          state.filter = cfg.filter.toLowerCase();
+          document.getElementById('filterInput').value = cfg.filter;
+        }
+        if (typeof cfg.limit === 'number') {
+          state.limit = cfg.limit;
+          document.getElementById('limitSelect').value = String(cfg.limit);
+        }
+        if (Array.isArray(cfg.selectedNames)) {
+          state.selectedNames = new Set(cfg.selectedNames);
+        }
+        if (Array.isArray(cfg.collapsed)) {
+          state.collapsed = new Set(cfg.collapsed);
+        }
+        if (cfg.view && typeof cfg.view.t0 === 'number' && typeof cfg.view.t1 === 'number') {
+          state.view = { t0: cfg.view.t0, t1: cfg.view.t1 };
+        }
+        // Re-render with restored selection
+        renderEventNames();
+        drawChart();
+        renderTable();
+      } catch (e) {
+        console.warn('Failed restoring view state', e);
+      }
+    }
+
+    // File handling
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const filesDiv = document.getElementById('files');
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      handleFiles(e.dataTransfer.files);
+    });
+    fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+    async function handleFiles(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      const file = fileList[0]; // single-file mode
+      const text = await new Promise((resolve) => { const fr = new FileReader(); fr.onload = () => resolve(fr.result); fr.readAsText(file); });
+      state.files = [{ name: file.name, size: file.size, text }];
+      state.collapsed = new Set(); // reset collapsed map for new file
+      renderFiles();
+      // Re-parse from scratch
+      state.events = []; state.perName = new Map(); state.minT = Infinity; state.maxT = -Infinity; state.parseErrors = 0;
+      parseFiles(state.files);
+      scheduleSave();
+      updateStatus();
+    }
+
+    function renderFiles() {
+      filesDiv.innerHTML = '';
+      const f = state.files[0];
+      if (!f) { document.getElementById('fileTitle').textContent = ''; return; }
+      document.getElementById('fileTitle').textContent = `– ${f.name} (${formatBytes(f.size)})`;
+      // No separate size list item; shown in the title now
+      updateStatus();
+    }
+
+    function parseFiles(files) {
+      let added = 0;
+      const pendingStarts = new Map(); // name -> [{idx, t}]
+      for (const f of files) {
+        const lines = f.text.replace(/\uFEFF/g, '').split(/\r?\n/);
+        for (const line of lines) {
+          if (!line || !line.trim()) continue;
+          const obj = safeParse(line);
+          if (!obj) { state.parseErrors++; continue; }
+          const name = obj.name || obj.Name || '(unknown)';
+          const t = extractTime(obj);
+          const ev = { ...obj, name, t, file: f.name };
+          maybeCaptureAbsoluteMapping(obj, t);
+          // Update t-range if present
+          if (typeof ev.t === 'number' && isFinite(ev.t)) {
+            state.minT = Math.min(state.minT, ev.t);
+            state.maxT = Math.max(state.maxT, ev.t);
+          }
+          // Count per name
+          if (!state.perName.has(ev.name)) state.perName.set(ev.name, { count: 0, color: pickColor(state.perName.size) });
+          state.perName.get(ev.name).count++;
+          // Track durations by matching start/end
+          if (ev.type === 'start') {
+            if (!pendingStarts.has(ev.name)) pendingStarts.set(ev.name, []);
+            pendingStarts.get(ev.name).push({ idx: state.events.length, t: ev.t });
+            state.events.push(ev);
+          } else if (ev.type === 'end') {
+            const stack = pendingStarts.get(ev.name);
+            if (stack && stack.length) {
+              const start = stack.pop();
+              const dur = (typeof ev.t === 'number' && typeof start.t === 'number') ? Math.max(0, ev.t - start.t) : undefined;
+              ev.duration = dur;
+              state.events.push(ev);
+              // Also annotate the matching start with back-link durationEndT (helps display if needed)
+              if (dur !== undefined) {
+                state.events[start.idx].duration = dur;
+                state.events[start.idx].endT = ev.t;
+              }
+            } else {
+              state.events.push(ev);
+            }
+          } else {
+            state.events.push(ev);
+          }
+          added++;
+        }
+      }
+      // Pass 2: mark unmatched starts as warnings and assume minimal duration so they are visible
+      for (const [name, stack] of pendingStarts.entries()) {
+        if (!stack || !stack.length) continue;
+        for (const item of stack) {
+          const startEv = state.events[item.idx];
+          if (startEv && startEv.type === 'start' && (startEv.endT == null)) {
+            startEv.duration = 0.1;
+            startEv._error = 'missing end';
+          }
+        }
+      }
+      // Sort by time if available; compute nesting depths for indentation/expand-collapse
+      state.events.sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+      // Depth computation: maintain a stack of open starts; depth is stack length
+      (function computeDepths(){
+        const stack = [];
+        for (const ev of state.events) {
+          if (ev.type === 'start') {
+            ev._depth = stack.length;
+            stack.push(ev);
+          } else if (ev.type === 'end') {
+            let depth = stack.length;
+            for (let i = stack.length - 1; i >= 0; i--) {
+              if (stack[i].name === ev.name) { depth = i; stack.splice(i, 1); break; }
+            }
+            ev._depth = depth;
+          } else {
+            ev._depth = stack.length;
+          }
+        }
+      })();
+      // Assign stable indices for read-only identification across views
+      state.events.forEach((ev, idx) => { ev._i = idx; });
+      updateSummary();
+      renderEventNames();
+      drawChart();
+      renderTable();
+      renderHighlights();
+      renderSpecials();
+    }
+
+    // Summary
+    const sumEvents = document.getElementById('sumEvents');
+    const sumTypes = document.getElementById('sumTypes');
+    const sumSpan = document.getElementById('sumSpan');
+    const parseErrorsEl = document.getElementById('parseErrors');
+    function updateSummary() {
+      sumEvents.textContent = fmt(state.events.length);
+      sumTypes.textContent = fmt(state.perName.size);
+      const span = (isFinite(state.minT) && isFinite(state.maxT)) ? (state.maxT - state.minT) : 0;
+      sumSpan.textContent = span.toFixed(3);
+      parseErrorsEl.textContent = state.parseErrors ? `Parse errors: ${fmt(state.parseErrors)} lines` : '';
+      updateStatus();
+    }
+
+    function updateStatus() {
+      const el = document.getElementById('status');
+      if (!el) return;
+      const hasFile = !!state.files[0];
+      let warn = 0, err = 0;
+      // Count structural parse errors
+      err += state.parseErrors || 0;
+      // Count semantic event warnings (missing end)
+      for (const ev of state.events) if (ev._error === 'missing end') warn++;
+      if (!hasFile) { el.className = 'status'; el.textContent = ''; return; }
+      if (err > 0) {
+        el.className = 'status err';
+        el.textContent = `❌ ${fmt(err)} parse error${err!==1?'s':''}` + (warn?` · ⚠ ${fmt(warn)} warning${warn!==1?'s':''}`:'');
+      } else if (warn > 0) {
+        el.className = 'status warn';
+        el.textContent = `⚠ ${fmt(warn)} warning${warn!==1?'s':''}`;
+      } else {
+        el.className = 'status ok';
+        el.textContent = '✔ OK';
+      }
+    }
+
+    // Event names list
+    const eventNamesDiv = document.getElementById('eventNames');
+    function renderEventNames() {
+      // Recompute counts from events, respecting text filter only (not selectedNames)
+      const counts = new Map();
+      const useFilter = !!state.filter;
+      for (const ev of state.events) {
+        if (useFilter && !(ev.name.toLowerCase().includes(state.filter))) continue;
+        const meta = state.perName.get(ev.name) || { count: 0, color: pickColor(0) };
+        const cur = counts.get(ev.name) || { count: 0, color: meta.color };
+        cur.count++;
+        counts.set(ev.name, cur);
+      }
+      const items = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
+      eventNamesDiv.innerHTML = '';
+      for (const [name, meta] of items) {
+        const row = document.createElement('div');
+        row.className = 'row' + (state.selectedNames.has(name) ? ' active' : '');
+        row.style.borderLeft = `4px solid ${meta.color}`;
+        row.innerHTML = `<div>${name}</div><div class="muted">${fmt(meta.count)}</div>`;
+        row.addEventListener('click', () => {
+          if (state.selectedNames.has(name)) state.selectedNames.delete(name); else state.selectedNames.add(name);
+          state.view = null; // ensure canvas matches selection
+          renderEventNames(); drawChart(); renderTable(); renderHighlights(); scheduleSave();
+        });
+        row.addEventListener('mouseenter', () => { state.hoverName = name; requestAnimationFrame(drawChart); });
+        row.addEventListener('mouseleave', () => { state.hoverName = null; requestAnimationFrame(drawChart); });
+        eventNamesDiv.appendChild(row);
+      }
+    }
+
+    // Filter + limit controls
+    const filterInput = document.getElementById('filterInput');
+    filterInput.addEventListener('input', (e) => {
+      state.filter = (e.target.value || '').toLowerCase();
+      state.view = null; // reset zoom so filtered items are visible
+      renderEventNames();
+      renderTable();
+      drawChart();
+      renderHighlights();
+      scheduleSave();
+    });
+    const limitSelect = document.getElementById('limitSelect');
+    limitSelect.addEventListener('change', (e) => { state.limit = parseInt(e.target.value, 10) || 500; renderTable(); scheduleSave(); });
+    const resetBtn = document.getElementById('resetBtn');
+    resetBtn.addEventListener('click', () => {
+      state.files = []; state.events = []; state.perName = new Map(); state.minT = Infinity; state.maxT = -Infinity; state.filter = ''; state.selectedNames = new Set(); state.parseErrors = 0; state.limit = 500;
+      filesDiv.innerHTML = ''; eventNamesDiv.innerHTML = ''; document.getElementById('tbody').innerHTML = ''; document.getElementById('chart').getContext('2d').clearRect(0,0,chart.width,chart.height);
+      filterInput.value = ''; updateSummary(); document.getElementById('chartLegend').textContent=''; document.getElementById('tableInfo').textContent=''; document.getElementById('fileTitle').textContent='';
+      localStorage.removeItem(state.storageKey);
+      idbClearFiles().catch(()=>{});
+    });
+
+    // Chart (simple histogram)
+    const chart = document.getElementById('chart');
+    const ctx = chart.getContext('2d');
+    let needsCanvasResize = true;
+    function sizeCanvasToContainer(canvas, height = 180) {
+      const container = canvas.parentElement;
+      const styles = getComputedStyle(container);
+      const paddingX = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const rect = container.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = Math.max(300, Math.floor(rect.width - paddingX));
+      canvas.style.width = cssW + 'px';
+      canvas.style.height = height + 'px';
+      canvas.width = Math.floor(cssW * dpr);
+      canvas.height = Math.floor(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    const chartLegend = document.getElementById('chartLegend');
+    function ellipsizeLabel(ctx, text, maxPx) {
+      if (maxPx <= 8) return '';
+      const full = ctx.measureText(text).width;
+      if (full <= maxPx) return text;
+      const ell = '…';
+      const ellW = ctx.measureText(ell).width;
+      let lo = 0, hi = text.length;
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const s = text.slice(0, mid) + ell;
+        if (ctx.measureText(s).width <= maxPx) lo = mid + 1; else hi = mid;
+      }
+      const cut = Math.max(0, lo - 1);
+      return (cut > 0 ? text.slice(0, cut) : '') + ell;
+    }
+    function drawGrid(ctx, pad, leftTimePad, innerTop, W, H, minT, maxT, pxPerSec) {
+      // Alternate 10s stripes to improve motion sense when panning
+      const step10 = 10;
+      const start10 = Math.floor(minT / step10) * step10;
+      let toggle = Math.floor(minT / step10) % 2;
+      for (let t = start10; t <= maxT + step10; t += step10) {
+        const x0 = Math.round(leftTimePad + (t - minT) * pxPerSec);
+        const x1 = Math.round(leftTimePad + (t + step10 - minT) * pxPerSec);
+        if ((toggle & 1) === 1) {
+          ctx.fillStyle = 'rgba(255,255,255,0.028)';
+          ctx.fillRect(x0, innerTop, Math.max(0, x1 - x0), H - innerTop - pad);
+        }
+        toggle++;
+      }
+      function drawLines(stepSec, color, width) {
+        const start = Math.floor(minT / stepSec) * stepSec;
+        ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath();
+        for (let t = start; t <= maxT + stepSec; t += stepSec) {
+          const x = Math.round(leftTimePad + (t - minT) * pxPerSec) + 0.5;
+          ctx.moveTo(x, pad);
+          ctx.lineTo(x, H - pad);
+        }
+        ctx.stroke();
+      }
+      // Strongest first so thinner lines can overlay
+      drawLines(600, 'rgba(59,78,128,0.45)', 1.2);  // 10 min
+      drawLines(60,  'rgba(49,64,102,0.35)', 1);    // 1 min
+      drawLines(10,  'rgba(40,49,73,0.22)', 1);     // 10 s
+    }
+    function drawTicks(ctx, pad, leftTimePad, topRuler, W, H, minT, maxT, pxPerSec) {
+      const innerTop = pad + topRuler, innerBottom = H - pad;
+      // left column absolute time/date if we have mapping
+      ctx.fillStyle = '#9aa4b2';
+      ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial';
+      if (state.timeOffsetSec != null) {
+        const absStart = minT + state.timeOffsetSec;
+        const dateStr = formatDate(absStart);
+        const timeStr = formatHMS(absStart);
+        ctx.textAlign = 'left';
+        ctx.fillText(dateStr, 8, pad + 12);
+        ctx.fillText(timeStr, 8, pad + 28);
+      } else if (state.firstIsoStr) {
+        ctx.textAlign = 'left';
+        ctx.fillText(state.firstIsoStr.slice(0,10), 8, pad + 12);
+      }
+
+      // tick helpers
+      function drawTickGrid(stepSec, color, heightPx, labelEvery) {
+        const start = Math.floor(minT / stepSec) * stepSec;
+        ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath();
+        ctx.fillStyle = '#9aa4b2';
+        let i = 0;
+        for (let t = start; t <= maxT + stepSec; t += stepSec, i++) {
+          const x = Math.round(leftTimePad + (t - minT) * pxPerSec);
+          // draw ticks in the top ruler band only
+          ctx.moveTo(x, pad);
+          ctx.lineTo(x, pad + heightPx);
+          if ((labelEvery && (i % labelEvery === 0)) || stepSec === 10) {
+            const label = (t - state.minT).toFixed(0) + 's';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(label, x, 2);
+          }
+        }
+        ctx.stroke();
+      }
+      // 10s (light), 60s (medium), 600s (strong)
+      drawTickGrid(10, '#283149', 6, 0);
+      drawTickGrid(60, '#314066', 10, 1);
+      drawTickGrid(600, '#3b4e80', 14, 1);
+    }
+    function drawChart() {
+      if (needsCanvasResize) { sizeCanvasToContainer(chart, 180); needsCanvasResize = false; }
+      ctx.clearRect(0, 0, chart.width, chart.height);
+      if (!isFinite(state.minT) || !isFinite(state.maxT) || state.events.length === 0) return;
+      const filtered = state.events.filter(byNameFilter).filter(e => typeof e.t === 'number' && isFinite(e.t));
+      if (filtered.length === 0) return;
+      const W = chart.width, H = chart.height; const pad = 12; const leftTimePad = 64; const topRuler = 22; const innerTop = pad + topRuler; const innerH = H - innerTop - pad; const innerW = W - pad - leftTimePad;
+      const globalMin = state.minT, globalMax = state.maxT;
+      const viewMin = state.view?.t0 ?? globalMin;
+      const viewMax = state.view?.t1 ?? globalMax;
+      const minT = Math.max(globalMin, viewMin);
+      const maxT = Math.min(globalMax, viewMax);
+      const span = Math.max(1e-6, maxT - minT);
+      const pxPerSec = innerW / span;
+      const laneHeight = 18; const laneGap = 4;
+
+      // Build spans from start events with duration; also include zero-duration markers for other events
+      const spans = [];
+      for (const ev of filtered) {
+        if (ev.type === 'start' && typeof ev.duration === 'number' && ev.duration > 0) {
+          spans.push({ name: ev.name, t0: ev.t, t1: ev.t + ev.duration, eid: ev._i });
+        } else if (!ev.type) {
+          // Treat instantaneous events as tiny spans to be visible
+          const w = Math.max(0.05, span * 0.002);
+          spans.push({ name: ev.name, t0: ev.t, t1: ev.t + w, eid: ev._i });
+        }
+      }
+      spans.sort((a,b) => a.t0 - b.t0 || (b.t1 - b.t0) - (a.t1 - a.t0));
+
+      // Assign lanes greedily (no overlap per lane)
+      const lanes = []; // last end time per lane
+      for (const s of spans) {
+        let laneIdx = 0;
+        for (; laneIdx < lanes.length; laneIdx++) if (s.t0 >= lanes[laneIdx]) break;
+        if (laneIdx === lanes.length) lanes.push(s.t1); else lanes[laneIdx] = s.t1;
+        s.lane = laneIdx;
+      }
+
+      // grid background + ticks
+      drawGrid(ctx, pad, leftTimePad, innerTop, W, H, minT, maxT, pxPerSec);
+      drawTicks(ctx, pad, leftTimePad, topRuler, W, H, minT, maxT, pxPerSec);
+      // baseline per lane row
+      ctx.strokeStyle = '#1b2133'; ctx.lineWidth = 1; ctx.beginPath();
+      for (let l = 0; l < Math.max(1, lanes.length); l++) {
+        const y = innerTop + l * (laneHeight + laneGap) + laneHeight;
+        ctx.moveTo(leftTimePad, y); ctx.lineTo(W - pad, y);
+      }
+      ctx.stroke();
+
+      const colorFor = (n) => state.perName.get(n)?.color || '#7dc1ff';
+      // store span rects for hit-testing
+      const spanRects = [];
+      ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      for (let i = 0; i < spans.length; i++) {
+        const s = spans[i];
+        const x = Math.round(leftTimePad + (s.t0 - minT) * pxPerSec);
+        const w = Math.max(2, Math.round((s.t1 - s.t0) * pxPerSec));
+        const y = innerTop + s.lane * (laneHeight + laneGap);
+        const isSpecificHover = state.hoverId != null;
+        const isNameHover = state.hoverName != null && state.hoverId == null;
+        let isMatch = true;
+        if (isSpecificHover) {
+          isMatch = String(s.eid) === String(state.hoverId);
+        } else if (isNameHover) {
+          isMatch = state.hoverName === s.name;
+        }
+        const isHoverActive = isSpecificHover || isNameHover;
+        ctx.globalAlpha = isHoverActive ? (isMatch ? 1 : 0.25) : 1;
+        ctx.fillStyle = colorFor(s.name);
+        ctx.fillRect(x, y, w, laneHeight);
+        if (isHoverActive && isMatch) {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = '#e6edf3';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), laneHeight - 1);
+        }
+        // label if wide enough
+        if (w > 48) {
+          const labelPadding = 8;
+          const labelMax = Math.max(0, w - labelPadding * 2);
+          if (labelMax > 12) {
+            const label = ellipsizeLabel(ctx, s.name, labelMax);
+            ctx.fillStyle = '#0b0f1a';
+            // clip to bar to avoid spill/cut by canvas edges
+            ctx.save();
+            ctx.beginPath(); ctx.rect(x+1, y+1, w-2, laneHeight-2); ctx.clip();
+            ctx.fillText(label, x + labelPadding, y + laneHeight / 2);
+            ctx.restore();
+          }
+        }
+        spanRects.push({ x, y, w, h: laneHeight, idx: i, name: s.name, t0: s.t0, t1: s.t1, eid: s.eid });
+      }
+      ctx.globalAlpha = 1;
+
+      // Legend by total duration per name; show session first if present
+      const totals = new Map();
+      for (const s of spans) totals.set(s.name, (totals.get(s.name) || 0) + (s.t1 - s.t0));
+      const entries = [...totals.entries()].sort((a,b)=>{
+        if (a[0] === 'session') return -1; if (b[0] === 'session') return 1; return b[1]-a[1];
+      }).slice(0,8);
+      const legend = entries.map(([name,len])=>{
+        const color = colorFor(name);
+        return `<span style=\"display:inline-flex;align-items:center;gap:6px;margin-left:10px\"><span style=\"width:10px;height:10px;background:${color};display:inline-block;border-radius:2px\"></span>${name} (${len.toFixed(2)}s)</span>`;
+      }).join('');
+      chartLegend.innerHTML = legend;
+
+      // Interactions: zoom/pan
+      installChartInteractions(minT, maxT, span, pxPerSec, leftTimePad, innerW, spanRects);
+    }
+
+    // Simple mouse wheel zoom and drag pan
+    let isPanning = false; let panStartX = 0; let panStartView = null;
+    const tooltip = document.createElement('div'); tooltip.className = 'tooltip'; tooltip.style.display = 'none'; document.body.appendChild(tooltip);
+    function installChartInteractions(minT, maxT, span, pxPerSec, padLeft, innerW, spanRects) {
+      chart.onwheel = (e) => {
+        e.preventDefault();
+        const dir = Math.sign(e.deltaY);
+        const mouseX = Math.max(0, Math.min(innerW, e.offsetX - padLeft));
+        const clampedX = Math.max(0, Math.min(innerW, mouseX));
+        const focusT = minT + (clampedX / pxPerSec);
+        const factor = dir > 0 ? 1.15 : 1/1.15; // zoom step
+        const v = state.view ?? { t0: state.minT, t1: state.maxT };
+        const newSpan = Math.max(0.1, Math.min(state.maxT - state.minT, (v.t1 - v.t0) * factor));
+        const k = (focusT - v.t0) / (v.t1 - v.t0 || 1);
+        let t0 = focusT - newSpan * k;
+        let t1 = t0 + newSpan;
+        // clamp to global
+        const g0 = state.minT, g1 = state.maxT;
+        if (t0 < g0) { t1 += (g0 - t0); t0 = g0; }
+        if (t1 > g1) { t0 -= (t1 - g1); t1 = g1; }
+        state.view = { t0, t1 };
+        scheduleSave();
+        requestAnimationFrame(drawChart);
+      };
+      chart.onmousemove = (e) => {
+        if (isPanning) { tooltip.style.display = 'none'; return; }
+        const rect = chart.getBoundingClientRect();
+        const mx = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const my = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        const hit = spanRects.find(r => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h);
+        // highlight matching row by unique eid if possible
+        const rows = document.querySelectorAll('#tbody tr');
+        rows.forEach(tr => tr.classList.remove('hl'));
+        if (hit) {
+          tooltip.style.display = 'block';
+          const tx = Math.min(window.innerWidth - 340, e.clientX + 10);
+          const ty = Math.min(window.innerHeight - 120, e.clientY + 10);
+          tooltip.style.left = tx + 'px';
+          tooltip.style.top = ty + 'px';
+          tooltip.innerHTML = `<b>${hit.name}</b><br>${(hit.t0).toFixed(3)}s → ${(hit.t1).toFixed(3)}s<br>${(hit.t1-hit.t0).toFixed(3)}s`;
+          let done = false;
+          for (const tr of rows) { if (tr.dataset.eid === String(hit.eid)) { tr.classList.add('hl'); done = true; break; } }
+          if (!done) { for (const tr of rows) { if (tr.dataset.name === hit.name) { tr.classList.add('hl'); break; } } }
+        } else {
+          tooltip.style.display = 'none';
+        }
+      };
+      chart.onclick = (e) => {
+        const rect = chart.getBoundingClientRect();
+        const mx = e.clientX - rect.left; const my = e.clientY - rect.top;
+        const hit = spanRects.find(r => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h);
+        if (!hit) return;
+        const rows = document.querySelectorAll('#tbody tr');
+        for (const tr of rows) {
+          if (tr.dataset.eid === String(hit.eid)) { tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); tr.classList.add('hl'); setTimeout(()=>tr.classList.remove('hl'), 1000); return; }
+        }
+        for (const tr of rows) { if (tr.dataset.name === hit.name) { tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); tr.classList.add('hl'); setTimeout(()=>tr.classList.remove('hl'), 1000); return; } }
+      };
+      chart.onmousedown = (e) => { isPanning = true; document.body.classList.add('pan-active'); panStartX = e.clientX; panStartView = state.view ?? { t0: state.minT, t1: state.maxT }; };
+      window.onmouseup = () => { isPanning = false; document.body.classList.remove('pan-active'); scheduleSave(); };
+      window.onmousemove = (e) => {
+        if (!isPanning) return;
+        const dx = e.clientX - panStartX;
+        const dt = -dx / pxPerSec;
+        let t0 = panStartView.t0 + dt;
+        let t1 = panStartView.t1 + dt;
+        const g0 = state.minT, g1 = state.maxT;
+        const spanV = t1 - t0;
+        if (t0 < g0) { t0 = g0; t1 = g0 + spanV; }
+        if (t1 > g1) { t1 = g1; t0 = g1 - spanV; }
+        state.view = { t0, t1 };
+        scheduleSave();
+        requestAnimationFrame(drawChart);
+      };
+      chart.ondblclick = () => { state.view = null; scheduleSave(); drawChart(); };
+    }
+
+    // Redraw on resize
+    let resizeTimer;
+    window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { needsCanvasResize = true; drawChart(); }, 100); });
+
+    // Restore on load
+    restoreViewState();
+
+    // Table
+    const tbody = document.getElementById('tbody');
+    const tableInfo = document.getElementById('tableInfo');
+    function renderTable() {
+      tbody.innerHTML = '';
+      let rows = 0; const lim = state.limit;
+      const filtered = state.events.filter(byNameFilter);
+      tableInfo.textContent = `${fmt(filtered.length)} events (showing up to ${fmt(lim)})`;
+      // Build visible list considering collapsed ancestors; keep collapsed regions until their matching end passes
+      const visible = buildVisibleList(filtered);
+
+      for (let idx = 0; idx < visible.length; idx++) {
+        const ev = visible[idx];
+        if (rows >= lim) break;
+        const tr = document.createElement('tr'); tr.dataset.name = ev.name; tr.dataset.eid = String(ev._i);
+        const t = (typeof ev.t === 'number' && isFinite(ev.t)) ? ev.t.toFixed(3) : '';
+        const dur = (typeof ev.duration === 'number' && isFinite(ev.duration)) ? ev.duration.toFixed(3) : '';
+        const data = prepareDisplayData(ev);
+        const color = state.perName.get(ev.name)?.color || '#7dc1ff';
+          // Build data cell content:
+          // - hide empty {}
+          // - pretty-show if <= 6 lines, otherwise keep collapsible
+          let dataHtml = '';
+          try {
+            const pretty = JSON.stringify(data, null, 2);
+            const isEmptyObj = pretty === '{}' && Object.keys(data).length === 0;
+            if (!isEmptyObj) {
+              const lineCount = (pretty.match(/\n/g) || []).length + 1;
+              if (lineCount <= 6) {
+                const compact = JSON.stringify(data);
+                // syntaxHighlightJSON already escapes and wraps tokens; wrap in json-inline to reuse colors
+                dataHtml = `<span class="json-inline">${syntaxHighlightJSON(compact)}</span>`;
+              } else {
+                const summary = escapeHtml(JSON.stringify(data));
+                dataHtml = `<details><summary><span class="ellipsis">${summary}</span></summary><pre class="json">${syntaxHighlightJSON(data)}</pre></details>`;
+              }
+            }
+          } catch (_) {
+            // Fallback to previous behavior on unexpected data
+            dataHtml = `<details><summary>${truncate(data)}</summary><pre class="json">${syntaxHighlightJSON(data)}</pre></details>`;
+          }
+        const hasChildren = hasChildrenFor(filtered, ev);
+        const isCollapsed = state.collapsed.has(ev._i);
+        const toggle = hasChildren ? (isCollapsed ? '▶' : '▼') : '';
+        tr.innerHTML = `
+          <td>${t}</td>
+          <td class="nowrap"><span style="display:inline-block;width:${12 + (ev._depth||0)*10}px"></span>${hasChildren?`<span class=\"toggle\" style=\"cursor:pointer;margin-right:4px\">${toggle}</span>`:''}<span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:2px;margin-right:6px;vertical-align:middle"></span>${ev.name}</td>
+          <td>${dur}</td>
+          <td>${ev._error ? '<span class="err" title="missing end">⚠ end missing</span>' : ''}</td>
+            <td>${dataHtml}</td>
+        `;
+        if (hasChildren) {
+          const tg = tr.querySelector('.toggle');
+          if (tg) tg.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (state.collapsed.has(ev._i)) state.collapsed.delete(ev._i); else state.collapsed.add(ev._i);
+            renderTable(); scheduleSave();
+          });
+        }
+        tr.addEventListener('mouseenter', () => { state.hoverName = ev.name; state.hoverId = String(ev._i); requestAnimationFrame(drawChart); });
+        tr.addEventListener('mouseleave', () => { state.hoverName = null; state.hoverId = null; requestAnimationFrame(drawChart); });
+        tbody.appendChild(tr);
+        rows++;
+      }
+    }
+
+    function escapeHtml(s){
+      return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+    }
+
+    // Simple JSON syntax highlighter (no deps)
+    function syntaxHighlightJSON(value) {
+      let json;
+      try {
+        json = typeof value === 'string' ? JSON.parse(value) : value;
+      } catch (_) {
+        json = value; // fallback: raw
+      }
+      const text = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
+      const esc = escapeHtml(text);
+      return esc
+        // keys
+        .replace(/(&quot;)(.*?)(?:&quot;)(\s*:\s*)/g, (m, q, key, colon) => `<span class="json-key">${q}${key}&quot;</span>${colon}`)
+        // strings
+        .replace(/:&nbsp;?(&quot;.*?&quot;)/g, (m, str) => `: <span class="json-string">${str}</span>`) // not used, kept for safety
+        .replace(/(&quot;.*?&quot;)(?!\s*:)/g, (m, str) => `<span class="json-string">${str}</span>`)
+        // numbers
+        .replace(/\b(-?\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?)\b/g, (m, num) => `<span class="json-number">${num}</span>`)
+        // booleans
+        .replace(/\b(true|false)\b/g, (m, b) => `<span class="json-boolean">${b}</span>`)
+        // null
+        .replace(/\bnull\b/g, '<span class="json-null">null</span>');
+    }
+
+    // No more special sections
+    function renderSpecials() {}
+    function renderHighlights() {}
+  </script>
+</body>
+</html>
+
+

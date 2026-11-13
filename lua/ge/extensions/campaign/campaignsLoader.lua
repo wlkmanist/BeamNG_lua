@@ -5,7 +5,7 @@
 local logTag = 'campaignsLoader'
 
 local M = {}
-M.campaignModules   = {'campaign_campaigns', 'campaign_exploration', 'campaign_comics','campaign_rewards', 'campaign_dealer','campaign_photoSafari'}
+M.campaignModules   = {'campaign_campaigns', 'campaign_comics','campaign_rewards', 'campaign_dealer','campaign_photoSafari'}
 
 local scenariosInAllCampaigns = {}
 

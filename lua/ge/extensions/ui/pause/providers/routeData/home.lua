@@ -5,6 +5,8 @@
 local Common = require("ge/extensions/ui/pause/providers/routeData/common")
 
 local M = {}
+local drivingAssistsDigestEnabled = false
+
 M.dependencies = {
   "career_career",
   "career_saveSystem",
@@ -45,7 +47,7 @@ local function buildCareerButtons()
     table.insert(definitions, {
       id = "careerCargoMap",
       label = "Map (My Cargo)",
-      icon = "map",
+      icon = "cardboardBox",
       callback = function()
         if career_modules_delivery_cargoScreen and career_modules_delivery_cargoScreen.enterMyCargo then
           career_modules_delivery_cargoScreen.enterMyCargo()
@@ -85,7 +87,62 @@ local function buildCareerButtons()
   return registerCareerButtons(definitions)
 end
 
+function M.setDrivingAssistsDigestEnabled(enabled)
+  drivingAssistsDigestEnabled = enabled == true
+end
+
+function M.isDrivingAssistsDigestEnabled()
+  return drivingAssistsDigestEnabled
+end
+
+local function buildFirstDriveLessonDigestElement()
+  local experience = gameplay_discover_firstDrive_experience
+  if not experience or not experience.hasReachedLookout or not experience.hasReachedLookout() then return nil end
+  local flow = gameplay_discover_firstDrive_learningFlow
+  if not flow or not flow.getPauseLessonDigest then return nil end
+
+  local lessons = flow.getPauseLessonDigest()
+  if #lessons == 0 then return nil end
+
+  return {
+    id = "firstDriveLessonDigest",
+    type = "component",
+    componentName = "PauseFirstDriveLessonDigest",
+    props = {
+      lessons = lessons,
+    },
+  }
+end
+
 function M.getHomeData(context)
+  if drivingAssistsDigestEnabled then
+    return {
+      mode = context.mode,
+      mainPanelContent = {
+        {
+          id = "drivingAssistsDigest",
+          type = "component",
+          componentName = "DrivingAssistsDigest",
+        },
+      },
+      sidePanelContents = {},
+      rail = ui_pause_features_homeRail.build(context, ui_pause_actions.registerButton),
+    }
+  end
+
+  if context.isFirstDriveGuided then
+    local mainPanelContent = {}
+    local digest = buildFirstDriveLessonDigestElement()
+    if digest then table.insert(mainPanelContent, digest) end
+    return {
+      mode = context.mode,
+      heading = _tr("ui.experiences.firstDrive.pause.title"),
+      mainPanelContent = mainPanelContent,
+      sidePanelContents = {},
+      rail = ui_pause_features_homeRail.build(context, ui_pause_actions.registerButton),
+    }
+  end
+
   local mainPanelContent = {}
   local sidePanelContents = nil
 
@@ -99,6 +156,10 @@ function M.getHomeData(context)
     for _, element in ipairs(elements) do
       addMainPanelElement(element)
     end
+  end
+
+  if context.isFirstDriveActive then
+    addMainPanelElement(buildFirstDriveLessonDigestElement())
   end
 
   if context.mode == "career" then
@@ -143,13 +204,28 @@ function M.getHomeData(context)
   elseif context.mode == "freeroamTutorial" and gameplay_discover_freeroamTutorial_pauseDataProvider then
     addMainPanelElements(gameplay_discover_freeroamTutorial_pauseDataProvider.getMainPanelContent(context))
   end
-  if context.mode ~= "scenario" then
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  local vehicleManagementLessonActive = gameplay_discover_firstDrive_learningFlow
+    and gameplay_discover_firstDrive_learningFlow.isLessonActive
+    and gameplay_discover_firstDrive_learningFlow.isLessonActive("vehicleManagement")
+  local showNearbyVehicles = not context.isFirstDriveActive
+    or vehicleManagementLessonActive
+    or capabilities and capabilities.isAllowed and capabilities.isAllowed("vehicleManagement")
+  if context.mode == "freeroam" and context.isMultiseatActive then
     addMainPanelElement({
-      id = "nearbyVehiclesComponent",
+      id = "multiseatVehiclesDigest",
       type = "component",
-      componentName = "PauseNearbyVehicles",
+      componentName = "PauseMultiseatVehiclesDigest",
     })
-    if context.mode ~= "freeroamTutorial" then
+  elseif context.mode ~= "scenario" and not context.isMultiseatActive then
+    if showNearbyVehicles then
+      addMainPanelElement({
+        id = "nearbyVehiclesComponent",
+        type = "component",
+        componentName = "PauseNearbyVehicles",
+      })
+    end
+    if context.mode ~= "freeroamTutorial" and not context.isFirstDriveActive then
       addMainPanelElement({
         id = "nearbyActivitiesComponent",
         type = "component",
@@ -167,7 +243,7 @@ function M.getHomeData(context)
   end
 
   local nearbyActivities = nil
-  if context.mode ~= "freeroamTutorial" and context.mode ~= "mission" then
+  if context.mode ~= "freeroamTutorial" and context.mode ~= "mission" and not context.isFirstDriveActive then
     nearbyActivities = ui_pause_providers_nearbyActivities.getData(context)
   end
 

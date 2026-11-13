@@ -1,4 +1,4 @@
-// "These bindings are meant to be used only with BeamNG.tech. Attempting to force BeamNG to load them can result in errors, subtle misbehaviours, missing/broken features, loss of customized bindings, etc. For technical details on how this file is ignored, check input/bindings.lua and tech/license.lua -- bruno",
+// "These bindings are meant to be used only with BeamNG.tech. Attempting to force BeamNG to load them can result in errors, subtle misbehaviours, missing/broken features, loss of customized bindings, etc. For technical details on how this file is ignored, check input/bindings.lua and license.lua -- bruno",
 {
 "toggleLidar"       :{"cat":"vehicle_debug", "order": 50, "ctx": "tlua", "onDown":"extensions.tech_utils.toggleLidar()", "title": "ui.inputActions.vehicle_debug.toggleLIDAR.title", "desc": "ui.inputActions.vehicle_debug.toggleLIDAR.description" },
 "toggleAnnotations" :{"cat":"debug", "order": 50, "ctx": "tlua", "onDown":"extensions.tech_utils.toggleAnnotations()", "title": "ui.inputActions.debug.toggleAnnotations.title", "desc": "ui.inputActions.debug.toggleAnnotations.description" },

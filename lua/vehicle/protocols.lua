@@ -209,6 +209,8 @@ local function init()
   M.updateGFX = nop
   physicsStepUsed = false
 
+  if settings.getValue("multiseat", false) then return end
+
   -- optimization, early return without hitting FS
   local outgaugeEnabled = settings.getValue("protocols_outgauge_enabled")
   local motionSimEnabled = settings.getValue("protocols_motionSim_enabled")

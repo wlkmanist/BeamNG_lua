@@ -5,8 +5,7 @@
 local pfxGlowBlurVertShader = scenetree.findObject("PFX_GlowBlurVertShader")
 if not pfxGlowBlurVertShader then
   pfxGlowBlurVertShader = createObject("ShaderData")
-  pfxGlowBlurVertShader.DXVertexShaderFile    = "shaders/common/postFx/glowBlurV.hlsl"
-  pfxGlowBlurVertShader.DXPixelShaderFile     = "shaders/common/postFx/glowBlurP.hlsl"
+  pfxGlowBlurVertShader.DXComputShaderName    = "shaders/common/postFx/glowBlur.cs.hlsl"
   pfxGlowBlurVertShader:setField("defines", 0, "BLUR_DIR=float2(0.0,1.0)")
   pfxGlowBlurVertShader:setField("samplerNames", 0, "$diffuseMap")
   pfxGlowBlurVertShader.pixVersion = 5.0
@@ -21,19 +20,26 @@ if not pfxGlowBlurHorzShader then
   pfxGlowBlurHorzShader:registerObject("PFX_GlowBlurHorzShader")
 end
 
+local pfxGlowCombineShader = scenetree.findObject("PFX_GlowCombineShader")
+if not pfxGlowCombineShader then
+  pfxGlowCombineShader = createObject("ShaderData")
+  pfxGlowCombineShader.DXComputShaderName = "shaders/common/postFx/glowCombine.cs.hlsl"
+  pfxGlowCombineShader:setField("samplerNames", 0, "$inputTex")
+  pfxGlowCombineShader:setField("samplerNames", 1, "$backbuffer")
+  pfxGlowCombineShader.pixVersion = 5.0
+  pfxGlowCombineShader:registerObject("PFX_GlowCombineShader")
+end
+
 local pfxGlowCombineStateBlock = scenetree.findObject("PFX_GlowCombineStateBlock")
 if not pfxGlowCombineStateBlock then
   local pfxDefaultStateBlock = scenetree.findObject("PFX_DefaultStateBlock")
   pfxGlowCombineStateBlock = createObject("GFXStateBlockData")
   pfxGlowCombineStateBlock:inheritParentFields(pfxDefaultStateBlock)
-  pfxGlowCombineStateBlock.alphaDefined = true
-  pfxGlowCombineStateBlock.alphaTestEnable = true
-  pfxGlowCombineStateBlock.alphaTestRef = 1
-  pfxGlowCombineStateBlock:setField("alphaTestFunc", 0, "GFXCmpGreaterEqual")
-  pfxGlowCombineStateBlock.blendDefined = true
-  pfxGlowCombineStateBlock.blendEnable = true
-  pfxGlowCombineStateBlock:setField("blendSrc", 0, "GFXBlendOne")
-  pfxGlowCombineStateBlock:setField("blendDest", 0, "GFXBlendOne")
+  -- the combine is a dispatch now, so it adds the glow in the shader instead of through a
+  -- One/One blend. Only the sampler states still apply.
+  pfxGlowCombineStateBlock.samplersDefined = true
+  pfxGlowCombineStateBlock:setField("samplerStates", 0, "SamplerClampLinear")
+  pfxGlowCombineStateBlock:setField("samplerStates", 1, "SamplerClampPoint")
   pfxGlowCombineStateBlock:registerObject("PFX_GlowCombineStateBlock")
 end
 
@@ -50,7 +56,7 @@ if not gammaPostFX then
   gammaPostFX.renderPriority = 1;
 
   -- First we down sample the glow buffer.
-  gammaPostFX:setField("shader", 0, "PFX_PassthruShader")
+  gammaPostFX:setField("shader", 0, "PFX_PassthruComputeShader")
   gammaPostFX:setField("stateBlock", 0, "PFX_DefaultStateBlock")
   gammaPostFX:setField("texture", 0, "#glowbuffer")
   gammaPostFX:setField("target", 0, "$outTex")
@@ -74,9 +80,10 @@ if not gammaPostFX then
   gammaPostFX:add(blurHorizontally)
 
   local upsampleAndCombine = createObject("PostEffect")
-  upsampleAndCombine:setField("shader", 0, "PFX_PassthruShader")
+  upsampleAndCombine:setField("shader", 0, "PFX_GlowCombineShader")
   upsampleAndCombine:setField("stateBlock", 0, "PFX_GlowCombineStateBlock")
   upsampleAndCombine:setField("texture", 0, "$inTex")
+  upsampleAndCombine:setField("texture", 1, "$backBuffer")
   upsampleAndCombine:setField("target", 0, "$backBuffer")
   upsampleAndCombine:registerObject()
   gammaPostFX:add(upsampleAndCombine)

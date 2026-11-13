@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Slip provider measuring wheel slip for traction and anti-lock brake control
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 70

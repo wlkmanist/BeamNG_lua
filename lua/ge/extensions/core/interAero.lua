@@ -7,16 +7,16 @@ local M = {}
 -- slip streaming (green)
 local slipReach = 3       -- lateral span of air wake having any effect (meters beyond vehicle width, per side)
 local slipFull = 0.5      -- lateral span of air wake having full effect (meters beyond vehicle width, per side)
-local slipStrength = 0.25 -- effect multiplier
+local slipStrength = 0.5  -- effect multiplier
 local slipSec = 1.5       -- longitudinal span of air wake (in seconds)
 local slipWidthReach = 4  -- longitudinal span of transition (from Full to Reach lateral span)
 -- bump drafting (blue)
 local bumpReach = 0.4     -- lateral span of smoothed air (meters beyond vehicle width, per side)
 local bumpSec = 0.065     -- longitudinal span of smoothed air (in seconds)
-local bumpStrength = 0.1  -- effect multiplier
+local bumpStrength = 0.17 -- effect multiplier
 -- side drafting (red)
 local sideReach = 1.25    -- lateral reach (in meters, added to vehicle body width)
-local sideStrength = 0.1  -- effect multiplier
+local sideStrength = 0.12 -- effect multiplier
 local sideContrib = 0.85  -- effect contribution per side: 0.5 means half contribution (linear sum), 1 means full contribution (max value), values in between get a non-linear mix of both
 
 -- dev helpers

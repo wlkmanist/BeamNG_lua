@@ -22,6 +22,8 @@ local highlightColors = {
 
   duplicated = ColorF(0.0,1.0,0.0,0.5),
 
+  nearby = ColorF(0.0,0.8,0.8,1),
+
   cursor = ColorF(0.5,0.5,0.5,1),
   createModeCursor = ColorF(0,1,0,1),
 

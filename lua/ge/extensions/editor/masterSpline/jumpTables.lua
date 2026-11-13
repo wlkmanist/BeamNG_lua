@@ -11,6 +11,7 @@ local meshSplineLink = require('editor/meshSpline/splineMgr')
 local assemblySplineLink = require('editor/assemblySpline/splineMgr')
 local decalSplineLink = require('editor/decalSpline/splineMgr')
 local roadSplineLink = require('editor/roadSpline/groupMgr')
+local treeSplineLink = require('editor/treeSpline/splineMgr')
 local util = require('editor/toolUtilities/util')
 
 -- Module constants.
@@ -18,6 +19,7 @@ local meshSplineStr = meshSplineLink.getToolPrefixStr()
 local assemblySplineStr = assemblySplineLink.getToolPrefixStr()
 local decalSplineStr = decalSplineLink.getToolPrefixStr()
 local roadSplineStr = roadSplineLink.getToolPrefixStr()
+local treeSplineStr = treeSplineLink.getToolPrefixStr()
 
 -- A jump table for setting the link state of a given layer.
 local setLinkJumpTable = {
@@ -25,6 +27,7 @@ local setLinkJumpTable = {
   [assemblySplineStr] = assemblySplineLink.setLink,
   [decalSplineStr] = decalSplineLink.setLink,
   [roadSplineStr] = roadSplineLink.setLink,
+  [treeSplineStr] = treeSplineLink.setLink,
 }
 
 -- A jump table for setting the name of a given spline.
@@ -78,6 +81,13 @@ local setNameJumpTable = {
       end
     end
   end,
+  [treeSplineStr] = function(id, splineName)
+    local idx = treeSplineLink.getSplineMap()[id]
+    local fullSplines = treeSplineLink.getTreeSplines()
+    if idx and fullSplines[idx] then -- Tree splines plant Forest items (no scene-tree folder), so just rename the record.
+      fullSplines[idx].name = splineName
+    end
+  end,
 }
 
 -- A jump table for creating a new spline.
@@ -86,6 +96,7 @@ local createJumpTable = {
   [assemblySplineStr] = assemblySplineLink.addNewAssemblySpline,
   [decalSplineStr] = decalSplineLink.addNewDecalSpline,
   [roadSplineStr] = roadSplineLink.addNewGroup,
+  [treeSplineStr] = treeSplineLink.addNewTreeSpline,
 }
 
 -- A jump table for getting the last created spline directly (optimized for undo/redo).
@@ -105,6 +116,10 @@ local getLastCreatedSplineJumpTable = {
   [roadSplineStr] = function()
     local roadSplines = roadSplineLink.getGroups()
     return #roadSplines > 0 and roadSplines[#roadSplines] or nil
+  end,
+  [treeSplineStr] = function()
+    local treeSplines = treeSplineLink.getTreeSplines()
+    return #treeSplines > 0 and treeSplines[#treeSplines] or nil
   end,
 }
 
@@ -135,6 +150,13 @@ local restoreJumpTable = {
     local spline = roadSplineLink.deepCopyGroup(data)
     roadSplineLink.addGroupToGroupArray(spline)
     util.computeIdToIdxMap(roadSplineLink.getGroups(), roadSplineLink.getIdToIdxMap())
+    return spline
+  end,
+  [treeSplineStr] = function(data)
+    local spline = treeSplineLink.deepCopyTreeSpline(data)
+    local treeSplines = treeSplineLink.getTreeSplines()
+    treeSplines[#treeSplines + 1] = spline
+    util.computeIdToIdxMap(treeSplines, treeSplineLink.getSplineMap())
     return spline
   end,
 }
@@ -185,6 +207,32 @@ local unlinkJumpTable = {
       end
     end
   end,
+  [treeSplineStr] = function(linkedSplineId)
+    local idx = treeSplineLink.getSplineMap()[linkedSplineId]
+    if idx then
+      local treeSplines = treeSplineLink.getTreeSplines()
+      if treeSplines[idx] then
+        treeSplines[idx].isLink = false
+        treeSplines[idx].linkId = nil
+        treeSplines[idx].isDirty = true
+      end
+    end
+  end,
+}
+
+-- A jump table for locking/unlocking a linked child spline (follows its Master Spline's lock).
+local setLockedJumpTable = {
+  [meshSplineStr]     = function(id, isLocked) require('editor/meshSpline').setLockedById(id, isLocked) end,
+  [assemblySplineStr] = function(id, isLocked) require('editor/assemblySpline').setLockedById(id, isLocked) end,
+  [decalSplineStr]    = function(id, isLocked) require('editor/decalSpline').setLockedById(id, isLocked) end,
+  [roadSplineStr]     = function(id, isLocked) require('editor/roadSpline').setLockedById(id, isLocked) end,
+  [treeSplineStr]     = function(id, isLocked) require('editor/treeSpline').setLockedById(id, isLocked) end,
+}
+
+-- A jump table for the splineLock `each` of a linked spline (only the tools whose hand edits an undone unlock can restore).
+local eachObjectJumpTable = {
+  [meshSplineStr]     = function(id, fn) require('editor/meshSpline').eachObjectById(id, fn) end,
+  [assemblySplineStr] = function(id, fn) require('editor/assemblySpline').eachObjectById(id, fn) end,
 }
 
 -- A jump table for removing a spline.
@@ -193,6 +241,7 @@ local removeJumpTable = {
   [assemblySplineStr] = assemblySplineLink.removeLinkedAssemblySpline,
   [decalSplineStr] = decalSplineLink.removeLinkedDecalSpline,
   [roadSplineStr] = roadSplineLink.removeLinkedRoadSpline,
+  [treeSplineStr] = treeSplineLink.removeLinkedTreeSpline,
 }
 
 -- A jump table for setting isDirty flag on linked splines.
@@ -221,6 +270,13 @@ local setLinkedSplineDirtyJumpTable = {
   [roadSplineStr] = function(id)
     local idx = roadSplineLink.getIdToIdxMap()[id]
     local fullSplines = roadSplineLink.getGroups()
+    if idx and fullSplines[idx] then
+      fullSplines[idx].isDirty = true
+    end
+  end,
+  [treeSplineStr] = function(id)
+    local idx = treeSplineLink.getSplineMap()[id]
+    local fullSplines = treeSplineLink.getTreeSplines()
     if idx and fullSplines[idx] then
       fullSplines[idx].isDirty = true
     end
@@ -269,6 +325,16 @@ local serializeJumpTable = {
     end
     return nil
   end,
+  [treeSplineStr] = function(linkedSplineId)
+    local idx = treeSplineLink.getSplineMap()[linkedSplineId]
+    if idx then
+      local treeSplines = treeSplineLink.getTreeSplines()
+      if treeSplines[idx] then
+        return treeSplineLink.deepCopyTreeSpline(treeSplines[idx])
+      end
+    end
+    return nil
+  end,
 }
 
 -- Jump table for getting relevant tool info from compatible tools.
@@ -297,6 +363,12 @@ local toolNavigation = {
     getSplines = roadSplineLink.getGroups,
     getIdToIdxMap = roadSplineLink.getIdToIdxMap,
   },
+  [treeSplineStr] = {
+    uiModule = 'editor_treeSpline',
+    getModeKey = treeSplineLink.getEditModeKey,
+    getSplines = treeSplineLink.getTreeSplines,
+    getIdToIdxMap = treeSplineLink.getSplineMap,
+  },
 }
 
 
@@ -308,6 +380,8 @@ M.getLastCreatedSplineJumpTable =                       getLastCreatedSplineJump
 M.restoreJumpTable =                                    restoreJumpTable
 M.unlinkJumpTable =                                     unlinkJumpTable
 M.removeJumpTable =                                     removeJumpTable
+M.setLockedJumpTable =                                  setLockedJumpTable
+M.eachObjectJumpTable =                                 eachObjectJumpTable
 M.setLinkedSplineDirtyJumpTable =                       setLinkedSplineDirtyJumpTable
 M.serializeJumpTable =                                  serializeJumpTable
 M.toolNavigation =                                      toolNavigation

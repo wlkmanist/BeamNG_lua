@@ -746,6 +746,7 @@ function Graphpath:_getPointToPointPathImpl(sourcePos, iter, targetPos, cutOffDr
   local tmpEdge1Data = table.new(0, 4)
   local tmpEdge2Data = table.new(0, 4)
 
+  local que = yieldFn and newMinheap() or que -- a yielding search can't share que: other searches would clear and refill it while this one is suspended
   que:clear()
   repeat
     profilerPushEvent("Graphpath:getPointToPointPathImpl")

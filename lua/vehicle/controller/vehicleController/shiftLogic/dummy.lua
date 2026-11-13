@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Provides pass-through powertrain control when no gearbox shift logic applies
+
 local M = {}
 
 local constants = {rpmToAV = 0.104719755, avToRPM = 9.549296596425384}

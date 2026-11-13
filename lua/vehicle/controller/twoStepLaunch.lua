@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Holds a configurable launch RPM for more consistent standing starts
+
 local M = {}
 M.type = "auxiliary"
 
@@ -15,11 +17,15 @@ local tempRevLimiterAV = 0
 local tempRevLimiterRPM = 0
 local twoStepState = "deactivated"
 
+local stateData
+local stateDataNameEnabled
+local stateDataNameRpm
+
 local function displayState()
   guihooks.message(string.format("Two-Step: %s (%d RPM)", (twoStepState ~= "deactivated" and "Active" or "Inactive"), tempRevLimiterRPM), 2, "vehicle.twoStep.status")
 end
 
-local function setTwoStep(enabled)
+local function setTwoStep(enabled, silent)
   if engine then
     if enabled then
       twoStepState = "idle"
@@ -27,7 +33,9 @@ local function setTwoStep(enabled)
       twoStepState = "deactivated"
       engine:resetTempRevLimiter()
     end
-    displayState()
+    if not silent then
+      displayState()
+    end
   end
 end
 
@@ -37,10 +45,12 @@ local function toggleTwoStep()
   end
 end
 
-local function setTwoStepRPM(rpm)
+local function setTwoStepRPM(rpm, silent)
   tempRevLimiterRPM = rpm
   tempRevLimiterAV = tempRevLimiterRPM * rpmToAV
-  displayState()
+  if not silent then
+    displayState()
+  end
 end
 
 local function changeTwoStepRPM(amount)
@@ -79,6 +89,10 @@ local function reset()
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameEnabled = M.name .. "_enabled"
+  stateDataNameRpm = M.name .. "_rpm"
+
   local engineName = jbeamData.engineName or "mainEngine"
   electricsName = jbeamData.electricsName or "twoStep"
   engine = powertrain.getDevice(engineName)
@@ -175,6 +189,28 @@ local function setParameters(parameters)
   end
 end
 
+local function getState()
+  stateData[stateDataNameEnabled] = twoStepState ~= "deactivated"
+  stateData[stateDataNameRpm] = tempRevLimiterRPM
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newRpm = data[stateDataNameRpm]
+  if type(newRpm) == "number" and newRpm == newRpm and newRpm ~= tempRevLimiterRPM then
+    setTwoStepRPM(newRpm, true)
+  end
+
+  local newEnabled = data[stateDataNameEnabled]
+  if type(newEnabled) == "boolean" and newEnabled ~= (twoStepState ~= "deactivated") then
+    setTwoStep(newEnabled, true)
+  end
+end
+
 M.init = init
 M.reset = reset
 M.updateGFX = nop
@@ -185,5 +221,8 @@ M.serialize = serialize
 M.deserialize = deserialize
 
 M.setParameters = setParameters
+
+M.getState = getState
+M.setState = setState
 
 return M

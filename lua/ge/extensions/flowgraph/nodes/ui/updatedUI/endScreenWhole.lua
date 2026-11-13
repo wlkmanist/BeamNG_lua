@@ -197,7 +197,7 @@ function C:closeDialogue()
     --core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
     --guihooks.trigger('MenuHide')
     --guihooks.trigger('ChangeState', 'menu')
-    guihooks.trigger('ChangeState', 'play')
+    extensions.ui_router.navigate('play')
   end
 end
 
@@ -285,7 +285,7 @@ function C:openDialogue()
   else
     table.insert(defaultBtns, self.mgr.modules.ui:addButton(
         function()
-          guihooks.trigger('ChangeState', {state = 'menu.scenarios'})
+          extensions.ui_router.navigate('menu.scenarios')
         end, {
         label = "ui.dashboard.scenarios",
       }))

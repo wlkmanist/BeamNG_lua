@@ -20,15 +20,24 @@ local isRotEnabled = false -- A flag which indicates if the rotation gizmo is en
 local isConformToTerrain = false -- A flag which indicates if the controlled spline should conform to the surface below, or not.
 local isRigid = false -- A flag which indicates if the controlled spline should have rigid translation, or not
 local beginDragRot = nil
+local isDragActive = false -- True between gizmoBeginDrag and gizmoEndDrag; lets tools defer heavy rebuilds during a gizmo drag.
+local commitHistoryOverride = nil -- Allows the owning spline tool to group this drag into a broader history action.
 local delta, tmpTan = vec3(), vec3()
 local tmpQuatF = QuatF(0, 0, 0, 1)
 local lastGizmoMode = nil -- Track the last gizmo mode to detect changes
+local anchorPos = nil
+local dragOffset = vec3()  -- (anchor - node) captured at drag-begin, so gizmoPos - dragOffset is the node's new position.
+local tmpNew = vec3()      -- scratch: the node's new position during a translate drag.
 
 
 -- The callback function for begin axis gizmo dragging.
 local function gizmoBeginDrag()
+  isDragActive = true
   local spline = splines[splineIdx]
   gizmoDragPre = deepCopyFunct(spline) -- Store the spline state upon beginning the drag.
+
+  -- Lock in the anchor->node offset so translation follows the cursor as a delta (gizmo drawn at the anchor, node trails by this).
+  if anchorPos then dragOffset:setSub2(anchorPos, spline.nodes[nodeIdx]) else dragOffset:set(0, 0, 0) end
 
   if isRotEnabled then
     local nodes = spline.nodes
@@ -41,8 +50,13 @@ end
 
 -- The callback function for end axis gizmo dragging.
 local function gizmoEndDrag()
-  editor.history:commitAction("Gizmo Drag", { old = gizmoDragPre, new = deepCopyFunct(splines[splineIdx]) }, undoFunct, redoFunct, true)
+  if commitHistoryOverride then
+    commitHistoryOverride("Gizmo Drag", { old = gizmoDragPre, new = deepCopyFunct(splines[splineIdx]) }, undoFunct, redoFunct, true)
+  else
+    editor.history:commitAction("Gizmo Drag", { old = gizmoDragPre, new = deepCopyFunct(splines[splineIdx]) }, undoFunct, redoFunct, true)
+  end
   beginDragRot = nil
+  isDragActive = false
   -- Re-flag dirty on release: gizmoDragging only sets isDirty on frames the axis actually moves, so the final
   -- release frame leaves nothing for the tool's dirty pipeline to pick up. Deferred-while-dragging rebuilds (e.g.
   -- bridge deck remesh) then never run against the final position until the node is touched again. Marking here
@@ -59,13 +73,14 @@ local function gizmoDragging()
     local nodes = spline.nodes
     local selNode = nodes[nodeIdx]
     local gizmoPos = editor.getAxisGizmoTransform():getColumn(3) -- Update the node position to where the gizmo is.
+    tmpNew:setSub2(gizmoPos, dragOffset) -- the node's target (== gizmoPos when there's no display anchor, dragOffset = 0).
     if isRigid then
-      delta:setSub2(gizmoPos, selNode)
+      delta:setSub2(tmpNew, selNode)
       for i = 1, #nodes do
         nodes[i]:setAdd(delta)
       end
     else
-      selNode:set(gizmoPos)
+      selNode:set(tmpNew)
     end
     spline.isDirty = true -- Mark the spline as dirty to trigger a re-render.
   end
@@ -94,10 +109,12 @@ local function gizmoDragging()
 end
 
 -- Handles the gizmo for translation.
-local function handleGizmo(isRotEnabledIn, selectedSplineIdx, selectedNodeIdx, splinesIn, isConformToTerrainIn, isRigidIn, deepCopyFunctIn, undoFunctIn, redoFunctIn)
+local function handleGizmo(isRotEnabledIn, selectedSplineIdx, selectedNodeIdx, splinesIn, isConformToTerrainIn, isRigidIn, deepCopyFunctIn, undoFunctIn, redoFunctIn, commitHistoryOverrideIn, anchorPosIn)
   splines, splineIdx, nodeIdx = splinesIn, selectedSplineIdx, selectedNodeIdx -- Keep the spline/node target in state.
   isRotEnabled, isConformToTerrain, isRigid = isRotEnabledIn, isConformToTerrainIn, isRigidIn
   deepCopyFunct, undoFunct, redoFunct =deepCopyFunctIn, undoFunctIn, redoFunctIn -- Keep the relevant callback functions in state.
+  commitHistoryOverride = commitHistoryOverrideIn
+  anchorPos = anchorPosIn -- optional DISPLAY position (drawn here instead of on the node); nil = on the node.
   if #splines > 0 then
     local spline = splines[selectedSplineIdx]
     local nodes = spline.nodes
@@ -113,7 +130,13 @@ local function handleGizmo(isRotEnabledIn, selectedSplineIdx, selectedNodeIdx, s
         rotation.x, rotation.y, rotation.z, rotation.w = q.x, q.y, q.z, q.w
       end
       local transform = rotation:getMatrix()
-      transform:setPosition(selNode)
+      -- Draw at the anchor when one's supplied (a hairpin's on-road apex). Mid-drag, keep it glued to the cursor at node+offset
+      -- (which equals the live gizmo pos), so resetting it each frame never fights the drag. No anchor -> draw on the node.
+      if anchorPos then
+        if isDragActive then tmpNew:setAdd2(selNode, dragOffset); transform:setPosition(tmpNew) else transform:setPosition(anchorPos) end
+      else
+        transform:setPosition(selNode)
+      end
       editor.setAxisGizmoTransform(transform)
 
       -- Update the gizmo.
@@ -143,8 +166,12 @@ local function handleGizmo(isRotEnabledIn, selectedSplineIdx, selectedNodeIdx, s
   end
 end
 
+-- True while an axis-gizmo drag (translate/rotate) is in progress.
+local function isDragging() return isDragActive end
+
 
 -- Public interface.
 M.handleGizmo =                                         handleGizmo
+M.isDragging =                                          isDragging
 
 return M

@@ -7,6 +7,7 @@ local M = {}
 M.dependencies = {}
 
 local maxDistanceFromVeh = 10
+local damageCheckInterval = 2
 local vehicleId
 local active
 
@@ -14,6 +15,8 @@ local startPosRot
 local id
 
 local testDriveInfo
+local damageDetected = false
+local damageCheckTimer = 0
 
 local function rtMessageJob(job)
   local message = job.args[1] or ""
@@ -56,12 +59,18 @@ end
 local function displayTimeLeft(time)
   helper.clear = false
   helper.ttl = 5
-  helper.msg = "Test drive time left: " .. time
+  helper.msg = core_locales.contextTranslate("ui.career.testDrive.timeLeft", {seconds = time})
   helper.category = "testDriveTimeLeft"
   helper.icon = nil
   guihooks.trigger('Message',helper)
 
   --showMessage("(WIP temporary) Time left: " .. time, true)
+end
+
+local function showDamageWarning()
+  local amount = career_modules_insurance_insurance.getTestDriveClaimPrice()
+  local msg = core_locales.contextTranslate("ui.career.testDrive.damageWarning", {amount = amount})
+  ui_message(msg, 5, "testDriveDamageWarning")
 end
 
 local function checkTimeLeft(dtSim)
@@ -74,6 +83,9 @@ local function checkTimeLeft(dtSim)
       local timeAfter = round(testDriveInfo.timeLimit)
       if timeBefore ~= timeAfter then
         displayTimeLeft(timeAfter)
+        if damageDetected then
+          showDamageWarning()
+        end
       end
       return true
     end
@@ -119,6 +131,11 @@ local function resetDataAfterTestDriveDone()
   --gameplay_markerInteraction.clearCache()
   id = -1
   vehicleId = nil
+  if damageDetected then
+    ui_message("", 1, "testDriveDamageWarning")
+  end
+  damageDetected = false
+  damageCheckTimer = 0
 end
 
 local function endTestDriveJob(job)
@@ -171,7 +188,10 @@ local function endTestDriveJob(job)
 
   simTimeAuthority.set(1)
   if tp then
-    guihooks.trigger('ChangeState', {state = 'play'})
+    if not vehicle or not scenetree.findObjectById(vehicle:getID()) then
+      log("W", "testDrive", "Test drive vehicle lost before onTestDriveEndedAfterFade; tethers may not be re-armed")
+    end
+    extensions.ui_router.navigate('play')
     ui_fadeScreen.stop(1)
     -- fade screen changes the ui state, so we need to change it back here
     extensions.hook('onTestDriveEndedAfterFade')
@@ -181,12 +201,15 @@ local function endTestDriveJob(job)
 end
 
 local function onVehicleRepairedByInsurance(amount)
-  rtMessage("Repaired test drive vehicle: -" .. amount, 1.8)
+  rtMessage(core_locales.contextTranslate("ui.career.testDrive.repairCostMessage", {amount = amount}), 1.8)
 end
 
-local function stop()
+local function stop(userAborted)
   if not active then return end
 
+  if userAborted ~= false then
+    extensions.hook("onGameplayActivityAborted")
+  end
   core_jobsystem.create(endTestDriveJob, 1)
   career_career.setAutosaveEnabled(true)
 end
@@ -194,14 +217,17 @@ end
 local function abandonTestDrive()
   if not active then return end
 
+  local abandonFees = testDriveInfo and testDriveInfo.abandonFees or 0
+  setActive(false)
+  career_career.setAutosaveEnabled(true)
+
   core_jobsystem.create(function(job)
-    setActive(false)
     job.sleep(0.2) -- job is needed to display the ui message
-    if testDriveInfo.abandonFees > 0 then --private sales don't have abandon fees
-      local logBookLabel = "Didn't return the test drive vehicle."
-      local label = string.format("Fee for not returning the test drive vehicle : -%i$", testDriveInfo.abandonFees)
+    if abandonFees > 0 then --private sales don't have abandon fees
+      local logBookLabel = "ui.career.testDrive.abandonLogLabel"
+      local label = core_locales.contextTranslate("ui.career.testDrive.abandonFeeMessage", {fee = abandonFees})
       ui_message(label, 5, 'test1')
-      career_modules_payment.pay({money = { amount = testDriveInfo.abandonFees, canBeNegative = true}}, {label = logBookLabel})
+      career_modules_payment.pay({money = { amount = abandonFees, canBeNegative = true}}, {label = logBookLabel})
     end
     resetDataAfterTestDriveDone()
     career_modules_inspectVehicle.onTestDriveAbandoned()
@@ -209,16 +235,31 @@ local function abandonTestDrive()
 
 end
 
+local function checkDamage(dtSim)
+  if damageDetected then return end
+  damageCheckTimer = damageCheckTimer + dtSim
+  if damageCheckTimer < damageCheckInterval then return end
+  damageCheckTimer = 0
+
+  career_modules_insurance_insurance.genericVehNeedsRepair(vehicleId, function(needsRepair)
+    if needsRepair and active then
+      damageDetected = true
+      career_modules_inspectVehicle.onTestDriveDamageDetected()
+    end
+  end)
+end
+
 local function onUpdate(dtReal, dtSim, dtRaw)
   if not vehicleId then return end
 
   if active then
     if not checkTimeLeft(dtSim) then
-      stop()
+      stop(false)
     end
     if not checkPlayerNotTooFarFromVeh() then
       abandonTestDrive()
     end
+    checkDamage(dtSim)
   end
 end
 
@@ -228,6 +269,10 @@ end
 
 local function isActive()
   return active
+end
+
+local function isDamageDetected()
+  return damageDetected
 end
 
 
@@ -283,7 +328,7 @@ local function onBeforeRadialOpened()
       generator = function(entries)
         if not isActive() then return end
         table.insert(entries, {
-          title = "Stop Test Drive",
+          title = "ui.career.testDrive.stopTestDrive",
           icon = "abandon",
           priority = 90,
           enabled = true,
@@ -307,6 +352,7 @@ M.getTimeLeft = getTimeLeft
 M.stop = stop
 M.start = start
 M.isActive = isActive
+M.isDamageDetected = isDamageDetected
 M.formatTestDriveToRawPoi = formatTestDriveToRawPoi
 M.resetData = resetData
 

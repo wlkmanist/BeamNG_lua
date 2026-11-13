@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Controls gear selection and torque converter lockup for automatic transmissions
+
 local M = {}
 
 local max = math.max
@@ -498,10 +500,14 @@ local function updateInGearArcade(dt)
       end
     end
 
-    if electrics.values.ignitionLevel ~= 2 and automaticHandling.mode ~= "P" then
+    --apply P or N when the engine is off
+    local hasPMode = automaticHandling.existingModeLookup["P"]
+    local engineOffTargetMode = hasPMode and "P" or "N"
+
+    if electrics.values.ignitionLevel ~= 2 and automaticHandling.mode ~= engineOffTargetMode then
       gearIndex = 0
       M.timer.neutralSelectionDelayTimer = M.timerConstants.neutralSelectionDelay
-      automaticHandling.mode = "P"
+      automaticHandling.mode = engineOffTargetMode
       applyGearboxMode()
       applyGearboxModeRestrictions()
     end

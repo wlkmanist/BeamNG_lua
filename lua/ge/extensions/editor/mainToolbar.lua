@@ -965,6 +965,12 @@ local function onEditorGuiToolBar()
         modesManagerOpen[0] = true
         im.CloseCurrentPopup()
       end
+      if im.Button("Edit Shortcuts...") then
+        if editor_toolShortcuts then
+          editor_toolShortcuts.openWindow()
+        end
+        im.CloseCurrentPopup()
+      end
       im.EndPopup()
     end
 

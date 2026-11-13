@@ -7,7 +7,7 @@ local M = {}
 M.outputPorts = {[1] = true} --set dynamically
 M.deviceCategories = {engine = true}
 
-local delayLine = rerequire("delayLine")
+local delayLine = require("delayLine")
 
 local max = math.max
 local min = math.min
@@ -353,7 +353,7 @@ local function checkHydroLocking(device, dt)
     damageTracker.setDamage("engine", "engineHydrolocked", true)
     -- avoid piston movement, simulate broken connecting rods
     device:lockUp()
-    guihooks.message("vehicle.combustionEngine.engineHydrolocked", 4, "vehicle.damage.flood")
+    guihooks.messageForSeatedPlayers("vehicle.combustionEngine.engineHydrolocked", 4, "vehicle.damage.flood")
     return
   end
 
@@ -362,12 +362,12 @@ local function checkHydroLocking(device, dt)
   -- ...and use that to check when to perform UI updates
   if currPercent ~= device.prevFloodPercent then
     if currPercent > device.prevFloodPercent then
-      guihooks.message({txt = "vehicle.combustionEngine.engineFlooding", context = {percent = currPercent}}, 4, "vehicle.damage.flood")
+      guihooks.messageForSeatedPlayers({txt = "vehicle.combustionEngine.engineFlooding", context = {percent = currPercent}}, 4, "vehicle.damage.flood")
     else
       if currPercent < 10 then
-        guihooks.message("vehicle.combustionEngine.engineDried", 4, "vehicle.damage.flood")
+        guihooks.messageForSeatedPlayers("vehicle.combustionEngine.engineDried", 4, "vehicle.damage.flood")
       else
-        guihooks.message({txt = "vehicle.combustionEngine.engineDrying", context = {percent = currPercent}}, 4, "vehicle.damage.flood")
+        guihooks.messageForSeatedPlayers({txt = "vehicle.combustionEngine.engineDrying", context = {percent = currPercent}}, 4, "vehicle.damage.flood")
       end
     end
   end
@@ -506,7 +506,7 @@ local function updateGFX(device, dt)
     if lockupChance <= device.overRevDamage and not damageTracker.getDamage("engine", "catastrophicOverrevDamage") then
       device:lockUp()
       damageTracker.setDamage("engine", "catastrophicOverrevDamage", true)
-      guihooks.message({txt = "vehicle.combustionEngine.engineCatastrophicOverrevDamage", context = {}}, 4, "vehicle.damage.catastrophicOverrev")
+      guihooks.messageForSeatedPlayers({txt = "vehicle.combustionEngine.engineCatastrophicOverrevDamage", context = {}}, 4, "vehicle.damage.catastrophicOverrev")
 
       if #device.engineBlockNodes >= 2 then
         sounds.playSoundOnceFollowNode("event:>Vehicle>Failures>engine_explode", device.engineBlockNodes[1], 1)
@@ -523,7 +523,7 @@ local function updateGFX(device, dt)
     if valveHitChance <= device.overRevDamage then
       device:scaleOutputTorque(0.98, 0.2)
       damageTracker.setDamage("engine", "mildOverrevDamage", true)
-      guihooks.message({txt = "vehicle.combustionEngine.engineMildOverrevDamage", context = {}}, 4, "vehicle.damage.mildOverrev")
+      guihooks.messageForSeatedPlayers({txt = "vehicle.combustionEngine.engineMildOverrevDamage", context = {}}, 4, "vehicle.damage.mildOverrev")
     end
   end
 
@@ -535,7 +535,7 @@ local function updateGFX(device, dt)
       if device.overTorqueDamage >= device.maxOverTorqueDamage and not damageTracker.getDamage("engine", "catastrophicOverTorqueDamage") then
         device:lockUp()
         damageTracker.setDamage("engine", "catastrophicOverTorqueDamage", true)
-        guihooks.message({txt = "vehicle.combustionEngine.engineCatastrophicOverTorqueDamage", context = {}}, 4, "vehicle.damage.catastrophicOverTorque")
+        guihooks.messageForSeatedPlayers({txt = "vehicle.combustionEngine.engineCatastrophicOverTorqueDamage", context = {}}, 4, "vehicle.damage.catastrophicOverTorque")
 
         if #device.engineBlockNodes >= 2 then
           sounds.playSoundOnceFollowNode("event:>Vehicle>Failures>engine_explode", device.engineBlockNodes[1], 1)
@@ -633,11 +633,9 @@ local function updateGFX(device, dt)
   device.shiftAfterFireFuel = 0
   device.continuousAfterFireFuel = 0
 
-  ---temp code to send current power to fmod---
-  --local currentCombustionPowerkW = device.combustionTorque * device.outputAV1 * 0.001
-  --device:setEngineSoundParameter(device.engineSoundIDExhaust, "currentPower", currentCombustionPowerkW, "exhaust")
-  --device:setEngineSoundParameter(device.engineSoundID, "currentPower", currentCombustionPowerkW, "engine")
-  ---end temp code---
+  local currentCombustionPowerkW = device.combustionTorque * device.outputAV1 * 0.001
+  device:setEngineSoundParameter(device.engineSoundIDExhaust, "currentPower", currentCombustionPowerkW, "exhaust")
+  device:setEngineSoundParameter(device.engineSoundID, "currentPower", currentCombustionPowerkW, "engine")
 end
 
 local function setTempRevLimiter(device, revLimiterAV, maxOvershootAV)
@@ -1140,6 +1138,10 @@ end
 --this does not update aggregate parameters like main_gain or _muffled, use the list API for these
 --it also does not update starter sound params
 local function setEngineSoundParameter(device, soundID, paramName, paramValue, reference)
+  if not soundID then
+    return
+  end
+
   device.soundConfiguration[reference] = device.soundConfiguration[reference] or {}
   device.soundConfiguration[reference].params = device.soundConfiguration[reference].params or {}
   device.soundConfiguration[reference].soundID = soundID
@@ -1149,7 +1151,11 @@ local function setEngineSoundParameter(device, soundID, paramName, paramValue, r
 end
 
 local function setEngineSoundParameterList(device, soundID, params, reference)
-  params.main_gain = params.base_gain + params.gainOffset + params.gainOffsetRevLimiter
+  if not soundID then
+    return
+  end
+
+  params.main_gain = min(0, params.base_gain + params.gainOffset + params.gainOffsetRevLimiter)
   params.muffled = params.base_muffled + params.mufflingOffset + params.mufflingOffsetRevLimiter
 
   device.soundConfiguration[reference] = device.soundConfiguration[reference] or {}
@@ -1495,7 +1501,7 @@ local function initSounds(device, jbeamData)
         local engineNodeIDs = {device.engineNodeID} --Hardcode intake sound location to a single node, no need for multiple
         device:initEngineSound(device.engineSoundID, samplePath, engineNodeIDs, offLoadGain, onLoadGain, "engine")
 
-        local main_gain = soundConfig.mainGain or 0
+        local main_gain = min(0, soundConfig.mainGain or 0)
 
         local eq_a_freq = sounds.hzToFMODHz(soundConfig.lowShelfFreq or soundConfig.lowCutFreq or 20)
         local eq_a_gain = soundConfig.lowShelfGain or 0
@@ -1594,7 +1600,7 @@ local function initSounds(device, jbeamData)
         device:initExhaustSound(device.engineSoundIDExhaust, samplePath, endNodeIDPairs, offLoadGain, onLoadGain, "exhaust")
 
         device.exhaustMainGain = soundConfig.mainGain or 0
-        local main_gain = device.exhaustMainGain + maxExhaustAudioGain
+        local main_gain = min(0, device.exhaustMainGain + maxExhaustAudioGain)
 
         local eq_a_freq = sounds.hzToFMODHz(soundConfig.lowShelfFreq or soundConfig.lowCutFreq or 20)
         local eq_a_gain = soundConfig.lowShelfGain or 0
@@ -2099,12 +2105,12 @@ local function new(jbeamData)
   --dump(jbeamData)
 
   local thermalsFileName = jbeamData.thermalsLuaFileName or "powertrain/combustionEngineThermals"
-  device.thermals = rerequire(thermalsFileName)
+  device.thermals = rerequire(thermalsFileName) -- rerequire is needed here, each engine needs its own instance
   device.thermals.init(device, jbeamData)
 
   if jbeamData.turbocharger and v.data[jbeamData.turbocharger] then
     local turbochargerFileName = jbeamData.turbochargerLuaFileName or "powertrain/turbocharger"
-    device.turbocharger = rerequire(turbochargerFileName)
+    device.turbocharger = rerequire(turbochargerFileName) -- rerequire is needed here, each engine needs its own instance
     device.turbocharger.init(device, v.data[jbeamData.turbocharger])
   else
     device.turbocharger = {reset = nop, updateGFX = nop, updateFixedStep = nop, updateSounds = nop, initSounds = nop, resetSounds = nop, getPartCondition = nop, isExisting = false}
@@ -2112,7 +2118,7 @@ local function new(jbeamData)
 
   if jbeamData.supercharger and v.data[jbeamData.supercharger] then
     local superchargerFileName = jbeamData.superchargerLuaFileName or "powertrain/supercharger"
-    device.supercharger = rerequire(superchargerFileName)
+    device.supercharger = rerequire(superchargerFileName) -- rerequire is needed here, each engine needs its own instance
     device.supercharger.init(device, v.data[jbeamData.supercharger])
   else
     device.supercharger = {reset = nop, updateGFX = nop, updateFixedStep = nop, updateSounds = nop, initSounds = nop, resetSounds = nop, getPartCondition = nop, isExisting = false}
@@ -2120,7 +2126,7 @@ local function new(jbeamData)
 
   if jbeamData.nitrousOxideInjection and v.data[jbeamData.nitrousOxideInjection] then
     local nitrousOxideFileName = jbeamData.nitrousOxideLuaFileName or "powertrain/nitrousOxideInjection"
-    device.nitrousOxideInjection = rerequire(nitrousOxideFileName)
+    device.nitrousOxideInjection = rerequire(nitrousOxideFileName) -- rerequire is needed here, each engine needs its own instance
     device.nitrousOxideInjection.init(device, v.data[jbeamData.nitrousOxideInjection])
   else
     device.nitrousOxideInjection = {reset = nop, updateGFX = nop, updateSounds = nop, initSounds = nop, resetSounds = nop, registerStorage = nop, getAddedTorque = nop, getPartCondition = nop, isExisting = false}

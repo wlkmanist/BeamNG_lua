@@ -21,7 +21,7 @@ local Constants = require("ge/extensions/ui/router/constants")
 local M = {}
 
 -- meta fields that map onto the router `ui` config block
-local UI_META_KEYS = {"uiTypes", "uiTypesFilter", "infoBar", "topBar", "uiApps", "triggerPause"}
+local UI_META_KEYS = {"uiTypes", "uiTypesFilter", "infoBar", "topBar", "uiApps", "triggerPause", "uiNav"}
 
 -- keys a mod may set via meta.luaRoute to override router route config
 local LUA_ROUTE_ALLOWLIST = {

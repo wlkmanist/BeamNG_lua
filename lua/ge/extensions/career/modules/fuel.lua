@@ -395,7 +395,7 @@ local function endTransaction()
     career_modules_inventory.updatePartConditions(nil, career_modules_inventory.getCurrentVehicle())
   end
 
-  guihooks.trigger('ChangeState', {state ='play'})
+  extensions.ui_router.navigate('play')
   extensions.hook("onRefuelingEndTransaction")
 end
 
@@ -405,10 +405,11 @@ local function payPrice()
     Engine.Audio.playOnce('AudioGui','event:>UI>Career>Buy_01')
   end
   stopFuelingType()
+  gameplay_achievement.unlockAchievement("VEHICLE_REFUELLED")
 
   local currentVehicle = getCurrentVehicleData()
   if currentVehicle and currentVehicle.loanType == "work" then
-    ui_message(string.format("Fuel paid for by the company"), 6, "refueling")
+    ui_message(_tr("ui.career.refueling.paidByCompany"), 6, "refueling")
   else
     career_modules_playerAttributes.addAttributes({money=-overallPrice}, {
       tags = {"fuel", "buying"},
@@ -604,10 +605,10 @@ local function setMinimumFuel(data, veh)
     -- refuel the car if it is electric or nearly empty
     if tank.energyType == "electricEnergy" then
       tank.currentEnergy = tank.maxEnergy
-      ui_message("Your vehicle has been fully recharged", nil, "emergencyRefuel")
+      ui_message(_tr("ui.career.refueling.emergencyFullyRecharged"), nil, "emergencyRefuel")
     elseif tank.currentEnergy <= tank.maxEnergy * 0.01 then
       tank.currentEnergy = tank.maxEnergy * 0.05
-      ui_message("Your tank was close to empty, so it has been refueled a little bit. You should visit a fuel station", nil, "emergencyRefuel")
+      ui_message(_tr("ui.career.refueling.emergencyPartialRefuel"), nil, "emergencyRefuel")
     end
   end
   applyFuelData(tanksData, veh)

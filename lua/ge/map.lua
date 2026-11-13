@@ -589,6 +589,9 @@ local function loadJsonDecalMap()
       if road and road.drivability > 0 then
         local edgeCount = road:getEdgeCount()
         local nodeCount = road:getNodeCount()
+        local useTangents = road.improvedSpline and not road.looped and nodeCount >= 4 -- The engine only treats the first or last node as a tangent marker when all three of these are true
+        local startTangent = useTangents and road.startTangent and 1 or 0
+        local endTangent = useTangents and road.endTangent and 1 or 0
         if max(edgeCount, nodeCount) > 1 then
           local prefix
           if tonumber(decalRoadName) then
@@ -639,7 +642,7 @@ local function loadJsonDecalMap()
             end
           end
 
-          if edgeCount > 2 and edgeCount >= nodeCount and road.useSubdivisions then -- use decalRoad edge (subdivision) data to generate AI path
+          if edgeCount > 2 and edgeCount >= nodeCount - startTangent - endTangent and road.useSubdivisions then -- use decalRoad edge (subdivision) data to generate AI path
             -- Polyline simplification: Radial distance
             local count, segCount, warningCount = 0, edgeCount - 1, 0
             for i = 0, segCount do
@@ -719,14 +722,20 @@ local function loadJsonDecalMap()
             tableClear(stack)
             stackIdx = 0
           else -- use decalRoad control point data to generate AI path
-            local prevName = nameNode(prefix, 1)
+            local nodeIdx = 1
+            local prevName = nameNode(prefix, nodeIdx)
             local lNode
-            if road.looped and nodeCount > 2 then
+            if road.improvedSpline and road.looped and nodeCount > 2 then
               lNode = prevName
+              -- Note: the first and last nodes are still marked endNode = true even though the road is closed (looped).
+              -- Because end nodes can merge even when noMerge is set, those two nodes can still merge with nearby nodes from other roads when autoJunction is off.
             end
-            mapNodes[prevName] = {pos = road:getNodePosition(0), radius = road:getNodeWidth(0) * 0.5, links = {}, noMerge = noMerge, endNode = true}
-            for i = 1, nodeCount - 1 do
-              local nodeName = nameNode(prefix, i+1)
+            local firstIdx = startTangent -- road node indexing starts at 0. If the first node is a tangent, skip it.
+            local lastIdx = nodeCount - 1 - endTangent -- If the last node is a tangent, skip it.
+            mapNodes[prevName] = {pos = road:getNodePosition(firstIdx), radius = road:getNodeWidth(firstIdx) * 0.5, links = {}, noMerge = noMerge, endNode = true}
+            for i = firstIdx+1, lastIdx do
+              nodeIdx = nodeIdx + 1
+              local nodeName = nameNode(prefix, nodeIdx)
               local pos = road:getNodePosition(i)
               local radius = road:getNodeWidth(i) * 0.5
               local inNode = flipDirection and nodeName or prevName
@@ -758,6 +767,7 @@ local function loadJsonDecalMap()
             -- road is looped: add edge between first and last nodes
             if lNode then
               local inNode = flipDirection and lNode or prevName
+              local outNode = inNode == lNode and prevName or lNode
               local data = {
                 drivability = drivability,
                 hiddenInNavi = hiddenInNavi,
@@ -765,15 +775,19 @@ local function loadJsonDecalMap()
                 lanes = lanes,
                 speedLimit = speedLimit,
                 inNode = inNode,
+                outNode = outNode,
                 type = roadType,
                 inPos = mapNodes[inNode].pos,
-                outPos = mapNodes[inNode == lNode and prevName or lNode].pos,
+                outPos = mapNodes[outNode].pos,
                 inRadius = mapNodes[inNode].radius,
-                outRadius = mapNodes[inNode == lNode and prevName or lNode].radius,
+                outRadius = mapNodes[outNode].radius,
                 noMerge = noMerge
               }
               mapNodes[lNode].links[prevName] = data
               mapNodes[prevName].links[lNode] = data
+              if not data.lanes then
+                data.lanes = getEdgeLaneConfig(prevName, lNode)
+              end
             end
           end
         end
@@ -2673,7 +2687,8 @@ local function loadMap(customMapNodes)
       maxRadius = maxRadius,
       graphData = gp:export(edgeCount),
       edgeKdTree = edgeKdTree:export(),
-      rules = rules
+      rules = rules,
+      buildSerial = buildSerial
     }
   ))
 
@@ -2747,6 +2762,10 @@ local function findBestRoad(pos, dir)
       bestDot = dirDot
       bestIdx = i
     end
+  end
+
+  if bestIdx == nil then
+    return findClosestRoad(pos) -- fallback
   end
 
   return candidateRoads[bestIdx], candidateRoads[bestIdx+1], sqrt(candidateRoads[bestIdx+2])

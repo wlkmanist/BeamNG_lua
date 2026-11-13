@@ -13,16 +13,105 @@ local driftDebugInfo = {
 
 local flashTime = 1.5
 local msgData = {}
-local score
 
 local wrongWayFlag = false
 local outOfBoundsFlag = false
-local creepSmoother = newTemporalSmoothingNonLinear(50,10, 0)
+local creepSmoothers = {} -- per-vehId
 
 local driftDebugUILayout = false
+local driftOwnsGameState = false
+local activeDriftApps = {}
+local isUnloaded = false
 
-local guiData = {}
+local guiData = { players = {} }
+local playerDataPool = {} -- playerKey -> reused table, the stream is pushed every frame
 
+-- The confirmed-score presentation is a phase machine owned here and published on the stream,
+-- so the UI never has to reconstruct it from an event that can race the stream update.
+local scorePhaseDurations = {
+  hold = 0.9,    -- confirmed score sits still
+  dwindle = 0.6,    -- counts down to zero
+  linger = 0.5,     -- rests at zero before clearing
+}
+local scorePhaseOrder = {hold = "dwindle", dwindle = "linger", linger = "idle"}
+local scorePresentations = {} -- vehId -> {phase, score, timer, id}
+local nextConfirmedScoreId = 1
+
+local function getCreepSmoother(vehId)
+  if not creepSmoothers[vehId] then
+    creepSmoothers[vehId] = newTemporalSmoothingNonLinear(50, 10, 0)
+  end
+  return creepSmoothers[vehId]
+end
+
+local function getScorePresentation(vehId)
+  local presentation = scorePresentations[vehId]
+  if not presentation then
+    presentation = {phase = "idle", score = 0, timer = 0, id = 0}
+    scorePresentations[vehId] = presentation
+  end
+  return presentation
+end
+
+local function getScorePresentationDuration()
+  return scorePhaseDurations.hold + scorePhaseDurations.dwindle + scorePhaseDurations.linger
+end
+
+local function startScorePresentation(vehId, score)
+  if not vehId then return end
+  local presentation = getScorePresentation(vehId)
+  presentation.phase = "hold"
+  presentation.score = score or 0
+  presentation.timer = 0
+  presentation.id = nextConfirmedScoreId
+  nextConfirmedScoreId = nextConfirmedScoreId + 1
+end
+
+local function getIsScorePresentationActive(vehId)
+  local presentation = scorePresentations[vehId]
+  return presentation ~= nil and presentation.phase ~= "idle"
+end
+
+local function clearScorePresentation(vehId)
+  local presentation = scorePresentations[vehId]
+  if not presentation then return end
+  presentation.phase = "idle"
+  presentation.score = 0
+  presentation.timer = 0
+end
+
+-- returns phase and 0..1 progress within it
+local function advanceScorePresentation(vehId, dtReal)
+  local presentation = getScorePresentation(vehId)
+  if presentation.phase == "idle" then return "idle", 0, 0, presentation.id end
+
+  presentation.timer = presentation.timer + dtReal
+
+  local duration = scorePhaseDurations[presentation.phase]
+  while duration and presentation.timer >= duration do
+    presentation.timer = presentation.timer - duration
+    presentation.phase = scorePhaseOrder[presentation.phase] or "idle"
+    if presentation.phase == "idle" then
+      clearScorePresentation(vehId)
+      return "idle", 0, 0, presentation.id
+    end
+    duration = scorePhaseDurations[presentation.phase]
+  end
+
+  local progress = duration and duration > 0 and (presentation.timer / duration) or 0
+  return presentation.phase, math.min(1, progress), presentation.score, presentation.id
+end
+
+local function getPlayerData(playerKey)
+  if not playerDataPool[playerKey] then
+    playerDataPool[playerKey] = {}
+  end
+  return playerDataPool[playerKey]
+end
+
+local function resolvePlayerId(vehId)
+  return gameplay_drift_drift.getPlayerIdForVehicle(vehId)
+end
 
 local function rtMessage(msg)
   msgData.msg = msg
@@ -38,46 +127,45 @@ end
 
 local function flashMessage(msg, duration)
   if gameplay_drift_general.getContext() == "inFreeroam" then return end
-  if msg == nil or msg == "" then
-    return
-  end
-
+  if msg == nil or msg == "" then return end
   duration = duration or flashTime
-
   ui_appContainers.showApp('topCenter', 'flashMessage')
   guihooks.trigger('TopCenterAppsFlashMessage', { msg = msg, ttl = duration, big = false })
 end
 
+-- the stream is rebuilt from authoritative state every frame in updateApps, so these
+-- handlers only need to reset the smoother (which is state the score doesn't carry)
+local function resetCreepSmoother(vehId)
+  local smoother = creepSmoothers[vehId]
+  if smoother then smoother:set(0) end
+end
+
 local function onDriftCompletedScored(data)
-  guiData.realtimeRemainingComboTime = 0
-  guiData.realtimeCreep = 0
-  creepSmoother:set(0)
+  local playerId = resolvePlayerId(data.vehId)
+  resetCreepSmoother(data.vehId)
+  startScorePresentation(data.vehId, data.addedScore)
 
   flashMessage(contextTranslate("missions.drift.general.addPoints", {points = data.addedScore}))
-  guihooks.trigger("setDriftPersistentDriftScored", data.addedScore, data.combo)
+  guihooks.trigger("setDriftPersistentDriftScored", data.addedScore, data.combo, playerId)
 
   clearRt()
 end
 
-local function onDriftCrash()
-  guihooks.trigger("setDriftRealtimeFail", _tr("missions.drift.display.crashed"))
-  guiData.realtimeRemainingComboTime = 0
-  guiData.realtimeCreep = 0
-  guihooks.queueStream("drift", guiData)
-
-  creepSmoother:set(0)
+-- single table payload: guihooks.trigger drops nil arguments and compacts the rest,
+-- so positional args with an optional one in the middle would shift the player id
+local function triggerRealtimeFail(vehId, reason)
+  guihooks.trigger("setDriftRealtimeFail", {reason = reason, playerId = resolvePlayerId(vehId)})
+  resetCreepSmoother(vehId)
+  clearScorePresentation(vehId) -- the fail message takes over the same display slot
   clearRt()
 end
 
-local function onDriftSpinout()
-  guihooks.trigger("setDriftRealtimeFail", _tr("missions.drift.display.spinout"))
-  guiData.realtimeRemainingComboTime = 0
-  guiData.realtimeCreep = 0
-  guihooks.queueStream("drift", guiData)
+local function onDriftCrash(vehId)
+  triggerRealtimeFail(vehId, _tr("missions.drift.display.crashed"))
+end
 
-
-  creepSmoother:set(0)
-  clearRt()
+local function onDriftSpinout(vehId)
+  triggerRealtimeFail(vehId, _tr("missions.drift.display.spinout"))
 end
 
 local function onDonutDriftScored(score)
@@ -101,52 +189,62 @@ local function onHitPoleScored(score)
 end
 
 local function updateApps(dtReal)
-  score = gameplay_drift_scoring.getScore()
   local scoreOptions = gameplay_drift_scoring.getScoreOptions()
+  local driftOptions = gameplay_drift_drift.getDriftOptions()
+  local maxAngle = driftOptions and driftOptions.maxAngle or 180
+
   guiData.context = gameplay_drift_general.getContext()
+  table.clear(guiData.players)
 
-  --guihooks.trigger("setDriftPermanentAndPotentialScore", score.score, score.potentialScore)
-  guiData.permanentScore = score.score
-  guiData.potentialScore = score.potentialScore
+  local trackedVehicles = gameplay_drift_drift.getTrackedVehicles()
+  for vehId, state in pairs(trackedVehicles) do
+    -- string keys so the stream always serializes as an object, whatever the player indices are
+    local playerKey = tostring(state.playerId or 0)
+    local score = gameplay_drift_scoring.getScore(vehId)
+    local smoother = getCreepSmoother(vehId)
+    local pData = getPlayerData(playerKey)
 
-  if score.cachedScore > 0 then
-    --guihooks.trigger("setDriftRealtimeScore", math.floor(score.cachedScore), score.combo)
-    guiData.realtimeCachedScoreFloored = math.floor(score.cachedScore)
-    guiData.realtimeCombo = score.combo
-    --guihooks.trigger("setDriftRemainingComboTime", gameplay_drift_drift.getCurrDriftCompletedTime())
-    guiData.realtimeRemainingComboTime = gameplay_drift_drift.getCurrDriftCompletedTime()
-    local creepPercent = score.comboCreepup / 100
-    if score.combo >= scoreOptions.comboOptions.comboSoftCap then
-      creepPercent = 1
+    pData.permanentScore = score.score
+    pData.potentialScore = score.potentialScore
+    pData.realtimePerformanceFactor = gameplay_drift_scoring.getSteppedDriftPerformanceFactor(vehId)
+    pData.realtimeCachedScoreFloored = 0
+    pData.realtimeCombo = 0
+    pData.realtimeRemainingComboTime = 0
+    pData.realtimeCreep = 0
+    pData.realtimeAngle = 0
+    pData.realtimeAirSpeed = 0
+
+    pData.scorePhase, pData.scorePhaseProgress, pData.confirmedScore, pData.confirmedScoreId =
+      advanceScorePresentation(vehId, dtReal)
+
+    if score.cachedScore > 0 then
+      pData.realtimeCachedScoreFloored = math.floor(score.cachedScore)
+      pData.realtimeCombo = score.combo
+      pData.realtimeRemainingComboTime = gameplay_drift_drift.getCurrDriftCompletedTime(vehId)
+      local creepPercent = score.comboCreepup / 100
+      if score.combo >= scoreOptions.comboOptions.comboSoftCap then
+        creepPercent = 1
+      end
+      pData.realtimeCreep = smoother:get(creepPercent, dtReal)
+    else
+      smoother:get(0, dtReal) -- keep the smoother decaying while not drifting
     end
 
-    --guihooks.trigger("setDriftRealtimeCreep", creepSmoother:get(creepPercent, dtReal))
-    guiData.realtimeCreep = creepSmoother:get(creepPercent, dtReal)
-  end
-  --guihooks.trigger("setDriftPerformanceFactor", gameplay_drift_scoring.getSteppedDriftPerformanceFactor())
-  guiData.realtimePerformanceFactor = gameplay_drift_scoring.getSteppedDriftPerformanceFactor()
+    local airspeed = gameplay_drift_drift.getAirSpeed(vehId) or 0
+    local angle = gameplay_drift_drift.getCurrDegAngleSigned(vehId) or 0
 
-  local airspeed =  gameplay_drift_drift.getAirSpeed() or 0
-  local angle = gameplay_drift_drift.getCurrDegAngleSigned() or 0
-  local isDrifting = gameplay_drift_drift.getIsDrifting()
+    if math.abs(angle) < maxAngle and gameplay_drift_drift.getIsOverSteering(vehId) and gameplay_drift_drift.getIsOverMinSpeedForDrift(vehId) and not gameplay_drift_drift.getIsInTheAir(vehId) and not gameplay_walk.isWalking() then
+      pData.realtimeAngle = round(angle)
+    end
 
+    if gameplay_drift_drift.getIsDrifting(vehId) then
+      if angle == math.huge or angle == -math.huge or airspeed < 2 then airspeed = 0 end
+      pData.realtimeAirSpeed = airspeed
+    end
 
-  if math.abs(angle) < gameplay_drift_drift.getDriftOptions().maxAngle and gameplay_drift_drift.getIsOverSteering() and gameplay_drift_drift.getIsOverMinSpeedForDrift() and not gameplay_drift_drift.getIsInTheAir() and not gameplay_walk.isWalking() then
-    --guihooks.trigger("setDriftRealtimeAngle", angle )
-    guiData.realtimeAngle = round(angle)
-  else
-    --guihooks.trigger("setDriftRealtimeAngle", 0)
-    guiData.realtimeAngle = 0
+    guiData.players[playerKey] = pData
   end
 
-  if isDrifting then
-    if angle == math.huge or angle == -math.huge or airspeed < 2 then angle = 0 end
-    --guihooks.trigger("setDriftRealtimeAirSpeed",airspeed)
-    guiData.realtimeAirSpeed = airspeed
-  else
-    --guihooks.trigger("setDriftRealtimeAirSpeed", 0)
-    guiData.realtimeAirSpeed = 0
-  end
   guihooks.queueStream("drift", guiData)
 end
 
@@ -182,7 +280,6 @@ local function displayWrongWay()
   end
 end
 
--- "Out of bounds" message has higher priority than the "Wrong way" message
 local function displayOutOfBounds()
   if not gameplay_drift_bounds then return end
 
@@ -197,43 +294,46 @@ local function displayOutOfBounds()
   end
 end
 
-local function setDriftAngleUIContainer(value)
-  if value then
-    ui_appContainers.showApp('topCenter', 'drift')
-  else
-    ui_appContainers.hideApp('topCenter', 'drift')
-  end
+local function showDriftApp(container, app)
+  if ui_appContainers.getAppVisibility(container, app) then return end
+  activeDriftApps[container .. ":" .. app] = {container, app}
+  ui_appContainers.showApp(container, app)
+end
+
+local function hideDriftApp(container, app)
+  activeDriftApps[container .. ":" .. app] = nil
+  ui_appContainers.hideApp(container, app)
 end
 
 local function setDriftScoreboardUI(value)
   if value then
-    ui_appContainers.showApp('topLeft', 'scoreboard')
+    showDriftApp('topLeft', 'scoreboard')
   else
-    ui_appContainers.hideApp('topLeft', 'scoreboard')
+    hideDriftApp('topLeft', 'scoreboard')
   end
 end
 
 local function setDriftTasksUI(value)
   if value then
-    ui_appContainers.showApp('topLeft', 'tasks')
+    showDriftApp('topLeft', 'tasks')
   else
-    ui_appContainers.hideApp('topLeft', 'tasks')
+    hideDriftApp('topLeft', 'tasks')
   end
 end
 
 local function setDriftScoresUI(value)
   if value then
-    ui_appContainers.showApp('topLeft', 'driftScores')
+    showDriftApp('topLeft', 'driftScores')
   else
-    ui_appContainers.hideApp('topLeft', 'driftScores')
+    hideDriftApp('topLeft', 'driftScores')
   end
 end
 
 local function enableDriftMissionUI()
   core_gamestate.setGameState('freeroam', 'driftMission', 'freeroam')
+  driftOwnsGameState = true
   guihooks.trigger('ClearTasklist')
 
-  setDriftAngleUIContainer(true)
   setDriftScoreboardUI(false)
   setDriftTasksUI(true)
   setDriftScoresUI(false)
@@ -242,14 +342,22 @@ local function enableDriftMissionUI()
 end
 
 local function disableDriftUI()
-  setDriftAngleUIContainer(false)
-  setDriftScoreboardUI(false)
-  setDriftTasksUI(false)
-  setDriftScoresUI(false)
+  for _, entry in pairs(activeDriftApps) do
+    ui_appContainers.hideApp(entry[1], entry[2])
+  end
+  table.clear(activeDriftApps)
   ui_appContainers.hideApp('topCenter', 'flashMessage')
-  local gs = core_gamestate.getGameState()
-  if gs.state ~= 'freeroam' or gs.appLayout ~= 'freeroam' then
-    core_gamestate.setGameState('freeroam','freeroam', 'freeroam')
+
+  if driftOwnsGameState then
+    local gs = core_gamestate.getGameState()
+    if career_career and career_career.isActive() then
+      core_gamestate.setGameState('career','career', nil)
+    else
+      if gs.state ~= 'freeroam' or gs.appLayout ~= 'freeroam' then
+        core_gamestate.setGameState('freeroam','freeroam', 'freeroam')
+      end
+    end
+    driftOwnsGameState = false
   end
 
   driftDebugUILayout = false
@@ -271,10 +379,10 @@ local function imguiDebug()
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
+  -- the hook cache rebuild can still call us in the frame we got unloaded, which would re-push a stale drift stream
+  if isUnloaded then return end
   imguiDebug()
   updateApps(dtReal)
-
-  score = gameplay_drift_scoring.getScore()
 
   displayWrongWay()
   displayOutOfBounds()
@@ -286,27 +394,35 @@ local function onDriftSpotCompleted(data)
 end
 
 local function onDriftQuickMessageDisplay(data)
-  guihooks.trigger('displayDriftScoreModifier', data.msg )
+  local playerId = data.vehId and resolvePlayerId(data.vehId) or 0
+  guihooks.trigger('displayDriftScoreModifier', data.msg, playerId)
 end
 
-local function onDriftPlVehReset()
-  guiData.realtimeCachedScoreFloored = 0
-  guiData.realtimeCombo = 0
-  guiData.realtimeRemainingComboTime = 0
-  guiData.realtimeCreep = 0
-  guihooks.queueStream("drift", guiData)
+local function onDriftPlVehReset(vehId)
+  resetCreepSmoother(vehId)
+  clearScorePresentation(vehId)
   clearRt()
 end
 
-local function onDriftCachedScoreReset()
-  guiData.realtimeCachedScoreFloored = 0
-  guiData.realtimeCombo = 0
-  guihooks.queueStream("drift", guiData)
+local function onDriftCachedScoreReset(vehId)
   clearRt()
 end
 
 local function onExtensionUnloaded()
+  isUnloaded = true
+  disableDriftUI()
   clearRt()
+  ui_apps_genericMissionData.clearData()
+  table.clear(creepSmoothers)
+  table.clear(scorePresentations)
+  table.clear(playerDataPool)
+  table.clear(guiData.players)
+  guihooks.queueStream("drift", guiData)
+end
+
+local function onVehicleDestroyed(vehId)
+  creepSmoothers[vehId] = nil
+  scorePresentations[vehId] = nil
 end
 
 local function onFreeroamDriftZoneNewHighscore()
@@ -317,7 +433,9 @@ local function onDriftSpotFailed(data)
   flashMessage(_tr(data.reason.msg), 2)
 end
 
-local function onDriftScoreWrappedUp(score)
+local function onDriftScoreWrappedUp(score, vehId)
+  resetCreepSmoother(vehId)
+  startScorePresentation(vehId, score)
   flashMessage(contextTranslate("missions.drift.general.extraPointDrift", {score = math.floor(score)}))
 end
 
@@ -352,16 +470,24 @@ local function onDriftContextChanged(context)
       setDriftScoresUI(true)
     end
     setDriftTasksUI(true)
-    setDriftAngleUIContainer(true)
   elseif context == "inFreeroamCruising" then
-    setDriftAngleUIContainer(true)
     setDriftScoresUI(true)
   elseif context == "inFreeroam" then
     disableDriftUI()
   end
 end
 
+local function onExtensionLoaded()
+  local ctx = gameplay_drift_general.getContext()
+  if ctx then
+    onDriftContextChanged(ctx)
+  end
+end
+
 local function reset()
+  table.clear(creepSmoothers)
+  table.clear(scorePresentations)
+  table.clear(playerDataPool)
   ui_apps_genericMissionData.clearData()
 end
 
@@ -390,12 +516,16 @@ M.onTightDriftScored = onTightDriftScored
 M.onHitPoleScored = onHitPoleScored
 M.onNearPoleScored = onNearPoleScored
 
+M.onExtensionLoaded = onExtensionLoaded
 M.onDriftContextChanged = onDriftContextChanged
 
 M.onDriftCachedScoreReset = onDriftCachedScoreReset
 M.onExtensionUnloaded = onExtensionUnloaded
+M.onVehicleDestroyed = onVehicleDestroyed
 M.onFreeroamDriftZoneNewHighscore = onFreeroamDriftZoneNewHighscore
 M.onDriftSpotFailed = onDriftSpotFailed
 
 M.getDriftDebugInfo = getDriftDebugInfo
+M.getIsScorePresentationActive = getIsScorePresentationActive
+M.getScorePresentationDuration = getScorePresentationDuration
 return M

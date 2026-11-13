@@ -43,9 +43,37 @@ C.legacyPins = {
 
 C.tags = {'gameplay', 'utils'}
 
+local logTag = 'spawnVehicle'
+local spawnRetryInterval = 1
+local spawnTimeout = 10
+
+function C:resetSpawnRetry()
+  self.retryTimer = 0
+  self.spawnFailedTime = 0
+end
+
 function C:init()
   self.state = 1
   self.pinOut.flow.value = false
+  self:resetSpawnRetry()
+end
+
+-- spawning can fail (e.g. low memory on PS5), so retry for a while and then abandon the mission
+function C:onSpawnFailed()
+  self.veh = nil
+  self.spawnFailedTime = self.spawnFailedTime + spawnRetryInterval
+  if self.spawnFailedTime < spawnTimeout then
+    log('W', logTag, string.format('Failed to spawn vehicle %s, retrying in %ds', dumps(self.pinIn.model.value), spawnRetryInterval))
+    self.retryTimer = spawnRetryInterval
+    return
+  end
+
+  log('E', logTag, string.format('Failed to spawn vehicle %s after %ds, giving up', dumps(self.pinIn.model.value), spawnTimeout))
+  self.mgr:logEvent("Vehicle Spawn Failed ".. dumps(self.pinIn.model.value), "E", "Vehicle " ..dumps(self.pinIn.model.value) .. " could not be spawned.", {type = "node", node = self})
+  self.state = 5
+  if self.mgr.activity then
+    gameplay_missions_missionManager.attemptAbandonMissionWithFade(self.mgr.activity)
+  end
 end
 
 function C:postInit()
@@ -59,12 +87,14 @@ function C:_executionStopped()
   self.state = 1
   self.pinOut.flow.value = false
   self.veh = nil
+  self:resetSpawnRetry()
 end
 
 function C:_executionStarted()
   self.spawningOptions = nil
   self.spawnedObjectId = nil
   self.state = 1
+  self:resetSpawnRetry()
   self.pinOut.flow.value = false
   self.pinOut.loaded.value = false
   self._dontDelete = false
@@ -88,11 +118,17 @@ function C:work()
     self.pinOut.flow.value = false
     self.pinOut.loaded.value = false
     self.veh = nil
+    self:resetSpawnRetry()
     return
   end
   if self.pinIn.flow.value then
     -- state 1: spawning state
     if self.state == 1 then
+      if self.retryTimer > 0 then
+        self.retryTimer = self.retryTimer - self.mgr.dtReal
+        return
+      end
+
       -- create a name if we have none.
       local name = self.pinIn.name.value or generateObjectNameForClass('BeamNGVehicle', 'object_')
 
@@ -158,6 +194,10 @@ function C:work()
       else
         self.veh = core_vehicles.spawnNewVehicle(self.spawningOptions.model, self.spawningOptions)
         self.mgr:logEvent("Vehicle Spawned ".. dumps(self.pinIn.model.value), "I", "A Vehicle " ..dumps(self.pinIn.model.value) .. " was spawned.", {type = "node", node = self})
+      end
+      if not self.veh then
+        self:onSpawnFailed()
+        return
       end
       self.mgr.modules.vehicle:addVehicle(self.veh, {dontDelete = self.pinIn.keepVehicle.value})
       self.spawnedObjectId = self.veh:getId()

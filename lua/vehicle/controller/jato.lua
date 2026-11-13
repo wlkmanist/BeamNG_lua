@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Controls JATO thrusters that provide temporary extra thrust
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 1100
@@ -24,6 +26,10 @@ local smokeTick = 0
 local thrusterLoopName
 local thrusterLoops1
 local thrusterLoops2
+
+local stateData
+local stateDataNameFuel
+local stateDataNameFuelCoef
 
 local function inputStringCallback(string)
   M.fuelCoef = 1 - M.fuelCoef
@@ -106,6 +112,10 @@ local function reset()
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameFuel = M.name .. "_fuel"
+  stateDataNameFuelCoef = M.name .. "_fuelCoef"
+
   fuel = jbeamData.fuel or 20
   initialFuel = fuel
   if initialFuel > 0 then
@@ -135,11 +145,36 @@ local function init(jbeamData)
   extensions.inputAnalyzer.registerInputString("uuddlrlrba", inputStringCallback)
 end
 
+local function getState()
+  stateData[stateDataNameFuel] = fuel
+  stateData[stateDataNameFuelCoef] = M.fuelCoef
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newFuel = data[stateDataNameFuel]
+  if type(newFuel) == "number" and newFuel == newFuel then
+    fuel = min(max(newFuel, 0), initialFuel)
+  end
+
+  local newFuelCoef = data[stateDataNameFuelCoef]
+  if type(newFuelCoef) == "number" and newFuelCoef == newFuelCoef then
+    M.fuelCoef = min(max(newFuelCoef, 0), 1)
+  end
+end
+
 M.init = init
 M.reset = reset
 M.updateGFX = updateGFX
 M.inputStringCallback = inputStringCallback
 
 M.updateSimpleControlButtons = updateSimpleControlButtons
+
+M.getState = getState
+M.setState = setState
 
 return M

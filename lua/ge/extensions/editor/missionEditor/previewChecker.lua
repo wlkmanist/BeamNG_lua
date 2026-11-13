@@ -91,7 +91,7 @@ function C:draw()
   im.Button("Preview")
   if im.IsItemHovered() then
     im.BeginTooltip()
-    im.Image(self.previewImage.texId, self.previewImage.size, im.ImVec2(0, 0), im.ImVec2(1, 1))
+    im.Image(self.previewImage.tex:getID(), self.previewImage.size, im.ImVec2(0, 0), im.ImVec2(1, 1))
     im.EndTooltip()
   end
   im.SameLine()
@@ -115,7 +115,7 @@ function C:draw()
   im.Button("Thumbnail")
   if im.IsItemHovered() then
     im.BeginTooltip()
-    im.Image(self.thumbImage.texId, self.thumbImage.size, im.ImVec2(0, 0), im.ImVec2(1, 1))
+    im.Image(self.thumbImage.tex:getID(), self.thumbImage.size, im.ImVec2(0, 0), im.ImVec2(1, 1))
     im.EndTooltip()
   end
   im.SameLine()
@@ -130,12 +130,12 @@ function C:draw()
     if size.x > im.GetContentRegionAvailWidth() then
       size = size * im.GetContentRegionAvailWidth() / size.x
     end
-    im.Image(self.previewImage.texId, im.ImVec2(size.x, size.y), im.ImVec2(0, 0), im.ImVec2(1, 1))
+    im.Image(self.previewImage.tex:getID(), im.ImVec2(size.x, size.y), im.ImVec2(0, 0), im.ImVec2(1, 1))
      size = vec3(self.thumbImage.size.x, self.thumbImage.size.y, 0)
     if size.x > im.GetContentRegionAvailWidth() then
       size = size * im.GetContentRegionAvailWidth() / size.x
     end
-    im.Image(self.thumbImage.texId, im.ImVec2(size.x, size.y), im.ImVec2(0, 0), im.ImVec2(1, 1))
+    im.Image(self.thumbImage.tex:getID(), im.ImVec2(size.x, size.y), im.ImVec2(0, 0), im.ImVec2(1, 1))
   end
 
   im.Columns(1)

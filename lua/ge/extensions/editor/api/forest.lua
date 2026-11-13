@@ -86,6 +86,17 @@ local function updateForestItem(forestData, key, keyPos, newData, newTrans, newS
   return forestData:updateItem(key, keyPos, newData, newTrans, newScale, newUid)
 end
 
+--- Set the opaque per-instance custom data of a forest item
+-- @param forestData the ForestData C++ class that contains the item
+-- @param key the key of the item
+-- @param customData the packed custom data value (-1 = none)
+-- @return the forest item
+local function setForestItemCustomData(forestData, key, customData)
+  editor.forestDirty = true
+  editor.setDirty()
+  return forestData:setItemCustomData(key, customData)
+end
+
 local function setForestItemSelected(forestData, key, selected)
   return forestData:setItemSelected(key, selected)
 end
@@ -97,6 +108,7 @@ local function initialize(editorInstance)
   editor.createForestItem = createForestItem
   editor.removeForestItem = removeForestItem
   editor.updateForestItem = updateForestItem
+  editor.setForestItemCustomData = setForestItemCustomData
   editor.setForestItemSelected = setForestItemSelected
 end
 

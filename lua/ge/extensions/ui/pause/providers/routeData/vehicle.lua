@@ -52,6 +52,13 @@ local function getVehicleSaveRouteTitle()
   return baseTitle
 end
 
+local function customConfigurationsAllowed()
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  return not capabilities
+    or not capabilities.areCustomConfigurationsAllowed
+    or capabilities.areCustomConfigurationsAllowed()
+end
+
 local function buildVehicleButtons(actionState)
   local definitions = {
 --[[     {
@@ -73,15 +80,6 @@ local function buildVehicleButtons(actionState)
       end,
     },
     --[[
-    {
-      id = "parts",
-      label = "Parts management",
-      icon = "wrench",
-      routeTarget = "pause.vehicle.parts",
-      callback = function()
-        return Common.tryPushStateSequence({"pause.vehicle.parts:menu-content-card-1", "menu.vehicleconfig.parts"})
-      end,
-    },
     {
       id = "tuning",
       label = "Tuning",
@@ -128,7 +126,7 @@ local function buildVehicleButtons(actionState)
       visible = permission.visible ~= false,
       enabled = permission.enabled ~= false,
       disabledReason = permission.disabledReason,
-      callback = definition.callback,
+      callback = permission.enabled == false and function() return false end or definition.callback,
     })
     if registered and registered.visible ~= false then
       table.insert(buttons, registered)
@@ -192,7 +190,7 @@ local function buildVehicleRecoveryButtons(actionState)
       visible = permission.visible ~= false,
       enabled = permission.enabled ~= false,
       disabledReason = permission.disabledReason,
-      callback = definition.callback,
+      callback = permission.enabled == false and function() return false end or definition.callback,
     })
     if registered and registered.visible ~= false then
       table.insert(buttons, registered)
@@ -234,7 +232,7 @@ local function buildVehicleSelectorButtons(actionState)
       visible = permission.visible ~= false,
       enabled = permission.enabled ~= false,
       disabledReason = permission.disabledReason,
-      callback = definition.callback,
+      callback = permission.enabled == false and function() return false end or definition.callback,
     })
     if registered and registered.visible ~= false then
       table.insert(buttons, registered)
@@ -250,8 +248,8 @@ local function buildVehicleRail(actionState)
   local vehicleRecoveryButtons = Common.asRailGroup("vehicleRecoveryButtons", buildVehicleRecoveryButtons(actionState))
   local vehicleSelectorButtons = Common.asRailGroup("vehicleSelectorButtons", buildVehicleSelectorButtons(actionState))
   if vehicleButtons then table.insert(groups, vehicleButtons) end
-  if vehicleRecoveryButtons then table.insert(groups, vehicleRecoveryButtons) end
   if vehicleSelectorButtons then table.insert(groups, vehicleSelectorButtons) end
+  if vehicleRecoveryButtons then table.insert(groups, vehicleRecoveryButtons) end
   return groups
 end
 
@@ -282,6 +280,21 @@ local function buildManageSpawnedSidePanel(context, useAsyncHydrationShell)
 end
 
 function M.getVehicleData(context)
+  if context.isMultiseatActive then
+    return {
+      rail = {},
+      mainPanelContent = {
+        {
+          id = "multiseatVehiclesDigest",
+          type = "component",
+          componentName = "PauseMultiseatVehiclesDigest",
+        },
+      },
+      sidePanelContents = {},
+      actions = {},
+    }
+  end
+
   local editable = isVehicleConfigEditable(context)
   local disabledReason = editable and nil or _tr("ui.pause.readOnlyInThisMode")
   local recoveryAllowed = context.mode == "freeroam" or context.mode == "multiplayer" or context.mode == "freeroamTutorial"
@@ -297,7 +310,6 @@ function M.getVehicleData(context)
   local actions = {
     partpacks = deepcopy(actionState),
     configurationCombined = deepcopy(actionState),
-    parts = deepcopy(actionState),
     tuning = deepcopy(actionState),
     colorSkin = deepcopy(actionState),
     saveConfig = deepcopy(actionState),
@@ -324,6 +336,25 @@ function M.getVehicleData(context)
     },
     debug = deepcopy(actionState),
   }
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  if capabilities and capabilities.isSessionActive and capabilities.isSessionActive() then
+    for _, actionId in ipairs({"partpacks", "configurationCombined", "tuning", "colorSkin", "saveConfig"}) do
+      capabilities.applyUiPermission(actions[actionId], "partsAndTuning")
+    end
+    capabilities.applyUiPermission(actions.vehicleSelector, "vehicleManagement")
+    if not context.isFirstDriveActive then
+      capabilities.applyUiPermission(actions.vehicleRepairHere, "radialMenu")
+      capabilities.applyUiPermission(actions.vehicleRecoverToRoad, "radialMenu")
+      capabilities.applyUiPermission(actions.vehicleFlipUpright, "radialMenu")
+    end
+    capabilities.applyUiPermission(actions.debug, "advancedSandbox")
+  end
+  if not getCurrentPlayerVehicle() then
+    for _, actionId in ipairs({"configurationCombined", "vehicleRepairHere", "vehicleRecoverToRoad", "vehicleFlipUpright"}) do
+      actions[actionId].enabled = false
+      actions[actionId].disabledReason = _tr("ui.radialmenu2.noVehicle")
+    end
+  end
 
   return {
     editable = editable,
@@ -369,18 +400,6 @@ function M.getVehiclePacksData()
   }
 end
 
-function M.getVehiclePartsData()
-  return {
-    mainPanelContent = {
-      {
-        id = "vehiclePartsComponent",
-        type = "component",
-        componentName = "PauseVehicleParts",
-      },
-    },
-  }
-end
-
 function M.getVehicleConfigurationCombinedData()
   return {
     heading = _tr("ui.dashboard.vehicleconfig"),
@@ -390,6 +409,9 @@ function M.getVehicleConfigurationCombinedData()
         id = "vehicleConfigurationCombinedComponent",
         type = "component",
         componentName = "PauseVehicleConfigurationCombined",
+        props = {
+          customConfigurationsEnabled = customConfigurationsAllowed(),
+        },
       },
     },
   }
@@ -445,7 +467,9 @@ end
 function M.getVehicleSpawnedData(context)
   -- PoC async hydration: keep the route mount payload light, then let the Vue screen request
   -- the full spawned vehicle payload after mount. This is intentionally scoped to spawned list.
+  local spawnedVehicles = ui_pause_providers_vehicleTabInteractions.getSpawnedVehiclesShellData(context)
   return {
+    mainCardClass = "menu-content-card-1--no-scroll",
     mainPanelContent = {
       {
         id = "vehicleSpawnedComponent",
@@ -453,7 +477,7 @@ function M.getVehicleSpawnedData(context)
         componentName = "PauseVehicleSpawned",
       },
     },
-    spawnedVehicles = ui_pause_providers_vehicleTabInteractions.getSpawnedVehiclesShellData(context),
+    spawnedVehicles = spawnedVehicles,
   }
 end
 

@@ -2,131 +2,81 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
-local ssaoPostFxCallbacks = {}
+local M = {}
 
-ssaoPostFxCallbacks.onEnabled = function()
-  -- This tells the AL shaders to reload and sample
-  -- from our #ssaoMask texture target.
-  VariableRegistry.set("$AL::UseSSAOMask", true)
-  return true;
-end
+local defaultContrast = 2
+local defaultRadius = 1.5
 
-ssaoPostFxCallbacks.onDisabled = function()
-  VariableRegistry.set("$AL::UseSSAOMask", false)
-end
+-- PostEffectSSAO only binds setters to lua, so the last applied values are kept here for
+-- tools that need to read them back
+local currentContrast = defaultContrast
+local currentRadius = defaultRadius
 
-local currentWasVis = nil
-local currentQuality = nil
-local currentTargetScale = nil
-ssaoPostFxCallbacks.onAdd = function()
-  -- log("I","ssaoPostFx", "ssaoPostFx called....")
-  currentWasVis = "Uninitialized"
-  currentQuality = "Uninitialized"
-end
-
-ssaoPostFxCallbacks.preProcess = function()
-  local quality = VariableRegistry.get("$SSAOPostFx::quality")
-  if quality ~= currentQuality then
-    currentQuality = tostring(clamp(round(tonumber(quality)), 0, 2))
-    local ssaoPostFx = scenetree.findObject("SSAOPostFx")
-    if ssaoPostFx then
-      ssaoPostFx:setShaderMacro( "QUALITY", currentQuality)
-    end
-  end
-  currentTargetScale = VariableRegistry.get("$SSAOPostFx::targetScale")
-end
-
-ssaoPostFxCallbacks.setShaderConsts = function()
+local function setContrast(value)
+  value = tonumber(value)
+  if not value then return end
+  currentContrast = value
   local ssaoPostFx = scenetree.findObject("SSAOPostFx")
-  if not ssaoPostFx then
-    return
+  if ssaoPostFx then
+    ssaoPostFx:setContrast(value)
   end
-
-  ssaoPostFx:setShaderConst("$overallStrength", VariableRegistry.get("$SSAOPostFx::overallStrength"))
-
-  -- Abbreviate is s-small l-large.
-  ssaoPostFx:setShaderConst("$sRadius", VariableRegistry.get("$SSAOPostFx::sRadius"))
-  ssaoPostFx:setShaderConst("$sStrength", VariableRegistry.get("$SSAOPostFx::sStrength"))
-  ssaoPostFx:setShaderConst("$sDepthMin", VariableRegistry.get("$SSAOPostFx::sDepthMin"))
-  ssaoPostFx:setShaderConst("$sDepthMax", VariableRegistry.get("$SSAOPostFx::sDepthMax"))
-  ssaoPostFx:setShaderConst("$sDepthPow", VariableRegistry.get("$SSAOPostFx::sDepthPow"))
-  ssaoPostFx:setShaderConst("$sNormalTol", VariableRegistry.get("$SSAOPostFx::sNormalTol"))
-  ssaoPostFx:setShaderConst("$sNormalPow", VariableRegistry.get("$SSAOPostFx::sNormalPow"))
-
-  ssaoPostFx:setShaderConst("$lRadius",   VariableRegistry.get("$SSAOPostFx::lRadius"))
-  ssaoPostFx:setShaderConst("$lStrength", VariableRegistry.get("$SSAOPostFx::lStrength"))
-  ssaoPostFx:setShaderConst("$lDepthMin", VariableRegistry.get("$SSAOPostFx::lDepthMin"))
-  ssaoPostFx:setShaderConst("$lDepthMax", VariableRegistry.get("$SSAOPostFx::lDepthMax"))
-  ssaoPostFx:setShaderConst("$lDepthPow", VariableRegistry.get("$SSAOPostFx::lDepthPow"))
-  ssaoPostFx:setShaderConst("$lNormalTol",VariableRegistry.get("$SSAOPostFx::lNormalTol"))
-  ssaoPostFx:setShaderConst("$lNormalPow",VariableRegistry.get("$SSAOPostFx::lNormalPow"))
-
-  -- NOTE(AK) 04/04/2022: I have to come back to thins once I know what to do as I have
-  --                      no idea where the blur object comes from
-  -- %blur = %this->blurY
-  -- %blur.setShaderConst("$blurDepthTol", $SSAOPostFx::blurDepthTol )
-  -- %blur.setShaderConst("$blurNormalTol", $SSAOPostFx::blurNormalTol )
-
-  -- %blur = %this->blurX
-  -- %blur.setShaderConst("$blurDepthTol", $SSAOPostFx::blurDepthTol )
-  -- %blur.setShaderConst("$blurNormalTol", $SSAOPostFx::blurNormalTol )
-
-  -- %blur = %this->blurY2
-  -- %blur.setShaderConst("$blurDepthTol", $SSAOPostFx::blurDepthTol )
-  -- %blur.setShaderConst("$blurNormalTol", $SSAOPostFx::blurNormalTol )
-
-  -- %blur = %this->blurX2
-  -- %blur.setShaderConst("$blurDepthTol", $SSAOPostFx::blurDepthTol )
-  -- %blur.setShaderConst("$blurNormalTol", $SSAOPostFx::blurNormalTol )
 end
-rawset(_G, "SSAOPostFxCallbacks", ssaoPostFxCallbacks)
+
+local function setRadius(value)
+  value = tonumber(value)
+  if not value then return end
+  currentRadius = value
+  local ssaoPostFx = scenetree.findObject("SSAOPostFx")
+  if ssaoPostFx then
+    ssaoPostFx:setRadius(value)
+  end
+end
+
+local function applyDefaults()
+  VariableRegistry.set("$SSAOPostFx::Enable", true)
+  setContrast(defaultContrast)
+  setRadius(defaultRadius)
+end
+
+M.applyDefaults = applyDefaults
+M.setContrast = setContrast
+M.setRadius = setRadius
+M.getContrast = function() return currentContrast end
+M.getRadius = function() return currentRadius end
+
+-- Inspect the generated world-space bent-normal map without changing materials.
+-- This debug effect is created on demand and has no cost while disabled.
+M.setBentNormalDebugEnabled = function(enabled)
+  local effect = scenetree.findObject("GTAOBentNormalsVizPostFx")
+  if enabled and not effect then
+    local shader = createObject("ShaderData")
+    shader.DXComputShaderName = "shaders/common/postFx/gtao/visualizeBentNormals.cs.hlsl"
+    shader.pixVersion = 5.0
+    shader:setField("samplerNames", 0, "$inputTex")
+    shader:registerObject("GTAOBentNormalsVizShader")
+    effect = createObject("PostEffect")
+    effect.allowReflectPass = false
+    effect.renderPriority = 9999
+    effect:setField("renderTime", 0, "PFXAfterDiffuse")
+    effect:setField("shader", 0, "GTAOBentNormalsVizShader")
+    effect:setField("stateBlock", 0, "PFX_DefaultStateBlock")
+    effect:setField("texture", 0, "#gtaoOutput")
+    effect:setField("target", 0, "$backBuffer")
+    effect:registerObject("GTAOBentNormalsVizPostFx")
+  end
+  if effect then
+    if enabled then effect:enable() else effect:disable() end
+  end
+end
 
 local ssaoPostFx = scenetree.findObject("SSAOPostFx")
 if not ssaoPostFx then
-  -- only set these when we start the game. On reloading lua, we don't want to set these values
-  VariableRegistry.set("$SSAOPostFx::overallStrength", "2.0")
-
-  -- The small radius SSAO settings.
-  VariableRegistry.set("$SSAOPostFx::sRadius", "0.1")
-  VariableRegistry.set("$SSAOPostFx::sStrength", "6.0")
-  VariableRegistry.set("$SSAOPostFx::sDepthMin", "0.1")
-  VariableRegistry.set("$SSAOPostFx::sDepthMax", "1.0")
-  VariableRegistry.set("$SSAOPostFx::sDepthPow", "1.0")
-  VariableRegistry.set("$SSAOPostFx::sNormalTol", "0.0")
-  VariableRegistry.set("$SSAOPostFx::sNormalPow", "1.0")
-
-  -- The large radius SSAO settings.
-  VariableRegistry.set("$SSAOPostFx::lRadius", "1.0")
-  VariableRegistry.set("$SSAOPostFx::lStrength", "10.0")
-  VariableRegistry.set("$SSAOPostFx::lDepthMin", "0.2")
-  VariableRegistry.set("$SSAOPostFx::lDepthMax", "2.0")
-  VariableRegistry.set("$SSAOPostFx::lDepthPow", "0.2")
-  VariableRegistry.set("$SSAOPostFx::lNormalTol", "-0.5")
-  VariableRegistry.set("$SSAOPostFx::lNormalPow", "2.0")
-
-  -- Valid values: 0, 1, 2
-  VariableRegistry.set("$SSAOPostFx::quality", "0")
-
-  --
-  VariableRegistry.set("$SSAOPostFx::blurDepthTol", "0.001")
-
-  --
-  VariableRegistry.set("$SSAOPostFx::blurNormalTol", "0.95")
-
-  --
-  VariableRegistry.set("$SSAOPostFx::targetScale", "0.5 0.5")
-
-  -----------------------------------------------------------------------------
-  -- PostEffects
-  -----------------------------------------------------------------------------
-
   ssaoPostFx = createObject("PostEffectSSAO")
-
   ssaoPostFx:registerObject("SSAOPostFx")
+  applyDefaults()
 end
+ssaoPostFx.bentNormals = settings.getValue("PostFXSpecularOcclusionEnabled") == true
 
--- Just here for debug visualization of the
--- SSAO mask texture used during lighting.
 local ssaoVizPostFx = scenetree.findObject("SSAOVizPostFx")
 if not ssaoVizPostFx then
   ssaoVizPostFx = createObject("PostEffectSSAO")
@@ -138,23 +88,4 @@ if not ssaoVizPostFx then
   ssaoVizPostFx:registerObject("SSAOVizPostFx")
 end
 
-local ssaoPowTableShader = scenetree.findObject("SSAOPowTableShader")
-if not ssaoPowTableShader then
-  ssaoPowTableShader = createObject("ShaderData")
-  ssaoPowTableShader.DXVertexShaderFile    = "shaders/common/postFx/ssao/SSAO_PowerTable_V.hlsl"
-  ssaoPowTableShader.DXPixelShaderFile     = "shaders/common/postFx/ssao/SSAO_PowerTable_P.hlsl"
-  ssaoPowTableShader.pixVersion = 5.0
-  ssaoPowTableShader:registerObject("SSAOPowTableShader")
-end
-
-local ssaoPowTablePostFx = scenetree.findObject("SSAOPowTablePostFx")
-if not ssaoPowTablePostFx then
-  ssaoPowTablePostFx = createObject("PostEffect")
-  ssaoPowTablePostFx:setField("shader", 0, "SSAOPowTableShader")
-  ssaoPowTablePostFx:setField("stateBlock", 0, "PFX_DefaultStateBlock")
-  ssaoPowTablePostFx:setField("renderTime", 0, "PFXTexGenOnDemand")
-  ssaoPowTablePostFx:setField("target", 0, "#ssao_pow_table")
-  ssaoPowTablePostFx:setField("targetFormat", 0, "GFXFormatR16F")
-  ssaoPowTablePostFx:setField("targetSize", 0, "256 1")
-  ssaoPowTablePostFx:registerObject("SSAOPowTablePostFx")
-end
+return M

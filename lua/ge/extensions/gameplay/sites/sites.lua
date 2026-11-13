@@ -60,9 +60,10 @@ function C:finalizeSites()
   -- check for multiSpots to generate
   for _, ps in ipairs(self.parkingSpots.sorted) do
     if ps.isMultiSpot and not ps.isProcedural then
-      ps:generateMultiSpots(self.parkingSpots)
+      ps:generateMultiSpots(self.parkingSpots, true)
     end
   end
+  self.parkingSpots:sort()
 
   self.locations:buildNamesDir()
   self.zones:buildNamesDir()

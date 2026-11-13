@@ -1,5 +1,5 @@
 local cc = require('/lua/ge/extensions/gameplay/rally/util/colors')
-local util = require('editor/tech/roadArchitect/utilities')                                         -- A module containing miscellaneous utility functions.
+local util = require('editor/roadArchitect/utilities')                                         -- A module containing miscellaneous utility functions.
 local compositorUtil = require('/lua/ge/extensions/gameplay/rally/compositors/helpers/compositorUtil')
 
 local M = {}

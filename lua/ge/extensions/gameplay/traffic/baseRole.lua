@@ -24,7 +24,7 @@ function C:init(veh, name, data)
   self.personalityModifiers = {}
   self.driver = {
     personality = deepcopy(basePersonality),
-    aggression = veh.vars.baseAggression
+    aggression = veh.getTrafficVars().baseAggression
   }
   self.flags = {}
   self.actions = {}
@@ -37,11 +37,11 @@ function C:init(veh, name, data)
         local legalSide = map.getRoadRules().rightHandDrive and -1 or 1
         local changeLaneDist = args.dist or self.veh:getBrakingDistance(nil, 0.5) -- uses expected braking distance
         local sideDist = legalSide * 5 -- should be distance to side
+
+        self.veh:setAiMode('traffic')
         if args.useWarnSignal then
           getObjectByID(self.veh.id):queueLuaCommand('electrics.set_warn_signal(1)')
         end
-
-        self.veh:setAiMode('traffic')
         -- the following calls are delayed while the AI plan rebuilds itself (needs improvement)
         -- this should really be done in ai.lua instead
         self.veh.queuedFuncs.laneChange = {timer = 0.25, vLua = 'ai.laneChange(nil, '..changeLaneDist..', '..sideDist..')'}
@@ -128,7 +128,7 @@ function C:setAction(name, args) -- sets the action to perform
 end
 
 function C:setAggression(baseAggression, ignorePersonality) -- helper method that sets and sends the ai aggression value
-  baseAggression = baseAggression or self.veh.vars.baseAggression
+  baseAggression = baseAggression or self.veh.getTrafficVars().baseAggression
   local modifier = ignorePersonality and 0 or (self.driver.personality.aggression - 0.5) * 0.6 -- from -0.3 to 0.3
   self.driver.aggression = clamp(baseAggression + modifier, 0.25, 1.25)
   getObjectByID(self.veh.id):queueLuaCommand('ai.setAggression('..self.driver.aggression..')') -- slightly randomized aggression (mean 0.3)
@@ -191,7 +191,7 @@ end
 function C:checkTargetVisible(id) -- checks if the other vehicle is visible (static raycast)
   local visible = false
   local targetId = id or self.targetId
-  local targetVeh = targetId and gameplay_traffic.getTrafficData()[targetId]
+  local targetVeh = targetId and self.veh.getTraffic()[targetId]
   if targetVeh then
     visible = self.veh:checkRayCast(targetVeh.pos + vec3(0, 0, 1))
   end
@@ -240,6 +240,9 @@ end
 function C:tryRandomEvent()
 end
 
+function C:onActiveDone()
+end
+
 function C:onRefresh()
 end
 
@@ -281,8 +284,8 @@ function C:onSerialize()
   return data
 end
 
-function C:onDeserialized(data)
-  self.veh = gameplay_traffic.getTrafficData()[data.id]
+function C:onDeserialized(data, veh)
+  self.veh = veh or gameplay_traffic.getTraffic()[data.id]
   self.name = data.name
   self.state = data.state
   self.actionName = data.actionName

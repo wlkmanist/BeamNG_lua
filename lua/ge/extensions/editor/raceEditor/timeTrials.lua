@@ -133,7 +133,7 @@ function C:drawGeneralInfo()
       size.x = size.x * fac
       size.y = size.y * fac
     end
-    im.Image(previewTex.texId, size)
+    im.Image(previewTex.tex:getID(), size)
     im.Separator()
   end
   for i, pn in ipairs(prefabData) do

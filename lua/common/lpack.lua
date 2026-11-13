@@ -282,9 +282,11 @@ local function decode(is, target)
   else
     local tmpBufDec = bufDec
     bufDec = is
-    bufDec:get(1)
-    res = bufDec:decode()
-    if res == nil then res = target and peekDecBinInto(target) or peekDecBin() end
+    if #bufDec > 1 then
+      bufDec:get(1)
+      res = bufDec:decode()
+      if res == nil then res = target and peekDecBinInto(target) or peekDecBin() end
+    end
     bufDec = tmpBufDec
   end
 

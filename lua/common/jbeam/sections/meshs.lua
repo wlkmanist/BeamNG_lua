@@ -20,13 +20,9 @@ local function translationWorldToPropAxis(trans, inLocalSpace, refPos, refXPos, 
   end
   nz:normalize()
 
-  local mat = MatrixF(true)
-  mat:setColumn(0, nx)
-  mat:setColumn(1, ny)
-  mat:setColumn(2, nz)
-  mat:inverse()
-
-  return mat:mulP3F(trans)
+  -- inverse of the matrix with columns nx, ny, nz, applied to trans
+  local yz, zx, xy = ny:cross(nz), nz:cross(nx), nx:cross(ny)
+  return vec3(trans:dot(yz), trans:dot(zx), trans:dot(xy)) / nx:dot(yz)
 end
 
 local function parseColor(v)
@@ -217,6 +213,8 @@ local function processProps(objID, vehicleObj, vehicle)
             if prop.lightAttenuation then attenuation = vec3(prop.lightAttenuation) end
             plight:setLightArgs(innerAngle, outerAngle, brightness, range, color, attenuation, castShadows)
             plight:setLightArgs2(flareName, flareScale, cookieName, animationType, animationPeriod, animationPhase, texSize, shadowSoftness)
+            -- Metres; omitted values keep the existing vehicle shadow appearance.
+            plight:setSourceRadius(prop.lightSourceRadius or -1)
             -- not needed here because above, but you can also update the light like this:
             --plight:setLightArgsDynamic(brightness, color)
           end

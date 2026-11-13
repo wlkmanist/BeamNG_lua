@@ -62,6 +62,7 @@ function C:_updateLight(intensity)
 end
 
 function C:sendMenus()
+  if not core_quickAccess then return end
   core_quickAccess.addEntry({level = '/root/sandbox/', uniqueID = "camera", icon = "camera", ignoreAsRecentAction = true, ["goto"] = '/root/sandbox/camera/', title = "Relative Camera"})
 
   core_quickAccess.addEntry({ level = '/root/sandbox/camera/',

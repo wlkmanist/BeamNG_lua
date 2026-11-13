@@ -116,9 +116,6 @@ local function startTraffic()
   if not trafficExt then return false end
   trafficExt.activate()
   trafficExt.setTrafficVars({aiMode = "traffic", enableRandomEvents = true})
-  if extensions and extensions.telemetry_core then
-    extensions.telemetry_core.startActivity("trafficEnabled")
-  end
   return true
 end
 
@@ -126,9 +123,6 @@ local function stopTraffic()
   local trafficExt = getTrafficExt()
   if not trafficExt then return false end
   trafficExt.deactivate(true)
-  if extensions and extensions.telemetry_core then
-    extensions.telemetry_core.endActivity("trafficEnabled")
-  end
   return true
 end
 
@@ -141,9 +135,7 @@ local function removeTraffic()
   if trafficExt and trafficExt.deleteVehicles then
     trafficExt.deleteVehicles()
   end
-  if extensions and extensions.telemetry_core then
-    extensions.telemetry_core.endActivity("trafficEnabled")
-  end
+  core_vehicles.enterFreecamIfNoVehicles()
   return true
 end
 
@@ -151,9 +143,6 @@ local function spawnTraffic(useTraffic, useParked, options)
   local trafficExt = getTrafficExt()
   if not trafficExt or not trafficExt.setupTrafficWaitForUi then return false end
   trafficExt.setupTrafficWaitForUi(useTraffic, useParked, options)
-  if extensions and extensions.telemetry_core then
-    extensions.telemetry_core.startActivity("trafficEnabled")
-  end
   return true
 end
 
@@ -209,7 +198,7 @@ local function getResolvedExtraTrafficAmount()
 end
 
 local function getResolvedParkedAmount()
-  local amount = settings.getValue("trafficParkedAmount")
+  local amount = settings.getValue("trafficParkingAmount")
   if amount == 0 then
     local trafficExt = getTrafficExt()
     if trafficExt and trafficExt.getIdealSpawnAmount then
@@ -324,10 +313,14 @@ function M.getData(payload)
 
   local enabled = isTrafficEnabled(state, parkingActive, counts)
   local actions = buildActions(editable, counts)
+  local firstDriveTrafficLessonWaitingForSpawn = gameplay_discover_firstDrive_learningFlow
+    and gameplay_discover_firstDrive_learningFlow.isLessonActive("traffic")
+    and gameplay_traffic.getTrafficAmount(true) == 0
+    and gameplay_parking.getParkedCarsAmount(true) == 0
 
   return {
     requestId = payload.requestId,
-    state = state,
+    state = firstDriveTrafficLessonWaitingForSpawn and "off" or state,
     parkingActive = parkingActive,
     enabled = enabled,
     canActivateExisting = be:getObjectCount() > 1,

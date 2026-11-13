@@ -7,6 +7,25 @@ local iconRendererObj = nil
 local iconWorldSize = 20
 local idCounter = 0
 
+-- Draw the mission icon with the Skia icon system (render_skiaIcons) instead of the C++
+-- atlas icon renderer. Read once per marker in setup, so flipping it only affects markers
+-- created afterwards - reload the level (or the markers) to switch.
+local useSkiaIcons = false
+-- The preset supplies the shape and colour; the motive comes from the mission's own
+-- iconFontIcon, or this fallback for the few mission types that do not declare one.
+local skiaIconPreset = "mission"
+local skiaIconFallbackMotive = "flag"
+-- World height in metres, then clamped as a fraction of the viewport height so a distant
+-- marker stays readable and a close one does not fill the screen.
+local skiaIconSize = 1
+local skiaIconMinScreen = 0.045
+local skiaIconMaxScreen = 0.12
+
+local function skiaIcons()
+  if not render_skiaIcons then extensions.load("render_skiaIcons") end
+  return render_skiaIcons
+end
+
 local layers = require("ui/apps/minimap/layers")
 
 local iconMesh = "art/shapes/interface/s_poi_circle.dae"
@@ -98,16 +117,20 @@ function C:update(data)
   -- alpha values for the icon and marker
   local iconShowDistance = self.cluster.focus and iconShowDistanceBase*2 or iconShowDistanceBase
   local missionIconAlphaDist = ((distanceFromMarker <= iconShowDistance) and 1 or 0)
-  local iconInfo = self.iconDataById[self.missionIconId]
-  if iconInfo and not isInArea then
-    tmpVec:set(iconInfo.worldPosition)
-    tmpVec:setSub(data.camPos)
-    tmpVec.z = tmpVec.z + iconHeightBottom*(missionIconAlphaDist)
-    local rayLength = tmpVec:length()
-    local hitDist = castRayStatic(data.camPos, tmpVec, rayLength, nil)
-    --simpleDebugText3d(string.format("distanceFromMarker: %0.3f, missionIconAlphaDist: %s, focus: %s, hitDist: %0.4f, rayLength: %0.4f", distanceFromMarker, missionIconAlphaDist, self.cluster.focus, hitDist, rayLength), iconInfo.worldPosition, 1)
-    if hitDist < rayLength then
-      missionIconAlphaDist = 0
+  -- The atlas icon draws over everything, so it needs an occlusion ray to hide itself behind
+  -- geometry. The Skia billboard does not, so the skia path skips the ray entirely.
+  if not self.skiaIcon then
+    local iconInfo = self.iconDataById[self.missionIconId]
+    if iconInfo and not isInArea then
+      tmpVec:set(iconInfo.worldPosition)
+      tmpVec:setSub(data.camPos)
+      tmpVec.z = tmpVec.z + iconHeightBottom*(missionIconAlphaDist)
+      local rayLength = tmpVec:length()
+      local hitDist = castRayStatic(data.camPos, tmpVec, rayLength, nil)
+      --simpleDebugText3d(string.format("distanceFromMarker: %0.3f, missionIconAlphaDist: %s, focus: %s, hitDist: %0.4f, rayLength: %0.4f", distanceFromMarker, missionIconAlphaDist, self.cluster.focus, hitDist, rayLength), iconInfo.worldPosition, 1)
+      if hitDist < rayLength then
+        missionIconAlphaDist = 0
+      end
     end
   end
 
@@ -119,8 +142,30 @@ function C:update(data)
   local radiusInterpolationDest = distanceFromMarker > math.max(markerFullRadiusDistance, self.radius) and 1 or data.cruisingSpeedFactor
   local smoothedCruisingFactor = self.cruisingSmoother:get(radiusInterpolationDest, data.dt)
 
-  -- Update icon position and visuals
-  if self.missionIconId and (missionIconAlpha > 0 or self.missionIconAlphaLastFrame > 0) then
+  -- Update icon position and visuals. render_skiaIcons owns the fade, so it only wants the
+  -- on/off target and a dt; globalAlpha is 0/1 (it drops while a mission is in the
+  -- foreground) and bigmap is a straight on/off, so both read as gates here.
+  if self.skiaIcon then
+    local showIcon = missionIconAlphaDist > 0 and data.globalAlpha > 0 and not bigMapActive
+    self.skiaIcon:setVisible(showIcon)
+    if showIcon or self.skiaIcon:visibility() > 0 then
+      local iconHeight = self.iconPositionSmoother:get(
+        (isInArea
+        and (data.highestBBPointZ-self.pos.z+iconHeightTop)
+        or ((distance2d > iconShowDistance) and 0 or iconHeightBottom))
+        * (1), data.dt)
+
+      tmpVec:set(0,0,iconHeight)
+      tmpVec:setAdd(self.pos)
+      self.skiaIcon:update(tmpVec, render_skiaIcons.screenBoundedScale(tmpVec, skiaIconSize, skiaIconMinScreen, skiaIconMaxScreen), data.dt)
+
+      if missionIconAlpha < 0.8 then
+        debugDrawer:drawLine(self.pos, tmpVec, lineColorF)
+      else
+        debugDrawer:drawLineInstance(self.pos, tmpVec, 1, lineColorF)
+      end
+    end
+  elseif self.missionIconId and (missionIconAlpha > 0 or self.missionIconAlphaLastFrame > 0) then
     local iconInfo = self.iconDataById[self.missionIconId]
     if iconInfo then
       local iconHeight = self.iconPositionSmoother:get(
@@ -209,17 +254,31 @@ function C:setup(cluster)
   self.type = "missionMarker"
 
   -- setting up the icon
-  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
-  if iconRendererObj then
-    self.iconDataById = {}
-    tmpVec:set(0,0,iconHeightBottom)
-    tmpVec:setAdd(self.pos)
-    self.missionIconId = iconRendererObj:addIcon(cluster.id, cluster.icon or "poi_exclamationmark", tmpVec)
-    local iconInfo = iconRendererObj:getIconById(self.missionIconId)
-    iconInfo.color = ColorI(255,255,255,255)
-    iconInfo.customSize = iconWorldSize
-    iconInfo.drawIconShadow = false
-    self.iconDataById[self.missionIconId] = iconInfo
+  self.iconDataById = {}
+  if useSkiaIcons then
+    local s = skiaIcons()
+    if s then
+      -- A stacked cluster of differing mission types shows its count instead of an icon, so
+      -- `text` and `motive` are mutually exclusive here.
+      self.skiaIcon = s.getIcon({
+        preset = skiaIconPreset,
+        motive = cluster.iconFontIcon or skiaIconFallbackMotive,
+        text = cluster.markerText,
+      })
+      self.skiaIcon:setVisible(false, true) -- it fades in once the player is close enough
+    end
+  else
+    iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+    if iconRendererObj then
+      tmpVec:set(0,0,iconHeightBottom)
+      tmpVec:setAdd(self.pos)
+      self.missionIconId = iconRendererObj:addIcon(cluster.id, cluster.icon or "poi_exclamationmark", tmpVec)
+      local iconInfo = iconRendererObj:getIconById(self.missionIconId)
+      iconInfo.color = ColorI(255,255,255,255)
+      iconInfo.customSize = iconWorldSize
+      iconInfo.drawIconShadow = false
+      self.iconDataById[self.missionIconId] = iconInfo
+    end
   end
 
   -- setting up the smoothers
@@ -290,11 +349,15 @@ function C:hide()
   self.iconAlphaSmoother:reset()
   self.iconPositionSmoother:reset()
 
-  -- hiding the icon
-  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
-  if iconRendererObj then
-    for id, data in pairs(self.iconDataById or {}) do
-      data.color = ColorI(0,0,0,0)
+  -- hiding the icon. C:update stops running while hidden, so snap it instead of fading.
+  if self.skiaIcon then
+    self.skiaIcon:setVisible(false, true)
+  else
+    iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+    if iconRendererObj then
+      for id, data in pairs(self.iconDataById or {}) do
+        data.color = ColorI(0,0,0,0)
+      end
     end
   end
 
@@ -322,10 +385,15 @@ end
 
 -- destorys/cleans up all objects created by this
 function C:clearObjects()
-  iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
-  if iconRendererObj then
-    for id, _ in pairs(self.iconDataById or {}) do
-      iconRendererObj:removeIconById(id)
+  if self.skiaIcon then
+    self.skiaIcon:release() -- back into the pool, for the next marker of the same look
+    self.skiaIcon = nil
+  elseif next(self.iconDataById or {}) then
+    iconRendererObj = gameplay_playmodeMarkers.getIconRendererObj()
+    if iconRendererObj then
+      for id, _ in pairs(self.iconDataById or {}) do
+        iconRendererObj:removeIconById(id)
+      end
     end
   end
 
@@ -355,30 +423,11 @@ end
 
 -- minimap
 local radius, strikeWidth = 6, 2
-local topAngle = 0
-local offsetForTriangle = {
-  vec3(math.sin(math.rad(topAngle)),  math.cos(math.rad(topAngle))*1.15, 0),
-  vec3(math.sin(math.rad(topAngle+120)),  math.cos(math.rad(topAngle+120)), 0),
-  vec3(math.sin(math.rad(topAngle-120)),  math.cos(math.rad(topAngle-120)), 0),
-}
-local a, b, c = vec3(), vec3(), vec3()
 local fillColor = color(72,125,249,255)
 local strikeColor = color(255,255,255,255)
 function C:drawOnMinimap(td, dpi)
-  a:set(self.pos)
-  ui_apps_minimap_utils.worldToMapXYZ(a, a)
-  a.x = a.x + offsetForTriangle[1].x*radius*dpi
-  a.y = a.y + offsetForTriangle[1].y*radius*dpi
-  b:set(self.pos)
-  ui_apps_minimap_utils.worldToMapXYZ(b, b)
-  b.x = b.x + offsetForTriangle[2].x*radius*dpi
-  b.y = b.y + offsetForTriangle[2].y*radius*dpi
-  c:set(self.pos)
-  ui_apps_minimap_utils.worldToMapXYZ(c, c)
-  c.x = c.x + offsetForTriangle[3].x*radius*dpi
-  c.y = c.y + offsetForTriangle[3].y*radius*dpi
-
-  td:triangle(a.x, a.y, b.x, b.y, c.x, c.y, 2*dpi, strikeWidth*dpi, fillColor,fillColor, fillColor, strikeColor, 0, layers.GAMEPLAY_MARKERS)
+  local worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset = ui_apps_minimap_utils.getWorldToMapTransform()
+  td:triangleMarker(self.pos.x, self.pos.y, radius, 2, strikeWidth, dpi, fillColor, strikeColor, worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset, layers.GAMEPLAY_MARKERS)
 end
 
 local quadtree = require('quadtree')
@@ -407,11 +456,15 @@ local function merge(pois, idPrefix)
   }
   local containsMissions = false
   local count = 0
+  local mixedTypes = false
   table.sort(pois, dateSort)
   for i, poi in ipairs(pois) do
-    cluster.pos = cluster.pos + poi.markerInfo.missionMarker.pos
-    cluster.rot = poi.markerInfo.missionMarker.rot
-    cluster.icon = poi.markerInfo.missionMarker.icon
+    local mi = poi.markerInfo.missionMarker
+    cluster.pos = cluster.pos + mi.pos
+    cluster.rot = mi.rot
+    cluster.icon = mi.icon
+    if i > 1 and mi.iconFontIcon ~= cluster.iconFontIcon then mixedTypes = true end
+    cluster.iconFontIcon = mi.iconFontIcon
     cluster.containedIds[i] = poi.id
     cluster.id = cluster.id..poi.id
     cluster.containedIdsLookup[poi.id] = true
@@ -424,6 +477,9 @@ local function merge(pois, idPrefix)
 
   if count > 1 then
     cluster.icon = string.format("mission_no-%02d_triangle",math.min(count, 9))
+    -- Missions that all share an icon still read fine as that icon, so only a cluster of
+    -- differing types falls back to showing how many are stacked here.
+    if mixedTypes then cluster.markerText = count > 9 and "9+" or tostring(count) end
   end
   return cluster
 end

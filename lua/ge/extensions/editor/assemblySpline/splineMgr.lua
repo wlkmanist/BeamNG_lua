@@ -64,6 +64,7 @@ local logTag = 'assemblySpline'
 
 -- External modules.
 local buffer = require('string.buffer')
+local session = require('editor/toolUtilities/session') -- Shared Save/Load Session helper (itemToTable + vec3 rehydrate).
 local pop = require('editor/assemblySpline/populate')
 local mol = require('editor/assemblySpline/molecule')
 local geom = require('editor/toolUtilities/geom')
@@ -108,6 +109,7 @@ local function setAssemblySpline(spline, idx)
     local newFolder = createObject("SimGroup")
     local folderNameId = Engine.generateUUID()
     newFolder:registerObject(string.format("%s - %s", uniqueName, folderNameId))
+    newFolder.cansave = false -- Transient while editing; the Bake button flips the folder to canSave=true.
     scenetree.MissionGroup:addObject(newFolder)
     spline.sceneTreeFolderId = newFolder:getId()
   end
@@ -178,6 +180,7 @@ local function addNewAssemblySpline()
   -- Create a new scene tree folder for the assembly spline.
   local newFolder = createObject("SimGroup")
   newFolder:registerObject(string.format("%s - %s", uniqueName, id))
+  newFolder.cansave = false -- Transient while editing; the Bake button flips the folder to canSave=true.
   scenetree.MissionGroup:addObject(newFolder)
 
   -- Create a static mesh for the assembly spline.
@@ -206,7 +209,7 @@ local function addNewAssemblySpline()
 
     spacing = woodenFencePreset.spacing, -- Spline properties.
     verticalOffset = woodenFencePreset.verticalOffset,
-    isConformToTerrain = true,
+    isConformToTerrain = false, -- One-shot model: build free in 3D by default; use the 'drop to surface' button to snap nodes down.
     normalMode = woodenFencePreset.normalMode,
     sag = woodenFencePreset.sag,
     preRot = woodenFencePreset.preRot,
@@ -260,6 +263,12 @@ local function removeAssemblySpline(idx)
 
   -- Update the spline map.
   util.computeIdToIdxMap(assemblySplines, splineMap)
+end
+
+-- Finds a live assembly spline by id (nil if not present).
+local function findAssemblySpline(id)
+  local idx = splineMap[id]
+  return idx and assemblySplines[idx] or nil
 end
 
 -- Removes a linked assembly spline by ID (called from master spline layer removal).
@@ -601,13 +610,37 @@ local function serializeAssemblySpline(spline)
   return buffer.encode(spline)
 end
 
--- Deserializes an assembly spline from a table.
+-- Serialises an assembly spline to a portable plain table for a session file (see toolUtilities/session): derived geometry
+-- emptied (rebuilt by the dirty pass), runtime scene handle dropped, live spline never mutated.
+local function serializeAssemblySplineToTable(spline)
+  return session.itemToTable(spline,
+    { 'divPoints', 'divWidths', 'tangents', 'binormals', 'normals', 'discMap', 'ribPoints' },
+    { 'sceneTreeFolderId' })
+end
+
+-- Deserializes an assembly spline. `data` is either the editor's buffer-encoded blob (string) or a plain table straight from a
+-- JSON session file. On the JSON path the derived scratch tables are empty and node positions arrive as plain {x,y,z}, so
+-- guarantee the tables exist and rehydrate them to vec3 before the first build.
 local function deserializeAssemblySpline(data, isCreateObject)
-  local spline = buffer.decode(data)
+  local spline = type(data) == 'table' and data or buffer.decode(data)
   spline.isDirty = true
 
-  -- Create a new scene tree folder for the assembly spline, if requested.
-  if isCreateObject then
+  spline.nodes = spline.nodes or {}
+  spline.widths = spline.widths or {}
+  spline.nmls = spline.nmls or {}
+  spline.divPoints = spline.divPoints or {}
+  spline.divWidths = spline.divWidths or {}
+  spline.tangents = spline.tangents or {}
+  spline.binormals = spline.binormals or {}
+  spline.normals = spline.normals or {}
+  spline.discMap = spline.discMap or {}
+  session.rehydrateVec3Array(spline.nodes)
+  session.rehydrateVec3Array(spline.nmls)
+
+  -- Create a new scene tree folder for the assembly spline, if requested. A locked spline kept across a Lua reload keeps its own.
+  if spline.keptObjects and spline.sceneTreeFolderId and scenetree.findObjectById(spline.sceneTreeFolderId) then
+    -- Kept folder: nothing to create.
+  elseif isCreateObject then
     -- Ensure we have a unique assembly spline name.
     local baseName = string.format(toolPrefixStr .. " %d", #assemblySplines + 1)
     local uniqueName = util.generateUniqueName(baseName, toolPrefixStr)
@@ -615,17 +648,23 @@ local function deserializeAssemblySpline(data, isCreateObject)
     -- Create a new scene tree folder for the assembly spline.
     local newFolder = createObject("SimGroup")
     newFolder:registerObject(string.format("%s - %s", uniqueName, spline.id))
+    newFolder.cansave = not spline.isEnabled -- Transient while editing; a locked spline's folder saves with the level.
     scenetree.MissionGroup:addObject(newFolder)
     spline.sceneTreeFolderId = newFolder:getId()
   end
   return spline
 end
 
+-- Recompute the spline id -> index map (called by the shared session helper after a load appends the loaded splines).
+local function recomputeIdMap() util.computeIdToIdxMap(assemblySplines, splineMap) end
+
 -- Updates the geometry and meshes of any dirty assembly splines.
 local function updateDirtyAssemblySplines()
+  local rebuiltAny = false -- did any spline actually rebuild this pass? (-> the document has an unsaved edit).
   for i = 1, #assemblySplines do
     local spline = assemblySplines[i]
     if spline.isDirty then
+      rebuiltAny = true
       -- Check if spline has enough nodes to be valid (minimum 2).
       local nodes = spline.nodes
       if #nodes < 2 then
@@ -655,6 +694,18 @@ local function updateDirtyAssemblySplines()
       spline.isDirty = false
     end
   end
+  if rebuiltAny then session.markEdited('assemblySpline') end -- fold this pass's edits into the Save/Save As dirty state (load guard swallows a fresh load's rebuild).
+end
+
+-- One-shot: drops the spline's control nodes onto the surface below (raycast). The build stays free in 3D, so this simply moves
+-- the nodes down to the terrain/objects; run it again after terraforming to re-snap.
+local function conformNodesToTerrain(spline)
+  if not spline or not spline.nodes then return end
+  local nodes = spline.nodes
+  for i = 1, #nodes do
+    util.vertRaycast(nodes[i])
+  end
+  spline.isDirty = true
 end
 
 -- Converts the given paths (traced from a bitmap) to assembly splines.
@@ -776,6 +827,7 @@ M.splitAssemblySpline =                                 splitAssemblySpline
 M.joinAssemblySplines =                                 joinAssemblySplines
 
 M.removeAssemblySpline =                                removeAssemblySpline
+M.findAssemblySpline =                                  findAssemblySpline
 M.removeLinkedAssemblySpline =                          removeLinkedAssemblySpline
 M.removeAllAssemblySplines =                            removeAllAssemblySplines
 
@@ -792,11 +844,14 @@ M.objectSelectUndo =                                    objectSelectUndo
 M.objectSelectRedo =                                    objectSelectRedo
 
 M.updateDirtyAssemblySplines =                          updateDirtyAssemblySplines
+M.conformNodesToTerrain =                               conformNodesToTerrain
 
 M.convertPathsToAssemblySplines =                       convertPathsToAssemblySplines
 
 M.serializeAssemblySpline =                             serializeAssemblySpline
 M.deserializeAssemblySpline =                           deserializeAssemblySpline
+M.serializeAssemblySplineToTable =                      serializeAssemblySplineToTable
+M.recomputeIdMap =                                      recomputeIdMap
 M.deepCopyAssemblySplineState =                         deepCopyAssemblySplineState
 
 M.getCurrentAssemblySplineList =                        getCurrentAssemblySplineList

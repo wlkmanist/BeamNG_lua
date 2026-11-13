@@ -43,6 +43,7 @@ end
 local function onGameplaySelectorGetTiles(items)
   for _, level in ipairs(core_levels.getList()) do
     local defaultSpawnPointCount = 0
+    local mapSize = level.size and level.size[1] * level.size[2] or "other"
     for idx, spawnPoint in ipairs(level.spawnPoints) do
       local name = spawnPoint.translationId or spawnPoint.name or spawnPoint.objectname or "ui.levelselect.unnamedSpawnpoint"
       name = _tr(name)
@@ -68,6 +69,9 @@ local function onGameplaySelectorGetTiles(items)
         system = "freeroam",
         type = "freeroamSpawnpoint",
         levelName = level.levelName,
+        source = level.official and "official" or "mod",
+        region = level.region or "other",
+        mapSize = mapSize,
         isAuxiliary = level.isAuxiliary,
         sourceIcons = {},
         validBackends = {freeroamSelector = true, gameplaySelector = false},
@@ -245,7 +249,7 @@ local function onGameplaySelectorGetDetails(itemDetails, details, buttonInstance
       buttonInstance.addButton(function()
         -- open freeroam configurator with current level and spawn point
         freeroam_freeroamConfigurator.setLevel(levelName, spawnPointObjectName)
-        guihooks.trigger("ChangeState", "menu.freeroamconfigurator")
+        extensions.ui_router.navigate("menu.freeroamconfigurator")
       end, {
         label = _tr("ui.freeroam.configure"),
         icon = "adjust",

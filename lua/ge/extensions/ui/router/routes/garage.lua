@@ -228,6 +228,78 @@ M.Children = {
     },
     ui = {
       topBar = Constants.TopBarDefaultsHidden
+    },
+    children = {
+      ["overlay"] = {
+        children = {
+          ["edit"] = {
+            screenId = "garage.photomode.overlay.edit",
+            title = "ui.photomode.overlay.editOverlay",
+            backTarget = "garage.photomode",
+            onEnter = "ui_garage_routeLifecycleCallbacks.onPhotomodeEnter",
+            onMount = "ui_garage_routeLifecycleCallbacks.onPhotomodeMount",
+            onLeave = "ui_garage_routeLifecycleCallbacks.onPhotomodeLeave",
+            scopeTree = {
+              ["pause-root"] = {
+                ["menu-content-card-1"] = {
+                  backTarget = "garage.photomode",
+                  backTargetType = "route",
+                  ["photomode-overlay-edit"] = {
+                    backTarget = "garage.photomode",
+                    backTargetType = "route",
+                    preferAutoFocus = true
+                  }
+                }
+              }
+            },
+            targetScope = "photomode-overlay-edit",
+            ui = {
+              topBar = Constants.TopBarDefaultsHidden,
+              infoBar = {
+                visible = true,
+                showSysInfo = false
+              },
+              uiApps = {
+                shown = false
+              }
+            },
+            children = {
+              ["adjust"] = {
+                screenId = "garage.photomode.overlay.edit.adjust",
+                title = "ui.photomode.overlay.editLayer",
+                backTarget = "garage.photomode.overlay.edit",
+                onEnter = "ui_garage_routeLifecycleCallbacks.onPhotomodeEnter",
+                onMount = "ui_garage_routeLifecycleCallbacks.onPhotomodeMount",
+                onLeave = "ui_garage_routeLifecycleCallbacks.onPhotomodeLeave",
+                scopeTree = {
+                  ["pause-root"] = {
+                    ["menu-content-card-1"] = {
+                      backTarget = "garage.photomode.overlay.edit",
+                      backTargetType = "route",
+                      ["photomode-overlay-edit"] = {
+                        backTarget = "garage.photomode.overlay.edit",
+                        backTargetType = "route",
+                        preferAutoFocus = true
+                      }
+                    }
+                  }
+                },
+                targetScope = "photomode-overlay-edit",
+                ui = {
+                  topBar = Constants.TopBarDefaultsHidden,
+                  infoBar = {
+                    visible = true,
+                    showSysInfo = false
+                  },
+                  uiApps = {
+                    shown = false
+                  }
+                },
+              }
+            },
+          }
+        }
+      }
     }
   }
 }

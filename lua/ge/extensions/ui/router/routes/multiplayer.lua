@@ -27,15 +27,6 @@ M.Children = {
       topBar = Constants.TopBarDefaultsHidden
     }
   },
-  ["gamemode"] = {
-    screenId = "pause.multiplayer.gamemode",
-    onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
-    onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
-    onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
-    ui = {
-      topBar = Constants.TopBarDefaultsHidden
-    }
-  },
   ["playerList"] = {
     screenId = "pause.multiplayer.playerList",
     onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",

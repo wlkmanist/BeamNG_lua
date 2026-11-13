@@ -3,6 +3,9 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local voicepack = require('/lua/ge/extensions/gameplay/rally/voicepack')
+local rallyUtil = require('/lua/ge/extensions/gameplay/rally/util')
+local AudioManager = require('/lua/ge/extensions/gameplay/rally/audioManager')
+local TextCompositor = require('/lua/ge/extensions/gameplay/rally/compositors/helpers/textCompositor')
 
 local C = {}
 
@@ -26,11 +29,74 @@ local settingKeys = {
   rallyEnableEarlyTimeControlPenalties = true,
 }
 
+-- each style voices this note at its own level of detail
+local samplePacenote = {
+  schemaVersion = 3,
+  items = {
+    ['1'] = { type = 'caution', level = 1 },
+    ['2'] = { type = 'early' },
+    ['4'] = { type = 'corner', direction = 1, intensity = 50 },
+  },
+}
+local sampleDistanceBefore = 'and'
+-- pre-recorded packs (e.g. pro) only exist per stage, so all of them preview this recording of the same note
+local recordedSampleMissionId = 'automation_test_track/rallyStage/002-mixedstage'
+local recordedSampleBasename = 'pacenote_27.ogg' -- "and care early 2 right minus off camber"
+local sampleCompositors = {}
+
 local function getLoopManager()
   if extensions.isExtensionLoaded('gameplay_rallyLoop') and gameplay_rallyLoop then
     return gameplay_rallyLoop.getManager()
   end
   return nil
+end
+
+local function clipAudioObjs(entry, basename)
+  local metadataEntry = voicepack.getEntryMetadata(entry)[basename]
+  local audioLen = metadataEntry and tonumber(metadataEntry.audioLen)
+  local fname = voicepack.getEntryAudioFile(entry, basename)
+  if not (audioLen and fname and FS:fileExists(fname)) then return nil end
+  return { { audioType = 'pacenote', pacenoteFname = fname, audioLen = audioLen } }
+end
+
+local function intercomCheckAudioObjs(entry)
+  return clipAudioObjs(entry, rallyUtil.makeSystemPacenoteAudioFilename('commsCheck', 1))
+end
+
+local function getSampleCompositor(style)
+  if sampleCompositors[style] == nil then
+    local compositor = TextCompositor(style)
+    sampleCompositors[style] = compositor:load() and compositor or false
+  end
+  return sampleCompositors[style] or nil
+end
+
+local function composedSampleAudioObjs(entry)
+  local compositor = entry.compositorStyle and getSampleCompositor(entry.compositorStyle)
+  if not compositor then return nil end
+
+  local metadata = voicepack.getEntryMetadata(entry)
+  local phrases = compositor:compositePhraseEntries(samplePacenote, sampleDistanceBefore, '') or {}
+  local audioObjs = {}
+  for i, phrase in ipairs(phrases) do
+    local basename = rallyUtil.makePacenoteAudioFilename(compositor:pacenoteHash(phrase.text))
+    local candidates = voicepack.getAudioCandidatesForEntry(entry, metadata, basename, { phrase.variant })
+    if #candidates == 0 then return nil end
+    table.insert(audioObjs, {
+      audioType = 'pacenote',
+      audioCandidates = candidates,
+      category = phrase.category,
+      nextCategory = phrases[i + 1] and phrases[i + 1].category,
+      structuredTimingAfter = i == #phrases and 'pacenote' or 'clip',
+    })
+  end
+  return #audioObjs > 0 and audioObjs or nil
+end
+
+local function recordedSampleAudioObjs(entry)
+  local sampleEntry = voicepack.scanMission('/gameplay/missions/'..recordedSampleMissionId, recordedSampleMissionId).pro
+  if not (sampleEntry and sampleEntry.persona == entry.persona) then return nil end
+  return clipAudioObjs(sampleEntry, recordedSampleBasename)
 end
 
 function C:init()
@@ -126,16 +192,58 @@ function C:work()
     return
   end
 
+  for _, option in ipairs(options) do
+    local entry = self:resolveEntry(option.value)
+    option.hasVisualPacenotes = not entry or entry.compositorStyle ~= nil
+  end
+
+  local visualPacenotes = self.pendingSettings.rallyVisualPacenotes
+  if visualPacenotes == nil then visualPacenotes = settings.getValue('rallyVisualPacenotes') == true end
+
   self.panel.options = options
   self.panel.selectedValue = self.pendingValue or selectedValue or ''
+  self.panel.visualPacenotes = visualPacenotes
   self.panel.settings = self:buildBoolSettings(mission)
   self.panel.note = loopManager and 'missions.missions.rally.startScreen.settings.loopTimeNote' or nil
   self.mgr.modules.ui:addUIElement(self.panel)
+
+  local entry = self:resolveEntry(self.panel.selectedValue)
+  self:playSample(entry, entry and intercomCheckAudioObjs(entry))
+end
+
+function C:resolveEntry(value)
+  local loopManager = getLoopManager()
+  if loopManager then
+    local loopMission = loopManager:getRallyLoopMission()
+    return loopMission and voicepack.resolveLoopMissionSettingEntry(loopMission.missionTypeData, value)
+  end
+  local rm = gameplay_rally and gameplay_rally.getRallyManager()
+  return rm and voicepack.resolveEntry(rm:getMissionDir(), voicepack.pickFromSettingValue(value), rm:getMissionId())
+end
+
+function C:playSample(entry, audioObjs)
+  self.sampleAudio = self.sampleAudio or AudioManager()
+  self.sampleAudio:resetQueue()
+  if not audioObjs then return end
+  self.sampleAudio:setVoicepackTiming(entry)
+  self.sampleAudio:enqueueAudioObjs(audioObjs)
+end
+
+function C:onUpdate(dtReal, dtSim, dtRaw)
+  if self.sampleAudio then self.sampleAudio:onUpdate(dtReal, dtSim, dtRaw) end
 end
 
 function C:onCoDriverSelectedByPanel(value)
   self.pendingValue = value
   self.panel.selectedValue = value
+  local entry = self:resolveEntry(value)
+  self:playSample(entry, entry and (composedSampleAudioObjs(entry) or recordedSampleAudioObjs(entry) or intercomCheckAudioObjs(entry)))
+end
+
+function C:onVisualPacenotesChangedByPanel(value)
+  value = value == true
+  self.pendingSettings.rallyVisualPacenotes = value
+  self.panel.visualPacenotes = value
 end
 
 -- Update the mission's session-local settings immediately so the loop manager can
@@ -166,6 +274,8 @@ function C:onRallyStartSettingChanged(key, value)
 end
 
 function C:onUIStartButtonClicked()
+  if self.sampleAudio then self.sampleAudio:resetQueue() end
+
   for key, value in pairs(self.pendingSettings) do
     if settings and settings.setValue then settings.setValue(key, value) end
   end

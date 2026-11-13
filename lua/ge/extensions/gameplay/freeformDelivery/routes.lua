@@ -9,6 +9,8 @@ local logTag = "freeformDelivery_routes"
 local activeDelivery = nil
 local routes = {} -- List of available routes from delivery JSON
 local currentRoute = nil -- Current active route (targetAreaId or vehicleId)
+local lastGuidanceGoalId = nil
+local updateAutomaticRoute
 
 local bigmapGroups = {}
 
@@ -505,6 +507,8 @@ function M.setup(delivery)
 
   activeDelivery = delivery
   routes = delivery.routes or {}
+  currentRoute = nil
+  lastGuidanceGoalId = nil
 
   bigmapGroups = delivery.bigmapGroups or {}
   -- check if all routes and vehicles have a bigmapGroup key. if any are left out, create a fallback group "Other Locations" and "Other Vehicles"
@@ -577,6 +581,7 @@ end
 
 function M.update(dtReal, dtSim, dtRaw, profiler)
   checkRouteArrival()
+  updateAutomaticRoute()
 end
 
 function M.cleanup()
@@ -588,6 +593,7 @@ function M.cleanup()
   activeDelivery = nil
   routes = {}
   currentRoute = nil
+  lastGuidanceGoalId = nil
 
   -- Update tasklist route message (to clear it)
   gameplay_freeformDelivery_tasklist.updateRouteMessage()
@@ -756,6 +762,143 @@ local function doesRouteMatchCurrent(route)
   end
 
   return false
+end
+
+local function getIncompleteVisibleGoals()
+  local incompleteGoals = {}
+  for goalId, goal in pairs(gameplay_freeformDelivery_goals.getGoals() or {}) do
+    local state = gameplay_freeformDelivery_goals.getGoalState(goalId)
+    if state and not state.completed and goal.showInTasklist ~= false then
+      table.insert(incompleteGoals, goal)
+    end
+  end
+
+  table.sort(incompleteGoals, function(a, b)
+    if (a.order or 0) ~= (b.order or 0) then
+      return (a.order or 0) < (b.order or 0)
+    end
+    return tostring(a.id) < tostring(b.id)
+  end)
+
+  return incompleteGoals
+end
+
+local function getGoalRouteSpec(goal)
+  if not goal then return nil end
+
+  if goal.type == "placement" and goal.targetAreaId then
+    return {targetAreaId = goal.targetAreaId}
+  end
+
+  if goal.type == "playerInVehicle" and goal.vehicleId then
+    return {vehicleId = goal.vehicleId}
+  end
+
+  if goal.type == "coupled" and goal.trailerId then
+    return {vehicleId = goal.trailerId}
+  end
+
+  return nil
+end
+
+local function getRequirementGoalId(requirement)
+  if type(requirement) == "string" then
+    return requirement
+  end
+  return type(requirement) == "table" and (requirement.id or requirement.goalId) or nil
+end
+
+local function getUniqueDependentGoal(goal)
+  if not goal then return nil end
+
+  local dependentGoal = nil
+  for _, candidate in pairs(gameplay_freeformDelivery_goals.getAllGoals() or {}) do
+    local candidateState = gameplay_freeformDelivery_goals.getGoalState(candidate.id)
+    local dependsOnGoal = false
+    local otherRequirementsComplete = true
+
+    if candidateState and not candidateState.completed then
+      for _, requirement in ipairs(candidate.requires or {}) do
+        local requirementId = getRequirementGoalId(requirement)
+        if requirementId == goal.id then
+          dependsOnGoal = true
+        elseif requirementId then
+          local state = gameplay_freeformDelivery_goals.getGoalState(requirementId)
+          if not state or not state.completed then
+            otherRequirementsComplete = false
+            break
+          end
+        end
+      end
+    end
+
+    if dependsOnGoal and otherRequirementsComplete then
+      if dependentGoal then
+        return nil
+      end
+      dependentGoal = candidate
+    end
+  end
+
+  return dependentGoal
+end
+
+local function getNextRouteSpec(goal)
+  local visitedGoals = {}
+  local currentGoal = goal
+
+  while currentGoal and not visitedGoals[currentGoal.id] do
+    visitedGoals[currentGoal.id] = true
+
+    local routeSpec = getGoalRouteSpec(currentGoal)
+    if routeSpec then
+      return routeSpec
+    end
+
+    currentGoal = getUniqueDependentGoal(currentGoal)
+  end
+
+  return nil
+end
+
+updateAutomaticRoute = function()
+  local incompleteGoals = getIncompleteVisibleGoals()
+  if #incompleteGoals ~= 1 then
+    local guidanceState = #incompleteGoals == 0 and nil or "multiple"
+    if guidanceState == lastGuidanceGoalId then return end
+
+    lastGuidanceGoalId = guidanceState
+    if currentRoute and currentRoute.automaticGoalId then
+      M.clearRoute()
+    end
+    return
+  end
+
+  local goal = incompleteGoals[1]
+  local goalId = goal and goal.id or nil
+  if goalId == lastGuidanceGoalId then return end
+
+  lastGuidanceGoalId = goalId
+  local routeSpec = getNextRouteSpec(goal)
+  if not routeSpec then
+    if currentRoute and currentRoute.automaticGoalId then
+      M.clearRoute()
+    end
+    return
+  end
+
+  local route = resolveCouplerAttachedRoute(routeSpec)
+  local routeSet = false
+  if route.targetAreaId then
+    routeSet = M.setRouteToTargetArea(route.targetAreaId, route)
+  elseif route.vehicleId then
+    routeSet = M.setRouteToVehicle(route.vehicleId, route)
+  end
+
+  if routeSet and currentRoute then
+    currentRoute.automaticGoalId = goalId
+    log('I', logTag, 'Automatically selected route for goal: ' .. tostring(goalId))
+  end
 end
 
 -- Format delivery data to POI elements for bigmap

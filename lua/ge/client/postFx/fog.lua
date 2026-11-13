@@ -9,8 +9,7 @@
 local fogPassShader = scenetree.findObject("FogPassShader")
 if not fogPassShader then
   fogPassShader = createObject("ShaderData")
-  fogPassShader.DXVertexShaderFile    = "shaders/common/postFx/fogP.hlsl"
-  fogPassShader.DXPixelShaderFile     = "shaders/common/postFx/fogP.hlsl"
+  fogPassShader.DXComputShaderName    = "shaders/common/postFx/fog.cs.hlsl"
   fogPassShader:setField("samplerNames", 0, "$prepassTex")
   fogPassShader.pixVersion = 5.0
   fogPassShader:registerObject("FogPassShader")
@@ -27,6 +26,7 @@ if not fogPassStateBlock then
   fogPassStateBlock:setField("samplerStates", 0, "SamplerClampLinear")
   fogPassStateBlock:setField("samplerStates", 1, "SamplerClampPoint")
   fogPassStateBlock:setField("samplerStates", 2, "SamplerClampLinear")
+  fogPassStateBlock:setField("samplerStates", 3, "SamplerClampPoint")
   fogPassStateBlock.blendDefined = true
   fogPassStateBlock.blendEnable = true
   fogPassStateBlock:setField("blendSrc", 0, "GFXBlendSrcAlpha")
@@ -46,6 +46,7 @@ if not fogPostFx then
   fogPostFx:setField("texture", 0, "#prepass[RT0]")
   fogPostFx:setField("texture", 1, "#prepass[Depth]")
   fogPostFx:setField("texture", 2, "$skyCameraVolume")
+  fogPostFx:setField("texture", 3, "$backBuffer")
   fogPostFx.renderPriority = 5
   fogPostFx:registerObject("FogPostFx")
 end
@@ -74,8 +75,7 @@ rawset(_G, "UnderwaterFogPostFxCallbacks", underwaterFogPostFxCallbacks)
 local underwaterFogPassShader = scenetree.findObject("UnderwaterFogPassShader")
 if not underwaterFogPassShader then
   underwaterFogPassShader = createObject("ShaderData")
-  underwaterFogPassShader.DXVertexShaderFile    = "shaders/common/postFx/underwaterFogP.hlsl"
-  underwaterFogPassShader.DXPixelShaderFile     = "shaders/common/postFx/underwaterFogP.hlsl"
+  underwaterFogPassShader.DXComputShaderName    = "shaders/common/postFx/underwaterFog.cs.hlsl"
   underwaterFogPassShader:setField("samplerNames", 0, "$prepassTex")
   underwaterFogPassShader.pixVersion = 5.0
   underwaterFogPassShader:registerObject("UnderwaterFogPassShader")

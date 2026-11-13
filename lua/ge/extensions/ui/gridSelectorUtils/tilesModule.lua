@@ -145,6 +145,7 @@ function M.create(config)
       if favouriteTile.highestFavouriteConfig then
         favouriteTile.doubleClickDetails.config = favouriteTile.highestFavouriteConfig.key
         favouriteTile.preview = favouriteTile.highestFavouriteConfig.preview
+        favouriteTile.specificConfigDrilldown = true
       end
       table.insert(favouriteGroup.tiles, favouriteTile)
       favouriteTile.highestFavouriteConfig = nil
@@ -158,6 +159,7 @@ function M.create(config)
       if recentTile.lowestRecentConfig then
         recentTile.doubleClickDetails.config = recentTile.lowestRecentConfig.key
         recentTile.preview = recentTile.lowestRecentConfig.preview
+        recentTile.specificConfigDrilldown = true
       end
       table.insert(recentGroup.tiles, recentTile)
       recentTile.highestFavouriteConfig = nil

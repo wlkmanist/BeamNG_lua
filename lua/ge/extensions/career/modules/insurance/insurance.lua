@@ -4,7 +4,7 @@
 
 local M = {}
 
-M.dependencies = {'career_career', 'career_modules_payment', 'career_modules_playerAttributes', 'career_modules_insurance_history', 'career_modules_tether'}
+M.dependencies = {'career_career', 'career_modules_payment', 'career_modules_playerAttributes', 'career_modules_insurance_history', 'career_modules_tether', 'career_modules_log'}
 
 local plInsuranceDataFileName = "insurance"
 
@@ -183,7 +183,7 @@ local function loadInsurancesData(resetSomeData)
   availableCoverageOptions = jsonReadFile("gameplay/insurance/coverageOptions/coverageOptions.json").coverageOptions
   local perks = jsonReadFile("gameplay/insurance/perks/perks.json").perks
 
-  -- load insurance providers, and translate their names and descriptions
+  -- load insurance providers, and translate their slogans
   local insuranceProvidersFileNames = FS:findFiles("gameplay/insurance/providers", "*.json", -1, true, false)
   for _, insuranceProviderFileName in ipairs(insuranceProvidersFileNames) do
     local insuranceInfo = jsonReadFile(insuranceProviderFileName)
@@ -277,7 +277,6 @@ local function loadInsurancesData(resetSomeData)
     for coverageOptionName, coverageOptionInfo in pairs(insuranceInfo.coverageOptions.deductible.choices) do
       coverageOptionInfo.choiceText = core_locales.contextTranslate("ui.career.insurance.coverageChoice.dollars", {amount = coverageOptionInfo.value})
     end
-    insuranceInfo.name = _tr(insuranceInfo.name)
     insuranceInfo.slogan = _tr(insuranceInfo.slogan)
     for coverageOptionName, coverageOptionInfo in pairs(insuranceInfo.coverageOptions) do
       for choiceId, choiceInfo in pairs(coverageOptionInfo.choices) do --add id to each choice to make it more practical
@@ -344,6 +343,10 @@ local function loadInsurancesData(resetSomeData)
     insuredDrivenDistance = savedPlInsuranceData.insuredDrivenDistance or 0
     invVehs = {}
     if savedPlInsuranceData.invVehs then
+      -- saves can carry entries for vehicles that are no longer in the inventory. Only prune when the
+      -- inventory actually loaded, so a load-order change can never wipe every entry.
+      local inventoryVehs = not career_modules_inventory.isEmpty() and career_modules_inventory.getVehicles() or nil
+
       -- making sure old broken nil insuranceId are converted to -1
       -- convert string keys to numbers
       for k, v in pairs(savedPlInsuranceData.invVehs) do
@@ -351,12 +354,21 @@ local function loadInsurancesData(resetSomeData)
           log("W", "Career", "Repaired legacy invVeh entry " .. tostring(k) .. ": insuranceId was nil, coerced to -1")
           v.insuranceId = -1
         end
-        invVehs[tonumber(k) or k] = v
+        local invVehId = tonumber(k) or k
+        if inventoryVehs and not inventoryVehs[v.id or invVehId] then
+          log("W", "Career", "Dropped stale invVeh entry " .. tostring(k) .. ": no such vehicle in the inventory")
+          career_modules_log.addLog(string.format("Dropped stale invVeh entry %s (insuranceId %s): no such vehicle in the inventory", tostring(k), tostring(v.insuranceId)), "insurance", "W")
+        else
+          invVehs[invVehId] = v
+        end
       end
     end
     career_modules_insurance_history.setPlHistory(savedPlInsuranceData.plHistory)
     plInsurancesData = savedPlInsuranceData.plInsurancesData
   end
+
+  career_modules_log.addLog(string.format("Loaded insurance data (%s): %d insured vehicle entries, driver score %d, %.0fm driven (%.0fm insured)",
+    isFirstLoadEver and "fresh init" or "from save", tableSize(invVehs), plDriverScore, totalDrivenDistance, insuredDrivenDistance), "insurance")
 end
 
 local function inventoryVehNeedsRepair(vehInvId)
@@ -428,7 +440,7 @@ end
 -- when you damage a test drive vehicle, insurance needs to know
 local function makeTestDriveDamageClaim(vehId)
   local label = core_locales.contextTranslate("ui.career.insurance.testDrive.claimMessage", {amount = testDriveClaimPrice.money.amount})
-  ui_message(label)
+  ui_message(label, 5, "testDriveDamageClaim")
 
   career_modules_payment.pay(testDriveClaimPrice, {label = label})
 
@@ -441,11 +453,16 @@ local function makeTestDriveDamageClaim(vehId)
       vehName = "ibishu n"
     }
   })
+
+  career_modules_log.addLog(string.format("Filed test drive damage claim for %.2f", testDriveClaimPrice.money.amount), "insurance")
 end
 local originComputerId
 local tether
 local tetherRange = 7 -- meters
 local function makeRepairClaim(invVehId, costs, vehInfo)
+  if not invVehs[invVehId] then return end
+  if not plInsurancesData[invVehs[invVehId].insuranceId] then return end -- uninsured vehicles can't file a claim
+
   local totalMoneyCost = 0
   local totalVoucherCost = 0
   for _, cost in pairs(costs) do
@@ -457,7 +474,7 @@ local function makeRepairClaim(invVehId, costs, vehInfo)
     end
   end
 
-  local insuranceId = invVehs[invVehId].id
+  local insuranceId = invVehs[invVehId].insuranceId
   local hasUsedAccidentForgiveness = false
 
   if plInsurancesData[insuranceId].accidentForgiveness > 0 then
@@ -494,6 +511,10 @@ local function makeRepairClaim(invVehId, costs, vehInfo)
       deductible = deductibleValue or 0
     }
   })
+
+  career_modules_log.addLog(string.format("Filed repair claim for vehicle %s on insurance %s: cost %.2f money / %.2f vouchers, deductible %.2f, accident forgiveness %s, driver score now %d",
+    tostring(invVehId), M.getInsuranceName(insuranceId), totalMoneyCost, totalVoucherCost, deductibleValue or 0,
+    hasUsedAccidentForgiveness and "used" or "not used", plDriverScore), "insurance")
 
   extensions.hook("onInsuranceRepairClaim")
   gameplay_achievement.unlockAchievement("CLAIM_FILED")
@@ -599,6 +620,10 @@ local function startRepair(vehInvId, repairOptionData, callback)
     end
   end
 
+  career_modules_log.addLog(string.format("Repaired vehicle %s (%s) for %.2f, repair time %s",
+    tostring(vehInvId), repairOptionData.isInsuranceRepair and "insurance" or "private", totalCost,
+    tostring(repairOptionData.repairTime or 0)), "insurance")
+
   -- the actual repair
   local paintRepair = getPlCoverageOptionValue(vehInvId, "paintRepair")
   local data = {
@@ -683,6 +708,9 @@ local function renewActiveInsurance(insuranceId)
     effects = {{type = "money", label = _tr("ui.career.insurance.effect.money"), changedBy = -renewalPrice, newValue = career_modules_playerAttributes.getAttributeValue("money")}},
     concernedInsuranceName = availableInsurances[activeInsuranceId].name
   })
+
+  career_modules_log.addLog(string.format("Renewed insurance %s for %.2f, accident forgiveness now %d",
+    insuranceName, renewalPrice, plInsurancesData[insuranceId].accidentForgiveness), "insurance")
 end
 
 local function sanitizeCoverageOption(insuranceId, coverageOptionId, invVehId)
@@ -729,11 +757,16 @@ local function getInvVehsUnderInsurance(insuranceId)
   local invVehList = {}
   for invVehId, data in pairs(invVehs) do
     if data.insuranceId == insuranceId then
-      local vehData = deepcopy(data)
-      local vehInfo = career_modules_inventory.getVehicles()[vehData.id]
-      vehData.thumbnail = career_modules_inventory.getVehicleThumbnail(vehData.id) .. "?" .. (vehInfo and vehInfo.dirtyDate or "")
-      vehData.needsRepair = inventoryVehNeedsRepair(vehData.id)
-      table.insert(invVehList, vehData)
+      local vehInfo = career_modules_inventory.getVehicles()[data.id]
+      -- skip entries whose inventory vehicle is gone, like the invVehsInsurancesData loop in sendUIData
+      if vehInfo then
+        local vehData = deepcopy(data)
+        -- nil when the model or config file is missing, e.g. an uninstalled mod
+        local thumbnail = career_modules_inventory.getVehicleThumbnail(vehData.id)
+        vehData.thumbnail = thumbnail and (thumbnail .. "?" .. (vehInfo.dirtyDate or "")) or nil
+        vehData.needsRepair = inventoryVehNeedsRepair(vehData.id)
+        table.insert(invVehList, vehData)
+      end
     end
   end
   return invVehList
@@ -803,6 +836,7 @@ local function checkInsuranceGestures()
     if plInsuranceData.metersDriven - lastHappenedAt > insuranceData.gestures[gestureName].distance then
       if gestures[gestureName](plInsuranceData) then
         plInsuranceData.gesturesData[gestureName].lastHappenedAt = plInsuranceData.metersDriven
+        career_modules_log.addLog(string.format("Insurance %s granted gesture %s", M.getInsuranceName(activeInsuranceId), gestureName), "insurance")
       end
     end
   end
@@ -821,6 +855,7 @@ local function checkDriverScoreDecrease()
         effects = {{type = "driverScore", label = _tr("ui.career.insurance.effect.driverScore"), changedBy = plDriverScore - oldScore, newValue = plDriverScore}},
         concernedInsuranceName = _tr("ui.career.insurance.safeDriving.concernedName")
       })
+      career_modules_log.addLog(string.format("Safe driving bonus: driver score %d -> %d", oldScore, plDriverScore), "insurance")
       ui_message(core_locales.contextTranslate("ui.career.insurance.safeDriving.message", {increase = safeDrivingScoreIncrease, score = plDriverScore}))
     end
   end
@@ -1336,12 +1371,13 @@ local function buildInsuranceOptionsData(context)
   }
 
   if context.type == "purchase" then
-    data.defaultInsuranceId = context.defaultInsuranceId
+    local defaultInsuranceId = context.defaultInsuranceId or -1
+    data.defaultInsuranceId = defaultInsuranceId
     data.insuranceClassId = context.insuranceClassId
     data.purchaseData = {
       vehShopId = context.vehShopId,
       purchaseType = context.purchaseType,
-      defaultInsuranceId = context.defaultInsuranceId,
+      defaultInsuranceId = defaultInsuranceId,
       insuranceClassId = context.insuranceClassId,
       vehicleInfo = deepcopy(context.vehicleInfo),
     }
@@ -1470,7 +1506,9 @@ end
 
 -- remove the vehicle from the insuranced vehicles json files
 local function onVehicleRemovedFromInventory(invVehId)
+  local hadEntry = invVehs[invVehId] ~= nil
   invVehs[invVehId] = nil
+  career_modules_log.addLog(string.format("Vehicle %s removed from inventory, insurance entry %s", tostring(invVehId), hadEntry and "dropped" or "was already absent"), "insurance")
 end
 
 -- pure setter: writes the new insurance on the invVeh entry and applies side-effects that
@@ -1516,8 +1554,12 @@ local function changeInvVehInsurance(invVehId, newInsuranceId)
 
   local insuranceChangeFees = calculateInsuranceSwitchingCost(invVehId, newInsuranceId)
   local insuranceName = newInsuranceId > 0 and availableInsurances[newInsuranceId].name or _tr("ui.career.insurance.none")
+  local oldInsuranceId = invVehs[invVehId].insuranceId
 
   applyInvVehInsurance(invVehId, newInsuranceId)
+
+  career_modules_log.addLog(string.format("Changed insurance of vehicle %s from %s to %s, fee %.2f",
+    tostring(invVehId), M.getInsuranceName(oldInsuranceId), M.getInsuranceName(newInsuranceId), insuranceChangeFees), "insurance")
   gameplay_achievement.unlockAchievement("POLICY_REVIEW")
 
   local niceName = career_modules_inventory.getVehicle(invVehId).niceName
@@ -1532,7 +1574,7 @@ local function changeInvVehInsurance(invVehId, newInsuranceId)
       concernedInsuranceName = insuranceName
     })
   else
-    if career_modules_payment.pay({money = {amount = insuranceChangeFees * -1, canBeNegative = false}}, {reason="insuranceChange"}) then
+    if career_modules_payment.pay({money = {amount = insuranceChangeFees * -1, canBeNegative = false}}, {label=attributeLabel}) then
       career_modules_insurance_history.addToPlHistory({
         type = "insuranceChanged",
         title = label,
@@ -1590,6 +1632,11 @@ local function onVehicleAddedToInventory(data)
   -- the act of registering a newly-purchased vehicle (which may already be damaged from a
   -- test drive).
   applyInvVehInsurance(data.inventoryId, insuranceId)
+
+  career_modules_log.addLog(string.format("Registered vehicle %s with insurance %s (initial value %.2f, class %s, purchase data %s)",
+    tostring(data.inventoryId), M.getInsuranceName(insuranceId), initialValue,
+    tostring(invVehs[data.inventoryId].requiredInsuranceClass and invVehs[data.inventoryId].requiredInsuranceClass.id),
+    data.purchaseData and "present" or "absent"), "insurance")
 end
 
 local function changeInvVehInsuranceCoverageOptions(invVehId, changedCoverageOptions)
@@ -1611,6 +1658,10 @@ local function changeInvVehInsuranceCoverageOptions(invVehId, changedCoverageOpt
   local label = core_locales.contextTranslate("ui.career.insurance.coverageChanged.payment", {insuranceName = availableInsurances[invVehs[invVehId].insuranceId].name})
   career_modules_payment.pay({money = { amount = availableInsurances[invVehs[invVehId].insuranceId].paperworkFees, canBeNegative = false}}, {label=label})
   plInsurancesData[invVehs[invVehId].insuranceId].nextInsuranceEditTimer = insuranceEditTime
+
+  career_modules_log.addLog(string.format("Changed coverage options of vehicle %s on insurance %s, paperwork fee %.2f",
+    tostring(invVehId), M.getInsuranceName(invVehs[invVehId].insuranceId),
+    availableInsurances[invVehs[invVehId].insuranceId].paperworkFees), "insurance")
 
   M.sendUIData()
 end
@@ -1651,6 +1702,8 @@ local function openMenu(_originComputerId)
         tether = career_modules_tether.startSphereTether(freeroam_facilities.getAverageDoorPositionForFacility(computer), tetherRange, career_career.closeAllMenus)
       end
     end
+
+    career_modules_log.addLog(string.format("Opened insurances from computer %s", tostring(originComputerId)), "insurance")
 
     ui_router.navigate("career.computer.insurances")
     extensions.hook("onComputerInsurance")
@@ -1717,6 +1770,8 @@ local function resetDriverScore()
         {type = "driverScore", label = _tr("ui.career.insurance.effect.driverScore"), changedBy = defaultDriverScore - oldScore, newValue = plDriverScore}
       }
     })
+    career_modules_log.addLog(string.format("Reset driver score from %d to %d for %.2f", oldScore, plDriverScore, resetCost), "insurance")
+
     sendUIData()
     career_modules_playerAbstract.sendPlayerAbstractDataToUI()
     return true
@@ -1751,6 +1806,7 @@ local function expediteRepair(inventoryId, price)
     vehInfo.timeToAccess = nil
     vehInfo.delayReason = nil
     career_modules_inventory.setVehicleDirty(inventoryId)
+    career_modules_log.addLog(string.format("Expedited repair of vehicle %s for %.2f", tostring(inventoryId), price), "insurance")
   end
 end
 
@@ -1769,6 +1825,9 @@ local function saveNewInsuranceCoverageOptions(insuranceId, newCoverageOptions)
       M.topUpRoadsideAssistance(insuranceId)
     end
 
+    career_modules_log.addLog(string.format("Saved insurance-wide coverage options for %s, paperwork fee %.2f",
+      M.getInsuranceName(insuranceId), availableInsurances[insuranceId].paperworkFees), "insurance")
+
     sendUIData()
   end
 end
@@ -1777,6 +1836,9 @@ local function saveNewVehicleCoverageOptions(vehicleId, newCoverageOptions)
   if career_modules_payment.canPay({money = {amount = availableInsurances[invVehs[vehicleId].insuranceId].paperworkFees, canBeNegative = false}}) then
     career_modules_payment.pay({money = {amount = availableInsurances[invVehs[vehicleId].insuranceId].paperworkFees, canBeNegative = false}}, {label = _tr("ui.career.insurance.payment.vehicleCoverageOptionsChanged")})
     invVehs[vehicleId].insuranceData.coverageOptionsData.currentCoverageOptions = newCoverageOptions
+    career_modules_log.addLog(string.format("Saved coverage options for vehicle %s on insurance %s, paperwork fee %.2f",
+      tostring(vehicleId), M.getInsuranceName(invVehs[vehicleId].insuranceId),
+      availableInsurances[invVehs[vehicleId].insuranceId].paperworkFees), "insurance")
     sendUIData()
     gameplay_achievement.unlockAchievement("POLICY_REVIEW")
   end
@@ -1801,6 +1863,10 @@ local function useRoadsideAssistance(invVehId)
   if not plInsurancesData[invVehs[invVehId].insuranceId] then return end
 
   plInsurancesData[invVehs[invVehId].insuranceId].roadsideAssistance = plInsurancesData[invVehs[invVehId].insuranceId].roadsideAssistance - 1
+
+  career_modules_log.addLog(string.format("Used roadside assistance on vehicle %s (insurance %s), %d uses left",
+    tostring(invVehId), M.getInsuranceName(invVehs[invVehId].insuranceId),
+    plInsurancesData[invVehs[invVehId].insuranceId].roadsideAssistance), "insurance")
 end
 
 local function getTestDriveClaimPrice()
@@ -1865,8 +1931,19 @@ local function getInsuranceDataById(insuranceId)
   return availableInsurances[insuranceId]
 end
 
-local function openChooseInsuranceScreen()
-  guihooks.trigger('ChangeState', {state = 'career.chooseInsurance', params = {}})
+local chooseInsuranceRoutes = {
+  purchase = "career.computer.vehicleShopping.vehicles.vehiclePurchase.chooseInsurance",
+  change = "career.computer.insurances.chooseInsurance",
+}
+
+-- purchase params: { purchaseType, shopId, insuranceId? }; change params: { vehicleId }
+local function openChooseInsuranceScreen(mode, params)
+  local routeName = chooseInsuranceRoutes[mode]
+  if not routeName then
+    log("E", "", "openChooseInsuranceScreen: unknown mode " .. tostring(mode))
+    return { result = false, success = false, reason = "unknown_mode" }
+  end
+  return extensions.ui_router.navigate(routeName, params)
 end
 
 local function setDriverScore(score)

@@ -48,7 +48,7 @@ M.qualityLevels = {
 }
 
 local function applyLevel(level)
-  local cs = ClusteredShading
+  local cs = ClusterShading
   if not cs then
     return
   end

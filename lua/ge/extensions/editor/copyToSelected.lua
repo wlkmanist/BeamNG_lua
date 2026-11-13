@@ -68,13 +68,11 @@ local function getCustomField(obj, fieldName, index)
   index = index or 0
 
   if obj.getDynDataFieldbyName then
-    local ok, value = pcall(obj.getDynDataFieldbyName, obj, fieldName, index)
-    if ok then return value end
+    return obj:getDynDataFieldbyName(fieldName, index)
   end
 
   if obj.getField then
-    local ok, value = pcall(obj.getField, obj, fieldName, index)
-    if ok then return value end
+    return obj:getField(fieldName, index)
   end
 
   return nil
@@ -86,13 +84,13 @@ local function setCustomField(obj, fieldName, index, value)
   value = tostring(value or "")
 
   if obj.setDynDataFieldbyName then
-    local ok = pcall(obj.setDynDataFieldbyName, obj, fieldName, index, value)
-    if ok then return true end
+    obj:setDynDataFieldbyName(fieldName, index, value)
+    return true
   end
 
   if obj.setField then
-    local ok = pcall(obj.setField, obj, fieldName, index, value)
-    if ok then return true end
+    obj:setField(fieldName, index, value)
+    return true
   end
 
   return false

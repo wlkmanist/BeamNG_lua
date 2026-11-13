@@ -156,6 +156,11 @@ local function onCouplerDetached(objId1, objId2, nodeId, obj2nodeId, breakForce)
 end
 
 local function onVehicleActiveChanged(vehId, active)
+  if multiplayer_vehicleSync then
+    multiplayer_vehicleSync.requestTrailerActiveFollow(vehId, active)
+    return
+  end
+
   -- sets the vehicle's trailer visibility state to match the owner
   if trailerReg[vehId] then
     getObjectByID(trailerReg[vehId].trailerId):setActive(active and 1 or 0)
@@ -196,6 +201,8 @@ end
 
 -- TODO: Remove this when trailer respawn is disabled
 local function onVehicleResetted(vehId)
+  if multiplayer_vehicleSync then return end
+
   if trailerReg[vehId] then
     local tmp = core_vehicles.vehsCouplerOffset[trailerReg[vehId].trailerId][trailerReg[vehId].trailerNode]
     spawn.placeTrailer(vehId, core_vehicles.vehsCouplerOffset[vehId][trailerReg[vehId].node], trailerReg[vehId].trailerId, tmp, core_vehicles.vehsCouplerTags[vehId][trailerReg[vehId].node])

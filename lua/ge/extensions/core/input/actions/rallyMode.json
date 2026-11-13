@@ -38,7 +38,8 @@
     "order": 1010,
     "title": "ui.inputActions.rallyMode.cut_voice_transcription.title",
     "desc": "ui.inputActions.rallyMode.cut_voice_transcription.description",
-    "onDown": "if gameplay_rally then gameplay_rally.actionTranscribeRecordingCut() end"
+    "onDown": "if gameplay_rally then gameplay_rally.actionTranscribeRecordingCut() end",
+    "simplemenu":false
   },
 
   // "recce_move_pacenote_forward": {
@@ -64,7 +65,8 @@
     "order": 1004,
     "title": "ui.inputActions.rallyMode.recce_move_vehicle_forward.title",
     "desc": "ui.inputActions.rallyMode.recce_move_vehicle_forward.description",
-    "onDown": "if gameplay_rally then gameplay_rally.actionRecceMoveVehicleForward() end"
+    "onDown": "if gameplay_rally then gameplay_rally.actionRecceMoveVehicleForward() end",
+    "simplemenu":false
   },
   "recce_move_vehicle_backward": {
     "cat": "gameplay",
@@ -72,7 +74,8 @@
     "order": 1005,
     "title": "ui.inputActions.rallyMode.recce_move_vehicle_backward.title",
     "desc": "ui.inputActions.rallyMode.recce_move_vehicle_backward.description",
-    "onDown": "if gameplay_rally then gameplay_rally.actionRecceMoveVehicleBackward() end"
+    "onDown": "if gameplay_rally then gameplay_rally.actionRecceMoveVehicleBackward() end",
+    "simplemenu":false
   },
 
   "rallyEditorSave": {

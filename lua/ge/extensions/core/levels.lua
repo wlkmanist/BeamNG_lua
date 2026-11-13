@@ -173,6 +173,12 @@ local function getList()
       end
     end
 
+    -- multiseat
+    info.multiseat = info.multiseat or {}
+    info.multiseat.maxPlayers = info.multiseat.maxPlayers or 4
+    -- override for testing:
+    --info.multiseat.maxPlayers = 64
+
     -- default to true if not set
     if info.supportsTraffic == nil then info.supportsTraffic = true end
     if info.supportsTimeOfDay == nil then info.supportsTimeOfDay = true end
@@ -180,6 +186,8 @@ local function getList()
     table.insert(levels, info)
     ::continue::
   end
+
+
 
   -- now filter out .mis levels if a json version of the same exists
   local jsonLevels = {}

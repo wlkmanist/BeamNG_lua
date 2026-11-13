@@ -109,7 +109,7 @@ local function onEditorGui()
     )
 
     local texObj = imUtils.texObj('#editorRenderTest')
-    im.Image(texObj.texId, availSize)
+    im.Image(texObj.tex:getID(), availSize)
   end
   editor.endWindow()
   im.PopStyleVar()

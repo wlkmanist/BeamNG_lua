@@ -9,6 +9,7 @@ return {
   vehicle          = { order = 2, icon = "directions_car", title = "ui.options.controls.bindings.Vehicle" },
   general          = { order = 3, icon = "language",       title = "ui.options.controls.bindings.General" },
   gameplay         = { order = 4, icon = "extension",      title = "ui.options.controls.bindings.Gameplay" },
+  splitscreen      = { order = 4.5, icon = "extension",    title = "Split Screen" },
   camera           = { order = 5, icon = "videocam",       title = "ui.options.controls.bindings.Camera" },
   menu             = { order = 6, icon = "web",            title = "ui.options.controls.bindings.MenuNavigation" },
   menuExtra        = { order = 6.5,icon = "web",           title = "ui.options.controls.bindings.MenuNavigationExtra" },

@@ -68,7 +68,7 @@ function C:init(sitesEditor, key)
 
   -- drag/dup state
   self.wasDragging = false
-  self.didCtrlDuplicateThisDrag = false
+  self.didShiftDuplicateThisDrag = false
 
   self.pendingGizmoMode = editor.AxisGizmoMode_Translate
   self.gizmoSetupCountdown = 0
@@ -255,12 +255,23 @@ function C:updateMultiSpot()
   end
 end
 
-function C:_beginCtrlDuplicate()
+function C:_beginShiftDuplicate()
   local ser = self.current:onSerialize()
   editor.history:commitAction("Duplicate Parking Spot",
     { self = self, list = self.list, ps = ser, baseName = self.current.name },
     createUndo, duplicateRedo)
-  self.didCtrlDuplicateThisDrag = true
+  self.didShiftDuplicateThisDrag = true
+  local ps = self.current
+  if ps then
+    self.isMultiSpot[0] = ps.isMultiSpot or false
+    self.multiSpotData.spotAmount[0] = ps.multiSpotData.spotAmount or 1
+    self.multiSpotData.spotOffset[0] = ps.multiSpotData.spotOffset or 0
+    self.multiSpotData.spotDirection = ps.multiSpotData.spotDirection or "Left"
+    self.multiSpotData.spotRotation[0] = ps.multiSpotData.spotRotation or 0
+    if self.listDisplay then
+      self.listDisplay:adoptElement(ps.id)
+    end
+  end
 end
 
 function C:drawElement(ps, mouseInfo)
@@ -285,17 +296,22 @@ function C:drawElement(ps, mouseInfo)
   self.current = ps
 
   ensureGizmo(self)
-  local startedDrag = transformUtil.isDragging and not self.wasDragging
-  local endedDrag = (not transformUtil.isDragging) and self.wasDragging
+  local wasDraggingBeforeUpdate = self.wasDragging
+  local change = transformUtil:update(mouseInfo)
+  local startedDrag = transformUtil.isDragging and not wasDraggingBeforeUpdate
 
-  if startedDrag then
-    local io = im.GetIO()
-    if io.KeyCtrl and not self.didCtrlDuplicateThisDrag then
-      self:_beginCtrlDuplicate()
+  if startedDrag and editor.keyModifiers.shift and not self.didShiftDuplicateThisDrag then
+    -- gizmo may already have moved this frame; keep original at drag-start pose
+    if transformUtil.beginDragPos then
+      self.current.pos = vec3(transformUtil.beginDragPos)
+      self.current.rot = quat(transformUtil.beginDragRot)
+      self.current.scl = transformUtil.oneDimensionalScale and transformUtil.beginDragScl or vec3(transformUtil.beginDragScl)
     end
+    self:_beginShiftDuplicate()
+    change = true
   end
 
-  if transformUtil:update(mouseInfo) then -- if change was detected
+  if change then
     if transformUtil.isDragging then
       self:updateFromTransform()
     else
@@ -304,8 +320,9 @@ function C:drawElement(ps, mouseInfo)
     end
   end
 
+  local endedDrag = (not transformUtil.isDragging) and wasDraggingBeforeUpdate
   if endedDrag then
-    self.didCtrlDuplicateThisDrag = false
+    self.didShiftDuplicateThisDrag = false
   end
   self.wasDragging = transformUtil.isDragging
 

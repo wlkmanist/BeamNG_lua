@@ -41,7 +41,7 @@ end
 
 function C:closeDialogue()
   if self.built then
-    guihooks.trigger('ChangeState', 'play')
+    -- extensions.ui_router.navigate('play')
   end
 end
 
@@ -108,7 +108,7 @@ function C:startFromUi()
   --self.started = true
   self.done = true
   extensions.hook("onUIStartButtonClicked")
-  guihooks.trigger('ChangeState', 'play')
+  extensions.ui_router.navigate('play')
   self.mgr.modules.ui.uiLayout = nil
 end
 

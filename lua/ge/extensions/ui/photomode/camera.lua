@@ -47,7 +47,7 @@ end
 
 local function isFreeCameraActive()
   if commands and type(commands.isFreeCamera) == "function" then
-    local ok, value = pcall(commands.isFreeCamera)
+    local ok, value = pcall(commands.isFreeCamera, 0)
     if ok then
       return value == true
     end
@@ -492,7 +492,7 @@ local function activateSessionFreeCamera()
   if not commands or type(commands.setFreeCamera) ~= "function" then
     return
   end
-  local ok, err = pcall(commands.setFreeCamera)
+  local ok, err = pcall(commands.setFreeCamera, 0)
   if not ok then
     log("E", logTag, "activateSessionFreeCamera failed: " .. tostring(err))
     return
@@ -507,7 +507,11 @@ local function applyCameraFov(fov)
   if not setFOV then
     return false, "camera_api_unavailable"
   end
-  local cameraTargetId = isFreeCameraActive() and 0 or readPlayerVehicleId()
+  local activeCameraName = readActiveCameraName()
+  if activeCameraName == "path" then
+    return false, "camera_mode_unsupported"
+  end
+  local cameraTargetId = activeCameraName == "free" and 0 or readPlayerVehicleId()
   if cameraTargetId == nil then
     return false, "camera_api_unavailable"
   end
@@ -558,33 +562,57 @@ local function applyCameraRoll(rollDeg)
 end
 
 local function restoreCameraMode(restoreState)
-  if not restoreState or restoreState.restoreEntryCameraOnExit ~= true then
-    return
+  if not restoreState then
+    return false
   end
+
   local entryCameraName = restoreState.entryCameraName
-  if entryCameraName == nil or entryCameraName == "path" then
-    return
+  if readActiveCameraName() == entryCameraName then
+    return true
   end
 
   if entryCameraName == "free" then
     if not commands or type(commands.setFreeCamera) ~= "function" then
-      return
+      return false
     end
-    local ok, err = pcall(commands.setFreeCamera)
+    local ok, err = pcall(commands.setFreeCamera, 0)
     if not ok then
       log("E", logTag, "restoreCameraMode free failed: " .. tostring(err))
+      return false
     end
-    return
+  else
+    if commands and type(commands.setGameCamera) == "function" then
+      local ok, err = pcall(commands.setGameCamera, 0)
+      if not ok then
+        log("E", logTag, "restoreCameraMode game camera failed: " .. tostring(err))
+        return false
+      end
+    elseif entryCameraName == nil then
+      return false
+    end
+
+    if entryCameraName ~= nil then
+      local setByName = ui_photomode_shared.getCoreCameraFunction("setByName")
+      if not setByName then
+        return false
+      end
+      local ok, err = pcall(setByName, 0, entryCameraName, false)
+      if not ok then
+        log("E", logTag, "restoreCameraMode failed: " .. tostring(err))
+        return false
+      end
+    end
   end
 
-  local setByName = ui_photomode_shared.getCoreCameraFunction("setByName")
-  if not setByName then
-    return
+  local restoredCameraName = readActiveCameraName()
+  if entryCameraName ~= nil and restoredCameraName ~= entryCameraName then
+    ui_photomode_shared.logDebug(
+      "restoreCameraMode expected=" .. tostring(entryCameraName) .. " actual=" .. tostring(restoredCameraName)
+    )
+    return false
   end
-  local ok, err = pcall(setByName, 0, entryCameraName, false)
-  if not ok then
-    log("E", logTag, "restoreCameraMode failed: " .. tostring(err))
-  end
+
+  return true
 end
 
 local function ensureFreeCameraForTransform()
@@ -598,7 +626,7 @@ local function ensureFreeCameraForTransform()
   if not commands or type(commands.setFreeCamera) ~= "function" then
     return false, "camera_api_unavailable"
   end
-  local ok, err = pcall(commands.setFreeCamera)
+  local ok, err = pcall(commands.setFreeCamera, 0)
   if not ok then
     log("E", logTag, "ensureFreeCameraForTransform failed: " .. tostring(err))
     return false, "camera_set_failed"
@@ -680,7 +708,9 @@ local function restoreCameraState()
   local restoreState = ui_photomode_shared.S.sessionCameraRestoreState
   ui_photomode_shared.S.sessionCameraRestoreState = nil
 
-  if restoreState.fov ~= nil then
+  local cameraModeRestored = restoreCameraMode(restoreState)
+
+  if cameraModeRestored and restoreState.fov ~= nil and restoreState.entryCameraName ~= "orbit" then
     local ok, reason = applyCameraFov(restoreState.fov)
     if not ok then
       ui_photomode_shared.logDebug("restoreCameraState fov restore skipped: " .. tostring(reason))
@@ -694,7 +724,7 @@ local function restoreCameraState()
     end
   end
 
-  if restoreState.rollDeg ~= nil then
+  if cameraModeRestored and restoreState.rollDeg ~= nil then
     applyCameraRoll(restoreState.rollDeg)
   end
 
@@ -715,8 +745,6 @@ local function restoreCameraState()
 
     applyCameraExposureStatePatch(exposurePatch)
   end
-
-  restoreCameraMode(restoreState)
 
 end
 
@@ -1027,7 +1055,6 @@ function M.restoreCameraBookmark(bookmark)
   local pos = readBookmarkVector3(bookmarkCamera and bookmarkCamera.pos)
   local rot = readBookmarkQuaternion(bookmarkCamera and bookmarkCamera.rot)
   local fov = tonumber(bookmarkCamera and bookmarkCamera.fov)
-  local rollDeg = tonumber(bookmarkCamera and bookmarkCamera.rollDeg)
   if not pos or not rot then
     return {
       ok = false,
@@ -1067,17 +1094,6 @@ function M.restoreCameraBookmark(bookmark)
       return {
         ok = false,
         reason = fovReason or "camera_set_failed",
-      }
-    end
-  end
-
-  if rollDeg ~= nil then
-    rollDeg = normalizeCameraRoll(rollDeg)
-    local rollOk, rollReason = applyCameraRoll(rollDeg)
-    if not rollOk then
-      return {
-        ok = false,
-        reason = rollReason or "camera_set_failed",
       }
     end
   end

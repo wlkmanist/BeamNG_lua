@@ -254,7 +254,16 @@ local function generateNewOffers()
       listing.timeOfNextOffer = nil
       local offer = generateOffer(listing.id)
       local offerValue = offer.value
-      guihooks.trigger("toastrMsg", {type="info", title="New offer for your listed vehicle", msg = core_locales.translateWithOrWithoutContext(listing.niceName) .. ": $" .. string.format("%.2f", offerValue) .. " ( " .. (offerValue > listing.value and "+ " or "- ") .. string.format("%.2f", math.abs(offerValue - listing.value)) .. "$ )"})
+      guihooks.trigger("toastrMsg", {
+        type = "info",
+        title = _tr("ui.career.vehicleMarketplace.toast.newOffer.title"),
+        msg = core_locales.contextTranslate("ui.career.vehicleMarketplace.toast.newOffer.message", {
+          vehicleName = listing.niceName,
+          offerValue = string.format("%.2f", offerValue),
+          differenceSign = offerValue > listing.value and "+" or "-",
+          difference = string.format("%.2f", math.abs(offerValue - listing.value))
+        })
+      })
       offerCountDiff = offerCountDiff + 1
     end
 
@@ -280,6 +289,7 @@ end
 
 -- negotiation variables
 local negotiationActive = false
+local offerTaken = false
 local startingPrice
 local patience = 1
 local isInsulted = false
@@ -367,11 +377,11 @@ local function selectQuoteForPersonality(personality, vehicleValue, isBuyer)
   -- Return random quote from pool
   if quotes and type(quotes) == "table" and #quotes > 0 then
     local selectedQuote = quotes[math.random(1, #quotes)]
-    return selectedQuote
+    return _tr(selectedQuote)
   end
 
   -- Fallback
-  return isBuyer and "I'm interested in this vehicle." or "Thanks for your interest."
+  return _tr(isBuyer and "ui.career.negotiation.fallback.buyerInterested" or "ui.career.negotiation.fallback.sellerThanks")
 end
 
 local function startNegotiateBuyingOffer(inventoryId, offerId)
@@ -405,6 +415,7 @@ local function startNegotiateBuyingOffer(inventoryId, offerId)
   actualVehicleValue = career_modules_valueCalculator.getInventoryVehicleValue(inventoryId)
   startingPrice = listing.value
   negotiationActive = true
+  offerTaken = false
   patience = 1
   isInsulted = false
   theirOffer = offer.value
@@ -422,7 +433,7 @@ local function startNegotiateBuyingOffer(inventoryId, offerId)
     }
   }
 
-  guihooks.trigger('ChangeState', {state = 'career.negotiation', params = {}})
+  return extensions.ui_router.navigate("career.computer.vehicleShopping.negotiation")
 end
 
 local function startNegotiateSellingOffer(_shopId)
@@ -432,8 +443,8 @@ local function startNegotiateSellingOffer(_shopId)
   if (vehicleInfo.discountPercentage or 0) > 0 or vehicleInfo.negotiationPossible == false then
     guihooks.trigger("toastrMsg", {
       type = "warning",
-      title = "Negotiation unavailable",
-      msg = vehicleInfo.negotiationDisabledReason or "This vehicle cannot be negotiated."
+      title = _tr("ui.career.vehiclePurchase.negotiationUnavailableTitle"),
+      msg = vehicleInfo.negotiationDisabledReason or _tr("ui.career.vehiclePurchase.negotiationCannotNegotiateFallback")
     })
     return
   end
@@ -466,6 +477,7 @@ local function startNegotiateSellingOffer(_shopId)
   actualVehicleValue = vehicleInfo.marketValue or vehicleInfo.Value
   startingPrice = vehicleInfo.Value
   negotiationActive = true
+  offerTaken = false
 
   if vehicleInfo.discountPercentage > 0 then
     startingPrice = startingPrice * (1 - vehicleInfo.discountPercentage / 100)
@@ -488,7 +500,7 @@ local function startNegotiateSellingOffer(_shopId)
   local patienceVariance = opponentPersonality.patienceVariance or 0.1
   patience = math.max(0.2, math.min(1.0, basePatience + (math.random() * patienceVariance * 2 - patienceVariance)))
 
-  guihooks.trigger('ChangeState', {state = 'career.negotiation', params = {}})
+  return extensions.ui_router.navigate("career.computer.vehicleShopping.vehicles.vehiclePurchase.negotiation")
 end
 
 local function cancelNegotiation()
@@ -700,9 +712,9 @@ local function makeOffer(price)
           -- they are insulted
           local insultQuotes = opponentPersonality.insultQuotes
           if insultQuotes and type(insultQuotes) == "table" and #insultQuotes > 0 then
-            opponentQuote = insultQuotes[math.random(1, #insultQuotes)]
+            opponentQuote = _tr(insultQuotes[math.random(1, #insultQuotes)])
           else
-            opponentQuote = "That's funny, do you have a real offer?"
+            opponentQuote = _tr("ui.career.negotiation.fallback.insultRealOffer")
           end
 
         elseif patience <= 0.40 then
@@ -747,7 +759,7 @@ local function makeOffer(price)
           if myOffer > (minAcceptable * 1.10) then
             local happyQuotes = opponentPersonality.happyQuotes
             if happyQuotes and type(happyQuotes) == "table" and #happyQuotes > 0 then
-              opponentQuote = happyQuotes[math.random(1, #happyQuotes)]
+              opponentQuote = _tr(happyQuotes[math.random(1, #happyQuotes)])
             end
           end
         else
@@ -757,7 +769,7 @@ local function makeOffer(price)
             theirOffer = theirOfferCandidate
             if patience <= 0.05 then
               negotiationStatus = "counterOfferLastChance"
-              opponentQuote = "That's it! Take it or leave it."
+              opponentQuote = _tr("ui.career.negotiation.fallback.finalOffer")
             else
               negotiationStatus = "counterOffer"
             end
@@ -853,6 +865,15 @@ local function takeTheirOffer()
     vehicleInfo.negotiationPossible = false
   end
   myOffer = nil
+  offerTaken = true
+end
+
+local function finalizeNegotiationExit()
+  if negotiationStatus == "accepted" and not offerTaken then
+    takeTheirOffer()
+  elseif negotiationStatus ~= "accepted" then
+    cancelNegotiation()
+  end
 end
 
 local myOfferValuePtr = im.IntPtr(0)
@@ -1034,6 +1055,7 @@ M.getNegotiationState = getNegotiationState
 M.makeNegotiationOffer = makeNegotiationOffer
 M.takeTheirOffer = takeTheirOffer
 M.cancelNegotiation = cancelNegotiation
+M.finalizeNegotiationExit = finalizeNegotiationExit
 
 M.firstNames = {
   "Aaliyah", "Aaron", "Abdullah", "Abigail", "Adam", "Aditya", "Adrian", "Adriana", "Adrien", "Agustin", "Ahmed", "Aisha", "Akari", "Akira", "Alan", "Albert", "Alberto", "Alejandra", "Alejandro", "Alessandro", "Alessia", "Alexander", "Alexandre", "Alexei", "Alexis", "Alfonso", "Alfredo", "Ali", "Alice", "Alicia", "Amanda", "Amandine", "Amber", "Amelia", "Amelie", "Amina", "Amir", "Amit", "Amparo", "Amy", "Ana", "Ananya", "Anastasia", "Andre", "Andrea", "Andreas", "Andrei", "Andres", "Andrew", "Angel", "Angela", "Anh", "Anjali", "Ann", "Anna", "Anselmo", "Anthony", "Antoine", "Anton", "Antonia", "Antonio", "Aoi", "Arjun", "Armando", "Artem", "Arthur", "Arturo", "Ascension", "Ashley", "Audrey", "Aurelie", "Aurora", "Austin", "Baptiste", "Barbara", "Beatrice", "Beatriz", "Benjamin", "Bernardo", "Betty", "Beverly", "Bilal", "Billy", "Binh", "Blanca", "Bobby", "Brandon", "Brenda", "Brian", "Brianna", "Brittany", "Bruce", "Bryan", "Camila", "Camille", "Cao", "Carl", "Carlos", "Carmen", "Carol", "Carolina", "Caroline", "Carolyn", "Catalina", "Catherine", "Cecile", "Celestino", "Celine", "Cesar", "Charles", "Charlotte", "Chen", "Cheng", "Cheryl", "Chiara", "Christian", "Christina", "Christine", "Christopher", "Claire", "Claudia", "Clement", "Concepcion", "Consuelo", "Cristian", "Cristina", "Cynthia", "Dalia", "Daniel", "Daniela", "Danielle", "Daria", "Dario", "Darius", "Darnell", "David", "Davide", "DeAndre", "Deborah", "Debra", "Deepika", "Deng", "Denis", "Denise", "Dennis", "Destiny", "Devonte", "Diana", "Diane", "Diego", "Dina", "Divya", "Dmitri", "Dolores", "Donald", "Donna", "Dorothy", "Douglas", "Duc", "Dylan", "Ebony", "Edoardo", "Eduardo", "Edward", "Ekaterina", "Elena", "Elisa", "Elisabeth", "Elise", "Eliseo", "Elizabeth", "Elodie", "Emilie", "Emilio", "Emily", "Emma", "Encarnacion", "Enrique", "Eric", "Erick", "Ernesto", "Esperanza", "Esteban", "Esther", "Ethan", "Eugene", "Eugenio", "Eun", "Eusebio", "Evelyn", "Fabian", "Fabien", "Faisal", "Fang", "Fatima", "Federico", "Felipe", "Felix", "Feng", "Fernanda", "Fernando", "Florian", "Frances", "Francesca", "Francesco", "Francisca", "Francisco", "Francois", "Frank", "Gabriel", "Gabriela", "Gabriele", "Gao", "Gary", "George", "Gerald", "Gerardo", "Ginevra", "Giorgia", "Giovanni", "Giulia", "Gloria", "Gonzalo", "Grace", "Graciela", "Gregory", "Greta", "Guadalupe", "Guillaume", "Guo", "Gustavo", "Hafsa", "Hai", "Hala", "Hamza", "Han", "Hana", "Hanan", "Hannah", "Harold", "Harry", "Haruka", "Hassan", "He", "Heather", "Hector", "Helen", "Helene", "Henri", "Henry", "Hiroshi", "Hoa", "Hu", "Huang", "Hugo", "Hui", "Hung", "Huong", "Hussein", "Hye", "Ibrahim", "Ignacio", "Igor", "Ines", "Irina", "Irma", "Isabel", "Isabelle", "Isha", "Isidro", "Ismael", "Ivan", "Jack", "Jacob", "Jacqueline", "Jalen", "Jamal", "James", "Jamil", "Jan", "Jane", "Janet", "Janice", "Jasmine", "Jason", "Javier", "Jean", "Jeffrey", "Jennifer", "Jeremy", "Jerry", "Jesse", "Jessica", "Ji", "Jimena", "Jin", "Jing", "Joan", "Joaquin", "Joe", "Johannes", "John", "Johnny", "Jonas", "Jonathan", "Jordan", "Jorge", "Jose", "Joseph", "Joshua", "Joyce", "Juan", "Juana", "Judith", "Judy", "Julia", "Julie", "Julien", "Juliette", "Julio", "Jun", "Justin", "Kai", "Karan", "Kareem", "Karen", "Karim", "Katharina", "Katherine", "Kathleen", "Kathryn", "Kathy", "Kavita", "Keisha", "Keith", "Kelly", "Kendrick", "Kenji", "Kenneth", "Kevin", "Khadija", "Khaled", "Khalid", "Kimberly", "Kiran", "Kristina", "Kyle", "Kyung", "Lan", "Larry", "Latoya", "Laura", "Lawrence", "Layla", "Lea", "Leandro", "Leila", "Leonardo", "Leticia", "Li", "Liliana", "Lin", "Lina", "Linda", "Ling", "Linh", "Lisa", "Liu", "Logan", "Lorenzo", "Lori", "Louis", "Luca", "Lucas", "Lucia", "Luis", "Lukas", "Luo", "Ma", "Madison", "Mahmoud", "Mai", "Malik", "Manoj", "Manon", "Manuel", "Manuela", "Marcelo", "Marco", "Marcus", "Margaret", "Margarita", "Maria", "Mariam", "Mariana", "Marie", "Marilyn", "Marina", "Marine", "Mario", "Marion", "Marisol", "Mark", "Markus", "Marquis", "Martha", "Martin", "Martina", "Mary", "Maryam", "Matteo", "Matthew", "Matthias", "Matthieu", "Maxim", "Maxime", "Maximilian", "Maximo", "Maya", "Meera", "Megan", "Mei", "Melanie", "Melissa", "Mercedes", "Mi", "Michael", "Michelle", "Miguel", "Mikhail", "Milagros", "Mildred", "Min", "Ming", "Mohammed", "Moises", "Mona", "Monica", "Monique", "Mustafa", "Na", "Nadia", "Nadine", "Nam", "Nancy", "Nasir", "Nasser", "Natalia", "Nathalie", "Nathan", "Natividad", "Neha", "Nestor", "Nga", "Nia", "Nicholas", "Nicolas", "Nicole", "Nikhil", "Nikolai", "Nina", "Nisha", "Noah", "Noha", "Noor", "Norma", "Nour", "Octavio", "Olga", "Olivier", "Omar", "Oscar", "Pablo", "Pamela", "Paola", "Patricia", "Patrick", "Paul", "Pauline", "Pavel", "Pedro", "Peter", "Petra", "Philip", "Philipp", "Philippe", "Phuong", "Piedad", "Pierre", "Pietro", "Pilar", "Polina", "Pooja", "Pradeep", "Presentacion", "Priya", "Purificacion", "Quang", "Rachel", "Rafael", "Rahul", "Raj", "Ralph", "Rami", "Ramon", "Rana", "Randy", "Rania", "Raquel", "Rashid", "Raul", "Ravi", "Raymond", "Rebecca", "Reem", "Regina", "Remedios", "Renato", "Rene", "Ricardo", "Riccardo", "Richard", "Rima", "Rin", "Riya", "Robert", "Roberto", "Rocio", "Rodolfo", "Rodrigo", "Rogelio", "Roger", "Rohan", "Romain", "Roman", "Ronald", "Rosa", "Rosario", "Rose", "Roy", "Ruben", "Russell", "Ryan", "Ryo", "Sabine", "Safiya", "Sakura", "Salma", "Salvador", "Salvatore", "Samantha", "Sami", "Samira", "Samuel", "Sandra", "Sang", "Sara", "Sarah", "Satoshi", "Saul", "Scott", "Sean", "Sebastian", "Sebastien", "Sergei", "Sergio", "Seung", "Shanice", "Sharon", "Shirley", "Shreya", "Siddharth", "Silvia", "Simon", "Simone", "Sneha", "Sofia", "Soledad", "Song", "Soo", "Sophie", "Stefan", "Stephanie", "Stephen", "Steven", "Sun", "Suresh", "Susan", "Susana", "Susanne", "Svetlana", "Swati", "Takeshi", "Tamer", "Tang", "Tanvi", "Tarek", "Tariq", "Tatiana", "Teodoro", "Teresa", "Terry", "Thao", "Theresa", "Thomas", "Tiffany", "Tim", "Timothy", "Tobias", "Tomas", "Tommaso", "Trevon", "Tuan", "Tyler", "Tyrone", "Valentin", "Valentina", "Valeria", "Valerio", "Vanessa", "Varun", "Veronica", "Victor", "Victoria", "Vikram", "Viktor", "Vincent", "Vincenzo", "Virginia", "Virginie", "Visitacion", "Vladimir", "Waleed", "Walter", "Wayne", "Wei", "William", "Willie", "Woo", "Wu", "Xia", "Xie", "Ximena", "Xu", "Yan", "Yang", "Yasmin", "Yolanda", "Young", "Youssef", "Yuan", "Yui", "Yuki", "Yulia", "Yusuf", "Yusuke", "Zachary", "Zain", "Zainab", "Zhang", "Zhao", "Zheng", "Zhou", "Zhu", "Zoe"
@@ -1078,84 +1100,84 @@ M.initialCount = #M.initials
 
 
 M.privateSellerQuotes = {
-  "Just want it gone, moving next week.",
-  "Hate to see her go, but need the space.",
-  "Been in the family for years, well maintained.",
-  "Price is firm, I know what I have.",
-  "Make me an offer, need cash ASAP.",
-  "No lowballers, I know what it's worth.",
-  "Garage kept, all service records available.",
-  "Drove it myself for 5 years, runs great.",
-  "Life changes, gotta sell unfortunately.",
-  "Open to reasonable offers.",
-  "Priced to sell this weekend.",
-  "Take care of it and it'll take care of you.",
-  "Never had any issues with it.",
-  "Only selling because I upgraded.",
-  "Don't waste my time with ridiculous offers.",
-  "First reasonable offer takes it.",
-  "Selling for a friend, flexible on price.",
-  "Mechanically sound, cosmetically rough.",
-  "It's been reliable for me.",
-  "New job means I don't need it anymore.",
-  "Adult owned, never abused.",
-  "Clean title in hand, ready to transfer.",
-  "Runs and drives, needs some TLC.",
-  "Everything works as it should.",
-  "Minor cosmetic issues, drives perfect.",
-  "Recent oil change and new tires.",
-  "Hate to part with it, but downsizing.",
-  "Priced below book value for quick sale.",
-  "Zero mechanical problems, drives smooth.",
-  "Cold AC, heat works great too.",
-  "Always serviced on time.",
-  "Second owner, bought from family.",
-  "Won't find a better deal than this.",
-  "Serious inquiries only please.",
-  "Text is best, I work nights.",
-  "Can meet at DMV to transfer title.",
-  "No joy rides, cash talks.",
-  "Perfect winter car, starts every time.",
-  "Great gas mileage, very economical.",
-  "Retiring and don't need two cars.",
-  "Baby on the way, need something bigger.",
-  "Moving out of state next month.",
-  "Estate sale, must sell quickly.",
-  "Lost my license, don't need it anymore.",
-  "Bought a truck, this has to go.",
-  "Wife's car, she wants something newer.",
-  "College kid car, heading off to school.",
-  "Transmission rebuilt last year.",
-  "Just passed inspection last month.",
-  "Great starter car for a teenager."
+  "ui.career.negotiation.privateSellerQuotes.01",
+  "ui.career.negotiation.privateSellerQuotes.02",
+  "ui.career.negotiation.privateSellerQuotes.03",
+  "ui.career.negotiation.privateSellerQuotes.04",
+  "ui.career.negotiation.privateSellerQuotes.05",
+  "ui.career.negotiation.privateSellerQuotes.06",
+  "ui.career.negotiation.privateSellerQuotes.07",
+  "ui.career.negotiation.privateSellerQuotes.08",
+  "ui.career.negotiation.privateSellerQuotes.09",
+  "ui.career.negotiation.privateSellerQuotes.10",
+  "ui.career.negotiation.privateSellerQuotes.11",
+  "ui.career.negotiation.privateSellerQuotes.12",
+  "ui.career.negotiation.privateSellerQuotes.13",
+  "ui.career.negotiation.privateSellerQuotes.14",
+  "ui.career.negotiation.privateSellerQuotes.15",
+  "ui.career.negotiation.privateSellerQuotes.16",
+  "ui.career.negotiation.privateSellerQuotes.17",
+  "ui.career.negotiation.privateSellerQuotes.18",
+  "ui.career.negotiation.privateSellerQuotes.19",
+  "ui.career.negotiation.privateSellerQuotes.20",
+  "ui.career.negotiation.privateSellerQuotes.21",
+  "ui.career.negotiation.privateSellerQuotes.22",
+  "ui.career.negotiation.privateSellerQuotes.23",
+  "ui.career.negotiation.privateSellerQuotes.24",
+  "ui.career.negotiation.privateSellerQuotes.25",
+  "ui.career.negotiation.privateSellerQuotes.26",
+  "ui.career.negotiation.privateSellerQuotes.27",
+  "ui.career.negotiation.privateSellerQuotes.28",
+  "ui.career.negotiation.privateSellerQuotes.29",
+  "ui.career.negotiation.privateSellerQuotes.30",
+  "ui.career.negotiation.privateSellerQuotes.31",
+  "ui.career.negotiation.privateSellerQuotes.32",
+  "ui.career.negotiation.privateSellerQuotes.33",
+  "ui.career.negotiation.privateSellerQuotes.34",
+  "ui.career.negotiation.privateSellerQuotes.35",
+  "ui.career.negotiation.privateSellerQuotes.36",
+  "ui.career.negotiation.privateSellerQuotes.37",
+  "ui.career.negotiation.privateSellerQuotes.38",
+  "ui.career.negotiation.privateSellerQuotes.39",
+  "ui.career.negotiation.privateSellerQuotes.40",
+  "ui.career.negotiation.privateSellerQuotes.41",
+  "ui.career.negotiation.privateSellerQuotes.42",
+  "ui.career.negotiation.privateSellerQuotes.43",
+  "ui.career.negotiation.privateSellerQuotes.44",
+  "ui.career.negotiation.privateSellerQuotes.45",
+  "ui.career.negotiation.privateSellerQuotes.46",
+  "ui.career.negotiation.privateSellerQuotes.47",
+  "ui.career.negotiation.privateSellerQuotes.48",
+  "ui.career.negotiation.privateSellerQuotes.49",
+  "ui.career.negotiation.privateSellerQuotes.50"
 }
 
 M.dealershipBuyerQuotes = {
-  "We're always looking for quality inventory.",
-  "Let me see what I can offer you for this.",
-  "I'll need to get it appraised, but we're interested.",
-  "We can make you an offer today.",
-  "What are you looking to get out of it?",
-  "We buy cars in any condition.",
-  "I can take it off your hands.",
-  "We're prepared to make a fair offer.",
-  "Let me run the numbers real quick.",
-  "We need inventory, I can work with you.",
-  "I'll have to inspect it first, but we're interested.",
-  "We can process this today if the price is right.",
-  "What's your bottom line on it?",
-  "We're in the market for one of these.",
-  "I can make you an offer, but it needs to be realistic.",
-  "We'll need to account for reconditioning costs.",
-  "Let's talk numbers.",
-  "We buy dozens of cars every month.",
-  "I can give you a quote, but our margins are tight.",
-  "We're definitely interested in adding this to our lot.",
-  "What were you hoping to get for it?",
-  "We can make this quick and easy for you.",
-  "I'll need to factor in wholesale value.",
-  "We're always buying - let's make a deal.",
-  "I can write you a check today."
+  "ui.career.negotiation.dealershipBuyerQuotes.01",
+  "ui.career.negotiation.dealershipBuyerQuotes.02",
+  "ui.career.negotiation.dealershipBuyerQuotes.03",
+  "ui.career.negotiation.dealershipBuyerQuotes.04",
+  "ui.career.negotiation.dealershipBuyerQuotes.05",
+  "ui.career.negotiation.dealershipBuyerQuotes.06",
+  "ui.career.negotiation.dealershipBuyerQuotes.07",
+  "ui.career.negotiation.dealershipBuyerQuotes.08",
+  "ui.career.negotiation.dealershipBuyerQuotes.09",
+  "ui.career.negotiation.dealershipBuyerQuotes.10",
+  "ui.career.negotiation.dealershipBuyerQuotes.11",
+  "ui.career.negotiation.dealershipBuyerQuotes.12",
+  "ui.career.negotiation.dealershipBuyerQuotes.13",
+  "ui.career.negotiation.dealershipBuyerQuotes.14",
+  "ui.career.negotiation.dealershipBuyerQuotes.15",
+  "ui.career.negotiation.dealershipBuyerQuotes.16",
+  "ui.career.negotiation.dealershipBuyerQuotes.17",
+  "ui.career.negotiation.dealershipBuyerQuotes.18",
+  "ui.career.negotiation.dealershipBuyerQuotes.19",
+  "ui.career.negotiation.dealershipBuyerQuotes.20",
+  "ui.career.negotiation.dealershipBuyerQuotes.21",
+  "ui.career.negotiation.dealershipBuyerQuotes.22",
+  "ui.career.negotiation.dealershipBuyerQuotes.23",
+  "ui.career.negotiation.dealershipBuyerQuotes.24",
+  "ui.career.negotiation.dealershipBuyerQuotes.25"
 }
 
 return M

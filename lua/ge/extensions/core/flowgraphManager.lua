@@ -24,6 +24,7 @@ M.refreshDependencies = function()
 end
 
 M.enableUsageTracking = false
+M.skipCountdowns = false
 
 local function onExtensionLoaded()
   --extensions.load('ui_flowgraph_editor')
@@ -203,15 +204,14 @@ local function reInitOnFileChange(filename)
 end
 
 local function onFileChanged(filename, type)
-  local dirname, fn, e = path.split(filename)
-
   -- check basic nodes
   if filename:sub(1, string.len(nodePath)) == nodePath then
     reInitOnFileChange(filename)
   end
 
   -- check custom nodes
-  if filename:sub(string.len(filename)-7,string.len(filename)) == 'Node.lua' then
+  if filename:sub(-8) == 'Node.lua' then
+    local dirname = path.split(filename)
     for _,manager in ipairs(managers) do
       if manager.savedDir and (manager.savedDir.."customNodes/") == dirname then
         reInitOnFileChange(filename)
@@ -280,7 +280,7 @@ local function getAvailableNodeTemplates()
       local moduleName = string.sub(fn, 1, string.len(fn) - 4)
       local requireFilename = string.sub(filename, 1, string.len(filename) - 4)
 
-      local status, node = pcall(rerequire, requireFilename)
+      local status, node = pcall(require, requireFilename)
       if not status then
         log('E', '', 'error while loading node ' .. tostring(requireFilename) .. ' : ' .. tostring(node) .. '. ' .. debug.tracesimple())
       else

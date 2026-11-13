@@ -134,7 +134,10 @@ local function checkVehicleTether(t)
   local playerPos = getPlayerVehicle(0):getPosition()
 
   local veh = scenetree.findObjectById(t.vehId)
-  if not veh then return end
+  if not veh then
+    log("W", "tether", "Vehicle tether target " .. tostring(t.vehId) .. " no longer exists, firing callback")
+    return true
+  end
   local vehPos = veh:getPosition()
   if drawDebug then
     debugDrawer:drawSphere(vehPos, t.r1, ColorF(1,0,0,0.2))
@@ -208,7 +211,11 @@ local function addTether(t)
 end
 
 local function removeTether(t)
-  table.remove(tethers, tableFindKey(tethers, t))
+  if not t then return end
+  -- table.remove defaults to the last index when pos is nil, so never call it without a hit
+  local id = tableFindKey(tethers, t)
+  if not id then return end
+  table.remove(tethers, id)
 end
 
 M.addTether = addTether

@@ -34,7 +34,8 @@ local renderDebugFlags = {
   FlagsDebugEmissive = bit.lshift(1,16),
   FlagsDebugTriangleSize = bit.lshift(1,17),
   FlagsDebugMipBaseColor = bit.lshift(1,18),
-  FlagsDebugMaterialWireframe = bit.lshift(1,19)
+  FlagsDebugMaterialWireframe = bit.lshift(1,19),
+  FlagsDebugDrawIdUniformity = bit.lshift(1,21)
 }
 
 
@@ -199,6 +200,19 @@ local legendDefs = {
       {"3 Layer",      {2/3, 1/3, 0}},
       {"4 Layer",      {1,0,0}}
     }
+  },
+  Material_DrawIdUniformity = {
+    title = "Draw ID Uniformity",
+    chips = {
+      {"Single draw ID in pixel wave",    {0,1,0}},
+      {"Mixed draw IDs in pixel wave",    {1,0,0}},
+      {"Not GPU-driven multidraw",        {0.3,0.3,0.3}}
+    },
+    bullets = {
+      "Works only in Vulkan API or Direct3D12, on the GPU-driven path",
+      "Red breaks the uniform descriptor and arena page access the multidraw shaders assume",
+      "Brightness is modulated by Ambient Occlusion"
+    }
   }
 }
 
@@ -324,7 +338,11 @@ function M.onExtensionLoaded()
 
     {type="Custom", name="Material_LayerCount", displayName="Layer Count",
       setter=function() materialDebugSetter(renderDebugFlags.FlagsDebugLayerCount) end,
-      getter=function() return materialDebugGetFlag()==renderDebugFlags.FlagsDebugLayerCount end}
+      getter=function() return materialDebugGetFlag()==renderDebugFlags.FlagsDebugLayerCount end},
+
+    {type="Custom", name="Material_DrawIdUniformity", displayName="Draw ID Uniformity",
+      setter=function() materialDebugSetter(renderDebugFlags.FlagsDebugDrawIdUniformity) end,
+      getter=function() return materialDebugGetFlag()==renderDebugFlags.FlagsDebugDrawIdUniformity end}
   }
 
   materialDebugEnabled = materialDebugGetFlag() ~= renderDebugFlags.FlagsDebugNone

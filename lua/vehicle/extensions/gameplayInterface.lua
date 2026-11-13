@@ -202,10 +202,14 @@ local function onExtensionLoaded()
       local _, file, _ = path.split(filePath)
       local fileName = file:sub(1, -5)
       local extensionPath = "gameplayInterfaceModules/" .. fileName
-      extensions.load(extensionPath)
       local extensionName = "gameplayInterfaceModules_" .. fileName
-      extensions[extensionName].requestRegistration(M)
-      extensions.unload(extensionName)
+      local wasLoaded = rawget(extensions, extensionName) ~= nil
+      if not wasLoaded then extensions.load(extensionPath) end
+      local extensionModule = rawget(extensions, extensionName)
+      if extensionModule then
+        extensionModule.requestRegistration(M)
+        if not wasLoaded then extensions.unload(extensionName) end
+      end
     end
   end
 

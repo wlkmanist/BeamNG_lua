@@ -21,6 +21,9 @@ end
 function C:reset()
   self.angularVelocity = vec3(0,0,0)
   self.velocity = vec3(0,0,0)
+  self.planarVelocity = vec3(0,0,0)
+  if self.planarExternalVelocity then self.planarExternalVelocity:set(0, 0, 0) end
+  self.planarExternalInputActive = false
   self.manualzoom = manualzoom()
   self.manualzoom:init(65)
   self.rot.z = 0 -- reset roll
@@ -56,6 +59,14 @@ function C:init()
   self.rot = vec3(0,0,0)
   self.newtonTranslation = true
   self.newtonRotation = true
+  self.planarTranslation = false
+  self.planarTranslationScale = 1
+  self.planarTranslationDrag = nil
+  self.planarTranslationSpeedMultiplier = nil
+  self.planarTranslationFastSpeedMultiplier = nil
+  self.planarTranslationResponse = nil
+  self.planarExternalVelocity = vec3(0, 0, 0)
+  self.planarExternalInputActive = false
   self:reset()
 end
 
@@ -102,29 +113,127 @@ function C:setRotation(rotation)
   self.rot:set(eulerYXZ)
 end
 
+function C:clearMotion()
+  self.velocity:set(0, 0, 0)
+  self.planarVelocity:set(0, 0, 0)
+  self.angularVelocity:set(0, 0, 0)
+end
+
+function C:clearAngularMotion()
+  self.angularVelocity:set(0, 0, 0)
+end
+
+function C:setPlanarTranslationInput(velocity, active)
+  self.planarExternalInputActive = active == true and velocity ~= nil
+  if self.planarExternalInputActive then
+    self.planarExternalVelocity:set(velocity)
+  else
+    self.planarExternalVelocity:set(0, 0, 0)
+  end
+end
+
+function C:clearPlanarTranslationInput()
+  self.planarExternalInputActive = false
+  self.planarExternalVelocity:set(0, 0, 0)
+end
+
+function C:clearPlanarTranslationMotion()
+  self.planarVelocity:set(0, 0, 0)
+  self:clearPlanarTranslationInput()
+end
+
 function C:onCameraChanged(focused)
   if not focused then return end
   self:reset()
 end
 
---[[
-function C:onCameraChanged(focused)
-  if focused then
-    -- Create actionmap if it doesn't exist
-    local am = scenetree.findObject("FreecamActionMap")
-    if not am then
-      am = ActionMap("FreecamActionMap")
-    end
-    -- Push the actionmap to take priority over vehicle controls
-    pushActionMap("Freecam")
+local inputVec, acc, forceVec, tempVec = vec3(), vec3(), vec3(), vec3()
+local desiredPlanarVelocity = vec3()
+local qdir, qdirLook, qyaw = quat(), quat(), quat()
+
+local function adjustedTranslationSpeed(self, data)
+  if not self.planarTranslation then
+    local modifiedSpeed = data.fastSpeedModifier and data.speed * 3 or data.speed
+    return ((modifiedSpeed^2)/30) / 40
+  end
+  local speedMultiplier = data.fastSpeedModifier
+    and (self.planarTranslationFastSpeedMultiplier or 1)
+    or (self.planarTranslationSpeedMultiplier or 1)
+  return ((data.speed^2)/30) / 40
+    * (self.planarTranslationScale or 1)
+    * speedMultiplier
+end
+
+local function updatePlanarVelocity(self, targetVelocity, hasInput, dt)
+  if hasInput then
+    local response = self.planarTranslationResponse or self.translationDrag
+    local amount = 1 - math.exp(-response * dt)
+    self.planarVelocity:set(
+      push3(self.planarVelocity)
+      + (push3(targetVelocity) - push3(self.planarVelocity)) * amount)
   else
-    -- Pop the actionmap when camera is deactivated
-    popActionMap("Freecam")
+    local drag = self.planarTranslationDrag or self.translationDrag
+    self.planarVelocity:setScaled(math.exp(-drag * dt))
   end
 end
---]]
-local inputVec, acc, forceVec, tempVec = vec3(), vec3(), vec3(), vec3()
-local qdir, qdirLook = quat(), quat()
+
+local function terrainHeight(position)
+  if not core_terrain or not core_terrain.getTerrain or not core_terrain.getTerrain() then return nil end
+  return core_terrain.getTerrainHeight(position)
+end
+
+local function followTerrainHeight(self, previousHeight)
+  if not previousHeight then return end
+  local currentHeight = core_terrain.getTerrainHeight(self.pos)
+  if currentHeight then
+    self.pos.z = self.pos.z + (currentHeight - previousHeight)
+  end
+end
+
+local function updatePlanarTranslation(self, data, adjustedSpeed)
+  local previousTerrainHeight = terrainHeight(self.pos)
+  qyaw:set(0, 0, 0, 1)
+  setRotateEuler(self.rot.x, 0, 0, qyaw, qdirLook)
+  tempVec:setRotate(qdirLook, inputVec)
+  desiredPlanarVelocity:setScaled2(tempVec, adjustedSpeed * 15)
+  local hasKeyboardInput = inputVec:squaredLength() > 0
+  local hasExternalInput = self.planarExternalInputActive == true
+  if hasExternalInput then
+    desiredPlanarVelocity:setAdd(self.planarExternalVelocity)
+  end
+  updatePlanarVelocity(
+    self,
+    desiredPlanarVelocity,
+    hasKeyboardInput or hasExternalInput,
+    data.dt)
+  self.pos:set(push3(self.pos) + push3(self.planarVelocity) * data.dt)
+  followTerrainHeight(self, previousTerrainHeight)
+end
+
+local function updateStandardTranslation(self, data, adjustedSpeed)
+  if self.newtonTranslation then
+    local force = self.translationForce * adjustedSpeed
+    if inputVec:squaredLength() > 0 then
+      acc:setScaled2(inputVec, force / self.mass)
+    end
+    forceVec:setScaled2(acc, data.dt)
+    forceVec:set(
+      push3(forceVec)
+      - push3(self.velocity) * math.min(self.translationDrag * data.dt, 1))
+    self.velocity:setAdd(forceVec)
+  else
+    self.velocity:setScaled2(inputVec, adjustedSpeed * 15)
+  end
+  tempVec:setRotate(qdir, self.velocity)
+  self.pos:set(push3(self.pos) + push3(tempVec) * data.dt)
+  updatePlanarVelocity(
+    self,
+    self.planarExternalVelocity,
+    self.planarExternalInputActive,
+    data.dt)
+  self.pos:set(push3(self.pos) + push3(self.planarVelocity) * data.dt)
+end
+
 function C:update(data)
   -- Rotation
   local dtFactor = data.dt * 200
@@ -160,21 +269,13 @@ function C:update(data)
     MoveManager.up - MoveManager.down + MoveManager.absZAxis
   )
 
-  local modifiedSpeed = data.fastSpeedModifier and data.speed * 3 or data.speed
-  local adjustedSpeed = ((modifiedSpeed^2)/30) / 40
-  if self.newtonTranslation then
-    local force = self.translationForce * adjustedSpeed
-    if inputVec:squaredLength() > 0 then
-      acc:setScaled2(inputVec, force / self.mass)
-    end
-    forceVec:setScaled2(acc, data.dt) -- Acceleration
-    forceVec:set(push3(forceVec) - push3(self.velocity) * math.min(self.translationDrag * data.dt, 1)) -- Drag
-    self.velocity:setAdd(forceVec)
+  local adjustedSpeed = adjustedTranslationSpeed(self, data)
+  if self.planarTranslation then
+    updatePlanarTranslation(self, data, adjustedSpeed)
   else
-    self.velocity:setScaled2(inputVec, adjustedSpeed * 15)
+    updateStandardTranslation(self, data, adjustedSpeed)
   end
-  tempVec:setRotate(qdir, self.velocity)
-  self.pos:set(push3(self.pos) + push3(tempVec) * data.dt) -- Move
+  self:clearPlanarTranslationInput()
 
   data.res.rot = qdir
   data.res.pos:set(self.pos)

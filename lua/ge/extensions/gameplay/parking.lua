@@ -640,7 +640,7 @@ end
 local function removeVehicle(vehId) -- removes a vehicle from the parked cars table
   if parkedVehData[vehId] then
     parkedVehData[vehId] = nil
-    parkedVehIds = tableKeysSorted(parkedVehData)
+    table.remove(parkedVehIds, arrayFindValueIndex(parkedVehIds, vehId))
   end
 end
 
@@ -703,10 +703,9 @@ local function setupVehicles(amount, options) -- spawns and prepares simple park
 
   amount = amount or -1
   if amount == -1 then
-    amount = settings.getValue("trafficParkedAmount")
-    if amount == 0 then
-      setMaxVehicleAmountForTraffic() -- fix parking amount if zero
-      amount = settings.getValue("trafficParkedAmount") -- get fixed amount
+    amount = settings.getValue("trafficParkingAmount")
+    if amount == 0 then -- auto amount
+      amount = clamp(gameplay_traffic.getIdealSpawnAmount(nil, true), 4, 16)
     end
   end
 
@@ -777,7 +776,9 @@ local function onVehicleGroupSpawned(vehList, groupId, groupName)
 end
 
 local function onVehicleResetted(vehId)
-  if active and getObjectByID(vehId):isPlayerControlled() then
+  if active then
+    local veh = getObjectByID(vehId)
+    if not veh or not veh:isPlayerControlled() then return end
     resetFlag = true
     respawnDelay = 0.1 -- small value but above zero
   end

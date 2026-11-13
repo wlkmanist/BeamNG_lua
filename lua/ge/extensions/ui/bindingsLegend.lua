@@ -66,6 +66,9 @@ local showBasicDrivingControls = false
 local basicDrivingSignature = nil
 local basicDrivingLastGearboxMode = nil
 local registeredGearboxModeVehicles = {}
+local lastModifierBits = 0
+local availableVehicleActions
+local availableVehicleActionsId
 local addActions
 
 local jsonActions = {}
@@ -302,6 +305,14 @@ local function getBasicDrivingActions()
     if not autoClutchEnabled then
       appendBasicDrivingAction(actions, seenActions, "clutch", 8)
     end
+  elseif selectedMode == "arcade" then
+    for _, actionData in ipairs(actions) do
+      if actionData.action == "accelerate" then
+        actionData.label = "ui.experiences.firstDrive.drivingAssists.forward"
+      elseif actionData.action == "brake" then
+        actionData.label = "ui.experiences.firstDrive.drivingAssists.backward"
+      end
+    end
   end
 
   return actions
@@ -310,7 +321,7 @@ end
 local function actionListSignature(actions)
   local actionNames = {}
   for i, action in ipairs(actions) do
-    actionNames[i] = action.action
+    actionNames[i] = action.action .. ":" .. (action.label or "")
   end
   return table.concat(actionNames, "|")
 end
@@ -357,9 +368,158 @@ local function getModifiersFromControl(control)
   return bindingModifiers
 end
 
+-- Generic vehicle actions that only make sense when the current vehicle has the matching hardware.
+local gatedVehicleActions = {
+  toggleESCMode = true,
+  nextESCMode = true,
+  previousESCMode = true,
+  toggle_headlights = true,
+  highbeam = true,
+  toggle_foglights = true,
+  toggle_left_signal = true,
+  toggle_right_signal = true,
+  toggle_hazard_signal = true,
+  toggle_lightbar_signal = true,
+  toggle_underglow = true,
+  toggleDiffMode = true,
+  toggle4WDStatus = true,
+  toggleRangeStatus = true,
+  toggleTransbrake = true,
+  toggleLineLock = true,
+  overrideNitrousOxide = true,
+  toggleNitrousOxide = true,
+  toggleTwoStep = true,
+  increaseTwoStepRPM = true,
+  decreaseTwoStepRPM = true,
+  toggleLightbarMode = true,
+}
+
+local function hasNonEmpty(value)
+  if type(value) == "string" then return value ~= "" end
+  if type(value) ~= "table" then return false end
+  for _, item in pairs(value) do
+    if item and item ~= "" then return true end
+  end
+  return false
+end
+
+local function isToggleableDifferential(device)
+  if type(device) ~= "table" or device.type ~= "differential" then return false end
+  if device.defaultToggle == false then return false end
+  if type(device.diffType) == "table" then
+    local modeCount = 0
+    for _, mode in pairs(device.diffType) do
+      if type(mode) == "string" then
+        modeCount = modeCount + 1
+        if modeCount > 1 then return true end
+      end
+    end
+  end
+  return device.defaultToggle == true
+end
+
+local function collectAvailableVehicleActions(vehId)
+  local available = {}
+  local vd = extensions.core_vehicle_manager.getVehicleData(vehId)
+  local vdata = vd and vd.vdata
+  if not vdata then return available end
+
+  local controllers = {}
+  local controllerNames = {}
+  local has4wdToggle, hasRangeToggle, hasDiffToggle
+  if vdata.controller then
+    for _, controllerData in pairs(vdata.controller) do
+      if type(controllerData) == "table" and controllerData.fileName then
+        controllers[controllerData.fileName] = true
+        controllerNames[controllerData.name or controllerData.fileName] = true
+        if controllerData.fileName == "4wd" then
+          if controllerData.shaftName or hasNonEmpty(controllerData.driveModesTransfercaseNames) then
+            has4wdToggle = true
+          end
+          if controllerData.rangeBoxName or hasNonEmpty(controllerData.driveModesRangeNames) then
+            hasRangeToggle = true
+          end
+          if hasNonEmpty(controllerData.driveModesDifferentialNames) then
+            hasDiffToggle = true
+          end
+        end
+      end
+    end
+  end
+
+  local glow = {}
+  local mv = vdata._materials and vdata._materials.mv
+  if mv then
+    for key in pairs(mv) do
+      glow[key] = true
+    end
+  end
+
+  local hasToggleDiffs = false
+  if vdata.powertrain then
+    for _, device in pairs(vdata.powertrain) do
+      if isToggleableDifferential(device) then
+        hasToggleDiffs = true
+        break
+      end
+    end
+  end
+
+  local hasHeadlights = glow.lowbeam or glow.highbeam or glow.lowhighbeam
+  local hasSignals = glow.signal_L or glow.signal_R or glow.hazard
+  local hasEsc = controllers.esc or controllerNames.driveModes
+  local hasLightbar = glow.lightbar or controllers.lightbar
+
+  available.toggleESCMode = hasEsc
+  available.nextESCMode = hasEsc
+  available.previousESCMode = hasEsc
+  available.toggle_headlights = hasHeadlights
+  available.highbeam = hasHeadlights
+  available.toggle_foglights = glow.fog
+  available.toggle_left_signal = hasSignals
+  available.toggle_right_signal = hasSignals
+  available.toggle_hazard_signal = hasSignals
+  available.toggle_lightbar_signal = hasLightbar
+  available.toggle_underglow = glow.underglow
+  available.toggleDiffMode = hasDiffToggle or hasToggleDiffs
+  available.toggle4WDStatus = has4wdToggle
+  available.toggleRangeStatus = hasRangeToggle
+  available.toggleTransbrake = controllers["braking/transbrake"]
+  available.toggleLineLock = controllers.lineLock
+  available.overrideNitrousOxide = controllers.nitrousOxideInjection
+  available.toggleNitrousOxide = controllers.nitrousOxideInjection
+  available.toggleTwoStep = controllers.twoStepLaunch
+  available.increaseTwoStepRPM = controllers.twoStepLaunch
+  available.decreaseTwoStepRPM = controllers.twoStepLaunch
+  available.toggleLightbarMode = controllers.lightbar or hasLightbar
+
+  return available
+end
+
+local function refreshAvailableVehicleActions(force)
+  local veh = be:getPlayerVehicle(0)
+  if not veh then
+    availableVehicleActions = nil
+    availableVehicleActionsId = nil
+    return
+  end
+  local vehId = veh:getID()
+  if not force and availableVehicleActions and availableVehicleActionsId == vehId then return end
+  availableVehicleActionsId = vehId
+  availableVehicleActions = collectAvailableVehicleActions(vehId)
+end
+
+local function isVehicleCapabilityAvailable(actionName)
+  if not gatedVehicleActions[actionName] then return true end
+  refreshAvailableVehicleActions(false)
+  return availableVehicleActions and availableVehicleActions[actionName] == true
+end
+
 local function isActionFilteredOut(actionInfo, actionName)
+  if not actionInfo then return true end
   if not modifierCategories[actionInfo.cat] and not actionsToAlwaysShow[actionName] then return true end
-  return core_input_actionFilter.isActionBlocked(actionName)
+  if core_input_actionFilter.isActionBlocked(actionName) then return true end
+  return not isVehicleCapabilityAvailable(actionName)
 end
 
 local function getBoundModifierActions()
@@ -629,6 +789,7 @@ local function isModifierCombinationFilteredOut(modifierNames)
 end
 
 local function onModifierChanged(newModifiers)
+  lastModifierBits = newModifiers or 0
   local modifierNames = {}
   if bit.band(newModifiers, MODIFIER_L_SHIFT) == MODIFIER_L_SHIFT or bit.band(newModifiers, MODIFIER_R_SHIFT) == MODIFIER_R_SHIFT then table.insert(modifierNames, "shift") end
   if bit.band(newModifiers, MODIFIER_L_CTRL) == MODIFIER_L_CTRL or bit.band(newModifiers, MODIFIER_R_CTRL) == MODIFIER_R_CTRL then table.insert(modifierNames, "ctrl") end
@@ -792,19 +953,44 @@ local function onClientEndMission()
   table.clear(actionCategoryActive)
   basicDrivingSignature = nil
   basicDrivingLastGearboxMode = nil
+  lastModifierBits = 0
+  availableVehicleActions = nil
+  availableVehicleActionsId = nil
   unregisterAllGearboxModeRegistrations()
+end
+
+local function refreshModifierActionsIfHeld()
+  if lastModifierBits ~= 0 then
+    onModifierChanged(lastModifierBits)
+    return true
+  end
+end
+
+local function onPlayerVehicleDataChanged(vehId)
+  local playerId = be:getPlayerVehicleID(0)
+  if vehId and playerId and vehId ~= playerId then return end
+  boundModifierActions = nil
+  refreshAvailableVehicleActions(true)
+  if not refreshModifierActionsIfHeld() then
+    sendDataToUI()
+  end
 end
 
 local function onActionFilterUpdated()
   boundModifierActions = nil
   basicDrivingSignature = nil
-  sendDataToUI()
+  if not refreshModifierActionsIfHeld() then
+    sendDataToUI()
+  end
 end
 
 local function onInputBindingsChanged()
   boundModifierActions = nil
   basicDrivingSignature = nil
-  sendDataToUI()
+  refreshAvailableVehicleActions(true)
+  if not refreshModifierActionsIfHeld() then
+    sendDataToUI()
+  end
 end
 
 local function onSettingsChanged()
@@ -819,6 +1005,7 @@ local function onSettingsChanged()
 end
 
 local function showToggleVehicleSpecificActionsMessage()
+  if gameplay_discover_firstDrive_experience and gameplay_discover_firstDrive_experience.isActive() then return end
   if settings.getValue("bindingsLegendShowApp", true) then
     guihooks.trigger("Message", {
       ttl = 10,
@@ -840,6 +1027,7 @@ end
 local function onVehicleSwitched(oldId, newId, player)
   if oldId ~= newId then
     boundModifierActions = nil
+    refreshAvailableVehicleActions(true)
     enableShowVehicleSpecificActions(false)
     local vehicleSpecificActions = getVehicleSpecificActions()
     if not tableIsEmpty(vehicleSpecificActions) then
@@ -853,7 +1041,9 @@ local function onVehicleSwitched(oldId, newId, player)
       end
       showToggleVehicleSpecificActionsMessage()
     end
-    sendDataToUI()
+    if not refreshModifierActionsIfHeld() then
+      sendDataToUI()
+    end
   end
 end
 
@@ -862,6 +1052,7 @@ local function onExtensionLoaded()
   if bindingAppActions then
     jsonActions = bindingAppActions
   end
+  refreshAvailableVehicleActions(true)
 end
 
 local function triggerInputAction(action, value)
@@ -903,6 +1094,8 @@ M.onModifierChanged = onModifierChanged
 M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
 M.onVehicleSwitched = onVehicleSwitched
+M.onVehicleSpawned = onPlayerVehicleDataChanged
+M.onVehicleResetted = onPlayerVehicleDataChanged
 M.onUpdate = onUpdate
 M.onExtensionLoaded = onExtensionLoaded
 M.onDeviceChanged = onDeviceChanged

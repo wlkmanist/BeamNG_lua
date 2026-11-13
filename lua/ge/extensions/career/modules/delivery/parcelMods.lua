@@ -27,11 +27,11 @@ local modifiers = {
         moneyMultipler = 1.5,
       }
     end,
-    unlockLabel = "Time Sensitive Deliveries",
+    unlockLabel = "ui.career.delivery.parcelMods.timed.unlockLabel",
     priority = 1,
     icon = "stopwatchSectionSolidEnd",
-    label = "Time Sensitive",
-    shortDescription = "Increased rewards when on time, penalty if late.",
+    label = "ui.career.delivery.parcelMods.timed.label",
+    shortDescription = "ui.career.delivery.parcelMods.timed.description",
     important = true,
   },
   post = {
@@ -42,10 +42,10 @@ local modifiers = {
         moneyMultipler = 1.2,
       }
     end,
-    unlockLabel = "General Post Parcels",
+    unlockLabel = "ui.career.delivery.parcelMods.post.unlockLabel",
     priority = 2,
     icon = "envelope",
-    label = "Postage Parcel",
+    label = "ui.career.delivery.parcelMods.post.label",
     shortDescription = "",
     hidden=true,
   },
@@ -59,11 +59,11 @@ local modifiers = {
         abandonMultiplier = 1.0,
       }
     end,
-    unlockLabel = "Precious Cargo",
+    unlockLabel = "ui.career.delivery.parcelMods.precious.unlockLabel",
     priority = 3,
     icon = "fragile",
-    label = "Precious",
-    shortDescription = "Increased rewards, high penalty if lost or abandoned.",
+    label = "ui.career.delivery.parcelMods.precious.label",
+    shortDescription = "ui.career.delivery.parcelMods.precious.description",
     important = true,
 
   },
@@ -75,10 +75,10 @@ local modifiers = {
         moneyMultipler = 1.0,
       }
     end,
-    unlockLabel = "Supply & Logistics Cargo",
+    unlockLabel = "ui.career.delivery.parcelMods.supplies.unlockLabel",
     priority = 4,
     icon = "cardboardBox",
-    label = "Supply & Logistics",
+    label = "ui.career.delivery.parcelMods.supplies.label",
     shortDescription = "",
     hidden=true,
   },
@@ -90,11 +90,11 @@ local modifiers = {
         moneyMultipler = 1.2,
       }
     end,
-    unlockLabel = "Large & Heavy Cargo",
+    unlockLabel = "ui.career.delivery.parcelMods.large.unlockLabel",
     priority = 5,
     icon = "group",
-    label = "Large & Heavy",
-    shortDescription = "Drive carefully and beware of momentum!"
+    label = "ui.career.delivery.parcelMods.large.label",
+    shortDescription = "ui.career.delivery.parcelMods.large.description"
   },
   fluid = {
     unlockFlag = "hazardousMaterialsDelivery",
@@ -103,11 +103,11 @@ local modifiers = {
         type = "fluid",
       }
     end,
-    unlockLabel = "Fluids",
+    unlockLabel = "ui.career.delivery.parcelMods.fluid.unlockLabel",
     priority = 6,
     icon = "droplet",
-    label = "Fluid",
-    shortDescription = "Requires a fluid-capable container or tank to transport."
+    label = "ui.career.delivery.parcelMods.fluid.label",
+    shortDescription = "ui.career.delivery.parcelMods.fluid.description"
   },
   dryBulk = {
     unlockFlag = "hazardousMaterialsDelivery",
@@ -116,11 +116,11 @@ local modifiers = {
         type = "dryBulk",
       }
     end,
-    unlockLabel = "Dry Bulk",
+    unlockLabel = "ui.career.delivery.parcelMods.dryBulk.unlockLabel",
     priority = 6,
     icon = "rocks",
-    label = "Dry Bulk",
-    shortDescription = "Requires a drybulk-capable container to transport."
+    label = "ui.career.delivery.parcelMods.dryBulk.label",
+    shortDescription = "ui.career.delivery.parcelMods.dryBulk.description"
   },
   parcel = {
     unlockFlag = "smallPackagesDelivery",
@@ -129,11 +129,11 @@ local modifiers = {
         type = "parcel",
       }
     end,
-    unlockLabel = "Parcel",
+    unlockLabel = "ui.career.delivery.parcelMods.parcel.unlockLabel",
     priority = 6,
     icon = "cardboardBox",
-    label = "Parcel",
-    shortDescription = "Requires a parcel-capable container transport.",
+    label = "ui.career.delivery.parcelMods.parcel.label",
+    shortDescription = "ui.career.delivery.parcelMods.parcel.description",
     hidden=true,
   },
   hazardous = {
@@ -143,11 +143,11 @@ local modifiers = {
         type = "hazardous",
       }
     end,
-    unlockLabel = "Hazardous",
+    unlockLabel = "ui.career.delivery.parcelMods.hazardous.unlockLabel",
     priority = 6,
     icon = "roadblockL",
-    label = "Hazardous",
-    shortDescription = "Large penalty if lost or abandoned. Requires special license to handle.",
+    label = "ui.career.delivery.parcelMods.hazardous.label",
+    shortDescription = "ui.career.delivery.parcelMods.hazardous.description",
 
   },
 }
@@ -185,9 +185,23 @@ M.getProgress = function()
   return progress
 end
 
-M.getModData = function(key) return modifiers[key] end
+M.getModData = function(key)
+  local modifier = modifiers[key]
+  if not modifier then return nil end
+  local data = {}
+  for field, value in pairs(modifier) do
+    data[field] = value
+  end
+  data.unlockLabel = _tr(data.unlockLabel)
+  data.label = _tr(data.label)
+  data.shortDescription = data.shortDescription ~= "" and _tr(data.shortDescription) or ""
+  return data
+end
 M.getModifierIcon = function(key) return modifiers[key].icon end
-M.getLabelAndShortDescription = function(key) return modifiers[key].label, modifiers[key].shortDescription end
+M.getLabelAndShortDescription = function(key)
+  local modifier = modifiers[key]
+  return _tr(modifier.label), modifier.shortDescription ~= "" and _tr(modifier.shortDescription) or ""
+end
 M.isImportant = function(key) return modifiers[key].important or false end
 
 local function calculateTimedModifierTime(distance)
@@ -259,7 +273,7 @@ local function getParcelModUnlockStatusSimple()
   return status
 end
 M.getParcelModUnlockStatusSimple = getParcelModUnlockStatusSimple
-M.getParcelModProgressLabel = function(key) return modifiers[key].unlockLabel end
+M.getParcelModProgressLabel = function(key) return _tr(modifiers[key].unlockLabel) end
 
 
 local function trackModifierStats(cargo)

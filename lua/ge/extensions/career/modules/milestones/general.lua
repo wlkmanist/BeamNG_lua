@@ -51,7 +51,10 @@ local function claim(id)
   local rewardsLabel = {}
   for _, reward in pairs(milestoneConfig.getRewards(step)) do
     sumChange[reward.attributeKey] = (sumChange[reward.attributeKey] or 0) + reward.rewardAmount
-    table.insert(rewardsLabel, string.format("%s: +%d", reward.attributeKey, reward.rewardAmount))
+    table.insert(rewardsLabel, core_locales.contextTranslate("ui.career.milestones.claimedRewardLine", {
+      attributeLabel = career_modules_playerAttributes.getRewardDisplayName(reward.attributeKey),
+      amount = reward.rewardAmount
+    }))
   end
   career_modules_playerAttributes.addAttributes(sumChange, {tags={"milestone","reward", "gameplay"}, label={txt = "ui.career.milestones.claimedRewardsFor", context = { milestoneName = milestoneConfig.getLabel(step)}}})
   milestones.saveData.general[id].claimedStep = step + 1

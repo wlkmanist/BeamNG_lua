@@ -18,6 +18,7 @@ local jbeamScaling = require('jbeam/scaling')
 local jbeamInteraction = require('jbeam/interaction')
 local jbeamVariables = require('jbeam/variables')
 local jbeamCamera = require('jbeam/sections/camera')
+local jbeamOccupantSlots = require('jbeam/sections/occupantSlots')
 local jbeamWheels = require('jbeam/sections/wheels')
 local jbeamNodeBeam = require('jbeam/sections/nodeBeam')
 local jbeamLicensePlatesSkins = require('jbeam/sections/licenseplatesSkins')
@@ -31,6 +32,7 @@ local jbeamMirrors = require('jbeam/sections/mirror')
 local jbeamPartColors =  require_optional('jbeam/sections/partColors') or { process=nop }
 local jbeamCondition = require_optional('jbeam/sections/condition') or { process=nop }
 local jbeamMaterials = require('jbeam/materials')
+local jbeamOccupantFaces = require('jbeam/sections/occupantFaces')
 local jbeamUtils = require('jbeam/utils')
 
 local M = {}
@@ -65,6 +67,42 @@ M.materials, M.materialsMap = particles.getMaterialsParticlesTable()
 local refreshScreenWhileLoading = true
 
 local cache = {}
+local editorVehicleCache = {}
+local editorCacheEnabled = false
+
+local function cacheVehicleBundleForEditor(vehicleId, vehicleBundle, vehicleObj)
+  if not editorCacheEnabled or not vehicleBundle or not vehicleObj then return end
+  for _, prop in pairs(vehicleBundle.vdata.props or {}) do
+    local propObject = prop.pid and vehicleObj:getProp(prop.pid)
+    if propObject then
+      local okPosition, position = pcall(function() return propObject:getBaseTranslationGlobal() end)
+      local okRotation, rotation = pcall(function() return propObject:getBaseRotationGlobal() end)
+      if okPosition and okRotation then
+        prop.editorTransform = {
+          pos = position,
+          rot = rotation,
+          rotationRadians = true,
+        }
+      end
+    end
+  end
+  editorVehicleCache[vehicleId] = jbeamUtils.stringBufferEncode(vehicleBundle)
+  for _, prop in pairs(vehicleBundle.vdata.props or {}) do
+    prop.editorTransform = nil
+  end
+end
+
+function M.getCachedVehicleBundle(vehicleId)
+  local cached = editorVehicleCache[vehicleId]
+  return cached and jbeamUtils.stringBufferDecode(cached) or nil
+end
+
+M.cacheVehicleBundleForEditor = cacheVehicleBundleForEditor
+
+function M.setEditorCacheEnabled(enabled)
+  editorCacheEnabled = enabled == true
+  if not editorCacheEnabled then table.clear(editorVehicleCache) end
+end
 
 -- helper function to preprocess vehicle configuration
 local function prepareVehicleConfig(ioCtx, vehicleDirectories, vehicleConfig)
@@ -195,6 +233,7 @@ local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConf
   if loadingProgress then loadingProgress:update(0.5, _tr("ui.jbeam.loader.inspectingVariables")) end
   jbeamNodeBeam.process(vehicle)
   if vmType == 'game' then
+    jbeamOccupantSlots.process(objID, vehicle, activePartsData)
     jbeamCamera.process(objID, vehicle)
   end
 
@@ -209,7 +248,7 @@ local function loadJbeam(objID, loadingProgress, vehicleDirectories, vehicleConf
     return nil
   end
 
-  if loadingProgress then loadingProgress:update(0.7, 'Doing some things.') end
+  if loadingProgress then loadingProgress:update(0.7, _tr("ui.jbeam.loader.doingSomeThings")) end
   jbeamAssorted.process(vehicle) -- after resolveGroupLinks
   jbeamWheels.processRotators(vehicle)
   jbeamGroups.process(vehicle) -- after processWheels, processRotators
@@ -341,7 +380,7 @@ local function loadBundle(objID, vehicleBundle, loadingProgress)
   -- everything that needs the object to be working or 3D meshes goes from here:
   if vehicleObj then
 
-    if loadingProgress then loadingProgress:update(0.8, 'Loading input events...') end
+    if loadingProgress then loadingProgress:update(0.8, _tr("ui.jbeam.loader.loadingInputEvents")) end
     jbeamEvents.process(objID, vehicleObj, vehicleBundle.vdata)
 
     if loadingProgress then loadingProgress:update(0.8, _tr("ui.jbeam.loader.addingMeshes")) end
@@ -372,6 +411,7 @@ local function loadBundle(objID, vehicleBundle, loadingProgress)
     jbeamMeshs.process(objID, vehicleObj, vehicleBundle.vdata)
     jbeamVisualRopes.process(objID, vehicleObj, vehicleBundle.vdata)
     jbeamMaterials.process(vehicleObj, vehicleBundle.vdata)
+    jbeamOccupantFaces.process(vehicleObj, vehicleBundle.vdata)
     jbeamMirrors.process(objID, vehicleObj, vehicleBundle.vdata)
 
     --some configs hardcode their colors in the info json rather than referencing a color name from the main json
@@ -405,6 +445,7 @@ local function loadBundle(objID, vehicleBundle, loadingProgress)
     vehicleBundle.vdata.flexbodies = {}
   end
   profilerPopEvent('loadBundle')
+  return vehicleObj
 end
 
 -- be aware this code runs on vehicle and ge lua
@@ -442,7 +483,6 @@ local function loadVehicleStage1(objID, vehicleDir, vehicleConfig)
     vehicleBundle.id = objID
     profilerPopEvent('jbeam/loader.cached')
   end
-
   --log('D', 'loader', 'jbeam LOADING TOOK: ' .. tostring(t:stopAndReset()) .. ' ms')
 
   --- for debug purposes:
@@ -467,7 +507,8 @@ local function loadVehicleStage1(objID, vehicleDir, vehicleConfig)
 
   --jsonWriteFile('vehicleBundle.json', vehicleBundle, true)
 
-  loadBundle(objID, vehicleBundle, loadingProgress)
+  local vehicleObj = loadBundle(objID, vehicleBundle, loadingProgress)
+  cacheVehicleBundleForEditor(objID, vehicleBundle, vehicleObj)
 
   --log('D', 'loader', '3D LOADING TOOK: ' .. tostring(t:stopAndReset()) .. ' ms')
 
@@ -483,6 +524,7 @@ end
 
 local function onFileChanged(filename, type)
   cache = {}
+  table.clear(editorVehicleCache)
 end
 
 -- public interface

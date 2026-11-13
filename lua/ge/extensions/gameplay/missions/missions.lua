@@ -177,9 +177,9 @@ local function getMissionEditorForType(missionTypeName)
 end
 M.getMissionEditorForType = getMissionEditorForType
 
-local noPreviewFilepath = "/ui/modules/gameContext/noPreview.jpg"
-local noThumbFilepath = "/ui/modules/gameContext/noThumb.jpg"
-local noVehicleThumbFilepath = "/ui/modules/gameContext/playerVehicle.jpg"
+local noPreviewFilepath = "/ui/images/noPreview.jpg"
+local noThumbFilepath = "/ui/images/noThumb.jpg"
+local noVehicleThumbFilepath = "/ui/images/playerVehicle.jpg"
 local previewFilenames = {"/preview.jpg","/preview.png","/preview.jpeg"}
 local thumbFilenames = {"/thumbnail.jpg","/thumbnail.png","/thumbnail.jpeg"}
 M.getNoPreviewFilepath = function() return noPreviewFilepath end
@@ -369,10 +369,12 @@ local function recursiveRemoveNestedFromCondition(mId, cond)
 end
 M.recursiveRemoveNestedFromCondition =  recursiveRemoveNestedFromCondition
 
-local function sanitizeMission(missionData, filepath)
+local function sanitizeMission(missionData, filepath, skipThumbnail)
   -- sanitize previews
   missionData.previewFile = missionData.previewFile or getMissionPreviewFilepath(missionData)
-  missionData.thumbnailFile = missionData.thumbnailFile or getThumbnailFilepath(missionData)
+  if not skipThumbnail then
+    missionData.thumbnailFile = missionData.thumbnailFile or getThumbnailFilepath(missionData)
+  end
   -- sanitize name
   if not missionData.name or (missionData.name == "") then
     log("E", "", "Missing 'name' field at: "..filepath)
@@ -576,7 +578,7 @@ end
 
 -- loads a single mission from file (no cache)
 local infoFile = "info.json"
-local function loadMission(missionDir)
+local function loadMission(missionDir, skipThumbnail)
   if not string.startswith(missionDir, missionsDir) then
     log("E", "", "Unable to load mission, not placed in "..missionsDir..": "..dumps(missionDir))
     return
@@ -586,7 +588,8 @@ local function loadMission(missionDir)
     return
   end
   local infoPath = missionDir .. "/" .. infoFile
-  if not FS:fileExists(infoPath) then
+  local infoFileExists = FS:fileExists(infoPath)
+  if not infoFileExists then
     log("E", "", "Unable to load mission, info file not found: "..dumps(infoPath))
     return nil
   end
@@ -601,7 +604,7 @@ local function loadMission(missionDir)
 
   missionData.id = getMissionIdFromPath(missionDir)
   missionData.missionFolder = missionDir
-  sanitizeMission(missionData, infoPath)
+  sanitizeMission(missionData, infoPath, skipThumbnail)
 
   -- cache mission attributes (with consistent order)
   --missionData.recommendedAttributesKeyBasedCache = {}
@@ -763,10 +766,20 @@ local function getMissionInfoList()
     infoMap[missionId] = data
   end
   -- procedural missions
+  local levelList = {}
   for _, level in pairs(getAllAvailableLevels()) do
-    local m = getProceduralMissionsByLevel(level)
-    for missionId, data in pairs(m) do
-      infoMap[missionId] = data
+    table.insert(levelList, level)
+  end
+  for _, generator in ipairs(proceduralMissionGenerators) do
+    local generatedMissions = generator.generate(levelList) or {}
+    for _, missionData in ipairs(generatedMissions) do
+      local level = getLevelFromMissionId(missionData.id)
+      if level then
+        proceduralMissionsByLevelCache[level] = proceduralMissionsByLevelCache[level] or {}
+        local data = {data = missionData, level = level, procedural = true}
+        proceduralMissionsByLevelCache[level][missionData.id] = data
+        infoMap[missionData.id] = data
+      end
     end
     systemYield()
   end
@@ -792,8 +805,8 @@ end
 
 -- return content of info.json for given mission id or nil if mission does not exist
 local filesDataById = {}
-local function getMissionFileData(id, infoData)
-  local missionData = filesDataById[id]
+local function getMissionFileData(id, infoData, skipThumbnail)
+  local missionData = skipThumbnail and nil or filesDataById[id]
   if not missionData then
     if not infoData then
       local level = getLevelFromMissionId(id)
@@ -803,31 +816,40 @@ local function getMissionFileData(id, infoData)
     if not infoData then return nil end
     if infoData.procedural then
       missionData = deepcopy(infoData.data)
-      sanitizeMission(missionData, "proceduralMission")
+      sanitizeMission(missionData, "proceduralMission", skipThumbnail)
       missionData.procedural = true
-      filesDataById[id] = missionData
     else  -- file-based mission
-      missionData = loadMission(infoData.dir)
+      missionData = loadMission(infoData.dir, skipThumbnail)
     end
-    filesDataById[id] = missionData
+    if not skipThumbnail then
+      filesDataById[id] = missionData
+    end
   end
   return missionData
 end
 
 -- returns all missions data from info.json files
 local filesData
-local function getFilesData()
-  if not filesData then
-    filesData = {}
-    for id, infoData in pairs(getMissionInfoList()) do
-      local missionData = getMissionFileData(id, infoData)
+local tileData
+local function getFilesData(skipThumbnail)
+  local data = skipThumbnail and (tileData or filesData) or filesData
+  if not data then
+    data = {}
+    local missionInfoList = getMissionInfoList()
+    for id, infoData in pairs(missionInfoList) do
+      local missionData = getMissionFileData(id, infoData, skipThumbnail)
       if missionData then
-        table.insert(filesData, missionData)
+        table.insert(data, missionData)
       end
     end
-    table.sort(filesData, function(a,b) return a.id<b.id end)
+    table.sort(data, function(a,b) return a.id<b.id end)
+    if skipThumbnail then
+      tileData = data
+    else
+      filesData = data
+    end
   end
-  return filesData
+  return data
 end
 
 local function createMission(id, data)
@@ -912,9 +934,11 @@ local function constructMissionFromFileData(missionData)
   if not mission.defaultUserSettings then
     mission.defaultUserSettings = {}
     if mission.getUserSettingsData then
+      mission._buildingDefaultUserSettings = true
       for _, d in ipairs(mission:getUserSettingsData() or {}) do
         mission.defaultUserSettings[d.key] = d.defaultValue ~= nil and deepcopy(d.defaultValue) or d.value
       end
+      mission._buildingDefaultUserSettings = nil
     end
   end
 
@@ -940,10 +964,10 @@ end
 
 -- return mission by id or nil if mission does not exist
 local missionsById = {}
-local function getMissionById(id)
+local function getMissionById(id, infoData)
   local mission = missionsById[id]
   if not mission then
-    local missionData = getMissionFileData(id)
+    local missionData = getMissionFileData(id, infoData)
     if not missionData then return nil end
     mission = constructMissionFromFileData(missionData)
     missionsById[id] = mission
@@ -958,8 +982,8 @@ local function getMissionsOfLevel(levelIdentifier)
   if not missionsOfLevel then
     missionsByLevel[levelIdentifier] = {}
     local infoDataList = getMissionInfoListOfLevel(levelIdentifier)
-    for id, _ in pairs(infoDataList) do
-      local mission = getMissionById(id)
+    for id, infoData in pairs(infoDataList) do
+      local mission = getMissionById(id, infoData)
       if mission then
         table.insert(missionsByLevel[levelIdentifier], mission)
       end
@@ -980,8 +1004,8 @@ local function getAllMissions()
     if util_asyncBulkLoader then
       util_asyncBulkLoader.addTotal(tableSize(infoDataList))
     end
-    for id, _ in pairs(infoDataList) do
-      local mission = getMissionById(id)
+    for id, infoData in pairs(infoDataList) do
+      local mission = getMissionById(id, infoData)
       if util_asyncBulkLoader then
         util_asyncBulkLoader.addCount(1)
       end
@@ -1097,7 +1121,7 @@ local function formatMissionToRawPoi(m, elements, levelIdentifier)
 
             data = { type = "mission", missionId = m.id, date = m.date or 0},
             markerInfo = {
-              missionMarker = {pos = l.pos, rot = l.rot, radius = l.radius, icon = m.bigMapIcon.icon},
+              missionMarker = {pos = l.pos, rot = l.rot, radius = l.radius, icon = m.bigMapIcon.icon, iconFontIcon = m.iconFontIcon},
               bigmapMarker = {pos = l.pos, icon = m.bigMapIcon.icon, quickTravelPosRotFunction = getMissionPosRot},
             }
           })
@@ -1275,6 +1299,7 @@ M.clearCache = function()
   fileBasedMissionDirCache = nil
   proceduralMissionsByLevelCache = {}
   filesData = nil
+  tileData = nil
   filesDataById = {}
   locationsCache = {}
   missions = nil

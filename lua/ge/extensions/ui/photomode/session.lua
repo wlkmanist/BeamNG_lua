@@ -12,6 +12,7 @@ M.dependencies = {
   "ui_photomode_advancedRender",
   "ui_photomode_capture",
   "ui_photomode_presets",
+  "core_settings_graphic",
 }
 
 
@@ -68,7 +69,30 @@ end
 
 local PHOTOMODE_PAUSE_REQUEST_ID = "ui_pause_photomode"
 local PHOTOMODE_CAMERA_ACTION_MAP = "PhotoModeCamera"
+local PHOTOMODE_PLAYER = 0
+local PLATFORM_QUALITY_PRESET = "Prioritize Resolution"
 local hiddenCameraInputEnabled = false
+
+-- Consoles offer a performance/resolution preset choice; photo mode runs the resolution one.
+-- This is a runtime override only, the saved GraphicOverallQuality choice is never written.
+local function applyPlatformPhotomodeQualityMode()
+  ui_photomode_shared.S.sessionPlatformQualityRestore = nil
+  -- the previous override can belong to another system (split screen), so it gets reinstated on exit
+  local previous = core_settings_graphic.getPresetOverride()
+  if core_settings_graphic.setPresetOverride({name = PLATFORM_QUALITY_PRESET}) ~= true then
+    return
+  end
+  ui_photomode_shared.S.sessionPlatformQualityRestore = {previous = previous}
+end
+
+local function restorePlatformPhotomodeQualityMode()
+  local restore = ui_photomode_shared.S.sessionPlatformQualityRestore
+  if not restore then
+    return
+  end
+  ui_photomode_shared.S.sessionPlatformQualityRestore = nil
+  core_settings_graphic.setPresetOverride(restore.previous)
+end
 
 local function setHiddenCameraInputEnabled(enabled)
   enabled = enabled == true
@@ -121,6 +145,36 @@ local function releasePhotomodePauseRequest()
     simTimeAuthority.pause(true)
   end
   ui_photomode_shared.S.photomodePauseWasPaused = false
+end
+
+local function applySplitScreenSoloView()
+  if ui_photomode_shared.S.splitScreenSoloViewApplied
+    or not extensions.isExtensionLoaded("render_splitScreen")
+    or not render_splitScreen
+    or type(render_splitScreen.beginSoloView) ~= "function"
+  then
+    return
+  end
+
+  local ok, applied = pcall(render_splitScreen.beginSoloView, PHOTOMODE_PLAYER, {mainView = true})
+  ui_photomode_shared.S.splitScreenSoloViewApplied = ok and applied == true
+  if not ui_photomode_shared.S.splitScreenSoloViewApplied then
+    ui_photomode_shared.logDebug("split-screen solo view failed: " .. tostring(applied))
+  end
+end
+
+local function restoreSplitScreenSoloView()
+  if not ui_photomode_shared.S.splitScreenSoloViewApplied then
+    return
+  end
+
+  ui_photomode_shared.S.splitScreenSoloViewApplied = false
+  if render_splitScreen and type(render_splitScreen.endSoloView) == "function" then
+    local ok, result = pcall(render_splitScreen.endSoloView)
+    if not ok then
+      ui_photomode_shared.logDebug("split-screen solo view restore failed: " .. tostring(result))
+    end
+  end
 end
 
 local function getCurrentLevelId()
@@ -185,8 +239,10 @@ end
 
 
 local function resetLocalSessionState()
-  ui_photomode_capture.finishPendingMotionCapture()
+  ui_photomode_capture.finishPendingMotionCapture(true)
   setHiddenCameraInputEnabled(false)
+  restorePlatformPhotomodeQualityMode()
+  restoreSplitScreenSoloView()
   releasePhotomodePauseRequest()
   ui_photomode_shared.S.sessionActive = false
   ui_photomode_shared.S.suppressionsApplied = false
@@ -402,9 +458,10 @@ function M.requestExitConfirmation(route, params, context)
   }
   setHiddenCameraInputEnabled(false)
 
+  local persistent = M.isPersistentSessionEnabled()
   guihooks.trigger("showConfirmationDialog", {
     title = "ui.photomode.exitConfirmation.title",
-    text = M.isPersistentSessionEnabled()
+    text = persistent
       and "ui.photomode.exitConfirmation.remembered"
       or "ui.photomode.exitConfirmation.discarded",
     buttons = {
@@ -412,11 +469,12 @@ function M.requestExitConfirmation(route, params, context)
         label = "ui.photomode.exitConfirmation.return",
         luaCallback = "ui_photomode_session.cancelExitConfirmation()",
         isCancel = true,
-        default = true,
       },
       {
         label = "ui.photomode.exitConfirmation.exit",
         luaCallback = "ui_photomode_session.confirmExit()",
+        isConfirm = true,
+        isDestructive = not persistent,
       },
     },
   })
@@ -496,9 +554,11 @@ function M.beginPhotomodeSession(options)
   ui_photomode_shared.S.advancedRenderTuningEnabledOverride = nil
   ui_photomode_presets.resetTemporaryPresets()
 
+  applyPhotomodePauseRequest()
+  applySplitScreenSoloView()
+  --applyPlatformPhotomodeQualityMode()
   ui_photomode_capture.refreshSessionDefaults()
 
-  applyPhotomodePauseRequest()
   ui_photomode_camera.captureRestoreState()
   ui_photomode_scene.captureRestoreState()
   ui_photomode_effects.captureRestoreState()
@@ -522,9 +582,11 @@ function M.endPhotomodeSession()
     and not ui_photomode_shared.S.sessionSceneRestoreState
     and not ui_photomode_shared.S.sessionEffectsRestoreState
     and not ui_photomode_shared.S.sessionAdvancedRenderRestoreState
+    and not ui_photomode_shared.S.sessionPlatformQualityRestore
     and not ui_photomode_shared.S.sessionNodeGrabberRestoreState
     and not ui_photomode_shared.S.pendingMotionCapture
     and not ui_photomode_shared.S.photomodePauseRequestApplied
+    and not ui_photomode_shared.S.splitScreenSoloViewApplied
   then
     ui_photomode_shared.logDebug("session end ignored (already inactive)")
     return false
@@ -532,7 +594,7 @@ function M.endPhotomodeSession()
 
   ui_photomode_shared.logDebug("session end")
   ui_photomode_scene.logTimeOfDayDebug("endPhotomodeSession current", ui_photomode_scene.captureSerializableState())
-  ui_photomode_capture.finishPendingMotionCapture()
+  ui_photomode_capture.finishPendingMotionCapture(true)
   if M.isPersistentSessionEnabled() then
     capturePersistentSessionState()
   else
@@ -546,6 +608,8 @@ function M.endPhotomodeSession()
   ui_photomode_advancedRender.restoreState()
   ui_photomode_camera.restoreState()
   ui_photomode_camera.restoreNodeGrabberState()
+  --restorePlatformPhotomodeQualityMode()
+  restoreSplitScreenSoloView()
   ui_photomode_capture.resetSettings()
   ui_photomode_shared.S.selectedResolutionPresetId = nil
   restoreSuppressions()

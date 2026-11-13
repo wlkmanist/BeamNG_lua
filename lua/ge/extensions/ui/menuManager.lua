@@ -8,9 +8,14 @@ local BLOCK_FORCE_THRESHOLD = 6
 local pauseV2Enabled = true
 
 local activeGameplayRoute = "play"
+local activePauseRoute
 
 local function setGameplayRoute(route)
   activeGameplayRoute = route or "play"
+end
+
+local function setPauseRoute(route)
+  activePauseRoute = route
 end
 
 local function getGameplayRoute()
@@ -86,6 +91,9 @@ local function getMenuRoute()
     return "menu"
   end
 
+  if activePauseRoute then
+    return activePauseRoute
+  end
   if pauseV2Enabled then
     if core_replay and core_replay.getLoadedFile and core_replay.getLoadedFile() ~= "" then
       return "pause.replay:pause-replay-player"
@@ -107,7 +115,9 @@ local function getOptionsRoute()
 end
 
 local function isPauseRoute(routeName)
-  return routeName == "pause" or string.find(routeName or "", "^pause%.") ~= nil
+  return activePauseRoute ~= nil and routeName == activePauseRoute
+    or routeName == "pause"
+    or string.find(routeName or "", "^pause%.") ~= nil
 end
 
 local function isOnMenu(routeName)
@@ -323,6 +333,8 @@ M.menuHide = function(showMenu)
 end
 
 M.setGameplayRoute = setGameplayRoute
+M.setPauseRoute = setPauseRoute
+M.getGameplayRoute = getGameplayRoute
 
 M.isPauseV2Enabled = function()
   return pauseV2Enabled

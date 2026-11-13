@@ -7,7 +7,14 @@
 -- User constants.
 local maxDecalRoadPoints = 100 -- The number of divPoints before we chunk a decal road.
 
-local simplifyTol = 0.25 -- Tolerance for the RDP node simplification algorithm.
+-- Decal nodes are resampled to (near-)uniform arc-length spacing before they ship: the engine's improvedSpline is
+-- uniform Catmull-Rom, which overshoots/knots wherever the sample resolution jumps. Even spacing puts it in its
+-- overshoot-free regime. Edge lines resample finer so the smooth line still tracks the mesh edge on bends.
+local decalResampleM = 2.0
+local edgeLineResampleM = 1.0
+-- Min decal segment length (m). A safety weld after resampling: a fully-degenerate (~0-length) polyline would
+-- otherwise make improvedSpline normalize a zero tangent and emit inf / overshoot verts, crashing the DecalRoad batcher.
+local decalWeldMinLenM = 0.05
 local defaultDecalRoadDetail = 1.0 -- The default value for the detail (number of binormal subdivisions) of the 'improvedSpline'decal road.
 
 local defaultMaterial = "road_invisible"
@@ -47,7 +54,7 @@ local damageAsphalt2TexLen = 25
 local damageAsphalt2Material = 'm_asphalt_damaged_02'
 local damageAsphalt2Str = "Damage Asphalt 2"
 
-local roadCenterLineMaterial = 'm_line_white_discontinue'
+local roadCenterLineMaterial = 'm_line_yellow_double' -- USA-style opposing-traffic divider: solid double yellow.
 local roadCenterLineStr = "Center Line"
 local defaultCenterlineWidth = 0.2
 local defaultCenterlineTexLen = 5.0
@@ -96,7 +103,7 @@ local M = {}
 
 -- Module dependencies.
 local buffer = require('string.buffer')
-local rdp = require('editor/toolUtilities/rdp')
+local geom = require('editor/toolUtilities/geom')
 local util = require('editor/toolUtilities/util')
 
 -- Module constants.
@@ -104,18 +111,33 @@ local min, max, floor, ceil = math.min, math.max, math.floor, math.ceil
 
 -- Module state.
 local tmp1 = vec3()
+local rangePts, rangeWs = {}, {} -- Reused scratch for a chunk's offset polyline before resample/weld (createDecalRoadFromRange).
 
 
 -- Returns the default values for the slider properties, for use in the tool's front end.
 local function getSliderDefaults() return sliderDefaults end
 
--- Deep copies a layer.
+local function isEdgeLineLayer(layer)
+  return layer and layer.name and string.find(layer.name, roadEdgeLineStr, 1, true) ~= nil
+end
+
+-- Uniform resample spacing for a decal layer: edge lines resample finer so the smooth line keeps hugging the mesh
+-- edge on bends; other markings/overlays use the coarser spacing.
+local function decalResampleSpacing(layer)
+  return isEdgeLineLayer(layer) and edgeLineResampleM or decalResampleM
+end
+
+-- Deep copies a layer. The runtime geometry buffers (pClipped/pFlip hold vec3 cdata that buffer.encode can't
+-- serialise) are detached from the SOURCE before encoding and restored afterwards -- so copying never wipes the
+-- source layer's live geometry (the old version cleared it in place, a destructive side effect). The copy starts
+-- with fresh empty buffers; they are rebuilt on the next updateLayer.
 local function deepCopyLayer(layer)
-  table.clear(layer.pClipped)
-  table.clear(layer.wClipped)
-  table.clear(layer.pFlip)
-  table.clear(layer.wFlip)
-  return buffer.decode(buffer.encode(layer))
+  local pC, wC, pF, wF = layer.pClipped, layer.wClipped, layer.pFlip, layer.wFlip
+  layer.pClipped, layer.wClipped, layer.pFlip, layer.wFlip = nil, nil, nil, nil
+  local copy = buffer.decode(buffer.encode(layer))
+  layer.pClipped, layer.wClipped, layer.pFlip, layer.wFlip = pC, wC, pF, wF
+  copy.pClipped, copy.wClipped, copy.pFlip, copy.wFlip = {}, {}, {}, {}
+  return copy
 end
 
 -- Deep copies all layers.
@@ -160,6 +182,14 @@ local function removeDecalRoadInLayer(layer)
   removeAllDecalRoadsForLayer(layer)
 end
 
+-- Calls fn(decalRoad) for each of a layer's DecalRoads (single-road and chunked-road representations).
+local function eachLayerRoad(layer, fn)
+  if layer.decalRoadId then fn(scenetree.findObjectById(layer.decalRoadId)) end
+  if layer.decalRoadIds then
+    for i = 1, #layer.decalRoadIds do fn(scenetree.findObjectById(layer.decalRoadIds[i])) end
+  end
+end
+
 -- Clears chunk data for a group.
 local function clearGroupChunks(group)
   table.clear(group.chunkStartIndices)
@@ -177,6 +207,7 @@ end
 -- Creates a DecalRoad from a range of divPoints.
 local function createDecalRoadFromRange(layer, group, startIdx, endIdx, folder, startFade, endFade)
   local decalRoad = createObject("DecalRoad")
+  decalRoad.cansave = false -- Transient while editing; the Bake button flips generated roads to canSave=true.
   decalRoad:setField("improvedSpline", 0, "true")
   decalRoad:setField("overObjects", 0, "true")
   decalRoad:setField("detail", 0, defaultDecalRoadDetail)
@@ -191,15 +222,25 @@ local function createDecalRoadFromRange(layer, group, startIdx, endIdx, folder, 
   decalRoad:registerObject(name)
   folder:addObject(decalRoad)
 
-  -- Apply the appropriate lateral offset to each node in the range.
+  -- Build the chunk's offset polyline into reused scratch, then uniform-resample + weld before inserting: improvedSpline
+  -- is uniform Catmull-Rom and overshoots/knots on uneven node spacing, and a near-zero segment crashes the batcher.
   local divPoints, divWidths, binormals = group.divPoints, group.divWidths, group.binormals
   local layerPositionHalfWidth = layer.position * 0.5
-
+  local pts, ws, m = rangePts, rangeWs, 0
+  table.clear(pts)
+  table.clear(ws)
   for i = startIdx, endIdx do
     tmp1:setScaled2(binormals[i], layerPositionHalfWidth * divWidths[i])
-    local offsetPoint = divPoints[i] + tmp1
-    local width = layer.isTrackWidth and divWidths[i] or layer.width
-    decalRoad:insertNodeNoRegen(offsetPoint, width, i - startIdx)
+    m = m + 1
+    pts[m] = pts[m] or vec3()
+    pts[m]:setAdd2(divPoints[i], tmp1)
+    ws[m] = layer.isTrackWidth and divWidths[i] or layer.width
+  end
+  geom.resampleUniformNodesWidths(pts, ws, decalResampleSpacing(layer))
+  geom.weldShortSegments(pts, ws, decalWeldMinLenM)
+
+  for i = 1, #pts do
+    decalRoad:insertNodeNoRegen(pts[i], ws[i], i - 1)
   end
 
   decalRoad:regenerate()
@@ -229,6 +270,7 @@ local function updateLayer(group, layerIdx, groupIdx)
     local drtest = scenetree.findObjectById(layer.decalRoadId)
     if not drtest or drtest:getClassName() ~= "DecalRoad" then -- Even if there is an id, we need to ensure it is a decal road object.
       local newDecalRoad = createObject("DecalRoad")
+      newDecalRoad.cansave = false -- Transient while editing; the Bake button flips generated roads to canSave=true.
       newDecalRoad:setField("improvedSpline", 0, "true")
       newDecalRoad:setField("overObjects", 0, "true")
       newDecalRoad:setField("detail", 0, defaultDecalRoadDetail)
@@ -337,8 +379,10 @@ local function updateLayer(group, layerIdx, groupIdx)
     pClipped, wClipped = pFlip, wFlip
   end
 
-  -- Simplify the nodes and widths.
-  rdp.simplifyNodesWidths(pClipped, wClipped, simplifyTol)
+  -- Uniform-resample + weld the nodes/widths: improvedSpline is uniform Catmull-Rom and overshoots/knots on uneven
+  -- node spacing; the weld guarantees no near-zero segment survives (a degenerate segment crashes the DecalRoad batcher).
+  geom.resampleUniformNodesWidths(pClipped, wClipped, decalResampleSpacing(layer))
+  geom.weldShortSegments(pClipped, wClipped, decalWeldMinLenM)
 
   -- Clear all the nodes from the decal road object, but do not regenerate the geometry.
   for i = #editor.getNodes(dRoad) - 1, 0, -1 do
@@ -452,6 +496,12 @@ local function duplicateLayer(idx, group)
   local newLayer = deepCopyLayer(layer)
   newLayer.id = Engine.generateUUID()
   newLayer.name = layer.name .. " (Copy)"
+  -- Drop the source's DecalRoad scene handles so the copy builds its OWN roads. Without this both layers point
+  -- at the same DecalRoad(s) and drive them together, so the original appears to vanish (and deleting either
+  -- deletes the shared object). Force a fresh build via isDirty.
+  newLayer.decalRoadId = nil
+  newLayer.decalRoadIds = {}
+  newLayer.isDirty = true
   table.insert(group.layers, idx + 1, newLayer)
 end
 
@@ -596,6 +646,11 @@ local function removeRoadCenterLineLayers(group) removeMatchingLayers(group, roa
 
 -- Adds new road edge lines layers.
 local function addRoadEdgeLinesLayers(group)
+  -- These are road-level (group) properties, not layer properties: the edge decals are auto-generated/hidden and
+  -- get rebuilt from scratch on every dirty update, so the authorable values must live on the group. Fall back to
+  -- the module defaults so older serialized roads (saved before these fields existed) still build correctly.
+  local w = group.edgeLineWidth or defaultEdgeLineWidth
+  local off = group.edgeLineOffset or 1.0
   group.layers[#group.layers + 1] = {
     name = roadEdgeLineStr .. " - Left",
     id = Engine.generateUUID(),
@@ -608,8 +663,8 @@ local function addRoadEdgeLinesLayers(group)
     isFlip = false,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeLineWidth,
-    position = -1.0,
+    width = w,
+    position = -off,
     texLen = sliderDefaults.defaultTexLength,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -632,8 +687,8 @@ local function addRoadEdgeLinesLayers(group)
     isFlip = false,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeLineWidth,
-    position = 1.0,
+    width = w,
+    position = off,
     texLen = sliderDefaults.defaultTexLength,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -710,6 +765,8 @@ local function removeRoadLaneLinesLayers(group) removeMatchingLayers(group, road
 
 -- Adds new edge blend 1 layers.
 local function addEdgeBlend1Layers(group)
+  local w = group.edgeBlend1Width or defaultEdgeBlend1Width
+  local off = group.edgeBlend1Offset or defaultEdgeBlend1LatPos
   group.layers[#group.layers + 1] = {
     name = roadEdgeBlend1Str .. " - Left",
     id = Engine.generateUUID(),
@@ -722,8 +779,8 @@ local function addEdgeBlend1Layers(group)
     isFlip = false,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeBlend1Width,
-    position = -defaultEdgeBlend1LatPos,
+    width = w,
+    position = -off,
     texLen = defaultEdgeBlend1TexLen,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -746,8 +803,8 @@ local function addEdgeBlend1Layers(group)
     isFlip = true,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeBlend1Width,
-    position = defaultEdgeBlend1LatPos,
+    width = w,
+    position = off,
     texLen = defaultEdgeBlend1TexLen,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -764,6 +821,8 @@ local function removeEdgeBlend1Layers(group) removeMatchingLayers(group, roadEdg
 
 -- Adds new edge blend 2 layers.
 local function addEdgeBlend2Layers(group)
+  local w = group.edgeBlend2Width or defaultEdgeBlend2Width
+  local off = group.edgeBlend2Offset or defaultEdgeBlend2LatPos
   group.layers[#group.layers + 1] = {
     name = roadEdgeBlend2Str .. " - Left",
     id = Engine.generateUUID(),
@@ -776,8 +835,8 @@ local function addEdgeBlend2Layers(group)
     isFlip = false,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeBlend2Width,
-    position = -defaultEdgeBlend2LatPos,
+    width = w,
+    position = -off,
     texLen = defaultEdgeBlend2TexLen,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -800,8 +859,8 @@ local function addEdgeBlend2Layers(group)
     isFlip = true,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeBlend2Width,
-    position = defaultEdgeBlend2LatPos,
+    width = w,
+    position = off,
     texLen = defaultEdgeBlend2TexLen,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -818,6 +877,8 @@ local function removeEdgeBlend2Layers(group) removeMatchingLayers(group, roadEdg
 
 -- Adds new edge blend 3 layers.
 local function addEdgeBlend3Layers(group)
+  local w = group.edgeBlend3Width or defaultEdgeBlend3Width
+  local off = group.edgeBlend3Offset or defaultEdgeBlend3LatPos
   group.layers[#group.layers + 1] = {
     name = roadEdgeBlend3Str .. " - Left_A",
     id = Engine.generateUUID(),
@@ -830,8 +891,8 @@ local function addEdgeBlend3Layers(group)
     isFlip = false,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeBlend3Width,
-    position = -defaultEdgeBlend3LatPos,
+    width = w,
+    position = -off,
     texLen = defaultEdgeBlend3TexLen,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -854,8 +915,8 @@ local function addEdgeBlend3Layers(group)
     isFlip = true,
     isTrackWidth = false,
     isOverObjects = false,
-    width = defaultEdgeBlend3Width,
-    position = defaultEdgeBlend3LatPos,
+    width = w,
+    position = off,
     texLen = defaultEdgeBlend3TexLen,
     fadeIn = sliderDefaults.defaultFadeIn,
     fadeOut = sliderDefaults.defaultFadeOut,
@@ -928,6 +989,7 @@ M.updateAllLayers =                                    updateAllLayers
 M.updateOnlyDirtyLayers =                              updateOnlyDirtyLayers
 
 M.removeDecalRoadInLayer =                             removeDecalRoadInLayer
+M.eachLayerRoad =                                      eachLayerRoad
 M.removeLayer =                                        removeLayer
 M.removeAllLayers =                                    removeAllLayers
 M.removeAllHiddenLayers =                              removeAllHiddenLayers

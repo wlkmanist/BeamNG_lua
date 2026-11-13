@@ -171,10 +171,12 @@ local function loadingScreenActive ()
 end
 
 local function loadingScreenInactive(state)
-  log('I', logTag, 'ui told us loading screen is unloaded: '..tostring(state))
+  local normalizedState = tonumber(state) or state
+  log('I', logTag, 'ui told us loading screen is unloaded: '..tostring(normalizedState))
   SFXSystem.setGlobalParameter("g_GameLoading", 0)
   SFXSystem.setGlobalParameter("g_FadeTimeMS", 1000) -- fade time in milliseconds
   LoadingManager:_triggerSignalLoadingScreenInactive()
+  extensions.hook('onLoadingScreenInactive', normalizedState)
 end
 
 local function onDeserialized(data)

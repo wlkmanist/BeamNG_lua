@@ -21,7 +21,7 @@ M.spawningOptionsHelper = {
   -- environment options
   timeOfDay = "default", -- options: "default", "current", "currentUtc", any of the keys from level's time of day options, or a number between 0 and 1
   date = nil, -- unix epoch seconds, used to set the environment year/month/day
-  timePlay = "disabled", -- options: "disabled", "slow", "normal", "fast" - time progression speed
+  timePlay = "disabled", -- options: "disabled", "level", "fast", "normal", "slow", "realtime"
 
   -- meta options
   resetOptionsAfterStartingFreeroam = true, -- options: true, false
@@ -271,31 +271,31 @@ local function onClientPostStartMission(levelPath)
     end
   end
 
-   -- set time play if set in spawningOptionsHelper
-   if M.spawningOptionsHelper.timePlay and M.spawningOptionsHelper.timePlay ~= "disabled" then
-     log('I', logTag, 'Setting time progression to: ' .. tostring(M.spawningOptionsHelper.timePlay))
+  -- set time play if set in spawningOptionsHelper
+  if M.spawningOptionsHelper.timePlay and M.spawningOptionsHelper.timePlay ~= "disabled" then
+    log('I', logTag, 'Setting time progression to: ' .. tostring(M.spawningOptionsHelper.timePlay))
 
-     local dayLength = 1800 -- normal: a full day in 30 min
-     if M.spawningOptionsHelper.timePlay == "slow" then
-       dayLength = 7200
-     elseif M.spawningOptionsHelper.timePlay == "fast" then
-       dayLength = 900
-     elseif M.spawningOptionsHelper.timePlay == "realtime" then
-       dayLength = 24 * 60 * 60
-     end
-     local time = core_environment.getTimeOfDay()
-     core_environment.setTimeOfDay({play = true, dayLength = dayLength, time = time.time})
-   end
+    local dayLength = core_environment.getDayCycleSeconds(M.spawningOptionsHelper.timePlay)
+    if M.spawningOptionsHelper.timePlay == "level" then
+      local levelName = getCurrentLevelIdentifier()
+      local level = levelName and core_levels.getLevelByName(levelName) or nil
+      dayLength = level and core_environment.getAuthoredDayLength(level.dir) or nil
+    end
+    if dayLength then
+      local time = core_environment.getTimeOfDay()
+      core_environment.setTimeOfDay({play = true, dayLength = dayLength, time = time.time})
+    end
+  end
 
-   -- reset environment options to default
-   M.spawningOptionsHelper.timeOfDay = "default"
-   M.spawningOptionsHelper.date = nil
-   M.spawningOptionsHelper.timePlay = "disabled"
+  -- reset environment options to default
+  M.spawningOptionsHelper.timeOfDay = "default"
+  M.spawningOptionsHelper.date = nil
+  M.spawningOptionsHelper.timePlay = "disabled"
 
-   -- start flowgraph (except for scenarios)
-   if scenario_scenarios == nil or scenario_scenarios.getScenario() == nil then
-     startAssociatedFlowgraph(getCurrentLevelIdentifier())
-   end
+  -- start flowgraph (except for scenarios)
+  if scenario_scenarios == nil or scenario_scenarios.getScenario() == nil then
+    startAssociatedFlowgraph(getCurrentLevelIdentifier())
+  end
 end
 
 local function onClientEndMission(levelPath)
@@ -313,13 +313,12 @@ end
 -- Resets previous vehicle alpha when switching between different vehicles
 -- Used to fix multipart highlighting when switching vehicles
 local function onVehicleSwitched(oldId, newId, player)
-  extensions.core_vehicle_partmgmt.showHighlightedParts(oldId)
+  extensions.core_vehicle_partmgmt.clearVehicleHighlights(oldId)
 end
 
 local function onVehicleSpawned(vehID)
   extensions.core_vehicle_partmgmt.resetVehicleHighlights(true, vehID)
   extensions.core_vehicle_partmgmt.setNewParts(vehID)
-  extensions.core_vehicle_partmgmt.showHighlightedParts(vehID)
 end
 
 local function onResetGameplay(playerID)
@@ -331,12 +330,14 @@ local function onResetGameplay(playerID)
     if mgr:blocksOnResetGameplay() then return end
   end
 
-  be:resetVehicle(playerID)
-  -- if core_intapi then
-  --   core_intapi.debug_resetVehicle(playerID)
-  -- else
-  --   be:resetVehicle(playerID)
-  -- end
+  if multiplayer_sessionManager and multiplayer_sessionManager.getCurrentSession() then return end
+
+  local veh = playerID ~= -1 and getPlayerVehicle(playerID)
+  if veh and settings.getValue('enableSmartRecovery', true) then
+    spawn.safeReset(veh)
+  else
+    be:resetVehicle(playerID)
+  end
 end
 
 local function startTrackBuilder(levelName, forceLoad)
@@ -347,24 +348,7 @@ local function startTrackBuilder(levelName, forceLoad)
     return
   end
 
-  if getCurrentLevelIdentifier() == nil or forceLoad then
-    local level = core_levels.getLevelByName(levelName)
-    if not level then
-      log('E', logTag, 'Level not found: ' .. tostring(levelName))
-      return
-    end
-
-    local callback = function ()
-      log('I', logTag, 'startTrackBuilder callback triggered...')
-      trackbuilder_trackBuilder.showTrackBuilder()
-    end
-
-    extensions.setCompletedCallback("onClientStartMission", callback);
-    startFreeroam(level)
-  else
-    trackbuilder_trackBuilder.toggleTrackBuilder()
-    guihooks.trigger("MenuHide")
-  end
+  trackbuilder_trackBuilder.enter(levelName, forceLoad)
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)

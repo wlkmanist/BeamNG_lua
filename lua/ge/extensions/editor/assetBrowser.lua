@@ -119,6 +119,7 @@ var.filteredAssetGroups = nil
 var.fontSize = math.ceil(im.GetFontSize())
 var.minThumbnailSize = math.ceil(im.GetFontSize())
 var.tooltipThumbnailSize = im.ImVec2(64,64)
+var.minTooltipThumbnailSize = 64
 var.maxTooltipThumbnailSize = 256
 var.thumbnailSliderGroupWidth = nil
 var.thumbnailSliderWidth = 120
@@ -805,6 +806,19 @@ local function selectAsset(asset)
   end
 end
 
+local function getSelectedAsset()
+  return editor.selection["asset"]
+end
+
+local function clearSelectedAsset()
+  local asset = editor.selection["asset"]
+  if not asset then return end
+  asset.selectedInABView = false
+  if asset.type ~= nil then asset.selected = false end
+  editor.selection["asset"] = nil
+  if var.viewSelectionHistory == asset then var.viewSelectionHistory = nil end
+end
+
 local function checkDirs(dir)
   if im.ImGuiTextFilter_PassFilter(var.assetViewFilter, dir.name) then
     table.insert(var.filteredDirs, dir)
@@ -1394,6 +1408,32 @@ local function onDrag()
   -- end
 end
 
+-- Display tooltip images at native size, scaled up to min and down to max, preserving aspect ratio.
+local function getTooltipThumbnailSize(imgSize)
+  local minSize = var.minTooltipThumbnailSize
+  local maxSize = var.maxTooltipThumbnailSize
+  local sizex = minSize
+  local sizey = minSize
+  if imgSize and imgSize.x > 0 and imgSize.y > 0 then
+    sizex = imgSize.x
+    sizey = imgSize.y
+    local larger = math.max(sizex, sizey)
+    if larger > maxSize then
+      local scale = maxSize / larger
+      sizex = sizex * scale
+      sizey = sizey * scale
+    elseif larger < minSize then
+      local scale = minSize / larger
+      sizex = sizex * scale
+      sizey = sizey * scale
+    end
+  end
+  local uiScale = im.uiscale[0]
+  var.tooltipThumbnailSize.x = sizex * uiScale
+  var.tooltipThumbnailSize.y = sizey * uiScale
+  return var.tooltipThumbnailSize
+end
+
 local function directoryDragDropSource(directory)
   if not directory then return end
   if var.dragging == var.dragging_enum.dragging then im.SetWindowFocus1() end
@@ -1428,26 +1468,10 @@ local function dragDropSource(asset, pos)
     local data = im.ArrayChar(2048, editor.assetDragDrop.data.path)
     im.SetDragDropPayload("ASSETDRAGDROP", data, im.ArraySize(data), im.Cond_Once)
     if (asset.type == 'image' or asset.type == 'mesh') and editor.assetDragDrop.dragImage and editor.assetDragDrop.dragImage.tex then
-      local sizex = var.tooltipThumbnailSize.x
-      local sizey = var.tooltipThumbnailSize.y
-      if asset.type == 'image' then
-        local img = editor.getTempTextureObj(asset.path)
-        if img then
-          local ratio = img.size.y / img.size.x
-          sizex = var.tooltipThumbnailSize.x / ratio
-          sizey = var.tooltipThumbnailSize.y
-          -- check if size exceeds the maximum size so we do not display 16k preview images
-          if sizex > var.maxTooltipThumbnailSize then
-            local resizeRatio = sizex / var.maxTooltipThumbnailSize
-            sizex = sizex / resizeRatio
-            sizey = sizey / resizeRatio
-          end
-        end
-      end
       im.TextUnformatted(asset.path)
       im.Image(
         editor.assetDragDrop.dragImage.tex:getID(),
-        im.ImVec2(sizex, sizey),
+        getTooltipThumbnailSize(editor.assetDragDrop.dragImage.size),
         nil, nil, nil,
         editor.color.white.Value
       )
@@ -2381,7 +2405,7 @@ local function showCollectionsSection()
   if editor.uiIconImageButton(editor.icons.content_paste, var.iconSize, nil, nil, nil, "Paste collection from clipboard") then
     openPasteCollectionDialog()
   end
-  im.tooltip("Past collection from clipboard")
+  im.tooltip("Paste collection from clipboard")
   im.SameLine()
   if editor.uiIconImageButton(editor.icons.refresh, var.iconSize, nil, nil, nil, "Reload collections") then
     var.collections = {}
@@ -2678,24 +2702,12 @@ local function textureSetTooltip(set)
   elseif var.options.assetViewFilterType == var.assetViewFilterType_enum.all_files then
     im.TextUnformatted(set.dir.path .. set.name)
   end
-  local img = nil
-  local ratio = nil
-
   local function textureSetTooltipImg(asset)
-    img = editor.getTempTextureObj(asset.path)
+    local img = editor.getTempTextureObj(asset.path)
     if img and img.size.x > 0 and img.size.y > 0 then
-      ratio = img.size.y / img.size.x
-      local sizex = var.tooltipThumbnailSize.x / ratio
-      local sizey = var.tooltipThumbnailSize.y
-      -- check if size exceeds the maximum size so we do not display 16k preview images
-      if sizex > var.maxTooltipThumbnailSize then
-        local resizeRatio = sizex / var.maxTooltipThumbnailSize
-        sizex = sizex / resizeRatio
-        sizey = sizey / resizeRatio
-      end
       im.Image(
         img.tex:getID(),
-        im.ImVec2(sizex, sizey),
+        getTooltipThumbnailSize(img.size),
         nil, nil, nil,
         editor.color.white.Value
       )
@@ -2724,7 +2736,7 @@ local function materialTooltip(material)
   if not tex or not tex.tex then return end
 
   im.BeginTooltip()
-    im.Image(tex.tex:getID(), var.tooltipThumbnailSize, nil, nil, nil, editor.color.white.Value)
+    im.Image(tex.tex:getID(), getTooltipThumbnailSize(tex.size), nil, nil, nil, editor.color.white.Value)
   im.EndTooltip()
 end
 
@@ -2969,18 +2981,9 @@ local function displayAssetInAssetView(file, childSize, newLine, inCollection)
       local function imgTooltip(path)
         local img = editor.getTempTextureObj(path)
         if img and img.size.x > 0 and img.size.y > 0 then
-          local ratio = img.size.y / img.size.x
-          local sizex = var.tooltipThumbnailSize.x / ratio
-          local sizey = var.tooltipThumbnailSize.y
-          -- check if size exceeds the maximum size so we do not display 16k preview images
-          if sizex > var.maxTooltipThumbnailSize then
-            local resizeRatio = sizex / var.maxTooltipThumbnailSize
-            sizex = sizex / resizeRatio
-            sizey = sizey / resizeRatio
-          end
           im.Image(
-            editor.getTempTextureObj(path).tex:getID(),
-            im.ImVec2(sizex, sizey),
+            img.tex:getID(),
+            getTooltipThumbnailSize(img.size),
             nil, nil, nil,
             editor.color.white.Value
           )
@@ -5606,6 +5609,8 @@ local function onEditorPreferenceValueChanged(path, value)
   if path == "assetBrowser.general.scrollSpeed" then var.options.scrollSpeed = value end
   if path == "assetBrowser.general.dragDropRotationMultiplier" then var.options.dragDropRotationMultiplier = value end
   if path == "assetBrowser.general.maxInspectorImagePreviewSize" then var.options.maxInspectorImagePreviewSize = value end
+  if path == "assetBrowser.general.minTooltipThumbnailSize" then var.minTooltipThumbnailSize = value end
+  if path == "assetBrowser.general.maxTooltipThumbnailSize" then var.maxTooltipThumbnailSize = value end
   if path == "assetBrowser.general.instantiateMeshInFrontOfCamera" then var.options.instantiateMeshInFrontOfCamera = value end
   if path == "assetBrowser.general.typeColors" then
     for type, color in pairs(var.typeColors) do
@@ -5664,6 +5669,8 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {thumbnailSize = {"int", 18, "The thumbnail image size"}},
     {maxThumbnailSize = {"int", 256, "The max thumbnail image size"}},
     {maxInspectorImagePreviewSize = {"int", 512, "The maximum preview image size within inspector"}},
+    {minTooltipThumbnailSize = {"int", 64, "The minimum tooltip thumbnail size. Small images are scaled up so they stay readable.", nil, 16, 512}},
+    {maxTooltipThumbnailSize = {"int", 256, "The maximum tooltip thumbnail size. Large images are scaled down so they do not cover the screen.", nil, 32, 1024}},
     {treeViewIndentationWidth = {"float", 8, ""}},
     {createAssetDataOfDirectory = {"bool", true, "If true the asset browser will create thumbnails and other data when opening a directory."}},
     {fileTypeIconColor = { "ColorI", ColorI(255, 255, 255, 255), "Color of file type icon." }},
@@ -5825,6 +5832,8 @@ end
 -- public interface
 M.selectFileByPath = selectFileByPath
 M.getAssetByPath = getAssetByPath
+M.getSelectedAsset = getSelectedAsset
+M.clearSelectedAsset = clearSelectedAsset
 
 M.onEditorActivated = onEditorActivated
 M.onEditorGui = onEditorGui

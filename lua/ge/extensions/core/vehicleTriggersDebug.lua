@@ -31,14 +31,14 @@ local function executeLink(vdata, lnk, actionValue, vehicleId)
         log('E', 'triggers', 'input action not found: ' .. tostring(lnk.inputAction))
         return 0
       end
-      return core_input_actions.executeCommand(vdata.inputActions[lnk.inputAction], value, vehicleId)
+      return core_input_actions.executeCommand(vdata.inputActions[lnk.inputAction], value, vehicleId, 0, lnk.triggerId)
     elseif lnk.namespace == 'common' then
       if lnk.commonLua then
         if not vdata.inputActions[lnk.inputAction] then
           log('E', 'triggers', 'input action not found: ' .. tostring(lnk.inputAction))
           return 0
         end
-        return core_input_actions.executeCommand(vdata.inputActions[lnk.inputAction], value, vehicleId)
+        return core_input_actions.executeCommand(vdata.inputActions[lnk.inputAction], value, vehicleId, 0, lnk.triggerId)
       end
       if core_vehicleTriggers and core_vehicleTriggers.state and core_vehicleTriggers.state.debugEnabled then
         ActionMap.debugEnabled = true
@@ -52,7 +52,7 @@ local function executeLink(vdata, lnk, actionValue, vehicleId)
       end
     end
   else
-    return core_input_actions.executeCommand(lnk.targetEvent, actionValue, vehicleId)
+    return core_input_actions.executeCommand(lnk.targetEvent, actionValue, vehicleId, 0, lnk.triggerId)
   end
   return 0
 end
@@ -96,7 +96,12 @@ local function drawDebugUI(dt)
           end
         end
       end
-      local activeTrigger = state.currentlyUsedTrigger and (tostring(state.currentlyUsedTrigger.v) .. ":" .. tostring(state.currentlyUsedTrigger.t)) or "nil"
+      local activeTriggers = {}
+      for player, hit in pairs(state.currentlyUsedTriggers or {}) do
+        table.insert(activeTriggers, string.format("p%d %s:%s", player, tostring(hit.v), tostring(hit.t)))
+      end
+      table.sort(activeTriggers)
+      local activeTrigger = #activeTriggers > 0 and table.concat(activeTriggers, ", ") or "nil"
       local enabledNow = core_vehicleTriggers.isEnabled and core_vehicleTriggers.isEnabled()
       local hoveredHitWorld = state.hoveredHitPosWorld
       local hoveredHitScreen01 = state.hoveredHitPosScreen01
@@ -210,7 +215,7 @@ local function drawDebugUI(dt)
         drawStateRow("timeSinceLastMovedMs", state.timeSinceLastMovedMs == nil and "nil" or state.timeSinceLastMovedMs, im.ImVec4(0.6, 0.9, 1, 1))
         drawStateRow("crosshairTimedOut", state.crosshairTimedOut, colorForBool(state.crosshairTimedOut))
         drawStateRow("crosshairHasTarget", state.crosshairHasTarget, colorForBool(state.crosshairHasTarget))
-        drawStateRow("currentlyUsedTrigger", activeTrigger, state.currentlyUsedTrigger and im.ImVec4(0.2, 1, 0.2, 1) or im.ImVec4(0.8, 0.8, 0.8, 1))
+        drawStateRow("currentlyUsedTriggers", activeTrigger, #activeTriggers > 0 and im.ImVec4(0.2, 1, 0.2, 1) or im.ImVec4(0.8, 0.8, 0.8, 1))
         drawStateRow("crosshairVisible", state.crosshairVisible, colorForBool(state.crosshairVisible))
         drawStateRow("vehicleTriggerCrosshairVisible(stream)", state.crosshairVisibleStream == nil and "nil" or state.crosshairVisibleStream, state.crosshairVisibleStream == nil and im.ImVec4(0.8, 0.8, 0.8, 1) or colorForBool(state.crosshairVisibleStream))
         drawStateRow("vehicleTriggerCrosshairHovered(stream)", state.crosshairHoveredStream == nil and "nil" or state.crosshairHoveredStream, state.crosshairHoveredStream == nil and im.ImVec4(0.8, 0.8, 0.8, 1) or colorForBool(state.crosshairHoveredStream))

@@ -203,6 +203,7 @@ function M.load(deliveryPath)
 
     deliveryData._prefabIds = allPrefabIds
     deliveryData._vehicleIndex = allVehicleIndex
+    deliveryData._hasColliders = needsCollisionReload
 
     -- Handle collision and navgraph reloads
     if needsCollisionReload then

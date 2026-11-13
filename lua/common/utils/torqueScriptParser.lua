@@ -7,10 +7,15 @@
 
 local M = {}
 
--- disable jit for the load because otherwise lulpeg (dependency of luaepnf) tries to use VLA indexing which we don't support
-jit.off()
-local epnf = require( "libs/lua-luaepnf/epnf" )
-jit.on()
+local epnf
+if jit and jit.status() then
+  -- disable jit for the load because otherwise lulpeg (dependency of luaepnf) tries to use VLA indexing which we don't support
+  jit.off()
+  epnf = require( "libs/lua-luaepnf/epnf" )
+  jit.on()
+else
+  epnf = require( "libs/lua-luaepnf/epnf" )
+end
 
 local nan, inf = 0/0, 1/0
 

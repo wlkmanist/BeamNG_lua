@@ -461,6 +461,11 @@ function C:updateCountdown()
     return
   end
 
+  if core_flowgraphManager.skipCountdowns and self.startTimerAttempted then
+    self:finishCountdown()
+    return
+  end
+
   if self.state == STATE_WAITING then
     self.timer = self:getTimeUntilLaunch()
     if self.targetStartTime and self.epochTime >= self.targetStartTime then
@@ -556,6 +561,7 @@ function C:sendRallyDataUpdate()
   if countdownActive then
     updateData.countdownData = {
       countdown = countdownPhase.countdownValue,
+      timeUntilLaunch = countdownPhase.timeUntilLaunch,
       state = self.state
     }
   end

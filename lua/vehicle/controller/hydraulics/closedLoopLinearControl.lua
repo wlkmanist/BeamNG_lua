@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Positions hydraulic equipment at a requested extension and holds it there
+
 local M = {}
 M.type = "auxiliary"
 
@@ -38,13 +40,13 @@ end
 
 local function reset(jbeamData)
   electrics.values[cylinderValveElectricsName] = 0
-  targetExtendPercent = 0
+  targetExtendPercent = clamp(jbeamData.targetExtendPercentInitial or 0, cylinderPositionMin, cylinderPositionMax)
   cylinderPID:reset()
 end
 
 local function init(jbeamData)
   cylinderPID = newPIDParallel(jbeamData.cylinderPIDKp or 0.5, jbeamData.cylinderPIDKi or 0.3, jbeamData.cylinderPIDKd or 0.01, -1, 1, 1000, 10, nil, nil, 0.01)
-  cylinderPID:setDebug(true)
+  cylinderPID:setDebug(false)
 
   cylinders = {}
 
@@ -57,9 +59,11 @@ local function init(jbeamData)
 
   if #cylinders <= 0 then
     invCylinderCount = 0
+    M.updateFixedStep = nil
     log("D", "closedLoopLinearControl.init", "No hydraulic cylinders found!")
   else
     invCylinderCount = 1 / #cylinders
+    M.updateFixedStep = updateFixedStep
   end
 
   cylinderValveElectricsName = jbeamData.cylinderValveElectricsName or "cylinderValve"

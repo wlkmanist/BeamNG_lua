@@ -23,10 +23,24 @@ local function getCurrentMode(context)
   if context.isGarageActive then return "garage" end
   if context.isCareerActive then return "career" end
   if context.isFreeroamTutorialActive then return "freeroamTutorial" end
+  if context.isMultiseatGamemodeActive then return "multiseatGamemode" end
+
   return "freeroam"
 end
 
 function M.getContext()
+  local isMultiseatActive = bool(core_multiseat and core_multiseat.isMultiseatActive and safeCall(core_multiseat.isMultiseatActive, false))
+  local isMultiseatGamemodeActive = bool(gameplay_multiseat_gamemodeManager and gameplay_multiseat_gamemodeManager.isActive and safeCall(gameplay_multiseat_gamemodeManager.isActive, false))
+  local isMultiseatFreeroamActive = bool(ui_multiseat_freeroam and ui_multiseat_freeroam.isActive and safeCall(ui_multiseat_freeroam.isActive, false))
+  local multiseatPlayers = safeCall(core_multiseat and core_multiseat.getPlayers, {})
+  local isMultiplePlayersActive = type(multiseatPlayers) == "table" and #multiseatPlayers > 1
+  local isFirstDriveActive = bool(gameplay_discover_firstDrive_experience
+    and gameplay_discover_firstDrive_experience.isActive
+    and safeCall(gameplay_discover_firstDrive_experience.isActive, false))
+  local isFirstDriveGuided = bool(gameplay_discover_firstDrive_experience
+    and gameplay_discover_firstDrive_experience.isGuidedDriveActive
+    and safeCall(gameplay_discover_firstDrive_experience.isGuidedDriveActive, false))
+
   local context = {
     isCareerActive = bool(career_career and career_career.isActive and safeCall(career_career.isActive, false)),
     isGarageActive = bool(gameplay_garageMode and gameplay_garageMode.isActive and safeCall(gameplay_garageMode.isActive, false)),
@@ -36,6 +50,10 @@ function M.getContext()
     foregroundMissionId = safeCall(gameplay_missions_missionManager and gameplay_missions_missionManager.getForegroundMissionId, nil),
     isBigMapBlocked = bool(core_input_actionFilter and core_input_actionFilter.isActionBlocked and safeCall(core_input_actionFilter.isActionBlocked, false, "toggleBigMap")),
     isFreeroamTutorialActive = gameplay_discover_freeroamTutorial_tutorial ~= nil,
+    isFirstDriveActive = isFirstDriveActive,
+    isFirstDriveGuided = isFirstDriveGuided,
+    isMultiseatGamemodeActive = isMultiseatGamemodeActive,
+    isMultiseatActive = isMultiseatActive or isMultiseatFreeroamActive or isMultiplePlayersActive,
   }
 
   context.isBigMapAllowed = not context.isBigMapBlocked

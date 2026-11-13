@@ -37,6 +37,7 @@ local kbdOutRateMult = 0
 local kbdInRateMult = 0
 local understeerInRateMult = 1 -- used by understeer assist to mitigate the slow return-to-center after long understeers
 local understeerOutRateMult = 1 -- used by speed-sensitive assist to mitigate the fast turn-in at high speeds
+local smWheelSpeedMax = newTemporalSmoothing(1, math.huge)
 local padSmoother = nil
 local kbdSmoother = nil
 local vehicleSteeringWheelLock = 450
@@ -502,8 +503,8 @@ local function inputStabilization(st, dt, filter)
   velVec:set(obj:getSmoothRefVelocityXYZ())
   rightVec:set(obj:getDirectionVectorRightXYZ())
   local velSqLen = velVec:squaredLength()
-  local lowSpeedCoef = min(abs(wheelSpeed), velSqLen, 10) * 0.1
   local velLen = sqrt(velSqLen)
+  local lowSpeedCoef = min(smWheelSpeedMax:get(min(abs(wheelSpeed), 10), dt), velSqLen, velLen, 10) * 0.1
   local speedThreshold = 13
   local velRightCos = velVec:dot(rightVec) / (velLen + 1e-10)
   local oversteer = lowSpeedCoef * min(velLen / speedThreshold, 1) * velRightCos
@@ -651,8 +652,15 @@ local function updateGFX(dt)
     if k == "steering" then
       if playerInfo.anyPlayerSeated and not ai.isDriving() then
         if filter ~= M.lastFilterType then
-          obj:queueGameEngineLua(string.format('extensions.telemetry_core.startActivity("controlsUsed", {method = "%s"})', FILTER_NAME[filter]))
           M.lastFilterType = filter
+          -- a point event, not a duration: the steering filter rarely changes within a
+          -- session, so the span it would measure is just the session itself. FILTER_AI
+          -- has no name and is skipped, it can still be the active filter for a frame
+          -- after the ai released the vehicle
+          local method = FILTER_NAME[filter]
+          if method then
+            obj:queueGameEngineLua(string.format('extensions.hook("onSteeringFilterChanged", %q)', method))
+          end
         end
       end
     end
@@ -762,6 +770,16 @@ local function padAccelerateBrake(val, filter)
   end
 end
 
+local function neutralizeControls()
+  kbdSteerLeft = 0
+  kbdSteerRight = 0
+  for inputName in pairs(M.state) do
+    if inputName ~= "parkingbrake" then
+      event(inputName, 0, 0)
+    end
+  end
+end
+
 local function settingsChanged()
   -- countersteer reduction assistant
   stabilizationEnabled = settings.getValue("steeringStabilizationEnabled", false)
@@ -833,6 +851,7 @@ M.event = event
 M.toggleEvent = toggleEvent
 M.kbdSteer = kbdSteer
 M.padAccelerateBrake = padAccelerateBrake
+M.neutralizeControls = neutralizeControls
 M.settingsChanged = settingsChanged
 M.setAllowedInputSource = setAllowedInputSource
 

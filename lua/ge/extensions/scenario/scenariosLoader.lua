@@ -454,7 +454,7 @@ local function start(sc)
       end
       unloadAutoExtensions()
       loadPresetExtensions()
-      extensions.telemetry_core.startActivity("scenarioRunning", {scenarioName = sc.name, file = sc.sourceFile})
+      extensions.hook('onFlowgraphScenarioStarted', sc)
       mgr:setRunning(true)
       mgr.stopRunningOnClientEndMission = true -- make mgr self-destruct when level is ended.
     else

@@ -533,6 +533,10 @@ local function viewMenu()
       end
     end
 
+    if editor_editorRenderSettings and imgui.MenuItem1(_tr("editor.menu.editorRenderSettings")) then
+      editor.showWindow("editorRenderSettings")
+    end
+
     if imgui.BeginMenu(_tr("editor.menu.layouts"), imgui_true) then
       for _, layoutPath in ipairs(editor_layoutManager.getWindowLayouts()) do
         if imgui.MenuItem1(string.match(layoutPath, ".+/(.+)"), nil, imgui_false, imgui_true) then
@@ -808,13 +812,7 @@ local function addWindowMenuItem(itemText, actionFunc, info, defaultToolWindow)
   local originalActionFunc = actionFunc
   item.actionFunc = function()
     recordRecentWindowMenuItem(item)
-    if extensions.telemetry_core then
-      extensions.telemetry_core.addEvent({
-        name = "editorToolWindowOpened",
-        toolName = item.itemText,
-        entryPoint = "windowMenu"
-      })
-    end
+    extensions.hook('onEditorToolWindowOpened', item.itemText, "windowMenu")
     if originalActionFunc then originalActionFunc() end
   end
   local menuGroups

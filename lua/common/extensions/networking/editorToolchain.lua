@@ -12,6 +12,8 @@ local server
 local selectedNodes = nil
 local sphereColor = ColorF(1,0,0,1)
 local subscriptions = {}
+local connections = {}
+local vehicleContextDirty = false
 
 local function getPeerName(connection)
   if connection.getpeername then
@@ -26,15 +28,44 @@ local function getPeerName(connection)
   end
 end
 
+local function sendPlayerVehicleInfo(connection, requestData)
+  local veh = getPlayerVehicle(0)
+  local vehicleData = core_vehicle_manager.getPlayerVehicleData()
+  if not veh or not vehicleData or not vehicleData.vdata then
+    server:send(connection, {cmd = 'noPlayerVehicle'}, requestData)
+    return
+  end
+
+  local activeParts = {}
+  for partName in pairs(vehicleData.vdata.activePartsData or {}) do
+    activeParts[partName] = true
+  end
+  if vehicleData.mainPartName then activeParts[vehicleData.mainPartName] = true end
+
+  server:send(connection, {
+    cmd = 'playerVehicleInfo',
+    data = {
+      vehicleId = veh:getId(),
+      jbeam = veh.Jbeam,
+      partConfig = veh.partConfig,
+      components = vehicleData.vdata.components or {},
+      variables = vehicleData.vdata.variables or {},
+      activeParts = activeParts,
+    }
+  }, requestData)
+end
+
 local function onData(connection, data)
   --dump{'<<< ', data}
 
   if data == 'disconnect' then
     subscriptions[connection] = nil
+    connections[connection] = nil
     selectedNodes = nil
     print('Connection closed: ' .. tostring(connection))
     return
   end
+  connections[connection] = true
 
   if data['cmd'] == 'ping' then
     --log('I', 'editorToolchain', getPeerName(connection) .. ' - ping')
@@ -56,16 +87,7 @@ local function onData(connection, data)
     server:send(connection, {cmd='siminfo', data=info}, data)
 
   elseif data['cmd'] == 'getPlayerVehicleInfo' then
-    local veh = getPlayerVehicle(0)
-    if not veh then
-      server:send(connection, {cmd='noPlayerVehicle'}, data)
-      return
-    end
-    local res = {
-      jbeam = veh.Jbeam,
-      partConfig = veh.partConfig,
-    }
-    server:send(connection, {cmd = 'playerVehicleInfo', data = res}, data)
+    sendPlayerVehicleInfo(connection, data)
   elseif data['cmd'] == 'selectNodes' then
     dump{'selecting nodes: ', data.nodes}
     selectedNodes = nil
@@ -107,6 +129,17 @@ local function onPreRender(dtReal, dtSim, dtRaw)
   local messages = server:receiveData()
   for _, msg in pairs(messages or {}) do
     onData(msg[1], msg[2])
+  end
+
+  if vehicleContextDirty then
+    vehicleContextDirty = false
+    for connection in pairs(connections) do
+      local ok, err = pcall(sendPlayerVehicleInfo, connection)
+      if not ok then
+        log('W', 'editorToolchain', 'Removing stale connection: ' .. tostring(err))
+        connections[connection] = nil
+      end
+    end
   end
 
   if selectedNodes then
@@ -158,6 +191,14 @@ local function onExtensionUnloaded()
   end
 end
 
+local function onVehicleSpawned(vehID)
+  if vehID == be:getPlayerVehicleID(0) then vehicleContextDirty = true end
+end
+
+local function onVehicleSwitched(_, _, player)
+  if player == nil or player == 0 then vehicleContextDirty = true end
+end
+
 local function onInit()
   setExtensionUnloadMode(M, 'manual')
 end
@@ -166,5 +207,7 @@ M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onPreRender = onPreRender
 M.onInit = onInit
+M.onVehicleSpawned = onVehicleSpawned
+M.onVehicleSwitched = onVehicleSwitched
 
 return M

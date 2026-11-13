@@ -174,6 +174,7 @@ local function sendDeviceData()
 end
 
 local function updateGFX(dt)
+  profilerPushEvent1("powertrain:updateGFX")
   M.currentGravity = obj:getGravity()
   M.invCurrentGravity = 1 / guardZero(M.currentGravity)
   M.currentEnvTemperature = obj:getEnvTemperature()
@@ -204,17 +205,17 @@ local function updateGFX(dt)
       end
     end
 
-    --profilerPushEvent(orderedDevices[i].name .. ":updateGFX")
+    profilerPushEvent1(device.updateGFXProfilerName)
     if device.updateGFX then
       device:updateGFX(dt)
     end
-    --profilerPopEvent(orderedDevices[i].name .. ":updateGFX")
+    profilerPopEvent1(device.updateGFXProfilerName)
 
-    --profilerPushEvent(orderedDevices[i].name .. ":updateSounds")
+    profilerPushEvent1(device.updateSoundsProfilerName)
     if device.updateSounds then
       device:updateSounds(dt)
     end
-    --profilerPopEvent(orderedDevices[i].name .. ":updateSounds")
+    profilerPopEvent1(device.updateSoundsProfilerName)
     if device.electricsName and device.visualShaftAngle then --only take care of devices that are meant to have a public angle
       device.visualShaftAngle = (device.visualShaftAngle + device[device.visualShaftAVName] / device.gearRatio * dt) % twoPi
       electrics.values[device.electricsName] = device.visualShaftAngle * visualShaftAngleCoef
@@ -222,33 +223,41 @@ local function updateGFX(dt)
   end
 
   sendDeviceData()
+  profilerPopEvent1("powertrain:updateGFX")
 end
 
 local function updateGFXLastStage(dt)
+  profilerPushEvent1("powertrain:updateGFXLastStage")
   for i = 1, deviceCount, 1 do
     local device = orderedDevices[i]
     if device.updateGFXLastStage then
+      profilerPushEvent1(device.updateGFXLastStageProfilerName)
       device:updateGFXLastStage(dt)
+      profilerPopEvent1(device.updateGFXLastStageProfilerName)
     end
   end
+  profilerPopEvent1("powertrain:updateGFXLastStage")
 end
 
 local function update(dt)
+  profilerPushEvent1("powertrain:update")
   M.torqueReactionCoefs, torqueReactionCoefs2 = torqueReactionCoefs2, M.torqueReactionCoefs
 
   --performanceLogger.startMeasurement("speeds")
   for i = deviceCount, 1, -1 do
-    --profilerPushEvent(orderedDevices[i].name .. ":velocityUpdate")
-    orderedDevices[i]:velocityUpdate(dt)
-    --profilerPopEvent(orderedDevices[i].name .. ":velocityUpdate")
+    local device = orderedDevices[i]
+    profilerPushEvent1(device.velocityUpdateProfilerName)
+    device:velocityUpdate(dt)
+    profilerPopEvent1(device.velocityUpdateProfilerName)
   end
   --performanceLogger.measureAverage("speeds", 10000, false)
 
   --performanceLogger.startMeasurement("torques")
   for i = 1, deviceCount, 1 do
-    --profilerPushEvent(orderedDevices[i].name .. ":torqueUpdate")
-    orderedDevices[i]:torqueUpdate(dt)
-    --profilerPopEvent(orderedDevices[i].name .. ":torqueUpdate")
+    local device = orderedDevices[i]
+    profilerPushEvent1(device.torqueUpdateProfilerName)
+    device:torqueUpdate(dt)
+    profilerPopEvent1(device.torqueUpdateProfilerName)
   end
   --performanceLogger.measureAverage("torques", 10000, false)
 
@@ -257,6 +266,7 @@ local function update(dt)
     trCoefs[i] = torsionReactorList[i].outputTorque1 / (trCoefs[i] + 1e-30)
     torqueReactionCoefs2[i] = 0
   end
+  profilerPopEvent1("powertrain:update")
 end
 
 local function sendDeviceTree()
@@ -565,6 +575,11 @@ local function init()
       device.parentOutputAVName = "outputAV" .. tostring(device.inputIndex)
       device.parentOutputTorqueName = "outputTorque" .. tostring(device.inputIndex)
       device.visualShaftAVName = device.visualShaftAVName or "inputAV"
+      device.velocityUpdateProfilerName = device.name .. ":velocityUpdate"
+      device.torqueUpdateProfilerName = device.name .. ":torqueUpdate"
+      device.updateGFXProfilerName = device.name .. ":updateGFX"
+      device.updateSoundsProfilerName = device.name .. ":updateSounds"
+      device.updateGFXLastStageProfilerName = device.name .. ":updateGFXLastStage"
 
       if device.breakTriggerBeam then
         if type(device.breakTriggerBeam) ~= "table" then
@@ -790,7 +805,7 @@ local function breakDevice(device)
     obj:breakBeam(breakTriggerBeamLookup[beamName])
   end
 
-  guihooks.message({txt = "vehicle.powertrain.deviceBroken", context = {deviceName = device.uiName}}, 10, "vehicle.damage.device." .. device.uiName)
+  guihooks.messageForSeatedPlayers({txt = "vehicle.powertrain.deviceBroken", context = {deviceName = device.uiName}}, 10, "vehicle.damage.device." .. device.uiName)
   damageTracker.setDamage("powertrain", device.name, true)
 end
 
@@ -1089,8 +1104,11 @@ local function getState()
   for i = 1, deviceCount, 1 do
     local device = orderedDevices[i]
     if device.getState then
-      tableMergeRecursive(stateData, device:getState())
-      hasData = true
+      local deviceState = device:getState()
+      if type(deviceState) == "table" then
+        tableMergeRecursive(stateData, deviceState)
+        hasData = true
+      end
     end
   end
 

@@ -9,6 +9,7 @@ local im = ui_imgui
 local toolWindowName = "visualization"
 local lightDebugSettingsWindowName = "visualizationLightDebugSettings"
 local materialDebugViz = require('/lua/ge/extensions/util/materialDebugViz')
+local selectabilityPresets = require("editor/api/selectabilityPresets")
 
 local var = {}
 var.visualizationTypesDefault = {}
@@ -62,22 +63,19 @@ end
 
 local function isLightObject(obj)
   if not obj then return false end
-  if obj.isSubClassOf then
-    local ok, result = pcall(obj.isSubClassOf, obj, "LightBase")
-    if ok and result then return true end
-  end
+  if obj.isSubClassOf and obj:isSubClassOf("LightBase") then return true end
   local className = obj.getClassName and obj:getClassName() or obj.className or ""
   return className == "PointLight" or className == "SpotLight" or className == "LightBase"
 end
 
 local function getLightPosition(obj)
   if obj and obj.getPosition then
-    local ok, pos = pcall(obj.getPosition, obj)
-    if ok and pos then return pos end
+    local pos = obj:getPosition()
+    if pos then return pos end
   end
   if obj and obj.getWorldBox then
-    local ok, box = pcall(obj.getWorldBox, obj)
-    if ok and box and box.getCenter then return box:getCenter() end
+    local box = obj:getWorldBox()
+    if box and box.getCenter then return box:getCenter() end
   end
 end
 
@@ -327,6 +325,9 @@ local function onEditorGui()
       end
     end
     if tabNo == 3 then
+      selectabilityPresets.drawControls()
+      local presetScoped = selectabilityPresets.getScopeOwner() ~= nil
+      if presetScoped then im.BeginDisabled() end
       drawResetButton("gizmos.visualization.selectable")
       local classes = worldEditorCppApi.getRenderableObjectClassNames()
       for _, name in ipairs(classes) do
@@ -336,12 +337,14 @@ local function onEditorGui()
           if im.Checkbox(name, selectable) then
             editor.setObjectTypeSelectable(name, selectable[0])
             editor.getPreference("gizmos.visualization.selectable")[name] = selectable[0]
+            selectabilityPresets.markCurrent()
             if editor.getPreference("gizmos.visualization.saveVisualizationSettings") then
               editor.savePreferences()
             end
           end
         end
       end
+      if presetScoped then im.EndDisabled() end
     end
     if nItems == 0 then
       im.Text("No match")
@@ -379,6 +382,7 @@ local function onEditorPreferenceValueChanged(path, value)
         editor.setObjectTypeSelectable(name, value[name])
       end
     end
+    selectabilityPresets.syncActivePresetFromMask()
   end
 
   if path == "gizmos.visualization.saveVisualizationSettings" then
@@ -399,8 +403,8 @@ local function onEditorRegisterPreferences(prefsRegistry)
   for _, name in ipairs(classes) do
     local visible = im.BoolPtr(editor.getObjectTypeVisible(name))
     local selectable = im.BoolPtr(editor.getObjectTypeSelectable(name))
-    var.visibleTypesDefault[name] = visible
-    var.selectableTypesDefault[name] = selectable
+    var.visibleTypesDefault[name] = visible[0]
+    var.selectableTypesDefault[name] = selectable[0]
   end
 
   prefsRegistry:registerCategory("gizmos")
@@ -434,6 +438,7 @@ local function registerNavgraphVisualization(tpe, name)
 end
 
 local function onEditorInitialized()
+  selectabilityPresets.initialize()
   editor.updateVisSettings = updateVisSettings
   editor.registerWindow(toolWindowName, im.ImVec2(500,600))
   editor.registerWindow(lightDebugSettingsWindowName, im.ImVec2(300, 155))
@@ -453,6 +458,7 @@ local function onEditorInitialized()
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "TerrainBlock.debugRender", displayName = "Terrain"})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "Engine.Render.DecalMgr.debugRender", displayName = "Decals"})
   editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "LightShadowMap.renderFrustums", displayName = "Light Frustums"})
+  editor.registerVisualizationType({type = editor.varTypes.LuaVar, name = "ClusterShading.heatmapOverlay", displayName = "Cluster Shading: Light Heatmap"})
   editor.registerVisualizationType({type = editor.varTypes.Custom, name = "editorLightDebugVisualization", displayName = "Lights Status",
                                     setter = function(on)
                                       lightDebugVisualizationEnabled = on

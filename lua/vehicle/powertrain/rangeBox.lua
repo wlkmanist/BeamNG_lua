@@ -36,11 +36,24 @@ local function updateSimpleControlButtons(device)
       high = "powertrain_rangebox_high",
       low = "powertrain_rangebox_low"
     }
-    extensions.ui_simplePowertrainControl.setButton("powertrain_device_mode_shortcut_" .. device.name, device.uiName, modeIconLookup[device.mode], nil, nil, string.format("powertrain.toggleDeviceMode(%q)", device.name))
+    extensions.ui_simplePowertrainControl.setButton(
+      "powertrain_device_mode_shortcut_" .. device.name,
+      device.uiName,
+      modeIconLookup[device.mode],
+      nil,
+      nil,
+      string.format("powertrain.toggleDeviceMode(%q)", device.name),
+      nil,
+      device.mode ~= device.defaultMode
+    )
   end
 end
 
 local function setMode(device, mode)
+  if mode ~= "high" and mode ~= "low" then
+    return
+  end
+
   device.mode = mode
   if mode == "high" then
     device:setGearIndex(device.highGearIndex)
@@ -48,6 +61,22 @@ local function setMode(device, mode)
     device:setGearIndex(device.lowGearIndex)
   end
   device:updateSimpleControlButtons()
+end
+
+local function getState(device)
+  device.stateData[device.stateDataNameMode] = device.mode
+  return device.stateData
+end
+
+local function setState(device, data)
+  if not data then
+    return
+  end
+
+  local newMode = data[device.stateDataNameMode]
+  if type(newMode) == "string" and newMode ~= device.mode then
+    device:setMode(newMode)
+  end
 end
 
 local function applyDeformGroupDamage(device, damageAmount)
@@ -191,6 +220,12 @@ local function new(jbeamData)
 
   device.availableModes = {"high", "low"}
   device.mode = device.lowGearIndex == 0 and "low" or "high"
+  device.defaultMode = device.mode
+
+  device.stateData = {}
+  device.stateDataNameMode = device.name .. "Mode"
+  device.getState = getState
+  device.setState = setState
 
   return device
 end

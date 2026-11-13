@@ -4,7 +4,6 @@
 
 local M = {}
 
-
 local function getBaseMission()
   return {
     description = "Mission Description for newIdadssad",
@@ -33,7 +32,7 @@ end
 local function generate(levelIdentifier)
   local levelList = nil
   if levelIdentifier then
-    levelList = {levelIdentifier}  -- limit search to this level
+    levelList = type(levelIdentifier) == "table" and levelIdentifier or {levelIdentifier}
   end
   local data = scenario_scenariosLoader.getLevels('bus', levelList)
   local missions = {}

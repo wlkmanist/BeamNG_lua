@@ -669,9 +669,16 @@ function C:unselect()
 end
 
 function C:setOrbitCameraToSelectedPacenote()
-  if self:selectedPacenote() then
+  local pacenote = self:selectedPacenote()
+  if not pacenote then return end
+
+  local focus = pacenote:getPosForOrbitCamera()
+  if editor.getPreference("camera.general.activeCamera") == "cameraV2" then
+    self.rallyEditor.setFreeCam()
+    editor.cameraLookAtPoint(focus)
+  else
     core_camera.setByName(0, "pacenoteOrbit")
-    core_camera.setRef(0, self:selectedPacenote():getPosForOrbitCamera())
+    core_camera.setRef(0, focus)
   end
 end
 
@@ -1842,11 +1849,22 @@ function C:selectRecentPacenote()
   return false
 end
 
+local function reaimCameraV2AfterNavigation(self, previousPacenoteId)
+  if self.pacenoteToolsState.selected_pn_id ~= previousPacenoteId
+    and editor.getPreference("camera.general.activeCamera") == "cameraV2" then
+    self:setOrbitCameraToSelectedPacenote()
+  end
+end
+
 function C:selectPrevPacenote()
   if not self.path then return end
   if self:cameraPathIsPlaying() then return end
 
-  if self:selectRecentPacenote() then return end
+  local previousPacenoteId = self.pacenoteToolsState.selected_pn_id
+  if self:selectRecentPacenote() then
+    reaimCameraV2AfterNavigation(self, previousPacenoteId)
+    return
+  end
 
   local curr = self.path.pacenotes.objects[self.pacenoteToolsState.selected_pn_id]
   local sorted = self.path.pacenotes.sorted
@@ -1885,13 +1903,18 @@ function C:selectPrevPacenote()
       end
     end
   end
+  reaimCameraV2AfterNavigation(self, previousPacenoteId)
 end
 
 function C:selectNextPacenote()
   if not self.path then return end
   if self:cameraPathIsPlaying() then return end
 
-  if self:selectRecentPacenote() then return end
+  local previousPacenoteId = self.pacenoteToolsState.selected_pn_id
+  if self:selectRecentPacenote() then
+    reaimCameraV2AfterNavigation(self, previousPacenoteId)
+    return
+  end
 
   local curr = self.path.pacenotes.objects[self.pacenoteToolsState.selected_pn_id]
   local sorted = self.path.pacenotes.sorted
@@ -1930,6 +1953,7 @@ function C:selectNextPacenote()
       end
     end
   end
+  reaimCameraV2AfterNavigation(self, previousPacenoteId)
 end
 
 function C:refreshPacenotesTab(snapshot, opts)

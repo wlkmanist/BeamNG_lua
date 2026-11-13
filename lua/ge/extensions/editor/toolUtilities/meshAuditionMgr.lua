@@ -248,9 +248,9 @@ local function handleMeshAuditionAndSelection(meshTarget, onMeshSelectedFunct)
       im.EndTable()
     end
 
-    -- Mesh list scroll panel.
+    -- Mesh list scroll panel. Reserve a row at the bottom for the Close button so the list stops just above it.
     im.Separator()
-    im.BeginChild1("meshListScrollArea", im.ImVec2(-1, -1))
+    im.BeginChild1("meshListScrollArea", im.ImVec2(-1, -im.GetFrameHeightWithSpacing()))
     if im.BeginListBox('##meshListBox', im.ImVec2(-1, -1)) then
       im.Columns(1, "meshSelectListboxColumns")
       local filterStr = ffi.string(meshFilterBuf):lower()
@@ -272,7 +272,13 @@ local function handleMeshAuditionAndSelection(meshTarget, onMeshSelectedFunct)
       im.EndListBox()
     end
     im.EndChild()
-    im.PopItemWidth()
+
+    -- Close button: leaves the audition view (restores the camera and removes the preview mesh) and hides the window,
+    -- so the user doesn't have to hunt for the window's X to dismiss it.
+    if im.Button("Close", im.ImVec2(-1, 0)) then
+      leaveAuditionView()
+    end
+    im.tooltip('Close the static mesh selector (keeps the current selection).')
   else
     leaveAuditionView()
   end

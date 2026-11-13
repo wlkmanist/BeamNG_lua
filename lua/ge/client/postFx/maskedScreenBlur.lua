@@ -6,8 +6,7 @@
 local screenBlurFX_YShader = scenetree.findObject("ScreenBlurFX_YShader")
 if not screenBlurFX_YShader then
   screenBlurFX_YShader = createObject("ShaderData")
-  screenBlurFX_YShader.DXVertexShaderFile    = "shaders/common/postFx/dof/DOF_Gausian_V.hlsl"
-  screenBlurFX_YShader.DXPixelShaderFile     = "shaders/common/postFx/dof/DOF_Gausian_P.hlsl"
+  screenBlurFX_YShader.DXComputShaderName    = "shaders/common/postFx/dof/DOF_Gausian.cs.hlsl"
   screenBlurFX_YShader.pixVersion = 5.0
   screenBlurFX_YShader.defines = "BLUR_DIR=float2(0.0,1.0)"
   screenBlurFX_YShader:registerObject("ScreenBlurFX_YShader")
@@ -36,8 +35,7 @@ end
 local simpleBlendShader = scenetree.findObject("SimpleBlendShader")
 if not simpleBlendShader then
   simpleBlendShader = createObject("ShaderData")
-  simpleBlendShader.DXVertexShaderFile    = "shaders/common/postFx/simpleBlendV.hlsl"
-  simpleBlendShader.DXPixelShaderFile     = "shaders/common/postFx/simpleBlendP.hlsl"
+  simpleBlendShader.DXComputShaderName    = "shaders/common/postFx/simpleBlend.cs.hlsl"
   simpleBlendShader.pixVersion = 5.0
   simpleBlendShader:registerObject("SimpleBlendShader")
 end
@@ -61,7 +59,7 @@ if not screenBlurFX then
   screenBlurFX.isEnabled = true
   screenBlurFX:setField("renderTime", 0, "PFXAfterBin")
   screenBlurFX:setField("renderBin", 0, "OverlayRender")
-  screenBlurFX:setField("shader", 0, "PFX_PassthruShader")
+  screenBlurFX:setField("shader", 0, "PFX_PassthruComputeShader")
   screenBlurFX:setField("stateBlock", 0, "AL_FormatTokenState")
   screenBlurFX:setField("texture", 0, "$backBuffer")
   screenBlurFX:setField("target", 0, "$outTex")

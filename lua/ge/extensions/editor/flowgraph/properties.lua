@@ -241,7 +241,7 @@ function C:drawItemHeader( item)
   a.y = a.y - yy
   b = im.ImVec2(a.x + b.x + xx * 2, a.y + im.GetFontSize() + 16)
   local uv = im.ImVec2(0.5, 0.1)
-  im.ImDrawList_AddImageRounded(im.GetWindowDrawList(), self.headerTexture.texId, a, b, im.ImVec2(0, 0), uv, im.GetColorU322(item.color), 0, 0)
+  im.ImDrawList_AddImageRounded(im.GetWindowDrawList(), self.headerTexture.tex:getID(), a, b, im.ImVec2(0, 0), uv, im.GetColorU322(item.color), 0, 0)
 
   im.PushItemWidth(100)
   im.Dummy(im.ImVec2(0,24))

@@ -62,22 +62,21 @@ M.drawRoads = function(p, radius, td, debugSettings, camPos, scale, dpi  )
     --if p then p:add("Start Roads") end
     local roadBgTransparentBlack = ui_apps_minimap_utils.colors.roadBgTransparentBlack
     local scaleInverse = 1/(scale+1e-10)
-    local worldToMapXY = ui_apps_minimap_utils.worldToMapXY
-    local tdlineRoundEnd = td.lineRoundEnd
+    local worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset = ui_apps_minimap_utils.getWorldToMapTransform()
+    local tdlineRoundEndWithBackground = td.lineRoundEndWithBackground
     dpi = dpi or 1
     local constantWidth = 2 * scaleInverse * dpi
     local constantWidthBg = constantWidth + 2 * dpi
     local layerBG = layers.ROADS_BG
     local layerFG = layers.ROADS_FG
+    local queryMinX, queryMinY = camPos.x-radius, camPos.y-radius
+    local queryMaxX, queryMaxY = camPos.x+radius, camPos.y+radius
 
-    for lIdx in kdNodes:queryNotNested(camPos.x-radius, camPos.y-radius, camPos.x+radius, camPos.y+radius) do
+    for lIdx in kdNodes:queryNotNested(queryMinX, queryMinY, queryMaxX, queryMaxY) do
       -- stats.navgraphRoadsVisible = stats.navgraphRoadsVisible + 1
-      local s1X, s1Y = worldToMapXY(links[lIdx  ], links[lIdx+1])
-      local s2X, s2Y = worldToMapXY(links[lIdx+2], links[lIdx+3])
       local clr = links[lIdx+4]
 
-      tdlineRoundEnd(td, s1X, s1Y, s2X, s2Y, constantWidthBg, constantWidthBg, 0, roadBgTransparentBlack, roadBgTransparentBlack, 0, 0, 0, layerBG)
-      tdlineRoundEnd(td, s1X, s1Y, s2X, s2Y, constantWidth, constantWidth, 0, clr, clr, 0, 0, 0, layerFG)
+      tdlineRoundEndWithBackground(td, links[lIdx], links[lIdx+1], links[lIdx+2], links[lIdx+3], constantWidth, constantWidthBg, clr, roadBgTransparentBlack, worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset, layerFG, layerBG)
     end
 
     if p then p:add("Roads") end

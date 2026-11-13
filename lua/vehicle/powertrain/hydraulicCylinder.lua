@@ -10,6 +10,8 @@ local abs = math.abs
 local sqrt = math.sqrt
 local pi = math.pi
 
+local positionModeDeadband = 0.005
+
 --**/VALVE LOGIC**--
 --types of dcv: (directional control valve)
 --float center: A B connect to T, P blocked, so, slipForce = 0, pumpFlow is blocked
@@ -56,7 +58,7 @@ local function getRawCylinderStage(cylinder)
     cylinder.currentStageId = 1
     return firstStage
   end
-  if currentExtend > lastStage.stageExtendEnd then
+  if currentExtend >= lastStage.stageExtendEnd then
     cylinder.currentStageId = #cylinder.stages
     return lastStage
   end
@@ -110,7 +112,7 @@ local function updateFloat(cylinder, inputPressure, dt)
   local invBeamCount = cylinder.invBeamCount
   local speedLimit = cylinder.maxSpeed
   local flowDragCoef = cylinder.minimumDragCoef
-  local frictionForce = cylinder.frictionCoef * invBeamCount
+  local frictionForce = cylinder.frictionCoef
   local cylinderActiveArea = stage.cylinderActiveArea
   local valvePosition = cylinder.valvePosition
   local valveSign = cylinder.valveSign
@@ -160,9 +162,8 @@ local function updateClosed(cylinder, inputPressure, dt)
   local speedLimit = cylinder.maxSpeed
   local slipSpeedLimit = cylinder.cylinderReliefSlipSpeedLimit
   local flowDragCoef = cylinder.flowDragCoef
-  local frictionForce = cylinder.frictionCoef * invBeamCount
+  local frictionForce = cylinder.frictionCoef
   local cylinderActiveArea = stage.cylinderActiveArea
-  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea
   local valveSign = cylinder.valveSign
   --cylinder.inputPressure = inputPressure --debug
 
@@ -174,6 +175,7 @@ local function updateClosed(cylinder, inputPressure, dt)
     end
   end
 
+  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea * invBeamCount
   local cylinderForce = inputPressure * cylinderActiveArea * valveSign
   local cylinderForceSmooth = cylinder.cylinderForceSmoother:get(cylinderForce)
   cylinderForce = sign(cylinderForce) * min(abs(cylinderForceSmooth), abs(cylinderForce)) * invBeamCount
@@ -209,9 +211,8 @@ local function updateTandem(cylinder, inputPressure, dt)
   local speedLimit = cylinder.maxSpeed
   local slipSpeedLimit = cylinder.cylinderReliefSlipSpeedLimit
   local flowDragCoef = cylinder.flowDragCoef
-  local frictionForce = cylinder.frictionCoef * invBeamCount
+  local frictionForce = cylinder.frictionCoef
   local cylinderActiveArea = stage.cylinderActiveArea
-  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea
   local valveSign = cylinder.valveSign
   --cylinder.inputPressure = inputPressure --debug
 
@@ -223,6 +224,7 @@ local function updateTandem(cylinder, inputPressure, dt)
     end
   end
 
+  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea * invBeamCount
   local cylinderForce = inputPressure * cylinderActiveArea * valveSign
   local cylinderForceSmooth = cylinder.cylinderForceSmoother:get(cylinderForce)
   cylinderForce = sign(cylinderForce) * min(abs(cylinderForceSmooth), abs(cylinderForce)) * invBeamCount
@@ -262,19 +264,11 @@ local function updateDrop(cylinder, inputPressure, dt)
   local speedLimit = cylinder.maxSpeed
   local slipSpeedLimit = cylinder.cylinderReliefSlipSpeedLimit
   local flowDragCoef = cylinder.flowDragCoef
-  local frictionForce = cylinder.frictionCoef * invBeamCount
+  local frictionForce = cylinder.frictionCoef
   local cylinderActiveArea = stage.cylinderActiveArea
-  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea
   local valvePosition = cylinder.valvePosition
   local valveSign = cylinder.valveSign
   --cylinder.inputPressure = inputPressure --debug
-
-  if valvePosition < cylinder.dropInputThreshold then
-    local dropInput = linearScale(abs(valvePosition), abs(cylinder.dropInputThreshold), 1, 0, 1)
-    slipForce = linearScale(dropInput, 0, 1, slipForce, 0)
-    slipSpeedLimit = linearScale(dropInput * dropInput, 0, 1, 0, cylinder.cylinderReliefSlipSpeedLimit)
-    inputPressure = 0
-  end
 
   if cylinder.hasRegen then
     if valveSign == cylinder.regenDirection then
@@ -282,6 +276,14 @@ local function updateDrop(cylinder, inputPressure, dt)
       flowDragCoef = flowDragCoef * stage.invRegenAreaRatio
       cylinderActiveArea = stage.shaftArea
     end
+  end
+
+  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea * invBeamCount
+  if valvePosition < cylinder.dropInputThreshold then
+    local dropInput = linearScale(abs(valvePosition), abs(cylinder.dropInputThreshold), 1, 0, 1)
+    slipForce = linearScale(dropInput, 0, 1, slipForce, 0)
+    slipSpeedLimit = linearScale(dropInput * dropInput, 0, 1, 0, cylinder.cylinderReliefSlipSpeedLimit)
+    inputPressure = 0
   end
 
   local cylinderForce = inputPressure * cylinderActiveArea * valveSign
@@ -329,9 +331,8 @@ local function updateBypass(cylinder, inputPressure, dt)
   local bypassSpeedLimit = cylinder.maxBypassSpeed
   local slipSpeedLimit = cylinder.cylinderReliefSlipSpeedLimit
   local flowDragCoef = cylinder.flowDragCoef
-  local frictionForce = cylinder.frictionCoef * invBeamCount
+  local frictionForce = cylinder.frictionCoef
   local cylinderActiveArea = stage.cylinderActiveArea
-  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea
   local valvePosition = cylinder.valvePosition
   local valveSign = cylinder.valveSign
   --cylinder.inputPressure = inputPressure --debug
@@ -345,6 +346,7 @@ local function updateBypass(cylinder, inputPressure, dt)
     end
   end
 
+  local slipForce = cylinder.cylinderReliefPressure * cylinderActiveArea * invBeamCount
   local cylinderForce = inputPressure * cylinderActiveArea * valveSign
   local cylinderForceSmooth = cylinder.cylinderForceSmoother:get(cylinderForce)
   cylinderForce = sign(cylinderForce) * min(abs(cylinderForceSmooth), abs(cylinderForce)) * invBeamCount
@@ -416,6 +418,15 @@ local function getValvePosition(valvePosition, cylinder, dt)
     local usePID = true
     local error = targetPosition - currentPosition
 
+    if abs(error) <= positionModeDeadband then
+      cylinder.valveMode = "direct"
+      cylinder.positionModeTargetPositionPID:reset()
+      -- if cylinder.name == "liftR" then
+      --   print(cylinder.name .. " -> direct mode")
+      -- end
+      return valvePosition
+    end
+
     if usePID then
       ------ pid way ------
       closedLoopValvePosition = cylinder.positionModeTargetPositionPID:get(currentPosition, targetPosition, dt)
@@ -434,13 +445,6 @@ local function getValvePosition(valvePosition, cylinder, dt)
       closedLoopValvePosition = cylinder.positionModeVelocityLineFitting:getX(targetVelocity)
     end
 
-    --if we reached our target, return to direct mode
-    if abs(error) < 0.005 then
-      cylinder.valveMode = "direct"
-    -- if cylinder.name == "liftR" then
-    --   print(cylinder.name .. " -> direct mode")
-    -- end
-    end
     return clamp(closedLoopValvePosition, -1, 1)
   end
 end
@@ -517,11 +521,19 @@ local function reset(cylinder, jbeamData)
   cylinder.cylinderForceSmoother:reset()
   cylinder.bypassSmoother:reset()
   cylinder.velocity = 0
-  cylinder.currentExtend = 0
-  cylinder.currentExtendPercent = 0
+
+  local currentExtend = 0
+  for _, cid in ipairs(cylinder.beamCids) do
+    currentExtend = currentExtend + obj:getBeamLength(cid)
+  end
+  cylinder.currentExtend = cylinder.beamCount > 0 and currentExtend * cylinder.invBeamCount or 0
+  cylinder.currentExtendPercent = cylinder.beamCount > 0 and linearScale(cylinder.currentExtend, cylinder.minExtend, cylinder.maxExtend, 0, 1) or 0
 
   cylinder.valvePosition = 0
   cylinder.valveSign = 0
+  cylinder.valveMode = "direct"
+  cylinder.targetPosition = clamp(cylinder.currentExtendPercent, 0, 1)
+  cylinder.positionModeTargetPositionPID:reset()
 
   for _, stage in ipairs(cylinder.stages) do
     cylinder:updateStageActiveArea(stage)
@@ -549,7 +561,7 @@ local function reset(cylinder, jbeamData)
 end
 
 local function getState(cylinder)
-  cylinder.stateData[cylinder.stateDataNameTargetPosition] = cylinder.currentExtendPercent
+  cylinder.stateData[cylinder.stateDataNameTargetPosition] = clamp(cylinder.currentExtendPercent, 0, 1)
   return cylinder.stateData
 end
 
@@ -559,10 +571,20 @@ local function setState(cylinder, data)
   end
 
   local targetPosition = data[cylinder.stateDataNameTargetPosition]
-  if targetPosition then
-    if abs(cylinder.currentExtendPercent - targetPosition) > 0.005 then
-      cylinder.targetPosition = targetPosition
+  if type(targetPosition) == "number" and targetPosition == targetPosition and targetPosition ~= math.huge and targetPosition ~= -math.huge then
+    targetPosition = clamp(targetPosition, 0, 1)
+    cylinder.targetPosition = targetPosition
+
+    if abs(cylinder.currentExtendPercent - targetPosition) > positionModeDeadband then
+      if cylinder.valveMode ~= "position" then
+        cylinder.positionModeTargetPositionPID:reset()
+      end
       cylinder.valveMode = "position"
+    else
+      if cylinder.valveMode ~= "direct" then
+        cylinder.positionModeTargetPositionPID:reset()
+      end
+      cylinder.valveMode = "direct"
     end
   end
 end
@@ -646,7 +668,7 @@ local function new(cylinderData, pumpDevice)
   --default to single stage get
   cylinder.getCylinderStage = getCylinderStageConventional
 
-  if not cylinderData.stages then
+  if not cylinderData.stages or #cylinderData.stages == 0 then
     local shaftDiameter = max(cylinderData.shaftDiameter or 0, 0.0001)
     local pistonDiameter = max(cylinderData.pistonDiameter or 0, 0.001)
     local defaultStage = {
@@ -677,7 +699,9 @@ local function new(cylinderData, pumpDevice)
       table.insert(tempStages, stage)
     end
 
-    if stageCount > 1 then
+    if stageCount == 1 then
+      table.insert(cylinder.stages, tempStages[1])
+    elseif stageCount > 1 then
       --if we have multiple stages, use the telescopic get method
       cylinder.getCylinderStage = getCylinderStageTelescopic
 
@@ -745,7 +769,7 @@ local function new(cylinderData, pumpDevice)
   cylinder:setValveType(cylinder.valveType)
 
   local currentExtend = 0
-  for _, bt in pairs(cylinderData.beamTags) do
+  for _, bt in pairs(cylinderData.beamTags or {}) do
     if beamstate.tagBeamMap[bt] then
       for _, cid in pairs(beamstate.tagBeamMap[bt]) do
         table.insert(cylinder.beamCids, cid)
@@ -756,9 +780,17 @@ local function new(cylinderData, pumpDevice)
       end
     end
   end
-  cylinder.invBeamCount = 1 / cylinder.beamCount
-  cylinder.currentExtend = currentExtend * cylinder.invBeamCount
-  cylinder.currentExtendPercent = linearScale(cylinder.currentExtend, cylinder.minExtend, cylinder.maxExtend, 0, 1)
+  if cylinder.beamCount > 0 then
+    cylinder.invBeamCount = 1 / cylinder.beamCount
+    cylinder.currentExtend = currentExtend * cylinder.invBeamCount
+    cylinder.currentExtendPercent = linearScale(cylinder.currentExtend, cylinder.minExtend, cylinder.maxExtend, 0, 1)
+  else
+    cylinder.invBeamCount = 0
+    cylinder.currentExtend = 0
+    cylinder.currentExtendPercent = 0
+    cylinder.update = updateDummy
+    log("E", "hydraulicCylinder.new", "cylinderName: " .. tostring(cylinder.name) .. ", pumpName: " .. tostring(cylinder.connectedPump.name))
+  end
 
   cylinder.initialStageId = 1
   for stageId, stage in ipairs(cylinder.stages) do

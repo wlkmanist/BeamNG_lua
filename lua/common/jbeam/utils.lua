@@ -12,6 +12,7 @@ local stringBuffer = require('string.buffer')
 local byte = string.byte
 local t_insert, t_clear, t_sort = table.insert, table.clear, table.sort
 local rad, deg, min, max = math.rad, math.deg, math.min, math.max
+local sin, cos, sqrt, atan2 = math.sin, math.cos, math.sqrt, math.atan2
 
 M.ignoreSections = {maxIDs=true, options=true}
 
@@ -121,14 +122,30 @@ local function addRotator(vehicle, wheelKey, wheel)
   end
 end
 
-local MatrixF = MatrixF or nop -- allows bananabench to run if MatrixF is not defined
-
-local cacheOpsMat, cacheNodeRots, cacheNodeOffsets, cacheNodeMoves, cachePosXSign, cacheOpCount = MatrixF(true), {}, {}, {}, 0, 0
-local cachePosX, cachePosY, cachePosZ = 0, 0, 0
-local cacheUsingMatrixMath = false
+local cacheNodeRots, cacheNodeOffsets, cacheNodeMoves, cachePosXSign, cacheOpCount = {}, {}, {}, 0, 0
+local cacheRot, cacheHasRot, cachePosX, cachePosY, cachePosZ = quat(0, 0, 0, 1), false, 0, 0, 0
 local nodeRots, nodeOffsets, nodeMoves, opMin, opMax, opCount = {}, {}, {}, math.huge, -math.huge, 0
-local tmpMat1, tmpMat2 = MatrixF(true), MatrixF(true)
+local tmpQuat1, tmpQuat2 = quat(0, 0, 0, 1), quat(0, 0, 0, 1)
 local tmpVec1 = vec3()
+
+-- radians, same euler parametrization as MatrixF (ZXY intrinsic)
+local function setQuatFromEuler(q, x, y, z)
+  x, y, z = x * 0.5, y * 0.5, z * 0.5
+  local sx, cx, sy, cy, sz, cz = sin(x), cos(x), sin(y), cos(y), sin(z), cos(z)
+  q:set(cz*sx*cy - sz*cx*sy, cz*cx*sy + sz*sx*cy, sz*cx*cy + cz*sx*sy, cz*cx*cy - sz*sx*sy)
+end
+
+local function quatToEuler(q)
+  local x, y, z, w = q.x, q.y, q.z, q.w
+  local xx, yy, zz, ww = x*x, y*y, z*z, w*w
+  local cxsy, cxcy = 2 * (w*y - x*z), ww - xx - yy + zz
+  local cx = sqrt(cxsy*cxsy + cxcy*cxcy)
+  local ex = atan2(2 * (y*z + w*x), cx)
+  if cx < 1e-7 then -- gimbal lock
+    return ex, 0, atan2(2 * (x*y + w*z), ww + xx - yy - zz)
+  end
+  return ex, atan2(cxsy, cxcy), atan2(2 * (w*z - x*y), ww - xx + yy - zz)
+end
 
 local function getNodeRotOffsetMoves(jbeamData)
   table.clear(nodeRots)
@@ -205,77 +222,44 @@ local function updateNodeTransformCache(posX)
   table.clear(cacheNodeOffsets)
   table.clear(cacheNodeMoves)
   cachePosXSign, cacheOpCount = sign(posX), opCount
-  cacheUsingMatrixMath = next(nodeRots) ~= nil
+  cacheHasRot = next(nodeRots) ~= nil
+  cacheRot:set(0, 0, 0, 1)
+  cachePosX, cachePosY, cachePosZ = 0, 0, 0
 
-  if cacheUsingMatrixMath then
-    cacheOpsMat:identity()
-    for i = opMin, opMax do
-      -- First apply rotation (if any)
-      if nodeRots[i] then
-        local op = nodeRots[i]
-        if op.px or op.py or op.pz then
-          local px = (op.px and type(op.px)=='number') and op.px or 0
-          local py = (op.py and type(op.py)=='number') and op.py or 0
-          local pz = (op.pz and type(op.pz)=='number') and op.pz or 0
+  for i = opMin, opMax do
+    -- First apply rotation (if any)
+    if nodeRots[i] then
+      local op = nodeRots[i]
+      local px = type(op.px) == 'number' and op.px or 0
+      local py = type(op.py) == 'number' and op.py or 0
+      local pz = type(op.pz) == 'number' and op.pz or 0
 
-          tmpMat1:identity()
-          tmpMat2:identity()
-          tmpVec1:set(px, py, pz)
-          tmpMat1:setPosition(tmpVec1)
-
-          tmpVec1:set(rad(-op.x), rad(-op.y), rad(-op.z))
-          tmpMat2:setFromEuler(tmpVec1)
-          tmpMat1:mul(tmpMat2)
-
-          tmpMat2:identity()
-          tmpVec1:set(-px, -py, -pz)
-          tmpMat2:setPosition(tmpVec1)
-          tmpMat1:mul(tmpMat2)
-        else
-          tmpVec1:set(rad(-op.x), rad(-op.y), rad(-op.z))
-          tmpMat1:setFromEuler(tmpVec1)
-        end
-        cacheOpsMat:mul(tmpMat1)
-        cacheNodeRots[i] = nodeRots[i]
-      end
-
-      -- Then apply offset (if any)
-      if nodeOffsets[i] then
-        local op = nodeOffsets[i]
-        tmpMat1:identity()
-        tmpVec1:set(cachePosXSign * op.x, op.y, op.z)
-        tmpMat1:setPosition(tmpVec1)
-        cacheOpsMat:mul(tmpMat1)
-        cacheNodeOffsets[i] = nodeOffsets[i]
-      end
-
-      -- Finally apply move (if any)
-      if nodeMoves[i] then
-        local op = nodeMoves[i]
-        tmpMat1:identity()
-        tmpVec1:set(op.x, op.y, op.z)
-        tmpMat1:setPosition(tmpVec1)
-        cacheOpsMat:mul(tmpMat1)
-        cacheNodeMoves[i] = nodeMoves[i]
-      end
+      setQuatFromEuler(tmpQuat1, rad(-op.x), rad(-op.y), rad(-op.z))
+      tmpVec1:set(px, py, pz)
+      tmpVec1:setRotate(tmpQuat1)
+      tmpVec1:set(px - tmpVec1.x, py - tmpVec1.y, pz - tmpVec1.z)
+      tmpVec1:setRotate(cacheRot)
+      cachePosX, cachePosY, cachePosZ = cachePosX + tmpVec1.x, cachePosY + tmpVec1.y, cachePosZ + tmpVec1.z
+      cacheRot:setMul2(tmpQuat1, cacheRot)
+      cacheNodeRots[i] = nodeRots[i]
     end
-  else
-    cachePosX, cachePosY, cachePosZ = 0, 0, 0
 
-    for i = opMin, opMax do
-      -- Apply offset (if any)
-      if nodeOffsets[i] then
-        local op = nodeOffsets[i]
-        cachePosX, cachePosY, cachePosZ = cachePosX + cachePosXSign * op.x, cachePosY + op.y, cachePosZ + op.z
-        cacheNodeOffsets[i] = nodeOffsets[i]
-      end
+    -- Then apply offset (if any)
+    if nodeOffsets[i] then
+      local op = nodeOffsets[i]
+      tmpVec1:set(cachePosXSign * op.x, op.y, op.z)
+      tmpVec1:setRotate(cacheRot)
+      cachePosX, cachePosY, cachePosZ = cachePosX + tmpVec1.x, cachePosY + tmpVec1.y, cachePosZ + tmpVec1.z
+      cacheNodeOffsets[i] = nodeOffsets[i]
+    end
 
-      -- Apply move (if any)
-      if nodeMoves[i] then
-        local op = nodeMoves[i]
-        cachePosX, cachePosY, cachePosZ = cachePosX + op.x, cachePosY + op.y, cachePosZ + op.z
-        cacheNodeMoves[i] = nodeMoves[i]
-      end
+    -- Finally apply move (if any)
+    if nodeMoves[i] then
+      local op = nodeMoves[i]
+      tmpVec1:set(op.x, op.y, op.z)
+      tmpVec1:setRotate(cacheRot)
+      cachePosX, cachePosY, cachePosZ = cachePosX + tmpVec1.x, cachePosY + tmpVec1.y, cachePosZ + tmpVec1.z
+      cacheNodeMoves[i] = nodeMoves[i]
     end
   end
 end
@@ -286,14 +270,12 @@ local function getPosAfterNodeRotateOffsetMove(jbeamData, x, y, z)
 
   updateNodeTransformCache(x)
 
-  -- cacheUsingMatrixMath is true if there are any node rotations
-  if cacheUsingMatrixMath then
+  if cacheHasRot then
     tmpVec1:set(x, y, z)
-    tmpVec1:set(cacheOpsMat:mulP3F(tmpVec1))
-    return tmpVec1.x, tmpVec1.y, tmpVec1.z
-  else
-    return cachePosX + x, cachePosY + y, cachePosZ + z
+    tmpVec1:setRotate(cacheRot)
+    x, y, z = tmpVec1:xyz()
   end
+  return x + cachePosX, y + cachePosY, z + cachePosZ
 end
 
 local function getFlexbodyPosRotAfterNodeRotateOffsetMove(jbeamData, x, y, z, rx, ry, rz)
@@ -302,17 +284,15 @@ local function getFlexbodyPosRotAfterNodeRotateOffsetMove(jbeamData, x, y, z, rx
 
   updateNodeTransformCache(x)
 
-  -- cacheUsingMatrixMath is true if there are any node rotations
-  if cacheUsingMatrixMath then
-    tmpVec1:set(rad(-rx), rad(-ry), rad(-rz))
-    tmpMat1:setFromEuler(tmpVec1)
-    tmpMat1:mul(cacheOpsMat)
+  if cacheHasRot then
     tmpVec1:set(x, y, z)
-    tmpVec1:set(cacheOpsMat:mulP3F(tmpVec1))
-    local eulerRot = tmpMat1:toEuler()
-    return tmpVec1.x, tmpVec1.y, tmpVec1.z, deg(-eulerRot.x), deg(-eulerRot.y), deg(-eulerRot.z)
+    tmpVec1:setRotate(cacheRot)
+    setQuatFromEuler(tmpQuat1, rad(-rx), rad(-ry), rad(-rz))
+    tmpQuat1:setMul2(cacheRot, tmpQuat1)
+    local ex, ey, ez = quatToEuler(tmpQuat1)
+    return tmpVec1.x + cachePosX, tmpVec1.y + cachePosY, tmpVec1.z + cachePosZ, deg(-ex), deg(-ey), deg(-ez)
   else
-    return cachePosX + x, cachePosY + y, cachePosZ + z
+    return x + cachePosX, y + cachePosY, z + cachePosZ
   end
 end
 
@@ -327,18 +307,15 @@ local function getPosRotBeforeNodeRotateOffsetMove(jbeamData, x, y, z, rx, ry, r
   local function calculatePosRot(posXSign)
     updateNodeTransformCache(posXSign)
 
-    -- cacheUsingMatrixMath is true if there are any node rotations
-    if cacheUsingMatrixMath then
-      local opsMat = cacheOpsMat:copy()
-      opsMat:inverse()
-
-      tmpVec1:set(rad(-rx), rad(-ry), rad(-rz))
-      tmpMat1:setFromEuler(tmpVec1)
-      tmpMat1:mul(opsMat)
-      tmpVec1:set(x, y, z)
-      tmpVec1:set(opsMat:mulP3F(tmpVec1))
-      local eulerRot = tmpMat1:toEuler()
-      return tmpVec1.x, tmpVec1.y, tmpVec1.z, deg(-eulerRot.x), deg(-eulerRot.y), deg(-eulerRot.z)
+    if cacheHasRot then
+      tmpQuat1:set(cacheRot)
+      tmpQuat1:inverse()
+      tmpVec1:set(x - cachePosX, y - cachePosY, z - cachePosZ)
+      tmpVec1:setRotate(tmpQuat1)
+      setQuatFromEuler(tmpQuat2, rad(-rx), rad(-ry), rad(-rz))
+      tmpQuat2:setMul2(tmpQuat1, tmpQuat2)
+      local ex, ey, ez = quatToEuler(tmpQuat2)
+      return tmpVec1.x, tmpVec1.y, tmpVec1.z, deg(-ex), deg(-ey), deg(-ez)
     else
       return x - cachePosX, y - cachePosY, z - cachePosZ, rx, ry, rz
     end

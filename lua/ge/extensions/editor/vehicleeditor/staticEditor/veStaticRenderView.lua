@@ -593,7 +593,7 @@ local function _windowContent(wndID)
 
   -- Main Render View Image
   im.SetCursorPos(startCursorPos)
-  im.Image(mainRVTexObj.texId, mainRVSize)
+  im.Image(mainRVTexObj.tex:getID(), mainRVSize)
   _drawContextMenu(wndID)
   if im.IsItemClicked(1) then
     im.OpenPopup('viewcontrol' .. tostring(wndData.wndName))
@@ -603,7 +603,7 @@ local function _windowContent(wndID)
   im.SetCursorPos(axisGizmoRVPos)
   local axisGizmoRVScreenPos = im.GetCursorScreenPos()
 
-  im.Image(axisGizmoRVTexObj.texId, axisGizmoRVSize)
+  im.Image(axisGizmoRVTexObj.tex:getID(), axisGizmoRVSize)
 
   wndData.mainRVData.imagePos = mainRVScreenPos
   wndData.mainRVData.imageSize = mainRVSize

@@ -23,9 +23,9 @@ local function onDriftScoreChanged(data)
 end
 
 local function onDriftSpotStarted(data)
-  if multiplayer_gameplayScoreboard then
+  if multiplayer_multiplayerScoreboard then
     hasDriftSpotStarted = true
-    scoreboardHandle = multiplayer_gameplayScoreboard.startNewScoreboard({entries = {{key = "potentialScore", name = "Potential Score", order = 1, type = "points"}, {key = "driftLevel", name = "", order = 2, type ="verticalBar"}, {key = "score", name = "Score", order = 2, type = "points"}}, orderBy = {key="score", direction="desc"}}, data.lineId)
+    scoreboardHandle = multiplayer_multiplayerScoreboard.startNewScoreboard({entries = {{key = "potentialScore", name = "Potential Score", order = 1, type = "points"}, {key = "driftLevel", name = "", order = 2, type ="verticalBar"}, {key = "score", name = "Score", order = 2, type = "points"}}, orderBy = {key="score", direction="desc"}}, data.lineId)
   end
 end
 

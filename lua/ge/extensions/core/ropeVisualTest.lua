@@ -2010,7 +2010,7 @@ local function onUpdate(dt)
 end
 
 -- Initialize ropes on module load
-local function onExtensionLoaded(serializedData)
+local function onDeserialized(serializedData)
   -- Restore UI state from serialized data
   if serializedData and serializedData.uiState then
     local ui = serializedData.uiState
@@ -2129,9 +2129,9 @@ local function onExtensionLoaded(serializedData)
 end
 
 -- Exports
-M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 M.onUpdate = onUpdate
 
 return M

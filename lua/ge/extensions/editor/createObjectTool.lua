@@ -25,7 +25,10 @@ local objectIdToSelect
 local placeAtCameraPos = false
 local newStaticMesh
 local lastUsedStaticMeshFolder = ""
-local lastUsedShapeName = "/core/art/shapes/no_mesh.dae"
+-- placeholder shape used when a TSStatic is created without a mesh, so it has a
+-- valid shape before it is registered/added (otherwise onAdd errors "No shape set")
+local noMeshShapePath = "/core/art/shapes/no_mesh.dae"
+local lastUsedShapeName = noMeshShapePath
 local staticMeshPickFilenameShown = false
 local angleAroundUpValue = 0
 local fieldsSetOnBuildFunc = {}
@@ -288,6 +291,15 @@ local function createCustomClassObject(clsName, parentNode)
     obj = Sim.upcast(obj)
     if obj then
       extensions.hook("onEditorCustomClassBuildFunc", obj)
+      -- TSStatic needs a valid shape before it is registered/added; without one,
+      -- onAdd logs "No shape set" and getShape returns null. Fall back to the
+      -- placeholder no-mesh shape when nothing set a shapeName.
+      if obj.isSubClassOf and obj:isSubClassOf("TSStatic") then
+        local shapeName = obj:getField("shapeName", "")
+        if not shapeName or shapeName == "" then
+          obj:setField("shapeName", 0, noMeshShapePath)
+        end
+      end
       -- now we can register it (will call onAdd)
       local newName = getNextNumberedName(clsName)
       obj:registerObject(newName)
@@ -342,6 +354,72 @@ local function navigateList(up)
     else
       selectedButtonListIndex = math.min(selectedButtonListIndex + 1, numberOfButtons)
     end
+  end
+end
+
+-- build function for classes created via the "Other classes" picker: preserves the
+-- legacy custom-class hook and gives TSStatic a placeholder shape so it is visible
+-- while being placed and does not error with "No shape set" on register
+local function buildCustomClass(obj)
+  extensions.hook("onEditorCustomClassBuildFunc", obj)
+  if obj.isSubClassOf and obj:isSubClassOf("TSStatic") then
+    local shapeName = obj:getField("shapeName", "")
+    if not shapeName or shapeName == "" then
+      obj:setField("shapeName", 0, noMeshShapePath)
+      clearBuildFuncFields(obj:getClassName())
+      registerBuildFuncField(obj:getClassName(), "shapeName", 0, noMeshShapePath)
+    end
+  end
+  return true
+end
+
+-- shared setup used by both the per-class toolbar buttons and the "Other classes"
+-- Create button, so custom classes get the same cursor-based placement (drag it around
+-- in the viewport, click to set position) as the built-in create-object buttons
+local function beginCreateObjectFromItem(item)
+  -- set edit mode to 'createObject', CreateObjectTool can also be open in objectSelect mode.
+  currentParent = getCurrentSelectedParent()
+  editor.selectEditMode(editor.editModes.createObject)
+
+  -- reset static mesh shape picker dialog and mouse wheel rotation angle
+  staticMeshPickFilenameShown = false
+  angleAroundUpValue = 0
+
+  -- delete the old instance if any, if we were hovering it in the viewport
+  if currentClassInstance then
+    if currentClassInstance:getGroup() then
+      currentClassInstance:getGroup():removeObject(currentClassInstance)
+    end
+    currentClassInstance:delete()
+    currentClassInstance = nil
+  end
+  currentCreateObjectItem = item
+  currentClassInstance = createObjectInstance(item.classname, item)
+
+  if currentClassInstance then
+    if currentClassInstance.disableCollision then
+      currentClassInstance:disableCollision()
+    end
+    editor.selectObjectById(currentClassInstance:getID())
+    -- do not repeat instance creation with mouse click in the scene, if this is not a
+    -- scene object, for example groups, or single instance is true, thus create only when toolbar button pressed
+    if not currentClassInstance:isSubClassOf("SceneObject") or item.singleInstance then
+      if currentClassInstance.enableCollision then
+        currentClassInstance:enableCollision()
+      end
+
+      if currentParent then
+        currentParent:addObject(currentClassInstance)
+      end
+
+      editor.history:commitAction("CreateObject", {parent = currentParent, classname = item.classname, name = currentClassInstance:getName(), objectID = currentClassInstance:getID()}, createObjectUndo, createObjectRedo, true)
+
+      objectIdToSelect = currentClassInstance:getID()
+      currentClassInstance = nil
+      currentCreateObjectItem = nil
+    end
+
+    editor.setDirty()
   end
 end
 
@@ -455,13 +533,14 @@ local function createObjectToolbar()
     end
 
     if imgui.Button("Create") then
-      --  Creates object under current selected node in scenetree
-      local obj = createCustomClassObject(currentCustomClassName)
-      --  Selects created object
-      if obj then editor.selectObjectById(obj:getId()) end
+      -- start cursor-based placement (drag in the viewport, click to set position),
+      -- same as the built-in create-object buttons; non-scene objects are added immediately
+      if currentCustomClassName then
+        beginCreateObjectFromItem({classname = currentCustomClassName, title = currentCustomClassName, buildFunc = buildCustomClass, singleInstance = false})
+      end
     end
     if imgui.IsItemHovered() then
-      imgui.SetTooltip("Create the class instance in the currently selected folder or object's parent folder")
+      imgui.SetTooltip("Create the class instance: drag it in the viewport and click to place (scene objects), or add it to the selected folder (other classes)")
     end
   else
     -- else we show a button for each class type we can create
@@ -470,50 +549,7 @@ local function createObjectToolbar()
 
       if item == currentCreateObjectItem then bgColor = imgui.GetStyleColorVec4(imgui.Col_ButtonActive) end
       if editor.uiIconImageButton(item.icon or editor.icons.stop, nil, nil, nil, bgColor) then
-        -- set edit mode to 'createObject', CreateObjectTool can also be open in objectSelect mode.
-        currentParent = getCurrentSelectedParent()
-        editor.selectEditMode(editor.editModes.createObject)
-
-        -- reset static mesh shape picker dialog and mouse wheel rotation angle
-        staticMeshPickFilenameShown = false
-        angleAroundUpValue = 0
-
-        -- delete the old instance if any, if we were hovering it in the viewport
-        if currentClassInstance then
-          if currentClassInstance:getGroup() then
-            currentClassInstance:getGroup():removeObject(currentClassInstance)
-          end
-          currentClassInstance:delete()
-          currentClassInstance = nil
-        end
-        currentCreateObjectItem = item
-        currentClassInstance = createObjectInstance(item.classname, item)
-
-        if currentClassInstance then
-          if currentClassInstance.disableCollision then
-            currentClassInstance:disableCollision()
-          end
-          editor.selectObjectById(currentClassInstance:getID())
-          -- do not repeat instance creation with mouse click in the scene, if this is not a
-          -- scene object, for example groups, or single instance is true, thus create only when toolbar button pressed
-          if not currentClassInstance:isSubClassOf("SceneObject") or item.singleInstance then
-            if currentClassInstance.enableCollision then
-              currentClassInstance:enableCollision()
-            end
-
-            if currentParent then
-              currentParent:addObject(currentClassInstance)
-            end
-
-            editor.history:commitAction("CreateObject", {parent = currentParent, classname = item.classname, name = currentClassInstance:getName(), objectID = currentClassInstance:getID()}, createObjectUndo, createObjectRedo, true)
-
-            objectIdToSelect = currentClassInstance:getID()
-            currentClassInstance = nil
-            currentCreateObjectItem = nil
-          end
-
-          editor.setDirty()
-        end
+        beginCreateObjectFromItem(item)
       end
 
       if imgui.IsItemHovered() then imgui.BeginTooltip() imgui.Text(item.title) imgui.EndTooltip() end

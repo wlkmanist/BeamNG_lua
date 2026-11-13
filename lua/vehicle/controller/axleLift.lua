@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Raises vehicle axles for extra ground clearance when needed
+
 local M = {}
 M.type = "auxiliary"
 
@@ -12,6 +14,9 @@ local hasBuiltPie
 
 local currentMode
 local modes = {auto = "auto", manual = "manual", off = "off"}
+
+local stateData
+local stateDataNameMode
 
 local frontAxleLiftElectricsName
 local rearAxleLiftElectricsName
@@ -52,9 +57,15 @@ local function updateGFX(dt)
   electrics.values[rearAxleLiftElectricsName] = rearPos
 end
 
-local function setMode(mode)
+local function setMode(mode, silent)
+  if not modes[mode] then
+    return
+  end
+
   currentMode = mode
-  guihooks.message("Axlelift: " .. string.sentenceCase(currentMode), 5, "vehicle.axleLift")
+  if not silent then
+    guihooks.message("Axlelift: " .. string.sentenceCase(currentMode), 5, "vehicle.axleLift")
+  end
 end
 
 local function getNextMode()
@@ -77,6 +88,9 @@ local function reset()
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameMode = M.name .. "Mode"
+
   velocityThresholdDisable = jbeamData.velocityThresholdDisable or 14
   velocityThresholdEnable = jbeamData.velocityThresholdEnable or 0.1
   accelerationThreshold = jbeamData.accelerationThreshold or 3
@@ -131,6 +145,22 @@ local function setParameters(parameters)
   end
 end
 
+local function getState()
+  stateData[stateDataNameMode] = currentMode
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newMode = data[stateDataNameMode]
+  if type(newMode) == "string" and modes[newMode] and newMode ~= currentMode then
+    setMode(newMode, true)
+  end
+end
+
 M.init = init
 M.reset = reset
 M.updateGFX = updateGFX
@@ -138,5 +168,8 @@ M.toggleMode = toggleMode
 M.setMode = setMode
 
 M.setParameters = setParameters
+
+M.getState = getState
+M.setState = setState
 
 return M

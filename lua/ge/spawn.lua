@@ -25,6 +25,7 @@ local removeTraffic = true
 local airSpawn = false
 local vehiclesPositionedThisFrame = {}
 local vehiclesWerePositionedThisFrame
+local vehsLastSafeTeleportPose = {}
 
 local localVehForward = vec3(0, -1, 0)
 local localVehUp = vec3(0, 0, 1)
@@ -266,18 +267,20 @@ end
 
 local rayCastStartPositionFactor = 0.4
 local function moveBBToGround(vehBB, raycastDown, unlimitedSafeSpawnRange)
-  -- Turn it around if upside down
-  if vehBB:getAxis(2):dot(vec3(0, 0, 1)) < 0 then
-    local mat = vehBB:getMatrix()
-    mat:setColumn(0, -mat:getColumn(0))
-    mat:setColumn(2, -mat:getColumn(2))
-    mat:setColumn(3, vehBB:getCenter())
-    vehBB:set2(mat, vehBB:getHalfExtents() * 2)
-  end
-
   local axis0, axis1, axis2 = vehBB:getAxis(0), vehBB:getAxis(1), vehBB:getAxis(2)
   local halfExtentsX, halfExtentsY, halfExtentsZ = abs(vehBB:getHalfExtents().x), abs(vehBB:getHalfExtents().y), abs(vehBB:getHalfExtents().z)
   local downVec = raycastDown and vec3(0,0,-1) or -axis2
+  if raycastDown then
+    -- keep only the yaw, so the vertical rays start above the footprint of the box regardless of its tilt
+    local levelForward = vec3(axis1.x, axis1.y, 0)
+    if levelForward:squaredLength() < 1e-6 then
+      levelForward = vec3(axis2.x, axis2.y, 0)
+    end
+    levelForward:normalize()
+    axis2 = vec3(0, 0, 1)
+    axis1 = levelForward
+    axis0 = levelForward:cross(axis2)
+  end
   -- first raycast straight down
   local rayDist
   if unlimitedSafeSpawnRange then
@@ -409,7 +412,6 @@ local function placeVehRec(vehBB, newVehID, vehDir, vehRight, isBBFloating, unli
 
   -- TODO test also for vehicle angle (the tipping angle, but also the yaw)
   -- TODO could also check for distance to intended position
-
   -- Check whether the candidate position is valid
   if not wrongFloatingStatus and not foundIntersection and pointVisibilityStatus > 0 then
     if not bestCandidate.pointVisibilityStatus or pointVisibilityStatus > bestCandidate.pointVisibilityStatus then
@@ -497,7 +499,7 @@ local function setSafePositionRec(params)
   local newBB = placeVehicle(boundingBox, veh:getId(), unlimitedSafeSpawnRange)
   if not newBB then
     if removeWhenNoPositionFound then
-      ui_message("ui.spawn.noPositionFound", 5, "spawn")
+      guihooks.trigger("toastrMsg", {type="warning", label="spawnNoPosition", title="ui.spawn.noPositionFound", config={timeOut=5000}})
       veh:delete()
       return nil
     else
@@ -533,6 +535,12 @@ local function setSafePositionRec(params)
   veh:setClusterPosRelRot(refNodeId, localRefNode.x, localRefNode.y, localRefNode.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
   veh:applyClusterVelocityScaleAdd(refNodeId, 0, 0, 0, 0)
   veh:setOriginalTransform(localRefNode.x, localRefNode.y, localRefNode.z, newRot.x, newRot.y, newRot.z, newRot.w)
+  be.nodeGrabber:clearVehicleFixedNodes(veh:getID())
+  -- Final placed pose (BB rotation + ref-node position). Used by MP safeTeleport capture.
+  vehsLastSafeTeleportPose[veh:getId()] = {
+    x = localRefNode.x, y = localRefNode.y, z = localRefNode.z,
+    rx = newRot.x, ry = newRot.y, rz = newRot.z, rw = newRot.w,
+  }
   return true
 end
 
@@ -569,6 +577,7 @@ local function setVehicleObject(veh, options)
     log('E', logTag, 'setVehicleObject Failed, no vehicle provided.')
     return
   end
+  log('D', logTag, string.format("Spawning vehicle '%s', available memory: %5.3f GB free", tostring(options.model), Engine.Platform.getMemoryInfo().availableBytes / (1024 * 1024 * 1024)))
 
   veh.JBeam = options.model
 
@@ -660,6 +669,9 @@ local function safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, 
     removeTraffic = removeTraffic_
   end
 
+  -- Drop any prior capture so a failed setSafePosition cannot return a stale pose.
+  vehsLastSafeTeleportPose[veh:getId()] = nil
+
   if resetVehicle then
     veh:setPosRot(pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, rot.w)
     veh:resetBrokenFlexMesh()
@@ -675,10 +687,22 @@ local function safeTeleport(veh, pos, rot, checkOnlyStatics_, visibilityPoint_, 
   })
 end
 
-local function teleportToLastRoadCallback(data, options)
+local function takeLastSafeTeleportPose(vid)
+  local pose = vehsLastSafeTeleportPose[vid]
+  vehsLastSafeTeleportPose[vid] = nil
+  return pose
+end
+
+local function safeReset(veh, checkOnlyStatics_, visibilityPoint_, removeTraffic_)
+  -- Use this as a better alternative to be:resetVehicle(0)
+  safeTeleport(veh, veh:getOriginalPosition(), quat(0,0,1,0) * veh:getOriginalRotation(), checkOnlyStatics_, visibilityPoint_, removeTraffic_, false, true)
+end
+
+local function teleportToLastRoadCallback(data, options, vehId)
   local mapData = map.getMap()
   local legalSide = map.getRoadRules().rightHandDrive and -1 or 1
-  local veh = getPlayerVehicle(0)
+  local veh = vehId and getObjectByID(vehId) or getPlayerVehicle(0)
+  if not veh then return end
   local pos, rot
   if tableIsEmpty(mapData.nodes) then
     pos = veh:getPosition()
@@ -736,7 +760,7 @@ local function teleportToLastRoadCallback(data, options)
             if core_groundMarkers.currentlyHasTarget() then
               core_groundMarkers.routePlanner:trackPosition(recoveryPoint.pos)
               if core_groundMarkers.routePlanner.path[2] then
-                local routeDir = core_groundMarkers.routePlanner.path[2].pos - getPlayerVehicle(0):getPosition()
+                local routeDir = core_groundMarkers.routePlanner.path[2].pos - veh:getPosition()
                 roadSide = drivingDir:dot(routeDir) > 0 and legalSide or -legalSide
               end
             end
@@ -787,7 +811,10 @@ local function teleportToLastRoad(veh, options)
   veh = veh or getPlayerVehicle(0)
   if not veh then return end
   if not options then options = {} end
-  queueCallbackInVehicle(veh, "spawn.teleportToLastRoadCallback", "recovery.recoveryPoints", options)
+  if multiplayer_vehicleSync and multiplayer_vehicleSync.requestTeleportToLastRoad(veh, options) then
+    return
+  end
+  queueCallbackInVehicle(veh, "spawn.teleportToLastRoadCallback", "recovery.recoveryPoints", options, veh:getID())
 end
 
 -- NOTE: Spawns in the vehicle rotated by 180 degrees around the z-axis
@@ -1119,6 +1146,8 @@ M.pickSpawnPoint                    = pickSpawnPoint
 M.calculateRelativeVehiclePlacement = calculateRelativeVehiclePlacement
 M.placeTrailer                      = placeTrailer
 M.safeTeleport                      = safeTeleport
+M.takeLastSafeTeleportPose          = takeLastSafeTeleportPose
+M.safeReset                         = safeReset
 M.teleportToLastRoad                = teleportToLastRoad
 M.teleportToLastRoadCallback        = teleportToLastRoadCallback
 

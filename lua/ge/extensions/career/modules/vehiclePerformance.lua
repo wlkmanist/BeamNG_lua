@@ -249,7 +249,7 @@ local function startDragTest()
         local movement = (vehicle:getPosition() - initialCheckPos):length()
         if movement < STUCK_THRESHOLD then
           log('I', 'vehiclePerformance', 'Vehicle stuck - cancelling test')
-          M.cancelTest()
+          M.cancelTest(nil, false)
         end
         -- Reset for next check interval
         initialCheckPos = vehicle:getPosition()
@@ -543,7 +543,10 @@ local function addScoresToPerformanceData(performanceData)
   end
 end
 
-local function cancelTest(delay)
+local function cancelTest(delay, userAborted)
+  if userAborted ~= false and testInProgress then
+    extensions.hook("onGameplayActivityAborted")
+  end
   cancelTestRequested = delay or 0
   zoomingCamera = false
   extensions.gameplay_skidpadTest.cancelTest()
@@ -625,7 +628,7 @@ local function onVehicleDamaged(damageData, damageDataDelta)
   if not testInProgress then return end
   local engineData = damageDataDelta.engine
   if engineData and (engineData.catastrophicOverTorqueDamage or engineData.engineLockedUp) then
-    cancelTest(vehicleBreakCancelDelay)
+    cancelTest(vehicleBreakCancelDelay, false)
   end
 end
 

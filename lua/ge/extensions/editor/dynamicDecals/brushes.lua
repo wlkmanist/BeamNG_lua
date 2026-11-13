@@ -462,7 +462,7 @@ local function inspectorGui(brush)
       im.TextUnformatted("texture path:")
       im.SameLine()
       im.TextUnformatted(brush.decalColorTexturePath)
-      im.Image(editor.getTempTextureObj(brush.decalColorTexturePath).texId, im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+      im.Image(editor.getTempTextureObj(brush.decalColorTexturePath).tex:getID(), im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
       im.TextUnformatted("Decal Color")
       im.TextUnformatted("Use color gradient: " .. (brush.decalUseGradientColor and "true" or "false"))
       if brush.decalUseGradientColor then
@@ -476,28 +476,28 @@ local function inspectorGui(brush)
       im.TextUnformatted("texture path:")
       im.SameLine()
       im.TextUnformatted(brush.decalNormalTexturePath)
-      im.Image(editor.getTempTextureObj(brush.decalNormalTexturePath).texId, im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+      im.Image(editor.getTempTextureObj(brush.decalNormalTexturePath).tex:getID(), im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
       im.TreePop()
     end
     if im.TreeNodeEx1("metallic##inspectorGuiBrush", im.TreeNodeFlags_DefaultOpen) then
       im.TextUnformatted("texture path:")
       im.SameLine()
       im.TextUnformatted(brush.decalMetallicTexturePath)
-      im.Image(editor.getTempTextureObj(brush.decalMetallicTexturePath).texId, im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+      im.Image(editor.getTempTextureObj(brush.decalMetallicTexturePath).tex:getID(), im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
       im.TreePop()
     end
     if im.TreeNodeEx1("roughness##inspectorGuiBrush", im.TreeNodeFlags_DefaultOpen) then
       im.TextUnformatted("texture path:")
       im.SameLine()
       im.TextUnformatted(brush.decalRoughnessTexturePath)
-      im.Image(editor.getTempTextureObj(brush.decalRoughnessTexturePath).texId, im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+      im.Image(editor.getTempTextureObj(brush.decalRoughnessTexturePath).tex:getID(), im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
       im.TreePop()
     end
     if im.TreeNodeEx1("alpha mask##inspectorGuiBrush", im.TreeNodeFlags_DefaultOpen) then
       im.TextUnformatted("texture path:")
       im.SameLine()
       im.TextUnformatted(brush.decalAlphaTexturePath)
-      im.Image(editor.getTempTextureObj(brush.decalAlphaTexturePath).texId, im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+      im.Image(editor.getTempTextureObj(brush.decalAlphaTexturePath).tex:getID(), im.ImVec2(imageWidth, imageWidth), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
       im.TreePop()
     end
     im.TreePop()
@@ -566,7 +566,7 @@ local function browserTabGui()
     for k, brush in ipairs(brushesData) do
       if checkFilter_brush(brush.name) then
         im.PushID1("Brush_" .. tostring(k))
-        if im.ImageButton("##TabGuiButton", editor.getTempTextureObj(brush.decalColorTexturePath).texId, im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, nil, (editor.selection["dynamicDecalBrush"] and editor.selection["dynamicDecalBrush"].id == k) and editor.color.beamng.Value or nil) then
+        if im.ImageButton("##TabGuiButton", editor.getTempTextureObj(brush.decalColorTexturePath).tex:getID(), im.ImVec2(thumbnailSize, thumbnailSize), im.ImVec2Zero, im.ImVec2One, nil, (editor.selection["dynamicDecalBrush"] and editor.selection["dynamicDecalBrush"].id == k) and editor.color.beamng.Value or nil) then
           selectBrush(k, brush)
         end
         im.PopID()

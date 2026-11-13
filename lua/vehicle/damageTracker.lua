@@ -62,7 +62,8 @@ local function setDamage(group, name, value, notifyUI)
 
   if notifyUI then
     local notifyKey = string.format("vehicle.%s.%s.%s", group, name, value)
-    guihooks.message(notifyKey, 5, notifyKey)
+    --guihooks.message(notifyKey, 5, notifyKey)
+    guihooks.messageForSeatedPlayers(notifyKey, 5, notifyKey)
   end
 
   M.updateGFX = updateGFXDirty

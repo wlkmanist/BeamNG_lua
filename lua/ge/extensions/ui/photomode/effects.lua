@@ -3,9 +3,9 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = { "ui_photomode_shared", "ui_photomode_postFxPersistence", "ui_photomode_flash" }
+M.dependencies = { "ui_photomode_shared", "ui_photomode_postFxPersistence", "ui_photomode_flash", "core_settings_graphic" }
 
-
+local logTag = "ui_photomode_effects"
 
 local EFFECTS_LIMITS = {
   dofBlurNearMin = 0,
@@ -20,17 +20,10 @@ local EFFECTS_LIMITS = {
   dofFalloffSharpnessMax = 100,
   motionBlurStrengthMin = 0,
   motionBlurStrengthMax = 2,
-  reflectionSizeLog2Min = 7,
-  reflectionSizeLog2Max = 11,
-  reflectionDetailMin = 0,
-  reflectionDetailMax = 2,
-  reflectionDistanceMin = 1,
-  reflectionDistanceMax = 2000,
-  ssaoContrastMin = 1,
-  ssaoContrastMax = 10,
-  ssaoRadiusMin = 0.01,
-  ssaoRadiusMax = 3,
 }
+
+local DYN_QUALITY_MODES = { "Disabled", "Lowest", "Low", "Normal", "High", "Ultra" }
+local SSR_QUALITY_MODES = { "Off", "Low", "Medium", "High" }
 
 
 local function normalizeEffectsDofBlurNear(value)
@@ -69,44 +62,38 @@ local function normalizeEffectsMotionBlurStrength(value)
   )
 end
 
-local function normalizeEffectsReflectionSizeLog2(value)
-  return ui_photomode_shared.clampNumber(
-    value,
-    EFFECTS_LIMITS.reflectionSizeLog2Min,
-    EFFECTS_LIMITS.reflectionSizeLog2Max,
-    9
-  )
-end
-
-local function normalizeEffectsReflectionDetail(value)
-  return ui_photomode_shared.clampNumber(
-    value,
-    EFFECTS_LIMITS.reflectionDetailMin,
-    EFFECTS_LIMITS.reflectionDetailMax,
-    0.8
-  )
-end
-
-local function normalizeEffectsReflectionDistance(value)
-  return ui_photomode_shared.clampNumber(
-    value,
-    EFFECTS_LIMITS.reflectionDistanceMin,
-    EFFECTS_LIMITS.reflectionDistanceMax,
-    300
-  )
-end
-
-local function textureSizeToLog2(value)
-  local numericValue = tonumber(value)
-  if numericValue == nil or numericValue <= 0 then
-    return 9
+local function normalizeDynQuality(value, fallback)
+  if type(value) == "string" then
+    for _, mode in ipairs(DYN_QUALITY_MODES) do
+      if mode == value then
+        return mode
+      end
+    end
   end
-  local log2Value = math.log(numericValue) / math.log(2)
-  return normalizeEffectsReflectionSizeLog2(math.floor(log2Value + 0.5))
+  return fallback
 end
 
-local function log2ToTextureSize(value)
-  return math.floor(math.pow(2, normalizeEffectsReflectionSizeLog2(value)) + 0.5)
+local function getGraphicQualityOption(settingName)
+  if not core_settings_graphic or type(core_settings_graphic.getOptions) ~= "function" then
+    return nil
+  end
+  return core_settings_graphic.getOptions(settingName)
+end
+
+local function readDynQualityMode(settingName, fallback)
+  local option = getGraphicQualityOption(settingName)
+  if option and type(option.get) == "function" then
+    return normalizeDynQuality(option.get(), fallback)
+  end
+  return normalizeDynQuality(ui_photomode_shared.readSettingValue(settingName), fallback)
+end
+
+local function applyDynQualityMode(settingName, value)
+  ui_photomode_shared.writeSettingValue(settingName, value)
+  local option = getGraphicQualityOption(settingName)
+  if option and type(option.set) == "function" then
+    option.set(value)
+  end
 end
 
 local function normalizeEffectsDofAperture(value)
@@ -202,29 +189,6 @@ local function readPostEffectNumber(effectName, getterName, propertyNames)
   return nil
 end
 
-local function hasPostEffectMethod(effectName, methodName)
-  local effectObject = readPostEffectObject(effectName)
-  return effectObject ~= nil and type(effectObject[methodName]) == "function"
-end
-
-local function normalizeEffectsSsaoContrast(value)
-  return ui_photomode_shared.clampNumber(
-    value,
-    EFFECTS_LIMITS.ssaoContrastMin,
-    EFFECTS_LIMITS.ssaoContrastMax,
-    2
-  )
-end
-
-local function normalizeEffectsSsaoRadius(value)
-  return ui_photomode_shared.clampNumber(
-    value,
-    EFFECTS_LIMITS.ssaoRadiusMin,
-    EFFECTS_LIMITS.ssaoRadiusMax,
-    1.5
-  )
-end
-
 local function ssaoQualityModeFromSamples(samples)
   samples = tonumber(samples)
   if samples ~= nil and samples >= 64 then
@@ -233,122 +197,112 @@ local function ssaoQualityModeFromSamples(samples)
   return "Normal"
 end
 
-local function ssaoSamplesFromQualityMode(value)
+local function normalizeSsaoQuality(value, fallback)
+  if value == "Off" or value == "off" or value == false then
+    return "Off"
+  end
   if value == "High" or tonumber(value) == 2 then
-    return 64, "High"
+    return "High"
   end
-
   if value == "Normal" or value == "Low" or tonumber(value) == 1 then
-    return 16, "Normal"
+    return "Normal"
   end
-
-  return nil, nil
+  return fallback
 end
 
-local function readSsaoContrast()
-  local value = readPostEffectNumber("SSAOPostFx", "getContrast", {
-    "contrast",
-    "overallStrength",
-  })
-
-  if value ~= nil then
-    return value
+local function readSsaoQualityMode()
+  local option = getGraphicQualityOption("PostFXSSAOGeneralQuality")
+  if option and type(option.get) == "function" then
+    local qualityMode = normalizeSsaoQuality(option.get(), nil)
+    if qualityMode then
+      return qualityMode
+    end
   end
 
-  -- Many builds expose setContrast but no getter.
-  if hasPostEffectMethod("SSAOPostFx", "setContrast") then
-    return 2
+  local enabled = readPostEffectEnabled("SSAOPostFx")
+  if enabled == false then
+    return "Off"
   end
-
-  return nil
-end
-
-local function readSsaoRadius()
-  local value = readPostEffectNumber("SSAOPostFx", "getRadius", {
-    "radius",
-  })
-
-  if value ~= nil then
-    return value
+  if enabled == true then
+    return ssaoQualityModeFromSamples(readPostEffectNumber("SSAOPostFx", "getSamples", { "samples" }))
   end
-
-  -- Many builds expose setRadius but no getter.
-  if hasPostEffectMethod("SSAOPostFx", "setRadius") then
-    return 1.5
-  end
-
-  return nil
-end
-
-local function readSsaoSamples()
-  local value = readPostEffectNumber("SSAOPostFx", "getSamples", {
-    "samples",
-  })
-
-  if value ~= nil then
-    return value
-  end
-
-  if not hasPostEffectMethod("SSAOPostFx", "setSamples") then
-    return nil
-  end
-
-  local qualitySetting = ui_photomode_shared.readSettingValue("PostFXSSAOGeneralQuality")
-  local samples = ssaoSamplesFromQualityMode(qualitySetting)
-
-  return samples or 16
-end
-
-local function applySsaoContrast(value)
-  local ssaoObject = readPostEffectObject("SSAOPostFx")
-  if not ssaoObject or type(ssaoObject.setContrast) ~= "function" then
-    return false, "ssao_contrast_unavailable"
-  end
-
-  local ok, err = pcall(ssaoObject.setContrast, ssaoObject, normalizeEffectsSsaoContrast(value))
-  if not ok then
-    log("E", logTag, "SSAOPostFx:setContrast failed: " .. tostring(err))
-    return false, "ssao_contrast_set_failed"
-  end
-
-  return true
-end
-
-local function applySsaoRadius(value)
-  local ssaoObject = readPostEffectObject("SSAOPostFx")
-  if not ssaoObject or type(ssaoObject.setRadius) ~= "function" then
-    return false, "ssao_radius_unavailable"
-  end
-
-  local ok, err = pcall(ssaoObject.setRadius, ssaoObject, normalizeEffectsSsaoRadius(value))
-  if not ok then
-    log("E", logTag, "SSAOPostFx:setRadius failed: " .. tostring(err))
-    return false, "ssao_radius_set_failed"
-  end
-
-  return true
+  return normalizeSsaoQuality(ui_photomode_shared.readSettingValue("PostFXSSAOGeneralQuality"), nil)
 end
 
 local function applySsaoQuality(value)
-  local samples, qualityMode = ssaoSamplesFromQualityMode(value)
-  if samples == nil then
+  local qualityMode = normalizeSsaoQuality(value, nil)
+  if not qualityMode then
     return false, "ssao_quality_invalid"
   end
+  applyDynQualityMode("PostFXSSAOGeneralQuality", qualityMode)
+  return true
+end
 
-  local ssaoObject = readPostEffectObject("SSAOPostFx")
-  if not ssaoObject or type(ssaoObject.setSamples) ~= "function" then
-    return false, "ssao_quality_unavailable"
+local function normalizeSsrQuality(value, fallback)
+  if type(value) == "string" then
+    for _, mode in ipairs(SSR_QUALITY_MODES) do
+      if mode == value then
+        return mode
+      end
+    end
   end
+  return fallback
+end
 
-  local ok, err = pcall(ssaoObject.setSamples, ssaoObject, samples)
+local function readSsrQualityMode()
+  local option = getGraphicQualityOption("PostFXSSRQuality")
+  if option and type(option.get) == "function" then
+    return normalizeSsrQuality(option.get(), nil)
+  end
+  return normalizeSsrQuality(ui_photomode_shared.readSettingValue("PostFXSSRQuality"), nil)
+end
+
+local function applySsrQuality(value)
+  local qualityMode = normalizeSsrQuality(value, nil)
+  if not qualityMode then
+    return false, "ssr_quality_invalid"
+  end
+  local option = getGraphicQualityOption("PostFXSSRQuality")
+  if option and type(option.set) == "function" then
+    option.set(qualityMode)
+    return true
+  end
+  ui_photomode_shared.writeSettingValue("PostFXSSRQuality", qualityMode)
+  ui_photomode_shared.writeSettingValue("PostFXSSREnabled", qualityMode ~= "Off")
+  local ok, reason = setPostEffectEnabled("PostFxSSSRObject", qualityMode ~= "Off")
   if not ok then
-    log("E", logTag, "SSAOPostFx:setSamples failed: " .. tostring(err))
-    return false, "ssao_quality_set_failed"
+    return false, reason or "ssr_quality_set_failed"
   end
+  return true
+end
 
-  -- Graphics settings historically use Low/High here.
-  ui_photomode_shared.writeSettingValue("PostFXSSAOGeneralQuality", qualityMode == "High" and "High" or "Low")
+local function readSpecularOcclusionEnabled()
+  local option = getGraphicQualityOption("PostFXSpecularOcclusionEnabled")
+  if option and type(option.get) == "function" then
+    return ui_photomode_shared.normalizeBoolean(option.get(), false)
+  end
+  return ui_photomode_shared.normalizeBoolean(ui_photomode_shared.readSettingValue("PostFXSpecularOcclusionEnabled"), nil)
+end
 
+local function applySpecularOcclusionEnabled(value)
+  local enabled = ui_photomode_shared.normalizeBoolean(value, false)
+  ui_photomode_shared.writeSettingValue("PostFXSpecularOcclusionEnabled", enabled)
+  local option = getGraphicQualityOption("PostFXSpecularOcclusionEnabled")
+  if option and type(option.set) == "function" then
+    option.set(enabled)
+  end
+  return true
+end
+
+local function applyOccupantsVisible(value)
+  local visible = ui_photomode_shared.normalizeBoolean(value, true)
+  ui_photomode_shared.writeSettingValue("enableSeatOccupants", visible)
+  if gameplay_seatOccupants and type(gameplay_seatOccupants.onSettingsChanged) == "function" then
+    gameplay_seatOccupants.onSettingsChanged()
+  end
+  if gameplay_traffic and type(gameplay_traffic.onSettingsChanged) == "function" then
+    gameplay_traffic.onSettingsChanged()
+  end
   return true
 end
 
@@ -360,17 +314,15 @@ local EFFECTS_DISPLAY_FIELDS = {
   { key = "dofFocusRange", normalize = normalizeEffectsDofFocusRange },
   { key = "dofAperture", normalize = normalizeEffectsDofAperture },
   { key = "dofFalloffSharpness", normalize = normalizeEffectsDofFalloffSharpness },
-  { key = "ssaoEnabled" },
-  { key = "ssaoContrast", normalize = normalizeEffectsSsaoContrast },
-  { key = "ssaoRadius", normalize = normalizeEffectsSsaoRadius },
-  { key = "ssaoSamples", outputKey = "ssaoQualityMode", normalize = ssaoQualityModeFromSamples },
+  { key = "ssaoQualityMode" },
+  { key = "specularOcclusionEnabled" },
   { key = "screenSpaceShadowsEnabled" },
+  { key = "ssrQualityMode" },
   { key = "motionBlurEnabled" },
   { key = "motionBlurStrength", normalize = normalizeEffectsMotionBlurStrength },
-  { key = "reflectionsEnabled" },
-  { key = "reflectionDetail", normalize = normalizeEffectsReflectionDetail },
-  { key = "reflectionDistance", normalize = normalizeEffectsReflectionDistance },
-  { key = "reflectionTextureSize", outputKey = "reflectionSizeLog2", normalize = textureSizeToLog2 },
+  { key = "reflectionQualityMode" },
+  { key = "mirrorsQualityMode" },
+  { key = "occupantsVisible" },
 }
 
 local function buildEffectsDisplayState(effectsState)
@@ -402,10 +354,6 @@ end
 
 local function captureEffectsSerializableState()
   local motionBlurObject = scenetree and scenetree.PostFxMotionBlur or nil
-  local reflectionsEnabledValue = ui_photomode_shared.readSettingValue("GraphicDynReflectionEnabled")
-  if reflectionsEnabledValue == nil then
-    reflectionsEnabledValue = ui_photomode_shared.readVariableRegistryValue("$pref::BeamNGVehicle::dynamicReflection::enabled")
-  end
 
   return {
     dofEnabled = readPostEffectEnabled("DOFPostEffect"),
@@ -415,18 +363,15 @@ local function captureEffectsSerializableState()
     dofFocusRange = tonumber(ui_photomode_shared.readVariableRegistryValue("$DOFPostFx::FocusRangeMax")),
     dofAperture = normalizeEffectsDofAperture(tonumber(ui_photomode_shared.readVariableRegistryValue("$DOFPostFx::BlurCurveFar"))),
     dofFalloffSharpness = normalizeEffectsDofFalloffSharpness(tonumber(ui_photomode_shared.readVariableRegistryValue("$DOFPostFx::FocusRangeMin"))),
-    ssaoEnabled = readPostEffectEnabled("SSAOPostFx"),
-    ssaoContrast = readSsaoContrast(),
-    ssaoRadius = readSsaoRadius(),
-    ssaoSamples = readSsaoSamples(),
-
+    ssaoQualityMode = readSsaoQualityMode(),
+    specularOcclusionEnabled = readSpecularOcclusionEnabled(),
     screenSpaceShadowsEnabled = readPostEffectEnabled("ScreenSpaceShadowsPostFx"),
+    ssrQualityMode = readSsrQualityMode(),
     motionBlurEnabled = readPostEffectEnabled("PostFxMotionBlur"),
     motionBlurStrength = motionBlurObject and tonumber(motionBlurObject.strength) or nil,
-    reflectionsEnabled = ui_photomode_shared.normalizeBoolean(reflectionsEnabledValue, true),
-    reflectionDetail = tonumber(ui_photomode_shared.readVariableRegistryValue("$pref::BeamNGVehicle::dynamicReflection::detail")),
-    reflectionDistance = tonumber(ui_photomode_shared.readVariableRegistryValue("$pref::BeamNGVehicle::dynamicReflection::distance")),
-    reflectionTextureSize = tonumber(ui_photomode_shared.readVariableRegistryValue("$pref::BeamNGVehicle::dynamicReflection::textureSize")),
+    reflectionQualityMode = readDynQualityMode("GraphicDynReflectionQuality", nil),
+    mirrorsQualityMode = readDynQualityMode("GraphicDynMirrorsQuality", nil),
+    occupantsVisible = ui_photomode_shared.normalizeBoolean(ui_photomode_shared.readSettingValue("enableSeatOccupants"), nil),
   }
 end
 
@@ -437,16 +382,14 @@ end
 local function buildEffectsAvailability(effectsState)
   return {
     dof = effectsState.dofEnabled ~= nil,
-    ssao = effectsState.ssaoEnabled ~= nil,
-    ssaoSettings = hasPostEffectMethod("SSAOPostFx", "setContrast")
-      or hasPostEffectMethod("SSAOPostFx", "setRadius")
-      or hasPostEffectMethod("SSAOPostFx", "setSamples"),
+    ssao = effectsState.ssaoQualityMode ~= nil,
+    specularOcclusion = effectsState.specularOcclusionEnabled ~= nil,
     screenSpaceShadows = effectsState.screenSpaceShadowsEnabled ~= nil,
+    ssr = effectsState.ssrQualityMode ~= nil,
     motionBlur = effectsState.motionBlurEnabled ~= nil,
-    reflections = effectsState.reflectionsEnabled ~= nil,
-    reflectionDetail = effectsState.reflectionDetail ~= nil,
-    reflectionDistance = effectsState.reflectionDistance ~= nil,
-    reflectionSize = effectsState.reflectionTextureSize ~= nil,
+    reflections = effectsState.reflectionQualityMode ~= nil,
+    mirrors = effectsState.mirrorsQualityMode ~= nil,
+    occupants = effectsState.occupantsVisible ~= nil,
   }
 end
 
@@ -575,43 +518,17 @@ local function applyEffectsStatePatch(partialState)
     updateDofRuntimeSettings()
   end
 
-  if partialState.ssaoEnabled ~= nil then
-    local ssaoEnabled = ui_photomode_shared.normalizeBoolean(partialState.ssaoEnabled, true)
-    ui_photomode_shared.writeSettingValue("PostFXSSAOGeneralEnabled", ssaoEnabled)
-    ui_photomode_shared.writeVariableRegistryValue("$SSAOPostFx::Enable", ssaoEnabled)
-
-    local ok, reason = setPostEffectEnabled("SSAOPostFx", ssaoEnabled)
-    if not ok then
-      return false, reason or "effect_set_failed"
-    end
-
-    changed = true
-  end
-
-  if partialState.ssaoContrast ~= nil then
-    local ok, reason = applySsaoContrast(partialState.ssaoContrast)
-    if not ok then
-      return false, reason or "ssao_contrast_set_failed"
-    end
-    changed = true
-  end
-
-  if partialState.ssaoRadius ~= nil then
-    local ok, reason = applySsaoRadius(partialState.ssaoRadius)
-    if not ok then
-      return false, reason or "ssao_radius_set_failed"
-    end
-    changed = true
-  end
-
   if partialState.ssaoQualityMode ~= nil
     or partialState.ssaoQuality ~= nil
     or partialState.ssaoSamples ~= nil
+    or partialState.ssaoEnabled ~= nil
   then
     local qualityValue = partialState.ssaoQualityMode or partialState.ssaoQuality
-
     if qualityValue == nil and partialState.ssaoSamples ~= nil then
       qualityValue = ssaoQualityModeFromSamples(partialState.ssaoSamples)
+    end
+    if qualityValue == nil and partialState.ssaoEnabled ~= nil then
+      qualityValue = ui_photomode_shared.normalizeBoolean(partialState.ssaoEnabled, true) and "Normal" or "Off"
     end
 
     local ok, reason = applySsaoQuality(qualityValue)
@@ -630,6 +547,19 @@ local function applyEffectsStatePatch(partialState)
       return false, reason or "screen_space_shadows_set_failed"
     end
 
+    changed = true
+  end
+
+  if partialState.specularOcclusionEnabled ~= nil then
+    applySpecularOcclusionEnabled(partialState.specularOcclusionEnabled)
+    changed = true
+  end
+
+  if partialState.ssrQualityMode ~= nil then
+    local ok, reason = applySsrQuality(partialState.ssrQualityMode)
+    if not ok then
+      return false, reason or "ssr_quality_set_failed"
+    end
     changed = true
   end
 
@@ -654,42 +584,26 @@ local function applyEffectsStatePatch(partialState)
     changed = true
   end
 
-  if partialState.reflectionsEnabled ~= nil then
-    local reflectionsEnabled = ui_photomode_shared.normalizeBoolean(partialState.reflectionsEnabled, true)
-    local settingsApplied = ui_photomode_shared.writeSettingsState({
-      GraphicDynReflectionEnabled = reflectionsEnabled,
-    })
-    if not settingsApplied then
-      ui_photomode_shared.writeVariableRegistryValue("$pref::BeamNGVehicle::dynamicReflection::enabled", reflectionsEnabled)
-      ui_photomode_shared.writeSettingValue("GraphicDynReflectionEnabled", reflectionsEnabled)
+  if partialState.reflectionQualityMode ~= nil then
+    local qualityMode = normalizeDynQuality(partialState.reflectionQualityMode, nil)
+    if not qualityMode then
+      return false, "reflection_quality_invalid"
     end
+    applyDynQualityMode("GraphicDynReflectionQuality", qualityMode)
     changed = true
   end
 
-  if partialState.reflectionSizeLog2 ~= nil or partialState.reflectionTextureSize ~= nil then
-    local textureSize = partialState.reflectionTextureSize
-    if textureSize == nil then
-      textureSize = log2ToTextureSize(partialState.reflectionSizeLog2)
-    else
-      textureSize = log2ToTextureSize(textureSizeToLog2(textureSize))
+  if partialState.mirrorsQualityMode ~= nil then
+    local qualityMode = normalizeDynQuality(partialState.mirrorsQualityMode, nil)
+    if not qualityMode then
+      return false, "mirrors_quality_invalid"
     end
-    ui_photomode_shared.writeVariableRegistryValue("$pref::BeamNGVehicle::dynamicReflection::textureSize", tonumber(textureSize))
+    applyDynQualityMode("GraphicDynMirrorsQuality", qualityMode)
     changed = true
   end
 
-  if partialState.reflectionDetail ~= nil then
-    ui_photomode_shared.writeVariableRegistryValue(
-      "$pref::BeamNGVehicle::dynamicReflection::detail",
-      normalizeEffectsReflectionDetail(partialState.reflectionDetail)
-    )
-    changed = true
-  end
-
-  if partialState.reflectionDistance ~= nil then
-    ui_photomode_shared.writeVariableRegistryValue(
-      "$pref::BeamNGVehicle::dynamicReflection::distance",
-      normalizeEffectsReflectionDistance(partialState.reflectionDistance)
-    )
+  if partialState.occupantsVisible ~= nil then
+    applyOccupantsVisible(partialState.occupantsVisible)
     changed = true
   end
 
@@ -763,6 +677,33 @@ local function restoreDofEffectsState(restoreState)
   return true
 end
 
+local NON_DOF_RESTORE_FIELDS = {
+  "ssaoQualityMode",
+  "specularOcclusionEnabled",
+  "screenSpaceShadowsEnabled",
+  "ssrQualityMode",
+  "motionBlurEnabled",
+  "motionBlurStrength",
+  "reflectionQualityMode",
+  "mirrorsQualityMode",
+  "occupantsVisible",
+}
+
+local function restoreNonDofEffectsState(restoreState)
+  for _, fieldName in ipairs(NON_DOF_RESTORE_FIELDS) do
+    if restoreState[fieldName] ~= nil then
+      local ok, reason = applyEffectsStatePatch({
+        [fieldName] = restoreState[fieldName],
+      })
+      if not ok then
+        ui_photomode_shared.logDebug(
+          "restoreEffectsState " .. fieldName .. " restore skipped: " .. tostring(reason)
+        )
+      end
+    end
+  end
+end
+
 local function restoreEffectsState()
   local restoreState = ui_photomode_shared.S.sessionEffectsRestoreStatePersisted and ui_photomode_postFxPersistence.loadRestoreState() or nil
   restoreState = restoreState or ui_photomode_shared.S.sessionEffectsRestoreState
@@ -773,24 +714,7 @@ local function restoreEffectsState()
 
   ui_photomode_shared.S.sessionEffectsRestoreState = nil
   ui_photomode_shared.S.sessionEffectsRestoreStatePersisted = false
-  local nonDofRestoreState = {
-    ssaoEnabled = restoreState.ssaoEnabled,
-    ssaoContrast = restoreState.ssaoContrast,
-    ssaoRadius = restoreState.ssaoRadius,
-    ssaoQualityMode = restoreState.ssaoSamples ~= nil and ssaoQualityModeFromSamples(restoreState.ssaoSamples) or nil,
-    screenSpaceShadowsEnabled = restoreState.screenSpaceShadowsEnabled,
-    motionBlurEnabled = restoreState.motionBlurEnabled,
-    motionBlurStrength = restoreState.motionBlurStrength,
-    reflectionsEnabled = restoreState.reflectionsEnabled,
-    reflectionDetail = restoreState.reflectionDetail,
-    reflectionDistance = restoreState.reflectionDistance,
-    reflectionTextureSize = restoreState.reflectionTextureSize,
-  }
-
-  local ok, reason = applyEffectsStatePatch(nonDofRestoreState)
-  if not ok then
-    ui_photomode_shared.logDebug("restoreEffectsState skipped: " .. tostring(reason))
-  end
+  restoreNonDofEffectsState(restoreState)
 
   local dofOk, dofReason = restoreDofEffectsState(restoreState)
   if not dofOk then
@@ -889,10 +813,13 @@ local EFFECTS_PRESET_PART_FIELDS = {
     "dofAperture",
     "dofFalloffSharpness",
   },
-  ssao = { "ssaoEnabled", "ssaoContrast", "ssaoRadius", "ssaoQualityMode" },
+  ssao = { "ssaoQualityMode" },
+  specularOcclusion = { "specularOcclusionEnabled" },
   screenSpaceShadows = { "screenSpaceShadowsEnabled" },
+  ssr = { "ssrQualityMode" },
   motionBlur = { "motionBlurEnabled", "motionBlurStrength" },
-  reflections = { "reflectionsEnabled", "reflectionSizeLog2", "reflectionDetail", "reflectionDistance" },
+  reflections = { "reflectionQualityMode", "mirrorsQualityMode" },
+  occupants = { "occupantsVisible" },
 }
 
 local function pickPresetFields(source, fields)
@@ -962,17 +889,15 @@ function M.buildMetadataState()
     dofFocusRange = effectsState.dofFocusRange,
     dofAperture = effectsState.dofAperture,
     dofFalloffSharpness = effectsState.dofFalloffSharpness,
-    ssaoEnabled = effectsState.ssaoEnabled,
-    ssaoContrast = effectsState.ssaoContrast,
-    ssaoRadius = effectsState.ssaoRadius,
     ssaoQualityMode = effectsState.ssaoQualityMode,
+    specularOcclusionEnabled = effectsState.specularOcclusionEnabled,
     screenSpaceShadowsEnabled = effectsState.screenSpaceShadowsEnabled,
+    ssrQualityMode = effectsState.ssrQualityMode,
     motionBlurEnabled = effectsState.motionBlurEnabled,
     motionBlurStrength = effectsState.motionBlurStrength,
-    reflectionsEnabled = effectsState.reflectionsEnabled,
-    reflectionSizeLog2 = effectsState.reflectionSizeLog2,
-    reflectionDetail = effectsState.reflectionDetail,
-    reflectionDistance = effectsState.reflectionDistance,
+    reflectionQualityMode = effectsState.reflectionQualityMode,
+    mirrorsQualityMode = effectsState.mirrorsQualityMode,
+    occupantsVisible = effectsState.occupantsVisible,
     flash = effectsState.flash,
   }
 end

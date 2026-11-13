@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Provides position-sensitive damping for multi-zone bypass shocks
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 80
@@ -11,6 +13,7 @@ local abs = math.abs
 
 local dampers = {}
 local damperZones = {}
+local pendingSound = false
 
 local soundSettings = {
   eventCompression = "",
@@ -44,10 +47,10 @@ local function update(dt)
       --   print(string.format("CLICK! Switch from %d to %d at velocity %.3fm/s, volume: %.2f", damper.previousDirection, smoothDirection, velocity, volume))
       -- end
       damper.previousDirection = smoothDirection
-      local event = smoothDirection > 0 and soundSettings.eventCompression or soundSettings.eventRebound
-      --make the clickety-clack
-      if soundSettings.emitValveSounds then
-        sounds.playSoundOnceFollowNode(event, damper.soundNodeCid or 0, volume, 1, soundSettings.maxVolume, 1)
+      if soundSettings.emitValveSounds and volume > damper.pendingVolume then
+        pendingSound = true
+        damper.pendingVolume = volume
+        damper.pendingEvent = smoothDirection > 0 and soundSettings.eventCompression or soundSettings.eventRebound
       end
     end
 
@@ -99,6 +102,19 @@ local function update(dt)
   end
 end
 
+local function updateGFX(dt)
+  if pendingSound then
+    for _, damper in ipairs(dampers) do
+      if damper.pendingVolume > 0 then
+        sounds.playSoundOnceAtNode(damper.pendingEvent, damper.soundNodeCid or 0, damper.pendingVolume, 1, soundSettings.maxVolume, 1)
+        damper.pendingVolume = 0
+        damper.pendingEvent = nil
+      end
+    end
+    pendingSound = false
+  end
+end
+
 -- local function debugDraw(focusPos)
 --   for _, damper in ipairs(dampers) do
 --     obj.debugDrawProxy:drawNodeText(v.data.beams[damper.beamCid].id1, color(255, 0, 0, 255), damperZones[damper.currentZoneId].zoneStart or "N/A", 0)
@@ -140,7 +156,9 @@ local function init(jbeamData)
       currentZoneId = nil,
       previousZoneId = -1,
       previousDisplacement = 0,
-      previousDirection = 0
+      previousDirection = 0,
+      pendingVolume = 0,
+      pendingEvent = nil
     }
     damper.previousDisplacement = damper.initialBeamLength
     table.insert(dampers, damper)
@@ -190,6 +208,7 @@ M.initSounds = initSounds
 M.reset = reset
 M.initLastStage = initLastStage
 M.update = update
+M.updateGFX = updateGFX
 --M.debugDraw = debugDraw
 
 return M

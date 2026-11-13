@@ -10,7 +10,11 @@ M.dependencies = {
 }
 
 local function isEnvironmentEditable(context)
-  return context.mode == "freeroam" or context.mode == "multiplayer" or context.mode == "freeroamTutorial"
+  return context.mode == "freeroam" or context.mode == "multiplayer" or context.mode == "freeroamTutorial" or not settings.getValue("restrictScenarios", true)
+end
+
+local function isTrafficEditable(context)
+  return isEnvironmentEditable(context) --and (not context.isMultiseatActive or core_multiseat.allowTrafficDebug)
 end
 
 local function getCurrentLevelText()
@@ -74,6 +78,9 @@ end
 
 function M.getEnvironmentData(context)
   local editable = isEnvironmentEditable(context)
+  local showTimeOfDay = true
+  local showTraffic = true
+  local showOther = true
   local disabledReason = editable and nil or _tr("ui.pause.readOnlyInThisMode")
   local timeOfDayOptions = core_environment and core_environment.getTimeOfDayOptions and core_environment.getTimeOfDayOptions() or {}
   local levelDefaults = core_environment and core_environment.getInitState and core_environment.getInitState() or {}
@@ -87,10 +94,24 @@ function M.getEnvironmentData(context)
     simulation = deepcopy(actionState),
     traffic = deepcopy(actionState),
   }
+  actions.traffic.visible = showTraffic
+  actions.traffic.enabled = editable and showTraffic
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  if capabilities and capabilities.isSessionActive and capabilities.isSessionActive() then
+    showTimeOfDay = capabilities.isAllowed("weather")
+    showTraffic = capabilities.isAllowed("traffic")
+    showOther = false
+    actions.weather.visible = showTimeOfDay
+    actions.weather.enabled = editable and showTimeOfDay
+    actions.traffic.visible = showTraffic
+    actions.traffic.enabled = editable and showTraffic
+    actions.simulation.visible = false
+    actions.simulation.enabled = false
+  end
   local buttons = buildEnvironmentButtons(actions)
 
   local otherButtonsCandidates, otherButtons = {}, {}
-  extensions.hook("onEnvironmentGetOtherButtons", otherButtonsCandidates, actionState)
+  if showOther then extensions.hook("onEnvironmentGetOtherButtons", otherButtonsCandidates, actionState) end
 
   for _, button in ipairs(otherButtonsCandidates) do
     if not button.id then log("E","", "onEnvironmentGetOtherButtons: button id is required") goto continue end
@@ -110,7 +131,7 @@ function M.getEnvironmentData(context)
 
     ::continue::
   end
-  table.insert(otherButtons, buttons.simulation)
+  if buttons.simulation then table.insert(otherButtons, buttons.simulation) end
   table.sort(otherButtons, function(a, b) return a.label < b.label end)
 
 
@@ -123,6 +144,9 @@ function M.getEnvironmentData(context)
         componentName = "PauseEnvironmentDigest",
         props = {
           editable = editable,
+          showTimeOfDay = showTimeOfDay,
+          showTraffic = showTraffic,
+          showOther = showOther,
           weatherButton = buttons.weather,
           trafficButton = buttons.traffic,
           otherButtons = otherButtons,
@@ -137,14 +161,22 @@ function M.getEnvironmentData(context)
 end
 
 function M.getEnvironmentWeatherData(context)
-  local editable = isEnvironmentEditable(context)
+  local permission = {
+    enabled = isEnvironmentEditable(context),
+    disabledReason = _tr("ui.pause.readOnlyInThisMode"),
+  }
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  if capabilities and capabilities.isSessionActive and capabilities.isSessionActive() then
+    capabilities.applyUiPermission(permission, "weather")
+  end
+  local editable = permission.enabled
   local timeOfDayOptions = core_environment.getTimeOfDayOptions()
   local levelDefaults = core_environment.getInitState()
 
   return {
     editable = editable,
-    disabledReason = editable and nil or _tr("ui.pause.readOnlyInThisMode"),
-    mainCardClass = "menu-content-card-1--wide",
+    disabledReason = editable and nil or permission.disabledReason,
+    mainCardClass = "menu-content-card-1--environment",
     mainPanelContent = {
       {
         id = "environmentWeatherComponent",
@@ -160,6 +192,13 @@ function M.getEnvironmentWeatherData(context)
 end
 
 function M.getEnvironmentSimulationData(context)
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  if capabilities and capabilities.isSessionActive and capabilities.isSessionActive() then
+    return {
+      editable = false,
+      mainPanelContent = {},
+    }
+  end
   local editable = isEnvironmentEditable(context)
 
   return {
@@ -176,11 +215,19 @@ function M.getEnvironmentSimulationData(context)
 end
 
 function M.getEnvironmentTrafficData(context)
-  local editable = isEnvironmentEditable(context)
+  local permission = {
+    enabled = isTrafficEditable(context),
+    disabledReason = _tr("ui.pause.readOnlyInThisMode"),
+  }
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  if capabilities and capabilities.isSessionActive and capabilities.isSessionActive() then
+    capabilities.applyUiPermission(permission, "traffic")
+  end
+  local editable = permission.enabled
 
   return {
     editable = editable,
-    disabledReason = editable and nil or _tr("ui.pause.readOnlyInThisMode"),
+    disabledReason = editable and nil or permission.disabledReason,
     traffic = ui_pause_providers_trafficControls.getData({editable = editable}),
     mainPanelContent = {
       {

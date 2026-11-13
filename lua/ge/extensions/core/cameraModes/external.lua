@@ -5,6 +5,7 @@
 -- filters
 local autozoom = require('core/cameraModes/autozoom')
 local autopoint = require('core/cameraModes/autopoint')
+local bobbing = require('core/cameraModes/bobbing')
 local handheld = require('core/cameraModes/handheld')
 local noise = require('core/cameraModes/noise')
 local smooth = require('core/cameraModes/smooth')
@@ -51,6 +52,7 @@ function C:init()
   self.noise:init(0.14)
   self.smooth = smooth()
   self.smooth:init(20, 2.0)
+  self.bobbing = bobbing()
   self.handheld = handheld()
   self.predictor = predictor()
   self:onSettingsChanged()
@@ -64,6 +66,7 @@ end
 
 function C:onSettingsChanged()
   self.tvModeOdds = settings.getValue('cameraFanVsTV') or 0.66
+  self.bobbing:onSettingsChanged()
 end
 
 function C:setRefNodes(centerNodeID, leftNodeID, backNodeID)
@@ -249,7 +252,7 @@ function C:switchCamera(carVel, carPos, veh, nx, ny, nz, carStopped, openxrSessi
     -- handheld camera should be at human height above ground, try to correct that
     if self.isFanMode then
       local heightTest = 50
-      local humanCameraHeight = dzRandom(1.3, 2.0)
+      local humanCameraHeight = dzRandom(1.2, 1.8)
       local distDown = castRayStaticDistance(self.camPos, self.camPos-vec3(0,0,heightTest))
       if distDown == 0 or distDown == heightTest then -- we may be underground
         local distUp = heightTest-castRayStaticDistance(self.camPos+vec3(0,0,heightTest), self.camPos)
@@ -421,6 +424,9 @@ function C:update(data)
     self.smooth:update(data)
   end
   self.handheld:update(data)
+  if self.isFanMode then
+    self.bobbing:update(data, clamp(self.camVel:length() / 4.5, 0, 1), data.dt)
+  end
   return true
 end
 

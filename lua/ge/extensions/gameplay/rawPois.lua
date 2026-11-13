@@ -6,6 +6,50 @@ local M = {}
 
 local rawPoiGeneration = 0
 local rawPoiListByLevel = {}
+local rawPoiMultiseatActive
+
+local function clear()
+  rawPoiListByLevel = {}
+  rawPoiGeneration = rawPoiGeneration + 1
+  log("D","","Raw Poi Lists Cleared. New Generation: " .. rawPoiGeneration)
+end
+
+local function isMultiseatActive()
+  return core_multiseat
+    and core_multiseat.isMultiseatActive
+    and core_multiseat.isMultiseatActive()
+    or false
+end
+
+local function syncMultiseatState()
+  local active = isMultiseatActive()
+  if rawPoiMultiseatActive == nil then
+    rawPoiMultiseatActive = active
+  elseif rawPoiMultiseatActive ~= active then
+    rawPoiMultiseatActive = active
+    clear()
+  end
+  return active
+end
+
+local function filterMultiseatPois(elementsUnchecked)
+  local elements = {}
+  for _, element in ipairs(elementsUnchecked) do
+    local markerInfo
+    for markerType, markerData in pairs(element.markerInfo or {}) do
+      if type(markerData) == "table" and markerData.multiseat == true then
+        markerInfo = markerInfo or {}
+        markerInfo[markerType] = markerData
+      end
+    end
+    if markerInfo then
+      local filteredElement = shallowcopy(element)
+      filteredElement.markerInfo = markerInfo
+      table.insert(elements, filteredElement)
+    end
+  end
+  return elements
+end
 
 local function validateRawPoiElement(element)
   local valid = true
@@ -32,6 +76,17 @@ local function getRawPoiListByLevel(levelIdentifier)
   if not levelIdentifier then
     return {}, rawPoiGeneration
   end
+  local multiseatActive = syncMultiseatState()
+
+  if multiseatActive then
+    if not rawPoiListByLevel[levelIdentifier] then
+      local elementsUnchecked = {}
+      extensions.hook("onGetRawPoiListForLevel", levelIdentifier, elementsUnchecked)
+      rawPoiListByLevel[levelIdentifier] = filterMultiseatPois(elementsUnchecked)
+    end
+    return rawPoiListByLevel[levelIdentifier], rawPoiGeneration
+  end
+
   -- when in the tutorial, only add the desired elements
   if career_career.isActive()  and levelIdentifier == "west_coast_usa" then
 
@@ -74,6 +129,7 @@ local function getRawPoiListByLevel(levelIdentifier)
     local testDriveActive = career_modules_testDrive and career_modules_testDrive.isActive()
     local deliveryActive = gameplay_freeformDelivery_freeformDelivery and gameplay_freeformDelivery_freeformDelivery.isLoaded()
     local allowedDataTypes = {}
+    local keepEmptyAllowedDataTypes = false
     if testDriveActive then
       allowedDataTypes.testDriveEnd = true
     end
@@ -88,7 +144,27 @@ local function getRawPoiListByLevel(levelIdentifier)
         whiteListIds['industrial/timeTrial/008-Sprint'] = true
       end
     end
-    if not next(allowedDataTypes) then allowedDataTypes = nil end
+    if gameplay_discover_firstDrive_experience and gameplay_discover_firstDrive_experience.hidesWorldPois and gameplay_discover_firstDrive_experience.hidesWorldPois() then
+      if gameplay_discover_firstDrive_experience.isGuidedDriveActive() then
+        table.clear(allowedDataTypes)
+        table.clear(whiteListIds)
+        keepEmptyAllowedDataTypes = false
+        allowedDataTypes.firstDriveDestination = true
+      else
+        local missionLessonActive = gameplay_discover_firstDrive_learningFlow
+          and gameplay_discover_firstDrive_learningFlow.isLessonActive("missions")
+        if missionLessonActive then
+          keepEmptyAllowedDataTypes = true
+          local missionId = gameplay_discover_firstDrive_learningFlow.getLessonMissionId("missions")
+          if missionId then whiteListIds[missionId] = true end
+        else
+          allowedDataTypes.firstDriveLearningLesson = true
+          allowedDataTypes.spawnPoint = true
+          allowedDataTypes.gasStation = true
+        end
+      end
+    end
+    if not next(allowedDataTypes) and not keepEmptyAllowedDataTypes then allowedDataTypes = nil end
     for _, e in ipairs(elementsUnchecked) do
       -- sanity check
 
@@ -99,7 +175,8 @@ local function getRawPoiListByLevel(levelIdentifier)
 
       -- Only include POIs if a test drive is not active, or if this POI is the testDriveEnd type
       local dataType = e.data and e.data.type
-      if not allowedDataTypes or (allowedDataTypes and allowedDataTypes[dataType]) or (whiteListIds and whiteListIds[e.id]) then
+      local whitelisted = whiteListIds and (whiteListIds[e.id] or whiteListIds[e.data and e.data.missionId])
+      if not allowedDataTypes or (allowedDataTypes and allowedDataTypes[dataType]) or whitelisted then
         table.insert(elements, e)
       end
     end
@@ -108,13 +185,12 @@ local function getRawPoiListByLevel(levelIdentifier)
   return rawPoiListByLevel[levelIdentifier], rawPoiGeneration
 end
 
-M.getRawPoiGeneration = function() return rawPoiGeneration end
-M.getRawPoiListByLevel = getRawPoiListByLevel
-M.clear = function()
-  rawPoiListByLevel = {}
-  rawPoiGeneration = rawPoiGeneration + 1
-  log("D","","Raw Poi Lists Cleared. New Generation: " .. rawPoiGeneration)
+M.getRawPoiGeneration = function()
+  syncMultiseatState()
+  return rawPoiGeneration
 end
+M.getRawPoiListByLevel = getRawPoiListByLevel
+M.clear = clear
 M.showMissionMarkersToggled = M.clear
 M.onModManagerReady = M.clear
 return M

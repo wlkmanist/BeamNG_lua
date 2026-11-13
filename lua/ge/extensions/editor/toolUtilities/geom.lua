@@ -13,13 +13,7 @@ local maxBankDeg = 15 -- The maximum bank angle in degrees for sharpest corners.
 local maxRayDist = 10000 -- The maximum distance for the camera -> mouse ray, in meters.
 
 local defaultMinNumDivisions = 10 -- The minimum number of subdivisions used when interpolating the secondary geometry properties of a spline.
-local maxDivisionSpacing = 20.0 -- The maximum allowed spacing between consecutive division points, in meters (determines the minimum number of subdivisions)
--- Absolute upper bound on the subdivisions of a SINGLE segment. Guards the free-Z subdividers (catmullRomFree /
--- catmullRomFreeWithBanking), whose division count is driven by the raw 3D node-to-node distance: a control node
--- that lands at an out-of-range Z (e.g. a diverged height solve) would otherwise ask for millions of points and
--- freeze/overflow. A normal segment needs a handful of divisions; 2000 (= a 40 km chord at maxDivisionSpacing) is
--- far past any real road yet keeps the point buffer finite. The terrain-conforming subdividers don't need this
--- (their Z is the terrain, so the chord can't run away).
+local maxDivisionSpacing = 20.0 -- The maximum allowed spacing between consecutive division points.
 local maxDivisionsHardCap = 2000
 
 local endMargin = 10 -- The margin to add to the first and last points of a polygon, in meters.
@@ -47,9 +41,8 @@ local util = require('editor/toolUtilities/util')
 
 -- Module constants.
 local abs, min, max, floor, ceil, rad = math.abs, math.min, math.max, math.floor, math.ceil, math.rad
-local sin, cos, tan, acos, pi, sqrt = math.sin, math.cos, math.tan, math.acos, math.pi, math.sqrt
+local sin, cos, tan, acos, atan2, pi, sqrt = math.sin, math.cos, math.tan, math.acos, math.atan2, math.pi, math.sqrt
 local random, huge = math.random, math.huge
-local splineGranInv = 1.0 / defaultMinNumDivisions
 local globalUp = vec3(0, 0, 1)
 local preRotQuats = {
   [0] = quat(0, 0, 0, 1), -- 0° (identity).
@@ -60,11 +53,12 @@ local preRotQuats = {
 
 -- Module state.
 local intersections, leftPts, rightPts = {}, {}, {}
+local rsX, rsY, rsZ, rsW, rsCum = {}, {}, {}, {}, {}
 local tmpQuat = quat()
 local tmpPoint2I = Point2I(0, 0)
 local pThis, pLast, mousePos2D, tmpTangent = vec3(), vec3(), vec3(), vec3()
 local tmp0, tmp1, tmp2, tmp3 = vec3(), vec3(), vec3(), vec3()
-local ab, bc, abNorm, bcNorm, tmpTan, tmpCross = vec3(), vec3(), vec3(), vec3(), vec3(), vec3()
+local ab, bc, abNorm, bcNorm, tmpTan = vec3(), vec3(), vec3(), vec3(), vec3()
 
 
 -- Returns the pre-rotation quaternions.
@@ -104,9 +98,6 @@ local function closestPointOnPolyline(pts, p, outPos)
 end
 
 -- Tip-to-tip height smooth: fix z[1] and z[n], rewrite interior Z via Steffen along XY length.
--- Cum lengths are computed before any Z writes (mutating Z while accumulating 3D distance
--- corrupts the parameter and can explode Steffen → runaway subdivision on rebuild).
--- Ghost knots outside the tips give zero end-slopes (no overshoot past tip heights).
 local function smoothNodesHeightSteffen(nodes)
   local n = nodes and #nodes or 0
   if n < 3 then return false end
@@ -128,21 +119,21 @@ local function smoothNodesHeightSteffen(nodes)
   return true
 end
 
--- Closest point on polyline to p in XY (Z lerped). Skips tip stubs via t margins.
--- Writes into outPos; returns squared XY distance (or math.huge).
-local function closestPointOnPolyline2D(pts, p, outPos, tMin, tMax)
+-- Closest point on polyline to p in XY (Z lerped).
+local function closestPointOnPolyline2D(pts, p, outPos, tMin, tMax, closed)
   tMin, tMax = tMin or 0, tMax or 1
   local bestD, n = huge, #pts
   if n < 2 then return bestD end
-  for i = 1, n - 1 do
-    local a, b = pts[i], pts[i + 1]
+  local lastSeg = closed and n or (n - 1)
+  for i = 1, lastSeg do
+    local a, b = pts[i], pts[(i % n) + 1]
     local abx, aby = b.x - a.x, b.y - a.y
     local lenSq = abx * abx + aby * aby
     if lenSq > 1e-12 then
       local t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq
       if t < 0 then t = 0 elseif t > 1 then t = 1 end
-      local segTMin = (i == 1) and tMin or 0
-      local segTMax = (i == n - 1) and tMax or 1
+      local segTMin = (not closed and i == 1) and tMin or 0
+      local segTMax = (not closed and i == n - 1) and tMax or 1
       if t >= segTMin and t <= segTMax then
         local hx = a.x + abx * t
         local hy = a.y + aby * t
@@ -158,17 +149,7 @@ local function closestPointOnPolyline2D(pts, p, outPos, tMin, tMax)
   return bestD
 end
 
--- Where two ribbons that leave a shared junction stop overlapping, as arc length along A measured from the
--- hub (hx, hy). Each polyline is passed in natural order with a flag saying which end is the junction tip.
--- The hub is treated as an extra vertex ahead of each tip: an earlier rebuild may already have pulled a mouth
--- back and deleted the control nodes between the hub and that tip, and reconstructing that stub as a straight
--- run can only make the measured gap smaller, i.e. it errs towards leaving the mouth where it is.
--- A is walked outward from the hub in stepM stations out to maxM. A station still overlaps while the nearest
--- point of B's centreline is closer than clearM (the two facing half-widths summed), and the FIRST clear
--- station is returned -- so only overlap that runs contiguously from the hub counts, and a ramp that curves
--- back alongside its neighbour further out cannot extend the answer. B is likewise only considered out to maxM
--- from its own tip, so a long link's far end can't register against this hub.
--- maxM means "never cleared inside the window": read it as "no better estimate available", not as a distance.
+-- Where two ribbons that leave a shared junction stop overlapping, as arc length along A measured from the hub (hx, hy)..
 local function ribbonOverlapEnd2D(hx, hy, a, aFromStart, b, bFromStart, clearM, stepM, maxM)
   local na = a and #a or 0
   local nb = b and #b or 0
@@ -294,14 +275,16 @@ local function isMouseOverNode(splines)
   return false, nil, nil
 end
 
--- Checks if the mouse is over the given polyline.
-local function isMouseOverPolyline(points, mousePos)
+-- Checks if the mouse is over the given polyline. `closed` also tests the edge from the last node back to the first, which
+-- is a real edge of a polygon and not of a polyline.
+local function isMouseOverPolyline(points, mousePos, closed)
   -- Project the mouse position onto the {z = 0} plane.
   mousePos2D:set(mousePos.x, mousePos.y, 0.0)
 
   -- Check each node, in each spline, in turn.
-  for j = 1, #points - 1 do
-    local p0, p1 = points[j], points[j + 1]
+  local n = #points
+  for j = 1, closed and n or (n - 1) do
+    local p0, p1 = points[j], points[j % n + 1]
     tmp1:set(p0.x, p0.y, 0.0)
     tmp2:set(p1.x, p1.y, 0.0)
     if mousePos2D:squaredDistanceToLineSegment(tmp1, tmp2) < intermediateTolSq then
@@ -313,55 +296,11 @@ local function isMouseOverPolyline(points, mousePos)
   return false, nil
 end
 
--- Checks if the mouse is over a rib.
--- [Splines - The collection of splines to check, which must have a member 1D array 'ribPoints', containing the ordered points of the ribs.]
-local function isMouseOverRib(splines)
-  -- Get the camera-to-mouse ray.
-  local ray = getCameraMouseRay()
-  local rayPos, rayDir = ray.pos, ray.dir
-
-  -- Check each spline in turn.
-  for i = 1, #splines do
-    local spline = splines[i]
-    if spline.isEnabled then
-      local ribPoints = spline.ribPoints
-      if ribPoints and #ribPoints > 0 then
-        -- Detect if this is a sidewalk spline by checking for sidewalk-specific properties.
-        local isHalfSpline = spline.tileSet ~= nil or spline.spacing ~= nil -- TODO: This is a hack to detect if this is a sidewalk spline.
-
-        if isHalfSpline then
-          -- For half-splines, only check odd-indexed ribs (right edge)
-          for j = 2, #ribPoints, 2 do
-            local a, b = intersectsRay_Sphere(rayPos, rayDir, ribPoints[j], mouseToNodetol) -- The intersection points between ray and node sphere.
-            if min(a, b) < maxRayDist then -- If one exists, the mouse is over this rib point.
-              return true, i, j -- Returns: isOverRib, spline index in give table, rib index in given table.
-            end
-          end
-        else
-          -- For full splines, check all rib points
-          for j = 1, #ribPoints do
-            local a, b = intersectsRay_Sphere(rayPos, rayDir, ribPoints[j], mouseToNodetol) -- The intersection points between ray and node sphere.
-            if min(a, b) < maxRayDist then -- If one exists, the mouse is over this rib point.
-              return true, i, j -- Returns: isOverRib, spline index in give table, rib index in given table.
-            end
-          end
-        end
-      end
-    end
-  end
-
-  -- The mouse is not over any rib, so return nil.
-  return false, nil, nil
-end
-
 -- Checks if the mouse is over a bar.
 -- [Splines - The collection of splines to check, which must have a member 1D array 'barPoints', containing the ordered points of the bars.]
 local function isMouseOverBar(splines)
-  -- Get the camera-to-mouse ray.
   local ray = getCameraMouseRay()
   local rayPos, rayDir = ray.pos, ray.dir
-
-  -- Check each spline in turn.
   for i = 1, #splines do
     local spline = splines[i]
     if spline and spline.isEnabled then
@@ -376,26 +315,19 @@ local function isMouseOverBar(splines)
       end
     end
   end
-
-  -- The mouse is not over any bar, so return nil.
   return false, nil, nil
 end
 
 -- Checks if the mouse is over a node in the navigation graph.
 local function isMouseOverGraphNode(nodes)
-  -- Get the camera-to-mouse ray.
   local ray = getCameraMouseRay()
   local rayPos, rayDir = ray.pos, ray.dir
-
-  -- Check each graph node in turn.
   for key, node in pairs(nodes) do
     local a, b = intersectsRay_Sphere(rayPos, rayDir, node, mouseToNodetol) -- Get any intersection points between the ray and node sphere.
     if min(a, b) < maxRayDist then -- If they do exist, the mouse is over this node, so we have found target.
       return true, key -- Return the node key along with the true result.
     end
   end
-
-  -- The mouse is not over any graph node, so return nil.
   return false, nil
 end
 
@@ -408,6 +340,30 @@ local function getAABB(points)
     xMin, xMax, yMin, yMax = min(xMin, pX), max(xMax, pX), min(yMin, pY), max(yMax, pY)
   end
   return { xMin = xMin, xMax = xMax, yMin = yMin, yMax = yMax }
+end
+
+-- Oriented bounding box of a 2D polygon (array of {[1]=x,[2]=y}) via PCA.
+local function polygonOBB(poly)
+  local n = #poly
+  local cx, cy = 0, 0
+  for i = 1, n do cx = cx + poly[i][1]; cy = cy + poly[i][2] end
+  cx, cy = cx / n, cy / n
+  local sxx, sxy, syy = 0, 0, 0
+  for i = 1, n do
+    local dx, dy = poly[i][1] - cx, poly[i][2] - cy
+    sxx = sxx + dx * dx; sxy = sxy + dx * dy; syy = syy + dy * dy
+  end
+  local theta = 0.5 * atan2(2 * sxy, sxx - syy)
+  local ct, st = cos(theta), sin(theta)
+  local minU, maxU, minV, maxV = huge, -huge, huge, -huge
+  for i = 1, n do
+    local dx, dy = poly[i][1] - cx, poly[i][2] - cy
+    local u, v = dx * ct + dy * st, -dx * st + dy * ct
+    if u < minU then minU = u end; if u > maxU then maxU = u end
+    if v < minV then minV = v end; if v > maxV then maxV = v end
+  end
+  local mu, mv = (minU + maxU) * 0.5, (minV + maxV) * 0.5
+  return cx + mu * ct - mv * st, cy + mu * st + mv * ct, (maxU - minU) * 0.5, (maxV - minV) * 0.5, theta
 end
 
 -- Computes a polygonal outline from the given spline. Includes a given margin.
@@ -521,7 +477,7 @@ local function rotateVecAroundAxisInlined(v, k, theta, out)
   return out
 end
 
--- Robust curvature radius approximation using 3 points.
+-- Curvature radius approximation using 3 points.
 local function computeTurningRadius(p1, p2, p3)
   ab:setSub2(p2, p1)
   bc:setSub2(p3, p2)
@@ -553,7 +509,6 @@ local function intersection2LineSegs(p1, p2, q1, q2, out)
   return nil
 end
 
--- 2D {x,y} helpers (polyBool / mouth cutback). Use mathlib where it applies.
 local function classifyAlong(t, eps)
   if t <= -eps then return -2 end
   if t < eps then return -1 end
@@ -584,13 +539,20 @@ local function pointsCollinear2D(a, b, c, eps)
   return abs((a.x - b.x) * (b.y - c.y) - (a.y - b.y) * (b.x - c.x)) < eps
 end
 
+-- p is taken to be collinear with left->right; false if it is either endpoint, or outside them.
+-- The test is on the DOT PRODUCT, not on the normalised position along the line. Both read the same at a metre or so, but the
+-- dot carries units of length squared, so on a two millimetre edge a normalised test tolerates a p that is an endpoint to
+-- within a ten-thousandth of the edge -- and the sweep that calls this then splits a segment at its own end, leaving a
+-- zero-length piece that corrupts the fill.
 local function pointBetween2D(p, left, right, eps)
   eps = eps or 1e-10
-  tmp0:set(p.x, p.y, 0)
-  tmp1:set(left.x, left.y, 0)
-  tmp2:set(right.x, right.y, 0)
-  local t = tmp0:xnormOnLine(tmp1, tmp2)
-  return t > eps and t < 1.0 - eps
+  local plx, ply = p.x - left.x, p.y - left.y
+  local rlx, rly = right.x - left.x, right.y - left.y
+  local dot = plx * rlx + ply * rly
+  if dot < eps then return false end
+  local sqlen = rlx * rlx + rly * rly
+  if dot - sqlen > -eps then return false end
+  return true
 end
 
 -- Returns { pt={x,y}, alongA, alongB } or nil if parallel (along* Martinez codes).
@@ -598,12 +560,15 @@ local function linesIntersect2D(a0, a1, b0, b1, eps)
   eps = eps or 1e-10
   local adx, ady = a1.x - a0.x, a1.y - a0.y
   local bdx, bdy = b1.x - b0.x, b1.y - b0.y
-  if abs(adx * bdy - ady * bdx) < eps then return nil end
-  tmp0:set(a0.x, a0.y, 0)
-  tmp1:set(a1.x, a1.y, 0)
-  tmp2:set(b0.x, b0.y, 0)
-  tmp3:set(b1.x, b1.y, 0)
-  local A, B = closestLinePoints(tmp0, tmp1, tmp2, tmp3)
+  local axb = adx * bdy - ady * bdx
+  if abs(axb) < eps then return nil end
+  -- Solved here rather than through closestLinePoints, which divides by the Gram determinant uu*vv - uv*uv. On two near
+  -- parallel segments that is the difference of two nearly equal fourth powers of length and comes back as pure round off, so
+  -- the pair of parameters it returns no longer describes the same point -- and the sweep that calls this then splits a
+  -- segment at a point metres off its own line. The cross below cancels one order of magnitude instead of two.
+  local dx, dy = a0.x - b0.x, a0.y - b0.y
+  local A = (bdx * dy - bdy * dx) / axb
+  local B = (adx * dy - ady * dx) / axb
   return {
     pt = { x = a0.x + A * adx, y = a0.y + A * ady },
     alongA = classifyAlong(A, eps),
@@ -614,13 +579,10 @@ end
 -- t along p0+t*d0 at intersection with p1+u*d1 (nil if parallel). Unit d0 => t in metres.
 local function lineDirsHitT2D(p0x, p0y, d0x, d0y, p1x, p1y, d1x, d1y, eps)
   eps = eps or 1e-10
-  if abs(d0x * d1y - d0y * d1x) < eps then return nil end
-  tmp0:set(p0x, p0y, 0)
-  tmp1:set(p0x + d0x, p0y + d0y, 0)
-  tmp2:set(p1x, p1y, 0)
-  tmp3:set(p1x + d1x, p1y + d1y, 0)
-  local t = closestLinePoints(tmp0, tmp1, tmp2, tmp3)
-  return t
+  local cross = d0x * d1y - d0y * d1x
+  if abs(cross) < eps then return nil end
+  -- Direct, for the reason given on linesIntersect2D. Shallow corners on a mitred outset are exactly the near parallel case.
+  return ((p1x - p0x) * d1y - (p1y - p0y) * d1x) / cross
 end
 
 -- Sample a cubic Bezier in XY (inclusive endpoints). segs = number of segments (default 14).
@@ -640,9 +602,7 @@ local function sampleCubicBezier2D(p0, p1, p2, p3, segs)
   return pts
 end
 
--- Point at arc length `s` (>= 0) from the moving tip along a node polyline (XY), using per-node arc-from-tip
--- distances `d`. fromStart => node[1] is the tip (d ascending with i); else node[#] is the tip. Clamps to the
--- far end. Helper for reshapeLeadInBezier2D.
+-- Point at arc length `s` (>= 0) from the moving tip along a node polyline (XY).
 local function pointAtArcFromTip(nodes, d, fromStart, s)
   local n = #nodes
   if fromStart then
@@ -669,11 +629,7 @@ local function pointAtArcFromTip(nodes, d, fromStart, s)
   return nodes[1].x, nodes[1].y
 end
 
--- Reshape one END of a node polyline in place (2D x/y; z untouched) so it LEAVES the moving tip at (p0x,p0y)
--- heading along unit (gx,gy), then eases tangent-continuously (G1) back onto the polyline's OWN path over the
--- first `L` metres via a cubic Bezier. Nodes beyond L keep their positions; nodes within L are re-placed by
--- their ORIGINAL arc fraction along the Bezier. fromStart => node[1] is the tip; else node[#nodes].
--- Faithful port of arealith's applyParallelLeadIn (the one-sided gore taper for a road continuation).
+-- Reshape one END of a node polyline in place (2D x/y; z untouched).
 local function reshapeLeadInBezier2D(nodes, fromStart, p0x, p0y, gx, gy, L)
   local n = #nodes
   if n < 2 or L <= 1e-6 then return end
@@ -718,8 +674,6 @@ local function reshapeLeadInBezier2D(nodes, fromStart, p0x, p0y, gx, gy, L)
 end
 
 -- Offset a 2D polyline along its local normal, toward (cx, cy).
--- Local left-normal of an ordered path at index i (perpendicular to the neighbour chord). Consistent handedness
--- along the whole path since the path order is fixed. Returns nx, ny (unit) or nil on a degenerate segment.
 local function pathLeftNormal2D(path, i, n)
   local ax, ay, bx, by
   if i == 1 then
@@ -735,11 +689,7 @@ local function pathLeftNormal2D(path, i, n)
   return -ty / tlen, tx / tlen
 end
 
--- Which handed side (left normal of the ordered path) points TOWARD (cx, cy), decided ONCE for the whole path by
--- summing the per-point test. A slip/merge connector runs nearly parallel to the direction to the hub centre, so a
--- per-point toward-centre test is near-degenerate and flips individual points the wrong way (the offset stops
--- tracking the edge and bends inward). One aggregate vote picks a single stable side, so the offset holds a
--- constant distance from the edge. Returns +1 if the left normal is (net) toward the centre, else -1.
+-- Which handed side (left normal of the ordered path) points TOWARD (cx, cy).
 local function pathTowardCentreSide2D(path, cx, cy)
   local n, vote = #path, 0
   for i = 1, n do
@@ -769,12 +719,102 @@ local function insetPathAlongNormal2D(path, cx, cy, insetM)
   return out
 end
 
--- Offset a 2D polyline AWAY from (cx, cy) along its local normal (the mirror of insetPathAlongNormal2D). distM > 0
--- pushes outward. Keeps z if present. The outward side is decided ONCE for the whole path (see
--- pathTowardCentreSide2D) so a near-parallel slip/merge connector can't flip individual points inward -- the
--- barrier keeps a constant distance from the edge.
-local function offsetPathFromCenter2D(path, cx, cy, distM)
-  if not path or #path < 2 or distM <= 0 then return path end
+local miterClipLimit = 1.5 -- SVG stroke-linejoin: miter-clip
+
+-- Miter-clipped parallel offset of an OPEN 2D polyline: one output point per source vertex (so paired rails stay
+-- index-aligned) with z carried through. Corners keep true perpendicular width, unlike offsetPathFromCenter2D's
+-- per-vertex normals. The side is chosen ONCE for the whole path so it cannot flip halfway along: away from
+-- (cx, cy), or toward it when inward.
+local function offsetPathMiter2D(pts, dist, cx, cy, z, inward)
+  local n = #pts
+  local out = {}
+  if n < 2 or dist == 0 then
+    for i = 1, n do out[i] = { x = pts[i].x, y = pts[i].y, z = pts[i].z or z } end
+    return out
+  end
+
+  -- Left-of-travel segment normals; a degenerate (zero-length) segment inherits a neighbour's.
+  local lnx, lny = {}, {}
+  for i = 1, n - 1 do
+    local dx, dy = pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y
+    local len = sqrt(dx * dx + dy * dy)
+    if len < 1e-9 then lnx[i], lny[i] = 0, 0 else lnx[i], lny[i] = -dy / len, dx / len end
+  end
+  for i = 1, n - 1 do
+    if lnx[i] == 0 and lny[i] == 0 then
+      for j = i - 1, 1, -1 do
+        if lnx[j] ~= 0 or lny[j] ~= 0 then lnx[i], lny[i] = lnx[j], lny[j] break end
+      end
+      if lnx[i] == 0 and lny[i] == 0 then
+        for j = i + 1, n - 1 do
+          if lnx[j] ~= 0 or lny[j] ~= 0 then lnx[i], lny[i] = lnx[j], lny[j] break end
+        end
+      end
+    end
+  end
+
+  -- Decide the side by SUMMING the outward test over the WHOLE path, not just the first segment: a path that
+  -- starts radially (a rim arc embedding into an arm) has a near-zero, ambiguous first normal, and keying off it
+  -- alone mis-flips the whole strip inward. The sum is dominated by the long tangential run (each term scales
+  -- with radial distance), so the strip reliably lands on the outside.
+  local signed = dist
+  local vote, sumAbs = 0, 0
+  for i = 1, n - 1 do
+    if lnx[i] ~= 0 or lny[i] ~= 0 then
+      local mx = (pts[i].x + pts[i + 1].x) * 0.5
+      local my = (pts[i].y + pts[i + 1].y) * 0.5
+      local d = (mx - cx) * lnx[i] + (my - cy) * lny[i]
+      vote = vote + d
+      sumAbs = sumAbs + abs(d)
+    end
+  end
+  -- A near-CANCELLING vote means a mostly-radial path (two radial legs meeting at a near-point), where the sign is
+  -- noise. Break the tie off the vertex CLOSEST to the centre: take the side that pushes THAT point to a larger
+  -- radius, so the innermost point can never cross inside. A decisive vote is untouched.
+  if sumAbs > 1e-9 and abs(vote) < 0.15 * sumAbs then
+    local mi, mr2 = 1, huge
+    for i = 1, n do
+      local dx, dy = pts[i].x - cx, pts[i].y - cy
+      local r2 = dx * dx + dy * dy
+      if r2 < mr2 then mr2, mi = r2, i end
+    end
+    local ni = min(mi, n - 1)
+    if (pts[mi].x - cx) * lnx[ni] + (pts[mi].y - cy) * lny[ni] < 0 then signed = -dist end
+  elseif vote < 0 then
+    signed = -dist
+  end
+  if inward then signed = -signed end
+
+  out[1] = { x = pts[1].x + lnx[1] * signed, y = pts[1].y + lny[1] * signed, z = pts[1].z or z }
+  for i = 2, n - 1 do
+    local n0x, n0y, n1x, n1y = lnx[i - 1], lny[i - 1], lnx[i], lny[i]
+    local vx, vy = pts[i].x, pts[i].y
+    local bx, by = n0x + n1x, n0y + n1y
+    local bl = sqrt(bx * bx + by * by)
+    local ox, oy
+    if bl < 1e-9 then
+      ox, oy = vx + n0x * signed, vy + n0y * signed
+    else
+      bx, by = bx / bl, by / bl
+      local cosHalf = bx * n0x + by * n0y
+      if abs(cosHalf) < 1e-6 then
+        ox, oy = vx + n0x * signed, vy + n0y * signed
+      else
+        local miterLen = signed / cosHalf
+        local maxLen = miterClipLimit * abs(signed)
+        if abs(miterLen) > maxLen then miterLen = (miterLen > 0 and 1 or -1) * maxLen end
+        ox, oy = vx + bx * miterLen, vy + by * miterLen
+      end
+    end
+    out[i] = { x = ox, y = oy, z = pts[i].z or z }
+  end
+  out[n] = { x = pts[n].x + lnx[n - 1] * signed, y = pts[n].y + lny[n - 1] * signed, z = pts[n].z or z }
+  return out
+end
+
+-- Offset a 2D polyline AWAY from (cx, cy) along its local normal.
+local function offsetPathFromCenter2D(path, cx, cy, distM, distArr)
+  if not path or #path < 2 or (distM <= 0 and not distArr) then return path end
   local n, out = #path, {}
   local outSide = -pathTowardCentreSide2D(path, cx, cy) -- opposite of the toward-centre side
   for i = 1, n do
@@ -783,8 +823,9 @@ local function offsetPathFromCenter2D(path, cx, cy, distM)
     if not nx then
       out[i] = { x = p.x, y = p.y, z = p.z }
     else
+      local d = distArr and (distArr[i] or 0) or distM
       nx, ny = nx * outSide, ny * outSide
-      out[i] = { x = p.x + nx * distM, y = p.y + ny * distM, z = p.z }
+      out[i] = { x = p.x + nx * d, y = p.y + ny * d, z = p.z }
     end
   end
   return out
@@ -828,11 +869,37 @@ local function polylineCumLength3D(pts)
   return cum, cum[n] or 0
 end
 
--- Ramer-Douglas-Peucker simplification of a polyline (perpendicular distance measured in XY only). Drops
--- vertices that lie within tolM of the chord between kept vertices, removing digitising noise (tightly spaced,
--- slightly-offset points that make a Catmull-Rom wobble) while preserving genuine corners. Endpoints are always
--- kept. Iterative (explicit stack) so long ways can't blow the Lua stack. Returns a new list of the kept point
--- objects (references preserved, so z rides along); the input is unchanged.
+-- 2D (XY-only) sibling of polylineCumLength3D for plain {x,y} points (no vec3 :distance): out[i] = distance from pts[1]
+-- to pts[i]. Takes an optional reused `out` table (cleared then refilled) so a hot rebuild allocates nothing; omit for a
+-- fresh one. Returns out and its total length.
+local function polylineCumLength2D(pts, out)
+  out = out or {}
+  table.clear(out)
+  local n = pts and #pts or 0
+  out[1] = 0
+  for i = 2, n do
+    local a, b = pts[i - 1], pts[i]
+    local dx, dy = b.x - a.x, b.y - a.y
+    out[i] = out[i - 1] + sqrt(dx * dx + dy * dy)
+  end
+  return out, out[n] or 0
+end
+
+-- Whether a shape signature (a flat list of numbers and strings) moved since `old`: numbers by more than tolM, strings at all.
+local function sigMoved(old, new, tolM)
+  if not old or #old ~= #new then return true end
+  for i = 1, #new do
+    local a, b = old[i], new[i]
+    if type(a) == 'number' and type(b) == 'number' then
+      if abs(a - b) > tolM then return true end
+    elseif a ~= b then
+      return true
+    end
+  end
+  return false
+end
+
+-- Ramer-Douglas-Peucker simplification of a polyline (perpendicular distance measured in full 3D).
 local function simplifyRDP(points, tolM)
   local n = points and #points or 0
   if n < 3 or not tolM or tolM <= 0 then return points end
@@ -845,18 +912,20 @@ local function simplifyRDP(points, tolM)
     local lo = stack[#stack]; stack[#stack] = nil
     if hi > lo + 1 then
       local a, b = points[lo], points[hi]
-      local ex, ey = b.x - a.x, b.y - a.y
-      local lenSq = ex * ex + ey * ey
+      local az, bz = a.z or 0, b.z or 0 -- 3D: a node XY-straight but Z-bent (incline crest/dip) must not be dropped;
+      local ex, ey, ez = b.x - a.x, b.y - a.y, bz - az -- z defaults to 0 so plain {x,y} callers (flat rings) still work
+      local lenSq = ex * ex + ey * ey + ez * ez
       local maxD, maxI = -1, nil
       for i = lo + 1, hi - 1 do
-        local px, py = points[i].x - a.x, points[i].y - a.y
+        local p = points[i]
+        local px, py, pz = p.x - a.x, p.y - a.y, (p.z or 0) - az
         local d
         if lenSq > 1e-12 then
-          local t = (px * ex + py * ey) / lenSq
-          local dx, dy = px - ex * t, py - ey * t
-          d = dx * dx + dy * dy
+          local t = (px * ex + py * ey + pz * ez) / lenSq
+          local dx, dy, dz = px - ex * t, py - ey * t, pz - ez * t
+          d = dx * dx + dy * dy + dz * dz
         else
-          d = px * px + py * py -- degenerate chord: distance to the shared endpoint
+          d = px * px + py * py + pz * pz -- degenerate chord: distance to the shared endpoint
         end
         if d > maxD then maxD, maxI = d, i end
       end
@@ -872,9 +941,51 @@ local function simplifyRDP(points, tolM)
   return out
 end
 
--- Densifies a polyline so no segment exceeds maxSpacing, by inserting evenly-spaced points (linear
--- interpolation) along any over-long segment. Original points are preserved; a new list is returned.
--- z is interpolated too, but callers that drape to terrain afterwards will overwrite it.
+-- Thin a tessellated curve down to chords of about `chord` metres.
+local function chordify(pts, n, chord, flags)
+  if n < 3 then return pts, flags end
+  local out, outF = { pts[1] }, flags and { flags[1] } or nil
+  local lastX, lastY = pts[1].x, pts[1].y
+  for i = 2, n - 1 do
+    local p = pts[i]
+    local dx, dy = p.x - lastX, p.y - lastY
+    if (flags and flags[i]) or dx * dx + dy * dy >= chord * chord then
+      out[#out + 1] = p
+      if outF then outF[#out] = flags[i] end
+      lastX, lastY = p.x, p.y
+    end
+  end
+  out[#out + 1] = pts[n]
+  if outF then outF[#out] = flags[n] end
+  return out, outF
+end
+
+-- Welds out near-coincident consecutive nodes, in place.
+local function weldShortSegments(nodes, widths, minLen)
+  local n = nodes and #nodes or 0
+  if n <= 2 then return n end
+  local minSq = minLen * minLen
+  local w = 1 -- write cursor = last kept index; node 1 stays in place
+  for j = 2, n - 1 do
+    if nodes[j]:squaredDistance(nodes[w]) >= minSq then
+      w = w + 1
+      nodes[w], widths[w] = nodes[j], widths[j]
+    end
+  end
+  -- Always keep the true end node; if it crowds the last kept node, overwrite that one instead of appending.
+  if w >= 2 and nodes[n]:squaredDistance(nodes[w]) < minSq then
+    nodes[w], widths[w] = nodes[n], widths[n]
+  else
+    w = w + 1
+    nodes[w], widths[w] = nodes[n], widths[n]
+  end
+  for i = w + 1, n do
+    nodes[i], widths[i] = nil, nil
+  end
+  return w
+end
+
+-- Densifies a polyline so no segment exceeds maxSpacing.
 local function densifyByMaxSpacing(points, maxSpacing)
   local n = points and #points or 0
   if n < 2 or not maxSpacing or maxSpacing <= 0 then return points end
@@ -893,11 +1004,45 @@ local function densifyByMaxSpacing(points, maxSpacing)
   return out
 end
 
--- Chaikin corner-cutting for a CLOSED polygon of {x=,y=} points. Each iteration replaces every vertex with
--- two points 1/4 and 3/4 along its outgoing edge, rounding the sharp digitising corners of an OSM ring into a
--- smooth loop (so a terraform carved to it gets a smooth shoreline instead of a notch at every vertex). The
--- point count roughly doubles per pass, so keep `iterations` small (RDP-simplify first to bound the input).
--- Returns a new list; the input is unchanged.
+-- Resamples a polyline (nodes = vec3[], widths = number[]).
+local function resampleUniformNodesWidths(nodes, widths, spacing)
+  local n = nodes and #nodes or 0
+  if n < 2 or not spacing or spacing <= 0 then return n end
+  -- Snapshot originals + build cumulative 3D length (so we can overwrite nodes while sampling).
+  local total = 0
+  rsCum[1] = 0
+  for i = 1, n do
+    local p = nodes[i]
+    rsX[i], rsY[i], rsZ[i], rsW[i] = p.x, p.y, p.z, widths[i]
+    if i > 1 then
+      local dx, dy, dz = rsX[i] - rsX[i - 1], rsY[i] - rsY[i - 1], rsZ[i] - rsZ[i - 1]
+      total = total + sqrt(dx * dx + dy * dy + dz * dz)
+      rsCum[i] = total
+    end
+  end
+  if total < epsilon then return n end -- fully degenerate: leave for the weld pass to collapse.
+
+  local intervals = max(1, floor(total / spacing + 0.5))
+  local outN = intervals + 1
+  local step = total / intervals
+  local seg = 1
+  for k = 1, outN do
+    local d = (k == outN) and total or (k - 1) * step
+    while seg < n - 1 and rsCum[seg + 1] < d do seg = seg + 1 end
+    local d0, d1 = rsCum[seg], rsCum[seg + 1]
+    local t = (d1 > d0) and (d - d0) / (d1 - d0) or 0
+    local p = nodes[k] or vec3()
+    nodes[k] = p
+    p:set(rsX[seg] + (rsX[seg + 1] - rsX[seg]) * t,
+          rsY[seg] + (rsY[seg + 1] - rsY[seg]) * t,
+          rsZ[seg] + (rsZ[seg + 1] - rsZ[seg]) * t)
+    widths[k] = rsW[seg] + (rsW[seg + 1] - rsW[seg]) * t
+  end
+  for i = outN + 1, n do nodes[i], widths[i] = nil, nil end
+  return outN
+end
+
+-- Chaikin corner-cutting for a closed polygon of {x=,y=} points.
 local function smoothClosedPolygonChaikin(poly, iterations)
   local pts = poly
   for _ = 1, (iterations or 1) do
@@ -914,6 +1059,30 @@ local function smoothClosedPolygonChaikin(poly, iterations)
   return pts
 end
 
+-- Squared distance from point (px,py) to the FINITE segment AB (t clamped to the segment) - for hot proximity tests.
+local function distSqPointSeg2D(px, py, ax, ay, bx, by)
+  local dx, dy = bx - ax, by - ay
+  local l2 = dx * dx + dy * dy
+  local t = (l2 > 1e-12) and ((px - ax) * dx + (py - ay) * dy) / l2 or 0
+  if t < 0 then t = 0 elseif t > 1 then t = 1 end
+  local ex, ey = px - (ax + dx * t), py - (ay + dy * t)
+  return ex * ex + ey * ey
+end
+
+-- Proper crossing of open segments AB x CD: returns the parameter t on AB in (0,1) at the interior crossing, else nil
+-- (parallel, or the crossing lies on/at an endpoint). Endpoints are excluded so touching strips don't read as a fold.
+local function segCrossParam2D(ax, ay, bx, by, cx, cy, dx, dy)
+  local r1x, r1y = bx - ax, by - ay
+  local r2x, r2y = dx - cx, dy - cy
+  local denom = r1x * r2y - r1y * r2x
+  if abs(denom) < 1e-9 then return nil end
+  local sx, sy = cx - ax, cy - ay
+  local t = (sx * r2y - sy * r2x) / denom
+  local u = (sx * r1y - sy * r1x) / denom
+  if t > 1e-4 and t < 1 - 1e-4 and u > 1e-4 and u < 1 - 1e-4 then return t end
+  return nil
+end
+
 -- 2D point-in-polygon (ray cast) for a ring of {x=,y=} verts. Winding-agnostic (even-odd).
 local function pointInRing2D(px, py, ring)
   local n, inside = #ring, false
@@ -928,15 +1097,371 @@ local function pointInRing2D(px, py, ring)
   return inside
 end
 
+-- One side of a box kept, Sutherland-Hodgman. The cut lands exactly on the line, so the corner two cuts make is the box's
+-- own corner to the last bit.
+local function clipAxis(pts, a, b, c, keepLess)
+  local out, n = {}, #pts
+  if n == 0 then return out end
+  local s = keepLess and -1 or 1
+  local p = pts[n]
+  local pin = (p[a] - c) * s >= 0
+  for i = 1, n do
+    local q = pts[i]
+    local qin = (q[a] - c) * s >= 0
+    if qin ~= pin then
+      local t = (c - p[a]) / (q[a] - p[a])
+      out[#out + 1] = { [a] = c, [b] = p[b] + (q[b] - p[b]) * t }
+    end
+    if qin then out[#out + 1] = q end
+    p, pin = q, qin
+  end
+  return out
+end
+
+-- A ring cut to the box x0..x1, y0..y1. A concave ring comes back as one ring that runs along the box edge between its
+-- pieces, which covers the same ground inside the box.
+local function clipRingRect2D(pts, x0, x1, y0, y1)
+  pts = clipAxis(pts, 'x', 'y', x0, false)
+  pts = clipAxis(pts, 'x', 'y', x1, true)
+  pts = clipAxis(pts, 'y', 'x', y0, false)
+  return clipAxis(pts, 'y', 'x', y1, true)
+end
+
+-- Point-in-triangle (2D, barycentric). Scalar (no vec3 alloc) for tight inner loops such as ear clipping.
+local function pointInTri2D(px, py, ax, ay, bx, by, cx, cy)
+  local v0x, v0y = cx - ax, cy - ay
+  local v1x, v1y = bx - ax, by - ay
+  local v2x, v2y = px - ax, py - ay
+  local d00 = v0x * v0x + v0y * v0y
+  local d01 = v0x * v1x + v0y * v1y
+  local d02 = v0x * v2x + v0y * v2y
+  local d11 = v1x * v1x + v1y * v1y
+  local d12 = v1x * v2x + v1y * v2y
+  local denom = d00 * d11 - d01 * d01
+  if denom == 0 then return false end
+  local inv = 1.0 / denom
+  local u = (d11 * d02 - d01 * d12) * inv
+  local v = (d00 * d12 - d01 * d02) * inv
+  return u >= 0 and v >= 0 and (u + v) <= 1
+end
+
+-- A ring handed over CLOSED -- its first point repeated at the end, which is what a walk along the edges wants -- with the
+-- repeat dropped. The same array back when there is no repeat, so the usual case costs a comparison.
+local function openRing2D(r)
+  local n = #r
+  if n < 2 or r[n].x ~= r[1].x or r[n].y ~= r[1].y then return r end
+  local out = {}
+  for i = 1, n - 1 do out[i] = r[i] end
+  return out
+end
+
+-- Ear-clipping triangulation of a simple 2D polygon (array of {x=,y=} verts, either winding).
+-- The closing repeat has to go before any of this: it is a zero-length edge, so the corner on either side of it has no turn
+-- in it and neither can ever be clipped as an ear. On most outlines the clip gets round them; on some it stalls, comes up
+-- short of the n-2 triangles a cap needs, and the WHOLE cap is thrown away.
+local function triangulatePolygon2D(poly)
+  poly = openRing2D(poly)
+  local n = #poly
+  local tris = {}
+  if n < 3 then return tris end
+  -- Index list in CCW order (reverse a CW ring) so the convex/ear tests share one winding.
+  local idx, area2 = {}, 0
+  for i = 1, n do local j = (i % n) + 1; area2 = area2 + (poly[i].x * poly[j].y - poly[j].x * poly[i].y) end
+  if area2 < 0 then for i = 1, n do idx[i] = n - i + 1 end else for i = 1, n do idx[i] = i end end
+  local m, guard = n, 0
+  while m > 3 and guard < 8 * n do
+    guard = guard + 1
+    local bestI, bestQ, forceI = nil, -1, nil
+    for i = 1, m do
+      local ip, ic, inx = idx[i == 1 and m or i - 1], idx[i], idx[i == m and 1 or i + 1]
+      local ax, ay, bx, by, cx, cy = poly[ip].x, poly[ip].y, poly[ic].x, poly[ic].y, poly[inx].x, poly[inx].y
+      local cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+      if cross > 1e-10 then -- convex corner
+        if not forceI then forceI = i end
+        local ear = true
+        local ex, ey = cx - ax, cy - ay
+        local L2 = ex * ex + ey * ey
+        for j = 1, m do
+          local ij = idx[j]
+          if ij ~= ip and ij ~= ic and ij ~= inx then
+            local px, py = poly[ij].x, poly[ij].y
+            -- Skip a point that coincides exactly with a corner (e.g. a hole-bridge seam duplicate) so it can't
+            -- falsely block an otherwise valid ear; a strict no-op for rings with distinct vertices.
+            local onCorner = (px == ax and py == ay) or (px == bx and py == by) or (px == cx and py == cy)
+            if not onCorner then
+              -- A vertex ON the diagonal the ear closes is inside it in exact arithmetic but either side in floating point;
+              -- clipped past, it is left hanging on a straight run with nothing to close it, and the whole cap fails.
+              local t = ((px - ax) * ex + (py - ay) * ey) / L2
+              local off = ex * (py - ay) - ey * (px - ax)
+              if (t > 0 and t < 1 and off * off <= 1e-12 * L2) or pointInTri2D(px, py, ax, ay, bx, by, cx, cy) then
+                ear = false; break
+              end
+            end
+          end
+        end
+        if ear then
+          -- Area over summed edge lengths: highest for an equilateral ear, towards zero for a sliver. Clipping the BEST
+          -- ear rather than the first is what keeps a cap off long thin triangles, which the GPU shades in 2x2 pixel
+          -- quads and so pays for at up to four times their coverage.
+          local q = cross / ((bx - ax) ^ 2 + (by - ay) ^ 2 + (cx - bx) ^ 2 + (cy - by) ^ 2 + (ax - cx) ^ 2 + (ay - cy) ^ 2)
+          if q > bestQ then bestI, bestQ = i, q end
+        end
+      end
+    end
+    local pick = bestI or forceI
+    if not pick then break end -- no convex vertex: degenerate, bail
+    local ip, ic, inx = idx[pick == 1 and m or pick - 1], idx[pick], idx[pick == m and 1 or pick + 1]
+    tris[#tris + 1] = { ip, ic, inx }
+    table.remove(idx, pick); m = m - 1
+  end
+  if m == 3 then tris[#tris + 1] = { idx[1], idx[2], idx[3] } end
+  if #tris ~= n - 2 then return {} end -- incomplete cap (degenerate ring): let the caller fall back
+  return tris
+end
+
+-- Twice the signed area of a 2D ring ({x=,y=} verts). Positive => CCW (x-right, y-up).
+local function ringSignedArea2(ring)
+  local a, n = 0, #ring
+  for i = 1, n do local j = (i % n) + 1; a = a + (ring[i].x * ring[j].y - ring[j].x * ring[i].y) end
+  return a
+end
+
+-- Turn at b going a -> b -> c. Positive => left, so on a CCW ring a positive turn is a convex corner.
+local function turn2(a, b, c)
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+end
+
+-- Does the wedge of interior at ring[i] face b? On a convex corner the interior is the wedge between the two edges, on a
+-- reflex one it is everything BUT that wedge, which is why the test cannot just be "left of both edges".
+local function inWedge2D(ring, i, b)
+  local n = #ring
+  local a, prv, nxt = ring[i], ring[i == 1 and n or i - 1], ring[(i % n) + 1]
+  if turn2(prv, a, nxt) > 0 then
+    return turn2(a, b, nxt) <= 0 and turn2(a, prv, b) <= 0
+  end
+  return turn2(a, b, nxt) > 0 or turn2(a, prv, b) > 0
+end
+
+-- Which vertex of `ring` a hole whose leftmost point is M can be joined to without the bridge crossing anything.
+local function bridgeTarget2D(ring, M)
+  local n = #ring
+  -- The ray from M along -x leaves through an edge that descends past M.y (the interior of a CCW ring lies to the left of
+  -- each edge, so its left-hand boundary runs downwards). Take the nearest such edge and its lower-x end as the first guess.
+  local qx, cand = -huge, nil
+  for i = 1, n do
+    local a, b = ring[i], ring[(i % n) + 1]
+    if a.y >= M.y and M.y >= b.y and b.y ~= a.y then
+      local ix = a.x + (M.y - a.y) / (b.y - a.y) * (b.x - a.x)
+      if ix <= M.x and ix > qx then
+        qx = ix
+        cand = (a.x < b.x) and i or ((i % n) + 1)
+        if ix == M.x then return cand end -- the hole is already touching this edge
+      end
+    end
+  end
+  if not cand then return nil end -- nothing to the left: the hole is not inside this ring at all
+
+  -- Any vertex standing inside the triangle (M, where the ray landed, the guess) would have the bridge cut across it. Of
+  -- those, take the one at the shallowest angle to the ray which can actually see M -- a vertex whose interior wedge faces
+  -- the other way is on the far side of its own boundary, and joining to it would put the bridge outside the polygon.
+  local P = ring[cand]
+  local best, tanMin = cand, huge
+  for i = 1, n do
+    local v = ring[i]
+    if v.x >= P.x and v.x <= M.x and v.x ~= M.x
+       and pointInTri2D(v.x, v.y, M.x, M.y, qx, M.y, P.x, P.y) and inWedge2D(ring, i, M) then
+      local t = abs(M.y - v.y) / (M.x - v.x)
+      if t < tanMin or (t == tanMin and v.x > ring[best].x) then best, tanMin = i, t end
+    end
+  end
+  return best
+end
+
+-- Merge hole rings into an outer ring with bridge edges. `count` caps how many of `holes` are taken.
+local function bridgeHoles2D(outer, holes, count)
+  local ring = {}
+  if ringSignedArea2(outer) < 0 then
+    for i = #outer, 1, -1 do ring[#ring + 1] = { x = outer[i].x, y = outer[i].y, z = outer[i].z } end
+  else
+    for i = 1, #outer do ring[#ring + 1] = { x = outer[i].x, y = outer[i].y, z = outer[i].z } end
+  end
+
+  -- Copy + normalise each hole to CW, note its min-x vertex, then bridge holes in ascending min-x order.
+  local hs = {}
+  for h = 1, (count or #holes) do
+    local src = holes[h]
+    if src and #src >= 3 then
+      local hr = {}
+      if ringSignedArea2(src) > 0 then
+        for i = #src, 1, -1 do hr[#hr + 1] = { x = src[i].x, y = src[i].y, z = src[i].z } end
+      else
+        for i = 1, #src do hr[#hr + 1] = { x = src[i].x, y = src[i].y, z = src[i].z } end
+      end
+      local mi = 1
+      for i = 2, #hr do
+        if hr[i].x < hr[mi].x or (hr[i].x == hr[mi].x and hr[i].y < hr[mi].y) then mi = i end
+      end
+      hs[#hs + 1] = { ring = hr, mi = mi, mx = hr[mi].x }
+    end
+  end
+  table.sort(hs, function(a, b) return a.mx < b.mx end)
+
+  for hh = 1, #hs do
+    local hr, mi = hs[hh].ring, hs[hh].mi
+    local bi = bridgeTarget2D(ring, hr[mi])
+    if bi then
+      -- Splice: outer[1..bi], hole from M all the way round back to M, bridge vertex again, then outer[bi+1..].
+      local merged = {}
+      for i = 1, bi do merged[#merged + 1] = ring[i] end
+      for k = 0, #hr do merged[#merged + 1] = hr[((mi - 1 + k) % #hr) + 1] end
+      merged[#merged + 1] = { x = ring[bi].x, y = ring[bi].y, z = ring[bi].z }
+      for i = bi + 1, #ring do merged[#merged + 1] = ring[i] end
+      ring = merged
+    end
+  end
+  return ring
+end
+
+-- Do these two segments cross, touch, or pass within `tol` of each other?
+local function segsFoul2D(a, b, c, d, tol)
+  if segCrossParam2D(a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y) then return true end
+  local t2 = tol * tol
+  return distSqPointSeg2D(a.x, a.y, c.x, c.y, d.x, d.y) <= t2
+      or distSqPointSeg2D(b.x, b.y, c.x, c.y, d.x, d.y) <= t2
+      or distSqPointSeg2D(c.x, c.y, a.x, a.y, b.x, b.y) <= t2
+      or distSqPointSeg2D(d.x, d.y, a.x, a.y, b.x, b.y) <= t2
+end
+
+local function ringsFoul2D(r, s, tol)
+  for i = 1, #r do
+    local a, b = r[i], r[(i % #r) + 1]
+    for j = 1, #s do
+      if segsFoul2D(a, b, s[j], s[(j % #s) + 1], tol) then return true end
+    end
+  end
+  return false
+end
+
+-- A hole must stand this far off anything else. Below it, the bridge to it runs down a gap narrower than the tolerance
+-- the ear tests work to, and the whole cap collapses rather than the one hole.
+local HOLE_CLEAR = 1e-3
+
+-- The holes that can actually be cut: wholly inside the outline, and clear of every hole already taken. Anything else is
+-- not a hole in this polygon -- it is a notch in its edge, or another hole's overlap -- and no triangulation of a ring
+-- with bridges to it exists.
+local function usableHoles2D(outer, holes)
+  local out = {}
+  for h = 1, #holes do
+    local r = holes[h]
+    if r and #r >= 3 and abs(ringSignedArea2(r)) > 1e-9 then
+      local ok = true
+      for i = 1, #r do
+        if not pointInRing2D(r[i].x, r[i].y, outer) then ok = false; break end
+      end
+      if ok and ringsFoul2D(r, outer, HOLE_CLEAR) then ok = false end
+      for k = 1, #out do
+        if not ok then break end
+        if ringsFoul2D(r, out[k], HOLE_CLEAR) or pointInRing2D(r[1].x, r[1].y, out[k])
+           or pointInRing2D(out[k][1].x, out[k][1].y, r) then ok = false end
+      end
+      if ok then out[#out + 1] = openRing2D(r) end
+    end
+  end
+  return out
+end
+
+-- Triangulate a 2D polygon that may have holes. Returns the ring the triangles index into and the triangles.
+local function triangulateWithHoles2D(outer, holes)
+  outer = openRing2D(outer) -- before the holes are bridged in, or the repeat ends up buried in the middle of the merged ring
+  local hs = holes and #holes > 0 and usableHoles2D(outer, holes) or nil
+  if not hs or #hs == 0 then return outer, triangulatePolygon2D(outer) end
+  -- Ear clipping a ring carrying bridges can still stall on an arrangement that is legal but awkward, and the cost of that
+  -- is the WHOLE cap. So give up the holes one at a time instead: a floor left unpierced reads as a mistake, a floor that
+  -- never appears reads as a hole in the world.
+  for n = #hs, 1, -1 do
+    local merged = bridgeHoles2D(outer, hs, n)
+    local tris = triangulatePolygon2D(merged)
+    if #tris > 0 then return merged, tris end
+  end
+  return outer, triangulatePolygon2D(outer)
+end
+
+-- The nearest edge from `i` stepping by `step` that has a normal. A ring handed over with its first point repeated at the end
+-- has a zero-length closing edge, and a corner mitred against that has one normal where it wants two, so it moves twice as far.
+local function liveEdge(nx, ny, i, step, n)
+  for _ = 1, n do
+    if nx[i] ~= 0 or ny[i] ~= 0 then return i end
+    i = (i + step - 1) % n + 1
+  end
+  return i
+end
+
+-- A closed ring pushed OUTWARD by a small `dist`, corners mitred.
+local function outsetClosedRing2D(ring, dist)
+  local n = ring and #ring or 0
+  if n < 3 or not dist or dist <= 1e-9 then return ring end
+  local s = (ringSignedArea2(ring) >= 0) and 1 or -1 -- outward is to the RIGHT of each directed edge when wound CCW
+  local nx, ny = {}, {}
+  for i = 1, n do
+    local a, b = ring[i], ring[i % n + 1]
+    local ex, ey = b.x - a.x, b.y - a.y
+    local L = sqrt(ex * ex + ey * ey)
+    if L > 1e-9 then nx[i], ny[i] = ey / L * s, -ex / L * s else nx[i], ny[i] = 0, 0 end
+  end
+  local out = {}
+  for i = 1, n do
+    local pe = liveEdge(nx, ny, (i == 1) and n or (i - 1), -1, n)
+    local ce = liveEdge(nx, ny, i, 1, n)
+    local mx, my = nx[pe] + nx[ce], ny[pe] + ny[ce]
+    local ml = sqrt(mx * mx + my * my)
+    if ml > 1e-6 then
+      -- How far the VERTEX travels to move both its edges out by `dist`: a corner's bisector is shorter than the normals it
+      -- splits. Capped, because at a hairpin that length runs away and would throw a spike across whatever lies beyond.
+      local t = min(2 * dist / ml, dist * 4)
+      out[i] = { x = ring[i].x + mx / ml * t, y = ring[i].y + my / ml * t, z = ring[i].z }
+    else
+      out[i] = { x = ring[i].x + nx[ce] * dist, y = ring[i].y + ny[ce] * dist, z = ring[i].z }
+    end
+  end
+  return out
+end
+
+-- The same, but only for the sides `move[i]` picks out; every other side stays exactly on the line it was on. A vertex
+-- between a side that moves and one that does not slides ALONG the stationary side to meet the moved one, so the two
+-- stay a closed ring with no notch at the changeover. Vertex count is unchanged.
+local function outsetRingSides2D(ring, dist, move)
+  local n = ring and #ring or 0
+  if n < 3 or not dist or dist <= 1e-9 or not move then return ring end
+  local s = (ringSignedArea2(ring) >= 0) and 1 or -1 -- outward is to the RIGHT of each directed edge when wound CCW
+  local ax, ay, px, py = {}, {}, {}, {}
+  for i = 1, n do
+    local a, b = ring[i], ring[i % n + 1]
+    local ex, ey = b.x - a.x, b.y - a.y
+    local L = sqrt(ex * ex + ey * ey)
+    ax[i], ay[i] = (L > 1e-9) and ex / L or 0, (L > 1e-9) and ey / L or 0
+    local d = move[i] and dist or 0
+    px[i], py[i] = a.x + ay[i] * d * s, a.y - ax[i] * d * s -- a point on the side once it has moved
+  end
+  local out = {}
+  for i = 1, n do
+    local pe = (i == 1) and n or (i - 1)
+    -- Where the two sides meeting at this vertex now cross. Nearly parallel ones -- a straight run split in two, or a
+    -- hairpin -- either have no crossing or throw it miles away, so there the vertex just takes its own side's offset.
+    local den = ax[pe] * ay[i] - ay[pe] * ax[i]
+    local moved = nil
+    if den > 1e-9 or den < -1e-9 then
+      local t = ((px[i] - px[pe]) * ay[i] - (py[i] - py[pe]) * ax[i]) / den
+      local ix, iy = px[pe] + ax[pe] * t, py[pe] + ay[pe] * t
+      if (ix - ring[i].x) ^ 2 + (iy - ring[i].y) ^ 2 <= (dist * 4) ^ 2 then moved = { x = ix, y = iy, z = ring[i].z } end
+    end
+    out[i] = moved or { x = px[i], y = py[i], z = ring[i].z }
+  end
+  return out
+end
+
 -- Inset a CLOSED polygon of {x=,y=} verts inward by up to dist, along each vertex's averaged edge normal (the
 -- true local inward direction, so it works on concave rings where a centroid-ward push would send points to the
--- wrong side). Each vertex is offset by the LARGEST distance up to `dist` that keeps it inside the original ring
--- (found by bisection when the full offset would cross the boundary). This does two things: it guarantees the
--- inset never leaves the polygon -- important when the result seeds a carve, since a carve that strayed outside
--- the shoreline would dig water-depth ground beyond the lake and float the sheet -- and it degrades GRACEFULLY at
--- a pinch (narrow waist, reflex corner) by insetting partway instead of snapping back to the boundary. Snapping
--- back left a zero-width bank there, i.e. a vertical facet, which is what made carved lake banks look stepped.
--- Returns a new ring; the input is unchanged.
+-- wrong side).
 local function insetClosedRing2D(ring, dist)
   local n = ring and #ring or 0
   if n < 3 or not dist or dist <= 0 then return ring end
@@ -954,12 +1479,15 @@ local function insetClosedRing2D(ring, dist)
   local out = {}
   for i = 1, n do
     local ox, oy = ring[i].x, ring[i].y
-    local pe = (i == 1) and n or (i - 1) -- previous edge
-    local mx, my = nx[pe] + nx[i], ny[pe] + ny[i]
+    local pe = liveEdge(nx, ny, (i == 1) and n or (i - 1), -1, n) -- previous edge
+    local ce = liveEdge(nx, ny, i, 1, n)
+    local mx, my = nx[pe] + nx[ce], ny[pe] + ny[ce]
     local ml = sqrt(mx * mx + my * my)
     if ml > 1e-6 then
       local dx, dy = mx / ml, my / ml
-      local t = dist
+      -- How far the VERTEX travels to move both its edges in by `dist`: a corner's bisector is shorter than the
+      -- normals it splits, so at a right angle it has to run out by root two. `ml` falls with the corner's angle.
+      local t = 2 * dist / ml
       if not pointInRing2D(ox + dx * t, oy + dy * t, ring) then
         local lo, hi = 0, dist -- largest offset that stays inside
         for _ = 1, 7 do
@@ -968,20 +1496,15 @@ local function insetClosedRing2D(ring, dist)
         end
         t = lo * 0.9 -- small margin off the boundary
       end
-      out[i] = { x = ox + dx * t, y = oy + dy * t }
+      out[i] = { x = ox + dx * t, y = oy + dy * t, z = ring[i].z }
     else
-      out[i] = { x = ox, y = oy }
+      out[i] = { x = ox, y = oy, z = ring[i].z }
     end
   end
   return out
 end
 
--- Split a 2D polyline into the runs that stay CLEAR of a blocked region, dropping the parts inside it.
--- `pts` are {x,y} (world); `isBlocked(x,y)` returns true where the polyline must be cut (e.g. on a road).
--- Each segment is sampled every stepM to catch mid-segment crossings; a run keeps the ORIGINAL nodes (so the
--- output stays sparse) plus a boundary clip point at each clear<->blocked transition (midpoint of the crossing
--- step -- close enough at ~1 m sampling). Runs whose total length is below minKeepM are dropped as slivers.
--- Returns an array of runs, each an array of {x,y}. A fully-clear polyline returns one run (its own nodes).
+-- Split a 2D polyline into the runs that stay clear of a blocked region.
 local function splitPolylineByBlocked(pts, isBlocked, stepM, minKeepM)
   local n = pts and #pts or 0
   local runs = {}
@@ -1105,13 +1628,6 @@ end
 
 -- Inverse bilinear on the XY plane: the (u, v) with p = lerp(lerp(q1, q2, u), lerp(q3, q4, u), v), or nil
 -- when p lies outside the quad. u runs across q1->q2, v along q1->q3.
---
--- LuaVec3:invBilinear2D cannot be used for this. The v equation is a QUADRATIC and BOTH of its roots
--- reproduce p exactly in XY -- only one lies inside the quad. Which one that is flips with the sign of the
--- quad's twist, i.e. for a road ribbon, with whether the corridor widens or narrows along the segment. So
--- the fixed +sqrt root invBilinear2D returns is the in-quad answer for only one of the two tapers; for the
--- other it returns a preimage a dozen units outside the unit square for EVERY interior point, and a
--- point-in-quad or height-at-point test built on it reports the entire tapered segment as "outside".
 local function quadUV(px, py, q1, q2, q3, q4)
   local ex, ey = q2.x - q1.x, q2.y - q1.y
   local fx, fy = q3.x - q1.x, q3.y - q1.y
@@ -1141,7 +1657,12 @@ local function quadUV(px, py, q1, q2, q3, q4)
     if v and v == v and v >= 0 and v <= 1 then
       local dx, dy = ex + v * gx, ey + v * gy
       local u = (abs(dx) > abs(dy)) and ((hx - fx * v) / dx) or ((hy - fy * v) / dy)
-      if u == u and u >= 0 and u <= 1 then return u, v end
+      if u == u and u >= 0 and u <= 1 then
+        -- Both coordinates, not just the one u came from: on a quad collapsed to a triangle v = 1 is always a root, and
+        -- with p in line with the collapsed edge that one coordinate holds for any v -- a point metres off reads as inside.
+        local rx, ry = hx - (ex + gx * v) * u - fx * v, hy - (ey + gy * v) * u - fy * v
+        if rx * rx + ry * ry <= 1e-6 then return u, v end
+      end
     end
   end
   return nil
@@ -1213,23 +1734,40 @@ end
 
 -- Splits a spline at the given node index, returning two sets of geometry.
 -- [Returns: nodes1, widths1, nmls1, nodes2, widths2, nmls2 (split arrays).]
-local function splitSplineGeometry(nodes, widths, nmls, splitNodeIdx)
+-- Copies a per-node corner-override entry so split/join hand each output spline its OWN entry instead of aliasing the source's.
+-- An entry is either false (auto) or a small flat table of overrides ({ radiusM, extraWidenM, apron, superElevDeg, taperM }); the
+-- non-table case passes straight through. Keeps the engineered per-corner settings (e.g. corner radius) alive across cut/join.
+local function copyCorner(c)
+  if type(c) == 'table' then
+    local t = {}
+    for k, v in pairs(c) do t[k] = v end
+    return t
+  end
+  return c or false -- nil (a sparse hole) or false -> auto; keeps the carried array DENSE so splineInput's index math stays valid.
+end
+
+-- `corners` (optional) is a parallel per-node override array carried through the split so engineered tools keep their per-corner
+-- radius/widen/etc. It is returned as two extra trailing values (corners1, corners2), index-aligned to nodes1/nodes2; callers that
+-- don't pass it get nil and are unaffected.
+local function splitSplineGeometry(nodes, widths, nmls, splitNodeIdx, corners)
   local numNodes = #nodes
   if splitNodeIdx < 1 or splitNodeIdx > numNodes then
     return nil, nil, nil, nil, nil, nil -- Invalid split index.
   end
 
   -- Copy the first half of the geometry.
-  local nodes1, widths1, nmls1 = {}, {}, {}
+  local nodes1, widths1, nmls1, corners1 = {}, {}, {}, corners and {} or nil
   for i = 1, splitNodeIdx do
     nodes1[i], widths1[i], nmls1[i] = vec3(nodes[i]), widths[i], vec3(nmls[i])
+    if corners then corners1[i] = copyCorner(corners[i]) end
   end
 
   -- Copy the second half of the geometry.
-  local nodes2, widths2, nmls2 = {}, {}, {}
+  local nodes2, widths2, nmls2, corners2 = {}, {}, {}, corners and {} or nil
   for i = splitNodeIdx, numNodes do
     local j = i - splitNodeIdx + 1
     nodes2[j], widths2[j], nmls2[j] = vec3(nodes[i]), widths[i], vec3(nmls[i])
+    if corners then corners2[j] = copyCorner(corners[i]) end
   end
 
   -- Push apart the shared split point for visual clarity.
@@ -1244,24 +1782,27 @@ local function splitSplineGeometry(nodes, widths, nmls, splitNodeIdx)
     nodes2[1] = nodes2[1] + offset
   end
 
-  return nodes1, widths1, nmls1, nodes2, widths2, nmls2
+  return nodes1, widths1, nmls1, nodes2, widths2, nmls2, corners1, corners2
 end
 
 -- Splits a loop spline at the given node index, returning reordered geometry.
 -- [Returns: nodesNew, widthsNew, nmlsNew (reordered loop arrays).]
-local function splitLoopSplineGeometry(nodes, widths, nmls, splitNodeIdx)
+-- `corners` (optional) is carried through the reorder and returned as a 4th value (cornersNew), index-aligned to nodesNew.
+local function splitLoopSplineGeometry(nodes, widths, nmls, splitNodeIdx, corners)
   local numNodes = #nodes
   if splitNodeIdx < 1 or splitNodeIdx > numNodes then
     return nil, nil, nil -- Invalid split index.
   end
 
-  local nodesNew, widthsNew, nmlsNew, ctr = {}, {}, {}, 1
+  local nodesNew, widthsNew, nmlsNew, cornersNew, ctr = {}, {}, {}, corners and {} or nil, 1
   for i = splitNodeIdx, numNodes do -- Copy from split point to end.
     nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(nodes[i]), widths[i], vec3(nmls[i])
+    if corners then cornersNew[ctr] = copyCorner(corners[i]) end
     ctr = ctr + 1
   end
   for i = 1, splitNodeIdx - 1 do -- Copy from start to split point.
     nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(nodes[i]), widths[i], vec3(nmls[i])
+    if corners then cornersNew[ctr] = copyCorner(corners[i]) end
     ctr = ctr + 1
   end
 
@@ -1274,55 +1815,63 @@ local function splitLoopSplineGeometry(nodes, widths, nmls, splitNodeIdx)
     nodesNew[#nodesNew] = nodesNew[#nodesNew] - offset
   end
 
-  return nodesNew, widthsNew, nmlsNew
+  return nodesNew, widthsNew, nmlsNew, cornersNew
 end
 
 -- Joins two spline geometries at the specified node indices.
--- [Returns: nodesNew, widthsNew, nmlsNew (joined arrays).]
-local function joinSplineGeometry(n1, w1, nm1, nodeIdx1, n2, w2, nm2, nodeIdx2)
-  local nodesNew, widthsNew, nmlsNew, ctr = {}, {}, {}, 1
+local function joinSplineGeometry(n1, w1, nm1, nodeIdx1, n2, w2, nm2, nodeIdx2, c1, c2)
+  local wantC = c1 ~= nil and c2 ~= nil
+  local nodesNew, widthsNew, nmlsNew, cornersNew, ctr = {}, {}, {}, wantC and {} or nil, 1
 
   if nodeIdx1 == 1 and nodeIdx2 == 1 then -- Start-Start: reverse spline2, append spline1.
     for i = #n2, 1, -1 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n2[i]), w2[i], vec3(nm2[i])
+      if wantC then cornersNew[ctr] = copyCorner(c2[i]) end
       ctr = ctr + 1
     end
     for i = 2, #n1 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n1[i]), w1[i], vec3(nm1[i])
+      if wantC then cornersNew[ctr] = copyCorner(c1[i]) end
       ctr = ctr + 1
     end
   elseif nodeIdx1 == 1 and nodeIdx2 == #n2 then -- Start-End: append spline2, then spline1.
     for i = 1, #n2 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n2[i]), w2[i], vec3(nm2[i])
+      if wantC then cornersNew[ctr] = copyCorner(c2[i]) end
       ctr = ctr + 1
     end
     for i = 2, #n1 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n1[i]), w1[i], vec3(nm1[i])
+      if wantC then cornersNew[ctr] = copyCorner(c1[i]) end
       ctr = ctr + 1
     end
   elseif nodeIdx1 == #n1 and nodeIdx2 == 1 then -- End-Start: append spline2 to spline1.
     for i = 1, #n1 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n1[i]), w1[i], vec3(nm1[i])
+      if wantC then cornersNew[ctr] = copyCorner(c1[i]) end
       ctr = ctr + 1
     end
     for i = 2, #n2 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n2[i]), w2[i], vec3(nm2[i])
+      if wantC then cornersNew[ctr] = copyCorner(c2[i]) end
       ctr = ctr + 1
     end
   elseif nodeIdx1 == #n1 and nodeIdx2 == #n2 then -- End-End: reverse spline2, append to spline1.
     for i = 1, #n1 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n1[i]), w1[i], vec3(nm1[i])
+      if wantC then cornersNew[ctr] = copyCorner(c1[i]) end
       ctr = ctr + 1
     end
     for i = #n2 - 1, 1, -1 do
       nodesNew[ctr], widthsNew[ctr], nmlsNew[ctr] = vec3(n2[i]), w2[i], vec3(nm2[i])
+      if wantC then cornersNew[ctr] = copyCorner(c2[i]) end
       ctr = ctr + 1
     end
   else
     return nil, nil, nil -- Invalid node indices.
   end
 
-  return nodesNew, widthsNew, nmlsNew
+  return nodesNew, widthsNew, nmlsNew, cornersNew
 end
 
 -- Flips the direction of the given spline.
@@ -1335,6 +1884,12 @@ local function flipSplineDirection(spline)
     table.insert(newNmls, nmls[i])
   end
   spline.nodes, spline.widths, spline.nmls = newNodes, newWidths, newNmls
+  local corners = spline.corners -- engineered per-corner overrides, aligned with the nodes
+  if corners then
+    local newCorners = {}
+    for i = #nodes, 1, -1 do newCorners[#newCorners + 1] = corners[i] or false end
+    spline.corners = newCorners
+  end
   spline.isDirty = true
 end
 
@@ -1440,14 +1995,15 @@ end
 -- [Returns: outPosns, outTans, outNormals]
 local function sampleSpline(divPoints, tangents, normals, spacing, outPosns, outTans, outNormals)
   table.clear(outPosns); table.clear(outTans); table.clear(outNormals)
+  if not (spacing > 0) then return end
   local nextDist, accDist, ctr, i = 0.0, 0.0, 1, 2
   while i <= #divPoints do
     local iMinusOne = i - 1
     local p1, p2 = divPoints[iMinusOne], divPoints[i]
     tmpTangent:set(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
     local segLen = tmpTangent:length()
-    if accDist + segLen < nextDist then -- If the current segment can't reach the next sample point, move on.
-      accDist = accDist + segLen
+    if segLen ~= segLen or accDist + segLen < nextDist then -- NaN segment, or can't reach the next sample: move on.
+      if segLen == segLen then accDist = accDist + segLen end
       i = i + 1
     else
       local t = (nextDist - accDist) / segLen
@@ -1461,6 +2017,57 @@ local function sampleSpline(divPoints, tangents, normals, spacing, outPosns, out
       ctr = ctr + 1
       nextDist = nextDist + spacing
     end
+  end
+end
+
+-- Even-fit sampler for discrete props (lamp posts / bollards).
+local function sampleSplineEvenFit(divPoints, tangents, normals, targetSpacing, isLoop, outPosns, outTans, outNormals)
+  table.clear(outPosns); table.clear(outTans); table.clear(outNormals)
+  local np = #divPoints
+  if np < 2 or not (targetSpacing > 0) then return end
+
+  -- Total arc length along the dense polyline (matches what the walk below traverses).
+  local totalLen = 0.0
+  for i = 2, np do
+    tmpTangent:set(divPoints[i].x - divPoints[i - 1].x, divPoints[i].y - divPoints[i - 1].y, divPoints[i].z - divPoints[i - 1].z)
+    totalLen = totalLen + tmpTangent:length()
+  end
+  if not (totalLen > 0) then return end
+
+  local n = max(1, floor(totalLen / targetSpacing + 0.5)) -- interval count whose spacing is closest to the target.
+  local step = totalLen / n
+
+  -- Walk the polyline once, emitting n samples at arc 0, step, 2*step, ... (start + interior; for an open run the final
+  -- end sample is forced on afterwards, for a loop these n samples already close the ring without a duplicate).
+  local ctr, nextDist, accDist, i = 1, 0.0, 0.0, 2
+  while ctr <= n and i <= np do
+    local iMinusOne = i - 1
+    local p1, p2 = divPoints[iMinusOne], divPoints[i]
+    tmpTangent:set(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
+    local segLen = tmpTangent:length()
+    if segLen ~= segLen or accDist + segLen < nextDist then
+      if segLen == segLen then accDist = accDist + segLen end
+      i = i + 1
+    else
+      local t = segLen > 0 and ((nextDist - accDist) / segLen) or 0
+      tmp0:setScaled2(tmpTangent, t)
+      tmp0:setAdd2(p1, tmp0)
+      outPosns[ctr] = vec3(tmp0)
+      outTans[ctr] = lerp(tangents[iMinusOne], tangents[i], t)
+      outTans[ctr]:normalize()
+      outNormals[ctr] = lerp(normals[iMinusOne], normals[i], t)
+      outNormals[ctr]:normalize()
+      ctr = ctr + 1
+      nextDist = nextDist + step
+    end
+  end
+
+  -- Open spline: force the final sample exactly onto the end point so the run always terminates with an item there
+  -- (float drift in the walk can otherwise miss the last position). Loops intentionally skip this.
+  if not isLoop then
+    outPosns[n + 1] = vec3(divPoints[np])
+    outTans[n + 1] = vec3(tangents[np]); outTans[n + 1]:normalize()
+    outNormals[n + 1] = vec3(normals[np]); outNormals[n + 1]:normalize()
   end
 end
 
@@ -1479,21 +2086,20 @@ local function ribbonUpFromAlong(along, upRef, outUp, prevAcross)
   if prevAcross and prevAcross:squaredLength() > 1e-12 and tmp1:dot(prevAcross) < 0 then
     tmp1:setScaled(-1)
   end
-  if prevAcross then prevAcross:set(tmp1) end
   outUp:setCross(tmp1, along)
   if outUp:squaredLength() < 1e-12 then
     outUp:set(globalUp)
   else
     outUp:normalize()
   end
+  if outUp:dot(upRef) < 0 then
+    tmp1:setScaled(-1)
+    outUp:setScaled(-1)
+  end
+  if prevAcross then prevAcross:set(tmp1) end
 end
 
 -- Mid-interval frame for rigid kit panels on a graded/banked edge (fences, barriers).
--- Along = chord Pi->Pi+1 (fallback: blended station tangents). Up = blended normals, re-orthonormalized.
--- Writes outPos / outTan / outUp. prevAcross optional for sign continuity.
--- A rigid fixed-length panel dropped at the interval midpoint only butts against its neighbours if its
--- long axis follows the chord, so both ends land on the endpoints. Aiming along the blended station
--- tangent instead tilts the panel off the segment it must fill -> kinks/height steps on graded edges.
 local function ribbonIntervalFrame(p1, p2, t1, t2, n1, n2, outPos, outTan, outUp, prevAcross)
   outPos:setAdd2(p1, p2)
   outPos:setScaled2(outPos, 0.5)
@@ -1545,14 +2151,16 @@ end
 -- [Returns: outPosns, outTans, outNormals, outScales]
 local function sampleSplineAdaptive(divPoints, tangents, normals, meshLength, outPosns, outTans, outNormals, outScales)
   table.clear(outPosns); table.clear(outTans); table.clear(outNormals); table.clear(outScales)
+  -- Same termination guard as sampleSpline: a non-finite / non-positive meshLength would stall nextDist and spin forever.
+  if not (meshLength > 0) then return end
   local nextDist, accDist, ctr, i = 0.0, 0.0, 1, 2
   while i <= #divPoints do
     local iMinusOne = i - 1
     local p1, p2 = divPoints[iMinusOne], divPoints[i]
     tmpTangent:set(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z)
     local segLen = tmpTangent:length()
-    if accDist + segLen < nextDist then -- If the current segment can't reach the next sample point, move on.
-      accDist = accDist + segLen
+    if segLen ~= segLen or accDist + segLen < nextDist then -- NaN segment, or can't reach the next sample: move on.
+      if segLen == segLen then accDist = accDist + segLen end
       i = i + 1
     else
       local t = (nextDist - accDist) / segLen
@@ -1586,6 +2194,25 @@ end
 local function curvatureToBankAngle(curv, bankStrength, maxDeg, tuning)
   local scaled = min(curv * (tuning or autoBankTuning), 1.0)
   return scaled * bankStrength * rad(maxDeg or maxBankDeg)
+end
+
+-- Rolls a spline's per-station frame by a READY-MADE signed bank fraction (bankT[i] in [-1, 1], + = curving left),
+-- peakRad being the angle a full-magnitude station reaches. The caller owns both the curvature -> fraction mapping and
+-- the arc-length RUNOFF that eases the roll in and out. Deriving the angle per station from local curvature here is
+-- what this function used to do, and it made the bank a square wave: full tilt the instant a corner starts, flat again
+-- on the straight, and a sign flip across an S-curve with nothing in between.
+local function applyBankFraction(spline, bankT, peakRad)
+  if not bankT or not peakRad or peakRad == 0 then return end
+  local normals, binormals, tangents = spline.normals, spline.binormals, spline.tangents
+  if not normals or not tangents then return end
+  for i = 1, #normals do
+    local f, t = bankT[i], tangents[i]
+    if f and f ~= 0 and normals[i] and t then
+      local ang = -f * peakRad
+      normals[i]:set(rotateVecAroundAxis(normals[i], t, ang))
+      if binormals and binormals[i] then binormals[i]:set(rotateVecAroundAxis(binormals[i], t, ang)) end
+    end
+  end
 end
 
 -- Computes a random jitter quaternion, for Z-only jitter.
@@ -1891,10 +2518,48 @@ local function isMouseOverSpline(spline, maxDistSq)
   local rayPos, rayDir = ray.pos, ray.dir
   tmp3:set(rayPos.x + rayDir.x * maxRayDist, rayPos.y + rayDir.y * maxRayDist, rayPos.z + rayDir.z * maxRayDist)
 
-  local bestDistSq, bestJ = maxDistSq or intermediateTolSq, nil
+  local tol = maxDistSq or intermediateTolSq
+
+  -- Engineered roads: the rendered centreline follows the clothoid divPoints, which deviate from a Catmull-Rom through
+  -- the control nodes -- so hit-testing the Catmull curve (below) misses the road the user actually sees, and insert-node
+  -- never triggers. Test the real divPoint polyline instead, then map the hit back to its control-node segment via
+  -- discMap (the divPoint index anchoring each node) so the inserted node lands in the right place along the spline.
+  local divPoints = spline.geometryMode == 'engineered' and spline.divPoints
+  if divPoints and #divPoints >= 2 then
+    local discMap, nodes = spline.discMap, spline.nodes
+    local bestDistSq, bestLower = tol, nil
+    pLast:set(huge, huge, huge)
+    for j = 1, #divPoints do
+      pThis:set(divPoints[j])
+      if pLast.x < 1e20 then
+        local distSq = squaredSegSegDist(pThis, pLast, rayPos, tmp3, tmp1, tmp2)
+        if distSq < bestDistSq then
+          bestDistSq, bestLower = distSq, j - 1 -- lower divPoint index of the hit segment
+          tmp0:set(tmp1)
+        end
+      end
+      pLast:set(pThis)
+    end
+    if not bestLower then return false, nil, nil end
+    -- Largest control segment j whose anchor divPoint index (discMap[j]) is <= the hit's divPoint index.
+    local numNodes = nodes and #nodes or 0
+    local idxLower = max(1, numNodes - 1)
+    if discMap and numNodes >= 2 then
+      for j = 1, numNodes - 1 do
+        if bestLower < (discMap[j + 1] or huge) then idxLower = j; break end
+      end
+    end
+    return true, idxLower, vec3(tmp0)
+  end
+
+  local bestDistSq, bestJ = tol, nil
   pLast:set(huge, huge, huge)
   local points = spline.nodes
   local numPoints, isLoop = #points, spline.isLoop
+  -- A polyline spline runs dead straight node to node, so each leg's two ends are the whole segment (the curve is exact at
+  -- t = 0 and 1): one step instead of walking a curve that isn't there.
+  local divs = spline.isPolyline and 1 or defaultMinNumDivisions
+  local step = 1.0 / divs
   for j = 1, numPoints - (isLoop and 0 or 1) do
     local i1, i2, i3, i4
     if isLoop then
@@ -1903,8 +2568,8 @@ local function isMouseOverSpline(spline, maxDistSq)
       i1, i2, i3, i4 = max(1, j - 1), j, j + 1, min(numPoints, j + 2)
     end
     local p0, p1, p2, p3 = points[i1], points[i2], points[i3], points[i4]
-    for k = 0, defaultMinNumDivisions do
-      pThis:set(catmullRomCentripetalFast(p0, p1, p2, p3, k * splineGranInv, 0.5))
+    for k = 0, divs do
+      pThis:set(catmullRomCentripetalFast(p0, p1, p2, p3, k * step, 0.5))
       if pLast.x < 1e20 then
         local distSq = squaredSegSegDist(pThis, pLast, rayPos, tmp3, tmp1, tmp2)
         if distSq < bestDistSq then
@@ -2115,7 +2780,7 @@ local function catmullRomRaycast(spline, minNumDivIn, minSpacing, rayRaise)
       divPoints[ctr] = divPoints[ctr] or vec3()
       normals[ctr] = normals[ctr] or vec3()
       catmullRomCentripetalFast(p0, p1, p2, p3, t, 0.5, divPoints[ctr])
-      util.vertRaycast(divPoints[ctr], rayRaise)
+      util.vertRaycast(divPoints[ctr], rayRaise, spline.rayPostFloat)
       catmullRomCentripetalFast(n0, n1, n2, n3, t, 0.5, normals[ctr])
       divWidths[ctr] = monotonicSteffen(w0, w1, w2, w3, 0, 1, 2, 3, t + 1)
       ctr = ctr + 1
@@ -2192,28 +2857,19 @@ end
 
 -- Interpolates the nodes and widths of the given spline with 'standard' Catmull-Rom splines to generate the secondary geometry properties.
 -- [The secondary geometry data is stored in the given spline object.]
-local function catmullRomFree(spline, minNumDivIn, deckZ)
+local function catmullRomFree(spline, minNumDivIn, deckZ, maxSpacingIn)
   local minNumDivisionsFinal = minNumDivIn or defaultMinNumDivisions
   local divPoints, divWidths, normals, discMap = spline.divPoints, spline.divWidths, spline.normals, spline.discMap
   local nodes, widths, nmls = spline.nodes, spline.widths, spline.nmls
   local numNodes, startIdx, ctr = #nodes, 0, 1
   local isLoop = spline.isLoop
-  -- XY is always the centripetal Catmull-Rom. Z depends on what the spline IS:
-  --  * GROUND road (deckZ false): monotone Steffen Z. It can't overshoot below its control nodes, so a road never
-  --    dips under the carved terrain, and it irons DTM jitter into a monotone profile (no washboard).
-  --  * elevated DECK (deckZ true): the smooth centripetal Catmull-Rom Z (skip the Steffen overwrite). Steffen's
-  --    monotone tangent limiter drives the slope toward ZERO at any node where the two neighbouring secants differ,
-  --    so on a "gently descend then drop" deck profile it FLATTENS the gentle part (the deck stays high longer than
-  --    it needs to) and crams the whole descent into the last segment -> the rollercoaster "stay-high-then-cliff".
-  --    Catmull-Rom looks ahead and spreads the descent into a smooth ramp. Deck control nodes are ironed smooth
-  --    upstream (heightSolve DECK_SMOOTH), so CR has no micro-extremum to overshoot into a wave.
   for j = 1, numNodes - (isLoop and 0 or 1) do
     discMap[j] = max(1, ctr - 1)
     local p0, p1, p2, p3, i1, i2, i3, i4 = crSegmentPoints(spline, j, numNodes, isLoop, nodes)
     local n0, n1, n2, n3 = nmls[i1], nmls[i2], nmls[i3], nmls[i4]
     local z0, z1, z2, z3 = p0.z, p1.z, p2.z, p3.z
     local w0, w1, w2, w3 = widths[i1], widths[i2], widths[i3], widths[i4]
-    local numDivisions = min(maxDivisionsHardCap, max(minNumDivisionsFinal, floor(p1:distance(p2) / maxDivisionSpacing + 0.5)))
+    local numDivisions = min(maxDivisionsHardCap, max(minNumDivisionsFinal, floor(p1:distance(p2) / (maxSpacingIn or maxDivisionSpacing) + 0.5)))
     local step = 1.0 / numDivisions
     for k = startIdx, numDivisions do
       local t = k * step
@@ -2246,27 +2902,20 @@ local function calculateCurvatureAtNode(nodes, nodeIdx)
 
   local p0, p1, p2 = nodes[nodeIdx - 1], nodes[nodeIdx], nodes[nodeIdx + 1]
 
-  -- Calculate vectors from p1 to p0 and p1 to p2 (matching original setAutoBanking logic)
-  tmp1:setSub2(p1, p0)
-  tmp1:normalize()
-  tmp2:setSub2(p1, p2)
-  tmpTangent:set(tmp2)
+  -- The caller banks about this axis.
+  tmpTangent:setSub2(p1, p2)
   tmpTangent:normalize()
 
-  -- Calculate angle between the two vectors
-  local unsignedAngle = acos(max(-1, min(1, tmp1:dot(tmpTangent))))
-  local avgLen = 0.5 * (tmp1:length() + tmpTangent:length())
-  local curvature = avgLen > 1e-5 and unsignedAngle / avgLen or 0
-
-  -- Determine the sign of curvature using cross product (matching original setAutoBanking logic)
-  tmpCross:setCross(tmp1, tmpTangent)
-  local sign = tmpCross:dot(globalUp) >= 0 and 1 or -1
-  return curvature * sign
+  -- The turn in plan per metre of the two legs (a grade change is no corner), negative turning left.
+  local ax, ay, bx, by = p1.x - p0.x, p1.y - p0.y, p2.x - p1.x, p2.y - p1.y
+  local la, lb = sqrt(ax * ax + ay * ay), sqrt(bx * bx + by * by)
+  if la < 1e-5 or lb < 1e-5 then return 0 end
+  return -2 * atan2(ax * by - ay * bx, ax * bx + ay * by) / (la + lb)
 end
 
 -- Interpolates the nodes and widths of the given spline with Catmull-Rom splines, applying auto banking with falloff.
 -- [The secondary geometry data is stored in the given spline object.]
-local function catmullRomFreeWithBanking(spline, minNumDivIn, bankStrength, maxDegIn, tuningIn, deckZ)
+local function catmullRomFreeWithBanking(spline, minNumDivIn, bankStrength, maxDegIn, tuningIn, deckZ, maxSpacingIn)
   local minNumDivisionsFinal = minNumDivIn or defaultMinNumDivisions
   local divPoints, divWidths, normals, discMap = spline.divPoints, spline.divWidths, spline.normals, spline.discMap
   local nodes, widths, nmls = spline.nodes, spline.widths, spline.nmls
@@ -2276,16 +2925,11 @@ local function catmullRomFreeWithBanking(spline, minNumDivIn, bankStrength, maxD
   -- elevated decks (deckZ true) so a bridge eases its descent instead of staying high then dropping off a cliff.
   for j = 1, numNodes - (isLoop and 0 or 1) do
     discMap[j] = max(1, ctr - 1)
-    -- Use crSegmentPoints so a linked tip honors the prescribed radial ghost (crGhostStart/Finish) exactly like the
-    -- non-banked catmullRomFree. The banking builder used to clamp its own p0/p3 (p0=p1 at an end) and so IGNORED the
-    -- ghost: a banked road (motorway/trunk/link -- i.e. every elevated interchange arm) then left the junction on the
-    -- wrong tip tangent, so its deck did not line up with the hub -> the persistent bridge/junction gap. Non-banked
-    -- roads never showed it because they already went through crSegmentPoints.
     local p0, p1, p2, p3, i1, i2, i3, i4 = crSegmentPoints(spline, j, numNodes, isLoop, nodes)
     local n0, n1, n2, n3 = nmls[i1], nmls[i2], nmls[i3], nmls[i4]
     local z0, z1, z2, z3 = p0.z, p1.z, p2.z, p3.z
     local w0, w1, w2, w3 = widths[i1], widths[i2], widths[i3], widths[i4]
-    local numDivisions = min(maxDivisionsHardCap, max(minNumDivisionsFinal, floor(p1:distance(p2) / maxDivisionSpacing + 0.5)))
+    local numDivisions = min(maxDivisionsHardCap, max(minNumDivisionsFinal, floor(p1:distance(p2) / (maxSpacingIn or maxDivisionSpacing) + 0.5)))
     local step = 1.0 / numDivisions
 
     for k = startIdx, numDivisions do
@@ -2300,30 +2944,30 @@ local function catmullRomFreeWithBanking(spline, minNumDivIn, bankStrength, maxD
       -- Interpolate base normals first
       catmullRomCentripetalFast(n0, n1, n2, n3, t, 0.5, normals[ctr])
 
-               -- Apply banking with falloff for nodes 1 and 2 (the main nodes of this segment)
-         if bankStrength > 0 then
-                  -- Calculate banking for node 1 (i2) with falloff based on distance from t=0
-          local falloff1 = max(0, 1.0 - abs(t) * (spline.autoBankFalloff or 2.0)) -- Falloff from t=0 to t=1/falloff
-          if falloff1 > 0 then
-            local curvature1 = calculateCurvatureAtNode(nodes, i2)
-            if curvature1 ~= 0 then
-              local bankAngle1 = -sign(curvature1) * curvatureToBankAngle(abs(curvature1), bankStrength, maxDegIn, tuningIn) * falloff1
-              local rotated1 = rotateVecAroundAxis(normals[ctr], tmpTangent, bankAngle1)
-              normals[ctr]:setLerp(normals[ctr], rotated1, falloff1 * 0.5)
-            end
+      -- Apply banking with falloff for nodes 1 and 2 (the main nodes of this segment)
+      if bankStrength > 0 then
+        -- Calculate banking for node 1 (i2) with falloff based on distance from t=0
+        local falloff1 = max(0, 1.0 - abs(t) * (spline.autoBankFalloff or 2.0)) -- Falloff from t=0 to t=1/falloff
+        if falloff1 > 0 then
+          local curvature1 = calculateCurvatureAtNode(nodes, i2)
+          if curvature1 ~= 0 then
+            local bankAngle1 = -sign(curvature1) * curvatureToBankAngle(abs(curvature1), bankStrength, maxDegIn, tuningIn) * falloff1
+            local rotated1 = rotateVecAroundAxis(normals[ctr], tmpTangent, bankAngle1)
+            normals[ctr]:setLerp(normals[ctr], rotated1, falloff1 * 0.5)
           end
+        end
 
-          -- Calculate banking for node 2 (i3) with falloff based on distance from t=1
-          local falloff2 = max(0, 1.0 - abs(t - 1) * (spline.autoBankFalloff or 2.0)) -- Falloff from t=0.5 to t=1
-          if falloff2 > 0 then
-            local curvature2 = calculateCurvatureAtNode(nodes, i3)
-            if curvature2 ~= 0 then
-              local bankAngle2 = -sign(curvature2) * curvatureToBankAngle(abs(curvature2), bankStrength, maxDegIn, tuningIn) * falloff2
-              local rotated2 = rotateVecAroundAxis(normals[ctr], tmpTangent, bankAngle2)
-              normals[ctr]:setLerp(normals[ctr], rotated2, falloff2 * 0.5)
-            end
+        -- Calculate banking for node 2 (i3) with falloff based on distance from t=1
+        local falloff2 = max(0, 1.0 - abs(t - 1) * (spline.autoBankFalloff or 2.0)) -- Falloff from t=0.5 to t=1
+        if falloff2 > 0 then
+          local curvature2 = calculateCurvatureAtNode(nodes, i3)
+          if curvature2 ~= 0 then
+            local bankAngle2 = -sign(curvature2) * curvatureToBankAngle(abs(curvature2), bankStrength, maxDegIn, tuningIn) * falloff2
+            local rotated2 = rotateVecAroundAxis(normals[ctr], tmpTangent, bankAngle2)
+            normals[ctr]:setLerp(normals[ctr], rotated2, falloff2 * 0.5)
           end
-       end
+        end
+      end
 
       divWidths[ctr] = monotonicSteffen(w0, w1, w2, w3, 0, 1, 2, 3, tPlus1)
       ctr = ctr + 1
@@ -2398,8 +3042,77 @@ local function computeGraphPathFromNodes(spline)
   end
 end
 
+-- Perpendicular distance of point (px,py) from segment (ax,ay)->(bx,by) in XY. Degenerate segment -> distance to A.
+local function perpDistPointSeg2D(ax, ay, bx, by, px, py)
+  local dx, dy = bx - ax, by - ay
+  local l2 = dx * dx + dy * dy
+  if l2 < 1e-12 then
+    local ex, ey = px - ax, py - ay
+    return sqrt(ex * ex + ey * ey)
+  end
+  local t = ((px - ax) * dx + (py - ay) * dy) / l2
+  local ex, ey = px - (ax + dx * t), py - (ay + dy * t)
+  return sqrt(ex * ex + ey * ey)
+end
+
+-- 2D scalar primitives on plain components (no vec3 / table churn - for hot geometry paths).
+local function cross2(ax, ay, bx, by) return ax * by - ay * bx end
+
+local function dot2(ax, ay, bx, by) return ax * bx + ay * by end
+
+local function normalize2(x, y)
+  local l = sqrt(x * x + y * y)
+  if l < 1e-12 then return 0, 0 end
+  return x / l, y / l
+end
+
+-- Which way a post, pier or newel STANDING ON A CORNER faces, given the direction in and the direction out.
+local function cornerAxis(ix, iy, ox, oy, period)
+  local ia = atan2(iy, ix)
+  local turn = atan2(oy, ox) - ia
+  turn = turn - (2 * pi) * floor(turn / (2 * pi) + 0.5) -- the actual turn, not one that went the long way round
+  period = period or (pi * 0.5)
+  -- Ties go to the SMALLER turn rather than always downwards. A chamfer turns exactly half a period, and rounding that the one way
+  -- folded a left-hand 45 to -45 where a right-hand 45 stayed put: the two leaned the same way instead of mirroring, which is what
+  -- made a run of them read as though the posts had been dropped in at random.
+  local k = turn / period
+  turn = turn - period * ((k >= 0) and ceil(k - 0.5) or floor(k + 0.5))
+  local th = ia + turn * 0.5
+  return cos(th), sin(th)
+end
+
+-- Intersect two INFINITE lines P+s*D and Q+s*E; returns ix,iy or nil when parallel (thin point-returning wrapper on
+-- lineDirsHitT2D, which returns the parameter along the first line).
+local function lineIntersect2D(px, py, dx, dy, qx, qy, ex, ey, eps)
+  local t = lineDirsHitT2D(px, py, dx, dy, qx, qy, ex, ey, eps)
+  if not t then return nil end
+  return px + dx * t, py + dy * t
+end
+
+-- Intersect two RAYS (forward only) P+s*D and Q+u*E; returns ix,iy or nil (parallel, or the hit lies behind either ray).
+local function rayIntersect2D(px, py, dx, dy, qx, qy, ex, ey, eps)
+  eps = eps or 1e-9
+  local den = cross2(dx, dy, ex, ey)
+  if den < eps and den > -eps then return nil end
+  local sx, sy = qx - px, qy - py
+  local s = cross2(sx, sy, ex, ey) / den
+  local u = cross2(sx, sy, dx, dy) / den
+  if s < -eps or u < -eps then return nil end
+  return px + dx * s, py + dy * s
+end
+
 
 -- Public interface.
+M.cross2 =                                              cross2
+M.dot2 =                                                dot2
+M.normalize2 =                                          normalize2
+M.cornerAxis =                                          cornerAxis
+M.lineIntersect2D =                                     lineIntersect2D
+M.rayIntersect2D =                                      rayIntersect2D
+M.perpDistPointSeg2D =                                  perpDistPointSeg2D
+M.distSqPointSeg2D =                                    distSqPointSeg2D
+M.segCrossParam2D =                                     segCrossParam2D
+
 M.getPreRotQuats =                                      getPreRotQuats
 
 M.getBarScale =                                         getBarScale
@@ -2414,11 +3127,11 @@ M.smoothNodesHeightSteffen =                            smoothNodesHeightSteffen
 M.isMouseOverNode =                                     isMouseOverNode
 M.isMouseOverSpline =                                   isMouseOverSpline
 M.isMouseOverPolyline =                                 isMouseOverPolyline
-M.isMouseOverRib =                                      isMouseOverRib
 M.isMouseOverBar =                                      isMouseOverBar
 M.isMouseOverGraphNode =                                isMouseOverGraphNode
 
 M.getAABB =                                             getAABB
+M.polygonOBB =                                          polygonOBB
 M.computeSplinePolygon =                                computeSplinePolygon
 M.isPointInTriangle =                                   isPointInTriangle
 M.getTerrainNormal =                                    getTerrainNormal
@@ -2440,14 +3153,28 @@ M.lineDirsHitT2D =                                      lineDirsHitT2D
 M.sampleCubicBezier2D =                                 sampleCubicBezier2D
 M.reshapeLeadInBezier2D =                               reshapeLeadInBezier2D
 M.insetPathAlongNormal2D =                              insetPathAlongNormal2D
+M.offsetPathMiter2D =                                   offsetPathMiter2D
 M.offsetPathFromCenter2D =                              offsetPathFromCenter2D
 M.multiPolygonCentroidXY =                              multiPolygonCentroidXY
 M.polylineCumLength3D =                                 polylineCumLength3D
+M.polylineCumLength2D =                                 polylineCumLength2D
 M.densifyByMaxSpacing =                                 densifyByMaxSpacing
 M.smoothClosedPolygonChaikin =                          smoothClosedPolygonChaikin
 M.insetClosedRing2D =                                   insetClosedRing2D
+M.outsetClosedRing2D =                                  outsetClosedRing2D
+M.outsetRingSides2D =                                   outsetRingSides2D
 M.pointInRing2D =                                       pointInRing2D
+M.clipRingRect2D =                                      clipRingRect2D
+M.pointInTri2D =                                        pointInTri2D
+M.triangulatePolygon2D =                                triangulatePolygon2D
+M.ringSignedArea2 =                                     ringSignedArea2
+M.bridgeHoles2D =                                       bridgeHoles2D
+M.triangulateWithHoles2D =                              triangulateWithHoles2D
+M.sigMoved =                                            sigMoved
 M.simplifyRDP =                                         simplifyRDP
+M.chordify =                                            chordify
+M.weldShortSegments =                                   weldShortSegments
+M.resampleUniformNodesWidths =                          resampleUniformNodesWidths
 M.splitPolylineByBlocked =                              splitPolylineByBlocked
 M.polylineZAtArcFromTip =                               polylineZAtArcFromTip
 M.tipOutwardXY =                                        tipOutwardXY
@@ -2474,6 +3201,7 @@ M.getNodeSpansInsidePolygon =                           getNodeSpansInsidePolygo
 
 M.projectPointToSpline =                                projectPointToSpline
 M.sampleSpline =                                        sampleSpline
+M.sampleSplineEvenFit =                                 sampleSplineEvenFit
 M.sampleSplineAdaptive =                                sampleSplineAdaptive
 M.ribbonUpFromAlong =                                   ribbonUpFromAlong
 M.ribbonIntervalFrame =                                 ribbonIntervalFrame
@@ -2499,6 +3227,9 @@ M.catmullRomRaycast =                                   catmullRomRaycast
 M.catmullRomConformToTerrain =                          catmullRomConformToTerrain
 M.catmullRomFree =                                      catmullRomFree
 M.catmullRomFreeWithBanking =                           catmullRomFreeWithBanking
+M.computeFrenetFrame =                                  computeFrenetFrame
+M.curvatureToBankAngle =                                curvatureToBankAngle
+M.applyBankFraction =                                   applyBankFraction
 
 M.computeGraphPathFromNodes =                           computeGraphPathFromNodes
 

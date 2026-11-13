@@ -63,8 +63,18 @@ local function getData()
 end
 M.getData = getData
 
+local function removeVehicleData(id)
+  for i, data in ipairs(M.vehCargoData) do
+    if data.vehId == id then
+      table.remove(M.vehCargoData, i)
+      return
+    end
+  end
+end
+
 local function updateVehicle(data)
   local veh = scenetree.findObjectById(data.vehId)
+  if not veh then return false end
 
   local clusterGeneration = veh:getNodeClusterGeneration()
   if clusterGeneration > (data.clusterGeneration or -math.huge) then
@@ -82,6 +92,7 @@ local function updateVehicle(data)
   for _, container in ipairs(data.containers) do
     container.position = container.noDetach and veh:getNodePosition(veh:getRefNodeId()) or veh:getNodePosition(container.nodeId)
   end
+  return true
 end
 M.updateVehicle = updateVehicle
 
@@ -235,7 +246,7 @@ local function drawVehicle(data)
     end
     inputs.sendUpdate = false
   end
-  if next(vehData) then
+  if veh and next(vehData) then
     core_vehicleBridge.executeAction(veh, "setCargoContainers", vehData, "updateExplicit")
     forceUpdate = true
   end
@@ -316,9 +327,15 @@ local function drawDebugMenu(dt)
     im.Separator()
     M.drawFlowRate(dt)
     im.Separator()
-    for _, data in ipairs(M.vehCargoData) do
-      M.updateVehicle(data)
-      M.drawVehicle(data)
+    local i = 1
+    while i <= #M.vehCargoData do
+      local data = M.vehCargoData[i]
+      if M.updateVehicle(data) then
+        M.drawVehicle(data)
+        i = i + 1
+      else
+        table.remove(M.vehCargoData, i)
+      end
     end
     if forceUpdate then
       M.getData()
@@ -338,11 +355,18 @@ M.show = function()
 end
 
 M.onVehicleResetted = function(id)
-  M.vehCargoData[id] = nil
+  removeVehicleData(id)
   forceUpdate = true
 end
 
 M.onChangeFlowRate = onChangeFlowRate
+
+local function onVehicleDestroyed(id)
+  removeVehicleData(id)
+end
+M.onVehicleDestroyed = onVehicleDestroyed
+M.onInstabilityDetected = onVehicleDestroyed
+
 
 return M
 

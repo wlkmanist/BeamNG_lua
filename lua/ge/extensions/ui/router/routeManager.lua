@@ -379,6 +379,15 @@ local function resolveRouteConfig(routeKey)
   local tokens = string.split(routeKey, "[^%.]+")
   local baseConfig = deepcopy(Constants.RouteConfigDefaults)
 
+  -- Layer router-owned UI defaults onto the base ui block. applyInheritedRouteConfig
+  -- then supplies these only when a route/parent leaves them unset, so explicit
+  -- route-level values (e.g. ui.uiNav = false) still win.
+  for k, v in pairs(Config.RouteUiDefaults) do
+    if baseConfig.ui[k] == nil then
+      baseConfig.ui[k] = deepcopy(v)
+    end
+  end
+
   -- if only 1 token check if it's a global route
   if #tokens == 1 then
     local globalRouteModule = findModule(globalRoutesModuleName)
@@ -435,6 +444,62 @@ local function getRouteConfig(routeKey)
   return routeConfig
 end
 
+-- Resolve a possibly-relative route reference against a base (committed) route
+-- name. Absolute references (dotted names, global one-segment names, and
+-- '/'-prefixed names) pass through unchanged. Relative references use '.' /
+-- '..' segments separated by '/', e.g. "./child", "../sibling", "../../x".
+-- Returns resolvedName, nil on success or nil, errorReason on failure.
+M.resolveRouteName = function(reference, baseRouteName)
+  if type(reference) ~= "string" or reference == "" then
+    return nil, "invalid_relative_route"
+  end
+
+  -- Anything that does not start with '.' is already absolute.
+  if string.sub(reference, 1, 1) ~= "." then
+    return reference, nil
+  end
+
+  if type(baseRouteName) ~= "string" or baseRouteName == "" then
+    return nil, "relative_route_without_base"
+  end
+
+  local tokens = string.split(baseRouteName, "[^%.]+")
+  local segments = string.split(reference, "[^/]+")
+
+  for _, segment in ipairs(segments) do
+    if segment == ".." then
+      if #tokens == 0 then
+        return nil, "invalid_relative_route"
+      end
+      table.remove(tokens)
+    elseif segment ~= "." and segment ~= "" then
+      table.insert(tokens, segment)
+    end
+  end
+
+  if #tokens == 0 then
+    return nil, "invalid_relative_route"
+  end
+
+  return table.concat(tokens, "."), nil
+end
+
+-- Resolve a declared backTarget/fallbackTarget that may be relative, against
+-- the route that declares it. Absolute targets pass through unchanged; a failed
+-- relative resolution falls back to the raw target so misconfiguration is
+-- visible rather than silently dropped.
+local function resolveDeclaredTarget(target, baseRouteName)
+  if type(target) ~= "string" or target == "" then
+    return target
+  end
+  local resolved, err = M.resolveRouteName(target, baseRouteName)
+  if err then
+    log("W", "routeManager", "Failed to resolve relative target '" .. target .. "' against '" .. tostring(baseRouteName) .. "': " .. err)
+    return target
+  end
+  return resolved
+end
+
 local function getParent(route)
   local name = route.name
   local tokens = string.split(name, "[^%.]+")
@@ -456,7 +521,7 @@ local function getBackTarget(route)
       return nil
     end
   elseif route.backTarget then
-    return route.backTarget
+    return resolveDeclaredTarget(route.backTarget, route.name)
   else
     local parent = getParent(route)
     if parent and parent.abstract then
@@ -466,7 +531,7 @@ local function getBackTarget(route)
       return parent.name
     end
     if route.fallbackTarget then
-      return route.fallbackTarget
+      return resolveDeclaredTarget(route.fallbackTarget, route.name)
     end
   end
 end

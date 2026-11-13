@@ -10,11 +10,12 @@ M.dependencies = {'core_vehicle_manager', 'core_environment'}
 local cameraInput = require('core/cameraInput')
 local cameraUpdate = require('core/cameraUpdate')
 
-local multicams = { "onboard" }
+local multicams = { "onboard", "occupant" }
 local pendingTrigger = nil
+local pendingCameraNameNotification = {}
 local configuration = {}  -- shared camera-menu config: { {name=foo, enabled=true}, {name=bar, enabled=false}, ... }
 local freeCameraConfiguration = {}
-local currentVersion = 1
+local currentVersion = 2
 
 M.speedFactor = 1 -- used to fix too smooth and slow camera movement when creating thumbnails
 
@@ -46,7 +47,8 @@ local function newCamData()
   -- them every frame (camera modes may replace data.res.pos with a fresh vec)
   return { veh = 0, vid = 0, dtSim = 0.0001, dtReal = 0.0001, dtRaw = 0.0001, dt = 0.0001, speed = 30, pos=vec3(), prevPos = vec3(), vehPos=vec3(), prevVehPos=vec3(), vel=vec3(), prevVel=vec3(),
     resPos = resPos, resTargetPos = resTargetPos, resRot = resRot,
-    res = {pos = resPos, targetPos = resTargetPos, rot = resRot, fov = 60} }
+    teleported = false,
+    res = {pos = resPos, targetPos = resTargetPos, rot = resRot, fov = 60, ortho = false} }
 end
 
 local function newContext(id, renderView, player, vehiclePlayer)
@@ -59,8 +61,9 @@ local function newContext(id, renderView, player, vehiclePlayer)
     move = (id == MAIN_CONTEXT) and moveManager or newMove(), -- per-player input state
     activeGlobalCameraName = nil,
     requestedCam = {},          -- {vid = {name=foo, customData=bar}}
-    lastVehicleName = nil,      -- used to detect vehicle switches
+    lastVehicleId = nil,        -- used to detect vehicle switches
     vehicleCamerasCache = nil,  -- per-context vehicle camera instances (lazy)
+    vehicleCamerasComplete = false,
     globalCamerasCache = nil,   -- per-context global camera instances (lazy)
     runningCamsOrderCache = nil,
     camData = newCamData(),
@@ -70,9 +73,15 @@ local function newContext(id, renderView, player, vehiclePlayer)
   }
 end
 
-local contexts = {}
+local extraContexts = {} -- extra views (split-screen, video stream); main is standalone
 local mainContext = newContext(MAIN_CONTEXT, MAIN_CONTEXT)
-contexts[MAIN_CONTEXT] = mainContext
+
+local function forEachContext(fn)
+  fn(mainContext)
+  for _, ctx in pairs(extraContexts) do
+    fn(ctx)
+  end
+end
 
 -- A context can be addressed three ways:
 --   * by player (a seat): ctxForPlayer(player) -> the view that player drives. player 0
@@ -82,36 +91,65 @@ contexts[MAIN_CONTEXT] = mainContext
 --   * by id (a view name): getContext(id) -> a specific view (nil -> main).
 --   * by vehicle id: the VID-addressed helpers below, which always act on the main view.
 local contextByPlayer = {[0] = mainContext}
+local inputTargetPlayer = nil
 local function ctxForPlayer(player)
+  if inputTargetPlayer ~= nil and player ~= nil then
+    player = inputTargetPlayer
+  end
   return (player ~= nil and contextByPlayer[player]) or mainContext
 end
 local function moveFor(player)
   return ctxForPlayer(player).move
 end
 
--- resolve a context by id (view name); nil -> main view
-local function getContext(id)
-  if id == nil then return mainContext end
-  return contexts[id]
+local function setInputTargetPlayer(player)
+  inputTargetPlayer = player ~= nil and tonumber(player) or nil
 end
 
-local function addVehicleData(vid, target, ctx)
+-- resolve a context by id (view name); nil / "main" -> main view
+local function getContext(id)
+  if id == nil or id == MAIN_CONTEXT then return mainContext end
+  return extraContexts[id]
+end
+
+local function addVehicleData(vid, target, ctx, recreateCameras)
   ctx = ctx or mainContext
-  local vdata = target[vid] or {}
-  local focusedCamNamePrevious = ((ctx.vehicleCamerasCache or {})[vid] or {}).focusedCamName
-  M.processVehicleCameraConfigChanged(vid, vdata, focusedCamNamePrevious, ctx)
+  local previousVdata = target[vid]
+  local focusedCamNamePrevious = previousVdata and previousVdata.focusedCamName
+  if recreateCameras and previousVdata then
+    for _, camera in pairs(previousVdata.cameras or {}) do
+      if camera.focused then
+        camera.focused = false
+        if type(camera.onCameraChanged) == "function" then
+          camera:onCameraChanged(false)
+        end
+      end
+    end
+  end
+  local vdata = recreateCameras and {} or previousVdata or {}
+  if not M.processVehicleCameraConfigChanged(vid, vdata, focusedCamNamePrevious, ctx) then
+    target[vid] = nil
+    return false
+  end
   target[vid] = vdata
+  return true
 end
 
 local function getVehicleData(ctx)
   ctx = ctx or mainContext
   if not ctx.vehicleCamerasCache then
-    local result = {}
+    ctx.vehicleCamerasCache = {}
+    ctx.vehicleCamerasComplete = false
+  end
+  if not ctx.vehicleCamerasComplete then
+    local result = ctx.vehicleCamerasCache
+    ctx.vehicleCamerasComplete = true
     for i=0, be:getObjectCount()-1 do
       local vid = be:getObject(i):getId()
-      addVehicleData(vid, result, ctx)
+      if not result[vid] and not addVehicleData(vid, result, ctx) then
+        ctx.vehicleCamerasComplete = false
+      end
     end
-    ctx.vehicleCamerasCache = result
   end
   return ctx.vehicleCamerasCache
 end
@@ -121,15 +159,25 @@ local function delVehicleData(vid, ctx)
 end
 
 local function onVehicleSpawned(vid)
-  for _, ctx in pairs(contexts) do
-    addVehicleData(vid, getVehicleData(ctx), ctx)
-  end
+  forEachContext(function(ctx)
+    if not addVehicleData(vid, getVehicleData(ctx), ctx) then
+      ctx.vehicleCamerasComplete = false
+    end
+  end)
+end
+
+local function onVehicleReplaced(vid)
+  forEachContext(function(ctx)
+    if not addVehicleData(vid, getVehicleData(ctx), ctx, true) then
+      ctx.vehicleCamerasComplete = false
+    end
+  end)
 end
 
 local function onVehicleDestroyed(vid)
-  for _, ctx in pairs(contexts) do
+  forEachContext(function(ctx)
     delVehicleData(vid, ctx)
-  end
+  end)
 end
 
 -- constructors for all camera types (cached)
@@ -142,6 +190,7 @@ local function getConstructors()
       local _,camMode,_ = path.splitWithoutExt(file)
       constructorsCache[camMode] = require('core/cameraModes/' .. camMode)
     end
+    constructorsCache.driver = constructorsCache.driver or constructorsCache.occupant -- legacy 'driver' mode: an occupant camera, configured by jbeam/sections/camera.lua
   end
   return constructorsCache
 end
@@ -285,11 +334,30 @@ local function nextCameraGroup(groups, active)
 end
 
 -- gather data used by Options > Cameras and other code
+local function getCameraTranslationName(camName)
+  if type(camName) == "string" and camName:find("^occupant%.", 1) then
+    return "occupant"
+  end
+  return camName
+end
+
 local function getExtendedConfig(vdata)
   local config = deepcopy(configuration)
   local slotId = 1
   for _, v in ipairs(config) do
-    local visible = vdata.cameras[v.name] and not vdata.cameras[v.name].hidden
+    v.translationName = getCameraTranslationName(v.name)
+    local camera = vdata.cameras[v.name]
+    if camera and v.name:find("^occupant%.", 1) then
+      local occupantName = camera.displayName
+        or (camera.defaultPermissionMode == "driver"
+          and "ui.gameplay.seatOccupants.driverSeat"
+          or "ui.gameplay.seatOccupants.passengerSeat")
+      v.label = {
+        txt = "ui.camera.mode.occupantNamed",
+        context = {occupantName = occupantName},
+      }
+    end
+    local visible = camera and not camera.hidden
     v.hidden = not visible
     -- set the binding camera number (keys 1 to 9, for example)
     if visible then
@@ -334,8 +402,10 @@ local function getCameraIcon(camName, camera)
   return "info"
 end
 
-local function isUnicycle(vehId)
-  return not mainContext.activeGlobalCameraName and core_vehicle_manager and core_vehicle_manager.getPlayerVehicleData() and core_vehicle_manager.getVehicleData(vehId).mainPartName == "unicycle"
+local function isUnicycle(vehId, ctx)
+  if not vehId or (ctx or mainContext).activeGlobalCameraName then return false end
+  local vehData = core_vehicle_manager and core_vehicle_manager.getVehicleData(vehId)
+  return (vehData and vehData.mainPartName == "unicycle") or false
 end
 
 -- send data to Messages UI app
@@ -371,11 +441,11 @@ local function displayCameraNameUI(player)
     return
   end
 
-  local vdata = getVdata(player, ctxForPlayer(player))
+  local vdata = getVdata(player, ctx)
   if not vdata then return end
   if not vdata.focusedCamName then return end
   local playerVehicle = getPlayerVehicle(player)
-  if playerVehicle and isUnicycle(playerVehicle:getId()) then return end
+  if playerVehicle and isUnicycle(playerVehicle:getId(), ctx) then return end
 
   local availableOptionsCount = 0
   local currentOptionIndex = 0
@@ -390,9 +460,23 @@ local function displayCameraNameUI(player)
     end
   end
 
+  local messageId = "ui.camera.switched"
+  local messageContext = {name = "ui.camera.mode." .. getCameraTranslationName(vdata.focusedCamName)}
+  if vdata.focusedCamName:find("^occupant%.", 1) then
+    local camera = vdata.cameras[vdata.focusedCamName]
+    local occupantName = camera and camera.displayName
+    if not occupantName then
+      occupantName = camera and camera.defaultPermissionMode == "driver"
+        and "ui.gameplay.seatOccupants.driverSeat"
+        or "ui.gameplay.seatOccupants.passengerSeat"
+    end
+    messageId = "ui.camera.switchedOccupant"
+    messageContext = {occupantName = occupantName}
+  end
+
   guihooks.trigger('Message', {
-    txt = 'ui.camera.switched',
-    context = {name = 'ui.camera.mode.' .. vdata.focusedCamName},
+    txt = messageId,
+    context = messageContext,
     ttl = 5,
     category = 'cameramode',
     icon = "survellianceCamera",
@@ -409,6 +493,40 @@ local function getCamIdFromName(camName)
   for id,config in ipairs(configuration) do
     if config.name == camName then
       return id
+    end
+  end
+end
+
+-- occupant cameras already in the configuration keep their user-defined position
+local function insertMissingOccupantCameras(vdata)
+  local configured = {}
+  for _, config in ipairs(configuration) do
+    configured[config.name] = true
+  end
+
+  local driverOccupants = {}
+  local passengerOccupants = {}
+  for name, camera in pairs(vdata.cameras) do
+    if name:find("^occupant%.", 1) and not configured[name] then
+      local target = camera.defaultPermissionMode == "driver" and driverOccupants or passengerOccupants
+      target[#target + 1] = name
+    end
+  end
+  table.sort(driverOccupants)
+  table.sort(passengerOccupants)
+
+  local insertAt = #configuration + 1
+  for index, config in ipairs(configuration) do
+    if config.name == "onboard.hood" then
+      insertAt = index
+      break
+    end
+  end
+
+  for _, names in ipairs({driverOccupants, passengerOccupants}) do
+    for _, name in ipairs(names) do
+      table.insert(configuration, insertAt, {name = name, enabled = vdata.cameras[name].disabledByDefault ~= true})
+      insertAt = insertAt + 1
     end
   end
 end
@@ -473,7 +591,8 @@ local function changeOrder(camId, offset)
   local n = #configuration
   for i = 1, n do
     newIdx = clamp(newIdx + offset, 1, n)
-    if not configuration[newIdx].hidden then break end
+    local camera = vdata.cameras[configuration[newIdx].name]
+    if camera and not camera.hidden then break end
   end
   if newIdx == camId then return end
 
@@ -544,6 +663,13 @@ local function setGlobalCameraByName(name, withTransition, customData, ctx)
   end
 end
 
+-- Blend the view from wherever it is now to wherever the camera ends up this frame. Call it right
+-- after switching cameras. duration is optional and overrides the configured blend time, for switches
+-- that should feel snappier than a regular camera change. player selects the view (nil = main).
+local function startCameraTransition(duration, player)
+  getGlobalCameras(ctxForPlayer(player)).transition:start(false, nil, duration)
+end
+
 local function enterGroupCam(name, ctx)
   local camera = getGlobalCameras(ctx)[name]
   if not camera then return false end
@@ -601,18 +727,9 @@ local function _setVehicleCameraByIndex(vdata, focusedCamId, ctx)
   if focusedCamId < 1 then focusedCamId = 1 end
 
   -- tell cameras about the focus change
-  local success = false
   local camConfig = configuration[focusedCamId]
-  if camConfig then
-    local newCam = vdata.cameras[camConfig.name]
-    if newCam then
-      newCam.focused = true
-      if type(newCam.onCameraChanged) == 'function' then
-        newCam:onCameraChanged(true)
-      end
-      success = true
-    end
-  end
+  local newCam = camConfig and vdata.cameras[camConfig.name]
+  local success = newCam ~= nil
   if success then
     log("D","", "Camera switched to "..dumps(camConfig.name))
     local oldCam = vdata.cameras[vdata.focusedCamName]
@@ -621,6 +738,10 @@ local function _setVehicleCameraByIndex(vdata, focusedCamId, ctx)
       if type(oldCam.onCameraChanged) == 'function' then
         oldCam:onCameraChanged(false)
       end
+    end
+    newCam.focused = true
+    if type(newCam.onCameraChanged) == 'function' then
+      newCam:onCameraChanged(true)
     end
 
     -- set it actually. This is the only function that is allowed to change focusedCamName directly
@@ -745,53 +866,74 @@ local function setCameraByNameFromOptions(player, camName)
 end
 
 local nodePos = vec3()
-local function isWithinRadius(cameraName, camPos, veh, vdata, radius)
-  if not vdata.cameras[cameraName] then return false end
-  nodePos:set(veh:getNodeAbsPositionXYZ(vdata.cameras[cameraName].camNodeID))
-  return nodePos:squaredDistance(camPos) < radius * radius
+local function isInsideBasedOnCameras(camPos, veh, vdata, radius)
+  local radiusSq = radius * radius
+  for _, camera in pairs(vdata.cameras) do
+    if camera.isInside == true then
+      nodePos:set(veh:getNodeAbsPositionXYZ(camera.camNodeID))
+      if nodePos:squaredDistance(camPos) < radiusSq then return true end
+    end
+  end
+  return false
 end
-
-
 
 local bbCenter, bbHalfAxis0, bbHalfAxis1, bbHalfAxis2 = vec3(), vec3(), vec3(), vec3()
 local function isCameraInside(player, camPos)
   local veh = getPlayerVehicle(player)
   if not veh then return 0 end
+  local ctx = ctxForPlayer(player)
   local vehId = veh:getId()
-  local vdata = getVehicleData()[vehId]
+  local vdata = getVehicleData(ctx)[vehId]
   if not vdata then return 0 end
-  if isUnicycle(vehId) then return 0 end
+  if isUnicycle(vehId, ctx) then return 0 end
 
   bbCenter:set(be:getObjectOOBBCenterXYZ(vehId))
   bbHalfAxis0:set(be:getObjectOOBBHalfAxisXYZ(vehId, 0))
   bbHalfAxis1:set(be:getObjectOOBBHalfAxisXYZ(vehId, 1))
   bbHalfAxis2:set(be:getObjectOOBBHalfAxisXYZ(vehId, 2))
-
   if not containsOBB_point(bbCenter, bbHalfAxis0, bbHalfAxis1, bbHalfAxis2, camPos) then return 0 end
-
-  return (isWithinRadius("onboard.driver", camPos, veh, vdata, 0.6) or isWithinRadius("onboard.rider", camPos, veh, vdata, 0.6)) and 1 or 0
+  return isInsideBasedOnCameras(camPos, veh, vdata, 0.6) and 1 or 0
 end
 
-local function getCameraDataById(vid)
-  local vehData = getVehicleData()[vid]
+-- ctxId selects which view's camera instances to return (nil = main view)
+local function getCameraDataById(vid, ctxId)
+  local vehData = getVehicleData(getContext(ctxId))[vid]
   if vehData then
     return vehData.cameras
   end
 end
 
-local function getDriverDataById(vehId)
-  local camNodeID, rightHandDrive, rightHandDoor = nil, false, false
-  local vdata = getVehicleData()[vehId]
-  if not vdata         then return camNodeID, rightHandDrive, rightHandDoor end
-  if not vdata.cameras then return camNodeID, rightHandDrive, rightHandDoor end
+local function getDriverCameraById(vehId, ctxId)
+  local vdata = getVehicleData(getContext(ctxId))[vehId]
+  if not vdata or not vdata.cameras then return nil, nil end
   local cam = vdata.cameras["onboard.driver"]
+  local camName = cam and "driver" or nil
+  if not cam then
+    for name, occupantCam in pairs(vdata.cameras) do
+      if name:find("^occupant%.", 1) and occupantCam.defaultPermissionMode == "driver" then
+        cam = occupantCam
+        camName = name
+        break
+      end
+    end
+  end
+  return camName, cam
+end
+
+local function getDriverCameraNameById(vehId, ctxId)
+  return getDriverCameraById(vehId, ctxId)
+end
+
+local function getDriverDataById(vehId, ctxId)
+  local camNodeID, rightHandDrive, rightHandDoor = nil, false, false
+  local _, cam = getDriverCameraById(vehId, ctxId)
   if not cam           then return camNodeID, rightHandDrive, rightHandDoor end
   camNodeID, rightHandDrive, rightHandDoor = cam.camNodeID, cam.rightHandCamera or false, cam.rightHandDoor or false -- convert nil to false
   return camNodeID, rightHandDrive, rightHandDoor
 end
 
-local function getDriverData(veh)
-  return getDriverDataById(veh and veh:getId())
+local function getDriverData(veh, ctxId)
+  return getDriverDataById(veh and veh:getId(), ctxId)
 end
 
 local function getActiveCamName(player)
@@ -884,7 +1026,7 @@ local function processVehicleCameraConfigChanged(vid, vdata, focusedCamNamePrevi
   if vmvd then
     vmvd = vmvd.vdata
   else
-    return
+    return false
   end
 
   local refNodes = vmvd.refNodes[0]
@@ -922,84 +1064,85 @@ local function processVehicleCameraConfigChanged(vid, vdata, focusedCamNamePrevi
   -- The camera-menu configuration is shared and owned/persisted by the main
   -- context only; extra contexts reuse it as-is (building it once if needed).
   if ctx.isMain or #configuration == 0 then
-  -- initial camera config
-  local initialConfiguration = {
-     {name="orbit"}
-    ,{name="driver"}
-    ,{name="onboard.hood"}
-    ,{name="external"}
-    ,{name="relative"}
-    ,{name="chase"}
-    ,{name="droneChase"}
-  }
-  local savedConfiguration = settings.getValue('cameraConfig')
-  if savedConfiguration and savedConfiguration ~= "" then
-    -- fix INI values that passed through javascript (e.g. when opening Options menu)
-    savedConfiguration = savedConfiguration:gsub("'",'"')
-    -- and then deserialize, so we can follow the user settings
-    savedConfiguration = jsonDecode(savedConfiguration)
-    -- if user settings version is good, go ahead and use it
-    if savedConfiguration and (savedConfiguration.version or 0) >= currentVersion then
-      initialConfiguration = savedConfiguration.data
-    end
-  end
-
-  -- fill pre-configured cameras (even if it's a disabled/unknown camera)
-  configuration = {}
-  for k,v in ipairs(initialConfiguration) do
-    local enabled = v.enabled
-    if enabled == nil then
-      enabled = true
-      local cam = vdata.cameras[v.name]
-      if cam then
-        enabled = cam.disabledByDefault ~= true
+    -- initial camera config
+    local initialConfiguration = {
+       {name="orbit"}
+      ,{name="driver"}
+      ,{name="onboard.hood"}
+      ,{name="external"}
+      ,{name="relative"}
+      ,{name="chase"}
+      ,{name="droneChase"}
+    }
+    local savedConfiguration = settings.getValue('cameraConfig')
+    if savedConfiguration and savedConfiguration ~= "" then
+      -- fix INI values that passed through javascript (e.g. when opening Options menu)
+      savedConfiguration = savedConfiguration:gsub("'",'"')
+      -- and then deserialize, so we can follow the user settings
+      savedConfiguration = jsonDecode(savedConfiguration)
+      -- if user settings version is good, go ahead and use it
+      if savedConfiguration and (savedConfiguration.version or 0) >= currentVersion then
+        initialConfiguration = savedConfiguration.data
       end
     end
-    table.insert(configuration, {name=v.name, enabled=enabled})
-  end
 
-  -- append non-configured cameras
-  local renaminingCamNames = {}
-  for name, cam in pairs(vdata.cameras) do
-    local configured = false
-    for _,v in ipairs(configuration) do
-      if v.name == name then configured = true end
-    end
-    if not configured then
-      table.insert(renaminingCamNames, name)
-    end
-  end
-
-  -- now, a bit more complex: order the remaining cameras with their order number (if present) or jbeam order
-  while #renaminingCamNames > 0 do
-    local orderMin = 99999
-    local lowestOrderId = nil
-    for k, name in ipairs(renaminingCamNames) do
-      -- locate idx with the minimum order value
-      local cam = vdata.cameras[name]
-      if cam.order then
-        if type(cam.order) == 'number' then
-          if cam.order < orderMin then
-            orderMin = cam.order
-            lowestOrderId = k
-          end
-        else
-          log("E", "", "Incorrectly defined camera, 'order' field is not numeric: "..dumps(type(order)))
+    -- fill pre-configured cameras (even if it's a disabled/unknown camera)
+    configuration = {}
+    for k,v in ipairs(initialConfiguration) do
+      local enabled = v.enabled
+      if enabled == nil then
+        enabled = true
+        local cam = vdata.cameras[v.name]
+        if cam then
+          enabled = cam.disabledByDefault ~= true
         end
       end
+      table.insert(configuration, {name=v.name, enabled=enabled})
     end
 
-    if not lowestOrderId then
-      -- no ordering? simply take first one then
-      lowestOrderId = 1
+    -- append non-configured cameras
+    local renaminingCamNames = {}
+    for name, cam in pairs(vdata.cameras) do
+      local configured = false
+      for _,v in ipairs(configuration) do
+        if v.name == name then configured = true end
+      end
+      if not configured and not name:find("^occupant%.", 1) then
+        table.insert(renaminingCamNames, name)
+      end
     end
 
-    local name = renaminingCamNames[lowestOrderId]
-    local enabled = vdata.cameras[name].disabledByDefault ~= true
-    table.insert(configuration, {name=name, enabled=enabled})
-    table.remove(renaminingCamNames, lowestOrderId)
+    -- now, a bit more complex: order the remaining cameras with their order number (if present) or jbeam order
+    while #renaminingCamNames > 0 do
+      local orderMin = 99999
+      local lowestOrderId = nil
+      for k, name in ipairs(renaminingCamNames) do
+        -- locate idx with the minimum order value
+        local cam = vdata.cameras[name]
+        if cam.order then
+          if type(cam.order) == 'number' then
+            if cam.order < orderMin then
+              orderMin = cam.order
+              lowestOrderId = k
+            end
+          else
+            log("E", "", "Incorrectly defined camera, 'order' field is not numeric: "..dumps(type(order)))
+          end
+        end
+      end
+
+      if not lowestOrderId then
+        -- no ordering? simply take first one then
+        lowestOrderId = 1
+      end
+
+      local name = renaminingCamNames[lowestOrderId]
+      local enabled = vdata.cameras[name].disabledByDefault ~= true
+      table.insert(configuration, {name=name, enabled=enabled})
+      table.remove(renaminingCamNames, lowestOrderId)
+    end
+    insertMissingOccupantCameras(vdata)
   end
-  end -- shared configuration build
 
   -- 1st try: we got a saved request, honour it before anything else
   local cameraSet = false
@@ -1041,6 +1184,7 @@ local function processVehicleCameraConfigChanged(vid, vdata, focusedCamNamePrevi
     log("E", "", "Unable to find a single usable camera, not even 'orbit' fallback. All bets are off from this point on")
   end
   if ctx.isMain then saveConfiguration(vdata) end
+  return true
 end
 M.processVehicleCameraConfigChanged = processVehicleCameraConfigChanged
 
@@ -1066,6 +1210,7 @@ local function vehicleChanged(oldVehId, newVehId, ctx)
     -- enable previously disabled cameras
     local vdata = getVehicleData(ctx)[newVehId]
     if vdata then
+      if ctx.isMain then insertMissingOccupantCameras(vdata) end
       for _, camera in pairs(vdata.cameras) do
         if camera.wasFocused == true then
           camera.focused = true
@@ -1283,15 +1428,24 @@ end
 --- players drive their own camera (player 0 = main view)
 
 local function setPosition(pid, ...)
-  if mainContext.activeGlobalCameraName == 'free' then
+  local ctx = ctxForPlayer(pid)
+  if ctx.isMain and ctx.activeGlobalCameraName == 'free' then
     local pos = (...)
     if pos ~= nil then
       setCameraPosC(pos.x, pos.y, pos.z)
-      mainContext.finalCameraData.pos:set(pos)
+      ctx.finalCameraData.pos:set(pos)
     end
   end
 
   return proxy_PID(pid, 'setPosition', ...)
+end
+
+local function clearMotion(pid)
+  return proxy_PID(pid, 'clearMotion')
+end
+
+local function clearAngularMotion(pid)
+  return proxy_PID(pid, 'clearAngularMotion')
 end
 
 local function setSmoothedCam(pid, ...)
@@ -1393,7 +1547,21 @@ local function hotkey(player, hotkeyid, modifier)
   return proxy_PID(player, 'hotkey', hotkeyid, modifier)
 end
 
+-- run the desired function on all cameras of a vehicle
+local function vehicleCamerasFunction(vid, functionName, ...)
+  local function vehicleCtxCamerasFunction(vid, functionName, ctx, ...)
+    local vdata = getVehicleData(ctx)[vid]
+    for _, cam in pairs(vdata and vdata.cameras or {}) do
+      local fn = cam[functionName]
+      if fn then fn(cam, ...) end
+    end
+  end
+  vehicleCtxCamerasFunction(vid, functionName, mainContext, ...)
+  for _, ctx in pairs(extraContexts) do vehicleCtxCamerasFunction(vid, functionName, ctx, ...) end
+end
+
 local function onVehicleResetted(vid, ...)
+  vehicleCamerasFunction(vid, "onVehicleResetted", ...)
   local vdata = getVehicleData()[vid]
   if not vdata then return end
   local c = vdata.cameras[vdata.focusedCamName]
@@ -1413,13 +1581,13 @@ end
 
 local function onDespawnObject(vid, isReloading)
   if isReloading == false then
-    for _, ctx in pairs(contexts) do delVehicleData(vid, ctx) end
+    forEachContext(function(ctx) delVehicleData(vid, ctx) end)
   end
 end
 
 -- run the desired function on all cameras of every context
 local function proxy_all(functionName, ...)
-  for _, ctx in pairs(contexts) do
+  local function runCameraFunction(ctx, ...)
     for vid, vdata in pairs(getVehicleData(ctx)) do
       for _, cam in pairs(vdata.cameras) do
         if cam[functionName] then
@@ -1432,6 +1600,10 @@ local function proxy_all(functionName, ...)
         cam[functionName](cam, ...)
       end
     end
+  end
+  runCameraFunction(mainContext, ...)
+  for _, ctx in pairs(extraContexts) do
+    runCameraFunction(ctx, ...)
   end
 end
 
@@ -1446,11 +1618,11 @@ local function resetConfiguration()
   settings.setValue('cameraConfig', "")
   settings.setValue('freeCameraConfig', "")
   table.clear(freeCameraConfiguration)
-  for _, ctx in pairs(contexts) do
+  forEachContext(function(ctx)
     for vid, vdata in pairs(getVehicleData(ctx)) do
       processVehicleCameraConfigChanged(vid, vdata, vdata.focusedCamName, ctx)
     end
-  end
+  end)
 end
 
 local function onScenarioRestarted(...)
@@ -1477,7 +1649,15 @@ local function onVehicleSwitched(oldId, newId, player)
     getGlobalCameras().transition:start(true)
   end
   proxy_all("onVehicleSwitched", oldId, newId, player)
-  M.displayCameraNameUI(0)
+  pendingCameraNameNotification[player] = true
+end
+
+local function onPreRender(...)
+  cameraUpdate.onPreRender(...)
+  for player in pairs(pendingCameraNameNotification) do
+    pendingCameraNameNotification[player] = nil
+    displayCameraNameUI(player)
+  end
 end
 
 local function onSerialize()
@@ -1485,7 +1665,9 @@ local function onSerialize()
   -- global cameras
   data.globalCameras = {}
   for k,cam in pairs(getGlobalCameras()) do
-    if cam.onSerialize then cam:onSerialize() end
+    if cam.onSerialize then
+      cam:onSerialize()
+    end
     data.globalCameras[k] = serialize(cam)
   end
 
@@ -1503,7 +1685,7 @@ local function onSerialize()
 
   -- general camera data (the main context is the player view we persist)
   data.activeGlobalCameraName = mainContext.activeGlobalCameraName
-  data.lastVehicleName = mainContext.lastVehicleName
+  data.lastVehicleId = mainContext.lastVehicleId
   data.pendingTrigger = pendingTrigger
   data.requestedCam = mainContext.requestedCam
   return data
@@ -1511,7 +1693,7 @@ end
 
 local function onDeserialized(data)
   -- general camera data
-  mainContext.lastVehicleName = data.lastVehicleName
+  mainContext.lastVehicleId = data.lastVehicleId
   pendingTrigger = data.pendingTrigger
   mainContext.requestedCam = data.requestedCam or {}
 
@@ -1519,7 +1701,9 @@ local function onDeserialized(data)
   for camName, cam in pairs(getGlobalCameras()) do
     if data.globalCameras[camName] then
       tableMergeRecursive(cam, deserialize(data.globalCameras[camName]))
-      if cam.onDeserialized then cam:onDeserialized() end
+      if cam.onDeserialized then
+        cam:onDeserialized()
+      end
     end
   end
 
@@ -1536,6 +1720,9 @@ local function onDeserialized(data)
           vdata.focusedCamName = svdata.focusedCamName
         end
       end
+      if cam.onDeserialized then
+        cam:onDeserialized()
+      end
     end
   end
 
@@ -1545,11 +1732,12 @@ end
 
 local function invalidateCaches()
   constructorsCache = nil
-  for _, ctx in pairs(contexts) do
+  forEachContext(function(ctx)
     ctx.globalCamerasCache = nil
     ctx.runningCamsOrderCache = nil
     ctx.vehicleCamerasCache = nil
-  end
+    ctx.vehicleCamerasComplete = false
+  end)
 end
 
 local function onFileChanged(filePath, changeType)
@@ -1571,10 +1759,10 @@ local function setFastSpeedModifier(enabled)
 end
 
 local function setPosRot(pid, px, py, pz, rx, ry, rz, rw)
-  if not commands.isFreeCamera() then return end
+  if not commands.isFreeCamera(pid) then return end
   core_camera.setPosition(pid, vec3(px, py, pz))
   if rx and ry and rz and rw then
-    core_camera.setRotation(pid, quat(rx, ry, rz, rw))
+    proxy_PID(pid, 'setRotation', quat(rx, ry, rz, rw))
   end
 end
 
@@ -1596,12 +1784,12 @@ local function getLookBack()
   return mainContext.camData.lookBack
 end
 
-local function setCameraUnicycleZoom(value)
-  mainContext.camData.unicycleZoom = value
+local function setCameraUnicycleZoom(value, player)
+  ctxForPlayer(player).camData.unicycleZoom = value
 end
 
-local function getCameraUnicycleZoom()
-  return mainContext.camData.unicycleZoom
+local function getCameraUnicycleZoom(player)
+  return ctxForPlayer(player).camData.unicycleZoom
 end
 
 local function setCameraDriverZoom(value, player)
@@ -1614,6 +1802,10 @@ end
 
 local function driverZoomToggle(player)
   setCameraDriverZoom(tonumber(getCameraDriverZoom(player) or 0) > 0.5 and 0 or 1, player)
+end
+
+local function unicycleZoomToggle(player)
+  setCameraUnicycleZoom(tonumber(getCameraUnicycleZoom(player) or 0) > 0.5 and 0 or 1, player)
 end
 
 -- getters default to the main (player) context; pass a context id to read another
@@ -1715,10 +1907,10 @@ end
 -- view of the local player's car without stealing the player's own input.
 local function createContext(id, renderView, player, vehiclePlayer)
   if id == nil or id == MAIN_CONTEXT then return mainContext end
-  local ctx = contexts[id]
+  local ctx = extraContexts[id]
   if not ctx then
     ctx = newContext(id, renderView or id, player, vehiclePlayer)
-    contexts[id] = ctx
+    extraContexts[id] = ctx
   else
     if renderView then ctx.renderView = renderView end
     if player ~= nil then ctx.player = player end
@@ -1730,23 +1922,32 @@ end
 
 local function destroyContext(id)
   if id == nil or id == MAIN_CONTEXT then return end -- never destroy the player view
-  local ctx = contexts[id]
+  local ctx = extraContexts[id]
   if ctx and contextByPlayer[ctx.player] == ctx then
     contextByPlayer[ctx.player] = (ctx.player == 0) and mainContext or nil
   end
-  contexts[id] = nil
+  extraContexts[id] = nil
+  if mainContext.vehicleCamerasCache then
+    mainContext.vehicleCamerasCache = nil
+  end
 end
 
 local function getContextIds()
-  local ids = {}
-  for id in pairs(contexts) do table.insert(ids, id) end
+  local ids = {MAIN_CONTEXT}
+  for id in pairs(extraContexts) do table.insert(ids, id) end
   return ids
+end
+
+-- the view a player looks through, as a context id for the get*(ctxId) getters. nil = main view
+local function getContextIdForPlayer(player)
+  local ctx = ctxForPlayer(player)
+  return (not ctx.isMain) and ctx.id or nil
 end
 
 -- Select a camera on a context without touching the player. camName nil or a
 -- global-camera name -> global camera; otherwise the player vehicle's camera.
 local function setContextCamera(id, camName, withTransition, customData)
-  local ctx = contexts[id]
+  local ctx = getContext(id)
   if not ctx then log("E", "", "Unknown camera context: "..dumps(id)); return false end
   local isGlobal = (camName == nil) or getGlobalCameras(ctx)[camName] ~= nil
   -- seed a freshly-selected global camera (e.g. free) with the view's current
@@ -1775,7 +1976,7 @@ end
 -- looks); `data` is the active camera mode's own state - each mode that has movable state
 -- implements serialize/deserialize (e.g. relative's offset, orbit's rotation+distance).
 local function getContextCameraState(id)
-  local ctx = (id == nil) and mainContext or contexts[id]
+  local ctx = getContext(id)
   if not ctx then return nil end
   local fc = ctx.finalCameraData
   local vdata = getVdata(ctx.player, ctx)
@@ -1794,7 +1995,7 @@ end
 -- restores its own state (relative offset, orbit rotation/distance, ...); a free/global cam
 -- without one is placed at the saved world pose.
 local function setContextCameraState(id, state)
-  local ctx = contexts[id]
+  local ctx = getContext(id)
   if not ctx or type(state) ~= 'table' then return end
   local isGlobal = (state.cam == nil) or state.cam == 'free' or getGlobalCameras(ctx)[state.cam] ~= nil
   setContextCamera(id, isGlobal and (state.cam or 'free') or state.cam)
@@ -1815,7 +2016,7 @@ end
 -- 'range'|'bool'|'choice'|'slots', type = 'float'|'int'|'bool'|'enum', value,
 -- [icon (Font Awesome solid class, e.g. 'fa-expand'), default, min, max, step, unit, options] }.
 local function getContextCameraParams(id)
-  local ctx = (id == nil) and mainContext or contexts[id]
+  local ctx = getContext(id)
   if not ctx then return {} end
   local cam = activeCamOf(ctx)
   return (cam and cam.listParams) and cam:listParams(id) or {}
@@ -1824,7 +2025,7 @@ end
 -- Apply one tunable to a context's active camera (nil id = the main player view), delegating
 -- to the camera mode's own setParam.
 local function setContextCameraParam(id, key, value)
-  local ctx = (id == nil) and mainContext or contexts[id]
+  local ctx = getContext(id)
   if not ctx then return end
   local cam = activeCamOf(ctx)
   if cam and cam.setParam then cam:setParam(key, value, id) end
@@ -1833,19 +2034,19 @@ end
 -- wire the split-out submodules now that this file's shared state + helpers exist
 cameraInput.setup({ moveFor = moveFor, getFovDeg = getFovDeg })
 cameraUpdate.setup({
-  contexts = contexts, mainContext = mainContext, moveManager = moveManager,
-  getConfiguration = function() return configuration end,
+  extraContexts = extraContexts, mainContext = mainContext, moveManager = moveManager,
   getGlobalCameras = getGlobalCameras, getVehicleData = getVehicleData, getRunningCamsOrder = getRunningCamsOrder,
   setGlobalCameraByName = setGlobalCameraByName, set = set, vehicleChanged = vehicleChanged,
-  isWithinRadius = isWithinRadius, isUnicycle = isUnicycle, cameraM = M,
+  isInsideBasedOnCameras = isInsideBasedOnCameras, isUnicycle = isUnicycle, cameraM = M,
 })
 
 -- callbacks
-M.onPreRender = cameraUpdate.onPreRender -- just update the camera right before the rendering
+M.onPreRender = onPreRender -- just update the camera right before the rendering
 M.onTrigger = onTrigger
 M.onSettingsChanged = onSettingsChanged
 M.onVehicleResetted = onVehicleResetted
 M.onVehicleSpawned = onVehicleSpawned
+M.onVehicleReplaced = onVehicleReplaced
 M.onVehicleSwitched = onVehicleSwitched
 M.onDespawnObject = onDespawnObject
 M.onVehicleDestroyed = onVehicleDestroyed
@@ -1878,10 +2079,13 @@ M.setSkipFovModifier = setSkipFovModifier
 M.setFastSpeedModifier = setFastSpeedModifier
 M.changeSpeed = changeSpeed
 M.setPosition = setPosition
+M.clearMotion = clearMotion
+M.clearAngularMotion = clearAngularMotion
 M.setSmoothedCam = setSmoothedCam
 M.setNewtonRotation = setNewtonRotation
 M.setNewtonTranslation = setNewtonTranslation
 M.setByName = setByName
+M.startCameraTransition = startCameraTransition
 M.setCameraByNameFromOptions = setCameraByNameFromOptions
 M.setVehicleCameraByNameWithId = setVehicleCameraByNameWithId
 M.exitCinematicCamera = function() setGlobalCameraByName(nil) end -- retrocompatibility layer
@@ -1893,6 +2097,7 @@ M.changeFreeCameraOrder = changeFreeCameraOrder
 M.getCameraDataById = getCameraDataById
 M.getDriverData = getDriverData
 M.getDriverDataById = getDriverDataById
+M.getDriverCameraNameById = getDriverCameraNameById
 M.getActiveCamName = getActiveCamName
 M.getActiveCamNameByVehId = getActiveCamNameByVehId
 M.getConfigurationReadOnly = getConfigurationReadOnly
@@ -1917,11 +2122,13 @@ M.getActiveGlobalCameraName = getActiveGlobalCameraName
 M.createContext = createContext
 M.destroyContext = destroyContext
 M.getContextIds = getContextIds
+M.getContextIdForPlayer = getContextIdForPlayer
 M.setContextCamera = setContextCamera
 M.getContextCameraState = getContextCameraState
 M.setContextCameraState = setContextCameraState
 M.getContextCameraParams = getContextCameraParams
 M.setContextCameraParam = setContextCameraParam
+M.setInputTargetPlayer = setInputTargetPlayer
 
 M.getPosition = getPosition
 M.getPositionXYZ = getPositionXYZ
@@ -1937,6 +2144,7 @@ M.getFovDeg = getFovDeg
 M.getFovRad = getFovRad
 
 M.proxy_Player = proxy_Player
+M.vehicleCamerasFunction = vehicleCamerasFunction
 M.globalCameraFunction = globalCameraFunction
 
 -- functions used by UI options
@@ -1950,6 +2158,7 @@ M.cycleCameraGroup = cycleCameraGroup
 M.resetCamera = resetCamera
 M.setLookBack = setLookBack
 M.setCameraUnicycleZoom = setCameraUnicycleZoom
+M.unicycleZoomToggle = unicycleZoomToggle
 M.setCameraDriverZoom = setCameraDriverZoom
 M.getCameraDriverZoom = getCameraDriverZoom
 M.driverZoomToggle = driverZoomToggle
@@ -1995,7 +2204,7 @@ M.onReplayStateChanged = function(newState)
     -- cannot recover from when the replay is over and "ejected".
     -- This is particularlly important when trying to return to the game state as it was BEFORE playing a replay video.
     -- The vehicles that were removed are returned to the scene somehow but the cache is not updated. Investigate why later.
-    for _, ctx in pairs(contexts) do ctx.vehicleCamerasCache = nil end
+    forEachContext(function(ctx) ctx.vehicleCamerasCache = nil end)
   end
 
   M.previousReplayStateName = newState.state

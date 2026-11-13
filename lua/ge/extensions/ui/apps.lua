@@ -30,7 +30,6 @@ local function filterAllowedAppPositionKeys(position)
 end
 
 local function appSimplemenuMatches(appData)
-  -- if simplemenu and appData.isAuxiliary then return false end
   return appData.simplemenu == nil or appData.simplemenu == simplemenu
 end
 
@@ -80,6 +79,7 @@ local function discoverVueAppFiles()
 end
 
 local function buildSourceOnlyEntry(appName, vueFile)
+  local appDir = path.split(vueFile)
   local types = { 'ui.apps.categories.internal' }
   local typesTranslated = {}
   for _, typeKey in ipairs(types) do
@@ -105,6 +105,7 @@ local function buildSourceOnlyEntry(appName, vueFile)
     hasAppJs              = false,
     vueFile               = vueFile,
     hasAppVue             = true,
+    hasSnapshot           = appDir ~= nil and FS:fileExists(appDir .. "mockdata/snapshot.json"),
     isAuxiliary           = true,
     interactive           = "no",
     essential             = false,
@@ -165,12 +166,14 @@ local function getAvailableAppList()
         end
         appData["vueFile"]   = vueFile
         appData["hasAppVue"] = vueFile ~= nil
+        appData["hasSnapshot"] = FS:fileExists(appDir .. "mockdata/snapshot.json")
         if vueFile then consumedVueFiles[vueFile] = true end
         appData["essential"] = appData["essential"] == true
         appData["isAuxiliary"] = appData["isAuxiliary"] == true
         appData["photomode"] = appData["photomode"] == true  -- photomode apps are hidden from the normal ui app selector
-        appData["interactive"] = appData["interactive"] == nil or appData["interactive"] == "required" or appData["interactive"] == "yes" or appData["interactive"] == true
         if appSimplemenuMatches(appData) then
+          appData.interactiveMode = appData.interactive
+          appData["interactive"] = appData["interactive"] == nil or appData["interactive"] == "required" or appData["interactive"] == "yes" or appData["interactive"] == true
           res[appData.appName] = appData
         end
       else

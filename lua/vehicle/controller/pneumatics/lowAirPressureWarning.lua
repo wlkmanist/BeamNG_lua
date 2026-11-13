@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Warns the driver when the vehicle's air pressure is too low
+
 local M = {}
 M.type = "auxiliary"
 
@@ -19,7 +21,7 @@ local function updateGFX(dt)
     electrics.values[lowAirWarningElectric] = 1
     if lowAirWarningSoundEvent and not isPlayingLowPressureSound then
       obj:playSFX(lowAirWarningSoundEvent)
-      guihooks.message("vehicle.pneumatics.lowAirPressureWarning", 3, "lowAirWarning")
+      guihooks.messageForSeatedPlayers("vehicle.pneumatics.lowAirPressureWarning", 3, "lowAirWarning")
       isPlayingLowPressureSound = true
     end
   elseif pressure > airOkPressure or electrics.values.ignitionLevel == 0 then

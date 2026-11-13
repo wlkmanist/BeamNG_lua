@@ -168,7 +168,6 @@ function C:finishUIBuilding()
     log("E","","Tried to finish building, but is currently not building!")
     return
   end
-  local mission = self.mgr.activity
   log("I","","Finishing Build...")
   log("I", "", dumpsz(self.uiLayout.layout, 2))
 
@@ -181,23 +180,13 @@ function C:finishUIBuilding()
         main = true,
       }))
 
-    if mission and mission:hasRules() then
-      table.insert(self.uiLayout.buttons, self:addButton(function()
-        mission:showRulesAsPopups()
-      end, {
-        label = "Rules",
-        focus = false,
-        main = false,
-      }))
-    end
-
     self:addReplayPanelAndSupportsReplay()
     self:setupPages()
-    guihooks.trigger('ChangeState', {state = 'mission.control', params = { mode = 'startScreen'}})
+    extensions.ui_router.navigate('mission.control', { mode = 'startScreen'})
   elseif self.uiLayout.mode == 'endScreen' then
     self:addReplayPanelAndSupportsReplay()
     self:setupPages()
-    guihooks.trigger('ChangeState', {state = 'mission.control', params = { mode = 'endScreen'}})
+    extensions.ui_router.navigate('mission.control', { mode = 'endScreen'})
   end
 
   if self.uiLayout and (self.uiLayout.mode == 'startScreen' or self.uiLayout.mode == 'endScreen') then
@@ -213,6 +202,7 @@ function C:setStartScreenAsSimple()
 end
 
 function C:addReplayPanelAndSupportsReplay()
+  if Engine.UI.isSimpleMenu() then return end
   if self.mgr.activity and self.mgr.activity.supportsReplay and ((self.uiLayout.simpleStartScreen ~= nil and not self.uiLayout.simpleStartScreen) or self.uiLayout.simpleStartScreen == nil)then
     self:addUIElement({
       type = "replayPanel",
@@ -242,6 +232,17 @@ end
 
 
 -- Elements --
+function C:buildListText(items)
+  local text = {"<ul>"}
+  for _, item in ipairs(items) do
+    table.insert(text, "<li>")
+    table.insert(text, item)
+    table.insert(text, "</li>")
+  end
+  table.insert(text, "</ul>")
+  return text
+end
+
 function C:onMissionScreenButtonClicked(button)
   if self.mgr.id ~= button.mgrId then
     return

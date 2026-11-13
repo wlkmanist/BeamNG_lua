@@ -1776,6 +1776,106 @@ M.setLayer = function(layerData_table, doReproject_bool)
   extensions.hook("dynamicDecals_setLayer", layerData_table.uid)
 end
 
+-- screen-space cursor position a ui-placed decal is projected from. re-transforming reprojects from
+-- this same centered cursor, so only a capture that lands centered can faithfully reproduce it.
+local CENTERED_CURSOR_UV = 0.5
+local CENTERED_CURSOR_UV_EPSILON = 0.01
+
+-- transform/projection-owned fields of a decal layer: everything derived from the camera pose and
+-- the live transform controls. re-placing an existing decal overwrites only these and preserves
+-- every identity/material/metadata field (uid, name, enabled, locked, meshes, mask, children, ...).
+local decalTransformFieldKeys = {
+  "camPosition", "camDirection",
+  "decalPos", "decalNorm",
+  "viewToScreen", "worldToViewToScreen",
+  "useZBufferDepth", "zBufferDepth",
+  "useLockedSurfaceNormal", "surfaceNormal",
+  "cursorPosScreenUv",
+  "decalScale", "decalSkew", "decalRotation",
+  "useSurfaceNormal",
+  "mirrored", "flipMirroredDecal",
+}
+
+-- captures a coherent decal projection from the current camera without mutating any editor state,
+-- so callers can inspect the would-be placement before committing. returns the raw projector data
+-- plus whether its screen-space cursor landed centered.
+local function captureCurrentDecalProjection()
+  local decalData = decalProjection:getDecalData(app:getCameraM(), app:getProjM())
+  local uv = decalData and decalData.cursorPosScreenUv
+  local centered = uv ~= nil
+    and math.abs(uv.x - CENTERED_CURSOR_UV) <= CENTERED_CURSOR_UV_EPSILON
+    and math.abs(uv.y - CENTERED_CURSOR_UV) <= CENTERED_CURSOR_UV_EPSILON
+  return decalData, centered
+end
+
+local function replaceDecalTransform_Undo(actionData)
+  _setLayerInCollection(layerStack, actionData.layerUid, actionData.fromLayerData)
+  M.reprojectLayers()
+end
+
+local function replaceDecalTransform_Redo(actionData)
+  _setLayerInCollection(layerStack, actionData.layerUid, actionData.toLayerData)
+  M.reprojectLayers()
+end
+
+-- re-projects an already placed decal from the current camera/projection while keeping its identity
+-- and every non-transform property intact. `originalLayer` is the immutable pre-edit snapshot taken
+-- before the live preview hid/altered the committed layer; it -- not the temporarily hidden live
+-- layer -- is used as both the base for the new layer and the history before-state, so undo/redo
+-- swap the exact before/after decal by uid and reproject once each. commits a single "Transform
+-- Decal" action and returns true on success.
+M.replaceDecalTransformFromCurrentProjection = function(layerUid_string, originalLayer)
+  if type(layerUid_string) ~= "string" then
+    print(string.format("%s.replaceDecalTransformFromCurrentProjection(): 'layerUid_string' must be a string.", logTag))
+    return false
+  end
+  if type(originalLayer) ~= "table" then
+    print(string.format("%s.replaceDecalTransformFromCurrentProjection(): 'originalLayer' snapshot must be given.", logTag))
+    return false
+  end
+
+  local liveLayer = getLayerByUidRec(layerUid_string, layerStack)
+  if not liveLayer then
+    print(string.format("%s.replaceDecalTransformFromCurrentProjection(): no layer with uid '%s'.", logTag, layerUid_string))
+    return false
+  end
+  if liveLayer.type ~= M.layerTypes.decal then
+    print(string.format("%s.replaceDecalTransformFromCurrentProjection(): layer '%s' is not a decal.", logTag, layerUid_string))
+    return false
+  end
+
+  local captured, centered = captureCurrentDecalProjection()
+  if not captured then
+    print(string.format("%s.replaceDecalTransformFromCurrentProjection(): failed to capture projection for '%s'.", logTag, layerUid_string))
+    return false
+  end
+  if not centered then
+    print(string.format("%s.replaceDecalTransformFromCurrentProjection(): captured cursor isn't centered, refusing to reproject '%s'.", logTag, layerUid_string))
+    return false
+  end
+
+  -- before-state is the immutable pre-edit snapshot, never the currently-hidden live layer.
+  local fromLayerData = deepcopy(originalLayer)
+  local toLayerData = deepcopy(originalLayer)
+  -- overwrite only the transform/projection-owned fields with the freshly captured projection.
+  for _, key in ipairs(decalTransformFieldKeys) do
+    toLayerData[key] = captured[key]
+  end
+
+  history:commitAction(
+    "Transform Decal",
+    {
+      layerUid = layerUid_string,
+      fromLayerData = fromLayerData,
+      toLayerData = toLayerData,
+    },
+    replaceDecalTransform_Undo,
+    replaceDecalTransform_Redo
+  )
+
+  return true
+end
+
 local function moveLayer_Undo(actionData)
   local item = layerStack[actionData.to]
   deleteLayer(actionData.to, actionData.toParentUid, true)

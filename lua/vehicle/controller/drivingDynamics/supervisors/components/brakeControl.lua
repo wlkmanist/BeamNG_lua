@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Control component applying individual wheel brakes for traction, stability, and anti-lock braking
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 70
@@ -123,6 +125,9 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
 
   local wheelToBrake
   local maxBrakeFactor = max(avBrakeFactor, slipAngleBrakeFactor, frontAxleSlipAngleBrakeFactor)
+  if maxBrakeFactor <= 0 then
+    return false
+  end
   if avBrakeFactor == maxBrakeFactor then
     if yawDifference > 0 then --Oversteer
       if measuredYaw > 0 then
@@ -160,7 +165,13 @@ local function actAsYawControl(measuredYaw, expectedYaw, yawDifference, bodySlip
     print("BrakeControl: actAsYawControl: maxBrakeFactor is not one of the expected values")
     return false
   end
+  if not wheelToBrake then
+    return false
+  end
   local wheelData = wheelControlData[wheelToBrake.name]
+  if not wheelData then
+    return false
+  end
 
   local antiLockUpFactor = linearScale(abs(wheelToBrake.angularVelocityBrakeCouple), 2, 5, 0, 1)
   wheelData.brakeFactorYawControl = maxBrakeFactor * antiLockUpFactor

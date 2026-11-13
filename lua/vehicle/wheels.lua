@@ -175,6 +175,66 @@ local function calculateThermalEfficiency(temperature, config)
   return min(max(f, 0), 1)
 end
 
+local function getWheelNonTreadNodeTemperatures(wd)
+  local totalTemp
+  local nodeCount
+  local minNodeTemp
+  local maxNodeTemp
+  for _, nodeId in pairs(wd.nodes or {}) do
+    local nodeTemp = obj:getNodeTemperature(nodeId)
+    if nodeTemp then
+      minNodeTemp = min(minNodeTemp or math.huge, nodeTemp)
+      maxNodeTemp = max(maxNodeTemp or -math.huge, nodeTemp)
+      totalTemp = (totalTemp or 0) + nodeTemp
+      nodeCount = (nodeCount or 0) + 1
+    end
+  end
+  return minNodeTemp, nodeCount and (totalTemp / nodeCount) or nil, maxNodeTemp
+end
+
+local function getWheelTreadTemperatures(wd)
+  local totalTemp
+  local nodeCount
+  local minNodeTemp
+  local maxNodeTemp
+  for _, nodeId in pairs(wd.treadNodes or {}) do
+    local nodeTemp = obj:getNodeTemperature(nodeId)
+    if nodeTemp then
+      minNodeTemp = min(minNodeTemp or math.huge, nodeTemp)
+      maxNodeTemp = max(maxNodeTemp or -math.huge, nodeTemp)
+      totalTemp = (totalTemp or 0) + nodeTemp
+      nodeCount = (nodeCount or 0) + 1
+    end
+  end
+  return minNodeTemp, nodeCount and (totalTemp / nodeCount) or nil, maxNodeTemp
+end
+
+local function getWheelAllNodeTemperatures(wd)
+  local totalTemp
+  local nodeCount
+  local minNodeTemp
+  local maxNodeTemp
+  for _, nodeId in pairs(wd.nodes or {}) do
+    local nodeTemp = obj:getNodeTemperature(nodeId)
+    if nodeTemp then
+      minNodeTemp = min(minNodeTemp or math.huge, nodeTemp)
+      maxNodeTemp = max(maxNodeTemp or -math.huge, nodeTemp)
+      totalTemp = (totalTemp or 0) + nodeTemp
+      nodeCount = (nodeCount or 0) + 1
+    end
+  end
+  for _, nodeId in pairs(wd.treadNodes or {}) do
+    local nodeTemp = obj:getNodeTemperature(nodeId)
+    if nodeTemp then
+      minNodeTemp = min(minNodeTemp or math.huge, nodeTemp)
+      maxNodeTemp = max(maxNodeTemp or -math.huge, nodeTemp)
+      totalTemp = (totalTemp or 0) + nodeTemp
+      nodeCount = (nodeCount or 0) + 1
+    end
+  end
+  return minNodeTemp, nodeCount and (totalTemp / nodeCount) or nil, maxNodeTemp
+end
+
 local function updateThermalsGFX(dt)
   local tEnv = obj:getEnvTemperature() + kelvinToCelsius
   local airSpeed = electrics.values.airflowspeed
@@ -288,6 +348,11 @@ local function updateThermalsGFX(dt)
         wi.tireAvgTemperature = obj:getWheelAvgTemperature(wd.wheelID)
         wi.tireCoreTemperature = obj:getWheelCoreTemperature(wd.wheelID)
         wi.tirePressure = tirePressure
+        if bdebug.state.vehicle.wheelThermals then
+          wi.minNonTreadTemperature, wi.avgNonTreadTemperature, wi.maxNonTreadTemperature = getWheelNonTreadNodeTemperatures(wd)
+          wi.minTreadTemperature, wi.avgTreadTemperature, wi.maxTreadTemperature = getWheelTreadTemperatures(wd)
+          wi.minAllTemperature, wi.avgAllTemperature, wi.maxAllTemperature = getWheelAllNodeTemperatures(wd)
+        end
       end
     end
     if wd.brakeSquealLoop then
@@ -329,7 +394,7 @@ local function updateWheelsGFX(dt)
           obj:playSFX(wd.tirePunctureLoop)
         end
       end
-      guihooks.message({txt = "vehicle.wheels.tirePunctured", context = {wheelName = wd.name}}, 5, "vehicle.damage.tirePunctured." .. wd.name)
+      guihooks.messageForSeatedPlayers({txt = "vehicle.wheels.tirePunctured", context = {wheelName = wd.name}}, 5, "vehicle.damage.tirePunctured." .. wd.name)
     end
 
     if wd.isPunctured then

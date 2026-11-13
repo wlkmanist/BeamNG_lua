@@ -22,6 +22,9 @@ local simSpeed = 1
 local init_env={}
 local myTexture = {}
 local tempCurve = {}
+local temperatureCurveOverrideC = nil
+local temperatureMinC, temperatureMaxC = -273.15, 200
+local temperatureUIMinC, temperatureUIMaxC = -50, 60
 
 local temperatureK = 0.0
 local groundWind = vec3()
@@ -70,13 +73,13 @@ local function getSimObjectId(obj)
   if not obj then return nil end
 
   if obj.getID then
-    local ok, id = pcall(obj.getID, obj)
-    if ok and id then return id end
+    local id = obj:getID()
+    if id then return id end
   end
 
   if obj.getId then
-    local ok, id = pcall(obj.getId, obj)
-    if ok and id then return id end
+    local id = obj:getId()
+    if id then return id end
   end
 
   return nil
@@ -87,15 +90,15 @@ local function getObjectFieldStringAt(obj, fieldName, index)
   index = index or 0
 
   if obj.getDynDataFieldbyName then
-    local ok, value = pcall(obj.getDynDataFieldbyName, obj, fieldName, index)
-    if ok and value ~= nil and tostring(value) ~= "" then
+    local value = obj:getDynDataFieldbyName(fieldName, index)
+    if value ~= nil and tostring(value) ~= "" then
       return tostring(value)
     end
   end
 
   if obj.getField then
-    local ok, value = pcall(obj.getField, obj, fieldName, index)
-    if ok and value ~= nil and tostring(value) ~= "" then
+    local value = obj:getField(fieldName, index)
+    if value ~= nil and tostring(value) ~= "" then
       return tostring(value)
     end
   end
@@ -140,7 +143,7 @@ local function setObjectFieldBool(obj, fieldName, value)
   local bool = value == true
   obj[fieldName] = bool
   if obj.setField then
-    pcall(obj.setField, obj, fieldName, 0, bool and "1" or "0")
+    obj:setField(fieldName, 0, bool and "1" or "0")
   end
 end
 
@@ -204,8 +207,8 @@ local function getInstanceColorTable(obj)
   if not obj then return {1, 1, 1, 1} end
 
   if obj.instanceColor and obj.instanceColor.toTable then
-    local ok, color = pcall(obj.instanceColor.toTable, obj.instanceColor)
-    if ok and color then
+    local color = obj.instanceColor:toTable()
+    if color then
       return {
         tonumber(color[1]) or 1,
         tonumber(color[2]) or 1,
@@ -236,10 +239,7 @@ end
 local function isLightBaseObject(obj)
   if not obj then return false end
 
-  if obj.isSubClassOf then
-    local ok, result = pcall(obj.isSubClassOf, obj, "LightBase")
-    if ok and result then return true end
-  end
+  if obj.isSubClassOf and obj:isSubClassOf("LightBase") then return true end
 
   local className = obj.className or (obj.getClassName and obj:getClassName()) or ""
 
@@ -308,8 +308,8 @@ getLightColorTable = function(lightObj, fallback)
   if not lightObj then return fallback end
 
   if lightObj.color and lightObj.color.toTable then
-    local ok, color = pcall(lightObj.color.toTable, lightObj.color)
-    if ok and color then
+    local color = lightObj.color:toTable()
+    if color then
       return {
         tonumber(color[1]) or fallback[1] or 1,
         tonumber(color[2]) or fallback[2] or 1,
@@ -328,8 +328,7 @@ end
 
 local getTimeOfDay
 
-local function getLevelInfoNumberDynField(fieldName)
-  local levelInfo = getObject("LevelInfo") or scenetree.theLevelInfo
+local function getLevelInfoNumberDynField(levelInfo, fieldName)
   if not levelInfo then return nil end
 
   local value = getObjectFieldString(levelInfo, fieldName)
@@ -340,14 +339,40 @@ local function getLevelInfoNumberDynField(fieldName)
   return min(max(numberValue, 0), 1)
 end
 
+-- the solar window only depends on the observer location and the date, so it is kept until
+-- one of those changes instead of rebuilding the solar tables on every call
+local solarNightWindow = {}
+
+local function getSolarNightWindowCached(state)
+  local cache = solarNightWindow
+  if cache.valid
+    and cache.latitude == state.latitude and cache.longitude == state.longitude
+    and cache.year == state.year and cache.month == state.month and cache.day == state.day
+    and cache.utcOffset == state.utcOffset and cache.dstRule == state.dstRule then
+    return cache.startTime, cache.endTime
+  end
+
+  cache.latitude, cache.longitude = state.latitude, state.longitude
+  cache.year, cache.month, cache.day = state.year, state.month, state.day
+  cache.utcOffset, cache.dstRule = state.utcOffset, state.dstRule
+  cache.startTime, cache.endTime = core_solarTimeOfDay.getSolarNightWindow(state)
+  cache.valid = true
+
+  return cache.startTime, cache.endTime
+end
+
 local function getNightLightsTimeWindow()
-  local manualStartTime = getLevelInfoNumberDynField("nightLightsNightStart")
-  local manualEndTime = getLevelInfoNumberDynField("nightLightsNightEnd")
+  local levelInfo = getObject("LevelInfo") or scenetree.theLevelInfo
+  local manualStartTime = getLevelInfoNumberDynField(levelInfo, "nightLightsNightStart")
+  local manualEndTime = getLevelInfoNumberDynField(levelInfo, "nightLightsNightEnd")
 
   if manualStartTime == nil and manualEndTime == nil then
-    local solarStartTime, solarEndTime = core_solarTimeOfDay.getSolarNightWindow(getTimeOfDay())
-    if solarStartTime ~= nil and solarEndTime ~= nil then
-      return solarStartTime, solarEndTime
+    local state = getTimeOfDay()
+    if state then
+      local solarStartTime, solarEndTime = getSolarNightWindowCached(state)
+      if solarStartTime ~= nil and solarEndTime ~= nil then
+        return solarStartTime, solarEndTime
+      end
     end
   end
 
@@ -389,13 +414,10 @@ end
 local function setLightIntensitySafe(lightObj, intensity)
   if not lightObj or intensity == nil then return end
 
-  local ok = pcall(function()
-    lightObj.intensity = intensity
-  end)
-  if not ok then return end
+  lightObj.intensity = intensity
 
   if lightObj.postApply then
-    pcall(lightObj.postApply, lightObj)
+    lightObj:postApply()
   end
 end
 
@@ -669,6 +691,14 @@ M.gravityPresets = {
   { key = "ui.environment.negativeEarth", title = "ui.environment.negativeEarth", value = 9.81 },
 }
 
+-- Real seconds for one full day-night cycle. Freeroam and the pause time-of-day control both use this list.
+M.dayCyclePresets = {
+  { speed = "fast", seconds = 900 },
+  { speed = "normal", seconds = 1800 },
+  { speed = "slow", seconds = 7200 },
+  { speed = "realtime", seconds = 86400 },
+}
+
 M.simSpeedPresets = {
   { key = "realtime", label = "ui.environment.realtime", value = 1 },
   { key = "2", label = "1/2x", value = 2 },
@@ -922,11 +952,7 @@ end
 local function getCloudWeatherOffsetKm()
   if not CloudLayer or type(CloudLayer.getWeatherOffsetKm) ~= "function" then return nil end
 
-  local ok, offset = pcall(CloudLayer.getWeatherOffsetKm)
-  if not ok then
-    log("E", "environment", "Unable to get CloudLayer weather offset: " .. tostring(offset))
-    return nil
-  end
+  local offset = CloudLayer.getWeatherOffsetKm()
   if not offset then return nil end
 
   return vec3(tonumber(offset.x) or 0, tonumber(offset.y) or 0, tonumber(offset.z) or 0)
@@ -944,12 +970,7 @@ local function setCloudWeatherOffsetKm(...)
   if not updatingWholeState then extensions.hook('onEnvironmentChanged', {cloudWeatherOffsetKm = offset}) end
   if not environmentChangesEnabled then return false end
 
-  local ok, err = pcall(CloudLayer.setWeatherOffsetKm, Point3F(offset.x, offset.y, offset.z))
-  if not ok then
-    log("E", "environment", "Unable to set CloudLayer weather offset: " .. tostring(err))
-    return false
-  end
-
+  CloudLayer.setWeatherOffsetKm(Point3F(offset.x, offset.y, offset.z))
   return true
 end
 
@@ -972,12 +993,7 @@ local function regenerateWeatherMap(seed)
   if not updatingWholeState then extensions.hook('onEnvironmentChanged', {cloudWeatherSeed = normalizedSeed}) end
   if not environmentChangesEnabled then return false, normalizedSeed end
 
-  local ok, err = pcall(CloudLayer.regenerateWeatherMap, normalizedSeed)
-  if not ok then
-    log("E", "environment", "Unable to regenerate CloudLayer weather map: " .. tostring(err))
-    return false
-  end
-
+  CloudLayer.regenerateWeatherMap(normalizedSeed)
   return true, normalizedSeed
 end
 
@@ -1218,7 +1234,7 @@ end
 local function setPrecipitation(rainDrops)
   local rainObj = getObject("Precipitation")
   if rainObj and rainDrops then
-    rainObj.numOfDrops = rainDrops
+    rainObj.numDrops = rainDrops
   end
 end
 
@@ -1226,7 +1242,7 @@ local function getPrecipitation()
   local rainObj = getObject("Precipitation")
   local rainDrops
   if rainObj then
-    rainDrops = rainObj.numOfDrops
+    rainDrops = rainObj.numDrops
   end
   return rainDrops
 end
@@ -1235,6 +1251,114 @@ local function getTemperatureK()
   return temperatureK
 end
 
+local function setTemperatureK(tempK)
+  be:setSeaLevelTemperatureK(tempK)
+  temperatureK = tempK
+end
+
+local function toFiniteNumber(value)
+  value = tonumber(value)
+  return value and not isnaninf(value) and value or nil
+end
+
+local function normalizeTemperatureCurve(curve)
+  if type(curve) ~= "table" or #curve < 2 then return nil end
+
+  local normalized = {}
+  local previousTime
+  for _, point in ipairs(curve) do
+    if type(point) ~= "table" then return nil end
+    local time, temperatureC = toFiniteNumber(point[1]), toFiniteNumber(point[2])
+    if not time or not temperatureC or time < 0 or time > 1 or (previousTime and time <= previousTime) then return nil end
+    table.insert(normalized, {time, clamp(temperatureC, temperatureMinC, temperatureMaxC)})
+    previousTime = time
+  end
+  if normalized[1][1] == 0 and normalized[#normalized][1] == 1 then
+    normalized[#normalized][2] = normalized[1][2]
+  end
+  return normalized
+end
+
+local function getTemperatureCurveStats(curve)
+  if not curve or #curve < 2 then return nil end
+
+  local minC, maxC = curve[1][2], curve[1][2]
+  local first, last = curve[1], curve[#curve]
+  local sum = (1 - last[1] + first[1]) * (last[2] + first[2]) * 0.5
+  for i = 2, #curve do
+    local previous, point = curve[i - 1], curve[i]
+    minC = min(minC, point[2])
+    maxC = max(maxC, point[2])
+    sum = sum + (point[1] - previous[1]) * (previous[2] + point[2]) * 0.5
+  end
+
+  return {averageC = sum, minC = minC, maxC = maxC}
+end
+
+local function getCurveTemperatureC(curve, time)
+  local t = (tonumber(time) or 0) % 1
+  for i = 2, #curve do
+    local previous, point = curve[i - 1], curve[i]
+    if t >= previous[1] and t <= point[1] then
+      return lerp(previous[2], point[2], (t - previous[1]) / (point[1] - previous[1]))
+    end
+  end
+
+  local first, last = curve[1], curve[#curve]
+  if t < first[1] then t = t + 1 end
+  return lerp(last[2], first[2], (t - last[1]) / (1 + first[1] - last[1]))
+end
+
+local function updateEffectiveTemperature(time)
+  if not be then return end
+  local curve = temperatureCurveOverrideC or tempCurve
+  if #curve < 2 then return end
+  if time == nil then
+    local tod = getTimeOfDay()
+    time = tod and tod.time
+  end
+  setTemperatureK(getCurveTemperatureC(curve, time) + 273.15)
+end
+
+local function createTemperatureCurveFromExtremes(lowC, highC)
+  local tod = getTimeOfDay()
+  local events = core_solarTimeOfDay.getSolarTimeOfDayEvents(tod)
+  local lowTime = core_solarTimeOfDay.timeFromMinutes(events and (events.sunrise or events.night)) or 0.5
+  local highTime = (core_solarTimeOfDay.timeFromMinutes(events and events.noon) or 0) + 2 / 24
+
+  local anchors = {{lowTime, lowC}, {highTime % 1, highC}}
+  table.sort(anchors, function(a, b) return a[1] < b[1] end)
+  return anchors
+end
+
+local function setTemperatureCurveExtreme(curve, targetC, isMin)
+  local stats = getTemperatureCurveStats(curve)
+  local averageC = stats.averageC
+  targetC = isMin and min(targetC, averageC) or max(targetC, averageC)
+  local extremeC = isMin and stats.minC or stats.maxC
+  if math.abs(extremeC - averageC) <= 1e-6 then
+    return createTemperatureCurveFromExtremes(isMin and targetC or stats.minC, isMin and stats.maxC or targetC)
+  end
+
+  local scale = (targetC - averageC) / (extremeC - averageC)
+  for _, point in ipairs(curve) do
+    if (isMin and point[2] < averageC) or (not isMin and point[2] > averageC) then
+      point[2] = averageC + (point[2] - averageC) * scale
+    end
+  end
+  return curve
+end
+
+local function getTemperatureProfile(curve)
+  local enabled = curve == nil and temperatureCurveOverrideC ~= nil
+  curve = curve or temperatureCurveOverrideC or tempCurve
+  local stats = getTemperatureCurveStats(curve)
+  if not stats then return nil end
+  stats.enabled = enabled
+  stats.midnightC = getCurveTemperatureC(curve, 0.5)
+  stats.curveC = deepcopy(curve)
+  return stats
+end
 
 -------------------------------------------------------------
 local function getState()
@@ -1265,11 +1389,50 @@ local function getState()
   res.numOfDrops = numOfDrops
   res.gravity = getGravity()
   res.temperatureC = getTemperatureK() - 273.15
+  res.temperatureProfile = getTemperatureProfile()
+  res.temperatureCurveOverrideC = temperatureCurveOverrideC and deepcopy(temperatureCurveOverrideC) or false
 
   if next(res) == nil then
     return nil
   end
   return res
+end
+
+local function applyTemperatureCurveOverride(curve)
+  temperatureCurveOverrideC = curve ~= false and curve or nil
+  updateEffectiveTemperature()
+  extensions.hook("onEnvironmentChanged", {temperatureCurveOverrideC = temperatureCurveOverrideC and deepcopy(temperatureCurveOverrideC) or false})
+  sendState()
+end
+
+local function setTemperatureProfile(profile)
+  if type(profile) ~= "table" or not environmentChangesEnabled then return end
+
+  local targetAverageC = toFiniteNumber(profile.averageC)
+  local targetMinC = toFiniteNumber(profile.minC)
+  local targetMaxC = toFiniteNumber(profile.maxC)
+  if not targetAverageC and not targetMinC and not targetMaxC then return end
+
+  local curve = deepcopy(temperatureCurveOverrideC or tempCurve)
+  if #curve < 2 then return end
+
+  if targetAverageC then
+    local delta = clamp(targetAverageC, temperatureUIMinC, temperatureUIMaxC) - getTemperatureCurveStats(curve).averageC
+    for _, point in ipairs(curve) do point[2] = point[2] + delta end
+  end
+
+  if targetMinC then curve = setTemperatureCurveExtreme(curve, clamp(targetMinC, temperatureUIMinC, temperatureUIMaxC), true) end
+  if targetMaxC then curve = setTemperatureCurveExtreme(curve, clamp(targetMaxC, temperatureUIMinC, temperatureUIMaxC), false) end
+  for _, point in ipairs(curve) do
+    point[2] = clamp(point[2], temperatureUIMinC, temperatureUIMaxC)
+  end
+
+  applyTemperatureCurveOverride(curve)
+end
+
+local function resetTemperatureProfile()
+  if not environmentChangesEnabled then return end
+  applyTemperatureCurveOverride(false)
 end
 
 local function applyStateNow(state)
@@ -1300,6 +1463,14 @@ local function applyStateNow(state)
   setFogAtmosphereHeight(state.fogAtmosphereHeight)
   setPrecipitation(state.numOfDrops)
   setGravity(state.gravity)
+  if state.temperatureCurveOverrideC ~= nil then
+    local curve = state.temperatureCurveOverrideC
+    local normalized = curve ~= false and normalizeTemperatureCurve(curve) or nil
+    if curve == false or normalized then
+      temperatureCurveOverrideC = normalized
+      updateEffectiveTemperature()
+    end
+  end
   updatingWholeState = false
 end
 
@@ -1573,6 +1744,7 @@ local function reset()
   if levelInfo then
     tempCurve = levelInfo:getTemperatureCurveC()
   end
+  temperatureCurveOverrideC = nil
   guihooks.trigger("EnvironmentStateUpdate", getState())
   guihooks.trigger("EnvironmentCanUpdateChanged", environmentChangesEnabled)
   reloadGroundModels()
@@ -1584,7 +1756,9 @@ end
 
 local function getInitState()
   if not init_env then return nil end
-  return shallowcopy(init_env)
+  local state = shallowcopy(init_env)
+  state.temperatureProfile = getTemperatureProfile(tempCurve)
+  return state
 end
 
 local function enableChanges(enabled)
@@ -1601,6 +1775,7 @@ local function onClientPreStartMission(levelPath)
   if levelInfo then
     tempCurve = levelInfo:getTemperatureCurveC()
   end
+  temperatureCurveOverrideC = nil
   reloadGroundModels(levelPath)
 end
 
@@ -1608,7 +1783,9 @@ local function onClientPostStartMission(levelPath)
   --print("onClientPreStartMission: " .. tostring(levelPath))
   envObjectIdCache = {}
   init_env=getState()
-  --init_env.time = init_env.startTime --TOD:onAdd is already doing that
+  local levelDir = path.split(levelPath or "", "(.-)([^/]-([^%.]*))$")
+  local authoredDayLength = M.getAuthoredDayLength(levelDir)
+  if authoredDayLength then init_env.authoredDayLength = authoredDayLength end
   setState(init_env) --necesary to "fix" some maps that have the sky changed
 end
 
@@ -1632,20 +1809,10 @@ local function onFilesChanged(files)
   end
 end
 
-local function setTemperatureK(tempK)
-  be:setSeaLevelTemperatureK(tempK)
-  temperatureK = tempK
-end
-
 function sendState()
   local state = getState()
   guihooks.trigger("EnvironmentStateUpdate", state)
   guihooks.trigger("EnvironmentCanUpdateChanged", environmentChangesEnabled)
-end
-
-local function invertLerp(from,to,value)
-  value = min(max(from, value),to)
-  return (value - from) / (to-from)
 end
 
 local function onUpdate(dtReal)
@@ -1662,24 +1829,7 @@ local function onUpdate(dtReal)
   if tod and tod.time then
     applynightLightsState(tod.time)
   end
-
-  if #tempCurve < 2 then return end
-  if not tod or not tod.time then
-    setTemperatureK( tempCurve[1][2] + 273.15 )
-    return
-  end
-
-  local tempC = 15
-  local t = max(tempCurve[1][1], min(tempCurve[#tempCurve][1], tod.time))
-  for i, v in ipairs(tempCurve) do
-    if v[1] > t or i == #tempCurve then
-      local factor = invertLerp(tempCurve[i-1][1], v[1], t)
-      tempC = lerp(tempCurve[i-1][2], v[2], clamp(factor,0,1))
-      break
-    end
-  end
-
-  setTemperatureK( tempC + 273.15 )
+  updateEffectiveTemperature(tod and tod.time)
 end
 
 local function onClientStartMission(levelPath)
@@ -1829,6 +1979,42 @@ local function getSimSpeedPresets()
   return M.simSpeedPresets
 end
 
+local function getDayCyclePresets()
+  return M.dayCyclePresets
+end
+
+local function getDayCycleSeconds(speed)
+  for _, preset in ipairs(M.dayCyclePresets) do
+    if preset.speed == speed then return preset.seconds end
+  end
+end
+
+-- The engine fills dayLength even when the level file omits it. Only an authored TimeOfDay.dayLength counts.
+local function authoredDayLengthInFile(filename)
+  local content = readFile(filename)
+  if type(content) ~= "string" then return nil end
+  for line in content:gmatch("[^\r\n]+") do
+    if line:find('"class"%s*:%s*"TimeOfDay"') then
+      local value = line:match('"dayLength"%s*:%s*(%-?[%d%.]+)')
+      local seconds = tonumber(value)
+      if seconds and seconds > 0 then return seconds end
+    end
+  end
+end
+
+local function getAuthoredDayLength(levelDir)
+  if type(levelDir) ~= "string" or levelDir == "" then return nil end
+  local files = FS:findFiles(levelDir, "*.level.json", -1, true, false)
+  if not files then return nil end
+  for _, filename in ipairs(files) do
+    local normalized = tostring(filename):gsub("\\", "/"):lower()
+    if not normalized:find("/scenarios/", 1, true) then
+      local seconds = authoredDayLengthInFile(filename)
+      if seconds then return seconds end
+    end
+  end
+end
+
 ------------------------------------------
 -- For ui interface environment property
 M.setState = setState
@@ -1844,6 +2030,9 @@ M.saveTireMarks = saveTireMarks
 M.loadTireMarks = loadTireMarks
 M.getGravityPresets = getGravityPresets
 M.getSimSpeedPresets = getSimSpeedPresets
+M.getDayCyclePresets = getDayCyclePresets
+M.getDayCycleSeconds = getDayCycleSeconds
+M.getAuthoredDayLength = getAuthoredDayLength
 ----------------------------------------------
 -- TimeofDay
 M.setTimeOfDay = setTimeOfDay
@@ -1924,6 +2113,8 @@ M.onDeserialized = onDeserialized
 M.enableChanges = enableChanges
 M.canChange = canChange
 M.getTemperatureK = getTemperatureK
+M.setTemperatureProfile = setTemperatureProfile
+M.resetTemperatureProfile = resetTemperatureProfile
 M.reloadGroundModels = reloadGroundModels
 M.onClientPreStartMission = onClientPreStartMission
 M.onClientPostStartMission = onClientPostStartMission

@@ -30,9 +30,11 @@ local abs, min, max, floor = math.abs, math.min, math.max, math.floor
 local sqrt, tan, huge = math.sqrt, math.tan, math.huge
 local globalDown = vec3(0, 0, -1)
 local camLookDownRot = quatFromDir(globalDown)
+local clearLevelClasses = { 'DecalRoad', 'TSStatic', 'MeshRoad', 'ProceduralMesh', 'PointLight', 'SpotLight' }
 
 -- Module state.
 local tmp1, tmp2 = vec3(), vec3()
+local lastMapPos, haveLastMapPos = vec3(), false
 
 
 -- Tests if mouse is hovering over the terrain (as opposed to any windows, etc).
@@ -44,16 +46,48 @@ end
 local function mouseOnMapPos()
   local ray = getCameraMouseRay()
   local rayPos, rayDir = ray.pos, ray.dir
-  return rayPos + rayDir * castRayStatic(rayPos, rayDir, maxRayDist)
+  local d = castRayStatic(rayPos, rayDir, maxRayDist)
+  if d >= maxRayDist then
+    if haveLastMapPos then return vec3(lastMapPos) end
+    return rayPos + rayDir * maxRayDist -- Nothing better to fall back on yet.
+  end
+  local hit = rayPos + rayDir * d
+  lastMapPos:set(hit)
+  haveLastMapPos = true
+  return hit
+end
+
+-- Position where the mouse ray crosses the horizontal plane z = planeZ.
+local function mouseOnPlaneZ(planeZ)
+  local ray = getCameraMouseRay()
+  local dz = ray.dir.z
+  if dz > -1e-6 and dz < 1e-6 then return nil end
+  local t = (planeZ - ray.pos.z) / dz
+  if t <= 0 then return nil end
+  return ray.pos + ray.dir * t
+end
+
+-- The GROUND under the mouse, settled onto the terrain heightfield rather than onto whatever static geometry stands in the ray's way.
+local function mouseOnTerrainPos(seedZ)
+  local p = mouseOnPlaneZ(seedZ or 0)
+  if not p then return nil end
+  for _ = 1, 4 do
+    tmp1:set(p.x, p.y, 0)
+    local q = mouseOnPlaneZ(core_terrain.getTerrainHeight(tmp1))
+    if not q then break end
+    p = q
+  end
+  return p
 end
 
 -- Downward vertical raycast which modifies the point's Z value in-place.
 -- Keeps the point slightly above the terrain surface to prevent sinking.
-local function vertRaycast(pos, rayRaise)
+local function vertRaycast(pos, rayRaise, postFloat)
   rayRaise = rayRaise or vertRayRaise
+  if postFloat == nil then postFloat = veryRayPostFloat end
   pos.z = pos.z + rayRaise
   local dDown = castRayStatic(pos, globalDown, maxRayDist)
-  pos.z = pos.z - min(dDown, maxRayDist) + veryRayPostFloat
+  pos.z = pos.z - min(dDown, maxRayDist) + postFloat
 end
 
 -- Fast copy function for simple arrays.
@@ -67,6 +101,7 @@ end
 
 -- Conversion functions for velocities in meters per second.
 local function msToMph(ms) return ms * 2.236936 end
+
 local function msToKph(ms) return ms * 3.6 end
 
 -- Returns the sum of all values in the given non-array table.
@@ -76,6 +111,34 @@ local function sumOverNonArrayTable(t)
     sum = sum + v
   end
   return sum
+end
+
+-- Strip a level back to bare terrain, so a scene can be built on it from nothing. Forest INSTANCES go too (gridmap
+-- ships trees and bushes that nothing else removes), but the ForestItemData datablocks stay: planting resolves its
+-- species by name, so dropping those would break the next thing that plants. Returns how many objects went.
+local function clearLevelContent()
+  local removed = 0
+  for c = 1, #clearLevelClasses do
+    local ok, names = pcall(scenetree.findClassObjects, clearLevelClasses[c])
+    if ok and names then
+      for i = 1, #names do
+        local obj = scenetree.findObject(names[i])
+        if obj then obj:delete(); removed = removed + 1 end
+      end
+    end
+  end
+  local forest = core_forest and core_forest.getForestObject()
+  local fd = forest and forest:getData() or nil
+  if fd then
+    local items = fd:getItems()
+    if items then
+      for i = 1, #items do fd:removeItem(items[i]) end
+    end
+    editor.forestDirty = true
+  end
+  log('I', 'util', string.format('Cleared %d level objects (%s) + all forest items.',
+                                 removed, table.concat(clearLevelClasses, ', ')))
+  return removed
 end
 
 -- Returns mesh bounding box info for a TSStatic shape path.
@@ -146,11 +209,59 @@ local function computeIdToIdxMap(splines, map)
   end
 end
 
--- Returns the number of materials in the terrain block.
-local function getNumMaterials()
+local function deepEqual(a, b)
+  if type(a) ~= type(b) then return false end -- before ==: a vec3 compared with anything else throws
+  if a == b then return true end
+  if type(a) ~= 'table' then return false end
+  for k, v in pairs(a) do if not deepEqual(v, b[k]) then return false end end
+  for k in pairs(b) do if a[k] == nil then return false end end
+  return true
+end
+
+-- The ids whose copies in two snapshots of the same items are the same: what an undo step between them never touched.
+local function unchangedIds(a, b)
+  local byId = {}
+  for i = 1, #b do byId[b[i].id] = b[i] end
+  local same = {}
+  for i = 1, #a do
+    local o = byId[a[i].id]
+    if o and deepEqual(a[i], o) then same[a[i].id] = true end
+  end
+  return same
+end
+
+-- One undo step, filed as a transaction of its own. A lone commitAction deep-copies the step on top of the stack and the
+-- new one to look for a duplicate, and a grade step holds millions of heights; a transaction is filed without that check.
+local function commitStep(label, data, undoFn, redoFn)
+  local h = editor.history
+  local began = h:beginTransaction(label)
+  h:commitAction(label, data, undoFn, redoFn, true)
+  if began then h:endTransaction(true) end
+end
+
+-- Terrain material layer names (0-based index -> name), same source roadNetwork paints from.
+local function getMaterialNames()
   local tb = extensions.editor_terrainEditor.getTerrainBlock()
-  local mtls = tb:getMaterials()
-  return #mtls
+  if not tb then return {} end
+  local n = tb:getMaterialCount()
+  local names = {}
+  for i = 0, n - 1 do names[i] = tb:getMaterialName(i) or ("Material " .. i) end
+  return names
+end
+
+-- First terrain layer actually called one of the candidates, ignoring case; nil if the level has none of them.
+local function findMaterialIdx(candidates)
+  local tb = extensions.editor_terrainEditor.getTerrainBlock()
+  if not tb then return nil end
+  local n = tb:getMaterialCount()
+  for c = 1, #candidates do
+    local cl = candidates[c]:lower()
+    for i = 0, n - 1 do
+      local nm = tb:getMaterialName(i)
+      if nm and nm:lower() == cl then return i end
+    end
+  end
+  return nil
 end
 
 -- Returns the length of the given polyline.
@@ -267,7 +378,7 @@ local function flipSplineDirection(spline)
 end
 
 -- Moves the camera directly above the spline with the given index.
-local function goToSpline(points)
+local function splineFocus(points)
   -- Compute the 2D AABB of the spline, and the max height.
   local xMin, xMax, yMin, yMax, zMax = huge, -huge, huge, -huge, -huge
   for i = 1, #points do
@@ -278,9 +389,9 @@ local function goToSpline(points)
     zMax = max(zMax, p.z)
   end
 
-  -- If the spline is too small (eg one node), do nothing and leave immediately.
+  -- If the spline is too small (eg one node), report nothing framable.
   if max(abs(xMax - xMin), abs(yMax - yMin)) < 0.1 then
-    return
+    return nil
   end
 
   -- Compute the mid-point of the 2D AABB.
@@ -291,11 +402,48 @@ local function goToSpline(points)
   -- Determine the required distance at which the camera should be positioned.
   local groundDist = tmp1:distance(tmp2) -- The largest distance from the center of the AABB to the outside.
   local halfFov = core_camera.getFovRad() * 0.5 -- Half the camera field-of-view (in radians).
-  local height = groundDist / tan(halfFov) + zMax + 5.0 -- The height at which the camera should be positioned, to fit the spline in view.
+  return midX, midY, groundDist / tan(halfFov) + zMax + 5.0
+end
 
+local function goToSpline(points)
+  local midX, midY, height = splineFocus(points)
+  if not midX then return end
   -- Move the camera to the appropriate pose.
   commands.setFreeCamera()
   core_camera.setPosRot(0, midX, midY, height, camLookDownRot.x, camLookDownRot.y, camLookDownRot.z, camLookDownRot.w)
+end
+
+--- The ground under the middle of the screen, in x,y. Where the site tools put whatever they open with, so a new one lands
+--- in front of the user rather than wherever the map happens to be centred.
+local function lookAtGround()
+  local pos, fwd = core_camera.getPosition(), core_camera.getForward()
+  if pos and fwd then
+    local dist = castRayStatic(pos, fwd, maxRayDist)
+    if dist and dist < maxRayDist then return pos.x + fwd.x * dist, pos.y + fwd.y * dist end
+  end
+  return 0, 0 -- looking at the sky, or out past the end of the map: the world origin is at least somewhere findable
+end
+
+--- The grid every site footprint is laid out on. World-aligned and shared by all three tools, so a wall drawn in one lines
+--- up with a wall drawn in another. Coarse enough that a square corner falls on it by itself instead of being aimed at.
+local FOOT_SNAP_M = 1.0
+local footSnapSpec = { ox = 0, oy = 0, step = FOOT_SNAP_M }
+local function footSnap() return footSnapSpec end
+
+--- A world x,y taken to that grid. For the points a tool puts down itself: a starter shape off the grid goes crooked the
+--- moment one of its corners is dragged onto it.
+local function footSnapped(x, y)
+  return floor(x / FOOT_SNAP_M + 0.5) * FOOT_SNAP_M, floor(y / FOOT_SNAP_M + 0.5) * FOOT_SNAP_M
+end
+
+--- A rectangle on the ground under the middle of the screen, wound counter-clockwise, its corners on the footprint grid.
+local function starterRing(w, d, zAt)
+  local hw, hd = w * 0.5, d * 0.5
+  local cx, cy = footSnapped(lookAtGround())
+  local xs, ys = { cx - hw, cx + hw, cx + hw, cx - hw }, { cy - hd, cy - hd, cy + hd, cy + hd }
+  local ring = {}
+  for i = 1, 4 do ring[i] = vec3(xs[i], ys[i], zAt and zAt(xs[i], ys[i]) or 0) end
+  return ring
 end
 
 -- Converts a ribbon polyline to a triangle mesh.
@@ -447,10 +595,12 @@ end
 -- Returns the sources from the given spline.
 local function getSourcesSingle(spline)
   local divPoints, divWidths, binormals = spline.divPoints, spline.divWidths, spline.binormals
+  -- Terraform footprint width.
+  local terraWidth = spline.terraWidth
   local sData = table.new(#divPoints, 0)
   local numDivPoints, ctr = #divPoints, 1
   for i = 1, numDivPoints do
-    sData[ctr] = { pos = divPoints[i], width = divWidths[i], binormal = binormals[i] }
+    sData[ctr] = { pos = divPoints[i], width = terraWidth or divWidths[i], binormal = binormals[i] }
     ctr = ctr + 1
   end
   return { sData }
@@ -614,10 +764,28 @@ local function writeWidthsToPng(paths, widths, width, height, outPath)
   end
 end
 
+-- A sub tab whose row stays put.
+local function beginSubTab(label, flags)
+  if not im.BeginTabItem(label, nil, flags or im.TabItemFlags_None) then return false end
+  im.BeginChild1(label .. '##subTabBody', im.ImVec2(0, 0), false)
+  return true
+end
+
+-- EndChild goes in whether or not the child was clipped, so this is not guarded.
+local function endSubTab()
+  im.EndChild()
+  im.EndTabItem()
+end
+
 
 -- Public interface.
+M.beginSubTab =                                         beginSubTab
+M.endSubTab =                                           endSubTab
+
 M.isMouseHoveringOverTerrain =                          isMouseHoveringOverTerrain
 M.mouseOnMapPos =                                       mouseOnMapPos
+M.mouseOnPlaneZ =                                        mouseOnPlaneZ
+M.mouseOnTerrainPos =                                   mouseOnTerrainPos
 
 M.vertRaycast =                                         vertRaycast
 
@@ -629,6 +797,7 @@ M.msToKph =                                             msToKph
 M.sumOverNonArrayTable =                                sumOverNonArrayTable
 
 M.getMeshBox =                                          getMeshBox
+M.clearLevelContent =                                   clearLevelContent
 
 M.getBlueToRedColour =                                  getBlueToRedColour
 M.getHueBasedColour255 =                                getHueBasedColour255
@@ -636,7 +805,15 @@ M.hsvToRgb255 =                                         hsvToRgb255
 
 M.generateUniqueName =                                  generateUniqueName
 M.computeIdToIdxMap =                                   computeIdToIdxMap
-M.getNumMaterials =                                     getNumMaterials
+M.deepEqual =                                           deepEqual
+M.unchangedIds =                                        unchangedIds
+M.commitStep =                                          commitStep
+M.getMaterialNames =                                    getMaterialNames
+M.findMaterialIdx =                                     findMaterialIdx
+M.lookAtGround =                                        lookAtGround
+M.footSnap =                                            footSnap
+M.footSnapped =                                         footSnapped
+M.starterRing =                                         starterRing
 M.getPolyLength =                                       getPolyLength
 M.getMinMaxWidth =                                      getMinMaxWidth
 M.isWidthFixed =                                        isWidthFixed
@@ -646,6 +823,7 @@ M.doesPathContainNode =                                 doesPathContainNode
 
 M.flipSplineDirection =                                 flipSplineDirection
 M.goToSpline =                                          goToSpline
+M.splineFocus =                                         splineFocus
 
 M.buildRibbonMeshFromPolyline =                         buildRibbonMeshFromPolyline
 M.buildRibbonGLTF =                                     buildRibbonGLTF

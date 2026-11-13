@@ -306,40 +306,7 @@ local function changeAllMarkers(path, field, new)
   )
 end
 
--- Speed normalization and timing functions
-local function normalizeMarkerSpeed(path, targetSpeed)
-  if #path.markers < 2 then
-    return
-  end
-
-  local markerValues = {}
-  local currentTime = path.markers[1].time -- Keep first marker time as anchor
-
-  for i = 2, #path.markers do
-    local prevMarker = path.markers[i - 1]
-    local currentMarker = path.markers[i]
-
-    -- Skip if previous marker has a cut (instant transition)
-    if not prevMarker.cut then
-      local distance = (currentMarker.pos - prevMarker.pos):length()
-      local timeToTravel = distance / targetSpeed
-      currentTime = currentTime + timeToTravel
-    else
-      -- Keep the same time for cut markers
-      currentTime = currentTime
-    end
-
-    markerValues[i] = { old = currentMarker.time, new = currentTime }
-  end
-
-  editor.history:commitAction(
-    'ChangeMarkerField',
-    { path = path, field = 'time', markerValues = markerValues },
-    changeMarkerFieldActionUndo,
-    changeMarkerFieldActionRedo
-  )
-end
-
+-- Timing relaxation (nudge interior times toward distance-proportional spacing)
 local function relaxMarkerTimings(path, smoothingFactor)
   if #path.markers < 3 then
     return
@@ -383,6 +350,380 @@ local function relaxMarkerTimings(path, smoothingFactor)
     changeMarkerFieldActionUndo,
     changeMarkerFieldActionRedo
   )
+end
+
+-- ── QoL helpers (ported from Workbench path camera; Editor has no attach) ──────
+
+local function facingYawPitchRoll(rot)
+  local f = (rot * yVector):normalized()
+  local u = (rot * zVector):normalized()
+  local yaw = math.deg(math.atan2(f.x, f.y))
+  local pitchDown = math.deg(math.asin(clamp(-f:dot(zVector), -1, 1)))
+  local wUpProj = zVector - f * zVector:dot(f)
+  if wUpProj:squaredLength() < 1e-12 then return yaw, pitchDown, 0 end
+  wUpProj:normalize()
+  local uProj = u - f * u:dot(f)
+  if uProj:squaredLength() < 1e-12 then return yaw, pitchDown, 0 end
+  uProj:normalize()
+  local roll = math.deg(math.atan2(wUpProj:cross(uProj):dot(f), wUpProj:dot(uProj)))
+  return yaw, pitchDown, roll
+end
+
+local function quatFromYawPitchRoll(yawDeg, pitchDownDeg, rollDeg)
+  local yaw = math.rad(yawDeg or 0)
+  local pitch = math.rad(pitchDownDeg or 0)
+  local roll = math.rad(rollDeg or 0)
+  local cp, sp = math.cos(pitch), math.sin(pitch)
+  local sy, cy = math.sin(yaw), math.cos(yaw)
+  local fwd = vec3(sy * cp, cy * cp, -sp)
+  if fwd:squaredLength() < 1e-12 then fwd = vec3(0, 1, 0) else fwd:normalize() end
+  local up0 = zVector - fwd * zVector:dot(fwd)
+  if up0:squaredLength() < 1e-12 then
+    up0 = xVector - fwd * xVector:dot(fwd)
+  end
+  up0:normalize()
+  if math.abs(roll) > 1e-8 then
+    local c, s = math.cos(roll), math.sin(roll)
+    up0 = up0 * c + fwd:cross(up0) * s
+    up0:normalize()
+  end
+  return quatFromDir(fwd, up0)
+end
+
+local FPV_BANK_FACTOR = 0.9
+local FPV_DEFAULT_MAX_BANK = 55
+local AUTO_SMOOTH_POS = 0.4
+local AUTO_SMOOTH_AIM_BLEND = 0.6
+local AUTO_SMOOTH_MAX_TURN_RATE = 55
+local fpvMaxBankPtr = im.FloatPtr(FPV_DEFAULT_MAX_BANK)
+local pathDurationPtr = im.FloatPtr(10)
+
+local function horizontalTurnDeg(a, b, c)
+  local v1 = vec3(b.x - a.x, b.y - a.y, 0)
+  local v2 = vec3(c.x - b.x, c.y - b.y, 0)
+  if v1:length() < 1e-3 or v2:length() < 1e-3 then return 0 end
+  v1:normalize()
+  v2:normalize()
+  local cross = v1.x * v2.y - v1.y * v2.x
+  local d = clamp(v1.x * v2.x + v1.y * v2.y, -1, 1)
+  return math.deg(math.atan2(cross, d))
+end
+
+local function markerPositions(path)
+  local positions = {}
+  for i, m in ipairs(path.markers) do
+    positions[i] = m.pos
+  end
+  return positions
+end
+
+local function fpvRollForMarker(path, index, maxBank, positions)
+  local n = #path.markers
+  if n < 2 or not path.markers[index] then return 0 end
+  maxBank = clamp(tonumber(maxBank) or FPV_DEFAULT_MAX_BANK, 1, 90)
+  positions = positions or markerPositions(path)
+  local a = positions[math.max(1, index - 1)]
+  local b = positions[index]
+  local c = positions[math.min(n, index + 1)]
+  if index == 1 then a = b - (c - b) end
+  if index == n then c = b + (b - a) end
+  local turn = horizontalTurnDeg(a, b, c)
+  local scale = FPV_BANK_FACTOR * (maxBank / FPV_DEFAULT_MAX_BANK)
+  return clamp(-turn * scale, -maxBank, maxBank)
+end
+
+local function pathTravelYawDeg(positions, index)
+  local n = #positions
+  local b = positions[index]
+  local dir
+  if index == 1 then
+    dir = positions[2] - b
+  elseif index == n then
+    dir = b - positions[n - 1]
+  else
+    local v1 = b - positions[index - 1]
+    local v2 = positions[index + 1] - b
+    local l1, l2 = v1:length(), v2:length()
+    if l1 < 1e-3 and l2 < 1e-3 then return nil end
+    if l1 >= 1e-3 then v1 = v1:normalized() else v1 = vec3(0, 0, 0) end
+    if l2 >= 1e-3 then v2 = v2:normalized() else v2 = vec3(0, 0, 0) end
+    dir = v1 + v2
+    if dir:squaredLength() < 1e-12 then
+      dir = (l2 >= 1e-3) and (positions[index + 1] - b) or (b - positions[index - 1])
+    end
+  end
+  dir = vec3(dir.x, dir.y, 0)
+  if dir:squaredLength() < 1e-12 then return nil end
+  return math.deg(math.atan2(dir.x, dir.y))
+end
+
+local function lerpAngleDeg(a, b, t)
+  local d = b - a
+  while d > 180 do d = d - 360 end
+  while d < -180 do d = d + 360 end
+  return a + d * t
+end
+
+local function quatAngleDeg(a, b)
+  local d = math.abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w)
+  return math.deg(2 * math.acos(clamp(d, 0, 1)))
+end
+
+local function rotWithRoll(m, rollDeg)
+  local yaw, pitch = facingYawPitchRoll(m.rot)
+  return quatFromYawPitchRoll(yaw, pitch, tonumber(rollDeg) or 0)
+end
+
+local function rotAimAlongPath(m, path, index, maxBank, positions, withBank)
+  local yaw, pitch, roll = facingYawPitchRoll(m.rot)
+  local travelYaw = pathTravelYawDeg(positions, index)
+  if travelYaw then yaw = travelYaw end
+  if withBank then roll = fpvRollForMarker(path, index, maxBank, positions) end
+  return quatFromYawPitchRoll(yaw, pitch, roll)
+end
+
+local function cloneMarkersDeep(markers)
+  local out = {}
+  for i, m in ipairs(markers) do
+    out[i] = {
+      pos = vec3(m.pos.x, m.pos.y, m.pos.z),
+      rot = quat(m.rot.x, m.rot.y, m.rot.z, m.rot.w),
+      time = m.time,
+      fov = m.fov,
+      positionSmooth = m.positionSmooth,
+      trackPosition = m.trackPosition,
+      cut = m.cut,
+      bullettime = m.bullettime,
+      movingStart = m.movingStart,
+      movingEnd = m.movingEnd,
+    }
+    if m.trackOffset then
+      out[i].trackOffset = { x = m.trackOffset.x or 0, y = m.trackOffset.y or 0, z = m.trackOffset.z or 0 }
+    end
+  end
+  return out
+end
+
+local function applyMarkersDeep(path, snap)
+  for i, s in ipairs(snap) do
+    local m = path.markers[i]
+    if not m then break end
+    m.pos = vec3(s.pos.x, s.pos.y, s.pos.z)
+    m.rot = quat(s.rot.x, s.rot.y, s.rot.z, s.rot.w)
+    m.time = s.time
+    m.fov = s.fov
+    m.positionSmooth = s.positionSmooth
+    m.trackPosition = s.trackPosition
+    m.cut = s.cut
+    m.bullettime = s.bullettime
+    m.movingStart = s.movingStart
+    m.movingEnd = s.movingEnd
+    if s.trackOffset then
+      m.trackOffset = { x = s.trackOffset.x, y = s.trackOffset.y, z = s.trackOffset.z }
+    else
+      m.trackOffset = nil
+    end
+  end
+end
+
+local function markersSnapshotUndo(actionData)
+  applyMarkersDeep(actionData.path, actionData.oldMarkers)
+  actionData.path.loopTime = actionData.oldLoopTime
+  if actionData.oldSelected then currentMarkerIndex = actionData.oldSelected end
+  setDirty(actionData.path)
+end
+
+local function markersSnapshotRedo(actionData)
+  applyMarkersDeep(actionData.path, actionData.newMarkers)
+  actionData.path.loopTime = actionData.newLoopTime
+  if actionData.newSelected then currentMarkerIndex = actionData.newSelected end
+  setDirty(actionData.path)
+end
+
+-- Mutate path markers, then commit one undoable snapshot (redo re-applies).
+local function commitMarkersEdit(path, actionName, mutateFn, selectIndex)
+  local oldMarkers = cloneMarkersDeep(path.markers)
+  local oldLoopTime = path.loopTime
+  local oldSelected = currentMarkerIndex
+  mutateFn(path)
+  local newMarkers = cloneMarkersDeep(path.markers)
+  local newLoopTime = path.loopTime
+  local newSelected = selectIndex or currentMarkerIndex
+  applyMarkersDeep(path, oldMarkers)
+  path.loopTime = oldLoopTime
+  currentMarkerIndex = oldSelected
+  editor.history:commitAction(
+    actionName,
+    {
+      path = path,
+      oldMarkers = oldMarkers,
+      newMarkers = newMarkers,
+      oldLoopTime = oldLoopTime,
+      newLoopTime = newLoopTime,
+      oldSelected = oldSelected,
+      newSelected = newSelected,
+    },
+    markersSnapshotUndo,
+    markersSnapshotRedo
+  )
+end
+
+local function applyEvenSpeed(path)
+  local m = path.markers
+  local n = #m
+  if n < 2 then return end
+  local first = m[1].time
+  local span = m[n].time - first
+  if span <= 0 then return end
+  local positions = markerPositions(path)
+  local dists, totalDist = {}, 0
+  for i = 1, n - 1 do
+    if m[i].cut then
+      dists[i] = 0
+    else
+      dists[i] = (positions[i + 1] - positions[i]):length()
+      totalDist = totalDist + dists[i]
+    end
+  end
+  if totalDist <= 0 then return end
+  local speed = totalDist / span
+  local t = first
+  for i = 2, n do
+    if not m[i - 1].cut then t = t + dists[i - 1] / speed end
+    m[i].time = t
+  end
+end
+
+local function applyAngularPad(path, maxRateDegPerSec)
+  local m = path.markers
+  local n = #m
+  if n < 2 then return end
+  local first = m[1].time
+  local span = m[n].time - first
+  if span <= 0 then return end
+  maxRateDegPerSec = maxRateDegPerSec or AUTO_SMOOTH_MAX_TURN_RATE
+  local dts, sum = {}, 0
+  for i = 1, n - 1 do
+    if m[i].cut then
+      dts[i] = 0
+    else
+      local dt = math.max(0, m[i + 1].time - m[i].time)
+      local need = quatAngleDeg(m[i].rot, m[i + 1].rot) / maxRateDegPerSec
+      dts[i] = math.max(dt, need)
+      sum = sum + dts[i]
+    end
+  end
+  if sum <= 0 then return end
+  local scale = span / sum
+  local t = first
+  for i = 2, n do
+    t = t + dts[i - 1] * scale
+    m[i].time = t
+  end
+end
+
+local function softenAimAlongPath(path, blend)
+  blend = clamp(tonumber(blend) or 0, 0, 1)
+  if blend <= 0 or #path.markers < 2 then return end
+  local positions = markerPositions(path)
+  for i, m in ipairs(path.markers) do
+    if not m.trackPosition then
+      local travelYaw = pathTravelYawDeg(positions, i)
+      if travelYaw then
+        local yaw, pitch, roll = facingYawPitchRoll(m.rot)
+        m.rot = quatFromYawPitchRoll(lerpAngleDeg(yaw, travelYaw, blend), pitch, roll)
+      end
+    end
+  end
+end
+
+local function autoSmoothPath(path)
+  if not path or #path.markers < 2 then return end
+  softenAimAlongPath(path, AUTO_SMOOTH_AIM_BLEND)
+  applyEvenSpeed(path)
+  applyAngularPad(path, AUTO_SMOOTH_MAX_TURN_RATE)
+  for _, m in ipairs(path.markers) do
+    m.positionSmooth = AUTO_SMOOTH_POS
+    m.movingStart = true
+    m.movingEnd = true
+  end
+end
+
+local function setPathDuration(path, target)
+  local m = path.markers
+  if #m < 2 or not target or target <= 0 then return end
+  local w, total = {}, 0
+  for i = 1, #m - 1 do
+    if m[i].cut then
+      w[i] = 0
+    else
+      local g = m[i + 1].time - m[i].time
+      if g <= 1e-6 then g = (m[i + 1].pos - m[i].pos):length() end
+      if g <= 1e-6 then g = 1 end
+      w[i] = g
+      total = total + g
+    end
+  end
+  if total <= 0 then return end
+  local oldSpan = m[#m].time - m[1].time
+  local t = m[1].time
+  for i = 2, #m do
+    t = t + w[i - 1] / total * target
+    m[i].time = t
+  end
+  if path.loopTime and oldSpan > 0 then
+    path.loopTime = path.loopTime * (target / oldSpan)
+  end
+end
+
+local function reversePathMarkers(path)
+  local m = path.markers
+  local n = #m
+  if n < 2 then return end
+  local times, oldCut = {}, {}
+  for i = 1, n do
+    times[i] = m[i].time
+    oldCut[i] = m[i].cut
+  end
+  local rev = {}
+  for i = 1, n do
+    local src = m[n + 1 - i]
+    local c = deepcopy(src)
+    c.pos = vec3(src.pos.x, src.pos.y, src.pos.z)
+    c.rot = quat(src.rot.x, src.rot.y, src.rot.z, src.rot.w)
+    if src.trackOffset then
+      c.trackOffset = { x = src.trackOffset.x or 0, y = src.trackOffset.y or 0, z = src.trackOffset.z or 0 }
+    end
+    c.time = times[i]
+    c.movingStart, c.movingEnd = src.movingEnd, src.movingStart
+    rev[i] = c
+  end
+  for i = 1, n - 1 do rev[i].cut = oldCut[n - i] end
+  rev[n].cut = false
+  -- Replace contents in place so history snapshots stay aligned by index.
+  for i = 1, n do
+    path.markers[i] = rev[i]
+  end
+end
+
+local function applyFpvToMarkers(path, maxBank, aim, indexOrNil)
+  local positions = markerPositions(path)
+  local indices = {}
+  if indexOrNil then
+    indices[1] = indexOrNil
+  else
+    for i = 1, #path.markers do indices[i] = i end
+  end
+  for _, i in ipairs(indices) do
+    local m = path.markers[i]
+    if m then
+      if aim then
+        m.rot = rotAimAlongPath(m, path, i, maxBank, positions, true)
+      else
+        m.rot = rotWithRoll(m, fpvRollForMarker(path, i, maxBank, positions))
+      end
+    end
+  end
 end
 
 -- Set Marker pos to current
@@ -1068,17 +1409,31 @@ local function displayMarkerList()
 
     local buttonWidth = (im.GetContentRegionAvailWidth() - 15 * im.uiscale[0]) / 3
 
-    -- Speed normalization
-    -- if im.Button('Normalize Speed', im.ImVec2(buttonWidth, 0)) then
-    --   im.OpenPopup('Speed Settings')
-    -- end
-    -- if im.IsItemHovered() then
-    --   im.tooltip('Set consistent speed based on distance between markers')
-    -- end
+    if im.Button('Even Speed', im.ImVec2(buttonWidth, 0)) then
+      commitMarkersEdit(M.currentPath, 'EvenSpeed', applyEvenSpeed)
+    end
+    if im.IsItemHovered() then
+      im.tooltip('Redistribute times by distance, keeping total duration')
+    end
 
     im.SameLine()
+    if im.Button('Set Duration', im.ImVec2(buttonWidth, 0)) then
+      local m = M.currentPath.markers
+      pathDurationPtr[0] = math.max(0.1, m[#m].time - m[1].time)
+      im.OpenPopup('Set Path Duration')
+    end
+    if im.IsItemHovered() then
+      im.tooltip('Scale the path to a target duration')
+    end
 
-    -- Timing relaxation
+    im.SameLine()
+    if im.Button('Reverse', im.ImVec2(buttonWidth, 0)) then
+      commitMarkersEdit(M.currentPath, 'ReversePath', reversePathMarkers, 1)
+    end
+    if im.IsItemHovered() then
+      im.tooltip('Reverse marker order; keep timeline times')
+    end
+
     if im.Button('Relax Timings', im.ImVec2(buttonWidth, 0)) then
       relaxMarkerTimings(M.currentPath, 0.6)
     end
@@ -1087,8 +1442,6 @@ local function displayMarkerList()
     end
 
     im.SameLine()
-
-    -- Advanced relaxation
     if im.Button('Smooth More', im.ImVec2(buttonWidth, 0)) then
       relaxMarkerTimings(M.currentPath, 0.9)
     end
@@ -1096,18 +1449,26 @@ local function displayMarkerList()
       im.tooltip('Apply stronger smoothing to timing irregularities')
     end
 
-    -- Speed settings popup
-    if im.BeginPopupModal('Speed Settings', nil, im.WindowFlags_AlwaysAutoResize) then
-      im.Text('Target Speed (units per second):')
-      local speed = im.FloatPtr(10.0) -- Default speed
-      im.PushItemWidth(200 * im.uiscale[0])
-      im.InputFloat('##speed', speed, 0.1, 1.0, '%.1f')
-      im.PopItemWidth()
+    im.SameLine()
+    if im.Button('Auto-smooth', im.ImVec2(buttonWidth, 0)) then
+      commitMarkersEdit(M.currentPath, 'AutoSmooth', autoSmoothPath)
+    end
+    if im.IsItemHovered() then
+      im.tooltip('Even speed, limit whip-pans, soften aim along path')
+    end
 
+    if im.BeginPopupModal('Set Path Duration', nil, im.WindowFlags_AlwaysAutoResize) then
+      im.Text('Target duration (seconds):')
+      im.PushItemWidth(200 * im.uiscale[0])
+      im.InputFloat('##pathDuration', pathDurationPtr, 0.1, 1.0, '%.2f')
+      im.PopItemWidth()
       im.Spacing()
       if im.Button('Apply', im.ImVec2(80 * im.uiscale[0], 0)) then
-        if speed[0] > 0.1 then
-          normalizeMarkerSpeed(M.currentPath, speed[0])
+        if pathDurationPtr[0] > 0.05 then
+          local target = pathDurationPtr[0]
+          commitMarkersEdit(M.currentPath, 'SetDuration', function(path)
+            setPathDuration(path, target)
+          end)
         end
         im.CloseCurrentPopup()
       end
@@ -1165,7 +1526,7 @@ local function displayMarkerList()
         im.TableSetColumnIndex(1)
         -- Make time column also selectable for better UX
         im.PushStyleColor2(im.Col_Header, isSelected and im.ImVec4(0.3, 0.6, 0.9, 0.8) or im.ImVec4(0, 0, 0, 0))
-        if im.Selectable1(string.format('%.1fs', marker.time), isSelected) then
+        if im.Selectable1(string.format('%.1fs##t%d', marker.time, index), isSelected) then
           selectMarker(index)
         end
         im.PopStyleColor()
@@ -1284,8 +1645,89 @@ local function displayMarkerList()
       im.PopItemWidth()
       im.Separator()
 
-      -- Timing section
       local halfWidth = (im.GetContentRegionAvailWidth() - 10 * im.uiscale[0]) * 0.5
+
+      -- Roll + FPV bank/aim (yaw along travel, keep pitch)
+      do
+        local _, _, rollDeg = facingYawPitchRoll(marker.rot)
+        local rollPtr = im.FloatPtr(rollDeg)
+        im.Text('Roll')
+        im.PushItemWidth(halfWidth)
+        if
+          im.InputFloat(
+            '##markerRoll',
+            rollPtr,
+            1.0,
+            5.0,
+            '%0.' .. editor.getPreference('ui.general.floatDigitCount') .. 'f',
+            im.InputTextFlags_EnterReturnsTrue
+          )
+        then
+          changeSingleMarker(M.currentPath, currentMarkerIndex, 'rot', rotWithRoll(marker, rollPtr[0]))
+        end
+        im.PopItemWidth()
+        if im.IsItemHovered() then
+          im.tooltip('Camera bank angle (degrees). Pitch and yaw are kept.')
+        end
+
+        im.Text('Max Bank')
+        im.PushItemWidth(halfWidth)
+        im.InputFloat('##fpvMaxBank', fpvMaxBankPtr, 1.0, 5.0, '%.0f')
+        im.PopItemWidth()
+        if im.IsItemHovered() then
+          im.tooltip('Scales FPV bank strength (degrees, 1–90)')
+        end
+        if fpvMaxBankPtr[0] < 1 then fpvMaxBankPtr[0] = 1 end
+        if fpvMaxBankPtr[0] > 90 then fpvMaxBankPtr[0] = 90 end
+
+        if #M.currentPath.markers >= 2 then
+          local fpvBtnW = (im.GetContentRegionAvailWidth() - 10 * im.uiscale[0]) * 0.5
+          if im.Button('FPV Bank', im.ImVec2(fpvBtnW, 0)) then
+            local maxBank = fpvMaxBankPtr[0]
+            local idx = currentMarkerIndex
+            commitMarkersEdit(M.currentPath, 'FpvBank', function(path)
+              applyFpvToMarkers(path, maxBank, false, idx)
+            end)
+          end
+          if im.IsItemHovered() then
+            im.tooltip('Set roll from path turn (then tweak manually)')
+          end
+          im.SameLine()
+          if im.Button('FPV Bank All', im.ImVec2(fpvBtnW, 0)) then
+            local maxBank = fpvMaxBankPtr[0]
+            commitMarkersEdit(M.currentPath, 'FpvBankAll', function(path)
+              applyFpvToMarkers(path, maxBank, false, nil)
+            end)
+          end
+          if im.IsItemHovered() then
+            im.tooltip('Apply FPV bank to all markers')
+          end
+
+          if im.Button('Aim + Bank', im.ImVec2(fpvBtnW, 0)) then
+            local maxBank = fpvMaxBankPtr[0]
+            local idx = currentMarkerIndex
+            commitMarkersEdit(M.currentPath, 'FpvAim', function(path)
+              applyFpvToMarkers(path, maxBank, true, idx)
+            end)
+          end
+          if im.IsItemHovered() then
+            im.tooltip('Yaw along path travel, keep pitch, set FPV bank')
+          end
+          im.SameLine()
+          if im.Button('Aim + Bank All', im.ImVec2(fpvBtnW, 0)) then
+            local maxBank = fpvMaxBankPtr[0]
+            commitMarkersEdit(M.currentPath, 'FpvAimAll', function(path)
+              applyFpvToMarkers(path, maxBank, true, nil)
+            end)
+          end
+          if im.IsItemHovered() then
+            im.tooltip('Aim + bank on all markers')
+          end
+        end
+      end
+      im.Separator()
+
+      -- Timing section
 
       -- Global Time
       if markerIsBeingCutTo(M.currentPath, currentMarkerIndex) then
@@ -1391,7 +1833,8 @@ local function displayMarkerList()
       end
 
       -- Cut checkbox
-      if markerIsBeingCutTo(M.currentPath, currentMarkerIndex) or currentMarkerIndex == #M.currentPath.markers then
+      local cutDisabled = markerIsBeingCutTo(M.currentPath, currentMarkerIndex) or currentMarkerIndex == #M.currentPath.markers
+      if cutDisabled then
         im.BeginDisabled()
       end
       local cut = im.BoolPtr(marker.cut or false)
@@ -1409,7 +1852,7 @@ local function displayMarkerList()
           setMarkerCutActionRedo
         )
       end
-      if markerIsBeingCutTo(M.currentPath, currentMarkerIndex) or currentMarkerIndex == #M.currentPath.markers then
+      if cutDisabled then
         im.EndDisabled()
       end
 
@@ -1967,7 +2410,7 @@ local function onEditorGui()
     if editor.beginWindow('cameraPathPreviewWindow', 'Camera path preview') then
       previewWindowSize = im.GetContentRegionAvail()
       local texObj = imUtils.texObj('#cameraPathPreview')
-      im.Image(texObj.texId, previewWindowSize)
+      im.Image(texObj.tex:getID(), previewWindowSize)
     end
     editor.endWindow()
   end]]

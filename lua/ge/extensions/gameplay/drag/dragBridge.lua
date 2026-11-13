@@ -31,6 +31,7 @@ local function buildLiveTimerEntry(timerDef, timerId, value)
   local entry = {
     id = timerId,
     label = timerDef.label or timerId,
+    labelKey = timerDef.labelKey,
     shortLabel = timerDef.shortLabel,
     value = val,
     important = (timerDef.important == true),
@@ -51,14 +52,14 @@ local function pushLiveTimerUpdatesToUi()
   local timerConfig = dragData.timers or {}
   if #timerConfig == 0 then return end
 
-  local racerInfos = {}
+  local racerInfos
   for vehId, racer in pairs(dragData.racers) do
     if racer and racer.lane and racer.timers then
       local lane = racer.lane
       if not liveTimerSentByLane[lane] then liveTimerSentByLane[lane] = {} end
       local laneCache = liveTimerSentByLane[lane]
       local netTimers = getNetworkTimersForVehicle(vehId)
-      local timerEntries = {}
+      local timerEntries
 
       for idx, timerDef in ipairs(timerConfig) do
         local timerId = timerDef.id or ("timer_" .. idx)
@@ -75,12 +76,14 @@ local function pushLiveTimerUpdatesToUi()
           local prevValue = laneCache[timerId]
           if prevValue == nil or math.abs(prevValue - numericValue) > 0.0005 then
             laneCache[timerId] = numericValue
+            timerEntries = timerEntries or {}
             table.insert(timerEntries, entry)
           end
         end
       end
 
-      if #timerEntries > 0 then
+      if timerEntries then
+        racerInfos = racerInfos or {}
         table.insert(racerInfos, {
           laneNum = lane,
           timerEntries = timerEntries,
@@ -89,7 +92,7 @@ local function pushLiveTimerUpdatesToUi()
     end
   end
 
-  if #racerInfos > 0 then
+  if racerInfos then
     guihooks.trigger("onDragRaceLiveTimesData", { racerInfos = racerInfos })
   end
 end
@@ -207,7 +210,7 @@ M.getDragStripInfo = function(dragStripId)
   if not dragStrip then return nil end
   if dragStrip.strip then
     return {
-      stripName = dragStrip.strip.name or (dragStrip.stripInfo and dragStrip.stripInfo.stripName) or "Drag Strip",
+      stripName = dragStrip.strip.name or (dragStrip.stripInfo and dragStrip.stripInfo.stripName) or "ui.facilities.type.dragstrip",
       dragType = dragStrip.dragType or "drag",
       context = dragStrip.context or "freeroam",
       lanes = dragStrip.strip.lanes,
@@ -281,7 +284,7 @@ M.generateOpponentsGroup = function(vehId, dial, vehiclePermissionRules, amount,
   end
 
   amount = amount or 1
-  offset = offset or 0.5
+  offset = offset or 0.1
 
   local configs = core_vehicles.getConfigList()
   local vehicleDetails = core_vehicles.getVehicleDetails(vehId)
@@ -290,20 +293,23 @@ M.generateOpponentsGroup = function(vehId, dial, vehiclePermissionRules, amount,
     return
   end
 
-  if not vehicleDetails.configs["Drag Times"] then
+  local playerDragTimes = vehicleDetails.configs["Performance Data"] or vehicleDetails.configs["Drag Times"]
+  if not playerDragTimes then
     log("E", logTag, "Vehicle has no drag times data")
     return
   end
 
-  local quarterMileScore = dial or vehicleDetails.configs["Drag Times"].time_1_4 or 10
+  local quarterMileScore = dial or playerDragTimes.time_1_4 or 10
   local minTime = quarterMileScore - offset
-  local maxTime = quarterMileScore + 0.1
+  local maxTime = quarterMileScore + 0.4
 
   local eligibleVehicles = {}
   local eligibleCount = 0
 
   for _, config in pairs(configs.configs) do
-    if config["Drag Times"] and config["Drag Times"].time_1_4 and config["Drag Times"].time_1_4 >= minTime and config["Drag Times"].time_1_4 < maxTime then
+    local dragTimes = config["Performance Data"] or config["Drag Times"]
+    local time = dragTimes and dragTimes.time_1_4
+    if time and time >= minTime and time < maxTime then
       local model = core_vehicles.getModel(config.model_key).model
       if checkVehiclePermission(model, vehiclePermissionRules) and not string.match(config.key, 'simple_traffic') then
         eligibleCount = eligibleCount + 1
@@ -432,17 +438,33 @@ end
 
 M.getPlayerRaceResult = function()
   local winners = M.getWinnersData() or {}
-  local playerPos = nil
+  local playerPos, player, opponentTime = nil, nil, nil
   for i, entry in ipairs(winners) do
-    if entry and entry.isPlayable then
+    if entry.isPlayable and not playerPos then
       playerPos = i
-      break
+      player = entry
+    elseif not entry.isPlayable and not entry.disqualified and entry.time and (not opponentTime or entry.time < opponentTime) then
+      opponentTime = entry.time
     end
   end
+
+  local dialDiff, threshold = 0, 0
+  if player and player.time then
+    local dragData = gameplay_drag_core.getData()
+    local racer = dragData and dragData.racers and dragData.racers[player.vehId]
+    local dialVal = racer and racer.timers and racer.timers.dial and racer.timers.dial.value or 0
+    dialDiff = player.time - dialVal
+    if opponentTime then
+      threshold = opponentTime - player.time
+    end
+  end
+
   return {
     playerWin = playerPos == 1,
     playerPos = playerPos,
     winners = winners,
+    dialDiff = dialDiff,
+    threshold = threshold,
   }
 end
 
@@ -567,7 +589,7 @@ M.getDragInfoData = function()
   end
 
   local treeType = data.prefabs and data.prefabs.christmasTree and data.prefabs.christmasTree.treeType or ".500"
-  local treeNames = {[".400"] = "Pro Tree ( .400 )", [".500"] = "Sportsman Tree ( .500 )"}
+  local treeNames = {[".400"] = "ui.drag.treeType.pro", [".500"] = "ui.drag.treeType.sportsmanTree"}
   local phaseNames = {stage = "Staging", countdown = "On Tree", race = "Racing", stop = "Stopping"}
 
   local importantTimerId = data.importantTimerId or "time_1_4"
@@ -575,17 +597,19 @@ M.getDragInfoData = function()
   if data.timers then
     for _, t in ipairs(data.timers) do
       if t.id == importantTimerId then
-        importantTimerLabel = t.label or importantTimerId
+        importantTimerLabel = t.labelKey and _tr(t.labelKey) or t.label or importantTimerId
         break
       end
     end
   end
+  local youName = _tr("ui.multiplayer.you")
+  local playerName = _tr("options.player")
 
   local drag = gameplay_drag_core.getDragGamemode()
   local isMP = drag and drag.isMultiplayer and drag.isMultiplayer()
   local raceState = isMP and gameplay_drag_core.getRaceState() or nil
   local mpPlayers = raceState and raceState.players or nil
-  local localPlayerId = isMP and drag.getLocalPlayerId and drag.getLocalPlayerId() or nil
+  local localMPPlayerId = isMP and drag.getLocalMPPlayerId and drag.getLocalMPPlayerId() or nil
 
   -- Build a lane-to-player lookup from the current heat slot for MP name resolution
   local laneToPlayer = {}
@@ -596,7 +620,7 @@ M.getDragInfoData = function()
     if type(slot) == "table" then
       for lane, pid in pairs(slot) do
         if pid and mpPlayers and mpPlayers[pid] then
-          laneToPlayer[lane] = { playerId = pid, persona = mpPlayers[pid].persona or mpPlayers[pid].configName or "Player" }
+          laneToPlayer[lane] = { mpPlayerId = pid, persona = mpPlayers[pid].persona or mpPlayers[pid].configName or playerName }
         end
       end
     end
@@ -613,11 +637,11 @@ M.getDragInfoData = function()
       if data.dragType == "bracketRace" and racer.timers and racer.timers.dial then
         rDialValue = racer.timers.dial.value
       end
-      local racerName = vehId == activeId and "You" or "Bot"
+      local racerName = vehId == activeId and youName or _tr("ui.drag.racer.bot")
       if isMP then
         local lp = laneToPlayer[racer.lane]
         if lp then
-          racerName = (lp.playerId == localPlayerId) and "You" or lp.persona
+          racerName = (lp.mpPlayerId == localMPPlayerId) and youName or lp.persona
         end
       end
       table.insert(racersList, {
@@ -659,8 +683,8 @@ M.getDragInfoData = function()
             for laneIdx, pid in pairs(slot) do
               if pid and mpPlayers[pid] then
                 local pd = mpPlayers[pid]
-                local pName = (pid == localPlayerId) and "You" or (pd.persona or "Player")
-                table.insert(waitingList, { name = pName, heat = heatIdx, lane = laneIdx, playerId = pid })
+                local pName = (pid == localMPPlayerId) and youName or (pd.persona or playerName)
+                table.insert(waitingList, { name = pName, heat = heatIdx, lane = laneIdx, mpPlayerId = pid })
               end
             end
           end
@@ -676,9 +700,9 @@ M.getDragInfoData = function()
   return {
     dragType             = data.dragType,
     isBracketRace        = data.dragType == "bracketRace",
-    stripName            = data.strip and data.strip.name or "",
+    stripName            = data.strip and data.strip.name and _tr(data.strip.name) or "",
     treeType             = treeType,
-    treeTypeLabel        = treeNames[treeType] or treeType,
+    treeTypeLabel        = treeNames[treeType] and _tr(treeNames[treeType]) or treeType,
     importantTimerId     = importantTimerId,
     importantTimerLabel  = importantTimerLabel,
     dialValue            = dialValue,
@@ -793,7 +817,7 @@ M.getStripLaneInfo = function()
       for i, lane in ipairs(data.strip.lanes) do
         lanes[i] = {
           index = i,
-          longName = lane.longName or ("Lane " .. i),
+          longName = lane.longName or core_locales.contextTranslate("ui.drag.lane.numbered", { lane = i }),
           shortName = lane.shortName or tostring(i),
           color = lane.color or nil,
         }

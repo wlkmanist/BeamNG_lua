@@ -2,13 +2,16 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
-if jit then	jit.opt.start('minstitch=10000000','maxtrace=2000', 'maxmcode=4000', 'maxside=10', 'hotexit=200') end
+--jit.off()
+if jit then
+  jit.opt.start("minstitch=10000000", "maxtrace=2000", "maxmcode=4000", "maxside=10", "hotexit=200")
+end
 vmType = "vehicle"
 
 package.path = "lua/vehicle/?.lua;?.lua;lua/common/?.lua;lua/common/libs/luasocket/?.lua;lua/?.lua;?.lua"
 package.cpath = ""
 require("luaCore")
-require('common/cdefMath')
+require("common/cdefMath")
 
 print = function(...)
   log("A", "print", tostring(...))
@@ -28,6 +31,8 @@ debug.tracesimple = STP.stacktraceSimple
 -- nop's for the profiler functions if not present
 profilerPushEvent = profilerPushEvent or nop
 profilerPopEvent = profilerPopEvent or nop
+profilerPushEvent1 = profilerPushEvent or nop
+profilerPopEvent1 = profilerPopEvent or nop
 shippingBuild = profilerPushEvent == nop
 
 extensions = require("extensions")
@@ -42,6 +47,7 @@ vehiclePath = nil
 
 playerInfo = {
   -- seatedPlayers = nil, -- list of players seated in this vehicle; players are indexed from 0 to N (e.g. { [1]=true, [4]=true } for 2nd and 5th players)
+  persona = nil,
   firstPlayerSeated = false,
   anyPlayerSeated = false
 }
@@ -79,6 +85,9 @@ end
 
 function onGraphicsStep(dtSim)
   lastDt = dtSim
+  local shouldSendStreams = streams.hasActiveStreams() and obj:getUpdateUIflag()
+  guihooks.updateStreams = shouldSendStreams
+
   sensors.updateGFX(dtSim) -- must be before input and ai
   mapmgr.sendTracking() -- must be before ai
   wheels.updateGFX(dtSim)
@@ -97,11 +106,8 @@ function onGraphicsStep(dtSim)
   sounds.updateGFX(dtSim)
   thrusters.updateGFX() -- should be after extensions.hook
 
-  if streams.hasActiveStreams() and obj:getUpdateUIflag() then
-    guihooks.updateStreams = true
+  if shouldSendStreams then
     guihooks.sendStreams()
-  else
-    guihooks.updateStreams = false
   end
 
   if playerInfo.firstPlayerSeated then
@@ -285,12 +291,19 @@ function init(path, initData)
 
   -- on invalid spawn data - make sure the data stubs are there
   local nodesMissing = false
-  if v.data.components == nil then v.data.components = {} end
+  if v.data.components == nil then
+    v.data.components = {}
+  end
   if v.data.nodes == nil then
     v.data.nodes = {}
     nodesMissing = true
   end
-  if v.data.beams == nil then v.data.beams = {} end
+  if v.data.beams == nil then
+    v.data.beams = {}
+  end
+
+  local additionalVehicleData = v.config and v.config.additionalVehicleData
+  playerInfo.persona = additionalVehicleData and additionalVehicleData.personaId or nil
 
   -- disable lua for simple vehicles
   if v.data.information and v.data.information.simpleObject == true then
@@ -323,7 +336,7 @@ function init(path, initData)
 
   if nodesMissing then
     -- show the spawn failed error
-    error('nodesMissing')
+    error("nodesMissing")
   end
   return true -- false = unload Lua
 end
@@ -511,6 +524,10 @@ function setControllingPlayers(players)
   ai.stateChanged()
   sounds.updateObjType()
   extensions.hook("onPlayersChanged", playerInfo.anyPlayerSeated) -- backward compatibility
+end
+
+function setPlayerPersona(persona)
+  playerInfo.persona = persona
 end
 
 function exportPersistentData()

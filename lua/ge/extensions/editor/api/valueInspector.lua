@@ -4,6 +4,7 @@
 
 local ffi = require('ffi')
 local imgui = ui_imgui
+local easeCurveUI = require("editor/api/easeCurveUI")
 local C = {}
 
 local globalsInitialized = false
@@ -369,10 +370,10 @@ function C:displayMaterialPopupList(objectSet, fieldName, fieldNameId, fieldValu
             end
             local texture = getTexObj(absPath)
             if texture then
-              if not (texture.texId == nil) then
+              if not (texture.tex == nil) then
                 if imgui.ImageButton(
                   "##DisplayMaterialButton_" .. objName,
-                  texture.texId,
+                  texture.tex:getID(),
                   imgui.ImVec2(32, 32),
                   imgui.ImVec2Zero,
                   imgui.ImVec2One,
@@ -981,37 +982,13 @@ function C:valueEditorGui(fieldName, fieldValue, arrayIndex, fieldLabel, fieldDe
     end
   -------------------------------------------------------------------------------------------------------------------------
   elseif fieldType == "EaseF" then
-    local vec = stringToTable(fieldValue)
-    if vec[1] == nil then vec[1] = "0" end
-    if vec[2] == nil then vec[2] = "0" end
-    if vec[3] == nil then vec[3] = "0" end
-    if vec[4] == nil then vec[4] = "0" end
-    self.input4FloatValue[0] = tonumber(vec[1])
-    self.input4FloatValue[1] = tonumber(vec[2])
-    self.input4FloatValue[2] = tonumber(vec[3])
-    self.input4FloatValue[3] = tonumber(vec[4])
-
-    local result = editor.uiInputFloat4Ex(fieldNameId, self.input4FloatValue, nil, nil, floatFormat, indeterminateFlags, self.editEnded)
-
-    if result.changed then
-      -- set the NaN value for elements that were not edited, engine will detect NaNs and will not set those elements on field setData
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateX) == editor.InputFloat_IndeterminateX then self.input4FloatValue[0] = undefinedInteger end
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateY) == editor.InputFloat_IndeterminateY then self.input4FloatValue[1] = undefinedInteger end
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateZ) == editor.InputFloat_IndeterminateZ then self.input4FloatValue[2] = 0/0 end
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateW) == editor.InputFloat_IndeterminateW then self.input4FloatValue[3] = 0/0 end
-      fieldValue = tostring(self.input4FloatValue[0]) .. " " .. tostring(self.input4FloatValue[1]) .. " " .. tostring(self.input4FloatValue[2]) .. " " .. tostring(self.input4FloatValue[3])
-      fieldValueCached = fieldValue
-    end
-
-    if self.editEnded[0] then
-      -- set the NaN value for elements that were not edited, engine will detect NaNs and will not set those elements on field setData
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateX) == editor.InputFloat_IndeterminateX then self.input4FloatValue[0] = undefinedInteger end
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateY) == editor.InputFloat_IndeterminateY then self.input4FloatValue[1] = undefinedInteger end
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateZ) == editor.InputFloat_IndeterminateZ then self.input4FloatValue[2] = 0/0 end
-      if bit.band(result.indeterminateFlags, editor.InputFloat_IndeterminateW) == editor.InputFloat_IndeterminateW then self.input4FloatValue[3] = 0/0 end
-      fieldValue = tostring(self.input4FloatValue[0]) .. " " .. tostring(self.input4FloatValue[1]) .. " " .. tostring(self.input4FloatValue[2]) .. " " .. tostring(self.input4FloatValue[3])
-      self.setValueCallback(fieldName, fieldValueCached or fieldValue, arrayIndex, customData, self.editEnded[0])
-    end
+    easeCurveUI.draw({
+      id = fieldName .. (arrayIndex or ""),
+      value = fieldValue,
+      setValue = function(value, editEnded)
+        self.setValueCallback(fieldName, value, arrayIndex, customData, editEnded)
+      end
+    })
   -------------------------------------------------------------------------------------------------------------------------
   elseif fieldType == "Point2I" then
     local vec = stringToTable(fieldValue)

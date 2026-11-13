@@ -64,6 +64,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
             guihooks.trigger('Message',helper)]]
             career_modules_logbook.spawnPointUnlocked(spawnPoint)
             extensions.hook("onSpawnPointUnlocked", spawnPoint)
+
             gameplay_rawPois.clear()
           end
         end

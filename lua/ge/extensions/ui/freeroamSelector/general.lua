@@ -10,6 +10,27 @@ M.dependencies = {
 local customRootPath = {}
 local propName = function(key) return _tr("ui.menu.gameplaySelector.propName." .. key, key) end
 local propValue = function(propNameKey, key) return core_locales.translateWithPrefixFallback(key, "ui.menu.gameplaySelector.propValue." .. propNameKey .. ".") end
+
+local mapSizeSteps = {0, 1024 * 1024, 2048 * 2048, 4096 * 4096, 8192 * 8192, 16384 * 16384}
+
+local function getFilterValue(item, propKey)
+  local value = item[propKey]
+  if propKey ~= "mapSize" or type(value) ~= "number" then return value or "other" end
+  for index = #mapSizeSteps, 1, -1 do
+    if value > mapSizeSteps[index] then return mapSizeSteps[index] end
+  end
+  return 0
+end
+
+local function filterOptionLabel(propKey, value)
+  if propKey == "mapSize" then return _tr("ui.common.unknown") end
+  if propKey == "source" then return _tr(value == "official" and "ui.common.official" or "ui.menu.gridSelector.tags.mod") end
+  local label = core_locales.translateWithPrefixFallback(value, "ui.vehicles.propValue.Region.")
+  if label == value and value:match("^%l") and not value:find("[%s%.]") then
+    return string.sentenceCase(value:gsub("[_-]+", " "))
+  end
+  return label
+end
 -- Load the modules
 local displayDataModule = require("ge/extensions/ui/gridSelectorUtils/displayDataModule")
 local filterModule = require("ge/extensions/ui/gridSelectorUtils/filterModule")
@@ -150,67 +171,74 @@ local function setupInstances()
     },
   }
 
-  -- Gameplay-specific filterInstance configuration
-  local filtersWhiteList = {}
-  local rangeFilters = tableValuesAsLookupDict({})
-  local commonFilters = {}
+  local filterDefinitions = {
+    {
+      propKey = "source",
+      propName = _tr("ui.vehicles.propName.Source"),
+      optionOrder = {"official", "mod"},
+    },
+    {
+      propKey = "mapSize",
+      propName = _tr("ui.menu.freeroamSelector.filters.mapSize"),
+      optionOrder = mapSizeSteps,
+    },
+    {
+      propKey = "region",
+      propName = _tr("ui.vehicles.propName.Region"),
+    },
+  }
 
-  -- Gameplay-specific filterInstance creation function
-  local function createGameplayFilters(gameplayList)
+  local function createFilters(gameplayList)
     local filterByProp = {}
-    -- TODO: this is currently not used, but when it is used, the translation needs to be supported
-    if gameplayList then
-      for _, item in pairs(gameplayList) do
-        for _, propName in pairs(filtersWhiteList) do
-          local propVal = item[propName:lower()]
-          if propVal == nil then
-            propVal = item[propName]
-          end
-          if propVal == nil then
-            propVal = _tr("ui.menu.gridSelector.other")
-          end
-
-          if not filterByProp[propName] then
-            filterByProp[propName] = {}
-          end
-
-          if type(propVal) == "table" then
-            for _, val in pairs(propVal) do
-              filterByProp[propName][val] = true
-            end
-          else
-            filterByProp[propName][propVal] = true
-          end
-        end
+    for _, item in pairs(gameplayList) do
+      for _, definition in ipairs(filterDefinitions) do
+        local propVal = getFilterValue(item, definition.propKey)
+        filterByProp[definition.propName] = filterByProp[definition.propName] or {}
+        filterByProp[definition.propName][propVal] = true
       end
     end
 
     local filters = {}
-    for _, propName in pairs(filtersWhiteList) do
+    local quickFilters = {}
+    for _, definition in ipairs(filterDefinitions) do
+      local filterName = definition.propName
+      local availableOptions = filterByProp[filterName] or {}
       local options = {}
-      for option, _ in pairs(filterByProp[propName] or {}) do
-        table.insert(options, option)
+      local optionOrder = {}
+      for index, option in ipairs(definition.optionOrder or {}) do
+        optionOrder[option] = index
       end
-      table.sort(options)
+      for option in pairs(availableOptions) do
+        local optionData = {value = option}
+        if definition.propKey == "mapSize" and type(option) == "number" then
+          optionData.maxValue = mapSizeSteps[optionOrder[option] + 1]
+        else
+          optionData.label = filterOptionLabel(definition.propKey, option)
+        end
+        table.insert(options, optionData)
+      end
+      table.sort(options, function(a, b)
+        local aOrder, bOrder = optionOrder[a.value], optionOrder[b.value]
+        if aOrder then return not bOrder or aOrder < bOrder end
+        if bOrder then return false end
+        return a.label < b.label
+      end)
+      for _, option in ipairs(options) do
+        table.insert(quickFilters, {filterName, option.value, option.label})
+      end
 
-      local filterType = rangeFilters[propName] and "range" or "set"
       table.insert(filters, {
-        propName = propName,
-        type = filterType,
+        propName = filterName,
+        propKey = definition.propKey,
+        type = "set",
         options = options,
-        currentFilterValues = {},
-        currentMin = nil,
-        currentMax = nil,
-        min = nil,
-        max = nil,
       })
     end
 
-    return filters, filterByProp
+    return filters, filterByProp, quickFilters
   end
 
-  -- Gameplay-specific filterInstance check function
-  local function gameplayPassesFilters(item, validFilters, searchText)
+  local function passesFilters(item, validFilters, searchText)
     -- Check auxiliary content filterInstance
     if not M.displayDataInstance.getDisplayData().showAuxContent and item.isAuxiliary then
       return false
@@ -228,10 +256,11 @@ local function setupInstances()
       end
       -- Also search in item properties
       if not match then
-        for _, propName in pairs(filtersWhiteList) do
-          local propVal = item[propName:lower()] or item[propName]
+        for _, definition in ipairs(filterDefinitions) do
+          local propVal = item[definition.propKey]
           if type(propVal) == 'string' then
-            if string.find(string.lower(propVal), searchTextLower, 1, true) then
+            local translatedPropVal = filterOptionLabel(definition.propKey, propVal)
+            if string.find(string.lower(translatedPropVal), searchTextLower, 1, true) then
               match = true
               break
             end
@@ -254,31 +283,11 @@ local function setupInstances()
 
     -- Check filters
     for _, filterInstance in ipairs(validFilters) do
-      local propVal = item[filterInstance.propName:lower()]
-      if propVal == nil then
-        propVal = item[filterInstance.propName]
-      end
-      if propVal == nil then
-        propVal = _tr("ui.menu.gridSelector.other")
-      end
-
-      if filterInstance.type == 'set' then
-        for _, option in pairs(filterInstance.options) do
-          if propVal == option and not filterInstance.currentFilterValues[option] then
-            return false
-          end
-        end
-      end
-      if filterInstance.type == 'range' then
-        if propVal == _tr("ui.menu.gridSelector.other") or not type(propVal) == 'number' then
-          return false
-        end
-        if (propVal < filterInstance.currentMin) or (propVal > filterInstance.currentMax) then
-          return false
-        end
+      local propVal = getFilterValue(item, filterInstance.propKey)
+      if filterInstance.currentFilterValues[propVal] == false then
+        return false
       end
     end
-
 
     return true
   end
@@ -308,7 +317,7 @@ local function setupInstances()
   displayDataInstance = displayDataModule.create("/settings/freeroamSelectorData.json", defaultDisplayDataOptions, updateDisplayData, M.backendName, targetVersion)
   M.displayDataInstance = displayDataInstance
   -- Initialize filterInstance module
-  filterInstance = filterModule.create(createGameplayFilters, {}, {}, {}, M.backendName, gameplayPassesFilters)
+  filterInstance = filterModule.create(createFilters, {}, {}, {}, M.backendName, passesFilters)
 end
 
 local function ensureInstances()

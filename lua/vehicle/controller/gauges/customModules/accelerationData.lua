@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Supplies vehicle acceleration data for dashboard g-force displays
+
 local M = {}
 M.type = "auxiliary"
 

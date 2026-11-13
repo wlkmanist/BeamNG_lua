@@ -295,7 +295,7 @@ local function editGroup() -- displays options and modifies the currently select
     commonGroups[options.groupListIdx].name = currGroup.name
   end
 
-  im.BeginChild1("groupType##editGroup", im.ImVec2(comboWidth, 32 * im.uiscale[0]), im.WindowFlags_None)
+  im.BeginChild1("groupType##editGroup", im.ImVec2(comboWidth, 40 * im.uiscale[0]), true, im.WindowFlags_NoScrollbar)
   local val = currGroup.type == "custom" and im.IntPtr(1) or im.IntPtr(2)
 
   if im.RadioButton2("Custom##editGroup", val, im.Int(1)) then
@@ -317,7 +317,7 @@ local function editGroup() -- displays options and modifies the currently select
   im.SameLine()
   im.TextUnformatted("Group Type")
 
-  im.BeginChild1("groupTags##editGroup", im.ImVec2(comboWidth, 64 * im.uiscale[0]), im.WindowFlags_None)
+  im.BeginChild1("groupTags##editGroup", im.ImVec2(comboWidth, 80 * im.uiscale[0]), true, im.WindowFlags_None)
 
   if not currGroup.tags[1] then
     im.TextUnformatted("No tags applied")
@@ -516,8 +516,8 @@ local function editGroup() -- displays options and modifies the currently select
       end
       im.Columns(1)
       im.EndChild()
-      editor.endModalWindow()
     end
+    editor.endModalWindow()
 
   ---- custom vehicle group ----
 
@@ -617,9 +617,8 @@ local function editGroup() -- displays options and modifies the currently select
     if im.Button("Done##customPaint", im.ImVec2(im.GetContentRegionAvailWidth(), 20)) then
       editor.closeModalWindow(customPaintWindowName)
     end
-
-    editor.endModalWindow()
   end
+  editor.endModalWindow()
 
   -- confirm overwrite group modal window
   if editor.beginModalWindow(overwriteGroupWindowName, "Confirm") then
@@ -635,9 +634,8 @@ local function editGroup() -- displays options and modifies the currently select
     if im.Button("No##overwriteGroup") then
       editor.closeModalWindow(overwriteGroupWindowName)
     end
-
-    editor.endModalWindow()
   end
+  editor.endModalWindow()
 end
 
 local function spawnGroup() -- spawns the current vehicle group into the world

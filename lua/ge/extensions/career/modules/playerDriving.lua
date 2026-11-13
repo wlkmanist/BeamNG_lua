@@ -49,7 +49,7 @@ local function getFallbackTrafficAmounts()
     trafficAmount = clamp(trafficAmount, 2, 50)
   end
 
-  local parkingAmount = settings.getValue('trafficParkedAmount')
+  local parkingAmount = settings.getValue('trafficParkingAmount')
   if not M.debugMode then
     parkingAmount = clamp(parkingAmount, 2, 50)
   end
@@ -274,7 +274,7 @@ local function onPursuitAction(vehId, action, data)
     elseif action == "arrest" then -- pursuit arrest, make the player pay a fine
       local fine = data.mode * data.uniqueOffensesCount * 100 -- fine value is WIP
       --fine = math.min(fine, career_modules_playerAttributes.getAttributeValue("money"))
-      career_modules_payment.pay({money = {amount = fine}}, {label = "Fine for being arrested by the police", tags={"gameplay", "police", "fine"}})
+      career_modules_payment.pay({money = {amount = fine}}, {label = "ui.career.attributeLog.finePoliceArrest", tags={"gameplay", "police", "fine"}})
       ui_message(_tr("ui.traffic.policeFine", "You got fined by the police: ")..fine, 5, "careerPursuit")
     end
   end
@@ -309,18 +309,7 @@ end
 local function onUpdate(dtReal, dtSim, dtRaw)
   if not playerPursuitActive() then return end
 
-  -- for now, prevent pursuit softlock by making the police give up
-  if not playerData.pursuitStuckTimer then playerData.pursuitStuckTimer = 0 end
-  if (playerData.traffic.speed < 3 and playerData.traffic.pursuit.timers.arrest == 0 and playerData.traffic.pursuit.timers.evade == 0) then
-    playerData.pursuitStuckTimer = playerData.pursuitStuckTimer + dtSim
-    if playerData.pursuitStuckTimer >= 10 then
-      log("I", "career", "Ending pursuit early due to stalemate")
-      gameplay_police.evadeVehicle(be:getPlayerVehicleID(0), true)
-      playerData.pursuitStuckTimer = 0
-    end
-  else
-    playerData.pursuitStuckTimer = 0
-  end
+  -- career police logic
 end
 
 local function onCareerActive(active)

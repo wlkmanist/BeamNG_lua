@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Animates automatic gear selectors that move along one axis
+
 local M = {}
 M.type = "auxiliary"
 

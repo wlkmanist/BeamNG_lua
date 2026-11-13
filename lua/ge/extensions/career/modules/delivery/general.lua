@@ -70,7 +70,7 @@ local function loadSaveData()
 end
 M.loadSaveData = loadSaveData
 local function saveableCargoFilter(cargo)
-  return cargo.offerExpiresAt > M.time() and cargo.location.type == "facilityParkingspot"
+  return cargo.offerExpiresAt > M.time() and cargo.location.type == "facilityParkingspot" and cargo.generatorLabel ~= "addMaterialAsParcelToContainer"
 end
 local function onSaveCurrentProfile(currentSavePath)
   local filePath = currentSavePath .. "/career/" .. saveFile
@@ -115,6 +115,7 @@ local function onSaveCurrentProfile(currentSavePath)
       groupSeed = cargo.groupSeed,
       automaticDropOff = cargo.automaticDropOff,
       organization = cargo.organization,
+      materialType = cargo.materialType,
     }
     if not groupMap[cargo.groupId] then
       maxGroupId = maxGroupId + 1
@@ -178,6 +179,16 @@ M.getVehicleName = getVehicleName
 local mostRecentCargoContainerData = {}
 local nearbyRadius = 25*25
 local sortByVehIdAndContainerId = function(a,b) if a.vehId == b.vehId then return a.containerId < b.containerId else return a.vehId < b.vehId end end
+local function isPassengerOnly(cargoTypes)
+  if not cargoTypes then return false end
+  local hasPassenger = false
+  for _, cargoType in ipairs(cargoTypes) do
+    if cargoType ~= "passenger" then return false end
+    hasPassenger = true
+  end
+  return hasPassenger
+end
+
 local function getNearbyVehicleCargoContainers(callback)
   if not core_vehicleBridge then return {} end
   local vehCargoData = {}
@@ -197,7 +208,14 @@ local function getNearbyVehicleCargoContainers(callback)
     core_vehicleBridge.requestValue(veh, function(vehCargoContainerData)
       vehCargoData[vehId] = {}
 
+      local deliveryContainers = {}
       for _, container in ipairs(vehCargoContainerData[1]) do
+        if not isPassengerOnly(container.cargoTypes) then
+          table.insert(deliveryContainers, container)
+        end
+      end
+
+      for _, container in ipairs(deliveryContainers) do
         local vehName = getVehicleName(vehId)
         local elem = {
           vehId = vehId,
@@ -351,7 +369,7 @@ local function updateContainerWeights(delayCallback)
   for vehId, data in pairs(updatePerVehicle) do
     local veh = scenetree.findObjectById(vehId)
 
-    core_vehicleBridge.executeAction(veh, "setCargoContainers", updatePerVehicle[vehId] or {}, "updateAll")
+    core_vehicleBridge.executeAction(veh, "setCargoContainers", updatePerVehicle[vehId] or {}, "updateDelivery")
     core_vehicleBridge.executeAction(veh, 'setFreeze', true)
 
     for _, con in pairs(updatePerVehicle[vehId]) do
@@ -370,7 +388,9 @@ local function updateContainerWeights(delayCallback)
     core_vehicleBridge.requestValue(veh, function(vehCargoContainerData)
       local maxForContainer = 0
       for _, container in ipairs(vehCargoContainerData[1]) do
-        maxForContainer = math.max(maxForContainer, container.reachTargetTimeRemaining)
+        if not isPassengerOnly(container.cargoTypes) then
+          maxForContainer = math.max(maxForContainer, container.reachTargetTimeRemaining)
+        end
       end
       delayData[vehId] = maxForContainer
 
@@ -840,7 +860,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
         local dropOffPoi = deepcopy(poiTemplate)
         dropOffPoi.heading = _tr("ui.career.delivery.general.deliveryDropOff")
         dropOffPoi.buttonLabel = _tr("ui.career.delivery.general.dropOff")
-        dropOffPoi.buttonFun = function() guihooks.trigger('ChangeState', {state = 'career.cargoDropOff', params = {facilityId = elem.facId, parkingSpotPath = elem.psPath}}) end
+        dropOffPoi.buttonFun = function() extensions.ui_router.navigate('career.cargoDropOff', {facilityId = elem.facId, parkingSpotPath = elem.psPath}) end
         dropOffPoi.icon = "poi_dropoff_round"
         table.insert(activityData, dropOffPoi)
       end

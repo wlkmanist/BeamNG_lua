@@ -19,6 +19,7 @@ local function getDetails(itemDetails)
 
   -- Use custom details buttons if provided (for challenge mode)
   if M.customDetailsButtons and next(M.customDetailsButtons) then
+    ui_vehicleSelector_vehicleOperations.clearButtonFunctions()
     for _, button in ipairs(M.customDetailsButtons) do
       table.insert(buttonInfo, ui_vehicleSelector_vehicleOperations.addButton(function(additionalData)
         if not additionalData then
@@ -67,7 +68,7 @@ end
 M.exploreFolder = exploreFolder
 
 local function goToMod(modId)
-  guihooks.trigger('ChangeState', {state = 'menu.mods.details', params = {modId = modId}})
+  extensions.ui_router.navigate('menu.mods.details', {modId = modId})
 end
 
 M.goToMod = goToMod

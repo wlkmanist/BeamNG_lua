@@ -17,6 +17,7 @@ local textureQualityGroup        = GraphicsQualityGroup('core/settings/textureQu
 local meshQualityGroup           = GraphicsQualityGroup('core/settings/meshQuality', 'Mesh Quality')
 local terrainQualityGroup        = GraphicsQualityGroup('core/settings/terrainQuality', 'Terrain Quality')
 local clusteredQuality           = require('core/settings/clusteredQuality')
+local dynCaptureQuality          = require('core/settings/dynCaptureQuality')
 
 local platform = Engine and Engine.Platform and Engine.Platform.getPlatform() or ""
 
@@ -26,13 +27,20 @@ local internalPresetOrder = {}
 local platformPresetOrder = {}
 local usingPlatformPresets = false
 
-local platformPresetIgnoreForCustomDetection = {
+-- user-facing toggles that keep their value when a preset override is applied on top
+local platformPresetUserOwnedKeys = {
   PostFXDOFGeneralEnabled = true,
   PostFXMotionBlurEnabled = true,
   PostFXMotionBlurStrength = true,
   PostFXMotionBlurPlayerVehicle = true,
+}
+
+local platformPresetIgnoreForCustomDetection = {
   fpsLimitEnabled = true,
 }
+for key in pairs(platformPresetUserOwnedKeys) do
+  platformPresetIgnoreForCustomDetection[key] = true
+end
 
 local allowedPresetKeys = {}
 for _, group in pairs(overallQualityPresets) do
@@ -106,6 +114,7 @@ end
 
 local graphicsOptions = nil
 local graphicInformation = nil
+local presetOverride = nil
 
 local function setScreenSpaceShadowsEnabled(value)
   VariableRegistry.set('$AL::UseSSSmask', value)
@@ -123,6 +132,43 @@ local function hdrSupported()
 end
 
 local hdrOutputModeUpdateTimer = 0
+
+-- Applying a render scale drains the gpu, recreates the upscaler context and reallocates the scene
+-- targets, so a slider drag would do all of that on every step. The apply waits until the value has
+-- held still for this long, and every further move restarts the wait.
+local renderScaleApplyDelay = 1
+local renderScaleUpdateTimer = 0
+local pendingRenderScale = nil
+
+-- AA/upscale settings live on each RenderView. Split-screen cells are splitscreen0..7; main still
+-- holds the value the engine copies from when compositing.
+local function forEachWorldRenderView(fn)
+  local mgr = RenderViewManagerInstance
+  if not mgr then return end
+  local rv = mgr:getView("main")
+  if rv then fn(rv) end
+  for i = 0, 7 do
+    rv = mgr:getView("splitscreen" .. i)
+    if rv then fn(rv) end
+  end
+  rv = mgr:getView("multiMonitorLeft")
+  if rv then fn(rv) end
+  rv = mgr:getView("multiMonitorRight")
+  if rv then fn(rv) end
+end
+
+local function applyPendingRenderScale()
+  if not pendingRenderScale then return end
+  forEachWorldRenderView(function(rv)
+    rv.upscaleRenderScale = pendingRenderScale
+  end)
+  pendingRenderScale = nil
+end
+
+local function delayedRenderScale(scale)
+  pendingRenderScale = scale
+  renderScaleUpdateTimer = renderScaleApplyDelay
+end
 
 local function getHdrOutputModeName()
   if not hdrSupported() then return "LDR" end
@@ -158,6 +204,62 @@ local function setBloomEnabledForLightingQuality(lightingQuality)
   postFX.threshHold = 8
 end
 
+local function isAdvancedLighting15(lightingQuality)
+  return lightingQuality == "High" or lightingQuality == "Ultra"
+end
+
+local ssrResolutionDivisors = {Low = 4, Medium = 2, High = 1}
+
+local function applySSRQuality(ssr, quality)
+  ssr.resolutionDivisor = ssrResolutionDivisors[quality] or 1
+end
+
+local function applySSREnabled(value, lightingQuality, quality)
+  lightingQuality = lightingQuality or (graphicsOptions and graphicsOptions.GraphicLightingQuality.get())
+  if value and not isAdvancedLighting15(lightingQuality) then
+    value = false
+  end
+  if value and PostFxSSSR and not PostFxSSSR.isSupported() then
+    return
+  end
+  local ssr = scenetree.findObject("PostFxSSSRObject")
+  if value and not ssr then
+    ssr = createObject("PostFxSSSR")
+    if not ssr then return end
+    ssr:registerObject("PostFxSSSRObject")
+    -- Keep the effect across level changes, even when enabled from a mission.
+    scenetree.RootGroup:add(ssr)
+  end
+  if not ssr then return end
+  applySSRQuality(ssr, quality or settings.getValue("PostFXSSRQuality"))
+  if value then
+    ssr:enable()
+  else
+    ssr:disable()
+  end
+end
+
+local placementPattern = string.rep(' *(%-?%d+)', 10)
+
+local function placementWithClientSize(canvas, clientWidth, clientHeight)
+  local placement = canvas:getPlacement()
+  if not placement or placement == '' then return nil end
+
+  local _, _, minX, minY, maxX, maxY, left, top, bottom, right = placement:match(placementPattern)
+  if not right then
+    log('W', 'graphic', 'Unexpected window placement format, cannot resize window: '..tostring(placement))
+    return nil
+  end
+  left, top, bottom, right = tonumber(left), tonumber(top), tonumber(bottom), tonumber(right)
+
+  local clientW, clientH = canvas:getWindowClientSizeXY()
+  local frameWidth = (right - left) - clientW
+  local frameHeight = (bottom - top) - clientH
+
+  return string.format('0 1 %s %s %s %s %d %d %d %d', minX, minY, maxX, maxY,
+                       left, top, top + clientHeight + frameHeight, left + clientWidth + frameWidth)
+end
+
 local function applyGraphicsState()
   if M.triggered_manual_save then
     log('E','graphic','Detected Saving in progress....ignoring redundant call')
@@ -181,9 +283,11 @@ local function applyGraphicsState()
 
   local displayDriver = graphicsOptions.GraphicDisplayDriver.get()
   displayDriver = displayDriver:gsub("/","\\")
+  local videoModeDesc = tostring(displayDriver)..', '..graphicsOptions.GraphicDisplayModes.get()..', '..tostring(resolutionWidth)..' x '..tostring(resolutionHeight)..' '..tostring(refreshRate)..' Hz'
+  recordPlayerAction('apply video mode '..videoModeDesc)
   GFXDevice.setDisplayDevice(displayDriver)
 
-  log('D','graphic','Applying graphic settings: '..tostring(displayDriver)..', '..graphicsOptions.GraphicDisplayModes.get()..', '..tostring(resolutionWidth)..' x '..tostring(resolutionHeight)..' '..tostring(refreshRate)..' Hz')
+  log('D','graphic','Applying graphic settings: '..videoModeDesc)
 
   local videoMode = {}
   videoMode.width = resolutionWidth
@@ -202,6 +306,11 @@ local function applyGraphicsState()
 
   if graphicsOptions.GraphicDisplayModes.isWindow() then
     if skipWindowPlacementRestore then
+      local resizedPlacement = placementWithClientSize(canvas, resolutionWidth, resolutionHeight)
+      if resizedPlacement then
+        log('D','graphic','Resizing window to '..tostring(resolutionWidth)..' x '..tostring(resolutionHeight)..' via placement: '..resizedPlacement)
+        canvas:restorePlacement(resizedPlacement)
+      end
       if graphicsOptions.WindowPlacement and type(graphicsOptions.WindowPlacement.set) == 'function' then
         graphicsOptions.WindowPlacement.set(canvas:getPlacement())
         settings.refreshTSState(true)
@@ -855,29 +964,176 @@ local function buildOptionHelpers()
     end
   }
 
+  -- Antialiasing techniques, mutually exclusive: fxaa and smaa are post effects, dlss/fsr3/fsr4/xess/
+  -- fsrCustom/pssr are temporal upscalers on each world RenderView (main and split-screen cells).
+  -- Upscaler keys map to UpscaleMode ordinals. smaaT2x is both, an UpscaleMode for the jitter and
+  -- velocity plus its own post effect chain. fxaa and smaa take UpscaleMode::Bilinear, which only
+  -- rasterizes the scene smaller and stretches the anti aliased result back up, so the render scale
+  -- applies to them too; at a scale of 1 the engine drops the stretch and renders native.
+  local upscaleModes = { dlss = 1, fsr3 = 2, fsr4 = 3, xess = 4, fsrCustom = 5, smaaT2x = 7, fxaa = 8, smaa = 8, pssr = 9 }
+  -- the lowest lighting quality does not render the depth and motion vectors the temporal
+  -- upscalers reproject with, so only the post effect AA modes stay selectable there
+  local temporalUpscalers = { dlss = true, fsr3 = true, fsr4 = true, xess = true, fsrCustom = true, smaaT2x = true, pssr = true }
+  local antialiasTypeLabels = {
+    {'fxaa', 'ui.options.graphics.antialiasMode.fxaa'},
+    {'smaa', 'ui.options.graphics.antialiasMode.smaa'},
+    {'smaaT2x', 'ui.options.graphics.antialiasMode.smaaT2x'},
+    {'dlss', 'ui.options.graphics.antialiasMode.dlss'},
+    {'fsr3', 'ui.options.graphics.antialiasMode.fsr3'},
+    {'fsr4', 'ui.options.graphics.antialiasMode.fsr4'},
+    {'xess', 'ui.options.graphics.antialiasMode.xess'},
+    {'fsrCustom', 'ui.options.graphics.antialiasMode.fsrCustom'},
+    {'pssr', 'ui.options.graphics.antialiasMode.pssr'},
+  }
+  local windowsOnlyUpscalers = { fsr3 = true, fsr4 = true, xess = true }
+  -- Prefer other temporal upscalers when the saved one is missing, then classic AA.
+  local antialiasFallbackOrder = { 'dlss', 'fsr4', 'fsr3', 'fsrCustom', 'xess', 'smaaT2x', 'smaa', 'fxaa' }
+  -- Linear render/display ratio the scene is rasterized at. The bounds mirror kUpscaleMinRenderScale
+  -- and kUpscaleMaxRenderScale in the engine; 1 renders native and only applies the temporal AA.
+  local minRenderScale, maxRenderScale = 0.33, 1
+  local defaultRenderScale = 1 / 1.5
+  -- settings saved before the presets became a scale still hold their key
+  local legacyRenderScales = { nativeAA = 1, quality = 1 / 1.5, balanced = 1 / 1.7, performance = 0.5, ultraPerformance = 1 / 3 }
+
+  local function toRenderScale(value)
+    local scale = tonumber(value) or legacyRenderScales[value] or defaultRenderScale
+    return math.max(minRenderScale, math.min(maxRenderScale, scale))
+  end
+
+  local function isAntialiasTypeOff(value)
+    return value == nil or value == 'off' or value == 'Off' or value == false or tonumber(value) == 0
+  end
+
+  local function isAntialiasTypeAvailable(value)
+    local mode = upscaleModes[value]
+    if not mode then return false end
+    if temporalUpscalers[value] and o.GraphicLightingQuality.get() == 'Lowest' then return false end
+    if not (RenderView and RenderView.isUpscaleModeAvailable) then return true end
+    return RenderView.isUpscaleModeAvailable(mode)
+  end
+
+  -- nil for modes that are simply hidden when unavailable (classic AA, PSSR)
+  local function antialiasUnavailableReason(key)
+    if key == 'pssr' or not temporalUpscalers[key] then return nil end
+    local prefix = 'ui.options.graphics.antialiasMode.'
+    if key == 'smaaT2x' then return prefix..'requiresLighting' end
+    if Engine.Render.getAdapterType() == 'Direct3D11' then return prefix..'requiresD3D12' end
+    if o.GraphicLightingQuality.get() == 'Lowest' then return prefix..'requiresLighting' end
+    if windowsOnlyUpscalers[key] then
+      if string.lower(Engine.Platform.getOSInfo().type or '') ~= 'windows' then return prefix..'requiresWindows' end
+      if string.find(string.lower(beamng_arch or ''), 'arm') then return prefix..'notOnArm' end
+    end
+    return prefix..key..'.requires'
+  end
+
+  local function resolveAntialiasType(value)
+    if isAntialiasTypeOff(value) then return 'off' end
+    if RenderView and RenderView.isUpscaleModeAvailable and not isAntialiasTypeAvailable('fxaa') then
+      return value
+    end
+    if isAntialiasTypeAvailable(value) then return value end
+    for _, key in ipairs(antialiasFallbackOrder) do
+      if key ~= value and isAntialiasTypeAvailable(key) then
+        return key
+      end
+    end
+    return 'off'
+  end
+
+  -- nil turns everything off
+  local function applyAntialiasType(value)
+    local function setEnabled(name, enabled)
+      local fx = scenetree.findObject(name)
+      if not fx then return end
+      if enabled then fx:enable() else fx:disable() end
+    end
+    setEnabled("SMAA_PostEffect", value == 'smaa')
+    setEnabled("SMAA_T2X_PostEffect", value == 'smaaT2x')
+    setEnabled("FXAA_PostEffect", value == 'fxaa')
+    local mode = upscaleModes[value] or 0
+    forEachWorldRenderView(function(rv)
+      rv.upscaleMode = mode
+    end)
+  end
+
+  local function isAntialiasOff()
+    local enabled = o.GraphicAntialias.get()
+    return enabled == false or enabled == nil or tonumber(enabled) == 0
+  end
+
   o.GraphicAntialiasType = {
     get = function ()
-      local value = settings.getValue('GraphicAntialiasType')
-      -- log('I','','get GraphicAntialiasType = '..tostring(value))
-      return value
+      if isAntialiasOff() then return 'off' end
+      return resolveAntialiasType(settings.getValue('GraphicAntialiasType'))
     end,
     set = function ( value )
-      local enabled = o.GraphicAntialias.get();
-      if enabled == 0 then return end
-
-      local smaaPostEffect = scenetree.findObject("SMAA_PostEffect")
-      local fxaaPostEffect = scenetree.findObject("FXAA_PostEffect")
-      if value == "fxaa" then
-        if smaaPostEffect then smaaPostEffect:disable() end
-        if fxaaPostEffect then fxaaPostEffect:enable() end
-      elseif value == "smaa" then
-        if fxaaPostEffect then fxaaPostEffect:disable() end
-        if smaaPostEffect then smaaPostEffect:enable() end
+      local resolved = resolveAntialiasType(value)
+      if resolved ~= value and not isAntialiasTypeOff(value) then
+        log('W', logTag, 'GraphicAntialiasType "'..tostring(value)..'" unavailable, falling back to "'..tostring(resolved)..'"')
       end
-      settings.setValue('GraphicAntialiasType', value)
+      if resolved == 'off' then
+        applyAntialiasType(nil)
+        settings.setValue('GraphicAntialias', 0)
+        settings.setValue('GraphicAntialiasType', 'off')
+        return
+      end
+      applyAntialiasType(resolved)
+      settings.setValue('GraphicAntialiasType', resolved)
+      if isAntialiasOff() then
+        settings.setValue('GraphicAntialias', 4)
+      end
     end,
     getModes = function ()
-      return {keys={'fxaa', 'smaa'}, values={'FXAA', 'SMAA'}}
+      local keys = {'off'}
+      local values = {'ui.common.off'}
+      -- shown greyed out in the options menu, with the reason as tooltip
+      local unavailable = {}
+      for _, entry in ipairs(antialiasTypeLabels) do
+        local key = entry[1]
+        if isAntialiasTypeAvailable(key) then
+          table.insert(keys, key)
+          table.insert(values, entry[2])
+        else
+          local reason = antialiasUnavailableReason(key)
+          if reason then table.insert(unavailable, {key, entry[2], reason}) end
+        end
+      end
+      return {keys=keys, values=values, unavailable=unavailable}
+    end,
+    sanitize = function ()
+      if isAntialiasOff() then return end
+      local current = settings.getValue('GraphicAntialiasType')
+      local resolved = resolveAntialiasType(current)
+      if resolved ~= current then
+        settings.setValue('GraphicAntialiasType', resolved)
+      end
+    end
+  }
+
+  o.GraphicUpscalingQuality = {
+    get = function ()
+      return toRenderScale(settings.getValue('GraphicUpscalingQuality'))
+    end,
+    set = function ( value )
+      local scale = toRenderScale(value)
+      delayedRenderScale(scale)
+      settings.setValue('GraphicUpscalingQuality', scale)
+    end
+  }
+
+  -- RCAS sharpening after the upscale, 0 off to 1 maximum, for every temporal upscaler. The engine
+  -- ignores it for the modes RenderView.isUpscaleSharpeningSupported rejects (off, fxaa, smaa, smaaT2x).
+  o.GraphicUpscalingSharpness = {
+    get = function ()
+      return math.max(0, math.min(1, tonumber(settings.getValue('GraphicUpscalingSharpness')) or 0))
+    end,
+    set = function ( value )
+      local sharpness = math.max(0, math.min(1, tonumber(value) or 0))
+      log('I', logTag, 'GraphicUpscalingSharpness '..tostring(sharpness))
+      forEachWorldRenderView(function(rv)
+        rv.upscaleSharpness = sharpness
+      end)
+      settings.setValue('GraphicUpscalingSharpness', sharpness)
     end
   }
 
@@ -887,20 +1143,12 @@ local function buildOptionHelpers()
       return settings.getValue('GraphicAntialias')
     end,
     set = function ( value )
-      local SMAA_PostEffect = scenetree.findObject("SMAA_PostEffect")
-      if not SMAA_PostEffect then return end
-      local FXAA_PostEffect = scenetree.findObject("FXAA_PostEffect")
-      if not FXAA_PostEffect then return end
       if tonumber(value) == 0 then
-        SMAA_PostEffect:disable()
-        FXAA_PostEffect:disable()
+        applyAntialiasType(nil)
       else
-        local antialiasType = settings.getValue('GraphicAntialiasType')
-        if antialiasType == 'fxaa' then
-          FXAA_PostEffect:enable()
-        else
-          SMAA_PostEffect:enable()
-        end
+        local aaType = settings.getValue('GraphicAntialiasType')
+        if isAntialiasTypeOff(aaType) then aaType = 'fxaa' end
+        applyAntialiasType(resolveAntialiasType(aaType))
       end
       settings.setValue('GraphicAntialias', value)
     end,
@@ -919,6 +1167,19 @@ local function buildOptionHelpers()
     end,
     getModes = function()
       return {keys={"0", "2","4", "8", "16"}, values={"Off", "x2", "x4", "x8", "x16"}}
+    end
+  }
+
+  o.GraphicPlatformPreset = {
+    get = function ()
+      return settings.getValue("GraphicPlatformPreset")
+    end,
+    onSettingsChanged = function ()
+      local value = settings.getValue("GraphicPlatformPreset")
+      -- this is a raw set, at this point the GraphicOverallQuality is already applied
+      if value ~= nil then
+        o.GraphicOverallQuality.qualityLevel = tostring(value)
+      end
     end
   }
 
@@ -952,19 +1213,26 @@ local function buildOptionHelpers()
       end
 
       o.GraphicOverallQuality.qualityLevel = tostring(value)
+
+      -- an override owns every preset key except the user-owned ones, so while one is active only
+      -- those are applied here and the rest lands once the override is released
       for k, v in pairs(levelData) do
-        if o[k] and type(o[k].set) == "function" then
-          o[k].set(v)
-        else
-          settings.setValue(k, v)
+        if not presetOverride or (usingPlatformPresets and platformPresetUserOwnedKeys[k]) then
+          if o[k] and type(o[k].set) == "function" then
+            o[k].set(v)
+          else
+            settings.setValue(k, v)
+          end
         end
       end
       setBloomEnabledForLightingQuality(o.GraphicLightingQuality.get())
       if usingPlatformPresets then
+        settings.setValue("GraphicPlatformPreset", value)
         settings.refreshTSState(true)
 
         -- applyGraphicsState needs Canvas/GFX to exist. Avoid calling it too early.
-        if scenetree.findObject("Canvas") and applyGraphicsState then
+        -- while overridden the video mode stays the override's, the choice is only saved.
+        if not presetOverride and scenetree.findObject("Canvas") and applyGraphicsState then
           applyGraphicsState()
         else
           settings.requestSave()
@@ -1178,6 +1446,14 @@ local function buildOptionHelpers()
       lightingQualityGroup:applyLevel(value)
       o.GraphicLightingQuality.qualityLevel = value
       setBloomEnabledForLightingQuality(value)
+      applySSREnabled(settings.getValue("PostFXSSREnabled"), value)
+
+      if value == 'Lowest' then
+        local aaType = settings.getValue('GraphicAntialiasType')
+        if temporalUpscalers[aaType] then
+          o.GraphicAntialiasType.set(aaType)
+        end
+      end
 
       if PSSMLightShadowMap then
         PSSMLightShadowMap.penumbraEnabled = value == "Ultra"
@@ -1221,97 +1497,65 @@ local function buildOptionHelpers()
     end
   }
 
-  -- GraphicDynReflectionEnabled
-  o.GraphicDynReflectionEnabled = {
+  local dynQualityModes = {
+    keys = {'Disabled', 'Lowest', 'Low', 'Normal', 'High', 'Ultra'},
+    values = {'ui.common.off', 'ui.options.graphics.Lowest', 'ui.options.graphics.Low', 'ui.options.graphics.Normal', 'ui.options.graphics.High', 'ui.options.graphics.Ultra'}
+  }
+
+  local function sanitizeDynQuality(value, levels, fallback)
+    if not levels[value] then
+      return fallback
+    end
+    return value
+  end
+
+  -- GraphicDynReflectionQuality
+  o.GraphicDynReflectionQuality = {
+    qualityLevel = "Disabled",
+
     get = function ()
-      return VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::enabled' ) ~= false
+      return o.GraphicDynReflectionQuality.qualityLevel
     end,
+
     set = function ( value )
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::enabled', value )
+      value = sanitizeDynQuality(value, dynCaptureQuality.reflectionLevels, "Disabled")
+      dynCaptureQuality.applyReflection(value)
+      o.GraphicDynReflectionQuality.qualityLevel = value
+    end,
+
+    getModes = function()
+      return dynQualityModes
     end
   }
 
   -- GraphicDynReflectionFacesPerupdate
+  -- cube faces refreshed each frame, the quality level sets the default and this overrides it
   o.GraphicDynReflectionFacesPerupdate = {
     get = function ()
-      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate' ) )
+      return tonumber(VariableRegistry.get("$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate"))
     end,
+
     set = function ( value )
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate', value )
+      VariableRegistry.set("$pref::BeamNGVehicle::dynamicReflection::facesPerUpdate", clamp(math.floor(tonumber(value) or 1), 1, 6))
     end
   }
 
-  -- GraphicDynReflectionDetail
-  o.GraphicDynReflectionDetail = {
-    get = function ()
-      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::detail' ) )
-    end,
-    set = function ( value )
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::detail', value )
-    end
-  }
+  -- GraphicDynMirrorsQuality
+  o.GraphicDynMirrorsQuality = {
+    qualityLevel = "Normal",
 
-  -- GraphicDynReflectionDistance
-  o.GraphicDynReflectionDistance = {
     get = function ()
-      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::distance' ) )
+      return o.GraphicDynMirrorsQuality.qualityLevel
     end,
-    set = function ( value )
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::distance', value )
-    end
-  }
 
-  -- GraphicDynReflectionTexsize
-  o.GraphicDynReflectionTexsize = {
-    get = function ()
-      local value = math.log(tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicReflection::textureSize' ) ) )/math.log( 2 )
-      return value - 7
-    end,
     set = function ( value )
-      value = math.pow(2, value + 7)
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicReflection::textureSize', value )
-    end
-  }
+      value = sanitizeDynQuality(value, dynCaptureQuality.mirrorLevels, "Normal")
+      dynCaptureQuality.applyMirrors(value)
+      o.GraphicDynMirrorsQuality.qualityLevel = value
+    end,
 
-  -- GraphicDynMirrorsEnabled
-  o.GraphicDynMirrorsEnabled = {
-    get = function ()
-      return VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::enabled' ) ~= false
-    end,
-    set = function ( value )
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::enabled', value )
-    end
-  }
-
-  -- GraphicDynMirrorsDetail
-  o.GraphicDynMirrorsDetail = {
-    get = function ()
-      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::detail' ) )
-    end,
-    set = function ( value )
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::detail', value )
-    end
-  }
-
-  -- GraphicDynMirrorsDistance
-  o.GraphicDynMirrorsDistance = {
-    get = function ()
-      return tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::distance' ) )
-    end,
-    set = function ( value )
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::distance', value )
-    end
-  }
-
-  -- GraphicDynMirrorsTexsize
-  o.GraphicDynMirrorsTexsize = {
-    get = function ()
-      local value = math.log(tonumber( VariableRegistry.get( '$pref::BeamNGVehicle::dynamicMirrors::textureSize' ) ) )/math.log( 2 )
-      return value - 7
-    end,
-    set = function ( value )
-      value = math.pow(2, value + 7)
-      VariableRegistry.set( '$pref::BeamNGVehicle::dynamicMirrors::textureSize', value )
+    getModes = function()
+      return dynQualityModes
     end
   }
 
@@ -1429,13 +1673,20 @@ local function buildOptionHelpers()
   -- SettingsPostFXSSAOGeneralQuality
   o.PostFXSSAOGeneralQuality = {
     get = function ()
+      local enabled = o.PostFXSSAOGeneralEnabled.get()
+      if enabled == false or enabled == 0 then return 'Off' end
       local value = settings.getValue('PostFXSSAOGeneralQuality')
-      -- log('I','','get PostFXSSAOGeneralQuality = '..tostring(value))
+      if value == 'Off' or value == 'off' then return 'Off' end
       return value
     end,
     set = function ( value )
-      local enabled = o.PostFXSSAOGeneralEnabled.get();
-      if enabled == 0 then return end
+      if value == 'Off' or value == 'off' or value == false then
+        settings.setValue('PostFXSSAOGeneralEnabled', false)
+        settings.setValue('PostFXSSAOGeneralQuality', 'Off')
+        return
+      end
+      settings.setValue('PostFXSSAOGeneralEnabled', true)
+      settings.setValue('PostFXSSAOGeneralQuality', value)
       local ssao = scenetree.findObject("SSAOPostFx")
       if not ssao then return end
       if value == "High" then
@@ -1443,10 +1694,62 @@ local function buildOptionHelpers()
       elseif value == "Normal" then
         scenetree.SSAOPostFx:setSamples(16)
       end
-      settings.setValue('PostFXSSAOGeneralQuality', value)
     end,
     getModes = function ()
-      return {keys={'Normal', 'High'}, values={'ui.options.graphics.Normal', 'ui.options.graphics.High'}}
+      return {keys={'Off', 'Normal', 'High'}, values={'ui.common.off', 'ui.options.graphics.Normal', 'ui.options.graphics.High'}}
+    end
+  }
+
+  o.PostFXSpecularOcclusionEnabled = {
+    get = function()
+      local ssao = scenetree.findObject("SSAOPostFx")
+      if ssao then return ssao.bentNormals end
+      return settings.getValue("PostFXSpecularOcclusionEnabled")
+    end,
+    set = function(value)
+      local ssao = scenetree.findObject("SSAOPostFx")
+      if ssao then ssao.bentNormals = value == true end
+    end
+  }
+
+  o.PostFXSSRAvailable = {
+    get = function ()
+      return PostFxSSSR ~= nil and PostFxSSSR.isSupported()
+    end
+  }
+
+  o.PostFXSSREnabled = {
+    get = function ()
+      return settings.getValue("PostFXSSREnabled")
+    end,
+    set = function (value)
+      -- Retain the boolean API for graphics presets and photo mode.
+      local quality = settings.getValue("PostFXSSRQuality")
+      if not value then
+        quality = "Off"
+      elseif not ssrResolutionDivisors[quality] then
+        quality = "High"
+      end
+      settings.setValue("PostFXSSREnabled", value)
+      settings.setValue("PostFXSSRQuality", quality)
+      applySSREnabled(value, nil, quality)
+    end
+  }
+
+  o.PostFXSSRQuality = {
+    get = function ()
+      local quality = settings.getValue("PostFXSSRQuality")
+      if quality == "Off" or settings.getValue("PostFXSSREnabled") == false then return "Off" end
+      return ssrResolutionDivisors[quality] and quality or "High"
+    end,
+    set = function (value)
+      value = (value == "Off" or ssrResolutionDivisors[value]) and value or "High"
+      settings.setValue("PostFXSSRQuality", value)
+      settings.setValue("PostFXSSREnabled", value ~= "Off")
+      applySSREnabled(value ~= "Off", nil, value)
+    end,
+    getModes = function ()
+      return {keys={'Off', 'Low', 'Medium', 'High'}, values={'ui.common.off', 'ui.options.graphics.Low', 'ui.common.medium', 'ui.options.graphics.High'}}
     end
   }
 
@@ -1592,9 +1895,14 @@ local function onFirstUpdateSettings()
   canvas:showWindow()
 
   gatherDisplayInformation()
+
+  if graphicsOptions.GraphicAntialiasType and type(graphicsOptions.GraphicAntialiasType.sanitize) == 'function' then
+    graphicsOptions.GraphicAntialiasType.sanitize()
+  end
 end
 
 local function refreshGraphicsState(newState)
+  local previousDisplayMode = M.selected_displayMode
   local settingState = ""
   if newState.GraphicDisplayDriver then settingState = newState.GraphicDisplayDriver..', ' end
   if newState.GraphicDisplayModes then settingState = settingState..newState.GraphicDisplayModes..', ' end
@@ -1619,11 +1927,18 @@ local function refreshGraphicsState(newState)
   end
 
   local shouldLogSanitizeMessage = false
-  if newState.GraphicDisplayDriver and newState.GraphicDisplayDriver ~= M.selected_displayDriver then
-    -- dump(tostring(M.selected_displayDriver) .. '  is now  '.. newState.GraphicDisplayDriver)
+  -- Compare on the '/' form: get() normalises to '//./DISPLAY1' while callers pass
+  -- the win32 name '\\.\DISPLAY1'. Unnormalised, the same display reads as a change
+  -- and SelectHighestForDisplay below replaces the chosen resolution with the
+  -- monitor's desktop one.
+  local newDisplayDriver = newState.GraphicDisplayDriver and newState.GraphicDisplayDriver:gsub("\\","/") or nil
+  if newDisplayDriver and newDisplayDriver ~= M.selected_displayDriver then
+    -- dump(tostring(M.selected_displayDriver) .. '  is now  '.. newDisplayDriver)
     if graphicsOptions.GraphicDisplayDriver and type(graphicsOptions.GraphicDisplayDriver.set) == 'function' then
-      graphicsOptions.GraphicDisplayDriver.set(newState.GraphicDisplayDriver)
-      graphicsOptions.GraphicDisplayResolutions.SelectHighestForDisplay(newState.GraphicDisplayDriver)
+      graphicsOptions.GraphicDisplayDriver.set(newDisplayDriver)
+      if not graphicsOptions.GraphicDisplayModes.isWindow() then
+        graphicsOptions.GraphicDisplayResolutions.SelectHighestForDisplay(newDisplayDriver)
+      end
     end
   end
 
@@ -1673,6 +1988,10 @@ local function refreshGraphicsState(newState)
   settings.refreshTSState(true)
   -- let UI and Lua know
   settings.notifyUI()
+  if previousDisplayMode and previousDisplayMode ~= ""
+      and M.selected_displayMode ~= previousDisplayMode then
+    extensions.hook("onDisplayModeChanged", previousDisplayMode, M.selected_displayMode)
+  end
 end
 
 local function onUiChangedState(toState, fromState)
@@ -1762,9 +2081,20 @@ local function autoDetectApplyGraphicsQuality()
 end
 
 local function onUpdate(dtReal)
+  local dt = dtReal or 0
+
+  if renderScaleUpdateTimer > 0 then
+    renderScaleUpdateTimer = renderScaleUpdateTimer - dt
+
+    if renderScaleUpdateTimer <= 0 then
+      renderScaleUpdateTimer = 0
+      applyPendingRenderScale()
+    end
+  end
+
   if hdrOutputModeUpdateTimer <= 0 then return end
 
-  hdrOutputModeUpdateTimer = hdrOutputModeUpdateTimer - (dtReal or 0)
+  hdrOutputModeUpdateTimer = hdrOutputModeUpdateTimer - dt
 
   if hdrOutputModeUpdateTimer <= 0 then
     hdrOutputModeUpdateTimer = 0
@@ -1788,9 +2118,50 @@ M.getDisplayInformation = function()
   return graphicInformation
 end
 
+-- applies a preset to the running game without touching the saved GraphicOverallQuality choice.
+-- skipVideoMode re-asserts the values of a preset that is already live, so the video mode it comes
+-- with is already applied. Applying it again would request a save and retrigger this from there.
+local function applyPresetValues(levelData, skipVideoMode)
+  for key, value in pairs(levelData) do
+    if not (usingPlatformPresets and platformPresetUserOwnedKeys[key]) then
+      local option = graphicsOptions[key]
+      if option and type(option.set) == "function" then
+        option.set(value)
+      else
+        settings.setValue(key, value)
+      end
+    end
+  end
+  setBloomEnabledForLightingQuality(graphicsOptions.GraphicLightingQuality.get())
+  if usingPlatformPresets then
+    if not skipVideoMode and scenetree.findObject("Canvas") then
+      applyGraphicsState()
+    end
+    settings.notifyUI()
+  end
+end
+
+-- override = {name = presetName, enforce = bool}, or nil to release and restore the saved preset.
+-- while an override is active the saved choice can still change, it just stays unapplied until the
+-- override is released. enforce additionally re-asserts the preset values on every settings change,
+-- for callers that have to stay on it no matter what the user changes meanwhile.
+local function setPresetOverride(override)
+  local levelData = overallQualityPresets[override and override.name or settings.getValue('GraphicOverallQuality')]
+  if type(levelData) ~= "table" then return false end
+  presetOverride = override
+  applyPresetValues(levelData)
+  return true
+end
+
 M.onSettingsChanged = function()
+  if presetOverride then
+    if presetOverride.enforce then applyPresetValues(overallQualityPresets[presetOverride.name], true) end
+    return
+  end
+  graphicsOptions.GraphicPlatformPreset.onSettingsChanged()
   graphicsOptions.GraphicOverallQuality.onSettingsChanged()
 end
+
 M.load = load
 M.buildOptionHelpers = buildOptionHelpers
 M.onInitSettings = onInitSettings
@@ -1803,5 +2174,7 @@ M.openCoconutWindow = openCoconutWindow
 M.autoDetectApplyGraphicsQuality = autoDetectApplyGraphicsQuality
 M.onUpdate = onUpdate
 M.toggleFullscreen = toggleFullscreen
+M.setPresetOverride = setPresetOverride
+M.getPresetOverride = function() return presetOverride end
 M.getOverallQualityPresets = function() return overallQualityPresets end
 return M

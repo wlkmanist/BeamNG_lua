@@ -308,6 +308,7 @@ local function initializeModules()
   M.sketchModule = require("editor/api/sketch")
   M.terrainModule = require("editor/api/terrain")
   M.forestModule = require("editor/api/forest")
+  M.pcgModule = require("editor/api/proceduralContentGenerator")
 
   M.guiModule.initialize(M)
   M.coreModule.initialize(M)
@@ -324,6 +325,7 @@ local function initializeModules()
   M.sketchModule.initialize(M)
   M.terrainModule.initialize(M)
   M.forestModule.initialize(M)
+  M.pcgModule.initialize(M)
 
   M.modulesInitialized = true
   extensions.hook("onEditorModulesInitialized")
@@ -577,6 +579,7 @@ local function setEditorActiveInternal(activate, safeMode)
 end
 
 local frameCount = 0
+local splashFrames = 3 -- imgui needs a few frames before a newly created window and its texture actually get drawn
 local doActivate = false
 local toggleEditorActive = false
 local wantSafeMode = false
@@ -631,28 +634,36 @@ end
 local function onUpdate()
   -- if there is a toggle editor request
   if toggleEditorActive then
-    -- on first request frame, show the loading popup
-    if frameCount < 1 then
+    -- on the first request frames, show the loading popup
+    if frameCount < splashFrames then
       -- show it only we want to activate editor
       if doActivate then
-        -- editor preferences (and the final UI scale) are not loaded yet, so we cannot rely on
-        -- imgui.uiscale[0] here. Size the splash from the window's own DPI scale, queried inside the
-        -- window where it is valid. Sizing it before Begin used GetWindowDpiScale() outside any window,
-        -- which returned a stale/leftover value and made the splash scale randomly between runs.
+        --TODO: we need to get editor UI scale somehow, at this point preferences are not loaded yet
+        -- change UI scale to default, so text fits in the loading window
+        imguiUtils.changeUIScale(1)
         local pos = imgui.ImVec2(imgui.GetMainViewport().Pos.x + imgui.GetMainViewport().Size.x / 2, imgui.GetMainViewport().Pos.y + imgui.GetMainViewport().Size.y / 2)
         if not splashImage then splashImage = imguiUtils.texObj("/core/art/gui/images/editorSplash.png") end
         local imageSize = splashImage.size
 
         imgui.SetNextWindowPos(pos, imgui.Cond_Appearing, imgui.ImVec2(0.5, 0.5))
-        imgui.Begin("loadingEditorWnd", nil, imgui.WindowFlags_NoScrollbar + imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoResize + imgui.WindowFlags_NoMove + imgui.WindowFlags_AlwaysAutoResize)
+        imgui.SetNextWindowSize(imgui.ImVec2(imgui.uiscale[0] * (imageSize.x + 50), imgui.uiscale[0] * (imageSize.y + 30)), imgui.Cond_Always)
+        imgui.Begin("loadingEditorWnd", nil, imgui.WindowFlags_NoScrollbar + imgui.WindowFlags_NoTitleBar + imgui.WindowFlags_NoResize + imgui.WindowFlags_NoMove)
 
-        local dpi = imgui.GetWindowDpiScale()
-        imgui.Image(splashImage.texId, imgui.ImVec2(dpi * imageSize.x, dpi * imageSize.y))
+        local style = imgui.GetStyle()
+        local size = imgui.uiscale[0] * imageSize.x + style.FramePadding.x * 2.0
+        local avail = imgui.GetContentRegionAvail().x
+        local off = (avail - size) * 0.5;
+
+        if off > 0.0 then
+          imgui.SetCursorPosX(imgui.GetCursorPosX() + off)
+        end
+
+        imgui.Image(splashImage.tex:getID(), imgui.ImVec2(imgui.uiscale[0] * imageSize.x, imgui.uiscale[0] * imageSize.y))
         imgui.End()
       end
       frameCount = frameCount + 1
     else
-      -- actual editor toggling after first frame of the toggling request
+      -- actual editor toggling after the splash frames of the toggling request
       toggleEditorActive = false
       frameCount = 0
       setEditorActiveInternal(doActivate, wantSafeMode)

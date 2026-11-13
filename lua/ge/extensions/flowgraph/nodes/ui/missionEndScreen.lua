@@ -183,7 +183,7 @@ function C:closeDialogue()
     --core_gamestate.setGameState('freeroam', 'freeroam', 'freeroam')
     --guihooks.trigger('MenuHide')
     --guihooks.trigger('ChangeState', 'menu')
-    guihooks.trigger('ChangeState', 'play')
+    extensions.ui_router.navigate('play')
     self.open = false
   end
 end

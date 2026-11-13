@@ -18,40 +18,41 @@ local fwdVec = vec3(0, 1, 0)
 function C:init()
   self.lastDistance = nil
   self.lastNearClipCenter = nil
-  self.useRaycast = true
+  self.rayIndex = 1
+  self.checkAllCorners = true
   self.isFilter = true
   self.hidden = true
   self.smoother = nil
   self.collidingCamDist = nil
+  self:onSettingsChanged()
+end
+
+function C:onSettingsChanged()
+  self.enabled = settings.getValue('cameraCollision', true)
 end
 
 local dirTemp = vec3()
-function C:isObstacleInFrontOfCam(rayDestinations)
+-- Catches geometry that the corner rays cannot see, one corner per call so these rays are round robined too
+function C:isObstacleInFrontOfCam(rayDestinations, cornerIdx)
+  local cornerPos = rayDestinations[cornerIdx]
   -- Test if we passed through a wall completely in one frame
   if self.lastNearClipCenter then
-    dirTemp:setSub2(rayDestinations[1], self.lastNearClipCenter)
+    dirTemp:setSub2(cornerPos, self.lastNearClipCenter)
     local rayDist = dirTemp:length()
     if castRayStatic(self.lastNearClipCenter, dirTemp, rayDist) < rayDist then
       return true
     end
   end
-  -- Test for geometry intersecting with the near clip plane
-  for i, cornerPos in ipairs(rayDestinations) do
-    local rayDest = rayDestinations[(i % 4) + 1]
-    dirTemp:setSub2(rayDest, cornerPos)
-    local dirLength = dirTemp:length()
-    local distHit = castRayStatic(cornerPos, dirTemp, dirLength)
-    if distHit < dirLength then
-      return true
-    end
-  end
-  return false
+  -- Test the near clip plane edge starting at this corner for intersecting geometry
+  dirTemp:setSub2(rayDestinations[(cornerIdx % 4) + 1], cornerPos)
+  local dirLength = dirTemp:length()
+  return castRayStatic(cornerPos, dirTemp, dirLength) < dirLength
 end
 
 local rayDestinations = {vec3(), vec3(), vec3(), vec3()}
 local camDir, camRight, camUp, dir, nearClipCenter, rayStart, newCamPos = vec3(), vec3(), vec3(), vec3(), vec3(), vec3(), vec3()
 function C:update(data)
-  if not settings.getValue('cameraCollision', true) then return end
+  if not self.enabled then return end
   local assumedNearClipDist = data.res.nearClip - safetyDistance
   camDir:setRotate(data.res.rot, fwdVec)
   camUp:setRotate(data.res.rot, upVec)
@@ -72,27 +73,37 @@ function C:update(data)
   rayDestinations[3]:set(nearClipCenter); rayDestinations[3]:setSub(camUp); rayDestinations[3]:setSub(camRight)
   rayDestinations[4]:set(nearClipCenter); rayDestinations[4]:setAdd(camUp); rayDestinations[4]:setSub(camRight)
 
-  if not self.useRaycast and self:isObstacleInFrontOfCam(rayDestinations) then
-    self.useRaycast = true
+  local closestHit = dirLength
+  local hitRegistered = false
+
+  -- Round robin: as long as nothing collides, only one corner is checked per frame. The frame one of
+  -- its rays hits something, all 4 corners are cast right away and keep being cast every frame, until
+  -- a frame comes back clean and we fall back to the round robin
+  if not self.checkAllCorners then
+    local cornerIdx = self.rayIndex
+    self.rayIndex = (cornerIdx % 4) + 1
+    rayStart:setSub2(rayDestinations[cornerIdx], dir)
+    local distHit = castRayStatic(rayStart, dir, closestHit)
+    if distHit < closestHit then
+      closestHit = distHit
+      self.checkAllCorners = true
+    else
+      self.checkAllCorners = self:isObstacleInFrontOfCam(rayDestinations, cornerIdx)
+    end
   end
 
-  local closestHit = dirLength
-  local hitRegistered
-  if self.useRaycast then
+  if self.checkAllCorners then
     -- Make 4 parallel raycasts from the targetPos to the camera pos and position the camera based on the closest hit
-    for i, cornerPos in ipairs(rayDestinations) do
-      rayStart:setSub2(cornerPos, dir)
+    for i = 1, 4 do
+      rayStart:setSub2(rayDestinations[i], dir)
       local distHit = castRayStatic(rayStart, dir, closestHit)
       if distHit < closestHit then
         closestHit = distHit
-        hitRegistered = rayStart
       end
     end
+    hitRegistered = closestHit < dirLength
+    self.checkAllCorners = hitRegistered
     closestHit = math.max(closestHit, 0.5)
-  end
-
-  if not hitRegistered then
-    self.useRaycast = false
   end
 
   if not self.smoother or not self.smoother.get then -- nil, or metatable stripped by a GE-reload deserialize
@@ -113,8 +124,10 @@ function C:update(data)
   self.lastDistance = smoothedDistance
   self.lastNearClipCenter = self.lastNearClipCenter or vec3()
   self.lastNearClipCenter:set(nearClipCenter)
-  newCamPos:set(push3(data.res.targetPos) + push3(dir):normalized() * (smoothedDistance + assumedNearClipDist))
-  if self.useRaycast then
+  newCamPos:setScaled2(dir, 1 / (dirLength + 1e-30))
+  newCamPos:setScaled(smoothedDistance + assumedNearClipDist)
+  newCamPos:setAdd(data.res.targetPos)
+  if hitRegistered then
     self.collidingCamDist = newCamPos:distance(data.res.targetPos)
   else
     self.collidingCamDist = nil

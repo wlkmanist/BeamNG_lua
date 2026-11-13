@@ -60,7 +60,7 @@ function C:processVehicles(params)
   self.processed = true
 end
 
-function C:prepareVehicle(id)
+function C:prepareVehicle(id, addDummyDriver)
   id = id or be:getPlayerVehicleID(0)
   local obj = getObjectByID(id)
   if obj then
@@ -70,10 +70,17 @@ function C:prepareVehicle(id)
       if timeObj.time >= nightStart and timeObj.time <= nightEnd then
         obj:queueLuaCommand("electrics.setLightsState(2)")
       end
-      -- TODO: Consider sunrise or sunset
     end
 
-    -- more actions can be set here depending on mission environment
+    if addDummyDriver and settings.getValue("enableSeatOccupants", true) then
+      for _, seat in ipairs(gameplay_seatOccupants.getSeats(id)) do
+        if seat.defaultPermissionMode == "driver" then
+          gameplay_seatOccupants.setDummyOccupant(id, seat.seatId)
+          gameplay_seatOccupants.setVehicleOccupantsEnabledOverride(id, true)
+          break
+        end
+      end
+    end
   end
 end
 

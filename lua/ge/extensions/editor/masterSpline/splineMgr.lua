@@ -24,17 +24,26 @@ local homologation = require('editor/masterSpline/homologation')
 local jumps = require('editor/masterSpline/jumpTables')
 local roadDesignStandards = require('editor/toolUtilities/roadDesignStandards')
 local geom = require('editor/toolUtilities/geom')
+local engineeredGeom = require('editor/toolUtilities/engineeredGeom')
+local curveWiden = require('editor/toolUtilities/curveWiden')
 local util = require('editor/toolUtilities/util')
+local session = require('editor/toolUtilities/session')
 local meshSplineLink = require('editor/meshSpline/splineMgr')
 local assemblySplineLink = require('editor/assemblySpline/splineMgr')
 local decalSplineLink = require('editor/decalSpline/splineMgr')
 local roadSplineLink = require('editor/roadSpline/groupMgr')
+local treeSplineLink = require('editor/treeSpline/splineMgr')
 
 -- Module constants.
 local abs, min, max = math.abs, math.min, math.max
 local sliderDefaults = layerMgr.getSliderDefaults()
 local roadDesignPresets = roadDesignStandards.getPresetStrings()
 local defaultRoadDesignPreset = roadDesignPresets[1]
+local engDefR = engineeredGeom.CONTROLS.radius.default
+local engDefLs = engineeredGeom.CONTROLS.transition.default
+local engDefVert = engineeredGeom.CONTROLS.vertical.default
+local engDefWidenMax = engineeredGeom.CONTROLS.widenAmount.default
+local engDefWidenRunoff = engineeredGeom.CONTROLS.widthTaper.default
 local setLinkJumpTable = jumps.setLinkJumpTable
 local setNameJumpTable = jumps.setNameJumpTable
 local createJumpTable = jumps.createJumpTable
@@ -89,6 +98,14 @@ local function addNewMasterSpline(name)
     isAutoBanking = false,
     bankStrength = sliderDefaults.defaultBankStrength,
     autoBankFalloff = sliderDefaults.defaultAutoBankFalloff,
+
+    geometryMode = 'engineered', -- default for a NEW master spline: 'engineered' (clothoid corners) flows to all layers/children. ('spline' = Catmull-Rom through nodes; old sessions backfill to spline via deserialize, below.)
+    engRadiusM = engDefR,
+    engTransM = engDefLs,
+    engVertLenM = engDefVert,
+    curveWidenMaxM = engDefWidenMax,       -- extra carriageway width through the tightest engineered corners (m, split both sides); flows into divWidths so every layer/child follows.
+    curveWidenRunoffM = engDefWidenRunoff, -- how gradually that widening eases in/out (m).
+    corners = {},                          -- sparse per-corner overrides (radiusM), created on first viewport-knob drag; kept index-aligned by splineInput.
 
     nodes = {}, -- Primary geometry arrays.
     widths = {},
@@ -154,9 +171,11 @@ end
 
 -- Updates the dirty Master Splines.
 local function updateDirtyMasterSplines(isSplineAnalysisEnabled)
+  local rebuiltAny = false -- did any spline/layer actually rebuild this pass? (-> the document has an unsaved edit).
   for i = 1, #masterSplines do
     local spline = masterSplines[i]
     if spline.isDirty then
+      rebuiltAny = true
 
       -- Check if we have less than 2 nodes - if so, clean up and skip processing
       if #spline.nodes < 2 then
@@ -172,7 +191,7 @@ local function updateDirtyMasterSplines(isSplineAnalysisEnabled)
         layerMgr.updateAllLayers(spline)
         masterSplines[i].isDirty = false
       else
-        -- Update the secondary (discretised) geometry properties.
+        -- Conform mode drops the control nodes to the terrain first; both spline and engineered sampling read the node normals from there.
         if spline.isConformToTerrain then
           local nodes, nmls = spline.nodes, spline.nmls
           local terrain = core_terrain.getTerrain()
@@ -183,13 +202,19 @@ local function updateDirtyMasterSplines(isSplineAnalysisEnabled)
               nmls[j] = geom.getTerrainNormal(node) -- Update the normal to what the local terrain has.
             end
           end
-          geom.catmullRomConformToTerrain(spline, minSplineDivisions)
-        else
-          if spline.isAutoBanking then
+        end
+        -- Engineered mode builds a clothoid centerline (draped in conform mode); spline mode keeps Catmull-Rom (+ optional auto-bank).
+        -- Either way the result lands in divPoints/divWidths/normals, which every layer/linked child consumes, so it propagates for free.
+        if not engineeredGeom.sampleInto(spline, { zMode = spline.isConformToTerrain and 'conform' or 'free', lonRes = minSplineDivisions }) then
+          if spline.isConformToTerrain then
+            geom.catmullRomConformToTerrain(spline, minSplineDivisions)
+          elseif spline.isAutoBanking then
             geom.catmullRomFreeWithBanking(spline, minSplineDivisions, spline.bankStrength)
           else
             geom.catmullRomFree(spline, minSplineDivisions)
           end
+        else
+          curveWiden.applyDivWidthWiden(spline) -- widen divWidths through tight engineered corners (no-op on gentle roads / spline mode); every layer/child follows.
         end
         geom.updateRibPointsFree(spline) -- Update the rib points.
 
@@ -202,13 +227,16 @@ local function updateDirtyMasterSplines(isSplineAnalysisEnabled)
         layerMgr.updateAllLayers(spline)
         masterSplines[i].isDirty = false
 
-        -- Update the road length.
-        masterSplines[i].roadLength = util.getPolyLength(spline.nodes)
+        -- Update the road length (engineered roads cut corners, so their true length is the built centerline, not the node polyline).
+        masterSplines[i].roadLength = spline.geometryMode == 'engineered' and util.getPolyLength(spline.divPoints) or util.getPolyLength(spline.nodes)
       end
     else
+      local layers = spline.layers
+      if layers then for li = 1, #layers do if layers[li].isDirty then rebuiltAny = true; break end end end
       layerMgr.updateOnlyDirtyLayers(spline) -- The Master Spline is not dirty, but it may contain dirty layers.
     end
   end
+  if rebuiltAny then session.markEdited('masterSpline') end -- fold this pass's edits into the Save/Save As dirty state (load guard swallows a fresh load's rebuild).
 end
 
 -- Manages the Live Optimise of the selected Master Spline only.
@@ -226,13 +254,17 @@ local function deepCopyMasterSpline(spline) return buffer.decode(buffer.encode(s
 -- Deep copies the full master spline state.
 local function deepCopyAllMasterSplines() return buffer.decode(buffer.encode(masterSplines)) end
 
+-- Recompute the Master Spline id -> index map (called by the shared session helper after a load appends the loaded splines).
+local function recomputeIdMap() util.computeIdToIdxMap(masterSplines, splineMap) end
+
 -- Captures the state of all linked splines across all master splines.
 local function captureLinkedSplinesState()
   local linkedSplines = {
     meshSpline = {},
     assemblySpline = {},
     decalSpline = {},
-    roadSpline = {}
+    roadSpline = {},
+    treeSpline = {}
   }
 
   -- Collect all linked spline IDs by type
@@ -240,6 +272,7 @@ local function captureLinkedSplinesState()
   local assemblySplineIds = {}
   local decalSplineIds = {}
   local roadSplineIds = {}
+  local treeSplineIds = {}
 
   for _, masterSpline in ipairs(masterSplines) do
     for _, layer in ipairs(masterSpline.layers) do
@@ -252,6 +285,8 @@ local function captureLinkedSplinesState()
           table.insert(decalSplineIds, layer.linkedSplineId)
         elseif layer.linkType == roadSplineLink.getToolPrefixStr() then
           table.insert(roadSplineIds, layer.linkedSplineId)
+        elseif layer.linkType == treeSplineLink.getToolPrefixStr() then
+          table.insert(treeSplineIds, layer.linkedSplineId)
         end
       end
     end
@@ -294,6 +329,15 @@ local function captureLinkedSplinesState()
     end
   end
 
+  local treeSplines = treeSplineLink.getTreeSplines()
+  local treeSplineMap = treeSplineLink.getSplineMap()
+  for _, id in ipairs(treeSplineIds) do
+    local idx = treeSplineMap[id]
+    if idx and treeSplines[idx] then
+      table.insert(linkedSplines.treeSpline, treeSplineLink.deepCopyTreeSpline(treeSplines[idx]))
+    end
+  end
+
   return linkedSplines
 end
 
@@ -308,11 +352,14 @@ end
 -- Splits the given Master Spline at the selected node index.
 local function splitMasterSpline(spline, splineIdx, selectedNodeIdx)
   if spline.isLoop then -- To split a loop, we need to re-place all the primary geometry starting at the split point then going round the cycle.
-    spline.nodes, spline.widths, spline.nmls = geom.splitLoopSplineGeometry(spline.nodes, spline.widths, spline.nmls, selectedNodeIdx)
+    local cornersNew
+    spline.nodes, spline.widths, spline.nmls, cornersNew = geom.splitLoopSplineGeometry(spline.nodes, spline.widths, spline.nmls, selectedNodeIdx, spline.corners)
+    spline.corners = cornersNew -- keep per-corner overrides (radius etc.) node-aligned; geom returns a dense array.
     spline.isLoop = false
     spline.isDirty = true
-  else -- Split nodes and widths.
-    local nodes1, widths1, nmls1, nodes2, widths2, nmls2 = geom.splitSplineGeometry(spline.nodes, spline.widths, spline.nmls, selectedNodeIdx)
+  else -- Split nodes and widths (carry the per-corner overrides through so each half keeps its own settings, on the right nodes).
+    local nodes1, widths1, nmls1, nodes2, widths2, nmls2, corners1, corners2 =
+      geom.splitSplineGeometry(spline.nodes, spline.widths, spline.nmls, selectedNodeIdx, spline.corners)
 
     -- Prepare copies.
     local spline1 = deepCopyMasterSpline(spline)
@@ -322,6 +369,7 @@ local function splitMasterSpline(spline, splineIdx, selectedNodeIdx)
     spline1.nodes = nodes1
     spline1.widths = widths1
     spline1.nmls = nmls1
+    spline1.corners = corners1 -- keep this half's per-corner overrides (dense, node-aligned).
     spline1.isDirty = true
     -- Clear layers - we'll handle them properly below
     spline1.layers = {}
@@ -333,6 +381,7 @@ local function splitMasterSpline(spline, splineIdx, selectedNodeIdx)
     spline2.nodes = nodes2
     spline2.widths = widths2
     spline2.nmls = nmls2
+    spline2.corners = corners2 -- keep this half's per-corner overrides (dense, node-aligned).
     spline2.isDirty = true
 
     -- Clear layers - we'll handle them properly below.
@@ -379,6 +428,13 @@ local function splitMasterSpline(spline, splineIdx, selectedNodeIdx)
           local idx = roadSplineMap[originalLayer.linkedSplineId]
           if idx and roadSplines[idx] then
             existingSpline = roadSplines[idx]
+          end
+        elseif originalLayer.linkType == treeSplineLink.getToolPrefixStr() then
+          local treeSplines = treeSplineLink.getTreeSplines()
+          local treeSplineMap = treeSplineLink.getSplineMap()
+          local idx = treeSplineMap[originalLayer.linkedSplineId]
+          if idx and treeSplines[idx] then
+            existingSpline = treeSplines[idx]
           end
         end
 
@@ -433,6 +489,17 @@ local function splitMasterSpline(spline, splineIdx, selectedNodeIdx)
             roadSplineLink.addGroupToGroupArray(spline1Copy)
             roadSplineLink.addGroupToGroupArray(spline2Copy)
             util.computeIdToIdxMap(roadSplineLink.getGroups(), roadSplineLink.getIdToIdxMap())
+          elseif originalLayer.linkType == treeSplineLink.getToolPrefixStr() then
+            spline1Copy = treeSplineLink.deepCopyTreeSpline(existingSpline)
+            spline2Copy = treeSplineLink.deepCopyTreeSpline(existingSpline)
+            -- Generate new ids for the copied splines.
+            spline1Copy.id = Engine.generateUUID()
+            spline2Copy.id = Engine.generateUUID()
+            -- Add to tree spline arrays (tree splines plant Forest items, so there is no scene-tree folder to reset).
+            local treeSplines = treeSplineLink.getTreeSplines()
+            treeSplines[#treeSplines + 1] = spline1Copy
+            treeSplines[#treeSplines + 1] = spline2Copy
+            util.computeIdToIdxMap(treeSplines, treeSplineLink.getSplineMap())
           end
 
           if spline1Copy and spline2Copy then
@@ -478,7 +545,8 @@ local function joinMasterSplines(splineIdx1, nodeIdx1, splineIdx2, nodeIdx2)
   -- Determine join case and concatenate in correct order.
   local n1, w1, nm1 = spline1.nodes, spline1.widths, spline1.nmls
   local n2, w2, nm2 = spline2.nodes, spline2.widths, spline2.nmls
-  local nodesNew, widthsNew, nmlsNew = geom.joinSplineGeometry(n1, w1, nm1, nodeIdx1, n2, w2, nm2, nodeIdx2)
+  -- Carry both splines' per-corner overrides through the join, index-aligned to the joined node list.
+  local nodesNew, widthsNew, nmlsNew, cornersNew = geom.joinSplineGeometry(n1, w1, nm1, nodeIdx1, n2, w2, nm2, nodeIdx2, spline1.corners, spline2.corners)
   if not nodesNew then
     return -- Early return if invalid node indices.
   end
@@ -487,6 +555,7 @@ local function joinMasterSplines(splineIdx1, nodeIdx1, splineIdx2, nodeIdx2)
   spline1.nodes = nodesNew
   spline1.widths = widthsNew
   spline1.nmls = nmlsNew
+  spline1.corners = cornersNew -- keep both splines' per-corner overrides (dense, node-aligned).
   spline1.isLoop = false
   spline1.isDirty = true
 
@@ -526,6 +595,14 @@ local function serializeMasterSpline(spline)
     isAutoBanking = spline.isAutoBanking,
     bankStrength = spline.bankStrength,
     autoBankFalloff = spline.autoBankFalloff,
+    -- Engineered (clothoid-corner) geometry: mode + design lengths + corner widening + the sparse per-corner radius overrides.
+    geometryMode = spline.geometryMode,
+    engRadiusM = spline.engRadiusM,
+    engTransM = spline.engTransM,
+    engVertLenM = spline.engVertLenM,
+    curveWidenMaxM = spline.curveWidenMaxM,
+    curveWidenRunoffM = spline.curveWidenRunoffM,
+    corners = spline.corners,
     nodes = serializedNodes,
     widths = spline.widths or {},
     nmls = serializedNmls,
@@ -570,6 +647,14 @@ local function deserializeMasterSpline(data)
     isAutoBanking = (data.isAutoBanking == true or data.isAutoBanking == 1) and true or false,
     bankStrength = data.bankStrength or 1.0,
     autoBankFalloff = data.autoBankFalloff or sliderDefaults.defaultAutoBankFalloff,
+
+    geometryMode = data.geometryMode or 'spline', -- clothoid-corners opt-in; backfills to spline for sessions saved before it existed.
+    engRadiusM = data.engRadiusM or engDefR,
+    engTransM = data.engTransM or engDefLs,
+    engVertLenM = data.engVertLenM or engDefVert,
+    curveWidenMaxM = data.curveWidenMaxM or engDefWidenMax,
+    curveWidenRunoffM = data.curveWidenRunoffM or engDefWidenRunoff,
+    corners = data.corners or {}, -- sparse per-corner radius overrides; kept index-aligned by splineInput.
 
     roadLength = 0.0,
 
@@ -643,6 +728,13 @@ local function lightMasterSplineUndoRedoCore(data)
     spline.isAutoBanking = data.isAutoBanking
     spline.bankStrength = data.bankStrength
     spline.autoBankFalloff = data.autoBankFalloff or sliderDefaults.defaultAutoBankFalloff
+    spline.geometryMode = data.geometryMode
+    spline.engRadiusM = data.engRadiusM
+    spline.engTransM = data.engTransM
+    spline.engVertLenM = data.engVertLenM
+    spline.curveWidenMaxM = data.curveWidenMaxM
+    spline.curveWidenRunoffM = data.curveWidenRunoffM
+    spline.corners = data.corners and buffer.decode(buffer.encode(data.corners)) or {} -- deep copy so a later knob drag can't alias the stored snapshot.
     spline.splineAnalysisMode = data.splineAnalysisMode
     spline.homologationPreset = data.homologationPreset
     spline.isOptimising = data.isOptimising
@@ -704,6 +796,13 @@ local function singleMasterSplineUndoRedoCore(data)
     spline.isAutoBanking = data.isAutoBanking
     spline.bankStrength = data.bankStrength
     spline.autoBankFalloff = data.autoBankFalloff
+    spline.geometryMode = data.geometryMode
+    spline.engRadiusM = data.engRadiusM
+    spline.engTransM = data.engTransM
+    spline.engVertLenM = data.engVertLenM
+    spline.curveWidenMaxM = data.curveWidenMaxM
+    spline.curveWidenRunoffM = data.curveWidenRunoffM
+    spline.corners = data.corners and buffer.decode(buffer.encode(data.corners)) or {} -- deep copy so a later knob drag can't alias the stored snapshot.
 
     spline.splineAnalysisMode = data.splineAnalysisMode
     spline.homologationPreset = data.homologationPreset -- The homologation preset.
@@ -792,6 +891,16 @@ local function transMasterSplineUndoRedoCore(stateData)
         util.computeIdToIdxMap(roadSplineLink.getGroups(), roadSplineLink.getIdToIdxMap())
       end
     end
+
+    -- Restore tree splines
+    for _, treeSpline in ipairs(stateData.linkedSplines.treeSpline or {}) do
+      if not treeSplineLink.isLinked(treeSpline.id) then
+        local spline = treeSplineLink.deepCopyTreeSpline(treeSpline)
+        local treeSplines = treeSplineLink.getTreeSplines()
+        treeSplines[#treeSplines + 1] = spline
+        util.computeIdToIdxMap(treeSplines, treeSplineLink.getSplineMap())
+      end
+    end
   end
 
   -- Step 3: Remove and restore master splines.
@@ -823,8 +932,8 @@ local function transMasterSplineUndoRedoCore(stateData)
 end
 
 -- Handles the undo/redo for trans-Master Spline edits.
-local function transMasterSplineEditUndo(splinesData) 
-  transMasterSplineUndoRedoCore(splinesData.old) 
+local function transMasterSplineEditUndo(splinesData)
+  transMasterSplineUndoRedoCore(splinesData.old)
 end
 
 -- Redefine the redo functions to include enhanced functionality.
@@ -835,7 +944,7 @@ local function singleMasterSplineEditRedo(data)
   local spline = masterSplines[splineMap[data.new.id]]
   if spline then
     for _, layer in ipairs(spline.layers) do
-      if layer.linkedSplineId and not (meshSplineLink.isLinked(layer.linkedSplineId) or assemblySplineLink.isLinked(layer.linkedSplineId) or decalSplineLink.isLinked(layer.linkedSplineId) or roadSplineLink.isLinked(layer.linkedSplineId)) then
+      if layer.linkedSplineId and not (meshSplineLink.isLinked(layer.linkedSplineId) or assemblySplineLink.isLinked(layer.linkedSplineId) or decalSplineLink.isLinked(layer.linkedSplineId) or roadSplineLink.isLinked(layer.linkedSplineId) or treeSplineLink.isLinked(layer.linkedSplineId)) then
         -- The linked spline was deleted, create a new default one.
         if createJumpTable[layer.linkType] then
           createJumpTable[layer.linkType]()
@@ -856,6 +965,130 @@ end
 
 local function transMasterSplineEditRedo(splinesData)
   transMasterSplineUndoRedoCore(splinesData.new)
+end
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+-- Bundled Save/Load Session (portable .json). Unlike the tool's level persistence (master-only), a session bundles each master
+-- PLUS every child spline it links (road/mesh/assembly/decal), serialised JSON-safe via each child tool's own session serialiser.
+-- On load we mint FRESH ids for every master and child and rewrite the layer links through an old->new map, so a load can never
+-- collide with existing content (repeat loads / merge are safe) and never leaves a dead 'goto' link. Undo/redo reuse the tool's
+-- full-graph trans core.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- Per-child-tool adapter for one linked child of a given layer.linkType (keyed by each tool's prefix string). serialize/deserialize/
+-- insert mirror EXACTLY what that child tool's own Save/Load Session does (deserialize with isCreateObject=true, then append +
+-- recompute id map), so a bundled child is created identically to a per-tool load.
+local function makeAdapter(getList, getMap, serialize, deserializeRaw)
+  return {
+    getList = getList, getMap = getMap, serialize = serialize,
+    deserialize = function(t) return deserializeRaw(t, true) end,
+    insert = function(item)
+      local l = getList(); l[#l + 1] = item
+      util.computeIdToIdxMap(l, getMap())
+    end,
+  }
+end
+local childAdapters = {
+  [meshSplineLink.getToolPrefixStr()] = makeAdapter(meshSplineLink.getMeshSplines, meshSplineLink.getSplineMap,
+    meshSplineLink.serializeMeshSplineToTable, meshSplineLink.deserializeMeshSpline),
+  [assemblySplineLink.getToolPrefixStr()] = makeAdapter(assemblySplineLink.getAssemblySplines, assemblySplineLink.getSplineMap,
+    assemblySplineLink.serializeAssemblySplineToTable, assemblySplineLink.deserializeAssemblySpline),
+  [decalSplineLink.getToolPrefixStr()] = makeAdapter(decalSplineLink.getDecalSplines, decalSplineLink.getSplineMap,
+    decalSplineLink.serializeDecalSplineToTable, decalSplineLink.deserializeDecalSpline),
+  [roadSplineLink.getToolPrefixStr()] = makeAdapter(roadSplineLink.getGroups, roadSplineLink.getIdToIdxMap,
+    roadSplineLink.serializeGroupToTable, roadSplineLink.deserializeGroup),
+  [treeSplineLink.getToolPrefixStr()] = makeAdapter(treeSplineLink.getTreeSplines, treeSplineLink.getSplineMap,
+    treeSplineLink.serializeTreeSplineToTable, treeSplineLink.deserializeTreeSpline),
+}
+
+-- getState for the shared session helper: bundle all masters + each linked child (deduped by id), all JSON-safe.
+local function serializeSessionState()
+  local state = { masterSplines = {}, children = {} }
+  for i = 1, #masterSplines do state.masterSplines[i] = serializeMasterSpline(masterSplines[i]) end
+
+  local seen = {}
+  for _, m in ipairs(masterSplines) do
+    for _, layer in ipairs(m.layers) do
+      local ad = layer.linkedSplineId and layer.linkType and childAdapters[layer.linkType]
+      if ad and not seen[layer.linkedSplineId] then
+        seen[layer.linkedSplineId] = true
+        local idx = ad.getMap()[layer.linkedSplineId]
+        local item = idx and ad.getList()[idx]
+        if item then
+          state.children[layer.linkType] = state.children[layer.linkType] or {}
+          table.insert(state.children[layer.linkType], ad.serialize(item))
+        end
+      end
+    end
+  end
+  return state
+end
+
+-- loadWhole for the shared session helper. Mints fresh ids for every master + child, remaps the layer links, inserts the children
+-- into their tools and the masters here, then relinks. `replace` first wipes the whole current master graph (masters + their linked
+-- children). Returns the number of masters loaded.
+local function loadSessionState(state, replace)
+  if type(state) ~= 'table' then return 0 end
+  local masters = state.masterSplines or {}
+  local children = state.children or {}
+
+  -- 1) Fresh id for every bundled child and master (old -> new), so nothing can collide with existing content.
+  local idMap = {}
+  for _, list in pairs(children) do
+    for _, c in ipairs(list) do if c.id then idMap[c.id] = Engine.generateUUID() end end
+  end
+  for _, m in ipairs(masters) do if m.id then idMap[m.id] = Engine.generateUUID() end end
+
+  -- 2) Replace wipes the current master graph (deletes masters + their linked children).
+  if replace then removeAllMasterSplines() end
+
+  -- 3) Insert the children under their new ids.
+  for linkType, list in pairs(children) do
+    local ad = childAdapters[linkType]
+    if ad then
+      for _, c in ipairs(list) do
+        if c.id then c.id = idMap[c.id] or c.id end
+        ad.insert(ad.deserialize(c))
+      end
+    end
+  end
+
+  -- 4) Insert the masters under their new ids, with layer links remapped (dropping any whose child was not bundled).
+  local count = 0
+  for _, m in ipairs(masters) do
+    if m.id then m.id = idMap[m.id] or m.id end
+    if m.layers then
+      for _, layer in ipairs(m.layers) do
+        layer.id = Engine.generateUUID() -- fresh layer id (keys UI widgets) so repeat/merge loads never collide.
+        if layer.linkedSplineId then
+          local mapped = idMap[layer.linkedSplineId]
+          if mapped then
+            layer.linkedSplineId = mapped
+          else -- child not present in the bundle: drop the link so there is never a dead 'goto'.
+            layer.linkedSplineId, layer.linkType, layer.isLink = nil, nil, false
+          end
+        end
+      end
+    end
+    addToMasterSplineArray(deserializeMasterSpline(m))
+    count = count + 1
+  end
+  util.computeIdToIdxMap(masterSplines, splineMap)
+
+  -- 5) Relink every layer to its (remapped) child and mark everything dirty for a rebuild.
+  for i = 1, #masterSplines do
+    local spline = masterSplines[i]
+    for _, layer in ipairs(spline.layers) do
+      if layer.linkedSplineId and layer.linkType and setLinkJumpTable[layer.linkType] then
+        setLinkJumpTable[layer.linkType](layer.linkedSplineId, spline.id, true)
+        layer.isDirty = true
+      end
+    end
+    spline.isDirty = true
+    setLinkedSplinesDirty(spline)
+  end
+
+  return count
 end
 
 -- Layer-specific undo/redo operations for adding layers.
@@ -1016,7 +1249,9 @@ local function unlinkAllSplines(masterSpline)
   local layers = masterSpline.layers
   for i = 1, #layers do
     local layer = layers[i]
-    unlinkJumpTable[layer.linkType](layer.linkedSplineId) -- Unlink the spline from the Master Spline.
+    if layer.linkType and unlinkJumpTable[layer.linkType] then
+      unlinkJumpTable[layer.linkType](layer.linkedSplineId) -- Unlink the spline from the Master Spline (skip generator layers).
+    end
   end
 end
 
@@ -1084,6 +1319,7 @@ M.convertPathsToMasterSplines =                         convertPathsToMasterSpli
 
 M.serializeMasterSpline =                               serializeMasterSpline
 M.deserializeMasterSpline =                             deserializeMasterSpline
+M.recomputeIdMap =                                      recomputeIdMap
 
 M.lightSplineUndo =                                     lightSplineUndo
 M.lightSplineRedo =                                     lightSplineRedo
@@ -1100,5 +1336,8 @@ M.transMasterSplineEditRedo =                           transMasterSplineEditRed
 
 M.updateLinkedSplineName =                              updateLinkedSplineName
 M.unlinkAllSplines =                                    unlinkAllSplines
+
+M.serializeSessionState =                               serializeSessionState
+M.loadSessionState =                                    loadSessionState
 
 return M

@@ -23,7 +23,7 @@ M.state = {
 
 local legendActions = {
   {action = "nodegrabberPadMode"},
-  {action = "nodegrabberPadGrab"},
+  {action = "nodegrabberGrab"},
   {action = "nodegrabberStrength"},
   {action = "nodegrabberAction"},
 }
@@ -107,15 +107,15 @@ local function switchToRelativeCamera()
 end
 
 local function restorePreviousCamera()
-  if M.state.previousRelativeData then
-    local p = M.state.previousRelativeData
+  local p = M.state.previousRelativeData
+  if p then
     local rel = core_camera.getCameraDataById(p.vehicleId).relative
     if p.pos then rel:setOffset(p.pos) else rel.pos = nil end
     if p.rot then rel:setRotation(p.rot) else rel.rot = nil end
     rel:setFOV(p.fov)
     M.state.previousRelativeData = nil
   end
-  if M.state.previousCameraName then core_camera.setByName(0, M.state.previousCameraName, false) end
+  if M.state.previousCameraName and p then core_camera.setVehicleCameraByNameWithId(p.vehicleId, M.state.previousCameraName, false) end
   M.state.previousCameraName = nil
 end
 
@@ -177,6 +177,14 @@ function M.toggleActive()
   setActive(not M.state.active)
 end
 
+function M.grab(value, deviceName)
+  if string.startswith(deviceName, "mouse") then
+    be.nodeGrabber:onMouseButton(value ~= 0)
+  else
+    M.setGrab(value)
+  end
+end
+
 function M.setGrab(value)
   local grabbing = value > 0
   if grabbing then
@@ -211,17 +219,42 @@ function M.onUpdate(dtReal)
   M.addStrength(strengthAxis * 50 * dtReal)
 end
 
-function M.onSerialize()
+local function resetInteraction()
+  -- Mouse activation is independent of gamepad mode. Clear both when the
+  -- interaction ends, including a pending mouse press with no grabbed node.
+  be.nodeGrabber:onMouseButton(false)
+  M.state.grabbing = false
   M.setMouseActive(false)
+  setActive(false)
+  strengthAxis = 0
+  restoreStrength()
+  be.nodeGrabber:renderNodes(false)
+  be.nodeGrabber:setControllerMode(false)
+  setMouseUiVisible(false)
+  syncActionMap()
+end
+
+function M.onSerialize()
+  resetInteraction()
   return M.state
 end
 
--- automatically deactivate gamepad nodegrabber on certain events
-function M.onExtensionUnloaded()                   setActive(false) end
-function M.onCefVisibilityChanged(cefVisible)      if not cefVisible then setActive(false) end end
-function M.onVehicleResetted(vehicleId)            if M.state.active and vehicleId == M.state.vehId then setActive(false) end end
-function M.onBeforeVehicleReplaced(vehicleId)      if M.state.active and vehicleId == M.state.vehId then setActive(false) end end
-function M.onDespawnObject(vehicleId, isReloading) if M.state.active and vehicleId == M.state.vehId and isReloading then setActive(false) end end
+-- Cancel both input modes so a missed release cannot survive a UI/vehicle transition.
+function M.onExtensionUnloaded()                   resetInteraction() end
+function M.onClientEndMission()                    resetInteraction() end
+function M.onCefVisibilityChanged(cefVisible)      if not cefVisible then resetInteraction() end end
+function M.onMenuActionMapEnabled(enabled)         if enabled then resetInteraction() end end
+local function resetVehicleInteraction(vehicleId)
+  if vehicleId == M.state.vehId or vehicleId == be:getPlayerVehicleID(0) then resetInteraction() end
+end
+function M.onVehicleResetted(vehicleId)            resetVehicleInteraction(vehicleId) end
+function M.onBeforeVehicleReplaced(vehicleId)      resetVehicleInteraction(vehicleId) end
+function M.onDespawnObject(vehicleId, isReloading) if isReloading then resetVehicleInteraction(vehicleId) end end
+function M.onActionFilterUpdated()
+  if core_input_actionFilter.isActionBlocked('nodegrabberRender') or core_input_actionFilter.isActionBlocked('nodegrabberGrab') then
+    resetInteraction()
+  end
+end
 function M.onCameraModeChanged(cameraName)         if M.state.active and not M.state.grabbing and not M.state.mouseActive and cameraName ~= "relative" then if cameraName ~= M.state.previousCameraName then M.state.previousCameraName = nil end setActive(false) end end
 function M.onGlobalCameraSet(cameraName)           if M.state.active and not M.state.grabbing and not M.state.mouseActive and cameraName then M.state.previousCameraName = nil setActive(false) end end
 

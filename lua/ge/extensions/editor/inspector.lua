@@ -269,8 +269,8 @@ local function getNightLightingFieldValue(objectId, fieldName, arrayIndex)
   local obj = scenetree.findObjectById(objectId)
   arrayIndex = arrayIndex or 0
   if obj and obj.getDynDataFieldbyName then
-    local ok, value = pcall(obj.getDynDataFieldbyName, obj, fieldName, arrayIndex)
-    if ok and value ~= nil and tostring(value) ~= "" then
+    local value = obj:getDynDataFieldbyName(fieldName, arrayIndex)
+    if value ~= nil and tostring(value) ~= "" then
       return tostring(value)
     end
   end
@@ -298,10 +298,7 @@ end
 
 local function isNightLightingLightObject(obj)
   if not obj then return false end
-  if obj.isSubClassOf then
-    local ok, result = pcall(obj.isSubClassOf, obj, "LightBase")
-    if ok and result == true then return true end
-  end
+  if obj.isSubClassOf and obj:isSubClassOf("LightBase") then return true end
   local className = obj.getClassName and obj:getClassName() or obj.className or ""
   return className == "PointLight" or className == "SpotLight"
 end
@@ -1661,8 +1658,8 @@ local function resolveCookieTexturePath(path)
   end
 
   if FS and FS.isLinkFile and FS:isLinkFile(p) then
-    local ok, link = pcall(jsonReadFile, p .. ".link")
-    if ok and type(link) == "table" and link.path and link.path ~= "" then
+    local link = jsonReadFile(p .. ".link")
+    if type(link) == "table" and link.path and link.path ~= "" then
       p = tostring(link.path):gsub("\\", "/")
       if FS and p:sub(1, 1) ~= "/" and FS:fileExists("/" .. p) then
         p = "/" .. p
@@ -1687,8 +1684,8 @@ local function readIESCookieJson(cookieTexturePath)
     return nil, jsonPath, tex
   end
 
-  local ok, data = pcall(jsonReadFile, jsonPath)
-  if not ok or type(data) ~= "table" then
+  local data = jsonReadFile(jsonPath)
+  if type(data) ~= "table" then
     return nil, jsonPath, tex
   end
 

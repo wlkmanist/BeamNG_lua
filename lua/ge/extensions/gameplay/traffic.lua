@@ -28,6 +28,22 @@ local spawnProcess = {}
 local spawnPointPos, spawnPointDirVec = vec3(), vec3()
 local tempVec = vec3()
 local vars, focus
+local trafficPassengerMesh = "traffic_passenger"
+local maxTrafficPassengerViewBits = 8
+
+local function updateSimpleTrafficPassengerVisibility(vehicle)
+  if not vehicle or vehicle:getJBeamFilename() ~= "simple_traffic" then return end
+  local hidden = not settings.getValue("enableSeatOccupants", true)
+  for bit = 0, maxTrafficPassengerViewBits - 1 do
+    vehicle:setMeshHiddenInRenderView(trafficPassengerMesh, bit, hidden)
+  end
+end
+
+local function updateAllSimpleTrafficPassengerVisibility()
+  for _, vehicle in ipairs(getAllVehicles()) do
+    updateSimpleTrafficPassengerVisibility(vehicle)
+  end
+end
 
 local auxiliaryData = { -- additional data for traffic
   activeChanged = false, -- active state changed flag
@@ -188,7 +204,7 @@ local function useReservedVehicle(providerName, count, onClaim, filter)
       if vehPool then vehPool:setVeh(id, true, true) end -- forceInsert: the active pool is usually full, so guarantee activation
       table.insert(claimed, id)
       --log('I', logTag, string.format('Put reserved vehicle %d into service for provider "%s"', id, providerName))
-      if #claimed >= count then break end
+      if claimed[count] then break end
     end
   end
   return claimed
@@ -251,9 +267,8 @@ end
 
 local function getAmountFromSettings() -- gets saved or calculated amount of vehicles
   local amount = settings.getValue('trafficAmount') -- get amount from gameplay settings
-  if amount == 0 then
-    setMaxVehicleAmountForTraffic() -- fix traffic amount if zero
-    amount = settings.getValue('trafficAmount') -- get fixed amount
+  if amount == 0 then -- use CPU-based value
+    amount = getMaxVehicleAmount(10)
   end
   return amount
 end
@@ -263,16 +278,20 @@ local function getIdealSpawnAmount(amount, enforceLimit) -- gets the ideal amoun
     amount = getAmountFromSettings()
   end
 
-  local vehCount = 0
   if enforceLimit then -- if true, subtracts the current active vehicle count
+    local vehCount = 0
     for _, veh in ipairs(getAllVehiclesByType()) do
       if veh.isParked ~= 'true' and veh:getActive() then -- ignore parked vehicles and inactive vehicles
         vehCount = vehCount + 1
       end
     end
+
+    if vehCount > 0 then
+      amount = amount - vehCount + 1 -- plus one for player vehicle
+    end
   end
 
-  return amount - vehCount
+  return amount
 end
 
 local function getState() -- returns traffic system state
@@ -622,13 +641,17 @@ end
 
 local function processNextSpawn(id, ignorePool) -- processes the next vehicle respawn action
   if not next(map.getMap().nodes) then return end
-  if traffic[id] and traffic[id].reserved and not traffic[id].claimed then -- a returned reserve: park it dormant instead of respawning
+
+  local veh = traffic[id]
+  veh:onActiveDone()
+
+  if veh.reserved and not veh.claimed then -- a returned reserve: park it dormant instead of respawning
     setVehToDormant(id)
     return
   end
   if not vars.enableRespawn then
-    if traffic[id].state ~= 'active' then
-      traffic[id]:onRefresh() -- refreshes the vehicle in place
+    if veh.state ~= 'active' then
+      veh:onRefresh() -- refreshes the vehicle in place
       return
     end
   end
@@ -637,7 +660,7 @@ local function processNextSpawn(id, ignorePool) -- processes the next vehicle re
   local oldId, newId = id, id
   local tempId
 
-  if not ignorePool and traffic[id].enableAutoPooling then
+  if not ignorePool and veh.enableAutoPooling then
     tempId = getNextVehFromPool()
     if tempId then
       if #vehPool.activeVehs < vehPool.maxActiveAmount then -- amount of active vehicles is less than the expected limit
@@ -649,7 +672,6 @@ local function processNextSpawn(id, ignorePool) -- processes the next vehicle re
   end
 
   newPos, newRot = getNextSpawnPoint(newId)
-  local veh = traffic[newId]
   if newPos then
     vehPool:setVeh(newId, true)
     respawnVehicle(newId, newPos, newRot)
@@ -680,6 +702,7 @@ local function resetTrafficVars() -- resets traffic variables to default
     aiAware = 'auto',
     aiDebug = 'off',
     enableRespawn = true, -- master respawn state; if false, disables all methods of respawning vehicles
+    enableDynamicValues = true, -- enhances traffic density by applying dynamic distance and direction scattering
     enableRandomEvents = false -- enables events such as police randomly chasing AI suspects
   }
 
@@ -756,44 +779,59 @@ local function insertTraffic(id, ignoreAi, ignoreVehPool) -- inserts a new vehic
   -- ignoreAi prevents AI and respawn logic from getting applied to the given vehicle
   -- ignoreVehPool prevents the vehicle from becoming deactivated due to the vehicle pooling system (maybe needs another way to handle this)
   local obj = getObjectByID(id)
+  if not obj then
+    log('E', logTag, string.format('Vehicle not found: %d', id))
+    return
+  end
+  updateSimpleTrafficPassengerVisibility(obj)
 
-  if obj and not traffic[id] then
-    traffic[id] = trafficVehicle({id = id})
-    if not traffic[id] then -- traffic vehicle object creation failed
+  if not traffic[id] then
+    local newVeh = trafficVehicle({id = id})
+    if not newVeh then -- traffic vehicle object creation failed
       return
     end
 
-    if not ignoreAi then
-      table.insert(trafficAiVehsList, id)
-      gameplay_walk.addVehicleToBlacklist(id)
-
-      obj:setDynDataFieldbyName('isTraffic', 0, 'true') -- this can be used by other systems to quickly check if this vehicle is only meant for traffic
-      obj.playerUsable = settings.getValue('trafficEnableSwitching') and true or false
-
-      if not vehPool then
-        createTrafficPool()
-      end
-      if not ignoreVehPool then
-        vehPool:insertVeh(id)
-      end
-
-      traffic[id]:setAiMode(obj.aiMode or vars.aiMode) -- object ai mode can overwrite traffic default ai mode
+    newVeh:postInit()
+    if not newVeh.isVehicle then -- traffic vehicle is not valid
+      return
     end
 
-    local meta = obj:getDynDataFieldbyName('spawnMeta', 0)
-    if meta then
-      local providerName = meta:match('^reserved:(.+)')
-      if providerName then
-        traffic[id].reserved = providerName
-        if not traffic[id].claimed then
-          traffic[id].enableRespawn = false
-          traffic[id].enableAutoPooling = false
-          traffic[id].activeProbability = 0
-        end
-      end
+    traffic[id] = newVeh
+  end
+
+  if not ignoreAi then
+    gameplay_walk.addVehicleToBlacklist(id)
+
+    obj:setDynDataFieldbyName('isTraffic', 0, 'true') -- this can be used by other systems to quickly check if this vehicle is only meant for traffic
+    obj.playerUsable = settings.getValue('trafficEnableSwitching') and true or false
+
+    if not vehPool then
+      createTrafficPool()
+    end
+    if not ignoreVehPool and not vehPool.allVehs[id] then
+      vehPool:insertVeh(id)
     end
 
-    trafficIdsSorted = tableKeysSorted(traffic)
+    traffic[id]:setAiMode(obj.aiMode or vars.aiMode) -- object ai mode can overwrite traffic default ai mode
+  end
+
+  local meta = obj:getDynDataFieldbyName('spawnMeta', 0)
+  if meta then
+    local providerName = meta:match('^reserved:(.+)')
+    if providerName then
+      traffic[id].reserved = providerName
+      if not traffic[id].claimed then
+        traffic[id].enableRespawn = false
+        traffic[id].enableAutoPooling = false
+        traffic[id].activeProbability = 0
+      end
+    end
+  end
+
+  local isInArray = arrayFindValueIndex(trafficIdsSorted, id) and true or false -- check exists due to module deserialization
+  if not isInArray then
+    if not ignoreAi then table.insert(trafficAiVehsList, id) end
+    table.insert(trafficIdsSorted, id)
     auxiliaryData.activeChanged = true
     extensions.hook('onTrafficVehicleAdded', id)
   end
@@ -820,7 +858,7 @@ removeTraffic = function(id, stopAi) -- remove a vehicle from the traffic table
     end
 
     traffic[id] = nil
-    trafficIdsSorted = tableKeysSorted(traffic)
+    table.remove(trafficIdsSorted, arrayFindValueIndex(trafficIdsSorted, id))
     auxiliaryData.activeChanged = true
     extensions.hook('onTrafficVehicleRemoved', id)
   end
@@ -848,6 +886,7 @@ local function checkPlayer(id) -- checks if the player data needs to be inserted
 end
 
 local function onVehicleSpawned(id)
+  updateSimpleTrafficPassengerVisibility(getObjectByID(id))
   if traffic[id] then -- if vehicle is replaced, update its traffic role and properties
     traffic[id]:applyModelConfigData()
     traffic[id]:setRole(traffic[id].autoRole)
@@ -981,8 +1020,7 @@ local function setupTraffic(amount, options) -- prepares a group of vehicles for
   end
 
   if amount == -1 then -- auto amount
-    local amountFromSettings = getAmountFromSettings()
-    amount = getIdealSpawnAmount(amountFromSettings) -- maxAmount automatically accounts for currently spawned non-traffic vehicles
+    amount = getIdealSpawnAmount(nil, true) -- adjust for amount of existing active vehicles
     activeAmount = amount
 
     if settings.getValue('trafficExtraVehicles') then
@@ -990,7 +1028,7 @@ local function setupTraffic(amount, options) -- prepares a group of vehicles for
     end
   else
     if options.autoAdjustAmount then
-      amount = getIdealSpawnAmount(amount) -- adjust for amount of existing active vehicles
+      amount = getIdealSpawnAmount(nil, true)
     end
   end
 
@@ -1246,36 +1284,41 @@ local function doTraffic(dt, dtSim) -- active traffic logic
 
   auxiliaryData.sampleTimer = auxiliaryData.sampleTimer + dtSim
   if auxiliaryData.sampleTimer > 5 then -- every 5 seconds, sample the current traffic conditions if there is a need to set dynamic spawn parameters
-    -- adjust global respawn distance based on road network density
-    local n1, n2 = map.findClosestRoad(focus.pos)
-    if n1 and n2 then
-      local radius = min(mapNodes[n1].radius, mapNodes[n2].radius)
-      local branchNodes = map.getGraphpath():getBranchNodesAround(n1, 200) -- expected minimum of 2 nodes
-      local branchNodeCount = branchNodes and #branchNodes or 20
-      local maxDist = auxiliaryData.activeAmount * 50 -- stronger effect if there are more vehicles
-      maxDist = maxDist * max(0.5, 6 - radius) -- radius coefficient (radius of 5 = coefficient of 1)
-      auxiliaryData.dynamicSpawnDist = min(1000, maxDist / branchNodeCount) -- distance scattering is affected by radius and local road network density
-      local link = mapNodes[n1].links[n2] or mapNodes[n2].links[n1]
-      if link and link.oneWay then -- reduce scattering if the road might be a highway
-        auxiliaryData.dynamicSpawnDist = auxiliaryData.dynamicSpawnDist * 0.25
-      end
-    end
-
-    -- adjust global respawn direction based on current traffic ahead on the road
-    local outboundCount = 0
-    for id, veh in pairs(traffic) do
-      if veh.state == 'active' then
-        local dotDir = sign2(focus.dirVec:dot(veh.dirVec))
-        if dotDir == 1 then
-          outboundCount = outboundCount + 1
+    if vars.enableDynamicValues then
+      -- adjust global respawn distance based on road network density
+      local n1, n2 = map.findClosestRoad(focus.pos)
+      if n1 and n2 then
+        local radius = min(mapNodes[n1].radius, mapNodes[n2].radius)
+        local branchNodes = map.getGraphpath():getBranchNodesAround(n1, 200) -- expected minimum of 2 nodes
+        local branchNodeCount = branchNodes and #branchNodes or 20
+        local maxDist = auxiliaryData.activeAmount * 50 -- stronger effect if there are more vehicles
+        maxDist = maxDist * max(0.5, 6 - radius) -- radius coefficient (radius of 5 = coefficient of 1)
+        auxiliaryData.dynamicSpawnDist = min(1000, maxDist / branchNodeCount) -- distance scattering is affected by radius and local road network density
+        local link = mapNodes[n1].links[n2] or mapNodes[n2].links[n1]
+        if link and link.oneWay then -- reduce scattering if the road might be a highway
+          auxiliaryData.dynamicSpawnDist = auxiliaryData.dynamicSpawnDist * 0.25
         end
       end
-    end
 
-    if auxiliaryData.activeAmount <= 2 then
-      auxiliaryData.dynamicSpawnDir = 0
+      -- adjust global respawn direction based on current traffic ahead on the road
+      local outboundCount = 0
+      for id, veh in pairs(traffic) do
+        if veh.state == 'active' then
+          local dotDir = sign2(focus.dirVec:dot(veh.dirVec))
+          if dotDir == 1 then
+            outboundCount = outboundCount + 1
+          end
+        end
+      end
+
+      if auxiliaryData.activeAmount <= 2 then
+        auxiliaryData.dynamicSpawnDir = 0
+      else
+        auxiliaryData.dynamicSpawnDir = lerp(-1, 1, outboundCount / auxiliaryData.activeAmount) -- favors opposite direction compared to the majority of vehicles
+      end
     else
-      auxiliaryData.dynamicSpawnDir = lerp(-1, 1, outboundCount / auxiliaryData.activeAmount) -- favors opposite direction compared to the majority of vehicles
+      auxiliaryData.dynamicSpawnDist = 0
+      auxiliaryData.dynamicSpawnDir = 0
     end
 
     auxiliaryData.sampleTimer = 0
@@ -1407,6 +1450,11 @@ local function onUpdate(dtReal, dtSim)
           focus.dirVec:setScaled(1 / max(1e-12, focus.speed)) -- normalizes the vector
           focus.speed = min(80, focus.speed) -- limited to prevent huge values if teleported
         end
+      elseif getObjectByID(focus.vehId) then
+        focus.pos:set(be:getObjectPositionXYZ(focus.vehId))
+        focus.dirVec:set(getObjectByID(focus.vehId):getDirectionVectorXYZ()) -- not efficient
+        tempVec:set(be:getObjectVelocityXYZ(focus.vehId))
+        focus.speed = tempVec:length()
       end
     end
 
@@ -1435,6 +1483,7 @@ local function onUpdate(dtReal, dtSim)
   end
 
   if auxiliaryData.activeChanged and not spawnProcess.vehList then -- force update the active amount
+    trafficIdsSorted = tableKeysSorted(traffic)
     updateActiveAmount()
   end
 end
@@ -1501,6 +1550,15 @@ local function onTrafficStopped()
 end
 
 local function onClientStartMission()
+  updateAllSimpleTrafficPassengerVisibility()
+end
+
+local function onExtensionLoaded()
+  updateAllSimpleTrafficPassengerVisibility()
+end
+
+local function onSettingsChanged()
+  updateAllSimpleTrafficPassengerVisibility()
 end
 
 local function onClientEndMission()
@@ -1540,22 +1598,24 @@ local function onSerialize(options)
     end
   end
 
-  for _, veh in pairs(traffic) do
+  local tidsSorted = tableKeysSorted(traffic)
+  for _, vehId in ipairs(tidsSorted) do
+    local veh = traffic[vehId]
     table.insert(trafficData, veh:onSerialize())
     if vehicleSpawnData then
-      local obj = getObjectByID(veh.id)
-      if obj and veh.id ~= options.exceptVehicleId and (veh.isAi or obj.isTraffic == 'true') then
+      local obj = getObjectByID(vehId)
+      if obj and vehId ~= options.exceptVehicleId and (veh.isAi or obj.isTraffic == 'true') then
         if options.debugVehicleStashing then
-          log('D', logTag, string.format('Capturing traffic vehicle for mission despawn stash: %d', veh.id))
+          log('D', logTag, string.format('Capturing traffic vehicle for mission despawn stash: %d', vehId))
         end
-        vehicleSpawnData[veh.id] = getVehicleSpawnData(obj)
-        table.insert(vehicleSpawnOrder, veh.id)
-      elseif obj and veh.id == options.exceptVehicleId and options.debugVehicleStashing then
-        log('D', logTag, string.format('Skipping mission player vehicle traffic despawn: %d', veh.id))
+        vehicleSpawnData[vehId] = getVehicleSpawnData(obj)
+        table.insert(vehicleSpawnOrder, vehId)
+      elseif obj and vehId == options.exceptVehicleId and options.debugVehicleStashing then
+        log('D', logTag, string.format('Skipping mission player vehicle traffic despawn: %d', vehId))
       end
     end
   end
-  local data = {state = state, traffic = deepcopy(trafficData), vars = deepcopy(vars), vehicleSpawnData = vehicleSpawnData, vehicleSpawnOrder = vehicleSpawnOrder}
+  local data = {state = state, traffic = trafficData, vars = deepcopy(vars), vehicleSpawnData = vehicleSpawnData, vehicleSpawnOrder = vehicleSpawnOrder}
   onTrafficStopped()
   mapNodes = nil
 
@@ -1596,10 +1656,11 @@ local function onDeserialized(data, options)
   end
 
   if data.state == 'on' then
-    for _, veh in pairs(data.traffic) do
+    local tidsSorted = tableKeysSorted(data.traffic)
+    for _, vehId in ipairs(tidsSorted) do
+      local veh = data.traffic[vehId]
       local oldId = veh.id
       if idMap[oldId] or (veh.role and veh.role.targetId and idMap[veh.role.targetId]) or (veh.pursuit and veh.pursuit.targetId and idMap[veh.pursuit.targetId]) then
-        veh = deepcopy(veh)
         veh.id = idMap[oldId] or oldId
         if veh.tracking then
           veh.tracking.vehId = veh.id
@@ -1621,12 +1682,12 @@ local function onDeserialized(data, options)
           veh.collisions = collisions
         end
       end
-      insertTraffic(veh.id, not veh.isAi)
+      traffic[veh.id] = trafficVehicle({id = veh.id})
       if traffic[veh.id] then
+        insertTraffic(veh.id, not veh.isAi)
         traffic[veh.id]:onDeserialized(veh)
       end
     end
-    updateTrafficPool()
   end
 end
 
@@ -1680,6 +1741,8 @@ M.onTrafficStarted = onTrafficStarted
 M.onTrafficStopped = onTrafficStopped
 M.onClientStartMission = onClientStartMission
 M.onClientEndMission = onClientEndMission
+M.onExtensionLoaded = onExtensionLoaded
+M.onSettingsChanged = onSettingsChanged
 M.onUiWaitingState = onUiWaitingState
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized

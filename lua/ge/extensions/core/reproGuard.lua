@@ -3,9 +3,9 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 -- Guard for the v1/runRepro scheme command. Decides whether a decoded command
--- line may be handed to run_repro.bat, using a Claude-Code-style allowlist of
--- glob patterns. Pure logic in isAllowed (no engine calls) so it is testable in
--- isolation; loadPatterns performs the file IO. The allowlist is read from
+-- line may be handed to run_repro.bat, using an allowlist of glob patterns.
+-- Pure logic in isAllowed (no engine calls) so it is testable in isolation;
+-- loadPatterns performs the file IO. The allowlist is read from
 -- `ALLOWLIST_PATH`, a VFS-relative path under `DevTools/`.
 
 local M = {}
@@ -15,9 +15,11 @@ local logTag = 'reproGuard'
 local ALLOWLIST_PATH = '/DevTools/tests/micropy/resources/repro_allowlist.json'
 
 -- Characters never allowed anywhere in the command (redirection / escape /
--- command substitution). '^' is escaped as '%^' and placed away from the start
--- of the class so it is not read as negation.
-local FORBIDDEN_CHARS = '[<>%^`]'
+-- command substitution / quote-breakout / control characters). '^' is escaped
+-- as '%^' and placed away from the start of the class so it is not read as
+-- negation. '%c' is Lua's control-character class - it also catches CR/LF,
+-- which splitSegments does not split on and '.' in a pattern still matches.
+local FORBIDDEN_CHARS = '[<>%^`"%c]'
 
 -- Internal split marker: SOH (byte 0x01), chosen because it cannot occur in a
 -- shell command string. NOTE: this is '\1' (a literal byte), NOT '\\1' (which

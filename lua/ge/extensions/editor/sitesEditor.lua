@@ -63,6 +63,9 @@ local function updateMouseInfo()
     if mouseInfo.down then
       mouseInfo.hold = false
       mouseInfo._downPos = vec3(mouseInfo.rayCast.pos)
+      if mouseInfo.rayCast.normal then
+        mouseInfo._downNormal = vec3(mouseInfo.rayCast.normal)
+      end
     end
     if mouseInfo.hold then
       mouseInfo._holdPos = vec3(mouseInfo.rayCast.pos)
@@ -328,6 +331,7 @@ local function onEditorInitialized()
 
   local parkingSpots = require('/lua/ge/extensions/editor/sitesEditor/parkingSpots')(M,'parkingSpots')
   local spotsList = require('/lua/ge/extensions/editor/sitesEditor/sortedListDisplay')(M, 'parkingSpots',parkingSpots)
+  parkingSpots.listDisplay = spotsList
   spotsList.windowDescription = "Parking Spots"
   table.insert(windows, spotsList)
 

@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Animates automatic gear selectors that move across two axes
+
 local dequeue = require("dequeue")
 
 local M = {}
@@ -105,7 +107,7 @@ local function handleMSModes(desiredMode)
       elseif gearIndex < lastMModeGearIndex then
         postfix = "-"
       end
-      if postfix then
+      if postfix and modeCoordinates[desiredMode .. postfix] then
         desiredMode = desiredMode .. postfix
         secondDesiredMode = "M"
       end

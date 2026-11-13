@@ -22,7 +22,7 @@ local function addDisconnectButton(buttons, context)
   if context.isMultiplayerActive then
     table.insert(buttons, ui_pause_actions.registerButton({
       id = "system.disconnect",
-      label = "Disconnect",
+      label = _tr("ui.pause.system.disconnect"),
       icon = "exit",
       flavor = "system",
       visible = true,
@@ -37,7 +37,8 @@ local function addDisconnectButton(buttons, context)
   end
 end
 
-local function addModsButton(buttons)
+local function addModsButton(buttons, context)
+  local enabled = not context.isFirstDriveActive
   table.insert(buttons, ui_pause_actions.registerButton({
     id = "system.mods",
     label = _tr("ui.dashboard.mods"),
@@ -45,7 +46,8 @@ local function addModsButton(buttons)
     flavor = "system",
     routeTarget = "pause.mods.local",
     visible = true,
-    enabled = true,
+    enabled = enabled,
+    disabledReason = enabled and nil or _tr("ui.experiences.firstDrive.pause.disabledDuringTutorial"),
     hideInSimpleMenu = true,
   }, function()
     return pushRoute("pause.mods.local")
@@ -70,17 +72,24 @@ local function addStatsButton(buttons)
   table.insert(buttons, ui_pause_actions.registerButton({
     id = "system.stats",
     label = _tr("ui.statspage.title"),
-    icon = "stats",
+    icon = "chartBars",
     flavor = "system",
+    routeTarget = "pause.stats",
     visible = true,
-    enabled = false,
-    disabledReason = "Not available yet",
+    enabled = true,
   }, function()
-    return false
+    return pushRoute("pause.stats")
   end))
 end
 
-local function addHudButton(buttons)
+local function isSplitScreenActive()
+  return render_splitScreen ~= nil and render_splitScreen.getCurrentConfiguration()
+end
+
+local function addHudButton(buttons, context)
+  if isSplitScreenActive() then return end
+  local enabled = not context.isFirstDriveActive
+
   table.insert(buttons, ui_pause_actions.registerButton({
     id = "system.hudApps",
     label = _tr("ui.dashboard.appedit"),
@@ -88,126 +97,121 @@ local function addHudButton(buttons)
     flavor = "system",
     routeTarget = "pause.hudApps",
     visible = true,
-    enabled = true,
+    enabled = enabled,
+    disabledReason = enabled and nil or _tr("ui.experiences.firstDrive.pause.disabledDuringTutorial"),
     hideInSimpleMenu = false,
   }, function()
     return pushRoute("pause.hudApps")
   end))
 end
 
-local function addExitToMainMenuButton(buttons)
-  table.insert(buttons, ui_pause_actions.registerButton({
+local function addExitToMainMenuButton(buttons, context)
+  table.insert(buttons, ui_pause_actions.registerButton(Common.withExitConfirm({
     id = "system.exitToMainMenu",
     label = _tr("ui.pause.system.exitLevel"),
     icon = "catalog02",
     flavor = "danger",
-    confirmText = "Exit to main menu?",
     visible = true,
     enabled = true,
-  }, function()
-    returnToMainMenu()
+  }, context, Common.ExitLevelTexts), function(payload)
+    Common.runExit(returnToMainMenu, payload)
     return true
   end))
 end
 
-local function addExitGameButton(buttons)
-  table.insert(buttons, ui_pause_actions.registerButton({
+local function addExitGameButton(buttons, context)
+  table.insert(buttons, ui_pause_actions.registerButton(Common.withExitConfirm({
     id = "system.exitGame",
     label = _tr("ui.pause.system.exitGame"),
     icon = "exit",
     flavor = "danger",
-    confirmText = "Exit game?",
     visible = true,
     enabled = true,
     hideInSimpleMenu = true,
-  }, function()
+  }, context, Common.ExitGameTexts), function(payload)
     if quit then
-      quit()
+      Common.runExit(quit, payload)
       return true
     end
     return false
   end))
 end
 
-local function addOldPauseMenuButton(buttons)
+local function buildTopSystemButtons(context)
+  local buttons = {}
+  addSettingsButton(buttons)
+  addModsButton(buttons, context)
+  addHudButton(buttons, context)
+  addStatsButton(buttons)
+  return buttons
+end
+
+local function buildFirstDriveButtons(context)
+  local experience = gameplay_discover_firstDrive_experience
+  if not context.isFirstDriveActive
+    or not experience or not experience.isActive or not experience.isActive() then
+    return {}
+  end
+
+  local buttons = {}
+  if not context.isFirstDriveGuided then
+    table.insert(buttons, ui_pause_actions.registerButton({
+      id = "system.firstDrive.restart",
+      label = _tr("ui.experiences.firstDrive.pause.restart"),
+      icon = "restart",
+      flavor = "system",
+      visible = true,
+      enabled = true,
+    }, function()
+      experience.start()
+      return true
+    end))
+    table.insert(buttons, ui_pause_actions.registerButton({
+      id = "system.firstDrive.resetProgress",
+      label = _tr("ui.experiences.firstDrive.pause.resetProgress"),
+      icon = "restart",
+      flavor = "danger",
+      confirmText = _tr("ui.experiences.firstDrive.pause.confirmResetProgress"),
+      visible = true,
+      enabled = true,
+    }, function()
+      if gameplay_discover_firstDrive_learningProgress then
+        gameplay_discover_firstDrive_learningProgress.reset()
+      end
+      experience.start()
+      return true
+    end))
+  end
   table.insert(buttons, ui_pause_actions.registerButton({
-    id = "system.mainmenu",
-    label = "Old Pause Menu",
-    icon = "catalog02",
-    flavor = "system",
-    routeTarget = "menu",
+    id = "system.firstDrive.freeroam",
+    label = _tr("ui.experiences.firstDrive.pause.freeroam"),
+    icon = "road",
+    flavor = "danger",
+    confirmText = _tr("ui.experiences.firstDrive.pause.confirmFreeroam"),
     visible = true,
     enabled = true,
   }, function()
-    return pushRoute("menu")
+    experience.onFirstDrivePauseFreeroam()
+    return true
   end))
-end
-
-local function buildTopSystemButtons()
-  local buttons = {}
-  addSettingsButton(buttons)
-  addModsButton(buttons)
-  addHudButton(buttons)
   return buttons
 end
 
 local function buildExitSystemButtons(context)
   local buttons = {}
   addDisconnectButton(buttons, context)
-  addExitToMainMenuButton(buttons)
-  addExitGameButton(buttons)
+  addExitToMainMenuButton(buttons, context)
+  addExitGameButton(buttons, context)
   return buttons
-end
-
-local function getCurrentLevelText()
-  local levelId = getCurrentLevelIdentifier and getCurrentLevelIdentifier() or nil
-  if not levelId then return "No level loaded" end
-
-  local title = core_levels and core_levels.getLevelTitle and core_levels.getLevelTitle(levelId) or nil
-  return title or levelId
-end
-
-local function getEnabledModsText()
-  if not core_modmanager or not core_modmanager.isReady or not core_modmanager.isReady() then
-    return "Mod manager not ready"
-  end
-
-  local stats = core_modmanager.getStats and core_modmanager.getStats() or {}
-  local enabledCount = (stats.zip or 0) + (stats.unpacked or 0)
-  return tostring(enabledCount)
-end
-
-local function buildSystemSidePanel()
-  return {
-    {
-      {
-        id = "systemCurrentLevel",
-        type = "component",
-        componentName = "PausePanelSimpleText",
-        props = {
-          title = "Current level",
-          text = getCurrentLevelText(),
-        },
-      },
-      {
-        id = "systemEnabledMods",
-        type = "component",
-        componentName = "PausePanelSimpleText",
-        hideInSimpleMenu = true,
-        props = {
-          title = _tr("ui.career.mods"),
-          text = getEnabledModsText(),
-        },
-      },
-    },
-  }
 end
 
 local function buildSystemRail(context)
   local groups = {}
-  local topSystemButtons = Common.asRailGroup("topSystemButtons", buildTopSystemButtons())
+  local topSystemButtons = Common.asRailGroup("topSystemButtons", buildTopSystemButtons(context))
+  local firstDriveButtons = Common.asRailGroup("firstDriveButtons", buildFirstDriveButtons(context))
   local exitSystemButtons = Common.asRailGroup("exitSystemButtons", buildExitSystemButtons(context))
   if topSystemButtons then table.insert(groups, topSystemButtons) end
+  if firstDriveButtons then table.insert(groups, firstDriveButtons) end
   if exitSystemButtons then table.insert(groups, exitSystemButtons) end
   return groups
 end
@@ -215,7 +219,7 @@ end
 function M.getSystemData(context)
   return {
     heading = _tr("ui.pause.system"),
-    sidePanelContents = buildSystemSidePanel(),
+    sidePanelContents = nil,
     rail = buildSystemRail(context),
   }
 end

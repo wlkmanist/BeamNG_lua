@@ -356,6 +356,7 @@ local function endDeliveryAndLog()
   end
 
   log('I', logTag, 'Ending delivery via quickAccess menu')
+  extensions.hook("onGameplayActivityAborted")
 
   -- Collect statistics using endScreen module
   local stats = gameplay_freeformDelivery_endScreen.collectStatistics(currentDelivery, startTime)

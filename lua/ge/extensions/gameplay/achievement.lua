@@ -303,7 +303,7 @@ local function startup()
 
   pending = {}
   statWatchers = {}
-  local manualAchievementsRemaining = checkManualAchievements()
+  checkManualAchievements()
 
   for _, raw in ipairs(achievementsList) do
     local entry = buildPendingEntry(raw, platformKey)
@@ -311,15 +311,6 @@ local function startup()
       pending[#pending + 1] = entry
     end
   end
-
-  local manualAchievements = {"VEHICLE_FAVOURITE","LEVEL_EXPLORER","VEHICLE_EXPLORER"}
-  local manualAchievementsRemaining = 0
-  for n in ipairs(manualAchievements) do
-    if not OnlineServiceProvider.isAchievementUnlocked(n) then
-      manualAchievementsRemaining = manualAchievementsRemaining + 1
-    end
-  end
-
 
   local i = 1
   while i <= #pending do

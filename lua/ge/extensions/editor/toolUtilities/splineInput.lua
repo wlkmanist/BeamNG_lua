@@ -19,7 +19,7 @@ local defaultSplineVel, defaultSplineVelLimit = 13.5, 70.0 -- The default veloci
 local timeUntilTextAppears = 1.0 -- The time it takes for the text to appear when adding a new node, in seconds.
 
 local intsctTol = 10000.0 -- The tolerance for hit detection, in meters.
-local baseHitScale = 0.2  -- A base factor used to scale the hit detection tolerance.
+local baseHitScale = 0.45  -- Grab radius as a multiple of the drawn handle's size law: gives a comfortable, constant on-screen grab disc (~2-3x the visible dot) at any zoom.
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -27,13 +27,15 @@ local M = {}
 
 -- Module dependencies.
 local geom = require('editor/toolUtilities/geom')
-local render = require('editor/toolUtilities/render')
+local rSpheres = require('editor/toolUtilities/render/spheres')
+local rMarkup = require('editor/toolUtilities/render/markup')
+local rTransport = require('editor/toolUtilities/render/transport')
 local gizmo = require('editor/toolUtilities/gizmo')
 local util = require('editor/toolUtilities/util')
 
 -- Module constants.
 local im = ui_imgui
-local min, max, ceil, sqrt, abs = math.min, math.max, math.ceil, math.sqrt, math.abs
+local min, max, ceil, abs = math.min, math.max, math.ceil, math.abs
 local globalUp = vec3(0, 0, 1)
 local joinDistSq = joinDist * joinDist
 local altKeyIdx, ctrlKeyIdx, shiftKeyIdx = im.GetKeyIndex(im.Key_ModAlt), im.GetKeyIndex(im.Key_ModCtrl), im.GetKeyIndex(im.Key_ModShift)
@@ -62,12 +64,20 @@ local candIdxLower, candPHit, candPriority, hitCandidates, tmpTable = {}, {}, {}
 local allSplines, splineToolNames = {}, {}
 local mouseVel2D, mouseLast, binVec = vec3(), vec3(), vec3()
 local lastDragMousePos = vec3()
+local nodeDragPlaneLast, nodeDragHasLast = vec3(), false -- previous-frame construction-plane pos for preserveNodeZ drags
 local midJoinClosest = vec3()
+
+-- Lets an owning tool defer or coalesce low-level spline edits into its own history action.
+local function commitHistory(commitHistoryOverride, name, data, undoFn, redoFn, dontCallRedoNow)
+  if commitHistoryOverride then return commitHistoryOverride(name, data, undoFn, redoFn, dontCallRedoNow) end
+  return editor.history:commitAction(name, data, undoFn, redoFn, dontCallRedoNow)
+end
 
 
 local function clearDragState()
   dragStatePre, isDragRib, isDragBar, isDragAux = nil, nil, nil, nil
   dragSplineIdx, dragNodeIdx, dragAuxIdx, dragRibIsFirstHandle, dragTipKind = nil, nil, nil, nil, nil
+  nodeDragHasLast = false -- next preserveNodeZ drag re-seeds its plane reference
 end
 
 -- Tip drags must track start/finish, not a raw index (junction mouth rebuild can reindex nodes).
@@ -85,12 +95,25 @@ local function resolveDragNodeIdx(nodes)
 end
 
 local function isDragging()
-  return dragSplineIdx ~= nil or isDragAux == true
+  return dragSplineIdx ~= nil or isDragAux == true or gizmo.isDragging()
+end
+
+-- A tool hosted inside another edit mode (the City Builder's network tabs) names itself here while its tab is open.
+local hostedTool = nil
+local function setHostedTool(prefix) hostedTool = prefix end
+
+local function activeToolName()
+  return hostedTool or (editor.editMode and editor.editMode.displayName)
 end
 
 local function getActiveTool()
-  local name = editor.editMode and editor.editMode.displayName
+  local name = activeToolName()
   return name and registeredTools[name] or nil
+end
+
+local function enterEditMode(modeKey)
+  local mode = editor.editModes[modeKey]
+  if editor.editMode ~= mode then editor.selectEditMode(mode) end
 end
 
 local function isNodeLockedByTool(spline, nodeIdx)
@@ -100,7 +123,10 @@ end
 
 -- Handles end drag events (loop formation, joins, cleanup).
 -- afterEndDragFn(selSpline, wasAuxDrag, auxIdx, dragSplineIdx, dragNodeIdx)
-local function handleEndDragEvents(splines, selSpline, copyFn, copyStateFn, joinFn, undoFn, redoFn, undoStateFn, redoStateFn, afterEndDragFn, isShiftDown, midJoinFn)
+local function handleEndDragEvents(splines, selSpline, copyFn, copyStateFn, joinFn, undoFn, redoFn, undoStateFn, redoStateFn, afterEndDragFn, isShiftDown, midJoinFn, commitHistoryOverride, isCtrlDown)
+  -- Every masterSpline-suite tool commits joins/loops on CTRL (consistent across the suite); the preview shows
+  -- whenever a candidate exists but nothing reshapes topology unless CTRL is held on release.
+  local joinMod = isCtrlDown
   if dragStatePre then
     -- Aux-node drag (e.g. junction centre) uses full session state undo.
     if isDragAux then
@@ -109,46 +135,45 @@ local function handleEndDragEvents(splines, selSpline, copyFn, copyStateFn, join
       clearDragState()
       if afterEndDragFn then afterEndDragFn(selSpline, true, auxIdx, nil, nil) end
       if copyStateFn and undoStateFn and redoStateFn and oldState then
-        editor.history:commitAction("Drag Aux Node", { old = oldState, new = copyStateFn() }, undoStateFn, redoStateFn, true)
+        commitHistory(commitHistoryOverride, "Drag Aux Node", { old = oldState, new = copyStateFn() }, undoStateFn, redoStateFn, true)
       end
       return true
     end
 
-    -- If there is a loop available and SHIFT is held, form the loop.
-    if isLoopAvailable and isShiftDown then
+    -- If there is a loop available and the join modifier is held, form the loop.
+    if isLoopAvailable and joinMod then
       local fullStatePre = copyFn(selSpline)
       local lastIdx = #selSpline.nodes
       table.remove(selSpline.nodes, lastIdx)
       table.remove(selSpline.widths, lastIdx)
       table.remove(selSpline.nmls, lastIdx)
+      if selSpline.corners then table.remove(selSpline.corners, lastIdx) end -- keep optional per-node overrides aligned (heroRoad).
       selSpline.isLoop = true
       selSpline.isDirty = true
       isLoopAvailable = false
-      editor.history:commitAction("Drag Loop", { old = fullStatePre, new = copyFn(selSpline) }, undoFn, redoFn, true)
+      commitHistory(commitHistoryOverride, "Drag Loop", { old = fullStatePre, new = copyFn(selSpline) }, undoFn, redoFn, true)
       clearDragState()
       return false
     end
 
-    -- End↔end join. Tools that pass midJoinFn (transportNetwork) join on release;
-    -- other tools keep the legacy SHIFT requirement.
-    local joinNoShift = midJoinFn ~= nil
-    if isJoinAvailable and (joinNoShift or isShiftDown) and joinFn and copyStateFn then
+    -- End↔end join, committed only when the join modifier is held (CTRL for roadNetwork, SHIFT for legacy).
+    if isJoinAvailable and joinMod and joinFn and copyStateFn then
       local fullStatePre = copyStateFn()
       joinFn(joinSplineIdx1, joinNodeIdx1, joinSplineIdx2, joinNodeIdx2)
       isJoinAvailable = false
       joinSplineIdx1, joinNodeIdx1, joinSplineIdx2, joinNodeIdx2 = nil, nil, nil, nil
-      editor.history:commitAction("Drag Join", { old = fullStatePre, new = copyStateFn() }, undoStateFn, redoStateFn, true)
+      commitHistory(commitHistoryOverride, "Drag Join", { old = fullStatePre, new = copyStateFn() }, undoStateFn, redoStateFn, true)
       clearDragState()
       return true
     end
 
-    -- End→mid join on release (transportNetwork).
-    if isMidJoinAvailable and midJoinFn and copyStateFn then
+    -- End→mid join on release (roadNetwork), gated on CTRL like the other joins.
+    if isMidJoinAvailable and joinMod and midJoinFn and copyStateFn then
       local fullStatePre = copyStateFn()
       midJoinFn(midJoinDragSplineIdx, midJoinDragNodeIdx, midJoinTargetSplineIdx, midJoinHitPos)
       isMidJoinAvailable = false
       midJoinDragSplineIdx, midJoinDragNodeIdx, midJoinTargetSplineIdx, midJoinHitPos = nil, nil, nil, nil
-      editor.history:commitAction("Drag Mid Join", { old = fullStatePre, new = copyStateFn() }, undoStateFn, redoStateFn, true)
+      commitHistory(commitHistoryOverride, "Drag Mid Join", { old = fullStatePre, new = copyStateFn() }, undoStateFn, redoStateFn, true)
       clearDragState()
       return true
     end
@@ -156,7 +181,7 @@ local function handleEndDragEvents(splines, selSpline, copyFn, copyStateFn, join
     -- End the drag. Pass the node that was actually dragged (remap tip after junction edits).
     local endedSplineIdx = dragSplineIdx
     local endedNodeIdx = resolveDragNodeIdx(splines[dragSplineIdx].nodes)
-    editor.history:commitAction("Drag", { old = dragStatePre, new = copyFn(splines[dragSplineIdx]) }, undoFn, redoFn, true)
+    commitHistory(commitHistoryOverride, "Drag", { old = dragStatePre, new = copyFn(splines[dragSplineIdx]) }, undoFn, redoFn, true)
     if afterEndDragFn then
       afterEndDragFn(selSpline, false, nil, endedSplineIdx, endedNodeIdx)
     end
@@ -186,13 +211,13 @@ local function handleBarDragging(selSpline, mouseRawY, isBarsLimits, isLockShape
   end
   local barPts = selSpline.barPoints
   if barPts and barPts[dragNodeIdx] then
-    render.drawSphereHighlight(barPts[dragNodeIdx])
+    rSpheres.drawSphereHighlight(barPts[dragNodeIdx])
   end
   selSpline.isDirty = true
 end
 
 -- Handles rib dragging operations.
-local function handleRibDragging(selSpline, isLockShape, isShiftDown)
+local function handleRibDragging(selSpline, isLockShape, isShiftDown, maxWidth)
   -- Calculate the magnitude of the drag.
   dragNodeIdx = resolveDragNodeIdx(selSpline.nodes)
   local widths = selSpline.widths
@@ -200,15 +225,15 @@ local function handleRibDragging(selSpline, isLockShape, isShiftDown)
   local isHalfSpline = selSpline.tileSet ~= nil or selSpline.spacing ~= nil
   if isHalfSpline then -- Half-spline.
     local ribPoint = ribPoints[dragNodeIdxTimesTwo]
-    render.drawSphereHighlight(ribPoint)
-    render.markupWidthDisplay(ribPoint, widths[dragNodeIdx])
+    rSpheres.drawSphereHighlight(ribPoint)
+    rMarkup.markupWidthDisplay(ribPoint, widths[dragNodeIdx])
     local divIdx = selSpline.discMap[dragNodeIdx]
     delta = mouseVel2D:dot(selSpline.binormals[divIdx])
   else -- Full spline.
     local p1, p2 = ribPoints[dragNodeIdxTimesTwo], ribPoints[dragNodeIdxTimesTwo - 1]
-    render.drawSphereHighlight(p1)
-    render.drawSphereHighlight(p2)
-    render.markupWidthDisplay(p1, widths[dragNodeIdx])
+    rSpheres.drawSphereHighlight(p1)
+    rSpheres.drawSphereHighlight(p2)
+    rMarkup.markupWidthDisplay(p1, widths[dragNodeIdx])
     binVec:setSub2(p2, p1)
     binVec:normalize()
     local handleSign = dragRibIsFirstHandle and -1 or 1
@@ -223,10 +248,10 @@ local function handleRibDragging(selSpline, isLockShape, isShiftDown)
   -- Move the widths appropriately.
   if isLockShape then -- Move all widths by the same amount.
     for i = 1, #widths do
-      widths[i] = max(minSplineWidth, min(maxSplineWidth, widths[i] + delta))
+      widths[i] = max(minSplineWidth, min(maxWidth, widths[i] + delta))
     end
   else -- Move a single width.
-    widths[dragNodeIdx] = max(minSplineWidth, min(maxSplineWidth, widths[dragNodeIdx] + delta))
+    widths[dragNodeIdx] = max(minSplineWidth, min(maxWidth, widths[dragNodeIdx] + delta))
   end
 
   selSpline.isDirty = true
@@ -236,7 +261,9 @@ end
 -- canJoinFn(dragSplineIdx, otherSplineIdx) / canJoinAuxFn(dragSplineIdx, auxIdx): optional
 -- predicates letting a tool keep separate networks apart (e.g. paths never join roads). When
 -- absent every candidate is joinable (default for tools with a single network).
-local function handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFn, canJoinFn, canJoinAuxFn)
+-- midJoinRefusalFn(dragSplineIdx, dragNodeIdx, otherSplineIdx, hitPos): optional, why the tool would refuse that mid join, so
+-- the preview shows it refused before the drop.
+local function handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFn, canJoinFn, canJoinAuxFn, preserveNodeZ, midJoinRefusalFn)
   -- Translate the nodes appropriately.
   local spline = splines[dragSplineIdx]
   local nodes = spline.nodes
@@ -249,7 +276,23 @@ local function handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFn
   else -- A single node is being dragged.
     local node = nodes[dragNodeIdx]
     if node and not isNodeLockedByTool(spline, dragNodeIdx) then
-      node:setAdd(mousePos - mouseLast)
+      if preserveNodeZ then
+        -- Move the node against a horizontal plane at its OWN height, so the drag is stable in XY and keeps Z even when the
+        -- surface under the cursor changes mid-drag (a tool that hides its mesh+collision on pickup makes mouseOnMapPos fall
+        -- from the elevated deck down to the terrain -- which otherwise yanks the node down + sideways). Offset-based off the
+        -- previous frame's plane crossing; re-seeds each drag (nodeDragHasLast) so there's no first-frame jump.
+        local planeNow = util.mouseOnPlaneZ(node.z)
+        if planeNow then
+          if nodeDragHasLast then
+            node.x = node.x + (planeNow.x - nodeDragPlaneLast.x)
+            node.y = node.y + (planeNow.y - nodeDragPlaneLast.y)
+          end
+          nodeDragPlaneLast:set(planeNow.x, planeNow.y, planeNow.z)
+          nodeDragHasLast = true
+        end
+      else
+        node:setAdd(mousePos - mouseLast)
+      end
     end
   end
 
@@ -259,7 +302,7 @@ local function handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFn
   if (dragNodeIdx == 1 or dragNodeIdx == numNodes) and numNodes > 3 and not splines[out.spline].isLoop then
     local nodeStart, nodeEnd = nodes[1], nodes[numNodes]
     if nodeStart:squaredDistance(nodeEnd) < joinDistSq then
-      render.renderCandidateLoop(nodeStart, nodeEnd) -- Show a line joining the start and end nodes, to indicate a loop is possible.
+      rTransport.renderCandidateLoop(nodeStart, nodeEnd) -- Show a line joining the start and end nodes, to indicate a loop is possible.
       isLoopAvailable = true -- Mark that we have a loop candidate.
     end
   end
@@ -271,9 +314,8 @@ local function handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFn
   isJoinAvailable = false
   isMidJoinAvailable = false
   midJoinDragSplineIdx, midJoinDragNodeIdx, midJoinTargetSplineIdx, midJoinHitPos = nil, nil, nil, nil
-  if (dragNodeIdx == 1 or dragNodeIdx == numNodes) and not isLoopAvailable and numNodes > 1 then
+  if (dragNodeIdx == 1 or dragNodeIdx == numNodes) and not isLoopAvailable and numNodes > 1 and not spline.isLoop then
     local draggedNode, isDraggingStart = nodes[dragNodeIdx], dragNodeIdx == 1
-    local joinNoShift = midJoinFn ~= nil
     local bestEndDistSq, endHitPos = joinDistSq, nil
 
     for i = 1, #splines do
@@ -305,11 +347,12 @@ local function handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFn
       local bestMidDistSq, bestMidIdx = joinDistSq, nil
       for i = 1, #splines do
         local otherSpline = splines[i]
-        -- 2+ nodes is enough (insert-at-mid then split yields two open roads).
-        if i ~= dragSplineIdx and otherSpline.isEnabled and not otherSpline.isLink and not otherSpline.isLoop and #otherSpline.nodes > 1
+        -- 2+ nodes is enough (insert-at-mid then split yields two open roads). Loops are valid mid-join targets: the
+        -- tip T's into the ring and the loop passes through the new hub (closest test wraps the seam via `closed`).
+        if i ~= dragSplineIdx and otherSpline.isEnabled and not otherSpline.isLink and #otherSpline.nodes > 1
           and (not canJoinFn or canJoinFn(dragSplineIdx, i)) then
-          -- Tip stubs excluded on first/last segment only (see geom.closestPointOnPolyline2D).
-          local d = geom.closestPointOnPolyline2D(otherSpline.nodes, draggedNode, midJoinClosest, 0.05, 0.95)
+          -- Tip stubs excluded on first/last segment only, open roads only (see geom.closestPointOnPolyline2D).
+          local d = geom.closestPointOnPolyline2D(otherSpline.nodes, draggedNode, midJoinClosest, 0.05, 0.95, otherSpline.isLoop)
           if d < bestMidDistSq then
             bestMidDistSq, bestMidIdx = d, i
             if not midJoinHitPos then midJoinHitPos = vec3() end
@@ -334,19 +377,20 @@ local function handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFn
       end
 
       if bestJctPos and bestJctDistSq <= bestMidDistSq and bestJctDistSq <= bestEndDistSq then
-        render.renderCandidateJoin(draggedNode, bestJctPos, true)
+        rTransport.renderCandidateJoin(draggedNode, bestJctPos)
       elseif bestMidIdx and midJoinHitPos and bestMidDistSq < bestEndDistSq then
-        render.renderCandidateJoin(draggedNode, midJoinHitPos, true)
+        rTransport.renderCandidateJoin(draggedNode, midJoinHitPos,
+          midJoinRefusalFn and midJoinRefusalFn(dragSplineIdx, dragNodeIdx, bestMidIdx, midJoinHitPos))
         isMidJoinAvailable = true
         midJoinDragSplineIdx = dragSplineIdx
         midJoinDragNodeIdx = dragNodeIdx
         midJoinTargetSplineIdx = bestMidIdx
       elseif endHitPos then
-        render.renderCandidateJoin(draggedNode, endHitPos, joinNoShift)
+        rTransport.renderCandidateJoin(draggedNode, endHitPos)
         isJoinAvailable = true
       end
     elseif endHitPos then
-      render.renderCandidateJoin(draggedNode, endHitPos, false)
+      rTransport.renderCandidateJoin(draggedNode, endHitPos)
       isJoinAvailable = true
     end
   end
@@ -379,7 +423,9 @@ end
 -- [targetType - 'node', 'rib', or 'bar' for different scaling]
 local function getAdaptiveTolerance(rayPos, targetPos, targetType)
   local distance = rayPos:distance(targetPos)
-  local visualScale = sqrt(distance) -- Scale the tolerance as distance increases.
+  -- Track the handle's constant on-screen size so the grab disc stays a fixed fraction of the screen (and a fixed multiple
+  -- of the drawn dot) at any zoom.
+  local visualScale = rSpheres.getSphereScale(distance)
   local typeScale = typeScales[targetType] -- Get the type-specific scaling.
   return baseHitScale * visualScale * typeScale
 end
@@ -647,6 +693,57 @@ local function registerSplineTool(prefix, getSplinesFn, getEditModeKeyFn, deepCo
 end
 
 
+-- Cross-tool node selection for tools that DON'T run handleSplineEvents themselves (polygon tools such as the
+-- forest zone editor). Each frame it hovers foreign-tool spline nodes (glow + 'select' markup) and, on click,
+-- switches to that tool and selects the node - exactly the pickup the spline tools get internally. Pass the
+-- calling tool's own prefix so its own splines are skipped (the caller selects those itself). Returns true when a
+-- foreign node is under the cursor, so the caller can skip its own scene interaction for the frame.
+local function handleForeignNodeSelection(activePrefix)
+  if not util.isMouseHoveringOverTerrain() then return false end
+  local mousePos = util.mouseOnMapPos()
+  local bestHit = getBestHitTarget(nil, mousePos, false, false)
+  if not bestHit or bestHit.type ~= 'node' then return false end
+  local toolName = bestHit.toolName
+  if not toolName or toolName == activePrefix then return false end -- own splines: caller handles those
+  local tool = registeredTools[toolName]
+  local targetSpline = allSplines[bestHit.splineIdx]
+  if not tool or not targetSpline or not targetSpline.isEnabled then return false end
+
+  local node = targetSpline.nodes[bestHit.nodeIdx]
+  rSpheres.drawSphereHighlightHover(node)
+  rMarkup.markupSelectSpline(node)
+  if im.IsMouseClicked(0) then
+    local getSplinesFn, getModeKeyFn = tool.getSplines, tool.getEditModeKey
+    if getSplinesFn and getModeKeyFn then
+      local modeKey = getModeKeyFn()
+      local targetSplines = getSplinesFn()
+      if targetSplines and modeKey then
+        local actualSplineIdx = nil
+        for i = 1, #targetSplines do
+          if targetSplines[i] == targetSpline then actualSplineIdx = i; break end
+        end
+        if actualSplineIdx then
+          enterEditMode(modeKey)
+          local uiMod = tool.uiModuleName and extensions[tool.uiModuleName] or nil
+          if uiMod and uiMod.setSelectedSplineIdx and uiMod.setSelectedNodeIdx then
+            uiMod.setSelectedSplineIdx(actualSplineIdx)
+            uiMod.setSelectedNodeIdx(bestHit.nodeIdx)
+          end
+          -- Start a drag if the target tool supports it (so a spline node can be dragged right after switching);
+          -- its own handleSplineEvents picks the drag up next frame. Tools without deepCopySpline just select.
+          if not targetSpline.isLink and tool.deepCopySpline then
+            dragStatePre = tool.deepCopySpline(targetSplines[actualSplineIdx])
+            isDragRib, dragSplineIdx, dragNodeIdx = false, actualSplineIdx, bestHit.nodeIdx
+            dragTipKind = tipKindForNode(targetSpline.nodes, bestHit.nodeIdx)
+            mouseLast = mousePos
+          end
+        end
+      end
+    end
+  end
+  return true
+end
+
 -- Handles the user input events for spline-editing tools.
 -- Splines are user-editable polylines along the centerline of a variable width. They can be used to create roads, paths, etc.
 -- [Splines - The collection of splines to handle events for.]
@@ -680,9 +777,21 @@ local function handleSplineEvents(
   isRotEnabled, isConformToTerrain, useRibs, useBars, isBarsLimits, useCopyPaste, useGizmo, isLockShape,
   defaultSplineWidth,
   deepCopyFunct, deepCopyStateFunct, copyProfileFunct, pasteProfileFunct, afterEndDragCallback, joinFunct,
-  undoFunct, redoFunct, undoStateFunct, redoStateFunct, midJoinFunct, canJoinFunct, canJoinAuxFunct)
+  undoFunct, redoFunct, undoStateFunct, redoStateFunct, midJoinFunct, canJoinFunct, canJoinAuxFunct,
+  eventOptions)
 
   -- Update the mouse position and velocity.
+  local commitHistoryOverride = eventOptions and eventOptions.commitHistoryOverride or nil
+  -- Opt-in: drag a single node against a horizontal plane at its own height (stable XY, keeps Z), instead of following the
+  -- surface raycast. Tools with free-3D elevated nodes that hide their mesh+collision mid-drag need this -- otherwise the
+  -- raycast falls to the terrain far below and the node jumps. Tools whose nodes should ride the surface leave this off.
+  local preserveNodeZ = eventOptions and eventOptions.preserveNodeZ or false
+  -- Opt-in: mute the add/insert-node affordance (markup + click-to-add) for this frame. Set by hosts while the cursor hovers one
+  -- of their own in-viewport handles (e.g. heroRoad's corner knob / on-curve grip), so idle "click to add node" doesn't show
+  -- through the handle -- WITHOUT skipping the whole event pass (the gizmo + selection still run, so the gizmo never blinks out).
+  local suppressAddNode = eventOptions and eventOptions.suppressAddNode or false
+  local midJoinRefusalFn = eventOptions and eventOptions.midJoinRefusalFn or nil -- see handleNodeDragging
+  local maxWidth = eventOptions and eventOptions.maxWidth or maxSplineWidth -- widest a rib drag may take a node
   local mousePos = util.mouseOnMapPos()
   local mouseRawY = im.GetMousePos().y
   mouseVel2D:set(mousePos.x - mouseLast.x, mousePos.y - mouseLast.y, 0.0)
@@ -699,7 +808,7 @@ local function handleSplineEvents(
 
   -- Finalize drag on mouse-up even if the cursor left the terrain (ImGui / sky).
   if dragStatePre and not im.IsMouseDown(0) then
-    local joinHandled = handleEndDragEvents(splines, selSpline, deepCopyFunct, deepCopyStateFunct, joinFunct, undoFunct, redoFunct, undoStateFunct, redoStateFunct, afterEndDragCallback, isShiftDown, midJoinFunct)
+    local joinHandled = handleEndDragEvents(splines, selSpline, deepCopyFunct, deepCopyStateFunct, joinFunct, undoFunct, redoFunct, undoStateFunct, redoStateFunct, afterEndDragCallback, isShiftDown, midJoinFunct, commitHistoryOverride, isCtrlDown)
     if joinHandled then return end
   end
 
@@ -707,12 +816,12 @@ local function handleSplineEvents(
   if util.isMouseHoveringOverTerrain() then
     -- Draw the mouse cursor (inactive if no selection or selected spline disabled) and show appropriate delayed markup.
     local isActive = selSpline ~= nil and selSpline.isEnabled == true
-    render.drawSphereCursor(mousePos, isActive)
+    rSpheres.drawSphereCursor(mousePos, isActive)
     if restTime < 0.0 then
       if selSpline and not selSpline.isEnabled then
-        render.markupSelectedSplineDisabled(mousePos)
+        rMarkup.markupSelectedSplineDisabled(mousePos)
       elseif not selSpline then
-        render.markupSelectOrAdd(mousePos)
+        rMarkup.markupSelectOrAdd(mousePos)
       end
     end
 
@@ -734,9 +843,9 @@ local function handleSplineEvents(
       if isDragBar then -- User is dragging a bar.
         handleBarDragging(selSpline, mouseRawY, isBarsLimits, isLockShape, isShiftDown)
       elseif isDragRib then -- User is dragging a rib.
-        handleRibDragging(selSpline, isLockShape, isShiftDown)
+        handleRibDragging(selSpline, isLockShape, isShiftDown, maxWidth)
       else -- User is dragging a node.
-        handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFunct, canJoinFunct, canJoinAuxFunct)
+        handleNodeDragging(splines, out, mousePos, isLockShape, midJoinFunct, canJoinFunct, canJoinAuxFunct, preserveNodeZ, midJoinRefusalFn)
       end
       mouseLast, mouseLastRawY = mousePos, mouseRawY
       return -- Early return if currently dragging.
@@ -752,9 +861,9 @@ local function handleSplineEvents(
         local auxIdx = bestHit.auxIdx
         local pos = auxNodes and auxNodes[auxIdx]
         if pos then
-          render.drawSphereHighlightHover(pos)
+          rSpheres.drawSphereHighlightHover(pos)
           if not im.IsMouseDown(0) and markupTime < 0.0 then
-            render.markupDrag(pos)
+            rMarkup.markupDrag(pos)
           end
           if im.IsMouseClicked(0) then
             out.aux = auxIdx
@@ -770,12 +879,12 @@ local function handleSplineEvents(
         local hoverSplineIdx, hoverNodeIdx = bestHit.splineIdx, bestHit.nodeIdx
 
         -- Check if this is a cross-tool hit (from another spline tool).
-        if bestHit.toolName and bestHit.toolName ~= editor.editMode.displayName then
+        if bestHit.toolName and bestHit.toolName ~= activeToolName() then
           local targetSpline = allSplines[hoverSplineIdx]
           local tool = bestHit.toolName and registeredTools[bestHit.toolName] or nil
           if targetSpline and targetSpline.isEnabled and tool then
-            render.drawSphereHighlightHover(targetSpline.nodes[hoverNodeIdx])
-            render.markupSelectSpline(targetSpline.nodes[hoverNodeIdx]) -- Show selection prompt.
+            rSpheres.drawSphereHighlightHover(targetSpline.nodes[hoverNodeIdx])
+            rMarkup.markupSelectSpline(targetSpline.nodes[hoverNodeIdx]) -- Show selection prompt.
             if im.IsMouseClicked(0) then -- Only switch tools on click, not hover.
               local getSplinesFn = tool.getSplines
               local getModeKeyFn = tool.getEditModeKey
@@ -791,7 +900,7 @@ local function handleSplineEvents(
                     end
                   end
                   if actualSplineIdx then
-                    editor.selectEditMode(editor.editModes[modeKey])
+                    enterEditMode(modeKey)
                     local uiModuleName = tool.uiModuleName
                     local toolUIModule = uiModuleName and extensions[uiModuleName] or nil -- Get the UI module of the tool which is being switched to.
                     if toolUIModule and toolUIModule.setSelectedSplineIdx and toolUIModule.setSelectedNodeIdx then
@@ -830,14 +939,14 @@ local function handleSplineEvents(
           local actualHoverSplineIdx = actualSplineIdx
           local hoverSpline = splines[actualHoverSplineIdx]
           local nodeLocked = isNodeLockedByTool(hoverSpline, hoverNodeIdx)
-          render.drawSphereHighlightHover(hoverSpline.nodes[hoverNodeIdx])
+          rSpheres.drawSphereHighlightHover(hoverSpline.nodes[hoverNodeIdx])
           if actualHoverSplineIdx ~= out.spline then
-            render.markupSelectSpline(hoverSpline.nodes[hoverNodeIdx])
+            rMarkup.markupSelectSpline(hoverSpline.nodes[hoverNodeIdx])
           elseif not dragSplineIdx and not im.IsMouseDown(0) and markupTime < 0.0 then
             if nodeLocked then
-              render.markupLinkedTip(hoverSpline.nodes[hoverNodeIdx])
+              rMarkup.markupLinkedTip(hoverSpline.nodes[hoverNodeIdx])
             else
-              render.markupDrag(hoverSpline.nodes[hoverNodeIdx])
+              rMarkup.markupDrag(hoverSpline.nodes[hoverNodeIdx])
             end
           end
           if im.IsMouseClicked(0) then
@@ -856,14 +965,14 @@ local function handleSplineEvents(
         local spline = allSplines[ribSplineIdx] -- Use allSplines index, not current tool's splines
         if spline and spline.isEnabled then
           local ribPts = spline.ribPoints
-          render.drawSphereHighlightHover(ribPts[ribIdx])
+          rSpheres.drawSphereHighlightHover(ribPts[ribIdx])
           local isHalfSpline = spline.tileSet ~= nil or spline.spacing ~= nil -- Check if the spline is a half-spline.
           if not isHalfSpline then
             local idx2 = ribIdx % 2 == 0 and ribIdx - 1 or ribIdx + 1
-            render.drawSphereHighlightHover(ribPts[idx2]) -- Only highlight the odd rib if we have a full spline.
+            rSpheres.drawSphereHighlightHover(ribPts[idx2]) -- Only highlight the odd rib if we have a full spline.
           end
           if not dragSplineIdx then
-            render.markupAdjustWidth(ribPts[ribIdx])
+            rMarkup.markupAdjustWidth(ribPts[ribIdx])
           end
           if im.IsMouseClicked(0) then
             local nodeIdx = ceil(ribIdx * 0.5)
@@ -886,9 +995,9 @@ local function handleSplineEvents(
         local spline = allSplines[barSplineIdx] -- Use allSplines index, not current tool's splines
         if spline and spline.isEnabled then
           local barPts = spline.barPoints
-          render.drawSphereHighlightHover(barPts[barNodeIdx])
+          rSpheres.drawSphereHighlightHover(barPts[barNodeIdx])
           if not dragSplineIdx then
-            render.markupAdjustBar(barPts[barNodeIdx])
+            rMarkup.markupAdjustBar(barPts[barNodeIdx])
           end
           if im.IsMouseClicked(0) then
             if not spline.isLink then -- Only allow bar dragging if the spline is not linked.
@@ -902,12 +1011,12 @@ local function handleSplineEvents(
           end
         end
       elseif bestHitType == 'spline' then -- 'Hover-Over-Spline' events.
-        if selSpline and selSpline.isEnabled and not selSpline.isLink then
+        if selSpline and selSpline.isEnabled and not selSpline.isLink and not suppressAddNode then
           local idxLower, pHit = bestHit.idxLower, bestHit.pHit
-          render.drawSphereHighlightHover(pHit)
-          render.drawSphereNode(pHit)
+          rSpheres.drawSphereHighlightHover(pHit)
+          rSpheres.drawSphereNode(pHit)
           if not dragSplineIdx and not im.IsMouseDown(0) and markupTime < 0.0 then
-            render.markupInsertNode(pHit)
+            rMarkup.markupInsertNode(pHit)
           end
           if im.IsMouseClicked(0) then
             local splinePre = deepCopyFunct(selSpline)
@@ -925,6 +1034,7 @@ local function handleSplineEvents(
             table.insert(widths, tableIdx, lerpWidth)
             local lerpNormal = lerp(nmls[iPrev], nmls[iNext], 0.5)
             table.insert(nmls, tableIdx, lerpNormal)
+            if selSpline.corners then table.insert(selSpline.corners, tableIdx, false) end -- new node inherits auto behaviour (heroRoad).
             if useBars then
               local vels, velLimits = selSpline.vels, selSpline.velLimits
               local lerpVel = (vels[iPrev] + vels[iNext]) * 0.5
@@ -935,19 +1045,19 @@ local function handleSplineEvents(
             out.node = tableIdx
             markupTime = timeUntilTextAppears
             selSpline.isDirty = true
-            editor.history:commitAction("Insert Node", { old = splinePre, new = deepCopyFunct(selSpline) }, undoFunct, redoFunct)
+            commitHistory(commitHistoryOverride, "Insert Node", { old = splinePre, new = deepCopyFunct(selSpline) }, undoFunct, redoFunct)
           end
         end
       end
     else -- 'Hover-Over-Free-Space' events.
-      if selSpline and selSpline.isEnabled then
+      if selSpline and selSpline.isEnabled and not suppressAddNode then
         if restTime < 0.0 then
           if selSpline.isLink then
-            render.markupLinkedSplineCannotAdd(mousePos)
+            rMarkup.markupLinkedSplineCannotAdd(mousePos)
           elseif selSpline.isLoop then
-            render.markupLoopedSplineCannotAdd(mousePos)
+            rMarkup.markupLoopedSplineCannotAdd(mousePos)
           else
-            render.markupAddNode(mousePos)
+            rMarkup.markupAddNode(mousePos)
           end
         end
         if im.IsMouseClicked(0) and not selSpline.isLoop and not selSpline.isLink then
@@ -958,6 +1068,7 @@ local function handleSplineEvents(
               table.insert(selNodes, 1, vec3(mousePos))
               table.insert(selWidths, 1, selWidths[1])
               table.insert(selNmls, 1, vec3(selNmls[1] or globalUp))
+              if selSpline.corners then table.insert(selSpline.corners, 1, false) end -- keep optional per-node overrides aligned (heroRoad).
               if useBars then
                 table.insert(selVels, 1, selVels[1])
                 table.insert(selVelLimits, 1, selVelLimits[1])
@@ -967,6 +1078,7 @@ local function handleSplineEvents(
               table.insert(selNodes, vec3(mousePos))
               table.insert(selWidths, selWidths[#selWidths])
               table.insert(selNmls, vec3(selNmls[#selNmls]))
+              if selSpline.corners then selSpline.corners[#selSpline.corners + 1] = false end -- keep optional per-node overrides aligned (heroRoad).
               if useBars then
                 table.insert(selVels, selVels[#selVels])
                 table.insert(selVelLimits, selVelLimits[#selVelLimits])
@@ -977,6 +1089,7 @@ local function handleSplineEvents(
             selNodes[#selNodes + 1] = vec3(mousePos)
             table.insert(selWidths, #selWidths > 0 and selWidths[#selWidths] or defaultSplineWidth)
             table.insert(selNmls, vec3(selNmls[#selNmls] or globalUp))
+            if selSpline.corners then selSpline.corners[#selSpline.corners + 1] = false end -- keep optional per-node overrides aligned (heroRoad).
             if useBars then
               table.insert(selVels, selVels[#selVels] or defaultSplineVel)
               table.insert(selVelLimits, selVelLimits[#selVelLimits] or defaultSplineVelLimit)
@@ -986,7 +1099,7 @@ local function handleSplineEvents(
           out.aux = nil
           markupTime = timeUntilTextAppears
           selSpline.isDirty = true
-          editor.history:commitAction("Add Node", { old = statePre, new = deepCopyFunct(selSpline) }, undoFunct, redoFunct, true)
+          commitHistory(commitHistoryOverride, "Add Node", { old = statePre, new = deepCopyFunct(selSpline) }, undoFunct, redoFunct, true)
         end
       end
     end
@@ -1001,9 +1114,10 @@ local function handleSplineEvents(
         table.remove(selSpline.nodes, out.node)
         table.remove(selSpline.widths, out.node)
         table.remove(selSpline.nmls, out.node)
+        if selSpline.corners then table.remove(selSpline.corners, out.node) end -- keep optional per-node overrides aligned (heroRoad).
         out.node = max(1, min(#selSpline.nodes, out.node))
         selSpline.isDirty = true
-        editor.history:commitAction("Delete Node", { old = splinePre, new = deepCopyFunct(selSpline) }, undoFunct, redoFunct, true)
+        commitHistory(commitHistoryOverride, "Delete Node", { old = splinePre, new = deepCopyFunct(selSpline) }, undoFunct, redoFunct, true)
         hasDeletePressedRecently = true
       end
     else
@@ -1016,8 +1130,10 @@ local function handleSplineEvents(
     if isAltDown and isAltDown ~= lastAltDown then
       out.isGizmoActive = not out.isGizmoActive
     end
-    if out.isGizmoActive and not isNodeLockedByTool(selSpline, out.node) then
-      gizmo.handleGizmo(isRotEnabled, out.spline, out.node, splines, isConformToTerrain, isLockShape, deepCopyFunct, undoFunct, redoFunct)
+    if out.isGizmoActive and selSpline and selSpline.isEnabled and not selSpline.isLink and not isNodeLockedByTool(selSpline, out.node) then
+      -- Optional per-node DISPLAY anchor from the host (e.g. draw the gizmo on a hairpin's on-road apex, not its far-off PI node).
+      local gizmoAnchor = eventOptions and eventOptions.gizmoAnchorFn and eventOptions.gizmoAnchorFn(out.spline, out.node) or nil
+      gizmo.handleGizmo(isRotEnabled, out.spline, out.node, splines, isConformToTerrain, isLockShape, deepCopyFunct, undoFunct, redoFunct, commitHistoryOverride, gizmoAnchor)
     end
     lastAltDown = isAltDown
   end
@@ -1027,10 +1143,11 @@ local function handleSplineEvents(
     if isCtrlDown and isCDown and out.spline then
       ctrlCProfile = copyProfileFunct(splines[out.spline])
     end
-    if isCtrlDown and isVDown and ctrlCProfile and out.spline and not hasPastePressedRecently then
+    local pasteTarget = out.spline and splines[out.spline]
+    if isCtrlDown and isVDown and ctrlCProfile and pasteTarget and pasteTarget.isEnabled and not pasteTarget.isLink and not hasPastePressedRecently then
       local splinePre = deepCopyFunct(splines[out.spline])
       pasteProfileFunct(splines[out.spline], ctrlCProfile)
-      editor.history:commitAction("Paste Profile", { old = splinePre, new = deepCopyFunct(splines[out.spline]) }, undoFunct, redoFunct, true)
+      commitHistory(commitHistoryOverride, "Paste Profile", { old = splinePre, new = deepCopyFunct(splines[out.spline]) }, undoFunct, redoFunct, true)
       hasPastePressedRecently = true
     end
     if not isVDown then
@@ -1066,7 +1183,7 @@ local function handleNavGraphEvents(selSpline, nodes, deepCopyFunct, undoFunct, 
   -- Scene-only events (when mouse is hovering over the terrain).
   if util.isMouseHoveringOverTerrain() then
     -- Draw the mouse cursor (inactive when no selection).
-    render.drawSphereCursor(mousePos, selSpline ~= nil)
+    rSpheres.drawSphereCursor(mousePos, selSpline ~= nil)
 
     -- Handle 'end bar drag' events.
     if not im.IsMouseDown(0) then
@@ -1106,9 +1223,9 @@ local function handleNavGraphEvents(selSpline, nodes, deepCopyFunct, undoFunct, 
     local isOverNode, hoverNodeKey = geom.isMouseOverGraphNode(nodes)
     isMouseOverHandle = isMouseOverHandle or isOverNode
     if isOverNode then -- 'Hover-Over-Node' events.
-      render.drawSphereHighlight(nodes[hoverNodeKey]) -- Draw a highlight when the mouse is over a graph node.
+      rSpheres.drawSphereHighlight(nodes[hoverNodeKey]) -- Draw a highlight when the mouse is over a graph node.
       if not im.IsMouseDown(0) and markupTime < 0.0 then
-        render.markupGraphNodeHover(nodes[hoverNodeKey]) -- Draw a special markup when the mouse is over a graph node.
+        rMarkup.markupGraphNodeHover(nodes[hoverNodeKey]) -- Draw a special markup when the mouse is over a graph node.
       end
       if im.IsMouseClicked(0) then
         local statePre = deepCopyFunct(selSpline)
@@ -1144,9 +1261,9 @@ local function handleNavGraphEvents(selSpline, nodes, deepCopyFunct, undoFunct, 
         isMouseOverHandle = isMouseOverHandle or isOverBar
         if isOverBar then -- 'Hover-Over-Bar' events.
           local barPts = selSpline.barPoints
-          render.drawSphereHighlightHover(barPts[barNodeIdx]) -- Pulsing highlight (same as ribs).
+          rSpheres.drawSphereHighlightHover(barPts[barNodeIdx]) -- Pulsing highlight (same as ribs).
           if not dragSplineIdx then
-            render.markupAdjustBar(barPts[barNodeIdx]) -- Markup when the mouse is over a bar.
+            rMarkup.markupAdjustBar(barPts[barNodeIdx]) -- Markup when the mouse is over a bar.
           end
           if im.IsMouseClicked(0) then
             dragStatePre = deepCopyFunct(selSpline)
@@ -1157,12 +1274,12 @@ local function handleNavGraphEvents(selSpline, nodes, deepCopyFunct, undoFunct, 
           end
         else -- 'Hover-Over-Free-Space' events.
           if restTime < 0.0 and not isMouseOverHandle then
-            render.markupGraphFreeSpace(mousePos) -- Markup when the mouse is over free space.
+            rMarkup.markupGraphFreeSpace(mousePos) -- Markup when the mouse is over free space.
           end
         end
       else
         if restTime < 0.0 and not isMouseOverHandle then
-          render.markupGraphFreeSpace(mousePos) -- Markup when the mouse is over free space.
+          rMarkup.markupGraphFreeSpace(mousePos) -- Markup when the mouse is over free space.
         end
       end
     end
@@ -1183,7 +1300,11 @@ end
 -- Public interface.
 M.handleSplineEvents =                                  handleSplineEvents
 M.handleNavGraphEvents =                                handleNavGraphEvents
+M.handleForeignNodeSelection =                          handleForeignNodeSelection
 M.registerSplineTool =                                  registerSplineTool
+M.setHostedTool =                                       setHostedTool
 M.isDragging =                                          isDragging
+M.cancelDrag =                                          clearDragState
+M.getBestHitTarget =                                    getBestHitTarget
 
 return M

@@ -29,11 +29,13 @@ function C:clear()
   self.postClear()
 end
 
-function C:create(name, forceId)
+function C:create(name, forceId, skipSort)
   local obj = self.objectConstructor(self.parent, name, forceId)
   obj.isProcedural = false
   self.objects[obj.id] = obj
-  self:sort()
+  if not skipSort then
+    self:sort()
+  end
   self.postCreate(obj)
   return obj
 end

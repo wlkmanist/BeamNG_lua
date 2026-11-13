@@ -24,23 +24,24 @@ local function initCamera()
   return cam
 end
 
-local function isFreeCamera()
-  return core_camera.getActiveCamName() == "free"
+local function isFreeCamera(player)
+  return core_camera.getActiveCamName(player) == "free"
 end
 
 local function getGameCamera() return scenetree.findObject("gameCamera") end
-local function setGameCamera()
-  core_camera.setGlobalCameraByName(nil)
-  extensions.hook("onCameraToggled", {cameraType='GameCam'})
+
+local function setGameCamera(player)
+  local ctxId = core_camera.getContextIdForPlayer(player) -- nil = main view
+  core_camera.setContextCamera(ctxId, nil)
+  if not ctxId then extensions.hook("onCameraToggled", {cameraType='GameCam'}) end
 end
 
 -- function used by C++ side, if you rename or move, you need to edit C++ side too
-local function setFreeCamera()
-  core_camera.setByName(0, 'free')
-  core_camera.setPosition(0, core_camera.getPosition())
-  core_camera.setRotation(0, core_camera.getQuat())
-  core_camera.resetCamera(0)
-  extensions.hook("onCameraToggled", {cameraType='FreeCam'})
+local function setFreeCamera(player)
+  local ctxId = core_camera.getContextIdForPlayer(player) -- nil = main view
+  core_camera.setContextCamera(ctxId, 'free') -- seeds the free cam with that view's current transform
+  core_camera.resetCamera(player)
+  if not ctxId then extensions.hook("onCameraToggled", {cameraType='FreeCam'}) end
 end
 
 -- camera modifier for faster speed (typically shift key)
@@ -94,31 +95,62 @@ local function dropPlayerAtCamera(player)
   core_camera.resetCamera(player)
 end
 
-local function dropPlayerAtCameraNoReset(player)
+local function resetDropPlayerAtCameraNoResetCamera(player)
+  setGameCamera()
+  if core_camera.getActiveCamName(player) == "bigMap" then
+    core_camera.setByName(player, "orbit", false)
+  end
+  core_camera.resetCamera(player)
+end
+
+local function planDropPlayerAtCameraNoReset(player)
   local playerVehicle = getPlayerVehicle(player)
-  if not playerVehicle then return end
+  if not playerVehicle then return nil end
   local pos = core_camera.getPosition()
   local camDir = core_camera.getForward()
   camDir.z = 0
   local camRot = quatFromDir(camDir, vec3(0,0,1))
   camRot = quat(0, 0, 1, 0) * camRot -- vehicles' forward is inverted
 
-  local vehRot = quat(playerVehicle:getClusterRotationSlow(playerVehicle:getRefNodeId()))
+  local nodeId = playerVehicle:getRefNodeId()
+
+  return {
+    vid = playerVehicle:getID(),
+    nodeId = nodeId,
+    clusterId = playerVehicle:getNodeClusterId(nodeId),
+    x = pos.x, y = pos.y, z = pos.z,
+    rx = camRot.x, ry = camRot.y, rz = camRot.z, rw = camRot.w,
+    originX = pos.x, originY = pos.y, originZ = pos.z,
+    originRx = camRot.x, originRy = camRot.y, originRz = camRot.z, originRw = camRot.w,
+  }
+end
+
+local function applyDropPlayerAtCameraNoResetPlan(player, plan)
+  local playerVehicle = getObjectByID(plan.vid)
+  if not playerVehicle then return false end
+  local camRot = quat(plan.originRx, plan.originRy, plan.originRz, plan.originRw)
+  local vehRot = quat(playerVehicle:getClusterRotationSlow(plan.nodeId))
   local diffRot = vehRot:inversed() * camRot
-  playerVehicle:setClusterPosRelRot(playerVehicle:getRefNodeId(), pos.x, pos.y, pos.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
-  playerVehicle:applyClusterVelocityScaleAdd(playerVehicle:getRefNodeId(), 0, 0, 0, 0)
-  -- if core_intapi then
-  --   core_intapi.debug_setClusterPosRelRot(player, playerVehicle:getID(), playerVehicle:getRefNodeId(), pos.x, pos.y, pos.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
-  -- else
-  --   playerVehicle:setClusterPosRelRot(playerVehicle:getRefNodeId(), pos.x, pos.y, pos.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
-  --   playerVehicle:applyClusterVelocityScaleAdd(playerVehicle:getRefNodeId(), 0, 0, 0, 0)
-  -- end
-  setGameCamera()
-  if core_camera.getActiveCamName(player) == "bigMap" then
-    core_camera.setByName(player, "orbit", false)
+  playerVehicle:setClusterPosRelRot(plan.nodeId, plan.x, plan.y, plan.z, diffRot.x, diffRot.y, diffRot.z, diffRot.w)
+  playerVehicle:applyClusterVelocityScaleAdd(plan.nodeId, 0, 0, 0, 0)
+  playerVehicle:setOriginalTransform(plan.originX, plan.originY, plan.originZ, plan.originRx, plan.originRy, plan.originRz, plan.originRw)
+  return true
+end
+
+local function dropPlayerAtCameraNoResetImpl(player)
+  local plan = planDropPlayerAtCameraNoReset(player)
+  if not plan then return nil end
+  if not applyDropPlayerAtCameraNoResetPlan(player, plan) then return nil end
+  resetDropPlayerAtCameraNoResetCamera(player)
+  return plan
+end
+
+local function dropPlayerAtCameraNoReset(player)
+  if multiplayer_vehicleSync then
+    multiplayer_vehicleSync.requestDropPlayerAtCameraNoReset(player)
+    return
   end
-  core_camera.resetCamera(player)
-  playerVehicle:setOriginalTransform(pos.x, pos.y, pos.z, camRot.x, camRot.y, camRot.z, camRot.w)
+  dropPlayerAtCameraNoResetImpl(player)
 end
 
 local function toggleCamera(player)
@@ -196,6 +228,10 @@ function getCameraFov() deprecationWarning("getCameraFov", "core_camera.getFovDe
 M.dropCameraAtPlayer = dropCameraAtPlayer
 M.dropPlayerAtCamera = dropPlayerAtCamera
 M.dropPlayerAtCameraNoReset = dropPlayerAtCameraNoReset
+M.dropPlayerAtCameraNoResetImpl = dropPlayerAtCameraNoResetImpl
+M.planDropPlayerAtCameraNoReset = planDropPlayerAtCameraNoReset
+M.applyDropPlayerAtCameraNoResetPlan = applyDropPlayerAtCameraNoResetPlan
+M.resetDropPlayerAtCameraNoResetCamera = resetDropPlayerAtCameraNoResetCamera
 M.getCamera = getGameCamera -- retrocompat
 M.getGame = getGame -- retrocompat
 M.onNodegrabStart = onNodegrabStart

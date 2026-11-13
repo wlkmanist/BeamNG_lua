@@ -480,7 +480,7 @@ local function formatVehicleOfferForUi(offers)
     end
 
     -- if vehicle delivery tutorial is active, only allow tutorial vehicles
-    if isVehicleDeliveryTutorialActive then
+    if isVehicleDeliveryTutorialActive and offer.data.type == "vehicle" then
       if not (offer.data and offer.data.isTutorialVehicle) then
         item.enabled = false
         item.disableReason = {type = "tutorial", label = _tr("ui.career.delivery.cargoScreen.disabledDuringTutorial")}
@@ -580,6 +580,7 @@ local function formatAcceptedOfferForUI(offer)
 end
 M.formatAcceptedOfferForUI = formatAcceptedOfferForUI
 M.abandonAcceptedOffer = function(vehId)
+  extensions.hook("onGameplayActivityAborted")
   dVehicleTasks.giveBackDeliveryVehicle(vehId)
 end
 
@@ -949,11 +950,145 @@ end
 
 M.deliveryScreenExternalButtonPressed = function(id)
   if id == "openDeliveryProgress" then
-    guihooks.trigger('ChangeState', {state = 'career.branchPage', params = {pathId = 'logistics-delivery'}})
+    extensions.ui_router.navigate("career.branchPage", {pathId = "logistics-delivery"})
   end
   if id == "openVehicleDeliveryProgress" then
-    guihooks.trigger('ChangeState', {state = 'career.branchPage', params = {pathId = 'logistics-vehicleDelivery'}})
+    extensions.ui_router.navigate("career.branchPage", {pathId = "logistics-vehicleDelivery"})
   end
+end
+
+local facilityDeliveryCountFormats = {
+  {type = "parcel", singular = "ui.career.cargoOverview.stats.parcelCount", plural = "ui.career.cargoOverview.stats.parcelCountPlural"},
+  {type = "vehicle", singular = "ui.career.cargoOverview.stats.vehicleCount", plural = "ui.career.cargoOverview.stats.vehicleCountPlural"},
+  {type = "trailer", singular = "ui.career.cargoOverview.stats.trailerCount", plural = "ui.career.cargoOverview.stats.trailerCountPlural"},
+  {type = "fluid", singular = "ui.career.cargoOverview.stats.fluidVolume"},
+  {type = "dryBulk", singular = "ui.career.cargoOverview.stats.dryBulkVolume"},
+}
+
+local function formatFacilityDeliveryCounts(deliveryProgress)
+  local values = {}
+  local countByType = deliveryProgress and deliveryProgress.countByType or {}
+  for _, format in ipairs(facilityDeliveryCountFormats) do
+    local amount = countByType[format.type] or 0
+    if amount > 0 then
+      local translation = amount == 1 and format.singular or (format.plural or format.singular)
+      table.insert(values, core_locales.contextTranslate(translation, {amount = amount}))
+    end
+  end
+  if not next(values) then return end
+  return table.concat(values, ", ")
+end
+
+local function getOrganizationStats(organization, currentFacility, currentPsPath)
+  local levelInfo = organization.reputationLevels[organization.reputation.level + 2] or {}
+  local stats = {}
+
+  if organization.offersDeliveries and levelInfo.deliveryBonus then
+    local bonusPercent = round((levelInfo.deliveryBonus.value - 1) * 100)
+    table.insert(stats, {
+      kind = "deliveryRewards",
+      icon = "beamCurrency",
+      label = _tr("ui.career.organizations.deliveryRewards"),
+      value = string.format("%+d%%", bonusPercent),
+      tooltip = {
+        txt = "ui.career.cargoOverview.stats.deliveryRewardsTooltip",
+        context = {percent = string.format("%+d%%", bonusPercent)}
+      }
+    })
+  end
+
+  if organization.loanableVehicles and levelInfo.loanerCut then
+    local loanerCutPercent = round(levelInfo.loanerCut.value * 100)
+    table.insert(stats, {
+      kind = "loanerCut",
+      icon = "carCoins",
+      label = _tr("ui.career.cargoCard.loanerCut"),
+      value = string.format("%d%%", loanerCutPercent),
+      tooltip = {
+        txt = "ui.career.cargoOverview.stats.loanerCutTooltip",
+        context = {percent = loanerCutPercent}
+      }
+    })
+  end
+
+  for _, unlock in ipairs(levelInfo.unlocks or {}) do
+    table.insert(stats, {
+      kind = "availableLoaner",
+      icon = unlock.icon,
+      label = _tr("ui.career.organizations.availableLoaners"),
+      value = core_locales.translateWithOrWithoutContext(unlock.label),
+      tooltip = "ui.career.cargoOverview.stats.availableLoanerTooltip"
+    })
+  end
+
+  local deliveriesFromFacility = formatFacilityDeliveryCounts(currentFacility.progress and currentFacility.progress.deliveredFromHere)
+  if deliveriesFromFacility then
+    table.insert(stats, {
+      kind = "deliveriesFromFacility",
+      icon = "boxPickUp03",
+      label = _tr("ui.career.cargoOverview.stats.deliveriesFromFacility"),
+      value = deliveriesFromFacility,
+      tooltip = "ui.career.cargoOverview.stats.deliveriesFromFacilityTooltip"
+    })
+  end
+  local deliveriesToFacility = formatFacilityDeliveryCounts(currentFacility.progress and currentFacility.progress.deliveredToHere)
+  if deliveriesToFacility then
+    table.insert(stats, {
+      kind = "deliveriesToFacility",
+      icon = "boxDropOff03",
+      label = _tr("ui.career.cargoOverview.stats.deliveriesToFacility"),
+      value = deliveriesToFacility,
+      tooltip = "ui.career.cargoOverview.stats.deliveriesToFacilityTooltip"
+    })
+  end
+
+  local originSpot = currentPsPath ~= "undefined" and currentPsPath or nil
+  if not originSpot then
+    for _, accessPoint in pairs(currentFacility.accessPointsByName or {}) do
+      originSpot = accessPoint.psPath
+      break
+    end
+  end
+
+  local facilities = {}
+  for _, facility in ipairs(organization.associatedFacilities or {}) do
+    if facility.id ~= currentFacility.id then
+      local targetFacility = dGenerator.getFacilityById(facility.id)
+      local distance
+      for _, accessPoint in pairs(targetFacility and targetFacility.accessPointsByName or {}) do
+        if originSpot and accessPoint.psPath then
+          local accessPointDistance = dGenerator.getDistanceBetweenFacilities(
+            {type = "facilityParkingspot", facId = currentFacility.id, psPath = originSpot},
+            {type = "facilityParkingspot", facId = facility.id, psPath = accessPoint.psPath}
+          )
+          distance = distance and math.min(distance, accessPointDistance) or accessPointDistance
+        end
+      end
+      table.insert(facilities, {name = facility.name, distance = distance})
+    end
+  end
+
+  table.sort(facilities, function(a, b)
+    if a.distance and b.distance then return a.distance < b.distance end
+    return a.distance ~= nil
+  end)
+
+  for _, facility in ipairs(facilities) do
+    local facilityName = core_locales.translateWithOrWithoutContext(facility.name)
+    if facility.distance then
+      local distance, unit = translateDistance(facility.distance, "auto")
+      facilityName = string.format("%s (%.1f %s)", facilityName, distance, unit)
+    end
+    table.insert(stats, {
+      kind = "facility",
+      icon = "garage01",
+      label = _tr("ui.career.organizations.facility"),
+      value = facilityName,
+      tooltip = "ui.career.cargoOverview.stats.facilityTooltip"
+    })
+  end
+
+  return stats
 end
 
 -- gets all offers and player cargo, depending on supplied facId and psPath.
@@ -1047,6 +1182,7 @@ local function requestCargoDataForUi(facId, psPath, updateMaxTimeTimestamp)
       }
       if organization then
         career_career.interactWithOrganization(fac.associatedOrganization)
+        organization.stats = getOrganizationStats(organization, fac, psPath)
         uiData.facility.organization = organization
         if fac.hasLoanerSpots then
           local loanersFormatted = career_modules_loanerVehicles.formatLoanerOfferForUi(fac) or {}
@@ -1346,6 +1482,7 @@ local function moveCargoFromUi(cargoId, targetLocation)
   ]]
 end
 M.applyTransientMoves = function()
+  extensions.hook("onGameplayActivityAborted")
   dParcelManager.applyTransientMoves()
 end
 
@@ -1411,23 +1548,41 @@ local function enterCargoOverviewScreen(facilityId, parkingSpotPath)
       cameraAdditionalHeightFactor = 0.65,
       horizontalOffsetFactor = 0,
       verticalOffsetFactor = 5,
-      navigationBoundariesFactor = 1.5
+      navigationBoundariesFactor = 1.5,
+      uiOwnsFocus = true,
     }
     freeroam_bigMapMode.enterBigMapWithCustomPOIs({}, M.deliveryMarkerSelected, options)
-    if facilityId == nil and parkingSpotPath == nil then
-      guihooks.trigger('ChangeState', {state = 'career.cargoOverview', params = {}})
-    else
-      guihooks.trigger('ChangeState', {state = 'career.cargoOverview', params = {facilityId = facilityId, parkingSpotPath = parkingSpotPath}})
+    -- Cargo Overview UI owns focus while BigMap runs in the background. Tell BigMap the UI has focus so
+    -- menu_item_select (the 'ok' UINav action) is not blocked, allowing scoped-nav cards to be activated.
+    freeroam_bigMapMode.setUiNavigationActive(true)
+    local params = {}
+    if facilityId ~= nil or parkingSpotPath ~= nil then
+      params.facilityId = facilityId
+      params.parkingSpotPath = parkingSpotPath
     end
+    extensions.ui_router.navigate("career.cargoOverview", params)
     extensions.hook("onEnterCargoOverviewScreen")
   end)
 end
 local function enterMyCargo() enterCargoOverviewScreen() end
 M.enterMyCargo = enterMyCargo
 
+local bigMapPanActions = {"bigMapMoveForwardBackward", "bigMapMoveLeftRight"}
+local function setBigMapPanEnabled(enabled)
+  core_input_actionFilter.setGroup("cargoScreenBigMapPan", bigMapPanActions)
+  core_input_actionFilter.addAction(0, "cargoScreenBigMapPan", not enabled)
+  if not enabled and core_camera then
+    -- filtered axis actions no longer report their return to 0
+    core_camera.moveForwardBackward(0)
+    core_camera.moveLeftRight(0)
+  end
+end
+M.setBigMapPanEnabled = setBigMapPanEnabled
+
 -- called whenever the cargo screen is closed for any reason.
 local function exitCargoOverviewScreen(facilityId, parkingSpotPath)
   cargoOverviewScreenOpen = false
+  setBigMapPanEnabled(true)
   gameplay_rawPois.clear()
   --career_career.closeAllMenus()
   freeroam_bigMapMode.exitBigMap(true)
@@ -1525,8 +1680,24 @@ local function cancelDeliveryConfiguration()
   ui_message(_tr("ui.career.delivery.cargoScreen.cancelledDeliveryConfiguration"))
 end
 
+local function isCargoOverviewChildRoute(routeName)
+  return type(routeName) == "string" and routeName:find("^career%.cargoOverview%.") ~= nil
+end
+
+local function onCargoOverviewRouteLeave(context, toRoute, fromRoute, data)
+  -- do not run full teardown if leaving a cargo child route
+  if toRoute and isCargoOverviewChildRoute(toRoute.name) then
+    return
+  end
+  if dParcelManager.hasUncommittedTransientMoves() then
+    cancelDeliveryConfiguration()
+  end
+  exitCargoOverviewScreen()
+end
+
 M.enterCargoOverviewScreen = enterCargoOverviewScreen
 M.exitCargoOverviewScreen = exitCargoOverviewScreen
+M.onCargoOverviewRouteLeave = onCargoOverviewRouteLeave
 M.commitDeliveryConfiguration = commitDeliveryConfiguration
 M.cancelDeliveryConfiguration = cancelDeliveryConfiguration
 
@@ -1820,7 +1991,12 @@ M.setVisibleIdsForBigMap = setVisibleIdsForBigMap
 
 
 -- other/utility functions
-M.exitDeliveryMode = function() dGeneral.exitDeliveryMode() end
+M.exitDeliveryMode = function()
+  if dGeneral.isDeliveryModeActive() then
+    extensions.hook("onGameplayActivityAborted")
+  end
+  dGeneral.exitDeliveryMode()
+end
 M.showCargoContainerHelpPopup = function()
   career_modules_tutorialPopups.introPopup("cargoContainerHowTo", true)
 end

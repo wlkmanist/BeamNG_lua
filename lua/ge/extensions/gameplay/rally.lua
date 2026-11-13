@@ -28,6 +28,8 @@ local logTag = ''
 
 local M = {}
 
+M.dependencies = { "gameplay_seatOccupants" }
+
 local rallyManager = nil
 local rallyManagerOwner = nil
 local errorMsgForUser = nil
@@ -97,6 +99,34 @@ local function canManageMission(owner)
   return true
 end
 
+-- co-driver: dummy occupant in the seat mirroring the driver's. Also re-seated on
+-- onSeatOccupantExit, since the seat system drops dummies on config respawns.
+local codriverVehId, codriverSeatId
+
+local function clearCodriver()
+  gameplay_seatOccupants.clearDummyOccupant(codriverVehId, codriverSeatId)
+  codriverVehId, codriverSeatId = nil, nil
+end
+
+local function seatCodriver()
+  if rallyManagerOwner ~= 'mission' then return end
+  local vehId = be:getPlayerVehicleID(0)
+  local seatsById, driverSeatId = {}
+  for _, seat in ipairs(gameplay_seatOccupants.getSeats(vehId)) do
+    seatsById[seat.seatId] = seat
+    if seat.isDriver then driverSeatId = seat.seatId end
+  end
+  if not driverSeatId then return end -- e.g. walking: leave the co-driver in the rally car
+  local seatId, mirrored = driverSeatId:gsub('[LR]$', { L = 'R', R = 'L' })
+  local seat = mirrored > 0 and seatsById[seatId]
+  if not seat then return end
+  if vehId ~= codriverVehId or seatId ~= codriverSeatId then clearCodriver() end
+  if not seat.occupied and gameplay_seatOccupants.setDummyOccupant(vehId, seatId) then
+    codriverVehId, codriverSeatId = vehId, seatId
+    log('I', logTag, string.format('seated co-driver in seat %s of vehicle %d', seatId, vehId))
+  end
+end
+
 local function loadMission(missionId, missionDir, drivelineMode, voicepackPick, options)
   options = options or {}
   local owner = options.owner or 'external'
@@ -119,6 +149,7 @@ local function loadMission(missionId, missionDir, drivelineMode, voicepackPick, 
   end
   rallyManager = newRallyManager
   rallyManagerOwner = owner
+  seatCodriver()
   return true
 end
 
@@ -208,6 +239,7 @@ end
 
 local function onExtensionUnloaded()
   if debugLogging then log('D', logTag, 'onExtensionUnloaded') end
+  clearCodriver()
   ExtHelper.unload()
   if debugLogging then log('I', logTag, 'gameplay_rally extension unloaded') end
 end
@@ -377,6 +409,8 @@ M.onUpdate = onUpdate
 M.onVehicleResetted = onVehicleResetted
 -- M.onVehicleSpawned = onVehicleSpawned
 -- M.onVehicleSwitched = onVehicleSwitched
+M.onSeatOccupantEnter = seatCodriver
+M.onSeatOccupantExit = seatCodriver
 -- M.onVehicleActiveChanged = onVehicleActiveChanged
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded

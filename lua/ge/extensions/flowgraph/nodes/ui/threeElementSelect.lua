@@ -107,7 +107,7 @@ function C:openDialogue()
 
   self._storedData = data
   self._active = true
-  guihooks.trigger('ChangeState', {state = 'menu.threeElementSelect', params = {data = data}})
+  extensions.ui_router.navigate('menu.threeElementSelect', {data = data})
 end
 
 

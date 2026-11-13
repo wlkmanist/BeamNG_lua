@@ -18,6 +18,7 @@ local farClip
 local size = 1
 
 local function updateValues()
+  if enabled == nil then return end
   scenetree.OnlyGui:setOrthoMainView(
     nearClip,
     farClip,

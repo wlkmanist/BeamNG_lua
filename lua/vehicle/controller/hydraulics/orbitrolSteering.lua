@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Makes hydraulically steered axles follow the requested steering position
+
 local M = {}
 M.type = "auxiliary"
 
@@ -12,6 +14,8 @@ local steeringPositionMax
 local invSteeringCylinderCount
 local steeringValveElectricsName
 
+local inputElectricsName
+
 local function updateFixedStep(dt)
   local currentSteering = 0
   --iterate over steeringCylinders and track extend percentage
@@ -21,7 +25,7 @@ local function updateFixedStep(dt)
   currentSteering = currentSteering * invSteeringCylinderCount
   currentSteering = linearScale(currentSteering, steeringPositionMin, steeringPositionMax, -1, 1)
 
-  local steeringTarget = electrics.values.steering_input or 0
+  local steeringTarget = electrics.values[inputElectricsName] or 0
 
   local steeringValveControl = steeringPID:get(currentSteering, steeringTarget, dt)
 
@@ -53,6 +57,7 @@ local function init(jbeamData)
     invSteeringCylinderCount = 0
   end
 
+  inputElectricsName = jbeamData.inputElectricsName or "steering_input"
   steeringValveElectricsName = jbeamData.steeringValveElectricsName or "steerCylinder"
   steeringPositionMin = jbeamData.steeringPositionMin or 0
   steeringPositionMax = jbeamData.steeringPositionMax or 1

@@ -58,7 +58,8 @@ local function createArrowPool(floatingArrowColor)
     for i = 0, 10 do
       local arrow = createObject('TSStatic')
       arrow:setField('shapeName', 0, "art/shapes/interface/s_mm_arrow_floating.dae")
-      arrow.scale = vec3(arrowScale, arrowScale, arrowScale)
+      arrow.scale = vec3(arrowSmall, arrowSmall, arrowSmall)
+      arrow.hidden = true
       arrow.useInstanceRenderData = true
       --arrow:setField('instanceColor1', 0, "1 1 1 1")
       arrow:setField('collisionType', 0, "None")
@@ -122,6 +123,7 @@ local function updateArrows(path, pathLength)
   --log('I', 'arrow', 'Updating arrows')
   local usedWpIds = {}
   local maxArrowDistance = 180 -- Only show arrows up to 180m in front
+  local minArrowDistance = 15 -- Fade out arrows before the vehicle reaches them, to avoid clipping into the camera
 
   --table.clear(lastWpLog)
 
@@ -145,7 +147,7 @@ local function updateArrows(path, pathLength)
       --wpLog.nodeToNodeAngle = math.acos(dirPrevPoint:cosAngle(dirNextPoint)) * 180/math.pi
       --wpLog.wp = path[i].wp
       --wpLog.linkCount = path[i].linkCount
-      if (path[i].linkCount and path[i].linkCount > 2) and path[i].wp then
+      if distToVehicle >= minArrowDistance and (path[i].linkCount and path[i].linkCount > 2) and path[i].wp then
         local nodeToNodeAngle = math.acos(dirPrevPoint:cosAngle(dirNextPoint)) * 180/math.pi
 
         -- Check if the route has the smallest angle of any possible path of the intersection

@@ -44,10 +44,10 @@ end
 
 local function setMap(newbuildSerial)
   if newbuildSerial and newbuildSerial == mapBuildSerial then return end
-  mapBuildSerial = newbuildSerial
 
   local _map = lpack.decode(obj:getLastMailbox('mapData'))
   if not (_map and _map.graphData and _map.edgeKdTree and _map.maxRadius and _map.nodeAliases) then return end
+  mapBuildSerial = _map.buildSerial
 
   maxRadius = _map.maxRadius
   M.nodeAliases = _map.nodeAliases
@@ -89,26 +89,31 @@ local function setSignals(data)
 end
 
 local function updateSignals(data)
-  if M.signalsData then
+  if M.signalsData and data then
     for i = 1, #data, 4 do
-      M.signalsData[data[i]] = M.signalsData[data[i]] or {}
-      M.signalsData[data[i]][data[i + 1]] = M.signalsData[data[i]][data[i + 1]] or {}
-      M.signalsData[data[i]][data[i + 1]][data[i + 2]] = M.signalsData[data[i]][data[i + 1]][data[i + 2]] or {action = 0}
-      M.signalsData[data[i]][data[i + 1]][data[i + 2]].action = tonumber(data[i + 3]) or 0
+      local signal = M.signalsData[data[i]] and M.signalsData[data[i]][data[i + 1]] and M.signalsData[data[i]][data[i + 1]][data[i + 2]]
+      if signal then
+        signal.action = tonumber(data[i + 3]) or 0
+      end
     end
   end
 end
 
 local buf = buffer.new()
 local states = {}
-local currentMailboxVersion = nil
+local lastTrafficSignalUpdatesMbVersion = -1
 local function sendTracking()
-  if M.signalsData then
-    local lastMailboxVersion = obj:getLastMailboxVersion("trafficSignalUpdates")
-    if currentMailboxVersion ~= lastMailboxVersion then
-      currentMailboxVersion = lastMailboxVersion
-      obj:getLastMailboxToBuffer("trafficSignalUpdates", buf)
-      updateSignals(lpack.decode(buf, signalTable))
+  if M.mapData then
+    local mailboxVersion = obj:getLastMailboxVersion("trafficSignalUpdates")
+    if lastTrafficSignalUpdatesMbVersion ~= mailboxVersion then
+      if not M.signalsData or mailboxVersion ~= lastTrafficSignalUpdatesMbVersion + 1 then
+        obj:queueGameEngineLua(string.format('map.request(%s,-2)', objectId))
+      end
+      lastTrafficSignalUpdatesMbVersion = mailboxVersion
+      if M.signalsData then
+        obj:getLastMailboxToBuffer("trafficSignalUpdates", buf)
+        updateSignals(lpack.decode(buf, signalTable))
+      end
     end
   end
 

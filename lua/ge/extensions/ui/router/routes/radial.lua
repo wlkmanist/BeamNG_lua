@@ -21,41 +21,6 @@ M.Root = {
 }
 
 M.Children = {
-  ["vehicles"] = {
-    screenId = "radial.vehicles",
-    onEnter = "ui_gridSelectorRouteLifecycleCallbacks.onRouteEnter",
-    onMount = "ui_gridSelectorRouteLifecycleCallbacks.onRouteMount",
-    onLeave = "ui_gridSelectorRouteLifecycleCallbacks.onRouteLeave",
-    meta = {
-      gridSelector = {
-        backendName = "vehicleSelector",
-        routePath = "/vehicle-selector",
-        defaultPath = { keys = { "allModels" } },
-      }
-    },
-    scopeTree = {
-      ["grid-selector-grid"] = {
-        ["grid-selector-details"] = {
-          backTarget = "grid-selector-grid",
-          backTargetType = "scope"
-        }
-      }
-    },
-    ui = {
-      uiTypes = {"vue"},
-      uiTypesFilter = Constants.UiTypesFilter.only,
-    }
-  },
-  ["vehicleconfig"] = {
-    -- radial-owned vehicle config; renders the concrete vue route instead of the
-    -- redirecting menu.vehicleconfig parent so lua/vue mount acks stay in the radial family
-    screenId = "radial.vehicleconfig",
-    backTarget = "radial",
-    ui = {
-      uiTypes = {"vue"},
-      uiTypesFilter = Constants.UiTypesFilter.only,
-    }
-  },
   ["mirrors"] = {
     screenId = "radial.mirrors",
     title = "ui.mirrors.name",

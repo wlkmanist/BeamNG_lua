@@ -46,6 +46,7 @@ local options = {
   minimapDrawGrid = {modes={keys={'automatic', 'always', 'never'}, values={'ui.options.minimap.drawGrid.automatic', 'ui.options.minimap.drawGrid.always', 'ui.options.minimap.drawGrid.never'}}, set = function(s) extensions.hook("onMinimapSettingsChanged", s) end},
   minimapLookahead = {modes={keys={'disabled', 'low', 'medium', 'high'}, values={'ui.options.minimap.lookahead.disabled', 'ui.options.minimap.lookahead.low', 'ui.options.minimap.lookahead.medium', 'ui.options.minimap.lookahead.high'}}, set = function(s) extensions.hook("onMinimapSettingsChanged", s) end},
   poiListDisplayMode = {modes={keys={'hidden', 'tree', 'simple'}, values={'ui.options.bigmap.poiListDisplayMode.hidden', 'ui.options.bigmap.poiListDisplayMode.tree', 'ui.options.bigmap.poiListDisplayMode.simple'}}},
+  rallyStartCountdownDisplay = {modes={keys={'3d', '2d', 'disabled'}, values={'ui.options.rally.startCountdownDisplay.3d', 'ui.options.rally.startCountdownDisplay.2d', 'ui.options.rally.startCountdownDisplay.disabled'}}},
 }
 
 
@@ -93,8 +94,11 @@ local function save()
     end
   end
   FS:directoryCreate(M.impl.path)
-  jsonWriteFile(M.impl.pathLocal, localValues, true)
-  jsonWriteFile(M.impl.pathCloud, cloudValues, true)
+  local savedLocal = jsonWriteFile(M.impl.pathLocal, localValues, true)
+  local savedCloud = jsonWriteFile(M.impl.pathCloud, cloudValues, true)
+  if not (savedLocal and savedCloud) then
+    guihooks.trigger("toastrMsg", {type="error", title="ui.options.saveFailed.title", msg="ui.options.saveFailed.description", config={closeButton=true, timeOut=10}})
+  end
   if not shipping_build and M.impl.internalValues then
     jsonWriteFile(M.impl.pathInternal, M.impl.internalValues, true)
   end
@@ -130,7 +134,7 @@ local function refreshLanguages()
   -- 0) ask c++ what language is active right now, so we can see if it changed later
   local oldLanguage = Lua:getSelectedLanguage()
 
-  if not M.newTranslationsAvailable and (appliedLanguage ~= "" and oldLanguage ~= "" and appliedLanguage == oldLanguage) then
+  if not M.translationsChanged and (appliedLanguage ~= "" and oldLanguage ~= "" and appliedLanguage == oldLanguage) then
     if (values.userLanguage == appliedUserLanguage) then
       -- log('D','','       no language change requried.')
       return
@@ -188,8 +192,8 @@ local function refreshLanguages()
   --print(' - languageChanged >> ' .. tostring(languageChanged) .. ' | "' .. tostring(Lua:getSelectedLanguage()) .. '" ~= ' .. tostring(oldLanguage))
 
   -- send the new state to the UI
-  if languageChanged or M.newTranslationsAvailable then
-    M.newTranslationsAvailable = nil
+  if languageChanged or M.translationsChanged then
+    M.translationsChanged = nil
     notifyUI()
     if ui_imgui and ui_imgui.ctx ~= nil then
       local imguiFonts = jsonReadFile('settings/imguiFonts.json') or {}
@@ -212,7 +216,7 @@ local function setState(newState, ignoreCache)
   local prevWorkbenchInsecure = values.workbenchInsecure
 
   -- Graphics quality groups that have preset values for groups of graphic settings
-  local graphicQualityGroups = {'GraphicOverallQuality', 'GraphicMeshQuality', 'GraphicTextureQuality', 'GraphicLightingQuality', 'GraphicCloudsQuality', 'GraphicShadowsQuality', 'GraphicClusteredQuality'}
+  local graphicQualityGroups = {'GraphicOverallQuality', 'GraphicMeshQuality', 'GraphicTextureQuality', 'GraphicLightingQuality', 'GraphicCloudsQuality', 'GraphicShadowsQuality', 'GraphicClusteredQuality', 'GraphicDynReflectionQuality', 'GraphicDynMirrorsQuality'}
 
   local sortedKeys = {}
   for k,_ in pairs(newState) do
@@ -250,16 +254,19 @@ local function setState(newState, ignoreCache)
     --print(debug.tracesimple())
   end
 
-  -- we can update the dynamic collision state on the fly
-  if values.disableDynamicCollision ~= nil then
-    be:setDynamicCollisionEnabled(not values.disableDynamicCollision)
-  end
-
   local extLoaded = extensions.isExtensionLoaded('ui_extApp')
   if values.externalUI2 and not extLoaded then
     extensions.load('ui_extApp')
   elseif not values.externalUI2 and extLoaded then
     extensions.unload('ui_extApp')
+  end
+
+  -- level scoped extension: only load it while a level is running, the preset extension list handles it otherwise
+  local couplerCamLoaded = extensions.isExtensionLoaded('core_couplerCameraModifier')
+  if values.couplerCameraModifier and not couplerCamLoaded and getCurrentLevelIdentifier() then
+    extensions.load('core_couplerCameraModifier')
+  elseif not values.couplerCameraModifier and couplerCamLoaded then
+    extensions.unload('core_couplerCameraModifier')
   end
 
   local wantMcp = values.enableMcp and not suppressWebServers
@@ -312,8 +319,59 @@ local function requestSave()
   M.settingsTick = settingsTick
 end
 
+local function normalizePersona(persona)
+  if type(persona) == "table" then persona = persona.id end
+  if persona == nil then return nil end
+  persona = tostring(persona)
+  if persona == "" then return nil end
+  return persona
+end
+
+local function setPersonaValue(key, value, persona)
+  persona = normalizePersona(persona)
+  if values.multiseat ~= true or persona == nil or not M.impl.personaScopedSettings[key] then return false end
+
+  local allPersonaValues = jsonReadFile(M.impl.pathPersona) or {}
+  local personaValues = allPersonaValues[persona]
+  if not personaValues then
+    personaValues = {}
+    allPersonaValues[persona] = personaValues
+  end
+  if personaValues[key] == value then return false end
+
+  personaValues[key] = value
+  FS:directoryCreate(M.impl.path)
+  if not jsonWriteFile(M.impl.pathPersona, allPersonaValues, true) then return false end
+  M.impl.invalidatePersonaCache()
+  return true
+end
+
+local function clearPersonaValues()
+  if FS:fileExists(M.impl.pathPersona) then
+    FS:removeFile(M.impl.pathPersona)
+  end
+  M.impl.invalidatePersonaCache()
+end
+
 local settingInProgress = {}
-local function setValue(key, value, ignoreCache)
+local function setValue(key, value, ignoreCache, persona)
+  if persona == nil and ignoreCache ~= nil and type(ignoreCache) ~= "boolean" then
+    persona = ignoreCache
+    ignoreCache = false
+  end
+  if persona ~= nil then
+    persona = normalizePersona(persona)
+    if persona == nil then return false end
+    if values.multiseat == true then
+      local stateDirty = setPersonaValue(key, value, persona)
+      if stateDirty and core_vehicles and core_vehicles.onPersonaSettingsChanged then
+        core_vehicles.onPersonaSettingsChanged(persona)
+      end
+      return stateDirty
+    end
+    return false
+  end
+
   if settingInProgress[key] then
     --log("W", "", "This call to setValue() settings is being ignored, because it is flagged as a recursive call via 'M.settingInProgress["..dumps(key).."]'. This should not happen, please review callstack below:")
     --print(debug.tracesimple())
@@ -327,12 +385,20 @@ local function setValue(key, value, ignoreCache)
   local stateDirty = false
   if ignoreCache or values[key] == nil or (tostring(value) ~= tostring(values[key])) then
     stateDirty = true
+    if not M.loadingSettingsInProgress then recordPlayerAction("change setting " .. tostring(key)) end
     values[key] = value
     if options[key] and type(options[key].set) == 'function' then
       options[key].set(value)
     end
   end
   settingInProgress[key] = false
+
+  if stateDirty and key == "multiseat" then
+    if value ~= true then clearPersonaValues() end
+    if not M.loadingSettingsInProgress then
+      be:queueAllObjectLua('onSettingsChanged()')
+    end
+  end
 
   -- delay writing to disk
   if stateDirty and not M.loadingSettingsInProgress then
@@ -347,16 +413,20 @@ local function resetSettingToDefault(key)
   end
 end
 
-local function getValue(key, defaultValue)
-  if values[key] == nil then
-    return defaultValue
-  end
-  return values[key]
+local function getValue(key, defaultValue, persona)
+  local value = values[key]
+  if value == nil then value = defaultValue end
+  if values.multiseat ~= true then persona = nil end
+  return M.impl.getPersonaValue(key, value, persona)
 end
 
 local function loadSettingValues()
   M.impl.invalidateCache()
   local data = M.impl.getValues()
+
+  -- The former SSR toggle takes precedence when importing saved settings.
+  -- Otherwise its saved quality would turn reflections back on during loading.
+  if data.PostFXSSREnabled == false then data.PostFXSSRQuality = "Off" end
 
   if data.userColorPresets then
     data.userColorPresets = data.userColorPresets:gsub("'", '"') -- replace ' with "
@@ -407,6 +477,10 @@ local function load(ignoreCache)
 end
 
 local function initSettings(reason)
+  if reason ~= "reload" then
+    clearPersonaValues()
+  end
+
  -- fix the options up and combine the keys and values into the dict
   for k,v in pairs(options) do
     if v.keys and v.values and not v.dict then
@@ -445,6 +519,7 @@ local function initSettings(reason)
   -- load the persistency file at least
   local data = loadSettingValues()
   tableMerge(values, data)
+  if reason == "reload" and values.multiseat ~= true then clearPersonaValues() end
 
   core_settings_graphic.onInitSettings(values)
 end
@@ -471,7 +546,8 @@ local function finalizeInit()
   local techLicense = false
   if ResearchVerifier ~= nil then techLicense = ResearchVerifier.isTechLicenseVerified() end
 
-  --Could be more optimal to call earlier?
+  -- note: this is deprecated, move your platforms to use Engine.Platform.getPlatformPreset() (lua/common/settings.lua)
+  -- and unset settingsJsonPath
   loadPlatformSettings(PlatformSwitches.settingsJsonPath)
 
   initFinalized = true
@@ -502,6 +578,7 @@ end
 
 local function exit()
   save()
+  clearPersonaValues()
 end
 
 local function stringToVersion(s)

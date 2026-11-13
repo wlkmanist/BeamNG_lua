@@ -497,7 +497,7 @@ local function exploreFolder(_backendName, path)
 end
 M.exploreFolder = exploreFolder
 local function goToMod(_backendName, modId)
-  guihooks.trigger('ChangeState', {state = 'menu.mods.details', params = {modId = modId}})
+  extensions.ui_router.navigate('menu.mods.details', {modId = modId})
 end
 M.goToMod = goToMod
 return M

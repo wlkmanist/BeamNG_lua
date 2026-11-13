@@ -26,6 +26,7 @@ M.couplerTagsOptions = {
 
 M.vehiclePlayersMap = {}
 M.playerVehicleMap = {}
+M.vehiclePersonaMap = {}
 
 M.resetVehCollectionEnabled = true
 
@@ -36,6 +37,7 @@ M.initVehCollections = {}
 M.initVehIdToVehCollection = {}
 
 M.attachedCouplers = {}
+M.vehsCouplings = {} -- [vid] = { [otherVid] = true }, adjacency for coupled vehicles
 M.vehsCouplerCache = {}
 M.vehsCouplerTags = {}
 M.vehsCouplerOffset = {}
@@ -49,6 +51,11 @@ local _showInvalidPcFiles = false
 -- agregates only, attribute stays the same
 local convertToRange = { 'Value', 'Weight', 'Top Speed', '0-100 km/h', '0-60 mph', 'Weight/Power', "Off-Road Score" }
 local convertToDict = { "Region", "InsuranceClass" }
+local aggregateTypeByKey = {}
+for _, key in ipairs(filtersWhiteList) do aggregateTypeByKey[key] = 4 end
+for _, key in ipairs(convertToDict) do aggregateTypeByKey[key] = 3 end
+for _, key in ipairs(convertToRange) do aggregateTypeByKey[key] = 2 end
+for _, key in ipairs(range) do aggregateTypeByKey[key] = 1 end
 
 -- so the ui knows when to interpret the data as range
 local finalRanges = {}
@@ -131,14 +138,15 @@ end
 
 local function _fillAggregates(data, destination)
   for key, value in pairs(data) do
-    if tableContains(range, key) then
+    local aggregateType = aggregateTypeByKey[key]
+    if aggregateType == 1 then
       if not destination[key] then
         destination[key] = deepcopy(data[key])
       else
         destination[key].min = min(data[key].min, destination[key].min)
         destination[key].max = max(data[key].max, destination[key].max)
       end
-    elseif tableContains(convertToRange, key) then
+    elseif aggregateType == 2 then
       if type(data[key]) == 'number' then
         if not destination[key] then
           destination[key] = {min = data[key], max = data[key]}
@@ -146,7 +154,7 @@ local function _fillAggregates(data, destination)
         destination[key].min = min(data[key], destination[key].min)
         destination[key].max = max(data[key], destination[key].max)
       end
-    elseif tableContains(convertToDict, key) then
+    elseif aggregateType == 3 then
       if not destination[key] then
         destination[key] = {}
       end
@@ -160,7 +168,7 @@ local function _fillAggregates(data, destination)
           end
         end
       end
-    elseif tableContains(filtersWhiteList, key) then
+    elseif aggregateType == 4 then
       if not destination[key] then
         destination[key] = {}
       end
@@ -178,14 +186,15 @@ end
 
 local function _mergeAggregates(data, destination)
   for key, value in pairs(data) do
-    if tableContains(range, key) or tableContains(convertToRange, key) then
+    local aggregateType = aggregateTypeByKey[key]
+    if aggregateType == 1 or aggregateType == 2 then
       if not destination[key] then
         destination[key] = deepcopy(data[key])
       else
         destination[key].min = min(data[key].min, destination[key].min)
         destination[key].max = max(data[key].max, destination[key].max)
       end
-    elseif tableContains(convertToDict, key) then
+    elseif aggregateType == 3 then
       if not destination[key] then
         destination[key] = {}
       end
@@ -194,7 +203,7 @@ local function _mergeAggregates(data, destination)
           destination[key][value] = true
         end
       end
-    elseif tableContains(filtersWhiteList, key) then
+    elseif aggregateType == 4 then
       if not destination[key] then
         destination[key] = deepcopy(data[key])
       else
@@ -324,7 +333,9 @@ local function computeFilesCaches()
   local function afterDecodeFile(yieldLabel)
     decoded = decoded + 1
     reportDecodeProgress()
-    yieldFn(yieldLabel)
+    if decoded % 1024 == 0 or decoded == totalDecode then
+      yieldFn(yieldLabel)
+    end
   end
 
   if reportScanProgress and totalDecode > 0 then
@@ -537,18 +548,24 @@ local function isModelsDataLoaded()
 end
 
 local _cachedGamePath = FS:getGamePath()
-local function _isOfficialContentVPathFast(vpath)
-  return string.startswith(FS:getFileRealPath(vpath), _cachedGamePath)
-end
-
-local function getSourceAttr(path)
-  if _isOfficialContentVPathFast(path) then
+local function getSourceAttrFromOrigin(path, origin)
+  if origin and string.startswith(origin.mountPath or "", _cachedGamePath) then
     return 'BeamNG - Official'
   elseif string.sub(path, -3) == '.pc' then
     return 'Custom'
   else
     return 'Mod'
   end
+end
+
+local function getSourceAttrAndMod(path)
+  local origin = FS:getFileOriginInfo(path)
+  return getSourceAttrFromOrigin(path, origin),
+    extensions.core_modmanager.getModFromOriginArchivePath(origin.archivePath)
+end
+
+local function getSourceAttr(path)
+  return getSourceAttrFromOrigin(path, FS:getFileOriginInfo(path))
 end
 
 local default_color_keys = {'default_color', 'default_color_2', 'default_color_3'}
@@ -629,17 +646,14 @@ local function _modelConfigsHelper(key, model, ignoreCache)
   end
 
   local configs = {}
-  local yieldFn = nop
   if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
-    yieldFn = util_asyncBulkLoader.yield
     util_asyncBulkLoader.addTotal(tableSize(vehFiles.configs))
   end
 
   for configFilename, configName in pairs(vehFiles.configs) do
-    local contentSource = getSourceAttr(configFilename)
+    local contentSource, mod = getSourceAttrAndMod(configFilename)
     -- use format
     local infoFilename = string.format("/vehicles/%s/info_%s.json", key, configName)
-    local mod = extensions.core_modmanager.getModFromPath(configFilename, true)
     local readData = {}
     if vehFiles.info[infoFilename] and getFilesParsed()[infoFilename] then
       readData = getFilesParsed()[infoFilename]
@@ -746,7 +760,6 @@ local function _modelConfigsHelper(key, model, ignoreCache)
       util_asyncBulkLoader.addCount(1)
     end
 
-    yieldFn("getModelConfigsHelper " .. configFilename)
     configs[configName] = configData
   end
 
@@ -772,8 +785,10 @@ local function getModel(key)
   -- use format
   local infoFilename = string.format("/vehicles/%s/info.json", key)
   local data = getFilesParsed()[infoFilename]
+  local contentSource
   if data then
-    local mod = extensions.core_modmanager.getModFromPath(infoFilename, true)
+    local mod
+    contentSource, mod = getSourceAttrAndMod(infoFilename)
     local source = infoFilename
     if mod then
       -- use format
@@ -893,7 +908,7 @@ local function getModel(key)
   extensions.core_vehiclePaints.setupPaints(model, cache[key].configs)
   profilerPopEvent("setupPaints")
   if data then
-    data.Source = getSourceAttr(infoFilename)
+    data.Source = contentSource or getSourceAttr(infoFilename)
 
     if fixedVehicle then
       data.Source = 'Mod'
@@ -914,10 +929,6 @@ local function getModel(key)
 
   if util_asyncBulkLoader then
     util_asyncBulkLoader.addCount(1)
-  end
-
-  if util_asyncBulkLoader and util_asyncBulkLoader.isLoading() then
-    util_asyncBulkLoader.yield("getModel " .. key)
   end
 
   return cache[key]
@@ -1059,7 +1070,7 @@ local function openSelectorUI()
     return
   end
   if ui_menuManager.isPauseV2Enabled() then
-    ui_vehicleSelector_general.openFromPause()
+    ui_vehicleSelector_general.openFromPause(nil, { focusSearch = true })
   else
     ui_vehicleSelector_general.openVehicleSelectorForFreeroam()
   end
@@ -1070,7 +1081,16 @@ local function openPartsSelectorUI()
     -- no vehicle selector in main menu
     return
   end
-  if ui_menuManager.isPauseV2Enabled() then
+  if not getPlayerVehicle(0) then return end
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  local firstDriveSessionActive = capabilities
+    and capabilities.isSessionActive
+    and capabilities.isSessionActive()
+  if firstDriveSessionActive
+    and not capabilities.isAllowed("partsAndTuning") then
+    return false
+  end
+  if firstDriveSessionActive or ui_menuManager.isPauseV2Enabled() then
     extensions.ui_router.navigate("pause.vehicle.configurationcombined")
   else
     guihooks.trigger('MenuOpenModule','vehicleconfig')
@@ -1665,8 +1685,12 @@ local function _spawnNewVehicle(modelName, config, state, localOptions, level)
   end
 
   local opt = sanitizeVehicleSpawnOptions(modelName, localOptions)
+  if opt.additionalVehicleData then
+    vehManager.queueAdditionalVehicleData(opt.additionalVehicleData)
+  end
   local veh = spawn.spawnVehicle(modelName, opt.config, opt.pos, opt.rot, opt)
   if not veh then
+    if opt.additionalVehicleData then vehManager.queueAdditionalVehicleData(nil) end
     return nil
   end
   local vehId = veh:getID()
@@ -1691,6 +1715,9 @@ local function replaceOtherVehicle(model, opt, otherVeh)
     options.safeSpawn = true
   end
   options.removeWhenNoPositionFound = false
+  if options.additionalVehicleData then
+    vehManager.queueAdditionalVehicleData(options.additionalVehicleData, otherVeh:getID())
+  end
   spawn.setVehicleObject(otherVeh, options)
   finalizeSpawn(options, otherVeh)
   return otherVeh
@@ -1722,6 +1749,7 @@ local function _replaceVehicle(modelName, config, state, localOptions, level)
   else -- spawn new vehicle in place and remove other
     extensions.hook("onBeforeVehicleReplaced", vehId)
     local enterVehicle = vehId == be:getPlayerVehicleID(0)
+    local replacingWalkingCharacter = veh:getJBeamFilename() == "unicycle"
 
     localOptions.model = modelName
 
@@ -1751,6 +1779,7 @@ local function _replaceVehicle(modelName, config, state, localOptions, level)
 
     veh:setDynDataFieldbyName("autoEnterVehicle", 0, "false")
     veh = replaceOtherVehicle(modelName, opt, veh)
+    if replacingWalkingCharacter then veh.playerUsable = true end
     veh:setDynDataFieldbyName("autoEnterVehicle", 0, "true")
     vehsSpawningFlag[vehId] = true
 
@@ -1824,6 +1853,8 @@ end
 -- called by the UI directly
 local function spawnNewVehicle(modelName, opt)
   if opt.canSpawnAnotherVehicleCheck ~= false and not canSpawnAnotherVehicle() then return false end
+  local playerVeh = getPlayerVehicle(0)
+  local switchToGameCamera = opt.autoEnterVehicle ~= false and not playerVeh
 
   -- Get the config data
   opt = deepcopy(opt) or {}
@@ -1843,6 +1874,10 @@ local function spawnNewVehicle(modelName, opt)
   local vehCollection = deepcopy(state.initVehCollection)
   buildInitVehCollectionCache(state.initVehCollection, vehCollection)
 
+  if switchToGameCamera then
+    commands.setGameCamera()
+  end
+
   if type(vehs) == 'table' then
     return vehs[1], vehs
   else
@@ -1859,6 +1894,13 @@ local function removeCurrent()
     end
   else
     log('E', 'vehicles', 'unable to remove vehicle: player 0 vehicle not found')
+  end
+end
+
+local function enterFreecamIfNoVehicles()
+  local playerVeh = getPlayerVehicle(0)
+  if be:getEnterableObjectCount() == 0 and not (playerVeh and playerVeh:getJBeamFilename() == "unicycle") then
+    commands.setFreeCamera()
   end
 end
 
@@ -1886,14 +1928,18 @@ local function replaceVehicle(modelName, opt, otherVeh, replaceWholeCollection)
   if other then
     otherVehId = other:getID()
     otherVehCollection = M.vehIdToVehCollection[otherVehId]
+  elseif opt.canSpawnAnotherVehicleCheck ~= false and not canSpawnAnotherVehicle() then
+    return false
   end
 
-  if replaceWholeCollection then
+  local switchToGameCamera = opt.autoEnterVehicle ~= false and not other
+
+  if replaceWholeCollection and otherVehCollection then
     -- get all vehicles to reuse from the other vehicle collection
     for vehId, _ in pairs(otherVehCollection.vehsData) do
       table.insert(state.vehsToReuse, vehId)
     end
-  else
+  elseif other then
     table.insert(state.vehsToReuse, otherVehId)
     splitVehicleCollection(otherVehId)
     removeVehicleFromCollection(otherVehId)
@@ -1915,6 +1961,10 @@ local function replaceVehicle(modelName, opt, otherVeh, replaceWholeCollection)
 
   local vehCollection = deepcopy(state.initVehCollection)
   buildInitVehCollectionCache(state.initVehCollection, vehCollection)
+
+  if switchToGameCamera then
+    commands.setGameCamera()
+  end
 
   if type(vehs) == 'table' then
     return vehs[1], vehs
@@ -2073,7 +2123,7 @@ local function makeVehicleLicenseText(veh, designPath)
 
   local design = designPath and plateDesign.loadDesign(designPath)
 
-  if settings.getValue("useSteamName") and core_gamestate.state.state == "freeroam" and veh.autoEnterVehicle and SteamLicensePlateVehicleId == nil and OnlineServiceProvider and OnlineServiceProvider.isWorking and OnlineServiceProvider.accountLoggedIn then
+  if settings.getValue("useSteamName") and core_gamestate.state.state == "freeroam" and veh.autoEnterVehicle ~= "false" and SteamLicensePlateVehicleId == nil and OnlineServiceProvider and OnlineServiceProvider.isWorking and OnlineServiceProvider.accountLoggedIn then
     SteamLicensePlateVehicleId = veh:getId()
     txt = OnlineServiceProvider.playerName
     txt = txt:gsub('"', "'") -- replace " with '
@@ -2550,6 +2600,7 @@ local function onPreVehicleSpawned(vehId)
   local veh = getObjectByID(vehId)
   if not veh then return end
 
+  M.vehsCouplings[vehId] = {}
   M.vehsCouplerCache[vehId], M.vehsCouplerTags[vehId], M.vehsCouplerOffset[vehId] = {}, {}, {}
   local couplerCache, couplerTags, couplerOffset = M.vehsCouplerCache[vehId], M.vehsCouplerTags[vehId], M.vehsCouplerOffset[vehId]
 
@@ -2575,6 +2626,64 @@ local function onPreVehicleSpawned(vehId)
   M.vehiclePlayersMap[vehId] = {}
 end
 
+local function queueVehiclePersona(vehId, persona)
+  local veh = getObjectByID(vehId)
+  if not veh then return end
+  veh:queueLuaCommand("setPlayerPersona(" .. serialize(persona) .. "); onSettingsChanged()")
+end
+
+local function setVehiclePersona(vehId, persona)
+  if type(persona) == "table" then persona = persona.id end
+  if persona ~= nil then persona = tostring(persona) end
+  if M.vehiclePersonaMap[vehId] == persona then return false end
+  M.vehiclePersonaMap[vehId] = persona
+  queueVehiclePersona(vehId, persona)
+  return true
+end
+
+local function getVehiclePersona(vehId)
+  return M.vehiclePersonaMap[vehId]
+end
+
+local function getJoinedPersonaForPlayer(player)
+  if not core_multiseat or not core_multiseat.getJoinedParticipants then return nil end
+  for _, participant in ipairs(core_multiseat.getJoinedParticipants()) do
+    if participant.assignment.playerIndex == player then
+      return participant.persona and participant.persona.id or nil
+    end
+  end
+end
+
+local function syncVehiclePersona(vehId)
+  local players = M.vehiclePlayersMap[vehId] or {}
+  local sortedPlayers = tableKeys(players)
+  table.sort(sortedPlayers)
+  local persona
+  for _, player in ipairs(sortedPlayers) do
+    persona = getJoinedPersonaForPlayer(player)
+    if persona then break end
+  end
+  setVehiclePersona(vehId, persona)
+end
+
+local function onPersonaSettingsChanged(persona)
+  if type(persona) == "table" then persona = persona.id end
+  if persona == nil then return end
+  persona = tostring(persona)
+  for vehId, vehiclePersona in pairs(M.vehiclePersonaMap) do
+    if vehiclePersona == persona then
+      local veh = getObjectByID(vehId)
+      if veh then veh:queueLuaCommand("onSettingsChanged()") end
+    end
+  end
+end
+
+local function onLocalParticipantsChanged()
+  for vehId, players in pairs(M.vehiclePlayersMap) do
+    if next(players) then syncVehiclePersona(vehId) end
+  end
+end
+
 local function onVehicleSwitched(oldId, newId, player)
   -- Track what players are in what vehicles
   if oldId ~= -1 then
@@ -2593,13 +2702,26 @@ local function onVehicleSwitched(oldId, newId, player)
       log("W", "onVehicleSwitched", "New vehicle "..newId.." not found in M.vehiclePlayersMap")
     end
   end
+  if oldId ~= -1 then syncVehiclePersona(oldId) end
+  if newId ~= -1 and newId ~= oldId then syncVehiclePersona(newId) end
 end
 
 local function onVehicleDestroyed(vid)
-  for i, coupler in ipairs(M.attachedCouplers) do
-    if coupler[1] == vid then
+  for i = #M.attachedCouplers, 1, -1 do
+    local coupler = M.attachedCouplers[i]
+    if coupler[1] == vid or coupler[2] == vid then
       table.remove(M.attachedCouplers, i)
     end
+  end
+
+  local others = M.vehsCouplings[vid]
+  if others then
+    for otherVid, _ in pairs(others) do
+      if M.vehsCouplings[otherVid] then
+        M.vehsCouplings[otherVid][vid] = nil
+      end
+    end
+    M.vehsCouplings[vid] = nil
   end
 
   M.vehsCouplerCache[vid], M.vehsCouplerTags[vid], M.vehsCouplerOffset[vid] = nil, nil, nil
@@ -2614,6 +2736,7 @@ local function onVehicleDestroyed(vid)
     end
     M.vehiclePlayersMap[vid] = nil
   end
+  M.vehiclePersonaMap[vid] = nil
 
   if SteamLicensePlateVehicleId == vid then
     SteamLicensePlateVehicleId = nil
@@ -2706,6 +2829,9 @@ end
 local function onCouplerAttached(objId1, objId2, nodeId, obj2nodeId)
   table.insert(M.attachedCouplers, {objId1, objId2, nodeId, obj2nodeId})
 
+  M.vehsCouplings[objId1][objId2] = true
+  M.vehsCouplings[objId2][objId1] = true
+
   -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
   -- -- if the two vehicles coupled together are not part of the same vehicle collection, remove both collections
   -- local collection = M.vehIdToVehCollection[objId1]
@@ -2789,6 +2915,9 @@ local function onCouplerDetached(obj1id, obj2id, nodeId, obj2nodeId)
     end
   end
 
+  if M.vehsCouplings[obj1id] then M.vehsCouplings[obj1id][obj2id] = nil end
+  if M.vehsCouplings[obj2id] then M.vehsCouplings[obj2id][obj1id] = nil end
+
   -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
   -- local collection = M.vehIdToVehCollection[obj1id]
   -- if collection and collection.resetState then
@@ -2842,7 +2971,9 @@ local function onSerialize()
   local data = {
     vehiclePlayersMap = M.vehiclePlayersMap,
     playerVehicleMap = M.playerVehicleMap,
+    vehiclePersonaMap = M.vehiclePersonaMap,
     attachedCouplers = M.attachedCouplers,
+    vehsCouplings = M.vehsCouplings,
     vehsCouplerCache = M.vehsCouplerCache,
     vehsCouplerTags = M.vehsCouplerTags,
     vehsCouplerOffset = M.vehsCouplerOffset,
@@ -2857,7 +2988,9 @@ end
 local function onDeserialized(data)
   M.vehiclePlayersMap = data.vehiclePlayersMap
   M.playerVehicleMap = data.playerVehicleMap
+  M.vehiclePersonaMap = data.vehiclePersonaMap or {}
   M.attachedCouplers = data.attachedCouplers
+  M.vehsCouplings = data.vehsCouplings
   M.vehsCouplerCache = data.vehsCouplerCache
   M.vehsCouplerTags = data.vehsCouplerTags
   M.vehsCouplerOffset = data.vehsCouplerOffset
@@ -2875,6 +3008,8 @@ local function onDeserialized(data)
 end
 
 local function onInstabilityDetected(vid, returnData)
+  if multiplayer_vehicleSync then return end
+
   if not settings.getValue('pauseGameOnInstability') then
     return
   end
@@ -2931,6 +3066,7 @@ M.getCouplerOffset = getCouplerOffset
 M.replaceVehicle = replaceVehicle
 M.spawnNewVehicle = spawnNewVehicle
 M.removeCurrent = removeCurrent
+M.enterFreecamIfNoVehicles = enterFreecamIfNoVehicles
 M.cloneCurrent = cloneCurrent
 M.removeAll = removeAll
 M.removeAllExceptCurrent = removeAllExceptCurrent
@@ -2964,6 +3100,10 @@ M.spawnDefault        = spawnDefault
 M.onPreVehicleSpawned = onPreVehicleSpawned
 M.onVehicleSwitched   = onVehicleSwitched
 M.onVehicleDestroyed  = onVehicleDestroyed
+M.onLocalParticipantsChanged = onLocalParticipantsChanged
+M.onPersonaSettingsChanged = onPersonaSettingsChanged
+M.setVehiclePersona = setVehiclePersona
+M.getVehiclePersona = getVehiclePersona
 M.onInstabilityDetected = onInstabilityDetected
 --M.onVehicleResetted   = onVehicleResetted -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled
 --M.onSetClusterPosRelRot = onSetClusterPosRelRot -- TODO: Trailer respawn code is currently active, uncomment this when it's disabled

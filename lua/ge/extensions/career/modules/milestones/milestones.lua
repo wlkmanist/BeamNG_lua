@@ -8,6 +8,18 @@ local colorToCompleted = {
   ["var(--bng-add-green-500)"] = "var(--bng-add-green-700)",
   ["var(--bng-add-red-500)"] = "var(--bng-add-red-700)",
 }
+
+local MILESTONE_FILTER_OPTIONS = {
+  { value = "general", label = "ui.career.milestones.filters.general" },
+  { value = "all", label = "ui.career.milestones.filters.all" },
+  { value = "mission", label = "ui.career.milestones.filters.mission" },
+  { value = "branch", label = "ui.career.milestones.filters.branch" },
+  { value = "delivery", label = "ui.career.milestones.filters.delivery" },
+  { value = "money", label = "ui.career.milestones.filters.money" },
+  { value = "speedTrap", label = "ui.career.milestones.filters.speedTrap" },
+  { value = "insurance", label = "ui.career.milestones.filters.insurance" },
+}
+
 local function sortByTimeAndId(a,b)
   if a.time == b.time and a.entryId and b.entryId then
     if type(a.entryId) == "number" and type(b.entryId) == "number" then
@@ -32,7 +44,7 @@ local function storeClaimFunctions(list)
   end
 end
 
-local function claim(id)
+local function claim(id, noGuiEvent)
   local claimFunction = claimFunctions[id] or nop
   local claimRefreshFunction = claimRefreshFunctions[id] or nop
   claimFunction()
@@ -41,6 +53,12 @@ local function claim(id)
     claimFunctions[id] = refresh.claimFunction
     claimRefreshFunctions[id] = refresh.claimRefreshFunction
     refresh.claimId = id
+  end
+  if not noGuiEvent then
+    guihooks.trigger("milestoneClaimed", {
+      claimId = id,
+      replacementEntry = refresh,
+    })
   end
   return refresh
 end
@@ -51,12 +69,16 @@ local function claimAllUnclaimed()
   local claimed = 0
   for _, milestone in ipairs(data.list or {}) do
     if milestone.claimable and milestone.claimId then
-      claim(milestone.claimId)
+      claim(milestone.claimId, true)
       claimed = claimed + 1
     end
   end
 
   getMilestones()
+  guihooks.trigger("allMilestonesClaimed", {
+    claimed = claimed,
+    unclaimedMilestonesCount = M.saveData.unclaimedMilestonesCount or 0,
+  })
   return {
     claimed = claimed,
     unclaimedMilestonesCount = M.saveData.unclaimedMilestonesCount or 0,
@@ -90,8 +112,11 @@ end
 local function onGetMilestones(list)
 
 end
-M.getMilestones = getMilestones
-M.onGetMilestones = onGetMilestones
+
+local function requestMilestones(filter)
+  guihooks.trigger("milestonesData", getMilestones(filter))
+end
+
 
 -- put here so it can eventually be delayed if in a mission, grouped up if multiple...
 local function milestoneReached(label)
@@ -150,9 +175,11 @@ M.loadSaveData = loadSaveData
 M.onSaveCurrentProfile = onSaveCurrentProfile
 M.onExtensionLoaded = onExtensionLoaded
 
-
 M.unclaimedMilestonesCount = unclaimedMilestonesCount
 M.onCareerActive = onCareerActive
+M.getMilestones = getMilestones
+M.requestMilestones = requestMilestones
+M.onGetMilestones = onGetMilestones
 
 -- common reward functions
 M.minorLinear = function(step) return {{attributeKey="money",rewardAmount=100*(step+1)}} end
@@ -160,10 +187,45 @@ M.majorLinear = function(step) return {{attributeKey="money",rewardAmount=250*(s
 
 M.colorGeneralGray = "var(--bng-cool-gray-700-rgb)"
 M.colorMissionBlue = "var(--bng-add-blue-500-rgb)"
-
 M.colorOrange = "var(--bng-orange-500-rgb)"
 
+local function getFilterOptions()
+  local options = {}
+  for _, option in ipairs(MILESTONE_FILTER_OPTIONS) do
+    table.insert(options, {
+      value = option.value,
+      label = _tr(option.label),
+    })
+  end
+  return options
+end
 
+local function attachRouteData(data)
+  if type(data) ~= "table" then return end
+  data.milestones = {
+    filterOptions = getFilterOptions(),
+  }
+end
 
+local function runPauseLifecycle(hookName, context, toRoute, fromRoute, data)
+  local pauseLifecycle = extensions.ui_pause_routeLifecycleCallbacks
+  local hook = pauseLifecycle and pauseLifecycle[hookName]
+  if type(hook) == "function" then
+    hook(context, toRoute, fromRoute, data)
+  end
+end
+
+local function onMilestonesRouteEnter(context, toRoute, fromRoute, data)
+  runPauseLifecycle("onPauseEnter", context, toRoute, fromRoute, data)
+  attachRouteData(data)
+end
+
+local function onMilestonesRouteMount(context, toRoute, fromRoute, data)
+  runPauseLifecycle("onPauseMount", context, toRoute, fromRoute, data)
+  attachRouteData(data)
+end
+
+M.onMilestonesRouteEnter = onMilestonesRouteEnter
+M.onMilestonesRouteMount = onMilestonesRouteMount
 
 return M

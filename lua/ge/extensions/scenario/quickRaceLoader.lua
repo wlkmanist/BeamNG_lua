@@ -548,7 +548,7 @@ local function loadQuickrace(scenarioKey, scenarioFile, trackFile, vehicleFile, 
   return processedScenario
 end
 
-local function starQuickRaceFromUI(scenarioFile, trackFile, vehicleFile, raceType)
+local function startQuickrace(scenarioFile, trackFile, vehicleFile, raceType)
   if scenetree.MissionGroup then
     log('D', logTag, 'Delaying start of quickrace until current level is unloaded...')
     local func = function()
@@ -573,16 +573,6 @@ local function starQuickRaceFromUI(scenarioFile, trackFile, vehicleFile, raceTyp
     local quickraceScenario = loadQuickrace(nil, scenarioFile, trackFile, vehicleFile, raceType)
     -- dump(quickraceScenario)
     scenario_scenarios.executeScenario(quickraceScenario)
-  end
-end
-
--- This function will merge the track and vehicle data into the scenario and start the scenario.
-local function startQuickrace(scenarioFile, trackFile, vehicleFile, type)
-
-  if campaign_exploration and campaign_exploration.getExplorationActive() then
-    campaign_exploration.startTimeTrail(scenarioFile, trackFile, vehicleFile)
-  else
-    starQuickRaceFromUI(scenarioFile, trackFile, vehicleFile, type)
   end
 end
 

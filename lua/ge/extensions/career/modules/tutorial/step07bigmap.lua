@@ -17,7 +17,7 @@ local goals = {
     id = "step7_selectPoiGoal",
     type = "goal",
     label = "ui.career.tutorial.task.step07.goal.selectPoi.label",
-    subtext = "ui.career.tutorial.task.step07.goal.selectPoi.subtext",
+    subtext = "ui.career.tutorial.task.step07.goal.selectPoi.subtext.keyboardmouse",
     subtextController = "ui.career.tutorial.task.step07.goal.selectPoi.subtext.controller",
     attention = true,
   },

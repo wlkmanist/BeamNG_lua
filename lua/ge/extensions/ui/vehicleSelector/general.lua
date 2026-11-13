@@ -8,6 +8,7 @@ M.dependencies = {
 }
 local customRootPath = {}
 local openedFromGarage = false
+local pendingFocusSearchOnOpen = false
 local spawnOnly = false
 -- Load the modules
 local displayDataModule = require("ge/extensions/ui/gridSelectorUtils/displayDataModule")
@@ -215,6 +216,7 @@ local function setupInstances()
       label = _tr("ui.menu.vehicleSelector.displayOptions.showCustomPCFiles.title"),
       key = "showCustomPCFiles",
       default = true,
+      hideInSimpleMenu = true,
       type = "checkbox",
       description = _tr("ui.menu.vehicleSelector.displayOptions.showCustomPCFiles.description"),
       save = true,
@@ -950,6 +952,17 @@ M.trackRecentVehicle = function(model, config)
   local itemKey = model .. "/" .. config
   return displayDataInstance.trackRecentItem(itemKey)
 end
+M.getRecentVehicles = function()
+  ensureInstances()
+  local vehicles = {}
+  for _, itemKey in ipairs(displayDataInstance.getRecentItems()) do
+    local model, config = itemKey:match("^([^/]+)/(.+)$")
+    if model and config then
+      vehicles[#vehicles + 1] = {model = model, config = config}
+    end
+  end
+  return vehicles
+end
 
 
 
@@ -1236,14 +1249,15 @@ M.openVehicleSelectorForFreeroamModal = function()
     -- print("exit callback")
     callback()
   end)
-  guihooks.trigger("ChangeState", "vehicle-selector")
+  extensions.ui_router.navigate("menu.vehiclesnew")
   guihooks.trigger("gridSelectorRefreshAll","vehicleSelector")
   extensions.hook("onVehicleSelectorOpen")
 
 end
 
-local function openVehicleSelectorForChallenge(callback)
+local function openVehicleSelectorForChallenge(callback, routeName, options)
   callback = callback or nop
+  options = options or {}
   openedFromGarage = false
   setSpawnOnly(false)
   customRootPath = {
@@ -1251,24 +1265,28 @@ local function openVehicleSelectorForChallenge(callback)
   }
   M.getUiData() -- Initialize if needed
   filterInstance.clearLockedFilters()
-  -- Opponents must be drivable vehicles, so hard-exclude props and trailers from the grid.
-  local filters = filterInstance.getFilters()
-  if filters and filters.filterList then
-    local excludedTypeValues = {
-      Prop = true,
-      Trailer = true,
-    }
-    for _, f in ipairs(filters.filterList) do
-      if f.propKey == "Type" and f.type == "set" and f.options then
-        local allowedTypes = {}
-        for _, opt in ipairs(f.options) do
-          local optValue = type(opt) == "table" and (opt.value or opt.id or opt.name) or opt
-          if optValue and not excludedTypeValues[optValue] then
-            table.insert(allowedTypes, optValue)
+  if options.unrestricted then
+    filterInstance.clearAllFilters()
+  else
+    -- Opponents must be drivable vehicles, so hard-exclude props and trailers from the grid.
+    local filters = filterInstance.getFilters()
+    if filters and filters.filterList then
+      local excludedTypeValues = {
+        Prop = true,
+        Trailer = true,
+      }
+      for _, f in ipairs(filters.filterList) do
+        if f.propKey == "Type" and f.type == "set" and f.options then
+          local allowedTypes = {}
+          for _, opt in ipairs(f.options) do
+            local optValue = type(opt) == "table" and (opt.value or opt.id or opt.name) or opt
+            if optValue and not excludedTypeValues[optValue] then
+              table.insert(allowedTypes, optValue)
+            end
           end
+          filterInstance.lockFilterModeExclusive(f.propName, allowedTypes)
+          break
         end
-        filterInstance.lockFilterModeExclusive(f.propName, allowedTypes)
-        break
       end
     end
   end
@@ -1288,7 +1306,7 @@ local function openVehicleSelectorForChallenge(callback)
   ui_vehicleSelector_detailsInteraction.setExitCallback(function()
     callback()
   end)
-  extensions.ui_router.navigate("mission.control.vehicleSelector")
+  extensions.ui_router.navigate(routeName or "mission.control.vehicleSelector")
   extensions.hook("onVehicleSelectorOpen")
 end
 M.openVehicleSelectorForChallenge = openVehicleSelectorForChallenge
@@ -1318,15 +1336,25 @@ local function openVehicleSelectorForFreeroamConfigurator(callback)
     {label = "Freeroam Configurator", gotoAngularState = 'menu.freeroamconfigurator'},
     {label = "Player Vehicle Selection", gotoPath = {'allModels'}, clearFilters = true, clearSearch = true},
   }
-  guihooks.trigger("ChangeState", "vehicle-selector")
+  extensions.ui_router.navigate("menu.vehiclesnew")
   guihooks.trigger("gridSelectorRefreshAll","vehicleSelector")
   extensions.hook("onVehicleSelectorOpen")
 end
 M.openVehicleSelectorForFreeroamConfigurator = openVehicleSelectorForFreeroamConfigurator
 
-local function openFromPause(routeName)
+local function openFromPause(routeName, options)
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  local vehicleManagementLessonActive = gameplay_discover_firstDrive_learningFlow
+    and gameplay_discover_firstDrive_learningFlow.isLessonActive
+    and gameplay_discover_firstDrive_learningFlow.isLessonActive("vehicleManagement")
+  if capabilities and capabilities.isSessionActive and capabilities.isSessionActive()
+    and not capabilities.isAllowed("vehicleManagement")
+    and not vehicleManagementLessonActive then
+    return false
+  end
   openedFromGarage = false
   setSpawnOnly(options and options.spawnOnly == true)
+  pendingFocusSearchOnOpen = options and options.focusSearch or false
   customRootPath = {
     --{label = "Pause", gotoState = "pause.vehicle"},
     {label = _tr("ui.menu.vehicleSelector.title"), gotoPath = {'allModels'}, clearFilters = true, clearSearch = true},
@@ -1337,9 +1365,20 @@ local function openFromPause(routeName)
   ui_vehicleSelector_detailsInteraction.setDetailsButtonForFreeroam(true)
   ui_vehicleSelector_detailsInteraction.setCustomDetailsButtons()
   ui_vehicleSelector_detailsInteraction.setExitCallback(nop)
-  extensions.ui_router.navigate(routeName or "pause.vehicleSelector")
+  if pendingFocusSearchOnOpen then
+    extensions.ui_router.navigate(routeName or "pause.vehicleSelector", nil, { preferredScope = "auxillary" })
+  else
+    extensions.ui_router.navigate(routeName or "pause.vehicleSelector")
+  end
+  return true
 end
 M.openFromPause = openFromPause
+
+function M.consumeFocusSearchOnOpen()
+  local shouldFocus = pendingFocusSearchOnOpen
+  pendingFocusSearchOnOpen = false
+  return shouldFocus
+end
 
 -- Drilldown lifecycle and helpers for the pause.vehicleSelector.vehicle child
 -- route. The pattern mirrors ui_gameplaySelector_general:
@@ -1611,6 +1650,12 @@ function M.requestDetails(item, requestId)
     detailsRequest = item.showDetails
   end
 
+  -- cluster tiles carry no showDetails, so there is no model/config to look up
+  if type(detailsRequest) ~= "table" or not detailsRequest.model or not detailsRequest.config then
+    log("W", "", "requestDetails: item has no model/config details (key: " .. tostring(type(item) == "table" and item.key or nil) .. ")")
+    return nil
+  end
+
   local details = M.getDetails(detailsRequest)
   local payload = {
     backendName = backendName,
@@ -1663,10 +1708,14 @@ local function emitPauseRouteSnapshot(pending)
     ui_vehicleSelector_tiles.overrideDefaultSelectedTile(pending.overrideTile)
   end
 
-  local ok, snapshotOrErr = pcall(buildVehicleRouteSnapshot, pathKeys)
+  local shortError = nil
+  local ok, snapshotOrErr = xpcall(buildVehicleRouteSnapshot, function(err)
+    shortError = tostring(err)
+    return debug.traceback(shortError)
+  end, pathKeys)
   if not ok then
-    log("E", "ui.vehicleSelector",
-      string.format("Failed to build pause vehicle selector route snapshot: %s", tostring(snapshotOrErr)))
+    log("E", "ui.vehicleSelector",string.format("Failed to build pause vehicle selector route snapshot: %s", shortError))
+    log("E", "ui.vehicleSelector", tostring(snapshotOrErr))
     return false
   end
 
@@ -1809,10 +1858,13 @@ local function navigateToVehicle(tile, options)
   local configKey = resolveConfigKeyFromTile(tile)
   local title = resolveVehicleTitleFromTile(tile, modelKey)
 
-  -- Only request a selected-tile override when the click came from a config
-  -- tile; cluster tiles should land on the model's default selection.
+  -- Request a selected-tile override when the click targets a specific config:
+  -- direct config tiles, or recent/favourite cluster copies that advertise one
+  -- via `specificConfigDrilldown`. Plain cluster tiles still land on the
+  -- model's default selection.
   local overrideTile = nil
-  if tile.isConfig and isNonEmptyString(modelKey) and isNonEmptyString(configKey) then
+  if isNonEmptyString(modelKey) and isNonEmptyString(configKey)
+      and (tile.isConfig or tile.specificConfigDrilldown) then
     overrideTile = {
       model_key = modelKey,
       config_key = configKey,

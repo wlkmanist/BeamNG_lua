@@ -16,6 +16,7 @@ local mouseDown = false
 local mouseDragStartPos = nil
 local objectsInRect = {}
 local duplicationDrag
+local finishAlignToSurfaceDrag
 
 local bboxColor = ColorF(0.9, 0.5, 0, 1)
 local bboxColorLocked = ColorF(0.9, 0, 0, 1)
@@ -512,6 +513,9 @@ local function objectToolActivate()
 end
 
 local function objectToolDeactivate()
+  if finishAlignToSurfaceDrag then
+    finishAlignToSurfaceDrag(false)
+  end
   editor.clearObjectSelection()
 end
 
@@ -559,6 +563,84 @@ local draggingObjectToAlign = false
 -- per-object align: {obj, id, initialTransform, scale, offsetFromPivot}; pivot follows mouse, each object aligns to normal at its position
 local alignToSurfaceObjects = {}
 local alignToSurfaceInitialPivot = nil -- vec3, selection pivot at drag start
+
+local function collisionEnabledState(obj)
+  if obj.isCollisionEnabled then
+    local ok, enabled = pcall(obj.isCollisionEnabled, obj)
+    if ok and type(enabled) == "boolean" then return enabled end
+  end
+  local ok, enabled = pcall(function() return obj.collisionEnabled end)
+  if ok and type(enabled) == "boolean" then return enabled end
+  if obj.getField then
+    local fieldOk, fieldValue = pcall(obj.getField, obj, "collisionEnabled", 0)
+    if fieldOk and fieldValue ~= nil and fieldValue ~= "" then
+      fieldValue = string.lower(tostring(fieldValue))
+      if fieldValue == "true" or fieldValue == "1" then return true end
+      if fieldValue == "false" or fieldValue == "0" then return false end
+    end
+    local typeOk, collisionType = pcall(obj.getField, obj, "collisionType", 0)
+    if typeOk and collisionType ~= nil and collisionType ~= "" then
+      return string.lower(tostring(collisionType)) ~= "none"
+    end
+  end
+  return nil
+end
+
+finishAlignToSurfaceDrag = function(commitHistory)
+  local hasAlignObjects = alignToSurfaceObjects and not tableIsEmpty(alignToSurfaceObjects)
+
+  if hasAlignObjects and commitHistory then
+    editor.history:beginTransaction("AlignObjectToSurface")
+  end
+
+  if hasAlignObjects then
+    for _, entry in ipairs(alignToSurfaceObjects) do
+      if entry.obj then
+        if not commitHistory then
+          entry.obj:setTransform(entry.initialTransform)
+          entry.obj:setScaleXYZ(entry.scale.x, entry.scale.y, entry.scale.z)
+        end
+        if entry.collisionEnabled == false and entry.obj.disableCollision then
+          entry.obj:disableCollision()
+        elseif entry.collisionEnabled == true and entry.obj.enableCollision then
+          entry.obj:enableCollision()
+        end
+        if commitHistory then
+          local newTransform = entry.obj:getTransform()
+          editor.history:commitAction("SetObjectTransform", { objectId = entry.id, newTransform = editor.matrixToTable(newTransform), oldTransform = editor.matrixToTable(entry.initialTransform) }, objectHistoryActions.setObjectTransformUndo, objectHistoryActions.setObjectTransformRedo, true)
+          editor.history:commitAction("SetObjectScale", { objectId = entry.id, newScale = entry.scale, oldScale = entry.scale }, objectHistoryActions.setObjectScaleUndo, objectHistoryActions.setObjectScaleRedo, true)
+        end
+      end
+    end
+  end
+
+  if hasAlignObjects then
+    if commitHistory then editor.history:endTransaction() end
+    if editor.computeSelectionBBox then
+      editor.computeSelectionBBox()
+    end
+    updateObjectSelectionAxisGizmo()
+  end
+
+  draggingObjectToAlign = false
+  currentObjectToAlign = nil
+  angleAroundUpValue = 0
+  editor.disableCameraZoom = false
+  alignToSurfaceInitialPivot = nil
+  alignToSurfaceObjects = {}
+  mouseDown = false
+end
+
+local function alignSelectionMatches()
+  local selectedIds = editor.selection.object or {}
+  if #selectedIds ~= #alignToSurfaceObjects then return false end
+  local selected = {}
+  for _, id in ipairs(selectedIds) do selected[id] = true end
+  for _, entry in ipairs(alignToSurfaceObjects) do
+    if not selected[entry.id] or not editor.canManipulateObject(entry.obj) then return false end
+  end
+  return true
+end
 
 -- raycast down through a world position to get surface hit (pt, norm)
 local function raycastDownAtPosition(pos, rayLen)
@@ -623,7 +705,17 @@ local function objectToolUpdate()
   if shiftDown then selectMode = editor.SelectMode_Add end
 
   -- double-click an object with a dedicated edit mode -> switch to that edit mode
-  if imgui.IsMouseDoubleClicked(0)
+  local leftDoubleClicked = imgui.IsMouseDoubleClicked(0)
+  local cameraFocusConsumed = leftDoubleClicked
+    and extensions.editor_cameraV2
+    and extensions.editor_cameraV2.consumeFocusDoubleClick
+    and extensions.editor_cameraV2.consumeFocusDoubleClick()
+  if cameraFocusConsumed then
+    mouseDown = false
+    clickedHoveredObject = false
+    return
+  end
+  if leftDoubleClicked
       and not ctrlDown and not altDown and not shiftDown
       and editor.isViewportHovered()
       and not editor.isAxisGizmoHovered()
@@ -715,6 +807,19 @@ local function objectToolUpdate()
     editor.disableCameraZoom = false
   end
 
+  if draggingObjectToAlign then
+    if not alignSelectionMatches() then
+      finishAlignToSurfaceDrag(false)
+      return
+    elseif not imgui.IsMouseDown(0) then
+      finishAlignToSurfaceDrag(true)
+      return
+    elseif not inAlignToSurfaceMode then
+      finishAlignToSurfaceDrag(false)
+      return
+    end
+  end
+
   -- align selection to surface: pivot follows mouse drag; each object aligns to normal at its position (Ctrl+Alt+drag)
   if imgui.IsMouseClicked(0) or imgui.IsMouseDown(0) or draggingObjectToAlign then
     if editor.selection.object and altDown and ctrlDown and #editor.selection.object then
@@ -728,10 +833,18 @@ local function objectToolUpdate()
         local id = editor.selection.object[i]
         local o = scenetree.findObjectById(id)
         if o and o.getTransform and o.getScale and o:getClassName() ~= "TerrainBlock" and editor.canManipulateObject(o) then
-          table.insert(objectsToAlign, { obj = o, id = id })
+          local collisionEnabled = collisionEnabledState(o)
+          if collisionEnabled ~= nil then
+            table.insert(objectsToAlign, { obj = o, id = id, collisionEnabled = collisionEnabled })
+          end
         end
       end
-      if tableIsEmpty(objectsToAlign) then return end
+      if tableIsEmpty(objectsToAlign) then
+        if draggingObjectToAlign then
+          finishAlignToSurfaceDrag(false)
+        end
+        return
+      end
 
       if not currentObjectToAlign then
         currentObjectToAlign = true
@@ -741,6 +854,7 @@ local function objectToolUpdate()
         alignToSurfaceInitialPivot = pivotPos
         for _, entry in ipairs(objectsToAlign) do
           local o, id = entry.obj, entry.id
+          local collisionEnabled = entry.collisionEnabled
           o:disableCollision()
           local pos = vec3(o:getPosition())
           local initMtx = o:getTransform()
@@ -751,6 +865,7 @@ local function objectToolUpdate()
             obj = o, id = id,
             initialTransform = initMtx,
             scale = o:getScale(),
+            collisionEnabled = collisionEnabled,
             offsetFromPivot = pos - pivotPos,
             initialYaw = initialYaw
           })
@@ -769,62 +884,45 @@ local function objectToolUpdate()
       mtxCorrection:setFromEuler(vec3((90 * math.pi) / 180.0, 0, 0))
       mtxAngleAroundUp:setFromEuler(vec3(0, 0, (angleAroundUpValue * math.pi) / 180.0))
 
-      if not imgui.IsMouseDown(0) and draggingObjectToAlign then
-        draggingObjectToAlign = false
-        currentObjectToAlign = nil
-        angleAroundUpValue = 0
-        editor.disableCameraZoom = false
-        alignToSurfaceInitialPivot = nil
-        editor.history:beginTransaction("AlignObjectToSurface")
-        for _, entry in ipairs(alignToSurfaceObjects) do
-          entry.obj:enableCollision()
-          local newTransform = entry.obj:getTransform()
-          editor.history:commitAction("SetObjectTransform", { objectId = entry.id, newTransform = editor.matrixToTable(newTransform), oldTransform = editor.matrixToTable(entry.initialTransform) }, objectHistoryActions.setObjectTransformUndo, objectHistoryActions.setObjectTransformRedo, true)
-          editor.history:commitAction("SetObjectScale", { objectId = entry.id, newScale = entry.scale, oldScale = entry.scale }, objectHistoryActions.setObjectScaleUndo, objectHistoryActions.setObjectScaleRedo, true)
-        end
-        editor.history:endTransaction()
-        alignToSurfaceObjects = {}
-      else
-        -- align to surface normal, preserving initial XY heading: build forward in tangent plane with that exact XY angle
-        for _, entry in ipairs(alignToSurfaceObjects) do
-          local desiredPos = pivotPos + entry.offsetFromPivot
-          local hit = raycastDownAtPosition(desiredPos)
-          if hit then
-            local n = hit.norm
-            -- forward in tangent plane such that atan2(fwd.y, fwd.x) = initialYaw (project (cos,sin,0) onto tangent plane)
-            local cx = math.cos(entry.initialYaw)
-            local cy = math.sin(entry.initialYaw)
-            local ndot = n.x * cx + n.y * cy
-            local fz = (math.abs(n.z) >= 1e-6) and (-ndot / n.z) or 0
-            local fwd = vec3(cx, cy, fz)
-            local flen = math.sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z)
-            if flen >= 1e-6 then
-              fwd.x, fwd.y, fwd.z = fwd.x / flen, fwd.y / flen, fwd.z / flen
-            else
-              fwd = vec3(cx, cy, 0)
-              local l2 = math.sqrt(cx * cx + cy * cy)
-              if l2 >= 1e-6 then fwd.x, fwd.y = cx / l2, cy / l2 end
-            end
-            -- right = fwd x n (negate n x fwd to avoid X mirror); columns 0,1,2 = right, forward, up
-            local rx = fwd.y * n.z - fwd.z * n.y
-            local ry = fwd.z * n.x - fwd.x * n.z
-            local rz = fwd.x * n.y - fwd.y * n.x
-            local rlen = math.sqrt(rx * rx + ry * ry + rz * rz)
-            if rlen >= 1e-6 then
-              rx, ry, rz = rx / rlen, ry / rlen, rz / rlen
-            else
-              rx, ry, rz = 1, 0, 0
-            end
-            local mtx = MatrixF(0)
-            mtx:setColumn(0, vec3(rx, ry, rz))
-            mtx:setColumn(1, fwd)
-            mtx:setColumn(2, vec3(n.x, n.y, n.z))
-            mtx:setPosition(hit.pt)
-            mtx = mtx:mul(mtxAngleAroundUp)
-            mtx:setPosition(hit.pt)
-            entry.obj:setTransform(mtx)
-            entry.obj:setScaleXYZ(entry.scale.x, entry.scale.y, entry.scale.z)
+      -- align to surface normal, preserving initial XY heading: build forward in tangent plane with that exact XY angle
+      for _, entry in ipairs(alignToSurfaceObjects) do
+        local desiredPos = pivotPos + entry.offsetFromPivot
+        local hit = raycastDownAtPosition(desiredPos)
+        if hit then
+          local n = hit.norm
+          -- forward in tangent plane such that atan2(fwd.y, fwd.x) = initialYaw (project (cos,sin,0) onto tangent plane)
+          local cx = math.cos(entry.initialYaw)
+          local cy = math.sin(entry.initialYaw)
+          local ndot = n.x * cx + n.y * cy
+          local fz = (math.abs(n.z) >= 1e-6) and (-ndot / n.z) or 0
+          local fwd = vec3(cx, cy, fz)
+          local flen = math.sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z)
+          if flen >= 1e-6 then
+            fwd.x, fwd.y, fwd.z = fwd.x / flen, fwd.y / flen, fwd.z / flen
+          else
+            fwd = vec3(cx, cy, 0)
+            local l2 = math.sqrt(cx * cx + cy * cy)
+            if l2 >= 1e-6 then fwd.x, fwd.y = cx / l2, cy / l2 end
           end
+          -- right = fwd x n (negate n x fwd to avoid X mirror); columns 0,1,2 = right, forward, up
+          local rx = fwd.y * n.z - fwd.z * n.y
+          local ry = fwd.z * n.x - fwd.x * n.z
+          local rz = fwd.x * n.y - fwd.y * n.x
+          local rlen = math.sqrt(rx * rx + ry * ry + rz * rz)
+          if rlen >= 1e-6 then
+            rx, ry, rz = rx / rlen, ry / rlen, rz / rlen
+          else
+            rx, ry, rz = 1, 0, 0
+          end
+          local mtx = MatrixF(0)
+          mtx:setColumn(0, vec3(rx, ry, rz))
+          mtx:setColumn(1, fwd)
+          mtx:setColumn(2, vec3(n.x, n.y, n.z))
+          mtx:setPosition(hit.pt)
+          mtx = mtx:mul(mtxAngleAroundUp)
+          mtx:setPosition(hit.pt)
+          entry.obj:setTransform(mtx)
+          entry.obj:setScaleXYZ(entry.scale.x, entry.scale.y, entry.scale.z)
         end
       end
       updateObjectSelectionAxisGizmo()

@@ -21,7 +21,7 @@ local stageCreepBrakeTime = 0.4     -- seconds to hold the brake before creeping
 local remoteStagingHoldTimers = {} -- key: lane number, value: os.clockhp() timestamp
 
 local DQ_RESTAMP_DELAY = 6.0  -- seconds after DQ before the re-stage zone check activates
-local dqRestageState = nil    -- { vehId, lane, timer } or nil when inactive
+local dqRestageStates = {}    -- key: vehId, value: { lane, timer, notifiedPlayer } (one per disqualified racer, so multiseat racers re-stage independently)
 
 -- Stuck/crash DNF detection (race phase only). Checked periodically, not every frame.
 local stuckCheckInterval = 3      -- seconds between stuck/crash checks
@@ -35,6 +35,10 @@ local aiPitchHard = 0.55          -- nose-up pitch where throttle hits the minim
 local aiThrottleMin = 0.5         -- lowest throttle override applied during a big wheelie
 
 local stagePos
+local wheelScratch = vec3()
+local vecY = vec3(0, 1, 0)
+local dqFwd = vec3()
+local dqOffset = vec3()
 
 local function onExtensionLoaded()
   if not gameplay_drag_core then
@@ -55,7 +59,7 @@ local function calculateDistanceOfAllWheelsFromStagePos(racer)
   local dragData = gameplay_drag_core.getData()
   if not dragData then return end
   stagePos = dragData.strip.lanes[racer.lane].waypoints.stage.transform.position
-  racer._wheelDistances = {}
+  racer._wheelDistances = racer._wheelDistances or {}
   for k, wheel in pairs(racer.wheelsCenter) do
     racer._wheelDistances[k] = racer._wheelDistances[k] or vec3()
     racer._wheelDistances[k]:set(wheel.pos)
@@ -71,6 +75,19 @@ local function areFrontWheelsParallelToLine(racer, lineTransform)
   local dotProduct = racer.vehDirectionVector:dot(lineTransform.y)
   local tolerance = 0.70
   return math.abs(dotProduct) >= tolerance
+end
+
+local function isPositionInAnotherOccupiedLane(dragData, ownLane, ownVehId, pos)
+  for laneIdx, laneData in ipairs(dragData.strip.lanes) do
+    if laneIdx ~= ownLane and laneData.zone and laneData.zone.containsPoint2D and laneData.zone:containsPoint2D(pos) then
+      for otherVehId, otherRacer in pairs(dragData.racers or {}) do
+        if otherVehId ~= ownVehId and otherRacer.lane == laneIdx and not otherRacer.vehicleRemoved and not otherRacer.isFinished then
+          return true
+        end
+      end
+    end
+  end
+  return false
 end
 
 local function isRacerInsideBoundary(racer)
@@ -94,6 +111,10 @@ local function isRacerInsideBoundary(racer)
     return false
   end
 
+  local racers = dragData.racers
+  local k = racers and next(racers)
+  local hasMultipleRacers = k ~= nil and next(racers, k) ~= nil
+
   -- Prefer wheel-center checks to ensure the whole car stays in-lane.
   if racer.wheelsCenter and next(racer.wheelsCenter) then
     for _, wheelData in pairs(racer.wheelsCenter) do
@@ -101,11 +122,18 @@ local function isRacerInsideBoundary(racer)
       if not wheelPos or not laneData.zone:containsPoint2D(wheelPos) then
         return false
       end
+      if hasMultipleRacers and isPositionInAnotherOccupiedLane(dragData, playerLane, racer.vehId, wheelPos) then
+        return false
+      end
     end
     return true
   end
 
-  return laneData.zone:containsPoint2D(racer.vehPos)
+  if not laneData.zone:containsPoint2D(racer.vehPos) then return false end
+  if hasMultipleRacers and isPositionInAnotherOccupiedLane(dragData, playerLane, racer.vehId, racer.vehPos) then
+    return false
+  end
+  return true
 end
 
 local function isRacerOutsideLane(racer)
@@ -221,23 +249,25 @@ local function disqualifyRacer(racer, reason)
 
     if not racer.isPlayable then
       racer.vehObj:queueLuaCommand('electrics.values.throttleOverride = nil')
+      racer._aiThrottle = nil
     end
     extensions.hook("setDisqualifiedLights", racer.vehId)
   end
 end
 
-local stageJumpDqBuffer = 0.02 -- small buffer beyond stage boundary to absorb physics micro-oscillations during countdown
+local redLightReason = "missions.dragRace.gameplay.disqualified.jumping"
+local stageJumpDqBuffer = 0.02 -- rear-only buffer to absorb physics micro-oscillations during countdown
 local disqualificationChecks = {
   stageJump = function(racer)
     local distance = getFrontWheelDistanceFromStagePos(racer)
-    if distance < -0.178 - stageJumpDqBuffer or distance > 0.178 + stageJumpDqBuffer then
-      return true, "missions.dragRace.gameplay.disqualified.jumping"
+    if distance < -0.178 - stageJumpDqBuffer or distance >= 0.178 then
+      return true, redLightReason
     end
     return false
   end,
 
   outOfBounds = function(racer, distance)
-    return not isRacerInsideBoundary(racer) or distance < -0.33,
+    return not racer.inLane or distance < -0.33,
            "missions.dragRace.gameplay.disqualified.outOfLane"
   end,
 
@@ -382,6 +412,9 @@ local function startRaceFromTree(vehId)
   if not racer.isPlayable then
     randomDelayTimer = math.random() / 2
   end
+  if racer.isLocalRacer ~= false then
+    racer.timersStarted = true
+  end
 
   currentPhase.completed = true
 end
@@ -430,7 +463,8 @@ local function areAllRacersStaged(dragData)
     return false, 0, 0
   end
 
-  local result = allStaged and stagedCount == totalCount
+  local minRequired = gameplay_drag_core.getExpectedStagingRacerCount and gameplay_drag_core.getExpectedStagingRacerCount() or 1
+  local result = allStaged and stagedCount == totalCount and totalCount >= minRequired
   return result, stagedCount, totalCount
 end
 
@@ -439,20 +473,28 @@ local function stage(phase, racer, dtSim)
   if not dragData or phase.completed then return end
   if racer.vehicleRemoved or not racer.vehId then return end
 
+  if not phase.wheelGeometryUpdated then
+    local vehObj = scenetree.findObjectById(racer.vehId)
+    if not vehObj then return end
+    phase.wheelGeometryUpdated = true
+    gameplay_drag_core.setRacerWheelGeometry(racer, vehObj)
+    M.updateRacer(racer)
+  end
+
   local distance = getFrontWheelDistanceFromStagePos(racer)
   if not distance then return end
 
-  -- Only send staging distance for the local player's vehicle
   if racer.vehId == be:getPlayerVehicleID(0) then
-    guihooks.trigger("updateStageApp", distance)
+    if math.abs(distance - (racer._stageAppDistance or math.huge)) > 0.001 then
+      racer._stageAppDistance = distance
+      guihooks.trigger("updateStageApp", distance)
+    end
   end
 
   local laneData = dragData.strip.lanes[racer.lane]
   local stageWaypoint = laneData.waypoints.stage.waypoint
-  local vehObj = scenetree.findObjectById(racer.vehId)
-  if not vehObj then return end
-  racer.vehObj = vehObj
-  local inLane = isRacerInsideBoundary(racer)
+  if not racer.vehObj then return end
+  local inLane = racer.inLane
 
   if not inLane then
     phase.completeTimer = 0
@@ -496,12 +538,14 @@ local function stage(phase, racer, dtSim)
           if not phase.creepPhase then
             phase.creepPhase = "brake"
             phase.creepBrakeTimer = 0
+            phase.aiApproachSpeed = nil
             racer.vehObj:queueLuaCommand('ai.setSpeedMode("set")')
             racer.vehObj:queueLuaCommand('ai.setSpeed(0)')
           elseif phase.creepPhase == "brake" then
             phase.creepBrakeTimer = phase.creepBrakeTimer + dtSim
             if phase.creepBrakeTimer >= stageCreepBrakeTime then
               phase.creepPhase = "creep"
+              phase.aiApproachSpeed = nil
               racer.vehObj:queueLuaCommand('ai.setSpeedMode("set")')
               racer.vehObj:queueLuaCommand('ai.setSpeed(' .. stageCreepSpeed .. ')')
             end
@@ -510,8 +554,11 @@ local function stage(phase, racer, dtSim)
           phase.creepPhase = nil
           local approachBonus = math.min(stageApproachBonusMax, math.max(0, -distance) * stageApproachSlope)
           local approachSpeed = stageWaypoint.speed + approachBonus
-          racer.vehObj:queueLuaCommand('ai.setSpeedMode("set")')
-          racer.vehObj:queueLuaCommand('ai.setSpeed(' .. approachSpeed .. ')')
+          if not phase.aiApproachSpeed or math.abs(approachSpeed - phase.aiApproachSpeed) > 0.1 then
+            phase.aiApproachSpeed = approachSpeed
+            racer.vehObj:queueLuaCommand('ai.setSpeedMode("set")')
+            racer.vehObj:queueLuaCommand('ai.setSpeed(' .. approachSpeed .. ')')
+          end
         end
       end
     end
@@ -580,77 +627,89 @@ local function clearRemoteStagingHoldTimers()
 end
 
 local function clearDqRestageState()
-  dqRestageState = nil
+  table.clear(dqRestageStates)
 end
 
+--- Per-vehicle re-stage timer/notification, so multiseat racers who false-start independently don't
+--- interfere with each other. Returns "leftArea" only when the lone racer (singleplayer/legacy freeroam)
+--- reverses far enough to abandon the strip entirely; with several racers, that one is simply re-staged
+--- instead of tearing down the whole activity for everyone else.
 local function checkFreeroamDqReStage(dtSim)
   if gameplay_drag_core.getGameplayContext() ~= "freeroam" then
-    dqRestageState = nil
+    table.clear(dqRestageStates)
     return
   end
   if gameplay_drag_core.getDragGamemode and gameplay_drag_core.getDragGamemode() then
-    dqRestageState = nil
+    table.clear(dqRestageStates)
     return
   end
 
   local data = gameplay_drag_core.getData()
   if not data or not data.racers or not data.strip or not data.strip.lanes then
-    dqRestageState = nil
+    table.clear(dqRestageStates)
     return
   end
 
-  local racer
-  for _, r in pairs(data.racers) do
-    if r.isPlayable and not r.isFinished and isRacerDisqualified(r) then racer = r; break end
-  end
-  if not racer then dqRestageState = nil; return end
-
-  local vehId = racer.vehId
-  if not dqRestageState or dqRestageState.vehId ~= vehId then
-    dqRestageState = { vehId = vehId, lane = racer.lane, timer = 0 }
+  -- Drop tracked state for any vehicle that's no longer a disqualified, unfinished, playable racer.
+  for vehId in pairs(dqRestageStates) do
+    local r = data.racers[vehId]
+    if not r or r.isFinished or not r.isPlayable or not isRacerDisqualified(r) then
+      dqRestageStates[vehId] = nil
+    end
   end
 
-  dqRestageState.timer = dqRestageState.timer + dtSim
-  if dqRestageState.timer < DQ_RESTAMP_DELAY then return end
+  for vehId, racer in pairs(data.racers) do
+    if racer.isPlayable and not racer.isFinished and isRacerDisqualified(racer) then
+      local state = dqRestageStates[vehId]
+      if not state then
+        state = { lane = racer.lane, timer = 0 }
+        dqRestageStates[vehId] = state
+      end
 
-  local veh = scenetree.findObjectById(vehId)
-  if not veh then return end
+      state.timer = state.timer + dtSim
+      if state.timer >= DQ_RESTAMP_DELAY then
+        local veh = scenetree.findObjectById(vehId)
+        if veh then
+          local laneData = data.strip.lanes[state.lane]
+          local stagePosLocal = laneData.waypoints.stage.transform.position
+          dqFwd:setRotate(laneData.waypoints.stage.transform.rot, vecY)
+          dqOffset:set(veh:getPositionXYZ())
+          dqOffset:setSub(stagePosLocal)
 
-  local laneData  = data.strip.lanes[dqRestageState.lane]
-  local stagePos  = laneData.waypoints.stage.transform.position
-  local stageFwd = laneData.waypoints.stage.transform.rot * vec3(0, 1, 0)
-  local vehPos    = veh:getPosition()
+          local distance = dqOffset:dot(dqFwd)
 
+          if distance < -6 then
+            local resetLane = state.lane
+            dqRestageStates[vehId] = nil
 
-  local distance = vec3(vehPos - stagePos):dot(stageFwd)
-
-  -- more than 6m: the player did a false start but still drives along the track. dont show anything, wait for them to either reverse back to the staging area or drive to the end of the lane
-  if distance > 6 then
-    return
+            if tableSize(data.racers) <= 1 then
+              -- Lone racer (today's singleplayer/legacy freeroam path): behaves exactly as before.
+              if distance <= -15 then
+                return "leftArea"
+              end
+              -- Note: gameplay_drag_core.reset() always clears dqRestageStates entirely (see
+              -- clearDqRestageState below), which is fine here since there's only one racer anyway.
+              gameplay_drag_core.reset({ raceState = true, timeslip = true, transitionLock = true, treeLightStaging = true, hooks = true })
+              gameplay_drag_core.startDragRaceActivity(resetLane, vehId)
+            else
+              -- Multiseat: re-stage just this racer via setupRacer (additive startDragRaceActivity),
+              -- skipping the shared reset() call above since it would wipe every other racer's
+              -- dqRestageStates entry (and touch global race/UI state) out from under them.
+              gameplay_drag_core.startDragRaceActivity(resetLane, vehId)
+            end
+          elseif distance <= 6 and not state.notifiedPlayer then
+            -- 6m in front of to 6m behind the stage line: notify the player to reverse back and re-stage.
+            state.notifiedPlayer = true
+            local messageData = {{"ui.drag.flash.reverseToRestage", 5, 0, false}}
+            guihooks.trigger('DragRaceTreeFlashMessage', messageData)
+            ui_appContainers.showApp('topCenter', 'flashMessage')
+            guihooks.trigger('ScenarioFlashMessage', { msg = "ui.drag.flash.reverseToRestage", ttl = 5, big = false })
+          end
+          -- distance > 6: still driving along the track after a false start; wait silently.
+        end
+      end
+    end
   end
-
-  -- if the player reversed back too far already when the timer finishes, just reset the drag area
-  if distance <= -15 then
-    return "leftArea"
-  end
-
-  -- otherwise: wait before the player goes back before the staging line, 6-15m before the staging line, and notify the player
-  if distance < -6 and distance > -15 then
-    local resetLane = dqRestageState.lane
-    dqRestageState = nil
-    gameplay_drag_core.reset({ raceState = true, racers = true, timeslip = true, transitionLock = true, treeLightStaging = true, hooks = true })
-    gameplay_drag_core.startDragRaceActivity(resetLane)
-    return
-  end
-
-  if not dqRestageState.notifiedPlayer then
-    dqRestageState.notifiedPlayer = true
-    local messageData = {{"Reverse to re-stage", 5, 0, false}}
-    guihooks.trigger('DragRaceTreeFlashMessage', messageData)
-    ui_appContainers.showApp('topCenter', 'flashMessage')
-    guihooks.trigger('ScenarioFlashMessage', { msg = "Reverse to re-stage", ttl = 5, big = false })
-  end
-
 end
 
 local function countdown(phase, racer, dtSim)
@@ -663,10 +722,8 @@ local function countdown(phase, racer, dtSim)
   local distance = getFrontWheelDistanceFromStagePos(racer)
   if not distance then return end
 
-  local vehObj = scenetree.findObjectById(racer.vehId)
-  if not vehObj then return end
-  racer.vehObj = vehObj
-  local inLane = isRacerInsideBoundary(racer)
+  if not racer.vehObj then return end
+  local inLane = racer.inLane
 
   if not inLane then
     if not isRacerDisqualified(racer) then
@@ -743,12 +800,10 @@ local function checkRacerStuckOrCrashed(racer, dtSim)
   if racer._stuckTimer < stuckCheckInterval then return false end
   racer._stuckTimer = 0
 
-  -- Flipped / on its side: the up vector no longer points up.
   if racer.vehDirectionVectorUp and racer.vehDirectionVectorUp.z < upVectorMin then
     return true, "missions.dragRace.gameplay.disqualified.crashed"
   end
 
-  -- Stuck: barely moved since the previous check. Seed the reference position the first time.
   if not racer._stuckCheckPos then
     racer._stuckCheckPos = vec3()
     racer._stuckCheckPos:set(racer.vehPos)
@@ -764,7 +819,7 @@ local function checkRacerStuckOrCrashed(racer, dtSim)
 end
 
 -- Ease off the AI throttle when the nose pitches up too hard, to avoid launch backflips.
--- Recalculated and applied every frame so it tracks the live pitch closely.
+-- Recalculated every frame; queued to the vehicle only when the target throttle changes.
 local function updateAiPitchThrottle(racer)
   if not racer.vehObj or not racer.vehDirectionVector then return end
   local pitch = racer.vehDirectionVector.z -- > 0 means the nose is pointing up
@@ -774,7 +829,10 @@ local function updateAiPitchThrottle(racer)
     t = math.min(math.max(t, 0), 1)
     target = 1 - t * (1 - aiThrottleMin)
   end
-  racer.vehObj:queueLuaCommand('electrics.values.throttleOverride = ' .. target)
+  if not racer._aiThrottle or math.abs(target - racer._aiThrottle) > 0.01 then
+    racer._aiThrottle = target
+    racer.vehObj:queueLuaCommand('electrics.values.throttleOverride = ' .. target)
+  end
 end
 
 local function race(phase, racer, dtSim)
@@ -786,11 +844,21 @@ local function race(phase, racer, dtSim)
 
   local laneData = dragData.strip.lanes[racer.lane]
   local endLine = laneData.waypoints.endLine
-  local vehObj = scenetree.findObjectById(racer.vehId)
-  if not vehObj then return end
-  racer.vehObj = vehObj
+  if not racer.vehObj then return end
 
-  if not isRacerInsideBoundary(racer) then
+  if phase.started and not racer.isFinished and (not racer.isPlayable or not isRacerDisqualified(racer)) then
+    local shouldDQ, reason = checkRacerStuckOrCrashed(racer, dtSim)
+    if shouldDQ then
+      if not racer.isPlayable then
+        stopAiVehicle(racer)
+      end
+      disqualifyRacer(racer, reason)
+      phase.completed = true
+      return
+    end
+  end
+
+  if not racer.inLane then
     if not isRacerDisqualified(racer) then
       disqualifyRacer(racer, "missions.dragRace.gameplay.disqualified.outOfLane")
     end
@@ -816,6 +884,7 @@ local function race(phase, racer, dtSim)
           end
         ]])
         racer.vehObj:queueLuaCommand('electrics.values.throttleOverride = 1')
+        racer._aiThrottle = 1
         racer.vehObj:queueLuaCommand('ai.setSpeed(' .. aiSpeed .. ')')
         racer.vehObj:queueLuaCommand('ai.setSpeedMode("' .. aiMode .. '")')
         racer.vehObj:queueLuaCommand('ai.setTarget("' .. aiTarget .. '")')
@@ -836,25 +905,8 @@ local function race(phase, racer, dtSim)
     end
   end
 
-  if phase.started and not racer.isFinished then
-    -- Pitch-limited throttle is an AI-only launch aid (the player controls their own throttle).
-    if not racer.isPlayable then
-      updateAiPitchThrottle(racer)
-    end
-
-    -- Stuck/crash DNF runs for every racer; notification is gated to the player downstream.
-    if not isRacerDisqualified(racer) then
-      local shouldDQ, reason = checkRacerStuckOrCrashed(racer, dtSim)
-      if shouldDQ then
-        if not racer.isPlayable then
-          stopAiVehicle(racer)
-        end
-        disqualifyRacer(racer, reason)
-        -- Advance past the race phase so a stuck/crashed racer doesn't block the race.
-        phase.completed = true
-        return
-      end
-    end
+  if phase.started and not racer.isFinished and not racer.isPlayable then
+    updateAiPitchThrottle(racer)
   end
 
   -- Race phase ends when the farthest-distance timer is set, not the important timer.
@@ -896,13 +948,16 @@ local function race(phase, racer, dtSim)
           end
         end
       end
+      local sentTimeslip = false
       if allRacersFinished then
         generateWinData()
+        if not gameplay_missions_missionManager.getForegroundMissionId() then
+          gameplay_drag_core.sendTimeslipDataToUi()
+          sentTimeslip = true
+        end
       end
-      if not gameplay_missions_missionManager.getForegroundMissionId() then
-        gameplay_drag_core.sendTimeslipDataToUi()
-      end
-      if racer.isPlayable then
+      -- The timeslip path already stores the dial. A second save rewrites the history file on the finish frame.
+      if racer.isPlayable and not sentTimeslip then
         gameplay_drag_core.saveDialTimes()
       end
     else
@@ -941,10 +996,7 @@ local function stop(phase, racer, dtSim)
   if racer.vehicleRemoved or not racer.vehId then return end
 
   local laneData = dragData.strip.lanes[racer.lane]
-  local spawnWaypoint = laneData.waypoints.spawn.waypoint
-  local vehObj = scenetree.findObjectById(racer.vehId)
-  if not vehObj then return end
-  racer.vehObj = vehObj
+  if not racer.vehObj then return end
 
   if not racer.isPlayable then
     if not phase.started then
@@ -1003,9 +1055,7 @@ local function emergencyStop(phase, racer, dtSim)
   if phase.completed then return end
   if racer.vehicleRemoved or not racer.vehId then return end
 
-  local vehObj = scenetree.findObjectById(racer.vehId)
-  if not vehObj then return end
-  racer.vehObj = vehObj
+  if not racer.vehObj then return end
 
   if not racer.isPlayable then
     if not phase.started then
@@ -1056,6 +1106,7 @@ local function updateRacer(racer)
   local vehObj = scenetree.findObjectById(racer.vehId)
   if not vehObj then
     racer.isValid = false
+    racer.vehObj = nil
     return
   end
   racer.vehObj = vehObj
@@ -1064,11 +1115,12 @@ local function updateRacer(racer)
   if not racer.vehDirectionVector then racer.vehDirectionVector = vec3() end
   if not racer.vehDirectionVectorUp then racer.vehDirectionVectorUp = vec3() end
   if not racer.vehVelocity then racer.vehVelocity = vec3() end
+  if not racer.vehRot then racer.vehRot = quat() end
 
   racer.vehPos:set(racer.vehObj:getPositionXYZ())
   racer.vehDirectionVector:set(racer.vehObj:getDirectionVectorXYZ())
   racer.vehDirectionVectorUp:set(racer.vehObj:getDirectionVectorUpXYZ())
-  racer.vehRot = quatFromDir(racer.vehDirectionVector, racer.vehDirectionVectorUp)
+  racer.vehRot:setFromDir(racer.vehDirectionVector, racer.vehDirectionVectorUp)
 
   racer.vehVelocity:set(racer.vehObj:getVelocityXYZ())
   racer.prevSpeed = racer.vehSpeed or 0
@@ -1096,7 +1148,8 @@ local function updateRacer(racer)
     end
     racer.wheelsCenter[k].pos:set(0, 0, 0)
     for _, wheel in ipairs(offset) do
-      racer.wheelsCenter[k].pos:setAdd(racer.vehRot * wheel)
+      wheelScratch:setRotate(racer.vehRot, wheel)
+      racer.wheelsCenter[k].pos:setAdd(wheelScratch)
     end
     racer.wheelsCenter[k].pos:setScaled(racer.wheelsCenter[k].wheelCountInv)
     racer.wheelsCenter[k].pos:setAdd(racer.vehPos)
@@ -1109,6 +1162,7 @@ local function updateRacer(racer)
   end
 
   local inLane = isRacerInsideBoundary(racer)
+  racer.inLane = inLane
   for k, distVec in pairs(racer._wheelDistances or {}) do
     if not racer.beamState[k] then
       racer.beamState[k] = {preStage = false, stage = false}
@@ -1116,9 +1170,10 @@ local function updateRacer(racer)
     processTreeLights(racer, k, distVec:dot(stageToEndNorm), inLane)
   end
 
+  racer.previousDistanceFromOrigin = racer.currentDistanceFromOrigin
   racer.currentDistanceFromOrigin = getFrontWheelDistanceFromStagePos(racer)
-  racer.previousDistanceFromOrigin = racer.currentDistanceFromOrigin or 0
 end
+M.updateRacer = updateRacer
 
 local function setDialsData(data)
   local count = #data
@@ -1164,11 +1219,11 @@ M.countdown = countdown
 M.race = race
 M.stop = stop
 M.emergencyStop = emergencyStop
-M.updateRacer = updateRacer
 M.setDialsData = setDialsData
 M.checkFreeroamDqReStage = checkFreeroamDqReStage
 M.clearDqRestageState = clearDqRestageState
 M.disqualifyRacer = disqualifyRacer
+M.redLightReason = redLightReason
 M.onDragClear = function()
   clearRemoteStagingHoldTimers()
   clearDqRestageState()

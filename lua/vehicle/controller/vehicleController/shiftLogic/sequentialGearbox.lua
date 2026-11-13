@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Controls ordered gear changes and clutch assistance for sequential transmissions
+
 local M = {}
 
 local max = math.max
@@ -99,7 +101,7 @@ local function shiftUp()
   gearIndex = min(max(gearIndex, gearbox.minGearIndex), gearbox.maxGearIndex)
 
   if M.gearboxHandling.gearboxSafety then
-    local gearRatio = gearbox.gearRatios[newDesiredGearIndex]
+    local gearRatio = gearbox.gearRatios[gearIndex]
     if gearbox.outputAV1 * gearRatio > engine.maxAV then
       gearIndex = prevGearIndex
     end

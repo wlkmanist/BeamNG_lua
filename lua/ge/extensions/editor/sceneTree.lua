@@ -21,6 +21,7 @@ local transparentColor = imgui.ImVec4(0,0,0,0)
 local defaultObjectNodeIcon = nil -- inited in onEditorInitialized
 local objectClassIcons = nil -- inited in onEditorInitialized
 local dragDropBGColor = imgui.GetColorU322(imgui.ImVec4(1, 1, 1, 0.25), 1)
+local dragDropLineColor = imgui.GetColorU322(imgui.ImVec4(1, 1, 1, 1), 1)
 local guiInstancer = require("editor/api/guiInstancer")()
 local objectHistoryActions = require("editor/api/objectHistoryActions")()
 local socket = require("socket")
@@ -41,6 +42,7 @@ local nodeWasDblClicked
 
 local mouseDragRange
 local dragSelectionList = {}
+local rangeSelectConsumed = false
 
 -- vars for virtual scrolling
 local entrySize
@@ -417,8 +419,13 @@ end
 local function removeNodeByObjectId(node, objId)
   if node.id == objId then
     if node.parent then
-      local renderOrderIndex = node.parent.children[objId].renderOrderIndex
-      table.remove(node.parent.renderChildrenOrder or {}, renderOrderIndex)
+      local order = node.parent.renderChildrenOrder
+      if order then
+        local idx = arrayFindValueIndex(order, objId)
+        if idx then
+          table.remove(order, idx)
+        end
+      end
       node.parent.children[objId] = nil
       return
     end
@@ -589,23 +596,48 @@ local function updateBreadcrumbPath(node)
   recursiveWalkParents(node)
 end
 
+local function collectVisibleIdsInIndexRange(instance, indexA, indexB)
+  local ids = {}
+  if not instance or not indexA or not indexB then return ids end
+  local lo, hi = math.min(indexA, indexB), math.max(indexA, indexB)
+  if searchResultsMode then
+    for _, n in ipairs(searchResults) do
+      if n.listIndex and n.listIndex >= lo and n.listIndex <= hi then
+        ids[#ids + 1] = n.id
+      end
+    end
+    return ids
+  end
+  local function walk(n)
+    if not n then return end
+    if n ~= instance.rootNode and not n.hidden and n.listIndex and n.listIndex >= lo and n.listIndex <= hi then
+      ids[#ids + 1] = n.id
+    end
+    if (n.isGroup or n.isExpandable) and (not showGroups or n.open or n.openOnSearch) and n.children and n.renderChildrenOrder then
+      for _, childId in ipairs(n.renderChildrenOrder) do
+        walk(n.children[childId])
+      end
+    end
+  end
+  walk(instance.rootNode)
+  return ids
+end
+
 local function selectNode(instance, node, selectMode)
   if not node then return end
   if not selectMode then selectMode = editor.SelectMode_New end
   if selectMode == SelectMode_Range then
-    if #instance.selectedNodes > 0 then
-      instance.selectionRange = {}
-      if not instance.lastSelectedIndex then
-        instance.lastSelectedIndex = node.listIndex
-      end
-      for i = math.min(instance.lastSelectedIndex, node.listIndex), math.max(instance.lastSelectedIndex, node.listIndex) do
-        instance.selectionRange[i] = true
-      end
-    else
-      instance.lastSelectedIndex = node.listIndex
-      selectMode = editor.SelectMode_New
-    end
+    if rangeSelectConsumed then return end
+    rangeSelectConsumed = true
     instance.currentListIndex = node.listIndex
+    if #instance.selectedNodes > 0 and instance.lastSelectedIndex and node.listIndex then
+      editor.selectObjects(collectVisibleIdsInIndexRange(instance, instance.lastSelectedIndex, node.listIndex))
+      editor.updateObjectSelectionAxisGizmo()
+      updateBreadcrumbPath(node)
+      return
+    end
+    instance.lastSelectedIndex = node.listIndex
+    selectMode = editor.SelectMode_New
   elseif selectMode == editor.SelectMode_New then
     instance.lastSelectedIndex = node.listIndex
     instance.currentListIndex = node.listIndex
@@ -1150,10 +1182,6 @@ local function selectChildren(instance, node)
   editor.selectObjects(objectIDs, editor.SelectMode_New)
 end
 
-local function rangesIntersect(r1, r2)
-  return r1.min < r2.max and r1.max > r2.min
-end
-
 local function setFieldRec(node, v, objectIDs)
   table.insert(objectIDs, node.id)
   for _, n in pairs(node.children or {}) do
@@ -1184,23 +1212,20 @@ local function boolFieldButton(instance, node, field, iconOn, iconOff)
   end
 end
 
-local disableHoverColor
-local drewDragSeparator
-
 local function nodeSelectable(instance, node, icon, iconColor, iconSize, selectionColor, label, textColor, triggerOnRelease, highlightText)
   editor.uiIconImage(icon, iconSize, iconColor)
   imgui.SameLine()
   imgui.PushStyleColor2(imgui.Col_Header, selectionColor)
   if node.selected or node.dragSelected then
     imgui.PushStyleColor2(imgui.Col_HeaderHovered, selectionColor)
-  elseif hasDragDropPayload and (disableHoverColor or not node.isGroup) then
-    imgui.PushStyleColor2(imgui.Col_HeaderHovered, imgui.ImVec4(0,0,0,0))
+  elseif hasDragDropPayload then
+    imgui.PushStyleColor2(imgui.Col_HeaderHovered, transparentColor)
   end
   imgui.Selectable1("##" .. label .. "_" .. node.id, node.selected or node.dragSelected, bit.bor(imgui.SelectableFlags_SpanAllColumns, imgui.SelectableFlags_AllowOverlap))
   local selectableHovered = imgui.IsItemHovered()
   if node.selected or node.dragSelected then
     imgui.PopStyleColor()
-  elseif hasDragDropPayload and (disableHoverColor or not node.isGroup) then
+  elseif hasDragDropPayload then
     imgui.PopStyleColor()
   end
   imgui.PopStyleColor()
@@ -1222,56 +1247,50 @@ local function nodeSelectable(instance, node, icon, iconColor, iconSize, selecti
   editor.uiHighlightedText(label, highlightText, textCol)
   local textHovered = imgui.IsItemHovered()
 
-  if hasDragDropPayload then
-    -- Check if hovering between items
-    local mousePosY = imgui.GetMousePos().y
-    local itemRect = {min = imgui.GetItemRectMin(), max = imgui.GetItemRectMax()}
-    local middlePoint = itemRect.min.y - imgui.GetStyle().FramePadding.y/2
-    -- Wider detection zone so the inter-item line indicator shows reliably during a drag.
-    -- Groups keep a narrower zone so the middle of the row stays available for "drop into group".
-    local detectionRange = node.isGroup and entrySize/4 or entrySize/2
-    -- AllowWhenBlockedByActiveItem is required: the source Selectable is "active" while the
-    -- mouse button is held, which would otherwise make IsWindowHovered return false for the
-    -- entire drag and only become true on the release frame (line flickering at end of drag).
+  if hasDragDropPayload and lastRowScreenY and node.parent then
+    -- the dragged Selectable stays the active imgui item during the whole drag, which makes imgui
+    -- report every other row as not hovered, so the drop target is resolved from the mouse position
     local hoverFlags = bit.bor(imgui.HoveredFlags_RootAndChildWindows, imgui.HoveredFlags_AllowWhenBlockedByActiveItem)
-    if mousePosY < middlePoint + detectionRange and mousePosY > middlePoint - detectionRange and imgui.IsWindowHovered(hoverFlags) then
-      local p1 = imgui.ImVec2(imgui.GetWindowPos().x, itemRect.min.y - imgui.GetStyle().FramePadding.y/2)
+    local mousePosY = imgui.GetMousePos().y
+    local rowTop = lastRowScreenY
+    local rowBottom = rowTop + rowHeight
+    if mousePosY >= rowTop and mousePosY < rowBottom and imgui.IsWindowHovered(hoverFlags) then
+      -- the top part of a group row reorders in front of the group, the rest drops into it
+      local dropIntoGroup = node.isGroup and not node.hidden and not node.selected
+        and mousePosY >= rowTop + rowHeight/4 and not isGroupChildOfSelection(instance, node)
+      local winPos = imgui.GetWindowPos()
       local winSize = imgui.GetWindowSize()
-      local p2 = imgui.ImVec2(imgui.GetWindowPos().x + winSize.x*2, p1.y)
       local dl = imgui.GetWindowDrawList()
-      imgui.ImDrawList_AddLine(dl, p1, p2, imgui.GetColorU322(imgui.ImVec4(1,1,1,1)), 3)
 
-      local parent = scenetree.findObjectById(node.parent.id)
-      if imgui.IsMouseReleased(0) and parent and not node.parent.selected and not isGroupChildOfSelection(instance, parent) then
-        local objects = {}
-        local placeholderObjects = {}
-        local oldGroups = {}
-        for _, node in ipairs(instance.selectedNodes) do
-          local object = scenetree.findObjectById(node.id)
-          local parent = scenetree.findObjectById(node.parent.id)
-          if object and parent then
-            table.insert(objects, node.id)
-            local nextObject = parent:getObject(parent:getObjectIndex(object) + 1)
-            if nextObject then
-              table.insert(placeholderObjects, nextObject:getID())
-            end
-            table.insert(oldGroups, node.parent.id)
-          end
+      if dropIntoGroup then
+        imgui.ImDrawList_AddRectFilled(dl, imgui.ImVec2(winPos.x, rowTop), imgui.ImVec2(winPos.x + winSize.x*2, rowBottom), dragDropBGColor)
+        if imgui.IsMouseReleased(0) then
+          local actionInfo = getChangeOrderActionData(instance, node.id)
+          editor.history:commitAction("ChangeOrder", actionInfo, changeOrderActionUndo, changeOrderActionRedo)
+          editor.setDirty()
+          nodeIdToOpen = node.id
         end
-        local actionInfo = {objects = objects, placeholderObjects = placeholderObjects, oldGroups = oldGroups, newGroup = node.parent.id, destObject = node.id}
-        editor.history:commitAction("ChangeOrder", actionInfo, changeOrderActionUndo, changeOrderActionRedo)
-        editor.setDirty()
-      end
-      drewDragSeparator = true
-    elseif selectableHovered then
-      if imgui.IsMouseReleased(0) then
-        if node.isGroup and not node.hidden and not disableHoverColor then
-          if not node.selected and not isGroupChildOfSelection(instance, node) then
-            local actionInfo = getChangeOrderActionData(instance, node.id)
-            editor.history:commitAction("ChangeOrder", actionInfo, changeOrderActionUndo, changeOrderActionRedo)
-            editor.setDirty()
-            nodeIdToOpen = node.id
+      else
+        imgui.ImDrawList_AddLine(dl, imgui.ImVec2(winPos.x, rowTop), imgui.ImVec2(winPos.x + winSize.x*2, rowTop), dragDropLineColor, 3)
+        if imgui.IsMouseReleased(0) and not node.parent.selected and not isGroupChildOfSelection(instance, node.parent) then
+          local objects = {}
+          local placeholderObjects = {}
+          local oldGroups = {}
+          for _, selectedNode in ipairs(instance.selectedNodes) do
+            local object = scenetree.findObjectById(selectedNode.id)
+            local parent = scenetree.findObjectById(selectedNode.parent.id)
+            if object and parent then
+              table.insert(objects, selectedNode.id)
+              local nextObject = parent:getObject(parent:getObjectIndex(object) + 1)
+              if nextObject then
+                table.insert(placeholderObjects, nextObject:getID())
+              end
+              table.insert(oldGroups, selectedNode.parent.id)
+            end
           end
+          local actionInfo = {objects = objects, placeholderObjects = placeholderObjects, oldGroups = oldGroups, newGroup = node.parent.id, destObject = node.id}
+          editor.history:commitAction("ChangeOrder", actionInfo, changeOrderActionUndo, changeOrderActionRedo)
+          editor.setDirty()
         end
       end
     end
@@ -2064,10 +2083,9 @@ local function renderSceneTreeGui(instance, node, recursiveDisplay, overrideIcon
       node.dragSelected = false
       if mouseDragRange and node.listIndex then
         dragSelectionList[node.listIndex] = nil
-        local itemRectRange = {min = imgui.GetItemRectMin().y, max = imgui.GetItemRectMax().y}
-        itemRectRange.min = itemRectRange.min - 2
-        itemRectRange.max = itemRectRange.max + 2
-        if rangesIntersect(mouseDragRange, itemRectRange) then
+        local rowTop = lastRowScreenY
+        local rowCenter = rowTop and (rowTop + rowHeight * 0.5)
+        if rowCenter and mouseDragRange.min <= rowCenter and mouseDragRange.max >= rowCenter then
           dragSelectionList[node.listIndex] = true
           node.dragSelected = true
         end
@@ -2147,7 +2165,6 @@ local function openSceneTree()
 end
 
 local function onEditorGui()
-  drewDragSeparator = false
   entrySize = round(math.max(imgui.CalcTextSize("W").y, smallIconSize.y * imgui.uiscale[0]) + imgui.GetStyle().FramePadding.y + 1) + 4
   if not rowHeight then rowHeight = entrySize end
   for index, instance in pairs(guiInstancer.instances) do
@@ -2306,12 +2323,12 @@ local function onEditorGui()
         end
       end
 
-      if imgui.IsMouseDragging(0) and instance.mouseDragStartPos and not hasDragDropPayload then
+      if imgui.IsMouseDragging(0) and not hasDragDropPayload then
         if clickedOnNode then
           -- Click started on an item then moved past the drag threshold; fall back to drag-drop
           -- here in case the in-item detection missed it (e.g. mouse already moved off the source item).
           hasDragDropPayload = true
-        else
+        elseif instance.mouseDragStartPos then
           if not editor.keyModifiers.ctrl then
             editor.clearObjectSelection()
           end
@@ -2378,6 +2395,7 @@ local function onEditorGui()
     clickedOnNode = false
     mouseDragRange = nil
   end
+  rangeSelectConsumed = false
 
   if hasDragDropPayload then
     selectedNodeTextColor = imgui.ImColorByRGB(0,255,255,150)
@@ -2386,9 +2404,6 @@ local function onEditorGui()
       hasDragDropPayload = false
     end
   end
-
-  -- disable hover coloring when the cursor is between two items
-  disableHoverColor = drewDragSeparator
 end
 
 local function onExtensionLoaded()

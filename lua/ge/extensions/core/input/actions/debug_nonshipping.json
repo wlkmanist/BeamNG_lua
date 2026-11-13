@@ -1,0 +1,5 @@
+{
+// debug actions that are inactive in shipping builds
+"launch_optick":           {"cat":"debug", "order":  3, "ctx": "tlua", "onDown":"if launchOptick then launchOptick() end", "title": "ui.inputActions.debug.launch_optick.title", "desc": "ui.inputActions.debug.launch_optick.description"},
+"optick_rolling_capture":  {"cat":"debug", "order":  4, "ctx": "tlua", "onDown":"if Engine.Profiler.startRollingCapture then extensions.util_optickRollingCapture.toggle() end", "title": "ui.inputActions.debug.optick_rolling_capture.title", "desc": "ui.inputActions.debug.optick_rolling_capture.description"}
+}

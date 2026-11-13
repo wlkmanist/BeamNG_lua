@@ -50,6 +50,10 @@ local function purgeLines(purgeTime)
   purgeActiveTime = (#purgeValveNodes > 0 and hasLiquid) and purgeTime or 0
 end
 
+local function getPurgeTimeRemaining()
+  return max(purgeActiveTime, 0)
+end
+
 local function getTankRatio()
   local ratio = 0
   local counter = 0
@@ -274,5 +278,6 @@ M.getAddedTorque = getAddedTorque
 M.registerStorage = registerStorage
 M.getTankRatio = getTankRatio
 M.purgeLines = purgeLines
+M.getPurgeTimeRemaining = getPurgeTimeRemaining
 
 return M

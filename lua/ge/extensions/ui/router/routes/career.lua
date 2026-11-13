@@ -6,7 +6,7 @@ local Constants = require("ge/extensions/ui/router/constants")
 
 local M = {}
 local ProgressLandingScopeTree = {
-  ["career-progress-landing"] = {
+  ["root"] = {
     preferAutoFocus = true,
   },
 }
@@ -89,14 +89,72 @@ local VehiclePurchaseScopeTree = {
   },
 }
 
+local ChooseInsuranceScopeTree = {
+  ["root"] = {
+    ["choose-insurance"] = {
+      preferAutoFocus = true,
+      backTargetType = "route",
+      ["choose-insurance-details"] = {
+        backTarget = "choose-insurance",
+        backTargetType = "scope",
+      },
+    },
+  },
+}
+
+local VehicleNegotiationScopeTree = {
+  ["root"] = {
+    ["vehicle-negotiation"] = {
+      preferAutoFocus = true,
+      backTargetType = "route",
+    },
+  },
+}
+
 local RefuelingScopeTree = {
   ["career-refueling"] = {}
+}
+
+local OrganizationsScopeTree = {
+  ["root"] = {
+    preferAutoFocus = true,
+  },
+}
+
+-- Children are optional because the cargo overview mounts different subsets
+-- depending on layout: facility delivery, facility landing, or my-cargo-only.
+local CargoOverviewScopeTree = {
+  ["root"] = {
+    ["cargo-overview-provided-orders"] = {
+      optional = true,
+      preferAutoFocus = true,
+    },
+    ["cargo-overview-cargo-detail"] = {
+      optional = true,
+      backTarget = "root",
+      backTargetType = "scope",
+    },
+    ["cargo-overview-my-cargo"] = {
+      optional = true,
+      ["cargo-overview-no-containers"] = {
+        optional = true,
+        preferAutoFocus = true,
+        backTarget = "cargo-overview-my-cargo",
+        backTargetType = "scope",
+      },
+    },
+    ["cargo-overview-facility-info"] = {
+      optional = true,
+      preferAutoFocus = true,
+    },
+  },
 }
 
 -- ModuleName(optional) by default is the name of the file unless specified otherwise
 M.ModuleName = "career"
 M.Root = {
   abstract = true,
+  title = "ui.playmodes.career",
   ui = {
     uiTypes = {"vue"},
     uiTypesFilter = Constants.UiTypesFilter.only,
@@ -107,7 +165,6 @@ M.Root = {
 }
 
 M.Children = {
-  ["chooseInsurance"] = { screenId = "career.chooseInsurance" },
   ["pauseBigMiddlePanel"] = { screenId = "career.pauseBigMiddlePanel" },
   ["logbook"] = { screenId = "career.logbook" },
   ["refueling"] = {
@@ -223,6 +280,15 @@ M.Children = {
         backTarget = "career.computer",
         targetScope = "root",
         scopeTree = ComputerScopeTree,
+        children = {
+          ["chooseInsurance"] = {
+            screenId = "career.computer.insurances.chooseInsurance",
+            title = "ui.career.vehiclePurchase.chooseInsurance",
+            backTarget = "career.computer.insurances",
+            targetScope = "choose-insurance",
+            scopeTree = ChooseInsuranceScopeTree,
+          },
+        },
       },
       ["playerAbstract"] = {
         screenId = "career.computer.playerAbstract",
@@ -273,6 +339,7 @@ M.Children = {
             back = { mode = "handler", handler = "vehicleShoppingVehicleListExitHandler" },
             targetScope = "vehicle-shopping-vehicles",
             scopeTree = VehicleShoppingVehiclesScopeTree,
+            onEnter = "career_modules_vehicleShopping.onRouteEnter",
             onMount = "career_modules_vehicleShopping.onRouteMount",
             children = {
               ["vehiclePurchase"] = {
@@ -282,17 +349,58 @@ M.Children = {
                 backTarget = "career.computer.vehicleShopping.vehicles",
                 targetScope = "vehicle-purchase",
                 scopeTree = VehiclePurchaseScopeTree,
+                children = {
+                  ["negotiation"] = {
+                    screenId = "career.computer.vehicleShopping.vehicles.vehiclePurchase.negotiation",
+                    back = { mode = "handler", handler = "negotiationExitHandler" },
+                    targetScope = "vehicle-negotiation",
+                    scopeTree = VehicleNegotiationScopeTree,
+                  },
+                  ["chooseInsurance"] = {
+                    screenId = "career.computer.vehicleShopping.vehicles.vehiclePurchase.chooseInsurance",
+                    title = "ui.career.vehiclePurchase.chooseInsurance",
+                    backTarget = "career.computer.vehicleShopping.vehicles.vehiclePurchase",
+                    targetScope = "choose-insurance",
+                    scopeTree = ChooseInsuranceScopeTree,
+                  },
+                },
               },
             },
+          },
+          ["negotiation"] = {
+            screenId = "career.computer.vehicleShopping.negotiation",
+            back = { mode = "handler", handler = "negotiationExitHandler" },
+            targetScope = "vehicle-negotiation",
+            scopeTree = VehicleNegotiationScopeTree,
           },
         },
       },
     },
   },
-  ["negotiation"] = { screenId = "career.negotiation" },
-  ["cargoDeliveryReward"] = { screenId = "career.cargoDeliveryReward" },
-  ["cargoDropOff"] = { screenId = "career.cargoDropOff" },
-  ["cargoOverview"] = { screenId = "career.cargoOverview" },
+  ["cargoDropOff"] = {
+    screenId = "career.cargoDropOff",
+    backTarget = "play",
+    targetScope = "cargo-drop-off",
+    scopeTree = {
+      ["cargo-drop-off"] = {
+        preferAutoFocus = true,
+        backTargetType = "route",
+      },
+    },
+  },
+  ["cargoOverview"] = {
+    screenId = "career.cargoOverview",
+    backTarget = "play",
+    targetScope = "root",
+    scopeTree = CargoOverviewScopeTree,
+    onLeave = "career_modules_delivery_cargoScreen.onCargoOverviewRouteLeave",
+    children = {
+      ["organizations"] = {
+        title = "ui.career.organizations.title",
+        scopeTree = OrganizationsScopeTree,
+      },
+    },
+  },
   ["myCargo"] = {
     screenId = "career.myCargo",
     title = "ui.career.myCargo.title2",
@@ -309,20 +417,22 @@ M.Children = {
       fallback = "ui.career.landingPage.name"
     },
     backTarget = "career.domainSelection",
-    targetScope = "career-progress-landing",
+    targetScope = "root",
     scopeTree = ProgressLandingScopeTree,
   },
   ["domainSelection"] = {
     screenId = "career.domainSelection",
     title = "ui.career.landingPage.name",
     backTarget = "pause",
-    targetScope = "career-progress-landing",
+    targetScope = "root",
     scopeTree = ProgressLandingScopeTree,
   },
   ["organizations"] = {
     screenId = "career.organizations",
     title = "ui.career.organizations.title",
     backTarget = "career.domainSelection",
+    targetScope = "root",
+    scopeTree = OrganizationsScopeTree,
   },
   ["branchPage"] = {
     screenId = "career.progressLanding",
@@ -336,7 +446,7 @@ M.Children = {
       mode = "handler",
       handler = "careerBranchPageBackHandler",
     },
-    targetScope = "career-progress-landing",
+    targetScope = "root",
     scopeTree = ProgressLandingScopeTree,
     children = {
       ["mission"] = {
@@ -355,7 +465,7 @@ M.Children = {
       },
       ["bigmap"] = {
         screenId = "bigmap",
-        title = "Map",
+        title = "ui.career.pause.map",
         backTarget = "career.branchPage",
         onLeave = "ui_pause_routeLifecycleCallbacks.onPauseBigmapLeave",
         targetScope = "bigmap-main",

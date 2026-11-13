@@ -267,14 +267,14 @@ local function isAiControlled(aiMode)
   return aiMode ~= "disabled" and aiMode ~= "none"
 end
 
-local function getLocalPlayerIds()
+local function getPlayerIds()
   local out = {}
   local seen = {}
   local assignedPlayers = core_input_bindings and core_input_bindings.getAssignedPlayers and core_input_bindings.getAssignedPlayers() or {}
-  for _, playerNumId in pairs(assignedPlayers) do
-    if type(playerNumId) == "number" and not seen[playerNumId] then
-      seen[playerNumId] = true
-      table.insert(out, playerNumId)
+  for _, playerId in pairs(assignedPlayers) do
+    if type(playerId) == "number" and playerId >= 0 and not seen[playerId] then
+      seen[playerId] = true
+      table.insert(out, playerId)
     end
   end
   if #out == 0 then
@@ -285,16 +285,16 @@ local function getLocalPlayerIds()
 end
 
 local function isMultiSeatLocalPlayers()
-  return #getLocalPlayerIds() > 1
+  return #getPlayerIds() > 1
 end
 
 local function getVehicleControllersByVehicleId()
   local byVehicleId = {}
-  for _, playerNumId in ipairs(getLocalPlayerIds()) do
-    local vehicleId = be and be.getPlayerVehicleID and be:getPlayerVehicleID(playerNumId) or nil
+  for _, playerId in ipairs(getPlayerIds()) do
+    local vehicleId = be and be.getPlayerVehicleID and be:getPlayerVehicleID(playerId) or nil
     if vehicleId and vehicleId >= 0 then
       byVehicleId[vehicleId] = byVehicleId[vehicleId] or {}
-      table.insert(byVehicleId[vehicleId], playerNumId)
+      table.insert(byVehicleId[vehicleId], playerId)
     end
   end
   for _, playerNums in pairs(byVehicleId) do
@@ -306,12 +306,12 @@ end
 local function getOnlineControlledVehicleIds()
   local byVehicleId = {}
   if not multiplayer_sessionManager or not multiplayer_vehicleSync or not multiplayer_multiplayer then return byVehicleId end
-  if not multiplayer_sessionManager.getSessionPlayers or not multiplayer_vehicleSync.mIdToVId or not multiplayer_multiplayer.getLocalClientId then return byVehicleId end
+  if not multiplayer_sessionManager.getSessionPlayers or not multiplayer_vehicleSync.mIdToVId or not multiplayer_multiplayer.getLocalMPClientId then return byVehicleId end
 
-  local localClientId = multiplayer_multiplayer.getLocalClientId()
+  local localMPClientId = multiplayer_multiplayer.getLocalMPClientId()
   local sessionPlayers = multiplayer_sessionManager.getSessionPlayers() or {}
   for _, sessionPlayer in pairs(sessionPlayers) do
-    if sessionPlayer and sessionPlayer.activeVehicleMId and sessionPlayer.clientId ~= localClientId then
+    if sessionPlayer and sessionPlayer.activeVehicleMId and sessionPlayer.mpClientId ~= localMPClientId then
       local vehicleId = multiplayer_vehicleSync.mIdToVId(sessionPlayer.activeVehicleMId)
       if vehicleId and vehicleId >= 0 then
         byVehicleId[vehicleId] = true
@@ -480,6 +480,40 @@ local function canModifyVehicles()
   return true
 end
 
+local function isFirstDriveExplorationActive()
+  local experience = gameplay_discover_firstDrive_experience
+  return experience and experience.isActive and experience.isActive()
+    and experience.getPhase and experience.getPhase() == "exploring"
+end
+
+local function isFirstDriveMissionActive()
+  return isFirstDriveExplorationActive()
+    and gameplay_missions_missionManager
+    and gameplay_missions_missionManager.getForegroundMissionId
+    and gameplay_missions_missionManager.getForegroundMissionId() ~= nil
+end
+
+local function canModifyVehicle(playerId, vehicleId, permission)
+  if not multiplayer_permissions or not multiplayer_multiplayer or not multiplayer_vehicleSync then return true end
+  local mpPlayerId = multiplayer_multiplayer.getLocalMPPlayerId(playerId)
+  local mid = multiplayer_vehicleSync.vIdToMId(vehicleId)
+  local allowed = multiplayer_permissions.checkPlayerPermission(mpPlayerId, permission, mid)
+  return allowed
+end
+
+local function hasModifiableOtherVehicle(playerId, anchorVehicleId, permission)
+  for i = 0, be:getObjectCount() - 1 do
+    local veh = be:getObject(i)
+    if veh then
+      local vid = veh:getId()
+      if vid ~= anchorVehicleId and not isWalkingCharacterVehicle(veh) and canModifyVehicle(playerId, vid, permission) then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 local function canSwitchVehicles()
   if not canModifyVehicles() then return false end
   if core_input_actionFilter and core_input_actionFilter.isActionBlocked then
@@ -514,7 +548,11 @@ local function canUseVehicleAiModes()
 end
 
 local function isSpawningTutorialActive()
-  return gameplay_discover_freeroamTutorial_tutorial and gameplay_discover_freeroamTutorial_tutorial.getActivePhase and gameplay_discover_freeroamTutorial_tutorial.getActivePhase() == "vehicleManagementSpawn"
+  return gameplay_discover_freeroamTutorial_tutorial
+    and gameplay_discover_freeroamTutorial_tutorial.getActivePhase
+    and gameplay_discover_freeroamTutorial_tutorial.getActivePhase() == "vehicleManagementSpawn"
+    or gameplay_discover_firstDrive_learningFlow
+    and gameplay_discover_firstDrive_learningFlow.isLessonActive("vehicleManagement")
 end
 
 local function getVehicleObjectById(vehicleId)
@@ -582,26 +620,32 @@ isWalkingCharacterVehicle = function(veh)
   return veh.JBeam == "unicycle"
 end
 
-local function trySwitchToVehicle(vehicleId, playerNumId)
+local function trySwitchToVehicle(vehicleId, playerId)
   if not canSwitchVehicles() then return false end
   local vehicle = getVehicleObjectById(vehicleId)
   if not vehicle or not be then return false end
-  be:enterVehicle(playerNumId or 0, vehicle)
+  be:enterVehicle(playerId or 0, vehicle)
   extensions.hook("trackNewVeh")
   extensions.hook("onVehicleSwitchPerformendByUser")
   return true
 end
 
 local function tryDeleteVehicle(vehicleId)
+  local playerId = 0
+  if not canModifyVehicle(playerId, vehicleId, 'removeVehicle') then return false end
   local vehicle = getVehicleObjectById(vehicleId)
   if not vehicle then return false end
   vehicle:delete()
+  core_vehicles.enterFreecamIfNoVehicles()
   extensions.hook("onVehicleTabInteractionRemoveVehicle", vehicleId)
   extensions.hook("trackNewVeh")
   return true
 end
 
 local function tryRepairVehicleHere(vehicleId)
+  if isFirstDriveMissionActive() then return false end
+  local playerId = 0
+  if not canModifyVehicle(playerId, vehicleId, 'recoverVehicle') then return false end
   local vehicle = getVehicleObjectById(vehicleId)
   if not vehicle or not spawn or not spawn.safeTeleport then return false end
   local pos = vehicle:getPosition()
@@ -612,6 +656,9 @@ local function tryRepairVehicleHere(vehicleId)
 end
 
 local function tryResetVehicle(vehicleId)
+  if isFirstDriveMissionActive() then return false end
+  local playerId = 0
+  if not canModifyVehicle(playerId, vehicleId, 'resetVehicle') then return false end
   local vehicle = getVehicleObjectById(vehicleId)
   if not vehicle then return false end
   vehicle:requestReset(RESET_PHYSICS)
@@ -654,21 +701,29 @@ local function tryDisableAiDriving(vehicleId)
 end
 
 local function tryRemoveAllOtherVehicles(vehicleId)
-  if not be then return false end
   local selectedVehicle = getVehicleObjectById(vehicleId)
   if not selectedVehicle then return false end
 
   local selectedId = selectedVehicle:getId()
+  local playerId = 0
+  local deletedAny = false
   for i = be:getObjectCount() - 1, 0, -1 do
     local veh = be:getObject(i)
     if veh and veh:getId() ~= selectedId and not isWalkingCharacterVehicle(veh) then
-      veh:delete()
+      local vid = veh:getId()
+      if canModifyVehicle(playerId, vid, 'removeVehicle') then
+        veh:delete()
+        deletedAny = true
+      end
     end
   end
 
-  extensions.hook("onVehicleTabInteractionRemoveAll", selectedId)
-  extensions.hook("trackNewVeh")
-  return true
+  if deletedAny then
+    core_vehicles.enterFreecamIfNoVehicles()
+    extensions.hook("onVehicleTabInteractionRemoveAll", selectedId)
+    extensions.hook("trackNewVeh")
+  end
+  return deletedAny
 end
 
 local function trySetOtherVehiclesAiMode(mode)
@@ -754,6 +809,8 @@ local function shouldNavigateAfterDelete(routeName)
 end
 
 local function tryCloneVehicle(vehicleId)
+  local playerId = 0
+  if not canModifyVehicle(playerId, vehicleId, 'spawnVehicle') then return false end
   if not be or not core_vehicles or not core_vehicles.cloneCurrent then return false end
   local sourceVehicle = getVehicleObjectById(vehicleId)
   if not sourceVehicle then return false end
@@ -813,9 +870,9 @@ local function getOrCreateActionButton(vehicleId, actionName)
       return ok
     end
   elseif type(actionName) == "string" and actionName:find("^switchToVehicle_p%d+$") then
-    local playerNumId = tonumber(actionName:match("^switchToVehicle_p(%d+)$")) or 0
+    local playerId = tonumber(actionName:match("^switchToVehicle_p(%d+)$")) or 0
     callback = function()
-      local ok = trySwitchToVehicle(vehicleId, playerNumId)
+      local ok = trySwitchToVehicle(vehicleId, playerId)
       refreshVehicleUiAfterAction(actionName)
       return ok
     end
@@ -847,10 +904,14 @@ local function getOrCreateActionButton(vehicleId, actionName)
       return ok
     end
   elseif actionName == "cloneVehicle" then
-    callback = function()
+    local function clone()
       local ok = tryCloneVehicle(vehicleId)
       refreshVehicleUiAfterAction(actionName)
       return ok
+    end
+    callback = function()
+      if gameplay_lowPerformance then return gameplay_lowPerformance.confirmSpawn(clone) end
+      return clone()
     end
   elseif actionName == "aiModeFlee" then
     callback = function()
@@ -952,13 +1013,21 @@ end
 
 local function buildVehicleActionContext(vehicleId, options)
   local currentVehicleId = be and be.getPlayerVehicleID and be:getPlayerVehicleID(0) or nil
+  local hasVehicle = type(vehicleId) == "number" and getVehicleTabObjectById(vehicleId) ~= nil or false
+  local sessionOk = canModifyVehicles()
+  local recoverySessionOk = sessionOk or isFirstDriveExplorationActive()
+  local recoveryAllowed = recoverySessionOk and not isFirstDriveMissionActive()
+  local playerId = 0
   return {
     vehicleId = vehicleId,
     routeName = type(options) == "table" and options.routeName or getCurrentRouteName(),
     currentVehicleId = currentVehicleId,
-    hasVehicle = type(vehicleId) == "number" and getVehicleTabObjectById(vehicleId) ~= nil or false,
+    hasVehicle = hasVehicle,
     isCurrent = type(vehicleId) == "number" and vehicleId == currentVehicleId,
-    canModify = canModifyVehicles(),
+    canModify = recoveryAllowed and canModifyVehicle(playerId, vehicleId, 'resetVehicle'),
+    canRemove = sessionOk and canModifyVehicle(playerId, vehicleId, 'removeVehicle'),
+    canRecover = recoveryAllowed and canModifyVehicle(playerId, vehicleId, 'recoverVehicle'),
+    canClone = sessionOk and canModifyVehicle(playerId, vehicleId, 'spawnVehicle'),
     canSwitch = canSwitchVehicles(),
     canExit = canExitVehicle(),
     canUseAi = canUseVehicleAiModes(),
@@ -983,8 +1052,8 @@ local function buildVehicleSwitchActions(context, options)
   local actions = {}
   local disabled = context.isCurrent or not (context.canSwitch and context.hasVehicle)
   if isMultiSeatLocalPlayers() then
-    for _, playerNumId in ipairs(getLocalPlayerIds()) do
-      table.insert(actions, buildActionEntry(context.vehicleId, "switchToVehicle_p" .. tostring(playerNumId), contextTranslate("ui.pause.vehicle.action.switchPlayer", {player = tostring(playerNumId + 1)}), disabled, nil, options))
+    for _, playerId in ipairs(getPlayerIds()) do
+      table.insert(actions, buildActionEntry(context.vehicleId, "switchToVehicle_p" .. tostring(playerId), contextTranslate("ui.pause.vehicle.action.switchPlayer", {player = tostring(playerId + 1)}), disabled, nil, options))
     end
   else
     table.insert(actions, buildActionEntry(context.vehicleId, "switchToVehicle", _tr("ui.pause.vehicle.action.switchToVehicle"), disabled, nil, options))
@@ -1007,7 +1076,7 @@ local function buildVehicleAiActions(context, options)
 end
 
 local function buildVehicleRepairAction(context, options)
-  return buildActionEntry(context.vehicleId, "repairVehicleHere", _tr("ui.radialmenu2.categories.repair"), not (context.canModify and context.hasVehicle), nil, options)
+  return buildActionEntry(context.vehicleId, "repairVehicleHere", _tr("ui.radialmenu2.categories.repair"), not (context.canRecover and context.hasVehicle), nil, options)
 end
 
 local function buildVehicleResetAction(context, options)
@@ -1015,11 +1084,11 @@ local function buildVehicleResetAction(context, options)
 end
 
 local function buildVehicleCloneAction(context, options)
-  return buildActionEntry(context.vehicleId, "cloneVehicle", _tr("ui.pause.vehicle.action.cloneVehicle"), not (context.canModify and context.hasVehicle), nil, options)
+  return buildActionEntry(context.vehicleId, "cloneVehicle", _tr("ui.pause.vehicle.action.cloneVehicle"), not (context.canClone and context.hasVehicle), nil, options)
 end
 
 local function buildVehicleDeleteAction(context, options)
-  return buildActionEntry(context.vehicleId, "deleteVehicle", _tr("ui.pause.vehicle.action.removeThisVehicle"), not (context.canModify and context.hasVehicle), {
+  return buildActionEntry(context.vehicleId, "deleteVehicle", _tr("ui.pause.vehicle.action.removeThisVehicle"), not (context.canRemove and context.hasVehicle), {
     danger = true,
     confirmText = contextTranslate("ui.pause.vehicle.action.confirmDeleteVehicle", {vehicle = getVehicleActionDisplayName(context.vehicleId)}),
   }, options)
@@ -1034,6 +1103,7 @@ end
 
 local function buildPerVehicleActionCatalog(vehicleId, options)
   local context = buildVehicleActionContext(vehicleId, options)
+  local playerId = 0
   return {
     context = context,
     openDetails = buildVehicleOpenDetailsAction(context, options),
@@ -1045,7 +1115,7 @@ local function buildPerVehicleActionCatalog(vehicleId, options)
     reset = buildVehicleResetAction(context, options),
     clone = buildVehicleCloneAction(context, options),
     delete = buildVehicleDeleteAction(context, options),
-    deleteOtherVehicles = buildDeleteOtherVehiclesAction(vehicleId, not (context.canModify and context.hasVehicle), options),
+    deleteOtherVehicles = buildDeleteOtherVehiclesAction(vehicleId, not (canModifyVehicles() and hasModifiableOtherVehicle(playerId, vehicleId, 'removeVehicle')), options),
   }
 end
 
@@ -1117,9 +1187,11 @@ local function buildSelectedSpawnedGroupsFromCatalog(catalog)
 end
 
 local function buildFleetActionCatalog(currentVehicleId, vehicles, options)
-  local canModify = canModifyVehicles()
   local canUseAi = canUseVehicleAiModes()
+  local playerId = 0
   local hasCurrentVehicle = type(currentVehicleId) == "number" and getVehicleTabObjectById(currentVehicleId) ~= nil
+  local canCloneCurrent = hasCurrentVehicle and canModifyVehicles() and canModifyVehicle(playerId, currentVehicleId, 'spawnVehicle')
+  local hasRemovableOther = hasModifiableOtherVehicle(playerId, currentVehicleId, 'removeVehicle')
   local hasOtherVehicle = false
   for _, vehicle in ipairs(vehicles or {}) do
     if not vehicle.isCurrent then
@@ -1136,8 +1208,8 @@ local function buildFleetActionCatalog(currentVehicleId, vehicles, options)
   end
 
   return {
-    cloneCurrent = buildActionEntry(currentVehicleId, "cloneVehicle", _tr("ui.radialmenu2.Manage.Clone"), not (canModify and hasCurrentVehicle), nil, options),
-    deleteOtherVehicles = buildDeleteOtherVehiclesAction(currentVehicleId, not (canModify and hasCurrentVehicle and hasOtherVehicle), options),
+    cloneCurrent = buildActionEntry(currentVehicleId, "cloneVehicle", _tr("ui.radialmenu2.Manage.Clone"), not canCloneCurrent, nil, options),
+    deleteOtherVehicles = buildDeleteOtherVehiclesAction(currentVehicleId, not (canModifyVehicles() and hasRemovableOther), options),
     aiModeButtons = aiModeButtons,
     aiModeDisabled = (type(options) == "table" and options.loading == true) or not (canUseAi and hasOtherVehicle),
   }
@@ -1185,8 +1257,8 @@ buildVehicleControllerUiElements = function(vehicleState, isCurrent)
 
   if hasPlayerControl then
     if isMultiSeatLocal then
-      for _, playerNumId in ipairs(controllingPlayerNums) do
-        local playerNumber = (tonumber(playerNumId) or 0) + 1
+      for _, playerId in ipairs(controllingPlayerNums) do
+        local playerNumber = (tonumber(playerId) or 0) + 1
         addElement("steeringWheelSporty", playerNumber)
       end
     else
@@ -1377,6 +1449,7 @@ local function getSpawnedVehiclesPayload(context)
     aiModeOptions = spawnedAiModeOptions,
     vehicles = vehicles,
     actions = getSpawnedRouteActions(currentVehicleId, vehicles),
+    lowPerformance = gameplay_lowPerformance and gameplay_lowPerformance.getPauseNotice() or nil,
   }
 end
 

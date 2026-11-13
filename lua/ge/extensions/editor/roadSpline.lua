@@ -8,7 +8,6 @@
 local simplifyRdpTol = 9.0 -- The tolerance for the RDP simplification of the spline.
 
 local defaultSplineWidth = 10.0 -- The default width for a spline when adding a new node, in meters.
-local layerBinSpacing = 10 -- The spacing between the lateral binormal lines for the layer wire-frame (in render visualisation).
 
 local latMin, latMax = -5.0, 5.0 -- The minimum and maximum values for the lateral position slider.
 local fadeMin, fadeMax = 0.0, 100.0 -- The minimum and maximum values for the fade slider.
@@ -24,17 +23,23 @@ local groupMgr = require('editor/roadSpline/groupMgr')
 local layerMgr = require('editor/roadSpline/layerMgr')
 local import = require('editor/roadSpline/import')
 local input = require('editor/toolUtilities/splineInput')
+local panCamera = require('editor/toolUtilities/panCamera')
 local materialSelectionMgr = require('editor/toolUtilities/materialSelectionMgr')
-local render = require('editor/toolUtilities/render')
+local rSpline = require('editor/toolUtilities/render/spline')
+local rTransport = require('editor/toolUtilities/render/transport')
 local poly = require('editor/toolUtilities/polygon')
 local skeleton = require('editor/toolUtilities/skeleton')
 local rdp = require('editor/toolUtilities/rdp')
 local maskExport = require('editor/toolUtilities/splineMaskExport')
 local util = require('editor/toolUtilities/util')
+local matCombo = require('editor/toolUtilities/matCombo')
 local geom = require('editor/toolUtilities/geom')
+local engineeredGeom = require('editor/toolUtilities/engineeredGeom')
+local cornerHandles = require('editor/toolUtilities/cornerHandles')
 local style = require('editor/toolUtilities/style')
 local paint = require('editor/toolUtilities/terrainPainter')
-
+local session = require('editor/toolUtilities/session')
+local bake = require('editor/toolUtilities/bake')
 -- Module constants.
 local im = ui_imgui
 local min, max = math.min, math.max
@@ -51,11 +56,49 @@ local isGizmoActive = false
 local isLockShape = false
 local previousSelectedGroupIdx = -1
 local sliderPreEditState = nil
+local hiddenGripNodes = {} -- reused each frame: engineered corners whose PI is flung far (the move grip stands in), so the stray node is hidden.
 local out = {
   spline = selectedGroupIdx,
   node = selectedNodeIdx,
   layer = selectedLayerId,
   isGizmoActive = isGizmoActive,
+}
+
+-- Save/Load Session spec handed to the shared helper (toolUtilities/session): only these tool-specific hooks stay here.
+local sessionSpec = {
+  toolId = 'roadSpline',
+  displayName = 'Road Spline',
+  itemNoun = 'road splines',
+  getItems = groupMgr.getGroups,
+  serializeItem = groupMgr.serializeGroupToTable,
+  deserializeItem = function(t) return groupMgr.deserializeGroup(t, true) end,
+  clearAll = function() groupMgr.removeAllGroups(true) end,
+  deepCopyAll = groupMgr.deepCopyAllGroups,
+  transUndo = groupMgr.transGroupEditUndo,
+  transRedo = groupMgr.transGroupEditRedo,
+  refreshIdMap = groupMgr.recomputeIdMap,
+  onLoaded = function() selectedGroupIdx = 1 end,
+  iconColor = cols.blueB,
+  iconSize = iconsBig,
+}
+
+-- Locks/unlocks the road spline with this id and rebuilds it now (also used by the Master Spline for linked children).
+local function setLockedById(id, isLocked)
+  local group = groupMgr.findGroup(id)
+  if not group then return end
+  if isLocked then groupMgr.updateDirtyGroups() end -- lock what the road shows, not a stale build (dirty layers too).
+  group.isEnabled = not isLocked
+  group.isDirty = true
+  groupMgr.updateDirtyGroups()
+end
+
+-- Bake spec: baking locks the road spline (its DecalRoads save with the level; it stays in the tool).
+local bakeSpec = {
+  toolId = 'roadSpline',
+  displayName = 'Road Spline',
+  iconColor = cols.redB,
+  iconSize = iconsBig,
+  setLockedById = setLockedById,
 }
 
 -- Register this tool with the shared spline input utilities.
@@ -103,7 +146,13 @@ local function onSerialize()
   local serializedGroups = {}
   for i = 1, #groups do
     local group = groups[i]
+    -- A locked road's DecalRoads, folder and terrain paint stay in the scene; it carries the road ids across and takes them back.
+    if not group.isEnabled then group.keptObjects = groupMgr.release(group) end
     serializedGroups[i] = groupMgr.serializeGroup(group)
+    group.keptObjects = nil
+  end
+  for i = #groups, 1, -1 do -- the locked ones are left in the scene as they are, not removed.
+    if not groups[i].isEnabled then table.remove(groups, i) end
   end
   groupMgr.removeAllGroups(true)
   return serializedGroups
@@ -115,14 +164,127 @@ local function onDeserialized(data)
   table.clear(groups)
   for i = 1, #data do
     local group = groupMgr.deserializeGroup(data[i], true)
+    if group.keptObjects then
+      groupMgr.adopt(group, group.keptObjects)
+      group.keptObjects = nil
+    end
     groups[#groups + 1] = group
   end
   util.computeIdToIdxMap(groups, groupMgr.getIdToIdxMap()) -- Recompute the group id -> index map.
 end
 
+-- Renders one full-width float slider bound to a group-level (road) property, with the standard
+-- activate-snapshot / deactivate-commit history pattern. Writing the group field + isDirty triggers
+-- recreateAutoGeneratedLayers on the next dirty update, which rebuilds the edge decals from the new value.
+-- Renders one row of a group-level float slider with a left-hand reset button (shown only when the value differs from
+-- its default), matching the tool's slider style. MUST be called inside a 2-column block (im.Columns(2) +
+-- SetColumnWidth(0, 30)) so consecutive rows pack tightly with no gaps.
+local function resetSlider(group, key, default, minV, maxV, fmt, tooltip, label)
+  if group[key] ~= default then
+    if editor.uiIconImageButton(editor.icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'reset_' .. key) then
+      local pre = groupMgr.deepCopyGroup(group)
+      group[key] = default
+      group.isDirty = true
+      editor.history:commitAction(label, { old = pre, new = groupMgr.deepCopyGroup(group) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
+    end
+    im.tooltip("Reset to default")
+  else
+    im.Dummy(iconsSmall)
+  end
+  im.SameLine()
+  im.NextColumn()
+  im.PushItemWidth(-1)
+  local ptr = im.FloatPtr(group[key])
+  if im.SliderFloat("###" .. key, ptr, minV, maxV, fmt) then
+    group[key] = ptr[0]
+    group.isDirty = true
+  end
+  if tooltip then im.tooltip(tooltip) end
+  if im.IsItemActivated() then sliderPreEditState = groupMgr.deepCopyGroup(group) end
+  if im.IsItemDeactivatedAfterEdit() then
+    editor.history:commitAction(label, { old = sliderPreEditState, new = groupMgr.deepCopyGroup(group) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
+  end
+  im.PopItemWidth()
+  im.NextColumn()
+end
+
+-- Renders the offset + width sliders for one auto-generated edge decal (edge line / edge blend), shown only
+-- when that decal is enabled. Offset is a lateral multiplier (1.0 == the road edge), width is in metres.
+local function edgeDecalControls(group, label, offsetKey, offsetDefault, widthKey, widthDefault)
+  im.TextColored(cols.dullWhite or cols.greenB, label)
+  im.PushStyleVar1(im.StyleVar_GrabMinSize, 20)
+  im.Columns(2, offsetKey .. 'Cols', false)
+  im.SetColumnWidth(0, 30)
+  resetSlider(group, offsetKey, offsetDefault, 0.0, 3.0, "Offset = %.2f", "Lateral offset of the decal (1.0 = the road edge). Mirrored on both sides.", "Adjust " .. label .. " Offset")
+  resetSlider(group, widthKey, widthDefault, 0.05, 10.0, "Width (m) = %.2f", "Width of the decal, in metres.", "Adjust " .. label .. " Width")
+  im.Columns(1)
+  im.PopStyleVar()
+end
+
+-- Returns the per-corner override record for a node, creating an empty one on first edit (applyDefaults seeds group.corners = {};
+-- splineInput keeps it index-aligned on node add/insert/remove). Keeps overrides sparse: untouched corners stay nil.
+local function ensureCornerOverride(group, idx)
+  group.corners = group.corners or {}
+  local ov = group.corners[idx]
+  if not ov then ov = {}; group.corners[idx] = ov end
+  return ov
+end
+
+local function setGeometryMode(group, mode)
+  local pre = groupMgr.deepCopyGroup(group)
+  group.geometryMode = mode; group.isDirty = true
+  editor.history:commitAction(mode == 'engineered' and "Set Engineered Geometry" or "Set Smooth Geometry",
+    { old = pre, new = groupMgr.deepCopyGroup(group) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
+end
+
+local function engGeomSlider(group, meta)
+  im.PushStyleVar1(im.StyleVar_GrabMinSize, 20)
+  im.Columns(2, 'roadEngCols_' .. meta.key, false)
+  im.SetColumnWidth(0, 30)
+  resetSlider(group, meta.key, meta.default, meta.min, meta.max, meta.fmt, meta.tooltip, meta.label)
+  im.Columns(1)
+  im.PopStyleVar()
+end
+
+-- "Geometry:" section: engineered clothoid corners that ROUND interior nodes vs a smooth spline THROUGH them. roadSpline is terrain-
+-- draped so there's no Hill Smoothing (Z comes from the ground); Width Taper applies (the mesh widens with divWidths). Corner radius is
+-- per-corner (the viewport knob). Labels/tooltips come from engineeredGeom.CONTROLS so every road tool reads identical text.
+local function geometryControls(group)
+  local C = engineeredGeom.CONTROLS
+  local isEng = group.geometryMode == 'engineered'
+  im.TextColored(cols.greenB, "Geometry:")
+  im.Text("Mode"); im.SameLine()
+  if im.RadioButton1("Engineered###roadEng", isEng) and not isEng then setGeometryMode(group, 'engineered') end
+  im.tooltip(C.modeEngTip)
+  im.SameLine()
+  if im.RadioButton1("Smooth###roadSmooth", not isEng) and isEng then setGeometryMode(group, 'spline') end
+  im.tooltip(C.modeSmoothTip)
+  if isEng then
+    engGeomSlider(group, C.transition)
+    engGeomSlider(group, C.widenAmount)
+    engGeomSlider(group, C.widthTaper)
+  end
+end
+
+-- Per-frame ctx bridging this tool into the shared corner-handle module: undo/dirty via groupMgr, the radius floor (roadSpline drapes
+-- Z so it uses the global engineered fold floor), and the selection setter writing our own selectedNodeIdx. roadSpline rebuilds dirty
+-- groups every frame, so a knob drag re-drapes + re-samples live with no special drag-hide path.
+local function cornerHandleCtx()
+  return {
+    selGroupIdx = selectedGroupIdx,
+    selNodeIdx = selectedNodeIdx,
+    setSelNode = function(i) selectedNodeIdx = i end,
+    minRadius = function() return engineeredGeom.DEFAULT_MIN_R end,
+    deepCopy = groupMgr.deepCopyGroup,
+    undo = groupMgr.singleGroupEditUndo,
+    redo = groupMgr.singleGroupEditRedo,
+    ensureOverride = ensureCornerOverride,
+  }
+end
+
 -- Main tool window UI.
 local function handleMainToolWindowUI()
-  if editor.beginWindow(toolWindowName, "Road Spline", im.WindowFlags_NoCollapse) then
+  if editor.beginWindow(toolWindowName, session.windowTitle(sessionSpec.toolId, "Road Spline", toolWindowName), im.WindowFlags_NoCollapse) then
     local icons = editor.icons
     local groups = groupMgr.getGroups()
 
@@ -213,6 +375,17 @@ local function handleMainToolWindowUI()
     else
       im.Dummy(iconsBig)
     end
+    im.SameLine()
+
+    -- Pan camera toggle (top-down RMB-drag pan + wheel zoom, shared across the spline tools).
+    if editor.uiIconImageButton(icons.videocam, iconsBig, panCamera.isOn() and cols.blueB or cols.blueD, nil, nil, 'panCamBtn') then
+      panCamera.toggle()
+    end
+    im.tooltip(panCamera.isOn() and 'Pan camera ON: top-down, RMB-drag to move, wheel to zoom. Click for the free camera.' or 'Pan camera: top-down view, RMB-drag pan + wheel zoom.')
+    im.SameLine()
+
+    -- 'Save Session' / 'Load Session' (+ Replace/Merge modal) via the shared helper. Save hides itself when the tool is empty.
+    session.renderButtons(sessionSpec)
 
     im.PopStyleVar(2)
     im.Columns(1)
@@ -258,23 +431,29 @@ local function handleMainToolWindowUI()
             im.TextColored(cols.dullWhite, group.name)
             im.tooltip('This road spline is disabled. To edit or remove it, first enable it.')
           else
+            -- Per-keystroke: only update the live label.
             if im.InputText("###" .. tostring(wCtr), splineNamePtr, 32) then
               group.name = ffi.string(splineNamePtr)
+            end
+            im.tooltip('Edit the road spline name.')
+            if im.IsItemActivated() then
+              sliderPreEditState = groupMgr.deepCopyGroup(group) -- snapshot before the edit begins, for undo.
+            end
+            if im.IsItemDeactivatedAfterEdit() then
+              group.name = ffi.string(splineNamePtr) -- final buffer value.
               if group.sceneTreeFolderId then
                 local folder = scenetree.findObjectById(group.sceneTreeFolderId)
                 if folder then
-                  local preState = groupMgr.deepCopyGroup(group)
                   folder:setName(group.name)
                   editor.refreshSceneTreeWindow()
                   group.isDirty = true -- Ensures the mesh names are updated in the scene tree.
                   local postState = groupMgr.deepCopyGroup(group)
-                  preState.isUpdateSceneTree = true
+                  if sliderPreEditState then sliderPreEditState.isUpdateSceneTree = true end
                   postState.isUpdateSceneTree = true
-                  editor.history:commitAction("Edit Road Spline Name", { old = preState, new = postState }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
+                  editor.history:commitAction("Edit Road Spline Name", { old = sliderPreEditState, new = postState }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
                 end
               end
             end
-            im.tooltip('Edit the road spline name.')
             if im.IsItemActive() then
               selectedGroupIdx = i
             end
@@ -305,14 +484,19 @@ local function handleMainToolWindowUI()
             btnCol = group.isEnabled and cols.blueB or cols.blueD
             local btnIcon = group.isEnabled and icons.lock or icons.lock_open
             if editor.uiIconImageButton(btnIcon, iconsSmall, btnCol, nil, nil, 'lockUnlockRoadSplineToggleBtn' .. i) then
-              local statePre = groupMgr.deepCopyGroup(group)
-              group.isEnabled = not group.isEnabled
+              bake.setLocked(bakeSpec, group, group.isEnabled)
               selectedGroupIdx = i
-              editor.history:commitAction("Toggle Road Spline Lock", { old = statePre, new = groupMgr.deepCopyGroup(group) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
             end
-            im.tooltip((group.isEnabled and 'Disable' or 'Enable') .. ' this road spline.')
+            im.tooltip(group.isEnabled and 'Lock this road spline: its decal roads save with the level.' or 'Unlock this road spline: its decal roads become editable again (hand edits are reset).')
           else
             im.Dummy(iconsSmall)
+          end
+          im.SameLine()
+
+          -- 'Bake' button (per row): locks this road spline.
+          if bake.rowButton(bakeSpec, group) then
+            editor.endWindow()
+            return
           end
           im.NextColumn()
           im.Separator()
@@ -330,7 +514,7 @@ local function handleMainToolWindowUI()
       if selGroup and #selGroup.nodes > 0 then
         if editor.uiIconImageButton(icons.cameraFocusTopDown, iconsBig, cols.blueB, nil, nil, 'goToRoadSplineBtn') then
           materialSelectionMgr.closeWindow() -- If using the groups section, ensure the material selection window is closed.
-          util.goToSpline(selGroup.divPoints)
+          if not panCamera.gotoPoints(selGroup.divPoints) then util.goToSpline(selGroup.divPoints) end
         end
         im.tooltip('Move the camera to the selected Road Spline.')
       else
@@ -454,14 +638,22 @@ local function handleMainToolWindowUI()
     -- Road Spline-specific UI.
     if selGroup and selGroup.isEnabled then
       -- Tab bar for organising the interface.
-      local selectedTab = 0 -- Default to first tab.
+      local selectedTab = 3 -- Default to the first tab (Road).
       if im.BeginTabBar("RoadSplineTabs") then
-        if im.BeginTabItem("Layers") then
+        if im.BeginTabItem("Road") then
+          selectedTab = 3
+          im.EndTabItem()
+        end
+        if im.BeginTabItem("Auto Layers") then
           selectedTab = 0
           im.EndTabItem()
         end
-        if im.BeginTabItem("Painting") then
+        if im.BeginTabItem("Layers") then
           selectedTab = 1
+          im.EndTabItem()
+        end
+        if im.BeginTabItem("Painting") then
+          selectedTab = 2
           im.EndTabItem()
         end
         im.EndTabBar()
@@ -470,7 +662,16 @@ local function handleMainToolWindowUI()
       -- Tab content.
       im.PushStyleVar2(im.StyleVar_WindowPadding, im.ImVec2(4, 8))
       if im.BeginChild1("TabContentChild", im.ImVec2(0, 0), true) then
-        if selectedTab == 0 then -- Layers tab.
+        if selectedTab == 3 then -- Road tab: how the node polyline becomes the centerline (spline vs engineered clothoid corners).
+          -- Hidden for linked children -- a master spline drives their shape (and already applies its own engineered centerline).
+          if selGroup.isLink then
+            im.TextColored(cols.greenB, "Centerline geometry:")
+            im.Dummy(im.ImVec2(0, 3))
+            im.TextColored(cols.dullWhite or cols.greenB, "This spline is linked to a master spline, which drives its centerline geometry.")
+          else
+            geometryControls(selGroup)
+          end
+        elseif selectedTab == 0 then -- Auto Layers tab (auto-generated markings/decals + edge decals).
           -- Road detailing controls.
           im.TextColored(cols.greenB, "Auto-Generated Layers:")
           im.Dummy(im.ImVec2(0, 3))
@@ -729,9 +930,19 @@ local function handleMainToolWindowUI()
 
           im.Columns(1)
 
+          -- Road-level placement/size controls for the enabled edge decals (edge line + edge blends).
+          if selGroup.isRoadEdgeLines or selGroup.isEdgeBlend1 or selGroup.isEdgeBlend2 or selGroup.isEdgeBlend3 then
+            im.Separator()
+            im.TextColored(cols.greenB, "Edge Decals:")
+            if selGroup.isRoadEdgeLines then edgeDecalControls(selGroup, "Edge Line", "edgeLineOffset", 1.0, "edgeLineWidth", 0.25) end
+            if selGroup.isEdgeBlend1 then edgeDecalControls(selGroup, "Edge Blend 1", "edgeBlend1Offset", 1.1, "edgeBlend1Width", 1.0) end
+            if selGroup.isEdgeBlend2 then edgeDecalControls(selGroup, "Edge Blend 2", "edgeBlend2Offset", 1.25, "edgeBlend2Width", 2.0) end
+            if selGroup.isEdgeBlend3 then edgeDecalControls(selGroup, "Edge Blend 3", "edgeBlend3Offset", 1.35, "edgeBlend3Width", 3.0) end
+          end
+
+        elseif selectedTab == 1 then -- Layers tab (user-authored decal layers + selected-layer material/properties).
           -- Layers list.
           if selGroup and selGroup.isEnabled then
-            im.Separator()
             im.TextColored(cols.greenB, "Layers:")
             local layers = selGroup.layers
 
@@ -771,8 +982,8 @@ local function handleMainToolWindowUI()
                       absPath = (string.find(absPath, "/") ~= nil and absPath or (mat:getPath() .. absPath))
                     end
                     local texObj = materialSelectionMgr.getTexObj(absPath)
-                    if texObj and texObj.texId then
-                      im.Image(texObj.texId, iconsSmall)
+                    if texObj and texObj.tex then
+                      im.Image(texObj.tex:getID(), iconsSmall)
                     else
                       im.Dummy(iconsSmall)
                     end
@@ -797,14 +1008,21 @@ local function handleMainToolWindowUI()
                     im.TextColored(cols.dullWhite, layer.name)
                     im.tooltip('This layer is disabled.')
                   else
+                    -- Per-keystroke: only update the live label. The decal rebuild + undo commit are deferred to
+                    -- IsItemDeactivatedAfterEdit, so renaming a layer rebuilds its decal once (on finish), not on every letter.
                     if im.InputText("###" .. tostring(wCtr), layerNamePtr, 32) then
-                      local preState = groupMgr.deepCopyGroup(selGroup)
                       layer.name = ffi.string(layerNamePtr)
-                      layerMgr.removeDecalRoadInLayer(layer)
-                      layer.isDirty = true
-                      editor.history:commitAction("Rename Layer", { old = preState, new = groupMgr.deepCopyGroup(selGroup) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
                     end
                     im.tooltip('Edit the layer name.')
+                    if im.IsItemActivated() then
+                      sliderPreEditState = groupMgr.deepCopyGroup(selGroup) -- snapshot before the edit begins, for undo.
+                    end
+                    if im.IsItemDeactivatedAfterEdit() then
+                      layer.name = ffi.string(layerNamePtr) -- final buffer value.
+                      layerMgr.removeDecalRoadInLayer(layer)
+                      layer.isDirty = true
+                      editor.history:commitAction("Rename Layer", { old = sliderPreEditState, new = groupMgr.deepCopyGroup(selGroup) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
+                    end
                     if im.IsItemActive() then
                       selectedLayerId = layer.id
                       materialSelectionMgr.closeWindow()
@@ -1178,7 +1396,7 @@ local function handleMainToolWindowUI()
           else
             materialSelectionMgr.closeWindow() -- If no layer is selected, ensure the material selection window is closed.
           end
-        elseif selectedTab == 1 then -- Painting tab.
+        elseif selectedTab == 2 then -- Painting tab.
           if selGroup and selGroup.isEnabled and #selGroup.nodes > 1 then
             im.TextColored(cols.greenB, "Terrain Painting:")
           -- Use the same 2-column slider layout as other spline tools.
@@ -1216,41 +1434,24 @@ local function handleMainToolWindowUI()
             im.PopItemWidth()
             im.NextColumn()
 
-            -- 'Paint Material' slider.
-            if (selGroup.paintMaterialIdx or sliderDefaults.defaultPaintMaterialIdx) ~= sliderDefaults.defaultPaintMaterialIdx then
-              if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetPaintMaterialBtn') then
-                local preEditState = groupMgr.deepCopyGroup(selGroup)
-                selGroup.paintMaterialIdx = sliderDefaults.defaultPaintMaterialIdx
-                selGroup.isDirty = true
-                editor.history:commitAction("Reset Paint Material", { old = preEditState, new = groupMgr.deepCopyGroup(selGroup) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
-              end
-              im.tooltip("Reset to default")
-            else
-              im.Dummy(im.ImVec2(iconsSmall.x + 4, iconsSmall.y))
-            end
-            im.SameLine()
-            im.NextColumn()
-            im.PushItemWidth(-1)
-            tmpPtr = im.IntPtr(selGroup.paintMaterialIdx or sliderDefaults.defaultPaintMaterialIdx)
-            if im.SliderInt('###81841', tmpPtr, 0, util.getNumMaterials(), "Paint Material = %d") then
-              selGroup.paintMaterialIdx = tmpPtr[0]
-              selGroup.isDirty = true
-            end
-            im.tooltip('Set the material to be used with terrain painting.')
-            if im.IsItemActivated() then
-              sliderPreEditState = groupMgr.deepCopyGroup(selGroup)
-            end
-            if im.IsItemDeactivatedAfterEdit() then
-              editor.history:commitAction("Adjust Paint Material", { old = sliderPreEditState, new = groupMgr.deepCopyGroup(selGroup) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
-            end
-            im.PopItemWidth()
-            im.NextColumn()
             im.PopStyleVar(1)
             im.Columns(1)
+
+            -- 'Paint Material' picker.
+            local pickedMat = matCombo.draw(selGroup.paintMaterialIdx or sliderDefaults.defaultPaintMaterialIdx, {
+              id = 'rsPaintMat', label = 'Material', default = sliderDefaults.defaultPaintMaterialIdx,
+              tooltip = 'Terrain layer painted under the road.',
+            })
+            if pickedMat then
+              local preEditState = groupMgr.deepCopyGroup(selGroup)
+              selGroup.paintMaterialIdx = pickedMat
+              selGroup.isDirty = true
+              editor.history:commitAction("Adjust Paint Material", { old = preEditState, new = groupMgr.deepCopyGroup(selGroup) }, groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo, true)
+            end
             im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(2, 2))
             im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
 
-            -- 'Paint Terrain' button.
+            -- 'Paint Terrain' toggle: on = paint + keep following edits (updateDirtyGroups repaints), off = restore what was there.
             btnCol = (selGroup.isPainting and cols.blueB or cols.blueD)
             if editor.uiIconImageButton(icons.terrain_painting, iconsBig, btnCol, nil, nil, 'paintTerrainBtn') then
               local statePre = groupMgr.deepCopyGroup(selGroup)
@@ -1301,17 +1502,21 @@ end
 
 -- Main editor callback.
 local function onEditorGui()
-  -- Ensure all Road Splines are updated, even if this tool is not active.
-  groupMgr.updateDirtyGroups()
+  -- Ensure all Road Splines are updated, even if this tool is not active. A live corner-knob drag takes the light path (geometry +
+  -- ribs only, ribbon wireframe shows it) so the heavy decal rebuild defers to release instead of jittering every frame.
+  groupMgr.updateDirtyGroups(cornerHandles.isDragging())
 
   -- If this tool is not active, render the shells of the splines but do nothing further.
   if not isRoadSplineActive then
-    render.renderShells(groupMgr.getGroups())
+    rSpline.renderShells(groupMgr.getGroups())
     return
   end
 
   -- Handle the main tool window UI.
   handleMainToolWindowUI()
+
+  -- Drive the pan camera when it's on (blocked during polygon draw / node drag so they don't fight).
+  if panCamera.isOn() then panCamera.drive(isDrawPolygon or input.isDragging()) end
 
   -- Handle the front end if the user is drawing a selection polygon.
   if isDrawPolygon then
@@ -1329,33 +1534,64 @@ local function onEditorGui()
     materialSelectionMgr.closeWindow() -- Close the material selection window if there is no selected layer.
   end
 
-  -- Render the wire frame (only if not linked to master spline).
-  if not selGroup then
-    render.renderRibbonWireFrame(groups, selectedGroupIdx, 2)
+  -- Render the wire frame (only if not linked to master spline). Also show it live for the selected road while a corner-knob drag
+  -- is deferring its decal rebuild, so the artist sees the new radius track under the cursor instead of a frozen road.
+  if not selGroup or cornerHandles.isDragging() then
+    rTransport.renderRibbonWireFrame(groups, selectedGroupIdx, 2, true)
   end
 
   -- Render the spline and layer visualisations with debugDraw (only if not linked to master spline).
   if selGroup then
-    render.handleSplineRendering(groups, selectedGroupIdx, selectedNodeIdx, isGizmoActive, false, isLockShape, false, true, elevScale)
+    -- Hide the stray far PI node of any engineered corner that's showing an on-apex grip, so a tight bend reads as one handle.
+    for k in pairs(hiddenGripNodes) do hiddenGripNodes[k] = nil end
+    if selGroup.geometryMode == 'engineered' then
+      for i = 2, #selGroup.nodes - 1 do
+        if cornerHandles.moveHandle(selGroup, i) then hiddenGripNodes[i] = true end
+      end
+    end
+    rSpline.handleSplineRendering(groups, selectedGroupIdx, selectedNodeIdx, isGizmoActive, false, isLockShape, false, true, elevScale, hiddenGripNodes)
+    rTransport.drawNodeGhosts(selGroup, hiddenGripNodes)
+    engineeredGeom.drawControlPolygon(selGroup) -- blue PI guide-line + corner/clothoid markers in engineered mode (shows the road cuts corners).
     if selectedLayer and selectedLayer.isEnabled and not selectedLayer.isHidden then
-      render.renderLayer(selectedLayer, selGroup, true, 2)
+      rSpline.renderLayer(selectedLayer, selGroup, true, 2)
     end
   end
 
-  -- Handle the mouse and keyboard events.
-  out.spline, out.node, out.layer, out.isGizmoActive, out.isLockShape = selectedGroupIdx, selectedNodeIdx, selectedIndex or 1, isGizmoActive, isLockShape
-  input.handleSplineEvents(
-    groups,
-    out,
-    false, true, true, false, false, true, true, isLockShape,
-    defaultSplineWidth,
-    groupMgr.deepCopyGroup, groupMgr.deepCopyAllGroups,
-    groupMgr.copyGroupProfile, groupMgr.pasteGroupProfile,
-    groupMgr.recreateAutoGeneratedLayers,
-    groupMgr.joinRoadSplines,
-    groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo,
-    groupMgr.transGroupEditUndo, groupMgr.transGroupEditRedo)
-  selectedGroupIdx, selectedNodeIdx, selectedIndex, isGizmoActive, isLockShape = out.spline, out.node, out.layer, out.isGizmoActive, out.isLockShape
+  -- Engineered per-corner radius knobs (shared cornerHandles): a click/drag on a knob owns the mouse so it never also moves a node;
+  -- a mere hover only mutes add-node (suppressAddNode) so the event pass -- and its gizmo -- keeps running. Skipped mid node-drag.
+  local cornerConsumed, suppressAddNode = false, false
+  if selGroup and selGroup.geometryMode == 'engineered' and not input.isDragging() then
+    local consumed, hovering = cornerHandles.update(selGroup, cornerHandleCtx())
+    if consumed then cornerConsumed = true elseif hovering then suppressAddNode = true end
+  end
+
+  -- Handle the mouse and keyboard events (skipped when a corner knob owns the frame).
+  if not cornerConsumed then
+    out.spline, out.node, out.layer, out.isGizmoActive, out.isLockShape = selectedGroupIdx, selectedNodeIdx, selectedIndex or 1, isGizmoActive, isLockShape
+    input.handleSplineEvents(
+      groups,
+      out,
+      -- useRibs is gated OFF while a corner knob/grip is hovered (suppressAddNode) so the green radius knob wins the pick where it
+      -- overlaps a width rib -- otherwise the ray hits both and they light up together / fight. The knob's own drag already owns
+      -- the frame (cornerConsumed skips this whole pass), so ribs only ever return here once the cursor leaves the knob.
+      false, true, not suppressAddNode, false, false, true, true, isLockShape,
+      defaultSplineWidth,
+      groupMgr.deepCopyGroup, groupMgr.deepCopyAllGroups,
+      groupMgr.copyGroupProfile, groupMgr.pasteGroupProfile,
+      groupMgr.recreateAutoGeneratedLayers,
+      groupMgr.joinRoadSplines,
+      groupMgr.singleGroupEditUndo, groupMgr.singleGroupEditRedo,
+      groupMgr.transGroupEditUndo, groupMgr.transGroupEditRedo,
+      nil, nil, nil, -- midJoin / canJoin / canJoinAux: not used here
+      { suppressAddNode = suppressAddNode, -- hovering a corner handle: mute add/insert-node under it, but keep the pass (gizmo stays).
+        -- Anchor the translate gizmo on the ghost grip (bend apex) for any engineered corner whose PI is flung far off the road.
+        gizmoAnchorFn = function(gi, ni)
+          local g = groups[gi]
+          if not g or g.geometryMode ~= 'engineered' or ni <= 1 or ni >= #g.nodes then return nil end
+          return cornerHandles.moveHandle(g, ni)
+        end })
+    selectedGroupIdx, selectedNodeIdx, selectedIndex, isGizmoActive, isLockShape = out.spline, out.node, out.layer, out.isGizmoActive, out.isLockShape
+  end
 
   -- Update selectedLayerId based on the returned index
   if selectedIndex and selGroup and selGroup.layers[selectedIndex] then
@@ -1371,6 +1607,10 @@ local function onActivate()
   editor.showWindow(toolWindowName)
   materialSelectionMgr.closeWindow()
   isRoadSplineActive = true
+  panCamera.configure({ focusProvider = function()
+    local g = groupMgr.getGroups()[selectedGroupIdx]
+    return g and g.divPoints
+  end })
 
   -- Recompute the group id -> index map.
   util.computeIdToIdxMap(groupMgr.getGroups(), groupMgr.getIdToIdxMap()) -- Probably not needed here, but just in case.
@@ -1382,6 +1622,7 @@ local function onDeactivate()
   poly.clearPolygon() -- Ensure there is no residual polygon left over from the previous usage.
   editor.hideWindow(toolWindowName)
   materialSelectionMgr.closeWindow()
+  panCamera.close()
   isRoadSplineActive = false
 end
 
@@ -1445,6 +1686,7 @@ end
 -- Public interface.
 M.setSelectedSplineIdx =                                setSelectedSplineIdx
 M.setSelectedNodeIdx =                                  setSelectedNodeIdx
+M.setLockedById =                                       setLockedById
 
 M.onSerialize =                                         onSerialize
 M.onDeserialized =                                      onDeserialized

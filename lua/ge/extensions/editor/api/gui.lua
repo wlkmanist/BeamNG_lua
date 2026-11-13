@@ -24,6 +24,12 @@ local fileDialogContexts = {}
 local windowVisibleStack = {} -- used for beginWindow/endWindow
 local windowShouldCallEndStack = {} -- used for beginWindow/endWindow
 local modalWindowVisibleStack = {} -- used for beginModalWindow/endModalWindow
+-- Heuristic for the scene viewport's right edge: Lua cannot query the central dock node bounds,
+-- so track docked editor window rectangles and use right-docked windows from the previous frame.
+local dockedWindowRects = {}
+local previousDockedWindowRects = {}
+local dockedWindowRectCount = 0
+local previousDockedWindowRectCount = 0
 local defaultIconButtonSize = imgui.ImVec2(32, 32)
 local WindowsStateFileFormatVersion = 2
 
@@ -37,7 +43,7 @@ local function texObj(path)
   res.path = path
   res.tex = imgui.ImTextureHandler(path)
   if not res.tex then return nil end
-  res.texId = res.tex:getID()
+  res.texId = res.tex:getID() -- do not use, left for legacy mods
   res.size = res.tex:getSize()
   res.format = ffi.string(res.tex:getFormat())
   return res
@@ -141,7 +147,7 @@ local function uiIconImage(icon, size, col, borderCol, label)
   tempVec2B.y = uy
   tempVec2C.x = vx
   tempVec2C.y = vy
-  if imgui.Image(iconsTex.texId, size, tempVec2B, tempVec2C, col, borderCol) then return true end
+  if imgui.Image(iconsTex.tex:getID(), size, tempVec2B, tempVec2C, col, borderCol) then return true end
   if label then imgui.SameLine() imgui.Text(label) end
 end
 
@@ -223,7 +229,7 @@ local function uiIconImageButton(icon, size, col, label, backgroundCol, id, text
     imgui.PushID1(id)
     imgui.PushStyleColor2(imgui.Col_Button, imgui.ImVec4(0,0,0,0))
     if not backgroundCol then backgroundCol = imgui.GetStyleColorVec4(imgui.Col_Button) end
-    imgui.ImageButton("##ImageButton", iconsTex.texId, size, imgui.ImVec2(ux, uy), imgui.ImVec2(vx, vy), backgroundCol, col)
+    imgui.ImageButton("##ImageButton", iconsTex.tex:getID(), size, imgui.ImVec2(ux, uy), imgui.ImVec2(vx, vy), backgroundCol, col)
     imgui.PopStyleColor()
     imgui.PopID()
     if onRelease then
@@ -437,10 +443,44 @@ local function isViewportFocused()
   return not imgui.IsAnyItemActive()
 end
 
+local function getSceneViewportRightEdge(screenY)
+  local viewport = imgui.GetMainViewport()
+  local viewportRight = viewport.Pos.x + viewport.Size.x
+  local edgeTolerance = 2 * imgui.uiscale[0]
+  local rightEdge
+
+  for index = 1, previousDockedWindowRectCount do
+    local rect = previousDockedWindowRects[index]
+    local windowRight = rect.x + rect.width
+    if math.abs(windowRight - viewportRight) <= edgeTolerance
+      and rect.width < viewport.Size.x - edgeTolerance
+      and screenY >= rect.y and screenY <= rect.y + rect.height then
+      rightEdge = math.max(rightEdge or rect.x, rect.x)
+    end
+  end
+
+  return rightEdge or viewportRight
+end
+
 --- Used by editor, present the entire editor UI
 local function presentGui(dtReal, dtSim, dtRaw)
+  dockedWindowRects, previousDockedWindowRects = previousDockedWindowRects, dockedWindowRects
+  previousDockedWindowRectCount = dockedWindowRectCount
+  dockedWindowRectCount = 0
+
   -- enable the dockspace
   local io = imgui.GetIO()
+
+  -- Keep the editor key modifiers in sync with ImGui's authoritative IO state every frame.
+  -- The setKeyModifier() path relies on the EditorKeyMods action map staying bound/pushed, which
+  -- can silently break after loading another level in the editor, leaving ctrl/shift stuck false
+  -- (so Ctrl/Shift add-to-selection stops working). ImGui's IO modifier flags are driven directly
+  -- by the platform backend and are unaffected by that, so treat them as the source of truth.
+  if editor.keyModifiers then
+    editor.keyModifiers.ctrl = io.KeyCtrl
+    editor.keyModifiers.shift = io.KeyShift
+    editor.keyModifiers.alt = io.KeyAlt
+  end
 
   if bit.band(io.ConfigFlags, imgui.ConfigFlags_DockingEnable) ~= 0 then
     -- this adds a transparent window we can dock into
@@ -1178,6 +1218,20 @@ local function beginWindow(windowName, title, flags, noClose)
   if not windowsState[windowName].modal then
     ret = imgui.Begin(title .. "##" .. windowName, visPtr, flags)
     windowShouldCallEndStack[#windowShouldCallEndStack] = true
+    if imgui.IsWindowDocked() then
+      local pos = imgui.GetWindowPos()
+      local size = imgui.GetWindowSize()
+      dockedWindowRectCount = dockedWindowRectCount + 1
+      local rect = dockedWindowRects[dockedWindowRectCount]
+      if not rect then
+        rect = {}
+        dockedWindowRects[dockedWindowRectCount] = rect
+      end
+      rect.x = pos.x
+      rect.y = pos.y
+      rect.width = size.x
+      rect.height = size.y
+    end
   else
     ret = imgui.BeginPopupModal(title .. "##" .. windowName, visPtr, flags)
     table.insert(modalWindowVisibleStack, ret)
@@ -1402,6 +1456,7 @@ local function addGuiCoreApi()
   editor.createIconAtlas = createIconAtlas
   editor.isViewportFocused = isViewportFocused
   editor.isViewportHovered = isViewportHovered
+  editor.getSceneViewportRightEdge = getSceneViewportRightEdge
   editor.screenToClient = screenToClient
   editor.getFontList = getFontList
   editor.getDefaultIconButtonSize = getDefaultIconButtonSize

@@ -38,4 +38,15 @@ M.careerBranchPageBackHandler = function()
   return ui_router.navigate("career.domainSelection", {focusPathId = pathId})
 end
 
+M.negotiationExitHandler = function()
+  extensions.career_modules_marketplace.finalizeNegotiationExit()
+
+  local prevEntry = NavigationState.getPreviousEntry()
+  if prevEntry and prevEntry.request and prevEntry.request.name then
+    return ui_router.navigate(prevEntry.request.name, prevEntry.request.params or {}, { restoreLastScope = true })
+  end
+
+  return { success = false, reason = "no_previous_entry" }
+end
+
 return M

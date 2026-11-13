@@ -1,7 +1,7 @@
 {
   "language": "ui.options.rally.languages.english.name",
   "dialect": "ui.options.rally.dialects.en-US.name",
-  "persona":"ui.options.rally.personas.dirtwheel.name",
+  "persona":"dirtwheel",
   "compositorStyle":"english/enthusiast",
   "notebooks": ["enthusiast", "structured"],
   "styleLabel":"ui.options.rally.styles.enthusiast.name",

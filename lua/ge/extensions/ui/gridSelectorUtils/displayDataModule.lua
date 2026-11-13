@@ -91,10 +91,8 @@ function M.create(dataFile, displayDataOptions, updateDisplayDataFunction, backe
         displayData[option.key] = not shipping_build
       end
       -- default for career content depends on shipping status
-      if option.key == "showCareerContent" then
-        if displayData[option.key] and not shipping_build then
-          displayData[option.key] = false
-        end
+      if option.key == "showCareerContent" and shipping_build then
+        displayData[option.key] = false
       end
     end
 
@@ -211,6 +209,11 @@ function M.create(dataFile, displayDataOptions, updateDisplayDataFunction, backe
     saveAllData(displayData)
   end
 
+  local function getRecentItems()
+    getDisplayData()
+    return deepcopy(recentItems)
+  end
+
   -- Get display data options
   local function getDisplayDataOptions()
     local displayData = getDisplayData()
@@ -250,6 +253,7 @@ function M.create(dataFile, displayDataOptions, updateDisplayDataFunction, backe
   instance.isFavourite = isFavourite
   instance.isRecentItem = isRecentItem
   instance.trackRecentItem = trackRecentItem
+  instance.getRecentItems = getRecentItems
   instance.initializeDisplayData = initializeDisplayData
   instance.clearAllFavourites = clearAllFavourites
   instance.clearAllRecentItems = clearAllRecentItems

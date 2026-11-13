@@ -136,26 +136,26 @@ M.onCareerProgressPageGetTasklistData = function(tasklistData, tasklistId)
     if allFinished then
       tasklistData.tasks = {
         {
-          label = "Cargo Delivery Tutorial Completed",
-          description = "You have completed the cargo delivery tutorial. You can now start delivering cargo and earn money and XP.",
+          label = _tr("ui.career.delivery.tutorial.cargo.completedLabel"),
+          description = _tr("ui.career.delivery.tutorial.cargo.completedDescription"),
           done = true
         },
       }
     else
       tasklistData.tasks = {
         {
-          label = "Install a cargo container in your vehicle.",
-          description = "Visit a garage and select 'Part Customization', then 'Cargo parts'.",
+          label = _tr("ui.career.delivery.tutorial.cargo.installContainerLabel"),
+          description = _tr("ui.career.delivery.tutorial.installContainerDescription"),
           done = allFinished or currentOrNearbyVehicleHasContainer("parcel")
         },
         {
-          label = "Load the Tutorial Package into your vehicle.",
-          description = "Inspect the cargo in front of the Belasco City Garage.",
+          label = _tr("ui.career.delivery.tutorial.cargo.loadPackageLabel"),
+          description = _tr("ui.career.delivery.tutorial.cargo.loadPackageDescription"),
           done = allFinished or currentVehicleHasTutorialCargo(),
         },
         {
-          label = "Deliver cargo to the destination.",
-          description = "Drop off the cargo at Jerry Riggs.",
+          label = _tr("ui.career.delivery.tutorial.cargo.deliverLabel"),
+          description = _tr("ui.career.delivery.tutorial.cargo.deliverDescription"),
           done = allFinished,
         },
       }
@@ -167,21 +167,21 @@ M.onCareerProgressPageGetTasklistData = function(tasklistData, tasklistId)
     if allFinished then
       tasklistData.tasks = {
         {
-          label = "Vehicle Delivery Tutorial Completed",
-          description = "You have completed the vehicle delivery tutorial. You can now start delivering vehicles and earn money and XP.",
+          label = _tr("ui.career.delivery.tutorial.vehicle.completedLabel"),
+          description = _tr("ui.career.delivery.tutorial.vehicle.completedDescription"),
           done = true
         },
       }
     else
       tasklistData.tasks = {
         {
-          label = "Bring out the tutorial vehicle from Belasco Auto.",
-          description = "Visit the Belasco Auto delivery facility and select the tutorial vehicle under 'Car Jockey'.",
+          label = _tr("ui.career.delivery.tutorial.vehicle.retrieveVehicleLabel"),
+          description = _tr("ui.career.delivery.tutorial.vehicle.retrieveVehicleDescription"),
           done = allFinished or tutorialVehicleTakenOutOfFacility(),
         },
         {
-          label = "Drive the vehicle to the destination.",
-          description = "Drive the vehicle to the destination and drop it off.",
+          label = _tr("ui.career.delivery.tutorial.vehicle.deliverLabel"),
+          description = _tr("ui.career.delivery.tutorial.vehicle.deliverDescription"),
           done = allFinished,
         },
       }
@@ -193,26 +193,26 @@ M.onCareerProgressPageGetTasklistData = function(tasklistData, tasklistId)
     if allFinished then
       tasklistData.tasks = {
         {
-          label = "Materials Delivery Tutorial Completed",
-          description = "You have completed the materials delivery tutorial. You can now start delivering materials and earn money and XP.",
+          label = _tr("ui.career.delivery.tutorial.materials.completedLabel"),
+          description = _tr("ui.career.delivery.tutorial.materials.completedDescription"),
           done = true
         },
       }
     else
       tasklistData.tasks = {
         {
-          label = "Install a dry bulk container in your vehicle.",
-          description = "Visit a garage and select 'Part Customization', then 'Cargo parts'.",
+          label = _tr("ui.career.delivery.tutorial.materials.installContainerLabel"),
+          description = _tr("ui.career.delivery.tutorial.installContainerDescription"),
           done = allFinished or currentOrNearbyVehicleHasContainer("dryBulk"),
         },
         {
-          label = "Load the introduction materials into your vehicle.",
-          description = "Inspect the materials at the Quarry facility.",
+          label = _tr("ui.career.delivery.tutorial.materials.loadMaterialsLabel"),
+          description = _tr("ui.career.delivery.tutorial.materials.loadMaterialsDescription"),
           done = allFinished or currentVehicleHasTutorialMaterials(),
         },
         {
-          label = "Deliver materials to the destination.",
-          description = "Drop off all of the materials at the Belasco City Construction Site.",
+          label = _tr("ui.career.delivery.tutorial.materials.deliverLabel"),
+          description = _tr("ui.career.delivery.tutorial.materials.deliverDescription"),
           done = allFinished,
         },
       }

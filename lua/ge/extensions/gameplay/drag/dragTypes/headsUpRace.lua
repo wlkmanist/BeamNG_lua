@@ -112,7 +112,18 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       dUtils.changeAllPhases()
     end
   else
-    if areDependenciesCompleted(dragData, false) then
+    local anyStaging = false
+    for _, r in pairs(dragData.racers) do
+      if not r.isFinished and not r.vehicleRemoved and r.currentPhase == 1 then
+        anyStaging = true
+        break
+      end
+    end
+    if anyStaging then
+      if select(1, dUtils.areAllRacersStaged(dragData)) then
+        dUtils.changeAllPhases()
+      end
+    elseif areDependenciesCompleted(dragData, false) then
       dUtils.changeAllPhases()
     end
   end

@@ -20,7 +20,7 @@ end
 function C:afterTrigger()
   if self.flags.reloadCollisionOnAfterTrigger then
     self.flags.reloadCollisionOnAfterTrigger = false
-    log("I", "prefabModule", "Reloading collision in afterTrigger, after spawning a prefab.")
+    log("I", "prefabModule", "Reloading collision in afterTrigger, after spawning or removing a prefab.")
     be:reloadCollision()
   end
   if self.flags.rebuildNavgraphOnAfterTrigger then
@@ -294,6 +294,9 @@ function C:deletePrefab(id, force)
           editor.onRemoveSceneTreeObjects({id})
         end
         obj:delete()
+      end
+      if data.containsColliders then
+        self.flags.reloadCollisionOnAfterTrigger = true
       end
     end
   end

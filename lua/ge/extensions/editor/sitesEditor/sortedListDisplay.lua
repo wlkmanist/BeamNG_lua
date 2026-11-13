@@ -108,6 +108,34 @@ function C:selectElement(id, mode)
   end
 end
 
+-- Switch list selection without calling elementEditor:select (keeps in-progress gizmo drag).
+function C:adoptElement(id)
+  table.clear(self.selections)
+  table.insert(self.selections, id)
+  self.index = id
+
+  for _, o in pairs(self.objects) do
+    o._drawMode = (o.id == id) and 'highlight' or 'normal'
+  end
+
+  local elem = self.objects[id]
+  if not elem or elem.missing then
+    return
+  end
+
+  self.elementEditor.current = elem
+  self:updateActiveTags()
+  self.nameText = im.ArrayChar(1024, elem.name)
+  self.color = im.ArrayFloat(4)
+  self.color[0] = im.Float(elem.color.x)
+  self.color[1] = im.Float(elem.color.y)
+  self.color[2] = im.Float(elem.color.z)
+  self.color[3] = im.Float(1)
+  self.fields = {}
+  self.customFieldsUtil:setFields(elem.customFields)
+  self.customFieldsUtil.presetTags = tableKeysSorted(self.activeTags)
+end
+
 function C:draw(mouseInfo)
   if self.sitesEditor.allowGizmo() then
     self.mouseInfo = mouseInfo

@@ -685,7 +685,7 @@ local function decalTextureWidget(type, name, removeTextureOverridePath)
   local imgWidthSetting = editor.getPreference("dynamicDecalsTool.decalProperties.texturePreviewSize")
   local imgWidth = imgWidthSetting > im.GetContentRegionAvailWidth() and im.GetContentRegionAvailWidth() or imgWidthSetting
   local imgHeight = img.path == "/" and imgWidth or imgWidth * img.size.y / img.size.x
-  im.Image(img.texId, im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+  im.Image(img.tex:getID(), im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
   if im.BeginDragDropTarget() then
     local payload = im.AcceptDragDropPayload("DynDecalTextureDrapDrop")
     if payload~=nil then

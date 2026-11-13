@@ -2,12 +2,15 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Holds selected brake lines for burnouts and drag launches
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 40
 
 local abs = math.abs
 local ceil = math.ceil
+local max = math.max
 
 local name = nil
 local lockedLines = nil
@@ -19,6 +22,10 @@ local hasBuiltPie = false
 local wheelRotatorCountDec = 0
 
 local wheelNamesString
+
+local stateData
+local stateDataNameActive
+local stateDataNameLockedTorqueByWheel
 
 local function updateWheelsIntermediate(dt)
   if lineLockActive > 0 then
@@ -61,10 +68,14 @@ local function init(jbeamData)
 
   lockedLines = {}
   lockedBrakingTorques = {}
+  stateData = {}
+  stateDataNameActive = M.name .. "Active"
+  stateDataNameLockedTorqueByWheel = {}
   wheelNamesString = ""
   for _, v in pairs(jbeamData.lockedLines or {}) do
     lockedLines[v] = true
     lockedBrakingTorques[v] = 0
+    stateDataNameLockedTorqueByWheel[v] = M.name .. "LockedTorque" .. v
     wheelNamesString = wheelNamesString .. v .. ", "
   end
   wheelNamesString = wheelNamesString:sub(0, wheelNamesString:len() - 2)
@@ -101,10 +112,44 @@ local function init(jbeamData)
   lineLockActive = 0
 end
 
+local function getState()
+  stateData[stateDataNameActive] = lineLockActive > 0
+  for wheelName, stateDataName in pairs(stateDataNameLockedTorqueByWheel) do
+    stateData[stateDataName] = lockedBrakingTorques[wheelName]
+  end
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  for wheelName, stateDataName in pairs(stateDataNameLockedTorqueByWheel) do
+    local newLockedTorque = data[stateDataName]
+    if type(newLockedTorque) == "number" and newLockedTorque == newLockedTorque then
+      lockedBrakingTorques[wheelName] = max(newLockedTorque, 0)
+    end
+  end
+
+  local newActive = data[stateDataNameActive]
+  if type(newActive) == "boolean" then
+    lineLockActive = newActive and 1 or 0
+    if not newActive then
+      for wheelName in pairs(lockedBrakingTorques) do
+        lockedBrakingTorques[wheelName] = 0
+      end
+    end
+  end
+end
+
 M.init = init
 M.updateGFX = updateGFX
 M.updateWheelsIntermediate = updateWheelsIntermediate
 M.setLineLock = setLineLock
 M.toggleLineLock = toggleLineLock
+
+M.getState = getState
+M.setState = setState
 
 return M

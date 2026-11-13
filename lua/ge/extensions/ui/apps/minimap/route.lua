@@ -6,13 +6,7 @@ local M = {}
 
 local layers = require("ui/apps/minimap/layers")
 
--- Route path storage
-local routePath = {}
 local routeMaxLength = 3000 -- limit the route to 3000 points
-local routeCurrentLength = 0
-for i = 1, routeMaxLength do
-  routePath[i] = vec3()
-end
 
 --local navBgWhite, navFgBlue
 
@@ -33,7 +27,7 @@ local function getRouteColor(distance)
   end
 end
 
-local function drawRoute(route, td, dpi)
+local function drawRoute(route, td, dpi, camPos, cullRadius)
   dpi = dpi or 1
   if not route or not route[1] then
     return
@@ -42,34 +36,46 @@ local function drawRoute(route, td, dpi)
   --navBgWhite = navBgWhite or currentStyleColorSet.navBg
   --navFgBlue = navFgBlue or currentStyleColorSet.navFg
   local startDistance = route[1].distToTarget
-  routeCurrentLength = math.min(#route, routeMaxLength)
-  for i = 1, routeCurrentLength do
-    ui_apps_minimap_utils.worldToMapXYZ(routePath[i], route[i].pos)
-  end
-  for i = 1, routeCurrentLength-1 do
-    td:lineRoundEnd(routePath[i].x, routePath[i].y, routePath[i+1].x, routePath[i+1].y, 4*dpi, 4*dpi, 0, clrNavBg, clrNavBg, 0, 0, 0, layers.ROUTE_BG)
-  end
-  for i = 1, routeCurrentLength-1 do
-    local color = getRouteColor(((startDistance - route[i].distToTarget) + (startDistance - route[i+1].distToTarget))/2)
-    td:lineRoundEnd(routePath[i].x, routePath[i].y, routePath[i+1].x, routePath[i+1].y, 2*dpi, 2*dpi, 0, color, color, 0, 0, 0, layers.ROUTE_FG)
+  local routeCurrentLength = math.min(#route, routeMaxLength)
+  local worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset = ui_apps_minimap_utils.getWorldToMapTransform()
+  local tdlineRoundEndWithBackground = td.lineRoundEndWithBackground
+  local widthBg, widthFg = 4*dpi, 2*dpi
+  local layerBG, layerFG = layers.ROUTE_BG, layers.ROUTE_FG
+  local cullMinX, cullMinY, cullMaxX, cullMaxY
+  if camPos and cullRadius then
+    cullMinX, cullMinY = camPos.x - cullRadius, camPos.y - cullRadius
+    cullMaxX, cullMaxY = camPos.x + cullRadius, camPos.y + cullRadius
   end
 
+  for i = 1, routeCurrentLength - 1 do
+    local p1, p2 = route[i].pos, route[i+1].pos
+    local visible = not cullMinX
+      or ((p1.x >= cullMinX or p2.x >= cullMinX)
+        and (p1.x <= cullMaxX or p2.x <= cullMaxX)
+        and (p1.y >= cullMinY or p2.y >= cullMinY)
+        and (p1.y <= cullMaxY or p2.y <= cullMaxY))
+
+    if visible then
+      local color = getRouteColor(((startDistance - route[i].distToTarget) + (startDistance - route[i+1].distToTarget))/2)
+      tdlineRoundEndWithBackground(td, p1.x, p1.y, p2.x, p2.y, widthFg, widthBg, color, clrNavBg, worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset, layerFG, layerBG)
+    end
+  end
 end
 
 -- Navigation drawing function
 local routeOverrides = {}
-local function drawNavigationRoute(td, dpi)
+local function drawNavigationRoute(td, dpi, camPos, cullRadius)
   dpi = dpi or 1
   table.clear(routeOverrides)
   extensions.hook("onMinimapRouteOverride", routeOverrides)
   if next(routeOverrides) then
     for _, route in ipairs(routeOverrides) do
-      drawRoute(route, td, dpi)
+      drawRoute(route, td, dpi, camPos, cullRadius)
     end
   else
     local rp = core_groundMarkers.routePlanner
     if rp and rp.path and rp.path[1] then
-      drawRoute(rp.path, td, dpi)
+      drawRoute(rp.path, td, dpi, camPos, cullRadius)
     end
   end
 end

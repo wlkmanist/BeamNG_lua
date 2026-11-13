@@ -8,6 +8,7 @@ local audioTiming = require('/lua/ge/extensions/gameplay/rally/audioTiming')
 
 local C = {}
 local logTag = ''
+local audioStopGraceSecs = 0.25
 
 function C:init(rallyManager)
   self.rallyManager = rallyManager
@@ -84,7 +85,10 @@ function C:_loadVoicepackTimingDefaults()
   if self.rallyManager and self.rallyManager.notebook and self.rallyManager.notebook.resolveActiveVoicepack then
     _, voicepackEntry = self.rallyManager.notebook:resolveActiveVoicepack()
   end
+  self:setVoicepackTiming(voicepackEntry)
+end
 
+function C:setVoicepackTiming(voicepackEntry)
   self:setCornerGapMs(voicepackEntry and voicepackEntry.cornerGapMs or 0)
   self:setPhraseGapMs(voicepackEntry and voicepackEntry.phraseGapMs or 0)
   self:setLinkWordGapMs(voicepackEntry and voicepackEntry.linkWordGapMs or self:getPhraseGapMs())
@@ -141,33 +145,33 @@ end
 function C:_trackAudioChannel(channelId, expiresAt)
   if type(channelId) ~= 'number' then return end
 
-  if not self.activeAudioChannels[channelId] then
+  if self.activeAudioChannels[channelId] == nil then
     self.activeAudioChannelCount = (self.activeAudioChannelCount or 0) + 1
   end
 
-  self.activeAudioChannels[channelId] = { expiresAt = expiresAt }
+  self.activeAudioChannels[channelId] = expiresAt or false
 
   if expiresAt and (not self.nextAudioChannelExpiry or expiresAt < self.nextAudioChannelExpiry) then
     self.nextAudioChannelExpiry = expiresAt
   end
 end
 
-function C:_pruneFinishedAudioChannels(force)
+function C:_stopExpiredAudioChannels()
   local count = self.activeAudioChannelCount or 0
   if count == 0 then
     self.nextAudioChannelExpiry = nil
     return
   end
 
-  if not force and not self.nextAudioChannelExpiry then return end
+  if not self.nextAudioChannelExpiry then return end
 
   local now = rallyUtil.getTime()
-  if not force and now < self.nextAudioChannelExpiry then return end
+  if now < self.nextAudioChannelExpiry then return end
 
   local nextExpiry = nil
-  for channelId, channelInfo in pairs(self.activeAudioChannels) do
-    local expiresAt = channelInfo.expiresAt
+  for channelId, expiresAt in pairs(self.activeAudioChannels) do
     if expiresAt and now >= expiresAt then
+      Engine.Audio.intercomStopPacenote(channelId)
       self.activeAudioChannels[channelId] = nil
       count = count - 1
     elseif expiresAt and (not nextExpiry or expiresAt < nextExpiry) then
@@ -180,15 +184,13 @@ function C:_pruneFinishedAudioChannels(force)
 end
 
 function C:_stopAudio()
-  self:_pruneFinishedAudioChannels(true)
-
   if (self.activeAudioChannelCount or 0) == 0 then return end
 
   for channelId, _ in pairs(self.activeAudioChannels) do
     Engine.Audio.intercomStopPacenote(channelId)
   end
 
-  self.activeAudioChannels = {}
+  table.clear(self.activeAudioChannels)
   self.activeAudioChannelCount = 0
   self.nextAudioChannelExpiry = nil
 end
@@ -359,7 +361,7 @@ function C:playNextInQueue()
         if type(channelId) == 'number' then
           local channelExpiresAt = nil
           if self.currAudioObj.audioLen then
-            channelExpiresAt = self.currAudioObj.time + self.currAudioObj.audioLen
+            channelExpiresAt = rallyUtil.getTime() + self.currAudioObj.audioLen + audioStopGraceSecs
           end
           self:_trackAudioChannel(channelId, channelExpiresAt)
         end
@@ -376,7 +378,7 @@ end
 
 function C:onUpdate(dtReal, dtSim, dtRaw)
   profilerPushEvent("AudioManager - onUpdate")
-  self:_pruneFinishedAudioChannels()
+  self:_stopExpiredAudioChannels()
   self:playNextInQueue()
   profilerPopEvent("AudioManager - onUpdate")
 end

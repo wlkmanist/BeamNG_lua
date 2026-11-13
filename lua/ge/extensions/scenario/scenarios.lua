@@ -231,15 +231,17 @@ local function finalizePreRunning()
         local vehicleIndex = assignment.vehicleIndex
 
         local player = assignedPlayers[devName]
-        if vehicleIndex == 0 then
-          be:exitVehicle(player)
-        else
-          local vehicleName = assignment.vehicleName
-          local vehicle = scenetree.findObject(vehicleName)
-          if vehicle then
-            be:enterVehicle(player, vehicle.obj)
+        if player and player >= 0 then
+          if vehicleIndex == 0 then
+            be:exitVehicle(player)
           else
-            log("E", logTag, "Couldn't find vehicle: "..dumps(vehicleName))
+            local vehicleName = assignment.vehicleName
+            local vehicle = scenetree.findObject(vehicleName)
+            if vehicle then
+              be:enterVehicle(player, vehicle.obj)
+            else
+              log("E", logTag, "Couldn't find vehicle: "..dumps(vehicleName))
+            end
           end
         end
       end
@@ -491,9 +493,6 @@ local function stop()
   inputActionFilter.clear(0) -- revert filtered bindings
   core_trailerRespawn.setEnabled(true)
   scenario = nil
-
-  local disableDynamicCollision = settings.getValue('disableDynamicCollision', true)
-  be:setDynamicCollisionEnabled(not disableDynamicCollision)
 
   if raceMarker then
     raceMarker.onClientEndMission()

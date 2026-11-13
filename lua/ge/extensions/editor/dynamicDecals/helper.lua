@@ -25,7 +25,7 @@ local function imageWidget(path, overrideWidth)
   local img = editor.getTempTextureObj(path)
   local imgWidth = overrideWidth or im.GetContentRegionAvailWidth()
   local imgHeight = img.path == "/" and imgWidth or imgWidth * img.size.y / img.size.x
-  im.Image(img.texId, im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+  im.Image(img.tex:getID(), im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
   im.TextUnformatted(string.format("%d x %d", img.size.x, img.size.y))
 end
 
@@ -35,7 +35,7 @@ local function imageTooltip(path, overrideTooltipWidth)
     local img = editor.getTempTextureObj(path)
     local imgWidth = overrideTooltipWidth or editor.getPreference("dynamicDecalsTool.imageTooltip.texturePreviewSize")
     local imgHeight = img.path == "/" and imgWidth or imgWidth * img.size.y / img.size.x
-    im.Image(img.texId, im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
+    im.Image(img.tex:getID(), im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1), nil, editor.color.beamng.Value)
     im.TextUnformatted(string.format("%d x %d", img.size.x, img.size.y))
     im.EndTooltip()
   end

@@ -128,8 +128,8 @@ local function getTrafficGroupFromFile(options) -- returns an existing vehicle g
   if files[1] then
     fileName = files[math.random(#files)] -- if multiple files exist, select one randomly
     group = jsonReadFile(fileName)
-    if group then
-      group = group.data -- assumes that group data exists (might fail!)
+    if group and group.data then
+      group = group.data -- actual vehicle group data
     end
   end
 
@@ -225,10 +225,11 @@ local function checkRayCast(pos, zOffset) -- checks if raycast from camera posit
   return rayDist < rayDistMax
 end
 
-local function checkUsability(pos, origPos, minDist, maxDist, n1, n2) -- checks if position on road is usable
+local function checkUsability(pos, origPos, minDist, maxDist, n1, n2, interRadiusCoef) -- checks if position on road is usable
   origPos = origPos or core_camera.getPosition()
   minDist = minDist or 80
   maxDist = maxDist or 1e12
+  interRadiusCoef = interRadiusCoef or 1.5
 
   -- check for minimum and maximum distance from the origin
   local dist = pos:squaredDistance(origPos)
@@ -236,11 +237,11 @@ local function checkUsability(pos, origPos, minDist, maxDist, n1, n2) -- checks 
     return false
   end
 
-  -- check for intersection road nodes, if applicable
+  -- check for intersection road nodes, and return false if within calculated radius
   if n1 or n2 then
     local mapNodes = map.getMap().nodes
-    if (n1 and map.getNodeLinkCount(n1) > 2 and pos:squaredDistance(mapNodes[n1].pos) <= square(mapNodes[n1].radius))
-    or (n2 and map.getNodeLinkCount(n2) > 2 and pos:squaredDistance(mapNodes[n2].pos) <= square(mapNodes[n2].radius)) then
+    if (n1 and map.getNodeLinkCount(n1) > 2 and pos:squaredDistance(mapNodes[n1].pos) <= square(mapNodes[n1].radius * interRadiusCoef))
+    or (n2 and map.getNodeLinkCount(n2) > 2 and pos:squaredDistance(mapNodes[n2].pos) <= square(mapNodes[n2].radius * interRadiusCoef)) then
       return false
     end
   end

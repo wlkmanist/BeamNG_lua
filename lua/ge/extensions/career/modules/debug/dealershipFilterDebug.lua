@@ -183,7 +183,7 @@ local function drawDebugMenu()
       if size.x > 60 then
         size = size * 60 / size.x
       end
-      im.Image(info._image.texId, im.ImVec2(size.x*4, size.y*4), im.ImVec2(0, 0), im.ImVec2(1, 1))
+      im.Image(info._image.tex:getID(), im.ImVec2(size.x*4, size.y*4), im.ImVec2(0, 0), im.ImVec2(1, 1))
       im.TableNextColumn()
 
       if im.Button(info.Name) then

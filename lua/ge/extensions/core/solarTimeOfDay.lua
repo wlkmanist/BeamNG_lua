@@ -221,8 +221,7 @@ function M.getSolarTimeOfDayEvents(state)
   }
 end
 
-function M.getSolarTimeOfDayValues(state)
-  local events = M.getSolarTimeOfDayEvents(state)
+local function getSolarTimeOfDayValuesFromEvents(events)
   if not events then return nil end
 
   local values = {
@@ -250,6 +249,10 @@ function M.getSolarTimeOfDayValues(state)
   return values
 end
 
+function M.getSolarTimeOfDayValues(state)
+  return getSolarTimeOfDayValuesFromEvents(M.getSolarTimeOfDayEvents(state))
+end
+
 function M.getSolarNightWindow(state)
   local events = M.getSolarTimeOfDayEvents(state)
   if not events then return nil end
@@ -274,7 +277,7 @@ function M.buildSolarTimeOfDayOptions(state, options)
     return result
   end
 
-  local values = M.getSolarTimeOfDayValues(state)
+  local values = getSolarTimeOfDayValuesFromEvents(events)
   local result = {}
 
   for _, option in ipairs(type(options) == "table" and options or {}) do

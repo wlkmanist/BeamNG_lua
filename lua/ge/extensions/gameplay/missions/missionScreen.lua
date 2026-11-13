@@ -123,7 +123,7 @@ local function formatMission(m)
 
   local info = {
     id = m.id,
-    name = m.name,
+    name = _tr(m.name),
     icon = m.iconFontIcon,
     description = m.description,
     previews = {previewFile},
@@ -140,7 +140,6 @@ local function formatMission(m)
     },
     hasUserSettingsUnlocked = gameplay_missions_progress.missionHasUserSettingsUnlocked(m.id),
     devMission = m.devMission,
-    hasRules = m:hasRules(),
     official = m.official,
     author = m.author,
     date = m.date,
@@ -450,6 +449,14 @@ local function requestStartingOptionsForUserSettings(id, userSettings)
         end
       end
     end
+
+    if not missionUserSettingByKey["setupModuleVehicles"] then
+      -- no vehicle choice is offered, so the mission type decides where the vehicle comes from.
+      -- anything but an explicit "the mission provides one" means the player has to supply it.
+      local declared = m.additionalAttributes.vehicle
+      usesOwnVehicle = declared ~= "provided" and declared ~= "none" and declared ~= "choice"
+    end
+
     if usesCustomVehicle then
       if viaCustomKey then
         local customVehicle = missionUserSettingByKey[viaCustomKey] and missionUserSettingByKey[viaCustomKey].value
@@ -505,6 +512,13 @@ local function requestStartingOptionsForUserSettings(id, userSettings)
 
     if not canPayFee then
       sendStartingOptions(id, cannotPayFeeOptions, entryFeeAsList)
+      return
+    end
+
+    -- if the mission needs the player's own vehicle and the player walks, disable starting.
+    if usesOwnVehicle and gameplay_walk.isWalking() then
+      sendStartingOptions(id, cantStartWalkingOptions, entryFeeAsList)
+      return
     end
 
     if not usesOwnVehicle then
@@ -515,12 +529,6 @@ local function requestStartingOptionsForUserSettings(id, userSettings)
 
     if usesOwnVehicle then
       if trySendOwnVehicleClassMismatchOptions(id, m, usesOwnVehicle, entryFeeAsList) then return end
-
-      -- if the player uses own vehicle and walks, disable starting.
-      if gameplay_walk.isWalking() then
-        sendStartingOptions(id, cantStartWalkingOptions, entryFeeAsList)
-        return
-      end
 
       local currentVehicle = career_modules_inventory.getCurrentVehicle()
       if not currentVehicle then
@@ -783,6 +791,7 @@ local function startMissionById(id, userSettings, startingOptions)
   local m = gameplay_missions_missions.getMissionById(id)
   userSettings = userSettings or {}
   startingOptions = startingOptions or {}
+  startingOptions.startedFrom = startingOptions.startedFrom or "missionScreen"
   if m then
     local startable = gameplay_missions_unlocks.isMissionStartable(m)
     if startable or startingOptions.skipUnlockCheck then
@@ -810,16 +819,7 @@ local function stopMissionById(id, force, abandonButtonPressed)
     end
   end
 end
-M.abandonCurrentMission = function() stopMissionById(nil, true) end
-
-local function showMissionRules(id)
-  id = id or gameplay_missions_missionManager.getForegroundMissionId()
-  local mission = gameplay_missions_missions.getMissionById(id)
-  if not mission then return end
-
-  mission:showRulesAsPopups()
-end
-M.showMissionRules = showMissionRules
+M.abandonCurrentMission = function() stopMissionById(nil, true, true) end
 
 local function changeUserSettings(id, settings)
   local mission = gameplay_missions_missions.getMissionById(id)
@@ -1302,7 +1302,7 @@ M.debugOnUpdate = function(dt)
       M.discoverLayouts()
     end
     if im.Button("Exit Screen") then
-      guihooks.trigger('ChangeState', 'freeroam')
+      extensions.ui_router.navigate('play')
     end
     if im.Button("Clear History") then
       M.uiLayoutHistory = {}
@@ -1327,8 +1327,9 @@ M.debugOnUpdate = function(dt)
         header = header .. " (" .. (layout.recordedAtFormatted or "Unknown") .. ")"
         if im.Button(header) then
           M.testLayout = layout
-          guihooks.trigger('ChangeState', 'freeroam')
-          guihooks.trigger('ChangeState', {state = 'mission.control', params = { mode = "test"}})
+          -- TODO: Why is this navigating twice to different routes?
+          extensions.ui_router.navigate('play')
+          extensions.ui_router.navigate('mission.control', { mode = "test"})
         end
 
         -- File column

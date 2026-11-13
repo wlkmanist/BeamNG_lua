@@ -19,7 +19,7 @@
     routeNode = routeConfigRef                         -- internal, not serialized
 
   Note: `request.params` holds true screen params only. Router-control
-  keys (e.g. preferredScope, decorator, showDecorator, loadingScreen)
+  keys (e.g. preferredScope, decorator, showDecorator)
   are kept on `request.options` so reload/back/replay flows can recover
   them without polluting the screen params.
 ]]

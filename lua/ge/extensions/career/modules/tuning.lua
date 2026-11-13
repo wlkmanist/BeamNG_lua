@@ -75,6 +75,16 @@ local shoppingCartBlackList = {
   {name = "$tirepressure_R", category = "Wheels", subCategory = "Rear"},
 }
 
+local hiddenCareerCategories = {
+  Cargo = true,
+}
+
+local hiddenCareerVarNames = {
+  ["$fuel"] = true,
+  ["$fuel_R"] = true,
+  ["$fuel_L"] = true,
+}
+
 local function isOnBlackList(varData)
   for _, blackListItem in ipairs(shoppingCartBlackList) do
     if blackListItem.name ~= varData.name then goto continue end
@@ -173,6 +183,11 @@ end
 local function getTuningData()
   local variables = getRawTuningData()
   if not variables then return end
+  for varName, varData in pairs(variables) do
+    if hiddenCareerVarNames[varName] or hiddenCareerCategories[varData.category] then
+      variables[varName] = nil
+    end
+  end
   return core_vehicle_partmgmt.translateTuningData(variables)
 end
 

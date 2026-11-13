@@ -223,6 +223,131 @@ local function moveMaterial(material, newFilename)
   return true
 end
 
+-- Max number of layers for materials v1.5
+local maxMaterialLayers = 4
+
+-- Only material parameters are copied, the SimObject fields identify the object,
+-- hold its namespaces or control its persistence.
+local dontCopyFields = {
+  name = true,
+  mapTo = true,
+  persistentId = true,
+  parentGroup = true,
+  internalName = true,
+  class = true,
+  className = true,
+  superClass = true,
+  hidden = true,
+  locked = true,
+  canSave = true,
+  canSaveDynamicFields = true,
+}
+
+local function resolveMaterial(material)
+  if type(material) == "string" then
+    material = scenetree.findObject(material)
+  end
+  if not material or material.___type ~= "class<Material>" then
+    log('E', "", "Given object is not a material.")
+    return nil
+  end
+  return material
+end
+
+local function residesInJson(material)
+  local filename = material:getFilename()
+  if not filename or #filename == 0 then return false end
+  local _, _, extension = path.split(filename)
+  return extension == "json"
+end
+
+-- Copies all parameters of a material onto another one, for all layers.
+local function copyMaterialFields(source, target)
+  for fieldName, _ in pairs(source:getFields()) do
+    if not dontCopyFields[fieldName] then
+      for layer = 0, maxMaterialLayers - 1 do
+        target:setField(fieldName, layer, source:getField(fieldName, layer))
+      end
+    end
+  end
+
+  for _, fieldName in ipairs(source:getDynamicFields() or {}) do
+    if not dontCopyFields[fieldName] then
+      target:setDynDataFieldbyName(fieldName, 0, source:getDynDataFieldbyName(fieldName, 0))
+    end
+  end
+end
+
+-- Copies all parameters of a material onto an existing material, keeping the target's name, mapTo and file.
+-- param 'source'; type 'class<Material>' || 'string';
+-- param 'target'; type 'class<Material>' || 'string';
+-- returns; type 'bool';
+local function copyMaterial(source, target)
+  source = resolveMaterial(source)
+  target = resolveMaterial(target)
+  if not source or not target then return false end
+
+  if source:getId() == target:getId() then
+    log('E', logTag, "Cannot copy a material onto itself.")
+    editor.showNotification("Cannot copy a material onto itself.")
+    return false
+  end
+
+  if not residesInJson(target) then
+    log('E', logTag, "Target material needs to reside in a json file.")
+    editor.showNotification("Target material needs to reside in a json file.")
+    return false
+  end
+
+  copyMaterialFields(source, target)
+  target:reload()
+
+  scenetree.matLuaEd_PersistMan:setDirty(target, '')
+  scenetree.matLuaEd_PersistMan:saveDirty()
+  return true
+end
+
+-- Copies a material into a new material with the given name, written to the given materials.json file.
+-- param 'source'; type 'class<Material>' || 'string';
+-- param 'newName'; type 'string';
+-- param 'newFilename'; type 'string';
+-- returns; type 'bool';
+local function copyMaterialAsNew(source, newName, newFilename)
+  source = resolveMaterial(source)
+  if not source then return false end
+
+  if #newName == 0 then
+    log('E', logTag, 'Material name must not be empty!')
+    editor.showNotification("Material name must not be empty!")
+    return false
+  end
+
+  if scenetree.findObject(newName) then
+    log('E', logTag, "A material with the given name '" .. newName .. "' already exists!")
+    editor.showNotification("A material with the given name '" .. newName .. "' already exists!")
+    return false
+  end
+
+  local directory = path.split(newFilename)
+  if FS:directoryExists(directory) == false then
+    log('E', logTag, "Given directory '" .. directory .. "' does not exist!")
+    editor.showNotification("Given directory '" .. directory .. "' does not exist!")
+    return false
+  end
+
+  local mat = createObject('Material')
+  mat:setFilename(newFilename)
+  copyMaterialFields(source, mat)
+  mat:setField('name', 0, newName)
+  mat:setField('mapTo', 0, newName)
+  mat.canSave = true
+  mat:registerObject(newName)
+
+  scenetree.matLuaEd_PersistMan:setDirty(mat, '')
+  scenetree.matLuaEd_PersistMan:saveDirty()
+  return true
+end
+
 local function deleteMaterial(material)
   if type(material) == "string" then
     material = scenetree.findObject(material)
@@ -252,6 +377,8 @@ local function initialize(editorInstance)
   editor.setMaterialProperty = setMaterialProperty
   editor.removeMaterialFromJson = removeMaterialFromJson
   editor.moveMaterial = moveMaterial
+  editor.copyMaterial = copyMaterial
+  editor.copyMaterialAsNew = copyMaterialAsNew
   editor.deleteMaterial = deleteMaterial
 end
 

@@ -47,9 +47,10 @@ end
 
 function C:workOnce()
   self:setDurationState('started')
-  ui_fadeScreen.fadeToBlack(self.pinIn.duration.value)
-  if self.mgr.modules.ui.isFadeScreenActive then -- if already active, skip to finish state
+  if ui_fadeScreen.isBlack() then -- already black (e.g. from the mission manager), skip to finish state
     self:setDurationState('finished')
+  else
+    ui_fadeScreen.fadeToBlack(self.pinIn.duration.value)
   end
   self.mgr.modules.ui.isFadeScreenActive = true
 end

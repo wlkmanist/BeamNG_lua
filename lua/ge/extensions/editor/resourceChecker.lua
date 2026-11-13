@@ -1824,7 +1824,7 @@ local function onEditorDeactivated()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("Resources Checker", onWindowMenuItem)
+  editor.addWindowMenuItem("Resources Checker", onWindowMenuItem, {groupMenuName = 'Assets'})
   editor.registerWindow(toolWindowName, im.ImVec2(500, 300))
   editor.registerWindow(imageWindowName, im.ImVec2(256, 256))
   editor.registerWindow(duplicateResolverWindowName, im.ImVec2(500, 300))

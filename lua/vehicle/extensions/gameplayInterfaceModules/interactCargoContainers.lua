@@ -14,6 +14,16 @@ local expressionParser
 local cargoContainerCache = nil
 local cargoContainerById = nil
 
+local function isPassengerOnly(cargoTypes)
+  if not cargoTypes then return false end
+  local hasPassenger = false
+  for _, cargoType in ipairs(cargoTypes) do
+    if cargoType ~= "passenger" then return false end
+    hasPassenger = true
+  end
+  return hasPassenger
+end
+
 local functionFieldNames = {
   beamSpringFunction = true,
   beamLimitSpringFunction = true,
@@ -47,6 +57,7 @@ local function buildContainerCache()
     cargoContainerById[container.cid] = {
       nodes = {},
       beams = {},
+      passengerOnly = isPassengerOnly(container.cargoTypes),
       smoothers = {
         volume = newTemporalSmoothing(container.maxVolumeRate or 1000, container.maxVolumeRate or 1000),
         density = newTemporalSmoothing(2, 2, nil, 1) -- need to smooth density? probably...
@@ -208,6 +219,10 @@ end
 local anyContainerNeedsUpdate = false
 local function updateGFX(dtSim)
   anyContainerNeedsUpdate = false
+  if not cargoContainerById then
+    M.setUpdateEnabled(false)
+    return
+  end
   for _, container in pairs(cargoContainerById) do
     if not container.reachedTarget then
       applyNodeAndBeamValues(container, dtSim)
@@ -259,9 +274,13 @@ local function setCargoContainers(params)
     local setContainerData = (params[1] or {})[id]
     local target = cargoContainerById[id].target
     local container = cargoContainerById[id]
+    if mode == "updateDelivery" and container.passengerOnly then
+      setContainerData = nil
+    end
     -- default non-set containers to 0 weight by default
-    target.volume = (setContainerData and setContainerData.volume) or (mode == "updateExplicit" and target.volume or 0) or 0
-    target.density = (setContainerData and setContainerData.density) or (mode == "updateExplicit" and target.density or 1) or 1
+    local keepCurrentTarget = mode == "updateExplicit" or (mode == "updateDelivery" and container.passengerOnly)
+    target.volume = (setContainerData and setContainerData.volume) or (keepCurrentTarget and target.volume or 0) or 0
+    target.density = (setContainerData and setContainerData.density) or (keepCurrentTarget and target.density or 1) or 1
 
     container.reachedTarget = abs(container.smoothers.volume.state - container.target.volume) < 1e-30 and abs(container.smoothers.density.state - container.target.density) < 1e-30
 
@@ -311,6 +330,7 @@ local function requestRegistration(gi)
 end
 
 local function onExtensionLoaded()
+  M.setUpdateEnabled(false)
   M.moduleActions.setCargoContainers = setCargoContainers
   M.moduleLookups.getCargoContainers = getCargoContainers
   cargoContainerCache = nil
@@ -318,6 +338,7 @@ local function onExtensionLoaded()
 end
 
 local function onReset()
+  M.setUpdateEnabled(false)
   cargoContainerCache = nil
   cargoContainerById = nil
 end

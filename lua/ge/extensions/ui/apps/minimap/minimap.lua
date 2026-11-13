@@ -28,11 +28,8 @@ local camPos, camRot, camRotInverse = vec3(), quat(), quat() -- camera transform
 local cameraLook = vec3()
 local scaleSetting = 0.5 -- px/m
 
-local currentPlayerId = 0
-
 local scale = scaleSetting
 local scaleInverse = 1/scale
-local sqr2 = math.sqrt(2)/2
 -- map/roads cache
 
 
@@ -84,6 +81,7 @@ local debugSettings = {
   useProfiler = false,
   useProfilerAlwaysLog = false,
   profileEveryNthFrame = 1,
+  logGarbage = false,
 }
 local debugSettingsData = {
   lookaheadValue = {
@@ -111,104 +109,125 @@ local debugSettingsData = {
 
 
 
+-- Lua garbage measurement per section (shown in the debug window when debugSettings.logGarbage is enabled)
+-- gcMark(name) attributes everything allocated since the previous gcStart/gcMark call to the section `name`.
+-- Samples where the collector ran inside the section (count went down) are discarded.
+local gcLast = 0
+local gcSections = {} -- name -> {last = KB, avg = KB}
+local gcOrder = {}
+local function gcStart()
+  if debugSettings.logGarbage then
+    gcLast = collectgarbage("count")
+  end
+end
+local function gcMark(name)
+  if not debugSettings.logGarbage then return end
+  local now = collectgarbage("count")
+  local delta = now - gcLast
+  gcLast = now
+  if delta < 0 then return end
+  local section = gcSections[name]
+  if not section then
+    section = {last = 0, avg = 0}
+    gcSections[name] = section
+    gcOrder[#gcOrder + 1] = name
+  end
+  section.last = delta
+  section.avg = section.avg * 0.98 + delta * 0.02
+end
+local function resetGcStats()
+  table.clear(gcSections)
+  table.clear(gcOrder)
+end
 
-
--- Unoptimized
-local tmp1, tmp2, tmp3, tmp4 = vec3(), vec3(), vec3(), vec3()
-local centerLocal = vec3()
-local worldYDirection = vec3(0,1,0)
-local directionLocal = vec3()
-local intersectionLocal = vec3()
-local leftTop, leftBottom, rightTop, rightBottom, diagonalTop, diagonalBottom = vec3(), vec3(), vec3(), vec3(), vec3(), vec3()
-local function drawCompass(offsetX, offsetY)
--- unoptimized
-  -- Work in minimap's local coordinate system (before rotation)
-  -- Use the actual minimap center coordinates, not the buffer offsets
-  centerLocal:set(width/2, height/2, 0)
-
-  -- Transform the Y+ direction vector through the minimap's rotation
-  -- Apply the same transformation as worldToMapXYZ but for direction vectors
-  directionLocal:set(worldYDirection)
-  directionLocal:setScaled(1/scale)  -- Scale like in worldToMapXYZ
-  directionLocal:setRotate(camRot)   -- Rotate like in worldToMapXYZ
-  -- Note: we don't apply the translation (camPos offset) since this is a direction vector
-
-  -- Flip Y coordinate to match minimap coordinate system
-  directionLocal.y = -directionLocal.y
-
-  directionLocal:normalize()
-
-  -- Use the existing boundary detection system from utils
-  -- First, calculate the target position in the direction of north
-  local targetDistance = math.max(width, height) * 2  -- Use a large enough distance to ensure we hit the boundary
-  intersectionLocal:set(centerLocal.x + directionLocal.x * targetDistance, centerLocal.y + directionLocal.y * targetDistance, 0)
-
-  -- Now use the utils boundary detection to clamp this position properly
-  -- This will handle both circle and rect modes correctly
-  ui_apps_minimap_utils.setClampToBounds(intersectionLocal, -4)
-  local dpi = im.GetWindowDpiScale()
-  -- Draw circle with triangle pointing toward the marker (like walking marker)
-  local circleRadius = 6 * dpi
-
-  -- Draw circle at intersection point
-  -- Convert from local coordinates to drawing coordinates by adding the offset
-  local drawX = intersectionLocal.x
-  local drawY = intersectionLocal.y
-  td:circle(drawX, drawY, circleRadius, 3, ui_apps_minimap_utils.colors.grayMuted , ui_apps_minimap_utils.colors.grayMuted, ui_apps_minimap_utils.colors.navBgWhite, ui_apps_minimap_utils.colors.navBgWhite, 0, layers.COMPASS)
-
-  -- Draw "N" inside the circle using lines
-  local letterSize = circleRadius *1.5
-  local centerX = drawX
-  local centerY = drawY
-  local strikeColor = ui_apps_minimap_utils.colors.navBgWhite
-
-
-  -- Left vertical line of "N"
-  leftTop:set(centerX - letterSize * 0.3, centerY + letterSize * 0.4, 0)
-  leftBottom:set(centerX - letterSize * 0.3, centerY - letterSize * 0.4, 0)
-
-  -- Right vertical line of "N"
-  rightTop:set(centerX + letterSize * 0.3, centerY + letterSize * 0.4, 0)
-  rightBottom:set(centerX + letterSize * 0.3, centerY - letterSize * 0.4, 0)
-
-  -- Diagonal line of "N"
-  diagonalTop:set(centerX + letterSize * 0.3, centerY + letterSize * 0.4, 0)
-  diagonalBottom:set(centerX - letterSize * 0.3, centerY - letterSize * 0.4, 0)
-  local lineWidth = 1
-  -- Draw the three lines of "N"
-  td:line(leftTop.x, leftTop.y, leftBottom.x, leftBottom.y, lineWidth, lineWidth, 0, 0, strikeColor, strikeColor, strikeColor, strikeColor, 0, layers.COMPASS)
-  td:line(rightTop.x, rightTop.y, rightBottom.x, rightBottom.y, lineWidth, lineWidth, 0, 0, strikeColor, strikeColor, strikeColor, strikeColor, 0, layers.COMPASS)
-  td:line(diagonalTop.x, diagonalTop.y, diagonalBottom.x, diagonalBottom.y, lineWidth, lineWidth, 0, 0, strikeColor, strikeColor, strikeColor, strikeColor, 0, layers.COMPASS)
-
+local function drawCompass(offsetX, offsetY, dpi)
+  local _, northX, _, northY = ui_apps_minimap_utils.getWorldToMapTransform()
+  local colors = ui_apps_minimap_utils.colors
+  td:northMarker(width, height, offsetX, offsetY, mode == "circle", northX, northY, dpi, colors.grayMuted, colors.navBgWhite, layers.COMPASS)
   return true
 end
 
 
-local nearbyIds = {}
-local function drawPlaymodeMarkers()
-  local clusterKd = gameplay_playmodeMarkers.getPlaymodeClustersAsQuadtree()
-  local radius = 1000
-  table.clear(nearbyIds)
-  for id in clusterKd:queryNotNested(camPos.x-radius, camPos.y-radius, camPos.x+radius, camPos.y+radius) do
-    nearbyIds[id] = true
+local cachedPlaymodeClusters = nil
+local playmodeClustersById = {}
+local focusedPlaymodeClusters = {}
+local drawnPlaymodeClusterIds = {}
+
+local function updatePlaymodeClusterCache(clusters)
+  if clusters == cachedPlaymodeClusters then return end
+
+  cachedPlaymodeClusters = clusters
+  table.clear(playmodeClustersById)
+  table.clear(focusedPlaymodeClusters)
+  for _, cluster in ipairs(clusters) do
+    playmodeClustersById[cluster.id] = cluster
+    if cluster.focus then
+      focusedPlaymodeClusters[#focusedPlaymodeClusters + 1] = cluster
+    end
   end
+end
+
+local function drawPlaymodeCluster(cluster, dpi)
+  local marker = gameplay_playmodeMarkers.getMarkerForCluster(cluster)
+  if marker.drawOnMinimap then
+    marker:drawOnMinimap(td, dpi)
+  elseif cluster.showOnMinimap ~= false and marker.pos then
+    ui_apps_minimap_utils.simpleCircle(marker.pos)
+  end
+end
+
+local function drawPlaymodeMarkers(searchRadius)
+  local clusters = gameplay_playmodeMarkers.getPlaymodeClusters()
+  updatePlaymodeClusterCache(clusters)
+
+  local clusterKd = gameplay_playmodeMarkers.getPlaymodeClustersAsQuadtree()
   local dpi = im.GetWindowDpiScale()
-  for i, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
-    local marker = gameplay_playmodeMarkers.getMarkerForCluster(cluster)
-    if (nearbyIds[cluster.id] or marker.focus) then
-      if marker.drawOnMinimap then
-        marker:drawOnMinimap(td, dpi)
+  local worldToMapXY = ui_apps_minimap_utils.worldToMapXY
+  local centerMapX, centerMapY = bufferLeft + width * 0.5, bufferTop + height * 0.5
+  table.clear(drawnPlaymodeClusterIds)
+
+  for id in clusterKd:queryNotNested(camPos.x-searchRadius, camPos.y-searchRadius, camPos.x+searchRadius, camPos.y+searchRadius) do
+    local cluster = playmodeClustersById[id]
+    if cluster then
+      local markerMapX, markerMapY = worldToMapXY(cluster.visibilityPos.x, cluster.visibilityPos.y)
+      local visibilityRadius = cluster.visibilityRadius * scaleInverse
+      local visible
+      if mode == "circle" then
+        local dx, dy = markerMapX - centerMapX, markerMapY - centerMapY
+        local visibleRadius = width * 0.5 + visibilityRadius
+        visible = dx * dx + dy * dy <= visibleRadius * visibleRadius
       else
-        if marker.pos then
-          ui_apps_minimap_utils.simpleCircle(marker.pos)
-        end
+        visible = markerMapX + visibilityRadius >= bufferLeft
+          and markerMapX - visibilityRadius <= bufferLeft + width
+          and markerMapY + visibilityRadius >= bufferTop
+          and markerMapY - visibilityRadius <= bufferTop + height
       end
+
+      if visible then
+        drawPlaymodeCluster(cluster, dpi)
+        drawnPlaymodeClusterIds[id] = true
+      end
+    end
+  end
+
+  for _, cluster in ipairs(focusedPlaymodeClusters) do
+    if cluster.focus and not drawnPlaymodeClusterIds[cluster.id] then
+      drawPlaymodeCluster(cluster, dpi)
+      drawnPlaymodeClusterIds[cluster.id] = true
+    end
+  end
+
+  local navigationPoiId = gameplay_markerInteraction and gameplay_markerInteraction.navigationPoiId
+  if navigationPoiId and not drawnPlaymodeClusterIds[navigationPoiId] then
+    local cluster = playmodeClustersById[navigationPoiId]
+    if cluster then
+      drawPlaymodeCluster(cluster, dpi)
     end
   end
 end
 
 -- temp variables
-local x,y, rad, areaPos
+local x,y, rad
 local occlusionTransforms = {}
 local occlusionPixels = {}
 
@@ -218,7 +237,12 @@ local up = vec3(0,1,0)
 local camRotInverse = quat()
 local firstPass = true
 local frameCount = 0
+local imVec00 = im.ImVec2(0,0)
 local imVec01 = im.ImVec2(0,1)
+local cursorPos = im.ImVec2(0,0) -- reused for GetCursorPosX/Y + SetCursorPos
+local boundsColor -- lazily computed debug bounds color
+local windowFlags -- lazily computed window flags
+local canvasObjectCache -- cached scenetree "Canvas" object
 local lookWithoutZ = vec3()
 local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
   -- setup imgui and size variables
@@ -230,8 +254,8 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
   height = height/dpi
   childSize.x = width
   childSize.y = height
-  areaPos = im.GetWindowPos()
-  x,y = areaPos.x + bufferLeft, areaPos.y + bufferTop
+  x,y = im.GetWindowPosXY()
+  x, y = x + bufferLeft, y + bufferTop
   centerX, centerY = x + width/2, y+height/2
 
   x = x*dpi
@@ -251,10 +275,11 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
   cameraLook:normalize()
   rad = -math.atan2(cameraLook.y, -cameraLook.x) + math.pi/2
 
+  -- camRot is module-level and updated in place (no per-frame quat allocation)
   if debugSettings.behaviourRotateWithCam then
-    camRot = quatFromEuler(0,0,rad)
+    camRot:setFromEuler(0,0,rad)
   else
-    camRot = quatFromEuler(0,0,0)
+    camRot:set(0,0,0,1)
   end
   camRotInverse:set(camRot)
   camRotInverse:inverse()
@@ -265,6 +290,8 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
     lookWithoutZ:setScaled(lookaheadValue * scale * height/2)
     camPos:setAdd(lookWithoutZ)
   end
+  gcMark("drawMinimap camera setup (GetWindowPosXY, camRot)")
+  if p then p:add("Camera setup") end
 
   -- Update utils extension with current state
   if ui_apps_minimap_utils then
@@ -278,22 +305,29 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
 
 
   im.Dummy(imVec01)
+  gcMark("setMinimapState + Dummy")
   if p then p:add("setup") end
 
   if ui_apps_sdfTopomap and ui_apps_sdfTopomap.isLoaded() then
     ui_apps_sdfTopomap.drawContours(td, width, height, scale, camPos, ui_apps_minimap_utils.worldToMapXYZ)
   end
+  gcMark("topomap contours")
+  if p then p:add("Topomap contours") end
 
   -- Draw grid (bottom layer)
   if debugSettings.drawGrid then
     ui_apps_minimap_utils.drawGrid()
     if p then p:add("Grid") end
   end
+  gcMark("grid")
 
   -- first pass for background, then for roads
-  local radius = math.max(width, height)*scale*sqr2
+  profilerPopEvent("Minimap setup")
+  profilerPushEvent("Minimap roads")
+  local radius = math.sqrt(width * width + height * height) * scale * 0.5
   firstPass = true
   ui_apps_minimap_roads.drawRoads(p, radius, td, debugSettings, camPos, scale, dpi) -- background
+  profilerPopEvent("Minimap roads")
   --[[if debugSettings.drawRoadsBg then
     firstPass = false
     if p then p:add("Roads BG") end
@@ -306,15 +340,14 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
   end
   ]]
 
+  profilerPushEvent("Minimap navigation and markers")
   -- Draw navigation route
   if debugSettings.drawNavigation and ui_apps_minimap_route then
-    ui_apps_minimap_route.drawNavigationRoute(td, dpi)
+    ui_apps_minimap_route.drawNavigationRoute(td, dpi, camPos, radius + 4 * dpi * scale)
     if p then p:add("Navigation") end
     ui_apps_minimap_route.drawRoutePointer(td)
     if p then p:add("Route Pointer") end
   end
-
-
 
   if debugSettings.draw100m then
     local w = 20
@@ -324,14 +357,16 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
 
   -- draw playmode markers
   if debugSettings.drawPlaymodeMarkers and gameplay_playmodeMarkers.isStateWithPlaymodeMarkers() then
-    drawPlaymodeMarkers()
+    local markerSearchRadius = mode == "circle" and width * scale * 0.5 or radius
+    drawPlaymodeMarkers(markerSearchRadius)
     if p then p:add("Playmode Markers") end
   end
 
   -- draw custom stuff
   extensions.hook("onDrawOnMinimap", td)
+  profilerPopEvent("Minimap navigation and markers")
 
-  currentPlayerId = be:getPlayerVehicleID(0)
+  profilerPushEvent("Minimap vehicles")
   if ui_apps_minimap_vehicles then
     ui_apps_minimap_vehicles.drawOtherVehicles(dtReal, dtSim)
     if p then p:add("Other Vehicles") end
@@ -341,14 +376,16 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
     scaleInverse = 1/scale
     if p then p:add("Player") end
   end
+  profilerPopEvent("Minimap vehicles")
 
 
+  profilerPushEvent("Minimap overlays")
   M.drawOcclusion(offsetX, offsetY)
   if p then p:add("Occlusion") end
 
 
   if debugSettings.drawCompass then
-    drawCompass(offsetX, offsetY)
+    drawCompass(offsetX, offsetY, dpi)
     if p then p:add("Compass") end
   end
 
@@ -357,6 +394,8 @@ local function drawMinimap(sizeX, sizeY, dtReal, dtSim)
     M.drawDebugOverlay()
     if p then p:add("Debug Overlay") end
   end
+  profilerPopEvent("Minimap overlays")
+  gcMark("drawMinimap rest (roads, markers, vehicles, overlays)")
 
 end
 
@@ -377,13 +416,33 @@ local loggedMinimapErrors = false
 local windowPos, windowSize = im.ImVec2(0,0), im.ImVec2(0,0)
 local function draw(dtReal, dtSim)
   if editor and editor.active then return end
+  profilerPushEvent("Minimap update")
+  profilerPushEvent("Minimap setup")
   if p then p:start() end
-  viewportsEnabled = bit.band(im.GetIO().ConfigFlags, im.ConfigFlags_ViewportsEnable) ~= 0
+  gcStart()
+  viewportsEnabled = im.GetConfigFlagsViewportsEnable()
   -- setup imgui window position and size
-  local canvasObject = scenetree.findObject("Canvas")
-  if not canvasObject then return end
-  if not canvasObject.getWindowClientSizeXY then return end
-  if viewportsEnabled and not canvasObject.clientToScreenXY then return end
+  -- cached: scenetree.findObject allocates a wrapper per call; looked up again only while missing
+  canvasObjectCache = canvasObjectCache or scenetree.findObject("Canvas")
+  local canvasObject = canvasObjectCache
+  if not canvasObject then
+    profilerPopEvent("Minimap setup")
+    profilerPopEvent("Minimap update")
+    return
+  end
+  if not canvasObject.getWindowClientSizeXY then
+    profilerPopEvent("Minimap setup")
+    profilerPopEvent("Minimap update")
+    return
+  end
+  if viewportsEnabled and not canvasObject.clientToScreenXY then
+    profilerPopEvent("Minimap setup")
+    profilerPopEvent("Minimap update")
+    return
+  end
+
+  gcMark("canvas lookup (viewport flag, cached findObject)")
+  if p then p:add("Canvas lookup") end
 
   local canvasSizeX, canvasSizeY = canvasObject:getWindowClientSizeXY()
   if not canvasSizeX or not canvasSizeY or canvasSizeX <= 0 or canvasSizeY <= 0 then
@@ -391,8 +450,12 @@ local function draw(dtReal, dtSim)
       log("E","",string.format("Canvas size is invalid: %s, %s", dumps(canvasSizeX), dumps(canvasSizeY)))
       loggedMinimapErrors = true
     end
+    profilerPopEvent("Minimap setup")
+    profilerPopEvent("Minimap update")
     return
   end
+  gcMark("canvas:getWindowClientSizeXY")
+  if p then p:add("getWindowClientSizeXY") end
 
   local canvasPosX, canvasPosY
   if viewportsEnabled then
@@ -402,11 +465,16 @@ local function draw(dtReal, dtSim)
         log("E","",string.format("Canvas pos is invalid: %s, %s", dumps(canvasPosX), dumps(canvasPosY)))
         loggedMinimapErrors = true
       end
+      profilerPopEvent("Minimap setup")
+      profilerPopEvent("Minimap update")
       return
     end
   else
     canvasPosX, canvasPosY = 0, 0
   end
+  gcMark("canvas:clientToScreenXY")
+  if p then p:add("clientToScreenXY") end
+
   bufferLeft, bufferRight, bufferTop, bufferBottom = 50, 50, 50, 50
   if loggedMinimapErrors then
     log("I","",string.format("Canvas Pos and size valid again: %s, %s, %s, %s", dumps(canvasPosX), dumps(canvasPosY), dumps(canvasSizeX), dumps(canvasSizeY)))
@@ -439,36 +507,52 @@ local function draw(dtReal, dtSim)
 
   windowSize.x = windowSize.x + bufferRight
   windowSize.y = windowSize.y + bufferBottom
+  gcMark("window geometry math")
+  if p then p:add("Window geometry math") end
 
-  im.SetNextWindowPos(windowPos, im.Cond_Always)
+  im.SetNextWindowPos(windowPos, im.Cond_Always, imVec00) -- explicit pivot: the wrapper allocates an ImVec2(0,0) when it is omitted
   im.SetNextWindowSize(windowSize, im.Cond_Always)
+  gcMark("SetNextWindowPos/Size")
+  if p then p:add("SetNextWindowPos/Size") end
   if loggedMinimapErrors then
     log("I","",string.format("Window Pos and size: %s, %s, %s, %s", dumps(windowPos.x), dumps(windowPos.y), dumps(windowSize.x), dumps(windowSize.y)))
   end
   loggedMinimapErrors = false
 
-  im.PushStyleColor1(im.Col_WindowBg, debugSettings.drawBounds and im.GetColorU322(im.ImVec4(0,0,0,0.25)) or transparent)
-  im.PushStyleColor1(im.Col_Border, debugSettings.drawBounds and im.GetColorU322(im.ImVec4(0,0,0,0.25)) or transparent)
-  im.PushStyleColor1(im.Col_BorderShadow, debugSettings.drawBounds and im.GetColorU322(im.ImVec4(0,0,0,0.25)) or transparent)
+  local backgroundColor = transparent
+  if debugSettings.drawBounds then
+    boundsColor = boundsColor or im.GetColorU322(im.ImVec4(0,0,0,0.25))
+    backgroundColor = boundsColor
+  end
+  im.PushStyleColor1(im.Col_WindowBg, backgroundColor)
+  im.PushStyleColor1(im.Col_Border, backgroundColor)
+  im.PushStyleColor1(im.Col_BorderShadow, backgroundColor)
   im.PushStyleVar2(im.StyleVar_WindowPadding, padding)
-  if p then p:add("Canvas and window setup") end
-  if im.Begin("SDF Minimap",nil, bit.bor(im.WindowFlags_NoScrollbar, im.WindowFlags_NoScrollWithMouse, im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoInputs, im.WindowFlags_Modal)) then
+  gcMark("style color/var push")
+  if p then p:add("Style push") end
+  windowFlags = windowFlags or bit.bor(im.WindowFlags_NoScrollbar, im.WindowFlags_NoScrollWithMouse, im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoInputs, im.WindowFlags_Modal)
+  local minimapWindowVisible = im.Begin("SDF Minimap",nil, windowFlags)
+  gcMark("im.Begin")
+  if p then p:add("im.Begin") end
+  local drewMinimap = false
+  if minimapWindowVisible then
 
-    local cp = im.GetCursorPos()
-    local size = im.GetContentRegionAvail()
-    local sizeX, sizeY = size.x, size.y
-    size.x = size.x - imPadding*2
-    size.y = size.y - imPadding*2
+    -- scalar getters only: no ImVec2 allocations
+    local cp = cursorPos
+    cp.x, cp.y = im.GetCursorPosX(), im.GetCursorPosY()
+    local sizeX, sizeY = im.GetContentRegionAvailXY()
+    local innerX, innerY = sizeX - imPadding*2, sizeY - imPadding*2
     local dpi = im.GetWindowDpiScale()
-    if size.x > 0 and size.y > 0 then
-      if size.x ~= lastSize.x or size.y ~= lastSize.y then
-        local texSizeX, texSizeY = math.floor((size.x)), math.floor((size.y))
+    gcMark("ImGui queries (cursor pos, content region avail, dpi)")
+    if p then p:add("ImGui queries") end
+    if innerX > 0 and innerY > 0 then
+      if innerX ~= lastSize.x or innerY ~= lastSize.y then
+        local texSizeX, texSizeY = math.floor(innerX), math.floor(innerY)
         td = TextureDrawPrimitiveRegistry:getOrCreate("sdfMinimap",texSizeX, texSizeY)
         td:setWidthHeight(texSizeX, texSizeY)
         td:setClearColor(0)
         td:setClearFlag("WhenDirty")
-        lastSize = size
-        --print(string.format("Size: %d, %d", size.x, size.y))
+        lastSize.x, lastSize.y = innerX, innerY
         --print(string.format("TexSize: %d, %d", texSizeX, texSizeY))
         lastTexSize.x = texSizeX
         lastTexSize.y = texSizeY
@@ -481,8 +565,13 @@ local function draw(dtReal, dtSim)
         local x2, y2 = (x + width) * canvasSizeX, (y + height) * canvasSizeY
         transform[5], transform[6], transform[7], transform[8] = x1-windowPos.x+canvasPosX-cp.x, y1-windowPos.y+canvasPosY-cp.y, x2-windowPos.x+canvasPosX-cp.x, y2-windowPos.y+canvasPosY-cp.y
       end
+      gcMark("texture size check + occlusion transforms")
+      if p then p:add("Occlusion transforms") end
 
       drawMinimap(sizeX, sizeY,dtReal, dtSim)
+      drewMinimap = true
+
+      profilerPushEvent("Minimap rest")
       cp.x = cp.x + imPadding
       cp.y = cp.y + imPadding
       im.SetCursorPos(cp)
@@ -492,6 +581,10 @@ local function draw(dtReal, dtSim)
       --im.Text(string.format("Window Size: %d, %d", windowSize.x, windowSize.y))
       --im.Text(string.format("Tex Size: %d, %d", lastTexSize.x, lastTexSize.y))
     end
+  end
+  if not drewMinimap then
+    profilerPopEvent("Minimap setup")
+    profilerPushEvent("Minimap rest")
   end
   im.End()
   im.PopStyleColor(3)
@@ -505,6 +598,7 @@ local function draw(dtReal, dtSim)
       im.SameLine()
       if im.Button("Reset Stats") then
         resetStats()
+        resetGcStats()
       end
       im.SameLine()
       if im.Button("Load Topo Map") then
@@ -512,6 +606,19 @@ local function draw(dtReal, dtSim)
       end
       for _, key in ipairs(tableKeysSorted(stats)) do
         im.Text(string.format("%s: %d", key, stats[key]))
+      end
+      if debugSettings.logGarbage then
+        im.Separator()
+        im.Text("Lua garbage per frame in KB (last | running avg)")
+        local totalLast, totalAvg = 0, 0
+        for _, name in ipairs(gcOrder) do
+          local section = gcSections[name]
+          totalLast = totalLast + section.last
+          totalAvg = totalAvg + section.avg
+          im.Text(string.format("%s: %.2f | %.2f", name, section.last, section.avg))
+        end
+        im.Text(string.format("total (measured sections): %.2f | %.2f", totalLast, totalAvg))
+        im.TextWrapped("Allocation is measured with collectgarbage('count'). Frames where the GC ran inside a section are skipped.")
       end
       im.Separator()
       for _, key in ipairs(tableKeysSorted(debugSettings)) do
@@ -554,6 +661,8 @@ local function draw(dtReal, dtSim)
     end
     im.End()
   end
+  profilerPopEvent("Minimap rest")
+  profilerPopEvent("Minimap update")
 end
 
 M.drawOcclusion = function(offsetX, offsetY)
@@ -652,7 +761,7 @@ local function onMinimapSettingsChanged(m)
   debugSettings.drawGrid = settings.getValue("minimapDrawGrid") == "always"
   debugSettings.lookaheadEnabled = settings.getValue("minimapLookahead") ~= "disabled"
   debugSettings.lookaheadValue = lookaheadValues[settings.getValue("minimapLookahead")] or 0
-  viewportsEnabled = bit.band(im.GetIO().ConfigFlags, im.ConfigFlags_ViewportsEnable) ~= 0
+  viewportsEnabled = im.GetConfigFlagsViewportsEnable()
 
   if mode ~= "circle" and mode ~= "rect" then
     mode = "rect"
@@ -673,8 +782,10 @@ local function setDrawTransform(x, y, width, height)
     loggedMinimapErrors = true
     return
   end
-  drawTransform = {x, y, width, height}
-  log("I","",string.format("Setting minimap transform: %0.5f, %0.5f, %0.5f, %0.5f", x, y, width, height))
+  if drawTransform[1] ~= x or drawTransform[2] ~= y or drawTransform[3] ~= width or drawTransform[4] ~= height then
+    drawTransform = {x, y, width, height}
+    log("I","",string.format("Setting minimap transform: %0.5f, %0.5f, %0.5f, %0.5f", x, y, width, height))
+  end
   if M.onUpdate == nil then
     M.onUpdate = draw
     loggedMinimapErrors = true

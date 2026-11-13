@@ -428,7 +428,8 @@ local spawnModes = {
     return getRoadTransform(data.route, data.startDist, data.step * data.gap, data.legalSide * 0.5, 1, 1)
   end,
   traffic = function (data) -- smart traffic formation
-    return getRoadTransform(data.route, data.startDist, data.step * data.gap, data.laneSide * 0.5, data.legalSide)
+    local laneSide = data.step % 2 == 0 and data.laneSide or -data.laneSide
+    return getRoadTransform(data.route, data.startDist, data.step * data.gap, laneSide * 0.5, data.legalSide)
   end,
   raceGrid = function (data) -- race grid formation
     local laneSide = data.step % 2 == 0 and data.laneSide or -data.laneSide
@@ -873,6 +874,7 @@ M.vehIdsToGroup = vehIdsToGroup
 M.spawnedVehsToGroup = spawnedVehsToGroup
 
 M.createGroup = createGroup
+M.createSpawnPositions = createSpawnPositions
 M.spawnGroup = spawnGroup
 M.spawnProcessedGroup = spawnProcessedGroup
 M.fitGroup = fitGroup

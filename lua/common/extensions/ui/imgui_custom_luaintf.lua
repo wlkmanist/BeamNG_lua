@@ -160,6 +160,7 @@ return function(M)
   end
 
   function M.GetIO() return imgui.GetIO() end
+  function M.getIOConfigFlags() return imgui.getIOConfigFlags() end
   function M.GetStyle() return imgui.GetStyle() end
 
   function M.IoFontsGetCount()
@@ -254,6 +255,18 @@ return function(M)
     end
   end
 
+  -- Same as M.tooltip, but wraps at wrapWidth (default 350px) so a long explanation stacks into a
+  -- readable block instead of stretching into one line across the screen.
+  function M.tooltipWrapped(message, wrapWidth)
+    if M.IsItemHovered() then
+      M.BeginTooltip()
+      M.PushTextWrapPos((wrapWidth or 350) * M.uiscale[0])
+      M.TextUnformatted(message)
+      M.PopTextWrapPos()
+      M.EndTooltip()
+    end
+  end
+
   function M.BeginDisabled(disable)
     if disable == nil then disable = true end
     imgui.BeginDisabled(disable)
@@ -280,6 +293,10 @@ return function(M)
 
   function M.getMonitorIndex()
     return imgui.getMonitorIndex()
+  end
+
+  function M.getMainViewPortId()
+    return imgui.getMainViewPortId()
   end
 
   function M.getCurrentMonitorSize()

@@ -265,7 +265,7 @@ local function taskLoadLevelStep(step)
         end
         foundLevel = true
         core_levels.startLevel(level, nil, function()
-          ui_router.navigate("play")
+          extensions.ui_router.navigate("play")
           profilerPushEvent("clientPostStartMission")
 
           clientPostStartMission(level)
@@ -691,10 +691,10 @@ local function taskStartTakePartConditionSnapshot(step)
   -- skip this step if career is not loaded
   if not career_modules_inventory then step.complete = true return end
   -- skip this step if the player is not seated in a vehicle they own
-  if not career_modules_inventory.getCurrentVehicle() then step.complete = true return end
+  local vehObj = getPlayerVehicle(0)
+  if not vehObj or not career_modules_inventory.getInventoryIdFromVehicleId(vehObj:getID()) then step.complete = true return end
 
   if not step.handled then
-    local vehObj = getPlayerVehicle(0)
     -- take snapshot
     core_vehicleBridge.executeAction(vehObj, 'createPartConditionSnapshot', "beforeMission")
     core_vehicleBridge.executeAction(vehObj, 'setPartConditionResetSnapshotKey', "beforeMission")
@@ -871,7 +871,7 @@ local function taskStartMissionStep(step)
     foregroundMissionId = mission.id
   end
 
-  extensions.hook("onAnyMissionChanged", "started", mission, taskData.data.userSettings)
+  extensions.hook("onAnyMissionChanged", "started", mission, taskData.data.userSettings, taskData.data.startedFrom)
   step.complete = true
 end
 
@@ -1043,8 +1043,12 @@ end
 local function taskStopFadeStep(step)
   if not step.waitForFade then
     gameplay_rawPois.clear()
-    core_gamestate.setGameState("freeroam","freeroam")
-    guihooks.trigger('ChangeState', 'play')
+    if career_career and career_career.isActive() then
+      core_gamestate.setGameState("career","career")
+    else
+      core_gamestate.setGameState("freeroam","freeroam")
+    end
+    extensions.ui_router.navigate('play')
     step.waitForFade = true
     ui_fadeScreen.stop(M.fadeDuration)
   end
@@ -1096,8 +1100,9 @@ local function startWithFade(mission, userSettings, startingOptions)
   end
   userSettings = userSettings or {}
   startingOptions = startingOptions or {}
+  recordPlayerAction("start mission " .. tostring(mission.id))
 
-  taskData.data = {mission = mission, userSettings = userSettings, startingOptions = startingOptions}
+  taskData.data = {mission = mission, userSettings = userSettings, startingOptions = startingOptions, startedFrom = startingOptions.startedFrom}
   taskData.type = "start"
   taskData.steps = {
     {
@@ -1110,12 +1115,6 @@ local function startWithFade(mission, userSettings, startingOptions)
     }, {
       name = "taskStartPreMissionHandling",
       processTask = taskStartPreMissionHandling
-    }, {
-      name = "taskStartStashVehiclesStep",
-      processTask = taskStartStashVehiclesStep
-    }, {
-      name = "taskStartVehicleStep",
-      processTask = taskStartVehicleStep
     }, {
       name = "taskStartStartingOptionRepairStep",
       processTask = taskStartStartingOptionRepairStep
@@ -1130,7 +1129,13 @@ local function startWithFade(mission, userSettings, startingOptions)
   end
 
   arrayConcat(taskData.steps, {
-     {
+    {
+      name = "taskStartStashVehiclesStep",
+      processTask = taskStartStashVehiclesStep
+    }, {
+      name = "taskStartVehicleStep",
+      processTask = taskStartVehicleStep
+    }, {
       name = "taskStartTrafficStep",
       processTask = taskStartTrafficStep
     }, {
@@ -1158,6 +1163,7 @@ local function startAsScenario(mission, userSettings)
     log("W", logTag, "Attempting to start mission while there is an active task: " .. dumpsz(taskData, 3))
     return
   end
+  recordPlayerAction("start mission " .. tostring(mission.id))
 
   taskData.data = {mission = mission, userSettings = userSettings}
   taskData.type = "start"
@@ -1216,8 +1222,9 @@ end
 local function startInstant(mission, userSettings, startingOptions)
   userSettings = userSettings or {}
   startingOptions = startingOptions or {}
+  recordPlayerAction("start mission " .. tostring(mission.id))
 
-  taskData.data = {mission = mission, userSettings = userSettings, startingOptions = startingOptions}
+  taskData.data = {mission = mission, userSettings = userSettings, startingOptions = startingOptions, startedFrom = startingOptions.startedFrom}
   taskData.type = "start"
   taskData.steps = {
     {
@@ -1238,7 +1245,7 @@ local function startInstant(mission, userSettings, startingOptions)
   extensions.hook("startFromWithinMissionInstant", mission, userSettings, startingOptions)
 end
 
-local function startWithLoadingLevel(mission, userSettings, level)
+local function startWithLoadingLevel(mission, userSettings, level, startedFrom)
   if not mission then
     log("E", logTag, "Couldn't start mission, mission id not found. " .. dumpsz(mission, 2))
     return true
@@ -1259,7 +1266,7 @@ local function startWithLoadingLevel(mission, userSettings, level)
   end
 
 
-  taskData.data = {mission = mission, userSettings = userSettings, level = level}
+  taskData.data = {mission = mission, userSettings = userSettings, level = level, startedFrom = startedFrom}
   taskData.type = "start"
   taskData.steps = {
     {
@@ -1308,6 +1315,12 @@ local function attemptAbandonMissionWithFade(mission, force, abandonButtonPresse
   end
   mission.restoreStartingInfoSetup = true
 
+  if abandonButtonPressed then
+    extensions.hook("onGameplayActivityAborted")
+  end
+
+  extensions.hook("onMissionAbandoned", mission, abandonButtonPressed)
+
   -- this mission handles stopping themselves..
   if mission:attemptAbandonMission() then
     log("I", logTag, "Requesting faded abandon for mission, not force stopping. : "..dumps(mission.id))
@@ -1352,7 +1365,6 @@ local function attemptAbandonMissionWithFade(mission, force, abandonButtonPresse
   }
   taskData.currentStep = 1
 
-  extensions.hook("onMissionAbandoned", mission)
   log("I", logTag, "Delaying abandonment of mission for fade.")
 end
 
@@ -1372,6 +1384,7 @@ local function stop(mission, data)
     log("W", logTag, "Attempting to stop mission while there is an active task.")
     return
   end
+  recordPlayerAction("stop mission " .. tostring(mission.id))
   taskData.data = {mission = mission, data = data or {}}
   taskData.type = "stop"
   taskData.active = true
@@ -1467,7 +1480,8 @@ local function onUpdate(dtReal, dtSim, dtRaw)
         local fun = delayedStartFromWithinMission.instant and M.startInstant or M.startWithFade
         local fail = fun(delayedStartFromWithinMission.mission, delayedStartFromWithinMission.userSettings,
           {
-            skipPartConditionSnapshot = delayedStartFromWithinMission.skipPartConditionSnapshot
+            skipPartConditionSnapshot = delayedStartFromWithinMission.skipPartConditionSnapshot,
+            startedFrom = "withinMission",
           }
         )
         if fail then

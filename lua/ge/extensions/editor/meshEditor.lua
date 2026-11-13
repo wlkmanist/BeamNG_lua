@@ -707,6 +707,24 @@ local function finishMesh()
   end
 end
 
+local function highlightMeshesNearCamera()
+  local camPos = core_camera.getPosition()
+  local maxDist = editor.getPreference(M.preferencesName .. ".general.highlightNearbyDistance")
+  local maxDistSq = maxDist * maxDist
+
+  for _, name in ipairs(scenetree.findClassObjects(M.type)) do
+    local mesh = scenetree.findObject(name)
+    if mesh and mesh:getID() ~= selectedMeshId and mesh:getID() ~= hoveredMeshID then
+      for index = 0, mesh:getEdgeCount() - 1 do
+        if camPos:squaredDistance(mesh:getTopMiddleEdgePosition(index)) <= maxDistSq then
+          showMesh(mesh, roadRiverGui.highlightColors.nearby)
+          break
+        end
+      end
+    end
+  end
+end
+
 local function raycastHitMesh(rayCastInfo, mesh)
   if rayCastInfo then
     return rayCastInfo.object:getID() == mesh:getID()
@@ -927,6 +945,10 @@ local function onUpdate()
     end
   end
 
+  if editor.getPreference(M.preferencesName .. ".general.highlightNearby") then
+    highlightMeshesNearCamera()
+  end
+
   -- Highlight selected meshes
   if selectedMesh then
     showMesh(selectedMesh, roadRiverGui.highlightColors.selected)
@@ -970,6 +992,20 @@ local function onToolbar()
   im.SameLine()
   im.PushItemWidth(im.uiscale[0] * 150)
   defaultDepthSlider()
+  im.SameLine()
+
+  local highlightNearbyPtr = im.BoolPtr(editor.getPreference(M.preferencesName .. ".general.highlightNearby"))
+  if im.Checkbox("Highlight nearby " .. string.lower(M.niceName) .. "s", highlightNearbyPtr) then
+    editor.setPreference(M.preferencesName .. ".general.highlightNearby", highlightNearbyPtr[0])
+  end
+  im.tooltip("Highlight all " .. string.lower(M.niceName) .. "s within a distance from the camera")
+  im.SameLine()
+
+  local highlightDistancePtr = im.FloatPtr(editor.getPreference(M.preferencesName .. ".general.highlightNearbyDistance"))
+  if im.InputFloat("##Highlight Distance", highlightDistancePtr, 1, 10) then
+    editor.setPreference(M.preferencesName .. ".general.highlightNearbyDistance", math.max(0, highlightDistancePtr[0]))
+  end
+  im.tooltip("Distance from the camera in meters")
 end
 
 local function onEditorPreferenceValueChanged(path, value)
@@ -984,7 +1020,9 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {defaultWidth = {"float", 10, "", nil, 0.1}},
     {defaultDepth = {"float", 5, "", nil, 0.1}},
     {defaultHeight = {"float", 2, "", nil, 0.1}},
-    {dragWidth = {"bool", false, "Change the width of newly placed nodes by clicking and dragging the mouse cursor."}}
+    {dragWidth = {"bool", false, "Change the width of newly placed nodes by clicking and dragging the mouse cursor."}},
+    {highlightNearby = {"bool", false, "Highlight all " .. string.lower(M.niceName) .. "s within a distance from the camera"}},
+    {highlightNearbyDistance = {"float", 100, "Distance from the camera in meters used to highlight nearby " .. string.lower(M.niceName) .. "s", nil, 0, 10000}}
   })
 end
 

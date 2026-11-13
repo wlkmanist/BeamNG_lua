@@ -4,10 +4,11 @@
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
--- Module constants.
-local nearFarLimitSq = square(500.0) -- The maximum distance for near-field dynamic SFX emitters
+-- User variables.
+local nearFarLimitSq = square(400.0) -- The maximum distance for near-field dynamic SFX emitters
 local radiusLength = 0.5 -- The length of the radius multiplier.
 local minAxisLimit = 1.0 -- The minimum axis limit.
+local blueNoiseInterval = 3 -- The number of frames between random segment probes on an emitter host.
 
 -- Weighting coefficients.  TODO - REMOVE LATER WHEN SYSTEM IS TUNED.
 local widthCoeff = 100.0 -- The weight of the river width.
@@ -23,25 +24,31 @@ local M = {}
 local logTag = 'audioRibbon'
 
 -- Module constants.
-local min, max, floor, ceil, sqrt, huge = math.min, math.max, math.floor, math.ceil, math.sqrt, math.huge
+local min, max, floor, sqrt, huge = math.min, math.max, math.floor, math.sqrt, math.huge
 
 
 -- Module state.
 local ribbons = nil -- The collection of ribbons for which we compute dynamic audio emitters.
 local ribbonNames = {} -- The collection of ribbon names (used for fast look-up).
-local nearList, farList = {}, {} -- The collection of near and far ribbons.
+-- The collections of near ribbons (full set of emitters), mid ribbons (inner point only) and far ribbons (round robin).
+-- The three lists are disjoint;  the near list holds at most two ribbons, being the two closest ones.
+local nearList, midList, farList = {}, {}, {}
+-- The closest ribbons seen so far this frame, used to re-select the near list at the end of the frame.
+local nearCandA, nearCandB = { key = nil, idx = nil, dSq = 0 }, { key = nil, idx = nil, dSq = 0 }
 local farSegmentRoundRobinKey = nil -- The key used for the round-robin on the far list segments
+local blueFrameTick = 0 -- Counts frames so that every emitter takes its random probe on the same frame.
+local isBlueFrame = false -- True on the frames where the random probe replaces the directional probe.
 local axes = { {}, {}, {}, {}, {} }
 local axesCache = { {}, {}, {}, {}, {} }
 local sfxEmitters = { {}, {}, {}, {}, {} }
 local tmp0, tmp1, tmp2, tmp3, tmp4, tmp5 = vec3(), vec3(), vec3(), vec3(), vec3(), vec3()
 local tmpAxis1, tmpAxis2, tmpList = vec3(), vec3(), vec3()
-local tmpEmitP, tmpBlueP = vec3(), vec3()
+local tmpBlueP = vec3()
 local lPosition, lForward, lRight = vec3(), vec3(), vec3()
 
 
--- Compute the closest point to the given segment.
-local function closestPoint(segIdx, p, ribbon, retP)
+-- Compute the closest point to the given segment.  Returns the point as separate components, to avoid a copy at each call site.
+local function closestPoint(segIdx, p, ribbon)
   local isAmbient = ribbon.isAmbient
   local isTopActive = ribbon.isTopActive
   local isUpRibbon = ribbon.isUpRibbon
@@ -51,46 +58,35 @@ local function closestPoint(segIdx, p, ribbon, retP)
   local i1, i2, i3, i4 = twoSegIdx - 1, twoSegIdx, twoSegIdx + 1, twoSegIdx + 2
   local c0, c1, c2, c3 = ribbon.nodes[i1], ribbon.nodes[i2], ribbon.nodes[i3], ribbon.nodes[i4]
   local d0, d1, d2, d3 = ribbon.depths[i1], ribbon.depths[i2], ribbon.depths[i3], ribbon.depths[i4]
-  tmp0:set(c0)
-  tmp1:set(c1)
-  tmp2:set(c2)
-  tmp3:set(c3)
+  -- The z-offset is a per-ribbon constant (the flags only change in the editor).  Collapsing the four
+  -- branches into a single scale lets the common no-offset case skip the vertex copies entirely.
+  local zScale
   if isAmbient or isQuadAndVolume then
-    if not isUpRibbon then
-      tmp0.z = tmp0.z + d0 * 0.5
-      tmp1.z = tmp1.z + d1 * 0.5
-      tmp2.z = tmp2.z + d2 * 0.5
-      tmp3.z = tmp3.z + d3 * 0.5
-    else
-      tmp0.z = tmp0.z - d0 * 0.5
-      tmp1.z = tmp1.z - d1 * 0.5
-      tmp2.z = tmp2.z - d2 * 0.5
-      tmp3.z = tmp3.z - d3 * 0.5
-    end
+    zScale = isUpRibbon and -0.5 or 0.5
+  elseif isUpRibbon then
+    zScale = isTopActive and 0.0 or -1.0
   else
-    if isUpRibbon and not isTopActive then
-      tmp0.z = tmp0.z - d0
-      tmp1.z = tmp1.z - d1
-      tmp2.z = tmp2.z - d2
-      tmp3.z = tmp3.z - d3
-    elseif not isUpRibbon and isTopActive then
-      tmp0.z = tmp0.z + d0
-      tmp1.z = tmp1.z + d1
-      tmp2.z = tmp2.z + d2
-      tmp3.z = tmp3.z + d3
-    end
+    zScale = isTopActive and 1.0 or 0.0
   end
-  local u1, v1 = p:triangleClosestPointUV(tmp0, tmp1, tmp2)
-  tmp4:setTrianglePointFromUV(tmp0, tmp1, tmp2, u1 ,v1)
-  local u2, v2 = p:triangleClosestPointUV(tmp1, tmp2, tmp3)
-  tmp5:setTrianglePointFromUV(tmp1, tmp2, tmp3, u2 ,v2)
+  local a, b, c, d
+  if zScale == 0.0 then
+    a, b, c, d = c0, c1, c2, c3
+  else
+    tmp0:set(c0); tmp0.z = tmp0.z + d0 * zScale
+    tmp1:set(c1); tmp1.z = tmp1.z + d1 * zScale
+    tmp2:set(c2); tmp2.z = tmp2.z + d2 * zScale
+    tmp3:set(c3); tmp3.z = tmp3.z + d3 * zScale
+    a, b, c, d = tmp0, tmp1, tmp2, tmp3
+  end
+  local u1, v1 = p:triangleClosestPointUV(a, b, c)
+  tmp4:setTrianglePointFromUV(a, b, c, u1 ,v1)
+  local u2, v2 = p:triangleClosestPointUV(b, c, d)
+  tmp5:setTrianglePointFromUV(b, c, d, u2 ,v2)
   local dSq1, dSq2 = p:squaredDistance(tmp4), p:squaredDistance(tmp5)
   if dSq2 < dSq1 then
-    retP:set(tmp5)
-    return retP, dSq2, u2, v2, true
+    return tmp5.x, tmp5.y, tmp5.z, dSq2, u2, v2, true
   end
-  retP:set(tmp4)
-  return retP, dSq1, u1, v1, false
+  return tmp4.x, tmp4.y, tmp4.z, dSq1, u1, v1, false
 end
 
 -- Creates an SFX Emitter object.
@@ -109,188 +105,211 @@ local function createSfxEmitter(eventName)
 end
 
 -- Update the given (inner) SFX emitter host.
-local function updateInnerEmitterHost(emit, ribbon, p)
-  local pClosest, bestSqDist, u, v, isFirstTriangle = closestPoint(emit.bestSeg, p, ribbon, tmpEmitP)
+local function updateInnerEmitterHost(emit, ribbon, p, forceRandomProbe)
+  local px, py, pz, bestSqDist, u, v, isFirstTriangle = closestPoint(emit.bestSeg, p, ribbon)
 
-  if pClosest then
-    emit.pos:set(pClosest.x, pClosest.y, pClosest.z)
+  if px then
+    local emitPos = emit.pos
+    emitPos:set(px, py, pz)
 
-    -- First, try the segment directly below the current segment.
-    local dSq = huge
-    if emit.bestSeg > 1 then
-      pClosest, dSq, u, v, isFirstTriangle = closestPoint(emit.bestSeg - 1, p, ribbon, tmpEmitP)
-      if dSq < bestSqDist then
-        bestSqDist = dSq
-        emit.pos:set(pClosest.x, pClosest.y, pClosest.z)
-        emit.bestSeg = emit.bestSeg - 1
+    -- The two probes below alternate rather than both running, which holds the cost at two segment tests every frame.
+    local sampleSeg
+    if not (isBlueFrame or forceRandomProbe) then
+      -- Try the segment in the current search direction.  The direction only flips when the probe fails, so a
+      -- listener travelling along the ribbon keeps probing the way it is moving and pays for a single segment test.
+      local probeSeg = emit.bestSeg + emit.dir
+      if probeSeg > 0 and probeSeg <= ribbon.numSegs then
+        local qx, qy, qz, dSq, qu, qv, qIsFirstTriangle = closestPoint(probeSeg, p, ribbon)
+        if dSq < bestSqDist then
+          bestSqDist = dSq
+          emitPos:set(qx, qy, qz)
+          emit.bestSeg = probeSeg
+          u, v, isFirstTriangle = qu, qv, qIsFirstTriangle
+        else
+          emit.dir = -emit.dir
+        end
+      else
+        emit.dir = -emit.dir
       end
+      -- The outer hosts still need a jump candidate on these frames, so hand them this host's own best point.
+      sampleSeg = emit.bestSeg
+      tmpBlueP:set(emitPos)
+    else
+      -- Try a random segment instead, which lets the emitter escape a local minimum the directional walk cannot leave.
+      emit.bN = getBlueNoise1d(emit.bN)
+      sampleSeg = max(1, floor(emit.bN * ribbon.numSegs))
+      local bx, by, bz, dSq, bu, bv, bIsFirstTriangle = closestPoint(sampleSeg, p, ribbon)
+      if sampleSeg ~= emit.bestSeg and dSq < bestSqDist then
+        bestSqDist = dSq
+        emitPos:set(bx, by, bz)
+        emit.bestSeg = sampleSeg
+        u, v, isFirstTriangle = bu, bv, bIsFirstTriangle
+      end
+      tmpBlueP:set(bx, by, bz)
     end
 
-    -- Second, try the segment directly above the current segment.
-    if emit.bestSeg < ribbon.numSegs then
-      pClosest, dSq, u, v, isFirstTriangle = closestPoint(emit.bestSeg + 1, p, ribbon, tmpEmitP)
-      if dSq < bestSqDist then
-        bestSqDist = dSq
-        emit.pos:set(pClosest.x, pClosest.y, pClosest.z)
-        emit.bestSeg = emit.bestSeg + 1
-      end
-    end
-
-    -- Third, try a random segment.
-    emit.bN = getBlueNoise1d(emit.bN)
-    local segSample = max(1, floor(emit.bN * ribbon.numSegs))
-    local pClosest, dSq = closestPoint(segSample, p, ribbon, tmpEmitP)
-    if segSample ~= emit.bestSeg then
-      if dSq < bestSqDist then
-        bestSqDist = dSq
-        emit.pos:set(pClosest.x, pClosest.y, pClosest.z)
-        emit.bestSeg = segSample
-      end
-    end
-
-    tmpBlueP:set(pClosest.x, pClosest.y, pClosest.z)
-    return tmpBlueP, segSample, u, v, isFirstTriangle
+    return tmpBlueP, sampleSeg, u, v, isFirstTriangle, bestSqDist
   end
-  return nil, nil, nil, nil, false
+  return nil, nil, nil, nil, false, nil
 end
 
 -- Update the given (outer) SFX emitter host.
 local function updateOuterEmitterHost(emit, ribbon, p, muteFlag, bluePoint, blueSeg, axis, axisCache, radius)
-  local pClosest, bestSqDist, u, v, isFirstTriangle = closestPoint(emit.bestSeg, p, ribbon, tmpEmitP)
-  emit.pos:set(pClosest.x, pClosest.y, pClosest.z)
+  local px, py, pz, bestSqDist, u, v, isFirstTriangle = closestPoint(emit.bestSeg, p, ribbon)
+  local emitPos = emit.pos
+  emitPos:set(px, py, pz)
 
-  -- First, try the segment directly below the current segment.
-  local dSq = huge
-  if emit.bestSeg > 1 then
-    pClosest, dSq, u, v, isFirstTriangle = closestPoint(emit.bestSeg - 1, p, ribbon, tmpEmitP)
+  -- First, try the segment in the current search direction.  The direction only flips when the probe fails, so a
+  -- listener travelling along the ribbon keeps probing the way it is moving and pays for a single segment test.
+  local probeSeg = emit.bestSeg + emit.dir
+  if probeSeg > 0 and probeSeg <= ribbon.numSegs then
+    local qx, qy, qz, dSq, qu, qv, qIsFirstTriangle = closestPoint(probeSeg, p, ribbon)
     if dSq < bestSqDist then
       bestSqDist = dSq
-      emit.pos:set(pClosest.x, pClosest.y, pClosest.z)
-      emit.bestSeg = emit.bestSeg - 1
+      emitPos:set(qx, qy, qz)
+      emit.bestSeg = probeSeg
+      u, v, isFirstTriangle = qu, qv, qIsFirstTriangle
+    else
+      emit.dir = -emit.dir
     end
+  else
+    emit.dir = -emit.dir
   end
 
-  -- Second, try the segment directly above the current segment.
-  if emit.bestSeg < ribbon.numSegs then
-    pClosest, dSq, u, v, isFirstTriangle = closestPoint(emit.bestSeg + 1, p, ribbon, tmpEmitP)
+  -- Second, try the segment the inner host handed over;  its random sample on a blue frame, its own best point otherwise.
+  -- bluePoint sits closest to the listener rather than to p, so its distance is an upper bound and only gates the full test.
+  if blueSeg ~= emit.bestSeg and p:squaredDistance(bluePoint) < bestSqDist then
+    local bx, by, bz, dSq, bu, bv, bIsFirstTriangle = closestPoint(blueSeg, p, ribbon)
     if dSq < bestSqDist then
       bestSqDist = dSq
-      emit.pos:set(pClosest.x, pClosest.y, pClosest.z)
-      emit.bestSeg = emit.bestSeg + 1
-    end
-  end
-
-  -- Third, try a random segment.
-  if blueSeg ~= emit.bestSeg then
-    local dSq = p:squaredDistance(bluePoint)
-    if dSq < bestSqDist then
-      bestSqDist = dSq
-      emit.pos:set(bluePoint.x, bluePoint.y, bluePoint.z)
+      emitPos:set(bx, by, bz)
       emit.bestSeg = blueSeg
+      u, v, isFirstTriangle = bu, bv, bIsFirstTriangle
     end
   end
 
   -- Update emitter data.
-  if #ribbon.nodes > 3 then
-    local speed = ribbon.speed
-    local segIdx = emit.bestSeg
-    local twoSegIdx = segIdx * 2
-    local i1, i2, i3, i4 = twoSegIdx - 1, twoSegIdx, twoSegIdx + 1, twoSegIdx + 2
-    local pairIdx = ceil(i1 * 0.5)
-    local w1, w2 = ribbon.widths[pairIdx], ribbon.widths[pairIdx + 1]
-    local d1, d2, d3, d4 = ribbon.depths[i1], ribbon.depths[i2], ribbon.depths[i3], ribbon.depths[i4]
-    local width, depth = nil, nil
-    local w = max(0, 1.0 - u - v)
-    if isFirstTriangle then
-      width = u * w1 + v * w1 + w * w2
-      depth = u * d1 + v * d2 + w * d3
-    else
-      width = u * w1 + v * w2 + w * w2
-      depth = u * d2 + v * d3 + w * d4
-    end
-    local dist = huge
-    if ribbon.isQuadAndVolume then
-      dist = max(0.0, p:distance(emit.pos) - (depth * 0.5))                                     -- Distance to the ellipsoid here (not the surface).
-    else
-      dist = p:distance(emit.pos)                                                               -- Distance to the surface here (no ellipsoid).
-    end
-    local volCoeff = 1 / max(1, sqrt(dist))
-    local volumeC = (speedCoeff * speed) * min(100, widthCoeff * width) * min(5, depthCoeff * depth)
-    local volumeC = volCoeff * volumeC / (volumeC + expOffset)
+  local speed = ribbon.speed
+  local segIdx = emit.bestSeg
+  local twoSegIdx = segIdx * 2
+  local i1, i2, i3, i4 = twoSegIdx - 1, twoSegIdx, twoSegIdx + 1, twoSegIdx + 2
+  -- The pair index is segIdx, since i1 is 2 * segIdx - 1 and the index is always whole.
+  local w1, w2 = ribbon.widths[segIdx], ribbon.widths[segIdx + 1]
+  local d1, d2, d3, d4 = ribbon.depths[i1], ribbon.depths[i2], ribbon.depths[i3], ribbon.depths[i4]
+  local width, depth = nil, nil
+  local w = max(0, 1.0 - u - v)
+  if isFirstTriangle then
+    width = w1 * (u + v) + w2 * w
+    depth = u * d1 + v * d2 + w * d3
+  else
+    width = u * w1 + w2 * (v + w)
+    depth = u * d2 + v * d3 + w * d4
+  end
+  -- emit.pos is the closest point found by the search above, so its distance from p is sqrt(bestSqDist).
+  local dist
+  if ribbon.isQuadAndVolume then
+    dist = max(0.0, sqrt(bestSqDist) - (depth * 0.5))                                           -- Distance to the ellipsoid here (not the surface).
+  else
+    dist = sqrt(bestSqDist)                                                                      -- Distance to the surface here (no ellipsoid).
+  end
+  local volCoeff = 1 / max(1, sqrt(dist))
+  local volumeC = (speedCoeff * speed) * min(100, widthCoeff * width) * min(5, depthCoeff * depth)
+  local volumeC = volCoeff * volumeC / (volumeC + expOffset)
 
-    if muteFlag then
-      volumeC = 0.0
-    end
-    emit.vol = volumeC
+  if muteFlag then
+    volumeC = 0.0
+  end
+  emit.vol = volumeC
 
-    axisCache[emit.eventNameStr] = axisCache[emit.eventNameStr] or { pos = vec3() }
-    if axis[emit.eventNameStr] == nil then
-      axis[emit.eventNameStr] = axisCache[emit.eventNameStr]
-      axis[emit.eventNameStr].loudness = -1
+  local eventName = emit.eventNameStr
+  local axisEntry = axis[eventName]
+  if axisEntry == nil then
+    axisEntry = axisCache[eventName]
+    if axisEntry == nil then
+      axisEntry = { pos = vec3() }
+      axisCache[eventName] = axisEntry
     end
+    axisEntry.loudness = -1
+    axis[eventName] = axisEntry
+  end
 
-    local loudness = volumeC / max(1, radius + 1e-10)
-    if loudness > axis[emit.eventNameStr].loudness then
-      axis[emit.eventNameStr].loudness = loudness
-      axis[emit.eventNameStr].volume = volumeC
-      axis[emit.eventNameStr].pitch = speed
-      axis[emit.eventNameStr].color = width
-      axis[emit.eventNameStr].texture = volCoeff
-      axis[emit.eventNameStr].pos:set(p)
-    end
+  local loudness = volumeC / max(1, radius + 1e-10)
+  if loudness > axisEntry.loudness then
+    axisEntry.loudness = loudness
+    axisEntry.volume = volumeC
+    axisEntry.pitch = speed
+    axisEntry.color = width
+    axisEntry.texture = volCoeff
+    axisEntry.pos:set(p)
   end
 end
 
 -- Update the center SFX emitter host.
-local function updateCenterEmitter(emit, ribbon, p, muteFlag, axis, axisCache, u, v, isFirstTriangle)
-  if #ribbon.nodes > 3 then
-    local speed = ribbon.speed
-    local segIdx = emit.bestSeg
-    local twoSegIdx = segIdx * 2
-    local i1, i2, i3, i4 = twoSegIdx - 1, twoSegIdx, twoSegIdx + 1, twoSegIdx + 2
-    local pairIdx = ceil(i1 * 0.5)
-    local w1, w2 = ribbon.widths[pairIdx], ribbon.widths[pairIdx + 1]
-    local d1, d2, d3, d4 = ribbon.depths[i1], ribbon.depths[i2], ribbon.depths[i3], ribbon.depths[i4]
-    local width, depth = nil, nil
-    local w = max(0, 1.0 - u - v)
-    if isFirstTriangle then
-      width = u * w1 + v * w1 + w * w2
-      depth = u * d1 + v * d2 + w * d3
-    else
-      width = u * w1 + v * w2 + w * w2
-      depth = u * d2 + v * d3 + w * d4
-    end
-    local dist = max(0.0, p:distance(emit.pos) - (depth * 0.5))
-    local volCoeff = 1.0 / max(1.0, sqrt(dist))
-    local volumeC = (speedCoeff * speed) * min(100, widthCoeff * width) * min(5, depthCoeff * depth)
-    local volumeC = volCoeff * volumeC / (volumeC + expOffset)
+local function updateCenterEmitter(emit, ribbon, muteFlag, axis, axisCache, u, v, isFirstTriangle, bestSqDist)
+  local speed = ribbon.speed
+  local segIdx = emit.bestSeg
+  local twoSegIdx = segIdx * 2
+  local i1, i2, i3, i4 = twoSegIdx - 1, twoSegIdx, twoSegIdx + 1, twoSegIdx + 2
+  -- The pair index is segIdx, since i1 is 2 * segIdx - 1 and the index is always whole.
+  local w1, w2 = ribbon.widths[segIdx], ribbon.widths[segIdx + 1]
+  local d1, d2, d3, d4 = ribbon.depths[i1], ribbon.depths[i2], ribbon.depths[i3], ribbon.depths[i4]
+  local width, depth = nil, nil
+  local w = max(0, 1.0 - u - v)
+  if isFirstTriangle then
+    width = w1 * (u + v) + w2 * w
+    depth = u * d1 + v * d2 + w * d3
+  else
+    width = u * w1 + w2 * (v + w)
+    depth = u * d2 + v * d3 + w * d4
+  end
+  -- emit.pos is the closest point found by the inner search, so its distance from the listener is sqrt(bestSqDist).
+  local dist = max(0.0, sqrt(bestSqDist) - (depth * 0.5))
+  local volCoeff = 1.0 / max(1.0, sqrt(dist))
+  local volumeC = (speedCoeff * speed) * min(100, widthCoeff * width) * min(5, depthCoeff * depth)
+  local volumeC = volCoeff * volumeC / (volumeC + expOffset)
 
-    if muteFlag then
-      volumeC = 0.0
-    end
-    emit.vol = volumeC
+  if muteFlag then
+    volumeC = 0.0
+  end
+  emit.vol = volumeC
 
-    axisCache[emit.eventNameStr] = axisCache[emit.eventNameStr] or { pos = vec3() }
-    if axis[emit.eventNameStr] == nil then
-      axis[emit.eventNameStr] = axisCache[emit.eventNameStr]
-      axis[emit.eventNameStr].loudness = -1
+  local eventName = emit.eventNameStr
+  local axisEntry = axis[eventName]
+  if axisEntry == nil then
+    axisEntry = axisCache[eventName]
+    if axisEntry == nil then
+      axisEntry = { pos = vec3() }
+      axisCache[eventName] = axisEntry
     end
+    axisEntry.loudness = -1
+    axis[eventName] = axisEntry
+  end
 
-    local loudness = volumeC
-    if loudness > axis[emit.eventNameStr].loudness then
-      axis[emit.eventNameStr].loudness = loudness
-      axis[emit.eventNameStr].volume = volumeC
-      axis[emit.eventNameStr].pitch = speed
-      axis[emit.eventNameStr].color = width
-      axis[emit.eventNameStr].texture = volCoeff
-      axis[emit.eventNameStr].pos:set(emit.pos)
-    end
+  local loudness = volumeC
+  if loudness > axisEntry.loudness then
+    axisEntry.loudness = loudness
+    axisEntry.volume = volumeC
+    axisEntry.pitch = speed
+    axisEntry.color = width
+    axisEntry.texture = volCoeff
+    axisEntry.pos:set(emit.pos)
+  end
+end
+
+-- Keeps track of the two closest ribbons seen so far this frame.
+local function trackNearCandidate(key, ribbonIdx, dSq)
+  local candA, candB = nearCandA, nearCandB
+  if dSq < candA.dSq then
+    candB.key, candB.idx, candB.dSq = candA.key, candA.idx, candA.dSq
+    candA.key, candA.idx, candA.dSq = key, ribbonIdx, dSq
+  elseif dSq < candB.dSq then
+    candB.key, candB.idx, candB.dSq = key, ribbonIdx, dSq
   end
 end
 
 -- Frame update
 local function onUpdate(dtReal, dtSim, dtRaw)
-  if not ribbons or #ribbons < 1 then
+  if not ribbons or next(ribbons) == nil then
     return
   end
 
@@ -299,44 +318,64 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   lForward:set(SFXSystem.getForwardXYZ())
   lRight:set(SFXSystem.getRightXYZ())
 
-  -- On first frame, populate the near list with all ribbons.
-  if not next(nearList) and not next(farList) then
+  -- Every emitter takes its random probe on the same frame.  That probe replaces the directional one rather than
+  -- adding to it, so synchronising them costs two segment tests per emitter on every frame either way.
+  blueFrameTick = blueFrameTick + 1
+  isBlueFrame = blueFrameTick >= blueNoiseInterval
+  if isBlueFrame then
+    blueFrameTick = 0
+  end
+
+  -- On first frame, populate the far list with all ribbons.
+  if not next(midList) and not next(farList) and not next(nearList) then
     for i = 1, #ribbons do
-      nearList[ribbons[i].persistantId] = i
+      farList[ribbons[i].persistantId] = i
     end
   end
 
   -- Update the closest points/segments for relevant ribbons.
-  -- [We update all closest points/segments of ribbons in the near list, but only one ribbon from the far list, chosen with a round robin selection].
+  -- [We update all closest points/segments of ribbons in the near/mid lists, but only one ribbon from the far list, chosen with a round robin selection].
   if next(farList) then
     farSegmentRoundRobinKey = tableRoundRobinKey(farList, farSegmentRoundRobinKey)
     local ribbonIdx = farList[farSegmentRoundRobinKey]
     local ribbon = ribbons[ribbonIdx]
-    if ribbon and ribbon.isEnabled and #ribbon.nodes > 3 then
-      updateInnerEmitterHost(ribbon.emitters[1], ribbon, lPosition)
-      if ribbon.emitters[1].pos:squaredDistance(lPosition) < nearFarLimitSq then
-        nearList[farSegmentRoundRobinKey] = ribbonIdx
+    if ribbon and ribbon.isEnabled and ribbon.numSegs > 0 then
+      -- The round robin visits one far ribbon per frame, so leaving it to the shared blue frame would alias against the
+      -- rotation and starve some ribbons of a random probe entirely.  A directional step is useless at this range anyway.
+      local innerEmitter = ribbon.emitters[1]
+      local _, _, _, _, _, bestSqDist = updateInnerEmitterHost(innerEmitter, ribbon, lPosition, true)
+      if (bestSqDist or innerEmitter.pos:squaredDistance(lPosition)) < nearFarLimitSq then
+        midList[farSegmentRoundRobinKey] = ribbonIdx
         farList[farSegmentRoundRobinKey] = nil
       end
     end
   end
 
-  -- Iterate over the ribbons in the near list and detect their contributions to the final audio output.
+  -- Iterate over the ribbons in the near/mid lists and detect their contributions to the final audio output.
   table.clear(axes[1])
   table.clear(axes[2])
   table.clear(axes[3])
   table.clear(axes[4])
   table.clear(axes[5])
+  nearCandA.key, nearCandA.dSq = nil, huge
+  nearCandB.key, nearCandB.dSq = nil, huge
+
+  -- The near ribbons get the full set of emitters, so they are the only ones which produce any audio.
   for k, ribbonIdx in pairs(nearList) do
     local ribbon = ribbons[ribbonIdx]
-    if ribbon.isEnabled and #ribbon.nodes > 3 then
-      local blueP, blueSeg, blueU, blueV, blueIsFirstTriangle = updateInnerEmitterHost(ribbon.emitters[1], ribbon, lPosition)
-      if blueP then
-        local ribbonEmitters = ribbon.emitters
+    local ribbonEmitters = ribbon.emitters
+    local innerEmitter = ribbonEmitters[1]
+    -- The inner host already measured the listener against the point it stored, so the near/far test below reuses that
+    -- distance rather than measuring the same pair of points again.  It falls back when the host did not run.
+    local dSq = nil
+    if ribbon.isEnabled and ribbon.numSegs > 0 then
+      local blueP, blueSeg, blueU, blueV, blueIsFirstTriangle, blueBestSqDist = updateInnerEmitterHost(innerEmitter, ribbon, lPosition)
+      if blueP and blueBestSqDist then
+        dSq = blueBestSqDist
         if ribbon.isAmbient then
-          updateCenterEmitter(ribbonEmitters[1], ribbon, lPosition, ribbon.isMuteA, axes[1], axesCache[1], blueU, blueV, blueIsFirstTriangle)
+          updateCenterEmitter(innerEmitter, ribbon, ribbon.isMuteA, axes[1], axesCache[1], blueU, blueV, blueIsFirstTriangle, blueBestSqDist)
         else
-          local radius = max(minAxisLimit, max(1.0, ribbon.emitters[1].pos:distance(lPosition)) * radiusLength)
+          local radius = max(minAxisLimit, max(1.0, sqrt(blueBestSqDist)) * radiusLength)
           tmpAxis1:setScaled2(lForward, radius)
           tmpAxis2:setScaled2(lRight, radius)
           tmpList:setAdd2(lPosition, tmpAxis1)
@@ -351,26 +390,64 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       end
     end
 
-    -- For every ribbon in the near list, if it is too far, move it from the near list to the far list.
-    if ribbon.emitters[1].pos:squaredDistance(lPosition) > nearFarLimitSq then
+    dSq = dSq or innerEmitter.pos:squaredDistance(lPosition)
+    if dSq > nearFarLimitSq then
+      -- The ribbon is too far away now, so move it from the near list to the far list.
       farList[k] = ribbonIdx
+      nearList[k] = nil
+    else
+      trackNearCandidate(k, ribbonIdx, dSq)
+    end
+  end
+
+  -- The mid ribbons only refresh their inner point, which keeps their distances current for the near selection below.
+  for k, ribbonIdx in pairs(midList) do
+    local ribbon = ribbons[ribbonIdx]
+    local innerEmitter = ribbon.emitters[1]
+    local dSq = nil
+    if ribbon.isEnabled and ribbon.numSegs > 0 then
+      local _, _, _, _, _, bestSqDist = updateInnerEmitterHost(innerEmitter, ribbon, lPosition)
+      dSq = bestSqDist
+    end
+
+    dSq = dSq or innerEmitter.pos:squaredDistance(lPosition)
+    if dSq > nearFarLimitSq then
+      -- The ribbon is too far away now, so move it from the mid list to the far list.
+      farList[k] = ribbonIdx
+      midList[k] = nil
+    else
+      trackNearCandidate(k, ribbonIdx, dSq)
+    end
+  end
+
+  -- Re-select the near list as the two closest ribbons.  Every distance compared above was refreshed this frame, so the
+  -- near and mid ribbons rank against each other on equal terms.
+  local candA, candB = nearCandA, nearCandB
+  for k, ribbonIdx in pairs(nearList) do
+    if k ~= candA.key and k ~= candB.key then
+      midList[k] = ribbonIdx
       nearList[k] = nil
     end
   end
-
-  -- Reset the volume RTPC channel for all existing dynamic SFX emitters, before updating them.
-  for i = 1, 5 do
-    for _, sfxEmitterOnAxis in pairs(sfxEmitters[i]) do
-      sfxEmitterOnAxis.vol = 0.0
-    end
+  if candA.key and not nearList[candA.key] then
+    nearList[candA.key] = candA.idx
+    midList[candA.key] = nil
+  end
+  if candB.key and not nearList[candB.key] then
+    nearList[candB.key] = candB.idx
+    midList[candB.key] = nil
   end
 
-  -- Update the existing SFX emitters with the recently-computed data from the near-list ribbons.
+  -- Update and push the RTPC channel outputs for all dynamic SFX emitters in a single pass.
+  -- Emitters that produced audio this frame take their values from the near-list ribbons;
+  -- the rest are silenced (volume reset, other channels left as-is).
   for i = 1, 5 do
     local axis = axes[i]
+    local sfxAxis = sfxEmitters[i]
+    -- Create any emitters that first appeared this frame
     for eventName, event in pairs(axis) do
-      if sfxEmitters[i][eventName] == nil then
-        sfxEmitters[i][eventName] = {
+      if sfxAxis[eventName] == nil then
+        sfxAxis[eventName] = {
           emitter = createSfxEmitter(eventName),
           vol = 0.0,
           pitch = 0.0,
@@ -378,22 +455,24 @@ local function onUpdate(dtReal, dtSim, dtRaw)
           texture = 0.0,
           pos = vec3(0.0, 0.0) }
       end
-      sfxEmitters[i][eventName].vol = event.volume
-      sfxEmitters[i][eventName].pitch = event.pitch
-      sfxEmitters[i][eventName].color = event.color
-      sfxEmitters[i][eventName].texture = event.texture
-      sfxEmitters[i][eventName].pos = event.pos
     end
-  end
-
-  -- Update the RTPC channel outputs for all existing dynamic SFX emitters.
-  for i = 1, 5 do
-    for _, sfxEmitterOnAxis in pairs(sfxEmitters[i]) do
-      if simObjectExists(sfxEmitterOnAxis.emitter) then
+    for eventName, sfxEmitterOnAxis in pairs(sfxAxis) do
+      local event = axis[eventName]
+      if event then
+        sfxEmitterOnAxis.vol = event.volume
+        sfxEmitterOnAxis.pitch = event.pitch
+        sfxEmitterOnAxis.color = event.color
+        sfxEmitterOnAxis.texture = event.texture
+        sfxEmitterOnAxis.pos = event.pos
+      else
+        sfxEmitterOnAxis.vol = 0.0
+      end
+      local sfxEmitterObj = sfxEmitterOnAxis.emitter
+      if simObjectExists(sfxEmitterObj) then
         if sfxEmitterOnAxis.vol ~= 0 then
-          sfxEmitterOnAxis.emitter:setPosition(sfxEmitterOnAxis.pos)
+          sfxEmitterObj:setPosition(sfxEmitterOnAxis.pos)
         end
-        sfxEmitterOnAxis.emitter:setVolumePitchCT(
+        sfxEmitterObj:setVolumePitchCT(
           sfxEmitterOnAxis.vol,
           sfxEmitterOnAxis.pitch,
           sfxEmitterOnAxis.color,
@@ -430,16 +509,17 @@ local function removeRibbon(idx)
   ribbonNames[ribbon.persistantId] = nil
   table.remove(ribbons, idx)
   table.clear(nearList)
+  table.clear(midList)
   table.clear(farList)
 end
 
 -- Updates the ribbon properties after the ribbon has been updated (eg a new node added, node deleted, etc).
 local function updateRibbonData(ribbon)
-  ribbon.emitters[1].bestSeg = 1
-  ribbon.emitters[2].bestSeg = 1
-  ribbon.emitters[3].bestSeg = 1
-  ribbon.emitters[4].bestSeg = 1
-  ribbon.emitters[5].bestSeg = 1
+  for i = 1, 5 do
+    local emit = ribbon.emitters[i]
+    emit.bestSeg = 1
+    emit.dir = 1
+  end
 
   ribbon.numSegs = max(0, ((#ribbon.nodes - 4) * 0.5) + 1)
 
@@ -455,6 +535,7 @@ end
 local function createEmitterHost(eventName)
   return {
     bestSeg = 0,
+    dir = 1,
     vol = 0,
     pos = vec3(huge, huge, huge),
     bN = 0,
@@ -693,18 +774,23 @@ local function onEditorBeforeSaveLevel()
   end
 end
 
+-- Deletes all SFX emitters and clears the ribbon state.
+local function resetRibbons()
+  clearAllSFXEmitters()
+  if ribbons then
+    table.clear(ribbons)
+  else
+    ribbons = {}
+  end
+  table.clear(ribbonNames)
+  table.clear(nearList)
+  table.clear(midList)
+  table.clear(farList)
+end
+
 -- Called once on level load.
 local function onClientCustomObjectSpawning()
-  if not ribbons then
-    ribbons, ribbonNames = {}, {}
-  end
-  if #ribbons > 0 then
-    table.clear(ribbons)
-    table.clear(ribbonNames)
-    table.clear(nearList)
-    table.clear(farList)
-    sfxEmitters = { {}, {}, {}, {}, {} }
-  end
+  resetRibbons()
   local levelName = getCurrentLevelIdentifier()
   if levelName then
     local filepath = "levels/" .. levelName .. "/dynamicAudioEmitters/" .. diskFileName
@@ -712,9 +798,10 @@ local function onClientCustomObjectSpawning()
   end
 end
 
--- Clears the near and far lists.
+-- Clears the near, mid and far lists.
 local function clearNearFarLists()
   table.clear(nearList)
+  table.clear(midList)
   table.clear(farList)
 end
 
@@ -726,6 +813,7 @@ local function getRibbons() return ribbons end
 local function setRibbons(val) ribbons = val end
 local function getRibbonNames() return ribbonNames end
 local function getNearList() return nearList end
+local function getMidList() return midList end
 local function getFarList() return farList end
 local function getSfxEmitters() return sfxEmitters end
 
@@ -736,7 +824,8 @@ M.onSerialize =                                           onSerialize
 M.onDeserialized =                                        onDeserialized
 M.onEditorBeforeSaveLevel =                               onEditorBeforeSaveLevel
 M.onClientCustomObjectSpawning =                          onClientCustomObjectSpawning
-M.onExit = clearAllSFXEmitters
+M.onClientEndMission =                                    resetRibbons
+M.onExit =                                                clearAllSFXEmitters
 
 M.createEmitterHost =                                     createEmitterHost
 M.updateRibbonData =                                      updateRibbonData
@@ -750,6 +839,7 @@ M.getRibbons =                                            getRibbons
 M.setRibbons =                                            setRibbons
 M.getRibbonNames =                                        getRibbonNames
 M.getNearList =                                           getNearList
+M.getMidList =                                            getMidList
 M.getFarList =                                            getFarList
 M.getSfxEmitters =                                        getSfxEmitters
 

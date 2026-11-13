@@ -102,15 +102,22 @@ local function sendCargoToTasklist()
     if hasNonClearElement then
       local subtext = ""
       if cargoCount > 0 and vehicleTaskCount == 0 then
-        subtext = string.format("%d item%s loaded.", cargoCount, cargoCount > 1 and "s" or "")
+        subtext = core_locales.contextTranslate(
+          cargoCount == 1 and "ui.career.delivery.tasklist.itemLoaded" or "ui.career.delivery.tasklist.itemsLoaded",
+          {count = cargoCount}
+        )
       else
-        subtext = string.format("%d ongoing task%s.", cargoCount + vehicleTaskCount + transientCount, (cargoCount + vehicleTaskCount + transientCount) > 1 and "s" or "")
+        local taskCount = cargoCount + vehicleTaskCount + transientCount
+        subtext = core_locales.contextTranslate(
+          taskCount == 1 and "ui.career.delivery.tasklist.ongoingTask" or "ui.career.delivery.tasklist.ongoingTasks",
+          {count = taskCount}
+        )
       end
       tasklistElements.header = {
         id = "header",
         update = true,
         type = "header",
-        label = "Active Deliveries",
+        label = _tr("ui.career.delivery.tasklist.activeDeliveries"),
         subtext = subtext
       }
     end
@@ -180,24 +187,31 @@ local function updateCargoTasklistElements()
       -- parcel tasks. these usually consist of multiple parcels grouped by destination.
       if elem.type == "parcels" then
         local first = dParcelManager.getCargoById(elem.cargoIds[1])
-        local modifierStrings = {string.format("%d Item%s", #elem.cargoIds, #elem.cargoIds~=1 and "s" or "")}
+        local modifierStrings = {
+          core_locales.contextTranslate(
+            #elem.cargoIds == 1 and "ui.career.delivery.tasklist.itemCount" or "ui.career.delivery.tasklist.itemsCount",
+            {count = #elem.cargoIds}
+          )
+        }
 
         for _, mod in ipairs(first.modifiers) do
           if mod.type == "timed" then
             local expiredTime = dGeneral.time() - first.loadedAtTimeStamp
             if expiredTime <= mod.timeUntilDelayed then
-              table.insert(modifierStrings, string.format("Time: %ds", mod.timeUntilDelayed - expiredTime))
+              table.insert(modifierStrings, core_locales.contextTranslate("ui.career.delivery.tasklist.timeRemaining", {seconds = math.floor(mod.timeUntilDelayed - expiredTime)}))
             elseif expiredTime <= mod.timeUntilLate then
-              table.insert(modifierStrings, string.format("Delayed: %ds", mod.timeUntilLate - expiredTime))
+              table.insert(modifierStrings, core_locales.contextTranslate("ui.career.delivery.tasklist.delayedTimeRemaining", {seconds = math.floor(mod.timeUntilLate - expiredTime)}))
             else
-              table.insert(modifierStrings, "Late")
+              table.insert(modifierStrings, _tr("ui.career.delivery.tasklist.late"))
             end
 
           end
         end
         guihooks.trigger("SetTasklistTask", {
             id = tasklistId,
-            label = string.format("Deliver to %s",  dParcelManager.getLocationLabelShort(first.destination)),
+            label = core_locales.contextTranslate("ui.career.delivery.tasklist.deliverTo", {
+              destination = dParcelManager.getLocationLabelShort(first.destination)
+            }),
             subtext = table.concat(modifierStrings, ", "),
             active = true,
             type = "message"
@@ -210,7 +224,13 @@ local function updateCargoTasklistElements()
         local first = dParcelManager.getCargoById(elem.cargoIds[1])
         guihooks.trigger("SetTasklistTask", {
             id = tasklistId,
-            label = string.format("Pick up %d items from %s", #elem.cargoIds, dParcelManager.getLocationLabelLong(first.location)),
+            label = core_locales.contextTranslate(
+              #elem.cargoIds == 1 and "ui.career.delivery.tasklist.pickUpItemFrom" or "ui.career.delivery.tasklist.pickUpItemsFrom",
+              {
+                count = #elem.cargoIds,
+                location = dParcelManager.getLocationLabelLong(first.location)
+              }
+            ),
             active = true,
             type = "message"
           }
@@ -224,16 +244,24 @@ local function updateCargoTasklistElements()
         if task then
           local label
           if task.type == "coupleTrailer" then
-            label = string.format("Couple the trailer.")
+            label = _tr("ui.career.delivery.tasklist.coupleTrailer")
           elseif task.type == "enterVehicle" then
-            label = string.format("Enter the vehicle.")
+            label = _tr("ui.career.delivery.tasklist.enterVehicle")
           elseif task.type == "bringToDestination" or task.type == "confirmDropOff" then
-            label = string.format("Drop off %s at %s.",elem.type == "trailer" and "the trailer" or "the vehicle", dParcelManager.getLocationLabelShort(task.destination))
+            label = core_locales.contextTranslate(
+              elem.type == "trailer" and "ui.career.delivery.tasklist.dropOffTrailerAt" or "ui.career.delivery.tasklist.dropOffVehicleAt",
+              {destination = dParcelManager.getLocationLabelShort(task.destination)}
+            )
           elseif task.type == "putIntoParkingSpot" then
-            local forwardString = ""
-            if task.forwardOn == "uncouple" then forwardString = "decouple" end
-            if task.forwardOn == "exitVehicle" then forwardString = "exit the vehicle" end
-            label = string.format("Park Trailer in %s and %s.", dParcelManager.getLocationLabelShort(task.destination), forwardString)
+            local translationKey = "ui.career.delivery.tasklist.parkTrailer"
+            if task.forwardOn == "uncouple" then
+              translationKey = "ui.career.delivery.tasklist.parkTrailerAndDecouple"
+            elseif task.forwardOn == "exitVehicle" then
+              translationKey = "ui.career.delivery.tasklist.parkTrailerAndExitVehicle"
+            end
+            label = core_locales.contextTranslate(translationKey, {
+              destination = dParcelManager.getLocationLabelShort(task.destination)
+            })
           --elseif task.type == "confirmDropOff" then
           --label = string.format("Confirm the dropoff at %s.", dParcelManager.getLocationLabelShort(task.destination))
           end

@@ -539,7 +539,7 @@ local function onPreRender(dtReal, dtSim, dtRaw)
           renderOrthoView(veh, view)
         end
         local texObj = imUtils.texObj('#' .. view.name)
-        im.Image(texObj.texId, im.ImVec2(view.size.x, view.size.y))
+        im.Image(texObj.tex:getID(), im.ImVec2(view.size.x, view.size.y))
         handleImageInput(view) -- must come directly after the image
         if im.IsItemClicked(1) then
           im.OpenPopup('VDV_VIEW_POPUP')

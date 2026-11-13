@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Positions hydraulic support feet for coupling, uncoupling, and manual operation
+
 local M = {}
 M.type = "auxiliary"
 
@@ -15,6 +17,12 @@ local ramDirectionElectricsName
 local feetCylinder
 local attachmentStates = {detached = "detached", attached = "attached", detachedMoveFeet = "detachedMoveFeet", attachedMoveFeet = "attachedMoveFeet"}
 local currentAttachmentState = attachmentStates.detached
+
+local stateData
+local stateDataNameAttachedPosition
+local stateDataNameDetachedPosition
+local stateDataNameManualMoveInput
+local stateDataNameAttachmentState
 
 local function moveFeet(input)
   manualMoveInput = input
@@ -63,6 +71,12 @@ local function onCouplerDetached(nodeId, obj2id, obj2nodeId, breakForce)
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameAttachedPosition = M.name .. "_attachedPosition"
+  stateDataNameDetachedPosition = M.name .. "_detachedPosition"
+  stateDataNameManualMoveInput = M.name .. "_manualMoveInput"
+  stateDataNameAttachmentState = M.name .. "_attachmentState"
+
   attachedPosition = jbeamData.attachedDefaultPosition or 0
   detachedPosition = jbeamData.detachedDefaultPosition or 1
 
@@ -78,10 +92,47 @@ local function init(jbeamData)
   currentAttachmentState = attachmentStates.detached
 end
 
+local function getState()
+  stateData[stateDataNameAttachedPosition] = attachedPosition
+  stateData[stateDataNameDetachedPosition] = detachedPosition
+  stateData[stateDataNameManualMoveInput] = manualMoveInput
+  stateData[stateDataNameAttachmentState] = currentAttachmentState
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newAttachedPosition = data[stateDataNameAttachedPosition]
+  if type(newAttachedPosition) == "number" and newAttachedPosition == newAttachedPosition then
+    attachedPosition = clamp(newAttachedPosition, 0, 1)
+  end
+
+  local newDetachedPosition = data[stateDataNameDetachedPosition]
+  if type(newDetachedPosition) == "number" and newDetachedPosition == newDetachedPosition then
+    detachedPosition = clamp(newDetachedPosition, 0, 1)
+  end
+
+  local newManualMoveInput = data[stateDataNameManualMoveInput]
+  if type(newManualMoveInput) == "number" and newManualMoveInput == newManualMoveInput then
+    manualMoveInput = clamp(newManualMoveInput, -1, 1)
+  end
+
+  local newAttachmentState = data[stateDataNameAttachmentState]
+  if attachmentStates[newAttachmentState] then
+    currentAttachmentState = newAttachmentState
+  end
+end
+
 M.init = init
 M.onCouplerAttached = onCouplerAttached
 M.onCouplerDetached = onCouplerDetached
 M.updateGFX = updateGFX
 M.moveFeet = moveFeet
+
+M.getState = getState
+M.setState = setState
 
 return M

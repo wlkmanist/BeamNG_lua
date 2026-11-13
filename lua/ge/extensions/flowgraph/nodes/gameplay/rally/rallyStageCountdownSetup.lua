@@ -39,7 +39,7 @@ function C:workOnce()
 
   extensions.hook('onRallyDataUpdated', {
     resetFallbackStreamData = true,
-    activeState = rallyUtil.activeState_countdown,
+    activeState = rallyUtil.activeState_inactive,
     countdownData = {
       countdown = countdownSettings.duration,
       state = 'waiting'

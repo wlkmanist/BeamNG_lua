@@ -29,9 +29,10 @@ local M = {}
 -- External modules.
 local audioRibbon = require('core/audioRibbon')
 local input = require('editor/toolUtilities/ribbonInput')
-local render = require('editor/toolUtilities/render')
+local rTransport = require('editor/toolUtilities/render/transport')
 local util = require('editor/toolUtilities/util')
 local style = require('editor/toolUtilities/style')
+local panCamera = require('editor/toolUtilities/panCamera')
 
 -- Module constants.
 local im = ui_imgui
@@ -149,11 +150,11 @@ local function copyRibbonsState()
     if ribbon and ribbon.emitters and ribbon.emitters[1] and ribbon.emitters[1].bestSeg then
       local emitters = ribbon.emitters
       local em1, em2, em3, em4, em5 = emitters[1], emitters[2], emitters[3], emitters[4], emitters[5]
-      emittersCopy[1] = { bestSeg = em1.bestSeg, pos = vec3(em1.pos), bN = em1.bN, eventNameStr = em1.eventNameStr }
-      emittersCopy[2] = { bestSeg = em2.bestSeg, pos = vec3(em2.pos), bN = em2.bN, eventNameStr = em2.eventNameStr }
-      emittersCopy[3] = { bestSeg = em3.bestSeg, pos = vec3(em3.pos), bN = em3.bN, eventNameStr = em3.eventNameStr }
-      emittersCopy[4] = { bestSeg = em4.bestSeg, pos = vec3(em4.pos), bN = em4.bN, eventNameStr = em4.eventNameStr }
-      emittersCopy[5] = { bestSeg = em5.bestSeg, pos = vec3(em5.pos), bN = em5.bN, eventNameStr = em5.eventNameStr }
+      emittersCopy[1] = { bestSeg = em1.bestSeg, dir = em1.dir, pos = vec3(em1.pos), bN = em1.bN, eventNameStr = em1.eventNameStr }
+      emittersCopy[2] = { bestSeg = em2.bestSeg, dir = em2.dir, pos = vec3(em2.pos), bN = em2.bN, eventNameStr = em2.eventNameStr }
+      emittersCopy[3] = { bestSeg = em3.bestSeg, dir = em3.dir, pos = vec3(em3.pos), bN = em3.bN, eventNameStr = em3.eventNameStr }
+      emittersCopy[4] = { bestSeg = em4.bestSeg, dir = em4.dir, pos = vec3(em4.pos), bN = em4.bN, eventNameStr = em4.eventNameStr }
+      emittersCopy[5] = { bestSeg = em5.bestSeg, dir = em5.dir, pos = vec3(em5.pos), bN = em5.bN, eventNameStr = em5.eventNameStr }
     end
 
     -- Deep copy the ribbon properties data and populate the copy.
@@ -205,7 +206,7 @@ end
 
 -- Creates a new ribbon (without any nodes yet), and adds it to the ribbons list.
 local function addNewRibbon()
-  local ribbons, ribbonNames, nearList = audioRibbon.getRibbons(), audioRibbon.getRibbonNames(), audioRibbon.getNearList()
+  local ribbons, ribbonNames, midList = audioRibbon.getRibbons(), audioRibbon.getRibbonNames(), audioRibbon.getMidList()
   local statePre = copyRibbonsState()
   local ribbonId = Engine.generateUUID()
   ribbons[#ribbons + 1] =
@@ -233,7 +234,7 @@ local function addNewRibbon()
   }
   ribbonNames[ribbonId] = true
   editor.history:commitAction("Add New Ribbon", { old = statePre, new = copyRibbonsState() }, editStateUndo, editStateRedo)
-  nearList[ribbonId] = #ribbons
+  midList[ribbonId] = #ribbons
   markRibbonUiDirty()
 end
 
@@ -565,12 +566,13 @@ local function renderToolWindow()
   local wasRibbonUiDirty, filterStr, uiList, ribbonIdx, ribbon, newName, selRibbon, selNodes
   if editor.beginWindow(toolWinName, "Dynamic Audio Ribbon Editor") then
     -- Top Button Row.
-    im.Columns(5, "topBtnRowColumns", false)
+    im.Columns(6, "topBtnRowColumns", false)
     im.SetColumnWidth(0, 39)
     im.SetColumnWidth(1, 39)
     im.SetColumnWidth(2, 39)
     im.SetColumnWidth(3, 39)
     im.SetColumnWidth(4, 39)
+    im.SetColumnWidth(5, 39)
 
     -- 'Add New ribbon' button.
     if editor.uiIconImageButton(icons.bSpline, iconsBig, cols.blueB, nil, nil, 'addNewRibbonButton') then
@@ -636,6 +638,13 @@ local function renderToolWindow()
     else
       im.Dummy(iconsBig)
     end
+    im.NextColumn()
+
+    -- Pan camera toggle (top-down RMB-drag pan + wheel zoom, shared across the spline tools).
+    if editor.uiIconImageButton(icons.videocam, iconsBig, panCamera.isOn() and cols.blueB or cols.blueD, nil, nil, 'panCamBtn') then
+      panCamera.toggle()
+    end
+    im.tooltip(panCamera.isOn() and 'Pan camera ON: top-down, RMB-drag to move, wheel to zoom. Click for the free camera.' or 'Pan camera: top-down view, RMB-drag pan + wheel zoom.')
     im.NextColumn()
     im.Columns(1)
     im.Separator()
@@ -802,7 +811,7 @@ local function renderToolWindow()
       selNodes = selRibbon.nodes
       if selNodes and #selNodes > 2 then
         if editor.uiIconImageButton(icons.cameraFocusTopDown, iconsBig, cols.blueB, nil, nil, 'goToSelectedRibbon') then
-          util.goToSpline(selNodes)
+          if not panCamera.gotoPoints(selNodes) then util.goToSpline(selNodes) end
         end
         im.tooltip('Go to this ribbon.')
       else
@@ -905,12 +914,15 @@ local function onEditorGui()
   renderToolWindow()
 
   -- Render the ribbons on the map.
-  render.renderRibbon(ribbons, selectedRibbonIdx, selectedNodeIdx, placedLeftNode, hoveredRibbonIdx, bestCursorSeg, isDragging)
+  rTransport.renderRibbon(ribbons, selectedRibbonIdx, selectedNodeIdx, placedLeftNode, hoveredRibbonIdx, bestCursorSeg, isDragging)
 
   -- Handle user editing of the selected ribbon.
   out.ribbonIdx, out.nodeIdx, out.isGizmoActive = selectedRibbonIdx, selectedNodeIdx, isGizmoActive
   bestCursorSeg, isDragging = input.handleRibbonEvents(ribbons, out, true, isLockShape, masterDepth, audioRibbon.updateRibbonData, copyRibbonsState, editStateUndo, editStateRedo)
   selectedRibbonIdx, selectedNodeIdx, isGizmoActive = out.ribbonIdx, out.nodeIdx, out.isGizmoActive
+
+  -- Drive the pan camera when it's on (blocked while dragging a ribbon node so they don't fight).
+  if panCamera.isOn() then panCamera.drive(isDragging) end
 end
 
 -- Called when the tool icon is pressed.
@@ -918,11 +930,17 @@ local function onActivate()
   editor.clearObjectSelection()
   editor.showWindow(toolWinName)
   isAudioRibbonEditor = true
+  panCamera.configure({ focusProvider = function()
+    local ribbons = audioRibbon.getRibbons()
+    local r = ribbons and ribbons[selectedRibbonIdx]
+    return r and r.nodes
+  end })
 end
 
 -- Called when the tool is exited.
 local function onDeactivate()
   editor.hideWindow(toolWinName)
+  panCamera.close()
   isAudioRibbonEditor = false
 end
 

@@ -81,16 +81,10 @@ M.onExtensionLoaded = function()
 end
 
 ----------------------------------------------------------
--- Private API
+-- Initial navigation
 ----------------------------------------------------------
-M._checkAllUiReady = function()
-  if not M.isUiReady() then
-    return
-  end
-  M.initialized = true
-  extensions.hook("onAllUiReady")
-
-  if not tech_license.isValid() then
+M.navigateToInitialScreen = function()
+  if not license.isValid() then
     if not ui_legal.isOnlineConsentSet() then
       return extensions.ui_router.navigate("legal.onlineFeatures")
     end
@@ -106,8 +100,20 @@ M._checkAllUiReady = function()
   if goingIntoGame then
     extensions.ui_router.navigate("play")
   else
+    if core_settings_settings.getValue("onboardingPopupShown") ~= true then
+      return extensions.ui_router.navigate("onboarding")
+    end
     extensions.ui_router.navigate("menu")
   end
+end
+
+M._checkAllUiReady = function()
+  if not M.isUiReady() then
+    return
+  end
+  M.initialized = true
+  extensions.hook("onAllUiReady")
+  return M.navigateToInitialScreen()
 end
 
 return M

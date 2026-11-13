@@ -67,6 +67,7 @@ end
 function C:init(id)
   self.id = id
   self.visible = false
+  self.renderViewPlayer = nil
 
   self.pos = nil
   self.radius = nil
@@ -105,7 +106,10 @@ function C:update(dt, dtSim)
   --debugDrawer:drawTextAdvanced(self.pos, String(string.format("mode: %s, colorTimer: %0.2f, visible: %s", self.mode, self.colorTimer, self.visible and "true" or "false")), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
   if not self.visible then return end
 
-  playerPosition:set(core_camera.getPosition())
+  local cameraContext = self.renderViewPlayer ~= nil
+    and core_camera.getContextIdForPlayer(self.renderViewPlayer)
+    or nil
+  playerPosition:set(core_camera.getPosition(cameraContext))
 
   local distanceFromMarker = self.pos:distance(playerPosition)
 
@@ -226,8 +230,33 @@ function C:hide() self:setVisibility(false) end
 function C:show() self:setVisibility(true)  end
 
 -- marker management
+function C:applyRenderViewMask()
+  for _, id in ipairs({self.baseId, self.leftId, self.rightId}) do
+    local object = id and scenetree.findObjectById(id)
+    if object then
+      object:renderViewMaskClear()
+      if self.renderViewPlayer ~= nil then
+        local players = render_splitScreen and render_splitScreen.getPlayers
+          and render_splitScreen.getPlayers()
+          or {}
+        for _, player in ipairs(players) do
+          if player ~= self.renderViewPlayer then
+            object:hideInRenderView(player)
+          end
+        end
+      end
+    end
+  end
+end
+
+function C:setRenderViewPlayer(player)
+  self.renderViewPlayer = player
+  self:applyRenderViewMask()
+end
+
 function C:createObject(shapeName, objectName)
   local marker =  createObject('TSStatic')
+  marker.dynamic = true
   marker:setField('shapeName', 0, shapeName)
   marker:setPosition(vec3(0, 0, 0))
   marker.scale = vec3(1, 1, 1)
@@ -253,12 +282,16 @@ function C:createMarkers()
   self.baseId  = self:createObject(baseShape,basePrefix..self.id):getId()
   self.leftId  = self:createObject(sideShape,sidesPrefix.."left"..self.id):getId()
   self.rightId = self:createObject(sideShape,sidesPrefix.."right"..self.id):getId()
+  self:applyRenderViewMask()
 end
 
 function C:clearMarker(id)
   if id then
     local obj = scenetree.findObjectById(id)
-    if obj then obj:delete() end
+    if obj then
+      obj:renderViewMaskClear()
+      obj:delete()
+    end
   end
 end
 

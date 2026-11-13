@@ -31,7 +31,8 @@ local mol = require('editor/assemblySpline/molecule')
 local pop = require('editor/assemblySpline/populate')
 local import = require('editor/assemblySpline/import')
 local input = require('editor/toolUtilities/splineInput')
-local render = require('editor/toolUtilities/render')
+local panCamera = require('editor/toolUtilities/panCamera')
+local rSpline = require('editor/toolUtilities/render/spline')
 local skeleton = require('editor/toolUtilities/skeleton')
 local rdp = require('editor/toolUtilities/rdp')
 local poly = require('editor/toolUtilities/polygon')
@@ -40,6 +41,8 @@ local util = require('editor/toolUtilities/util')
 local geom = require('editor/toolUtilities/geom')
 local style = require('editor/toolUtilities/style')
 local terra = require('editor/terraform/terraform')
+local session = require('editor/toolUtilities/session')
+local bake = require('editor/toolUtilities/bake')
 
 -- Module constants.
 local im = ui_imgui
@@ -58,17 +61,64 @@ local selectedSplineIdx = 1
 local selectedNodeIdx = 1
 local sliderPreEditState = nil
 local terraParams = {
-  terraDOI = 50.0,
-  terraMargin = 5.0,
-  terraFalloff = 2.0,
+  terraDOI = 20.0,
+  terraMargin = 1.0,
+  terraFalloff = 3.0,
   terraRoughness = 0.0,
   terraScale = 0.0,
+  terraSmooth = 2.0,
 }
 local out = {
   spline = selectedSplineIdx,
   node = selectedNodeIdx,
   isGizmoActive = isGizmoActive,
   isLockShape = isLockShape,
+}
+
+-- Save/Load Session spec handed to the shared helper (toolUtilities/session): only these tool-specific hooks stay here.
+local sessionSpec = {
+  toolId = 'assemblySpline',
+  displayName = 'Assembly Spline',
+  itemNoun = 'assembly splines',
+  getItems = splineMgr.getAssemblySplines,
+  serializeItem = splineMgr.serializeAssemblySplineToTable,
+  deserializeItem = function(t) return splineMgr.deserializeAssemblySpline(t, true) end,
+  clearAll = function() splineMgr.removeAllAssemblySplines(true) end,
+  deepCopyAll = splineMgr.deepCopyAssemblySplineState,
+  transUndo = splineMgr.transSplineEditUndo,
+  transRedo = splineMgr.transSplineEditRedo,
+  refreshIdMap = splineMgr.recomputeIdMap,
+  onLoaded = function() selectedSplineIdx = 1 end,
+  getGlobals = function() return terraParams end, -- tool-global terraform knobs travel with the session.
+  applyGlobals = function(t) for k in pairs(terraParams) do if type(t[k]) == 'number' then terraParams[k] = t[k] end end end,
+  iconColor = cols.blueB,
+  iconSize = iconsBig,
+}
+
+-- Locks/unlocks the assembly spline with this id and rebuilds it now (also used by the Master Spline for linked children).
+local function setLockedById(id, isLocked)
+  local spline = splineMgr.findAssemblySpline(id)
+  if not spline then return end
+  if isLocked and spline.isDirty then splineMgr.updateDirtyAssemblySplines() end -- lock what the spline shows, not a stale build.
+  spline.isEnabled = not isLocked
+  spline.isDirty = true
+  splineMgr.updateDirtyAssemblySplines()
+end
+
+-- The splineLock `each` for the assembly spline with this id (nothing if it is gone).
+local function eachObjectById(id, fn)
+  local spline = splineMgr.findAssemblySpline(id)
+  if spline then pop.eachObject(spline, fn) end
+end
+
+-- Bake spec: baking locks the spline (its meshes save with the level and collide; it stays in the tool).
+local bakeSpec = {
+  toolId = 'assemblySpline',
+  displayName = 'Assembly Spline',
+  iconColor = cols.redB,
+  iconSize = iconsBig,
+  setLockedById = setLockedById,
+  eachObjectById = eachObjectById,
 }
 
 -- Register this tool with the shared spline input utilities.
@@ -94,9 +144,16 @@ local function onSerialize()
   local numSplines = #assemblySplines
   local assemblySplinesSer = {}
   for i = 1, numSplines do
-    assemblySplinesSer[i] = splineMgr.serializeAssemblySpline(assemblySplines[i])
+    local spline = assemblySplines[i]
+    -- A locked spline's meshes (and any hand edits) stay in the scene; it carries their ids across and takes them back.
+    if not spline.isEnabled then spline.keptObjects = pop.release(spline) end
+    assemblySplinesSer[i] = splineMgr.serializeAssemblySpline(spline)
+    if spline.keptObjects then
+      spline.keptObjects = nil
+      spline.sceneTreeFolderId = nil -- so the removal below leaves the folder in place.
+    end
   end
-  splineMgr.removeAllAssemblySplines()
+  splineMgr.removeAllAssemblySplines(true)
   return assemblySplinesSer
 end
 
@@ -107,6 +164,10 @@ local function onDeserialized(data)
     table.clear(assemblySplines)
     for i = 1, #data do
       local spline = splineMgr.deserializeAssemblySpline(data[i], true)
+      if spline.keptObjects then
+        pop.adopt(spline, spline.keptObjects)
+        spline.keptObjects = nil
+      end
       assemblySplines[#assemblySplines + 1] = spline
     end
     selectedSplineIdx = max(1, min(#assemblySplines, selectedSplineIdx))
@@ -135,19 +196,12 @@ end
 
 -- Handles the main tool window.
 local function handleMainToolWindowUI()
-  if editor.beginWindow(toolWinName, "Assembly Spline###21344", im.WindowFlags_NoCollapse) then
+  if editor.beginWindow(toolWinName, session.windowTitle(sessionSpec.toolId, "Assembly Spline", "21344"), im.WindowFlags_NoCollapse) then
     local icons = editor.icons
     local assemblySplines = splineMgr.getAssemblySplines()
     selectedSplineIdx = max(1, min(#assemblySplines, selectedSplineIdx)) -- Ensure the selected spline index is within bounds.
 
-    -- Top buttons row.
-    im.Columns(6, "topMasterButtonsRow", false)
-    im.SetColumnWidth(0, 39)
-    im.SetColumnWidth(1, 39)
-    im.SetColumnWidth(2, 39)
-    im.SetColumnWidth(3, 39)
-    im.SetColumnWidth(4, 39)
-    im.SetColumnWidth(5, 39)
+    -- Top buttons row (inline: plain im.SameLine sequence, Dummy holds slots for unavailable buttons).
     im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(2, 2))
     im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
 
@@ -160,7 +214,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip('Add a new assembly spline.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Draw A Selection Polygon' button.
     local btnCol = isDrawPolygon and cols.blueB or cols.blueD
@@ -170,7 +223,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip(isDrawPolygon and 'Click to stop drawing a selection polygon.' or 'Click to draw a selection polygon, to convert scene objects to an Assembly Spline.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Import From Bitmap Mask' button.
     if editor.uiIconImageButton(icons.floppyDiskPlus, iconsBig, cols.blueB, nil, nil, 'importFromBitmapMaskBtn') then
@@ -191,7 +243,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip('Import assembly splines from a bitmap mask.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Remove All Assembly Splines' button.
     if #assemblySplines > 0 then
@@ -206,7 +257,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Lock Shape' toggle button.
     local selSpline = assemblySplines[selectedSplineIdx]
@@ -220,7 +270,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Export Spline Mask' button.
     if #assemblySplines > 0 then
@@ -239,7 +288,17 @@ local function handleMainToolWindowUI()
     else
       im.Dummy(iconsBig)
     end
-    im.NextColumn()
+    im.SameLine()
+
+    -- Pan camera toggle (top-down RMB-drag pan + wheel zoom, shared across the spline tools).
+    if editor.uiIconImageButton(icons.videocam, iconsBig, panCamera.isOn() and cols.blueB or cols.blueD, nil, nil, 'panCamBtn') then
+      panCamera.toggle()
+    end
+    im.tooltip(panCamera.isOn() and 'Pan camera ON: top-down, RMB-drag to move, wheel to zoom. Click for the free camera.' or 'Pan camera: top-down view, RMB-drag pan + wheel zoom.')
+    im.SameLine()
+
+    -- 'Save Session' / 'Load Session' (+ Replace/Merge modal) via the shared helper.
+    session.renderButtons(sessionSpec)
 
     im.PopStyleVar(2)
     im.Columns(1)
@@ -250,11 +309,12 @@ local function handleMainToolWindowUI()
       im.TextColored(cols.greenB, "Assembly Splines:")
       im.PushItemWidth(-1)
       if im.BeginListBox('', im.ImVec2(-1, 180)) then
-        im.Columns(4, "splineListBoxColumns", true)
+        im.Columns(5, "splineListBoxColumns", true)
         im.SetColumnWidth(0, 30)
-        im.SetColumnWidth(1, 180)
+        im.SetColumnWidth(1, 150)
         im.SetColumnWidth(2, 35)
         im.SetColumnWidth(3, 35)
+        im.SetColumnWidth(4, 35)
         im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(4, 2))
         im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
         local wCtr = 41225
@@ -269,7 +329,7 @@ local function handleMainToolWindowUI()
           im.SameLine()
           im.NextColumn()
 
-          im.PushItemWidth(180)
+          im.PushItemWidth(150)
           local splineNamePtr = im.ArrayChar(32, spline.name)
           if spline.isLink then
             im.TextColored(cols.dullWhite, spline.name)
@@ -308,6 +368,7 @@ local function handleMainToolWindowUI()
           if spline.isEnabled and not spline.isLink then
             if editor.uiIconImageButton(icons.trashBin2, iconsSmall, cols.blueB, nil, nil, 'removeSpline' .. i) then
               local statePre = splineMgr.deepCopyAssemblySplineState()
+              terra.restoreBaseline(spline) -- Undo this spline's terraform carve so deleting it cleans the terrain up.
               splineMgr.removeAssemblySpline(i)
               if selectedSplineIdx > i then
                 selectedSplineIdx = selectedSplineIdx - 1
@@ -329,16 +390,19 @@ local function handleMainToolWindowUI()
             local btnCol = spline.isEnabled and cols.blueB or cols.blueD
             local btnIcon = spline.isEnabled and icons.lock or icons.lock_open
             if editor.uiIconImageButton(btnIcon, iconsSmall, btnCol, nil, nil, 'lockUnlockAssemblySplineToggleBtn' .. i) then
-              local statePre = splineMgr.deepCopyAssemblySpline(spline)
-              spline.isEnabled = not spline.isEnabled
-              pop.tryRemove(spline) -- Remove the assembly spline from the population, before rebuilding the collision mesh.
-              spline.isDirty = true
+              bake.setLocked(bakeSpec, spline, spline.isEnabled)
               selectedSplineIdx = i
-              editor.history:commitAction("Toggle assembly spline Lock", { old = statePre, new = splineMgr.deepCopyAssemblySpline(spline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
             end
-            im.tooltip((spline.isEnabled and 'Disable' or 'Enable') .. ' this assembly spline.')
+            im.tooltip(spline.isEnabled and 'Lock this assembly spline: its meshes save with the level and collide.' or 'Unlock this assembly spline: its meshes become editable again (hand edits are reset).')
           else
             im.Dummy(iconsSmall)
+          end
+          im.NextColumn()
+
+          -- 'Bake' button (per row): locks this assembly spline.
+          if bake.rowButton(bakeSpec, spline) then
+            editor.endWindow()
+            return
           end
           im.NextColumn()
           im.Separator()
@@ -364,7 +428,7 @@ local function handleMainToolWindowUI()
       -- 'Go To Selected Spline' button.
       if selSpline.nodes and #selSpline.nodes > 1 then
         if editor.uiIconImageButton(icons.cameraFocusTopDown, iconsBig, cols.blueB, nil, nil, 'goToSelectedSplineBtn') then
-          util.goToSpline(selSpline.divPoints)
+          if not panCamera.gotoPoints(selSpline.divPoints) then util.goToSpline(selSpline.divPoints) end
         end
         im.tooltip('Go to this assembly spline (move camera).')
       else
@@ -373,16 +437,14 @@ local function handleMainToolWindowUI()
       im.SameLine()
       im.NextColumn()
 
-      -- 'Conform To Surface Below' button.
+      -- 'Drop To Surface Below' one-shot button (assembly splines build free in 3D; this snaps the control nodes down to the surface).
       if selSpline and selSpline.isEnabled and not selSpline.isLink then
-        btnCol = selSpline.isConformToTerrain and cols.blueB or cols.blueD
-        if editor.uiIconImageButton(icons.lineToTerrain, iconsBig, btnCol, nil, nil, 'conformToTerrainBtn') then
+        if editor.uiIconImageButton(icons.lineToTerrain, iconsBig, cols.blueB, nil, nil, 'conformToTerrainBtn') then
           local statePre = splineMgr.deepCopyAssemblySpline(selSpline)
-          selSpline.isConformToTerrain = not selSpline.isConformToTerrain
-          selSpline.isDirty = true
-          editor.history:commitAction("Conform To Surface Below", { old = statePre, new = splineMgr.deepCopyAssemblySpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
+          splineMgr.conformNodesToTerrain(selSpline)
+          editor.history:commitAction("Drop To Surface Below", { old = statePre, new = splineMgr.deepCopyAssemblySpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
         end
-        im.tooltip((selSpline.isConformToTerrain and 'Unconform' or 'Conform') .. ' the selected assembly spline to the surface below.')
+        im.tooltip('Drop the control nodes of the selected assembly spline onto the surface below.')
       else
         im.Dummy(iconsBig)
       end
@@ -1430,9 +1492,9 @@ local function handleMainToolWindowUI()
             im.SetColumnWidth(0, 30)
 
           -- 'DOI' slider.
-          if terraParams.terraDOI ~= 50.0 then
+          if terraParams.terraDOI ~= 20.0 then
             if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetDOI_assembly') then
-              terraParams.terraDOI = 50.0
+              terraParams.terraDOI = 20.0
             end
             im.tooltip("Reset to default")
           else
@@ -1450,9 +1512,9 @@ local function handleMainToolWindowUI()
           im.NextColumn()
 
           -- 'Terraform Margin' slider.
-          if terraParams.terraMargin ~= 5.0 then
+          if terraParams.terraMargin ~= 1.0 then
             if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetMargin_assembly') then
-              terraParams.terraMargin = 5.0
+              terraParams.terraMargin = 1.0
             end
             im.tooltip("Reset to default")
           else
@@ -1469,9 +1531,9 @@ local function handleMainToolWindowUI()
           im.NextColumn()
 
           -- 'Terraform Falloff' slider.
-          if terraParams.terraFalloff ~= 2.0 then
+          if terraParams.terraFalloff ~= 3.0 then
             if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetFalloff_assembly') then
-              terraParams.terraFalloff = 2.0
+              terraParams.terraFalloff = 3.0
             end
             im.tooltip("Reset to default")
           else
@@ -1525,18 +1587,39 @@ local function handleMainToolWindowUI()
           im.PopItemWidth()
           im.NextColumn()
 
+          -- 'Terraform Smoothing' slider.
+          if terraParams.terraSmooth ~= 2.0 then
+            if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetSmooth_assembly') then
+              terraParams.terraSmooth = 2.0
+            end
+            im.tooltip("Reset to default")
+          else
+            im.Dummy(iconsSmall)
+          end
+          im.SameLine()
+          im.NextColumn()
+          im.PushItemWidth(-1)
+          tmpPtr = im.FloatPtr(terraParams.terraSmooth)
+          if im.SliderFloat('###assembly_smooth', tmpPtr, 0.0, 2.0, "Smoothing = %.0f") then
+            terraParams.terraSmooth = tmpPtr[0]
+          end
+          im.tooltip('Relaxation passes on the transition apron OUTSIDE the spline (the flat margin stays exact). 0 = raw feathered falloff; 2 = a smooth, even embankment. Above 2 just widens the feather, so it caps here.')
+          im.PopItemWidth()
+          im.NextColumn()
+
           im.Columns(1)
 
-          -- 'Terraform To Assembly Spline' button.
-          if selSpline and selSpline.isEnabled and not selSpline.isLink and #selSpline.nodes > 1 and not selSpline.isConformToTerrain then
-            if editor.uiIconImageButton(icons.terrainToLine, iconsBig, cols.blueB, nil, nil, 'terraformToAssemblySplineBtn') then
-              local sources = util.getSourcesSingle(selSpline)
-              terra.terraformToSources(terraParams.terraDOI, terraParams.terraMargin, terraParams.terraFalloff, terraParams.terraRoughness, terraParams.terraScale, sources)
-            end
-            im.tooltip('Terraform the terrain to the selected Assembly Spline.')
-          else
-            im.Dummy(iconsBig)
+          -- Terraform to the molecule's REAL cross-run footprint (cached on the molecule), not the placeholder node width; min 1m.
+          if selSpline then
+            local mol_ = selSpline.moleculeDescription
+            selSpline.terraWidth = math.max(1.0, (mol_ and mol_.crossW) or 0)
           end
+
+          -- 'Terraform To Assembly Spline' + 'Restore Terrain' buttons (shared baseline-memory helper: idempotent re-carve + un-carve).
+          local canTerra = selSpline and selSpline.isEnabled and not selSpline.isLink and #selSpline.nodes > 1 and not selSpline.isConformToTerrain
+          terra.terraformButtons(selSpline, canTerra,
+            { doi = terraParams.terraDOI, margin = terraParams.terraMargin, falloff = terraParams.terraFalloff, roughness = terraParams.terraRoughness, scale = terraParams.terraScale, smooth = terraParams.terraSmooth },
+            'Assembly Spline', icons, cols, iconsBig)
           im.NextColumn()
           im.Columns(1)
           im.Separator()
@@ -1570,12 +1653,15 @@ local function onEditorGui()
 
   -- If this tool is not active, render the shells of the splines but do nothing further.
   if not isAssemblySplineActive then
-    render.renderShells(splineMgr.getAssemblySplines())
+    rSpline.renderShells(splineMgr.getAssemblySplines())
     return
   end
 
   -- Handle the main tool window UI.
   handleMainToolWindowUI()
+
+  -- Drive the pan camera when it's on (blocked during polygon draw / node drag so they don't fight).
+  if panCamera.isOn() then panCamera.drive(isDrawPolygon or input.isDragging()) end
 
   -- Handle the front end if the user is drawing a selection polygon.
   if isDrawPolygon then
@@ -1603,10 +1689,10 @@ local function onEditorGui()
   -- Render the assembly splines with debugDraw (only if not linked to master spline).
   local selSpline = splines[selectedSplineIdx]
   if selSpline then
-    render.handleSplineRendering(splines, selectedSplineIdx, selectedNodeIdx, isGizmoActive, false, isLockShape, true, false, elevScale)
+    rSpline.handleSplineRendering(splines, selectedSplineIdx, selectedNodeIdx, isGizmoActive, false, isLockShape, true, false, elevScale)
 
     -- Render polylines for assembly splines.
-    render.renderSplinePolylines(splines, selectedSplineIdx)
+    rSpline.renderSplinePolylines(splines, selectedSplineIdx)
   end
 end
 
@@ -1617,6 +1703,10 @@ local function onActivate()
   editor.clearObjectSelection()
   editor.showWindow(toolWinName)
   isAssemblySplineActive = true
+  panCamera.configure({ focusProvider = function()
+    local s = splineMgr.getAssemblySplines()[selectedSplineIdx]
+    return s and s.divPoints
+  end })
 end
 
 -- Called when the tool is exited.
@@ -1624,6 +1714,7 @@ local function onDeactivate()
   isDrawPolygon = false
   poly.clearPolygon() -- Ensure there is no residual polygon left over from the previous usage.
   editor.hideWindow(toolWinName)
+  panCamera.close()
   isAssemblySplineActive = false
 end
 
@@ -1682,6 +1773,8 @@ end
 -- Public interface.
 M.setSelectedSplineIdx =                                  setSelectedSplineIdx
 M.setSelectedNodeIdx =                                    setSelectedNodeIdx
+M.setLockedById =                                         setLockedById
+M.eachObjectById =                                        eachObjectById
 
 M.onSerialize =                                           onSerialize
 M.onDeserialized =                                        onDeserialized

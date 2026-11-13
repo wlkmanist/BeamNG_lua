@@ -1,14 +1,44 @@
 local M = {}
 
+local missionTypeLabelByType = {
+  dragStripRace = "bigMap.missionLabels.dragRace",
+  dragStripAPM = "bigMap.missionLabels.dragRace",
+  generatedTimeTrial = "bigMap.missionLabels.timeTrial",
+  simpleLapconfigScenario = "bigMap.missionLabels.training",
+  flowgraph = "bigMap.missionLabels.custom",
+}
+
 local function getKeyFromDetails(details)
   return string.format("mission_%s", details.missionId)
 end
 
+local function getGameplaySelectorSubGroup(mission)
+  if mission.gameplaySelectorSubGroup then
+    return mission.gameplaySelectorSubGroup
+  end
+  if mission.missionType == "garageToGarage" then
+    local missionTypeData = mission.missionTypeData or {}
+    return missionTypeData.isGlobal and "missions.garage.gameplaySelectorSubGroup.global" or "missions.garage.gameplaySelectorSubGroup.other"
+  end
+end
+
 local function onGameplaySelectorGetTiles(items, backend)
   if backend.backendName == "gameplaySelector" then
-    for _, mission in ipairs(gameplay_missions_missions.getAllMissions()) do
+    for _, mission in ipairs(gameplay_missions_missions.getFilesData(true)) do
       local isCareerOnly = mission.careerSetup and mission.careerSetup.showInCareer and not mission.careerSetup.showInFreeroam
+      local missionTypeLabel = mission.missionTypeLabel or missionTypeLabelByType[mission.missionType]
+      if not missionTypeLabel then
+        local missionTypeData = mission.missionTypeData or {}
+        if mission.missionType == "drift" and missionTypeData.driftType ~= "A to B" and missionTypeData.driftType ~= "A to B with stunt zones" then
+          missionTypeLabel = "bigMap.missionLabels.gymkhana"
+        elseif mission.missionType == "avalanche" and not missionTypeData.targetAreaActive then
+          missionTypeLabel = "bigMap.missionLabels.gymkhana"
+        else
+          missionTypeLabel = "bigMap.missionLabels." .. mission.missionType
+        end
+      end
       local forwardInfo = gameplay_missions_unlocks.getForwardMissionInfo(mission)
+      local date = tonumber(mission.date) or 0
 
       local item =  {
         name = mission.name,
@@ -19,15 +49,15 @@ local function onGameplaySelectorGetTiles(items, backend)
 
         system = "challenges",
         missionType = mission.missionType,
-        missionTypeLabel = mission.missionTypeLabel,
-        gameplaySelectorSubGroup = mission.gameplaySelectorSubGroup,
-        type = _tr(mission.missionTypeLabel),
+        missionTypeLabel = missionTypeLabel,
+        gameplaySelectorSubGroup = getGameplaySelectorSubGroup(mission),
+        type = _tr(missionTypeLabel),
         sourceIcons = {},
         isAuxiliary = mission.devMission,
         isCareerOnly = isCareerOnly, -- Add flag for filtering
-        order = isCareerOnly and forwardInfo.depth or -(mission.date or 0),
+        order = isCareerOnly and forwardInfo.depth or -date,
         validBackends = {gameplaySelector = true},
-        date = mission.date,
+        date = date,
       }
       item.key = getKeyFromDetails(item.showDetails)
       item.showDetails.key = item.key
@@ -43,7 +73,7 @@ local function onGameplaySelectorGetTiles(items, backend)
         item.level = core_levels.getLevelTitle(item.level) or "ui.menu.gridSelector.other"
         item.level = _tr(item.level)
       end
-      if mission.official then
+      if mission.official or isOfficialContentVPath(mission.missionFolder) then
         table.insert(item.sourceIcons, {icon = "beamNG"})
       end
       if mission.devMission then
@@ -206,7 +236,7 @@ local function onGameplaySelectorGetDetails(itemDetails, details, buttonInstance
         -- Track recent usage
         backend.trackRecent(itemDetails.key)
         -- Start mission
-        gameplay_missions_missionManager.startWithLoadingLevel(mission)
+        gameplay_missions_missionManager.startWithLoadingLevel(mission, nil, nil, "gameplaySelector")
       end, {
         label = _tr("ui.menu.gameplaySelector.missions.startMission"),
         icon = "play",

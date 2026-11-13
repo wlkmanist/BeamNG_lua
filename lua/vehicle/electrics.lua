@@ -302,8 +302,6 @@ local function updateElectricsWithIgnitionLevelEuropean()
   values.signal_R = 0
   values.hazard = 0
   values.hazard_enabled = 0
-  values.lightbar = 0
-  lightbarState = 0
   values.lowpressure = 0
   values.oil = 0
   values.lowhighbeam = 0
@@ -796,7 +794,6 @@ local function reset()
 
   customValueParser.resetCustomValues()
 
-  --lightbarState = 0
   lightsSavedState = 0
 
   resetIndicatorPulse()
@@ -841,7 +838,6 @@ local function init()
   M.values.boostMax = 0
   M.values.electricalLoadCoef = 1
 
-  --lightbarState = 0
   lightsSavedState = 0
 
   toggleSound(lightbarState == 2, sirenSound)
@@ -932,7 +928,7 @@ local function init()
   ignitionHoldingStarterTimer = 0
   ignitionWasStartingEngine = false
 
-  spawnVehicleIgnitionLevel = settings.getValue("spawnVehicleIgnitionLevel") or 3
+  spawnVehicleIgnitionLevel = settings.getValue("spawnVehicleIgnitionLevel", 3, playerInfo.persona)
   if v.config.additionalVehicleData and v.config.additionalVehicleData.spawnWithEngineRunning ~= nil then
     spawnVehicleIgnitionLevel = v.config.additionalVehicleData.spawnWithEngineRunning and 3 or 0
   end

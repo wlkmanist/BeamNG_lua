@@ -195,7 +195,7 @@ function C:drawSide(a, b, z, clrI)
   debugDrawer:drawTriSolid(xDraw, yDraw, zDraw, clrI)
 end
 
-function C:generateMultiSpots(parkingSpotList)
+function C:generateMultiSpots(parkingSpotList, skipSort)
   if self.wasGenerated then
     return
   end
@@ -223,7 +223,7 @@ function C:generateMultiSpots(parkingSpotList)
       tempPos:setAdd2(self.pos, tempDirVec)
       tempQuat:setFromEuler(0, 0, self.multiSpotData.spotRotation)
       tempQuat:setMul2(tempQuat, self.rotOrig)
-      local newSpot = parkingSpotList:create(string.format("%s.%d", self.name, (i + 1)))
+      local newSpot = parkingSpotList:create(string.format("%s.%d", self.name, (i + 1)), nil, skipSort)
       newSpot:set(tempPos, tempQuat, self.scl)
 
       for _, tag in ipairs(self.customFields.sortedTags) do

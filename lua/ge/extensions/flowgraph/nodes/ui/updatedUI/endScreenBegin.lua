@@ -171,7 +171,7 @@ end
 function C:onResetGameplay()
   if self.open and self.data.includeRetryButton then
     log("I","","Closing End Screen because of reset!")
-    guihooks.trigger('ChangeState', 'play')
+    extensions.ui_router.navigate('play')
     self.pinOut.retry.value = true
   end
 end
@@ -250,7 +250,7 @@ function C:openDialogue()
   else
     table.insert(defaultBtns, self.mgr.modules.ui:addButton(
         function()
-          guihooks.trigger('ChangeState', {state = 'menu.scenarios'})
+          extensions.ui_router.navigate('menu.scenarios')
         end, {
         label = "ui.dashboard.scenarios",
       }))
@@ -324,7 +324,7 @@ end
 
 function C:closeDialogue()
   if self.built then
-    guihooks.trigger('ChangeState', 'play')
+    extensions.ui_router.navigate('play')
   end
 end
 

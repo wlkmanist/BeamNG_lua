@@ -105,7 +105,7 @@ local function updateGFX(dt)
       currentNode.containerBeamBroken = true
       currentNode.canIgnite = true
       if not currentNode.ignoreContainerBeamBreakMessage then
-        guihooks.message("vehicle.fire.fuelTankRuptured", 10, "vehicle.damage.fueltank")
+        guihooks.messageForSeatedPlayers("vehicle.fire.fuelTankRuptured", 10, "vehicle.damage.fueltank")
       end
     end
     currentNode.vaporState = max(currentNode.vaporState - (vaporCondenseCoef * dt), 0) -- condense fuel again

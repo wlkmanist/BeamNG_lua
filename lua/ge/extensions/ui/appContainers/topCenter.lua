@@ -3,7 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
-M.dependencies = { "ui_appContainers" }
+M.dependencies = {"ui_appContainers", "ui_firstDrive_moveOff"}
 
 local logTag = "appContainers_topCenter"
 local verboseLogging = false
@@ -16,6 +16,9 @@ local FLASH_MESSAGE_EVENT = "TopCenterAppsFlashMessage"
 
 local flashMessageQueue = {}
 local currentMessage = nil
+
+local activeFlash = nil
+local activeSpeedTarget = nil
 
 local function setAppVisibility(containerId, appId, visible)
   ui_appContainers.setAppVisibility(containerId, appId, visible)
@@ -43,6 +46,19 @@ end
 
 local function getVisibleApps(containerId)
   return ui_appContainers.getVisibleApps(containerId)
+end
+
+local function setSpeedTarget(data)
+  activeSpeedTarget = data
+  guihooks.trigger("TechDriverTrainingSpeedBarTarget", data)
+end
+
+local function getSpeedTarget()
+  return activeSpeedTarget
+end
+
+local function clearSpeedTarget()
+  activeSpeedTarget = nil
 end
 
 local function getAvailableApps(containerId)
@@ -167,7 +183,24 @@ end
 local function clearAllFlashMessages()
   flashMessageQueue = {}
   currentMessage = nil
+  activeFlash = nil
   hideApp(CONTAINER_ID, "flashMessage")
+end
+
+-- Shows a single flash message and remembers it for the duration of its ttl. So that even if the hud app mounts late, it will show
+local function showFlashMessage(msg, ttl, big)
+  ttl = ttl or 3
+  big = big and true or false
+  activeFlash = { msg = msg, ttl = ttl, big = big, remaining = ttl }
+  showApp(CONTAINER_ID, "flashMessage")
+  guihooks.trigger(FLASH_MESSAGE_EVENT, { msg = msg, ttl = ttl, big = big })
+end
+
+-- Used by the hud app to catch up on a message that was sent before it mounted.
+local function getActiveFlashMessage()
+  if not activeFlash then return nil end
+  if not getAppVisibility(CONTAINER_ID, "flashMessage") then return nil end
+  return { msg = activeFlash.msg, ttl = activeFlash.remaining, big = activeFlash.big }
 end
 
 local function onGameplayFlashMessage(data)
@@ -194,6 +227,13 @@ local function onGameplayFlashMessage(data)
 end
 
 local function onUpdate(dtReal, dtSim, dtRaw)
+  if activeFlash then
+    activeFlash.remaining = activeFlash.remaining - dtReal
+    if activeFlash.remaining <= 0 then
+      activeFlash = nil
+    end
+  end
+
   if currentMessage then
     currentMessage.timer = currentMessage.timer + dtSim
     if currentMessage.timer >= currentMessage.duration then
@@ -234,8 +274,10 @@ local function onExtensionLoaded()
       drift = { visible = false },
       drag = { visible = false },
       pointsBar = { visible = false },
+      speedTargetBar = { visible = false },
       flashMessage = { visible = false },
       countdown = { visible = false },
+      moveOff = { visible = false },
     }
   })
 end
@@ -243,6 +285,7 @@ end
 local function onExtensionUnloaded()
   flashMessageQueue = {}
   currentMessage = nil
+  activeFlash = nil
 end
 
 M.onExtensionLoaded = onExtensionLoaded
@@ -253,6 +296,11 @@ M.onUpdate = onUpdate
 M.onGameplayFlashMessage = onGameplayFlashMessage
 M.clearMessagesFromSource = clearMessagesFromSource
 M.clearAllFlashMessages = clearAllFlashMessages
+M.showFlashMessage = showFlashMessage
+M.getActiveFlashMessage = getActiveFlashMessage
+M.setSpeedTarget = setSpeedTarget
+M.getSpeedTarget = getSpeedTarget
+M.clearSpeedTarget = clearSpeedTarget
 M.onScenarioFlashMessage = onScenarioFlashMessage
 M.onScenarioFlashMessageClear = onScenarioFlashMessageClear
 M.onScenarioNotRunning = onScenarioNotRunning

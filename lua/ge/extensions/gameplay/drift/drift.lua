@@ -3,7 +3,6 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 M.dependencies = {"gameplay_walk"}
---M.dependencies = {"gameplay_util_crashDetection"} -- this needs to be there in order for crashDetection onUpdate to be called before drift onUpdate
 local im = ui_imgui
 local pow = math.pow
 local abs = math.abs
@@ -11,9 +10,7 @@ local sqrt = math.sqrt
 
 local redF = ColorF(1,0,0,1)
 local blueF = ColorF(0,0.5,1,0.5)
-local vehId
-local resetFlag = false
-local isBeingDebugged
+
 local simulatedDriftData
 local dtSim
 
@@ -24,57 +21,15 @@ local driftDebugInfo = {
   canBeChanged = true
 }
 
-local accelSmoother = newTemporalSmoothing(0.13,0.13)
-local gForceSmoother = newTemporalSmoothing(2,2)
-
 local plotHelperUtil
 local maxHistorySize = 50
 local debugHistoryTimer = 0
 local debugHistorySamplesPerSec = 10
 local debugToggleSmothnessGraph = im.BoolPtr(false)
 
-local currDriftCompletedTimer = 0
-local currFailPointsCooldown = 0 -- after a crash or spinout, we need to wait for a cooldown before we can start drifting again and earn points
-local isDrifting
-local isOverSteering
-local isChainingDrifts
-local isCrashing
-local currDegAngle
-local currDegAngleSign
-local lastDriftTimer = 0
 local resetTimer = 0.1
-local currResetTimer = 0
-local score
-local driftChainActiveData = nil -- data about a whole chain of drifts
-local driftActiveData = nil -- data about a single drift
-local driftSmoothnessData = nil
-local frontPoint = {
-  lastFrameVel = vec3(),
-  lastFramePos = vec3(),
-  vel = vec3(),
-  pos = vec3(),
-} -- arbitrary point placed in front of the car to detect a drift
-local rearPoint = {
-  lastFrameVel = vec3(),
-  lastFramePos = vec3(),
-  vel = vec3(),
-  pos = vec3(),
-} -- arbitrary point placed behind the car to detect a drift
-local accelerationSmoothed -- negative and positive
-local lastFrameKphAirSpeed
-local distSinceLastFrame -- drift scoring is calculated with distance, and not time
-local kphAirSpeed
-local isInTheAir
-local isReverseCheesing
-local currDriftCompleteTime
-local crashed = false
-local balanceMode = false -- to better balance mission we use cheats
 
-local debugHistories = {
-  jerk = {color = {1, 0.1, 0.1, 1}, name = "G-Force Jerk", data = {}},
-  angleDiff = {color = {0.3, 1, 1, 1}, name = "Angle Diff", data = {}},
-  speedDiff = {color = {0.3, 1, 0.3, 1}, name = "Speed Diff", data = {}},
-}
+local showImguiCrashWindow = false
 
 local crashDetectionSettings = {
   verticallyUnweighted = true,
@@ -96,33 +51,86 @@ local driftOptions = {
   baseDriftCompleteTime = 1.2,
   failPointsCooldown = 1.65,
   minAirSpeed = 4,
-  maxWasDriftingTime = 4, -- used to detect spinouts
+  maxWasDriftingTime = 4,
   crashDamageThreshold = 150
 }
 
-local showImguiCrashWindow = false
+local trackedVehicles = {} -- keyed by vehId
+local firstDriveSuppressed = false
 
-local function reset()
-  gameplay_util_crashDetection.resetCrashData(vehId)
-  driftActiveData = nil
-  driftChainActiveData = nil
-  driftSmoothnessData = nil
-  resetFlag = true
-  isDrifting = false
-  balanceMode = false
-
-  -- Reset debug histories
-  for _, historyData in pairs(debugHistories) do
-    historyData.data = {}
-  end
+local function newVehicleDriftState(id)
+  return {
+    vehId = id,
+    playerId = 0,
+    veh = nil,
+    vehData = nil,
+    resetFlag = false,
+    isDrifting = false,
+    isOverSteering = false,
+    isChainingDrifts = false,
+    isCrashing = false,
+    currDegAngle = 0,
+    currDegAngleSign = 0,
+    currDriftCompletedTimer = 0,
+    currFailPointsCooldown = 0,
+    lastDriftTimer = 0,
+    currResetTimer = 0,
+    driftActiveData = nil,
+    driftChainActiveData = nil,
+    driftSmoothnessData = nil,
+    frontPoint = {
+      lastFrameVel = vec3(),
+      lastFramePos = vec3(),
+      vel = vec3(),
+      pos = vec3(),
+    },
+    rearPoint = {
+      lastFrameVel = vec3(),
+      lastFramePos = vec3(),
+      vel = vec3(),
+      pos = vec3(),
+    },
+    accelSmoother = newTemporalSmoothing(0.13, 0.13),
+    gForceSmoother = newTemporalSmoothing(2, 2),
+    accelerationSmoothed = nil,
+    lastFrameKphAirSpeed = nil,
+    kphAirSpeed = 0,
+    distSinceLastFrame = 0,
+    isInTheAir = false,
+    isReverseCheesing = false,
+    currDriftCompleteTime = nil,
+    crashed = false,
+    balanceMode = false,
+    vehPos = vec3(),
+    velDir = vec3(0,0,0),
+    lastFramePlPos = vec3(),
+    lastFrameVel = vec3(),
+    avrgRefPointsKphSpeed = nil,
+    frontDot = nil,
+    centerDot = nil,
+    rearDot = nil,
+    driftAngleDiff = nil,
+    stopSpinoutCheck = false,
+    triggerCrashDelayTimer = 0,
+    score = nil,
+    -- debug
+    debugHistories = {
+      jerk = {color = {1, 0.1, 0.1, 1}, name = "G-Force Jerk", data = {}},
+      angleDiff = {color = {0.3, 1, 1, 1}, name = "Angle Diff", data = {}},
+      speedDiff = {color = {0.3, 1, 0.3, 1}, name = "Speed Diff", data = {}},
+    },
+  }
 end
 
---------- GARBAGE COLLECTION VARIABLES -----------
-local vehPos = vec3()
-local velDir = vec3(0,0,0)
-local veh
-local vehData
-local driftAngleDiff
+local function getState(vehId)
+  if vehId then return trackedVehicles[vehId] end
+  local plVehId = be:getPlayerVehicleID(0)
+  if plVehId and trackedVehicles[plVehId] then return trackedVehicles[plVehId] end
+  for _, state in pairs(trackedVehicles) do return state end
+  return nil
+end
+
+-- GC-avoidance scratch vectors (shared across all vehicles per frame)
 local dirVec = vec3()
 local corner_FL = vec3()
 local corner_FR = vec3()
@@ -133,146 +141,37 @@ local frontCenter = vec3()
 local rearCenter = vec3()
 local up = vec3(0,0,1)
 local tempVec = vec3(0,0,0)
-local avrgRefPointsKphSpeed -- instead of picking the car speed, we use two off-centered points
-local frontDot -- calculate the front reference point's velocity dot product with vehicle dir
-local centerDot -- calculate the center reference point's velocity dot product with vehicle dir
-local rearDot -- calculate the rear reference point's velocity dot product with vehicle dir
---------------------------------------------------
-local function newDriftSmoothnessData()
-  driftSmoothnessData = {
-    totalScore = 0,
-    numberOfSamples = 0,
-    smoothness = 0,
-
-    gForceJerk = 0,
-  }
-end
-
-local function newDriftActiveData(vehicleData)
-  driftActiveData = {
-    driftDuration = 0,
-    driftDistance = 0,
-    closestWallDistanceFront = 0,
-    closestWallDistanceRear = 0,
-    currDegAngle = 0,
-    direction = nil,
-    lastFrameVelDir = vec3(velDir),
-    totalDriftAngle = 0,
-    totalDriftTime = 0,
-    angleVelocity = 0,
-    totalDonutsInRow = 0,
-    startPos = vec3(vehicleData.pos),
-    lastPos = vec3(vehicleData.pos),
-    avgDriftAngle = 0,
-    driftUniformity = 0,
-    score = 0, -- earned score during that one drift
-
-    -- these are used for average calculation
-    totalAngles = 0,
-    totalSpeeds = 0,
-    totalPerformanceFactors = 0,
-    totalSteps = 0,
-
-    -- drift smoothness data
-    lastFrameDriftAngle = currDegAngle,
-    driftAngleDiffSinceLastFrame = 0,
-    lastFrameSpeed = 0,
-    speedDiffSinceLastFrame = 0,
-    lastFrameGForce = 0,
-    gForceJerk = 0,
-  }
-end
-
-local function newDriftChainActiveData()
-  driftChainActiveData = {
-    totalDriftDistance = 0,
-    totalDriftTime = 0,
-    rightDrifts = 0,
-    leftDrifts = 0,
-    chainedDrifts = 0,
-    currentCircleDrift = { -- 360 drifts
-      totalAngle = 0
-    }
-  }
-end
-
-
--- Function to calculate yaw from a vector
-local function calculateYaw(vector)
-  local normalized = vector:normalized()
-  return math.atan2(normalized.y, normalized.x)
-end
-
--- Function to calculate the yaw difference
-local function yawDifference(vec1, vec2)
-  local yaw1 = calculateYaw(vec1)
-  local yaw2 = calculateYaw(vec2)
-  local difference = yaw2 - yaw1
-
-  -- Normalize the difference to be within -π to π
-  while difference > math.pi do
-      difference = difference - 2 * math.pi
-  end
-  while difference < -math.pi do
-      difference = difference + 2 * math.pi
-  end
-
-  return difference
-end
-
-local velocityTip = vec3(0,0,0)
-local function calculateDriftAngle(vehData)
-  dirVec:set(vehData.dirVec)
-  tempVec:set(vehData.vel)
-  tempVec:normalize()
-  dirVec:normalize()
-
-  currDegAngle = math.abs(yawDifference(tempVec, dirVec) * (180 / math.pi))
-  currDegAngleSign = vehData.vel:dot(up:cross(dirVec))
-
-  if simulatedDriftData then currDegAngle = simulatedDriftData.currDegAngle end
-
-  if isBeingDebugged then
-    debugDrawer:drawTextAdvanced(center, string.format("Smoothed accel : %0.2f", accelerationSmoothed or 0), ColorF(1,1,1,1),  true, false, ColorI(0,0,0,255), false, false)
-
-    debugDrawer:drawLine(center, center + dirVec, ColorF(1,0,0,1))
-    velocityTip:set(center + vehData.vel:normalized())
-    debugDrawer:drawLine(center, velocityTip, ColorF(1,0.3,0,1))
-    debugDrawer:drawTextAdvanced(center, string.format("Yaw : %d ° (min req:%d)", currDegAngle, driftOptions.minAngle), ColorF(1,1,1,1), true, false, ColorI(0,0,0,255), false, false)
-  end
-end
 
 local halfAxis0 = vec3()
 local halfAxis1 = vec3()
 local halfAxis2 = vec3()
 local oobbCenter = vec3()
 local raycastHeightVec = vec3(0,0,driftOptions.raycastHeight)
-local function calculateVehCenterAndWheels()
-  halfAxis0:set(be:getObjectOOBBHalfAxisXYZ(vehId, 0))
-  halfAxis1:set(be:getObjectOOBBHalfAxisXYZ(vehId, 1))
-  halfAxis2:set(be:getObjectOOBBHalfAxisXYZ(vehId, 2))
-  oobbCenter:set(be:getObjectOOBBCenterXYZ(vehId))
-  corner_FL:set(-push3(halfAxis1)+push3(oobbCenter)+push3(halfAxis0)-push3(halfAxis2)+push3(raycastHeightVec))
-  corner_FR:set(-push3(halfAxis1)+push3(oobbCenter)-push3(halfAxis0)-push3(halfAxis2)+push3(raycastHeightVec))
-  corner_BR:set(push3(halfAxis1)+push3(oobbCenter)+push3(halfAxis0)-push3(halfAxis2)+push3(raycastHeightVec))
-  corner_BL:set(push3(halfAxis1)+push3(oobbCenter)-push3(halfAxis0)-push3(halfAxis2)+push3(raycastHeightVec))
-  center:set(
-    (corner_FL.x + corner_FR.x + corner_BL.x + corner_BR.x) / 4,
-    (corner_FL.y + corner_FR.y + corner_BL.y + corner_BR.y) / 4,
-    (corner_FL.z + corner_FR.z + corner_BL.z + corner_BR.z) / 4
-  )
 
-  frontCenter:set(
-    (corner_FL.x + corner_FR.x + center.x) / 3,
-    (corner_FL.y + corner_FR.y + center.y) / 3,
-    (corner_FL.z + corner_FR.z + center.z) / 3
-  )
-  rearCenter:set(
-    (corner_BL.x + corner_BR.x + center.x) / 3,
-    (corner_BL.y + corner_BR.y + center.y) / 3,
-    (corner_BL.z + corner_BR.z + center.z) / 3
-  )
-end
+local velocityTip = vec3(0,0,0)
+
+local tempVecCurrVel = vec3()
+local tempVecPos = vec3()
+local tempVecPosUp = vec3()
+local tempVecPosUp2 = vec3()
+local tempNormalizedVel = vec3()
+local tempColor = ColorF(1,0.3,1,0.3)
+
+local frontPointTempVec = vec3()
+local rearPointTempVec = vec3()
+local crossUpTempVec = vec3()
+
+local vec3DistDiff = vec3(0,0,0)
+local tempVellDiff = vec3()
+local tempVec2 = vec3()
+
+local random = 0.5
+local distFromCenter = 4
+local minSpeedAllowed = 1.5
+local minAllowedAngle = 110
+local triggerCrashDelay = 0.3
+
+--------------------------------------------------
 
 local scanners = {
   front = {
@@ -295,20 +194,170 @@ local scanners = {
   },
 }
 
-local random = 0.5
-local tempVec2 = vec3()
-local function calculateDistWall()
+local function resetVehicleState(state)
+  gameplay_util_crashDetection.resetCrashData(state.vehId)
+  state.driftActiveData = nil
+  state.driftChainActiveData = nil
+  state.driftSmoothnessData = nil
+  state.resetFlag = true
+  state.isDrifting = false
+  state.balanceMode = false
+
+  for _, historyData in pairs(state.debugHistories) do
+    historyData.data = {}
+  end
+end
+
+local function newDriftSmoothnessData(state)
+  state.driftSmoothnessData = {
+    totalScore = 0,
+    numberOfSamples = 0,
+    smoothness = 0,
+    gForceJerk = 0,
+  }
+end
+
+local function newDriftActiveData(state, vehicleData)
+  state.driftActiveData = {
+    driftDuration = 0,
+    driftDistance = 0,
+    closestWallDistanceFront = 0,
+    closestWallDistanceRear = 0,
+    currDegAngle = 0,
+    direction = nil,
+    lastFrameVelDir = vec3(state.velDir),
+    totalDriftAngle = 0,
+    totalDriftTime = 0,
+    angleVelocity = 0,
+    totalDonutsInRow = 0,
+    startPos = vec3(vehicleData.pos),
+    lastPos = vec3(vehicleData.pos),
+    avgDriftAngle = 0,
+    driftUniformity = 0,
+    score = 0,
+
+    totalAngles = 0,
+    totalSpeeds = 0,
+    totalPerformanceFactors = 0,
+    totalSteps = 0,
+
+    lastFrameDriftAngle = state.currDegAngle,
+    driftAngleDiffSinceLastFrame = 0,
+    lastFrameSpeed = 0,
+    speedDiffSinceLastFrame = 0,
+    lastFrameGForce = 0,
+    gForceJerk = 0,
+  }
+end
+
+local function newDriftChainActiveData(state)
+  state.driftChainActiveData = {
+    totalDriftDistance = 0,
+    totalDriftTime = 0,
+    rightDrifts = 0,
+    leftDrifts = 0,
+    chainedDrifts = 0,
+    currentCircleDrift = {
+      totalAngle = 0
+    }
+  }
+end
+
+local function calculateYaw(vector)
+  local normalized = vector:normalized()
+  return math.atan2(normalized.y, normalized.x)
+end
+
+local function yawDifference(vec1, vec2)
+  local yaw1 = calculateYaw(vec1)
+  local yaw2 = calculateYaw(vec2)
+  local difference = yaw2 - yaw1
+
+  while difference > math.pi do
+      difference = difference - 2 * math.pi
+  end
+  while difference < -math.pi do
+      difference = difference + 2 * math.pi
+  end
+
+  return difference
+end
+
+local isBeingDebugged
+local function calculateDriftAngle(state, vehData)
+  dirVec:set(vehData.dirVec)
+  dirVec:normalize()
+  tempVec:set(vehData.vel)
+  tempVec:normalize()
+
+  local difference = math.atan2(dirVec.y, dirVec.x) - math.atan2(tempVec.y, tempVec.x)
+  if difference > math.pi then difference = difference - 2 * math.pi
+  elseif difference < -math.pi then difference = difference + 2 * math.pi end
+  state.currDegAngle = math.abs(difference * (180 / math.pi))
+  state.currDegAngleSign = vehData.vel:dot(up:cross(dirVec))
+
+  if simulatedDriftData then state.currDegAngle = simulatedDriftData.currDegAngle end
+
+  if isBeingDebugged then
+    debugDrawer:drawTextAdvanced(center, string.format("Smoothed accel : %0.2f", state.accelerationSmoothed or 0), ColorF(1,1,1,1),  true, false, ColorI(0,0,0,255), false, false)
+    debugDrawer:drawLine(center, center + dirVec, ColorF(1,0,0,1))
+    velocityTip:set(center + vehData.vel:normalized())
+    debugDrawer:drawLine(center, velocityTip, ColorF(1,0.3,0,1))
+    debugDrawer:drawTextAdvanced(center, string.format("Yaw : %d ° (min req:%d)", state.currDegAngle, driftOptions.minAngle), ColorF(1,1,1,1), true, false, ColorI(0,0,0,255), false, false)
+  end
+end
+
+local function calculateVehCenterAndWheels(state)
+  halfAxis0:set(be:getObjectOOBBHalfAxisXYZ(state.vehId, 0))
+  halfAxis1:set(be:getObjectOOBBHalfAxisXYZ(state.vehId, 1))
+  halfAxis2:set(be:getObjectOOBBHalfAxisXYZ(state.vehId, 2))
+  oobbCenter:set(be:getObjectOOBBCenterXYZ(state.vehId))
+  corner_FL:set(
+    -halfAxis1.x + oobbCenter.x + halfAxis0.x - halfAxis2.x + raycastHeightVec.x,
+    -halfAxis1.y + oobbCenter.y + halfAxis0.y - halfAxis2.y + raycastHeightVec.y,
+    -halfAxis1.z + oobbCenter.z + halfAxis0.z - halfAxis2.z + raycastHeightVec.z
+  )
+  corner_FR:set(
+    -halfAxis1.x + oobbCenter.x - halfAxis0.x - halfAxis2.x + raycastHeightVec.x,
+    -halfAxis1.y + oobbCenter.y - halfAxis0.y - halfAxis2.y + raycastHeightVec.y,
+    -halfAxis1.z + oobbCenter.z - halfAxis0.z - halfAxis2.z + raycastHeightVec.z
+  )
+  corner_BR:set(
+    halfAxis1.x + oobbCenter.x + halfAxis0.x - halfAxis2.x + raycastHeightVec.x,
+    halfAxis1.y + oobbCenter.y + halfAxis0.y - halfAxis2.y + raycastHeightVec.y,
+    halfAxis1.z + oobbCenter.z + halfAxis0.z - halfAxis2.z + raycastHeightVec.z
+  )
+  corner_BL:set(
+    halfAxis1.x + oobbCenter.x - halfAxis0.x - halfAxis2.x + raycastHeightVec.x,
+    halfAxis1.y + oobbCenter.y - halfAxis0.y - halfAxis2.y + raycastHeightVec.y,
+    halfAxis1.z + oobbCenter.z - halfAxis0.z - halfAxis2.z + raycastHeightVec.z
+  )
+  center:set(
+    (corner_FL.x + corner_FR.x + corner_BL.x + corner_BR.x) / 4,
+    (corner_FL.y + corner_FR.y + corner_BL.y + corner_BR.y) / 4,
+    (corner_FL.z + corner_FR.z + corner_BL.z + corner_BR.z) / 4
+  )
+  frontCenter:set(
+    (corner_FL.x + corner_FR.x + center.x) / 3,
+    (corner_FL.y + corner_FR.y + center.y) / 3,
+    (corner_FL.z + corner_FR.z + center.z) / 3
+  )
+  rearCenter:set(
+    (corner_BL.x + corner_BR.x + center.x) / 3,
+    (corner_BL.y + corner_BR.y + center.y) / 3,
+    (corner_BL.z + corner_BR.z + center.z) / 3
+  )
+end
+
+local function calculateDistWall(state)
   random = getBlueNoise1d(random)
   for _, scannerData in pairs(scanners) do
-
-    -- these 3 lines are a no garbage lerp
     tempVec:setSub2(scannerData.limitEnd, scannerData.limitStart)
     tempVec:setScaled(random)
     tempVec:setAdd(scannerData.limitStart)
 
     tempVec2:setSub2(tempVec, scannerData.startPoint)
     local scanDist = castRayStatic(scannerData.startPoint, tempVec2, driftOptions.wallDetectionLength)
-
 
     if isBeingDebugged then
       debugDrawer:drawLine(scannerData.startPoint, scannerData.startPoint + (tempVec2):normalized() * scanDist, blueF)
@@ -328,75 +377,61 @@ local function calculateDistWall()
     end
 
     if simulatedDriftData and simulatedDriftData.wallDistance then
-      driftActiveData[scannerData.value] = simulatedDriftData.wallDistance
+      state.driftActiveData[scannerData.value] = simulatedDriftData.wallDistance
     else
-      driftActiveData[scannerData.value] = scannerData.lockDist
+      state.driftActiveData[scannerData.value] = scannerData.lockDist
     end
   end
 end
 
-local function driftFailed()
-  currFailPointsCooldown = driftOptions.failPointsCooldown
-  driftChainActiveData = nil
-  driftActiveData = nil
+local function driftFailed(state)
+  state.currFailPointsCooldown = driftOptions.failPointsCooldown
+  state.driftChainActiveData = nil
+  state.driftActiveData = nil
 end
 
-local triggerCrashDelay = 0.3
-local triggerCrashDelayTimer = 0
-local function checkForCrash()
-
+local function checkForCrash(state)
   if simulatedDriftData then
     if simulatedDriftData.isCrashing then
-      crashed = true
+      state.crashed = true
     end
   end
 
-
-  if crashed then
-    triggerCrashDelayTimer = triggerCrashDelayTimer + dtSim
-    if triggerCrashDelayTimer >= triggerCrashDelay then
-      if score.cachedScore > 0 then
-        driftFailed()
-        extensions.hook("onDriftCrash")
-        crashed = false
+  if state.crashed then
+    state.triggerCrashDelayTimer = state.triggerCrashDelayTimer + dtSim
+    if state.triggerCrashDelayTimer >= triggerCrashDelay then
+      if state.score.cachedScore > 0 then
+        driftFailed(state)
+        extensions.hook("onDriftCrash", state.vehId)
+        state.crashed = false
       end
     end
   end
 
-  isCrashing = gameplay_util_crashDetection.isVehCrashing(vehId)
+  state.isCrashing = gameplay_util_crashDetection.isVehCrashing(state.vehId)
 end
 
-local function detectCircleDrift()
-  if isChainingDrifts then
-    if isDrifting then
-      driftChainActiveData.currentCircleDrift.totalAngle = driftChainActiveData.currentCircleDrift.totalAngle + driftAngleDiff
+local function detectCircleDrift(state)
+  if state.isChainingDrifts then
+    if state.isDrifting then
+      state.driftChainActiveData.currentCircleDrift.totalAngle = state.driftChainActiveData.currentCircleDrift.totalAngle + state.driftAngleDiff
     end
   end
 end
 
-local minSpeedAllowed = 1.5
-local minAllowedAngle = 110
-local stopSpinoutCheck = false
-local function detectSpinout()
-  if currFailPointsCooldown > 0 or isCrashing then return end -- to avoid the message "drift failed : spinout" to appear before crashing
-  if kphAirSpeed < minSpeedAllowed then
-    if currDegAngle > minAllowedAngle and not stopSpinoutCheck then
-      driftFailed()
-      extensions.hook("onDriftSpinout")
+local function detectSpinout(state)
+  if state.currFailPointsCooldown > 0 or state.isCrashing then return end
+  if state.kphAirSpeed < minSpeedAllowed then
+    if state.currDegAngle > minAllowedAngle and not state.stopSpinoutCheck then
+      driftFailed(state)
+      extensions.hook("onDriftSpinout", state.vehId)
     end
-    if lastDriftTimer < driftOptions.maxWasDriftingTime then
-      stopSpinoutCheck = true -- at low speed, "currDegAngle" goes crazy, so we check only once otherwise the player will always "spinout"
+    if state.lastDriftTimer < driftOptions.maxWasDriftingTime then
+      state.stopSpinoutCheck = true
     end
   end
 end
 
--- all for gc
-local tempVecCurrVel = vec3()
-local tempVecPos = vec3()
-local tempVecPosUp = vec3()
-local tempVecPosUp2 = vec3()
-local tempNormalizedVel = vec3()
-local tempColor = ColorF(1,0.3,1,0.3)
 local function updateReferencePointData(point)
   tempVecPos:set(point.pos)
 
@@ -411,7 +446,6 @@ local function updateReferencePointData(point)
     end
   end
 
-
   if point.lastFramePos then
     tempVecCurrVel:setSub2(tempVecPos, point.lastFramePos)
     tempVecCurrVel:setScaled(1/dtSim)
@@ -421,18 +455,11 @@ local function updateReferencePointData(point)
 
   point.lastFrameVel:set(tempVecCurrVel)
   point.lastFramePos:set(tempVecPos)
-
   point.vel:set(tempVecCurrVel)
 end
 
-local distFromCenter = 4
-
-local frontPointTempVec = vec3()
-local rearPointTempVec = vec3()
-local crossUpTempVec = vec3()
-local function checkOverSteering()
-
-  isOverSteering = false
+local function checkOverSteering(state)
+  state.isOverSteering = false
 
   frontPointTempVec:set(dirVec)
   frontPointTempVec:setScaled(distFromCenter)
@@ -442,45 +469,42 @@ local function checkOverSteering()
   rearPointTempVec:setScaled(-distFromCenter)
   rearPointTempVec:setAdd(center)
 
-  frontPoint.pos:set(frontPointTempVec)
-  rearPoint.pos:set(rearPointTempVec)
-  updateReferencePointData(frontPoint)
-  updateReferencePointData(rearPoint)
-  if frontPoint.vel and vehData then
-    avrgRefPointsKphSpeed = ((frontPoint.vel:length() + rearPoint.vel:length()) / 2) * 3.6
+  state.frontPoint.pos:set(frontPointTempVec)
+  state.rearPoint.pos:set(rearPointTempVec)
+  updateReferencePointData(state.frontPoint)
+  updateReferencePointData(state.rearPoint)
+  if state.frontPoint.vel and state.vehData then
+    state.avrgRefPointsKphSpeed = ((state.frontPoint.vel:length() + state.rearPoint.vel:length()) / 2) * 3.6
 
     crossUpTempVec:set(dirVec:cross(up))
-    frontDot = frontPoint.vel:normalized():dot(crossUpTempVec)
-    centerDot = velDir:dot(crossUpTempVec)
-    rearDot = rearPoint.vel:normalized():dot(crossUpTempVec)
+    state.frontDot = state.frontPoint.vel:normalized():dot(crossUpTempVec)
+    state.centerDot = state.velDir:dot(crossUpTempVec)
+    state.rearDot = state.rearPoint.vel:normalized():dot(crossUpTempVec)
 
-    isOverSteering =
-    frontDot < 0 and centerDot > 0 or
-    centerDot < 0 and frontDot > 0 or
-    frontDot > 0 and centerDot > 0 and rearDot > 0 or
-    frontDot < 0 and centerDot < 0 and rearDot < 0
+    state.isOverSteering =
+    state.frontDot < 0 and state.centerDot > 0 or
+    state.centerDot < 0 and state.frontDot > 0 or
+    state.frontDot > 0 and state.centerDot > 0 and state.rearDot > 0 or
+    state.frontDot < 0 and state.centerDot < 0 and state.rearDot < 0
   end
 end
 
--- Reverse cheesing is when the player accelerate in reverse while turning the wheel. This gains a lot of point
-local function isReverseCheesingFunc()
-  isReverseCheesing = (currDegAngle or 0) > 120 and (accelerationSmoothed or 0) > -0.07
+local function isReverseCheesingFunc(state)
+  state.isReverseCheesing = (state.currDegAngle or 0) > 120 and (state.accelerationSmoothed or 0) > -0.07
   if isBeingDebugged then
-    debugDrawer:drawTextAdvanced(center, "Reverse cheesing : " .. tostring(isReverseCheesing), ColorF(1,1,1,1), true, false, ColorI(0,0,0,255), false, false)
+    debugDrawer:drawTextAdvanced(center, "Reverse cheesing : " .. tostring(state.isReverseCheesing), ColorF(1,1,1,1), true, false, ColorI(0,0,0,255), false, false)
   end
 end
 
-
-local function populateDriftSmoothnessHistory()
+local function populateDriftSmoothnessHistory(state)
   if isBeingDebugged then
     debugHistoryTimer = debugHistoryTimer + dtSim * debugHistorySamplesPerSec
     if debugHistoryTimer > 1 then
-      table.insert(debugHistories.jerk.data, 1, driftActiveData.gForceJerk)
-      table.insert(debugHistories.angleDiff.data, 1, driftActiveData.driftAngleDiffSinceLastFrame or 0)
-      table.insert(debugHistories.speedDiff.data, 1, driftActiveData.speedDiffSinceLastFrame or 0)
+      table.insert(state.debugHistories.jerk.data, 1, state.driftActiveData.gForceJerk)
+      table.insert(state.debugHistories.angleDiff.data, 1, state.driftActiveData.driftAngleDiffSinceLastFrame or 0)
+      table.insert(state.debugHistories.speedDiff.data, 1, state.driftActiveData.speedDiffSinceLastFrame or 0)
 
-      -- remove oldest data
-      for _, historyData in pairs(debugHistories) do
+      for _, historyData in pairs(state.debugHistories) do
         if historyData.data and historyData.data[maxHistorySize] then
           historyData.data[maxHistorySize] = nil
         end
@@ -489,315 +513,338 @@ local function populateDriftSmoothnessHistory()
       debugHistoryTimer = debugHistoryTimer - 1
     end
   end
-
 end
 
-local tempVellDiff = vec3()
-local lastFrameVel = vec3()
-local function calculateGForceJerk()
-  tempVellDiff:setSub2(vehData.vel, lastFrameVel)
-  lastFrameVel:set(vehData.vel)
+local function calculateGForceJerk(state)
+  tempVellDiff:setSub2(state.vehData.vel, state.lastFrameVel)
+  state.lastFrameVel:set(state.vehData.vel)
   local gForce = tempVellDiff:length() / dtSim / 9.81
 
-  local gForceJerk = math.abs(gForce - driftActiveData.lastFrameGForce)
-  local gForceJerkSmoothed = gForceSmoother:get(gForceJerk, dtSim)
-  driftActiveData.lastFrameGForce = gForce
+  local gForceJerk = math.abs(gForce - state.driftActiveData.lastFrameGForce)
+  local gForceJerkSmoothed = state.gForceSmoother:get(gForceJerk, dtSim)
+  state.driftActiveData.lastFrameGForce = gForce
 
-  driftActiveData.gForceJerk = gForceJerkSmoothed
+  state.driftActiveData.gForceJerk = gForceJerkSmoothed
 end
 
-local function calculateAngleDiff()
-  driftActiveData.driftAngleDiffSinceLastFrame = math.abs(currDegAngle - driftActiveData.lastFrameDriftAngle)
-  driftActiveData.lastFrameDriftAngle = currDegAngle
-end
-local function calculateSpeedDiff()
-  driftActiveData.speedDiffSinceLastFrame = math.abs(kphAirSpeed - lastFrameKphAirSpeed)
+local function calculateAngleDiff(state)
+  state.driftActiveData.driftAngleDiffSinceLastFrame = math.abs(state.currDegAngle - state.driftActiveData.lastFrameDriftAngle)
+  state.driftActiveData.lastFrameDriftAngle = state.currDegAngle
 end
 
-local function calculateDriftSmoothnessScore()
-  if not driftSmoothnessData then
-    newDriftSmoothnessData()
+local function calculateSpeedDiff(state)
+  state.driftActiveData.speedDiffSinceLastFrame = math.abs(state.kphAirSpeed - state.lastFrameKphAirSpeed)
+end
+
+local function calculateDriftSmoothnessScore(state)
+  if not state.driftSmoothnessData then
+    newDriftSmoothnessData(state)
   end
-  calculateGForceJerk()
-  calculateAngleDiff()
-  calculateSpeedDiff()
-  populateDriftSmoothnessHistory()
+  calculateGForceJerk(state)
+  calculateAngleDiff(state)
+  calculateSpeedDiff(state)
+  populateDriftSmoothnessHistory(state)
 
-  driftSmoothnessData.totalScore = driftSmoothnessData.totalScore + (driftActiveData.gForceJerk ^ 2 + driftActiveData.driftAngleDiffSinceLastFrame ^ 2 + driftActiveData.speedDiffSinceLastFrame ^ 2)
-  driftSmoothnessData.numberOfSamples = driftSmoothnessData.numberOfSamples + 1
-  driftSmoothnessData.smoothness = driftSmoothnessData.totalScore / driftSmoothnessData.numberOfSamples
+  state.driftSmoothnessData.totalScore = state.driftSmoothnessData.totalScore + (state.driftActiveData.gForceJerk ^ 2 + state.driftActiveData.driftAngleDiffSinceLastFrame ^ 2 + state.driftActiveData.speedDiffSinceLastFrame ^ 2)
+  state.driftSmoothnessData.numberOfSamples = state.driftSmoothnessData.numberOfSamples + 1
+  state.driftSmoothnessData.smoothness = state.driftSmoothnessData.totalScore / state.driftSmoothnessData.numberOfSamples
 end
 
-local vec3DistDiff = vec3(0,0,0)
-local function detectAndGatherDriftInfo(vehicleData)
+local function detectAndGatherDriftInfo(state, vehicleData)
+  isReverseCheesingFunc(state)
+  state.isInTheAir = not gameplay_util_groundContact.isOnWheels(state.vehId)
 
-  isReverseCheesingFunc()
-  isInTheAir = not gameplay_util_groundContact.isOnWheels(vehId)
+  checkOverSteering(state)
 
-  checkOverSteering()
-
-  -- override actual data with the simulated data
   if simulatedDriftData then
-    isReverseCheesing = false
-    isInTheAir = false
-    avrgRefPointsKphSpeed = simulatedDriftData.airSpeed
-    currFailPointsCooldown = 0
-    currResetTimer = 0
-    isOverSteering = true
+    state.isReverseCheesing = false
+    state.isInTheAir = false
+    state.avrgRefPointsKphSpeed = simulatedDriftData.airSpeed
+    state.currFailPointsCooldown = 0
+    state.currResetTimer = 0
+    state.isOverSteering = true
   end
 
-  isDrifting =
-  isOverSteering
-  and not isReverseCheesing
-  and currDegAngle > driftOptions.minAngle and currDegAngle < driftOptions.maxAngle
-  and avrgRefPointsKphSpeed > driftOptions.minAirSpeed
+  state.isDrifting =
+  state.isOverSteering
+  and not state.isReverseCheesing
+  and state.currDegAngle > driftOptions.minAngle and state.currDegAngle < driftOptions.maxAngle
+  and state.avrgRefPointsKphSpeed > driftOptions.minAirSpeed
   and not gameplay_walk.isWalking()
-  and not isInTheAir
-  and currFailPointsCooldown <= 0
-  and currResetTimer <= 0
-  and not isCrashing
+  and not state.isInTheAir
+  and state.currFailPointsCooldown <= 0
+  and state.currResetTimer <= 0
+  and not state.isCrashing
 
-  velDir:set(push3(vehicleData.vel):normalized())
+  state.velDir:set(push3(vehicleData.vel):normalized())
 
-  if isDrifting then
-    if driftChainActiveData == nil then
-      newDriftChainActiveData()
-      extensions.hook("onDriftChainStarted")
+  if state.isDrifting then
+    if state.driftChainActiveData == nil then
+      newDriftChainActiveData(state)
+      extensions.hook("onDriftChainStarted", state.vehId)
     end
 
-    if driftActiveData == nil then
-      newDriftActiveData(vehicleData)
+    if state.driftActiveData == nil then
+      newDriftActiveData(state, vehicleData)
 
-      if velDir:dot(up:cross(vehicleData.dirVec:normalized())) > 0 then
-        driftChainActiveData.rightDrifts = driftChainActiveData.rightDrifts + 1
-        driftActiveData.direction = "right"
+      if state.velDir:dot(up:cross(vehicleData.dirVec:normalized())) > 0 then
+        state.driftChainActiveData.rightDrifts = state.driftChainActiveData.rightDrifts + 1
+        state.driftActiveData.direction = "right"
       else
-        driftChainActiveData.leftDrifts = driftChainActiveData.leftDrifts + 1
-        driftActiveData.direction = "left"
+        state.driftChainActiveData.leftDrifts = state.driftChainActiveData.leftDrifts + 1
+        state.driftActiveData.direction = "left"
       end
-      driftChainActiveData.chainedDrifts = driftChainActiveData.chainedDrifts + 1
-      stopSpinoutCheck = false
+      state.driftChainActiveData.chainedDrifts = state.driftChainActiveData.chainedDrifts + 1
+      state.stopSpinoutCheck = false
 
-      if driftChainActiveData.chainedDrifts > 1 then
-        extensions.hook("onDriftTransition")
+      if state.driftChainActiveData.chainedDrifts > 1 then
+        extensions.hook("onDriftTransition", state.vehId)
       end
-      extensions.hook("onDriftStatusChanged", true, driftActiveData.direction)
+      extensions.hook("onDriftStatusChanged", true, state.driftActiveData.direction, state.vehId)
     end
 
-    currDriftCompletedTimer = currDriftCompleteTime
+    state.currDriftCompletedTimer = state.currDriftCompleteTime
 
-    driftAngleDiff = math.deg(math.acos(velDir:cosAngle(driftActiveData.lastFrameVelDir))) -- angle in deg
+    state.driftAngleDiff = math.deg(math.acos(state.velDir:cosAngle(state.driftActiveData.lastFrameVelDir)))
 
-    driftActiveData.angleVelocity = driftAngleDiff / dtSim
-    driftActiveData.totalDriftAngle = driftActiveData.totalDriftAngle + driftAngleDiff
+    state.driftActiveData.angleVelocity = state.driftAngleDiff / dtSim
+    state.driftActiveData.totalDriftAngle = state.driftActiveData.totalDriftAngle + state.driftAngleDiff
     if debugToggleSmothnessGraph[0] then
-      calculateDriftSmoothnessScore()
+      calculateDriftSmoothnessScore(state)
     end
 
-    driftActiveData.lastFrameVelDir:set(velDir)
-    driftActiveData.totalDriftTime = driftActiveData.totalDriftTime + dtSim
-    driftActiveData.score = driftActiveData.score + gameplay_drift_scoring.getScoreAddedThisFrame()
+    state.driftActiveData.lastFrameVelDir:set(state.velDir)
+    state.driftActiveData.totalDriftTime = state.driftActiveData.totalDriftTime + dtSim
+    state.driftActiveData.score = state.driftActiveData.score + gameplay_drift_scoring.getScoreAddedThisFrame(state.vehId)
 
-    -- total drifting distance
-    vec3DistDiff:setSub2(driftActiveData.lastPos, vehicleData.pos)
-    driftChainActiveData.totalDriftDistance = driftChainActiveData.totalDriftDistance + vec3DistDiff:length()
-    driftActiveData.lastPos:set(vehicleData.pos)
-    driftActiveData.driftDistance = driftActiveData.driftDistance + vec3DistDiff:length()
-    -- total drift time
-    driftChainActiveData.totalDriftTime = driftChainActiveData.totalDriftTime + dtSim
+    vec3DistDiff:setSub2(state.driftActiveData.lastPos, vehicleData.pos)
+    state.driftChainActiveData.totalDriftDistance = state.driftChainActiveData.totalDriftDistance + vec3DistDiff:length()
+    state.driftActiveData.lastPos:set(vehicleData.pos)
+    state.driftActiveData.driftDistance = state.driftActiveData.driftDistance + vec3DistDiff:length()
+    state.driftChainActiveData.totalDriftTime = state.driftChainActiveData.totalDriftTime + dtSim
 
-    driftActiveData.totalSpeeds = driftActiveData.totalSpeeds + kphAirSpeed
-    driftActiveData.totalAngles = driftActiveData.totalAngles + currDegAngle
-    driftActiveData.totalPerformanceFactors = driftActiveData.totalPerformanceFactors + gameplay_drift_scoring.getDriftPerformanceFactor()
-    driftActiveData.totalSteps = driftActiveData.totalSteps + 1
+    state.driftActiveData.totalSpeeds = state.driftActiveData.totalSpeeds + state.kphAirSpeed
+    state.driftActiveData.totalAngles = state.driftActiveData.totalAngles + state.currDegAngle
+    state.driftActiveData.totalPerformanceFactors = state.driftActiveData.totalPerformanceFactors + gameplay_drift_scoring.getDriftPerformanceFactor(state.vehId)
+    state.driftActiveData.totalSteps = state.driftActiveData.totalSteps + 1
 
-    lastDriftTimer = 0
+    state.lastDriftTimer = 0
 
   else
-    if driftActiveData then --if just stopped drifting
-      extensions.hook("onDriftStatusChanged", false)
-      extensions.hook("onDriftActiveDataFinished", driftActiveData)
-      driftActiveData = nil
+    if state.driftActiveData then
+      extensions.hook("onDriftStatusChanged", false, nil, state.vehId)
+      extensions.hook("onDriftActiveDataFinished", state.driftActiveData, state.vehId)
+      state.driftActiveData = nil
     end
 
-    lastDriftTimer = lastDriftTimer + dtSim
+    state.lastDriftTimer = state.lastDriftTimer + dtSim
   end
 
-  isChainingDrifts = driftChainActiveData ~= nil
+  state.isChainingDrifts = state.driftChainActiveData ~= nil
 end
 
-local function driftCoolDown()
-  if currDriftCompletedTimer > 0 then
-    currDriftCompletedTimer = currDriftCompletedTimer - dtSim
-    if balanceMode then currDriftCompletedTimer = 1 end
-    if currDriftCompletedTimer < 0 and score.cachedScore > 0 then
+local function driftCoolDown(state)
+  if state.currDriftCompletedTimer > 0 then
+    state.currDriftCompletedTimer = state.currDriftCompletedTimer - dtSim
+    if state.balanceMode then state.currDriftCompletedTimer = 1 end
+    if state.currDriftCompletedTimer < 0 and state.score.cachedScore > 0 then
       extensions.hook('onDriftCompleted', {
-        chainDriftData = driftChainActiveData
+        chainDriftData = state.driftChainActiveData,
+        vehId = state.vehId
       })
-      driftChainActiveData = nil
+      state.driftChainActiveData = nil
     end
   end
 end
 
-local function updateDriftCompleteTime()
-  currDriftCompleteTime = linearScale(score.combo, 5, 20, driftOptions.baseDriftCompleteTime, 2.25)
+local function updateDriftCompleteTime(state)
+  state.currDriftCompleteTime = linearScale(state.score.combo, 5, 20, driftOptions.baseDriftCompleteTime, 2.25)
 end
 
--- drift scoring is based on distance, not time
-local lastFramePlPos = vec3()
-local function calculateDistSinceLastFrame()
-  if lastFramePlPos then
-    distSinceLastFrame =  M.getVehPos():distance(lastFramePlPos)
+local function calculateDistSinceLastFrame(state)
+  if state.lastFramePlPos then
+    state.distSinceLastFrame = state.vehPos:distance(state.lastFramePlPos)
     if simulatedDriftData then
-      distSinceLastFrame = simulatedDriftData.airSpeed * dtSim / 3.6421
+      state.distSinceLastFrame = simulatedDriftData.airSpeed * dtSim / 3.6421
     end
   end
 
-  lastFramePlPos:set(M.getVehPos())
+  state.lastFramePlPos:set(state.vehPos)
+end
+
+local function tryTrackDriftVehForCrash(state)
+  if state.vehId ~= nil and gameplay_drift_general.getContext() ~= "inAnotherMissionType" and not gameplay_util_crashDetection.isVehTracked(state.vehId) and state.vehId > -1 then
+    gameplay_util_crashDetection.addTrackedVehicleById(state.vehId, crashDetectionSettings, "drift")
+  end
 end
 
 local function imguiDebug()
-  if isBeingDebugged then
-    if im.Begin("Drift detection") then
-      im.Text("Is drifting : " .. ((isDrifting and "Yes") or "No"))
-      im.Text("Is crashing : " .. ((isCrashing and "Yes") or "No"))
-      im.Text("Is reverse cheesing : " .. ((isReverseCheesing and "Yes") or "No"))
-      im.Text("Is in the air : " .. ((isInTheAir and "Yes") or "No"))
-      im.Text(string.format("Air speed : %d(%d) kph", kphAirSpeed or 0, avrgRefPointsKphSpeed or 0))
-      im.Text(string.format("Min required angle : %0.2f", driftOptions.minAngle or 0))
-      im.Text(string.format("Drift complete time : %0.2f", currDriftCompleteTime or 0))
-      im.Text(string.format("Time to confirmation : %0.2f", currDriftCompletedTimer))
-      im.Text(string.format("Acceleration : %0.2f", accelerationSmoothed or 0))
+  if not isBeingDebugged then return end
+  local state = getState()
+  if not state then return end
 
-      im.Dummy(im.ImVec2(1, 10))
+  if im.Begin("Drift detection") then
+    im.Text("Is drifting : " .. ((state.isDrifting and "Yes") or "No"))
+    im.Text("Is crashing : " .. ((state.isCrashing and "Yes") or "No"))
+    im.Text("Is reverse cheesing : " .. ((state.isReverseCheesing and "Yes") or "No"))
+    im.Text("Is in the air : " .. ((state.isInTheAir and "Yes") or "No"))
+    im.Text(string.format("Air speed : %d(%d) kph", state.kphAirSpeed or 0, state.avrgRefPointsKphSpeed or 0))
+    im.Text(string.format("Min required angle : %0.2f", driftOptions.minAngle or 0))
+    im.Text(string.format("Drift complete time : %0.2f", state.currDriftCompleteTime or 0))
+    im.Text(string.format("Time to confirmation : %0.2f", state.currDriftCompletedTimer))
+    im.Text(string.format("Acceleration : %0.2f", state.accelerationSmoothed or 0))
+    im.Text(string.format("Tracked vehicles : %d", tableSize(trackedVehicles)))
 
-      if im.Button("Toggle Imgui Crash Window") then
-        showImguiCrashWindow = not showImguiCrashWindow
-      end
+    im.Dummy(im.ImVec2(1, 10))
 
-
-      if isDrifting then
-        local avgDriftAngle = driftActiveData.totalAngles / driftActiveData.totalSteps
-        im.Text(string.format("Angle : %d °", currDegAngle))
-        im.Text(string.format("Total drift distance : %d", driftChainActiveData.totalDriftDistance))
-        im.Text(string.format("Average drift angle : %d", avgDriftAngle))
-        im.Text(string.format("Wall distance front : %f", driftActiveData.closestWallDistanceFront))
-        im.Text(string.format("Wall distance rear : %f", driftActiveData.closestWallDistanceRear))
-      end
-
-      im.Text("Balance mode : " .. (balanceMode and "Yes" or "No"))
-
-      im.Dummy(im.ImVec2(1, 10))
-
-      im.Checkbox("Toggle Smothness Graph", debugToggleSmothnessGraph)
-      if debugToggleSmothnessGraph[0] then
-        im.Text(string.format("Drift smoothness : %0.2f", driftSmoothnessData and driftSmoothnessData.smoothness or 0))
-        im.SameLine()
-        if im.Button("Reset Drift Smoothness") then
-          newDriftSmoothnessData()
-        end
-
-        -- Drift Smoothness Graph
-        plotHelperUtil = plotHelperUtil or require('/lua/ge/extensions/editor/util/plotHelperUtil')()
-        im.BeginChild1("Debug Graph", im.ImVec2(im.GetContentRegionAvailWidth(), 400), true)
-        for _, historyData in pairs(debugHistories) do
-          im.PushStyleColor2(im.Col_Text, im.ImVec4(historyData.color[1], historyData.color[2], historyData.color[3], historyData.color[4]))
-          im.TextWrapped(historyData.name)
-          im.PopStyleColor()
-        end
-
-
-        local chartData = {}
-        local chartColors = {}
-        local i = 1
-        for _, historyData in pairs(debugHistories) do
-          chartData[i] = {}
-          for j = 1, #historyData.data do
-            chartData[i][j] = {j, historyData.data[j]}
-          end
-          chartColors[i] = historyData.color
-          i = i + 1
-        end
-
-
-        plotHelperUtil:setDataMulti(chartData)
-        plotHelperUtil:setSeriesColors(chartColors)
-        plotHelperUtil:scaleToFitData()
-        plotHelperUtil:setScale(nil, nil, 0, nil)
-        plotHelperUtil:draw(im.GetContentRegionAvailWidth(), im.GetContentRegionAvail().y, 400)
-
-        im.EndChild()
-      end
+    if im.Button("Toggle Imgui Crash Window") then
+      showImguiCrashWindow = not showImguiCrashWindow
     end
-    im.End()
 
-    gameplay_util_crashDetection.setDebug(showImguiCrashWindow)
+    if state.isDrifting and state.driftActiveData then
+      local avgDriftAngle = state.driftActiveData.totalAngles / state.driftActiveData.totalSteps
+      im.Text(string.format("Angle : %d °", state.currDegAngle))
+      im.Text(string.format("Total drift distance : %d", state.driftChainActiveData.totalDriftDistance))
+      im.Text(string.format("Average drift angle : %d", avgDriftAngle))
+      im.Text(string.format("Wall distance front : %f", state.driftActiveData.closestWallDistanceFront))
+      im.Text(string.format("Wall distance rear : %f", state.driftActiveData.closestWallDistanceRear))
+    end
+
+    im.Text("Balance mode : " .. (state.balanceMode and "Yes" or "No"))
+
+    im.Dummy(im.ImVec2(1, 10))
+
+    im.Checkbox("Toggle Smothness Graph", debugToggleSmothnessGraph)
+    if debugToggleSmothnessGraph[0] then
+      im.Text(string.format("Drift smoothness : %0.2f", state.driftSmoothnessData and state.driftSmoothnessData.smoothness or 0))
+      im.SameLine()
+      if im.Button("Reset Drift Smoothness") then
+        newDriftSmoothnessData(state)
+      end
+
+      plotHelperUtil = plotHelperUtil or require('/lua/ge/extensions/editor/util/plotHelperUtil')()
+      im.BeginChild1("Debug Graph", im.ImVec2(im.GetContentRegionAvailWidth(), 400), true)
+      for _, historyData in pairs(state.debugHistories) do
+        im.PushStyleColor2(im.Col_Text, im.ImVec4(historyData.color[1], historyData.color[2], historyData.color[3], historyData.color[4]))
+        im.TextWrapped(historyData.name)
+        im.PopStyleColor()
+      end
+
+      local chartData = {}
+      local chartColors = {}
+      local i = 1
+      for _, historyData in pairs(state.debugHistories) do
+        chartData[i] = {}
+        for j = 1, #historyData.data do
+          chartData[i][j] = {j, historyData.data[j]}
+        end
+        chartColors[i] = historyData.color
+        i = i + 1
+      end
+
+      plotHelperUtil:setDataMulti(chartData)
+      plotHelperUtil:setSeriesColors(chartColors)
+      plotHelperUtil:scaleToFitData()
+      plotHelperUtil:setScale(nil, nil, 0, nil)
+      plotHelperUtil:draw(im.GetContentRegionAvailWidth(), im.GetContentRegionAvail().y, 400)
+
+      im.EndChild()
+    end
   end
+  im.End()
+
+  gameplay_util_crashDetection.setDebug(showImguiCrashWindow)
 end
 
-local function tryTrackDriftVehForCrash()
-  if vehId ~= nil and gameplay_drift_general.getContext() ~= "inAnotherMissionType" and not gameplay_util_crashDetection.isVehTracked(vehId) and vehId > -1 then
-    gameplay_util_crashDetection.addTrackedVehicleById(vehId, crashDetectionSettings, "drift")
-  end
-end
+local function updateVehicle(state)
+  if not state.resetFlag then resetVehicleState(state) end
 
+  if state.vehId and not state.veh then
+    state.veh = scenetree.findObjectById(state.vehId)
+  end
+
+  if not state.veh then return end
+
+  state.vehData = map.objects[state.vehId]
+  if not state.vehData then return end
+  state.kphAirSpeed = state.vehData.vel:length() * 3.6
+
+  state.vehPos:set(state.vehData.pos)
+  tryTrackDriftVehForCrash(state)
+
+  state.score = gameplay_drift_scoring.getScore(state.vehId)
+
+  updateDriftCompleteTime(state)
+  calculateVehCenterAndWheels(state)
+
+  calculateDriftAngle(state, state.vehData)
+  calculateDistSinceLastFrame(state)
+  checkForCrash(state)
+  if not state.isDrifting and (state.score.cachedScore or 0) > 0 then
+    detectSpinout(state)
+  end
+  detectAndGatherDriftInfo(state, state.vehData)
+  detectCircleDrift(state)
+
+  if state.isDrifting then
+    calculateDistWall(state)
+    state.driftActiveData.currDegAngle = state.currDegAngle
+  else
+    driftCoolDown(state)
+  end
+  if state.currFailPointsCooldown > 0 then
+    state.currFailPointsCooldown = state.currFailPointsCooldown - dtSim
+  end
+
+  if state.currResetTimer > 0 then
+    state.currResetTimer = state.currResetTimer - dtSim
+  end
+
+  state.accelerationSmoothed = state.accelSmoother:get(state.kphAirSpeed - (state.lastFrameKphAirSpeed or state.kphAirSpeed), dtSim)
+  state.lastFrameKphAirSpeed = state.kphAirSpeed
+end
 
 local function onUpdate(dtReal, _dtSim, dtRaw)
   dtSim = _dtSim
 
+  local firstDriveActive = gameplay_discover_firstDrive_experience
+    and gameplay_discover_firstDrive_experience.isActive
+    and gameplay_discover_firstDrive_experience.isActive()
+  if firstDriveActive then
+    if not firstDriveSuppressed then
+      for _, state in pairs(trackedVehicles) do resetVehicleState(state) end
+      gameplay_drift_scoring.reset()
+    end
+    firstDriveSuppressed = true
+    return
+  end
+  firstDriveSuppressed = false
+
   isBeingDebugged = gameplay_drift_general.getExtensionDebug("gameplay_drift_drift")
   imguiDebug()
-  isDrifting = false
+
   if gameplay_drift_general.getGeneralDebug() then profiler:start() end
 
   if gameplay_walk.isWalking() or gameplay_drift_general.getPaused() or _dtSim <= 0 then return end
 
-  score = gameplay_drift_scoring.getScore()
+  -- skip drift processing during splitscreen unless the drift gamemode is running
+  if core_multiseat.isMultiseatActive() and gameplay_drift_general.getContext() ~= "inSplitscreen" then return end
 
-  if not resetFlag then reset() end
-
-  if vehId and not veh then
-    veh = scenetree.findObjectById(vehId)
-  else
-    veh = getPlayerVehicle(0)
+  -- auto-track player 0 if nothing tracked yet
+  if not next(trackedVehicles) then
+    local plVeh = getPlayerVehicle(0)
+    if plVeh then
+      local plId = plVeh:getId()
+      if plId and plId > -1 then
+        M.addTrackedVehicle(plId)
+      end
+    end
   end
 
-  if not veh then return end
-  vehId = veh:getId()
-  vehData = map.objects[vehId]
-  if not vehData then return end
-  kphAirSpeed = vehData.vel:length() * 3.6
-
-  vehPos:set(vehData.pos)
-  tryTrackDriftVehForCrash()
-
-  updateDriftCompleteTime()
-  calculateVehCenterAndWheels()
-
-  calculateDriftAngle(vehData)
-  calculateDistSinceLastFrame()
-  checkForCrash()
-  if not isDrifting and (score.cachedScore or 0) > 0 then
-    detectSpinout()
-  end
-  detectAndGatherDriftInfo(vehData)
-  detectCircleDrift()
-  if isDrifting then
-    calculateDistWall()
-    driftActiveData.currDegAngle = currDegAngle
-  else
-    driftCoolDown()
-  end
-  if currFailPointsCooldown > 0 then
-    currFailPointsCooldown = currFailPointsCooldown - dtSim
+  for _, state in pairs(trackedVehicles) do
+    updateVehicle(state)
   end
 
-  if currResetTimer > 0 then
-    currResetTimer = currResetTimer - dtSim
-  end
-
-  accelerationSmoothed = accelSmoother:get(kphAirSpeed- (lastFrameKphAirSpeed or kphAirSpeed), dtReal)
-  lastFrameKphAirSpeed = kphAirSpeed
   if gameplay_drift_general.getGeneralDebug() then
     profiler:add("Drift detection")
     gc = profiler.sections[1].garbage
@@ -809,16 +856,166 @@ local function simulateADrift(data)
   simulatedDriftData = data
 end
 
-local function getDriftActiveData()
-  return driftActiveData
+local function getPlayerIdForVehicle(vehId)
+  local state = trackedVehicles[vehId]
+  return state and state.playerId or 0
 end
 
-local function getDriftChainActiveData()
-  return driftChainActiveData
+local function removeTrackedVehicle(vehId)
+  if not vehId then return end
+  local state = trackedVehicles[vehId]
+  if state then
+    gameplay_util_crashDetection.removeTrackedVehicleById(vehId)
+  end
+  trackedVehicles[vehId] = nil
 end
 
-local function getDriftChainChainedDrifts()
-  return driftChainActiveData and driftChainActiveData.chainedDrifts or 0
+local function addTrackedVehicle(vehId, opts)
+  if not vehId or vehId < 0 then return end
+  local state = trackedVehicles[vehId]
+  if not state then
+    state = newVehicleDriftState(vehId)
+    trackedVehicles[vehId] = state
+  end
+  if opts then
+    if opts.playerId ~= nil then
+      state.playerId = opts.playerId
+      -- a player drives one vehicle at a time: drop any older claim on that player, otherwise
+      -- leftovers (eg a mission vehicle removed without a vehicle switch) keep being tracked
+      -- and fight over the same player slot in the UI stream
+      for otherId, otherState in pairs(trackedVehicles) do
+        if otherId ~= vehId and otherState.playerId == opts.playerId then
+          removeTrackedVehicle(otherId)
+        end
+      end
+    end
+  end
+  return state
+end
+
+local function getTrackedVehicles()
+  return trackedVehicles
+end
+
+local function getDriftActiveData(vehId)
+  local state = getState(vehId)
+  return state and state.driftActiveData
+end
+
+local function getDriftChainActiveData(vehId)
+  local state = getState(vehId)
+  return state and state.driftChainActiveData
+end
+
+local function getDriftChainChainedDrifts(vehId)
+  local state = getState(vehId)
+  return state and state.driftChainActiveData and state.driftChainActiveData.chainedDrifts or 0
+end
+
+local function getIsDrifting(vehId)
+  local state = getState(vehId)
+  return state and state.isDrifting or false
+end
+
+local function getAirSpeed(vehId)
+  local state = getState(vehId)
+  return state and state.kphAirSpeed
+end
+
+local function getVehPos(vehId)
+  local state = getState(vehId)
+  return state and state.vehPos
+end
+
+local function getVehId()
+  local state = getState()
+  return state and state.vehId
+end
+
+local function getPlVeh()
+  local state = getState()
+  return state and state.veh
+end
+
+local function getVehData(vehId)
+  local state = getState(vehId)
+  return state and state.vehData
+end
+
+local function getVehVel(vehId)
+  local state = getState(vehId)
+  return state and state.velDir
+end
+
+local function getCurrDegAngleSigned(vehId)
+  local state = getState(vehId)
+  if not state then return 0 end
+  return (state.currDegAngle or 0) * sign(state.currDegAngleSign or 0)
+end
+
+local function getCurrDriftCompletedTime(vehId)
+  local state = getState(vehId)
+  if not state or not state.currDriftCompleteTime or state.currDriftCompleteTime == 0 then return 0 end
+  return state.currDriftCompletedTimer / state.currDriftCompleteTime
+end
+
+local function getAngleDiff(vehId)
+  local state = getState(vehId)
+  return state and state.driftAngleDiff
+end
+
+local function getDistSinceLastFrame(vehId)
+  local state = getState(vehId)
+  return state and state.distSinceLastFrame or 0
+end
+
+local function getCurrentDriftDuration(vehId)
+  local state = getState(vehId)
+  if state and state.isDrifting and state.driftActiveData then
+    return state.driftActiveData.totalDriftTime
+  end
+  return 0
+end
+
+local function getIsOverSteering(vehId)
+  local state = getState(vehId)
+  return state and state.isOverSteering or false
+end
+
+local function getIsOverMinSpeedForDrift(vehId)
+  local state = getState(vehId)
+  return state and state.avrgRefPointsKphSpeed and state.avrgRefPointsKphSpeed > driftOptions.minAirSpeed or false
+end
+
+local function getIsInTheAir(vehId)
+  local state = getState(vehId)
+  return state and state.isInTheAir or false
+end
+
+local function getIsCrashing(vehId)
+  local state = getState(vehId)
+  return state and state.isCrashing or false
+end
+
+local function doesPlHaveVeh(vehId)
+  local state = getState(vehId)
+  return state and state.vehData ~= nil
+end
+
+local function getDriftOptions()
+  return driftOptions
+end
+
+local function getVehCorners()
+  return {corner_FR, corner_BR, corner_BL, corner_FL}
+end
+
+local function getGC()
+  return gc
+end
+
+local function getDriftDebugInfo()
+  return driftDebugInfo
 end
 
 local function setAllowDonut(value)
@@ -830,155 +1027,121 @@ local function setAllowTightDrift(value)
 end
 
 local function setVehId(newVehId)
-  vehId = newVehId
-end
-
-local function getVehId()
-  return vehId
-end
-
-local function getPlVeh()
-  return veh
-end
-
-local function getIsDrifting()
-  return isDrifting
-end
-
-local function getDriftOptions()
-  return driftOptions
-end
-
-local function getVehCorners()
-  return {corner_FR, corner_BR, corner_BL, corner_FL}
-end
-
-local function getAirSpeed()
-  return kphAirSpeed
-end
-
-local function getCurrDegAngleSigned()
-  return (currDegAngle or 0) * sign(currDegAngleSign or 0)
-end
-
-local function getCurrDriftCompletedTime()
-  return currDriftCompletedTimer / currDriftCompleteTime
-end
-
-local function getAngleDiff()
-  return driftAngleDiff
-end
-
-local function getGC()
-  return gc
-end
-
-local function getVehPos()
-  return vehPos
-end
-
-local function getIsCrashing()
-  return isCrashing
-end
-
-local function getDriftDebugInfo()
-  return driftDebugInfo
-end
-
-local function onVehicleSwitched(oldId, newVehId)
-
-  vehId = newVehId
-
-  if oldId ~= -1 then
-    gameplay_util_crashDetection.removeTrackedVehicleById(oldId)
+  for id, _ in pairs(trackedVehicles) do
+    if id ~= newVehId then
+      removeTrackedVehicle(id)
+    end
   end
-  if gameplay_drift_general.getContext() ~= "inAnotherMissionType" and newVehId ~= -1 then
-    tryTrackDriftVehForCrash()
-  end
-
-  currResetTimer = resetTimer
+  addTrackedVehicle(newVehId)
 end
 
--- this is only used for the debug imgui window to test UI
+local function setBalanceMode(_balanceMode, vehId)
+  local state = getState(vehId)
+  if state then state.balanceMode = _balanceMode end
+end
+
+--------- HOOKS -----------
+
+local function reset(vehId)
+  if vehId then
+    local state = trackedVehicles[vehId]
+    if state then resetVehicleState(state) end
+  else
+    for _, state in pairs(trackedVehicles) do
+      resetVehicleState(state)
+    end
+  end
+end
+
+local function onVehicleSwitched(oldId, newVehId, player)
+  player = player or 0
+  if oldId and oldId ~= -1 then
+    -- only untrack the vehicle this player was actually driving, otherwise a
+    -- second seat entering a vehicle would evict the other players' vehicles
+    local oldState = trackedVehicles[oldId]
+    if oldState and oldState.playerId == player then
+      removeTrackedVehicle(oldId)
+    end
+  end
+  if newVehId and newVehId ~= -1 then
+    local state = addTrackedVehicle(newVehId, {playerId = player})
+    if state then state.currResetTimer = resetTimer end
+  end
+end
+
+local function onVehicleDestroyed(vehId)
+  removeTrackedVehicle(vehId)
+end
+
+local function onClientEndMission()
+  table.clear(trackedVehicles)
+end
+
 local function onAnyStuntZoneAccomplished()
-  currDriftCompletedTimer = currDriftCompleteTime
+  local state = getState()
+  if state and state.currDriftCompleteTime then
+    state.currDriftCompletedTimer = state.currDriftCompleteTime
+  end
 end
 
 local function onDriftContextChanged(context, oldContext)
   if oldContext ~= context then
     if context ~= "inAnotherMissionType" then
-      tryTrackDriftVehForCrash()
+      for _, state in pairs(trackedVehicles) do
+        if state.vehId and not gameplay_util_crashDetection.isVehTracked(state.vehId) and state.vehId > -1 then
+          gameplay_util_crashDetection.addTrackedVehicleById(state.vehId, crashDetectionSettings, "drift")
+        end
+      end
     elseif context == "inAnotherMissionType" then
-      gameplay_util_crashDetection.removeTrackedVehicleById(vehId)
+      for _, state in pairs(trackedVehicles) do
+        gameplay_util_crashDetection.removeTrackedVehicleById(state.vehId)
+      end
     end
   end
 end
 
 local function onDriftChallengeFinished()
-  if driftChainActiveData ~= nil then
-    extensions.hook('onDriftCompleted', {
-      chainDriftData = driftChainActiveData
-    })
-  end
-  if isDrifting then
-    extensions.hook("onDriftActiveDataFinished", driftActiveData)
+  for _, state in pairs(trackedVehicles) do
+    if state.driftChainActiveData ~= nil then
+      extensions.hook('onDriftCompleted', {
+        chainDriftData = state.driftChainActiveData,
+        vehId = state.vehId
+      })
+    end
+    if state.isDrifting then
+      extensions.hook("onDriftActiveDataFinished", state.driftActiveData, state.vehId)
+    end
   end
 end
 
 local function onVehicleCrashStarted(crashStartData)
   if gameplay_walk.isWalking() or gameplay_drift_general.getPaused() or gameplay_drift_general.getFrozen() or dtSim <= 0 then return end
+  if crashStartData.vehId == nil then return end
 
-  if crashStartData.vehId == nil or score.cachedScore == nil or vehId == nil then return end
+  local state = trackedVehicles[crashStartData.vehId]
+  if not state then return end
 
-  if crashStartData.vehId == vehId and score.cachedScore > 0 then
-    crashed = true
+  local score = gameplay_drift_scoring.getScore(state.vehId)
+  if score and score.cachedScore and score.cachedScore > 0 then
+    state.crashed = true
   end
 end
 
-local function onDriftPlVehReset()
-  reset()
-  currResetTimer = resetTimer
-end
-
-local function getDistSinceLastFrame()
-  return distSinceLastFrame or 0
-end
-
-local function getCurrentDriftDuration()
-  if isDrifting then
-    return driftActiveData.totalDriftTime
+local function onDriftPlVehReset(vehId)
+  if vehId then
+    local state = trackedVehicles[vehId]
+    if state then
+      resetVehicleState(state)
+      state.currResetTimer = resetTimer
+    end
   else
-    return 0
+    for _, state in pairs(trackedVehicles) do
+      resetVehicleState(state)
+      state.currResetTimer = resetTimer
+    end
   end
 end
 
-local function getIsOverSteering()
-  return isOverSteering
-end
-
-local function getIsOverMinSpeedForDrift()
-  return avrgRefPointsKphSpeed > driftOptions.minAirSpeed
-end
-
-local function doesPlHaveVeh()
-  return vehData ~= nil
-end
-
-local function getVehData()
-  return vehData
-end
-
-local function getVehVel()
-  return velDir
-end
-
-local function getIsInTheAir()
-  return isInTheAir
-end
-
-local function setBalanceMode(_balanceMode)
-  balanceMode = _balanceMode
-end
 local function onSerialize()
   return {
     debugToggleSmothnessGraph = debugToggleSmothnessGraph[0],
@@ -992,6 +1155,8 @@ end
 M.onUpdate = onUpdate
 M.onVehicleCrashStarted = onVehicleCrashStarted
 M.onVehicleSwitched = onVehicleSwitched
+M.onVehicleDestroyed = onVehicleDestroyed
+M.onClientEndMission = onClientEndMission
 M.onSerialize = onSerialize
 M.onDeserialized = onDeserialized
 M.onDriftPlVehReset = onDriftPlVehReset
@@ -1026,11 +1191,15 @@ M.getIsInTheAir = getIsInTheAir
 
 M.doesPlHaveVeh = doesPlHaveVeh
 
+M.addTrackedVehicle = addTrackedVehicle
+M.removeTrackedVehicle = removeTrackedVehicle
+M.getTrackedVehicles = getTrackedVehicles
+M.getPlayerIdForVehicle = getPlayerIdForVehicle
+
 M.setVehId = setVehId
 M.setAllowTightDrift = setAllowTightDrift
 M.setAllowDonut = setAllowDonut
 M.setBalanceMode = setBalanceMode
 
--- to simulate a drift
 M.simulateADrift = simulateADrift
 return M

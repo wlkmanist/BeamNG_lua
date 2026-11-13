@@ -11,6 +11,7 @@ local S = {
   sessionActive = false,
   activeProfile = "pause",
   suppressionsApplied = false,
+  splitScreenSoloViewApplied = false,
   previousCompatPhotoModeOpen = false,
   photoModeOpen = false,
   routePayloadContractVersion = 8,
@@ -21,6 +22,7 @@ local S = {
   sessionEffectsRestoreState = nil,
   sessionEffectsRestoreStatePersisted = false,
   sessionAdvancedRenderRestoreState = nil,
+  sessionPlatformQualityRestore = nil,
 
   sessionNodeGrabberRestoreState = nil,
   nodeGrabberVisible = false,

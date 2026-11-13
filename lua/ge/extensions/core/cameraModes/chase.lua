@@ -54,6 +54,7 @@ end
 function C:onSettingsChanged()
   self.relaxation = settings.getValue('cameraOrbitRelaxation') or 3
   self.rollSmoothing = math.max(settings.getValue('cameraChaseRollSmoothing') or 1, 0.000001)
+  self.collision:onSettingsChanged()
   self:reset() --TODO is this really necessary?
 end
 

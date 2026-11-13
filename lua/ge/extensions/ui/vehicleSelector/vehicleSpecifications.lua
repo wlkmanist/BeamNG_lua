@@ -145,7 +145,7 @@ local valueToUnit = {
     if not type(value) == 'number' then
       return tostring(value)
     end
-    return string.format("%0.2f%s", value, " s")
+    return core_locales.withUnit(string.format("%0.2f", value), "s")
   end,
   g = function(value)
     if not type(value) == 'number' then
@@ -157,13 +157,13 @@ local valueToUnit = {
     if not type(value) == 'number' then
       return tostring(value)
     end
-    return string.format("%0.2f%s", value * CONVERSIONS.MPS_TO_KMH, " km/h")
+    return core_locales.withUnit(string.format("%0.2f", value * CONVERSIONS.MPS_TO_KMH), "km/h")
   end,
   mph = function(value)
     if not type(value) == 'number' then
       return tostring(value)
     end
-    return string.format("%0.2f%s", value * CONVERSIONS.MPS_TO_MPH, " mph")
+    return core_locales.withUnit(string.format("%0.2f", value * CONVERSIONS.MPS_TO_MPH), "mph")
   end,
   torque = function(value, modelDetails, configDetails)
     if not type(value) == 'number' then
@@ -174,11 +174,12 @@ local valueToUnit = {
     local unit = metricOrImperial == 'metric' and 'Nm' or 'lb-ft'
     value = metricOrImperial == 'metric' and value or value * CONVERSIONS.NM_TO_LBFT
     local decimals = value >= 100 and 0 or (value >= 10 and 1 or 2)
+    local formatted = core_locales.withUnit(string.format("%0."..decimals.."f", value), unit)
     -- value is in Nm
     if peakRPM then
-      return {{text = string.format("%0."..decimals.."f %s", value, unit)},{text=string.format("@ %s rpm", peakRPM), italic = true}}
+      return {{text = formatted},{text="@ " .. core_locales.withUnit(tostring(peakRPM), "rpm"), italic = true}}
     else
-      return string.format("%0."..decimals.."f %s", value, unit)
+      return formatted
     end
   end,
   power = function(value, modelDetails, configDetails)
@@ -203,10 +204,11 @@ local valueToUnit = {
       unit = 'PS'
     end
     local decimals = value >= 100 and 0 or (value >= 10 and 1 or 2)
+    local formatted = core_locales.withUnit(string.format("%0."..decimals.."f", value), unit)
     if peakRPM then
-      return {{text = string.format("%0."..decimals.."f %s", value, unit)},{text=string.format("@ %s rpm", peakRPM), italic = true}}
+      return {{text = formatted},{text="@ " .. core_locales.withUnit(tostring(peakRPM), "rpm"), italic = true}}
     else
-      return string.format("%0."..decimals.."f %s", value, unit)
+      return formatted
     end
   end,
   speed = function(value)
@@ -216,9 +218,9 @@ local valueToUnit = {
     local metricOrImperial = settings.getValue('uiUnitLength')
     -- value is in m/s
     if metricOrImperial == 'metric' then
-      return string.format("%0.2f%s", value * CONVERSIONS.MPS_TO_KMH, " km/h")
+      return core_locales.withUnit(string.format("%0.2f", value * CONVERSIONS.MPS_TO_KMH), "km/h")
     else
-      return string.format("%0.2f%s", value * CONVERSIONS.MPS_TO_MPH, " mph")
+      return core_locales.withUnit(string.format("%0.2f", value * CONVERSIONS.MPS_TO_MPH), "mph")
     end
   end,
   weightPower = function(value)
@@ -244,7 +246,7 @@ local valueToUnit = {
       value = value / CONVERSIONS.PS_TO_KW
     end
 
-    return string.format("%0.2f %s/%s", value, weightStr, powerStr)
+    return core_locales.withUnit(string.format("%0.2f", value), weightStr.."/"..powerStr)
   end,
   weight = function(value)
     if not type(value) == 'number' then
@@ -254,12 +256,12 @@ local valueToUnit = {
     local weightUnit = settings.getValue('uiUnitWeight')
     local decimals = value >= 100 and 0 or (value >= 10 and 1 or 2)
     if weightUnit == 'kg' then
-      return string.format("%0."..decimals.."f kg", value)
+      return core_locales.withUnit(string.format("%0."..decimals.."f", value), "kg")
     else
       -- convert kg to lb
       local lbValue = value * CONVERSIONS.KG_TO_LB
       local lbDecimals = lbValue >= 100 and 0 or (lbValue >= 10 and 1 or 2)
-      return string.format("%0."..lbDecimals.."f lb", lbValue)
+      return core_locales.withUnit(string.format("%0."..lbDecimals.."f", lbValue), "lb")
     end
   end,
   distanceMinor = function(value)
@@ -269,9 +271,9 @@ local valueToUnit = {
     local metricOrImperial = settings.getValue('uiUnitLength')
     -- value is in m
     if metricOrImperial == 'metric' then
-      return string.format("%0.2f m", value)
+      return core_locales.withUnit(string.format("%0.2f", value), "m")
     else
-      return string.format("%0.2f ft", value * CONVERSIONS.M_TO_FT)
+      return core_locales.withUnit(string.format("%0.2f", value * CONVERSIONS.M_TO_FT), "ft")
     end
   end,
 }

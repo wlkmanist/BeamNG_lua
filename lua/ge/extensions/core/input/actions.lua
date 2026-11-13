@@ -8,7 +8,7 @@ local actionsCache = {} -- both vehicle-specific and normal actions, [true] for 
 local normalActionsCache = {}                     -- normal actions, [true] for active ones, [false] for inactive ones
 
 local M = {}
-M.dependencies = { "core_input_categories", "core_input_deprecatedActions", "tech_license" }
+M.dependencies = { "core_input_categories", "core_input_deprecatedActions", "license" }
 M.menuIndependentPrefix = "MenuIndependent_"
 M.menuActionMapNames = {}
 
@@ -47,13 +47,14 @@ end
 
 -- read the actions for the specified vehicle, or normal actions otherwise
 -- if active is true, only active actions are returned
--- if active is false, only inactive actions are returned (due to e.g. beamng.tech license)
+-- if active is false, only inactive actions are returned (due to e.g. beamng.tech license, or *_nonshipping.json files in shipping builds)
 local function readFromActionsFile(vehicleName, active)
   local directory = vehicleName and ("vehicles/"..vehicleName) or "lua/ge/extensions/core/input/actions/"
   local pattern = vehicleName and "input_actions*.json" or "*.json"
   local result = {}
   for _,path in pairs(FS:findFiles(directory, pattern, 0, false, false)) do
-    if active == tech_license.isAllowedActionsPath(path) then
+    local isActive = license.isAllowedActionsPath(path) and not (shipping_build and string.find(path, "_nonshipping", 1, true))
+    if active == isActive then
       local vehicleActions = jsonReadFile(path)
       if vehicleActions == nil then
         log("E", "input_actions", 'unable to read json file: ' .. tostring(path))
@@ -290,43 +291,44 @@ local function queueCmd(vehId, cmd)
   end
 end
 
-local function _replaceCmd(cmd, actionValue, vehicleId)
+local function _replaceCmd(cmd, actionValue, vehicleId, player, triggerId)
   cmd = cmd:gsub("VALUE", tostring(actionValue))
   cmd = cmd:gsub("VEHICLEID", tostring(vehicleId))
   -- TODO: improve hardcoded filter, etc
   cmd = cmd:gsub("FILTERTYPE", '-1')
-  cmd = cmd:gsub("PLAYER", '0')
+  cmd = cmd:gsub("PLAYER", tostring(player or 0))
+  cmd = cmd:gsub("TRIGGERID", tostring(triggerId or ''))
   cmd = cmd:gsub("ANGLE", '900')
   cmd = cmd:gsub("LOCKTYPE", '0')
   return cmd
 end
 
 -- returns the executed action count
-local function executeCommand(evt, actionValue, vehicleId)
+local function executeCommand(evt, actionValue, vehicleId, player, triggerId)
   if evt.ctx == nil or evt.ctx == 'vlua' then
     -- send to vehicle
     if evt.onDown and actionValue == 1 then
-      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId, player, triggerId)
       return queueCmd(vehicleId, cmdStr)
     elseif evt.onUp and actionValue == 0 then
-      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId, player, triggerId)
       return queueCmd(vehicleId, cmdStr)
     elseif evt.onChange then
-      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId, player, triggerId)
       return queueCmd(vehicleId, cmdStr)
     end
   elseif evt.ctx == 'elua' or evt.ctx == 'tlua' then
     -- GE
     if evt.onDown and actionValue == 1 then
-      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId, player, triggerId)
       Lua:queueLuaCommand(cmdStr)
       return 1
     elseif evt.onUp and actionValue == 0 then
-      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId, player, triggerId)
       Lua:queueLuaCommand(cmdStr)
       return 1
     elseif evt.onChange then
-      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId, player, triggerId)
       Lua:queueLuaCommand(cmdStr)
       return 1
     end
@@ -334,15 +336,15 @@ local function executeCommand(evt, actionValue, vehicleId)
   elseif evt.ctx == 'bvlua' then
     -- to all objects
     if evt.onDown and actionValue == 1 then
-      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onDown, actionValue, vehicleId, player, triggerId)
       be:queueAllObjectLua(cmdStr)
       return 1
     elseif evt.onUp and actionValue == 0 then
-      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onUp, actionValue, vehicleId, player, triggerId)
       be:queueAllObjectLua(cmdStr)
       return 1
     elseif evt.onChange then
-      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId)
+      local cmdStr = _replaceCmd(evt.onChange, actionValue, vehicleId, player, triggerId)
       be:queueAllObjectLua(cmdStr)
       return 1
     end

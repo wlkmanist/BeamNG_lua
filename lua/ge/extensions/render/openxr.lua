@@ -287,11 +287,13 @@ local function closeWelcomeDialog()
 end
 
 M.setStateUI = function(stateString)
+  recordPlayerAction("set VR state " .. tostring(stateString))
   M.stateString = stateString
   variableOnUpdate = nop
   if stateString == "welcome" then
     M.cefDialogOpen = true
-    if Engine.Render.getAdapterType() == "Vulkan" then
+    local adapterType = Engine.Render.getAdapterType()
+    if adapterType == "Vulkan" or adapterType == "Direct3D12" then
       guihooks.trigger('ConfirmationDialogOpen', welcomeTitle, welcomeBody, buttonOkText, buttonOkLua, buttonCancelText, buttonCancelLua)
     else
       guihooks.trigger('ConfirmationDialogOpen', welcomeTitle, welcomeBody, nil, nil, buttonNoVulkanText, buttonNoVulkanLua)

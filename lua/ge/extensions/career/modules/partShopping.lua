@@ -101,7 +101,10 @@ local function generatePart(partName, currentVehicleData, availableParts, path, 
   part.name = partName
   part.value = jbeamData.information.value or 100
   part.partCondition = {integrityValue = 1, odometer = 0, visualValue = 1}
-  part.description = availableParts[partName] or {description = _tr("ui.career.partShopping.noDescriptionFound")}
+  -- availableParts entries belong to the jbeamIO cache, so copy before writing the
+  -- translated name into it, otherwise every shop visit re-translates the same table
+  local partInfo = availableParts[partName]
+  part.description = partInfo and shallowcopy(partInfo) or {description = _tr("ui.career.partShopping.noDescriptionFound")}
   part.tags = {}
   part.containingSlot = path
   part.partPath = path .. partName
@@ -149,7 +152,7 @@ local function generatePartFromTree(treeNode, slotName, slotInfo, currentVehicle
   local partInfo = availableParts[treeNode.chosenPartName]
   previewVehicleSlotData[treeNode.path] = slotInfo
 
-  treeNode.chosenPartNiceName = partInfo and partInfo.description
+  treeNode.chosenPartNiceName = partInfo and core_vehicle_partmgmt.getTranslation(partInfo.description, "ui.vehicleconfig.information.name.")
   treeNode.slotNiceName = slotsNiceName[slotName]
   treeNode.slotName = slotName
 
@@ -158,7 +161,7 @@ local function generatePartFromTree(treeNode, slotName, slotInfo, currentVehicle
   if treeNode.suitablePartNames then
     for _, suitablePartName in ipairs(treeNode.suitablePartNames) do
       local part = generatePart(suitablePartName, currentVehicleData, availableParts, treeNode.path, slotName, vehicleObj)
-      if part.containingSlot ~= "main" and not part.description.isAuxiliary then
+      if part and part.containingSlot ~= "main" and not part.description.isAuxiliary then
         table.insert(partsInShop, part)
 
         -- Add matching parts from inventory
@@ -200,7 +203,17 @@ local function generatePartFromTree(treeNode, slotName, slotInfo, currentVehicle
   -- Recursively process child slots
   if treeNode.children then
     for childSlot, childNode in pairs(treeNode.children) do
-      generatePartFromTree(childNode, childSlot, partInfo.slotInfoUi[childSlot], currentVehicleData, availableParts, vehicleObj)
+      generatePartFromTree(childNode, childSlot, partInfo and partInfo.slotInfoUi and partInfo.slotInfoUi[childSlot], currentVehicleData, availableParts, vehicleObj)
+    end
+  end
+end
+
+local function removeSlotsWithoutParts(treeNode, slotsWithParts)
+  if not treeNode.children then return end
+  for slotName, childNode in pairs(treeNode.children) do
+    removeSlotsWithoutParts(childNode, slotsWithParts)
+    if not slotsWithParts[childNode.path] and tableIsEmpty(childNode.children) then
+      treeNode.children[slotName] = nil
     end
   end
 end
@@ -222,6 +235,12 @@ local function generatePartShop()
   partsInShop = {}
   local chosenPartsTree = deepcopy(currentVehicleData.config.partsTree)
   generatePartFromTree(chosenPartsTree, "", nil, currentVehicleData, availableParts, vehicleObj)
+
+  local slotsWithParts = {}
+  for _, part in ipairs(partsInShop) do
+    slotsWithParts[part.containingSlot] = true
+  end
+  removeSlotsWithoutParts(chosenPartsTree, slotsWithParts)
 
   return chosenPartsTree
 end
@@ -270,7 +289,7 @@ local function buildSearchSlotList(partTree)
   for path, slotInfo in pairs(searchSlotDict) do
     table.insert(searchSlotList, slotInfo)
   end
-  table.sort(searchSlotList, function(a,b) return a.slotNiceName < b.slotNiceName end)
+  table.sort(searchSlotList, function(a,b) return (a.slotNiceName or a.slotName) < (b.slotNiceName or b.slotName) end)
   return searchSlotList
 end
 
@@ -294,15 +313,18 @@ local function updateShoppingCart()
   local slotsAdded = {}
   local counter = 1
   for slot, part in pairs(shoppingCart.partsIn) do
-    shoppingCart.slotList[counter] = slot
-    shoppingCart.partsInList[counter] = part
-    shoppingCart.partsOutList[counter] = shoppingCart.partsOut[part.containingSlot]
+    local partOut = shoppingCart.partsOut[part.containingSlot]
+    if not career_modules_partInventory.isHiddenInUI(part) or (partOut and not career_modules_partInventory.isHiddenInUI(partOut)) then
+      shoppingCart.slotList[counter] = slot
+      shoppingCart.partsInList[counter] = part
+      shoppingCart.partsOutList[counter] = partOut
+      counter = counter + 1
+    end
     slotsAdded[part.containingSlot] = true
-    counter = counter + 1
   end
 
   for slot, part in pairs(shoppingCart.partsOut) do
-    if not slotsAdded[part.containingSlot] then
+    if not slotsAdded[part.containingSlot] and not career_modules_partInventory.isHiddenInUI(part) then
       shoppingCart.slotList[counter] = slot
       shoppingCart.partsOutList[counter] = part
       slotsAdded[part.containingSlot] = true
@@ -468,7 +490,7 @@ local function startShoppingActual(_originComputerId)
     if partName and partName ~= "" then
       local partInfo = availableParts[partName]
       if partInfo then
-        partsNiceName[partName] = partInfo.description
+        partsNiceName[partName] = core_vehicle_partmgmt.getTranslation(partInfo.description, "ui.vehicleconfig.information.name.")
       end
     end
   end
@@ -527,12 +549,26 @@ local function getDefaultPartName(jbeamData, slotName)
   end
 end
 
-local function getFittingPartFromInventory(parentPart, slotName, currentVehicleData)
+-- chainSlots maps containingSlot -> slotInfo for the parts that are being installed
+local function fitsSlotAboveInChain(partDescription, path, chainSlots)
+  for chainPath, slotInfo in pairs(chainSlots) do
+    if string.startswith(path, chainPath) and jbeamSlotSystem.partFitsSlot(partDescription, slotInfo) then return true end
+  end
+  return false
+end
+
+local function getFittingPartFromInventory(parentPart, slotName, currentVehicleData, chainSlots, usedPartIds)
   for partId, inventoryPart in pairs(career_modules_partInventory.getInventory()) do
     local partSlotOfThisPartInShoppingCart = getPartSlotFromPartIdInShoppingCart(partId) -- for checking if the part is already in the shopping cart
 
     local partDescription = jbeamIO.getPart(currentVehicleData.ioCtx, inventoryPart.name)
-    if inventoryPart.location == 0 and inventoryPart.vehicleModel == parentPart.vehicleModel and (not partSlotOfThisPartInShoppingCart) and jbeamSlotSystem.partFitsSlot(partDescription, parentPart.description.slotInfoUi[slotName]) then
+    if inventoryPart.location == 0 -- in storage, not in a vehicle
+      and inventoryPart.vehicleModel == parentPart.vehicleModel -- made for the same vehicle model
+      and not partSlotOfThisPartInShoppingCart -- not already in the shopping cart
+      and not usedPartIds[partId] -- not already used in another slot of this install
+      and jbeamSlotSystem.partFitsSlot(partDescription, parentPart.description.slotInfoUi[slotName]) -- fits the slot that is being filled
+      and not fitsSlotAboveInChain(partDescription, parentPart.containingSlot, chainSlots) -- doesn't fit a slot above in the chain, so parts of the same kind don't get stacked
+    then
       local shopPart = deepcopy(inventoryPart)
       shopPart.containingSlot = parentPart.containingSlot .. slotName .. "/"
       shopPart.partPath = shopPart.containingSlot .. inventoryPart.name
@@ -547,7 +583,7 @@ local function getFittingPartFromInventory(parentPart, slotName, currentVehicleD
   end
 end
 
-local function getNeededAdditionalParts(parts, inventoryId)
+local function getNeededAdditionalParts(parts, inventoryId, chainSlots)
   local vehId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
   local vehicleObj = getObjectByID(vehId)
   local currentVehicleData = extensions.core_vehicle_manager.getVehicleData(getCurrentVehicleVehId())
@@ -563,13 +599,21 @@ local function getNeededAdditionalParts(parts, inventoryId)
   end
 
   for path, part in pairs(combinedSlotToPartMap) do
-    local jbeamData = jbeamIO.getPart(currentVehicleData.ioCtx, part.name)
-    part.slotType = jbeamData.slotType
+    if not part.slotType then
+      local jbeamData = jbeamIO.getPart(currentVehicleData.ioCtx, part.name)
+      if jbeamData then
+        part.slotType = jbeamData.slotType
+      end
+    end
   end
 
   -- add the default part if the slot is empty and they have a default part
   local addedParts = false
   local resultParts = deepcopy(parts)
+  local usedPartIds = {}
+  for _, part in pairs(parts) do
+    if part.partId then usedPartIds[part.partId] = true end
+  end
   for _, part in pairs(parts) do
     if part.description.slotInfoUi then
       for slotName, slotInfo in pairs(part.description.slotInfoUi) do
@@ -578,17 +622,28 @@ local function getNeededAdditionalParts(parts, inventoryId)
           local jbeamData = jbeamIO.getPart(currentVehicleData.ioCtx, part.name)
 
           -- look for a fitting part from the inventory
-          local fittingPart = getFittingPartFromInventory(part, slotName, currentVehicleData)
+          local fittingPart = getFittingPartFromInventory(part, slotName, currentVehicleData, chainSlots, usedPartIds)
+          if fittingPart then
+            usedPartIds[fittingPart.partId] = true
+          end
 
           if not fittingPart then
             local partNameToGenerate = getDefaultPartName(jbeamData, slotName)
             if partNameToGenerate then -- found a default part name
               fittingPart = generatePart(partNameToGenerate, currentVehicleData, availableParts, path, slotName, vehicleObj)
+              if fittingPart then
+                local generatedJbeam = jbeamIO.getPart(currentVehicleData.ioCtx, fittingPart.name)
+                -- this check should normally not be necessary, but it's possible that the jbeam has a non-fitting part as the default part and then this would lead to an infinite loop
+                if generatedJbeam and not jbeamSlotSystem.partFitsSlot(generatedJbeam, slotInfo) then
+                  fittingPart.slotType = slotInfo.allowTypes[1]
+                end
+              end
             end
           end
 
           if fittingPart then
             resultParts[fittingPart.containingSlot] = fittingPart
+            chainSlots[fittingPart.containingSlot] = slotInfo
             addedParts = true
             if not slotInfo.coreSlot then
               fittingPart.sourcePart = true
@@ -647,15 +702,13 @@ local function findIncompatiblePartsInShoppingCart()
 end
 
 -- fill the preview vehicle with the initial parts
-local function fillWithInitialParts(containingSlot, currentVehicleData)
+local function fillWithInitialParts(containingSlot)
   local node = getNodeFromSlotPath(previewVehicle.config.partsTree, containingSlot)
+  if not node then return end
   local initialVehicleNode = getNodeFromSlotPath(initialVehicle.config.partsTree, containingSlot)
   if initialVehicleNode and initialVehicleNode.chosenPartName and initialVehicleNode.chosenPartName ~= "" then
     node.chosenPartName = initialVehicleNode.chosenPartName
     previewVehicle.partConditions[initialVehicleNode.partPath] = initialVehicle.partConditions[initialVehicleNode.partPath]
-    for _, slot in ipairs(initialVehicleNode.children or {}) do
-      fillWithInitialParts(slot.path, currentVehicleData)
-    end
   else
     node.chosenPartName = ""
   end
@@ -700,9 +753,13 @@ local function updateInstalledParts(addedParts, removedParts)
   if addedParts then
     local firstPart = next(addedParts)
     if firstPart and not addedParts[firstPart].emptyPlaceholder then
+      local chainSlots = {}
+      for _, part in pairs(addedParts) do
+        chainSlots[part.containingSlot] = previewVehicleSlotData[part.containingSlot]
+      end
       local werePartsAdded
       repeat
-        addedParts, werePartsAdded = getNeededAdditionalParts(addedParts, currentVehicle)
+        addedParts, werePartsAdded = getNeededAdditionalParts(addedParts, currentVehicle, chainSlots)
         for path, part in pairs(addedParts) do
           local node = getNodeFromSlotPath(previewVehicle.config.partsTree, part.containingSlot)
           if node then
@@ -731,7 +788,7 @@ local function updateInstalledParts(addedParts, removedParts)
       local initialPart = jbeamIO.getPart(currentVehicleData.ioCtx, initialPartName)
 
       if initialPartName and initialPartName ~= "" and jbeamSlotSystem.partFitsSlot(initialPart, previewVehicleSlotData[containingSlot]) then
-        fillWithInitialParts(containingSlot, currentVehicleData)
+        fillWithInitialParts(containingSlot)
       else
         local node = getNodeFromSlotPath(previewVehicle.config.partsTree, containingSlot)
         if node then node.chosenPartName = "" end
@@ -903,12 +960,9 @@ end
 
 local function getBuyingLabel()
   local parts = {}
-  for i=1,tableSize(shoppingCart.partsInList) - 1 do
-    local part = shoppingCart.partsInList[i]
+  for _, part in ipairs(shoppingCart.partsInList) do
     table.insert(parts, part.description.description)
   end
-  local part = shoppingCart.partsInList[tableSize(shoppingCart.partsInList)]
-  table.insert(parts, part.description.description)
   return {
     txt = "ui.career.partShopping.boughtNewParts",
     context = {parts = table.concat(parts, ", ")},

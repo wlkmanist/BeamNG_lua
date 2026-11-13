@@ -555,6 +555,11 @@ local function fractPos(x)
   return x - floor(x)
 end
 
+-- i in [M..N], returns [0..1]
+function indexedBlueNoise(i)
+  return fractPos(i * 0.6180339887498949)
+end
+
 -- x is previous value, returns [0..1)
 function getBlueNoise1d(x)
   return fractPos(x + 0.6180339887498949)
@@ -1298,6 +1303,14 @@ function bumpFun(x, peakLeftX, peakRightX, leftSlope, rightSlope, leftY, peakY, 
     ((rightY or 0)-peakY)*(1+sigmoid1(roundness*(x-peakRightX), (rightSlope or 1))))
 end
 
+function bumpPFun(x, peakX, leftWidth, rightWidth, leftC, rightC, baseY, peakY)
+  x = x - peakX
+  local is_fall = x > 0.0
+  x = min(max(abs(x) / (is_fall and rightWidth or leftWidth), 0), 1)
+  baseY = baseY or 0
+  return baseY + ((peakY or 1) - baseY) * square(1 - x) * (1 + x * (2 - (x * 3) * (is_fall and rightC or leftC)))
+end
+
 function median3(a,b,c)
   return max(min(a,b),min(max(a,b),c))
 end
@@ -1522,19 +1535,19 @@ function intersectsRay_Cylinder(rpos, rdir, cposa, cposb, cR)
   return (minhit <= maxhit and minhit or math.huge), maxhit
 end
 
--- https://iquilezles.org/articles/intersectors , returns first hit, untested
+-- https://iquilezles.org/articles/intersectors , returns first hit (negative if behind the ray origin)
 function intersectsRay_Capsule(rpos, rdir, cposa, cposb, cR )
   local ba, oa = cposb - cposa, rpos - cposa
   local baba, bard, baoa = ba:squaredLength(), ba:dot(rdir), ba:dot(oa)
   local a, b = baba - bard*bard, rdir:dot(oa) * baba - baoa*bard
   local h = b*b - a*((oa:squaredLength()-cR*cR) * baba - baoa*baoa)
   if h >= 0 then
-    local t = (-b-sqrt(h))/a
+    local t = (-b-sqrt(h))/(a + 1e-30)
     local y = baoa + t*bard
     if y > 0 and y < baba then return t end -- body
     oa:set(y <= 0 and oa or rpos - cposb) -- caps
     b = rdir:dot(oa)
-    h = b*b - oa:squaredLength() - cR*cR
+    h = b*b - oa:squaredLength() + cR*cR
     if h > 0 then return -b-sqrt(h) end
   end
   return math.huge

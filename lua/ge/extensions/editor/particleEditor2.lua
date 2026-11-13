@@ -321,7 +321,7 @@ local function drawPreview(paneWidth)
   previewHeight = math.max(2, math.floor(avail.y))
   if previewRv then
     local texObj = imUtils.texObj('#' .. renderViewName)
-    im.Image(texObj.texId, im.ImVec2(previewWidth, previewHeight))
+    im.Image(texObj.tex:getID(), im.ImVec2(previewWidth, previewHeight))
     handlePreviewInput()
   end
   im.EndChild()

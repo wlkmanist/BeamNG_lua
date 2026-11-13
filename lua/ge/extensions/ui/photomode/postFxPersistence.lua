@@ -6,26 +6,31 @@ local M = {}
 
 local logTag = "ui_photomode_postfx"
 local RESTORE_STATE_FILE = "settings/photomodePostFxRestoreState.json"
-local DEFAULT_POSTFX_PRESET_FILE = "lua/ge/client/postFx/presets/defaultpostfxpreset.postfx"
 local RESTORE_STATE_VERSION = 1
-local PHOTOMODE_AUTOFOCUS_FOCUS_RANGE = 0
 
 local BOOLEAN_FIELDS = {
   "dofEnabled",
   "dofAutofocus",
-  "ssaoEnabled",
+  "specularOcclusionEnabled",
+  "screenSpaceShadowsEnabled",
   "motionBlurEnabled",
-  "reflectionsEnabled",
+  "occupantsVisible",
 }
 
 local NUMBER_FIELDS = {
   "dofMaxBlurNear",
   "dofMaxBlurFar",
   "dofFocusRange",
+  "dofAperture",
+  "dofFalloffSharpness",
   "motionBlurStrength",
-  "reflectionDetail",
-  "reflectionDistance",
-  "reflectionTextureSize",
+}
+
+local STRING_FIELDS = {
+  "ssaoQualityMode",
+  "ssrQualityMode",
+  "reflectionQualityMode",
+  "mirrorsQualityMode",
 }
 
 local function normalizeBoolean(value, fallback)
@@ -49,15 +54,6 @@ local function normalizeNumber(value)
   return number
 end
 
-local function getPackagedDofDefaults()
-  local preset = jsonReadFile(DEFAULT_POSTFX_PRESET_FILE) or {}
-  local dof = type(preset.DOF) == "table" and preset.DOF or {}
-  return {
-    dofAutofocus = normalizeBoolean(dof.EnableAutoFocus, false),
-    dofFocusRange = normalizeNumber(dof.FocusDistance) or 250,
-  }
-end
-
 local function hasAnyEffectsField(effectsState)
   if type(effectsState) ~= "table" then
     return false
@@ -68,6 +64,11 @@ local function hasAnyEffectsField(effectsState)
     end
   end
   for _, fieldName in ipairs(NUMBER_FIELDS) do
+    if effectsState[fieldName] ~= nil then
+      return true
+    end
+  end
+  for _, fieldName in ipairs(STRING_FIELDS) do
     if effectsState[fieldName] ~= nil then
       return true
     end
@@ -92,6 +93,11 @@ local function normalizeEffectsState(effectsState)
       normalizedState[fieldName] = normalizedNumber
     end
   end
+  for _, fieldName in ipairs(STRING_FIELDS) do
+    if type(effectsState[fieldName]) == "string" then
+      normalizedState[fieldName] = effectsState[fieldName]
+    end
+  end
 
   if normalizedState.dofAutofocus == nil and (
     normalizedState.dofEnabled ~= nil
@@ -100,12 +106,6 @@ local function normalizeEffectsState(effectsState)
       or normalizedState.dofFocusRange ~= nil
   ) then
     normalizedState.dofAutofocus = false
-  end
-
-  if normalizedState.dofAutofocus ~= true
-    and normalizedState.dofFocusRange == PHOTOMODE_AUTOFOCUS_FOCUS_RANGE
-  then
-    normalizedState.dofFocusRange = getPackagedDofDefaults().dofFocusRange
   end
 
   return hasAnyEffectsField(normalizedState) and normalizedState or nil

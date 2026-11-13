@@ -59,11 +59,6 @@ local function _saveData()
   -- career saving has been moved to onSaveCurrentProfile
 end
 
-local function onFirstUpdate()
-  log("I", "onFirstUpdate", "loading data")
-  _loadData()
-end
-
 local function _save()
   --log("E","_save","!!!!!!!!!!!!!!!!!!!!")
   lastSaveTime = os.clock()
@@ -779,6 +774,8 @@ local function onCareerActive(active)
 end
 
 local function onExtensionLoaded()
+  log("I", "onExtensionLoaded", "loading data")
+  _loadData()
   loadSubmodules()
 end
 
@@ -789,7 +786,6 @@ local function forceTimerUpdate()
 end
 
 
-M.onFirstUpdate = onFirstUpdate
 M.onExit = onExit
 M.onExtensionUnloaded = onExtensionUnloaded
 M.onSerialize = onSerialize

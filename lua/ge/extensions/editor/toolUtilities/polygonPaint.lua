@@ -11,7 +11,8 @@ local M = {}
 
 local im = ui_imgui
 
-local render = require('editor/toolUtilities/render')
+local rSpheres = require('editor/toolUtilities/render/spheres')
+local rLines = require('editor/toolUtilities/render/lines')
 local util = require('editor/toolUtilities/util')
 local rdp = require('editor/toolUtilities/rdp')
 local style = require('editor/toolUtilities/style')
@@ -112,13 +113,13 @@ local function renderPreview()
 
   for i = 1, n do
     -- Use the same render helper style as other tools; make spheres clearly visible.
-    render.drawSphereImmediate(points[i], paintSphereScale, previewCol)
+    rSpheres.drawSphereImmediate(points[i], paintSphereScale, previewCol)
     if i > 1 then
-      render.drawLineImmediate(points[i - 1], points[i], 2, previewColEdge)
+      rLines.drawLineImmediate(points[i - 1], points[i], 2, previewColEdge)
     end
   end
   if n > 2 then
-    render.drawLineImmediate(points[n], points[1], 2, previewColEdge)
+    rLines.drawLineImmediate(points[n], points[1], 2, previewColEdge)
   end
 end
 
@@ -139,7 +140,7 @@ local function update()
 
   -- Always render preview + cursor while armed/drawing.
   renderPreview()
-  render.drawSphereCursor(cursorPos, hoveringTerrain)
+  rSpheres.drawSphereCursor(cursorPos, hoveringTerrain)
 
   -- Capture gate:
   local canCapture = hoveringTerrain

@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
---Purpose: controller for emulating dynamic brake lights and related things like hazards control
+--Purpose: Drives brake-light and hazard output for ABS, ESC, regen, and emergency braking
 
 local M = {}
 M.type = "auxiliary"

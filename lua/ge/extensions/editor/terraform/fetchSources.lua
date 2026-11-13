@@ -14,7 +14,7 @@ local M = {}
 -- External modules.
 local meshSplines = require("editor/meshSpline/splineMgr")
 local assemblySplines = require("editor/assemblySpline/splineMgr")
-local ratRoads = require("editor/tech/roadArchitect/roads")
+local ratRoads = require("editor/roadArchitect/roads")
 local masterSpline = require("editor/masterSpline/splineMgr")
 local geom = require("editor/toolUtilities/geom")
 

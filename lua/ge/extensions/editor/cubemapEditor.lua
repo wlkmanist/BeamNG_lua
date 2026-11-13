@@ -283,7 +283,7 @@ local function cubemapFaceImageButton(index, tooltip)
 
   if im.ImageButton(
     "##imageButton2",
-    tex.texId,
+    tex.tex:getID(),
     im.ImVec2(cubemapFaceThumbnailSize, cubemapFaceThumbnailSize),
     im.ImVec2Zero,
     im.ImVec2One,
@@ -745,7 +745,7 @@ end
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(750, 380))
   editor.hideWindow(toolWindowName)
-  editor.addWindowMenuItem("Cubemap Editor", function() M.show() end, nil, false)
+  editor.addWindowMenuItem("Cubemap Editor", function() M.show() end, {groupMenuName = 'Assets'})
 end
 
 local function onEditorGui()

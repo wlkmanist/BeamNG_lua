@@ -168,6 +168,8 @@ local autoAggregate = {
     local aggMax = aggregate[config.aggregateKeyMax] or 0
     if attempt.data[config.attemptKey] then
       aggCurrent = aggCurrent + 1
+    else
+      aggCurrent = 0
     end
     if config.newBestKey and aggCurrent > aggMax then
       change.newBestKeysByKey[config.newBestKey] = true

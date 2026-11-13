@@ -13,6 +13,7 @@ local jobMetadataById = {}
 local jobSidecarEnabledById = {}
 local pendingUploadSidecars = {}
 local reservedScreenshotPaths = {}
+local captureInProgress = false
 local minimalScreenshotMetadata
 local getOnlineProviderPlayerName
 local debugTracingEnabled = false
@@ -96,6 +97,13 @@ local function pruneDoneJobs()
   jobsList = newList
 end
 
+local function isCaptureInProgress()
+  if captureInProgress then
+    log('I', 'screenshot', 'ignoring screenshot capture, previous screenshot still in progress')
+  end
+  return captureInProgress
+end
+
 local function startNewRun()
   currentRunId = currentRunId + 1
   logTrace("startNewRun runId=" .. tostring(currentRunId))
@@ -107,6 +115,7 @@ local function createScreenshotTracked(p)
   local p2 = shallowcopy(p or {})
   local id = createScreenshot2(p2)
   if not id or id == 0 then return id end
+  captureInProgress = true
 
   local j = jobs[id]
   if not j then
@@ -501,6 +510,8 @@ local function readPhotomodeUploadSidecar(screenshotPath, useCache)
 end
 
 local function doScreenshot(batchTag, upload, path, ext, options)
+  if isCaptureInProgress() then return end
+  recordPlayerAction("take screenshot")
   startNewRun()
   -- find the next available screenshot filename
   local counter = 0
@@ -922,6 +933,7 @@ local function _screenshot(superSampling, tiles, overlap, highest, rescaleFactor
   rescaleFactor = tonumber(rescaleFactor)
   if not rescaleFactor or rescaleFactor <= 0 then rescaleFactor = 1 end
   splitSceneVehicle, saveNormalDepth = normalizeArtifactCaptureFlags(splitSceneVehicle, saveNormalDepth)
+  recordPlayerAction(string.format("take screenshot (superSampling %s, tiles %s)", tostring(superSampling), tostring(tiles)))
 
   -- set the new values
   if highest and not M.hqActive then
@@ -1053,6 +1065,17 @@ local function screenshotSaved(id, res, filename)
   pushJobsToUI()
 end
 
+local function getScreenshotCompletion(id)
+  local job = jobs[id]
+  if not job or (job.phase ~= 'done' and job.phase ~= 'error') then return nil end
+  return {
+    id = job.id,
+    result = job.result,
+    filename = job.filename,
+    phase = job.phase
+  }
+end
+
 local function screenshotUploaded(id, result, _adminUrl, shareUrl)
   id = tonumber(id) or 0
   result = tonumber(result) or 1
@@ -1154,6 +1177,7 @@ local function screenshotAllDone()
   end
 
   reservedScreenshotPaths = {}
+  captureInProgress = false
   logTrace("screenshotAllDone runId=" .. tostring(currentRunId))
   if extensions and extensions.hook then
     extensions.hook('onScreenshotAllDone')
@@ -1161,6 +1185,60 @@ local function screenshotAllDone()
   if guihooks and guihooks.trigger then
     guihooks.trigger("ScreenshotJobsAllDone", true)
   end
+end
+
+local function clampSuperSamplingForGpuBudget(superSampling, hardMax)
+  superSampling = tonumber(superSampling) or 1
+  superSampling = math.floor(superSampling + 0.5)
+  hardMax = tonumber(hardMax) or 24
+  superSampling = math.max(1, math.min(hardMax, superSampling))
+  if superSampling <= 1 or type(getMaxSafeScreenshotSuperSampling) ~= "function" then
+    return superSampling
+  end
+
+  local width, height
+  if GFXDevice and type(GFXDevice.getVideoMode) == "function" then
+    local ok, videoMode = pcall(GFXDevice.getVideoMode)
+    if ok and type(videoMode) == "table" then
+      width = tonumber(videoMode.width)
+      height = tonumber(videoMode.height)
+    end
+  end
+  if not width or not height or width <= 0 or height <= 0 then
+    return superSampling
+  end
+
+  local hdrCapture = false
+  if GFXHdr and type(GFXHdr.getSupported) == "function" and GFXHdr.getSupported() == true then
+    if type(GFXHdr.getOutputModeName) == "function" then
+      hdrCapture = GFXHdr.getOutputModeName() ~= "LDR"
+    end
+  end
+
+  local ok, safeMax = pcall(getMaxSafeScreenshotSuperSampling, width, height, hdrCapture, hardMax)
+  if not ok then
+    return superSampling
+  end
+  safeMax = math.floor(tonumber(safeMax) or hardMax)
+  if safeMax < 1 then
+    safeMax = 1
+  end
+  if superSampling > safeMax then
+    log(
+      'W',
+      'screenshot',
+      string.format(
+        "clamping supersampling from %d to %d for gpu budget (%dx%d hdr=%s)",
+        superSampling,
+        safeMax,
+        width,
+        height,
+        tostring(hdrCapture)
+      )
+    )
+    return safeMax
+  end
+  return superSampling
 end
 
 -- WARNING: Be very careful when tweaking supersampling, massive will cause freezes and crash some GPU drivers
@@ -1190,6 +1268,7 @@ end
 -- 1080p user gets a 4K image.
 -- 4K user gets an 8K image (Safe limit for most GPUs).
 local function takeBigScreenShot(a, b, c, d)
+  if isCaptureInProgress() then return end
   startNewRun()
   local options = extractScreenshotCallOptions(c, d)
   local splitSceneVehicle, saveNormalDepth
@@ -1200,13 +1279,15 @@ local function takeBigScreenShot(a, b, c, d)
     splitSceneVehicle = a == true
     saveNormalDepth = b == true
   end
-  _screenshot(4, 1, 0, false, nil, 'color', nil, splitSceneVehicle, saveNormalDepth, options)
+  local superSampling = clampSuperSamplingForGpuBudget(4, 4)
+  _screenshot(superSampling, 1, 0, false, nil, 'color', nil, splitSceneVehicle, saveNormalDepth, options)
 end
 
 -- Huge: 3x Scale (9x total pixels).
 -- 1080p user gets a ~6K image.
 -- 4K user gets a ~12K image.
 local function takeHugeScreenShot(a, b, c, d)
+  if isCaptureInProgress() then return end
   startNewRun()
   local options = extractScreenshotCallOptions(c, d)
   local splitSceneVehicle, saveNormalDepth
@@ -1217,7 +1298,8 @@ local function takeHugeScreenShot(a, b, c, d)
     splitSceneVehicle = a == true
     saveNormalDepth = b == true
   end
-  _screenshot(9, 1, 0, true, nil, 'color', nil, splitSceneVehicle, saveNormalDepth, options)
+  local superSampling = clampSuperSamplingForGpuBudget(9, 9)
+  _screenshot(superSampling, 1, 0, superSampling >= 9, nil, 'color', nil, splitSceneVehicle, saveNormalDepth, options)
 end
 
 -- Custom: expose supersampling (first argument) for UI preview/advanced usage.
@@ -1226,9 +1308,7 @@ end
 local function takeCustomScreenShot(superSampling, rescaleFactor, a, b, c, d)
   startNewRun()
   local options = extractScreenshotCallOptions(c, d)
-  superSampling = tonumber(superSampling) or 1
-  superSampling = math.floor(superSampling + 0.5)
-  superSampling = math.max(1, math.min(24, superSampling))
+  superSampling = clampSuperSamplingForGpuBudget(superSampling, 24)
   rescaleFactor = tonumber(rescaleFactor)
   local splitSceneVehicle, saveNormalDepth
   if type(a) == 'table' then
@@ -1244,9 +1324,7 @@ end
 local function takeMotionBlurScreenShot(superSampling, rescaleFactor, a, b, c, d)
   startNewRun()
   local options = extractScreenshotCallOptions(c, d)
-  superSampling = tonumber(superSampling) or 1
-  superSampling = math.floor(superSampling + 0.5)
-  superSampling = math.max(1, math.min(24, superSampling))
+  superSampling = clampSuperSamplingForGpuBudget(superSampling, 24)
   rescaleFactor = tonumber(rescaleFactor)
   local splitSceneVehicle, saveNormalDepth
   if type(a) == 'table' then
@@ -1272,6 +1350,7 @@ M.publish = publish
 M.doScreenshot = doScreenshot
 M.doSteamScreenshot = doSteamScreenshot
 M.createScreenshotTracked = createScreenshotTracked
+M.getScreenshotCompletion = getScreenshotCompletion
 M.openScreenshotsFolderInExplorer = openScreenshotsFolderInExplorer
 M.openScreenshotFileInExplorer = openScreenshotFileInExplorer
 M.getPhotomodeRollEntries = getPhotomodeRollEntries

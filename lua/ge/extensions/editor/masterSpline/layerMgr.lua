@@ -8,11 +8,12 @@
 local sliderDefaults = { -- The default values for the slider properties, for use in the tool's front end.
   defaultPaintMargin = 0.0,
   defaultLateralPosition = 0.0,
-  defaultDOI = 70.0,
-  defaultTerraMargin = 5.0,
-  defaultTerraFalloff = 1.5,
-  defaultTerraRoughness = 0.1,
-  defaultTerraScale = 0.5,
+  defaultDOI = 20.0,
+  defaultTerraMargin = 1.0,
+  defaultTerraFalloff = 3.0,
+  defaultTerraRoughness = 0.0,
+  defaultTerraScale = 0.0,
+  defaultTerraSmooth = 2.0,
   defaultBankStrength = 0.5,
   defaultAutoBankFalloff = 0.6,
 }
@@ -27,6 +28,7 @@ local meshSplineLink = require('editor/meshSpline/splineMgr')
 local assemblySplineLink = require('editor/assemblySpline/splineMgr')
 local decalSplineLink = require('editor/decalSpline/splineMgr')
 local roadSplineLink = require('editor/roadSpline/groupMgr')
+local treeSplineLink = require('editor/treeSpline/splineMgr')
 local rdp = require('editor/toolUtilities/rdp')
 
 -- Module constants.
@@ -34,6 +36,7 @@ local meshSplineStr = meshSplineLink.getToolPrefixStr()
 local assemblySplineStr = assemblySplineLink.getToolPrefixStr()
 local decalSplineStr = decalSplineLink.getToolPrefixStr()
 local roadSplineStr = roadSplineLink.getToolPrefixStr()
+local treeSplineStr = treeSplineLink.getToolPrefixStr()
 local defaultLinkType = meshSplineStr
 
 -- Module state.
@@ -46,6 +49,7 @@ local linkUpdateJumpTable = {
   [assemblySplineStr] = assemblySplineLink.updateLinkedAssemblySpline,
   [decalSplineStr] = decalSplineLink.updateLinkedDecalSpline,
   [roadSplineStr] = roadSplineLink.updateLinkedRoadSpline,
+  [treeSplineStr] = treeSplineLink.updateLinkedTreeSpline,
 }
 
 -- A jump table for removing a linked spline.
@@ -54,6 +58,7 @@ local linkRemoveJumpTable = {
   [assemblySplineStr] = assemblySplineLink.removeLinkedAssemblySpline,
   [decalSplineStr] = decalSplineLink.removeLinkedDecalSpline,
   [roadSplineStr] = roadSplineLink.removeLinkedRoadSpline,
+  [treeSplineStr] = treeSplineLink.removeLinkedTreeSpline,
 }
 
 
@@ -68,7 +73,7 @@ local function deepCopyAllLayers(layers) return buffer.decode(buffer.encode(laye
 
 -- Updates the linked layer geometry by sending the nodes to the linked object.
 local function updateLinkedLayer(masterSpline, layerIdx)
-  local nodes, widths, nmls = masterSpline.nodes, masterSpline.widths, masterSpline.nmls
+  local nodes = masterSpline.nodes
   if #nodes < 2 then
     local layer = masterSpline.layers[layerIdx]
     if layer.linkedSplineId then -- Set the linked spline dirty, so its objects are cleaned up.
@@ -162,9 +167,8 @@ end
 local function removeLayer(idx, masterSpline)
   local masterSplineLayers = masterSpline.layers
   local layer = masterSplineLayers[idx]
-  local linkedSplineId = layer.linkedSplineId
-  if linkedSplineId then
-    linkRemoveJumpTable[layer.linkType](linkedSplineId)
+  if layer.linkedSplineId then
+    linkRemoveJumpTable[layer.linkType](layer.linkedSplineId)
   end
   table.remove(masterSplineLayers, idx)
 end
@@ -174,9 +178,8 @@ local function removeAllLayers(masterSpline)
   local layers = masterSpline.layers
   for i = #layers, 1, -1 do
     local layer = layers[i]
-    local linkedSplineId = layer.linkedSplineId
-    if linkedSplineId then
-      linkRemoveJumpTable[layer.linkType](linkedSplineId)
+    if layer.linkedSplineId then
+      linkRemoveJumpTable[layer.linkType](layer.linkedSplineId)
     end
     table.remove(layers, i)
   end

@@ -9,6 +9,7 @@ M.dependencies = {'gameplay_drag_saveSystem', 'gameplay_drag_dragBridge', 'gamep
 
 local dragData
 local raceStateStore = {}
+local expectedStagingRacerCount = 1
 
 local gameplayContext = "freeroam"
 local dragExtension
@@ -25,24 +26,45 @@ local RESET_STATE_RESETTING = "resetting"
 local RESET_STATE_READY = "ready"
 local resetState = RESET_STATE_IDLE
 local loadedDragExtensions = {}
+local zonePosScratch = vec3()
 
+
+local function isMultiseatActive()
+  return settings.getValue("multiseat") == true
+end
 
 local DRAG_MP_GAMEMODE_EXT = extensions.luaPathToExtName('multiplayer/gamemodes/drag/drag')
 local function getDragGamemode()
-  -- Restore the two lines below once multiplayer drag is ready to ship.
-  -- local ext = _G[DRAG_MP_GAMEMODE_EXT]
-  -- if type(ext) ~= "table" then return nil end
-  -- return ext
-  return nil
+  local ext = _G[DRAG_MP_GAMEMODE_EXT]
+  if type(ext) ~= "table" then return nil end
+  return ext
+end
+
+local function triggerTreeLightStaging(visible)
+  if gameplay_drag_display and gameplay_drag_display.broadcastTreeLightStaging then
+    gameplay_drag_display.broadcastTreeLightStaging(visible)
+  else
+    guihooks.trigger('updateTreeLightStaging', visible and true or false)
+  end
+end
+
+local function isMultiseatDragGamemode()
+  return gameplay_multiseat_gamemodeManager
+    and gameplay_multiseat_gamemodeManager.getGamemodeId
+    and gameplay_multiseat_gamemodeManager.getGamemodeId() == "drag"
 end
 
 local function doSendTimeslipDataToUi()
   local slipData = gameplay_drag_timeslip.createTimeslipData()
   if not slipData or not next(slipData) then
-    guihooks.trigger("onDragRaceTimeslipData", nil)
+    if not isMultiseatDragGamemode() then
+      guihooks.trigger("onDragRaceTimeslipData", nil)
+    end
     return
   end
   M.saveDialTimes(slipData)
+  -- Split-screen drag gamemode shows the timeslip on the end screen instead of the HUD overlay.
+  if isMultiseatDragGamemode() then return end
   guihooks.trigger("onDragRaceTimeslipData", slipData)
 end
 
@@ -50,7 +72,7 @@ local function sendTimeslipDataToUi()
   local drag = getDragGamemode()
   if drag and drag.isMultiplayer and drag.isMultiplayer() then
     -- MP owns timer sync/timeout behavior and decides when to finalize.
-    extensions.hook("onDragMpTimeslipRequested")
+    extensions.hook("onDragMPTimeslipRequested")
     return
   end
   doSendTimeslipDataToUi()
@@ -211,7 +233,7 @@ local function normalizeRacerDisqualificationFields(racer)
   setRacerDisqualificationState(racer, getRacerIsDisqualified(racer), getRacerDisqualificationReason(racer))
 end
 
-local function setupRacerMpStub(vehicleId, lane, currentDragData)
+local function setupRacerMPStub(vehicleId, lane, currentDragData)
   local drag = getDragGamemode()
   if not drag or not drag.isMultiplayer() then return false end
   local phases = {}
@@ -250,8 +272,8 @@ local function getInitialDial(vehicleId, importantTimerId)
     return oldData[timesKey][importantTimerId] or oldData[timesKey].time_1_4 or 10
   end
   local details = core_vehicles.getVehicleDetails(vehicleId)
-  if details and details.configs and details.configs["Drag Times"] then
-    local dt = details.configs["Drag Times"]
+  local dt = details and details.configs and (details.configs["Performance Data"] or details.configs["Drag Times"])
+  if dt then
     return dt[importantTimerId] or dt.time_1_4 or 10
   end
   return 10
@@ -331,6 +353,19 @@ local function buildWheelGeometry(vehicle, vehicleId)
   return wheelsByFrontness, maxFrontness
 end
 
+local function setRacerWheelGeometry(racer, vehicle)
+  local wheelsByFrontness, maxFrontness = buildWheelGeometry(vehicle, racer.vehId)
+  racer.allWheelsOffsets = wheelsByFrontness
+  racer.wheelsCenter = {}
+  racer.beamState = {}
+  racer._wheelDistances = nil
+  racer.frontWheelId = maxFrontness
+  for k, offsets in pairs(wheelsByFrontness) do
+    racer.wheelsCenter[k] = { pos = vec3(), wheelCountInv = 1 / #offsets }
+    racer.beamState[k] = { preStage = false, stage = false }
+  end
+end
+
 local function buildRacerPhases(phasesConfig)
   local phases = {}
   for _, phase in ipairs(phasesConfig) do
@@ -355,9 +390,19 @@ local function setupRacer(vehicleId, lane)
     return
   end
 
+  if lane and currentDragData.racers then
+    for existingVehId, existingRacer in pairs(currentDragData.racers) do
+      if existingVehId ~= vehicleId and existingRacer.lane == lane and not existingRacer.vehicleRemoved then
+        log('W', logTag, string.format('setupRacer: lane %s already occupied by vehId %s, refusing to also assign vehId %s',
+          tostring(lane), tostring(existingVehId), tostring(vehicleId)))
+        return
+      end
+    end
+  end
+
   local vehicle = scenetree.findObjectById(vehicleId)
   if not vehicle or vehicle.className ~= "BeamNGVehicle" then
-    if setupRacerMpStub(vehicleId, lane, currentDragData) then
+    if setupRacerMPStub(vehicleId, lane, currentDragData) then
       return
     end
     log('E', logTag, 'Object with ID: ' .. vehicleId .. ' is not a vehicle')
@@ -375,8 +420,6 @@ local function setupRacer(vehicleId, lane)
     isPlayable = true,
     lane = lane,
     isFinished = false,
-    wheelsOffsets = {},
-    currentCorners = {},
     canBeTeleported = currentDragData.canBeTeleported,
     canBeReseted = currentDragData.canBeReseted,
     treeStarted = false,
@@ -395,15 +438,7 @@ local function setupRacer(vehicleId, lane)
   }
   setRacerDisqualificationState(racer, false, "None")
 
-  local wheelsByFrontness, maxFrontness = buildWheelGeometry(vehicle, vehicleId)
-  racer.allWheelsOffsets = wheelsByFrontness
-  racer.wheelsCenter = {}
-  racer.beamState = {}
-  racer.frontWheelId = maxFrontness
-  for k, v in pairs(racer.allWheelsOffsets) do
-    racer.wheelsCenter[k] = { pos = vec3(), wheelCountInv = 1 / #racer.allWheelsOffsets[k] }
-    racer.beamState[k] = { preStage = false, stage = false }
-  end
+  setRacerWheelGeometry(racer, vehicle)
 
   racer.phases = buildRacerPhases(currentDragData.phases)
 
@@ -476,6 +511,8 @@ local function setDragRaceData(data)
     log('E', logTag, 'Failed to ensure all extensions loaded in setDragRaceData')
     return
   end
+  -- Read the dial book when the strip arms, not when the car crosses the finish line.
+  gameplay_drag_saveSystem.ensureDialCache()
   extensions.hook('onDragDataSet', data)
 end
 
@@ -564,7 +601,7 @@ end
 --- Marks a racer as removed (vehicle destroyed). Racer stays in data with lane/timers but no vehId/vehObj.
 local function markRacerVehicleRemoved(racer, reason)
   if not racer then return end
-  markRacerDisqualifiedAndFinished(racer, reason or "Vehicle removed")
+  markRacerDisqualifiedAndFinished(racer, reason or "missions.dragRace.gameplay.disqualified.vehicleRemoved")
   racer.vehicleRemoved = true
   racer.vehObj = nil
 end
@@ -581,6 +618,8 @@ local function resetRacerState(racer)
   racer.reactionTimeInvalid = false
   racer.damage = 0
   racer.raceStartBroadcasted = false
+  racer._stuckTimer = nil
+  racer._stuckCheckPos = nil
   if racer.phases then
     for _, phase in ipairs(racer.phases) do
       phase.started = false
@@ -588,6 +627,7 @@ local function resetRacerState(racer)
       phase.timerOffset = 0
       phase.creepPhase = nil
       phase.creepBrakeTimer = nil
+      phase.wheelGeometryUpdated = nil
     end
   end
 end
@@ -636,7 +676,7 @@ M.reset = function(opts)
     gameplay_drag_phaseHandlers.clearRemoteStagingHoldTimers()
   end
 
-  if opts.treeLightStaging then guihooks.trigger('updateTreeLightStaging', true) end
+  if opts.treeLightStaging then triggerTreeLightStaging(true) end
   if opts.timeslip then guihooks.trigger("onDragRaceTimeslipData", nil) end
   if opts.hooks then extensions.hook("onDragReset", hookOpts) end
 
@@ -684,14 +724,17 @@ M.clear = function(opts)
     poiJoinRequestSent = {}
   end
   resetState = RESET_STATE_IDLE
-  if opts.context then gameplayContext = "freeroam" end
+  if opts.context then
+    gameplayContext = "freeroam"
+    expectedStagingRacerCount = 1
+  end
   if opts.ui and ui_appContainers then
     ui_appContainers.hideApp('topCenter', 'drag')
   end
   if opts.ui and ui_appContainers_topCenter then
     ui_appContainers_topCenter.clearMessagesFromSource('drag')
   end
-  if opts.treeLightStaging then guihooks.trigger('updateTreeLightStaging', false) end
+  if opts.treeLightStaging then triggerTreeLightStaging(false) end
   if opts.hooks then extensions.hook("onDragClearComplete") end
 end
 
@@ -772,8 +815,16 @@ local function trySetUIContainerContextToDrag()
   end
 end
 
+local function isJoinWindowOpen(data)
+  if not data or data.isCompleted then return false end
+  if not data.racers then return true end
+  for _, racer in pairs(data.racers) do
+    if racer.currentPhase and racer.currentPhase > 1 then return false end
+  end
+  return true
+end
 
-local function startDragRaceActivity(lane)
+local function startDragRaceActivity(lane, vehicleId)
   local currentDragData = getData()
   if not currentDragData then
     log('E', logTag, 'startDragRaceActivity called but dragData is nil')
@@ -810,33 +861,39 @@ local function startDragRaceActivity(lane)
     return false
   end
 
-  -- In MP, racers are already set up by onDragRaceStarted (local + remote stubs).
-  -- Only clear and recreate in singleplayer freeroam where this is the initial racer setup.
   local isMP = getDragGamemode() and getDragGamemode().isMultiplayer and getDragGamemode().isMultiplayer()
   if not isMP and lane ~= nil and gameplayContext == "freeroam" then
-    dragData.racers = {}
-    if dragData.prefabs and dragData.prefabs.christmasTree and not dragData.prefabs.christmasTree.treeType then
-      dragData.prefabs.christmasTree.treeType = ".500"
+    if not dragData.racers or not next(dragData.racers) then
+      dragData.racers = {}
+      if dragData.prefabs and dragData.prefabs.christmasTree and not dragData.prefabs.christmasTree.treeType then
+        dragData.prefabs.christmasTree.treeType = ".500"
+      end
     end
-    setupRacer(be:getPlayerVehicleID(0), lane)
+    setupRacer(vehicleId or be:getPlayerVehicleID(0), lane)
     gameplayContext = dragData.context or 'freeroam'
   end
 
   poiJoinRequestSent = {}
 
-  trySetUIContainerContextToDrag()
-  -- In MP, don't force-show the staging app; checkStagingAppVisibility will show it when the player is near the stage line.
-  local drag = getDragGamemode()
-  if not drag or not drag.isMultiplayer or not drag.isMultiplayer() then
-    guihooks.trigger('updateTreeLightStaging', true)
+  if not isMultiseatActive() then
+    trySetUIContainerContextToDrag()
   end
-  dragExtension.startActivity()
+  if not isMP then
+    triggerTreeLightStaging(true)
+  end
+  if gameplayContext ~= "freeroam" then
+    for _, racer in pairs(dragData.racers) do
+      local vehObj = racer.isPlayable and racer.vehId and scenetree.findObjectById(racer.vehId)
+      if vehObj then
+        core_vehicleBridge.executeAction(vehObj, 'setIgnitionLevel', 3)
+      end
+    end
+  end
   extensions.hook('onDragRacersSetup', dragData)
+  dragExtension.startActivity()
   return true
 end
 
-
---- Merge updates into stored race state for raceId. MP handlers and gamemode call this; they do not edit race state directly.
 local function setRaceState(raceId, updates)
   if not raceId or not updates or type(updates) ~= "table" then return end
   raceStateStore[raceId] = raceStateStore[raceId] or {}
@@ -846,16 +903,21 @@ local function setRaceState(raceId, updates)
   end
 end
 
---- Removes a race from the state store entirely.
+local function setExpectedStagingRacerCount(count)
+  expectedStagingRacerCount = math.max(1, tonumber(count) or 1)
+end
+
+local function getExpectedStagingRacerCount()
+  return expectedStagingRacerCount or 1
+end
+
 local function clearRaceState(raceId)
   if raceId then raceStateStore[raceId] = nil end
 end
 
---- Returns race state. In MP: from raceStateStore (canonical); data = getData(). In SP: from dragData.
 local function getRaceState(raceId)
   local drag = getDragGamemode()
   if drag and drag.isMultiplayer and drag.isMultiplayer() then
-    -- Default to the local player's active race when no raceId is provided
     if not raceId then
       local lcar = drag.getLocalClientActiveRace and drag.getLocalClientActiveRace()
       raceId = lcar and lcar.id or nil
@@ -914,7 +976,7 @@ local function onVehicleResetted(vehicleId)
     if currentDragData.racers and currentDragData.racers[vehicleId] then
       local isMultiplayer = getDragGamemode() and getDragGamemode().isMultiplayer()
       if not isMultiplayer then
-        markRacerDisqualifiedAndFinished(currentDragData.racers[vehicleId], "Vehicle reset")
+        markRacerDisqualifiedAndFinished(currentDragData.racers[vehicleId], "missions.dragRace.gameplay.disqualified.vehicleReset")
       end
     end
   end
@@ -927,8 +989,8 @@ local function onVehicleSwitched(oldId, newId)
     if racers then
       local isMultiplayer = getDragGamemode() and getDragGamemode().isMultiplayer()
       if not isMultiplayer then
-        if racers[oldId] then markRacerDisqualifiedAndFinished(racers[oldId], "Vehicle switched") end
-        if racers[newId] then markRacerDisqualifiedAndFinished(racers[newId], "Vehicle switched") end
+        if racers[oldId] then markRacerDisqualifiedAndFinished(racers[oldId], "missions.dragRace.gameplay.disqualified.vehicleSwitched") end
+        if racers[newId] then markRacerDisqualifiedAndFinished(racers[newId], "missions.dragRace.gameplay.disqualified.vehicleSwitched") end
       end
     end
   end
@@ -940,7 +1002,7 @@ local function onVehicleDestroyed(vehicleId)
     if currentDragData.racers and currentDragData.racers[vehicleId] then
       local isMultiplayer = getDragGamemode() and getDragGamemode().isMultiplayer()
       if not isMultiplayer then
-        markRacerVehicleRemoved(currentDragData.racers[vehicleId], "Vehicle removed")
+        markRacerVehicleRemoved(currentDragData.racers[vehicleId], "missions.dragRace.gameplay.disqualified.vehicleRemoved")
       end
     end
   end
@@ -970,7 +1032,10 @@ local function onDragRaceCountdownStart(mappedTime, randValue)
     end
   elseif not isMP then
     local allStaged, stagedCount, totalCount = gameplay_drag_phaseHandlers.areAllRacersStaged(currentDragData)
-    if allStaged and totalCount > 0 and stagedCount == totalCount then
+    if allStaged
+      and totalCount >= getExpectedStagingRacerCount()
+      and stagedCount == totalCount
+    then
       gameplay_drag_phaseHandlers.changeAllPhases()
     end
   end
@@ -1112,15 +1177,15 @@ local function onDragRaceStarted(raceId)
   -- Use slot index as lane so each racer gets the correct lane for this heat (staging lights per lane).
   if type(slot) == "table" then
     for lane = 1, (dragData.strip and dragData.strip.lanes and #dragData.strip.lanes) or 2 do
-      local playerId = slot[lane]
-      if playerId and players[playerId] then
-        local pd = players[playerId]
+      local mpPlayerId = slot[lane]
+      if mpPlayerId and players[mpPlayerId] then
+        local pd = players[mpPlayerId]
         setupRacer(pd.vehicleId, lane)
       end
     end
   end
   if not next(dragData.racers) then
-    for playerId, playerData in pairs(players) do
+    for mpPlayerId, playerData in pairs(players) do
       setupRacer(playerData.vehicleId, playerData.lane or 1)
     end
   end
@@ -1130,10 +1195,10 @@ local function onDragRaceStarted(raceId)
   -- Mark it as isLocalRacer so the update loop only runs physics on this machine's vehicle.
   -- Remote racers (stubs or synced vehicles with wrong scenetree IDs) are network-driven only.
   if drag and drag.isMultiplayer and drag.isMultiplayer() then
-    local localPlayerId = drag.getLocalPlayerId and drag.getLocalPlayerId()
+    local localMPPlayerId = drag.getLocalMPPlayerId and drag.getLocalMPPlayerId()
     local localVehicleId = be:getPlayerVehicleID(0)
-    if localPlayerId and localVehicleId and localVehicleId > 0 then
-      local pd = players[localPlayerId]
+    if localMPPlayerId and localVehicleId and localVehicleId > 0 then
+      local pd = players[localMPPlayerId]
       if pd and pd.lane then
         -- Remove the stub entry (vehicleId=-1 or whatever was stored at join time)
         if pd.vehicleId ~= localVehicleId and dragData.racers[pd.vehicleId] then
@@ -1148,6 +1213,20 @@ local function onDragRaceStarted(raceId)
     -- Tag each racer so the per-frame update loop knows which one is local
     for vehId, racer in pairs(dragData.racers) do
       racer.isLocalRacer = (vehId == localVehicleId)
+    end
+  end
+
+  for mpPlayerId, pd in pairs(players) do
+    local dial = pd and pd.dial
+    if dial then
+      local vid = pd.vehicleId
+      if drag and drag.isMultiplayer and drag.isMultiplayer() then
+        local localMPPlayerId = drag.getLocalMPPlayerId and drag.getLocalMPPlayerId()
+        if mpPlayerId == localMPPlayerId then
+          vid = be:getPlayerVehicleID(0) or vid
+        end
+      end
+      if vid then setRacerDial(vid, dial) end
     end
   end
 
@@ -1192,12 +1271,12 @@ end
 
 --- Marks the racer belonging to a player as DQ+finished when they disconnect mid-race.
 local function onDragRacePlayerLeft(player)
-  if not player or not player.playerId then return end
+  if not player or not player.mpPlayerId then return end
   local drag = getDragGamemode()
   if not drag or not drag.isMultiplayer or not drag.isMultiplayer() then return end
   local raceState = getRaceState()
   if not raceState or not raceState.players then return end
-  local pd = raceState.players[player.playerId]
+  local pd = raceState.players[player.mpPlayerId]
   if not pd then return end
   local currentDragData = getData()
   if not currentDragData or not currentDragData.racers then return end
@@ -1216,7 +1295,7 @@ local function onDragRacePlayerLeft(player)
     end
   end
 
-  -- Fallback for MP remap cases where active racer key no longer matches raceState.players[playerId].vehicleId.
+  -- Fallback for MP remap cases where active racer key no longer matches raceState.players[mpPlayerId].vehicleId.
   if not racer and pd.lane ~= nil then
     for _, r in pairs(currentDragData.racers) do
       if r.lane == pd.lane then
@@ -1227,8 +1306,8 @@ local function onDragRacePlayerLeft(player)
   end
 
   if racer and not racer.isFinished then
-    markRacerDisqualifiedAndFinished(racer, "Player left")
-    log('W', logTag, string.format('Racer for player %s disconnected mid-race; marked DQ+finished', tostring(player.playerId)))
+    markRacerDisqualifiedAndFinished(racer, "missions.dragRace.gameplay.disqualified.playerLeft")
+    log('W', logTag, string.format('Racer for player %s disconnected mid-race; marked DQ+finished', tostring(player.mpPlayerId)))
   end
 end
 
@@ -1237,9 +1316,9 @@ local function onDragRaceClientDisconnected(client)
   if not client or not client.id then return end
   local drag = getDragGamemode()
   if not drag then return end
-  local playerId = drag.getPlayerIdByClientId and drag.getPlayerIdByClientId(client.id)
-  if not playerId then return end
-  onDragRacePlayerLeft({ playerId = playerId })
+  local mpPlayerId = drag.getMPPlayerIdByMPClientId and drag.getMPPlayerIdByMPClientId(client.id)
+  if not mpPlayerId then return end
+  onDragRacePlayerLeft({ mpPlayerId = mpPlayerId })
 end
 
 local function onExtensionLoaded()
@@ -1279,6 +1358,9 @@ local STAGE_RUNAWAY_CLEAR_DISTANCE = 25
 --- While still staging (race not started, not returning from a finished race), running far enough away to clear
 --- the stage guide helper also tears down the whole drag system + UI. Offline freeroam only. Must run from
 --- core.onUpdate (not display) so the teardown's extension unload doesn't happen mid display update.
+-- Loops all playable racers still in the staging phase; only tears down the whole activity once every
+-- one of them has run far enough away that none are still attempting to stage. This degrades to the
+-- original single-racer behavior when there's exactly one playable racer (singleplayer).
 local function checkStageRunaway()
   if gameplayContext ~= "freeroam" then return end
   local data = getData()
@@ -1286,22 +1368,26 @@ local function checkStageRunaway()
   if not gameplay_drag_phaseHandlers then return end
   if getDragGamemode() and getDragGamemode().isMultiplayer and getDragGamemode().isMultiplayer() then return end
 
+  local anyStaging = false
+  local allRanAway = true
   for _, racer in pairs(data.racers) do
     if racer.isPlayable then
       local phaseName = racer.phases and racer.phases[racer.currentPhase] and racer.phases[racer.currentPhase].name
-      if phaseName ~= "stage" then return end
-      if racer.currentDistanceFromOrigin == nil then return end
-      gameplay_drag_phaseHandlers.calculateDistanceOfAllWheelsFromStagePos(racer)
-      local distance = gameplay_drag_phaseHandlers.getFrontWheelDistanceFromStagePos(racer)
-      if distance and math.abs(distance) > STAGE_RUNAWAY_CLEAR_DISTANCE then
-        onPlayerLeftDragArea()
+      if phaseName == "stage" and racer.currentDistanceFromOrigin ~= nil then
+        anyStaging = true
+        if math.abs(racer.currentDistanceFromOrigin) <= STAGE_RUNAWAY_CLEAR_DISTANCE then
+          allRanAway = false
+        end
       end
-      return
     end
+  end
+
+  if anyStaging and allRanAway then
+    onPlayerLeftDragArea()
   end
 end
 
-local function finalizeMpPostRace()
+local function finalizeMPPostRace()
   local data = getData()
   if data and data.racers then
     for vehId, _ in pairs(data.racers) do
@@ -1322,14 +1408,22 @@ local function onUpdate(dtReal, dtSim, dtRaw)
   local data = getData()
   if gameplayContext == "freeroam" and data and data.strip and data.strip.stripZone and data.strip.stripZone.containsPoint2D then
     if not (getDragGamemode() and getDragGamemode().isMultiplayer and getDragGamemode().isMultiplayer()) then
-      local playerVehId = be:getPlayerVehicleID(0)
-      if playerVehId and playerVehId ~= 0 then
-        local veh = scenetree.findObjectById(playerVehId)
-        if veh and veh.getPosition then
-          local pos = veh:getPosition()
-          if not data.strip.stripZone:containsPoint2D(pos) then
-            onPlayerLeftDragArea()
+      if data.racers and next(data.racers) then
+        local anyRacerInZone = false
+        for _, racer in pairs(data.racers) do
+          if not racer.vehicleRemoved and racer.vehId and racer.vehId ~= 0 then
+            local veh = scenetree.findObjectById(racer.vehId)
+            if veh then
+              zonePosScratch:set(veh:getPositionXYZ())
+              if data.strip.stripZone:containsPoint2D(zonePosScratch) then
+                anyRacerInZone = true
+                break
+              end
+            end
           end
+        end
+        if not anyRacerInZone then
+          onPlayerLeftDragArea()
         end
       end
     end
@@ -1344,8 +1438,6 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     end
     gameplay_drag_phaseHandlers.updateRemoteStagingHoldTimers()
   end
-
-  -- Multiplayer and rules-menu updates are owned by their respective extensions.
 end
 
 local function onAnyMissionChanged(status, mission)
@@ -1443,6 +1535,7 @@ M.loadDragStripData = loadDragStripData
 M.loadDragDataForMission = loadDragDataForMission
 M.setDragRaceData = setDragRaceData
 M.setupRacer = setupRacer
+M.setRacerWheelGeometry = setRacerWheelGeometry
 
 M.setPlayableVehicle = setPlayableVehicle
 M.setRacerDial = setRacerDial
@@ -1457,6 +1550,8 @@ M.validateResetState = validateResetState
 M.getData = getData
 M.getRaceState = getRaceState
 M.setRaceState = setRaceState
+M.setExpectedStagingRacerCount = setExpectedStagingRacerCount
+M.getExpectedStagingRacerCount = getExpectedStagingRacerCount
 M.clearRaceState = clearRaceState
 M.getRacerData = getRacerData
 M.getTimers = getTimers
@@ -1498,6 +1593,7 @@ M.getStagingCheckData = getStagingCheckData
 
 M.allRacersFinished = allRacersFinished
 M.isDragEnabled = isDragEnabled
+M.isJoinWindowOpen = isJoinWindowOpen
 M.isPoiJoinRequestSent = function(poiKey) return poiJoinRequestSent[poiKey] end
 M.setPoiJoinRequestSent = function(poiKey, val)
   if val then poiJoinRequestSent[poiKey] = true else poiJoinRequestSent[poiKey] = nil end
@@ -1522,15 +1618,15 @@ M.onDragRaceClientDisconnected = onDragRaceClientDisconnected
 
 -- In MP, when network timer values arrive, check if we now have values for ALL racers.
 -- Once all synced: update display signs, generate win data + winning lights, create timeslip + save history.
-M.onDragRaceTimerUpdated = function(raceId, playerId, timerName, timerValue)
+M.onDragRaceTimerUpdated = function(raceId, mpPlayerId, timerName, timerValue)
   local drag = getDragGamemode()
   if not drag or not drag.isMultiplayer or not drag.isMultiplayer() then return end
 
   if timerName == "dial" then
     if drag and drag.getActiveDragRace then
       local race = drag.getActiveDragRace()
-      if race and race.players and race.players[playerId] then
-        local vid = race.players[playerId].vehicleId
+      if race and race.players and race.players[mpPlayerId] then
+        local vid = race.players[mpPlayerId].vehicleId
         if vid and vid ~= -1 then
           setRacerDial(vid, timerValue)
         end
@@ -1541,8 +1637,8 @@ M.onDragRaceTimerUpdated = function(raceId, playerId, timerName, timerValue)
   local data = getData()
   if data and data.racers and drag and drag.getActiveDragRace then
     local race = drag.getActiveDragRace()
-    if race and race.players and race.players[playerId] then
-      local pd = race.players[playerId]
+    if race and race.players and race.players[mpPlayerId] then
+      local pd = race.players[mpPlayerId]
       local newVid = pd.vehicleId
       if newVid and newVid ~= -1 and not data.racers[newVid] then
         for vehId, racer in pairs(data.racers) do
@@ -1559,7 +1655,7 @@ M.onDragRaceTimerUpdated = function(raceId, playerId, timerName, timerValue)
 
 end
 
-M.finalizeMpPostRace = finalizeMpPostRace
+M.finalizeMPPostRace = finalizeMPPostRace
 
 M.onExtensionUnloaded = function()
   M.clear({ hooks = true, transitionLock = true, localRace = true, extensions = true, data = true, context = true, ui = true, treeLightStaging = true })

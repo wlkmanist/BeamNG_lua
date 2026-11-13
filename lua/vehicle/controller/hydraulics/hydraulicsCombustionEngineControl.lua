@@ -15,6 +15,9 @@ local electricActivationSigns
 local manualIdleRaise
 local raisedIdleElectricsName
 
+local stateData
+local stateDataNameManualIdleRaise
+
 local function updateGFXDynamicRaise(dt)
   local activateAutoIdleRaise = false
   local connectPump = false
@@ -67,6 +70,9 @@ local function reset(jbeamData)
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameManualIdleRaise = M.name .. "_manualIdleRaise"
+
   local mode = jbeamData.mode
   if mode == "electricsRaiseAndConnect" then
     local relevantEngineName = jbeamData.controlledEngine or "mainEngine"
@@ -104,10 +110,29 @@ local function init(jbeamData)
   end
 end
 
+local function getState()
+  stateData[stateDataNameManualIdleRaise] = manualIdleRaise == true
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newManualIdleRaise = data[stateDataNameManualIdleRaise]
+  if type(newManualIdleRaise) == "boolean" and newManualIdleRaise ~= manualIdleRaise then
+    setIdleRaise(newManualIdleRaise)
+  end
+end
+
 M.init = init
 M.reset = reset
 M.updateGFX = nop
 M.toggleIdleRaise = toggleIdleRaise
 M.setIdleRaise = setIdleRaise
+
+M.getState = getState
+M.setState = setState
 
 return M

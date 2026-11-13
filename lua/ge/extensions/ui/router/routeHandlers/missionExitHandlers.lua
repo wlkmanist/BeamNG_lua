@@ -3,6 +3,11 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 local M = {}
 
+local function gameplayRoute()
+  local menuManager = extensions.ui_menuManager
+  return (menuManager and menuManager.getGameplayRoute and menuManager.getGameplayRoute()) or "play"
+end
+
 M.missionDetailsExitHandler = function()
   if extensions.gameplay_missions_missionScreen.isAnyMissionActive() then
     local isMissionStartOrEndScreen = extensions.gameplay_missions_missionScreen.isMissionStartOrEndScreenActive()
@@ -13,7 +18,7 @@ M.missionDetailsExitHandler = function()
     end
   end
 
-  ui_router.navigate("play")
+  ui_router.navigate(gameplayRoute())
 end
 
 M.pauseExitHandler = function()
@@ -24,7 +29,7 @@ M.pauseExitHandler = function()
     })
   end
 
-  return ui_router.navigate("play")
+  return ui_router.navigate(gameplayRoute())
 end
 
 M.missionVehicleSelectorBackHandler = function()
@@ -35,7 +40,7 @@ M.missionVehicleSelectorBackHandler = function()
     })
   end
 
-  return ui_router.navigate("play")
+  return ui_router.navigate(gameplayRoute())
 end
 
 return M

@@ -4,20 +4,95 @@
 
 local M = {}
 
-M.dependencies = { "core_locales", "core_vehicle_thumbnail" }
+M.dependencies = {
+  "core_locales",
+  "core_vehicle_configTarget",
+  "core_vehicle_thumbnail",
+  "core_vehicle_partFocusCamera",
+  "gameplay_achievement",
+}
 
 local buffer = require('string.buffer')
 local json = require("json")
 local jbeamIO = require('jbeam/io')
 local partPacksFunctions = require('jbeam/partpacks')
+local saveConfigUtils = require("ge/extensions/vehicles/saveConfigUtils")
 
 local vehManager = extensions.core_vehicle_manager
 local vehsPartsData = {}
 local vehsRichPartInfo = {}
 
--- If inVehID is nil, it uses player vehicle
+local function resolveConfigVehicleId(explicitVehicleId)
+  return extensions.core_vehicle_configTarget.resolveVehicleId(explicitVehicleId)
+end
+
+local function resolveConfigVehicle(explicitVehicleId)
+  return extensions.core_vehicle_configTarget.resolveVehicle(explicitVehicleId)
+end
+
+local function resolveConfigVehicleData(explicitVehicleId)
+  return extensions.core_vehicle_configTarget.resolveVehicleData(explicitVehicleId)
+end
+
+local function isOccupantCharacterMesh(entry, mesh)
+  local meshKind = entry.originalMesh or mesh
+  if meshKind ~= "character_torso" and meshKind ~= "character_head" then return false end
+  return type(entry.partPath) == "string" and entry.partPath:find("occupant_generic", 1, true) ~= nil
+end
+
+local function processHighlightMeshes(vehData)
+  local meshesByPart = {}
+  local allMeshes = {}
+  local allMeshesSeen = {}
+
+  local function addMesh(entry)
+    local mesh = entry.mesh
+    if not mesh or mesh == "" or mesh == "SPOTLIGHT" or mesh == "POINTLIGHT" then return end
+    if isOccupantCharacterMesh(entry, mesh) then return end
+    if not allMeshesSeen[mesh] then
+      allMeshesSeen[mesh] = true
+      allMeshes[#allMeshes + 1] = mesh
+    end
+    if entry.partPath then
+      local meshes = meshesByPart[entry.partPath]
+      if not meshes then
+        meshes = {}
+        meshesByPart[entry.partPath] = meshes
+      end
+      meshes[#meshes + 1] = mesh
+    end
+  end
+
+  -- flexbodies become flexmeshes; props are the remaining mesh objects
+  for _, flexbody in pairs(vehData.vdata.flexbodies or {}) do
+    addMesh(flexbody)
+  end
+  for _, prop in pairs(vehData.vdata.props or {}) do
+    addMesh(prop)
+  end
+
+  local highlightMeshesByPart = {}
+  local function visit(node, parentMeshes)
+    local highlightMeshes = parentMeshes
+    if node.partPath and meshesByPart[node.partPath] then
+      highlightMeshes = meshesByPart[node.partPath]
+    end
+    if node.partPath then
+      node.highlightMeshes = highlightMeshes or {}
+      highlightMeshesByPart[node.partPath] = node.highlightMeshes
+    end
+    for _, child in pairs(node.children or {}) do
+      visit(child, highlightMeshes)
+    end
+  end
+  visit(vehData.config.partsTree or {}, nil)
+  table.sort(allMeshes)
+  return allMeshes, allMeshesSeen, highlightMeshesByPart
+end
+
+-- If inVehID is nil, it uses the active configuration target or player 0's vehicle.
 local function getVehData(inVehID)
-  local vehObj = inVehID and getObjectByID(inVehID) or getPlayerVehicle(0)
+  local vehObj = resolveConfigVehicle(inVehID)
   if not vehObj then return end
   local vehID = vehObj:getID()
 
@@ -50,6 +125,7 @@ local function getVehData(inVehID)
       table.insert(partsHighlightedIdxs, k)
       partNameToIdx[partName] = k
     end
+    local allMeshes, allMeshesSet, highlightMeshesByPart = processHighlightMeshes(vehData)
 
     vehsPartsData[vehID] = {
       vehName = vehObj:getJBeamFilename(),
@@ -58,10 +134,18 @@ local function getVehData(inVehID)
       partsHighlighted = partsHighlighted,
       partsHighlightedIdxs = partsHighlightedIdxs,
       partNameToIdx = partNameToIdx,
+      allMeshes = allMeshes,
+      allMeshesSet = allMeshesSet,
+      highlightMeshesByPart = highlightMeshesByPart,
     }
   end
 
-  return vehObj, vehData, vehID, vehsPartsData[vehID]
+  local partsData = vehsPartsData[vehID]
+  if not partsData.highlightMeshesByPart then
+    partsData.allMeshes, partsData.allMeshesSet, partsData.highlightMeshesByPart =
+      processHighlightMeshes(vehData)
+  end
+  return vehObj, vehData, vehID, partsData
 end
 
 local function getTranslation(name, prefix)
@@ -436,7 +520,7 @@ local function saveVehicleCollection(collectionTree, filename)
 end
 
 local function savePartConfigFileStage2(partsCondition, filename)
-  local playerVehicle = getPlayerVehicle(0)
+  local playerVehicle = resolveConfigVehicle()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -506,32 +590,23 @@ local function normalizeSaveSettings(settings)
   return normalized
 end
 
-local function normalizeSaveMetadata(metadata)
-  local normalized = {
-    Description = nil,
-  }
-  if type(metadata) ~= "table" then
-    return normalized
-  end
+local function getPlayerVehicleModelKey()
+  local playerVehicle = resolveConfigVehicleData()
+  if not playerVehicle then return nil end
+  local modelKey = playerVehicle.model
+    or (playerVehicle.vehicleDirectory or ""):gsub("^/?vehicles/", ""):gsub("/", "")
+  return modelKey ~= "" and modelKey or nil
+end
 
-  local description = metadata.Description
-  if type(description) ~= "string" then
-    description = metadata.description
-  end
-  if type(description) == "string" then
-    description = description:gsub("^%s+", ""):gsub("%s+$", "")
-    if description ~= "" then
-      normalized.Description = description
-    end
-  end
-  return normalized
+local function normalizeSaveMetadata(metadata)
+  return saveConfigUtils.validateMetadata(metadata, getPlayerVehicleModelKey())
 end
 
 local function getSaveAvailability()
   if gameplay_walk and gameplay_walk.isWalking and gameplay_walk.isWalking() then
     return { canSave = false, reason = "walking" }
   end
-  if be:getObjectCount() == 0 or getPlayerVehicle(0) == nil or vehManager.getPlayerVehicleData() == nil then
+  if be:getObjectCount() == 0 or resolveConfigVehicle() == nil or resolveConfigVehicleData() == nil then
     return { canSave = false, reason = "noVehicle" }
   end
   return { canSave = true }
@@ -554,14 +629,18 @@ local function captureVehiclePaints(playerVehicle)
 end
 
 local function savePartConfigFileStage2_Format2(partsCondition, filename, saveSettings, saveMetadata)
-  local playerVehicle = getPlayerVehicle(0)
-  local playerVehicleData = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicle()
+  local playerVehicleData = resolveConfigVehicleData()
   if not playerVehicle or not playerVehicleData then
     log('E', 'partmgmt', 'no active vehicle')
     return false
   end
   local normalizedSaveSettings = normalizeSaveSettings(saveSettings)
-  local normalizedSaveMetadata = normalizeSaveMetadata(saveMetadata)
+  local normalizedSaveMetadata, metadataError = normalizeSaveMetadata(saveMetadata)
+  if not normalizedSaveMetadata then
+    log('W', 'partmgmt', 'invalid save metadata: '..dumps(metadataError))
+    return false
+  end
 
   local configName = string.sub(filename, #(playerVehicleData.vehicleDirectory or "") + 1)
   configName = configName:gsub("%.pc$", "")
@@ -592,10 +671,12 @@ local function savePartConfigFileStage2_Format2(partsCondition, filename, saveSe
   end
 
   infoData.Configuration = playerVehicleData.config.Configuration or configName
-  infoData.Description = normalizedSaveMetadata.Description
+  for key, value in pairs(normalizedSaveMetadata) do
+    infoData[key] = value
+  end
   pcData.paints = nil
   if normalizedSaveSettings.saveLicenseplate then
-    pcData.licenseName = extensions.core_vehicles.makeVehicleLicenseText()
+    pcData.licenseName = extensions.core_vehicles.makeVehicleLicenseText(playerVehicle)
   else
     pcData.licenseName = nil
   end
@@ -632,7 +713,7 @@ end
 local function savePartConfigFile(filename, saveSettings, saveMetadata)
   local savePartsCondition = false
   if savePartsCondition then
-    local playerVehicle = getPlayerVehicle(0)
+    local playerVehicle = resolveConfigVehicle()
     if playerVehicle then
       queueCallbackInVehicle(playerVehicle, "extensions.core_vehicle_partmgmt.savePartConfigFileStage2", "partCondition.getConditions("..serialize(filename)..")")
     end
@@ -643,7 +724,7 @@ local function savePartConfigFile(filename, saveSettings, saveMetadata)
 end
 
 local function saveLocal(fn, saveSettings, saveMetadata)
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return false
@@ -652,7 +733,7 @@ local function saveLocal(fn, saveSettings, saveMetadata)
 end
 
 local function setCurrentConfigurationName(configurationName)
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return false
@@ -674,7 +755,8 @@ end
 -- Stage 2
 local function saveLocalScreenshot_stage2(fn)
   -- Take screenshot
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
+  if not playerVehicle then return false end
   local screenshotName = (playerVehicle.vehicleDirectory .. fn)
   screenshot.doScreenshot(nil, nil, screenshotName, 'jpg')
   -- Stage 3 on JS side
@@ -687,14 +769,42 @@ local function savedefault()
   savePartConfigFile('settings/default.pc')
 end
 
-local function sendDataToUI()
+local setNewParts
+
+local function highlightsCoverTree(partsHighlighted, partsTree)
+  local covered = true
+  local function walk(node)
+    if not covered or not node then return end
+    if node.partPath and partsHighlighted[node.partPath] == nil then
+      covered = false
+      return
+    end
+    if node.children then
+      for _, child in pairs(node.children) do
+        walk(child)
+      end
+    end
+  end
+  walk(partsTree)
+  return covered
+end
+
+local function sendDataToUI(explicitVehicleId)
   local startTime = os.clockhp()
-  local playerVehID = be:getPlayerVehicleID(0)
-  if playerVehID == -1 then
+  local vehicleId = resolveConfigVehicleId(explicitVehicleId)
+  if not vehicleId then
     log('E', 'partmgmt', 'no active vehicle')
     return
   end
-  local vehObj, vehData, vehID, partsData = getVehData(playerVehID)
+  local vehObj, vehData, vehID, partsData = getVehData(vehicleId)
+  if not vehObj or not vehData then return end
+
+  -- Highlight flags are cached from the tree at first open. A part just installed into an
+  -- empty slot is missing from that cache, so the eye and pin stay disabled until reopen.
+  if not highlightsCoverTree(partsData.partsHighlighted, vehData.config.partsTree) then
+    setNewParts(vehID, true)
+    partsData = vehsPartsData[vehID]
+  end
 
   local pcFilename = vehData.config.partConfigFilename
   local configDefaults = nil
@@ -735,7 +845,8 @@ end
 
 local function hasAvailablePart(partName)
   if not partName or partName == "" then return end
-  local playerVehicleData = core_vehicle_manager.getPlayerVehicleData()
+  local playerVehicleData = resolveConfigVehicleData()
+  if not playerVehicleData then return false end
   local parts = jbeamIO.getAvailableParts(playerVehicleData.ioCtx)
 
   if parts[partName] then
@@ -746,8 +857,8 @@ local function hasAvailablePart(partName)
 end
 
 local function setSkin(skin)
-  local vehicle = getPlayerVehicle(0)
-  local playerVehicleData = core_vehicle_manager.getPlayerVehicleData()
+  local vehicle = resolveConfigVehicle()
+  local playerVehicleData = resolveConfigVehicleData()
 
   if not vehicle or not playerVehicleData then return end
 
@@ -768,7 +879,7 @@ local function setSkin(skin)
       local carModelToLoad = vehicle.JBeam
       local vehicleData = {}
       vehicleData.config = carConfigToLoad
-      core_vehicles.replaceVehicle(carModelToLoad, vehicleData)
+      core_vehicles.replaceVehicle(carModelToLoad, vehicleData, vehicle)
       return true
     else
       if node.children then
@@ -811,6 +922,16 @@ local function mergeConfigOfVehicle(veh, inData, respawn)
 
   if respawn then
     --dump{"RESPAWN: ", vehicleData.config}
+    if extensions.core_vehicle_configTarget.getTargetVehicleId() == vehId then
+      -- the respawn re-seats autoEnterVehiclePlayer (player 0 by default): keep the configuring player
+      -- in their vehicle, without pulling player 0 into someone else's
+      local targetPlayer = extensions.core_vehicle_configTarget.getTargetPlayerId()
+      if targetPlayer and be:getPlayerVehicleID(targetPlayer) == vehId then
+        veh.autoEnterVehiclePlayer = tostring(targetPlayer)
+      else
+        veh.autoEnterVehicle = "false"
+      end
+    end
     veh:respawn(serialize(vehicleData.config))
   else
     local paintCount = tableSize(inData.paints)
@@ -821,8 +942,8 @@ local function mergeConfigOfVehicle(veh, inData, respawn)
   end
 end
 
-local function mergeConfig(inData, respawn)
-  local veh = getPlayerVehicle(0)
+local function mergeConfig(inData, respawn, explicitVehicleId)
+  local veh = resolveConfigVehicle(explicitVehicleId)
   if not veh then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -833,8 +954,8 @@ local function mergeConfig(inData, respawn)
   return mergeConfigOfVehicle(veh, inData, respawn)
 end
 
-local function setConfigPaints (data, respawn)
-  mergeConfig({paints = data}, respawn)
+local function setConfigPaints (data, respawn, explicitVehicleId)
+  mergeConfig({paints = data}, respawn, explicitVehicleId)
 end
 
 local function setConfigVars (data, respawn)
@@ -858,8 +979,7 @@ local function getConfigOfVehicle(vehicleId)
 end
 
 local function getConfig()
-  -- get config of current player vehicle
-  local vehicleId = be:getPlayerVehicleID(0)
+  local vehicleId = resolveConfigVehicleId()
   local config = getConfigOfVehicle(vehicleId)
   if not config then
     log('E', 'partmgmt', 'no active vehicle')
@@ -869,16 +989,16 @@ local function getConfig()
 end
 
 local function loadLocal(filename, respawn)
-  local veh = getPlayerVehicle(0)
+  local veh = resolveConfigVehicle()
   if not veh then
     log('E', 'partmgmt', 'no active vehicle')
     return
   end
-  core_vehicles.replaceVehicle(veh.JBeam, {config = filename})
+  core_vehicles.replaceVehicle(veh.JBeam, {config = filename}, veh)
 end
 
 local function removeLocal(filename)
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -891,7 +1011,7 @@ end
 
 local function isOfficialConfig(filename)
   local isOfficial
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -902,7 +1022,7 @@ end
 
 local function isPlayerConfig(filename)
   local isPlayerConfig
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -926,20 +1046,33 @@ local function sanitizeConfigBasename(configRef)
 end
 
 local function getCurrentLocalConfigName()
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     return nil
   end
   local configRef = playerVehicle.config and playerVehicle.config.partConfigFilename
   if not configRef or configRef == "" then
-    local veh = getPlayerVehicle(0)
+    local veh = resolveConfigVehicle()
     configRef = veh and veh.partConfig
   end
   return sanitizeConfigBasename(tostring(configRef or ""))
 end
 
+local function getSaveMetadataFields(targetConfigName)
+  local playerVehicle = resolveConfigVehicleData()
+  if not playerVehicle then return {} end
+  local modelKey = getPlayerVehicleModelKey()
+  if not modelKey then return {} end
+  return saveConfigUtils.getFields(
+    modelKey,
+    playerVehicle.vehicleDirectory,
+    getCurrentLocalConfigName(),
+    sanitizeConfigBasename(targetConfigName)
+  )
+end
+
 local function getConfigList()
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -983,22 +1116,18 @@ local function getNextCustomConfigFilename(configurationName)
       usedNames[string.lower(entry.name)] = true
     end
   end
-  local sanitizedName = string.lower(configurationName or '')
-  sanitizedName = string.gsub(sanitizedName, '[^a-z0-9]', '')
-  if sanitizedName == '' then
-    sanitizedName = 'customConfig'
-  end
+  configurationName = string.lower(configurationName or '')
 
-  local candidate = sanitizedName .. string.format('%06d', math.random(0, 999999))
+  local candidate = configurationName
   while usedNames[string.lower(candidate)] do
-    candidate = sanitizedName .. string.format('%06d', math.random(0, 999999))
+    candidate = configurationName .. string.format('%06d', math.random(0, 999999))
   end
   return candidate
 end
 
 local function validatePaints()
-  local playerVehicle = getPlayerVehicle(0)
-  local playerVehicleData = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicle()
+  local playerVehicleData = resolveConfigVehicleData()
   if not playerVehicle or not playerVehicleData then
     log('E', 'partmgmt', 'no active vehicle')
     return {}
@@ -1014,7 +1143,7 @@ local function validatePaints()
 end
 
 local function getCurrentLicensePlate()
-  local playerVehicle = getPlayerVehicle(0)
+  local playerVehicle = resolveConfigVehicle()
   if not playerVehicle then
     return ""
   end
@@ -1023,6 +1152,21 @@ local function getCurrentLicensePlate()
     return ""
   end
   return plateText
+end
+
+local function setCurrentLicensePlate(text)
+  local vehicleId = resolveConfigVehicleId()
+  if not vehicleId then return false end
+  core_vehicles.setPlateText(text, vehicleId)
+  return true
+end
+
+local function regenerateCurrentLicensePlate()
+  local vehicle = resolveConfigVehicle()
+  if not vehicle then return "" end
+  local text = core_vehicles.regenerateVehicleLicenseText(vehicle)
+  core_vehicles.setPlateText(text, vehicle:getId())
+  return text or ""
 end
 
 local function saveLocalConfigToFile(fileName, configurationName, saveSettings, saveMetadata)
@@ -1036,8 +1180,15 @@ local function saveLocalConfigToFile(fileName, configurationName, saveSettings, 
     return { success = false, reason = "invalidFilename" }
   end
   local normalizedSaveSettings = normalizeSaveSettings(saveSettings)
-  local normalizedSaveMetadata = normalizeSaveMetadata(saveMetadata)
-  local playerVehicleData = vehManager.getPlayerVehicleData()
+  local normalizedSaveMetadata, metadataError = normalizeSaveMetadata(saveMetadata)
+  if not normalizedSaveMetadata then
+    return {
+      success = false,
+      reason = "invalidMetadata",
+      metadataError = metadataError,
+    }
+  end
+  local playerVehicleData = resolveConfigVehicleData()
   local previousConfigurationName = playerVehicleData and playerVehicleData.config and playerVehicleData.config.Configuration or nil
   local targetConfigurationName = type(configurationName) == "string" and configurationName or ""
   targetConfigurationName = targetConfigurationName:gsub("^%s+", ""):gsub("%s+$", "")
@@ -1045,7 +1196,7 @@ local function saveLocalConfigToFile(fileName, configurationName, saveSettings, 
     targetConfigurationName = normalizedFileName
   end
   local function restoreConfigurationName()
-    local currentVehicleData = vehManager.getPlayerVehicleData()
+    local currentVehicleData = resolveConfigVehicleData()
     if currentVehicleData and currentVehicleData.config then
       currentVehicleData.config.Configuration = previousConfigurationName
     end
@@ -1057,7 +1208,7 @@ local function saveLocalConfigToFile(fileName, configurationName, saveSettings, 
     restoreConfigurationName()
     return { success = false, reason = "saveFailed" }
   end
-  playerVehicleData = vehManager.getPlayerVehicleData()
+  playerVehicleData = resolveConfigVehicleData()
   local thumbnailPath = playerVehicleData and (playerVehicleData.vehicleDirectory .. normalizedFileName .. ".jpg") or nil
   local copiedPreviewThumbnail = false
   local hasRequestedCapture = normalizedSaveSettings.thumbnailCaptureRequested
@@ -1159,7 +1310,7 @@ local function saveExistingLocalConfig(fileName, configurationName, saveSettings
 end
 
 local function openConfigFolderInExplorer()
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -1171,41 +1322,257 @@ local function openConfigFolderInExplorer()
    Engine.Platform.exploreFolder(playerVehicle.vehicleDirectory)
 end
 
--- Actually sets transparency of meshes related to parts
-local function setPartsMeshesAlpha(vehObj, vdata, partNames, alpha, notSelectedAlpha)
-  vehObj:setMeshAlpha(notSelectedAlpha or 0, "", false)
+-- Part highlighting draws the vehicle as an x-ray ghost with the highlighted parts kept real on top
+-- of it. Every mesh holds its own alpha and eases toward its target, so changing the selection
+-- crossfades the parts that changed instead of popping, and so does entering or leaving the x-ray.
+-- alpha per second. On M so it can be retuned from the console while watching a fade:
+--   core_vehicle_partmgmt.xrayFadeRate = 5
+M.xrayFadeRate = 5
+local xrayVehID = nil
+local xrayTarget = {}  -- mesh name -> alpha it is heading for
+local xrayCurrent = {} -- mesh name -> alpha it is at
+local xrayFaded = {}   -- meshes owned by the ghost overlay (non-selected)
+local xrayOverlay = {} -- partially visible meshes drawn by the translucent overlay
+local xraySolid = {}   -- fully visible meshes drawn after the ghost with their normal materials
+local xrayHidden = {}  -- selected meshes set to 0% visibility, kept out of the ghost so nothing is drawn
+local xrayAnimating = false
+local xrayPassesDirty = false
+local partsSelectorChangedTime = nil
+local partsSelectorChangedState = nil
 
-  if vdata.flexbodies then
-    for _, flexbody in pairs(vdata.flexbodies) do
-      if flexbody.mesh and flexbody.mesh ~= "" and flexbody.meshLoaded then
-        if partNames[flexbody.partPath] then
-          if not vehObj:setMeshAlpha(alpha, flexbody.mesh, false) then
-            log('W', 'mesh', 'flexbody unable to set mesh alpha: ' ..  dumps{'mesh: ', flexbody.mesh, 'alpha: ', alpha, 'existing alpha: ', vehObj:getMeshAlpha(flexbody.mesh)})
-          else
-            --print('flexbody set mesh alpha: ' .. flexbody.mesh .. ' to ' .. alpha)
-          end
-        else
-          --log('W', '', 'part not highlighted: ' .. tostring(flexbody.partPath))
-        end
+local function clearXrayState(restoreAlpha)
+  local vehObj = xrayVehID and getObjectByID(xrayVehID)
+  if vehObj then
+    if restoreAlpha then
+      for mesh in pairs(xrayCurrent) do
+        vehObj:setMeshAlpha(1, mesh, false)
       end
     end
+    vehObj:clearRenderPass(0)
+    vehObj:clearRenderPass(1)
+    vehObj:clearRenderPass(3)
   end
-  if vdata.props then
-    for _, prop in pairs(vdata.props) do
-      if prop.mesh and prop.mesh ~= "" and prop.mesh ~= "SPOTLIGHT" and prop.mesh ~= "POINTLIGHT" then
-        if partNames[prop.partPath] then
-          if not vehObj:setMeshAlpha(alpha, prop.mesh, false) then
-            log('W', 'mesh', 'prop unable to set mesh alpha: ' ..  dumps{'mesh: ', prop.mesh, 'alpha: ', alpha, 'existing alpha: ', vehObj:getMeshAlpha(prop.mesh)})
-          else
-            --print('prop set mesh alpha: ' .. prop.mesh .. ' to ' .. alpha)
-          end
-        else
-          --log('W', '', 'part not highlighted: ' .. tostring(prop.partPath))
-        end
-      end
+
+  table.clear(xrayTarget)
+  table.clear(xrayCurrent)
+  table.clear(xrayFaded)
+  table.clear(xrayOverlay)
+  table.clear(xraySolid)
+  table.clear(xrayHidden)
+  xrayVehID = nil
+  xrayAnimating = false
+  xrayPassesDirty = false
+  partsSelectorChangedTime = nil
+  partsSelectorChangedState = nil
+end
+
+local function clearVehicleHighlights(inVehID)
+  if not inVehID or xrayVehID == inVehID then
+    clearXrayState(true)
+  end
+end
+
+-- The normal base handles alpha state. Ghost, fading, and solid selected meshes are layered after it.
+local function applyXrayPasses(vehObj)
+  local faded = {}
+  local overlay = {}
+  local solid = {}
+  local needGhost = false
+  for mesh, target in pairs(xrayTarget) do
+    local current = xrayCurrent[mesh] or 1
+    if target < 1 or current < 1 then
+      needGhost = true
+    end
+    -- ghost by target so it appears as soon as a part is deselected, not after the fade finishes
+    if target < 0.999 and not xrayHidden[mesh] then
+      table.insert(faded, mesh)
+    end
+    if current > 0.001 and current < 0.999 then
+      table.insert(overlay, mesh)
+    elseif target >= 0.999 and current >= 0.999 then
+      table.insert(solid, mesh)
     end
   end
+
+  if not needGhost then
+    vehObj:clearRenderPass(0)
+    vehObj:clearRenderPass(1)
+    vehObj:clearRenderPass(3)
+    table.clear(xrayFaded)
+    table.clear(xrayOverlay)
+    table.clear(xraySolid)
+    return
+  end
+
+  table.sort(faded)
+  table.sort(overlay)
+  table.sort(solid)
+  if table.concat(faded, '\0') == table.concat(xrayFaded, '\0')
+    and table.concat(overlay, '\0') == table.concat(xrayOverlay, '\0')
+    and table.concat(solid, '\0') == table.concat(xraySolid, '\0') then
+    return
+  end
+  xrayFaded = faded
+  xrayOverlay = overlay
+  xraySolid = solid
+
+  if #faded > 0 then
+    vehObj:setRenderPass(0, 'vehicleGhost', faded, false, true)
+  else
+    vehObj:clearRenderPass(0)
+  end
+  if #solid > 0 then
+    vehObj:setRenderPass(1, '', solid, true, true, false)
+  else
+    vehObj:clearRenderPass(1)
+  end
+  if #overlay > 0 then
+    vehObj:setRenderPass(3, '', overlay, true, true)
+  else
+    vehObj:clearRenderPass(3)
+  end
+end
+
+local function updateXrayFade(dt)
+  if not xrayAnimating then return end
+
+  local vehObj = xrayVehID and getObjectByID(xrayVehID)
+  if not vehObj then
+    clearXrayState(false)
+    return
+  end
+
+  if xrayPassesDirty then
+    if not vehObj:prepareTranslucentPermutations() then
+      return
+    end
+    applyXrayPasses(vehObj)
+    xrayPassesDirty = false
+  end
+
+  local step = dt * (M.xrayFadeRate or 0.5)
+  local done = true
+  local membershipChanged = false
+  for mesh, target in pairs(xrayTarget) do
+    local current = xrayCurrent[mesh] or 1
+    if math.abs(target - current) > 0.001 then
+      local wasDrawn = current > 0.001
+      local wasSolid = current >= 0.999
+      current = current < target and math.min(current + step, target) or math.max(current - step, target)
+      xrayCurrent[mesh] = current
+      vehObj:setMeshAlpha(current, mesh, false)
+      done = false
+      if wasDrawn ~= (current > 0.001) or wasSolid ~= (current >= 0.999) then
+        membershipChanged = true
+      end
+    elseif current ~= target then
+      xrayCurrent[mesh] = target
+      vehObj:setMeshAlpha(target, mesh, false)
+    end
+  end
+
+  if membershipChanged or done then
+    applyXrayPasses(vehObj)
+  end
+  xrayAnimating = not done
+end
+
+-- bdebug filters its node/beam/triangle visualizations by this map, so it has to be kept in sync
+-- with the highlight state whenever the selection or the parts tree changes.
+local function sendPartsSelected(vehObj, partNames)
   vehObj:queueLuaCommand(string.format('bdebug.setPartsSelected(%s)', serialize(partNames)))
+end
+
+-- Actually sets transparency of meshes related to parts. Anything not selected fades out completely
+-- and is left to the x-ray ghost underneath.
+local function collectPartMeshes(partsData, partNames)
+  local meshes = {}
+  for partPath, selected in pairs(partNames) do
+    if selected then
+      for _, mesh in ipairs(partsData.highlightMeshesByPart[partPath] or {}) do
+        meshes[mesh] = true
+      end
+    end
+  end
+  return meshes
+end
+
+-- cameraParts is the set the part camera frames, which is not always what is highlighted: the camera
+-- follows what the user points at, so a forced highlight cannot drag it around. An empty set releases
+-- the camera back to the player once the selection stays empty.
+local function updatePartFocusCamera(vehID, partsData, cameraParts, cameraOptions)
+  if type(cameraParts) == 'table' and next(cameraParts) then
+    extensions.core_vehicle_partFocusCamera.focusOnParts(
+      vehID,
+      cameraParts,
+      collectPartMeshes(partsData, cameraParts),
+      nil,
+      cameraOptions
+    )
+  else
+    extensions.core_vehicle_partFocusCamera.release(type(cameraOptions) == 'table' and cameraOptions.immediate == true)
+  end
+end
+
+local function releasePartFocusCamera()
+  extensions.core_vehicle_partFocusCamera.clear()
+end
+
+local function setPartsMeshesAlpha(vehObj, partsData, partNames, alpha)
+  local vehID = vehObj:getId()
+  local selectedMeshes = collectPartMeshes(partsData, partNames)
+
+  local allPartsSelected = alpha >= 1
+  for _, partPath in ipairs(partsData.partsSorted) do
+    if not partNames[partPath] then
+      allPartsSelected = false
+      break
+    end
+  end
+  if allPartsSelected then
+    clearVehicleHighlights(vehID)
+    sendPartsSelected(vehObj, partNames)
+    return selectedMeshes
+  end
+
+  if xrayVehID ~= vehID then
+    clearXrayState(true)
+    xrayVehID = vehID
+    vehObj:prepareTranslucentPermutations()
+  end
+
+  local changed = false
+  for _, mesh in ipairs(partsData.allMeshes) do
+    if xrayCurrent[mesh] == nil then
+      xrayCurrent[mesh] = 1
+      vehObj:setMeshAlpha(1, mesh, false)
+    end
+    local target = selectedMeshes[mesh] and alpha or 0
+    local hidden = selectedMeshes[mesh] and alpha <= 0.001 or nil
+    if xrayTarget[mesh] ~= target or xrayHidden[mesh] ~= hidden then
+      xrayTarget[mesh] = target
+      xrayHidden[mesh] = hidden
+      changed = true
+    end
+  end
+
+  -- Meshes removed by a configuration change must not retain stale alpha.
+  for mesh in pairs(xrayCurrent) do
+    if not partsData.allMeshesSet[mesh] and xrayTarget[mesh] ~= 1 then
+      xrayTarget[mesh] = 1
+      changed = true
+    end
+  end
+
+  -- the ui calls this on every hover and on a debounce timer, so doing nothing when the selection
+  -- did not actually move is what keeps an in flight fade smooth
+  if changed then
+    xrayPassesDirty = true
+    xrayAnimating = true
+  end
+
+  sendPartsSelected(vehObj, partNames)
+  return selectedMeshes
 end
 
 -- Sets transparency of highlighted parts
@@ -1216,7 +1583,7 @@ local function setHighlightedPartsVisiblity(alpha, inVehID)
 
   partsData.alpha = alpha
 
-  setPartsMeshesAlpha(vehObj, vehData.vdata, partsData.partsHighlighted, alpha)
+  setPartsMeshesAlpha(vehObj, partsData, partsData.partsHighlighted, alpha)
 end
 
 -- Changes transparency of highlighted parts by delta value
@@ -1227,16 +1594,18 @@ local function changeHighlightedPartsVisiblity(deltaAlpha, inVehID)
 
   partsData.alpha = clamp(partsData.alpha + deltaAlpha, 0, 1)
 
-  setPartsMeshesAlpha(vehObj, vehData.vdata, partsData.partsHighlighted, partsData.alpha)
+  setPartsMeshesAlpha(vehObj, partsData, partsData.partsHighlighted, partsData.alpha)
 end
 
 -- Just shows parts highlighted
+-- cameraParts lets the caller keep the part camera on something while the highlight goes back to normal
 -- If inVehID is nil, it uses player vehicle
-local function showHighlightedParts(inVehID)
+local function showHighlightedParts(inVehID, cameraParts, cameraOptions)
   local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
-  setPartsMeshesAlpha(vehObj, vehData.vdata, partsData.partsHighlighted, partsData.alpha)
+  setPartsMeshesAlpha(vehObj, partsData, partsData.partsHighlighted, partsData.alpha)
+  updatePartFocusCamera(vehID, partsData, cameraParts, cameraOptions)
 end
 
 -- Highlighting refers to clicking on the "eye" icon
@@ -1267,22 +1636,24 @@ local function highlightParts(parts, inVehID)
   end
 
   highlightNode(vehData.config.partsTree or {})
-  setPartsMeshesAlpha(vehObj, vehData.vdata, parts, partsData.alpha)
+  setPartsMeshesAlpha(vehObj, partsData, parts, partsData.alpha)
 end
 
 -- selecting refers to hovering over a part in the UI (only temporary)
+-- cameraParts defaults to the highlighted parts
 -- If inVehID is nil, it uses player vehicle
-local function selectParts(parts, inVehID)
+local function selectParts(parts, inVehID, cameraParts, cameraOptions)
   local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
-  setPartsMeshesAlpha(vehObj, vehData.vdata, parts, partsData.alpha, 0.2)
+  setPartsMeshesAlpha(vehObj, partsData, parts, 1)
+  updatePartFocusCamera(vehID, partsData, type(cameraParts) == 'table' and cameraParts or parts, cameraOptions)
 end
 
 -- Merge old part highlights with new vehicle parts
 -- When new part added, its visiblity is set to the parent part visiblity,
 -- as well as its children to prevent weirdness
 -- If inVehID is nil, it uses player vehicle
-local function setNewParts(inVehID)
+function setNewParts(inVehID, silent)
   local vehObj, vehData, vehID, partsData = getVehData(inVehID)
   if not vehObj then return end
 
@@ -1329,6 +1700,12 @@ local function setNewParts(inVehID)
     end
     partsData.partNameToIdx[partName] = k
   end
+  partsData.allMeshes, partsData.allMeshesSet, partsData.highlightMeshesByPart =
+    processHighlightMeshes(vehData)
+
+  if not silent then
+    sendPartsSelected(vehObj, newHighlightedParts)
+  end
 end
 
 local function sendPartsSelectorStateToUI()
@@ -1354,9 +1731,6 @@ local function partsSelectorChangedDebounced(state)
   highlightParts(partsSelected, vehID)
 end
 
-local partsSelectorChangedTime = nil
-local partsSelectorChangedState = nil
-
 local function partsSelectorChanged(state)
   partsSelectorChangedState = state
   partsSelectorChangedTime = os.clockhp()
@@ -1381,6 +1755,17 @@ local function resetVehicleHighlights(onlyIfVehChanged, inVehID)
 
   if clear then
     vehsPartsData[vehID] = nil
+
+    -- fade back to the solid vehicle rather than popping. applyXrayPasses drops the ghost and the
+    -- overlay by itself once every mesh is back at 1.
+    -- everything ever touched, not just what the last selection listed, so nothing is left faded
+    if xrayVehID == vehID and next(xrayCurrent) then
+      for mesh in pairs(xrayCurrent) do
+        xrayTarget[mesh] = 1
+      end
+      xrayAnimating = true
+    end
+    extensions.core_vehicle_partFocusCamera.clear()
   end
 end
 
@@ -1389,7 +1774,7 @@ local function resetConfig()
 end
 
 local function resetAllToLoadedConfig()
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -1399,7 +1784,7 @@ end
 
 -- Used by Vehicle Config -> Parts "Reset" button to reset parts back to loaded config
 local function resetPartsToLoadedConfig()
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -1419,7 +1804,7 @@ local function resetPartsToLoadedConfig()
 end
 
 local function resetVarsToLoadedConfig()
-  local playerVehicle = vehManager.getPlayerVehicleData()
+  local playerVehicle = resolveConfigVehicleData()
   if not playerVehicle then
     log('E', 'partmgmt', 'no active vehicle')
     return
@@ -1439,16 +1824,47 @@ local function resetVarsToLoadedConfig()
 end
 
 local function onVehicleSpawned(vehID)
+  if xrayVehID == vehID or (partsSelectorChangedState and partsSelectorChangedState.vehID == vehID) then
+    clearXrayState(true)
+  end
   -- Invalidate the rich part info on vehicle spawned
   vehsRichPartInfo[vehID] = nil
 end
 
+local function onVehicleSwitched(oldID, newID, player)
+  local targetPlayer = extensions.core_vehicle_configTarget.getTargetPlayerId() or 0
+  if player == targetPlayer and oldID ~= newID then
+    clearXrayState(true)
+  end
+end
+
+local function onVehicleDestroyed(vehID)
+  if xrayVehID == vehID or (partsSelectorChangedState and partsSelectorChangedState.vehID == vehID) then
+    clearXrayState(false)
+  end
+  vehsPartsData[vehID] = nil
+  vehsRichPartInfo[vehID] = nil
+end
+
+local function onVehicleConfigTargetChanged(current)
+  clearXrayState(true)
+  if current and current.vehId then
+    sendDataToUI(current.vehId)
+  end
+end
+
+local function onExtensionUnloaded()
+  clearXrayState(true)
+end
+
 local function onLanguageChanged()
   table.clear(vehsRichPartInfo)
+  saveConfigUtils.clearCache()
 end
 
 local function onReloadLocales()
   table.clear(vehsRichPartInfo)
+  saveConfigUtils.clearCache()
 end
 
 local function onUpdate(dt)
@@ -1459,9 +1875,11 @@ local function onUpdate(dt)
       partsSelectorChangedTime = nil
     end
   end
+  updateXrayFade(dt)
 end
 
 local function onFilesChanged(files)
+  saveConfigUtils.clearCache()
   -- detect and invalidate part packs collect cache when part packs files change
   for _, fileData in pairs(files or {}) do
     local filename = fileData and fileData.filename
@@ -1474,6 +1892,7 @@ local function onFilesChanged(files)
 end
 
 local function onSerialize()
+  clearXrayState(true)
   return {
     vehsPartsData = vehsPartsData,
     vehsRichPartInfo = vehsRichPartInfo,
@@ -1502,6 +1921,7 @@ M.selectParts = selectParts
 M.setNewParts = setNewParts
 M.showHighlightedParts = showHighlightedParts
 M.resetVehicleHighlights = resetVehicleHighlights
+M.clearVehicleHighlights = clearVehicleHighlights
 M.setConfigOfVehicle = mergeConfigOfVehicle
 M.setConfig = mergeConfig
 M.setConfigPaints = setConfigPaints
@@ -1510,13 +1930,16 @@ M.setPartsConfig = setPartsConfig
 M.setPartsTreeConfig = setPartsTreeConfig
 M.getConfig = getConfig
 M.getConfigOfVehicle = getConfigOfVehicle
+M.getConfigVehicleId = resolveConfigVehicleId
 M.resetConfig = resetConfig
 M.reset = reset
 M.sendDataToUI = sendDataToUI
 M.sendPartsSelectorStateToUI = sendPartsSelectorStateToUI
+M.releasePartFocusCamera = releasePartFocusCamera
 M.partsSelectorChanged = partsSelectorChanged
 M.getConfigList = getConfigList
 M.getCurrentLocalConfigName = getCurrentLocalConfigName
+M.getSaveMetadataFields = getSaveMetadataFields
 M.openConfigFolderInExplorer = openConfigFolderInExplorer
 M.loadLocal = loadLocal
 M.removeLocal = removeLocal
@@ -1530,6 +1953,8 @@ M.saveNewLocalConfig = saveNewLocalConfig
 M.saveExistingLocalConfig = saveExistingLocalConfig
 M.validatePaints = validatePaints
 M.getCurrentLicensePlate = getCurrentLicensePlate
+M.setCurrentLicensePlate = setCurrentLicensePlate
+M.regenerateCurrentLicensePlate = regenerateCurrentLicensePlate
 M.saveLocalScreenshot = saveLocalScreenshot
 M.saveLocalScreenshot_stage2 = saveLocalScreenshot_stage2
 M.savedefault = savedefault
@@ -1539,6 +1964,10 @@ M.getTranslation = getTranslation
 M.translateTuningData = translateTuningData
 
 M.onVehicleSpawned = onVehicleSpawned
+M.onVehicleSwitched = onVehicleSwitched
+M.onVehicleDestroyed = onVehicleDestroyed
+M.onVehicleConfigTargetChanged = onVehicleConfigTargetChanged
+M.onExtensionUnloaded = onExtensionUnloaded
 M.onUpdate = onUpdate
 M.onFilesChanged = onFilesChanged
 M.onLanguageChanged = onLanguageChanged

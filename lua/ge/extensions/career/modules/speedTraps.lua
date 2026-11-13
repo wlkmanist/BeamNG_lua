@@ -62,7 +62,7 @@ local function onSpeedTrapTriggered(speedTrapData, playerSpeed, overSpeed)
 
   if penaltyType == "default" then
     local fine = getFineFromSpeed(overSpeed)
-    career_modules_payment.pay(fine, {label="Fine for speeding", tags={"fine"}})
+    career_modules_payment.pay(fine, {label="ui.career.attributeLog.fineSpeeding", tags={"fine"}})
     ui_message({txt="ui.career.speedTrap.speedingMessage", context={licensePlate = core_vehicles.getVehicleLicenseText(veh), fine = fine.money.amount, recordedSpeed = playerSpeed, speedLimit = speedTrapData.speedLimit}}, 10, 'speedTrap')
     Engine.Audio.playOnce('AudioGui','event:>UI>Career>Speedcam_Snapshot')
 
@@ -74,7 +74,7 @@ local function onSpeedTrapTriggered(speedTrapData, playerSpeed, overSpeed)
     if vehInfo.owningOrganization then
       local fine = {}
       fine[vehInfo.owningOrganization .. "Reputation"] = {amount = 10, canBeNegative = true}
-      career_modules_payment.pay(fine, {label="Reputation cost for speeding", tags={"fine"}})
+      career_modules_payment.pay(fine, {label="ui.career.attributeLog.reputationCostSpeeding", tags={"fine"}})
     end
   end
 
@@ -108,11 +108,14 @@ local function onRedLightCamTriggered(speedTrapData, playerSpeed)
   local veh = getPlayerVehicle(0)
   if not inventoryId or hasLicensePlate(inventoryId) then
     local fine = {money = {amount = 500, canBeNegative = true}}
-    career_modules_payment.pay(fine, {label="Fine for driving over a red light", tags={"fine"}})
+    career_modules_payment.pay(fine, {label="ui.career.attributeLog.fineRedLight", tags={"fine"}})
     Engine.Audio.playOnce('AudioGui','event:>UI>Career>Speedcam_Snapshot')
-    ui_message(string.format("Traffic Violation (Failure to stop at Red Light): \n - %q | Fine %d$", core_vehicles.getVehicleLicenseText(veh), fine.money.amount), 10, "speedTrap")
+    ui_message({
+      txt = "ui.career.speedTrap.redLightMessage",
+      context = {licensePlate = core_vehicles.getVehicleLicenseText(veh), fine = fine.money.amount}
+    }, 10, "speedTrap")
   else
-    ui_message(string.format("Traffic Violation (Failure to stop at Red Light): \n - No license plate detected | Fine could not be issued"), 10, "speedTrap")
+    ui_message(_tr("ui.career.speedTrap.redLightNoLicensePlateMessage"), 10, "speedTrap")
   end
 end
 

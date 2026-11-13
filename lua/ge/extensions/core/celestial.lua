@@ -35,6 +35,10 @@ local atmosphereApplied = false -- the profile's atmosphere is pushed to the sky
 local customDriver = nil     -- optional mod per-frame sky driver (core_celestial.setDriver); nil = built-in Earth
 local _ctx = {}              -- reused per-frame context handed to the driver (allocation-free hot path)
 
+local pushed = {}            -- last value written per sky field
+local _bodies, _bodyCount = {}, 0 -- reused celestial-body list handed to setCelestialBodies (1 = the moon)
+local _tintVec = setmetatable({}, { __mode = "k" }) -- profile body -> its tint vec3, built once
+
 -- Fallback observer + date for a TimeOfDay that predates the location/date fields
 -- (older levels, or before the engine carries them). The level overrides all of these.
 local DEF_LAT, DEF_LON = 47.0, 8.0
@@ -326,6 +330,7 @@ local function enableChrome(sky)
   local pc = parseColor(nc); if pc[1] + pc[2] + pc[3] < 1e-3 then nc = DEFAULT_NIGHT end
   local pf = parseColor(nf); if pf[1] + pf[2] + pf[3] < 1e-3 then nf = DEFAULT_NIGHT end
   saved = { nightColor = nc, nightFogColor = nf, moonScale = sky.moonScale, useNightCubemap = sky.useNightCubemap }
+  pushed = {} -- this sky has not been driven yet, so the next apply() must push every field
   sky:setField("nightColor", 0, "0 0 0 1")
   sky:setField("nightFogColor", 0, "0 0 0 1")
   sky.useNightCubemap = false
@@ -348,6 +353,7 @@ local function disableSky(sky)
   sky.starVisibility = 0
   sky.meteorsEnabled = false
   sky.moonEnabled = false
+  pushed = {} -- we just wrote fields behind apply()'s back
   if setCelestialBodies then setCelestialBodies(sky:getID(), {}) end -- drop data-driven bodies too
 end
 
@@ -430,7 +436,8 @@ end
 -- Append the profile's extra bodies (planets / moons / extra suns) with lightweight apparent motion:
 -- a fixed {azimuth,elevation}, or a circular path (ra0/dec advancing at 360deg per periodH hours).
 -- Reuses the same altAz + sidereal-time math as the sun/moon so every body shares one sky frame.
-local function appendProfileBodies(out, pbs, lst, lat, northOff, jd)
+-- Fills the reused _bodies list after the `n` entries already in it and returns the new count.
+local function appendProfileBodies(pbs, n, lst, lat, northOff, jd)
   for _, pb in ipairs(pbs) do
     local az, el
     if pb.azimuth ~= nil or pb.elevation ~= nil then
@@ -440,16 +447,19 @@ local function appendProfileBodies(out, pbs, lst, lat, northOff, jd)
       local alt, a = altAz(lst - ((pb.ra0 or 0) * DEG + rate), (pb.dec or 0) * DEG, lat)
       az, el = skyAzimuthDeg(a, northOff), alt * toDeg
     end
-    out[#out + 1] = {
-      azimuth = az, elevation = el,
-      angularSize = pb.angularSize or 0.5,
-      illumination = pb.illumination or 1.0,
-      brightnessEV = pb.brightnessEV or 0.0,
-      emissive = pb.emissive and true or false,
-      albedo = pb.albedo,
-      tint = pb.tint and vec3(pb.tint[1] or 1, pb.tint[2] or 1, pb.tint[3] or 1) or nil,
-    }
+    if pb.tint and not _tintVec[pb] then _tintVec[pb] = vec3(pb.tint[1] or 1, pb.tint[2] or 1, pb.tint[3] or 1) end
+    n = n + 1
+    local b = _bodies[n]
+    if not b then b = {}; _bodies[n] = b end
+    b.azimuth, b.elevation = az, el
+    b.angularSize = pb.angularSize or 0.5
+    b.illumination = pb.illumination or 1.0
+    b.brightnessEV = pb.brightnessEV or 0.0
+    b.emissive = pb.emissive and true or false
+    b.albedo = pb.albedo
+    b.tint = _tintVec[pb]
   end
+  return n
 end
 
 -- Place equatorial coords (RA/Dec in degrees) into the current sky frame -> (azimuth deg, elevation
@@ -459,29 +469,22 @@ local function ctxAltAz(raDeg, decDeg)
   return skyAzimuthDeg(az, _ctx.starNorthOffset), alt * toDeg
 end
 
+-- Write a sky field only when it actually moved; identical values cost a C++ hop for nothing.
+local function pushField(sky, field, v)
+  if pushed[field] ~= v then
+    sky[field] = v
+    pushed[field] = v
+  end
+end
+
 -- Position sun, moon and the star field for the level's current time + place.
 local function apply(sky, tod)
   local w = readWhen(tod)
   local jd = whenToJD(w)
   local d = jd - 2451543.5
-  local sunRA, sunDec, Ms, ws, oblecl = computeSun(d)
-  local moonRA, moonDec, moonNode, moonDist = computeMoon(d, Ms, ws, oblecl)
   local lst = localSiderealTime(jd, w.lon)
   local lat = w.lat * DEG
   local northOff = northOffsetDeg * DEG
-
-  local sunAlt, sunAz = altAz(lst - sunRA, sunDec, lat)
-  local moonAlt, moonAz = altAz(lst - moonRA, moonDec, lat)
-
-  -- geocentric -> what an observer on the ground actually sees: lunar parallax, then refraction
-  moonAlt, moonAz = topocentric(moonAlt, moonAz, moonDist)
-  sunAlt = sunAlt + refractionDeg(sunAlt * toDeg) * DEG
-  moonAlt = moonAlt + refractionDeg(moonAlt * toDeg) * DEG
-
-  local moonAzDeg = skyAzimuthDeg(moonAz, northOff)
-  local moonElDeg = moonAlt * toDeg
-  local cosElong = sin(sunDec) * sin(moonDec) + cos(sunDec) * cos(moonDec) * cos(sunRA - moonRA)
-  local moonIllum = clamp((1 - cosElong) * 0.5, 0, 1)
   local m = meteorState(w.y, w.mo, w.d)
 
   -- Hand the real-sky defaults to a custom driver (if any) to retarget the sun, bodies, star
@@ -490,45 +493,66 @@ local function apply(sky, tod)
   local ctx = _ctx
   ctx.sky, ctx.time, ctx.jd, ctx.lst, ctx.lat, ctx.lon = sky, w.time, jd, lst, lat, w.lon
   ctx.year, ctx.month, ctx.day = w.y, w.mo, w.d
-  ctx.sunAz, ctx.sunEl = skyAzimuthDeg(sunAz, northOff), sunAlt * toDeg
   ctx.starLst, ctx.starLat, ctx.starNorthOffset, ctx.starAzimuthSign, ctx.starVisibility = lst, lat, northOff, azimuthSign, 1.0
-  ctx.moonOrbitNodeRad = moonNode * DEG
   ctx.meteorRate = meteorTest and meteorTestRate or m.rate
   ctx.meteorShowerFraction = meteorTest and 1.0 or m.showerFraction
   ctx.meteorRadiantRA = meteorTest and 48 or m.ra
   ctx.meteorRadiantDec = meteorTest and 58 or m.dec
   ctx.altAz = ctxAltAz
 
-  local bodies = {
-    { azimuth = moonAzDeg, elevation = moonElDeg, angularSize = sky.moonAngularSize or 1.5,
-      illumination = moonIllum, albedo = (activeProfile and activeProfile.moonAlbedo) or DEFAULT_MOON_ALBEDO },
-  }
+  local sunRA, sunDec, Ms, ws, oblecl = computeSun(d)
+  local sunAlt, sunAz = altAz(lst - sunRA, sunDec, lat)
+  sunAlt = sunAlt + refractionDeg(sunAlt * toDeg) * DEG
+  ctx.sunAz, ctx.sunEl = skyAzimuthDeg(sunAz, northOff), sunAlt * toDeg
+
+  local moonRA, moonDec, moonNode, moonDist = computeMoon(d, Ms, ws, oblecl)
+  local moonAlt, moonAz = altAz(lst - moonRA, moonDec, lat)
+  -- geocentric -> what an observer on the ground actually sees: lunar parallax, then refraction
+  moonAlt, moonAz = topocentric(moonAlt, moonAz, moonDist)
+  moonAlt = moonAlt + refractionDeg(moonAlt * toDeg) * DEG
+  local moonAzDeg = skyAzimuthDeg(moonAz, northOff)
+  local moonElDeg = moonAlt * toDeg
+  local cosElong = sin(sunDec) * sin(moonDec) + cos(sunDec) * cos(moonDec) * cos(sunRA - moonRA)
+  local moonIllum = clamp((1 - cosElong) * 0.5, 0, 1)
+  ctx.moonOrbitNodeRad = moonNode * DEG
+
+  local moon = _bodies[1]
+  if not moon then moon = {}; _bodies[1] = moon end
+  moon.azimuth, moon.elevation, moon.illumination = moonAzDeg, moonElDeg, moonIllum
+  moon.angularSize = sky.moonAngularSize or 1.5
+  moon.albedo = (activeProfile and activeProfile.moonAlbedo) or DEFAULT_MOON_ALBEDO
+  local n = 1
   if activeProfile and activeProfile.bodies then
-    appendProfileBodies(bodies, activeProfile.bodies, lst, lat, northOff, jd)
+    n = appendProfileBodies(activeProfile.bodies, n, lst, lat, northOff, jd)
   end
-  ctx.bodies = bodies
+  for i = n + 1, _bodyCount do _bodies[i] = nil end
+  _bodyCount = n
+  ctx.bodies = _bodies
 
   if customDriver then customDriver(ctx) end
 
   -- Push the (possibly overridden) state. Sun az/el drives the atmosphere shader + scene light; the
   -- moon and any extra bodies render as billboards (the legacy single-moon path stays off).
-  sky.azimuth = ctx.sunAz
-  sky.elevation = ctx.sunEl
-  sky.moonAzimuth = moonAzDeg
-  sky.moonElevation = moonElDeg
-  sky.moonIllumination = moonIllum
-  sky.moonOrbitNodeRad = ctx.moonOrbitNodeRad
-  sky.starLocalSiderealTime = ctx.starLst
-  sky.starLatitude = ctx.starLat
-  sky.starNorthOffset = ctx.starNorthOffset
-  sky.starAzimuthSign = ctx.starAzimuthSign
-  sky.starVisibility = ctx.starVisibility
-  if setCelestialBodies then setCelestialBodies(sky:getID(), ctx.bodies) end
+  pushField(sky, "azimuth", ctx.sunAz)
+  pushField(sky, "elevation", ctx.sunEl)
+  pushField(sky, "moonAzimuth", moonAzDeg)
+  pushField(sky, "moonElevation", moonElDeg)
+  pushField(sky, "moonIllumination", moonIllum)
+  pushField(sky, "moonOrbitNodeRad", ctx.moonOrbitNodeRad)
+  pushField(sky, "starLocalSiderealTime", ctx.starLst)
+  pushField(sky, "starLatitude", ctx.starLat)
+  pushField(sky, "starNorthOffset", ctx.starNorthOffset)
+  pushField(sky, "starAzimuthSign", ctx.starAzimuthSign)
+  pushField(sky, "starVisibility", ctx.starVisibility)
+  if setCelestialBodies and (customDriver or pushed.bodiesAt ~= jd) then
+    setCelestialBodies(skyId, ctx.bodies)
+    pushed.bodiesAt = jd
+  end
   if namesDirty then pushConstellationNames(sky); namesDirty = false end
-  sky.meteorRate = ctx.meteorRate
-  sky.meteorShowerFraction = ctx.meteorShowerFraction
-  sky.meteorRadiantRA = ctx.meteorRadiantRA
-  sky.meteorRadiantDec = ctx.meteorRadiantDec
+  pushField(sky, "meteorRate", ctx.meteorRate)
+  pushField(sky, "meteorShowerFraction", ctx.meteorShowerFraction)
+  pushField(sky, "meteorRadiantRA", ctx.meteorRadiantRA)
+  pushField(sky, "meteorRadiantDec", ctx.meteorRadiantDec)
 end
 
 -- Solar eclipses ------------------------------------------------------------
@@ -783,6 +807,7 @@ function M.loadProfile(profile)
   if type(profile) == "string" then profile = jsonReadFile(profile) end
   if type(profile) ~= "table" then return false end
   activeProfile, atmosphereApplied = profile, false
+  pushed = {} -- the body set / moon albedo can change without the clock moving
   return true
 end
 function M.getActiveProfile() return activeProfile end
@@ -1071,6 +1096,8 @@ local function resetCaches()
   lastHoverKey, lastHover = nil, nil
   cardRenderer, starCardId, constCardId, currentCard, currentTargetDir = nil, nil, nil, nil, nil -- fresh renderer per level
   atmosphereApplied = false
+  pushed = {} -- the first frame on the new sky pushes everything
+  _bodies, _bodyCount = {}, 0
 end
 M.onClientPostStartMission = function() resetCaches(); loadLevelProfile() end
 M.onClientEndMission = function() resetCaches(); activeProfile = nil end

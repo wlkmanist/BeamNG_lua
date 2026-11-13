@@ -117,6 +117,10 @@ function C:panToWorldPos(worldPos)
   bigMapPan.setTarget(self, worldPos, camToLookAtPoint)
 end
 
+function C:zoomToFactor(factor)
+  bigMapPan.zoomToFactor(self, factor)
+end
+
 local orthoOptions = {size = 1, nearClip = 1, farClip = 5000}
 function C:update(data)
   if self.initialCamData and self.firstUpdate then
@@ -131,12 +135,6 @@ function C:update(data)
   local zoomBefore = self.manualzoom.fov
   self.manualzoom:update(data)
   local zoomAfter = self.manualzoom.fov
-  if freeroam_bigMapMode and zoomBefore ~= zoomAfter then
-    if self:getZoomStage(zoomBefore) ~= self:getZoomStage(zoomAfter) then
-      freeroam_bigMapMode.updateMergeRadius(self:getZoomStage(zoomAfter))
-      gameplay_markerInteraction.skipNextIconFading()
-    end
-  end
 
   if zoomBefore ~= zoomAfter and zoomMouseStartPos then
     -- Move the camera to keep the mouse cursor roughly on the same spot
@@ -182,6 +180,13 @@ function C:update(data)
   -- smoothly ease toward the pan target, cancel if the user moves the camera
   local userMoving = mouseDragStartPos ~= nil or MoveManager.forward ~= 0 or MoveManager.backward ~= 0 or MoveManager.left ~= 0 or MoveManager.right ~= 0
   bigMapPan.update(self, data.dtReal, userMoving)
+  data.res.fov = self.manualzoom.fov
+  if freeroam_bigMapMode and zoomBefore ~= data.res.fov then
+    if self:getZoomStage(zoomBefore) ~= self:getZoomStage(data.res.fov) then
+      freeroam_bigMapMode.updateMergeRadius(self:getZoomStage(data.res.fov))
+      gameplay_markerInteraction.skipNextIconFading()
+    end
+  end
 
   -- Keep the camera in the bounds of the map
   if camToLookAtPoint then

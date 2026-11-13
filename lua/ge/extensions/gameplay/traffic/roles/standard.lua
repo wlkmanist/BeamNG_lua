@@ -97,8 +97,12 @@ end
 function C:onOtherCrashDamage(otherId, data)
   -- triggers if self is currently not in a collision or witness to one
   if self.driver.eventType ~= 'selfCollision' and self.driver.eventType ~= 'otherCollision' then
-    self.driver.eventType = 'otherCrash'
-    self:setTarget(otherId)
+    local targetVeh = gameplay_traffic.getTrafficData()[otherId]
+    -- checks if target is within distance, in front of self, and visible
+    if targetVeh and self.veh:getInteractiveDistance(targetVeh.pos, true) <= 3600 and self.veh.dirVec:dot(targetVeh.pos - self.veh.pos) > 0 and self:checkTargetVisible(otherId) then
+      self.driver.eventType = 'otherCrash'
+      self:setTarget(otherId)
+    end
   end
 end
 
@@ -307,6 +311,8 @@ function C:onUpdate(dt, dtSim)
         end
       end
     end
+  elseif self.targetId and self.state ~= 'none' then -- target is no longer in the traffic table
+    self:resetAction()
   end
 end
 

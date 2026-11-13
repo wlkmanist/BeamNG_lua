@@ -4,11 +4,9 @@
 local M = {}
 
 local Constants = require("ge/extensions/ui/router/constants")
-local Config = require("ge/extensions/ui/router/config")
 local TransitionManager = require("ge/extensions/ui/router/managers/transitionManager")
 local FrameworkManager = require("ge/extensions/ui/router/managers/frameworkManager")
 local GuardManager = require("ge/extensions/ui/router/managers/guardManager")
-local LoadingScreenManager = require("ge/extensions/ui/router/managers/loadingScreenManager")
 local NavigationState = require("ge/extensions/ui/router/navigationState")
 local NavigationContextService = require("ge/extensions/ui/router/services/navigationContext")
 local RouteHandlers = require("ge/extensions/ui/router/routeHandlers")
@@ -16,9 +14,37 @@ local BreadcrumbManager = require("ge/extensions/ui/router/managers/breadcrumbMa
 local ScopeManager = require("ge/extensions/ui/router/managers/scopeManager")
 local ResolvedRoute = require("ge/extensions/ui/router/models/ResolvedRoute")
 local LifecycleExecutor = require("ge/extensions/ui/router/lifecycleExecutor")
+local RouteReference = require("ge/extensions/ui/router/routeReference")
+
+-- Non-shipping diagnostics only. Required (and invoked) solely when not a shipping build so no
+-- observer work happens in shipping.
+local NavigationObserver = shipping_build ~= true and require("ge/extensions/ui/router/navigationObserver") or nil
 
 local navigationEpoch = 0
 local activeRouteData = {}
+
+-- Protected navigation lock. A navigation requested with options.cancellable == false acquires an
+-- identity-safe token that blocks every newer navigate/back/reload until that navigation reaches a
+-- terminal state (completion, cancellation, failure, timeout, reset, deserialization). The token is
+-- a unique value (not a boolean) so cleanup can release only the exact navigation that acquired it,
+-- never a newer protected navigation that replaced it.
+local activeProtectionToken = nil
+local protectionCounter = 0
+
+local function acquireNavigationProtection()
+  protectionCounter = protectionCounter + 1
+  activeProtectionToken = "navProtect_" .. protectionCounter
+  return activeProtectionToken
+end
+
+-- Release only when the supplied token still owns the lock. A nil token or a token that no longer
+-- matches (already replaced/released) is a no-op, so terminal cleanup of an older transition can
+-- never clear the token of a newer protected navigation.
+local function releaseNavigationProtection(token)
+  if token ~= nil and activeProtectionToken == token then
+    activeProtectionToken = nil
+  end
+end
 
 local activeScopeState = {
   activeScopeId = nil,
@@ -87,23 +113,27 @@ local function asNonEmptyString(value)
   return nil
 end
 
-local function parseInlineScopedRoute(routeName)
-  if type(routeName) ~= "string" then
-    return routeName, nil, routeName
+-- Vue acknowledgements must echo back a non-empty transition id so Lua validates against the exact
+-- active transition. Angular/legacy callers keep the route-name fallback (id optional). The check
+-- only applies while a transition is active, so an idle router still reports no_active_transition.
+local function missingVueTransitionId(frameworkId, transitionId)
+  if frameworkId ~= "vue" then
+    return false
   end
-
-  local delimiterIndex = string.find(routeName, ":", 1, true)
-  if not delimiterIndex then
-    return routeName, nil, routeName
+  if not TransitionManager.isTransitioning() then
+    return false
   end
+  return asNonEmptyString(transitionId) == nil
+end
 
-  local baseRouteName = string.sub(routeName, 1, delimiterIndex - 1)
-  local routeScopeId = string.sub(routeName, delimiterIndex + 1)
-  if baseRouteName == "" or routeScopeId == "" then
-    return routeName, nil, routeName
+local function getCommittedRouteName()
+  local currentEntry = NavigationState.getCurrentEntry()
+  local request = currentEntry and currentEntry.request
+  local name = request and request.name
+  if type(name) == "string" and name ~= "" then
+    return name
   end
-
-  return baseRouteName, routeScopeId, routeName
+  return nil
 end
 
 local function buildEffectiveOptions(options, routeScopeId)
@@ -166,24 +196,6 @@ local function runOnLeave(toRoute, fromRoute, options)
   local leaveContext = buildNavigationContext(toRoute, fromRoute, "leave", options)
   local ok, _ = LifecycleExecutor.runLifecycleHook(currentRoute, "onLeave", leaveContext, toRoute, fromRoute, leaveData)
   return ok
-end
-
-local function showLoadingScreenIfNeeded(resolvedRoute, options)
-  -- log("D", "Router", "Checking loading screen for route: " .. resolvedRoute.name)
-  local shouldShow = LoadingScreenManager.shouldShow(resolvedRoute, options)
-
-  if not shouldShow then
-    -- log("D", "Router", "Loading screen is not needed for this route " .. resolvedRoute.name)
-    return
-  end
-
-  local autoHide = options and options.loadingScreen and options.loadingScreen.autoHide or
-                       Config.LoadingScreen.autoHideOnComplete
-  local autoHideTime = options and options.loadingScreen and options.loadingScreen.autoHideTime or nil
-  LoadingScreenManager.show(nil, {
-    autoHide = autoHide,
-    autoHideTime = autoHideTime
-  })
 end
 
 local function executeExitGuards(route, params, context)
@@ -252,20 +264,41 @@ local function navigationPreemptedFailure()
   })
 end
 
-local function resolveNavigationTarget(routename, options)
-  local baseRouteName, routeScopeId, fullRouteName = parseInlineScopedRoute(routename)
-  local effectiveOptions = buildEffectiveOptions(options, routeScopeId)
-  local route = extensions.ui_router_routeManager.getRoute(baseRouteName)
+local function resolveNavigationTarget(routename, params, options)
+  -- Split off any inline query (?a=1) and scope (:scope) decoration, then resolve
+  -- a possibly-relative route name against the currently committed route.
+  local parsed = RouteReference.parse(routename)
+  local routeScopeId = asNonEmptyString(parsed.scope)
 
+  local baseRouteName, resolveErr = extensions.ui_router_routeManager.resolveRouteName(parsed.route, getCommittedRouteName())
+  if resolveErr then
+    log("W", "", "Failed to resolve route reference: " .. tostring(routename) .. " (" .. resolveErr .. ")")
+    return nil, navigationFailure(resolveErr)
+  end
+
+  local route = extensions.ui_router_routeManager.getRoute(baseRouteName)
   if not route then
-    log("W", "", "Route not found: " .. tostring(fullRouteName))
+    log("W", "", "Route not found: " .. tostring(baseRouteName))
     return nil, navigationFailure("route_not_found")
+  end
+
+  local effectiveOptions = buildEffectiveOptions(options, routeScopeId)
+  -- Explicit params win over inline query params on collision.
+  local effectiveParams = RouteReference.mergeParams(parsed.params, params)
+
+  -- Canonical, query-free full route reference: base[:scope]. The inline query
+  -- is intentionally dropped so a reload replays effective params from
+  -- request.params instead of re-parsing the query string.
+  local fullRouteName = baseRouteName
+  if routeScopeId then
+    fullRouteName = baseRouteName .. ":" .. routeScopeId
   end
 
   return {
     route = route,
     baseRouteName = baseRouteName,
     fullRouteName = fullRouteName,
+    params = effectiveParams,
     options = effectiveOptions,
   }
 end
@@ -283,26 +316,115 @@ local function getActiveTransitionRoutes()
   return toRoute, fromRoute
 end
 
+--[[
+  How long a navigation took, for whoever wants to report on it.
+
+  Stamped with os.clockhp() and not the transition's accumulated dtReal, because a frame that
+  stalls while a screen loads is exactly the wait a player sits through, and dtReal only moves
+  while the gui update runs.
+
+  The clock starts when navigate() is called and not when the transition starts, because the
+  guards and onEnter run in between and a route that loads its data there would otherwise
+  have that time missing from its own measurement.
+
+  Three numbers come out of it:
+    total  navigate() until the navigation finished
+    enter  the part before the transition even started: exit guards, onLeave, enter guards
+           and onEnter. Lua side work
+    ready  the part after the route was committed, which is where a screen waits on its own
+           data and on its animations
+  Whatever is left over is the handoff to the UI framework and its own router.
+
+  mountAcked tells the two kinds of route apart. One that never acknowledges a mount finishes
+  at the commit, so its total stops earlier and does not compare against one that does.
+
+  Where the end is: routeMounted is acked one Vue tick after the component tree updated, which
+  is after the DOM is right but, in a production build, before the browser has painted it. So
+  this is a close floor for the first usable frame rather than the frame itself.
+]]
+local navigateCalledAt = nil
+
+local function stampNavigationMilestone(milestone)
+  local session = TransitionManager.getSession()
+  if not session then return end
+  session.milestoneAt = session.milestoneAt or {}
+  session.milestoneAt[milestone] = os.clockhp()
+end
+
+local function navigationTimings()
+  local session = TransitionManager.getSession()
+  local at = session and session.milestoneAt
+  if not at or not at.started then return nil end
+
+  local finished = at.mounted or at.committed
+  if not finished then return nil end
+
+  local function ms(from, to)
+    return math.floor((to - from) * 1000 + 0.5)
+  end
+
+  return {
+    total = ms(at.started, finished),
+    enter = at.transition and ms(at.started, at.transition) or nil,
+    ready = at.mounted and at.committed and ms(at.committed, at.mounted) or nil,
+    mountAcked = at.mounted ~= nil,
+  }
+end
+
 local function completeActiveTransition(routeName, routeData, transitionId)
   activeRouteData = routeData
-  return TransitionManager.complete(routeName, transitionId)
+  -- read before completing, which drops the session the stamps (and protection token) live on
+  local session = TransitionManager.getSession()
+  local protectionToken = session and session.protectionToken or nil
+  local timings = navigationTimings()
+  local success, reason = TransitionManager.complete(routeName, transitionId)
+  -- Only release once the transition actually completed; a rejected (e.g. id mismatch) completion
+  -- leaves the protected transition active and must keep its lock.
+  if success then
+    releaseNavigationProtection(protectionToken)
+  end
+  if timings then
+    extensions.hook(Constants.RouterExtensionHooks.ROUTE_TIMING, routeName, timings)
+  end
+  return success, reason
 end
 
 local function cancelActiveTransition(reason, extras)
   extras = extras or {}
+  -- Capture the cancelled session's token before TransitionManager drops the session. Releasing by
+  -- the session token (not the live global) keeps a replacement cancel from clearing a newer
+  -- protected navigation's lock: an older, unprotected session simply carries no token.
+  local session = TransitionManager.getSession()
+  local protectionToken = session and session.protectionToken or nil
   local toRoute, fromRoute = getActiveTransitionRoutes()
-  local wasCancelled = TransitionManager.cancel(reason)
+  local wasCancelled, cancelledId = TransitionManager.cancel(reason)
+
+  if wasCancelled then
+    releaseNavigationProtection(protectionToken)
+  end
+
+  -- Drop any uncommitted pending entry so a superseded/aborted navigation leaves no stale state.
+  NavigationState.clearPendingEntry()
 
   if extras.notify == false then
     return wasCancelled
   end
 
-  FrameworkManager.sendRouteChangeCancelled(toRoute)
+  -- Preserve the cancelled transition id in the notification so the UI can clear only the
+  -- handoff that matches the cancelled transition.
+  FrameworkManager.sendRouteChangeCancelled(toRoute, { transitionId = cancelledId, reason = reason })
+
+  -- Internal replacements (a newer navigation superseding this one) still notify the UI so it can
+  -- drop the matching handoff, but suppress the public cancel hook; the incoming navigation owns it.
+  if extras.suppressPublic then
+    return wasCancelled
+  end
 
   local hookPayload = {
     toRoute = toRoute,
     fromRoute = fromRoute,
     reason = reason,
+    transitionId = cancelledId,
   }
   if type(extras.hook) == "table" then
     for key, value in pairs(extras.hook) do
@@ -310,8 +432,6 @@ local function cancelActiveTransition(reason, extras)
     end
   end
   extensions.hook(Constants.RouterHooks.ROUTE_CHANGE_CANCELLED, hookPayload)
-
-  LoadingScreenManager.hide()
 
   return wasCancelled
 end
@@ -354,20 +474,35 @@ local function timeoutActiveTransition(reason, classification)
   })
 end
 
-local function cancelActiveTransitionIfNeeded()
+local function cancelActiveTransitionIfNeeded(replacementAttempt)
   if not TransitionManager.isTransitioning() then
     return
   end
 
+  -- The active transition being replaced is a proven preemption: report it before cancelling,
+  -- reading the preempted attempt off the active transition session.
+  if NavigationObserver and replacementAttempt then
+    local session = TransitionManager.getSession()
+    if session then
+      NavigationObserver.reportPreemption(session.observerAttempt, replacementAttempt, "active_transition")
+    end
+  end
+
   -- log("D", "", "Transition is currently in progress, cancelling the current transition")
-  -- Preempted navigation: cancel silently, the incoming navigation owns the next side effects.
-  cancelActiveTransition("navigation_replaced", { notify = false })
+  -- Preempted navigation: emit a transition-scoped cancelled event so the UI drops the superseded
+  -- handoff, but suppress the public hook; the incoming navigation owns it.
+  cancelActiveTransition("navigation_replaced", { suppressPublic = true })
 end
 
-local function runEnterLifecycle(route, fromRoute, options)
+local function runEnterLifecycle(entry, fromRoute, options)
   local routeData = {}
-  local navigationContext = buildNavigationContext(route, fromRoute, "navigate", options)
-  local enterOk, enterErr, enterIsHard = LifecycleExecutor.runLifecycleHook(route, "onEnter", navigationContext, route, fromRoute, routeData)
+  local resolved = entry.resolved
+  -- onEnter receives entry.resolved (with merged effective params) so it observes
+  -- the same params as onMount, which is handed the transition context's toRoute
+  -- (also entry.resolved). Hook lookup still uses the route node config, which
+  -- carries the onEnter/onMount/onLeave function references.
+  local navigationContext = buildNavigationContext(resolved, fromRoute, "navigate", options)
+  local enterOk, enterErr, enterIsHard = LifecycleExecutor.runLifecycleHook(entry.routeNode, "onEnter", navigationContext, resolved, fromRoute, routeData)
 
   if enterIsHard then
     return nil, navigationFailure("lifecycle_hook_error")
@@ -381,7 +516,8 @@ local function runEnterLifecycle(route, fromRoute, options)
   }
 end
 
-local function buildNavigationEntry(target, params, previousEntry)
+local function buildNavigationEntry(target, previousEntry)
+  local params = target.params
   local targetScopeInfo = ScopeManager.getTargetScope(target.route, target.options)
   local targetScope = targetScopeInfo.targetScope
 
@@ -409,12 +545,18 @@ local function emitInitialRouteData(entryInfo, enterState)
   })
 end
 
-local function createTransitionMeta(entry, routeName, enterState)
+local function createTransitionMeta(entry, routeName, enterState, attempt, protectionToken)
   local expectsHandoff = routeExpectsHandoff(entry.resolved)
 
   return {
     routeName = routeName,
     routeData = enterState.routeData,
+    -- Identity-safe protected-navigation token (nil for cancellable navigations). Carried on the
+    -- session so terminal cleanup releases exactly this navigation's lock.
+    protectionToken = protectionToken,
+    -- Non-shipping diagnostics only: lets a later replacing navigation attribute this transition
+    -- back to the navigate() that started it. nil in shipping builds.
+    observerAttempt = attempt,
     skipOnMount = not enterState.enterOk,
     mounted = false,
     routeChangeCommitted = false,
@@ -422,8 +564,9 @@ local function createTransitionMeta(entry, routeName, enterState)
     -- Kept for handoff resends: the exact pending entry to re-emit without re-running setup.
     pendingEntry = entry,
     -- Phase state. `phase` is nil for non-phased (Angular/legacy) transitions, which keep
-    -- the flat TransitionManager timeout. Phased framework transitions own their own budget.
-    phase = expectsHandoff and "handoff" or nil,
+    -- the flat TransitionManager timeout. Phased framework transitions start in the indefinite
+    -- `startup` phase and own their own budget.
+    phase = expectsHandoff and "startup" or nil,
     phaseElapsed = 0,
     totalElapsed = 0,
     timeSinceLastEmit = 0,
@@ -460,16 +603,18 @@ end
       and returns resend/timeout events from update(); it performs no side effects itself.
     - router.lua (this file) owns navigation orchestration and side effects: it decides when to
       start a transition, promotes pending entries, runs lifecycle hooks (onMount), emits route
-      data, and reacts to TransitionManager events by calling FrameworkManager / loading screen.
+      data, and reacts to TransitionManager events by calling FrameworkManager.
     - FrameworkManager owns the outbound guihooks to the UI frameworks (sendRouteChange/*Complete/*Cancelled).
 
   Completion depends on the mount-ack predicate: routes that expect a Vue mount ack finish at
   step 5 (M.routeMounted), everything else finishes at step 4 (M.routeChangeComplete).
 ]]
-local function startNavigationTransition(entry, routeName, enterState)
+local function startNavigationTransition(entry, routeName, enterState, attempt, protectionToken)
   NavigationState.setPendingEntry(entry)
 
-  local session = createTransitionMeta(entry, routeName, enterState)
+  local session = createTransitionMeta(entry, routeName, enterState, attempt, protectionToken)
+  -- the guards and onEnter already ran, so the session inherits the time navigate() started
+  session.milestoneAt = {started = navigateCalledAt or os.clockhp(), transition = os.clockhp()}
   local started, transitionId = TransitionManager.start({ toRoute = entry.resolved, fromRoute = entry.fromRoute, session = session })
 
   FrameworkManager.sendRouteChange(entry, started and transitionId or nil)
@@ -477,16 +622,41 @@ local function startNavigationTransition(entry, routeName, enterState)
 end
 
 M.navigate = function(routename, params, options)
-  local target, resolveFailure = resolveNavigationTarget(routename, options)
+  -- Admission gate: while a protected (cancellable=false) navigation is active, reject every newer
+  -- request up front, before observer registration, route resolution, guards, or lifecycle hooks.
+  -- Blocked requests are not queued and identical requests are not special-cased.
+  if activeProtectionToken ~= nil then
+    log("D", "Router", "navigate blocked: a protected navigation is active for " .. tostring(routename))
+    return navigationFailure("active_navigation_not_cancellable")
+  end
+
+  navigateCalledAt = os.clockhp()
+
+  -- Begin the attempt before any router wrapper obscures the external caller. Non-shipping only.
+  local attempt = NavigationObserver and NavigationObserver.beginAttempt() or nil
+
+  local target, resolveFailure = resolveNavigationTarget(routename, params, options)
   if resolveFailure then
     return resolveFailure
   end
 
-  local canExit = executeExitGuards(target.route, params, {
+  if NavigationObserver then
+    NavigationObserver.attachResolvedTarget(attempt, target)
+  end
+
+  -- Acquire protection once the request has resolved, before exit guards run, so a cancellable=false
+  -- navigation is protected across its entire flow. nil/true keep the last-navigation-wins behavior.
+  local protectionToken = nil
+  if target.options and target.options.cancellable == false then
+    protectionToken = acquireNavigationProtection()
+  end
+
+  local canExit = executeExitGuards(target.route, target.params, {
     routeName = target.fullRouteName,
     options = target.options,
   })
   if canExit.result == false then
+    releaseNavigationProtection(protectionToken)
     return guardFailure("guard_blocked_exit", canExit)
   end
 
@@ -494,31 +664,46 @@ M.navigate = function(routename, params, options)
   local previousEntry = NavigationState.getCurrentEntry()
   local fromRoute = previousEntry and ResolvedRoute.toCompatRoute(previousEntry.resolved) or nil
 
-  cancelActiveTransitionIfNeeded()
+  cancelActiveTransitionIfNeeded(attempt)
   runOnLeave(target.route, fromRoute, target.options)
 
-  local canEnter = executeEnterGuards(target.route, params)
+  local canEnter = executeEnterGuards(target.route, target.params)
   if canEnter.result == false then
+    releaseNavigationProtection(protectionToken)
     return guardFailure("guard_blocked_enter", canEnter)
   end
 
   if not isEpochCurrent(epoch) then
+    -- A re-entrant navigate() (during exit guards / onLeave / enter guards) bumped the epoch.
+    releaseNavigationProtection(protectionToken)
+    if NavigationObserver then
+      NavigationObserver.reportPreemption(attempt, NavigationObserver.getCurrentAttempt(), "post_guard")
+    end
     return navigationPreemptedFailure()
   end
 
-  local enterState, enterFailure = runEnterLifecycle(target.route, fromRoute, target.options)
+  -- Build the entry (and entry.resolved) before onEnter so both lifecycle sites
+  -- observe the same effective params through entry.resolved.
+  local entryInfo = buildNavigationEntry(target, previousEntry)
+
+  local enterState, enterFailure = runEnterLifecycle(entryInfo.entry, fromRoute, target.options)
   if enterFailure then
+    releaseNavigationProtection(protectionToken)
     return enterFailure
   end
 
-  local entryInfo = buildNavigationEntry(target, params, previousEntry)
   emitInitialRouteData(entryInfo, enterState)
 
   if not isEpochCurrent(epoch) then
+    -- A re-entrant navigate() during onEnter bumped the epoch.
+    releaseNavigationProtection(protectionToken)
+    if NavigationObserver then
+      NavigationObserver.reportPreemption(attempt, NavigationObserver.getCurrentAttempt(), "post_enter")
+    end
     return navigationPreemptedFailure()
   end
 
-  startNavigationTransition(entryInfo.entry, target.baseRouteName, enterState)
+  startNavigationTransition(entryInfo.entry, target.baseRouteName, enterState, attempt, protectionToken)
 
   return {
     result = true,
@@ -540,11 +725,18 @@ M.back = function(options)
 
   local backTarget = currentEntry.resolved.backTarget
   if backTarget then
-    local previousRequest = currentEntry.request
-    local previousParams = previousRequest and previousRequest.params or {}
+    -- Prefer the previous stack entry's params when it matches backTarget (e.g. child -> implicit parent back);
+    -- otherwise fall back to the current entry's params (explicit backTarget or deep-linked child with no match).
+    local backParams
+    local prevEntry = NavigationState.getPreviousEntry()
+    if prevEntry and prevEntry.request and prevEntry.request.name == backTarget then
+      backParams = prevEntry.request.params or {}
+    else
+      backParams = (currentEntry.request and currentEntry.request.params) or {}
+    end
     local backOptions = buildEffectiveOptions(options)
     backOptions.restoreLastScope = true
-    return M.navigate(backTarget, previousParams, backOptions)
+    return M.navigate(backTarget, backParams, backOptions)
   end
 
   local currentRouteNode = currentEntry.routeNode
@@ -614,7 +806,48 @@ end
 
 M.routeNavigationStarted = function(frameworkId, routeName, transitionId)
   -- log("I", "", "routeNavigationStarted: " .. routeName)
+  if missingVueTransitionId(frameworkId, transitionId) then
+    log("W", "Router", "routeNavigationStarted from vue requires a transition id for route: " .. tostring(routeName))
+    return { success = false, reason = "missing_transition_id" }
+  end
   return TransitionManager.markProgress(routeName, "routeNavigationStarted", transitionId)
+end
+
+--[[
+  Definitive UI rejection of an in-flight route change.
+
+  This is only for structurally impossible / malformed requests that can never resolve on the
+  UI side. Missing routes are NOT rejected here: runtime/mod routes may register later, so those
+  requests stay retryable via the startup resends. When the rejection matches the active
+  transition, cancel it (clearing the pending entry) and notify with the transition id.
+
+  @param frameworkId - Framework reporting the rejection (e.g. "vue")
+  @param routeName - Route the UI rejected
+  @param transitionId - Active transition id being echoed back (validated when provided)
+  @param reason - Optional rejection reason for diagnostics
+  @return { success, reason? }
+]]
+M.routeChangeRejected = function(frameworkId, routeName, transitionId, reason)
+  if not TransitionManager.isTransitioning() then
+    log("W", "Router", "routeChangeRejected received without active transition: " .. tostring(routeName))
+    return { success = false, reason = "no_active_transition" }
+  end
+
+  -- Validate the transition id (when provided) so a stale rejection can't cancel a newer
+  -- transition. Missing ids fall back to accepting the rejection for the active transition.
+  local activeTransitionId = TransitionManager.getTransitionId()
+  if transitionId ~= nil and activeTransitionId ~= nil and transitionId ~= activeTransitionId then
+    log("W", "Router", "routeChangeRejected transition id mismatch. Expected: " ..
+        tostring(activeTransitionId) .. ", Got: " .. tostring(transitionId))
+    return { success = false, reason = "transition_id_mismatch" }
+  end
+
+  log("W", "Router", "Route change rejected by " .. tostring(frameworkId) .. " for route: " ..
+      tostring(routeName) .. " reason: " .. tostring(reason))
+  cancelActiveTransition("route_change_rejected", {
+    hook = { rejectedReason = reason },
+  })
+  return { success = true }
 end
 
 M.routeChangeComplete = function(frameworkId, routeName, transitionId)
@@ -622,6 +855,11 @@ M.routeChangeComplete = function(frameworkId, routeName, transitionId)
   if not TransitionManager.isTransitioning() then
     log("W", "Router", "routeChangeComplete received without active transition: " .. tostring(routeName))
     return { success = false, reason = "no_active_transition" }
+  end
+
+  if missingVueTransitionId(frameworkId, transitionId) then
+    log("W", "Router", "routeChangeComplete from vue requires a transition id for route: " .. tostring(routeName))
+    return { success = false, reason = "missing_transition_id" }
   end
 
   local session = TransitionManager.getSession()
@@ -656,6 +894,7 @@ M.routeChangeComplete = function(frameworkId, routeName, transitionId)
 
   NavigationState.promotePendingEntry()
   TransitionManager.markCommitted(routeName, transitionId)
+  stampNavigationMilestone("committed")
 
   local currentEntry = NavigationState.getCurrentEntry()
   if not currentEntry then
@@ -677,6 +916,64 @@ M.routeChangeComplete = function(frameworkId, routeName, transitionId)
   return { success = true }
 end
 
+--[[
+  Framework-reported navigation failure (e.g. the Vue push rejected because a component
+  chunk failed to load). Rolls back the in-flight navigation without disturbing the
+  committed route:
+    - validates the failure against the active transition (route + transition id),
+    - rejects a failure that arrives after commit (too late to roll back safely),
+    - runs the pending destination's onLeave to reverse its onEnter side effects,
+    - cancels the matching transition (which clears the pending entry), leaving the
+      committed route untouched.
+
+  @param frameworkId - Reporting framework (kept for API symmetry)
+  @param routeName - Canonical route name that failed to hand off
+  @param transitionId - Active transition id being echoed back (optional)
+  @return { success, reason? }
+]]
+M.routeChangeFailed = function(frameworkId, routeName, transitionId)
+  if not TransitionManager.isTransitioning() then
+    log("W", "Router", "routeChangeFailed received without active transition: " .. tostring(routeName))
+    return { success = false, reason = "no_active_transition" }
+  end
+
+  if missingVueTransitionId(frameworkId, transitionId) then
+    log("W", "Router", "routeChangeFailed from vue requires a transition id for route: " .. tostring(routeName))
+    return { success = false, reason = "missing_transition_id" }
+  end
+
+  -- Validate against the active transition so a stale failure cannot roll back a newer navigation.
+  local validation = TransitionManager.validateAcknowledgement(routeName, transitionId)
+  if not validation.success then
+    log("W", "Router", "routeChangeFailed ignored (" .. tostring(validation.reason) .. ") for route: " .. tostring(routeName))
+    return { success = false, reason = validation.reason }
+  end
+
+  local session = TransitionManager.getSession()
+  if session and session.routeChangeCommitted then
+    -- The route already committed; the failure arrived too late to roll back safely.
+    return { success = false, reason = "already_committed" }
+  end
+
+  local pendingEntry = NavigationState.getPendingEntry()
+  if pendingEntry and pendingEntry.routeNode then
+    -- Reverse the destination's onEnter side effects by running its onLeave, framed as
+    -- leaving the pending route back to the committed one.
+    local currentEntry = NavigationState.getCurrentEntry()
+    local backToRoute = currentEntry and ResolvedRoute.toCompatRoute(currentEntry.resolved) or nil
+    local leaveData = (session and session.routeData) or {}
+    local pendingOptions = pendingEntry.request and pendingEntry.request.options or nil
+    local leaveContext = buildNavigationContext(backToRoute, pendingEntry.resolved, "leave", pendingOptions)
+    LifecycleExecutor.runLifecycleHook(pendingEntry.routeNode, "onLeave", leaveContext, backToRoute, pendingEntry.resolved, leaveData)
+  end
+
+  -- Cancel the matching transition; cancelActiveTransition clears the pending entry and the
+  -- committed route is never promoted or altered.
+  cancelActiveTransition("route_change_failed")
+
+  return { success = true }
+end
+
 M.routeMounted = function(routeName, transitionId)
   -- log("I", "Router", "routeMounted: " .. routeName)
   if not TransitionManager.isTransitioning() then
@@ -687,6 +984,12 @@ M.routeMounted = function(routeName, transitionId)
     end
     log("W", "Router", "routeMounted received without active transition: " .. tostring(routeName))
     return { success = false, reason = "no_active_transition" }
+  end
+
+  -- routeMounted is a Vue-only acknowledgement, so it must echo a non-empty transition id.
+  if asNonEmptyString(transitionId) == nil then
+    log("W", "Router", "routeMounted requires a transition id for route: " .. tostring(routeName))
+    return { success = false, reason = "missing_transition_id" }
   end
 
   local context = TransitionManager.getTransitionContext()
@@ -711,6 +1014,14 @@ M.routeMounted = function(routeName, transitionId)
     return { success = false, reason = "missing_transition_meta" }
   end
 
+  -- A mount ack cannot finish a route that has not been promoted yet. Reject until the
+  -- matching routeChangeComplete commits, so an early mount ack can never complete an
+  -- unpromoted route.
+  if not session.routeChangeCommitted then
+    log("W", "Router", "routeMounted received before commit for route: " .. tostring(routeName))
+    return { success = false, reason = "not_committed" }
+  end
+
   if session.skipOnMount then
     return { success = true, skipped = true }
   end
@@ -729,6 +1040,7 @@ M.routeMounted = function(routeName, transitionId)
   local breadcrumbs = currentEntry and currentEntry.resolved and currentEntry.resolved.breadcrumbs or nil
   emitRouteData(context.toRoute, context.fromRoute, session.routeData, mountOk and "mounted-ready" or "error", mountErr, { targetScope = targetScope, breadcrumbs = breadcrumbs })
   TransitionManager.markMounted(routeName, transitionId)
+  stampNavigationMilestone("mounted")
   completeActiveTransition(routeName, session.routeData, transitionId)
 
   return { success = true }
@@ -748,10 +1060,6 @@ M.onGuiUpdate = function(dtReal, dtSim, dtRaw)
       return
     end
   end
-
-  if LoadingScreenManager.canUpdate() then
-    LoadingScreenManager.update(dtReal)
-  end
 end
 
 M.onSerialize = function()
@@ -762,6 +1070,9 @@ M.onSerialize = function()
 end
 
 M.onDeserialize = function(data)
+  -- A deserialized router starts with no in-flight transition, so any protection lock from before
+  -- the reload is stale and must not survive into the restored session.
+  activeProtectionToken = nil
   if not data then
     return
   end
@@ -815,27 +1126,31 @@ M.getState = function()
   }
 end
 
+M.isNavigationProtected = function()
+  return activeProtectionToken ~= nil
+end
+
 M.resetStates = function()
   NavigationState.reset()
   TransitionManager.reset()
-  LoadingScreenManager.hide()
+  if NavigationObserver then
+    NavigationObserver.reset()
+  end
+  activeProtectionToken = nil
   activeRouteData = {}
   activeScopeState.activeScopeId = nil
   activeScopeState.previousActiveScopeId = nil
   activeScopeState.routeName = nil
 end
 
--- Manual loading screen API
-M.showLoadingScreen = function(options)
-  LoadingScreenManager.show(nil, options)
+-- Test-only seams for the protected-navigation lock. Not part of the public router API; they let
+-- the co-located navigationProtection tests seed and inspect the identity-safe token directly.
+M.__test_getProtectionToken = function()
+  return activeProtectionToken
 end
 
-M.hideLoadingScreen = function()
-  LoadingScreenManager.hide()
-end
-
-M.isLoadingScreenActive = function()
-  return LoadingScreenManager.isActive()
+M.__test_setProtectionToken = function(token)
+  activeProtectionToken = token
 end
 
 -- Deprecated methods

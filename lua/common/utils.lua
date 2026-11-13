@@ -46,16 +46,6 @@ function HSVtoRGB(h, s, v)
   return is + s*min(max(abs(h6-3)-1, 0), 1), is + s*min(max(2-abs(h6-2), 0), 1), is + s*min(max(2-abs(h6-4), 0), 1)
 end
 
-function rainbowColor(numOfSteps, step, format)
-  local x = step / max(numOfSteps, 1e-10)
-  local r, g, b = min(1, max(0, 4 * x - 2)), min(1, max(0, 2 - abs(4 * x - 2))), min(1, max(0, 2 - 4 * x))
-  if (format or 255) == 255 then
-    return {floor(r*255), floor(g*255), floor(b*255), 255}
-  else
-    return {r, g, b, 1}
-  end
-end
-
 -- r,g,b,a in [0..255]
 function color(r, g, b, a)
   return max(0, min(255, floor(r))) * 16777216 + max(0, min(255, floor(g))) * 65536 + max(0, min(255, floor(b))) * 256 + max(0, min(255, floor(a or 255)))
@@ -84,6 +74,23 @@ function parseColor(v)
   end
 end
 
+-- uses the full hue spectrum. x in [0..1], for indexed colors: hueColor(indexedBlueNoise(i))
+function hueColor(x, a)
+  local r, g, b = HSVtoRGB(x, 1, 1)
+  return color(255*r, 255*g, 255*b, a)
+end
+
+-- unless you have a reason, default to jetColor instead
+function rainbowColor(numOfSteps, step, format)
+  local x = step / max(numOfSteps, 1e-10)
+  local r, g, b = min(1, max(0, 4 * x - 2)), min(1, max(0, 2 - abs(4 * x - 2))), min(1, max(0, 2 - 4 * x))
+  if (format or 255) == 255 then
+    return {floor(r*255), floor(g*255), floor(b*255), 255}
+  else
+    return {r, g, b, 1}
+  end
+end
+
 -- x in [0..1]
 function ironbowColor(x, a)
   return color(255*min(1, max(0, x*1.55/(0.11+x) - 0.4)), 255*min(1, max(0,x*1.47 - 0.35)), 255*min(1, max(0, x*6-5, 0.63544-9.4*(x-0.26)*(x-0.26))), a)
@@ -99,6 +106,7 @@ function greyColor(x, a)
   local c = 255*x
   return color(c, c, c, a)
 end
+
 
 --MARK: String utils
 local inspect = require("libs/inspect/inspect")
@@ -918,6 +926,16 @@ end
 
 function ui_message(msg, ttl, category, icon)
   guihooks.message(msg, (ttl or 5), (category or ''), icon or "info")
+end
+
+function ui_toast(msg, title, type, _config)
+  if type == nil then type = 'info' end -- info, success, warning, error
+  local config = {}
+  for k, v in pairs(_config or {}) do
+    config[k] = v
+  end
+
+  guihooks.trigger("toastrMsg", {type=type, title=title, msg=msg, config=config})
 end
 
 function fillActionLabelSimple(actionSimple)

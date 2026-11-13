@@ -111,6 +111,29 @@ end
 function C:getCommonSettingsData()
   local data = {}
 
+  if self._buildingDefaultUserSettings then
+    if self.setupModules.vehicles.enabled then
+      local setupModule = self.setupModules.vehicles
+      local lastIdx = #(setupModule.vehicles or {}) + 1
+      local usePlayerVehicle = setupModule.includePlayerVehicle
+        and (setupModule.prioritizePlayerVehicle or lastIdx == 1)
+      local initIdx = usePlayerVehicle and lastIdx or 1
+      table.insert(data, {key = 'setupModuleVehicles', value = initIdx})
+    end
+    if self.setupModules.traffic.enabled then
+      table.insert(data, {key = 'setupModuleTraffic', value = self.setupModules.traffic.useTraffic})
+    end
+    if self.setupModules.environment.enabled and self.setupModules.environment.todUserSetting then
+      table.insert(data, {
+        key = 'setupModuleEnvironmentTime',
+        value = self.setupModules.environment.normalizedTime ~= nil
+          and missionDefaultEnvironmentTimeValue
+          or self.setupModules.environment.time
+      })
+    end
+    return data
+  end
+
   if self.setupModules.vehicles.enabled then
     local values = {}
     local setupModule = self.setupModules.vehicles
@@ -605,46 +628,6 @@ function C:getGameContextUiButtons()
   end
   table.sort(results, sortBtns)
   return results
-end
-
-function C:getRules()
-  local pages = {}
-  local rulesFiles = {}
-  for _, layer in ipairs(self.layers or {}) do
-    local rulesFolder = layer.dir .. "rules/"
-    arrayConcat(rulesFiles,FS:findFiles(rulesFolder, "*.html", -1, true, false))
-  end
-  table.sort(rulesFiles, function(a,b)
-    local _, fnA, _ = path.split(a)
-    local _, fnB, _ = path.split(b)
-    return fnA < fnB
-  end)
-  for _, file in ipairs(rulesFiles) do
-    local content = readFile(file):gsub("\r\n","")
-    table.insert(pages, content)
-  end
-  return pages
-end
-
-function C:hasRules()
-  -- disabled for now
-  return false
-  --return next(self:getRules()) ~= nil
-end
-
-function C:showRulesAsPopups()
-  local entries = {}
-  for _, page in ipairs(self:getRules()) do
-    local entry = {
-      type = "info",
-      content = page,
-      isPopup = true,
-    }
-    table.insert(entries, entry)
-  end
-  if next(entries) then
-    guihooks.trigger("introPopupTutorial", entries)
-  end
 end
 
 -- expose all script hooks to the mission type

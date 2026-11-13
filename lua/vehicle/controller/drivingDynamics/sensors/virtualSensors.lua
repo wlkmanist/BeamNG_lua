@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Virtual sensor estimating trustworthy vehicle speed and body slip for driving dynamics control
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 56
@@ -20,8 +22,7 @@ local twoPi = pi * 2
 local halfPi = pi * 0.5
 local max = math.max
 local min = math.min
-
-local poolVec3 = {} --pool for temporary vec3s
+local floor = math.floor
 
 M.reference = {
   bodySlipAngle = 0,
@@ -99,12 +100,28 @@ local refNodeCoGTransformationAlpha = vec3(0, 0, 0)
 local refNodeCoGTransformationAccRefNode = vec3(0, 0, 0)
 local refNodeCoGTransformationAccCoG = vec3(0, 0, 0)
 
-local function updateBodySlipAngle(sinBodySlipAngle, cosBodySlipAngle, accelerationX, accelerationY, dt)
+-- position derived acceleration: CoG point carried by the live vehicle frame, differentiated twice at a fixed rate
+local positionSampleTime = 1 / 250
+local positionMaxAccelerationSquared = 200 * 200 --anything above ~20g is treated as a position discontinuity (teleport)
+local positionSampleTimer = 0
+local positionHasLastCoG = false
+local positionHasLastVelocity = false
+local positionLastSampleDt = 0
+local positionCoGForward, positionCoGLeft, positionCoGUp = 0, 0, 0
+local positionLastCoG = vec3(0, 0, 0)
+local positionLastCoGVelocity = vec3(0, 0, 0)
+local positionLastForward = vec3(0, 0, 0)
+local positionLastLeft = vec3(0, 0, 0)
+local positionLastYawIncrement = 0
+local positionAccelerationX = 0
+local positionAccelerationY = 0
+local positionYawRate = 0
+
+local function updateBodySlipAngle(sinBodySlipAngle, cosBodySlipAngle, accelerationX, accelerationY, yawRate, dt)
   local virtual = M.virtual
   local vehicleData = CMU.vehicleData
   local vehicleStats = vehicleData.vehicleStats
   local sensorHub = CMU.sensorHub
-  local yawRate = sensorHub.yawAV
   local yawRateSmooth = sensorHub.yawAVSmooth
 
   local virtualSpeed = virtual.speed
@@ -118,12 +135,17 @@ local function updateBodySlipAngle(sinBodySlipAngle, cosBodySlipAngle, accelerat
   --(5.7) but WITHOUT the gravity compensation for x and y since the acc readinngs are already compensated for gravity
   local deltaHighSpeedBSA = -(sinBodySlipAngle * accelerationX * invSpeed) + (cosBodySlipAngle * accelerationY * invSpeed) - yawRate
   virtual.bodySlipAngleIntegrated = virtual.bodySlipAngleIntegrated + deltaHighSpeedBSA * dt * lowSpeedCoef
+  --print("virtualSensors bodySlipAngleTrace: bodySlipAngleUsed: " .. tostring(virtual.bodySlipAngle) .. ", bodySlipAngleIntegrated: " .. tostring(virtual.bodySlipAngleIntegrated) .. ", virtualSpeedUsed: " .. tostring(virtualSpeed) .. ", wheelSpeed: " .. tostring(virtual.wheelSpeed) .. ", recoveryWheelSpeed: " .. tostring(virtual.recoveryWheelSpeed) .. ", accelerationX: " .. tostring(accelerationX) .. ", accelerationY: " .. tostring(accelerationY) .. ", accelerationBodySlipAngleRate: " .. tostring(deltaHighSpeedBSA + yawRate) .. ", yawRate: " .. tostring(yawRate) .. ", bodySlipAngleRateResidual: " .. tostring(deltaHighSpeedBSA))
 
   -- if abs(virtual.bodySlipAngleIntegrated) > twoPi then
   --   virtual.bodySlipAngleIntegrated = virtual.bodySlipAngleIntegrated - sign(virtual.bodySlipAngleIntegrated) * twoPi
   -- end
 
-  if abs(virtual.bodySlipAngleIntegrated) > pi then
+  --flip the speed instead of growing the slip angle past 90deg, but only when the wheels confirm the reversal: the integrated slip angle drifts freely at low speed
+  if abs(virtual.bodySlipAngleIntegrated) > halfPi and virtual.integratedSpeed * virtual.wheelSpeed < 0 and abs(virtual.wheelSpeed) > 1 then
+    virtual.bodySlipAngleIntegrated = virtual.bodySlipAngleIntegrated - sign(virtual.bodySlipAngleIntegrated) * pi
+    virtual.integratedSpeed = -virtual.integratedSpeed
+  elseif abs(virtual.bodySlipAngleIntegrated) > pi then
     virtual.bodySlipAngleIntegrated = virtual.bodySlipAngleIntegrated - sign(virtual.bodySlipAngleIntegrated) * twoPi
   end
 
@@ -148,7 +170,8 @@ local function updateBodySlipAngle(sinBodySlipAngle, cosBodySlipAngle, accelerat
   virtual.bodySlipAngleLowSpeedTrust = lowSpeedBsaTrust
   virtual.bodySlipAngle = linearScale(abs(virtualSpeed), 4, 5, trustedLowSpeedBsa, virtual.bodySlipAngleIntegrated)
 
-  virtual.bodySlipAngleRate = abs((virtual.lastBodySlipAngle - virtual.bodySlipAngle)) / dt
+  local bodySlipAngleChange = virtual.lastBodySlipAngle - virtual.bodySlipAngle
+  virtual.bodySlipAngleRate = abs(bodySlipAngleChange - pi * floor(bodySlipAngleChange / pi + 0.5)) / dt --a 180deg flip is not a change
 end
 
 local function updateIntegratedSpeed(sinBodySlipAngle, cosBodySlipAngle, accelerationX, accelerationY, dt)
@@ -159,6 +182,7 @@ local function updateIntegratedSpeed(sinBodySlipAngle, cosBodySlipAngle, acceler
   local dSpeed = (cosBodySlipAngle * accelerationX) + (sinBodySlipAngle * accelerationY)
   virtual.imuAcceleration = smoother.imuAcceleration:get(dSpeed, dt)
   virtual.integratedSpeed = virtual.integratedSpeed + dSpeed * dt
+  --print("virtualSensors speedTrace: integratedSpeed: " .. tostring(virtual.integratedSpeed) .. ", integratedSpeedRate: " .. tostring(dSpeed) .. ", speedRateFromLongitudinalAcceleration: " .. tostring(cosBodySlipAngle * accelerationX) .. ", speedRateFromLateralAcceleration: " .. tostring(sinBodySlipAngle * accelerationY))
 end
 
 local function updateRecoveryWheelSpeed(dt)
@@ -384,12 +408,12 @@ local function updateTrustWorthiness(dt)
     trustWorthiness.needsFullReset = false
     CMU.systemDegradationResolved()
   elseif resetCriteria.isDrivingStraightProbability >= 0.99 then
-  --if we are still actively driving, but straight, we can at least reset the body slip angle, but speed is unknown since we might have wheel slip
-  --virtual.bodySlipAngle = 0
-  --virtual.bodySlipAngleIntegrated = 0
+    --if we are still actively driving, but straight, we can at least reset the body slip angle, but speed is unknown since we might have wheel slip
+    virtual.bodySlipAngle = 0
+    virtual.bodySlipAngleIntegrated = 0
 
-  --trustWorthiness.bodySlipAngle = 1
-  --CMU.logDebugMessage("virtualSensors", "Full reset improved: isDrivingStraightProbability >= 0.99")
+    trustWorthiness.bodySlipAngle = 1
+    CMU.logDebugMessage("virtualSensors", "Full reset improved: isDrivingStraightProbability >= 0.99")
   end
 end
 
@@ -398,45 +422,79 @@ local function updateFixedStep(dt)
   updateTrustWorthiness(dt)
 end
 
+local function updatePositionDerivedAcceleration(sampleDt, forwardX, forwardY, forwardZ, upX, upY, upZ, cogX, cogY, cogZ)
+  local invForwardLength = 1 / sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ)
+  forwardX, forwardY, forwardZ = forwardX * invForwardLength, forwardY * invForwardLength, forwardZ * invForwardLength
+  local leftX, leftY, leftZ = upY * forwardZ - upZ * forwardY, upZ * forwardX - upX * forwardZ, upX * forwardY - upY * forwardX
+  local invLeftLength = 1 / sqrt(leftX * leftX + leftY * leftY + leftZ * leftZ)
+  leftX, leftY, leftZ = leftX * invLeftLength, leftY * invLeftLength, leftZ * invLeftLength
+  upX, upY, upZ = forwardY * leftZ - forwardZ * leftY, forwardZ * leftX - forwardX * leftZ, forwardX * leftY - forwardY * leftX
+
+  cogX = cogX + forwardX * positionCoGForward + leftX * positionCoGLeft + upX * positionCoGUp
+  cogY = cogY + forwardY * positionCoGForward + leftY * positionCoGLeft + upY * positionCoGUp
+  cogZ = cogZ + forwardZ * positionCoGForward + leftZ * positionCoGLeft + upZ * positionCoGUp
+
+  local isVelocityValid = false
+  if positionHasLastCoG then
+    local invSampleDt = 1 / sampleDt
+    local velocityX = (cogX - positionLastCoG.x) * invSampleDt
+    local velocityY = (cogY - positionLastCoG.y) * invSampleDt
+    local velocityZ = (cogZ - positionLastCoG.z) * invSampleDt
+    local lastForward, lastLeft = positionLastForward, positionLastLeft
+    local yawIncrement = atan2((lastForward.y * forwardZ - lastForward.z * forwardY) * upX + (lastForward.z * forwardX - lastForward.x * forwardZ) * upY + (lastForward.x * forwardY - lastForward.y * forwardX) * upZ, lastForward.x * forwardX + lastForward.y * forwardY + lastForward.z * forwardZ)
+    isVelocityValid = true
+    if positionHasLastVelocity then
+      local invSampleDtSum = 1 / (sampleDt + positionLastSampleDt)
+      local invAccelerationDt = 2 * invSampleDtSum
+      local accelerationX = (velocityX - positionLastCoGVelocity.x) * invAccelerationDt
+      local accelerationY = (velocityY - positionLastCoGVelocity.y) * invAccelerationDt
+      local accelerationZ = (velocityZ - positionLastCoGVelocity.z) * invAccelerationDt
+      if accelerationX * accelerationX + accelerationY * accelerationY + accelerationZ * accelerationZ > positionMaxAccelerationSquared then
+        isVelocityValid = false --this velocity spans a position jump (teleport), restart the difference chain and keep the last valid acceleration and yaw rate
+      else
+        --the second difference is centred on the previous sample, so project on its frame and match the yaw rate to it
+        positionAccelerationX = accelerationX * lastForward.x + accelerationY * lastForward.y + accelerationZ * lastForward.z
+        positionAccelerationY = -(accelerationX * lastLeft.x + accelerationY * lastLeft.y + accelerationZ * lastLeft.z)
+        positionYawRate = -(yawIncrement + positionLastYawIncrement) * invSampleDtSum
+      end
+    end
+    positionLastYawIncrement = yawIncrement
+    positionLastCoGVelocity:set(velocityX, velocityY, velocityZ)
+  end
+  positionLastCoG:set(cogX, cogY, cogZ)
+  positionLastForward:set(forwardX, forwardY, forwardZ)
+  positionLastLeft:set(leftX, leftY, leftZ)
+  positionLastSampleDt = sampleDt
+  positionHasLastCoG = true
+  positionHasLastVelocity = isVelocityValid
+end
+
+local function getPositionDerivedAcceleration(dt)
+  positionSampleTimer = positionSampleTimer + dt
+  if positionSampleTimer < positionSampleTime - 1e-9 then
+    return positionAccelerationX, positionAccelerationY, positionYawRate
+  end
+  local sampleDt = positionSampleTimer --includes the overshoot, so resetting to 0 loses no time
+  positionSampleTimer = 0
+
+  local forwardX, forwardY, forwardZ = obj:getDirectionVectorXYZ()
+  local upX, upY, upZ = obj:getDirectionVectorUpXYZ()
+  local cogX, cogY, cogZ = obj:getPositionXYZ()
+  updatePositionDerivedAcceleration(sampleDt, forwardX, forwardY, forwardZ, upX, upY, upZ, cogX, cogY, cogZ)
+
+  return positionAccelerationX, positionAccelerationY, positionYawRate
+end
+
 local function update(dt)
-  resetTmpVec3(poolVec3) --init vec3 pool
-
-  local sensorHub = CMU.sensorHub
-
-  -- Rotational acceleration compensation at sensor location
-  refNodeCoGTransformationOmega:set(sensorHub.rollAV, sensorHub.pitchAV, sensorHub.yawAV)
-  refNodeCoGTransformationAlpha:set((refNodeCoGTransformationOmega.x - refNodeCoGTransformationLastOmega.x) / dt, (refNodeCoGTransformationOmega.y - refNodeCoGTransformationLastOmega.y) / dt, (refNodeCoGTransformationOmega.z - refNodeCoGTransformationLastOmega.z) / dt)
-  refNodeCoGTransformationLastOmega:set(refNodeCoGTransformationOmega.x, refNodeCoGTransformationOmega.y, refNodeCoGTransformationOmega.z)
-
-  local rotAcc = getTmpVec3(poolVec3)
-  rotAcc:setCross(refNodeCoGTransformationAlpha, offsetRefNodeFromCoG)
-
-  local omegaCrossR = getTmpVec3(poolVec3)
-  omegaCrossR:setCross(refNodeCoGTransformationOmega, offsetRefNodeFromCoG)
-
-  local rotAcc2 = getTmpVec3(poolVec3)
-  rotAcc2:setCross(refNodeCoGTransformationOmega, omegaCrossR)
-
-  rotAcc:setAdd(rotAcc2)
-
-  refNodeCoGTransformationAccRefNode:set(sensorHub.accelerationX, sensorHub.accelerationY, sensorHub.accelerationZ)
-  refNodeCoGTransformationAccCoG:set(refNodeCoGTransformationAccRefNode.x - rotAcc.x, refNodeCoGTransformationAccRefNode.y - rotAcc.y, refNodeCoGTransformationAccRefNode.z - rotAcc.z)
-
-  -- Map to the paper's axis convention (paper X from game Y, paper Y from game X)
-  local accelerationX = -refNodeCoGTransformationAccCoG.y
-  local accelerationY = -refNodeCoGTransformationAccCoG.x
-
-  --non compensated for reference
-  --local accelerationX = -sensorHub.accelerationY --X from the paper is Y in the game
-  --local accelerationY = -sensorHub.accelerationX --Y from the paper is X in the game
+  local accelerationX, accelerationY, yawRate = getPositionDerivedAcceleration(dt)
 
   local virtual = M.virtual
   local bsa = virtual.bodySlipAngle
   local sinBodySlipAngle = sin(bsa)
   local cosBodySlipAngle = cos(bsa)
 
-  updateBodySlipAngle(sinBodySlipAngle, cosBodySlipAngle, accelerationX, accelerationY, dt)
-  updateIntegratedSpeed(sinBodySlipAngle, cosBodySlipAngle, accelerationX, accelerationY, dt)
+  updateIntegratedSpeed(sinBodySlipAngle, cosBodySlipAngle, accelerationX, accelerationY, dt) --before updateBodySlipAngle, which may flip the speed sign
+  updateBodySlipAngle(sinBodySlipAngle, cosBodySlipAngle, accelerationX, accelerationY, yawRate, dt)
 
   virtual.speed = virtual.integratedSpeed
 end
@@ -545,6 +603,15 @@ local function reset(jbeamData)
   refNodeCoGTransformationAlpha:set(0, 0, 0)
   refNodeCoGTransformationAccRefNode:set(0, 0, 0)
   refNodeCoGTransformationAccCoG:set(0, 0, 0)
+
+  positionSampleTimer = 0
+  positionHasLastCoG = false
+  positionHasLastVelocity = false
+  positionLastSampleDt = 0
+  positionLastYawIncrement = 0
+  positionAccelerationX = 0
+  positionAccelerationY = 0
+  positionYawRate = 0
 end
 
 local function init(jbeamData)
@@ -585,6 +652,18 @@ local function initLastStage()
   local accPos = CMU.vehicleData.vehicleStats.refNodePos or offsetRefNodeFromCoG
 
   offsetRefNodeFromCoG = accPos - cogPos
+
+  --CoG offset from the ref node in the axes of obj:getDirectionVector/obj:getDirectionVectorUp
+  local refNodes = v.data.refNodes[0]
+  local nodes = v.data.nodes
+  local refNodePos = vec3(nodes[refNodes.ref].pos)
+  local forward = refNodePos - vec3(nodes[refNodes.back].pos)
+  forward:normalize()
+  local left = (vec3(nodes[refNodes.up].pos) - refNodePos):cross(forward)
+  left:normalize()
+  local up = forward:cross(left)
+  local cogOffset = cogPos - refNodePos
+  positionCoGForward, positionCoGLeft, positionCoGUp = cogOffset:dot(forward), cogOffset:dot(left), cogOffset:dot(up)
 end
 
 local function setDebugMode(debugEnabled)

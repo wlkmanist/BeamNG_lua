@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Maintains and adjusts the ride height of pneumatic suspension groups
+
 local M = {}
 M.type = "auxiliary"
 M.defaultOrder = 80
@@ -18,6 +20,10 @@ local actuationStartDistance = 0
 local actuationEndDistance = 0
 local actuationDelay = 0
 local minValveOpenAmount = 0
+
+local stateData
+local stateDataNameTargetLengthByGroup
+local stateDataNameAdjustmentRateByGroup
 
 local function iterateGroups(groupNameOrNames)
   if type(groupNameOrNames) == "string" then
@@ -205,6 +211,10 @@ local function reset()
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameTargetLengthByGroup = {}
+  stateDataNameAdjustmentRateByGroup = {}
+
   local actuatorGroupsData = v.data[jbeamData.actuatorGroups] or {}
   local controlBeamNames = {}
 
@@ -250,6 +260,8 @@ local function init(jbeamData)
           commitNewHeight = false,
           debug = groupData.debug == true,
         }
+        stateDataNameTargetLengthByGroup[controlGroupName] = M.name .. "_" .. controlGroupName .. "_targetLength"
+        stateDataNameAdjustmentRateByGroup[controlGroupName] = M.name .. "_" .. controlGroupName .. "_adjustmentRate"
 
         if not defaultTargetLength then
           -- need to automatically determine default target length from initial beam length; give vehicle time to settle
@@ -279,6 +291,35 @@ local function initSecondStage(jbeamData)
   end
 end
 
+local function getState()
+  for groupName, group in pairs(controlGroups) do
+    stateData[stateDataNameTargetLengthByGroup[groupName]] = group.targetLength
+    stateData[stateDataNameAdjustmentRateByGroup[groupName]] = group.adjustmentRate
+  end
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  for groupName, group in pairs(controlGroups) do
+    local newTargetLength = data[stateDataNameTargetLengthByGroup[groupName]]
+    if type(newTargetLength) == "number" and newTargetLength == newTargetLength and newTargetLength ~= group.targetLength then
+      setTargetLength(groupName, newTargetLength, true)
+    end
+
+    local newAdjustmentRate = data[stateDataNameAdjustmentRateByGroup[groupName]]
+    if type(newAdjustmentRate) == "number" and newAdjustmentRate == newAdjustmentRate then
+      newAdjustmentRate = clamp(newAdjustmentRate, -1, 1)
+      if newAdjustmentRate ~= group.adjustmentRate then
+        setAdjustmentRate(groupName, newAdjustmentRate)
+      end
+    end
+  end
+end
+
 M.setTemporarilyDisabled = setTemporarilyDisabled
 M.setAdjustmentRate = setAdjustmentRate
 M.stopAdjusting = stopAdjusting
@@ -295,5 +336,8 @@ M.init = init
 M.initSecondStage = initSecondStage
 M.reset = reset
 M.updateFixedStep = updateFixedStep
+
+M.getState = getState
+M.setState = setState
 
 return M

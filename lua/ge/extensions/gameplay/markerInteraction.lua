@@ -258,8 +258,101 @@ local timeSincePlayerTeleport
 
 local markerVisibilityBySetting = {}
 
+local multiseatUpdateDataByPlayer = {}
+local multiseatPlayerData = {}
+local multiseatPlayers = {}
+local multiseatActiveMarkers = {}
+local multiseatMarkerGeneration = -1
+local multiseatInteractionActive = false
+
+local function displayMultiseatTriggers(dtReal)
+  local markerGeneration = gameplay_rawPois.getRawPoiGeneration()
+  if multiseatMarkerGeneration ~= markerGeneration then
+    table.clear(multiseatActiveMarkers)
+    multiseatMarkerGeneration = markerGeneration
+  end
+  table.clear(multiseatPlayerData)
+  local clusterQt = gameplay_playmodeMarkers.getPlaymodeClustersAsQuadtree()
+  local maxRadius = 100
+
+  core_multiseat.getPlayers(multiseatPlayers)
+  for _, playerIndex in ipairs(multiseatPlayers) do
+    local playerVehicle = getPlayerVehicle(playerIndex)
+    if playerVehicle then
+      local data = multiseatUpdateDataByPlayer[playerIndex]
+      if not data then
+        data = {
+          vehPos = vec3(),
+          vehPos2d = vec3(),
+          vehVelocity = vec3(),
+          nearbyIds = {},
+        }
+        multiseatUpdateDataByPlayer[playerIndex] = data
+      end
+
+      data.playerIndex = playerIndex
+      data.veh = playerVehicle
+      data.vehPos:set(playerVehicle:getPositionXYZ())
+      data.vehPos2d:set(data.vehPos)
+      data.vehPos2d.z = 0
+      data.vehVelocity:set(playerVehicle:getVelocityXYZ())
+      data.isWalking = gameplay_walk and gameplay_walk.isWalking and gameplay_walk.isWalking(playerIndex) or false
+      data.dt = dtReal
+      table.clear(data.nearbyIds)
+
+      for id in clusterQt:queryNotNested(
+        data.vehPos.x - maxRadius,
+        data.vehPos.y - maxRadius,
+        data.vehPos.x + maxRadius,
+        data.vehPos.y + maxRadius
+      ) do
+        data.nearbyIds[id] = true
+      end
+      table.insert(multiseatPlayerData, data)
+    end
+  end
+
+  for _, cluster in ipairs(gameplay_playmodeMarkers.getPlaymodeClusters()) do
+    local marker = multiseatActiveMarkers[cluster.id]
+    local isNearby = false
+    for _, data in ipairs(multiseatPlayerData) do
+      if data.nearbyIds[cluster.id] then
+        marker = marker or gameplay_playmodeMarkers.getMarkerForCluster(cluster)
+        multiseatActiveMarkers[cluster.id] = marker
+        if marker.interactWhileMoving then
+          marker:interactWhileMoving(data)
+        end
+        isNearby = true
+      end
+    end
+    if not isNearby and marker then
+      marker:hide()
+      multiseatActiveMarkers[cluster.id] = nil
+    end
+  end
+end
+
 local function displayMissionMarkers(level, dtSim, dtReal)
   profilerPushEvent("MissionMarker precalc")
+  local multiseatActive = core_multiseat
+    and core_multiseat.isMultiseatActive
+    and core_multiseat.isMultiseatActive()
+    or false
+  if multiseatActive then
+    if not multiseatInteractionActive then
+      table.clear(currentInteractableElements)
+      closeViewDetailPrompt(true)
+      multiseatInteractionActive = true
+    end
+    displayMultiseatTriggers(dtReal)
+    profilerPopEvent("MissionMarker precalc")
+    return
+  elseif multiseatInteractionActive then
+    multiseatInteractionActive = false
+    table.clear(multiseatActiveMarkers)
+    forceReevaluateOpenPrompt = true
+  end
+
   local activeMission = gameplay_missions_missionManager.getForegroundMissionId()
   local globalAlpha = 1
   if activeMission then
@@ -362,9 +455,10 @@ local function displayMissionMarkers(level, dtSim, dtReal)
   local decalCount = 0
   local careerActive = (career_career and career_career.isActive())
   local tutorialActive = gameplay_discover_freeroamTutorial_tutorial ~= nil
+  local firstDriveActive = gameplay_discover_firstDrive_experience and gameplay_discover_firstDrive_experience.isActive()
   table.clear(interactableElements)
   local showMissionMarkers = markersVisibleTemporary
-  markerVisibilityBySetting.showMissionMarkers = (careerActive or tutorialActive or settings.getValue("showMissionMarkers"))
+  markerVisibilityBySetting.showMissionMarkers = (careerActive or tutorialActive or firstDriveActive or settings.getValue("showMissionMarkers"))
   --markerVisibilityBySetting.enableDragRaceInFreeroam = (careerActive or settings.getValue("enableDragRaceInFreeroam"))
   --markerVisibilityBySetting.enableDriftInFreeroam = (careerActive or settings.getValue("enableDriftInFreeroam"))
   --markerVisibilityBySetting.enableGasStationsInFreeroam = (careerActive or settings.getValue("enableGasStationsInFreeroam"))
@@ -497,7 +591,7 @@ end
 
 local function reachedTarget()
   if not core_groundMarkers.clearPathOnReachingTarget then return end
-  if settings.getValue("showMissionMarkers") or (career_career and career_career.isActive()) then
+  if settings.getValue("showMissionMarkers") or (career_career and career_career.isActive()) or (gameplay_discover_firstDrive_experience and gameplay_discover_firstDrive_experience.isActive()) then
     resetForceVisible()
   end
   M.reachedTargetPos = core_groundMarkers.endWP[1]
@@ -574,6 +668,10 @@ local function onAnyMissionChanged(state)
   if state == "started" then
     freeroam_bigMapMode.deselect()
     resetForceVisible()
+    if ui_missionInfo.openState == "opened" then
+      table.clear(currentInteractableElements)
+      closeViewDetailPrompt(true)
+    end
   end
 end
 

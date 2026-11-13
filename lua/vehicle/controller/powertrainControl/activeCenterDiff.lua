@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Balances traction and handling by actively controlling center differential lock
+
 local M = {}
 M.type = "auxiliary"
 
@@ -84,7 +86,7 @@ end
 local function init(jbeamData)
   biasOversteerVsTraction = jbeamData.biasOversteerVsTraction or 0.5
 
-  local interpolatedMap = rerequire("interpolatedMap")
+  local interpolatedMap = require("interpolatedMap")
   throttleLockMap = interpolatedMap.new()
   throttleLockMap.clampToDataRange = true
   throttleLockMap:loadData(jbeamData.throttleLockMap)

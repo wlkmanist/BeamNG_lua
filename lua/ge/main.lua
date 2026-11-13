@@ -36,7 +36,6 @@ print = function(...)
   -- log('A', "print", debug.traceback()) -- find where print is used
 end
 log("I", "", "============== GELUA VM loading ===============")
-local t0 = os.clockhp()
 
 require('mathlib')
 Point3F = vec3
@@ -227,6 +226,14 @@ function convertCStoJson(filenames, newExtSuffix)
   log('I', 'convertCStoJson', 'Conversion all done.')
 end
 
+local function loadRequiredExtension(extName)
+  extensions.load(extName)
+  if not extensions.isExtensionLoaded(extName) then
+    log('E', 'main', 'Required extension \'' .. extName .. '\' was not found, exiting.')
+    shutdown(1)
+  end
+end
+
 -- immediate command line arguments
 -- worked off before anything else
 -- called when the world is init'ed
@@ -241,22 +248,21 @@ local function handleCommandLineFirstFrame()
   end
 
   if tableFindKey(cmdArgs, '-compilemeshes') then
-    extensions.load('util_compileMeshes')
+    loadRequiredExtension('util_compileMeshes')
   end
-
   if tableFindKey(cmdArgs, '-LoadSingleLevelForTextureCache') then
-    --Using existing extension to run level for 600 frames. Use with param: -testlevel [level name]
-    extensions.load('test_singleLevel')
+    -- Using existing extension to run level for 600 frames. Use with param: -testlevel [level name]
+    loadRequiredExtension('test_singleLevel')
   end
   if tableFindKey(cmdArgs, '-LoadSingleLevelForShaderCache') then
-    --Same but waiting for 2000 frames and 35sec(which happen latest). Usage: -testlevel [level name] -testvehicle [vehicle_name] -testsettings [path to json]
-    extensions.load('test_singleLevelLong')
+    -- Same but waiting for 2000 frames and 35sec(which happen latest). Usage: -testlevel [level name] -testvehicle [vehicle_name] -testsettings [path to json]
+    loadRequiredExtension('test_singleLevelLong')
   end
   if tableFindKey(cmdArgs, '-LoadTrackBuilder') then
-	extensions.load('test_runTrackBuilder')
+    loadRequiredExtension('test_runTrackBuilder')
   end
   if tableFindKey(cmdArgs, '-LoadLightRunner') then
-	extensions.load('test_runLightRunner')
+    loadRequiredExtension('test_runLightRunner')
   end
 
   if tableFindKey(cmdArgs, '-convertCSMaterials') then
@@ -322,7 +328,7 @@ local function handleCommandLineFirstFrame()
   end
 
   if tableFindKey(cmdArgs, '-disableDynamicCollision') then
-    settings.setValue('disableDynamicCollision', true)
+    be:setDynamicCollisionEnabled(false)
   end
 
   if tableFindKey(cmdArgs, '-enablemcp') then
@@ -344,7 +350,7 @@ local startupExtensions = {
   'career_career', 'career_saveSystem', 'util_richPresence', 'freeroam_freeroam', 'gameplay_garageMode',
   'gameplay_missions_missions', 'gameplay_missions_progress', 'gameplay_missions_unlocks', 'gameplay_missions_missionScreen',
   'gameplay_statistic', 'render_hdr', 'scenario_quickRaceLoader', 'scenario_scenariosLoader', 'core_windowsConsole',
-  'core_devices', 'ui_gridSelector', 'ui_bindingsLegend', 'gameplay_util_crashDetection', 'core_audioRibbon', 'core_audioForest', 'freeroam_freeroamConfigurator', 'ui_uiStateManager', 'core_onScreenKeyboard'
+  'core_devices', 'ui_gridSelector', 'ui_bindingsLegend', 'gameplay_util_crashDetection', 'core_audioRibbon', 'core_audioForest', 'freeroam_freeroamConfigurator', 'ui_uiStateManager', 'core_onScreenKeyboard', 'ui_tutorialHighlight', 'gameplay_discover',
   -- DO NOT ADD MORE EXTENSIONS TO THIS LIST unless it's required by game startup procedure. Instead, try the following:
   --   To load an extension on demand:               extensions.load("my_extension")
   --   To keep an extension loaded across levels:    M.onInit = function() setExtensionUnloadMode(M, "manual") end
@@ -352,9 +358,14 @@ local startupExtensions = {
   --   If you have already put your extension on this list, and it's not critical for game startup procedure, please remove it by following the instructions above.
 }
 
+-- Multiplayer extension is only available in dev builds for now, but if later we want to add it to shipping builds, we can add it directly as a startupExtension.
+if not shipping_build and FS:fileExists('/lua/common/extensions/multiplayer/multiplayer.lua') then
+  table.insert(startupExtensions, 'multiplayer_multiplayer')
+end
+
 -- Extensions that get loaded by various game modes (freeroam, etc) and in other circumstances too:
 local presetExtensions = {
-  'core_checkpoints', 'core_environment', 'core_celestial', 'core_forest', 'core_gameContext',
+  'core_checkpoints', 'core_couplerCameraModifier', 'core_environment', 'core_celestial', 'core_forest', 'core_gameContext',
   'core_groundMarkers', 'core_interAero', 'core_multiSpawn', 'core_quickAccess', 'core_funstuff', 'core_recoveryPrompt', 'core_recoveryCamera', 'core_terrain',
   'core_trafficSignals', 'core_trailerRespawn', 'core_vehicleBridge', 'core_vehicle_mirror', 'core_weather',
   'debug_vehicleDebug',
@@ -363,8 +374,8 @@ local presetExtensions = {
   'gameplay_missions_missionManager', 'gameplay_missions_startTrigger', 'gameplay_parking', 'gameplay_rawPois',
   'gameplay_traffic', 'gameplay_walk', 'trackbuilder_trackBuilder', 'ui_fadeScreen', 'ui_apps_genericMissionData', 'ui_missionInfo',
   'freeroam_crashCamModeLoader', 'gameplay_speedTraps', 'gameplay_speedTrapLeaderboards',
-  'gameplay_util_groundContact', 'gameplay_drift_general', 'gameplay_crawl_general', 'gameplay_achievement',  'gameplay_discover',
-  'gameplay_drag_core'
+  'gameplay_util_groundContact', 'gameplay_drift_general', 'gameplay_crawl_general', 'gameplay_achievement',  'gameplay_drag_core', 'gameplay_seatOccupants',
+  'gameplay_lowPerformance'
 }
 
 local cmdlineLevelLoadExtensions = {} -- extensions indicated from command line arguments
@@ -463,9 +474,11 @@ local musicTrackReloadingLua = false
 local musicSourceId = nil
 local mainMenuMusicPausedForRoute = false
 local mainMenuMusicStopRequested = false
+local mainMenuMusicKeepAlive = false
+local mainMenuMusicPauseRequests = {}
 local creditsMusicRouteActive = false
 local creditsMusicExtensionName = "ui_credits"
-local musicRouteFadeDuration = 0.4
+local musicRouteFadeDuration = 0.6
 local mainMenuMusicVolume = 1
 local mainMenuMusicFade = nil
 
@@ -582,7 +595,7 @@ local function fadeMainMenuMusicFromPause()
 end
 
 local function startMusic()
-  if tech_license and tech_license.isValid() then
+  if license and license.isValid() then
     return
   end
 
@@ -595,11 +608,12 @@ local function startMusic()
     return
   end
 
-  if musicSourceId then
-    local musicSource = getMusicSource()
-    if musicSource and musicSource:isPlaying() then
+  local oldMusicSource = getMusicSource()
+  if oldMusicSource then
+    if oldMusicSource:isPlaying() then
       return
     end
+    oldMusicSource:delete()
   end
 
   musicSourceId = Engine.Audio.createSource('AudioMusic', 'event:>Music>main_theme')
@@ -615,7 +629,7 @@ local function startMusic()
 end
 
 local function stopMusic()
-  if tech_license and tech_license.isValid() then
+  if license and license.isValid() then
     return
   end
 
@@ -647,7 +661,7 @@ local function fadeMainMenuMusicToStop()
 end
 
 local function isCreditsMusicRoute(routeName)
-  return routeName == "menu.extras.credits"
+  return routeName == "menu.credits"
 end
 
 local function isMainMenuActive()
@@ -687,6 +701,26 @@ local function resumeMainMenuMusic()
   startMusic()
 end
 
+function setMainMenuMusicKeepAlive(active)
+  active = active == true
+  if mainMenuMusicKeepAlive == active then return end
+  mainMenuMusicKeepAlive = active
+  if active then
+    resumeMainMenuMusic()
+  else
+    refreshMainMenuMusicRouteState()
+  end
+end
+
+function setMainMenuMusicPauseRequest(requestId, active)
+  if type(requestId) ~= "string" or requestId == "" then return false end
+  active = active == true
+  if (mainMenuMusicPauseRequests[requestId] == true) == active then return true end
+  mainMenuMusicPauseRequests[requestId] = active and true or nil
+  refreshMainMenuMusicRouteState()
+  return true
+end
+
 local function getCreditsMusicExtension()
   return extensions[creditsMusicExtensionName] or _G[creditsMusicExtensionName]
 end
@@ -721,6 +755,19 @@ local function setCreditsMusicRouteActive(active)
 end
 
 function setMainMenuMusicRouteState(routeName)
+  if next(mainMenuMusicPauseRequests) then
+    setCreditsMusicRouteActive(false)
+    mainMenuMusicPausedForRoute = true
+    fadeMainMenuMusicToPause()
+    return
+  end
+
+  if mainMenuMusicKeepAlive then
+    setCreditsMusicRouteActive(false)
+    resumeMainMenuMusic()
+    return
+  end
+
   if isMainMenuMusicStartRoute(routeName) then
     setCreditsMusicRouteActive(false)
     resumeMainMenuMusic()
@@ -760,6 +807,7 @@ end
 
 -- called before the Mission Resources are loaded
 function clientPreStartMission(levelPath)
+  recordPlayerAction("load level " .. tostring(levelPath))
   worldReadyState = 0
   extensions.hook('onClientPreStartMission', levelPath)
   guihooks.trigger('PreStartMission')
@@ -777,7 +825,9 @@ end
 -- called when the level items are already loaded (after clientPostStartMission)
 function clientStartMission(levelPath)
   log("D", "clientStartMission", "starting levelPath: " .. tostring(levelPath))
-  fadeMainMenuMusicToStop()
+  if not mainMenuMusicKeepAlive then
+    fadeMainMenuMusicToStop()
+  end
   extensions.hookNotify('onClientStartMission', levelPath)
   map.assureLoad() --> needs to be after extensions.hook('onClientStartMission', levelPath)
   -- TODO: re-evaluate MenuHide trigger with new navigation system
@@ -789,6 +839,7 @@ end
 function clientEndMission(levelPath)
   -- core_gamestate.requestGameState()
   -- log("D", "clientEndMission", "ending levelPath: " .. tostring(levelPath))
+  extensions.hookNotify('onClientPreEndMission', levelPath)
   be:physicsStopSimulation()
   simTimeAuthority.pause(false)
   extensions.hookNotify('onClientEndMission', levelPath)
@@ -900,6 +951,18 @@ local function handleInstableVehicles(dtSim)
   end
 end
 
+local luaReloadStartTime
+local luaReloadModManagerCompleted = false
+local luaReloadUiReady = false
+
+local function tryCompleteLuaReload()
+  if not luaReloadStartTime or not luaReloadModManagerCompleted or not luaReloadUiReady then return end
+  if core_jobsystem.getRunningJobCount() > 0 or settings.settingsTick ~= nop then return end
+  local mcpServer = rawget(_G, "mcp_server")
+  if mcpServer and mcpServer.isReady and not mcpServer.isReady() then return end
+  onLuaReloadCompleted()
+end
+
 function updateFirstFrame()
   -- completeIntegrityChunk("base") -- unused for now
   extensions.hook('onFirstUpdate')
@@ -914,6 +977,7 @@ function updateFirstFrame()
     -- it only prevents opening a main window
     uiReady()
   end
+  if luaReloadStartTime then log("I", "", string.format("============== GELUA VM firstFrame in %.0f ms ==============", (os.clockhp() - luaReloadStartTime) * 1000)) end
 end
 
 -- this function is called after input and before physics
@@ -954,11 +1018,13 @@ function update(dtReal, dtSim, dtRaw)
     extensions.setProfiler(geluaProfiler)
   end
   profilerPopEvent('GE Main Update')
+  tryCompleteLuaReload()
 end
 
 -- called when the UI is up and running
 function uiReady()
   extensions.hook('onUiReady')
+  luaReloadUiReady = true
 end
 
 -- to allow the UI to be aware of the state of the lua backend
@@ -969,6 +1035,10 @@ end
 
 -- Also called on reload (Control-L)
 function init(reason)
+  -- "startup" or "reload". Kept as a global because extensions that load later, telemetry
+  -- included, cannot see this argument.
+  luaVmStartReason = reason
+
   settings.initSettings(reason)
 
   --log('D', "init", 'GameEngine Lua (re)loaded')
@@ -1000,14 +1070,11 @@ function init(reason)
 
   prepareStartupExtensionsList()
   extensions.load(startupExtensions)
+  core_locales.selfTest()
 
   if jit and jit.os == "Windows" then
     extensions.load('util_materialHotReload') -- dev material hot-reload, Windows only
   end
-
-  -- quick self-test of teleport detector
-  extensions.test_objectTeleported_main.test(false)
-  extensions.unload('test_objectTeleported_main')
 
   table.clear(cmdlineLevelLoadExtensions)
 
@@ -1069,15 +1136,19 @@ end
 
 function vehicleSpawned(vid)
   profilerPushEvent('vehicleSpawned')
+  invalidatePlayerVehicles()
+  invalidateVehicleCache()
   local v = getObjectByID(vid)
-  if not v then return end
+  if not v then
+    profilerPopEvent('vehicleSpawned')
+    return
+  end
 
   -- update the gravity of the vehicle
   if core_environment then
     v:queueLuaCommand("obj:setGravity("..core_environment.getGravity()..")")
   end
 
-  invalidateVehicleCache()
   -- Do data initialization in "onPreVehicleSpawned" hooks for "onVehicleSpawned" hooks
   extensions.hook('onPreVehicleSpawned', vid, v)
   extensions.hook('onVehicleSpawned', vid, v)
@@ -1111,8 +1182,8 @@ end
 
 -- Callback when vehicles are activated or deactivated (e.g. by the traffic pooling system)
 -- This is unrelated to tabbing into other cars (that would be the vehicleSwitched() function)
-function vehicleActiveChanged(vehicleID, active)
-  extensions.hook('onVehicleActiveChanged', vehicleID, active)
+function vehicleActiveChanged(vehicleID, active, setActiveCount)
+  extensions.hook('onVehicleActiveChanged', vehicleID, active, setActiveCount)
 end
 
 function onMouseLocked(locked)
@@ -1128,27 +1199,11 @@ function vehicleDestroyed(vid)
 end
 
 function onCouplerAttached(objId1, objId2, nodeId, obj2nodeId)
-  local playerId = be:getPlayerVehicleID(0)
-  local isPlayerVehicle = playerId == objId1 or playerId == objId2
-
-  if isPlayerVehicle and objId1 ~= objId2 and settings.getValue("couplerCameraModifier", false) then
-    local isEnabled = core_couplerCameraModifier ~= nil
-    extensions.load('core_couplerCameraModifier')
-    if isEnabled == false and core_couplerCameraModifier.checkForTrailer(objId1, objId2) == false then
-      extensions.unload('core_couplerCameraModifier')
-    end
-  end
   extensions.hook('onCouplerAttached', objId1, objId2, nodeId, obj2nodeId)
 end
 
 function onCouplerDetached(objId1, objId2, nodeId, obj2nodeId, breakForce)
-  local playerId = be:getPlayerVehicleID(0)
-  local isPlayerVehicle = playerId == objId1 or playerId == objId2
-
   extensions.hook('onCouplerDetached', objId1, objId2, nodeId, obj2nodeId, breakForce)
-  if isPlayerVehicle and core_couplerCameraModifier ~= nil then
-    extensions.unload('core_couplerCameraModifier')
-  end
 end
 
 --Trigered when trailer coupler is detached by the user
@@ -1183,7 +1238,8 @@ function replaySpawnVehicle(jbeamFilename, partConfigData)
   if core_replay and core_replay.getDebugEnabled and core_replay.getDebugEnabled() then
     log("I", "core_replay.debug", "replaySpawnVehicle callback: " .. dumps({jbeamFilename = jbeamFilename, hasPartConfigData = partConfigData ~= nil}))
   end
-  local veh = spawn.spawnVehicle(jbeamFilename, partConfigData, vec3(), quat(), nil, nil, nil)
+  -- only seat the player if they have no vehicle yet (e.g. replay level just loaded), never steal their seat
+  local veh = spawn.spawnVehicle(jbeamFilename, partConfigData, vec3(), quat(), {autoEnterVehicle = getPlayerVehicle(0) == nil})
   if be:getEnterableObjectCount() == 1 then
     commands.setGameCamera()
   end
@@ -1248,7 +1304,7 @@ function updateTranslations()
   extensions.core_repository.installMod('locales_v2.zip', 'translations.zip', 'mods/', function(data)
     log('D', 'updateTranslations', 'translations download done: mods/translations.zip')
     -- reload the settings to activate the new files
-    settings.newTranslationsAvailable = true -- this enforces the UI refresh, fixes some state problems
+    settings.translationsChanged = true -- this enforces the UI refresh, fixes some state problems
     settings.load(true)
   end)
 end
@@ -1422,8 +1478,6 @@ function onExit()
     p:add("MainEventManager.onError")
   end
 
-  postFxModule.savePresetFile('settings/postfxSettings.postfx')
-  p:add("savePostFx")
   settings.exit()
   p:add("settings")
   p:finish(true)
@@ -1509,14 +1563,25 @@ function onGameEngineStartup()
   end
 end
 
-function onLuaReloaded()
+function onLuaReloaded(reloadStartTime)
   local clientCore = require("client/core")
   clientCore.reloadCore()
   local client_init = require("client/init")
   client_init.reloadClient()
-  local dt = os.clockhp() - t0
-  t0 = nil
+  local dt = os.clockhp() - reloadStartTime
   log("I", "", string.format("============== GELUA VM reloaded in %.0f ms ==============", dt * 1000))
+  luaReloadStartTime = reloadStartTime
+  luaReloadModManagerCompleted = false
+  luaReloadUiReady = false
+end
+
+function onLuaReloadModManagerCompleted()
+  luaReloadModManagerCompleted = true
+end
+
+function onLuaReloadCompleted()
+  if luaReloadStartTime then log("I", "", string.format("============== GELUA VM completed in %.0f ms ==============", (os.clockhp() - luaReloadStartTime) * 1000)) end
+  luaReloadStartTime = nil
 end
 
 function onTexDrawPrimCompressDone(textureName)

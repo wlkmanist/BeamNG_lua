@@ -9,6 +9,7 @@ local simplifyRdpTol = 9.0 -- The tolerance for the RDP simplification of the sp
 
 local minSpacing, maxSpacing = -0.2, 40.0 -- The minimum and maximum allowed spacing of the mesh components.
 local minVerticalOffset, maxVerticalOffset = -100.0, 100.0 -- The minimum and maximum allowed vertical offset of the mesh components.
+local minCapOffset, maxCapOffset = -10.0, 10.0 -- The minimum and maximum longitudinal (along-run) offset of the start/end cap meshes.
 local DOImin, DOImax = 0.0, 500.0
 local terraMarginMin, terraMarginMax = 1.0, 20.0
 local terraFalloffMin, terraFalloffMax = 1.0, 5.0
@@ -28,7 +29,8 @@ local splineMgr = require('editor/meshSpline/splineMgr')
 local pop = require('editor/meshSpline/populate')
 local import = require('editor/meshSpline/import')
 local input = require('editor/toolUtilities/splineInput')
-local render = require('editor/toolUtilities/render')
+local panCamera = require('editor/toolUtilities/panCamera')
+local rSpline = require('editor/toolUtilities/render/spline')
 local poly = require('editor/toolUtilities/polygon')
 local skeleton = require('editor/toolUtilities/skeleton')
 local rdp = require('editor/toolUtilities/rdp')
@@ -38,6 +40,8 @@ local geom = require('editor/toolUtilities/geom')
 local style = require('editor/toolUtilities/style')
 local meshAuditionMgr = require('editor/toolUtilities/meshAuditionMgr')
 local terra = require('editor/terraform/terraform')
+local session = require('editor/toolUtilities/session')
+local bake = require('editor/toolUtilities/bake')
 
 -- Module constants.
 local im = ui_imgui
@@ -56,17 +60,64 @@ local selectedSplineIdx, selectedNodeIdx, selectedMeshIdx = 1, 1, 1
 local meshTarget = 'main'
 local sliderPreEditState = nil
 local terraParams = {
-  terraDOI = 50.0,
-  terraMargin = 5.0,
-  terraFalloff = 2.0,
+  terraDOI = 20.0,
+  terraMargin = 1.0,
+  terraFalloff = 3.0,
   terraRoughness = 0.0,
   terraScale = 0.0,
+  terraSmooth = 2.0,
 }
 local out = {
   spline = selectedSplineIdx,
   node = selectedNodeIdx,
   isGizmoActive = isGizmoActive,
   isLockShape = isLockShape,
+}
+
+-- Save/Load Session spec.
+local sessionSpec = {
+  toolId = 'meshSpline',
+  displayName = 'Mesh Spline',
+  itemNoun = 'mesh splines',
+  getItems = splineMgr.getMeshSplines,
+  serializeItem = splineMgr.serializeMeshSplineToTable,
+  deserializeItem = function(t) return splineMgr.deserializeMeshSpline(t, true) end,
+  clearAll = function() splineMgr.removeAllMeshSplines(true) end,
+  deepCopyAll = splineMgr.deepCopyMeshSplineState,
+  transUndo = splineMgr.transSplineEditUndo,
+  transRedo = splineMgr.transSplineEditRedo,
+  refreshIdMap = splineMgr.recomputeIdMap,
+  onLoaded = function() selectedSplineIdx = 1 end,
+  getGlobals = function() return terraParams end, -- tool-global terraform knobs travel with the session.
+  applyGlobals = function(t) for k in pairs(terraParams) do if type(t[k]) == 'number' then terraParams[k] = t[k] end end end,
+  iconColor = cols.blueB,
+  iconSize = iconsBig,
+}
+
+-- Locks/unlocks the mesh spline with this id and rebuilds it now (also used by the Master Spline for linked children).
+local function setLockedById(id, isLocked)
+  local spline = splineMgr.findMeshSpline(id)
+  if not spline then return end
+  if isLocked and spline.isDirty then splineMgr.updateDirtyMeshSplines() end -- lock what the spline shows, not a stale build.
+  spline.isEnabled = not isLocked
+  spline.isDirty = true
+  splineMgr.updateDirtyMeshSplines()
+end
+
+-- The splineLock `each` for the mesh spline with this id (nothing if it is gone).
+local function eachObjectById(id, fn)
+  local spline = splineMgr.findMeshSpline(id)
+  if spline then pop.eachObject(spline, fn) end
+end
+
+-- Bake spec: baking locks the spline (its meshes save with the level and collide; it stays in the tool).
+local bakeSpec = {
+  toolId = 'meshSpline',
+  displayName = 'Mesh Spline',
+  iconColor = cols.redB,
+  iconSize = iconsBig,
+  setLockedById = setLockedById,
+  eachObjectById = eachObjectById,
 }
 
 -- Register this tool with the shared spline input utilities.
@@ -96,10 +147,16 @@ local function onSerialize()
   local meshSplinesSer = {}
   for i = 1, #meshSplines do
     local spline = meshSplines[i]
+    -- A locked spline's meshes (and any hand edits) stay in the scene; it carries their ids across and takes them back.
+    if not spline.isEnabled then spline.keptObjects = pop.release(spline) end
     local data = splineMgr.serializeMeshSpline(spline)
+    if spline.keptObjects then
+      spline.keptObjects = nil
+      spline.sceneTreeFolderId = nil -- so the removal below leaves the folder in place.
+    end
     meshSplinesSer[#meshSplinesSer + 1] = data
   end
-  splineMgr.removeAllMeshSplines()
+  splineMgr.removeAllMeshSplines(true)
   return meshSplinesSer
 end
 
@@ -110,6 +167,10 @@ local function onDeserialized(data)
     table.clear(meshSplines)
     for i = 1, #data do
       local spline = splineMgr.deserializeMeshSpline(data[i], true)
+      if spline.keptObjects then
+        pop.adopt(spline, spline.keptObjects)
+        spline.keptObjects = nil
+      end
       meshSplines[#meshSplines + 1] = spline
     end
     selectedSplineIdx = max(1, min(#meshSplines, selectedSplineIdx))
@@ -183,19 +244,12 @@ end
 
 -- Handles the main tool window.
 local function handleMainToolWindowUI()
-  if editor.beginWindow(toolWinName, "Mesh Spline###1144", im.WindowFlags_NoCollapse) then
+  if editor.beginWindow(toolWinName, session.windowTitle(sessionSpec.toolId, "Mesh Spline", "1144"), im.WindowFlags_NoCollapse) then
     local icons = editor.icons
     local meshSplines = splineMgr.getMeshSplines()
     selectedSplineIdx = max(1, min(#meshSplines, selectedSplineIdx)) -- Ensure the selected spline index is within bounds.
 
-    -- Top buttons row.
-    im.Columns(6, "topMasterButtonsRow", false)
-    im.SetColumnWidth(0, 39)
-    im.SetColumnWidth(1, 39)
-    im.SetColumnWidth(2, 39)
-    im.SetColumnWidth(3, 39)
-    im.SetColumnWidth(4, 39)
-    im.SetColumnWidth(5, 39)
+    -- Top buttons row (inline: plain im.SameLine sequence, Dummy holds slots for unavailable buttons).
     im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(2, 2))
     im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
 
@@ -208,7 +262,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip('Add a new mesh spline.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Import From Bitmap Mask' button.
     if editor.uiIconImageButton(icons.floppyDiskPlus, iconsBig, cols.blueB, nil, nil, 'importFromBitmapMaskBtn') then
@@ -229,7 +282,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip('Import mesh splines from a bitmap mask.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Draw A Selection Polygon' button.
     local btnCol = isDrawPolygon and cols.blueB or cols.blueD
@@ -239,7 +291,6 @@ local function handleMainToolWindowUI()
     end
     im.tooltip(isDrawPolygon and 'Click to stop drawing a selection polygon.' or 'Click to draw a selection polygon, to convert scene objects to a Mesh Spline.')
     im.SameLine()
-    im.NextColumn()
 
     -- 'Remove All Mesh Splines' button.
     if #meshSplines > 0 then
@@ -254,7 +305,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Lock Shape' toggle button.
     local selSpline = meshSplines[selectedSplineIdx]
@@ -268,7 +318,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Export Spline Mask' button.
     if #meshSplines > 0 then
@@ -287,7 +336,17 @@ local function handleMainToolWindowUI()
     else
       im.Dummy(iconsBig)
     end
-    im.NextColumn()
+    im.SameLine()
+
+    -- Pan camera toggle (top-down RMB-drag pan + wheel zoom, shared across the spline tools).
+    if editor.uiIconImageButton(icons.videocam, iconsBig, panCamera.isOn() and cols.blueB or cols.blueD, nil, nil, 'panCamBtn') then
+      panCamera.toggle()
+    end
+    im.tooltip(panCamera.isOn() and 'Pan camera ON: top-down, RMB-drag to move, wheel to zoom. Click for the free camera.' or 'Pan camera: top-down view, RMB-drag pan + wheel zoom.')
+    im.SameLine()
+
+    -- 'Save Session' / 'Load Session' (+ Replace/Merge modal) via the shared helper.
+    session.renderButtons(sessionSpec)
 
     im.PopStyleVar(2)
     im.Columns(1)
@@ -298,11 +357,12 @@ local function handleMainToolWindowUI()
       im.TextColored(cols.greenB, "Mesh Splines:")
       im.PushItemWidth(-1)
       if im.BeginListBox('', im.ImVec2(-1, 180)) then
-        im.Columns(4, "splineListBoxColumns", true)
+        im.Columns(5, "splineListBoxColumns", true)
         im.SetColumnWidth(0, 30)
-        im.SetColumnWidth(1, 180)
+        im.SetColumnWidth(1, 150)
         im.SetColumnWidth(2, 35)
         im.SetColumnWidth(3, 35)
+        im.SetColumnWidth(4, 35)
         im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(4, 2))
         im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
         local wCtr = 41225
@@ -317,7 +377,7 @@ local function handleMainToolWindowUI()
           im.SameLine()
           im.NextColumn()
 
-          im.PushItemWidth(180)
+          im.PushItemWidth(150)
           local splineNamePtr = im.ArrayChar(32, spline.name)
           if spline.isLink then
             im.TextColored(cols.dullWhite, spline.name)
@@ -356,6 +416,7 @@ local function handleMainToolWindowUI()
           if spline.isEnabled and not spline.isLink then
             if editor.uiIconImageButton(icons.trashBin2, iconsSmall, cols.blueB, nil, nil, 'removeSpline' .. i) then
               local statePre = splineMgr.deepCopyMeshSplineState()
+              terra.restoreBaseline(spline) -- Undo this spline's terraform carve so deleting it cleans the terrain up.
               splineMgr.removeMeshSpline(i)
               if selectedSplineIdx > i then
                 selectedSplineIdx = selectedSplineIdx - 1
@@ -377,16 +438,19 @@ local function handleMainToolWindowUI()
             btnCol = spline.isEnabled and cols.blueB or cols.blueD
             local btnIcon = spline.isEnabled and icons.lock or icons.lock_open
             if editor.uiIconImageButton(btnIcon, iconsSmall, btnCol, nil, nil, 'lockUnlockMeshSplineToggleBtn' .. i) then
-              local statePre = splineMgr.deepCopyMeshSpline(spline)
-              spline.isEnabled = not spline.isEnabled
-              pop.tryRemove(spline) -- Remove the mesh spline from the population, before rebuilding the collision mesh.
-              spline.isDirty = true
+              bake.setLocked(bakeSpec, spline, spline.isEnabled)
               selectedSplineIdx = i
-              editor.history:commitAction("Toggle Mesh Spline Lock", { old = statePre, new = splineMgr.deepCopyMeshSpline(spline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
             end
-            im.tooltip((spline.isEnabled and 'Disable' or 'Enable') .. ' this mesh spline.')
+            im.tooltip(spline.isEnabled and 'Lock this mesh spline: its meshes save with the level and collide.' or 'Unlock this mesh spline: its meshes become editable again (hand edits are reset).')
           else
             im.Dummy(iconsSmall)
+          end
+          im.NextColumn()
+
+          -- 'Bake' button (per row): locks this spline.
+          if bake.rowButton(bakeSpec, spline) then
+            editor.endWindow()
+            return
           end
           im.NextColumn()
           im.Separator()
@@ -413,7 +477,7 @@ local function handleMainToolWindowUI()
       -- 'Go To Selected Spline' button.
       if selSpline.nodes and #selSpline.nodes > 1 then
         if editor.uiIconImageButton(icons.cameraFocusTopDown, iconsBig, cols.blueB, nil, nil, 'goToSelectedSplineBtn') then
-          util.goToSpline(selSpline.divPoints)
+          if not panCamera.gotoPoints(selSpline.divPoints) then util.goToSpline(selSpline.divPoints) end
         end
         im.tooltip('Go to this mesh spline (move camera).')
       else
@@ -422,16 +486,14 @@ local function handleMainToolWindowUI()
       im.SameLine()
       im.NextColumn()
 
-      -- 'Conform To Surface Below' button.
+      -- 'Drop To Surface Below' one-shot button (mesh splines build free in 3D; this snaps the control nodes down to the surface).
       if selSpline and selSpline.isEnabled and not selSpline.isLink then
-        btnCol = selSpline.isConformToTerrain and cols.blueB or cols.blueD
-        if editor.uiIconImageButton(icons.lineToTerrain, iconsBig, btnCol, nil, nil, 'conformToTerrainBtn') then
+        if editor.uiIconImageButton(icons.lineToTerrain, iconsBig, cols.blueB, nil, nil, 'conformToTerrainBtn') then
           local statePre = splineMgr.deepCopyMeshSpline(selSpline)
-          selSpline.isConformToTerrain = not selSpline.isConformToTerrain
-          selSpline.isDirty = true
-          editor.history:commitAction("Conform To Surface Below", { old = statePre, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
+          splineMgr.conformNodesToTerrain(selSpline)
+          editor.history:commitAction("Drop To Surface Below", { old = statePre, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
         end
-        im.tooltip((selSpline.isConformToTerrain and 'Unconform' or 'Conform') .. ' the selected mesh spline to the surface below.')
+        im.tooltip('Drop the control nodes of the selected mesh spline onto the surface below.')
       else
         im.Dummy(iconsBig)
       end
@@ -586,12 +648,15 @@ local function handleMainToolWindowUI()
       im.SameLine()
       im.NextColumn()
       im.PushItemWidth(-1)
+      -- Floor the slider at the biggest overlap this piece allows (period stays >= the clamp), so heavy negative
+      -- overlap is reachable for long modular pieces without ever dragging into a period that spawns endless instances.
+      local spacingMin = pop.minSpacingFor(selSpline) or minSpacing
       local tmpPtr = im.FloatPtr(selSpline.spacing)
-      if im.SliderFloat('###5756', tmpPtr, minSpacing, maxSpacing, "Spacing (m) = %.2f") then
+      if im.SliderFloat('###5756', tmpPtr, spacingMin, maxSpacing, "Spacing (m) = %.2f") then
         selSpline.spacing = tmpPtr[0]
         selSpline.isDirty = true
       end
-      im.tooltip('Set the longitudinal spacing between each mesh component.')
+      im.tooltip('Longitudinal gap between pieces. Negative overlaps them -- drag left to tile a piece on a tighter grid than its mesh length.')
       if im.IsItemActivated() then
         sliderPreEditState = splineMgr.deepCopyMeshSpline(selSpline)
       end
@@ -600,6 +665,27 @@ local function handleMainToolWindowUI()
       end
       im.PopItemWidth()
       im.NextColumn()
+
+      -- 'Lock ends' toggle: discrete props (lamps/bollards) only. Pins an item at both ends and even-fits the interior
+      -- towards the Spacing target, so the label shows the resulting spacing you'll actually get. Hidden for tiling meshes
+      -- (barriers), where end-to-end abutment already handles the ends.
+      if pop.isDiscreteSpline(selSpline) then
+        im.Dummy(iconsSmall)
+        im.NextColumn()
+        im.PushItemWidth(-1)
+        local eff = pop.evenFitInfo(selSpline)
+        local label = eff and string.format("Lock ends (\xE2\x89\x88 %.1f m)###meshLockEnds", eff) or "Lock ends###meshLockEnds"
+        local tmpBool = im.BoolPtr(selSpline.isFixedEnds == true)
+        if im.Checkbox(label, tmpBool) then
+          local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
+          selSpline.isFixedEnds = tmpBool[0]
+          selSpline.isDirty = true
+          editor.history:commitAction("Toggle Lock Ends", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
+        end
+        im.tooltip('Always place a prop at both the start and end of the run, distributing the rest as evenly as possible near the Spacing target.')
+        im.PopItemWidth()
+        im.NextColumn()
+      end
 
       -- Vertical Offset slider.
       if selSpline.verticalOffset ~= defaultParams.verticalOffset then
@@ -755,16 +841,14 @@ local function handleMainToolWindowUI()
       im.Columns(1)
       im.Separator()
 
-      -- Preset buttons.
+      -- Preset buttons. Two fixed rows so nothing wraps/overlaps: barriers + loose props on row 1, all lamp posts on row 2.
       im.TextColored(cols.greenB, "Presets:")
-      im.Columns(7, "presetBtns", false)
+      im.Columns(5, "presetBtnsProps", false)
       im.SetColumnWidth(0, 40)
       im.SetColumnWidth(1, 40)
       im.SetColumnWidth(2, 40)
       im.SetColumnWidth(3, 40)
       im.SetColumnWidth(4, 40)
-      im.SetColumnWidth(5, 40)
-      im.SetColumnWidth(6, 40)
       im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(2, 2))
       im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
 
@@ -801,6 +885,39 @@ local function handleMainToolWindowUI()
       im.SameLine()
       im.NextColumn()
 
+      -- 'Bollard' preset button.
+      if editor.uiIconImageButton(icons.bollard, iconsBig, cols.blueB, nil, nil, 'bollardPresetBtn') then
+        local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
+        splineMgr.setPreset(selSpline, 'bollard')
+        selSpline.isDirty = true
+        editor.history:commitAction("Select Bollard Preset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.presetSelectionUndo, splineMgr.presetSelectionRedo, true)
+      end
+      im.tooltip('Select The Bollard Preset.')
+      im.SameLine()
+      im.NextColumn()
+
+      -- 'Oil Drum' preset button.
+      if editor.uiIconImageButton(icons.fg_barrel, iconsBig, cols.blueB, nil, nil, 'oilDrumPresetBtn') then
+        local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
+        splineMgr.setPreset(selSpline, 'oil_drum')
+        selSpline.isDirty = true
+        editor.history:commitAction("Select Oil Drum Preset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.presetSelectionUndo, splineMgr.presetSelectionRedo, true)
+      end
+      im.tooltip('Select The Oil Drum Preset.')
+      im.NextColumn()
+      im.PopStyleVar(2)
+      im.Columns(1)
+
+      -- Lamp posts (own row so the five icons never overlap the props above).
+      im.Columns(5, "presetBtnsLamps", false)
+      im.SetColumnWidth(0, 40)
+      im.SetColumnWidth(1, 40)
+      im.SetColumnWidth(2, 40)
+      im.SetColumnWidth(3, 40)
+      im.SetColumnWidth(4, 40)
+      im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(2, 2))
+      im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
+
       -- 'Mast Arm Lamp Post' preset button.
       if editor.uiIconImageButton(icons.lampPost2, iconsBig, cols.blueB, nil, nil, 'mastArmLampPostPresetBtn') then
         local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
@@ -823,25 +940,36 @@ local function handleMainToolWindowUI()
       im.SameLine()
       im.NextColumn()
 
-      -- 'Bollard' preset button.
-      if editor.uiIconImageButton(icons.bollard, iconsBig, cols.blueB, nil, nil, 'bollardPresetBtn') then
+      -- 'Street Lamp Post' preset button.
+      if editor.uiIconImageButton(icons.wb_sunny or icons.lampPost2, iconsBig, cols.blueB, nil, nil, 'streetLampPostPresetBtn') then
         local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
-        splineMgr.setPreset(selSpline, 'bollard')
+        splineMgr.setPreset(selSpline, 'street_lamp_post')
         selSpline.isDirty = true
-        editor.history:commitAction("Select Bollard Preset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.presetSelectionUndo, splineMgr.presetSelectionRedo, true)
+        editor.history:commitAction("Select Street Lamp Post Preset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.presetSelectionUndo, splineMgr.presetSelectionRedo, true)
       end
-      im.tooltip('Select The Bollard Preset.')
+      im.tooltip('Select The Modern Single Street Lamp Preset.')
       im.SameLine()
       im.NextColumn()
 
-      -- 'Oil Drum' preset button.
-      if editor.uiIconImageButton(icons.fg_barrel, iconsBig, cols.blueB, nil, nil, 'oilDrumPresetBtn') then
+      -- 'Highway Lamp Post' preset button.
+      if editor.uiIconImageButton(icons.highlight or icons.lampPost2, iconsBig, cols.blueB, nil, nil, 'highwayLampPostPresetBtn') then
         local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
-        splineMgr.setPreset(selSpline, 'oil_drum')
+        splineMgr.setPreset(selSpline, 'highway_lamp_post')
         selSpline.isDirty = true
-        editor.history:commitAction("Select Oil Drum Preset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.presetSelectionUndo, splineMgr.presetSelectionRedo, true)
+        editor.history:commitAction("Select Highway Lamp Post Preset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.presetSelectionUndo, splineMgr.presetSelectionRedo, true)
       end
-      im.tooltip('Select The Oil Drum Preset.')
+      im.tooltip('Select The Tall Highway Lamp Preset.')
+      im.SameLine()
+      im.NextColumn()
+
+      -- 'Sidewalk Lamp Post' preset button.
+      if editor.uiIconImageButton(icons.wb_twilight or icons.lampPost2, iconsBig, cols.blueB, nil, nil, 'sidewalkLampPostPresetBtn') then
+        local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
+        splineMgr.setPreset(selSpline, 'sidewalk_lamp_post')
+        selSpline.isDirty = true
+        editor.history:commitAction("Select Sidewalk Lamp Post Preset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.presetSelectionUndo, splineMgr.presetSelectionRedo, true)
+      end
+      im.tooltip('Select The Pedestrian Sidewalk Lamp Preset.')
       im.NextColumn()
       im.PopStyleVar(2)
       im.Separator()
@@ -1217,6 +1345,39 @@ local function handleMainToolWindowUI()
             im.tooltip('Set the rotation to 270°.')
             im.NextColumn()
             im.PopItemWidth()
+            im.Columns(1)
+
+            -- Start cap longitudinal offset: slide the cap along the run to seam it against the first piece.
+            im.Columns(2, 'startCapOffsetCols', false)
+            im.SetColumnWidth(0, 30)
+            if (selSpline.startCapOffset or 0) ~= defaultParams.startCapOffset then
+              if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetStartCapOffsetBtn') then
+                local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
+                selSpline.startCapOffset = defaultParams.startCapOffset
+                selSpline.isDirty = true
+                editor.history:commitAction("Reset Start Cap Offset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
+              end
+              im.tooltip("Reset to default")
+            else
+              im.Dummy(iconsSmall)
+            end
+            im.SameLine()
+            im.NextColumn()
+            im.PushItemWidth(-1)
+            tmpPtr = im.FloatPtr(selSpline.startCapOffset or 0)
+            if im.SliderFloat('###startCapOffset', tmpPtr, minCapOffset, maxCapOffset, "Cap Offset (m) = %.3f") then
+              selSpline.startCapOffset = tmpPtr[0]
+              selSpline.isDirty = true
+            end
+            im.tooltip('Slide the start cap along the run (+ forward) to line it up with the first piece.')
+            if im.IsItemActivated() then
+              sliderPreEditState = splineMgr.deepCopyMeshSpline(selSpline)
+            end
+            if im.IsItemDeactivatedAfterEdit() then
+              editor.history:commitAction("Adjust Start Cap Offset", { old = sliderPreEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
+            end
+            im.PopItemWidth()
+            im.Columns(1)
           end
           im.Columns(1)
 
@@ -1259,6 +1420,39 @@ local function handleMainToolWindowUI()
             im.tooltip('Set the rotation to 270°.')
             im.NextColumn()
             im.PopItemWidth()
+            im.Columns(1)
+
+            -- End cap longitudinal offset: slide the cap along the run to seam it against the last piece.
+            im.Columns(2, 'endCapOffsetCols', false)
+            im.SetColumnWidth(0, 30)
+            if (selSpline.endCapOffset or 0) ~= defaultParams.endCapOffset then
+              if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetEndCapOffsetBtn') then
+                local preEditState = splineMgr.deepCopyMeshSpline(selSpline)
+                selSpline.endCapOffset = defaultParams.endCapOffset
+                selSpline.isDirty = true
+                editor.history:commitAction("Reset End Cap Offset", { old = preEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
+              end
+              im.tooltip("Reset to default")
+            else
+              im.Dummy(iconsSmall)
+            end
+            im.SameLine()
+            im.NextColumn()
+            im.PushItemWidth(-1)
+            tmpPtr = im.FloatPtr(selSpline.endCapOffset or 0)
+            if im.SliderFloat('###endCapOffset', tmpPtr, minCapOffset, maxCapOffset, "Cap Offset (m) = %.3f") then
+              selSpline.endCapOffset = tmpPtr[0]
+              selSpline.isDirty = true
+            end
+            im.tooltip('Slide the end cap along the run (+ forward) to line it up with the last piece.')
+            if im.IsItemActivated() then
+              sliderPreEditState = splineMgr.deepCopyMeshSpline(selSpline)
+            end
+            if im.IsItemDeactivatedAfterEdit() then
+              editor.history:commitAction("Adjust End Cap Offset", { old = sliderPreEditState, new = splineMgr.deepCopyMeshSpline(selSpline) }, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, true)
+            end
+            im.PopItemWidth()
+            im.Columns(1)
           end
           im.Columns(1)
           im.Separator()
@@ -1432,9 +1626,9 @@ local function handleMainToolWindowUI()
             im.SetColumnWidth(0, 30)
 
           -- 'DOI' slider.
-          if terraParams.terraDOI ~= 50.0 then
+          if terraParams.terraDOI ~= 20.0 then
             if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetDOI_mesh') then
-              terraParams.terraDOI = 50.0
+              terraParams.terraDOI = 20.0
             end
             im.tooltip("Reset to default")
           else
@@ -1452,9 +1646,9 @@ local function handleMainToolWindowUI()
           im.NextColumn()
 
           -- 'Terraform Margin' slider.
-          if terraParams.terraMargin ~= 5.0 then
+          if terraParams.terraMargin ~= 1.0 then
             if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetMargin_mesh') then
-              terraParams.terraMargin = 5.0
+              terraParams.terraMargin = 1.0
             end
             im.tooltip("Reset to default")
           else
@@ -1471,9 +1665,9 @@ local function handleMainToolWindowUI()
           im.NextColumn()
 
           -- 'Terraform Falloff' slider.
-          if terraParams.terraFalloff ~= 2.0 then
+          if terraParams.terraFalloff ~= 3.0 then
             if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetFalloff_mesh') then
-              terraParams.terraFalloff = 2.0
+              terraParams.terraFalloff = 3.0
             end
             im.tooltip("Reset to default")
           else
@@ -1527,18 +1721,40 @@ local function handleMainToolWindowUI()
           im.PopItemWidth()
           im.NextColumn()
 
+          -- 'Terraform Smoothing' slider.
+          if terraParams.terraSmooth ~= 2.0 then
+            if editor.uiIconImageButton(icons.poi_point_1_round, iconsSmall, cols.blueB, nil, nil, 'resetSmooth_mesh') then
+              terraParams.terraSmooth = 2.0
+            end
+            im.tooltip("Reset to default")
+          else
+            im.Dummy(iconsSmall)
+          end
+          im.SameLine()
+          im.NextColumn()
+          im.PushItemWidth(-1)
+          tmpPtr = im.FloatPtr(terraParams.terraSmooth)
+          if im.SliderFloat('###mesh_smooth', tmpPtr, 0.0, 2.0, "Smoothing = %.0f") then
+            terraParams.terraSmooth = tmpPtr[0]
+          end
+          im.tooltip('Relaxation passes on the transition apron OUTSIDE the spline (the flat margin stays exact). 0 = raw feathered falloff; 2 = a smooth, even embankment. Above 2 just widens the feather, so it caps here.')
+          im.PopItemWidth()
+          im.NextColumn()
+
           im.Columns(1)
 
-          -- 'Terraform To Mesh Spline' button.
-          if selSpline and selSpline.isEnabled and not selSpline.isLink and #selSpline.nodes > 1 and not selSpline.isConformToTerrain then
-            if editor.uiIconImageButton(icons.terrainToLine, iconsBig, cols.blueB, nil, nil, 'terraformToMeshSplineBtn') then
-              local sources = util.getSourcesSingle(selSpline)
-              terra.terraformToSources(terraParams.terraDOI, terraParams.terraMargin, terraParams.terraFalloff, terraParams.terraRoughness, terraParams.terraScale, sources)
-            end
-            im.tooltip('Terraform the terrain to the selected Mesh Spline.')
-          else
-            im.Dummy(iconsBig)
+          -- Terraform to the mesh's ACTUAL cross-width, not the placeholder node width: extentsW is the mesh's lateral size, and
+          -- rotating the run 90/270 swaps length<->width so the cross-direction becomes extentsL. Nil-safe (falls back to node width).
+          if selSpline then
+            local w = ((selSpline.rot or 0) % 2) == 1 and selSpline.extentsL_Center or selSpline.extentsW_Center
+            selSpline.terraWidth = w and w > 0 and math.max(1.0, w) or nil -- min 1m corridor; nil (no mesh) falls back to node width.
           end
+
+          -- 'Terraform To Mesh Spline' + 'Restore Terrain' buttons (shared baseline-memory helper: idempotent re-carve + un-carve).
+          local canTerra = selSpline and selSpline.isEnabled and not selSpline.isLink and #selSpline.nodes > 1 and not selSpline.isConformToTerrain
+          terra.terraformButtons(selSpline, canTerra,
+            { doi = terraParams.terraDOI, margin = terraParams.terraMargin, falloff = terraParams.terraFalloff, roughness = terraParams.terraRoughness, scale = terraParams.terraScale, smooth = terraParams.terraSmooth },
+            'Mesh Spline', icons, cols, iconsBig)
           im.NextColumn()
 
           im.Columns(1)
@@ -1573,7 +1789,7 @@ local function onEditorGui()
 
   -- If this tool is not active, render the shells of the splines but do nothing further.
   if not isMeshSplineActive then
-    render.renderShells(splineMgr.getMeshSplines())
+    rSpline.renderShells(splineMgr.getMeshSplines())
     return
   end
 
@@ -1582,6 +1798,9 @@ local function onEditorGui()
 
   -- Handle the mesh audition and selection.
   meshAuditionMgr.handleMeshAuditionAndSelection(meshTarget, onMeshSelected)
+
+  -- Drive the pan camera when it's on (blocked during polygon draw / node drag so they don't fight).
+  if panCamera.isOn() then panCamera.drive(isDrawPolygon or input.isDragging()) end
 
   -- Handle the front end if the user is drawing a selection polygon.
   if isDrawPolygon then
@@ -1609,10 +1828,10 @@ local function onEditorGui()
   -- Render the mesh splines with debugDraw (only if not linked to master spline).
   local selSpline = splines[out.spline]
   if selSpline then
-    render.handleSplineRendering(splines, out.spline, out.node, isGizmoActive, true, isLockShape, true, false, elevScale)
+    rSpline.handleSplineRendering(splines, out.spline, out.node, isGizmoActive, true, isLockShape, true, false, elevScale)
 
     -- Render polylines for mesh splines.
-    render.renderSplinePolylines(splines, out.spline)
+    rSpline.renderSplinePolylines(splines, out.spline)
   end
 end
 
@@ -1623,6 +1842,10 @@ local function onActivate()
   editor.clearObjectSelection()
   editor.showWindow(toolWinName)
   isMeshSplineActive = true
+  panCamera.configure({ focusProvider = function()
+    local s = splineMgr.getMeshSplines()[selectedSplineIdx]
+    return s and s.divPoints
+  end })
 end
 
 -- Called when the tool is exited.
@@ -1631,6 +1854,7 @@ local function onDeactivate()
   poly.clearPolygon() -- Ensure there is no residual polygon left over from the previous usage.
   meshAuditionMgr.leaveAuditionView()
   editor.hideWindow(toolWinName)
+  panCamera.close()
   isMeshSplineActive = false
 end
 
@@ -1686,6 +1910,8 @@ local function onClientEndMission() splineMgr.removeAllMeshSplines(true) end
 -- Public interface.
 M.setSelectedSplineIdx =                                  setSelectedSplineIdx
 M.setSelectedNodeIdx =                                    setSelectedNodeIdx
+M.setLockedById =                                         setLockedById
+M.eachObjectById =                                        eachObjectById
 
 M.onSerialize =                                           onSerialize
 M.onDeserialized =                                        onDeserialized

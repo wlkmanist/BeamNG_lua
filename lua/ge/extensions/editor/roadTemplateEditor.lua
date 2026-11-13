@@ -145,7 +145,7 @@ local function templateSelectionDialog()
       for i=1, #editor_roadUtils.getMaterials() do
         -- Load a template as a set of temporary decal roads
         im.PushID1(string.format('template_%d', i))
-        if im.ImageButton("##selectionDialogButton", editor_roadUtils.getMaterials()[i].texId, im.ImVec2(128, 128), im.ImVec2Zero, im.ImVec2One,
+        if im.ImageButton("##selectionDialogButton", editor_roadUtils.getMaterials()[i].tex:getID(), im.ImVec2(128, 128), im.ImVec2Zero, im.ImVec2One,
                           im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then
           templateDialogOpen[0] = false
 

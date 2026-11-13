@@ -452,9 +452,6 @@ local function onExtensionLoaded()
   else
     log("D","Rich Presence", "Rich Presence is disabled. internal="..dumps(internal).." settings="..dumps(settings.getValue('richPresence')))
   end
-  if Steam then
-    Steam.timelineSetGameMode(0)
-  end
   for k,v in pairs(timelineEvents) do
     gameplay_statistic.callbackRegister(k, false, statCbTimeline)
   end
@@ -555,7 +552,7 @@ local function onUiReady()
       state = 1 --playing
     end
   end
-  if Steam then
+  if Steam and state ~= 0 then
     Steam.timelineSetGameMode(state)
   end
   updateCurrentActivity()
@@ -581,7 +578,7 @@ local function onUiChangedState(toState, fromState)
   else
     state = 1 --playing
   end
-  if Steam then
+  if Steam and state ~= 0 then
     Steam.timelineSetGameMode(state)
   end
 end

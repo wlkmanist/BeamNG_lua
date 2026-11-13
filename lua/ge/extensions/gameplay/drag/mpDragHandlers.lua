@@ -28,10 +28,10 @@ local function handleDragSessionStarted(state, bridge, client, senderId, recpIds
 
   gameplay_drag_core.setDragRaceData(r.poiData and deepcopy(r.poiData) or nil)
 
-  local localPlayerId = bridge.getLocalPlayerId and bridge.getLocalPlayerId()
+  local localMPPlayerId = bridge.getLocalMPPlayerId and bridge.getLocalMPPlayerId()
   local players = r.players or {}
-  if localPlayerId and players[localPlayerId] and bridge.setLocalClientActiveRace then
-    local pd = players[localPlayerId]
+  if localMPPlayerId and players[localMPPlayerId] and bridge.setLocalClientActiveRace then
+    local pd = players[localMPPlayerId]
     bridge.setLocalClientActiveRace(raceId, r.poiData, pd.lane or 1, r.treeType or ".500")
   end
   extensions.hook("onDragRaceListChanged")
@@ -115,12 +115,12 @@ local function handleDragRaceTreeLightUpdate(state, bridge, client, senderId, re
   if not data or data.type ~= "treeLightUpdate" or not data.lane or not data.lightState then return end
   extensions.hook("onDragRaceTreeLights", data.lane, data.lightState)
   if not data.raceId then return end
-  local clientIds = bridge.getTimerRecipientClientIds and bridge.getTimerRecipientClientIds(data.raceId)
-  if clientIds and next(clientIds) and bridge.sendToClientIds then
-    local myCid = bridge.getLocalClientId and bridge.getLocalClientId()
-    if myCid then clientIds[myCid] = nil end
-    if next(clientIds) then
-      bridge.sendToClientIds(clientIds, "dragRaceTreeLights", { type = "treeLights", raceId = data.raceId, lane = data.lane, lightState = data.lightState })
+  local mpClientIds = bridge.getTimerRecipientMPClientIds and bridge.getTimerRecipientMPClientIds(data.raceId)
+  if mpClientIds and next(mpClientIds) and bridge.sendToMPClientIds then
+    local myCid = bridge.getLocalMPClientId and bridge.getLocalMPClientId()
+    if myCid then mpClientIds[myCid] = nil end
+    if next(mpClientIds) then
+      bridge.sendToMPClientIds(mpClientIds, "dragRaceTreeLights", { type = "treeLights", raceId = data.raceId, lane = data.lane, lightState = data.lightState })
     end
   end
 end
@@ -130,8 +130,8 @@ end
 local function handleDragRaceFinishTime(state, bridge, client, senderId, recpIds, data)
   if not bridge or not bridge.isSessionHost or not bridge.isSessionHost() then return end
   if not data or data.type ~= "finishTime" then return end
-  local playerId = client and bridge.getPlayerIdByClientId and bridge.getPlayerIdByClientId(client.id)
-  if not playerId then return end
+  local mpPlayerId = client and bridge.getMPPlayerIdByMPClientId and bridge.getMPPlayerIdByMPClientId(client.id)
+  if not mpPlayerId then return end
   local raceId = data.raceId
   if not raceId then return end
   local entry = state.dragRaces and state.dragRaces[raceId]
@@ -142,7 +142,7 @@ local function handleDragRaceFinishTime(state, bridge, client, senderId, recpIds
   if not rawTime then return end
   -- Map sender's clock to host clock so elapsed is comparable; no mapping needed for host's own finish.
   local finishTimeHostClock = rawTime
-  local myCid = bridge.getLocalClientId and bridge.getLocalClientId()
+  local myCid = bridge.getLocalMPClientId and bridge.getLocalMPClientId()
   if client and client.id and myCid and client.id ~= myCid then
     if multiplayer_synclib and multiplayer_synclib.mapOtherClock then
       local mapped = multiplayer_synclib.mapOtherClock(client.id, rawTime)
@@ -160,14 +160,14 @@ local function handleDragRaceFinishTime(state, bridge, client, senderId, recpIds
   local elapsed = finishTimeHostClock - hostStart
   local stateGet = bridge.getRaceState and bridge.getRaceState(raceId)
   local finishTimes = (stateGet and stateGet.finishTimes) or {}
-  finishTimes[playerId] = elapsed
+  finishTimes[mpPlayerId] = elapsed
   gameplay_drag_core.setRaceState(raceId, { finishTimes = finishTimes })
-  local clientIds = bridge.getTimerRecipientClientIds and bridge.getTimerRecipientClientIds(raceId)
-  if clientIds and next(clientIds) and bridge.sendToClientIds then
-    if myCid then clientIds[myCid] = nil end
-    if next(clientIds) then
-      bridge.sendToClientIds(clientIds, "dragRaceFinishTimeBroadcast", {
-        type = "finishTimeBroadcast", raceId = raceId, playerId = playerId, finishTime = elapsed
+  local mpClientIds = bridge.getTimerRecipientMPClientIds and bridge.getTimerRecipientMPClientIds(raceId)
+  if mpClientIds and next(mpClientIds) and bridge.sendToMPClientIds then
+    if myCid then mpClientIds[myCid] = nil end
+    if next(mpClientIds) then
+      bridge.sendToMPClientIds(mpClientIds, "dragRaceFinishTimeBroadcast", {
+        type = "finishTimeBroadcast", raceId = raceId, mpPlayerId = mpPlayerId, finishTime = elapsed
       })
     end
   end
@@ -175,13 +175,13 @@ local function handleDragRaceFinishTime(state, bridge, client, senderId, recpIds
 end
 
 -- All clients: applies authoritative timer update from host, updates vehicleId and configName if available.
--- data fields: type="timerUpdate", raceId, playerId, vehicleId, timerName, timerValue, configName
+-- data fields: type="timerUpdate", raceId, mpPlayerId, vehicleId, timerName, timerValue, configName
 local function handleDragRaceTimerUpdate(state, bridge, client, senderId, recpIds, data)
   if not data or data.type ~= "timerUpdate" or not data.raceId then return end
   local stateGet = bridge.getRaceState and bridge.getRaceState(data.raceId)
   if not stateGet then return end
   local timerValues = stateGet.timerValues or {}
-  local pid = data.playerId
+  local pid = data.mpPlayerId
   if not pid then return end
   if not timerValues[pid] then timerValues[pid] = {} end
   timerValues[pid][data.timerName] = data.timerValue
@@ -202,42 +202,42 @@ end
 local function handleDragRaceTimerUpdateRequest(state, bridge, client, senderId, recpIds, data)
   if not bridge or not bridge.isSessionHost or not bridge.isSessionHost() then return end
   if not data or data.type ~= "timerUpdateRequest" or not data.raceId then return end
-  local playerId = client and bridge.getPlayerIdByClientId and bridge.getPlayerIdByClientId(client.id)
-  if not playerId then return end
+  local mpPlayerId = client and bridge.getMPPlayerIdByMPClientId and bridge.getMPPlayerIdByMPClientId(client.id)
+  if not mpPlayerId then return end
   local stateGet = bridge.getRaceState and bridge.getRaceState(data.raceId)
   if not stateGet then return end
   local timerValues = stateGet.timerValues or {}
-  if not timerValues[playerId] then timerValues[playerId] = {} end
-  timerValues[playerId][data.timerName] = data.timerValue
+  if not timerValues[mpPlayerId] then timerValues[mpPlayerId] = {} end
+  timerValues[mpPlayerId][data.timerName] = data.timerValue
   local players = stateGet.players or {}
-  if players[playerId] and data.vehicleId and data.vehicleId ~= -1 then
-    players[playerId].vehicleId = data.vehicleId
+  if players[mpPlayerId] and data.vehicleId and data.vehicleId ~= -1 then
+    players[mpPlayerId].vehicleId = data.vehicleId
   end
-  if players[playerId] and data.configName then
-    players[playerId].configName = data.configName
+  if players[mpPlayerId] and data.configName then
+    players[mpPlayerId].configName = data.configName
   end
   gameplay_drag_core.setRaceState(data.raceId, { timerValues = timerValues, players = players })
-  local clientIds = bridge.getTimerRecipientClientIds and bridge.getTimerRecipientClientIds(data.raceId)
-  if clientIds and next(clientIds) and bridge.sendToClientIds then
-    local myCid = bridge.getLocalClientId and bridge.getLocalClientId()
-    if myCid then clientIds[myCid] = nil end
-    if next(clientIds) then
-      bridge.sendToClientIds(clientIds, "dragRaceTimerUpdate", {
-        type = "timerUpdate", raceId = data.raceId, playerId = playerId, vehicleId = data.vehicleId, timerName = data.timerName, timerValue = data.timerValue, configName = data.configName
+  local mpClientIds = bridge.getTimerRecipientMPClientIds and bridge.getTimerRecipientMPClientIds(data.raceId)
+  if mpClientIds and next(mpClientIds) and bridge.sendToMPClientIds then
+    local myCid = bridge.getLocalMPClientId and bridge.getLocalMPClientId()
+    if myCid then mpClientIds[myCid] = nil end
+    if next(mpClientIds) then
+      bridge.sendToMPClientIds(mpClientIds, "dragRaceTimerUpdate", {
+        type = "timerUpdate", raceId = data.raceId, mpPlayerId = mpPlayerId, vehicleId = data.vehicleId, timerName = data.timerName, timerValue = data.timerValue, configName = data.configName
       })
     end
   end
-  extensions.hook("onDragRaceTimerUpdated", data.raceId, playerId, data.timerName, data.timerValue)
+  extensions.hook("onDragRaceTimerUpdated", data.raceId, mpPlayerId, data.timerName, data.timerValue)
   extensions.hook("onDragRaceTimerValuesUpdated", timerValues)
 end
 
 -- All clients: applies finish time broadcast from host.
--- data fields: type="finishTimeBroadcast", raceId, playerId, finishTime (elapsed seconds)
+-- data fields: type="finishTimeBroadcast", raceId, mpPlayerId, finishTime (elapsed seconds)
 local function handleDragRaceFinishTimeBroadcast(state, bridge, client, senderId, recpIds, data)
   if not data or data.type ~= "finishTimeBroadcast" or not data.raceId then return end
   local stateGet = bridge.getRaceState and bridge.getRaceState(data.raceId)
   local finishTimes = (stateGet and stateGet.finishTimes) or {}
-  finishTimes[data.playerId] = data.finishTime
+  finishTimes[data.mpPlayerId] = data.finishTime
   gameplay_drag_core.setRaceState(data.raceId, { finishTimes = finishTimes })
   extensions.hook("onDragRaceFinishTimesUpdated", finishTimes)
 end
@@ -350,9 +350,9 @@ local function handleDragRaceStateRequest(state, bridge, client, senderId, recpI
       if sessionPlayers and raceState.creatorId and sessionPlayers[raceState.creatorId] then
         creatorName = sessionPlayers[raceState.creatorId].persona or "Unknown"
       end
-      local clientId = client and client.id
-      if clientId and bridge.sendToClientIds then
-        bridge.sendToClientIds({[clientId] = true}, "dragSessionStarted", {
+      local mpClientId = client and client.id
+      if mpClientId and bridge.sendToMPClientIds then
+        bridge.sendToMPClientIds({[mpClientId] = true}, "dragSessionStarted", {
           type = "dragSessionStarted",
           raceId = raceId,
           lobbyId = entry.lobbyId,
@@ -376,7 +376,7 @@ local function handleDragRaceStateRequest(state, bridge, client, senderId, recpI
         -- isStarted flag is set correctly (the original broadcast arrived before this
         -- extension was loaded and was lost).
         if raceState.isStarted then
-          bridge.sendToClientIds({[clientId] = true}, "dragRaceStarted", {
+          bridge.sendToMPClientIds({[mpClientId] = true}, "dragRaceStarted", {
             type = "dragRaceStarted",
             raceId = raceId,
           })

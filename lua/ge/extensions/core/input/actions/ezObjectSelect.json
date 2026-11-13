@@ -1,0 +1,128 @@
+{
+  "ezSelectModalTransform": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestTransformShortcut() end",
+    "actionMap": "EZObjectSelectBlender",
+    "title": "ui.inputActions.editor.ezSelectModalTransform.title",
+    "desc": "ui.inputActions.editor.ezSelectModalTransform.description"
+  },
+  "ezSelectModalRotate": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestRotateShortcut() end",
+    "actionMap": "EZObjectSelectBlender",
+    "title": "ui.inputActions.editor.ezSelectModalRotate.title",
+    "desc": "ui.inputActions.editor.ezSelectModalRotate.description"
+  },
+  "ezSelectModalScale": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestScaleShortcut() end",
+    "actionMap": "EZObjectSelectBlender",
+    "title": "ui.inputActions.editor.ezSelectModalScale.title",
+    "desc": "ui.inputActions.editor.ezSelectModalScale.description"
+  },
+  "ezSelectFocus": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestFocusShortcut() end",
+    "actionMap": "EZObjectSelect",
+    "title": "ui.inputActions.editor.ezSelectFocus.title",
+    "desc": "ui.inputActions.editor.ezSelectFocus.description"
+  },
+  "ezSelectNumpadFront": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('front') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadFront.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadFront.description"
+  },
+  "ezSelectNumpadSide": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('side') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadSide.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadSide.description"
+  },
+  "ezSelectNumpadTop": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('top') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadTop.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadTop.description"
+  },
+  "ezSelectNumpadProjection": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('projection') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadProjection.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadProjection.description"
+  },
+  "ezSelectNumpadOpposite": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('opposite') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadOpposite.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadOpposite.description"
+  },
+  "ezSelectNumpadFrame": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('frame') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadFrame.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadFrame.description"
+  },
+  "ezSelectNumpadOrbitLeft": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('orbitLeft') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadOrbitLeft.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadOrbitLeft.description"
+  },
+  "ezSelectNumpadOrbitRight": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('orbitRight') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadOrbitRight.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadOrbitRight.description"
+  },
+  "ezSelectNumpadOrbitUp": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('orbitUp') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadOrbitUp.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadOrbitUp.description"
+  },
+  "ezSelectNumpadOrbitDown": {
+    "cat": "editor",
+    "order": 1,
+    "ctx": "tlua",
+    "onDown": "if extensions.editor_ezObjectSelect then extensions.editor_ezObjectSelect.requestNumpadPreset('orbitDown') end",
+    "actionMap": "EZObjectSelectNumpad",
+    "title": "ui.inputActions.editor.ezSelectNumpadOrbitDown.title",
+    "desc": "ui.inputActions.editor.ezSelectNumpadOrbitDown.description"
+  }
+}

@@ -13,15 +13,6 @@ M.Root = {
 }
 
 M.Children = {
-  ["iconViewer"] = {
-    ui = {
-      uiTypes = {"angular"},
-      uiTypesFilter = Constants.UiTypesFilter.only,
-      infoBar = Constants.InfoBarDefaultsHidden,
-      topBar = Constants.TopBarDefaultsHidden,
-      uiApps = Constants.UiAppsDefaults,
-    }
-  },
   ["mapview"] = {
     ui = {
       uiTypes = {"angular"},

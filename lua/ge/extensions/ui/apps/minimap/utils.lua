@@ -30,6 +30,8 @@ local camFwd, camRight = vec3(), vec3()
 local camInverseFwd, camInverseRight = vec3(), vec3()
 local halfWidthWithOffset = 0
 local halfHeightWithOffset = 0
+local worldToMapXX, worldToMapXYCoef, worldToMapXOffset = 0, 0, 0
+local worldToMapYX, worldToMapYY, worldToMapYOffset = 0, 0, 0
 
 -- Setter function to update state from main minimap
 M.setMinimapState = function(w, h, cx, cy, cp, cr, cri, s, si, textureDraw, ox, oy, minimapMode, dpi)
@@ -54,6 +56,13 @@ M.setMinimapState = function(w, h, cx, cy, cp, cr, cri, s, si, textureDraw, ox, 
   halfWidthWithOffset = width*0.5 + offsetX
   halfHeightWithOffset = height*0.5 + offsetY
 
+  worldToMapXX = scaleInverse * camFwd.x
+  worldToMapXYCoef = scaleInverse * camRight.x
+  worldToMapYX = -scaleInverse * camFwd.y
+  worldToMapYY = -scaleInverse * camRight.y
+  worldToMapXOffset = halfWidthWithOffset - camPos.x * worldToMapXX - camPos.y * worldToMapXYCoef
+  worldToMapYOffset = halfHeightWithOffset - camPos.x * worldToMapYX - camPos.y * worldToMapYY
+
   camInverseFwd:set(1,0,0)
   camInverseFwd:setRotate(camRotInverse)
   camInverseRight:set(0,1,0)
@@ -76,31 +85,28 @@ end
 --  local x = (source.x - camPos.x) * scaleInverse * camFwd.x + (source.y - camPos.y) * scaleInverse * camRight.x
 --local y = (source.x - camPos.x) * scaleInverse * camFwd.y + (source.y - camPos.y) * scaleInverse * camRight.y
 local function worldToMapXYZ(target, source)
-  --target:set(source)
   local x, y = source.x, source.y
-  --target:setSub(camPos)
-  --target:setScaled(scaleInverse)
-  x = (x - camPos.x) * scaleInverse
-  y = (y - camPos.y) * scaleInverse
-
-  --target:setRotate(camRot)
-  --target:set(target.x * camFwd + target.y * camRight)
-  local tX = x
-  x = halfWidthWithOffset  + (tX * camFwd.x + y * camRight.x )
-  y = halfHeightWithOffset - (tX * camFwd.y + y * camRight.y)
-
-  target:set(x, y,0)
+  target:set(
+    x * worldToMapXX + y * worldToMapXYCoef + worldToMapXOffset,
+    x * worldToMapYX + y * worldToMapYY + worldToMapYOffset,
+    0
+  )
 end
 
 local function worldToMapXY(x,y )
-  x = (x - camPos.x) * scaleInverse
-  y = (y - camPos.y) * scaleInverse
+  return x * worldToMapXX + y * worldToMapXYCoef + worldToMapXOffset,
+         x * worldToMapYX + y * worldToMapYY + worldToMapYOffset
+end
 
-  local tX = x
-  x = halfWidthWithOffset  + (tX * camFwd.x + y * camRight.x )
-  y = halfHeightWithOffset - (tX * camFwd.y + y * camRight.y)
+local function worldLineToMapXY(x1, y1, x2, y2)
+  return x1 * worldToMapXX + y1 * worldToMapXYCoef + worldToMapXOffset,
+         x1 * worldToMapYX + y1 * worldToMapYY + worldToMapYOffset,
+         x2 * worldToMapXX + y2 * worldToMapXYCoef + worldToMapXOffset,
+         x2 * worldToMapYX + y2 * worldToMapYY + worldToMapYOffset
+end
 
-  return x, y
+local function getWorldToMapTransform()
+  return worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset
 end
 
 
@@ -150,166 +156,62 @@ local clampToMinimapBounds = function(pos, buffer)
 end
 
 -- Returns the clamped position and a flag indicating whether clamping happened
-local centerLocal, target, fromCenter, dir = vec3(), vec3(), vec3(), vec3()
-local corners = {vec3(), vec3(), vec3(), vec3()}
-local edge, toP1, cross1, cross2 = vec3(), vec3(), vec3(), vec3()
 local function setClampToBounds(pos, inset, maxDistance)
   inset = inset or 0
-  centerLocal:set(width*0.5 + offsetX, height*0.5 + offsetY, 0)
-  target:set(pos.x, pos.y, 0)
+  local centerX = width * 0.5 + offsetX
+  local centerY = height * 0.5 + offsetY
+  local targetX, targetY = pos.x, pos.y
+  local deltaX, deltaY = targetX - centerX, targetY - centerY
+  local distanceSquared = deltaX * deltaX + deltaY * deltaY
 
-  -- Vector from center to target
-  fromCenter:set(target.x - centerLocal.x, target.y - centerLocal.y, 0)
-  local distance = fromCenter:length()
-
-  if distance <= 1e-6 then
-    pos:set(centerLocal.x, centerLocal.y, 0)
+  if distanceSquared <= 1e-12 then
+    pos:set(centerX, centerY, 0)
     return pos, false
   end
 
-  -- Circle mode clamping (same style as compass)
   if mode == "circle" then
-    local maxDistance = width*0.5 - inset
-    if distance > maxDistance then
-      dir:set(fromCenter)
-      dir:normalize()
-      pos:set(centerLocal.x + dir.x * maxDistance, centerLocal.y + dir.y * maxDistance, 0)
+    local radius = width * 0.5 - inset
+    if distanceSquared > radius * radius then
+      local scaleToBounds = radius / math.sqrt(distanceSquared)
+      pos:set(centerX + deltaX * scaleToBounds, centerY + deltaY * scaleToBounds, 0)
       return pos, true
     end
-    pos:set(target)
+    pos:set(targetX, targetY, 0)
     return pos, false
   end
 
-  -- Rect mode clamping: intersect ray(center -> target) with inset rectangle
   local halfWidth = (width - 2 * inset) * 0.5
   local halfHeight = (height - 2 * inset) * 0.5
+  local absDeltaX, absDeltaY = math.abs(deltaX), math.abs(deltaY)
 
-  -- Inside check
-  if math.abs(target.x - centerLocal.x) <= halfWidth and math.abs(target.y - centerLocal.y) <= halfHeight then
-    pos:set(target)
+  if absDeltaX <= halfWidth and absDeltaY <= halfHeight then
+    pos:set(targetX, targetY, 0)
     return pos, false
   end
 
-  -- Ray/segment intersection against rectangle edges
-  corners[1]:set(offsetX + inset,           offsetY + inset,            0)
-  corners[2]:set(offsetX + width - inset,   offsetY + inset,            0)
-  corners[3]:set(offsetX + width - inset,   offsetY + height - inset,   0)
-  corners[4]:set(offsetX + inset,           offsetY + height - inset,   0)
-
-  dir:set(fromCenter)
-  dir:normalize()
-
-  local tMin = math.huge
-  for i = 1, 4 do
-    local p1 = corners[i]
-    local p2 = corners[i % 4 + 1]
-    edge:set(p2.x - p1.x, p2.y - p1.y, 0)
-    toP1:set(p1.x - centerLocal.x, p1.y - centerLocal.y, 0)
-
-    local cross1 = dir.x * edge.y - dir.y * edge.x
-    local cross2 = toP1.x * edge.y - toP1.y * edge.x
-
-    if math.abs(cross1) > 1e-6 then
-      local t1 = cross2 / cross1
-      local t2 = (toP1.x * dir.y - toP1.y * dir.x) / cross1
-      if t1 > 0 and t2 >= 0 and t2 <= 1 then
-        tMin = math.min(tMin, t1)
-      end
-    end
-  end
-
-  if tMin < math.huge then
-    pos:set(centerLocal.x + dir.x * tMin, centerLocal.y + dir.y * tMin, 0)
-    return pos, true
-  end
-
-  -- Fallback: return original target if no intersection found
-  pos:set(target)
-  return pos, false
+  local scaleX = absDeltaX > 1e-6 and halfWidth / absDeltaX or math.huge
+  local scaleY = absDeltaY > 1e-6 and halfHeight / absDeltaY or math.huge
+  local scaleToBounds = math.min(scaleX, scaleY)
+  pos:set(centerX + deltaX * scaleToBounds, centerY + deltaY * scaleToBounds, 0)
+  return pos, true
 end
 
 -- Drawing utility functions
 local strikeWidth = 3.0
 local fillColor = color(254,102,1,255)
 local strikeColor = color(255,255,255,255)
-local circlePos = vec3()
 local simpleCircle = function(pos, fill, strikeClr, radius)
-  circlePos:set(pos)
-  worldToMapXYZ(circlePos, circlePos)
-  td:circle(circlePos.x, circlePos.y, ((radius or 6)-strikeWidth)*M.dpi, strikeWidth*M.dpi, fill or fillColor, fill or fillColor, strikeClr or strikeColor, strikeClr or strikeColor, 0, layers.GAMEPLAY_MARKERS)
+  td:circleMarker(pos.x, pos.y, radius or 6, strikeWidth, M.dpi, fill or fillColor, strikeClr or strikeColor, worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset, layers.GAMEPLAY_MARKERS)
 end
 
-local linePos1 = vec3()
-local linePos2 = vec3()
 local simpleLine = function(pos1, pos2, fill, strikeClr)
-  linePos1:set(pos1)
-  linePos2:set(pos2)
-  worldToMapXYZ(linePos1, linePos1)
-  worldToMapXYZ(linePos2, linePos2)
-  td:lineRoundEnd(linePos1.x, linePos1.y, linePos2.x, linePos2.y, strikeWidth*M.dpi, strikeWidth*M.dpi, strikeWidth*M.dpi, fill or fillColor, fill or fillColor, strikeClr or strikeColor, strikeClr or strikeColor, 0, layers.GAMEPLAY_MARKERS)
+  td:lineRoundEndTransformed(pos1.x, pos1.y, pos2.x, pos2.y, strikeWidth*M.dpi, strikeWidth*M.dpi, fill or fillColor, strikeClr or strikeColor, worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset, layers.GAMEPLAY_MARKERS)
 end
 
-local buffer = -14
-local centerLocal, markerLocal, directionLocal, intersectionLocal = vec3(), vec3(), vec3(), vec3()
-local tip, side, side1, side2 = vec3(), vec3(), vec3(), vec3()
--- Edge pointer function
+-- Edge pointer function: returns false if the position is inside of the minimap (nothing drawn)
+-- the border color is always clrNavBg and the stroke is always white, strikeClr is unused
 local drawEdgePointer = function(pos, fill, strikeClr, radius, maxDistance)
-  maxDistance = maxDistance or math.huge
-  radius = radius or 6
-  -- Convert world position to minimap coordinates
-  circlePos:set(pos)
-  worldToMapXYZ(circlePos, circlePos)
-
-  -- Work in minimap's local coordinate system (before rotation)
-  centerLocal:set(width/2 + offsetX, height/2 + offsetY, 0)
-
-  -- Convert marker to local coordinates
-  markerLocal:set(0,0,0)
-  worldToMapXYZ(markerLocal, pos)
-
-  -- Calculate direction in local coordinates
-  directionLocal:set(markerLocal.x - centerLocal.x, markerLocal.y - centerLocal.y, 0)
-  directionLocal:normalize()
-
-  -- Clamp target to bounds using shared helper (account for marker radius)
-  intersectionLocal:set(markerLocal)
-  local _, wasClamped = setClampToBounds(intersectionLocal, buffer + radius)
-  if not wasClamped then
-    return false
-  end
-
-  -- Check if the real-world distance between original and clamped positions exceeds maxDistance
-  if maxDistance ~= math.huge then
-    -- Convert clamped minimap position back to world coordinates
-    local clampedWorldPosX, clampedWorldPosY = worldToMapXYInverse(intersectionLocal.x, intersectionLocal.y)
-
-    local realWorldDistanceSquared = (clampedWorldPosX - pos.x)^2 + (clampedWorldPosY - pos.y)^2
-    if realWorldDistanceSquared > maxDistance^2 then
-      return true
-    end
-  end
-
-  -- Draw circle with triangle pointing toward the marker (like walking marker)
-  local circleRadius = (radius-1.5)*M.dpi
-  local triangleSize = (radius-3)*M.dpi
-  local triangleLength = (radius+2)*M.dpi
-
-  -- Draw triangle pointing toward marker
-  tip:set(intersectionLocal.x + directionLocal.x * triangleLength, intersectionLocal.y + directionLocal.y * triangleLength, 0)
-
-  -- Triangle sides (perpendicular to direction)
-  side:set(-directionLocal.y, directionLocal.x, 0)
-  side1:set(intersectionLocal.x + side.x * triangleSize, intersectionLocal.y + side.y * triangleSize, 0)
-  side2:set(intersectionLocal.x - side.x * triangleSize, intersectionLocal.y - side.y * triangleSize, 0)
-
-  -- Draw circle at intersection point
-  -- Draw triangle with white border and colored fill
-  td:circle(intersectionLocal.x, intersectionLocal.y, circleRadius, 1*M.dpi, clrNavBg, clrNavBg, strikeColor, strikeColor, 0, layers.ROUTE_POINTER)
-  td:triangle(tip.x, tip.y, side1.x, side1.y, side2.x, side2.y, 2*M.dpi, 0, clrNavBg, clrNavBg, clrNavBg, clrNavBg, 0, layers.ROUTE_POINTER)
-
-  td:circle(intersectionLocal.x, intersectionLocal.y, circleRadius-2*M.dpi, 0, fill or fillColor, fill or fillColor, 0, 0, 0, layers.ROUTE_POINTER)
-  td:triangle(tip.x, tip.y, side1.x, side1.y, side2.x, side2.y, 0, 0, fill or fillColor, fill or fillColor, fill or fillColor, fill or fillColor, 0, layers.ROUTE_POINTER)
-  return true
+  return td:edgePointer(pos.x, pos.y, width, height, offsetX, offsetY, mode == "circle", radius or 6, maxDistance or math.huge, M.dpi, fill or fillColor, clrNavBg, strikeColor, worldToMapXX, worldToMapXYCoef, worldToMapYX, worldToMapYY, worldToMapXOffset, worldToMapYOffset, layers.ROUTE_POINTER)
 end
 
 local simpleCircleWithEdgePointer = function(pos, fill, strikeClr, radius)
@@ -334,6 +236,8 @@ end
 M.worldToMap = worldToMap
 M.worldToMapXYZ = worldToMapXYZ
 M.worldToMapXY = worldToMapXY
+M.worldLineToMapXY = worldLineToMapXY
+M.getWorldToMapTransform = getWorldToMapTransform
 M.mapToWorld = mapToWorld
 M.simpleCircle = simpleCircle
 M.simpleLine = simpleLine

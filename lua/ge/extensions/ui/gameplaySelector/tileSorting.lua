@@ -26,11 +26,12 @@ local UNKNOWN_SYSTEM_ORDER = 999
 -- Centralized system order for consistent sorting across the module
 M.SYSTEM_ORDER = {
   ['freeroam'] = 1,
-  ['challenges'] = 2,
-  ['scenarios'] = 3,
-  ['scenariosMultiplayer'] = 4,
-  ['campaigns'] = 5,
-  ['Other...'] = 6,
+  ['quickStartExperiences'] = 2,
+  ['challenges'] = 3,
+  ['scenarios'] = 4,
+  ['scenariosMultiplayer'] = 5,
+  ['campaigns'] = 6,
+  ['Other...'] = 7,
 }
 
 -- Base sorting function that puts "Other..." items last

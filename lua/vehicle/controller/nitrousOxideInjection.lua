@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Provides driver control and feedback for an engine's nitrous oxide system
+
 local M = {}
 M.type = "auxiliary"
 M.relevantDevice = "mainEngine"
@@ -16,6 +18,9 @@ local n2oData = {}
 local simpleButtonColorInactive = "FFFFFF"
 local simpleButtonColorArmed = "98FB00"
 local simpleButtonColorActive = "3096F1"
+
+local stateData
+local stateDataNamePurgeTimeRemaining
 
 local function updateSimpleControlButtons()
   local color = simpleButtonColorInactive
@@ -69,12 +74,38 @@ local function deserialize(data)
   end
 end
 
+local function getState()
+  local nitrousOxideInjection = engine and engine.nitrousOxideInjection
+  local purgeTimeRemaining = nitrousOxideInjection and nitrousOxideInjection.getPurgeTimeRemaining and nitrousOxideInjection.getPurgeTimeRemaining() or 0
+  stateData[stateDataNamePurgeTimeRemaining] = purgeTimeRemaining
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local nitrousOxideInjection = engine and engine.nitrousOxideInjection
+  local newPurgeTimeRemaining = data[stateDataNamePurgeTimeRemaining]
+  if type(newPurgeTimeRemaining) == "number" and newPurgeTimeRemaining == newPurgeTimeRemaining and nitrousOxideInjection and nitrousOxideInjection.purgeLines then
+    newPurgeTimeRemaining = clamp(newPurgeTimeRemaining, 0, purgeTime)
+    local currentPurgeTimeRemaining = nitrousOxideInjection.getPurgeTimeRemaining and nitrousOxideInjection.getPurgeTimeRemaining() or 0
+    if newPurgeTimeRemaining ~= currentPurgeTimeRemaining then
+      nitrousOxideInjection.purgeLines(newPurgeTimeRemaining)
+    end
+  end
+end
+
 local function reset(jbeamData)
   n2oData = {}
 end
 
 local function init(jbeamData)
   M.updateGFX = nop
+
+  stateData = {}
+  stateDataNamePurgeTimeRemaining = M.name .. "PurgeTimeRemaining"
 
   name = jbeamData.name
   armElectricsName = jbeamData.electricsArmName or "nitrousOxideArm"
@@ -124,6 +155,9 @@ M.setOverride = setOverride
 M.toggleActive = toggleActive
 M.serialize = serialize
 M.deserialize = deserialize
+
+M.getState = getState
+M.setState = setState
 
 M.updateSimpleControlButtons = updateSimpleControlButtons
 

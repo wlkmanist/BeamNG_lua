@@ -11,6 +11,7 @@ M.Root = {
   abstract = true,
   ui = {
     uiTypes = {"vue"},
+    uiTypesFilter = Constants.UiTypesFilter.only,
     infoBar = Constants.InfoBarDefaults,
     topBar = Constants.TopBarDefaultsHidden,
     uiApps = Constants.UiAppsDefaults

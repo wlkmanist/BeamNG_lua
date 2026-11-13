@@ -26,11 +26,11 @@ end
 local function onDriftCompletedScored(data)
   gameplay_statistic.metricAdd("drift/totalScore", data.addedScore)
   setNewMaxStat("drift/maxDriftScore", data.addedScore)
-  if data.addedScore >= 20000 then
+  if gameplay_achievement and data.addedScore >= 20000 then
     gameplay_achievement.unlockAchievement("DRIFT_SINGLE")
   end
   local totalScore = gameplay_statistic.metricGet("drift/totalScore", false)
-  if totalScore and totalScore.value >= 1000000 then
+  if gameplay_achievement and totalScore and totalScore.value >= 1000000 then
     gameplay_achievement.unlockAchievement("DRIFT_TOTAL")
   end
 end

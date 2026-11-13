@@ -43,6 +43,10 @@
   //friction particles
   ["RUBBER"     , "ASPHALT"     , "X>18"    , ""                , 0.1    , 1         , 1      , 6]
   ["RUBBER"     , "ASPHALT"     , "X>12"    , ""                , 0.1    , 1         , 1      , 22]
+  ["RUBBER"     , "COBBLESTONE" , "X>18"    , ""                , 0.1    , 1         , 1      , 6]
+  ["RUBBER"     , "COBBLESTONE" , "X>12"    , ""                , 0.1    , 1         , 1      , 22]
+  ["RUBBER"     , "ROCK"        , "X>18"    , ""                , 0.1    , 1         , 1      , 6]
+  ["RUBBER"     , "ROCK"        , "X>12"    , ""                , 0.1    , 1         , 1      , 22]
   ["METAL"      , "ASPHALT"     , "X>2.5"   , ""                , 0.1    , 1         , 1      , 1]
   ["METAL"      , "METAL"       , "X>2.5"   , ""                , 0.1    , 1         , 1      , 1]
   //wood

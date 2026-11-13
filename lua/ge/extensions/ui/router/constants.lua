@@ -98,6 +98,9 @@ M.RouterHooks = {
 -- RouterHooks above, which still drive the GUI event names.
 M.RouterExtensionHooks = {
   AFTER_ROUTE_CHANGE = "onAfterRouteChange",
+  -- Fired once a navigation finished, with how long it took. See navigationTimings in
+  -- router.lua for what the numbers mean.
+  ROUTE_TIMING = "onRouteTiming",
 }
 
 return M

@@ -22,19 +22,11 @@ local watchedImagePaths = {}
 local runtimeFileRevs = {}
 local runtimeFileMtimes = {}
 
-local runtimeBundleIncludes = {
-  "/ui/ui-vue/src/",
-  "/ui/ui-vue/generated/",
-}
-local runtimeBundleExcludes = {
-  "/ui/ui-vue/src/modules/",
-}
-local runtimeStatExts = {
-  js = true, mjs = true, cjs = true, vue = true, scss = true, css = true,
-}
-local runtimeStyleExts = {
-  scss = true, css = true,
-}
+local runtimeFsConfigured = false
+local runtimeBundleIncludes = {}
+local runtimeBundleExcludes = {}
+local runtimeStatExts = {}
+local runtimeStyleExts = {}
 
 local function getVueMods()
   local modDir = "/ui/ui-vue/mods"
@@ -86,11 +78,13 @@ local function getUiApps()
       vueFile      = app.vueFile,
       hasAppVue    = app.hasAppVue == true,
       hasAppJs     = app.hasAppJs == true,
+      hasSnapshot  = app.hasSnapshot == true,
       essential    = app.essential == true,
       devonly      = app.devonly == true,
       official     = app.official == true,
       sourceOnly   = app.sourceOnly == true,
       preserveAspectRatio = app.preserveAspectRatio == true,
+      preview      = app.previews and app.previews[1] or nil,
     }
   end
   return res
@@ -167,15 +161,29 @@ local function runtimeExtOf(filepath)
   return ext and string.lower(ext) or ""
 end
 
+local function extListToSet(list)
+  local out = {}
+  if type(list) ~= "table" then return out end
+  for _, ext in ipairs(list) do
+    if type(ext) == "string" and ext ~= "" then
+      out[string.lower(ext)] = true
+    end
+  end
+  return out
+end
+
 local function isRuntimeStatType(filepath)
+  if not runtimeFsConfigured then return false end
   return runtimeStatExts[runtimeExtOf(filepath)] == true
 end
 
 local function isRuntimeStyleType(filepath)
+  if not runtimeFsConfigured then return false end
   return runtimeStyleExts[runtimeExtOf(filepath)] == true
 end
 
 local function isRuntimeUnderIncludes(filepath)
+  if not runtimeFsConfigured then return false end
   for _, prefix in ipairs(runtimeBundleIncludes) do
     if startsWithPath(filepath, prefix) then return true end
   end
@@ -191,6 +199,7 @@ local function isRuntimeBundled(filepath)
 end
 
 local function shouldServeRuntimeFile(filepath)
+  if not runtimeFsConfigured then return false end
   if not isRuntimeUnderIncludes(filepath) then return false end
   if not isRuntimeStatType(filepath) then return false end
   return (not isRuntimeBundled(filepath)) or isRuntimeStyleType(filepath)
@@ -198,38 +207,12 @@ end
 
 local function setUiRuntimeBundled(cfg)
   if type(cfg) ~= "table" then return end
-  if type(cfg.includes) == "table" then runtimeBundleIncludes = cfg.includes end
-  if type(cfg.excludes) == "table" then runtimeBundleExcludes = cfg.excludes end
-end
-
-local function buildImageListsChangedPayload(files)
-  local changedPathsByName = {}
-  local changedFiles = {}
-
-  for _, v in pairs(files or {}) do
-    local filename = normalisePath(v.filename)
-    local matched = false
-    for watchedPath, _ in pairs(watchedImagePaths) do
-      if startsWithPath(filename, watchedPath) then
-        changedPathsByName[watchedPath] = true
-        matched = true
-      end
-    end
-    if matched then
-      table.insert(changedFiles, filename)
-    end
-  end
-
-  local changedPaths = {}
-  for watchedPath, _ in pairs(changedPathsByName) do
-    table.insert(changedPaths, watchedPath)
-  end
-  table.sort(changedPaths)
-
-  return {
-    paths = changedPaths,
-    files = changedFiles,
-  }
+  if type(cfg.includes) ~= "table" or #cfg.includes == 0 then return end
+  runtimeBundleIncludes = cfg.includes
+  runtimeBundleExcludes = type(cfg.excludes) == "table" and cfg.excludes or {}
+  runtimeStatExts = extListToSet(cfg.statExts)
+  runtimeStyleExts = extListToSet(cfg.styleExts)
+  runtimeFsConfigured = true
 end
 
 local function fileMatchesApp(filepath, app)
@@ -292,6 +275,8 @@ local function onFilesChanged(files)
   local modModulesChanged = false
   local vueModsChanged = false
   local uiAppsChanged = false
+  local imagePathsByName = {}
+  local imageFiles = {}
   for _,v in pairs(files) do
     if not modModulesChanged and string.startswith(v.filename, "/ui/modModules/") then
       sendUIModules()
@@ -305,6 +290,16 @@ local function onFilesChanged(files)
       uiAppsChanged = true
     end
     local fname = normalisePath(v.filename)
+    local imageMatched = false
+    for watchedPath, _ in pairs(watchedImagePaths) do
+      if startsWithPath(fname, watchedPath) then
+        imagePathsByName[watchedPath] = true
+        imageMatched = true
+      end
+    end
+    if imageMatched then
+      table.insert(imageFiles, fname)
+    end
     if shouldServeRuntimeFile(fname) then
       if v.type == "deleted" then
         runtimeFileMtimes[fname] = nil
@@ -324,7 +319,15 @@ local function onFilesChanged(files)
   if uiAppsChanged then
     guihooks.trigger("UiAppsChanged", buildUiAppsChangedPayload(files))
   end
-  local imageListsPayload = buildImageListsChangedPayload(files)
+  local imagePaths = {}
+  for watchedPath, _ in pairs(imagePathsByName) do
+    table.insert(imagePaths, watchedPath)
+  end
+  table.sort(imagePaths)
+  local imageListsPayload = {
+    paths = imagePaths,
+    files = imageFiles,
+  }
   if #imageListsPayload.paths > 0 then
     guihooks.trigger("UiImageListChanged", imageListsPayload)
   end
@@ -336,12 +339,13 @@ end
 
 -- for manual file reloads
 local function bumpUiRuntimeRevision(path)
-  if type(path) ~= "string" then return 0 end
+  if not runtimeFsConfigured or type(path) ~= "string" then return 0 end
   runtimeFileRevs[path] = (runtimeFileRevs[path] or 0) + 1
   return runtimeFileRevs[path]
 end
 
 local function getUiRuntimeFileList(withMtime)
+  if not runtimeFsConfigured then return {} end
   local result = {}
   for _, root in ipairs(runtimeBundleIncludes) do
     local searchRoot = root:gsub("/$", "")

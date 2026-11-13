@@ -50,7 +50,7 @@ end
 
 function C:onLoadingScreenFadeout(missionFile)
   log('D', logTag, 'onLoadingScreenFadeout: ' .. tostring(missionFile))
-  ui_router.navigate("play")
+  -- ui_router.navigate("play")
   if self.state == 4 then return end
   self.state = 3
   self.bufferDelay = self.data.delayBufferFrames

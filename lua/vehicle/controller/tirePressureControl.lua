@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Lets drivers inflate or deflate selected wheel groups from the cab
+
 local M = {}
 M.type = "auxiliary"
 
@@ -17,6 +19,11 @@ local pEnv = 101325
 local activeGroupPressureChange = 0
 local activeGroupPressureElectricsName
 local activeGroupPressureElectricsSmoother = newTemporalSigmoidSmoothing(300000, 500000, 200000, 300000)
+
+local stateData
+local stateDataNameActivePressureChange
+local stateDataNameGroupActive
+local stateDataNameWheelPressure
 
 local function updateGFX(dt)
   pEnv = obj:getEnvPressure()
@@ -114,6 +121,57 @@ end
 local function stopActiveGroups()
   activeGroupPressureChange = 0
   guihooks.message("vehicle.tirePressureControl.message.stoppingActiveGroups", 2, "vehicle.tirePressureControl.inflateDeflate")
+end
+
+local function getState()
+  stateData[stateDataNameActivePressureChange] = activeGroupPressureChange
+
+  for groupName, isActive in pairs(activeGroups) do
+    local stateDataName = stateDataNameGroupActive[groupName]
+    if stateDataName then
+      stateData[stateDataName] = isActive
+    end
+  end
+
+  for _, wheelGroup in pairs(wheelGroups) do
+    for wheelName, wheelData in pairs(wheelGroup.wheelData) do
+      local stateDataName = stateDataNameWheelPressure[wheelName]
+      if stateDataName then
+        stateData[stateDataName] = obj:getGroupPressure(wheelData.pressureGroupId)
+      end
+    end
+  end
+
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  for groupName, stateDataName in pairs(stateDataNameGroupActive) do
+    local newActive = data[stateDataName]
+    if type(newActive) == "boolean" then
+      activeGroups[groupName] = newActive
+    end
+  end
+
+  local newActivePressureChange = data[stateDataNameActivePressureChange]
+  if type(newActivePressureChange) == "number" and newActivePressureChange == newActivePressureChange and inflateMaxFlow and deflateMaxFlow then
+    activeGroupPressureChange = clamp(newActivePressureChange, -deflateMaxFlow, inflateMaxFlow)
+  end
+
+  local environmentPressure = obj:getEnvPressure()
+  for _, wheelGroup in pairs(wheelGroups) do
+    for wheelName, wheelData in pairs(wheelGroup.wheelData) do
+      local newPressure = data[stateDataNameWheelPressure[wheelName]]
+      if type(newPressure) == "number" and newPressure == newPressure and not wheels.wheels[wheelData.wheelId].isBroken then
+        wheelData.currentPressure = clamp(newPressure, environmentPressure, wheelGroup.maxPressure)
+        obj:setGroupPressure(wheelData.pressureGroupId, wheelData.currentPressure)
+      end
+    end
+  end
 end
 
 local function registerQuickAccess()
@@ -223,6 +281,11 @@ local function init(jbeamData)
 end
 
 local function initSecondStage(jbeamData)
+  stateData = {}
+  stateDataNameActivePressureChange = M.name .. "ActivePressureChange"
+  stateDataNameGroupActive = {}
+  stateDataNameWheelPressure = {}
+
   local mode = jbeamData.mode or "manualControl"
   if mode == "manualControl" then
     wheelGroups = {}
@@ -273,6 +336,10 @@ local function initSecondStage(jbeamData)
             isActiveElectricsName = M.name .. "_" .. groupName .. "_isActive"
           }
           activeGroups[groupName] = false
+          stateDataNameGroupActive[groupName] = M.name .. "_" .. groupName .. "Active"
+          for wheelName in pairs(wheelData) do
+            stateDataNameWheelPressure[wheelName] = M.name .. wheelName .. "Pressure"
+          end
         else
           log("D", "tirePressureControl.initSecondStage", "No valid wheel data provided for group: " .. (groupName or "nil"))
         end
@@ -298,5 +365,8 @@ M.toggleGroupState = toggleGroupState
 M.startInflateActiveGroups = startInflateActiveGroups
 M.startDeflateActiveGroups = startDeflateActiveGroups
 M.stopActiveGroups = stopActiveGroups
+
+M.getState = getState
+M.setState = setState
 
 return M

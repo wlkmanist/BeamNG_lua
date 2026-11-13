@@ -7,10 +7,13 @@ local M = {}
 M.dependencies = {}
 
 local didTestDrive
+local testDriveDamageDetected = false
+local leavingSale = false
 
 local leaveSaleDist = 25
 local vehToSalePosDist = 10
 local arriveToVehInspectionDist = 20
+local purchaseTetherDist = 3
 local leaveSaleTether
 local testDriveTime = 60
 
@@ -47,8 +50,21 @@ local function removeSaleTether()
     leaveSaleTether = nil
   end
 end
+
+local function openPurchaseMenuWithTether(shopId)
+  career_modules_vehicleShopping.openPurchaseMenu("inspect", shopId)
+  local playerVeh = getPlayerVehicle(0)
+  if not playerVeh then
+    log("W", "inspectVehicle", "no player vehicle when opening purchase menu; menu will not be tethered")
+    return
+  end
+  career_modules_tether.removeTether(purchaseTether)
+  purchaseTether = career_modules_tether.startSphereTether(playerVeh:getPosition(), purchaseTetherDist, function() career_career.closeAllMenus() end)
+end
 local function resetInspectionData()
   didTestDrive = false
+  testDriveDamageDetected = false
+  leavingSale = false
   timeLeftToInspectVehicle = 0
   hasPlayerArrivedToVehInspection = false
   testDriveInfo = nil
@@ -56,6 +72,8 @@ local function resetInspectionData()
 
   removeSaleTether()
   removeVehTetherToSalePos()
+  career_modules_tether.removeTether(purchaseTether)
+  purchaseTether = nil
 
   core_groundMarkers.setPath(nil)
 
@@ -69,19 +87,22 @@ local function spawnVehicle(shopId)
   spawnOptions.config = vehicleInfo.key
   spawnOptions.autoEnterVehicle = false
   local newVeh = core_vehicles.spawnNewVehicle(vehicleInfo.model_key, spawnOptions)
-  core_vehicleBridge.executeAction(newVeh,'setIgnitionLevel', 0)
-  core_vehicleBridge.executeAction(newVeh, 'setFreeze', true)
-  newVeh:queueLuaCommand(string.format("partCondition.initConditions(nil, %d, nil, %f)", vehicleInfo.Mileage, career_modules_vehicleShopping.getVisualValueFromMileage(vehicleInfo.Mileage)))
+  if newVeh then
+    core_vehicleBridge.executeAction(newVeh,'setIgnitionLevel', 0)
+    core_vehicleBridge.executeAction(newVeh, 'setFreeze', true)
+    newVeh:queueLuaCommand(string.format("partCondition.initConditions(nil, %d, nil, %f)", vehicleInfo.Mileage, career_modules_vehicleShopping.getVisualValueFromMileage(vehicleInfo.Mileage)))
+  end
   return newVeh
 end
 
 local function showVehicle(vehicleInfo)
-  local vehObj
-  if vehicleInfo then
-    vehObj = spawnVehicle(vehicleInfo.shopId)
-    testDriveVehInfo = {shopId = vehicleInfo.shopId, vehId = vehObj:getID(), name = vehicleInfo.Brand .. " " .. vehicleInfo.Name, value = vehicleInfo.Value}
-    --career_modules_testDrive.resetData()
+  if not vehicleInfo then return end
+  local vehObj = spawnVehicle(vehicleInfo.shopId)
+  if not vehObj then
+    log("E", "inspectVehicle", "Failed to spawn vehicle for inspection (shopId=" .. tostring(vehicleInfo.shopId) .. ")")
+    return
   end
+  testDriveVehInfo = {shopId = vehicleInfo.shopId, vehId = vehObj:getID(), name = vehicleInfo.Brand .. " " .. vehicleInfo.Name, value = vehicleInfo.Value}
 
   return vehObj
 end
@@ -144,15 +165,20 @@ local function leaveSaleCallback(despawnPreviousVehMode, freezePreviousVeh, chec
     checkDamage = true
   end
   if defaultLeaveMessage == nil then
-    defaultLeaveMessage = "You have left the sale."
+    defaultLeaveMessage = _tr("ui.career.inspectVehicle.message.leftSale")
   end
   if not testDriveVehInfo then return end
+  -- resetInspectionData only runs at the very end of the job below, so without a
+  -- synchronous latch every call landing in that window pays the damage claim again
+  if leavingSale then return end
+  leavingSale = true
 
   -- Store the vehicle ID locally to prevent race condition
   local vehId = testDriveVehInfo.vehId
 
   core_jobsystem.create(function(job)
     job.sleep(0.1)
+    career_career.closeAllMenus()
     if career_modules_testDrive.isActive() then
       career_modules_testDrive.abandonTestDrive()
     else
@@ -193,15 +219,15 @@ local function leaveSaleCallback(despawnPreviousVehMode, freezePreviousVeh, chec
 
 end
 
-local function startInspection(vehicleInfo, teleportToVehicle)
-  core_jobsystem.create(function(job)
+local function startInspection(vehicleInfo, teleportToVehicle, job)
+  local function doStartInspection(job)
     if testDriveInfo then
       leaveSaleCallback("despawn")
       job.sleep(0.35)
     end
 
     local vehToInspect = showVehicle(vehicleInfo)
-    if not vehToInspect then return end
+    if not vehToInspect then return false end
 
     local parkingSpot
     local doesThePlayerHaveToDriveThere = false
@@ -253,16 +279,24 @@ local function startInspection(vehicleInfo, teleportToVehicle)
       addVehTetherToSalePos()
     end
     gameplay_rawPois.clear()
-  end,1)
+    return true
+  end
+
+  if job then
+    return doStartInspection(job)
+  end
+  core_jobsystem.create(function(job)
+    doStartInspection(job)
+  end, 1)
 end
 
 local function buySpawnedVehicle(buyVehicleOptions)
   career_modules_vehicleShopping.buySpawnedVehicle(buyVehicleOptions)
-  leaveSaleCallback("dontDespawn", false, false, "You purchased the vehicle.")
+  leaveSaleCallback("dontDespawn", false, false, _tr("ui.career.inspectVehicle.message.purchasedVehicle"))
 end
 
 local function playerDidntArriveOnTime()
-  leaveSaleCallback("flagForDeletion", true, false, "The seller has waited for too long. He has canceled the sale.")
+  leaveSaleCallback("flagForDeletion", true, false, _tr("ui.career.inspectVehicle.message.sellerTimedOut"))
 end
 
 local function updateTimeLeftToInspectVehicle(dtSim)
@@ -291,7 +325,7 @@ local function checkTestDriveVehMoved(vehObj)
   if checkTestDriveVehMovedFlag then
     local distanceToVeh = vehObj:getPosition():distance(testDriveInfo.startParkingSpot.pos)
     if distanceToVeh > vehToSalePosDist then
-      M.leaveSaleCallback("flagForDeletion", false, false, "The seller's vehicle has been moved. The sale has been cancelled.")
+      M.leaveSaleCallback("flagForDeletion", false, false, _tr("ui.career.inspectVehicle.message.vehicleMovedSaleCancelled"))
     end
   end
 end
@@ -321,9 +355,18 @@ end
 
 local function onTestDriveStarted()
   didTestDrive = true
+  testDriveDamageDetected = false
   -- Remove the sale tether during test drive because player will be in the test vehicle
   removeSaleTether()
   removeVehTetherToSalePos()
+end
+
+local function onTestDriveDamageDetected()
+  testDriveDamageDetected = true
+end
+
+local function isTestDriveDamageDetected()
+  return testDriveDamageDetected
 end
 
 local function onAnyMissionChanged(status, id)
@@ -380,7 +423,7 @@ local function getInspectVehiclePoi()
         pos = testDriveInfo.startParkingSpot.pos,
         icon = "mission_drift_triangle",
         name = testDriveInfo.dealershipName,
-        description = "The seller awaits you at the parking spot.",
+        description = _tr("ui.career.inspectVehicle.bigmap.sellerAwaitingDescription"),
         thumbnail = testDriveInfo.dealershipPreview,
         previews = {testDriveInfo.dealershipPreview},
       }
@@ -403,7 +446,7 @@ local function onActivityAcceptGatherData(elemData, activityData)
       local data = {
         icon = "poi_dealer_1_rect",
         heading = elem.testDriveInfo.vehicleInfo.Brand .. " - " .. elem.testDriveInfo.vehicleInfo.Name,
-        preheadings = {"Purchase Vehicle"},
+        preheadings = {_tr("ui.career.inspectVehicle.prompt.purchaseVehicle")},
         sorting = {
           type = elem.type,
           id = elem.id
@@ -411,16 +454,14 @@ local function onActivityAcceptGatherData(elemData, activityData)
         props = {
           {
             icon = "carDealer",
-            keyLabel = "From : " .. elem.testDriveInfo.vehicleInfo.sellerName
+            keyLabel = core_locales.contextTranslate("ui.career.inspectVehicle.prompt.fromSeller", {sellerName = elem.testDriveInfo.vehicleInfo.sellerName})
           }
         }
       }
 
-      data.buttonLabel = "See Purchase Information"
+      data.buttonLabel = _tr("ui.career.inspectVehicle.prompt.seePurchaseInformation")
       data.buttonFun = function()
-        --career_modules_vehicleShopping.openPurchaseMenu("inspect", elem.testDriveInfo.vehicleInfo.shopId)
-        career_modules_vehicleShopping.openPurchaseMenu("inspect", elem.testDriveInfo.vehicleInfo.shopId)
-        purchaseTether = career_modules_tether.startSphereTether(getPlayerVehicle(0):getPosition(), 3, function() career_career.closeAllMenus() end)
+        openPurchaseMenuWithTether(elem.testDriveInfo.vehicleInfo.shopId)
       end
       table.insert(activityData, data)
     end
@@ -432,20 +473,38 @@ local function getDidTestDrive()
 end
 
 local function onPurchaseMenuClosed()
-  career_modules_tether.removeTether(purchaseTether)
-  purchaseTether = nil
+  if purchaseTether then
+    career_modules_tether.removeTether(purchaseTether)
+    purchaseTether = nil
+  end
 end
 
 local function onTestDriveAbandoned()
-  leaveSaleCallback("flagForDeletion", true, true, "You have abandoned the sale.")
+  leaveSaleCallback("flagForDeletion", true, true, _tr("ui.career.inspectVehicle.message.abandonedSale"))
 end
 
 local function onTestDriveEndedAfterFade()
   if testDriveVehInfo then
+    log("D", "inspectVehicle", "onTestDriveEndedAfterFade: re-arming tethers for vehId=" .. tostring(testDriveVehInfo.vehId))
     addSaleTether()
     addVehTetherToSalePos()
+    gameplay_rawPois.clear()
+
+    -- auto-open purchase screen after returning from test drive
+    if testDriveInfo and testDriveInfo.vehicleInfo then
+      openPurchaseMenuWithTether(testDriveInfo.vehicleInfo.shopId)
+    end
   else
     log("W", "inspectVehicle", "onTestDriveEndedAfterFade fired without testDriveVehInfo; sale tether will NOT be re-armed")
+  end
+end
+
+local function onVehicleSwitched(oldId, newId, player)
+  if testDriveVehInfo and newId == testDriveVehInfo.vehId and not career_modules_testDrive.isActive() then
+    local veh = getObjectByID(newId)
+    if veh then
+      core_vehicleBridge.executeAction(veh, 'setFreeze', true)
+    end
   end
 end
 
@@ -459,6 +518,8 @@ M.startInspection = startInspection
 M.getSpawnedVehicleInfo = getSpawnedVehicleInfo
 M.getDidTestDrive = getDidTestDrive
 M.getInspectVehiclePoi = getInspectVehiclePoi
+M.onTestDriveDamageDetected = onTestDriveDamageDetected
+M.isTestDriveDamageDetected = isTestDriveDamageDetected
 
 M.onDeliveryModeStarted = onDeliveryModeStarted
 M.onVehicleDestroyed = onVehicleDestroyed
@@ -469,6 +530,7 @@ M.onGetRawPoiListForLevel = onGetRawPoiListForLevel
 M.onPurchaseMenuClosed = onPurchaseMenuClosed
 M.onTestDriveAbandoned = onTestDriveAbandoned
 M.onTestDriveEndedAfterFade = onTestDriveEndedAfterFade
+M.onVehicleSwitched = onVehicleSwitched
 
 -- internal only
 M.leaveSaleCallback = leaveSaleCallback

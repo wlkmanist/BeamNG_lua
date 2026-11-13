@@ -2,10 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
--- First-party 2D polygon boolean (Martinez-style segment pipeline).
--- Algorithm: F. Martinez (2008); adapted from the MIT polybooljs approach
--- (Sean Connelly / @voidqk). Used by transportNetwork junctions (unionMany).
--- Flat module locals only — no nested functions (LuaJIT closure cost / FNEW).
+-- First-party 2D polygon boolean (Martinez-style segment pipeline), adapted from the MIT polybooljs approach.
 
 local M = {}
 
@@ -13,72 +10,81 @@ local M = {}
 local geom = require('editor/toolUtilities/geom')
 
 -- Module constants.
-local floor = math.floor
--- Point-comparison tolerance for the whole sweep (coincidence, collinearity, above/below, intersection). Keep it
--- TIGHT. Widening it (a past 1e-4 experiment) is counter-productive: the coincidence tests below then fold
--- genuinely-distinct endpoints together, so real metre-scale edges lose their start-event insertion and trip the
--- orphaned-end path in ixCalculate en masse. At 1e-10 only true numeric duplicates merge, so an orphaned end is a
--- sub-nm twin that is safe to discard (see the st == nil branch in ixCalculate).
-local eps = 1e-10
+local floor, abs, min, max = math.floor, math.abs, math.min, math.max
+local eps = 1e-10 -- sweep tolerance; keep tight (widening folds distinct endpoints and breaks the coincidence tests).
+-- Input grid in the local frame. An edge leaning less than eps per piece reads as vertical once split, and orders its own ends
+-- backwards; snapped, an edge is either square or leans by at least this.
+local SNAP = 1e-6
+-- A clip corner this close to a subject corner is moved onto it. Two outlines offset from the same edge agree only to a few
+-- SNAP, and edges that nearly but not exactly coincide make the sweep drop whole rings.
+local WELD = 1e-4
+local SPLIT_CELL = 4.0 -- bucket size for the corners splitOnto looks up
 
-local pointsSame2D = geom.pointsSame2D
-local pointsCompare2D = geom.pointsCompare2D
-local pointAboveOrOnLine2D = geom.pointAboveOrOnLine2D
-local pointsCollinear2D = geom.pointsCollinear2D
-local pointBetween2D = geom.pointBetween2D
-local linesIntersect2D = geom.linesIntersect2D
+-- Segment-selection fill tables, indexed by the four fill flags. 1 => output filled above, 2 => below, 0 => discard.
+local SEL_UNION = {
+  0, 2, 1, 0,
+  2, 2, 0, 0,
+  1, 0, 1, 0,
+  0, 0, 0, 0,
+}
+local SEL_DIFFERENCE = { -- primary minus secondary: kept side is myFill and not otherFill.
+  0, 0, 0, 0,
+  2, 0, 2, 0,
+  1, 1, 0, 0,
+  0, 1, 2, 0,
+}
 
--- Scratch compare contexts (reuse; never nest predicate closures).
+-- Scratch compare contexts (reused; never nest predicate closures).
 local eventCtx = { isStart = false, pt = nil, otherPt = nil }
 local statusCtx = { ev = nil }
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Point helpers
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+-- Copies a point.
 local function ptCopy(p) return { x = p.x, y = p.y } end
 
+-- Normalises a point from {x,y} or {[1],[2]} form; nil passes through.
 local function ptFrom(p)
   if not p then return nil end
   if p.x then return { x = p.x, y = p.y } end
   return { x = p[1], y = p[2] }
 end
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Doubly-linked list (no methods / no predicate closures)
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
+-- Creates an empty list.
 local function llCreate()
   local root = { root = true, next = nil, prev = nil }
   return { root = root }
 end
 
+-- True if node is a real (non-root) member.
 local function llExists(list, node)
   return node ~= nil and node ~= list.root
 end
 
+-- True if the list has no nodes.
 local function llIsEmpty(list)
   return list.root.next == nil
 end
 
+-- Returns the first node.
 local function llGetHead(list)
   return list.root.next
 end
 
+-- Unlinks a node from its list.
 local function llNodeRemove(node)
   if node.prev then node.prev.next = node.next end
   if node.next then node.next.prev = node.prev end
   node.prev, node.next = nil, nil
 end
 
+-- Wraps a data table as a fresh (unlinked) node.
 local function llNode(data)
   data.prev = nil
   data.next = nil
   return data
 end
 
--- Insert node before the first node where shouldBefore(here) is true; else append.
--- shouldBefore is a module-level fn(here, ctx) — ctx carries compare state.
+-- Inserts node before the first entry where shouldBefore(here, ctx) is true, else appends.
 local function llInsertBefore(list, node, shouldBefore, ctx)
   local root = list.root
   local last, here = root, root.next
@@ -98,7 +104,7 @@ local function llInsertBefore(list, node, shouldBefore, ctx)
   node.next = nil
 end
 
--- Find first node where shouldStop(here, ctx); return before/after for insert.
+-- Finds the first node where shouldStop(here, ctx); returns the prev/here pair for an insert.
 local function llFindTransition(list, shouldStop, ctx)
   local root = list.root
   local prev, here = root, root.next
@@ -110,6 +116,7 @@ local function llFindTransition(list, shouldStop, ctx)
   return prev, here
 end
 
+-- Links node between prev and here.
 local function llInsertAt(prev, here, node)
   node.prev = prev
   node.next = here
@@ -118,10 +125,7 @@ local function llInsertAt(prev, here, node)
   return node
 end
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Segments
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
+-- New segment with empty fill flags.
 local function segmentNew(start, finish)
   return {
     start = start,
@@ -131,6 +135,7 @@ local function segmentNew(start, finish)
   }
 end
 
+-- Copies a segment's endpoints and myFill (otherFill reset).
 local function segmentCopy(start, finish, seg)
   return {
     start = start,
@@ -140,15 +145,14 @@ local function segmentCopy(start, finish, seg)
   }
 end
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Intersecter (explicit state table; all helpers at module scope)
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
+-- New intersecter state.
 local function ixCreate(selfIntersection)
   return { eventRoot = llCreate(), selfIntersection = selfIntersection }
 end
 
+-- Orders two events by point, then start/end, then above/below.
 local function ixEventCompare(p1Start, p1a, p1b, p2Start, p2a, p2b)
+  local pointsCompare2D, pointsSame2D, pointAboveOrOnLine2D = geom.pointsCompare2D, geom.pointsSame2D, geom.pointAboveOrOnLine2D
   local comp = pointsCompare2D(p1a, p2a, eps)
   if comp ~= 0 then return comp end
   if pointsSame2D(p1b, p2b, eps) then return 0 end
@@ -158,11 +162,12 @@ local function ixEventCompare(p1Start, p1a, p1b, p2Start, p2a, p2b)
   return pointAboveOrOnLine2D(p1b, left, right, eps) and 1 or -1
 end
 
--- ctx = { isStart, pt, otherPt }
+-- Event insert predicate; ctx = { isStart, pt, otherPt }.
 local function ixEventShouldBefore(here, ctx)
   return ixEventCompare(ctx.isStart, ctx.pt, ctx.otherPt, here.isStart, here.pt, here.other.pt) < 0
 end
 
+-- Inserts an event in sweep order.
 local function ixEventAdd(ix, ev, otherPt)
   eventCtx.isStart = ev.isStart
   eventCtx.pt = ev.pt
@@ -170,6 +175,7 @@ local function ixEventAdd(ix, ev, otherPt)
   llInsertBefore(ix.eventRoot, ev, ixEventShouldBefore, eventCtx)
 end
 
+-- Adds a segment's start event.
 local function ixEventAddSegmentStart(ix, seg, primary)
   local evStart = llNode({
     isStart = true,
@@ -183,6 +189,7 @@ local function ixEventAddSegmentStart(ix, seg, primary)
   return evStart
 end
 
+-- Adds a segment's end event, linked to its start.
 local function ixEventAddSegmentEnd(ix, evStart, seg, primary)
   local evEnd = llNode({
     isStart = false,
@@ -196,12 +203,14 @@ local function ixEventAddSegmentEnd(ix, evStart, seg, primary)
   ixEventAdd(ix, evEnd, evStart.pt)
 end
 
+-- Adds both events for a segment.
 local function ixEventAddSegment(ix, seg, primary)
   local evStart = ixEventAddSegmentStart(ix, seg, primary)
   ixEventAddSegmentEnd(ix, evStart, seg, primary)
   return evStart
 end
 
+-- Moves an event's end point and re-inserts it.
 local function ixEventUpdateEnd(ix, ev, finish)
   llNodeRemove(ev.other)
   ev.seg.finish = finish
@@ -209,13 +218,20 @@ local function ixEventUpdateEnd(ix, ev, finish)
   ixEventAdd(ix, ev.other, ev.pt)
 end
 
+-- Splits a segment at pt, queueing the tail. A cut on one of the segment's own ends is refused: there is nothing to split
+-- off, and the zero length piece it would leave reads as parallel to every segment and collinear with every segment, so it
+-- goes on to chop a good edge at a point metres off that edge's own line and the chainer then finds no rings at all.
 local function ixEventDivide(ix, ev, pt)
+  local pointsSame2D = geom.pointsSame2D
+  if pointsSame2D(pt, ev.seg.start, eps) or pointsSame2D(pt, ev.seg.finish, eps) then return nil end
   local ns = segmentCopy(pt, ev.seg.finish, ev.seg)
   ixEventUpdateEnd(ix, ev, pt)
   return ixEventAddSegment(ix, ns, ev.primary)
 end
 
+-- Orders two status entries by vertical position.
 local function ixStatusCompare(ev1, ev2)
+  local pointsCollinear2D, pointAboveOrOnLine2D = geom.pointsCollinear2D, geom.pointAboveOrOnLine2D
   local a1, a2 = ev1.seg.start, ev1.seg.finish
   local b1, b2 = ev2.seg.start, ev2.seg.finish
   if pointsCollinear2D(a1, b1, b2, eps) then
@@ -225,12 +241,15 @@ local function ixStatusCompare(ev1, ev2)
   return pointAboveOrOnLine2D(a1, b1, b2, eps) and 1 or -1
 end
 
--- ctx = { ev }
+-- Status insert predicate; ctx = { ev }.
 local function ixStatusShouldStop(here, ctx)
   return ixStatusCompare(ctx.ev, here.ev) > 0
 end
 
+-- Handles the intersection/overlap of two segments, dividing them as needed.
 local function ixCheckIntersection(ix, ev1, ev2)
+  local linesIntersect2D, pointsCollinear2D, pointsSame2D, pointBetween2D =
+    geom.linesIntersect2D, geom.pointsCollinear2D, geom.pointsSame2D, geom.pointBetween2D
   local seg1, seg2 = ev1.seg, ev2.seg
   local a1, a2, b1, b2 = seg1.start, seg1.finish, seg2.start, seg2.finish
   local i = linesIntersect2D(a1, a2, b1, b2, eps)
@@ -273,13 +292,19 @@ local function ixCheckIntersection(ix, ev1, ev2)
   return nil
 end
 
+-- Sweeps the event queue, resolving fill flags; returns the annotated segments.
 local function ixCalculate(ix, primaryInverted, secondaryInverted)
   local statusRoot = llCreate()
   local segments = {}
   local selfIntersection = ix.selfIntersection
   local eventRoot = ix.eventRoot
 
+  -- Termination guard: degenerate/overlapping input can re-queue events forever; cap and raise so the caller's pcall falls back.
+  local iterGuard, iterCap = 0, 500000
+
   while not llIsEmpty(eventRoot) do
+    iterGuard = iterGuard + 1
+    if iterGuard > iterCap then error('polyBool sweep exceeded iteration cap (degenerate/overlapping input)') end
     local ev = llGetHead(eventRoot)
     local skipRemove = false
 
@@ -327,7 +352,9 @@ local function ixCalculate(ix, primaryInverted, secondaryInverted)
           if ev.seg.otherFill == nil then
             local inside
             if not below then
-              inside = ev.primary and secondaryInverted or primaryInverted
+              -- Written out rather than as "a and b or c", which silently yields primaryInverted whenever
+              -- secondaryInverted is false, which is the usual case.
+              if ev.primary then inside = secondaryInverted else inside = primaryInverted end
             else
               if ev.primary == below.primary then
                 inside = below.seg.otherFill.above
@@ -343,11 +370,7 @@ local function ixCalculate(ix, primaryInverted, secondaryInverted)
       end
     else
       local st = ev.status
-      -- st == nil: this end event's start was dropped earlier as coincident (within eps) with another point, so
-      -- the segment was never inserted on the sweep. With a tight eps that only happens for a true numeric
-      -- duplicate of a segment already swept (junction arms legitimately share boundary edges), which contributes
-      -- no new boundary. Fall through and let the loop tail discard the event. This MUST be non-fatal: erroring
-      -- here aborted the entire junction seal (caller pcall -> empty regions) over a redundant sub-nm sliver.
+      -- st == nil: this end's start was dropped as coincident (tight eps => a true duplicate edge), so discard it non-fatally.
       if st then
         if llExists(statusRoot, st.prev) and llExists(statusRoot, st.next) then
           ixCheckIntersection(ix, st.prev.ev, st.next.ev)
@@ -370,7 +393,9 @@ local function ixCalculate(ix, primaryInverted, secondaryInverted)
   return segments
 end
 
+-- Adds every edge of a region as segments.
 local function ixAddRegion(ix, region)
+  local pointsCompare2D = geom.pointsCompare2D
   local n = #region
   if n < 2 then return end
   local pt2 = region[n]
@@ -388,17 +413,7 @@ local function ixAddRegion(ix, region)
   end
 end
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Segment selection
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-local SEL_UNION = {
-  0, 2, 1, 0,
-  2, 2, 0, 0,
-  1, 0, 1, 0,
-  0, 0, 0, 0,
-}
-
+-- Keeps the segments the selection table marks, tagging each output fill side.
 local function selectSegments(segments, selection)
   local result = {}
   for i = 1, #segments do
@@ -421,10 +436,7 @@ local function selectSegments(segments, selection)
   return result
 end
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Segment chainer
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
+-- Reverses chain[index] in place.
 local function reverseChain(chains, index)
   local c = chains[index]
   local n = #c
@@ -433,7 +445,9 @@ local function reverseChain(chains, index)
   end
 end
 
+-- Appends chain2 onto chain1, dropping collinear seams, then removes chain2.
 local function appendChain(chains, index1, index2)
+  local pointsCollinear2D = geom.pointsCollinear2D
   local chain1, chain2 = chains[index1], chains[index2]
   local tail, tail2 = chain1[#chain1], chain1[#chain1 - 1]
   local head, head2 = chain2[1], chain2[2]
@@ -450,7 +464,9 @@ local function appendChain(chains, index1, index2)
   table.remove(chains, index2)
 end
 
+-- Stitches the swept segments into closed region rings.
 local function segmentChainer(segments)
+  local pointsSame2D, pointsCollinear2D = geom.pointsSame2D, geom.pointsCollinear2D
   local chains, regions = {}, {}
 
   for si = 1, #segments do
@@ -458,7 +474,7 @@ local function segmentChainer(segments)
     local pt1, pt2 = seg.start, seg.finish
     if not pointsSame2D(pt1, pt2, eps) then
       local firstIndex, firstHead, firstPt1 = 0, false, false
-      local secondIndex, secondHead, secondPt1 = 0, false, false
+      local secondIndex, secondHead = 0, false
       local matchCount = 0
 
       for i = 1, #chains do
@@ -481,7 +497,7 @@ local function segmentChainer(segments)
           if matchCount == 1 then
             firstIndex, firstHead, firstPt1 = i, matchesHead, matchesPt1
           else
-            secondIndex, secondHead, secondPt1 = i, matchesHead, matchesPt1
+            secondIndex, secondHead = i, matchesHead
             break
           end
         end
@@ -540,17 +556,16 @@ local function segmentChainer(segments)
   return regions
 end
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Normalize / core API
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
+-- True if t looks like a list of points.
 local function isPointList(t)
   if type(t) ~= 'table' or #t < 1 then return false end
   local p = t[1]
   return type(p) == 'table' and (p.x ~= nil or p[1] ~= nil)
 end
 
+-- Drops duplicate and closing points from a region.
 local function normalizeRegion(region)
+  local pointsSame2D = geom.pointsSame2D
   local out, n = {}, 0
   for i = 1, #region do
     local p = ptFrom(region[i])
@@ -567,6 +582,7 @@ local function normalizeRegion(region)
   return out
 end
 
+-- Coerces flexible input (a { regions }, a single ring, or a list of rings) into { regions, inverted }.
 local function normalize(poly)
   if not poly then return { regions = {}, inverted = false } end
   if poly.regions then
@@ -592,6 +608,7 @@ local function normalize(poly)
   return { regions = {}, inverted = false }
 end
 
+-- Builds the self-intersected segment set for one poly.
 local function segmentsFromPoly(poly)
   poly = normalize(poly)
   local ix = ixCreate(true)
@@ -601,6 +618,7 @@ local function segmentsFromPoly(poly)
   return { segments = ixCalculate(ix, poly.inverted, false), inverted = poly.inverted }
 end
 
+-- Combines two segment sets into one annotated set.
 local function combineSegments(seg1, seg2)
   local ix = ixCreate(false)
   local s1, s2 = seg1.segments, seg2.segments
@@ -619,46 +637,130 @@ local function combineSegments(seg1, seg2)
   }
 end
 
+-- Selects the union of a combined set.
 local function selectUnion(combined)
   return { segments = selectSegments(combined.combined, SEL_UNION), inverted = combined.inverted1 or combined.inverted2 }
 end
 
+-- Selects the difference of a combined set.
+local function selectDifference(combined)
+  return { segments = selectSegments(combined.combined, SEL_DIFFERENCE), inverted = combined.inverted1 and not combined.inverted2 }
+end
+
+-- Chains a selected segment set back into regions.
 local function polygonFromSegments(seg)
   return { regions = segmentChainer(seg.segments), inverted = seg.inverted }
 end
 
+-- A ring moved into the local frame and onto the input grid.
+local function toLocal(ring, ox, oy)
+  local out = {}
+  for k = 1, #ring do
+    out[k] = { x = floor((ring[k].x - ox) / SNAP + 0.5) * SNAP, y = floor((ring[k].y - oy) / SNAP + 0.5) * SNAP }
+  end
+  return out
+end
+
+-- Moves every corner of `clip` that lies within WELD of a corner of `subject` onto that corner, in place.
+local function weld(subject, clip)
+  local cells = {}
+  for r = 1, #subject.regions do
+    local ring = subject.regions[r]
+    for k = 1, #ring do
+      local p = ring[k]
+      cells[floor(p.x / WELD) * 1e8 + floor(p.y / WELD)] = p
+    end
+  end
+  for r = 1, #clip.regions do
+    local ring = clip.regions[r]
+    for k = 1, #ring do
+      local p = ring[k]
+      local cx, cy, best, bd = floor(p.x / WELD), floor(p.y / WELD), nil, WELD * WELD
+      for dx = -1, 1 do
+        for dy = -1, 1 do
+          local s = cells[(cx + dx) * 1e8 + cy + dy]
+          if s then
+            local d = (s.x - p.x) ^ 2 + (s.y - p.y) ^ 2
+            if d <= bd then best, bd = s, d end
+          end
+        end
+      end
+      if best then p.x, p.y = best.x, best.y end
+    end
+  end
+end
+
+-- Adds every corner of `from` lying within WELD of an edge of `into`, short of its ends, to that edge. Two outlines cut
+-- from the same road edge run along one line a hair apart; sharing every corner on it, they are one edge to the sweep.
+local function splitOnto(into, from)
+  local cells = {}
+  for r = 1, #from.regions do
+    local ring = from.regions[r]
+    for k = 1, #ring do
+      local p = ring[k]
+      local key = floor(p.x / SPLIT_CELL) * 1e8 + floor(p.y / SPLIT_CELL)
+      local list = cells[key]
+      if not list then list = {} cells[key] = list end
+      list[#list + 1] = p
+    end
+  end
+  local w2 = WELD * WELD
+  for r = 1, #into.regions do
+    local ring, out = into.regions[r], {}
+    local n = #ring
+    for k = 1, n do
+      local a, b = ring[k], ring[k % n + 1]
+      out[#out + 1] = a
+      local dx, dy = b.x - a.x, b.y - a.y
+      local L2 = dx * dx + dy * dy
+      if L2 > w2 then
+        local hits
+        for cx = floor((min(a.x, b.x) - WELD) / SPLIT_CELL), floor((max(a.x, b.x) + WELD) / SPLIT_CELL) do
+          for cy = floor((min(a.y, b.y) - WELD) / SPLIT_CELL), floor((max(a.y, b.y) + WELD) / SPLIT_CELL) do
+            local list = cells[cx * 1e8 + cy]
+            for i = 1, (list and #list or 0) do
+              local p = list[i]
+              local t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2
+              local ex, ey = a.x + dx * t - p.x, a.y + dy * t - p.y
+              if t > 0 and t < 1 and ex * ex + ey * ey <= w2
+                 and (p.x - a.x) ^ 2 + (p.y - a.y) ^ 2 > w2 and (p.x - b.x) ^ 2 + (p.y - b.y) ^ 2 > w2 then
+                hits = hits or {}
+                hits[#hits + 1] = { t = t, p = p }
+              end
+            end
+          end
+        end
+        if hits then
+          table.sort(hits, function(u, v) return u.t < v.t end)
+          for i = 1, #hits do out[#out + 1] = { x = hits[i].p.x, y = hits[i].p.y } end
+        end
+      end
+    end
+    into.regions[r] = out
+  end
+end
+
+-- Unions many polys. Works in a local frame near the origin so the absolute epsilon does not underflow at world coords.
 local function unionMany(polys)
   if not polys or #polys == 0 then return { regions = {}, inverted = false } end
 
-  -- Work in a LOCAL frame near the origin. Every compare/intersection epsilon in this kernel (and geom)
-  -- is ABSOLUTE (1e-10), but junction geometry arrives in WORLD coords (imported terrain sits tens of
-  -- thousands of metres from the origin), where 1e-10 is right at float64's resolution. Intersection
-  -- points that should coincide then differ by more than eps and a segment collapses mid-sweep -> the
-  -- "zero-length segment" error. Shifting to a local origin makes coords small (metres) so the epsilons
-  -- behave; the result is shifted straight back. Pure translation: the union shape is unchanged.
   local first = polys[1].regions and polys[1].regions[1] and polys[1].regions[1][1]
   local ox, oy = first and first.x or 0, first and first.y or 0
 
   local shifted = {}
   for i = 1, #polys do
     local regs, out = polys[i].regions or {}, {}
-    for r = 1, #regs do
-      local ring, ringOut = regs[r], {}
-      for k = 1, #ring do ringOut[k] = { x = ring[k].x - ox, y = ring[k].y - oy } end
-      out[r] = ringOut
-    end
+    for r = 1, #regs do out[r] = toLocal(regs[r], ox, oy) end
     shifted[i] = { regions = out, inverted = polys[i].inverted }
   end
 
   local acc = segmentsFromPoly(shifted[1])
   for i = 2, #shifted do
     local seg2 = segmentsFromPoly(shifted[i])
-    local comb = combineSegments(acc, seg2)
-    acc = selectUnion(comb)
+    acc = selectUnion(combineSegments(acc, seg2))
   end
   local result = polygonFromSegments(acc)
 
-  -- Shift the result back to world coords (fresh points, so no aliasing / double-shift).
   local regs, outRegions = result.regions, {}
   for r = 1, #regs do
     local ring, ringOut = regs[r], {}
@@ -668,8 +770,110 @@ local function unionMany(polys)
   return { regions = outRegions, inverted = result.inverted }
 end
 
+-- Boolean difference: subject minus clip; accepts the same flexible input as normalize. Local-frame like unionMany.
+local function difference(subject, clip)
+  local a, b = normalize(subject), normalize(clip)
+  if #a.regions == 0 then return { regions = {}, inverted = a.inverted } end
+  if #b.regions == 0 then return { regions = a.regions, inverted = a.inverted } end -- nothing to subtract
+
+  local first = a.regions[1] and a.regions[1][1]
+  local ox, oy = first and first.x or 0, first and first.y or 0
+
+  local sa = { regions = {}, inverted = a.inverted }
+  for r = 1, #a.regions do sa.regions[r] = toLocal(a.regions[r], ox, oy) end
+  local sb = { regions = {}, inverted = b.inverted }
+  for r = 1, #b.regions do sb.regions[r] = toLocal(b.regions[r], ox, oy) end
+  weld(sa, sb)
+  splitOnto(sa, sb)
+  splitOnto(sb, sa)
+
+  local comb = combineSegments(segmentsFromPoly(sa), segmentsFromPoly(sb))
+  local result = polygonFromSegments(selectDifference(comb))
+
+  local outRegions = {}
+  for r = 1, #result.regions do
+    local ring, ringOut = result.regions[r], {}
+    for k = 1, #ring do ringOut[k] = { x = ring[k].x + ox, y = ring[k].y + oy } end
+    outRegions[r] = ringOut
+  end
+  return { regions = outRegions, inverted = result.inverted }
+end
+
+
+--- A point to test a ring's nesting by: the midpoint of its longest edge. ON the boundary rather than inside it, which is
+--- what makes it cheap -- a ring is never asked about itself, and every other ring gives a clean answer for a point on some
+--- unrelated outline.
+local function probePoint(r)
+  local n, bi, bl = #r, 1, -1
+  for i = 1, n do
+    local a, b = r[i], r[i % n + 1]
+    local l = (b.x - a.x) ^ 2 + (b.y - a.y) ^ 2
+    if l > bl then bi, bl = i, l end
+  end
+  local a, b = r[bi], r[bi % n + 1]
+  return (a.x + b.x) * 0.5, (a.y + b.y) * 0.5
+end
+
+local function wind(r, wantCCW)
+  if (geom.ringSignedArea2(r) >= 0) ~= wantCCW then
+    for a = 1, floor(#r * 0.5) do r[a], r[#r - a + 1] = r[#r - a + 1], r[a] end
+  end
+  return r
+end
+
+--- Sort a boolean result's flat ring list into outer rings each carrying its own holes, wound CCW outside and CW inside so a
+--- triangulator can take them as they come. Nesting is by containment depth: even is solid, odd is a hole.
+---
+--- The companion to `difference` -- subtracting one shape from another is what produces a ring list that has to be read this
+--- way, and every caller that cuts real ground out of real ground needs the same answer from it.
+local function areas(regions)
+  local rings = {}
+  for i = 1, #regions do
+    local r = regions[i]
+    if r and #r >= 3 and abs(geom.ringSignedArea2(r)) > 1e-9 then rings[#rings + 1] = r end
+  end
+  local px, py = {}, {}
+  for i = 1, #rings do px[i], py[i] = probePoint(rings[i]) end
+
+  local depth = {}
+  for i = 1, #rings do
+    local d = 0
+    for k = 1, #rings do
+      if k ~= i and geom.pointInRing2D(px[i], py[i], rings[k]) then d = d + 1 end
+    end
+    depth[i] = d
+  end
+
+  local out = {}
+  for i = 1, #rings do
+    if depth[i] % 2 == 0 then out[i] = { ring = wind(rings[i], true), holes = {} } end
+  end
+  -- A hole belongs to the DEEPEST ring that contains it, which is its immediate parent rather than some ring further out.
+  for i = 1, #rings do
+    if depth[i] % 2 == 1 then
+      local best = nil
+      for k = 1, #rings do
+        if out[k] and geom.pointInRing2D(px[i], py[i], rings[k])
+           and (not best or depth[k] > depth[best]) then best = k end
+      end
+      if best then
+        local t = out[best].holes
+        t[#t + 1] = wind(rings[i], false)
+      end
+    end
+  end
+
+  local list = {}
+  for i = 1, #rings do
+    if out[i] then list[#list + 1] = out[i] end
+  end
+  return list
+end
+
 
 -- Public interface.
-M.unionMany =                                           unionMany
+M.unionMany = unionMany
+M.difference = difference
+M.areas = areas
 
 return M

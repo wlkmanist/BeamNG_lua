@@ -6,7 +6,7 @@ local M = {}
 local saveRoot = 'settings/cloud/saves/'
 local saveSystemVersion = 64
 local backwardsCompVersion = 36
-local numberOfAutosaves = 2
+local numberOfAutosaves = 4
 local creationDateOfCurrentProfile
 
 local currentProfile

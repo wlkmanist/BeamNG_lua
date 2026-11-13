@@ -1966,7 +1966,7 @@ local function onEditorInitialized()
     hideObjectIcons = false,
   }
   editor.editModes.groundCoverEditMode.auxShortcuts[editor.AuxControl_LMB] = "Select"
-  editor.addWindowMenuItem("Ground Cover Editor", show)
+  editor.addWindowMenuItem("Ground Cover Editor", show, {groupMenuName = 'Terrain'})
 end
 
 M.onEditorInitialized = onEditorInitialized

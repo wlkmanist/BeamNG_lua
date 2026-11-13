@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
---Purpose: Controls an existing compression brake setup in a combustion engine
+--Purpose: Provides driver-controlled engine braking for vehicles equipped with a compression brake
 
 local M = {}
 M.type = "auxiliary"
@@ -19,9 +19,15 @@ local compressionBrakeLevels
 local compressionBrakeLevelActiveIndex
 local didSetDrivingAggressionOverride
 
-local function setCompressionBrakeCoef(coef)
+local stateData
+local stateDataNameCoef
+local stateDataNameLevelIndex
+
+local function setCompressionBrakeCoef(coef, silent)
   compressionBrakeCoef = clamp(coef, 0, 1)
-  guihooks.message(string.format("Compression Brake: %d%%", compressionBrakeCoef * 100), 5, "vehicle.compressionBrake." .. controlledEngine.name)
+  if not silent then
+    guihooks.message({txt = "vehicle.compressionBrake.level", context = {level = compressionBrakeCoef * 100}}, 5, "vehicle.compressionBrake." .. controlledEngine.name)
+  end
 end
 
 local function changeCompressionBrakeLevel(indexChange)
@@ -29,9 +35,9 @@ local function changeCompressionBrakeLevel(indexChange)
   setCompressionBrakeCoef(compressionBrakeLevels[compressionBrakeLevelActiveIndex])
 end
 
-local function setCompressionBrakeLevel(level)
+local function setCompressionBrakeLevel(level, silent)
   compressionBrakeLevelActiveIndex = clamp(level, 1, #compressionBrakeLevels)
-  setCompressionBrakeCoef(compressionBrakeLevels[compressionBrakeLevelActiveIndex])
+  setCompressionBrakeCoef(compressionBrakeLevels[compressionBrakeLevelActiveIndex], silent)
 end
 
 local function toggleCompressionBrakeState()
@@ -70,7 +76,38 @@ local function reset(jbeamData)
   lastCompressionBrakeCoef = -1
 end
 
+local function getState()
+  if compressionBrakeCoef ~= nil and compressionBrakeLevelActiveIndex ~= nil then
+    stateData[stateDataNameCoef] = compressionBrakeCoef
+    stateData[stateDataNameLevelIndex] = compressionBrakeLevelActiveIndex
+  end
+  return stateData
+end
+
+local function setState(data)
+  if not data or not compressionBrakeLevels then
+    return
+  end
+
+  local newLevelIndex = data[stateDataNameLevelIndex]
+  if type(newLevelIndex) == "number" and newLevelIndex == newLevelIndex and newLevelIndex % 1 == 0 and newLevelIndex >= 1 and newLevelIndex <= #compressionBrakeLevels and newLevelIndex ~= compressionBrakeLevelActiveIndex then
+    setCompressionBrakeLevel(newLevelIndex, true)
+  end
+
+  local newCoef = data[stateDataNameCoef]
+  if type(newCoef) == "number" and newCoef == newCoef then
+    newCoef = clamp(newCoef, 0, 1)
+    if newCoef ~= compressionBrakeCoef then
+      setCompressionBrakeCoef(newCoef, true)
+    end
+  end
+end
+
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameCoef = M.name .. "Coef"
+  stateDataNameLevelIndex = M.name .. "LevelIndex"
+
   local engineName = jbeamData.controlledEngine or "mainEngine"
   controlledEngine = powertrain.getDevice(engineName)
   if not controlledEngine then
@@ -101,5 +138,8 @@ M.setCompressionBrakeCoef = setCompressionBrakeCoef
 M.setCompressionBrakeLevel = setCompressionBrakeLevel
 M.changeCompressionBrakeLevel = changeCompressionBrakeLevel
 M.toggleCompressionBrakeState = toggleCompressionBrakeState
+
+M.getState = getState
+M.setState = setState
 
 return M

@@ -46,7 +46,11 @@ end
 local function getClusteredItemsStats(clusteredItems, sortMode)
   local _, config = next(clusteredItems.configsByKey)
   local model = core_vehicles.getModel(config.model_key)
-  local preview = model.model.preview or model.model.preview or ("/vehicles/" .. model.model.key .. "/default.jpg")
+  local generatedPreview = "/vehicles/" .. model.model.key .. "/default.png"
+  local preview = FS:fileExists(generatedPreview)
+    and generatedPreview
+    or model.model.preview
+    or ("/vehicles/" .. model.model.key .. "/default.jpg")
 
   -- Import sorting functions
   local tileSorting = require('/lua/ge/extensions/ui/vehicleSelector/tileSorting')

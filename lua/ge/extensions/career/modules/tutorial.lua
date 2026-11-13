@@ -117,6 +117,12 @@ local function onExtensionLoaded()
   M.sharedTutorialData = gameplay_tutorial_runtime.sharedTutorialData
 end
 
+local function onExtensionUnloaded()
+  if gameplay_tutorial_runtime then
+    gameplay_tutorial_runtime.stop()
+  end
+end
+
 local function onSaveCurrentProfile(currentSavePath)
   pullRuntimeProgress()
   saveData.version = moduleVersion
@@ -226,6 +232,7 @@ function M.onGetRawPoiListForTutorial(elements)
 end
 
 M.onExtensionLoaded = onExtensionLoaded
+M.onExtensionUnloaded = onExtensionUnloaded
 M.onSaveCurrentProfile = onSaveCurrentProfile
 M.onCareerActive = onCareerActive
 

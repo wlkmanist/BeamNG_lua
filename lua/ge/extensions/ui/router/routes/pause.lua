@@ -225,12 +225,12 @@ M.Children = {
     screenId = "career.milestones",
     title = "ui.career.milestones.title",
     backTarget = "pause",
-    onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
-    onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
+    onEnter = "career_modules_milestones_milestones.onMilestonesRouteEnter",
+    onMount = "career_modules_milestones_milestones.onMilestonesRouteMount",
     onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
-    targetScope = "milestones",
+    targetScope = "root",
     scopeTree = {
-      ["milestones"] = {
+      ["root"] = {
         preferAutoFocus = true,
       },
     },
@@ -453,17 +453,17 @@ M.Children = {
         screenId = "pause.career.milestones",
         title = "ui.career.milestones.title",
         backTarget = "pause.career.history",
-        onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
-        onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
+        onEnter = "career_modules_milestones_milestones.onMilestonesRouteEnter",
+        onMount = "career_modules_milestones_milestones.onMilestonesRouteMount",
         onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
         scopeTree = {
-          ["milestones"] = {
+          ["root"] = {
             backTarget = "pause.career.history",
             backTargetType = "route",
             preferAutoFocus = true
           }
         },
-        targetScope = "milestones",
+        targetScope = "root",
         ui = {
           topBar = Constants.TopBarDefaultsHidden
         }
@@ -508,6 +508,149 @@ M.Children = {
     ui = {
       topBar = Constants.TopBarDefaultsHidden
     }
+  },
+  ["multiseatSettings"] = {
+    screenId = "pause.multiseatSettings",
+    title = "ui.multiseat.settings.title",
+    backTarget = "pause",
+    exitGuards = {"confirmMultiseatSettingsExit"},
+    onEnter = "ui_multiseat_multiseatSettings.onSettingsEnter",
+    onLeave = "ui_multiseat_multiseatSettings.onSettingsLeave",
+    scopeTree = {
+      ["multiseat-settings"] = {},
+    },
+    ui = {
+      infoBar = { visible = true, showSysInfo = false },
+      topBar = Constants.TopBarDefaultsHidden,
+      uiApps = { shown = false },
+    },
+    children = {
+      ["vehicleSelector"] = {
+        screenId = "pause.multiseatSettings.vehicleSelector",
+        title = "ui.menu.vehicleSelector.title",
+        backTarget = "pause.multiseatSettings",
+        exitGuards = {"confirmMultiseatSettingsExit"},
+        onEnter = "ui_multiseat_multiseatSettings.onVehicleSelectorEnter",
+        onMount = "ui_multiseat_multiseatSettings.onVehicleSelectorMount",
+        onLeave = "ui_multiseat_multiseatSettings.onVehicleSelectorLeave",
+        meta = {
+          gridSelector = {
+            backendName = "vehicleSelector",
+            routePath = "/pause/multiseat-settings/vehicle-selector",
+            defaultPath = { keys = { "allModels" } },
+          },
+        },
+        scopeTree = {
+          ["grid-selector-grid"] = {
+            ["grid-selector-details"] = {
+              backTarget = "grid-selector-grid",
+              backTargetType = "scope",
+            },
+          },
+        },
+        ui = {
+          infoBar = { visible = true, showSysInfo = false },
+          topBar = Constants.TopBarDefaultsHidden,
+          uiApps = { shown = false },
+        },
+      },
+    },
+  },
+  ["gamemodes"] = {
+    screenId = "pause.gamemodes",
+    title = "ui.gamemodes.gamemode",
+    backTarget = "pause",
+    onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
+    onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
+    onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+    scopeTree = {
+      ["pause-root"] = {
+        ["menu-content-card-1"] = {
+          backTarget = "pause",
+          backTargetType = "route"
+        }
+      }
+    },
+    targetScope = "menu-content-card-1",
+    ui = {
+      infoBar = { visible = true, showSysInfo = false },
+      topBar = Constants.TopBarDefaultsHidden,
+      uiApps = { shown = false },
+    },
+    children = {
+      ["setup"] = {
+        screenId = "pause.gamemodes.setup",
+        title = "ui.gamemodes.settings",
+        backTarget = "pause.gamemodes",
+        onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
+        onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
+        onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+        scopeTree = {
+          ["pause-root"] = {
+            ["menu-content-card-1"] = {
+              backTarget = "pause.gamemodes",
+              backTargetType = "route"
+            }
+          }
+        },
+        targetScope = "menu-content-card-1",
+        ui = {
+          infoBar = { visible = true, showSysInfo = false },
+          topBar = Constants.TopBarDefaultsHidden,
+          uiApps = { shown = false },
+        },
+      },
+    },
+  },
+  ["gamemodeSettings"] = {
+    screenId = "pause.gamemodeSettings",
+    title = "ui.gamemodes.settings",
+    backTarget = "pause",
+    onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
+    onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
+    onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+    scopeTree = {
+      ["pause-root"] = {
+        ["menu-content-card-1"] = {
+          backTarget = "pause",
+          backTargetType = "route"
+        }
+      }
+    },
+    targetScope = "menu-content-card-1",
+    ui = {
+      infoBar = { visible = true, showSysInfo = false },
+      topBar = Constants.TopBarDefaultsHidden,
+      uiApps = { shown = false },
+    }
+  },
+  ["multiseatVehicleSelector"] = {
+    screenId = "pause.multiseatVehicleSelector",
+    title = "ui.menu.vehicleSelector.title",
+    backTarget = "pause",
+    onEnter = "ui_multiseat_multiseatVehicles.onQuickVehicleSelectorEnter",
+    onMount = "ui_multiseat_multiseatVehicles.onQuickVehicleSelectorMount",
+    onLeave = "ui_multiseat_multiseatVehicles.onQuickVehicleSelectorLeave",
+    meta = {
+      gridSelector = {
+        backendName = "vehicleSelector",
+        routePath = "/pause-multiseat-vehicle-selector",
+        defaultPath = { keys = { "allModels" } },
+      },
+    },
+    scopeTree = {
+      ["grid-selector-grid"] = {
+        ["grid-selector-details"] = {
+          backTarget = "grid-selector-grid",
+          backTargetType = "scope",
+        },
+      },
+    },
+    ui = {
+      infoBar = { visible = true, showSysInfo = false },
+      topBar = Constants.TopBarDefaultsHidden,
+      uiApps = { shown = false },
+    },
   },
   ["vehicleSelector"] = {
     screenId = "pause.vehicleSelector",
@@ -609,21 +752,25 @@ M.Children = {
           topBar = Constants.TopBarDefaultsHidden
         },
       },
-      ["stats"] = {
-        screenId = "pause.options.stats",
-        title = "ui.statspage.title",
-        backTarget = "pause.options",
-        scopeTree = {
-          ["options-stats-subview"] = {}
-        },
-        ui = {
-          uiTypes = {"vue"},
-          uiTypesFilter = Constants.UiTypesFilter.only,
-          topBar = Constants.TopBarDefaultsHidden,
-          uiApps = {
-            shown = false
-          }
-        }
+    }
+  },
+  ["stats"] = {
+    screenId = "pause.stats",
+    title = "ui.statspage.title",
+    backTarget = "pause.system",
+    onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
+    onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
+    onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+    scopeTree = {
+      ["pause-stats"] = {}
+    },
+    targetScope = "pause-stats",
+    ui = {
+      uiTypes = {"vue"},
+      uiTypesFilter = Constants.UiTypesFilter.only,
+      topBar = Constants.TopBarDefaultsHidden,
+      uiApps = {
+        shown = false
       }
     }
   },
@@ -651,34 +798,21 @@ M.Children = {
       topBar = Constants.TopBarDefaultsHidden
     },
     children = {
-      ["parts"] = {
-        onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
-        onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
-        onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
-        scopeTree = {
-          ["pause-root"] = {
-            ["menu-content-card-1"] = {
-              backTarget = "pause.vehicle",
-              backTargetType = "route"
-            }
-          },
-        },
-        targetScope = "menu-content-card-1",
-        ui = {
-          topBar = Constants.TopBarDefaultsHidden
-        },
-      },
       ["configurationcombined"] = {
         screenId = "pause.vehicle.configurationcombined",
         title = "ui.dashboard.vehicleconfig",
+        exitGuards = {"confirmVehicleConfigurationCombinedExit"},
+        back = {
+          mode = "handler",
+          handler = "vehicleConfigurationBackHandler"
+        },
         onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
         onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
-        onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+        onLeave = "ui_pause_routeLifecycleCallbacks.onVehicleConfigurationLeave",
         scopeTree = {
           ["pause-root"] = {
             ["menu-content-card-1"] = {
               ["pause-tab-combined-parts"] = {
-                backTarget = "pause.vehicle",
                 backTargetType = "route"
               },
               ["pause-tab-combined-search"] = {
@@ -687,19 +821,23 @@ M.Children = {
               },
               ["pause-tab-combined-tuning"] = {
                 optional = true,
-                backTarget = "pause.vehicle",
                 backTargetType = "route"
               },
               ["pause-tab-combined-paint"] = {
                 optional = true,
-                backTarget = "pause.vehicle",
+                backTargetType = "route"
+              },
+              ["pause-tab-combined-occupants"] = {
+                optional = true,
                 backTargetType = "route"
               },
               ["pause-tab-combined-options"] = {
                 optional = true,
-                backTarget = "pause.vehicle",
                 backTargetType = "route"
               }
+            },
+            ["pause-tab-combined-telemetry"] = {
+              optional = true
             }
           }
         },
@@ -710,7 +848,7 @@ M.Children = {
             title = "ui.pause.route.saveConfig",
             onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
             onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
-            onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+            onLeave = "ui_pause_routeLifecycleCallbacks.onVehicleConfigurationLeave",
             scopeTree = {
               ["pause-root"] = {
                 ["menu-content-card-1"] = {
@@ -733,7 +871,7 @@ M.Children = {
             title = "ui.pause.route.manageConfigs",
             onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
             onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
-            onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+            onLeave = "ui_pause_routeLifecycleCallbacks.onVehicleConfigurationLeave",
             scopeTree = {
               ["pause-root"] = {
                 ["menu-content-card-1"] = {
@@ -752,7 +890,7 @@ M.Children = {
             title = "ui.mirrors.name",
             onEnter = "ui_pause_routeLifecycleCallbacks.onPauseEnter",
             onMount = "ui_pause_routeLifecycleCallbacks.onPauseMount",
-            onLeave = "ui_pause_routeLifecycleCallbacks.onPauseLeave",
+            onLeave = "ui_pause_routeLifecycleCallbacks.onVehicleConfigurationLeave",
             backTarget = "pause.vehicle.configurationcombined",
             ui = {
               topBar = Constants.TopBarDefaultsHidden
@@ -1063,6 +1201,78 @@ M.Children = {
     },
     ui = {
       topBar = Constants.TopBarDefaultsHidden
+    },
+    children = {
+      ["overlay"] = {
+        children = {
+          ["edit"] = {
+            screenId = "pause.photomode.overlay.edit",
+            title = "ui.photomode.overlay.editOverlay",
+            backTarget = "pause.photomode",
+            onEnter = "ui_pause_routeLifecycleCallbacks.onPhotomodeEnter",
+            onMount = "ui_pause_routeLifecycleCallbacks.onPhotomodeMount",
+            onLeave = "ui_pause_routeLifecycleCallbacks.onPhotomodeLeave",
+            scopeTree = {
+              ["pause-root"] = {
+                ["menu-content-card-1"] = {
+                  backTarget = "pause.photomode",
+                  backTargetType = "route",
+                  ["photomode-overlay-edit"] = {
+                    backTarget = "pause.photomode",
+                    backTargetType = "route",
+                    preferAutoFocus = true
+                  }
+                }
+              }
+            },
+            targetScope = "photomode-overlay-edit",
+            ui = {
+              topBar = Constants.TopBarDefaultsHidden,
+              infoBar = {
+                visible = true,
+                showSysInfo = false
+              },
+              uiApps = {
+                shown = false
+              }
+            },
+            children = {
+              ["adjust"] = {
+                screenId = "pause.photomode.overlay.edit.adjust",
+                title = "ui.photomode.overlay.editLayer",
+                backTarget = "pause.photomode.overlay.edit",
+                onEnter = "ui_pause_routeLifecycleCallbacks.onPhotomodeEnter",
+                onMount = "ui_pause_routeLifecycleCallbacks.onPhotomodeMount",
+                onLeave = "ui_pause_routeLifecycleCallbacks.onPhotomodeLeave",
+                scopeTree = {
+                  ["pause-root"] = {
+                    ["menu-content-card-1"] = {
+                      backTarget = "pause.photomode.overlay.edit",
+                      backTargetType = "route",
+                      ["photomode-overlay-edit"] = {
+                        backTarget = "pause.photomode.overlay.edit",
+                        backTargetType = "route",
+                        preferAutoFocus = true
+                      }
+                    }
+                  }
+                },
+                targetScope = "photomode-overlay-edit",
+                ui = {
+                  topBar = Constants.TopBarDefaultsHidden,
+                  infoBar = {
+                    visible = true,
+                    showSysInfo = false
+                  },
+                  uiApps = {
+                    shown = false
+                  }
+                },
+              }
+            },
+          }
+        }
+      }
     }
   },
   ["freeroamselector"] = {

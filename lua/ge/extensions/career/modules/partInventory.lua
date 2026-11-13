@@ -14,111 +14,12 @@ local minimumVersion = 42
 
 local partInventory = {}
 
-local partsBefore = {}
-local partsAfter
 local slotToPartIdMap = {}
 local partPathToPartIdMap = {}
 local partInventoryOpen = false
 local closeMenuAfterSaving
 
 local currentVehicleInventoryIdForMenu
-
-local function getNodeFromSlotPath(tree, path)
-  if not tree or not path then return nil end
-
-  -- Handle empty path case
-  if path == "/" then return tree end
-
-  -- Split the path into segments
-  local segments = {}
-  for segment in string.gmatch(path, "[^/]+") do
-    table.insert(segments, segment)
-  end
-
-  -- Navigate through the tree
-  local currentNode = tree
-  for _, segment in ipairs(segments) do
-    if currentNode.children and currentNode.children[segment] then
-      currentNode = currentNode.children[segment]
-    else
-      return nil -- Path not found
-    end
-  end
-
-  return currentNode
-end
-
-local function getDisconnectedParts(initialRemovedNode, vehicle)
-  local disconnectedParts = {}
-
-  -- Helper function to recursively traverse the tree
-  local function traverseTree(node)
-    if not node then return end
-
-    -- If this node has a part, add it to disconnectedParts
-    if node.chosenPartName and node.chosenPartName ~= "" then
-      for partId, inventoryPart in pairs(partInventory) do
-        if inventoryPart.containingSlot == node.path and inventoryPart.location == vehicle.id then
-          disconnectedParts[partId] = inventoryPart
-          break
-        end
-      end
-    end
-
-    -- Recursively process all children
-    if node.children then
-      for _, childNode in pairs(node.children) do
-        traverseTree(childNode)
-      end
-    end
-  end
-
-  -- Start traversal from the parent node
-  traverseTree(initialRemovedNode)
-
-  return disconnectedParts
-end
-
-local function removeDisconnectedParts(vehicle, removedPartId)
-  local initialRemovedPart = partInventory[removedPartId]
-  local initialRemovedNode = getNodeFromSlotPath(vehicle.config.partsTree, initialRemovedPart.containingSlot)
-
-  local disconnectedParts = getDisconnectedParts(initialRemovedNode, vehicle)
-  initialRemovedNode.chosenPartName = ""
-  initialRemovedNode.children = {}
-  for partId, part in pairs(disconnectedParts) do
-    -- remove the part
-    vehicle.partConditions[part.partPath] = nil
-    partsAfter[partId] = nil
-  end
-end
-
-local function getPartsThatMoved(partsBefore, partsAfter)
-  -- Compare old parts with new parts to see what has changed
-  local movedOut = {}
-  for partId, _ in pairs(partsBefore) do
-    if not partsAfter[partId] then
-      movedOut[partId] = true
-    end
-  end
-  return {movedOut = movedOut}
-end
-
-local function initConditionsCallback(_, inventoryId)
-  local vehObjId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
-  local vehicleObj = getObjectByID(vehObjId)
-  queueCallbackInVehicle(vehicleObj, "career_modules_partInventory.changedPartsCallback", "partCondition.getConditions()", inventoryId)
-end
-
-local function getPartIdsFromVehicle(inventoryId)
-  local result = {}
-  for partId, part in pairs(partInventory) do
-    if part.location == inventoryId then
-      result[partId] = true
-    end
-  end
-  return result
-end
 
 local function sellParts(partIds)
   local total = 0
@@ -137,35 +38,6 @@ local function sellParts(partIds)
   if partInventoryOpen then
     M.sendUIData()
   end
-end
-
-local function removePart(partId, inventoryId)
-  local vehicle = career_modules_inventory.getVehicles()[inventoryId]
-  local carModelToLoad = vehicle.model
-  local vehicleData = {}
-  vehicleData.config = vehicle.config
-  vehicleData.keepOtherVehRotation = true
-  partsAfter = getPartIdsFromVehicle(inventoryId)
-  partsAfter[partId] = nil
-  removeDisconnectedParts(vehicle, partId)
-
-  local partConditions = vehicle.partConditions
-
-  local numberOfBrokenParts = career_modules_valueCalculator.getNumberOfBrokenParts(partConditions)
-  if numberOfBrokenParts > 0 and numberOfBrokenParts < career_modules_valueCalculator.getBrokenPartsThreshold() then
-    career_modules_insurance_insurance.repairPartConditions({partConditions = partConditions})
-  end
-
-  local vehObjId = career_modules_inventory.getVehicleIdFromInventoryId(inventoryId)
-  if vehObjId then
-    local vehicleObj = getObjectByID(vehObjId)
-    core_vehicle_manager.queueAdditionalVehicleData({spawnWithEngineRunning = false}, vehObjId)
-    core_vehicles.replaceVehicle(carModelToLoad, vehicleData, vehicleObj)
-    queueCallbackInVehicle(vehicleObj, "career_modules_partInventory.initConditionsCallback", "partCondition.initConditions(" .. serialize(partConditions) .. ")", inventoryId)
-  else
-    M.changedPartsCallback(partConditions, inventoryId)
-  end
-  career_modules_inventory.setVehicleDirty(inventoryId)
 end
 
 local function addPartFromTree(result, tree, vehicleData, availableParts, vehObj, inventoryId, partConditions)
@@ -236,9 +108,12 @@ end
 
 -- TODO could even update once every time before removing a part
 local function updatePartConditionsInInventory()
-  for partId, part in pairs(partInventory) do
-    if part.location > 0 and career_modules_inventory.getVehicles()[part.location].partConditions[part.partPath] then
-      part.partCondition = career_modules_inventory.getVehicles()[part.location].partConditions[part.partPath]
+  local vehicles = career_modules_inventory.getVehicles()
+  for _, part in pairs(partInventory) do
+    local vehicle = vehicles[part.location]
+    local partCondition = vehicle and vehicle.partConditions and vehicle.partConditions[part.partPath]
+    if partCondition then
+      part.partCondition = partCondition
     end
   end
 end
@@ -251,22 +126,18 @@ local function addPartToInventory(part)
   partInventory[idCounter] = part
 end
 
+local function isHiddenInUI(part)
+  return part.description and part.description.isAuxiliary and (part.value or 0) == 0
+end
 
-local function changedPartsCallback(partConditions, inventoryId)
-  career_modules_inventory.getPartConditionsCallback(partConditions, inventoryId)
-  local partsThatMoved = getPartsThatMoved(partsBefore, partsAfter)
-  partsAfter = nil
-  local vehicle = career_modules_inventory.getVehicles()[inventoryId]
-  for partId, _ in pairs(partsThatMoved.movedOut) do
-    local part = partInventory[partId]
-    part.location = 0
-    vehicle.changedSlots[part.containingSlot] = true
-  end
-  updateVehicleMaps()
-  if partInventoryOpen then
-    M.sendUIData()
+local function removeHiddenPartsInStorage()
+  for partId, part in pairs(partInventory) do
+    if part.location == 0 and isHiddenInUI(part) then
+      partInventory[partId] = nil
+    end
   end
 end
+
 
 local function addNewPartsToInventory(inventoryId)
   local newParts = generateAndGetPartsFromVehicle(inventoryId)
@@ -319,6 +190,8 @@ local function updatePartsToMatchSpawnedVehicle(inventoryId)
       newPart.partCondition = existing.part.partCondition or newPart.partCondition
       newPart.tags = existing.part.tags or newPart.tags
       newPart.year = existing.part.year or vehicleYear
+      newPart.repairCount = existing.part.repairCount
+      newPart.primered = existing.part.primered
       -- Keep the condition reachable under the (possibly renamed) part path.
       if vehicle and vehicle.partConditions and newPart.partCondition then
         vehicle.partConditions[newPart.partPath] = newPart.partCondition
@@ -446,10 +319,7 @@ local function sendUIData()
   local vehicles = career_modules_inventory.getVehicles()
   local vehiclesUiData = {}
 
-  data.brokenVehicleInventoryIds = {}
   for inventoryId, vehicle in pairs(vehicles) do
-    data.brokenVehicleInventoryIds[tostring(inventoryId)] = career_modules_insurance_insurance.inventoryVehNeedsRepair(inventoryId)
-
     local vehicleUiData = deepcopy(vehicle)
     vehicleUiData.thumbnail = career_modules_inventory.getVehicleThumbnail(inventoryId) .. "?" .. (vehicleUiData.dirtyDate or "")
     vehicleUiData.niceName = core_locales.translateWithOrWithoutContext(vehicleUiData.niceName)
@@ -457,7 +327,7 @@ local function sendUIData()
   end
 
   for partId, part in pairs(partInventory) do
-    if not part.mainPart then
+    if not part.mainPart and not isHiddenInUI(part) then
       local newPart = deepcopy(part)
       newPart.id = partId
       newPart.name = core_locales.translateWithOrWithoutContext(newPart.name)
@@ -471,11 +341,7 @@ local function sendUIData()
       end
       newPart.vehicleModelDisplayName = getVehicleModelDisplayName(newPart.vehicleModel)
       newPart.finalValue = career_modules_valueCalculator.getPartValue(newPart)
-      newPart.accessible = not (vehicles[newPart.location] and
-          (vehicles[newPart.location].timeToAccess or
-          data.brokenVehicleInventoryIds[newPart.location] or
-          not career_modules_permissions.getStatusForTag("partSwapping", {inventoryId = newPart.location}).allow)
-        )
+      newPart.accessible = not vehicles[newPart.location]
       table.insert(partList, newPart)
     end
   end
@@ -565,6 +431,7 @@ local function onExtensionLoaded()
     partInventory = {}
   end
   updatePartDescriptionsWithJBeamInfo()
+  removeHiddenPartsInStorage()
   updateVehicleMaps()
 end
 
@@ -576,6 +443,7 @@ local function onEnterVehicleFinished(currentVehicle)
 end
 
 local function onPartShoppingTransactionComplete()
+  removeHiddenPartsInStorage()
   updateVehicleMaps()
 end
 
@@ -698,10 +566,7 @@ local function onComputerAddFunctions(menuData, computerFunctions)
   computerFunctions.general[computerFunctionData.id] = computerFunctionData
 end
 
-M.generateAndGetPartsFromVehicle = generateAndGetPartsFromVehicle
 M.updatePartsToMatchSpawnedVehicle = updatePartsToMatchSpawnedVehicle
-M.changedPartsCallback = changedPartsCallback
-M.initConditionsCallback = initConditionsCallback
 M.sendUIData = sendUIData
 M.openMenu = openMenu
 M.closeMenu = closeMenu
@@ -715,6 +580,7 @@ M.addPartToInventory = addPartToInventory
 M.getPart = getPart
 M.updatePartConditionsInInventory = updatePartConditionsInInventory
 M.sellParts = sellParts
+M.isHiddenInUI = isHiddenInUI
 
 M.onExtensionLoaded = onExtensionLoaded
 M.onUpdate = onUpdate

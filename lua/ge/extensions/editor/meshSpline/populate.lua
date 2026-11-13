@@ -11,29 +11,62 @@ local largeSpacingThreshold = 5.0 -- Threshold above which to use local spline d
 
 local epsilon = 1e-6
 
+-- Floor for the tiling period so a large negative overlap (Spacing) can't drive the period toward zero and spawn a
+-- near-infinite number of pieces. The samplers already bail at period <= 0 (empty run), but a tiny POSITIVE period would
+-- still explode the instance count, so we clamp to whichever is larger: an absolute floor, or a fraction of the piece.
+local minPeriodFrac = 0.1
+local minPeriodAbs = 0.1
+
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 local M = {}
 
 -- Module dependencies.
 local geom = require('editor/toolUtilities/geom')
+local populationEngine = require('editor/meshSpline/populationEngine')
+local splineLock = require('editor/toolUtilities/splineLock')
 local util = require('editor/toolUtilities/util')
 
 -- Module constants.
-local max, random, randomseed = math.max, math.random, math.randomseed
+local floor, max, random, randomseed = math.floor, math.max, math.random, math.randomseed
 local scaleVec = vec3(1, 1, 1)
 local zeroVec, globalUp = vec3(0, 0, 0), vec3(0, 0, 1)
 local preRotQuats = geom.getPreRotQuats()
 
 -- Module state.
 local staticMeshes = {}
+local lockApplied = {} -- spline id -> the lock state last applied to its meshes (see splineLock.sync).
 local finalPosns, finalTans, finalNormals = {}, {}, {}
 local pathsMap, counters = {}, {}
 local meshPaths, meshPreRots, meshIsStart, meshIsEnd = {}, {}, {}, {}
 local componentNames, componentProbabilities = {}, {}
 local jitterQuat, rot, tmpRot1 = quat(), quat(), quat()
 local tmpPos, tmpTan, tmpBinormal, tmpVec1 = vec3(), vec3(), vec3(), vec3()
+local tmpDir, tmpAxisWorld = vec3(), vec3()
+local axisXObj, axisYObj = vec3(1, 0, 0), vec3(0, 1, 0)
 
+
+-- Oriented piece length along the run: object X normally, object Y when rotated 90/270 (odd rot). nil until measured.
+local function pieceLength(spline)
+  if (spline.rot % 2) == 1 then return spline.extentsW_Center end
+  return spline.extentsL_Center
+end
+
+-- The period actually used to tile the run: piece length + Spacing, floored (see minPeriodFrac/minPeriodAbs) so a heavy
+-- negative overlap can't collapse it. Single source of truth shared by the placement and the UI's even-fit label.
+local function effectivePeriod(spline)
+  local length = pieceLength(spline)
+  if not length then return nil end
+  return max(max(minPeriodAbs, length * minPeriodFrac), length + (spline.spacing or 0))
+end
+
+-- Slider floor for Spacing on this piece: the value that reaches the minimum allowed period (max overlap) for its length.
+-- Below this the period would be clamped anyway, so we stop the slider here to keep it a live, honest control.
+local function minSpacingFor(spline)
+  local length = pieceLength(spline)
+  if not length then return nil end
+  return max(minPeriodAbs, length * minPeriodFrac) - length
+end
 
 -- Computes a map from each mesh unit to the mesh properties which it should use.
 local function computeMeshMap(numMeshes, spline)
@@ -132,6 +165,18 @@ local function computeMeshMap(numMeshes, spline)
   return meshPaths, meshPreRots, meshIsStart, meshIsEnd, pathsMap
 end
 
+-- Creates one generated mesh in the spline's folder, in the spline's current lock state.
+local function createMesh(spline, shapePath, name, folder)
+  local mesh = createObject('TSStatic')
+  mesh:setField('shapeName', 0, shapePath)
+  splineLock.applyObject(mesh, not spline.isEnabled, true) -- solid only once locked: a live preview would leave stale hulls behind it
+  mesh:registerObject(Sim.getUniqueName(name))
+  mesh.scale = scaleVec
+  splineLock.tag(mesh, toolPrefixStr, spline)
+  folder:addObject(mesh.obj)
+  return mesh
+end
+
 -- Manages mesh pools for any component type.
 local function manageComponentPool(spline, componentType, componentPath, componentId, splineName, meshesBySpline)
   meshesBySpline[componentId] = meshesBySpline[componentId] or {}
@@ -139,16 +184,9 @@ local function manageComponentPool(spline, componentType, componentPath, compone
   local numNeeded, numInPool = pathsMap[componentId] or 0, #componentMeshes
 
   -- Add any extra meshes which may be needed.
+  local folder = scenetree.findObjectById(spline.sceneTreeFolderId)
   for i = numInPool + 1, numNeeded do
-    local meshId = string.format("MeshSpline_%s_%s_%d", spline.id, componentType, i)
-    local mesh = createObject('TSStatic')
-    mesh.cansave = true
-    mesh:setField('shapeName', 0, componentPath)
-    mesh:registerObject(meshId)
-    mesh.scale = scaleVec
-    local folder = scenetree.findObjectById(spline.sceneTreeFolderId)
-    folder:addObject(mesh.obj)
-    componentMeshes[i] = mesh
+    componentMeshes[i] = createMesh(spline, componentPath, string.format("MeshSpline_%s_%s_%d", spline.id, componentType, i), folder)
   end
 
   -- Remove any excess meshes which we no longer need.
@@ -171,7 +209,7 @@ local function manageMeshPools(spline, splineIdx)
     local uniqueName = util.generateUniqueName(baseName, toolPrefixStr)
     folder = createObject("SimGroup")
     folder:registerObject(string.format("%s - %s", uniqueName, spline.id))
-    folder.cansave = true
+    folder.cansave = not spline.isEnabled -- Transient while editing; saves with the level while the spline is locked.
     scenetree.MissionGroup:addObject(folder)
     spline.sceneTreeFolderId = folder:getId()
     staticMeshes[spline.id] = staticMeshes[spline.id] or {}
@@ -181,6 +219,7 @@ local function manageMeshPools(spline, splineIdx)
   local splineName, splineId = spline.name, spline.id
   staticMeshes[splineId] = staticMeshes[splineId] or {}
   local meshesBySpline = staticMeshes[splineId]
+  for _, list in pairs(meshesBySpline) do splineLock.dropDeleted(list) end -- meshes deleted by hand get recreated below.
 
   -- Manage the pool of static meshes for the main components.
   manageComponentPool(spline, "Main", spline.centerMeshPath, spline.mainComponentPath, splineName, meshesBySpline)
@@ -197,34 +236,63 @@ local function manageMeshPools(spline, splineIdx)
   -- Manage the single static mesh for the start cap.
   local startCapPath = spline.startCapMeshPath
   local startCapId = spline.startCapComponentPath
-  if spline.isStartCap and not meshesBySpline[startCapId] then
-    local meshId = string.format("MeshSpline_%s_StartCap", spline.id)
-    local mesh = createObject('TSStatic')
-    mesh.cansave = true
-    mesh:setField('shapeName', 0, startCapPath)
-    mesh:registerObject(meshId)
-    mesh.scale = scaleVec
-    folder:addObject(mesh.obj) -- Add the mesh to the spline's scene tree folder.
-    meshesBySpline[startCapId] = { mesh }
+  if spline.isStartCap and not (meshesBySpline[startCapId] and meshesBySpline[startCapId][1]) then
+    meshesBySpline[startCapId] = { createMesh(spline, startCapPath, string.format("MeshSpline_%s_StartCap", spline.id), folder) }
   end
 
   -- Manage the single static mesh for the end cap.
   local endCapPath = spline.endCapMeshPath
   local endCapId = spline.endCapComponentPath
-  if spline.isEndCap and not meshesBySpline[endCapId] then
-    local meshId = string.format("MeshSpline_%s_EndCap", spline.id)
-    local mesh = createObject('TSStatic')
-    mesh.cansave = true
-    mesh:setField('shapeName', 0, endCapPath)
-    mesh:registerObject(meshId)
-    mesh.scale = scaleVec
-    folder:addObject(mesh.obj) -- Add the mesh to the spline's scene tree folder.
-    meshesBySpline[endCapId] = { mesh }
+  if spline.isEndCap and not (meshesBySpline[endCapId] and meshesBySpline[endCapId][1]) then
+    meshesBySpline[endCapId] = { createMesh(spline, endCapPath, string.format("MeshSpline_%s_EndCap", spline.id), folder) }
   end
+end
+
+-- Calls fn(mesh, true) for every mesh the tool holds for the spline (the splineLock `each`).
+local function eachObject(spline, fn)
+  for _, list in pairs(staticMeshes[spline.id] or {}) do
+    for i = 1, #list do fn(list[i], true) end
+  end
+end
+
+-- Brings the spline's existing meshes in line with its lock state. On unlock, any mesh whose shape was swapped by hand while
+-- locked gets its own shape back and scales are reset; the placement pass then moves everything back.
+local function syncLockState(spline)
+  if spline.isEnabled and lockApplied[spline.id] then
+    local shapeById = {
+      [spline.mainComponentPath or ''] = spline.centerMeshPath,
+      [spline.alias1ComponentPath or ''] = spline.alias1MeshPath,
+      [spline.alias2ComponentPath or ''] = spline.alias2MeshPath,
+      [spline.alias3ComponentPath or ''] = spline.alias3MeshPath,
+      [spline.startCapComponentPath or ''] = spline.startCapMeshPath,
+      [spline.endCapComponentPath or ''] = spline.endCapMeshPath,
+    }
+    for id, list in pairs(staticMeshes[spline.id] or {}) do
+      for i = 1, #list do
+        local mesh = list[i]
+        if mesh and simObjectExists(mesh) then
+          if shapeById[id] and mesh:getField('shapeName', 0) ~= shapeById[id] then
+            mesh:setField('shapeName', 0, shapeById[id])
+            mesh:postApply()
+          end
+          mesh.scale = scaleVec
+        end
+      end
+    end
+  end
+  splineLock.sync(lockApplied, spline, toolPrefixStr, function(fn) eachObject(spline, fn) end)
+end
+
+-- A locked spline whose meshes exist only has its lock state applied: the tool does not move them. Returns true if so.
+local function keepLocked(spline)
+  if spline.isEnabled or not splineLock.hasAny(function(fn) eachObject(spline, fn) end) then return false end
+  syncLockState(spline)
+  return true
 end
 
 -- Populates a mesh spline with instances of a static mesh along its length.
 local function populateMeshSpline(spline, splineIdx)
+  if keepLocked(spline) then return end
   local length = spline.extentsL_Center
   local meshPathCenter = spline.centerMeshPath
   if not length or not meshPathCenter or #spline.divPoints < 2 then
@@ -239,13 +307,22 @@ local function populateMeshSpline(spline, splineIdx)
     length = spline.extentsW_Center
   end
 
-  -- Sample equidistant points along the spline; outputs are reused tables.
-  geom.sampleSpline(spline.divPoints, spline.tangents, spline.normals, length + spline.spacing, finalPosns, finalTans, finalNormals)
+  -- Discrete props (large spacing, e.g. lamp posts / bollards) sit ON each sample point; tiling meshes (small spacing,
+  -- e.g. barriers / fences) abut end-to-end within each cell. Computed here (before sampling) because 'lock ends' even-fit
+  -- sampling only applies to discrete props.
+  local isDiscrete = spline.spacing > largeSpacingThreshold
+
+  -- Sample points along the spline; outputs are reused tables. Period = mesh length + gap (centre-to-centre for discrete),
+  -- floored by effectivePeriod so a heavy negative overlap can't spawn a near-infinite number of pieces.
+  -- With 'lock ends' on a discrete run, use the even-fit sampler: an item is pinned to both ends and the interior is
+  -- spaced as evenly as possible near that target period.
+  populationEngine.sample(spline, effectivePeriod(spline), finalPosns, finalTans, finalNormals, isDiscrete and spline.isFixedEnds)
 
   -- Decide mesh distribution and collect counts.
   computeMeshMap(#finalPosns, spline)
 
   -- Ensure mesh pools exist and match demand.
+  syncLockState(spline)
   manageMeshPools(spline, splineIdx)
 
   -- Init per-component counters.
@@ -258,17 +335,30 @@ local function populateMeshSpline(spline, splineIdx)
   local meshesBySpline = staticMeshes[spline.id]
   local normalMode = spline.normalMode
   local verticalOffset = spline.verticalOffset
-  local isCenteredLeft = spline.isCenteredLeft
-  local useLocalSplineData = (spline.spacing > largeSpacingThreshold) and (not isCenteredLeft)
   local quat90Z = preRotQuats[1]
+
+  -- Pivot-agnostic tiling anchor. negExt/posExt are the origin->face distances along the tiling axis (object X for
+  -- rot 0/180, object Y for rot 90/270), read from the mesh's measured bounding box; their sum is the cell length.
+  -- Seating each piece so its back cut-face lands on the cell's trailing sample makes any origin (end, centre, or
+  -- anywhere between) tile seam-to-seam. Fall back to a centred pivot for splines that predate the box measurement.
+  local rotIsOdd = (spline.rot % 2) == 1
+  local tilingAxisObj = rotIsOdd and axisYObj or axisXObj
+  local negExt, posExt
+  if rotIsOdd then
+    negExt, posExt = spline.boxYLeft_Center, spline.boxYRight_Center
+  else
+    negExt, posExt = spline.boxXLeft_Center, spline.boxXRight_Center
+  end
+  negExt = negExt or (length * 0.5)
+  posExt = posExt or (length * 0.5)
 
   -- Place meshes.
   for i = 1, #meshPaths do
     local p1 = finalPosns[i]
     local p2 = finalPosns[i + 1] or (finalPosns[i] + (finalPosns[i] - (finalPosns[i - 1] or zeroVec)))
 
-    -- Tangent: chord vs local (branchless on spacing/centering).
-    if useLocalSplineData then
+    -- Tangent: discrete props follow the local spline tangent; tiling meshes use the cell chord to align seam-to-seam.
+    if isDiscrete then
       tmpTan:set(finalTans[i])
       tmpTan:normalize()
     else
@@ -276,7 +366,7 @@ local function populateMeshSpline(spline, splineIdx)
       tmpTan:normalize()
     end
 
-    -- Frame + base rotation.
+    -- Frame.
     local normal
     if normalMode == 0 then
       normal = finalNormals[i]
@@ -292,27 +382,39 @@ local function populateMeshSpline(spline, splineIdx)
     end
     tmpBinormal:setCross(tmpTan, normal)
 
+    -- Base rotation (pre-jitter): prerot * quat90Z * frame. Assembled before positioning so the pivot offset can read
+    -- which way the mesh's tiling axis actually points.
+    tmpRot1:setMul2(meshPreRots[i], quat90Z)
+    rot:setMul2(tmpRot1, rot)
+
     -- Position.
     if meshIsStart[i] or meshIsEnd[i] then
-      tmpPos:setAdd2(p1, p2)
+      tmpPos:setAdd2(p1, p2)          -- Cap: centre of its cell (per-cap extents aren't measured, so caps stay centred).
       tmpPos:setScaled2(tmpPos, 0.5)
-    else
-      if isCenteredLeft then
-        tmpPos:set(p2)
-      else
-        if useLocalSplineData then
-          tmpPos:set(p1)
-        else
-          tmpPos:setAdd2(p1, p2)
-          tmpPos:setScaled2(tmpPos, 0.5)
-        end
+      -- Cap longitudinal offset: caps aren't box-measured, so they can only be centred in their cell -- fine for meshes
+      -- authored to the jersey convention, but a custom cap (e.g. snowbank ends) lands with a gap. Let the artist nudge
+      -- the cap along the run to seam it. + moves it forward along the run direction (tmpTan).
+      local capOff = meshIsStart[i] and (spline.startCapOffset or 0) or (spline.endCapOffset or 0)
+      if capOff ~= 0 then
+        tmpAxisWorld:setScaled2(tmpTan, capOff) -- tmpTan is already normalized here; tmpAxisWorld is free in the cap branch.
+        tmpPos:setAdd2(tmpPos, tmpAxisWorld)
       end
+    elseif isDiscrete then
+      tmpPos:set(p1)                  -- Discrete prop: on the sample point (first instance at the spline start).
+    else
+      -- Tiling mesh: seat it so its back cut-face lands on p1 (the cell's trailing sample), whatever the authored
+      -- origin. Rotate the object tiling axis into world to find which face points 'back' along the run, then push the
+      -- origin forward off p1 by that face's distance. Origin-at-front collapses to p2, centre-origin to the midpoint.
+      tmpAxisWorld:setRotate(rot, tilingAxisObj)
+      local backExtent = (tmpAxisWorld:dot(tmpTan) >= 0) and negExt or posExt
+      tmpDir:set(tmpTan)
+      tmpDir:normalize()
+      tmpPos:setScaled2(tmpDir, backExtent)
+      tmpPos:setAdd2(p1, tmpPos)
     end
     tmpPos.z = tmpPos.z + verticalOffset
 
-    -- Rotation: prerot, base, jitter.
-    tmpRot1:setMul2(meshPreRots[i], quat90Z)
-    rot:setMul2(tmpRot1, rot)
+    -- Jitter.
     geom.computeRandomJitterQuat(spline, tmpTan, tmpBinormal, normal, jitterQuat)
     rot:setMul2(rot, jitterQuat)
 
@@ -339,11 +441,68 @@ local function tryRemove(spline)
     end
     staticMeshes[splineId] = nil
   end
+  lockApplied[splineId] = nil
+end
+
+-- Lua reload: the tool lets go of a locked spline's meshes without deleting them (they are the level's) and returns their ids
+-- per component, for adopt() to pick up again.
+local function release(spline)
+  local ids = {}
+  for componentId, list in pairs(staticMeshes[spline.id] or {}) do
+    local l = {}
+    for i = 1, #list do
+      if list[i] and simObjectExists(list[i]) then l[#l + 1] = list[i]:getId() end
+    end
+    ids[componentId] = l
+  end
+  staticMeshes[spline.id] = nil
+  lockApplied[spline.id] = nil
+  return ids
+end
+
+-- Takes back the meshes release() let go of (those still in the scene), as they are.
+local function adopt(spline, ids)
+  local meshesBySpline = {}
+  for componentId, l in pairs(ids) do
+    local list = {}
+    for i = 1, #l do
+      local mesh = scenetree.findObjectById(l[i])
+      if mesh then list[#list + 1] = mesh end
+    end
+    meshesBySpline[componentId] = list
+  end
+  staticMeshes[spline.id] = meshesBySpline
+  lockApplied[spline.id] = not spline.isEnabled
+end
+
+-- A spline is 'discrete' (props sitting on sample points, e.g. lamps) rather than 'tiling' (barriers abutting end-to-end)
+-- when its gap exceeds the threshold. The UI uses this to show the discrete-only 'Lock ends' toggle.
+local function isDiscreteSpline(spline)
+  return spline and spline.spacing and spline.spacing > largeSpacingThreshold
+end
+
+-- For the 'Lock ends' UI label: given the current spline, returns the effective centre-to-centre spacing (m) and the
+-- number of gaps that even-fit would produce, so the user sees the real spacing they'll get (e.g. "≈ 19.0 m"). Returns
+-- nil when it can't be computed (too few points / no mesh length yet).
+local function evenFitInfo(spline)
+  if not spline or #spline.divPoints < 2 then return nil end
+  local period = effectivePeriod(spline)
+  if not (period and period > 0) then return nil end
+  local L = util.getPolyLength(spline.divPoints)
+  if not (L > 0) then return nil end
+  local n = max(1, floor(L / period + 0.5))
+  return L / n, n
 end
 
 
 -- Public interface.
+M.isDiscreteSpline =                                    isDiscreteSpline
+M.evenFitInfo =                                         evenFitInfo
+M.minSpacingFor =                                       minSpacingFor
 M.populateMeshSpline =                                  populateMeshSpline
 M.tryRemove =                                           tryRemove
+M.eachObject =                                          eachObject
+M.release =                                             release
+M.adopt =                                               adopt
 
 return M

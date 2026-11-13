@@ -47,6 +47,7 @@ local function getDefaultDisplayDataOptions()
       key = "includeAuxContent",
       default = false,
       type = "checkbox",
+      hideInSimpleMenu = true,
       description = _tr("ui.menu.gridSelector.displayOptions.includeAuxContent.description"),
       save = true,
       showInModes = {displayControls = true},
@@ -84,6 +85,49 @@ local filtersWhiteList = {
 }
 
 local INTERNAL_TYPE_KEY = "ui.apps.categories.internal"
+local DEBUG_TYPE_KEY = "ui.apps.categories.debug"
+
+local function appInteractiveMode(app)
+  if app.interactiveMode ~= nil then
+    return app.interactiveMode
+  end
+  if app.interactive == true then
+    return "yes"
+  end
+  if app.interactive == false then
+    return "no"
+  end
+  return app.interactive
+end
+
+local function appVisibleInSelector(app)
+  if not Engine.UI.isSimpleMenu() then
+    return true
+  end
+  if app.isAuxiliary then
+    return false
+  end
+  if appInteractiveMode(app) == "required" then
+    return false
+  end
+  if app.typesLookup and app.typesLookup[DEBUG_TYPE_KEY] then
+    return false
+  end
+  return true
+end
+
+local function getSelectorApps(apps)
+  if not Engine.UI.isSimpleMenu() then
+    return apps
+  end
+  local filtered = {}
+  for appName, app in pairs(apps or {}) do
+    if appVisibleInSelector(app) then
+      filtered[appName] = app
+    end
+  end
+  return filtered
+end
 
 local function getDisplayTypes(app)
   local types = {}
@@ -222,10 +266,11 @@ end
 -- Initialize app data from apps module
 local function initializeAppData()
   local apps = getApps()
+  local selectorApps = getSelectorApps(apps)
 
   -- Initialize filters with the app data
   local filterInstance = filterModule.create(createFilters, {}, rangeFilters, {},backendName, passesFiltersFunction)
-  filterInstance.initializeFilters(apps)
+  filterInstance.initializeFilters(selectorApps)
   local filterData = filterInstance.getFilters()
 
   return {
@@ -270,7 +315,7 @@ local function appToTile(app)
   end
 
   -- Add mouse icon if app requires mouse
-  if app.interactive == "required" then
+  if appInteractiveMode(app) == "required" then
     table.insert(sourceIcons, {
       icon = "mouse"
     })
@@ -315,6 +360,7 @@ function M.getTiles(path)
   local items = {}
   for _, app in pairs(apps) do
     if app.photomode ~= true
+      and appVisibleInSelector(app)
       and (data.displayData.includeAuxContent or not app.isAuxiliary)
       and filterInstance.passesFilters(app) then
       table.insert(items, app)
@@ -539,7 +585,7 @@ function M.getDetails(details)
   local specifications = {}
 
   -- Add interactivity specification
-  local interactive = app.interactive
+  local interactive = appInteractiveMode(app)
   if interactive then
     if interactive == "yes" then
       table.insert(specifications, {
@@ -578,6 +624,15 @@ function M.getDetails(details)
       key = "types",
       label = _tr("ui.apps.selector.type"),
       value = typesText
+    })
+  end
+
+  if not shipping_build and app.folder then
+    table.insert(specifications, {
+      icon = "code",
+      key = "folder",
+      label = _tr("ui.photomode.overlay.directoryName"),
+      value = app.folder,
     })
   end
 

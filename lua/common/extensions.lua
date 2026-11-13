@@ -1004,8 +1004,10 @@ local function getSerializationData(reason)
     ::continue::
   end
 
-  -- unload all extension modules
-  unloadExcept()
+  if reason == 'reload' then
+    -- unload all extension modules
+    unloadExcept()
+  end
 
   return tmp
 end

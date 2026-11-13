@@ -5,6 +5,10 @@
 local C = {}
 C.__index = C
 
+local splitScreenReferenceAspect = 16 / 9
+local splitScreenFovCompensation = 0.33
+-- local splitScreenFovDebug = {}
+
 function C:init()
   self.isGlobal = true
   self.runningOrder = 1
@@ -12,67 +16,85 @@ function C:init()
   self.hidden = true
 end
 
+-- Camera modes choose the base vertical FOV. Narrow split-screen views widen it
+-- slightly so their horizontal visibility is not excessively cropped.
+local function compensateNarrowSplitScreenFov(name, fov)
+  if string.sub(name, 1, 11) ~= "splitscreen" or not render_splitScreen or not render_splitScreen.getCurrentConfiguration() then
+    return fov
+  end
+
+  local renderView = RenderViewManagerInstance:getView(name)
+  local resolution = renderView and renderView.resolution
+  if not resolution or resolution.x <= 0 or resolution.y <= 0 then return fov end
+
+  local aspect = resolution.x / resolution.y
+  if aspect >= splitScreenReferenceAspect then return fov end
+
+  -- local originalFov = fov
+  local targetFov = math.deg(2 * math.atan(math.tan(math.rad(fov) * 0.5) * splitScreenReferenceAspect / aspect))
+  fov = fov + (targetFov - fov) * splitScreenFovCompensation
+  -- local percentChange = originalFov ~= 0 and (fov - originalFov) / originalFov * 100 or 0
+  -- local debugText = string.format("Split-screen FOV [%s]: %.2f -> %.2f (%+.1f%%)", name, originalFov, fov, percentChange)
+  -- if splitScreenFovDebug[name] ~= debugText then
+  --   print(debugText)
+  --   splitScreenFovDebug[name] = debugText
+  -- end
+  return fov
+end
+
 -- Push a non-main camera context to its own RenderView (the player view goes
 -- through the C++ main-camera path below). The view's resolution / texture target
 -- are owned by whoever created the context; here we only drive the camera each frame.
 local function updateRenderView(name, res)
   if not RenderViewManagerInstance then return end
-  local rv = RenderViewManagerInstance:getView(name)
-  if not rv then return end -- view not set up (yet); nothing to drive
-  local mat = QuatF(res.rot.x, res.rot.y, res.rot.z, res.rot.w):getMatrix()
-  mat:setPosition(res.pos)
-  rv.cameraMatrix = mat
-  local resol = rv.resolution
-  local aspect = (resol and resol.y > 0) and (resol.x / resol.y) or (16 / 9)
-  if res.ortho then
+  local fov = compensateNarrowSplitScreenFov(name, res.fov)
+
+  local ortho = res.ortho == true
+  local orthoHalfHeight = 0
+  if ortho then
     -- size the ortho box to frame the same area the perspective view would at the target distance,
     -- so the fov slider keeps zooming and switching projection doesn't jump the scale
     local dx, dy, dz = res.pos.x - res.targetPos.x, res.pos.y - res.targetPos.y, res.pos.z - res.targetPos.z
-    local halfH = math.tan(math.rad(res.fov) * 0.5) * math.sqrt(dx * dx + dy * dy + dz * dz)
-    local halfW = halfH * aspect
-    rv.frustum = Frustum.constructOrtho(-halfW, halfW, halfH, -halfH, res.nearClip or 0.1, 2000)
-  else
-    rv.frustum = Frustum.construct(false, math.rad(res.fov), aspect, res.nearClip or 0.1, 2000)
+    orthoHalfHeight = math.tan(math.rad(fov) * 0.5) * math.sqrt(dx * dx + dy * dy + dz * dz)
   end
-  rv.isOrtho = res.ortho == true
-  rv.fov = res.fov
+
+  RenderViewManagerInstance:updateViewCamera(name,
+    res.pos.x, res.pos.y, res.pos.z,
+    res.rot.x, res.rot.y, res.rot.z, res.rot.w,
+    fov, res.nearClip or 0.1, 2000, ortho, orthoHalfHeight)
 end
 
-local gameNotified
+-- core/cameraUpdate.lua only runs the camera loop while levelLoaded, so no level check is needed here
 function C:update(data)
-  -- extra contexts render to their own RenderView, independent of level/openxr/main
-  if data.renderView and data.renderView ~= "main" then
-    if levelLoaded then updateRenderView(data.renderView, data.res) end
-    return
-  end
+  local dataRes = data.res
 
-  if not levelLoaded then
-    if data.openxrSessionRunning then OpenXR.setGeluaCameraPosRot(0, 0, 0, 0, 0, 0, 1) end
-    if not gameNotified then
-      log("W", "", "No camera available, no level loaded either")
-      gameNotified = true
-    end
+  -- extra contexts render to their own RenderView, independent of openxr/main
+  if data.renderView and data.renderView ~= "main" then
+    updateRenderView(data.renderView, dataRes)
     return
   end
-  gameNotified = nil
 
   if data.openxrSessionRunning then
-    OpenXR.setGeluaCameraPosRot(
-      data.res.pos.x, data.res.pos.y, data.res.pos.z,
-      data.res.rot.x, data.res.rot.y, data.res.rot.z, data.res.rot.w
-    )
+    OpenXR.setGeluaCameraPosRot(dataRes.pos.x, dataRes.pos.y, dataRes.pos.z, dataRes.rot.x, dataRes.rot.y, dataRes.rot.z, dataRes.rot.w)
 
     local posX, posY, posZ, rotX, rotY, rotZ, rotW = OpenXR.getCameraPosRotPredictedXYZXYZW()
-    data.res.pos:setAddXYZ(posX, posY, posZ)
-    data.res.rot:setMulXYZW(rotX, rotY, rotZ, rotW, data.res.rot.x, data.res.rot.y, data.res.rot.z, data.res.rot.w)
+    dataRes.pos:setAddXYZ(posX, posY, posZ)
+    dataRes.rot:setMulXYZW(rotX, rotY, rotZ, rotW, dataRes.rot.x, dataRes.rot.y, dataRes.rot.z, dataRes.rot.w)
   end
 
-  setCameraPosRotFovNearClipC(
-    data.res.pos.x, data.res.pos.y, data.res.pos.z,
-    data.res.rot.x, data.res.rot.y, data.res.rot.z, data.res.rot.w,
-    data.res.fov,
-    data.res.nearClip
-  )
+  local inBigMap = freeroam_bigMapMode and freeroam_bigMapMode.bigMapActive() or false
+  local inTransition = freeroam_bigMapMode and freeroam_bigMapMode.isTransitionActive() or false
+  local motionContinuous = not not (inTransition or (inBigMap and self.wasBigMap))
+  if motionContinuous or self.motionContinuous then
+    local renderView = RenderViewManagerInstance and RenderViewManagerInstance:getView("main")
+    if renderView then
+      renderView.cameraMotionContinuous = motionContinuous
+    end
+  end
+  self.motionContinuous = motionContinuous
+  self.wasBigMap = inBigMap
+
+  setCameraPosRotFovNearClipC(dataRes.pos.x, dataRes.pos.y, dataRes.pos.z, dataRes.rot.x, dataRes.rot.y, dataRes.rot.z, dataRes.rot.w, dataRes.fov, dataRes.nearClip)
 end
 
 -- DO NOT CHANGE CLASS IMPLEMENTATION BELOW

@@ -196,20 +196,29 @@ local function pageGui(cat)
   imgui.Spacing()
   imgui.Spacing()
   imgui.Spacing()
-  imgui.Columns(2, valueInspector.inspectorName .. "FieldsColumn")
+
+  -- while searching there are no import/export buttons, so the title gets the full width
+  local splitTitleRow = not imgui.ImGuiTextFilter_IsActive(prefItemNameFilter)
+
+  if splitTitleRow then imgui.Columns(2, valueInspector.inspectorName .. "FieldsColumn") end
   imgui.PushFont3("cairo_regular_medium")
   imgui.TextColored(imgui.GetStyleColorVec4(imgui.Col_NavHighlight), cat.label .. " Preferences")
   imgui.PopFont()
-  imgui.NextColumn()
-  imgui.PushItemWidth(imgui.GetContentRegionAvailWidth())
-  importExportUi(cat.name)
-  imgui.PopItemWidth()
-  imgui.Columns(1)
+  if splitTitleRow then
+    imgui.NextColumn()
+    imgui.PushItemWidth(imgui.GetContentRegionAvailWidth())
+    importExportUi(cat.name)
+    imgui.PopItemWidth()
+    imgui.Columns(1)
+  end
 
   -- show the visible subcategories and their items
+  -- scoped by category name, since several categories use the same subcategory names/labels
+  imgui.PushID1(cat.name .. "_PREF_CATEGORY")
+  local itemsIndent = 15 * imgui.uiscale[0]
   for _, subCat in ipairs(cat.subcategories) do
     if subCat.visibleOnSearch and imgui.CollapsingHeader1(subCat.label, nodeFlags) then
-      imgui.Indent(15)
+      imgui.Indent(itemsIndent)
       imgui.PushID1(subCat.name .. "_PREF_ITEMS")
       for i = 1, #subCat.items do
         if subCat.items[i].visibleOnSearch and not subCat.items[i].hidden then
@@ -217,10 +226,11 @@ local function pageGui(cat)
         end
       end
       imgui.PopID()
-      imgui.Unindent(15)
+      imgui.Unindent(itemsIndent)
       imgui.Separator()
     end
   end
+  imgui.PopID()
 
 end
 

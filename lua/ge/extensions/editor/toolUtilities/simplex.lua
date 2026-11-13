@@ -6,12 +6,17 @@ local M = {}
 
 -- Module constants.
 local floor, sqrt = math.floor, math.sqrt
+-- Skew/unskew factors for the 2D simplex grid, precomputed once (they're pure constants; recomputing sqrt(3) per call was pure
+-- overhead across the millions of samples marching cubes takes). Values are identical to the inline expressions they replace.
+local F2 = 0.5 * (sqrt(3) - 1)
+local G2 = (3 - sqrt(3)) / 6
+local G2_2 = 2 * G2
 
--- Gradients for 2D.
-local grad3 = {
-  {1,1}, {-1,1}, {1,-1}, {-1,-1},
-  {1,0}, {-1,0}, {0,1}, {0,-1},
-}
+-- Gradients for 2D, split into flat X/Y arrays (was a table of {x,y} pairs). Flat arrays let noise() index gradX[gi]/gradY[gi]
+-- directly instead of a nested grad3[gi] deref + a dot() call per corner -- 3 fewer function calls and 3 fewer table-of-table
+-- lookups per noise sample, which adds up across the millions marching cubes takes. Order matches the old grad3 exactly.
+local gradX = { 1, -1, 1, -1, 1, -1, 0,  0 }
+local gradY = { 1,  1, -1, -1, 0,  0, 1, -1 }
 
 -- Permutation table.
 local perm = {}
@@ -41,17 +46,16 @@ for i = 0, 255 do
   perm[i + 256] = val
 end
 
--- Dot product.
-local function dot(g, x, y)
-  return g[1] * x + g[2] * y
-end
+-- perm folded to the 1..8 gradient index (perm[k] % 8 + 1), precomputed for all 0..511 so noise() skips the per-corner % 8 + 1.
+local permG = {}
+for i = 0, 511 do permG[i] = perm[i] % 8 + 1 end
 
 -- Simplex noise.
 function M.noise(xin, yin)
-  local s = (xin + yin) * 0.5 * (sqrt(3) - 1)
+  local s = (xin + yin) * F2
   local i = floor(xin + s)
   local j = floor(yin + s)
-  local t = (i + j) * ((3 - sqrt(3)) / 6)
+  local t = (i + j) * G2
   local X0 = i - t
   local Y0 = j - t
   local x0 = xin - X0
@@ -60,35 +64,35 @@ function M.noise(xin, yin)
   local i1, j1
   if x0 > y0 then i1, j1 = 1, 0 else i1, j1 = 0, 1 end
 
-  local x1 = x0 - i1 + ((3 - sqrt(3)) / 6)
-  local y1 = y0 - j1 + ((3 - sqrt(3)) / 6)
-  local x2 = x0 - 1 + 2 * ((3 - sqrt(3)) / 6)
-  local y2 = y0 - 1 + 2 * ((3 - sqrt(3)) / 6)
+  local x1 = x0 - i1 + G2
+  local y1 = y0 - j1 + G2
+  local x2 = x0 - 1 + G2_2
+  local y2 = y0 - 1 + G2_2
 
   local ii = i % 256
   local jj = j % 256
-  local gi0 = perm[ii + perm[jj]] % 8 + 1
-  local gi1 = perm[ii + i1 + perm[jj + j1]] % 8 + 1
-  local gi2 = perm[ii + 1 + perm[jj + 1]] % 8 + 1
+  local gi0 = permG[ii + perm[jj]]
+  local gi1 = permG[ii + i1 + perm[jj + j1]]
+  local gi2 = permG[ii + 1 + perm[jj + 1]]
 
   local n0, n1, n2
 
   local t0 = 0.5 - x0 * x0 - y0 * y0
   if t0 < 0 then n0 = 0 else
     t0 = t0 * t0
-    n0 = t0 * t0 * dot(grad3[gi0], x0, y0)
+    n0 = t0 * t0 * (gradX[gi0] * x0 + gradY[gi0] * y0)
   end
 
   local t1 = 0.5 - x1 * x1 - y1 * y1
   if t1 < 0 then n1 = 0 else
     t1 = t1 * t1
-    n1 = t1 * t1 * dot(grad3[gi1], x1, y1)
+    n1 = t1 * t1 * (gradX[gi1] * x1 + gradY[gi1] * y1)
   end
 
   local t2 = 0.5 - x2 * x2 - y2 * y2
   if t2 < 0 then n2 = 0 else
     t2 = t2 * t2
-    n2 = t2 * t2 * dot(grad3[gi2], x2, y2)
+    n2 = t2 * t2 * (gradX[gi2] * x2 + gradY[gi2] * y2)
   end
 
   return 70 * (n0 + n1 + n2)

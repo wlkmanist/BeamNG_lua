@@ -112,7 +112,7 @@ local function onEditorInspectorHeaderGui(inspectorInfo)
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem("DataBlock Editor", onWindowMenuItem)
+  editor.addWindowMenuItem("DataBlock Editor", onWindowMenuItem, {groupMenuName = 'Assets'})
   editor.registerWindow(dataBlockEditorWindowName, im.ImVec2(200, 400))
   editor.registerWindow(createDataBlockWindowName, im.ImVec2(300, 200))
   dataBlockClasses = getAllDataBlockClasses()

@@ -1157,7 +1157,7 @@ local function textureImageButtonWidget(value, property, guiId, editEnded, widge
   )
 
 
-  if im.ImageButton(string.format("%s_imageButton", widgetId), img.texId, im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1)) then
+  if im.ImageButton(string.format("%s_imageButton", widgetId), img.tex:getID(), im.ImVec2(imgWidth, imgHeight), im.ImVec2(0,0), im.ImVec2(1,1)) then
     local openPath = baseProp.defaultDir
     local dir, fileName, fileExt = path.split(value)
     if #fileExt > 0 then

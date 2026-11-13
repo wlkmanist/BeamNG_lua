@@ -2,34 +2,34 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
--- Per-frame camera update loop, split out of core/camera.lua. Computes each camera
--- context (the main player view + any extra render-view contexts) by driving the
--- existing camera modes. core_camera injects its state + selection/registry helpers
--- via setup() and exposes M.onPreRender / M.onClientPostStartMission as its callbacks.
+-- Per-frame camera update loop, split out of core/camera.lua. The main player view
+-- and extra RenderView contexts (split-screen, video stream) are processed separately:
+-- they share the same camera modes, but OpenXR, shadows, SSAO and the onCameraPreRender
+-- hook only run on the main view. core_camera injects its state + helpers via setup()
+-- and exposes M.onPreRender / M.onClientPostStartMission as its callbacks.
 
 local cameraInput = require('core/cameraInput')
 
 local M = {}
 
 -- injected by core/camera.lua (its shared state + selection/registry/config helpers)
-local contexts, mainContext, moveManager, getConfiguration
+local extraContexts, mainContext, moveManager
 local getGlobalCameras, getVehicleData, getRunningCamsOrder
 local setGlobalCameraByName, set, vehicleChanged
-local isWithinRadius, isUnicycle
+local isInsideBasedOnCameras, isUnicycle
 local cameraM
 
 function M.setup(deps)
-  contexts = deps.contexts
+  extraContexts = deps.extraContexts
   mainContext = deps.mainContext
   moveManager = deps.moveManager
-  getConfiguration = deps.getConfiguration
   getGlobalCameras = deps.getGlobalCameras
   getVehicleData = deps.getVehicleData
   getRunningCamsOrder = deps.getRunningCamsOrder
   setGlobalCameraByName = deps.setGlobalCameraByName
   set = deps.set
   vehicleChanged = deps.vehicleChanged
-  isWithinRadius = deps.isWithinRadius
+  isInsideBasedOnCameras = deps.isInsideBasedOnCameras
   isUnicycle = deps.isUnicycle
   cameraM = deps.cameraM
 end
@@ -39,25 +39,27 @@ end
 -- the fixed cascade layout so it is sharper than the full range detached camera
 local drivingShadowDistanceScale = 0.5
 local lastShadowDistanceScale = nil
+local lastSdsmFitEnabled = nil
 
 -- Reduces the SSAO radius when the camera is inside the vehicle interior
-local isCameraInsidePrevious = false
+local isCameraInsidePrevious -- nil until the first update, so a level load re-applies a known radius
 local function updateInteriorSSAO(veh)
-  if not veh then return false end
-
-  local vehId = veh:getId()
-  if isUnicycle(vehId) then return false end
   local camPos = mainContext.finalCameraData.pos
-  local vdata = getVehicleData()[vehId]
-  if not vdata then return false end
+  local isCameraInsideNow = false
 
-  local isCameraInsideNow = isWithinRadius("onboard.driver", camPos, veh, vdata, 0.6) or isWithinRadius("onboard.rider", camPos, veh, vdata, 0.6)
-  if not (freeroam_bigMapMode and freeroam_bigMapMode.bigMapActive()) then
-    local oobb = veh:getSpawnWorldOOBB()
-    local inside = (isCameraInsideNow and oobb:isContained(camPos))
-    if isCameraInsideNow ~= isCameraInsidePrevious then
-      if scenetree.SSAOPostFx then scenetree.SSAOPostFx:setRadiusTarget((inside and 0.5) or 1.5) end
+  -- no vehicle, a unicycle or a vehicle without camera data all count as outside, so the radius
+  -- always returns to the exterior value instead of staying stuck at the interior one
+  if veh then
+    local vehId = veh:getId()
+    local vdata = getVehicleData()[vehId]
+    if vdata and not isUnicycle(vehId) then
+      isCameraInsideNow = isInsideBasedOnCameras(camPos, veh, vdata, 0.6)
     end
+  end
+
+  if isCameraInsideNow ~= isCameraInsidePrevious and not (freeroam_bigMapMode and freeroam_bigMapMode.bigMapActive()) then
+    local inside = isCameraInsideNow and veh:getSpawnWorldOOBB():isContained(camPos)
+    if scenetree.SSAOPostFx then scenetree.SSAOPostFx:setRadiusTarget((inside and 0.5) or 1.5) end
   end
   isCameraInsidePrevious = isCameraInsideNow
 end
@@ -76,7 +78,7 @@ end
 
 function M.onClientPostStartMission()
   levelNearClip = nil
-  isCameraInsidePrevious = false
+  isCameraInsidePrevious = nil
 end
 
 -- guard against sending NaN and inf to C++, which will put it in an unrecoverable
@@ -109,13 +111,16 @@ local function updateCameraData(ctx)
   ctx.finalCameraData.fovDeg = res.fov
 end
 
--- Compute one context's camera for this frame, reusing all the existing camera
--- modes. The main context drives the player view ("main" RenderView); extra
--- contexts drive their own RenderView. Player input (MoveManager), OpenXR, the
--- onCameraPreRender hook and interior-shadow tuning only apply to the main context.
-local function updateContext(ctx, dtReal, dtSim, dtRaw)
+local function notifyCameraChanged(ctx, camName, vid)
+  if camName == ctx.lastCamName and vid == ctx.lastCamVid then return end
+  ctx.lastCamName = camName
+  ctx.lastCamVid = vid
+  extensions.hook("onCameraChanged", ctx.player or 0, camName, vid)
+end
+
+-- Fill camData for this frame and detect vehicle switches. Shared by main and extra views.
+local function beginContextUpdate(ctx, dtReal, dtSim, dtRaw)
   local camData = ctx.camData
-  MoveManager = ctx.move -- camera modes read this player's input while updating this context
   local player = ctx.player or 0
   local veh = getPlayerVehicle(ctx.vehiclePlayer or player) -- vehicle (and its cameras) may come from a different seat than the input player
   local vid = veh and veh:getId()
@@ -123,7 +128,7 @@ local function updateContext(ctx, dtReal, dtSim, dtRaw)
   -- fixup res if a reference in it has been altered
   camData.resPos:set(camData.pos)
   camData.resTargetPos:set(0, 0, 0)
-  camData.resRot:set(1,0,0,0)
+  camData.resRot:set(0,0,0,1)
   camData.res.pos = camData.resPos
   camData.res.targetPos = camData.resTargetPos
   camData.res.rot = camData.resRot
@@ -139,8 +144,8 @@ local function updateContext(ctx, dtReal, dtSim, dtRaw)
   camData.prevPos:set(camData.pos)
   camData.prevVehPos:set(camData.vehPos)
   camData.renderView = ctx.renderView -- the gameengine.lua output filter sends res to this RenderView
+  camData.openxrSessionRunning = false
 
-  camData.openxrSessionRunning = ctx.isMain and render_openxr and render_openxr.isSessionRunning() or false
   if veh then
     camData.pos:set(veh:getPositionXYZ()) -- scene object position - this jumps on the floating point grid
     camData.vehPos:set(veh:getRefNodeAbsPositionXYZ()) -- vehicle's actual position on a double precision grid
@@ -163,74 +168,64 @@ local function updateContext(ctx, dtReal, dtSim, dtRaw)
     end
   end
 
-  if veh then
-    local vehicleName = veh:getField('name', '')
-    if vehicleName ~= ctx.lastVehicleName then
-      local lastVehicle = ctx.lastVehicleName and scenetree.findObject(ctx.lastVehicleName) or nil
-      local lastVehicleId = lastVehicle and lastVehicle:getId() or nil
-      vehicleChanged(lastVehicleId, vid, ctx)
-      ctx.lastVehicleName = vehicleName
-    end
+  if veh and vid ~= ctx.lastVehicleId then
+    vehicleChanged(ctx.lastVehicleId, vid, ctx)
+    ctx.lastVehicleId = vid
   end
-
-  if not getConfiguration() then return end
 
   camData.res.targetPos:set(camData.pos)   -- tracked target
   camData.res.fov = 60
   camData.res.nearClip = getLevelNearClip() or 0.1 -- choose a sane default if the level hasn't defined a nearclip
 
-  -- update the selected camera
-  local globalCam = getGlobalCameras(ctx)[ctx.activeGlobalCameraName]
+  return camData, veh, vid
+end
 
-  -- attached to a vehicle cap the far shadow depth so the fixed cascade layout stays sharp near the car,
-  -- a global camera opens it to the full range
-  if ctx.isMain then
-    local targetShadowScale = globalCam and 1.0 or drivingShadowDistanceScale
-    if targetShadowScale ~= lastShadowDistanceScale and PSSMLightShadowMap then
-      PSSMLightShadowMap.sdsmMaxDistanceScale = targetShadowScale
-      lastShadowDistanceScale = targetShadowScale
+-- Drive the selected global or vehicle camera. globalCam is the context's active global camera
+-- (nil drives the vehicle camera), resolved by the caller since main also needs it for shadows. Returns:
+--   'ok'        camera updated, run filters
+--   'abort'     nothing this frame (no vdata, or orbit fallback already applied)
+--   'need-free' vehicle cam missing and orbit missing; caller last-resorts to free cam
+-- Second return is true when a global camera update() succeeded (main fires onCameraPreRender).
+local function updateSelectedCamera(ctx, camData, vid, globalCam)
+  if globalCam then
+    notifyCameraChanged(ctx, ctx.activeGlobalCameraName, vid)
+    if globalCam:update(camData) then
+      return 'ok', true
     end
+    setGlobalCameraByName(nil, nil, nil, ctx)
+    return 'ok', false
   end
 
-  if globalCam then
-    -- one of the global cameras
-    if globalCam:update(camData) then
-      if ctx.isMain then extensions.hook("onCameraPreRender", camData) end
-    else
-      setGlobalCameraByName(nil, nil, nil, ctx)
-    end
-  else
-    -- one of the vehicle cameras
-    local vdata = getVehicleData(ctx)[vid]
-    if not vdata then
-      --log("E", "", "No global cam used, and no vehicle exists either")
-      return
-    end
-    local plvdata = core_vehicle_manager.getPlayerVehicleData()
-    local isUnicycle = plvdata and plvdata.mainPartName == "unicycle"
-    local camName = isUnicycle and "unicycle" or vdata.focusedCamName
-    local cam = vdata.cameras[camName]
-    if cam and vdata.focusedCamName then
-      cam:update(camData)
-      if not validateData(ctx, camData) and cam.init then cam:init() end -- if present, clean up NaN/infs in camera state, by re-initting it
-    else
-      local fallbackCamName = "orbit"
-      local fallbackCam = vdata.cameras[fallbackCamName]
-      if fallbackCam then
-        log("E", "", "Vehicle cam \""..dumps(vdata.focusedCamName).."\" not found. Falling back to \""..dumps(fallbackCamName).."\"")
-        set(fallbackCamName, nil, nil, 0, ctx)
-      elseif ctx.isMain then
-        log("E", "", "Vehicle cam \""..dumps(vdata.focusedCamName).."\" not found. Fallback cam \""..dumps(fallbackCamName).."\" not found either. Falling back to free camera")
-        commands.setFreeCamera()
-      else
-        setGlobalCameraByName('free', nil, nil, ctx) -- keep the fallback local to this context (don't disturb the player)
-      end
-      return
+  local vdata = getVehicleData(ctx)[vid]
+  if not vdata then
+    return 'abort'
+  end
+  local camName = isUnicycle(vid, ctx) and "unicycle" or vdata.focusedCamName
+  local cam = vdata.cameras[camName]
+  if cam and vdata.focusedCamName then
+    notifyCameraChanged(ctx, camName, vid)
+    cam:update(camData)
+    -- if present, clean up NaN/infs in camera state, by re-initting it
+    if not validateData(ctx, camData) and cam.init then
+      cam:init()
     end
     camData.dt = camData.dtReal -- revert back to gfx dt, in case one filter switched it
+    return 'ok'
   end
 
-  -- running cameras (incl. the gameengine.lua output filter, which sends res to camData.renderView)
+  local fallbackCamName = "orbit"
+  local fallbackCam = vdata.cameras[fallbackCamName]
+  if fallbackCam then
+    log("E", "", "Vehicle cam \""..dumps(vdata.focusedCamName).."\" not found. Falling back to \""..dumps(fallbackCamName).."\"")
+    set(fallbackCamName, nil, nil, 0, ctx)
+    return 'abort'
+  end
+  return 'need-free', nil, vdata.focusedCamName
+end
+
+-- Running cameras (incl. the gameengine.lua output filter, which sends res to camData.renderView)
+-- plus per-frame relative-look clear and finalCameraData copy.
+local function updateGlobalCameras(ctx, camData)
   for _,v in ipairs(getRunningCamsOrder(ctx)) do
     v.cam:update(camData)
   end
@@ -240,23 +235,83 @@ local function updateContext(ctx, dtReal, dtSim, dtRaw)
   MoveManager.pitchRelative = 0
   MoveManager.rollRelative = 0
 
-  if ctx.isMain then -- spacemouse absolute axes are a single-device, main-only concern
-    cameraInput.tickAbsAxes(dtReal)
+  updateCameraData(ctx)
+end
+
+local function updateMainShadows(globalCam)
+  -- Keep cascade coverage stable; retain the tighter split distribution while driving.
+  local targetShadowScale = globalCam and 1.0 or drivingShadowDistanceScale
+  local targetSdsmFit = false
+  if PSSMLightShadowMap then
+    if targetShadowScale ~= lastShadowDistanceScale then
+      PSSMLightShadowMap.sdsmMaxDistanceScale = targetShadowScale
+      lastShadowDistanceScale = targetShadowScale
+    end
+    if targetSdsmFit ~= lastSdsmFitEnabled then
+      PSSMLightShadowMap.sdsmFitEnabled = targetSdsmFit
+      lastSdsmFitEnabled = targetSdsmFit
+    end
+  end
+end
+
+local function updateMainContext(dtReal, dtSim, dtRaw)
+  local ctx = mainContext
+  local camData, veh, vid = beginContextUpdate(ctx, dtReal, dtSim, dtRaw)
+  camData.openxrSessionRunning = render_openxr and render_openxr.isSessionRunning() or false
+
+  local globalCam = getGlobalCameras(ctx)[ctx.activeGlobalCameraName]
+  updateMainShadows(globalCam)
+
+  local result, ranGlobal, missingCamName = updateSelectedCamera(ctx, camData, vid, globalCam)
+  if result == 'ok' then
+    if ranGlobal then extensions.hook("onCameraPreRender", camData) end
+  elseif result == 'need-free' then
+    log("E", "", "Vehicle cam \""..dumps(missingCamName).."\" not found. Fallback cam \""..dumps("orbit").."\" not found either. Falling back to free camera")
+    commands.setFreeCamera()
+    return
+  else
+    return
   end
 
-  updateCameraData(ctx)
+  updateGlobalCameras(ctx, camData)
+  cameraInput.tickAbsAxes(dtReal) -- spacemouse absolute axes are a single-device, main-only concern
+  updateInteriorSSAO(veh)
+end
 
-  if ctx.isMain and veh then updateInteriorSSAO(veh) end
+-- No camera this frame (e.g. the player has no vehicle): keep sending the last pose to the RenderView,
+-- since its projection is only rebuilt from its current resolution when a pose is sent
+local function holdLastPose(ctx, camData)
+  local final = ctx.finalCameraData
+  if final.fovDeg <= 0 then return end -- no pose sent yet
+  camData.res.pos:set(final.pos)
+  camData.res.rot:set(final.rot)
+  camData.res.fov = final.fovDeg
+  getGlobalCameras(ctx).gameengine:update(camData)
+end
 
-  MoveManager = moveManager -- restore the main input state as the default between frames
+local function updateExtraContext(ctx, dtReal, dtSim, dtRaw)
+  MoveManager = ctx.move -- camera modes read this player's input while updating this context
+  local camData, _, vid = beginContextUpdate(ctx, dtReal, dtSim, dtRaw)
+
+  local result = updateSelectedCamera(ctx, camData, vid, getGlobalCameras(ctx)[ctx.activeGlobalCameraName])
+  if result == 'need-free' then
+    setGlobalCameraByName('free', nil, nil, ctx) -- keep the fallback local to this context (don't disturb the player)
+    return
+  elseif result ~= 'ok' then
+    holdLastPose(ctx, camData)
+    return
+  end
+
+  updateGlobalCameras(ctx, camData)
 end
 
 function M.onPreRender(dtReal, dtSim, dtRaw)
   if not levelLoaded then return end
-  updateContext(mainContext, dtReal, dtSim, dtRaw) -- player view first
-  for _, ctx in pairs(contexts) do
-    if not ctx.isMain then updateContext(ctx, dtReal, dtSim, dtRaw) end
+  updateMainContext(dtReal, dtSim, dtRaw)
+  for _, ctx in pairs(extraContexts) do
+    updateExtraContext(ctx, dtReal, dtSim, dtRaw)
   end
+  MoveManager = moveManager -- restore the main input state as the default between frames
 end
 
 return M

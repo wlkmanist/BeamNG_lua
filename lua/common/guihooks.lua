@@ -128,6 +128,24 @@ local function message(msg, ttl, category, icon, availableOptionsCount, currentO
   trigger('Message', {msg = msg, ttl = (ttl or 5), category = (category or ''), icon = icon, availableOptionsCount = availableOptionsCount, currentOptionIndex = currentOptionIndex})
 end
 
+local emptyTable = {}
+local function messageForSeatedPlayers(msg, ttl, category, icon, availableOptionsCount, currentOptionIndex)
+  local data
+  if type(msg) == "table" and ttl == nil and msg.msg ~= nil then
+    data = {}
+    for key, value in pairs(msg) do
+      data[key] = value
+    end
+  else
+    data = {msg = msg, ttl = (ttl or 5), category = (category or ''), icon = icon, availableOptionsCount = availableOptionsCount, currentOptionIndex = currentOptionIndex}
+  end
+
+  for player in pairs(playerInfo.seatedPlayers or emptyTable) do
+    data.player = player
+    trigger('Message', data)
+  end
+end
+
 -- UI app graph. accepts any amount of arguments, each argument can define in this order: { key, value, scale, unit, renderNegatives, color }
 -- for example: graph( {"foo",foo},  {"bar",bar,100},  {"baz",baz,nil,"m/s",false,nil} )
 local function graph(a, ...)
@@ -188,6 +206,7 @@ M.send = queueStream
 
 -- UI messaging shortcut
 M.message = message
+M.messageForSeatedPlayers = messageForSeatedPlayers
 M.graph = graph -- 'Generic Graph' UI app
 M.graphWithCSV = graphWithCSV -- 'Generic Graph' UI app
 M.graphWithCSVWrite = graphWithCSVWrite -- 'Generic Graph' UI app

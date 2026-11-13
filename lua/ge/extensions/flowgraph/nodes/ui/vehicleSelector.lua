@@ -46,10 +46,8 @@ end
 local function getVehicleDial(model, config)
   if not model or not config or config == "" then return 12 end
   local okCfg, cfg = pcall(core_vehicles.getConfig, model, config)
-  if okCfg and cfg and cfg["Drag Times"] then
-    return cfg["Drag Times"].time_1_4 or 12
-  end
-  return 12
+  local dragTimes = okCfg and cfg and (cfg["Performance Data"] or cfg["Drag Times"])
+  return dragTimes and dragTimes.time_1_4 or 12
 end
 
 local function getVehicleColor(model, config, additionalData)
@@ -164,7 +162,7 @@ end
 
 function C:closeDialogue()
   if self.built then
-    guihooks.trigger('ChangeState', 'play')
+    extensions.ui_router.navigate('play')
     if self.mgr.modules.ui then
       self.mgr.modules.ui.uiLayout = nil
     end

@@ -4,7 +4,6 @@
 
 local M = {}
 
-
 local function getBaseMission()
   return {
     description = "Mission Description for newIdadssad",
@@ -76,7 +75,7 @@ local function generate(levelIdentifier)
   extensions.load('scenario_quickRaceLoader')
   local levelList = nil
   if levelIdentifier then
-    levelList = {levelIdentifier}  -- limit search to this level
+    levelList = type(levelIdentifier) == "table" and levelIdentifier or {levelIdentifier}
   end
   local data = scenario_quickRaceLoader.getQuickraceList(levelList)
   local missions = {}

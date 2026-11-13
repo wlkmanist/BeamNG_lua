@@ -16,6 +16,7 @@ local function initConsole()
     metricAdd = function() end,
   }
   core_sounds = {
+    setEngineSoundParameter = function() end,
     setEngineSoundParameterList = function() end,
     initExhaustSound = function() end,
     setExhaustSoundNodes = function() end,

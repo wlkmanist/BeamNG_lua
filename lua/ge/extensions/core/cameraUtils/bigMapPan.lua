@@ -2,13 +2,11 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
--- Shared "pan to a world position" helper for the bigmap camera modes (bigMap / bigMapOrtho).
--- It stores a target on the camera (cam.panTarget) and eases the camera position toward it.
--- NOTE: kept outside cameraModes/ on purpose - files in that folder are auto-loaded as camera constructors.
+-- Shared pan/zoom helper for the bigmap camera modes (bigMap / bigMapOrtho).
+-- Kept outside cameraModes/: files in that folder are auto-loaded as camera constructors.
 
 local M = {}
 
--- set a pan target so that the given world (ground) position becomes centered.
 -- lookAtOffset is the camera->lookAt vector (camToLookAtPoint) of the calling camera mode.
 function M.setTarget(cam, worldPos, lookAtOffset)
   if not worldPos then return end
@@ -17,8 +15,30 @@ function M.setTarget(cam, worldPos, lookAtOffset)
   cam.panTarget = vec3(worldPos.x - offset.x, worldPos.y - offset.y, z)
 end
 
--- ease the camera toward its pan target; cancels the pan when the user moves the camera.
+-- factor: 0 = zoomed out (fovMax), 1 = zoomed in (fovMin)
+function M.zoomToFactor(cam, factor)
+  factor = clamp(tonumber(factor) or 0, 0, 1)
+  cam.zoomTarget = lerp(cam.fovMax, cam.fovMin, factor)
+end
+
+-- Ease toward pan/zoom targets; cancels when the user moves (or zooms, for zoomTarget).
 function M.update(cam, dt, userMoving)
+  local t = clamp(dt * 6, 0, 1)
+
+  if cam.zoomTarget then
+    local userZooming = MoveManager.zoomIn ~= 0 or MoveManager.zoomOut ~= 0
+    if userMoving or userZooming then
+      cam.zoomTarget = nil
+    else
+      local fov = cam.manualzoom.fov + (cam.zoomTarget - cam.manualzoom.fov) * t
+      if math.abs(cam.zoomTarget - fov) < 0.01 then
+        fov = cam.zoomTarget
+        cam.zoomTarget = nil
+      end
+      cam.manualzoom.fov = fov
+    end
+  end
+
   if not cam.panTarget then return end
   if userMoving then
     cam.panTarget = nil
@@ -26,7 +46,6 @@ function M.update(cam, dt, userMoving)
   end
 
   local pos = cam.bigMapCamPosition
-  local t = clamp(dt * 6, 0, 1)
   pos.x = pos.x + (cam.panTarget.x - pos.x) * t
   pos.y = pos.y + (cam.panTarget.y - pos.y) * t
 

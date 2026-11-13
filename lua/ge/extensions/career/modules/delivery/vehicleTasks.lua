@@ -238,20 +238,20 @@ local function getRewardsWithBreakdown(taskData)
   local brokenPartsMultipler = 1
   if brokenPartsRelative >= 0.25 then
     brokenPartsMultipler = 0
-    partsBreakdown.label = "Excessive Damage"
+    partsBreakdown.label = _tr("ui.career.delivery.breakdown.excessiveDamage")
     partsBreakdown.rewards = {money = -origMoney}
     for rewardKey, rewardValue in pairs(reputationRewards) do
       partsBreakdown.rewards[rewardKey] = -2 * rewardValue
     end
   elseif taskData.brokenPartsNumber >= brokenPartsThreshold then
     brokenPartsMultipler = 0.8 - 0.6*(brokenPartsRelative*4)
-    partsBreakdown.label = "Slight Damage"
+    partsBreakdown.label = _tr("ui.career.delivery.breakdown.slightDamage")
     partsBreakdown.rewards = {money = -(1-brokenPartsMultipler)*origMoney}
     for rewardKey, rewardValue in pairs(reputationRewards) do
       partsBreakdown.rewards[rewardKey] = -(1-brokenPartsMultipler) * rewardValue
     end
   else
-    partsBreakdown.label = "No Damage"
+    partsBreakdown.label = _tr("ui.career.delivery.breakdown.noDamage")
     partsBreakdown.rewards = {money = math.ceil(origMoney*0.05)}
   end
 
@@ -264,7 +264,7 @@ local function getRewardsWithBreakdown(taskData)
         for rewardKey, rewardValue in pairs(reputationRewards) do
           rewards[rewardKey] = math.ceil(rewardValue*0.125)
         end
-        table.insert(breakdown, {label = "No Detours", rewards = rewards, simpleBreakdownType="bonus", })
+        table.insert(breakdown, {label = _tr("ui.career.delivery.breakdown.noDetours"), rewards = rewards, simpleBreakdownType="bonus", })
       end
     end
     if timeTaken < expectedTime then
@@ -272,7 +272,7 @@ local function getRewardsWithBreakdown(taskData)
       for rewardKey, rewardValue in pairs(reputationRewards) do
         rewards[rewardKey] = math.ceil(rewardValue*0.125)
       end
-      table.insert(breakdown, {label = "No Delays", rewards = rewards, simpleBreakdownType="bonus",})
+      table.insert(breakdown, {label = _tr("ui.career.delivery.breakdown.noDelays"), rewards = rewards, simpleBreakdownType="bonus",})
     end
   end
 
@@ -282,7 +282,7 @@ local function getRewardsWithBreakdown(taskData)
     local organizationCut = (organization.reputationLevels[level+2].loanerCut and organization.reputationLevels[level+2].loanerCut.value or 0.5)
 
     local organizationElement = {
-      label = string.format("Loaner Organization (%d%% cut)", round(organizationCut * 100)),
+      label = core_locales.contextTranslate("ui.career.delivery.breakdown.loanerOrganization", {cut = round(organizationCut * 100)}),
       rewards = {money = -organizationCut * originalRewards.money},
       simpleBreakdownType = "loaner",
     }
@@ -295,7 +295,7 @@ local function getRewardsWithBreakdown(taskData)
   if branchMultiplier > 1 then
     local level = career_branches.getBranchLevel("logistics")
     table.insert(breakdown, {
-      label = "Level " .. level .. " Multiplier",
+      label = core_locales.contextTranslate("ui.career.delivery.breakdown.levelMultiplier", {level = level}),
       rewards = {money = originalRewards.money * branchMultiplier - originalRewards.money},
       simpleBreakdownType = "branch",
     })
@@ -311,7 +311,9 @@ local function getRewardsWithBreakdown(taskData)
 
         -- Add precision parking breakdown entry
         local precisionBreakdown = {
-          label = "Precision Parking (" .. precisionBonus.precisionLevel:gsub("^%l", string.upper) .. ")",
+          label = core_locales.contextTranslate("ui.career.delivery.breakdown.precisionParking", {
+            precisionLevel = _tr("ui.career.delivery.precisionLevel." .. precisionBonus.precisionLevel)
+          }),
           rewards = {},
           simpleBreakdownType = (precisionBonus.moneyFlat >= 0 and precisionBonus.logisticsFlat >= 0) and "bonus" or "penalty",
           precisionData = precisionData
@@ -552,7 +554,16 @@ local function processGiveBack(taskData)
     })
     taskData.remove = true
 
-    local message = string.format("Delivery %s abandoned. \n %0.2f$ penalty. " .. (taskData.offer.organization and "\n%d reputation lost." or ""), taskData.offer.name, -fine.money, taskData.offer.organization and -fine[taskData.offer.organization .. "Reputation"] or 0)
+    local messageContext = {
+      deliveryName = _tr(taskData.offer.name),
+      penalty = string.format("%0.2f", -fine.money)
+    }
+    local messageKey = "ui.career.delivery.notification.abandoned"
+    if taskData.offer.organization then
+      messageKey = "ui.career.delivery.notification.abandonedWithReputation"
+      messageContext.reputation = -fine[taskData.offer.organization .. "Reputation"]
+    end
+    local message = core_locales.contextTranslate(messageKey, messageContext)
     core_jobsystem.create(showMessageJob, nil, message, "delivery", "local_shipping")
   end
 end

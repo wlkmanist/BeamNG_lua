@@ -49,7 +49,7 @@ local goals = {
     id = "step9_openPurchaseGoal",
     type = "goal",
     label = "ui.career.tutorial.task.step09.goal.openPurchase.label",
-    subtext = "ui.career.tutorial.task.step09.goal.openPurchase.subtext",
+    subtext = "ui.career.tutorial.task.step09.goal.openPurchase.subtext.keyboardmouse",
     subtextController = "ui.career.tutorial.task.step09.goal.openPurchase.subtext.controller",
     attention = true,
   },

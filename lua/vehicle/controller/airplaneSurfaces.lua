@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Provides pilot control over aircraft flight surfaces and trim
+
 local M = {}
 --Mandatory controller parameters
 M.type = "auxiliary"

@@ -4,6 +4,8 @@ M.dependencies = {
   'gameplay_forceField',
 }
 
+local routeGenerator = require('/lua/ge/extensions/gameplay/util/routeGenerator')
+
 local function toggleForceField()
   if gameplay_forceField.isActive() then
     if gameplay_forceField.getForceMultiplier() > 0 then
@@ -20,10 +22,30 @@ local function toggleForceField()
   return {"reload"}
 end
 
+-- fling actions will be reduced or negated if the vehicle is going faster than flingMaxSpeed in the direction of the fling
+local flingReduceSpeed, flingMaxSpeed = 200 / 3.6, 450 / 3.6 -- m/s
+local helper = vec3(0, 0, 0)
+
+local function applyFling(veh, x, y, z)
+  helper:set(veh:getVelocityXYZ())
+  local addLen = math.sqrt(x * x + y * y + z * z)
+  if addLen > 0 then
+    local speedAlong = (helper.x * x + helper.y * y + helper.z * z) / addLen
+    if speedAlong > flingReduceSpeed then
+      local scale = 0
+      if speedAlong < flingMaxSpeed then
+        scale = (flingMaxSpeed - speedAlong) / (flingMaxSpeed - flingReduceSpeed)
+      end
+      x, y, z = x * scale, y * scale, z * scale
+    end
+  end
+  veh:applyClusterVelocityScaleAdd(veh:getRefNodeId(), 1, x, y, z)
+end
+
 local function flingUpward()
   local veh = getPlayerVehicle(0)
   if veh then
-    veh:applyClusterVelocityScaleAdd(veh:getRefNodeId(), 1, 0, 0, 15)
+    applyFling(veh, 0, 0, 15)
   end
   return {"hide"}
 end
@@ -31,7 +53,7 @@ end
 local function flingDownward()
   local veh = getPlayerVehicle(0)
   if veh then
-    veh:applyClusterVelocityScaleAdd(veh:getRefNodeId(), 1, 0, 0, -15)
+    applyFling(veh, 0, 0, -15)
   end
   return {"hide"}
 end
@@ -42,7 +64,7 @@ local function boost()
     local dir = veh:getDirectionVector()
     dir:normalize()
     dir = dir * 25
-    veh:applyClusterVelocityScaleAdd(veh:getRefNodeId(), 1, dir.x, dir.y, dir.z)
+    applyFling(veh, dir.x, dir.y, dir.z)
   end
   return {"hide"}
 end
@@ -53,7 +75,7 @@ local function boostBackwards()
     local dir = veh:getDirectionVector()
     dir:normalize()
     dir = dir * - 25
-    veh:applyClusterVelocityScaleAdd(veh:getRefNodeId(), 1, dir.x, dir.y, dir.z)
+    applyFling(veh, dir.x, dir.y, dir.z)
   end
   return {"hide"}
 end
@@ -188,38 +210,38 @@ local function randomVehicle()
   return {"hide"}
 end
 
+local randomRouteMinLength = 3000
+local randomRouteMaxLength = 8000
+local randomRouteBandBoundaries = {0.2, 0.7} -- trail < 0.2, dirt 0.2-0.7, tarmac > 0.7
+local randomRouteTargetRatios = {trail = 0, dirt = 0.5, tarmac = 0.5}
+local randomRouteCheckpointDistance = 300
+
 local function randomRoute()
   local veh = getPlayerVehicle(0)
   if not veh then return end
 
-  local name_a, name_b, distance = map.findClosestRoad(veh:getPosition())
-  if not name_a or not name_b then return end
-  local a = map.getMap().nodes[name_a]
-  local b = map.getMap().nodes[name_b]
+  local startPos = vec3(veh:getPosition())
+  local startDir = vec3(veh:getDirectionVector()):z0():normalized()
+  local length = randomRouteMinLength + math.random() * (randomRouteMaxLength - randomRouteMinLength)
+  -- the generator falls back to seeding with os.time(), which would repeat the same route when triggered twice within a second
+  local seed = math.floor(os.clock() * 1000000) % 2147483647
 
-  local xnorm = clamp(veh:getPosition():xnormOnLine(a.pos, b.pos), 0, 1)
-  -- if we are closer to point b, swap it around
-  if xnorm > 0.5 then
-    name_a, name_b = name_b, name_a
-    a = map.getMap().nodes[name_a]
-    b = map.getMap().nodes[name_b]
-    xnorm = 1-xnorm
-  end
-  local bestTarget = nil
-  local bestDistance = 0
-  local targets = tableKeys(map.getMap().nodes)
-  for i = 1, 10 do
-    local target = map.getMap().nodes[targets[math.random(1, #targets)]]
-    freeroam_bigMapMode.setNavFocus(target.pos)
-    local length = core_groundMarkers.routePlanner.path[1].distToTarget
-    if length > bestDistance then
-      bestDistance = length
-      bestTarget = target
-    end
-  end
-  --local wps = map.getGraphpath():getRandomPathG(name_a, fwd, 1000 + math.random(0, 2000), nil, nil, false)
-  --local wps = map.getGraphpath():getRandomPath(name_b, name_a, nil)
-  freeroam_bigMapMode.setNavFocus(bestTarget.pos)
+  core_jobsystem.create(function(job)
+    local _, checkpoints = routeGenerator.generateRaceRoute(startPos, length, startDir, nil, nil, nil, job, seed, randomRouteTargetRatios, randomRouteBandBoundaries, randomRouteCheckpointDistance)
+    if not checkpoints or #checkpoints == 0 then return end
+
+    core_groundMarkers.setPath(checkpoints, {
+      -- also makes markerInteraction draw the distance column on the next checkpoint
+      clearPathOnReachingTarget = true,
+      cutOffDrivability = routeGenerator.defaultMinDrivability,
+      dirMult = 1,
+      penaltyAboveCutoff = 1,
+      penaltyBelowCutoff = routeGenerator.drivabilityPenalty,
+      wZ = 1,
+    })
+    freeroam_bigMapMode.resetRoute()
+  end, 0.01)
+
   return {"hide"}
 end
 

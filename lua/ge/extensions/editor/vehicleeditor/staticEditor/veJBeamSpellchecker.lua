@@ -58,6 +58,7 @@ local allSections = {
     nodeMaterial = true,
     selfCollision = true,
     collision = true,
+    ignoreForThumbnailFraming = true,
     nodeWeight = true,
     group = true,
     chemEnergy = true,

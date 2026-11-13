@@ -4,11 +4,33 @@
 
 local M = {}
 
+M.dependencies = {
+  "ui_multiseat_multiseatConfiguration",
+}
+
 local lastDiscover = nil
+local pendingExperienceLoadId = nil -- discover id whose next loadExt should bind onUnloaded
 local navigateToPlayOnFadeout = false
+local postLoadRoute = "play"
 local discoversById = nil
 local pageInfosById = {}
 local PAGE_PLACEHOLDER_IMAGE = "/gameplay/discover/images/freeroamTBD.jpg"
+
+local function luaPathToExtName(filepath)
+  if string.sub(filepath, 1, 1) == "/" then
+    filepath = string.sub(filepath, 2)
+  end
+  return (filepath:gsub("_", "__"):gsub("/", "_"))
+end
+
+local function getLoadedExtensionModule(extensionName)
+  local extPath = extensionName
+  if string.sub(extPath, 1, 1) == "/" then
+    extPath = string.sub(extPath, 2)
+  end
+  local extName = luaPathToExtName(extPath)
+  return rawget(_G, extName) or package.loaded[extPath] or package.loaded[extensionName]
+end
 
 local function enrichPageInfoMetadata(pageInfo)
   local folder = pageInfo and pageInfo.folder
@@ -36,6 +58,14 @@ end
 local function buildTagList(data)
   local tagList = {}
 
+  if data and data.playerCount then
+    table.insert(tagList, {
+      icon = "helmets",
+      label = string.format("From %d to %d players", data.playerCount.min or -1, data.playerCount.max or -1),
+      playerCount = deepcopy(data.playerCount),
+    })
+  end
+
   if data and data.version then
     table.insert(tagList, {
       icon = "listSmall",
@@ -50,16 +80,26 @@ local function buildTagList(data)
     })
   end
 
-  if data.type == "mission" then
+  if data.typeTag then
+    local typeTag = deepcopy(data.typeTag)
+    typeTag.label = core_locales.translateWithOrWithoutContext(typeTag.label)
+    table.insert(tagList, typeTag)
+  elseif data.type == "mission" then
     table.insert(tagList, {
       icon = "flag",
       label = _tr("ui.playmodes.mission")
     })
-  end
-  if data.type == "freeroam" then
+  elseif data.type == "freeroam" and not data.hideFreeroamTag then
     table.insert(tagList, {
       icon = "road",
       label = _tr("ui.playmodes.freeroam")
+    })
+  end
+
+  if data and data.progressTag then
+    table.insert(tagList, {
+      icon = "bookOpened",
+      label = data.progressTag.label,
     })
   end
 
@@ -89,14 +129,22 @@ M.loadDiscovers = function()
   for _, file in ipairs(discoverFiles) do
     local dir, fn = path.splitWithoutExt(file)
     local discover = require(dir..fn)
-    if discover.pageInfo then
-      pageInfosById[fn] = discover.pageInfo
-      pageInfosById[fn].folder = dir
-      enrichPageInfoMetadata(pageInfosById[fn])
-    end
-    if discover.experiences then
-      for _, experience in ipairs(discover.experiences) do
-        discoversById[experience.id] = experience
+    if discover then
+      if discover.pageInfo then
+        pageInfosById[fn] = discover.pageInfo
+        pageInfosById[fn].folder = dir
+        enrichPageInfoMetadata(pageInfosById[fn])
+      end
+      if discover.experiences then
+        for _, experience in ipairs(discover.experiences) do
+          discoversById[experience.id] = experience
+        end
+      end
+      if discover.getProgressTag then
+        local progressTag = discover.getProgressTag()
+        if progressTag then
+          pageInfosById[fn].progressTag = progressTag
+        end
       end
     end
   end
@@ -183,6 +231,7 @@ local function getDiscoverPages()
     page.modName = pageInfo.modName
     page.modTitle = pageInfo.modTitle
     page.tagList = deepcopy(pageInfo.tagList or {})
+    page.showMultiseatControllers = pageInfo.showMultiseatControllers or false
     local autoTagList = buildTagList(page)
     for _, tag in ipairs(autoTagList) do
       table.insert(page.tagList, tag)
@@ -224,7 +273,12 @@ local function getDiscoverPages()
     end
     table.insert(pages, page)
   end
-  table.sort(pages, function(a, b) return (a.date or 0) > (b.date or 0) end)
+  table.sort(pages, function(a, b)
+    local dateA = a.date or 0
+    local dateB = b.date or 0
+    if dateA ~= dateB then return dateA > dateB end
+    return (a.sortBias or 0) > (b.sortBias or 0)
+  end)
   return pages
 end
 
@@ -239,41 +293,77 @@ local function startDiscover(discoverId)
     log("W", "discover", "Unknown discover id: " .. tostring(discoverId))
     return
   end
+  local splitscreenSetup
+  if discover.playerCount then
+    splitscreenSetup = require("gameplay/discover/multiseat/splitscreen")
+    if not splitscreenSetup.canStartWithOptIns(discover.playerCount.min, discover.playerCount.max, discover.playerCount.softMax) then
+      log("W", "discover", "Invalid splitscreen player configuration for: " .. tostring(discoverId))
+      return false
+    end
+    local committed, reason = splitscreenSetup.commitMenuSetup()
+    if not committed then
+      log("W", "discover", "Could not apply splitscreen player configuration: " .. tostring(reason))
+      return false
+    end
+  end
   lastDiscover = discoverId
+  postLoadRoute = discover.playRoute or "play"
   if discover.missionId then
     local mission = gameplay_missions_missions.getMissionById(discover.missionId)
     if not mission then
       log("E", "discover", "Mission not found for discover '" .. tostring(discoverId) .. "' (missionId: " .. tostring(discover.missionId) .. ")")
       lastDiscover = nil
+      postLoadRoute = "play"
       return
     end
     log('I', 'discover', 'Starting discover mission: ' .. discoverId)
     navigateToPlayOnFadeout = true
-    local started = gameplay_missions_missionManager.startWithLoadingLevel(mission)
+    local started = gameplay_missions_missionManager.startWithLoadingLevel(mission, nil, nil, "discover")
     if started then
       navigateToPlayOnFadeout = false
+      postLoadRoute = "play"
       lastDiscover = nil
     end
   elseif type(discover.trigger) == "function" then
     log('I', 'discover', 'Starting discover: ' .. discoverId)
     navigateToPlayOnFadeout = true
+    pendingExperienceLoadId = discoverId
     local started = discover.trigger(M)
+    pendingExperienceLoadId = nil
     if started == false then
+      if splitscreenSetup then splitscreenSetup.rollbackMenuSetup() end
       navigateToPlayOnFadeout = false
+      postLoadRoute = "play"
       lastDiscover = nil
+    else
+      if splitscreenSetup then splitscreenSetup.completeMenuSetup() end
+      if type(discover.onLoaded) == "function" then discover.onLoaded(M) end
     end
   else
+    if splitscreenSetup then splitscreenSetup.rollbackMenuSetup() end
     log("E", "discover", "Discover '" .. tostring(discoverId) .. "' has no trigger function")
     lastDiscover = nil
+    postLoadRoute = "play"
   end
 end
-M.onLoadingScreenFadeout = function()
+
+local function navigateToPostLoadRoute()
   lastDiscover = nil
-  if navigateToPlayOnFadeout then
-    navigateToPlayOnFadeout = false
-    extensions.ui_router.navigate("play")
+  if not navigateToPlayOnFadeout then
+    return false
   end
+  navigateToPlayOnFadeout = false
+  local targetRoute = postLoadRoute
+  postLoadRoute = "play"
+  if gameplay_missions_missionScreen and gameplay_missions_missionScreen.isMissionStartOrEndScreenActive() then
+    return false
+  end
+  extensions.ui_router.navigate(targetRoute)
+  return true
 end
+
+M.navigateToPostLoadRoute = navigateToPostLoadRoute
+M.onLoadingScreenFadeout = navigateToPostLoadRoute
 
 local clearTasksOnClientEndMission = false
 M.clearTasksOnClientEndMission = function()
@@ -283,7 +373,10 @@ end
 local loadedExtensions = {}
 
 M.onClientEndMission = function()
-  navigateToPlayOnFadeout = false
+  if lastDiscover == nil then
+    navigateToPlayOnFadeout = false
+    postLoadRoute = "play"
+  end
   if clearTasksOnClientEndMission then
     guihooks.trigger('ClearTasklist')
     clearTasksOnClientEndMission = false
@@ -295,16 +388,46 @@ M.loadExt = function(extensionName)
     return
   end
   extensions.load(extensionName)
+  loadedExtensions[extensionName] = true
+
+  local discoverId = pendingExperienceLoadId
+  local discover = discoverId and discoversById[discoverId]
+  if not discover or type(discover.onUnloaded) ~= "function" then
+    return
+  end
+
+  local extModule = getLoadedExtensionModule(extensionName)
+  if not extModule then
+    log("W", "discover", "Could not bind onUnloaded for '" .. tostring(extensionName) .. "'")
+    return
+  end
+
+  local prevUnload = extModule.onExtensionUnloaded
+  extModule.onExtensionUnloaded = function(...)
+    if type(prevUnload) == "function" then
+      prevUnload(...)
+    end
+    loadedExtensions[extensionName] = nil
+    if type(discover.onUnloaded) == "function" then
+      discover.onUnloaded(M)
+    end
+  end
 end
 
 
 -- can be started with -discover <discoverName>
+-- -discover firstStart replays the first-launch onboarding popup in the main menu instead
 local function onInit()
   setExtensionUnloadMode(M, "manual")
   local cmdArgs = Engine.getStartingArgs()
   for i, v in ipairs(cmdArgs) do
     if v == "-discover" then
-      M.startDiscover(cmdArgs[i+1])
+      local discoverId = cmdArgs[i+1]
+      if discoverId == "firstStart" then
+        settings.setState({ onboardingPopupShown = false })
+      else
+        M.startDiscover(discoverId)
+      end
     end
   end
 end
@@ -359,6 +482,51 @@ M.introPopup = function(id)
   })
 end
 
+
+local SPLITSCREEN_PAGE_MODULE = "/gameplay/discover/multiseat/splitscreen"
+
+local function getSplitscreenPageModule()
+  M.loadDiscovers()
+  local mod = package.loaded[SPLITSCREEN_PAGE_MODULE]
+    or package.loaded["gameplay/discover/multiseat/splitscreen"]
+  if mod then return mod end
+  return require(SPLITSCREEN_PAGE_MODULE)
+end
+
+M.getSplitscreenPlayerOptIns = function()
+  return getSplitscreenPageModule().getPlayerOptInState()
+end
+
+M.cycleSplitscreenDevicePlayer = function(deviceId, operation, direction)
+  local splitscreen = getSplitscreenPageModule()
+  if operation == "toggle" then return splitscreen.toggleDevicePlayer(deviceId) end
+  if operation == "move" then return splitscreen.moveDevicePlayer(deviceId, direction) end
+  return splitscreen.cycleDevicePlayer(deviceId)
+end
+
+M.setSplitscreenDevicePlayer = function(deviceId, personaNumber)
+  return getSplitscreenPageModule().setDevicePlayer(deviceId, personaNumber)
+end
+
+M.joinSplitscreenDeviceGroup = function(groupId)
+  return getSplitscreenPageModule().joinDeviceGroup(groupId)
+end
+
+M.setSplitscreenPlayerOptIn = function(player, optedIn)
+  return getSplitscreenPageModule().setPlayerOptIn(player, optedIn)
+end
+
+M.getSplitscreenOptedInPlayers = function()
+  return getSplitscreenPageModule().getOptedInPlayers()
+end
+
+M.canStartSplitscreenDiscover = function(minPlayers, maxPlayers)
+  return getSplitscreenPageModule().canStartWithOptIns(minPlayers, maxPlayers)
+end
+
+M.leaveSplitscreenMenuSetup = function()
+  return getSplitscreenPageModule().leaveMenuSetup()
+end
 
 M.getDiscoverPages = getDiscoverPages
 M.onInit = onInit

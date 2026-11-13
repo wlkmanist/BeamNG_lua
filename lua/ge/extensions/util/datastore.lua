@@ -10,12 +10,15 @@ local msgpack = require("libs/lua-MessagePack/MessagePack")
 
 local logTag = "datastore"
 
+-- structured failure for ops against a store that is not registered in-memory
+local ERR_STORE_NOT_REGISTERED = "store_not_registered"
+
 -- msgpack packs the store far faster than JSON (benchmarked on the UI cache ~30x write, ~2x read)
 local USE_MSGPACK = true
 local FILE_EXT = USE_MSGPACK and "bin" or "json"
 
 -- storeName -> store = {
---   filePath, primaryField, loaded,
+--   filePath, primaryField, loaded, readonly,
 --   entries = { [primaryValue] = entry },          -- primary index (unique)
 --   indices = { [field] = { [value] = { entry, ... } } }, -- lazy secondary indices (multi-valued)
 --   chainField, chainResolveField,
@@ -62,17 +65,27 @@ local function isRegistered(storeName)
   return stores[storeName] ~= nil
 end
 
-local function getLoaded(storeName)
+local function unregisteredFailure(storeName)
+  log("W", logTag, "store not registered: " .. tostring(storeName))
+  return { ok = false, err = ERR_STORE_NOT_REGISTERED, storeName = storeName }
+end
+
+local function isUnregisteredFailure(result)
+  return type(result) == "table" and result.ok == false and result.err == ERR_STORE_NOT_REGISTERED
+end
+
+local function getRegistered(storeName)
   local store = stores[storeName]
-  if not store then
-    log("W", logTag, "store not registered: " .. tostring(storeName))
-    return nil
-  end
+  if not store then return nil, unregisteredFailure(storeName) end
   loadStore(store)
   return store
 end
 
-local function writeStore(store)
+local function writeStore(store, storeName)
+  if store.readonly then
+    log("W", logTag, "refused write to readonly store: " .. tostring(storeName))
+    return
+  end
   local arr = {}
   for _, entry in pairs(store.entries) do
     arr[#arr + 1] = entry
@@ -129,7 +142,7 @@ local function detachFromIndices(store, entry)
   end
 end
 
--- storeName, primaryField (unique storage key, default "name"), opts = { path, prefix }
+-- storeName, primaryField (unique storage key, default "name"), opts = { path, prefix, readonly }
 -- file = <path>/<prefix?><storeName>.<bin|json> (prefix adds a trailing "-" when set)
 local function register(storeName, primaryField, opts)
   if type(storeName) ~= "string" or storeName == "" then
@@ -146,6 +159,7 @@ local function register(storeName, primaryField, opts)
   stores[storeName] = {
     filePath = dir .. "/" .. fileName,
     primaryField = (type(primaryField) == "string" and primaryField ~= "") and primaryField or "name",
+    readonly = opts.readonly == true,
     loaded = false,
     entries = {},
     indices = {},
@@ -156,9 +170,20 @@ local function register(storeName, primaryField, opts)
   return true
 end
 
+-- in-memory only: drop registration without touching the backing file
+local function unregister(storeName)
+  if type(storeName) ~= "string" or storeName == "" then
+    log("E", logTag, "unregister: invalid storeName")
+    return false
+  end
+  if not stores[storeName] then return false end
+  stores[storeName] = nil
+  return true
+end
+
 local function getEntry(storeName, field, value)
-  local store = getLoaded(storeName)
-  if not store then return nil end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
   if field == store.primaryField then return store.entries[value] end
   local list = ensureIndex(store, field)[value]
   return list and list[1] or nil
@@ -168,8 +193,9 @@ end
 -- values must be a table
 local function getEntries(storeName, field, values)
   local out = {}
-  local store = getLoaded(storeName)
-  if not store or type(values) ~= "table" then return out end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
+  if type(values) ~= "table" then return out end
   local pf = store.primaryField
   local isPrimary = field == pf
   local idx = (not isPrimary) and ensureIndex(store, field) or nil
@@ -194,8 +220,8 @@ end
 -- primaryKey=true: same table but mapped to each entry's primary value (and non-unique)
 local function getIndex(storeName, field, primaryKey)
   local out = {}
-  local store = getLoaded(storeName)
-  if not store then return out end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
   if primaryKey then
     for pk, entry in pairs(store.entries) do
       local v = entry[field]
@@ -215,8 +241,8 @@ end
 
 local function getAll(storeName)
   local out = {}
-  local store = getLoaded(storeName)
-  if not store then return out end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
   for _, entry in pairs(store.entries) do
     out[#out + 1] = entry
   end
@@ -224,8 +250,8 @@ local function getAll(storeName)
 end
 
 local function hasEntry(storeName, field, value)
-  local store = getLoaded(storeName)
-  if not store then return false end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
   if field == store.primaryField then return store.entries[value] ~= nil end
   local list = ensureIndex(store, field)[value]
   return list ~= nil and #list > 0
@@ -234,9 +260,10 @@ end
 -- lookup, then follow the seed's chainField (array of keys)
 local function getChain(storeName, field, value)
   local out = {}
-  local store = getLoaded(storeName)
-  if not store then return out end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
   local seed = getEntry(storeName, field, value)
+  if isUnregisteredFailure(seed) then return seed end
   if not seed then return out end
   local pf = store.primaryField
   local seen = { [seed[pf]] = true }
@@ -250,7 +277,7 @@ local function getChain(storeName, field, value)
     if type(keys) == "table" then
       for _, key in ipairs(keys) do
         local rel = getEntry(storeName, resolveField, key)
-        if rel and not seen[rel[pf]] then
+        if rel and not isUnregisteredFailure(rel) and not seen[rel[pf]] then
           seen[rel[pf]] = true
           out[#out + 1] = rel
           stack[#stack + 1] = rel
@@ -263,8 +290,10 @@ end
 
 -- upsert by primaryField: detach the old entry, then re-index
 local function putEntries(storeName, entries)
-  local store = getLoaded(storeName)
-  if not store or type(entries) ~= "table" then return false end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
+  if type(entries) ~= "table" then return false end
+  if store.readonly then return false end
   local pf = store.primaryField
   local changed = false
   for _, entry in ipairs(entries) do
@@ -279,13 +308,15 @@ local function putEntries(storeName, entries)
       log("W", logTag, "putEntries: entry missing primary field '" .. tostring(pf) .. "' in " .. tostring(storeName))
     end
   end
-  if changed then writeStore(store) end
+  if changed then writeStore(store, storeName) end
   return changed
 end
 
 local function removeEntries(storeName, field, values)
-  local store = getLoaded(storeName)
-  if not store or type(values) ~= "table" then return false end
+  local store, err = getRegistered(storeName)
+  if not store then return err end
+  if type(values) ~= "table" then return false end
+  if store.readonly then return false end
   local pf = store.primaryField
   local isPrimary = field == pf
   local idx = (not isPrimary) and ensureIndex(store, field) or nil
@@ -309,27 +340,25 @@ local function removeEntries(storeName, field, values)
     detachFromIndices(store, entry)
     store.entries[entry[pf]] = nil
   end
-  writeStore(store)
+  writeStore(store, storeName)
   return true
 end
 
 local function clear(storeName)
   local store = stores[storeName]
-  if not store then return false end
+  if not store then return unregisteredFailure(storeName) end
+  if store.readonly then return false end
   store.loaded = true
   store.entries = {}
   store.indices = {}
-  writeStore(store)
+  writeStore(store, storeName)
   return true
 end
 
 -- chainField: entry field holding an array of related keys
 local function setChain(storeName, chainField, field)
   local store = stores[storeName]
-  if not store then
-    log("W", logTag, "setChain: store not registered: " .. tostring(storeName))
-    return false
-  end
+  if not store then return unregisteredFailure(storeName) end
   store.chainField = chainField
   store.chainResolveField = field
   loadStore(store)
@@ -348,6 +377,7 @@ local function onSerialize()
     registrations[name] = {
       filePath = store.filePath,
       primaryField = store.primaryField,
+      readonly = store.readonly,
       chainField = store.chainField,
       chainResolveField = store.chainResolveField,
     }
@@ -362,6 +392,7 @@ local function onDeserialized(data)
     stores[name] = {
       filePath = reg.filePath,
       primaryField = reg.primaryField or "name",
+      readonly = reg.readonly == true,
       loaded = false,
       entries = {},
       indices = {},
@@ -372,7 +403,9 @@ local function onDeserialized(data)
 end
 
 M.register = register
+M.unregister = unregister
 M.isRegistered = isRegistered
+M.isUnregisteredFailure = isUnregisteredFailure
 M.getEntry = getEntry
 M.getEntries = getEntries
 M.getIndex = getIndex

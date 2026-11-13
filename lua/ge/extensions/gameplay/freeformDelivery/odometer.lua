@@ -5,14 +5,13 @@
 local M = {}
 M.dependencies = {
   'core_vehicleBridge',
-  'core_vehicle_manager',
   'gameplay_freeformDelivery_utils',
   'gameplay_freeformDelivery_setup'
 }
 local logTag = "freeformDelivery_odometer"
 
 -- Track vehicles with odometer tracking enabled
-local trackedVehicles = {} -- vehId -> {deliveryVehicleId, startingOdometer, currentOdometer, maxOdometer, vehData}
+local trackedVehicles = {} -- vehId -> {deliveryVehicleId, startingOdometer, currentOdometer, maxOdometer, requestPending}
 local pendingOdometerRequests = {} -- Track vehicles waiting for odometer data
 local odometerUpdateTimer = 0
 local odometerUpdateInterval = 1.0 / 8.0 -- Update 8 times per second
@@ -53,7 +52,7 @@ local function formatDistance(value)
 end
 
 -- Request odometer value for a vehicle (async)
-local function requestOdometer(vehId, deliveryVehicleId, vehData, maxOdometer)
+local function requestOdometer(vehId, deliveryVehicleId, maxOdometer)
   if not core_vehicleBridge then
     log('W', logTag, 'core_vehicleBridge not available')
     return false
@@ -71,29 +70,20 @@ local function requestOdometer(vehId, deliveryVehicleId, vehData, maxOdometer)
   core_vehicleBridge.requestValue(veh, function(res)
     pendingOdometerRequests[vehId] = nil
 
-    local mainPartName = "/" .. vehData.config.mainPartName
-    local part = res.result and res.result[mainPartName]
-    if not part then
-      log('W', logTag, 'Could not find part ' .. tostring(mainPartName) .. ' - starting odometer will be -1')
-      trackedVehicles[vehId] = {
-        deliveryVehicleId = deliveryVehicleId,
-        startingOdometer = -1,
-        currentOdometer = -1,
-        maxOdometer = maxOdometer,
-        vehData = vehData
-      }
-    else
-      local odometer = part.odometer or -1
-      trackedVehicles[vehId] = {
-        deliveryVehicleId = deliveryVehicleId,
-        startingOdometer = odometer,
-        currentOdometer = odometer,
-        maxOdometer = maxOdometer,
-        vehData = vehData
-      }
+    local odometer = res and tonumber(res.result) or -1
+    trackedVehicles[vehId] = {
+      deliveryVehicleId = deliveryVehicleId,
+      startingOdometer = odometer,
+      currentOdometer = odometer,
+      maxOdometer = maxOdometer,
+      requestPending = false
+    }
+    if odometer >= 0 then
       log('I', logTag, string.format('Vehicle %s starting odometer: %.2f m (%.2f km)', deliveryVehicleId, odometer, odometer / 1000))
+    else
+      log('W', logTag, 'Could not read starting odometer for vehicle ' .. tostring(deliveryVehicleId))
     end
-  end, 'getPartConditions')
+  end, 'getRootPartOdometer')
 
   return true
 end
@@ -111,29 +101,23 @@ function M.setup(delivery)
     return
   end
 
-  if not core_vehicle_manager then
-    log('W', logTag, 'core_vehicle_manager not available, odometer tracking disabled')
-    return
-  end
-
   -- Find vehicles with odometer tracking flag
   for _, vehicleDef in ipairs(delivery.vehicles) do
     if vehicleDef.trackOdometer then
       -- Get vehicle ID from setup module
       local vehId = gameplay_freeformDelivery_setup.getVehicleId(vehicleDef.id)
       if vehId then
-        local vehData = core_vehicle_manager.getVehicleData(vehId)
-        if vehData then
-          local veh = getObjectByID(vehId)
+        local veh = getObjectByID(vehId)
+        if veh then
           if not vehicleDef.partsInitialized then
             veh:queueLuaCommand(string.format("partCondition.initConditions(nil, %d, nil, %f)", 0, 0))
             vehicleDef.partsInitialized = true
           end
           -- Pass maxOdometer if specified in vehicle definition
           local maxOdometer = vehicleDef.maxOdometer or nil
-          requestOdometer(vehId, vehicleDef.id, vehData, maxOdometer)
+          requestOdometer(vehId, vehicleDef.id, maxOdometer)
         else
-          log('W', logTag, 'Could not get vehicle data for: ' .. tostring(vehicleDef.id))
+          log('W', logTag, 'Vehicle not found: ' .. tostring(vehicleDef.id))
         end
       else
         log('W', logTag, 'Vehicle ID not found for: ' .. tostring(vehicleDef.id))
@@ -149,7 +133,7 @@ end
 
 -- Update odometer values (called 8 times per second)
 function M.update(dtReal)
-  if not core_vehicleBridge or not core_vehicle_manager then return end
+  if not core_vehicleBridge then return end
 
   -- Update timer
   odometerUpdateTimer = odometerUpdateTimer + dtReal
@@ -159,12 +143,16 @@ function M.update(dtReal)
   -- Update odometer for all tracked vehicles and check for maxOdometer violations
   for vehId, vehicleData in pairs(trackedVehicles) do
     local veh = getObjectByID(vehId)
-    if veh then
+    if veh and not vehicleData.requestPending then
+      vehicleData.requestPending = true
       core_vehicleBridge.requestValue(veh, function(res)
-        local mainPartName = "/" .. vehicleData.vehData.config.mainPartName
-        local part = res.result and res.result[mainPartName]
-        if part and part.odometer then
-          vehicleData.currentOdometer = part.odometer
+        -- Ignore responses belonging to tracking state that has since been reset.
+        if trackedVehicles[vehId] ~= vehicleData then return end
+        vehicleData.requestPending = false
+
+        local odometer = res and tonumber(res.result)
+        if odometer then
+          vehicleData.currentOdometer = odometer
 
           -- Check if maxOdometer is exceeded
           if vehicleData.maxOdometer and vehicleData.currentOdometer >= 0 and vehicleData.startingOdometer >= 0 then
@@ -184,7 +172,7 @@ function M.update(dtReal)
             end
           end
         end
-      end, 'getPartConditions')
+      end, 'getRootPartOdometer')
     end
   end
 end

@@ -175,6 +175,7 @@ local function GuessFunctionName(info)
     for _ = 1, info.linedefined do
       line = file:read("*l")
     end
+    file:close()
     if not line then
       --print("line not found")    -- whoops!
       return "?"

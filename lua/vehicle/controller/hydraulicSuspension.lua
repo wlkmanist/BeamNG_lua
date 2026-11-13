@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Enables adjustable ride height and hydraulic motion for configured suspension beam groups
+
 local M = {}
 M.type = "auxiliary"
 
@@ -25,6 +27,8 @@ local lastPumpFlow
 local releaseSoundLoop
 local lastFrameBeamLengths
 local releaseSoundVolumeSmoother = newTemporalSmoothing(1, 1)
+
+local stateData
 
 local function updateBeamPhysics(beamData)
   obj:setBeamLengthRefRatio(beamData.cid, beamData.currentPosition)
@@ -160,6 +164,8 @@ local function reset()
 end
 
 local function init(jbeamData)
+  stateData = {}
+
   local hydraulicsData = v.data[jbeamData.hydraulicBeams or "hydraulicsData"] or {}
 
   local hydraulicBeamNames = {}
@@ -208,6 +214,10 @@ local function init(jbeamData)
           momentaryIncreaseMaxExtension = 0,
           bleedCoef = relevantBeam.defaultBleed
         }
+        beamData.stateDataNameCurrentPosition = M.name .. "_" .. name .. "_currentPosition"
+        beamData.stateDataNameTargetPosition = M.name .. "_" .. name .. "_targetPosition"
+        beamData.stateDataNameBleedCoef = M.name .. "_" .. name .. "_bleedCoef"
+        beamData.stateDataNameSpeedCoef = M.name .. "_" .. name .. "_speedCoef"
         beamData.originalBeamPosition = beamData.currentPosition
         lastFrameBeamLengths[beamData.cid] = beamData.currentPosition
 
@@ -223,6 +233,57 @@ local function init(jbeamData)
 
   basePumpSpeed = jbeamData.basePumpSpeed or 0.5
   maxPumpSpeed = jbeamData.maxPumpSpeed or basePumpSpeed * 20
+end
+
+local function getState()
+  for _, beam in ipairs(beams) do
+    stateData[beam.stateDataNameCurrentPosition] = beam.currentPosition
+    stateData[beam.stateDataNameTargetPosition] = beam.targetPosition
+    stateData[beam.stateDataNameBleedCoef] = beam.bleedCoef
+    stateData[beam.stateDataNameSpeedCoef] = beam.speedCoef
+  end
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  for _, beam in ipairs(beams) do
+    local stateChanged = false
+
+    local newCurrentPosition = data[beam.stateDataNameCurrentPosition]
+    if type(newCurrentPosition) == "number" and newCurrentPosition == newCurrentPosition and newCurrentPosition ~= beam.currentPosition then
+      beam.currentPosition = newCurrentPosition
+      stateChanged = true
+    end
+
+    local newTargetPosition = data[beam.stateDataNameTargetPosition]
+    if type(newTargetPosition) == "number" and newTargetPosition == newTargetPosition and newTargetPosition ~= beam.targetPosition then
+      beam.targetPosition = newTargetPosition
+      stateChanged = true
+    end
+
+    local newBleedCoef = data[beam.stateDataNameBleedCoef]
+    if type(newBleedCoef) == "number" and newBleedCoef == newBleedCoef then
+      newBleedCoef = clamp(newBleedCoef, 0, 1)
+      if newBleedCoef ~= beam.bleedCoef then
+        beam.bleedCoef = newBleedCoef
+        stateChanged = true
+      end
+    end
+
+    local newSpeedCoef = data[beam.stateDataNameSpeedCoef]
+    if type(newSpeedCoef) == "number" and newSpeedCoef == newSpeedCoef and newSpeedCoef ~= beam.speedCoef then
+      beam.speedCoef = newSpeedCoef
+      stateChanged = true
+    end
+
+    if stateChanged then
+      updateBeamPhysics(beam)
+    end
+  end
 end
 
 local function initSounds(jbeamData)
@@ -259,5 +320,8 @@ M.updateFixedStep = updateFixedStep
 M.setGroupsPosition = setGroupsPosition
 M.setGroupsBleed = setGroupsBleed
 M.setGroupsMomentaryIncrease = setGroupsMomentaryIncrease
+
+M.getState = getState
+M.setState = setState
 
 return M

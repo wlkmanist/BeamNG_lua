@@ -81,10 +81,8 @@ local function readAll(path)
   path = normalizePath(path)
 
   if readFile then
-    local ok, txt = pcall(readFile, path)
-    if ok and txt then
-      return txt
-    end
+    local txt = readFile(path)
+    if txt then return txt end
   end
 
   local f = io.open(path, "rb")
@@ -1233,13 +1231,7 @@ function M.writeCookieMetadata(ies, outPath, opts, saveInfo)
   local metadataPath = M.getCookieMetadataPath(outPath)
   local data = M.buildCookieMetadata(ies, outPath, opts, saveInfo)
 
-  local ok, err = pcall(function()
-    jsonWriteFile(metadataPath, data, true)
-  end)
-
-  if not ok then
-    return false, err
-  end
+  jsonWriteFile(metadataPath, data, true)
 
   return true, metadataPath, data
 end

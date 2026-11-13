@@ -6,6 +6,8 @@ local M = {}
 local delayedData = {}
 local cycleArgs = {}
 local delayCounter = 1
+local isBlack = false
+local blackRequested = false
 
 M.delayFrames = 3
 
@@ -13,6 +15,7 @@ M.delayFrames = 3
 local function fadeToBlack(fade, screenData, args)
   fade = fade or 1
   args = args or {}
+  blackRequested = true
   local params = {
     -- fade to and stop on black
     fadeIn = fade,
@@ -26,6 +29,7 @@ local function fadeToBlack(fade, screenData, args)
   guihooks.trigger("LoadingScreen", { active = true, custom = params })
 
   if headless_mode then -- in headless mode, skip this as there's no UI
+    isBlack = true
     extensions.hook("onScreenFadeState", 1)
   end
 
@@ -38,6 +42,8 @@ end
 local function fadeFromBlack(fade, args)
   fade = fade or 1
   args = args or {}
+  isBlack = false
+  blackRequested = false
   -- local params = {fadeIn = 0, pause = 0, fadeOut = fade} -- fade from black
   -- guihooks.trigger('ChangeState', {state = 'fadeScreen', params = params})
   guihooks.trigger("LoadingScreen", { active = false, custom = { fadeOut = fade } })
@@ -70,6 +76,7 @@ local function onGuiUpdate()
   if delayedData[1] then
     if delayCounter <= 0 then
       for _, state in ipairs(delayedData) do
+        if state == 1 then isBlack = blackRequested end
         extensions.hook("onScreenFadeState", state)
 
         if state == 2 and next(cycleArgs) then -- only during full fade cycle
@@ -87,6 +94,7 @@ end
 M.fadeToBlack = fadeToBlack
 M.fadeFromBlack = fadeFromBlack
 M.fadeSequence = fadeSequence
+M.isBlack = function() return isBlack end
 M.start = fadeToBlack
 M.stop = fadeFromBlack
 M.cycle = fadeSequence

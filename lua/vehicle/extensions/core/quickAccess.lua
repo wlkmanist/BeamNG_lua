@@ -173,12 +173,23 @@ local function selectItem(id, buttonDown, actionIndex)
   return true
 end
 
+local function cruiseSpeedDelta()
+  local units = settings.getValue("uiUnitLength")
+  return units == "imperial" and constants.mphToMs or constants.kmhToMs
+end
+
+local function adjustCruiseSpeed(direction)
+  if type(direction) ~= "number" or direction == 0 then return end
+  if not extensions.isExtensionLoaded("cruiseControl") then return end
+  local sign = direction > 0 and 1 or -1
+  extensions.cruiseControl.changeSpeed(sign * cruiseSpeedDelta())
+end
+
 local function onInit()
   -- check if there are powered wheels
   local hasPoweredWheels = not tableIsEmpty(powertrain.getPoweredWheelNames())
 
   -- only add cruise control if there are powered wheels
-  -- todo: display the cc target speed in the description
   if hasPoweredWheels then
     -- cruise control
     addEntry(
@@ -233,16 +244,16 @@ local function onInit()
             uniqueID = "cruiseControl_plusResume",
             onSelect = function()
               if cruiseEnabled then
-                local units = settings.getValue("uiUnitLength")
-                local delta = units == "imperial" and constants.mphToMs or constants.kmhToMs
-
-                extensions.cruiseControl.changeSpeed(delta)
-              else
-                extensions.cruiseControl.setSpeed(cruiseSetSpeed)
+                adjustCruiseSpeed(1)
+                return {}
               end
+              extensions.cruiseControl.setSpeed(cruiseSetSpeed)
               return {"reload"}
             end
           }
+          if cruiseEnabled then
+            e.holdRepeat = 1
+          end
           table.insert(entries, e)
 
           -- Set/-
@@ -257,16 +268,16 @@ local function onInit()
             uniqueID = "cruiseControl_minusSet",
             onSelect = function()
               if cruiseEnabled then
-                local units = settings.getValue("uiUnitLength")
-                local delta = units == "imperial" and constants.mphToMs or constants.kmhToMs
-
-                extensions.cruiseControl.changeSpeed(-delta)
-              else
-                extensions.cruiseControl.holdCurrentSpeed()
+                adjustCruiseSpeed(-1)
+                return {}
               end
+              extensions.cruiseControl.holdCurrentSpeed()
               return {"reload"}
             end
           }
+          if cruiseEnabled then
+            e.holdRepeat = -1
+          end
           table.insert(entries, e)
 
           -- Cancel
@@ -315,6 +326,7 @@ M.updateGFX = nil
 -- interface for GE lua
 M.requestItems = requestItems
 M.selectItem = selectItem -- no extension message hook, thus no 'on'
+M.adjustCruiseSpeed = adjustCruiseSpeed
 
 -- interface for the vehicle lua
 M.addEntry = addEntry

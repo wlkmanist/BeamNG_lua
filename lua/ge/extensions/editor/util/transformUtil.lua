@@ -213,13 +213,32 @@ function C:shiftUpdate(mouseInfo)
     self.isDragging = true
   end
   if mouseInfo.hold then
+    -- hold without a prior down (shift mid-drag, or down eaten by UI)
+    if not self._temp then
+      self._temp = {
+        pos = vec3(self.pos),
+        rot = quat(self.rot),
+        scl = self.oneDimensionalScale and self.scl or vec3(self.scl),
+        moved = false
+      }
+      self.isDragging = true
+      mouseInfo._downPos = vec3(mouseInfo.rayCast.pos)
+      if mouseInfo.rayCast.normal then
+        mouseInfo._downNormal = vec3(mouseInfo.rayCast.normal)
+      end
+      mouseInfo._holdPos = vec3(mouseInfo.rayCast.pos)
+    end
+    if not mouseInfo._downPos or not mouseInfo._holdPos then
+      return
+    end
     local len = (mouseInfo._holdPos - mouseInfo._downPos):length()
     if len > 1 then
       self._temp.moved = true
     end
     local fwd = self.switchRotationForMouse and mouseInfo._downPos - mouseInfo._holdPos or mouseInfo._holdPos - mouseInfo._downPos
+    local up = mouseInfo._downNormal or vec3(0, 0, 1)
 
-    local rot = quatFromDir(fwd, mouseInfo._downNormal):normalized()
+    local rot = quatFromDir(fwd, up):normalized()
     self:set(mouseInfo._downPos,
         self._temp.moved and self.allowRotate and rot,
         self._temp.moved and self.oneDimensionalScale and len or nil)
@@ -248,7 +267,8 @@ function C:update(mouseInfo)
       if mouseInfo and mouseInfo.valid then
         local txt
         local clr
-        if editor.keyModifiers.shift then
+        local gizmoBlocksQuickEdit = editor.isAxisGizmoHovered() or (self.isDragging and not self._temp)
+        if editor.keyModifiers.shift and not gizmoBlocksQuickEdit then
           txt = "Click and Drag to place this here."
           clr = ColorI(0, 0, 96, 255)
           change = self:shiftUpdate(mouseInfo) or change
@@ -258,7 +278,10 @@ function C:update(mouseInfo)
             self._temp = nil
             self.isDragging = false
           end
-          if not editor.isAxisGizmoHovered() then
+          if editor.keyModifiers.shift and editor.isAxisGizmoHovered() then
+            txt = "Drag to duplicate."
+            clr = ColorI(0, 0, 96, 255)
+          elseif not editor.keyModifiers.shift and not editor.isAxisGizmoHovered() then
             txt = "Hold Shift for Quick Edit."
           end
           if im.IsMouseClicked(0) and not im.GetIO().WantCaptureMouse and not editor.isAxisGizmoHovered() then

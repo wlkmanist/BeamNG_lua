@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Provides driver controls for selectable 4WD, low range, and differential modes
+
 local M = {}
 M.type = "auxiliary"
 M.relevantDevice = "transfercase"

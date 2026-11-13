@@ -28,8 +28,6 @@ local function getDefaultEnvironmentDate(levelName)
 end
 
 local navigateToPlayOnFadeout = false
-local playNavigationPendingAfterFadeout = false
-local worldReadyState = -1
 
 -- Configuration state
 local currentConfiguration = {
@@ -182,7 +180,7 @@ local defaultVehicle = {
     paint3 = "Sea Blue"
   }
 }
-if extensions.tech_license.isValid() then
+if extensions.license.isValid() then
   defaultVehicle = {
     model = "etk800",
     config = "854_190d_A",
@@ -944,6 +942,71 @@ local function isVehicleDetailPathKeys(keys)
   return type(modelKey) == "string" and modelKey ~= ""
 end
 
+local function resolveDrilldownVehicleFromRouteParams(route)
+  local routeParams = type(route) == "table" and route.params or nil
+  if type(routeParams) ~= "table" then
+    return nil
+  end
+  local drilldownVehicle = routeParams.drilldownVehicle
+  if type(drilldownVehicle) ~= "table" then
+    return nil
+  end
+  local modelKey = drilldownVehicle.model
+  local configKey = drilldownVehicle.config
+  if type(modelKey) ~= "string" or modelKey == ""
+    or type(configKey) ~= "string" or configKey == "" then
+    return nil
+  end
+  return {
+    model = modelKey,
+    config = configKey,
+  }
+end
+
+-- Apply a config override immediately before the vehicle snapshot is built so
+-- recent/favourite cluster copies and unclustered config tiles focus the
+-- clicked config instead of the model default. Plain cluster drilldowns omit
+-- `drilldownVehicle` in route params and keep the model-default selection.
+local function applyWizardVehicleConfigOverrideBeforeSnapshot(path, options)
+  if not (ui_vehicleSelector_tiles and ui_vehicleSelector_tiles.overrideDefaultSelectedTile) then
+    return
+  end
+
+  local pathKeys = type(path) == "table" and path.keys or nil
+  if not isVehicleDetailPathKeys(pathKeys) then
+    return
+  end
+
+  local modelKey, configKey = nil, nil
+  local drilldownVehicle = type(options) == "table" and options.drilldownVehicle or nil
+  if type(drilldownVehicle) == "table" then
+    modelKey = drilldownVehicle.model
+    configKey = drilldownVehicle.config
+  else
+    local suppressOverride = type(options) == "table" and options.suppressVehicleSelectionOverride == true
+    if suppressOverride then
+      return
+    end
+    local selectedVehicle = currentConfiguration.vehicle or {}
+    modelKey = selectedVehicle.model
+    configKey = selectedVehicle.config
+  end
+
+  if type(modelKey) ~= "string" or modelKey == ""
+    or type(configKey) ~= "string" or configKey == "" then
+    return
+  end
+  if pathKeys[2] ~= modelKey then
+    return
+  end
+
+  ui_vehicleSelector_tiles.overrideDefaultSelectedTile({
+    model_key = modelKey,
+    config_key = configKey,
+    key = configKey,
+  })
+end
+
 -- Prefer a route-supplied path for the wizard vehicle detail route (e.g. when
 -- a cluster tile passes `{ path = { keys = gotoPath } }` through navigate
 -- params), and fall back to the current selection path otherwise. Mirrors
@@ -1008,17 +1071,20 @@ local function buildWizardRouteData(data, route, pathByStepOverrides, options)
     end
   end
 
-  data.freeroamWizard = {
-    selection = {
-      levelName = currentConfiguration.levelName,
-      spawnPointName = currentConfiguration.spawnPointName,
-      vehicle = deepcopy(currentConfiguration.vehicle),
-    },
-    uiState = {
-      pathByStep = pathByStep,
-      searchByStep = deepcopy(wizardSearchState.searchByStep),
-      filtersByStep = deepcopy(wizardFilterState.filtersByStep),
-    },
+  local wizardData = data.freeroamWizard
+  if type(wizardData) ~= "table" then
+    wizardData = {}
+    data.freeroamWizard = wizardData
+  end
+  wizardData.selection = {
+    levelName = currentConfiguration.levelName,
+    spawnPointName = currentConfiguration.spawnPointName,
+    vehicle = deepcopy(currentConfiguration.vehicle),
+  }
+  wizardData.uiState = {
+    pathByStep = pathByStep,
+    searchByStep = deepcopy(wizardSearchState.searchByStep),
+    filtersByStep = deepcopy(wizardFilterState.filtersByStep),
   }
 end
 
@@ -1046,6 +1112,7 @@ M.onWizardVehicleDetailRouteEnter = function(context, toRoute, fromRoute, data)
     vehicle = detailPath,
   }, {
     suppressVehicleSelectionOverride = fromRouteParams,
+    drilldownVehicle = resolveDrilldownVehicleFromRouteParams(toRoute),
   })
 end
 
@@ -1222,7 +1289,7 @@ local function clearWizardSelectorFiltersForStart()
   captureWizardSearchAndFiltersFromBackend("vehicle")
 end
 
-local function buildWizardStepSnapshot(step, path)
+local function buildWizardStepSnapshot(step, path, options)
   local _, backendName = getWizardBackendForStep(step)
   if not backendName then
     return nil
@@ -1237,6 +1304,10 @@ local function buildWizardStepSnapshot(step, path)
 
   if not (ui_gridSelector and type(ui_gridSelector.getSelectorSnapshot) == "function") then
     return nil
+  end
+
+  if step == "vehicle" then
+    applyWizardVehicleConfigOverrideBeforeSnapshot(resolvedPath, options)
   end
 
   local ok, snapshotOrErr = pcall(ui_gridSelector.getSelectorSnapshot, backendName, resolvedPath)
@@ -1305,7 +1376,7 @@ local function attachWizardStepSnapshot(data, step, path)
     return
   end
 
-  local stepSnapshot = buildWizardStepSnapshot(step, path)
+  local stepSnapshot = buildWizardStepSnapshot(step, path, nil)
   if not stepSnapshot then
     return
   end
@@ -1369,7 +1440,7 @@ local function emitFreeroamSelectorDataLoaded(step, pending)
 
   captureWizardSearchAndFiltersFromBackend(step)
 
-  local stepSnapshot = buildWizardStepSnapshot(step, pending.path)
+  local stepSnapshot = buildWizardStepSnapshot(step, pending.path, pending)
   if not stepSnapshot then
     return false
   end
@@ -1468,6 +1539,7 @@ local function beginAsyncVehicleRouteMount(routeName, path, options)
     path = path,
     suppressVehicleSelectionOverride = type(options) == "table"
       and options.suppressVehicleSelectionOverride == true or false,
+    drilldownVehicle = type(options) == "table" and options.drilldownVehicle or nil,
   }
 
   -- print(string.format(
@@ -1590,6 +1662,7 @@ local function attachOrDeferVehicleSnapshot(data, toRoute, vehiclePath, options)
       path = vehiclePath,
       suppressVehicleSelectionOverride = type(options) == "table"
         and options.suppressVehicleSelectionOverride == true or false,
+      drilldownVehicle = type(options) == "table" and options.drilldownVehicle or nil,
     })
     return
   end
@@ -1627,19 +1700,19 @@ end
 
 M.onWizardVehicleDetailRouteMount = function(context, toRoute, fromRoute, data)
   local detailPath, fromRouteParams = getWizardVehicleDetailPathForRoute(toRoute)
+  local mountOptions = {
+    suppressVehicleSelectionOverride = fromRouteParams,
+    drilldownVehicle = resolveDrilldownVehicleFromRouteParams(toRoute),
+  }
   buildWizardRouteData(data, toRoute, {
     vehicle = detailPath,
-  }, {
-    suppressVehicleSelectionOverride = fromRouteParams,
-  })
-  attachOrDeferVehicleSnapshot(data, toRoute, detailPath, {
-    suppressVehicleSelectionOverride = fromRouteParams,
-  })
+  }, mountOptions)
+  attachOrDeferVehicleSnapshot(data, toRoute, detailPath, mountOptions)
 end
 
 
 -- Set level for configuration
-M.setSpawnPoint = function(levelName, spawnPointName, key)
+M.setSpawnPoint = function(levelName, spawnPointName, key, routeName)
   local previousLevelName = currentConfiguration.levelName
   local dateUsesLevelDefault = currentConfiguration.options.environment_date == getDefaultEnvironmentDate(previousLevelName)
     or currentConfiguration.options.environment_date == fallbackEnvironmentDate
@@ -1661,6 +1734,9 @@ M.setSpawnPoint = function(levelName, spawnPointName, key)
   currentConfiguration.spawnPointTile = fetchSpawnPointTile(levelName, resolvedSpawnPointName)
 
   currentConfiguration._dirty = true
+  if routeName then
+    return extensions.ui_router.navigate(routeName)
+  end
 end
 
 
@@ -1823,14 +1899,14 @@ M.onSpawnPointTileClick = function()
   -- print("onSpawnPointTileClick")
   ui_freeroamSelector_general.openFreeroamSelectorForFreeroamConfigurator(function(levelName, spawnPointName)
     M.setSpawnPoint(levelName, spawnPointName)
-    guihooks.trigger("ChangeState", "menu.freeroamconfigurator")
+    extensions.ui_router.navigate("menu.freeroamconfigurator")
   end)
 end
 
 M.onVehicleTileClick = function()
   ui_vehicleSelector_general.openVehicleSelectorForFreeroamConfigurator(function(model, config, additionalData)
     M.setVehicle(model, config, additionalData)
-    guihooks.trigger("ChangeState", "menu.freeroamconfigurator")
+    extensions.ui_router.navigate("menu.freeroamconfigurator")
   end)
 end
 
@@ -1872,7 +1948,6 @@ M.startFreeroam = function(configuration)
   local started = freeroam_freeroam.startFreeroamByName(configuration.levelName, configuration.spawnPointName, nil, { configuration.vehicle.model, options})
   if not started then
     navigateToPlayOnFadeout = false
-    playNavigationPendingAfterFadeout = false
     return
   end
   local spawnPointKey = configuration.spawnPointTile and configuration.spawnPointTile.key
@@ -1886,37 +1961,14 @@ M.startFreeroam = function(configuration)
   clearWizardSelectorFiltersForStart()
 end
 
-local function tryNavigateToPlayAfterLoad()
-  if not playNavigationPendingAfterFadeout then
-    return
-  end
-  if worldReadyState ~= 2 then
-    return
-  end
-  if core_gamestate.loading() then
-    return
-  end
-  playNavigationPendingAfterFadeout = false
-  extensions.ui_router.navigate("play")
-end
-
+-- Navigate to "play" exactly once, when the loading screen fades out. The router keeps resending
+-- the route change until the UI reports navigation started, so we only gate on the fade-out here.
 M.onLoadingScreenFadeout = function()
-  if navigateToPlayOnFadeout then
-    navigateToPlayOnFadeout = false
-    playNavigationPendingAfterFadeout = true
-    tryNavigateToPlayAfterLoad()
+  if not navigateToPlayOnFadeout then
+    return
   end
-end
-
-M.onWorldReadyState = function(state)
-  worldReadyState = state
-  if state == 2 then
-    tryNavigateToPlayAfterLoad()
-  end
-end
-
-M.onUpdate = function()
-  tryNavigateToPlayAfterLoad()
+  navigateToPlayOnFadeout = false
+  extensions.ui_router.navigate("play")
 end
 
 return M

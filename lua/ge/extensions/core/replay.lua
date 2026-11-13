@@ -21,6 +21,8 @@ local replayMetadataCache = {}
 local replayDebugEnabled = false
 local replayDebugStateTicksRemaining = 0
 local pendingReplayInitialPause
+local pendingLoadFile
+local persistentRecordingNotice = false
 local debugLog
 local getReplayDebugSnapshot
 local getFileStream
@@ -365,6 +367,12 @@ local function finishPendingReplayInitialPause(trigger)
   }))
 end
 
+local function clearPersistentRecordingNotice()
+  if not persistentRecordingNotice then return end
+  persistentRecordingNotice = false
+  guihooks.trigger("Message", {category = "replay", clear = true})
+end
+
 local function stateChanged(loadedFile, positionSeconds, totalSeconds, speed, paused, fpsPlay, fpsRec, statestr, framePositionSeconds)
   local prevState = M.state.state
   local prevPaused = M.state.paused
@@ -413,6 +421,10 @@ local function stateChanged(loadedFile, positionSeconds, totalSeconds, speed, pa
     if replayDebugStateTicksRemaining > 0 then
       replayDebugStateTicksRemaining = replayDebugStateTicksRemaining - 1
     end
+  end
+  if prevState == 'recording' and statestr ~= 'recording' then
+    missionReplayRecording = false
+    clearPersistentRecordingNotice()
   end
   guihooks.trigger('replayStateChanged', M.state)
   extensions.hook("onReplayStateChanged", M.state)
@@ -587,6 +599,35 @@ local function playReplayStream(filename, autoplay, source, options)
   return replayOperationResult(true, filename, nil, {code = "ok", ret = ret})
 end
 
+local function cancelPendingLoadFile()
+  if not pendingLoadFile then return end
+  pendingLoadFile = nil
+  guihooks.trigger("app:waiting", false)
+end
+
+local function onUiWaitingState(state)
+  if not state then return end
+  local pending = pendingLoadFile
+  if not pending then return end
+  pendingLoadFile = nil
+
+  pendingReplayInitialPause = nil
+  local ok, result = pcall(function()
+    local stream = getFileStream()
+    if stream then
+      stream:stop()
+      debugLog("loadFile.afterStop", getReplayDebugSnapshot({filename = pending.filename, autoplay = pending.autoplay, options = pending.options}))
+    end
+    return playReplayStream(pending.filename, pending.autoplay, "loadFile", pending.options)
+  end)
+  guihooks.trigger("app:waiting", false)
+  if not ok then
+    log("E", "", "Replay load after waiting UI failed: " .. tostring(result))
+  else
+    debugLog("loadFile.afterPlay", getReplayDebugSnapshot({filename = pending.filename, result = result}))
+  end
+end
+
 function loadFile(filename, autoplay, options)
   local stream = getFileStream()
   if not stream then
@@ -603,14 +644,23 @@ function loadFile(filename, autoplay, options)
   log("D","", "Loading: "..replayFilename)
   debugLog("loadFile.begin", getReplayDebugSnapshot({filename = replayFilename, autoplay = autoplay, options = options}))
 
-  pendingReplayInitialPause = nil
-  stream:stop()
-  debugLog("loadFile.afterStop", getReplayDebugSnapshot({filename = replayFilename, autoplay = autoplay, options = options}))
+  local alreadyPending = pendingLoadFile ~= nil
+  pendingLoadFile = {
+    filename = replayFilename,
+    autoplay = autoplay,
+    options = options,
+  }
+  if alreadyPending then
+    debugLog("loadFile.replacePending", getReplayDebugSnapshot({filename = replayFilename, autoplay = autoplay, options = options}))
+    return replayOperationResult(true, replayFilename, nil, {code = "queued"})
+  end
 
-  return playReplayStream(replayFilename, autoplay, "loadFile", options)
+  guihooks.trigger("app:waiting", true)
+  return replayOperationResult(true, replayFilename, nil, {code = "queued"})
 end
 
 local function stop()
+  cancelPendingLoadFile()
   local stream = getFileStream()
   if not stream then return end
 
@@ -629,6 +679,7 @@ local function stopAndUnload()
     return replayOperationResult(false, M.state.loadedFile, "Replay stream is not available", {code = "streamUnavailable"})
   end
 
+  cancelPendingLoadFile()
   pendingReplayInitialPause = nil
   stream:stop()
   publishUnloadedReplayState()
@@ -641,6 +692,7 @@ local function cancelRecording()
 
   log("D","",'Cancelling recording from state: '..M.state.state)
   if M.state.state == 'recording' then
+    persistentRecordingNotice = false
     ui_message("replay.cancelRecording", 5, "replay", "local_movies")
     local file = M.state.loadedFile
     stream:stop()
@@ -678,8 +730,16 @@ local function startReplayRecording(stream, isMissionReplay)
 
   if isMissionReplay then missionReplayRecording = true end
   log("D","",'record to: '..filename)
+  -- send the notice before record(): once "replay.hudStatus" exists, a "replay" message would overwrite it instead
+  persistentRecordingNotice = not isMissionReplay
   ui_message(isMissionReplay and "replay.startRecordingAutoReplay" or "replay.startRecording", isMissionReplay and 5 or -1, "replay", "local_movies")
-  stream:record(filename)
+  local err = stream:record(filename)
+  if err then
+    missionReplayRecording = false
+    clearPersistentRecordingNotice()
+    displayMsg("error", "replay.recordStartError." .. err)
+    return replayOperationResult(false, filename, "Replay stream failed to start recording: " .. err, {code = "recordStartFailed", reason = err})
+  end
   return replayOperationResult(true, filename, nil, {code = "ok"})
 end
 
@@ -698,11 +758,12 @@ local function stopReplayRecording(stream, autoplayAfterStopping, isMissionRepla
   local filename = M.state.loadedFile
   local playbackResult
   if isMissionReplay then missionReplayRecording = false end
+  persistentRecordingNotice = false
   if autoplayAfterStopping then
-    ui_message(isMissionReplay and "stopAutoReplayRecordingAutoplay" or "replay.stopRecordingAutoplay", 5, "replay", "local_movies")
+    ui_message(isMissionReplay and "replay.stopAutoReplayRecordingAutoplay" or "replay.stopRecordingAutoplay", 5, "replay", "local_movies")
     playbackResult = loadFile(filename)
   else
-    ui_message(isMissionReplay and "stopAutoReplayRecording" or "replay.stopRecording", 5, "replay", "local_movies")
+    ui_message(isMissionReplay and "replay.stopAutoReplayRecording" or "replay.stopRecording", 5, "replay", "local_movies")
     stream:stop()
   end
   if notifyCatalog then notifyReplayRecordingsUpdated() end
@@ -1016,6 +1077,7 @@ M.startRecording = startRecording
 M.stopRecording = stopRecording
 M.cancelRecording = cancelRecording
 M.loadFile = loadFile
+M.onUiWaitingState = onUiWaitingState
 M.stop = stop
 M.stopAndUnload = stopAndUnload
 M.pause = pause

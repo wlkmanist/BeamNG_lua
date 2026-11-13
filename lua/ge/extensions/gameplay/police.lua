@@ -133,6 +133,96 @@ local function placeRoadblock(vehIds, pos, rot, placeData) -- places a roadblock
   core_multiSpawn.placeGroup(vehIds, {ignoreAdjust = true, ignoreSafe = true, customTransforms = transforms}) -- delays some frames to improve performance
 end
 
+local function setupRoadblock(targetId, roadblockVehIds, roadblockPropIds, originPos, originDirVec, activeDist, spawnDist)
+  local result = {vehIds = {}, propIds = {}}
+  local spawnData
+
+  targetId = targetId or be:getPlayerVehicleID(0)
+  roadblockVehIds = roadblockVehIds or tableKeysSorted(policeVehs)
+  roadblockPropIds = roadblockPropIds or policePropIds
+  originPos = originPos or core_camera.getPosition()
+  originDirVec = originDirVec or core_camera.getForward()
+  activeDist = activeDist or 100 -- radial distance for keeping nearby vehicles active (and preventing sudden vanishing)
+  spawnDist = spawnDist or 120 -- minimum spawn distance for the roadblock
+
+  -- set activeDist to 0 to skip distance and direction checks
+  -- set spawnDist to 0 to force spawn roadblock at the origin
+
+  for _, vehId in ipairs(roadblockVehIds) do
+    tempPos:set(be:getObjectPositionXYZ(vehId))
+    tempFwd:setSub2(tempPos, originPos)
+    local dotValue = activeDist > 0 and 0 or math.huge
+    if getObjectByID(vehId):getActive() and originPos:squaredDistance(tempPos) > square(activeDist) and originDirVec:dot(tempFwd) < dotValue then
+      local vehData = policeVehs[vehId]
+      if not vehData or (vehData and vehData.role.validTargets[targetId]) then
+        table.insert(result.vehIds, vehId)
+      end
+    end
+  end
+
+  if result.vehIds[min(2, #roadblockVehIds)] then -- at least 2 vehicles, or 1 if it is the only one available
+    if spawnDist > 0 then
+      spawnData = gameplay_traffic_trafficUtils.findSpawnPointOnRoute(originPos, originDirVec, spawnDist, max(300, spawnDist * 3), 240, {pathRandomization = 0}) -- spawn point ahead of the target vehicle
+    else
+      spawnData = gameplay_traffic_trafficUtils.findSpawnPointOnRoute(originPos, originDirVec, 0, 100, 0) -- spawn point at the origin
+    end
+      if spawnData and spawnData.n1 then
+      local mapNodes = map.getMap().nodes
+      local rbWidth = math.min(mapNodes[spawnData.n1].radius, mapNodes[spawnData.n2].radius) * 2 + 1 -- road width, plus a small margin
+      local bestVehIds, totalLength = checkRoadblock(result.vehIds, rbWidth) -- returns vehicles that can fit in the roadblock
+      if bestVehIds[1] then -- at least one vehicle was valid
+        result.vehIds = bestVehIds
+
+        local bestPropIds
+        local maxPropLength = 0
+
+        if roadblockPropIds[1] then
+          bestPropIds = checkRoadblock(roadblockPropIds, rbWidth, false) -- TODO: optimize
+          for _, propId in ipairs(bestPropIds) do
+            local extents = getObjectByID(propId).initialNodePosBB:getExtents()
+            maxPropLength = max(maxPropLength, max(extents.x, extents.y))
+            table.insert(result.propIds, propId)
+          end
+        end
+
+        for _, vehId in ipairs(result.vehIds) do
+          local vehData = policeVehs[vehId]
+          if vehData then
+            if vehData.state == 'fadeIn' or vehData.state == 'fadeOut' then -- ensures that vehicles have full mesh alpha
+              getObjectByID(vehId):setMeshAlpha(1, '')
+              vehData.alpha = 1
+              vehData.state = 'active'
+            end
+            vehData:modifyRespawnValues(500) -- prevents the vehicles from respawning too quickly
+            vehData.role:setAction('roadblock')
+          end
+        end
+
+        local angle = 0 -- roughly calculated angles (good enough for most cases)
+        if rbWidth - totalLength > 2 then
+          angle = random(-20, 20)
+        elseif rbWidth - totalLength < 1 then
+          angle = random(30, 50) * sign2(random() - 0.5)
+        else
+          angle = random(-5, 5)
+        end
+
+        placeRoadblock(result.vehIds, spawnData.pos, quatFromDir(spawnData.dir, spawnData.normal), {angle = angle, centerAngle = 0, width = rbWidth})
+        if result.propIds[1] then
+          tempFwd:setScaled2(spawnData.dir, maxPropLength * 0.5 + 2)
+          tempPos:setSub2(spawnData.pos, tempFwd)
+          spawnData.pos2 = vec3(tempPos)
+          placeRoadblock(result.propIds, spawnData.pos2, quatFromDir(spawnData.dir, spawnData.normal), {angle = -90, width = rbWidth})
+        end
+
+        return result
+      end
+    end
+  end
+
+  return -- nil if failed
+end
+
 local function setPropsActive(active, reset)
   for _, v in ipairs(policePropIds) do
     getObjectByID(v):setActive(active and 1 or 0)
@@ -238,7 +328,7 @@ local function setPursuitMode(mode, targetId, policeIds) -- sets pursuit mode; -
 
   local traffic = gameplay_traffic.getTrafficData()
   local targetVeh = traffic[targetId]
-  if not traffic[targetId] then return end
+  if not traffic[targetId] or traffic[targetId].ignorePursuit then return end
   local pursuit = targetVeh.pursuit
 
   if not policeIds then
@@ -322,7 +412,7 @@ local function setPursuitMode(mode, targetId, policeIds) -- sets pursuit mode; -
           veh.role:setAction('pursuitEnd')
         end
       elseif mode == 0 then
-        if veh.role.targetId == targetId then
+        if be:getObjectActive(id) and veh.role.targetId == targetId then -- important, vehicle object must be active (inactive ones will self resolve later)
           veh.role:resetAction()
         end
       elseif mode >= 1 then
@@ -607,6 +697,13 @@ local function onVehicleResetted(id)
   end
 end
 
+local function onVehicleDestroyed(id)
+  local i = arrayFindValueIndex(policePropIds, id)
+  if i then
+    table.remove(policePropIds, i)
+  end
+end
+
 local function onClientEndMission()
   table.clear(policeVehs)
   resetPursuitVars()
@@ -626,30 +723,6 @@ local function onUpdate(dt, dtSim)
 
   for id, veh in pairs(gameplay_traffic.getTrafficData()) do
     local pursuit = veh.pursuit
-    local bestPoliceId, bestDist, bestInterDist = getNearestPoliceVehicle(id, true, true)
-
-    local addSightValue
-    local sightCoef = pursuit.mode + 2
-    if not bestPoliceId then
-      addSightValue = -dtSim * 0.25 -- no police visible, reduce sight value
-    else
-      local targetDist = min(bestDist, bestInterDist) -- police look ahead distance or police vehicle distance, whichever is better
-      addSightValue = (120 / targetDist) * dtSim * vars.strictness * sightCoef -- increments faster when nearer
-    end
-    pursuit.sightValue = clamp(pursuit.sightValue + addSightValue, 0, 1)
-    pursuit.policeVisible = pursuit.sightValue >= 0.5
-
-    local addScore = 0
-    if pursuit.addScore > 0 then
-      addScore = pursuit.addScore -- add score from pursuit infraction
-    else
-      if pursuit.mode >= 1 then
-        addScore = vars.strictness * min(10, veh.speed) * dtSim * 2 -- gradual increase during pursuit
-      end
-    end
-    pursuit.score = max(0, pursuit.score + addScore)
-
-    pursuit.addScore = 0
 
     -- pursuit mode processing
     if pursuit.mode >= 0 then
@@ -658,7 +731,7 @@ local function onUpdate(dt, dtSim)
           if pursuit.mode == 0 then -- activates only nearest police vehicle at start of pursuit
             if not veh.queuedFuncs.pursuitStart then
               local delay = clamp(15 / max(1e-12, veh.speed), 0, 1)
-              veh.queuedFuncs.pursuitStart = {timer = delay, func = setPursuitMode, args = {i, id, bestPoliceId}} -- small delay for lights & sirens
+              veh.queuedFuncs.pursuitStart = {timer = delay, func = setPursuitMode, args = {i, id, veh.pursuit.sight.policeId}} -- small delay for lights & sirens
             end
           else
             setPursuitMode(i, id)
@@ -667,163 +740,6 @@ local function onUpdate(dt, dtSim)
         end
       end
     end
-
-    -- active pursuit
-    if pursuit.mode ~= 0 then
-      --local legalSide = map.getRoadRules().rightHandDrive and -1 or 1
-      local arrestRadius = pursuit.policeVisible and vars.arrestRadius or 5 -- very small radius if police visibility is blocked, prevents false arresting
-      local evadeRadius = pursuit.policeVisible and 200 or vars.evadeRadius -- very large radius if police visibility is unblocked, prevents false evading
-
-      -- alert
-      if pursuit.mode == 1 and pursuit.offensesCount > 1 and not pursuit.flags.policeAlert then -- alert more police units if there is more than one offense
-        setPursuitMode(1, id)
-        pursuit.flags.policeAlert = 1
-      end
-
-      -- arrest
-      if pursuit.mode >= 1 then
-        if pursuit.timers.arrest >= vars.arrestTime then
-          arrestVehicle(id, gameplay_traffic.showMessages)
-        end
-      -- release
-      elseif pursuit.mode == -1 then
-        if (pursuit.timers.arrest <= -5 or not veh.role.flags.freeze) then
-          releaseVehicle(id, gameplay_traffic.showMessages)
-        end
-
-        if vars.autoRelease then
-          pursuit.timers.arrest = clamp(pursuit.timers.arrest - dtSim, -5, 0)
-        else
-          pursuit.timers.arrest = 0
-        end
-      end
-
-      if pursuit.mode >= 1 then
-        -- visible and within arrest distance
-        if bestPoliceId and bestDist < square(arrestRadius) then
-          if veh.speed <= 2.5 and policeVehs[bestPoliceId].speed <= 2.5 and bestDist < square(arrestRadius) then
-            pursuit.timers.arrest = min(vars.arrestTime, pursuit.timers.arrest + dtSim)
-          else
-            pursuit.timers.arrest = 0
-          end
-
-          pursuit.timers.evade = 0
-        else
-          if pursuit.mode == 3 then
-            -- roadblock logic
-            if vars.roadblockFrequency > 0 and pursuit.timers.roadblock == 0 then
-              local vehIds = {}
-              local count = 0
-              local spawnData
-
-              if veh.pos:squaredDistance(pursuit.roadblockPos) > 400 then
-                local minDist = 40 + 60 / max(0.001, gameplay_traffic.getTrafficVars().spawnValue)
-
-                for otherId, otherVeh in pairs(policeVehs) do -- first, check for police vehicles that are out of sight
-                  if getObjectByID(otherId):getActive() and otherVeh.role.validTargets[id] and otherVeh.role.validTargets[id].dist > 10000
-                  and otherVeh.focusDist > minDist and veh.focus.dirVec:dot(otherVeh.pos - veh.focus.pos) < 0 then
-                    table.insert(vehIds, otherId)
-                  end
-                  count = count + 1
-                end
-              end
-
-              if vehIds[min(2, count)] then -- at least 2 vehicles, or 1 if it is the only one
-                spawnData = gameplay_traffic_trafficUtils.findSpawnPointOnRoute(veh.pos, veh.dirVec, 120, 400, 200, {pathRandomization = 0}) -- spawn point ahead of the target vehicle
-                if spawnData and spawnData.n1 then
-                  local mapNodes = map.getMap().nodes
-                  local rbWidth = math.min(mapNodes[spawnData.n1].radius, mapNodes[spawnData.n2].radius) * 2 + 1 -- road width, plus a small margin
-                  local newVehIds, totalLength = checkRoadblock(vehIds, rbWidth) -- returns vehicles that can fit in the roadblock
-                  local maxPropLength = 0
-                  local newPropIds
-
-                  if policePropIds[1] then
-                    for i = #policePropIds, 1, -1 do -- validation (quick and dirty)
-                      if not getObjectByID(policePropIds[i]) then
-                        removeProp(policePropIds[i])
-                      end
-                    end
-
-                    newPropIds = checkRoadblock(policePropIds, rbWidth, false)
-                    for _, pid in ipairs(newPropIds) do
-                      maxPropLength = max(maxPropLength, getObjectByID(pid).initialNodePosBB:getExtents().y)
-                    end
-                  end
-
-                  pursuit.roadblockPos:set(spawnData.pos)
-                  pursuit.flags.roadblockNear = nil
-                  extensions.hook('onPursuitAction', id, 'roadblock', pursuit)
-
-                  for _, vid in ipairs(newVehIds) do
-                    local vehData = policeVehs[vid]
-                    if vehData.state == 'fadeIn' or vehData.state == 'fadeOut' then -- ensures that vehicles have full mesh alpha
-                      getObjectByID(vid):setMeshAlpha(1, '')
-                      vehData.alpha = 1
-                      vehData.state = 'active'
-                    end
-                    vehData:modifyRespawnValues(500) -- prevents the vehicles from respawning too quickly
-                    vehData.role:setAction('roadblock')
-                  end
-
-                  local angle = 0 -- guessed angles (good enough for most cases)
-                  if rbWidth - totalLength > 2 then
-                    angle = random(-20, 20)
-                  elseif rbWidth - totalLength < 1 then
-                    angle = random(30, 50) * sign2(random() - 0.5)
-                  else
-                    angle = random(-5, 5)
-                  end
-
-                  placeRoadblock(newVehIds, spawnData.pos, quatFromDir(spawnData.dir, spawnData.normal), {angle = angle, centerAngle = 0, width = rbWidth})
-                  if newPropIds then
-                    placeRoadblock(policePropIds, spawnData.pos - spawnData.dir * (maxPropLength * 0.5 + 2), quatFromDir(spawnData.dir, spawnData.normal), {angle = -90, width = rbWidth})
-                  end
-                end
-              end
-
-              if spawnData then -- valid roadblock
-                pursuit.timers.roadblock = max(10, 60 - vars.roadblockFrequency * 60) -- time interval to test for the next roadblock
-                if count == 1 then
-                  pursuit.timers.roadblock = pursuit.timers.roadblock + 20 -- if only one vehicle, add 20 seconds to the roadblock timer
-                end
-              else
-                pursuit.timers.roadblock = 1 -- bounce time until next roadblock check
-              end
-            end
-          end
-
-          if pursuit.timers.evade >= vars.evadeTime then
-            evadeVehicle(id, gameplay_traffic.showMessages)
-          end
-
-          if bestDist > square(evadeRadius) then
-            pursuit.timers.evade = min(vars.evadeTime, pursuit.timers.evade + dtSim)
-          elseif bestDist <= square(evadeRadius * 0.5) then
-            pursuit.timers.evade = 0
-          end
-
-          pursuit.timers.arrest = 0
-        end
-      end
-
-      if pursuit.mode == 3 and pursuit.timers.evadeValue < 0.5 then
-        pursuit.timers.roadblock = max(0, pursuit.timers.roadblock - dtSim)
-      else
-        pursuit.timers.roadblock = 1
-      end
-
-      if not pursuit.flags.roadblockNear and veh.pos:squaredDistance(pursuit.roadblockPos) <= 400 then -- increment roadblock counter
-        pursuit.roadblocks = pursuit.roadblocks + 1
-        pursuit.flags.roadblockNear = 1
-      end
-
-      if pursuit.mode >= 1 then
-        pursuit.timers.main = pursuit.timers.main + dtSim
-      end
-    end
-
-    pursuit.timers.arrestValue = pursuit.mode ~= -1 and clamp(pursuit.timers.arrest / max(1e-12, vars.arrestTime), 0, 1) or 1
-    pursuit.timers.evadeValue = clamp(pursuit.timers.evade / max(1e-12, vars.evadeTime), 0, 1)
   end
 
   -- TODO: change this into a background activity
@@ -854,6 +770,7 @@ M.removeProp = removeProp
 M.setPropsActive = setPropsActive
 M.checkRoadblock = checkRoadblock
 M.placeRoadblock = placeRoadblock
+M.setupRoadblock = setupRoadblock
 M.setPursuitMode = setPursuitMode
 M.setPursuitVars = setPursuitVars
 M.setPoliceVars = setPursuitVars
@@ -868,6 +785,7 @@ M.getPursuitData = getPursuitData
 M.getPursuitVars = getPursuitVars
 M.getPoliceVars = getPursuitVars
 M.getPoliceVehicles = getPoliceVehicles
+M.getPolice = getPoliceVehicles
 M.getNearestPoliceVehicle = getNearestPoliceVehicle
 M.isVehicleInPursuit = isVehicleInPursuit
 
@@ -878,6 +796,7 @@ M.onTrafficStarted = onTrafficStarted
 M.onTrafficStopped = onTrafficStopped
 M.onVehicleSwitched = onVehicleSwitched
 M.onVehicleResetted = onVehicleResetted
+M.onVehicleDestroyed = onVehicleDestroyed
 M.onClientEndMission = onClientEndMission
 M.onUpdate = onUpdate
 M.onTrafficSpecialVehiclesProviders = onTrafficSpecialVehiclesProviders

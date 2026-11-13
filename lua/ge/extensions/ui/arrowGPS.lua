@@ -20,6 +20,10 @@ local activePos = nil
 local activeColor = nil
 
 local function resolveActive()
+  if arrow and not scenetree.findObjectById(arrowId) then
+    arrow = nil
+    arrowId = nil
+  end
   local bestKey = nil
   local bestPriority = math.huge
   for key, reg in pairs(registrations) do
@@ -42,12 +46,7 @@ local function resolveActive()
     activePos = nil
     activeColor = nil
     if arrow then
-      if not scenetree.findObjectById(arrowId) then
-        arrow = nil
-        arrowId = nil
-      else
-        arrow.hidden = true
-      end
+      arrow.hidden = true
     end
   end
 end
@@ -133,7 +132,7 @@ end
 
 local function setScale(scale)
   arrowScale = scale
-  if arrow then
+  if arrow and scenetree.findObjectById(arrowId) then
     arrow.scale = vec3(scale, scale, scale)
   end
 end
@@ -143,19 +142,17 @@ local function setDepth(depth)
 end
 
 local function onPreRender(dt)
-  if not arrow then return end
-  if not scenetree.findObjectById(arrowId) then
+  if arrow and not scenetree.findObjectById(arrowId) then
     arrow = nil
     arrowId = nil
+  end
+
+  if not activePos or not getPlayerVehicle(0) then
+    if arrow then arrow.hidden = true end
     return
   end
 
-  local playerVehicle = getPlayerVehicle(0)
-  if not playerVehicle or not activePos then
-    arrow.hidden = true
-    return
-  end
-
+  createArrow()
   local arrowPos = screenToWorld(appScreenX, appScreenY, arrowDepth)
   if not arrowPos then
     arrow.hidden = true
@@ -179,10 +176,6 @@ local function onPreRender(dt)
   arrow.hidden = false
 end
 
-local function onExtensionLoaded()
-  createArrow()
-end
-
 local function onExtensionUnloaded()
   destroyArrow()
   registrations = {}
@@ -197,7 +190,6 @@ M.setAppScreenPos = setAppScreenPos
 M.setScale = setScale
 M.setDepth = setDepth
 M.onPreRender = onPreRender
-M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
 
 return M

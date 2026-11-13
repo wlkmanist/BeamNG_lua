@@ -12,10 +12,12 @@ M.dependencies = {
   "ui_pause_providers_routeData_vehicle",
   "ui_pause_providers_routeData_environment",
   "ui_pause_providers_routeData_multiplayer",
+  "ui_pause_providers_routeData_gamemodes",
   "ui_pause_providers_routeData_photomode",
   "ui_pause_providers_trafficControls",
   "ui_pause_providers_vehicleTabInteractions",
   "ui_pause_photomode",
+  "ui_pause_vehicleConfigurationOccupants",
 }
 
 local PAUSE_HOME_PAUSE_REQUEST_ID = "ui_pause_home_tab"
@@ -48,7 +50,6 @@ local PauseRouteLabels = {
   ["pause.environment.simulation"] = "ui.pause.environment.simulation",
   ["pause.environment.traffic"] = "ui.radialmenu2.traffic",
   ["pause.multiplayer"] = "ui.dashboard.multiplayer",
-  ["pause.vehicle.parts"] = "ui.pause.route.partsManagement",
   ["pause.vehicle.configurationcombined"] = "ui.dashboard.vehicleconfig",
   ["pause.vehicle.configurationcombined.save"] = "ui.pause.route.saveConfig",
   ["pause.vehicle.configurationcombined.configlistmanage"] = "ui.pause.route.manageConfigs",
@@ -64,8 +65,10 @@ local PauseRouteLabels = {
   ["pause.manageVehicles.vehicleDetails"] = "ui.pause.route.vehicleDetails",
   ["pause.vehicleDetails"] = "ui.pause.route.vehicleDetails",
   ["pause.multiplayer.settings"] = "ui.multiplayer.sessionSettingsTitle",
-  ["pause.multiplayer.gamemode"] = "ui.multiplayer.gamemode",
   ["pause.multiplayer.playerList"] = "ui.pause.route.playerList",
+  ["pause.gamemodes"] = "ui.gamemodes.gamemode",
+  ["pause.gamemodes.setup"] = "ui.gamemodes.settings",
+  ["pause.gamemodeSettings"] = "ui.gamemodes.settings",
   ["pause.replay"] = "ui.apps.replay.name",
   ["pause.replay.all"] = "ui.pause.route.allReplays",
   ["pause.options"] = "ui.dashboard.options",
@@ -90,7 +93,7 @@ local function getReplayData(routeName)
   }
 end
 
-local function getPauseRouteData(context, routeName)
+local function getPauseRouteData(context, routeName, routeParams)
   if routeName == "pause.system" then
     return ui_pause_providers_routeData_system.getSystemData(context)
   end
@@ -124,9 +127,6 @@ local function getPauseRouteData(context, routeName)
 
   if routeName == "pause.vehicle" then
     return ui_pause_providers_routeData_vehicle.getVehicleData(context)
-  end
-  if routeName == "pause.vehicle.parts" then
-    return ui_pause_providers_routeData_vehicle.getVehiclePartsData()
   end
   if routeName == "pause.vehicle.configurationcombined" then
     return ui_pause_providers_routeData_vehicle.getVehicleConfigurationCombinedData()
@@ -175,11 +175,18 @@ local function getPauseRouteData(context, routeName)
   if routeName == "pause.multiplayer.settings" then
     return ui_pause_providers_routeData_multiplayer.getMultiplayerSettingsData(context)
   end
-  if routeName == "pause.multiplayer.gamemode" then
-    return ui_pause_providers_routeData_multiplayer.getMultiplayerGamemodeData()
-  end
   if routeName == "pause.multiplayer.playerList" then
     return ui_pause_providers_routeData_multiplayer.getMultiplayerPlayerListData()
+  end
+
+  if routeName == "pause.gamemodes" then
+    return ui_pause_providers_routeData_gamemodes.getGamemodesData(context)
+  end
+  if routeName == "pause.gamemodes.setup" then
+    return ui_pause_providers_routeData_gamemodes.getGamemodeSetupData(context, routeParams)
+  end
+  if routeName == "pause.gamemodeSettings" then
+    return ui_pause_providers_routeData_gamemodes.getGamemodeSettingsData(context)
   end
 
   if routeName == "pause.photomode" or routeName:find("^pause%.photomode%.") == 1 then
@@ -193,7 +200,7 @@ local function getPauseRouteData(context, routeName)
   return {}
 end
 
-local function getPauseRootRouteName(routeName)
+local function getPauseRootRouteName(routeName, context)
   local name = routeName or ""
   if name == "pause.photomode" or name:find("^pause%.photomode%.") == 1 then return "pause.photomode" end
   if name == "pause.system" then return "pause.system" end
@@ -205,11 +212,15 @@ local function getPauseRootRouteName(routeName)
   if name:find("^pause%.vehicle") == 1 then return "pause.vehicle" end
   if name:find("^pause%.environment") == 1 then return "pause.environment" end
   if name:find("^pause%.multiplayer") == 1 then return "pause.multiplayer" end
+  if name == "pause.gamemodes" or name:find("^pause%.gamemodes%.") == 1 or name == "pause.gamemodeSettings" then
+    if context and context.isMultiplayerActive then return "pause.multiplayer" end
+    return "pause"
+  end
   return "pause"
 end
 
-local function getPauseSelectedTabIndex(routeName, tabs)
-  local rootRoute = getPauseRootRouteName(routeName)
+local function getPauseSelectedTabIndex(routeName, tabs, context)
+  local rootRoute = getPauseRootRouteName(routeName, context)
   for i, tab in ipairs(tabs or {}) do
     if tab.routeName == rootRoute then
       return i - 1
@@ -218,7 +229,7 @@ local function getPauseSelectedTabIndex(routeName, tabs)
   return 0
 end
 
-local function buildPauseBreadcrumbs(routeName)
+local function buildPauseBreadcrumbs(routeName, context)
   if routeName == "pause.system" or routeName == "pause" or routeName == "pause.career" or routeName == "pause.career.history" or routeName == "pause.vehicle" or routeName == "pause.environment" or routeName == "pause.multiplayer" then
     return {}
   end
@@ -227,7 +238,7 @@ local function buildPauseBreadcrumbs(routeName)
     {label = "ui.environment.pause", routeName = "pause"},
   }
 
-  local rootRoute = getPauseRootRouteName(routeName)
+  local rootRoute = getPauseRootRouteName(routeName, context)
   if rootRoute ~= "pause" then
     table.insert(breadcrumbs, {
       label = PauseRouteLabels[rootRoute] or rootRoute,
@@ -263,6 +274,13 @@ local function buildPauseBreadcrumbs(routeName)
     })
   end
 
+  if routeName == "pause.gamemodes.setup" then
+    table.insert(breadcrumbs, {
+      label = PauseRouteLabels["pause.gamemodes"] or "ui.gamemodes.gamemode",
+      routeName = "pause.gamemodes",
+    })
+  end
+
   table.insert(breadcrumbs, {
     label = (routeName == "pause.vehicle.save" or routeName == "pause.vehicle.configurationcombined.save")
       and ui_pause_providers_routeData_vehicle.getVehicleSaveRouteTitle()
@@ -274,13 +292,45 @@ local function buildPauseBreadcrumbs(routeName)
 end
 
 local function buildPauseTabs(context)
+  if context.isFirstDriveGuided then
+    local label = _tr("ui.experiences.firstDrive.pause.title")
+    return {
+      {
+        tabId = "system",
+        routeName = "pause.system",
+        label = _tr("ui.pause.system"),
+        icon = "adjust",
+        digestHeading = _tr("ui.pause.system"),
+        visible = true,
+        enabled = true,
+        disabledReason = nil,
+      },
+      {
+        tabId = "firstDrive",
+        routeName = "pause",
+        label = label,
+        icon = "road",
+        digestHeading = label,
+        visible = true,
+        enabled = true,
+        disabledReason = nil,
+      },
+    }
+  end
+
   local homeTabLabel = _tr("ui.pause.tab.home")
   local homeTabIcon = "road"
-  if context.mode == "freeroam" then
+  if context.isFirstDriveActive then
+    homeTabLabel = _tr("ui.experiences.firstDrive.pause.title")
+  elseif context.mode == "freeroam" then
     homeTabLabel = _tr("ui.playmodes.freeroam")
   elseif context.mode == "mission" then
     homeTabLabel = _tr("ui.playmodes.mission")
     homeTabIcon = "flag"
+  end
+  if context.isMultiseatActive then
+    homeTabLabel = _tr("ui.playmodes.multiseat")
+    homeTabIcon = "splitScreen"
   end
   local tabs = {
     {
@@ -306,16 +356,18 @@ local function buildPauseTabs(context)
   }
 
   if context.mode == "career" then
-    table.insert(tabs, {
-      tabId = "progress",
-      routeName = "pause.career",
-      label = _tr("ui.career.landingPage.name"),
-      icon = "cup",
-      digestHeading = _tr("ui.career.landingPage.name"),
-      visible = true,
-      enabled = true,
-      disabledReason = nil,
-    })
+    if ui_pause_providers_routeData_career.isCareerProgressAvailable() then
+      table.insert(tabs, {
+        tabId = "progress",
+        routeName = "pause.career",
+        label = _tr("ui.career.landingPage.name"),
+        icon = "cup",
+        digestHeading = _tr("ui.career.landingPage.name"),
+        visible = true,
+        enabled = true,
+        disabledReason = nil,
+      })
+    end
     table.insert(tabs, {
       tabId = "history",
       routeName = "pause.career.history",
@@ -327,29 +379,38 @@ local function buildPauseTabs(context)
       disabledReason = nil,
     })
   else
-    table.insert(tabs, {
-      tabId = "vehicle",
-      routeName = "pause.vehicle",
-      label = _tr("ui.pause.vehicle"),
-      icon = "car",
-      digestHeading = _tr("ui.pause.vehicle"),
-      visible = true,
-      enabled = true,
-      disabledReason = nil,
-    })
-    table.insert(tabs, {
-      tabId = "environment",
-      routeName = "pause.environment",
-      label = _tr("ui.dashboard.environment"),
-      icon = "weather",
-      digestHeading = _tr("ui.dashboard.environment"),
-      visible = true,
-      enabled = true,
-      disabledReason = nil,
-    })
+    local capabilities = gameplay_discover_firstDrive_capabilities
+    local firstDrivePolicyActive = capabilities
+      and capabilities.isSessionActive
+      and capabilities.isSessionActive()
+    if not firstDrivePolicyActive or capabilities.isAllowed("vehicleTab") then
+      table.insert(tabs, {
+        tabId = "vehicle",
+        routeName = "pause.vehicle",
+        label = _tr("ui.pause.vehicle"),
+        icon = "car",
+        digestHeading = _tr("ui.pause.vehicle"),
+        visible = true,
+        enabled = true,
+        disabledReason = nil,
+      })
+    end
+    if not firstDrivePolicyActive or capabilities.isAllowed("environmentTab") then
+      table.insert(tabs, {
+        tabId = "environment",
+        routeName = "pause.environment",
+        label = _tr("ui.dashboard.environment"),
+        icon = "weather",
+        digestHeading = _tr("ui.dashboard.environment"),
+        visible = true,
+        enabled = true,
+        disabledReason = nil,
+      })
+    end
   end
 
-  if MP ~= nil and not context.isFreeroamTutorialActive and context.mode == 'freeroam' then
+  if MP ~= nil and not context.isFirstDriveActive and not context.isFreeroamTutorialActive
+    and not context.isMultiseatActive and context.mode == "freeroam" then
     table.insert(tabs, {
       tabId = "multiplayer",
       routeName = "pause.multiplayer",
@@ -377,12 +438,18 @@ local function isPauseRouteName(routeName)
     or routeName:find("^menu%.pause") == 1
 end
 
+local function isVehicleConfigurationRoute(routeName)
+  return type(routeName) == "string"
+    and (routeName == "pause.vehicle.configurationcombined"
+      or routeName:find("^pause%.vehicle%.configurationcombined%.") == 1)
+end
+
 local function shouldPauseSimulationForRoute(routeName)
   if type(routeName) ~= "string" then return false end
   if routeName == "pause.options" or routeName:find("^pause%.options%.") == 1 then
     return true
   end
-  if routeName == "pause.vehicle.parts" or routeName == "pause.vehicle.configurationcombined" or routeName == "pause.vehicle.configurationcombined.mirrors" or routeName == "pause.vehicle.tuning" or routeName == "pause.vehicle.debug" or routeName == "pause.vehicle.paint" then
+  if routeName == "pause.vehicle.configurationcombined" or routeName == "pause.vehicle.configurationcombined.mirrors" or routeName == "pause.vehicle.tuning" or routeName == "pause.vehicle.debug" or routeName == "pause.vehicle.paint" then
     return false
   end
   if routeName == "pause.environment.weather" or routeName == "pause.environment.simulation" then
@@ -421,12 +488,12 @@ local function getPauseRouteHeading(routeName, routeHeading)
   return _tr(PauseRouteLabels[routeName] or "ui.environment.pause")
 end
 
-local function buildPauseLayoutData(routeName, navigationContext, includeRouteContent)
+local function buildPauseLayoutData(routeName, navigationContext, includeRouteContent, routeParams)
   local runtimeContext = type(navigationContext) == "table" and navigationContext or {}
   local tabs = buildPauseTabs(runtimeContext)
 
   ui_pause_actions.clearActions()
-  local routeData = includeRouteContent == false and {} or (getPauseRouteData(runtimeContext, routeName) or {})
+  local routeData = includeRouteContent == false and {} or (getPauseRouteData(runtimeContext, routeName, routeParams) or {})
 
   local mainContent = routeData.mainPanelContent or {}
   routeData.mainPanelContent = nil
@@ -435,16 +502,19 @@ local function buildPauseLayoutData(routeName, navigationContext, includeRouteCo
   local panelsContent = routeData.panels or {}
   routeData.panels = nil
   local routeHeading = routeData.heading
+    or (runtimeContext.isFirstDriveGuided and _tr("ui.experiences.firstDrive.pause.title"))
   routeData.heading = nil
 
-  local railContent = routeData.rail or {}
+  local railContent = routeData.rail
+    or (routeName == "pause" and ui_pause_features_homeRail.build(runtimeContext, ui_pause_actions.registerButton))
+    or {}
   routeData.rail = nil
 
   return {
     topbar = {
       show = true,
       tabs = tabs,
-      selectedTab = getPauseSelectedTabIndex(routeName, tabs),
+      selectedTab = getPauseSelectedTabIndex(routeName, tabs, runtimeContext),
       hints = {
         tabLeft = _tr("ui.pause.hints.previousTab"),
         tabRight = _tr("ui.pause.hints.nextTab"),
@@ -454,7 +524,7 @@ local function buildPauseLayoutData(routeName, navigationContext, includeRouteCo
     header = {
       heading = getPauseRouteHeading(routeName, routeHeading),
       subheading = nil,
-      breadcrumbs = buildPauseBreadcrumbs(routeName),
+      breadcrumbs = buildPauseBreadcrumbs(routeName, runtimeContext),
     },
     content = {
       main = mainContent,
@@ -476,7 +546,7 @@ local function fillPauseRouteData(context, toRoute, fromRoute, data, includeRout
     return
   end
 
-  data.layoutMenu = buildPauseLayoutData(routeName, context, includeRouteContent)
+  data.layoutMenu = buildPauseLayoutData(routeName, context, includeRouteContent, toRoute and toRoute.params)
   data.pause = {
     routeName = routeName,
     context = context or {},
@@ -550,6 +620,35 @@ function M.onPauseLeave(context, toRoute, fromRoute, data)
     if ui_pause_camera and ui_pause_camera.endPauseSession then
       ui_pause_camera.endPauseSession()
     end
+  end
+end
+
+function M.onVehicleConfigurationLeave(context, toRoute, fromRoute, data)
+  M.onPauseLeave(context, toRoute, fromRoute, data)
+  if isVehicleConfigurationRoute(toRoute and toRoute.name) then return end
+
+  if ui_pause_vehicleConfigurationOccupants then
+    ui_pause_vehicleConfigurationOccupants.endSession()
+  end
+  if render_splitScreen and render_splitScreen.endSoloView then
+    render_splitScreen.endSoloView()
+  end
+  if extensions.core_vehicle_configTarget then
+    extensions.core_vehicle_configTarget.clear("routeLeave")
+  end
+end
+
+function M.onVehicleConfigTargetChanged(current, previous, reason)
+  if current or reason ~= "vehicleDestroyed" then return end
+
+  if render_splitScreen and render_splitScreen.endSoloView then
+    render_splitScreen.endSoloView()
+  end
+  local route = extensions.ui_router.getCurrent()
+  local routeName = route and route.resolved and route.resolved.name
+  if isVehicleConfigurationRoute(routeName) then
+    local returnRoute = previous and previous.returnRoute or "pause.vehicle"
+    extensions.ui_router.navigate(returnRoute)
   end
 end
 

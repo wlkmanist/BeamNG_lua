@@ -11,7 +11,7 @@ local curTrigger = false
 local function watchAirtime()
   if initialWheelCount ~= wheels.wheelCount then return end --if we lose a wheel
   local prevTrigger = curTrigger
-  local curTrigger = obj:getGroundSpeed() > 6
+  curTrigger = obj:getGroundSpeed() > 6
 
   for i = 0, initialWheelCount-1 do
     local wd = wheels.wheels[i]

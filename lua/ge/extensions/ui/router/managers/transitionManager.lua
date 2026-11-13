@@ -171,6 +171,7 @@ M.getSession = function()
   return state.session
 end
 
+
 --[[
   Mark a progress milestone reported by the UI framework.
 
@@ -265,21 +266,19 @@ local function classifyTransitionTimeout(progress)
 end
 
 -- Map a phase name to the timeout classification reported when its budget expires.
+-- The startup phase never times out (resends indefinitely), so it is intentionally omitted.
 local PHASE_TIMEOUT_CLASSIFICATION = {
-  handoff = "route_change_not_accepted",
-  routerStart = "route_navigation_not_started",
   routeCommit = "route_change_not_completed",
   mountReady = "route_mounted_not_acknowledged",
 }
 
 -- Derive the current phase from the progress acks recorded on the session.
+-- routeChangeReceived is telemetry only and does not advance the phase; the startup
+-- phase ends only when routeNavigationStarted is observed.
 local function computeTransitionPhase(session)
   local progress = session.progress or {}
-  if not progress.routeChangeReceived then
-    return "handoff"
-  end
   if not progress.routeNavigationStarted then
-    return "routerStart"
+    return "startup"
   end
   if not progress.routeChangeCommitted then
     return "routeCommit"
@@ -310,15 +309,21 @@ M.getTimeoutInfo = function(classification)
   }
 end
 
--- Phased regime: Vue handoff transitions (session.phase set). Advances through the
--- per-phase budgets, requests a route-change resend while waiting for the handoff ack,
--- and reports the first exceeded budget. Returns an event table or nil.
+-- Phased regime: Vue handoff transitions (session.phase set). While in the startup phase it
+-- resends the pending route-change event on a fixed interval and never times out. Once the
+-- navigation starts it resets the completion timers (so the indefinite startup wait is not
+-- counted) and advances through the post-start per-phase budgets, reporting the first exceeded
+-- budget. Returns an event table or nil.
 local function updatePhasedTransition(dtReal)
   local session = state.session
 
-  session.totalElapsed = session.totalElapsed + dtReal
   session.phaseElapsed = session.phaseElapsed + dtReal
   session.timeSinceLastEmit = session.timeSinceLastEmit + dtReal
+  -- Startup time is excluded from the post-start total budget: only accumulate totalElapsed
+  -- once we've left the indefinite startup phase.
+  if session.phase ~= "startup" then
+    session.totalElapsed = session.totalElapsed + dtReal
+  end
 
   -- advance-phases: recompute the phase from progress acks and reset the phase timer on change.
   local nextPhase = computeTransitionPhase(session)
@@ -326,26 +331,36 @@ local function updatePhasedTransition(dtReal)
     log("D", "Router", "Router phase " .. tostring(session.phase) .. " -> " .. tostring(nextPhase) ..
         " for route: " .. tostring(session.routeName) ..
         " after " .. string.format("%.2f", session.phaseElapsed) .. "s")
+    -- Reset completion timing when the start milestone is observed so the post-start budgets
+    -- begin from zero and never include the (potentially long) startup wait.
+    if session.phase == "startup" then
+      session.totalElapsed = 0
+    end
     session.phase = nextPhase
     session.phaseElapsed = 0
   end
 
   local cfg = Config.PhaseTimeouts
 
-  if session.phase == "handoff" then
-    if session.handoffAttempts <= cfg.handoffMaxResends and session.timeSinceLastEmit >= cfg.handoffResendDelay then
+  if session.phase == "startup" then
+    -- Resend the exact pending route-change entry on a fixed interval, indefinitely, until the
+    -- UI reports the Vue Router pipeline has started. Missing routes stay retryable this way.
+    if session.timeSinceLastEmit >= cfg.startupResendInterval then
       local pendingEntry = session.pendingEntry
       if pendingEntry then
         session.handoffAttempts = session.handoffAttempts + 1
         session.timeSinceLastEmit = 0
-        log("D", "Router", "Handoff resend attempt " .. session.handoffAttempts ..
+        log("D", "Router", "Startup resend attempt " .. session.handoffAttempts ..
             " for route: " .. tostring(session.routeName))
         return { type = "resendRouteChange", entry = pendingEntry }
       end
     end
+    -- No timeout while waiting for startup.
+    return nil
   end
 
-  -- classify-phase-timeouts: prefer the specific phase budget, then the emergency total cap.
+  -- classify-phase-timeouts (post-start only): prefer the specific phase budget, then the
+  -- emergency total cap.
   local phaseBudget = cfg[session.phase]
   if phaseBudget and session.phaseElapsed >= phaseBudget then
     local classification = PHASE_TIMEOUT_CLASSIFICATION[session.phase] or "transition_timeout"

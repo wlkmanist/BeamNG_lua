@@ -673,6 +673,13 @@ function C:triggerShowVisualPacenote(pacenote)
     log('D', logTag, string.format('triggerShowVisualPacenote name=%s, serialNo=%s', pacenote.name, pacenote.visualSerialNo))
   end
 
+  -- calls without icons (e.g. "keep left") have no visuals; an empty table would reach the UI as {} instead of []
+  local visualPacenotes = compiledPacenote.visualPacenoteEvent.visualPacenotes
+  if not visualPacenotes or not visualPacenotes[1] then
+    profilerPopEvent("rallyManager:triggerShowVisualPacenote")
+    return
+  end
+
   guihooks.trigger('showVisualPacenote2', compiledPacenote.visualPacenoteEvent)
   profilerPopEvent("rallyManager:triggerShowVisualPacenote")
 end

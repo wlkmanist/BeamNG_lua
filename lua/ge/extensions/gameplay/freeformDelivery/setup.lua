@@ -643,6 +643,9 @@ function M.cleanup(delivery, keepVehicles)
         end
       end
     end
+    if delivery._hasColliders then
+      be:reloadCollision()
+    end
   end
 
   -- Move vehicles not in prefabs to MissionGroup (if keeping vehicles)

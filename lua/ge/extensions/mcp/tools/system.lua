@@ -64,13 +64,12 @@ function M.get_render_info()
 end
 
 function M.screenshot(args)
-  if type(createScreenshot2) ~= "function" then return "screenshots unavailable", true end
   local dir = "screenshots/mcp/"
   if not FS:directoryExists(dir) then FS:directoryCreate(dir, true) end
   screenshotCounter = screenshotCounter + 1
   local jpg = args and args.jpg == true
   local rel = dir .. "shot_" .. os.date("%Y%m%d_%H%M%S") .. "_" .. screenshotCounter .. (jpg and ".jpg" or ".png")
-  local id = createScreenshot2({ filename = (rel:gsub("%.%w+$", "")), writeJPG = jpg, superSampling = 1 })
+  local id = require('screenshot').createScreenshotTracked({ filename = (rel:gsub("%.%w+$", "")), writeJPG = jpg, superSampling = 1 })
   if not id or id == 0 then return "screenshot failed (no graphics device?)", true end
   -- written asynchronously under the user path; ready within a few frames (before the AI reads it)
   return (FS:getUserPath() .. rel):gsub("\\", "/"), false
@@ -86,13 +85,12 @@ function M.screenshot_image(args)
     pendingShotPath = nil
     return { data = (require('mime').b64(bytes)), mimeType = "image/jpeg" }, false
   end
-  if type(createScreenshot2) ~= "function" then return "screenshots unavailable", true end
   local dir = "screenshots/mcp/"
   if not FS:directoryExists(dir) then FS:directoryCreate(dir, true) end
   local rel = dir .. "wire_" .. os.time() .. "_" .. screenshotCounter .. ".jpg"
   screenshotCounter = screenshotCounter + 1
   local scale = tonumber(args and args.scale) or 0.4
-  local id = createScreenshot2({ filename = (rel:gsub("%.jpg$", "")), writeJPG = true, superSampling = 1, rescaleFactor = scale })
+  local id = require('screenshot').createScreenshotTracked({ filename = (rel:gsub("%.jpg$", "")), writeJPG = true, superSampling = 1, rescaleFactor = scale })
   if not id or id == 0 then return "screenshot failed (no graphics device?)", true end
   pendingShotPath = rel -- CWD-relative; Lua io.open is sandboxed to relative paths
   return "capturing JPG (scale " .. scale .. "); call screenshot_image again in a moment to receive the image", false

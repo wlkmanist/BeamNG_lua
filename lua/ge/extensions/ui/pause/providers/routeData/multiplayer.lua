@@ -10,10 +10,29 @@ local function isMultiplayerActionsEditable(context)
   return not context or context.mode ~= "freeroamTutorial"
 end
 
+local function getPlayerListSidePanelContents()
+  return {
+    {
+      {
+        id = "multiplayerPlayerListTitle",
+        type = "title",
+        text = "ui.multiplayer.players",
+      },
+      {
+        id = "multiplayerPlayerListComponent",
+        type = "component",
+        componentName = "PauseMultiplayerPlayerList",
+      },
+    },
+  }
+end
+
 function M.getMultiplayerData(context)
   local isActive = context.isMultiplayerActive == true
   local editable = isMultiplayerActionsEditable(context)
   local disabledReason = editable and nil or "Read-only in this mode"
+  local hasRunningGamemode = multiplayer_gamemodeManager and multiplayer_gamemodeManager.getCurrentGamemodeExt() ~= nil
+  local gamemodeRoute = hasRunningGamemode and "pause.gamemodeSettings" or "pause.gamemodes"
 
   return {
     active = true,
@@ -38,13 +57,13 @@ function M.getMultiplayerData(context)
             }),
             Common.registerPauseButton({
               id = "openMultiplayerGamemodeFromHome",
-              label = _tr("ui.multiplayer.gamemode"),
+              label = _tr("ui.multiplayer.gamemodes"),
               icon = "play",
-              routeTarget = "pause.multiplayer.gamemode",
+              routeTarget = gamemodeRoute,
               enabled = editable and isActive,
               disabledReason = disabledReason,
               callback = function()
-                return Common.tryPushStateSequence("pause.multiplayer.gamemode")
+                return Common.tryPushStateSequence(gamemodeRoute)
               end,
             }),
             Common.registerPauseButton({
@@ -62,33 +81,11 @@ function M.getMultiplayerData(context)
         },
       }
     },
-    sidePanelContents = isActive and {
-      {
-        {
-          id = "multiplayerPlayerListTitle",
-          type = "title",
-          text = "Players",
-        },
-        {
-          id = "multiplayerPlayerListComponent",
-          type = "component",
-          componentName = "PauseMultiplayerPlayerList",
-        },
-      },
-    } or {
-      {
-        {
-          id = "multiplayerPlayerListTitle",
-          type = "title",
-          text = "Not connected to a multiplayer session",
-        },
-      }
-    },
+    sidePanelContents = getPlayerListSidePanelContents(),
   }
 end
 
-function M.getMultiplayerSettingsData(context)
-  local isActive = context.isMultiplayerActive == true
+function M.getMultiplayerSettingsData()
   return {
     mainPanelContent = {
       {
@@ -97,56 +94,11 @@ function M.getMultiplayerSettingsData(context)
         componentName = "PauseMultiplayerSessionTab",
       },
     },
-    sidePanelContents = isActive and {
-      {
-        {
-          id = "multiplayerPlayerListTitle",
-          type = "title",
-          text = "Players",
-        },
-        {
-          id = "multiplayerPlayerListComponent",
-          type = "component",
-          componentName = "PauseMultiplayerPlayerList",
-        },
-      },
-    } or {
-      {
-        {
-          id = "multiplayerPlayerListTitle",
-          type = "title",
-          text = "Not connected to a multiplayer session",
-        },
-      }
-    },
+    sidePanelContents = getPlayerListSidePanelContents(),
   }
 end
 
-function M.getMultiplayerGamemodeData()
-  return {
-    mainPanelContent = {
-      {
-        id = "multiplayerGamemodeComponent",
-        type = "component",
-        componentName = "PauseMultiplayerGamemodesTab",
-      },
-    },
-    sidePanelContents = {
-      {
-        {
-          id = "multiplayerGamemodePlayerListTitle",
-          type = "title",
-          text = "Players",
-        },
-        {
-          id = "multiplayerGamemodePlayerListComponent",
-          type = "component",
-          componentName = "PauseMultiplayerPlayerList",
-        },
-      },
-    },
-  }
-end
+M.getPlayerListSidePanelContents = getPlayerListSidePanelContents
 
 function M.getMultiplayerPlayerListData()
   return {

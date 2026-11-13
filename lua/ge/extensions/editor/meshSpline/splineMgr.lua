@@ -21,6 +21,8 @@ local defaultRot = 1
 local defaultParams = {
   spacing = 0.0,
   verticalOffset = 0.0,
+  startCapOffset = 0.0,
+  endCapOffset = 0.0,
   normalMode = 2, -- 0=local, 1=global, 2=terrain (default).
   jitterForward = 0.0,
   jitterRight = 0.0,
@@ -232,6 +234,127 @@ local victorianLampPostPreset = {
   endCapMeshName = 'lamp1',
 }
 
+-- The modern single street lamp preset (global 's_*' asset). rot carries the roadsideProps/bridge calibration: relative to the
+-- mast (rot = 1) the street pole faces the other way, so rot = 0. Verify facing in-game and only adjust rot if it points wrong.
+local streetLampPostPreset = {
+  name = 'Street Lamp Post',
+  meshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_street_single_01.dae',
+  meshName = 's_lamp_post_street_single_01',
+  rot = 0,
+  spacing = 30.0,
+  normalMode = 1,
+  verticalOffset = 0.0,
+  jitterForward = 0.01,
+  jitterRight = 0.01,
+  jitterUp = 0.01,
+  mainRandomWeight = 1.0,
+  splineRandomSeed = 0,
+  isAliasRoundRobin = true,
+  isAlias1 = false,
+  alias1RandomWeight = 0.0,
+  alias1Rot = 0,
+  alias1MeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_street_single_01.dae',
+  alias1MeshName = 's_lamp_post_street_single_01',
+  isAlias2 = false,
+  alias2RandomWeight = 0.0,
+  alias2Rot = 0,
+  alias2MeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_street_single_01.dae',
+  alias2MeshName = 's_lamp_post_street_single_01',
+  isAlias3 = false,
+  alias3RandomWeight = 0.0,
+  alias3Rot = 0,
+  alias3MeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_street_single_01.dae',
+  alias3MeshName = 's_lamp_post_street_single_01',
+  isStartCap = false,
+  startCapRot = 0,
+  startCapMeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_street_single_01.dae',
+  startCapMeshName = 's_lamp_post_street_single_01',
+  isEndCap = false,
+  endCapRot = 0,
+  endCapMeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_street_single_01.dae',
+  endCapMeshName = 's_lamp_post_street_single_01',
+}
+
+-- The tall highway lamp preset (global 's_*' asset). rot = 2 (mast + 180) per the shared calibration.
+local highwayLampPostPreset = {
+  name = 'Highway Lamp Post',
+  meshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_single_highway_01.dae',
+  meshName = 's_lamp_post_single_highway_01',
+  rot = 2,
+  spacing = 40.0,
+  normalMode = 1,
+  verticalOffset = 0.0,
+  jitterForward = 0.01,
+  jitterRight = 0.01,
+  jitterUp = 0.01,
+  mainRandomWeight = 1.0,
+  splineRandomSeed = 0,
+  isAliasRoundRobin = true,
+  isAlias1 = false,
+  alias1RandomWeight = 0.0,
+  alias1Rot = 2,
+  alias1MeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_single_highway_01.dae',
+  alias1MeshName = 's_lamp_post_single_highway_01',
+  isAlias2 = false,
+  alias2RandomWeight = 0.0,
+  alias2Rot = 2,
+  alias2MeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_single_highway_01.dae',
+  alias2MeshName = 's_lamp_post_single_highway_01',
+  isAlias3 = false,
+  alias3RandomWeight = 0.0,
+  alias3Rot = 2,
+  alias3MeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_single_highway_01.dae',
+  alias3MeshName = 's_lamp_post_single_highway_01',
+  isStartCap = false,
+  startCapRot = 2,
+  startCapMeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_single_highway_01.dae',
+  startCapMeshName = 's_lamp_post_single_highway_01',
+  isEndCap = false,
+  endCapRot = 2,
+  endCapMeshPath = 'assets/meshes/props/urban/lighting/s_lamp_post_single_highway_01.dae',
+  endCapMeshName = 's_lamp_post_single_highway_01',
+}
+
+-- The pedestrian sidewalk lamp preset (global 's_*' asset). rot = 2 (mast + 180) per the shared calibration.
+local sidewalkLampPostPreset = {
+  name = 'Sidewalk Lamp Post',
+  meshPath = 'assets/meshes/props/urban/lighting/s_streetlamp_sidewalk_01.dae',
+  meshName = 's_streetlamp_sidewalk_01',
+  rot = 2,
+  spacing = 25.0,
+  normalMode = 1,
+  verticalOffset = 0.0,
+  jitterForward = 0.01,
+  jitterRight = 0.01,
+  jitterUp = 0.01,
+  mainRandomWeight = 1.0,
+  splineRandomSeed = 0,
+  isAliasRoundRobin = true,
+  isAlias1 = false,
+  alias1RandomWeight = 0.0,
+  alias1Rot = 2,
+  alias1MeshPath = 'assets/meshes/props/urban/lighting/s_streetlamp_sidewalk_01.dae',
+  alias1MeshName = 's_streetlamp_sidewalk_01',
+  isAlias2 = false,
+  alias2RandomWeight = 0.0,
+  alias2Rot = 2,
+  alias2MeshPath = 'assets/meshes/props/urban/lighting/s_streetlamp_sidewalk_01.dae',
+  alias2MeshName = 's_streetlamp_sidewalk_01',
+  isAlias3 = false,
+  alias3RandomWeight = 0.0,
+  alias3Rot = 2,
+  alias3MeshPath = 'assets/meshes/props/urban/lighting/s_streetlamp_sidewalk_01.dae',
+  alias3MeshName = 's_streetlamp_sidewalk_01',
+  isStartCap = false,
+  startCapRot = 2,
+  startCapMeshPath = 'assets/meshes/props/urban/lighting/s_streetlamp_sidewalk_01.dae',
+  startCapMeshName = 's_streetlamp_sidewalk_01',
+  isEndCap = false,
+  endCapRot = 2,
+  endCapMeshPath = 'assets/meshes/props/urban/lighting/s_streetlamp_sidewalk_01.dae',
+  endCapMeshName = 's_streetlamp_sidewalk_01',
+}
+
 -- The bollard preset.
 local bollardPreset = {
   name = 'Bollard',
@@ -320,8 +443,10 @@ local logTag = 'meshSpline'
 -- External modules.
 local buffer = require('string.buffer')
 local pop = require('editor/meshSpline/populate')
+local populationEngine = require('editor/meshSpline/populationEngine')
 local geom = require('editor/toolUtilities/geom')
 local util = require('editor/toolUtilities/util')
+local session = require('editor/toolUtilities/session') -- Shared Save/Load Session helper (itemToTable + vec3 rehydrate).
 
 -- Module constants.
 local abs, min = math.abs, math.min
@@ -331,6 +456,9 @@ local presetsByStr = {
   ['metal_fence'] = metalFencePreset,
   ['mast_arm_lamp_post'] = mastArmLampPostPreset,
   ['victorian_lamp_post'] = victorianLampPostPreset,
+  ['street_lamp_post'] = streetLampPostPreset,
+  ['highway_lamp_post'] = highwayLampPostPreset,
+  ['sidewalk_lamp_post'] = sidewalkLampPostPreset,
   ['bollard'] = bollardPreset,
   ['oil_drum'] = oilDrumPreset,
 }
@@ -366,7 +494,7 @@ local function setMeshSpline(spline, idx)
     local newFolder = createObject("SimGroup")
     local folderNameId = Engine.generateUUID()
     newFolder:registerObject(string.format("%s - %s", uniqueName, folderNameId))
-    newFolder.cansave = true
+    newFolder.cansave = false -- Transient while editing; the Bake button flips the folder to canSave=true.
     scenetree.MissionGroup:addObject(newFolder)
     spline.sceneTreeFolderId = newFolder:getId()
   end
@@ -462,12 +590,14 @@ local function setPreset(spline, presetStr)
     spline.startCapMeshPath = preset.startCapMeshPath
     spline.startCapMeshName = preset.startCapMeshName
     spline.startCapComponentPath = string.format('startCap_%s', preset.startCapMeshPath)
+    spline.startCapOffset = preset.startCapOffset or 0.0
 
     spline.isEndCap = preset.isEndCap
     spline.endCapRot = preset.endCapRot
     spline.endCapMeshPath = preset.endCapMeshPath
     spline.endCapMeshName = preset.endCapMeshName
     spline.endCapComponentPath = string.format('endCap_%s', preset.endCapMeshPath)
+    spline.endCapOffset = preset.endCapOffset or 0.0
   end
 
   spline.isDirty = true
@@ -486,7 +616,7 @@ local function addNewMeshSpline()
   -- Create a new folder for the mesh spline.
   local newFolder = createObject("SimGroup")
   newFolder:registerObject(string.format("%s - %s", uniqueName, id))
-  newFolder.cansave = true
+  newFolder.cansave = false -- Transient while editing; the Bake button flips the folder to canSave=true.
   scenetree.MissionGroup:addObject(newFolder)
 
   -- Create a new mesh spline with basic structure.
@@ -508,9 +638,10 @@ local function addNewMeshSpline()
     normals = {},
     discMap = {},
     isEnabled = true,
-    isConformToTerrain = true,
+    isConformToTerrain = false, -- One-shot model: build free in 3D by default; use the 'drop to surface' button to snap nodes down.
     normalMode = 2,
     isAliasRoundRobin = true,
+    isFixedEnds = false, -- 'Lock ends': discrete props only -- pin an item at both ends, even-fit the interior (see populate).
     roadLength = 0.0,
   })
 
@@ -535,6 +666,12 @@ local function removeMeshSpline(idx)
 
   -- Update the spline map.
   util.computeIdToIdxMap(meshSplines, splineMap)
+end
+
+-- Finds a live mesh spline by id (nil if not present).
+local function findMeshSpline(id)
+  local idx = splineMap[id]
+  return idx and meshSplines[idx] or nil
 end
 
 -- Removes a linked mesh spline by ID (called from master spline layer removal).
@@ -614,6 +751,7 @@ local function splitMeshSpline(selectedSplineIdx, selectedNodeIdx)
     meshSplines[#meshSplines].verticalOffset = copy.verticalOffset
     meshSplines[#meshSplines].isConformToTerrain = copy.isConformToTerrain
     meshSplines[#meshSplines].isAliasRoundRobin = copy.isAliasRoundRobin
+    meshSplines[#meshSplines].isFixedEnds = copy.isFixedEnds
     meshSplines[#meshSplines].roadLength = 0.0
     meshSplines[#meshSplines].spacing = copy.spacing
     meshSplines[#meshSplines].jitterForward = copy.jitterForward
@@ -654,11 +792,13 @@ local function splitMeshSpline(selectedSplineIdx, selectedNodeIdx)
     meshSplines[#meshSplines].startCapMeshPath = copy.startCapMeshPath
     meshSplines[#meshSplines].startCapMeshName = copy.startCapMeshName
     meshSplines[#meshSplines].startCapComponentPath = copy.startCapComponentPath
+    meshSplines[#meshSplines].startCapOffset = copy.startCapOffset or 0.0
     meshSplines[#meshSplines].isEndCap = false
     meshSplines[#meshSplines].endCapRot = defaultRot
     meshSplines[#meshSplines].endCapMeshPath = defaultMeshPath
     meshSplines[#meshSplines].endCapMeshName = defaultMeshName
     meshSplines[#meshSplines].endCapComponentPath = copy.endCapComponentPath
+    meshSplines[#meshSplines].endCapOffset = 0.0
 
     -- Get split geometry for first half
     local nodes1, widths1, nmls1, nodes2, widths2, nmls2 = geom.splitSplineGeometry(copy.nodes, copy.widths, copy.nmls, selectedNodeIdx)
@@ -681,6 +821,7 @@ local function splitMeshSpline(selectedSplineIdx, selectedNodeIdx)
     meshSplines[#meshSplines].verticalOffset = copy.verticalOffset
     meshSplines[#meshSplines].isConformToTerrain = copy.isConformToTerrain
     meshSplines[#meshSplines].isAliasRoundRobin = copy.isAliasRoundRobin
+    meshSplines[#meshSplines].isFixedEnds = copy.isFixedEnds
     meshSplines[#meshSplines].roadLength = 0.0
     meshSplines[#meshSplines].spacing = copy.spacing
     meshSplines[#meshSplines].jitterForward = copy.jitterForward
@@ -721,11 +862,13 @@ local function splitMeshSpline(selectedSplineIdx, selectedNodeIdx)
     meshSplines[#meshSplines].startCapMeshPath = defaultMeshPath
     meshSplines[#meshSplines].startCapMeshName = defaultMeshName
     meshSplines[#meshSplines].startCapComponentPath = copy.startCapComponentPath
+    meshSplines[#meshSplines].startCapOffset = 0.0
     meshSplines[#meshSplines].isEndCap = copy.isEndCap
     meshSplines[#meshSplines].endCapRot = copy.endCapRot
     meshSplines[#meshSplines].endCapMeshPath = copy.endCapMeshPath
     meshSplines[#meshSplines].endCapMeshName = copy.endCapMeshName
     meshSplines[#meshSplines].endCapComponentPath = copy.endCapComponentPath
+    meshSplines[#meshSplines].endCapOffset = copy.endCapOffset or 0.0
 
     -- Get split geometry for second half
     for i = 1, #nodes2 do
@@ -791,6 +934,7 @@ local function singleSplineEditUndoRedoCore(data)
     spline.isCenteredLeft = data.isCenteredLeft
     spline.isConformToTerrain = data.isConformToTerrain
     spline.isAliasRoundRobin = data.isAliasRoundRobin
+    spline.isFixedEnds = data.isFixedEnds
     spline.roadLength = data.roadLength
     spline.spacing = data.spacing
     spline.verticalOffset = data.verticalOffset or 0.0
@@ -832,11 +976,13 @@ local function singleSplineEditUndoRedoCore(data)
     spline.startCapMeshPath = data.startCapMeshPath
     spline.startCapMeshName = data.startCapMeshName
     spline.startCapComponentPath = data.startCapComponentPath
+    spline.startCapOffset = data.startCapOffset or 0.0
     spline.isEndCap = data.isEndCap
     spline.endCapRot = data.endCapRot
     spline.endCapMeshPath = data.endCapMeshPath
     spline.endCapMeshName = data.endCapMeshName
     spline.endCapComponentPath = data.endCapComponentPath
+    spline.endCapOffset = data.endCapOffset or 0.0
 
     -- Special case for when the mesh spline has been renamed.
     if data.isUpdateSceneTree then
@@ -913,6 +1059,9 @@ local function transSplineEditRedo(data)
   util.computeIdToIdxMap(meshSplines, splineMap)
 end
 
+-- Recompute the spline id -> index map (called by the shared session helper after a load appends the loaded splines).
+local function recomputeIdMap() util.computeIdToIdxMap(meshSplines, splineMap) end
+
 -- Core function for the object select undo/redo.
 local function objectSelectUndoRedoCore(data)
   local idx = splineMap[data.id]
@@ -955,6 +1104,7 @@ local function pasteMeshSplineProfile(spline, profile)
   spline.isCenteredLeft = profile.isCenteredLeft
   spline.isConformToTerrain = profile.isConformToTerrain
   spline.isAliasRoundRobin = profile.isAliasRoundRobin
+  spline.isFixedEnds = profile.isFixedEnds
   spline.spacing = profile.spacing
   spline.verticalOffset = profile.verticalOffset
   spline.jitterForward = profile.jitterForward
@@ -995,11 +1145,13 @@ local function pasteMeshSplineProfile(spline, profile)
   spline.startCapMeshPath = profile.startCapMeshPath
   spline.startCapMeshName = profile.startCapMeshName
   spline.startCapComponentPath = profile.startCapComponentPath
+  spline.startCapOffset = profile.startCapOffset or 0.0
   spline.isEndCap = false -- Do not include end cap for spline A..
   spline.endCapRot = defaultRot -- Use default rotation for end cap, since it is not first used.
   spline.endCapMeshPath = defaultMeshPath -- Use default mesh for end cap, since it is not first used.
   spline.endCapMeshName = defaultMeshName -- Use default mesh name for end cap, since it is not first used.
   spline.endCapComponentPath = profile.endCapComponentPath
+  spline.endCapOffset = 0.0
 end
 
 -- Serializes a mesh spline to a table.
@@ -1013,13 +1165,41 @@ local function serializeMeshSpline(spline)
   return buffer.encode(spline)
 end
 
--- Deserializes a mesh spline from a table.
+-- Serialises a mesh spline to a portable plain table for a session file (see toolUtilities/session). Deep-copied through the
+-- codec so the live spline is never mutated; derived geometry is emptied (rebuilt by the dirty pass) and the runtime scene
+-- handle dropped.
+local function serializeMeshSplineToTable(spline)
+  return session.itemToTable(spline,
+    { 'divPoints', 'divWidths', 'tangents', 'binormals', 'normals', 'discMap', 'ribPoints' },
+    { 'sceneTreeFolderId' })
+end
+
+-- Deserializes a mesh spline. `data` is either the editor's buffer-encoded blob (string) or a plain table straight from a JSON
+-- session file. On the JSON path the derived scratch tables are empty and node positions arrive as plain {x,y,z}, so guarantee
+-- the tables exist and rehydrate them to vec3 before the first build.
 local function deserializeMeshSpline(data, isCreateObject)
-  local spline = buffer.decode(data)
+  local spline = type(data) == 'table' and data or buffer.decode(data)
   spline.isDirty = true
 
-  -- Create a new scene tree folder for the mesh spline, if requested.
-  if isCreateObject then
+  spline.nodes = spline.nodes or {}
+  spline.widths = spline.widths or {}
+  spline.nmls = spline.nmls or {}
+  spline.divPoints = spline.divPoints or {}
+  spline.divWidths = spline.divWidths or {}
+  spline.tangents = spline.tangents or {}
+  spline.binormals = spline.binormals or {}
+  spline.normals = spline.normals or {}
+  spline.discMap = spline.discMap or {}
+  spline.isFixedEnds = spline.isFixedEnds or false
+  spline.startCapOffset = spline.startCapOffset or 0.0 -- backward-compat: older sessions/presets predate cap offsets.
+  spline.endCapOffset = spline.endCapOffset or 0.0
+  session.rehydrateVec3Array(spline.nodes)
+  session.rehydrateVec3Array(spline.nmls)
+
+  -- Create a new scene tree folder for the mesh spline, if requested. A locked spline kept across a Lua reload keeps its own.
+  if spline.keptObjects and spline.sceneTreeFolderId and scenetree.findObjectById(spline.sceneTreeFolderId) then
+    -- Kept folder: nothing to create.
+  elseif isCreateObject then
     -- Ensure we have a unique mesh spline name.
     local baseName = string.format(toolPrefixStr .. " %d", #meshSplines + 1)
     local uniqueName = util.generateUniqueName(baseName, toolPrefixStr)
@@ -1027,7 +1207,7 @@ local function deserializeMeshSpline(data, isCreateObject)
     -- Create a new scene tree folder for the mesh spline.
     local newFolder = createObject("SimGroup")
     newFolder:registerObject(string.format("%s - %s", uniqueName, spline.id))
-    newFolder.cansave = true
+    newFolder.cansave = not spline.isEnabled -- Transient while editing; a locked spline's folder saves with the level.
     scenetree.MissionGroup:addObject(newFolder)
     spline.sceneTreeFolderId = newFolder:getId()
   end
@@ -1036,30 +1216,20 @@ end
 
 -- Updates the geometry and meshes of any dirty mesh splines.
 local function updateDirtyMeshSplines()
+  local rebuiltAny = false -- did any spline actually rebuild this pass? (-> the document has an unsaved edit).
   for i = 1, #meshSplines do
     local spline = meshSplines[i]
     if spline.isDirty then
+      rebuiltAny = true
       -- Check if spline has enough nodes to be valid (minimum 2)
       local nodes = spline.nodes
       if #nodes < 2 then
         -- Remove all meshes and clear secondary geometry when insufficient nodes.
         pop.tryRemove(spline)
-        table.clear(spline.divPoints)
-        table.clear(spline.divWidths)
-        table.clear(spline.tangents)
-        table.clear(spline.binormals)
-        table.clear(spline.normals)
-        table.clear(spline.discMap)
+        populationEngine.clearDerivedGeometry(spline)
         spline.roadLength = 0.0
       else
-        if spline.isConformToTerrain then
-          for j = 1, #nodes do
-            util.vertRaycast(nodes[j])
-          end
-          geom.catmullRomRaycast(spline, minSplineDivisions) -- Ensure the secondary geometry is updated and conforms to the terrain.
-        else
-          geom.catmullRomFree(spline, minSplineDivisions) -- Ensure the secondary geometry is updated, but remains free in 3D (not conformed to the terrain).
-        end
+        populationEngine.updateGeometry(spline, minSplineDivisions)
         pop.populateMeshSpline(spline, i)
 
         spline.roadLength = util.getPolyLength(nodes) -- Update the spline length.
@@ -1068,6 +1238,18 @@ local function updateDirtyMeshSplines()
       spline.isDirty = false
     end
   end
+  if rebuiltAny then session.markEdited('meshSpline') end -- fold this pass's edits into the Save/Save As dirty state (load guard swallows a fresh load's rebuild).
+end
+
+-- One-shot: drops the spline's control nodes onto the surface below (raycast). The build stays free in 3D, so this simply moves
+-- the nodes down to the terrain/objects; run it again after terraforming to re-snap.
+local function conformNodesToTerrain(spline)
+  if not spline or not spline.nodes then return end
+  local nodes = spline.nodes
+  for i = 1, #nodes do
+    util.vertRaycast(nodes[i])
+  end
+  spline.isDirty = true
 end
 
 -- Converts the given paths (traced from a bitmap) to mesh splines.
@@ -1190,6 +1372,7 @@ M.splitMeshSpline =                                     splitMeshSpline
 M.joinMeshSplines =                                     joinMeshSplines
 
 M.removeMeshSpline =                                    removeMeshSpline
+M.findMeshSpline =                                      findMeshSpline
 M.removeLinkedMeshSpline =                              removeLinkedMeshSpline
 M.removeAllMeshSplines =                                removeAllMeshSplines
 
@@ -1208,11 +1391,14 @@ M.objectSelectUndo =                                    objectSelectUndo
 M.objectSelectRedo =                                    objectSelectRedo
 
 M.updateDirtyMeshSplines =                              updateDirtyMeshSplines
+M.conformNodesToTerrain =                               conformNodesToTerrain
 
 M.convertPathsToMeshSplines =                           convertPathsToMeshSplines
 
 M.serializeMeshSpline =                                 serializeMeshSpline
 M.deserializeMeshSpline =                               deserializeMeshSpline
+M.serializeMeshSplineToTable =                          serializeMeshSplineToTable
+M.recomputeIdMap =                                      recomputeIdMap
 M.deepCopyMeshSplineState =                             deepCopyMeshSplineState
 
 M.getCurrentMeshSplineList =                            getCurrentMeshSplineList

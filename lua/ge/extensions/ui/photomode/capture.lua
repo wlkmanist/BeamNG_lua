@@ -30,6 +30,12 @@ local CAPTURE_LIMITS = {
   downscaleLevelMin = 1,
   downscaleLevelMax = 8,
 }
+-- Internal render scale of the temporal upscalers, mirrors GraphicUpscalingQuality in core_settings_graphic.
+local RESOLUTION_SCALE_LIMITS = {
+  min = 0.33,
+  max = 1,
+  step = 0.01,
+}
 local function isHdrCaptureSupported()
   return GFXHdr and type(GFXHdr.getSupported) == "function" and GFXHdr.getSupported() == true
 end
@@ -94,7 +100,43 @@ local CAPTURE_DEFAULTS = {
   hdrScreenshot = false,
 }
 
-local CAPTURE_WARNING_THRESHOLD = 9
+-- Temporal reconstruction upscalers. Classic FXAA/SMAA keep the 2x/2x capture defaults.
+local TEMPORAL_UPSCALER_TYPES = {
+  dlss = true,
+  fsr3 = true,
+  fsr4 = true,
+  xess = true,
+  fsrCustom = true,
+  pssr = true,
+}
+
+local function areTemporalUpscalersEnabled()
+  if not settings or type(settings.getValue) ~= "function" then
+    return false
+  end
+  local antialias = settings.getValue("GraphicAntialias")
+  if antialias == false or antialias == nil or tonumber(antialias) == 0 then
+    return false
+  end
+  local antialiasType = settings.getValue("GraphicAntialiasType")
+  return TEMPORAL_UPSCALER_TYPES[antialiasType] == true
+end
+
+local function getDefaultSuperSampling()
+  if areTemporalUpscalersEnabled() then
+    return 1
+  end
+  return CAPTURE_DEFAULTS.superSampling
+end
+
+local function getDefaultDownscaleLevel()
+  if areTemporalUpscalersEnabled() then
+    return 1
+  end
+  return CAPTURE_DEFAULTS.downscaleLevel
+end
+
+local CAPTURE_WARNING_THRESHOLD = 6
 local DEFAULT_RESOLUTION_PRESET_ID = "current"
 local RESOLUTION_PRESETS = {
   { id = "current", labelKey = "ui.photomode.capture.preset.current" },
@@ -151,10 +193,68 @@ local function normalizeBoolean(value, fallback)
   return fallback == true
 end
 
+local function readResolutionScale()
+  local option = core_settings_graphic and core_settings_graphic.getOptions("GraphicUpscalingQuality") or nil
+  if not option or type(option.get) ~= "function" then
+    return RESOLUTION_SCALE_LIMITS.max
+  end
+  return clampNumber(option.get(), RESOLUTION_SCALE_LIMITS.min, RESOLUTION_SCALE_LIMITS.max, RESOLUTION_SCALE_LIMITS.max)
+end
+
+local function applyResolutionScale(value)
+  local scale = clampNumber(value, RESOLUTION_SCALE_LIMITS.min, RESOLUTION_SCALE_LIMITS.max, readResolutionScale())
+  if not ui_photomode_shared.writeSettingsState({ GraphicUpscalingQuality = scale }) then
+    return false
+  end
+  ui_photomode_shared.notifySettingsUi()
+  return true
+end
+
+local sessionResolutionScaleRestore = nil
+
+local function writeResolutionScaleViews(scale)
+  local mgr = RenderViewManagerInstance
+  if not mgr then
+    return
+  end
+  local function setScale(name)
+    local rv = mgr:getView(name)
+    if rv then
+      rv.upscaleRenderScale = scale
+    end
+  end
+  setScale("main")
+  for i = 0, 7 do
+    setScale("splitscreen" .. i)
+  end
+  setScale("multiMonitorLeft")
+  setScale("multiMonitorRight")
+end
+
+local function captureResolutionScaleRestoreState()
+  if sessionResolutionScaleRestore ~= nil then
+    return
+  end
+  sessionResolutionScaleRestore = readResolutionScale()
+end
+
+local function restoreSessionResolutionScale()
+  local scale = sessionResolutionScaleRestore
+  if scale == nil then
+    return
+  end
+  sessionResolutionScaleRestore = nil
+  if not applyResolutionScale(scale) then
+    sessionResolutionScaleRestore = scale
+    return
+  end
+  writeResolutionScaleViews(scale)
+end
+
 function M.buildDefaultSettings()
   return {
-    superSampling = CAPTURE_DEFAULTS.superSampling,
-    downscaleLevel = CAPTURE_DEFAULTS.downscaleLevel,
+    superSampling = getDefaultSuperSampling(),
+    downscaleLevel = getDefaultDownscaleLevel(),
     motionEnabled = CAPTURE_DEFAULTS.motionEnabled,
     motionBehavior = CAPTURE_DEFAULTS.motionBehavior,
     splitSceneVehicle = CAPTURE_DEFAULTS.splitSceneVehicle,
@@ -314,24 +414,72 @@ function M.applySelectedResolutionPresetBeforeCapture(selectedResolutionPresetId
   return M.applyResolutionPreset(preset)
 end
 
-function M.normalizeCaptureSuperSampling(value)
+local function getSafeSuperSamplingMax(hdrCapture)
+  local hardMax = CAPTURE_LIMITS.superSamplingMax
+  if type(getMaxSafeScreenshotSuperSampling) ~= "function" then
+    return hardMax
+  end
+
+  local videoMode = getCurrentWindowVideoMode()
+  local width = videoMode and tonumber(videoMode.width) or nil
+  local height = videoMode and tonumber(videoMode.height) or nil
+  if width == nil or height == nil or width <= 0 or height <= 0 then
+    return hardMax
+  end
+
+  local ok, safeMax = pcall(
+    getMaxSafeScreenshotSuperSampling,
+    width,
+    height,
+    hdrCapture == true,
+    hardMax
+  )
+  if not ok then
+    return hardMax
+  end
+
+  safeMax = math.floor(tonumber(safeMax) or hardMax)
+  if safeMax < CAPTURE_LIMITS.superSamplingMin then
+    return CAPTURE_LIMITS.superSamplingMin
+  end
+  if safeMax > hardMax then
+    return hardMax
+  end
+  return safeMax
+end
+
+function M.normalizeCaptureSuperSampling(value, safeMax)
   local numericValue = tonumber(value) or CAPTURE_DEFAULTS.superSampling
   numericValue = math.floor(numericValue + 0.5)
+  local maxValue = tonumber(safeMax) or CAPTURE_LIMITS.superSamplingMax
+  if maxValue < CAPTURE_LIMITS.superSamplingMin then
+    maxValue = CAPTURE_LIMITS.superSamplingMin
+  end
+  if maxValue > CAPTURE_LIMITS.superSamplingMax then
+    maxValue = CAPTURE_LIMITS.superSamplingMax
+  end
   return ui_photomode_shared.clampNumber(
     numericValue,
     CAPTURE_LIMITS.superSamplingMin,
-    CAPTURE_LIMITS.superSamplingMax,
+    maxValue,
     CAPTURE_DEFAULTS.superSampling
   )
 end
 
-local function normalizeCaptureDownscaleLevel(value)
+local function normalizeCaptureDownscaleLevel(value, safeMax)
   local numericValue = tonumber(value) or CAPTURE_DEFAULTS.downscaleLevel
   numericValue = math.floor(numericValue + 0.5)
+  local maxValue = tonumber(safeMax) or CAPTURE_LIMITS.downscaleLevelMax
+  if maxValue < CAPTURE_LIMITS.downscaleLevelMin then
+    maxValue = CAPTURE_LIMITS.downscaleLevelMin
+  end
+  if maxValue > CAPTURE_LIMITS.downscaleLevelMax then
+    maxValue = CAPTURE_LIMITS.downscaleLevelMax
+  end
   return ui_photomode_shared.clampNumber(
     numericValue,
     CAPTURE_LIMITS.downscaleLevelMin,
-    CAPTURE_LIMITS.downscaleLevelMax,
+    maxValue,
     CAPTURE_DEFAULTS.downscaleLevel
   )
 end
@@ -387,14 +535,31 @@ function M.buildNormalizedCaptureSettings(captureSettings)
     hdrScreenshot = false
   end
 
+  local temporalUpscalersEnabled = areTemporalUpscalersEnabled()
+  local safeSuperSamplingMax = getSafeSuperSamplingMax(hdrScreenshot)
+  local superSampling = M.normalizeCaptureSuperSampling(
+    captureSettings and captureSettings.superSampling,
+    safeSuperSamplingMax
+  )
+  local downscaleLevel = normalizeCaptureDownscaleLevel(
+    captureSettings and captureSettings.downscaleLevel,
+    safeSuperSamplingMax
+  )
+  if temporalUpscalersEnabled then
+    superSampling = 1
+    downscaleLevel = 1
+  end
+
   return {
-    superSampling = M.normalizeCaptureSuperSampling(captureSettings and captureSettings.superSampling),
-    downscaleLevel = normalizeCaptureDownscaleLevel(captureSettings and captureSettings.downscaleLevel),
+    superSampling = superSampling,
+    downscaleLevel = downscaleLevel,
     motionEnabled = ui_photomode_shared.normalizeBoolean(captureSettings and captureSettings.motionEnabled, CAPTURE_DEFAULTS.motionEnabled),
     motionBehavior = normalizeMotionBehavior(captureSettings and captureSettings.motionBehavior),
     splitSceneVehicle = ui_photomode_shared.normalizeBoolean(captureSettings and captureSettings.splitSceneVehicle, CAPTURE_DEFAULTS.splitSceneVehicle),
     saveNormalDepth = ui_photomode_shared.normalizeBoolean(captureSettings and captureSettings.saveNormalDepth, CAPTURE_DEFAULTS.saveNormalDepth),
     hdrScreenshot = hdrScreenshot,
+    safeSuperSamplingMax = safeSuperSamplingMax,
+    temporalUpscalersEnabled = temporalUpscalersEnabled,
   }
 end
 
@@ -514,12 +679,36 @@ local function buildOutputSizeGuidanceLabels(width, height, formatLabel)
     tr("ui.photomode.capture.outputSizeRange", { low = string.format("%.1f", lowMiB), high = string.format("%.1f", highMiB) })
 end
 
-local function buildCaptureWarningState(superSampling)
+local function buildCaptureWarningState(superSampling, safeSuperSamplingMax, temporalUpscalersEnabled)
+  if temporalUpscalersEnabled then
+    return {
+      active = false,
+      reason = nil,
+      threshold = CAPTURE_WARNING_THRESHOLD,
+      safeMax = safeSuperSamplingMax,
+      label = "",
+    }
+  end
+
+  local vramLimited = safeSuperSamplingMax < CAPTURE_LIMITS.superSamplingMax
+  if vramLimited then
+    return {
+      active = true,
+      reason = "vram_limit",
+      threshold = CAPTURE_WARNING_THRESHOLD,
+      safeMax = safeSuperSamplingMax,
+      label = tr("ui.photomode.capture.warningVramLimit", {
+        max = safeSuperSamplingMax,
+      }),
+    }
+  end
+
   local warningActive = superSampling >= CAPTURE_WARNING_THRESHOLD
   return {
     active = warningActive,
     reason = warningActive and "high_supersampling" or nil,
     threshold = CAPTURE_WARNING_THRESHOLD,
+    safeMax = safeSuperSamplingMax,
     label = warningActive and tr("ui.photomode.capture.warningHighSupersampling") or "",
   }
 end
@@ -531,35 +720,55 @@ function M.buildCaptureState(captureSettings)
   local currentWindowVideoMode = getCurrentWindowVideoMode()
   local currentWidth = currentWindowVideoMode and currentWindowVideoMode.width or nil
   local currentHeight = currentWindowVideoMode and currentWindowVideoMode.height or nil
-  local renderScale = math.sqrt(normalizedSettings.superSampling)
+  local temporalUpscalersEnabled = normalizedSettings.temporalUpscalersEnabled == true
+  local resolutionScale = readResolutionScale()
+  local renderScale = temporalUpscalersEnabled and resolutionScale or math.sqrt(normalizedSettings.superSampling)
   local renderTargetResolution = buildScaledResolution(currentWidth, currentHeight, renderScale)
-  local outputResolution = renderTargetResolution
-    and buildScaledResolution(renderTargetResolution.width, renderTargetResolution.height, rescaleFactor)
-    or nil
+  local outputResolution
+  if temporalUpscalersEnabled then
+    outputResolution = buildScaledResolution(currentWidth, currentHeight, 1)
+  else
+    outputResolution = renderTargetResolution
+      and buildScaledResolution(renderTargetResolution.width, renderTargetResolution.height, rescaleFactor)
+      or nil
+  end
   local formatLabel = readScreenshotFormatLabel()
   local outputSizeLabel, outputSizeRangeLabel = buildOutputSizeGuidanceLabels(
     outputResolution and outputResolution.width or nil,
     outputResolution and outputResolution.height or nil,
     formatLabel
   )
-  local warningState = buildCaptureWarningState(normalizedSettings.superSampling)
+  local safeSuperSamplingMax = normalizedSettings.safeSuperSamplingMax or CAPTURE_LIMITS.superSamplingMax
+  local warningState = buildCaptureWarningState(
+    normalizedSettings.superSampling,
+    safeSuperSamplingMax,
+    temporalUpscalersEnabled
+  )
 
   return {
     superSampling = normalizedSettings.superSampling,
     downscaleLevel = normalizedSettings.downscaleLevel,
     rescaleFactor = rescaleFactor,
+    temporalUpscalersEnabled = temporalUpscalersEnabled,
+    resolutionScale = {
+      value = resolutionScale,
+      min = RESOLUTION_SCALE_LIMITS.min,
+      max = RESOLUTION_SCALE_LIMITS.max,
+      step = RESOLUTION_SCALE_LIMITS.step,
+    },
     limits = {
       superSampling = {
         min = CAPTURE_LIMITS.superSamplingMin,
-        max = CAPTURE_LIMITS.superSamplingMax,
+        max = safeSuperSamplingMax,
         step = 1,
       },
       downscaleLevel = {
         min = CAPTURE_LIMITS.downscaleLevelMin,
-        max = CAPTURE_LIMITS.downscaleLevelMax,
+        max = safeSuperSamplingMax,
         step = 1,
       },
       warningThreshold = CAPTURE_WARNING_THRESHOLD,
+      hardSuperSamplingMax = CAPTURE_LIMITS.superSamplingMax,
     },
     readouts = {
       currentWindowLabel = buildResolutionWithMegaPixelsLabel(currentWidth, currentHeight),
@@ -612,11 +821,17 @@ function M.applyCaptureStatePatch(currentCaptureSettings, partialState)
   local nextCaptureSettings = M.buildNormalizedCaptureSettings(currentCaptureSettings)
 
   if partialState.superSampling ~= nil then
-    nextCaptureSettings.superSampling = M.normalizeCaptureSuperSampling(partialState.superSampling)
+    nextCaptureSettings.superSampling = M.normalizeCaptureSuperSampling(
+      partialState.superSampling,
+      nextCaptureSettings.safeSuperSamplingMax
+    )
   end
 
   if partialState.downscaleLevel ~= nil then
-    nextCaptureSettings.downscaleLevel = normalizeCaptureDownscaleLevel(partialState.downscaleLevel)
+    nextCaptureSettings.downscaleLevel = normalizeCaptureDownscaleLevel(
+      partialState.downscaleLevel,
+      nextCaptureSettings.safeSuperSamplingMax
+    )
   end
 
   if type(partialState.motion) == "table" then
@@ -645,6 +860,10 @@ function M.applyCaptureStatePatch(currentCaptureSettings, partialState)
     ui_photomode_flash.applyStatePatch(partialState.flash)
   end
 
+  if partialState.resolutionScale ~= nil and not applyResolutionScale(partialState.resolutionScale) then
+    return nil, "capture_resolution_scale_set_failed"
+  end
+
   return M.buildNormalizedCaptureSettings(nextCaptureSettings)
 end
 
@@ -655,9 +874,11 @@ local BASIC_CAPTURE_HDR_SETTLE_MAX_FRAMES = 10
 local MOTION_CAPTURE = {
   warmupFrames = 2,
   cleanupFrames = 1,
+  attachReleaseFrames = 3,
 }
 local captureSettings = M.buildDefaultSettings()
 local pendingBasicCapture = nil
+local pendingAttachReleaseFrames = 0
 
 local function buildCaptureState()
   return M.buildCaptureState(captureSettings)
@@ -682,13 +903,30 @@ local function requestScreenshotCall(flashKind, screenshotFn, ...)
 end
 
 local function disableMotionCaptureAttach()
+  pendingAttachReleaseFrames = 0
   local attachExtension = extensions and extensions.util_photomodeAttach or nil
   if not attachExtension or type(attachExtension.enable) ~= "function" then
     return
   end
+  if type(attachExtension.syncCameraToVehicle) == "function" then
+    local syncOk, syncError = pcall(attachExtension.syncCameraToVehicle)
+    if not syncOk then
+      log("E", logTag, "disableMotionCaptureAttach sync failed: " .. tostring(syncError))
+    end
+  end
   local disableOk, disableError = pcall(attachExtension.enable, false)
   if not disableOk then
     log("E", logTag, "disableMotionCaptureAttach failed: " .. tostring(disableError))
+  end
+end
+
+local function updateMotionCaptureAttachRelease()
+  if pendingAttachReleaseFrames <= 0 then
+    return
+  end
+  pendingAttachReleaseFrames = pendingAttachReleaseFrames - 1
+  if pendingAttachReleaseFrames <= 0 then
+    disableMotionCaptureAttach()
   end
 end
 
@@ -718,25 +956,35 @@ local function restoreMotionCapturePauseRequest(restorePauseRequest)
   return true
 end
 
-function M.finishPendingMotionCapture()
+function M.finishPendingMotionCapture(immediateAttachRelease)
   if not ui_photomode_shared.S.pendingMotionCapture then
+    if immediateAttachRelease == true then
+      disableMotionCaptureAttach()
+    end
     return
   end
   local repauseAfterCapture = ui_photomode_shared.S.pendingMotionCapture.repauseAfterCapture == true
   local restorePauseRequest = ui_photomode_shared.S.pendingMotionCapture.restorePhotomodePauseRequest == true
+  local attachActive = ui_photomode_shared.S.pendingMotionCapture.attachActive == true
   ui_photomode_shared.S.pendingMotionCapture = nil
-  disableMotionCaptureAttach()
-  if restoreMotionCapturePauseRequest(restorePauseRequest) then
+
+  if not restoreMotionCapturePauseRequest(restorePauseRequest) then
+    if repauseAfterCapture
+      and simTimeAuthority
+      and type(simTimeAuthority.getPause) == "function"
+      and type(simTimeAuthority.pause) == "function"
+      and simTimeAuthority.getPause() ~= true
+    then
+      simTimeAuthority.pause(true)
+    end
+  end
+
+  if attachActive and immediateAttachRelease ~= true then
+    pendingAttachReleaseFrames = MOTION_CAPTURE.attachReleaseFrames
     return
   end
-  if repauseAfterCapture
-    and simTimeAuthority
-    and type(simTimeAuthority.getPause) == "function"
-    and type(simTimeAuthority.pause) == "function"
-    and simTimeAuthority.getPause() ~= true
-  then
-    simTimeAuthority.pause(true)
-  end
+
+  disableMotionCaptureAttach()
 end
 
 local function finishPendingBasicCapture()
@@ -753,11 +1001,16 @@ end
 function M.restoreCaptureRuntimeState()
   finishPendingBasicCapture()
   ui_photomode_flash.restoreRuntimeState()
+  restoreSessionResolutionScale()
 end
 
 function M.refreshSessionDefaults()
+  captureResolutionScaleRestoreState()
+  local defaults = M.buildDefaultSettings()
   local nextCaptureSettings = M.buildNormalizedCaptureSettings(captureSettings)
-  nextCaptureSettings.hdrScreenshot = getDefaultHdrScreenshotEnabled()
+  nextCaptureSettings.superSampling = defaults.superSampling
+  nextCaptureSettings.downscaleLevel = defaults.downscaleLevel
+  nextCaptureSettings.hdrScreenshot = defaults.hdrScreenshot
   captureSettings = nextCaptureSettings
   ui_photomode_flash.applyRuntimeSettings()
 end
@@ -805,6 +1058,7 @@ function M.buildMetadataState()
       enabled = captureState.hdr and captureState.hdr.enabled or false,
     },
     flash = captureState.flash,
+    resolutionScale = captureState.resolutionScale and captureState.resolutionScale.value or nil,
   }
 end
 
@@ -1226,6 +1480,7 @@ local function requestMotionScreenshotWithMode(requestedOutputMode)
         if not enableOk then
           log("E", logTag, "requestMotionScreenshot attach enable failed: " .. tostring(enableError))
         else
+          pendingAttachReleaseFrames = 0 -- a pending release must not cut this capture short
           attachActive = true
         end
       end
@@ -1342,6 +1597,8 @@ function M.handlePreRender(dtReal, dtSim, dtRaw)
   if ui_photomode_shared.S.captureInProgressFramesRemaining > 0 then
     ui_photomode_shared.S.captureInProgressFramesRemaining = ui_photomode_shared.S.captureInProgressFramesRemaining - 1
   end
+
+  updateMotionCaptureAttachRelease()
 
   if pendingBasicCapture then
     if pendingBasicCapture.awaitingScreenshotDone == true then

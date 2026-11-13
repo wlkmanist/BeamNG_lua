@@ -6,7 +6,7 @@ local M = {}
 local tasklistLocale = require("/lua/ge/extensions/career/modules/tutorial/tasklistLocale")
 local logTag = "tutorial_step1"
 
-local PHASE_WAIT_LOADING_SCREEN = "waitLoadingScreen"
+local PHASE_WAIT_VEHICLE_SETUP = "waitVehicleSetup"
 local PHASE_GET_IN_CAR = "getInCar"
 local PHASE_WAIT_BASIC_CONTROLS_POPUP = "waitBasicControlsPopup"
 local PHASE_CONTROLS = "controls"
@@ -36,7 +36,7 @@ local goals = {
 function M.setup(stepData)
   startupInstantResetDone = false
   controlsCompleteScheduled = false
-  phase = PHASE_WAIT_LOADING_SCREEN
+  phase = PHASE_WAIT_VEHICLE_SETUP
   -- Reset goals
   for _, goal in pairs(goals) do
     goal.done = false
@@ -68,10 +68,10 @@ end
 
 -- Called every frame while step is active (via extension system)
 function M.onUpdate(dtReal, dtSim, dtRaw)
-  if not gameplay_tutorial_setup.vehicleSetupComplete or ui_router.isLoadingScreenActive() then
+  if not gameplay_tutorial_setup.vehicleSetupComplete or core_gamestate.loading() then
     return
   end
-  if phase == PHASE_WAIT_LOADING_SCREEN then
+  if phase == PHASE_WAIT_VEHICLE_SETUP then
     phase = PHASE_GET_IN_CAR
     career_modules_tutorialPopups.introPopupSequence({"v2/tutorialStart", "v2/approachVehicle"}, true)
     return
@@ -87,7 +87,8 @@ function M.onUpdate(dtReal, dtSim, dtRaw)
         vehicleMarkerId = nil
       end
 
-      core_camera.setByName(0,"driver")
+      local vehId = be:getPlayerVehicleID(0)
+      core_camera.setByName(0, core_camera.getDriverCameraNameById(vehId) or "driver")
 
       phase = PHASE_WAIT_BASIC_CONTROLS_POPUP
       core_jobsystem.create(function(job)
@@ -205,7 +206,7 @@ local function skipStep()
       gameplay_walk.getInVehicle(veh)
       commands.setGameCamera()
     end
-    core_camera.setByName(0, "driver")
+    core_camera.setByName(0, core_camera.getDriverCameraNameById(veh:getId()) or "driver")
     core_vehicleBridge.executeAction(veh, 'setGearboxMode', settings.getValue("defaultGearboxBehavior", "none?"))
     core_vehicleBridge.executeAction(veh, 'setIgnitionLevel', 3)
     core_vehicleBridge.executeAction(veh, 'shiftToGearIndex', 0)

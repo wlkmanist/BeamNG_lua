@@ -33,6 +33,7 @@ end
 local debugDrawDistance = 250.0
 local debugTextDistance = 50.0
 local sphereAlpha = 0.25
+local showInfoLabels = im.BoolPtr(true)
 
 local hoveredSphereId = nil
 
@@ -205,7 +206,7 @@ local function drawDebugSpheres(campos)
         col = ColorF(0.15, 0.85, 0.2, sphereAlpha)
       end
       debugDrawer:drawSphere(inst.position, r, col)
-      if d2 <= tdist2 then
+      if showInfoLabels[0] and d2 <= tdist2 then
         local dist = math.sqrt(d2)
         debugDrawer:drawTextAdvanced(inst.position, String('Name: ' .. inst.template:getName()), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
         debugDrawer:drawTextAdvanced(inst.position, String('ID: ' .. tostring(inst.id)), ColorF(1,1,1,1), true, false, ColorI(0,0,0,192))
@@ -235,7 +236,7 @@ local function displayMaterialPreview(material)
   local image = editor.texObj(actualFilenameWithPath)
   if image.size.y > 0 and image.size.x > 0 then
     im.Image(
-      image.texId,
+      image.tex:getID(),
       im.ImVec2(200, image.size.y / (image.size.x / 200)),
       im.ImVec2Zero,
       im.ImVec2One,
@@ -1366,6 +1367,8 @@ local function onEditorGui()
     if im.SliderFloat("Gizmo sphere alpha", saPtr, 0.0, 1.0, "%.2f") then
       sphereAlpha = saPtr[0]
     end
+
+    im.Checkbox("Show info labels", showInfoLabels)
 
     if im.BeginTabBar("decal editor##") then
       if im.BeginTabItem("Templates") then

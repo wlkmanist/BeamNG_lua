@@ -24,38 +24,46 @@ local function updateGFX(dt)
   end
   --obj:setWind(0,55.55,0)
   --obj:setWind(0,0,55.55)
-  M.directionVector = -obj:getDirectionVector()
+  -- Body axes as (right, fwd, up), right handed, matching the workbench aero panel.
+  M.directionVector = obj:getDirectionVector()
   M.directionVectorUp = obj:getDirectionVectorUp()
-  --M.directionVectorLeft = M.directionVectorUp:cross(M.directionVector)
-  M.directionVectorLeft = M.directionVector:cross(M.directionVectorUp)
+  M.directionVectorRight = M.directionVector:cross(M.directionVectorUp)
 
-  --local cog = obj:calcCenterOfGravityRel(true) + obj:getPosition()
-  local cop = obj:calcCenterOfPressureRel()
-  local copVec = obj:calcCenterOfPressureRel() + obj:getPosition()
+  -- Everything is referenced to the centre of gravity. Under free rolling the drag
+  -- is balanced by the car's own inertia, which acts through the CoG, so a moment
+  -- taken there carries no dependence on the centre of pressure, the drag height or
+  -- the axle heights.
+  local cog = obj:calcCenterOfGravityRel(false)
 
   aeroData.vehID = obj:getID()
   aeroData.totalAeroForce = obj:calcTotalAeroForces()
-  aeroData.totalAeroTorque = obj:calcTotalAeroTorque(cop)
+  -- calcTotalAeroTorque returns the negative of the usual sum (r - P) x F moment:
+  -- sampling it about two points a metre apart shifts it by +(offset x F) where the
+  -- textbook convention gives -(offset x F). Flip it for the physical moment.
+  aeroData.totalAeroTorque = -obj:calcTotalAeroTorque(cog)
   aeroData.test = 100
 
-  --obj.debugDrawProxy:drawSphere(0.05, copVec, color(0,0,255,255))
-  --obj.debugDrawProxy:drawSphere(0.05, cog, color(255,0,255,255))
-  aeroData.totalAeroForceVehicle = vec3(aeroData.totalAeroForce:dot(M.directionVectorLeft), aeroData.totalAeroForce:dot(M.directionVector), aeroData.totalAeroForce:dot(M.directionVectorUp))
-  aeroData.afX = aeroData.totalAeroForce:dot(M.directionVectorLeft)
-  aeroData.afY = aeroData.totalAeroForce:dot(M.directionVector)
-  aeroData.afZ = aeroData.totalAeroForce:dot(M.directionVectorUp)
+  local force = aeroData.totalAeroForce
+  local moment = aeroData.totalAeroTorque
+
+  --obj.debugDrawProxy:drawSphere(0.05, cog + obj:getPosition(), color(255,0,255,255))
+  aeroData.totalAeroForceVehicle = vec3(force:dot(M.directionVectorRight), force:dot(M.directionVector), force:dot(M.directionVectorUp))
+  aeroData.afX = aeroData.totalAeroForceVehicle.x
+  aeroData.afY = aeroData.totalAeroForceVehicle.y
+  aeroData.afZ = aeroData.totalAeroForceVehicle.z
   --print(M.afX..' '..M.afY..' '..M.afZ)
 
-  aeroData.totalAeroTorqueVehicle = vec3(aeroData.totalAeroTorque:dot(M.directionVectorLeft), aeroData.totalAeroTorque:dot(M.directionVector), aeroData.totalAeroTorque:dot(M.directionVectorUp))
-  aeroData.aTX = aeroData.totalAeroTorque:dot(M.directionVectorLeft)
-  aeroData.aTY = aeroData.totalAeroTorque:dot(M.directionVector)
-  aeroData.aTZ = aeroData.totalAeroTorque:dot(M.directionVectorUp)
+  -- (pitch, roll, yaw): pitch positive is nose up, roll positive leans the car to
+  -- the right, yaw positive turns the nose to the left.
+  aeroData.totalAeroTorqueVehicle = vec3(moment:dot(M.directionVectorRight), moment:dot(M.directionVector), moment:dot(M.directionVectorUp))
+  aeroData.aTX = aeroData.totalAeroTorqueVehicle.x
+  aeroData.aTY = aeroData.totalAeroTorqueVehicle.y
+  aeroData.aTZ = aeroData.totalAeroTorqueVehicle.z
   --print(M.aTX..' '..M.aTY..' '..M.aTZ)
 
   for _, wd in pairs(wheels.wheels) do
-    local pos1 = obj:getNodePosition(wd.node1) + obj:getPosition()
-    local pos2 = obj:getNodePosition(wd.node2) + obj:getPosition()
-    local middlePos = (pos2 + pos1) * 0.5
+    -- Offsets from the vehicle origin, the same space calcCenterOfGravityRel uses.
+    local middlePos = (obj:getNodePosition(wd.node1) + obj:getNodePosition(wd.node2)) * 0.5
 
     if wd.name == aeroData.wheelNameFR then
       frontRightWheelPos = middlePos
@@ -83,15 +91,27 @@ local function updateGFX(dt)
     --obj.debugDrawProxy:drawSphere(0.02, rearAxlePos, color(255,0,0,255))
     --obj.debugDrawProxy:drawSphere(0.02, frontAxlePos, color(255,0,0,255))
 
-    local frontAxleToCOP = copVec - frontAxlePos
-    local rearAxleToCOP = copVec - rearAxlePos
-    local wheelbase = (frontAxlePos - rearAxlePos):length()
+    -- Vertical reaction the ground has to supply at each axle, assuming free
+    -- rolling: no horizontal tyre force, so only the longitudinal distance from the
+    -- CoG to each axle matters and the heights drop out. Positive is downforce.
+    local a = (frontAxlePos - cog):dot(M.directionVector)
+    local b = -(rearAxlePos - cog):dot(M.directionVector)
+    local wheelbase = a + b
 
-    aeroData.rearDownForce = -(frontAxleToCOP:cross(aeroData.totalAeroForce) - aeroData.totalAeroTorque):dot(M.directionVectorLeft) / wheelbase
-    aeroData.frontDownForce = (rearAxleToCOP:cross(aeroData.totalAeroForce) - aeroData.totalAeroTorque):dot(M.directionVectorLeft) / wheelbase
+    if wheelbase > 1e-6 then
+      local down = -force:dot(M.directionVectorUp)
+      local pitch = aeroData.totalAeroTorqueVehicle.x
+      aeroData.frontDownForce = (down * b - pitch) / wheelbase
+      aeroData.rearDownForce = (down * a + pitch) / wheelbase
 
-    aeroData.percentFront = aeroData.frontDownForce / (abs(aeroData.frontDownForce) + abs(aeroData.rearDownForce)) * 100
-    aeroData.percentRear = aeroData.rearDownForce / (abs(aeroData.frontDownForce) + abs(aeroData.rearDownForce)) * 100
+      -- Below about a newton the split is only noise, so don't dress it up as a
+      -- percentage.
+      local total = abs(aeroData.frontDownForce) + abs(aeroData.rearDownForce)
+      if total > 1 then
+        aeroData.percentFront = aeroData.frontDownForce / total * 100
+        aeroData.percentRear = aeroData.rearDownForce / total * 100
+      end
+    end
 
   --print(aeroData.frontDownForce..' '..aeroData.rearDownForce..' '..aeroData.afX..' '..aeroData.afY..' '..aeroData.afZ)
   --print("%F:"..' '..string.format("%.2f",aeroData.percentFront)..' '.."%R:"..' '..string.format("%.2f",aeroData.percentRear)..' '.."Net Force X:"..' '..string.format("%.2f",aeroData.afX)..' '.."Y:"..''..string.format("%.2f",aeroData.afY)..' '.."Z:"..''..string.format("%.2f",aeroData.afZ))

@@ -16,6 +16,17 @@ local function _cleanupRows(row)
   row.skinName = nil
 end
 
+-- jbeam coordinates, so the node offsets/rotations of the part have to be applied on top.
+-- Has to run before _cleanupRows, which drops the nodeOffset this reads.
+local function _globalBaseTranslation(row, key)
+  local pos = row[key]
+  if not pos then return nil end
+  local x, y, z = jbeamUtils.getPosAfterNodeRotateOffsetMove(row, pos.x, pos.y, pos.z)
+  local newPos = vec3(x, y, z)
+  row[key .. 'WithNodeTransforms'] = newPos
+  return newPos
+end
+
 local function processEvents(objID, vehicleObj, vehicle)
   profilerPushEvent('processEvents')
   if vehicle.events ~= nil then
@@ -35,6 +46,9 @@ local function processTriggers(objID, vehicleObj, vehicle)
     local trigger_count = 0
 
     for _, ab in pairs(vehicle.triggers) do
+      local baseTranslationGlobal = _globalBaseTranslation(ab, 'baseTranslationGlobal')
+      local baseTranslationGlobalElastic = _globalBaseTranslation(ab, 'baseTranslationGlobalElastic')
+      local baseTranslationGlobalRigid = _globalBaseTranslation(ab, 'baseTranslationGlobalRigid')
       _cleanupRows(ab)
       local abid = vehicleObj:addTrigger()
       if abid < 0 then
@@ -60,6 +74,15 @@ local function processTriggers(objID, vehicleObj, vehicle)
         if ab.baseTranslation ~= nil then
           ab.baseTranslation = vec3(ab.baseTranslation)
           abo.baseTranslation = ab.baseTranslation
+        end
+        if baseTranslationGlobal then
+          abo:setBaseTranslationGlobal(baseTranslationGlobal)
+        end
+        if baseTranslationGlobalElastic then
+          abo:setBaseTranslationGlobalElastic(baseTranslationGlobalElastic)
+        end
+        if baseTranslationGlobalRigid then
+          abo:setBaseTranslationGlobalRigid(baseTranslationGlobalRigid)
         end
         if ab.translationOffset ~= nil then
           ab.translationOffset = vec3(ab.translationOffset)
@@ -89,6 +112,18 @@ local function processTriggers(objID, vehicleObj, vehicle)
         elseif typeStr == 'sphere' and type(ab.size) == 'number' then
             abo:setSphereSize(ab.size)
         end
+
+        local highlightMeshes = {}
+        if type(ab.mesh) == 'string' and ab.mesh ~= '' then
+          highlightMeshes[1] = ab.mesh
+        elseif type(ab.mesh) == 'table' then
+          for _, mesh in ipairs(ab.mesh) do
+            if type(mesh) == 'string' and mesh ~= '' then
+              highlightMeshes[#highlightMeshes + 1] = mesh
+            end
+          end
+        end
+        abo:setHighlightMeshes(highlightMeshes)
 
         abo.visibleDistance = 0.15
 

@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
---Purpose: Used to implement tank-like steering with a differential braking system
+--Purpose: Enables skid steering on vehicles that turn by braking either side
 
 local M = {}
 M.type = "auxiliary"

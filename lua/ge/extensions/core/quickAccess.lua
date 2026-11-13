@@ -32,6 +32,15 @@ local menuTreeCopyForUI
 
 local iconTags = jsonReadFile("ui/assets/iconMappings/iconTags.json")
 local iconTagsWarned = {}
+
+local function canModifyVehicle(playerId, vehicleId, permission)
+  if not multiplayer_permissions then return true end
+  local mpPlayerId = multiplayer_multiplayer.getLocalMPPlayerId(playerId)
+  local mid = multiplayer_vehicleSync.vIdToMId(vehicleId)
+  local allowed = multiplayer_permissions.checkPlayerPermission(mpPlayerId, permission, mid)
+  return allowed
+end
+
 local updateIcon = function(icon, title)
   if not icon then return end
   if iconTags[icon] then
@@ -56,7 +65,7 @@ local vehicleMenuTrees = {}
 local currentUiState
 local simTimeBefore
 -- true while the radial is intentionally handing off to a radial-owned child route
--- (e.g. radial.vehicles / radial.vehicleconfig). Used to guard accidental close requests.
+-- (e.g. radial.mirrors). Used to guard accidental close requests.
 local routeHandoffActive = false
 --local possibleTopLevels = {"sandbox", "playerVehicle", "favorites", "multi"}
 
@@ -508,7 +517,6 @@ local function getDynamicSlotConfigurationData()
     ::continue::
   end
   table.insert(rootItems, 1, recentActionsItem)
-  table.insert(rootItems, 1, {title = "ui.radialmenu2.dynamicSlot.empty", mode = "empty", uniqueID = "dynamic_empty", icon = "circleSlashed", desc = "ui.radialmenu2.dynamicSlot.empty.desc"})
   menuTreeCopyForUI.items = rootItems
 
   local dynamicSlotKey = dynamicSlotKeyToConfigure
@@ -795,7 +803,7 @@ local function registerSandboxMenus()
     local _dragData = gameplay_drag_core and gameplay_drag_core.getData()
     if _dragData and _dragData.dragType == "bracketRace" and gameplay_drag_dragBridge then
       table.insert(entries, {
-        title = 'ui.drag.dialControl', icon = 'timer', uniqueID = 'dragDial',
+        title = 'ui.drag.dial.title', icon = 'timer', uniqueID = 'dragDial',
         desc = 'ui.drag.dialControl.desc',
         onSelect = function()
           gameplay_drag_dragBridge.showDialControl()
@@ -810,13 +818,17 @@ local function registerSandboxMenus()
 
 
   addEntry({ level = '/root/sandbox/repair/', generator = function(entries)
-    local playerVeh = getPlayerVehicle(0)
+    local playerId = 0
+    local playerVeh = getPlayerVehicle(playerId)
     if playerVeh then
+      local vid = playerVeh:getId()
 
       if not core_input_actionFilter.isActionBlocked("loadHome") then
         table.insert(entries, {
           title = 'ui.radialmenu2.Manage.Home', action = "loadHome", icon = 'garage02', priority = 80, startSlot = 5, endSlot = 5, uniqueID = 'loadHome', ignoreAsRecentActionForCategory = "sandbox",
+          enabled = canModifyVehicle(playerId, vid, 'loadHome'),
           onSelect = function()
+            if not canModifyVehicle(playerId, vid, 'loadHome') then return {'hide'} end
             extensions.hook('trackVehReset')
             playerVeh:queueLuaCommand("recovery.loadHome()")
             return {'hide'}
@@ -826,7 +838,9 @@ local function registerSandboxMenus()
       if not core_input_actionFilter.isActionBlocked("recover_to_last_road") then
         table.insert(entries, {
           title = 'ui.radialmenu2.flipVehicleUpright', icon = 'carToWheels', priority = 83, startSlot = 3, endSlot = 3, uniqueID = 'flipVehicleUpright', ignoreAsRecentActionForCategory = "sandbox",
+          enabled = canModifyVehicle(playerId, vid, 'teleportVehicle'),
           onSelect = function()
+            if not canModifyVehicle(playerId, vid, 'teleportVehicle') then return {'hide'} end
             spawn.safeTeleport(playerVeh, playerVeh:getPosition(), quatFromDir(playerVeh:getDirectionVector()), nil, nil, nil, nil, false )
             extensions.hook('onVehicleFlippedUpright', playerVeh:getID())
             return {'hide'}
@@ -836,9 +850,11 @@ local function registerSandboxMenus()
       if not core_input_actionFilter.isActionBlocked("reload_vehicle") then
         table.insert(entries, {
           title = "ui.radialmenu2.repairVehicle", icon = "wrench", priority = 90, startSlot = 0, endSlot = 2, uniqueID = 'repairVehicle', ignoreAsRecentActionForCategory = "sandbox",
+          enabled = canModifyVehicle(playerId, vid, 'recoverVehicle'),
           onSelect = function()
-            getPlayerVehicle(0):resetBrokenFlexMesh()
-            spawn.safeTeleport(getPlayerVehicle(0), getPlayerVehicle(0):getPosition(), quatFromDir(getPlayerVehicle(0):getDirectionVector(), getPlayerVehicle(0):getDirectionVectorUp()), nil, nil, nil, nil, true)
+            if not canModifyVehicle(playerId, vid, 'recoverVehicle') then return {"hide"} end
+            getPlayerVehicle(playerId):resetBrokenFlexMesh()
+            spawn.safeTeleport(getPlayerVehicle(playerId), getPlayerVehicle(playerId):getPosition(), quatFromDir(getPlayerVehicle(playerId):getDirectionVector(), getPlayerVehicle(playerId):getDirectionVectorUp()), nil, nil, nil, nil, true)
             return {"hide"}
           end
         })
@@ -848,7 +864,17 @@ local function registerSandboxMenus()
           title = "ui.radialmenu2.resetAllVehicles", action = "reset_all_physics", icon = "carsWrench", priority = 90, startSlot = 4, endSlot = 4, uniqueID = 'resetAllVehicles',
           onSelect = function()
             extensions.hook('trackVehReset')
-            resetGameplay(-1)
+            if not multiplayer_permissions then
+              resetGameplay(-1)
+            else
+              for i = 0, be:getObjectCount() - 1 do
+                local veh = be:getObject(i)
+                if veh and canModifyVehicle(playerId, veh:getId(), 'resetVehicle') then
+                  veh:requestReset(RESET_PHYSICS)
+                  veh:resetBrokenFlexMesh()
+                end
+              end
+            end
             return {"hide"}
           end
         })
@@ -856,7 +882,9 @@ local function registerSandboxMenus()
       if not core_input_actionFilter.isActionBlocked("recover_to_last_road") then
         table.insert(entries, {
           title = 'ui.radialmenu2.recoverToLastRoad', action = "recover_to_last_road", icon = 'road', priority = 82, startSlot = 7, endSlot = 7, uniqueID = 'recoverToLastRoad', ignoreAsRecentActionForCategory = "sandbox", -- Down
+          enabled = canModifyVehicle(playerId, vid, 'recoverToLastRoad'),
           onSelect = function()
+            if not canModifyVehicle(playerId, vid, 'recoverToLastRoad') then return {'hide'} end
             spawn.teleportToLastRoad(playerVeh, {resetVehicle = false})
             return {'hide'}
           end
@@ -865,7 +893,9 @@ local function registerSandboxMenus()
       if not core_input_actionFilter.isActionBlocked("saveHome") then
         table.insert(entries, {
           title = 'ui.radialmenu2.Manage.Set_home', action = "saveHome", icon = 'plusGarage1', priority = 81, startSlot = 6, endSlot = 6, uniqueID = 'saveHome', ignoreAsRecentActionForCategory = "sandbox",
+          enabled = canModifyVehicle(playerId, vid, 'loadHome'),
           onSelect = function()
+            if not canModifyVehicle(playerId, vid, 'loadHome') then return {'hide'} end
             playerVeh:queueLuaCommand("recovery.saveHome()")
             return {'hide'}
           end
@@ -887,21 +917,29 @@ local function registerSandboxMenus()
   end})
 
   addEntry({ level = '/root/sandbox/vehicles/', generator = function(entries)
+    local playerId = 0
     if not core_input_actionFilter.isActionBlocked("vehicle_selector") then
       local e = { title = 'ui.radialmenu2.Manage.Select', icon = 'vehicleFeatures01', startSlot = 1, folder = true, uniqueID = 'vehicle_selector',
         onSelect = function()
-          M.beginRouteHandoff()
-          extensions.ui_router.navigate("radial.vehicles")
+          M.setEnabled(false)
+          extensions.ui_router.navigate("pause.vehicleSelector")
           return {}
         end
       }
       table.insert(entries, e)
     end
     if not core_input_actionFilter.isActionBlocked("parts_selector") then
+      local playerVeh = getPlayerVehicle(playerId)
+      local canParts = playerVeh ~= nil and canModifyVehicle(playerId, playerVeh:getId(), 'resetVehicle')
       local e = { title = 'ui.radialmenu2.Manage.Partsconfig', icon = 'engine', startSlot = 2, folder = true, uniqueID = 'partsconfig',
+        enabled = canParts,
         onSelect = function()
-          M.beginRouteHandoff()
-          extensions.ui_router.navigate("radial.vehicleconfig")
+          local veh = getPlayerVehicle(playerId)
+          if not veh or not canModifyVehicle(playerId, veh:getId(), 'resetVehicle') then
+            return {'hide'}
+          end
+          M.setEnabled(false)
+          extensions.ui_router.navigate("pause.vehicle.configurationcombined")
           return {}
         end
       }
@@ -911,11 +949,18 @@ local function registerSandboxMenus()
 
 
     if not core_input_actionFilter.isActionBlocked("switch_next_vehicle") then
+      local playerVeh = getPlayerVehicle(playerId)
+      local canRemove = playerVeh ~= nil and canModifyVehicle(playerId, playerVeh:getId(), 'removeVehicle')
+      local canClone = playerVeh ~= nil and not gameplay_walk.isWalking() and canModifyVehicle(playerId, playerVeh:getId(), 'spawnVehicle')
 
       table.insert(entries,{
         level = '/vehicles/', title = 'ui.radialmenu2.Manage.Remove', icon = 'trashBin1', startSlot = 7,
-        enabled = be:getObjectCount() > 0 and getPlayerVehicle(0) ~= nil, uniqueID = 'removeVehicle',
+        enabled = canRemove, uniqueID = 'removeVehicle',
         onSelect = function()
+          local veh = getPlayerVehicle(playerId)
+          if not veh or not canModifyVehicle(playerId, veh:getId(), 'removeVehicle') then
+            return {'hide'}
+          end
           core_vehicles.removeCurrent()
           extensions.hook("trackNewVeh")
           return {'hide'}
@@ -923,18 +968,34 @@ local function registerSandboxMenus()
       })
       table.insert(entries,{
         level = '/vehicles/', title = 'ui.radialmenu2.Manage.Clone', icon = 'copy', startSlot = 6, uniqueID = 'cloneVehicle',
-        enabled = be:getObjectCount() > 0 and getPlayerVehicle(0) ~= nil and not gameplay_walk.isWalking(),
+        enabled = canClone,
         onSelect = function()
-          core_vehicles.cloneCurrent()
-          extensions.hook("trackNewVeh")
+          local veh = getPlayerVehicle(playerId)
+          if not veh or not canModifyVehicle(playerId, veh:getId(), 'spawnVehicle') then
+            return {'hide'}
+          end
+          local function clone()
+            core_vehicles.cloneCurrent()
+            extensions.hook("trackNewVeh")
+          end
+          if gameplay_lowPerformance then gameplay_lowPerformance.confirmSpawn(clone) else clone() end
           return {'hide'}
         end
       })
       local currentVehicle = be:getPlayerVehicle(0)
       local vehName = {txt = 'ui.radialmenu2.Manage.yourVehicle', context = {name = M.getVehicleName(currentVehicle)}}
+      local count = 0
+      local hasOtherActiveVeh = false
+      for _ in activeVehiclesIterator() do
+        count = count + 1
+        if count > 1 then
+          hasOtherActiveVeh = true
+          break
+        end
+      end
       table.insert(entries, {
         title = 'ui.radialmenu2.Manage.Switch', icon = 'arrowsReplace', startSlot = 3, uniqueID = 'switchVehiclesNext',
-        enabled = be:getObjectCount() > 1,
+        enabled = hasOtherActiveVeh,
         desc = vehName,
         onSelect = function()
           be:enterNextVehicle(0, 1)
@@ -944,7 +1005,7 @@ local function registerSandboxMenus()
       table.insert(entries, {
         title = 'ui.radialmenu2.Manage.SwitchEllipsis', icon = 'carsChange', startSlot = 4, uniqueID = 'switchVehicles', ["goto"] = '/root/sandbox/vehicles/switch_vehicles/', ignoreAsRecentAction = true,
         desc = vehName,
-        enabled = be:getObjectCount() > 1,
+        enabled = hasOtherActiveVeh,
       })
     end
   end})
@@ -964,6 +1025,7 @@ local function registerSandboxMenus()
     for i = 0, be:getObjectCount()-1 do
       local veh = be:getObject(i)
       local targetVehId = veh:getId()
+      if not veh:getActive() then goto skipObj end
       --if targetVehId ~= vid then
         local vicon = "carNumber" .. (i%9)+1
         local vehKey = veh.JBeam
@@ -1181,7 +1243,7 @@ local function registerSandboxMenus()
         uniqueID = 'trafficMenu',
         onSelect = function()
           M.setEnabled(false)
-          guihooks.trigger('ChangeState', {state = 'menu.environment.traffic'})
+          extensions.ui_router.navigate('menu.environment.traffic')
           return {}
         end})
       table.insert(entries, { title = 'ui.radialmenu2.traffic.stop', desc = "ui.radialmenu2.traffic.stop.desc", priority = 61, icon = 'pause',
@@ -1190,7 +1252,6 @@ local function registerSandboxMenus()
         enabled = extensions.gameplay_traffic.getState() == "on",
         onSelect = function()
         extensions.gameplay_traffic.deactivate(true)
-        extensions.telemetry_core.endActivity("trafficEnabled")
         return {"hide"}
       end})
       table.insert(entries, { title = 'ui.radialmenu2.traffic.remove', desc = "ui.radialmenu2.traffic.remove.desc", priority = 62, icon = 'trashBin1',
@@ -1200,7 +1261,7 @@ local function registerSandboxMenus()
         onSelect = function()
           extensions.gameplay_parking.deleteVehicles()
           extensions.gameplay_traffic.deleteVehicles()
-        extensions.telemetry_core.endActivity("trafficEnabled")
+          core_vehicles.enterFreecamIfNoVehicles()
         return {"hide"}
       end})
       table.insert(entries, { title = 'ui.radialmenu2.traffic.spawnNormal', desc = "ui.radialmenu2.traffic.spawnNormal.desc", priority = 63, icon = 'cars',
@@ -1208,7 +1269,6 @@ local function registerSandboxMenus()
         uniqueID = 'trafficSpawnNormal',
         onSelect = function()
           extensions.gameplay_traffic.setupTrafficWaitForUi(true, true)
-          extensions.telemetry_core.startActivity("trafficEnabled")
           return {"hide"}
         end})
       table.insert(entries, { title = 'ui.radialmenu2.traffic.spawnPolice', desc = "ui.radialmenu2.traffic.spawnPolice.desc", priority = 64, icon = 'carChase01',
@@ -1216,7 +1276,6 @@ local function registerSandboxMenus()
         uniqueID = 'trafficSpawnPolice',
         onSelect = function()
           extensions.gameplay_traffic.setupTrafficWaitForUi(true, true, {police = true})
-          extensions.telemetry_core.startActivity("trafficEnabled")
           return {"hide"}
       end})
       table.insert(entries, { title = 'ui.radialmenu2.traffic.spawnParked', desc = "ui.radialmenu2.traffic.spawnParked.desc", priority = 65, icon = 'parking',
@@ -1224,7 +1283,6 @@ local function registerSandboxMenus()
         uniqueID = 'trafficSpawnParked',
         onSelect = function()
           extensions.gameplay_traffic.setupTrafficWaitForUi(false, true)
-          extensions.telemetry_core.startActivity("trafficEnabled")
           return {"hide"}
       end})
       table.insert(entries, { title = 'ui.radialmenu2.traffic.start', desc = "ui.radialmenu2.traffic.start.desc", priority = 66, icon = 'play',
@@ -1234,7 +1292,6 @@ local function registerSandboxMenus()
         onSelect = function()
           extensions.gameplay_traffic.activate()
           extensions.gameplay_traffic.setTrafficVars({aiMode = "traffic", enableRandomEvents = true})
-          extensions.telemetry_core.startActivity("trafficEnabled")
           return {"hide"}
       end})
     end
@@ -1278,13 +1335,15 @@ local function registerPlayerVehicleMenus()
     -- Add vehicle entry/exit action
     if gameplay_walk.isTogglingEnabled() and not core_input_actionFilter.isActionBlocked("toggleWalkingMode") then
       local vehicleInFront = gameplay_walk.getVehicleInFront()
-      local title = gameplay_walk.isWalking() and
+      local walking = gameplay_walk.isWalking()
+      local title = walking and
       (vehicleInFront and "ui.radialmenu2.enterVehicle" or "ui.radialmenu2.noVehicleToEnter") or
       "ui.radialmenu2.exitVehicle"
+      local canToggle = not gameplay_walk.canSetWalkingMode or gameplay_walk.canSetWalkingMode(not walking, false, 0)
 
       local e = {
-        title = title, icon = gameplay_walk.isWalking() and "seatArrowInLeft" or "seatArrowOut", startSlot = 1, priority = 94, ignoreAsRecentActionForCategory = "playerVehicle",
-        enabled = not gameplay_walk.isWalking() or vehicleInFront ~= nil, uniqueID = "toggleWalkingMode",
+        title = title, icon = walking and "seatArrowInLeft" or "seatArrowOut", startSlot = 1, priority = 94, ignoreAsRecentActionForCategory = "playerVehicle",
+        enabled = canToggle and (not walking or vehicleInFront ~= nil), uniqueID = "toggleWalkingMode",
         onSelect = function()
           gameplay_walk.toggleWalkingMode()
           return {'hide'}
@@ -1471,6 +1530,7 @@ local function isUsingOccupiedSlots(startSlot, endSlot, occupiedSlots)
 end
 
 local uiData
+local tutorialHighlightTargets = {}
 -- we got all the data required, show the menu
 local function _assembleMenuComplete()
   if not currentMenuItems then return end
@@ -1673,6 +1733,7 @@ local function _assembleMenuComplete()
     breadcrumbs = breadcrumbs,
     menuIcon = menuIcon,
     hasLRShoulderButtons = currentFirstLevelId == "root" and currentSecondLevelId == nil,
+    tutorialHighlightTargets = tutorialHighlightTargets,
   }
 
   if simTimeBefore == nil then
@@ -1693,7 +1754,7 @@ local function _assembleMenuComplete()
     else
       gameStateBefore = deepcopy(core_gamestate.state)
     end
-    extensions.ui_router.navigate("radial")
+    extensions.ui_router.navigate("radial", nil, {cancellable = false})
     core_gamestate.setGameState(nil,'radial')
   end
   guihooks.trigger('radialMenuUpdated')
@@ -1703,6 +1764,20 @@ end
 
 local function getUiData()
   return uiData
+end
+
+local function setTutorialHighlightTargets(targets)
+  local normalizedTargets = {}
+  local seen = {}
+  for _, target in ipairs(type(targets) == "table" and targets or {}) do
+    if type(target) == "string" and target ~= "" and not seen[target] then
+      table.insert(normalizedTargets, target)
+      seen[target] = true
+    end
+  end
+  tutorialHighlightTargets = normalizedTargets
+  if uiData then uiData.tutorialHighlightTargets = tutorialHighlightTargets end
+  if uiVisible then guihooks.trigger("radialMenuUpdated") end
 end
 
 local function isMenuEmpty(level)
@@ -2068,21 +2143,26 @@ local function gotoLevel(level)
 end
 M.gotoLevel = gotoLevel
 
-local function hide()
-  -- a real close always ends any pending route handoff, so a true user dismissal
-  -- cannot leave the radial stuck in a temporarily hidden state
-  routeHandoffActive = false
+local function hide(skipNavigate)
   if uiVisible then
     -- Restore previous game state
     --dump("Hide: gameStateBefore")
     --dump(gameStateBefore)
     if gameStateBefore ~= nil then
-      extensions.ui_router.navigate("play")
+      if not skipNavigate then
+        local res = extensions.ui_router.navigate("play")
+        if res and not res.success and res.reason == "active_navigation_not_cancellable" then
+          return
+        end
+      end
       core_gamestate.setGameState(gameStateBefore.state, gameStateBefore.appLayout, gameStateBefore.menuItems, gameStateBefore.options)
       gameStateBefore = nil
     end
     extensions.hook("onHideRadialMenu")
   end
+  -- a real close always ends any pending route handoff, so a true user dismissal
+  -- cannot leave the radial stuck in a temporarily hidden state
+  routeHandoffActive = false
   currentMenuItems = nil
   currentLevel = nil
   vehicleWaitFrames = 0
@@ -2135,7 +2215,7 @@ local function temporaryUnhide()
 end
 
 -- Route handoff: leaving the radial view for a radial-owned child screen
--- (radial.vehicles / radial.vehicleconfig) without triggering a real close.
+-- (e.g. radial.mirrors) without triggering a real close.
 local function beginRouteHandoff()
   routeHandoffActive = true
   temporaryHide()
@@ -2152,7 +2232,7 @@ local function isRouteHandoffActive()
 end
 
 -- Non-navigating handoff cleanup for radial-owned child routes that exit straight
--- to gameplay (e.g. radial.vehicles spawning/replacing a vehicle). This clears the
+-- to gameplay. This clears the
 -- same radial runtime state as hide(), but must NOT navigate back to "play" again,
 local function finishRouteHandoffExit()
   if not routeHandoffActive then return end
@@ -2397,6 +2477,14 @@ local function onInit()
 end
 
 -- callback from the ui
+local function adjustCruiseSpeed(direction)
+  if type(direction) ~= "number" or direction == 0 then return end
+  local veh = getPlayerVehicle(0)
+  if not veh then return end
+  local sign = direction > 0 and 1 or -1
+  veh:queueLuaCommand("extensions.core_quickAccess.adjustCruiseSpeed(" .. sign .. ")")
+end
+
 local function selectItem(id, buttonDown, actionIndex)
   if type(id) ~= 'number' then return end
   if currentMenuItems == nil then return end
@@ -2551,8 +2639,11 @@ end
 
 local function onUiChangedState(toState)
   currentUiState = toState
-  if routeHandoffActive and toState == "play" then
-    finishRouteHandoffExit()
+  if routeHandoffActive then
+    if toState == "play" then finishRouteHandoffExit() end
+  elseif uiVisible and toState ~= "radial" and not string.startswith(toState, "radial.") then
+    -- another route took over (e.g. ctrl+E), close without navigating
+    hide(true)
   end
 end
 
@@ -2601,16 +2692,20 @@ local actions = {
     M.toggle()
   end,
   recoverVehicle = function()
+    local playerId = 0
+    local veh = be:getPlayerVehicle(playerId)
+    if not veh then return end
+    if not canModifyVehicle(playerId, veh:getId(), 'recoverVehicle') then return end
     extensions.hook('trackVehReset')
-    local veh = be:getPlayerVehicle(0)
-    if veh then
-      veh:resetBrokenFlexMesh()
-      spawn.safeTeleport(veh, veh:getPosition(),quatFromDir(veh:getDirectionVector(), veh:getDirectionVectorUp()))
-    end
+    veh:resetBrokenFlexMesh()
+    spawn.safeTeleport(veh, veh:getPosition(),quatFromDir(veh:getDirectionVector(), veh:getDirectionVectorUp()))
   end,
   resetVehicle = function()
+    local playerId = 0
+    local veh = be:getPlayerVehicle(playerId)
+    if veh and not canModifyVehicle(playerId, veh:getId(), 'resetVehicle') then return end
     extensions.hook('trackVehReset')
-    resetGameplay(0)
+    resetGameplay(playerId)
   end,
   activateStarterMotor = function()
     local veh = be:getPlayerVehicle(0)
@@ -2649,6 +2744,7 @@ M.onUiChangedState = onUiChangedState
 M.onSerialize = onSerialize
 M.onBeforeBigMapActivated = onBeforeBigMapActivated
 M.getUiData = getUiData
+M.setTutorialHighlightTargets = setTutorialHighlightTargets
 M.openDynamicSlotConfigurator = openDynamicSlotConfigurator
 M.onClientEndMission = onClientEndMission
 M.onVehicleSpawned = onVehicleSpawned
@@ -2659,6 +2755,7 @@ M.registerMenu = function() log('E', 'quickAccess', 'registerMenu is deprecated.
 
 -- API towards the UI
 M.selectItem = selectItem
+M.adjustCruiseSpeed = adjustCruiseSpeed
 M.contextAction = contextAction
 M.back = back
 M.isEnabled = isEnabled

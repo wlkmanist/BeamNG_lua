@@ -239,7 +239,7 @@ local function setFreeCam()
   local lastCamPos = core_camera.getPosition()
   local lastCamRot = core_camera.getQuat()
 
-  core_camera.setByName(0, 'free')
+  editor.selectCamera(editor.CameraType_Free)
   core_camera.setPosition(0, lastCamPos)
   core_camera.setRotation(0, lastCamRot)
 end

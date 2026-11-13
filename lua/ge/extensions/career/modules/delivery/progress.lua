@@ -43,19 +43,25 @@ M.onCargoDelivered = function(cargoItems)
   local affectedFacilities = {}
 
   for _, cargo in ipairs(cargoItems or {}) do
+    local cargoType = "parcel"
+    local amount = 1
     if cargo.materialType == nil then
       progress.cargoDeliveredByType.parcel = progress.cargoDeliveredByType.parcel + 1
     else
       local material = dGenerator.getMaterialsTemplatesById(cargo.materialType)
-      progress.cargoDeliveredByType[material.type] = (progress.cargoDeliveredByType[material.type] or 0) + cargo.slots
+      cargoType = material.type
+      amount = cargo.slots
+      progress.cargoDeliveredByType[cargoType] = (progress.cargoDeliveredByType[cargoType] or 0) + amount
     end
 
     local cargoOrigFacility = dGenerator.getFacilityById(cargo.origin.facId)
-    cargoOrigFacility.progress.deliveredFromHere.countByType.parcel = cargoOrigFacility.progress.deliveredFromHere.countByType.parcel + 1
+    local deliveredFromHere = cargoOrigFacility.progress.deliveredFromHere.countByType
+    deliveredFromHere[cargoType] = (deliveredFromHere[cargoType] or 0) + amount
     cargoOrigFacility.progress.deliveredFromHere.moneySum = cargoOrigFacility.progress.deliveredFromHere.moneySum + (cargo.rewards.money or 0)
 
     local cargoDestFacility = dGenerator.getFacilityById(cargo.location.facId)
-    cargoDestFacility.progress.deliveredToHere.countByType.parcel = cargoDestFacility.progress.deliveredToHere.countByType.parcel + 1
+    local deliveredToHere = cargoDestFacility.progress.deliveredToHere.countByType
+    deliveredToHere[cargoType] = (deliveredToHere[cargoType] or 0) + amount
     cargoDestFacility.progress.deliveredToHere.moneySum = cargoDestFacility.progress.deliveredToHere.moneySum + (cargo.rewards.money or 0)
 
     dParcelMods.trackModifierStats(cargo)
@@ -462,22 +468,34 @@ M.confirmDropOffCheckComplete = function()
         animationData = career_modules_branches_landing.getBranchSkillCardData(key),
         branchLevels = deepcopy(branch.levels),
         showLevelUpPopup = true,
-        unlockPopupHeader = string.format("%s %s: Level %d", _tr(branch.name), branch.isSkill and "Skill" or "Branch", career_branches.getBranchLevel(branch.id) or 0)
+        unlockPopupHeader = core_locales.contextTranslate("ui.career.delivery.progress.unlockPopupHeader", {
+          branchName = _tr(branch.name),
+          branchType = _tr(branch.isSkill and "ui.career.delivery.progress.skill" or "ui.career.delivery.progress.branch"),
+          level = career_branches.getBranchLevel(branch.id) or 0
+        })
       }
 
       for i, levelInfo in ipairs(branchInfo[key].branchLevels) do
-        levelInfo.levelLabel = "Level " .. i
+        levelInfo.levelLabel = core_locales.contextTranslate("ui.career.delivery.progress.level", {level = i})
       end
 
-      if branch.isBranch then branchInfo[key].animationData.name = "Branch: " .. _tr(branchInfo[key].animationData.name) end
-      if branch.isSkill then branchInfo[key].animationData.name = "Skill: " .. _tr(branchInfo[key].animationData.name) end
+      if branch.isBranch then
+        branchInfo[key].animationData.name = core_locales.contextTranslate("ui.career.delivery.progress.branchName", {
+          name = _tr(branchInfo[key].animationData.name)
+        })
+      end
+      if branch.isSkill then
+        branchInfo[key].animationData.name = core_locales.contextTranslate("ui.career.delivery.progress.skillName", {
+          name = _tr(branchInfo[key].animationData.name)
+        })
+      end
     end
 
     if key == "money" then
       branchInfo[key].icon = "beamCurrency"
       branchInfo[key].animationData = {
         type = "number",
-        name = "Money",
+        name = _tr("ui.career.delivery.progress.money"),
         value = career_modules_playerAttributes.getAttribute("money").value
       }
     end
@@ -486,7 +504,7 @@ M.confirmDropOffCheckComplete = function()
       branchInfo[key].icon = "beamXPLo"
       branchInfo[key].animationData = {
         type = "number",
-        name = "BeamXP",
+        name = _tr("ui.career.delivery.progress.beamXP"),
         value = career_modules_playerAttributes.getAttribute("beamXP").value
       }
     end

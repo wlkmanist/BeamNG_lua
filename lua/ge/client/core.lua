@@ -842,7 +842,9 @@ local function createWaterShaderData()
   local waterShader = createObject("ShaderData")
   waterShader.DXVertexShaderFile = "shaders/common/water/waterV.hlsl"
   waterShader.DXPixelShaderFile  = "shaders/common/water/waterP.hlsl"
-  waterShader.pixVersion = 5.0;
+  -- Material lighting consumes SSR through the scene descriptor set on SM6 backends.
+  waterShader.pixVersion = PostFxSSSR.isSupported() and 6.0 or 5.0
+  waterShader.defines = PostFxSSSR.isSupported() and "BNG_HLSL_MODEL=6" or "BNG_HLSL_MODEL=5"
   waterShader:registerObject("WaterShader")
 
   local waterSampler = createObject("GFXSamplerStateData")
@@ -1119,35 +1121,62 @@ end
 
 
 local function createVehicleData()
-  if not scenetree.findObject("PropSelectionCustomMat") then
+  local shaderVersion = Engine.Render.getAdapterType() == "Direct3D11" and 4 or 6
+  local shaderDefines = shaderVersion >= 6 and "BNG_HLSL_MODEL=6" or nil
+
+  if not scenetree.findObject("VehicleHighlightMat") then
     local shader = createObject("ShaderData")
-    shader.DXVertexShaderFile = "shaders/common/vehicle/propselection.hlsl"
-    shader.DXPixelShaderFile  = "shaders/common/vehicle/propselection.hlsl"
-    shader.pixVersion = 5.0;
-    shader:registerObject("PropSelectionShader")
+    shader.DXVertexShaderFile = "shaders/common/vehicle/highlight.hlsl"
+    shader.DXPixelShaderFile  = "shaders/common/vehicle/highlight.hlsl"
+    shader.pixVersion = shaderVersion
+    if shaderDefines then shader:setField("defines", 0, shaderDefines) end
+    shader:registerObject("VehicleHighlightShader")
 
     local stateBlock = createObject("GFXStateBlockData")
     stateBlock.blendDefined = true
     stateBlock.blendEnable = true
     stateBlock:setField("blendSrc", 0, "GFXBlendSrcAlpha")
     stateBlock:setField("blendDest", 0, "GFXBlendInvSrcAlpha")
-    stateBlock.zDefined = true
-    stateBlock.zEnable = true
-    stateBlock.zWriteEnable = false
-    if VariableRegistry.get("$Scene::useReversedDepthBuffer") then
-      stateBlock.zBias = 1
-      stateBlock.zSlopeBias = 1
-    else
-      stateBlock.zBias = -5
-      stateBlock.zSlopeBias = -5
-    end
-    stateBlock:registerObject("ProSelectionStateBlock")
+    stateBlock:registerObject("VehicleHighlightStateBlock")
 
-    local waterBasicMat = createObject("CustomMaterial")
-    waterBasicMat:setField("shader", 0, "PropSelectionShader")
-    waterBasicMat:setField("stateBlock", 0, "ProSelectionStateBlock")
-    waterBasicMat:registerObject("PropSelectionCustomMat")
+    local highlightMat = createObject("CustomMaterial")
+    highlightMat:setField("shader", 0, "VehicleHighlightShader")
+    highlightMat:setField("stateBlock", 0, "VehicleHighlightStateBlock")
+    highlightMat:setField("highlightAlpha", 0, "1")
+    highlightMat:setField("translucent", 0, "1")
+    highlightMat:setField("translucentBlendOp", 0, "LerpAlpha")
+    highlightMat:setField("castShadows", 0, "0")
+    highlightMat:setField("doubleSided", 0, "0")
+    highlightMat:registerObject("VehicleHighlightMat")
   end
+
+  -- see through vehicle override material, for setRenderPass. Alpha is fresnel weighted, which a
+  -- shadergen Material cannot express, so it is a CustomMaterial like the highlight
+  if not scenetree.findObject("vehicleGhost") then
+    local ghostShader = createObject("ShaderData")
+    ghostShader.DXVertexShaderFile = "shaders/common/vehicle/ghost.hlsl"
+    ghostShader.DXPixelShaderFile  = "shaders/common/vehicle/ghost.hlsl"
+    ghostShader.pixVersion = shaderVersion
+    if shaderDefines then ghostShader:setField("defines", 0, shaderDefines) end
+    ghostShader:registerObject("VehicleGhostShader")
+
+    local ghostState = createObject("GFXStateBlockData")
+    ghostState.blendDefined = true
+    ghostState.blendEnable = true
+    ghostState:setField("blendSrc", 0, "GFXBlendSrcAlpha")
+    ghostState:setField("blendDest", 0, "GFXBlendInvSrcAlpha")
+    ghostState:registerObject("VehicleGhostStateBlock")
+
+    local ghostMat = createObject("CustomMaterial")
+    ghostMat:setField("shader", 0, "VehicleGhostShader")
+    ghostMat:setField("stateBlock", 0, "VehicleGhostStateBlock")
+    ghostMat:setField("translucent", 0, "1")
+    ghostMat:setField("translucentBlendOp", 0, "LerpAlpha")
+    ghostMat:setField("castShadows", 0, "0")
+    ghostMat:setField("doubleSided", 0, "1")
+    ghostMat:registerObject("vehicleGhost")
+  end
+
 end
 
 M.initializeCore = function()

@@ -94,7 +94,7 @@ local function browserTabGui()
             local char = glyphs[tostring(i)]
             im.ImageButton(
               string.format("%s##GlyphImageButton", key),
-              fontAtlasTexObj.texId,
+              fontAtlasTexObj.tex:getID(),
               im.ImVec2(previewSize, previewSize),
               im.ImVec2(glyph.monospaced_x / header.atlas_monospaced_width, glyph.monospaced_y / header.atlas_monospaced_height),
               im.ImVec2((glyph.monospaced_x + header.glyph_pixel_height) / header.atlas_monospaced_width, (glyph.monospaced_y + header.glyph_pixel_height) / header.atlas_monospaced_height)
@@ -253,7 +253,7 @@ local function fontPreviewWindowGui()
           local char = glyphs[tostring(i)]
           im.ImageButton(
             string.format("%s##FontPreviewGlyphsChildImageButton", tostring(i)),
-            textureObject.texId,
+            textureObject.tex:getID(),
             im.ImVec2(glyphPreviewSize, glyphPreviewSize),
             im.ImVec2(char.monospaced_x / header.atlas_monospaced_width, char.monospaced_y / header.atlas_monospaced_height),
             im.ImVec2((char.monospaced_x + header.glyph_pixel_height) / header.atlas_monospaced_width, (char.monospaced_y + header.glyph_pixel_height) / header.atlas_monospaced_height),
@@ -287,7 +287,7 @@ local function fontPreviewWindowGui()
           local char = glyphs[tostring(i)]
           im.ImageButton(
             string.format("%s##FontPreviewGlyphsChildSDFImageButton", tostring(i)),
-            textureObject.texId,
+            textureObject.tex:getID(),
             im.ImVec2(glyphPreviewSize, glyphPreviewSize),
             im.ImVec2(char.monospaced_x / header.atlas_monospaced_width, char.monospaced_y / header.atlas_monospaced_height),
             im.ImVec2((char.monospaced_x + header.glyph_pixel_height) / header.atlas_monospaced_width, (char.monospaced_y + header.glyph_pixel_height) / header.atlas_monospaced_height),
@@ -388,7 +388,7 @@ local function sectionGui(guiId)
 
     im.SetCursorPos(cpos)
     im.Image(
-      editor.getTempTextureObj(string.format("%s%s/%s%s", destinationDirectory, getSelectedFontAtlasName(), getSelectedFontAtlasName(), "_monospaced.png")).texId,
+      editor.getTempTextureObj(string.format("%s%s/%s%s", destinationDirectory, getSelectedFontAtlasName(), getSelectedFontAtlasName(), "_monospaced.png")).tex:getID(),
       im.ImVec2(glyphPreviewSize, glyphPreviewSize),
       im.ImVec2(char.monospaced_x / header.atlas_monospaced_width, char.monospaced_y / header.atlas_monospaced_height),
       im.ImVec2((char.monospaced_x + header.glyph_pixel_height) / header.atlas_monospaced_width, (char.monospaced_y + header.glyph_pixel_height) / header.atlas_monospaced_height),

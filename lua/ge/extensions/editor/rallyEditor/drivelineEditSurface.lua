@@ -7,7 +7,8 @@ local logTag = 'drivelineEditSurface'
 
 local drivelineUtil = require('/lua/ge/extensions/gameplay/rally/driveline/util')
 local geom = require('editor/toolUtilities/geom')
-local render = require('editor/toolUtilities/render')
+local rSpheres = require('editor/toolUtilities/render/spheres')
+local rMarkup = require('editor/toolUtilities/render/markup')
 local util = require('editor/toolUtilities/util')
 local rdp = require('editor/toolUtilities/rdp')
 local zSnap = require('/lua/ge/extensions/editor/rallyEditor/zSnap')
@@ -199,7 +200,7 @@ function M.handleSplineInteraction(host, opts)
   end
 
   if hitNodeIdx then
-    render.drawSphereHighlightHover(host.drivelineV3.spline.nodes[hitNodeIdx])
+    rSpheres.drawSphereHighlightHover(host.drivelineV3.spline.nodes[hitNodeIdx])
     if isMouseClicked then
       notifyBeforeMutation(host, opts, 'Drag Node')
       host.selectedNodeIdx = hitNodeIdx
@@ -237,9 +238,9 @@ function M.handleSplineInteraction(host, opts)
   local isOverCurve, idxLower, pHit = geom.isMouseOverSpline(host.drivelineV3.spline)
 
   if not hitNodeIdx and isOverCurve and pHit then
-    render.drawSphereHighlightHover(pHit)
-    render.drawSphereNode(pHit)
-    render.markupInsertNode(pHit)
+    rSpheres.drawSphereHighlightHover(pHit)
+    rSpheres.drawSphereNode(pHit)
+    rMarkup.markupInsertNode(pHit)
     if isMouseClicked then
       notifyBeforeMutation(host, opts, 'Insert Node')
       local preEdit = host.drivelineV3:deepCopySpline()
@@ -260,7 +261,7 @@ function M.handleSplineInteraction(host, opts)
   end
 
   if not hitNodeIdx and not isOverCurve then
-    render.drawSphereNode(mousePos)
+    rSpheres.drawSphereNode(mousePos)
 
     if isMouseClicked then
       notifyBeforeMutation(host, opts, 'Add Node')

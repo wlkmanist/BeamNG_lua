@@ -4,6 +4,9 @@
 local Constants = require("ge/extensions/ui/router/constants")
 local M = {}
 
+-- replays live on the main menu in simple menu, and in More otherwise
+local replayBackTarget = Engine.UI.isSimpleMenu() and "menu" or "menu.others"
+
 M.Root = {
   screenId = "menu",
   title = "ui.common.menu",
@@ -22,18 +25,6 @@ M.Root = {
 
 M.Children = {
   { include = "mods" },
-  ["start"] = {
-    screenId = "menu.start",
-    children = {
-      ["loadmainmenu"] = {
-        screenId = "menu.start.loadmainmenu"
-      }
-    }
-  },
-  -- Legacy Angular startup route alias. Keep until startup flow is migrated to dotted route names.
-  ["start_loadmainmenu"] = {
-    screenId = "menu.start_loadmainmenu"
-  },
   ["bigmapMenu"] = {
     screenId = "menu.bigmapMenu",
     ui = {
@@ -355,10 +346,23 @@ M.Children = {
       topBar = {
         visible = false
       }
+    },
+    children = {
+      ["details"] = {
+        screenId = "menu.discover.details",
+        backTarget = "menu.discover",
+      },
+      ["multiseat"] = {
+        screenId = "menu.discover.multiseat",
+        backTarget = "menu",
+        children = {
+          ["details"] = {
+            screenId = "menu.discover.details",
+            backTarget = "menu.discover.multiseat",
+          },
+        },
+      },
     }
-  },
-  ["gameContext"] = {
-    screenId = "menu.gameContext"
   },
   ["gameplay"] = {
     screenId = "menu.gameplay",
@@ -380,7 +384,7 @@ M.Children = {
       ["root"] = {
         ["grid"] = {
           backTargetType = "route",
-          backTarget = "menu.others",
+          backTarget = "menu",
         },
         ["auxillary"] = {
           backTarget = "grid",
@@ -388,7 +392,7 @@ M.Children = {
         }
       },
     },
-    backTarget = "menu.others",
+    backTarget = "menu",
     targetScope = "grid",
     children = {
       ["type"] = {
@@ -443,7 +447,7 @@ M.Children = {
       ["root"] = {
         ["grid"] = {
           backTargetType = "route",
-          backTarget = "menu.others",
+          backTarget = "menu",
         },
         ["auxillary"] = {
           backTarget = "grid",
@@ -452,7 +456,65 @@ M.Children = {
       },
     },
     targetScope = "grid",
-    backTarget = "menu.others",
+    backTarget = "menu",
+  },
+  ["experiencesSelector"] = {
+    screenId = "menu.experiencesSelector",
+    title = "ui.playmodes.quickStartExperiences",
+    onMount = "ui_gameplaySelector_general.onRouteMount",
+    ui = {
+      uiTypes = {"vue"},
+      uiTypesFilter = Constants.UiTypesFilter.only,
+      topBar = Constants.TopBarDefaultsHidden,
+    },
+    meta = {
+      gridSelector = {
+        backendName = "gameplaySelector",
+        routePath = "/gameplay-selector/experiences",
+        defaultPath = { keys = { "allGameplay" } },
+      }
+    },
+    scopeTree = {
+      ["root"] = {
+        ["grid"] = {
+          backTargetType = "route",
+          backTarget = "menu.discover",
+        },
+        ["auxillary"] = {
+          backTarget = "grid",
+          backTargetType = "scope"
+        }
+      },
+    },
+    targetScope = "grid",
+    backTarget = "menu.discover",
+    children = {
+      ["type"] = {
+        screenId = "menu.experiencesSelector.type",
+        title = {
+          mode = "dynamic",
+          source = "ui_gameplaySelector_general.resolveClusterTitle",
+          paramKey = "clusterTitle",
+          fallback = "ui.playmodes.quickStartExperiences"
+        },
+        onEnter = "ui_gameplaySelector_general.onClusterRouteEnter",
+        onMount = "ui_gameplaySelector_general.onClusterRouteMount",
+        backTarget = "menu.experiencesSelector",
+        scopeTree = {
+          ["root"] = {
+            ["grid"] = {
+              backTargetType = "route",
+              backTarget = "menu.experiencesSelector",
+            },
+            ["auxillary"] = {
+              backTarget = "grid",
+              backTargetType = "scope"
+            }
+          },
+        },
+        targetScope = "grid",
+      }
+    }
   },
   -- This route is handled by the menuRouteLifecycleCallbacks extension, forwarding the player to the new photomode route
   ["photomode"] = {
@@ -484,76 +546,29 @@ M.Children = {
       ["root"] = {}
     }
   },
-  ["extras"] = {
-    screenId = "menu.extras",
-    title = "Extras",
+  ["credits"] = {
+    screenId = "menu.credits",
+    title = "Credits",
     backTarget = "menu",
     scopeTree = {
-      ["mainmenu-extras"] = {}
+      ["mainmenu-credits"] = {}
     },
     ui = {
       uiTypes = {"vue"},
       uiTypesFilter = Constants.UiTypesFilter.only,
-      infoBar = Constants.InfoBarDefaults,
+      infoBar = Constants.InfoBarDefaultsHidden,
       topBar = Constants.TopBarDefaultsHidden,
       uiApps = {
         shown = false
       },
-    },
-    children = {
-      ["licenses"] = {
-        screenId = "menu.extras.licenses",
-        title = "Licenses",
-        backTarget = "menu.extras",
-        scopeTree = {
-          ["mainmenu-extras"] = {}
-        }
-      },
-      ["help"] = {
-        screenId = "menu.extras.help",
-        title = "Help",
-        backTarget = "menu.extras",
-        scopeTree = {
-          ["mainmenu-extras"] = {}
-        }
-      },
-      ["performance"] = {
-        screenId = "menu.extras.performance",
-        title = "Performance",
-        backTarget = "menu.extras",
-        scopeTree = {
-          ["mainmenu-extras"] = {}
-        }
-      },
-      ["stats"] = {
-        screenId = "menu.extras.stats",
-        title = "Stats",
-        backTarget = "menu.extras",
-        scopeTree = {
-          ["mainmenu-extras"] = {}
-        }
-      },
-      ["credits"] = {
-        screenId = "menu.extras.credits",
-        title = "Credits",
-        backTarget = "menu.extras",
-        scopeTree = {
-          ["mainmenu-extras-credits"] = {}
-        },
-        ui = {
-          uiTypes = {"vue"},
-          uiTypesFilter = Constants.UiTypesFilter.only,
-          infoBar = Constants.InfoBarDefaultsHidden,
-          topBar = Constants.TopBarDefaultsHidden,
-          uiApps = {
-            shown = false
-          },
-        }
-      }
     }
   },
   ["modsDetails"] = {
-    screenId = "menu.modsDetails"
+    screenId = "menu.modsDetails",
+    ui = {
+      uiTypes = {"angular"},
+      uiTypesFilter = Constants.UiTypesFilter.only
+    }
   },
   ["options"] = {
     screenId = "menu.options",
@@ -629,11 +644,11 @@ M.Children = {
   ["replay"] = {
     screenId = "menu.replay",
     title = "ui.menu.replay",
-    backTarget = "menu",
+    backTarget = replayBackTarget,
     scopeTree = {
       ["menu-replay-assembly"] = {
         ["menu-replay-browser"] = {
-          backTarget = "menu",
+          backTarget = replayBackTarget,
           backTargetType = "route",
           preferAutoFocus = true
         }

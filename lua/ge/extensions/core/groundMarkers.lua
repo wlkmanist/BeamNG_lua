@@ -13,6 +13,8 @@ local M = {}
 M.dependencies = {'core_groundMarkerArrows'}
 M.routePlanner = require('/lua/ge/extensions/gameplay/route/route')()
 M.debugPath = false
+local pathRequestId = 0
+local pathPending = false
 
 local decals = {}
 local numDecals = 0
@@ -41,6 +43,7 @@ local function deprecationWarning(oldFunction, newFunction)
 end
 
 local function getPathLength()
+  if pathPending then return math.huge end
   if M.routePlanner.path and M.routePlanner.path[1] then
     return M.routePlanner.path[1].distToTarget
   end
@@ -180,7 +183,7 @@ local appInterval = 0.25
 local lastGenerationPos
 local playerVehPos = vec3()
 local function onPreRender(dt)
-  if not M.endWP or photoModeOpen then return end
+  if not M.endWP or not M.routePlanner.path[1] or photoModeOpen then return end
   profilerPushEvent("Groundmarkers onPreRender")
 
   local veh = getPlayerVehicle(0)
@@ -194,7 +197,7 @@ local function onPreRender(dt)
     playerVehPos:set(core_camera.getPosition())
   end
 
-  if freeroam_bigMapMode.bigMapActive() or not lastGenerationPos or lastGenerationPos:distance(playerVehPos) > 1 then
+  if M.renderDecals ~= false and (freeroam_bigMapMode.bigMapActive() or not lastGenerationPos or lastGenerationPos:distance(playerVehPos) > 1) then
     generateRouteDecals(playerVehPos)
     lastGenerationPos = lastGenerationPos or vec3()
     lastGenerationPos:set(playerVehPos)
@@ -217,7 +220,7 @@ local function onPreRender(dt)
     end
   end
 
-  if settings.getValue("showNavigationGroundmarkers") then
+  if M.renderDecals ~= false and settings.getValue("showNavigationGroundmarkers") then
     Engine.Render.DynamicDecalMgr.addDecals(M.decalPool, M.activeDecalCount)
   end
   appTimer = appTimer + dt
@@ -244,8 +247,11 @@ local function sendToApp()
 end
 
 local function setPath(wp, options)
-  profilerPushEvent("Groundmarkers setFocus")
+  profilerPushEvent("Groundmarkers setPath")
   options = options or {}
+  pathRequestId = pathRequestId + 1
+  local requestId = pathRequestId
+  pathPending = false
   M.endWP = nil
   -- clear pool
   M.decalPoolCount = 0
@@ -266,13 +272,14 @@ local function setPath(wp, options)
   M.renderDecals = options.renderDecals ~= false
   M.routePlanner.lockFixedNodes = options.lockFixedNodes or false
   M.endWP = (type(wp) == 'table' and wp) or {wp}
+  M.routePlanner:clear()
   if not wp or tableIsEmpty(M.endWP) then
-    M.routePlanner:clear()
     M.endWP = nil
     local data = {
       markers = {}
     }
     guihooks.trigger("NavigationGroundMarkersUpdate", data)
+    core_groundMarkerArrows.clearArrows()
   else
     local veh = getPlayerVehicle(0)
     local vehiclePos = vec3(veh and veh:getPosition() or core_camera.getPosition())
@@ -295,15 +302,30 @@ local function setPath(wp, options)
     profilerPushEvent("Groundmarkers route setupPath")
     M.routePathTmp = multiPath
     M.routePlanner:setRouteParams(M.cutOffDrivability, M.dirMult, M.penaltyAboveCutoff, M.penaltyBelowCutoff, M.wD, M.wZ)
-    M.routePlanner:setupPathMulti(multiPath)
-    if veh then
-      M.routePlanner:trackVehicle(veh)
+    local function onPathReady()
+      if requestId ~= pathRequestId or not M.endWP then return end
+      pathPending = false
+      local currentVeh = getPlayerVehicle(0)
+      if currentVeh then
+        M.routePlanner:trackVehicle(currentVeh)
+      end
+      M.sendToApp()
+      core_groundMarkerArrows.createArrowPool(M.floatingArrowColor)
+      if options.onComplete then
+        options.onComplete()
+      end
     end
-    profilerPopEvent('Groundmarkers setFocus')
-    M.sendToApp()
+    if options.async then
+      pathPending = true
+      guihooks.trigger("NavigationGroundMarkersUpdate", { markers = {} })
+      core_groundMarkerArrows.clearArrows()
+      M.routePlanner:setupPathMultiJob(multiPath, onPathReady)
+    else
+      M.routePlanner:setupPathMulti(multiPath)
+      onPathReady()
+    end
+    profilerPopEvent('Groundmarkers route setupPath')
   end
-
-  core_groundMarkerArrows.createArrowPool(M.floatingArrowColor)
 
   profilerPopEvent('Groundmarkers setPath')
 end
@@ -321,6 +343,7 @@ local function unflagFirstFixedNode()
     M.routePlanner:clear()
     M.endWP = nil
     guihooks.trigger("NavigationGroundMarkersUpdate", { markers = {} })
+    core_groundMarkerArrows.clearArrows()
     return true
   end
 

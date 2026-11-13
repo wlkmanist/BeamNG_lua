@@ -618,8 +618,8 @@ end
 
 local forwardVec = vec3(0, -1, 0)
 local anotherForwardVec = vec3(0, 1, 0)
-local scaleVec = vec3(7, 8, 5)
-local anotherScaleVec = vec3(10, 12, 5)
+local scaleVec = vec3(3, 3.7, 3)
+local anotherScaleVec = vec3(4, 5, 4)
 local drawPos
 local color
 local propPos

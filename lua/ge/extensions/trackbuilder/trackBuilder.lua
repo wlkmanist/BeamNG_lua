@@ -633,7 +633,7 @@ local function dragDropSource(texture)
     if not materialSettings.dragDropData then materialSettings.dragDropData = im.ArrayChar(64, texture.path) end
     if not materialSettings.dragDropImage then materialSettings.dragDropImage = editor.texObj(texture.path) end
     im.SetDragDropPayload("TrackBuilderMaterialPayload", materialSettings.dragDropData, im.ArraySize(materialSettings.dragDropData), im.Cond_Once );
-    im.Image(materialSettings.dragDropImage.texId, im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
+    im.Image(materialSettings.dragDropImage.tex:getID(), im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
     im.EndDragDropSource()
   end
 end
@@ -656,7 +656,7 @@ local function dragDropSourceTextureSet(name, set)
     if not materialSettings.dragDropData then materialSettings.dragDropData = im.ArrayChar(64, name) end
     if not materialSettings.dragDropImage then materialSettings.dragDropImage = set.tex end
     im.SetDragDropPayload("TrackBuilderTextureSetPayload", materialSettings.dragDropData, im.ArraySize(materialSettings.dragDropData), im.Cond_Once );
-    im.Image(materialSettings.dragDropImage.texId, im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
+    im.Image(materialSettings.dragDropImage.tex:getID(), im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
     im.EndDragDropSource()
   end
 end
@@ -679,7 +679,7 @@ local function dragDropSourceGlowMap(name, glowMap)
     if not materialSettings.dragDropData then materialSettings.dragDropData = im.ArrayChar(64, name) end
     if not materialSettings.dragDropImage then materialSettings.dragDropImage = glowMap.tex end
     im.SetDragDropPayload("TrackBuilderGlowMapPayload", materialSettings.dragDropData, im.ArraySize(materialSettings.dragDropData), im.Cond_Once );
-    im.Image(materialSettings.dragDropImage.texId, im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
+    im.Image(materialSettings.dragDropImage.tex:getID(), im.ImVec2(50, 50), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,255,255,255).Value, im.ImColorByRGB(255,255,255,255).Value)
     im.EndDragDropSource()
   end
 end
@@ -722,7 +722,7 @@ local function materialEditor()
 
   im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.texture", 'Texture'))
   im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.base", 'Base'))
-  if im.ImageButton("##imageButton1", materialSettings.base.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
+  if im.ImageButton("##imageButton1", materialSettings.base.tex:getID(), im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
   dragDropTarget('base')
   dragDropTargetTextureSet()
   textureTooltip(materialSettings.base)
@@ -736,7 +736,7 @@ local function materialEditor()
 
   im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.decal", "Decal"))
   im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.center", "Center"))
-  if im.ImageButton("##imageButton2", materialSettings.center.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
+  if im.ImageButton("##imageButton2", materialSettings.center.tex:getID(), im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(255,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
   dragDropTarget('center')
   dragDropTargetGlowMap('center')
   textureTooltip(materialSettings.center)
@@ -750,7 +750,7 @@ local function materialEditor()
 
   im.TextColored(style.textColor,"")
   im.TextColored(style.textColor,_tr("ui.trackBuilder.matEditor.border", "Border"))
-  if im.ImageButton("##imageButton3", materialSettings.border.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
+  if im.ImageButton("##imageButton3", materialSettings.border.tex:getID(), im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,0).Value, im.ImColorByRGB(255,255,255,255).Value) then end
   dragDropTarget('border')
   dragDropTargetGlowMap('border')
   textureTooltip(materialSettings.border)
@@ -805,7 +805,7 @@ local function materialEditor()
     im.BeginChild1("baseTextureChild", im.ImVec2(-1,160))
     local i = 1
     for name, set in pairs(materialSettings.textureSets) do
-      if im.ImageButton("##imageButton4", set.tex.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then print("Image") end
+      if im.ImageButton("##baseTexture_" .. name, set.tex:getID(), im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then print("Image") end
       dragDropSourceTextureSet(name, set)
       im.tooltip(name)
       if i % 3 ~= 0 and i ~= materialSettings.texteSetsSize then im.SameLine() end
@@ -819,7 +819,7 @@ local function materialEditor()
     im.BeginChild1("decalTextureChild",im.ImVec2(-1,160))
     local i = 1
     for name, glowMap in pairs(materialSettings.glowMaps) do
-      if im.ImageButton("##imageButton5", glowMap.tex.texId, im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then print("Image") end
+      if im.ImageButton("##decalTexture_" .. name, glowMap.tex:getID(), im.ImVec2(64,64), im.ImVec2Zero, im.ImVec2One, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then print("Image") end
       dragDropSourceGlowMap(name, glowMap)
       im.tooltip(name)
       if i % 3 ~= 0 and i ~= materialSettings.glowMapsSize then im.SameLine() end
@@ -3505,9 +3505,21 @@ local function showTrackBuilderWindow(show)
       open[0] = false
     end
   end
+
+  -- every entry point funnels through here, so listeners see the real final state
+  extensions.hook('onTrackBuilderWindowToggled', open[0])
 end
 
+-- set while route-driven teardown (onRouteLeave) runs, so the editor teardown
+-- inside hideTrackBuilder does not try to navigate on top of the router.
+local tearingDown = false
+
+-- set while enter() is waiting for a level load; onClientEndMission must not
+-- navigate away from the trackBuilder route before showTrackBuilder runs.
+local pendingEnter = false
+
 local function showTrackBuilder()
+  pendingEnter = false
   local freeCam = commands.isFreeCamera()
   if not freeCam then
     commands.setGameCamera()
@@ -3524,6 +3536,16 @@ local function hideTrackBuilder()
 
   initialized = false
   tb = nil
+
+  -- editor closed on its own (e.g. ImGui X): if we are still on the track-builder
+  -- gameplay route, hand the route back to normal gameplay.
+  if not tearingDown then
+    extensions.ui_menuManager.setGameplayRoute(nil)
+    local current = extensions.ui_router.getCurrent()
+    if current and current.request and current.request.name == "trackBuilder" then
+      extensions.ui_router.navigate("play")
+    end
+  end
 end
 
 
@@ -3533,12 +3555,82 @@ local function toggleTrackBuilder()
     commands.setGameCamera()
   end
   local active = open[0]
-  showTrackBuilderWindow(not active)
   if active then
-    extensions.telemetry_core.endActivity("trackBuilder")
+    hideTrackBuilder()
   else
-    extensions.telemetry_core.startActivity("trackBuilder")
+    extensions.ui_menuManager.setGameplayRoute("trackBuilder")
+    local current = extensions.ui_router.getCurrent()
+    if not current or not current.request or current.request.name ~= "trackBuilder" then
+      extensions.ui_router.navigate("trackBuilder")
+    end
+    showTrackBuilderWindow(true)
   end
+end
+
+
+-- centralized activation contract used by the router and by freeroam
+
+local function isActive()
+  return initialized and open[0] == true
+end
+
+local function enter(levelName, forceLoad)
+  local currentLevel = getCurrentLevelIdentifier()
+  local wantedLevel = levelName and string.lower(levelName) or nil
+  local needsLoad = currentLevel == nil or forceLoad == true or (wantedLevel ~= nil and currentLevel ~= wantedLevel)
+
+  if needsLoad then
+    local level = core_levels.getLevelByName(levelName)
+    if not level then
+      log('E', logTag, 'Level not found: ' .. tostring(levelName))
+      return
+    end
+    pendingEnter = true
+    extensions.setCompletedCallback("onClientStartMission", function()
+      log('I', logTag, 'trackBuilder enter callback triggered...')
+      trackbuilder_trackBuilder.showTrackBuilder()
+    end)
+    freeroam_freeroam.startFreeroam(level)
+  else
+    M.showTrackBuilder()
+  end
+end
+
+local function exit()
+  if not isActive() then return end
+  -- teardown driven by the router already leaving the route: tear the editor down
+  -- and release the gameplay route, but let the router own the navigation target.
+  tearingDown = true
+  hideTrackBuilder()
+  tearingDown = false
+  extensions.ui_menuManager.setGameplayRoute(nil)
+end
+
+local function exitToMainMenu()
+  pendingEnter = false
+  if isActive() then
+    exit()
+  end
+  returnToMainMenu()
+end
+
+local function onRouteEnter(context, toRoute, fromRoute, data)
+  local params = (toRoute and toRoute.params) or {}
+  local levelName = params.level or "glow_city"
+  local forceLoad = params.forceLoad == true
+  extensions.ui_menuManager.setGameplayRoute("trackBuilder")
+  enter(levelName, forceLoad)
+end
+
+local function onRouteLeave(context, toRoute, fromRoute, data)
+  if isActive() then
+    exit()
+  end
+end
+
+local function onClientEndMission()
+  if pendingEnter then return end
+  hideTrackBuilder()
 end
 
 
@@ -3549,6 +3641,13 @@ M.toggleTrackBuilder = toggleTrackBuilder
 M.showTrackBuilderWindow = showTrackBuilderWindow
 M.onWindowResized = onWindowResized
 M.onUpdate = onUpdate
-M.onClientEndMission = hideTrackBuilder
+M.onClientEndMission = onClientEndMission
+
+M.isActive = isActive
+M.enter = enter
+M.exit = exit
+M.exitToMainMenu = exitToMainMenu
+M.onRouteEnter = onRouteEnter
+M.onRouteLeave = onRouteLeave
 
 return M

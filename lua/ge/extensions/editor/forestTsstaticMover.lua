@@ -197,6 +197,7 @@ local function captureForestData(items)
       itemDataId = d and d.getId and d:getId() or nil,
       shapeFile = d and tostring(d:getShapeFile()) or nil,
       uid = it.getUid and it:getUid() or nil,
+      customData = it:getCustomData(),
     })
   end
   return t
@@ -350,6 +351,10 @@ local function actionUndo(data)
       end
       if itemData then
         local item = forestData:createNewItem(itemData, fs.transform, fs.scale)
+        -- createNewItem cannot take custom data, so copy it over onto the created item
+        if fs.customData and fs.customData >= 0 then
+          item = editor.setForestItemCustomData(forestData, item:getKey(), fs.customData)
+        end
         table.insert(restored, item)
       end
     end
@@ -549,7 +554,7 @@ local function onWindowMenuItem()
 end
 
 local function onEditorInitialized()
-  editor.addWindowMenuItem(toolName, onWindowMenuItem)
+  editor.addWindowMenuItem(toolName, onWindowMenuItem, {groupMenuName = 'Terrain'})
   editor.registerWindow(toolWindowName, im.ImVec2(560, 260))
 end
 

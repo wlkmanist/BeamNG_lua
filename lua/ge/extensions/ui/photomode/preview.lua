@@ -53,7 +53,7 @@ end
 
 local function runPreviewJumpPayload(payload)
   if commands and type(commands.setFreeCamera) == "function" then
-    local freecamOk, freecamErr = pcall(commands.setFreeCamera)
+    local freecamOk, freecamErr = pcall(commands.setFreeCamera, 0)
     if not freecamOk then
       log("E", logTag, "runPreviewJumpPayload setFreeCamera failed: " .. tostring(freecamErr))
     end

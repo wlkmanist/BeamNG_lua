@@ -104,7 +104,11 @@ local cameraSmoothMoveJob = function(job)
 end
 
 local function fitViewToSelectionSmooth()
-  if not editor_gizmoHelper.isGizmoVisible() then return end
+  local hasSelection = editor.selection
+    and editor.selection.object
+    and #editor.selection.object > 0
+  if not hasSelection and not editor_gizmoHelper.isGizmoVisible() then return end
+  if hasSelection and editor.computeSelectionBBox then editor.computeSelectionBBox() end
   local bBox = editor.objectSelectionBBox
   local viewRadius = (bBox.maxExtents - bBox.minExtents):len()
   local maxViewRadius = 16000
@@ -122,7 +126,7 @@ local function fitViewToSelectionSmooth()
   camVars.camStartPos = core_camera.getPosition()
   local rot = core_camera.getQuat()
   local center = bBox:getCenter()
-  if not editor.selection.object or (#editor.selection.object == 0) then
+  if not hasSelection then
     center = editor.getAxisGizmoTransform():getColumn(3)
     viewRadius = minViewRadius
   end

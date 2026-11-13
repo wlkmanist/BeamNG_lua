@@ -25,7 +25,8 @@ local M = {}
 
 -- External modules.
 local ffi = require('ffi')
-local render = require('editor/toolUtilities/render')
+local rMarkup = require('editor/toolUtilities/render/markup')
+local rGraph = require('editor/toolUtilities/render/graph')
 local style = require('editor/toolUtilities/style')
 local audioForest = require('core/audioForest')
 local audioForestCommon = require('core/audioForest/audioForestCommon')
@@ -493,8 +494,8 @@ local function updateForestHoverPicking()
   end
 
   tmpH:set(hoveredForestPos.x, hoveredForestPos.y, hoveredForestPos.z + 2.0)
-  if render.markupSplineName then
-    render.markupSplineName(tmpH, hoverLabelStr)
+  if rMarkup.markupSplineName then
+    rMarkup.markupSplineName(tmpH, hoverLabelStr)
   end
 
   if im.IsMouseClicked(0) then
@@ -931,7 +932,7 @@ local function onEditorGui()
   if showNodeVisPtr[0] and worldGraph then
     worldGraph.sphereRadius = nodeVisSphereRadiusPtr[0]
     if emitterNodeIds and emitterNodeIdCount and emitterNodeIdCount > 0 then
-      render.renderWorldGraphNodeBackdrops(
+      rGraph.renderWorldGraphNodeBackdrops(
       worldGraph,
       nodeVisDrawRadiusPtr[0],
       emitterNodeIds,
@@ -939,7 +940,7 @@ local function onEditorGui()
       1.7,
       color(60, 60, 60, 90))
     end
-    render.renderWorldGraphNodes(worldGraph, nodeVisDrawRadiusPtr[0])
+    rGraph.renderWorldGraphNodes(worldGraph, nodeVisDrawRadiusPtr[0])
 
     local centroidActive, cx, cy, cz = audioForest.getMainEmitterDebugState()
     if centroidActive then

@@ -7,7 +7,7 @@
  -- http://timothylottes.blogspot.com/
  --
  -- The shader is tuned for the defaul quality and good performance.
- -- See shaders\common\postFx\fxaa\fxaaP.hlsl to tweak the internal
+ -- See shaders\common\postFx\fxaa\fxaa.cs.hlsl to tweak the internal
  -- quality and performance settings.
 local fxaa_PostEffectCallbacks = {}
 fxaa_PostEffectCallbacks.onEnabled = function()
@@ -15,6 +15,10 @@ fxaa_PostEffectCallbacks.onEnabled = function()
   local smaa_postfx = scenetree.findObject("SMAA_PostEffect")
   if smaa_postfx then
      smaa_postfx:disable()
+  end
+  -- defined by postFx/smaa.lua, which owns the T2x chain and the render view jitter that goes with it
+  if disableSmaaT2x then
+    disableSmaaT2x()
   end
   return true
 end
@@ -30,8 +34,7 @@ if not fxaaShaderData then
   fxaaStateBlock:registerObject("FXAA_StateBlock")
 
   local fxaaShaderData = createObject("ShaderData")
-  fxaaShaderData.DXVertexShaderFile    = "shaders/common/postFx/fxaa/fxaaV.hlsl"
-  fxaaShaderData.DXPixelShaderFile     = "shaders/common/postFx/fxaa/fxaaP.hlsl"
+  fxaaShaderData.DXComputShaderName    = "shaders/common/postFx/fxaa/fxaa.cs.hlsl"
   fxaaShaderData:setField("samplerNames", 0, "$colorTex")
   fxaaShaderData.pixVersion = 5.0
   fxaaShaderData:registerObject("FXAA_ShaderData")

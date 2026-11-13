@@ -7,12 +7,8 @@ local Common = require("ge/extensions/ui/pause/providers/routeData/common")
 local M = {}
 
 local function pushRoute(routeName)
-  if extensions and extensions.ui_router and extensions.ui_router.navigate then
-    local result = extensions.ui_router.navigate(routeName)
-    return result ~= false
-  end
-  guihooks.trigger("ChangeState", {state = routeName})
-  return true
+  local result = extensions.ui_router.navigate(routeName)
+  return result ~= false
 end
 
 -- "Exit scenario" only clears scenario_scenarios' bookkeeping and leaves the
@@ -82,21 +78,25 @@ local function toActionLabel(value, fallback)
   return fallback
 end
 
-local function addFreeroamStyleRecoveryActions(actions, registerButton)
-  table.insert(actions, registerButton({
-    id = "home.repairHere",
-    label = _tr("ui.radialmenu2.repairVehicle"),
-    icon = "wrench",
-    rail = "home",
-    visible = true,
-    enabled = true,
-  }, function()
-    local veh = getCurrentPlayerVehicle()
-    if not veh or not spawn or not spawn.safeTeleport then return false end
-    spawn.safeTeleport(veh, veh:getPosition(), quatFromDir(veh:getDirectionVector()), nil, nil, nil, nil, true)
-    extensions.hook("onPauseMenuRightRailButtonPressed", "repairHere")
-    return true
-  end))
+local function addFreeroamStyleRecoveryActions(context, actions, registerButton)
+  if not context.isMultiseatActive then
+    local hasVehicle = getCurrentPlayerVehicle() ~= nil
+    table.insert(actions, registerButton({
+      id = "home.repairHere",
+      label = _tr("ui.radialmenu2.repairVehicle"),
+      icon = "wrench",
+      rail = "home",
+      visible = true,
+      enabled = hasVehicle,
+      disabledReason = not hasVehicle and _tr("ui.radialmenu2.noVehicle") or nil,
+    }, function()
+      local veh = getCurrentPlayerVehicle()
+      if not veh or not spawn or not spawn.safeTeleport then return false end
+      spawn.safeTeleport(veh, veh:getPosition(), quatFromDir(veh:getDirectionVector()), nil, nil, nil, nil, true)
+      extensions.hook("onPauseMenuRightRailButtonPressed", "repairHere")
+      return true
+    end))
+  end
 end
 
 local function addCareerRecoveryActions(actions, registerButton)
@@ -247,8 +247,9 @@ local function buildRecoveryActions(context, registerButton)
     visible = true,
     enabled = true,
   }, function()
-    if gameplay_missions_missionScreen and gameplay_missions_missionScreen.isMissionStartOrEndScreenActive() then
-      return pushRoute("mission.control")
+    if ui_menuManager and ui_menuManager.toggleMenu then
+      ui_menuManager.toggleMenu()
+      return true
     end
     return pushRoute("play")
   end))
@@ -268,7 +269,7 @@ local function buildRecoveryActions(context, registerButton)
   end
 
   if context.mode == "multiplayer" or context.mode == "freeroam" or context.mode == "freeroamTutorial" then
-    addFreeroamStyleRecoveryActions(actions, registerButton)
+    addFreeroamStyleRecoveryActions(context, actions, registerButton)
   end
 
   return actions
@@ -297,12 +298,134 @@ local function buildTutorialLessonActions(context, registerButton)
     enabled = true,
   }, function()
     gameplay_discover_freeroamTutorial_tutorial.setActivePhase("")
-    local result = pushRoute("play")
-    if not result then
-      guihooks.trigger("ChangeState", {state = "play"})
-    end
-    return result
+    return pushRoute("play")
   end))
+
+  return actions
+end
+
+local function buildGuidedFirstDriveResumeActions(registerButton)
+  local exp = gameplay_discover_firstDrive_experience
+  if not exp or not exp.isGuidedDriveActive or not exp.isGuidedDriveActive() then return {} end
+
+  return {
+    registerButton({
+      id = "home.firstDrive.continue",
+      label = _tr("ui.experiences.firstDrive.pause.continue"),
+      icon = "play",
+      rail = "home",
+      visible = true,
+      enabled = true,
+    }, function()
+      if ui_menuManager and ui_menuManager.toggleMenu then
+        ui_menuManager.toggleMenu()
+        return true
+      end
+      return false
+    end),
+  }
+end
+
+local function buildGuidedFirstDriveExitActions(registerButton)
+  local exp = gameplay_discover_firstDrive_experience
+  if not exp or not exp.isGuidedDriveActive or not exp.isGuidedDriveActive() then return {} end
+
+  return {
+    registerButton({
+      id = "home.firstDrive.exit",
+      label = _tr("ui.experiences.firstDrive.pause.exit"),
+      icon = "catalog02",
+      rail = "home",
+      flavor = "danger",
+      confirmText = _tr("ui.experiences.firstDrive.pause.confirmExit"),
+      cancelLabel = _tr("ui.pause.common.keepPlaying"),
+      visible = true,
+      enabled = true,
+    }, function()
+      exp.onFirstDrivePauseExit()
+      return true
+    end),
+  }
+end
+
+local function buildFirstDriveLearningActions(registerButton)
+  local exp = gameplay_discover_firstDrive_experience
+  if not exp or not exp.isActive or not exp.isActive() then return {} end
+
+  local learning = gameplay_discover_firstDrive_learningFlow
+  local hasActiveLesson = learning and learning.hasActiveLesson and learning.hasActiveLesson()
+  local actions = {}
+
+  if hasActiveLesson then
+    local drivingAssistsLesson = gameplay_discover_firstDrive_lessons_drivingAssists_drivingAssists
+    if learning.isLessonActive and learning.isLessonActive("drivingAssists")
+      and drivingAssistsLesson and drivingAssistsLesson.canConfirm and drivingAssistsLesson.canConfirm() then
+      table.insert(actions, registerButton({
+        id = "home.firstDrive.confirmDrivingAssists",
+        label = _tr("ui.experiences.freeroamTutorial.drivemode.button.confirm"),
+        icon = "checkmark",
+        rail = "home",
+        routeTarget = "play",
+        visible = true,
+        enabled = true,
+      }, function()
+        if not pushRoute("play") then return false end
+        return learning.completeLesson("drivingAssists")
+      end))
+    end
+    table.insert(actions, registerButton({
+      id = "home.firstDrive.stopLearningLesson",
+      label = _tr("ui.experiences.firstDrive.learning.stopLesson"),
+      icon = "abandon",
+      rail = "home",
+      routeTarget = "play",
+      visible = true,
+      enabled = true,
+    }, function()
+      learning.cancelActiveLesson("pauseMenu")
+      return pushRoute("play")
+    end))
+  elseif learning and learning.hasPendingAreaLesson and learning.hasPendingAreaLesson() then
+    table.insert(actions, registerButton({
+      id = "home.firstDrive.skipToTargetArea",
+      label = _tr("ui.experiences.firstDrive.learning.skipToTargetArea"),
+      icon = "fastTravel",
+      rail = "home",
+      routeTarget = "play",
+      visible = true,
+      enabled = true,
+    }, function()
+      local skipped = learning.skipToTargetArea()
+      if skipped then pushRoute("play") end
+      return skipped
+    end))
+  elseif learning and learning.isAvailable and learning.isAvailable() then
+    local progress = gameplay_discover_firstDrive_learningProgress
+    if progress and progress.areAllLessonsCompleted and progress.areAllLessonsCompleted() then
+      table.insert(actions, registerButton({
+        id = "home.firstDrive.finishOnboarding",
+        label = _tr("ui.experiences.firstDrive.learning.finishOnboarding"),
+        icon = "cup",
+        rail = "home",
+        routeTarget = "firstDrive.completion",
+        visible = true,
+        enabled = true,
+      }, function()
+        return exp.openOnboardingCompletion()
+      end))
+    end
+    table.insert(actions, registerButton({
+      id = "home.firstDrive.learningAreas",
+      label = _tr("ui.experiences.firstDrive.learning.pauseAction"),
+      icon = "bookOpened",
+      rail = "home",
+      routeTarget = "firstDrive.learning",
+      visible = true,
+      enabled = true,
+    }, function()
+      return exp.openLearningAreas()
+    end))
+  end
 
   return actions
 end
@@ -314,15 +437,25 @@ local function buildAuxiliaryActions(context, registerButton)
     or context.mode == "garage"
     or context.mode == "freeroamTutorial"
 
-  if vehicleSelectorAllowed then
+  if vehicleSelectorAllowed and not context.isMultiseatActive then
+    local permission = { enabled = true }
+    local capabilities = gameplay_discover_firstDrive_capabilities
+    local vehicleManagementLessonActive = gameplay_discover_firstDrive_learningFlow
+      and gameplay_discover_firstDrive_learningFlow.isLessonActive("vehicleManagement")
+    if not vehicleManagementLessonActive
+      and capabilities and capabilities.isSessionActive and capabilities.isSessionActive() then
+      capabilities.applyUiPermission(permission, "vehicleManagement")
+    end
     table.insert(actions, registerButton({
       id = "home.vehicleSelector",
       label = _tr("ui.menu.vehicleSelector.title"),
       icon = "vehicleFeatures01",
       routeTarget = "pause.vehicleSelector",
       visible = true,
-      enabled = true,
+      enabled = permission.enabled,
+      disabledReason = permission.disabledReason,
     }, function()
+      if permission.enabled == false then return false end
       if ui_vehicleSelector_general and ui_vehicleSelector_general.openFromPause then
         ui_vehicleSelector_general.openFromPause()
         return true
@@ -331,48 +464,68 @@ local function buildAuxiliaryActions(context, registerButton)
     end))
   end
 
-  if not context.isScenarioActive then
-    table.insert(actions, registerButton({
-      id = "home.map",
-      label = _tr("ui.dashboard.bigmap"),
-      icon = "mapWithEmitter",
-      visible = true,
-      enabled = context.isBigMapAllowed,
-      disabledReason = context.isBigMapAllowed and nil or "Disabled in current context",
-      routeTarget = "pause.bigmap",
-    }, function()
-      --if ui_pause_camera then
-      --  ui_pause_camera.endPauseSession()
-      --end
-      if freeroam_bigMapMode and freeroam_bigMapMode.enterBigMap then
-        freeroam_bigMapMode.enterBigMap({instant = true, routeTarget = "pause.bigmap"})
-        return true
+
+  if not context.isMultiseatActive then
+    if not context.isScenarioActive then
+      local mapPermission = {
+        enabled = context.isBigMapAllowed,
+        disabledReason = context.isBigMapAllowed and nil or "Disabled in current context",
+      }
+      local mapCapabilities = gameplay_discover_firstDrive_capabilities
+      if mapCapabilities and mapCapabilities.isSessionActive and mapCapabilities.isSessionActive() then
+        mapCapabilities.applyUiPermission(mapPermission, "bigMap")
       end
-      return false
-    end))
+      table.insert(actions, registerButton({
+        id = "home.map",
+        label = _tr("ui.dashboard.bigmap"),
+        icon = "mapWithEmitter",
+        visible = true,
+        enabled = mapPermission.enabled,
+        disabledReason = mapPermission.disabledReason,
+        routeTarget = "pause.bigmap",
+      }, function()
+        --if ui_pause_camera then
+        --  ui_pause_camera.endPauseSession()
+        --end
+        if mapPermission.enabled and freeroam_bigMapMode and freeroam_bigMapMode.enterBigMap then
+          freeroam_bigMapMode.enterBigMap({instant = true, routeTarget = "pause.bigmap"})
+          return true
+        end
+        return false
+      end))
+    end
   end
 
+  local photoPermission = { enabled = true }
+  local capabilities = gameplay_discover_firstDrive_capabilities
+  if capabilities and capabilities.isSessionActive and capabilities.isSessionActive() then
+    capabilities.applyUiPermission(photoPermission, "advancedSandbox")
+  end
   table.insert(actions, registerButton({
     id = "home.photomode",
     label = _tr("ui.dashboard.photomode"),
     icon = "photo",
     routeTarget = "pause.photomode",
     visible = true,
-    enabled = true,
+    enabled = photoPermission.enabled,
+    disabledReason = photoPermission.disabledReason,
   }, function()
+    if photoPermission.enabled == false then return false end
     return pushRoute("pause.photomode")
   end))
 
-  table.insert(actions, registerButton({
-    id = "home.replay",
-    label = _tr("ui.menu.replay"),
-    icon = "movieCamera",
-    routeTarget = "pause.replay",
-    visible = context.mode ~= "career",
-    enabled = context.mode ~= "career",
-  }, function()
-    return pushRoute("pause.replay")
-  end))
+  if not context.isMultiseatActive and not context.isFirstDriveActive then
+    table.insert(actions, registerButton({
+      id = "home.replay",
+      label = _tr("ui.menu.replay"),
+      icon = "movieCamera",
+      routeTarget = "pause.replay",
+      visible = context.mode ~= "career",
+      enabled = context.mode ~= "career",
+    }, function()
+      return pushRoute("pause.replay")
+    end))
+  end
 
   return actions
 end
@@ -380,7 +533,7 @@ end
 local function buildMainMenuActions(context, registerButton)
   local actions = {}
 
-  if context.mode == "freeroam" then
+  if context.mode == "freeroam" and not context.isFirstDriveActive then
 
     table.insert(actions, registerButton({
       id = "home.changeLevel",
@@ -408,10 +561,10 @@ local function buildMainMenuActions(context, registerButton)
   if (context.isMissionActive or context.isScenarioActive) and not hideExitActivityForWizardScenario then
     table.insert(actions, registerButton({
       id = "home.exitActivity",
-      label = context.isMissionActive and "Exit challenge" or "Exit scenario",
+      label = context.isMissionActive and _tr("ui.radialmenu2.missionAbandon") or _tr("ui.pause.home.exitScenario"),
       icon = "abandon",
       flavor = "danger",
-      confirmText = context.isMissionActive and "Exit current challenge?" or "Exit current scenario?",
+      confirmText = context.isMissionActive and _tr("ui.pause.home.confirmExitChallenge") or _tr("ui.pause.home.confirmExitScenario"),
       visible = true,
       enabled = true,
     }, function()
@@ -420,6 +573,10 @@ local function buildMainMenuActions(context, registerButton)
         and gameplay_missions_missionScreen.stopMissionById then
         gameplay_missions_missionScreen.stopMissionById(nil, false, true)
         return true
+      end
+
+      if context.isScenarioActive then
+        extensions.hook("onGameplayActivityAborted")
       end
 
       if context.isScenarioActive
@@ -439,16 +596,15 @@ local function buildMainMenuActions(context, registerButton)
     end))
   end
 
-  table.insert(actions, registerButton({
+  table.insert(actions, registerButton(Common.withExitConfirm({
     id = "home.exitToMainMenu",
     label = _tr("ui.pause.system.exitLevel"),
     icon = "catalog02",
     flavor = "danger",
-    confirmText = "Exit to main menu?",
     visible = true,
     enabled = true,
-  }, function()
-    returnToMainMenu()
+  }, context, Common.ExitLevelTexts), function(payload)
+    Common.runExit(returnToMainMenu, payload)
     return true
   end))
 
@@ -480,7 +636,7 @@ local function buildCareerActions(context, registerButton)
     icon = "saveAs1",
     routeTarget = "career.profiles.saveAs",
     visible = true,
-    enabled = true,
+    enabled = career_career.isAutosaveEnabled(),
   }, function()
     return pushRoute("career.profiles.saveAs")
   end))
@@ -490,9 +646,9 @@ local function buildCareerActions(context, registerButton)
     label = _tr("ui.common.load"),
     icon = "folder",
     routeTarget = "career.profiles",
-    confirmText = "Are you sure you want to load a different profile? Any unsaved progress will be lost.",
+    confirmText = _tr("ui.career.pause.loadProfileMessage"),
     visible = true,
-    enabled = true,
+    enabled = career_career.isAutosaveEnabled(),
   }, function()
     return pushRoute("career.profiles")
   end))
@@ -500,19 +656,59 @@ local function buildCareerActions(context, registerButton)
   return actions
 end
 
+local function buildMultiseatActions(context, registerButton)
+  if context.isFirstDriveActive then return {} end
+  if context.mode == "freeroam" and not context.isMultiseatActive then
+    -- when multiseat is already running it owns its own settings/exit buttons in the multiseat group
+    return {registerButton({
+      id = "home.splitScreen",
+      label = _tr("ui.multiseat.title"),
+      icon = "splitScreen",
+      visible = true,
+      enabled = true,
+    }, function()
+      extensions.load("ui_multiseat_freeroam")
+      return ui_multiseat_freeroam and ui_multiseat_freeroam.openSettings() or false
+    end)}
+  end
+
+  if context.mode ~= "multiseatGamemode" and context.mode ~= "freeroam" then return {} end
+  local actions = {}
+  extensions.hook("onPauseHomeRailBuildMultiseatActions", actions, context, registerButton)
+  return actions
+end
+
 function M.build(context, registerButton)
+  if context.isFirstDriveGuided then
+    local groups = {}
+    local resumeGroup = Common.asRailGroup("recovery", buildGuidedFirstDriveResumeActions(registerButton))
+    local exitGroup = Common.asRailGroup("mainMenu", buildGuidedFirstDriveExitActions(registerButton))
+    if resumeGroup then table.insert(groups, resumeGroup) end
+    if exitGroup then table.insert(groups, exitGroup) end
+    return groups
+  end
+
   local groups = {}
   local recoveryGroup = Common.asRailGroup("recovery", buildRecoveryActions(context, registerButton))
+  local firstDriveLearningGroup = Common.asRailGroup("firstDriveLearning", buildFirstDriveLearningActions(registerButton))
   local tutorialLessonGroup = Common.asRailGroup("tutorialLesson", buildTutorialLessonActions(context, registerButton))
   local careerGroup = Common.asRailGroup("career", buildCareerActions(context, registerButton))
   local auxiliaryGroup = Common.asRailGroup("auxiliary", buildAuxiliaryActions(context, registerButton))
   local mainMenuGroup = Common.asRailGroup("mainMenu", buildMainMenuActions(context, registerButton))
+  local multiseatGroup = Common.asRailGroup("multiseat", buildMultiseatActions(context, registerButton))
 
   if recoveryGroup then table.insert(groups, recoveryGroup) end
+  if firstDriveLearningGroup then table.insert(groups, firstDriveLearningGroup) end
   if tutorialLessonGroup then table.insert(groups, tutorialLessonGroup) end
   if careerGroup then table.insert(groups, careerGroup) end
+  if context.isMultiseatActive and multiseatGroup then table.insert(groups, multiseatGroup) end
   if auxiliaryGroup then table.insert(groups, auxiliaryGroup) end
+  if not context.isMultiseatActive and multiseatGroup then table.insert(groups, multiseatGroup) end
   if mainMenuGroup then table.insert(groups, mainMenuGroup) end
+
+  local multiseatActionCount = multiseatGroup and #(multiseatGroup.actions or {}) or 0
+  log('I', 'pause.homeRail', string.format('build: groups=%d multiseatActions=%d isMultiseatActive=%s',
+    #groups, multiseatActionCount, tostring(context.isMultiseatActive)))
 
   return groups
 end

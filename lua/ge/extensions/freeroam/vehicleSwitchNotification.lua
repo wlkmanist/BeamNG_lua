@@ -91,47 +91,77 @@ local function getSwitchableVehicleStats(currentVehId)
   return availableOptionsCount, currentOptionIndex
 end
 
-local function onVehicleSwitched(oldId, newId, player)
-  -- Only process for player 0
-  if player ~= 0 then return end
-
-  -- Check if we have a valid new vehicle
-  if newId == -1 then return end
-
-  local veh = scenetree.findObjectById(newId)
+local function showPresenceNotification(player, presence)
+  if not presence then return end
+  local veh = scenetree.findObjectById(presence.vehicleId)
   if not veh then return end
-
-  -- Clear message if entering walking mode (unicycle)
-  if veh:getJBeamFilename() == "unicycle" then
-    guihooks.trigger('Message', {
-      category = 'vehicleSwitch',
-      clear = true
-    })
-    return
-  end
-
-  -- Get vehicle name and icon
   local vehicleName, vehicleIcon = getVehicleInfo(veh)
   if not vehicleName then return end
-  local availableOptionsCount, currentOptionIndex = 1,0
-  if not core_input_actionFilter.isActionBlocked("switch_next_vehicle") and not core_input_actionFilter.isActionBlocked("switch_previous_vehicle") then
-    availableOptionsCount, currentOptionIndex = getSwitchableVehicleStats(newId)
-  else
 
+  local message
+  if presence.seatId then
+    local seatName = presence.seatId
+    if gameplay_seatOccupants and gameplay_seatOccupants.getSeats then
+      for _, seat in ipairs(gameplay_seatOccupants.getSeats(presence.vehicleId) or {}) do
+        if seat.seatId == presence.seatId then
+          if seat.displayName then
+            seatName = _tr(seat.displayName)
+          else
+            seatName = _tr(seat.defaultPermissionMode == "driver"
+              and "ui.gameplay.seatOccupants.driverSeat"
+              or "ui.gameplay.seatOccupants.passengerSeat")
+          end
+          break
+        end
+      end
+    end
+    message = core_locales.contextTranslate("ui.vehicleSwitchNotification.seat", {
+      vehicle = vehicleName,
+      seat = seatName,
+    })
+  else
+    local messageId = presence.permissionMode == "passenger"
+      and "ui.vehicleSwitchNotification.unseatedSpectator"
+      or "ui.vehicleSwitchNotification.unseatedFullControls"
+    message = core_locales.contextTranslate(messageId, {
+      vehicle = vehicleName,
+    })
   end
 
-  -- Display message with current vehicle icon
-  guihooks.trigger('Message', {
-    msg = vehicleName,
+  local availableOptionsCount, currentOptionIndex = 1, 0
+  if not core_input_actionFilter.isActionBlocked("switch_next_vehicle")
+      and not core_input_actionFilter.isActionBlocked("switch_previous_vehicle") then
+    availableOptionsCount, currentOptionIndex = getSwitchableVehicleStats(presence.vehicleId)
+  end
+  guihooks.trigger("Message", {
+    msg = message,
     ttl = 5,
-    category = 'vehicleSwitch',
+    category = "vehicleSwitch" .. tostring(player),
     icon = vehicleIcon,
+    player = player,
     availableOptionsCount = availableOptionsCount,
-    currentOptionIndex = currentOptionIndex
+    currentOptionIndex = currentOptionIndex,
   })
 end
 
+local function onVehicleSwitched(_, newId, player)
+  player = player or 0
+  local veh = newId and newId ~= -1 and scenetree.findObjectById(newId)
+  if not veh or veh:getJBeamFilename() == "unicycle" then
+    guihooks.trigger("Message", {
+      category = "vehicleSwitch" .. tostring(player),
+      player = player,
+      clear = true,
+    })
+  end
+end
+
+local function onPlayerVehiclePresenceChanged(player, _, presence)
+  showPresenceNotification(player or 0, presence)
+end
+
 M.onVehicleSwitched = onVehicleSwitched
+M.onPlayerVehiclePresenceChanged = onPlayerVehiclePresenceChanged
 
 return M
 

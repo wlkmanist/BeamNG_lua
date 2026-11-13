@@ -32,9 +32,8 @@ end
 
 function C:unloadExt()
   -- log('D', logTag, 'unloading gameplay_rally')
-  if extensions.isExtensionLoaded('gameplay_rally') then
-    extensions.unload('gameplay_rally')
-  end
+  if gameplay_rallyStartClock then extensions.unload('gameplay_rallyStartClock') end
+  if gameplay_rally then extensions.unload('gameplay_rally') end
 
   if self.loadedRallyLoopBridge and extensions.isExtensionLoaded(rallyUtil.extRallyLoop) then
     local loopManager = gameplay_rallyLoop and gameplay_rallyLoop.getManager()
@@ -66,6 +65,7 @@ function C:workOnce()
   -- self:unloadExt()
   self:loadExt()
   self:loadRallyLoopBridge()
+  extensions.load('gameplay_rallyStartClock')
 
   local missionId, missionDir, voicepackPick
 

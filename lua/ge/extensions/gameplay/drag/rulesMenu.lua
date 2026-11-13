@@ -14,18 +14,35 @@ local POI_RADIUS = 12
 
 -- local presetManager
 -- No persistence, just returns/accepts the supplied defaults so the rules menu keeps working.
-local presetManagerFallback = {
-  getPreset = function(levelId, stripId) return nil end,
-  getOrCreatePreset = function(levelId, stripId, defaultsFromStrip)
-    local def = defaultsFromStrip or {}
-    return {
-      dragType = def.dragType or "headsUpRace",
-      treeType = def.treeType or ".500",
-      importantTimerId = def.importantTimerId or "time_1_4",
-    }
-  end,
-  savePreset = function(levelId, stripId, rules) end,
-}
+local presetManagerFallback = (function()
+  local store = {}
+  local function makeKey(levelId, stripId)
+    return (levelId or "") .. "|" .. (stripId or "")
+  end
+  return {
+    getPreset = function(levelId, stripId)
+      return store[makeKey(levelId, stripId)]
+    end,
+    getOrCreatePreset = function(levelId, stripId, defaultsFromStrip)
+      local existing = store[makeKey(levelId, stripId)]
+      if existing then return existing end
+      local def = defaultsFromStrip or {}
+      return {
+        dragType = def.dragType or "headsUpRace",
+        treeType = def.treeType or ".500",
+        importantTimerId = def.importantTimerId or "time_1_4",
+      }
+    end,
+    savePreset = function(levelId, stripId, rules)
+      if not rules then return end
+      store[makeKey(levelId, stripId)] = {
+        dragType = rules.dragType,
+        treeType = rules.treeType,
+        importantTimerId = rules.importantTimerId,
+      }
+    end,
+  }
+end)()
 local function getPresetManager()
   -- local ok, mod = pcall(require, "multiplayer.gamemodes.drag.util.presetManager")
   -- if ok and mod then return mod end
@@ -135,7 +152,7 @@ M.getRulesScreenData = function(facilityIdOrStripId)
     local label = (t.label and t.label ~= "") and t.label or id
     local typ = (t.type == "velocity") and "velocity" or "distanceTimer"
     local dist = type(t.distance) == "number" and t.distance or 0
-    table.insert(timers, { id = id, label = label, shortLabel = t.shortLabel, type = typ, distance = dist })
+    table.insert(timers, { id = id, label = label, labelKey = t.labelKey, shortLabel = t.shortLabel, type = typ, distance = dist })
   end
   return {
     levelId = levelId,

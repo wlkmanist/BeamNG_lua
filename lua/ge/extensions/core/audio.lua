@@ -71,7 +71,6 @@ local function populateBankSets()
       filepath = "/"..filepath
     end
     filepath = string.lower(filepath)
-    local stringParts = {}
     local filename = string.match(filepath, "^(.-)%.") --(.-) capture is non-greedy, capture as few characters as possible. '%.' means '.' has to exist in the string. Capture upto 1st '.' excluding the period.
     local key = string.match(filename, "([^/]*)$")
     local fileStats = FS:stat(filepath)
@@ -150,33 +149,15 @@ end
 
 local function onFirstUpdate()
   --log("I", "onFirstUpdate", 'onFirstUpdate called....')
-  profilerPushEvent('audioLoadBanksFirstFrame')
-  if M.hotloadTriggered then
-    log("I", "audio", 'Hotloading banks....')
-    loadedBankCache = {}
-    levelProjectsCache  = {}
-    if SFXFMODProject then
-      SFXFMODProject.hotloadingTriggered()
-    else
-     log("E", "audio", "SFXFMODProject is nil")
-   end
+  if M.keepLoadedBanks then
+    M.keepLoadedBanks = nil
+    inited = true
+    return
   end
 
+  profilerPushEvent('audioLoadBanksFirstFrame')
   populateBankSets()
   loadBankSets()
-
-  if M.hotloadTriggered then
-    -- We need to trigger what would have happened in onClientPreStartMission because we are
-    -- already in the level and triggered hotloading
-    -- loadLevelBanks()
-    if SFXFMODProject then
-      SFXFMODProject.hotloadingCompleted()
-    else
-     log("E", "audio", "SFXFMODProject is nil")
-    end
-  end
-
-  M.hotloadTriggered = nil
 
   profilerPopEvent('audioLoadBanksFirstFrame')
 end
@@ -236,7 +217,7 @@ local function onFilesChanged(files)
       filename = "/"..filename
     end
 
-    if filename and filename:match('.*%.bank$') then
+    if string.sub(filename, -5) == '.bank' then
       filename = string.lower(filename)
       loadedBankCache[filename] = false
 
@@ -258,12 +239,17 @@ local function onFilesChanged(files)
 end
 
 local function onSerialize()
-    startProcessForHotloading()
-    return { hotloadTriggered = true }
+  return {
+    keepLoadedBanks = true,
+    levelProjectsCache = levelProjectsCache,
+    loadedBankCache = loadedBankCache,
+  }
 end
 
 local function onDeserialized(data)
-  M.hotloadTriggered = data.hotloadTriggered
+  M.keepLoadedBanks = data.keepLoadedBanks
+  levelProjectsCache = data.levelProjectsCache or {}
+  loadedBankCache = data.loadedBankCache or {}
 end
 
 local function onPhysicsPaused()

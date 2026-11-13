@@ -14,6 +14,7 @@ local lookBackVec = vec3(0,-0.3,0)
 local upperSpeedThreshold = 10
 local lowerSpeedThreshold = 1
 local pitchTransitionDelay = 1.5
+local hdegToRad = math.pi/180 * 0.5
 
 local function getRot(base, vf, vz)
   local nyn = vf:normalized()
@@ -30,7 +31,6 @@ function C:init()
   self.camLastPos = vec3()
   self.camLastPos2 = vec3()
   self.camLastPosPerp = vec3()
-  self.camVel = vec3()
   self.cameraResetted = 3
   self.lockCamera = false
   self.orbitOffset = vec3()
@@ -106,6 +106,7 @@ function C:onVehicleCameraConfigChanged()
   self.skipFovModifier = self.skipFovModifier or false
   self.smoothedPitchOffset:set(0)
   self.dynamicPitchQuat:setFromEuler(0, 0, 0)
+  self.dynamicPitchActive = false
   self.aboveCamPitchThreshold = false
   self.dynamicPitchLimit = nil
   self.fov = self.fov or 65
@@ -119,6 +120,8 @@ function C:onSettingsChanged()
   self.maxDynamicPitch = math.rad(settings.getValue('cameraOrbitMaxDrivingPitch') or 0)
   self.maxDynamicOffset = settings.getValue('cameraOrbitMaxDynamicOffset') or 0
   self.smoothingEnabled = settings.getValue('cameraOrbitSmoothing', true)
+  self.multiseat = settings.getValue('multiseat')
+  self.collision:onSettingsChanged()
 end
 
 function C:onVehicleSwitched()
@@ -224,11 +227,11 @@ function C:setSkipFovModifier(skip)
   self.skipFovModifier = skip
 end
 
-local function isManualRotation()
-  return MoveManager.yawRelative ~= 0 or MoveManager.pitchRelative ~= 0 or MoveManager.yawRight > 0.01 or MoveManager.yawLeft > 0.01 or MoveManager.pitchDown > 0.01 or MoveManager.pitchUp > 0.01
+local function isManualRotation(mm)
+  return mm.yawRelative ~= 0 or mm.pitchRelative ~= 0 or mm.yawRight > 0.01 or mm.yawLeft > 0.01 or mm.pitchDown > 0.01 or mm.pitchUp > 0.01
 end
 
-local ref, left, back, dirxy = vec3(), vec3(), vec3(), vec3()
+local ref, left, back = vec3(), vec3(), vec3()
 
 local nx, ny, nz = vec3(), vec3(), vec3()
 
@@ -238,9 +241,9 @@ local lastCamPointVec, lastCamLastPerp, moveDir = vec3(), vec3(), vec3()
 
 local rot, calculatedCamPos, camPos, updir, rear = vec3(), vec3(), vec3(), vec3(), vec3()
 
-local resultPos, resultRot, tempQuatB = vec3(), quat(), quat()
+local lookDir, tempQuatB = vec3(), quat()
 
-local bbCenter, bbHalfAxis1 = vec3(), vec3()
+local bbCenter, bbHalfAxis1, lookBackDir = vec3(), vec3(), vec3()
 
 function C:update(data)
   data.res.collisionCompatible = true
@@ -260,7 +263,7 @@ function C:update(data)
   if self.cameraResetted == 3 then
     if self.lockCamera == false or self.configChanged == false then
       -- if a reload hasn't just happened
-      self.camRot = vec3(self.defaultRotation)
+      self.camRot:set(self.defaultRotation)
       self.camDist = self.defaultDistance
       self.lockCamera = false
       self.accumManualYaw = 0
@@ -273,13 +276,14 @@ function C:update(data)
   if data.teleported then
     self.smoothedPitchOffset:set(0)
     self.dynamicPitchQuat:setFromEuler(0, 0, 0)
+    self.dynamicPitchActive = false
   end
 
   -- calculate the camera offset: rotate with the vehicle
-  nx:set(push3(left) - ref)
-  ny:set(push3(back) - ref)
-  nz:set(push3(nx):cross(ny))
-  ny:set(push3(nx):cross(-push3(nz)))
+  nx:setSub2(left, ref)
+  ny:setSub2(back, ref)
+  nz:setCross(nx, ny)
+  ny:setCross(nz, nx)
   nx:normalize()
   ny:normalize()
   nz:normalize()
@@ -288,32 +292,37 @@ function C:update(data)
     -- this needs to happen here as on init the node data is not existing yet
     if self.offset and self.offset.x and nx:length() ~= 0 and ny:length() ~= 0 then
       self.camBase = vec3(self.offset.x, self.offset.y, self.offset.z)
-      self.camOffset2 = nx * self.camBase.x + ny * self.camBase.y + nz * self.camBase.z
-      if self.target then
-        targetPos = data.pos + ref
-      else
-        targetPos = data.pos + ref + self.camOffset2
+      local baseX, baseY, baseZ = self.camBase.x, self.camBase.y, self.camBase.z
+      self.camOffset2 = self.camOffset2 or vec3()
+      self.camOffset2:set(nx.x * baseX + ny.x * baseY + nz.x * baseZ, nx.y * baseX + ny.y * baseY + nz.y * baseZ, nx.z * baseX + ny.z * baseY + nz.z * baseZ)
+      targetPos:setAdd2(data.pos, ref)
+      if not self.target then
+        targetPos:setAdd(self.camOffset2)
       end
     elseif self.camOffset2 then
-      targetPos = data.pos + ref + self.camOffset2
+      targetPos:setAdd2(data.pos, ref)
+      targetPos:setAdd(self.camOffset2)
       self.camOffset2 = nil -- we only use previous offset for only one frame when needed
     else
-      targetPos = data.veh:getBBCenter() - (data.pos + ref)
+      targetPos:setSub2(data.veh:getBBCenter(), push3(data.pos) + ref)
     end
   else
     if not self.camOffset2 then self.camOffset2 = vec3() end
-    self.camOffset2:set(push3(nx) * self.camBase.x + push3(ny) * self.camBase.y + push3(nz) * self.camBase.z)
-    targetPos:set(push3(data.pos) + ref + self.camOffset2)
+    local baseX, baseY, baseZ = self.camBase.x, self.camBase.y, self.camBase.z
+    self.camOffset2:set(nx.x * baseX + ny.x * baseY + nz.x * baseZ, nx.y * baseX + ny.y * baseY + nz.y * baseZ, nx.z * baseX + ny.z * baseY + nz.z * baseZ)
+    targetPos:setAdd2(data.pos, ref)
+    targetPos:setAdd(self.camOffset2)
   end
 
-  local yawDif = 0.1*(MoveManager.yawRight - MoveManager.yawLeft)
-  local pitchDif = 0.1*(MoveManager.pitchDown - MoveManager.pitchUp)
+  local mm = MoveManager
+  local yawDif = 0.1*(mm.yawRight - mm.yawLeft)
+  local pitchDif = 0.1*(mm.pitchDown - mm.pitchUp)
   dir:set(vecY)
 
   if self.cameraResetted == 0 then
     if self.lockCamera == true then
       camdir:set(push3(self.camLastTargetPos) - self.camLastPos2)
-      if sign((push3(targetPos) - self.camLastTargetPos):dot(camdir)) < 0 then
+      if (push3(targetPos) - self.camLastTargetPos):dot(camdir) < 0 then
         self.camRot.x = self.camRot.x + 180
         self.camLastRot.x = self.camLastRot.x + math.pi
         self.camLastPos2:set(push3(targetPos) + camdir)
@@ -323,7 +332,7 @@ function C:update(data)
   else
     self.lockCamera = false
     if self.cameraResetted >= 1 then
-      dir = ref - back
+      dir:setSub2(ref, back)
       if targetPos:distance(self.preResetPos) < 4 then
         -- smoothly rotate back to default
         local rx, ry = getRot((self.camLastTargetPos - self.camLastPos), dir, nz)
@@ -334,21 +343,25 @@ function C:update(data)
         self.camRot:set(self.defaultRotation)
         self.camLastRot:set(math.rad(self.camRot.x), math.rad(self.camRot.y) * 1.5, 0)
       end
-      self.camLastPos2 = targetPos - dir
-      self.camLastPosPerp = vecZ:cross(dir):normalized() * (self.relaxation * -0.8) + targetPos
+      self.camLastPos2:setSub2(targetPos, dir)
+      updir:setCross(vecZ, dir)
+      updir:normalize()
+      updir:setScaled(self.relaxation * -0.8)
+      self.camLastPosPerp:setAdd2(updir, targetPos)
       dir:normalize()
     end
   end
 
   local maxRot = 4.5
-  if (math.abs(yawDif) + math.abs(pitchDif) + math.abs(MoveManager.yawRelative) + math.abs(MoveManager.pitchRelative) > 0) then
+  if yawDif ~= 0 or pitchDif ~= 0 or mm.yawRelative ~= 0 or mm.pitchRelative ~= 0 then
     maxRot = 1000
   end
 
   -- mouse rotation
   local dtfactor = data.dt * 1000
-  local mouseYaw = sign(MoveManager.yawRelative) * math.min(math.abs(MoveManager.yawRelative * 10), maxRot * data.dt) + yawDif * dtfactor
-  local mousePitch = sign(-MoveManager.pitchRelative) * math.min(math.abs(MoveManager.pitchRelative * 10), maxRot * data.dt) + pitchDif * dtfactor
+  local maxRotDt = maxRot * data.dt
+  local mouseYaw = clamp(mm.yawRelative * 10, -maxRotDt, maxRotDt) + yawDif * dtfactor
+  local mousePitch = clamp(mm.pitchRelative * -10, -maxRotDt, maxRotDt) + pitchDif * dtfactor
   if mouseYaw ~= 0 or mousePitch ~= 0 then
     -- only lock the camera once enough horizontal movement has accumulated
     self.accumManualYaw = (self.accumManualYaw or 0) + mouseYaw
@@ -376,17 +389,17 @@ function C:update(data)
   end
 
   -- If the camera is colliding with something, dont increase the camDist
-  local zoomChange = MoveManager.zoomIn - MoveManager.zoomOut
-  local newCamDist
-  local adjustedSpeed = data.fastSpeedModifier and data.speed * 3 or data.speed
-  if zoomChange ~= 0 and self.collision:collidingCamDistance() then
-    if zoomChange < 0 then
-      newCamDist = self.collision:collidingCamDistance() + zoomChange * dtfactor * adjustedSpeed * 0.0001 * core_camera.getFovDeg()
+  local zoomChange = mm.zoomIn - mm.zoomOut
+  local newCamDist = self.camDist
+  if zoomChange ~= 0 then
+    local adjustedSpeed = data.fastSpeedModifier and data.speed * 3 or data.speed
+    local zoomStep = zoomChange * dtfactor * adjustedSpeed * 0.0001 * core_camera.getFovDeg()
+    local collidingCamDist = self.collision:collidingCamDistance()
+    if collidingCamDist then
+      if zoomChange < 0 then newCamDist = collidingCamDist + zoomStep end
     else
-      newCamDist = self.camDist
+      newCamDist = self.camDist + zoomStep
     end
-  else
-    newCamDist = self.camDist + zoomChange * dtfactor * adjustedSpeed * 0.0001 * core_camera.getFovDeg()
   end
   self.camDist = clamp(newCamDist, self.camMinDist, self.camMaxDist or math.huge)
 
@@ -397,28 +410,31 @@ function C:update(data)
   end
 
   if self.cameraResetted ~= 1 then
-    lastCamPointVec:set(push3(targetPos) - self.camLastPos2)
-    lastCamLastPerp:set(push3(self.camLastPosPerp) - targetPos)
+    lastCamPointVec:setSub2(targetPos, self.camLastPos2)
+    lastCamLastPerp:setSub2(self.camLastPosPerp, targetPos)
     if lastCamPointVec:length() < self.relaxation and lastCamLastPerp:length() > self.relaxation * 0.8 then
-      moveDir:set(push3(targetPos) - self.camLastTargetPos); moveDir:normalize()
+      moveDir:setSub2(targetPos, self.camLastTargetPos); moveDir:normalize()
       if math.abs(push3(lastCamPointVec):normalized():dot(moveDir)) > math.abs(push3(lastCamLastPerp):normalized():dot(moveDir)) then
         self.camLastPos2:set(push3(lastCamPointVec):cross(lastCamLastPerp):cross(lastCamLastPerp):normalized() + targetPos)
-        lastCamPointVec:set(push3(targetPos) - self.camLastPos2)
+        lastCamPointVec:setSub2(targetPos, self.camLastPos2)
       end
     end
     dir:set(lastCamPointVec)
     dir:normalize()
 
     -- flatten the rotation plane when camera moves perpendicularly
-    dirxy:set(dir.x, dir.y, 0)
-    local dirxylen = dirxy:length()
+    local dirX, dirY = dir.x, dir.y
+    local dirxylen = math.sqrt(dirX*dirX + dirY*dirY)
     local coef = math.sqrt(math.max(0, 1 - dirxylen))
-    dir:set(push3(dir) * math.max(0, 1 - coef) + push3(dirxy) * (coef / (dirxylen + 1e-30)))
+    local dirWeight = math.max(0, 1 - coef)
+    local dirxyWeight = coef / (dirxylen + 1e-30)
+    dir:set(dirX * dirWeight + dirX * dirxyWeight, dirY * dirWeight + dirY * dirxyWeight, dir.z * dirWeight)
     dir:normalize()
   end
 
-  lastCamPointVec:set(push3(self.camLastPos2) - targetPos)
-  self.camLastPos2:set(push3(lastCamPointVec) * (self.relaxation / (lastCamPointVec:length() + 1e-30)) + targetPos)
+  lastCamPointVec:setSub2(self.camLastPos2, targetPos)
+  lastCamPointVec:resize(self.relaxation)
+  self.camLastPos2:setAdd2(lastCamPointVec, targetPos)
 
   rot:set(math.rad(self.camRot.x), math.rad(self.camRot.y), math.rad(self.camRot.z))
 
@@ -426,44 +442,58 @@ function C:update(data)
   local dist = self.camDist
   if self.smoothingEnabled then
     local ratio = 1 / (data.dt * 8)
-    local srdif = -sign(self.camLastRot.x - rot.x)
-    if math.abs(self.camLastRot.x + srdif * 2 * math.pi - rot.x) < math.abs(self.camLastRot.x - rot.x) then
-      self.camLastRot.x = self.camLastRot.x + srdif * 2 * math.pi
+    local ratioSum = ratio + 1
+    local newWeight = 1 / ratioSum
+    local lastWeight = ratio / ratioSum
+
+    -- more than half a turn apart means the target is across the +-pi seam: wrap to take the short way around
+    local rotxDelta = self.camLastRot.x - rot.x
+    if math.abs(rotxDelta) > math.pi then
+      self.camLastRot.x = self.camLastRot.x - sign(rotxDelta) * 2 * math.pi
     end
-    local rotxDiff = (1 / (ratio + 1) * rot.x + (ratio / (ratio + 1)) * self.camLastRot.x) - self.camLastRot.x
-    rot.x = self.camLastRot.x + sign(rotxDiff) * math.min(math.abs(rotxDiff), maxRot * data.dt)
-    rot.y = 1 / (ratio + 1) * rot.y + (ratio / (ratio + 1)) * self.camLastRot.y
-    dist = 1 / (ratio + 1) * self.camDist + (ratio / (ratio + 1)) * self.camLastDist
+
+    local rotxDiff = newWeight * (rot.x - self.camLastRot.x)
+    rot.x = self.camLastRot.x + clamp(rotxDiff, -maxRotDt, maxRotDt)
+    rot.y = newWeight * rot.y + lastWeight * self.camLastRot.y
+    dist = newWeight * self.camDist + lastWeight * self.camLastDist
   end
 
-  -- find where the rear of the vehicle is. this is roughly(*) the vehicle area that will occupy the same size in screen space, no matter the speed.
-  -- (*) the camera is usually not right behind the car, but behind+higher: this angle is ignored for simplicity. The bounding box is usually a bit too big anyway, so the end result is close enough that we can ignore this asterisk (*) in our calculations. In the same way, if the user rotates the camera left or right, we ignore that horizontal angle too (we always use the same refToRear distance)
-  if self.rearNodeID then
-    rear:set(data.veh:getNodePositionXYZ(self.rearNodeID))
-    rear:setAdd(data.pos)
-  else
-    local vehId = data.veh:getID()
-    bbCenter:set(be:getObjectOOBBCenterXYZ(vehId))
-    bbHalfAxis1:set(be:getObjectOOBBHalfAxisXYZ(vehId, 1))
-    rear:set(bbCenter)
-    rear:setAdd(bbHalfAxis1)
-  end
-
-  -- compute how wide the rear of the car is (in screen space) when using the jbeam config (self.camDist). This 'originalWidth' will be preserved in screen space, no matter the FOV we end up applying
-  local refToRear = rear:distance(targetPos)
-  local hdegToRad = math.pi/180 * 0.5
+  local velLength = data.vel:length()
 
   local fov = self.fov
   local fovdistDiff = 0
   local fovModifier = self.skipFovModifier and 0 or self.fovModifier
 
   if (not self.target) and self.fov and fovModifier and self.maxDynamicFov and self.camDist then
+    -- find where the rear of the vehicle is. this is roughly(*) the vehicle area that will occupy the same size in screen space, no matter the speed.
+    -- (*) the camera is usually not right behind the car, but behind+higher: this angle is ignored for simplicity. The bounding box is usually a bit too big anyway, so the end result is close enough that we can ignore this asterisk (*) in our calculations. In the same way, if the user rotates the camera left or right, we ignore that horizontal angle too (we always use the same refToRear distance)
+    if self.rearNodeID then
+      rear:set(data.veh:getNodePositionXYZ(self.rearNodeID))
+      rear:setAdd(data.pos)
+    else
+      local vehId = data.veh:getID()
+      bbCenter:set(be:getObjectOOBBCenterXYZ(vehId))
+      bbHalfAxis1:set(be:getObjectOOBBHalfAxisXYZ(vehId, 1))
+      rear:set(bbCenter)
+      rear:setAdd(bbHalfAxis1)
+    end
+
+    -- compute how wide the rear of the car is (in screen space) when using the jbeam config (self.camDist). This 'originalWidth' will be preserved in screen space, no matter the FOV we end up applying
+    local refToRear = rear:distance(targetPos)
+
     -- compute how much more FOV we're going to add depending on speed (from zero up to self.maxDynamicFov)
-    fov = self.fov + fovModifier + self.maxDynamicFov * (math.min(1, data.vel:length()/130))
+    fov = self.fov + fovModifier + self.maxDynamicFov * (math.min(1, velLength/130))
+
+    -- the jbeam-config half-FOV tangent only moves when the fov settings do, so keep the last one around
+    local baseFov = self.fov + fovModifier
+    if baseFov ~= self.lastBaseFov then
+      self.lastBaseFov = baseFov
+      self.baseFovTan = math.tan(baseFov * hdegToRad)
+    end
 
     -- apply final field of view
     -- compute and apply the camera distance that will preserve the originalWidth
-    fovdistDiff = (self.camDist - refToRear) * (math.tan((self.fov+fovModifier) * hdegToRad) / math.tan(fov * hdegToRad) - 1)
+    fovdistDiff = (self.camDist - refToRear) * (self.baseFovTan / math.tan(fov * hdegToRad) - 1)
   end
 
   local rotB = rot
@@ -471,30 +501,33 @@ function C:update(data)
 
   if data.lookBack then
     rotB = lookBackVec
-    dirB = back - ref
+    lookBackDir:setSub2(back, ref)
+    dirB = lookBackDir
   end
 
+  local cosPitch = math.cos(rotB.y)
   calculatedCamPos:set(
-    math.sin(rotB.x) * math.cos(rotB.y)
-    , -math.cos(rotB.x) * math.cos(rotB.y)
+    math.sin(rotB.x) * cosPitch
+    , -math.cos(rotB.x) * cosPitch
     , -math.sin(rotB.y))
   tempQuatB:setFromDir(dirB)
   calculatedCamPos:setRotate(tempQuatB)
   calculatedCamPos:setScaled(dist + fovdistDiff)
 
-  camPos:set(push3(calculatedCamPos) + targetPos + self.orbitOffset)
+  camPos:setAdd2(calculatedCamPos, targetPos)
+  camPos:setAdd(self.orbitOffset)
   updir:setCross(vecZ, dir)
-  self.camLastPosPerp:set(push3(updir) * (self.relaxation * -0.8 / (updir:length() + 1e-30)) + targetPos)
+  updir:resize(self.relaxation * -0.8)
+  self.camLastPosPerp:setAdd2(updir, targetPos)
 
   self.camLastTargetPos2:set(self.camLastTargetPos)
   self.camLastTargetPos:set(targetPos)
-  self.camVel:set((push3(camPos) - self.camLastPos) / data.dt)
   self.camLastPos:set(camPos)
   self.camLastRot:set(rot)
   self.camLastDist = dist
   self.cameraResetted = math.max(self.cameraResetted - 1, 0)
 
-  if isManualRotation() then
+  if isManualRotation(mm) then
     self.timeSinceManualRotation = 0
   else
     self.timeSinceManualRotation = self.timeSinceManualRotation and self.timeSinceManualRotation + data.dt or 0
@@ -503,7 +536,7 @@ function C:update(data)
   if self.timeSinceManualRotation > 1 then
     -- Handle camera pitch threshold logic
     if self.aboveCamPitchThreshold then
-      if data.vel:length() < lowerSpeedThreshold then
+      if velLength < lowerSpeedThreshold then
         -- Set initial timer value based on pitch offset
         local startTime = self.smoothedPitchOffset:value() == 1 and pitchTransitionDelay or 0
         self.belowThresholdTimer = (self.belowThresholdTimer or startTime) - data.dt
@@ -517,7 +550,7 @@ function C:update(data)
         self.belowThresholdTimer = nil
       end
     else
-      self.aboveCamPitchThreshold = data.vel:length() > upperSpeedThreshold
+      self.aboveCamPitchThreshold = velLength > upperSpeedThreshold
     end
 
     -- dynamic pitch calculation
@@ -531,26 +564,25 @@ function C:update(data)
       normalizedPitchOffset = self.smoothedPitchOffset:getWithRateAccel(targetLerpValue, data.dt, 0.5, 0.5, 0.5)
     end
 
-    local maxDynamicPitch = settings.getValue("multiseat") and 0 or self.maxDynamicPitch
+    local maxDynamicPitch = self.multiseat and 0 or self.maxDynamicPitch
     local dynamicPitch = -math.min(maxDynamicPitch, self.dynamicPitchLimit) * normalizedPitchOffset
     self.dynamicPitchQuat:setFromEuler(dynamicPitch, 0, 0)
+    self.dynamicPitchActive = dynamicPitch ~= 0
   else
     self.smoothedPitchOffset:get(self.smoothedPitchOffset:value(), data.dt)
   end
 
   -- height offset calculation
-  local velocity = math.min(data.vel:length(), 70)
+  local velocity = math.min(velLength, 70)
   local smoothedVelocity = math.max(velocity * 0.05 - 0.2, 0.0)
   local lengthValue = math.min((1.4 * smoothedVelocity) / (smoothedVelocity + 4.1), 1)
 
-  resultPos:set(0, 0, lengthValue)
-  resultPos:setScaled(self.maxDynamicOffset)
-  resultPos:setAdd(camPos)
-
-  resultRot:setFromDir(push3(targetPos) - camPos)
-  resultRot:setMul2(self.dynamicPitchQuat, resultRot)
-  data.res.pos:set(resultPos)
-  data.res.rot:set(resultRot)
+  lookDir:setSub2(targetPos, camPos)
+  data.res.pos:set(camPos.x, camPos.y, camPos.z + lengthValue * self.maxDynamicOffset)
+  data.res.rot:setFromDir(lookDir)
+  if self.dynamicPitchActive then
+    data.res.rot:setMul2(self.dynamicPitchQuat, data.res.rot)
+  end
   data.res.fov = fov
   data.res.targetPos:set(targetPos)
   self.collision:update(data)

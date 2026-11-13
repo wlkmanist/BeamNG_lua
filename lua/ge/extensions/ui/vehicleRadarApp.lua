@@ -61,7 +61,7 @@ local function onExtensionLoaded()
 end
 
 local function updateSetting(key, value)
-  if settings[key] ~= nil then
+  if settings[key] ~= nil and settings[key] ~= value then
     settings[key] = value
     saveSettings()
   end

@@ -7,7 +7,7 @@
 -- Feel free to move this module in the future, if needed.
 
 local M = {}
-local missingPreview = "/ui/modules/gameContext/noPreview.jpg"
+local missingPreview = "/ui/images/noPreview.jpg"
 
 local facilitiesByLevel = {}
 

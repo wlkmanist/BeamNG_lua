@@ -613,9 +613,9 @@ local function triggerVehicleOfferGenerator(fac, generator, timeOffset)
         lookupType = logisticType,
       }
       type = "vehicle"
-      name = "Vehicle Transport"
+      name = _tr("ui.career.delivery.offerNames.vehicleTransport")
       if generator.isTutorialGenerator and isVehicleDeliveryTutorialActive then
-        name = "Tutorial Vehicle Transport: " .. name
+        name = _tr("ui.career.delivery.offerNames.tutorialVehicleTransport")
       end
     elseif vehType == "trailer" then
       task = {
@@ -625,7 +625,7 @@ local function triggerVehicleOfferGenerator(fac, generator, timeOffset)
         lookupType = logisticType,
       }
       type = "trailer"
-      name = "Trailer Transport"
+      name = _tr("ui.career.delivery.offerNames.trailerTransport")
     end
 
     local offerDuration = generator.interval * (math.random() * 0.8 + 0.8)
@@ -850,7 +850,7 @@ local function addMaterialAsParcelToContainer(con, storage, amount, sourceFacId,
 
   local item = {
     templateId = -1,
-    name = string.format("%s from %s",_tr(materialData.name), _tr(fac.name)),
+    name = core_locales.contextTranslate("ui.career.delivery.cargoName.materialFromFacility", {material = materialData.name, facility = fac.name}),
     type = materialData.type,
     slots = amount,
     materialType = materialType,
@@ -1152,7 +1152,8 @@ local function setupFacilities(loadData)
             parcel = 0,
             vehicle = 0,
             trailer = 0,
-            material = 0,
+            fluid = 0,
+            dryBulk = 0,
           },
           moneySum = 0
         },
@@ -1161,7 +1162,8 @@ local function setupFacilities(loadData)
             parcel = 0,
             vehicle = 0,
             trailer = 0,
-            material = 0,
+            fluid = 0,
+            dryBulk = 0,
           },
           moneySum = 0
         },
@@ -1440,8 +1442,22 @@ local function setupFacilities(loadData)
   end
 end
 
+local function repairLoadedCargo(cargo)
+  -- material taken from facility storages only exists while loaded in a vehicle, the storage volumes are saved separately
+  if cargo.generatorLabel == "addMaterialAsParcelToContainer" then
+    log("I","",string.format("Discarding saved material cargo '%s'", tostring(cargo.name)))
+    return false
+  end
+  if not cargo.materialType then
+    local template = getParcelTemplateById(cargo.templateId)
+    cargo.materialType = template and template.materialType
+  end
+  return true
+end
+
 local function setup(loadData)
   getMaterialsTemplates()
+  getDeliveryParcelTemplates()
   getDeliveryVehicleTemplates()
   setupFacilities(loadData)
   -- use the existing cargo if its there
@@ -1449,9 +1465,11 @@ local function setup(loadData)
   if loadData.parcels and next(loadData.parcels) then
     log("I","","Loading Parcels from file... " .. #loadData.parcels)
     for _, cargo in ipairs(loadData.parcels) do
-      cargoId = cargoId + 1
-      cargo.id = cargoId
-      dParcelManager.addCargo(cargo)
+      if repairLoadedCargo(cargo) then
+        cargoId = cargoId + 1
+        cargo.id = cargoId
+        dParcelManager.addCargo(cargo)
+      end
     end
     groupId = loadData.general.maxGroupId + 1
   else

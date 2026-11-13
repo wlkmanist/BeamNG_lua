@@ -12,7 +12,9 @@ local C = {}
 
 local logTag = 'traffic'
 
-local tickTime = 0.25
+local TICK_TIME = 0.25
+local SLOW_SPEED = 2.5
+
 local tempPos, tempDirVec = vec3(), vec3()
 
 -- const vectors --
@@ -22,15 +24,7 @@ function C:init(id, role)
   id = id or 0
   local obj = getObjectByID(id)
   if not obj then
-    log('E', logTag, string.format('Failed to initialize traffic vehicle: %d', id))
-    return
-  end
-
-  local modelData = core_vehicles.getModel(obj.jbeam).model
-  local modelType = modelData and string.lower(modelData.Type) or 'none'
-  if obj.jbeam == 'unicycle' and obj:isPlayerControlled() then modelType = 'player' end
-  if not modelData or not arrayFindValueIndex({'car', 'truck', 'automation', 'traffic', 'proptraffic', 'player'}, modelType) then
-    log('I', logTag, string.format('Ignoring traffic vehicle due to invalid vehicle type: %d', id))
+    log('E', logTag, string.format('Vehicle not found: %d', id))
     return
   elseif obj.ignoreTraffic then
     log('I', logTag, string.format('Ignoring traffic vehicle due to blocking flag: %d', id))
@@ -38,9 +32,6 @@ function C:init(id, role)
   end
 
   getObjectByID(id):setMeshAlpha(1, '') -- force vehicle to be visible
-
-  self.vars = gameplay_traffic.getTrafficVars()
-  self.policeVars = gameplay_police.getPoliceVars()
 
   self.collisions = {} -- keys: vehicle id, values: collision data
   self.queuedFuncs = {} -- keys: name id, values: timer, func, args, vLua (vLua string overrides func and args)
@@ -54,15 +45,22 @@ function C:init(id, role)
   self.camVisible = true
   self.headlights = false
   self.isAi = false
+  self.isPerson = obj.jbeam == 'unicycle'
+  self.isVehicle = not self.isPerson
   self.isPlayerControlled = obj:isPlayerControlled()
   self.focus = gameplay_traffic.getFocus()
   self.focusDist = 0
 
+  -- self tracking object
   self.tracking = require('gameplay/traffic/roadTracking')({vehId = id})
 
+  -- getters (can be externally accessed and modified, if needed)
+  self.getTraffic = gameplay_traffic.getTraffic
+  self.getPolice = gameplay_police.getPolice
+  self.getTrafficVars = gameplay_traffic.getTrafficVars
+  self.getPoliceVars = gameplay_police.getPoliceVars
+
   self:resetAll()
-  self:applyModelConfigData()
-  self:setRole(role or self.autoRole)
 
   if core_trailerRespawn and core_trailerRespawn.getTrailerData()[id] then -- assumes that this vehicle will always respawn with a trailer attached
     self.hasTrailer = true
@@ -71,6 +69,10 @@ function C:init(id, role)
   self.debugLine = true
   self.debugText = true
 
+  self.model = obj.jbeam
+  self.width = obj.initialNodePosBB:getExtents().x
+  self.length = obj.initialNodePosBB:getExtents().y
+
   self.pos, self.targetPos, self.dirVec, self.vel, self.driveVec = vec3(), vec3(), vec3(), vec3(), vec3()
   self.damage = 0
   self.speed = 0
@@ -78,14 +80,36 @@ function C:init(id, role)
   self.respawnCount = 0
   self.tickTimer = 0
   self.activeProbability = 1
+
+  -- the following properties get updated in postInit
+  self.modelName = self.model
+  self.drivability = 0.5
+  self.useRandomPaint = false
+  self.autoRole = 'empty'
+  self:setRole(self.autoRole)
 end
 
-function C:applyModelConfigData() -- sets data that depends on the vehicle model & config, and returns the generated vehicle role
-  local role = 'standard'
+function C:postInit() -- recommended to call this after the vehicle was initialized
+  self:applyModelConfigData()
+  self:setRole(self.autoRole)
+end
+
+function C:applyModelConfigData() -- sets data and role that depends on the vehicle model & config
   local obj = getObjectByID(self.id)
+
   local modelData = core_vehicles.getModel(obj.jbeam).model
   local _, configKey = path.splitWithoutExt(obj.partConfig)
   local configData = core_vehicles.getModel(obj.jbeam).configs[configKey]
+  local modelType = modelData and string.lower(modelData.Type) or 'none'
+  if obj.jbeam == 'unicycle' and obj:isPlayerControlled() then modelType = 'player' end
+  if not modelData or not arrayFindValueIndex({'car', 'truck', 'automation', 'traffic', 'proptraffic', 'player'}, modelType) then
+    log('I', logTag, string.format('Traffic vehicle status is false: %d', self.id))
+    self.isVehicle = false
+  end
+
+  if not self.isVehicle then
+    self.isAi = false
+  end
 
   local modelName = obj.jbeam
   local vehType = modelData.Type
@@ -97,12 +121,12 @@ function C:applyModelConfigData() -- sets data that depends on the vehicle model
   if modelData.Name then
     modelName = modelData.Brand and string.format('%s %s', modelData.Brand, modelData.Name) or modelData.Name
   end
-  if modelName == 'Simplified Traffic Vehicles' then -- NOTE: this is hacky, please improve
+  if obj.jbeam == 'simple_traffic' then -- special case for simplified traffic vehicles
     local partConfigStr = obj.partConfig
     local _, key = path.splitWithoutExt(partConfigStr)
     key = string.match(key, '%w*')
     if key then
-      local tempModel = core_vehicles.getModelList().models[key] or {Name = 'Unknown'}
+      local tempModel = core_vehicles.getModelList().models[key] or {Name = 'Unknown'} -- TODO: avoid unknown
       modelName = tempModel.Brand and string.format('%s %s', tempModel.Brand, tempModel.Name) or tempModel.Name
     end
   end
@@ -112,34 +136,30 @@ function C:applyModelConfigData() -- sets data that depends on the vehicle model
   end
 
   local drivability = 0.25
-  local offRoadScore = configData and configData['Off-Road Score']
-  if offRoadScore then
-    drivability = clamp(10 / max(1e-12, offRoadScore - 4 * max(0, width - 2) - 4 * max(0, length - 5)), 0, 1) -- minimum drivability
-    -- large vehicles lower this value even more
-    -- this is rough and could be improved
+  local role = self.isVehicle and 'standard' or 'empty'
+  if self.isVehicle then
+    local offRoadScore = configData and configData['Off-Road Score']
+    if offRoadScore then
+      drivability = clamp(10 / max(1e-12, offRoadScore - 4 * max(0, width - 2) - 4 * max(0, length - 5)), 0, 1) -- minimum drivability
+      -- large vehicles lower this value even more
+      -- this is rough and could be improved
+    end
+
+    local configTypeLower = string.lower(configType or '')
+    local pc = string.lower(obj.partConfig)
+    if configTypeLower == 'police' then
+      role = 'police'
+    elseif string.endswith(pc, '.pc') and string.find(pc, 'police') then -- assumes police vehicle
+      role = 'police'
+      log('I', logTag, string.format('Assigning police role using file name method: %d', self.id))
+    end
+    if string.find(pc, 'taxi') then
+      self.isTaxi = true
+    end
   end
 
-  local configTypeLower = string.lower(configType or '')
-  local pc = string.lower(obj.partConfig)
-  if configTypeLower == 'police' then
-    role = 'police'
-  elseif string.endswith(pc, '.pc') and string.find(pc, 'police') then -- assumes police vehicle
-    role = 'police'
-    log('I', logTag, string.format('Assigning police role using file name method: %d', self.id))
-  end
-  if string.find(pc, 'taxi') then
-    self.isTaxi = true
-  end
-  if configTypeLower == 'service' then
-    self._serviceConfigFlag = 1 -- temporary flag
-  end
-
-  self.model = obj.jbeam
   self.modelName = modelName
-  self.width = width
-  self.length = length
   self.drivability = drivability
-  self.isPerson = obj.jbeam == 'unicycle' -- assumes that the "vehicle" is a person
   self.useRandomPaint = useRandomPaint
   self.autoRole = role
 end
@@ -149,8 +169,8 @@ function C:resetPursuit()
     gameplay_police.setPursuitMode(0, self.id)
   end
   self.pursuit = {mode = 0, score = 0, addScore = 0, policeCount = 0, hitCount = 0, offensesCount = 0, uniqueOffensesCount = 0,
-  sightValue = 0, roadblocks = 0, roadblockPos = vec3(), policeWrecks = 0, offenses = {}, offensesList = {}, flags = {}}
-  self.pursuit.timers = {main = 0, arrest = 0, evade = 0, roadblock = 0, arrestValue = 0, evadeValue = 0}
+  sightValue = 0, roadblocks = 0, roadblockTargetId = 0, policeWrecks = 0, offenses = {}, offensesList = {}, sight = {}, flags = {}}
+  self.pursuit.timers = {main = 0, arrest = 0, evade = 0, roadblock = 0, stuck = 0, arrestValue = 0, evadeValue = 0}
 end
 
 function C:resetTracking()
@@ -163,8 +183,8 @@ end
 function C:resetValues()
   self.pos = self.pos or getObjectByID(self.id):getPosition()
   self.respawn = {
-    spawnValue = self.vars.spawnValue, -- respawnability coefficient, from 0 (slow) to 3 (rapid); exactly 0 disables respawning
-    spawnDirBias = self.vars.spawnDirBias, -- probability of direction of next respawn, from -1 (away from you) to 1 (towards you)
+    spawnValue = self.getTrafficVars().spawnValue, -- respawnability coefficient, from 0 (slow) to 3 (rapid); exactly 0 disables respawning
+    spawnDirBias = self.getTrafficVars().spawnDirBias, -- probability of direction of next respawn, from -1 (away from you) to 1 (towards you)
     spawnRandomization = 1, -- spawn point search randomization (from 0 to 1; 0 = straight ahead, 1 = branching and scattering)
     activeRadius = self.pos:distance(self.focus.pos) + 500, -- radius to stay active in (compares distance to focus point)
     finalRadius = 1e6, -- calculated active radius
@@ -202,7 +222,8 @@ function C:useSiren(duration, disableAfterUse) -- set siren with duration
 end
 
 function C:setAiMode(mode, ignoreParams) -- sets the AI mode and a few automatic parameters
-  mode = mode or self.vars.aiMode
+  local vars = self.getTrafficVars()
+  mode = mode or vars.aiMode
   self.isAi = mode ~= 'disabled'
 
   local obj = getObjectByID(self.id)
@@ -211,15 +232,15 @@ function C:setAiMode(mode, ignoreParams) -- sets the AI mode and a few automatic
   if ignoreParams then return end -- ignoreParams can be used to prevent auto setting of parameters such as aggression
 
   if mode == 'traffic' then
-    obj:queueLuaCommand(string.format('ai.setAggression(%.3f)', self.vars.baseAggression))
+    obj:queueLuaCommand(string.format('ai.setAggression(%.3f)', vars.baseAggression))
     obj:queueLuaCommand('ai.setSpeedMode("legal")')
     obj:queueLuaCommand('ai.driveInLane("on")')
   elseif mode == 'random' or mode == 'flee' or mode == 'chase' then
     if mode == 'flee' or mode == 'chase' then
-      obj:queueLuaCommand(string.format('ai.setAggression(%.3f)', max(0.8, self.vars.baseAggression)))
+      obj:queueLuaCommand(string.format('ai.setAggression(%.3f)', max(0.8, vars.baseAggression)))
       obj:queueLuaCommand('ai.setAggressionMode("off")')
     else
-      obj:queueLuaCommand(string.format('ai.setAggression(%.3f)', self.vars.baseAggression))
+      obj:queueLuaCommand(string.format('ai.setAggression(%.3f)', vars.baseAggression))
     end
     obj:queueLuaCommand('ai.setSpeedMode("off")')
     obj:queueLuaCommand('ai.driveInLane("off")')
@@ -229,11 +250,11 @@ function C:setAiMode(mode, ignoreParams) -- sets the AI mode and a few automatic
 end
 
 function C:setAiParameters(params) -- sets a few AI parameters
-  params = params or self.vars -- uses the traffic variables by default
+  params = params or self.getTrafficVars() -- uses the traffic variables by default
 
   local obj = getObjectByID(self.id)
-  if params.aggression or params.baseAggression then
-    local aggression = params.aggression or params.baseAggression
+  local aggression = params.aggression or params.baseAggression
+  if aggression then
     obj:queueLuaCommand(string.format('ai.setAggression(%.3f)', aggression))
   end
 
@@ -266,11 +287,6 @@ function C:setRole(roleName) -- sets the driver role
     end
 
     self.role = roleClass({veh = self, name = roleName})
-
-    if self._serviceConfigFlag then -- temporary flag
-      self.role.ignorePersonality = true
-      self._serviceConfigFlag = nil
-    end
 
     self.role:onRoleStarted()
     extensions.hook('onTrafficAction', self.id, 'changeRole', {targetId = self.role.targetId or 0, name = roleName, prevName = prevName, data = {}})
@@ -331,7 +347,7 @@ function C:checkCollisions() -- checks for contact with other tracked vehicles
           if self.speed >= 1 then -- hacky, but solves an edge case where this vehicle is refreshed while stopped in a collision
             self.role:onCollision(id, collision)
 
-            for otherId, otherVeh in pairs(gameplay_traffic.getTrafficData()) do -- notify other traffic vehicles of collision
+            for otherId, otherVeh in pairs(self.getTraffic()) do -- notify other traffic vehicles of collision
               if not otherVeh.otherCollisionFlag and otherId ~= self.id and otherId ~= id then
                 otherVeh.role:onOtherCollision(self.id, id, collision)
                 otherVeh.otherCollisionFlag = true
@@ -341,7 +357,7 @@ function C:checkCollisions() -- checks for contact with other tracked vehicles
         end
 
         if self.isAi and not self.isTaxi then -- it is easy to touch the taxi while walking up to it. If not for this flag It would reset its AI, messing with the taxi system
-          veh = gameplay_traffic.getTrafficData()[id]
+          veh = self.getTraffic()[id]
           if veh and veh.isPerson then -- specific logic that handles collision with unicycle (walking mode)
             if isCurrentCollision and not self.role.flags.pullOver then -- stops AI during contact
               self.role:setAction('pullOver')
@@ -472,11 +488,11 @@ function C:triggerOffense(data) -- triggers a pursuit offense
   self.pursuit.addScore = self.pursuit.addScore + data.score
 end
 
-function C:checkOffenses() -- tests for vechicle offenses for police
+function C:checkOffenses() -- tests for vehicle offenses for police
   -- Offenses: speeding, racing, hitPolice, hitTraffic, reckless, wrongWay, intersection
-  if self.policeVars.strictness <= 0 then return end
+  if self.getPoliceVars().strictness <= 0 then return end
   local pursuit = self.pursuit
-  local threshold = 1 - clamp(self.policeVars.strictness, 0, 0.8) -- offense threshold
+  local threshold = 1 - clamp(self.getPoliceVars().strictness, 0, 0.8) -- offense threshold
 
   if self.tracking.faults.overSpeed >= threshold then
     if self.speed >= max(16.7, self.tracking.speedLimit * 1.2) and not pursuit.offenses.speeding then -- at least 60 km/h
@@ -497,32 +513,86 @@ function C:checkOffenses() -- tests for vechicle offenses for police
   end
 
   for id, coll in pairs(self.collisions) do
-    local veh = gameplay_traffic.getTrafficData()[id]
+    local veh = self.getTraffic()[id]
     if veh then
       local validCollision = coll.dot >= 0.2 and coll.speed >= 1 -- simple comparison to check if current vehicle is at fault for collision
       if veh.role.targetId ~= nil and veh.role.targetId ~= self.id then -- invalidate collision if other vehicle is targeting a different vehicle
         validCollision = false
-      elseif veh.role.name == 'police' and (veh.role.flags.roadblock or veh.role.flags.cooldown) then -- invalidate collision during some police actions
+      elseif veh.role.name == 'police' and veh.role.flags.cooldown then -- invalidate collision if police has cooldown flag
         validCollision = false
       end
       if self.isPerson then -- special check if the vehicle is a person
-        local center = vec3(be:getObjectOOBBCenterXYZ(id)) -- for accuracy
-        validCollision = self.pos:z0():squaredDistance(center:z0()) < square(veh.width * 0.6) or coll.count >= 3 -- jumping on car, or multiple hits
+        tempPos:set(be:getObjectOOBBCenterXYZ(id))
+        tempPos.z = 0
+        validCollision = self.pos:z0():squaredDistance(tempPos) < square(veh.width * 0.6) or coll.count >= 3 -- jumping on car, or multiple hits
       end
 
       if not coll.offense and validCollision then
-        if veh.role.name == 'police' and coll.inArea then -- always triggers if police was hit (in most cases)
-          self:triggerOffense({key = 'hitPolice', value = id, score = 200})
-          pursuit.hitCount = pursuit.hitCount + 1
-          coll.offense = true
-        elseif pursuit.mode > 0 or coll.state == 'abandoned' then -- fleeing in a pursuit, or abandoning an accident
-          self:triggerOffense({key = 'hitTraffic', value = id, score = 100})
-          pursuit.hitCount = pursuit.hitCount + 1
-          coll.offense = true
+        if veh.role.name == 'police' then -- police vehicle collision
+          if coll.inArea then -- needs to be in collision area
+            self:triggerOffense({key = 'hitPolice', value = id, score = 200})
+            pursuit.hitCount = pursuit.hitCount + 1
+            coll.offense = true
+          end
+        else -- civilian vehicle collision
+          if pursuit.mode > 0 or coll.state == 'abandoned' then -- fleeing in a pursuit, or abandoning an accident
+            self:triggerOffense({key = 'hitTraffic', value = id, score = 100})
+            pursuit.hitCount = pursuit.hitCount + 1
+            coll.offense = true
+          end
         end
       end
     end
   end
+end
+
+function C:checkPoliceVisibility(dtSim) -- checks police visibility
+  local pursuit = self.pursuit
+  local useTargetVisible = pursuit.timers.stuck * 2 < self.getPoliceVars().arrestRadius -- false if vehicle is stuck for too long
+  if gameplay_traffic.getTraffic()[self.id] then
+    pursuit.sight.policeId, pursuit.sight.dist, pursuit.sight.interDist = gameplay_police.getNearestPoliceVehicle(self.id, useTargetVisible, true)
+  else
+    pursuit.sight.policeId = nil
+    pursuit.sight.dist = math.huge
+    pursuit.sight.interDist = math.huge
+
+    for id, veh in pairs(self.getPolice()) do -- similar to function gameplay_police.getNearestPoliceVehicle
+      if be:getObjectActive(id) then
+        local target = veh.role.validTargets[self.id]
+        if target and veh.role.state ~= 'disabled' and (not useTargetVisible or target.visible) then
+          if target.dist < pursuit.sight.dist then
+            pursuit.sight.dist = target.dist
+            pursuit.sight.interDist = target.interDist
+            pursuit.sight.policeId = id
+          end
+        end
+      end
+    end
+  end
+
+  local addSightValue
+  local sightCoef = self.pursuit.mode + 2
+  local strictness = self.getPoliceVars().strictness
+  if not pursuit.sight.policeId then
+    addSightValue = -dtSim * 0.25 -- no police visible, reduce sight value
+  else
+    local targetDist = min(pursuit.sight.dist, pursuit.sight.interDist) -- police look ahead distance or police vehicle distance, whichever is better
+    addSightValue = (120 / targetDist) * dtSim * strictness * sightCoef -- increments faster when nearer
+  end
+  self.pursuit.sightValue = clamp(self.pursuit.sightValue + addSightValue, 0, 1)
+  self.pursuit.policeVisible = self.pursuit.sightValue >= 0.5
+
+  local addScore = 0
+  if self.pursuit.addScore > 0 then
+    addScore = self.pursuit.addScore -- add score from pursuit infraction
+  else
+    if self.pursuit.mode >= 1 then
+      addScore = strictness * min(10, self.speed) * dtSim * 2 -- gradual increase during pursuit
+    end
+  end
+  self.pursuit.score = max(0, self.pursuit.score + addScore)
+
+  self.pursuit.addScore = 0
 end
 
 function C:checkTimeOfDay() -- checks time of day
@@ -544,6 +614,10 @@ function C:onVehicleResetted() -- triggers whenever vehicle resets (automaticall
   self:resetTracking()
 end
 
+function C:onActiveDone() -- triggers after a vehicle is faded out or sent to inactive pool
+  self.role:onActiveDone()
+end
+
 function C:onRespawn() -- triggers after vehicle respawns in traffic
   if self.useRandomPaint then
     core_vehicle_manager.setVehiclePaintsNames(self.id, core_vehiclePaints.getRandomPaintsByVehicle(self.id))
@@ -558,16 +632,14 @@ function C:onRefresh() -- triggers whenever vehicle data needs to be refreshed (
   if self.isAi then
     local obj = getObjectByID(self.id)
 
-    self.vars = gameplay_traffic.getTrafficVars()
-    self.policeVars = gameplay_police.getPoliceVars()
     self:resetAll()
 
     obj.playerUsable = settings.getValue('trafficEnableSwitching') and true or false
 
-    if self.vars.aiDebug == 'traffic' then
+    if self.getTrafficVars().aiDebug == 'traffic' then
       obj:queueLuaCommand('ai.setVehicleDebugMode({debugMode = "off"})')
     else
-      obj:queueLuaCommand(string.format('ai.setVehicleDebugMode({debugMode = "%s"})', self.vars.aiDebug))
+      obj:queueLuaCommand(string.format('ai.setVehicleDebugMode({debugMode = "%s"})', self.getTrafficVars().aiDebug))
     end
 
     local isDaytime = self:checkTimeOfDay()
@@ -643,7 +715,7 @@ function C:onTrafficTick(tickTime)
   if tickDamage >= baseValues.lowDamage then
     self.role:onCrashDamage({speed = self.speed, damage = self.damage, tickDamage = tickDamage})
 
-    for id, veh in pairs(gameplay_traffic.getTrafficData()) do
+    for id, veh in pairs(self.getTraffic()) do
       if id ~= self.id then
         veh.role:onOtherCrashDamage(self.id, {speed = self.speed, damage = self.damage, tickDamage = tickDamage})
       end
@@ -657,7 +729,7 @@ function C:onTrafficTick(tickTime)
   end
 
   if not self.activeData.tCrash and not self.activeData.tNearMiss then
-    for id, veh in pairs(gameplay_traffic.getTrafficData()) do
+    for id, veh in pairs(self.getTraffic()) do
       if id ~= self.id then
         local tracking = veh.tracking
         if tracking.sideValue < 0 and (tracking.faults.wrongWay >= 0.25 or tracking.faults.overSpeed >= 0.25) then
@@ -677,6 +749,126 @@ function C:onTrafficTick(tickTime)
   self.prevDamage = self.damage
 
   self.role:onTrafficTick(tickTime)
+end
+
+function C:onPursuitUpdate(dt, dtSim)
+  local pursuit = self.pursuit
+  local vars = self.getPoliceVars()
+  local isMainTraffic = gameplay_traffic.getTraffic()[self.id] and true or false -- true if the main traffic system has this vehicle
+  if pursuit.mode ~= 0 then
+    local arrestRadius = pursuit.policeVisible and vars.arrestRadius or 5 -- very small radius if police visibility is blocked, prevents false arresting
+    local evadeRadius = pursuit.policeVisible and 200 or vars.evadeRadius -- very large radius if police visibility is unblocked, prevents false evading
+    local nearDist = pursuit.sight.dist or math.huge
+
+    -- alert
+    if isMainTraffic and pursuit.mode == 1 and pursuit.offensesCount > 1 and not pursuit.flags.policeAlert then -- alert more police units if there is more than one offense
+      gameplay_police.setPursuitMode(1, self.id)
+      pursuit.flags.policeAlert = 1
+    end
+
+    -- arrest
+    if pursuit.mode >= 1 then
+      if pursuit.timers.arrest >= vars.arrestTime then
+        if isMainTraffic then
+          gameplay_police.arrestVehicle(self.id, gameplay_traffic.showMessages)
+        else
+          pursuit.mode = -1
+          pursuit.timers.arrest = 0
+          extensions.hook('onPursuitAction', self.id, 'arrest', self.pursuit)
+        end
+      end
+    -- release
+    elseif pursuit.mode == -1 then
+      if (pursuit.timers.arrest <= -5 or not self.role.flags.freeze) then
+        if isMainTraffic then
+          gameplay_police.releaseVehicle(self.id, gameplay_traffic.showMessages)
+        else
+          pursuit.mode = 0
+          pursuit.timers.arrest = 0
+          extensions.hook('onPursuitAction', self.id, 'release', self.pursuit)
+        end
+      end
+
+      if self.getPoliceVars().autoRelease then
+        pursuit.timers.arrest = clamp(pursuit.timers.arrest - dtSim, -5, 0)
+      else
+        pursuit.timers.arrest = 0
+      end
+    end
+
+    if pursuit.mode >= 1 then
+      pursuit.timers.stuck = self.speed <= SLOW_SPEED and pursuit.timers.stuck + dtSim or 0
+      if pursuit.timers.stuck * 2 >= vars.arrestRadius then
+        arrestRadius = min(pursuit.timers.stuck * 2, vars.arrestRadius * 3) -- arrest radius grows if the vehicle is stuck
+      end
+
+      -- visible and within arrest distance
+      if pursuit.sight.policeId and nearDist < square(arrestRadius) then
+        if self.speed <= SLOW_SPEED and self.getPolice()[pursuit.sight.policeId].speed <= SLOW_SPEED and nearDist < square(arrestRadius) then
+          pursuit.timers.arrest = min(vars.arrestTime, pursuit.timers.arrest + dtSim)
+        else
+          pursuit.timers.arrest = 0
+        end
+
+        pursuit.timers.evade = 0
+      else
+        if pursuit.mode == 3 then
+          -- setup roadblock and adjust timer
+          if vars.roadblockFrequency > 0 and pursuit.timers.roadblock == 0 then
+            if isMainTraffic then
+              local roadblock = gameplay_police.setupRoadblock(self.id, nil, nil, self.focus.pos, self.focus.dirVec)
+              if roadblock then
+                pursuit.roadblockTargetId = roadblock.vehIds[1]
+                pursuit.flags.roadblockNear = nil
+                pursuit.timers.roadblock = max(10, 60 - vars.roadblockFrequency * 60) -- time interval to test for the next roadblock
+                extensions.hook('onPursuitAction', self.id, 'roadblock', pursuit)
+              else
+                pursuit.timers.roadblock = 2 -- bounce time until next roadblock check
+              end
+            else
+              pursuit.timers.roadblock = max(10, 60 - vars.roadblockFrequency * 60)
+              extensions.hook('onPursuitAction', self.id, 'roadblockAlert', pursuit)
+            end
+          end
+        end
+
+        if pursuit.timers.evade >= vars.evadeTime then
+          if isMainTraffic then
+            gameplay_police.evadeVehicle(self.id, gameplay_traffic.showMessages)
+          else
+            pursuit.mode = 0
+            pursuit.timers.evade = 0
+            extensions.hook('onPursuitAction', self.id, 'evade', pursuit)
+          end
+        end
+
+        if nearDist > square(evadeRadius) then
+          pursuit.timers.evade = min(vars.evadeTime, pursuit.timers.evade + dtSim)
+        elseif nearDist <= square(evadeRadius * 0.5) then
+          pursuit.timers.evade = 0
+        end
+
+        pursuit.timers.arrest = 0
+      end
+    end
+
+    if pursuit.mode == 3 and pursuit.timers.evadeValue < 0.5 then
+      pursuit.timers.roadblock = max(0, pursuit.timers.roadblock - dtSim)
+    end
+
+    local roadblockVeh = self.getPolice()[pursuit.roadblockTargetId]
+    if not pursuit.flags.roadblockNear and roadblockVeh and self.pos:squaredDistance(roadblockVeh.pos) <= 400 then -- increment roadblock counter
+      pursuit.roadblocks = pursuit.roadblocks + 1
+      pursuit.flags.roadblockNear = 1
+    end
+
+    if pursuit.mode >= 1 then
+      pursuit.timers.main = pursuit.timers.main + dtSim
+    end
+  end
+
+  pursuit.timers.arrestValue = pursuit.mode ~= -1 and clamp(pursuit.timers.arrest / max(1e-12, self.getPoliceVars().arrestTime), 0, 1) or 1
+  pursuit.timers.evadeValue = clamp(pursuit.timers.evade / max(1e-12, self.getPoliceVars().evadeTime), 0, 1)
 end
 
 function C:onUpdate(dt, dtSim)
@@ -728,9 +920,9 @@ function C:onUpdate(dt, dtSim)
     end
 
     self.tickTimer = self.tickTimer + dtSim
-    if self.tickTimer >= tickTime then
-      self:onTrafficTick(tickTime)
-      self.tickTimer = self.tickTimer - tickTime
+    if self.tickTimer >= TICK_TIME then
+      self:onTrafficTick(TICK_TIME)
+      self.tickTimer = self.tickTimer - TICK_TIME
     end
 
     if self.enableTracking then
@@ -740,10 +932,15 @@ function C:onUpdate(dt, dtSim)
         self:trackCollision(id, dtSim)
       end
 
-      if self.role.name ~= 'police' and self.pursuit.policeVisible then
-        self:checkOffenses()
+      if self.role.name ~= 'police' then
+        self:checkPoliceVisibility(dtSim)
+        if self.pursuit.policeVisible then
+          self:checkOffenses()
+        end
       end
     end
+
+    self:onPursuitUpdate(dt, dtSim)
 
     -- queued functions
     for k, v in pairs(self.queuedFuncs) do
@@ -769,6 +966,14 @@ function C:onSerialize()
   local data = {
     id = self.id,
     isAi = self.isAi,
+    isVehicle = self.isVehicle,
+    model = self.model,
+    modelName = self.modelName,
+    drivability = self.drivability,
+    useRandomPaint = self.useRandomPaint,
+    autoRole = self.autoRole,
+    state = self.state,
+    respawn = self.respawn,
     respawnCount = self.respawnCount,
     enableRespawn = self.enableRespawn,
     enableTracking = self.enableTracking,
@@ -776,6 +981,8 @@ function C:onSerialize()
     activeProbability = self.activeProbability,
     reserved = self.reserved,
     claimed = self.claimed,
+    collisions = self.collisions,
+    pursuit = self.pursuit,
     tracking = self.tracking:onSerialize(),
     role = self.role:onSerialize()
   }
@@ -786,6 +993,14 @@ end
 function C:onDeserialized(data)
   self.id = data.id
   self.isAi = data.isAi
+  self.isVehicle = data.isVehicle
+  self.model = data.model
+  self.modelName = data.modelName
+  self.drivability = data.drivability
+  self.useRandomPaint = data.useRandomPaint
+  self.autoRole = data.autoRole
+  self.state = data.state
+  self.respawn = data.respawn
   self.respawnCount = data.respawnCount
   self.enableRespawn = data.enableRespawn
   self.enableTracking = data.enableTracking
@@ -793,12 +1008,15 @@ function C:onDeserialized(data)
   self.activeProbability = data.activeProbability
   self.reserved = data.reserved
   self.claimed = data.claimed
+  self.collisions = data.collisions
+  self.pursuit = data.pursuit
 
-  self:applyModelConfigData()
+  --self:applyModelConfigData()
   self:setRole(data.role.name)
-  self:onRefresh()
   self.tracking:onDeserialized(data.tracking)
-  self.role:onDeserialized(data.role)
+  self.role:onDeserialized(data.role, self)
+
+  if not be:getObjectActive(self.id) then self.state = 'queued' end
 end
 
 return function(...)

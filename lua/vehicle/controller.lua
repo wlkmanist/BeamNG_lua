@@ -112,36 +112,36 @@ end
 
 local function updateGFX(dt)
   for i = 1, gfxUpdateCount, 1 do
-    --profilerPushEvent(controllerNameLookup.updateGFXStep[i] .. ":updateGFXStep")
+    profilerPushEvent1(controllerNameLookup.updateGFXStep[i])
     --gcprobe()
     gfxUpdates[i](dt)
-    --print(controllerNameLookup.updateGFXStep[i] .. ":updateGFXStep: " .. gcprobe())
-    --profilerPopEvent(controllerNameLookup.updateGFXStep[i] .. ":updateGFXStep")
+    --print(controllerNameLookup.updateGFXStep[i] .. ": " .. gcprobe())
+    profilerPopEvent1(controllerNameLookup.updateGFXStep[i])
   end
 end
 
 local function updateFixedStep(dt)
   --print("updateFixedStep gcprobe")
-  --profilerPushEvent("controller:updateFixedStep")
+  profilerPushEvent1("controller:updateFixedStep")
   for i = 1, fixedStepUpdateCount, 1 do
-    --profilerPushEvent(controllerNameLookup.updateFixedStep[i] .. ":updateFixedStep")
+    profilerPushEvent1(controllerNameLookup.updateFixedStep[i])
     --gcprobe()
     fixedStepUpdates[i](dt)
-    --print(controllerNameLookup.updateFixedStep[i] .. ":updateFixedStep: " .. gcprobe())
-    --profilerPopEvent(controllerNameLookup.updateFixedStep[i] .. ":updateFixedStep")
+    --print(controllerNameLookup.updateFixedStep[i] .. ": " .. gcprobe())
+    profilerPopEvent1(controllerNameLookup.updateFixedStep[i])
   end
-  --profilerPopEvent("controller:updateFixedStep")
+  profilerPopEvent1("controller:updateFixedStep")
 end
 
 local function updateWithFixedStep(dt)
-  --profilerPushEvent("controller:updatePhysicsStep")
+  profilerPushEvent1("controller:updatePhysicsStep")
   --print("updateWithFixedStep gcprobe")
   for i = 1, physicsUpdateCount, 1 do
-    --profilerPushEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
+    profilerPushEvent1(controllerNameLookup.updatePhysicsStep[i])
     --gcprobe()
     physicsUpdates[i](dt)
-    --print(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep: " .. gcprobe())
-    --profilerPopEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
+    --print(controllerNameLookup.updatePhysicsStep[i] .. ": " .. gcprobe())
+    profilerPopEvent1(controllerNameLookup.updatePhysicsStep[i])
   end
 
   --if below code needs to change, make sure to copy the changes to the hardcoded export version at the end of this file as well
@@ -150,22 +150,22 @@ local function updateWithFixedStep(dt)
     updateFixedStep(fixedStepTimer)
     fixedStepTimer = fixedStepTimer - fixedStepTime
   end
-  --profilerPopEvent("controller:updatePhysicsStep")
+  profilerPopEvent1("controller:updatePhysicsStep")
 end
 
 local function updateWithoutFixedStep(dt)
   for i = 1, physicsUpdateCount, 1 do
-    --profilerPushEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
+    profilerPushEvent1(controllerNameLookup.updatePhysicsStep[i])
     physicsUpdates[i](dt)
-    --profilerPopEvent(controllerNameLookup.updatePhysicsStep[i] .. ":updatePhysicsStep")
+    profilerPopEvent1(controllerNameLookup.updatePhysicsStep[i])
   end
 end
 
 local function updateWheelsIntermediate(dt)
   for i = 1, wheelsIntermediateUpdateCount, 1 do
-    --profilerPushEvent(controllerNameLookup.updateWheelsIntermediate[i] .. ":updateWheelsIntermediate")
+    profilerPushEvent1(controllerNameLookup.updateWheelsIntermediate[i])
     wheelsIntermediateUpdates[i](dt)
-    --profilerPopEvent(controllerNameLookup.updateWheelsIntermediate[i] .. ":updateWheelsIntermediate")
+    profilerPopEvent1(controllerNameLookup.updateWheelsIntermediate[i])
   end
 end
 
@@ -309,7 +309,7 @@ local function loadControllerExternal(fileName, controllerName, controllerData)
     if loadedControllers[controllerName] then
       error(string.format("Controller with same name is already existing, can't load duplicate controller. Name: %q", controllerName))
     end
-    c = rerequire(filePath)
+    c = rerequire(filePath) -- rerequire is needed here
     if c then
       local data = controllerData or {}
       controllerJbeamData[controllerName] = data
@@ -494,7 +494,7 @@ local function init()
   for k, c in pairs(controllers) do
     local filePath = directory .. c.fileName
     local loadFunc = function()
-      local controller = rerequire(filePath)
+      local controller = rerequire(filePath) -- rerequire is needed here
       if controller and type(controller) == "table" then
         local data = tableMergeRecursive(c, v.data[k] or {})
         c.name = c.name or k
@@ -575,19 +575,19 @@ end
 local function cacheControllerFunctions(controller)
   if controller.update then
     table.insert(physicsUpdates, controller.update)
-    table.insert(controllerNameLookup.updatePhysicsStep, controller.typeName)
+    table.insert(controllerNameLookup.updatePhysicsStep, controller.typeName .. ":updatePhysicsStep")
   end
   if controller.updateWheelsIntermediate then
     table.insert(wheelsIntermediateUpdates, controller.updateWheelsIntermediate)
-    table.insert(controllerNameLookup.updateWheelsIntermediate, controller.typeName)
+    table.insert(controllerNameLookup.updateWheelsIntermediate, controller.typeName .. ":updateWheelsIntermediate")
   end
   if controller.updateGFX then
     table.insert(gfxUpdates, controller.updateGFX)
-    table.insert(controllerNameLookup.updateGFXStep, controller.typeName)
+    table.insert(controllerNameLookup.updateGFXStep, controller.typeName .. ":updateGFXStep")
   end
   if controller.updateFixedStep then
     table.insert(fixedStepUpdates, controller.updateFixedStep)
-    table.insert(controllerNameLookup.updateFixedStep, controller.typeName)
+    table.insert(controllerNameLookup.updateFixedStep, controller.typeName .. ":updateFixedStep")
   end
   if controller.debugDraw then
     table.insert(debugDraws, controller.debugDraw)

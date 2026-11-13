@@ -49,7 +49,7 @@ local function playComic(comicData, comicFinishedCallback)
       end
       -- TODO: not muting other channels here, this is buggy and makes it not unmute sometimes
       -- forEachAudioChannel(audioCallback)
-      guihooks.trigger('ChangeState', {state = 'campaign.comic', params = {comiclist = comicPanels}})
+      extensions.ui_router.navigate('campaign.comic', {comiclist = comicPanels})
     end
 end
 

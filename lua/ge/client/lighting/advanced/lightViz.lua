@@ -45,8 +45,7 @@ end
 local al_DepthVisualizeShader = scenetree.findObject("AL_DepthVisualizeShader")
 if not al_DepthVisualizeShader then
   al_DepthVisualizeShader = createObject("ShaderData")
-  al_DepthVisualizeShader.DXVertexShaderFile = "shaders/common/lighting/advanced/dbgDepthVisualizeP.hlsl"
-  al_DepthVisualizeShader.DXPixelShaderFile  = "shaders/common/lighting/advanced/dbgDepthVisualizeP.hlsl"
+  al_DepthVisualizeShader.DXComputShaderName = "shaders/common/lighting/advanced/dbgDepthVisualize.cs.hlsl"
   al_DepthVisualizeShader:setField("samplerNames", 0, "prepassBuffer")
   al_DepthVisualizeShader:setField("samplerNames", 1, "depthViz")
   al_DepthVisualizeShader.pixVersion = 5.0;
@@ -76,8 +75,7 @@ end
 local al_NormalsVisualizeShader = scenetree.findObject("AL_NormalsVisualizeShader")
 if not al_NormalsVisualizeShader then
   al_NormalsVisualizeShader = createObject("ShaderData")
-  al_NormalsVisualizeShader.DXVertexShaderFile  = "shaders/common/lighting/advanced/dbgNormalVisualizeP.hlsl"
-  al_NormalsVisualizeShader.DXPixelShaderFile   = "shaders/common/lighting/advanced/dbgNormalVisualizeP.hlsl"
+  al_NormalsVisualizeShader.DXComputShaderName  = "shaders/common/lighting/advanced/dbgNormalVisualize.cs.hlsl"
   al_NormalsVisualizeShader:setField("samplerNames", 0, "prepassTex")
   al_NormalsVisualizeShader.pixVersion = 5.0;
   al_NormalsVisualizeShader:registerObject("AL_NormalsVisualizeShader")
@@ -105,8 +103,7 @@ end
 local al_LightColorVisualizeShader = scenetree.findObject("AL_LightColorVisualizeShader")
 if not al_LightColorVisualizeShader then
   al_LightColorVisualizeShader = createObject("ShaderData")
-  al_LightColorVisualizeShader.DXVertexShaderFile  = "shaders/common/lighting/advanced/dbgLightColorVisualizeP.hlsl"
-  al_LightColorVisualizeShader.DXPixelShaderFile   = "shaders/common/lighting/advanced/dbgLightColorVisualizeP.hlsl"
+  al_LightColorVisualizeShader.DXComputShaderName  = "shaders/common/lighting/advanced/dbgLightColorVisualize.cs.hlsl"
   al_LightColorVisualizeShader:setField("samplerNames", 0, "lightInfoBuffer")
   al_LightColorVisualizeShader.pixVersion = 5.0;
   al_LightColorVisualizeShader:registerObject("AL_LightColorVisualizeShader")
@@ -133,8 +130,7 @@ end
 local al_LightSpecularVisualizeShader = scenetree.findObject("AL_LightSpecularVisualizeShader")
 if not al_LightSpecularVisualizeShader then
   al_LightSpecularVisualizeShader = createObject("ShaderData")
-  al_LightSpecularVisualizeShader.DXVertexShaderFile  = "shaders/common/lighting/advanced/dbgLightSpecularVisualizeP.hlsl"
-  al_LightSpecularVisualizeShader.DXPixelShaderFile   = "shaders/common/lighting/advanced/dbgLightSpecularVisualizeP.hlsl"
+  al_LightSpecularVisualizeShader.DXComputShaderName  = "shaders/common/lighting/advanced/dbgLightSpecularVisualize.cs.hlsl"
   al_LightSpecularVisualizeShader:setField("samplerNames", 0, "lightInfoBuffer")
   al_LightSpecularVisualizeShader.pixVersion = 5.0;
   al_LightSpecularVisualizeShader:registerObject("AL_LightSpecularVisualizeShader")
@@ -161,8 +157,7 @@ end
 local al_VelocityVisualizeShader = scenetree.findObject("AL_VelocityVisualizeShader")
 if not al_VelocityVisualizeShader then
   al_VelocityVisualizeShader = createObject("ShaderData")
-  al_VelocityVisualizeShader.DXVertexShaderFile  = "shaders/common/lighting/advanced/dbgVelocityVisualizeP.hlsl"
-  al_VelocityVisualizeShader.DXPixelShaderFile   = "shaders/common/lighting/advanced/dbgVelocityVisualizeP.hlsl"
+  al_VelocityVisualizeShader.DXComputShaderName  = "shaders/common/lighting/advanced/dbgVelocityVisualize.cs.hlsl"
   al_VelocityVisualizeShader:setField("samplerNames", 0, "velocityTex")
   al_VelocityVisualizeShader.pixVersion = 5.0;
   al_VelocityVisualizeShader:registerObject("AL_VelocityVisualizeShader")
@@ -189,8 +184,7 @@ end
 local annotationVisualizeShader = scenetree.findObject("AnnotationVisualizeShader")
 if not annotationVisualizeShader then
   annotationVisualizeShader = createObject("ShaderData")
-  annotationVisualizeShader.DXVertexShaderFile  = "shaders/common/postFx/annotationViz.hlsl"
-  annotationVisualizeShader.DXPixelShaderFile   = "shaders/common/postFx/annotationViz.hlsl"
+  annotationVisualizeShader.DXComputShaderName  = "shaders/common/postFx/annotationViz.cs.hlsl"
   annotationVisualizeShader:setField("samplerNames", 0, "AnnotationBuffer")
   annotationVisualizeShader:setField("samplerNames", 1, "warningTex")
   annotationVisualizeShader.pixVersion = 5.0;

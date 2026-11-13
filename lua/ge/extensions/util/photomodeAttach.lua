@@ -97,7 +97,7 @@ function M.enable(en, opts)
   M.rotOffset = vrotYaw:inversed() * camRot
 end
 
-function M.onPreRender(dtReal, dtSim, dtRaw)
+local function applyAttachedTransform()
   if not M.enabled then return end
   if core_camera.getActiveGlobalCameraName() ~= "free" then return end
 
@@ -127,6 +127,12 @@ function M.onPreRender(dtReal, dtSim, dtRaw)
     camPos.x, camPos.y, camPos.z,
     camRot.x, camRot.y, camRot.z, camRot.w
   )
+end
+
+M.syncCameraToVehicle = applyAttachedTransform
+
+function M.onPreRender(dtReal, dtSim, dtRaw)
+  applyAttachedTransform()
 end
 
 return M

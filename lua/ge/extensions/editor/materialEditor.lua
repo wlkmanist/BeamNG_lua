@@ -12,6 +12,7 @@ local dbg = false
 
 local toolWindowName = 'materialEditor'
 local createMaterialWindowName = "materialEditorCreateMaterial"
+local copyMaterialWindowName = "materialEditorCopyMaterial"
 local materialPreviewWindowName = "materialEditorMaterialPreview"
 local materialsByTagsWindowName = "materialEditorMaterialsByTag"
 local materialUsageWindowName = "materialEditorMaterialUsage"
@@ -31,6 +32,15 @@ local copiedValues = {}
 -- filter
 local matFilter = im.ImGuiTextFilter()
 local filteredBySceneSelection = false
+
+-- scene focus on the current material: overlay its submeshes and/or hide everything else
+local focusHighlightMode_enum = {
+  off = 0,
+  solid = 1,
+  wireframe = 2,
+}
+local focusHighlightMode = focusHighlightMode_enum.off
+local focusIsolate = false
 
 -- material preview
 local previewMeshesPath = "/art/shapes/material_preview/"
@@ -110,6 +120,16 @@ local newMatMapToLocked = false
 
 local editMatName = ""
 
+-- copy material
+local copyMatSourceName = nil
+local copyMatMode = im.IntPtr(0) -- 0 = existing material, 1 = new material
+local copyMatTargetName = nil
+local copyMatFilter = im.ImGuiTextFilter()
+local copyMatTargetNames = nil
+local copyMatName = im.ArrayChar(128)
+local copyMatPath = im.ArrayChar(512)
+local copyMatMaxListedTargets = 200
+
 -- Materials
 v.materialNameList = nil
 v.materialNamesPtr = nil
@@ -179,12 +199,19 @@ local function normalizePathForCheck(mat, p)
   end
 end
 
-v.totalTexSize = { lastMatId = nil, dirty = true, size = 0 }
+local matTexSizeById = {}
+local matTexSizePrecomputeIndex = 0
+local matTexSizeVisibleStart = nil
+local matTexSizeVisibleEnd = nil
+local matTexSizeVisibleIndex = nil
+local matTexSizePrecomputePerFrame = 2
+
+local function formatEstSizeMB(bytes)
+  return string.format("%.2f MB", (bytes or 0) / 1e6)
+end
+
 local function computeTotalTextureSize(mat)
   if not mat then return 0 end
-  if v.totalTexSize.dirty == false and v.totalTexSize.lastMatId == mat:getId() then
-    return v.totalTexSize.size
-  end
 
   local version = tonumber(mat:getField("version", 0)) or 0
   local layers
@@ -199,8 +226,8 @@ local function computeTotalTextureSize(mat)
   local total = 0
   local seen = {}
   local fields = mat:getFields() or {}
-  for k, v in pairs(fields) do
-    if v.type == "filename" then
+  for k, field in pairs(fields) do
+    if field.type == "filename" then
       for layer = 0, layers - 1 do
         local raw = mat:getField(k, layer) or ""
         if raw ~= "" then
@@ -218,10 +245,67 @@ local function computeTotalTextureSize(mat)
     end
   end
 
-  v.totalTexSize.lastMatId = mat:getId()
-  v.totalTexSize.size = total
-  v.totalTexSize.dirty = false
   return total
+end
+
+local function getMaterialEstSize(mat)
+  if not mat then return 0 end
+  local id = mat:getId()
+  local cached = matTexSizeById[id]
+  if cached ~= nil then return cached end
+  local size = computeTotalTextureSize(mat)
+  matTexSizeById[id] = size
+  return size
+end
+
+local function invalidateMatTexSize(mat)
+  if mat then
+    matTexSizeById[mat:getId()] = nil
+  else
+    matTexSizeById = {}
+  end
+end
+
+local function materialListLabel(name, mat)
+  if not name then return "" end
+  if not mat or not options.showEstimatedSizeInList then return name end
+
+  local id = mat:getId()
+  local size = matTexSizeById[id]
+  if size == nil then return name end
+  return name .. " (" .. formatEstSizeMB(size) .. ")"
+end
+
+local function precomputeMaterialSize(index)
+  local name = v.materialNameList[index]
+  local mat = name and scenetree.findObject(name)
+  if not mat or matTexSizeById[mat:getId()] ~= nil then return false end
+
+  getMaterialEstSize(mat)
+  return true
+end
+
+local function precomputeMaterialSizes()
+  if not options.showEstimatedSizeInList or not v.materialNameList then return end
+
+  local remaining = matTexSizePrecomputePerFrame
+  if matTexSizeVisibleIndex then
+    while remaining > 0 and matTexSizeVisibleIndex < matTexSizeVisibleEnd do
+      if precomputeMaterialSize(matTexSizeVisibleIndex) then
+        remaining = remaining - 1
+      end
+      matTexSizeVisibleIndex = matTexSizeVisibleIndex + 1
+    end
+  end
+
+  local scanned = 0
+  while remaining > 0 and scanned < matTexSizePrecomputePerFrame and matTexSizePrecomputeIndex < (v.materialNamesPtrCount or 0) do
+    if precomputeMaterialSize(matTexSizePrecomputeIndex) then
+      remaining = remaining - 1
+    end
+    matTexSizePrecomputeIndex = matTexSizePrecomputeIndex + 1
+    scanned = scanned + 1
+  end
 end
 
 local function pushIssue(key, level, text)
@@ -815,6 +899,25 @@ local function mapTagsJob()
   -- dump(tags)
 end
 
+local function applyMaterialFocus()
+  local matName = currentMaterial and currentMaterial:getField("name", 0) or ""
+  if matName == "" then
+    focusHighlightMode = focusHighlightMode_enum.off
+    focusIsolate = false
+  end
+
+  local highlight = focusHighlightMode ~= focusHighlightMode_enum.off
+  worldEditorCppApi.setMaterialFocus((highlight or focusIsolate) and matName or "")
+  worldEditorCppApi.setMaterialFocusHighlight(highlight, focusHighlightMode == focusHighlightMode_enum.wireframe)
+  worldEditorCppApi.setMaterialFocusIsolate(focusIsolate)
+end
+
+local function clearMaterialFocus()
+  focusHighlightMode = focusHighlightMode_enum.off
+  focusIsolate = false
+  applyMaterialFocus()
+end
+
 local function updateMaterialProperties()
   if not be then return end
   if dbg then editor.logInfo(logTag .. 'Update texture maps') end
@@ -838,8 +941,8 @@ local function updateMaterialProperties()
 
   o.reflectionMode[0] = (currentMaterial:getField("dynamicCubemap", 0) == "1" and 1 or currentMaterial:getField("cubemap", 0) == "" and 0 or 2)
   texIssues.dirty = true
-  v.totalTexSize.dirty = true
-  computeTotalTextureSize(currentMaterial)
+  getMaterialEstSize(currentMaterial)
+  applyMaterialFocus()
 end
 
 local function selectMaterialByName(matName, clearFilter)
@@ -1000,6 +1103,10 @@ local function getMaterials(optionalMaterialNameList)
 
   v.materialNamesPtr = im.ArrayCharPtrByTbl(v.materialNameList)
   v.materialNamesPtrCount = i
+  matTexSizePrecomputeIndex = 0
+  matTexSizeVisibleStart = nil
+  matTexSizeVisibleEnd = nil
+  matTexSizeVisibleIndex = nil
 
   if editor and editor.getPreference then
     local levelMaterialNames = editor.getPreference("materialEditor.general.levelMaterialNames")
@@ -1151,7 +1258,7 @@ local function setProperty(materialObj, property, layer, value)
   end
   if editor.setMaterialProperty(matObj, property, layer, value) then
     setMaterialDirty(matObj)
-    v.totalTexSize.dirty = true
+    invalidateMatTexSize(matObj)
     if editor.isWindowVisible(materialPreviewWindowName) == true then
       if extMatPreview then
         extMatPreview:renderWorld(extDimRdr)
@@ -1325,6 +1432,7 @@ local function getOrSetLayerData(data, get, layerIndex)
   getOrSetMaterialFieldIntoTable(get, "detailAoMapStrength", layerIndex, data)
   getOrSetMaterialFieldIntoTable(get, "emissiveFactor", layerIndex, data)
   getOrSetMaterialFieldIntoTable(get, "emissiveIntensityNits", layerIndex, data)
+  getOrSetMaterialFieldIntoTable(get, "emissiveIgnoreExposure", layerIndex, data)
   getOrSetMaterialFieldIntoTable(get, "emissiveMap", layerIndex, data)
   getOrSetMaterialFieldIntoTable(get, "retroreflectivity", layerIndex, data)
   getOrSetMaterialFieldIntoTable(get, "retroreflectiveColor", layerIndex, data)
@@ -1572,7 +1680,7 @@ Hit the "Save material" button to save the changes to the material.]],
 
   if im.ImageButton(
     "##imageButton1",
-    texture.texId,
+    texture.tex:getID(),
     size,
     im.ImVec2Zero,
     im.ImVec2One,
@@ -2002,6 +2110,62 @@ local function moveCurrentMaterialToFile()
   )
 end
 
+-- Adds a material name to the material list of the last "pick object from scene", so newly created materials show up in the list.
+local function addToRayPickMaterialNameList(matName)
+  if not rayPickMaterialNameList then return end
+  for _, name in ipairs(rayPickMaterialNameList) do
+    if name == matName then return end
+  end
+  rayPickMaterialNameList[#rayPickMaterialNameList + 1] = matName
+end
+
+local function openCopyMaterialWindow()
+  if not currentMaterial then return end
+  copyMatSourceName = currentMaterial:getField("name", 0)
+  copyMatTargetName = nil
+  copyMatMode[0] = 0
+  im.ImGuiTextFilter_Clear(copyMatFilter)
+
+  local uniqueName = copyMatSourceName .. "_copy"
+  local index = 1
+  while scenetree.findObject(uniqueName) do
+    index = index + 1
+    uniqueName = copyMatSourceName .. "_copy" .. tostring(index)
+  end
+  ffi.copy(copyMatName, uniqueName)
+
+  -- a new material can only be written into a materials.json file
+  local filename = currentMaterial:getFilename()
+  local sourceResidesInJson = false
+  if filename and #filename > 0 then
+    local _, _, extension = path.split(filename)
+    sourceResidesInJson = (extension == "json")
+  end
+  if not sourceResidesInJson then
+    filename = (lastCreateMaterialPath or "/") .. "main.materials.json"
+  end
+  ffi.copy(copyMatPath, filename)
+
+  -- only materials residing in a json file can be overridden
+  local sortFunc = function(a,b) return string.lower(a) < string.lower(b) end
+  copyMatTargetNames = {}
+  for _, matName in pairs(scenetree.findClassObjects('Material')) do
+    local mat = scenetree.findObject(matName)
+    if mat and mat.___type == "class<Material>" and not mat:isAutoGenerated() and matName ~= copyMatSourceName then
+      local matFilename = mat:getFilename()
+      if matFilename and #matFilename > 0 then
+        local _, _, matExtension = path.split(matFilename)
+        if matExtension == "json" then
+          table.insert(copyMatTargetNames, matName)
+        end
+      end
+    end
+  end
+  table.sort(copyMatTargetNames, sortFunc)
+
+  editor.showWindow(copyMaterialWindowName)
+end
+
 local function materialInfo()
   if im.BeginPopup("EDITMATERIALNAME") then
     im.TextUnformatted("Edit material name")
@@ -2122,6 +2286,15 @@ local function materialInfo()
     end
     im.NextColumn()
 
+    -- Copy material to another material
+    im.TextUnformatted("Copy")
+    im.NextColumn()
+    if im.Button("Copy To...") then
+      openCopyMaterialWindow()
+    end
+    im.tooltip("Copy this material's parameters to an existing material or to a new material.\nThe name and 'mapTo' of the target material are kept.\nChanges won't take effect until reloading the map.")
+    im.NextColumn()
+
     -- Version
     local version = tonumber(currentMaterial:getField('version', 0))
     im.TextUnformatted("Version")
@@ -2147,7 +2320,7 @@ local function materialInfo()
         currentMaterial:setField('version', 0, '1.5')
         currentMaterial:reload()
         setMaterialDirty()
-        v.totalTexSize.dirty = true
+        invalidateMatTexSize(currentMaterial)
       end
       im.PopStyleColor(3)
     end
@@ -2201,8 +2374,8 @@ local function materialInfo()
     im.TextUnformatted("Est. size")
     im.ShowHelpMarker("Displays the estimated total GPU memory used by all textures in this material.\nActual usage varies with the MIP levels currently loaded.\nFor detailed statistics use Performance Graph GPU Memory Profiling (CTRL + SHIFT + F).", true)
     im.NextColumn()
-    local totalSize = computeTotalTextureSize(currentMaterial)
-    im.TextUnformatted(string.format("%.2f MB", totalSize / 1e6))
+    local totalSize = getMaterialEstSize(currentMaterial)
+    im.TextUnformatted(formatEstSizeMB(totalSize))
     --
     im.Columns(1)
   end
@@ -2441,7 +2614,7 @@ local function annotationWidget()
           annotationsTbl[annotations[n]].b / 255,
           1.0)
       end
-      im.ColorButton("annotationColorButton", bgColor, 0, im.ImVec2(25, 19))
+      im.ColorButton("annotationColorButton##" .. tostring(n), bgColor, 0, im.ImVec2(25, 19))
       im.SameLine()
       if im.Selectable1(annotations[n], isSelected) then
         value = annotations[n]
@@ -2550,12 +2723,12 @@ local function materialPropertiesVersion1()
         -- Detail Map Scale,
         im.TextUnformatted("Detail Map")
         inputFloat2("Scale:", "detailScale", "%.2f", lyr)
+        combo("UV Layer", "detailMapUV", {"0", "1"}, lyr)
         im.Separator()
 
         -- Color Detail Map
         imageButton("BaseColor Detail Map", "detailMap", lyr, function()
           inputFloat("Strength:", "detailBaseColorMapStrength", nil, nil, nil, lyr)
-          combo("UV Layer", "detailMapUV", {"0", "1"}, lyr)
         end)
         im.Separator()
 
@@ -2653,6 +2826,7 @@ local function materialPropertiesVersion1()
         im.ShowHelpMarker("Adjust emissive color with color temperature instead of RGB values to get more realistic light source color", true)
         colorEdit4("Factor", "emissiveFactor", nil, lyr)
         inputFloat("Intensity (nits)", "emissiveIntensityNits", nil, nil, nil, lyr, "Physical emissive intensity in nits.")
+        checkbox("Ignore Exposure", "emissiveIgnoreExposure", lyr, "If enabled the emissive is independent of the scene exposure, so it stays equally visible at day and night. Factor * intensity is then display relative (1 is about white) instead of nits.")
 
         if useCT then
           im.PushItemWidth(im.GetContentRegionAvailWidth() - 10)
@@ -2964,6 +3138,30 @@ local function menuGui()
   end
   im.tooltip("Shows All Loaded Materials")
 
+  im.SameLine()
+
+  local highlightBgColor
+  if focusHighlightMode ~= focusHighlightMode_enum.off then
+    highlightBgColor = im.ImColorByRGB(255,102,0,255).Value
+  end
+  if editor.uiIconImageButton(editor.icons.highlight, im.ImVec2(v.inputWidgetHeight * 1.5, v.inputWidgetHeight * 1.5), nil, nil, highlightBgColor) then
+    focusHighlightMode = (focusHighlightMode + 1) % 3
+    applyMaterialFocus()
+  end
+  im.tooltip("Highlight In Scene The Submeshes Using This Material (Off / Solid / Wireframe)")
+
+  im.SameLine()
+
+  local isolateBgColor
+  if focusIsolate then
+    isolateBgColor = im.ImColorByRGB(255,102,0,255).Value
+  end
+  if editor.uiIconImageButton(editor.icons.visibility, im.ImVec2(v.inputWidgetHeight * 1.5, v.inputWidgetHeight * 1.5), nil, nil, isolateBgColor) then
+    focusIsolate = not focusIsolate
+    applyMaterialFocus()
+  end
+  im.tooltip("Isolate In Scene The Submeshes Using This Material, Hiding Everything Else")
+
   if pickMaterialsFromObjectName then
     im.SameLine()
     im.TextColored(im.ImVec4(1, 1, 0, 1), "From: " .. pickMaterialsFromObjectName)
@@ -3125,15 +3323,7 @@ local function createMaterialWindowGui()
       if editor.createMaterial(ffi.string(newMatName), ffi.string(newMatPath), (newMatMapToLocked == true and ffi.string(newMatName) or ffi.string(newMatMapTo))) then
         editor.hideWindow(createMaterialWindowName)
         local createdName = ffi.string(newMatName)
-        if rayPickMaterialNameList then
-          local already = false
-          for _, n in ipairs(rayPickMaterialNameList) do
-            if n == createdName then already = true break end
-          end
-          if not already then
-            rayPickMaterialNameList[#rayPickMaterialNameList + 1] = createdName
-          end
-        end
+        addToRayPickMaterialNameList(createdName)
         getMaterials()
         selectMaterialByName(createdName)
         ffi.copy(newMatName, "")
@@ -3151,6 +3341,122 @@ local function createMaterialWindowGui()
   if createMaterialMessage and createMaterialMessage ~= "" and createMaterialError then
     im.SetCursorPos(im.ImVec2(im.GetCursorPosX(), im.GetContentRegionAvail().y + im.GetCursorPosY() - im.GetTextLineHeight()))
     im.TextColored(im.ImVec4(1, 1, 0, 1), createMaterialMessage)
+  end
+  editor.endWindow()
+end
+
+local function copyMaterialWindowGui()
+  if editor.beginWindow(copyMaterialWindowName, "Copy Material") then
+    im.TextUnformatted("Copy all parameters of '" .. tostring(copyMatSourceName) .. "' to:")
+    im.RadioButton2("Existing material", copyMatMode, 0)
+    im.SameLine()
+    im.RadioButton2("New material", copyMatMode, 1)
+    im.Separator()
+
+    local errorMessage = nil
+
+    if copyMatMode[0] == 0 then
+      im.TextColored(editor.color.warning.Value, "All parameters of the target material will be overridden.")
+      im.TextUnformatted("Its name and 'mapTo' are kept.")
+      editor.uiInputSearchTextFilter("Filter materials (inc, -exc)", copyMatFilter, im.GetContentRegionAvailWidth())
+      im.TextUnformatted("Target: " .. (copyMatTargetName or "none"))
+
+      local reservedHeight = 2 * (v.inputWidgetHeight * im.uiscale[0] + 2 * v.style.ItemSpacing.y)
+      if im.BeginChild1("CopyMaterialTargetList", im.ImVec2(0, im.GetContentRegionAvail().y - reservedHeight), true) then
+        local listed = 0
+        for _, matName in ipairs(copyMatTargetNames or {}) do
+          if im.ImGuiTextFilter_PassFilter(copyMatFilter, matName) then
+            if listed >= copyMatMaxListedTargets then
+              im.TextUnformatted("... refine the filter to see more materials")
+              break
+            end
+            if im.Selectable1(matName, matName == copyMatTargetName) then
+              copyMatTargetName = matName
+            end
+            listed = listed + 1
+          end
+        end
+      end
+      im.EndChild()
+
+      if not copyMatTargetName then
+        errorMessage = "Please select a target material."
+      end
+    else
+      im.TextUnformatted("Material Name:")
+      im.SameLine()
+      im.PushItemWidth(im.GetContentRegionAvailWidth())
+      im.InputText("##CopyMatName", copyMatName, nil, im.flags(im.InputTextFlags_CharsNoBlank))
+      im.PopItemWidth()
+
+      im.TextUnformatted("Path:")
+      im.SameLine()
+      im.PushItemWidth(im.GetContentRegionAvailWidth() - (v.style.ItemSpacing.x + 2 * v.style.FramePadding.x + im.CalcTextSize("...").x))
+      im.InputText("##CopyMatPath", copyMatPath, nil, im.flags(im.InputTextFlags_CharsNoBlank))
+      im.PopItemWidth()
+      im.SameLine()
+      if im.Button("...") then
+        local currentPath = ffi.string(copyMatPath)
+        local dialogPath = lastCreateMaterialPath
+        if currentPath and #currentPath > 0 then
+          local dir = path.split(currentPath)
+          if dir and #dir > 0 then
+            dialogPath = dir
+          end
+        end
+        editor_fileDialog.saveFile(
+          function(data)
+            lastCreateMaterialPath = data.path
+            ffi.copy(copyMatPath, data.filepath)
+          end,
+          {{"Material file", ".materials.json"}},
+          false,
+          dialogPath,
+          "File already exists.\nDo you want to add the material to this file?"
+        )
+      end
+
+      local newName = ffi.string(copyMatName)
+      local _, _, extension = path.split(ffi.string(copyMatPath))
+      if #newName == 0 then
+        errorMessage = "Please enter a material name."
+      elseif scenetree.findObject(newName) then
+        errorMessage = "Object with name \"" .. newName .. "\" already exists. Please choose a different name."
+      elseif extension ~= "json" then
+        errorMessage = "Please choose a materials.json file for the new material."
+      end
+    end
+
+    if errorMessage then
+      im.TextColored(im.ImVec4(1, 1, 0, 1), errorMessage)
+    end
+
+    if errorMessage then im.BeginDisabled() end
+    if im.Button("Copy") then
+      local copied = false
+      local targetName = nil
+      if copyMatMode[0] == 0 then
+        targetName = copyMatTargetName
+        copied = editor.copyMaterial(copyMatSourceName, copyMatTargetName)
+      else
+        targetName = ffi.string(copyMatName)
+        copied = editor.copyMaterialAsNew(copyMatSourceName, targetName, ffi.string(copyMatPath))
+      end
+
+      if copied then
+        editor.hideWindow(copyMaterialWindowName)
+        v.dirtyMaterials[targetName] = nil
+        addToRayPickMaterialNameList(targetName)
+        getMaterials()
+        selectMaterialByName(targetName)
+        editor.showNotification("Material '" .. copyMatSourceName .. "' copied to '" .. targetName .. "'.")
+      end
+    end
+    if errorMessage then im.EndDisabled() end
+    im.SameLine()
+    if im.Button("Cancel") then
+      editor.hideWindow(copyMaterialWindowName)
+    end
   end
   editor.endWindow()
 end
@@ -3184,7 +3490,69 @@ local function materialPreviewWindowGui()
   editor.endWindow()
 end
 
+local materialComboClipper = nil
+
+local function drawMaterialsCombo()
+  local preview
+  if v.materialNamesPtrCount == 0 then
+    preview = v.materialNameList[0] or ""
+  else
+    preview = materialListLabel(v.materialNameList[v.currentMaterialIndex], currentMaterial)
+  end
+
+  if not im.BeginCombo("##Materials", preview, im.ComboFlags_HeightLarge) then
+    matTexSizeVisibleStart = nil
+    matTexSizeVisibleEnd = nil
+    matTexSizeVisibleIndex = nil
+    return
+  end
+
+  if v.materialNamesPtrCount > 0 then
+    if not materialComboClipper then
+      materialComboClipper = im.ImGuiListClipper()
+    end
+    local itemH = im.GetTextLineHeightWithSpacing()
+    if im.IsWindowAppearing() then
+      im.SetScrollY(v.currentMaterialIndex * itemH)
+    end
+    local visibleStart = math.max(0, math.floor(im.GetScrollY() / itemH))
+    local visibleEnd = math.min(v.materialNamesPtrCount, visibleStart + math.ceil(im.GetWindowHeight() / itemH) + 1)
+    if visibleStart ~= matTexSizeVisibleStart or visibleEnd ~= matTexSizeVisibleEnd then
+      matTexSizeVisibleStart = visibleStart
+      matTexSizeVisibleEnd = visibleEnd
+      matTexSizeVisibleIndex = visibleStart
+    end
+    im.ImGuiListClipper_Begin(materialComboClipper, v.materialNamesPtrCount, itemH)
+    im.ImGuiListClipper_IncludeRangeByIndices(materialComboClipper, v.currentMaterialIndex, v.currentMaterialIndex + 1)
+    while im.ImGuiListClipper_Step(materialComboClipper) do
+      local displayStart = tonumber(materialComboClipper.DisplayStart)
+      for row = displayStart, tonumber(materialComboClipper.DisplayEnd) - 1 do
+        local name = v.materialNameList[row]
+        local mat = name and scenetree.findObject(name)
+        local label = materialListLabel(name, mat)
+        local isSelected = (row == v.currentMaterialIndex)
+        if im.Selectable1(label .. "##" .. tostring(row), isSelected) then
+          if dbg then editor.logInfo(logTag .. "Material has changed!") end
+          v.currentMaterialIndex = row
+          updateMaterialProperties()
+          local levelMaterialNames = editor.getPreference("materialEditor.general.levelMaterialNames")
+          levelMaterialNames[getMissionPath()] = v.materialNameList[v.currentMaterialIndex]
+          editor.setPreference("materialEditor.general.levelMaterialNames", levelMaterialNames)
+        end
+        if isSelected then
+          im.SetItemDefaultFocus()
+        end
+      end
+    end
+    im.ImGuiListClipper_End(materialComboClipper)
+  end
+  im.EndCombo()
+end
+
 local function onEditorGui()
+  v.style = im.GetStyle()
+  v.inputWidgetHeight = 16 + v.style.FramePadding.y
+
   materialPreviewWindowGui()
   materialUsageWindowGui()
 
@@ -3194,8 +3562,6 @@ local function onEditorGui()
   end
 
   if editor.beginWindow(toolWindowName, "Material Editor") then
-    v.style = im.GetStyle()
-    v.inputWidgetHeight = 16 + v.style.FramePadding.y
     menuGui()
 
     if openPickMapToFromObjectPopup == true then
@@ -3229,14 +3595,8 @@ local function onEditorGui()
         (im.GetContentRegionAvailWidth() - (2 * (math.ceil(17 * im.uiscale[0]) + 2 * v.style.FramePadding.y) + 2 * v.style.ItemSpacing.x))
       )
       if v.materialNamesPtrCount == 0 then im.BeginDisabled() end
-      if im.Combo1("##Materials", editor.getTempInt_NumberNumber(v.currentMaterialIndex), v.materialNamesPtr, (#v.materialNameList + 1), 20) then
-        if dbg then editor.logInfo(logTag .. "Material has changed!") end
-        v.currentMaterialIndex = editor.getTempInt_NumberNumber()
-        updateMaterialProperties()
-        local levelMaterialNames = editor.getPreference("materialEditor.general.levelMaterialNames")
-        levelMaterialNames[getMissionPath()] = v.materialNameList[v.currentMaterialIndex]
-        editor.setPreference("materialEditor.general.levelMaterialNames", levelMaterialNames)
-      end
+      drawMaterialsCombo()
+      precomputeMaterialSizes()
       if v.materialNamesPtrCount == 0 then
         im.EndDisabled()
         if not v.materialListIsNothingFound then
@@ -3343,13 +3703,17 @@ local function onEditorGui()
 
   if editor.isWindowVisible(toolWindowName) then
     createMaterialWindowGui()
+    copyMaterialWindowGui()
     materialsByTagWindowGui()
+  elseif focusHighlightMode ~= focusHighlightMode_enum.off or focusIsolate then
+    clearMaterialFocus()
   end
 end
 
 local function onWindowMenuItem()
   editor.showWindow(toolWindowName)
   editor.hideWindow(createMaterialWindowName)
+  editor.hideWindow(copyMaterialWindowName)
 
   if not loadedAllVehicleMaterials then
     loadedAllVehicleMaterials = true
@@ -3399,6 +3763,9 @@ local function onEditorPreferenceValueChanged(path, value)
     options.textFilterResultsWithSameFirstCharAtTop = value
     getMaterials()
   end
+  if path == "materialEditor.general.showEstimatedSizeInList" then
+    options.showEstimatedSizeInList = value
+  end
 end
 
 local function onEditorRegisterPreferences(prefsRegistry)
@@ -3409,6 +3776,7 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {thumbnailSize = {"int", 64, "", nil, 32, 256 }},
     {maxMaterialPreviewSize = {"int", 256, "", nil, 64, 1024}},
     {textFilterResultsWithSameFirstCharAtTop = {"bool", true, "List materials starting with the same chars as the text filter at top of materials list."}},
+    {showEstimatedSizeInList = {"bool", false, "Show estimated GPU texture size next to material names in the dropdown."}},
     -- hidden
     {columnSizes = {"table", {29, 53, 300, 145, 97, 280}, "", nil, nil, nil, true}},
     {levelMaterialNames = {"table", {}, "", nil, nil, nil, true}},
@@ -3446,8 +3814,10 @@ local function onEditorActivated()
 end
 
 local function onEditorDeactivated()
+  clearMaterialFocus()
   v.materialNameList = nil
   v.materialNamesPtr = nil
+  matTexSizeById = {}
 
   previewMeshes = nil
   groundModels = nil
@@ -3458,11 +3828,13 @@ local function onEditorInitialized()
   editor.addWindowMenuItem("Material Editor", onWindowMenuItem, nil, true)
   editor.registerWindow(toolWindowName, im.ImVec2(310, 580))
   editor.registerWindow(createMaterialWindowName, im.ImVec2(450, 150))
+  editor.registerWindow(copyMaterialWindowName, im.ImVec2(450, 400))
   editor.registerWindow(materialPreviewWindowName, im.ImVec2(300, 300))
   editor.registerWindow(materialsByTagsWindowName, im.ImVec2(260, 320))
   editor.registerWindow(materialUsageWindowName, im.ImVec2(420, 340))
   editor.hideWindow(materialUsageWindowName)
   editor.hideWindow(createMaterialWindowName)
+  editor.hideWindow(copyMaterialWindowName)
   editor.hideWindow(materialPreviewWindowName)
   editor.hideWindow(materialsByTagsWindowName)
   core_jobsystem.create(mapTagsJob, 1)

@@ -101,7 +101,12 @@ local function returnVehicleActual(inventoryId)
     local fine = {}
     fine[vehInfo.owningOrganization .. "Reputation"] = career_modules_reputation.getValueForEvent("returnLoanerDamaged")
     career_modules_playerAttributes.addAttributes(fine, {tags={"fine"}, label="ui.career.attributeLog.loanerDamagedReputationCost"})
-    guihooks.trigger("toastrMsg", {type="warning", label = "loanReturnedDamaged", title="Loaner returned damaged", msg="Lost reputation due to returning a damaged loaned vehicle."})
+    guihooks.trigger("toastrMsg", {
+      type = "warning",
+      label = "loanReturnedDamaged",
+      title = _tr("ui.career.loaner.toast.returnedDamaged.title"),
+      msg = _tr("ui.career.loaner.toast.returnedDamaged.message")
+    })
   end
   career_modules_inventory.removeVehicle(inventoryId)
 end
@@ -151,7 +156,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
       playerPos:set(be:getObjectPositionXYZ(be:getPlayerVehicleID(0)))
 
       if not loanedVehiclesInfo[inventoryId] and playerPos:distance(vehPos) > walkAwayRadius then
-        ui_message(string.format("You are leaving a loaned vehicle behind. After %d seconds, it will be returned to the owner.", walkAwayTimeLimit), 5, "loanedVehicleTime")
+        ui_message(core_locales.contextTranslate("ui.career.loaner.message.walkAwayInitial", {seconds = walkAwayTimeLimit}), 5, "loanedVehicleTime")
         loanedVehiclesInfo[inventoryId] = {time = walkAwayTimeLimit}
         break
       end
@@ -181,7 +186,7 @@ local function onUpdate(dtReal, dtSim, dtRaw)
     end
 
     if not loanedVehInfo.warningShown and loanedVehInfo.time < walkAwayWarningTime then
-      ui_message(string.format("After %d more seconds of not returning to the loaned vehicle, it will be returned to the owner.", walkAwayWarningTime), 5, "loanedVehicleTime")
+      ui_message(core_locales.contextTranslate("ui.career.loaner.message.walkAwayWarning", {seconds = walkAwayWarningTime}), 5, "loanedVehicleTime")
       loanedVehInfo.warningShown = true
       break
     end
@@ -255,7 +260,7 @@ local function formatSpawnedLoanersForUi()
     local configInfo = core_vehicles.getConfig(vehInfo.model, configFilename)
 
     veh.loanerCut = organization.reputationLevels[organization.reputation.level+2].loanerCut
-    veh.name = veh.niceName
+    veh.name = career_modules_inventory.getVehicleNiceNameTranslated(veh.id)
     veh.vehMileage = career_modules_valueCalculator.getVehicleMileageById(veh.id)
     veh.organizationName = organization.name
     veh.vehOfferType = (configInfo.aggregates.Type.Trailer) and "trailer" or "vehicle"
@@ -269,7 +274,7 @@ local function formatSpawnedLoanersForUi()
           table.insert(veh.capacity, {
             icon = career_modules_delivery_parcelMods.getModifierIcon(cap.type),
             labelShort = string.format("%dL", cap.amount),
-            labelLong = string.format("Fluids: %dL", cap.amount),
+            labelLong = core_locales.contextTranslate("ui.career.loaner.capacity.fluidsLong", {liters = cap.amount}),
           })
         end
       end
@@ -314,7 +319,7 @@ local function formatLoanerOfferForUi(facility)
       enabled = false
       disableReason = {
         type = "noSpace",
-        label  = "There are no free parking spots for loaner vehicles of this type.",
+        label  = _tr("ui.career.loaner.disableReason.noParkingSpots"),
       }
     end
 
@@ -322,7 +327,7 @@ local function formatLoanerOfferForUi(facility)
       enabled = false
       disableReason = {
         type = "limit",
-        label = "You already have a loaned vehicle of that type from this organization.",
+        label = _tr("ui.career.loaner.disableReason.alreadyHaveLoaner"),
       }
     end
 
@@ -330,10 +335,22 @@ local function formatLoanerOfferForUi(facility)
       enabled = false
       disableReason = {
         type = "locked", icon = "peopleOutline", level = rentalVehicleInfo.reputationLvl,
-        label = string.format("Requires Reputation '%s' with %s", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, _tr(organization.name))
+        label = core_locales.contextTranslate("ui.career.loaner.disableReason.requiresReputation", {
+          reputationLabel = organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label,
+          organizationName = organization.name
+        })
       }
       unlockInfo = {
-        type = "minLevel", icon = "peopleOutline", longLabel = string.format("Requires Reputation '%s' with %s", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, _tr(organization.name)), shortLabel = string.format("%s (lvl %d)", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, rentalVehicleInfo.reputationLvl)
+        type = "minLevel",
+        icon = "peopleOutline",
+        longLabel = core_locales.contextTranslate("ui.career.loaner.disableReason.requiresReputation", {
+          reputationLabel = organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label,
+          organizationName = organization.name
+        }),
+        shortLabel = core_locales.contextTranslate("ui.career.loaner.unlockInfo.reputationLevel", {
+          reputationLabel = organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label,
+          level = rentalVehicleInfo.reputationLvl
+        })
       }
     end
 
@@ -341,10 +358,13 @@ local function formatLoanerOfferForUi(facility)
       enabled = false
       disableReason = {
         type = "locked", icon = "cardboardBox", level = rentalVehicleInfo.deliveryLvl,
-        label = string.format("Requires Skill 'Cargo Delivery' lvl %d", rentalVehicleInfo.deliveryLvl )
+        label = core_locales.contextTranslate("ui.career.loaner.disableReason.requiresCargoDeliverySkill", {level = rentalVehicleInfo.deliveryLvl})
       }
       unlockInfo = {
-        type = "minLevel", icon = "cardboardBox", longLabel = string.format("Requires Skill 'Cargo Delivery' lvl %d", rentalVehicleInfo.deliveryLvl ), shortLabel = string.format("lvl %d", rentalVehicleInfo.deliveryLvl )
+        type = "minLevel",
+        icon = "cardboardBox",
+        longLabel = core_locales.contextTranslate("ui.career.loaner.disableReason.requiresCargoDeliverySkill", {level = rentalVehicleInfo.deliveryLvl}),
+        shortLabel = core_locales.contextTranslate("ui.career.loaner.unlockInfo.level", {level = rentalVehicleInfo.deliveryLvl})
       }
     end
 
@@ -382,16 +402,22 @@ local function formatLoanerOfferForUi(facility)
           table.insert(item.capacity, {
             icon = career_modules_delivery_parcelMods.getModifierIcon(cap.type),
             labelShort = string.format("%dL", cap.amount),
-            labelLong = string.format("Fluids: %dL", cap.amount),
+            labelLong = core_locales.contextTranslate("ui.career.loaner.capacity.fluidsLong", {liters = cap.amount}),
           })
         end
       end
     end
 
     if enabled then
-      local repLabel = string.format("%s (lvl %d)", organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label, rentalVehicleInfo.reputationLvl)
+      local repLabel = core_locales.contextTranslate("ui.career.loaner.unlockInfo.reputationLevel", {
+        reputationLabel = organization.reputationLevels[rentalVehicleInfo.reputationLvl+2].label,
+        level = rentalVehicleInfo.reputationLvl
+      })
       item.unlockInfo = {
-        type = "minLevel", icon = "peopleOutline", longLabel = string.format("Requires reputation: %s",repLabel), shortLabel = repLabel
+        type = "minLevel",
+        icon = "peopleOutline",
+        longLabel = core_locales.contextTranslate("ui.career.loaner.unlockInfo.requiresReputation", {reputationLabel = repLabel}),
+        shortLabel = repLabel
       }
     end
 

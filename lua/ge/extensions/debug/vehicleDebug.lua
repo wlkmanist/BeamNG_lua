@@ -58,7 +58,7 @@ local function onUpdate(dt)
   end
 end
 
-local function onExtensionLoaded(serializedData)
+local function onDeserialized(serializedData)
   if serializedData then
     debugEnabled = serializedData.debugEnabled
   end
@@ -76,7 +76,7 @@ M.setDebugEnabled = setDebugEnabled
 M.bdebugRequestViewportSize = bdebugRequestViewportSize
 
 M.onUpdate = onUpdate
-M.onExtensionLoaded = onExtensionLoaded
 M.onSerialize = onSerialize
+M.onDeserialized = onDeserialized
 
 return M

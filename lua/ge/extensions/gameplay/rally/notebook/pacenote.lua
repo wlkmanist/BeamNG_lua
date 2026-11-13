@@ -1247,7 +1247,11 @@ local function textForDrawDebug(drawConfig, selection_state, wp, dist_text, hove
     end
 
     if shift and hover then
-      txt = '[CAMERA LOCK] '..txt
+      local cameraAction = editor
+        and editor.getPreference("camera.general.activeCamera") == "cameraV2"
+        and "FOCUS"
+        or "CAMERA LOCK"
+      txt = '['..cameraAction..'] '..txt
     end
 
     if not txt or txt == '' then

@@ -7,17 +7,32 @@ local logTag = "drag_timeslip"
 
 M.dependencies = {'gameplay_drag_saveSystem'}
 
-local treeNames = {[".400"] = "Pro Tree", [".500"] = "Sportsman Tree"}
+local treeNames = {[".400"] = "ui.drag.treeType.pro", [".500"] = "ui.drag.treeType.sportsmanTree"}
 
 local function getReactionTimerValueForRacer(racer)
   return gameplay_drag_times.getReactionTimerValue(racer)
+end
+
+local function isMultiseatActive()
+  return settings.getValue("multiseat") == true
+end
+
+local function getMultiseatPersonaForVeh(vehId)
+  if not core_multiseat then return nil end
+  for _, player in ipairs(core_multiseat.getPlayers()) do
+    if be:getPlayerVehicleID(player) == vehId then
+      local participant = core_multiseat.getParticipant(player)
+      return participant and participant.persona
+    end
+  end
+  return nil
 end
 
 local function buildTimeslipRows(timerConfig)
   local rows = {}
   table.insert(rows, { key = "laneName", labelKey = "missions.missions.dragRace.userSettings.lane" })
   table.insert(rows, { key = nil })
-  table.insert(rows, { key = "dial", label = "DIAL" })
+  table.insert(rows, { key = "dial", labelKey = "ui.drag.timeslip.dial" })
 
   local distanceTimers = {}
   local velocityByDist = {}
@@ -33,7 +48,7 @@ local function buildTimeslipRows(timerConfig)
   table.sort(distanceTimers, function(a, b) return (a.distance or 0) < (b.distance or 0) end)
 
   for _, t in ipairs(distanceTimers) do
-    table.insert(rows, { key = t.id, label = t.shortLabel or t.label })
+    table.insert(rows, { key = t.id, labelKey = t.labelKey, label = t.shortLabel or t.label })
     local vel = velocityByDist[t.distance or 0]
     if vel then
       table.insert(rows, { key = vel.id .. "_kmh", label = "KM/H" })
@@ -41,7 +56,7 @@ local function buildTimeslipRows(timerConfig)
     end
   end
 
-  table.insert(rows, { key = "dialDiff", label = "DIFF" })
+  table.insert(rows, { key = "dialDiff", labelKey = "ui.drag.timeslip.diff" })
   return rows
 end
 
@@ -54,7 +69,7 @@ function M.createTimeslipData()
 
   local rawData = {}
   rawData.stripInfo = {
-    stripName = currentDragData.stripInfo and currentDragData.stripInfo.stripName or "Drag Strip",
+    stripName = currentDragData.stripInfo and currentDragData.stripInfo.stripName or "ui.facilities.type.dragstrip",
     levelName = core_levels.getLevelByName(getCurrentLevelIdentifier()).title,
     dateTime = os.date(currentDragData.stripInfo and currentDragData.stripInfo.dateFormat or "%a %m/%d/%Y %I:%M:%S %p"),
     timestamp = os.time(),
@@ -100,6 +115,7 @@ function M.createTimeslipData()
     local importantVal = 0
     local dialVal = (racer.timers and racer.timers.dial and racer.timers.dial.value) or 0
     local reactionVal = getReactionTimerValueForRacer(racer)
+    local winTime = gameplay_drag_times.getImportantTimerValueForWin(racer, currentDragData)
     local netTimers = isMP and networkTimers[id] or nil
 
     for _, t in ipairs(timerConfig) do
@@ -121,6 +137,7 @@ function M.createTimeslipData()
       local entry = {
         id = timerId,
         label = t.label or timerId,
+        labelKey = t.labelKey,
         shortLabel = t.shortLabel,
         value = val,
         important = (t.important == true),
@@ -174,8 +191,9 @@ function M.createTimeslipData()
       timersForUi.dial = { type = "dialTimer", value = dialVal, isSet = true }
     end
 
+    local laneName = currentDragData.strip and currentDragData.strip.lanes and currentDragData.strip.lanes[racer.lane] and currentDragData.strip.lanes[racer.lane].longName or core_locales.contextTranslate("ui.drag.lane.numbered", { lane = racer.lane })
     local displayValues = {}
-    displayValues.laneName = currentDragData.strip and currentDragData.strip.lanes and currentDragData.strip.lanes[racer.lane] and currentDragData.strip.lanes[racer.lane].longName or ("Lane " .. tostring(racer.lane))
+    displayValues.laneName = laneName
     if currentDragData.dragType == "bracketRace" and dialVal ~= nil and dialVal >= 0 then
       displayValues.dial = string.format("%0.3f", dialVal)
     else
@@ -200,12 +218,13 @@ function M.createTimeslipData()
       name = displayName,
       stock = racer.stock and "Stock" or "Modified",
       licenseText = racer.licenseText,
-      lane = currentDragData.strip and currentDragData.strip.lanes and currentDragData.strip.lanes[racer.lane] and currentDragData.strip.lanes[racer.lane].longName or ("Lane " .. tostring(racer.lane)),
+      lane = laneName,
       laneNum = racer.lane,
       finalTime = importantVal,
       reactionTime = reactionVal,
+      winTime = winTime,
       rewards = rewards,
-      dialDiff = (importantVal + reactionVal) - dialVal,
+      dialDiff = winTime - dialVal,
       disqualification = (racer.isDisqualified ~= nil and racer.isDisqualified) or racer.isDesqualified,
       brand = (currentVehicle and currentVehicle.model and currentVehicle.model.Brand) or "Unknown",
       country = (currentVehicle and currentVehicle.model and currentVehicle.model.Country) or "Unknown",
@@ -218,6 +237,16 @@ function M.createTimeslipData()
       timers = timersForUi,
       displayValues = displayValues,
     }
+
+    local persona = isMultiseatActive() and getMultiseatPersonaForVeh(id)
+    if persona then
+      info.personaName = persona.displayName
+      info.personaColor = persona.colorHex
+      info.personaIcon = persona.icon
+    elseif id == be:getPlayerVehicleID(0) and OnlineServiceProvider and OnlineServiceProvider.playerName ~= "" then
+      info.personaName = OnlineServiceProvider.playerName
+    end
+
     table.insert(rawData.racerInfos, info)
   end
   table.sort(rawData.racerInfos, function(a, b) return a.laneNum > b.laneNum end)
@@ -233,9 +262,8 @@ function M.createTimeslipData()
     if info.displayValues then
       if not info.displayValues.dialDiff then info.displayValues.dialDiff = "-" end
       local et = tonumber(info.finalTime) or 0
-      local rt = tonumber(info.reactionTime) or 0
       if et > 0 then
-        info.displayValues.etRt = string.format("%0.3f", et + rt) .. "s"
+        info.displayValues.etRt = string.format("%0.3f", info.winTime) .. "s"
       end
     end
   end
@@ -245,26 +273,26 @@ function M.createTimeslipData()
     for _, pair in ipairs({{a, b}, {b, a}}) do
       local me, other = pair[1], pair[2]
       if me.disqualification then
-        me.winnerResult = "DQ"
+        me.winnerResult = "ui.drag.timeslip.dq"
       elseif other.disqualification then
-        me.winnerResult = "WINNER"
+        me.winnerResult = "ui.drag.timeslip.winner"
       elseif rawData.dragType == "bracketRace" then
         local meDiff  = tonumber(me.dialDiff) or 0
         local othDiff = tonumber(other.dialDiff) or 0
         if meDiff == othDiff then
-          me.winnerResult = "TIE"
+          me.winnerResult = "ui.drag.timeslip.tie"
         elseif meDiff > 0 and othDiff > 0 then
-          me.winnerResult = meDiff < othDiff and "WINNER" or ""
+          me.winnerResult = meDiff < othDiff and "ui.drag.timeslip.winner" or ""
         else
-          me.winnerResult = meDiff > othDiff and "WINNER" or "Break Out"
+          me.winnerResult = meDiff > othDiff and "ui.drag.timeslip.winner" or "ui.drag.timeslip.breakOut"
         end
       else
-        local meTime  = tonumber(me.finalTime) or 0
-        local othTime = tonumber(other.finalTime) or 0
+        local meTime  = tonumber(me.winTime) or 0
+        local othTime = tonumber(other.winTime) or 0
         if meTime > othTime then
           me.winnerResult = string.format("+%0.3f", meTime - othTime)
         else
-          me.winnerResult = "WINNER"
+          me.winnerResult = "ui.drag.timeslip.winner"
         end
       end
     end
@@ -309,7 +337,7 @@ function M.screenshotTimeslip()
   local dir = "screenshots/timeslips/" .. os.date("%Y-%m-%d_%H-%M-%S")
   if screenshot and screenshot.doScreenshot then
     screenshot.doScreenshot(nil, nil, dir, 'jpg')
-    if ui_message then ui_message("Timeslip saved: " .. dir .. ".jpg", nil, nil, "save") end
+    if ui_message then ui_message({txt = "ui.drag.timeslip.saved", context = {path = dir .. ".jpg"}}, nil, nil, "save") end
   else
     log('E', logTag, "screenshot.doScreenshot not available")
   end

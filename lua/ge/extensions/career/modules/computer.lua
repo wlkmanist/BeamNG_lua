@@ -70,13 +70,25 @@ local function getComputerUIData()
   if not computerFunctions then
     return data
   end
+  local function translateReasons(functions)
+    for _, functionData in pairs(functions) do
+      if functionData.reason and functionData.reason.label then
+        functionData.reason.label = core_locales.translateWithOrWithoutContext(functionData.reason.label)
+      end
+    end
+  end
+
+  -- work on the copy, so the shared M.reasons tables never get their keys overwritten
   local computerFunctionsForUI = deepcopy(computerFunctions)
-  computerFunctionsForUI.vehicleSpecific = {}
+  local vehicleSpecificForUI = {}
 
   -- convert keys of the table to string, because js doesnt support number keys
-  for inventoryId, computerFunction in pairs(computerFunctions.vehicleSpecific) do
-    computerFunctionsForUI.vehicleSpecific[tostring(inventoryId)] = computerFunction
+  for inventoryId, computerFunction in pairs(computerFunctionsForUI.vehicleSpecific) do
+    translateReasons(computerFunction)
+    vehicleSpecificForUI[tostring(inventoryId)] = computerFunction
   end
+  computerFunctionsForUI.vehicleSpecific = vehicleSpecificForUI
+  translateReasons(computerFunctionsForUI.general)
 
   local vehiclesForUI = deepcopy(menuData.vehiclesInGarage)
   for i, vehicleData in ipairs(vehiclesForUI) do
@@ -116,15 +128,15 @@ M.computerButtonCallback = computerButtonCallback
 M.reasons = {
   tutorialActive = {
     type = "text",
-    label = "Disabled during tutorial."
+    label = "ui.career.computer.reason.disabledDuringTutorial"
   },
   hasBoughtStarterVehicle = {
     type = "text",
-    label = "You need to buy a starter vehicle first."
+    label = "ui.career.computer.reason.buyStarterVehicleFirst"
   },
   needsRepair = {
     type = "needsRepair",
-    label = "The vehicle needs to be repaired first."
+    label = "ui.career.computer.reason.vehicleNeedsRepairFirst"
   }
 }
 

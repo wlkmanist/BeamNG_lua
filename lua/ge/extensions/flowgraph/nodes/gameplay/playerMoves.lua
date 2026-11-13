@@ -33,6 +33,7 @@ end
 function C:work(args)
   if self.pinIn.reset.value then
     self.initialPos = nil
+    self.msgSent = true
   end
   self.pinOut.success.value = false
   if self.pinIn.flow.value then
@@ -56,12 +57,12 @@ function C:work(args)
     -- display start message
     if self.data.useScenarioRealtimeDisplay then
       if self.msgSent and not hasMoved then
-        guihooks.trigger('ScenarioRealtimeDisplay', {msg = _tr("missions.general.moveToStart"), context = "accelerateToBegin"})
+        guihooks.trigger('ScenarioRealtimeDisplay', {msg = "missions.general.moveToStart", context = "accelerateToBegin"})
       end
 
       if hasMoved and self.msgSent then
-        self.initialPosIsSet = false
         guihooks.trigger('ScenarioRealtimeDisplay', {msg = "", context = "accelerateToBegin"})
+        self.msgSent = false
       end
     end
 

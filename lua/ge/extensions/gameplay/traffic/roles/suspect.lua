@@ -16,10 +16,11 @@ function C:init()
     fleePolice = function ()
       if self.veh.isAi then
         self.veh:setAiMode('flee')
-        getObjectByID(self.veh.id):queueLuaCommand('controller.setFreeze(0)')
-        getObjectByID(self.veh.id):queueLuaCommand('ai.setAggressionMode("off")')
-        getObjectByID(self.veh.id):queueLuaCommand('ai.driveInLane("off")')
-        getObjectByID(self.veh.id):queueLuaCommand('ai.setSpeedMode("off")')
+        local obj = getObjectByID(self.veh.id)
+        obj:queueLuaCommand('controller.setFreeze(0)')
+        obj:queueLuaCommand('ai.setAggressionMode("off")')
+        obj:queueLuaCommand('ai.driveInLane("off")')
+        obj:queueLuaCommand('ai.setSpeedMode("off")')
         self:setAggression(0.8)
       end
       self.veh:modifyRespawnValues(800, 40) -- this strongly keeps the vehicle from respawning
@@ -45,8 +46,16 @@ function C:init()
 end
 
 function C:onRoleEnded()
-  if gameplay_traffic.showMessages and be:getPlayerVehicleID(0) == self.targetId then
-    gameplay_police.evadeVehicle(self.veh.id, true)
+  if self.flags.flee then
+    gameplay_police.evadeVehicle(self.veh.id, gameplay_traffic.showMessages)
+    self.flags.flee = nil
+  end
+end
+
+function C:onActiveDone()
+  if self.flags.flee then
+    gameplay_police.evadeVehicle(self.veh.id, gameplay_traffic.showMessages)
+    self.flags.flee = nil
   end
 end
 
@@ -55,7 +64,7 @@ function C:onTrafficTick(tickTime)
   local speedThreshold = self.flags.driveCheck and 1 or 0 -- minimum pursuit start speed
   if self.state == 'wanted' and self.veh.pursuit.sightValue >= sightThreshold and self.veh.speed >= speedThreshold then
     local policeIds = {}
-    for id, veh in pairs(gameplay_police.getPoliceVehicles()) do
+    for id, veh in pairs(self.veh.getPolice()) do
       if not veh.role.flags.pursuit and not veh.role.flags.reset then -- only available police vehicles
         table.insert(policeIds, id)
       end

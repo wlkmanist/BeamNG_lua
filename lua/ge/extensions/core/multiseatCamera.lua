@@ -8,6 +8,8 @@ local M = {}
 local lastLocation = vec3(0, 0, 0);
 
 local function onUpdate()
+  if commands and commands.isFreeCamera and commands.isFreeCamera(0) then return end
+
   local i = 0
   local meanLocation = vec3(0, 0, 0)
   local meanDirection = vec3(0, 0, 0)
@@ -74,22 +76,42 @@ local function setEnabled(enabled)
   end
 end
 
-local multiseatEnabled = false
+local function getPlayerCount()
+  if not core_multiseat then return 1 end
+  return #core_multiseat.getPlayers()
+end
+
+local cameraEnabled = false
+
+local function shouldMultiseatCameraBeEnabled()
+  if not settings.getValue("multiseat") or not extensions.isExtensionLoaded("render_splitScreen") or getPlayerCount() <= 1 then return false end
+  local splitScreenEnabled, _, _, mode = render_splitScreen.getCurrentConfiguration()
+  return not splitScreenEnabled or mode == "shared"
+end
+
+local function apply(newCameraEnabled)
+  if newCameraEnabled == cameraEnabled then return end
+  cameraEnabled = newCameraEnabled
+  setEnabled(cameraEnabled)
+end
+
 local function onSettingsChanged()
-  local newMultiseatEnabled = settings.getValue("multiseat")
-  if newMultiseatEnabled == multiseatEnabled then return end
-  multiseatEnabled = newMultiseatEnabled
-  setEnabled(multiseatEnabled)
+  apply(shouldMultiseatCameraBeEnabled())
+end
+
+local function onSplitScreenChanged(splitScreenEnabled, playerCount, layout, mode)
+  apply(not splitScreenEnabled or mode == "shared")
 end
 
 local function onSerialize()
-  if multiseatEnabled then
-    multiseatEnabled = false
-    setEnabled(multiseatEnabled)
+  if cameraEnabled then
+    cameraEnabled = false
+    setEnabled(cameraEnabled)
   end
 end
 
 M.onSettingsChanged = onSettingsChanged
+M.onSplitScreenChanged = onSplitScreenChanged
 M.onUpdate = nop
 M.onSerialize = onSerialize
 

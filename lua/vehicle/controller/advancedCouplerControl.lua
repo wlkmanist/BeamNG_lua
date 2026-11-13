@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Controls grouped latches for interactive doors, gates, and other coupled parts
+
 local M = {}
 M.type = "auxiliary"
 
@@ -258,6 +260,20 @@ local function updateGFX(dt)
     end
   end
 
+  if couplerGroup.unlatchTriggerElectricName and electrics.values[couplerGroup.unlatchTriggerElectricName] then
+    local unlatchTriggerElectricValue = electrics.values[couplerGroup.unlatchTriggerElectricName]
+    if unlatchTriggerElectricValue > 0 and couplerGroup.groupState == couplerStates.attached then
+      detachGroup()
+    end
+  end
+
+  if couplerGroup.latchTriggerElectricName and electrics.values[couplerGroup.latchTriggerElectricName] then
+    local latchTriggerElectricValue = electrics.values[couplerGroup.latchTriggerElectricName]
+    if latchTriggerElectricValue > 0 and couplerGroup.groupState ~= couplerStates.attached then
+      tryAttachGroupImpulse()
+    end
+  end
+
   if #autoLatchesToActivate > 0 then
     local activatedAutoLatches = {}
     for key, couplerIndex in ipairs(autoLatchesToActivate) do
@@ -420,7 +436,9 @@ local function init(jbeamData)
     openForceConditions = tableFromHeaderTable(jbeamData.openForceConditions or {}),
     attachUIMessage = jbeamData.attachUIMessage,
     attachingUIMessage = jbeamData.attachingUIMessage,
-    detachUIMessage = jbeamData.detachUIMessage
+    detachUIMessage = jbeamData.detachUIMessage,
+    latchTriggerElectricName = jbeamData.latchTriggerElectricName,
+    unlatchTriggerElectricName = jbeamData.unlatchTriggerElectricName
   }
   bdebug.setNodeDebugText("Latches", couplerGroup.soundNode, M.name .. ": " .. (couplerGroup.attachSoundEvent or "no attach event"))
   bdebug.setNodeDebugText("Latches", couplerGroup.soundNode, M.name .. ": " .. (couplerGroup.detachSoundEvent or "no detach event"))

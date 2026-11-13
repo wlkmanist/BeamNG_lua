@@ -23,6 +23,8 @@ local suppressDamageUntilTime = 0
 local tutorialDamagePopupShown = false
 local timeTrialDamagePopupShown = false
 local careerDamagePopupShown = false
+local damagePopupHandler = nil -- optional override; when set, replaces career popup open
+local skipNextDamagePopup = false
 
 local function isInTimeTrial()
   local fgId = gameplay_missions_missionManager and gameplay_missions_missionManager.getForegroundMissionId()
@@ -81,6 +83,9 @@ end
 
 M.setRepairGoal = function(goal) repairGoal = goal or deepcopy(defaultRepairGoal) end
 M.setDefaultRepairGoal = function() repairGoal = deepcopy(defaultRepairGoal) end
+M.setDamagePopupHandler = function(handler)
+  damagePopupHandler = type(handler) == "function" and handler or nil
+end
 
 local timeTrialDamagedMessageId = "tutorial_timeTrialDamagedMessage"
 local timeTrialRestartGoal = {
@@ -154,6 +159,13 @@ function M.setTrackedVehicleId(vehicleId)
   configuredVehId = vehicleId
 end
 
+function M.claimNextDamagePopup()
+  hadCrash = true
+  wasRepairedAfterCrash = false
+  skipNextDamagePopup = true
+  clearPendingDamagePopupState()
+end
+
 function M.showRepairTask()
   if not enabled then return end
   if not hadCrash or wasRepairedAfterCrash then return end
@@ -189,6 +201,10 @@ end
 
 function M.cleanup()
   M.setEnabled(false)
+  configuredVehId = nil
+  repairGoal = deepcopy(defaultRepairGoal)
+  damagePopupHandler = nil
+  skipNextDamagePopup = false
   hadCrash = false
   wasRepairedAfterCrash = false
   suppressDamageUntilTime = 0
@@ -207,6 +223,10 @@ end
 
 local function showDamagePopupAndRepairTask()
   clearPendingDamagePopupState()
+  if skipNextDamagePopup then
+    skipNextDamagePopup = false
+    return
+  end
 
   local inTimeTrial = isInTimeTrial()
   local popupId
@@ -232,7 +252,9 @@ local function showDamagePopupAndRepairTask()
     end
   end
 
-  if shouldShowPopup and career_modules_tutorialPopups then
+  if damagePopupHandler then
+    damagePopupHandler(popupId)
+  elseif shouldShowPopup and career_modules_tutorialPopups then
     career_modules_tutorialPopups.introPopup(popupId, true)
   end
 

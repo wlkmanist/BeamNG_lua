@@ -343,7 +343,13 @@ local function addVehicle(vehId, inventoryId, options)
     if amountOfVehicles == 1 then
       M.setFavoriteVehicle(inventoryId)
     end
-    if amountOfVehicles >= 3 then
+    local amountOfOwnedVehicles = 0
+    for _, inventoryVehicle in pairs(vehicles) do
+      if inventoryVehicle.owned then
+        amountOfOwnedVehicles = amountOfOwnedVehicles + 1
+      end
+    end
+    if amountOfOwnedVehicles >= 3 then
       gameplay_achievement.unlockAchievement("GARAGE_STARTER")
     end
     return inventoryId
@@ -387,7 +393,12 @@ local function onPartConditionsUpdateFinished()
 end
 
 local function getPartConditionsCallback(partConditions, inventoryId)
-  vehicles[inventoryId].partConditions = partConditions
+  -- the vehicle returns false while its part conditions are not initialized
+  if type(partConditions) == "table" then
+    vehicles[inventoryId].partConditions = partConditions
+  else
+    log("W", "inventory", string.format("Vehicle returned no part conditions for inventoryId %s, keeping the previous ones", tostring(inventoryId)))
+  end
   onPartConditionsUpdateFinished()
   career_modules_partInventory.updatePartConditionsInInventory()
 end
@@ -482,7 +493,14 @@ local function spawnVehicle(inventoryId, replaceOption, callback)
       end, 'ping')
     else
       core_vehicleBridge.executeAction(vehObj, 'initPartConditions', {}, 0, 1, 1)
-      core_vehicleBridge.requestValue(vehObj, function(res) career_modules_inventory.updatePartConditions(nil, inventoryId, callback) end, 'ping')
+      core_vehicleBridge.requestValue(vehObj, function(res)
+        career_modules_inventory.updatePartConditions(nil, inventoryId, function()
+          if vehicles[inventoryId].partConditions then
+            career_modules_partInventory.updatePartsToMatchSpawnedVehicle(inventoryId)
+          end
+          if callback then callback() end
+        end)
+      end, 'ping')
     end
 
     gameplay_walk.removeVehicleFromBlacklist(vehObj:getId())
@@ -1028,8 +1046,9 @@ local function spawnVehicleAfterFade(enterAfterSpawn, inventoryId, callback)
       -- if the vehicle is already spawned, call the callback directly
       if inventoryIdToVehId[inventoryId] then
         callback()
-      else
-        spawnVehicle(inventoryId, nil, callback)
+      elseif not spawnVehicle(inventoryId, nil, callback) then
+        ui_fadeScreen.stop(0.5)
+        guihooks.trigger("toastrMsg", {type="error", label = "vehSpawnFailed", title = _tr("ui.career.inventory.toast.vehicleSpawnFailed.title"), msg = _tr("ui.career.inventory.toast.vehicleSpawnFailed.msg")})
       end
     end
   end
@@ -1049,7 +1068,7 @@ local function spawnVehicleAndTeleportToGarage(enterAfterSpawn, inventoryId, rep
         freeroam_facilities.teleportToGarage(closestGarage.id, vehObj, false)
         career_modules_fuel.minimumRefuelingCheck(vehObj:getId())
         setVehicleDirty(inventoryId)
-        guihooks.trigger('ChangeState', {state = 'play'})
+        extensions.ui_router.navigate('play')
         ui_fadeScreen.stop(0.5)
 
         local pos, _ = freeroam_facilities.getGaragePosRot(closestGarage, vehObj)

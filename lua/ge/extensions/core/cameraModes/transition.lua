@@ -11,7 +11,7 @@ function C:init()
   self.isFilter = true
   self.hidden = true
   self.camLastPosRel = vec3(5,5,5)
-  self.camLastPosAbs = vec3(0,0,0)
+  self.camLastPosAbs = vec3(math.huge, math.huge, math.huge) -- no frame recorded yet, nothing to blend from
   self.camLastFOV = 90
   self.camLastQDir = quat(1,0,0,1)
   self.camLastNearClip = 0.1
@@ -37,6 +37,17 @@ function C:canTransition(origin, target)
 end
 
 function C:update(data)
+  -- idle: nothing to blend, only record this frame as the source of a future transition.
+  -- camLastPosRel is not needed here, a starting transition recomputes it from camLastPosAbs
+  if self.transitionRequestedType == nil and self.transitionTime <= 0 and self.camPathTransitionData == nil then
+    local res = data.res
+    self.camLastPosAbs:set(res.pos)
+    self.camLastQDir:set(res.rot)
+    self.camLastFOV = res.fov
+    self.camLastNearClip = res.nearClip
+    return true
+  end
+
   local useOldCam = false
   if self.camPathTransitionData then
     self.transitionTime = 0
@@ -45,12 +56,14 @@ function C:update(data)
     self.camPathTransitionData = nil
     useOldCam = true
   end
-  if self.transitionRequestedType ~= nil and self.firstTime then
+  -- a request that arrives before the first recorded frame waits here until there is a position to blend from
+  if self.transitionRequestedType ~= nil and self.camLastPosAbs.x ~= math.huge then
     if self:canTransition(data.res.pos, self.camLastPosAbs) then
       self.camLastPosRel = self.camLastPosAbs - data.pos
-      self.transitionTime = self.transitionRequestedType and self.transitionVehicleDuration or self.transitionDuration
+      self.transitionTime = self.requestedDuration or (self.transitionRequestedType and self.transitionVehicleDuration or self.transitionDuration)
     end
     self.transitionRequestedType = nil
+    self.requestedDuration = nil
   end
 
   data.res.pos:setSub(data.pos) -- make it relative
@@ -77,7 +90,6 @@ function C:update(data)
     data.res.nearClip = self.camLastNearClip
   end
   self.camLastPosAbs:set(data.res.pos)
-  self.firstTime = true
 
   self.camLastQDir:set(data.res.rot)
   self.camLastFOV = data.res.fov
@@ -85,9 +97,12 @@ function C:update(data)
   return true
 end
 
-function C:start(isVehicleSwitch, camPathTransitionData)
+-- duration overrides the configured blend time for this one transition, for switches that want to be
+-- snappier than a regular camera change
+function C:start(isVehicleSwitch, camPathTransitionData, duration)
   self.transitionRequestedType = isVehicleSwitch and true or false
   self.camPathTransitionData = camPathTransitionData
+  self.requestedDuration = duration
 end
 
 -- DO NOT CHANGE CLASS IMPLEMENTATION BELOW

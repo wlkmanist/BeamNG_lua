@@ -69,10 +69,142 @@ local sRT_directory = "/assets/decal_roads/simple_templates/"
 local sRT_template_filename = "main"
 local sRT_extension = ".simpleRoadTemplate.json"
 local sRT_valueInspectorName = "roadEditorSimpleRoadTemplates"
+local srtSelectedTemplateIndex = 1
 
 local valueInspector = require("editor/api/valueInspector")()
 local srtAllowedTemplateFields = {
   -- `engineFieldName` is used for valueInspector's custom filter lookup (fieldName .. className).
+  -- Pathfinding
+  {
+    key = "drivability",
+    label = "Drivability",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = -1.0,
+    description = "If the AI should use this road or not: -1 = no use, 1 = optimal, 0.5 = dirt road."
+  },
+  {
+    key = "autoLanes",
+    label = "Auto Lanes",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = true,
+    description = "When enabled, lanes will be assigned automatically to this road."
+  },
+  {
+    key = "lanesLeft",
+    label = "Lanes Left",
+    fieldType = "int",
+    fieldTypeName = "TypeI32",
+    defaultValue = 1,
+    description = "Amount of lanes on the left side."
+  },
+  {
+    key = "lanesRight",
+    label = "Lanes Right",
+    fieldType = "int",
+    fieldTypeName = "TypeI32",
+    defaultValue = 1,
+    description = "Amount of lanes on the right side."
+  },
+  {
+    key = "oneWay",
+    label = "One Way",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Road is only one way."
+  },
+  {
+    key = "flipDirection",
+    label = "Flip Direction",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Road direction is inverted."
+  },
+  {
+    key = "gatedRoad",
+    label = "Gated Road",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Road is open to the public."
+  },
+  {
+    key = "autoJunction",
+    label = "Auto Junction",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = true,
+    description = "When enabled, AI path will automatically connect to each other when they intersect."
+  },
+  {
+    key = "useSubdivisions",
+    label = "Use Subdivisions",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = true,
+    description = "Generate high detail AI road."
+  },
+  -- ImprovedSpline
+  {
+    key = "improvedSpline",
+    label = "Improved Spline",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Use new spline algorithm for smoother paths."
+  },
+  {
+    key = "startTangent",
+    label = "Start Tangent",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Use first point as tangent marker."
+  },
+  {
+    key = "endTangent",
+    label = "End Tangent",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Use last point as tangent marker."
+  },
+  {
+    key = "looped",
+    label = "Looped",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Loop the road."
+  },
+  {
+    key = "smoothness",
+    label = "Smoothness",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = 0.5,
+    description = "0 = linear, 0.5 = half smooth, 1 = fully smooth."
+  },
+  {
+    key = "detail",
+    label = "Detail",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = 0.1,
+    description = "0.1 = every 10%, 0.2 = every 20%, 0.5 = at 50% only."
+  },
+  -- DecalRoad
+  {
+    key = "overObjects",
+    label = "Over Objects",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Enables raycast down on static meshes."
+  },
   {
     key = "material",
     engineFieldName = "Material",
@@ -82,6 +214,71 @@ local srtAllowedTemplateFields = {
     defaultValue = "BlankWhite",
     description = "Material used for rendering."
   },
+  {
+    key = "textureLength",
+    label = "Texture Length",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = 5.0,
+    description = "The length in meters of textures mapped to the DecalRoad."
+  },
+  {
+    key = "breakAngle",
+    label = "Break Angle",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = 3.0,
+    description = "Angle in degrees - DecalRoad will subdivide the spline if its curve is greater than this threshold."
+  },
+  {
+    key = "renderPriority",
+    label = "Render Priority",
+    fieldType = "int",
+    fieldTypeName = "TypeI32",
+    defaultValue = 10,
+    description = "DecalRoads are rendered in descending renderPriority order."
+  },
+  {
+    key = "zBias",
+    label = "Z Bias",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = 0.0,
+    description = "Render order: -1 to top most, 1 for bottom most."
+  },
+  {
+    key = "decalBias",
+    label = "Decal Bias",
+    fieldType = "float",
+    fieldTypeName = "TypeF32",
+    defaultValue = 0.0,
+    description = "The hovering height of the decal over the terrain."
+  },
+  {
+    key = "distanceFade",
+    label = "Distance Fade",
+    fieldType = "Point2F",
+    fieldTypeName = "TypePoint2F",
+    defaultValue = "0 0",
+    description = "Distance at which the decalroad will start to fade out, and the size of the fade. First value should be bigger than the second for best results."
+  },
+  {
+    key = "startEndFade",
+    label = "Start End Fade",
+    fieldType = "Point2F",
+    fieldTypeName = "TypePoint2F",
+    defaultValue = "0 0",
+    description = "Size of the fade at the start and end of the decalroad."
+  },
+  {
+    key = "hiddenInNavi",
+    label = "Hidden In Navi",
+    fieldType = "bool",
+    fieldTypeName = "TypeBool",
+    defaultValue = false,
+    description = "Whether this road is hidden in the navigation app."
+  },
+  -- Node properties, not engine fields
   {
     key = "width",
     label = "Width",
@@ -109,9 +306,15 @@ end
 
 local function srtSetTemplateValue(customData, fieldValue)
   if not customData or not customData.target or not customData.key then return end
-  if customData.valueType == "float" then
+  local valueType = customData.valueType
+  if valueType == "float" then
     customData.target[customData.key] = tonumber(fieldValue) or 0
+  elseif valueType == "int" then
+    customData.target[customData.key] = math.floor(tonumber(fieldValue) or 0)
+  elseif valueType == "bool" then
+    customData.target[customData.key] = (fieldValue == "true" or fieldValue == "1" or fieldValue == true)
   else
+    -- strings and Point2F ("x y")
     customData.target[customData.key] = tostring(fieldValue or "")
   end
 end
@@ -129,6 +332,93 @@ local function makeUniqueTemplateName(base)
     name = base .. tostring(i)
   end
   return name
+end
+
+-- Per property opt-in flags deciding what gets applied, keyed by template table. Not persisted.
+local srtApplyFlags = setmetatable({}, {__mode = "k"})
+
+local function srtGetApplyFlag(template, fieldKey)
+  local flags = srtApplyFlags[template]
+  if not flags then
+    flags = {}
+    srtApplyFlags[template] = flags
+  end
+  if not flags[fieldKey] then flags[fieldKey] = im.BoolPtr(true) end
+  return flags[fieldKey]
+end
+
+local function srtSetRoadValues(roadValues)
+  for roadId, values in pairs(roadValues) do
+    local road = scenetree.findObjectById(roadId)
+    if road then
+      for fieldName, value in pairs(values.fields) do
+        editor.setFieldValue(roadId, fieldName, value)
+      end
+      for nodeId, width in pairs(values.nodeWidths) do
+        editor.setNodeWidth(road, nodeId, width)
+      end
+      editor.updateRoadVertices(road)
+    end
+  end
+end
+
+local function srtApplyTemplateActionUndo(actionData)
+  srtSetRoadValues(actionData.oldValues)
+end
+
+local function srtApplyTemplateActionRedo(actionData)
+  srtSetRoadValues(actionData.newValues)
+end
+
+local function applyTemplateToSelectedRoads(template)
+  if tableIsEmpty(selectedRoadsIds) then
+    editor.showNotification("Select a road to apply the template to")
+    return
+  end
+
+  local oldValues = {}
+  local newValues = {}
+  local anyValue = false
+
+  for _, roadId in ipairs(selectedRoadsIds) do
+    local road = scenetree.findObjectById(roadId)
+    if road then
+      local oldRoadValues = {fields = {}, nodeWidths = {}}
+      local newRoadValues = {fields = {}, nodeWidths = {}}
+
+      for _, field in ipairs(srtAllowedTemplateFields) do
+        local value = template.attributes and template.attributes[field.key]
+        if value ~= nil and srtGetApplyFlag(template, field.key)[0] then
+          anyValue = true
+          if field.applyToAllNodes then
+            for nodeId = 0, road:getNodeCount() - 1 do
+              oldRoadValues.nodeWidths[nodeId] = road:getNodeWidth(nodeId)
+              newRoadValues.nodeWidths[nodeId] = tonumber(value) or 0
+            end
+          else
+            local fieldName = field.engineFieldName or field.key
+            oldRoadValues.fields[fieldName] = editor.getFieldValue(roadId, fieldName)
+            newRoadValues.fields[fieldName] = tostring(value)
+          end
+        end
+      end
+
+      oldValues[roadId] = oldRoadValues
+      newValues[roadId] = newRoadValues
+    end
+  end
+
+  if not anyValue then
+    editor.showNotification("No template properties selected to apply")
+    return
+  end
+
+  editor.history:commitAction(
+    "ApplyRoadTemplate",
+    {oldValues = oldValues, newValues = newValues},
+    srtApplyTemplateActionUndo,
+    srtApplyTemplateActionRedo
+  )
 end
 
 local function myFilterCallback(fieldName, className)
@@ -161,108 +451,116 @@ local function simpleRoadTemplatesEditorGui()
       name = makeUniqueTemplateName("template"),
       attributes = {}
     })
+    srtSelectedTemplateIndex = #simpleRoadTemplates
   end
 
   im.Separator()
-  if im.Button("Dump templates") then
-    dump(simpleRoadTemplates)
+
+  if tableIsEmpty(simpleRoadTemplates) then
+    im.TextUnformatted("No templates yet, use 'Add Template' to create one.")
+    return
   end
+
+  srtSelectedTemplateIndex = clamp(srtSelectedTemplateIndex, 1, #simpleRoadTemplates)
+  local templateName = function(index)
+    local template = simpleRoadTemplates[index]
+    return (template and template.name) or ("template" .. tostring(index))
+  end
+
+  if im.BeginCombo("Template##srt_tplSelect", templateName(srtSelectedTemplateIndex)) then
+    for index = 1, #simpleRoadTemplates do
+      if im.Selectable1(templateName(index) .. "##srt_tplSelect_" .. tostring(index), index == srtSelectedTemplateIndex) then
+        srtSelectedTemplateIndex = index
+      end
+    end
+    im.EndCombo()
+  end
+
   im.Separator()
 
-  for k, template in ipairs(simpleRoadTemplates) do
-    local headerName = template.name or ("template" .. tostring(k))
-    if im.CollapsingHeader1(headerName .. "##srt_tpl_" .. tostring(k)) then
-      im.Indent()
+  local template = simpleRoadTemplates[srtSelectedTemplateIndex]
+  im.Columns(2, sRT_valueInspectorName .. "FieldsColumn")
+  valueInspector:valueEditorGui(
+    "srt_tplName",
+    tostring(template.name or ""),
+    0,
+    "Template Name",
+    "",
+    "string",
+    "TypeString",
+    {target = template, key = "name", valueType = "string"},
+    nil,
+    nil,
+    0
+  )
+  im.Columns(1, sRT_valueInspectorName .. "FieldsColumn")
 
+  im.SeparatorText("Properties")
+  local attrs = template.attributes
+  for _, field in ipairs(srtAllowedTemplateFields) do
+    if attrs[field.key] ~= nil then
       im.Columns(2, sRT_valueInspectorName .. "FieldsColumn")
+      im.Checkbox("##srt_apply_" .. field.key, srtGetApplyFlag(template, field.key))
+      im.tooltip("Apply " .. field.label .. " when applying this template")
+      im.SameLine()
+      if editor.uiIconImageButton(editor.icons.delete, iconSize, nil, nil, nil, "Remove " .. field.label .. "##srt_rm_" .. field.key) then
+        attrs[field.key] = nil
+      end
+      im.SameLine()
+      im.PushID1("srt_attr_" .. field.key)
       valueInspector:valueEditorGui(
-        "srt_tplName_" .. tostring(k),
-        tostring(template.name or ""),
+        field.engineFieldName or field.key,
+        tostring(attrs[field.key]),
         0,
-        "Template Name",
-        "",
-        "string",
-        "TypeString",
-        {target = template, key = "name", valueType = "string"},
+        field.label,
+        field.description or "",
+        field.fieldType,
+        field.fieldTypeName,
+        {target = attrs, key = field.key, valueType = field.fieldType},
         nil,
         nil,
         0
       )
       im.Columns(1, sRT_valueInspectorName .. "FieldsColumn")
-
-      im.SeparatorText("Properties")
-      local attrs = template.attributes
-      for _, field in ipairs(srtAllowedTemplateFields) do
-        if attrs[field.key] ~= nil then
-          im.Columns(2, sRT_valueInspectorName .. "FieldsColumn")
-          if editor.uiIconImageButton(editor.icons.delete, iconSize, nil, nil, nil, "Remove " .. field.label .. "##srt_rm_" .. tostring(k) .. "_" .. field.key) then
-            attrs[field.key] = nil
-          end
-          im.SameLine()
-          im.PushID1("srt_attr_" .. tostring(k) .. "_" .. field.key)
-          valueInspector:valueEditorGui(
-            field.engineFieldName or field.key,
-            tostring(attrs[field.key]),
-            0,
-            field.label,
-            "",
-            field.fieldType,
-            field.fieldTypeName,
-            {target = attrs, key = field.key, valueType = field.fieldType},
-            nil,
-            nil,
-            0
-          )
-          im.Columns(1, sRT_valueInspectorName .. "FieldsColumn")
-          im.PopID()
-        end
-      end
-
-      im.SeparatorText("Actions")
-      local missingFields = {}
-      for _, field in ipairs(srtAllowedTemplateFields) do
-        if attrs[field.key] == nil then
-          table.insert(missingFields, field)
-        end
-      end
-
-      if #missingFields > 0 then
-        if im.BeginCombo("##srt_addField_" .. tostring(k), "Add field...") then
-          for _, field in ipairs(missingFields) do
-            if im.Selectable1(field.label .. "##srt_add_" .. tostring(k) .. "_" .. field.key, false) then
-              attrs[field.key] = deepcopy(field.defaultValue)
-            end
-          end
-          im.EndCombo()
-        end
-      else
-        im.BeginDisabled()
-        if im.BeginCombo("##srt_addField_" .. tostring(k), "--- All available fields already added ---") then
-          for _, field in ipairs(missingFields) do
-            if im.Selectable1("--- All available fields already added ---" .. "##srt_add_" .. tostring(k) .. "_" .. field.key, false) then
-
-            end
-          end
-          im.EndCombo()
-        end
-        im.EndDisabled()
-      end
-      im.tooltip("Add field to the template")
-
-      im.Separator()
-      if im.Button("Apply Template to Selected Road") then
-        -- applyTemplateToSelectedRoad(template)
-      end
-
-      if editor.uiButtonRightAlign("Delete Template##srt_del_tpl_" .. tostring(k), nil, true) then
-        table.remove(simpleRoadTemplates, k)
-        break
-      end
-
-      im.Unindent()
+      im.PopID()
     end
   end
 
+  im.SeparatorText("Actions")
+  local missingFields = {}
+  for _, field in ipairs(srtAllowedTemplateFields) do
+    if attrs[field.key] == nil then
+      table.insert(missingFields, field)
+    end
+  end
+
+  if #missingFields > 0 then
+    if im.BeginCombo("##srt_addField", "Add field...") then
+      for _, field in ipairs(missingFields) do
+        if im.Selectable1(field.label .. "##srt_add_" .. field.key, false) then
+          attrs[field.key] = deepcopy(field.defaultValue)
+        end
+      end
+      im.EndCombo()
+    end
+    im.tooltip("Add field to the template")
+  else
+    im.BeginDisabled()
+    if im.BeginCombo("##srt_addField", "--- All available fields already added ---") then
+      im.EndCombo()
+    end
+    im.EndDisabled()
+  end
+
+  im.Separator()
+  if im.Button("Apply Template to Selected Road") then
+    applyTemplateToSelectedRoads(template)
+  end
+
+  if editor.uiButtonRightAlign("Delete Template", nil, true) then
+    table.remove(simpleRoadTemplates, srtSelectedTemplateIndex)
+    srtSelectedTemplateIndex = clamp(srtSelectedTemplateIndex, 1, math.max(#simpleRoadTemplates, 1))
+  end
 end
 
 local function showAIModeText()
@@ -844,7 +1142,7 @@ local function templateDialog()
     im.Begin("Templates", templateDialogOpen, 0)
       for i=1, #editor_roadUtils.getMaterials() do
         im.PushID1(string.format('template_%d', i))
-        if im.ImageButton(editor_roadUtils.getMaterials()[i].texId, im.ImVec2(128, 128), im.ImVec2Zero, im.ImVec2One, 1, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then
+        if im.ImageButton(editor_roadUtils.getMaterials()[i].tex:getID(), im.ImVec2(128, 128), im.ImVec2Zero, im.ImVec2One, 1, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then
           templateDialogOpen[0] = false
           editor.setDynamicFieldValue(selectedRoadId, "template", editor_roadUtils.getRoadTemplateFiles()[i])
           editor_roadUtils.reloadTemplates()
@@ -982,7 +1280,7 @@ local function onEditorInspectorHeaderGui(inspectorInfo)
       local matIndex = indexOf(editor_roadUtils.getMaterialNames(), materialName)
       local texID = 0
       if matIndex then
-        if im.ImageButton(editor_roadUtils.getMaterials()[matIndex].texId, im.ImVec2(128, 128), im.ImVec2Zero, im.ImVec2One, 1, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then
+        if im.ImageButton(editor_roadUtils.getMaterials()[matIndex].tex:getID(), im.ImVec2(128, 128), im.ImVec2Zero, im.ImVec2One, 1, im.ImColorByRGB(0,0,0,255).Value, im.ImColorByRGB(255,255,255,255).Value) then
           templateDialogOpen[0] = true
         end
       else
@@ -1197,6 +1495,26 @@ local function showRoad(road, roadColor)
     local selectedRoad = scenetree.findObjectById(roadID)
     if selectedRoad then
       showNodes(selectedRoad)
+    end
+  end
+end
+
+local function highlightRoadsNearCamera()
+  local camPos = core_camera.getPosition()
+  local maxDist = editor.getPreference("roadEditor.general.highlightNearbyRoadsDistance")
+  local maxDistSq = maxDist * maxDist
+
+  for roadID, _ in pairs(editor.getAllRoads()) do
+    if not isRoadSelected(roadID) and roadID ~= hoveredRoadID then
+      local road = scenetree.findObjectById(roadID)
+      if road then
+        for index = 0, road:getEdgeCount() - 1 do
+          if camPos:squaredDistance(road:getMiddleEdgePosition(index)) <= maxDistSq then
+            showRoad(road, roadRiverGui.highlightColors.nearby)
+            break
+          end
+        end
+      end
     end
   end
 end
@@ -1721,6 +2039,10 @@ local function onUpdate()
     end
   end
 
+  if editor.getPreference("roadEditor.general.highlightNearbyRoads") then
+    highlightRoadsNearCamera()
+  end
+
   -- Highlight selected roads
   if not tableIsEmpty(selectedRoadsIds) then
     local numSelectedRoads = tableSize(selectedRoadsIds)
@@ -1868,6 +2190,21 @@ local function onToolbar()
     editor.setPreference("roadEditor.general.overObjects", overObjectsPtr[0])
   end
   im.tooltip("Make roads that go over static objects too")
+
+  im.SameLine()
+  local highlightNearbyPtr = im.BoolPtr(editor.getPreference("roadEditor.general.highlightNearbyRoads"))
+  if im.Checkbox("Highlight nearby roads", highlightNearbyPtr) then
+    editor.setPreference("roadEditor.general.highlightNearbyRoads", highlightNearbyPtr[0])
+  end
+  im.tooltip("Highlight all roads within a distance from the camera")
+
+  im.SameLine()
+  local highlightDistancePtr = im.FloatPtr(editor.getPreference("roadEditor.general.highlightNearbyRoadsDistance"))
+  if im.InputFloat("##Highlight Distance", highlightDistancePtr, 1, 10, "%0." .. editor.getPreference("ui.general.floatDigitCount") .. "f") then
+    editor.setPreference("roadEditor.general.highlightNearbyRoadsDistance", math.max(0, highlightDistancePtr[0]))
+  end
+  im.tooltip("Distance from the camera in meters")
+
   im.SameLine()
 
   if editor.beginModalWindow(roadNotSelectableErrorWindowName, roadNotSelectableErrorWindowTitle, im.WindowFlags_AlwaysAutoResize + im.WindowFlags_NoScrollbar) then
@@ -1896,6 +2233,8 @@ local function onEditorRegisterPreferences(prefsRegistry)
     {aiRoadsSelectable = {"bool", true, "Controls whether ai roads should be selectable in the decal road editor"}},
     {nonAiRoadsSelectable = {"bool", true, "Controls whether non-ai roads should be selectable in the decal road editor"}},
     {overObjects = {"bool", false, "Controls whether roads go over static objects too"}},
+    {highlightNearbyRoads = {"bool", false, "Highlight all roads within a distance from the camera"}},
+    {highlightNearbyRoadsDistance = {"float", 100, "Distance from the camera in meters used to highlight nearby roads", nil, 0, 10000}},
     -- this was disabled since when moving objects around, we would need to reload physics, since overObjects is using physics for raycasting its heights
     --{updateDecalRoadsOnStaticMeshTransform = {"bool", false, "When enabled, decal roads with Over Objects update their geometry when you move static objects in the editor. Disable for better performance when moving many objects."}},
     -- hidden

@@ -41,6 +41,7 @@ local textinput = im.ArrayChar(256, "")
 local textinputNewFolder = im.ArrayChar(256, "")
 local cbdata = nil
 local selectedFile = nil
+local selectedDir = nil
 local fileViewColumnWidth = nil
 
 local recentDirs = {}
@@ -132,7 +133,7 @@ local function imagePreviewGui()
     sizey = sizey / ratio
   end
 
-  im.Image(getTempTextureObj().texId, im.ImVec2(sizex, sizex), nil, nil, nil, im.ImVec4(1,1,1,1))
+  im.Image(getTempTextureObj().tex:getID(), im.ImVec2(sizex, sizex), nil, nil, nil, im.ImVec4(1,1,1,1))
 end
 
 local previewFunctions = {
@@ -175,6 +176,7 @@ local function refreshCache(localcachepath)
   if currentPath:sub(-1) ~= "/" then currentPath = currentPath.."/" end
   currentPath = currentPath:gsub("/+", "/")   -- Reducing multiple slashes to avoid trimmed list names
   currentFolderStat = FS:stat(currentPath)
+  selectedDir = nil                           -- a folder picked in one directory is not a pick in the next one
   local pathLen = string.len(currentPath) + 1
   -- get entries for current path
   local files = FS:findFiles(localcachepath, '*', 0, false, true) -- TODO : feature #4209
@@ -263,12 +265,13 @@ local columns = {
     visible = true,
     lockedVisibility = true,
     guiFn = function(file)
-      local doubleClicked = false
       -- Directory
       if file.filetype == "dir" then
         editor.uiIconImage(editor.icons.folder, im.ImVec2(im.GetFontSize(), im.GetFontSize()))
         im.SameLine()
-        im.Selectable1(file.name, file.name == fNameInput)
+        if im.Selectable1(file.name, file == selectedDir or file.name == fNameInput) and options.select_folder then
+          selectedDir = file
+        end
 
         if editor.IsItemDoubleClicked(0) then
           refreshCache(currentPath..file.name.."/")
@@ -746,8 +749,9 @@ local function onEditorGui()
       end
       if im.Button(action) or pressedEnter then
         local fname = ffi.string(textinput)
-        if options.select_folder and currentPath ~= "/" then
-          execCB({path=currentPath, action=action, stat=currentFolderStat})
+        if options.select_folder then
+          local dir = selectedDir and (currentPath .. selectedDir.name .. "/") or (currentPath ~= "/" and currentPath or nil)
+          if dir then execCB({path=dir, action=action, stat=selectedDir or currentFolderStat}) end
         elseif action == "Save" and fname:len() > 0 then
           if fname:reverse():find(options.suffix[fileTypeSelected][2]:reverse()) ~= 1 then
             fname = fname..options.suffix[fileTypeSelected][2]
@@ -853,7 +857,7 @@ local function tooltip_image(file)
       sizey = sizey / ratio
     end
     im.Image(
-      getTempTextureObj().texId,
+      getTempTextureObj().tex:getID(),
       im.ImVec2(sizex, sizey),
       nil, nil, nil,
       editor.color.white.Value
@@ -879,6 +883,7 @@ local function _fileDialog(act, callbackFn, filenameSuffix, selectFolder, defaul
   end
   overwriteDialogText = overwriteDlgText
   selectedFile = nil
+  selectedDir = nil
   action = act
   fileTypeSelected = 1
   if selectFolder then

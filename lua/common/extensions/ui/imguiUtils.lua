@@ -35,7 +35,7 @@ function M.texObj(path)
   res.file = string.match(path, "^.+/(.+)$")
   res.path = path
   res.tex = imgui.ImTextureHandler(path)
-  res.texId = res.tex:getID()
+  res.texId = res.tex:getID() -- do not use field, left for legacy mods
   res.size = res.tex:getSize()
   return res
 end

@@ -132,10 +132,11 @@ local function getInfo()
     if type(v) == 'table' then
       v.state = 'ok'
       if v.warnings and #v.warnings > 0 then
-        for k2,v2 in pairs(v.warnings) do
+        for _,v2 in pairs(v.warnings) do
           if settings.getValue('PerformanceWarnings.' .. tostring(v2.msg)) then
             v2.ack = true
           end
+          extensions.hook('onPerformanceHardwareWarning', k, v2)
           if stateLevels[v2.type] > stateLevels[v.state] then
             v.state = v2.type
           end

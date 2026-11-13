@@ -39,6 +39,14 @@ local function getConditions(params)
   return {result = partCondition.getConditions()}
 end
 
+local function getRootPartOdometer(params)
+  local dataTypeCheck, dataTypeError = checkTableDataTypes(params, {})
+  if not dataTypeCheck then
+    return {failReason = dataTypeError}
+  end
+  return {result = partCondition.getRootPartOdometerValue()}
+end
+
 local function createConditionSnapshot(params)
   local dataTypeCheck, dataTypeError = checkTableDataTypes(params, {"string"})
   if not dataTypeCheck then
@@ -90,6 +98,7 @@ end
 
 local function onExtensionLoaded()
   M.moduleLookups.getPartConditions = getConditions
+  M.moduleLookups.getRootPartOdometer = getRootPartOdometer
   M.moduleActions.initPartConditions = initConditions
   M.moduleActions.ensurePartConditionsInit = ensureConditionsInit
   M.moduleActions.createPartConditionSnapshot = createConditionSnapshot

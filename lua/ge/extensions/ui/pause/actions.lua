@@ -17,8 +17,26 @@ local function registerButton(metadata, callback)
   return cloned
 end
 
+-- A failed save never fires onSaveFinished, so a pending callback must expire instead of firing on a later autosave.
+local saveThenTimeoutSeconds = 30
+local pendingAfterCareerSave
+
 function M.clearActions()
   buttonInstance.clearButtonFunctions()
+  pendingAfterCareerSave = nil
+end
+
+function M.saveCareerThen(callback)
+  pendingAfterCareerSave = { callback = callback, requestedAt = os.time() }
+  career_saveSystem.saveCurrent()
+end
+
+function M.onSaveFinished()
+  local pending = pendingAfterCareerSave
+  pendingAfterCareerSave = nil
+  if pending and os.time() - pending.requestedAt <= saveThenTimeoutSeconds then
+    pending.callback()
+  end
 end
 
 function M.executeAction(buttonId, payload)

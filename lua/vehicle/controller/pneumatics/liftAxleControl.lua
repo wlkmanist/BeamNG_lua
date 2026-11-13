@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Raises and lowers a pneumatic lift axle on demand
+
 local M = {}
 M.type = "auxiliary"
 
@@ -21,6 +23,11 @@ local maximumSupplyPressureChangeRate
 local mainAirbagsPressureEletricsName
 local liftAirbagsPressureEletricsName
 local liftAxleControlModeEletricsName
+
+local stateData
+local stateDataNameMode
+local stateDataNameMaximumSupplyPressure
+local stateDataNamePressureChangeRate
 
 local function updateGFX(dt)
   if currentMode == modes.drop then
@@ -68,6 +75,11 @@ local function reset(jbeamData)
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameMode = M.name .. "_mode"
+  stateDataNameMaximumSupplyPressure = M.name .. "_maximumSupplyPressure"
+  stateDataNamePressureChangeRate = M.name .. "_pressureChangeRate"
+
   maximumSupplyPressure = jbeamData.defaultMaximumSupplyPressure or 0
   maximumSupplyPressureChangeRate = 0
   liftAirbagsGroupName = jbeamData.liftAirbagsGroupName
@@ -100,6 +112,37 @@ local function initLastStage(jbeamData)
   setMode(modes.lift)
 end
 
+local function getState()
+  stateData[stateDataNameMode] = currentMode
+  stateData[stateDataNameMaximumSupplyPressure] = maximumSupplyPressure
+  stateData[stateDataNamePressureChangeRate] = maximumSupplyPressureChangeRate
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newMaximumSupplyPressure = data[stateDataNameMaximumSupplyPressure]
+  if type(newMaximumSupplyPressure) == "number" and newMaximumSupplyPressure == newMaximumSupplyPressure then
+    newMaximumSupplyPressure = clamp(newMaximumSupplyPressure, max(powertrain.currentEnvPressure, minMaximumSupplyPressure), maxMaximumSupplyPressure)
+    if newMaximumSupplyPressure ~= maximumSupplyPressure then
+      setMaximumSupplyPressure(newMaximumSupplyPressure)
+    end
+  end
+
+  local newPressureChangeRate = data[stateDataNamePressureChangeRate]
+  if type(newPressureChangeRate) == "number" and newPressureChangeRate == newPressureChangeRate and newPressureChangeRate ~= maximumSupplyPressureChangeRate then
+    setMaximumSupplyPressureChangeRate(newPressureChangeRate)
+  end
+
+  local newMode = data[stateDataNameMode]
+  if modes[newMode] and newMode ~= currentMode and actuatorsControllerMain and actuatorsControllerLift then
+    setMode(newMode)
+  end
+end
+
 M.init = init
 --M.initSecondStage = initSecondStage
 M.initLastStage = initLastStage
@@ -112,5 +155,8 @@ M.setMode = setMode
 M.toggleMode = toggleMode
 M.setMaximumSupplyPressure = setMaximumSupplyPressure
 M.setMaximumSupplyPressureChangeRate = setMaximumSupplyPressureChangeRate
+
+M.getState = getState
+M.setState = setState
 
 return M

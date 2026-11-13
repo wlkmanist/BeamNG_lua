@@ -214,7 +214,7 @@ if not pfxDefaultDOFStateBlock then
   pfxDefaultDOFStateBlock.zEnable = false
   pfxDefaultDOFStateBlock.zWriteEnable = false
   pfxDefaultDOFStateBlock.samplersDefined = true
-  pfxDefaultDOFStateBlock:setField("samplerStates", 0, "SamplerClampPoint")
+  pfxDefaultDOFStateBlock:setField("samplerStates", 0, "SamplerClampLinear")
   pfxDefaultDOFStateBlock:setField("samplerStates", 1, "SamplerClampPoint")
   pfxDefaultDOFStateBlock:registerObject("PFX_DefaultDOFStateBlock")
 end
@@ -277,17 +277,16 @@ end
 local pfxDOFDownSampleShader = scenetree.findObject("PFX_DOFDownSampleShader")
 if not pfxDOFDownSampleShader then
   pfxDOFDownSampleShader = createObject("ShaderData")
-  pfxDOFDownSampleShader.DXVertexShaderFile    = "shaders/common/postFx/dof/DOF_DownSample_V.hlsl"
-  pfxDOFDownSampleShader.DXPixelShaderFile     = "shaders/common/postFx/dof/DOF_DownSample_P.hlsl"
+  pfxDOFDownSampleShader.DXComputShaderName    = "shaders/common/postFx/dof/DOF_DownSample.cs.hlsl"
   pfxDOFDownSampleShader.pixVersion = 5.0
+  pfxDOFDownSampleShader.defines = "BNG_DOF_STABLE_GRID=2"
   pfxDOFDownSampleShader:registerObject("PFX_DOFDownSampleShader")
 end
 
 local pfxDOFBlurYShader = scenetree.findObject("PFX_DOFBlurYShader")
 if not pfxDOFBlurYShader then
   pfxDOFBlurYShader = createObject("ShaderData")
-  pfxDOFBlurYShader.DXVertexShaderFile    = "shaders/common/postFx/dof/DOF_Gausian_V.hlsl"
-  pfxDOFBlurYShader.DXPixelShaderFile     = "shaders/common/postFx/dof/DOF_Gausian_P.hlsl"
+  pfxDOFBlurYShader.DXComputShaderName    = "shaders/common/postFx/dof/DOF_Gausian.cs.hlsl"
   pfxDOFBlurYShader.pixVersion = 5.0
   pfxDOFBlurYShader.defines = "BLUR_DIR=float2(0.0,1.0)"
   pfxDOFBlurYShader:registerObject("PFX_DOFBlurYShader")
@@ -304,8 +303,7 @@ end
 local pfxDOFCalcCoCShader = scenetree.findObject("PFX_DOFCalcCoCShader")
 if not pfxDOFCalcCoCShader then
   pfxDOFCalcCoCShader = createObject("ShaderData")
-  pfxDOFCalcCoCShader.DXVertexShaderFile    = "shaders/common/postFx/dof/DOF_CalcCoC_V.hlsl"
-  pfxDOFCalcCoCShader.DXPixelShaderFile     = "shaders/common/postFx/dof/DOF_CalcCoC_P.hlsl"
+  pfxDOFCalcCoCShader.DXComputShaderName    = "shaders/common/postFx/dof/DOF_CalcCoC.cs.hlsl"
   pfxDOFCalcCoCShader.pixVersion = 5.0
   pfxDOFCalcCoCShader:registerObject("PFX_DOFCalcCoCShader")
 end
@@ -313,8 +311,7 @@ end
 local pfxDOFSmallBlurShader = scenetree.findObject("PFX_DOFSmallBlurShader")
 if not pfxDOFSmallBlurShader then
   pfxDOFSmallBlurShader = createObject("ShaderData")
-  pfxDOFSmallBlurShader.DXVertexShaderFile    = "shaders/common/postFx/dof/DOF_SmallBlur_V.hlsl"
-  pfxDOFSmallBlurShader.DXPixelShaderFile     = "shaders/common/postFx/dof/DOF_SmallBlur_P.hlsl"
+  pfxDOFSmallBlurShader.DXComputShaderName    = "shaders/common/postFx/dof/DOF_SmallBlur.cs.hlsl"
   pfxDOFSmallBlurShader.pixVersion = 5.0
   pfxDOFSmallBlurShader:registerObject("PFX_DOFSmallBlurShader")
 end
@@ -322,9 +319,9 @@ end
 local pfxDOFFinalShader = scenetree.findObject("PFX_DOFFinalShader")
 if not pfxDOFFinalShader then
   pfxDOFFinalShader = createObject("ShaderData")
-  pfxDOFFinalShader.DXVertexShaderFile    = "shaders/common/postFx/dof/DOF_Final_V.hlsl"
-  pfxDOFFinalShader.DXPixelShaderFile     = "shaders/common/postFx/dof/DOF_Final_P.hlsl"
+  pfxDOFFinalShader.DXComputShaderName    = "shaders/common/postFx/dof/DOF_Final.cs.hlsl"
   pfxDOFFinalShader.pixVersion = 5.0
+  pfxDOFFinalShader.defines = "BNG_DOF_STABLE_GRID=2"
   pfxDOFFinalShader:registerObject("PFX_DOFFinalShader")
 end
 
@@ -449,6 +446,43 @@ dOFPostEffectCallbacks.onAdd = function()
   dofPostEffect.farSlope = 5.0
 end
 
+-- Low blur limits only use the four full-resolution small-blur taps.
+-- Keep the original chain for stronger blur, custom curves and debug views.
+local existingDof = scenetree.findObject("DOFPostEffect")
+local smallOnlyActive = existingDof and existingDof.skipDraw == true or false
+local dofChildren = {"DOFBlurY", "DOFBlurX", "DOFCalcCoC", "DOFSmallBlur"}
+local function canUseSmallOnly(dof)
+  if dof.debugModeEnabled then return false end
+  local maximum = math.max(tonumber(dof.nearBlurMax) or 1, tonumber(dof.farBlurMax) or 1)
+  if maximum < 0 or maximum > 1 then return false end
+  local scale, bias = {}, {}
+  for n in tostring(dof.lerpScale):gmatch("%S+") do scale[#scale + 1] = tonumber(n) end
+  for n in tostring(dof.lerpBias):gmatch("%S+") do bias[#bias + 1] = tonumber(n) end
+  if #scale ~= 4 or #bias ~= 4 or scale[2] >= 0 or scale[4] <= 0 then return false end
+  local t = maximum * maximum * (3 - 2 * maximum)
+  -- A margin keeps half/float rounding from activating a discarded weight.
+  return t * scale[2] + bias[2] >= 1.001 and t * scale[4] + bias[4] <= -0.001
+end
+
+dOFPostEffectCallbacks.preProcess = function()
+  local dof = scenetree.findObject("DOFPostEffect")
+  if not dof then return end
+  local smallOnly = canUseSmallOnly(dof)
+  if smallOnly == smallOnlyActive then return end
+  smallOnlyActive = smallOnly
+  dof.skipDraw = smallOnly
+  local final = scenetree.findObject("DOFFinalPFX")
+  if final then
+    final:setShaderMacro("BNG_DOF_SMALL_ONLY", smallOnly and "1" or "0")
+    final:setField("texture", 1, smallOnly and "" or "$inTex")
+    final:setField("texture", 2, smallOnly and "" or "#largeBlur")
+  end
+  for _, name in ipairs(dofChildren) do
+    local child = scenetree.findObject(name)
+    if child then child.skip = smallOnly end
+  end
+end
+
 dOFPostEffectCallbacks.setShaderConsts = function()
   local dofPostEffect = scenetree.findObject("DOFPostEffect")
   if not dofPostEffect or not dofPostEffect.focalDist then
@@ -511,13 +545,45 @@ dOFPostEffectCallbacks.setShaderConsts = function()
   end
 end
 rawset(_G, "DOFPostEffectCallbacks", dOFPostEffectCallbacks)
+-- The final effect establishes this view's FarDist before its callback. When
+-- the producer is skipped, update focus here rather than using another view's
+-- global parameters from preProcess.
+local dofFinalCallbacks = rawget(_G, "DOFFinalPFXCallbacks") or {}
+dofFinalCallbacks.setShaderConsts = function()
+  if smallOnlyActive then dOFPostEffectCallbacks.setShaderConsts() end
+end
+rawset(_G, "DOFFinalPFXCallbacks", dofFinalCallbacks)
+
+
+local defaults = {
+  Enable          = true,
+  EnableDebugMode = false,
+  EnableAutoFocus = false,
+  BlurMin         = 0.0,
+  BlurMax         = 0.25,
+  FocusRangeMin   = 100.0,
+  FocusRangeMax   = 250.0,
+  BlurCurveNear   = 20.0,
+  BlurCurveFar    = 10.0,
+}
+
+local function applyDefaults()
+  for name, value in pairs(defaults) do
+    VariableRegistry.set("$DOFPostFx::" .. name, value)
+  end
+end
 
 local dofPostEffect = scenetree.findObject("DOFPostEffect")
 if not dofPostEffect then
+  -- only seed these when we start the game. On reloading lua, we don't want to reset live values
+  applyDefaults()
+
   dofPostEffect = createObject("PostEffect")
   dofPostEffect.isEnabled = false
   dofPostEffect:setField("renderTime", 0, "PFXAfterBin")
-  dofPostEffect:setField("renderBin", 0, "GlowBin")
+  -- Blur the resolved HDR color before tonemapping. Feeding DOF into a temporal
+  -- upscaler makes its blurred edges disagree with the sharp depth/velocity.
+  dofPostEffect:setField("renderBin", 0, "UpscaleDispatch")
   dofPostEffect.renderPriority = 0.1
   dofPostEffect:setField("shader", 0, "PFX_DOFDownSampleShader")
   dofPostEffect:setField("stateBlock", 0, "PFX_DOFDownSampleStateBlock")
@@ -583,6 +649,8 @@ if not dofPostEffect then
 end
 
 local M = {}
+
+M.applyDefaults = applyDefaults
 
 M.updateDOFSettings = function()
   local dofPostEffect = scenetree.findObject("DOFPostEffect")

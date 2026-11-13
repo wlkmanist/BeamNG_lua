@@ -44,8 +44,29 @@ M.sendRouteChangeComplete = function(data)
   guihooks.trigger("ui_router_" .. Constants.RouterHooks.AFTER_ROUTE_CHANGE, data)
 end
 
-M.sendRouteChangeCancelled = function(data)
-  guihooks.trigger("ui_router_" .. Constants.RouterHooks.ROUTE_CHANGE_CANCELLED, data)
+--[[
+  Emit a route-change-cancelled event to the UI frameworks.
+
+  @param data - The cancelled route (toRoute), treated as immutable.
+  @param extras - Optional identity payload, e.g. { transitionId = <cancelledId>, reason = <reason> }.
+
+  When identity extras are supplied a shallow copy of the route is emitted with the
+  cancelled transition id (and reason) attached, so the UI can clear only the handoff
+  that matches the cancelled transition instead of blindly dropping the active one.
+]]
+M.sendRouteChangeCancelled = function(data, extras)
+  local payload = data
+  if type(extras) == "table" and (extras.transitionId ~= nil or extras.reason ~= nil) then
+    payload = {}
+    if type(data) == "table" then
+      for key, value in pairs(data) do
+        payload[key] = value
+      end
+    end
+    payload.transitionId = extras.transitionId
+    payload.reason = extras.reason
+  end
+  guihooks.trigger("ui_router_" .. Constants.RouterHooks.ROUTE_CHANGE_CANCELLED, payload)
 end
 
 return M

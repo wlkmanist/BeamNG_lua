@@ -26,7 +26,11 @@ local splineMgr = require('editor/drivePathEditor/splineMgr')
 local playback = require('editor/drivePathEditor/playback')
 local record = require('editor/drivePathEditor/record')
 local input = require('editor/toolUtilities/splineInput')
-local render = require('editor/toolUtilities/render')
+local panCamera = require('editor/toolUtilities/panCamera')
+local rSpline = require('editor/toolUtilities/render/spline')
+local rTransport = require('editor/toolUtilities/render/transport')
+local rGraph = require('editor/toolUtilities/render/graph')
+local rMarkup = require('editor/toolUtilities/render/markup')
 local skeleton = require('editor/toolUtilities/skeleton')
 local rdp = require('editor/toolUtilities/rdp')
 local util = require('editor/toolUtilities/util')
@@ -119,15 +123,7 @@ local function handleMainToolWindowUI()
     local sceneVehicles = splineMgr.getActiveVehicles(false)
     selectedSplineIdx = max(1, min(#drivePathSplines, selectedSplineIdx)) -- Ensure the selected spline index is within bounds.
 
-    -- Top buttons row.
-    im.Columns(7, "topMasterButtonsRow", false)
-    im.SetColumnWidth(0, 39)
-    im.SetColumnWidth(1, 39)
-    im.SetColumnWidth(2, 39)
-    im.SetColumnWidth(3, 39)
-    im.SetColumnWidth(4, 39)
-    im.SetColumnWidth(5, 39)
-    im.SetColumnWidth(6, 39)
+    -- Top buttons row (inline: plain im.SameLine sequence, Dummy holds slots for unavailable buttons).
     im.PushStyleVar2(im.StyleVar_FramePadding, im.ImVec2(2, 2))
     im.PushStyleVar2(im.StyleVar_ItemSpacing, im.ImVec2(4, 2))
 
@@ -144,7 +140,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Import From Bitmap Mask' button.
     if not isPlaying and not isRecording then
@@ -169,7 +164,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Remove All Drive Path Splines' button.
     if #drivePathSplines > 0 and not isPlaying and not isRecording then
@@ -184,7 +178,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Speed/Speed Limit Toggle' button.
     local selSpline = drivePathSplines[selectedSplineIdx]
@@ -209,7 +202,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Lock Shape' toggle button.
     if #drivePathSplines > 0 and selSpline and selSpline.isEnabled and not isPlaying and not isRecording then
@@ -222,7 +214,13 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
+
+    -- Pan camera toggle (top-down RMB-drag pan + wheel zoom, shared across the spline tools).
+    if editor.uiIconImageButton(icons.videocam, iconsBig, panCamera.isOn() and cols.blueB or cols.blueD, nil, nil, 'panCamBtn') then
+      panCamera.toggle()
+    end
+    im.tooltip(panCamera.isOn() and 'Pan camera ON: top-down, RMB-drag to move, wheel to zoom. Click for the free camera.' or 'Pan camera: top-down view, RMB-drag pan + wheel zoom.')
+    im.SameLine()
 
     -- 'Save Session' button.
     if #drivePathSplines > 0 then
@@ -249,7 +247,6 @@ local function handleMainToolWindowUI()
       im.Dummy(iconsBig)
     end
     im.SameLine()
-    im.NextColumn()
 
     -- 'Load Session' button.
     if editor.uiIconImageButton(icons.folder, iconsBig, nil, nil, nil, 'loadSessionBtn') then
@@ -277,7 +274,6 @@ local function handleMainToolWindowUI()
         "/")
     end
     im.tooltip('Load a previously-saved session from disk.')
-    im.NextColumn()
 
     im.PopStyleVar(2)
     im.Columns(1)
@@ -414,7 +410,7 @@ local function handleMainToolWindowUI()
       if (#selSpline.nodes > 1 or #selSpline.graphNodes > 1) and not isPlaying and not isRecording then
         if editor.uiIconImageButton(icons.cameraFocusTopDown, iconsBig, cols.blueB, nil, nil, 'goToSelectedSplineBtn') then
           if selSpline.isFreeMode then
-            util.goToSpline(selSpline.divPoints)
+            if not panCamera.gotoPoints(selSpline.divPoints) then util.goToSpline(selSpline.divPoints) end
           else
             local graphData = splineMgr.getNavGraph()
             if graphData then
@@ -422,7 +418,7 @@ local function handleMainToolWindowUI()
               for i = 1, #selSpline.graphNodes do
                 nds[i] = graphData.nodes[selSpline.graphNodes[i]] -- For the NavGraph mode, we need to convert the node indices to node positions first.
               end
-              util.goToSpline(nds)
+              if not panCamera.gotoPoints(nds) then util.goToSpline(nds) end
             end
           end
         end
@@ -1095,18 +1091,21 @@ local function onEditorGui()
 
   -- If this tool is not active, render the shells of the splines but do nothing further.
   if not isDrivePathEditorActive then
-    render.renderShells(splineMgr.getDrivePathSplines())
+    rSpline.renderShells(splineMgr.getDrivePathSplines())
     return
   end
 
   -- Handle the main tool window UI.
   handleMainToolWindowUI()
 
+  -- Drive the pan camera when it's on (not during playback/record, which own the camera; blocked during node drag).
+  if panCamera.isOn() and not (isPlaying or isRecording) then panCamera.drive(input.isDragging()) end
+
   -- Handle the ongoing playback events, if active.
   if isPlaying then
     playback.handlePlayback()
     if isRenderSplineWhenPlaying then
-      render.renderWireframeRibbons(splineMgr.getDrivePathSplines()) -- Render just the wireframe ribbons.
+      rSpline.renderWireframeRibbons(splineMgr.getDrivePathSplines()) -- Render just the wireframe ribbons.
     end
   end
 
@@ -1142,17 +1141,18 @@ local function onEditorGui()
     selectedSplineIdx, selectedNodeIdx, isGizmoActive, isLockShape = out.spline, out.node, out.isGizmoActive, out.isLockShape
 
     -- Render the drive path spline.
-    render.handleSplineRendering(splines, selectedSplineIdx, selectedNodeIdx, isGizmoActive, false, isLockShape, false, true, elevScale)
+    rSpline.handleSplineRendering(splines, selectedSplineIdx, selectedNodeIdx, isGizmoActive, false, isLockShape, false, true, elevScale)
+    rTransport.drawNodeGhosts(selSpline)
     if selSpline and selSpline.isEnabled then
       if useBars then
-        render.renderVelocities(selSpline, isBarsLimit, velocityUnitsInt, elevScale)
+        rGraph.renderVelocities(selSpline, isBarsLimit, velocityUnitsInt, elevScale)
       end
-      render.renderRibbonWireFrame(splines, selectedSplineIdx) -- Render the colored wireframe surface.
+      rTransport.renderRibbonWireFrame(splines, selectedSplineIdx, nil, true) -- Render the colored wireframe surface.
       local nodes = selSpline.nodes
       if #nodes > 0 then
-        render.markupStart(nodes[1])
+        rMarkup.markupStart(nodes[1])
         if not selSpline.isLoop and #nodes > 1 then
-          render.markupEnd(nodes[#nodes])
+          rMarkup.markupEnd(nodes[#nodes])
         end
       end
     end
@@ -1169,23 +1169,23 @@ local function onEditorGui()
     input.handleNavGraphEvents(selSpline, graphData.nodes, splineMgr.deepCopyDrivePathSpline, splineMgr.singleSplineEditUndo, splineMgr.singleSplineEditRedo, false, useBars)
 
     -- Render the path along with the nav graph.
-    render.renderNavGraph(graphData)
-    render.renderGraphPath(selSpline.graphPath, graphData)
+    rGraph.renderNavGraph(graphData)
+    rGraph.renderGraphPath(selSpline.graphPath, graphData)
 
     -- Render the spline using the computed navgraph path geometry.
     if selSpline.divPoints and #selSpline.divPoints > 1 then
-      render.renderDrivePathSurface(selSpline)
+      rSpline.renderDrivePathSurface(selSpline)
       if useBars then
-        render.renderVelocities(selSpline, false, velocityUnitsInt, elevScale)
+        rGraph.renderVelocities(selSpline, false, velocityUnitsInt, elevScale)
       end
     end
 
     if useBars then
-      render.drawBarPoints(selSpline.barPoints, elevScale)
+      rSpline.drawBarPoints(selSpline.barPoints, elevScale)
     end
-    render.renderChosenNodes(selSpline.graphNodes, graphData)
+    rGraph.renderChosenNodes(selSpline.graphNodes, graphData)
     if useBars then
-      render.renderVelocitiesGraph(selSpline, velocityUnitsInt, elevScale, false)
+      rGraph.renderVelocitiesGraph(selSpline, velocityUnitsInt, elevScale, false)
     end
   end
 end
@@ -1195,6 +1195,10 @@ local function onActivate()
   editor.clearObjectSelection()
   editor.showWindow(toolWinName)
   isDrivePathEditorActive = true
+  panCamera.configure({ focusProvider = function()
+    local s = splineMgr.getDrivePathSplines()[selectedSplineIdx]
+    return s and (s.divPoints and #s.divPoints > 1 and s.divPoints or s.nodes)
+  end })
 
   -- Disable the AI for all vehicles.
   for _, veh in activeVehiclesIterator() do
@@ -1205,6 +1209,7 @@ end
 -- Called when the tool is exited.
 local function onDeactivate()
   editor.hideWindow(toolWinName)
+  panCamera.close()
   isDrivePathEditorActive = false
 end
 

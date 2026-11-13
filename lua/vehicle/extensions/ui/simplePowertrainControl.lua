@@ -4,9 +4,38 @@
 
 local M = {}
 
-local function setButton(id, uiName, icon, color, ringValue, onClickCallback, remove)
+local function normalizeColor(color)
+  if type(color) ~= "string" or color == "" then
+    return nil
+  end
+  if string.byte(color, 1) ~= 35 then -- '#'
+    return "#" .. color
+  end
+  return color
+end
+
+local function setButton(id, uiName, icon, color, ringValue, onClickCallback, remove, active)
+  local players = {}
+  for playerIndex in pairs(playerInfo.seatedPlayers or {}) do
+    players[#players + 1] = playerIndex
+  end
+  table.sort(players)
+
   --print(string.format("id: %q, uiName: %q, icon: %q, ringvalue: %q, click: %q, remove: %q", id, uiName, icon, color, ringValue, onClickCallback, remove))
-  guihooks.trigger("ChangePowerTrainButtons", {id = id, tooltip = uiName, icon = icon, color = color, ringValue = ringValue, onClick = onClickCallback, remove = remove})
+  guihooks.trigger(
+    "ChangePowerTrainButtons",
+    {
+      id = id,
+      players = players,
+      tooltip = uiName,
+      icon = icon,
+      color = normalizeColor(color),
+      ringValue = ringValue,
+      onClick = onClickCallback,
+      remove = remove,
+      active = active,
+    }
+  )
 end
 
 local function updateButtons()

@@ -28,7 +28,8 @@ local importState = {
   materials = {},
   selected = {},
   rename = {},
-  renamePtrs = {}
+  renamePtrs = {},
+  override = {}
 }
 
 local terrainMaterialTextureSetProperties = {
@@ -595,6 +596,47 @@ local function remapTexturePath(srcPath)
   return dstPath
 end
 
+local importedMaterialIdentityFields = {
+  class = true,
+  fileName = true,
+  internalName = true,
+  name = true,
+  persistentId = true
+}
+
+local function findCurrentMaterial(internalName)
+  local lowerName = string.lower(internalName or "")
+  for _, proxy in pairs(editor_terrainEditor.getMaterialsInJson()) do
+    if proxy and string.lower(proxy.internalName or "") == lowerName then
+      return proxy
+    end
+  end
+end
+
+local function applyImportedMaterialFields(material, source, resetFields)
+  if resetFields then
+    local defaults = TerrainMaterial()
+    for fieldName in pairs(material:getFields()) do
+      if not importedMaterialIdentityFields[fieldName] then
+        material:setField(fieldName, 0, defaults:getField(fieldName, 0) or "")
+      end
+    end
+    defaults:deleteObject()
+  end
+
+  for field, value in pairs(source) do
+    if not importedMaterialIdentityFields[field] then
+      if type(value) == "string" and string.find(field:lower(), "tex") then
+        material:setField(field, 0, remapTexturePath(value))
+      elseif type(value) == "table" then
+        material:setField(field, 0, table.concat(value, " "))
+      else
+        material:setField(field, 0, tostring(value))
+      end
+    end
+  end
+end
+
 local function helpTooltip(text)
   if im.IsItemHovered() then
     im.BeginTooltip()
@@ -800,7 +842,7 @@ end
   im.PushID1(propertyName)
   if im.ImageButton(
     "##imageButton1",
-    texture.texId,
+    texture.tex:getID(),
     size,
     im.ImVec2Zero,
     im.ImVec2One,
@@ -1102,6 +1144,7 @@ local function importMaterialFromOtherLevel()
     selected = {},
     rename = {},
     renamePtrs = {},
+    override = {},
     levels = {}
   }
 
@@ -1342,7 +1385,7 @@ local function materialPropertiesGuiV0()
 
   -- diffuse
   im.PushID1("mat_properties_image_button_diffuse")
-  if im.ImageButton("##imageButton2", terrainMtlCopyProxy.diffuseMapObj.texId, materialEditorMapThumbnailSize, nil, nil) then
+  if im.ImageButton("##imageButton2", terrainMtlCopyProxy.diffuseMapObj.tex:getID(), materialEditorMapThumbnailSize, nil, nil) then
     editor_fileDialog.openFile(
       function(data) editor_terrainEditor.updateMap(terrainMtlCopyProxy, "diffuse", data.filepath) end,
       {{"Any files", "*"}, {"Images", {".png", ".dds", ".jpg"}}, {"DDS", ".dds"}, {"PNG", ".png"}, {"JPG", ".jpg"}},
@@ -1373,7 +1416,7 @@ local function materialPropertiesGuiV0()
   im.Separator()
   -- macro
   im.PushID1("mat_properties_image_button_macro")
-  if im.ImageButton("##imageButton3", terrainMtlCopyProxy.macroMapObj.texId, materialEditorMapThumbnailSize, nil, nil) then
+  if im.ImageButton("##imageButton3", terrainMtlCopyProxy.macroMapObj.tex:getID(), materialEditorMapThumbnailSize, nil, nil) then
     editor_fileDialog.openFile(
       function(data) editor_terrainEditor.updateMap(terrainMtlCopyProxy, "macro", data.filepath) end,
       {{"Any files", "*"}, {"Images",{".png", ".dds", ".jpg"}}, {"DDS", ".dds"},{"PNG", ".png"},{"JPG", ".jpg"}},
@@ -1406,7 +1449,7 @@ local function materialPropertiesGuiV0()
   im.Separator()
   -- detail
   im.PushID1("mat_properties_image_button_detail")
-  if im.ImageButton("##imageButton4", terrainMtlCopyProxy.detailMapObj.texId, materialEditorMapThumbnailSize, nil, nil) then
+  if im.ImageButton("##imageButton4", terrainMtlCopyProxy.detailMapObj.tex:getID(), materialEditorMapThumbnailSize, nil, nil) then
     editor_fileDialog.openFile(
       function(data) editor_terrainEditor.updateMap(terrainMtlCopyProxy, "detail", data.filepath) end,
       {{"Any files", "*"}, {"Images", {".png", ".dds", ".jpg"}}, {"DDS", ".dds"}, {"PNG", ".png"},{"JPG", ".jpg"}},
@@ -1439,7 +1482,7 @@ local function materialPropertiesGuiV0()
   im.Separator()
   -- normal
   im.PushID1("mat_properties_image_button_normal")
-  if im.ImageButton("##imageButton5", terrainMtlCopyProxy.normalMapObj.texId, materialEditorMapThumbnailSize, nil, nil) then
+  if im.ImageButton("##imageButton5", terrainMtlCopyProxy.normalMapObj.tex:getID(), materialEditorMapThumbnailSize, nil, nil) then
     editor_fileDialog.openFile(
       function(data) editor_terrainEditor.updateMap(terrainMtlCopyProxy, "normal", data.filepath) end,
       {{"Any files", "*"}, {"Images", {".png", ".dds", ".jpg"}}, {"DDS", ".dds"}, {"PNG", ".png"}, {"JPG", ".jpg"}},
@@ -1755,6 +1798,9 @@ You'll have to manually update the properties (textures, ...).
 
               importState.materials = {}
               importState.selected = {}
+              importState.rename = {}
+              importState.renamePtrs = {}
+              importState.override = {}
 
               if FS:fileExists(matFile) then
                 importState.materials = loadTerrainMaterialsFromJson(matFile)
@@ -1773,6 +1819,7 @@ You'll have to manually update the properties (textures, ...).
             selected = {},
             rename = {},
             renamePtrs = {},
+            override = {},
             levels = {}
           }
           editor.closeModalWindow("importTerrainMaterialsModal")
@@ -1786,6 +1833,9 @@ You'll have to manually update the properties (textures, ...).
           importState.levelPath = nil
           importState.materials = {}
           importState.selected = {}
+          importState.rename = {}
+          importState.renamePtrs = {}
+          importState.override = {}
         end
 
         im.Separator()
@@ -1817,6 +1867,26 @@ You'll have to manually update the properties (textures, ...).
             im.InputText("##rename_" .. key, buf)
             importState.rename[key] = ffi.string(buf)
             im.PopItemWidth()
+
+            local existing = findCurrentMaterial(importState.rename[key])
+            if existing then
+              im.SameLine()
+              local overridePtr = im.BoolPtr(importState.override[key] or false)
+              if im.Checkbox("Override##override_" .. key, overridePtr) then
+                importState.override[key] = overridePtr[0]
+              end
+              if im.IsItemHovered() then
+                im.BeginTooltip()
+                im.TextUnformatted("Replace the existing material '" .. existing.internalName .. "'.")
+                im.TextColored(editor.color.warning.Value, "The existing material settings will be lost.")
+                im.EndTooltip()
+              end
+              if importState.override[key] then
+                im.TextColored(editor.color.warning.Value, "Will replace existing material: " .. existing.internalName)
+              end
+            else
+              importState.override[key] = false
+            end
           end
         end
         im.EndChild()
@@ -1829,59 +1899,54 @@ You'll have to manually update the properties (textures, ...).
         im.SameLine()
 
         if im.Button("Import") then
+          local importedAny = false
+          local defaultFileName = editor_terrainEditor.getVars().levelPath .. editor_terrainEditor.getMatFilePath()
+          local pm = scenetree.terrEd_PersistMan or scenetree.terrainMatEditor_PersistMan
+
           for _, m in ipairs(importState.materials) do
             if importState.selected[m.internalName] then
-
-              local newMtl = TerrainMaterial()
-
               local baseName = importState.rename[m.internalName] or m.internalName or "Material"
-              local newName = editor_terrainEditor.getUniqueMtlName(baseName)
-              newMtl:setInternalName(newName)
-              for field, value in pairs(m) do
-                if field ~= "internalName"
-                and field ~= "persistentId"
-                and field ~= "class"
-                and field ~= "name" then
+              local existing = findCurrentMaterial(baseName)
 
-                  if type(value) == "string" and string.find(field:lower(), "tex") then
-                    local newPath = remapTexturePath(value)
-                    newMtl:setField(field, 0, newPath)
-
-                  elseif type(value) == "table" then
-                    newMtl:setField(field, 0, table.concat(value, " "))
-                  else
-                    newMtl:setField(field, 0, tostring(value))
-                  end
+              if existing and importState.override[m.internalName] then
+                applyImportedMaterialFields(existing.material, m, true)
+                if pm then
+                  pm:setDirty(existing.material, existing.fileName or defaultFileName)
                 end
-              end
+                importedAny = true
+              else
+                local newMtl = TerrainMaterial()
+                local newName = editor_terrainEditor.getUniqueMtlName(baseName)
+                newMtl:setInternalName(newName)
+                applyImportedMaterialFields(newMtl, m, false)
 
-              local fileName = editor_terrainEditor.getVars().levelPath .. editor_terrainEditor.getMatFilePath()
-              newMtl:setFileName(fileName)
+                newMtl:setFileName(defaultFileName)
 
-              local pid = newMtl:getOrCreatePersistentID()
+                local pid = newMtl:getOrCreatePersistentID()
+                local fullName = newName .. "-" .. pid
 
-              local fullName = newName .. "-" .. pid
+                newMtl:setField("name", 0, fullName)
+                newMtl:setInternalName(newName)
+                newMtl:registerObject(fullName)
 
-              newMtl:setField("name", 0, fullName)
-              newMtl:setInternalName(newName)
+                local proxy = editor_terrainEditor.createMaterialProxy(-1, pid, newMtl, newName, false, false)
+                editor_terrainEditor.getMaterialsInJson()[proxy.uniqueID] = proxy
 
-              newMtl:registerObject(fullName)
-
-              local proxy = editor_terrainEditor.createMaterialProxy(-1, pid, newMtl, newName, false, false)
-              editor_terrainEditor.getMaterialsInJson()[proxy.uniqueID] = proxy
-
-              local pm = scenetree.terrEd_PersistMan or scenetree.terrainMatEditor_PersistMan
-              if pm then
-                pm:setDirty(newMtl, fileName)
+                if pm then
+                  pm:setDirty(newMtl, defaultFileName)
+                end
+                importedAny = true
               end
             end
           end
 
-          editor_terrainEditor.setMaterialsDirty()
-          editor_terrainEditor.saveTerrainAndMaterials()
-          editor_terrainEditor.updateMaterialLibrary()
-          editor_terrainEditor.updatePaintMaterialProxies()
-          invalidateValidationCache()
+          if importedAny then
+            editor_terrainEditor.setMaterialsDirty()
+            editor_terrainEditor.saveTerrainAndMaterials()
+            editor_terrainEditor.updateMaterialLibrary()
+            editor_terrainEditor.updatePaintMaterialProxies()
+            invalidateValidationCache()
+          end
 
           importState = {}
           editor.closeModalWindow("importTerrainMaterialsModal")
@@ -1978,11 +2043,17 @@ You'll have to manually update the properties (textures, ...).
         end
         im.tooltip("Import Material from Other Level")
 
+        local reloadLabel = "Reload Terrain Materials"
+        local reloadW = im.CalcTextSize(reloadLabel).x + im.GetStyle().FramePadding.x * 2
         im.SameLine()
-
-        local posX = im.GetCursorPosX()
-        im.SetCursorPosX(posX + im.GetContentRegionAvailWidth() - ((1 * im.GetStyle().FramePadding.x) + im.CalcTextSize("Reload Terrain Materials").x))
-        if im.SmallButton("Reload Terrain Materials") then
+        if im.GetContentRegionAvailWidth() < reloadW then
+          im.NewLine()
+        end
+        local availW = im.GetContentRegionAvailWidth()
+        if availW > reloadW then
+          im.SetCursorPosX(im.GetCursorPosX() + availW - reloadW)
+        end
+        if im.SmallButton(reloadLabel) then
           editor.logInfo("Reloading Terrain Materials")
           reloadTerrainMaterials()
         end

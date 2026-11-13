@@ -96,6 +96,7 @@ end
 function M.GetWindowDrawList() return imgui.GetWindowDrawList() end
 function M.GetWindowDpiScale() return imgui.GetWindowDpiScale() end
 function M.GetWindowPos() return imgui.GetWindowPos() end
+function M.GetWindowPosXY() return imgui.GetWindowPosXY() end
 function M.GetWindowSize() return imgui.GetWindowSize() end
 function M.GetWindowWidth() return imgui.GetWindowWidth() end
 function M.GetWindowHeight() return imgui.GetWindowHeight() end
@@ -157,6 +158,8 @@ function M.SetWindowFocus2(string_name)
   imgui.SetWindowFocus2(string_name)
 end
 function M.GetContentRegionAvail() return imgui.GetContentRegionAvail() end
+function M.GetContentRegionAvailXY() return imgui.GetContentRegionAvailXY() end
+function M.GetConfigFlagsViewportsEnable() return imgui.GetConfigFlagsViewportsEnable() end
 function M.GetContentRegionMax() return imgui.GetContentRegionMax() end
 function M.GetWindowContentRegionMin() return imgui.GetWindowContentRegionMin() end
 function M.GetWindowContentRegionMax() return imgui.GetWindowContentRegionMax() end

@@ -193,8 +193,13 @@ local function reset()
 end
 
 local function onExtensionUnloaded()
-  activateContinuousDriftSound(continuousDriftSoundId, false)
+  local sound = continuousDriftSoundId and scenetree.findObjectById(continuousDriftSoundId)
+  if sound then
+    sound:delete()
+  end
+  continuousDriftSoundId = nil
 end
+
 
 M.onUpdate = onUpdate
 M.onExtensionUnloaded = onExtensionUnloaded

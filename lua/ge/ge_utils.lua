@@ -456,15 +456,10 @@ function getObjectByID(id)
   return veh or nil -- replaces "false" with nil
 end
 
-function vehicleSetPositionRotation(id, px, py, pz, rx, ry, rz, rw, player)
+function vehicleSetPositionRotation(id, px, py, pz, rx, ry, rz, rw)
   local bo = getObjectByID(id)
   if bo then
     bo:setPositionRotation(px, py, pz, rx, ry, rz, rw)
-    -- if core_intapi and player then
-    --   core_intapi.debug_setPosRot(player, id, px, py, pz, rx, ry, rz, rw)
-    -- else
-    --   bo:setPositionRotation(px, py, pz, rx, ry, rz, rw)
-    -- end
   else
     log('E', "vehicleSetPositionRotation", 'vehicle not found: ' .. tostring(id))
   end
@@ -877,12 +872,12 @@ end
 
 -- this function is used by the main options, and exists here because gameplay_traffic may not be loaded
 function setMaxVehicleAmountForTraffic(limit)
-  local availableMemoryGB = math.ceil(Engine.Platform.getMemoryInfo().osPhysAvailable / (1024 * 1024 * 1024))
+  -- local availableMemoryGB = math.ceil(Engine.Platform.getMemoryInfo().osPhysAvailable / (1024 * 1024 * 1024))
   local maxAmount = getMaxVehicleAmount(limit or 8) -- safe maximum of 8
   local trafficAmount = math.max(1, maxAmount - 1) -- minus 1 to account for player vehicle
-  local parkingAmount = clamp(maxAmount * 2, 1, availableMemoryGB - maxAmount) -- unsure about this
+  local parkingAmount = math.max(1, maxAmount - 1) -- same as trafficAmount
   settings.setValue("trafficAmount", trafficAmount)
-  settings.setValue("trafficParkedAmount", parkingAmount)
+  settings.setValue("trafficParkingAmount", parkingAmount)
   log('I', '', string.format("Updated traffic amounts for settings: %d traffic, %d parking", trafficAmount, parkingAmount))
 end
 
@@ -899,15 +894,16 @@ function canSpawnAnotherVehicle(minGB)
   minGB = minGB or requiredMemoryGB
   local m = Engine.Platform.getMemoryInfo()
   local availableGB = m.availableBytes / (1024 * 1024 * 1024)
-  if availableGB >= minGB then
-    -- temporary additional log spam, to better understand the OOM spawn preventer situation
-    log('I', '', string.format("Apparently able to spawn another vehicle, available memory: %5.3f GB free, %5.3f GB required", availableGB, minGB))
-    logMemoryInfo('D')
-  end
   if availableGB >= minGB then return true end
   guihooks.trigger("toastrMsg", {type="info", title="ui.tooManyVehicles.title", msg="ui.tooManyVehicles.msg", config={timeOut=15000}})
   log('W', '', string.format("Unable to spawn another vehicle, available memory is too low: only %5.3f GB free, %5.3f GB required", availableGB, minGB))
   logMemoryInfo('W')
+  extensions.hook("onVehicleSpawnBlocked", availableGB, minGB)
+end
+
+-- kept in a small engine ring buffer and printed to the log on crash and shutdown, consecutive identical actions are merged
+function recordPlayerAction(text)
+  if Engine.PlayerActionLog then Engine.PlayerActionLog.record(text) end
 end
 
 ------------------------------------------------------------------------------
@@ -1103,7 +1099,7 @@ function fillVehicleSpawnOptionDefaults(modelName, opt)
   if type(opt.config) == 'string' then
     if string.endswith(opt.config, '.pc') then
       local configName = string.match(opt.config, "([^./]*).pc")
-      if model.configs[configName] then
+      if model.configs and model.configs[configName] then
         config = model.configs[configName] or {}
         opt.config = configName
       else
@@ -1256,7 +1252,9 @@ function sanitizeVehicleSpawnOptions(model, opt)
       local position = vec3(playerVehicle:getPosition())
       options.pos = position + offset * 5
 
-      options.visibilityPoint = position
+      local oobb = playerVehicle:getSpawnWorldOOBB()
+      local halfHeight = oobb:getHalfExtents().z
+      options.visibilityPoint = vec3(oobb:getCenter()) + vec3(0,0,1) * math.max(halfHeight - 0.1, 0.1)
     end
   end
 

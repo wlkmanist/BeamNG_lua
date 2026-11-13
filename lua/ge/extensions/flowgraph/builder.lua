@@ -77,7 +77,7 @@ function C:End(node)
     local drawList = ui_flowgraph_editor.GetNodeBackgroundDrawList(self.CurrentNodeId)
     local halfBorderWidth = ui_flowgraph_editor.GetStyle().NodeBorderWidth * 0.5
 
-    if self.HeaderRect and not self.HeaderRect.is_empty() and self.headerTexture.texId then
+    if self.HeaderRect and not self.HeaderRect.is_empty() and self.headerTexture.tex then
       local uv = im.ImVec2(self.HeaderRect.w / (4 * im.uiscale[0] * self.headerTexture.size.x), self.HeaderRect.h / (4 * im.uiscale[0] * self.headerTexture.size.y))
 
       local a = self.HeaderRect.top_left()
@@ -87,7 +87,7 @@ function C:End(node)
       local b = self.HeaderRect.bottom_right()
       b.x = b.x + 4 - halfBorderWidth
 
-      im.ImDrawList_AddImageRounded(im.GetWindowDrawList(), self.headerTexture.texId, a, b, im.ImVec2(0, 0), uv, im.GetColorU322(self.HeaderColor), ui_flowgraph_editor.GetStyle().NodeRounding, 3)
+      im.ImDrawList_AddImageRounded(im.GetWindowDrawList(), self.headerTexture.tex:getID(), a, b, im.ImVec2(0, 0), uv, im.GetColorU322(self.HeaderColor), ui_flowgraph_editor.GetStyle().NodeRounding, 3)
 
       local headerSeparatorRect = createRect(self.HeaderRect.bottom_left(), self.ContentRect.top_right())
       if not headerSeparatorRect.is_empty() then

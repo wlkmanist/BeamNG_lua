@@ -193,13 +193,16 @@ local function getModNameFromPath(path)
   return modname
 end
 
+local function getModFromOriginArchivePath(originArchivePath)
+  if not originArchivePath then return nil end
+  return mods[getModNameFromPath(originArchivePath)]
+end
+
 -- this call is really slow, use carefully
 local function getModFromPath(vfsPath)
   local originArchivePath = FS:getOriginArchivePathRelative(vfsPath)
   --log('I', '', 'getModFromPath(' .. tostring(vfsPath) .. ') -> ' .. tostring(originArchivePath))
-  if not originArchivePath then return nil end
-  local _, filename, ext = path.splitWithoutExt(originArchivePath)
-  return mods[filename]
+  return getModFromOriginArchivePath(originArchivePath)
 end
 
 -- checks the type of a mod based on the existing files
@@ -314,18 +317,46 @@ local function checkMod(modname)
   return mods[modname].valid and #mods[modname].conflict == 0
 end
 
+local function hasSameFileStat(first, second)
+  return first and second and first.filetype == second.filetype and first.filesize == second.filesize and first.modtime == second.modtime and first.createtime == second.createtime
+end
+
+local function applyModInfo(mod, modID, modData)
+  modID = modID:upper()
+  mod.modID = modID
+  mod.modInfoPath = '/mod_info/' .. modID .. '/'
+  mod.modData = modData
+  if type(modData.attachments) == 'table' then
+    modData.imgs = {}
+    for _, attachment in pairs(modData.attachments) do
+      table.insert(modData.imgs, mod.modInfoPath .. attachment.thumb_filename:gsub("\\", "/"))
+    end
+  end
+  if type(modData.icon) == 'string' then
+    modData.icon = mod.modInfoPath .. modData.icon
+  end
+end
+
 -- adds / updates a file in the DB
-local function updateZIPEntry(filename)
+local function updateZIPEntry(filename, cachedZipFileList)
   --log('I', 'updateZIPEntry', "filename : "..dumps(filename))
   local modname = getModNameFromPath(filename)
-  local zip = ZipArchive()
-  if not zip:openArchiveName( filename, "R" ) and FS:fileExists(filename) then
-    local errMsg = "Invalid ZIP file: "..dumps(filename)
-    log("E","updZipEntry", errMsg)
-    guihooks.trigger('modmanagerError', errMsg)
-    return nil,nil
+  local cachedZip = cachedZipFileList and hasSameFileStat(cachedZipFileList.stat, FS:stat(filename)) and cachedZipFileList or nil
+  local useCachedManifest = cachedZip and (not cachedZip.hasManifest or cachedZip.modInfo)
+  local zip
+  local filesInZIP
+  if useCachedManifest then
+    filesInZIP = cachedZip.files
+  else
+    zip = ZipArchive()
+    if not zip:openArchiveName( filename, "R" ) and FS:fileExists(filename) then
+      local errMsg = "Invalid ZIP file: "..dumps(filename)
+      log("E","updZipEntry", errMsg)
+      guihooks.trigger('modmanagerError', errMsg)
+      return nil,nil
+    end
+    filesInZIP = cachedZip and cachedZip.files or zip:getFileList()
   end
-  local filesInZIP = zip:getFileList()
 
   if mods[modname] and mods[modname].fullpath == filename then
     --log('D', 'updateZIPEntry', "mod already known: " .. tostring(filename))
@@ -415,39 +446,29 @@ local function updateZIPEntry(filename)
   end
 
   --refresh mod info if file is changed
-  for k2, v2 in pairs(filesInZIP) do
-    v2 = string.lower(v2)
-    local modID = string.match(tostring(v2), '^/?mod_info/([0-9a-zA-Z]*)/info%.json')
-    if modID then
-      -- its a repo info file!
-      modID = modID:upper()
-      mods[modname].modID = modID
-      mods[modname].modInfoPath = '/mod_info/'..modID..'/'
-      local jsonContent = zip:readFileEntryByIdx(k2)
-      if jsonContent then
-        mods[modname].modData = jsonDecode(jsonContent, tostring(filename) .. ' : ' .. tostring(v2))
-        -- fix the relative paths to be absolute paths for the UI
-        if not mods[modname].modData then
-          local errMsg = "Coudn't decode repo manifest for "..dumps(v2).." inside "..dumps(filename)
-          log('E', "checkDuplicatedMods", errMsg)
-          guihooks.trigger('modmanagerError', errMsg)
-          break
-        end
-        if type(mods[modname].modData.attachments) == 'table' then
-          mods[modname].modData.imgs = {}
-          for _,va in pairs(mods[modname].modData.attachments) do
-            table.insert(mods[modname].modData.imgs, mods[modname].modInfoPath .. va.thumb_filename:gsub("\\", "/") )
-            --table.insert(d.modData.imgs, d.modInfoPath .. "/images/" .. va.data_filename:gsub("\\", "/") )
+  if useCachedManifest and cachedZip.modInfo then
+    applyModInfo(mods[modname], cachedZip.modID, cachedZip.modInfo)
+  elseif zip then
+    for k2, v2 in pairs(filesInZIP) do
+      v2 = string.lower(v2)
+      local modID = string.match(tostring(v2), '^/?mod_info/([0-9a-zA-Z]*)/info%.json')
+      if modID then
+        local jsonContent = zip:readFileEntryByIdx(k2)
+        if jsonContent then
+          local modData = jsonDecode(jsonContent, tostring(filename) .. ' : ' .. tostring(v2))
+          if not modData then
+            local errMsg = "Coudn't decode repo manifest for "..dumps(v2).." inside "..dumps(filename)
+            log('E', "checkDuplicatedMods", errMsg)
+            guihooks.trigger('modmanagerError', errMsg)
+            break
           end
+          applyModInfo(mods[modname], modID, modData)
         end
-        if type(mods[modname].modData.icon) == 'string' then
-          mods[modname].modData.icon = mods[modname].modInfoPath .. mods[modname].modData.icon
-        end
+        break
       end
-      break
     end
   end
-  zip:close()
+  if zip then zip:close() end
 
   --if you only have vanila and unpacked, the level list do not get refreshed
   if filename:find('/unpacked/') and filename:endswith('/') then
@@ -473,6 +494,7 @@ local function checkDuplicatedMods(filelist)
   local uniqueModList = {}
   local idModList = {}
   local oldModToDelete = {}
+  local zipFileLists = {}
   for _, filepath in ipairs(filelist) do
     -- log('D', 'checkDuplicatedMods', "filepath = ".. dumps(filepath) )
     local modname = getModNameFromPath(filepath)
@@ -481,13 +503,15 @@ local function checkDuplicatedMods(filelist)
       uniqueModList[modname] = filepath
       if string.endswith(filepath, ".zip" ) and FS:fileExists(filepath) then
         -- log('D', 'checkDuplicatedMods', "opening zip")
+        local zipStat = FS:stat(filepath)
         local zip = ZipArchive()
-        zip:openArchiveName( filepath, "R" )
-        local filesInZIP = zip:getFileList()
-        for k2, v2 in pairs(filesInZIP) do
+        local filesInZIP = zip:openArchiveName( filepath, "R" ) and zip:getFileList()
+        zipFileLists[filepath] = filesInZIP and { files = filesInZIP, stat = zipStat, hasManifest = false } or nil -- uncached invalid zips get reported by updateZIPEntry
+        for k2, v2 in pairs(filesInZIP or {}) do
           v2 = string.lower(v2)
           local modID = string.match(tostring(v2), '^/?mod_info/([0-9a-zA-Z]*)/info%.json')
           if modID then
+            zipFileLists[filepath].hasManifest = true
             -- log('D', 'checkDuplicatedMods', "found repo metadate = "..dumps(modID))
             local jsonContent = zip:readFileEntryByIdx(k2)
             if jsonContent then
@@ -496,6 +520,8 @@ local function checkDuplicatedMods(filelist)
                 log('E', "checkDuplicatedMods", "Coudn't decode repo manifest for "..dumps(v2).." inside "..dumps(filepath))
                 break
               end
+              zipFileLists[filepath].modID = modID
+              zipFileLists[filepath].modInfo = modInfo
               -- log('D', 'checkDuplicatedMods', dumps(modInfo.filename).."  "..modID.."  "..dumps(modInfo.last_update).."  res="..tostring(modInfo.resource_date).."  rel="..tostring(modInfo.release_date).."")
               if idModList[modID] ~= nil then
                 local oldFilepath = ""
@@ -527,8 +553,6 @@ local function checkDuplicatedMods(filelist)
                 local errMsgID = ""
                 local needManualAction = true
                 if string.sub(oldFilepath,1,11) == "/mods/repo/" then
-                  zip:close()
-                  zip = nil
                   table.insert(oldModToDelete,{name=oldModName,path=oldFilepath})
                   needManualAction = false
                 end
@@ -545,10 +569,7 @@ local function checkDuplicatedMods(filelist)
             break
           end
         end
-        if zip then
-          zip:close()
-          zip = nil
-        end
+        if zip then zip:close() end
       end
     else
       local errMsg = 'Duplicated mod[ '..modname..' ]\n['..uniqueModList[modname]..']\n - ['..filepath..']'
@@ -567,7 +588,7 @@ local function checkDuplicatedMods(filelist)
       guihooks.trigger('modmanagerError', errMsgID)
     end
   end
-  return outFilelist
+  return outFilelist, zipFileLists
 end
 
 
@@ -611,6 +632,7 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
     ready = true
     extensions.hook('onModManagerReady')
     guihooks.trigger('ModManagerReady')
+    onLuaReloadModManagerCompleted()
     return
   end
 
@@ -628,7 +650,8 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
   local fileList = {}
   for k, v in ipairs(unpackedList) do table.insert(fileList, v) end
   for k, v in ipairs(zipfileList) do table.insert(fileList, v) end
-  fileList = checkDuplicatedMods(fileList)
+  local zipFileLists
+  fileList, zipFileLists = checkDuplicatedMods(fileList)
 
   local mountList = {}
   for k,filename in pairs(fileList) do
@@ -640,7 +663,8 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
 
       if FS:directoryExists(filename) then filename=filename.."/" end
 
-      local mod, modFiles = updateZIPEntry(filename)
+      local mod, modFiles = updateZIPEntry(filename, zipFileLists[filename])
+      zipFileLists[filename] = nil
 
       if mod and not isSafeMode() and mod.active ~= false then
         log('D', 'initDB', 'mountEntry -- ' .. tostring(filename) .. ': ' .. (mod.modID or '') .. ' : ' .. (mod.modname or ''))
@@ -695,14 +719,26 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
   -- execute modScripts
   -- TODO deprecated: some modScripts are used to load extensions, added backward compatibility
   local old_loadModule = extensions.load
+  local old_setExtensionUnloadMode = setExtensionUnloadMode
+  local modScriptFile
+  local explicitManualExtensions = {}
+  setExtensionUnloadMode = function(extension, unloadMode)
+    local extensionName = type(extension) == 'table' and extension.__extensionName__ or extension
+    if type(extensionName) == 'string' and unloadMode == 'manual' then explicitManualExtensions[extensionName] = true end
+    old_setExtensionUnloadMode(extension, unloadMode)
+  end
   extensions.load = function(module)
-    log('W', 'initDB.modScript', 'Please make sure to call setExtensionUnloadMode(m, "manual") to have this extension loaded properly.')
+    if type(module) ~= 'string' or not explicitManualExtensions[module] then
+      local extensionName = type(module) == 'string' and '"' .. module .. '"' or 'm'
+      log('W', 'initDB.modScript', 'Please make sure to call setExtensionUnloadMode(' .. extensionName .. ', "manual") to have this extension loaded properly. Script: ' .. tostring(modScriptFile))
+    end
     old_loadModule(module)
     setExtensionUnloadMode(module, "manual")
   end
 
   local modScriptFiles = FS:findFiles('/scripts/', 'modScript.lua', -1, true, false)
   for k,v in ipairs(modScriptFiles) do
+    modScriptFile = v
     local status, ret = pcall(dofile, v)
     if not status then
       log('E', 'initDB.modScript', 'Failed to execute ' .. v)
@@ -713,13 +749,16 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
 
   modScriptFiles = FS:findFiles('/mods_data/', 'modScript.lua', 1, true, false)
   for k,v in ipairs(modScriptFiles) do
+    modScriptFile = v
     if not pcall(dofile, v) then
       log('E', 'initDB.modScript', 'Failed to execute ' .. v)
     end
     systemYield()
   end
 
+  modScriptFile = nil
   extensions.load = old_loadModule
+  setExtensionUnloadMode = old_setExtensionUnloadMode
   loadManualUnloadExtensions()
 
   if checkStartup and settings.getValue('modAutoUpdates') and Engine.Platform.isNetworkUnrestricted() then
@@ -728,12 +767,25 @@ local initDB = extensions.core_jobsystem.wrap(function(job)
   end
 
   extensions.hook('onModManagerModsMounted')
+  onLuaReloadModManagerCompleted()
 end)
 
 local function deactivateAllMods()
-  for modname, v in pairs(mods) do
-    M.deactivateMod(modname, true)
+  local unmountList = {}
+  for _, mod in pairs(mods) do
+    if FS:isMounted(mod.fullpath) then
+      table.insert(unmountList, mod.fullpath)
+    end
   end
+  if not FS:unmountList(unmountList) then
+    log('E', 'deactivateAllMods', 'Failed to unmount mods')
+    return
+  end
+  local mountedFilesChange = {}
+  for modname, _ in pairs(mods) do
+    arrayConcat(mountedFilesChange, M.deactivateMod(modname, true, true))
+  end
+  _G.onFileChanged(mountedFilesChange)
   stateChanged()
 end
 
@@ -833,25 +885,6 @@ local function testZips()
 end
 --]]
 
-local function getPossiblyBrokenMods()
-  local overrides = FS:listOverrides()
-  local mods = {}
-  for file,v in pairs(overrides) do
-    local mod = v[1]
-    mods[mod] = mods[mod] or {}
-    table.insert(mods[mod], file)
-  end
-  local result = {}
-  for mod,files in pairs(mods) do
-    log("W", "", "Possibly broken mod detected: "..dumps(mod)..". It overwrites the following files:")
-    for _,file in ipairs(files) do
-      log("W", "", " - Overwriten file: "..dumps(file))
-    end
-    table.insert(result, {mod, files})
-  end
-  return result
-end
-
 local function _cleanPathFromHash(p)
   return p:gsub("\\","")
 end
@@ -938,7 +971,7 @@ local function _getModScriptFiles(modname)
   return modScripts
 end
 
-local function deactivateMod(modname, preventStateChange)
+local function deactivateMod(modname, preventStateChange, deferFileChanged)
   if not mods[modname] then
     log('I', 'deactivateMod', 'mod not existing ' .. tostring(modname))
     return
@@ -958,13 +991,14 @@ local function deactivateMod(modname, preventStateChange)
 
   mods[modname].active = false
   extensions.hook('onModDeactivated', deepcopy(mods[modname]))
-  if mountedFilesChange then
+  if mountedFilesChange and not deferFileChanged then
     _G.onFileChanged(mountedFilesChange) --main.lua
   end
 
   if not preventStateChange then --
     stateChanged()
   end
+  return mountedFilesChange
 end
 
 local function getModNameFromID(modID)
@@ -1362,7 +1396,7 @@ local checkUpdate = extensions.core_jobsystem.wrap(function(job)
         return
       end
       --print(dumps( request.responseData) )
-      if not request.responseData and request.responseData.ok == 1 then
+      if request.responseData.ok == 0 then
         log('E', 'checkUpdate', 'modSync failed =' .. (request.responseBuffer or "")  )
         guihooks.trigger('modmanagerError', 'Check Update failed')
       else
@@ -1563,7 +1597,7 @@ M.modIsUnpacked = modIsUnpacked
 M.check4Update = check4Update
 M.getModFromPath = getModFromPath
 M.getModFromPathSUPERSLOW = getModFromPath -- backward compatibility
-M.getPossiblyBrokenMods = getPossiblyBrokenMods
+M.getModFromOriginArchivePath = getModFromOriginArchivePath
 M.getMods = getMods
 
 M.getModForFilename = getModForFilename

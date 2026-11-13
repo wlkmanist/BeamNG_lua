@@ -51,7 +51,7 @@ local function updateGFX(device, dt)
   if clutchMessage then
     device.clutchThermalsMessageTimer = device.clutchThermalsMessageTimer - dt
     if device.clutchThermalsMessageTimer <= 0 then
-      guihooks.message({txt = clutchMessage}, messageTime, "vehicle.clutchThermals")
+      guihooks.messageForSeatedPlayers({txt = clutchMessage}, messageTime, "vehicle.clutchThermals")
       device.clutchThermalsMessageTimer = 0.9
     end
   end

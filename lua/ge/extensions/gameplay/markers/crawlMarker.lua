@@ -16,6 +16,7 @@ local iconHeightTop = 2.5
 local iconRendererObj
 local iconWorldSize = 20
 local tmpVec = vec3()
+local tmpLineStart = vec3()
 local maxVisibleDistance = 35
 local screenObjTemp = nil
 function C:init()
@@ -70,7 +71,7 @@ function C:update(data)
     --simpleDebugText3d(idx, area.iconPos, 0.25)
 
     -- Check sphere overlap - no walking requirement
-    local distance = (data.bbCenter - area.areaPos):length()
+    local distance = data.bbCenter:distance(area.areaPos)
     local overlap = distance < area.radius
     anyOverlap = overlap
 
@@ -100,7 +101,9 @@ function C:update(data)
       iconInfo.color = playModeColorI
       if smootherVal > 0.1 then
         --lineColorF.a = area.iconAlphaSmoother:value()
-        debugDrawer:drawLine(area.iconPos + vec3(0,0,self.iconOffsetHeight - smootherVal * self.iconOffsetHeight), tmpVec, lineColorF)
+        tmpLineStart:set(0, 0, self.iconOffsetHeight - smootherVal * self.iconOffsetHeight)
+        tmpLineStart:setAdd(area.iconPos)
+        debugDrawer:drawLine(tmpLineStart, tmpVec, lineColorF)
       end
     end
   end

@@ -12,6 +12,7 @@ local pwmEnv
 local updateCustomElectricsFunction
 
 local customDefaultValues
+local customElectricsNames
 
 --function used as a case selector, input can be both int and bool as the first argument, any number of arguments after that
 --in case it's a bool, it works like a ternary if, returning the second param if true, the third if false
@@ -91,7 +92,12 @@ local function updateEnvElectrics(dt)
 end
 
 local function updateElectrics(dt)
-  for electricsName, customValue in pairs(customElectricsEnv.electrics) do
+  -- for electricsName, customValue in pairs(customElectricsEnv.electrics) do
+  --   print("updating electrics: " .. electricsName .. " = " .. dumps(customValue or "nil"))
+  --   electrics.values[electricsName] = customValue
+  -- end
+  for _, electricsName in ipairs(customElectricsNames) do
+    local customValue = customElectricsEnv.electrics[electricsName]
     electrics.values[electricsName] = customValue
   end
   --dump(customElectricsEnv.electrics)
@@ -164,6 +170,7 @@ local function compileCustomValueUpdates(customValueData)
   --print("customValueData")
   --dump(customValueData)
 
+  customElectricsNames = {}
   customDefaultValues = {}
 
   local customValueUpdateStrings = {}
@@ -184,8 +191,12 @@ local function compileCustomValueUpdates(customValueData)
       else
         log("D", "electricsCustomValueParser.compileCustomValueUpdates", string.format("No default value for custom electrics value: %s", customValue.electricsName))
       end
+      table.insert(customElectricsNames, customValue.electricsName)
     end
   end
+
+  --print("customElectricsNames")
+  --dump(customElectricsNames)
 
   --print("customDefaultValues")
   --dump(customDefaultValues)

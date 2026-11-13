@@ -12,6 +12,7 @@ local C = {}
 C.__index = C
 
 local manualzoom = require('core/cameraModes/manualzoom')
+local bobbing = require('core/cameraModes/bobbing')
 
 local up = vec3(0, 0, 1)
 local downVec = vec3(0, 0, -1)
@@ -36,6 +37,7 @@ function C:init()
   self.walkSpeed = self.walkSpeed or 2.45 -- m/s on foot
   self.groundWalk = self.groundWalk ~= false -- raycast grounding + gravity on by default
   self.manualzoom = manualzoom()
+  self.bobbing = bobbing()
   self:onSettingsChanged()
   -- fixed feel constants (kept internal to avoid knob sprawl)
   self.runMult   = 2.0   -- sprint multiplier (camera-fast modifier)
@@ -52,8 +54,7 @@ end
 
 function C:onSettingsChanged()
   self.eyeHeight = clamp(tonumber(settings.getValue('cameraSteadycamEyeHeight')) or 1.7, 1.0, 2.5)
-  self.walkBobScale = clamp(tonumber(settings.getValue('cameraSteadycamWalkBob')) or 1, 0, 2)
-  self.standingBobScale = clamp(tonumber(settings.getValue('cameraSteadycamStandingBob')) or 1, 0, 2)
+  self.bobbing:onSettingsChanged()
   local configuredFov = clamp(tonumber(settings.getValue('cameraSteadycamFov')) or 60, 10, 140)
   if self.configuredFov ~= configuredFov then
     self.configuredFov = configuredFov
@@ -71,9 +72,7 @@ function C:reset()
   self.vz = 0
   self.grounded = false
   self.prevUp = 0
-  self.bobPhase = 0
-  self.t = 0
-  self.phase = vec3(math.random(), math.random(), math.random()) * (2 * math.pi) -- random handheld sway offsets
+  self.bobbing:reset()
   self.manualzoom:reset()
 end
 
@@ -106,8 +105,8 @@ function C:listParams()
   return {
     { key = 'height',     icon = 'fa-ruler-vertical', kind = 'range', value = self.eyeHeight, default = 1.7, min = 1.0, max = 2.5, step = 0.1 },
     { key = 'walkSpeed',  icon = 'fa-person-walking', kind = 'range', value = self.walkSpeed, min = 1,   max = 12,  step = 0.5 },
-    { key = 'walkBob',    icon = 'fa-person-walking', kind = 'range', value = self.walkBobScale, default = 1, min = 0, max = 2, step = 0.1 },
-    { key = 'standingBob', icon = 'fa-person', kind = 'range', value = self.standingBobScale, default = 1, min = 0, max = 2, step = 0.1 },
+    { key = 'walkBob',    icon = 'fa-person-walking', kind = 'range', value = self.bobbing.walkBobScale, default = 1, min = 0, max = 2, step = 0.1 },
+    { key = 'standingBob',icon = 'fa-person',         kind = 'range', value = self.bobbing.standingBobScale, default = 1, min = 0, max = 2, step = 0.1 },
     { key = 'groundWalk', icon = 'fa-shoe-prints',    kind = 'bool',  value = self.groundWalk == true },
     { key = 'fov',        icon = 'fa-expand',         title = 'Field of view', kind = 'range', type = 'int', value = self.manualzoom.fov, default = 60, min = 10, max = 140, step = 1, unit = '°' },
   }
@@ -116,15 +115,15 @@ end
 function C:setParam(key, value)
   if key == 'height' then self.eyeHeight = clamp(tonumber(value) or self.eyeHeight, 1.0, 2.5)
   elseif key == 'walkSpeed' then self.walkSpeed = clamp(tonumber(value) or self.walkSpeed, 1, 12)
-  elseif key == 'walkBob' then self.walkBobScale = clamp(tonumber(value) or self.walkBobScale, 0, 2)
-  elseif key == 'standingBob' then self.standingBobScale = clamp(tonumber(value) or self.standingBobScale, 0, 2)
+  elseif key == 'walkBob' then self.bobbing.walkBobScale = clamp(tonumber(value) or self.bobbing.walkBobScale, 0, 2)
+  elseif key == 'standingBob' then self.bobbing.standingBobScale = clamp(tonumber(value) or self.bobbing.standingBobScale, 0, 2)
   elseif key == 'groundWalk' then self.groundWalk = value and true or false
   elseif key == 'fov' then self:setFOV(tonumber(value) or self.manualzoom.fov) end
 end
 
 function C:serialize()
   return { fov = self.manualzoom.fov, height = self.eyeHeight, walkSpeed = self.walkSpeed,
-           walkBob = self.walkBobScale, standingBob = self.standingBobScale, groundWalk = self.groundWalk }
+           walkBob = self.bobbing.walkBobScale, standingBob = self.bobbing.standingBobScale, groundWalk = self.groundWalk }
 end
 
 function C:deserialize(s)
@@ -132,8 +131,8 @@ function C:deserialize(s)
   if s.fov then self:setFOV(s.fov) end
   if s.height then self.eyeHeight = s.height end
   if s.walkSpeed then self.walkSpeed = s.walkSpeed end
-  if s.walkBob then self.walkBobScale = s.walkBob elseif s.bob then self.walkBobScale = s.bob / 0.6 end
-  if s.standingBob then self.standingBobScale = s.standingBob elseif s.bob then self.standingBobScale = s.bob / 0.6 end
+  if s.walkBob then self.bobbing.walkBobScale = s.walkBob elseif s.bob then self.bobbing.walkBobScale = s.bob / 0.6 end
+  if s.standingBob then self.bobbing.standingBobScale = s.standingBob elseif s.bob then self.bobbing.standingBobScale = s.bob / 0.6 end
   if s.groundWalk ~= nil then self.groundWalk = s.groundWalk end
 end
 
@@ -141,7 +140,6 @@ function C:update(data)
   data.res.collisionCompatible = false
   local dt = data.dt
   if dt <= 0 then dt = 1e-4 end
-  self.t = self.t + dt
 
   -- look: mouse deltas (frame-cleared, already FOV-scaled) + key/pad rotate axes
   self.yaw = self.yaw + MoveManager.yawRelative * self.mouseSens
@@ -219,40 +217,14 @@ function C:update(data)
     self.vz, self.grounded = 0, false
   end
 
-  -- footstep head-bob (vertical) + handheld "steadycam" sway, all scaled by bob
   local walkAmt = self.grounded and clamp(stepDist / dt / self.walkSpeed, 0, 1) or 0
-  self.bobPhase = self.bobPhase + dt * (4 + walkAmt * 6)
-  local walkBobScale = self.walkBobScale * 0.6
-  local standingBobScale = self.standingBobScale * 0.6
-  local bobUp = 0.035 * walkAmt * walkBobScale * math.abs(math.sin(self.bobPhase))
-
-  -- gentle always-on handheld life (grows while walking), random per-axis phase
-  local t, ph = self.t, self.phase
-  local blendedBobScale = standingBobScale + (walkBobScale - standingBobScale) * walkAmt
-  local amp = blendedBobScale * (0.6 + 0.8 * walkAmt)
-  local swayPitch = amp * 0.006 * math.sin(0.8 * t + ph.y) + walkBobScale * 0.020 * walkAmt * math.sin(self.bobPhase + 1.2)
-  local swayRoll  = amp * 0.012 * math.sin(0.5 * t + ph.z) + walkBobScale * 0.030 * walkAmt * math.sin(self.bobPhase * 0.5)
-  local swayYaw   = amp * 0.006 * math.sin(0.7 * t + ph.x)
-
-  -- standing still: someone holding a phone up to film -> slow breathing + big slow handheld wander
-  local still = (1 - walkAmt) * standingBobScale
-  if still > 0 then
-    local breath  = math.sin(t * 1.2 + ph.x)                                  -- ~5s breath cycle
-    local wanderP = math.sin(t * 0.8 + ph.y) + 0.5 * math.sin(t * 1.7 + ph.z) -- slow arms-drift, non-repeating
-    local wanderY = math.sin(t * 0.6 + ph.z) + 0.5 * math.sin(t * 1.3 + ph.x)
-    bobUp     = bobUp     + still * 0.016 * breath
-    swayPitch = swayPitch + still * (0.012 * breath + 0.014 * wanderP)
-    swayYaw   = swayYaw   + still * 0.016 * wanderY
-    swayRoll  = swayRoll  + still * 0.010 * math.sin(t * 0.5 + ph.z)
-  end
-
   local cp = math.cos(self.pitchSmooth)
   fwd:set(sy * cp, cy * cp, math.sin(self.pitchSmooth))
   local q = quatFromDir(fwd, up)
-  if amp ~= 0 then q = q * quatFromEuler(swayPitch, swayRoll, swayYaw) end
 
-  data.res.pos:set(self.pos.x, self.pos.y, self.pos.z + bobUp)
+  data.res.pos:set(self.pos.x, self.pos.y, self.pos.z)
   data.res.rot = q
+  self.bobbing:update(data, walkAmt, dt)
   data.res.fov = self.manualzoom.fov
   self.manualzoom:update(data)
   data.res.targetPos:set(self.pos.x + fwd.x * 10, self.pos.y + fwd.y * 10, self.pos.z + fwd.z * 10)

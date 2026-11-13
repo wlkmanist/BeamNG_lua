@@ -2,6 +2,8 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
+--Purpose: Lets machinery reuse driving inputs to operate different function groups
+
 local M = {}
 M.type = "auxiliary"
 
@@ -17,6 +19,9 @@ local inputs = {}
 
 local configurations = {}
 
+local stateData
+local stateDataNameModeIndex
+
 local function updateGFX(dt)
   inputs.steering = input.steering
   inputs.throttle = input.throttle
@@ -30,10 +35,16 @@ local function updateGFX(dt)
   end
 end
 
-local function setControlModeIndex(index)
+local function setControlModeIndex(index, silent)
+  if not controlModes[index] then
+    return
+  end
+
   M.controlModeIndex = index
   M.controlModeName = controlModes[M.controlModeIndex].name
-  guihooks.message("Control Mode: " .. controlModes[M.controlModeIndex].name, 5, "vehicle.controls.mode")
+  if not silent then
+    guihooks.message("Control Mode: " .. controlModes[M.controlModeIndex].name, 5, "vehicle.controls.mode")
+  end
 end
 
 local function toggleControlMode(value)
@@ -52,6 +63,9 @@ local function setInputValue(name, value)
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameModeIndex = M.name .. "_modeIndex"
+
   controlModes = tableFromHeaderTable(jbeamData.modes)
 
   local config = tableFromHeaderTable(jbeamData.config)
@@ -106,10 +120,29 @@ local function init(jbeamData)
   end
 end
 
+local function getState()
+  stateData[stateDataNameModeIndex] = M.controlModeIndex
+  return stateData
+end
+
+local function setState(data)
+  if not data then
+    return
+  end
+
+  local newModeIndex = data[stateDataNameModeIndex]
+  if type(newModeIndex) == "number" and controlModes[newModeIndex] and newModeIndex ~= M.controlModeIndex then
+    setControlModeIndex(newModeIndex, true)
+  end
+end
+
 M.init = init
 M.updateGFX = updateGFX
 M.toggleControlMode = toggleControlMode
 M.setControlModeIndex = setControlModeIndex
 M.setInputValue = setInputValue
+
+M.getState = getState
+M.setState = setState
 
 return M

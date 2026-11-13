@@ -5,6 +5,23 @@ local Constants = require("ge/extensions/ui/router/constants")
 local M = {}
 
 M.Children = {
+  ["onboarding"] = {
+    screenId = "onboarding",
+    backTarget = "menu",
+    scopeTree = {
+      ["root"] = {}
+    },
+    ui = {
+      uiTypes = {"vue"},
+      uiTypesFilter = Constants.UiTypesFilter.only,
+      infoBar = Constants.InfoBarDefaults,
+      topBar = Constants.TopBarDefaultsHidden,
+      uiApps = {
+        shown = false,
+      },
+    }
+  },
+
   ["buttonLayout"] = {
     ui = {
       infoBar = Constants.InfoBarDefaults,
@@ -18,6 +35,7 @@ M.Children = {
     title = "Play",
     back = { mode = "rootExit" },
     ui = {
+      uiNav = false,
       uiTypes = {"vue"},
       uiTypesFilter = Constants.UiTypesFilter.only,
       infoBar = Constants.InfoBarDefaultsHidden,

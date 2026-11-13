@@ -744,7 +744,7 @@ M.onComputerAddFunctions = function(menuData, computerFunctions)
       label = _tr("ui.career.APM.name") ..' ' .. _tr("ui.career.landingPage.name"),
       icon = "garage01",
       callback = function()
-        guihooks.trigger('ChangeState', {state = 'career.branchPage', params = {pathId = "apm", returnRoute = "career.computer"}})
+        extensions.ui_router.navigate('career.branchPage', {pathId = "apm", returnRoute = "career.computer"})
       end,
       disabled = not menuData.hasBoughtStarterVehicle,
       reason = (not menuData.hasBoughtStarterVehicle) and career_modules_computer.reasons.hasBoughtStarterVehicle or nil,

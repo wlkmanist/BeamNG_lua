@@ -29,6 +29,17 @@ function M.testDroneIsRegularCamera(ctx)
   ctx:assertEqual(drone.disabledByDefault, true, "Drone Chase is disabled by default")
 end
 
+function M.testLegacyDriverIsOccupant(ctx)
+  local vehicle = {camerasInternal = {{name = "driver", idCam = 5, rightHandCamera = true}}}
+  require("jbeam/sections/camera").process(0, vehicle)
+  local driver = require("core/cameraModes/occupant")(vehicle.cameraData.driver)
+  ctx:assertEqual(driver.camNodeID, 5, "driver camera node comes from the onboard 'driver' camera")
+  ctx:assertEqual(driver.seatSide, "right", "right-hand camera means a right-hand seat")
+  ctx:assertEqual(driver.shoulderRight.lateralOffset, 0.6, "right shoulder is the window side")
+  driver:onOccupantDetached("ocpAttachFL")
+  ctx:assert(not driver.occupantDetached, "driver camera has no seat to detach from")
+end
+
 function M.testFreeCameraConfigurationApi(ctx)
   local camera = cam()
   ctx:assert(type(camera.getFreeCameraConfigurationReadOnly) == "function", "free camera configuration is readable")

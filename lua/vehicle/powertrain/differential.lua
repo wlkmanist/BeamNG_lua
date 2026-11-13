@@ -172,18 +172,56 @@ local function getPartCondition(device)
   return integrityValue, integrityState
 end
 
+local GENERIC_MODE_ICONS = {
+  open = "powertrain_differential_open",
+  torqueVectoring = "powertrain_differential_open",
+  lsd = "powertrain_differential_lsd",
+  viscous = "powertrain_differential_lsd",
+  locked = "powertrain_differential_closed",
+  dually = "powertrain_differential_open",
+  activeLock = "powertrain_differential_lsd",
+}
+
+local AXLE_MODE_ICONS = {
+  front = {
+    open = "powertrain_differential_front_default",
+    torqueVectoring = "powertrain_differential_front_default",
+    locked = "powertrain_differential_front_locked",
+    dually = "powertrain_differential_front_default",
+  },
+  middle = {
+    open = "powertrain_differential_middle_default",
+    torqueVectoring = "powertrain_differential_middle_default",
+    locked = "powertrain_differential_middle_locked",
+    dually = "powertrain_differential_middle_default",
+  },
+  rear = {
+    open = "powertrain_differential_rear_default",
+    torqueVectoring = "powertrain_differential_rear_default",
+    locked = "powertrain_differential_rear_locked",
+    dually = "powertrain_differential_rear_default",
+  }
+}
+
+local function differentialUiAxle(device)
+  local hay = string.lower(tostring(device.uiName or "") .. " " .. tostring(device.name or ""))
+  if hay:find("front", 1, true) then
+    return "front"
+  end
+  if hay:find("rear", 1, true) then
+    return "rear"
+  end
+  if hay:find("middle", 1, true) or hay:find("center", 1, true) or hay:find("transfer", 1, true) then
+    return "middle"
+  end
+  return nil
+end
+
 local function updateSimpleControlButtons(device)
   if #device.availableModes > 1 and device.uiSimpleModeControl then
-    local modeIconLookup = {
-      open = "powertrain_differential_open",
-      torqueVectoring = "powertrain_differential_open",
-      lsd = "powertrain_differential_lsd",
-      viscous = "powertrain_differential_lsd",
-      locked = "powertrain_differential_closed",
-      dually = "powertrain_differential_open",
-      activeLock = "powertrain_differential_lsd"
-    }
-    extensions.ui_simplePowertrainControl.setButton("powertrain_device_mode_shortcut_" .. device.name, device.uiName, modeIconLookup[device.mode], nil, nil, string.format("powertrain.toggleDeviceMode(%q)", device.name))
+    local axle = differentialUiAxle(device)
+    local icon = (axle and AXLE_MODE_ICONS[axle][device.mode]) or GENERIC_MODE_ICONS[device.mode]
+    extensions.ui_simplePowertrainControl.setButton("powertrain_device_mode_shortcut_" .. device.name, device.uiName, icon, nil, nil, string.format("powertrain.toggleDeviceMode(%q)", device.name), nil, device.mode ~= device.defaultMode)
   end
 end
 
@@ -200,6 +238,22 @@ local function setMode(device, mode)
   device.mode = mode
   selectUpdates(device)
   device:updateSimpleControlButtons()
+end
+
+local function getState(device)
+  device.stateData[device.stateDataNameMode] = device.mode
+  return device.stateData
+end
+
+local function setState(device, data)
+  if not data then
+    return
+  end
+
+  local newMode = data[device.stateDataNameMode]
+  if type(newMode) == "string" and newMode ~= device.mode then
+    device:setMode(newMode)
+  end
 end
 
 local function calculateInertia(device)
@@ -323,6 +377,14 @@ local function new(jbeamData)
   else
     device.mode = jbeamData.diffType or "open"
     device.availableModes = {device.mode}
+  end
+  device.defaultMode = device.mode
+
+  if #device.availableModes > 1 then
+    device.stateData = {}
+    device.stateDataNameMode = device.name .. "Mode"
+    device.getState = getState
+    device.setState = setState
   end
 
   device.visualType = "differential_" .. device.mode

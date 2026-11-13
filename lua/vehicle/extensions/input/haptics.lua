@@ -160,7 +160,7 @@ local function vibrationUpdate(dt)
     local totalForceBrake = math.min(lockedWheelsRelative * stoppedVehicleMultiplier * hydros.wheelFFBForceCoef / 100, 1) * 20/2
     local totalForceAccelerate = math.min(overSpinningWheelsAverageSlip * hydros.wheelFFBForceCoef / 100, 1) * 23/2
 
-    if FFBID ~= 1 then hydros.getForceFeedbackFunction()(obj, FFBID, totalForce * 10, 0, 0, 0) end-- the c++ api expects a value between 0 and 10
+    if FFBID ~= -1 then hydros.getForceFeedbackFunction()(obj, FFBID, totalForce * 10, 0, 0, 0) end-- the c++ api expects a value between 0 and 10 --
     if hydros.enableThrottleForceFeedback then
       if FFBID_accelerate ~= -1 then hydros.getForceFeedbackFunction()(obj, FFBID_accelerate, totalForceAccelerate, 0.24, 1, 1) end
     else

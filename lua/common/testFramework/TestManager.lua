@@ -211,7 +211,7 @@ local TestManager = {
       return string.format("%6.0fB", bytes or 0)
     end
 
-    if not enableJit then
+    if jit and not enableJit then
       jit.off() -- always disable JIT - not available on all platforms and not deterministic
     end
 

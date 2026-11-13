@@ -114,7 +114,7 @@ local function getDriftSpotsById()
   return spotsById
 end
 
-local noPreviewFilepath = "/ui/modules/gameContext/noPreview.jpg"
+local noPreviewFilepath = "/ui/images/noPreview.jpg"
 local previewFilenames = {"/preview.jpg","/preview.png","/preview.jpeg"}
 local function getPreviewWithFallback(dir)
   -- check in mission Dir

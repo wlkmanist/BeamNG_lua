@@ -54,9 +54,16 @@ local function onClientEndMission()
   materialsCache = {}
 end
 
+local function onFilesChanged(files)
+  if next(files) then
+    jbeamLoader.onFileChanged()
+  end
+end
+
 local function onFileChanged(filename, type)
-  jbeamIO.onFileChanged(filename, type)
-  jbeamLoader.onFileChanged(filename, type)
+  if string.sub(filename, -6) == ".jbeam" then
+    jbeamIO.onFileChanged(filename, type)
+  end
   local path = string.match(filename, "^(/vehicles/[^/]*/)[^%.]*%.materials%.json$")
   if path then
     log('D', 'vehicleLoader', 'Materials changed in vehicle path, invalidating cache: ' .. tostring(path))
@@ -121,9 +128,13 @@ local function spawnCCallback(objID, vehicleDir, configDataIn, reloading)
 
   -- makes the object available for every call, etc
   be:addObject(vehicleObj, false)
+  -- vehicle is removed during reload, invalidate so cache is not used after re-adding
+  invalidatePlayerVehicles()
 
   local timer = hptimer()
-  log('D', 'vehicleLoader', 'partConfigData [' .. type(configDataIn) .. '] = ' .. dumps(configDataIn))
+  local configDump = dumps(configDataIn)
+  if #configDump > 100 then configDump = configDump:sub(1, 97) .. '...' end
+  log('D', 'vehicleLoader', 'partConfigData [' .. type(configDataIn) .. '] = ' .. configDump)
   local vehicleConfig = extensions.core_vehicle_partmgmt.buildConfigFromString(vehicleDir, configDataIn)
 
   extensions.hook("onSpawnCCallback", objID)
@@ -131,6 +142,11 @@ local function spawnCCallback(objID, vehicleDir, configDataIn, reloading)
   if additionalVehicleData and not additionalDataId or additionalDataId == objID then
     vehicleConfig.additionalVehicleData = additionalVehicleData
     additionalVehicleData = nil
+  end
+  local personaId = core_vehicles and core_vehicles.getVehiclePersona and core_vehicles.getVehiclePersona(objID)
+  if personaId then
+    vehicleConfig.additionalVehicleData = vehicleConfig.additionalVehicleData or {}
+    vehicleConfig.additionalVehicleData.personaId = vehicleConfig.additionalVehicleData.personaId or personaId
   end
 
   if debugEnabled then
@@ -366,6 +382,7 @@ M.onDespawnObject    = onDespawnObject
 M.onSerialize        = onSerialize
 M.onDeserialized     = onDeserialized
 M.onClientEndMission = onClientEndMission
+M.onFilesChanged     = onFilesChanged
 M.onFileChanged      = onFileChanged
 M.onUpdate = onUpdate
 

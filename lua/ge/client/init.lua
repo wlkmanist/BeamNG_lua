@@ -54,8 +54,8 @@ local function initBaseClient()
   -- log('I','client', "Initialize the post effect manager")
   postFxModule.initPostEffects()
 
-  -- Get the default preset settings
-  postFxModule.applyDefaultPreset()
+  -- Get the default settings
+  postFxModule.applyDefaults()
 
   -- log('I','client', "... initBaseClient done")
 end

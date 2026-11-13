@@ -202,16 +202,16 @@ local function resolvePaintHelper(modelPaints, paintKeyOrPaint, paintIdsToPaintN
   local paint = nil
 
   if type(paintKeyOrPaint) == 'string' then
-    debugLog("resolving paint " .. dumps(paintKeyOrPaint))
+    if debugLog ~= nop then debugLog("resolving paint " .. dumps(paintKeyOrPaint)) end
     paint = modelPaints[paintKeyOrPaint]
   elseif type(paintKeyOrPaint) == 'table' then
-    debugLog("resolving paint " .. dumps(paintKeyOrPaint.name))
+    if debugLog ~= nop then debugLog("resolving paint " .. dumps(paintKeyOrPaint.name)) end
     paint = paintKeyOrPaint
   end
   if paint then
-    debugLog("paint found: " .. dumps(paint.name))
+    if debugLog ~= nop then debugLog("paint found: " .. dumps(paint.name)) end
     if not modelPaints[paint.name] then
-      debugLog("added paint " .. dumps(paint.name) .. " to model. This paint was explicitly defined")
+      if debugLog ~= nop then debugLog("added paint " .. dumps(paint.name) .. " to model. This paint was explicitly defined") end
       paint.class = 'custom'
       modelPaints[paint.name] = paint
       return paint, true
@@ -224,7 +224,7 @@ local function resolvePaintHelper(modelPaints, paintKeyOrPaint, paintIdsToPaintN
     if paintName then
       paint = modelPaints[paintName]
       if paint then
-        debugLog("paint found: " .. dumps(paint.name) .. ". Paint was already added to the model")
+        if debugLog ~= nop then debugLog("paint found: " .. dumps(paint.name) .. ". Paint was already added to the model") end
         return paint
       end
     end
@@ -235,7 +235,7 @@ local function resolvePaintHelper(modelPaints, paintKeyOrPaint, paintIdsToPaintN
       paint.class = 'custom'
       modelPaints[paint.name] = paint
       paintIdsToPaintNames[paintKeyOrPaint] = paint.name
-      debugLog("adding paint to model: " .. dumps(paint.id) .. "/" .. dumps(paint.name) .. " (from library) ")
+      if debugLog ~= nop then debugLog("adding paint to model: " .. dumps(paint.id) .. "/" .. dumps(paint.name) .. " (from library) ") end
       return paint, true
     end
   end
@@ -319,8 +319,7 @@ local function resolveMultiPaintSetupHelper(model, multiPaintSetupKeyOrMultiPain
   }
 
 
-
-  debugLog("resolving multiPaintSetup: " .. dumps(multiPaintSetupWithNames.name))
+  if debugLog ~= nop then debugLog("resolving multiPaintSetup: " .. dumps(multiPaintSetupWithNames.name)) end
   for i = 1, 3 do
     local defaultPaintKey = "paint" .. i
     if multiPaintSetup[defaultPaintKey] and multiPaintSetup[defaultPaintKey] ~= "" then
@@ -333,7 +332,9 @@ local function resolveMultiPaintSetupHelper(model, multiPaintSetupKeyOrMultiPain
         log("E", "vehicles", "paint " .. dumps(multiPaintSetup[defaultPaintKey]) .. " not found in default paint list or any library for model " .. dumps(key) .. ", used as " ..dumps(defaultPaintKey) .. " in multiPaintSetup " .. dumps(multiPaintSetup.name or "unknown"))
       end
     else
-      debugLog("paint " .. dumps(multiPaintSetup[defaultPaintKey]) .. " not found in default paint list or any library for model " .. dumps(key) .. ", used as " ..dumps(defaultPaintKey) .. " in multiPaintSetup " .. dumps(multiPaintSetup.name or "unknown"))
+      if debugLog ~= nop then
+        debugLog("paint " .. dumps(multiPaintSetup[defaultPaintKey]) .. " not found in default paint list or any library for model " .. dumps(key) .. ", used as " ..dumps(defaultPaintKey) .. " in multiPaintSetup " .. dumps(multiPaintSetup.name or "unknown"))
+      end
     end
   end
 
@@ -357,7 +358,8 @@ local function setupPaints(model, configs)
   debugModelKey = model.key
   debugConfigKey = nil
   --debugLog = model.key == 'simple_traffic' and debugLogFun or nop
-  debugLog("setupPaints for model " .. dumps(model.key))
+  local debugLogEnabled = debugLog ~= nop
+  if debugLogEnabled then debugLog("setupPaints for model " .. dumps(model.key)) end
 
   local paintIdsToPaintNames = {}
   local configMultiPaintSetupsFromCollectionsByKey = {}
@@ -416,7 +418,7 @@ local function setupPaints(model, configs)
       if paintFromLibrary then
         tableMerge(paintFromLibrary, paint)
         markPaintOfficial(paintFromLibrary, paintFromLibrary._official == true)
-        addPaintToScope(target, paintFromLibrary, "adding paint from " .. ownerLabel .. ".libraryPaints to " .. (target == model and "model" or "config"))
+        addPaintToScope(target, paintFromLibrary, debugLogEnabled and ("adding paint from " .. ownerLabel .. ".libraryPaints to " .. (target == model and "model" or "config")) or nil)
       else
         log('E', 'vehicles', "paint " .. dumps(paint.id) .. " not found in any paint library for " .. ownerLabel .. " " .. dumps(target.key))
       end
@@ -434,7 +436,7 @@ local function setupPaints(model, configs)
           tableMerge(paint, paintsByIdCache[paint.id])
           paint.class = collection.class
           markPaintOfficial(paint, collectionIsOfficial)
-          addPaintToScope(target, paint, "adding paint from " .. ownerLabel .. ".paintCollections to " .. (target == model and "model" or "config") .. " (from collection " .. dumps(collectionId) .. ")")
+          addPaintToScope(target, paint, debugLogEnabled and ("adding paint from " .. ownerLabel .. ".paintCollections to " .. (target == model and "model" or "config") .. " (from collection " .. dumps(collectionId) .. ")") or nil)
         end
         local collectionMultiPaintSetups = {}
         for _, setup in pairs(collection.multiPaintSetups or {}) do
@@ -477,7 +479,9 @@ local function setupPaints(model, configs)
   -- R1: collect direct paints (model + configs)
   normalizeDirectPaints(model)
   normalizeMultiPaintSetups(model)
-  debugLog("Model has " .. #tableKeys(model.paints) .. " explicit paints: " .. table.concat(tableKeysSorted(model.paints), ", "))
+  if debugLogEnabled then
+    debugLog("Model has " .. #tableKeys(model.paints) .. " explicit paints: " .. table.concat(tableKeysSorted(model.paints), ", "))
+  end
   for _, config in pairs(configs) do
     normalizeDirectPaints(config)
     normalizeMultiPaintSetups(config)
@@ -518,7 +522,9 @@ local function setupPaints(model, configs)
 
   local defaultMultiPaintSetup = model.defaultMultiPaintSetup
   if not defaultMultiPaintSetup then
-    debugLog("no defaultMultiPaintSetup found for model " .. dumps(model.key)..". Using defaultPaintName1, defaultPaintName2, defaultPaintName3: " .. dumps(model.defaultPaintName1) .. ", " .. dumps(model.defaultPaintName2) .. ", " .. dumps(model.defaultPaintName3))
+    if debugLogEnabled then
+      debugLog("no defaultMultiPaintSetup found for model " .. dumps(model.key)..". Using defaultPaintName1, defaultPaintName2, defaultPaintName3: " .. dumps(model.defaultPaintName1) .. ", " .. dumps(model.defaultPaintName2) .. ", " .. dumps(model.defaultPaintName3))
+    end
     defaultMultiPaintSetup = {
       name = model.Name .. " default paints",
       paint1 = model.defaultPaintName1,
@@ -571,7 +577,10 @@ local function setupPaints(model, configs)
         generated = true,
         _official = isEntryOfficial(config),
       }
-      debugLog("no defaultMultiPaintSetup found for config " .. dumps(config.key)..". Using defaultPaintName1, defaultPaintName2, defaultPaintName3: " .. dumps(configDefaultMultiPaintSetup.paint1) .. ", " .. dumps(configDefaultMultiPaintSetup.paint2) .. ", " .. dumps(configDefaultMultiPaintSetup.paint3))
+      if debugLogEnabled then
+        local configDefaultDebugLogTimer = hptimer()
+        debugLog("no defaultMultiPaintSetup found for config " .. dumps(config.key)..". Using defaultPaintName1, defaultPaintName2, defaultPaintName3: " .. dumps(configDefaultMultiPaintSetup.paint1) .. ", " .. dumps(configDefaultMultiPaintSetup.paint2) .. ", " .. dumps(configDefaultMultiPaintSetup.paint3))
+      end
       if not (configDefaultMultiPaintSetup.paint1 or configDefaultMultiPaintSetup.paint2 or configDefaultMultiPaintSetup.paint3) then
         configDefaultMultiPaintSetup = nil
       end
@@ -627,7 +636,9 @@ local function setupPaints(model, configs)
     end
   end
 
-  debugLog("Finished: Model has " .. #tableKeys(model.paints) .. " paints: " .. table.concat(tableKeysSorted(model.paints), ", "))
+  if debugLogEnabled then
+    debugLog("Finished: Model has " .. #tableKeys(model.paints) .. " paints: " .. table.concat(tableKeysSorted(model.paints), ", "))
+  end
 
 
 
@@ -695,7 +706,10 @@ local function setupRandomPaintHelper(model_key)
     local multiPaintSetup = multiPaintSetupsByName[multiPaintSetupNameOrId]
     if not multiPaintSetup then
       multiPaintSetup = multiPaintSetupsByIdCache[multiPaintSetupNameOrId]
-      multiPaintSetup = multiPaintSetupsByName[multiPaintSetup.name]
+      multiPaintSetup = multiPaintSetup and multiPaintSetupsByName[multiPaintSetup.name]
+    end
+    if not multiPaintSetup then
+      log('W', 'vehiclePaints', "randomMultiPaintDistribution references unknown multiPaintSetup " .. dumps(multiPaintSetupNameOrId) .. " in model " .. dumps(model.key))
     end
     if multiPaintSetup then
       newRandomMultiPaintDistributionModel[multiPaintSetup.name] = probability
@@ -790,7 +804,10 @@ local function setupRandomPaintHelper(model_key)
       local multiPaintSetup = multiPaintSetupsByName[multiPaintSetupNameOrId]
       if not multiPaintSetup then
         multiPaintSetup = multiPaintSetupsByIdCache[multiPaintSetupNameOrId]
-        multiPaintSetup = multiPaintSetupsByName[multiPaintSetup.name]
+        multiPaintSetup = multiPaintSetup and multiPaintSetupsByName[multiPaintSetup.name]
+      end
+      if not multiPaintSetup then
+        log('W', 'vehiclePaints', "randomMultiPaintDistribution references unknown multiPaintSetup " .. dumps(multiPaintSetupNameOrId) .. " in config " .. dumps(model.key) .. "/" .. dumps(config.key))
       end
       if multiPaintSetup then
         newRandomMultiPaintDistributionConfig[multiPaintSetup.name] = probability
@@ -1179,8 +1196,8 @@ local function getRandomPaintsByVehicle(vehId)
   local obj = getObjectByID(vehId or 0)
   local model = obj and obj.jbeam
   local config = obj and tostring(obj.partConfig)
-  config  = string.match(config, "vehicles/".. model .."/(.*).pc")
-  if not obj or not config then
+  config = model and config and string.match(config, "vehicles/" .. model .. "/(.*)%.pc")
+  if not config then
     log('W', 'getRandomPaint', 'Vehicle not found, now using default paint data')
     return {'White', 'White', 'White'}
   end

@@ -1484,7 +1484,7 @@ function C:getCustomNodeTemplates()
     end
     local moduleName = string.sub(fn, 1, string.len(fn) - 4)
     local requireFilename = string.sub(filename, 1, string.len(filename) - 4)
-    local status, node = pcall(rerequire, requireFilename)
+    local status, node = pcall(require, requireFilename)
     if not status then
       log('E', logTag, 'error while loading node ' .. tostring(requireFilename) .. ' : ' .. tostring(node) .. '. ' .. debug.tracesimple())
     else

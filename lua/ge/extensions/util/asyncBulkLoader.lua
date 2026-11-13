@@ -30,12 +30,14 @@ local countSeen = {}
 M.addCount = function(count)
   asyncBulkLoaderProgress.count = asyncBulkLoaderProgress.count + count
   M.reportStream()
-  local trace = debug.tracesimple()
-  if not countSeen[trace] then
-    countSeen[trace] = 0
-    --print("new trace: " .. trace:match("([^\n]*\n?[^\n]*)"))
+  if tooLongLoadingThreshold ~= math.huge then
+    local trace = debug.tracesimple()
+    if not countSeen[trace] then
+      countSeen[trace] = 0
+      --print("new trace: " .. trace:match("([^\n]*\n?[^\n]*)"))
+    end
+    countSeen[trace] = countSeen[trace] + count
   end
-  countSeen[trace] = countSeen[trace] + count
 end
 
 -- profiling

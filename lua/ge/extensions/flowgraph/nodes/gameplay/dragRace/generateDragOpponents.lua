@@ -70,10 +70,8 @@ function C:createVehicleEntry(config)
   local paints = getAvailablePaints(config.model_key)
   local paint = (#paints > 0) and paints[math.random(#paints)] or nil
 
-  local dial = 12
-  if config["Drag Times"] then
-    dial = config["Drag Times"].time_1_4
-  end
+  local dragTimes = config["Performance Data"] or config["Drag Times"]
+  local dial = dragTimes and dragTimes.time_1_4 or 12
 
   return {
     model = config.model_key,
@@ -95,7 +93,8 @@ function C:getPlayerVehicleAsFallback(count)
   local modelKey = currentVeh.model.model
   local configKey = currentVeh.configs.Name or "base"
   local paints = getAvailablePaints(modelKey)
-  local playerDial = currentVeh.configs["Drag Times"] and currentVeh.configs["Drag Times"].time_1_4 or 12
+  local dragTimes = currentVeh.configs["Performance Data"] or currentVeh.configs["Drag Times"]
+  local playerDial = dragTimes and dragTimes.time_1_4 or 12
 
   for i = 1, count do
     local paint = (#paints > 0) and paints[math.random(#paints)] or nil
@@ -130,11 +129,9 @@ function C:getPlayerDial(currentVeh)
   end
 
   -- Fallback to vehicle config
-  if currentVeh and currentVeh.configs and currentVeh.configs["Drag Times"] then
-    return currentVeh.configs["Drag Times"].time_1_4
-  end
-
-  return 12
+  local configs = currentVeh and currentVeh.configs
+  local dragTimes = configs and (configs["Performance Data"] or configs["Drag Times"])
+  return dragTimes and dragTimes.time_1_4 or 12
 end
 
 -- Generate opponents for bracket race mode
@@ -163,11 +160,10 @@ function C:generateSimilarOpponents(vehConfigs, dial, count, currentVeh)
 
   -- Find vehicles with similar dial times
   for _, v in pairs(vehConfigs) do
-    if v["Drag Times"] then
-      local time = v["Drag Times"].time_1_4
-      if time >= (dial - 0.5) and time < (dial + 0.1) then
-        table.insert(similarVehicles, v)
-      end
+    local dragTimes = v["Performance Data"] or v["Drag Times"]
+    local time = dragTimes and dragTimes.time_1_4
+    if time and time >= (dial - 0.1) and time < (dial + 0.4) then
+      table.insert(similarVehicles, v)
     end
   end
 

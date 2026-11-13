@@ -2,10 +2,7 @@ return {
   id = "freshStart",
   order = 200,
   tier = "minor",
-  title = "Open World",
-  description = "Purchase your first vehicle immediately, explore freely, and define your own journey. APM's career path remains available from the garage computer whenever you're ready.",
   image = "images/career/start_fresh.jpg",
-  tag = "Recommended for experienced players",
   initPlayerAttributes = function(playerAttributes)
     playerAttributes.setAttributes({money = 10000}, {label = "Starting Capital"})
   end,

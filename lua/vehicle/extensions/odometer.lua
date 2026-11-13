@@ -9,13 +9,22 @@ local abs = math.abs
 local relativeOdometer = 0
 local submitedStatOdo = 0
 local submitedTime = 0
+local ropeLength = 0.05
+local lead = 0
 
 local function onReset()
   M.submitStatistic()
 end
 
 local function updateGFX(dt)
-  relativeOdometer = relativeOdometer + abs(electrics.values.wheelspeed or 0) * dt
+  lead = lead + abs(electrics.values.wheelspeed or 0) * dt * sign(electrics.values.avgWheelAV)
+  if lead > ropeLength then
+    relativeOdometer = relativeOdometer + abs(lead - ropeLength)
+    lead = ropeLength
+  elseif lead < -ropeLength then
+    relativeOdometer = relativeOdometer + abs(-lead - ropeLength)
+    lead = -ropeLength
+  end
   submitedTime = submitedTime + dt
   if ai.mode == "disabled" and submitedTime > 30 then
     M.submitStatistic()

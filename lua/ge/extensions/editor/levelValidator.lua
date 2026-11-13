@@ -855,7 +855,7 @@ end
 
 local function onEditorInitialized()
   editor.registerWindow(toolWindowName, im.ImVec2(200, 400))
-  editor.addWindowMenuItem("Level Validator", onWindowMenuItem)
+  editor.addWindowMenuItem("Level Validator", onWindowMenuItem, {groupMenuName = 'Debug'})
 end
 
 local function onExtensionLoaded()

@@ -22,13 +22,21 @@ local function loadVehicle(vehicleDir)
   return lpack.encode({vdata  = vehicleBundle.vdata, config = vehicleBundle.config})
 end
 
+local function spawnNoSleep(id, testVehicle, vehLPackData, pos)
+  local obj = BeamEngine:spawnObject2(id, testVehicle, vehLPackData, pos)
+  if obj ~= nil then
+    obj:queueLuaCommand("if obj and obj.setSleepingEnabled then obj:setSleepingEnabled(false) end")
+  end
+  return obj
+end
+
 function myBenchStep(testVehicle, vehLPackData, n, steps)
   steps = steps or gfxSteps
   local hp = HighPerfTimer()
   local hpSR = hp.stopAndReset
   -- spawn n vehicles
   for i=currentObjects + 1, n do
-    BeamEngine:spawnObject2(i, testVehicle, vehLPackData, Vector3(300 * i, 300 * i, 1)) -- spawn 1m up
+    spawnNoSleep(i, testVehicle, vehLPackData, Vector3(300 * i, 300 * i, 1)) -- spawn 1m up, no sleeping
     currentObjects = currentObjects + 1
   end
   local spawntime = hp:stop()
@@ -40,13 +48,17 @@ function myBenchStep(testVehicle, vehLPackData, n, steps)
   local min = math.min
   local bupdate = BeamEngine.update
   collectgarbage("stop")
-  jit.off()
+  -- The PS5 LuaJIT build is compiled without the JIT compiler, so jit.on() raises 'JIT
+  -- compiler permanently disabled by build option' and kills the whole benchmark there.
+  -- On such a build neither call can affect the measurement (the interpreter is all there
+  -- is), so tolerate the failure rather than abort.
+  pcall(jit.off)
   for i=1, steps do
     hpSR(hp)
     bupdate(BeamEngine, dt, dt)
     mint = min(mint, hpSR(hp))
   end
-  jit.on()
+  pcall(jit.on)
   collectgarbage("restart")
 
   if BeamEngine:instabilityDetected() then
@@ -114,7 +126,7 @@ function benchPhysics(vehicles, vehicleMin, vehicleMax)
 
     -- init
     BeamEngine:deleteAllObjects()
-    local obj = BeamEngine:spawnObject2(k, testVehicle, vehLPackData, Vector3(300 * k, 300 * k, 1)) -- spawn 1m up
+    local obj = spawnNoSleep(k, testVehicle, vehLPackData, Vector3(300 * k, 300 * k, 1)) -- spawn 1m up, no sleeping
     local nodecount = obj:getNodeCount()
     local beamcount = obj:getBeamCount()
     currentObjects = 1
@@ -216,5 +228,11 @@ local M = {}
 
 M.physics = benchPhysics
 M.getAllVehicles = getAllVehicles
+-- Exposed so callers can drive the engine directly, e.g. setThreadingLayout() for a
+-- worker-count sweep (see bananabench-threads.lua). It is a BeamNG::System, so every
+-- method in beamng.h is reachable from here.
+M.beam = function()
+  return BeamEngine
+end
 
 return M

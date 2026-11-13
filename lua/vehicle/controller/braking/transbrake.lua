@@ -2,7 +2,7 @@
 -- If a copy of the bCDDL was not distributed with this
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
---Purpose: Controls an existing transbrake setup in a gearbox
+--Purpose: Lets drag vehicles hold position under power for launch staging
 
 local M = {}
 M.type = "auxiliary"
@@ -11,14 +11,19 @@ local gearbox = nil
 local electricsName = nil
 local hasBuiltPie = false
 
+local stateData
+local stateDataNameActive
+
 local function updateGFX(dt)
   electrics.values[electricsName] = gearbox.lockCoef == 0
 end
 
-local function setTransbrake(value)
+local function setTransbrake(value, silent)
   if gearbox then
     gearbox:setLock(value)
-    guihooks.message("Transbrake is " .. (value and "enabled" or "disabled"), 2, "vehicle.transbrake.status")
+    if not silent then
+      guihooks.message("Transbrake is " .. (value and "enabled" or "disabled"), 2, "vehicle.transbrake.status")
+    end
   end
 end
 
@@ -30,6 +35,9 @@ local function toggleTransbrake()
 end
 
 local function init(jbeamData)
+  stateData = {}
+  stateDataNameActive = M.name .. "Active"
+
   local gearboxName = jbeamData.gearboxName or "gearbox"
   electricsName = jbeamData.electricsName or "transbrake"
   gearbox = powertrain.getDevice(gearboxName)
@@ -63,6 +71,22 @@ local function init(jbeamData)
   end
 end
 
+local function getState()
+  stateData[stateDataNameActive] = gearbox and gearbox.lockCoef == 0 or false
+  return stateData
+end
+
+local function setState(data)
+  if not data or not gearbox then
+    return
+  end
+
+  local newActive = data[stateDataNameActive]
+  if type(newActive) == "boolean" and newActive ~= (gearbox.lockCoef == 0) then
+    setTransbrake(newActive, true)
+  end
+end
+
 --example: onGameplayEvent("controller:transbrake", "setTransbrake", true)
 --example: onGameplayEvent("controller:myTransbrakeName", "setTransbrake", false)
 local function onGameplayEvent(event, eventData)
@@ -84,5 +108,8 @@ M.updateGFX = nop
 M.toggleTransbrake = toggleTransbrake
 M.setTransbrake = setTransbrake
 M.onGameplayEvent = onGameplayEvent
+
+M.getState = getState
+M.setState = setState
 
 return M

@@ -147,7 +147,7 @@ local function takepiccheck()
     return
   end
   if not M.closeToPhoto then
-    guihooks.trigger('ChangeState', {state = 'menu'})
+    extensions.ui_router.navigate('menu')
     guihooks.trigger('ScenarioFlashMessage', {{'Drive closer to the target to take the picture', 2}} )
     simTimeAuthority.pause(false)
     return
@@ -175,7 +175,7 @@ local function takepiccheck()
     M.msg= "target is not in the scene"
     val = false
   end
-  guihooks.trigger('ChangeState', {state = 'menu'})
+  extensions.ui_router.navigate('menu')
   guihooks.trigger('ScenarioFlashMessage', {{M.msg, 2}} )
   simTimeAuthority.pause(false)
   return val

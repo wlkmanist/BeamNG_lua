@@ -258,6 +258,22 @@ function M.endTutorial()
   return true
 end
 
+-- Unloads the active step without marking the tutorial completed
+function M.stop()
+  if currentStepExtensionName then
+    local stepModule = extensions[currentStepExtensionName]
+    if stepModule and stepModule.cleanup then
+      stepModule.cleanup()
+    end
+    extensions.unload(currentStepExtensionName)
+    currentStepExtensionName = nil
+  end
+
+  isActive = false
+  currentStepId = nil
+  currentStepIndex = nil
+end
+
 function M.onUpdate(dtReal, dtSim, dtRaw)
   gameplay_tutorial_damageTracker.setTrackedVehicleId(gameplay_tutorial_setup.tutorialVehicleId)
   if isActive and currentStepExtensionName then

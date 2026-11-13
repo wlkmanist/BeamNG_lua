@@ -157,10 +157,10 @@ local function propagateBranchLevel(startId)
   end
 end
 
--- builds the forward cache (this needs all missions to be loaded)
+-- builds the forward cache from all mission data
 local function buildForwardCache()
-  -- get all missions, initialize the forward cache
-  local missions = gameplay_missions_missions.getAllMissions()
+  -- get all mission data, initialize the forward cache
+  local missions = gameplay_missions_missions.getFilesData(true)
   _forwardCache = {}
   for _, m in ipairs(missions) do
     _forwardCache[m.id] = {}

@@ -403,7 +403,7 @@ local function onWindowMenuItem() editor.showWindow(toolWindowName) end
 
 local function onEditorDeactivated()
   if _dynamicCollision then
-    be:setDynamicCollisionEnabled(not settings.getValue('disableDynamicCollision'))
+    be:setDynamicCollisionEnabled(true)
   end
 end
 

@@ -17,9 +17,11 @@ C.pinSchema = {
 }
 
 function C:workOnce()
-  self.mgr.modules.mission:prepareVehicle(self.pinIn.vehId.value or be:getPlayerVehicleID(0))
-  for _, vehId in pairs(self.pinIn.vehicleIds.value or {}) do
-    self.mgr.modules.mission:prepareVehicle(vehId)
+  local playerVehId = be:getPlayerVehicleID(0)
+  local vehId = self.pinIn.vehId.value or playerVehId
+  self.mgr.modules.mission:prepareVehicle(vehId, false)
+  for _, id in pairs(self.pinIn.vehicleIds.value or {}) do
+    self.mgr.modules.mission:prepareVehicle(id, id ~= vehId and id ~= playerVehId)
   end
 end
 

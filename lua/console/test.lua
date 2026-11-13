@@ -4,7 +4,7 @@
 
 -- this is the main test file
 
-rerequire("lua/console/benchphysics")
+require("lua/console/benchphysics")
 
 
 --rerequire("lua/tests/simpleload")

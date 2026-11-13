@@ -3,6 +3,7 @@
 -- file, You can obtain one at http://beamng.com/bCDDL-1.1.txt
 
 local M = {}
+M.dependencies = {"core_vehicle_configTarget"}
 
 -- transform a color from a   "0..1 0..1 0..1 0..2"    string to a   {0..1, 0..1, 0..1, 0..1}   array
 local function colorStringToColorTable(colorString)
@@ -36,7 +37,7 @@ local function setVehicleColor(index, colorString, objID)
   -- index from JS is zero based, LUA is 1 based
   index = index + 1
   -- log('I','setVehicleColor','setVehicleColor called: index = '..tostring(index)..' colorString = '..tostring(colorString)..' objID = '..tostring(objID))
-  local objID = objID or be:getPlayerVehicleID(0)
+  local objID = extensions.core_vehicle_configTarget.resolveVehicleId(objID)
   if not objID then return end
 
   local veh = getObjectByID(objID)
@@ -45,13 +46,13 @@ local function setVehicleColor(index, colorString, objID)
 
   if allPaints then
     -- Save paint to config
-    extensions.core_vehicle_partmgmt.setConfigPaints(allPaints, false)
+    extensions.core_vehicle_partmgmt.setConfigPaints(allPaints, false, objID)
   end
 end
 
 local function setVehiclePaint(index, paint, objID)
   -- 1 based index
-  local objID = objID or be:getPlayerVehicleID(0)
+  local objID = extensions.core_vehicle_configTarget.resolveVehicleId(objID)
   if not objID then return end
 
   local veh = getObjectByID(objID)
@@ -66,7 +67,7 @@ local function setVehiclePaint(index, paint, objID)
   extensions.core_vehicle_manager.liveUpdateVehicleColors(objID, veh, index, paint)
 
   -- Save paint to config
-  extensions.core_vehicle_partmgmt.setConfigPaints(vd.config.paints, false)
+  extensions.core_vehicle_partmgmt.setConfigPaints(vd.config.paints, false, objID)
 end
 
 local function onVehicleSpawned(vehId)

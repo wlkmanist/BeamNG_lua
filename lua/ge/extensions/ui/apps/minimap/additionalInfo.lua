@@ -1,8 +1,17 @@
 local M = {}
 local hasNewAdditionalInfo = false
-local additionalInfo = {}
+local additionalInfo = {
+  visible = true,
+}
 
 M.requestAdditionalInfo = function()
+  hasNewAdditionalInfo = true
+end
+
+M.setVisible = function(visible)
+  visible = visible ~= false
+  if additionalInfo.visible == visible then return end
+  additionalInfo.visible = visible
   hasNewAdditionalInfo = true
 end
 
@@ -90,6 +99,7 @@ end
 
 local function onClientEndMission()
   table.clear(additionalInfo)
+  additionalInfo.visible = true
   hasNewAdditionalInfo = true
 end
 

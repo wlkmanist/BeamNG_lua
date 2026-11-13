@@ -5,15 +5,23 @@
 local M = {}
 local logTag = "drag_save_system"
 
+local DIAL_FILE = "settings/dragDialTimes.json"
+local BEST_FILE = "settings/dragDialBest.json"
+local HISTORY_FILE = "settings/dragDialHistory.jsonl"
+
+local dialCache
+local cacheLoaded = false
+local configHashCache = {}
+
 M.DEFAULT_TIMERS = {
-  { id = "reactionTime", label = "Reaction Time", shortLabel = "R/T", type = "distanceTimer", distance = 0.178, important = false },
-  { id = "time_60", label = "60 ft", shortLabel = "60'", type = "distanceTimer", distance = 18.288, important = false },
-  { id = "time_330", label = "330 ft", shortLabel = "330'", type = "distanceTimer", distance = 100.584, important = false },
-  { id = "time_1_8", label = "1/8 mile", shortLabel = "1/8", type = "distanceTimer", distance = 201.168, important = false },
-  { id = "time_1000", label = "1000 ft", shortLabel = "1000'", type = "distanceTimer", distance = 304.8, important = false },
-  { id = "time_1_4", label = "1/4 mile", shortLabel = "1/4", type = "distanceTimer", distance = 402.336, important = true },
-  { id = "velAt_1_8", label = "Speed at 1/8 mile", type = "velocity", distance = 201.168, important = false },
-  { id = "velAt_1_4", label = "Speed at 1/4 mile", type = "velocity", distance = 402.336, important = false },
+  { id = "reactionTime", label = "Reaction Time", labelKey = "ui.drag.winnerBy.reactionTime", shortLabel = "R/T", type = "distanceTimer", distance = 0.178, important = false },
+  { id = "time_60", label = "60 ft", labelKey = "ui.drag.winnerBy.time60", shortLabel = "60'", type = "distanceTimer", distance = 18.288, important = false },
+  { id = "time_330", label = "330 ft", labelKey = "ui.drag.winnerBy.time330", shortLabel = "330'", type = "distanceTimer", distance = 100.584, important = false },
+  { id = "time_1_8", label = "1/8 mile", labelKey = "ui.drag.winnerBy.time18", shortLabel = "1/8", type = "distanceTimer", distance = 201.168, important = false },
+  { id = "time_1000", label = "1000 ft", labelKey = "ui.drag.winnerBy.time1000", shortLabel = "1000'", type = "distanceTimer", distance = 304.8, important = false },
+  { id = "time_1_4", label = "1/4 mile", labelKey = "ui.drag.winnerBy.time14", shortLabel = "1/4", type = "distanceTimer", distance = 402.336, important = true },
+  { id = "velAt_1_8", label = "Speed at 1/8 mile", labelKey = "ui.drag.winnerBy.speedAt18", type = "velocity", distance = 201.168, important = false },
+  { id = "velAt_1_4", label = "Speed at 1/4 mile", labelKey = "ui.drag.winnerBy.speedAt14", type = "velocity", distance = 402.336, important = false },
 }
 
 local function createDefaultTimers()
@@ -47,6 +55,7 @@ local function normalizeTimersConfig(timersArray)
       table.insert(out, {
         id = id,
         label = t.label and tostring(t.label) or id,
+        labelKey = t.labelKey,
         type = t.type,
         distance = t.distance,
         important = important and (importantId == id),
@@ -455,6 +464,187 @@ M.convertLegacyData = function(legacyData)
   return convertedData
 end
 
+local function slipKey(hash, slip)
+  local info = slip and slip.stripInfo or nil
+  local stamp = info and (info.dateTime or info.timestamp) or ""
+  local finals = ""
+  if slip and slip.racerInfos then
+    for i = 1, #slip.racerInfos do
+      finals = finals .. tostring(slip.racerInfos[i].finalTime or "") .. ","
+    end
+  end
+  return tostring(hash) .. "\0" .. tostring(stamp) .. "\0" .. tostring(slip and slip.stripId or "") .. "\0" .. finals
+end
+
+local function dialHasHistory(cache)
+  for _, data in pairs(cache) do
+    if type(data) == "table" and type(data.history) == "table" and data.history[1] then
+      return true
+    end
+  end
+  return false
+end
+
+local function bestTable(cache)
+  local out = {}
+  for hash, data in pairs(cache) do
+    local row = {}
+    for k, v in pairs(data) do
+      if k ~= "history" then
+        row[k] = v
+      end
+    end
+    out[hash] = row
+  end
+  return out
+end
+
+local function rememberSlip(hash, slip)
+  local bucket = dialCache[hash]
+  if not bucket then
+    bucket = {}
+    dialCache[hash] = bucket
+  end
+  if not bucket.history then bucket.history = {} end
+  bucket.history[#bucket.history + 1] = slip
+end
+
+local function collectHistoryRows(cache)
+  local rows = {}
+  for hash, data in pairs(cache) do
+    if type(data.history) == "table" then
+      for i = 1, #data.history do
+        rows[#rows + 1] = { configHash = hash, slip = data.history[i] }
+      end
+    end
+  end
+  return rows
+end
+
+local function readHistoryRows(path)
+  local rows = {}
+  local f = io.open(path, "r")
+  if not f then return rows end
+  for line in f:lines() do
+    if line ~= "" then
+      local row = jsonDecode(line, path)
+      if type(row) == "table" and row.configHash and type(row.slip) == "table" then
+        rows[#rows + 1] = row
+      end
+    end
+  end
+  f:close()
+  return rows
+end
+
+local function writeHistoryRows(path, rows)
+  local f = io.open(path, "w")
+  if not f then return false end
+  for i = 1, #rows do
+    f:write(jsonEncode(rows[i]))
+    f:write("\n")
+  end
+  f:close()
+  return true
+end
+
+-- One compact line per run. Rewriting the whole history book is what froze the finish frame.
+local function replaceHistoryFile(rows)
+  local tmp = HISTORY_FILE .. ".tmp"
+  if not writeHistoryRows(tmp, rows) then
+    log('E', logTag, 'Unable to write drag history')
+    return false
+  end
+  if not FS:fileExists(HISTORY_FILE) then
+    if FS:renameFile(tmp, HISTORY_FILE) == 0 then
+      return true
+    end
+    log('E', logTag, 'Failed to replace drag history file')
+    return false
+  end
+  local bak = HISTORY_FILE .. ".bak"
+  if FS:fileExists(bak) then
+    FS:removeFile(bak)
+  end
+  if FS:renameFile(HISTORY_FILE, bak) ~= 0 then
+    log('E', logTag, 'Failed to move old drag history file')
+    return false
+  end
+  if FS:renameFile(tmp, HISTORY_FILE) ~= 0 then
+    FS:renameFile(bak, HISTORY_FILE)
+    log('E', logTag, 'Failed to replace drag history file')
+    return false
+  end
+  FS:removeFile(bak)
+  return true
+end
+
+local function appendHistoryRow(row)
+  local f = io.open(HISTORY_FILE, "a")
+  if not f then
+    log('E', logTag, 'Unable to append drag history')
+    return false
+  end
+  f:write(jsonEncode(row))
+  f:write("\n")
+  f:close()
+  return true
+end
+
+local function mergeBestOverlay()
+  local bestOverlay = jsonReadFile(BEST_FILE)
+  if not bestOverlay then return end
+  for hash, data in pairs(bestOverlay) do
+    if type(data) == "table" then
+      local bucket = dialCache[hash]
+      if not bucket then
+        bucket = {}
+        dialCache[hash] = bucket
+      end
+      for k, v in pairs(data) do
+        if k ~= "history" then
+          bucket[k] = v
+        end
+      end
+    end
+  end
+end
+
+-- Loads dial times once per session. Legacy history is moved out of the pretty JSON file so later finishes do not rewrite it.
+function M.ensureDialCache()
+  if cacheLoaded then return dialCache end
+  cacheLoaded = true
+  dialCache = jsonReadFile(DIAL_FILE) or {}
+
+  local diskRows = readHistoryRows(HISTORY_FILE)
+  if dialHasHistory(dialCache) then
+    local seen = {}
+    local rows = collectHistoryRows(dialCache)
+    for i = 1, #rows do
+      seen[slipKey(rows[i].configHash, rows[i].slip)] = true
+    end
+    for i = 1, #diskRows do
+      local row = diskRows[i]
+      local key = slipKey(row.configHash, row.slip)
+      if not seen[key] then
+        seen[key] = true
+        rememberSlip(row.configHash, row.slip)
+        rows[#rows + 1] = row
+      end
+    end
+    if replaceHistoryFile(rows) then
+      jsonWriteFile(DIAL_FILE, bestTable(dialCache), false, nil, true)
+    end
+  else
+    for i = 1, #diskRows do
+      rememberSlip(diskRows[i].configHash, diskRows[i].slip)
+    end
+  end
+
+  mergeBestOverlay()
+  return dialCache
+end
+
 --- Saves dial times and optional timeslip history for playable racers.
 -- dragData: current drag data, timeslip: optional timeslip table to save to history
 M.saveDialTimes = function(dragData, timeslip)
@@ -463,24 +653,26 @@ M.saveDialTimes = function(dragData, timeslip)
     return
   end
 
-  local filePath = "settings/dragDialTimes.json"
-  local dialTimes = jsonReadFile(filePath) or {}
+  local cache = M.ensureDialCache()
   local importantId = dragData.importantTimerId or "time_1_4"
+  local bestChanged = false
 
   for vehId, racer in pairs(dragData.racers) do
     local importantTimer = racer.timers and racer.timers[importantId]
     if importantTimer and racer.isPlayable then
       local timesKey = M.generateHashFromFile(vehId)
       local currentTime = importantTimer.value or 10
-      if not dialTimes[timesKey] then
-        dialTimes[timesKey] = { time_1_4 = currentTime, history = {} }
-      elseif not dialTimes[timesKey].history then
-        dialTimes[timesKey].history = {}
+      local bucket = cache[timesKey]
+      if not bucket then
+        bucket = { time_1_4 = currentTime }
+        cache[timesKey] = bucket
+        bestChanged = true
       end
-      local prevBest = dialTimes[timesKey][importantId] or dialTimes[timesKey].time_1_4 or 10
+      local prevBest = bucket[importantId] or bucket.time_1_4 or 10
       if currentTime < prevBest then
-        dialTimes[timesKey][importantId] = currentTime
-        dialTimes[timesKey].time_1_4 = currentTime
+        bucket[importantId] = currentTime
+        bucket.time_1_4 = currentTime
+        bestChanged = true
       end
       if timeslip then
         local historyEntry = deepcopy(timeslip)
@@ -498,18 +690,21 @@ M.saveDialTimes = function(dragData, timeslip)
             end
           end
         end
-        table.insert(dialTimes[timesKey].history, historyEntry)
+        if not bucket.history then bucket.history = {} end
+        bucket.history[#bucket.history + 1] = historyEntry
+        appendHistoryRow({ configHash = timesKey, slip = historyEntry })
       end
     end
   end
 
-  jsonWriteFile(filePath, dialTimes, true)
+  if bestChanged then
+    jsonWriteFile(BEST_FILE, bestTable(cache), false)
+  end
 end
 
 --- Returns dial times keyed by config hash.
 M.getDialTimes = function()
-  local filePath = "settings/dragDialTimes.json"
-  local dialTimes = jsonReadFile(filePath) or {}
+  local dialTimes = M.ensureDialCache()
   local result = {}
   for configHash, data in pairs(dialTimes) do
     result[configHash] = {}
@@ -541,11 +736,16 @@ M.generateHashFromFile = function(vehicleId)
   if not string.find(configFile, "^/") then
     configFile = "/" .. configFile
   end
+  local cacheKey = tostring(vehicleId) .. "\0" .. configFile
+  local cached = configHashCache[cacheKey]
+  if cached then return cached end
+  local hash = "vehicle_" .. tostring(vehicleId)
   if FS:fileExists(configFile) then
-    local hash = FS:hashFile(configFile)
-    if hash and hash ~= "" then return hash end
+    local fileHash = FS:hashFile(configFile)
+    if fileHash and fileHash ~= "" then hash = fileHash end
   end
-  return "vehicle_" .. tostring(vehicleId)
+  configHashCache[cacheKey] = hash
+  return hash
 end
 
 --- Returns current career save path, or empty string.
@@ -557,10 +757,9 @@ end
 -- dir: target directory path
 M.saveDialFile = function(dir)
   if not dir then return false end
-  local filePath = "settings/dragDialTimes.json"
-  local dialTimes = jsonReadFile(filePath) or {}
+  local dialTimes = M.ensureDialCache()
   local savePath = dir .. "/dragDialTimes.json"
-  local success = jsonWriteFile(savePath, dialTimes, true)
+  local success = jsonWriteFile(savePath, dialTimes, false)
   if not success then
     log('E', logTag, 'Failed to save dial file to: ' .. savePath)
   end
@@ -569,8 +768,7 @@ end
 
 --- Returns history entries from dial times. Optionally filters by drag settings id / strip file id on this level.
 M.getHistory = function(id)
-  local filePath = "settings/dragDialTimes.json"
-  local dialTimes = jsonReadFile(filePath) or {}
+  local dialTimes = M.ensureDialCache()
   local allHistory = {}
   for _, data in pairs(dialTimes) do
     if data.history then
@@ -647,6 +845,17 @@ M.getHistory = function(id)
   end
 
   return { history = filteredHistory }
+end
+
+--- Returns up to `count` saved timeslips across all strips, newest first.
+M.getRecentHistory = function(count)
+  local history = M.getHistory().history
+  table.sort(history, function(a, b)
+    return (a.stripInfo and a.stripInfo.timestamp or 0) > (b.stripInfo and b.stripInfo.timestamp or 0)
+  end)
+  local recent = {}
+  for i = 1, math.min(count, #history) do recent[i] = history[i] end
+  return recent
 end
 
 --- Hook: saves dial file when save slot changes.

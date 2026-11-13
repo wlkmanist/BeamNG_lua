@@ -83,23 +83,13 @@ local function getTexObj(name)
     if not name or name == "" then return nil end
     local path = bufferToTexPath(name)
     -- reuse cached handler when the selection hasn't changed
-    if cachedTexName == name and cachedTexHandler then
-        local texId = cachedTexHandler:getID()
-        if texId then
-            return {
-                texId = texId,
-                size = cachedTexHandler:getSize(),
-                format = ffi.string(cachedTexHandler:getFormat()),
-            }
-        end
+    if not (cachedTexName == name and cachedTexHandler) then
+        cachedTexHandler = im.ImTextureHandler(path)
+        cachedTexName = name
     end
-    cachedTexHandler = im.ImTextureHandler(path)
-    cachedTexName = name
     if not cachedTexHandler then return nil end
-    local texId = cachedTexHandler:getID()
-    if not texId then return nil end
     return {
-        texId = texId,
+        tex = cachedTexHandler,
         size = cachedTexHandler:getSize(),
         format = ffi.string(cachedTexHandler:getFormat()),
     }
@@ -199,7 +189,7 @@ local function drawPreviewPanel()
     )
 
     -- draw the texture with pan/zoom
-    if texObj and texObj.texId and texObj.size then
+    if texObj and texObj.tex and texObj.size then
         local srcW = math.max(1, texObj.size.x or 1)
         local srcH = math.max(1, texObj.size.y or 1)
 
@@ -212,7 +202,7 @@ local function drawPreviewPanel()
 
         im.SetCursorScreenPos(im.ImVec2(cx, cy))
         local tint = channelTints[channelIdx[0] + 1] or channelTints[1]
-        im.Image(texObj.texId, im.ImVec2(displayW, displayH), nil, nil, tint)
+        im.Image(texObj.tex:getID(), im.ImVec2(displayW, displayH), nil, nil, tint)
         im.SetCursorScreenPos(screenPos)
     else
         im.SetCursorScreenPos(im.ImVec2(screenPos.x + 8, screenPos.y + 8))

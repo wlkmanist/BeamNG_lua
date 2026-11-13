@@ -4,7 +4,6 @@
 local M = {}
 local im = ui_imgui
 local imVec4Red = im.ImVec4(1,0.1,0,1)
-local driftAppMounted = false
 
 M.dependencies = {"gameplay_drift_drift", "gameplay_drift_scoring", "gameplay_drift_statistics", "gameplay_drift_saveLoad", "gameplay_util_groundContact"}
 
@@ -28,7 +27,7 @@ local variableExtensions = {
     contexts = {"inChallenge"}
   },
   gameplay_drift_display = {
-    contexts = {"inChallenge", "inFreeroamChallenge", "inFreeroam", "inFreeroamCruising"}
+    contexts = {"inChallenge", "inFreeroamChallenge", "inFreeroamCruising", "inSplitscreen"}
   },
   gameplay_drift_quickMessages = {
     contexts = {"inFreeroam", "inChallenge", "inFreeroamChallenge", "inFreeroamCruising"}
@@ -57,7 +56,7 @@ local frozen = false -- used to freeze the scoring, drift detection. For exemple
 local challengeMode
 local paused = false -- used to "pause" the drift systems, used during the end screen of formal mission challenges
 
-local contextList = {"inFreeroam", "inChallenge", "inFreeroamChallenge", "inAnotherMissionType", "inFreeroamCruising"}
+local contextList = {"inFreeroam", "inChallenge", "inFreeroamChallenge", "inAnotherMissionType", "inFreeroamCruising", "inSplitscreen"}
 local challengeModeList = {"None", "A to B", "A to B with stunt zones", "Gymkhana", "Competition"}
 
 local driftExtensions = {}
@@ -149,6 +148,7 @@ local function setContext(newContext)
   local oldContext = context
 
   context = newContext
+
   extensions.hook("onDriftContextChanged", context, oldContext)
 
   if oldContext ~= context then
@@ -201,11 +201,6 @@ local function getMultiplayerEnabled()
   return multiplayer_sessionManager and multiplayer_sessionManager.getCurrentSession() and multiplayerEnabled
 end
 
-local function getIsThereAnyDriftUIAppDisplayed()
-  local gameplayContextDriftLoaded = ui_appContainers.getAppVisibility('topCenter', 'drift')
-  return driftAppMounted and gameplayContextDriftLoaded
-end
-
 local function onAnyMissionChanged(status, mission)
   clear()
   if status == "started" then
@@ -220,8 +215,9 @@ local function onAnyMissionChanged(status, mission)
 end
 
 local function onVehicleResetted(vid)
-  if vid == be:getPlayerVehicleID(0) then
-    extensions.hook("onDriftPlVehReset")
+  local tracked = gameplay_drift_drift.getTrackedVehicles()
+  if tracked and tracked[vid] then
+    extensions.hook("onDriftPlVehReset", vid)
   end
 end
 
@@ -333,7 +329,7 @@ local function checkFrozen()
   if gameplay_drift_destination then
     goingWrongWay = gameplay_drift_destination.getGoingWrongWay()
   end
-  if gameplay_drift_bounds then
+  if gameplay_drift_bounds and context ~= "inSplitscreen" then
     outOfBounds = gameplay_drift_bounds.getIsOutOfBounds()
   end
 
@@ -353,7 +349,7 @@ local function loadSoundExtension(value)
 end
 
 local function checkIfSoundShouldPlay()
-  if getIsThereAnyDriftUIAppDisplayed() then
+  if gameplay_drift_display then
     if not gameplay_drift_sounds then
       loadSoundExtension(true)
     end
@@ -367,15 +363,19 @@ end
 local function checkCruisingExtension()
   local shouldBeLoaded = (context == "inFreeroam" or context == "inFreeroamCruising")
     and not (career_career and career_career.isActive and career_career.isActive())
+    and not core_multiseat.isMultiseatActive()
     and settings.getValue("enableDriftFreeroamCruising")
     and gameplay_discover_freeroamTutorial_tutorial == nil
+    and not (gameplay_discover_firstDrive_experience
+      and gameplay_discover_firstDrive_experience.isActive
+      and gameplay_discover_firstDrive_experience.isActive())
 
   if shouldBeLoaded and not gameplay_drift_freeroam_cruising then
     extensions.load("gameplay_drift_freeroam_cruising")
     checkLoadedExtensions()
   elseif not shouldBeLoaded and gameplay_drift_freeroam_cruising then
     if context == "inFreeroamCruising" then
-      context = "inFreeroam"
+      setContext("inFreeroam")
     end
     extensions.unload("gameplay_drift_freeroam_cruising")
     checkLoadedExtensions()
@@ -414,17 +414,6 @@ end
 
 local function onExtensionLoaded()
   driftExtensions = FS:findFiles("/lua/ge/extensions/gameplay/drift", '*.lua', -1, false, false)
-  -- the UI app can persist across a GE lua reload (it doesn't remount), so it won't re-announce on its own.
-  -- ask it to (re)report whether it's mounted. harmless if no app is listening.
-  guihooks.trigger("onDriftRequestAppMountedState")
-end
-
-local function onDriftAppMounted()
-  driftAppMounted = true
-end
-
-local function onDriftAppUnmounted()
-  driftAppMounted = false
 end
 
 local function onMPSessionChanged(old, new)
@@ -452,7 +441,6 @@ M.getContext = getContext
 M.getFrozen = getFrozen
 M.getPaused = getPaused
 M.getDriftDebugInfo = getDriftDebugInfo
-M.getIsThereAnyDriftUIAppDisplayed = getIsThereAnyDriftUIAppDisplayed
 M.setDebug = setDebug
 M.setContext = setContext
 M.setPaused = setPaused
@@ -466,7 +454,5 @@ M.onExtensionLoaded = onExtensionLoaded
 
 M.onClientEndMission = onClientEndMission
 M.onClientPostStartMission = onClientPostStartMission
-M.onDriftAppMounted = onDriftAppMounted
-M.onDriftAppUnmounted = onDriftAppUnmounted
 M.onMPSessionChanged = onMPSessionChanged
 return M
